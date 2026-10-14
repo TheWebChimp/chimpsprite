@@ -168,7 +168,8 @@ impl CanvasView {
         let slop = EDGE_SLOP_PX / self.zoom;
         let over_label = pointer.and_then(|p| self.label_at(ui, rect, editor, p));
 
-        // Guías del diálogo Canvas Size: tienen prioridad sobre las herramientas.
+        // Con el diálogo Canvas Size abierto el lienzo es modal: solo guías, paneo y zoom.
+        let modal = dialog.is_some();
         let over_guide = match (&dialog, pointer) {
             (Some(d), Some(p)) if self.dragging_guide.is_none() && !editor.is_painting() => {
                 self.guide_at(rect, d, editor, p)
@@ -201,7 +202,8 @@ impl CanvasView {
             }
         });
 
-        if self.dragging_guide.is_none()
+        if !modal
+            && self.dragging_guide.is_none()
             && !space
             && response.hovered()
             && !editor.is_painting()
@@ -228,6 +230,8 @@ impl CanvasView {
             Some(egui::CursorIcon::Grab)
         } else if guide_cursor.is_some() {
             guide_cursor
+        } else if modal {
+            response.hovered().then_some(egui::CursorIcon::Default)
         } else if !response.hovered() {
             None
         } else if over_label.is_some() && !editor.is_painting() {
@@ -282,6 +286,7 @@ impl CanvasView {
             self.fit(rect, editor);
         }
         self.handle_input(ui, &response, rect, editor, dialog.as_deref_mut());
+        let modal = dialog.is_some();
         let guide = dialog.and_then(|d| d.preview_rect(&editor.document));
 
         let view = editor.view();
@@ -384,6 +389,7 @@ impl CanvasView {
         let space = ui.input(|i| i.key_down(egui::Key::Space));
         let tool = editor.active_tool();
         if let (Some((hx, hy)), Some(origin)) = (self.hover, active_origin)
+            && !modal
             && !space
             && response.hovered()
             && tool != ToolKind::Artboard

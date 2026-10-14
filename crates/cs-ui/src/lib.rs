@@ -81,6 +81,10 @@ impl ChimpApp {
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        // El diálogo Canvas Size es modal: maneja sus propias teclas.
+        if self.canvas_size.is_some() {
+            return;
+        }
         let redo_shift = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
         let redo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
         let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
@@ -208,19 +212,29 @@ impl eframe::App for ChimpApp {
         let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
 
-        egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
+        let modal = self.canvas_size.is_some();
+        egui::Panel::top("menu").show(ui, |ui| {
+            ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
+        });
         egui::Panel::bottom("status")
             .show(ui, |ui| panels::status_bar(ui, &self.editor, &self.canvas));
         egui::Panel::left("tools")
             .resizable(false)
             .exact_size(150.0)
-            .show(ui, |ui| panels::toolbar(ui, &mut self.editor));
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.editor));
+            });
         egui::Panel::right("palette")
             .default_size(220.0)
             .show(ui, |ui| {
                 panels::palette(ui, &mut self.editor);
                 ui.add_space(12.0);
-                if panels::artboards(ui, &mut self.editor, &mut self.artboard_name) {
+                let open = ui
+                    .add_enabled_ui(!modal, |ui| {
+                        panels::artboards(ui, &mut self.editor, &mut self.artboard_name)
+                    })
+                    .inner;
+                if open {
                     self.open_canvas_size();
                 }
             });
