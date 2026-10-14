@@ -48,11 +48,10 @@ pub struct ChimpApp {
 impl ChimpApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
-        let editor = if std::env::var_os("CHIMPSPRITE_DEMO").is_some() {
-            demo::editor()
-        } else {
-            new_editor()
-        };
+        let args: Vec<_> = std::env::args_os().skip(1).collect();
+        let demo =
+            std::env::var_os("CHIMPSPRITE_DEMO").is_some() || args.iter().any(|a| a == "--demo");
+        let editor = if demo { demo::editor() } else { new_editor() };
         let mut app = Self {
             editor,
             canvas: canvas::CanvasView::default(),
@@ -70,8 +69,12 @@ impl ChimpApp {
             title: String::new(),
         };
         app.saved_version = app.editor.doc_version;
-        // Abrir el archivo pasado por línea de comandos.
-        if let Some(path) = std::env::args_os().nth(1).map(PathBuf::from) {
+        // Abrir el archivo pasado por línea de comandos (los argumentos `--…` son flags).
+        if let Some(path) = args
+            .iter()
+            .find(|a| !a.to_string_lossy().starts_with("--"))
+            .map(PathBuf::from)
+        {
             app.open_path(&path);
         }
         // Desarrollo: abre el diálogo con un ancho de ejemplo para capturas.
