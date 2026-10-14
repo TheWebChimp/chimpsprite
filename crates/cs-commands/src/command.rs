@@ -1,6 +1,7 @@
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use cs_core::{Cel, Frame, Image, ImageId, Layer, LayerId, PixelValue, Sprite};
+use cs_core::{ArtboardId, Cel, Frame, Image, ImageId, Layer, LayerId, PixelValue, Sprite};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -23,6 +24,14 @@ pub enum CmdError {
     LastFrame,
     #[error("pixel value does not match the sprite color mode")]
     ColorModeMismatch,
+    #[error("invalid size {0}×{1}")]
+    InvalidSize(u32, u32),
+    #[error("artboard {0:?} not found")]
+    ArtboardNotFound(ArtboardId),
+    #[error("artboard id {0:?} already exists")]
+    DuplicateArtboardId(ArtboardId),
+    #[error("cannot remove the last artboard")]
+    LastArtboard,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +79,14 @@ pub enum Command {
     RemoveFrame {
         index: usize,
     },
+    /// Cambia el tamaño del lienzo y desplaza todos los cels por `offset`.
+    ResizeCanvas {
+        width: u32,
+        height: u32,
+        offset: (i32, i32),
+    },
+    /// Recorta las imágenes de los cels a los límites del lienzo; quita los cels que quedan fuera.
+    TrimToCanvas,
     /// Transacción: se aplica completa o nada; cuenta como un paso de undo.
     Batch(Vec<Command>),
 }
@@ -99,9 +116,111 @@ impl Command {
             Command::SetLayerProps { id, props } => set_layer_props(doc, *id, props),
             Command::AddFrame { index, frame } => add_frame(doc, *index, *frame),
             Command::RemoveFrame { index } => remove_frame(doc, *index),
+            Command::ResizeCanvas {
+                width,
+                height,
+                offset,
+            } => resize_canvas(doc, *width, *height, *offset),
+            Command::TrimToCanvas => Ok(trim_to_canvas(doc)),
             Command::Batch(cmds) => apply_batch(doc, cmds),
         }
     }
+}
+
+impl crate::Undoable for Command {
+    type Target = Sprite;
+
+    fn apply(&self, target: &mut Sprite) -> Result<Self, CmdError> {
+        Command::apply(self, target)
+    }
+}
+
+fn resize_canvas(
+    doc: &mut Sprite,
+    width: u32,
+    height: u32,
+    offset: (i32, i32),
+) -> Result<Command, CmdError> {
+    if width == 0 || height == 0 {
+        return Err(CmdError::InvalidSize(width, height));
+    }
+    let inverse = Command::ResizeCanvas {
+        width: doc.width,
+        height: doc.height,
+        offset: (-offset.0, -offset.1),
+    };
+    doc.width = width;
+    doc.height = height;
+    for cel in doc.cels.values_mut() {
+        cel.position.0 += offset.0;
+        cel.position.1 += offset.1;
+    }
+    Ok(inverse)
+}
+
+fn trim_to_canvas(doc: &mut Sprite) -> Command {
+    // Agrupa los cels por imagen: los vinculados se recortan juntos.
+    let mut by_image: BTreeMap<ImageId, Vec<(LayerId, usize)>> = BTreeMap::new();
+    for (key, cel) in &doc.cels {
+        by_image.entry(cel.image).or_default().push(*key);
+    }
+    let (w, h) = (doc.width as i32, doc.height as i32);
+    let mut inverse = Vec::new();
+    for (image_id, keys) in by_image {
+        let positions: Vec<_> = keys.iter().map(|k| doc.cels[k].position).collect();
+        if positions.iter().any(|p| *p != positions[0]) {
+            log::warn!("linked cels of {image_id:?} have different positions; not trimmed");
+            continue;
+        }
+        let Some(image) = doc.images.get(&image_id).cloned() else {
+            continue;
+        };
+        let (px, py) = positions[0];
+        let (x0, y0) = (px.max(0), py.max(0));
+        let (x1, y1) = (
+            (px + image.width() as i32).min(w),
+            (py + image.height() as i32).min(h),
+        );
+        let cropped = if x0 >= x1 || y0 >= y1 {
+            None
+        } else if (x1 - x0, y1 - y0) == (image.width() as i32, image.height() as i32) {
+            continue;
+        } else {
+            Some(image.crop(
+                (x0 - px) as u32,
+                (y0 - py) as u32,
+                (x1 - x0) as u32,
+                (y1 - y0) as u32,
+            ))
+        };
+        for key in keys {
+            let old = doc.cels[&key];
+            inverse.push(Command::SetCel {
+                layer: key.0,
+                frame: key.1,
+                cel: Some(old),
+            });
+            match &cropped {
+                Some(_) => {
+                    doc.cels.get_mut(&key).expect("key exists").position = (x0, y0);
+                }
+                None => {
+                    doc.cels.remove(&key);
+                }
+            }
+        }
+        inverse.push(Command::SetImage {
+            id: image_id,
+            image: Some(image),
+        });
+        match cropped {
+            Some(img) => doc.images.insert(image_id, Arc::new(img)),
+            None => doc.images.remove(&image_id),
+        };
+    }
+    // Primero restaurar imágenes y luego cels.
+    inverse.reverse();
+    Command::Batch(inverse)
 }
 
 fn set_cel(
@@ -338,6 +457,80 @@ mod tests {
         ])
         .apply(&mut s);
         assert_eq!(r, Err(CmdError::LayerNotFound(LayerId(99))));
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn resize_canvas_shifts_cels_and_undoes() {
+        let mut s = Sprite::new(4, 4, ColorMode::Rgba);
+        dot(1).apply(&mut s).unwrap();
+        let before = s.clone();
+        let inv = Command::ResizeCanvas {
+            width: 6,
+            height: 5,
+            offset: (2, 1),
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!((s.width, s.height), (6, 5));
+        assert_eq!(s.cel(LayerId(1), 0).unwrap().position, (2, 1));
+        assert_eq!(
+            s.pixel(LayerId(1), 0, 2, 1),
+            PixelValue::Rgba(Rgba::rgb(1, 2, 3))
+        );
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        assert_eq!(
+            Command::ResizeCanvas {
+                width: 0,
+                height: 3,
+                offset: (0, 0)
+            }
+            .apply(&mut s),
+            Err(CmdError::InvalidSize(0, 3))
+        );
+    }
+
+    #[test]
+    fn trim_crops_partial_cels_and_drops_outside_ones() {
+        let mut s = Sprite::new(4, 4, ColorMode::Rgba);
+        let c = PixelValue::Rgba(Rgba::rgb(5, 5, 5));
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, c), (3, 3, c)],
+        }
+        .apply(&mut s)
+        .unwrap();
+        // Achica el lienzo a 2×2 dejando el cel de 4×4 asomando.
+        Command::ResizeCanvas {
+            width: 2,
+            height: 2,
+            offset: (-1, -1),
+        }
+        .apply(&mut s)
+        .unwrap();
+        let before = s.clone();
+        let inv = Command::TrimToCanvas.apply(&mut s).unwrap();
+        let cel = *s.cel(LayerId(1), 0).unwrap();
+        assert_eq!(cel.position, (0, 0));
+        let img = s.image(cel.image).unwrap();
+        assert_eq!((img.width(), img.height()), (2, 2));
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+
+        // Un cel completamente afuera desaparece.
+        Command::ResizeCanvas {
+            width: 2,
+            height: 2,
+            offset: (-10, 0),
+        }
+        .apply(&mut s)
+        .unwrap();
+        let before = s.clone();
+        let inv = Command::TrimToCanvas.apply(&mut s).unwrap();
+        assert!(s.cels.is_empty() && s.images.is_empty());
+        inv.apply(&mut s).unwrap();
         assert_eq!(s, before);
     }
 

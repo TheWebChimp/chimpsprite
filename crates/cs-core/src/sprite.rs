@@ -72,7 +72,7 @@ pub struct Cel {
     pub image: ImageId,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sprite {
     pub width: u32,
     pub height: u32,
@@ -81,8 +81,34 @@ pub struct Sprite {
     /// Orden de abajo hacia arriba; los grupos se expresan con `Layer::parent`.
     pub layers: Vec<Layer>,
     pub frames: Vec<Frame>,
+    #[serde(with = "as_entries")]
     pub cels: BTreeMap<(LayerId, usize), Cel>,
+    #[serde(with = "as_entries")]
     pub images: BTreeMap<ImageId, Arc<Image>>,
+}
+
+/// Serializa un mapa como lista de pares, para que funcione en formatos (como JSON)
+/// que solo aceptan claves de texto.
+mod as_entries {
+    use std::collections::BTreeMap;
+
+    use serde::{Deserialize, Deserializer, Serialize, Serializer};
+
+    pub fn serialize<K: Serialize, V: Serialize, S: Serializer>(
+        map: &BTreeMap<K, V>,
+        s: S,
+    ) -> Result<S::Ok, S::Error> {
+        s.collect_seq(map.iter())
+    }
+
+    pub fn deserialize<'de, K, V, D>(d: D) -> Result<BTreeMap<K, V>, D::Error>
+    where
+        K: Deserialize<'de> + Ord,
+        V: Deserialize<'de>,
+        D: Deserializer<'de>,
+    {
+        Ok(Vec::<(K, V)>::deserialize(d)?.into_iter().collect())
+    }
 }
 
 impl Sprite {
@@ -164,6 +190,25 @@ mod tests {
         s.images
             .insert(ImageId(7), Arc::new(Image::new(1, 1, ColorMode::Rgba)));
         assert_eq!(s.next_image_id(), ImageId(8));
+    }
+
+    #[test]
+    fn json_roundtrip_with_cels() {
+        let mut s = Sprite::new(4, 4, ColorMode::Rgba);
+        let mut img = Image::new(2, 1, ColorMode::Rgba);
+        img.set(1, 0, PixelValue::Rgba(crate::Rgba::rgb(1, 2, 3)))
+            .unwrap();
+        s.images.insert(ImageId(3), Arc::new(img));
+        s.cels.insert(
+            (LayerId(1), 0),
+            Cel {
+                position: (-1, 2),
+                opacity: 200,
+                image: ImageId(3),
+            },
+        );
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(serde_json::from_str::<Sprite>(&json).unwrap(), s);
     }
 
     #[test]

@@ -1,13 +1,15 @@
 //! Interfaz egui de ChimpSprite: capa delgada sobre el motor.
 
 mod canvas;
+mod canvas_size;
 mod capture;
 mod demo;
 mod editor;
 mod panels;
 mod theme;
+mod widgets;
 
-use cs_core::{ColorMode, Sprite};
+use cs_core::{ArtboardId, ColorMode, Sprite};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 
 pub use editor::{Editor, ToolKind};
@@ -18,36 +20,71 @@ pub struct ChimpApp {
     editor: Editor,
     canvas: canvas::CanvasView,
     capture: capture::Capture,
+    /// Texto del nombre del artboard activo mientras se edita.
+    artboard_name: (ArtboardId, String),
+    canvas_size: Option<canvas_size::CanvasSizeDialog>,
 }
 
 impl ChimpApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
-        let mut editor = Editor::new(Sprite::new(
-            NEW_SPRITE_SIZE,
-            NEW_SPRITE_SIZE,
-            ColorMode::Rgba,
-        ));
-        if std::env::var_os("CHIMPSPRITE_DEMO").is_some() {
-            demo::draw(&mut editor);
-        }
-        Self {
+        let editor = if std::env::var_os("CHIMPSPRITE_DEMO").is_some() {
+            demo::editor()
+        } else {
+            new_editor()
+        };
+        let mut app = Self {
             editor,
             canvas: canvas::CanvasView::default(),
             capture: capture::Capture::from_env(),
+            artboard_name: (ArtboardId(0), String::new()),
+            canvas_size: None,
+        };
+        // Desarrollo: abre el diálogo con un ancho de ejemplo para capturas.
+        if std::env::var_os("CHIMPSPRITE_DEMO_CANVAS_SIZE").is_some() {
+            app.open_canvas_size();
+            if let Some(d) = &mut app.canvas_size {
+                d.set_anchor(0, 1);
+                d.set_width(d.width() + 24);
+            }
+        }
+        app
+    }
+
+    fn open_canvas_size(&mut self) {
+        self.canvas_size = Some(canvas_size::CanvasSizeDialog::new(self.editor.artboard()));
+    }
+
+    fn update_canvas_size(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.canvas_size else {
+            return;
+        };
+        if self.editor.document.artboard(dialog.artboard).is_none() {
+            self.canvas_size = None;
+            return;
+        }
+        match canvas_size::show(ctx, dialog) {
+            canvas_size::DialogResult::Open => {}
+            canvas_size::DialogResult::Accept => {
+                if let Some(cmd) = dialog.command(&self.editor.document) {
+                    self.editor.execute_doc(cmd);
+                }
+                self.canvas_size = None;
+            }
+            canvas_size::DialogResult::Cancel => self.canvas_size = None,
         }
     }
 
     fn new_sprite(&mut self) {
-        self.editor = Editor::new(Sprite::new(
-            NEW_SPRITE_SIZE,
-            NEW_SPRITE_SIZE,
-            ColorMode::Rgba,
-        ));
+        self.editor = new_editor();
         self.canvas.reset();
     }
 
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        // El diálogo Canvas Size es modal: maneja sus propias teclas.
+        if self.canvas_size.is_some() {
+            return;
+        }
         let redo_shift = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
         let redo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
         let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
@@ -67,7 +104,7 @@ impl ChimpApp {
         if ctx.egui_wants_keyboard_input() || self.editor.is_painting() {
             return;
         }
-        let pressed: Vec<Key> = ctx.input(|i| {
+        let pressed: Vec<(Key, bool)> = ctx.input(|i| {
             if i.modifiers.command || i.modifiers.alt {
                 return Vec::new();
             }
@@ -78,15 +115,17 @@ impl ChimpApp {
                         key,
                         pressed: true,
                         repeat: false,
+                        modifiers,
                         ..
-                    } => Some(*key),
+                    } => Some((*key, modifiers.shift)),
                     _ => None,
                 })
                 .collect()
         });
-        for key in pressed {
+        for (key, shift) in pressed {
             let editor = &mut self.editor;
             match key {
+                Key::O if shift => editor.tool = ToolKind::Artboard,
                 Key::B => editor.tool = ToolKind::Pencil,
                 Key::E => editor.tool = ToolKind::Eraser,
                 Key::G => editor.tool = ToolKind::Bucket,
@@ -117,6 +156,11 @@ impl ChimpApp {
                 ui.separator();
                 if ui.button("Quit").clicked() {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
+            });
+            ui.menu_button("Sprite", |ui| {
+                if ui.button("Canvas Size…").clicked() {
+                    self.open_canvas_size();
                 }
             });
             ui.menu_button("Edit", |ui| {
@@ -155,22 +199,50 @@ impl ChimpApp {
     }
 }
 
+fn new_editor() -> Editor {
+    Editor::with_sprite(Sprite::new(
+        NEW_SPRITE_SIZE,
+        NEW_SPRITE_SIZE,
+        ColorMode::Rgba,
+    ))
+}
+
 impl eframe::App for ChimpApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
 
-        egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
+        let modal = self.canvas_size.is_some();
+        egui::Panel::top("menu").show(ui, |ui| {
+            ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
+        });
         egui::Panel::bottom("status")
             .show(ui, |ui| panels::status_bar(ui, &self.editor, &self.canvas));
         egui::Panel::left("tools")
             .resizable(false)
             .exact_size(150.0)
-            .show(ui, |ui| panels::toolbar(ui, &mut self.editor));
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.editor));
+            });
         egui::Panel::right("palette")
             .default_size(220.0)
-            .show(ui, |ui| panels::palette(ui, &mut self.editor));
-        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &mut self.editor));
+            .show(ui, |ui| {
+                panels::palette(ui, &mut self.editor);
+                ui.add_space(12.0);
+                let open = ui
+                    .add_enabled_ui(!modal, |ui| {
+                        panels::artboards(ui, &mut self.editor, &mut self.artboard_name)
+                    })
+                    .inner;
+                if open {
+                    self.open_canvas_size();
+                }
+            });
+        egui::CentralPanel::no_frame().show(ui, |ui| {
+            self.canvas
+                .show(ui, &mut self.editor, self.canvas_size.as_mut())
+        });
+        self.update_canvas_size(&ctx);
 
         self.capture.update(&ctx);
     }

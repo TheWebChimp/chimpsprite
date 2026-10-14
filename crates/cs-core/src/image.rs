@@ -71,11 +71,52 @@ impl Image {
         }
         Ok(())
     }
+
+    /// Copia del rectángulo `(x, y, width, height)`, que debe caber dentro de la imagen.
+    pub fn crop(&self, x: u32, y: u32, width: u32, height: u32) -> Image {
+        assert!(
+            x + width <= self.width && y + height <= self.height,
+            "crop out of bounds"
+        );
+        let rows = (y..y + height).map(|row| {
+            let start = (row * self.width + x) as usize;
+            start..start + width as usize
+        });
+        let pixels = match &self.pixels {
+            PixelBuffer::Rgba(p) => {
+                PixelBuffer::Rgba(rows.flat_map(|r| p[r].iter().copied()).collect())
+            }
+            PixelBuffer::Indexed(p) => {
+                PixelBuffer::Indexed(rows.flat_map(|r| p[r].iter().copied()).collect())
+            }
+        };
+        Image {
+            width,
+            height,
+            pixels,
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crop_copies_sub_rectangle() {
+        let mut img = Image::new(
+            4,
+            3,
+            ColorMode::Indexed {
+                transparent_index: 0,
+            },
+        );
+        img.set(2, 1, PixelValue::Index(7)).unwrap();
+        let c = img.crop(1, 1, 2, 2);
+        assert_eq!((c.width(), c.height()), (2, 2));
+        assert_eq!(c.get(1, 0), Some(PixelValue::Index(7)));
+        assert_eq!(c.get(0, 0), Some(PixelValue::Index(0)));
+    }
 
     #[test]
     fn new_rgba_image_is_transparent() {

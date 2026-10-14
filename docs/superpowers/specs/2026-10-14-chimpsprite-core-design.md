@@ -43,6 +43,11 @@ Incluido:
 - Exportar PNG (frame), secuencia PNG, GIF animado, spritesheet (horizontal/vertical/grid) + JSON
   compatible con el formato de Aseprite.
 - Importar PNG como sprite nuevo o como capa.
+- Artboards: un documento contiene varios sprites independientes en un lienzo infinito (ver sección
+  Artboards). Formato nativo `.chimp` para documentos con varios artboards.
+
+Hitos del core: M1 motor + lienzo, M2 herramientas + selección, M3 documento + artboards,
+M4 capas/timeline/animación, M5 `.aseprite`/`.chimp` + export.
 
 Fuera de alcance v1: modo Grayscale, tilemaps, slices, scripting, selección no rectangular, máscaras,
 build web, MCP. (Tilemaps, slices y user data se preservan al guardar, ver IO.)
@@ -156,6 +161,33 @@ timeline abajo.
 - Atajos estilo Aseprite (B lápiz, E borrador, G cubeta, L línea, U rectángulo/elipse, M selección,
   V mover, I cuentagotas, Ctrl+Z/Ctrl+Y, espacio para paneo).
 - Tema oscuro propio.
+
+## Artboards
+
+Agregado el 2026-10-14. Inspirado en Illustrator, pero cada artboard es un sprite completo e
+independiente (tamaño, paleta, modo de color, capas, frames y tags propios).
+
+```rust
+Document { artboards: Vec<Artboard> }        // orden = z-order en el lienzo
+Artboard { id: ArtboardId, name: String, position: (i32, i32), sprite: Sprite }
+```
+
+- `Sprite` y su motor no cambian; `Document` es una capa encima.
+- Comandos de documento: `DocCommand::{OnArtboard { id, cmd }, AddArtboard, RemoveArtboard,
+  SetArtboardProps (nombre/posición), Batch}`. `Command::ResizeCanvas { width, height, offset }` cambia
+  el tamaño de un sprite desplazando sus cels por `offset` (para redimensionar desde cualquier borde sin
+  mover el contenido en el mundo).
+- Un único historial por documento: undo cronológico entre artboards.
+- No se puede eliminar el último artboard.
+- UI: lienzo infinito con todos los artboards en su posición; nombre sobre cada uno; el activo con borde
+  de acento. Un clic con cualquier herramienta sobre otro artboard lo activa. Herramienta Artboard
+  (Shift+O): arrastrar en vacío crea, arrastrar dentro mueve, arrastrar un borde/esquina redimensiona.
+  Panel con lista de artboards (activar, crear, renombrar, eliminar). Herramientas, timeline, capas y
+  selección operan sobre el artboard activo; al cambiar de artboard se recuerdan capa y frame activos y
+  se descarta la selección.
+- Archivos: abrir `.aseprite` = documento con un artboard. `.chimp` = zip con un `.aseprite` por
+  artboard + `manifest.json` (versión, artboards con id, nombre, posición y archivo).
+- Export: por artboard o todos juntos en un atlas con JSON.
 
 ## IO (`cs-io`)
 

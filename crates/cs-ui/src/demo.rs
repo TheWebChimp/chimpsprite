@@ -1,13 +1,68 @@
 //! Sprite de demostración (`CHIMPSPRITE_DEMO=1`), dibujado a través de comandos normales.
 
-use cs_commands::Command;
-use cs_core::PixelValue;
+use cs_commands::{Command, DocCommand};
+use cs_core::{ColorMode, Mask, PixelValue, Sprite};
+use cs_raster::{ellipse_filled, ellipse_outline};
 
 use crate::editor::Editor;
 
+/// Documento de demo: un chimpancé y un plátano en artboards separados.
+pub fn editor() -> Editor {
+    let mut editor = Editor::with_sprite(Sprite::new(64, 64, ColorMode::Rgba));
+    editor.execute_doc(DocCommand::SetArtboardProps {
+        id: editor.active,
+        name: Some("chimp".into()),
+        position: None,
+    });
+    let chimp = editor.active;
+    draw_chimp(&mut editor);
+
+    editor.add_artboard(32, 32);
+    editor.execute_doc(DocCommand::SetArtboardProps {
+        id: editor.active,
+        name: Some("banana".into()),
+        position: Some((80, 16)),
+    });
+    draw_banana(&mut editor);
+
+    editor.activate(chimp);
+    select_face(&mut editor);
+    editor
+}
+
+/// Plátano: una media luna (elipse menos elipse desplazada) con contorno.
+fn draw_banana(editor: &mut Editor) {
+    let yellow = editor.palette_value(8);
+    let outline = editor.palette_value(30);
+    let stem = editor.palette_value(4);
+    let body: Vec<_> = ellipse_filled((3, 4), (28, 27))
+        .into_iter()
+        .filter(|p| !ellipse_filled((3, -2), (28, 21)).contains(p))
+        .collect();
+    let mut pixels: Vec<(i32, i32, PixelValue)> =
+        body.iter().map(|&(x, y)| (x, y, yellow)).collect();
+    pixels.extend(
+        ellipse_outline((3, 4), (28, 27))
+            .into_iter()
+            .filter(|p| body.contains(p))
+            .map(|(x, y)| (x, y, outline)),
+    );
+    pixels.extend([
+        (2, 15, stem),
+        (2, 16, stem),
+        (1, 15, stem),
+        (29, 15, outline),
+    ]);
+    editor.execute(Command::DrawPixels {
+        layer: editor.layer,
+        frame: editor.frame,
+        pixels,
+    });
+}
+
 /// Dibuja una cara de chimpancé centrada usando índices de la paleta DB32.
-pub fn draw(editor: &mut Editor) {
-    let (w, h) = (editor.sprite.width as i32, editor.sprite.height as i32);
+fn draw_chimp(editor: &mut Editor) {
+    let (w, h) = (editor.sprite().width as i32, editor.sprite().height as i32);
     let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
     let r = (w.min(h) as f32) * 0.3;
     let fur = editor.palette_value(4);
@@ -68,14 +123,14 @@ pub fn draw(editor: &mut Editor) {
         frame: editor.frame,
         pixels,
     });
+}
 
-    // Una selección alrededor de la cara para lucir las marching ants.
+/// Una selección alrededor de la cara para lucir las marching ants.
+fn select_face(editor: &mut Editor) {
+    let (w, h) = (editor.sprite().width, editor.sprite().height);
+    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
+    let r = (w.min(h) as f32) * 0.3;
     let (x0, y0) = ((cx - r * 0.75) as i32, (cy - r * 0.45) as i32);
     let (x1, y1) = ((cx + r * 0.75) as i32, (cy + r * 0.85) as i32);
-    editor.set_selection(Some(cs_core::Mask::from_rect(
-        editor.sprite.width,
-        editor.sprite.height,
-        (x0, y0),
-        (x1, y1),
-    )));
+    editor.set_selection(Some(Mask::from_rect(w, h, (x0, y0), (x1, y1))));
 }
