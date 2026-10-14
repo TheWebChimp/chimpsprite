@@ -4,6 +4,7 @@ mod command;
 mod doc_command;
 mod draw;
 mod history;
+pub mod ops;
 
 pub use command::{CmdError, Command, LayerProps};
 pub use doc_command::DocCommand;

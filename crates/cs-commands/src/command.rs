@@ -1,7 +1,10 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use cs_core::{ArtboardId, Cel, Frame, Image, ImageId, Layer, LayerId, PixelValue, Sprite};
+use cs_core::{
+    ArtboardId, BlendMode, Cel, Frame, Image, ImageId, Layer, LayerId, LayerKind, PixelValue,
+    Sprite, Tag,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -32,6 +35,8 @@ pub enum CmdError {
     DuplicateArtboardId(ArtboardId),
     #[error("cannot remove the last artboard")]
     LastArtboard,
+    #[error("the move would break the layer tree")]
+    InvalidLayerTree,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -40,6 +45,7 @@ pub struct LayerProps {
     pub visible: Option<bool>,
     pub locked: Option<bool>,
     pub opacity: Option<u8>,
+    pub blend: Option<BlendMode>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -87,6 +93,22 @@ pub enum Command {
     },
     /// Recorta las imágenes de los cels a los límites del lienzo; quita los cels que quedan fuera.
     TrimToCanvas,
+    /// Reemplaza la lista completa de tags.
+    SetTags(Vec<Tag>),
+    /// Mueve la capa y sus descendientes; `index` es la posición en la lista sin ese bloque.
+    MoveLayer {
+        id: LayerId,
+        index: usize,
+        parent: Option<LayerId>,
+    },
+    MoveFrame {
+        from: usize,
+        to: usize,
+    },
+    SetFrameDuration {
+        index: usize,
+        duration_ms: u16,
+    },
     /// Transacción: se aplica completa o nada; cuenta como un paso de undo.
     Batch(Vec<Command>),
 }
@@ -122,6 +144,23 @@ impl Command {
                 offset,
             } => resize_canvas(doc, *width, *height, *offset),
             Command::TrimToCanvas => Ok(trim_to_canvas(doc)),
+            Command::SetTags(tags) => Ok(Command::SetTags(std::mem::replace(
+                &mut doc.tags,
+                tags.clone(),
+            ))),
+            Command::MoveLayer { id, index, parent } => move_layer(doc, *id, *index, *parent),
+            Command::MoveFrame { from, to } => move_frame(doc, *from, *to),
+            Command::SetFrameDuration { index, duration_ms } => {
+                let frame = doc
+                    .frames
+                    .get_mut(*index)
+                    .ok_or(CmdError::FrameOutOfRange(*index))?;
+                let old = std::mem::replace(&mut frame.duration_ms, *duration_ms);
+                Ok(Command::SetFrameDuration {
+                    index: *index,
+                    duration_ms: old,
+                })
+            }
             Command::Batch(cmds) => apply_batch(doc, cmds),
         }
     }
@@ -291,7 +330,89 @@ fn set_layer_props(doc: &mut Sprite, id: LayerId, props: &LayerProps) -> Result<
     if let Some(v) = props.opacity {
         old.opacity = Some(std::mem::replace(&mut layer.opacity, v));
     }
+    if let Some(v) = props.blend {
+        old.blend = Some(std::mem::replace(&mut layer.blend, v));
+    }
     Ok(Command::SetLayerProps { id, props: old })
+}
+
+fn move_layer(
+    doc: &mut Sprite,
+    id: LayerId,
+    index: usize,
+    parent: Option<LayerId>,
+) -> Result<Command, CmdError> {
+    let range = doc.subtree_range(id).ok_or(CmdError::LayerNotFound(id))?;
+    let old_index = range.start;
+    let old_parent = doc.layers[old_index].parent;
+    let backup = doc.layers.clone();
+    let block: Vec<Layer> = doc.layers.drain(range).collect();
+    let parent_ok = parent.is_none_or(|p| doc.layer(p).is_some_and(|l| l.kind == LayerKind::Group));
+    if index > doc.layers.len() || !parent_ok {
+        doc.layers = backup;
+        return Err(if parent_ok {
+            CmdError::IndexOutOfRange(index)
+        } else {
+            CmdError::InvalidLayerTree
+        });
+    }
+    doc.layers.splice(index..index, block);
+    doc.layers[index].parent = parent;
+    if !doc.is_valid_tree() {
+        doc.layers = backup;
+        return Err(CmdError::InvalidLayerTree);
+    }
+    Ok(Command::MoveLayer {
+        id,
+        index: old_index,
+        parent: old_parent,
+    })
+}
+
+fn move_frame(doc: &mut Sprite, from: usize, to: usize) -> Result<Command, CmdError> {
+    let len = doc.frames.len();
+    for i in [from, to] {
+        if i >= len {
+            return Err(CmdError::FrameOutOfRange(i));
+        }
+    }
+    let frame = doc.frames.remove(from);
+    doc.frames.insert(to, frame);
+    remap_frames(doc, |f| {
+        if f == from {
+            to
+        } else if from < to && f > from && f <= to {
+            f - 1
+        } else if to < from && f >= to && f < from {
+            f + 1
+        } else {
+            f
+        }
+    });
+    Ok(Command::MoveFrame { from: to, to: from })
+}
+
+/// Tags después de insertar un frame en `index`.
+fn tags_after_insert(tags: &[Tag], index: usize) -> Vec<Tag> {
+    tags.iter()
+        .map(|t| Tag {
+            from: if t.from >= index { t.from + 1 } else { t.from },
+            to: if t.to >= index { t.to + 1 } else { t.to },
+            ..t.clone()
+        })
+        .collect()
+}
+
+/// Tags después de quitar el frame `index`; desaparecen los que solo lo contenían a él.
+fn tags_after_remove(tags: &[Tag], index: usize) -> Vec<Tag> {
+    tags.iter()
+        .filter(|t| !(t.from == index && t.to == index))
+        .map(|t| Tag {
+            from: if t.from > index { t.from - 1 } else { t.from },
+            to: if t.to >= index { t.to - 1 } else { t.to },
+            ..t.clone()
+        })
+        .collect()
 }
 
 /// Reindexa los cels: `f(frame)` devuelve el nuevo índice.
@@ -309,7 +430,12 @@ fn add_frame(doc: &mut Sprite, index: usize, frame: Frame) -> Result<Command, Cm
     }
     remap_frames(doc, |f| if f >= index { f + 1 } else { f });
     doc.frames.insert(index, frame);
-    Ok(Command::RemoveFrame { index })
+    let old_tags = std::mem::take(&mut doc.tags);
+    doc.tags = tags_after_insert(&old_tags, index);
+    Ok(Command::Batch(vec![
+        Command::RemoveFrame { index },
+        Command::SetTags(old_tags),
+    ]))
 }
 
 fn remove_frame(doc: &mut Sprite, index: usize) -> Result<Command, CmdError> {
@@ -338,6 +464,9 @@ fn remove_frame(doc: &mut Sprite, index: usize) -> Result<Command, CmdError> {
         });
     }
     remap_frames(doc, |f| if f > index { f - 1 } else { f });
+    let old_tags = std::mem::take(&mut doc.tags);
+    doc.tags = tags_after_remove(&old_tags, index);
+    inverse.push(Command::SetTags(old_tags));
     Ok(Command::Batch(inverse))
 }
 
