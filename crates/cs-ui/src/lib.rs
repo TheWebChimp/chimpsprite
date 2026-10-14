@@ -56,22 +56,56 @@ impl ChimpApp {
         } else if ctx.input_mut(|i| i.consume_shortcut(&undo)) {
             self.editor.undo();
         }
-        if ctx.egui_wants_keyboard_input() {
+        let select_all = KeyboardShortcut::new(Modifiers::COMMAND, Key::A);
+        let deselect = KeyboardShortcut::new(Modifiers::COMMAND, Key::D);
+        if ctx.input_mut(|i| i.consume_shortcut(&select_all)) {
+            self.editor.select_all();
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&deselect)) {
+            self.editor.deselect();
+        }
+        if ctx.egui_wants_keyboard_input() || self.editor.is_painting() {
             return;
         }
-        ctx.input(|i| {
-            if !i.modifiers.any() {
-                if i.key_pressed(Key::B) {
-                    self.editor.tool = ToolKind::Pencil;
-                }
-                if i.key_pressed(Key::E) {
-                    self.editor.tool = ToolKind::Eraser;
-                }
-                if i.key_pressed(Key::X) {
-                    self.editor.swap_colors();
-                }
+        let pressed: Vec<Key> = ctx.input(|i| {
+            if i.modifiers.command || i.modifiers.alt {
+                return Vec::new();
             }
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        repeat: false,
+                        ..
+                    } => Some(*key),
+                    _ => None,
+                })
+                .collect()
         });
+        for key in pressed {
+            let editor = &mut self.editor;
+            match key {
+                Key::B => editor.tool = ToolKind::Pencil,
+                Key::E => editor.tool = ToolKind::Eraser,
+                Key::G => editor.tool = ToolKind::Bucket,
+                Key::L => editor.tool = ToolKind::Line,
+                Key::U => {
+                    editor.tool = if editor.tool == ToolKind::Rectangle {
+                        ToolKind::Ellipse
+                    } else {
+                        ToolKind::Rectangle
+                    }
+                }
+                Key::M => editor.tool = ToolKind::Select,
+                Key::V => editor.tool = ToolKind::Move,
+                Key::I => editor.tool = ToolKind::Eyedropper,
+                Key::X => editor.swap_colors(),
+                Key::Delete | Key::Backspace => editor.clear_selection_content(),
+                _ => {}
+            }
+        }
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
@@ -99,6 +133,22 @@ impl ChimpApp {
                     .clicked()
                 {
                     self.editor.redo();
+                }
+                ui.separator();
+                if ui
+                    .add(egui::Button::new("Select All").shortcut_text("Ctrl+A"))
+                    .clicked()
+                {
+                    self.editor.select_all();
+                }
+                let has_selection = self.editor.selection.is_some();
+                let deselect = egui::Button::new("Deselect").shortcut_text("Ctrl+D");
+                if ui.add_enabled(has_selection, deselect).clicked() {
+                    self.editor.deselect();
+                }
+                let clear = egui::Button::new("Clear").shortcut_text("Del");
+                if ui.add_enabled(has_selection, clear).clicked() {
+                    self.editor.clear_selection_content();
                 }
             });
         });

@@ -68,4 +68,14 @@ pub fn draw(editor: &mut Editor) {
         frame: editor.frame,
         pixels,
     });
+
+    // Una selección alrededor de la cara para lucir las marching ants.
+    let (x0, y0) = ((cx - r * 0.75) as i32, (cy - r * 0.45) as i32);
+    let (x1, y1) = ((cx + r * 0.75) as i32, (cy + r * 0.85) as i32);
+    editor.set_selection(Some(cs_core::Mask::from_rect(
+        editor.sprite.width,
+        editor.sprite.height,
+        (x0, y0),
+        (x1, y1),
+    )));
 }

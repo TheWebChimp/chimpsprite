@@ -14,7 +14,7 @@ pub fn ellipse_outline(a: Point, b: Point) -> Vec<Point> {
     let mut err = dx + dy + b1 * ea * ea;
     y0 += (eb + 1) / 2;
     let mut y1 = y0 - b1;
-    ea *= 8 * ea;
+    ea = 8 * ea * ea;
     b1 = 8 * eb * eb;
 
     let mut out = Vec::new();

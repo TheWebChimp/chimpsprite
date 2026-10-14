@@ -1,3 +1,6 @@
+use std::time::Duration;
+
+use cs_core::Mask;
 use eframe::egui::{
     self, Color32, ColorImage, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle,
     TextureOptions, Vec2,
@@ -11,6 +14,8 @@ const ZOOM_LEVELS: [f32; 12] = [
 ];
 /// Tamaño en pantalla de cada cuadro del damero de transparencia.
 const CHECKER_PX: f32 = 8.0;
+/// Velocidad de las "marching ants" (pasos por segundo).
+const ANTS_SPEED: f64 = 6.0;
 
 /// Vista del lienzo: zoom, paneo y la textura del sprite compuesto.
 pub struct CanvasView {
@@ -19,6 +24,8 @@ pub struct CanvasView {
     texture: Option<TextureHandle>,
     checker: Option<TextureHandle>,
     rendered_revision: Option<u64>,
+    /// Selección a dibujar (la del documento o la del gesto en curso).
+    selection: Option<Mask>,
     fitted: bool,
     /// Píxel del sprite bajo el cursor, para la barra de estado.
     pub hover: Option<(i32, i32)>,
@@ -32,6 +39,7 @@ impl Default for CanvasView {
             texture: None,
             checker: None,
             rendered_revision: None,
+            selection: None,
             fitted: false,
             hover: None,
         }
@@ -77,19 +85,27 @@ impl CanvasView {
         self.pan = new_origin - rect.center() + sprite_size * next / 2.0;
     }
 
+    /// Recompone si el documento cambió o hay un gesto en curso (vista previa).
     fn update_texture(&mut self, ctx: &egui::Context, editor: &Editor) {
-        if self.rendered_revision == Some(editor.revision) && self.texture.is_some() {
+        let painting = editor.is_painting();
+        if !painting && self.rendered_revision == Some(editor.revision) && self.texture.is_some() {
             return;
         }
-        let pixels = cs_render::render_frame(&editor.sprite, editor.frame);
-        let bytes: Vec<u8> = pixels.iter().flat_map(|c| [c.r, c.g, c.b, c.a]).collect();
+        let view = editor.frame_view();
+        let bytes: Vec<u8> = view
+            .pixels
+            .iter()
+            .flat_map(|c| [c.r, c.g, c.b, c.a])
+            .collect();
         let size = [editor.sprite.width as usize, editor.sprite.height as usize];
         let image = ColorImage::from_rgba_unmultiplied(size, &bytes);
         match &mut self.texture {
             Some(tex) => tex.set(image, TextureOptions::NEAREST),
             None => self.texture = Some(ctx.load_texture("sprite", image, TextureOptions::NEAREST)),
         }
-        self.rendered_revision = Some(editor.revision);
+        self.selection = view.selection;
+        // Durante un gesto no marcamos como al día, para recomponer al terminar.
+        self.rendered_revision = (!painting).then_some(editor.revision);
     }
 
     fn checker(&mut self, ctx: &egui::Context) -> egui::TextureId {
@@ -102,13 +118,14 @@ impl CanvasView {
             .id()
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
-        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
-        let ctx = ui.ctx().clone();
+    fn handle_input(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        rect: Rect,
+        editor: &mut Editor,
+    ) {
         let sprite_size = Vec2::new(editor.sprite.width as f32, editor.sprite.height as f32);
-        if !self.fitted && rect.width() > 0.0 {
-            self.fit(rect, sprite_size);
-        }
 
         // Zoom con la rueda, anclado al cursor.
         if let Some(pointer) = response.hover_pos() {
@@ -136,28 +153,31 @@ impl CanvasView {
         }
 
         let origin = self.origin(rect, sprite_size);
+        let zoom = self.zoom;
         let to_sprite = |p: Pos2| {
-            let s = (p - origin) / self.zoom;
+            let s = (p - origin) / zoom;
             (s.x.floor() as i32, s.y.floor() as i32)
         };
         self.hover = response.hover_pos().map(to_sprite);
 
-        // Pintura: usamos el estado crudo del puntero para que un clic sin arrastre también pinte.
-        let (pressed_primary, pressed_secondary, any_down, pointer) = ui.input(|i| {
+        // Pintura: estado crudo del puntero, para que un clic sin arrastre también cuente.
+        let (pressed_primary, pressed_secondary, any_down, pointer, modifiers) = ui.input(|i| {
             (
                 i.pointer.button_pressed(egui::PointerButton::Primary),
                 i.pointer.button_pressed(egui::PointerButton::Secondary),
                 i.pointer.primary_down() || i.pointer.secondary_down(),
                 i.pointer.interact_pos(),
+                i.modifiers,
             )
         });
+        editor.options.constrain = modifiers.shift;
         if !space
             && response.hovered()
             && !editor.is_painting()
             && (pressed_primary || pressed_secondary)
             && let Some(p) = pointer
         {
-            editor.pointer_press(to_sprite(p), pressed_secondary);
+            editor.pointer_press(to_sprite(p), pressed_secondary, modifiers.alt);
         }
         if editor.is_painting() {
             if any_down {
@@ -169,7 +189,31 @@ impl CanvasView {
             }
         }
 
+        let cursor = if space {
+            Some(egui::CursorIcon::Grab)
+        } else if !response.hovered() {
+            None
+        } else if editor.active_tool() == ToolKind::Move {
+            Some(egui::CursorIcon::Move)
+        } else {
+            Some(egui::CursorIcon::Crosshair)
+        };
+        if let Some(c) = cursor {
+            ui.ctx().set_cursor_icon(c);
+        }
+    }
+
+    pub fn show(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
+        let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+        let ctx = ui.ctx().clone();
+        let sprite_size = Vec2::new(editor.sprite.width as f32, editor.sprite.height as f32);
+        if !self.fitted && rect.width() > 0.0 {
+            self.fit(rect, sprite_size);
+        }
+        self.handle_input(ui, &response, rect, editor);
         self.update_texture(&ctx, editor);
+
+        let origin = self.origin(rect, sprite_size);
         let checker = self.checker(&ctx);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, theme::CANVAS_BG);
@@ -183,29 +227,6 @@ impl CanvasView {
         if let Some(tex) = &self.texture {
             let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
             painter.image(tex.id(), canvas_rect, full_uv, Color32::WHITE);
-        }
-
-        let pixel_rect = |x: i32, y: i32, size: u32| {
-            Rect::from_min_size(
-                origin + Vec2::new(x as f32, y as f32) * self.zoom,
-                Vec2::splat(size as f32 * self.zoom),
-            )
-        };
-
-        // Vista previa del trazo en curso.
-        let erasing = editor.tool == ToolKind::Eraser;
-        for (x, y, v) in editor.preview() {
-            if x < 0 || y < 0 || x >= editor.sprite.width as i32 || y >= editor.sprite.height as i32
-            {
-                continue;
-            }
-            let color = if erasing {
-                theme::ERASE_PREVIEW
-            } else {
-                let c = editor.resolve(v);
-                Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
-            };
-            painter.rect_filled(pixel_rect(x, y, 1), 0.0, color);
         }
 
         if self.zoom >= 8.0 {
@@ -226,12 +247,28 @@ impl CanvasView {
             StrokeKind::Outside,
         );
 
+        if let Some(mask) = &self.selection {
+            let phase = (ctx.input(|i| i.time) * ANTS_SPEED) as i32;
+            draw_marching_ants(&painter, mask, origin, self.zoom, phase);
+            ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
+        }
+
         // Contorno del pincel bajo el cursor.
+        let space = ui.input(|i| i.key_down(egui::Key::Space));
         if let Some((hx, hy)) = self.hover
             && !space
+            && response.hovered()
         {
-            let offset = -((editor.brush_size as i32 - 1) / 2);
-            let r = pixel_rect(hx + offset, hy + offset, editor.brush_size);
+            let size = if editor.active_tool().uses_brush() {
+                editor.options.brush_size
+            } else {
+                1
+            };
+            let offset = -((size as i32 - 1) / 2);
+            let r = Rect::from_min_size(
+                origin + Vec2::new((hx + offset) as f32, (hy + offset) as f32) * self.zoom,
+                Vec2::splat(size as f32 * self.zoom),
+            );
             painter.rect_stroke(
                 r,
                 0.0,
@@ -239,11 +276,31 @@ impl CanvasView {
                 StrokeKind::Inside,
             );
         }
+    }
+}
 
-        if space {
-            ctx.set_cursor_icon(egui::CursorIcon::Grab);
-        } else if response.hovered() {
-            ctx.set_cursor_icon(egui::CursorIcon::Crosshair);
+/// Dibuja el borde de la máscara con segmentos blanco/negro que se desplazan con `phase`.
+fn draw_marching_ants(painter: &egui::Painter, mask: &Mask, origin: Pos2, zoom: f32, phase: i32) {
+    let at = |x: i32, y: i32| origin + Vec2::new(x as f32, y as f32) * zoom;
+    let color = |n: i32| {
+        if (n + phase).rem_euclid(2) == 0 {
+            Color32::WHITE
+        } else {
+            Color32::BLACK
+        }
+    };
+    for (x, y) in mask.points() {
+        // Cada lado del píxel sin vecino seleccionado es borde.
+        let edges = [
+            (!mask.contains(x, y - 1), at(x, y), at(x + 1, y), x),
+            (!mask.contains(x, y + 1), at(x, y + 1), at(x + 1, y + 1), x),
+            (!mask.contains(x - 1, y), at(x, y), at(x, y + 1), y),
+            (!mask.contains(x + 1, y), at(x + 1, y), at(x + 1, y + 1), y),
+        ];
+        for (is_edge, a, b, n) in edges {
+            if is_edge {
+                painter.line_segment([a, b], Stroke::new(1.0, color(n)));
+            }
         }
     }
 }
