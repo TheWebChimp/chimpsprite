@@ -10,6 +10,9 @@ cs-raster.workspace = true
 cs-commands.workspace = true
 cs-render.workspace = true
 cs-tools.workspace = true
+cs-io.workspace = true
+thiserror.workspace = true
+rfd = "0.17"
 eframe = { workspace = true, features = ["wgpu", "default_fonts", "accesskit"] }
 png.workspace = true
 log.workspace = true
