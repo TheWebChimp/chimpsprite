@@ -31,7 +31,8 @@ jobs:
           base="https://github.com/trunk-rs/trunk/releases/download/${TRUNK_VERSION}"
           curl -sSfLO "$base/trunk-x86_64-unknown-linux-gnu.tar.gz"
           curl -sSfLO "$base/trunk-x86_64-unknown-linux-gnu.tar.gz.sha256"
-          sha256sum -c trunk-x86_64-unknown-linux-gnu.tar.gz.sha256
+          # El .sha256 de trunk trae solo el hash; sha256sum espera "hash  archivo".
+          echo "$(tr -d '[:space:]' < trunk-x86_64-unknown-linux-gnu.tar.gz.sha256)  trunk-x86_64-unknown-linux-gnu.tar.gz" | sha256sum -c -
           sudo tar -xzf trunk-x86_64-unknown-linux-gnu.tar.gz -C /usr/local/bin
           trunk --version
       - name: Build
