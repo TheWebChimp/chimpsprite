@@ -17,6 +17,7 @@ mod recent;
 mod tabs;
 mod theme;
 mod timeline;
+mod view;
 mod widgets;
 
 use cs_core::{ColorMode, Sprite};
@@ -26,6 +27,7 @@ pub use editor::{Editor, ToolKind};
 
 const NEW_SPRITE_SIZE: u32 = 64;
 const RECENT_KEY: &str = "chimpsprite.recent";
+const VIEW_KEY: &str = "chimpsprite.view";
 
 pub struct ChimpApp {
     /// Documento de la pestaña activa (un marcador vacío si se está en Home).
@@ -37,6 +39,9 @@ pub struct ChimpApp {
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
     recent: recent::RecentFiles,
+    view: view::ViewSettings,
+    grid_dialog: Option<view::GridDialog>,
+    fullscreen: bool,
     pending: Option<file_actions::Pending>,
     message: Option<file_actions::Message>,
     export: Option<export_dialog::ExportDialog>,
@@ -55,6 +60,10 @@ impl ChimpApp {
             .storage
             .and_then(|s| eframe::get_value(s, RECENT_KEY))
             .unwrap_or_default();
+        let view = cc
+            .storage
+            .and_then(|s| eframe::get_value(s, VIEW_KEY))
+            .unwrap_or_default();
         let mut app = Self {
             doc: tabs::DocState::untitled(""),
             tabs: tabs::Tabs::default(),
@@ -64,6 +73,9 @@ impl ChimpApp {
             autosaver: autosave::Autosaver::default(),
             restore: None,
             recent,
+            view,
+            grid_dialog: None,
+            fullscreen: false,
             pending: None,
             message: None,
             export: None,
@@ -136,6 +148,125 @@ impl ChimpApp {
         }
     }
 
+    fn update_grid_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.grid_dialog else {
+            return;
+        };
+        match dialog.show(ctx) {
+            view::GridDialogResult::Open => {}
+            view::GridDialogResult::Accept => {
+                let [r, g, b, a] = dialog.color.to_srgba_unmultiplied();
+                self.view.grid_color = [r, g, b, a];
+                self.view.grid = true;
+                if self.tabs.active().is_some()
+                    && let Some(cmd) = dialog.command(&self.doc.editor)
+                {
+                    self.doc.editor.execute_doc(cmd);
+                }
+                self.grid_dialog = None;
+            }
+            view::GridDialogResult::Cancel => self.grid_dialog = None,
+        }
+    }
+
+    fn toggle_fullscreen(&mut self, ctx: &egui::Context) {
+        self.fullscreen = !self.fullscreen;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
+    }
+
+    /// Atajos del menú View (funcionan aunque no haya foco en el lienzo).
+    fn view_shortcuts(&mut self, ctx: &egui::Context) {
+        let shortcut = |m, k| KeyboardShortcut::new(m, k);
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::H))) {
+            self.view.extras = !self.view.extras;
+        }
+        let fit = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Num0);
+        if ctx.input_mut(|i| i.consume_shortcut(&fit)) {
+            self.doc.canvas.request_zoom(view::ZoomRequest::Fit);
+        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::Num0))) {
+            self.doc.canvas.request_zoom(view::ZoomRequest::Actual);
+        }
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
+        let (zoom_in, zoom_out, tab, f11) = ctx.input(|i| {
+            let plain = !i.modifiers.command && !i.modifiers.alt;
+            (
+                plain && (i.key_pressed(Key::Plus) || i.key_pressed(Key::Equals)),
+                plain && i.key_pressed(Key::Minus),
+                plain && !i.modifiers.shift && i.key_pressed(Key::Tab),
+                i.key_pressed(Key::F11),
+            )
+        });
+        if zoom_in {
+            self.doc.canvas.request_zoom(view::ZoomRequest::In);
+        }
+        if zoom_out {
+            self.doc.canvas.request_zoom(view::ZoomRequest::Out);
+        }
+        if tab {
+            self.view.timeline = !self.view.timeline;
+        }
+        if f11 && !cfg!(target_arch = "wasm32") {
+            self.toggle_fullscreen(ctx);
+        }
+    }
+
+    fn view_menu(&mut self, ui: &mut egui::Ui) {
+        let item = |text: &str, keys: &str| egui::Button::new(text).shortcut_text(keys);
+        let v = &mut self.view;
+        ui.add(egui::Checkbox::new(&mut v.extras, "Extras"))
+            .on_hover_text("Ctrl+H: show or hide all extras");
+        ui.menu_button("Show", |ui| {
+            ui.add_enabled_ui(v.extras, |ui| {
+                ui.checkbox(&mut v.pixel_grid, "Pixel Grid");
+                ui.checkbox(&mut v.grid, "Grid");
+                ui.checkbox(&mut v.selection_edges, "Selection Edges");
+                ui.checkbox(&mut v.brush_preview, "Brush Preview");
+                ui.checkbox(&mut v.artboard_names, "Artboard Names");
+            });
+        });
+        ui.menu_button("Grid", |ui| {
+            ui.checkbox(&mut self.view.grid, "Show Grid");
+            if ui.button("Grid Settings…").clicked() {
+                self.grid_dialog = Some(view::GridDialog::new(&self.doc.editor, &self.view));
+                ui.close();
+            }
+        });
+        ui.separator();
+        ui.add(egui::Checkbox::new(
+            &mut self.doc.editor.onion_enabled,
+            "Onion Skin",
+        ))
+        .on_hover_text("F3");
+        ui.add(egui::Checkbox::new(&mut self.view.timeline, "Timeline"))
+            .on_hover_text("Tab");
+        if !cfg!(target_arch = "wasm32") {
+            let mut fullscreen = self.fullscreen;
+            if ui
+                .add(egui::Checkbox::new(&mut fullscreen, "Full Screen"))
+                .on_hover_text("F11")
+                .changed()
+            {
+                self.toggle_fullscreen(ui.ctx());
+            }
+        }
+        ui.separator();
+        let canvas = &mut self.doc.canvas;
+        if ui.add(item("Zoom In", "+")).clicked() {
+            canvas.request_zoom(view::ZoomRequest::In);
+        }
+        if ui.add(item("Zoom Out", "-")).clicked() {
+            canvas.request_zoom(view::ZoomRequest::Out);
+        }
+        if ui.add(item("Actual Size", "Ctrl+0")).clicked() {
+            canvas.request_zoom(view::ZoomRequest::Actual);
+        }
+        if ui.add(item("Fit to Screen", "Ctrl+Shift+0")).clicked() {
+            canvas.request_zoom(view::ZoomRequest::Fit);
+        }
+    }
+
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
         // Los diálogos son modales: manejan sus propias teclas.
         if self.is_modal() {
@@ -157,6 +288,7 @@ impl ChimpApp {
         if !self.has_doc() {
             return;
         }
+        self.view_shortcuts(ctx);
         if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::W)))
             && let Some(i) = self.tabs.active()
         {
@@ -305,6 +437,7 @@ impl ChimpApp {
                         self.open_canvas_size();
                     }
                 });
+                ui.menu_button("View", |ui| self.view_menu(ui));
                 ui.menu_button("Edit", |ui| {
                     let undo = egui::Button::new("Undo").shortcut_text("Ctrl+Z");
                     if ui
@@ -380,14 +513,16 @@ impl ChimpApp {
 
     /// Paneles del editor (cuando hay un documento activo).
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) {
-        egui::Panel::bottom("timeline")
-            .resizable(true)
-            .default_size(190.0)
-            .show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| {
-                    timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline)
+        if self.view.timeline {
+            egui::Panel::bottom("timeline")
+                .resizable(true)
+                .default_size(190.0)
+                .show(ui, |ui| {
+                    ui.add_enabled_ui(!modal, |ui| {
+                        timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline)
+                    });
                 });
-            });
+        }
         egui::Panel::left("tools")
             .resizable(false)
             .exact_size(150.0)
@@ -409,9 +544,12 @@ impl ChimpApp {
                 }
             });
         egui::CentralPanel::no_frame().show(ui, |ui| {
-            self.doc
-                .canvas
-                .show(ui, &mut self.doc.editor, self.canvas_size.as_mut())
+            self.doc.canvas.show(
+                ui,
+                &mut self.doc.editor,
+                self.canvas_size.as_mut(),
+                &self.view,
+            )
         });
     }
 }
@@ -464,6 +602,7 @@ impl eframe::App for ChimpApp {
             });
         }
         self.update_canvas_size(&ctx);
+        self.update_grid_dialog(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
         self.autosave(&ctx);
@@ -475,5 +614,6 @@ impl eframe::App for ChimpApp {
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, RECENT_KEY, &self.recent);
+        eframe::set_value(storage, VIEW_KEY, &self.view);
     }
 }

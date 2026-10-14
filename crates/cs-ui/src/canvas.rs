@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use cs_core::{Artboard, ArtboardId, Mask};
+use cs_core::{Artboard, ArtboardId, GridSettings, Mask};
 use cs_tools::{ArtboardHit, Edges, hit_test};
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Pos2, Rect, Sense, Stroke, StrokeKind,
@@ -11,6 +11,7 @@ use eframe::egui::{
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
 use crate::editor::{Editor, ToolKind};
 use crate::theme;
+use crate::view::{ViewSettings, ZoomRequest};
 
 const ZOOM_LEVELS: [f32; 13] = [
     0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
@@ -39,6 +40,10 @@ pub struct CanvasView {
     dragging_guide: Option<GuideEdge>,
     /// El puntero está sobre la etiqueta de un artboard.
     over_label: bool,
+    /// Las etiquetas se ven (si no, no se pueden arrastrar).
+    names_visible: bool,
+    /// Zoom pedido desde el menú; se aplica al conocer el tamaño del lienzo.
+    pending_zoom: Option<ZoomRequest>,
 }
 
 impl Default for CanvasView {
@@ -53,6 +58,8 @@ impl Default for CanvasView {
             hover: None,
             dragging_guide: None,
             over_label: false,
+            names_visible: true,
+            pending_zoom: None,
         }
     }
 }
@@ -101,6 +108,24 @@ impl CanvasView {
         let world = (anchor - self.origin(rect)) / self.zoom;
         self.zoom = next;
         self.pan = anchor - world * next - rect.center();
+    }
+
+    pub fn request_zoom(&mut self, request: ZoomRequest) {
+        self.pending_zoom = Some(request);
+    }
+
+    fn apply_zoom(&mut self, rect: Rect, editor: &Editor, request: ZoomRequest) {
+        match request {
+            ZoomRequest::In => self.zoom_at(rect, rect.center(), true),
+            ZoomRequest::Out => self.zoom_at(rect, rect.center(), false),
+            ZoomRequest::Actual => {
+                // Mantiene en el centro lo que está en el centro.
+                let center = (rect.center() - self.origin(rect)) / self.zoom;
+                self.zoom = 1.0;
+                self.pan = -center;
+            }
+            ZoomRequest::Fit => self.fit(rect, editor),
+        }
     }
 
     fn checker(&mut self, ctx: &egui::Context) -> egui::TextureId {
@@ -162,7 +187,9 @@ impl CanvasView {
         });
         editor.options.constrain = modifiers.shift;
         let slop = EDGE_SLOP_PX / self.zoom;
-        let over_label = pointer.and_then(|p| self.label_at(ui, rect, editor, p));
+        let over_label = pointer
+            .filter(|_| self.names_visible)
+            .and_then(|p| self.label_at(ui, rect, editor, p));
         self.over_label = over_label.is_some();
 
         // Con el diálogo Canvas Size abierto el lienzo es modal: solo guías, paneo y zoom.
@@ -283,12 +310,19 @@ impl CanvasView {
         ui: &mut egui::Ui,
         editor: &mut Editor,
         mut dialog: Option<&mut CanvasSizeDialog>,
+        view_settings: &ViewSettings,
     ) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let ctx = ui.ctx().clone();
         if !self.fitted && rect.width() > 0.0 {
             self.fit(rect, editor);
         }
+        if let Some(request) = self.pending_zoom.take()
+            && rect.width() > 0.0
+        {
+            self.apply_zoom(rect, editor, request);
+        }
+        self.names_visible = view_settings.shows(view_settings.artboard_names);
         self.handle_input(ui, &response, rect, editor, dialog.as_deref_mut());
         let modal = dialog.is_some();
         let guide = dialog.and_then(|d| d.preview_rect(&editor.document));
@@ -342,7 +376,16 @@ impl CanvasView {
                 let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
                 painter.image(tex.id(), screen, full_uv, Color32::WHITE);
             }
-            if self.zoom >= 8.0 {
+            if view_settings.shows(view_settings.grid) {
+                draw_grid(
+                    &painter,
+                    screen,
+                    artboard.sprite.grid,
+                    self.zoom,
+                    view_settings.grid_color(),
+                );
+            }
+            if self.zoom >= 8.0 && view_settings.shows(view_settings.pixel_grid) {
                 let stroke = Stroke::new(1.0, theme::GRID);
                 for x in 1..artboard.sprite.width {
                     painter.vline(
@@ -366,13 +409,15 @@ impl CanvasView {
                 (Stroke::new(1.0, theme::CANVAS_BORDER), theme::LABEL)
             };
             painter.rect_stroke(screen, 0.0, border, StrokeKind::Outside);
-            painter.text(
-                screen.left_top() - Vec2::new(0.0, LABEL_GAP),
-                Align2::LEFT_BOTTOM,
-                label_text(artboard),
-                FontId::proportional(LABEL_SIZE),
-                label_color,
-            );
+            if self.names_visible {
+                painter.text(
+                    screen.left_top() - Vec2::new(0.0, LABEL_GAP),
+                    Align2::LEFT_BOTTOM,
+                    label_text(artboard),
+                    FontId::proportional(LABEL_SIZE),
+                    label_color,
+                );
+            }
         }
 
         if let Some((min, max)) = guide {
@@ -389,7 +434,9 @@ impl CanvasView {
         let active_origin = document
             .artboard(editor.active)
             .map(|a| self.to_screen(rect, a.position));
-        if let (Some(mask), Some(origin)) = (&view.selection, active_origin) {
+        if let (Some(mask), Some(origin)) = (&view.selection, active_origin)
+            && view_settings.shows(view_settings.selection_edges)
+        {
             let phase = (ctx.input(|i| i.time) * ANTS_SPEED) as i32;
             draw_marching_ants(&painter, mask, origin, self.zoom, phase);
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
@@ -405,6 +452,7 @@ impl CanvasView {
             && !space
             && response.hovered()
             && tool != ToolKind::Artboard
+            && view_settings.shows(view_settings.brush_preview)
         {
             let size = if tool.uses_brush() {
                 editor.options.brush_size
@@ -423,6 +471,33 @@ impl CanvasView {
                 StrokeKind::Inside,
             );
         }
+    }
+}
+
+/// Líneas del grid de trabajo dentro del artboard (se omiten si quedan a menos de 4 px).
+fn draw_grid(painter: &egui::Painter, screen: Rect, grid: GridSettings, zoom: f32, color: Color32) {
+    let (sx, sy) = (
+        grid.size.0.max(1) as f32 * zoom,
+        grid.size.1.max(1) as f32 * zoom,
+    );
+    if sx < 4.0 || sy < 4.0 {
+        return;
+    }
+    let stroke = Stroke::new(1.0, color);
+    let first = |offset: i32, step: f32| (offset as f32 * zoom).rem_euclid(step);
+    let mut x = screen.left() + first(grid.offset.0, sx);
+    while x < screen.right() {
+        if x > screen.left() {
+            painter.vline(x, screen.y_range(), stroke);
+        }
+        x += sx;
+    }
+    let mut y = screen.top() + first(grid.offset.1, sy);
+    while y < screen.bottom() {
+        if y > screen.top() {
+            painter.hline(screen.x_range(), y, stroke);
+        }
+        y += sy;
     }
 }
 
