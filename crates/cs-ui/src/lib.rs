@@ -323,8 +323,14 @@ impl eframe::App for ChimpApp {
         egui::Panel::top("menu").show(ui, |ui| {
             ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
         });
-        egui::Panel::bottom("status")
-            .show(ui, |ui| panels::status_bar(ui, &self.editor, &self.canvas));
+        egui::Panel::bottom("status").show(ui, |ui| {
+            let notice = self
+                .autosaver
+                .disabled_reason
+                .as_ref()
+                .map(|r| format!("Autosave off: {r}"));
+            panels::status_bar(ui, &self.editor, &self.canvas, notice.as_deref())
+        });
         egui::Panel::bottom("timeline")
             .resizable(true)
             .default_size(190.0)

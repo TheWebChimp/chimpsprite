@@ -136,7 +136,8 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) {
     });
 }
 
-pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView) {
+/// `notice`: aviso breve al final de la barra (p. ej. autosave desactivado).
+pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView, notice: Option<&str>) {
     ui.horizontal(|ui| {
         let s = editor.sprite();
         ui.label(format!(
@@ -158,6 +159,10 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView) {
         ui.label(format!("{}%", (canvas.zoom * 100.0) as u32));
         ui.separator();
         ui.label(format!("Frame {}/{}", editor.frame + 1, s.frames.len()));
+        if let Some(notice) = notice {
+            ui.separator();
+            ui.colored_label(theme::ACCENT, notice);
+        }
     });
 }
 
