@@ -4,9 +4,10 @@ use cs_commands::{Command, DocCommand};
 use cs_core::{Artboard, ArtboardId, Document};
 use eframe::egui::{self, Color32, Pos2, Sense, Stroke, Vec2};
 
-use crate::theme;
+use crate::{theme, widgets};
 
 const MAX_SIZE: i64 = 16384;
+const BORDER_RANGE: std::ops::RangeInclusive<i32> = -(MAX_SIZE as i32)..=MAX_SIZE as i32;
 
 /// Estado del diálogo. Los bordes pueden ser negativos (recortan).
 #[derive(Clone, Debug, PartialEq)]
@@ -89,6 +90,22 @@ impl CanvasSizeDialog {
         ))
     }
 
+    /// Mueve un borde a la coordenada de mundo `coord` (al arrastrar su guía).
+    /// El tamaño nunca baja de 1 px.
+    pub fn set_edge(&mut self, edge: GuideEdge, coord: i32, doc: &Document) {
+        let Some(artboard) = doc.artboard(self.artboard) else {
+            return;
+        };
+        let (x, y) = artboard.position;
+        let (w, h) = (self.original.0 as i32, self.original.1 as i32);
+        match edge {
+            GuideEdge::Left => self.left = (x - coord).max(1 - w - self.right),
+            GuideEdge::Right => self.right = (coord - x - w).max(1 - w - self.left),
+            GuideEdge::Top => self.top = (y - coord).max(1 - h - self.bottom),
+            GuideEdge::Bottom => self.bottom = (coord - y - h).max(1 - h - self.top),
+        }
+    }
+
     /// Comando a ejecutar al aceptar; `None` si no hay cambios o el tamaño no es válido.
     pub fn command(&self, doc: &Document) -> Option<DocCommand> {
         let unchanged = (self.left, self.top, self.right, self.bottom) == (0, 0, 0, 0);
@@ -119,6 +136,21 @@ impl CanvasSizeDialog {
     }
 }
 
+/// Guía arrastrable de la vista previa.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GuideEdge {
+    Left,
+    Right,
+    Top,
+    Bottom,
+}
+
+impl GuideEdge {
+    pub fn is_vertical(self) -> bool {
+        matches!(self, GuideEdge::Left | GuideEdge::Right)
+    }
+}
+
 /// Lo que el usuario decidió en este frame.
 pub enum DialogResult {
     Open,
@@ -143,27 +175,13 @@ pub fn show(ctx: &egui::Context, dialog: &mut CanvasSizeDialog) -> DialogResult 
                     .show(ui, |ui| {
                         ui.label("Width:");
                         let mut w = dialog.width();
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut w)
-                                    .range(1..=MAX_SIZE)
-                                    .suffix(" px"),
-                            )
-                            .changed()
-                        {
+                        if widgets::number(ui, &mut w, 1..=MAX_SIZE, " px").changed() {
                             dialog.set_width(w);
                         }
                         ui.end_row();
                         ui.label("Height:");
                         let mut h = dialog.height();
-                        if ui
-                            .add(
-                                egui::DragValue::new(&mut h)
-                                    .range(1..=MAX_SIZE)
-                                    .suffix(" px"),
-                            )
-                            .changed()
-                        {
+                        if widgets::number(ui, &mut h, 1..=MAX_SIZE, " px").changed() {
                             dialog.set_height(h);
                         }
                         ui.end_row();
@@ -179,14 +197,14 @@ pub fn show(ctx: &egui::Context, dialog: &mut CanvasSizeDialog) -> DialogResult 
                 .spacing([8.0, 6.0])
                 .show(ui, |ui| {
                     ui.label("Left:");
-                    ui.add(egui::DragValue::new(&mut dialog.left).suffix(" px"));
+                    widgets::number(ui, &mut dialog.left, BORDER_RANGE, " px");
                     ui.label("Top:");
-                    ui.add(egui::DragValue::new(&mut dialog.top).suffix(" px"));
+                    widgets::number(ui, &mut dialog.top, BORDER_RANGE, " px");
                     ui.end_row();
                     ui.label("Right:");
-                    ui.add(egui::DragValue::new(&mut dialog.right).suffix(" px"));
+                    widgets::number(ui, &mut dialog.right, BORDER_RANGE, " px");
                     ui.label("Bottom:");
-                    ui.add(egui::DragValue::new(&mut dialog.bottom).suffix(" px"));
+                    widgets::number(ui, &mut dialog.bottom, BORDER_RANGE, " px");
                     ui.end_row();
                 });
 
@@ -292,6 +310,21 @@ mod tests {
         assert_eq!((c.left, c.right), (5, 0));
         c.set_height(2);
         assert_eq!((c.top, c.bottom), (-2, -2));
+    }
+
+    #[test]
+    fn dragging_guides_sets_borders_and_keeps_min_size() {
+        let d = doc(); // 10×6 en (100, 50)
+        let mut c = dialog(&d);
+        c.set_edge(GuideEdge::Left, 96, &d);
+        c.set_edge(GuideEdge::Bottom, 60, &d);
+        assert_eq!((c.left, c.bottom), (4, 4));
+        assert_eq!(c.preview_rect(&d), Some(((96, 50), (110, 60))));
+        // Arrastrar el borde derecho más allá del izquierdo deja 1 px.
+        c.set_edge(GuideEdge::Right, 0, &d);
+        assert_eq!(c.width(), 1);
+        c.set_edge(GuideEdge::Top, 500, &d);
+        assert_eq!(c.height(), 1);
     }
 
     #[test]

@@ -8,6 +8,7 @@ use eframe::egui::{
     TextureHandle, TextureOptions, Vec2,
 };
 
+use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
 use crate::editor::{Editor, ToolKind};
 use crate::theme;
 
@@ -34,6 +35,8 @@ pub struct CanvasView {
     fitted: bool,
     /// Píxel local del artboard activo bajo el cursor, para la barra de estado.
     pub hover: Option<(i32, i32)>,
+    /// Guía del diálogo Canvas Size que se está arrastrando.
+    dragging_guide: Option<GuideEdge>,
 }
 
 impl Default for CanvasView {
@@ -46,6 +49,7 @@ impl Default for CanvasView {
             rendered_revision: None,
             fitted: false,
             hover: None,
+            dragging_guide: None,
         }
     }
 }
@@ -119,6 +123,7 @@ impl CanvasView {
         response: &egui::Response,
         rect: Rect,
         editor: &mut Editor,
+        dialog: Option<&mut CanvasSizeDialog>,
     ) {
         // Zoom con la rueda, anclado al cursor.
         if let Some(pointer) = response.hover_pos() {
@@ -162,7 +167,42 @@ impl CanvasView {
         editor.options.constrain = modifiers.shift;
         let slop = EDGE_SLOP_PX / self.zoom;
         let over_label = pointer.and_then(|p| self.label_at(ui, rect, editor, p));
-        if !space
+
+        // Guías del diálogo Canvas Size: tienen prioridad sobre las herramientas.
+        let over_guide = match (&dialog, pointer) {
+            (Some(d), Some(p)) if self.dragging_guide.is_none() && !editor.is_painting() => {
+                self.guide_at(rect, d, editor, p)
+            }
+            _ => None,
+        };
+        if let Some(d) = dialog {
+            if pressed_primary && response.hovered() && over_guide.is_some() && !space {
+                self.dragging_guide = over_guide;
+            }
+            if let Some(edge) = self.dragging_guide {
+                match pointer {
+                    Some(p) if any_down => {
+                        let (wx, wy) = self.to_world(rect, p);
+                        let coord = if edge.is_vertical() { wx } else { wy };
+                        d.set_edge(edge, coord.round() as i32, &editor.document);
+                    }
+                    _ if !any_down => self.dragging_guide = None,
+                    _ => {}
+                }
+            }
+        } else {
+            self.dragging_guide = None;
+        }
+        let guide_cursor = self.dragging_guide.or(over_guide).map(|edge| {
+            if edge.is_vertical() {
+                egui::CursorIcon::ResizeHorizontal
+            } else {
+                egui::CursorIcon::ResizeVertical
+            }
+        });
+
+        if self.dragging_guide.is_none()
+            && !space
             && response.hovered()
             && !editor.is_painting()
             && (pressed_primary || pressed_secondary)
@@ -186,6 +226,8 @@ impl CanvasView {
 
         let cursor = if space {
             Some(egui::CursorIcon::Grab)
+        } else if guide_cursor.is_some() {
+            guide_cursor
         } else if !response.hovered() {
             None
         } else if over_label.is_some() && !editor.is_painting() {
@@ -205,19 +247,42 @@ impl CanvasView {
         }
     }
 
-    /// `guide`: rectángulo de mundo a resaltar (vista previa del diálogo Canvas Size).
+    /// Guía bajo `p` (en pantalla), si hay una a menos de `EDGE_SLOP_PX`.
+    fn guide_at(
+        &self,
+        rect: Rect,
+        dialog: &CanvasSizeDialog,
+        editor: &Editor,
+        p: Pos2,
+    ) -> Option<GuideEdge> {
+        let (min, max) = dialog.preview_rect(&editor.document)?;
+        let (a, b) = (self.to_screen(rect, min), self.to_screen(rect, max));
+        [
+            (GuideEdge::Left, (p.x - a.x).abs()),
+            (GuideEdge::Right, (p.x - b.x).abs()),
+            (GuideEdge::Top, (p.y - a.y).abs()),
+            (GuideEdge::Bottom, (p.y - b.y).abs()),
+        ]
+        .into_iter()
+        .filter(|(_, d)| *d <= EDGE_SLOP_PX)
+        .min_by(|x, y| x.1.total_cmp(&y.1))
+        .map(|(edge, _)| edge)
+    }
+
+    /// `dialog`: diálogo Canvas Size abierto; sus guías se dibujan y se pueden arrastrar.
     pub fn show(
         &mut self,
         ui: &mut egui::Ui,
         editor: &mut Editor,
-        guide: Option<((i32, i32), (i32, i32))>,
+        mut dialog: Option<&mut CanvasSizeDialog>,
     ) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let ctx = ui.ctx().clone();
         if !self.fitted && rect.width() > 0.0 {
             self.fit(rect, editor);
         }
-        self.handle_input(ui, &response, rect, editor);
+        self.handle_input(ui, &response, rect, editor, dialog.as_deref_mut());
+        let guide = dialog.and_then(|d| d.preview_rect(&editor.document));
 
         let view = editor.view();
         let document = view.document.as_ref();

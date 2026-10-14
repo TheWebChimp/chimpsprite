@@ -7,6 +7,7 @@ mod demo;
 mod editor;
 mod panels;
 mod theme;
+mod widgets;
 
 use cs_core::{ArtboardId, ColorMode, Sprite};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
@@ -223,11 +224,10 @@ impl eframe::App for ChimpApp {
                     self.open_canvas_size();
                 }
             });
-        let guide = self
-            .canvas_size
-            .as_ref()
-            .and_then(|d| d.preview_rect(&self.editor.document));
-        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &mut self.editor, guide));
+        egui::CentralPanel::no_frame().show(ui, |ui| {
+            self.canvas
+                .show(ui, &mut self.editor, self.canvas_size.as_mut())
+        });
         self.update_canvas_size(&ctx);
 
         self.capture.update(&ctx);
