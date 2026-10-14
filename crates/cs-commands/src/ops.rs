@@ -367,6 +367,7 @@ mod tests {
             to,
             direction: AnimDirection::Forward,
             color: Rgba::rgb(1, 1, 1),
+            repeat: 0,
         };
         Command::SetTags(vec![tag("walk", 1, 2), tag("solo", 3, 3)])
             .apply(&mut s)

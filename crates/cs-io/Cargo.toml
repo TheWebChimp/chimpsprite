@@ -1,0 +1,21 @@
+[package]
+name = "cs-io"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cs-core.workspace = true
+cs-commands.workspace = true
+cs-render.workspace = true
+flate2 = "1.1"
+zip = { version = "9", default-features = false, features = ["deflate"] }
+png.workspace = true
+gif = "0.14"
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+thiserror.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true

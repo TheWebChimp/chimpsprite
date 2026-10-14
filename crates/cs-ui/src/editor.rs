@@ -237,6 +237,9 @@ pub struct Editor {
     pub collapsed: HashSet<(ArtboardId, LayerId)>,
     pub onion_enabled: bool,
     pub onion: OnionSkin,
+    /// Cambia con cada modificación del documento (ejecutar, deshacer, rehacer); sirve para
+    /// saber si hay cambios sin guardar.
+    pub doc_version: u64,
 }
 
 impl Editor {
@@ -270,6 +273,7 @@ impl Editor {
             collapsed: HashSet::new(),
             onion_enabled: false,
             onion: OnionSkin::default(),
+            doc_version: 0,
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
@@ -358,6 +362,7 @@ impl Editor {
         match self.history.execute(&mut self.document, cmd) {
             Ok(()) => {
                 self.revision += 1;
+                self.doc_version += 1;
                 self.ensure_valid();
                 true
             }
@@ -372,6 +377,7 @@ impl Editor {
         match self.history.undo(&mut self.document) {
             Ok(true) => {
                 self.revision += 1;
+                self.doc_version += 1;
                 self.ensure_valid();
             }
             Ok(false) => {}
@@ -383,6 +389,7 @@ impl Editor {
         match self.history.redo(&mut self.document) {
             Ok(true) => {
                 self.revision += 1;
+                self.doc_version += 1;
                 self.ensure_valid();
             }
             Ok(false) => {}

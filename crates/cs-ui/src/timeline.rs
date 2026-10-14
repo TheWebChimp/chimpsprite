@@ -246,6 +246,7 @@ fn tag_menu(ui: &mut egui::Ui, editor: &mut Editor, index: usize, tag: &Tag) {
             (AnimDirection::Forward, "Forward"),
             (AnimDirection::Reverse, "Reverse"),
             (AnimDirection::PingPong, "Ping-pong"),
+            (AnimDirection::PingPongReverse, "Ping-pong ←"),
         ] {
             ui.radio_value(&mut edited.direction, dir, label);
         }

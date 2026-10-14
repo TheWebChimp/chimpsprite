@@ -150,6 +150,7 @@ impl Editor {
             to,
             direction: AnimDirection::Forward,
             color: TAG_COLORS[n % TAG_COLORS.len()],
+            repeat: 0,
         });
         self.execute(Command::SetTags(tags));
     }

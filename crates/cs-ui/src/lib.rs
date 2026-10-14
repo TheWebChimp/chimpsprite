@@ -6,10 +6,15 @@ mod canvas_size;
 mod capture;
 mod demo;
 mod editor;
+mod export_dialog;
+mod file_actions;
+mod files;
 mod panels;
 mod theme;
 mod timeline;
 mod widgets;
+
+use std::path::PathBuf;
 
 use cs_core::{ArtboardId, ColorMode, Sprite};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
@@ -26,16 +31,27 @@ pub struct ChimpApp {
     artboard_name: (ArtboardId, String),
     canvas_size: Option<canvas_size::CanvasSizeDialog>,
     timeline: timeline::TimelineState,
+    /// Archivo del documento (`None` si nunca se guardó).
+    path: Option<PathBuf>,
+    /// `Editor::doc_version` en el último guardado.
+    saved_version: u64,
+    pending: Option<file_actions::Pending>,
+    message: Option<file_actions::Message>,
+    export: Option<export_dialog::ExportDialog>,
+    /// Opciones de la última exportación, para reabrir el diálogo igual.
+    last_export: export_dialog::ExportDialog,
+    /// Cerrar sin preguntar (ya se confirmó).
+    allow_close: bool,
+    title: String,
 }
 
 impl ChimpApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
-        let editor = if std::env::var_os("CHIMPSPRITE_DEMO").is_some() {
-            demo::editor()
-        } else {
-            new_editor()
-        };
+        let args: Vec<_> = std::env::args_os().skip(1).collect();
+        let demo =
+            std::env::var_os("CHIMPSPRITE_DEMO").is_some() || args.iter().any(|a| a == "--demo");
+        let editor = if demo { demo::editor() } else { new_editor() };
         let mut app = Self {
             editor,
             canvas: canvas::CanvasView::default(),
@@ -43,7 +59,24 @@ impl ChimpApp {
             artboard_name: (ArtboardId(0), String::new()),
             canvas_size: None,
             timeline: timeline::TimelineState::default(),
+            path: None,
+            saved_version: 0,
+            pending: None,
+            message: None,
+            export: None,
+            last_export: export_dialog::ExportDialog::default(),
+            allow_close: false,
+            title: String::new(),
         };
+        app.saved_version = app.editor.doc_version;
+        // Abrir el archivo pasado por línea de comandos (los argumentos `--…` son flags).
+        if let Some(path) = args
+            .iter()
+            .find(|a| !a.to_string_lossy().starts_with("--"))
+            .map(PathBuf::from)
+        {
+            app.open_path(&path);
+        }
         // Desarrollo: abre el diálogo con un ancho de ejemplo para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_CANVAS_SIZE").is_some() {
             app.open_canvas_size();
@@ -79,15 +112,26 @@ impl ChimpApp {
         }
     }
 
-    fn new_sprite(&mut self) {
-        self.editor = new_editor();
-        self.canvas.reset();
-    }
-
     fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        // El diálogo Canvas Size es modal: maneja sus propias teclas.
-        if self.canvas_size.is_some() {
+        // Los diálogos son modales: manejan sus propias teclas.
+        if self.is_modal() {
             return;
+        }
+        let shortcut = |m, k| KeyboardShortcut::new(m, k);
+        let save_as = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
+        if ctx.input_mut(|i| i.consume_shortcut(&save_as)) {
+            self.save_as();
+        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::S))) {
+            self.save();
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::N))) {
+            self.request(file_actions::Pending::New, ctx);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::O))) {
+            self.request(file_actions::Pending::Open, ctx);
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::E))) {
+            self.open_export();
         }
         let redo_shift = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
         let redo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
@@ -165,12 +209,31 @@ impl ChimpApp {
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
-                if ui.button("New").clicked() {
-                    self.new_sprite();
+                let ctx = ui.ctx().clone();
+                let item = |text: &str, keys: &str| egui::Button::new(text).shortcut_text(keys);
+                if ui.add(item("New", "Ctrl+N")).clicked() {
+                    self.request(file_actions::Pending::New, &ctx);
+                }
+                if ui.add(item("Open…", "Ctrl+O")).clicked() {
+                    self.request(file_actions::Pending::Open, &ctx);
+                }
+                ui.separator();
+                if ui.add(item("Save", "Ctrl+S")).clicked() {
+                    self.save();
+                }
+                if ui.add(item("Save As…", "Ctrl+Shift+S")).clicked() {
+                    self.save_as();
+                }
+                ui.separator();
+                if ui.button("Import PNG as Layer…").clicked() {
+                    self.import_layer();
+                }
+                if ui.add(item("Export…", "Ctrl+E")).clicked() {
+                    self.open_export();
                 }
                 ui.separator();
                 if ui.button("Quit").clicked() {
-                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                    self.request(file_actions::Pending::Quit, &ctx);
                 }
             });
             ui.menu_button("Sprite", |ui| {
@@ -225,6 +288,8 @@ fn new_editor() -> Editor {
 impl eframe::App for ChimpApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        self.handle_close_request(&ctx);
+        self.handle_dropped_files(&ctx);
         self.handle_shortcuts(&ctx);
         if self.editor.playing {
             let dt_ms = ctx.input(|i| i.stable_dt) as f64 * 1000.0;
@@ -232,7 +297,7 @@ impl eframe::App for ChimpApp {
             ctx.request_repaint();
         }
 
-        let modal = self.canvas_size.is_some();
+        let modal = self.is_modal();
         egui::Panel::top("menu").show(ui, |ui| {
             ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
         });
@@ -271,6 +336,8 @@ impl eframe::App for ChimpApp {
                 .show(ui, &mut self.editor, self.canvas_size.as_mut())
         });
         self.update_canvas_size(&ctx);
+        self.show_dialogs(&ctx);
+        self.update_title(&ctx);
 
         self.capture.update(&ctx);
     }

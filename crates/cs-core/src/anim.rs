@@ -8,6 +8,8 @@ pub enum AnimDirection {
     Forward,
     Reverse,
     PingPong,
+    /// Ping-pong que empieza hacia atrás.
+    PingPongReverse,
 }
 
 /// Rango con nombre de frames (inclusivo), como los tags de Aseprite.
@@ -18,6 +20,9 @@ pub struct Tag {
     pub to: usize,
     pub direction: AnimDirection,
     pub color: Rgba,
+    /// Veces que se repite (0 = sin especificar, como en Aseprite).
+    #[serde(default)]
+    pub repeat: u16,
 }
 
 impl Tag {
@@ -37,7 +42,10 @@ impl Playback {
     pub fn new(frame: usize, direction: AnimDirection) -> Self {
         Self {
             frame,
-            forward: direction != AnimDirection::Reverse,
+            forward: !matches!(
+                direction,
+                AnimDirection::Reverse | AnimDirection::PingPongReverse
+            ),
         }
     }
 
@@ -70,7 +78,7 @@ impl Playback {
                     self.frame - 1
                 };
             }
-            AnimDirection::PingPong => {
+            AnimDirection::PingPong | AnimDirection::PingPongReverse => {
                 if self.forward && self.frame == to {
                     self.forward = false;
                 } else if !self.forward && self.frame == from {
@@ -111,6 +119,14 @@ mod tests {
         assert_eq!(
             run(AnimDirection::PingPong, 0, (0, 2), 6),
             vec![1, 2, 1, 0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn ping_pong_reverse_starts_backwards() {
+        assert_eq!(
+            run(AnimDirection::PingPongReverse, 2, (0, 2), 4),
+            vec![1, 0, 1, 2]
         );
     }
 

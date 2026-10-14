@@ -22,4 +22,5 @@ cs-raster = { path = "crates/cs-raster" }
 cs-commands = { path = "crates/cs-commands" }
 cs-render = { path = "crates/cs-render" }
 cs-tools = { path = "crates/cs-tools" }
+cs-io = { path = "crates/cs-io" }
 cs-ui = { path = "crates/cs-ui" }
