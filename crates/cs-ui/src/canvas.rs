@@ -37,6 +37,8 @@ pub struct CanvasView {
     fitted: bool,
     /// Píxel local del artboard activo bajo el cursor, para la barra de estado.
     pub hover: Option<(i32, i32)>,
+    /// Ayuda para la barra de estado cuando el puntero está sobre una regla o una guía.
+    pub guide_hint: Option<&'static str>,
     /// Guía del diálogo Canvas Size que se está arrastrando.
     dragging_guide: Option<GuideEdge>,
     /// El puntero está sobre la etiqueta de un artboard.
@@ -70,6 +72,7 @@ impl Default for CanvasView {
             rendered_revision: None,
             fitted: false,
             hover: None,
+            guide_hint: None,
             dragging_guide: None,
             over_label: false,
             names_visible: true,
@@ -201,6 +204,7 @@ impl CanvasView {
             Axis::Vertical => egui::CursorIcon::ResizeHorizontal,
         };
         self.over_ruler = pointer.is_some_and(|p| response.hovered() && on_ruler(p));
+        self.guide_hint = None;
 
         if let Some(mut drag) = self.ruler_drag {
             if down {
@@ -245,16 +249,29 @@ impl CanvasView {
                     over_ruler: true,
                 });
             }
+            if axis.is_some() {
+                self.guide_hint = Some("Drag from the ruler to create a guide");
+            }
             return Some(axis.map_or(egui::CursorIcon::Default, axis_cursor));
         }
+        if !view.shows(view.guides) {
+            return None;
+        }
+        let index = hit_guide(editor.guides(), local(p), SNAP_PX / self.zoom)?;
         let grabbable = matches!(
             editor.active_tool(),
             ToolKind::Select | ToolKind::Move | ToolKind::Artboard
         ) || ctrl;
-        if !view.shows(view.guides) || view.lock_guides || !grabbable {
+        if view.lock_guides {
+            self.guide_hint = Some("Guides are locked (View › Guides › Lock Guides)");
             return None;
         }
-        let index = hit_guide(editor.guides(), local(p), SNAP_PX / self.zoom)?;
+        if !grabbable {
+            self.guide_hint =
+                Some("Guide: hold Ctrl and drag to move it · drop it on a ruler to remove it");
+            return None;
+        }
+        self.guide_hint = Some("Drag to move the guide · drop it on a ruler to remove it");
         let guide = editor.guides()[index];
         if pressed {
             self.ruler_drag = Some(GuideDrag {

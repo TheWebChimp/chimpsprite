@@ -159,6 +159,10 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView, notic
         ui.label(format!("{}%", (canvas.zoom * 100.0) as u32));
         ui.separator();
         ui.label(format!("Frame {}/{}", editor.frame + 1, s.frames.len()));
+        if let Some(hint) = canvas.guide_hint {
+            ui.separator();
+            ui.colored_label(theme::GUIDE_LINE, hint);
+        }
         if let Some(notice) = notice {
             ui.separator();
             ui.colored_label(theme::ACCENT, notice);
