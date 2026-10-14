@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/*"]
+members = ["crates/*", "apps/*"]
 
 [workspace.package]
 version = "0.1.0"
@@ -15,7 +15,7 @@ thiserror = "2"
 log = "0.4"
 proptest = "1.12"
 png = "0.18"
-eframe = "0.36"
+eframe = { version = "0.36", default-features = false }
 env_logger = "0.11"
 cs-core = { path = "crates/cs-core" }
 cs-raster = { path = "crates/cs-raster" }

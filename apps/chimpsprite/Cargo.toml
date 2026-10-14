@@ -1,0 +1,11 @@
+[package]
+name = "chimpsprite"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cs-ui.workspace = true
+eframe = { workspace = true, features = ["wgpu", "default_fonts", "accesskit", "wayland", "x11"] }
+env_logger.workspace = true
+log.workspace = true

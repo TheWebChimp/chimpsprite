@@ -1,0 +1,15 @@
+[package]
+name = "cs-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cs-core.workspace = true
+cs-raster.workspace = true
+cs-commands.workspace = true
+cs-render.workspace = true
+cs-tools.workspace = true
+eframe = { workspace = true, features = ["wgpu", "default_fonts", "accesskit"] }
+png.workspace = true
+log.workspace = true
