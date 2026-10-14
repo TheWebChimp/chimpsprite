@@ -7,6 +7,9 @@ pub const CHECKER_LIGHT: Color32 = Color32::from_rgb(0x9a, 0x9a, 0xa2);
 pub const CHECKER_DARK: Color32 = Color32::from_rgb(0x7a, 0x7a, 0x82);
 pub const GRID: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 40);
 pub const GUIDE: Color32 = Color32::from_rgb(0x4a, 0x7d, 0xff);
+pub const GUIDE_LINE: Color32 = Color32::from_rgb(0x2e, 0xd3, 0xe6);
+pub const RULER_BG: Color32 = Color32::from_rgb(0x22, 0x23, 0x2a);
+pub const RULER_TICK: Color32 = Color32::from_rgb(0x6a, 0x6b, 0x78);
 pub const LABEL: Color32 = Color32::from_rgb(0x9a, 0x9b, 0xa8);
 pub const BRUSH_OUTLINE: Color32 = Color32::from_rgba_premultiplied(230, 230, 230, 230);
 

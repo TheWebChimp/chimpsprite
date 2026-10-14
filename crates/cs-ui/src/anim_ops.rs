@@ -337,6 +337,30 @@ impl Editor {
         }
     }
 
+    /// Vincula los cels del rango seleccionado de una capa (un paso de undo).
+    pub fn link_range(&mut self, layer: LayerId, from: usize, to: usize) {
+        if let Some(cmd) = ops::link_range(self.sprite(), layer, from, to) {
+            self.execute(cmd);
+        }
+    }
+
+    pub fn unlink_range(&mut self, layer: LayerId, from: usize, to: usize) {
+        if let Some(cmd) = ops::unlink_range(self.sprite(), layer, from, to) {
+            self.execute(cmd);
+        }
+    }
+
+    /// Agrega un color al final de la paleta (si no está ya).
+    pub fn add_to_palette(&mut self, color: Rgba) {
+        let palette = &self.sprite().palette;
+        if palette.colors().contains(&color) || palette.len() >= 256 {
+            return;
+        }
+        let mut colors = palette.colors().to_vec();
+        colors.push(color);
+        self.execute(Command::SetPalette(cs_core::Palette::new(colors)));
+    }
+
     pub fn clear_cel(&mut self, layer: LayerId, frame: usize) {
         if self.sprite().cel(layer, frame).is_some() {
             self.execute(Command::SetCel {
@@ -462,6 +486,17 @@ mod tests {
             e.undo();
         }
         assert_eq!(e.sprite().layer(id).unwrap().name, "Layer 1");
+    }
+
+    #[test]
+    fn palette_add_is_undoable_and_skips_duplicates() {
+        let mut e = editor_with_frames(1);
+        let n = e.sprite().palette.len();
+        e.add_to_palette(Rgba::rgb(1, 2, 3));
+        e.add_to_palette(Rgba::rgb(1, 2, 3));
+        assert_eq!(e.sprite().palette.len(), n + 1);
+        e.undo();
+        assert_eq!(e.sprite().palette.len(), n);
     }
 
     #[test]

@@ -61,6 +61,22 @@ impl Layer {
     }
 }
 
+/// Cuadrícula de trabajo del sprite (además del grid de píxeles).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GridSettings {
+    pub size: (u32, u32),
+    pub offset: (i32, i32),
+}
+
+impl Default for GridSettings {
+    fn default() -> Self {
+        Self {
+            size: (16, 16),
+            offset: (0, 0),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Frame {
     pub duration_ms: u16,
@@ -92,6 +108,8 @@ pub struct Sprite {
     /// Datos de archivo que no interpretamos (p. ej. slices de `.aseprite`) y se reescriben tal cual.
     #[serde(default)]
     pub extra_chunks: Vec<RawChunk>,
+    #[serde(default)]
+    pub grid: GridSettings,
 }
 
 /// Chunk de archivo preservado sin interpretar.
@@ -138,6 +156,7 @@ impl Sprite {
             images: BTreeMap::new(),
             tags: Vec::new(),
             extra_chunks: Vec::new(),
+            grid: GridSettings::default(),
         }
     }
 

@@ -28,6 +28,22 @@ pub fn editor() -> Editor {
 
     editor.activate(chimp);
     editor.set_frame(0);
+    // Guías al centro del chimpancé.
+    editor.set_guides(vec![
+        cs_core::Guide {
+            axis: cs_core::Axis::Vertical,
+            position: 32,
+        },
+        cs_core::Guide {
+            axis: cs_core::Axis::Horizontal,
+            position: 32,
+        },
+    ]);
+    // Simetría horizontal para probar dibujando sobre la cara.
+    editor.set_symmetry(cs_core::Symmetry {
+        mode: cs_core::SymmetryMode::Horizontal,
+        center2: None,
+    });
     editor
 }
 

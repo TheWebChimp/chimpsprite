@@ -177,6 +177,22 @@ impl SpriteTools {
     }
 }
 
+/// Refleja un `DrawPixels` según la simetría; otros comandos pasan igual.
+fn mirror(cmd: Command, symmetry: cs_core::Symmetry, center2: (i32, i32)) -> Command {
+    match cmd {
+        Command::DrawPixels {
+            layer,
+            frame,
+            pixels,
+        } if symmetry.mode != cs_core::SymmetryMode::None => Command::DrawPixels {
+            layer,
+            frame,
+            pixels: cs_raster::symmetrize(&pixels, symmetry.mode, center2),
+        },
+        other => other,
+    }
+}
+
 /// Recorta un `DrawPixels` a la máscara; otros comandos pasan igual.
 fn clip(cmd: Command, mask: &Mask) -> Command {
     match cmd {
@@ -240,6 +256,8 @@ pub struct Editor {
     /// Cambia con cada modificación del documento (ejecutar, deshacer, rehacer); sirve para
     /// saber si hay cambios sin guardar.
     pub doc_version: u64,
+    /// A qué se pegan las herramientas de forma (lo actualiza el lienzo cada frame).
+    pub snap: Option<crate::guides::SnapContext>,
 }
 
 impl Editor {
@@ -274,6 +292,7 @@ impl Editor {
             onion_enabled: false,
             onion: OnionSkin::default(),
             doc_version: 0,
+            snap: None,
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
@@ -405,6 +424,8 @@ impl Editor {
         sprite.palette = template.palette.clone();
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
+            guides: Vec::new(),
+            symmetry: Default::default(),
             id,
             name: format!("Artboard {}", id.0),
             position: (x1 + 16, y0),
@@ -564,8 +585,32 @@ impl Editor {
         if let Some(id) = self.document.artboard_at(world) {
             self.activate(id);
         }
-        let p = self.to_local(world);
+        let p = self.to_local(self.snapped(world));
+        // Mover sin selección: cambia a la capa que tiene algo dibujado bajo el puntero.
+        if self.active_tool() == ToolKind::Move
+            && self.selection.is_none()
+            && let Some(layer) = self.layer_at(p)
+        {
+            self.layer = layer;
+        }
         self.with_tool(|tool, ctx| tool.press(ctx, p));
+    }
+
+    /// Capa de imagen más alta con un píxel visible en `p` (local), ignorando ocultas y bloqueadas.
+    pub fn layer_at(&self, p: Point) -> Option<LayerId> {
+        let sprite = self.sprite();
+        sprite
+            .layers
+            .iter()
+            .rev()
+            .filter(|l| l.kind == cs_core::LayerKind::Image && !l.locked && l.opacity > 0)
+            .filter(|l| sprite.is_visible(l.id))
+            .find(|l| {
+                let visible = cs_render::resolve(sprite, sprite.pixel(l.id, self.frame, p.0, p.1));
+                let cel_opacity = sprite.cel(l.id, self.frame).map_or(0, |c| c.opacity);
+                visible.a > 0 && cel_opacity > 0
+            })
+            .map(|l| l.id)
     }
 
     pub fn pointer_drag(&mut self, world: (f32, f32)) {
@@ -573,8 +618,40 @@ impl Editor {
             self.artboard_tool.drag(world);
             return;
         }
-        let p = self.to_local(world);
+        let p = self.to_local(self.snapped(world));
         self.with_tool(|tool, ctx| tool.drag(ctx, p));
+    }
+
+    /// Pega el punto a guías/grid si la herramienta activa lo usa (no las de trazo libre).
+    fn snapped(&self, world: (f32, f32)) -> (f32, f32) {
+        let snaps = matches!(
+            self.active_tool(),
+            ToolKind::Select
+                | ToolKind::Move
+                | ToolKind::Line
+                | ToolKind::Rectangle
+                | ToolKind::Ellipse
+        );
+        let Some(ctx) = self.snap.as_ref().filter(|_| snaps) else {
+            return world;
+        };
+        let (ox, oy) = self.artboard().position;
+        let (lx, ly) = ctx.snap((world.0 - ox as f32, world.1 - oy as f32));
+        (lx + ox as f32, ly + oy as f32)
+    }
+
+    pub fn guides(&self) -> &[cs_core::Guide] {
+        &self.artboard().guides
+    }
+
+    /// Reemplaza las guías del artboard activo (un paso de undo).
+    pub fn set_guides(&mut self, guides: Vec<cs_core::Guide>) {
+        if guides.as_slice() != self.guides() {
+            self.execute_doc(DocCommand::SetGuides {
+                id: self.active,
+                guides,
+            });
+        }
     }
 
     pub fn pointer_release(&mut self) {
@@ -598,13 +675,37 @@ impl Editor {
         self.apply_output(kind, out);
     }
 
+    /// Simetría y recorte a la selección para las herramientas que pintan.
+    fn shape_paint(&self, kind: ToolKind, cmd: Command) -> Command {
+        if !kind.paints() {
+            return cmd;
+        }
+        let artboard = self.artboard();
+        let cmd = mirror(cmd, artboard.symmetry, artboard.symmetry_center2());
+        match &self.selection {
+            Some(mask) => clip(cmd, mask),
+            None => cmd,
+        }
+    }
+
+    pub fn symmetry(&self) -> cs_core::Symmetry {
+        self.artboard().symmetry
+    }
+
+    /// Cambia la simetría del artboard activo (un paso de undo).
+    pub fn set_symmetry(&mut self, symmetry: cs_core::Symmetry) {
+        if symmetry != self.symmetry() {
+            self.execute_doc(DocCommand::SetSymmetry {
+                id: self.active,
+                symmetry,
+            });
+        }
+    }
+
     fn apply_output(&mut self, kind: ToolKind, out: ToolOutput) {
         let applied = match out.command {
             Some(cmd) => {
-                let cmd = match (&self.selection, kind.paints()) {
-                    (Some(mask), true) => clip(cmd, mask),
-                    _ => cmd,
-                };
+                let cmd = self.shape_paint(kind, cmd);
                 self.execute(cmd)
             }
             None => true,
@@ -658,10 +759,7 @@ impl Editor {
                 selection,
             };
         };
-        let cmd = match (&self.selection, kind.paints()) {
-            (Some(mask), true) => clip(cmd, mask),
-            _ => cmd,
-        };
+        let cmd = self.shape_paint(kind, cmd);
         let mut doc = self.document.clone();
         let applied = DocCommand::OnArtboard {
             id: self.active,
@@ -860,6 +958,102 @@ mod tests {
         assert!(e.sprite().cels.is_empty(), "no debe pintar");
         e.undo();
         assert_eq!(e.artboard().position, (0, 0));
+    }
+
+    #[test]
+    fn shape_tools_snap_to_guides_but_pencil_does_not() {
+        use cs_core::{Axis, Guide};
+        let mut e = editor();
+        e.set_guides(vec![Guide {
+            axis: Axis::Vertical,
+            position: 4,
+        }]);
+        e.snap = Some(crate::guides::SnapContext {
+            guides: e.guides().to_vec(),
+            grid: None,
+            tolerance: 1.0,
+        });
+        e.tool = ToolKind::Select;
+        e.pointer_press((0.5, 0.5), false, false, 0.1);
+        e.pointer_drag((4.3, 2.5)); // cerca de x = 4 → píxel 4 (lado del puntero)
+        e.pointer_release();
+        assert_eq!(
+            e.selection.as_ref().unwrap().bounds(),
+            Some(((0, 0), (4, 2)))
+        );
+        e.deselect();
+        e.tool = ToolKind::Pencil;
+        e.pointer_press((3.6, 1.5), false, false, 0.1);
+        e.pointer_release();
+        assert_eq!(
+            e.sprite().pixel(LayerId(1), 0, 3, 1),
+            e.primary,
+            "pencil ignores snap"
+        );
+        e.undo();
+        e.undo();
+        assert!(e.guides().is_empty(), "guides are undoable");
+    }
+
+    #[test]
+    fn symmetric_strokes_are_one_undo_step_and_respect_selection() {
+        use cs_core::{Symmetry, SymmetryMode};
+        let mut e = editor(); // 8×8
+        e.set_symmetry(Symmetry {
+            mode: SymmetryMode::Horizontal,
+            center2: None,
+        });
+        click(&mut e, (1, 1), false, false);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 6, 1), e.primary);
+        e.undo();
+        assert!(e.sprite().cels.is_empty(), "both sides undone together");
+        // Con selección solo en la mitad izquierda, el reflejo queda fuera.
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (3, 7))));
+        click(&mut e, (2, 2), false, false);
+        let t = e.sprite().color_mode.transparent();
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 2), e.primary);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 5, 2), t);
+    }
+
+    #[test]
+    fn move_tool_picks_the_layer_under_the_pointer() {
+        let mut e = editor();
+        let bottom = LayerId(1);
+        e.execute(Command::DrawPixels {
+            layer: bottom,
+            frame: 0,
+            pixels: vec![(1, 1, e.primary)],
+        });
+        e.execute(Command::AddLayer {
+            index: 1,
+            layer: cs_core::Layer::new_image(LayerId(2), "top"),
+        });
+        e.execute(Command::DrawPixels {
+            layer: LayerId(2),
+            frame: 0,
+            pixels: vec![(5, 5, e.primary)],
+        });
+        e.layer = bottom;
+        e.tool = ToolKind::Move;
+        // Clic sobre lo de la capa de arriba: cambia a ella y la mueve.
+        e.pointer_press((5.5, 5.5), false, false, 0.1);
+        assert_eq!(e.layer, LayerId(2));
+        e.pointer_drag((6.5, 5.5));
+        e.pointer_release();
+        assert_eq!(e.sprite().cel(LayerId(2), 0).unwrap().position, (1, 0));
+        assert_eq!(e.sprite().cel(bottom, 0).unwrap().position, (0, 0));
+        // Clic en vacío: se queda en la capa actual.
+        e.pointer_press((7.5, 0.5), false, false, 0.1);
+        e.pointer_release();
+        assert_eq!(e.layer, LayerId(2));
+        // Las capas bloqueadas u ocultas no se eligen.
+        e.toggle_locked(LayerId(2));
+        e.pointer_press((1.5, 1.5), false, false, 0.1);
+        e.pointer_release();
+        assert_eq!(e.layer, bottom);
+        e.toggle_visible(bottom);
+        e.layer = LayerId(2);
+        assert_eq!(e.layer_at((1, 1)), None);
     }
 
     #[test]

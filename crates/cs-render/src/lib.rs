@@ -125,6 +125,36 @@ pub fn render_frame(sprite: &Sprite, frame: usize) -> Vec<Rgba> {
     out
 }
 
+/// Color compuesto de un solo píxel (lo que se ve en pantalla), sin renderizar todo el frame.
+pub fn composite_pixel(sprite: &Sprite, frame: usize, x: i32, y: i32) -> Rgba {
+    if x < 0 || y < 0 || x >= sprite.width as i32 || y >= sprite.height as i32 {
+        return Rgba::TRANSPARENT;
+    }
+    let mut out = Rgba::TRANSPARENT;
+    for layer in sprite.layers.iter().filter(|l| l.kind == LayerKind::Image) {
+        let Some(layer_opacity) = effective_opacity(sprite, layer) else {
+            continue;
+        };
+        let Some(cel) = sprite.cel(layer.id, frame) else {
+            continue;
+        };
+        let Some(image) = sprite.image(cel.image) else {
+            continue;
+        };
+        let (ix, iy) = (x - cel.position.0, y - cel.position.1);
+        if ix < 0 || iy < 0 {
+            continue;
+        }
+        let Some(value) = image.get(ix as u32, iy as u32) else {
+            continue;
+        };
+        let src = resolve(sprite, value);
+        let alpha = mul(src.a as u32, mul(layer_opacity, cel.opacity as u32)) as u8;
+        out = blend(out, src, alpha, layer.blend);
+    }
+    out
+}
+
 /// Opciones del papel cebolla.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct OnionSkin {
@@ -266,6 +296,38 @@ mod tests {
             ..onion
         };
         assert_eq!(render_onion(&s, 1, &none), render_frame(&s, 1));
+    }
+
+    #[test]
+    fn composite_pixel_matches_full_render() {
+        let mut s = Sprite::new(3, 2, ColorMode::Rgba);
+        draw(
+            &mut s,
+            1,
+            vec![
+                (0, 0, PixelValue::Rgba(Rgba::rgb(255, 0, 0))),
+                (2, 1, PixelValue::Rgba(Rgba::rgb(0, 0, 255))),
+            ],
+        );
+        Command::AddLayer {
+            index: 1,
+            layer: Layer::new_image(LayerId(2), "top"),
+        }
+        .apply(&mut s)
+        .unwrap();
+        draw(
+            &mut s,
+            2,
+            vec![(0, 0, PixelValue::Rgba(Rgba::new(0, 255, 0, 128)))],
+        );
+        s.layer_mut(LayerId(2)).unwrap().blend = BlendMode::Screen;
+        let full = render_frame(&s, 0);
+        for y in 0..2 {
+            for x in 0..3 {
+                assert_eq!(composite_pixel(&s, 0, x, y), full[(y * 3 + x) as usize]);
+            }
+        }
+        assert_eq!(composite_pixel(&s, 0, -1, 0), Rgba::TRANSPARENT);
     }
 
     #[test]
