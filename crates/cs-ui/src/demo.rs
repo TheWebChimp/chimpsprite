@@ -28,6 +28,17 @@ pub fn editor() -> Editor {
 
     editor.activate(chimp);
     editor.set_frame(0);
+    // Guías al centro del chimpancé.
+    editor.set_guides(vec![
+        cs_core::Guide {
+            axis: cs_core::Axis::Vertical,
+            position: 32,
+        },
+        cs_core::Guide {
+            axis: cs_core::Axis::Horizontal,
+            position: 32,
+        },
+    ]);
     editor
 }
 

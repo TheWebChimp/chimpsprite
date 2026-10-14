@@ -21,6 +21,12 @@ pub struct ViewSettings {
     pub artboard_names: bool,
     pub grid_color: [u8; 4],
     pub timeline: bool,
+    /// Las reglas son parte de la interfaz: no dependen de Extras.
+    pub rulers: bool,
+    pub guides: bool,
+    pub snap_to_guides: bool,
+    pub snap_to_grid: bool,
+    pub lock_guides: bool,
 }
 
 impl Default for ViewSettings {
@@ -34,6 +40,11 @@ impl Default for ViewSettings {
             artboard_names: true,
             grid_color: [80, 140, 255, 110],
             timeline: true,
+            rulers: true,
+            guides: true,
+            snap_to_guides: true,
+            snap_to_grid: false,
+            lock_guides: false,
         }
     }
 }

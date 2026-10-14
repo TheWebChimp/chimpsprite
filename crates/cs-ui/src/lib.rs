@@ -10,6 +10,7 @@ mod editor;
 mod export_dialog;
 mod file_actions;
 mod files;
+mod guides;
 mod home;
 mod panels;
 mod platform;
@@ -218,7 +219,9 @@ impl ChimpApp {
         ui.add(egui::Checkbox::new(&mut v.extras, "Extras"))
             .on_hover_text("Ctrl+H: show or hide all extras");
         ui.menu_button("Show", |ui| {
+            ui.checkbox(&mut v.rulers, "Rulers");
             ui.add_enabled_ui(v.extras, |ui| {
+                ui.checkbox(&mut v.guides, "Guides");
                 ui.checkbox(&mut v.pixel_grid, "Pixel Grid");
                 ui.checkbox(&mut v.grid, "Grid");
                 ui.checkbox(&mut v.selection_edges, "Selection Edges");
@@ -226,8 +229,24 @@ impl ChimpApp {
                 ui.checkbox(&mut v.artboard_names, "Artboard Names");
             });
         });
+        ui.menu_button("Guides", |ui| {
+            ui.checkbox(&mut self.view.guides, "Show Guides");
+            ui.checkbox(&mut self.view.snap_to_guides, "Snap to Guides");
+            ui.checkbox(&mut self.view.lock_guides, "Lock Guides");
+            ui.separator();
+            let has_guides = !self.doc.editor.guides().is_empty();
+            if ui
+                .add_enabled(has_guides, egui::Button::new("Clear Guides"))
+                .clicked()
+            {
+                self.doc.editor.set_guides(Vec::new());
+                ui.close();
+            }
+            ui.weak("Drag from a ruler to add a guide;\ndrag it back to remove it.");
+        });
         ui.menu_button("Grid", |ui| {
             ui.checkbox(&mut self.view.grid, "Show Grid");
+            ui.checkbox(&mut self.view.snap_to_grid, "Snap to Grid");
             if ui.button("Grid Settings…").clicked() {
                 self.grid_dialog = Some(view::GridDialog::new(&self.doc.editor, &self.view));
                 ui.close();

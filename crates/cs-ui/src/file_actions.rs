@@ -268,6 +268,21 @@ impl ChimpApp {
                     target: Some(target),
                 };
                 self.doc.saved_version = self.doc.editor.doc_version;
+                let lost_guides = files::kind_of(&self.doc.location.name)
+                    == Some(FileKind::Aseprite)
+                    && self
+                        .doc
+                        .editor
+                        .document
+                        .artboards
+                        .iter()
+                        .any(|a| !a.guides.is_empty());
+                if lost_guides {
+                    self.show_message(
+                        "Saved without guides",
+                        ".aseprite files can't store guides. Save as .chimp to keep them.",
+                    );
+                }
                 true
             }
             Err(e @ FileError::MultipleArtboards(_)) => {

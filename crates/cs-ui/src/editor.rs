@@ -240,6 +240,8 @@ pub struct Editor {
     /// Cambia con cada modificación del documento (ejecutar, deshacer, rehacer); sirve para
     /// saber si hay cambios sin guardar.
     pub doc_version: u64,
+    /// A qué se pegan las herramientas de forma (lo actualiza el lienzo cada frame).
+    pub snap: Option<crate::guides::SnapContext>,
 }
 
 impl Editor {
@@ -274,6 +276,7 @@ impl Editor {
             onion_enabled: false,
             onion: OnionSkin::default(),
             doc_version: 0,
+            snap: None,
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
@@ -565,7 +568,7 @@ impl Editor {
         if let Some(id) = self.document.artboard_at(world) {
             self.activate(id);
         }
-        let p = self.to_local(world);
+        let p = self.to_local(self.snapped(world));
         self.with_tool(|tool, ctx| tool.press(ctx, p));
     }
 
@@ -574,8 +577,40 @@ impl Editor {
             self.artboard_tool.drag(world);
             return;
         }
-        let p = self.to_local(world);
+        let p = self.to_local(self.snapped(world));
         self.with_tool(|tool, ctx| tool.drag(ctx, p));
+    }
+
+    /// Pega el punto a guías/grid si la herramienta activa lo usa (no las de trazo libre).
+    fn snapped(&self, world: (f32, f32)) -> (f32, f32) {
+        let snaps = matches!(
+            self.active_tool(),
+            ToolKind::Select
+                | ToolKind::Move
+                | ToolKind::Line
+                | ToolKind::Rectangle
+                | ToolKind::Ellipse
+        );
+        let Some(ctx) = self.snap.as_ref().filter(|_| snaps) else {
+            return world;
+        };
+        let (ox, oy) = self.artboard().position;
+        let (lx, ly) = ctx.snap((world.0 - ox as f32, world.1 - oy as f32));
+        (lx + ox as f32, ly + oy as f32)
+    }
+
+    pub fn guides(&self) -> &[cs_core::Guide] {
+        &self.artboard().guides
+    }
+
+    /// Reemplaza las guías del artboard activo (un paso de undo).
+    pub fn set_guides(&mut self, guides: Vec<cs_core::Guide>) {
+        if guides.as_slice() != self.guides() {
+            self.execute_doc(DocCommand::SetGuides {
+                id: self.active,
+                guides,
+            });
+        }
     }
 
     pub fn pointer_release(&mut self) {
@@ -861,6 +896,41 @@ mod tests {
         assert!(e.sprite().cels.is_empty(), "no debe pintar");
         e.undo();
         assert_eq!(e.artboard().position, (0, 0));
+    }
+
+    #[test]
+    fn shape_tools_snap_to_guides_but_pencil_does_not() {
+        use cs_core::{Axis, Guide};
+        let mut e = editor();
+        e.set_guides(vec![Guide {
+            axis: Axis::Vertical,
+            position: 4,
+        }]);
+        e.snap = Some(crate::guides::SnapContext {
+            guides: e.guides().to_vec(),
+            grid: None,
+            tolerance: 1.0,
+        });
+        e.tool = ToolKind::Select;
+        e.pointer_press((0.5, 0.5), false, false, 0.1);
+        e.pointer_drag((4.3, 2.5)); // cerca de x = 4 → píxel 4 (lado del puntero)
+        e.pointer_release();
+        assert_eq!(
+            e.selection.as_ref().unwrap().bounds(),
+            Some(((0, 0), (4, 2)))
+        );
+        e.deselect();
+        e.tool = ToolKind::Pencil;
+        e.pointer_press((3.6, 1.5), false, false, 0.1);
+        e.pointer_release();
+        assert_eq!(
+            e.sprite().pixel(LayerId(1), 0, 3, 1),
+            e.primary,
+            "pencil ignores snap"
+        );
+        e.undo();
+        e.undo();
+        assert!(e.guides().is_empty(), "guides are undoable");
     }
 
     #[test]

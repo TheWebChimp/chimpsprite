@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use cs_core::{Artboard, ArtboardId, GridSettings, Mask};
+use cs_core::{Artboard, ArtboardId, Axis, GridSettings, Guide, Mask};
 use cs_tools::{ArtboardHit, Edges, hit_test};
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Pos2, Rect, Sense, Stroke, StrokeKind,
@@ -10,6 +10,7 @@ use eframe::egui::{
 
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
 use crate::editor::{Editor, ToolKind};
+use crate::guides::{RULER_PX, SNAP_PX, SnapContext, after_drag, hit_guide, nice_step};
 use crate::theme;
 use crate::view::{ViewSettings, ZoomRequest};
 
@@ -44,6 +45,19 @@ pub struct CanvasView {
     names_visible: bool,
     /// Zoom pedido desde el menú; se aplica al conocer el tamaño del lienzo.
     pending_zoom: Option<ZoomRequest>,
+    /// Guía que se está creando (desde una regla) o moviendo.
+    ruler_drag: Option<GuideDrag>,
+    /// El puntero está sobre una regla.
+    over_ruler: bool,
+}
+
+/// Arrastre de una guía: `index` es la guía original si se está moviendo una existente.
+#[derive(Clone, Copy, Debug)]
+struct GuideDrag {
+    index: Option<usize>,
+    axis: Axis,
+    position: i32,
+    over_ruler: bool,
 }
 
 impl Default for CanvasView {
@@ -60,6 +74,8 @@ impl Default for CanvasView {
             over_label: false,
             names_visible: true,
             pending_zoom: None,
+            ruler_drag: None,
+            over_ruler: false,
         }
     }
 }
@@ -138,6 +154,119 @@ impl CanvasView {
             .id()
     }
 
+    /// Reglas superior e izquierda (sin la esquina).
+    fn ruler_rects(rect: Rect) -> (Rect, Rect) {
+        let top = Rect::from_min_max(
+            rect.min + Vec2::new(RULER_PX, 0.0),
+            Pos2::new(rect.right(), rect.top() + RULER_PX),
+        );
+        let left = Rect::from_min_max(
+            rect.min + Vec2::new(0.0, RULER_PX),
+            Pos2::new(rect.left() + RULER_PX, rect.bottom()),
+        );
+        (top, left)
+    }
+
+    /// Crear (desde las reglas), mover y borrar guías. Devuelve el cursor a mostrar si el
+    /// puntero está ocupado por las reglas/guías (y en ese caso las herramientas no reciben el clic).
+    #[allow(clippy::too_many_arguments)]
+    fn guide_input(
+        &mut self,
+        response: &egui::Response,
+        rect: Rect,
+        editor: &mut Editor,
+        view: &ViewSettings,
+        pointer: Option<Pos2>,
+        pressed: bool,
+        down: bool,
+        ctrl: bool,
+    ) -> Option<egui::CursorIcon> {
+        let origin = editor.artboard().position;
+        // Copias para no tomar prestado `self` dentro de los closures.
+        let (screen_origin, zoom) = (self.origin(rect), self.zoom);
+        let local = move |p: Pos2| {
+            let w = (p - screen_origin) / zoom;
+            (w.x - origin.0 as f32, w.y - origin.1 as f32)
+        };
+        let on_ruler = |p: Pos2| {
+            view.rulers && {
+                let (top, left) = Self::ruler_rects(rect);
+                top.contains(p)
+                    || left.contains(p)
+                    || p.x < rect.left() + RULER_PX && p.y < rect.top() + RULER_PX
+            }
+        };
+        let axis_cursor = |axis: Axis| match axis {
+            Axis::Horizontal => egui::CursorIcon::ResizeVertical,
+            Axis::Vertical => egui::CursorIcon::ResizeHorizontal,
+        };
+        self.over_ruler = pointer.is_some_and(|p| response.hovered() && on_ruler(p));
+
+        if let Some(mut drag) = self.ruler_drag {
+            if down {
+                if let Some(p) = pointer {
+                    let (lx, ly) = local(p);
+                    drag.position = match drag.axis {
+                        Axis::Horizontal => ly.round() as i32,
+                        Axis::Vertical => lx.round() as i32,
+                    };
+                    drag.over_ruler = on_ruler(p);
+                    self.ruler_drag = Some(drag);
+                }
+                return Some(axis_cursor(drag.axis));
+            }
+            let new = (!drag.over_ruler).then_some(Guide {
+                axis: drag.axis,
+                position: drag.position,
+            });
+            let guides = after_drag(editor.guides(), drag.index, new);
+            editor.set_guides(guides);
+            self.ruler_drag = None;
+            return None;
+        }
+        if editor.is_painting() || !response.hovered() {
+            return None;
+        }
+        let p = pointer?;
+        if on_ruler(p) {
+            let (top, left) = Self::ruler_rects(rect);
+            let axis = if top.contains(p) {
+                Some(Axis::Horizontal)
+            } else if left.contains(p) {
+                Some(Axis::Vertical)
+            } else {
+                None
+            };
+            if pressed && let Some(axis) = axis {
+                self.ruler_drag = Some(GuideDrag {
+                    index: None,
+                    axis,
+                    position: 0,
+                    over_ruler: true,
+                });
+            }
+            return Some(axis.map_or(egui::CursorIcon::Default, axis_cursor));
+        }
+        let grabbable = matches!(
+            editor.active_tool(),
+            ToolKind::Select | ToolKind::Move | ToolKind::Artboard
+        ) || ctrl;
+        if !view.shows(view.guides) || view.lock_guides || !grabbable {
+            return None;
+        }
+        let index = hit_guide(editor.guides(), local(p), SNAP_PX / self.zoom)?;
+        let guide = editor.guides()[index];
+        if pressed {
+            self.ruler_drag = Some(GuideDrag {
+                index: Some(index),
+                axis: guide.axis,
+                position: guide.position,
+                over_ruler: false,
+            });
+        }
+        Some(axis_cursor(guide.axis))
+    }
+
     fn handle_input(
         &mut self,
         ui: &egui::Ui,
@@ -145,6 +274,7 @@ impl CanvasView {
         rect: Rect,
         editor: &mut Editor,
         dialog: Option<&mut CanvasSizeDialog>,
+        view: &ViewSettings,
     ) {
         // Zoom con la rueda, anclado al cursor.
         if let Some(pointer) = response.hover_pos() {
@@ -218,15 +348,33 @@ impl CanvasView {
         } else {
             self.dragging_guide = None;
         }
-        let guide_cursor = self.dragging_guide.or(over_guide).map(|edge| {
+        let mut guide_cursor = self.dragging_guide.or(over_guide).map(|edge| {
             if edge.is_vertical() {
                 egui::CursorIcon::ResizeHorizontal
             } else {
                 egui::CursorIcon::ResizeVertical
             }
         });
+        // Reglas y guías del documento (no con el diálogo Canvas Size abierto).
+        let ruler_cursor = if modal || space {
+            None
+        } else {
+            self.guide_input(
+                response,
+                rect,
+                editor,
+                view,
+                pointer,
+                pressed_primary,
+                any_down,
+                modifiers.command,
+            )
+        };
+        let ruler_busy = ruler_cursor.is_some() || self.ruler_drag.is_some();
+        guide_cursor = guide_cursor.or(ruler_cursor);
 
         if !modal
+            && !ruler_busy
             && self.dragging_guide.is_none()
             && !space
             && response.hovered()
@@ -258,6 +406,8 @@ impl CanvasView {
             response.hovered().then_some(egui::CursorIcon::Default)
         } else if !response.hovered() {
             None
+        } else if ruler_busy {
+            Some(egui::CursorIcon::Default)
         } else if editor.artboard_gesture().moving() {
             Some(egui::CursorIcon::Grabbing)
         } else if let Some(edges) = editor.artboard_gesture().resizing() {
@@ -323,7 +473,23 @@ impl CanvasView {
             self.apply_zoom(rect, editor, request);
         }
         self.names_visible = view_settings.shows(view_settings.artboard_names);
-        self.handle_input(ui, &response, rect, editor, dialog.as_deref_mut());
+        editor.snap = Some(SnapContext {
+            guides: if view_settings.shows(view_settings.guides) && view_settings.snap_to_guides {
+                editor.guides().to_vec()
+            } else {
+                Vec::new()
+            },
+            grid: view_settings.snap_to_grid.then(|| editor.sprite().grid),
+            tolerance: SNAP_PX / self.zoom,
+        });
+        self.handle_input(
+            ui,
+            &response,
+            rect,
+            editor,
+            dialog.as_deref_mut(),
+            view_settings,
+        );
         let modal = dialog.is_some();
         let guide = dialog.and_then(|d| d.preview_rect(&editor.document));
 
@@ -420,6 +586,45 @@ impl CanvasView {
             }
         }
 
+        if view_settings.shows(view_settings.guides) {
+            let dragged = self.ruler_drag.and_then(|d| d.index);
+            for artboard in &document.artboards {
+                let ((x0, y0), (x1, y1)) = artboard.rect();
+                let screen = Rect::from_min_max(
+                    self.to_screen(rect, (x0, y0)),
+                    self.to_screen(rect, (x1, y1)),
+                );
+                let active = artboard.id == editor.active;
+                for (i, g) in artboard.guides.iter().enumerate() {
+                    if active && Some(i) == dragged {
+                        continue;
+                    }
+                    draw_guide(&painter, screen, *g, self.zoom, theme::GUIDE_LINE);
+                }
+            }
+        }
+        if let Some(drag) = self.ruler_drag {
+            // La guía en movimiento cruza todo el lienzo; sobre la regla se ve tenue (se borrará).
+            let a = editor.artboard();
+            let world = (a.position.0 + drag.position, a.position.1 + drag.position);
+            let color = if drag.over_ruler {
+                theme::GUIDE_LINE.gamma_multiply(0.35)
+            } else {
+                theme::GUIDE_LINE
+            };
+            let stroke = Stroke::new(1.0, color);
+            match drag.axis {
+                Axis::Horizontal => {
+                    let y = painter.round_to_pixel_center(self.to_screen(rect, world).y);
+                    painter.hline(rect.x_range(), y, stroke)
+                }
+                Axis::Vertical => {
+                    let x = painter.round_to_pixel_center(self.to_screen(rect, world).x);
+                    painter.vline(x, rect.y_range(), stroke)
+                }
+            };
+        }
+
         if let Some((min, max)) = guide {
             let r = Rect::from_min_max(self.to_screen(rect, min), self.to_screen(rect, max));
             let stroke = Stroke::new(1.0, theme::GUIDE);
@@ -448,6 +653,8 @@ impl CanvasView {
         if let (Some((hx, hy)), Some(origin)) = (self.hover, active_origin)
             && !modal
             && !self.over_label
+            && !self.over_ruler
+            && self.ruler_drag.is_none()
             && !editor.artboard_gesture().is_active()
             && !space
             && response.hovered()
@@ -470,6 +677,116 @@ impl CanvasView {
                 Stroke::new(1.0, theme::BRUSH_OUTLINE),
                 StrokeKind::Inside,
             );
+        }
+
+        if view_settings.rulers {
+            let pointer = response.hover_pos().or(ui.ctx().pointer_interact_pos());
+            self.draw_rulers(&painter, rect, editor, pointer);
+        }
+    }
+
+    /// Reglas en píxeles del artboard activo (origen en su esquina superior izquierda).
+    fn draw_rulers(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        editor: &Editor,
+        pointer: Option<Pos2>,
+    ) {
+        let (top, left) = Self::ruler_rects(rect);
+        let corner = Rect::from_min_size(rect.min, Vec2::splat(RULER_PX));
+        for r in [top, left, corner] {
+            painter.rect_filled(r, 0.0, theme::RULER_BG);
+        }
+        painter.hline(
+            rect.x_range(),
+            top.bottom(),
+            Stroke::new(1.0, theme::CANVAS_BORDER),
+        );
+        painter.vline(
+            left.right(),
+            rect.y_range(),
+            Stroke::new(1.0, theme::CANVAS_BORDER),
+        );
+
+        let origin = editor.artboard().position;
+        let major = nice_step(self.zoom, 50.0);
+        let minor = [major / 10, major / 5, major / 2]
+            .into_iter()
+            .find(|&m| m >= 1 && m as f32 * self.zoom >= 6.0)
+            .unwrap_or(major);
+        let font = FontId::monospace(9.0);
+        let tick = Stroke::new(1.0, theme::RULER_TICK);
+        // Rango local visible en cada eje.
+        let (wx0, wy0) = self.to_world(rect, rect.min);
+        let (wx1, wy1) = self.to_world(rect, rect.max);
+        let span = |w0: f32, w1: f32, o: i32| {
+            let a = ((w0 - o as f32) / minor as f32).floor() as i32 - 1;
+            let b = ((w1 - o as f32) / minor as f32).ceil() as i32 + 1;
+            a..=b
+        };
+        for k in span(wx0, wx1, origin.0) {
+            let u = k * minor;
+            let x = self.to_screen(rect, (origin.0 + u, 0)).x;
+            if x < top.left() || x > top.right() {
+                continue;
+            }
+            let is_major = u.rem_euclid(major) == 0;
+            let h = if is_major { RULER_PX } else { RULER_PX * 0.35 };
+            painter.vline(x, (top.bottom() - h)..=top.bottom(), tick);
+            if is_major {
+                painter.text(
+                    Pos2::new(x + 2.0, top.top() + 1.0),
+                    Align2::LEFT_TOP,
+                    u.to_string(),
+                    font.clone(),
+                    theme::LABEL,
+                );
+            }
+        }
+        for k in span(wy0, wy1, origin.1) {
+            let u = k * minor;
+            let y = self.to_screen(rect, (0, origin.1 + u)).y;
+            if y < left.top() || y > left.bottom() {
+                continue;
+            }
+            let is_major = u.rem_euclid(major) == 0;
+            let w = if is_major { RULER_PX } else { RULER_PX * 0.35 };
+            painter.hline((left.right() - w)..=left.right(), y, tick);
+            if is_major {
+                painter.text(
+                    Pos2::new(left.left() + 1.0, y + 2.0),
+                    Align2::LEFT_TOP,
+                    u.to_string(),
+                    font.clone(),
+                    theme::LABEL,
+                );
+            }
+        }
+        // Posición del cursor.
+        if let Some(p) = pointer.filter(|p| rect.contains(*p)) {
+            let mark = Stroke::new(1.0, theme::ACCENT);
+            painter.vline(p.x, top.y_range(), mark);
+            painter.hline(left.x_range(), p.y, mark);
+        }
+    }
+}
+
+/// Línea de una guía dentro del artboard (si cae dentro de él).
+fn draw_guide(painter: &egui::Painter, screen: Rect, guide: Guide, zoom: f32, color: Color32) {
+    let stroke = Stroke::new(1.0, color);
+    match guide.axis {
+        Axis::Horizontal => {
+            let y = screen.top() + guide.position as f32 * zoom;
+            if (screen.top()..=screen.bottom()).contains(&y) {
+                painter.hline(screen.x_range(), painter.round_to_pixel_center(y), stroke);
+            }
+        }
+        Axis::Vertical => {
+            let x = screen.left() + guide.position as f32 * zoom;
+            if (screen.left()..=screen.right()).contains(&x) {
+                painter.vline(painter.round_to_pixel_center(x), screen.y_range(), stroke);
+            }
         }
     }
 }
