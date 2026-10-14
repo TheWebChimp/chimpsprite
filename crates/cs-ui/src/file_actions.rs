@@ -1,4 +1,5 @@
-//! Acciones de archivo de la app: nuevo, abrir, guardar, importar, exportar, cambios sin guardar.
+//! Acciones de archivo de la app: nuevo, abrir, guardar, importar, exportar, pestañas y cambios
+//! sin guardar.
 
 use eframe::egui;
 
@@ -6,7 +7,8 @@ use crate::editor::Editor;
 use crate::export_dialog::ExportResult;
 use crate::files::{self, FileError, FileKind};
 use crate::platform::{FileFilter, OpenPurpose, PlatformEvent, SaveTarget};
-use crate::{ChimpApp, new_editor};
+use crate::tabs::DocState;
+use crate::{ChimpApp, demo};
 
 pub(crate) const SPRITE_FILTERS: &[FileFilter] = &[
     FileFilter {
@@ -32,7 +34,7 @@ const PNG_FILTER: &[FileFilter] = &[FileFilter {
     extensions: &["png"],
 }];
 
-/// Un archivo ya leído, esperando a que el usuario confirme si descarta los cambios.
+/// Un archivo ya leído.
 pub(crate) struct Loaded {
     pub name: String,
     pub target: Option<SaveTarget>,
@@ -40,10 +42,9 @@ pub(crate) struct Loaded {
 }
 
 /// Acción en espera de que el usuario decida qué hacer con los cambios sin guardar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Pending {
-    New,
-    Open,
-    Load(Box<Loaded>),
+    CloseTab(usize),
     Quit,
 }
 
@@ -70,8 +71,9 @@ impl Default for DocLocation {
 }
 
 impl ChimpApp {
-    pub(crate) fn is_dirty(&self) -> bool {
-        self.editor.doc_version != self.saved_version
+    /// Hay cambios sin guardar en alguna pestaña.
+    pub(crate) fn any_dirty(&self) -> bool {
+        !self.tabs.dirty(&self.doc).is_empty()
     }
 
     pub(crate) fn is_modal(&self) -> bool {
@@ -89,40 +91,63 @@ impl ChimpApp {
         });
     }
 
-    pub(crate) fn reset_with(&mut self, editor: Editor, location: DocLocation) {
-        self.editor = editor;
-        self.location = location;
-        self.saved_version = self.editor.doc_version;
-        self.canvas.reset();
+    /// Abre `doc` en una pestaña nueva (o en lugar de un Untitled intacto).
+    fn open_doc(&mut self, doc: DocState) {
         self.canvas_size = None;
-        self.timeline = Default::default();
+        self.tabs.open(&mut self.doc, doc);
     }
 
-    /// Ejecuta `action`, o pregunta antes si hay cambios sin guardar.
-    pub(crate) fn request(&mut self, action: Pending, ctx: &egui::Context) {
-        if self.is_dirty() {
-            self.pending = Some(action);
+    pub(crate) fn new_document(&mut self) {
+        let name = self.tabs.untitled_name(&self.doc);
+        self.open_doc(DocState::untitled(name));
+    }
+
+    pub(crate) fn open_demo(&mut self) {
+        self.open_doc(DocState::new(
+            demo::editor(),
+            DocLocation {
+                name: "Demo".into(),
+                target: None,
+            },
+        ));
+    }
+
+    pub(crate) fn open_dialog(&mut self, ctx: &egui::Context) {
+        self.platform
+            .open_file(SPRITE_FILTERS, OpenPurpose::Open, ctx);
+    }
+
+    /// Cierra una pestaña, preguntando antes si tiene cambios.
+    pub(crate) fn request_close_tab(&mut self, index: usize) {
+        if self.tabs.dirty(&self.doc).contains(&index) {
+            self.pending = Some(Pending::CloseTab(index));
         } else {
-            self.perform(action, ctx);
+            self.close_tab(index);
         }
     }
 
-    fn perform(&mut self, action: Pending, ctx: &egui::Context) {
-        match action {
-            Pending::New => self.reset_with(new_editor(), DocLocation::default()),
-            Pending::Open => self
-                .platform
-                .open_file(SPRITE_FILTERS, OpenPurpose::Open, ctx),
-            Pending::Load(loaded) => self.load(*loaded),
-            Pending::Quit => {
-                self.allow_close = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-            }
+    fn close_tab(&mut self, index: usize) {
+        if self.tabs.active() == Some(index) {
+            self.canvas_size = None;
         }
+        self.tabs.close(&mut self.doc, index);
+    }
+
+    pub(crate) fn request_quit(&mut self, ctx: &egui::Context) {
+        if self.any_dirty() {
+            self.pending = Some(Pending::Quit);
+        } else {
+            self.quit(ctx);
+        }
+    }
+
+    fn quit(&mut self, ctx: &egui::Context) {
+        self.allow_close = true;
+        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
     }
 
     /// Procesa lo que llegó de la plataforma (archivos abiertos o errores).
-    pub(crate) fn handle_platform_events(&mut self, ctx: &egui::Context) {
+    pub(crate) fn handle_platform_events(&mut self, _ctx: &egui::Context) {
         for event in self.platform.poll() {
             match event {
                 PlatformEvent::Opened {
@@ -137,9 +162,11 @@ impl ChimpApp {
                         bytes,
                     };
                     match purpose {
-                        OpenPurpose::Open => self.load(loaded),
-                        OpenPurpose::Dropped => self.request(Pending::Load(Box::new(loaded)), ctx),
-                        OpenPurpose::ImportLayer => self.import_layer_bytes(&loaded),
+                        OpenPurpose::Open | OpenPurpose::Dropped => self.load(loaded),
+                        OpenPurpose::ImportLayer if self.has_doc() => {
+                            self.import_layer_bytes(&loaded)
+                        }
+                        OpenPurpose::ImportLayer => {}
                     }
                 }
                 PlatformEvent::Error(e) => self.show_message("Could not read the file", e),
@@ -148,10 +175,20 @@ impl ChimpApp {
     }
 
     fn load(&mut self, loaded: Loaded) {
+        // Si ya está abierto, solo cambia a esa pestaña.
+        if let Some(path) = loaded.target.as_ref().and_then(|t| t.path())
+            && let Some(i) = self.tabs.find_path(&self.doc, &path)
+        {
+            self.tabs.switch(&mut self.doc, i);
+            return;
+        }
         match files::decode(&loaded.name, &loaded.bytes) {
             Ok((doc, report)) => {
                 // Un PNG se abre como sprite nuevo: guardarlo pide elegir .chimp o .aseprite.
                 let is_png = files::kind_of(&loaded.name) == Some(FileKind::Png);
+                if let Some(path) = loaded.target.as_ref().and_then(|t| t.path()) {
+                    self.recent.add(&path);
+                }
                 let location = DocLocation {
                     name: if is_png {
                         format!("{}.chimp", files::stem(&loaded.name))
@@ -160,7 +197,7 @@ impl ChimpApp {
                     },
                     target: loaded.target.filter(|_| !is_png),
                 };
-                self.reset_with(Editor::new(doc), location);
+                self.open_doc(DocState::new(Editor::new(doc), location));
                 if !report.warnings.is_empty() {
                     let body = report
                         .warnings
@@ -177,22 +214,23 @@ impl ChimpApp {
 
     /// Guarda en el archivo actual (o pregunta dónde). Devuelve si se guardó.
     pub(crate) fn save(&mut self) -> bool {
-        match self.location.target.clone() {
+        match self.doc.location.target.clone() {
             Some(target) => self.save_to(target),
             None => self.save_as(),
         }
     }
 
     pub(crate) fn save_as(&mut self) -> bool {
-        let multiple = self.editor.document.artboards.len() > 1;
-        let aseprite = files::kind_of(&self.location.name) == Some(FileKind::Aseprite) && !multiple;
+        let multiple = self.doc.editor.document.artboards.len() > 1;
+        let aseprite =
+            files::kind_of(&self.doc.location.name) == Some(FileKind::Aseprite) && !multiple;
         let ext = if aseprite { "aseprite" } else { "chimp" };
-        let stem = match &self.location.target {
+        let stem = match &self.doc.location.target {
             Some(t) => t.stem().to_string(),
-            None if self.location.name != "Untitled" => {
-                files::stem(&self.location.name).to_string()
+            None if !self.doc.location.name.starts_with("Untitled") => {
+                files::stem(&self.doc.location.name).to_string()
             }
-            None => self.editor.artboard().name.clone(),
+            None => self.doc.editor.artboard().name.clone(),
         };
         let chimp = FileFilter {
             name: "ChimpSprite",
@@ -213,18 +251,22 @@ impl ChimpApp {
     }
 
     fn save_to(&mut self, target: SaveTarget) -> bool {
-        let result = files::encode(&self.editor.document, &target.file_name).and_then(|bytes| {
-            self.platform
-                .write(&target, &bytes)
-                .map_err(FileError::Platform)
-        });
+        let result =
+            files::encode(&self.doc.editor.document, &target.file_name).and_then(|bytes| {
+                self.platform
+                    .write(&target, &bytes)
+                    .map_err(FileError::Platform)
+            });
         match result {
             Ok(()) => {
-                self.location = DocLocation {
+                if let Some(path) = target.path() {
+                    self.recent.add(&path);
+                }
+                self.doc.location = DocLocation {
                     name: target.file_name.clone(),
                     target: Some(target),
                 };
-                self.saved_version = self.editor.doc_version;
+                self.doc.saved_version = self.doc.editor.doc_version;
                 true
             }
             Err(e @ FileError::MultipleArtboards(_)) => {
@@ -246,18 +288,18 @@ impl ChimpApp {
     fn import_layer_bytes(&mut self, loaded: &Loaded) {
         let name = files::stem(&loaded.name).to_string();
         let result = cs_io::import::import_png_layer(
-            self.editor.sprite(),
+            self.doc.editor.sprite(),
             &loaded.bytes,
-            self.editor.frame,
+            self.doc.editor.frame,
             &name,
         );
         match result {
             Ok(cmd) => {
-                if self.editor.execute(cmd)
-                    && let Some(top) = self.editor.sprite().layers.last()
+                if self.doc.editor.execute(cmd)
+                    && let Some(top) = self.doc.editor.sprite().layers.last()
                 {
                     let id = top.id;
-                    self.editor.select_layer(id);
+                    self.doc.editor.select_layer(id);
                 }
             }
             Err(e) => self.show_message("Could not import", e.to_string()),
@@ -268,7 +310,7 @@ impl ChimpApp {
         self.export = Some(self.last_export.clone());
     }
 
-    /// Archivos soltados sobre la ventana: abre el primero.
+    /// Archivos soltados sobre la ventana: abre el primero en una pestaña nueva.
     pub(crate) fn handle_dropped_files(&mut self, ctx: &egui::Context) {
         let dropped = ctx.input(|i| i.raw.dropped_files.first().cloned());
         if let Some(file) = dropped
@@ -280,30 +322,45 @@ impl ChimpApp {
 
     /// Cerrar la ventana con cambios sin guardar pregunta primero.
     pub(crate) fn handle_close_request(&mut self, ctx: &egui::Context) {
-        if ctx.input(|i| i.viewport().close_requested()) && self.is_dirty() && !self.allow_close {
+        if ctx.input(|i| i.viewport().close_requested()) && self.any_dirty() && !self.allow_close {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.pending = Some(Pending::Quit);
         }
     }
 
-    /// Guarda en el navegador cada tanto mientras haya cambios; limpia al quedar todo guardado.
+    /// Guarda en el navegador las pestañas con cambios cada tanto; limpia si no queda ninguna.
     pub(crate) fn autosave(&mut self, ctx: &egui::Context) {
         let now = ctx.input(|i| i.time);
-        let (version, dirty) = (self.editor.doc_version, self.is_dirty());
-        if !dirty {
-            if self.autosaver.due(now, version, true) {
+        let dirty = self.tabs.dirty(&self.doc);
+        // Huella de versiones: cambia si cualquier pestaña cambia.
+        let fingerprint = self
+            .tabs
+            .docs(&self.doc)
+            .iter()
+            .enumerate()
+            .fold(0u64, |acc, (i, d)| {
+                acc.wrapping_mul(1_000_003)
+                    .wrapping_add(d.editor.doc_version ^ ((i as u64) << 48))
+            });
+        if dirty.is_empty() {
+            if self.autosaver.due(now, fingerprint, true) {
                 crate::autosave::storage::clear();
-                self.autosaver.mark_saved(now, version);
+                self.autosaver.mark_saved(now, fingerprint);
             }
             return;
         }
-        if !self.autosaver.due(now, version, dirty) {
+        if !self.autosaver.due(now, fingerprint, true) {
             return;
         }
-        let result = crate::autosave::encode(&self.editor.document, &self.location.name)
+        let docs = self.tabs.docs(&self.doc);
+        let entries: Vec<_> = dirty
+            .iter()
+            .map(|&i| (docs[i].location.name.as_str(), &docs[i].editor.document))
+            .collect();
+        let result = crate::autosave::encode(&entries)
             .and_then(|text| crate::autosave::storage::store(&text));
         match result {
-            Ok(()) => self.autosaver.mark_saved(now, version),
+            Ok(()) => self.autosaver.mark_saved(now, fingerprint),
             Err(e) => {
                 log::warn!("autosave disabled: {e}");
                 self.autosaver.disabled_reason = Some(e);
@@ -311,7 +368,7 @@ impl ChimpApp {
         }
     }
 
-    /// Pregunta si restaurar la sesión guardada en el navegador.
+    /// Pregunta si restaurar las sesiones guardadas en el navegador.
     pub(crate) fn show_restore(&mut self, ctx: &egui::Context) {
         let Some(restore) = &self.restore else {
             return;
@@ -322,10 +379,10 @@ impl ChimpApp {
             .resizable(false)
             .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
             .show(ctx, |ui| {
-                ui.label(format!(
-                    "\"{}\" has unsaved changes from your last visit.",
-                    restore.name
-                ));
+                ui.label("These documents have unsaved changes from your last visit:");
+                for r in restore {
+                    ui.label(format!("• {}", r.name));
+                }
                 ui.add_space(6.0);
                 ui.horizontal(|ui| {
                     if ui.button("Restore").clicked() {
@@ -338,14 +395,18 @@ impl ChimpApp {
             });
         match choice {
             Some(true) => {
-                let restore = self.restore.take().expect("restore");
-                let location = DocLocation {
-                    name: restore.name,
-                    target: None,
-                };
-                self.reset_with(Editor::new(restore.doc), location);
-                // Lo restaurado no está guardado en ningún archivo.
-                self.saved_version = u64::MAX;
+                for r in self.restore.take().expect("restore") {
+                    let mut doc = DocState::new(
+                        Editor::new(r.doc),
+                        DocLocation {
+                            name: r.name,
+                            target: None,
+                        },
+                    );
+                    // Lo restaurado no está guardado en ningún archivo.
+                    doc.saved_version = u64::MAX;
+                    self.open_doc(doc);
+                }
             }
             Some(false) => {
                 self.restore = None;
@@ -356,11 +417,15 @@ impl ChimpApp {
     }
 
     pub(crate) fn update_title(&mut self, ctx: &egui::Context) {
-        let title = format!(
-            "{}{} — ChimpSprite",
-            self.location.name,
-            if self.is_dirty() { " •" } else { "" }
-        );
+        let title = if self.has_doc() {
+            format!(
+                "{}{} — ChimpSprite",
+                self.doc.location.name,
+                if self.doc.is_dirty() { " •" } else { "" }
+            )
+        } else {
+            "ChimpSprite".to_string()
+        };
         if title != self.title {
             crate::platform::set_title(ctx, &title);
             self.title = title;
@@ -369,44 +434,8 @@ impl ChimpApp {
 
     /// Ventanas modales: cambios sin guardar, mensajes y exportación.
     pub(crate) fn show_dialogs(&mut self, ctx: &egui::Context) {
-        if self.pending.is_some() {
-            let mut choice = None;
-            egui::Window::new("Unsaved changes")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .show(ctx, |ui| {
-                    ui.label("Do you want to save your changes first?");
-                    ui.add_space(6.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Save").clicked() {
-                            choice = Some(0);
-                        }
-                        if ui.button("Discard").clicked() {
-                            choice = Some(1);
-                        }
-                        if ui.button("Cancel").clicked() {
-                            choice = Some(2);
-                        }
-                    });
-                });
-            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-                choice = Some(2);
-            }
-            match choice {
-                Some(0) => {
-                    let pending = self.pending.take().expect("pending");
-                    if self.save() {
-                        self.perform(pending, ctx);
-                    }
-                }
-                Some(1) => {
-                    let pending = self.pending.take().expect("pending");
-                    self.perform(pending, ctx);
-                }
-                Some(_) => self.pending = None,
-                None => {}
-            }
+        if let Some(pending) = self.pending {
+            self.unsaved_dialog(ctx, pending);
         }
 
         if let Some(message) = &self.message {
@@ -431,7 +460,7 @@ impl ChimpApp {
         }
 
         if let Some(mut dialog) = self.export.take() {
-            match dialog.show(ctx, &self.editor, &self.platform) {
+            match dialog.show(ctx, &self.doc.editor, &self.platform) {
                 ExportResult::Open => self.export = Some(dialog),
                 ExportResult::Cancel => self.last_export = dialog,
                 ExportResult::Done(files) => {
@@ -448,6 +477,82 @@ impl ChimpApp {
                     self.show_message("Could not export", e);
                 }
             }
+        }
+    }
+
+    fn unsaved_dialog(&mut self, ctx: &egui::Context, pending: Pending) {
+        let infos = self.tabs.infos(&self.doc);
+        let (question, names): (String, Vec<String>) = match pending {
+            Pending::CloseTab(i) => (
+                format!(
+                    "Save changes to \"{}\" before closing?",
+                    infos.get(i).map_or("", |t| t.name.as_str())
+                ),
+                Vec::new(),
+            ),
+            Pending::Quit => (
+                "These documents have unsaved changes:".to_string(),
+                self.tabs
+                    .dirty(&self.doc)
+                    .iter()
+                    .map(|&i| infos[i].name.clone())
+                    .collect(),
+            ),
+        };
+        let (save, discard) = match pending {
+            Pending::CloseTab(_) => ("Save", "Discard"),
+            Pending::Quit => ("Save all", "Discard all"),
+        };
+        let mut choice = None;
+        egui::Window::new("Unsaved changes")
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+            .show(ctx, |ui| {
+                ui.label(question);
+                for name in &names {
+                    ui.label(format!("• {name}"));
+                }
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if ui.button(save).clicked() {
+                        choice = Some(0);
+                    }
+                    if ui.button(discard).clicked() {
+                        choice = Some(1);
+                    }
+                    if ui.button("Cancel").clicked() {
+                        choice = Some(2);
+                    }
+                });
+            });
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            choice = Some(2);
+        }
+        let Some(choice) = choice else {
+            return;
+        };
+        self.pending = None;
+        match (pending, choice) {
+            (Pending::CloseTab(i), 0) => {
+                self.tabs.switch(&mut self.doc, i);
+                if self.save() {
+                    self.close_tab(i);
+                }
+            }
+            (Pending::CloseTab(i), 1) => self.close_tab(i),
+            (Pending::Quit, 0) => {
+                // Guarda una por una; si alguna se cancela, no sale.
+                for i in self.tabs.dirty(&self.doc) {
+                    self.tabs.switch(&mut self.doc, i);
+                    if !self.save() {
+                        return;
+                    }
+                }
+                self.quit(ctx);
+            }
+            (Pending::Quit, 1) => self.quit(ctx),
+            _ => {}
         }
     }
 }

@@ -10,33 +10,33 @@ mod editor;
 mod export_dialog;
 mod file_actions;
 mod files;
+mod home;
 mod panels;
 mod platform;
+mod recent;
+mod tabs;
 mod theme;
 mod timeline;
 mod widgets;
 
-use cs_core::{ArtboardId, ColorMode, Sprite};
+use cs_core::{ColorMode, Sprite};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 
 pub use editor::{Editor, ToolKind};
 
 const NEW_SPRITE_SIZE: u32 = 64;
+const RECENT_KEY: &str = "chimpsprite.recent";
 
 pub struct ChimpApp {
-    editor: Editor,
-    canvas: canvas::CanvasView,
+    /// Documento de la pestaña activa (un marcador vacío si se está en Home).
+    doc: tabs::DocState,
+    tabs: tabs::Tabs,
     capture: capture::Capture,
-    /// Texto del nombre del artboard activo mientras se edita.
-    artboard_name: (ArtboardId, String),
     canvas_size: Option<canvas_size::CanvasSizeDialog>,
-    timeline: timeline::TimelineState,
-    location: file_actions::DocLocation,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
-    restore: Option<autosave::Restore>,
-    /// `Editor::doc_version` en el último guardado.
-    saved_version: u64,
+    restore: Option<Vec<autosave::Restore>>,
+    recent: recent::RecentFiles,
     pending: Option<file_actions::Pending>,
     message: Option<file_actions::Message>,
     export: Option<export_dialog::ExportDialog>,
@@ -51,23 +51,19 @@ impl ChimpApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
         let launch = platform::launch_options();
-        let editor = if launch.demo {
-            demo::editor()
-        } else {
-            new_editor()
-        };
+        let recent = cc
+            .storage
+            .and_then(|s| eframe::get_value(s, RECENT_KEY))
+            .unwrap_or_default();
         let mut app = Self {
-            editor,
-            canvas: canvas::CanvasView::default(),
+            doc: tabs::DocState::untitled(""),
+            tabs: tabs::Tabs::default(),
             capture: capture::Capture::from_env(),
-            artboard_name: (ArtboardId(0), String::new()),
             canvas_size: None,
-            timeline: timeline::TimelineState::default(),
-            location: file_actions::DocLocation::default(),
             platform: platform::Platform::default(),
             autosaver: autosave::Autosaver::default(),
             restore: None,
-            saved_version: 0,
+            recent,
             pending: None,
             message: None,
             export: None,
@@ -75,17 +71,20 @@ impl ChimpApp {
             allow_close: false,
             title: String::new(),
         };
-        app.saved_version = app.editor.doc_version;
+        if launch.demo {
+            app.open_demo();
+        }
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(path) = &launch.open {
             app.platform.open_path(path, platform::OpenPurpose::Open);
         }
-        // Sesión guardada en el navegador (solo web).
+        // Sesiones guardadas en el navegador (solo web).
         if !launch.demo
             && let Some(text) = autosave::storage::load()
         {
             match autosave::decode(&text) {
-                Ok((doc, name)) => app.restore = Some(autosave::Restore { name, doc }),
+                Ok(docs) if !docs.is_empty() => app.restore = Some(docs),
+                Ok(_) => {}
                 Err(e) => {
                     log::warn!("discarding unreadable autosave: {e}");
                     autosave::storage::clear();
@@ -94,7 +93,7 @@ impl ChimpApp {
         }
         platform::install_unload_guard();
         // Desarrollo: abre el diálogo con un ancho de ejemplo para capturas.
-        if std::env::var_os("CHIMPSPRITE_DEMO_CANVAS_SIZE").is_some() {
+        if std::env::var_os("CHIMPSPRITE_DEMO_CANVAS_SIZE").is_some() && app.has_doc() {
             app.open_canvas_size();
             if let Some(d) = &mut app.canvas_size {
                 d.set_anchor(0, 1);
@@ -104,23 +103,32 @@ impl ChimpApp {
         app
     }
 
+    /// `false` en Home.
+    pub(crate) fn has_doc(&self) -> bool {
+        self.tabs.active().is_some()
+    }
+
     fn open_canvas_size(&mut self) {
-        self.canvas_size = Some(canvas_size::CanvasSizeDialog::new(self.editor.artboard()));
+        self.canvas_size = Some(canvas_size::CanvasSizeDialog::new(
+            self.doc.editor.artboard(),
+        ));
     }
 
     fn update_canvas_size(&mut self, ctx: &egui::Context) {
         let Some(dialog) = &mut self.canvas_size else {
             return;
         };
-        if self.editor.document.artboard(dialog.artboard).is_none() {
+        if self.tabs.active().is_none()
+            || self.doc.editor.document.artboard(dialog.artboard).is_none()
+        {
             self.canvas_size = None;
             return;
         }
         match canvas_size::show(ctx, dialog) {
             canvas_size::DialogResult::Open => {}
             canvas_size::DialogResult::Accept => {
-                if let Some(cmd) = dialog.command(&self.editor.document) {
-                    self.editor.execute_doc(cmd);
+                if let Some(cmd) = dialog.command(&self.doc.editor.document) {
+                    self.doc.editor.execute_doc(cmd);
                 }
                 self.canvas_size = None;
             }
@@ -134,17 +142,31 @@ impl ChimpApp {
             return;
         }
         let shortcut = |m, k| KeyboardShortcut::new(m, k);
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::N))) {
+            self.new_document();
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::O))) {
+            self.open_dialog(ctx);
+        }
+        let prev_tab = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Tab);
+        if ctx.input_mut(|i| i.consume_shortcut(&prev_tab)) {
+            self.tabs.cycle(&mut self.doc, false);
+        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::Tab))) {
+            self.tabs.cycle(&mut self.doc, true);
+        }
+        if !self.has_doc() {
+            return;
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::W)))
+            && let Some(i) = self.tabs.active()
+        {
+            self.request_close_tab(i);
+        }
         let save_as = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
         if ctx.input_mut(|i| i.consume_shortcut(&save_as)) {
             self.save_as();
         } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::S))) {
             self.save();
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::N))) {
-            self.request(file_actions::Pending::New, ctx);
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::O))) {
-            self.request(file_actions::Pending::Open, ctx);
         }
         if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::E))) {
             self.open_export();
@@ -153,24 +175,24 @@ impl ChimpApp {
         let redo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
         let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
         if ctx.input_mut(|i| i.consume_shortcut(&redo_shift) || i.consume_shortcut(&redo)) {
-            self.editor.redo();
+            self.doc.editor.redo();
         } else if ctx.input_mut(|i| i.consume_shortcut(&undo)) {
-            self.editor.undo();
+            self.doc.editor.undo();
         }
         let select_all = KeyboardShortcut::new(Modifiers::COMMAND, Key::A);
         let deselect = KeyboardShortcut::new(Modifiers::COMMAND, Key::D);
         if ctx.input_mut(|i| i.consume_shortcut(&select_all)) {
-            self.editor.select_all();
+            self.doc.editor.select_all();
         }
         if ctx.input_mut(|i| i.consume_shortcut(&deselect)) {
-            self.editor.deselect();
+            self.doc.editor.deselect();
         }
-        if ctx.egui_wants_keyboard_input() || self.editor.is_painting() {
+        if ctx.egui_wants_keyboard_input() || self.doc.editor.is_painting() {
             return;
         }
         let new_frame = KeyboardShortcut::new(Modifiers::ALT, Key::N);
         if ctx.input_mut(|i| i.consume_shortcut(&new_frame)) {
-            self.editor.duplicate_frame();
+            self.doc.editor.duplicate_frame();
         }
         let pressed: Vec<(Key, bool)> = ctx.input(|i| {
             if i.modifiers.command || i.modifiers.alt {
@@ -191,7 +213,7 @@ impl ChimpApp {
                 .collect()
         });
         for (key, shift) in pressed {
-            let editor = &mut self.editor;
+            let editor = &mut self.doc.editor;
             match key {
                 Key::O if shift => editor.tool = ToolKind::Artboard,
                 Key::N if shift => editor.add_layer(cs_core::LayerKind::Image),
@@ -223,15 +245,16 @@ impl ChimpApp {
     }
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
+        let has_doc = self.has_doc();
         egui::MenuBar::new().ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 let ctx = ui.ctx().clone();
                 let item = |text: &str, keys: &str| egui::Button::new(text).shortcut_text(keys);
                 if ui.add(item("New", "Ctrl+N")).clicked() {
-                    self.request(file_actions::Pending::New, &ctx);
+                    self.new_document();
                 }
                 if ui.add(item("Open…", "Ctrl+O")).clicked() {
-                    self.request(file_actions::Pending::Open, &ctx);
+                    self.open_dialog(&ctx);
                 }
                 ui.separator();
                 let (save, save_as) = if self.platform.saves_by_download() {
@@ -239,61 +262,156 @@ impl ChimpApp {
                 } else {
                     ("Save", "Save As…")
                 };
-                if ui.add(item(save, "Ctrl+S")).clicked() {
+                if ui.add_enabled(has_doc, item(save, "Ctrl+S")).clicked() {
                     self.save();
                 }
-                if ui.add(item(save_as, "Ctrl+Shift+S")).clicked() {
+                if ui
+                    .add_enabled(has_doc, item(save_as, "Ctrl+Shift+S"))
+                    .clicked()
+                {
                     self.save_as();
                 }
+                let close = item(
+                    "Close",
+                    if cfg!(target_arch = "wasm32") {
+                        ""
+                    } else {
+                        "Ctrl+W"
+                    },
+                );
+                if ui.add_enabled(has_doc, close).clicked()
+                    && let Some(i) = self.tabs.active()
+                {
+                    self.request_close_tab(i);
+                }
                 ui.separator();
-                if ui.button("Import PNG as Layer…").clicked() {
+                if ui
+                    .add_enabled(has_doc, egui::Button::new("Import PNG as Layer…"))
+                    .clicked()
+                {
                     self.import_layer(&ctx);
                 }
-                if ui.add(item("Export…", "Ctrl+E")).clicked() {
+                if ui.add_enabled(has_doc, item("Export…", "Ctrl+E")).clicked() {
                     self.open_export();
                 }
                 ui.separator();
                 if ui.button("Quit").clicked() {
-                    self.request(file_actions::Pending::Quit, &ctx);
+                    self.request_quit(&ctx);
                 }
             });
-            ui.menu_button("Sprite", |ui| {
-                if ui.button("Canvas Size…").clicked() {
+            ui.add_enabled_ui(has_doc, |ui| {
+                ui.menu_button("Sprite", |ui| {
+                    if ui.button("Canvas Size…").clicked() {
+                        self.open_canvas_size();
+                    }
+                });
+                ui.menu_button("Edit", |ui| {
+                    let undo = egui::Button::new("Undo").shortcut_text("Ctrl+Z");
+                    if ui
+                        .add_enabled(self.doc.editor.history.can_undo(), undo)
+                        .clicked()
+                    {
+                        self.doc.editor.undo();
+                    }
+                    let redo = egui::Button::new("Redo").shortcut_text("Ctrl+Y");
+                    if ui
+                        .add_enabled(self.doc.editor.history.can_redo(), redo)
+                        .clicked()
+                    {
+                        self.doc.editor.redo();
+                    }
+                    ui.separator();
+                    if ui
+                        .add(egui::Button::new("Select All").shortcut_text("Ctrl+A"))
+                        .clicked()
+                    {
+                        self.doc.editor.select_all();
+                    }
+                    let has_selection = self.doc.editor.selection.is_some();
+                    let deselect = egui::Button::new("Deselect").shortcut_text("Ctrl+D");
+                    if ui.add_enabled(has_selection, deselect).clicked() {
+                        self.doc.editor.deselect();
+                    }
+                    let clear = egui::Button::new("Clear").shortcut_text("Del");
+                    if ui.add_enabled(has_selection, clear).clicked() {
+                        self.doc.editor.clear_selection_content();
+                    }
+                });
+            });
+        });
+    }
+
+    /// Barra de pestañas: Home + documentos.
+    fn tab_bar(&mut self, ui: &mut egui::Ui) {
+        let mut switch_to = None;
+        let mut close = None;
+        let mut home = false;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 2.0;
+            if ui.selectable_label(!self.has_doc(), "🏠 Home").clicked() {
+                home = true;
+            }
+            for (i, tab) in self.tabs.infos(&self.doc).into_iter().enumerate() {
+                let active = self.tabs.active() == Some(i);
+                let label = format!("{}{}", tab.name, if tab.dirty { " •" } else { "" });
+                ui.add_space(4.0);
+                let response = ui.selectable_label(active, label);
+                if response.clicked() {
+                    switch_to = Some(i);
+                }
+                if response.middle_clicked() {
+                    close = Some(i);
+                }
+                if ui.small_button("×").on_hover_text("Close").clicked() {
+                    close = Some(i);
+                }
+            }
+        });
+        if home {
+            self.tabs.go_home(&mut self.doc);
+        }
+        if let Some(i) = switch_to {
+            self.tabs.switch(&mut self.doc, i);
+        }
+        if let Some(i) = close {
+            self.request_close_tab(i);
+        }
+    }
+
+    /// Paneles del editor (cuando hay un documento activo).
+    fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) {
+        egui::Panel::bottom("timeline")
+            .resizable(true)
+            .default_size(190.0)
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline)
+                });
+            });
+        egui::Panel::left("tools")
+            .resizable(false)
+            .exact_size(150.0)
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.doc.editor));
+            });
+        egui::Panel::right("palette")
+            .default_size(220.0)
+            .show(ui, |ui| {
+                panels::palette(ui, &mut self.doc.editor);
+                ui.add_space(12.0);
+                let open = ui
+                    .add_enabled_ui(!modal, |ui| {
+                        panels::artboards(ui, &mut self.doc.editor, &mut self.doc.artboard_name)
+                    })
+                    .inner;
+                if open {
                     self.open_canvas_size();
                 }
             });
-            ui.menu_button("Edit", |ui| {
-                let undo = egui::Button::new("Undo").shortcut_text("Ctrl+Z");
-                if ui
-                    .add_enabled(self.editor.history.can_undo(), undo)
-                    .clicked()
-                {
-                    self.editor.undo();
-                }
-                let redo = egui::Button::new("Redo").shortcut_text("Ctrl+Y");
-                if ui
-                    .add_enabled(self.editor.history.can_redo(), redo)
-                    .clicked()
-                {
-                    self.editor.redo();
-                }
-                ui.separator();
-                if ui
-                    .add(egui::Button::new("Select All").shortcut_text("Ctrl+A"))
-                    .clicked()
-                {
-                    self.editor.select_all();
-                }
-                let has_selection = self.editor.selection.is_some();
-                let deselect = egui::Button::new("Deselect").shortcut_text("Ctrl+D");
-                if ui.add_enabled(has_selection, deselect).clicked() {
-                    self.editor.deselect();
-                }
-                let clear = egui::Button::new("Clear").shortcut_text("Del");
-                if ui.add_enabled(has_selection, clear).clicked() {
-                    self.editor.clear_selection_content();
-                }
-            });
+        egui::CentralPanel::no_frame().show(ui, |ui| {
+            self.doc
+                .canvas
+                .show(ui, &mut self.doc.editor, self.canvas_size.as_mut())
         });
     }
 }
@@ -313,9 +431,9 @@ impl eframe::App for ChimpApp {
         self.handle_dropped_files(&ctx);
         self.handle_platform_events(&ctx);
         self.handle_shortcuts(&ctx);
-        if self.editor.playing {
+        if self.has_doc() && self.doc.editor.playing {
             let dt_ms = ctx.input(|i| i.stable_dt) as f64 * 1000.0;
-            self.editor.tick(dt_ms);
+            self.doc.editor.tick(dt_ms);
             ctx.request_repaint();
         }
 
@@ -323,53 +441,39 @@ impl eframe::App for ChimpApp {
         egui::Panel::top("menu").show(ui, |ui| {
             ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
         });
+        egui::Panel::top("tabs").show(ui, |ui| {
+            ui.add_enabled_ui(!modal, |ui| self.tab_bar(ui));
+        });
         egui::Panel::bottom("status").show(ui, |ui| {
             let notice = self
                 .autosaver
                 .disabled_reason
                 .as_ref()
                 .map(|r| format!("Autosave off: {r}"));
-            panels::status_bar(ui, &self.editor, &self.canvas, notice.as_deref())
+            if self.has_doc() {
+                panels::status_bar(ui, &self.doc.editor, &self.doc.canvas, notice.as_deref());
+            } else {
+                ui.label(format!("ChimpSprite {}", env!("CARGO_PKG_VERSION")));
+            }
         });
-        egui::Panel::bottom("timeline")
-            .resizable(true)
-            .default_size(190.0)
-            .show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| {
-                    timeline::show(ui, &mut self.editor, &mut self.timeline)
-                });
+        if self.has_doc() {
+            self.editor_panels(ui, modal);
+        } else {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| self.home(ui));
             });
-        egui::Panel::left("tools")
-            .resizable(false)
-            .exact_size(150.0)
-            .show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.editor));
-            });
-        egui::Panel::right("palette")
-            .default_size(220.0)
-            .show(ui, |ui| {
-                panels::palette(ui, &mut self.editor);
-                ui.add_space(12.0);
-                let open = ui
-                    .add_enabled_ui(!modal, |ui| {
-                        panels::artboards(ui, &mut self.editor, &mut self.artboard_name)
-                    })
-                    .inner;
-                if open {
-                    self.open_canvas_size();
-                }
-            });
-        egui::CentralPanel::no_frame().show(ui, |ui| {
-            self.canvas
-                .show(ui, &mut self.editor, self.canvas_size.as_mut())
-        });
+        }
         self.update_canvas_size(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
         self.autosave(&ctx);
         self.update_title(&ctx);
-        platform::set_unsaved(self.is_dirty());
+        platform::set_unsaved(self.any_dirty());
 
         self.capture.update(&ctx);
+    }
+
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, RECENT_KEY, &self.recent);
     }
 }

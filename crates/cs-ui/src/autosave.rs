@@ -19,14 +19,19 @@ struct Payload {
     chimp: String,
 }
 
-/// Documento listo para guardar; `Err` si no cabe.
-pub fn encode(doc: &Document, name: &str) -> Result<String, String> {
-    let bytes = cs_io::chimp::write(doc).map_err(|e| e.to_string())?;
-    let text = serde_json::to_string(&Payload {
-        name: name.to_string(),
-        chimp: STANDARD.encode(bytes),
-    })
-    .map_err(|e| e.to_string())?;
+/// Documentos (nombre, contenido) listos para guardar; `Err` si no caben.
+pub fn encode(docs: &[(&str, &Document)]) -> Result<String, String> {
+    let payloads = docs
+        .iter()
+        .map(|(name, doc)| {
+            let bytes = cs_io::chimp::write(doc).map_err(|e| e.to_string())?;
+            Ok(Payload {
+                name: name.to_string(),
+                chimp: STANDARD.encode(bytes),
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    let text = serde_json::to_string(&payloads).map_err(|e| e.to_string())?;
     if text.len() > MAX_ENCODED {
         return Err(format!(
             "the document is too large for browser autosave ({} KB)",
@@ -36,11 +41,16 @@ pub fn encode(doc: &Document, name: &str) -> Result<String, String> {
     Ok(text)
 }
 
-pub fn decode(text: &str) -> Result<(Document, String), String> {
-    let payload: Payload = serde_json::from_str(text).map_err(|e| e.to_string())?;
-    let bytes = STANDARD.decode(payload.chimp).map_err(|e| e.to_string())?;
-    let (doc, _) = cs_io::chimp::read(&bytes).map_err(|e| e.to_string())?;
-    Ok((doc, payload.name))
+pub fn decode(text: &str) -> Result<Vec<Restore>, String> {
+    let payloads: Vec<Payload> = serde_json::from_str(text).map_err(|e| e.to_string())?;
+    payloads
+        .into_iter()
+        .map(|p| {
+            let bytes = STANDARD.decode(p.chimp).map_err(|e| e.to_string())?;
+            let (doc, _) = cs_io::chimp::read(&bytes).map_err(|e| e.to_string())?;
+            Ok(Restore { name: p.name, doc })
+        })
+        .collect()
 }
 
 /// Sesión encontrada al iniciar, esperando a que el usuario decida.
@@ -118,10 +128,13 @@ mod tests {
     #[test]
     fn encode_decode_roundtrip() {
         let doc = Document::with_sprite("hero", Sprite::new(8, 8, ColorMode::Rgba));
-        let text = encode(&doc, "game.chimp").unwrap();
-        let (back, name) = decode(&text).unwrap();
-        assert_eq!(name, "game.chimp");
-        assert_eq!(back.artboards[0].name, "hero");
+        let other = Document::with_sprite("coin", Sprite::new(4, 4, ColorMode::Rgba));
+        let text = encode(&[("game.chimp", &doc), ("Untitled 2", &other)]).unwrap();
+        let back = decode(&text).unwrap();
+        assert_eq!(back.len(), 2);
+        assert_eq!(back[0].name, "game.chimp");
+        assert_eq!(back[0].doc.artboards[0].name, "hero");
+        assert_eq!(back[1].doc.artboards[0].name, "coin");
         assert!(decode("{nope").is_err());
     }
 
@@ -152,7 +165,7 @@ mod tests {
         .apply(&mut sprite)
         .unwrap();
         let doc = Document::with_sprite("noise", sprite);
-        assert!(encode(&doc, "noise.chimp").is_err());
+        assert!(encode(&[("noise.chimp", &doc)]).is_err());
     }
 
     #[test]

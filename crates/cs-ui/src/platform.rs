@@ -123,6 +123,24 @@ impl Platform {
         }
     }
 
+    /// Abre el diálogo directamente en `dir` (carpetas recientes).
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn open_file_in(
+        &self,
+        filters: &[FileFilter],
+        dir: &Path,
+        purpose: OpenPurpose,
+        _ctx: &egui::Context,
+    ) {
+        let mut dialog = rfd::FileDialog::new().set_directory(dir);
+        for f in filters {
+            dialog = dialog.add_filter(f.name, f.extensions);
+        }
+        if let Some(path) = dialog.pick_file() {
+            self.open_path(&path, purpose);
+        }
+    }
+
     #[cfg(target_arch = "wasm32")]
     pub fn open_file(&self, filters: &[FileFilter], purpose: OpenPurpose, ctx: &egui::Context) {
         let mut dialog = rfd::AsyncFileDialog::new();

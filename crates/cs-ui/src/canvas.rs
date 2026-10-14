@@ -58,13 +58,6 @@ impl Default for CanvasView {
 }
 
 impl CanvasView {
-    /// Fuerza a recomponer y reajustar el zoom (p. ej. tras crear un documento nuevo).
-    pub fn reset(&mut self) {
-        self.rendered_revision = None;
-        self.fitted = false;
-        self.textures.clear();
-    }
-
     /// Posición en pantalla del origen del mundo.
     fn origin(&self, rect: Rect) -> Pos2 {
         rect.center() + self.pan
