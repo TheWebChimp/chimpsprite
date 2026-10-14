@@ -889,6 +889,9 @@ dependencies = [
 [[package]]
 name = "cs-raster"
 version = "0.1.0"
+dependencies = [
+ "cs-core",
+]
 
 [[package]]
 name = "cs-render"

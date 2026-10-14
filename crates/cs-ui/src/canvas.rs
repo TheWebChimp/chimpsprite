@@ -53,6 +53,32 @@ pub struct CanvasView {
     sym_drag: Option<(SymHandle, (i32, i32))>,
     /// El puntero está sobre una regla.
     over_ruler: bool,
+    /// Dibujar el cursor de cuentagotas (el del sistema se oculta).
+    draw_pipette: bool,
+}
+
+/// Margen (en pantalla) desde el borde del lienzo en el que empieza el auto-scroll.
+const AUTOSCROLL_MARGIN: f32 = 24.0;
+/// Velocidad máxima del auto-scroll en píxeles de pantalla por segundo.
+const AUTOSCROLL_SPEED: f32 = 700.0;
+
+/// Velocidad de auto-scroll (px/s) cuando el puntero arrastra cerca o fuera de `area`.
+/// Negativa hacia la izquierda/arriba; crece con la distancia y se satura.
+fn autoscroll_velocity(area: Rect, p: Pos2) -> Vec2 {
+    let axis = |v: f32, min: f32, max: f32| {
+        let overshoot = if v < min + AUTOSCROLL_MARGIN {
+            v - (min + AUTOSCROLL_MARGIN)
+        } else if v > max - AUTOSCROLL_MARGIN {
+            v - (max - AUTOSCROLL_MARGIN)
+        } else {
+            0.0
+        };
+        (overshoot / (AUTOSCROLL_MARGIN * 6.0)).clamp(-1.0, 1.0) * AUTOSCROLL_SPEED
+    };
+    Vec2::new(
+        axis(p.x, area.left(), area.right()),
+        axis(p.y, area.top(), area.bottom()),
+    )
 }
 
 /// Parte del eje de simetría que se arrastra.
@@ -104,6 +130,7 @@ impl Default for CanvasView {
             ruler_drag: None,
             sym_drag: None,
             over_ruler: false,
+            draw_pipette: false,
         }
     }
 }
@@ -483,6 +510,7 @@ impl CanvasView {
             }
         }
 
+        self.draw_pipette = false;
         // Paneo con botón medio o espacio + arrastre.
         let space = ui.input(|i| i.key_down(egui::Key::Space));
         if response.dragged_by(egui::PointerButton::Middle)
@@ -593,6 +621,26 @@ impl CanvasView {
                 _ => editor.pointer_press(world, pressed_secondary, modifiers.alt, slop),
             }
         }
+        // Auto-scroll: arrastrando cerca o fuera del borde, la vista se desplaza.
+        let dragging = editor.is_painting() || self.ruler_drag.is_some() || self.sym_drag.is_some();
+        if dragging
+            && any_down
+            && !space
+            && !modal
+            && let Some(p) = pointer
+        {
+            let area = if view.rulers {
+                Rect::from_min_max(rect.min + Vec2::splat(RULER_PX), rect.max)
+            } else {
+                rect
+            };
+            let velocity = autoscroll_velocity(area, p);
+            if velocity != Vec2::ZERO {
+                let dt = ui.input(|i| i.stable_dt).min(0.05);
+                self.pan -= velocity * dt;
+                ui.ctx().request_repaint();
+            }
+        }
         if editor.is_painting() {
             if any_down {
                 if let Some(p) = pointer {
@@ -629,6 +677,9 @@ impl CanvasView {
             ))
         } else if editor.active_tool() == ToolKind::Move {
             Some(egui::CursorIcon::Move)
+        } else if editor.active_tool() == ToolKind::Eyedropper {
+            self.draw_pipette = true;
+            Some(egui::CursorIcon::None)
         } else {
             Some(egui::CursorIcon::Crosshair)
         };
@@ -893,6 +944,18 @@ impl CanvasView {
             let pointer = response.hover_pos().or(ui.ctx().pointer_interact_pos());
             self.draw_rulers(&painter, rect, editor, pointer);
         }
+
+        if self.draw_pipette
+            && let Some(p) = response.hover_pos()
+        {
+            // Color que se tomaría (de la capa actual, como el cuentagotas).
+            let color = self.hover.and_then(|(x, y)| {
+                let s = editor.sprite();
+                let inside = x >= 0 && y >= 0 && x < s.width as i32 && y < s.height as i32;
+                inside.then(|| editor.resolve(s.pixel(editor.layer, editor.frame, x, y)))
+            });
+            draw_pipette(&painter, p, color);
+        }
     }
 
     /// Reglas en píxeles del artboard activo (origen en su esquina superior izquierda).
@@ -978,6 +1041,51 @@ impl CanvasView {
             let mark = Stroke::new(1.0, theme::ACCENT);
             painter.vline(p.x, top.y_range(), mark);
             painter.hline(left.x_range(), p.y, mark);
+        }
+    }
+}
+
+/// Cursor de cuentagotas: la punta está exactamente en `tip`; al lado, el color de debajo.
+fn draw_pipette(painter: &egui::Painter, tip: Pos2, color: Option<cs_core::Rgba>) {
+    let d = Vec2::new(1.0, -1.0).normalized();
+    // Tamaño general del cursor.
+    let k = 1.5;
+    let dark = Color32::from_rgb(0x14, 0x14, 0x18);
+    let needle_end = tip + d * (5.0 * k);
+    let tube_end = tip + d * (14.0 * k);
+    let bulb = tip + d * (18.0 * k);
+    // Contorno oscuro y luego relleno claro, para que se vea sobre cualquier fondo.
+    painter.line_segment([tip, needle_end], Stroke::new(3.0 * k, dark));
+    painter.line_segment([needle_end, tube_end], Stroke::new(7.0 * k, dark));
+    painter.circle_filled(bulb, 4.5 * k, dark);
+    painter.line_segment([tip, needle_end], Stroke::new(1.2 * k, Color32::WHITE));
+    painter.line_segment(
+        [needle_end, tube_end],
+        Stroke::new(4.0 * k, Color32::from_rgb(0xdd, 0xe6, 0xf0)),
+    );
+    let perp = Vec2::new(d.y, -d.x) * (4.5 * k);
+    painter.line_segment(
+        [tube_end - perp, tube_end + perp],
+        Stroke::new(2.5 * k, dark),
+    );
+    painter.circle_filled(bulb, 3.0 * k, theme::ACCENT);
+    // Muestra del color bajo la punta.
+    let swatch = Rect::from_min_size(tip + Vec2::splat(8.0 * k), Vec2::splat(12.0 * k));
+    painter.rect_filled(swatch.expand(1.0), 2.0, dark);
+    match color {
+        Some(c) if c.a > 0 => {
+            painter.rect_filled(
+                swatch,
+                1.0,
+                Color32::from_rgba_unmultiplied(c.r, c.g, c.b, 255),
+            );
+        }
+        _ => {
+            painter.rect_filled(swatch, 1.0, theme::CHECKER_LIGHT);
+            painter.line_segment(
+                [swatch.left_bottom(), swatch.right_top()],
+                Stroke::new(1.5, Color32::from_rgb(0xd9, 0x57, 0x63)),
+            );
         }
     }
 }
@@ -1108,5 +1216,28 @@ fn draw_marching_ants(painter: &egui::Painter, mask: &Mask, origin: Pos2, zoom: 
                 painter.line_segment([a, b], Stroke::new(1.0, color(n)));
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn autoscroll_only_near_edges_and_grows_with_distance() {
+        let area = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(400.0, 300.0));
+        assert_eq!(
+            autoscroll_velocity(area, Pos2::new(200.0, 150.0)),
+            Vec2::ZERO
+        );
+        let near = autoscroll_velocity(area, Pos2::new(390.0, 150.0));
+        let far = autoscroll_velocity(area, Pos2::new(460.0, 150.0));
+        assert!(near.x > 0.0 && far.x > near.x && near.y == 0.0);
+        let up_left = autoscroll_velocity(area, Pos2::new(-500.0, -500.0));
+        assert_eq!(
+            up_left,
+            Vec2::new(-AUTOSCROLL_SPEED, -AUTOSCROLL_SPEED),
+            "saturates"
+        );
     }
 }
