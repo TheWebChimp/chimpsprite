@@ -1,5 +1,6 @@
 //! Herramientas como máquinas de estado: eventos de puntero → comandos.
 
+mod artboard;
 mod bucket;
 mod eyedropper;
 mod move_tool;
@@ -7,6 +8,7 @@ mod pencil;
 mod select;
 mod shape;
 
+pub use artboard::{ArtboardHit, ArtboardTool, Edges, hit_test};
 pub use bucket::Bucket;
 pub use cs_raster::Point;
 pub use eyedropper::Eyedropper;
