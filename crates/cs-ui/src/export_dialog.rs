@@ -1,12 +1,11 @@
 //! Diálogo "Export": formato, alcance, escala y opciones de spritesheet.
 
-use std::path::{Path, PathBuf};
-
 use cs_io::export::{self, JsonFormat, SheetLayout};
 use eframe::egui;
 
 use crate::editor::Editor;
-use crate::files::{FileError, write_atomic};
+use crate::files::{self, FileError};
+use crate::platform::{FileFilter, Platform, SaveTarget};
 use crate::widgets;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -82,8 +81,8 @@ impl Default for ExportDialog {
 pub enum ExportResult {
     Open,
     Cancel,
-    /// Archivos escritos.
-    Done(Vec<PathBuf>),
+    /// Archivos escritos (rutas en escritorio, nombres descargados en web).
+    Done(Vec<String>),
     Failed(String),
 }
 
@@ -100,37 +99,33 @@ impl ExportDialog {
         }
     }
 
-    /// Escribe los archivos; `path` es el elegido por el usuario (PNG o GIF principal).
-    pub fn export(&self, editor: &Editor, path: &Path) -> Result<Vec<PathBuf>, FileError> {
+    /// Genera los archivos a escribir. `file_name` es el principal (PNG o GIF); los demás
+    /// (JSON, secuencia) se nombran a partir de él.
+    pub fn build(
+        &self,
+        editor: &Editor,
+        file_name: &str,
+    ) -> Result<Vec<(String, Vec<u8>)>, FileError> {
         let sprite = editor.sprite();
         let name = editor.artboard().name.clone();
-        let file_name = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("sheet.png")
-            .to_string();
-        let json_path = path.with_extension("json");
-        let mut written = Vec::new();
-        match self.format {
-            ExportFormat::Png => {
-                write_atomic(path, &export::export_png(sprite, editor.frame, self.scale)?)?;
-                written.push(path.to_path_buf());
-            }
-            ExportFormat::PngSequence => {
-                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("frame");
-                for (i, png) in export::export_png_sequence(sprite, self.scale)?
-                    .into_iter()
-                    .enumerate()
-                {
-                    let p = path.with_file_name(format!("{stem}_{:03}.png", i + 1));
-                    write_atomic(&p, &png)?;
-                    written.push(p);
-                }
-            }
+        let stem = files::stem(file_name).to_string();
+        let json_name = format!("{stem}.json");
+        Ok(match self.format {
+            ExportFormat::Png => vec![(
+                file_name.to_string(),
+                export::export_png(sprite, editor.frame, self.scale)?,
+            )],
+            ExportFormat::PngSequence => export::export_png_sequence(sprite, self.scale)?
+                .into_iter()
+                .enumerate()
+                .map(|(i, png)| (format!("{stem}_{:03}.png", i + 1), png))
+                .collect(),
             ExportFormat::Gif => {
                 let (from, to) = self.frame_range(editor);
-                write_atomic(path, &export::export_gif(sprite, from, to, self.scale)?)?;
-                written.push(path.to_path_buf());
+                vec![(
+                    file_name.to_string(),
+                    export::export_gif(sprite, from, to, self.scale)?,
+                )]
             }
             ExportFormat::Sheet => {
                 let layout = match self.layout {
@@ -140,23 +135,45 @@ impl ExportDialog {
                     other => other,
                 };
                 let sheet =
-                    export::export_sheet(sprite, &name, &file_name, layout, self.scale, self.json)?;
-                write_atomic(path, &sheet.png)?;
-                write_atomic(&json_path, sheet.json.as_bytes())?;
-                written.extend([path.to_path_buf(), json_path]);
+                    export::export_sheet(sprite, &name, file_name, layout, self.scale, self.json)?;
+                vec![
+                    (file_name.to_string(), sheet.png),
+                    (json_name, sheet.json.into_bytes()),
+                ]
             }
             ExportFormat::Atlas => {
                 let atlas =
-                    export::export_atlas(&editor.document, &file_name, self.scale, self.json)?;
-                write_atomic(path, &atlas.png)?;
-                write_atomic(&json_path, atlas.json.as_bytes())?;
-                written.extend([path.to_path_buf(), json_path]);
+                    export::export_atlas(&editor.document, file_name, self.scale, self.json)?;
+                vec![
+                    (file_name.to_string(), atlas.png),
+                    (json_name, atlas.json.into_bytes()),
+                ]
             }
+        })
+    }
+
+    /// Genera y escribe (o descarga) los archivos junto a `target`.
+    pub fn export(
+        &self,
+        editor: &Editor,
+        target: &SaveTarget,
+        platform: &Platform,
+    ) -> Result<Vec<String>, FileError> {
+        let mut written = Vec::new();
+        for (name, bytes) in self.build(editor, &target.file_name)? {
+            let file = target.sibling(&name);
+            platform.write(&file, &bytes).map_err(FileError::Platform)?;
+            written.push(file.path().map_or(name, |p| p.display().to_string()));
         }
         Ok(written)
     }
 
-    pub fn show(&mut self, ctx: &egui::Context, editor: &Editor) -> ExportResult {
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        editor: &Editor,
+        platform: &Platform,
+    ) -> ExportResult {
         let mut result = ExportResult::Open;
         let mut open = true;
         egui::Window::new("Export")
@@ -222,7 +239,7 @@ impl ExportDialog {
                 ui.separator();
                 ui.horizontal(|ui| {
                     if ui.button("Export…").clicked() {
-                        result = self.pick_and_export(editor);
+                        result = self.pick_and_export(editor, platform);
                     }
                     if ui.button("Cancel").clicked() {
                         result = ExportResult::Cancel;
@@ -235,20 +252,20 @@ impl ExportDialog {
         result
     }
 
-    fn pick_and_export(&self, editor: &Editor) -> ExportResult {
+    fn pick_and_export(&self, editor: &Editor, platform: &Platform) -> ExportResult {
         let ext = self.format.extension();
         let default_name = match self.format {
             ExportFormat::Atlas => format!("atlas.{ext}"),
             _ => format!("{}.{ext}", editor.artboard().name),
         };
-        let Some(path) = rfd::FileDialog::new()
-            .add_filter(ext.to_uppercase(), &[ext])
-            .set_file_name(default_name)
-            .save_file()
-        else {
+        let filter = [FileFilter {
+            name: if ext == "gif" { "GIF" } else { "PNG" },
+            extensions: if ext == "gif" { &["gif"] } else { &["png"] },
+        }];
+        let Some(target) = platform.choose_save(&default_name, &filter) else {
             return ExportResult::Open;
         };
-        match self.export(editor, &path) {
+        match self.export(editor, &target, platform) {
             Ok(files) => ExportResult::Done(files),
             Err(e) => ExportResult::Failed(e.to_string()),
         }
@@ -270,23 +287,35 @@ mod tests {
     use super::*;
 
     #[test]
-    fn exports_write_expected_files() {
-        let dir = std::env::temp_dir().join(format!("chimpsprite-export-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+    fn build_names_files_from_the_main_name() {
         let mut editor = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
         editor.insert_empty_frame();
         let mut d = ExportDialog::default();
-        let files = d.export(&editor, &dir.join("hero.png")).unwrap();
-        assert_eq!(files, vec![dir.join("hero.png"), dir.join("hero.json")]);
+        let names = |d: &ExportDialog, main: &str| -> Vec<String> {
+            d.build(&editor, main)
+                .unwrap()
+                .into_iter()
+                .map(|(n, _)| n)
+                .collect()
+        };
+        assert_eq!(names(&d, "hero.png"), vec!["hero.png", "hero.json"]);
         d.format = ExportFormat::PngSequence;
-        let files = d.export(&editor, &dir.join("walk.png")).unwrap();
-        assert_eq!(
-            files,
-            vec![dir.join("walk_001.png"), dir.join("walk_002.png")]
-        );
+        assert_eq!(names(&d, "walk.png"), vec!["walk_001.png", "walk_002.png"]);
         d.format = ExportFormat::Gif;
-        assert!(d.export(&editor, &dir.join("anim.gif")).is_ok());
-        assert!(dir.join("anim.gif").exists());
+        assert_eq!(names(&d, "anim.gif"), vec!["anim.gif"]);
+    }
+
+    #[test]
+    fn export_writes_next_to_target() {
+        let dir = std::env::temp_dir().join(format!("chimpsprite-export-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let editor = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
+        let target = SaveTarget::from_path(&dir.join("hero.png")).unwrap();
+        let files = ExportDialog::default()
+            .export(&editor, &target, &Platform::default())
+            .unwrap();
+        assert_eq!(files.len(), 2);
+        assert!(dir.join("hero.png").exists() && dir.join("hero.json").exists());
         std::fs::remove_dir_all(dir).ok();
     }
 }
