@@ -134,6 +134,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cs-tools"
+version = "0.1.0"
+dependencies = [
+ "cs-commands",
+ "cs-core",
+ "cs-raster",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
