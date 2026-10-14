@@ -1,5 +1,6 @@
 //! Interfaz egui de ChimpSprite: capa delgada sobre el motor.
 
+mod anim_ops;
 mod canvas;
 mod canvas_size;
 mod capture;
@@ -7,6 +8,7 @@ mod demo;
 mod editor;
 mod panels;
 mod theme;
+mod timeline;
 mod widgets;
 
 use cs_core::{ArtboardId, ColorMode, Sprite};
@@ -23,6 +25,7 @@ pub struct ChimpApp {
     /// Texto del nombre del artboard activo mientras se edita.
     artboard_name: (ArtboardId, String),
     canvas_size: Option<canvas_size::CanvasSizeDialog>,
+    timeline: timeline::TimelineState,
 }
 
 impl ChimpApp {
@@ -39,6 +42,7 @@ impl ChimpApp {
             capture: capture::Capture::from_env(),
             artboard_name: (ArtboardId(0), String::new()),
             canvas_size: None,
+            timeline: timeline::TimelineState::default(),
         };
         // Desarrollo: abre el diálogo con un ancho de ejemplo para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_CANVAS_SIZE").is_some() {
@@ -104,6 +108,10 @@ impl ChimpApp {
         if ctx.egui_wants_keyboard_input() || self.editor.is_painting() {
             return;
         }
+        let new_frame = KeyboardShortcut::new(Modifiers::ALT, Key::N);
+        if ctx.input_mut(|i| i.consume_shortcut(&new_frame)) {
+            self.editor.duplicate_frame();
+        }
         let pressed: Vec<(Key, bool)> = ctx.input(|i| {
             if i.modifiers.command || i.modifiers.alt {
                 return Vec::new();
@@ -126,6 +134,13 @@ impl ChimpApp {
             let editor = &mut self.editor;
             match key {
                 Key::O if shift => editor.tool = ToolKind::Artboard,
+                Key::N if shift => editor.add_layer(cs_core::LayerKind::Image),
+                Key::Enter => editor.toggle_play(),
+                Key::Comma | Key::ArrowLeft => editor.prev_frame(),
+                Key::Period | Key::ArrowRight => editor.next_frame(),
+                Key::ArrowUp => editor.step_layer(true),
+                Key::ArrowDown => editor.step_layer(false),
+                Key::F3 => editor.onion_enabled = !editor.onion_enabled,
                 Key::B => editor.tool = ToolKind::Pencil,
                 Key::E => editor.tool = ToolKind::Eraser,
                 Key::G => editor.tool = ToolKind::Bucket,
@@ -211,6 +226,11 @@ impl eframe::App for ChimpApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.handle_shortcuts(&ctx);
+        if self.editor.playing {
+            let dt_ms = ctx.input(|i| i.stable_dt) as f64 * 1000.0;
+            self.editor.tick(dt_ms);
+            ctx.request_repaint();
+        }
 
         let modal = self.canvas_size.is_some();
         egui::Panel::top("menu").show(ui, |ui| {
@@ -218,6 +238,14 @@ impl eframe::App for ChimpApp {
         });
         egui::Panel::bottom("status")
             .show(ui, |ui| panels::status_bar(ui, &self.editor, &self.canvas));
+        egui::Panel::bottom("timeline")
+            .resizable(true)
+            .default_size(190.0)
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    timeline::show(ui, &mut self.editor, &mut self.timeline)
+                });
+            });
         egui::Panel::left("tools")
             .resizable(false)
             .exact_size(150.0)

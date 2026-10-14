@@ -1,7 +1,7 @@
 //! Sprite de demostración (`CHIMPSPRITE_DEMO=1`), dibujado a través de comandos normales.
 
 use cs_commands::{Command, DocCommand};
-use cs_core::{ColorMode, Mask, PixelValue, Sprite};
+use cs_core::{ColorMode, PixelValue, Sprite};
 use cs_raster::{ellipse_filled, ellipse_outline};
 
 use crate::editor::Editor;
@@ -16,6 +16,7 @@ pub fn editor() -> Editor {
     });
     let chimp = editor.active;
     draw_chimp(&mut editor);
+    animate_chimp(&mut editor);
 
     editor.add_artboard(32, 32);
     editor.execute_doc(DocCommand::SetArtboardProps {
@@ -26,8 +27,77 @@ pub fn editor() -> Editor {
     draw_banana(&mut editor);
 
     editor.activate(chimp);
-    select_face(&mut editor);
+    editor.set_frame(0);
     editor
+}
+
+/// Capa "Hat", 4 frames (gorro vinculado en todos), parpadeo en el frame 3 y tag "Idle".
+fn animate_chimp(editor: &mut Editor) {
+    let body = editor.layer;
+    editor.rename_layer(body, "Body".into());
+    editor.add_layer(cs_core::LayerKind::Image);
+    let hat = editor.layer;
+    editor.rename_layer(hat, "Hat".into());
+    let (w, h) = (editor.sprite().width as i32, editor.sprite().height as i32);
+    let (cx, top) = (w / 2, (h as f32 / 2.0 - h as f32 * 0.3) as i32);
+    let red = editor.palette_value(27);
+    let dark = editor.palette_value(2);
+    let white = editor.palette_value(21);
+    let mut pixels: Vec<(i32, i32, PixelValue)> =
+        ellipse_filled((cx - 9, top - 5), (cx + 8, top + 6))
+            .into_iter()
+            .filter(|&(_, y)| y <= top + 1)
+            .map(|(x, y)| (x, y, red))
+            .collect();
+    pixels.extend((cx - 10..=cx + 9).map(|x| (x, top + 2, dark)));
+    pixels.extend([
+        (cx - 1, top - 7, white),
+        (cx, top - 7, white),
+        (cx - 1, top - 6, white),
+        (cx, top - 6, white),
+    ]);
+    editor.execute(Command::DrawPixels {
+        layer: hat,
+        frame: 0,
+        pixels,
+    });
+
+    for _ in 0..3 {
+        editor.duplicate_frame();
+    }
+    for f in 1..4 {
+        editor.link_to_previous(hat, f);
+    }
+
+    // Parpadeo: ojos cerrados en el frame 3.
+    let r = (w.min(h) as f32) * 0.3;
+    let (cxf, cyf) = (w as f32 / 2.0, h as f32 / 2.0);
+    let eye_y = (cyf - r * 0.1) as i32;
+    let face = editor.palette_value(7);
+    let lid = editor.palette_value(1);
+    let mut blink = Vec::new();
+    for ex in [(cxf - r * 0.3) as i32, (cxf + r * 0.3) as i32 - 1] {
+        blink.extend([
+            (ex, eye_y, face),
+            (ex + 1, eye_y, face),
+            (ex, eye_y + 1, lid),
+            (ex + 1, eye_y + 1, lid),
+        ]);
+    }
+    editor.execute(Command::DrawPixels {
+        layer: body,
+        frame: 2,
+        pixels: blink,
+    });
+    editor.set_duration_of(0, 300);
+    editor.frame_range = Some((0, 3));
+    editor.add_tag();
+    if let Some(mut tag) = editor.sprite().tags.first().cloned() {
+        tag.name = "Idle".into();
+        editor.set_tag(0, tag);
+    }
+    editor.frame_range = None;
+    editor.select_layer(body);
 }
 
 /// Plátano: una media luna (elipse menos elipse desplazada) con contorno.
@@ -123,14 +193,4 @@ fn draw_chimp(editor: &mut Editor) {
         frame: editor.frame,
         pixels,
     });
-}
-
-/// Una selección alrededor de la cara para lucir las marching ants.
-fn select_face(editor: &mut Editor) {
-    let (w, h) = (editor.sprite().width, editor.sprite().height);
-    let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
-    let r = (w.min(h) as f32) * 0.3;
-    let (x0, y0) = ((cx - r * 0.75) as i32, (cy - r * 0.45) as i32);
-    let (x1, y1) = ((cx + r * 0.75) as i32, (cy + r * 0.85) as i32);
-    editor.set_selection(Some(Mask::from_rect(w, h, (x0, y0), (x1, y1))));
 }
