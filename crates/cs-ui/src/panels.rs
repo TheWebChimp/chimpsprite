@@ -4,26 +4,60 @@ use crate::canvas::CanvasView;
 use crate::editor::{Editor, ToolKind};
 use crate::theme;
 
-const TOOLS: [(ToolKind, &str, &str); 2] = [
-    (ToolKind::Pencil, "✏ Pencil", "B"),
-    (ToolKind::Eraser, "🗑 Eraser", "E"),
-];
+fn icon(kind: ToolKind) -> &'static str {
+    match kind {
+        ToolKind::Select => "🔲",
+        ToolKind::Move => "✋",
+        ToolKind::Pencil => "✏",
+        ToolKind::Eraser => "🗑",
+        ToolKind::Bucket => "🍶",
+        ToolKind::Line => "📏",
+        ToolKind::Rectangle => "⬜",
+        ToolKind::Ellipse => "⭕",
+        ToolKind::Eyedropper => "💧",
+    }
+}
 
 pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.add_space(6.0);
     ui.heading("Tools");
     ui.separator();
-    for (kind, label, key) in TOOLS {
+    for kind in ToolKind::ALL {
         let selected = editor.tool == kind;
-        let button = egui::Button::selectable(selected, label).shortcut_text(key);
-        if ui.add_sized([ui.available_width(), 26.0], button).clicked() {
+        let label = format!("{} {}", icon(kind), kind.label());
+        let button = egui::Button::selectable(selected, label).shortcut_text(kind.shortcut());
+        if ui.add_sized([ui.available_width(), 24.0], button).clicked() {
             editor.tool = kind;
         }
     }
+
     ui.add_space(10.0);
-    ui.label("Brush size");
-    ui.add(egui::Slider::new(&mut editor.brush_size, 1..=32));
-    ui.checkbox(&mut editor.pixel_perfect, "Pixel-perfect");
+    ui.heading("Options");
+    ui.separator();
+    let tool = editor.tool;
+    let options = &mut editor.options;
+    if tool.uses_brush() {
+        ui.label("Brush size");
+        ui.add(egui::Slider::new(&mut options.brush_size, 1..=32));
+    }
+    if matches!(tool, ToolKind::Pencil | ToolKind::Eraser) {
+        ui.checkbox(&mut options.pixel_perfect, "Pixel-perfect");
+    }
+    if matches!(tool, ToolKind::Rectangle | ToolKind::Ellipse) {
+        ui.checkbox(&mut options.filled, "Filled");
+    }
+    if tool == ToolKind::Bucket {
+        ui.checkbox(&mut options.contiguous, "Contiguous");
+    }
+    if matches!(
+        tool,
+        ToolKind::Line | ToolKind::Rectangle | ToolKind::Ellipse | ToolKind::Select
+    ) {
+        ui.weak("Shift: constrain");
+    }
+    if tool.paints() {
+        ui.weak("Alt+click: pick color");
+    }
 }
 
 fn swatch(ui: &mut egui::Ui, color: Color32, size: f32) -> egui::Response {

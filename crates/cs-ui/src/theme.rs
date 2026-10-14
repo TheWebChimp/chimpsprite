@@ -7,7 +7,6 @@ pub const CHECKER_LIGHT: Color32 = Color32::from_rgb(0x9a, 0x9a, 0xa2);
 pub const CHECKER_DARK: Color32 = Color32::from_rgb(0x7a, 0x7a, 0x82);
 pub const GRID: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 40);
 pub const BRUSH_OUTLINE: Color32 = Color32::from_rgba_premultiplied(230, 230, 230, 230);
-pub const ERASE_PREVIEW: Color32 = Color32::from_rgba_premultiplied(60, 60, 60, 60);
 
 const PANEL: Color32 = Color32::from_rgb(0x26, 0x27, 0x2f);
 const WIDGET: Color32 = Color32::from_rgb(0x33, 0x34, 0x3e);

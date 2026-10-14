@@ -1,10 +1,7 @@
-use std::collections::BTreeSet;
-
-use cs_commands::Command;
 use cs_core::PixelValue;
-use cs_raster::{Point, brush_square, line, pixel_perfect};
+use cs_raster::{Point, line, pixel_perfect, stamp};
 
-use crate::{Tool, ToolContext};
+use crate::{Tool, ToolContext, ToolOutput};
 
 #[derive(Debug, Default)]
 pub struct Pencil {
@@ -16,35 +13,16 @@ impl Pencil {
         Self::default()
     }
 
-    fn pixels(&self, ctx: &ToolContext, color: PixelValue) -> Vec<(i32, i32, PixelValue)> {
+    fn output(&self, ctx: &ToolContext, color: PixelValue) -> ToolOutput {
+        if self.path.is_empty() {
+            return ToolOutput::default();
+        }
         let path = if ctx.pixel_perfect && ctx.brush_size <= 1 {
             pixel_perfect(&self.path)
         } else {
             self.path.clone()
         };
-        let mut seen = BTreeSet::new();
-        let mut out = Vec::new();
-        for p in path {
-            for q in brush_square(p, ctx.brush_size) {
-                if seen.insert(q) {
-                    out.push((q.0, q.1, color));
-                }
-            }
-        }
-        out
-    }
-
-    fn finish(&mut self, ctx: &ToolContext, color: PixelValue) -> Option<Command> {
-        if self.path.is_empty() {
-            return None;
-        }
-        let pixels = self.pixels(ctx, color);
-        self.path.clear();
-        Some(Command::DrawPixels {
-            layer: ctx.layer,
-            frame: ctx.frame,
-            pixels,
-        })
+        ToolOutput::command(ctx.draw(stamp(&path, ctx.brush_size), color))
     }
 }
 
@@ -62,12 +40,14 @@ impl Tool for Pencil {
         }
     }
 
-    fn release(&mut self, ctx: &ToolContext) -> Option<Command> {
-        self.finish(ctx, ctx.color)
+    fn release(&mut self, ctx: &ToolContext) -> ToolOutput {
+        let out = self.output(ctx, ctx.color);
+        self.path.clear();
+        out
     }
 
-    fn preview(&self, ctx: &ToolContext) -> Vec<(i32, i32, PixelValue)> {
-        self.pixels(ctx, ctx.color)
+    fn preview(&self, ctx: &ToolContext) -> ToolOutput {
+        self.output(ctx, ctx.color)
     }
 
     fn is_active(&self) -> bool {
@@ -76,18 +56,14 @@ impl Tool for Pencil {
 }
 
 /// Lápiz que pinta con el valor transparente del sprite.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Eraser {
     pencil: Pencil,
-    transparent: PixelValue,
 }
 
 impl Eraser {
-    pub fn new(transparent: PixelValue) -> Self {
-        Self {
-            pencil: Pencil::new(),
-            transparent,
-        }
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -100,12 +76,14 @@ impl Tool for Eraser {
         self.pencil.drag(ctx, p);
     }
 
-    fn release(&mut self, ctx: &ToolContext) -> Option<Command> {
-        self.pencil.finish(ctx, self.transparent)
+    fn release(&mut self, ctx: &ToolContext) -> ToolOutput {
+        let out = self.preview(ctx);
+        self.pencil.path.clear();
+        out
     }
 
-    fn preview(&self, ctx: &ToolContext) -> Vec<(i32, i32, PixelValue)> {
-        self.pencil.pixels(ctx, self.transparent)
+    fn preview(&self, ctx: &ToolContext) -> ToolOutput {
+        self.pencil.output(ctx, ctx.sprite.color_mode.transparent())
     }
 
     fn is_active(&self) -> bool {
@@ -116,63 +94,49 @@ impl Tool for Eraser {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cs_core::{LayerId, Rgba};
-
-    fn ctx(pp: bool) -> ToolContext {
-        ToolContext {
-            layer: LayerId(1),
-            frame: 0,
-            color: PixelValue::Rgba(Rgba::rgb(9, 9, 9)),
-            brush_size: 1,
-            pixel_perfect: pp,
-        }
-    }
-
-    fn coords(cmd: Command) -> Vec<(i32, i32)> {
-        let Command::DrawPixels { pixels, .. } = cmd else {
-            panic!("expected DrawPixels")
-        };
-        pixels.into_iter().map(|(x, y, _)| (x, y)).collect()
-    }
+    use crate::test_util::*;
+    use cs_commands::Command;
 
     #[test]
     fn drag_interpolates_with_line() {
+        let s = sprite();
+        let c = ctx(&s);
         let mut p = Pencil::new();
-        let c = ctx(false);
         p.press(&c, (0, 0));
         p.drag(&c, (3, 0));
         assert!(p.is_active());
-        assert_eq!(
-            coords(p.release(&c).unwrap()),
-            vec![(0, 0), (1, 0), (2, 0), (3, 0)]
-        );
+        assert_eq!(coords(&p.preview(&c)), vec![(0, 0), (1, 0), (2, 0), (3, 0)]);
+        assert_eq!(coords(&p.release(&c)), vec![(0, 0), (1, 0), (2, 0), (3, 0)]);
         assert!(!p.is_active());
     }
 
     #[test]
-    fn pixel_perfect_applies_on_release() {
+    fn pixel_perfect_applies() {
+        let s = sprite();
+        let mut c = ctx(&s);
+        c.pixel_perfect = true;
         let mut p = Pencil::new();
-        let c = ctx(true);
         p.press(&c, (0, 0));
         p.drag(&c, (1, 0));
         p.drag(&c, (1, 1));
-        assert_eq!(coords(p.release(&c).unwrap()), vec![(0, 0), (1, 1)]);
+        assert_eq!(coords(&p.release(&c)), vec![(0, 0), (1, 1)]);
     }
 
     #[test]
     fn eraser_uses_transparent_value() {
-        let t = PixelValue::Index(0);
-        let mut e = Eraser::new(t);
-        let c = ctx(false);
+        let s = sprite();
+        let c = ctx(&s);
+        let mut e = Eraser::new();
         e.press(&c, (2, 2));
-        let Command::DrawPixels { pixels, .. } = e.release(&c).unwrap() else {
+        let Some(Command::DrawPixels { pixels, .. }) = e.release(&c).command else {
             panic!()
         };
-        assert_eq!(pixels, vec![(2, 2, t)]);
+        assert_eq!(pixels, vec![(2, 2, s.color_mode.transparent())]);
     }
 
     #[test]
-    fn release_without_press_is_none() {
-        assert!(Pencil::new().release(&ctx(false)).is_none());
+    fn release_without_press_is_empty() {
+        let s = sprite();
+        assert_eq!(Pencil::new().release(&ctx(&s)), ToolOutput::default());
     }
 }

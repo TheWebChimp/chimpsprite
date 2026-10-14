@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ColorMode, Image, Palette};
+use crate::{ColorMode, Image, Palette, PixelValue};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LayerId(pub u32);
@@ -126,6 +126,19 @@ impl Sprite {
     pub fn image(&self, id: ImageId) -> Option<&Arc<Image>> {
         self.images.get(&id)
     }
+
+    /// Valor del píxel de una capa en coordenadas del lienzo; transparente si no hay cel o cae fuera.
+    pub fn pixel(&self, layer: LayerId, frame: usize, x: i32, y: i32) -> PixelValue {
+        self.cel(layer, frame)
+            .and_then(|cel| {
+                let (lx, ly) = (x - cel.position.0, y - cel.position.1);
+                if lx < 0 || ly < 0 {
+                    return None;
+                }
+                self.image(cel.image)?.get(lx as u32, ly as u32)
+            })
+            .unwrap_or_else(|| self.color_mode.transparent())
+    }
 }
 
 #[cfg(test)]
@@ -151,5 +164,26 @@ mod tests {
         s.images
             .insert(ImageId(7), Arc::new(Image::new(1, 1, ColorMode::Rgba)));
         assert_eq!(s.next_image_id(), ImageId(8));
+    }
+
+    #[test]
+    fn pixel_respects_cel_position() {
+        let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+        let red = PixelValue::Rgba(crate::Rgba::rgb(255, 0, 0));
+        let mut img = Image::new(2, 2, ColorMode::Rgba);
+        img.set(1, 1, red).unwrap();
+        s.images.insert(ImageId(1), Arc::new(img));
+        s.cels.insert(
+            (LayerId(1), 0),
+            Cel {
+                position: (3, 4),
+                opacity: 255,
+                image: ImageId(1),
+            },
+        );
+        assert_eq!(s.pixel(LayerId(1), 0, 4, 5), red);
+        assert_eq!(s.pixel(LayerId(1), 0, 3, 4), s.color_mode.transparent());
+        assert_eq!(s.pixel(LayerId(1), 0, 0, 0), s.color_mode.transparent());
+        assert_eq!(s.pixel(LayerId(1), 1, 4, 5), s.color_mode.transparent());
     }
 }
