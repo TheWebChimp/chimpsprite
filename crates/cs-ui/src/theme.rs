@@ -6,6 +6,7 @@ pub const CANVAS_BORDER: Color32 = Color32::from_rgb(0x0e, 0x0e, 0x12);
 pub const CHECKER_LIGHT: Color32 = Color32::from_rgb(0x9a, 0x9a, 0xa2);
 pub const CHECKER_DARK: Color32 = Color32::from_rgb(0x7a, 0x7a, 0x82);
 pub const GRID: Color32 = Color32::from_rgba_premultiplied(0, 0, 0, 40);
+pub const LABEL: Color32 = Color32::from_rgb(0x9a, 0x9b, 0xa8);
 pub const BRUSH_OUTLINE: Color32 = Color32::from_rgba_premultiplied(230, 230, 230, 230);
 
 const PANEL: Color32 = Color32::from_rgb(0x26, 0x27, 0x2f);

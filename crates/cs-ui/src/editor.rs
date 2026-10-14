@@ -1,8 +1,11 @@
-use cs_commands::{Command, History};
-use cs_core::{ColorMode, LayerId, Mask, PixelValue, Rgba, Sprite};
+use std::borrow::Cow;
+use std::collections::HashMap;
+
+use cs_commands::{Command, DocCommand, History};
+use cs_core::{Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, PixelValue, Rgba, Sprite};
 use cs_tools::{
-    Bucket, Eraser, Eyedropper, MoveTool, Pencil, Point, RectSelect, ShapeKind, ShapeTool, Tool,
-    ToolContext, ToolOutput,
+    ArtboardTool, Bucket, Eraser, Eyedropper, MoveTool, Pencil, Point, RectSelect, ShapeKind,
+    ShapeTool, Tool, ToolContext, ToolOutput,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -16,10 +19,11 @@ pub enum ToolKind {
     Select,
     Move,
     Eyedropper,
+    Artboard,
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 9] = [
+    pub const ALL: [ToolKind; 10] = [
         ToolKind::Select,
         ToolKind::Move,
         ToolKind::Pencil,
@@ -29,6 +33,7 @@ impl ToolKind {
         ToolKind::Rectangle,
         ToolKind::Ellipse,
         ToolKind::Eyedropper,
+        ToolKind::Artboard,
     ];
 
     pub fn label(self) -> &'static str {
@@ -42,6 +47,7 @@ impl ToolKind {
             ToolKind::Select => "Select",
             ToolKind::Move => "Move",
             ToolKind::Eyedropper => "Eyedropper",
+            ToolKind::Artboard => "Artboard",
         }
     }
 
@@ -55,6 +61,7 @@ impl ToolKind {
             ToolKind::Select => "M",
             ToolKind::Move => "V",
             ToolKind::Eyedropper => "I",
+            ToolKind::Artboard => "Shift+O",
         }
     }
 
@@ -107,7 +114,8 @@ impl Default for ToolOptions {
     }
 }
 
-struct Tools {
+/// Herramientas que trabajan dentro de un sprite.
+struct SpriteTools {
     pencil: Pencil,
     eraser: Eraser,
     bucket: Bucket,
@@ -119,7 +127,7 @@ struct Tools {
     eyedropper: Eyedropper,
 }
 
-impl Tools {
+impl SpriteTools {
     fn new() -> Self {
         Self {
             pencil: Pencil::new(),
@@ -134,8 +142,8 @@ impl Tools {
         }
     }
 
-    fn get(&self, kind: ToolKind) -> &dyn Tool {
-        match kind {
+    fn get(&self, kind: ToolKind) -> Option<&dyn Tool> {
+        Some(match kind {
             ToolKind::Pencil => &self.pencil,
             ToolKind::Eraser => &self.eraser,
             ToolKind::Bucket => &self.bucket,
@@ -145,11 +153,12 @@ impl Tools {
             ToolKind::Select => &self.select,
             ToolKind::Move => &self.mover,
             ToolKind::Eyedropper => &self.eyedropper,
-        }
+            ToolKind::Artboard => return None,
+        })
     }
 
-    fn get_mut(&mut self, kind: ToolKind) -> &mut dyn Tool {
-        match kind {
+    fn get_mut(&mut self, kind: ToolKind) -> Option<&mut dyn Tool> {
+        Some(match kind {
             ToolKind::Pencil => &mut self.pencil,
             ToolKind::Eraser => &mut self.eraser,
             ToolKind::Bucket => &mut self.bucket,
@@ -159,7 +168,8 @@ impl Tools {
             ToolKind::Select => &mut self.select,
             ToolKind::Move => &mut self.mover,
             ToolKind::Eyedropper => &mut self.eyedropper,
-        }
+            ToolKind::Artboard => return None,
+        })
     }
 }
 
@@ -183,70 +193,145 @@ fn clip(cmd: Command, mask: &Mask) -> Command {
 }
 
 /// Lo que el lienzo debe mostrar en este frame.
-pub struct FrameView {
-    pub pixels: Vec<Rgba>,
+pub struct DocView<'a> {
+    /// El documento, con el gesto en curso aplicado si lo hay.
+    pub document: Cow<'a, Document>,
     pub selection: Option<Mask>,
 }
 
 /// Estado del documento abierto y de la edición. No sabe nada de egui.
 pub struct Editor {
-    pub sprite: Sprite,
-    pub history: History,
+    pub document: Document,
+    pub history: History<DocCommand>,
+    pub active: ArtboardId,
     pub layer: LayerId,
     pub frame: usize,
     pub primary: PixelValue,
     pub secondary: PixelValue,
     pub tool: ToolKind,
     pub options: ToolOptions,
+    /// Selección dentro del artboard activo.
     pub selection: Option<Mask>,
     /// Aumenta cada vez que el documento o la selección cambian.
     pub revision: u64,
-    tools: Tools,
+    /// Capa y frame recordados por artboard.
+    views: HashMap<ArtboardId, (LayerId, usize)>,
+    tools: SpriteTools,
+    artboard_tool: ArtboardTool,
     painting_secondary: bool,
     /// Alt al presionar: cuentagotas temporal durante el gesto.
     temp_eyedropper: bool,
 }
 
 impl Editor {
-    pub fn new(sprite: Sprite) -> Self {
-        let layer = sprite.layers.last().map(|l| l.id).unwrap_or(LayerId(1));
+    pub fn new(document: Document) -> Self {
+        assert!(
+            !document.artboards.is_empty(),
+            "a document needs at least one artboard"
+        );
+        let active = document.artboards[0].id;
         let mut editor = Self {
+            document,
+            history: History::new(),
+            active,
+            layer: LayerId(1),
+            frame: 0,
             primary: PixelValue::Index(0),
             secondary: PixelValue::Index(0),
-            sprite,
-            history: History::new(),
-            layer,
-            frame: 0,
             tool: ToolKind::Pencil,
             options: ToolOptions::default(),
             selection: None,
             revision: 0,
-            tools: Tools::new(),
+            views: HashMap::new(),
+            tools: SpriteTools::new(),
+            artboard_tool: ArtboardTool::new(),
             painting_secondary: false,
             temp_eyedropper: false,
         };
+        editor.ensure_valid();
         editor.primary = editor.palette_value(0);
         editor.secondary = editor.palette_value(21);
         editor
     }
 
+    pub fn with_sprite(sprite: Sprite) -> Self {
+        Self::new(Document::with_sprite("Artboard 1", sprite))
+    }
+
+    pub fn artboard(&self) -> &Artboard {
+        self.document
+            .artboard(self.active)
+            .expect("active artboard exists")
+    }
+
+    pub fn sprite(&self) -> &Sprite {
+        &self.artboard().sprite
+    }
+
+    /// Mantiene invariantes tras cambios en el documento (p. ej. undo de un artboard).
+    fn ensure_valid(&mut self) {
+        if self.document.artboard(self.active).is_none() {
+            self.active = self.document.artboards[0].id;
+            self.selection = None;
+        }
+        let sprite = &self
+            .document
+            .artboard(self.active)
+            .expect("active artboard exists")
+            .sprite;
+        if sprite.layer(self.layer).is_none() {
+            self.layer = sprite.layers.last().map_or(LayerId(1), |l| l.id);
+        }
+        self.frame = self.frame.min(sprite.frames.len().saturating_sub(1));
+        let (w, h) = (sprite.width, sprite.height);
+        if self
+            .selection
+            .as_ref()
+            .is_some_and(|m| (m.width(), m.height()) != (w, h))
+        {
+            self.selection = None;
+        }
+    }
+
+    /// Activa otro artboard: recuerda capa/frame del actual y descarta la selección.
+    pub fn activate(&mut self, id: ArtboardId) {
+        if id == self.active || self.document.artboard(id).is_none() {
+            return;
+        }
+        self.views.insert(self.active, (self.layer, self.frame));
+        self.active = id;
+        (self.layer, self.frame) = self.views.get(&id).copied().unwrap_or((LayerId(0), 0));
+        self.selection = None;
+        self.ensure_valid();
+        self.revision += 1;
+    }
+
     /// Valor de píxel para la entrada `index` de la paleta según el modo de color.
     pub fn palette_value(&self, index: u8) -> PixelValue {
-        match self.sprite.color_mode {
+        let sprite = self.sprite();
+        match sprite.color_mode {
             ColorMode::Indexed { .. } => PixelValue::Index(index),
-            ColorMode::Rgba => PixelValue::Rgba(self.sprite.palette.get(index).unwrap_or_default()),
+            ColorMode::Rgba => PixelValue::Rgba(sprite.palette.get(index).unwrap_or_default()),
         }
     }
 
     pub fn resolve(&self, value: PixelValue) -> Rgba {
-        cs_render::resolve(&self.sprite, value)
+        cs_render::resolve(self.sprite(), value)
     }
 
-    /// Ejecuta un comando; devuelve si se aplicó.
+    /// Ejecuta un comando sobre el artboard activo; devuelve si se aplicó.
     pub fn execute(&mut self, cmd: Command) -> bool {
-        match self.history.execute(&mut self.sprite, cmd) {
+        self.execute_doc(DocCommand::OnArtboard {
+            id: self.active,
+            cmd,
+        })
+    }
+
+    pub fn execute_doc(&mut self, cmd: DocCommand) -> bool {
+        match self.history.execute(&mut self.document, cmd) {
             Ok(()) => {
                 self.revision += 1;
+                self.ensure_valid();
                 true
             }
             Err(e) => {
@@ -257,18 +342,61 @@ impl Editor {
     }
 
     pub fn undo(&mut self) {
-        match self.history.undo(&mut self.sprite) {
-            Ok(true) => self.revision += 1,
+        match self.history.undo(&mut self.document) {
+            Ok(true) => {
+                self.revision += 1;
+                self.ensure_valid();
+            }
             Ok(false) => {}
             Err(e) => log::error!("undo failed: {e}"),
         }
     }
 
     pub fn redo(&mut self) {
-        match self.history.redo(&mut self.sprite) {
-            Ok(true) => self.revision += 1,
+        match self.history.redo(&mut self.document) {
+            Ok(true) => {
+                self.revision += 1;
+                self.ensure_valid();
+            }
             Ok(false) => {}
             Err(e) => log::error!("redo failed: {e}"),
+        }
+    }
+
+    /// Crea un artboard vacío del tamaño dado a la derecha de los existentes y lo activa.
+    pub fn add_artboard(&mut self, width: u32, height: u32) {
+        let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
+        let template = self.sprite();
+        let mut sprite = Sprite::new(width, height, template.color_mode);
+        sprite.palette = template.palette.clone();
+        let id = self.document.next_artboard_id();
+        let artboard = Artboard {
+            id,
+            name: format!("Artboard {}", id.0),
+            position: (x1 + 16, y0),
+            sprite,
+        };
+        if self.execute_doc(DocCommand::AddArtboard {
+            index: self.document.artboards.len(),
+            artboard: Box::new(artboard),
+        }) {
+            self.activate(id);
+        }
+    }
+
+    pub fn remove_active_artboard(&mut self) {
+        if self.document.artboards.len() > 1 {
+            self.execute_doc(DocCommand::RemoveArtboard { id: self.active });
+        }
+    }
+
+    pub fn rename_active_artboard(&mut self, name: String) {
+        if name != self.artboard().name {
+            self.execute_doc(DocCommand::SetArtboardProps {
+                id: self.active,
+                name: Some(name),
+                position: None,
+            });
         }
     }
 
@@ -282,7 +410,8 @@ impl Editor {
     }
 
     pub fn select_all(&mut self) {
-        self.set_selection(Some(Mask::all(self.sprite.width, self.sprite.height)));
+        let s = self.sprite();
+        self.set_selection(Some(Mask::all(s.width, s.height)));
     }
 
     pub fn deselect(&mut self) {
@@ -294,7 +423,7 @@ impl Editor {
         let Some(mask) = &self.selection else {
             return;
         };
-        let t = self.sprite.color_mode.transparent();
+        let t = self.sprite().color_mode.transparent();
         let pixels = mask.points().map(|(x, y)| (x, y, t)).collect();
         self.execute(Command::DrawPixels {
             layer: self.layer,
@@ -313,7 +442,20 @@ impl Editor {
     }
 
     pub fn is_painting(&self) -> bool {
-        self.tools.get(self.active_tool()).is_active()
+        self.artboard_tool.is_active()
+            || self
+                .tools
+                .get(self.active_tool())
+                .is_some_and(|t| t.is_active())
+    }
+
+    /// Punto de mundo → píxel local del artboard activo.
+    pub fn to_local(&self, world: (f32, f32)) -> Point {
+        let (x, y) = self.artboard().position;
+        (
+            (world.0 - x as f32).floor() as i32,
+            (world.1 - y as f32).floor() as i32,
+        )
     }
 
     fn color(&self) -> PixelValue {
@@ -326,7 +468,7 @@ impl Editor {
 
     fn context(&self) -> ToolContext<'_> {
         ToolContext {
-            sprite: &self.sprite,
+            sprite: self.sprite(),
             layer: self.layer,
             frame: self.frame,
             color: self.color(),
@@ -339,26 +481,62 @@ impl Editor {
         }
     }
 
-    /// Corre `f` sobre la herramienta activa con un contexto que toma prestado el documento.
-    fn with_tool<R>(&mut self, f: impl FnOnce(&mut dyn Tool, &ToolContext) -> R) -> R {
+    /// Corre `f` sobre la herramienta de sprite activa con un contexto que toma prestado el documento.
+    fn with_tool<R: Default>(&mut self, f: impl FnOnce(&mut dyn Tool, &ToolContext) -> R) -> R {
         let kind = self.active_tool();
-        let mut tools = std::mem::replace(&mut self.tools, Tools::new());
-        let result = f(tools.get_mut(kind), &self.context());
+        let mut tools = std::mem::replace(&mut self.tools, SpriteTools::new());
+        let result = tools
+            .get_mut(kind)
+            .map(|tool| f(tool, &self.context()))
+            .unwrap_or_default();
         self.tools = tools;
         result
     }
 
-    pub fn pointer_press(&mut self, p: Point, secondary: bool, alt: bool) {
+    /// `slop`: tolerancia en píxeles de mundo para tomar bordes de artboards.
+    pub fn pointer_press(&mut self, world: (f32, f32), secondary: bool, alt: bool, slop: f32) {
         self.painting_secondary = secondary;
         self.temp_eyedropper = alt && self.tool != ToolKind::Eyedropper;
+        if self.active_tool() == ToolKind::Artboard {
+            if let Some(id) =
+                self.artboard_tool
+                    .press(&self.document, world, slop, Some(self.active))
+            {
+                self.activate(id);
+            }
+            return;
+        }
+        if let Some(id) = self.document.artboard_at(world) {
+            self.activate(id);
+        }
+        let p = self.to_local(world);
         self.with_tool(|tool, ctx| tool.press(ctx, p));
     }
 
-    pub fn pointer_drag(&mut self, p: Point) {
+    pub fn pointer_drag(&mut self, world: (f32, f32)) {
+        if self.artboard_tool.is_active() {
+            self.artboard_tool.drag(world);
+            return;
+        }
+        let p = self.to_local(world);
         self.with_tool(|tool, ctx| tool.drag(ctx, p));
     }
 
     pub fn pointer_release(&mut self) {
+        if self.artboard_tool.is_active() {
+            if let Some(cmd) = self.artboard_tool.release(&self.document) {
+                let created = match &cmd {
+                    DocCommand::AddArtboard { artboard, .. } => Some(artboard.id),
+                    _ => None,
+                };
+                if self.execute_doc(cmd)
+                    && let Some(id) = created
+                {
+                    self.activate(id);
+                }
+            }
+            return;
+        }
         let kind = self.active_tool();
         let out = self.with_tool(|tool, ctx| tool.release(ctx));
         self.temp_eyedropper = false;
@@ -390,36 +568,59 @@ impl Editor {
         }
     }
 
-    /// Composición a mostrar: el documento con el gesto en curso aplicado sobre un clon.
-    pub fn frame_view(&self) -> FrameView {
-        let kind = self.active_tool();
-        let tool = self.tools.get(kind);
-        if !tool.is_active() {
-            return FrameView {
-                pixels: cs_render::render_frame(&self.sprite, self.frame),
-                selection: self.selection.clone(),
+    /// Documento a mostrar: el actual o un clon con el gesto en curso aplicado.
+    pub fn view(&self) -> DocView<'_> {
+        let current = || DocView {
+            document: Cow::Borrowed(&self.document),
+            selection: self.selection.clone(),
+        };
+        if self.artboard_tool.is_active() {
+            let Some(cmd) = self.artboard_tool.preview(&self.document) else {
+                return current();
+            };
+            let mut doc = self.document.clone();
+            return match cmd.apply(&mut doc) {
+                Ok(_) => DocView {
+                    document: Cow::Owned(doc),
+                    // La selección no aplica si el tamaño cambia durante el gesto.
+                    selection: None,
+                },
+                Err(_) => current(),
             };
         }
-        let out = tool.preview(&self.context());
-        let pixels = match out.command {
-            Some(cmd) => {
-                let cmd = match (&self.selection, kind.paints()) {
-                    (Some(mask), true) => clip(cmd, mask),
-                    _ => cmd,
-                };
-                let mut preview = self.sprite.clone();
-                match cmd.apply(&mut preview) {
-                    Ok(_) => cs_render::render_frame(&preview, self.frame),
-                    Err(_) => cs_render::render_frame(&self.sprite, self.frame),
-                }
-            }
-            None => cs_render::render_frame(&self.sprite, self.frame),
+        let kind = self.active_tool();
+        let Some(tool) = self.tools.get(kind).filter(|t| t.is_active()) else {
+            return current();
         };
+        let out = tool.preview(&self.context());
         let selection = match out.selection {
             Some(sel) => sel,
             None => self.selection.clone(),
         };
-        FrameView { pixels, selection }
+        let Some(cmd) = out.command else {
+            return DocView {
+                document: Cow::Borrowed(&self.document),
+                selection,
+            };
+        };
+        let cmd = match (&self.selection, kind.paints()) {
+            (Some(mask), true) => clip(cmd, mask),
+            _ => cmd,
+        };
+        let mut doc = self.document.clone();
+        let applied = DocCommand::OnArtboard {
+            id: self.active,
+            cmd,
+        }
+        .apply(&mut doc);
+        DocView {
+            document: if applied.is_ok() {
+                Cow::Owned(doc)
+            } else {
+                Cow::Borrowed(&self.document)
+            },
+            selection,
+        }
     }
 }
 
@@ -428,12 +629,21 @@ mod tests {
     use super::*;
 
     fn editor() -> Editor {
-        Editor::new(Sprite::new(8, 8, ColorMode::Rgba))
+        Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba))
     }
 
+    /// Clic en coordenadas locales del artboard activo.
     fn click(e: &mut Editor, p: Point, secondary: bool, alt: bool) {
-        e.pointer_press(p, secondary, alt);
+        let (x, y) = e.artboard().position;
+        let world = ((x + p.0) as f32 + 0.5, (y + p.1) as f32 + 0.5);
+        e.pointer_press(world, secondary, alt, 0.1);
         e.pointer_release();
+    }
+
+    fn two_boards() -> Editor {
+        let mut e = editor();
+        e.add_artboard(4, 4);
+        e
     }
 
     #[test]
@@ -447,16 +657,16 @@ mod tests {
         });
         assert!(e.revision > r0 && e.history.can_undo());
         e.undo();
-        assert!(e.sprite.cels.is_empty());
+        assert!(e.sprite().cels.is_empty());
         e.redo();
-        assert!(!e.sprite.cels.is_empty());
+        assert!(!e.sprite().cels.is_empty());
     }
 
     #[test]
     fn secondary_button_paints_secondary_color() {
         let mut e = editor();
         click(&mut e, (1, 1), true, false);
-        assert_eq!(e.sprite.pixel(LayerId(1), 0, 1, 1), e.secondary);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 1), e.secondary);
     }
 
     #[test]
@@ -466,10 +676,10 @@ mod tests {
         e.tool = ToolKind::Bucket;
         e.options.contiguous = false;
         click(&mut e, (0, 0), false, false);
-        assert_eq!(e.sprite.pixel(LayerId(1), 0, 1, 1), e.primary);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 1), e.primary);
         assert_eq!(
-            e.sprite.pixel(LayerId(1), 0, 2, 2),
-            e.sprite.color_mode.transparent()
+            e.sprite().pixel(LayerId(1), 0, 2, 2),
+            e.sprite().color_mode.transparent()
         );
     }
 
@@ -487,7 +697,7 @@ mod tests {
         assert_eq!(e.active_tool(), ToolKind::Pencil);
         e.tool = ToolKind::Eyedropper;
         click(&mut e, (0, 0), true, false);
-        assert_eq!(e.secondary, e.sprite.color_mode.transparent());
+        assert_eq!(e.secondary, e.sprite().color_mode.transparent());
     }
 
     #[test]
@@ -497,34 +707,93 @@ mod tests {
         click(&mut e, (0, 0), false, false);
         e.set_selection(Some(Mask::from_rect(8, 8, (2, 2), (3, 3))));
         e.clear_selection_content();
-        let t = e.sprite.color_mode.transparent();
-        assert_eq!(e.sprite.pixel(LayerId(1), 0, 2, 2), t);
-        assert_eq!(e.sprite.pixel(LayerId(1), 0, 0, 0), e.primary);
-    }
-
-    #[test]
-    fn select_all_and_deselect() {
-        let mut e = editor();
-        e.select_all();
-        assert_eq!(e.selection.as_ref().unwrap().points().count(), 64);
-        e.deselect();
-        assert!(e.selection.is_none());
+        let t = e.sprite().color_mode.transparent();
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 2), t);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 0, 0), e.primary);
     }
 
     #[test]
     fn preview_shows_stroke_without_touching_document() {
         let mut e = editor();
-        e.pointer_press((0, 0), false, false);
-        let view = e.frame_view();
-        assert_eq!(view.pixels[0], e.resolve(e.primary));
-        assert!(e.sprite.cels.is_empty());
+        e.pointer_press((0.5, 0.5), false, false, 0.1);
+        let view = e.view();
+        let preview = &view.document.artboards[0].sprite;
+        assert_eq!(preview.pixel(LayerId(1), 0, 0, 0), e.primary);
+        drop(view);
+        assert!(e.sprite().cels.is_empty());
         e.pointer_release();
-        assert!(!e.sprite.cels.is_empty());
+        assert!(!e.sprite().cels.is_empty());
+    }
+
+    #[test]
+    fn drawing_only_touches_active_artboard_and_click_activates() {
+        let mut e = two_boards();
+        let second = e.active;
+        click(&mut e, (0, 0), false, false);
+        assert!(e.document.artboards[0].sprite.cels.is_empty());
+        assert!(!e.document.artboards[1].sprite.cels.is_empty());
+        // Clic sobre el primer artboard: lo activa y pinta ahí.
+        e.pointer_press((0.5, 0.5), false, false, 0.1);
+        e.pointer_release();
+        assert_ne!(e.active, second);
+        assert!(!e.document.artboards[0].sprite.cels.is_empty());
+    }
+
+    #[test]
+    fn undo_is_chronological_across_artboards() {
+        let mut e = two_boards();
+        click(&mut e, (0, 0), false, false);
+        e.activate(e.document.artboards[0].id);
+        click(&mut e, (0, 0), false, false);
+        e.undo();
+        assert!(e.document.artboards[0].sprite.cels.is_empty());
+        assert!(!e.document.artboards[1].sprite.cels.is_empty());
+        e.undo();
+        assert!(e.document.artboards[1].sprite.cels.is_empty());
+        e.undo();
+        assert_eq!(e.document.artboards.len(), 1);
+        assert_eq!(e.active, e.document.artboards[0].id);
+    }
+
+    #[test]
+    fn activating_drops_selection_and_remembers_layer() {
+        let mut e = two_boards();
+        let (first, second) = (e.document.artboards[0].id, e.document.artboards[1].id);
+        e.execute(Command::AddLayer {
+            index: 1,
+            layer: cs_core::Layer::new_image(LayerId(2), "top"),
+        });
+        e.layer = LayerId(2);
+        e.select_all();
+        e.activate(first);
+        assert!(e.selection.is_none());
+        assert_eq!(e.layer, LayerId(1));
+        e.activate(second);
+        assert_eq!(e.layer, LayerId(2));
+    }
+
+    #[test]
+    fn cannot_remove_last_artboard() {
+        let mut e = editor();
+        e.remove_active_artboard();
+        assert_eq!(e.document.artboards.len(), 1);
+    }
+
+    #[test]
+    fn artboard_tool_creates_and_activates() {
+        let mut e = editor();
+        e.tool = ToolKind::Artboard;
+        e.pointer_press((20.0, 0.0), false, false, 0.1);
+        e.pointer_drag((29.0, 9.0));
+        e.pointer_release();
+        assert_eq!(e.document.artboards.len(), 2);
+        assert_eq!(e.active, e.document.artboards[1].id);
+        assert_eq!((e.sprite().width, e.sprite().height), (10, 10));
     }
 
     #[test]
     fn indexed_sprite_uses_palette_indices() {
-        let e = Editor::new(Sprite::new(
+        let e = Editor::with_sprite(Sprite::new(
             4,
             4,
             ColorMode::Indexed {

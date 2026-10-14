@@ -7,7 +7,7 @@ mod editor;
 mod panels;
 mod theme;
 
-use cs_core::{ColorMode, Sprite};
+use cs_core::{ArtboardId, ColorMode, Sprite};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 
 pub use editor::{Editor, ToolKind};
@@ -18,32 +18,28 @@ pub struct ChimpApp {
     editor: Editor,
     canvas: canvas::CanvasView,
     capture: capture::Capture,
+    /// Texto del nombre del artboard activo mientras se edita.
+    artboard_name: (ArtboardId, String),
 }
 
 impl ChimpApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
-        let mut editor = Editor::new(Sprite::new(
-            NEW_SPRITE_SIZE,
-            NEW_SPRITE_SIZE,
-            ColorMode::Rgba,
-        ));
-        if std::env::var_os("CHIMPSPRITE_DEMO").is_some() {
-            demo::draw(&mut editor);
-        }
+        let editor = if std::env::var_os("CHIMPSPRITE_DEMO").is_some() {
+            demo::editor()
+        } else {
+            new_editor()
+        };
         Self {
             editor,
             canvas: canvas::CanvasView::default(),
             capture: capture::Capture::from_env(),
+            artboard_name: (ArtboardId(0), String::new()),
         }
     }
 
     fn new_sprite(&mut self) {
-        self.editor = Editor::new(Sprite::new(
-            NEW_SPRITE_SIZE,
-            NEW_SPRITE_SIZE,
-            ColorMode::Rgba,
-        ));
+        self.editor = new_editor();
         self.canvas.reset();
     }
 
@@ -67,7 +63,7 @@ impl ChimpApp {
         if ctx.egui_wants_keyboard_input() || self.editor.is_painting() {
             return;
         }
-        let pressed: Vec<Key> = ctx.input(|i| {
+        let pressed: Vec<(Key, bool)> = ctx.input(|i| {
             if i.modifiers.command || i.modifiers.alt {
                 return Vec::new();
             }
@@ -78,15 +74,17 @@ impl ChimpApp {
                         key,
                         pressed: true,
                         repeat: false,
+                        modifiers,
                         ..
-                    } => Some(*key),
+                    } => Some((*key, modifiers.shift)),
                     _ => None,
                 })
                 .collect()
         });
-        for key in pressed {
+        for (key, shift) in pressed {
             let editor = &mut self.editor;
             match key {
+                Key::O if shift => editor.tool = ToolKind::Artboard,
                 Key::B => editor.tool = ToolKind::Pencil,
                 Key::E => editor.tool = ToolKind::Eraser,
                 Key::G => editor.tool = ToolKind::Bucket,
@@ -155,6 +153,14 @@ impl ChimpApp {
     }
 }
 
+fn new_editor() -> Editor {
+    Editor::with_sprite(Sprite::new(
+        NEW_SPRITE_SIZE,
+        NEW_SPRITE_SIZE,
+        ColorMode::Rgba,
+    ))
+}
+
 impl eframe::App for ChimpApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
@@ -169,7 +175,11 @@ impl eframe::App for ChimpApp {
             .show(ui, |ui| panels::toolbar(ui, &mut self.editor));
         egui::Panel::right("palette")
             .default_size(220.0)
-            .show(ui, |ui| panels::palette(ui, &mut self.editor));
+            .show(ui, |ui| {
+                panels::palette(ui, &mut self.editor);
+                ui.add_space(12.0);
+                panels::artboards(ui, &mut self.editor, &mut self.artboard_name);
+            });
         egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &mut self.editor));
 
         self.capture.update(&ctx);

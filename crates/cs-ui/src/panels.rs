@@ -1,5 +1,7 @@
 use eframe::egui::{self, Color32, Rect, Sense, Stroke, StrokeKind, Vec2};
 
+use cs_core::ArtboardId;
+
 use crate::canvas::CanvasView;
 use crate::editor::{Editor, ToolKind};
 use crate::theme;
@@ -15,6 +17,7 @@ fn icon(kind: ToolKind) -> &'static str {
         ToolKind::Rectangle => "⬜",
         ToolKind::Ellipse => "⭕",
         ToolKind::Eyedropper => "💧",
+        ToolKind::Artboard => "🖼",
     }
 }
 
@@ -104,11 +107,11 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) {
     let size = 20.0;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::splat(2.0);
-        let count = editor.sprite.palette.len().min(256);
+        let count = editor.sprite().palette.len().min(256);
         for i in 0..count {
             let index = i as u8;
             let value = editor.palette_value(index);
-            let color = to_color32(editor.sprite.palette.colors()[i]);
+            let color = to_color32(editor.sprite().palette.colors()[i]);
             let response = swatch(ui, color, size).on_hover_text(format!("#{i}"));
             if value == editor.primary || value == editor.secondary {
                 let stroke_color = if value == editor.primary {
@@ -135,8 +138,13 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) {
 
 pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView) {
     ui.horizontal(|ui| {
-        let s = &editor.sprite;
-        ui.label(format!("{}×{}", s.width, s.height));
+        let s = editor.sprite();
+        ui.label(format!(
+            "{}  {}×{}",
+            editor.artboard().name,
+            s.width,
+            s.height
+        ));
         ui.separator();
         match canvas.hover {
             Some((x, y)) if x >= 0 && y >= 0 && x < s.width as i32 && y < s.height as i32 => {
@@ -151,4 +159,59 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView) {
         ui.separator();
         ui.label(format!("Frame {}/{}", editor.frame + 1, s.frames.len()));
     });
+}
+
+/// Lista de artboards: activar, crear, renombrar y eliminar.
+pub fn artboards(ui: &mut egui::Ui, editor: &mut Editor, name_buffer: &mut (ArtboardId, String)) {
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.heading("Artboards");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let can_remove = editor.document.artboards.len() > 1;
+            if ui
+                .add_enabled(can_remove, egui::Button::new("🗑").small())
+                .on_hover_text("Delete artboard")
+                .clicked()
+            {
+                editor.remove_active_artboard();
+            }
+            if ui
+                .small_button("➕")
+                .on_hover_text("New 64×64 artboard")
+                .clicked()
+            {
+                editor.add_artboard(64, 64);
+            }
+        });
+    });
+    ui.separator();
+
+    let ids: Vec<(ArtboardId, String)> = editor
+        .document
+        .artboards
+        .iter()
+        .rev()
+        .map(|a| (a.id, a.name.clone()))
+        .collect();
+    for (id, name) in ids {
+        if ui.selectable_label(id == editor.active, name).clicked() {
+            editor.activate(id);
+        }
+    }
+
+    ui.add_space(4.0);
+    if name_buffer.0 != editor.active {
+        *name_buffer = (editor.active, editor.artboard().name.clone());
+    }
+    let response = ui.add(egui::TextEdit::singleline(&mut name_buffer.1).hint_text("Name"));
+    if response.lost_focus() {
+        let name = name_buffer.1.trim().to_string();
+        if name.is_empty() {
+            name_buffer.1 = editor.artboard().name.clone();
+        } else {
+            editor.rename_active_artboard(name);
+        }
+    } else if !response.has_focus() {
+        name_buffer.1 = editor.artboard().name.clone();
+    }
 }

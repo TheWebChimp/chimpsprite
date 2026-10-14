@@ -1,33 +1,35 @@
+use std::collections::HashMap;
 use std::time::Duration;
 
-use cs_core::Mask;
+use cs_core::{ArtboardId, Mask};
+use cs_tools::{ArtboardHit, Edges, hit_test};
 use eframe::egui::{
-    self, Color32, ColorImage, Pos2, Rect, Sense, Stroke, StrokeKind, TextureHandle,
-    TextureOptions, Vec2,
+    self, Align2, Color32, ColorImage, FontId, Pos2, Rect, Sense, Stroke, StrokeKind,
+    TextureHandle, TextureOptions, Vec2,
 };
 
 use crate::editor::{Editor, ToolKind};
 use crate::theme;
 
-const ZOOM_LEVELS: [f32; 12] = [
-    1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
+const ZOOM_LEVELS: [f32; 13] = [
+    0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
 ];
 /// Tamaño en pantalla de cada cuadro del damero de transparencia.
 const CHECKER_PX: f32 = 8.0;
 /// Velocidad de las "marching ants" (pasos por segundo).
 const ANTS_SPEED: f64 = 6.0;
+/// Tolerancia en pantalla para tomar bordes de artboards.
+const EDGE_SLOP_PX: f32 = 6.0;
 
-/// Vista del lienzo: zoom, paneo y la textura del sprite compuesto.
+/// Vista del lienzo infinito: zoom, paneo y una textura por artboard.
 pub struct CanvasView {
     pub zoom: f32,
     pan: Vec2,
-    texture: Option<TextureHandle>,
+    textures: HashMap<ArtboardId, TextureHandle>,
     checker: Option<TextureHandle>,
     rendered_revision: Option<u64>,
-    /// Selección a dibujar (la del documento o la del gesto en curso).
-    selection: Option<Mask>,
     fitted: bool,
-    /// Píxel del sprite bajo el cursor, para la barra de estado.
+    /// Píxel local del artboard activo bajo el cursor, para la barra de estado.
     pub hover: Option<(i32, i32)>,
 }
 
@@ -36,10 +38,9 @@ impl Default for CanvasView {
         Self {
             zoom: 8.0,
             pan: Vec2::ZERO,
-            texture: None,
+            textures: HashMap::new(),
             checker: None,
             rendered_revision: None,
-            selection: None,
             fitted: false,
             hover: None,
         }
@@ -47,29 +48,44 @@ impl Default for CanvasView {
 }
 
 impl CanvasView {
-    /// Fuerza a recomponer y reajustar el zoom (p. ej. tras crear un sprite nuevo).
+    /// Fuerza a recomponer y reajustar el zoom (p. ej. tras crear un documento nuevo).
     pub fn reset(&mut self) {
         self.rendered_revision = None;
         self.fitted = false;
-        self.pan = Vec2::ZERO;
+        self.textures.clear();
     }
 
-    fn origin(&self, rect: Rect, sprite_size: Vec2) -> Pos2 {
-        rect.center() + self.pan - sprite_size * self.zoom / 2.0
+    /// Posición en pantalla del origen del mundo.
+    fn origin(&self, rect: Rect) -> Pos2 {
+        rect.center() + self.pan
     }
 
-    fn fit(&mut self, rect: Rect, sprite_size: Vec2) {
-        let max = (rect.size() * 0.85 / sprite_size).min_elem();
+    fn to_screen(&self, rect: Rect, world: (i32, i32)) -> Pos2 {
+        self.origin(rect) + Vec2::new(world.0 as f32, world.1 as f32) * self.zoom
+    }
+
+    fn to_world(&self, rect: Rect, p: Pos2) -> (f32, f32) {
+        let w = (p - self.origin(rect)) / self.zoom;
+        (w.x, w.y)
+    }
+
+    fn fit(&mut self, rect: Rect, editor: &Editor) {
+        let Some(((x0, y0), (x1, y1))) = editor.document.bounds() else {
+            return;
+        };
+        let size = Vec2::new((x1 - x0) as f32, (y1 - y0) as f32);
+        let max = (rect.size() * 0.85 / size).min_elem();
         self.zoom = ZOOM_LEVELS
             .iter()
             .copied()
             .rfind(|&z| z <= max)
-            .unwrap_or(1.0);
-        self.pan = Vec2::ZERO;
+            .unwrap_or(ZOOM_LEVELS[0]);
+        let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
+        self.pan = -center * self.zoom;
         self.fitted = true;
     }
 
-    fn zoom_at(&mut self, rect: Rect, sprite_size: Vec2, anchor: Pos2, step_in: bool) {
+    fn zoom_at(&mut self, rect: Rect, anchor: Pos2, step_in: bool) {
         let i = ZOOM_LEVELS
             .iter()
             .position(|&z| z >= self.zoom)
@@ -79,33 +95,9 @@ impl CanvasView {
         } else {
             ZOOM_LEVELS[i.saturating_sub(1)]
         };
-        let sprite_pos = (anchor - self.origin(rect, sprite_size)) / self.zoom;
+        let world = (anchor - self.origin(rect)) / self.zoom;
         self.zoom = next;
-        let new_origin = anchor - sprite_pos * next;
-        self.pan = new_origin - rect.center() + sprite_size * next / 2.0;
-    }
-
-    /// Recompone si el documento cambió o hay un gesto en curso (vista previa).
-    fn update_texture(&mut self, ctx: &egui::Context, editor: &Editor) {
-        let painting = editor.is_painting();
-        if !painting && self.rendered_revision == Some(editor.revision) && self.texture.is_some() {
-            return;
-        }
-        let view = editor.frame_view();
-        let bytes: Vec<u8> = view
-            .pixels
-            .iter()
-            .flat_map(|c| [c.r, c.g, c.b, c.a])
-            .collect();
-        let size = [editor.sprite.width as usize, editor.sprite.height as usize];
-        let image = ColorImage::from_rgba_unmultiplied(size, &bytes);
-        match &mut self.texture {
-            Some(tex) => tex.set(image, TextureOptions::NEAREST),
-            None => self.texture = Some(ctx.load_texture("sprite", image, TextureOptions::NEAREST)),
-        }
-        self.selection = view.selection;
-        // Durante un gesto no marcamos como al día, para recomponer al terminar.
-        self.rendered_revision = (!painting).then_some(editor.revision);
+        self.pan = anchor - world * next - rect.center();
     }
 
     fn checker(&mut self, ctx: &egui::Context) -> egui::TextureId {
@@ -125,8 +117,6 @@ impl CanvasView {
         rect: Rect,
         editor: &mut Editor,
     ) {
-        let sprite_size = Vec2::new(editor.sprite.width as f32, editor.sprite.height as f32);
-
         // Zoom con la rueda, anclado al cursor.
         if let Some(pointer) = response.hover_pos() {
             let scroll: f32 = ui.input(|i| {
@@ -140,7 +130,7 @@ impl CanvasView {
                     .sum()
             });
             if scroll != 0.0 {
-                self.zoom_at(rect, sprite_size, pointer, scroll > 0.0);
+                self.zoom_at(rect, pointer, scroll > 0.0);
             }
         }
 
@@ -152,13 +142,9 @@ impl CanvasView {
             self.pan += response.drag_delta();
         }
 
-        let origin = self.origin(rect, sprite_size);
-        let zoom = self.zoom;
-        let to_sprite = |p: Pos2| {
-            let s = (p - origin) / zoom;
-            (s.x.floor() as i32, s.y.floor() as i32)
-        };
-        self.hover = response.hover_pos().map(to_sprite);
+        self.hover = response
+            .hover_pos()
+            .map(|p| editor.to_local(self.to_world(rect, p)));
 
         // Pintura: estado crudo del puntero, para que un clic sin arrastre también cuente.
         let (pressed_primary, pressed_secondary, any_down, pointer, modifiers) = ui.input(|i| {
@@ -171,18 +157,20 @@ impl CanvasView {
             )
         });
         editor.options.constrain = modifiers.shift;
+        let slop = EDGE_SLOP_PX / self.zoom;
         if !space
             && response.hovered()
             && !editor.is_painting()
             && (pressed_primary || pressed_secondary)
             && let Some(p) = pointer
         {
-            editor.pointer_press(to_sprite(p), pressed_secondary, modifiers.alt);
+            let world = self.to_world(rect, p);
+            editor.pointer_press(world, pressed_secondary, modifiers.alt, slop);
         }
         if editor.is_painting() {
             if any_down {
                 if let Some(p) = pointer {
-                    editor.pointer_drag(to_sprite(p));
+                    editor.pointer_drag(self.to_world(rect, p));
                 }
             } else {
                 editor.pointer_release();
@@ -193,6 +181,11 @@ impl CanvasView {
             Some(egui::CursorIcon::Grab)
         } else if !response.hovered() {
             None
+        } else if editor.active_tool() == ToolKind::Artboard {
+            let world = pointer.map(|p| self.to_world(rect, p));
+            Some(artboard_cursor(
+                world.and_then(|w| hit_test(&editor.document, w, slop)),
+            ))
         } else if editor.active_tool() == ToolKind::Move {
             Some(egui::CursorIcon::Move)
         } else {
@@ -206,48 +199,94 @@ impl CanvasView {
     pub fn show(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let ctx = ui.ctx().clone();
-        let sprite_size = Vec2::new(editor.sprite.width as f32, editor.sprite.height as f32);
         if !self.fitted && rect.width() > 0.0 {
-            self.fit(rect, sprite_size);
+            self.fit(rect, editor);
         }
         self.handle_input(ui, &response, rect, editor);
-        self.update_texture(&ctx, editor);
 
-        let origin = self.origin(rect, sprite_size);
+        let view = editor.view();
+        let document = view.document.as_ref();
+
+        // Recompone las texturas si el documento cambió o hay un gesto en curso.
+        let painting = editor.is_painting();
+        if painting || self.rendered_revision != Some(editor.revision) {
+            self.textures
+                .retain(|id, _| document.artboard(*id).is_some());
+            for artboard in &document.artboards {
+                let sprite = &artboard.sprite;
+                let pixels = cs_render::render_frame(sprite, frame_for(editor, artboard.id));
+                let bytes: Vec<u8> = pixels.iter().flat_map(|c| [c.r, c.g, c.b, c.a]).collect();
+                let size = [sprite.width as usize, sprite.height as usize];
+                let image = ColorImage::from_rgba_unmultiplied(size, &bytes);
+                match self.textures.get_mut(&artboard.id) {
+                    Some(tex) => tex.set(image, TextureOptions::NEAREST),
+                    None => {
+                        let name = format!("artboard-{}", artboard.id.0);
+                        let tex = ctx.load_texture(name, image, TextureOptions::NEAREST);
+                        self.textures.insert(artboard.id, tex);
+                    }
+                }
+            }
+            // Durante un gesto no marcamos como al día, para recomponer al terminar.
+            self.rendered_revision = (!painting).then_some(editor.revision);
+        }
+
         let checker = self.checker(&ctx);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, theme::CANVAS_BG);
 
-        let canvas_rect = Rect::from_min_size(origin, sprite_size * self.zoom);
-        let uv = Rect::from_min_max(
-            Pos2::ZERO,
-            (canvas_rect.size() / (CHECKER_PX * 2.0)).to_pos2(),
-        );
-        painter.image(checker, canvas_rect, uv, Color32::WHITE);
-        if let Some(tex) = &self.texture {
-            let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
-            painter.image(tex.id(), canvas_rect, full_uv, Color32::WHITE);
+        for artboard in &document.artboards {
+            let ((x0, y0), (x1, y1)) = artboard.rect();
+            let screen = Rect::from_min_max(
+                self.to_screen(rect, (x0, y0)),
+                self.to_screen(rect, (x1, y1)),
+            );
+            let uv = Rect::from_min_max(Pos2::ZERO, (screen.size() / (CHECKER_PX * 2.0)).to_pos2());
+            painter.image(checker, screen, uv, Color32::WHITE);
+            if let Some(tex) = self.textures.get(&artboard.id) {
+                let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+                painter.image(tex.id(), screen, full_uv, Color32::WHITE);
+            }
+            if self.zoom >= 8.0 {
+                let stroke = Stroke::new(1.0, theme::GRID);
+                for x in 1..artboard.sprite.width {
+                    painter.vline(
+                        screen.left() + x as f32 * self.zoom,
+                        screen.y_range(),
+                        stroke,
+                    );
+                }
+                for y in 1..artboard.sprite.height {
+                    painter.hline(
+                        screen.x_range(),
+                        screen.top() + y as f32 * self.zoom,
+                        stroke,
+                    );
+                }
+            }
+            let active = artboard.id == editor.active;
+            let (border, label_color) = if active {
+                (Stroke::new(2.0, theme::ACCENT), theme::ACCENT)
+            } else {
+                (Stroke::new(1.0, theme::CANVAS_BORDER), theme::LABEL)
+            };
+            painter.rect_stroke(screen, 0.0, border, StrokeKind::Outside);
+            painter.text(
+                screen.left_top() - Vec2::new(0.0, 4.0),
+                Align2::LEFT_BOTTOM,
+                format!(
+                    "{}  {}×{}",
+                    artboard.name, artboard.sprite.width, artboard.sprite.height
+                ),
+                FontId::proportional(12.0),
+                label_color,
+            );
         }
 
-        if self.zoom >= 8.0 {
-            let stroke = Stroke::new(1.0, theme::GRID);
-            for x in 1..editor.sprite.width {
-                let px = canvas_rect.left() + x as f32 * self.zoom;
-                painter.vline(px, canvas_rect.y_range(), stroke);
-            }
-            for y in 1..editor.sprite.height {
-                let py = canvas_rect.top() + y as f32 * self.zoom;
-                painter.hline(canvas_rect.x_range(), py, stroke);
-            }
-        }
-        painter.rect_stroke(
-            canvas_rect,
-            0.0,
-            Stroke::new(1.0, theme::CANVAS_BORDER),
-            StrokeKind::Outside,
-        );
-
-        if let Some(mask) = &self.selection {
+        let active_origin = document
+            .artboard(editor.active)
+            .map(|a| self.to_screen(rect, a.position));
+        if let (Some(mask), Some(origin)) = (&view.selection, active_origin) {
             let phase = (ctx.input(|i| i.time) * ANTS_SPEED) as i32;
             draw_marching_ants(&painter, mask, origin, self.zoom, phase);
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
@@ -255,11 +294,13 @@ impl CanvasView {
 
         // Contorno del pincel bajo el cursor.
         let space = ui.input(|i| i.key_down(egui::Key::Space));
-        if let Some((hx, hy)) = self.hover
+        let tool = editor.active_tool();
+        if let (Some((hx, hy)), Some(origin)) = (self.hover, active_origin)
             && !space
             && response.hovered()
+            && tool != ToolKind::Artboard
         {
-            let size = if editor.active_tool().uses_brush() {
+            let size = if tool.uses_brush() {
                 editor.options.brush_size
             } else {
                 1
@@ -276,6 +317,43 @@ impl CanvasView {
                 StrokeKind::Inside,
             );
         }
+    }
+}
+
+/// Frame a mostrar de cada artboard: el activo usa el frame actual; los demás, el primero.
+fn frame_for(editor: &Editor, id: ArtboardId) -> usize {
+    if id == editor.active { editor.frame } else { 0 }
+}
+
+fn artboard_cursor(hit: Option<ArtboardHit>) -> egui::CursorIcon {
+    use egui::CursorIcon as C;
+    match hit {
+        Some(ArtboardHit::Edge(_, e)) => match e {
+            Edges {
+                left: true,
+                top: true,
+                ..
+            }
+            | Edges {
+                right: true,
+                bottom: true,
+                ..
+            } => C::ResizeNwSe,
+            Edges {
+                left: true,
+                bottom: true,
+                ..
+            }
+            | Edges {
+                right: true,
+                top: true,
+                ..
+            } => C::ResizeNeSw,
+            Edges { left: true, .. } | Edges { right: true, .. } => C::ResizeHorizontal,
+            _ => C::ResizeVertical,
+        },
+        Some(ArtboardHit::Inside(_)) => C::Move,
+        None => C::Crosshair,
     }
 }
 
