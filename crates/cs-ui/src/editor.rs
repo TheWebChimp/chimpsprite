@@ -7,66 +7,137 @@ use cs_core::{
     Rgba, Sprite,
 };
 use cs_render::OnionSkin;
+use cs_tools::text::TextStyle;
 use cs_tools::{
-    ArtboardTool, Bucket, Eraser, Eyedropper, MoveTool, Pencil, Point, RectSelect, ShapeKind,
-    ShapeTool, Tool, ToolContext, ToolOutput,
+    ArtboardTool, Bucket, Dither, Eraser, Eyedropper, GradientShape, GradientTool, Jumble, Lasso,
+    MagicWand, Marquee, MarqueeShape, MoveTool, Pencil, Point, PolygonLasso, ShapeKind, ShapeTool,
+    Spray, Tool, ToolContext, ToolOutput,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolKind {
+    RectSelect,
+    EllipseSelect,
+    Lasso,
+    PolygonLasso,
+    MagicWand,
+    Move,
     Pencil,
+    Spray,
     Eraser,
+    Eyedropper,
     Bucket,
+    Gradient,
     Line,
     Rectangle,
     Ellipse,
-    Select,
-    Move,
-    Eyedropper,
+    Jumble,
+    Text,
     Artboard,
 }
 
 impl ToolKind {
-    pub const ALL: [ToolKind; 10] = [
-        ToolKind::Select,
-        ToolKind::Move,
-        ToolKind::Pencil,
-        ToolKind::Eraser,
-        ToolKind::Bucket,
-        ToolKind::Line,
-        ToolKind::Rectangle,
-        ToolKind::Ellipse,
-        ToolKind::Eyedropper,
-        ToolKind::Artboard,
+    /// Grupos de la barra (como en Aseprite); el primero de cada grupo es el predeterminado.
+    pub const GROUPS: [&'static [ToolKind]; 11] = [
+        &[
+            ToolKind::RectSelect,
+            ToolKind::EllipseSelect,
+            ToolKind::Lasso,
+            ToolKind::PolygonLasso,
+            ToolKind::MagicWand,
+        ],
+        &[ToolKind::Move],
+        &[ToolKind::Pencil, ToolKind::Spray],
+        &[ToolKind::Eraser],
+        &[ToolKind::Eyedropper],
+        &[ToolKind::Bucket, ToolKind::Gradient],
+        &[ToolKind::Line],
+        &[ToolKind::Rectangle, ToolKind::Ellipse],
+        &[ToolKind::Jumble],
+        &[ToolKind::Text],
+        &[ToolKind::Artboard],
     ];
 
     pub fn label(self) -> &'static str {
         match self {
+            ToolKind::RectSelect => "Rectangular Marquee",
+            ToolKind::EllipseSelect => "Elliptical Marquee",
+            ToolKind::Lasso => "Lasso",
+            ToolKind::PolygonLasso => "Polygonal Lasso",
+            ToolKind::MagicWand => "Magic Wand",
+            ToolKind::Move => "Move",
             ToolKind::Pencil => "Pencil",
+            ToolKind::Spray => "Spray",
             ToolKind::Eraser => "Eraser",
-            ToolKind::Bucket => "Bucket",
+            ToolKind::Eyedropper => "Eyedropper",
+            ToolKind::Bucket => "Paint Bucket",
+            ToolKind::Gradient => "Gradient",
             ToolKind::Line => "Line",
             ToolKind::Rectangle => "Rectangle",
             ToolKind::Ellipse => "Ellipse",
-            ToolKind::Select => "Select",
-            ToolKind::Move => "Move",
-            ToolKind::Eyedropper => "Eyedropper",
+            ToolKind::Jumble => "Jumble",
+            ToolKind::Text => "Text",
             ToolKind::Artboard => "Artboard",
         }
     }
 
     pub fn shortcut(self) -> &'static str {
         match self {
-            ToolKind::Pencil => "B",
-            ToolKind::Eraser => "E",
-            ToolKind::Bucket => "G",
-            ToolKind::Line => "L",
-            ToolKind::Rectangle | ToolKind::Ellipse => "U",
-            ToolKind::Select => "M",
+            ToolKind::RectSelect => "M",
+            ToolKind::EllipseSelect => "Shift+M",
+            ToolKind::Lasso => "Q",
+            ToolKind::PolygonLasso => "Shift+Q",
+            ToolKind::MagicWand => "W",
             ToolKind::Move => "V",
+            ToolKind::Pencil => "B",
+            ToolKind::Spray => "Shift+S",
+            ToolKind::Eraser => "E",
             ToolKind::Eyedropper => "I",
+            ToolKind::Bucket => "G",
+            ToolKind::Gradient => "Shift+G",
+            ToolKind::Line => "L",
+            ToolKind::Rectangle => "U",
+            ToolKind::Ellipse => "Shift+U",
+            ToolKind::Jumble => "R",
+            ToolKind::Text => "T",
             ToolKind::Artboard => "Shift+O",
         }
+    }
+
+    /// Herramienta de un atajo de teclado (sin Ctrl/Alt).
+    pub fn from_key(key: char, shift: bool) -> Option<ToolKind> {
+        Some(match (key, shift) {
+            ('M', false) => ToolKind::RectSelect,
+            ('M', true) => ToolKind::EllipseSelect,
+            ('Q', false) => ToolKind::Lasso,
+            ('Q', true) => ToolKind::PolygonLasso,
+            ('W', false) => ToolKind::MagicWand,
+            ('V', false) => ToolKind::Move,
+            ('B', false) => ToolKind::Pencil,
+            ('S', true) => ToolKind::Spray,
+            ('E', false) => ToolKind::Eraser,
+            ('I', false) => ToolKind::Eyedropper,
+            ('G', false) => ToolKind::Bucket,
+            ('G', true) => ToolKind::Gradient,
+            ('L', false) => ToolKind::Line,
+            ('U', false) => ToolKind::Rectangle,
+            ('U', true) => ToolKind::Ellipse,
+            ('R', false) => ToolKind::Jumble,
+            ('T', false) => ToolKind::Text,
+            ('O', true) => ToolKind::Artboard,
+            _ => return None,
+        })
+    }
+
+    pub fn is_selection(self) -> bool {
+        matches!(
+            self,
+            ToolKind::RectSelect
+                | ToolKind::EllipseSelect
+                | ToolKind::Lasso
+                | ToolKind::PolygonLasso
+                | ToolKind::MagicWand
+        )
     }
 
     /// Herramientas que pintan y por lo tanto se recortan a la selección.
@@ -74,11 +145,15 @@ impl ToolKind {
         matches!(
             self,
             ToolKind::Pencil
+                | ToolKind::Spray
                 | ToolKind::Eraser
                 | ToolKind::Bucket
+                | ToolKind::Gradient
                 | ToolKind::Line
                 | ToolKind::Rectangle
                 | ToolKind::Ellipse
+                | ToolKind::Jumble
+                | ToolKind::Text
         )
     }
 
@@ -87,12 +162,64 @@ impl ToolKind {
         matches!(
             self,
             ToolKind::Pencil
+                | ToolKind::Spray
                 | ToolKind::Eraser
                 | ToolKind::Line
                 | ToolKind::Rectangle
                 | ToolKind::Ellipse
+                | ToolKind::Jumble
         )
     }
+}
+
+/// Cómo se combina una selección nueva con la existente.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SelectionMode {
+    #[default]
+    Replace,
+    Add,
+    Subtract,
+    Intersect,
+}
+
+impl SelectionMode {
+    pub const ALL: [SelectionMode; 4] = [
+        SelectionMode::Replace,
+        SelectionMode::Add,
+        SelectionMode::Subtract,
+        SelectionMode::Intersect,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SelectionMode::Replace => "Replace",
+            SelectionMode::Add => "Add (Shift)",
+            SelectionMode::Subtract => "Subtract (Alt)",
+            SelectionMode::Intersect => "Intersect (Shift+Alt)",
+        }
+    }
+
+    /// Combina la forma `shape` de un gesto con la selección `base`. `shape = None` es un clic
+    /// sin forma: en Replace deselecciona; en los demás modos no cambia nada.
+    pub fn combine(self, base: Option<&Mask>, shape: Option<Mask>) -> Option<Mask> {
+        match (self, shape, base) {
+            (SelectionMode::Replace, shape, _) => shape,
+            (_, None, base) => base.cloned(),
+            (SelectionMode::Add, Some(s), Some(b)) => Some(b.union(&s)),
+            (SelectionMode::Add, Some(s), None) => Some(s),
+            (SelectionMode::Subtract, Some(s), Some(b)) => Some(b.subtract(&s)),
+            (SelectionMode::Intersect, Some(s), Some(b)) => Some(b.intersect(&s)),
+            (SelectionMode::Subtract | SelectionMode::Intersect, Some(_), None) => None,
+        }
+    }
+}
+
+/// Texto que se está escribiendo (todavía no aplicado).
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextDraft {
+    /// Esquina superior izquierda, en píxeles del artboard activo.
+    pub origin: Point,
+    pub text: String,
 }
 
 /// Opciones compartidas por las herramientas.
@@ -104,6 +231,15 @@ pub struct ToolOptions {
     pub contiguous: bool,
     /// Shift presionado (lo actualiza la UI cada frame).
     pub constrain: bool,
+    pub selection_mode: SelectionMode,
+    /// Varita: diferencia máxima por canal.
+    pub tolerance: u8,
+    /// Varita: tomar los colores de todas las capas visibles.
+    pub sample_all: bool,
+    pub spray_width: u32,
+    pub spray_speed: u32,
+    pub gradient_shape: GradientShape,
+    pub dither: Dither,
 }
 
 impl Default for ToolOptions {
@@ -114,19 +250,33 @@ impl Default for ToolOptions {
             filled: false,
             contiguous: true,
             constrain: false,
+            selection_mode: SelectionMode::Replace,
+            tolerance: 0,
+            sample_all: false,
+            spray_width: 16,
+            spray_speed: 32,
+            gradient_shape: GradientShape::Linear,
+            dither: Dither::None,
         }
     }
 }
 
 /// Herramientas que trabajan dentro de un sprite.
 struct SpriteTools {
+    rect_select: Marquee,
+    ellipse_select: Marquee,
+    lasso: Lasso,
+    polygon_lasso: PolygonLasso,
+    magic_wand: MagicWand,
     pencil: Pencil,
+    spray: Spray,
     eraser: Eraser,
     bucket: Bucket,
+    gradient: GradientTool,
     line: ShapeTool,
     rectangle: ShapeTool,
     ellipse: ShapeTool,
-    select: RectSelect,
+    jumble: Jumble,
     mover: MoveTool,
     eyedropper: Eyedropper,
 }
@@ -134,13 +284,20 @@ struct SpriteTools {
 impl SpriteTools {
     fn new() -> Self {
         Self {
+            rect_select: Marquee::new(MarqueeShape::Rectangle),
+            ellipse_select: Marquee::new(MarqueeShape::Ellipse),
+            lasso: Lasso::new(),
+            polygon_lasso: PolygonLasso::new(),
+            magic_wand: MagicWand::new(),
             pencil: Pencil::new(),
+            spray: Spray::new(),
             eraser: Eraser::new(),
             bucket: Bucket::new(),
+            gradient: GradientTool::new(),
             line: ShapeTool::new(ShapeKind::Line),
             rectangle: ShapeTool::new(ShapeKind::Rectangle),
             ellipse: ShapeTool::new(ShapeKind::Ellipse),
-            select: RectSelect::new(),
+            jumble: Jumble::new(),
             mover: MoveTool::new(),
             eyedropper: Eyedropper::new(),
         }
@@ -148,31 +305,45 @@ impl SpriteTools {
 
     fn get(&self, kind: ToolKind) -> Option<&dyn Tool> {
         Some(match kind {
+            ToolKind::RectSelect => &self.rect_select,
+            ToolKind::EllipseSelect => &self.ellipse_select,
+            ToolKind::Lasso => &self.lasso,
+            ToolKind::PolygonLasso => &self.polygon_lasso,
+            ToolKind::MagicWand => &self.magic_wand,
             ToolKind::Pencil => &self.pencil,
+            ToolKind::Spray => &self.spray,
             ToolKind::Eraser => &self.eraser,
             ToolKind::Bucket => &self.bucket,
+            ToolKind::Gradient => &self.gradient,
             ToolKind::Line => &self.line,
             ToolKind::Rectangle => &self.rectangle,
             ToolKind::Ellipse => &self.ellipse,
-            ToolKind::Select => &self.select,
+            ToolKind::Jumble => &self.jumble,
             ToolKind::Move => &self.mover,
             ToolKind::Eyedropper => &self.eyedropper,
-            ToolKind::Artboard => return None,
+            ToolKind::Text | ToolKind::Artboard => return None,
         })
     }
 
     fn get_mut(&mut self, kind: ToolKind) -> Option<&mut dyn Tool> {
         Some(match kind {
+            ToolKind::RectSelect => &mut self.rect_select,
+            ToolKind::EllipseSelect => &mut self.ellipse_select,
+            ToolKind::Lasso => &mut self.lasso,
+            ToolKind::PolygonLasso => &mut self.polygon_lasso,
+            ToolKind::MagicWand => &mut self.magic_wand,
             ToolKind::Pencil => &mut self.pencil,
+            ToolKind::Spray => &mut self.spray,
             ToolKind::Eraser => &mut self.eraser,
             ToolKind::Bucket => &mut self.bucket,
+            ToolKind::Gradient => &mut self.gradient,
             ToolKind::Line => &mut self.line,
             ToolKind::Rectangle => &mut self.rectangle,
             ToolKind::Ellipse => &mut self.ellipse,
-            ToolKind::Select => &mut self.select,
+            ToolKind::Jumble => &mut self.jumble,
             ToolKind::Move => &mut self.mover,
             ToolKind::Eyedropper => &mut self.eyedropper,
-            ToolKind::Artboard => return None,
+            ToolKind::Text | ToolKind::Artboard => return None,
         })
     }
 }
@@ -258,6 +429,15 @@ pub struct Editor {
     pub doc_version: u64,
     /// A qué se pegan las herramientas de forma (lo actualiza el lienzo cada frame).
     pub snap: Option<crate::guides::SnapContext>,
+    /// Última selección descartada (para Reselect).
+    last_selection: Option<Mask>,
+    /// Modo de combinación del gesto de selección en curso.
+    gesture_mode: SelectionMode,
+    /// Shift ya estaba presionado al empezar el gesto (se usó para el modo, no para restringir).
+    shift_at_press: bool,
+    /// Texto en edición con la herramienta Text.
+    pub text: Option<TextDraft>,
+    pub text_style: TextStyle,
 }
 
 impl Editor {
@@ -293,6 +473,11 @@ impl Editor {
             onion: OnionSkin::default(),
             doc_version: 0,
             snap: None,
+            last_selection: None,
+            gesture_mode: SelectionMode::Replace,
+            shift_at_press: false,
+            text: None,
+            text_style: TextStyle::default(),
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
@@ -460,8 +645,47 @@ impl Editor {
     }
 
     pub fn set_selection(&mut self, selection: Option<Mask>) {
-        self.selection = selection.filter(|m| !m.is_empty());
+        let selection = selection.filter(|m| !m.is_empty());
+        if selection.is_none()
+            && let Some(old) = self.selection.take()
+        {
+            self.last_selection = Some(old);
+        }
+        self.selection = selection;
         self.revision += 1;
+    }
+
+    /// Vuelve a la última selección descartada (si sigue cabiendo en el lienzo).
+    pub fn reselect(&mut self) {
+        let s = self.sprite();
+        let (w, h) = (s.width, s.height);
+        if let Some(last) = self.last_selection.clone()
+            && (last.width(), last.height()) == (w, h)
+        {
+            self.set_selection(Some(last));
+        }
+    }
+
+    /// Invierte la selección; sin selección, selecciona todo.
+    pub fn invert_selection(&mut self) {
+        let s = self.sprite();
+        let inverted = match &self.selection {
+            Some(mask) => mask.inverted(),
+            None => Mask::all(s.width, s.height),
+        };
+        self.set_selection(Some(inverted));
+    }
+
+    pub fn can_reselect(&self) -> bool {
+        self.last_selection.is_some()
+    }
+
+    /// Cambia de herramienta descartando gestos de varios clics a medias.
+    pub fn set_tool(&mut self, kind: ToolKind) {
+        if kind != self.tool {
+            self.cancel_gesture();
+            self.tool = kind;
+        }
     }
 
     pub fn select_all(&mut self) {
@@ -509,6 +733,84 @@ impl Editor {
                 .is_some_and(|t| t.is_active())
     }
 
+    /// Gesto de varios clics a medias (lazo poligonal) o texto en edición.
+    pub fn is_pending(&self) -> bool {
+        self.text.is_some()
+            || self
+                .tools
+                .get(self.active_tool())
+                .is_some_and(|t| t.is_pending())
+    }
+
+    /// Movimiento del puntero sin botones.
+    pub fn pointer_hover(&mut self, world: (f32, f32)) {
+        if self
+            .tools
+            .get(self.active_tool())
+            .is_some_and(|t| t.is_pending())
+        {
+            let p = self.to_local(self.snapped(world));
+            self.with_tool(|tool, ctx| tool.hover(ctx, p));
+        }
+    }
+
+    /// Tiempo con el botón presionado (spray).
+    pub fn tool_tick(&mut self, dt_ms: f32) {
+        if self.is_painting() {
+            self.with_tool(|tool, ctx| tool.tick(ctx, dt_ms));
+        }
+    }
+
+    /// Termina un gesto de varios clics (Enter / doble clic) o aplica el texto en edición.
+    pub fn finish_gesture(&mut self) {
+        if self.text.is_some() {
+            self.commit_text();
+            return;
+        }
+        let kind = self.active_tool();
+        if self.tools.get(kind).is_some_and(|t| t.is_pending()) {
+            let out = self.with_tool(|tool, ctx| tool.finish(ctx));
+            self.apply_output(kind, out);
+        }
+    }
+
+    /// Descarta el gesto en curso (Esc).
+    pub fn cancel_gesture(&mut self) {
+        self.text = None;
+        if let Some(tool) = self.tools.get_mut(self.active_tool()) {
+            tool.cancel();
+        }
+        self.revision += 1;
+    }
+
+    /// Aplica el texto en edición con el color primario (un paso de undo).
+    pub fn commit_text(&mut self) {
+        let Some(cmd) = self.text_command() else {
+            self.text = None;
+            return;
+        };
+        self.text = None;
+        let cmd = self.shape_paint(ToolKind::Text, cmd);
+        self.execute(cmd);
+    }
+
+    fn text_command(&self) -> Option<Command> {
+        let draft = self.text.as_ref().filter(|d| !d.text.trim().is_empty())?;
+        let pixels = cs_tools::text::text_pixels(
+            self.sprite(),
+            (self.layer, self.frame),
+            draft.origin,
+            self.primary,
+            &draft.text,
+            &self.text_style,
+        );
+        Some(Command::DrawPixels {
+            layer: self.layer,
+            frame: self.frame,
+            pixels,
+        })
+    }
+
     /// Punto de mundo → píxel local del artboard activo.
     /// Frame a mostrar de un artboard: el actual si es el activo; si no, el recordado.
     pub fn frame_of(&self, id: ArtboardId) -> usize {
@@ -536,17 +838,32 @@ impl Editor {
     }
 
     fn context(&self) -> ToolContext<'_> {
+        let secondary = if self.painting_secondary {
+            self.primary
+        } else {
+            self.secondary
+        };
+        // En selección, Shift al empezar elige el modo Add y no restringe la forma.
+        let constrain =
+            self.options.constrain && !(self.active_tool().is_selection() && self.shift_at_press);
         ToolContext {
             sprite: self.sprite(),
             layer: self.layer,
             frame: self.frame,
             color: self.color(),
+            secondary,
             brush_size: self.options.brush_size,
             pixel_perfect: self.options.pixel_perfect,
             filled: self.options.filled,
             contiguous: self.options.contiguous,
-            constrain: self.options.constrain,
+            constrain,
             selection: self.selection.as_ref(),
+            tolerance: self.options.tolerance,
+            sample_all: self.options.sample_all,
+            spray_width: self.options.spray_width,
+            spray_speed: self.options.spray_speed,
+            gradient_shape: self.options.gradient_shape,
+            dither: self.options.dither,
         }
     }
 
@@ -572,7 +889,18 @@ impl Editor {
     pub fn pointer_press(&mut self, world: (f32, f32), secondary: bool, alt: bool, slop: f32) {
         self.stop();
         self.painting_secondary = secondary;
-        self.temp_eyedropper = alt && self.tool != ToolKind::Eyedropper;
+        // Alt es cuentagotas temporal solo en las herramientas que pintan.
+        self.temp_eyedropper = alt && self.tool.paints();
+        let shift = self.options.constrain;
+        if self.tool.is_selection() && !self.tools.get(self.tool).is_some_and(|t| t.is_pending()) {
+            self.shift_at_press = shift;
+            self.gesture_mode = match (shift, alt) {
+                (true, true) => SelectionMode::Intersect,
+                (true, false) => SelectionMode::Add,
+                (false, true) => SelectionMode::Subtract,
+                (false, false) => self.options.selection_mode,
+            };
+        }
         if self.active_tool() == ToolKind::Artboard {
             if let Some(id) =
                 self.artboard_tool
@@ -586,6 +914,20 @@ impl Editor {
             self.activate(id);
         }
         let p = self.to_local(self.snapped(world));
+        if self.active_tool() == ToolKind::Text {
+            // Un clic empieza un texto o mueve el que se está escribiendo.
+            match &mut self.text {
+                Some(draft) => draft.origin = p,
+                None => {
+                    self.text = Some(TextDraft {
+                        origin: p,
+                        text: String::new(),
+                    })
+                }
+            }
+            self.revision += 1;
+            return;
+        }
         // Mover sin selección: cambia a la capa que tiene algo dibujado bajo el puntero.
         if self.active_tool() == ToolKind::Move
             && self.selection.is_none()
@@ -626,7 +968,11 @@ impl Editor {
     fn snapped(&self, world: (f32, f32)) -> (f32, f32) {
         let snaps = matches!(
             self.active_tool(),
-            ToolKind::Select
+            ToolKind::RectSelect
+                | ToolKind::EllipseSelect
+                | ToolKind::PolygonLasso
+                | ToolKind::Gradient
+                | ToolKind::Text
                 | ToolKind::Move
                 | ToolKind::Line
                 | ToolKind::Rectangle
@@ -681,7 +1027,11 @@ impl Editor {
             return cmd;
         }
         let artboard = self.artboard();
-        let cmd = mirror(cmd, artboard.symmetry, artboard.symmetry_center2());
+        let cmd = if kind == ToolKind::Text {
+            cmd
+        } else {
+            mirror(cmd, artboard.symmetry, artboard.symmetry_center2())
+        };
         match &self.selection {
             Some(mask) => clip(cmd, mask),
             None => cmd,
@@ -720,7 +1070,17 @@ impl Editor {
         if let Some(selection) = out.selection
             && applied
         {
-            self.set_selection(selection);
+            let combined = self.combine_selection(kind, selection);
+            self.set_selection(combined);
+        }
+    }
+
+    /// Combina la forma de un gesto de selección con la selección actual según el modo.
+    fn combine_selection(&self, kind: ToolKind, shape: Option<Mask>) -> Option<Mask> {
+        if kind.is_selection() {
+            self.gesture_mode.combine(self.selection.as_ref(), shape)
+        } else {
+            shape
         }
     }
 
@@ -744,13 +1104,34 @@ impl Editor {
                 Err(_) => current(),
             };
         }
+        if let Some(cmd) = self.text_command() {
+            let cmd = self.shape_paint(ToolKind::Text, cmd);
+            let mut doc = self.document.clone();
+            let applied = DocCommand::OnArtboard {
+                id: self.active,
+                cmd,
+            }
+            .apply(&mut doc);
+            return DocView {
+                document: if applied.is_ok() {
+                    Cow::Owned(doc)
+                } else {
+                    Cow::Borrowed(&self.document)
+                },
+                selection: self.selection.clone(),
+            };
+        }
         let kind = self.active_tool();
-        let Some(tool) = self.tools.get(kind).filter(|t| t.is_active()) else {
+        let Some(tool) = self
+            .tools
+            .get(kind)
+            .filter(|t| t.is_active() || t.is_pending())
+        else {
             return current();
         };
         let out = tool.preview(&self.context());
         let selection = match out.selection {
-            Some(sel) => sel,
+            Some(sel) => self.combine_selection(kind, sel),
             None => self.selection.clone(),
         };
         let Some(cmd) = out.command else {
@@ -791,6 +1172,114 @@ mod tests {
         let world = ((x + p.0) as f32 + 0.5, (y + p.1) as f32 + 0.5);
         e.pointer_press(world, secondary, alt, 0.1);
         e.pointer_release();
+    }
+
+    /// Arrastre en coordenadas locales (centro de píxel) con Shift/Alt al presionar.
+    fn drag_local(e: &mut Editor, a: Point, b: Point, shift: bool, alt: bool) {
+        let at = |p: Point| (p.0 as f32 + 0.5, p.1 as f32 + 0.5);
+        e.options.constrain = shift;
+        e.pointer_press(at(a), false, alt, 0.1);
+        e.pointer_drag(at(b));
+        e.pointer_release();
+        e.options.constrain = false;
+    }
+
+    #[test]
+    fn selection_modes_from_modifiers() {
+        let mut e = editor();
+        e.tool = ToolKind::RectSelect;
+        drag_local(&mut e, (0, 0), (3, 3), false, false);
+        assert_eq!(e.selection.as_ref().unwrap().points().count(), 16);
+        drag_local(&mut e, (4, 0), (5, 0), true, false); // Shift: add
+        assert_eq!(e.selection.as_ref().unwrap().points().count(), 18);
+        drag_local(&mut e, (0, 0), (1, 1), false, true); // Alt: subtract (no cuentagotas)
+        assert_eq!(e.selection.as_ref().unwrap().points().count(), 14);
+        drag_local(&mut e, (2, 2), (7, 7), true, true); // Shift+Alt: intersect
+        assert_eq!(e.selection.as_ref().unwrap().points().count(), 4);
+        // Modo elegido en las opciones.
+        e.options.selection_mode = SelectionMode::Add;
+        drag_local(&mut e, (7, 7), (7, 7), false, false); // clic: no cambia en Add
+        assert_eq!(e.selection.as_ref().unwrap().points().count(), 4);
+        e.options.selection_mode = SelectionMode::Replace;
+        drag_local(&mut e, (7, 7), (7, 7), false, false);
+        assert!(e.selection.is_none(), "click deselects in Replace");
+        e.reselect();
+        assert_eq!(e.selection.as_ref().unwrap().points().count(), 4);
+        e.invert_selection();
+        assert_eq!(e.selection.as_ref().unwrap().points().count(), 60);
+        e.deselect();
+        e.invert_selection();
+        assert_eq!(
+            e.selection.as_ref().unwrap().points().count(),
+            64,
+            "inverse of nothing = all"
+        );
+    }
+
+    #[test]
+    fn polygon_lasso_by_clicks_enter_and_escape() {
+        let mut e = editor();
+        e.set_tool(ToolKind::PolygonLasso);
+        for p in [(0, 0), (6, 0), (6, 6)] {
+            click(&mut e, p, false, false);
+        }
+        assert!(e.is_pending() && !e.is_painting());
+        e.pointer_hover((0.5, 6.5));
+        assert!(e.view().selection.is_some(), "preview while pending");
+        e.finish_gesture();
+        assert!(!e.is_pending());
+        assert!(e.selection.as_ref().unwrap().contains(5, 1));
+        click(&mut e, (1, 1), false, false);
+        e.cancel_gesture();
+        assert!(!e.is_pending());
+        // Cambiar de herramienta descarta el gesto a medias.
+        click(&mut e, (1, 1), false, false);
+        e.set_tool(ToolKind::Pencil);
+        e.set_tool(ToolKind::PolygonLasso);
+        assert!(!e.is_pending());
+    }
+
+    #[test]
+    fn text_draft_previews_commits_and_cancels() {
+        let mut e = editor();
+        e.set_tool(ToolKind::Text);
+        click(&mut e, (1, 0), false, false);
+        e.text.as_mut().unwrap().text = "I".into();
+        assert!(!e.history.can_undo());
+        let preview = e.view().document.artboards[0].sprite.clone();
+        assert!(preview.cels.contains_key(&(LayerId(1), 0)), "preview draws");
+        click(&mut e, (2, 0), false, false); // mueve el texto
+        e.commit_text();
+        assert!(e.text.is_none());
+        let px = e.sprite().pixel(LayerId(1), 0, 4, 3);
+        assert_eq!(px, e.primary, "the I stem at x = 2 + 2");
+        e.undo();
+        assert!(e.sprite().cels.is_empty());
+        click(&mut e, (0, 0), false, false);
+        e.cancel_gesture();
+        assert!(e.text.is_none());
+    }
+
+    #[test]
+    fn spray_keeps_painting_while_held_and_gradient_fills() {
+        let mut e = editor();
+        e.set_tool(ToolKind::Spray);
+        e.options.spray_width = 4;
+        e.pointer_press((4.5, 4.5), false, false, 0.1);
+        e.tool_tick(1000.0);
+        e.pointer_release();
+        let painted = (0..8)
+            .flat_map(|y| (0..8).map(move |x| (x, y)))
+            .filter(|&(x, y)| e.sprite().pixel(LayerId(1), 0, x, y) == e.primary)
+            .count();
+        assert!(painted > 3, "{painted}");
+
+        let mut e = editor();
+        e.set_tool(ToolKind::Gradient);
+        e.options.dither = Dither::Bayer2;
+        drag_local(&mut e, (0, 0), (7, 0), false, false);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 0, 5), e.primary);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 7, 5), e.secondary);
     }
 
     fn two_boards() -> Editor {
@@ -973,7 +1462,7 @@ mod tests {
             grid: None,
             tolerance: 1.0,
         });
-        e.tool = ToolKind::Select;
+        e.tool = ToolKind::RectSelect;
         e.pointer_press((0.5, 0.5), false, false, 0.1);
         e.pointer_drag((4.3, 2.5)); // cerca de x = 4 → píxel 4 (lado del puntero)
         e.pointer_release();

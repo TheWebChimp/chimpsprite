@@ -3,14 +3,18 @@
 mod constrain;
 mod ellipse;
 mod fill;
+mod gradient;
 mod line;
+mod polygon;
 mod rect;
 mod symmetry;
 
 pub use constrain::{constrain_line, constrain_square};
 pub use ellipse::{ellipse_filled, ellipse_outline};
 pub use fill::flood_fill;
+pub use gradient::{Dither, GradientShape, gradient_t};
 pub use line::{brush_square, line, pixel_perfect, stamp};
+pub use polygon::polygon_filled;
 pub use rect::{rect_filled, rect_outline};
 pub use symmetry::{SymmetryMode, symmetric_points, symmetrize};
 

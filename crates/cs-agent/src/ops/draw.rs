@@ -5,9 +5,14 @@ use cs_core::{ArtboardId, LayerId, PixelValue};
 use cs_raster::Point;
 
 use crate::error::{Result, invalid};
-use crate::params::{ColorArg, DrawLine, DrawPixels, DrawShape, Fill, Rect, Ref};
+use crate::params::{
+    ColorArg, DitherArg, DrawLine, DrawPixels, DrawShape, DrawText, Fill, FontArg, Gradient,
+    GradientShapeArg, Rect, Ref,
+};
 use crate::target;
 use crate::{Reply, Session};
+use cs_tools::text::{FontChoice, TextStyle};
+use cs_tools::{Dither, GradientShape};
 
 /// Tamaño máximo del pincel.
 const MAX_BRUSH: u32 = 64;
@@ -158,6 +163,81 @@ impl Session {
         self.paint(&p.doc, &s, points, p.clip)
     }
 
+    pub fn gradient(&mut self, p: Gradient) -> Result<Reply> {
+        let (artboard, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let layer = target::image_layer(sprite, p.layer.as_ref())?;
+        let frame = target::frame(sprite, p.frame)?;
+        let from = target::color(sprite, &p.from)?;
+        let to = target::color(sprite, &p.to)?;
+        if (p.x0, p.y0) == (p.x1, p.y1) {
+            return Err(invalid("start and end points must differ"));
+        }
+        let shape = match p.shape {
+            GradientShapeArg::Linear => GradientShape::Linear,
+            GradientShapeArg::Radial => GradientShape::Radial,
+        };
+        let dither = match p.dither {
+            DitherArg::None => Dither::None,
+            DitherArg::Bayer2 => Dither::Bayer2,
+            DitherArg::Bayer4 => Dither::Bayer4,
+            DitherArg::Bayer8 => Dither::Bayer8,
+        };
+        let (x0, y0, x1, y1) = target::region(sprite, p.clip)?;
+        let points = (y0..y1).flat_map(|y| (x0..x1).map(move |x| (x, y)));
+        let pixels = cs_tools::gradient_pixels(
+            sprite,
+            (from, to),
+            (shape, dither),
+            ((p.x0, p.y0), (p.x1, p.y1)),
+            points,
+        );
+        self.draw(&p.doc, artboard, layer, frame, pixels)
+    }
+
+    pub fn draw_text(&mut self, p: DrawText) -> Result<Reply> {
+        let s = self.stroke(
+            &p.doc,
+            p.artboard.as_ref(),
+            p.layer.as_ref(),
+            p.frame,
+            &p.color,
+        )?;
+        if p.text.trim().is_empty() {
+            return Err(invalid("text is empty"));
+        }
+        let (font, default_size, range) = match p.font {
+            FontArg::Pixel => (FontChoice::Pixel, 1, 1..=8),
+            FontArg::Hack => (FontChoice::Hack, 16, 4..=256),
+            FontArg::Ubuntu => (FontChoice::Ubuntu, 16, 4..=256),
+        };
+        let size = p.size.unwrap_or(default_size);
+        if !range.contains(&size) {
+            return Err(invalid(format!(
+                "size {size} out of range {}-{} for this font",
+                range.start(),
+                range.end()
+            )));
+        }
+        let style = TextStyle {
+            font,
+            size,
+            antialias: p.antialias,
+        };
+        let (_, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let pixels: Vec<_> = cs_tools::text::text_pixels(
+            sprite,
+            (s.layer, s.frame),
+            (p.x, p.y),
+            s.color,
+            &p.text,
+            &style,
+        )
+        .into_iter()
+        .filter(|&(x, y, _)| target::in_clip(p.clip, x, y))
+        .collect();
+        self.draw(&p.doc, s.artboard, s.layer, s.frame, pixels)
+    }
+
     pub fn fill(&mut self, p: Fill) -> Result<Reply> {
         let s = self.stroke(
             &p.doc,
@@ -299,6 +379,46 @@ mod tests {
             .unwrap();
         assert_eq!(px(&s, 4, 4), RED);
         assert_eq!(px(&s, 0, 0), CLEAR);
+    }
+
+    #[test]
+    fn gradient_and_text() {
+        let mut s = session(8, 8);
+        s.gradient(p(json!({"doc": "d1", "x0": 0, "y0": 0, "x1": 7, "y1": 0,
+            "from": "#f00", "to": "#00f", "dither": "bayer4"})))
+            .unwrap();
+        assert_eq!(px(&s, 0, 4), RED);
+        assert_eq!(px(&s, 7, 4), PixelValue::Rgba(Rgba::rgb(0, 0, 255)));
+        assert!(
+            s.gradient(p(json!({"doc": "d1", "x0": 1, "y0": 1, "x1": 1, "y1": 1,
+                "from": "#f00", "to": "#00f"})))
+                .is_err()
+        );
+
+        let mut s = session(16, 10);
+        s.draw_text(p(
+            json!({"doc": "d1", "x": 1, "y": 1, "text": "Hi", "color": "#f00"}),
+        ))
+        .unwrap();
+        assert_eq!(px(&s, 1, 1), RED, "H top-left");
+        assert_eq!(px(&s, 0, 0), CLEAR);
+        s.draw_text(p(
+            json!({"doc": "d1", "x": 0, "y": 0, "text": "o", "color": "#f00",
+            "font": "hack", "size": 10, "antialias": true}),
+        ))
+        .unwrap();
+        assert!(
+            s.draw_text(p(
+                json!({"doc": "d1", "x": 0, "y": 0, "text": " ", "color": "#f00"})
+            ))
+            .is_err()
+        );
+        assert!(
+            s.draw_text(p(
+                json!({"doc": "d1", "x": 0, "y": 0, "text": "a", "color": "#f00", "size": 9})
+            ))
+            .is_err()
+        );
     }
 
     #[test]
