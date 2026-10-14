@@ -37,7 +37,7 @@ de web. El motor (`cs-core` … `cs-io`) no cambia: ya compila a wasm y el CI lo
 
 - Render: eframe + wgpu con WebGPU y respaldo WebGL2 (feature `webgl` de wgpu).
 - Aviso al salir: handler `beforeunload` activo mientras haya cambios sin guardar.
-- Autosave: cada 10 s (y al ocultar la pestaña) si hay cambios, el documento como `.chimp` codificado en
+- Autosave: cada 10 s si hay cambios, el documento como `.chimp` codificado en
   base64 va a `localStorage` (clave `chimpsprite.autosave`) junto con su nombre. Tope de 4 MB
   codificados; si no cabe, se avisa una vez en la barra de estado y no se guarda. Al iniciar, si hay
   autosave, se ofrece "Restore last session" / "Discard".

@@ -701,6 +701,8 @@ dependencies = [
  "eframe",
  "env_logger",
  "log",
+ "wasm-bindgen-futures",
+ "wgpu",
 ]
 
 [[package]]

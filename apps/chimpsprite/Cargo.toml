@@ -7,5 +7,12 @@ license.workspace = true
 [dependencies]
 cs-ui.workspace = true
 eframe = { workspace = true, features = ["wgpu", "default_fonts", "accesskit", "wayland", "x11"] }
-env_logger.workspace = true
 log.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+env_logger.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen-futures = "0.4"
+# Respaldo WebGL2 para navegadores sin WebGPU (se unifica con el wgpu de eframe).
+wgpu = { version = "30", default-features = false, features = ["webgl"] }
