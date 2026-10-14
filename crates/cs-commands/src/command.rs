@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use cs_core::{Cel, Frame, Image, ImageId, Layer, LayerId, PixelValue, Sprite};
+use cs_core::{ArtboardId, Cel, Frame, Image, ImageId, Layer, LayerId, PixelValue, Sprite};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -23,6 +23,14 @@ pub enum CmdError {
     LastFrame,
     #[error("pixel value does not match the sprite color mode")]
     ColorModeMismatch,
+    #[error("invalid size {0}×{1}")]
+    InvalidSize(u32, u32),
+    #[error("artboard {0:?} not found")]
+    ArtboardNotFound(ArtboardId),
+    #[error("artboard id {0:?} already exists")]
+    DuplicateArtboardId(ArtboardId),
+    #[error("cannot remove the last artboard")]
+    LastArtboard,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -70,6 +78,12 @@ pub enum Command {
     RemoveFrame {
         index: usize,
     },
+    /// Cambia el tamaño del lienzo y desplaza todos los cels por `offset`.
+    ResizeCanvas {
+        width: u32,
+        height: u32,
+        offset: (i32, i32),
+    },
     /// Transacción: se aplica completa o nada; cuenta como un paso de undo.
     Batch(Vec<Command>),
 }
@@ -99,9 +113,45 @@ impl Command {
             Command::SetLayerProps { id, props } => set_layer_props(doc, *id, props),
             Command::AddFrame { index, frame } => add_frame(doc, *index, *frame),
             Command::RemoveFrame { index } => remove_frame(doc, *index),
+            Command::ResizeCanvas {
+                width,
+                height,
+                offset,
+            } => resize_canvas(doc, *width, *height, *offset),
             Command::Batch(cmds) => apply_batch(doc, cmds),
         }
     }
+}
+
+impl crate::Undoable for Command {
+    type Target = Sprite;
+
+    fn apply(&self, target: &mut Sprite) -> Result<Self, CmdError> {
+        Command::apply(self, target)
+    }
+}
+
+fn resize_canvas(
+    doc: &mut Sprite,
+    width: u32,
+    height: u32,
+    offset: (i32, i32),
+) -> Result<Command, CmdError> {
+    if width == 0 || height == 0 {
+        return Err(CmdError::InvalidSize(width, height));
+    }
+    let inverse = Command::ResizeCanvas {
+        width: doc.width,
+        height: doc.height,
+        offset: (-offset.0, -offset.1),
+    };
+    doc.width = width;
+    doc.height = height;
+    for cel in doc.cels.values_mut() {
+        cel.position.0 += offset.0;
+        cel.position.1 += offset.1;
+    }
+    Ok(inverse)
 }
 
 fn set_cel(
@@ -339,6 +389,37 @@ mod tests {
         .apply(&mut s);
         assert_eq!(r, Err(CmdError::LayerNotFound(LayerId(99))));
         assert_eq!(s, before);
+    }
+
+    #[test]
+    fn resize_canvas_shifts_cels_and_undoes() {
+        let mut s = Sprite::new(4, 4, ColorMode::Rgba);
+        dot(1).apply(&mut s).unwrap();
+        let before = s.clone();
+        let inv = Command::ResizeCanvas {
+            width: 6,
+            height: 5,
+            offset: (2, 1),
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!((s.width, s.height), (6, 5));
+        assert_eq!(s.cel(LayerId(1), 0).unwrap().position, (2, 1));
+        assert_eq!(
+            s.pixel(LayerId(1), 0, 2, 1),
+            PixelValue::Rgba(Rgba::rgb(1, 2, 3))
+        );
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        assert_eq!(
+            Command::ResizeCanvas {
+                width: 0,
+                height: 3,
+                offset: (0, 0)
+            }
+            .apply(&mut s),
+            Err(CmdError::InvalidSize(0, 3))
+        );
     }
 
     #[test]
