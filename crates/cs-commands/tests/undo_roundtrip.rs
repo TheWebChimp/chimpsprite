@@ -122,6 +122,7 @@ fn to_command(s: &Sprite, op: &Op) -> Option<Command> {
                 to: a.max(b),
                 direction: AnimDirection::PingPong,
                 color: Rgba::rgb(0, 0, 0),
+                repeat: 0,
             }])
         }
         Op::Hide { layer: l } => Command::SetLayerProps {

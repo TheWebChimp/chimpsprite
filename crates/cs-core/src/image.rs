@@ -38,6 +38,19 @@ impl Image {
         }
     }
 
+    /// Imagen a partir de píxeles ya decodificados; `None` si el largo no coincide.
+    pub fn from_buffer(width: u32, height: u32, pixels: PixelBuffer) -> Option<Self> {
+        let len = match &pixels {
+            PixelBuffer::Rgba(p) => p.len(),
+            PixelBuffer::Indexed(p) => p.len(),
+        };
+        (len == (width as usize) * (height as usize)).then_some(Self {
+            width,
+            height,
+            pixels,
+        })
+    }
+
     pub fn width(&self) -> u32 {
         self.width
     }

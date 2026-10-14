@@ -89,6 +89,16 @@ pub struct Sprite {
     pub images: BTreeMap<ImageId, Arc<Image>>,
     #[serde(default)]
     pub tags: Vec<Tag>,
+    /// Datos de archivo que no interpretamos (p. ej. slices de `.aseprite`) y se reescriben tal cual.
+    #[serde(default)]
+    pub extra_chunks: Vec<RawChunk>,
+}
+
+/// Chunk de archivo preservado sin interpretar.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RawChunk {
+    pub kind: u16,
+    pub data: Vec<u8>,
 }
 
 /// Serializa un mapa como lista de pares, para que funcione en formatos (como JSON)
@@ -127,6 +137,7 @@ impl Sprite {
             cels: BTreeMap::new(),
             images: BTreeMap::new(),
             tags: Vec::new(),
+            extra_chunks: Vec::new(),
         }
     }
 
