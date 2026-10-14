@@ -310,7 +310,13 @@ impl CanvasView {
                 .retain(|id, _| document.artboard(*id).is_some());
             for artboard in &document.artboards {
                 let sprite = &artboard.sprite;
-                let pixels = cs_render::render_frame(sprite, frame_for(editor, artboard.id));
+                let frame = editor.frame_of(artboard.id);
+                let onion = artboard.id == editor.active && editor.onion_enabled && !editor.playing;
+                let pixels = if onion {
+                    cs_render::render_onion(sprite, frame, &editor.onion)
+                } else {
+                    cs_render::render_frame(sprite, frame)
+                };
                 let bytes: Vec<u8> = pixels.iter().flat_map(|c| [c.r, c.g, c.b, c.a]).collect();
                 let size = [sprite.width as usize, sprite.height as usize];
                 let image = ColorImage::from_rgba_unmultiplied(size, &bytes);
@@ -450,11 +456,6 @@ impl CanvasView {
             label.contains(p).then_some(artboard.id)
         })
     }
-}
-
-/// Frame a mostrar de cada artboard: el activo usa el frame actual; los demás, el primero.
-fn frame_for(editor: &Editor, id: ArtboardId) -> usize {
-    if id == editor.active { editor.frame } else { 0 }
 }
 
 fn artboard_cursor(hit: Option<ArtboardHit>) -> egui::CursorIcon {

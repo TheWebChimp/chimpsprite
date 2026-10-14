@@ -3,7 +3,9 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ColorMode, Image, Palette, PixelValue};
+use std::ops::Range;
+
+use crate::{ColorMode, Image, Palette, PixelValue, Tag};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LayerId(pub u32);
@@ -85,6 +87,8 @@ pub struct Sprite {
     pub cels: BTreeMap<(LayerId, usize), Cel>,
     #[serde(with = "as_entries")]
     pub images: BTreeMap<ImageId, Arc<Image>>,
+    #[serde(default)]
+    pub tags: Vec<Tag>,
 }
 
 /// Serializa un mapa como lista de pares, para que funcione en formatos (como JSON)
@@ -122,6 +126,7 @@ impl Sprite {
             frames: vec![Frame { duration_ms: 100 }],
             cels: BTreeMap::new(),
             images: BTreeMap::new(),
+            tags: Vec::new(),
         }
     }
 
@@ -165,6 +170,74 @@ impl Sprite {
             })
             .unwrap_or_else(|| self.color_mode.transparent())
     }
+
+    /// `true` si `layer` está dentro (a cualquier profundidad) del grupo `ancestor`.
+    pub fn is_descendant(&self, layer: LayerId, ancestor: LayerId) -> bool {
+        let mut current = self.layer(layer).and_then(|l| l.parent);
+        for _ in 0..self.layers.len() {
+            match current {
+                Some(p) if p == ancestor => return true,
+                Some(p) => current = self.layer(p).and_then(|l| l.parent),
+                None => return false,
+            }
+        }
+        false
+    }
+
+    /// Índices del bloque formado por la capa y sus descendientes (contiguos).
+    pub fn subtree_range(&self, id: LayerId) -> Option<Range<usize>> {
+        let start = self.layer_index(id)?;
+        let len = self.layers[start + 1..]
+            .iter()
+            .take_while(|l| self.is_descendant(l.id, id))
+            .count();
+        Some(start..start + 1 + len)
+    }
+
+    /// Cantidad de grupos ancestros.
+    pub fn depth(&self, id: LayerId) -> usize {
+        let mut depth = 0;
+        let mut current = self.layer(id).and_then(|l| l.parent);
+        while let Some(p) = current {
+            depth += 1;
+            if depth > self.layers.len() {
+                break;
+            }
+            current = self.layer(p).and_then(|l| l.parent);
+        }
+        depth
+    }
+
+    /// Visible si la capa y todos sus grupos ancestros lo son.
+    pub fn is_visible(&self, id: LayerId) -> bool {
+        let Some(layer) = self.layer(id) else {
+            return false;
+        };
+        layer.visible && layer.parent.is_none_or(|p| self.is_visible(p))
+    }
+
+    /// Invariante: cada padre es un grupo que aparece antes que sus hijos, y entre ambos
+    /// solo hay descendientes del mismo grupo.
+    pub fn is_valid_tree(&self) -> bool {
+        self.layers.iter().enumerate().all(|(i, layer)| {
+            let Some(parent) = layer.parent else {
+                return true;
+            };
+            let Some(pi) = self.layer_index(parent) else {
+                return false;
+            };
+            self.layers[pi].kind == LayerKind::Group
+                && pi < i
+                && self.layers[pi + 1..i]
+                    .iter()
+                    .all(|l| self.is_descendant(l.id, parent))
+        })
+    }
+
+    /// Primer tag que contiene `frame`.
+    pub fn tag_at(&self, frame: usize) -> Option<&Tag> {
+        self.tags.iter().find(|t| t.contains(frame))
+    }
 }
 
 #[cfg(test)]
@@ -190,6 +263,48 @@ mod tests {
         s.images
             .insert(ImageId(7), Arc::new(Image::new(1, 1, ColorMode::Rgba)));
         assert_eq!(s.next_image_id(), ImageId(8));
+    }
+
+    /// Abajo → arriba: bg, grupo g { a, b }, top.
+    fn tree() -> Sprite {
+        let mut s = Sprite::new(2, 2, ColorMode::Rgba);
+        let mut group = Layer::new_image(LayerId(2), "g");
+        group.kind = LayerKind::Group;
+        let mut a = Layer::new_image(LayerId(3), "a");
+        a.parent = Some(LayerId(2));
+        let mut b = Layer::new_image(LayerId(4), "b");
+        b.parent = Some(LayerId(2));
+        s.layers
+            .extend([group, a, b, Layer::new_image(LayerId(5), "top")]);
+        s
+    }
+
+    #[test]
+    fn subtree_depth_and_visibility() {
+        let mut s = tree();
+        assert_eq!(s.subtree_range(LayerId(2)), Some(1..4));
+        assert_eq!(s.subtree_range(LayerId(5)), Some(4..5));
+        assert_eq!(s.depth(LayerId(4)), 1);
+        assert!(s.is_valid_tree());
+        s.layer_mut(LayerId(2)).unwrap().visible = false;
+        assert!(!s.is_visible(LayerId(3)));
+        assert!(s.is_visible(LayerId(5)));
+    }
+
+    #[test]
+    fn invalid_tree_is_detected() {
+        let mut s = tree();
+        // Mueve "top" entre el grupo y sus hijos.
+        let top = s.layers.remove(4);
+        s.layers.insert(2, top);
+        assert!(!s.is_valid_tree());
+        // Intercambiar dos hermanos dentro del grupo es válido.
+        let mut s = tree();
+        s.layers.swap(2, 3);
+        assert!(s.is_valid_tree());
+        // Un hijo antes que su grupo no lo es.
+        s.layers.swap(1, 2);
+        assert!(!s.is_valid_tree());
     }
 
     #[test]

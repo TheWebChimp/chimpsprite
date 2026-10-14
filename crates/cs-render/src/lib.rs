@@ -1,6 +1,6 @@
 //! Compositor CPU de referencia: capas visibles → buffer RGBA.
 
-use cs_core::{ColorMode, Layer, LayerKind, PixelValue, Rgba, Sprite};
+use cs_core::{BlendMode, ColorMode, Layer, LayerKind, PixelValue, Rgba, Sprite};
 
 /// Convierte un valor de píxel a color, resolviendo la paleta en modo indexado.
 pub fn resolve(sprite: &Sprite, value: PixelValue) -> Rgba {
@@ -30,6 +30,43 @@ pub fn blend_over(dst: Rgba, src: Rgba, alpha: u8) -> Rgba {
         ch(src.b, dst.b),
         out_a.div_ceil(255).min(255) as u8,
     )
+}
+
+/// Fórmula separable de cada modo (canales en 0..=1): `b` fondo, `s` capa.
+fn blend_channel(mode: BlendMode, b: f32, s: f32) -> f32 {
+    match mode {
+        BlendMode::Normal | BlendMode::Other(_) => s,
+        BlendMode::Multiply => b * s,
+        BlendMode::Screen => b + s - b * s,
+        BlendMode::Overlay => {
+            if b <= 0.5 {
+                2.0 * b * s
+            } else {
+                1.0 - 2.0 * (1.0 - b) * (1.0 - s)
+            }
+        }
+        BlendMode::Darken => b.min(s),
+        BlendMode::Lighten => b.max(s),
+        BlendMode::Addition => (b + s).min(1.0),
+        BlendMode::Subtract => (b - s).max(0.0),
+        BlendMode::Difference => (b - s).abs(),
+    }
+}
+
+/// Mezcla `src` sobre `dst` con un modo. Donde el fondo es transparente, se ve el color de la capa;
+/// donde es opaco, el resultado del modo (como en la especificación W3C de compositing).
+pub fn blend(dst: Rgba, src: Rgba, alpha: u8, mode: BlendMode) -> Rgba {
+    if matches!(mode, BlendMode::Normal | BlendMode::Other(_)) || dst.a == 0 {
+        return blend_over(dst, src, alpha);
+    }
+    let ab = dst.a as f32 / 255.0;
+    let ch = |b: u8, s: u8| {
+        let (b, s) = (b as f32 / 255.0, s as f32 / 255.0);
+        let mixed = (1.0 - ab) * s + ab * blend_channel(mode, b, s);
+        (mixed * 255.0).round().clamp(0.0, 255.0) as u8
+    };
+    let mixed = Rgba::new(ch(dst.r, src.r), ch(dst.g, src.g), ch(dst.b, src.b), src.a);
+    blend_over(dst, mixed, alpha)
 }
 
 fn mul(a: u32, b: u32) -> u32 {
@@ -81,9 +118,68 @@ pub fn render_frame(sprite: &Sprite, frame: usize) -> Vec<Rgba> {
                 let src = resolve(sprite, image.get(ix, iy).expect("in bounds"));
                 let alpha = mul(src.a as u32, opacity) as u8;
                 let i = (y * w + x) as usize;
-                out[i] = blend_over(out[i], src, alpha);
+                out[i] = blend(out[i], src, alpha, layer.blend);
             }
         }
+    }
+    out
+}
+
+/// Opciones del papel cebolla.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct OnionSkin {
+    /// Frames anteriores a mostrar.
+    pub before: usize,
+    /// Frames siguientes a mostrar.
+    pub after: usize,
+    /// Opacidad del frame vecino más cercano; los más lejanos se desvanecen.
+    pub opacity: u8,
+    /// Teñir de rojo los anteriores y de azul los siguientes.
+    pub tint: bool,
+}
+
+impl Default for OnionSkin {
+    fn default() -> Self {
+        Self {
+            before: 1,
+            after: 1,
+            opacity: 96,
+            tint: true,
+        }
+    }
+}
+
+const TINT_BEFORE: Rgba = Rgba::rgb(255, 40, 40);
+const TINT_AFTER: Rgba = Rgba::rgb(40, 90, 255);
+
+fn tinted(c: Rgba, tint: Rgba) -> Rgba {
+    let mix = |a: u8, b: u8| ((a as u32 + b as u32) / 2) as u8;
+    Rgba::new(mix(c.r, tint.r), mix(c.g, tint.g), mix(c.b, tint.b), c.a)
+}
+
+/// Frame actual con los vecinos semitransparentes debajo (papel cebolla).
+pub fn render_onion(sprite: &Sprite, frame: usize, onion: &OnionSkin) -> Vec<Rgba> {
+    let mut out = vec![Rgba::TRANSPARENT; (sprite.width * sprite.height) as usize];
+    let mut ghost = |f: usize, distance: usize, count: usize, tint: Rgba| {
+        let alpha = onion.opacity as u32 * (count - distance + 1) as u32 / count as u32;
+        for (o, c) in out.iter_mut().zip(render_frame(sprite, f)) {
+            let c = if onion.tint { tinted(c, tint) } else { c };
+            *o = blend_over(*o, c, mul(c.a as u32, alpha) as u8);
+        }
+    };
+    // De lo más lejano a lo más cercano, para que lo cercano quede encima.
+    for d in (1..=onion.before).rev() {
+        if let Some(f) = frame.checked_sub(d) {
+            ghost(f, d, onion.before, TINT_BEFORE);
+        }
+    }
+    for d in (1..=onion.after).rev() {
+        if frame + d < sprite.frames.len() {
+            ghost(frame + d, d, onion.after, TINT_AFTER);
+        }
+    }
+    for (o, c) in out.iter_mut().zip(render_frame(sprite, frame)) {
+        *o = blend_over(*o, c, c.a);
     }
     out
 }
@@ -102,6 +198,74 @@ mod tests {
         }
         .apply(s)
         .unwrap();
+    }
+
+    #[test]
+    fn blend_modes_on_opaque_backdrop() {
+        let b = Rgba::rgb(200, 100, 50);
+        let s = Rgba::rgb(100, 100, 100);
+        let px = |mode| blend(b, s, 255, mode);
+        assert_eq!(px(BlendMode::Normal), s);
+        assert_eq!(px(BlendMode::Multiply), Rgba::rgb(78, 39, 20));
+        assert_eq!(px(BlendMode::Screen), Rgba::rgb(222, 161, 130));
+        assert_eq!(px(BlendMode::Overlay), Rgba::rgb(188, 78, 39));
+        assert_eq!(px(BlendMode::Darken), Rgba::rgb(100, 100, 50));
+        assert_eq!(px(BlendMode::Lighten), Rgba::rgb(200, 100, 100));
+        assert_eq!(px(BlendMode::Addition), Rgba::rgb(255, 200, 150));
+        assert_eq!(px(BlendMode::Subtract), Rgba::rgb(100, 0, 0));
+        assert_eq!(px(BlendMode::Difference), Rgba::rgb(100, 0, 50));
+        assert_eq!(px(BlendMode::Other(99)), s);
+    }
+
+    #[test]
+    fn blend_mode_over_transparent_shows_layer_color() {
+        let s = Rgba::rgb(100, 100, 100);
+        assert_eq!(blend(Rgba::TRANSPARENT, s, 255, BlendMode::Multiply), s);
+    }
+
+    #[test]
+    fn onion_shows_previous_frame_under_current() {
+        let mut s = Sprite::new(2, 1, ColorMode::Rgba);
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        let green = PixelValue::Rgba(Rgba::rgb(0, 255, 0));
+        draw(&mut s, 1, vec![(0, 0, red), (1, 0, red)]);
+        Command::AddFrame {
+            index: 1,
+            frame: Frame { duration_ms: 100 },
+        }
+        .apply(&mut s)
+        .unwrap();
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 1,
+            pixels: vec![(1, 0, green)],
+        }
+        .apply(&mut s)
+        .unwrap();
+        let onion = OnionSkin {
+            before: 1,
+            after: 1,
+            opacity: 128,
+            tint: false,
+        };
+        let out = render_onion(&s, 1, &onion);
+        assert_eq!(
+            out[0],
+            Rgba::new(255, 0, 0, 128),
+            "fantasma del frame anterior"
+        );
+        assert_eq!(
+            out[1],
+            Rgba::rgb(0, 255, 0),
+            "el frame actual tapa al fantasma"
+        );
+        // Sin vecinos que mostrar, igual al render normal.
+        let none = OnionSkin {
+            before: 0,
+            after: 0,
+            ..onion
+        };
+        assert_eq!(render_onion(&s, 1, &none), render_frame(&s, 1));
     }
 
     #[test]

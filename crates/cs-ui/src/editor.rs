@@ -1,8 +1,12 @@
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cs_commands::{Command, DocCommand, History};
-use cs_core::{Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, PixelValue, Rgba, Sprite};
+use cs_core::{
+    AnimDirection, Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, PixelValue, Playback,
+    Rgba, Sprite,
+};
+use cs_render::OnionSkin;
 use cs_tools::{
     ArtboardTool, Bucket, Eraser, Eyedropper, MoveTool, Pencil, Point, RectSelect, ShapeKind,
     ShapeTool, Tool, ToolContext, ToolOutput,
@@ -221,6 +225,18 @@ pub struct Editor {
     painting_secondary: bool,
     /// Alt al presionar: cuentagotas temporal durante el gesto.
     temp_eyedropper: bool,
+    /// Reproducción en curso.
+    pub playing: bool,
+    /// Estado de la reproducción: posición, rango (inclusivo) y dirección.
+    pub(crate) playback: Option<(Playback, (usize, usize), AnimDirection)>,
+    /// Milisegundos acumulados en el frame actual durante la reproducción.
+    pub(crate) play_clock: f64,
+    /// Rango de frames seleccionado en el timeline (para tags, duraciones…).
+    pub frame_range: Option<(usize, usize)>,
+    /// Grupos colapsados en el timeline (estado de UI, por artboard).
+    pub collapsed: HashSet<(ArtboardId, LayerId)>,
+    pub onion_enabled: bool,
+    pub onion: OnionSkin,
 }
 
 impl Editor {
@@ -247,6 +263,13 @@ impl Editor {
             artboard_tool: ArtboardTool::new(),
             painting_secondary: false,
             temp_eyedropper: false,
+            playing: false,
+            playback: None,
+            play_clock: 0.0,
+            frame_range: None,
+            collapsed: HashSet::new(),
+            onion_enabled: false,
+            onion: OnionSkin::default(),
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
@@ -283,6 +306,8 @@ impl Editor {
             self.layer = sprite.layers.last().map_or(LayerId(1), |l| l.id);
         }
         self.frame = self.frame.min(sprite.frames.len().saturating_sub(1));
+        let last = sprite.frames.len().saturating_sub(1);
+        self.frame_range = self.frame_range.map(|(a, b)| (a.min(last), b.min(last)));
         let (w, h) = (sprite.width, sprite.height);
         if self
             .selection
@@ -298,6 +323,8 @@ impl Editor {
         if id == self.active || self.document.artboard(id).is_none() {
             return;
         }
+        self.stop();
+        self.frame_range = None;
         self.views.insert(self.active, (self.layer, self.frame));
         self.active = id;
         (self.layer, self.frame) = self.views.get(&id).copied().unwrap_or((LayerId(0), 0));
@@ -455,6 +482,15 @@ impl Editor {
     }
 
     /// Punto de mundo → píxel local del artboard activo.
+    /// Frame a mostrar de un artboard: el actual si es el activo; si no, el recordado.
+    pub fn frame_of(&self, id: ArtboardId) -> usize {
+        if id == self.active {
+            self.frame
+        } else {
+            self.views.get(&id).map_or(0, |v| v.1)
+        }
+    }
+
     pub fn to_local(&self, world: (f32, f32)) -> Point {
         let (x, y) = self.artboard().position;
         (
@@ -506,6 +542,7 @@ impl Editor {
 
     /// `slop`: tolerancia en píxeles de mundo para tomar bordes de artboards.
     pub fn pointer_press(&mut self, world: (f32, f32), secondary: bool, alt: bool, slop: f32) {
+        self.stop();
         self.painting_secondary = secondary;
         self.temp_eyedropper = alt && self.tool != ToolKind::Eyedropper;
         if self.active_tool() == ToolKind::Artboard {
