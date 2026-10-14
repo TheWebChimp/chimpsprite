@@ -51,7 +51,7 @@ visible?, locked?, opacity?, blend?)`, `remove_layer`, `move_layer(above? | belo
 `add_frame(at?, duplicate?, linked?, duration_ms?)`, `remove_frame`, `move_frame(from, to)`,
 `set_frame_duration(frames?, duration_ms)`; `set_tag(name, from, to, direction?, color?, repeat?)`
 (crea o reemplaza por nombre), `remove_tag(name)`; `link_cels(layer, from, to)`, `unlink_cels`,
-`clear_cel`.
+`clear_cel`, `move_cel(dx, dy, frames?)` (mueve el cel entero; los vinculados siguen vinculados).
 
 **Dibujo** (todas con `brush_size?` y `clip?` = rectángulo que recorta): `draw_pixels(pixels:
 [{x, y, color}])`, `draw_line(points: [[x, y]…], color)` (polilínea), `draw_rect(x0, y0, x1, y1,

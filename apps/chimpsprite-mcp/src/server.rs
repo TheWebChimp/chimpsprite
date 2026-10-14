@@ -200,6 +200,13 @@ impl ChimpServer {
     }
 
     #[tool(
+        description = "Move cels (their whole image) by (dx, dy) in one frame or a range; linked cels stay linked. Combine with inbetween to animate movement."
+    )]
+    fn move_cel(&self, Parameters(p): Parameters<MoveCel>) -> CallToolResult {
+        self.with(|s| s.move_cel(p))
+    }
+
+    #[tool(
         description = "Insert `count` in-between frames before `to`. Each layer reuses its `from` image (linked); when `to` shows the same image at another position, the position is interpolated."
     )]
     fn inbetween(&self, Parameters(p): Parameters<Inbetween>) -> CallToolResult {

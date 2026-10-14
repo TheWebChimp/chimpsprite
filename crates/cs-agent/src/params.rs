@@ -263,6 +263,20 @@ pub struct CelOnly {
     pub frame: usize,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MoveCel {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Option<Ref>,
+    #[serde(default)]
+    pub frame: usize,
+    /// Move the cels of these frames instead of `frame`.
+    pub frames: Option<FrameRange>,
+    /// Offset in pixels; linked cels stay linked.
+    pub dx: i32,
+    pub dy: i32,
+}
+
 // --- Dibujo ---
 
 #[derive(Debug, Deserialize, JsonSchema)]

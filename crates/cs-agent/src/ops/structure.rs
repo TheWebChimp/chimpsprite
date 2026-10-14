@@ -364,6 +364,41 @@ impl Session {
         )))
     }
 
+    pub fn move_cel(&mut self, p: MoveCel) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let layer = target::image_layer(sprite, p.layer.as_ref())?;
+        let frames = match p.frames {
+            Some(r) => target::frames(sprite, r.from, r.to)?,
+            None => {
+                let f = target::frame(sprite, p.frame)?;
+                f..=f
+            }
+        };
+        let cmds: Vec<Command> = frames
+            .filter_map(|frame| {
+                let cel = sprite.cel(layer, frame)?;
+                let (x, y) = cel.position;
+                Some(Command::SetCel {
+                    layer,
+                    frame,
+                    cel: Some(Cel {
+                        position: (x + p.dx, y + p.dy),
+                        ..*cel
+                    }),
+                })
+            })
+            .collect();
+        if cmds.is_empty() {
+            return Ok(Reply::text("No cels in range; nothing moved."));
+        }
+        let n = cmds.len();
+        self.run_on(&p.doc, ab, cmds)?;
+        Ok(Reply::text(format!(
+            "Moved {n} cel(s) of layer {} by ({}, {}).",
+            layer.0, p.dx, p.dy
+        )))
+    }
+
     // --- Animación ---
 
     pub fn inbetween(&mut self, p: Inbetween) -> Result<Reply> {
@@ -577,6 +612,30 @@ mod tests {
         assert_eq!(
             sp.pixel(LayerId(1), 0, 1, 1),
             PixelValue::Rgba(Rgba::rgb(0, 255, 0))
+        );
+    }
+
+    #[test]
+    fn move_cel_keeps_links() {
+        let mut s = session(8, 8);
+        s.draw_pixels(p(
+            json!({"doc": "d1", "pixels": [{"x": 0, "y": 0, "color": "#f00"}]}),
+        ))
+        .unwrap();
+        s.add_frame(p(json!({"doc": "d1", "duplicate": 0, "linked": true})))
+            .unwrap();
+        s.move_cel(p(json!({"doc": "d1", "frame": 1, "dx": 3, "dy": 2})))
+            .unwrap();
+        let (_, sp) = s.sprite("d1", None).unwrap();
+        let (a, b) = (
+            sp.cel(LayerId(1), 0).unwrap(),
+            sp.cel(LayerId(1), 1).unwrap(),
+        );
+        assert_eq!((a.position, b.position), ((0, 0), (3, 2)));
+        assert_eq!(a.image, b.image);
+        assert_eq!(
+            sp.pixel(LayerId(1), 1, 3, 2),
+            PixelValue::Rgba(Rgba::rgb(255, 0, 0))
         );
     }
 
