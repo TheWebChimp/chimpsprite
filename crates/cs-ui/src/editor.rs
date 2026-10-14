@@ -493,6 +493,12 @@ impl Editor {
         result
     }
 
+    /// Arrastrar la etiqueta de un artboard: lo activa y lo mueve, con cualquier herramienta.
+    pub fn press_artboard_label(&mut self, id: ArtboardId, world: (f32, f32)) {
+        self.activate(id);
+        self.artboard_tool.start_move(id, world);
+    }
+
     /// `slop`: tolerancia en píxeles de mundo para tomar bordes de artboards.
     pub fn pointer_press(&mut self, world: (f32, f32), secondary: bool, alt: bool, slop: f32) {
         self.painting_secondary = secondary;
@@ -789,6 +795,22 @@ mod tests {
         assert_eq!(e.document.artboards.len(), 2);
         assert_eq!(e.active, e.document.artboards[1].id);
         assert_eq!((e.sprite().width, e.sprite().height), (10, 10));
+    }
+
+    #[test]
+    fn dragging_label_moves_artboard_with_any_tool() {
+        let mut e = two_boards();
+        let first = e.document.artboards[0].id;
+        e.tool = ToolKind::Pencil;
+        e.press_artboard_label(first, (1.0, -2.0));
+        assert!(e.is_painting());
+        e.pointer_drag((6.0, -2.0));
+        e.pointer_release();
+        assert_eq!(e.active, first);
+        assert_eq!(e.artboard().position, (5, 0));
+        assert!(e.sprite().cels.is_empty(), "no debe pintar");
+        e.undo();
+        assert_eq!(e.artboard().position, (0, 0));
     }
 
     #[test]

@@ -92,6 +92,13 @@ impl ArtboardTool {
         activate
     }
 
+    /// Empieza a mover `id` directamente (p. ej. al arrastrar su etiqueta con otra herramienta).
+    pub fn start_move(&mut self, id: ArtboardId, p: (f32, f32)) {
+        self.start = p;
+        self.current = p;
+        self.mode = Some(Mode::Move(id));
+    }
+
     pub fn drag(&mut self, p: (f32, f32)) {
         if self.mode.is_some() {
             self.current = p;
@@ -266,6 +273,17 @@ mod tests {
         assert_eq!(ab.sprite.pixel(LayerId(1), 0, 4, 0), red);
         inv.apply(&mut d).unwrap();
         assert_eq!(d, before);
+    }
+
+    #[test]
+    fn start_move_moves_from_anywhere() {
+        let mut d = doc();
+        let mut t = ArtboardTool::new();
+        // Punto fuera del artboard (sobre su etiqueta), igual mueve.
+        t.start_move(ArtboardId(1), (101.0, 98.0));
+        t.drag((111.4, 90.0));
+        t.release(&d).unwrap().apply(&mut d).unwrap();
+        assert_eq!(d.artboards[0].position, (110, 92));
     }
 
     #[test]

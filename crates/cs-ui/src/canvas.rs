@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use cs_core::{ArtboardId, Mask};
+use cs_core::{Artboard, ArtboardId, Mask};
 use cs_tools::{ArtboardHit, Edges, hit_test};
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Pos2, Rect, Sense, Stroke, StrokeKind,
@@ -20,6 +20,9 @@ const CHECKER_PX: f32 = 8.0;
 const ANTS_SPEED: f64 = 6.0;
 /// Tolerancia en pantalla para tomar bordes de artboards.
 const EDGE_SLOP_PX: f32 = 6.0;
+/// Etiqueta con el nombre sobre cada artboard (arrastrable para moverlo).
+const LABEL_SIZE: f32 = 12.0;
+const LABEL_GAP: f32 = 4.0;
 
 /// Vista del lienzo infinito: zoom, paneo y una textura por artboard.
 pub struct CanvasView {
@@ -158,6 +161,7 @@ impl CanvasView {
         });
         editor.options.constrain = modifiers.shift;
         let slop = EDGE_SLOP_PX / self.zoom;
+        let over_label = pointer.and_then(|p| self.label_at(ui, rect, editor, p));
         if !space
             && response.hovered()
             && !editor.is_painting()
@@ -165,7 +169,10 @@ impl CanvasView {
             && let Some(p) = pointer
         {
             let world = self.to_world(rect, p);
-            editor.pointer_press(world, pressed_secondary, modifiers.alt, slop);
+            match over_label {
+                Some(id) if pressed_primary => editor.press_artboard_label(id, world),
+                _ => editor.pointer_press(world, pressed_secondary, modifiers.alt, slop),
+            }
         }
         if editor.is_painting() {
             if any_down {
@@ -181,6 +188,8 @@ impl CanvasView {
             Some(egui::CursorIcon::Grab)
         } else if !response.hovered() {
             None
+        } else if over_label.is_some() && !editor.is_painting() {
+            Some(egui::CursorIcon::Grab)
         } else if editor.active_tool() == ToolKind::Artboard {
             let world = pointer.map(|p| self.to_world(rect, p));
             Some(artboard_cursor(
@@ -272,13 +281,10 @@ impl CanvasView {
             };
             painter.rect_stroke(screen, 0.0, border, StrokeKind::Outside);
             painter.text(
-                screen.left_top() - Vec2::new(0.0, 4.0),
+                screen.left_top() - Vec2::new(0.0, LABEL_GAP),
                 Align2::LEFT_BOTTOM,
-                format!(
-                    "{}  {}×{}",
-                    artboard.name, artboard.sprite.width, artboard.sprite.height
-                ),
-                FontId::proportional(12.0),
+                label_text(artboard),
+                FontId::proportional(LABEL_SIZE),
                 label_color,
             );
         }
@@ -317,6 +323,31 @@ impl CanvasView {
                 StrokeKind::Inside,
             );
         }
+    }
+}
+
+fn label_text(artboard: &Artboard) -> String {
+    format!(
+        "{}  {}×{}",
+        artboard.name, artboard.sprite.width, artboard.sprite.height
+    )
+}
+
+impl CanvasView {
+    /// Artboard cuya etiqueta (nombre sobre el borde superior) está bajo `p`, el de más arriba primero.
+    fn label_at(&self, ui: &egui::Ui, rect: Rect, editor: &Editor, p: Pos2) -> Option<ArtboardId> {
+        editor.document.artboards.iter().rev().find_map(|artboard| {
+            let galley = ui.painter().layout_no_wrap(
+                label_text(artboard),
+                FontId::proportional(LABEL_SIZE),
+                Color32::WHITE,
+            );
+            let bottom_left = self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
+            let label =
+                Rect::from_min_size(bottom_left - Vec2::new(0.0, galley.size().y), galley.size())
+                    .expand(2.0);
+            label.contains(p).then_some(artboard.id)
+        })
     }
 }
 
