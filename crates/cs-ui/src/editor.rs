@@ -586,7 +586,31 @@ impl Editor {
             self.activate(id);
         }
         let p = self.to_local(self.snapped(world));
+        // Mover sin selección: cambia a la capa que tiene algo dibujado bajo el puntero.
+        if self.active_tool() == ToolKind::Move
+            && self.selection.is_none()
+            && let Some(layer) = self.layer_at(p)
+        {
+            self.layer = layer;
+        }
         self.with_tool(|tool, ctx| tool.press(ctx, p));
+    }
+
+    /// Capa de imagen más alta con un píxel visible en `p` (local), ignorando ocultas y bloqueadas.
+    pub fn layer_at(&self, p: Point) -> Option<LayerId> {
+        let sprite = self.sprite();
+        sprite
+            .layers
+            .iter()
+            .rev()
+            .filter(|l| l.kind == cs_core::LayerKind::Image && !l.locked && l.opacity > 0)
+            .filter(|l| sprite.is_visible(l.id))
+            .find(|l| {
+                let visible = cs_render::resolve(sprite, sprite.pixel(l.id, self.frame, p.0, p.1));
+                let cel_opacity = sprite.cel(l.id, self.frame).map_or(0, |c| c.opacity);
+                visible.a > 0 && cel_opacity > 0
+            })
+            .map(|l| l.id)
     }
 
     pub fn pointer_drag(&mut self, world: (f32, f32)) {
@@ -989,6 +1013,47 @@ mod tests {
         let t = e.sprite().color_mode.transparent();
         assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 2), e.primary);
         assert_eq!(e.sprite().pixel(LayerId(1), 0, 5, 2), t);
+    }
+
+    #[test]
+    fn move_tool_picks_the_layer_under_the_pointer() {
+        let mut e = editor();
+        let bottom = LayerId(1);
+        e.execute(Command::DrawPixels {
+            layer: bottom,
+            frame: 0,
+            pixels: vec![(1, 1, e.primary)],
+        });
+        e.execute(Command::AddLayer {
+            index: 1,
+            layer: cs_core::Layer::new_image(LayerId(2), "top"),
+        });
+        e.execute(Command::DrawPixels {
+            layer: LayerId(2),
+            frame: 0,
+            pixels: vec![(5, 5, e.primary)],
+        });
+        e.layer = bottom;
+        e.tool = ToolKind::Move;
+        // Clic sobre lo de la capa de arriba: cambia a ella y la mueve.
+        e.pointer_press((5.5, 5.5), false, false, 0.1);
+        assert_eq!(e.layer, LayerId(2));
+        e.pointer_drag((6.5, 5.5));
+        e.pointer_release();
+        assert_eq!(e.sprite().cel(LayerId(2), 0).unwrap().position, (1, 0));
+        assert_eq!(e.sprite().cel(bottom, 0).unwrap().position, (0, 0));
+        // Clic en vacío: se queda en la capa actual.
+        e.pointer_press((7.5, 0.5), false, false, 0.1);
+        e.pointer_release();
+        assert_eq!(e.layer, LayerId(2));
+        // Las capas bloqueadas u ocultas no se eligen.
+        e.toggle_locked(LayerId(2));
+        e.pointer_press((1.5, 1.5), false, false, 0.1);
+        e.pointer_release();
+        assert_eq!(e.layer, bottom);
+        e.toggle_visible(bottom);
+        e.layer = LayerId(2);
+        assert_eq!(e.layer_at((1, 1)), None);
     }
 
     #[test]
