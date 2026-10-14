@@ -109,6 +109,18 @@ impl ArtboardTool {
         self.mode.is_some()
     }
 
+    /// Bordes que se están arrastrando, si el gesto es de redimensionar.
+    pub fn resizing(&self) -> Option<Edges> {
+        match self.mode {
+            Some(Mode::Resize(_, edges)) => Some(edges),
+            _ => None,
+        }
+    }
+
+    pub fn moving(&self) -> bool {
+        matches!(self.mode, Some(Mode::Move(_)))
+    }
+
     pub fn release(&mut self, doc: &Document) -> Option<DocCommand> {
         let cmd = self.preview(doc);
         self.mode = None;

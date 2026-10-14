@@ -441,6 +441,11 @@ impl Editor {
         }
     }
 
+    /// Gesto de la herramienta Artboard en curso (crear, mover o redimensionar).
+    pub fn artboard_gesture(&self) -> &ArtboardTool {
+        &self.artboard_tool
+    }
+
     pub fn is_painting(&self) -> bool {
         self.artboard_tool.is_active()
             || self

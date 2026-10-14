@@ -37,6 +37,8 @@ pub struct CanvasView {
     pub hover: Option<(i32, i32)>,
     /// Guía del diálogo Canvas Size que se está arrastrando.
     dragging_guide: Option<GuideEdge>,
+    /// El puntero está sobre la etiqueta de un artboard.
+    over_label: bool,
 }
 
 impl Default for CanvasView {
@@ -50,6 +52,7 @@ impl Default for CanvasView {
             fitted: false,
             hover: None,
             dragging_guide: None,
+            over_label: false,
         }
     }
 }
@@ -167,6 +170,7 @@ impl CanvasView {
         editor.options.constrain = modifiers.shift;
         let slop = EDGE_SLOP_PX / self.zoom;
         let over_label = pointer.and_then(|p| self.label_at(ui, rect, editor, p));
+        self.over_label = over_label.is_some();
 
         // Con el diálogo Canvas Size abierto el lienzo es modal: solo guías, paneo y zoom.
         let modal = dialog.is_some();
@@ -234,6 +238,13 @@ impl CanvasView {
             response.hovered().then_some(egui::CursorIcon::Default)
         } else if !response.hovered() {
             None
+        } else if editor.artboard_gesture().moving() {
+            Some(egui::CursorIcon::Grabbing)
+        } else if let Some(edges) = editor.artboard_gesture().resizing() {
+            Some(artboard_cursor(Some(ArtboardHit::Edge(
+                editor.active,
+                edges,
+            ))))
         } else if over_label.is_some() && !editor.is_painting() {
             Some(egui::CursorIcon::Grab)
         } else if editor.active_tool() == ToolKind::Artboard {
@@ -390,6 +401,8 @@ impl CanvasView {
         let tool = editor.active_tool();
         if let (Some((hx, hy)), Some(origin)) = (self.hover, active_origin)
             && !modal
+            && !self.over_label
+            && !editor.artboard_gesture().is_active()
             && !space
             && response.hovered()
             && tool != ToolKind::Artboard
