@@ -541,6 +541,7 @@ mod tests {
     fn atlas_stacks_artboards_and_offsets_tags() {
         let mut doc = Document::with_sprite("hero", sprite());
         doc.artboards.push(Artboard {
+            guides: Vec::new(),
             id: ArtboardId(2),
             name: "coin".into(),
             position: (10, 0),

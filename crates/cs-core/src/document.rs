@@ -5,6 +5,22 @@ use crate::Sprite;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ArtboardId(pub u32);
 
+/// Orientación de una guía.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Axis {
+    /// Línea horizontal en `y = position`.
+    Horizontal,
+    /// Línea vertical en `x = position`.
+    Vertical,
+}
+
+/// Guía en coordenadas locales del artboard, siempre en un borde de píxel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Guide {
+    pub axis: Axis,
+    pub position: i32,
+}
+
 /// Un sprite independiente colocado en el lienzo infinito del documento.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Artboard {
@@ -13,6 +29,8 @@ pub struct Artboard {
     /// Esquina superior izquierda en coordenadas de mundo.
     pub position: (i32, i32),
     pub sprite: Sprite,
+    #[serde(default)]
+    pub guides: Vec<Guide>,
 }
 
 impl Artboard {
@@ -41,6 +59,7 @@ impl Document {
     pub fn with_sprite(name: impl Into<String>, sprite: Sprite) -> Self {
         Self {
             artboards: vec![Artboard {
+                guides: Vec::new(),
                 id: ArtboardId(1),
                 name: name.into(),
                 position: (0, 0),
@@ -96,6 +115,7 @@ mod tests {
     fn doc() -> Document {
         let mut d = Document::with_sprite("a", Sprite::new(10, 10, ColorMode::Rgba));
         d.artboards.push(Artboard {
+            guides: Vec::new(),
             id: d.next_artboard_id(),
             name: "b".into(),
             position: (5, 5),

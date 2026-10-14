@@ -405,6 +405,7 @@ impl Editor {
         sprite.palette = template.palette.clone();
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
+            guides: Vec::new(),
             id,
             name: format!("Artboard {}", id.0),
             position: (x1 + 16, y0),

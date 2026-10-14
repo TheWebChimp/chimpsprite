@@ -94,6 +94,7 @@ mod tests {
         assert_eq!(back.artboards[0].sprite.width, 5);
 
         doc.artboards.push(Artboard {
+            guides: Vec::new(),
             id: ArtboardId(2),
             name: "coin".into(),
             position: (20, 0),
