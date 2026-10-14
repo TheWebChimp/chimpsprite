@@ -119,6 +119,51 @@ pub fn link_cel(sprite: &Sprite, layer: LayerId, frame: usize, source: usize) ->
     })
 }
 
+/// Vincula todos los frames `from..=to` de una capa al primer cel del rango que exista.
+pub fn link_range(sprite: &Sprite, layer: LayerId, from: usize, to: usize) -> Option<Command> {
+    let (from, to) = (from.min(to), from.max(to));
+    let source = (from..=to).find(|&f| sprite.cel(layer, f).is_some())?;
+    let cel = *sprite.cel(layer, source)?;
+    let cmds: Vec<Command> = (from..=to)
+        .filter(|&f| f != source && sprite.cel(layer, f) != Some(&cel))
+        .map(|frame| Command::SetCel {
+            layer,
+            frame,
+            cel: Some(cel),
+        })
+        .collect();
+    (!cmds.is_empty()).then_some(Command::Batch(cmds))
+}
+
+/// Desvincula todos los cels vinculados del rango (cada uno recibe su propia copia).
+pub fn unlink_range(sprite: &Sprite, layer: LayerId, from: usize, to: usize) -> Option<Command> {
+    let (from, to) = (from.min(to), from.max(to));
+    let mut next_id = sprite.next_image_id().0;
+    let mut cmds = Vec::new();
+    // El primero de cada grupo vinculado conserva la imagen original.
+    let mut kept = std::collections::HashSet::new();
+    for frame in from..=to {
+        let Some(cel) = sprite.cel(layer, frame).copied() else {
+            continue;
+        };
+        if !is_linked(sprite, layer, frame) || kept.insert(cel.image) {
+            continue;
+        }
+        let id = ImageId(next_id);
+        next_id += 1;
+        cmds.push(Command::SetImage {
+            id,
+            image: sprite.image(cel.image).cloned(),
+        });
+        cmds.push(Command::SetCel {
+            layer,
+            frame,
+            cel: Some(Cel { image: id, ..cel }),
+        });
+    }
+    (!cmds.is_empty()).then_some(Command::Batch(cmds))
+}
+
 /// Desvincula un cel que comparte imagen con otros: recibe una copia propia.
 pub fn unlink_cel(sprite: &Sprite, layer: LayerId, frame: usize) -> Option<Command> {
     let cel = *sprite.cel(layer, frame)?;
@@ -348,6 +393,57 @@ mod tests {
             .unwrap();
         assert!(!is_linked(&s, LayerId(1), 0));
         assert_eq!(unlink_cel(&s, LayerId(1), 1), None);
+    }
+
+    #[test]
+    fn link_and_unlink_ranges() {
+        let mut s = Sprite::new(4, 4, ColorMode::Rgba);
+        for i in 1..4 {
+            Command::AddFrame {
+                index: i,
+                frame: Frame { duration_ms: 100 },
+            }
+            .apply(&mut s)
+            .unwrap();
+        }
+        dot(&mut s, 1, 1); // el primer cel del rango 0..=3 está en el frame 1
+        let before = s.clone();
+        let inv = link_range(&s, LayerId(1), 3, 0)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        for f in 0..4 {
+            assert!(is_linked(&s, LayerId(1), f), "frame {f}");
+        }
+        assert_eq!(link_range(&s, LayerId(1), 0, 3), None, "already linked");
+        let linked = s.clone();
+        let inv2 = unlink_range(&s, LayerId(1), 0, 3)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        for f in 0..4 {
+            assert!(!is_linked(&s, LayerId(1), f), "frame {f}");
+        }
+        inv2.apply(&mut s).unwrap();
+        assert_eq!(s, linked);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        let empty = Sprite::new(2, 2, ColorMode::Rgba);
+        assert_eq!(link_range(&empty, LayerId(1), 0, 0), None);
+    }
+
+    #[test]
+    fn set_palette_roundtrip() {
+        let mut s = Sprite::new(2, 2, ColorMode::Rgba);
+        let before = s.clone();
+        let mut colors = s.palette.colors().to_vec();
+        colors.push(Rgba::rgb(1, 2, 3));
+        let inv = Command::SetPalette(Palette::new(colors))
+            .apply(&mut s)
+            .unwrap();
+        assert_eq!(s.palette.len(), 33);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
     }
 
     #[test]

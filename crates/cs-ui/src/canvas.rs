@@ -932,6 +932,11 @@ impl CanvasView {
                 origin + Vec2::new((hx + offset) as f32, (hy + offset) as f32) * self.zoom,
                 Vec2::splat(size as f32 * self.zoom),
             );
+            // Las herramientas que pintan muestran el color primario bajo el cursor.
+            if tool.paints() && tool != ToolKind::Eraser && tool != ToolKind::Bucket {
+                let c = editor.resolve(editor.primary);
+                painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a));
+            }
             painter.rect_stroke(
                 r,
                 0.0,

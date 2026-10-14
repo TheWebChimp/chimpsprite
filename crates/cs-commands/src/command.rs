@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use cs_core::{
     ArtboardId, BlendMode, Cel, Frame, GridSettings, Image, ImageId, Layer, LayerId, LayerKind,
-    PixelValue, Sprite, Tag,
+    Palette, PixelValue, Sprite, Tag,
 };
 use serde::{Deserialize, Serialize};
 
@@ -96,6 +96,8 @@ pub enum Command {
     /// Reemplaza la lista completa de tags.
     SetTags(Vec<Tag>),
     SetGrid(GridSettings),
+    /// Reemplaza la paleta completa.
+    SetPalette(Palette),
     /// Mueve la capa y sus descendientes; `index` es la posición en la lista sin ese bloque.
     MoveLayer {
         id: LayerId,
@@ -145,6 +147,10 @@ impl Command {
                 offset,
             } => resize_canvas(doc, *width, *height, *offset),
             Command::TrimToCanvas => Ok(trim_to_canvas(doc)),
+            Command::SetPalette(palette) => Ok(Command::SetPalette(std::mem::replace(
+                &mut doc.palette,
+                palette.clone(),
+            ))),
             Command::SetGrid(grid) => {
                 if grid.size.0 == 0 || grid.size.1 == 0 {
                     return Err(CmdError::InvalidSize(grid.size.0, grid.size.1));

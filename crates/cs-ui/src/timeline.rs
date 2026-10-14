@@ -45,6 +45,8 @@ pub struct TimelineState {
     duration_edit: Option<u16>,
     /// Frame donde empezó una selección con Shift.
     range_anchor: Option<usize>,
+    /// Capa en la que se está arrastrando una selección de cels.
+    cel_drag: Option<LayerId>,
 }
 
 #[derive(Clone, Copy)]
@@ -544,8 +546,12 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
     }
     for f in 0..editor.frame_count() {
         let r = cell_rect(row, f);
-        let response = ui.interact(r, ui.id().with(("cel", id, f)), Sense::click());
-        if f == editor.frame {
+        let response = ui.interact(r, ui.id().with(("cel", id, f)), Sense::click_and_drag());
+        let (sel_a, sel_b) = editor.selected_frames();
+        let in_range = active && editor.frame_range.is_some() && (sel_a..=sel_b).contains(&f);
+        if in_range {
+            painter.rect_filled(r.shrink(1.0), 2.0, theme::ACCENT.gamma_multiply(0.35));
+        } else if f == editor.frame {
             painter.rect_filled(r, 0.0, theme::ACCENT.gamma_multiply(0.15));
         }
         if active && f == editor.frame {
@@ -576,13 +582,48 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
                 Stroke::new(1.0, theme::LABEL.gamma_multiply(0.6)),
             );
         }
+        // Arrastrar sobre los cels de una capa selecciona un rango de frames.
+        if response.drag_started() {
+            editor.stop();
+            editor.select_layer(id);
+            state.range_anchor = Some(f);
+            state.cel_drag = Some(id);
+            editor.frame_range = Some((f, f));
+            editor.set_frame(f);
+        }
+        if state.cel_drag == Some(id) && response.contains_pointer() {
+            if ui.input(|i| i.pointer.primary_down()) {
+                let anchor = state.range_anchor.unwrap_or(f);
+                editor.frame_range = Some((anchor, f));
+            } else {
+                state.cel_drag = None;
+            }
+        }
         if response.clicked() {
             editor.stop();
             editor.select_layer(id);
-            editor.frame_range = None;
+            if ui.input(|i| i.modifiers.shift) {
+                let anchor = state.range_anchor.unwrap_or(editor.frame);
+                editor.frame_range = Some((anchor, f));
+            } else {
+                state.range_anchor = Some(f);
+                editor.frame_range = None;
+            }
             editor.set_frame(f);
         }
         response.context_menu(|ui| {
+            let (a, b) = editor.selected_frames();
+            if editor.frame_range.is_some() && a != b && (a..=b).contains(&f) {
+                if ui.button(format!("Link {} cels", b - a + 1)).clicked() {
+                    editor.link_range(id, a, b);
+                    ui.close();
+                }
+                if ui.button("Unlink cels").clicked() {
+                    editor.unlink_range(id, a, b);
+                    ui.close();
+                }
+                ui.separator();
+            }
             let sprite = editor.sprite();
             let has_cel = sprite.cel(id, f).is_some();
             let can_link = f > 0 && sprite.cel(id, f - 1).is_some();
