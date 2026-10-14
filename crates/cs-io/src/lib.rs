@@ -2,6 +2,7 @@
 
 pub mod aseprite;
 mod bytes;
+pub mod chimp;
 mod error;
 
 pub use error::{IoError, Result};
