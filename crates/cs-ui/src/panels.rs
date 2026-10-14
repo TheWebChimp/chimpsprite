@@ -162,7 +162,13 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView) {
 }
 
 /// Lista de artboards: activar, crear, renombrar y eliminar.
-pub fn artboards(ui: &mut egui::Ui, editor: &mut Editor, name_buffer: &mut (ArtboardId, String)) {
+/// Devuelve `true` si se pidió abrir el diálogo de tamaño.
+pub fn artboards(
+    ui: &mut egui::Ui,
+    editor: &mut Editor,
+    name_buffer: &mut (ArtboardId, String),
+) -> bool {
+    let mut resize = false;
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.heading("Artboards");
@@ -214,4 +220,8 @@ pub fn artboards(ui: &mut egui::Ui, editor: &mut Editor, name_buffer: &mut (Artb
     } else if !response.has_focus() {
         name_buffer.1 = editor.artboard().name.clone();
     }
+    if ui.button("Canvas Size…").clicked() {
+        resize = true;
+    }
+    resize
 }

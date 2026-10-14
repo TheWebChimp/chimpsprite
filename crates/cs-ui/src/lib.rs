@@ -1,6 +1,7 @@
 //! Interfaz egui de ChimpSprite: capa delgada sobre el motor.
 
 mod canvas;
+mod canvas_size;
 mod capture;
 mod demo;
 mod editor;
@@ -20,6 +21,7 @@ pub struct ChimpApp {
     capture: capture::Capture,
     /// Texto del nombre del artboard activo mientras se edita.
     artboard_name: (ArtboardId, String),
+    canvas_size: Option<canvas_size::CanvasSizeDialog>,
 }
 
 impl ChimpApp {
@@ -30,11 +32,45 @@ impl ChimpApp {
         } else {
             new_editor()
         };
-        Self {
+        let mut app = Self {
             editor,
             canvas: canvas::CanvasView::default(),
             capture: capture::Capture::from_env(),
             artboard_name: (ArtboardId(0), String::new()),
+            canvas_size: None,
+        };
+        // Desarrollo: abre el diálogo con un ancho de ejemplo para capturas.
+        if std::env::var_os("CHIMPSPRITE_DEMO_CANVAS_SIZE").is_some() {
+            app.open_canvas_size();
+            if let Some(d) = &mut app.canvas_size {
+                d.set_anchor(0, 1);
+                d.set_width(d.width() + 24);
+            }
+        }
+        app
+    }
+
+    fn open_canvas_size(&mut self) {
+        self.canvas_size = Some(canvas_size::CanvasSizeDialog::new(self.editor.artboard()));
+    }
+
+    fn update_canvas_size(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.canvas_size else {
+            return;
+        };
+        if self.editor.document.artboard(dialog.artboard).is_none() {
+            self.canvas_size = None;
+            return;
+        }
+        match canvas_size::show(ctx, dialog) {
+            canvas_size::DialogResult::Open => {}
+            canvas_size::DialogResult::Accept => {
+                if let Some(cmd) = dialog.command(&self.editor.document) {
+                    self.editor.execute_doc(cmd);
+                }
+                self.canvas_size = None;
+            }
+            canvas_size::DialogResult::Cancel => self.canvas_size = None,
         }
     }
 
@@ -117,6 +153,11 @@ impl ChimpApp {
                     ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });
+            ui.menu_button("Sprite", |ui| {
+                if ui.button("Canvas Size…").clicked() {
+                    self.open_canvas_size();
+                }
+            });
             ui.menu_button("Edit", |ui| {
                 let undo = egui::Button::new("Undo").shortcut_text("Ctrl+Z");
                 if ui
@@ -178,9 +219,16 @@ impl eframe::App for ChimpApp {
             .show(ui, |ui| {
                 panels::palette(ui, &mut self.editor);
                 ui.add_space(12.0);
-                panels::artboards(ui, &mut self.editor, &mut self.artboard_name);
+                if panels::artboards(ui, &mut self.editor, &mut self.artboard_name) {
+                    self.open_canvas_size();
+                }
             });
-        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &mut self.editor));
+        let guide = self
+            .canvas_size
+            .as_ref()
+            .and_then(|d| d.preview_rect(&self.editor.document));
+        egui::CentralPanel::no_frame().show(ui, |ui| self.canvas.show(ui, &mut self.editor, guide));
+        self.update_canvas_size(&ctx);
 
         self.capture.update(&ctx);
     }

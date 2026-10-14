@@ -205,7 +205,13 @@ impl CanvasView {
         }
     }
 
-    pub fn show(&mut self, ui: &mut egui::Ui, editor: &mut Editor) {
+    /// `guide`: rectángulo de mundo a resaltar (vista previa del diálogo Canvas Size).
+    pub fn show(
+        &mut self,
+        ui: &mut egui::Ui,
+        editor: &mut Editor,
+        guide: Option<((i32, i32), (i32, i32))>,
+    ) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let ctx = ui.ctx().clone();
         if !self.fitted && rect.width() > 0.0 {
@@ -287,6 +293,17 @@ impl CanvasView {
                 FontId::proportional(LABEL_SIZE),
                 label_color,
             );
+        }
+
+        if let Some((min, max)) = guide {
+            let r = Rect::from_min_max(self.to_screen(rect, min), self.to_screen(rect, max));
+            let stroke = Stroke::new(1.0, theme::GUIDE);
+            // Guías que cruzan todo el lienzo, como en Aseprite.
+            painter.vline(r.left(), rect.y_range(), stroke);
+            painter.vline(r.right(), rect.y_range(), stroke);
+            painter.hline(rect.x_range(), r.top(), stroke);
+            painter.hline(rect.x_range(), r.bottom(), stroke);
+            painter.rect_stroke(r, 0.0, Stroke::new(2.0, theme::GUIDE), StrokeKind::Outside);
         }
 
         let active_origin = document
