@@ -228,33 +228,6 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) {
     color_picker(ui, editor);
 }
 
-fn hex_of(c: cs_core::Rgba) -> String {
-    if c.a == 255 {
-        format!("#{:02x}{:02x}{:02x}", c.r, c.g, c.b)
-    } else {
-        format!("#{:02x}{:02x}{:02x}{:02x}", c.r, c.g, c.b, c.a)
-    }
-}
-
-/// `#rgb`, `#rrggbb` o `#rrggbbaa` (el `#` es opcional).
-fn parse_hex(text: &str) -> Option<cs_core::Rgba> {
-    let t = text.trim().trim_start_matches('#');
-    let byte = |i: usize| u8::from_str_radix(t.get(i..i + 2)?, 16).ok();
-    match t.len() {
-        3 => {
-            let d = |i: usize| {
-                u8::from_str_radix(t.get(i..i + 1)?, 16)
-                    .ok()
-                    .map(|v| v * 17)
-            };
-            Some(cs_core::Rgba::rgb(d(0)?, d(1)?, d(2)?))
-        }
-        6 => Some(cs_core::Rgba::rgb(byte(0)?, byte(2)?, byte(4)?)),
-        8 => Some(cs_core::Rgba::new(byte(0)?, byte(2)?, byte(4)?, byte(6)?)),
-        _ => None,
-    }
-}
-
 /// Selector de color libre (RGBA): edita el color primario.
 fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
     let cs_core::PixelValue::Rgba(current) = editor.primary else {
@@ -273,7 +246,7 @@ fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
         let id = ui.id().with("hex");
         let mut text = ui
             .data_mut(|d| d.get_temp::<String>(id))
-            .unwrap_or_else(|| hex_of(current));
+            .unwrap_or_else(|| current.to_hex());
         let response = ui.add(
             egui::TextEdit::singleline(&mut text)
                 .desired_width(90.0)
@@ -285,7 +258,7 @@ fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
             ui.data_mut(|d| d.remove::<String>(id));
         }
         if response.lost_focus()
-            && let Some(c) = parse_hex(&text)
+            && let Some(c) = cs_core::Rgba::parse_hex(&text)
         {
             editor.primary = cs_core::PixelValue::Rgba(c);
         }
@@ -397,25 +370,4 @@ pub fn artboards(
         resize = true;
     }
     resize
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hex_roundtrip_and_short_forms() {
-        let c = cs_core::Rgba::new(0x90, 0x52, 0xbc, 255);
-        assert_eq!(hex_of(c), "#9052bc");
-        assert_eq!(parse_hex("#9052bc"), Some(c));
-        assert_eq!(parse_hex("9052BC"), Some(c));
-        assert_eq!(parse_hex("#f0a"), Some(cs_core::Rgba::rgb(255, 0, 170)));
-        assert_eq!(
-            parse_hex("#11223380"),
-            Some(cs_core::Rgba::new(0x11, 0x22, 0x33, 0x80))
-        );
-        assert_eq!(hex_of(cs_core::Rgba::new(1, 2, 3, 4)), "#01020304");
-        assert_eq!(parse_hex("#12"), None);
-        assert_eq!(parse_hex("#zzzzzz"), None);
-    }
 }

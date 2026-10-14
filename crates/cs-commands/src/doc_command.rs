@@ -1,4 +1,4 @@
-use cs_core::{Artboard, ArtboardId, Document, Guide, Symmetry};
+use cs_core::{Artboard, ArtboardId, Document, Guide, Sprite, Symmetry};
 use serde::{Deserialize, Serialize};
 
 use crate::{CmdError, Command};
@@ -31,6 +31,11 @@ pub enum DocCommand {
     SetSymmetry {
         id: ArtboardId,
         symmetry: Symmetry,
+    },
+    /// Reemplaza el sprite completo de un artboard (p. ej. al cambiar el modo de color).
+    SetSprite {
+        id: ArtboardId,
+        sprite: Box<Sprite>,
     },
     /// Transacción: se aplica completa o nada.
     Batch(Vec<DocCommand>),
@@ -101,6 +106,19 @@ impl DocCommand {
                     symmetry: old,
                 })
             }
+            DocCommand::SetSprite { id, sprite } => {
+                if sprite.width == 0 || sprite.height == 0 {
+                    return Err(CmdError::InvalidSize(sprite.width, sprite.height));
+                }
+                let artboard = doc
+                    .artboard_mut(*id)
+                    .ok_or(CmdError::ArtboardNotFound(*id))?;
+                let old = std::mem::replace(&mut artboard.sprite, (**sprite).clone());
+                Ok(DocCommand::SetSprite {
+                    id: *id,
+                    sprite: Box::new(old),
+                })
+            }
             DocCommand::Batch(cmds) => {
                 let mut inverses = Vec::with_capacity(cmds.len());
                 for cmd in cmds {
@@ -150,6 +168,35 @@ mod tests {
             position: (10, 0),
             sprite: Sprite::new(2, 2, ColorMode::Rgba),
         }
+    }
+
+    #[test]
+    fn set_sprite_roundtrip() {
+        let mut d = doc();
+        let before = d.clone();
+        let inv = DocCommand::SetSprite {
+            id: ArtboardId(1),
+            sprite: Box::new(Sprite::new(
+                3,
+                2,
+                ColorMode::Indexed {
+                    transparent_index: 0,
+                },
+            )),
+        }
+        .apply(&mut d)
+        .unwrap();
+        assert_eq!(d.artboards[0].sprite.width, 3);
+        inv.apply(&mut d).unwrap();
+        assert_eq!(d, before);
+        assert!(
+            DocCommand::SetSprite {
+                id: ArtboardId(9),
+                sprite: Box::new(Sprite::new(1, 1, ColorMode::Rgba)),
+            }
+            .apply(&mut d)
+            .is_err()
+        );
     }
 
     #[test]

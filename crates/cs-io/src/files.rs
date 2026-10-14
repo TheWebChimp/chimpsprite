@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
+use crate::{IoError, LoadReport, aseprite, chimp, import};
 use cs_core::Document;
-use cs_io::{IoError, LoadReport, aseprite, chimp, import};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {

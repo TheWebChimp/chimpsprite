@@ -24,3 +24,4 @@ cs-render = { path = "crates/cs-render" }
 cs-tools = { path = "crates/cs-tools" }
 cs-io = { path = "crates/cs-io" }
 cs-ui = { path = "crates/cs-ui" }
+cs-agent = { path = "crates/cs-agent" }

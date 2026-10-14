@@ -1,0 +1,15 @@
+[package]
+name = "chimpsprite-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "MCP server for ChimpSprite: create, draw, animate and export pixel art from an agent"
+
+[dependencies]
+cs-agent.workspace = true
+rmcp = { version = "3.5", features = ["server", "transport-io", "macros"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "io-std"] }
+base64 = "0.22"
+
+[dev-dependencies]
+serde_json.workspace = true

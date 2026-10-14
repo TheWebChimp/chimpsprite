@@ -5,6 +5,7 @@ mod bytes;
 pub mod chimp;
 mod error;
 pub mod export;
+pub mod files;
 pub mod import;
 
 pub use error::{IoError, Result};
