@@ -300,13 +300,13 @@ fn read_palette(c: &mut Reader, palette: &mut Vec<Rgba>) -> Result<()> {
         )));
     }
     palette.resize(size, Rgba::rgb(0, 0, 0));
-    for i in from..=to {
+    for entry in &mut palette[from..=to] {
         let flags = c.u16()?;
         let (r, g, b, a) = (c.u8()?, c.u8()?, c.u8()?, c.u8()?);
         if flags & 1 != 0 {
             c.string()?;
         }
-        palette[i] = Rgba::new(r, g, b, a);
+        *entry = Rgba::new(r, g, b, a);
     }
     Ok(())
 }
@@ -487,12 +487,16 @@ fn inflate(data: &[u8], expected: usize) -> Result<Vec<u8>> {
 fn decode_pixels(w: u32, h: u32, raw: &[u8], depth: Depth) -> Result<Image> {
     let pixels = match depth {
         Depth::Rgba => PixelBuffer::Rgba(
-            raw.chunks_exact(4)
+            raw.as_chunks::<4>()
+                .0
+                .iter()
                 .map(|p| Rgba::new(p[0], p[1], p[2], p[3]))
                 .collect(),
         ),
         Depth::Grayscale => PixelBuffer::Rgba(
-            raw.chunks_exact(2)
+            raw.as_chunks::<2>()
+                .0
+                .iter()
                 .map(|p| Rgba::new(p[0], p[0], p[0], p[1]))
                 .collect(),
         ),
