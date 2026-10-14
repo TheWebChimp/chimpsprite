@@ -148,7 +148,8 @@ mod tests {
         let mut s = Sprite::new(4, 4, ColorMode::Rgba);
         assert_eq!(s.next_layer_id(), LayerId(2));
         assert_eq!(s.next_image_id(), ImageId(1));
-        s.images.insert(ImageId(7), Arc::new(Image::new(1, 1, ColorMode::Rgba)));
+        s.images
+            .insert(ImageId(7), Arc::new(Image::new(1, 1, ColorMode::Rgba)));
         assert_eq!(s.next_image_id(), ImageId(8));
     }
 }

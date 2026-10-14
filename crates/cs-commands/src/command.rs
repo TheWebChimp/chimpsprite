@@ -89,7 +89,10 @@ impl Command {
                     Some(img) => doc.images.insert(*id, img.clone()),
                     None => doc.images.remove(id),
                 };
-                Ok(Command::SetImage { id: *id, image: old })
+                Ok(Command::SetImage {
+                    id: *id,
+                    image: old,
+                })
             }
             Command::AddLayer { index, layer } => add_layer(doc, *index, layer),
             Command::RemoveLayer { id } => remove_layer(doc, *id),
@@ -175,7 +178,10 @@ fn set_layer_props(doc: &mut Sprite, id: LayerId, props: &LayerProps) -> Result<
 /// Reindexa los cels: `f(frame)` devuelve el nuevo índice.
 fn remap_frames(doc: &mut Sprite, f: impl Fn(usize) -> usize) {
     let cels = std::mem::take(&mut doc.cels);
-    doc.cels = cels.into_iter().map(|((l, fr), c)| ((l, f(fr)), c)).collect();
+    doc.cels = cels
+        .into_iter()
+        .map(|((l, fr), c)| ((l, f(fr)), c))
+        .collect();
 }
 
 fn add_frame(doc: &mut Sprite, index: usize, frame: Frame) -> Result<Command, CmdError> {
@@ -194,7 +200,12 @@ fn remove_frame(doc: &mut Sprite, index: usize) -> Result<Command, CmdError> {
     if doc.frames.len() == 1 {
         return Err(CmdError::LastFrame);
     }
-    let keys: Vec<_> = doc.cels.keys().filter(|(_, f)| *f == index).copied().collect();
+    let keys: Vec<_> = doc
+        .cels
+        .keys()
+        .filter(|(_, f)| *f == index)
+        .copied()
+        .collect();
     let mut inverse = vec![Command::AddFrame {
         index,
         frame: doc.frames.remove(index),
@@ -265,7 +276,9 @@ mod tests {
         let mut s = Sprite::new(4, 4, ColorMode::Rgba);
         dot(1).apply(&mut s).unwrap();
         let before = s.clone();
-        let inv = Command::RemoveLayer { id: LayerId(1) }.apply(&mut s).unwrap();
+        let inv = Command::RemoveLayer { id: LayerId(1) }
+            .apply(&mut s)
+            .unwrap();
         assert!(s.layers.is_empty() && s.cels.is_empty());
         inv.apply(&mut s).unwrap();
         assert_eq!(s, before);

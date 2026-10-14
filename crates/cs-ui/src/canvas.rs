@@ -6,7 +6,9 @@ use eframe::egui::{
 use crate::editor::{Editor, ToolKind};
 use crate::theme;
 
-const ZOOM_LEVELS: [f32; 12] = [1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0];
+const ZOOM_LEVELS: [f32; 12] = [
+    1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
+];
 /// Tamaño en pantalla de cada cuadro del damero de transparencia.
 const CHECKER_PX: f32 = 8.0;
 
@@ -53,15 +55,17 @@ impl CanvasView {
         self.zoom = ZOOM_LEVELS
             .iter()
             .copied()
-            .filter(|&z| z <= max)
-            .last()
+            .rfind(|&z| z <= max)
             .unwrap_or(1.0);
         self.pan = Vec2::ZERO;
         self.fitted = true;
     }
 
     fn zoom_at(&mut self, rect: Rect, sprite_size: Vec2, anchor: Pos2, step_in: bool) {
-        let i = ZOOM_LEVELS.iter().position(|&z| z >= self.zoom).unwrap_or(0);
+        let i = ZOOM_LEVELS
+            .iter()
+            .position(|&z| z >= self.zoom)
+            .unwrap_or(0);
         let next = if step_in {
             ZOOM_LEVELS[(i + 1).min(ZOOM_LEVELS.len() - 1)]
         } else {
@@ -83,9 +87,7 @@ impl CanvasView {
         let image = ColorImage::from_rgba_unmultiplied(size, &bytes);
         match &mut self.texture {
             Some(tex) => tex.set(image, TextureOptions::NEAREST),
-            None => {
-                self.texture = Some(ctx.load_texture("sprite", image, TextureOptions::NEAREST))
-            }
+            None => self.texture = Some(ctx.load_texture("sprite", image, TextureOptions::NEAREST)),
         }
         self.rendered_revision = Some(editor.revision);
     }
@@ -149,12 +151,13 @@ impl CanvasView {
                 i.pointer.interact_pos(),
             )
         });
-        if !space && response.hovered() && !editor.is_painting() {
-            if let Some(p) = pointer {
-                if pressed_primary || pressed_secondary {
-                    editor.pointer_press(to_sprite(p), pressed_secondary);
-                }
-            }
+        if !space
+            && response.hovered()
+            && !editor.is_painting()
+            && (pressed_primary || pressed_secondary)
+            && let Some(p) = pointer
+        {
+            editor.pointer_press(to_sprite(p), pressed_secondary);
         }
         if editor.is_painting() {
             if any_down {
@@ -172,7 +175,10 @@ impl CanvasView {
         painter.rect_filled(rect, 0.0, theme::CANVAS_BG);
 
         let canvas_rect = Rect::from_min_size(origin, sprite_size * self.zoom);
-        let uv = Rect::from_min_max(Pos2::ZERO, (canvas_rect.size() / (CHECKER_PX * 2.0)).to_pos2());
+        let uv = Rect::from_min_max(
+            Pos2::ZERO,
+            (canvas_rect.size() / (CHECKER_PX * 2.0)).to_pos2(),
+        );
         painter.image(checker, canvas_rect, uv, Color32::WHITE);
         if let Some(tex) = &self.texture {
             let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
@@ -189,7 +195,8 @@ impl CanvasView {
         // Vista previa del trazo en curso.
         let erasing = editor.tool == ToolKind::Eraser;
         for (x, y, v) in editor.preview() {
-            if x < 0 || y < 0 || x >= editor.sprite.width as i32 || y >= editor.sprite.height as i32 {
+            if x < 0 || y < 0 || x >= editor.sprite.width as i32 || y >= editor.sprite.height as i32
+            {
                 continue;
             }
             let color = if erasing {
@@ -212,15 +219,25 @@ impl CanvasView {
                 painter.hline(canvas_rect.x_range(), py, stroke);
             }
         }
-        painter.rect_stroke(canvas_rect, 0.0, Stroke::new(1.0, theme::CANVAS_BORDER), StrokeKind::Outside);
+        painter.rect_stroke(
+            canvas_rect,
+            0.0,
+            Stroke::new(1.0, theme::CANVAS_BORDER),
+            StrokeKind::Outside,
+        );
 
         // Contorno del pincel bajo el cursor.
-        if let Some((hx, hy)) = self.hover {
-            if !space {
-                let offset = -((editor.brush_size as i32 - 1) / 2);
-                let r = pixel_rect(hx + offset, hy + offset, editor.brush_size);
-                painter.rect_stroke(r, 0.0, Stroke::new(1.0, theme::BRUSH_OUTLINE), StrokeKind::Inside);
-            }
+        if let Some((hx, hy)) = self.hover
+            && !space
+        {
+            let offset = -((editor.brush_size as i32 - 1) / 2);
+            let r = pixel_rect(hx + offset, hy + offset, editor.brush_size);
+            painter.rect_stroke(
+                r,
+                0.0,
+                Stroke::new(1.0, theme::BRUSH_OUTLINE),
+                StrokeKind::Inside,
+            );
         }
 
         if space {

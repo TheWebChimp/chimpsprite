@@ -93,7 +93,11 @@ impl Editor {
         ToolContext {
             layer: self.layer,
             frame: self.frame,
-            color: if self.painting_secondary { self.secondary } else { self.primary },
+            color: if self.painting_secondary {
+                self.secondary
+            } else {
+                self.primary
+            },
             brush_size: self.brush_size,
             pixel_perfect: self.pixel_perfect,
         }
@@ -172,7 +176,13 @@ mod tests {
 
     #[test]
     fn indexed_sprite_uses_palette_indices() {
-        let e = Editor::new(Sprite::new(4, 4, ColorMode::Indexed { transparent_index: 0 }));
+        let e = Editor::new(Sprite::new(
+            4,
+            4,
+            ColorMode::Indexed {
+                transparent_index: 0,
+            },
+        ));
         assert_eq!(e.primary, PixelValue::Index(0));
         assert_eq!(e.secondary, PixelValue::Index(21));
     }

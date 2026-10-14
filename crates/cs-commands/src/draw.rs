@@ -10,7 +10,9 @@ pub(crate) fn draw_pixels(
     frame: usize,
     pixels: &[(i32, i32, PixelValue)],
 ) -> Result<Command, CmdError> {
-    let layer = doc.layer(layer_id).ok_or(CmdError::LayerNotFound(layer_id))?;
+    let layer = doc
+        .layer(layer_id)
+        .ok_or(CmdError::LayerNotFound(layer_id))?;
     if layer.kind != LayerKind::Image {
         return Err(CmdError::NotImageLayer(layer_id));
     }
@@ -68,7 +70,9 @@ pub(crate) fn draw_pixels(
         for y in 0..image.height() {
             for x in 0..image.width() {
                 let v = image.get(x, y).expect("in bounds");
-                grown.set(ox + x, oy + y, v).expect("grown image covers old cel");
+                grown
+                    .set(ox + x, oy + y, v)
+                    .expect("grown image covers old cel");
             }
         }
         image = Arc::new(grown);

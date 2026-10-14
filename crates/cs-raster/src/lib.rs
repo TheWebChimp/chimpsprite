@@ -87,7 +87,10 @@ mod tests {
 
     #[test]
     fn pixel_perfect_removes_l_corners() {
-        assert_eq!(pixel_perfect(&[(0, 0), (1, 0), (1, 1)]), vec![(0, 0), (1, 1)]);
+        assert_eq!(
+            pixel_perfect(&[(0, 0), (1, 0), (1, 1)]),
+            vec![(0, 0), (1, 1)]
+        );
     }
 
     #[test]
@@ -101,7 +104,10 @@ mod tests {
     #[test]
     fn brush_sizes() {
         assert_eq!(brush_square((5, 5), 1), vec![(5, 5)]);
-        assert_eq!(brush_square((0, 0), 2), vec![(0, 0), (1, 0), (0, 1), (1, 1)]);
+        assert_eq!(
+            brush_square((0, 0), 2),
+            vec![(0, 0), (1, 0), (0, 1), (1, 1)]
+        );
         assert_eq!(brush_square((0, 0), 3).len(), 9);
         assert!(brush_square((0, 0), 3).contains(&(-1, -1)));
     }

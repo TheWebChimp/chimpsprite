@@ -48,7 +48,12 @@ pub fn draw(editor: &mut Editor) {
     // Ojos, brillo y boca.
     let eye_y = (cy - r * 0.1) as i32;
     for ex in [(cx - r * 0.3) as i32, (cx + r * 0.3) as i32 - 1] {
-        pixels.extend([(ex, eye_y, eye), (ex + 1, eye_y, eye), (ex, eye_y + 1, eye), (ex + 1, eye_y + 1, eye)]);
+        pixels.extend([
+            (ex, eye_y, eye),
+            (ex + 1, eye_y, eye),
+            (ex, eye_y + 1, eye),
+            (ex + 1, eye_y + 1, eye),
+        ]);
         pixels.push((ex, eye_y, shine));
     }
     let mouth_y = (cy + r * 0.5) as i32;

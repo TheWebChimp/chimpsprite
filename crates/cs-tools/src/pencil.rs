@@ -142,7 +142,10 @@ mod tests {
         p.press(&c, (0, 0));
         p.drag(&c, (3, 0));
         assert!(p.is_active());
-        assert_eq!(coords(p.release(&c).unwrap()), vec![(0, 0), (1, 0), (2, 0), (3, 0)]);
+        assert_eq!(
+            coords(p.release(&c).unwrap()),
+            vec![(0, 0), (1, 0), (2, 0), (3, 0)]
+        );
         assert!(!p.is_active());
     }
 

@@ -31,7 +31,11 @@ impl Image {
             PixelValue::Rgba(c) => PixelBuffer::Rgba(vec![c; n]),
             PixelValue::Index(i) => PixelBuffer::Indexed(vec![i; n]),
         };
-        Self { width, height, pixels }
+        Self {
+            width,
+            height,
+            pixels,
+        }
     }
 
     pub fn width(&self) -> u32 {
@@ -81,7 +85,13 @@ mod tests {
 
     #[test]
     fn new_indexed_image_uses_transparent_index() {
-        let img = Image::new(2, 2, ColorMode::Indexed { transparent_index: 3 });
+        let img = Image::new(
+            2,
+            2,
+            ColorMode::Indexed {
+                transparent_index: 3,
+            },
+        );
         assert_eq!(img.get(0, 0), Some(PixelValue::Index(3)));
     }
 
@@ -91,8 +101,14 @@ mod tests {
         let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
         img.set(1, 0, red).unwrap();
         assert_eq!(img.get(1, 0), Some(red));
-        assert_eq!(img.set(2, 0, red), Err(ImageError::OutOfBounds { x: 2, y: 0 }));
-        assert_eq!(img.set(0, 0, PixelValue::Index(1)), Err(ImageError::ModeMismatch));
+        assert_eq!(
+            img.set(2, 0, red),
+            Err(ImageError::OutOfBounds { x: 2, y: 0 })
+        );
+        assert_eq!(
+            img.set(0, 0, PixelValue::Index(1)),
+            Err(ImageError::ModeMismatch)
+        );
         assert_eq!(img.get(5, 5), None);
     }
 }

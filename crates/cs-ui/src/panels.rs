@@ -33,8 +33,16 @@ fn swatch(ui: &mut egui::Ui, color: Color32, size: f32) -> egui::Response {
         // Damero mínimo para que se note la transparencia.
         let half = rect.size() / 2.0;
         painter.rect_filled(rect, 0.0, theme::CHECKER_LIGHT);
-        painter.rect_filled(Rect::from_min_size(rect.min, half), 0.0, theme::CHECKER_DARK);
-        painter.rect_filled(Rect::from_min_size(rect.min + half, half), 0.0, theme::CHECKER_DARK);
+        painter.rect_filled(
+            Rect::from_min_size(rect.min, half),
+            0.0,
+            theme::CHECKER_DARK,
+        );
+        painter.rect_filled(
+            Rect::from_min_size(rect.min + half, half),
+            0.0,
+            theme::CHECKER_DARK,
+        );
     }
     painter.rect_filled(rect, 0.0, color);
     response
@@ -69,8 +77,17 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) {
             let color = to_color32(editor.sprite.palette.colors()[i]);
             let response = swatch(ui, color, size).on_hover_text(format!("#{i}"));
             if value == editor.primary || value == editor.secondary {
-                let stroke_color = if value == editor.primary { Color32::WHITE } else { theme::ACCENT };
-                ui.painter().rect_stroke(response.rect, 0.0, Stroke::new(2.0, stroke_color), StrokeKind::Inside);
+                let stroke_color = if value == editor.primary {
+                    Color32::WHITE
+                } else {
+                    theme::ACCENT
+                };
+                ui.painter().rect_stroke(
+                    response.rect,
+                    0.0,
+                    Stroke::new(2.0, stroke_color),
+                    StrokeKind::Inside,
+                );
             }
             if response.clicked() {
                 editor.primary = value;

@@ -23,7 +23,11 @@ pub struct ChimpApp {
 impl ChimpApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
-        let mut editor = Editor::new(Sprite::new(NEW_SPRITE_SIZE, NEW_SPRITE_SIZE, ColorMode::Rgba));
+        let mut editor = Editor::new(Sprite::new(
+            NEW_SPRITE_SIZE,
+            NEW_SPRITE_SIZE,
+            ColorMode::Rgba,
+        ));
         if std::env::var_os("CHIMPSPRITE_DEMO").is_some() {
             demo::draw(&mut editor);
         }
@@ -35,7 +39,11 @@ impl ChimpApp {
     }
 
     fn new_sprite(&mut self) {
-        self.editor = Editor::new(Sprite::new(NEW_SPRITE_SIZE, NEW_SPRITE_SIZE, ColorMode::Rgba));
+        self.editor = Editor::new(Sprite::new(
+            NEW_SPRITE_SIZE,
+            NEW_SPRITE_SIZE,
+            ColorMode::Rgba,
+        ));
         self.canvas.reset();
     }
 
@@ -79,11 +87,17 @@ impl ChimpApp {
             });
             ui.menu_button("Edit", |ui| {
                 let undo = egui::Button::new("Undo").shortcut_text("Ctrl+Z");
-                if ui.add_enabled(self.editor.history.can_undo(), undo).clicked() {
+                if ui
+                    .add_enabled(self.editor.history.can_undo(), undo)
+                    .clicked()
+                {
                     self.editor.undo();
                 }
                 let redo = egui::Button::new("Redo").shortcut_text("Ctrl+Y");
-                if ui.add_enabled(self.editor.history.can_redo(), redo).clicked() {
+                if ui
+                    .add_enabled(self.editor.history.can_redo(), redo)
+                    .clicked()
+                {
                     self.editor.redo();
                 }
             });
@@ -97,9 +111,8 @@ impl eframe::App for ChimpApp {
         self.handle_shortcuts(&ctx);
 
         egui::Panel::top("menu").show(ui, |ui| self.menu_bar(ui));
-        egui::Panel::bottom("status").show(ui, |ui| {
-            panels::status_bar(ui, &self.editor, &self.canvas)
-        });
+        egui::Panel::bottom("status")
+            .show(ui, |ui| panels::status_bar(ui, &self.editor, &self.canvas));
         egui::Panel::left("tools")
             .resizable(false)
             .exact_size(150.0)

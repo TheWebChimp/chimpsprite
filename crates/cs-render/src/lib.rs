@@ -95,18 +95,34 @@ mod tests {
     use cs_core::*;
 
     fn draw(s: &mut Sprite, layer: u32, pixels: Vec<(i32, i32, PixelValue)>) {
-        Command::DrawPixels { layer: LayerId(layer), frame: 0, pixels }
-            .apply(s)
-            .unwrap();
+        Command::DrawPixels {
+            layer: LayerId(layer),
+            frame: 0,
+            pixels,
+        }
+        .apply(s)
+        .unwrap();
     }
 
     #[test]
     fn blend_over_math() {
         let blue = Rgba::rgb(0, 0, 255);
-        assert_eq!(blend_over(blue, Rgba::rgb(255, 0, 0), 255), Rgba::rgb(255, 0, 0));
-        assert_eq!(blend_over(blue, Rgba::rgb(255, 0, 0), 128), Rgba::new(128, 0, 127, 255));
-        assert_eq!(blend_over(Rgba::TRANSPARENT, Rgba::rgb(9, 9, 9), 0), Rgba::TRANSPARENT);
-        assert_eq!(blend_over(Rgba::TRANSPARENT, Rgba::rgb(9, 9, 9), 100), Rgba::new(9, 9, 9, 100));
+        assert_eq!(
+            blend_over(blue, Rgba::rgb(255, 0, 0), 255),
+            Rgba::rgb(255, 0, 0)
+        );
+        assert_eq!(
+            blend_over(blue, Rgba::rgb(255, 0, 0), 128),
+            Rgba::new(128, 0, 127, 255)
+        );
+        assert_eq!(
+            blend_over(Rgba::TRANSPARENT, Rgba::rgb(9, 9, 9), 0),
+            Rgba::TRANSPARENT
+        );
+        assert_eq!(
+            blend_over(Rgba::TRANSPARENT, Rgba::rgb(9, 9, 9), 100),
+            Rgba::new(9, 9, 9, 100)
+        );
     }
 
     #[test]
@@ -115,26 +131,48 @@ mod tests {
         let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
         let green = PixelValue::Rgba(Rgba::rgb(0, 255, 0));
         draw(&mut s, 1, vec![(0, 0, red), (1, 0, red)]);
-        Command::AddLayer { index: 1, layer: Layer::new_image(LayerId(2), "top") }
-            .apply(&mut s)
-            .unwrap();
+        Command::AddLayer {
+            index: 1,
+            layer: Layer::new_image(LayerId(2), "top"),
+        }
+        .apply(&mut s)
+        .unwrap();
         draw(&mut s, 2, vec![(1, 0, green)]);
-        assert_eq!(render_frame(&s, 0), vec![Rgba::rgb(255, 0, 0), Rgba::rgb(0, 255, 0)]);
+        assert_eq!(
+            render_frame(&s, 0),
+            vec![Rgba::rgb(255, 0, 0), Rgba::rgb(0, 255, 0)]
+        );
         s.layer_mut(LayerId(2)).unwrap().visible = false;
-        assert_eq!(render_frame(&s, 0), vec![Rgba::rgb(255, 0, 0), Rgba::rgb(255, 0, 0)]);
+        assert_eq!(
+            render_frame(&s, 0),
+            vec![Rgba::rgb(255, 0, 0), Rgba::rgb(255, 0, 0)]
+        );
     }
 
     #[test]
     fn indexed_resolves_palette_and_transparent_index() {
-        let mut s = Sprite::new(2, 1, ColorMode::Indexed { transparent_index: 0 });
+        let mut s = Sprite::new(
+            2,
+            1,
+            ColorMode::Indexed {
+                transparent_index: 0,
+            },
+        );
         draw(&mut s, 1, vec![(0, 0, PixelValue::Index(21))]);
-        assert_eq!(render_frame(&s, 0), vec![Rgba::rgb(255, 255, 255), Rgba::TRANSPARENT]);
+        assert_eq!(
+            render_frame(&s, 0),
+            vec![Rgba::rgb(255, 255, 255), Rgba::TRANSPARENT]
+        );
     }
 
     #[test]
     fn hidden_group_hides_children() {
         let mut s = Sprite::new(1, 1, ColorMode::Rgba);
-        draw(&mut s, 1, vec![(0, 0, PixelValue::Rgba(Rgba::rgb(1, 1, 1)))]);
+        draw(
+            &mut s,
+            1,
+            vec![(0, 0, PixelValue::Rgba(Rgba::rgb(1, 1, 1)))],
+        );
         let mut group = Layer::new_image(LayerId(2), "g");
         group.kind = LayerKind::Group;
         group.visible = false;
