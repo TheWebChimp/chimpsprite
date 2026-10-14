@@ -558,7 +558,7 @@ impl ChimpApp {
         }
         egui::Panel::left("tools")
             .resizable(false)
-            .exact_size(150.0)
+            .exact_size(184.0)
             .show(ui, |ui| {
                 ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.doc.editor));
             });

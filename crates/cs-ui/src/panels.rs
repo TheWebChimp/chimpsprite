@@ -45,18 +45,26 @@ fn tool_group(ui: &mut egui::Ui, editor: &mut Editor, index: usize, group: &[Too
     let mut pick = None;
     ui.horizontal(|ui| {
         let more = group.len() > 1;
-        let width = ui.available_width() - if more { 26.0 } else { 0.0 };
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let width = ui.available_width() - if more { 22.0 } else { 0.0 };
         let label = format!("{} {}", icon(shown), shown.label());
-        let button =
-            egui::Button::selectable(editor.tool == shown, label).shortcut_text(shown.shortcut());
-        let response = ui.add_sized([width, 24.0], button);
+        let button = egui::Button::selectable(editor.tool == shown, label)
+            .shortcut_text("")
+            .truncate();
+        let response = ui.add_sized([width, 24.0], button).on_hover_text(format!(
+            "{} ({})",
+            shown.label(),
+            shown.shortcut()
+        ));
         if response.clicked() {
             pick = Some(shown);
         }
         if more {
             let current = editor.tool;
             response.context_menu(|ui| group_menu(ui, current, group, &mut pick));
-            ui.menu_button("⏷", |ui| group_menu(ui, current, group, &mut pick));
+            ui.menu_button("⏷", |ui| group_menu(ui, current, group, &mut pick))
+                .response
+                .on_hover_text("More tools (or right-click)");
         }
     });
     if let Some(kind) = pick {
