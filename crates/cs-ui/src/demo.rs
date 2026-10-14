@@ -39,6 +39,11 @@ pub fn editor() -> Editor {
             position: 32,
         },
     ]);
+    // Simetría horizontal para probar dibujando sobre la cara.
+    editor.set_symmetry(cs_core::Symmetry {
+        mode: cs_core::SymmetryMode::Horizontal,
+        center2: None,
+    });
     editor
 }
 

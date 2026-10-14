@@ -95,6 +95,7 @@ mod tests {
 
         doc.artboards.push(Artboard {
             guides: Vec::new(),
+            symmetry: Default::default(),
             id: ArtboardId(2),
             name: "coin".into(),
             position: (20, 0),

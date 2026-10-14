@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 use std::io::{Cursor, Read, Write};
 
-use cs_core::{Artboard, ArtboardId, Document, Guide};
+use cs_core::{Artboard, ArtboardId, Document, Guide, Symmetry};
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -31,6 +31,8 @@ struct Entry {
     file: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     guides: Vec<Guide>,
+    #[serde(default)]
+    symmetry: Symmetry,
 }
 
 fn zip_error(e: impl std::fmt::Display) -> IoError {
@@ -51,6 +53,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
             position: [artboard.position.0, artboard.position.1],
             file,
             guides: artboard.guides.clone(),
+            symmetry: artboard.symmetry,
         });
     }
     let manifest = Manifest {
@@ -106,6 +109,7 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
         }
         artboards.push(Artboard {
             guides: entry.guides,
+            symmetry: entry.symmetry,
             id: ArtboardId(entry.id),
             name: entry.name,
             position: (entry.position[0], entry.position[1]),
@@ -136,6 +140,10 @@ mod tests {
                 axis: cs_core::Axis::Vertical,
                 position: 2,
             }],
+            symmetry: cs_core::Symmetry {
+                mode: cs_core::SymmetryMode::Both,
+                center2: Some((5, 3)),
+            },
             id: ArtboardId(7),
             name: "banana 🍌".into(),
             position: (-40, 12),
@@ -159,6 +167,7 @@ mod tests {
         for (a, b) in d.artboards.iter().zip(&back.artboards) {
             assert_eq!((a.id, &a.name, a.position), (b.id, &b.name, b.position));
             assert_eq!(a.guides, b.guides);
+            assert_eq!(a.symmetry, b.symmetry);
             assert_eq!(
                 cs_render::render_frame(&a.sprite, 0),
                 cs_render::render_frame(&b.sprite, 0)

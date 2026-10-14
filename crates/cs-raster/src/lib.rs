@@ -5,12 +5,14 @@ mod ellipse;
 mod fill;
 mod line;
 mod rect;
+mod symmetry;
 
 pub use constrain::{constrain_line, constrain_square};
 pub use ellipse::{ellipse_filled, ellipse_outline};
 pub use fill::flood_fill;
 pub use line::{brush_square, line, pixel_perfect, stamp};
 pub use rect::{rect_filled, rect_outline};
+pub use symmetry::{SymmetryMode, symmetric_points, symmetrize};
 
 pub type Point = (i32, i32);
 

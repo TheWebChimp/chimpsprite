@@ -1,6 +1,6 @@
 use eframe::egui::{self, Color32, Rect, Sense, Stroke, StrokeKind, Vec2};
 
-use cs_core::ArtboardId;
+use cs_core::{ArtboardId, SymmetryMode};
 
 use crate::canvas::CanvasView;
 use crate::editor::{Editor, ToolKind};
@@ -60,6 +60,96 @@ pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor) {
     }
     if tool.paints() {
         ui.weak("Alt+click: pick color");
+    }
+
+    ui.add_space(10.0);
+    ui.heading("Symmetry");
+    ui.separator();
+    symmetry_buttons(ui, editor);
+}
+
+const SYMMETRY_MODES: [(SymmetryMode, &str); 7] = [
+    (SymmetryMode::None, "Off"),
+    (SymmetryMode::Horizontal, "Horizontal (left ↔ right)"),
+    (SymmetryMode::Vertical, "Vertical (top ↔ bottom)"),
+    (SymmetryMode::Both, "Horizontal + vertical"),
+    (SymmetryMode::DiagonalDown, "Diagonal ╲"),
+    (SymmetryMode::DiagonalUp, "Diagonal ╱"),
+    (SymmetryMode::All, "All 8 directions"),
+];
+
+fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor) {
+    let current = editor.symmetry();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::splat(2.0);
+        for (mode, tip) in SYMMETRY_MODES {
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
+            let selected = current.mode == mode;
+            let visuals = ui.style().interact_selectable(&response, selected);
+            let painter = ui.painter();
+            painter.rect_filled(rect, 3.0, visuals.weak_bg_fill);
+            let color = if selected {
+                theme::ACCENT
+            } else {
+                visuals.fg_stroke.color
+            };
+            draw_symmetry_icon(painter, rect.shrink(5.0), mode, color);
+            if response.on_hover_text(tip).clicked() {
+                editor.set_symmetry(cs_core::Symmetry { mode, ..current });
+            }
+        }
+    });
+    if current.mode != SymmetryMode::None {
+        ui.weak("Ctrl+drag the dashed axes to move them");
+        if current.center2.is_some() && ui.small_button("Center axes").clicked() {
+            editor.set_symmetry(cs_core::Symmetry {
+                center2: None,
+                ..current
+            });
+        }
+    }
+}
+
+fn draw_symmetry_icon(painter: &egui::Painter, r: Rect, mode: SymmetryMode, color: Color32) {
+    let stroke = Stroke::new(1.5, color);
+    painter.rect_stroke(
+        r,
+        1.0,
+        Stroke::new(1.0, color.gamma_multiply(0.5)),
+        StrokeKind::Inside,
+    );
+    let (c, tl, br) = (r.center(), r.left_top(), r.right_bottom());
+    let (tr, bl) = (r.right_top(), r.left_bottom());
+    let vertical = || painter.vline(c.x, r.y_range(), stroke);
+    let horizontal = || painter.hline(r.x_range(), c.y, stroke);
+    let down = || painter.line_segment([tl, br], stroke);
+    let up = || painter.line_segment([bl, tr], stroke);
+    match mode {
+        SymmetryMode::None => {
+            painter.circle_filled(c, 1.5, color);
+        }
+        SymmetryMode::Horizontal => {
+            vertical();
+        }
+        SymmetryMode::Vertical => {
+            horizontal();
+        }
+        SymmetryMode::Both => {
+            vertical();
+            horizontal();
+        }
+        SymmetryMode::DiagonalDown => {
+            down();
+        }
+        SymmetryMode::DiagonalUp => {
+            up();
+        }
+        SymmetryMode::All => {
+            vertical();
+            horizontal();
+            down();
+            up();
+        }
     }
 }
 

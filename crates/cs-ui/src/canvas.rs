@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use cs_core::{Artboard, ArtboardId, Axis, GridSettings, Guide, Mask};
+use cs_core::{Artboard, ArtboardId, Axis, GridSettings, Guide, Mask, SymmetryMode};
 use cs_tools::{ArtboardHit, Edges, hit_test};
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Pos2, Rect, Sense, Stroke, StrokeKind,
@@ -49,8 +49,32 @@ pub struct CanvasView {
     pending_zoom: Option<ZoomRequest>,
     /// Guía que se está creando (desde una regla) o moviendo.
     ruler_drag: Option<GuideDrag>,
+    /// Eje de simetría que se está arrastrando y centro provisional (medios píxeles).
+    sym_drag: Option<(SymHandle, (i32, i32))>,
     /// El puntero está sobre una regla.
     over_ruler: bool,
+}
+
+/// Parte del eje de simetría que se arrastra.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SymHandle {
+    Center,
+    X,
+    Y,
+}
+
+fn has_vertical_axis(mode: SymmetryMode) -> bool {
+    matches!(
+        mode,
+        SymmetryMode::Horizontal | SymmetryMode::Both | SymmetryMode::All
+    )
+}
+
+fn has_horizontal_axis(mode: SymmetryMode) -> bool {
+    matches!(
+        mode,
+        SymmetryMode::Vertical | SymmetryMode::Both | SymmetryMode::All
+    )
 }
 
 /// Arrastre de una guía: `index` es la guía original si se está moviendo una existente.
@@ -78,6 +102,7 @@ impl Default for CanvasView {
             names_visible: true,
             pending_zoom: None,
             ruler_drag: None,
+            sym_drag: None,
             over_ruler: false,
         }
     }
@@ -170,6 +195,155 @@ impl CanvasView {
         (top, left)
     }
 
+    /// Centro de simetría efectivo en pantalla (con el arrastre en curso, si lo hay).
+    fn symmetry_center(&self, rect: Rect, editor: &Editor) -> (Pos2, (i32, i32)) {
+        let a = editor.artboard();
+        let c2 = self
+            .sym_drag
+            .map_or_else(|| a.symmetry_center2(), |(_, c)| c);
+        let origin = self.to_screen(rect, a.position);
+        (
+            origin + Vec2::new(c2.0 as f32, c2.1 as f32) * (self.zoom / 2.0),
+            c2,
+        )
+    }
+
+    /// Mover el eje de simetría (centro o líneas). Igual que las guías: con Ctrl o con
+    /// Select/Move/Artboard.
+    #[allow(clippy::too_many_arguments)]
+    fn symmetry_input(
+        &mut self,
+        response: &egui::Response,
+        rect: Rect,
+        editor: &mut Editor,
+        pointer: Option<Pos2>,
+        pressed: bool,
+        down: bool,
+        ctrl: bool,
+    ) -> Option<egui::CursorIcon> {
+        let symmetry = editor.symmetry();
+        if symmetry.mode == SymmetryMode::None {
+            self.sym_drag = None;
+            return None;
+        }
+        let cursor = |h: SymHandle| match h {
+            SymHandle::Center => egui::CursorIcon::Move,
+            SymHandle::X => egui::CursorIcon::ResizeHorizontal,
+            SymHandle::Y => egui::CursorIcon::ResizeVertical,
+        };
+        let origin = self.to_screen(rect, editor.artboard().position);
+        let half = self.zoom / 2.0;
+        let to_c2 = |p: Pos2| {
+            let v = (p - origin) / half;
+            (v.x.round() as i32, v.y.round() as i32)
+        };
+        if let Some((handle, c2)) = self.sym_drag {
+            if down {
+                if let Some(p) = pointer {
+                    let (x, y) = to_c2(p);
+                    let c2 = match handle {
+                        SymHandle::Center => (x, y),
+                        SymHandle::X => (x, c2.1),
+                        SymHandle::Y => (c2.0, y),
+                    };
+                    self.sym_drag = Some((handle, c2));
+                }
+                return Some(cursor(handle));
+            }
+            editor.set_symmetry(cs_core::Symmetry {
+                center2: Some(c2),
+                ..symmetry
+            });
+            self.sym_drag = None;
+            return None;
+        }
+        if editor.is_painting() || !response.hovered() {
+            return None;
+        }
+        let p = pointer?;
+        let (center, c2) = self.symmetry_center(rect, editor);
+        let artboard = Rect::from_min_max(
+            origin,
+            origin
+                + Vec2::new(editor.sprite().width as f32, editor.sprite().height as f32)
+                    * self.zoom,
+        );
+        let handle = if p.distance(center) <= 7.0 {
+            Some(SymHandle::Center)
+        } else if has_vertical_axis(symmetry.mode)
+            && (p.x - center.x).abs() <= 4.0
+            && artboard.y_range().contains(p.y)
+        {
+            Some(SymHandle::X)
+        } else if has_horizontal_axis(symmetry.mode)
+            && (p.y - center.y).abs() <= 4.0
+            && artboard.x_range().contains(p.x)
+        {
+            Some(SymHandle::Y)
+        } else {
+            None
+        }?;
+        let grabbable = matches!(
+            editor.active_tool(),
+            ToolKind::Select | ToolKind::Move | ToolKind::Artboard
+        ) || ctrl;
+        if !grabbable {
+            self.guide_hint = Some("Symmetry axis: hold Ctrl and drag to move it");
+            return None;
+        }
+        self.guide_hint = Some("Drag to move the symmetry axis");
+        if pressed {
+            self.sym_drag = Some((handle, c2));
+        }
+        Some(cursor(handle))
+    }
+
+    /// Ejes de simetría punteados sobre el artboard activo y su centro.
+    fn draw_symmetry(&self, painter: &egui::Painter, rect: Rect, editor: &Editor) {
+        let mode = editor.symmetry().mode;
+        if mode == SymmetryMode::None {
+            return;
+        }
+        let a = editor.artboard();
+        let ((x0, y0), (x1, y1)) = a.rect();
+        let screen = Rect::from_min_max(
+            self.to_screen(rect, (x0, y0)),
+            self.to_screen(rect, (x1, y1)),
+        );
+        let painter = painter.with_clip_rect(screen.intersect(rect));
+        let (c, _) = self.symmetry_center(rect, editor);
+        let stroke = Stroke::new(1.5, theme::ACCENT);
+        let mut segments = Vec::new();
+        if has_vertical_axis(mode) {
+            segments.push([
+                Pos2::new(c.x, screen.top()),
+                Pos2::new(c.x, screen.bottom()),
+            ]);
+        }
+        if has_horizontal_axis(mode) {
+            segments.push([
+                Pos2::new(screen.left(), c.y),
+                Pos2::new(screen.right(), c.y),
+            ]);
+        }
+        let k = screen.width().max(screen.height());
+        if matches!(mode, SymmetryMode::DiagonalDown | SymmetryMode::All) {
+            segments.push([c - Vec2::splat(k), c + Vec2::splat(k)]);
+        }
+        if matches!(mode, SymmetryMode::DiagonalUp | SymmetryMode::All) {
+            segments.push([c + Vec2::new(-k, k), c + Vec2::new(k, -k)]);
+        }
+        for seg in segments {
+            painter.extend(egui::Shape::dashed_line(&seg, stroke, 6.0, 4.0));
+        }
+        painter.circle(
+            c,
+            4.0,
+            theme::ACCENT,
+            Stroke::new(1.0, theme::CANVAS_BORDER),
+        );
+    }
+
     /// Crear (desde las reglas), mover y borrar guías. Devuelve el cursor a mostrar si el
     /// puntero está ocupado por las reglas/guías (y en ese caso las herramientas no reciben el clic).
     #[allow(clippy::too_many_arguments)]
@@ -204,7 +378,6 @@ impl CanvasView {
             Axis::Vertical => egui::CursorIcon::ResizeHorizontal,
         };
         self.over_ruler = pointer.is_some_and(|p| response.hovered() && on_ruler(p));
-        self.guide_hint = None;
 
         if let Some(mut drag) = self.ruler_drag {
             if down {
@@ -372,9 +545,23 @@ impl CanvasView {
                 egui::CursorIcon::ResizeVertical
             }
         });
-        // Reglas y guías del documento (no con el diálogo Canvas Size abierto).
-        let ruler_cursor = if modal || space {
+        // Eje de simetría, reglas y guías (no con el diálogo Canvas Size abierto).
+        self.guide_hint = None;
+        let sym_cursor = if modal || space {
             None
+        } else {
+            self.symmetry_input(
+                response,
+                rect,
+                editor,
+                pointer,
+                pressed_primary,
+                any_down,
+                modifiers.command,
+            )
+        };
+        let ruler_cursor = if modal || space || sym_cursor.is_some() || self.sym_drag.is_some() {
+            sym_cursor
         } else {
             self.guide_input(
                 response,
@@ -387,7 +574,8 @@ impl CanvasView {
                 modifiers.command,
             )
         };
-        let ruler_busy = ruler_cursor.is_some() || self.ruler_drag.is_some();
+        let ruler_busy =
+            ruler_cursor.is_some() || self.ruler_drag.is_some() || self.sym_drag.is_some();
         guide_cursor = guide_cursor.or(ruler_cursor);
 
         if !modal
@@ -642,6 +830,10 @@ impl CanvasView {
             };
         }
 
+        if !modal {
+            self.draw_symmetry(&painter, rect, editor);
+        }
+
         if let Some((min, max)) = guide {
             let r = Rect::from_min_max(self.to_screen(rect, min), self.to_screen(rect, max));
             let stroke = Stroke::new(1.0, theme::GUIDE);
@@ -672,6 +864,7 @@ impl CanvasView {
             && !self.over_label
             && !self.over_ruler
             && self.ruler_drag.is_none()
+            && self.sym_drag.is_none()
             && !editor.artboard_gesture().is_active()
             && !space
             && response.hovered()

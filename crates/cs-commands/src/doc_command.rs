@@ -1,4 +1,4 @@
-use cs_core::{Artboard, ArtboardId, Document, Guide};
+use cs_core::{Artboard, ArtboardId, Document, Guide, Symmetry};
 use serde::{Deserialize, Serialize};
 
 use crate::{CmdError, Command};
@@ -27,6 +27,10 @@ pub enum DocCommand {
     SetGuides {
         id: ArtboardId,
         guides: Vec<Guide>,
+    },
+    SetSymmetry {
+        id: ArtboardId,
+        symmetry: Symmetry,
     },
     /// Transacción: se aplica completa o nada.
     Batch(Vec<DocCommand>),
@@ -87,6 +91,16 @@ impl DocCommand {
                     guides: old,
                 })
             }
+            DocCommand::SetSymmetry { id, symmetry } => {
+                let artboard = doc
+                    .artboard_mut(*id)
+                    .ok_or(CmdError::ArtboardNotFound(*id))?;
+                let old = std::mem::replace(&mut artboard.symmetry, *symmetry);
+                Ok(DocCommand::SetSymmetry {
+                    id: *id,
+                    symmetry: old,
+                })
+            }
             DocCommand::Batch(cmds) => {
                 let mut inverses = Vec::with_capacity(cmds.len());
                 for cmd in cmds {
@@ -130,6 +144,7 @@ mod tests {
     fn second(d: &Document) -> Artboard {
         Artboard {
             guides: Vec::new(),
+            symmetry: Default::default(),
             id: d.next_artboard_id(),
             name: "two".into(),
             position: (10, 0),

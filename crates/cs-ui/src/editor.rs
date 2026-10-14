@@ -177,6 +177,22 @@ impl SpriteTools {
     }
 }
 
+/// Refleja un `DrawPixels` según la simetría; otros comandos pasan igual.
+fn mirror(cmd: Command, symmetry: cs_core::Symmetry, center2: (i32, i32)) -> Command {
+    match cmd {
+        Command::DrawPixels {
+            layer,
+            frame,
+            pixels,
+        } if symmetry.mode != cs_core::SymmetryMode::None => Command::DrawPixels {
+            layer,
+            frame,
+            pixels: cs_raster::symmetrize(&pixels, symmetry.mode, center2),
+        },
+        other => other,
+    }
+}
+
 /// Recorta un `DrawPixels` a la máscara; otros comandos pasan igual.
 fn clip(cmd: Command, mask: &Mask) -> Command {
     match cmd {
@@ -409,6 +425,7 @@ impl Editor {
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
             guides: Vec::new(),
+            symmetry: Default::default(),
             id,
             name: format!("Artboard {}", id.0),
             position: (x1 + 16, y0),
@@ -634,13 +651,37 @@ impl Editor {
         self.apply_output(kind, out);
     }
 
+    /// Simetría y recorte a la selección para las herramientas que pintan.
+    fn shape_paint(&self, kind: ToolKind, cmd: Command) -> Command {
+        if !kind.paints() {
+            return cmd;
+        }
+        let artboard = self.artboard();
+        let cmd = mirror(cmd, artboard.symmetry, artboard.symmetry_center2());
+        match &self.selection {
+            Some(mask) => clip(cmd, mask),
+            None => cmd,
+        }
+    }
+
+    pub fn symmetry(&self) -> cs_core::Symmetry {
+        self.artboard().symmetry
+    }
+
+    /// Cambia la simetría del artboard activo (un paso de undo).
+    pub fn set_symmetry(&mut self, symmetry: cs_core::Symmetry) {
+        if symmetry != self.symmetry() {
+            self.execute_doc(DocCommand::SetSymmetry {
+                id: self.active,
+                symmetry,
+            });
+        }
+    }
+
     fn apply_output(&mut self, kind: ToolKind, out: ToolOutput) {
         let applied = match out.command {
             Some(cmd) => {
-                let cmd = match (&self.selection, kind.paints()) {
-                    (Some(mask), true) => clip(cmd, mask),
-                    _ => cmd,
-                };
+                let cmd = self.shape_paint(kind, cmd);
                 self.execute(cmd)
             }
             None => true,
@@ -694,10 +735,7 @@ impl Editor {
                 selection,
             };
         };
-        let cmd = match (&self.selection, kind.paints()) {
-            (Some(mask), true) => clip(cmd, mask),
-            _ => cmd,
-        };
+        let cmd = self.shape_paint(kind, cmd);
         let mut doc = self.document.clone();
         let applied = DocCommand::OnArtboard {
             id: self.active,
@@ -931,6 +969,26 @@ mod tests {
         e.undo();
         e.undo();
         assert!(e.guides().is_empty(), "guides are undoable");
+    }
+
+    #[test]
+    fn symmetric_strokes_are_one_undo_step_and_respect_selection() {
+        use cs_core::{Symmetry, SymmetryMode};
+        let mut e = editor(); // 8×8
+        e.set_symmetry(Symmetry {
+            mode: SymmetryMode::Horizontal,
+            center2: None,
+        });
+        click(&mut e, (1, 1), false, false);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 6, 1), e.primary);
+        e.undo();
+        assert!(e.sprite().cels.is_empty(), "both sides undone together");
+        // Con selección solo en la mitad izquierda, el reflejo queda fuera.
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (3, 7))));
+        click(&mut e, (2, 2), false, false);
+        let t = e.sprite().color_mode.transparent();
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 2), e.primary);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 5, 2), t);
     }
 
     #[test]

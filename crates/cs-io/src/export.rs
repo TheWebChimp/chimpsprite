@@ -542,6 +542,7 @@ mod tests {
         let mut doc = Document::with_sprite("hero", sprite());
         doc.artboards.push(Artboard {
             guides: Vec::new(),
+            symmetry: Default::default(),
             id: ArtboardId(2),
             name: "coin".into(),
             position: (10, 0),

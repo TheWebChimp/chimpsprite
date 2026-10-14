@@ -21,6 +21,32 @@ pub struct Guide {
     pub position: i32,
 }
 
+/// Modos de simetría para dibujar. Los ejes pasan por un centro en **medios píxeles**.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SymmetryMode {
+    #[default]
+    None,
+    /// Espejo izquierda ↔ derecha (eje vertical).
+    Horizontal,
+    /// Espejo arriba ↔ abajo (eje horizontal).
+    Vertical,
+    Both,
+    /// Diagonal ╲.
+    DiagonalDown,
+    /// Diagonal ╱.
+    DiagonalUp,
+    /// Las 8 simetrías del cuadrado.
+    All,
+}
+
+/// Simetría de un artboard.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Symmetry {
+    pub mode: SymmetryMode,
+    /// Centro × 2 (medios píxeles); `None` = centro del artboard.
+    pub center2: Option<(i32, i32)>,
+}
+
 /// Un sprite independiente colocado en el lienzo infinito del documento.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Artboard {
@@ -31,6 +57,17 @@ pub struct Artboard {
     pub sprite: Sprite,
     #[serde(default)]
     pub guides: Vec<Guide>,
+    #[serde(default)]
+    pub symmetry: Symmetry,
+}
+
+impl Artboard {
+    /// Centro de simetría efectivo en medios píxeles.
+    pub fn symmetry_center2(&self) -> (i32, i32) {
+        self.symmetry
+            .center2
+            .unwrap_or((self.sprite.width as i32, self.sprite.height as i32))
+    }
 }
 
 impl Artboard {
@@ -60,6 +97,7 @@ impl Document {
         Self {
             artboards: vec![Artboard {
                 guides: Vec::new(),
+                symmetry: Default::default(),
                 id: ArtboardId(1),
                 name: name.into(),
                 position: (0, 0),
@@ -116,6 +154,7 @@ mod tests {
         let mut d = Document::with_sprite("a", Sprite::new(10, 10, ColorMode::Rgba));
         d.artboards.push(Artboard {
             guides: Vec::new(),
+            symmetry: Default::default(),
             id: d.next_artboard_id(),
             name: "b".into(),
             position: (5, 5),
