@@ -1,6 +1,7 @@
 //! Interfaz egui de ChimpSprite: capa delgada sobre el motor.
 
 mod anim_ops;
+mod autosave;
 mod canvas;
 mod canvas_size;
 mod capture;
@@ -10,11 +11,10 @@ mod export_dialog;
 mod file_actions;
 mod files;
 mod panels;
+mod platform;
 mod theme;
 mod timeline;
 mod widgets;
-
-use std::path::PathBuf;
 
 use cs_core::{ArtboardId, ColorMode, Sprite};
 use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
@@ -31,8 +31,10 @@ pub struct ChimpApp {
     artboard_name: (ArtboardId, String),
     canvas_size: Option<canvas_size::CanvasSizeDialog>,
     timeline: timeline::TimelineState,
-    /// Archivo del documento (`None` si nunca se guardó).
-    path: Option<PathBuf>,
+    location: file_actions::DocLocation,
+    platform: platform::Platform,
+    autosaver: autosave::Autosaver,
+    restore: Option<autosave::Restore>,
     /// `Editor::doc_version` en el último guardado.
     saved_version: u64,
     pending: Option<file_actions::Pending>,
@@ -48,10 +50,12 @@ pub struct ChimpApp {
 impl ChimpApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
-        let args: Vec<_> = std::env::args_os().skip(1).collect();
-        let demo =
-            std::env::var_os("CHIMPSPRITE_DEMO").is_some() || args.iter().any(|a| a == "--demo");
-        let editor = if demo { demo::editor() } else { new_editor() };
+        let launch = platform::launch_options();
+        let editor = if launch.demo {
+            demo::editor()
+        } else {
+            new_editor()
+        };
         let mut app = Self {
             editor,
             canvas: canvas::CanvasView::default(),
@@ -59,7 +63,10 @@ impl ChimpApp {
             artboard_name: (ArtboardId(0), String::new()),
             canvas_size: None,
             timeline: timeline::TimelineState::default(),
-            path: None,
+            location: file_actions::DocLocation::default(),
+            platform: platform::Platform::default(),
+            autosaver: autosave::Autosaver::default(),
+            restore: None,
             saved_version: 0,
             pending: None,
             message: None,
@@ -69,14 +76,23 @@ impl ChimpApp {
             title: String::new(),
         };
         app.saved_version = app.editor.doc_version;
-        // Abrir el archivo pasado por línea de comandos (los argumentos `--…` son flags).
-        if let Some(path) = args
-            .iter()
-            .find(|a| !a.to_string_lossy().starts_with("--"))
-            .map(PathBuf::from)
-        {
-            app.open_path(&path);
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = &launch.open {
+            app.platform.open_path(path, platform::OpenPurpose::Open);
         }
+        // Sesión guardada en el navegador (solo web).
+        if !launch.demo
+            && let Some(text) = autosave::storage::load()
+        {
+            match autosave::decode(&text) {
+                Ok((doc, name)) => app.restore = Some(autosave::Restore { name, doc }),
+                Err(e) => {
+                    log::warn!("discarding unreadable autosave: {e}");
+                    autosave::storage::clear();
+                }
+            }
+        }
+        platform::install_unload_guard();
         // Desarrollo: abre el diálogo con un ancho de ejemplo para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_CANVAS_SIZE").is_some() {
             app.open_canvas_size();
@@ -218,15 +234,20 @@ impl ChimpApp {
                     self.request(file_actions::Pending::Open, &ctx);
                 }
                 ui.separator();
-                if ui.add(item("Save", "Ctrl+S")).clicked() {
+                let (save, save_as) = if self.platform.saves_by_download() {
+                    ("Save (download)", "Save As… (download)")
+                } else {
+                    ("Save", "Save As…")
+                };
+                if ui.add(item(save, "Ctrl+S")).clicked() {
                     self.save();
                 }
-                if ui.add(item("Save As…", "Ctrl+Shift+S")).clicked() {
+                if ui.add(item(save_as, "Ctrl+Shift+S")).clicked() {
                     self.save_as();
                 }
                 ui.separator();
                 if ui.button("Import PNG as Layer…").clicked() {
-                    self.import_layer();
+                    self.import_layer(&ctx);
                 }
                 if ui.add(item("Export…", "Ctrl+E")).clicked() {
                     self.open_export();
@@ -290,6 +311,7 @@ impl eframe::App for ChimpApp {
         let ctx = ui.ctx().clone();
         self.handle_close_request(&ctx);
         self.handle_dropped_files(&ctx);
+        self.handle_platform_events(&ctx);
         self.handle_shortcuts(&ctx);
         if self.editor.playing {
             let dt_ms = ctx.input(|i| i.stable_dt) as f64 * 1000.0;
@@ -337,7 +359,10 @@ impl eframe::App for ChimpApp {
         });
         self.update_canvas_size(&ctx);
         self.show_dialogs(&ctx);
+        self.show_restore(&ctx);
+        self.autosave(&ctx);
         self.update_title(&ctx);
+        platform::set_unsaved(self.is_dirty());
 
         self.capture.update(&ctx);
     }

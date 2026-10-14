@@ -13,6 +13,25 @@ cs-tools.workspace = true
 cs-io.workspace = true
 thiserror.workspace = true
 rfd = "0.17"
+base64 = "0.22"
+serde.workspace = true
+serde_json.workspace = true
 eframe = { workspace = true, features = ["wgpu", "default_fonts", "accesskit"] }
 png.workspace = true
 log.workspace = true
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4"
+js-sys = "0.3"
+web-sys = { version = "0.3", features = [
+    "Window",
+    "Document",
+    "Element",
+    "HtmlAnchorElement",
+    "Blob",
+    "Url",
+    "Storage",
+    "Location",
+    "BeforeUnloadEvent",
+] }
