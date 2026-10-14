@@ -9,7 +9,7 @@ mod demo;
 mod editor;
 mod export_dialog;
 mod file_actions;
-mod files;
+use cs_io::files;
 mod guides;
 mod home;
 mod panels;

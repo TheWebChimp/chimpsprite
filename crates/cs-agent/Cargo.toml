@@ -1,0 +1,16 @@
+[package]
+name = "cs-agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cs-core.workspace = true
+cs-raster.workspace = true
+cs-commands.workspace = true
+cs-render.workspace = true
+cs-io.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+schemars = "1"
+thiserror.workspace = true

@@ -22,6 +22,34 @@ impl Rgba {
     pub const fn from_hex(hex: u32) -> Self {
         Self::rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
     }
+
+    /// `#rgb`, `#rrggbb` o `#rrggbbaa` (el `#` es opcional).
+    pub fn parse_hex(text: &str) -> Option<Self> {
+        let t = text.trim().trim_start_matches('#');
+        let byte = |i: usize| u8::from_str_radix(t.get(i..i + 2)?, 16).ok();
+        match t.len() {
+            3 => {
+                let d = |i: usize| {
+                    u8::from_str_radix(t.get(i..i + 1)?, 16)
+                        .ok()
+                        .map(|v| v * 17)
+                };
+                Some(Self::rgb(d(0)?, d(1)?, d(2)?))
+            }
+            6 => Some(Self::rgb(byte(0)?, byte(2)?, byte(4)?)),
+            8 => Some(Self::new(byte(0)?, byte(2)?, byte(4)?, byte(6)?)),
+            _ => None,
+        }
+    }
+
+    /// `#rrggbb`, o `#rrggbbaa` si no es opaco.
+    pub fn to_hex(self) -> String {
+        if self.a == 255 {
+            format!("#{:02x}{:02x}{:02x}", self.r, self.g, self.b)
+        } else {
+            format!("#{:02x}{:02x}{:02x}{:02x}", self.r, self.g, self.b, self.a)
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,5 +118,26 @@ impl Palette {
 
     pub fn is_empty(&self) -> bool {
         self.colors.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hex_roundtrip_and_short_forms() {
+        let c = Rgba::new(0x90, 0x52, 0xbc, 255);
+        assert_eq!(c.to_hex(), "#9052bc");
+        assert_eq!(Rgba::parse_hex("#9052bc"), Some(c));
+        assert_eq!(Rgba::parse_hex("9052BC"), Some(c));
+        assert_eq!(Rgba::parse_hex("#f0a"), Some(Rgba::rgb(255, 0, 170)));
+        assert_eq!(
+            Rgba::parse_hex("#11223380"),
+            Some(Rgba::new(0x11, 0x22, 0x33, 0x80))
+        );
+        assert_eq!(Rgba::new(1, 2, 3, 4).to_hex(), "#01020304");
+        assert_eq!(Rgba::parse_hex("#12"), None);
+        assert_eq!(Rgba::parse_hex("#zzzzzz"), None);
     }
 }

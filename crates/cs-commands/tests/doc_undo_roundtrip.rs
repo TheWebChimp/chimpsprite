@@ -21,6 +21,10 @@ enum Op {
         x: i32,
         y: i32,
     },
+    Replace {
+        board: usize,
+        w: u32,
+    },
     Resize {
         board: usize,
         w: u32,
@@ -36,6 +40,7 @@ fn op() -> impl Strategy<Value = Op> {
         1 => (1..9u32, 1..9u32).prop_map(|(w, h)| Op::AddArtboard { w, h }),
         1 => (0..4usize).prop_map(|board| Op::RemoveArtboard { board }),
         1 => (0..4usize, -20..20i32, -20..20i32).prop_map(|(board, x, y)| Op::Move { board, x, y }),
+        1 => (0..4usize, 1..6u32).prop_map(|(board, w)| Op::Replace { board, w }),
         1 => (0..4usize, 0..9u32, 0..9u32, -3..3i32, -3..3i32)
             .prop_map(|(board, w, h, dx, dy)| Op::Resize { board, w, h, dx, dy }),
     ]
@@ -64,6 +69,16 @@ fn to_command(d: &Document, op: &Op) -> DocCommand {
             }),
         },
         Op::RemoveArtboard { board } => DocCommand::RemoveArtboard { id: pick(board) },
+        Op::Replace { board, w } => DocCommand::SetSprite {
+            id: pick(board),
+            sprite: Box::new(Sprite::new(
+                w,
+                2,
+                ColorMode::Indexed {
+                    transparent_index: 0,
+                },
+            )),
+        },
         Op::Move { board, x, y } => DocCommand::SetArtboardProps {
             id: pick(board),
             name: None,
