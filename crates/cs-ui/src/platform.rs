@@ -264,6 +264,19 @@ pub fn install_unload_guard() {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn install_unload_guard() {}
 
+/// Título de la ventana (escritorio) o de la pestaña (web).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_title(ctx: &egui::Context, title: &str) {
+    ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.to_string()));
+}
+
+#[cfg(target_arch = "wasm32")]
+pub fn set_title(_ctx: &egui::Context, title: &str) {
+    if let Some(document) = web_sys::window().and_then(|w| w.document()) {
+        document.set_title(title);
+    }
+}
+
 /// Informa si hay cambios sin guardar (lo usa el aviso de cierre en web).
 #[cfg(target_arch = "wasm32")]
 pub fn set_unsaved(unsaved: bool) {

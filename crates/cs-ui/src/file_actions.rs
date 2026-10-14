@@ -362,7 +362,7 @@ impl ChimpApp {
             if self.is_dirty() { " •" } else { "" }
         );
         if title != self.title {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Title(title.clone()));
+            crate::platform::set_title(ctx, &title);
             self.title = title;
         }
     }
