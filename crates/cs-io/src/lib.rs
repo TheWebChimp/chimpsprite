@@ -4,6 +4,8 @@ pub mod aseprite;
 mod bytes;
 pub mod chimp;
 mod error;
+pub mod export;
+pub mod import;
 
 pub use error::{IoError, Result};
 
