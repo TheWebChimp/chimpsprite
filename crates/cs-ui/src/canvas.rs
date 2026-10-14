@@ -948,11 +948,11 @@ impl CanvasView {
         if self.draw_pipette
             && let Some(p) = response.hover_pos()
         {
-            // Color que se tomaría (de la capa actual, como el cuentagotas).
+            // Color que se tomaría: lo que se ve (todas las capas visibles).
             let color = self.hover.and_then(|(x, y)| {
                 let s = editor.sprite();
                 let inside = x >= 0 && y >= 0 && x < s.width as i32 && y < s.height as i32;
-                inside.then(|| editor.resolve(s.pixel(editor.layer, editor.frame, x, y)))
+                inside.then(|| cs_render::composite_pixel(s, editor.frame, x, y))
             });
             draw_pipette(&painter, p, color);
         }

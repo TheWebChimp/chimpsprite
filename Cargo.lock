@@ -908,6 +908,7 @@ dependencies = [
  "cs-commands",
  "cs-core",
  "cs-raster",
+ "cs-render",
 ]
 
 [[package]]

@@ -8,3 +8,4 @@ license.workspace = true
 cs-core.workspace = true
 cs-raster.workspace = true
 cs-commands.workspace = true
+cs-render.workspace = true
