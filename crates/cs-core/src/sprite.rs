@@ -1,0 +1,155 @@
+use std::collections::BTreeMap;
+use std::sync::Arc;
+
+use serde::{Deserialize, Serialize};
+
+use crate::{ColorMode, Image, Palette};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct LayerId(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ImageId(pub u32);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BlendMode {
+    Normal,
+    Multiply,
+    Screen,
+    Overlay,
+    Darken,
+    Lighten,
+    Addition,
+    Subtract,
+    Difference,
+    /// Modo leído de un archivo que no soportamos; se conserva y se renderiza como Normal.
+    Other(u16),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum LayerKind {
+    Image,
+    Group,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Layer {
+    pub id: LayerId,
+    pub name: String,
+    pub kind: LayerKind,
+    pub parent: Option<LayerId>,
+    pub visible: bool,
+    pub locked: bool,
+    pub opacity: u8,
+    pub blend: BlendMode,
+}
+
+impl Layer {
+    pub fn new_image(id: LayerId, name: impl Into<String>) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            kind: LayerKind::Image,
+            parent: None,
+            visible: true,
+            locked: false,
+            opacity: 255,
+            blend: BlendMode::Normal,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Frame {
+    pub duration_ms: u16,
+}
+
+/// Contenido de una capa en un frame. Dos cels con el mismo `image` están vinculados.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cel {
+    pub position: (i32, i32),
+    pub opacity: u8,
+    pub image: ImageId,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Sprite {
+    pub width: u32,
+    pub height: u32,
+    pub color_mode: ColorMode,
+    pub palette: Palette,
+    /// Orden de abajo hacia arriba; los grupos se expresan con `Layer::parent`.
+    pub layers: Vec<Layer>,
+    pub frames: Vec<Frame>,
+    pub cels: BTreeMap<(LayerId, usize), Cel>,
+    pub images: BTreeMap<ImageId, Arc<Image>>,
+}
+
+impl Sprite {
+    pub fn new(width: u32, height: u32, color_mode: ColorMode) -> Self {
+        Self {
+            width,
+            height,
+            color_mode,
+            palette: Palette::db32(),
+            layers: vec![Layer::new_image(LayerId(1), "Layer 1")],
+            frames: vec![Frame { duration_ms: 100 }],
+            cels: BTreeMap::new(),
+            images: BTreeMap::new(),
+        }
+    }
+
+    pub fn layer_index(&self, id: LayerId) -> Option<usize> {
+        self.layers.iter().position(|l| l.id == id)
+    }
+
+    pub fn layer(&self, id: LayerId) -> Option<&Layer> {
+        self.layers.iter().find(|l| l.id == id)
+    }
+
+    pub fn layer_mut(&mut self, id: LayerId) -> Option<&mut Layer> {
+        self.layers.iter_mut().find(|l| l.id == id)
+    }
+
+    pub fn next_layer_id(&self) -> LayerId {
+        LayerId(self.layers.iter().map(|l| l.id.0).max().unwrap_or(0) + 1)
+    }
+
+    pub fn next_image_id(&self) -> ImageId {
+        ImageId(self.images.keys().map(|k| k.0).max().map_or(1, |m| m + 1))
+    }
+
+    pub fn cel(&self, layer: LayerId, frame: usize) -> Option<&Cel> {
+        self.cels.get(&(layer, frame))
+    }
+
+    pub fn image(&self, id: ImageId) -> Option<&Arc<Image>> {
+        self.images.get(&id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_sprite_has_one_layer_one_frame_no_cels() {
+        let s = Sprite::new(16, 8, ColorMode::Rgba);
+        assert_eq!((s.width, s.height), (16, 8));
+        assert_eq!(s.layers.len(), 1);
+        assert_eq!(s.layers[0].name, "Layer 1");
+        assert_eq!(s.frames, vec![Frame { duration_ms: 100 }]);
+        assert!(s.cels.is_empty());
+        assert_eq!(s.palette.len(), 32);
+    }
+
+    #[test]
+    fn id_allocation_is_max_plus_one() {
+        let mut s = Sprite::new(4, 4, ColorMode::Rgba);
+        assert_eq!(s.next_layer_id(), LayerId(2));
+        assert_eq!(s.next_image_id(), ImageId(1));
+        s.images
+            .insert(ImageId(7), Arc::new(Image::new(1, 1, ColorMode::Rgba)));
+        assert_eq!(s.next_image_id(), ImageId(8));
+    }
+}
