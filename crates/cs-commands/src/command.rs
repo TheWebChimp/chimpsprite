@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cs_core::{
-    ArtboardId, BlendMode, Cel, Frame, Image, ImageId, Layer, LayerId, LayerKind, PixelValue,
-    Sprite, Tag,
+    ArtboardId, BlendMode, Cel, Frame, GridSettings, Image, ImageId, Layer, LayerId, LayerKind,
+    PixelValue, Sprite, Tag,
 };
 use serde::{Deserialize, Serialize};
 
@@ -95,6 +95,7 @@ pub enum Command {
     TrimToCanvas,
     /// Reemplaza la lista completa de tags.
     SetTags(Vec<Tag>),
+    SetGrid(GridSettings),
     /// Mueve la capa y sus descendientes; `index` es la posición en la lista sin ese bloque.
     MoveLayer {
         id: LayerId,
@@ -144,6 +145,12 @@ impl Command {
                 offset,
             } => resize_canvas(doc, *width, *height, *offset),
             Command::TrimToCanvas => Ok(trim_to_canvas(doc)),
+            Command::SetGrid(grid) => {
+                if grid.size.0 == 0 || grid.size.1 == 0 {
+                    return Err(CmdError::InvalidSize(grid.size.0, grid.size.1));
+                }
+                Ok(Command::SetGrid(std::mem::replace(&mut doc.grid, *grid)))
+            }
             Command::SetTags(tags) => Ok(Command::SetTags(std::mem::replace(
                 &mut doc.tags,
                 tags.clone(),
@@ -661,6 +668,28 @@ mod tests {
         assert!(s.cels.is_empty() && s.images.is_empty());
         inv.apply(&mut s).unwrap();
         assert_eq!(s, before);
+    }
+
+    #[test]
+    fn set_grid_roundtrip_and_rejects_zero() {
+        let mut s = Sprite::new(4, 4, ColorMode::Rgba);
+        let before = s.clone();
+        let grid = GridSettings {
+            size: (8, 4),
+            offset: (1, -2),
+        };
+        let inv = Command::SetGrid(grid).apply(&mut s).unwrap();
+        assert_eq!(s.grid, grid);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        assert!(
+            Command::SetGrid(GridSettings {
+                size: (0, 4),
+                offset: (0, 0)
+            })
+            .apply(&mut s)
+            .is_err()
+        );
     }
 
     #[test]

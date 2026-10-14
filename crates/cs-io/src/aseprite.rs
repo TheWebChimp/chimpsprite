@@ -142,7 +142,10 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
     let transparent_index = r.u8()?;
     r.skip(3)?;
     r.u16()?; // cantidad de colores (la paleta trae el dato real)
-    r.skip(2 + 8 + 84)?; // proporción de píxel, grilla y reservado
+    r.skip(2)?; // proporción de píxel
+    let grid_offset = (r.i16()? as i32, r.i16()? as i32);
+    let grid_size = (r.u16()? as u32, r.u16()? as u32);
+    r.skip(84)?;
     if width == 0 || height == 0 {
         return Err(IoError::Corrupt(format!("invalid size {width}×{height}")));
     }
@@ -159,6 +162,12 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
     };
 
     let mut sprite = Sprite::new(width, height, mode);
+    if grid_size.0 > 0 && grid_size.1 > 0 {
+        sprite.grid = cs_core::GridSettings {
+            size: grid_size,
+            offset: grid_offset,
+        };
+    }
     sprite.layers.clear();
     sprite.frames.clear();
     let mut palette: Vec<Rgba> = Vec::new();
@@ -598,10 +607,11 @@ fn write_header(out: &mut Vec<u8>, sprite: &Sprite) {
     out.w_u16(sprite.palette.len().min(u16::MAX as usize) as u16);
     out.w_u8(1); // proporción de píxel 1:1
     out.w_u8(1);
-    out.w_i16(0); // grilla
-    out.w_i16(0);
-    out.w_u16(16);
-    out.w_u16(16);
+    let grid = sprite.grid;
+    out.w_i16(grid.offset.0.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
+    out.w_i16(grid.offset.1.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
+    out.w_u16(grid.size.0.min(u16::MAX as u32) as u16);
+    out.w_u16(grid.size.1.min(u16::MAX as u32) as u16);
     out.w_zeros(84);
 }
 
@@ -767,6 +777,7 @@ mod tests {
         assert_eq!(a.frames, b.frames);
         assert_eq!(a.tags, b.tags);
         assert_eq!(a.extra_chunks, b.extra_chunks);
+        assert_eq!(a.grid, b.grid);
         assert_eq!(a.layers.len(), b.layers.len());
         for (la, lb) in a.layers.iter().zip(&b.layers) {
             assert_eq!(
@@ -872,6 +883,10 @@ mod tests {
                 repeat: 0,
             },
         ];
+        s.grid = GridSettings {
+            size: (8, 6),
+            offset: (2, -1),
+        };
         s.extra_chunks = vec![RawChunk {
             kind: CHUNK_SLICE,
             data: vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, b'h', b'i'],
