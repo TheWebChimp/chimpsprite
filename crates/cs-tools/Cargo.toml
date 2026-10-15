@@ -9,3 +9,5 @@ cs-core.workspace = true
 cs-raster.workspace = true
 cs-commands.workspace = true
 cs-render.workspace = true
+fontdue = "0.9"
+epaint_default_fonts = "0.36"

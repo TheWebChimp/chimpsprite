@@ -3,19 +3,28 @@
 mod artboard;
 mod bucket;
 mod eyedropper;
+mod gradient;
+mod jumble;
 mod move_tool;
 mod pencil;
+mod rng;
 mod select;
 mod shape;
+mod spray;
+pub mod text;
 
 pub use artboard::{ArtboardHit, ArtboardTool, Edges, hit_test};
 pub use bucket::Bucket;
 pub use cs_raster::Point;
+pub use cs_raster::{Dither, GradientShape};
 pub use eyedropper::Eyedropper;
+pub use gradient::{GradientTool, gradient_pixels, gradient_value};
+pub use jumble::Jumble;
 pub use move_tool::MoveTool;
 pub use pencil::{Eraser, Pencil};
-pub use select::RectSelect;
+pub use select::{Lasso, MagicWand, Marquee, MarqueeShape, PolygonLasso};
 pub use shape::{ShapeKind, ShapeTool};
+pub use spray::Spray;
 
 use cs_commands::Command;
 use cs_core::{LayerId, Mask, PixelValue, Sprite};
@@ -25,6 +34,8 @@ pub struct ToolContext<'a> {
     pub layer: LayerId,
     pub frame: usize,
     pub color: PixelValue,
+    /// El otro color (destino del degradado).
+    pub secondary: PixelValue,
     pub brush_size: u32,
     pub pixel_perfect: bool,
     /// Formas rellenas (rectángulo/elipse).
@@ -34,6 +45,15 @@ pub struct ToolContext<'a> {
     /// Shift: líneas a 45°, cuadrados y círculos.
     pub constrain: bool,
     pub selection: Option<&'a Mask>,
+    /// Varita: diferencia máxima por canal (0–255).
+    pub tolerance: u8,
+    /// Varita: comparar con la composición visible en vez de la capa actual.
+    pub sample_all: bool,
+    /// Spray: diámetro del área y puntos por segundo / 6.
+    pub spray_width: u32,
+    pub spray_speed: u32,
+    pub gradient_shape: GradientShape,
+    pub dither: Dither,
 }
 
 impl ToolContext<'_> {
@@ -76,7 +96,22 @@ pub trait Tool {
     fn release(&mut self, ctx: &ToolContext) -> ToolOutput;
     /// Lo que pasaría si el gesto terminara ahora (para la vista previa).
     fn preview(&self, ctx: &ToolContext) -> ToolOutput;
+    /// Hay un gesto en curso con un botón presionado.
     fn is_active(&self) -> bool;
+    /// El puntero se mueve sin botones (p. ej. la línea elástica del lazo poligonal).
+    fn hover(&mut self, _ctx: &ToolContext, _p: Point) {}
+    /// Pasa el tiempo con el botón presionado (el spray sigue rociando).
+    fn tick(&mut self, _ctx: &ToolContext, _dt_ms: f32) {}
+    /// Gesto de varios clics en curso entre un clic y el siguiente.
+    fn is_pending(&self) -> bool {
+        false
+    }
+    /// Termina un gesto de varios clics (Enter o doble clic).
+    fn finish(&mut self, _ctx: &ToolContext) -> ToolOutput {
+        ToolOutput::default()
+    }
+    /// Descarta el gesto en curso (Esc).
+    fn cancel(&mut self) {}
 }
 
 /// Estado común de las herramientas de "arrastrar de A a B".
@@ -129,12 +164,19 @@ pub(crate) mod test_util {
             layer: LayerId(1),
             frame: 0,
             color: red(),
+            secondary: PixelValue::Rgba(Rgba::rgb(0, 0, 255)),
             brush_size: 1,
             pixel_perfect: false,
             filled: false,
             contiguous: true,
             constrain: false,
             selection: None,
+            tolerance: 0,
+            sample_all: false,
+            spray_width: 8,
+            spray_speed: 32,
+            gradient_shape: Default::default(),
+            dither: Default::default(),
         }
     }
 

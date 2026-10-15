@@ -331,12 +331,19 @@ impl ChimpApp {
             self.doc.editor.undo();
         }
         let select_all = KeyboardShortcut::new(Modifiers::COMMAND, Key::A);
+        let reselect = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::D);
         let deselect = KeyboardShortcut::new(Modifiers::COMMAND, Key::D);
+        let inverse = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::I);
         if ctx.input_mut(|i| i.consume_shortcut(&select_all)) {
             self.doc.editor.select_all();
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&deselect)) {
+        if ctx.input_mut(|i| i.consume_shortcut(&reselect)) {
+            self.doc.editor.reselect();
+        } else if ctx.input_mut(|i| i.consume_shortcut(&deselect)) {
             self.doc.editor.deselect();
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&inverse)) {
+            self.doc.editor.invert_selection();
         }
         if ctx.egui_wants_keyboard_input() || self.doc.editor.is_painting() {
             return;
@@ -365,29 +372,21 @@ impl ChimpApp {
         });
         for (key, shift) in pressed {
             let editor = &mut self.doc.editor;
+            let letter = key.name().chars().next().filter(|_| key.name().len() == 1);
+            if let Some(tool) = letter.and_then(|c| ToolKind::from_key(c, shift)) {
+                editor.set_tool(tool);
+                continue;
+            }
             match key {
-                Key::O if shift => editor.tool = ToolKind::Artboard,
                 Key::N if shift => editor.add_layer(cs_core::LayerKind::Image),
+                Key::Enter if editor.is_pending() => editor.finish_gesture(),
+                Key::Escape => editor.cancel_gesture(),
                 Key::Enter => editor.toggle_play(),
                 Key::Comma | Key::ArrowLeft => editor.prev_frame(),
                 Key::Period | Key::ArrowRight => editor.next_frame(),
                 Key::ArrowUp => editor.step_layer(true),
                 Key::ArrowDown => editor.step_layer(false),
                 Key::F3 => editor.onion_enabled = !editor.onion_enabled,
-                Key::B => editor.tool = ToolKind::Pencil,
-                Key::E => editor.tool = ToolKind::Eraser,
-                Key::G => editor.tool = ToolKind::Bucket,
-                Key::L => editor.tool = ToolKind::Line,
-                Key::U => {
-                    editor.tool = if editor.tool == ToolKind::Rectangle {
-                        ToolKind::Ellipse
-                    } else {
-                        ToolKind::Rectangle
-                    }
-                }
-                Key::M => editor.tool = ToolKind::Select,
-                Key::V => editor.tool = ToolKind::Move,
-                Key::I => editor.tool = ToolKind::Eyedropper,
                 Key::X => editor.swap_colors(),
                 Key::Delete | Key::Backspace => editor.clear_selection_content(),
                 _ => {}
@@ -473,20 +472,35 @@ impl ChimpApp {
                         self.doc.editor.redo();
                     }
                     ui.separator();
-                    if ui
-                        .add(egui::Button::new("Select All").shortcut_text("Ctrl+A"))
-                        .clicked()
-                    {
-                        self.doc.editor.select_all();
-                    }
                     let has_selection = self.doc.editor.selection.is_some();
-                    let deselect = egui::Button::new("Deselect").shortcut_text("Ctrl+D");
-                    if ui.add_enabled(has_selection, deselect).clicked() {
-                        self.doc.editor.deselect();
-                    }
                     let clear = egui::Button::new("Clear").shortcut_text("Del");
                     if ui.add_enabled(has_selection, clear).clicked() {
                         self.doc.editor.clear_selection_content();
+                    }
+                });
+                ui.menu_button("Select", |ui| {
+                    let editor = &mut self.doc.editor;
+                    let has_selection = editor.selection.is_some();
+                    if ui
+                        .add(egui::Button::new("All").shortcut_text("Ctrl+A"))
+                        .clicked()
+                    {
+                        editor.select_all();
+                    }
+                    let deselect = egui::Button::new("Deselect").shortcut_text("Ctrl+D");
+                    if ui.add_enabled(has_selection, deselect).clicked() {
+                        editor.deselect();
+                    }
+                    let reselect = egui::Button::new("Reselect").shortcut_text("Ctrl+Shift+D");
+                    if ui
+                        .add_enabled(!has_selection && editor.can_reselect(), reselect)
+                        .clicked()
+                    {
+                        editor.reselect();
+                    }
+                    let inverse = egui::Button::new("Inverse").shortcut_text("Ctrl+Shift+I");
+                    if ui.add(inverse).clicked() {
+                        editor.invert_selection();
                     }
                 });
             });
@@ -544,7 +558,7 @@ impl ChimpApp {
         }
         egui::Panel::left("tools")
             .resizable(false)
-            .exact_size(150.0)
+            .exact_size(184.0)
             .show(ui, |ui| {
                 ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.doc.editor));
             });

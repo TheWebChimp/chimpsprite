@@ -248,6 +248,20 @@ impl ChimpServer {
         self.with(|s| s.fill(p))
     }
 
+    #[tool(
+        description = "Fill an area (default: whole canvas) with a linear or radial gradient between two colors, optionally with ordered (Bayer) dithering."
+    )]
+    fn gradient(&self, Parameters(p): Parameters<Gradient>) -> CallToolResult {
+        self.with(|s| s.gradient(p))
+    }
+
+    #[tool(
+        description = "Write text with the built-in 5×7 pixel font or a vector font (Hack, Ubuntu), at (x, y) top-left."
+    )]
+    fn draw_text(&self, Parameters(p): Parameters<DrawText>) -> CallToolResult {
+        self.with(|s| s.draw_text(p))
+    }
+
     // --- Color ---
 
     #[tool(description = "Replace the artboard palette with a list of hex colors.")]

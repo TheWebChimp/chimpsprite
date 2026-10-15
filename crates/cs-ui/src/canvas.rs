@@ -312,7 +312,7 @@ impl CanvasView {
         }?;
         let grabbable = matches!(
             editor.active_tool(),
-            ToolKind::Select | ToolKind::Move | ToolKind::Artboard
+            ToolKind::RectSelect | ToolKind::EllipseSelect | ToolKind::Move | ToolKind::Artboard
         ) || ctrl;
         if !grabbable {
             self.guide_hint = Some("Symmetry axis: hold Ctrl and drag to move it");
@@ -460,7 +460,7 @@ impl CanvasView {
         let index = hit_guide(editor.guides(), local(p), SNAP_PX / self.zoom)?;
         let grabbable = matches!(
             editor.active_tool(),
-            ToolKind::Select | ToolKind::Move | ToolKind::Artboard
+            ToolKind::RectSelect | ToolKind::EllipseSelect | ToolKind::Move | ToolKind::Artboard
         ) || ctrl;
         if view.lock_guides {
             self.guide_hint = Some("Guides are locked (View › Guides › Lock Guides)");
@@ -646,9 +646,21 @@ impl CanvasView {
                 if let Some(p) = pointer {
                     editor.pointer_drag(self.to_world(rect, p));
                 }
+                let dt_ms = ui.input(|i| i.stable_dt).min(0.1) * 1000.0;
+                editor.tool_tick(dt_ms);
+                if editor.active_tool() == ToolKind::Spray {
+                    ui.ctx().request_repaint();
+                }
             } else {
                 editor.pointer_release();
             }
+        } else if response.hovered()
+            && let Some(p) = pointer
+        {
+            editor.pointer_hover(self.to_world(rect, p));
+        }
+        if response.double_clicked() && editor.active_tool() == ToolKind::PolygonLasso {
+            editor.finish_gesture();
         }
 
         let cursor = if space {

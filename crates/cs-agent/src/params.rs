@@ -349,6 +349,85 @@ pub struct Fill {
     pub clip: Option<Rect>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum GradientShapeArg {
+    #[default]
+    Linear,
+    /// Circles around (x0, y0); (x1, y1) marks the end radius.
+    Radial,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum DitherArg {
+    /// Smooth interpolation (nearest palette color on indexed sprites).
+    #[default]
+    None,
+    /// Ordered dithering between the two colors (classic pixel-art look).
+    Bayer2,
+    Bayer4,
+    Bayer8,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct Gradient {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Option<Ref>,
+    #[serde(default)]
+    pub frame: usize,
+    /// Start point (color `from`).
+    pub x0: i32,
+    pub y0: i32,
+    /// End point (color `to`).
+    pub x1: i32,
+    pub y1: i32,
+    pub from: ColorArg,
+    pub to: ColorArg,
+    #[serde(default)]
+    pub shape: GradientShapeArg,
+    #[serde(default)]
+    pub dither: DitherArg,
+    /// Area to fill. Default: the whole canvas.
+    pub clip: Option<Rect>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum FontArg {
+    /// Built-in 5×7 pixel font; size is an integer scale (1-8). Lines are 9 px tall per scale.
+    #[default]
+    Pixel,
+    /// Monospace vector font; size in pixels.
+    Hack,
+    /// Sans-serif vector font; size in pixels.
+    Ubuntu,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DrawText {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Option<Ref>,
+    #[serde(default)]
+    pub frame: usize,
+    /// Top-left corner of the text.
+    pub x: i32,
+    pub y: i32,
+    /// Text; "\n" starts a new line.
+    pub text: String,
+    pub color: ColorArg,
+    #[serde(default)]
+    pub font: FontArg,
+    /// Pixel font: scale 1-8 (default 1). Vector fonts: pixels (default 16).
+    pub size: Option<u32>,
+    /// Smooth edges blended over the layer (vector fonts on RGBA sprites only).
+    #[serde(default)]
+    pub antialias: bool,
+    pub clip: Option<Rect>,
+}
+
 // --- Color ---
 
 #[derive(Debug, Deserialize, JsonSchema)]

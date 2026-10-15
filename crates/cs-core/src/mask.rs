@@ -85,6 +85,57 @@ impl Mask {
         })
     }
 
+    /// Máscara con los puntos dados (los de fuera del lienzo se ignoran).
+    pub fn from_points(
+        width: u32,
+        height: u32,
+        points: impl IntoIterator<Item = (i32, i32)>,
+    ) -> Self {
+        let mut mask = Self::new(width, height);
+        for (x, y) in points {
+            mask.set(x, y, true);
+        }
+        mask
+    }
+
+    fn zip(&self, other: &Mask, f: impl Fn(bool, bool) -> bool) -> Self {
+        debug_assert_eq!((self.width, self.height), (other.width, other.height));
+        Self {
+            width: self.width,
+            height: self.height,
+            bits: self
+                .bits
+                .iter()
+                .zip(&other.bits)
+                .map(|(&a, &b)| f(a, b))
+                .collect(),
+        }
+    }
+
+    /// Lo que está en cualquiera de las dos.
+    pub fn union(&self, other: &Mask) -> Self {
+        self.zip(other, |a, b| a || b)
+    }
+
+    /// Lo de `self` que no está en `other`.
+    pub fn subtract(&self, other: &Mask) -> Self {
+        self.zip(other, |a, b| a && !b)
+    }
+
+    /// Lo que está en ambas.
+    pub fn intersect(&self, other: &Mask) -> Self {
+        self.zip(other, |a, b| a && b)
+    }
+
+    /// Todo lo no seleccionado.
+    pub fn inverted(&self) -> Self {
+        Self {
+            width: self.width,
+            height: self.height,
+            bits: self.bits.iter().map(|b| !b).collect(),
+        }
+    }
+
     /// Copia desplazada; lo que sale del lienzo se pierde.
     pub fn translated(&self, dx: i32, dy: i32) -> Self {
         let mut out = Self::new(self.width, self.height);
@@ -111,6 +162,18 @@ mod tests {
         assert!(Mask::new(3, 3).is_empty());
         assert_eq!(Mask::new(3, 3).bounds(), None);
         assert!(!Mask::all(3, 3).is_empty());
+    }
+
+    #[test]
+    fn boolean_operations() {
+        let a = Mask::from_rect(4, 1, (0, 0), (2, 0));
+        let b = Mask::from_rect(4, 1, (1, 0), (3, 0));
+        let pts = |m: Mask| m.points().map(|p| p.0).collect::<Vec<_>>();
+        assert_eq!(pts(a.union(&b)), [0, 1, 2, 3]);
+        assert_eq!(pts(a.subtract(&b)), [0]);
+        assert_eq!(pts(a.intersect(&b)), [1, 2]);
+        assert_eq!(pts(a.inverted()), [3]);
+        assert_eq!(pts(Mask::from_points(4, 1, [(1, 0), (9, 0)])), [1]);
     }
 
     #[test]

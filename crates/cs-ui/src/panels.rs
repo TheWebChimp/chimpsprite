@@ -3,21 +3,88 @@ use eframe::egui::{self, Color32, Rect, Sense, Stroke, StrokeKind, Vec2};
 use cs_core::{ArtboardId, SymmetryMode};
 
 use crate::canvas::CanvasView;
-use crate::editor::{Editor, ToolKind};
+use cs_tools::text::FontChoice;
+use cs_tools::{Dither, GradientShape};
+
+use crate::editor::{Editor, SelectionMode, ToolKind};
 use crate::theme;
 
 fn icon(kind: ToolKind) -> &'static str {
     match kind {
-        ToolKind::Select => "🔲",
+        ToolKind::RectSelect => "🔲",
+        ToolKind::EllipseSelect => "🔘",
+        ToolKind::Lasso => "➰",
+        ToolKind::PolygonLasso => "🔷",
+        ToolKind::MagicWand => "✨",
         ToolKind::Move => "✋",
         ToolKind::Pencil => "✏",
+        ToolKind::Spray => "💨",
         ToolKind::Eraser => "🗑",
+        ToolKind::Eyedropper => "💧",
         ToolKind::Bucket => "🍶",
+        ToolKind::Gradient => "🌈",
         ToolKind::Line => "📏",
         ToolKind::Rectangle => "⬜",
         ToolKind::Ellipse => "⭕",
-        ToolKind::Eyedropper => "💧",
+        ToolKind::Jumble => "🎲",
+        ToolKind::Text => "🔤",
         ToolKind::Artboard => "🖼",
+    }
+}
+
+/// Fila de un grupo: la herramienta actual del grupo y, si hay más, un desplegable (también con
+/// clic derecho) con las demás, como en Aseprite.
+fn tool_group(ui: &mut egui::Ui, editor: &mut Editor, index: usize, group: &[ToolKind]) {
+    let memory = ui.id().with(("tool_group", index));
+    if group.contains(&editor.tool) {
+        ui.data_mut(|d| d.insert_temp(memory, editor.tool));
+    }
+    let shown = ui
+        .data(|d| d.get_temp::<ToolKind>(memory))
+        .unwrap_or(group[0]);
+    let mut pick = None;
+    ui.horizontal(|ui| {
+        let more = group.len() > 1;
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let width = ui.available_width() - if more { 22.0 } else { 0.0 };
+        let label = format!("{} {}", icon(shown), shown.label());
+        let button = egui::Button::selectable(editor.tool == shown, label)
+            .shortcut_text("")
+            .truncate();
+        let response = ui.add_sized([width, 24.0], button).on_hover_text(format!(
+            "{} ({})",
+            shown.label(),
+            shown.shortcut()
+        ));
+        if response.clicked() {
+            pick = Some(shown);
+        }
+        if more {
+            let current = editor.tool;
+            response.context_menu(|ui| group_menu(ui, current, group, &mut pick));
+            ui.menu_button("⏷", |ui| group_menu(ui, current, group, &mut pick))
+                .response
+                .on_hover_text("More tools (or right-click)");
+        }
+    });
+    if let Some(kind) = pick {
+        editor.set_tool(kind);
+    }
+}
+
+fn group_menu(
+    ui: &mut egui::Ui,
+    current: ToolKind,
+    group: &[ToolKind],
+    pick: &mut Option<ToolKind>,
+) {
+    for &kind in group {
+        let label = format!("{} {}", icon(kind), kind.label());
+        let item = egui::Button::selectable(current == kind, label).shortcut_text(kind.shortcut());
+        if ui.add(item).clicked() {
+            *pick = Some(kind);
+            ui.close();
+        }
     }
 }
 
@@ -25,18 +92,24 @@ pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.add_space(6.0);
     ui.heading("Tools");
     ui.separator();
-    for kind in ToolKind::ALL {
-        let selected = editor.tool == kind;
-        let label = format!("{} {}", icon(kind), kind.label());
-        let button = egui::Button::selectable(selected, label).shortcut_text(kind.shortcut());
-        if ui.add_sized([ui.available_width(), 24.0], button).clicked() {
-            editor.tool = kind;
-        }
+    ui.spacing_mut().item_spacing.y = 3.0;
+    for (index, group) in ToolKind::GROUPS.iter().enumerate() {
+        tool_group(ui, editor, index, group);
     }
 
     ui.add_space(10.0);
     ui.heading("Options");
     ui.separator();
+    tool_options(ui, editor);
+
+    ui.add_space(10.0);
+    ui.heading("Symmetry");
+    ui.separator();
+    symmetry_buttons(ui, editor);
+    text_window(ui.ctx(), editor);
+}
+
+fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
     let tool = editor.tool;
     let options = &mut editor.options;
     if tool.uses_brush() {
@@ -49,23 +122,166 @@ pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor) {
     if matches!(tool, ToolKind::Rectangle | ToolKind::Ellipse) {
         ui.checkbox(&mut options.filled, "Filled");
     }
-    if tool == ToolKind::Bucket {
-        ui.checkbox(&mut options.contiguous, "Contiguous");
+    if tool.is_selection() {
+        ui.label("Mode");
+        for mode in SelectionMode::ALL {
+            ui.radio_value(&mut options.selection_mode, mode, mode.label());
+        }
+    }
+    match tool {
+        ToolKind::MagicWand => {
+            ui.label("Tolerance");
+            ui.add(egui::Slider::new(&mut options.tolerance, 0..=255));
+            ui.checkbox(&mut options.contiguous, "Contiguous");
+            ui.horizontal(|ui| {
+                ui.label("Sample:");
+                ui.radio_value(&mut options.sample_all, false, "Layer");
+                ui.radio_value(&mut options.sample_all, true, "All layers");
+            });
+        }
+        ToolKind::Lasso => {
+            ui.weak("Drag around the area; it closes when you release.");
+        }
+        ToolKind::PolygonLasso => {
+            ui.weak("Click to add points. Click the first point, double-click or press Enter to close; Esc cancels.");
+        }
+        ToolKind::Bucket => {
+            ui.checkbox(&mut options.contiguous, "Contiguous");
+        }
+        ToolKind::Spray => {
+            ui.label("Spray width");
+            ui.add(egui::Slider::new(&mut options.spray_width, 1..=64));
+            ui.label("Spray speed");
+            ui.add(egui::Slider::new(&mut options.spray_speed, 1..=100));
+        }
+        ToolKind::Gradient => {
+            ui.horizontal(|ui| {
+                ui.radio_value(&mut options.gradient_shape, GradientShape::Linear, "Linear");
+                ui.radio_value(&mut options.gradient_shape, GradientShape::Radial, "Radial");
+            });
+            egui::ComboBox::from_id_salt("dither")
+                .selected_text(options.dither.label())
+                .show_ui(ui, |ui| {
+                    for d in Dither::ALL {
+                        ui.selectable_value(&mut options.dither, d, d.label());
+                    }
+                });
+            ui.weak("Drag from the primary to the secondary color. Right-drag swaps them.");
+        }
+        ToolKind::Jumble => {
+            ui.weak("Scrambles pixels within the brush radius.");
+        }
+        ToolKind::Text => {
+            text_style_options(ui, editor);
+            ui.weak("Click on the canvas to place text.");
+        }
+        _ => {}
     }
     if matches!(
         tool,
-        ToolKind::Line | ToolKind::Rectangle | ToolKind::Ellipse | ToolKind::Select
-    ) {
+        ToolKind::Line | ToolKind::Rectangle | ToolKind::Ellipse | ToolKind::Gradient
+    ) || matches!(tool, ToolKind::RectSelect | ToolKind::EllipseSelect)
+    {
         ui.weak("Shift: constrain");
     }
     if tool.paints() {
         ui.weak("Alt+click: pick color");
     }
+}
 
-    ui.add_space(10.0);
-    ui.heading("Symmetry");
-    ui.separator();
-    symmetry_buttons(ui, editor);
+fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor) {
+    let style = &mut editor.text_style;
+    let mut fonts = vec![FontChoice::Pixel, FontChoice::Hack, FontChoice::Ubuntu];
+    if let FontChoice::Custom { .. } = style.font {
+        fonts.push(style.font.clone());
+    }
+    egui::ComboBox::from_label("Font")
+        .selected_text(style.font.name())
+        .show_ui(ui, |ui| {
+            for font in fonts {
+                let name = font.name();
+                let selected = style.font == font;
+                if ui.selectable_label(selected, name).clicked() && !selected {
+                    style.size = if font == FontChoice::Pixel { 1 } else { 16 };
+                    style.font = font;
+                }
+            }
+        });
+    #[cfg(not(target_arch = "wasm32"))]
+    if ui.button("Load font…").clicked()
+        && let Some(path) = rfd::FileDialog::new()
+            .add_filter("Fonts", &["ttf", "otf"])
+            .pick_file()
+    {
+        let name = path
+            .file_stem()
+            .and_then(|n| n.to_str())
+            .unwrap_or("Font")
+            .to_string();
+        match std::fs::read(&path)
+            .map_err(|e| e.to_string())
+            .and_then(|bytes| FontChoice::load(name, &bytes))
+        {
+            Ok(font) => {
+                style.font = font;
+                style.size = 16;
+            }
+            Err(e) => log::warn!("could not load font {}: {e}", path.display()),
+        }
+    }
+    if style.font == FontChoice::Pixel {
+        ui.add(egui::Slider::new(&mut style.size, 1..=8).text("Scale"));
+    } else {
+        ui.add(egui::Slider::new(&mut style.size, 6..=96).text("Size"));
+        ui.checkbox(&mut style.antialias, "Antialias");
+    }
+}
+
+/// Ventana flotante para escribir el texto que se está colocando.
+fn text_window(ctx: &egui::Context, editor: &mut Editor) {
+    if editor.text.is_none() {
+        return;
+    }
+    let mut commit = false;
+    let mut cancel = false;
+    egui::Window::new("Text")
+        .collapsible(false)
+        .resizable(false)
+        .default_width(260.0)
+        .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 90.0))
+        .show(ctx, |ui| {
+            text_style_options(ui, editor);
+            let Some(draft) = editor.text.as_mut() else {
+                return;
+            };
+            let edit = egui::TextEdit::multiline(&mut draft.text)
+                .desired_rows(3)
+                .desired_width(f32::INFINITY)
+                .hint_text("Type here…");
+            let response = ui.add(edit);
+            if draft.text.is_empty() && !response.has_focus() {
+                response.request_focus();
+            }
+            if response.changed() {
+                editor.revision += 1;
+            }
+            let (enter, esc) = ui.input(|i| {
+                (
+                    i.modifiers.command && i.key_pressed(egui::Key::Enter),
+                    i.key_pressed(egui::Key::Escape),
+                )
+            });
+            ui.weak("Click the canvas to move it. Ctrl+Enter applies.");
+            ui.horizontal(|ui| {
+                commit = ui.button("OK").clicked() || enter;
+                cancel = ui.button("Cancel").clicked() || esc;
+            });
+        });
+    if commit {
+        editor.commit_text();
+    } else if cancel {
+        editor.cancel_gesture();
+    }
 }
 
 const SYMMETRY_MODES: [(SymmetryMode, &str); 7] = [
