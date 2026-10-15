@@ -408,10 +408,10 @@ fn read_layer(
         parent,
         visible: flags & LAYER_VISIBLE != 0,
         locked: flags & LAYER_EDITABLE == 0,
-        opacity: if header_flags & HEADER_FLAG_LAYER_OPACITY != 0 {
-            opacity
-        } else {
-            255
+        // Aseprite guarda los grupos con opacidad 0 (y la ignora al componer): eso es "opaco".
+        opacity: match (header_flags & HEADER_FLAG_LAYER_OPACITY != 0, kind, opacity) {
+            (false, _, _) | (true, LayerKind::Group, 0) => 255,
+            (true, _, o) => o,
         },
         blend,
         mask: None,
@@ -890,10 +890,13 @@ mod tests {
         assert_eq!(a.grid, b.grid);
         assert_eq!(a.layers.len(), b.layers.len());
         for (la, lb) in a.layers.iter().zip(&b.layers) {
+            // Un grupo con opacidad 0 se lee como 255: así guarda Aseprite todos los grupos.
+            let opacity = match (la.kind, la.opacity) {
+                (LayerKind::Group, 0) => 255,
+                (_, o) => o,
+            };
             assert_eq!(
-                (
-                    &la.name, la.kind, la.visible, la.locked, la.opacity, la.blend
-                ),
+                (&la.name, la.kind, la.visible, la.locked, opacity, la.blend),
                 (
                     &lb.name, lb.kind, lb.visible, lb.locked, lb.opacity, lb.blend
                 )
