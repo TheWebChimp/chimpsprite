@@ -18,6 +18,7 @@ pub fn editor() -> Editor {
     draw_chimp(&mut editor);
     animate_chimp(&mut editor);
     shade_chimp(&mut editor);
+    slice_chimp(&mut editor);
 
     editor.add_artboard(32, 32);
     editor.execute_doc(DocCommand::SetArtboardProps {
@@ -149,6 +150,26 @@ fn shade_chimp(editor: &mut Editor) {
         mask: Some(mask),
     });
     editor.select_layer(body);
+}
+
+/// Slices de ejemplo: la hitbox de la cabeza (más chica en el parpadeo) con pivote en la barbilla.
+fn slice_chimp(editor: &mut Editor) {
+    let key = |frame, bounds, pivot| cs_core::SliceKey {
+        frame,
+        bounds,
+        center: None,
+        pivot,
+    };
+    editor.execute(Command::SetSlices(vec![cs_core::Slice {
+        name: "hitbox".into(),
+        color: cs_core::Rgba::rgb(230, 60, 80),
+        text: "damage=1".into(),
+        keys: vec![
+            key(0, (13, 14, 38, 38), Some((19, 38))),
+            key(2, (15, 18, 34, 34), Some((17, 34))),
+            key(3, (13, 14, 38, 38), Some((19, 38))),
+        ],
+    }]));
 }
 
 /// Plátano: una media luna (elipse menos elipse desplazada) con contorno.

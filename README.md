@@ -11,6 +11,14 @@ la suite [ArtCraft](https://github.com/storytold). Reimplementación clean-room.
 cargo run -p chimpsprite
 ```
 
+## Game dev
+
+- **Slices** (Shift+C) para hitboxes y pivotes por frame, compatibles con los de Aseprite.
+- **Export** › Godot 4 (`SpriteFrames` `.tres`), Unity (`.png.meta` con un sprite por frame) y Bevy
+  (`.ron` con la grilla, animaciones y slices). Para Bevy:
+  `TextureAtlasLayout::from_grid(tile_size, columns, rows, None, None)`.
+- **Normal maps** opcionales (`_n.png`) para luces 2D.
+
 ## Servidor MCP (agentes)
 
 `chimpsprite-mcp` deja que un agente (Claude, etc.) cree, dibuje, anime, lea y exporte sprites sin la

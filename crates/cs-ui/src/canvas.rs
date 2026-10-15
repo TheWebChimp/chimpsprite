@@ -915,6 +915,13 @@ impl CanvasView {
         let active_origin = document
             .artboard(editor.active)
             .map(|a| self.to_screen(rect, a.position));
+        if let Some(origin) = active_origin
+            && (view_settings.shows(view_settings.slices)
+                || editor.active_tool() == ToolKind::Slice)
+            && let Some(artboard) = document.artboard(editor.active)
+        {
+            draw_slices(&painter, &artboard.sprite, editor, origin, self.zoom);
+        }
         if let (Some(mask), Some(origin)) = (&view.selection, active_origin)
             && view_settings.shows(view_settings.selection_edges)
         {
@@ -1211,6 +1218,53 @@ fn artboard_cursor(hit: Option<ArtboardHit>) -> egui::CursorIcon {
         },
         Some(ArtboardHit::Inside(_)) => C::Move,
         None => C::Crosshair,
+    }
+}
+
+/// Rectángulos de los slices del frame actual, con nombre y pivote; el seleccionado, más grueso.
+fn draw_slices(
+    painter: &egui::Painter,
+    sprite: &cs_core::Sprite,
+    editor: &Editor,
+    origin: Pos2,
+    zoom: f32,
+) {
+    let at = |x: i32, y: i32| origin + Vec2::new(x as f32, y as f32) * zoom;
+    for (i, slice) in sprite.slices.iter().enumerate() {
+        let Some(key) = slice.key_at(editor.frame) else {
+            continue;
+        };
+        let (x, y, w, h) = key.bounds;
+        let r = Rect::from_min_max(at(x, y), at(x + w as i32, y + h as i32));
+        let c = slice.color;
+        let color = Color32::from_rgb(c.r, c.g, c.b);
+        let selected = editor.slice == Some(i);
+        painter.rect_filled(
+            r,
+            0.0,
+            color.gamma_multiply(if selected { 0.18 } else { 0.08 }),
+        );
+        painter.rect_stroke(
+            r,
+            0.0,
+            Stroke::new(if selected { 2.0 } else { 1.0 }, color),
+            StrokeKind::Inside,
+        );
+        painter.text(
+            r.left_top() + Vec2::new(2.0, -1.0),
+            Align2::LEFT_BOTTOM,
+            &slice.name,
+            FontId::proportional(11.0),
+            color,
+        );
+        if let Some((px, py)) = key.pivot {
+            let p = at(x + px, y + py);
+            let s = 5.0;
+            let stroke = Stroke::new(1.5, Color32::WHITE);
+            painter.line_segment([p - Vec2::new(s, 0.0), p + Vec2::new(s, 0.0)], stroke);
+            painter.line_segment([p - Vec2::new(0.0, s), p + Vec2::new(0.0, s)], stroke);
+            painter.circle_stroke(p, 2.5, Stroke::new(1.0, color));
+        }
     }
 }
 

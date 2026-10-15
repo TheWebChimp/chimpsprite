@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use cs_core::{
     ArtboardId, BlendMode, Cel, Frame, GridSettings, Image, ImageId, Layer, LayerId, LayerKind,
-    LayerMask, Palette, PixelValue, Sprite, Tag,
+    LayerMask, Palette, PixelValue, Slice, Sprite, Tag,
 };
 use serde::{Deserialize, Serialize};
 
@@ -109,6 +109,8 @@ pub enum Command {
     TrimToCanvas,
     /// Reemplaza la lista completa de tags.
     SetTags(Vec<Tag>),
+    /// Reemplaza todos los slices (hitboxes, pivotes).
+    SetSlices(Vec<Slice>),
     SetGrid(GridSettings),
     /// Reemplaza la paleta completa.
     SetPalette(Palette),
@@ -180,6 +182,10 @@ impl Command {
             Command::SetTags(tags) => Ok(Command::SetTags(std::mem::replace(
                 &mut doc.tags,
                 tags.clone(),
+            ))),
+            Command::SetSlices(slices) => Ok(Command::SetSlices(std::mem::replace(
+                &mut doc.slices,
+                slices.clone(),
             ))),
             Command::MoveLayer { id, index, parent } => move_layer(doc, *id, *index, *parent),
             Command::MoveFrame { from, to } => move_frame(doc, *from, *to),
@@ -485,6 +491,26 @@ fn tags_after_remove(tags: &[Tag], index: usize) -> Vec<Tag> {
         .collect()
 }
 
+/// Slices con las claves corridas por `f` (si dos caen en el mismo frame gana la última).
+fn remap_slices(slices: &[Slice], f: impl Fn(usize) -> usize) -> Vec<Slice> {
+    slices
+        .iter()
+        .map(|s| {
+            let mut out = Slice {
+                keys: Vec::new(),
+                ..s.clone()
+            };
+            for key in &s.keys {
+                out.set_key(cs_core::SliceKey {
+                    frame: f(key.frame),
+                    ..*key
+                });
+            }
+            out
+        })
+        .collect()
+}
+
 /// Reindexa los cels: `f(frame)` devuelve el nuevo índice.
 fn remap_frames(doc: &mut Sprite, f: impl Fn(usize) -> usize) {
     let cels = std::mem::take(&mut doc.cels);
@@ -502,9 +528,14 @@ fn add_frame(doc: &mut Sprite, index: usize, frame: Frame) -> Result<Command, Cm
     doc.frames.insert(index, frame);
     let old_tags = std::mem::take(&mut doc.tags);
     doc.tags = tags_after_insert(&old_tags, index);
+    let old_slices = std::mem::take(&mut doc.slices);
+    // Las claves en el frame insertado o después se corren, salvo la del frame 0 (vale desde el
+    // principio).
+    doc.slices = remap_slices(&old_slices, |f| if f >= index && f > 0 { f + 1 } else { f });
     Ok(Command::Batch(vec![
         Command::RemoveFrame { index },
         Command::SetTags(old_tags),
+        Command::SetSlices(old_slices),
     ]))
 }
 
@@ -537,6 +568,9 @@ fn remove_frame(doc: &mut Sprite, index: usize) -> Result<Command, CmdError> {
     let old_tags = std::mem::take(&mut doc.tags);
     doc.tags = tags_after_remove(&old_tags, index);
     inverse.push(Command::SetTags(old_tags));
+    let old_slices = std::mem::take(&mut doc.slices);
+    doc.slices = remap_slices(&old_slices, |f| if f > index { f - 1 } else { f });
+    inverse.push(Command::SetSlices(old_slices));
     Ok(Command::Batch(inverse))
 }
 
@@ -639,6 +673,47 @@ mod tests {
         .unwrap();
         assert!(!s.layers[0].visible);
         assert_eq!(s.layers[0].opacity, 10);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn slices_follow_inserted_and_removed_frames() {
+        let mut s = Sprite::new(4, 4, ColorMode::Rgba);
+        for i in 1..3 {
+            Command::AddFrame {
+                index: i,
+                frame: Frame { duration_ms: 100 },
+            }
+            .apply(&mut s)
+            .unwrap();
+        }
+        let key = |frame| cs_core::SliceKey {
+            frame,
+            bounds: (0, 0, 2, 2),
+            center: None,
+            pivot: Some((1, 1)),
+        };
+        let slices = vec![Slice {
+            name: "hit".into(),
+            color: Rgba::rgb(0, 0, 255),
+            text: String::new(),
+            keys: vec![key(0), key(2)],
+        }];
+        Command::SetSlices(slices).apply(&mut s).unwrap();
+        let before = s.clone();
+        let inv = Command::AddFrame {
+            index: 1,
+            frame: Frame { duration_ms: 100 },
+        }
+        .apply(&mut s)
+        .unwrap();
+        let frames = |s: &Sprite| s.slices[0].keys.iter().map(|k| k.frame).collect::<Vec<_>>();
+        assert_eq!(frames(&s), [0, 3]);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        let inv = Command::RemoveFrame { index: 1 }.apply(&mut s).unwrap();
+        assert_eq!(frames(&s), [0, 1]);
         inv.apply(&mut s).unwrap();
         assert_eq!(s, before);
     }

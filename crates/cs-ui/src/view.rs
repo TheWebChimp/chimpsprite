@@ -19,6 +19,8 @@ pub struct ViewSettings {
     pub selection_edges: bool,
     pub brush_preview: bool,
     pub artboard_names: bool,
+    /// Rectángulos de los slices (hitboxes, pivotes).
+    pub slices: bool,
     pub grid_color: [u8; 4],
     pub timeline: bool,
     /// Las reglas son parte de la interfaz: no dependen de Extras.
@@ -38,6 +40,7 @@ impl Default for ViewSettings {
             selection_edges: true,
             brush_preview: true,
             artboard_names: true,
+            slices: true,
             grid_color: [80, 140, 255, 110],
             timeline: true,
             rulers: true,

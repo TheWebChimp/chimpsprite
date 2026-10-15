@@ -185,6 +185,54 @@ pub struct Sprite {
     pub extra_chunks: Vec<RawChunk>,
     #[serde(default)]
     pub grid: GridSettings,
+    /// Rectángulos con nombre por frame (hitboxes, pivotes, 9-slice), como los slices de Aseprite.
+    #[serde(default)]
+    pub slices: Vec<Slice>,
+}
+
+/// Rectángulo con nombre que puede cambiar por frame: hitboxes, puntos de anclaje, 9-slice.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Slice {
+    pub name: String,
+    pub color: crate::Rgba,
+    /// Texto libre (p. ej. "hurtbox", datos para el motor).
+    #[serde(default)]
+    pub text: String,
+    /// Ordenadas por frame; cada una vale desde su frame hasta la siguiente.
+    pub keys: Vec<SliceKey>,
+}
+
+/// Estado de un slice desde un frame.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SliceKey {
+    pub frame: usize,
+    /// `(x, y, ancho, alto)`; ancho 0 = el slice no existe desde este frame.
+    pub bounds: (i32, i32, u32, u32),
+    /// Centro de 9-slice, relativo a `bounds`.
+    #[serde(default)]
+    pub center: Option<(i32, i32, u32, u32)>,
+    /// Pivote, relativo a la esquina de `bounds`.
+    #[serde(default)]
+    pub pivot: Option<(i32, i32)>,
+}
+
+impl Slice {
+    /// Clave vigente en `frame` (la última que empieza en o antes de él), si el slice existe ahí.
+    pub fn key_at(&self, frame: usize) -> Option<&SliceKey> {
+        self.keys
+            .iter()
+            .rev()
+            .find(|k| k.frame <= frame)
+            .filter(|k| k.bounds.2 > 0 && k.bounds.3 > 0)
+    }
+
+    /// Pone (o reemplaza) la clave de su frame, manteniendo el orden.
+    pub fn set_key(&mut self, key: SliceKey) {
+        match self.keys.binary_search_by_key(&key.frame, |k| k.frame) {
+            Ok(i) => self.keys[i] = key,
+            Err(i) => self.keys.insert(i, key),
+        }
+    }
 }
 
 /// Chunk de archivo preservado sin interpretar.
@@ -232,6 +280,7 @@ impl Sprite {
             tags: Vec::new(),
             extra_chunks: Vec::new(),
             grid: GridSettings::default(),
+            slices: Vec::new(),
         }
     }
 
@@ -376,6 +425,32 @@ impl Sprite {
 #[cfg(test)]
 mod mask_tests {
     use super::*;
+
+    #[test]
+    fn slice_keys_apply_until_the_next_one() {
+        let key = |frame, w| SliceKey {
+            frame,
+            bounds: (1, 2, w, 3),
+            center: None,
+            pivot: None,
+        };
+        let mut s = Slice {
+            name: "hit".into(),
+            color: crate::Rgba::rgb(0, 0, 255),
+            text: String::new(),
+            keys: vec![key(0, 4)],
+        };
+        s.set_key(key(3, 0));
+        s.set_key(key(1, 5));
+        s.set_key(key(1, 6));
+        assert_eq!(
+            s.keys.iter().map(|k| k.frame).collect::<Vec<_>>(),
+            [0, 1, 3]
+        );
+        assert_eq!(s.key_at(0).unwrap().bounds.2, 4);
+        assert_eq!(s.key_at(2).unwrap().bounds.2, 6);
+        assert!(s.key_at(5).is_none(), "zero width hides it");
+    }
 
     #[test]
     fn layer_mask_values_and_growth() {

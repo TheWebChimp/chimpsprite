@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use cs_core::{
     AnimDirection, BlendMode, Cel, ColorMode, Frame, Image, Layer, LayerId, LayerKind, Palette,
-    PixelBuffer, RawChunk, Rgba, Sprite, Tag,
+    PixelBuffer, Rgba, Slice, SliceKey, Sprite, Tag,
 };
 use flate2::Compression;
 use flate2::read::ZlibDecoder;
@@ -113,8 +113,8 @@ enum UserDataTarget {
     None,
     /// Índice del próximo tag que recibe user data.
     Tags(usize),
-    /// El último slice: su user data se preserva junto a él.
-    Slice,
+    /// El slice con este índice recibe el user data (color y texto).
+    Slice(usize),
 }
 
 // --- Lectura ---------------------------------------------------------------------------------
@@ -246,20 +246,23 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
                         }
                         *next += 1;
                     }
-                    UserDataTarget::Slice => sprite.extra_chunks.push(RawChunk {
-                        kind,
-                        data: c.rest().to_vec(),
-                    }),
+                    UserDataTarget::Slice(i) => {
+                        let (text, color) = read_user_data(&mut c)?;
+                        if let Some(slice) = sprite.slices.get_mut(*i) {
+                            slice.text = text.unwrap_or_default();
+                            if let Some(color) = color {
+                                slice.color = color;
+                            }
+                        }
+                        user_data = UserDataTarget::None;
+                    }
                     UserDataTarget::None => {
                         report.warn("user data (text, colors, properties) is not kept yet");
                     }
                 },
                 CHUNK_SLICE => {
-                    sprite.extra_chunks.push(RawChunk {
-                        kind,
-                        data: c.rest().to_vec(),
-                    });
-                    user_data = UserDataTarget::Slice;
+                    sprite.slices.push(read_slice(&mut c)?);
+                    user_data = UserDataTarget::Slice(sprite.slices.len() - 1);
                 }
                 CHUNK_COLOR_PROFILE => {}
                 other => {
@@ -540,6 +543,62 @@ fn read_tags(c: &mut Reader, tags: &mut Vec<Tag>, report: &mut LoadReport) -> Re
     Ok(())
 }
 
+/// Color de los slices sin user data (el azul de Aseprite).
+const SLICE_COLOR: Rgba = Rgba::rgb(0, 0, 255);
+
+fn read_slice(c: &mut Reader) -> Result<Slice> {
+    let count = c.u32()? as usize;
+    let flags = c.u32()?;
+    c.skip(4)?;
+    let name = c.string()?;
+    let mut keys = Vec::with_capacity(count.min(4096));
+    for _ in 0..count {
+        let frame = c.u32()? as usize;
+        let (x, y) = (c.u32()? as i32, c.u32()? as i32);
+        let (w, h) = (c.u32()?, c.u32()?);
+        let center = if flags & 1 != 0 {
+            Some((c.u32()? as i32, c.u32()? as i32, c.u32()?, c.u32()?))
+        } else {
+            None
+        };
+        let pivot = if flags & 2 != 0 {
+            Some((c.u32()? as i32, c.u32()? as i32))
+        } else {
+            None
+        };
+        keys.push(SliceKey {
+            frame,
+            bounds: (x, y, w, h),
+            center,
+            pivot,
+        });
+    }
+    keys.sort_by_key(|k| k.frame);
+    Ok(Slice {
+        name,
+        color: SLICE_COLOR,
+        text: String::new(),
+        keys,
+    })
+}
+
+/// Texto y color de un chunk de user data.
+fn read_user_data(c: &mut Reader) -> Result<(Option<String>, Option<Rgba>)> {
+    let flags = c.u32()?;
+    let text = if flags & 1 != 0 {
+        Some(c.string()?)
+    } else {
+        None
+    };
+    let color = if flags & 2 != 0 {
+        let (r, g, b, a) = (c.u8()?, c.u8()?, c.u8()?, c.u8()?);
+        Some(Rgba::new(r, g, b, a))
+    } else {
+        None
+    };
+    Ok((text, color))
+}
+
 fn read_user_data_color(c: &mut Reader) -> Result<Option<Rgba>> {
     let flags = c.u32()?;
     if flags & 1 != 0 {
@@ -576,6 +635,10 @@ pub fn write(sprite: &Sprite) -> Vec<u8> {
             }
             for chunk in &sprite.extra_chunks {
                 chunks.push((chunk.kind, chunk.data.clone()));
+            }
+            for slice in &sprite.slices {
+                chunks.push((CHUNK_SLICE, slice_chunk(slice)));
+                chunks.push((CHUNK_USER_DATA, slice_user_data(slice)));
             }
         }
         for (index, layer) in sprite.layers.iter().enumerate() {
@@ -693,6 +756,50 @@ fn tags_chunk(tags: &[Tag]) -> Vec<u8> {
     d
 }
 
+fn slice_chunk(slice: &Slice) -> Vec<u8> {
+    let nine = slice.keys.iter().any(|k| k.center.is_some());
+    let pivot = slice.keys.iter().any(|k| k.pivot.is_some());
+    let mut d = Vec::new();
+    d.w_u32(slice.keys.len() as u32);
+    d.w_u32(nine as u32 | (pivot as u32) << 1);
+    d.w_u32(0);
+    d.w_string(&slice.name);
+    for k in &slice.keys {
+        let (x, y, w, h) = k.bounds;
+        d.w_u32(k.frame as u32);
+        d.w_u32(x as u32);
+        d.w_u32(y as u32);
+        d.w_u32(w);
+        d.w_u32(h);
+        if nine {
+            let (cx, cy, cw, ch) = k.center.unwrap_or((0, 0, w, h));
+            d.w_u32(cx as u32);
+            d.w_u32(cy as u32);
+            d.w_u32(cw);
+            d.w_u32(ch);
+        }
+        if pivot {
+            let (px, py) = k.pivot.unwrap_or((0, 0));
+            d.w_u32(px as u32);
+            d.w_u32(py as u32);
+        }
+    }
+    d
+}
+
+fn slice_user_data(slice: &Slice) -> Vec<u8> {
+    let c = slice.color;
+    let mut d = Vec::new();
+    if slice.text.is_empty() {
+        d.w_u32(2);
+    } else {
+        d.w_u32(3);
+        d.w_string(&slice.text);
+    }
+    d.extend_from_slice(&[c.r, c.g, c.b, c.a]);
+    d
+}
+
 fn color_user_data(color: Rgba) -> Vec<u8> {
     let mut d = Vec::new();
     d.w_u32(2);
@@ -779,6 +886,7 @@ mod tests {
         assert_eq!(a.frames, b.frames);
         assert_eq!(a.tags, b.tags);
         assert_eq!(a.extra_chunks, b.extra_chunks);
+        assert_eq!(a.slices, b.slices);
         assert_eq!(a.grid, b.grid);
         assert_eq!(a.layers.len(), b.layers.len());
         for (la, lb) in a.layers.iter().zip(&b.layers) {
@@ -889,10 +997,38 @@ mod tests {
             size: (8, 6),
             offset: (2, -1),
         };
-        s.extra_chunks = vec![RawChunk {
-            kind: CHUNK_SLICE,
-            data: vec![1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, b'h', b'i'],
-        }];
+        s.slices = vec![
+            Slice {
+                name: "hitbox".into(),
+                color: Rgba::rgb(255, 0, 0),
+                text: "damage=3".into(),
+                keys: vec![
+                    SliceKey {
+                        frame: 0,
+                        bounds: (1, 2, 3, 4),
+                        center: None,
+                        pivot: Some((1, 4)),
+                    },
+                    SliceKey {
+                        frame: 2,
+                        bounds: (-2, 0, 5, 5),
+                        center: None,
+                        pivot: Some((2, 5)),
+                    },
+                ],
+            },
+            Slice {
+                name: "panel".into(),
+                color: SLICE_COLOR,
+                text: String::new(),
+                keys: vec![SliceKey {
+                    frame: 0,
+                    bounds: (0, 0, 8, 8),
+                    center: Some((2, 2, 4, 4)),
+                    pivot: None,
+                }],
+            },
+        ];
         s
     }
 

@@ -46,6 +46,36 @@ impl Bitmap {
         }
     }
 
+    /// Normal map del frame compuesto, escalado (vecino más cercano).
+    pub fn normal_from_frame(sprite: &Sprite, frame: usize, scale: u32) -> Self {
+        let base = Self {
+            width: sprite.width,
+            height: sprite.height,
+            pixels: cs_render::normal_map(
+                &render_frame(sprite, frame),
+                sprite.width,
+                sprite.height,
+                1.0,
+            ),
+        };
+        base.scaled(scale)
+    }
+
+    /// Copia ampliada por un factor entero.
+    pub fn scaled(&self, scale: u32) -> Self {
+        let scale = scale.max(1);
+        let (w, h) = (self.width * scale, self.height * scale);
+        let pixels = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| self.pixels[((y / scale) * self.width + x / scale) as usize])
+            .collect();
+        Self {
+            width: w,
+            height: h,
+            pixels,
+        }
+    }
+
     /// Copia `other` en la posición `(x, y)`.
     pub fn blit(&mut self, other: &Bitmap, x: u32, y: u32) {
         for row in 0..other.height {
@@ -267,7 +297,54 @@ fn frames_json(placed: &[Placed], format: JsonFormat) -> Value {
     }
 }
 
-fn meta(image_name: &str, w: u32, h: u32, scale: u32, tags: Vec<Value>, layers: Value) -> Value {
+/// Slices en el formato JSON de Aseprite (escalados), con prefijo de nombre y corrimiento de frames.
+fn slices_json(sprite: &Sprite, prefix: &str, frame_offset: usize, scale: u32) -> Vec<Value> {
+    let s = scale as i64;
+    sprite
+        .slices
+        .iter()
+        .map(|slice| {
+            let keys: Vec<Value> = slice
+                .keys
+                .iter()
+                .map(|k| {
+                    let (x, y, w, h) = k.bounds;
+                    let mut key = json!({
+                        "frame": k.frame + frame_offset,
+                        "bounds": { "x": x as i64 * s, "y": y as i64 * s, "w": w as i64 * s, "h": h as i64 * s },
+                    });
+                    if let Some((cx, cy, cw, ch)) = k.center {
+                        key["center"] = json!({ "x": cx as i64 * s, "y": cy as i64 * s, "w": cw as i64 * s, "h": ch as i64 * s });
+                    }
+                    if let Some((px, py)) = k.pivot {
+                        key["pivot"] = json!({ "x": px as i64 * s, "y": py as i64 * s });
+                    }
+                    key
+                })
+                .collect();
+            let c = slice.color;
+            let mut v = json!({
+                "name": format!("{prefix}{}", slice.name),
+                "color": format!("#{:02x}{:02x}{:02x}{:02x}", c.r, c.g, c.b, c.a),
+                "keys": keys,
+            });
+            if !slice.text.is_empty() {
+                v["data"] = json!(slice.text);
+            }
+            v
+        })
+        .collect()
+}
+
+fn meta(
+    image_name: &str,
+    w: u32,
+    h: u32,
+    scale: u32,
+    tags: Vec<Value>,
+    layers: Value,
+    slices: Vec<Value>,
+) -> Value {
     json!({
         "app": APP,
         "version": env!("CARGO_PKG_VERSION"),
@@ -277,8 +354,27 @@ fn meta(image_name: &str, w: u32, h: u32, scale: u32, tags: Vec<Value>, layers: 
         "scale": scale.to_string(),
         "frameTags": tags,
         "layers": layers,
-        "slices": [],
+        "slices": slices,
     })
+}
+
+/// Normal map de un frame como PNG.
+pub fn export_normal_png(sprite: &Sprite, frame: usize, scale: u32) -> Result<Vec<u8>> {
+    Bitmap::normal_from_frame(sprite, frame, scale).to_png()
+}
+
+/// Hoja de normal maps con la misma distribución que `export_sheet` (cada frame por separado,
+/// para que no se mezclen los bordes).
+pub fn export_normal_sheet(sprite: &Sprite, layout: SheetLayout, scale: u32) -> Result<Vec<u8>> {
+    let rects = crate::engines::frame_rects(sprite, layout, scale);
+    let (w, h) = rects
+        .iter()
+        .fold((1, 1), |(w, h), r| (w.max(r.0 + r.2), h.max(r.1 + r.3)));
+    let mut sheet = Bitmap::new(w, h);
+    for (f, &(x, y, _, _)) in rects.iter().enumerate() {
+        sheet.blit(&Bitmap::normal_from_frame(sprite, f, scale), x, y);
+    }
+    sheet.to_png()
 }
 
 /// Spritesheet de todos los frames del sprite.
@@ -327,7 +423,15 @@ pub fn export_sheet(
     );
     let json = json!({
         "frames": frames_json(&placed, format),
-        "meta": meta(image_name, sheet.width, sheet.height, scale, tags, layers),
+        "meta": meta(
+            image_name,
+            sheet.width,
+            sheet.height,
+            scale,
+            tags,
+            layers,
+            slices_json(sprite, "", 0, scale),
+        ),
     });
     Ok(Sheet {
         png: sheet.to_png()?,
@@ -354,6 +458,7 @@ pub fn export_atlas(
     let mut atlas = Bitmap::new(width.max(1), height.max(1));
     let mut placed = Vec::new();
     let mut tags = Vec::new();
+    let mut slices = Vec::new();
     let mut y = 0;
     for artboard in &doc.artboards {
         let s = &artboard.sprite;
@@ -375,6 +480,12 @@ pub fn export_atlas(
                 .iter()
                 .map(|t| tag_json(t, &format!("{}/{}", artboard.name, t.name), offset)),
         );
+        slices.extend(slices_json(
+            s,
+            &format!("{}/", artboard.name),
+            offset,
+            scale,
+        ));
         y += s.height * scale;
     }
     let artboards = Value::Array(
@@ -390,6 +501,7 @@ pub fn export_atlas(
         scale,
         tags,
         json!([]),
+        slices,
     );
     meta["artboards"] = artboards;
     let json = json!({ "frames": frames_json(&placed, format), "meta": meta });

@@ -128,6 +128,16 @@ fn describe_sprite(s: &Sprite) -> Value {
         "frame_durations_ms": s.frames.iter().map(|f| f.duration_ms).collect::<Vec<_>>(),
         "tags": tags,
         "cels": cels,
+        "slices": s.slices.iter().map(|sl| json!({
+            "name": sl.name,
+            "color": sl.color.to_hex(),
+            "text": sl.text,
+            "keys": sl.keys.iter().map(|k| json!({
+                "frame": k.frame,
+                "x": k.bounds.0, "y": k.bounds.1, "w": k.bounds.2, "h": k.bounds.3,
+                "pivot": k.pivot.map(|(x, y)| [x, y]),
+            })).collect::<Vec<_>>(),
+        })).collect::<Vec<_>>(),
     })
 }
 

@@ -7,7 +7,7 @@ use cs_tools::text::FontChoice;
 use cs_tools::{Dither, GradientShape};
 
 use crate::editor::{Editor, SelectionMode, ToolKind};
-use crate::theme;
+use crate::{theme, widgets};
 
 fn icon(kind: ToolKind) -> &'static str {
     match kind {
@@ -28,6 +28,7 @@ fn icon(kind: ToolKind) -> &'static str {
         ToolKind::Ellipse => "⭕",
         ToolKind::Jumble => "🎲",
         ToolKind::Text => "🔤",
+        ToolKind::Slice => "✂",
         ToolKind::Artboard => "🖼",
     }
 }
@@ -174,6 +175,9 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
         ToolKind::Text => {
             text_style_options(ui, editor);
             ui.weak("Click on the canvas to place text.");
+        }
+        ToolKind::Slice => {
+            ui.weak("Drag to create a slice (hitbox, pivot…). Drag the selected one to move it or its edges to resize it: changes apply from the current frame on.");
         }
         _ => {}
     }
@@ -593,4 +597,142 @@ pub fn artboards(
         resize = true;
     }
     resize
+}
+
+/// Panel de slices: lista, nombre, color, datos y la clave del frame actual (rect y pivote).
+pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
+    ui.horizontal(|ui| {
+        ui.heading("Slices");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            if ui
+                .add_enabled(editor.slice.is_some(), egui::Button::new("🗑").small())
+                .on_hover_text("Delete slice")
+                .clicked()
+            {
+                editor.delete_slice();
+            }
+        });
+    });
+    ui.separator();
+    let names: Vec<(String, cs_core::Rgba)> = editor
+        .sprite()
+        .slices
+        .iter()
+        .map(|s| (s.name.clone(), s.color))
+        .collect();
+    if names.is_empty() {
+        ui.weak("No slices. Use the Slice tool (Shift+C) to mark hitboxes and pivots.");
+        return;
+    }
+    for (i, (name, color)) in names.iter().enumerate() {
+        ui.horizontal(|ui| {
+            let (r, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
+            ui.painter()
+                .rect_filled(r, 2.0, Color32::from_rgb(color.r, color.g, color.b));
+            if ui.selectable_label(editor.slice == Some(i), name).clicked() {
+                editor.slice = Some(i);
+                editor.set_tool(ToolKind::Slice);
+            }
+        });
+    }
+    let Some(slice) = editor.selected_slice().cloned() else {
+        return;
+    };
+    ui.separator();
+    let mut name = slice.name.clone();
+    ui.horizontal(|ui| {
+        ui.label("Name");
+        if ui.text_edit_singleline(&mut name).lost_focus() && name != slice.name {
+            editor.update_slice(|s| s.name = name.clone());
+        }
+    });
+    let mut c32 = Color32::from_rgb(slice.color.r, slice.color.g, slice.color.b);
+    ui.horizontal(|ui| {
+        ui.label("Color");
+        if ui.color_edit_button_srgba(&mut c32).changed() {
+            let [r, g, b, _] = c32.to_array();
+            editor.update_slice(|s| s.color = cs_core::Rgba::rgb(r, g, b));
+        }
+    });
+    let mut text = slice.text.clone();
+    ui.horizontal(|ui| {
+        ui.label("Data");
+        if ui
+            .text_edit_singleline(&mut text)
+            .on_hover_text("Free text exported with the slice (e.g. damage=3)")
+            .lost_focus()
+            && text != slice.text
+        {
+            editor.update_slice(|s| s.text = text.clone());
+        }
+    });
+    let frame = editor.frame;
+    let Some(key) = slice.key_at(frame).copied() else {
+        ui.weak(format!("Hidden on frame {}", frame + 1));
+        return;
+    };
+    let own_key = key.frame == frame;
+    ui.label(if own_key {
+        format!("Frame {} (own key)", frame + 1)
+    } else {
+        format!("Frame {} (from frame {})", frame + 1, key.frame + 1)
+    });
+    let (mut x, mut y, mut w, mut h) = key.bounds;
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label("X");
+        changed |= widgets::number(ui, &mut x, -4096..=4096, "").changed();
+        ui.label("Y");
+        changed |= widgets::number(ui, &mut y, -4096..=4096, "").changed();
+    });
+    ui.horizontal(|ui| {
+        ui.label("W");
+        changed |= widgets::number(ui, &mut w, 1..=4096, "").changed();
+        ui.label("H");
+        changed |= widgets::number(ui, &mut h, 1..=4096, "").changed();
+    });
+    if changed {
+        editor.update_slice_key(|k| k.bounds = (x, y, w, h));
+    }
+    let mut has_pivot = key.pivot.is_some();
+    if ui.checkbox(&mut has_pivot, "Pivot").changed() {
+        let default = (w as i32 / 2, h as i32);
+        editor.update_slice_key(|k| k.pivot = has_pivot.then_some(default));
+    }
+    if let Some((mut px, mut py)) = key.pivot {
+        let mut moved = false;
+        ui.horizontal(|ui| {
+            ui.label("X");
+            moved |= widgets::number(ui, &mut px, -4096..=4096, "").changed();
+            ui.label("Y");
+            moved |= widgets::number(ui, &mut py, -4096..=4096, "").changed();
+        });
+        if moved {
+            editor.update_slice_key(|k| k.pivot = Some((px, py)));
+        }
+    }
+    if own_key
+        && slice.keys.first().is_some_and(|k| k.frame != frame)
+        && ui.button("Remove key on this frame").clicked()
+    {
+        editor.remove_slice_key();
+    }
+    let mut hide = false;
+    if ui
+        .small_button("Hide from this frame")
+        .on_hover_text("Adds an empty key: the slice disappears from here on")
+        .clicked()
+    {
+        hide = true;
+    }
+    if hide {
+        editor.update_slice(|s| {
+            s.set_key(cs_core::SliceKey {
+                frame,
+                bounds: (x, y, 0, 0),
+                center: None,
+                pivot: None,
+            })
+        });
+    }
 }

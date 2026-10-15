@@ -1,6 +1,7 @@
 //! Ver (render a PNG), leer píxeles como texto y exportar.
 
 use cs_core::{ColorMode, PixelValue, Rgba};
+use cs_io::engines;
 use cs_io::export::{self, Bitmap, JsonFormat, SheetLayout};
 use cs_render::{OnionSkin, blend_over, render_frame, render_onion, resolve};
 
@@ -198,6 +199,51 @@ impl Session {
                 write(path.clone(), &atlas.png)?;
                 write(path.with_extension("json"), atlas.json.as_bytes())?;
             }
+            ExportKind::Godot | ExportKind::Unity | ExportKind::Bevy => {
+                let name = &self
+                    .doc(&p.doc)?
+                    .document
+                    .artboard(id)
+                    .expect("resolved")
+                    .name;
+                let sheet = export::export_sheet(sprite, name, &image_name, layout, scale, format)?;
+                write(path.clone(), &sheet.png)?;
+                match p.kind {
+                    ExportKind::Godot => {
+                        let folder = p.godot_folder.as_deref().unwrap_or("res://");
+                        let res = format!("{}/{image_name}", folder.trim_end_matches('/'));
+                        let tres = engines::godot_sprite_frames(sprite, &res, layout, scale);
+                        write(path.with_extension("tres"), tres.as_bytes())?;
+                    }
+                    ExportKind::Unity => {
+                        let meta = engines::unity_meta(sprite, &image_name, layout, scale);
+                        write(
+                            path.with_file_name(format!("{image_name}.meta")),
+                            meta.as_bytes(),
+                        )?;
+                    }
+                    _ => {
+                        let ron = engines::bevy_atlas(sprite, &image_name, layout, scale);
+                        write(path.with_extension("ron"), ron.as_bytes())?;
+                    }
+                }
+            }
+        }
+        if p.normal_map {
+            let normals = match p.kind {
+                ExportKind::Png => {
+                    export::export_normal_png(sprite, target::frame(sprite, p.frame)?, scale)?
+                }
+                ExportKind::Sheet | ExportKind::Godot | ExportKind::Unity | ExportKind::Bevy => {
+                    export::export_normal_sheet(sprite, layout, scale)?
+                }
+                _ => {
+                    return Err(invalid(
+                        "normal_map works with kind png, sheet, godot, unity or bevy",
+                    ));
+                }
+            };
+            write(path.with_file_name(format!("{stem}_n.png")), &normals)?;
         }
         Ok(Reply::text(format!("Wrote:\n{}", written.join("\n"))))
     }
@@ -300,7 +346,31 @@ mod tests {
             json!({"doc": "d1", "path": "atlas.png", "kind": "atlas", "json_array": true}),
         ))
         .unwrap();
+        s.export(p(
+            json!({"doc": "d1", "path": "game/hero.png", "kind": "godot", "normal_map": true,
+            "godot_folder": "res://art/"}),
+        ))
+        .unwrap();
+        s.export(p(
+            json!({"doc": "d1", "path": "u/hero.png", "kind": "unity"}),
+        ))
+        .unwrap();
+        s.export(p(
+            json!({"doc": "d1", "path": "b/hero.png", "kind": "bevy"}),
+        ))
+        .unwrap();
+        assert!(
+            s.export(p(
+                json!({"doc": "d1", "path": "x.gif", "kind": "gif", "normal_map": true})
+            ))
+            .is_err()
+        );
+        let tres = std::fs::read_to_string(dir.join("game/hero.tres")).unwrap();
+        assert!(tres.contains("path=\"res://art/hero.png\""));
         for f in [
+            "game/hero_n.png",
+            "u/hero.png.meta",
+            "b/hero.ron",
             "a.png",
             "a.gif",
             "seq/a_001.png",

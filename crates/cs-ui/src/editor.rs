@@ -11,7 +11,7 @@ use cs_tools::text::TextStyle;
 use cs_tools::{
     ArtboardTool, Bucket, Dither, Eraser, Eyedropper, GradientShape, GradientTool, Jumble, Lasso,
     MagicWand, Marquee, MarqueeShape, MoveTool, Pencil, Point, PolygonLasso, ShapeKind, ShapeTool,
-    Spray, Tool, ToolContext, ToolOutput,
+    SliceTool, Spray, Tool, ToolContext, ToolOutput,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -33,12 +33,13 @@ pub enum ToolKind {
     Ellipse,
     Jumble,
     Text,
+    Slice,
     Artboard,
 }
 
 impl ToolKind {
     /// Grupos de la barra (como en Aseprite); el primero de cada grupo es el predeterminado.
-    pub const GROUPS: [&'static [ToolKind]; 11] = [
+    pub const GROUPS: [&'static [ToolKind]; 12] = [
         &[
             ToolKind::RectSelect,
             ToolKind::EllipseSelect,
@@ -55,6 +56,7 @@ impl ToolKind {
         &[ToolKind::Rectangle, ToolKind::Ellipse],
         &[ToolKind::Jumble],
         &[ToolKind::Text],
+        &[ToolKind::Slice],
         &[ToolKind::Artboard],
     ];
 
@@ -77,6 +79,7 @@ impl ToolKind {
             ToolKind::Ellipse => "Ellipse",
             ToolKind::Jumble => "Jumble",
             ToolKind::Text => "Text",
+            ToolKind::Slice => "Slice",
             ToolKind::Artboard => "Artboard",
         }
     }
@@ -100,6 +103,7 @@ impl ToolKind {
             ToolKind::Ellipse => "Shift+U",
             ToolKind::Jumble => "R",
             ToolKind::Text => "T",
+            ToolKind::Slice => "Shift+C",
             ToolKind::Artboard => "Shift+O",
         }
     }
@@ -124,6 +128,7 @@ impl ToolKind {
             ('U', true) => ToolKind::Ellipse,
             ('R', false) => ToolKind::Jumble,
             ('T', false) => ToolKind::Text,
+            ('C', true) => ToolKind::Slice,
             ('O', true) => ToolKind::Artboard,
             _ => return None,
         })
@@ -277,6 +282,7 @@ struct SpriteTools {
     rectangle: ShapeTool,
     ellipse: ShapeTool,
     jumble: Jumble,
+    slice: SliceTool,
     mover: MoveTool,
     eyedropper: Eyedropper,
 }
@@ -298,6 +304,7 @@ impl SpriteTools {
             rectangle: ShapeTool::new(ShapeKind::Rectangle),
             ellipse: ShapeTool::new(ShapeKind::Ellipse),
             jumble: Jumble::new(),
+            slice: SliceTool::new(),
             mover: MoveTool::new(),
             eyedropper: Eyedropper::new(),
         }
@@ -319,6 +326,7 @@ impl SpriteTools {
             ToolKind::Rectangle => &self.rectangle,
             ToolKind::Ellipse => &self.ellipse,
             ToolKind::Jumble => &self.jumble,
+            ToolKind::Slice => &self.slice,
             ToolKind::Move => &self.mover,
             ToolKind::Eyedropper => &self.eyedropper,
             ToolKind::Text | ToolKind::Artboard => return None,
@@ -341,6 +349,7 @@ impl SpriteTools {
             ToolKind::Rectangle => &mut self.rectangle,
             ToolKind::Ellipse => &mut self.ellipse,
             ToolKind::Jumble => &mut self.jumble,
+            ToolKind::Slice => &mut self.slice,
             ToolKind::Move => &mut self.mover,
             ToolKind::Eyedropper => &mut self.eyedropper,
             ToolKind::Text | ToolKind::Artboard => return None,
@@ -439,6 +448,8 @@ pub struct Editor {
     pub text: Option<TextDraft>,
     /// Las herramientas pintan en la máscara de la capa actual (si tiene).
     pub edit_mask: bool,
+    /// Slice seleccionado del artboard activo (índice en `sprite.slices`).
+    pub slice: Option<usize>,
     pub text_style: TextStyle,
 }
 
@@ -481,6 +492,7 @@ impl Editor {
             text: None,
             text_style: TextStyle::default(),
             edit_mask: false,
+            slice: None,
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
@@ -517,6 +529,8 @@ impl Editor {
             self.layer = sprite.layers.last().map_or(LayerId(1), |l| l.id);
         }
         self.frame = self.frame.min(sprite.frames.len().saturating_sub(1));
+        let slices = sprite.slices.len();
+        self.slice = self.slice.filter(|&i| i < slices);
         let last = sprite.frames.len().saturating_sub(1);
         self.frame_range = self.frame_range.map(|(a, b)| (a.min(last), b.min(last)));
         let (w, h) = (sprite.width, sprite.height);
@@ -540,6 +554,7 @@ impl Editor {
         self.active = id;
         (self.layer, self.frame) = self.views.get(&id).copied().unwrap_or((LayerId(0), 0));
         self.selection = None;
+        self.slice = None;
         self.ensure_valid();
         self.revision += 1;
     }
@@ -875,6 +890,7 @@ impl Editor {
             spray_speed: self.options.spray_speed,
             gradient_shape: self.options.gradient_shape,
             dither: self.options.dither,
+            selected_slice: self.slice,
         }
     }
 
@@ -925,6 +941,9 @@ impl Editor {
             self.activate(id);
         }
         let p = self.to_local(self.snapped(world));
+        if self.active_tool() == ToolKind::Slice {
+            self.select_slice_at(p);
+        }
         if self.active_tool() == ToolKind::Text {
             // Un clic empieza un texto o mueve el que se está escribiendo.
             match &mut self.text {
@@ -1083,6 +1102,7 @@ impl Editor {
     }
 
     fn apply_output(&mut self, kind: ToolKind, out: ToolOutput) {
+        let slices_before = self.sprite().slices.len();
         let applied = match out.command {
             Some(cmd) => {
                 let cmd = self.shape_paint(kind, cmd);
@@ -1102,6 +1122,11 @@ impl Editor {
         {
             let combined = self.combine_selection(kind, selection);
             self.set_selection(combined);
+        }
+        // Un slice recién creado queda seleccionado.
+        let slices_after = self.sprite().slices.len();
+        if kind == ToolKind::Slice && slices_after > slices_before {
+            self.slice = Some(slices_after - 1);
         }
     }
 
