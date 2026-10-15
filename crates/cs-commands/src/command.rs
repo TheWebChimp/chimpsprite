@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use cs_core::{
     ArtboardId, BlendMode, Cel, Frame, GridSettings, Image, ImageId, Layer, LayerId, LayerKind,
-    Palette, PixelValue, Sprite, Tag,
+    LayerMask, Palette, PixelValue, Sprite, Tag,
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +37,8 @@ pub enum CmdError {
     LastArtboard,
     #[error("the move would break the layer tree")]
     InvalidLayerTree,
+    #[error("layer {0:?} has no mask")]
+    NoMask(LayerId),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +48,8 @@ pub struct LayerProps {
     pub locked: Option<bool>,
     pub opacity: Option<u8>,
     pub blend: Option<BlendMode>,
+    #[serde(default)]
+    pub clip: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -77,6 +81,16 @@ pub enum Command {
     SetLayerProps {
         id: LayerId,
         props: LayerProps,
+    },
+    /// Pone, cambia o quita la máscara de una capa.
+    SetLayerMask {
+        id: LayerId,
+        mask: Option<LayerMask>,
+    },
+    /// Pinta valores (0 oculta, 255 muestra) en la máscara de una capa; la agranda si hace falta.
+    DrawMask {
+        layer: LayerId,
+        pixels: Vec<(i32, i32, u8)>,
     },
     AddFrame {
         index: usize,
@@ -139,6 +153,12 @@ impl Command {
             Command::AddLayer { index, layer } => add_layer(doc, *index, layer),
             Command::RemoveLayer { id } => remove_layer(doc, *id),
             Command::SetLayerProps { id, props } => set_layer_props(doc, *id, props),
+            Command::SetLayerMask { id, mask } => {
+                let layer = doc.layer_mut(*id).ok_or(CmdError::LayerNotFound(*id))?;
+                let old = std::mem::replace(&mut layer.mask, mask.clone());
+                Ok(Command::SetLayerMask { id: *id, mask: old })
+            }
+            Command::DrawMask { layer, pixels } => draw_mask(doc, *layer, pixels),
             Command::AddFrame { index, frame } => add_frame(doc, *index, *frame),
             Command::RemoveFrame { index } => remove_frame(doc, *index),
             Command::ResizeCanvas {
@@ -206,6 +226,10 @@ fn resize_canvas(
     for cel in doc.cels.values_mut() {
         cel.position.0 += offset.0;
         cel.position.1 += offset.1;
+    }
+    for mask in doc.layers.iter_mut().filter_map(|l| l.mask.as_mut()) {
+        mask.position.0 += offset.0;
+        mask.position.1 += offset.1;
     }
     Ok(inverse)
 }
@@ -346,7 +370,40 @@ fn set_layer_props(doc: &mut Sprite, id: LayerId, props: &LayerProps) -> Result<
     if let Some(v) = props.blend {
         old.blend = Some(std::mem::replace(&mut layer.blend, v));
     }
+    if let Some(v) = props.clip {
+        old.clip = Some(std::mem::replace(&mut layer.clip, v));
+    }
     Ok(Command::SetLayerProps { id, props: old })
+}
+
+fn draw_mask(
+    doc: &mut Sprite,
+    id: LayerId,
+    pixels: &[(i32, i32, u8)],
+) -> Result<Command, CmdError> {
+    let layer = doc.layer_mut(id).ok_or(CmdError::LayerNotFound(id))?;
+    if layer.locked {
+        return Err(CmdError::LayerLocked(id));
+    }
+    let old = layer.mask.clone().ok_or(CmdError::NoMask(id))?;
+    if pixels.is_empty() {
+        return Ok(Command::Batch(Vec::new()));
+    }
+    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for &(x, y, _) in pixels {
+        (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+    }
+    let mut mask = old.grown_to(x0, y0, x1, y1);
+    let (px, py, w) = (mask.position.0, mask.position.1, mask.width);
+    let data = std::sync::Arc::make_mut(&mut mask.data);
+    for &(x, y, v) in pixels {
+        data[((y - py) as u32 * w + (x - px) as u32) as usize] = v;
+    }
+    layer.mask = Some(mask);
+    Ok(Command::SetLayerMask {
+        id,
+        mask: Some(old),
+    })
 }
 
 fn move_layer(
@@ -583,6 +640,65 @@ mod tests {
         assert!(!s.layers[0].visible);
         assert_eq!(s.layers[0].opacity, 10);
         inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn masks_set_draw_resize_roundtrip() {
+        let mut s = Sprite::new(4, 4, ColorMode::Rgba);
+        let before = s.clone();
+        assert_eq!(
+            Command::DrawMask {
+                layer: LayerId(1),
+                pixels: vec![(0, 0, 0)],
+            }
+            .apply(&mut s),
+            Err(CmdError::NoMask(LayerId(1)))
+        );
+        let inv_set = Command::SetLayerMask {
+            id: LayerId(1),
+            mask: Some(LayerMask::filled(4, 4, 255)),
+        }
+        .apply(&mut s)
+        .unwrap();
+        let with_mask = s.clone();
+        let inv_draw = Command::DrawMask {
+            layer: LayerId(1),
+            pixels: vec![(1, 1, 0), (6, 1, 40)],
+        }
+        .apply(&mut s)
+        .unwrap();
+        let mask = s.layers[0].mask.as_ref().unwrap();
+        assert_eq!(
+            (mask.get(1, 1), mask.get(6, 1), mask.get(5, 1)),
+            (0, 40, 255)
+        );
+        let drawn = s.clone();
+        let inv_resize = Command::ResizeCanvas {
+            width: 6,
+            height: 6,
+            offset: (2, 1),
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!(s.layers[0].mask.as_ref().unwrap().get(3, 2), 0);
+        inv_resize.apply(&mut s).unwrap();
+        assert_eq!(s, drawn);
+        inv_draw.apply(&mut s).unwrap();
+        assert_eq!(s, with_mask);
+        inv_set.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        let inv_clip = Command::SetLayerProps {
+            id: LayerId(1),
+            props: LayerProps {
+                clip: Some(true),
+                ..Default::default()
+            },
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert!(s.layers[0].clip);
+        inv_clip.apply(&mut s).unwrap();
         assert_eq!(s, before);
     }
 

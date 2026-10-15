@@ -140,6 +140,18 @@ pub fn color(sprite: &Sprite, c: &ColorArg) -> Result<PixelValue> {
     }
 }
 
+/// Color para pintar en la capa o, con `on_mask`, en su máscara (donde vale cualquier hex aunque
+/// el sprite sea indexado: solo importa su luminosidad).
+pub fn paint_value(sprite: &Sprite, c: &ColorArg, on_mask: bool) -> Result<PixelValue> {
+    match c {
+        ColorArg::Text(t) if on_mask && !t.eq_ignore_ascii_case("transparent") => {
+            Ok(PixelValue::Rgba(hex(t)?))
+        }
+        ColorArg::Text(_) if on_mask => Ok(PixelValue::Rgba(Rgba::TRANSPARENT)),
+        _ => color(sprite, c),
+    }
+}
+
 /// Rectángulo indicado (o el lienzo completo) recortado al lienzo, como `(x0, y0, x1, y1)`
 /// con máximo exclusivo. Error si queda vacío.
 pub fn region(sprite: &Sprite, rect: Option<Rect>) -> Result<(i32, i32, i32, i32)> {

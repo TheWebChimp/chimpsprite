@@ -258,6 +258,7 @@ impl ChimpApp {
                     .write(&target, &bytes)
                     .map_err(FileError::Platform)
             });
+        let target_name = target.file_name.clone();
         match result {
             Ok(()) => {
                 if let Some(path) = target.path() {
@@ -277,7 +278,13 @@ impl ChimpApp {
                         .artboards
                         .iter()
                         .any(|a| !a.guides.is_empty());
-                if lost_guides {
+                let baked = files::bakes_masks(&self.doc.editor.document, &target_name);
+                if baked {
+                    self.show_message(
+                        "Masks applied in the file",
+                        ".aseprite files have no layer or clipping masks, so they were applied to                          the pixels in the saved file (your open document keeps them). Save as                          .chimp to keep them editable.",
+                    );
+                } else if lost_guides {
                     self.show_message(
                         "Saved without guides",
                         ".aseprite files can't store guides. Save as .chimp to keep them.",

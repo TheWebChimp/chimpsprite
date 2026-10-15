@@ -151,6 +151,22 @@ pub struct SetLayer {
     /// 0-255.
     pub opacity: Option<u8>,
     pub blend: Option<BlendArg>,
+    /// Clipping mask: show this layer only where the layer below it (same group) has pixels.
+    pub clip: Option<bool>,
+    /// Turn the layer mask on or off without deleting it.
+    pub mask_enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddMask {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Ref,
+    /// Start hiding everything (paint white to reveal). Default: everything visible.
+    #[serde(default)]
+    pub hide_all: bool,
+    /// Only this rectangle starts visible; everything else hidden.
+    pub reveal: Option<Rect>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -297,6 +313,10 @@ pub struct DrawPixels {
     pub pixels: Vec<PixelArg>,
     /// Only pixels inside this rectangle are drawn.
     pub clip: Option<Rect>,
+    /// Paint on the layer mask instead of the layer: white (or light colors) reveals, black or
+    /// "transparent" hides. The layer needs a mask (add_mask).
+    #[serde(default)]
+    pub on_mask: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -312,6 +332,10 @@ pub struct DrawLine {
     /// Square brush size (default 1).
     pub brush_size: Option<u32>,
     pub clip: Option<Rect>,
+    /// Paint on the layer mask instead of the layer: white (or light colors) reveals, black or
+    /// "transparent" hides. The layer needs a mask (add_mask).
+    #[serde(default)]
+    pub on_mask: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -332,6 +356,10 @@ pub struct DrawShape {
     /// Outline brush size (default 1).
     pub brush_size: Option<u32>,
     pub clip: Option<Rect>,
+    /// Paint on the layer mask instead of the layer: white (or light colors) reveals, black or
+    /// "transparent" hides. The layer needs a mask (add_mask).
+    #[serde(default)]
+    pub on_mask: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -347,6 +375,10 @@ pub struct Fill {
     /// true (default): flood the connected area; false: replace that color everywhere in the cel.
     pub contiguous: Option<bool>,
     pub clip: Option<Rect>,
+    /// Paint on the layer mask instead of the layer: white (or light colors) reveals, black or
+    /// "transparent" hides. The layer needs a mask (add_mask).
+    #[serde(default)]
+    pub on_mask: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -391,6 +423,10 @@ pub struct Gradient {
     pub dither: DitherArg,
     /// Area to fill. Default: the whole canvas.
     pub clip: Option<Rect>,
+    /// Paint on the layer mask instead of the layer: white (or light colors) reveals, black or
+    /// "transparent" hides. The layer needs a mask (add_mask).
+    #[serde(default)]
+    pub on_mask: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]

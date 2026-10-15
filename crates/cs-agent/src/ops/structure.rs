@@ -161,9 +161,73 @@ impl Session {
             locked: p.locked,
             opacity: p.opacity,
             blend: p.blend.map(blend),
+            clip: p.clip,
         };
-        self.run_on(&p.doc, ab, vec![Command::SetLayerProps { id, props }])?;
+        let mut cmds = vec![Command::SetLayerProps { id, props }];
+        if let Some(enabled) = p.mask_enabled {
+            let Some(mut mask) = sprite.layer(id).and_then(|l| l.mask.clone()) else {
+                return Err(invalid("the layer has no mask; add one with add_mask"));
+            };
+            mask.enabled = enabled;
+            cmds.push(Command::SetLayerMask {
+                id,
+                mask: Some(mask),
+            });
+        }
+        self.run_on(&p.doc, ab, cmds)?;
         Ok(Reply::text(format!("Updated layer {}.", id.0)))
+    }
+
+    pub fn add_mask(&mut self, p: AddMask) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let id = target::layer(sprite, &p.layer)?;
+        let reveal = match p.reveal {
+            Some(r) => {
+                let (x0, y0, x1, y1) = target::region(sprite, Some(r))?;
+                Some(cs_core::Mask::from_rect(
+                    sprite.width,
+                    sprite.height,
+                    (x0, y0),
+                    (x1 - 1, y1 - 1),
+                ))
+            }
+            None => None,
+        };
+        let mask = ops::new_mask(sprite, p.hide_all, reveal.as_ref());
+        self.run_on(
+            &p.doc,
+            ab,
+            vec![Command::SetLayerMask {
+                id,
+                mask: Some(mask),
+            }],
+        )?;
+        Ok(Reply::text(format!(
+            "Added a mask to layer {}. Paint on it with on_mask: true (white reveals, black hides).",
+            id.0
+        )))
+    }
+
+    pub fn remove_mask(&mut self, p: LayerOnly) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let id = target::layer(sprite, &p.layer)?;
+        if sprite.layer(id).is_none_or(|l| l.mask.is_none()) {
+            return Err(invalid("the layer has no mask"));
+        }
+        self.run_on(&p.doc, ab, vec![Command::SetLayerMask { id, mask: None }])?;
+        Ok(Reply::text(format!("Removed the mask of layer {}.", id.0)))
+    }
+
+    pub fn apply_mask(&mut self, p: LayerOnly) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let id = target::layer(sprite, &p.layer)?;
+        let cmd = ops::apply_mask(sprite, id)
+            .ok_or_else(|| invalid("only image layers with a mask can have it applied"))?;
+        self.run_on(&p.doc, ab, vec![cmd])?;
+        Ok(Reply::text(format!(
+            "Applied the mask of layer {} to its pixels in every frame.",
+            id.0
+        )))
     }
 
     pub fn remove_layer(&mut self, p: LayerOnly) -> Result<Reply> {
@@ -525,6 +589,55 @@ mod tests {
             s.add_layer(p(json!({"doc": "d1", "into": "body"})))
                 .is_err()
         );
+    }
+
+    #[test]
+    fn masks_and_clipping() {
+        let mut s = session(4, 1);
+        s.draw_line(p(
+            json!({"doc": "d1", "points": [[0, 0], [3, 0]], "color": "#f00"}),
+        ))
+        .unwrap();
+        assert!(
+            s.draw_pixels(p(json!({"doc": "d1", "on_mask": true,
+                "pixels": [{"x": 0, "y": 0, "color": "#000"}]})))
+                .is_err(),
+            "no mask yet"
+        );
+        s.add_mask(p(
+            json!({"doc": "d1", "layer": 1, "reveal": {"x": 1, "y": 0, "w": 2, "h": 1}}),
+        ))
+        .unwrap();
+        let alpha =
+            |s: &Session, x| cs_render::composite_pixel(s.sprite("d1", None).unwrap().1, 0, x, 0).a;
+        assert_eq!((alpha(&s, 0), alpha(&s, 1)), (0, 255));
+        s.draw_pixels(p(json!({"doc": "d1", "on_mask": true,
+            "pixels": [{"x": 0, "y": 0, "color": "#fff"}, {"x": 1, "y": 0, "color": "transparent"}]})))
+            .unwrap();
+        assert_eq!((alpha(&s, 0), alpha(&s, 1)), (255, 0));
+        s.set_layer(p(json!({"doc": "d1", "layer": 1, "mask_enabled": false})))
+            .unwrap();
+        assert_eq!(alpha(&s, 1), 255);
+        s.set_layer(p(json!({"doc": "d1", "layer": 1, "mask_enabled": true})))
+            .unwrap();
+        s.apply_mask(p(json!({"doc": "d1", "layer": 1}))).unwrap();
+        let (_, sp) = s.sprite("d1", None).unwrap();
+        assert!(sp.layers[0].mask.is_none());
+        assert_eq!(alpha(&s, 1), 0, "applied to the pixels");
+        assert!(s.remove_mask(p(json!({"doc": "d1", "layer": 1}))).is_err());
+
+        s.add_layer(p(json!({"doc": "d1", "name": "shade"})))
+            .unwrap();
+        s.draw_line(p(
+            json!({"doc": "d1", "layer": "shade", "points": [[0, 0], [3, 0]], "color": "#00f"}),
+        ))
+        .unwrap();
+        s.set_layer(p(json!({"doc": "d1", "layer": "shade", "clip": true})))
+            .unwrap();
+        let px =
+            |s: &Session, x| cs_render::composite_pixel(s.sprite("d1", None).unwrap().1, 0, x, 0);
+        assert_eq!(px(&s, 0), cs_core::Rgba::rgb(0, 0, 255));
+        assert_eq!(px(&s, 1).a, 0, "clipped where the base is empty");
     }
 
     #[test]

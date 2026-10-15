@@ -222,6 +222,12 @@ impl Session {
                 "\nWarning: .aseprite files don't store guides; save as .chimp to keep them.",
             );
         }
+        if files::bakes_masks(&d.document, &name) {
+            text.push_str(
+                "
+Note: .aseprite has no layer/clipping masks; they were applied to the pixels                  in the file (the open document keeps them). Save as .chimp to keep them editable.",
+            );
+        }
         d.path = Some(path);
         Ok(Reply::text(text))
     }

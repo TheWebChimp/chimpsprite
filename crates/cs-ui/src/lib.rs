@@ -9,6 +9,7 @@ mod demo;
 mod editor;
 mod export_dialog;
 mod file_actions;
+mod mask_ops;
 use cs_io::files;
 mod guides;
 mod home;
@@ -334,6 +335,11 @@ impl ChimpApp {
         let reselect = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::D);
         let deselect = KeyboardShortcut::new(Modifiers::COMMAND, Key::D);
         let inverse = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::I);
+        let clipping = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::G);
+        if ctx.input_mut(|i| i.consume_shortcut(&clipping)) {
+            let layer = self.doc.editor.layer;
+            self.doc.editor.toggle_clip(layer);
+        }
         if ctx.input_mut(|i| i.consume_shortcut(&select_all)) {
             self.doc.editor.select_all();
         }
@@ -477,6 +483,10 @@ impl ChimpApp {
                     if ui.add_enabled(has_selection, clear).clicked() {
                         self.doc.editor.clear_selection_content();
                     }
+                });
+                ui.menu_button("Layer", |ui| {
+                    let layer = self.doc.editor.layer;
+                    timeline::mask_menu(ui, &mut self.doc.editor, layer);
                 });
                 ui.menu_button("Select", |ui| {
                     let editor = &mut self.doc.editor;

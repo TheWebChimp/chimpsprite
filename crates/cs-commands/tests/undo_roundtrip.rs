@@ -43,6 +43,19 @@ enum Op {
         from: usize,
         to: usize,
     },
+    Mask {
+        layer: usize,
+        hide: bool,
+    },
+    MaskDraw {
+        x: i32,
+        y: i32,
+        v: u8,
+        layer: usize,
+    },
+    Clip {
+        layer: usize,
+    },
     Hide {
         layer: usize,
     },
@@ -63,6 +76,10 @@ fn op() -> impl Strategy<Value = Op> {
         1 => (idx.clone(), any::<bool>()).prop_map(|(frame, linked)| Op::Duplicate { frame, linked }),
         1 => (idx.clone(), 1..500u16).prop_map(|(frame, ms)| Op::Duration { frame, ms }),
         1 => (idx.clone(), idx.clone()).prop_map(|(from, to)| Op::Tag { from, to }),
+        1 => (idx.clone(), any::<bool>()).prop_map(|(layer, hide)| Op::Mask { layer, hide }),
+        2 => (-2..10i32, -2..10i32, any::<u8>(), idx.clone())
+            .prop_map(|(x, y, v, layer)| Op::MaskDraw { x, y, v, layer }),
+        1 => idx.clone().prop_map(|layer| Op::Clip { layer }),
         1 => idx.prop_map(|layer| Op::Hide { layer }),
     ]
 }
@@ -125,6 +142,25 @@ fn to_command(s: &Sprite, op: &Op) -> Option<Command> {
                 repeat: 0,
             }])
         }
+        Op::Mask { layer: l, hide } => Command::SetLayerMask {
+            id: layer(l),
+            mask: Some(LayerMask::filled(
+                s.width,
+                s.height,
+                if hide { 0 } else { 255 },
+            )),
+        },
+        Op::MaskDraw { x, y, v, layer: l } => Command::DrawMask {
+            layer: layer(l),
+            pixels: vec![(x, y, v)],
+        },
+        Op::Clip { layer: l } => Command::SetLayerProps {
+            id: layer(l),
+            props: LayerProps {
+                clip: Some(true),
+                ..Default::default()
+            },
+        },
         Op::Hide { layer: l } => Command::SetLayerProps {
             id: layer(l),
             props: LayerProps {

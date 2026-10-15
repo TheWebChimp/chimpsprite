@@ -23,6 +23,7 @@ struct Stroke {
     layer: LayerId,
     frame: usize,
     color: PixelValue,
+    on_mask: bool,
 }
 
 impl Session {
@@ -33,13 +34,15 @@ impl Session {
         layer: Option<&Ref>,
         frame: usize,
         color: &ColorArg,
+        on_mask: bool,
     ) -> Result<Stroke> {
         let (artboard, sprite) = self.sprite(doc, artboard)?;
         Ok(Stroke {
             artboard,
             layer: target::image_layer(sprite, layer)?,
             frame: target::frame(sprite, frame)?,
-            color: target::color(sprite, color)?,
+            color: target::paint_value(sprite, color, on_mask)?,
+            on_mask,
         })
     }
 
@@ -56,7 +59,7 @@ impl Session {
             .filter(|&(x, y)| target::in_clip(clip, x, y))
             .map(|(x, y)| (x, y, s.color))
             .collect();
-        self.draw(doc, s.artboard, s.layer, s.frame, pixels)
+        self.draw(doc, s.artboard, s.layer, s.frame, pixels, s.on_mask)
     }
 
     fn draw(
@@ -66,6 +69,7 @@ impl Session {
         layer: LayerId,
         frame: usize,
         mut pixels: Vec<(i32, i32, PixelValue)>,
+        on_mask: bool,
     ) -> Result<Reply> {
         let (_, sprite) = self.sprite(doc, Some(&Ref::Id(artboard.0)))?;
         let (w, h) = (sprite.width as i32, sprite.height as i32);
@@ -78,6 +82,30 @@ impl Session {
             ));
         }
         let n = pixels.len();
+        if on_mask {
+            if sprite.layer(layer).is_none_or(|l| l.mask.is_none()) {
+                return Err(invalid(format!(
+                    "layer {} has no mask; add one with add_mask",
+                    layer.0
+                )));
+            }
+            let levels = pixels
+                .into_iter()
+                .map(|(x, y, v)| (x, y, cs_render::mask_level(cs_render::resolve(sprite, v))))
+                .collect();
+            self.run_on(
+                doc,
+                artboard,
+                vec![Command::DrawMask {
+                    layer,
+                    pixels: levels,
+                }],
+            )?;
+            return Ok(Reply::text(format!(
+                "Painted {n} pixel(s) on the mask of layer {}.",
+                layer.0
+            )));
+        }
         self.run_on(
             doc,
             artboard,
@@ -101,11 +129,15 @@ impl Session {
         // El último gana si un píxel se repite.
         for px in p.pixels.iter().rev() {
             if target::in_clip(p.clip, px.x, px.y) {
-                pixels.push((px.x, px.y, target::color(sprite, &px.color)?));
+                pixels.push((
+                    px.x,
+                    px.y,
+                    target::paint_value(sprite, &px.color, p.on_mask)?,
+                ));
             }
         }
         pixels.sort_by_key(|&(x, y, _)| (y, x));
-        self.draw(&p.doc, artboard, layer, frame, pixels)
+        self.draw(&p.doc, artboard, layer, frame, pixels, p.on_mask)
     }
 
     pub fn draw_line(&mut self, p: DrawLine) -> Result<Reply> {
@@ -115,6 +147,7 @@ impl Session {
             p.layer.as_ref(),
             p.frame,
             &p.color,
+            p.on_mask,
         )?;
         let vertices: Vec<Point> = p.points.iter().map(|&[x, y]| (x, y)).collect();
         let mut path = match vertices.as_slice() {
@@ -136,6 +169,7 @@ impl Session {
             p.layer.as_ref(),
             p.frame,
             &p.color,
+            p.on_mask,
         )?;
         let (a, b) = ((p.x0, p.y0), (p.x1, p.y1));
         let points = if p.filled {
@@ -153,6 +187,7 @@ impl Session {
             p.layer.as_ref(),
             p.frame,
             &p.color,
+            p.on_mask,
         )?;
         let (a, b) = ((p.x0, p.y0), (p.x1, p.y1));
         let points = if p.filled {
@@ -167,8 +202,8 @@ impl Session {
         let (artboard, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         let layer = target::image_layer(sprite, p.layer.as_ref())?;
         let frame = target::frame(sprite, p.frame)?;
-        let from = target::color(sprite, &p.from)?;
-        let to = target::color(sprite, &p.to)?;
+        let from = target::paint_value(sprite, &p.from, p.on_mask)?;
+        let to = target::paint_value(sprite, &p.to, p.on_mask)?;
         if (p.x0, p.y0) == (p.x1, p.y1) {
             return Err(invalid("start and end points must differ"));
         }
@@ -191,7 +226,7 @@ impl Session {
             ((p.x0, p.y0), (p.x1, p.y1)),
             points,
         );
-        self.draw(&p.doc, artboard, layer, frame, pixels)
+        self.draw(&p.doc, artboard, layer, frame, pixels, p.on_mask)
     }
 
     pub fn draw_text(&mut self, p: DrawText) -> Result<Reply> {
@@ -201,6 +236,7 @@ impl Session {
             p.layer.as_ref(),
             p.frame,
             &p.color,
+            false,
         )?;
         if p.text.trim().is_empty() {
             return Err(invalid("text is empty"));
@@ -235,7 +271,7 @@ impl Session {
         .into_iter()
         .filter(|&(x, y, _)| target::in_clip(p.clip, x, y))
         .collect();
-        self.draw(&p.doc, s.artboard, s.layer, s.frame, pixels)
+        self.draw(&p.doc, s.artboard, s.layer, s.frame, pixels, false)
     }
 
     pub fn fill(&mut self, p: Fill) -> Result<Reply> {
@@ -245,6 +281,7 @@ impl Session {
             p.layer.as_ref(),
             p.frame,
             &p.color,
+            p.on_mask,
         )?;
         let (_, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         let (w, h) = (sprite.width, sprite.height);

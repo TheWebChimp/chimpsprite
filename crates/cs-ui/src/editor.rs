@@ -437,6 +437,8 @@ pub struct Editor {
     shift_at_press: bool,
     /// Texto en edición con la herramienta Text.
     pub text: Option<TextDraft>,
+    /// Las herramientas pintan en la máscara de la capa actual (si tiene).
+    pub edit_mask: bool,
     pub text_style: TextStyle,
 }
 
@@ -478,6 +480,7 @@ impl Editor {
             shift_at_press: false,
             text: None,
             text_style: TextStyle::default(),
+            edit_mask: false,
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
@@ -702,6 +705,14 @@ impl Editor {
         let Some(mask) = &self.selection else {
             return;
         };
+        if self.editing_mask() {
+            let pixels = mask.points().map(|(x, y)| (x, y, 0)).collect();
+            self.execute(Command::DrawMask {
+                layer: self.layer,
+                pixels,
+            });
+            return;
+        }
         let t = self.sprite().color_mode.transparent();
         let pixels = mask.points().map(|(x, y)| (x, y, t)).collect();
         self.execute(Command::DrawPixels {
@@ -1032,9 +1043,28 @@ impl Editor {
         } else {
             mirror(cmd, artboard.symmetry, artboard.symmetry_center2())
         };
-        match &self.selection {
+        let cmd = match &self.selection {
             Some(mask) => clip(cmd, mask),
             None => cmd,
+        };
+        if self.editing_mask() {
+            self.to_mask_command(cmd)
+        } else {
+            cmd
+        }
+    }
+
+    /// Editando la máscara, un trazo pinta niveles: blanco muestra, negro o transparente oculta.
+    fn to_mask_command(&self, cmd: Command) -> Command {
+        match cmd {
+            Command::DrawPixels { layer, pixels, .. } => Command::DrawMask {
+                layer,
+                pixels: pixels
+                    .into_iter()
+                    .map(|(x, y, v)| (x, y, cs_render::mask_level(self.resolve(v))))
+                    .collect(),
+            },
+            other => other,
         }
     }
 

@@ -22,6 +22,15 @@ pub fn kind_of(name: &str) -> Option<FileKind> {
     }
 }
 
+/// ¿Guardar en este formato aplica (pierde como capas editables) máscaras o recortes?
+pub fn bakes_masks(doc: &Document, file_name: &str) -> bool {
+    kind_of(file_name) == Some(FileKind::Aseprite)
+        && doc
+            .artboards
+            .iter()
+            .any(|a| a.sprite.layers.iter().any(|l| l.mask.is_some() || l.clip))
+}
+
 /// Nombre sin extensión.
 pub fn stem(name: &str) -> &str {
     Path::new(name)
@@ -63,7 +72,12 @@ pub fn encode(doc: &Document, file_name: &str) -> Result<Vec<u8>, FileError> {
     match kind_of(file_name) {
         Some(FileKind::Chimp) => Ok(chimp::write(doc)?),
         Some(FileKind::Aseprite) => match doc.artboards.as_slice() {
-            [only] => Ok(aseprite::write(&only.sprite)),
+            // `.aseprite` no tiene máscaras ni recortes: se aplican a los píxeles.
+            [only] => Ok(aseprite::write(
+                cs_render::bake_masks(&only.sprite)
+                    .as_ref()
+                    .unwrap_or(&only.sprite),
+            )),
             many => Err(FileError::MultipleArtboards(many.len())),
         },
         _ => Err(FileError::UnknownType(file_name.to_string())),

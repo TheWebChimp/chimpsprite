@@ -411,6 +411,8 @@ fn read_layer(
             255
         },
         blend,
+        mask: None,
+        clip: false,
     });
     Ok(())
 }

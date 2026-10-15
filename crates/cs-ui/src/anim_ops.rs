@@ -173,9 +173,11 @@ impl Editor {
 
     // --- Capas -------------------------------------------------------------------------------
 
+    /// Selecciona la capa para pintar sus píxeles (no su máscara).
     pub fn select_layer(&mut self, id: LayerId) {
         if self.sprite().layer(id).is_some() {
             self.layer = id;
+            self.edit_mask = false;
         }
     }
 

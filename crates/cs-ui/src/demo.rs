@@ -17,6 +17,7 @@ pub fn editor() -> Editor {
     let chimp = editor.active;
     draw_chimp(&mut editor);
     animate_chimp(&mut editor);
+    shade_chimp(&mut editor);
 
     editor.add_artboard(32, 32);
     editor.execute_doc(DocCommand::SetArtboardProps {
@@ -113,6 +114,40 @@ fn animate_chimp(editor: &mut Editor) {
         editor.set_tag(0, tag);
     }
     editor.frame_range = None;
+    editor.select_layer(body);
+}
+
+/// Capa "Shade" recortada al cuerpo (máscara de recorte) con una máscara de capa en degradado:
+/// la sombra solo cae sobre el chimpancé y se desvanece hacia el centro.
+fn shade_chimp(editor: &mut Editor) {
+    let body = editor.layer;
+    editor.add_layer(cs_core::LayerKind::Image);
+    let shade = editor.layer;
+    editor.rename_layer(shade, "Shade".into());
+    let (w, h) = (editor.sprite().width as i32, editor.sprite().height as i32);
+    let dark = PixelValue::Rgba(cs_core::Rgba::new(40, 20, 60, 120));
+    let pixels = (0..h)
+        .flat_map(|y| (w / 2..w).map(move |x| (x, y, dark)))
+        .collect();
+    editor.execute(Command::DrawPixels {
+        layer: shade,
+        frame: 0,
+        pixels,
+    });
+    for f in 1..editor.sprite().frames.len() {
+        editor.link_to_previous(shade, f);
+    }
+    editor.toggle_clip(shade);
+    let mut mask = cs_core::LayerMask::filled(w as u32, h as u32, 255);
+    mask.data = std::sync::Arc::new(
+        (0..h)
+            .flat_map(|_| (0..w).map(|x| ((x - w / 2).clamp(0, 12) * 255 / 12) as u8))
+            .collect(),
+    );
+    editor.execute(Command::SetLayerMask {
+        id: shade,
+        mask: Some(mask),
+    });
     editor.select_layer(body);
 }
 
