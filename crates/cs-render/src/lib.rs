@@ -2,6 +2,9 @@
 
 use std::sync::Arc;
 
+mod normal;
+pub use normal::normal_map;
+
 use cs_core::{BlendMode, ColorMode, Image, ImageId, Layer, LayerKind, PixelValue, Rgba, Sprite};
 
 /// Convierte un valor de píxel a color, resolviendo la paleta en modo indexado.

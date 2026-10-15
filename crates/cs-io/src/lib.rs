@@ -3,6 +3,7 @@
 pub mod aseprite;
 mod bytes;
 pub mod chimp;
+pub mod engines;
 mod error;
 pub mod export;
 pub mod files;

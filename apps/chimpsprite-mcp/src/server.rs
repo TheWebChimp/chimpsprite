@@ -169,6 +169,18 @@ impl ChimpServer {
         self.with(|s| s.apply_mask(p))
     }
 
+    #[tool(
+        description = "Create or update a named slice: a rectangle (hitbox, hurtbox, anchor) with an optional pivot. Set it on a later frame to change it from there (per-frame hitboxes). Exported in sheet JSON, Unity pivots and Bevy RON."
+    )]
+    fn set_slice(&self, Parameters(p): Parameters<SetSlice>) -> CallToolResult {
+        self.with(|s| s.set_slice(p))
+    }
+
+    #[tool(description = "Remove a slice by name.")]
+    fn remove_slice(&self, Parameters(p): Parameters<RemoveSlice>) -> CallToolResult {
+        self.with(|s| s.remove_slice(p))
+    }
+
     // --- Frames, tags y cels ---
 
     #[tool(description = "Add an empty frame, or duplicate an existing one (optionally linked).")]
@@ -349,7 +361,7 @@ impl ChimpServer {
     }
 
     #[tool(
-        description = "Export to PNG, animated GIF, PNG sequence, spritesheet (+JSON) or atlas of all artboards (+JSON)."
+        description = "Export to PNG, animated GIF, PNG sequence, spritesheet (+JSON), atlas of all artboards (+JSON), or game-engine formats: Godot SpriteFrames, Unity sliced sprites, Bevy atlas. Optionally also a normal map for 2D lighting."
     )]
     fn export(&self, Parameters(p): Parameters<Export>) -> CallToolResult {
         self.with(|s| s.export(p))

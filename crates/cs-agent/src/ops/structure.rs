@@ -379,6 +379,62 @@ impl Session {
         Ok(Reply::text(format!("Removed tag '{}'.", p.name)))
     }
 
+    // --- Slices ---
+
+    pub fn set_slice(&mut self, p: SetSlice) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        target::frame(sprite, p.frame)?;
+        if p.w == 0 || p.h == 0 {
+            return Err(invalid("w and h must be at least 1"));
+        }
+        let mut slices = sprite.slices.clone();
+        let index = match slices.iter().position(|s| s.name == p.name) {
+            Some(i) => i,
+            None => {
+                slices.push(cs_core::Slice {
+                    name: p.name.clone(),
+                    color: cs_tools::SLICE_COLOR,
+                    text: String::new(),
+                    keys: Vec::new(),
+                });
+                slices.len() - 1
+            }
+        };
+        let slice = &mut slices[index];
+        if let Some(c) = &p.color {
+            slice.color = target::hex(c)?;
+        }
+        if let Some(t) = &p.text {
+            slice.text = t.clone();
+        }
+        slice.set_key(cs_core::SliceKey {
+            frame: p.frame,
+            bounds: (p.x, p.y, p.w, p.h),
+            center: None,
+            pivot: p.pivot.map(|[x, y]| (x, y)),
+        });
+        self.run_on(&p.doc, ab, vec![Command::SetSlices(slices)])?;
+        Ok(Reply::text(format!(
+            "Slice '{}' set from frame {}.",
+            p.name, p.frame
+        )))
+    }
+
+    pub fn remove_slice(&mut self, p: RemoveSlice) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        if !sprite.slices.iter().any(|s| s.name == p.name) {
+            return Err(invalid(format!("no slice named '{}'", p.name)));
+        }
+        let slices = sprite
+            .slices
+            .iter()
+            .filter(|s| s.name != p.name)
+            .cloned()
+            .collect();
+        self.run_on(&p.doc, ab, vec![Command::SetSlices(slices)])?;
+        Ok(Reply::text(format!("Removed slice '{}'.", p.name)))
+    }
+
     // --- Cels ---
 
     pub fn link_cels(&mut self, p: CelRange) -> Result<Reply> {
@@ -587,6 +643,40 @@ mod tests {
         assert_eq!(s.sprite("d1", None).unwrap().1.layers.len(), 2);
         assert!(
             s.add_layer(p(json!({"doc": "d1", "into": "body"})))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn slices_create_update_per_frame_and_remove() {
+        let mut s = session(8, 8);
+        s.add_frame(p(json!({"doc": "d1"}))).unwrap();
+        s.set_slice(p(
+            json!({"doc": "d1", "name": "hit", "x": 1, "y": 1, "w": 4, "h": 4,
+            "pivot": [2, 4], "text": "damage=3"}),
+        ))
+        .unwrap();
+        s.set_slice(p(
+            json!({"doc": "d1", "name": "hit", "frame": 1, "x": 3, "y": 1, "w": 4, "h": 4}),
+        ))
+        .unwrap();
+        let (_, sp) = s.sprite("d1", None).unwrap();
+        let slice = &sp.slices[0];
+        assert_eq!(slice.text, "damage=3");
+        assert_eq!(slice.key_at(0).unwrap().pivot, Some((2, 4)));
+        assert_eq!(slice.key_at(1).unwrap().bounds.0, 3);
+        let described = crate::ops::test_util::json(&s.describe(p(json!({"doc": "d1"}))).unwrap());
+        assert_eq!(described["artboards"][0]["slices"][0]["name"], "hit");
+        assert!(
+            s.set_slice(p(
+                json!({"doc": "d1", "name": "x", "x": 0, "y": 0, "w": 0, "h": 1})
+            ))
+            .is_err()
+        );
+        s.remove_slice(p(json!({"doc": "d1", "name": "hit"})))
+            .unwrap();
+        assert!(
+            s.remove_slice(p(json!({"doc": "d1", "name": "hit"})))
                 .is_err()
         );
     }

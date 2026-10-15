@@ -10,6 +10,7 @@ mod editor;
 mod export_dialog;
 mod file_actions;
 mod mask_ops;
+mod slice_ops;
 use cs_io::files;
 mod guides;
 mod home;
@@ -226,6 +227,7 @@ impl ChimpApp {
                 ui.checkbox(&mut v.pixel_grid, "Pixel Grid");
                 ui.checkbox(&mut v.grid, "Grid");
                 ui.checkbox(&mut v.selection_edges, "Selection Edges");
+                ui.checkbox(&mut v.slices, "Slices");
                 ui.checkbox(&mut v.brush_preview, "Brush Preview");
                 ui.checkbox(&mut v.artboard_names, "Artboard Names");
             });
@@ -575,11 +577,22 @@ impl ChimpApp {
         egui::Panel::right("palette")
             .default_size(220.0)
             .show(ui, |ui| {
-                panels::palette(ui, &mut self.doc.editor);
-                ui.add_space(12.0);
-                let open = ui
-                    .add_enabled_ui(!modal, |ui| {
-                        panels::artboards(ui, &mut self.doc.editor, &mut self.doc.artboard_name)
+                let open = egui::ScrollArea::vertical()
+                    .show(ui, |ui| {
+                        panels::palette(ui, &mut self.doc.editor);
+                        ui.add_space(12.0);
+                        let open = ui
+                            .add_enabled_ui(!modal, |ui| {
+                                panels::artboards(
+                                    ui,
+                                    &mut self.doc.editor,
+                                    &mut self.doc.artboard_name,
+                                )
+                            })
+                            .inner;
+                        ui.add_space(12.0);
+                        ui.add_enabled_ui(!modal, |ui| panels::slices(ui, &mut self.doc.editor));
+                        open
                     })
                     .inner;
                 if open {

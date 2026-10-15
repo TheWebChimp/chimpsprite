@@ -1,5 +1,6 @@
 //! Diálogo "Export": formato, alcance, escala y opciones de spritesheet.
 
+use cs_io::engines;
 use cs_io::export::{self, JsonFormat, SheetLayout};
 use eframe::egui;
 
@@ -17,16 +18,38 @@ pub enum ExportFormat {
     Sheet,
     /// Todos los artboards en una sola imagen.
     Atlas,
+    /// Hoja + recurso `SpriteFrames` de Godot 4.
+    Godot,
+    /// Hoja + `.meta` de Unity con un sprite por frame.
+    Unity,
+    /// Hoja + atlas RON para Bevy.
+    Bevy,
 }
 
 impl ExportFormat {
-    const ALL: [ExportFormat; 5] = [
+    const ALL: [ExportFormat; 8] = [
         ExportFormat::Png,
         ExportFormat::PngSequence,
         ExportFormat::Gif,
         ExportFormat::Sheet,
         ExportFormat::Atlas,
+        ExportFormat::Godot,
+        ExportFormat::Unity,
+        ExportFormat::Bevy,
     ];
+
+    /// Formatos que arman una hoja con layout configurable.
+    fn uses_sheet(self) -> bool {
+        matches!(
+            self,
+            ExportFormat::Sheet | ExportFormat::Godot | ExportFormat::Unity | ExportFormat::Bevy
+        )
+    }
+
+    /// Formatos que pueden llevar normal map.
+    fn supports_normals(self) -> bool {
+        self.uses_sheet() || self == ExportFormat::Png
+    }
 
     fn label(self) -> &'static str {
         match self {
@@ -35,6 +58,9 @@ impl ExportFormat {
             ExportFormat::Gif => "Animated GIF",
             ExportFormat::Sheet => "Spritesheet + JSON",
             ExportFormat::Atlas => "Atlas of all artboards + JSON",
+            ExportFormat::Godot => "Godot 4 (SpriteFrames .tres)",
+            ExportFormat::Unity => "Unity (sliced sprites .meta)",
+            ExportFormat::Bevy => "Bevy (atlas .ron)",
         }
     }
 
@@ -63,6 +89,10 @@ pub struct ExportDialog {
     pub layout: SheetLayout,
     pub columns: u32,
     pub json: JsonFormat,
+    /// También exportar `<nombre>_n.png` con el normal map.
+    pub normal_map: bool,
+    /// Carpeta `res://` donde quedará la hoja en el proyecto de Godot.
+    pub godot_folder: String,
 }
 
 impl Default for ExportDialog {
@@ -74,6 +104,8 @@ impl Default for ExportDialog {
             layout: SheetLayout::Horizontal,
             columns: 4,
             json: JsonFormat::Hash,
+            normal_map: false,
+            godot_folder: "res://".into(),
         }
     }
 }
@@ -110,6 +142,38 @@ impl ExportDialog {
         let name = editor.artboard().name.clone();
         let stem = files::stem(file_name).to_string();
         let json_name = format!("{stem}.json");
+        let layout = match self.layout {
+            SheetLayout::Grid { .. } => SheetLayout::Grid {
+                columns: self.columns,
+            },
+            other => other,
+        };
+        let mut files = self.build_main(editor, file_name, &name, &stem, &json_name, layout)?;
+        if self.normal_map && self.format.supports_normals() {
+            let png = if self.format == ExportFormat::Png {
+                export::export_normal_png(sprite, editor.frame, self.scale)?
+            } else {
+                export::export_normal_sheet(sprite, layout, self.scale)?
+            };
+            files.push((format!("{stem}_n.png"), png));
+        }
+        Ok(files)
+    }
+
+    fn build_main(
+        &self,
+        editor: &Editor,
+        file_name: &str,
+        name: &str,
+        stem: &str,
+        json_name: &str,
+        layout: SheetLayout,
+    ) -> Result<Vec<(String, Vec<u8>)>, FileError> {
+        let sprite = editor.sprite();
+        let json_name = json_name.to_string();
+        let sheet_png = || -> Result<Vec<u8>, FileError> {
+            Ok(export::export_sheet(sprite, name, file_name, layout, self.scale, self.json)?.png)
+        };
         Ok(match self.format {
             ExportFormat::Png => vec![(
                 file_name.to_string(),
@@ -127,15 +191,32 @@ impl ExportDialog {
                     export::export_gif(sprite, from, to, self.scale)?,
                 )]
             }
+            ExportFormat::Godot => {
+                let folder = self.godot_folder.trim_end_matches('/');
+                let path = format!("{folder}/{file_name}");
+                let tres = engines::godot_sprite_frames(sprite, &path, layout, self.scale);
+                vec![
+                    (file_name.to_string(), sheet_png()?),
+                    (format!("{stem}.tres"), tres.into_bytes()),
+                ]
+            }
+            ExportFormat::Unity => {
+                let meta = engines::unity_meta(sprite, file_name, layout, self.scale);
+                vec![
+                    (file_name.to_string(), sheet_png()?),
+                    (format!("{file_name}.meta"), meta.into_bytes()),
+                ]
+            }
+            ExportFormat::Bevy => {
+                let ron = engines::bevy_atlas(sprite, file_name, layout, self.scale);
+                vec![
+                    (file_name.to_string(), sheet_png()?),
+                    (format!("{stem}.ron"), ron.into_bytes()),
+                ]
+            }
             ExportFormat::Sheet => {
-                let layout = match self.layout {
-                    SheetLayout::Grid { .. } => SheetLayout::Grid {
-                        columns: self.columns,
-                    },
-                    other => other,
-                };
                 let sheet =
-                    export::export_sheet(sprite, &name, file_name, layout, self.scale, self.json)?;
+                    export::export_sheet(sprite, name, file_name, layout, self.scale, self.json)?;
                 vec![
                     (file_name.to_string(), sheet.png),
                     (json_name, sheet.json.into_bytes()),
@@ -203,7 +284,7 @@ impl ExportDialog {
                             ui.radio_value(&mut self.gif_range, GifRange::Selection, "Selection");
                         });
                     }
-                    ExportFormat::Sheet => {
+                    format if format.uses_sheet() => {
                         ui.horizontal(|ui| {
                             ui.label("Layout");
                             ui.radio_value(&mut self.layout, SheetLayout::Horizontal, "Horizontal");
@@ -221,9 +302,33 @@ impl ExportDialog {
                                 widgets::number(ui, &mut self.columns, 1..=256, " cols");
                             }
                         });
-                        json_options(ui, &mut self.json);
+                        if format == ExportFormat::Sheet {
+                            json_options(ui, &mut self.json);
+                        }
+                        if format == ExportFormat::Godot {
+                            ui.horizontal(|ui| {
+                                ui.label("Godot folder");
+                                ui.text_edit_singleline(&mut self.godot_folder);
+                            });
+                        }
                     }
                     ExportFormat::Atlas => json_options(ui, &mut self.json),
+                    _ => {}
+                }
+                if self.format.supports_normals() {
+                    ui.checkbox(&mut self.normal_map, "Also export normal map (_n.png)")
+                        .on_hover_text("Lighting normals from the sprite's shape, for 2D lights in Godot/Unity/Bevy");
+                }
+                match self.format {
+                    ExportFormat::Godot => {
+                        ui.weak("Animations come from tags; durations become per-frame multipliers.");
+                    }
+                    ExportFormat::Unity => {
+                        ui.weak("One sprite per frame; pivots come from slices with a pivot.");
+                    }
+                    ExportFormat::Bevy => {
+                        ui.weak("Grid layout for TextureAtlasLayout::from_grid, plus animations and slices.");
+                    }
                     _ => {}
                 }
                 let sprite = editor.sprite();
@@ -303,6 +408,22 @@ mod tests {
         assert_eq!(names(&d, "walk.png"), vec!["walk_001.png", "walk_002.png"]);
         d.format = ExportFormat::Gif;
         assert_eq!(names(&d, "anim.gif"), vec!["anim.gif"]);
+        d.format = ExportFormat::Godot;
+        d.normal_map = true;
+        assert_eq!(
+            names(&d, "hero.png"),
+            vec!["hero.png", "hero.tres", "hero_n.png"]
+        );
+        d.format = ExportFormat::Unity;
+        assert_eq!(
+            names(&d, "hero.png"),
+            vec!["hero.png", "hero.png.meta", "hero_n.png"]
+        );
+        d.format = ExportFormat::Bevy;
+        d.normal_map = false;
+        assert_eq!(names(&d, "hero.png"), vec!["hero.png", "hero.ron"]);
+        let files = d.build(&editor, "hero.png").unwrap();
+        assert!(String::from_utf8_lossy(&files[1].1).contains("columns: 2"));
     }
 
     #[test]

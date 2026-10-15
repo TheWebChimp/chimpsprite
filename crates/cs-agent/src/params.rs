@@ -654,6 +654,12 @@ pub enum ExportKind {
     Sheet,
     /// All artboards in one PNG + JSON.
     Atlas,
+    /// Spritesheet PNG + Godot 4 SpriteFrames (.tres): one animation per tag.
+    Godot,
+    /// Spritesheet PNG + Unity .meta with one sprite per frame (pivots from slices).
+    Unity,
+    /// Spritesheet PNG + Bevy atlas (.ron): grid, animations and slices.
+    Bevy,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -685,6 +691,38 @@ pub struct Export {
     /// JSON "frames" as an array instead of a hash.
     #[serde(default)]
     pub json_array: bool,
+    /// Also write `<name>_n.png`: a normal map for 2D lighting (png, sheet, godot, unity, bevy).
+    #[serde(default)]
+    pub normal_map: bool,
+    /// Godot: `res://` folder where the sheet will live (default "res://").
+    pub godot_folder: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetSlice {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    /// Creates the slice or updates the one with this name.
+    pub name: String,
+    /// The rectangle applies from this frame on (default 0 = every frame).
+    #[serde(default)]
+    pub frame: usize,
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+    /// Pivot relative to the slice's top-left corner, e.g. [w/2, h] for the feet.
+    pub pivot: Option<[i32; 2]>,
+    pub color: Option<String>,
+    /// Free text exported with the slice (e.g. "damage=3").
+    pub text: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RemoveSlice {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub name: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

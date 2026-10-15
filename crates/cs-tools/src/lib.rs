@@ -10,6 +10,7 @@ mod pencil;
 mod rng;
 mod select;
 mod shape;
+mod slice;
 mod spray;
 pub mod text;
 
@@ -24,6 +25,7 @@ pub use move_tool::MoveTool;
 pub use pencil::{Eraser, Pencil};
 pub use select::{Lasso, MagicWand, Marquee, MarqueeShape, PolygonLasso};
 pub use shape::{ShapeKind, ShapeTool};
+pub use slice::{SLICE_COLOR, SliceTool};
 pub use spray::Spray;
 
 use cs_commands::Command;
@@ -54,6 +56,8 @@ pub struct ToolContext<'a> {
     pub spray_speed: u32,
     pub gradient_shape: GradientShape,
     pub dither: Dither,
+    /// Slice seleccionado (índice en `sprite.slices`) para moverlo o redimensionarlo.
+    pub selected_slice: Option<usize>,
 }
 
 impl ToolContext<'_> {
@@ -177,6 +181,7 @@ pub(crate) mod test_util {
             spray_speed: 32,
             gradient_shape: Default::default(),
             dither: Default::default(),
+            selected_slice: None,
         }
     }
 
