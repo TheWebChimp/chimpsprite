@@ -773,11 +773,15 @@ impl CanvasView {
                 let sprite = &artboard.sprite;
                 let frame = editor.frame_of(artboard.id);
                 let onion = artboard.id == editor.active && editor.onion_enabled && !editor.playing;
-                let pixels = if onion {
+                let mut pixels = if onion {
                     cs_render::render_onion(sprite, frame, &editor.onion)
                 } else {
                     cs_render::render_frame(sprite, frame)
                 };
+                // Editando una máscara, lo que oculta se ve en rojo.
+                if artboard.id == editor.active && editor.editing_mask() {
+                    cs_render::mask_overlay(sprite, editor.layer, &mut pixels);
+                }
                 let bytes: Vec<u8> = pixels.iter().flat_map(|c| [c.r, c.g, c.b, c.a]).collect();
                 let size = [sprite.width as usize, sprite.height as usize];
                 let image = ColorImage::from_rgba_unmultiplied(size, &bytes);

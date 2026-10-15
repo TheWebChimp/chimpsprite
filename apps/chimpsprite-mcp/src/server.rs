@@ -135,7 +135,9 @@ impl ChimpServer {
         self.with(|s| s.add_layer(p))
     }
 
-    #[tool(description = "Change a layer's name, visibility, lock, opacity (0-255) or blend mode.")]
+    #[tool(
+        description = "Change a layer's name, visibility, lock, opacity (0-255), blend mode, clipping mask (clip) or mask on/off (mask_enabled)."
+    )]
     fn set_layer(&self, Parameters(p): Parameters<SetLayer>) -> CallToolResult {
         self.with(|s| s.set_layer(p))
     }
@@ -148,6 +150,23 @@ impl ChimpServer {
     #[tool(description = "Move a layer above or below another, or into a group.")]
     fn move_layer(&self, Parameters(p): Parameters<MoveLayer>) -> CallToolResult {
         self.with(|s| s.move_layer(p))
+    }
+
+    #[tool(
+        description = "Add a layer mask (hides parts of a layer without erasing). Then paint it with on_mask: true on draw_* / fill / gradient: white reveals, black hides."
+    )]
+    fn add_mask(&self, Parameters(p): Parameters<AddMask>) -> CallToolResult {
+        self.with(|s| s.add_mask(p))
+    }
+
+    #[tool(description = "Delete a layer mask (the layer shows fully again).")]
+    fn remove_mask(&self, Parameters(p): Parameters<LayerOnly>) -> CallToolResult {
+        self.with(|s| s.remove_mask(p))
+    }
+
+    #[tool(description = "Apply a layer mask to the layer's pixels in every frame and remove it.")]
+    fn apply_mask(&self, Parameters(p): Parameters<LayerOnly>) -> CallToolResult {
+        self.with(|s| s.apply_mask(p))
     }
 
     // --- Frames, tags y cels ---

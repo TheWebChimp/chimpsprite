@@ -7,6 +7,7 @@ use eframe::egui::{
 };
 
 use crate::editor::Editor;
+use crate::mask_ops::NewMask;
 use crate::{theme, widgets};
 
 const ROW_H: f32 = 22.0;
@@ -454,7 +455,65 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
         );
         x += 14.0;
     }
-    let name_rect = Rect::from_min_max(pos2(x, row.top()), pos2(left.right(), row.bottom()));
+    // Recortadas: sangría con flecha hacia la capa base.
+    if layer.clip {
+        let stroke = Stroke::new(1.5, theme::ACCENT);
+        let (top, mid) = (row.top() + 4.0, row.center().y + 1.0);
+        let (x0, x1) = (x + 3.0, x + 10.0);
+        painter.line_segment([pos2(x0, top), pos2(x0, mid)], stroke);
+        painter.line_segment([pos2(x0, mid), pos2(x1, mid)], stroke);
+        painter.line_segment([pos2(x1 - 3.0, mid - 3.0), pos2(x1, mid)], stroke);
+        painter.line_segment([pos2(x1 - 3.0, mid + 3.0), pos2(x1, mid)], stroke);
+        x += 14.0;
+    }
+    // Miniatura de la máscara: clic para pintarla (o volver a la capa).
+    let mut right = left.right();
+    if let Some(mask) = &layer.mask {
+        let chip =
+            Rect::from_center_size(pos2(left.right() - 12.0, row.center().y), vec2(16.0, 14.0));
+        right = chip.left() - 2.0;
+        let editing = active && editor.edit_mask;
+        let response = ui
+            .interact(chip, ui.id().with(("mask", id)), Sense::click())
+            .on_hover_text(if editing {
+                "Editing the mask (click to edit the layer)"
+            } else {
+                "Layer mask (click to paint it)"
+            });
+        painter.rect_filled(chip, 2.0, Color32::from_gray(40));
+        painter.rect_filled(
+            Rect::from_min_max(chip.min, pos2(chip.center().x, chip.max.y)).shrink(2.0),
+            0.0,
+            Color32::WHITE,
+        );
+        painter.rect_filled(
+            Rect::from_min_max(pos2(chip.center().x, chip.min.y), chip.max).shrink(2.0),
+            0.0,
+            Color32::BLACK,
+        );
+        if !mask.enabled {
+            painter.line_segment(
+                [chip.left_bottom(), chip.right_top()],
+                Stroke::new(1.5, Color32::from_rgb(230, 40, 60)),
+            );
+        }
+        painter.rect_stroke(
+            chip,
+            2.0,
+            Stroke::new(
+                if editing { 2.0 } else { 1.0 },
+                if editing { theme::ACCENT } else { theme::LABEL },
+            ),
+            StrokeKind::Outside,
+        );
+        if response.clicked() {
+            let editing_now = editor.layer == id && editor.edit_mask;
+            editor.select_layer(id);
+            editor.edit_mask = !editing_now;
+        }
+        response.context_menu(|ui| mask_menu(ui, editor, id));
+    }
+    let name_rect = Rect::from_min_max(pos2(x, row.top()), pos2(right, row.bottom()));
     let name_response = ui.interact(
         name_rect,
         ui.id().with(("name", id)),
@@ -538,6 +597,8 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
             editor.remove_layer();
             ui.close();
         }
+        ui.separator();
+        mask_menu(ui, editor, id);
     });
 
     // Cels.
@@ -654,6 +715,88 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
 }
 
 /// Dónde cae una capa soltada sobre `row` según la altura del puntero.
+/// Acciones de máscara y recorte de una capa (menú contextual y menú Layer).
+pub(crate) fn mask_menu(ui: &mut egui::Ui, editor: &mut Editor, id: LayerId) {
+    let Some(layer) = editor.sprite().layer(id).cloned() else {
+        return;
+    };
+    match &layer.mask {
+        None => {
+            ui.menu_button("Add Layer Mask", |ui| {
+                if ui.button("Reveal All").clicked() {
+                    editor.add_mask(id, NewMask::RevealAll);
+                    ui.close();
+                }
+                if ui.button("Hide All").clicked() {
+                    editor.add_mask(id, NewMask::HideAll);
+                    ui.close();
+                }
+                let has_selection = editor.selection.is_some();
+                if ui
+                    .add_enabled(has_selection, egui::Button::new("From Selection"))
+                    .clicked()
+                {
+                    editor.add_mask(id, NewMask::FromSelection);
+                    ui.close();
+                }
+            });
+        }
+        Some(mask) => {
+            let editing = editor.layer == id && editor.edit_mask;
+            if ui
+                .button(if editing {
+                    "Edit Layer Pixels"
+                } else {
+                    "Edit Mask"
+                })
+                .clicked()
+            {
+                editor.select_layer(id);
+                editor.edit_mask = !editing;
+                ui.close();
+            }
+            if ui
+                .button(if mask.enabled {
+                    "Disable Mask"
+                } else {
+                    "Enable Mask"
+                })
+                .clicked()
+            {
+                editor.toggle_mask_enabled(id);
+                ui.close();
+            }
+            if ui.button("Mask to Selection").clicked() {
+                editor.mask_to_selection(id);
+                ui.close();
+            }
+            if ui
+                .add_enabled(
+                    layer.kind == LayerKind::Image,
+                    egui::Button::new("Apply Mask"),
+                )
+                .clicked()
+            {
+                editor.apply_mask(id);
+                ui.close();
+            }
+            if ui.button("Delete Mask").clicked() {
+                editor.delete_mask(id);
+                ui.close();
+            }
+        }
+    }
+    let mut clip = layer.clip;
+    let toggle = egui::Checkbox::new(&mut clip, "Clipping Mask");
+    if ui
+        .add(toggle)
+        .on_hover_text("Show this layer only where the layer below has pixels (Ctrl+Alt+G)")
+        .clicked()
+    {
+        editor.toggle_clip(id);
+    }
+}
+
 fn drop_kind(row: Rect, pointer: Pos2, target: &cs_core::Layer) -> LayerDrop {
     let t = (pointer.y - row.top()) / row.height();
     if target.kind == LayerKind::Group && (0.3..0.7).contains(&t) {

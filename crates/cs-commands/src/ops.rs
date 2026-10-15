@@ -1,6 +1,9 @@
 //! Operaciones compuestas: arman `Command`s a partir del estado actual del sprite.
 
-use cs_core::{Cel, ImageId, Layer, LayerId, LayerKind, Sprite};
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use cs_core::{Cel, ImageId, Layer, LayerId, LayerKind, LayerMask, Mask, PixelValue, Sprite};
 
 use crate::Command;
 
@@ -107,6 +110,92 @@ pub fn duplicate_frame(sprite: &Sprite, index: usize, linked: bool) -> Option<Co
         });
     }
     Some(Command::Batch(cmds))
+}
+
+/// Máscara nueva del tamaño del lienzo: todo visible, todo oculto, o visible solo en `selection`.
+pub fn new_mask(sprite: &Sprite, hide_all: bool, selection: Option<&Mask>) -> LayerMask {
+    let (w, h) = (sprite.width, sprite.height);
+    match selection {
+        Some(sel) => {
+            let mut mask = LayerMask::filled(w, h, 0);
+            let data = Arc::make_mut(&mut mask.data);
+            for (x, y) in sel.points() {
+                data[(y as u32 * w + x as u32) as usize] = 255;
+            }
+            mask
+        }
+        None => LayerMask::filled(w, h, if hide_all { 0 } else { 255 }),
+    }
+}
+
+/// Aplica la máscara de una capa de imagen a sus píxeles (todos los frames) y la quita.
+/// Los cels vinculados siguen compartiendo imagen.
+pub fn apply_mask(sprite: &Sprite, id: LayerId) -> Option<Command> {
+    let layer = sprite.layer(id)?;
+    let mask = layer.mask.as_ref()?;
+    if layer.kind != LayerKind::Image {
+        return None;
+    }
+    let mut cmds = Vec::new();
+    let mut next = sprite.next_image_id().0;
+    let mut done: HashMap<(ImageId, (i32, i32)), ImageId> = HashMap::new();
+    for frame in 0..sprite.frames.len() {
+        let Some(cel) = sprite.cel(id, frame).copied() else {
+            continue;
+        };
+        let new_id = match done.get(&(cel.image, cel.position)) {
+            Some(&new_id) => new_id,
+            None => {
+                let Some(image) = sprite.image(cel.image) else {
+                    continue;
+                };
+                let mut out = cs_core::Image::clone(image);
+                for iy in 0..image.height() {
+                    for ix in 0..image.width() {
+                        let (x, y) = (cel.position.0 + ix as i32, cel.position.1 + iy as i32);
+                        let m = mask.get(x, y) as u32;
+                        let value = match image.get(ix, iy).expect("in bounds") {
+                            PixelValue::Rgba(c) => PixelValue::Rgba(cs_core::Rgba {
+                                a: ((c.a as u32 * m + 127) / 255) as u8,
+                                ..c
+                            }),
+                            PixelValue::Index(_) if m < 128 => sprite.color_mode.transparent(),
+                            v => v,
+                        };
+                        out.set(ix, iy, value).expect("same mode");
+                    }
+                }
+                let new_id = ImageId(next);
+                next += 1;
+                cmds.push(Command::SetImage {
+                    id: new_id,
+                    image: Some(Arc::new(out)),
+                });
+                done.insert((cel.image, cel.position), new_id);
+                new_id
+            }
+        };
+        cmds.push(Command::SetCel {
+            layer: id,
+            frame,
+            cel: Some(Cel {
+                image: new_id,
+                ..cel
+            }),
+        });
+    }
+    cmds.push(Command::SetLayerMask { id, mask: None });
+    Some(Command::Batch(cmds))
+}
+
+/// Selección con lo que deja ver la máscara (valor ≥ 128).
+pub fn mask_to_selection(sprite: &Sprite, id: LayerId) -> Option<Mask> {
+    let mask = sprite.layer(id)?.mask.as_ref()?;
+    let (w, h) = (sprite.width as i32, sprite.height as i32);
+    let points = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .filter(|&(x, y)| mask.get(x, y) >= 128);
+    Some(Mask::from_points(sprite.width, sprite.height, points))
 }
 
 /// Vincula el cel `(layer, frame)` al de `(layer, source)`: pasan a compartir imagen.
@@ -393,6 +482,46 @@ mod tests {
             .unwrap();
         assert!(!is_linked(&s, LayerId(1), 0));
         assert_eq!(unlink_cel(&s, LayerId(1), 1), None);
+    }
+
+    #[test]
+    fn new_apply_and_select_masks() {
+        let mut s = Sprite::new(4, 1, ColorMode::Rgba);
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: (0..4).map(|x| (x, 0, red)).collect(),
+        }
+        .apply(&mut s)
+        .unwrap();
+        duplicate_frame(&s, 0, true).unwrap().apply(&mut s).unwrap();
+        let sel = Mask::from_rect(4, 1, (1, 0), (2, 0));
+        let mask = new_mask(&s, false, Some(&sel));
+        assert_eq!(
+            (mask.get(0, 0), mask.get(1, 0), mask.get(9, 9)),
+            (0, 255, 0)
+        );
+        assert_eq!(new_mask(&s, true, None).get(0, 0), 0);
+        Command::SetLayerMask {
+            id: LayerId(1),
+            mask: Some(mask),
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!(mask_to_selection(&s, LayerId(1)).unwrap(), sel);
+        let before = s.clone();
+        let inv = apply_mask(&s, LayerId(1)).unwrap().apply(&mut s).unwrap();
+        assert!(s.layers[0].mask.is_none());
+        assert_eq!(
+            s.pixel(LayerId(1), 1, 0, 0),
+            PixelValue::Rgba(Rgba::new(255, 0, 0, 0))
+        );
+        assert_eq!(s.pixel(LayerId(1), 0, 1, 0), red);
+        assert!(is_linked(&s, LayerId(1), 1), "links survive");
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        assert!(apply_mask(&s, LayerId(9)).is_none());
     }
 
     #[test]

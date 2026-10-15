@@ -3,7 +3,9 @@
 use std::collections::HashSet;
 use std::io::{Cursor, Read, Write};
 
-use cs_core::{Artboard, ArtboardId, Document, Guide, Symmetry};
+use std::sync::Arc;
+
+use cs_core::{Artboard, ArtboardId, Document, Guide, LayerMask, Sprite, Symmetry};
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -33,6 +35,91 @@ struct Entry {
     guides: Vec<Guide>,
     #[serde(default)]
     symmetry: Symmetry,
+    /// Datos de capa que `.aseprite` no guarda (máscaras y recortes), por índice de capa.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    layers: Vec<LayerExtra>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct LayerExtra {
+    index: usize,
+    #[serde(default)]
+    clip: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mask: Option<MaskEntry>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct MaskEntry {
+    position: [i32; 2],
+    width: u32,
+    height: u32,
+    default: u8,
+    enabled: bool,
+    /// Bytes crudos (un valor por píxel, fila por fila) dentro del zip.
+    file: String,
+}
+
+/// Extras de cada capa con máscara o recorte, y los bytes de sus máscaras.
+fn layer_extras(artboard: &Artboard) -> Vec<(LayerExtra, Option<Arc<Vec<u8>>>)> {
+    artboard
+        .sprite
+        .layers
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.clip || l.mask.is_some())
+        .map(|(index, l)| {
+            let mask = l.mask.as_ref().map(|m| MaskEntry {
+                position: [m.position.0, m.position.1],
+                width: m.width,
+                height: m.height,
+                default: m.default,
+                enabled: m.enabled,
+                file: format!("masks/{}/{index}.bin", artboard.id.0),
+            });
+            let data = l.mask.as_ref().map(|m| m.data.clone());
+            (
+                LayerExtra {
+                    index,
+                    clip: l.clip,
+                    mask,
+                },
+                data,
+            )
+        })
+        .collect()
+}
+
+fn apply_extras(
+    zip: &mut ZipArchive<Cursor<&[u8]>>,
+    sprite: &mut Sprite,
+    extras: Vec<LayerExtra>,
+) -> Result<()> {
+    for extra in extras {
+        let count = sprite.layers.len();
+        let layer = sprite.layers.get_mut(extra.index).ok_or_else(|| {
+            IoError::Corrupt(format!(
+                "layer {} out of range ({count} layers)",
+                extra.index
+            ))
+        })?;
+        layer.clip = extra.clip;
+        if let Some(m) = extra.mask {
+            let data = read_entry(zip, &m.file)?;
+            if data.len() != (m.width as usize) * (m.height as usize) {
+                return Err(IoError::Corrupt(format!("{}: wrong mask size", m.file)));
+            }
+            layer.mask = Some(LayerMask {
+                position: (m.position[0], m.position[1]),
+                width: m.width,
+                height: m.height,
+                data: Arc::new(data),
+                default: m.default,
+                enabled: m.enabled,
+            });
+        }
+    }
+    Ok(())
 }
 
 fn zip_error(e: impl std::fmt::Display) -> IoError {
@@ -47,6 +134,15 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
         let file = format!("artboards/{}.aseprite", artboard.id.0);
         zip.start_file(file.as_str(), options).map_err(zip_error)?;
         zip.write_all(&aseprite::write(&artboard.sprite))?;
+        let mut layers = Vec::new();
+        for (extra, data) in layer_extras(artboard) {
+            if let (Some(mask), Some(data)) = (&extra.mask, data) {
+                zip.start_file(mask.file.as_str(), options)
+                    .map_err(zip_error)?;
+                zip.write_all(&data)?;
+            }
+            layers.push(extra);
+        }
         entries.push(Entry {
             id: artboard.id.0,
             name: artboard.name.clone(),
@@ -54,6 +150,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
             file,
             guides: artboard.guides.clone(),
             symmetry: artboard.symmetry,
+            layers,
         });
     }
     let manifest = Manifest {
@@ -103,7 +200,8 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
                 entry.id
             )));
         }
-        let (sprite, sub) = aseprite::read(&read_entry(&mut zip, &entry.file)?)?;
+        let (mut sprite, sub) = aseprite::read(&read_entry(&mut zip, &entry.file)?)?;
+        apply_extras(&mut zip, &mut sprite, entry.layers)?;
         for w in sub.warnings {
             report.warn(format!("{}: {w}", entry.name));
         }
@@ -124,6 +222,25 @@ mod tests {
     use cs_core::*;
 
     use super::*;
+
+    #[test]
+    fn masks_and_clipping_roundtrip() {
+        let mut d = doc();
+        let mut mask = LayerMask::filled(8, 8, 255);
+        mask.data = std::sync::Arc::new((0..64).map(|i| (i * 4) as u8).collect());
+        mask.position = (-1, 2);
+        mask.enabled = false;
+        let sprite = &mut d.artboards[0].sprite;
+        sprite.layers[0].mask = Some(mask);
+        let mut top = Layer::new_image(LayerId(2), "top");
+        top.clip = true;
+        sprite.layers.push(top);
+        let (back, _) = read(&write(&d).unwrap()).unwrap();
+        let layers = &back.artboards[0].sprite.layers;
+        assert_eq!(layers[0].mask, d.artboards[0].sprite.layers[0].mask);
+        assert!(layers[1].clip && !layers[0].clip);
+        assert!(back.artboards[1].sprite.layers[0].mask.is_none());
+    }
 
     fn doc() -> Document {
         let mut chimp = Sprite::new(8, 8, ColorMode::Rgba);

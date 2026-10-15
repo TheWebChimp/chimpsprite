@@ -44,6 +44,13 @@ pub struct Layer {
     pub locked: bool,
     pub opacity: u8,
     pub blend: BlendMode,
+    /// Máscara de capa: oculta partes de la capa (o del grupo) sin borrarlas.
+    #[serde(default)]
+    pub mask: Option<LayerMask>,
+    /// Máscara de recorte: la capa solo se ve donde hay píxeles en la capa base (la primera de
+    /// abajo, del mismo padre, que no recorta).
+    #[serde(default)]
+    pub clip: bool,
 }
 
 impl Layer {
@@ -57,6 +64,74 @@ impl Layer {
             locked: false,
             opacity: 255,
             blend: BlendMode::Normal,
+            mask: None,
+            clip: false,
+        }
+    }
+}
+
+/// Máscara de capa en escala de grises: 255 muestra, 0 oculta. Cubre un rectángulo del lienzo;
+/// fuera de él vale `default`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LayerMask {
+    pub position: (i32, i32),
+    pub width: u32,
+    pub height: u32,
+    pub data: Arc<Vec<u8>>,
+    pub default: u8,
+    /// Desactivada, la máscara no afecta (pero se conserva).
+    pub enabled: bool,
+}
+
+impl LayerMask {
+    /// Máscara del tamaño del lienzo con un solo valor.
+    pub fn filled(width: u32, height: u32, value: u8) -> Self {
+        Self {
+            position: (0, 0),
+            width,
+            height,
+            data: Arc::new(vec![value; (width * height) as usize]),
+            default: value,
+            enabled: true,
+        }
+    }
+
+    /// Valor guardado en `(x, y)` del lienzo (sin considerar si está activa).
+    pub fn get(&self, x: i32, y: i32) -> u8 {
+        let (lx, ly) = (x - self.position.0, y - self.position.1);
+        if lx < 0 || ly < 0 || lx >= self.width as i32 || ly >= self.height as i32 {
+            return self.default;
+        }
+        self.data[(ly as u32 * self.width + lx as u32) as usize]
+    }
+
+    /// Lo que la máscara deja ver en `(x, y)`: 255 si está desactivada.
+    pub fn value(&self, x: i32, y: i32) -> u8 {
+        if self.enabled { self.get(x, y) } else { 255 }
+    }
+
+    /// Copia que también cubre el rectángulo `(x0, y0)..(x1, y1)` (máximo exclusivo).
+    pub fn grown_to(&self, x0: i32, y0: i32, x1: i32, y1: i32) -> Self {
+        let (ox0, oy0) = self.position;
+        let (ox1, oy1) = (ox0 + self.width as i32, oy0 + self.height as i32);
+        let (nx0, ny0, nx1, ny1) = (x0.min(ox0), y0.min(oy0), x1.max(ox1), y1.max(oy1));
+        if (nx0, ny0, nx1, ny1) == (ox0, oy0, ox1, oy1) {
+            return self.clone();
+        }
+        let (w, h) = ((nx1 - nx0) as u32, (ny1 - ny0) as u32);
+        let mut data = vec![self.default; (w * h) as usize];
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let (gx, gy) = ((x as i32 + ox0 - nx0) as u32, (y as i32 + oy0 - ny0) as u32);
+                data[(gy * w + gx) as usize] = self.data[(y * self.width + x) as usize];
+            }
+        }
+        Self {
+            position: (nx0, ny0),
+            width: w,
+            height: h,
+            data: Arc::new(data),
+            ..self.clone()
         }
     }
 }
@@ -265,8 +340,83 @@ impl Sprite {
     }
 
     /// Primer tag que contiene `frame`.
+    /// Capa base de una capa que recorta: la primera de abajo con el mismo padre que no recorta.
+    pub fn clip_base(&self, id: LayerId) -> Option<LayerId> {
+        let layer = self.layer(id)?;
+        if !layer.clip {
+            return None;
+        }
+        let index = self.layer_index(id)?;
+        self.layers[..index]
+            .iter()
+            .rev()
+            .filter(|l| l.parent == layer.parent)
+            .find(|l| !l.clip)
+            .map(|l| l.id)
+    }
+
+    /// Producto de las máscaras de la capa y sus grupos ancestros en `(x, y)` (0–255).
+    pub fn mask_value(&self, id: LayerId, x: i32, y: i32) -> u8 {
+        let mut value = 255u32;
+        let mut current = self.layer(id);
+        while let Some(layer) = current {
+            if let Some(mask) = &layer.mask {
+                value = (value * mask.value(x, y) as u32 + 127) / 255;
+            }
+            current = layer.parent.and_then(|p| self.layer(p));
+        }
+        value as u8
+    }
+
     pub fn tag_at(&self, frame: usize) -> Option<&Tag> {
         self.tags.iter().find(|t| t.contains(frame))
+    }
+}
+
+#[cfg(test)]
+mod mask_tests {
+    use super::*;
+
+    #[test]
+    fn layer_mask_values_and_growth() {
+        let mut m = LayerMask::filled(2, 2, 255);
+        m.data = Arc::new(vec![0, 255, 128, 255]);
+        assert_eq!((m.get(0, 0), m.get(0, 1), m.get(5, 5)), (0, 128, 255));
+        m.enabled = false;
+        assert_eq!(m.value(0, 0), 255);
+        m.enabled = true;
+        let g = m.grown_to(-1, 0, 2, 3);
+        assert_eq!((g.position, g.width, g.height), ((-1, 0), 3, 3));
+        assert_eq!((g.get(0, 0), g.get(0, 1), g.get(-1, 2)), (0, 128, 255));
+        assert_eq!(m.grown_to(0, 0, 1, 1), m);
+    }
+
+    #[test]
+    fn clip_base_and_nested_masks() {
+        let mut s = Sprite::new(2, 2, ColorMode::Rgba);
+        let mut group = Layer::new_image(LayerId(2), "g");
+        group.kind = LayerKind::Group;
+        group.mask = Some(LayerMask::filled(2, 2, 128));
+        let mut base = Layer::new_image(LayerId(3), "base");
+        base.parent = Some(LayerId(2));
+        let mut shade = Layer::new_image(LayerId(4), "shade");
+        shade.parent = Some(LayerId(2));
+        shade.clip = true;
+        shade.mask = Some(LayerMask::filled(2, 2, 128));
+        let mut light = Layer::new_image(LayerId(5), "light");
+        light.parent = Some(LayerId(2));
+        light.clip = true;
+        s.layers.extend([group, base, shade, light]);
+        assert_eq!(s.clip_base(LayerId(4)), Some(LayerId(3)));
+        assert_eq!(
+            s.clip_base(LayerId(5)),
+            Some(LayerId(3)),
+            "stacked clips share the base"
+        );
+        assert_eq!(s.clip_base(LayerId(3)), None);
+        assert_eq!(s.mask_value(LayerId(3), 0, 0), 128);
+        assert_eq!(s.mask_value(LayerId(4), 0, 0), 64);
+        assert_eq!(s.mask_value(LayerId(1), 0, 0), 255);
     }
 }
 

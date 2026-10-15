@@ -1,6 +1,8 @@
 //! Compositor CPU de referencia: capas visibles → buffer RGBA.
 
-use cs_core::{BlendMode, ColorMode, Layer, LayerKind, PixelValue, Rgba, Sprite};
+use std::sync::Arc;
+
+use cs_core::{BlendMode, ColorMode, Image, ImageId, Layer, LayerKind, PixelValue, Rgba, Sprite};
 
 /// Convierte un valor de píxel a color, resolviendo la paleta en modo indexado.
 pub fn resolve(sprite: &Sprite, value: PixelValue) -> Rgba {
@@ -90,6 +92,122 @@ fn effective_opacity(sprite: &Sprite, layer: &Layer) -> Option<u32> {
     Some(opacity)
 }
 
+/// ¿La capa necesita máscara o recorte al componer?
+fn is_masked(sprite: &Sprite, layer: &Layer) -> bool {
+    if layer.clip {
+        return true;
+    }
+    let mut current = Some(layer);
+    while let Some(l) = current {
+        if l.mask.as_ref().is_some_and(|m| m.enabled) {
+            return true;
+        }
+        current = l.parent.and_then(|p| sprite.layer(p));
+    }
+    false
+}
+
+/// Alfa (0–255) de la capa base de un recorte en `(x, y)`: sus píxeles por su máscara. Una base
+/// oculta oculta también a las capas que recorta; un grupo como base no recorta.
+fn base_alpha(sprite: &Sprite, base: &Layer, frame: usize, x: i32, y: i32) -> u32 {
+    if effective_opacity(sprite, base).is_none() {
+        return 0;
+    }
+    if base.kind == LayerKind::Group {
+        return 255;
+    }
+    let pixel = resolve(sprite, sprite.pixel(base.id, frame, x, y)).a as u32;
+    mul(pixel, sprite.mask_value(base.id, x, y) as u32)
+}
+
+/// Cuánto deja ver la máscara (y el recorte) de la capa en `(x, y)`: 0–255.
+pub fn coverage(sprite: &Sprite, layer: &Layer, frame: usize, x: i32, y: i32) -> u32 {
+    let mut a = sprite.mask_value(layer.id, x, y) as u32;
+    if let Some(base) = sprite.clip_base(layer.id).and_then(|b| sprite.layer(b)) {
+        a = mul(a, base_alpha(sprite, base, frame, x, y));
+    }
+    a
+}
+
+/// Nivel de máscara para pintar con un color: blanco muestra, negro (o transparente) oculta.
+pub fn mask_level(c: Rgba) -> u8 {
+    let luma = (c.r as u32 * 299 + c.g as u32 * 587 + c.b as u32 * 114) / 1000;
+    ((luma * c.a as u32 + 127) / 255) as u8
+}
+
+/// Tiñe de rojo lo que oculta la máscara de `layer` (para editarla viéndola).
+pub fn mask_overlay(sprite: &Sprite, layer: cs_core::LayerId, pixels: &mut [Rgba]) {
+    let Some(mask) = sprite.layer(layer).and_then(|l| l.mask.as_ref()) else {
+        return;
+    };
+    let w = sprite.width as i32;
+    for (i, px) in pixels.iter_mut().enumerate() {
+        let (x, y) = (i as i32 % w, i as i32 / w);
+        let hidden = 255 - mask.get(x, y);
+        if hidden > 0 {
+            *px = blend_over(*px, Rgba::rgb(230, 40, 60), hidden / 2);
+        }
+    }
+}
+
+/// Copia del sprite con las máscaras y recortes aplicados a los píxeles (para formatos que no
+/// los soportan). `None` si no hay nada que aplicar. Los cels afectados dejan de estar vinculados.
+pub fn bake_masks(sprite: &Sprite) -> Option<Sprite> {
+    let affected: Vec<&Layer> = sprite
+        .layers
+        .iter()
+        .filter(|l| l.kind == LayerKind::Image && is_masked(sprite, l))
+        .collect();
+    let has_masks = sprite.layers.iter().any(|l| l.mask.is_some() || l.clip);
+    if !has_masks {
+        return None;
+    }
+    let mut out = sprite.clone();
+    let mut next = sprite.next_image_id().0;
+    for layer in affected {
+        for frame in 0..sprite.frames.len() {
+            let Some(cel) = sprite.cel(layer.id, frame) else {
+                continue;
+            };
+            let Some(image) = sprite.image(cel.image) else {
+                continue;
+            };
+            let mut baked = Image::clone(image);
+            for iy in 0..image.height() {
+                for ix in 0..image.width() {
+                    let (x, y) = (cel.position.0 + ix as i32, cel.position.1 + iy as i32);
+                    let cov = coverage(sprite, layer, frame, x, y);
+                    let value = image.get(ix, iy).expect("in bounds");
+                    let new = match (value, sprite.color_mode) {
+                        (PixelValue::Rgba(c), _) => PixelValue::Rgba(Rgba {
+                            a: mul(c.a as u32, cov) as u8,
+                            ..c
+                        }),
+                        (PixelValue::Index(_), mode) if cov < 128 => mode.transparent(),
+                        (v, _) => v,
+                    };
+                    baked.set(ix, iy, new).expect("same mode");
+                }
+            }
+            let id = ImageId(next);
+            next += 1;
+            out.images.insert(id, Arc::new(baked));
+            out.cels
+                .get_mut(&(layer.id, frame))
+                .expect("cel exists")
+                .image = id;
+        }
+    }
+    for layer in &mut out.layers {
+        layer.mask = None;
+        layer.clip = false;
+    }
+    // Quita imágenes que ya no usa ningún cel.
+    let used: std::collections::HashSet<ImageId> = out.cels.values().map(|c| c.image).collect();
+    out.images.retain(|id, _| used.contains(id));
+    Some(out)
+}
+
 /// Compone el frame en un buffer de `width * height` píxeles, fila por fila.
 pub fn render_frame(sprite: &Sprite, frame: usize) -> Vec<Rgba> {
     let (w, h) = (sprite.width as i32, sprite.height as i32);
@@ -105,6 +223,7 @@ pub fn render_frame(sprite: &Sprite, frame: usize) -> Vec<Rgba> {
             continue;
         };
         let opacity = mul(layer_opacity, cel.opacity as u32);
+        let masked = is_masked(sprite, layer);
         for iy in 0..image.height() {
             let y = cel.position.1 + iy as i32;
             if y < 0 || y >= h {
@@ -116,7 +235,11 @@ pub fn render_frame(sprite: &Sprite, frame: usize) -> Vec<Rgba> {
                     continue;
                 }
                 let src = resolve(sprite, image.get(ix, iy).expect("in bounds"));
-                let alpha = mul(src.a as u32, opacity) as u8;
+                let mut alpha = mul(src.a as u32, opacity);
+                if masked && alpha > 0 {
+                    alpha = mul(alpha, coverage(sprite, layer, frame, x, y));
+                }
+                let alpha = alpha as u8;
                 let i = (y * w + x) as usize;
                 out[i] = blend(out[i], src, alpha, layer.blend);
             }
@@ -149,8 +272,11 @@ pub fn composite_pixel(sprite: &Sprite, frame: usize, x: i32, y: i32) -> Rgba {
             continue;
         };
         let src = resolve(sprite, value);
-        let alpha = mul(src.a as u32, mul(layer_opacity, cel.opacity as u32)) as u8;
-        out = blend(out, src, alpha, layer.blend);
+        let mut alpha = mul(src.a as u32, mul(layer_opacity, cel.opacity as u32));
+        if is_masked(sprite, layer) {
+            alpha = mul(alpha, coverage(sprite, layer, frame, x, y));
+        }
+        out = blend(out, src, alpha as u8, layer.blend);
     }
     out
 }
@@ -219,6 +345,101 @@ mod tests {
     use super::*;
     use cs_commands::Command;
     use cs_core::*;
+
+    fn dot(s: &mut Sprite, layer: u32, x: i32, y: i32, c: Rgba) {
+        draw(s, layer, vec![(x, y, PixelValue::Rgba(c))]);
+    }
+
+    #[test]
+    fn layer_masks_hide_and_can_be_disabled() {
+        let mut s = Sprite::new(2, 1, ColorMode::Rgba);
+        let red = Rgba::rgb(255, 0, 0);
+        dot(&mut s, 1, 0, 0, red);
+        dot(&mut s, 1, 1, 0, red);
+        let mut mask = LayerMask::filled(2, 1, 255);
+        mask.data = std::sync::Arc::new(vec![0, 128]);
+        s.layers[0].mask = Some(mask);
+        let out = render_frame(&s, 0);
+        assert_eq!(out[0].a, 0);
+        assert_eq!(out[1].a, 128);
+        assert_eq!(composite_pixel(&s, 0, 1, 0), out[1]);
+        s.layers[0].mask.as_mut().unwrap().enabled = false;
+        assert_eq!(render_frame(&s, 0)[0], red);
+    }
+
+    #[test]
+    fn group_masks_apply_to_children() {
+        let mut s = Sprite::new(1, 1, ColorMode::Rgba);
+        let mut group = Layer::new_image(LayerId(2), "g");
+        group.kind = LayerKind::Group;
+        group.mask = Some(LayerMask::filled(1, 1, 0));
+        s.layers.insert(0, group);
+        s.layers[1].parent = Some(LayerId(2));
+        dot(&mut s, 1, 0, 0, Rgba::rgb(1, 2, 3));
+        assert_eq!(render_frame(&s, 0)[0].a, 0);
+    }
+
+    #[test]
+    fn clipping_follows_the_base_layer() {
+        let mut s = Sprite::new(2, 1, ColorMode::Rgba);
+        let mut shade = Layer::new_image(LayerId(2), "shade");
+        shade.clip = true;
+        s.layers.push(shade);
+        dot(&mut s, 1, 0, 0, Rgba::rgb(255, 0, 0));
+        draw(
+            &mut s,
+            2,
+            vec![
+                (0, 0, PixelValue::Rgba(Rgba::rgb(0, 0, 255))),
+                (1, 0, PixelValue::Rgba(Rgba::rgb(0, 0, 255))),
+            ],
+        );
+        let out = render_frame(&s, 0);
+        assert_eq!(out[0], Rgba::rgb(0, 0, 255), "shade over the base");
+        assert_eq!(out[1].a, 0, "no base pixel, no shade");
+        s.layers[0].visible = false;
+        assert_eq!(
+            render_frame(&s, 0)[0].a,
+            0,
+            "hidden base hides clipped layers"
+        );
+    }
+
+    #[test]
+    fn baking_applies_masks_and_clipping() {
+        let mut s = Sprite::new(2, 1, ColorMode::Rgba);
+        assert!(bake_masks(&s).is_none());
+        let mut shade = Layer::new_image(LayerId(2), "shade");
+        shade.clip = true;
+        s.layers.push(shade);
+        dot(&mut s, 1, 0, 0, Rgba::rgb(255, 0, 0));
+        draw(
+            &mut s,
+            2,
+            vec![
+                (0, 0, PixelValue::Rgba(Rgba::rgb(0, 0, 255))),
+                (1, 0, PixelValue::Rgba(Rgba::rgb(0, 0, 255))),
+            ],
+        );
+        let mut mask = LayerMask::filled(2, 1, 255);
+        mask.data = std::sync::Arc::new(vec![255, 0]);
+        s.layers[0].mask = Some(mask);
+        let baked = bake_masks(&s).unwrap();
+        assert!(baked.layers.iter().all(|l| l.mask.is_none() && !l.clip));
+        assert_eq!(render_frame(&baked, 0), render_frame(&s, 0));
+    }
+
+    #[test]
+    fn mask_overlay_tints_hidden_areas() {
+        let mut s = Sprite::new(2, 1, ColorMode::Rgba);
+        let mut mask = LayerMask::filled(2, 1, 255);
+        mask.data = std::sync::Arc::new(vec![0, 255]);
+        s.layers[0].mask = Some(mask);
+        let mut px = vec![Rgba::TRANSPARENT; 2];
+        mask_overlay(&s, LayerId(1), &mut px);
+        assert!(px[0].a > 0 && px[0].r > px[0].b);
+        assert_eq!(px[1], Rgba::TRANSPARENT);
+    }
 
     fn draw(s: &mut Sprite, layer: u32, pixels: Vec<(i32, i32, PixelValue)>) {
         Command::DrawPixels {
