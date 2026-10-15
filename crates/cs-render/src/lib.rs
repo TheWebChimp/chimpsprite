@@ -58,20 +58,45 @@ fn blend_channel(mode: BlendMode, b: f32, s: f32) -> f32 {
     }
 }
 
-/// Mezcla `src` sobre `dst` con un modo. Donde el fondo es transparente, se ve el color de la capa;
-/// donde es opaco, el resultado del modo (como en la especificación W3C de compositing).
+/// Interpola de `a` hacia `b` (canales y alfa) en `t` (0–255), como `rgba_blender_merge` de
+/// Aseprite: si un lado es transparente se toma el color del otro.
+fn merge(a: Rgba, b: Rgba, t: u8) -> Rgba {
+    let t = t as i32;
+    let lerp = |x: u8, y: u8| (x as i32 + (y as i32 - x as i32) * t / 255) as u8;
+    let (r, g, bl) = if a.a == 0 {
+        (b.r, b.g, b.b)
+    } else if b.a == 0 {
+        (a.r, a.g, a.b)
+    } else {
+        (lerp(a.r, b.r), lerp(a.g, b.g), lerp(a.b, b.b))
+    };
+    let alpha = lerp(a.a, b.a);
+    if alpha == 0 {
+        Rgba::TRANSPARENT
+    } else {
+        Rgba::new(r, g, bl, alpha)
+    }
+}
+
+/// Mezcla `src` sobre `dst` con un modo, igual que Aseprite: sobre fondo transparente se ve la
+/// capa; sobre fondo opaco, el resultado del modo; sobre semitransparente, una mezcla de ambos
+/// según el alfa del fondo y el de la capa.
 pub fn blend(dst: Rgba, src: Rgba, alpha: u8, mode: BlendMode) -> Rgba {
     if matches!(mode, BlendMode::Normal | BlendMode::Other(_)) || dst.a == 0 {
         return blend_over(dst, src, alpha);
     }
-    let ab = dst.a as f32 / 255.0;
     let ch = |b: u8, s: u8| {
-        let (b, s) = (b as f32 / 255.0, s as f32 / 255.0);
-        let mixed = (1.0 - ab) * s + ab * blend_channel(mode, b, s);
+        let mixed = blend_channel(mode, b as f32 / 255.0, s as f32 / 255.0);
         (mixed * 255.0).round().clamp(0.0, 255.0) as u8
     };
-    let mixed = Rgba::new(ch(dst.r, src.r), ch(dst.g, src.g), ch(dst.b, src.b), src.a);
-    blend_over(dst, mixed, alpha)
+    let moded = Rgba::new(ch(dst.r, src.r), ch(dst.g, src.g), ch(dst.b, src.b), src.a);
+    let blended = blend_over(dst, moded, alpha);
+    if dst.a == 255 {
+        return blended;
+    }
+    let normal = blend_over(dst, src, alpha);
+    let toward_mode = merge(normal, blended, dst.a);
+    merge(toward_mode, blended, mul(dst.a as u32, alpha as u32) as u8)
 }
 
 fn mul(a: u32, b: u32) -> u32 {
