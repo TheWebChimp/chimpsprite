@@ -100,6 +100,9 @@ pub fn new_tilemap_layer(sprite: &Sprite, above: Option<LayerId>, tileset: u32) 
 }
 
 /// Pone tiles en el cel tilemap `(layer, frame)`. Las coordenadas son celdas de la grilla del
+/// Lado máximo de una grilla de tilemap, en tiles (protege contra pedidos absurdos).
+pub const MAX_TILEMAP_SIDE: u32 = 4096;
+
 /// lienzo: la celda `(x, y)` empieza en el píxel `(x · ancho_tile, y · alto_tile)` (corrida por el
 /// resto de la posición del cel si no está alineado). Sin cel, crea uno en (0, 0). Si las celdas
 /// caen fuera de la grilla, la agranda con vacíos y corre la posición del cel si crece hacia la
@@ -123,24 +126,48 @@ pub fn set_tiles(
     let position = old_cel.map_or((0, 0), |c| c.position);
     // Celda del lienzo donde empieza la grilla actual.
     let origin = (position.0.div_euclid(tw), position.1.div_euclid(th));
-    let (mut x0, mut y0, mut x1, mut y1) = (0, 0, ow, oh);
+    let (mut x0, mut y0, mut x1, mut y1) = (0i64, 0i64, ow as i64, oh as i64);
     for &(x, y, _) in cells {
-        let (rx, ry) = (x - origin.0, y - origin.1);
-        (x0, y0, x1, y1) = (x0.min(rx), y0.min(ry), x1.max(rx + 1), y1.max(ry + 1));
+        // Usa aritmética saturada para evitar overflow en i32::MAX.
+        let (rx, ry) = (
+            (x as i64).saturating_sub(origin.0 as i64),
+            (y as i64).saturating_sub(origin.1 as i64),
+        );
+        x0 = x0.min(rx);
+        y0 = y0.min(ry);
+        x1 = x1.max(rx.saturating_add(1));
+        y1 = y1.max(ry.saturating_add(1));
     }
-    let mut grid = TileGrid::new((x1 - x0) as u32, (y1 - y0) as u32);
+
+    // Valida el tamaño de la grilla antes de asignar.
+    let width = x1 - x0;
+    let height = y1 - y0;
+    if width <= 0
+        || height <= 0
+        || width > MAX_TILEMAP_SIDE as i64
+        || height > MAX_TILEMAP_SIDE as i64
+    {
+        return None;
+    }
+    let x0_i32 = x0 as i32;
+    let y0_i32 = y0 as i32;
+    let mut grid = TileGrid::new(width as u32, height as u32);
     if let Some(old) = old_grid {
         for y in 0..old.height {
             for x in 0..old.width {
                 let tile = old.get(x, y).unwrap_or(Tile::EMPTY);
-                grid.set((x as i32 - x0) as u32, (y as i32 - y0) as u32, tile);
+                grid.set((x as i32 - x0_i32) as u32, (y as i32 - y0_i32) as u32, tile);
             }
         }
     }
     for &(x, y, tile) in cells {
-        grid.set((x - origin.0 - x0) as u32, (y - origin.1 - y0) as u32, tile);
+        grid.set(
+            (x - origin.0 - x0_i32) as u32,
+            (y - origin.1 - y0_i32) as u32,
+            tile,
+        );
     }
-    let new_position = (position.0 + x0 * tw, position.1 + y0 * th);
+    let new_position = (position.0 + x0_i32 * tw, position.1 + y0_i32 * th);
     if old_grid == Some(&grid) && new_position == position {
         return None;
     }
@@ -554,6 +581,19 @@ mod tests {
         // En una capa de imagen, o sin celdas, no hace nada.
         assert!(set_tiles(&s, LayerId(1), 0, &[(0, 0, t(1))]).is_none());
         assert!(set_tiles(&s, LayerId(2), 0, &[]).is_none());
+    }
+
+    #[test]
+    fn set_tiles_rejects_huge_bounds() {
+        let s = with_tilemap_layer();
+        let t = |i| Tile::new(i, false, false, false);
+        // Una celda muy lejana (100_000, 100_000) haría una grilla gigantesca: rechazada.
+        assert!(set_tiles(&s, LayerId(2), 0, &[(100_000, 100_000, t(1))]).is_none());
+        // i32::MAX en una coordenada causa overflow en lógica de bounds: rechazada.
+        assert!(set_tiles(&s, LayerId(2), 0, &[(i32::MAX, 0, t(1))]).is_none());
+        assert!(set_tiles(&s, LayerId(2), 0, &[(0, i32::MAX, t(1))]).is_none());
+        // Una llamada normal sigue funcionando.
+        assert!(set_tiles(&s, LayerId(2), 0, &[(1, 1, t(1))]).is_some());
     }
 
     #[test]
