@@ -24,6 +24,18 @@ fn move_output(ctx: &ToolContext, dx: i32, dy: i32) -> ToolOutput {
     if sprite.layer(ctx.layer).is_none_or(|l| l.locked) {
         return ToolOutput::default();
     }
+    if sprite
+        .layer(ctx.layer)
+        .is_some_and(|l| l.kind == cs_core::LayerKind::Instance)
+    {
+        let moved = cs_commands::ops::update_instance_key(sprite, ctx.layer, ctx.frame, |k| {
+            k.position = (k.position.0 + dx, k.position.1 + dy);
+        });
+        return ToolOutput {
+            command: moved,
+            ..Default::default()
+        };
+    }
     match ctx.selection {
         Some(mask) => {
             let transparent = sprite.color_mode.transparent();
@@ -87,7 +99,9 @@ impl Tool for MoveTool {
 mod tests {
     use super::*;
     use crate::test_util::*;
-    use cs_core::{LayerId, Mask, Sprite};
+    use cs_core::{
+        ArtboardId, Frame, InstanceKey, InstanceTrack, LayerId, LayerKind, Mask, Sprite,
+    };
 
     fn with_dot() -> Sprite {
         let mut s = sprite();
@@ -106,6 +120,33 @@ mod tests {
         t.press(c, a);
         t.drag(c, b);
         t.release(c)
+    }
+
+    #[test]
+    fn moves_instance_key_creating_one_on_the_current_frame() {
+        let mut s = sprite();
+        Command::AddFrame {
+            index: 1,
+            frame: Frame { duration_ms: 100 },
+        }
+        .apply(&mut s)
+        .unwrap();
+        let mut layer = cs_core::Layer::new_image(LayerId(2), "i");
+        layer.kind = LayerKind::Instance;
+        layer.instance = Some(InstanceTrack {
+            keys: vec![InstanceKey::new(0, ArtboardId(2), (1, 1))],
+        });
+        s.layers.push(layer);
+        let out = {
+            let mut c = ctx(&s);
+            c.layer = LayerId(2);
+            c.frame = 1;
+            gesture(&c, (0, 0), (2, 3))
+        };
+        out.command.unwrap().apply(&mut s).unwrap();
+        let track = s.layer(LayerId(2)).unwrap().instance.clone().unwrap();
+        assert_eq!(track.key_at(0).unwrap().position, (1, 1));
+        assert_eq!(track.key_at(1).unwrap().position, (3, 4));
     }
 
     #[test]
