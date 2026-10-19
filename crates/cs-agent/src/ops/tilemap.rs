@@ -185,9 +185,19 @@ impl Session {
                 y1 = y1.max(ry + 1);
             }
             let limit = ops::MAX_TILEMAP_SIDE as i64;
-            if x1 - x0 > limit || y1 - y0 > limit {
+            let (gw, gh) = (x1 - x0, y1 - y0);
+            if gw > limit || gh > limit {
                 return Err(invalid(format!(
                     "the tilemap grid would exceed the {limit}-tile limit per side"
+                )));
+            }
+            if !ops::tilemap_fits(gw as u64, gh as u64, (tw, th)) {
+                return Err(invalid(format!(
+                    "the tilemap grid would be {gw}×{gh} tiles of {tw}×{th} ({}×{} pixels), more \
+                     than the {} pixels a tilemap cel can cover; use fewer or closer cells",
+                    gw * tw as i64,
+                    gh * th as i64,
+                    cs_core::MAX_TILEMAP_PIXELS
                 )));
             }
             return Ok(Reply::text("Nothing changed."));
@@ -403,6 +413,23 @@ mod tests {
         set(&mut s2, json!([{"x": 0, "y": 0, "tile": 1}])).unwrap();
         let e = set(&mut s2, json!([{"x": -4096, "y": 0, "tile": 0}])).unwrap_err();
         assert!(e.to_string().contains("4096"), "{e}");
+    }
+
+    #[test]
+    fn set_tiles_reports_the_pixel_area_limit() {
+        // Tiles de 4×4: 4096×4096 celdas caben de lado, pero son 16384² píxeles.
+        let mut s = tile_session();
+        let e = set(
+            &mut s,
+            json!([{"x": 0, "y": 0, "tile": 1}, {"x": 4095, "y": 4095, "tile": 1}]),
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains("pixels"), "{e}");
+        set(
+            &mut s,
+            json!([{"x": 0, "y": 0, "tile": 1}, {"x": 2047, "y": 2047, "tile": 1}]),
+        )
+        .unwrap();
     }
 
     #[test]

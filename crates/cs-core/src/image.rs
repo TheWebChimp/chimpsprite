@@ -24,18 +24,35 @@ pub enum ImageError {
 }
 
 impl Image {
-    /// Imagen llena de píxeles transparentes.
+    /// Imagen llena de píxeles transparentes. Un tamaño imposible de representar (más bytes de los
+    /// que admite un `Vec`) no entra en pánico: da una imagen vacía de 0×0 y un aviso en el log.
+    /// Para distinguir ese caso, `try_new`.
     pub fn new(width: u32, height: u32, mode: ColorMode) -> Self {
-        let n = (width * height) as usize;
+        Self::try_new(width, height, mode).unwrap_or_else(|| {
+            log::warn!("image of {width}×{height} pixels is too large; using an empty image");
+            Self::try_new(0, 0, mode).expect("an empty image always fits")
+        })
+    }
+
+    /// Como `new`, pero `None` si la cantidad de bytes no cabe en memoria direccionable.
+    pub fn try_new(width: u32, height: u32, mode: ColorMode) -> Option<Self> {
+        let n = (width as usize).checked_mul(height as usize)?;
+        let pixel_bytes = match mode {
+            ColorMode::Rgba => std::mem::size_of::<Rgba>(),
+            ColorMode::Indexed { .. } => 1,
+        };
+        if n.checked_mul(pixel_bytes)? > isize::MAX as usize {
+            return None;
+        }
         let pixels = match mode.transparent() {
             PixelValue::Rgba(c) => PixelBuffer::Rgba(vec![c; n]),
             PixelValue::Index(i) => PixelBuffer::Indexed(vec![i; n]),
         };
-        Self {
+        Some(Self {
             width,
             height,
             pixels,
-        }
+        })
     }
 
     /// Imagen a partir de píxeles ya decodificados; `None` si el largo no coincide.
@@ -64,7 +81,7 @@ impl Image {
     }
 
     fn offset(&self, x: u32, y: u32) -> Option<usize> {
-        (x < self.width && y < self.height).then(|| (y * self.width + x) as usize)
+        (x < self.width && y < self.height).then(|| y as usize * self.width as usize + x as usize)
     }
 
     pub fn get(&self, x: u32, y: u32) -> Option<PixelValue> {
@@ -88,11 +105,12 @@ impl Image {
     /// Copia del rectángulo `(x, y, width, height)`, que debe caber dentro de la imagen.
     pub fn crop(&self, x: u32, y: u32, width: u32, height: u32) -> Image {
         assert!(
-            x + width <= self.width && y + height <= self.height,
+            x as u64 + width as u64 <= self.width as u64
+                && y as u64 + height as u64 <= self.height as u64,
             "crop out of bounds"
         );
         let rows = (y..y + height).map(|row| {
-            let start = (row * self.width + x) as usize;
+            let start = row as usize * self.width as usize + x as usize;
             start..start + width as usize
         });
         let pixels = match &self.pixels {
@@ -129,6 +147,16 @@ mod tests {
         assert_eq!((c.width(), c.height()), (2, 2));
         assert_eq!(c.get(1, 0), Some(PixelValue::Index(7)));
         assert_eq!(c.get(0, 0), Some(PixelValue::Index(0)));
+    }
+
+    #[test]
+    fn impossible_sizes_do_not_panic() {
+        assert!(Image::try_new(u32::MAX, u32::MAX, ColorMode::Rgba).is_none());
+        let img = Image::new(u32::MAX, u32::MAX, ColorMode::Rgba);
+        assert_eq!((img.width(), img.height()), (0, 0));
+        assert_eq!(img.get(0, 0), None);
+        let ok = Image::try_new(3, 2, ColorMode::Rgba).unwrap();
+        assert_eq!(ok, Image::new(3, 2, ColorMode::Rgba));
     }
 
     #[test]

@@ -2,14 +2,14 @@
 //! convierten en capas de imagen con cels temporales; el compositor solo ve píxeles.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use cs_core::{
-    ArtboardId, Cel, ColorMode, Document, Image, ImageId, InstanceKey, InstanceTrack, LayerKind,
-    PixelValue, Rgba, Sprite, Tile, TileGrid, Tileset, source_frame,
+    ArtboardId, Cel, ColorMode, Document, Image, ImageId, InstanceKey, InstanceTrack, Layer,
+    LayerKind, PixelValue, Rgba, Sprite, Tile, TileGrid, Tileset, source_frame,
 };
 
 use crate::render_frame;
@@ -198,12 +198,27 @@ fn tilemaps_baked(sprite: &Sprite, frames: Range<usize>, skip_hidden: bool) -> O
     if !sprite.layers.iter().any(|l| l.kind == LayerKind::Tilemap) {
         return None;
     }
+    let mut out = convert_tilemap_layers(sprite, frames, skip_hidden, |_| true);
+    out.tilesets.clear();
+    out.tilemaps.clear();
+    Some(out)
+}
+
+/// Copia con las capas tilemap que elige `convert` pasadas a capas de imagen (ver
+/// `tilemaps_baked`). Los tilesets y las grillas quedan; el que llama decide si los quita.
+pub(crate) fn convert_tilemap_layers(
+    sprite: &Sprite,
+    frames: Range<usize>,
+    skip_hidden: bool,
+    convert: impl Fn(&Layer) -> bool,
+) -> Sprite {
     let mut out = sprite.clone();
     let mut next = sprite.next_image_id().0;
-    // Los cels vinculados (misma grilla, mismo tileset) siguen compartiendo imagen.
-    let mut done: HashMap<(ImageId, u32), ImageId> = HashMap::new();
+    // Los cels vinculados (misma grilla, mismo tileset, misma posición) siguen compartiendo imagen.
+    type Drawn = (ImageId, (i32, i32));
+    let mut done: HashMap<(ImageId, u32, (i32, i32)), Drawn> = HashMap::new();
     for layer in &mut out.layers {
-        if layer.kind != LayerKind::Tilemap {
+        if layer.kind != LayerKind::Tilemap || !convert(layer) {
             continue;
         }
         layer.kind = LayerKind::Image;
@@ -221,50 +236,102 @@ fn tilemaps_baked(sprite: &Sprite, frames: Range<usize>, skip_hidden: bool) -> O
             else {
                 continue;
             };
-            let key = (cel.image, i);
-            let image = match done.get(&key) {
-                Some(&id) => id,
+            let key = (cel.image, i, cel.position);
+            let (image, position) = match done.get(&key) {
+                Some(&drawn) => drawn,
                 None => {
+                    // Solo la parte que cae dentro del lienzo: lo de afuera no se ve ni se exporta.
+                    let Some((position, pixels)) =
+                        tilemap_image(sprite, tileset, grid, cel.position)
+                    else {
+                        continue;
+                    };
                     let id = ImageId(next);
                     next += 1;
-                    let pixels = tilemap_image(sprite.color_mode, tileset, grid);
                     out.images.insert(id, Arc::new(pixels));
-                    done.insert(key, id);
-                    id
+                    done.insert(key, (id, position));
+                    (id, position)
                 }
             };
-            out.cels.insert((layer.id, frame), Cel { image, ..cel });
+            out.cels.insert(
+                (layer.id, frame),
+                Cel {
+                    image,
+                    position,
+                    ..cel
+                },
+            );
         }
     }
-    out.tilesets.clear();
-    out.tilemaps.clear();
-    Some(out)
+    // Grillas que ya no usa ningún cel (las de las capas convertidas).
+    let used: HashSet<ImageId> = out.cels.values().map(|c| c.image).collect();
+    out.tilemaps.retain(|id, _| used.contains(id));
+    out
 }
 
-/// Imagen de una grilla: cada tile se copia como valores (sin mezclar), con sus flips.
-fn tilemap_image(mode: ColorMode, tileset: &Tileset, grid: &TileGrid) -> Image {
+/// Parte visible de un cel tilemap en `position`: la grilla dibujada recortada al lienzo, con la
+/// posición del recorte. Cada tile se copia como valores (sin mezclar), con sus flips. `None` si
+/// el cel cae entero fuera del lienzo. El tamaño queda acotado por el lienzo aunque la grilla
+/// sea enorme.
+fn tilemap_image(
+    sprite: &Sprite,
+    tileset: &Tileset,
+    grid: &TileGrid,
+    position: (i32, i32),
+) -> Option<((i32, i32), Image)> {
     let (tw, th) = tileset.tile_size;
-    let mut image = Image::new(grid.width * tw, grid.height * th, mode);
-    for gy in 0..grid.height {
-        for gx in 0..grid.width {
-            let Some(tile) = grid.get(gx, gy) else {
-                continue;
-            };
-            let Some(src) = tile_image(tileset, tile) else {
-                continue;
-            };
-            for y in 0..th {
-                for x in 0..tw {
-                    let (sx, sy) = tile_source(tile, tw, th, x, y);
-                    if let Some(v) = src.get(sx, sy) {
-                        // Un tile de otro modo de color (datos corruptos) no se dibuja.
-                        let _ = image.set(gx * tw + x, gy * th + y, v);
-                    }
-                }
+    let (px, py) = (position.0 as i64, position.1 as i64);
+    let x0 = px.max(0);
+    let y0 = py.max(0);
+    let x1 = (px + grid.width as i64 * tw as i64).min(sprite.width as i64);
+    let y1 = (py + grid.height as i64 * th as i64).min(sprite.height as i64);
+    if x0 >= x1 || y0 >= y1 {
+        return None;
+    }
+    let mut image = Image::new((x1 - x0) as u32, (y1 - y0) as u32, sprite.color_mode);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            if let Some(v) = grid_pixel(sprite.color_mode, tileset, grid, x - px, y - py) {
+                image
+                    .set((x - x0) as u32, (y - y0) as u32, v)
+                    .expect("in bounds and same mode");
             }
         }
     }
-    image
+    Some(((x0 as i32, y0 as i32), image))
+}
+
+/// Valor que dibuja la grilla en `(lx, ly)`, relativo a su esquina: una sola búsqueda de tile.
+/// `None` fuera de la grilla, en celdas que no dibujan (ver `tile_image`) o si el tile es de otro
+/// modo de color (datos corruptos).
+fn grid_pixel(
+    mode: ColorMode,
+    tileset: &Tileset,
+    grid: &TileGrid,
+    lx: i64,
+    ly: i64,
+) -> Option<PixelValue> {
+    let (tw, th) = tileset.tile_size;
+    if lx < 0 || ly < 0 || tw == 0 || th == 0 {
+        return None;
+    }
+    let gx = u32::try_from(lx / tw as i64).ok()?;
+    let gy = u32::try_from(ly / th as i64).ok()?;
+    let tile = grid.get(gx, gy)?;
+    let src = tile_image(tileset, tile)?;
+    let (sx, sy) = tile_source(
+        tile,
+        tw,
+        th,
+        (lx % tw as i64) as u32,
+        (ly % th as i64) as u32,
+    );
+    let value = src.get(sx, sy)?;
+    let same_mode = matches!(
+        (value, mode),
+        (PixelValue::Rgba(_), ColorMode::Rgba) | (PixelValue::Index(_), ColorMode::Indexed { .. })
+    );
+    same_mode.then_some(value)
 }
 
 /// Avisado una sola vez: flip D en tiles no cuadrados.
@@ -671,6 +738,99 @@ mod tests {
             bake_layers(&d, sprite, Bake::KeepTilemaps).is_none(),
             "no instances to bake"
         );
+    }
+
+    #[test]
+    fn huge_tilemap_grids_are_drawn_only_inside_the_canvas() {
+        // Tiles de 16×16 en una grilla de 4096×4096: 65536² píxeles (en u32 da 0).
+        let mut ts = Tileset::new("t", (16, 16), ColorMode::Rgba);
+        let mut tile = Image::new(16, 16, ColorMode::Rgba);
+        tile.set(0, 0, PixelValue::Rgba(RED)).unwrap();
+        ts.tiles.push(Arc::new(tile));
+        let mut s = Sprite::new(32, 32, ColorMode::Rgba);
+        s.layers[0].kind = LayerKind::Tilemap;
+        s.layers[0].tileset = Some(0);
+        s.tilesets.push(ts);
+        let mut grid = TileGrid::new(4096, 4096);
+        grid.set(0, 0, Tile::new(1, false, false, false));
+        grid.set(4095, 4095, Tile::new(1, false, false, false));
+        Command::Batch(vec![
+            Command::SetTilemap {
+                id: ImageId(1),
+                grid: Some(Arc::new(grid)),
+            },
+            Command::SetCel {
+                layer: LayerId(1),
+                frame: 0,
+                cel: Some(Cel {
+                    position: (0, 0),
+                    opacity: 255,
+                    image: ImageId(1),
+                }),
+            },
+        ])
+        .apply(&mut s)
+        .unwrap();
+        let m = materialize_tilemaps(&s, 0..1);
+        let cel = m.cel(LayerId(1), 0).unwrap();
+        let image = m.image(cel.image).unwrap();
+        assert_eq!(
+            (cel.position, image.width(), image.height()),
+            ((0, 0), 32, 32)
+        );
+        assert_eq!(render_frame(&m, 0)[0], RED);
+        // Al hornear todo (exportar píxeles) también queda del tamaño del lienzo.
+        let d = Document::with_sprite("t", s);
+        let baked = bake_layers(&d, &d.artboards[0].sprite, Bake::Everything).unwrap();
+        let image = baked
+            .image(baked.cel(LayerId(1), 0).unwrap().image)
+            .unwrap();
+        assert_eq!((image.width(), image.height()), (32, 32));
+    }
+
+    #[test]
+    fn tilemap_cels_partly_off_canvas_draw_the_visible_part() {
+        // 3×2 celdas de 3×3 con flips variados; la referencia es la grilla entera dibujada en un
+        // lienzo donde entra completa.
+        let mut grid = TileGrid::new(3, 2);
+        for i in 0..6u32 {
+            grid.set(
+                i % 3,
+                i / 3,
+                Tile::new(1, i & 1 != 0, i & 2 != 0, i & 4 != 0),
+            );
+        }
+        let full = tiled(ColorMode::Rgba, rgba_tileset(), grid.clone(), (0, 0));
+        let full_px = render_frame(&materialize_tilemaps(&full, 0..1), 0);
+        let fw = full.width as i32;
+        for position in [(-4, 2), (-1, -5), (2, -1), (-9, 0), (5, 5), (-20, 0)] {
+            let mut s = tiled(ColorMode::Rgba, rgba_tileset(), grid.clone(), position);
+            s.width = 5;
+            s.height = 4;
+            let m = materialize_tilemaps(&s, 0..1);
+            let px = render_frame(&m, 0);
+            for y in 0..4 {
+                for x in 0..5 {
+                    let (lx, ly) = (x - position.0, y - position.1);
+                    let expected = if (0..9).contains(&lx) && (0..6).contains(&ly) {
+                        full_px[(ly * fw + lx) as usize]
+                    } else {
+                        Rgba::TRANSPARENT
+                    };
+                    assert_eq!(
+                        px[(y * 5 + x) as usize],
+                        expected,
+                        "{position:?} ({x}, {y})"
+                    );
+                }
+            }
+            if let Some(cel) = m.cel(LayerId(1), 0) {
+                let image = m.image(cel.image).unwrap();
+                let (x, y) = cel.position;
+                assert!(x >= 0 && y >= 0, "{position:?}");
+                assert!(x as u32 + image.width() <= 5 && y as u32 + image.height() <= 4);
+            }
+        }
     }
 
     #[test]

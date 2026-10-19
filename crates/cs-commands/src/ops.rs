@@ -102,12 +102,20 @@ pub fn new_tilemap_layer(sprite: &Sprite, above: Option<LayerId>, tileset: u32) 
 /// Lado máximo de una grilla de tilemap, en tiles (protege contra pedidos absurdos).
 pub const MAX_TILEMAP_SIDE: u32 = 4096;
 
+/// ¿Una grilla de `width`×`height` tiles de `tile_size` cabe en `MAX_TILEMAP_PIXELS` al dibujarse?
+pub fn tilemap_fits(width: u64, height: u64, tile_size: (u32, u32)) -> bool {
+    let w = width.saturating_mul(tile_size.0 as u64);
+    let h = height.saturating_mul(tile_size.1 as u64);
+    w.saturating_mul(h) <= cs_core::MAX_TILEMAP_PIXELS
+}
+
 /// Pone tiles en el cel tilemap `(layer, frame)`. Las coordenadas son celdas de la grilla del
 /// lienzo: la celda `(x, y)` empieza en el píxel `(x · ancho_tile, y · alto_tile)` (corrida por el
 /// resto de la posición del cel si no está alineado). Sin cel, crea uno en (0, 0). Si las celdas
 /// caen fuera de la grilla, la agranda con vacíos y corre la posición del cel si crece hacia la
 /// izquierda o hacia arriba. Un cel vinculado recibe una grilla propia. `None` si la capa no es
-/// tilemap, su tileset no existe, no hay celdas o nada cambia.
+/// tilemap, su tileset no existe, no hay celdas, nada cambia o la grilla pasaría
+/// `MAX_TILEMAP_SIDE` de lado o `MAX_TILEMAP_PIXELS` dibujada (ver `tilemap_fits`).
 pub fn set_tiles(
     sprite: &Sprite,
     layer: LayerId,
@@ -147,6 +155,11 @@ pub fn set_tiles(
         || width > MAX_TILEMAP_SIDE as i64
         || height > MAX_TILEMAP_SIDE as i64
     {
+        return None;
+    }
+    // Ni una grilla que, dibujada, pase el límite que el lector de `.aseprite` acepta (se
+    // descartaría al abrir el archivo guardado).
+    if !tilemap_fits(width as u64, height as u64, tileset.tile_size) {
         return None;
     }
     let x0_i32 = x0 as i32;
@@ -594,6 +607,19 @@ mod tests {
         assert!(set_tiles(&s, LayerId(2), 0, &[(0, i32::MAX, t(1))]).is_none());
         // Una llamada normal sigue funcionando.
         assert!(set_tiles(&s, LayerId(2), 0, &[(1, 1, t(1))]).is_some());
+    }
+
+    #[test]
+    fn set_tiles_caps_the_grid_pixel_area() {
+        let s = with_tilemap_layer();
+        let t = |i| Tile::new(i, false, false, false);
+        // Tiles de 4×4: 4096×4096 celdas entran en el lado máximo pero son 16384² píxeles, más
+        // que MAX_TILEMAP_PIXELS (el lector descartaría ese cel).
+        assert!(set_tiles(&s, LayerId(2), 0, &[(0, 0, t(1)), (4095, 4095, t(1))]).is_none());
+        // 2048×2048 celdas = 8192² = justo el límite.
+        assert_eq!(8192u64 * 8192, MAX_TILEMAP_PIXELS);
+        assert!(set_tiles(&s, LayerId(2), 0, &[(0, 0, t(1)), (2047, 2047, t(1))]).is_some());
+        assert!(set_tiles(&s, LayerId(2), 0, &[(0, 0, t(1)), (2047, 2048, t(1))]).is_none());
     }
 
     #[test]
