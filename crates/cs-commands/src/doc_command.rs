@@ -49,6 +49,14 @@ impl DocCommand {
                     .artboard_mut(*id)
                     .ok_or(CmdError::ArtboardNotFound(*id))?;
                 let inverse = cmd.apply(&mut artboard.sprite)?;
+                // Un artboard no puede contenerse a sí mismo a través de sus instancias.
+                if !doc.cycle_free(*id) {
+                    let artboard = doc.artboard_mut(*id).expect("still there");
+                    if let Err(e) = inverse.apply(&mut artboard.sprite) {
+                        log::error!("instance cycle rollback failed: {e}");
+                    }
+                    return Err(CmdError::InstanceCycle);
+                }
                 Ok(DocCommand::OnArtboard {
                     id: *id,
                     cmd: inverse,
@@ -168,6 +176,41 @@ mod tests {
             position: (10, 0),
             sprite: Sprite::new(2, 2, ColorMode::Rgba),
         }
+    }
+
+    #[test]
+    fn instance_cycles_are_rejected_and_nothing_changes() {
+        let mut doc = Document::with_sprite("a", Sprite::new(4, 4, ColorMode::Rgba));
+        doc.artboards.push(Artboard {
+            id: ArtboardId(2),
+            name: "b".into(),
+            position: (10, 0),
+            sprite: Sprite::new(4, 4, ColorMode::Rgba),
+            guides: Vec::new(),
+            symmetry: Default::default(),
+        });
+        let place = |doc: &Document, host: u32, source: u32| DocCommand::OnArtboard {
+            id: ArtboardId(host),
+            cmd: crate::ops::new_instance_layer(
+                &doc.artboard(ArtboardId(host)).unwrap().sprite,
+                None,
+                0,
+                ArtboardId(source),
+                "i",
+                (0, 0),
+            ),
+        };
+        place(&doc, 1, 2).apply(&mut doc).unwrap();
+        let before = doc.clone();
+        assert_eq!(
+            place(&doc, 2, 1).apply(&mut doc),
+            Err(CmdError::InstanceCycle)
+        );
+        assert_eq!(
+            place(&doc, 1, 1).apply(&mut doc),
+            Err(CmdError::InstanceCycle)
+        );
+        assert_eq!(doc, before);
     }
 
     #[test]
