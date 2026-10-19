@@ -275,6 +275,10 @@ pub fn bake_masks(sprite: &Sprite) -> Option<Sprite> {
 }
 
 /// Compone el frame en un buffer de `width * height` píxeles, fila por fila.
+///
+/// Solo dibuja capas de imagen: las tilemap (y las de instancia) se ignoran, así que hay que
+/// pasarle el sprite materializado (`materialize` o `materialize_tilemaps`). A diferencia de
+/// `composite_pixel`, que sí lee las tilemap tile a tile.
 pub fn render_frame(sprite: &Sprite, frame: usize) -> Vec<Rgba> {
     let (w, h) = (sprite.width as i32, sprite.height as i32);
     let mut out = vec![Rgba::TRANSPARENT; (w * h) as usize];
