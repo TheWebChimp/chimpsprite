@@ -455,10 +455,17 @@ fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
         return;
     };
     let mut c32 = to_color32(current);
-    // El cuadro de saturación/brillo ocupa todo el ancho del panel.
+    // El cuadro de saturación/brillo ocupa todo el ancho del panel. Se restaura después: si no,
+    // los sliders de los paneles siguientes heredan ese ancho y agrandan el panel en cada frame.
+    let slider_width = ui.spacing().slider_width;
     ui.spacing_mut().slider_width = (ui.available_width() - 8.0).max(120.0);
-    if egui::color_picker::color_picker_color32(ui, &mut c32, egui::color_picker::Alpha::OnlyBlend)
-    {
+    let picked = egui::color_picker::color_picker_color32(
+        ui,
+        &mut c32,
+        egui::color_picker::Alpha::OnlyBlend,
+    );
+    ui.spacing_mut().slider_width = slider_width;
+    if picked {
         let [r, g, b, a] = c32.to_srgba_unmultiplied();
         editor.primary = cs_core::PixelValue::Rgba(cs_core::Rgba::new(r, g, b, a));
     }
