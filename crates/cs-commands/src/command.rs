@@ -203,7 +203,9 @@ impl Command {
                 if l.kind != LayerKind::Instance {
                     return Err(CmdError::NotInstanceLayer(*layer));
                 }
-                let old = l.instance.replace(track.clone()).unwrap_or_default();
+                let mut track = track.clone();
+                track.normalize();
+                let old = l.instance.replace(track).unwrap_or_default();
                 Ok(Command::SetInstanceTrack {
                     layer: *layer,
                     track: old,
@@ -1019,6 +1021,29 @@ mod tests {
             .apply(&mut s),
             Err(CmdError::NotInstanceLayer(LayerId(1)))
         );
+    }
+
+    #[test]
+    fn set_instance_track_normalizes_keys() {
+        let mut s = with_instance();
+        let before = s.clone();
+        let inv = Command::SetInstanceTrack {
+            layer: LayerId(2),
+            track: InstanceTrack {
+                keys: vec![
+                    InstanceKey::new(2, ArtboardId(2), (0, 0)),
+                    InstanceKey::new(0, ArtboardId(2), (1, 1)),
+                    InstanceKey::new(2, ArtboardId(2), (5, 5)),
+                ],
+            },
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!(key_frames(&s), vec![0, 2]);
+        let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+        assert_eq!(track.keys[1].position, (5, 5), "last wins");
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
     }
 
     #[test]

@@ -112,7 +112,9 @@ fn apply_extras(
         layer.clip = extra.clip;
         let id = layer.id;
         let instance_layer = extra.instance.is_some();
-        if let Some(track) = extra.instance {
+        if let Some(mut track) = extra.instance {
+            // Un archivo editado a mano puede traer keys desordenadas o repetidas.
+            track.normalize();
             layer.kind = LayerKind::Instance;
             layer.instance = Some(track);
         }
@@ -339,6 +341,26 @@ mod tests {
         let expected =
             cs_render::render_frame(&cs_render::materialize(&d, &d.artboards[0].sprite, 0..1), 0);
         assert_eq!(cs_render::render_frame(&inner, 0), expected);
+    }
+
+    #[test]
+    fn unsorted_instance_keys_load_normalized() {
+        let mut d = with_instance(Timing::MovieClip { first_frame: 0 });
+        let track = d.artboards[0].sprite.layers[1].instance.as_mut().unwrap();
+        let first = track.keys[0];
+        track.keys = vec![
+            InstanceKey { frame: 3, ..first },
+            first,
+            InstanceKey {
+                frame: 3,
+                position: (4, 4),
+                ..first
+            },
+        ];
+        let (back, _) = read(&write(&d).unwrap()).unwrap();
+        let keys = &back.artboards[0].sprite.layers[1].instance.as_ref().unwrap().keys;
+        let got: Vec<_> = keys.iter().map(|k| (k.frame, k.position)).collect();
+        assert_eq!(got, vec![(0, (1, 1)), (3, (4, 4))]);
     }
 
     #[test]

@@ -77,6 +77,19 @@ impl InstanceTrack {
         }
     }
 
+    /// Deja las keys ordenadas por frame y sin frames repetidos (de cada frame queda la última).
+    pub fn normalize(&mut self) {
+        self.keys.sort_by_key(|k| k.frame);
+        let mut out: Vec<InstanceKey> = Vec::with_capacity(self.keys.len());
+        for key in self.keys.drain(..) {
+            match out.last_mut() {
+                Some(last) if last.frame == key.frame => *last = key,
+                _ => out.push(key),
+            }
+        }
+        self.keys = out;
+    }
+
     /// Quita la key que empieza en `frame`. `false` si no había.
     pub fn remove_key(&mut self, frame: usize) -> bool {
         let before = self.keys.len();
@@ -216,6 +229,22 @@ mod tests {
         let mut late = InstanceTrack::default();
         late.set_key(InstanceKey::new(3, ArtboardId(2), (0, 0)));
         assert!(late.key_at(1).is_none(), "nothing before the first key");
+    }
+
+    #[test]
+    fn normalize_sorts_and_keeps_the_last_key_of_each_frame() {
+        let mut t = InstanceTrack {
+            keys: vec![
+                InstanceKey::new(3, ArtboardId(2), (0, 0)),
+                InstanceKey::new(1, ArtboardId(2), (1, 0)),
+                InstanceKey::new(3, ArtboardId(2), (2, 0)),
+                InstanceKey::new(1, ArtboardId(2), (3, 0)),
+                InstanceKey::new(0, ArtboardId(2), (4, 0)),
+            ],
+        };
+        t.normalize();
+        let got: Vec<_> = t.keys.iter().map(|k| (k.frame, k.position.0)).collect();
+        assert_eq!(got, vec![(0, 4), (1, 3), (3, 2)]);
     }
 
     #[test]
