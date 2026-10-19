@@ -6,7 +6,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use cs_core::{
-    Cel, ColorMode, Document, Image, ImageId, InstanceKey, InstanceTrack, LayerKind, PixelValue,
+    ArtboardId, Cel, ColorMode, Document, Image, ImageId, InstanceKey, InstanceTrack, LayerKind, PixelValue,
     Rgba, Sprite, source_frame,
 };
 
@@ -22,7 +22,15 @@ pub fn materialize<'a>(
     sprite: &'a Sprite,
     frames: Range<usize>,
 ) -> Cow<'a, Sprite> {
-    materialize_at(doc, sprite, frames, 0)
+    // Si el sprite es el de un artboard del documento, ese artboard ya está "en curso".
+    let mut stack: Vec<ArtboardId> = doc
+        .artboards
+        .iter()
+        .find(|a| std::ptr::eq(&a.sprite, sprite))
+        .map(|a| a.id)
+        .into_iter()
+        .collect();
+    materialize_at(doc, sprite, frames, &mut stack)
 }
 
 /// `materialize` de todos los frames, para formatos sin instancias. `None` si no hay.
@@ -37,14 +45,15 @@ fn materialize_at<'a>(
     doc: &Document,
     sprite: &'a Sprite,
     frames: Range<usize>,
-    depth: u32,
+    // Artboards que se están materializando (de afuera hacia adentro).
+    stack: &mut Vec<ArtboardId>,
 ) -> Cow<'a, Sprite> {
     if !sprite.layers.iter().any(|l| l.kind == LayerKind::Instance) {
         return Cow::Borrowed(sprite);
     }
     let mut out = sprite.clone();
     let mut next = sprite.next_image_id().0;
-    let can_draw = sprite.color_mode == ColorMode::Rgba && depth < MAX_DEPTH;
+    let can_draw = sprite.color_mode == ColorMode::Rgba && (stack.len() as u32) < MAX_DEPTH;
     for layer in &mut out.layers {
         if layer.kind != LayerKind::Instance {
             continue;
@@ -57,7 +66,7 @@ fn materialize_at<'a>(
             continue;
         }
         for frame in frames.clone() {
-            let Some((position, image)) = instance_image(doc, sprite, &track, frame, depth) else {
+            let Some((position, image)) = instance_image(doc, sprite, &track, frame, stack) else {
                 continue;
             };
             let id = ImageId(next);
@@ -83,13 +92,19 @@ fn instance_image(
     parent: &Sprite,
     track: &InstanceTrack,
     frame: usize,
-    depth: u32,
+    stack: &mut Vec<ArtboardId>,
 ) -> Option<((i32, i32), Image)> {
     let key: &InstanceKey = track.key_at(frame)?;
-    let source = &doc.artboard(key.source?)?.sprite;
+    let source_id = key.source?;
+    // Un artboard que ya se está materializando no se dibuja dentro de sí mismo (ciclo).
+    if stack.contains(&source_id) {
+        return None;
+    }
+    let source = &doc.artboard(source_id)?.sprite;
     let sf = source_frame(key, parent, frame, source);
-    let inner = materialize_at(doc, source, sf..sf + 1, depth + 1);
-    let pixels = render_frame(&inner, sf);
+    stack.push(source_id);
+    let pixels = render_frame(&materialize_at(doc, source, sf..sf + 1, stack), sf);
+    stack.pop();
     let (w, h) = (source.width, source.height);
     let at = |x: u32, y: u32| -> Rgba {
         let sx = if key.flip_h { w - 1 - x } else { x };
@@ -259,6 +274,27 @@ mod tests {
         .unwrap();
         let m = materialize(&d, &d.artboards[0].sprite, 0..1);
         assert_eq!(px(&render_frame(&m, 0), 0, 0), RED);
+    }
+
+    #[test]
+    fn branching_cycles_stop_at_the_first_repeat() {
+        // Dos capas de instancia del artboard 1 que lo muestran a él mismo: con solo el límite
+        // de profundidad serían 2^16 renders.
+        let mut h = host(vec![InstanceKey::new(0, ArtboardId(1), (0, 0))]);
+        let mut second = h.layers[1].clone();
+        second.id = LayerId(3);
+        h.layers.push(second);
+        let mut d = doc(h);
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(1, 1, PixelValue::Rgba(RED))],
+        }
+        .apply(&mut d.artboards[0].sprite)
+        .unwrap();
+        let m = materialize(&d, &d.artboards[0].sprite, 0..4);
+        assert_eq!(px(&render_frame(&m, 0), 1, 1), RED);
+        assert!(m.cels.keys().all(|(l, _)| *l == LayerId(1)));
     }
 
     #[test]

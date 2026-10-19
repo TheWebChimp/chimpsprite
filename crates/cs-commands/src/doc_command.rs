@@ -70,7 +70,20 @@ impl DocCommand {
                     return Err(CmdError::DuplicateArtboardId(artboard.id));
                 }
                 doc.artboards.insert(*index, (**artboard).clone());
-                Ok(DocCommand::RemoveArtboard { id: artboard.id })
+                let inverse = DocCommand::RemoveArtboard { id: artboard.id };
+                // El nuevo puede instanciarse a sí mismo o cerrar un ciclo con keys que ya lo
+                // apuntaban.
+                let id = artboard.id;
+                let cycle = doc
+                    .artboards
+                    .iter()
+                    .filter(|a| a.id == id || doc.instance_sources(a.id).contains(&id))
+                    .any(|a| !doc.cycle_free(a.id));
+                if cycle {
+                    doc.artboards.remove(*index);
+                    return Err(CmdError::InstanceCycle);
+                }
+                Ok(inverse)
             }
             DocCommand::RemoveArtboard { id } => {
                 let index = doc.index(*id).ok_or(CmdError::ArtboardNotFound(*id))?;
@@ -122,6 +135,10 @@ impl DocCommand {
                     .artboard_mut(*id)
                     .ok_or(CmdError::ArtboardNotFound(*id))?;
                 let old = std::mem::replace(&mut artboard.sprite, (**sprite).clone());
+                if !doc.cycle_free(*id) {
+                    doc.artboard_mut(*id).expect("still there").sprite = old;
+                    return Err(CmdError::InstanceCycle);
+                }
                 Ok(DocCommand::SetSprite {
                     id: *id,
                     sprite: Box::new(old),
@@ -211,6 +228,73 @@ mod tests {
             Err(CmdError::InstanceCycle)
         );
         assert_eq!(doc, before);
+    }
+
+    /// Sprite con una capa de instancia que muestra `source`.
+    fn instancing(source: u32) -> Sprite {
+        let s = Sprite::new(4, 4, ColorMode::Rgba);
+        let mut s2 = s.clone();
+        crate::ops::new_instance_layer(&s, None, 0, ArtboardId(source), "i", (0, 0))
+            .apply(&mut s2)
+            .unwrap();
+        s2
+    }
+
+    #[test]
+    fn set_sprite_rejects_instance_cycles() {
+        let mut d = doc();
+        let before = d.clone();
+        assert_eq!(
+            DocCommand::SetSprite {
+                id: ArtboardId(1),
+                sprite: Box::new(instancing(1)),
+            }
+            .apply(&mut d),
+            Err(CmdError::InstanceCycle)
+        );
+        assert_eq!(d, before);
+    }
+
+    #[test]
+    fn add_artboard_rejects_instance_cycles() {
+        let mut d = doc();
+        let before = d.clone();
+        // Se instancia a sí mismo.
+        let mut ab = second(&d);
+        ab.sprite = instancing(ab.id.0);
+        assert_eq!(
+            DocCommand::AddArtboard {
+                index: 1,
+                artboard: Box::new(ab),
+            }
+            .apply(&mut d),
+            Err(CmdError::InstanceCycle)
+        );
+        assert_eq!(d, before);
+        // El 1 apunta (colgado) al 7; agregar un 7 que instancia al 1 cerraría el ciclo.
+        let mut d = Document::with_sprite("a", instancing(7));
+        let before = d.clone();
+        let mut ab = second(&d);
+        ab.id = ArtboardId(7);
+        ab.sprite = instancing(1);
+        assert_eq!(
+            DocCommand::AddArtboard {
+                index: 0,
+                artboard: Box::new(ab.clone()),
+            }
+            .apply(&mut d),
+            Err(CmdError::InstanceCycle)
+        );
+        assert_eq!(d, before);
+        // Sin ciclo entra bien.
+        ab.sprite = Sprite::new(2, 2, ColorMode::Rgba);
+        DocCommand::AddArtboard {
+            index: 0,
+            artboard: Box::new(ab),
+        }
+        .apply(&mut d)
+        .unwrap();
+        assert_eq!(d.artboards.len(), 2);
     }
 
     #[test]
