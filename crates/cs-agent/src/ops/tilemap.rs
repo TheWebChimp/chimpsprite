@@ -160,6 +160,33 @@ impl Session {
             cells.push((c.x, c.y, Tile::new(c.tile, c.flip_x, c.flip_y, c.flip_d)));
         }
         let Some(cmd) = ops::set_tiles(sprite, layer, frame, &cells) else {
+            // `None` también significa "grilla > 4096 celdas de lado": se distingue calculando la extensión.
+            let (tw, th) = tileset.tile_size;
+            let (mut x0, mut y0) = (i64::MAX, i64::MAX);
+            let (mut x1, mut y1) = (i64::MIN, i64::MIN);
+            for &(x, y, _) in &cells {
+                x0 = x0.min(x as i64);
+                y0 = y0.min(y as i64);
+                x1 = x1.max(x as i64);
+                y1 = y1.max(y as i64);
+            }
+            if let Some((c, g)) = sprite
+                .cel(layer, frame)
+                .and_then(|c| Some((c, sprite.tilemap(c.image)?)))
+            {
+                let cx = c.position.0.div_euclid(tw as i32) as i64;
+                let cy = c.position.1.div_euclid(th as i32) as i64;
+                x0 = x0.min(cx);
+                y0 = y0.min(cy);
+                x1 = x1.max(cx + g.width as i64 - 1);
+                y1 = y1.max(cy + g.height as i64 - 1);
+            }
+            let limit = ops::MAX_TILEMAP_SIDE as i64;
+            if x1 - x0 + 1 > limit || y1 - y0 + 1 > limit {
+                return Err(invalid(format!(
+                    "the tilemap grid would exceed the {limit}-tile limit per side"
+                )));
+            }
             return Ok(Reply::text("Nothing changed."));
         };
         self.run_on(&p.doc, ab, vec![cmd])?;
