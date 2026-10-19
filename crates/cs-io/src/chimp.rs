@@ -5,7 +5,9 @@ use std::io::{Cursor, Read, Write};
 
 use std::sync::Arc;
 
-use cs_core::{Artboard, ArtboardId, Document, Guide, LayerMask, Sprite, Symmetry};
+use cs_core::{
+    Artboard, ArtboardId, Document, Guide, InstanceTrack, LayerKind, LayerMask, Sprite, Symmetry,
+};
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -47,6 +49,9 @@ struct LayerExtra {
     clip: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mask: Option<MaskEntry>,
+    /// Keys de una capa de instancia (en el `.aseprite` interno va horneada).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    instance: Option<InstanceTrack>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -67,7 +72,7 @@ fn layer_extras(artboard: &Artboard) -> Vec<(LayerExtra, Option<Arc<Vec<u8>>>)> 
         .layers
         .iter()
         .enumerate()
-        .filter(|(_, l)| l.clip || l.mask.is_some())
+        .filter(|(_, l)| l.clip || l.mask.is_some() || l.instance.is_some())
         .map(|(index, l)| {
             let mask = l.mask.as_ref().map(|m| MaskEntry {
                 position: [m.position.0, m.position.1],
@@ -83,6 +88,7 @@ fn layer_extras(artboard: &Artboard) -> Vec<(LayerExtra, Option<Arc<Vec<u8>>>)> 
                     index,
                     clip: l.clip,
                     mask,
+                    instance: l.instance.clone(),
                 },
                 data,
             )
@@ -104,6 +110,12 @@ fn apply_extras(
             ))
         })?;
         layer.clip = extra.clip;
+        let id = layer.id;
+        let instance_layer = extra.instance.is_some();
+        if let Some(track) = extra.instance {
+            layer.kind = LayerKind::Instance;
+            layer.instance = Some(track);
+        }
         if let Some(m) = extra.mask {
             let data = read_entry(zip, &m.file)?;
             if data.len() != (m.width as usize) * (m.height as usize) {
@@ -118,7 +130,14 @@ fn apply_extras(
                 enabled: m.enabled,
             });
         }
+        if instance_layer {
+            // Los cels horneados no se usan: la instancia se recompone desde su fuente.
+            sprite.cels.retain(|(l, _), _| *l != id);
+        }
     }
+    // Quita del pool las imágenes que ya no usa ningún cel.
+    let used: HashSet<cs_core::ImageId> = sprite.cels.values().map(|c| c.image).collect();
+    sprite.images.retain(|id, _| used.contains(id));
     Ok(())
 }
 
@@ -133,7 +152,9 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
     for artboard in &doc.artboards {
         let file = format!("artboards/{}.aseprite", artboard.id.0);
         zip.start_file(file.as_str(), options).map_err(zip_error)?;
-        zip.write_all(&aseprite::write(&artboard.sprite))?;
+        // Las instancias van horneadas para que el `.aseprite` se vea bien fuera de ChimpSprite.
+        let baked = cs_render::bake_instances(doc, &artboard.sprite);
+        zip.write_all(&aseprite::write(baked.as_ref().unwrap_or(&artboard.sprite)))?;
         let mut layers = Vec::new();
         for (extra, data) in layer_extras(artboard) {
             if let (Some(mask), Some(data)) = (&extra.mask, data) {
@@ -214,7 +235,31 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
             sprite,
         });
     }
-    Ok((Document { artboards }, report))
+    let mut doc = Document { artboards };
+    // Un archivo editado a mano podría tener instancias en ciclo: se quitan esas keys.
+    for id in doc.artboards.iter().map(|a| a.id).collect::<Vec<_>>() {
+        if doc.cycle_free(id) {
+            continue;
+        }
+        let name = doc.artboard(id).expect("exists").name.clone();
+        let sources = doc.instance_sources(id);
+        let bad: Vec<_> = sources
+            .into_iter()
+            .filter(|&s| doc.would_cycle(id, s))
+            .collect();
+        let sprite = &mut doc.artboard_mut(id).expect("exists").sprite;
+        for track in sprite.layers.iter_mut().filter_map(|l| l.instance.as_mut()) {
+            for key in &mut track.keys {
+                if key.source.is_some_and(|s| bad.contains(&s)) {
+                    key.source = None;
+                }
+            }
+        }
+        report.warn(format!(
+            "{name}: removed instances that contained the artboard itself"
+        ));
+    }
+    Ok((doc, report))
 }
 
 #[cfg(test)]
@@ -240,6 +285,75 @@ mod tests {
         assert_eq!(layers[0].mask, d.artboards[0].sprite.layers[0].mask);
         assert!(layers[1].clip && !layers[0].clip);
         assert!(back.artboards[1].sprite.layers[0].mask.is_none());
+    }
+
+    /// Documento con el artboard 7 (el segundo de `doc()`) instanciado en el 1 (capa de instancia id 2).
+    fn with_instance(timing: Timing) -> Document {
+        let mut d = doc();
+        let mut key = InstanceKey::new(0, ArtboardId(7), (1, 1));
+        key.timing = timing;
+        key.flip_h = true;
+        let mut layer = Layer::new_image(LayerId(2), "inst");
+        layer.kind = LayerKind::Instance;
+        layer.instance = Some(InstanceTrack { keys: vec![key] });
+        d.artboards[0].sprite.layers.push(layer);
+        cs_commands::Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, PixelValue::Index(1))],
+        }
+        .apply(&mut d.artboards[1].sprite)
+        .unwrap();
+        d
+    }
+
+    #[test]
+    fn instances_roundtrip_in_both_timings() {
+        for timing in [
+            Timing::Graphic {
+                first_frame: 0,
+                play: GraphicPlay::Once,
+            },
+            Timing::MovieClip { first_frame: 0 },
+        ] {
+            let d = with_instance(timing);
+            let (back, report) = read(&write(&d).unwrap()).unwrap();
+            assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+            let layer = &back.artboards[0].sprite.layers[1];
+            assert_eq!(layer.kind, LayerKind::Instance);
+            assert_eq!(layer.instance, d.artboards[0].sprite.layers[1].instance);
+            assert!(
+                back.artboards[0].sprite.cel(LayerId(2), 0).is_none(),
+                "baked cels dropped"
+            );
+        }
+    }
+
+    #[test]
+    fn inner_aseprite_has_the_instance_baked() {
+        let d = with_instance(Timing::MovieClip { first_frame: 0 });
+        let bytes = write(&d).unwrap();
+        let mut zip = ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
+        let (inner, _) =
+            aseprite::read(&read_entry(&mut zip, "artboards/1.aseprite").unwrap()).unwrap();
+        let expected =
+            cs_render::render_frame(&cs_render::materialize(&d, &d.artboards[0].sprite, 0..1), 0);
+        assert_eq!(cs_render::render_frame(&inner, 0), expected);
+    }
+
+    #[test]
+    fn cyclic_instances_load_with_a_warning() {
+        let mut d = with_instance(Timing::MovieClip { first_frame: 0 });
+        // El artboard 7 instancia al 1: ciclo.
+        let mut layer = Layer::new_image(LayerId(2), "back");
+        layer.kind = LayerKind::Instance;
+        layer.instance = Some(InstanceTrack {
+            keys: vec![InstanceKey::new(0, ArtboardId(1), (0, 0))],
+        });
+        d.artboards[1].sprite.layers.push(layer);
+        let (back, report) = read(&write(&d).unwrap()).unwrap();
+        assert!(!report.warnings.is_empty());
+        assert!(back.artboards.iter().all(|a| back.cycle_free(a.id)));
     }
 
     fn doc() -> Document {

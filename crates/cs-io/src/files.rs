@@ -31,6 +31,15 @@ pub fn bakes_masks(doc: &Document, file_name: &str) -> bool {
             .any(|a| a.sprite.layers.iter().any(|l| l.mask.is_some() || l.clip))
 }
 
+/// ¿Guardar en este formato convierte instancias en píxeles?
+pub fn bakes_instances(doc: &Document, file_name: &str) -> bool {
+    kind_of(file_name) == Some(FileKind::Aseprite)
+        && doc
+            .artboards
+            .iter()
+            .any(|a| a.sprite.layers.iter().any(|l| l.instance.is_some()))
+}
+
 /// Nombre sin extensión.
 pub fn stem(name: &str) -> &str {
     Path::new(name)
@@ -72,12 +81,13 @@ pub fn encode(doc: &Document, file_name: &str) -> Result<Vec<u8>, FileError> {
     match kind_of(file_name) {
         Some(FileKind::Chimp) => Ok(chimp::write(doc)?),
         Some(FileKind::Aseprite) => match doc.artboards.as_slice() {
-            // `.aseprite` no tiene máscaras ni recortes: se aplican a los píxeles.
-            [only] => Ok(aseprite::write(
-                cs_render::bake_masks(&only.sprite)
-                    .as_ref()
-                    .unwrap_or(&only.sprite),
-            )),
+            // `.aseprite` no tiene instancias, máscaras ni recortes: se aplican a los píxeles.
+            [only] => {
+                let baked = cs_render::bake_instances(doc, &only.sprite);
+                let sprite = baked.as_ref().unwrap_or(&only.sprite);
+                let masked = cs_render::bake_masks(sprite);
+                Ok(aseprite::write(masked.as_ref().unwrap_or(sprite)))
+            }
             many => Err(FileError::MultipleArtboards(many.len())),
         },
         _ => Err(FileError::UnknownType(file_name.to_string())),
@@ -125,5 +135,43 @@ mod tests {
             decode("x.txt", b""),
             Err(FileError::UnknownType(_))
         ));
+    }
+
+    #[test]
+    fn saving_aseprite_bakes_instances() {
+        let mut d = Document::with_sprite("a", Sprite::new(4, 4, ColorMode::Rgba));
+        let mut symbol = Sprite::new(2, 2, ColorMode::Rgba);
+        cs_commands::Command::DrawPixels {
+            layer: cs_core::LayerId(1),
+            frame: 0,
+            pixels: vec![(1, 1, cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(5, 6, 7)))],
+        }
+        .apply(&mut symbol)
+        .unwrap();
+        d.artboards.push(Artboard {
+            id: ArtboardId(2),
+            name: "s".into(),
+            position: (9, 0),
+            sprite: symbol,
+            guides: Vec::new(),
+            symmetry: Default::default(),
+        });
+        cs_commands::ops::new_instance_layer(
+            &d.artboards[0].sprite.clone(),
+            None,
+            0,
+            ArtboardId(2),
+            "i",
+            (2, 2),
+        )
+        .apply(&mut d.artboards[0].sprite)
+        .unwrap();
+        assert!(bakes_instances(&d, "x.aseprite"));
+        assert!(!bakes_instances(&d, "x.chimp"));
+        d.artboards.truncate(1);
+        // Un solo artboard con la fuente ausente: igual guarda (la instancia no dibuja nada).
+        let bytes = encode(&d, "x.aseprite").unwrap();
+        let (back, _) = aseprite::read(&bytes).unwrap();
+        assert_eq!(back.layers[1].kind, cs_core::LayerKind::Image);
     }
 }
