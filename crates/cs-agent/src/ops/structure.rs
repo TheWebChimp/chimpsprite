@@ -813,10 +813,57 @@ mod tests {
         assert_eq!(layer["instance"]["keys"].as_array().unwrap().len(), 2);
         s.remove_instance_key(p(json!({"doc": "d1", "layer": "Coin", "frame": 1})))
             .unwrap();
+        let err = s
+            .add_instance_layer(p(json!({"doc": "d1", "artboard": "coin", "source": 1})))
+            .expect_err("coin cannot contain the artboard that contains it");
         assert!(
-            s.add_instance_layer(p(json!({"doc": "d1", "artboard": "coin", "source": 1})))
-                .is_err(),
-            "coin cannot contain the artboard that contains it"
+            err.to_string().contains("cycle"),
+            "error message should mention cycle: {}",
+            err
+        );
+
+        // Test that set_instance_key also rejects cycles
+        s.add_artboard(p(
+            json!({"doc": "d1", "name": "gem", "width": 2, "height": 2}),
+        ))
+        .unwrap();
+        s.add_instance_layer(p(
+            json!({"doc": "d1", "artboard": "coin", "source": "gem", "x": 0, "y": 0,
+            "name": "GemInstance"}),
+        ))
+        .unwrap();
+        let (_, coin_sprite) = s.sprite("d1", Some(&Ref::Name("coin".into()))).unwrap();
+        let gem_layer = target::layer(coin_sprite, &Ref::Name("GemInstance".into())).unwrap();
+        let err = s
+            .set_instance_key(p(
+                json!({"doc": "d1", "artboard": "coin", "layer": "GemInstance",
+            "frame": 0, "source": 1}),
+            ))
+            .expect_err("coin cannot re-point its instance to the artboard that contains it");
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("contain") || err_msg.contains("cycle"),
+            "error message should mention containing or cycle: {}",
+            err_msg
+        );
+        // Verify the layer's source is unchanged
+        let (_, coin_sprite_after) = s.sprite("d1", Some(&Ref::Name("coin".into()))).unwrap();
+        let layer = coin_sprite_after.layer(gem_layer).expect("layer exists");
+        let instance = layer.instance.as_ref().expect("is instance layer");
+        let key = instance.key_at(0).expect("key at frame 0");
+        let gem_id = s
+            .doc("d1")
+            .unwrap()
+            .document
+            .artboards
+            .iter()
+            .find(|a| a.name == "gem")
+            .map(|a| a.id)
+            .expect("gem artboard exists");
+        assert_eq!(
+            key.source,
+            Some(gem_id),
+            "source should still be gem, not the root artboard"
         );
     }
 
