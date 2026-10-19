@@ -118,8 +118,24 @@ impl Document {
         self.artboards.iter_mut().find(|a| a.id == id)
     }
 
+    /// Id nuevo: mayor que el de todo artboard existente y que toda fuente de instancia, para que
+    /// las keys que apuntan a un artboard borrado no pasen a mostrar uno nuevo.
     pub fn next_artboard_id(&self) -> ArtboardId {
-        ArtboardId(self.artboards.iter().map(|a| a.id.0).max().unwrap_or(0) + 1)
+        let sources = self
+            .artboards
+            .iter()
+            .flat_map(|a| a.sprite.layers.iter())
+            .filter_map(|l| l.instance.as_ref())
+            .flat_map(|t| t.keys.iter().filter_map(|k| k.source));
+        let max = self
+            .artboards
+            .iter()
+            .map(|a| a.id)
+            .chain(sources)
+            .map(|id| id.0)
+            .max()
+            .unwrap_or(0);
+        ArtboardId(max + 1)
     }
 
     /// El artboard de más arriba bajo el punto de mundo `p`.
@@ -257,5 +273,14 @@ mod tests {
         assert!(d.cycle_free(ArtboardId(1)));
         let looped = instancing(&[(1, &[2]), (2, &[3]), (3, &[1])]);
         assert!(!looped.cycle_free(ArtboardId(3)));
+    }
+
+    #[test]
+    fn next_artboard_id_skips_ids_still_referenced_by_instances() {
+        // El 1 instancia al 5, que ya no existe: el próximo id no puede ser 5.
+        let d = instancing(&[(1, &[5]), (2, &[])]);
+        assert_eq!(d.next_artboard_id(), ArtboardId(6));
+        let d = instancing(&[(1, &[]), (3, &[1])]);
+        assert_eq!(d.next_artboard_id(), ArtboardId(4));
     }
 }
