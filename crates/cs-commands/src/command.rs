@@ -630,12 +630,18 @@ fn remove_frame(doc: &mut Sprite, index: usize) -> Result<Command, CmdError> {
     let old_slices = std::mem::take(&mut doc.slices);
     doc.slices = remap_slices(&old_slices, |f| if f > index { f - 1 } else { f });
     inverse.push(Command::SetSlices(old_slices));
-    // Una key en el último frame quitado pasa al nuevo último (no queda fuera de rango).
+    inverse.extend(remap_instances(doc, |f| if f > index { f - 1 } else { f }));
+    // Una key en el último frame quitado queda fuera de rango: pasa al nuevo último frame si
+    // ahí no hay otra (si la hay, esa sigue mandando y la quitada se descarta).
     let last = doc.frames.len() - 1;
-    inverse.extend(remap_instances(doc, |f| {
-        let f = if f > index { f - 1 } else { f };
-        f.min(last)
-    }));
+    for track in doc.layers.iter_mut().filter_map(|l| l.instance.as_mut()) {
+        let taken = track.keys.iter().any(|k| k.frame == last);
+        if taken {
+            track.keys.retain(|k| k.frame <= last);
+        } else if let Some(key) = track.keys.iter_mut().find(|k| k.frame > last) {
+            key.frame = last;
+        }
+    }
     Ok(Command::Batch(inverse))
 }
 
@@ -1062,6 +1068,25 @@ mod tests {
         let before = s.clone();
         let inv = Command::RemoveFrame { index: 2 }.apply(&mut s).unwrap();
         assert_eq!(key_frames(&s), vec![1]);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn removing_the_last_frame_keeps_an_existing_key_on_the_new_last() {
+        let mut s = with_instance();
+        set_keys(
+            &mut s,
+            vec![
+                InstanceKey::new(1, ArtboardId(2), (1, 1)),
+                InstanceKey::new(2, ArtboardId(2), (2, 2)),
+            ],
+        );
+        let before = s.clone();
+        let inv = Command::RemoveFrame { index: 2 }.apply(&mut s).unwrap();
+        let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+        let got: Vec<_> = track.keys.iter().map(|k| (k.frame, k.position)).collect();
+        assert_eq!(got, vec![(1, (1, 1))], "frame 1 keeps its own key");
         inv.apply(&mut s).unwrap();
         assert_eq!(s, before);
     }
