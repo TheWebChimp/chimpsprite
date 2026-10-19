@@ -93,7 +93,9 @@ desde `source`. Lo usan:
 - los comandos, que rechazan la operación;
 - la carga del `.chimp`, que descarta la key culpable y deja un aviso en `LoadReport`.
 
-`source` debe existir y ser RGBA. Si no, la key se ignora al render y se muestra un aviso en la UI.
+Si `source` no existe, la key se ignora al render y el panel la marca. El sprite que *contiene* la
+instancia debe ser RGBA; el artboard fuente puede tener cualquier modo de color, porque se compone a
+RGBA.
 
 ## 2. Render (`cs-render`)
 
@@ -122,22 +124,34 @@ La opacidad, el blend, las máscaras y el clip de la capa los resuelve el render
 cambios. Por defensa ante datos corruptos, la recursión tiene un límite de profundidad de 16.
 Pasado ese límite, la instancia no se dibuja.
 
-Los llamadores que hoy renderizan un artboard (canvas, miniaturas, export, `cs-agent`) llaman a
-`materialize` antes. Para las capas de instancia, `coverage` usa el sprite materializado.
+Los llamadores que hoy renderizan un artboard (canvas, export, `cs-agent`) llaman antes a
+`materialize` o a `bake_instances`.
+
+Limitación aceptada: el cuentagotas, la varita mágica con "sample all" y la vista previa del
+color en el cursor siguen usando el sprite sin materializar, así que no ven los píxeles de las
+instancias.
 
 ## 3. Comandos (`cs-commands`)
 
-Todos los comandos son serializables y tienen undo, como los existentes:
+Hay una sola primitiva nueva, serializable y con undo como las demás:
+`Command::SetInstanceTrack { layer, track }`. Reemplaza el track completo de una capa de instancia,
+igual que `SetSlices` hace con los slices. Las operaciones de alto nivel son funciones de `ops` que
+devuelven comandos:
 
-- `AddInstanceLayer { artboard, source, frame, position }` crea la capa sobre la capa actual con
-  una key `Graphic { first_frame: 0, play: Loop }`, sin flip y con opacidad 255.
-- `SetInstanceKey { artboard, layer, key }` inserta o reemplaza la key.
-- `RemoveInstanceKey { artboard, layer, frame }` borra la key. No se permite borrar la única key;
+- `ops::new_instance_layer(sprite, above, frame, source, name, position)` arma un `AddLayer` sobre
+  la capa indicada, con una key `Graphic { first_frame: 0, play: Loop }`, sin flip y con opacidad
+  255.
+- `ops::update_instance_key(sprite, layer, frame, f)` edita la key vigente; si `frame` no es
+  keyframe, primero la copia ahí.
+- `ops::remove_instance_key(sprite, layer, frame)` borra la key. No se permite borrar la única key;
   en ese caso se borra la capa.
 
 Ajustes a operaciones existentes:
 
-- **Insertar o borrar frames** desplaza `frame` de las keys, igual que los slices.
+- **Ciclos:** `DocCommand::OnArtboard` revisa, después de aplicar, que el artboard no instancie
+  algo que lo contenga. Si lo hace, deshace el cambio y devuelve `CmdError::InstanceCycle`.
+- **Insertar o borrar frames** desplaza `frame` de las keys, igual que los slices. Mover un frame
+  no las toca, como tampoco toca los slices.
 - **Borrar un artboard que otros instancian** deja esas keys con `source` colgante. La key no se
   dibuja y el panel la marca. El undo lo restaura todo.
 - **Duplicar un artboard** conserva sus instancias.
@@ -160,7 +174,7 @@ Ajustes a operaciones existentes:
   - flip H y flip V;
   - opacidad.
 - **Herramienta Move** sobre una capa de instancia arrastra la instancia y genera un
-  `SetInstanceKey` al soltar, creando key si hace falta.
+  `SetInstanceTrack` al soltar, creando key si hace falta.
 - **Herramientas de pintura** sobre una capa de instancia: el cursor queda deshabilitado y la
   barra de estado dice "Capa de instancia: edita el artboard fuente".
 - **Doble clic** con Move sobre una instancia selecciona el artboard fuente y lo encuadra, como
@@ -186,9 +200,9 @@ Nuevas operaciones, que delegan en los comandos:
 - `add_instance_layer`
 - `set_instance_key`
 - `remove_instance_key`
-- `list_instances`: capas de instancia y sus keys de un artboard.
 
-`render`/`export` en `cs-agent` usan `materialize`.
+En lugar de un `list_instances` aparte, `describe` incluye en cada capa de instancia su `kind`
+(`"instance"`) y sus keys. `render`/`export` en `cs-agent` usan `materialize`.
 
 ## 7. Tests
 
