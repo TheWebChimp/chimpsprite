@@ -630,7 +630,12 @@ fn remove_frame(doc: &mut Sprite, index: usize) -> Result<Command, CmdError> {
     let old_slices = std::mem::take(&mut doc.slices);
     doc.slices = remap_slices(&old_slices, |f| if f > index { f - 1 } else { f });
     inverse.push(Command::SetSlices(old_slices));
-    inverse.extend(remap_instances(doc, |f| if f > index { f - 1 } else { f }));
+    // Una key en el último frame quitado pasa al nuevo último (no queda fuera de rango).
+    let last = doc.frames.len() - 1;
+    inverse.extend(remap_instances(doc, |f| {
+        let f = if f > index { f - 1 } else { f };
+        f.min(last)
+    }));
     Ok(Command::Batch(inverse))
 }
 
@@ -1042,6 +1047,55 @@ mod tests {
         assert_eq!(key_frames(&s), vec![0, 2]);
         let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
         assert_eq!(track.keys[1].position, (5, 5), "last wins");
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    fn set_keys(s: &mut Sprite, keys: Vec<InstanceKey>) {
+        s.layer_mut(LayerId(2)).unwrap().instance = Some(InstanceTrack { keys });
+    }
+
+    #[test]
+    fn removing_the_last_frame_moves_its_key_to_the_new_last() {
+        let mut s = with_instance();
+        set_keys(&mut s, vec![InstanceKey::new(2, ArtboardId(2), (4, 4))]);
+        let before = s.clone();
+        let inv = Command::RemoveFrame { index: 2 }.apply(&mut s).unwrap();
+        assert_eq!(key_frames(&s), vec![1]);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn removing_a_frame_between_two_keys_keeps_the_later_one() {
+        let mut s = with_instance();
+        set_keys(
+            &mut s,
+            vec![
+                InstanceKey::new(1, ArtboardId(2), (1, 1)),
+                InstanceKey::new(2, ArtboardId(2), (2, 2)),
+            ],
+        );
+        let before = s.clone();
+        let inv = Command::RemoveFrame { index: 1 }.apply(&mut s).unwrap();
+        let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+        let got: Vec<_> = track.keys.iter().map(|k| (k.frame, k.position)).collect();
+        assert_eq!(got, vec![(1, (2, 2))]);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn inserting_frame_zero_keeps_the_frame_zero_key() {
+        let mut s = with_instance();
+        let before = s.clone();
+        let inv = Command::AddFrame {
+            index: 0,
+            frame: Frame { duration_ms: 100 },
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!(key_frames(&s), vec![0, 3]);
         inv.apply(&mut s).unwrap();
         assert_eq!(s, before);
     }
