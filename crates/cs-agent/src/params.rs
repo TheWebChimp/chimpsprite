@@ -782,6 +782,87 @@ pub struct RemoveInstanceKey {
     pub frame: usize,
 }
 
+// --- Tilemaps ---
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct CreateTileset {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub name: String,
+    /// Tile width in pixels (1-256).
+    pub tile_width: u32,
+    /// Tile height in pixels (1-256).
+    pub tile_height: u32,
+    /// Number shown for tile 1 in the UI (default 1, like Aseprite).
+    pub base_index: Option<i16>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetTilePixels {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    /// Tileset index (0-based, as listed by describe).
+    pub tileset: usize,
+    /// Tile to paint. Tile 0 is the empty tile and cannot be edited; use the current tile count
+    /// to add a new tile.
+    pub tile: usize,
+    /// Pixels in tile coordinates.
+    pub pixels: Vec<PixelArg>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddTilemapLayer {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    /// Tileset index (0-based).
+    pub tileset: usize,
+    /// Layer name (default "Tilemap N").
+    pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct TileCell {
+    /// Canvas grid cell: cell (x, y) starts at pixel (x * tile_width, y * tile_height).
+    pub x: i32,
+    pub y: i32,
+    /// Tile index (0 = empty, erases the cell).
+    pub tile: u32,
+    #[serde(default)]
+    pub flip_x: bool,
+    #[serde(default)]
+    pub flip_y: bool,
+    /// Diagonal flip (swap X/Y); needs square tiles.
+    #[serde(default)]
+    pub flip_d: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetTiles {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    /// A tilemap layer.
+    pub layer: Ref,
+    #[serde(default)]
+    pub frame: usize,
+    pub cells: Vec<TileCell>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct GetTiles {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    /// A tilemap layer.
+    pub layer: Ref,
+    #[serde(default)]
+    pub frame: usize,
+    /// Optional rect of canvas cells to read (x, y, w, h together); needed for grids over
+    /// 65536 cells. At most 65536 cells per call.
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub w: Option<u32>,
+    pub h: Option<u32>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ApplyCommands {
     pub doc: String,

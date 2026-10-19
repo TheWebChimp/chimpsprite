@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use cs_core::{
-    ArtboardId, Cel, ImageId, InstanceKey, Layer, LayerId, LayerKind, LayerMask, Mask, PixelValue,
-    Sprite,
+    ArtboardId, Cel, ColorMode, Image, ImageId, InstanceKey, Layer, LayerId, LayerKind, LayerMask,
+    Mask, PixelBuffer, PixelValue, Sprite, Tile, TileGrid,
 };
 
 use crate::Command;
@@ -25,6 +25,7 @@ pub fn new_layer(sprite: &Sprite, above: Option<LayerId>, kind: LayerKind) -> Co
     let prefix = match kind {
         LayerKind::Group => "Group",
         LayerKind::Instance => "Instance",
+        LayerKind::Tilemap => "Tilemap",
         LayerKind::Image => "Layer",
     };
     let mut layer = Layer::new_image(id, format!("{prefix} {}", id.0));
@@ -86,6 +87,170 @@ pub fn remove_instance_key(sprite: &Sprite, layer: LayerId, frame: usize) -> Opt
     let mut new = track.clone();
     new.remove_key(frame);
     Some(Command::SetInstanceTrack { layer, track: new })
+}
+
+/// Capa tilemap nueva sobre `above` que dibuja con el tileset `tileset`.
+pub fn new_tilemap_layer(sprite: &Sprite, above: Option<LayerId>, tileset: u32) -> Command {
+    let Command::AddLayer { index, mut layer } = new_layer(sprite, above, LayerKind::Tilemap)
+    else {
+        unreachable!("new_layer devuelve AddLayer");
+    };
+    layer.tileset = Some(tileset);
+    Command::AddLayer { index, layer }
+}
+
+/// Lado máximo de una grilla de tilemap, en tiles (protege contra pedidos absurdos).
+pub const MAX_TILEMAP_SIDE: u32 = 4096;
+
+/// ¿Una grilla de `width`×`height` tiles de `tile_size` cabe en `MAX_TILEMAP_PIXELS` al dibujarse?
+pub fn tilemap_fits(width: u64, height: u64, tile_size: (u32, u32)) -> bool {
+    let w = width.saturating_mul(tile_size.0 as u64);
+    let h = height.saturating_mul(tile_size.1 as u64);
+    w.saturating_mul(h) <= cs_core::MAX_TILEMAP_PIXELS
+}
+
+/// Pone tiles en el cel tilemap `(layer, frame)`. Las coordenadas son celdas de la grilla del
+/// lienzo: la celda `(x, y)` empieza en el píxel `(x · ancho_tile, y · alto_tile)` (corrida por el
+/// resto de la posición del cel si no está alineado). Sin cel, crea uno en (0, 0). Si las celdas
+/// caen fuera de la grilla, la agranda con vacíos y corre la posición del cel si crece hacia la
+/// izquierda o hacia arriba. Un cel vinculado recibe una grilla propia. `None` si la capa no es
+/// tilemap, su tileset no existe, no hay celdas, nada cambia o la grilla pasaría
+/// `MAX_TILEMAP_SIDE` de lado o `MAX_TILEMAP_PIXELS` dibujada (ver `tilemap_fits`).
+pub fn set_tiles(
+    sprite: &Sprite,
+    layer: LayerId,
+    frame: usize,
+    cells: &[(i32, i32, Tile)],
+) -> Option<Command> {
+    let l = sprite.layer(layer)?;
+    if l.kind != LayerKind::Tilemap || cells.is_empty() || frame >= sprite.frames.len() {
+        return None;
+    }
+    let tileset = sprite.tilesets.get(l.tileset? as usize)?;
+    let (tw, th) = (tileset.tile_size.0 as i32, tileset.tile_size.1 as i32);
+    let old_cel = sprite.cel(layer, frame).copied();
+    let old_grid: Option<&TileGrid> = old_cel.and_then(|c| sprite.tilemap(c.image)).map(|g| &**g);
+    let (ow, oh) = old_grid.map_or((0, 0), |g| (g.width as i32, g.height as i32));
+    let position = old_cel.map_or((0, 0), |c| c.position);
+    // Celda del lienzo donde empieza la grilla actual.
+    let origin = (position.0.div_euclid(tw), position.1.div_euclid(th));
+    let (mut x0, mut y0, mut x1, mut y1) = (0i64, 0i64, ow as i64, oh as i64);
+    for &(x, y, _) in cells {
+        // Usa aritmética saturada para evitar overflow en i32::MAX.
+        let (rx, ry) = (
+            (x as i64).saturating_sub(origin.0 as i64),
+            (y as i64).saturating_sub(origin.1 as i64),
+        );
+        x0 = x0.min(rx);
+        y0 = y0.min(ry);
+        x1 = x1.max(rx.saturating_add(1));
+        y1 = y1.max(ry.saturating_add(1));
+    }
+
+    // Valida el tamaño de la grilla antes de asignar.
+    let width = x1 - x0;
+    let height = y1 - y0;
+    if width <= 0
+        || height <= 0
+        || width > MAX_TILEMAP_SIDE as i64
+        || height > MAX_TILEMAP_SIDE as i64
+    {
+        return None;
+    }
+    // Ni una grilla que, dibujada, pase el límite que el lector de `.aseprite` acepta (se
+    // descartaría al abrir el archivo guardado).
+    if !tilemap_fits(width as u64, height as u64, tileset.tile_size) {
+        return None;
+    }
+    let x0_i32 = x0 as i32;
+    let y0_i32 = y0 as i32;
+    let mut grid = TileGrid::new(width as u32, height as u32);
+    if let Some(old) = old_grid {
+        for y in 0..old.height {
+            for x in 0..old.width {
+                let tile = old.get(x, y).unwrap_or(Tile::EMPTY);
+                grid.set((x as i32 - x0_i32) as u32, (y as i32 - y0_i32) as u32, tile);
+            }
+        }
+    }
+    for &(x, y, tile) in cells {
+        grid.set(
+            (x - origin.0 - x0_i32) as u32,
+            (y - origin.1 - y0_i32) as u32,
+            tile,
+        );
+    }
+    let new_position = (position.0 + x0_i32 * tw, position.1 + y0_i32 * th);
+    if old_grid == Some(&grid) && new_position == position {
+        return None;
+    }
+    // Un cel vinculado recibe una grilla nueva; si no, se reemplaza la suya.
+    let id = match old_cel {
+        Some(c) if !is_linked(sprite, layer, frame) => c.image,
+        _ => sprite.next_image_id(),
+    };
+    Some(Command::Batch(vec![
+        Command::SetTilemap {
+            id,
+            grid: Some(Arc::new(grid)),
+        },
+        Command::SetCel {
+            layer,
+            frame,
+            cel: Some(Cel {
+                position: new_position,
+                opacity: old_cel.map_or(255, |c| c.opacity),
+                image: id,
+            }),
+        },
+    ]))
+}
+
+/// Reemplaza la imagen del tile `index` del tileset `tileset`, o la agrega si
+/// `index == tiles.len()`. `None` si es el tile 0 (el vacío), el índice o el tileset no existen,
+/// la imagen no tiene el tamaño o el modo de color del tileset, o nada cambia.
+pub fn set_tile_image(
+    sprite: &Sprite,
+    tileset: usize,
+    index: usize,
+    image: Image,
+) -> Option<Command> {
+    let ts = sprite.tilesets.get(tileset)?;
+    if index == 0 || index > ts.tiles.len() || (image.width(), image.height()) != ts.tile_size {
+        return None;
+    }
+    let same_mode = matches!(
+        (image.pixels(), sprite.color_mode),
+        (PixelBuffer::Rgba(_), ColorMode::Rgba)
+            | (PixelBuffer::Indexed(_), ColorMode::Indexed { .. })
+    );
+    if !same_mode {
+        return None;
+    }
+    let mut new = ts.clone();
+    if index == new.tiles.len() {
+        new.tiles.push(Arc::new(image));
+    } else {
+        new.tiles[index] = Arc::new(image);
+    }
+    (new != *ts).then_some(Command::SetTileset {
+        index: tileset,
+        tileset: Some(new),
+    })
+}
+
+/// Copia del contenido de un cel (imagen o grilla de tiles) con el id `to`.
+fn copy_content(sprite: &Sprite, from: ImageId, to: ImageId) -> Command {
+    match sprite.tilemap(from) {
+        Some(grid) => Command::SetTilemap {
+            id: to,
+            grid: Some(grid.clone()),
+        },
+        None => Command::SetImage {
+            id: to,
+            image: sprite.image(from).cloned(),
+        },
+    }
 }
 
 /// Quita la capa y, si es un grupo, todo su contenido.
@@ -151,10 +316,7 @@ pub fn duplicate_frame(sprite: &Sprite, index: usize, linked: bool) -> Option<Co
         } else {
             let id = ImageId(next_id);
             next_id += 1;
-            cmds.push(Command::SetImage {
-                id,
-                image: sprite.image(cel.image).cloned(),
-            });
+            cmds.push(copy_content(sprite, cel.image, id));
             Cel { image: id, ..*cel }
         };
         cmds.push(Command::SetCel {
@@ -294,10 +456,7 @@ pub fn unlink_range(sprite: &Sprite, layer: LayerId, from: usize, to: usize) -> 
         }
         let id = ImageId(next_id);
         next_id += 1;
-        cmds.push(Command::SetImage {
-            id,
-            image: sprite.image(cel.image).cloned(),
-        });
+        cmds.push(copy_content(sprite, cel.image, id));
         cmds.push(Command::SetCel {
             layer,
             frame,
@@ -319,10 +478,7 @@ pub fn unlink_cel(sprite: &Sprite, layer: LayerId, frame: usize) -> Option<Comma
     }
     let id = sprite.next_image_id();
     Some(Command::Batch(vec![
-        Command::SetImage {
-            id,
-            image: sprite.image(cel.image).cloned(),
-        },
+        copy_content(sprite, cel.image, id),
         Command::SetCel {
             layer,
             frame,
@@ -343,9 +499,198 @@ pub fn is_linked(sprite: &Sprite, layer: LayerId, frame: usize) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use cs_core::*;
 
     use super::*;
+
+    /// Sprite de 16×16 con un tileset de 4×4 (dos tiles además del vacío) y una capa tilemap
+    /// (id 2) encima de la capa 1.
+    fn with_tilemap_layer() -> Sprite {
+        let mut s = Sprite::new(16, 16, ColorMode::Rgba);
+        let mut ts = Tileset::new("t", (4, 4), ColorMode::Rgba);
+        for _ in 0..2 {
+            ts.tiles.push(Arc::new(Image::new(4, 4, ColorMode::Rgba)));
+        }
+        crate::Command::SetTileset {
+            index: 0,
+            tileset: Some(ts),
+        }
+        .apply(&mut s)
+        .unwrap();
+        new_tilemap_layer(&s.clone(), Some(LayerId(1)), 0)
+            .apply(&mut s)
+            .unwrap();
+        s
+    }
+
+    fn grid_of(s: &Sprite, layer: u32, frame: usize) -> (Cel, TileGrid) {
+        let cel = *s.cel(LayerId(layer), frame).unwrap();
+        (cel, TileGrid::clone(s.tilemap(cel.image).unwrap()))
+    }
+
+    #[test]
+    fn new_tilemap_layer_uses_the_tileset() {
+        let s = with_tilemap_layer();
+        let layer = s.layer(LayerId(2)).unwrap();
+        assert_eq!(
+            (layer.kind, layer.tileset, layer.name.as_str()),
+            (LayerKind::Tilemap, Some(0), "Tilemap 2")
+        );
+    }
+
+    #[test]
+    fn set_tiles_creates_grows_and_unlinks() {
+        let mut s = with_tilemap_layer();
+        let t = |i| Tile::new(i, false, false, false);
+        // Sin cel: se crea en (0, 0) con la grilla mínima que llega a la celda (2, 1).
+        set_tiles(&s, LayerId(2), 0, &[(2, 1, t(1))])
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        let (cel, grid) = grid_of(&s, 2, 0);
+        assert_eq!((cel.position, grid.width, grid.height), ((0, 0), 3, 2));
+        assert_eq!(grid.get(2, 1), Some(t(1)));
+        // Hacia la izquierda y hacia arriba: la grilla crece y el cel se corre.
+        let before = s.clone();
+        let inv = set_tiles(&s, LayerId(2), 0, &[(-1, -2, t(2))])
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        let (cel, grid) = grid_of(&s, 2, 0);
+        assert_eq!((cel.position, grid.width, grid.height), ((-4, -8), 4, 4));
+        assert_eq!(grid.get(0, 0), Some(t(2)));
+        assert_eq!(
+            grid.get(3, 3),
+            Some(t(1)),
+            "the old tile moved with the grid"
+        );
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        // Si nada cambia, no hay comando.
+        assert!(set_tiles(&s, LayerId(2), 0, &[(2, 1, t(1))]).is_none());
+        // Vinculado: solo el cel editado recibe una grilla nueva.
+        crate::Command::AddFrame {
+            index: 1,
+            frame: Frame { duration_ms: 100 },
+        }
+        .apply(&mut s)
+        .unwrap();
+        link_cel(&s, LayerId(2), 1, 0)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        set_tiles(&s, LayerId(2), 1, &[(0, 0, t(2))])
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        let ((c0, g0), (c1, g1)) = (grid_of(&s, 2, 0), grid_of(&s, 2, 1));
+        assert_ne!(c0.image, c1.image);
+        assert_eq!(
+            (g0.get(0, 0), g1.get(0, 0)),
+            (Some(Tile::EMPTY), Some(t(2)))
+        );
+        // En una capa de imagen, o sin celdas, no hace nada.
+        assert!(set_tiles(&s, LayerId(1), 0, &[(0, 0, t(1))]).is_none());
+        assert!(set_tiles(&s, LayerId(2), 0, &[]).is_none());
+    }
+
+    #[test]
+    fn set_tiles_rejects_huge_bounds() {
+        let s = with_tilemap_layer();
+        let t = |i| Tile::new(i, false, false, false);
+        // Una celda muy lejana (100_000, 100_000) haría una grilla gigantesca: rechazada.
+        assert!(set_tiles(&s, LayerId(2), 0, &[(100_000, 100_000, t(1))]).is_none());
+        // i32::MAX en una coordenada causa overflow en lógica de bounds: rechazada.
+        assert!(set_tiles(&s, LayerId(2), 0, &[(i32::MAX, 0, t(1))]).is_none());
+        assert!(set_tiles(&s, LayerId(2), 0, &[(0, i32::MAX, t(1))]).is_none());
+        // Una llamada normal sigue funcionando.
+        assert!(set_tiles(&s, LayerId(2), 0, &[(1, 1, t(1))]).is_some());
+    }
+
+    #[test]
+    fn set_tiles_caps_the_grid_pixel_area() {
+        let s = with_tilemap_layer();
+        let t = |i| Tile::new(i, false, false, false);
+        // Tiles de 4×4: 4096×4096 celdas entran en el lado máximo pero son 16384² píxeles, más
+        // que MAX_TILEMAP_PIXELS (el lector descartaría ese cel).
+        assert!(set_tiles(&s, LayerId(2), 0, &[(0, 0, t(1)), (4095, 4095, t(1))]).is_none());
+        // 2048×2048 celdas = 8192² = justo el límite.
+        assert_eq!(8192u64 * 8192, MAX_TILEMAP_PIXELS);
+        assert!(set_tiles(&s, LayerId(2), 0, &[(0, 0, t(1)), (2047, 2047, t(1))]).is_some());
+        assert!(set_tiles(&s, LayerId(2), 0, &[(0, 0, t(1)), (2047, 2048, t(1))]).is_none());
+    }
+
+    #[test]
+    fn set_tile_image_adds_and_replaces_but_not_tile_zero() {
+        let mut s = with_tilemap_layer();
+        let mut img = Image::new(4, 4, ColorMode::Rgba);
+        img.set(1, 1, PixelValue::Rgba(Rgba::rgb(9, 9, 9))).unwrap();
+        let before = s.clone();
+        let inv = set_tile_image(&s, 0, 1, img.clone())
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        assert_eq!(*s.tilesets[0].tiles[1], img);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        set_tile_image(&s, 0, 3, img.clone())
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        assert_eq!(s.tilesets[0].tiles.len(), 4, "index == len adds a tile");
+        assert!(
+            set_tile_image(&s, 0, 0, img.clone()).is_none(),
+            "tile 0 is the empty tile"
+        );
+        assert!(
+            set_tile_image(&s, 0, 9, img.clone()).is_none(),
+            "out of range"
+        );
+        assert!(
+            set_tile_image(&s, 1, 1, img.clone()).is_none(),
+            "no tileset 1"
+        );
+        assert!(
+            set_tile_image(&s, 0, 3, img).is_none(),
+            "same image: nothing changes"
+        );
+        let small = Image::new(2, 2, ColorMode::Rgba);
+        assert!(set_tile_image(&s, 0, 1, small).is_none(), "wrong size");
+    }
+
+    #[test]
+    fn duplicating_and_unlinking_tilemap_cels_copies_the_grid() {
+        let mut s = with_tilemap_layer();
+        set_tiles(
+            &s,
+            LayerId(2),
+            0,
+            &[(0, 0, Tile::new(1, false, false, false))],
+        )
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+        duplicate_frame(&s.clone(), 0, false)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        let ((c0, g0), (c1, g1)) = (grid_of(&s, 2, 0), grid_of(&s, 2, 1));
+        assert_ne!(c0.image, c1.image);
+        assert_eq!(g0, g1);
+        link_cel(&s, LayerId(2), 1, 0)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        unlink_cel(&s, LayerId(2), 1)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        let cel = *s.cel(LayerId(2), 1).unwrap();
+        assert_ne!(cel.image, c0.image);
+        assert!(s.tilemap(cel.image).is_some());
+    }
 
     fn dot(s: &mut Sprite, layer: u32, frame: usize) {
         Command::DrawPixels {

@@ -66,8 +66,14 @@ pub fn image_layer(sprite: &Sprite, r: Option<&Ref>) -> Result<LayerId> {
     };
     let l = sprite.layer(id).expect("resolved");
     if l.kind != LayerKind::Image {
+        let what = match l.kind {
+            LayerKind::Group => "a group",
+            LayerKind::Instance => "an instance layer",
+            LayerKind::Tilemap => "a tilemap layer (use set_tiles or set_tile_pixels)",
+            LayerKind::Image => unreachable!("checked above"),
+        };
         return Err(invalid(format!(
-            "layer '{}' is a group, not an image layer",
+            "layer '{}' is {what}, not an image layer",
             l.name
         )));
     }

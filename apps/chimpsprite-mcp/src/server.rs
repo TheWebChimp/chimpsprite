@@ -200,6 +200,41 @@ impl ChimpServer {
         self.with(|s| s.remove_instance_key(p))
     }
 
+    // --- Tilemaps ---
+
+    #[tool(
+        description = "Create an empty tileset in an artboard (tile 0 is always the empty tile). Paint tiles with set_tile_pixels and draw with them on a tilemap layer (add_tilemap_layer, set_tiles)."
+    )]
+    fn create_tileset(&self, Parameters(p): Parameters<CreateTileset>) -> CallToolResult {
+        self.with(|s| s.create_tileset(p))
+    }
+
+    #[tool(
+        description = "Paint pixels of one tile, in tile coordinates. Use tile = the current tile count to add a new tile; tile 0 cannot be edited. Every cel using the tile updates."
+    )]
+    fn set_tile_pixels(&self, Parameters(p): Parameters<SetTilePixels>) -> CallToolResult {
+        self.with(|s| s.set_tile_pixels(p))
+    }
+
+    #[tool(description = "Add a tilemap layer on top that draws tiles from a tileset.")]
+    fn add_tilemap_layer(&self, Parameters(p): Parameters<AddTilemapLayer>) -> CallToolResult {
+        self.with(|s| s.add_tilemap_layer(p))
+    }
+
+    #[tool(
+        description = "Place tiles on a tilemap layer. Cells are canvas grid cells: cell (x, y) starts at pixel (x * tile_width, y * tile_height). Tile 0 erases a cell; optional flip_x / flip_y / flip_d. The layer's grid grows as needed, up to 4096 tiles per side and 67108864 pixels in total (grid width × tile width × grid height × tile height)."
+    )]
+    fn set_tiles(&self, Parameters(p): Parameters<SetTiles>) -> CallToolResult {
+        self.with(|s| s.set_tiles(p))
+    }
+
+    #[tool(
+        description = "Read a tilemap layer's grid on a frame: tile index and flips of each cell, and the cel position. Grids over 65536 cells (256×256) must be read in parts: pass x, y, w, h, a rect of canvas cells (at most 65536 cells); cells outside the grid read as tile 0."
+    )]
+    fn get_tiles(&self, Parameters(p): Parameters<GetTiles>) -> CallToolResult {
+        self.with(|s| s.get_tiles(p))
+    }
+
     // --- Frames, tags y cels ---
 
     #[tool(description = "Add an empty frame, or duplicate an existing one (optionally linked).")]

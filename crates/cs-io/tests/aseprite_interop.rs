@@ -1,7 +1,7 @@
 //! Compatibilidad con archivos hechos por Aseprite 1.3 (generados con `fixtures/make.lua`):
 //! capas, grupo, modos de mezcla, opacidades, cels vinculados y movidos, tags y slices. Cada frame
 //! que compone ChimpSprite debe coincidir con el PNG RGBA que exportó Aseprite (`frames.lua`), y lo
-//! que guarda ChimpSprite debe volver a leerse igual.
+//! que guarda ChimpSprite debe volver a leerse igual. Tilemaps: `fixtures/tilemaps.lua`.
 
 use cs_core::{AnimDirection, LayerKind, Rgba, Sprite};
 use cs_io::{aseprite, import};
@@ -25,10 +25,11 @@ fn assert_matches_aseprite(sprite: &Sprite, name: &str) {
 fn assert_matches_aseprite_within(sprite: &Sprite, name: &str, tolerance: u8) {
     let mut worst = (0u8, String::new());
     let mut off = 0;
+    let composed = cs_render::materialize_tilemaps(sprite, 0..sprite.frames.len());
     for frame in 0..sprite.frames.len() {
         let png = std::fs::read(format!("{FIXTURES}/{name}_{frame}.png")).unwrap();
         let reference = import::decode_png(&png).unwrap();
-        let ours = cs_render::render_frame(sprite, frame);
+        let ours = cs_render::render_frame(&composed, frame);
         assert_eq!(ours.len(), reference.pixels.len());
         for (i, (a, b)) in ours.iter().zip(&reference.pixels).enumerate() {
             if a.a == 0 && b.a == 0 {
@@ -120,6 +121,127 @@ fn saving_keeps_everything_aseprite_wrote() {
                 cs_render::render_frame(&back, f),
                 cs_render::render_frame(&s, f)
             );
+        }
+    }
+}
+
+#[test]
+fn tilemap_file_renders_like_aseprite() {
+    let s = load("tilemap_rgba");
+    let maps: Vec<_> = s
+        .layers
+        .iter()
+        .filter(|l| l.kind == LayerKind::Tilemap)
+        .collect();
+    assert_eq!(maps.len(), 2);
+    assert!(maps.iter().all(|l| l.tileset == Some(0)), "shared tileset");
+    assert_eq!(s.tilesets.len(), 1);
+    let ts = &s.tilesets[0];
+    assert_eq!(
+        (ts.name.as_str(), ts.tile_size, ts.tiles.len()),
+        ("Terrain", (8, 8), 4)
+    );
+    assert!(ts.user_data.is_some(), "tileset user data");
+    assert!(
+        ts.tile_user_data.get(2).is_some_and(Option::is_some),
+        "tile 2 user data: {:?}",
+        ts.tile_user_data
+    );
+    let ground = maps[0].id;
+    let cel = s.cel(ground, 0).unwrap();
+    assert_eq!(cel.image, s.cel(ground, 1).unwrap().image, "linked cels");
+    let grid = s.tilemap(cel.image).unwrap();
+    assert!(grid.width >= 4 && grid.height >= 2);
+    // El generador Lua pone en la celda (x, y) de las 2 primeras filas combo = y * 4 + x, con
+    // flip X = bit 0, Y = bit 1, D = bit 2 de combo, e índice 1 + combo % 3.
+    for y in 0..2u32 {
+        for x in 0..4u32 {
+            let combo = y * 4 + x;
+            let t = grid.get(x, y).unwrap();
+            assert_eq!(
+                (t.index(), t.flip_x(), t.flip_y(), t.flip_d()),
+                (
+                    1 + combo % 3,
+                    combo & 1 != 0,
+                    combo & 2 != 0,
+                    combo & 4 != 0
+                ),
+                "cell ({x}, {y})"
+            );
+        }
+    }
+    assert_matches_aseprite(&s, "tilemap_rgba");
+}
+
+#[test]
+fn indexed_tilemap_file_renders_like_aseprite() {
+    let s = load("tilemap_indexed");
+    assert!(matches!(s.color_mode, cs_core::ColorMode::Indexed { .. }));
+    assert!(s.layers.iter().any(|l| l.kind == LayerKind::Tilemap));
+    assert_matches_aseprite(&s, "tilemap_indexed");
+}
+
+#[test]
+fn saving_tilemaps_keeps_everything_aseprite_wrote() {
+    for name in ["tilemap_rgba", "tilemap_indexed"] {
+        let s = load(name);
+        let (back, report) = aseprite::read(&aseprite::write(&s)).unwrap();
+        assert!(report.warnings.is_empty(), "{name}: {:?}", report.warnings);
+        assert_eq!(back.layers, s.layers, "{name}");
+        assert_eq!(back.tilesets, s.tilesets, "{name}");
+        assert_eq!(back.frames, s.frames, "{name}");
+        for layer in &s.layers {
+            for f in 0..s.frames.len() {
+                let (a, b) = (s.cel(layer.id, f), back.cel(layer.id, f));
+                assert_eq!(
+                    a.map(|c| (c.position, c.opacity)),
+                    b.map(|c| (c.position, c.opacity)),
+                    "{name} {} frame {f}",
+                    layer.name
+                );
+                if let (Some(a), Some(b)) = (a, b) {
+                    assert_eq!(s.tilemap(a.image), back.tilemap(b.image));
+                    assert_eq!(s.image(a.image), back.image(b.image));
+                }
+            }
+        }
+        assert_matches_aseprite(&back, name);
+    }
+}
+
+/// Lo que escribe ChimpSprite, abierto por el Aseprite real, se ve igual que el original. Necesita
+/// Aseprite: `cargo test -p cs-io --test aseprite_interop -- --ignored` (ruta en `ASEPRITE`, o la
+/// de Steam por defecto).
+#[test]
+#[ignore = "needs Aseprite; set ASEPRITE to its executable"]
+fn aseprite_opens_the_tilemaps_we_write() {
+    let exe = std::env::var("ASEPRITE").unwrap_or_else(|_| {
+        r"C:\Program Files (x86)\Steam\steamapps\common\Aseprite\Aseprite.exe".into()
+    });
+    let dir = std::env::temp_dir().join("chimpsprite-tilemaps");
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in ["tilemap_rgba", "tilemap_indexed"] {
+        let s = load(name);
+        let file = dir.join(format!("{name}.aseprite"));
+        std::fs::write(&file, aseprite::write(&s)).unwrap();
+        let prefix = dir.join(format!("{name}_"));
+        let status = std::process::Command::new(&exe)
+            .arg("-b")
+            .arg("--script-param")
+            .arg(format!("file={}", file.display()))
+            .arg("--script-param")
+            .arg(format!("out={}", prefix.display()))
+            .arg("--script")
+            .arg(format!("{FIXTURES}/frames.lua"))
+            .status()
+            .unwrap();
+        assert!(status.success(), "{name}: Aseprite failed");
+        for f in 0..s.frames.len() {
+            let read_png =
+                |path: String| import::decode_png(&std::fs::read(path).unwrap()).unwrap();
+            let ours = read_png(format!("{}{f}.png", prefix.display()));
+            let theirs = read_png(format!("{FIXTURES}/{name}_{f}.png"));
+            assert_eq!(ours.pixels, theirs.pixels, "{name} frame {f}");
         }
     }
 }

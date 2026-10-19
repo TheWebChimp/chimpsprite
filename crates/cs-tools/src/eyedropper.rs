@@ -50,6 +50,7 @@ impl Tool for Eyedropper {
 /// Valor de píxel para el color visible en `p`, en el modo de color del sprite.
 pub fn visible_value(sprite: &cs_core::Sprite, frame: usize, p: Point) -> cs_core::PixelValue {
     use cs_core::{ColorMode, PixelValue};
+    // `composite_pixel` ya ve los tilemaps (un tile por capa, sin materializar).
     let c = cs_render::composite_pixel(sprite, frame, p.0, p.1);
     match sprite.color_mode {
         ColorMode::Rgba => PixelValue::Rgba(c),
@@ -155,5 +156,36 @@ mod tests {
         assert_eq!(e.release(&c).pick, Some(red()));
         e.press(&c, (20, 3));
         assert_eq!(e.release(&c).pick, None);
+    }
+
+    #[test]
+    fn picks_colors_from_tilemap_layers() {
+        use std::sync::Arc;
+
+        use cs_core::{Cel, Image, ImageId, LayerKind, PixelValue, Rgba, Tile, TileGrid, Tileset};
+        let mut s = sprite();
+        let mut ts = Tileset::new("t", (2, 2), s.color_mode);
+        let mut img = Image::new(2, 2, s.color_mode);
+        img.set(0, 0, red()).unwrap();
+        ts.tiles.push(Arc::new(img));
+        s.tilesets.push(ts);
+        s.layers[0].kind = LayerKind::Tilemap;
+        s.layers[0].tileset = Some(0);
+        let mut grid = TileGrid::new(2, 1);
+        grid.set(1, 0, Tile::new(1, false, false, false));
+        s.tilemaps.insert(ImageId(1), Arc::new(grid));
+        s.cels.insert(
+            (LayerId(1), 0),
+            Cel {
+                position: (0, 0),
+                opacity: 255,
+                image: ImageId(1),
+            },
+        );
+        assert_eq!(visible_value(&s, 0, (2, 0)), red());
+        assert_eq!(
+            visible_value(&s, 0, (0, 0)),
+            PixelValue::Rgba(Rgba::TRANSPARENT)
+        );
     }
 }

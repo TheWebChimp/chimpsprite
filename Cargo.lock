@@ -917,6 +917,7 @@ dependencies = [
 name = "cs-core"
 version = "0.1.0"
 dependencies = [
+ "log",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -953,6 +954,7 @@ version = "0.1.0"
 dependencies = [
  "cs-commands",
  "cs-core",
+ "log",
 ]
 
 [[package]]

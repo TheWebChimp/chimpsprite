@@ -535,13 +535,13 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
             editor.rename_layer(id, name.trim().to_string());
         }
     } else {
-        let label = if layer.kind == LayerKind::Group {
-            format!("📁 {}", layer.name)
-        } else if layer.kind == LayerKind::Instance {
+        let label = match layer.kind {
+            LayerKind::Group => format!("📁 {}", layer.name),
             // El mismo ícono que la herramienta Artboard: la capa muestra otro artboard.
-            format!("🖼 {}", layer.name)
-        } else {
-            layer.name.clone()
+            LayerKind::Instance => format!("🖼 {}", layer.name),
+            // Grilla de tiles.
+            LayerKind::Tilemap => format!("⊞ {}", layer.name),
+            LayerKind::Image => layer.name.clone(),
         };
         let color = if visible_chain {
             ui.visuals().text_color()

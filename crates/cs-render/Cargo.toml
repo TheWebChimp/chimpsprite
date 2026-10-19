@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 cs-core.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 cs-commands.workspace = true

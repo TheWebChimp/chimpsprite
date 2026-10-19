@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-mod instance;
+mod materialize;
 mod normal;
-pub use instance::{bake_instances, materialize};
+pub use materialize::{Bake, bake_layers, materialize, materialize_tilemaps, tilemap_pixel};
 pub use normal::normal_map;
 
 use cs_core::{BlendMode, ColorMode, Image, ImageId, Layer, LayerKind, PixelValue, Rgba, Sprite};
@@ -146,8 +146,18 @@ fn base_alpha(sprite: &Sprite, base: &Layer, frame: usize, x: i32, y: i32) -> u3
     if base.kind == LayerKind::Group {
         return 255;
     }
-    let pixel = resolve(sprite, sprite.pixel(base.id, frame, x, y)).a as u32;
+    let pixel = resolve(sprite, layer_value(sprite, base, frame, x, y)).a as u32;
     mul(pixel, sprite.mask_value(base.id, x, y) as u32)
+}
+
+/// Valor de la capa en `(x, y)` del lienzo: el píxel de su cel o, si es tilemap, el del tile que
+/// cae ahí (sin materializar). Transparente si no hay nada.
+fn layer_value(sprite: &Sprite, layer: &Layer, frame: usize, x: i32, y: i32) -> PixelValue {
+    match layer.kind {
+        LayerKind::Tilemap => tilemap_pixel(sprite, layer, frame, x, y)
+            .unwrap_or_else(|| sprite.color_mode.transparent()),
+        _ => sprite.pixel(layer.id, frame, x, y),
+    }
 }
 
 /// Cuánto deja ver la máscara (y el recorte) de la capa en `(x, y)`: 0–255.
@@ -180,18 +190,44 @@ pub fn mask_overlay(sprite: &Sprite, layer: cs_core::LayerId, pixels: &mut [Rgba
     }
 }
 
+/// Capas tilemap con máscara, recorte o dentro de un grupo con máscara: `bake_masks` las convierte
+/// en capas de imagen (una grilla de tiles no puede llevar la máscara aplicada).
+pub fn masked_tilemap_layers(sprite: &Sprite) -> Vec<cs_core::LayerId> {
+    sprite
+        .layers
+        .iter()
+        .filter(|l| l.kind == LayerKind::Tilemap && is_masked(sprite, l))
+        .map(|l| l.id)
+        .collect()
+}
+
 /// Copia del sprite con las máscaras y recortes aplicados a los píxeles (para formatos que no
 /// los soportan). `None` si no hay nada que aplicar. Los cels afectados dejan de estar vinculados.
+///
+/// Las capas tilemap enmascaradas (ver `masked_tilemap_layers`) pasan a ser capas de imagen con
+/// la grilla dibujada, para poder aplicarles la máscara; las demás siguen siendo tilemap (y
+/// pueden ser base de un recorte: se lee el tile que cae en cada píxel).
 pub fn bake_masks(sprite: &Sprite) -> Option<Sprite> {
+    let has_masks = sprite.layers.iter().any(|l| l.mask.is_some() || l.clip);
+    if !has_masks {
+        return None;
+    }
+    let tilemaps = masked_tilemap_layers(sprite);
+    let converted;
+    let sprite = if tilemaps.is_empty() {
+        sprite
+    } else {
+        converted =
+            materialize::convert_tilemap_layers(sprite, 0..sprite.frames.len(), false, |l| {
+                tilemaps.contains(&l.id)
+            });
+        &converted
+    };
     let affected: Vec<&Layer> = sprite
         .layers
         .iter()
         .filter(|l| l.kind == LayerKind::Image && is_masked(sprite, l))
         .collect();
-    let has_masks = sprite.layers.iter().any(|l| l.mask.is_some() || l.clip);
-    if !has_masks {
-        return None;
-    }
     let mut out = sprite.clone();
     let mut next = sprite.next_image_id().0;
     for layer in affected {
@@ -239,6 +275,10 @@ pub fn bake_masks(sprite: &Sprite) -> Option<Sprite> {
 }
 
 /// Compone el frame en un buffer de `width * height` píxeles, fila por fila.
+///
+/// Solo dibuja capas de imagen: las tilemap (y las de instancia) se ignoran, así que hay que
+/// pasarle el sprite materializado (`materialize` o `materialize_tilemaps`). A diferencia de
+/// `composite_pixel`, que sí lee las tilemap tile a tile.
 pub fn render_frame(sprite: &Sprite, frame: usize) -> Vec<Rgba> {
     let (w, h) = (sprite.width as i32, sprite.height as i32);
     let mut out = vec![Rgba::TRANSPARENT; (w * h) as usize];
@@ -279,26 +319,33 @@ pub fn render_frame(sprite: &Sprite, frame: usize) -> Vec<Rgba> {
 }
 
 /// Color compuesto de un solo píxel (lo que se ve en pantalla), sin renderizar todo el frame.
+/// Las capas tilemap se leen tile a tile (igual que si estuvieran materializadas, sin copiar
+/// el sprite); las de instancia no (hay que materializarlas antes).
 pub fn composite_pixel(sprite: &Sprite, frame: usize, x: i32, y: i32) -> Rgba {
     if x < 0 || y < 0 || x >= sprite.width as i32 || y >= sprite.height as i32 {
         return Rgba::TRANSPARENT;
     }
     let mut out = Rgba::TRANSPARENT;
-    for layer in sprite.layers.iter().filter(|l| l.kind == LayerKind::Image) {
+    let drawn = |l: &&Layer| matches!(l.kind, LayerKind::Image | LayerKind::Tilemap);
+    for layer in sprite.layers.iter().filter(drawn) {
         let Some(layer_opacity) = effective_opacity(sprite, layer) else {
             continue;
         };
         let Some(cel) = sprite.cel(layer.id, frame) else {
             continue;
         };
-        let Some(image) = sprite.image(cel.image) else {
-            continue;
+        let value = if layer.kind == LayerKind::Tilemap {
+            tilemap_pixel(sprite, layer, frame, x, y)
+        } else {
+            let (ix, iy) = (x - cel.position.0, y - cel.position.1);
+            if ix < 0 || iy < 0 {
+                continue;
+            }
+            sprite
+                .image(cel.image)
+                .and_then(|image| image.get(ix as u32, iy as u32))
         };
-        let (ix, iy) = (x - cel.position.0, y - cel.position.1);
-        if ix < 0 || iy < 0 {
-            continue;
-        }
-        let Some(value) = image.get(ix as u32, iy as u32) else {
+        let Some(value) = value else {
             continue;
         };
         let src = resolve(sprite, value);
@@ -600,6 +647,63 @@ mod tests {
             }
         }
         assert_eq!(composite_pixel(&s, 0, -1, 0), Rgba::TRANSPARENT);
+    }
+
+    #[test]
+    fn composite_pixel_reads_tilemap_layers_without_materializing() {
+        // Tilemap (capa 2) de tiles de 2×2 con un píxel verde en (1, 0) del tile, sobre una
+        // capa de imagen roja; el cel no está alineado y la celda (1, 0) está espejada en X.
+        let mut s = Sprite::new(6, 3, ColorMode::Rgba);
+        draw(
+            &mut s,
+            1,
+            (0..6)
+                .map(|x| (x, 0, PixelValue::Rgba(Rgba::rgb(255, 0, 0))))
+                .collect(),
+        );
+        let mut ts = Tileset::new("t", (2, 2), ColorMode::Rgba);
+        let mut tile = Image::new(2, 2, ColorMode::Rgba);
+        tile.set(1, 0, PixelValue::Rgba(Rgba::new(0, 255, 0, 128)))
+            .unwrap();
+        ts.tiles.push(Arc::new(tile));
+        s.tilesets.push(ts);
+        let mut layer = Layer::new_image(LayerId(2), "map");
+        layer.kind = LayerKind::Tilemap;
+        layer.tileset = Some(0);
+        layer.blend = BlendMode::Screen;
+        s.layers.push(layer);
+        let mut grid = TileGrid::new(2, 1);
+        grid.set(0, 0, Tile::new(1, false, false, false));
+        grid.set(1, 0, Tile::new(1, true, false, false));
+        s.tilemaps.insert(ImageId(50), Arc::new(grid));
+        s.cels.insert(
+            (LayerId(2), 0),
+            Cel {
+                position: (1, 0),
+                opacity: 200,
+                image: ImageId(50),
+            },
+        );
+        let full = render_frame(&materialize_tilemaps(&s, 0..1), 0);
+        for y in -1..4 {
+            for x in -1..7 {
+                let expected = if (0..6).contains(&x) && (0..3).contains(&y) {
+                    full[(y * 6 + x) as usize]
+                } else {
+                    Rgba::TRANSPARENT
+                };
+                assert_eq!(composite_pixel(&s, 0, x, y), expected, "({x}, {y})");
+            }
+        }
+        // El tile se ve (no solo la capa de abajo): (2, 0) es el verde del tile 0; (3, 0) del
+        // espejado.
+        assert_ne!(composite_pixel(&s, 0, 2, 0), Rgba::rgb(255, 0, 0));
+        assert_ne!(composite_pixel(&s, 0, 3, 0), Rgba::rgb(255, 0, 0));
+        assert_eq!(composite_pixel(&s, 0, 4, 0), Rgba::rgb(255, 0, 0));
+        assert_eq!(
+            tilemap_pixel(&s, s.layer(LayerId(2)).unwrap(), 0, 2, 0),
+            Some(PixelValue::Rgba(Rgba::new(0, 255, 0, 128)))
+        );
     }
 
     #[test]

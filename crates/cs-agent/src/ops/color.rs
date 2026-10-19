@@ -145,6 +145,12 @@ impl Session {
                 "the sprite is already indexed; edit its palette with set_palette or recolor",
             ));
         }
+        // Los tiles también tendrían que convertirse; queda para cuando se editen tilemaps.
+        if !sprite.tilesets.is_empty() {
+            return Err(invalid(
+                "quantize does not support artboards with tilesets yet",
+            ));
+        }
         let limit = if p.to_indexed { 255 } else { 256 };
         let palette = match (&p.max_colors, &p.palette) {
             (Some(n), None) => {

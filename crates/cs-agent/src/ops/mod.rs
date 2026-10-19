@@ -4,6 +4,7 @@ mod color;
 mod document;
 mod draw;
 mod structure;
+mod tilemap;
 mod transform;
 mod view;
 

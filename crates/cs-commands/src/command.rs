@@ -3,7 +3,8 @@ use std::sync::Arc;
 
 use cs_core::{
     ArtboardId, BlendMode, Cel, Frame, GridSettings, Image, ImageId, InstanceKey, InstanceTrack,
-    Layer, LayerId, LayerKind, LayerMask, Palette, PixelValue, Slice, Sprite, Tag,
+    Layer, LayerId, LayerKind, LayerMask, Palette, PixelValue, Slice, Sprite, Tag, TileGrid,
+    Tileset,
 };
 use serde::{Deserialize, Serialize};
 
@@ -43,6 +44,8 @@ pub enum CmdError {
     NotInstanceLayer(LayerId),
     #[error("an artboard cannot contain itself")]
     InstanceCycle,
+    #[error("tileset {0} is used by a layer")]
+    TilesetInUse(usize),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -119,6 +122,18 @@ pub enum Command {
     SetInstanceTrack {
         layer: LayerId,
         track: InstanceTrack,
+    },
+    /// Primitiva: agrega (`index == len`), reemplaza (`index < len`) o quita (`None`) un tileset.
+    /// Solo se quita el último (quitar otro correría los índices de las capas) y solo si ninguna
+    /// capa lo usa.
+    SetTileset {
+        index: usize,
+        tileset: Option<Tileset>,
+    },
+    /// Primitiva: pone (o quita, con `None`) una grilla de tiles del pool.
+    SetTilemap {
+        id: ImageId,
+        grid: Option<Arc<TileGrid>>,
     },
     SetGrid(GridSettings),
     /// Reemplaza la paleta completa.
@@ -210,6 +225,14 @@ impl Command {
                     layer: *layer,
                     track: old,
                 })
+            }
+            Command::SetTileset { index, tileset } => set_tileset(doc, *index, tileset.as_ref()),
+            Command::SetTilemap { id, grid } => {
+                let old = match grid {
+                    Some(g) => doc.tilemaps.insert(*id, g.clone()),
+                    None => doc.tilemaps.remove(id),
+                };
+                Ok(Command::SetTilemap { id: *id, grid: old })
             }
             Command::MoveLayer { id, index, parent } => move_layer(doc, *id, *index, *parent),
             Command::MoveFrame { from, to } => move_frame(doc, *from, *to),
@@ -359,6 +382,43 @@ fn set_cel(
     })
 }
 
+fn set_tileset(
+    doc: &mut Sprite,
+    index: usize,
+    tileset: Option<&Tileset>,
+) -> Result<Command, CmdError> {
+    let len = doc.tilesets.len();
+    match tileset {
+        Some(t) if index < len => {
+            let old = std::mem::replace(&mut doc.tilesets[index], t.clone());
+            Ok(Command::SetTileset {
+                index,
+                tileset: Some(old),
+            })
+        }
+        Some(t) if index == len => {
+            doc.tilesets.push(t.clone());
+            Ok(Command::SetTileset {
+                index,
+                tileset: None,
+            })
+        }
+        Some(_) => Err(CmdError::IndexOutOfRange(index)),
+        None => {
+            if index + 1 != len {
+                return Err(CmdError::IndexOutOfRange(index));
+            }
+            if doc.layers.iter().any(|l| l.tileset == Some(index as u32)) {
+                return Err(CmdError::TilesetInUse(index));
+            }
+            Ok(Command::SetTileset {
+                index,
+                tileset: doc.tilesets.pop(),
+            })
+        }
+    }
+}
+
 fn add_layer(doc: &mut Sprite, index: usize, layer: &Layer) -> Result<Command, CmdError> {
     if index > doc.layers.len() {
         return Err(CmdError::IndexOutOfRange(index));
@@ -378,13 +438,35 @@ fn remove_layer(doc: &mut Sprite, id: LayerId) -> Result<Command, CmdError> {
     let layer = doc.layers.remove(index);
     let keys: Vec<_> = doc.cels.keys().filter(|(l, _)| *l == id).copied().collect();
     let mut inverse = vec![Command::AddLayer { index, layer }];
+    let mut freed = Vec::new();
     for key in keys {
         let cel = doc.cels.remove(&key);
+        freed.extend(cel.map(|c| c.image));
         inverse.push(Command::SetCel {
             layer: key.0,
             frame: key.1,
             cel,
         });
+    }
+    // Las imágenes y grillas que ya no usa ningún cel salen del pool (el inverso las restaura).
+    freed.sort();
+    freed.dedup();
+    for image in freed {
+        if doc.cels.values().any(|c| c.image == image) {
+            continue;
+        }
+        if let Some(old) = doc.images.remove(&image) {
+            inverse.push(Command::SetImage {
+                id: image,
+                image: Some(old),
+            });
+        }
+        if let Some(old) = doc.tilemaps.remove(&image) {
+            inverse.push(Command::SetTilemap {
+                id: image,
+                grid: Some(old),
+            });
+        }
     }
     Ok(Command::Batch(inverse))
 }
@@ -666,6 +748,8 @@ fn apply_batch(doc: &mut Sprite, cmds: &[Command]) -> Result<Command, CmdError> 
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use cs_core::*;
 
     use crate::{CmdError, Command, LayerProps};
@@ -676,6 +760,144 @@ mod tests {
             frame: 0,
             pixels: vec![(0, 0, PixelValue::Rgba(Rgba::rgb(1, 2, 3)))],
         }
+    }
+
+    fn add_tileset(s: &mut Sprite, index: usize, name: &str) -> Command {
+        Command::SetTileset {
+            index,
+            tileset: Some(Tileset::new(name, (4, 4), ColorMode::Rgba)),
+        }
+        .apply(s)
+        .unwrap()
+    }
+
+    #[test]
+    fn set_tileset_adds_replaces_and_removes_with_undo() {
+        let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+        let empty = s.clone();
+        let inv = add_tileset(&mut s, 0, "a");
+        assert_eq!(s.tilesets.len(), 1);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, empty);
+        add_tileset(&mut s, 0, "a");
+        add_tileset(&mut s, 1, "b");
+        let two = s.clone();
+        let inv = add_tileset(&mut s, 0, "c");
+        assert_eq!(s.tilesets[0].name, "c");
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, two);
+        assert_eq!(
+            Command::SetTileset {
+                index: 5,
+                tileset: Some(Tileset::new("x", (4, 4), ColorMode::Rgba)),
+            }
+            .apply(&mut s),
+            Err(CmdError::IndexOutOfRange(5))
+        );
+        // Quitar: solo el último y solo si ninguna capa lo usa.
+        assert_eq!(
+            Command::SetTileset {
+                index: 0,
+                tileset: None
+            }
+            .apply(&mut s),
+            Err(CmdError::IndexOutOfRange(0))
+        );
+        s.layers[0].kind = LayerKind::Tilemap;
+        s.layers[0].tileset = Some(1);
+        assert_eq!(
+            Command::SetTileset {
+                index: 1,
+                tileset: None
+            }
+            .apply(&mut s),
+            Err(CmdError::TilesetInUse(1))
+        );
+        s.layers[0].tileset = Some(0);
+        let before = s.clone();
+        let inv = Command::SetTileset {
+            index: 1,
+            tileset: None,
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!(s.tilesets.len(), 1);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn set_tilemap_roundtrip() {
+        let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+        let before = s.clone();
+        let grid = Arc::new(TileGrid::new(2, 2));
+        let inv = Command::SetTilemap {
+            id: ImageId(3),
+            grid: Some(grid.clone()),
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!(s.tilemap(ImageId(3)), Some(&grid));
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn removing_a_layer_frees_unused_images_and_grids() {
+        let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+        dot(1).apply(&mut s).unwrap();
+        let mut layer = Layer::new_image(LayerId(2), "map");
+        layer.kind = LayerKind::Tilemap;
+        layer.tileset = Some(0);
+        s.layers.push(layer);
+        s.tilemaps.insert(ImageId(5), Arc::new(TileGrid::new(1, 1)));
+        s.cels.insert(
+            (LayerId(2), 0),
+            Cel {
+                position: (0, 0),
+                opacity: 255,
+                image: ImageId(5),
+            },
+        );
+        let before = s.clone();
+        let inv = Command::RemoveLayer { id: LayerId(2) }
+            .apply(&mut s)
+            .unwrap();
+        assert!(s.tilemaps.is_empty());
+        assert_eq!(s.images.len(), 1, "the other layer's image stays");
+        let inv1 = Command::RemoveLayer { id: LayerId(1) }
+            .apply(&mut s)
+            .unwrap();
+        assert!(s.images.is_empty());
+        inv1.apply(&mut s).unwrap();
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn resize_moves_tilemap_cels_and_trim_ignores_them() {
+        let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+        s.layers[0].kind = LayerKind::Tilemap;
+        s.tilemaps.insert(ImageId(1), Arc::new(TileGrid::new(4, 4)));
+        s.cels.insert(
+            (LayerId(1), 0),
+            Cel {
+                position: (0, 0),
+                opacity: 255,
+                image: ImageId(1),
+            },
+        );
+        Command::ResizeCanvas {
+            width: 4,
+            height: 4,
+            offset: (-2, -2),
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!(s.cel(LayerId(1), 0).unwrap().position, (-2, -2));
+        let before = s.clone();
+        Command::TrimToCanvas.apply(&mut s).unwrap();
+        assert_eq!(s, before);
     }
 
     #[test]
@@ -967,6 +1189,14 @@ mod tests {
                 layer: LayerId(1),
                 frame: 0,
                 pixels: vec![(0, 0, PixelValue::Index(2))],
+            },
+            Command::SetTileset {
+                index: 0,
+                tileset: Some(Tileset::new("t", (8, 8), ColorMode::Rgba)),
+            },
+            Command::SetTilemap {
+                id: ImageId(4),
+                grid: Some(Arc::new(TileGrid::new(2, 1))),
             },
             Command::SetInstanceTrack {
                 layer: LayerId(2),

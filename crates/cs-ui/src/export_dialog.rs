@@ -138,8 +138,12 @@ impl ExportDialog {
         editor: &Editor,
         file_name: &str,
     ) -> Result<Vec<(String, Vec<u8>)>, FileError> {
-        // Las instancias se hornean en capas normales para exportar.
-        let baked = cs_render::bake_instances(&editor.document, editor.sprite());
+        // Las instancias y los tilemaps se hornean en capas normales para exportar.
+        let baked = cs_render::bake_layers(
+            &editor.document,
+            editor.sprite(),
+            cs_render::Bake::Everything,
+        );
         let sprite = baked.as_ref().unwrap_or(editor.sprite());
         let name = editor.artboard().name.clone();
         let stem = files::stem(file_name).to_string();
@@ -171,7 +175,11 @@ impl ExportDialog {
         json_name: &str,
         layout: SheetLayout,
     ) -> Result<Vec<(String, Vec<u8>)>, FileError> {
-        let baked = cs_render::bake_instances(&editor.document, editor.sprite());
+        let baked = cs_render::bake_layers(
+            &editor.document,
+            editor.sprite(),
+            cs_render::Bake::Everything,
+        );
         let sprite = baked.as_ref().unwrap_or(editor.sprite());
         let json_name = json_name.to_string();
         let sheet_png = || -> Result<Vec<u8>, FileError> {

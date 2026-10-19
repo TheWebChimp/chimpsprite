@@ -77,6 +77,7 @@ fn describe_sprite(s: &Sprite) -> Value {
                 "kind": match l.kind {
                     LayerKind::Group => "group",
                     LayerKind::Instance => "instance",
+                    LayerKind::Tilemap => "tilemap",
                     LayerKind::Image => "image",
                 },
                 "parent": l.parent.map(|p| p.0),
@@ -88,6 +89,9 @@ fn describe_sprite(s: &Sprite) -> Value {
             if let Some(track) = &l.instance {
                 v["instance"] = json!(track);
             }
+            if let Some(t) = l.tileset {
+                v["tileset"] = json!(t);
+            }
             v
         })
         .collect();
@@ -98,7 +102,7 @@ fn describe_sprite(s: &Sprite) -> Value {
             let (w, h) = s
                 .image(cel.image)
                 .map_or((0, 0), |i| (i.width(), i.height()));
-            json!({
+            let mut v = json!({
                 "layer": layer.0,
                 "frame": frame,
                 "x": cel.position.0,
@@ -107,7 +111,11 @@ fn describe_sprite(s: &Sprite) -> Value {
                 "h": h,
                 "opacity": cel.opacity,
                 "image": cel.image.0,
-            })
+            });
+            if let Some(g) = s.tilemap(cel.image) {
+                v["grid"] = json!([g.width, g.height]);
+            }
+            v
         })
         .collect();
     let tags: Vec<Value> = s
@@ -132,6 +140,13 @@ fn describe_sprite(s: &Sprite) -> Value {
             ColorMode::Indexed { .. } => "indexed",
         },
         "palette": s.palette.colors().iter().map(|c| c.to_hex()).collect::<Vec<_>>(),
+        "tilesets": s.tilesets.iter().enumerate().map(|(i, t)| json!({
+            "index": i,
+            "name": t.name,
+            "tile_size": [t.tile_size.0, t.tile_size.1],
+            "tiles": t.tiles.len(),
+            "base_index": t.base_index,
+        })).collect::<Vec<_>>(),
         "layers_bottom_to_top": layers,
         "frame_durations_ms": s.frames.iter().map(|f| f.duration_ms).collect::<Vec<_>>(),
         "tags": tags,
@@ -242,8 +257,19 @@ impl Session {
         }
         if files::bakes_masks(&d.document, &name) {
             text.push_str(
-                "
-Note: .aseprite has no layer/clipping masks; they were applied to the pixels                  in the file (the open document keeps them). Save as .chimp to keep them editable.",
+                "\nNote: .aseprite has no layer/clipping masks; they were applied to the pixels \
+                 in the file (the open document keeps them). Save as .chimp to keep them editable.",
+            );
+        }
+        let missing = files::tilesets_missing_tiles(&d.document, &name);
+        if !missing.is_empty() {
+            text.push_str("\nWarning: ");
+            text.push_str(&files::missing_tiles_note(&missing));
+        }
+        if files::converts_tilemaps(&d.document, &name) {
+            text.push_str(
+                "\nNote: tilemap layers with a mask or clipping were saved as image layers in \
+                 that file so the mask could be applied.",
             );
         }
         d.path = Some(path);
@@ -381,6 +407,49 @@ mod tests {
         s.close(p(json!({"doc": "d1"}))).unwrap();
         assert!(s.describe(p(json!({"doc": "d1"}))).is_err());
         assert!(s.open(p(json!({"path": "../x.chimp"}))).is_err());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn saving_aseprite_reports_tilemap_notes_cleanly() {
+        let dir = std::env::temp_dir().join(format!("cs-agent-notes-{}", std::process::id()));
+        let mut s = Session::new(Some(dir.clone()));
+        s.new_document(p(json!({"width": 8, "height": 8}))).unwrap();
+        s.create_tileset(p(
+            json!({"doc": "d1", "name": "t", "tile_width": 4, "tile_height": 4}),
+        ))
+        .unwrap();
+        s.set_tile_pixels(p(json!({"doc": "d1", "tileset": 0, "tile": 1,
+            "pixels": [{"x": 0, "y": 0, "color": "#ff0000"}]})))
+            .unwrap();
+        s.add_tilemap_layer(p(json!({"doc": "d1", "tileset": 0, "name": "map"})))
+            .unwrap();
+        s.set_tiles(p(
+            json!({"doc": "d1", "layer": "map", "cells": [{"x": 0, "y": 0, "tile": 1}]}),
+        ))
+        .unwrap();
+        // Máscara en la tilemap y un tileset al que le falta el tile que usa la grilla.
+        let sprite = &mut s.doc_mut("d1").unwrap().document.artboards[0].sprite;
+        let layer = sprite.layers.iter_mut().find(|l| l.name == "map").unwrap();
+        layer.mask = Some(cs_core::LayerMask::filled(8, 8, 255));
+        sprite.tilesets[0].tiles.truncate(1);
+        let text = s
+            .save(p(json!({"doc": "d1", "path": "notes.aseprite"})))
+            .unwrap()
+            .text;
+        assert!(
+            text.contains("\nWarning: Tileset 't' is missing tiles"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\nNote: tilemap layers with a mask"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\nNote: .aseprite has no layer/clipping masks"),
+            "{text}"
+        );
+        assert!(!text.contains("  "), "no runs of spaces: {text}");
         std::fs::remove_dir_all(dir).ok();
     }
 
