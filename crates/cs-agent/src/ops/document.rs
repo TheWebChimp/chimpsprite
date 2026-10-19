@@ -89,6 +89,9 @@ fn describe_sprite(s: &Sprite) -> Value {
             if let Some(track) = &l.instance {
                 v["instance"] = json!(track);
             }
+            if let Some(t) = l.tileset {
+                v["tileset"] = json!(t);
+            }
             v
         })
         .collect();
@@ -99,7 +102,7 @@ fn describe_sprite(s: &Sprite) -> Value {
             let (w, h) = s
                 .image(cel.image)
                 .map_or((0, 0), |i| (i.width(), i.height()));
-            json!({
+            let mut v = json!({
                 "layer": layer.0,
                 "frame": frame,
                 "x": cel.position.0,
@@ -108,7 +111,11 @@ fn describe_sprite(s: &Sprite) -> Value {
                 "h": h,
                 "opacity": cel.opacity,
                 "image": cel.image.0,
-            })
+            });
+            if let Some(g) = s.tilemap(cel.image) {
+                v["grid"] = json!([g.width, g.height]);
+            }
+            v
         })
         .collect();
     let tags: Vec<Value> = s
@@ -133,6 +140,13 @@ fn describe_sprite(s: &Sprite) -> Value {
             ColorMode::Indexed { .. } => "indexed",
         },
         "palette": s.palette.colors().iter().map(|c| c.to_hex()).collect::<Vec<_>>(),
+        "tilesets": s.tilesets.iter().enumerate().map(|(i, t)| json!({
+            "index": i,
+            "name": t.name,
+            "tile_size": [t.tile_size.0, t.tile_size.1],
+            "tiles": t.tiles.len(),
+            "base_index": t.base_index,
+        })).collect::<Vec<_>>(),
         "layers_bottom_to_top": layers,
         "frame_durations_ms": s.frames.iter().map(|f| f.duration_ms).collect::<Vec<_>>(),
         "tags": tags,

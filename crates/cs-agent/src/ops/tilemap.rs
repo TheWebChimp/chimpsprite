@@ -1,0 +1,324 @@
+//! Tilemaps: tilesets, tiles y grillas de las capas tilemap.
+
+use cs_commands::{Command, ops};
+use cs_core::{Image, LayerId, LayerKind, Sprite, Tile, Tileset};
+use serde_json::{Value, json};
+
+use crate::error::{Result, invalid};
+use crate::params::{AddTilemapLayer, CreateTileset, GetTiles, Ref, SetTilePixels, SetTiles};
+use crate::target;
+use crate::{Reply, Session};
+
+/// Lado máximo de un tile.
+const MAX_TILE: u32 = 256;
+/// Coordenada máxima (en celdas, en valor absoluto) que acepta `set_tiles`.
+const MAX_CELL: i32 = 4096;
+
+/// Capa tilemap indicada, con el índice y el tileset que usa.
+fn tilemap_layer<'a>(sprite: &'a Sprite, r: &Ref) -> Result<(LayerId, usize, &'a Tileset)> {
+    let id = target::layer(sprite, r)?;
+    let layer = sprite.layer(id).expect("resolved");
+    if layer.kind != LayerKind::Tilemap {
+        return Err(invalid(format!(
+            "layer '{}' is not a tilemap layer; create one with add_tilemap_layer",
+            layer.name
+        )));
+    }
+    let index = layer.tileset.map_or(usize::MAX, |i| i as usize);
+    let tileset = sprite.tilesets.get(index).ok_or_else(|| {
+        invalid(format!(
+            "tilemap layer '{}' has no valid tileset",
+            layer.name
+        ))
+    })?;
+    Ok((id, index, tileset))
+}
+
+fn tileset_at(sprite: &Sprite, index: usize) -> Result<&Tileset> {
+    sprite.tilesets.get(index).ok_or_else(|| {
+        invalid(format!(
+            "tileset {index} not found; the artboard has {} tileset(s) (create one with create_tileset)",
+            sprite.tilesets.len()
+        ))
+    })
+}
+
+impl Session {
+    pub fn create_tileset(&mut self, p: CreateTileset) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let (w, h) = (p.tile_width, p.tile_height);
+        if !(1..=MAX_TILE).contains(&w) || !(1..=MAX_TILE).contains(&h) {
+            return Err(invalid(format!(
+                "tile size {w}×{h} must be 1-{MAX_TILE} on each side"
+            )));
+        }
+        let mut tileset = Tileset::new(p.name.clone(), (w, h), sprite.color_mode);
+        if let Some(base) = p.base_index {
+            tileset.base_index = base;
+        }
+        let index = sprite.tilesets.len();
+        let cmd = Command::SetTileset {
+            index,
+            tileset: Some(tileset),
+        };
+        self.run_on(&p.doc, ab, vec![cmd])?;
+        Ok(Reply::text(format!(
+            "Created tileset {index} '{}' with {w}×{h} tiles. Tile 0 is the empty tile; add tiles \
+             with set_tile_pixels (tile 1 first).",
+            p.name
+        )))
+    }
+
+    pub fn set_tile_pixels(&mut self, p: SetTilePixels) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let ts = tileset_at(sprite, p.tileset)?;
+        if p.tile == 0 {
+            return Err(invalid("tile 0 is the empty tile and cannot be edited"));
+        }
+        let count = ts.tiles.len();
+        if p.tile > count {
+            return Err(invalid(format!(
+                "tile {} out of range; the tileset has {count} tiles (use tile {count} to add one)",
+                p.tile
+            )));
+        }
+        let (w, h) = ts.tile_size;
+        let mut image = ts
+            .tiles
+            .get(p.tile)
+            .map_or_else(|| Image::new(w, h, sprite.color_mode), |t| Image::clone(t));
+        for px in &p.pixels {
+            if px.x < 0 || px.y < 0 || px.x as u32 >= w || px.y as u32 >= h {
+                return Err(invalid(format!(
+                    "pixel ({}, {}) is outside the {w}×{h} tile",
+                    px.x, px.y
+                )));
+            }
+            let value = target::color(sprite, &px.color)?;
+            image
+                .set(px.x as u32, px.y as u32, value)
+                .map_err(|e| invalid(e.to_string()))?;
+        }
+        let added = p.tile == count;
+        let Some(cmd) = ops::set_tile_image(sprite, p.tileset, p.tile, image) else {
+            return Ok(Reply::text("Nothing changed."));
+        };
+        self.run_on(&p.doc, ab, vec![cmd])?;
+        Ok(Reply::text(if added {
+            format!("Added tile {} to tileset {}.", p.tile, p.tileset)
+        } else {
+            format!("Painted tile {} of tileset {}.", p.tile, p.tileset)
+        }))
+    }
+
+    pub fn add_tilemap_layer(&mut self, p: AddTilemapLayer) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        tileset_at(sprite, p.tileset)?;
+        // Arriba de todo, en el nivel raíz.
+        let Command::AddLayer { index, mut layer } =
+            ops::new_tilemap_layer(sprite, None, p.tileset as u32)
+        else {
+            unreachable!("new_tilemap_layer devuelve AddLayer");
+        };
+        if let Some(name) = &p.name {
+            layer.name = name.clone();
+        }
+        let reply = format!(
+            "Added tilemap layer '{}' using tileset {}.",
+            layer.name, p.tileset
+        );
+        self.run_on(&p.doc, ab, vec![Command::AddLayer { index, layer }])?;
+        Ok(Reply::text(reply))
+    }
+
+    pub fn set_tiles(&mut self, p: SetTiles) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let (layer, _, tileset) = tilemap_layer(sprite, &p.layer)?;
+        let frame = target::frame(sprite, p.frame)?;
+        if p.cells.is_empty() {
+            return Err(invalid("cells is empty"));
+        }
+        let count = tileset.tiles.len();
+        let square = tileset.tile_size.0 == tileset.tile_size.1;
+        let mut cells = Vec::with_capacity(p.cells.len());
+        for c in &p.cells {
+            if c.x.abs() > MAX_CELL || c.y.abs() > MAX_CELL {
+                return Err(invalid(format!(
+                    "cell ({}, {}) is too far; use -{MAX_CELL}..{MAX_CELL}",
+                    c.x, c.y
+                )));
+            }
+            if c.tile as usize >= count {
+                return Err(invalid(format!(
+                    "tile {} out of range; the tileset has {count} tiles (0 = empty)",
+                    c.tile
+                )));
+            }
+            if c.flip_d && !square {
+                return Err(invalid("flip_d needs square tiles"));
+            }
+            cells.push((c.x, c.y, Tile::new(c.tile, c.flip_x, c.flip_y, c.flip_d)));
+        }
+        let Some(cmd) = ops::set_tiles(sprite, layer, frame, &cells) else {
+            return Ok(Reply::text("Nothing changed."));
+        };
+        self.run_on(&p.doc, ab, vec![cmd])?;
+        Ok(Reply::text(format!(
+            "Set {} cell(s) on frame {frame}.",
+            cells.len()
+        )))
+    }
+
+    pub fn get_tiles(&self, p: GetTiles) -> Result<Reply> {
+        let (_, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let (layer, index, tileset) = tilemap_layer(sprite, &p.layer)?;
+        let frame = target::frame(sprite, p.frame)?;
+        let (tw, th) = tileset.tile_size;
+        let found = sprite
+            .cel(layer, frame)
+            .and_then(|c| Some((c, sprite.tilemap(c.image)?)));
+        let Some((cel, grid)) = found else {
+            return Ok(Reply::json(json!({
+                "layer": layer.0,
+                "frame": frame,
+                "tileset": index,
+                "tile_size": [tw, th],
+                "cel": null,
+                "rows": [],
+            })));
+        };
+        let rows: Vec<Value> = (0..grid.height)
+            .map(|y| {
+                let row: Vec<Value> = (0..grid.width)
+                    .map(|x| {
+                        let t = grid.get(x, y).unwrap_or(Tile::EMPTY);
+                        let mut v = json!({ "tile": t.index() });
+                        if t.flip_x() {
+                            v["flip_x"] = json!(true);
+                        }
+                        if t.flip_y() {
+                            v["flip_y"] = json!(true);
+                        }
+                        if t.flip_d() {
+                            v["flip_d"] = json!(true);
+                        }
+                        v
+                    })
+                    .collect();
+                Value::from(row)
+            })
+            .collect();
+        let first_cell = [
+            cel.position.0.div_euclid(tw as i32),
+            cel.position.1.div_euclid(th as i32),
+        ];
+        Ok(Reply::json(json!({
+            "layer": layer.0,
+            "frame": frame,
+            "tileset": index,
+            "tile_size": [tw, th],
+            "cel": {
+                "x": cel.position.0,
+                "y": cel.position.1,
+                "opacity": cel.opacity,
+                "first_cell": first_cell,
+                "columns": grid.width,
+                "rows": grid.height,
+            },
+            "rows": rows,
+            "notes": "rows[r][c] is canvas cell (first_cell[0] + c, first_cell[1] + r); tile 0 is empty.",
+        })))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cs_core::Rgba;
+    use serde_json::json;
+
+    use crate::Session;
+    use crate::ops::test_util::{json, p, session};
+
+    const RED: Rgba = Rgba::rgb(255, 0, 0);
+    const BLUE: Rgba = Rgba::rgb(0, 0, 255);
+
+    fn px(s: &Session, x: usize, y: usize) -> Rgba {
+        let (_, sprite) = s.sprite("d1", None).unwrap();
+        let d = &s.doc("d1").unwrap().document;
+        cs_render::render_frame(&cs_render::materialize(d, sprite, 0..1), 0)
+            [y * sprite.width as usize + x]
+    }
+
+    #[test]
+    fn tilemaps_create_paint_place_read_and_describe() {
+        let mut s = session(16, 8);
+        s.create_tileset(p(json!({"doc": "d1", "name": "terrain",
+            "tile_width": 4, "tile_height": 4})))
+            .unwrap();
+        s.set_tile_pixels(p(json!({"doc": "d1", "tileset": 0, "tile": 1, "pixels": [
+            {"x": 0, "y": 0, "color": "#ff0000"}, {"x": 3, "y": 0, "color": "#0000ff"}]})))
+            .unwrap();
+        assert!(
+            s.set_tile_pixels(p(json!({"doc": "d1", "tileset": 0, "tile": 0,
+                "pixels": [{"x": 0, "y": 0, "color": "#ff0000"}]})))
+                .is_err(),
+            "tile 0 cannot be edited"
+        );
+        assert!(
+            s.set_tile_pixels(p(
+                json!({"doc": "d1", "tileset": 0, "tile": 3, "pixels": []})
+            ))
+            .is_err(),
+            "tile 3 would skip tile 2"
+        );
+        s.add_tilemap_layer(p(json!({"doc": "d1", "tileset": 0, "name": "map"})))
+            .unwrap();
+        s.set_tiles(p(json!({"doc": "d1", "layer": "map", "cells": [
+            {"x": 1, "y": 1, "tile": 1}, {"x": 2, "y": 1, "tile": 1, "flip_x": true}]})))
+            .unwrap();
+        // Celda (1, 1) = píxeles 4..8 × 4..8; la (2, 1) está espejada.
+        assert_eq!(px(&s, 4, 4), RED);
+        assert_eq!(px(&s, 7, 4), BLUE);
+        assert_eq!(px(&s, 11, 4), RED);
+        assert_eq!(px(&s, 8, 4), BLUE);
+        assert!(
+            s.set_tiles(p(json!({"doc": "d1", "layer": "map",
+                "cells": [{"x": 0, "y": 0, "tile": 5}]})))
+                .is_err(),
+            "tile out of range"
+        );
+        assert!(
+            s.set_tiles(p(json!({"doc": "d1", "layer": 1,
+                "cells": [{"x": 0, "y": 0, "tile": 1}]})))
+                .is_err(),
+            "not a tilemap layer"
+        );
+
+        let tiles = json(
+            &s.get_tiles(p(json!({"doc": "d1", "layer": "map"})))
+                .unwrap(),
+        );
+        assert_eq!(tiles["cel"]["columns"], 3);
+        assert_eq!(tiles["cel"]["rows"], 2);
+        assert_eq!(tiles["cel"]["first_cell"], json!([0, 0]));
+        assert_eq!(tiles["rows"][1][2]["tile"], 1);
+        assert_eq!(tiles["rows"][1][2]["flip_x"], true);
+        assert!(tiles["rows"][1][1].get("flip_x").is_none());
+
+        let described = json(&s.describe(p(json!({"doc": "d1"}))).unwrap());
+        let artboard = &described["artboards"][0];
+        assert_eq!(artboard["tilesets"][0]["name"], "terrain");
+        assert_eq!(artboard["tilesets"][0]["tiles"], 2);
+        assert_eq!(artboard["tilesets"][0]["tile_size"], json!([4, 4]));
+        let layer = &artboard["layers_bottom_to_top"][1];
+        assert_eq!(layer["kind"], "tilemap");
+        assert_eq!(layer["tileset"], 0);
+        let cel = artboard["cels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["layer"] == layer["id"])
+            .unwrap();
+        assert_eq!(cel["grid"], json!([3, 2]));
+    }
+}
