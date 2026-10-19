@@ -137,8 +137,12 @@ impl Session {
 
     pub fn export(&self, p: Export) -> Result<Reply> {
         let (id, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
-        // Las instancias se hornean en capas de imagen antes de exportar.
-        let baked = cs_render::bake_instances(&self.doc(&p.doc)?.document, sprite);
+        // Las instancias y los tilemaps se hornean en capas de imagen antes de exportar.
+        let baked = cs_render::bake_layers(
+            &self.doc(&p.doc)?.document,
+            sprite,
+            cs_render::Bake::Everything,
+        );
         let sprite = baked.as_ref().unwrap_or(sprite);
         let scale = match p.scale.unwrap_or(1) {
             s @ 1..=64 => s,

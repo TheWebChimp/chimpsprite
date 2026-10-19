@@ -2,9 +2,9 @@
 
 use std::sync::Arc;
 
-mod instance;
+mod materialize;
 mod normal;
-pub use instance::{bake_instances, materialize};
+pub use materialize::{Bake, bake_layers, materialize, materialize_tilemaps};
 pub use normal::normal_map;
 
 use cs_core::{BlendMode, ColorMode, Image, ImageId, Layer, LayerKind, PixelValue, Rgba, Sprite};

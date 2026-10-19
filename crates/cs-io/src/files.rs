@@ -81,9 +81,11 @@ pub fn encode(doc: &Document, file_name: &str) -> Result<Vec<u8>, FileError> {
     match kind_of(file_name) {
         Some(FileKind::Chimp) => Ok(chimp::write(doc)?),
         Some(FileKind::Aseprite) => match doc.artboards.as_slice() {
-            // `.aseprite` no tiene instancias, máscaras ni recortes: se aplican a los píxeles.
+            // `.aseprite` no tiene instancias, máscaras ni recortes: se aplican a los píxeles. Los
+            // tilemaps se guardan como tilemaps.
             [only] => {
-                let baked = cs_render::bake_instances(doc, &only.sprite);
+                let baked =
+                    cs_render::bake_layers(doc, &only.sprite, cs_render::Bake::KeepTilemaps);
                 let sprite = baked.as_ref().unwrap_or(&only.sprite);
                 let masked = cs_render::bake_masks(sprite);
                 Ok(aseprite::write(masked.as_ref().unwrap_or(sprite)))

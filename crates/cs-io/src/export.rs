@@ -461,7 +461,7 @@ pub fn export_atlas(
     let mut slices = Vec::new();
     let mut y = 0;
     for artboard in &doc.artboards {
-        let baked = cs_render::bake_instances(doc, &artboard.sprite);
+        let baked = cs_render::bake_layers(doc, &artboard.sprite, cs_render::Bake::Everything);
         let s = baked.as_ref().unwrap_or(&artboard.sprite);
         let offset = placed.len();
         for f in 0..s.frames.len() {

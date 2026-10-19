@@ -155,7 +155,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
         let file = format!("artboards/{}.aseprite", artboard.id.0);
         zip.start_file(file.as_str(), options).map_err(zip_error)?;
         // Las instancias van horneadas para que el `.aseprite` se vea bien fuera de ChimpSprite.
-        let baked = cs_render::bake_instances(doc, &artboard.sprite);
+        let baked = cs_render::bake_layers(doc, &artboard.sprite, cs_render::Bake::KeepTilemaps);
         zip.write_all(&aseprite::write(baked.as_ref().unwrap_or(&artboard.sprite)))?;
         let mut layers = Vec::new();
         for (extra, data) in layer_extras(artboard) {
