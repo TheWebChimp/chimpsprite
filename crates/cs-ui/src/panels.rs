@@ -613,6 +613,31 @@ pub fn artboards(
     resize
 }
 
+/// Gesto sobre campos numéricos o sliders: un solo paso de undo por arrastre o edición.
+/// Llamar antes de aplicar el cambio; devuelve el grupo (id del widget que cambió) si cambió.
+fn gesture_group(editor: &mut Editor, responses: &[&egui::Response]) -> Option<u64> {
+    if responses
+        .iter()
+        .any(|r| r.drag_started() || r.gained_focus())
+    {
+        editor.end_group();
+    }
+    responses.iter().find(|r| r.changed()).map(|r| r.id.value())
+}
+
+/// Llamar después de aplicar: cierra el gesto si terminó (o si el cambio no era parte de uno).
+fn gesture_end(editor: &mut Editor, responses: &[&egui::Response]) {
+    let ended = responses.iter().any(|r| {
+        r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged() && !r.has_focus())
+    });
+    if ended {
+        editor.end_group();
+    }
+}
+
+/// Rango de los campos de posición de la instancia.
+const POSITION_RANGE: std::ops::RangeInclusive<i32> = -16384..=16384;
+
 /// Propiedades de la instancia de la capa actual en el frame actual.
 pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) {
     let Some(key) = editor.instance_key() else {
@@ -638,14 +663,18 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) {
             }
         });
     let (mut x, mut y) = key.position;
-    ui.horizontal(|ui| {
-        ui.label("Position");
-        let cx = ui.add(egui::DragValue::new(&mut x)).changed();
-        let cy = ui.add(egui::DragValue::new(&mut y)).changed();
-        if cx || cy {
-            editor.update_instance_key(|k| k.position = (x, y));
-        }
-    });
+    let (rx, ry) = ui
+        .horizontal(|ui| {
+            ui.label("Position");
+            let rx = widgets::number(ui, &mut x, POSITION_RANGE, "");
+            let ry = widgets::number(ui, &mut y, POSITION_RANGE, "");
+            (rx, ry)
+        })
+        .inner;
+    if let Some(group) = gesture_group(editor, &[&rx, &ry]) {
+        editor.update_instance_key_grouped(Some(group), |k| k.position = (x, y));
+    }
+    gesture_end(editor, &[&rx, &ry]);
     let (mut fh, mut fv) = (key.flip_h, key.flip_v);
     ui.horizontal(|ui| {
         if ui.checkbox(&mut fh, "Flip H").changed() {
@@ -656,12 +685,11 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) {
         }
     });
     let mut opacity = key.opacity;
-    if ui
-        .add(egui::Slider::new(&mut opacity, 0..=255).text("Opacity"))
-        .changed()
-    {
-        editor.update_instance_key(|k| k.opacity = opacity);
+    let r = ui.add(egui::Slider::new(&mut opacity, 0..=255).text("Opacity"));
+    if let Some(group) = gesture_group(editor, &[&r]) {
+        editor.update_instance_key_grouped(Some(group), |k| k.opacity = opacity);
     }
+    gesture_end(editor, &[&r]);
     use cs_core::{GraphicPlay, Timing};
     let (mut first, mut mode) = match key.timing {
         Timing::Graphic { first_frame, play } => (first_frame, Some(play)),
@@ -682,18 +710,21 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) {
         .source
         .and_then(|s| editor.document.artboard(s))
         .map_or(1, |a| a.sprite.frames.len());
-    ui.horizontal(|ui| {
-        ui.label("First frame");
-        let mut shown = first + 1;
-        if ui
-            .add(egui::DragValue::new(&mut shown).range(1..=frames))
-            .changed()
-        {
-            first = shown - 1;
-        }
-    });
+    let first_response = ui
+        .horizontal(|ui| {
+            ui.label("First frame");
+            let mut shown = first + 1;
+            let r = widgets::number(ui, &mut shown, 1..=frames, "");
+            if r.changed() {
+                first = shown - 1;
+            }
+            r
+        })
+        .inner;
+    // El modo es un clic (paso propio); el primer frame se arrastra (un paso por gesto).
+    let group = gesture_group(editor, &[&first_response]).filter(|_| mode == before.1);
     if (first, mode) != before {
-        editor.update_instance_key(|k| {
+        editor.update_instance_key_grouped(group, |k| {
             k.timing = match mode {
                 Some(play) => Timing::Graphic {
                     first_frame: first,
@@ -703,6 +734,7 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) {
             }
         });
     }
+    gesture_end(editor, &[&first_response]);
     if ui
         .button("Edit Symbol")
         .on_hover_text("Go to the source artboard (double-click with Move)")
@@ -792,38 +824,48 @@ pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
         format!("Frame {} (from frame {})", frame + 1, key.frame + 1)
     });
     let (mut x, mut y, mut w, mut h) = key.bounds;
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label("X");
-        changed |= widgets::number(ui, &mut x, -4096..=4096, "").changed();
-        ui.label("Y");
-        changed |= widgets::number(ui, &mut y, -4096..=4096, "").changed();
-    });
-    ui.horizontal(|ui| {
-        ui.label("W");
-        changed |= widgets::number(ui, &mut w, 1..=4096, "").changed();
-        ui.label("H");
-        changed |= widgets::number(ui, &mut h, 1..=4096, "").changed();
-    });
-    if changed {
-        editor.update_slice_key(|k| k.bounds = (x, y, w, h));
+    let (rx, ry) = ui
+        .horizontal(|ui| {
+            ui.label("X");
+            let rx = widgets::number(ui, &mut x, -4096..=4096, "");
+            ui.label("Y");
+            let ry = widgets::number(ui, &mut y, -4096..=4096, "");
+            (rx, ry)
+        })
+        .inner;
+    let (rw, rh) = ui
+        .horizontal(|ui| {
+            ui.label("W");
+            let rw = widgets::number(ui, &mut w, 1..=4096, "");
+            ui.label("H");
+            let rh = widgets::number(ui, &mut h, 1..=4096, "");
+            (rw, rh)
+        })
+        .inner;
+    let rect_fields = [&rx, &ry, &rw, &rh];
+    if let Some(group) = gesture_group(editor, &rect_fields) {
+        editor.update_slice_key_grouped(Some(group), |k| k.bounds = (x, y, w, h));
     }
+    gesture_end(editor, &rect_fields);
     let mut has_pivot = key.pivot.is_some();
     if ui.checkbox(&mut has_pivot, "Pivot").changed() {
         let default = (w as i32 / 2, h as i32);
         editor.update_slice_key(|k| k.pivot = has_pivot.then_some(default));
     }
     if let Some((mut px, mut py)) = key.pivot {
-        let mut moved = false;
-        ui.horizontal(|ui| {
-            ui.label("X");
-            moved |= widgets::number(ui, &mut px, -4096..=4096, "").changed();
-            ui.label("Y");
-            moved |= widgets::number(ui, &mut py, -4096..=4096, "").changed();
-        });
-        if moved {
-            editor.update_slice_key(|k| k.pivot = Some((px, py)));
+        let (rx, ry) = ui
+            .horizontal(|ui| {
+                ui.label("X");
+                let rx = widgets::number(ui, &mut px, -4096..=4096, "");
+                ui.label("Y");
+                let ry = widgets::number(ui, &mut py, -4096..=4096, "");
+                (rx, ry)
+            })
+            .inner;
+        if let Some(group) = gesture_group(editor, &[&rx, &ry]) {
+            editor.update_slice_key_grouped(Some(group), |k| k.pivot = Some((px, py)));
         }
+        gesture_end(editor, &[&rx, &ry]);
     }
     if own_key
         && slice.keys.first().is_some_and(|k| k.frame != frame)

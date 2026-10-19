@@ -61,8 +61,20 @@ impl Editor {
 
     /// Cambia la key vigente de la capa actual; si el frame actual no es keyframe, crea uno.
     pub fn update_instance_key(&mut self, f: impl FnOnce(&mut InstanceKey)) {
+        self.update_instance_key_grouped(None, f);
+    }
+
+    /// `update_instance_key` como parte del gesto `group` (un solo paso de undo por gesto).
+    pub fn update_instance_key_grouped(
+        &mut self,
+        group: Option<u64>,
+        f: impl FnOnce(&mut InstanceKey),
+    ) {
         if let Some(cmd) = ops::update_instance_key(self.sprite(), self.layer, self.frame, f) {
-            self.execute(cmd);
+            match group {
+                Some(g) => self.execute_grouped(cmd, g),
+                None => self.execute(cmd),
+            };
         }
     }
 
@@ -137,5 +149,30 @@ mod tests {
         assert!(e.is_instance_keyframe(layer.id, 1));
         assert!(e.enter_instance());
         assert_eq!(e.active, ArtboardId(2));
+    }
+
+    #[test]
+    fn grouped_updates_undo_as_one_step() {
+        let mut e = editor();
+        e.add_instance_layer(ArtboardId(2));
+        e.set_frame(1);
+        let original = e.sprite().layer(e.layer).unwrap().instance.clone();
+        for x in 1..4 {
+            e.update_instance_key_grouped(Some(7), |k| k.position = (x, 0));
+        }
+        assert_eq!(e.instance_key().unwrap().position, (3, 0));
+        e.undo();
+        assert_eq!(e.sprite().layer(e.layer).unwrap().instance, original);
+        // Un grupo nuevo (o el mismo tras end_group) es otro paso.
+        e.update_instance_key_grouped(Some(7), |k| k.position = (5, 0));
+        e.end_group();
+        e.update_instance_key_grouped(Some(7), |k| k.position = (6, 0));
+        e.update_instance_key_grouped(Some(8), |k| k.position = (7, 0));
+        e.undo();
+        assert_eq!(e.instance_key().unwrap().position, (6, 0));
+        e.undo();
+        assert_eq!(e.instance_key().unwrap().position, (5, 0));
+        e.undo();
+        assert_eq!(e.sprite().layer(e.layer).unwrap().instance, original);
     }
 }
