@@ -26,10 +26,13 @@ impl Session {
             None => (RENDER_TARGET / sprite.width.max(sprite.height)).clamp(1, 16),
         };
         let background = p.background.as_deref().map(target::hex).transpose()?;
+        // Las instancias se materializan antes de componer.
+        let d = &self.doc(&p.doc)?.document;
+        let composed = cs_render::materialize(d, sprite, 0..sprite.frames.len());
         let mut pixels = if p.onion {
-            render_onion(sprite, frame, &OnionSkin::default())
+            render_onion(&composed, frame, &OnionSkin::default())
         } else {
-            render_frame(sprite, frame)
+            render_frame(&composed, frame)
         };
         if let Some(bg) = background {
             for px in &mut pixels {
@@ -79,6 +82,8 @@ impl Session {
                 y1 - y0
             )));
         }
+        let d = &self.doc(&p.doc)?.document;
+        let composed = cs_render::materialize(d, sprite, frame..frame + 1);
         let indexed = matches!(sprite.color_mode, ColorMode::Indexed { .. });
         let palette_index = |c: Rgba| {
             sprite
@@ -104,7 +109,7 @@ impl Session {
                             }
                         }
                         None => {
-                            let color = cs_render::composite_pixel(sprite, frame, x, y);
+                            let color = cs_render::composite_pixel(&composed, frame, x, y);
                             let index = if indexed { palette_index(color) } else { None };
                             Cell { color, index }
                         }
@@ -126,6 +131,9 @@ impl Session {
 
     pub fn export(&self, p: Export) -> Result<Reply> {
         let (id, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        // Las instancias se hornean en capas de imagen antes de exportar.
+        let baked = cs_render::bake_instances(&self.doc(&p.doc)?.document, sprite);
+        let sprite = baked.as_ref().unwrap_or(sprite);
         let scale = match p.scale.unwrap_or(1) {
             s @ 1..=64 => s,
             s => return Err(invalid(format!("scale {s} must be 1-64"))),

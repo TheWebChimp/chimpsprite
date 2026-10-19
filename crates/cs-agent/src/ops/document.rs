@@ -74,7 +74,12 @@ fn describe_sprite(s: &Sprite) -> Value {
             json!({
                 "id": l.id.0,
                 "name": l.name,
-                "kind": if l.kind == LayerKind::Group { "group" } else { "image" },
+                "kind": match l.kind {
+                    LayerKind::Group => "group",
+                    LayerKind::Instance => "instance",
+                    LayerKind::Image => "image",
+                },
+                "instance": l.instance,
                 "parent": l.parent.map(|p| p.0),
                 "visible": l.visible,
                 "locked": l.locked,
