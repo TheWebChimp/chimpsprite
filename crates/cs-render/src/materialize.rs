@@ -301,6 +301,36 @@ fn tilemap_image(
     Some(((x0 as i32, y0 as i32), image))
 }
 
+/// Valor que dibuja la capa tilemap `layer` en el píxel `(x, y)` del lienzo, sin materializar:
+/// una sola búsqueda de tile. Igual que lo que deja `materialize_tilemaps` en ese píxel (fuera
+/// del lienzo no hay nada). `None` si ahí no dibuja nada o la capa no es tilemap.
+pub fn tilemap_pixel(
+    sprite: &Sprite,
+    layer: &Layer,
+    frame: usize,
+    x: i32,
+    y: i32,
+) -> Option<PixelValue> {
+    if layer.kind != LayerKind::Tilemap
+        || x < 0
+        || y < 0
+        || x as u32 >= sprite.width
+        || y as u32 >= sprite.height
+    {
+        return None;
+    }
+    let cel = sprite.cel(layer.id, frame)?;
+    let tileset = sprite.tilesets.get(layer.tileset? as usize)?;
+    let grid = sprite.tilemap(cel.image)?;
+    grid_pixel(
+        sprite.color_mode,
+        tileset,
+        grid,
+        x as i64 - cel.position.0 as i64,
+        y as i64 - cel.position.1 as i64,
+    )
+}
+
 /// Valor que dibuja la grilla en `(lx, ly)`, relativo a su esquina: una sola búsqueda de tile.
 /// `None` fuera de la grilla, en celdas que no dibujan (ver `tile_image`) o si el tile es de otro
 /// modo de color (datos corruptos).

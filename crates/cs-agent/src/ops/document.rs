@@ -257,8 +257,14 @@ impl Session {
         }
         if files::bakes_masks(&d.document, &name) {
             text.push_str(
-                "
-Note: .aseprite has no layer/clipping masks; they were applied to the pixels                  in the file (the open document keeps them). Save as .chimp to keep them editable.",
+                "\nNote: .aseprite has no layer/clipping masks; they were applied to the pixels \
+                 in the file (the open document keeps them). Save as .chimp to keep them editable.",
+            );
+        }
+        if files::converts_tilemaps(&d.document, &name) {
+            text.push_str(
+                "\nNote: tilemap layers with a mask or clipping were saved as image layers in \
+                 that file so the mask could be applied.",
             );
         }
         d.path = Some(path);

@@ -280,10 +280,18 @@ impl ChimpApp {
                         .any(|a| !a.guides.is_empty());
                 let baked = files::bakes_masks(&self.doc.editor.document, &target_name);
                 if baked {
-                    self.show_message(
-                        "Masks applied in the file",
-                        ".aseprite files have no layer or clipping masks, so they were applied to                          the pixels in the saved file (your open document keeps them). Save as                          .chimp to keep them editable.",
+                    let mut body = String::from(
+                        ".aseprite files have no layer or clipping masks, so they were applied to \
+                         the pixels in the saved file (your open document keeps them). Save as \
+                         .chimp to keep them editable.",
                     );
+                    if files::converts_tilemaps(&self.doc.editor.document, &target_name) {
+                        body.push_str(
+                            "\n\nTilemap layers with a mask or clipping were saved as image \
+                             layers in that file so the mask could be applied.",
+                        );
+                    }
+                    self.show_message("Masks applied in the file", body);
                 } else if lost_guides {
                     self.show_message(
                         "Saved without guides",

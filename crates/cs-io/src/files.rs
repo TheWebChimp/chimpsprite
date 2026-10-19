@@ -31,6 +31,17 @@ pub fn bakes_masks(doc: &Document, file_name: &str) -> bool {
             .any(|a| a.sprite.layers.iter().any(|l| l.mask.is_some() || l.clip))
 }
 
+/// ¿Guardar en este formato convierte capas tilemap en capas de imagen? Pasa en `.aseprite` con
+/// las tilemap que tienen máscara o recorte (o están en un grupo con máscara): para aplicar la
+/// máscara se guardan como píxeles.
+pub fn converts_tilemaps(doc: &Document, file_name: &str) -> bool {
+    kind_of(file_name) == Some(FileKind::Aseprite)
+        && doc
+            .artboards
+            .iter()
+            .any(|a| !cs_render::masked_tilemap_layers(&a.sprite).is_empty())
+}
+
 /// ¿Guardar en este formato convierte instancias en píxeles?
 pub fn bakes_instances(doc: &Document, file_name: &str) -> bool {
     kind_of(file_name) == Some(FileKind::Aseprite)
@@ -175,6 +186,126 @@ mod tests {
         let bytes = encode(&d, "x.aseprite").unwrap();
         let (back, _) = aseprite::read(&bytes).unwrap();
         assert_eq!(back.layers[1].kind, cs_core::LayerKind::Image);
+    }
+
+    /// 8×8 con una capa de imagen (1), una tilemap (2) con tiles rojos en las celdas (0, 0) y
+    /// (1, 1) de 4×4, y otra tilemap (3) sin máscaras con un tile en (1, 0).
+    fn masked_tilemap_sprite() -> Sprite {
+        use cs_core::{Image, LayerId, PixelValue, Rgba, Tile, Tileset};
+        let mut sprite = Sprite::new(8, 8, ColorMode::Rgba);
+        let mut ts = Tileset::new("t", (4, 4), ColorMode::Rgba);
+        let mut tile = Image::new(4, 4, ColorMode::Rgba);
+        for y in 0..4 {
+            for x in 0..4 {
+                tile.set(x, y, PixelValue::Rgba(Rgba::rgb(200, 10 * x as u8, 30)))
+                    .unwrap();
+            }
+        }
+        ts.tiles.push(std::sync::Arc::new(tile));
+        cs_commands::Command::SetTileset {
+            index: 0,
+            tileset: Some(ts),
+        }
+        .apply(&mut sprite)
+        .unwrap();
+        let t = Tile::new(1, false, false, false);
+        for (above, cells) in [(1, [(0, 0), (1, 1)]), (2, [(1, 0), (1, 0)])] {
+            cs_commands::ops::new_tilemap_layer(&sprite.clone(), Some(LayerId(above)), 0)
+                .apply(&mut sprite)
+                .unwrap();
+            let id = LayerId(above + 1);
+            let cells: Vec<_> = cells.iter().map(|&(x, y)| (x, y, t)).collect();
+            cs_commands::ops::set_tiles(&sprite, id, 0, &cells)
+                .unwrap()
+                .apply(&mut sprite)
+                .unwrap();
+        }
+        sprite
+    }
+
+    fn rendered(sprite: &Sprite) -> Vec<cs_core::Rgba> {
+        cs_render::render_frame(&cs_render::materialize_tilemaps(sprite, 0..1), 0)
+    }
+
+    /// Guarda como `.aseprite`, vuelve a abrir y compara lo que se ve.
+    fn aseprite_roundtrip(sprite: Sprite, converts: bool) -> Sprite {
+        let d = Document::with_sprite("m", sprite.clone());
+        assert_eq!(converts_tilemaps(&d, "m.aseprite"), converts);
+        assert!(!converts_tilemaps(&d, "m.chimp"));
+        let (back, _) = decode("m.aseprite", &encode(&d, "m.aseprite").unwrap()).unwrap();
+        let back = back.artboards[0].sprite.clone();
+        assert_eq!(rendered(&back), rendered(&sprite));
+        // La tilemap sin máscaras sigue siendo tilemap.
+        assert_eq!(kind(&back, "Tilemap 3"), cs_core::LayerKind::Tilemap);
+        back
+    }
+
+    /// Tipo de la capa con ese nombre (los ids cambian al releer el `.aseprite`).
+    fn kind(sprite: &Sprite, name: &str) -> cs_core::LayerKind {
+        sprite.layers.iter().find(|l| l.name == name).unwrap().kind
+    }
+
+    #[test]
+    fn saving_aseprite_keeps_masks_on_tilemap_layers() {
+        use cs_core::{LayerId, LayerKind, LayerMask};
+        // (a) Una máscara que oculta la mitad izquierda de la tilemap 2.
+        let mut s = masked_tilemap_sprite();
+        let mut mask = LayerMask::filled(8, 8, 255);
+        mask.data = std::sync::Arc::new((0..64).map(|i| if i % 8 < 4 { 0 } else { 255 }).collect());
+        s.layer_mut(LayerId(2)).unwrap().mask = Some(mask);
+        let back = aseprite_roundtrip(s, true);
+        assert_eq!(kind(&back, "Tilemap 2"), LayerKind::Image);
+    }
+
+    #[test]
+    fn saving_aseprite_keeps_layers_clipped_onto_tilemaps() {
+        use cs_core::{Layer, LayerId, LayerKind, PixelValue, Rgba};
+        // (b) Una capa de imagen azul recortada sobre la tilemap 2 (la base).
+        let mut s = masked_tilemap_sprite();
+        let mut shade = Layer::new_image(LayerId(4), "shade");
+        shade.clip = true;
+        let index = s.layer_index(LayerId(2)).unwrap() + 1;
+        cs_commands::Command::AddLayer {
+            index,
+            layer: shade,
+        }
+        .apply(&mut s)
+        .unwrap();
+        let blue = PixelValue::Rgba(Rgba::new(0, 0, 255, 200));
+        cs_commands::Command::DrawPixels {
+            layer: LayerId(4),
+            frame: 0,
+            pixels: (0..8)
+                .flat_map(|y| (0..8).map(move |x| (x, y, blue)))
+                .collect(),
+        }
+        .apply(&mut s)
+        .unwrap();
+        let before = rendered(&s);
+        assert!(before[0].b > 100, "shade over the base");
+        assert_eq!(before[7].b, 30, "no base, no shade: only tilemap 3 there");
+        let back = aseprite_roundtrip(s, false);
+        // La base no tiene máscara ni recorte propio: sigue siendo tilemap.
+        assert_eq!(kind(&back, "Tilemap 2"), LayerKind::Tilemap);
+    }
+
+    #[test]
+    fn saving_aseprite_keeps_group_masks_over_tilemaps() {
+        use cs_core::{Layer, LayerId, LayerKind, LayerMask};
+        // (c) Un grupo con máscara que contiene a la tilemap 2.
+        let mut s = masked_tilemap_sprite();
+        let mut group = Layer::new_image(LayerId(5), "g");
+        group.kind = LayerKind::Group;
+        let mut mask = LayerMask::filled(8, 8, 255);
+        mask.data = std::sync::Arc::new((0..64).map(|i| if i < 32 { 0 } else { 255 }).collect());
+        group.mask = Some(mask);
+        // Los grupos van justo debajo (antes en la lista) de sus hijas.
+        let at = s.layer_index(LayerId(2)).unwrap();
+        s.layers.insert(at, group);
+        s.layer_mut(LayerId(2)).unwrap().parent = Some(LayerId(5));
+        assert!(s.is_valid_tree());
+        let back = aseprite_roundtrip(s, true);
+        assert_eq!(kind(&back, "Tilemap 2"), LayerKind::Image);
     }
 
     #[test]

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 mod materialize;
 mod normal;
-pub use materialize::{Bake, bake_layers, materialize, materialize_tilemaps};
+pub use materialize::{Bake, bake_layers, materialize, materialize_tilemaps, tilemap_pixel};
 pub use normal::normal_map;
 
 use cs_core::{BlendMode, ColorMode, Image, ImageId, Layer, LayerKind, PixelValue, Rgba, Sprite};
@@ -146,8 +146,18 @@ fn base_alpha(sprite: &Sprite, base: &Layer, frame: usize, x: i32, y: i32) -> u3
     if base.kind == LayerKind::Group {
         return 255;
     }
-    let pixel = resolve(sprite, sprite.pixel(base.id, frame, x, y)).a as u32;
+    let pixel = resolve(sprite, layer_value(sprite, base, frame, x, y)).a as u32;
     mul(pixel, sprite.mask_value(base.id, x, y) as u32)
+}
+
+/// Valor de la capa en `(x, y)` del lienzo: el píxel de su cel o, si es tilemap, el del tile que
+/// cae ahí (sin materializar). Transparente si no hay nada.
+fn layer_value(sprite: &Sprite, layer: &Layer, frame: usize, x: i32, y: i32) -> PixelValue {
+    match layer.kind {
+        LayerKind::Tilemap => tilemap_pixel(sprite, layer, frame, x, y)
+            .unwrap_or_else(|| sprite.color_mode.transparent()),
+        _ => sprite.pixel(layer.id, frame, x, y),
+    }
 }
 
 /// Cuánto deja ver la máscara (y el recorte) de la capa en `(x, y)`: 0–255.
@@ -180,18 +190,44 @@ pub fn mask_overlay(sprite: &Sprite, layer: cs_core::LayerId, pixels: &mut [Rgba
     }
 }
 
+/// Capas tilemap con máscara, recorte o dentro de un grupo con máscara: `bake_masks` las convierte
+/// en capas de imagen (una grilla de tiles no puede llevar la máscara aplicada).
+pub fn masked_tilemap_layers(sprite: &Sprite) -> Vec<cs_core::LayerId> {
+    sprite
+        .layers
+        .iter()
+        .filter(|l| l.kind == LayerKind::Tilemap && is_masked(sprite, l))
+        .map(|l| l.id)
+        .collect()
+}
+
 /// Copia del sprite con las máscaras y recortes aplicados a los píxeles (para formatos que no
 /// los soportan). `None` si no hay nada que aplicar. Los cels afectados dejan de estar vinculados.
+///
+/// Las capas tilemap enmascaradas (ver `masked_tilemap_layers`) pasan a ser capas de imagen con
+/// la grilla dibujada, para poder aplicarles la máscara; las demás siguen siendo tilemap (y
+/// pueden ser base de un recorte: se lee el tile que cae en cada píxel).
 pub fn bake_masks(sprite: &Sprite) -> Option<Sprite> {
+    let has_masks = sprite.layers.iter().any(|l| l.mask.is_some() || l.clip);
+    if !has_masks {
+        return None;
+    }
+    let tilemaps = masked_tilemap_layers(sprite);
+    let converted;
+    let sprite = if tilemaps.is_empty() {
+        sprite
+    } else {
+        converted =
+            materialize::convert_tilemap_layers(sprite, 0..sprite.frames.len(), false, |l| {
+                tilemaps.contains(&l.id)
+            });
+        &converted
+    };
     let affected: Vec<&Layer> = sprite
         .layers
         .iter()
         .filter(|l| l.kind == LayerKind::Image && is_masked(sprite, l))
         .collect();
-    let has_masks = sprite.layers.iter().any(|l| l.mask.is_some() || l.clip);
-    if !has_masks {
-        return None;
-    }
     let mut out = sprite.clone();
     let mut next = sprite.next_image_id().0;
     for layer in affected {
