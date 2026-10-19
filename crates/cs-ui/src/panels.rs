@@ -615,20 +615,24 @@ pub fn artboards(
 
 /// Gesto sobre campos numéricos o sliders: un solo paso de undo por arrastre o edición.
 /// Llamar antes de aplicar el cambio; devuelve el grupo (id del widget que cambió) si cambió.
+/// El gesto anterior del mismo widget ya terminó en `gesture_end` (al soltar o perder el foco),
+/// así que acá solo se corta al tomar foco; cortar en `drag_started` partiría en dos el
+/// "clic (el slider salta) + arrastre".
 fn gesture_group(editor: &mut Editor, responses: &[&egui::Response]) -> Option<u64> {
-    if responses
-        .iter()
-        .any(|r| r.drag_started() || r.gained_focus())
-    {
+    if responses.iter().any(|r| r.gained_focus()) {
         editor.end_group();
     }
     responses.iter().find(|r| r.changed()).map(|r| r.id.value())
 }
 
-/// Llamar después de aplicar: cierra el gesto si terminó (o si el cambio no era parte de uno).
+/// Llamar después de aplicar: cierra el gesto si terminó (al soltar el botón, al perder el foco,
+/// o si el cambio no vino de un botón apretado ni de un campo con foco).
 fn gesture_end(editor: &mut Editor, responses: &[&egui::Response]) {
     let ended = responses.iter().any(|r| {
-        r.drag_stopped() || r.lost_focus() || (r.changed() && !r.dragged() && !r.has_focus())
+        r.drag_stopped()
+            || r.clicked()
+            || r.lost_focus()
+            || (r.changed() && !r.is_pointer_button_down_on() && !r.has_focus())
     });
     if ended {
         editor.end_group();
@@ -891,5 +895,79 @@ pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
                 pivot: None,
             })
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cs_core::{ColorMode, Sprite};
+    use eframe::egui::{Event, PointerButton, Pos2, RawInput, pos2};
+
+    use super::*;
+
+    /// Corre un frame con un slider de opacidad conectado como en el panel de instancia;
+    /// devuelve el rect del slider.
+    fn frame(ctx: &egui::Context, editor: &mut Editor, events: Vec<Event>) -> Rect {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+            events,
+            ..Default::default()
+        };
+        let mut rect = Rect::NOTHING;
+        let mut output = ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let mut opacity = editor.instance_key().unwrap().opacity;
+                let r = ui.add(egui::Slider::new(&mut opacity, 0..=255));
+                if let Some(group) = gesture_group(editor, &[&r]) {
+                    editor.update_instance_key_grouped(Some(group), |k| k.opacity = opacity);
+                }
+                gesture_end(editor, &[&r]);
+                rect = r.rect;
+            });
+        });
+        output.textures_delta.clear();
+        rect
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn slider_click_then_drag_is_one_undo_step() {
+        let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+        e.add_artboard(4, 4);
+        e.activate(cs_core::ArtboardId(1));
+        e.add_instance_layer(cs_core::ArtboardId(2));
+        let original = e.instance_key().unwrap();
+        let ctx = egui::Context::default();
+        let r = frame(&ctx, &mut e, vec![]);
+        let y = r.center().y;
+        let at = |t: f32| pos2(r.left() + r.width() * t, y);
+        // Clic en el 20 % (el valor salta), arrastre hasta el 30 % y suelta.
+        frame(&ctx, &mut e, vec![Event::PointerMoved(at(0.2))]);
+        frame(&ctx, &mut e, vec![button(at(0.2), true)]);
+        for t in [0.22, 0.25, 0.3] {
+            frame(&ctx, &mut e, vec![Event::PointerMoved(at(t))]);
+        }
+        frame(&ctx, &mut e, vec![button(at(0.3), false)]);
+        frame(&ctx, &mut e, vec![]);
+        let dragged = e.instance_key().unwrap().opacity;
+        assert_ne!(dragged, original.opacity, "the slider moved");
+        // Un segundo clic es otro paso.
+        frame(&ctx, &mut e, vec![Event::PointerMoved(at(0.6))]);
+        frame(&ctx, &mut e, vec![button(at(0.6), true)]);
+        frame(&ctx, &mut e, vec![button(at(0.6), false)]);
+        frame(&ctx, &mut e, vec![]);
+        assert_ne!(e.instance_key().unwrap().opacity, dragged);
+        e.undo();
+        assert_eq!(e.instance_key().unwrap().opacity, dragged);
+        e.undo();
+        assert_eq!(e.instance_key().unwrap(), original);
     }
 }
