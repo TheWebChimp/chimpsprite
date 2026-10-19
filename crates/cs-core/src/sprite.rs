@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use std::ops::Range;
 
-use crate::{ColorMode, Image, Palette, PixelValue, Tag};
+use crate::{ColorMode, Image, Palette, PixelValue, Tag, TileGrid, Tileset};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct LayerId(pub u32);
@@ -34,6 +34,8 @@ pub enum LayerKind {
     Group,
     /// Muestra otro artboard (un símbolo) con su propia línea de tiempo; no tiene cels.
     Instance,
+    /// Grilla de tiles de un tileset del sprite; sus cels apuntan a `Sprite::tilemaps`.
+    Tilemap,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +58,9 @@ pub struct Layer {
     /// Keys de la instancia; solo en capas `LayerKind::Instance`.
     #[serde(default)]
     pub instance: Option<crate::InstanceTrack>,
+    /// Índice en `Sprite::tilesets`; solo en capas `LayerKind::Tilemap`.
+    #[serde(default)]
+    pub tileset: Option<u32>,
 }
 
 impl Layer {
@@ -72,6 +77,7 @@ impl Layer {
             mask: None,
             clip: false,
             instance: None,
+            tileset: None,
         }
     }
 }
@@ -194,6 +200,12 @@ pub struct Sprite {
     /// Rectángulos con nombre por frame (hitboxes, pivotes, 9-slice), como los slices de Aseprite.
     #[serde(default)]
     pub slices: Vec<Slice>,
+    /// Tilesets del sprite; las capas tilemap los referencian por índice.
+    #[serde(default)]
+    pub tilesets: Vec<Tileset>,
+    /// Grillas de los cels tilemap. Comparten el espacio de ids con `images`.
+    #[serde(default, with = "as_entries")]
+    pub tilemaps: BTreeMap<ImageId, Arc<TileGrid>>,
 }
 
 /// Rectángulo con nombre que puede cambiar por frame: hitboxes, puntos de anclaje, 9-slice.
@@ -287,6 +299,8 @@ impl Sprite {
             extra_chunks: Vec::new(),
             grid: GridSettings::default(),
             slices: Vec::new(),
+            tilesets: Vec::new(),
+            tilemaps: BTreeMap::new(),
         }
     }
 
@@ -306,8 +320,15 @@ impl Sprite {
         LayerId(self.layers.iter().map(|l| l.id.0).max().unwrap_or(0) + 1)
     }
 
+    /// Id libre para `images` o `tilemaps` (comparten el espacio de ids).
     pub fn next_image_id(&self) -> ImageId {
-        ImageId(self.images.keys().map(|k| k.0).max().map_or(1, |m| m + 1))
+        let max = self
+            .images
+            .keys()
+            .chain(self.tilemaps.keys())
+            .map(|k| k.0)
+            .max();
+        ImageId(max.map_or(1, |m| m + 1))
     }
 
     pub fn cel(&self, layer: LayerId, frame: usize) -> Option<&Cel> {
@@ -316,6 +337,10 @@ impl Sprite {
 
     pub fn image(&self, id: ImageId) -> Option<&Arc<Image>> {
         self.images.get(&id)
+    }
+
+    pub fn tilemap(&self, id: ImageId) -> Option<&Arc<TileGrid>> {
+        self.tilemaps.get(&id)
     }
 
     /// Valor del píxel de una capa en coordenadas del lienzo; transparente si no hay cel o cae fuera.

@@ -7,6 +7,7 @@ mod image;
 mod instance;
 mod mask;
 mod sprite;
+mod tilemap;
 
 pub use anim::*;
 pub use color::*;
@@ -15,3 +16,4 @@ pub use image::*;
 pub use instance::*;
 pub use mask::*;
 pub use sprite::*;
+pub use tilemap::*;

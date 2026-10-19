@@ -417,6 +417,7 @@ fn read_layer(
         mask: None,
         clip: false,
         instance: None,
+        tileset: None,
     });
     Ok(())
 }

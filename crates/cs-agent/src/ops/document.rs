@@ -77,6 +77,7 @@ fn describe_sprite(s: &Sprite) -> Value {
                 "kind": match l.kind {
                     LayerKind::Group => "group",
                     LayerKind::Instance => "instance",
+                    LayerKind::Tilemap => "tilemap",
                     LayerKind::Image => "image",
                 },
                 "parent": l.parent.map(|p| p.0),

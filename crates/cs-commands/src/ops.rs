@@ -25,6 +25,7 @@ pub fn new_layer(sprite: &Sprite, above: Option<LayerId>, kind: LayerKind) -> Co
     let prefix = match kind {
         LayerKind::Group => "Group",
         LayerKind::Instance => "Instance",
+        LayerKind::Tilemap => "Tilemap",
         LayerKind::Image => "Layer",
     };
     let mut layer = Layer::new_image(id, format!("{prefix} {}", id.0));
