@@ -459,8 +459,8 @@ impl Session {
         let y =
             p.y.unwrap_or((sprite.height as i32 - src.sprite.height as i32) / 2);
         let name = p.name.clone().unwrap_or_else(|| src.name.clone());
-        let top = sprite.layers.last().map(|l| l.id);
-        let cmd = ops::new_instance_layer(sprite, top, p.frame, source, &name, (x, y));
+        // Arriba de todo, en el nivel raíz (no dentro del grupo de la última capa).
+        let cmd = ops::new_instance_layer(sprite, None, p.frame, source, &name, (x, y));
         let reply = format!("Placed '{}' as layer '{name}'.", src.name);
         self.run_on(&p.doc, host, vec![cmd])?;
         Ok(Reply::text(reply))
@@ -778,6 +778,25 @@ mod tests {
     }
 
     #[test]
+    fn instance_layers_go_on_top_at_root_level() {
+        let mut s = session(8, 8);
+        s.add_artboard(p(
+            json!({"doc": "d1", "name": "coin", "width": 2, "height": 2}),
+        ))
+        .unwrap();
+        s.add_layer(p(json!({"doc": "d1", "name": "G", "group": true})))
+            .unwrap();
+        s.add_layer(p(json!({"doc": "d1", "name": "inner", "into": "G"})))
+            .unwrap();
+        s.add_instance_layer(p(json!({"doc": "d1", "source": "coin", "name": "Coin"})))
+            .unwrap();
+        let sprite = s.sprite("d1", None).unwrap().1;
+        let top = sprite.layers.last().unwrap();
+        assert_eq!(top.name, "Coin");
+        assert_eq!(top.parent, None, "not inside the last layer's group");
+    }
+
+    #[test]
     fn instances_place_key_render_and_reject_cycles() {
         let mut s = session(8, 8);
         s.add_artboard(p(
@@ -811,6 +830,11 @@ mod tests {
         let layer = &described["artboards"][0]["layers_bottom_to_top"][1];
         assert_eq!(layer["kind"], "instance");
         assert_eq!(layer["instance"]["keys"].as_array().unwrap().len(), 2);
+        let image = &described["artboards"][0]["layers_bottom_to_top"][0];
+        assert!(
+            image.get("instance").is_none(),
+            "only instance layers say so"
+        );
         s.remove_instance_key(p(json!({"doc": "d1", "layer": "Coin", "frame": 1})))
             .unwrap();
         let err = s

@@ -594,7 +594,14 @@ impl ChimpApp {
                             })
                             .inner;
                         ui.add_space(12.0);
-                        ui.add_enabled_ui(!modal, |ui| panels::instance(ui, &mut self.doc.editor));
+                        let entered = ui
+                            .add_enabled_ui(!modal, |ui| panels::instance(ui, &mut self.doc.editor))
+                            .inner;
+                        if entered {
+                            self.doc
+                                .canvas
+                                .request_zoom(view::ZoomRequest::CenterActive);
+                        }
                         ui.add_enabled_ui(!modal, |ui| panels::slices(ui, &mut self.doc.editor));
                         open
                     })

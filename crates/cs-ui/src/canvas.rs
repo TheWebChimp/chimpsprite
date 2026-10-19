@@ -196,7 +196,15 @@ impl CanvasView {
                 self.pan = -center;
             }
             ZoomRequest::Fit => self.fit(rect, editor),
+            ZoomRequest::CenterActive => self.center_active(editor),
         }
+    }
+
+    /// Centra el artboard activo sin cambiar el zoom (p. ej. al entrar a un símbolo).
+    fn center_active(&mut self, editor: &Editor) {
+        let ((x0, y0), (x1, y1)) = editor.artboard().rect();
+        let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
+        self.pan = -center * self.zoom;
     }
 
     fn checker(&mut self, ctx: &egui::Context) -> egui::TextureId {
@@ -666,10 +674,7 @@ impl CanvasView {
             && editor.active_tool() == ToolKind::Move
             && editor.enter_instance()
         {
-            let ((x0, y0), (x1, y1)) = editor.artboard().rect();
-            // Centra el artboard fuente sin cambiar el zoom.
-            let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
-            self.pan = -center * self.zoom;
+            self.center_active(editor);
         }
 
         let cursor = if space {

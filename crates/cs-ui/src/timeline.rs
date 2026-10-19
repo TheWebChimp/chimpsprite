@@ -707,8 +707,14 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
         response.context_menu(|ui| {
             if layer.kind == LayerKind::Instance {
                 let is_key = editor.is_instance_keyframe(id, f);
+                // Antes de la primera key no hay nada que copiar.
+                let has_key = editor
+                    .sprite()
+                    .layer(id)
+                    .and_then(|l| l.instance.as_ref())
+                    .is_some_and(|t| t.key_at(f).is_some());
                 if ui
-                    .add_enabled(!is_key, egui::Button::new("Insert Keyframe"))
+                    .add_enabled(has_key && !is_key, egui::Button::new("Insert Keyframe"))
                     .clicked()
                 {
                     editor.insert_instance_key(id, f);

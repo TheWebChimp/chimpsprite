@@ -638,10 +638,11 @@ fn gesture_end(editor: &mut Editor, responses: &[&egui::Response]) {
 /// Rango de los campos de posición de la instancia.
 const POSITION_RANGE: std::ops::RangeInclusive<i32> = -16384..=16384;
 
-/// Propiedades de la instancia de la capa actual en el frame actual.
-pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) {
+/// Propiedades de la instancia de la capa actual en el frame actual. Devuelve `true` si se
+/// entró al símbolo (el lienzo debe centrarlo).
+pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     let Some(key) = editor.instance_key() else {
-        return;
+        return false;
     };
     ui.heading("Instance");
     let is_key = editor.is_instance_keyframe(editor.layer, editor.frame);
@@ -735,14 +736,13 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) {
         });
     }
     gesture_end(editor, &[&first_response]);
-    if ui
+    let entered = ui
         .button("Edit Symbol")
         .on_hover_text("Go to the source artboard (double-click with Move)")
         .clicked()
-    {
-        editor.enter_instance();
-    }
+        && editor.enter_instance();
     ui.separator();
+    entered
 }
 
 /// Panel de slices: lista, nombre, color, datos y la clave del frame actual (rect y pivote).

@@ -71,7 +71,7 @@ fn describe_sprite(s: &Sprite) -> Value {
         .layers
         .iter()
         .map(|l| {
-            json!({
+            let mut v = json!({
                 "id": l.id.0,
                 "name": l.name,
                 "kind": match l.kind {
@@ -79,13 +79,16 @@ fn describe_sprite(s: &Sprite) -> Value {
                     LayerKind::Instance => "instance",
                     LayerKind::Image => "image",
                 },
-                "instance": l.instance,
                 "parent": l.parent.map(|p| p.0),
                 "visible": l.visible,
                 "locked": l.locked,
                 "opacity": l.opacity,
                 "blend": blend_name(l.blend),
-            })
+            });
+            if let Some(track) = &l.instance {
+                v["instance"] = json!(track);
+            }
+            v
         })
         .collect();
     let cels: Vec<Value> = s

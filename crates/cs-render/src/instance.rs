@@ -62,7 +62,8 @@ fn materialize_at<'a>(
         let Some(track) = layer.instance.take() else {
             continue;
         };
-        if !can_draw {
+        // Una capa oculta no se ve: no hace falta renderizar su fuente.
+        if !can_draw || !layer.visible {
             continue;
         }
         for frame in frames.clone() {
@@ -295,6 +296,17 @@ mod tests {
         let m = materialize(&d, &d.artboards[0].sprite, 0..4);
         assert_eq!(px(&render_frame(&m, 0), 1, 1), RED);
         assert!(m.cels.keys().all(|(l, _)| *l == LayerId(1)));
+    }
+
+    #[test]
+    fn hidden_instance_layers_are_not_materialized() {
+        let mut h = host(vec![InstanceKey::new(0, ArtboardId(2), (0, 0))]);
+        h.layers[1].visible = false;
+        let d = doc(h);
+        let m = materialize(&d, &d.artboards[0].sprite, 0..4);
+        let layer = m.layer(LayerId(2)).unwrap();
+        assert_eq!(layer.kind, LayerKind::Image);
+        assert!(m.cels.is_empty());
     }
 
     #[test]
