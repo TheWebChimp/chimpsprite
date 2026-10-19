@@ -315,26 +315,33 @@ pub fn render_frame(sprite: &Sprite, frame: usize) -> Vec<Rgba> {
 }
 
 /// Color compuesto de un solo píxel (lo que se ve en pantalla), sin renderizar todo el frame.
+/// Las capas tilemap se leen tile a tile (igual que si estuvieran materializadas, sin copiar
+/// el sprite); las de instancia no (hay que materializarlas antes).
 pub fn composite_pixel(sprite: &Sprite, frame: usize, x: i32, y: i32) -> Rgba {
     if x < 0 || y < 0 || x >= sprite.width as i32 || y >= sprite.height as i32 {
         return Rgba::TRANSPARENT;
     }
     let mut out = Rgba::TRANSPARENT;
-    for layer in sprite.layers.iter().filter(|l| l.kind == LayerKind::Image) {
+    let drawn = |l: &&Layer| matches!(l.kind, LayerKind::Image | LayerKind::Tilemap);
+    for layer in sprite.layers.iter().filter(drawn) {
         let Some(layer_opacity) = effective_opacity(sprite, layer) else {
             continue;
         };
         let Some(cel) = sprite.cel(layer.id, frame) else {
             continue;
         };
-        let Some(image) = sprite.image(cel.image) else {
-            continue;
+        let value = if layer.kind == LayerKind::Tilemap {
+            tilemap_pixel(sprite, layer, frame, x, y)
+        } else {
+            let (ix, iy) = (x - cel.position.0, y - cel.position.1);
+            if ix < 0 || iy < 0 {
+                continue;
+            }
+            sprite
+                .image(cel.image)
+                .and_then(|image| image.get(ix as u32, iy as u32))
         };
-        let (ix, iy) = (x - cel.position.0, y - cel.position.1);
-        if ix < 0 || iy < 0 {
-            continue;
-        }
-        let Some(value) = image.get(ix as u32, iy as u32) else {
+        let Some(value) = value else {
             continue;
         };
         let src = resolve(sprite, value);
@@ -636,6 +643,63 @@ mod tests {
             }
         }
         assert_eq!(composite_pixel(&s, 0, -1, 0), Rgba::TRANSPARENT);
+    }
+
+    #[test]
+    fn composite_pixel_reads_tilemap_layers_without_materializing() {
+        // Tilemap (capa 2) de tiles de 2×2 con un píxel verde en (1, 0) del tile, sobre una
+        // capa de imagen roja; el cel no está alineado y la celda (1, 0) está espejada en X.
+        let mut s = Sprite::new(6, 3, ColorMode::Rgba);
+        draw(
+            &mut s,
+            1,
+            (0..6)
+                .map(|x| (x, 0, PixelValue::Rgba(Rgba::rgb(255, 0, 0))))
+                .collect(),
+        );
+        let mut ts = Tileset::new("t", (2, 2), ColorMode::Rgba);
+        let mut tile = Image::new(2, 2, ColorMode::Rgba);
+        tile.set(1, 0, PixelValue::Rgba(Rgba::new(0, 255, 0, 128)))
+            .unwrap();
+        ts.tiles.push(Arc::new(tile));
+        s.tilesets.push(ts);
+        let mut layer = Layer::new_image(LayerId(2), "map");
+        layer.kind = LayerKind::Tilemap;
+        layer.tileset = Some(0);
+        layer.blend = BlendMode::Screen;
+        s.layers.push(layer);
+        let mut grid = TileGrid::new(2, 1);
+        grid.set(0, 0, Tile::new(1, false, false, false));
+        grid.set(1, 0, Tile::new(1, true, false, false));
+        s.tilemaps.insert(ImageId(50), Arc::new(grid));
+        s.cels.insert(
+            (LayerId(2), 0),
+            Cel {
+                position: (1, 0),
+                opacity: 200,
+                image: ImageId(50),
+            },
+        );
+        let full = render_frame(&materialize_tilemaps(&s, 0..1), 0);
+        for y in -1..4 {
+            for x in -1..7 {
+                let expected = if (0..6).contains(&x) && (0..3).contains(&y) {
+                    full[(y * 6 + x) as usize]
+                } else {
+                    Rgba::TRANSPARENT
+                };
+                assert_eq!(composite_pixel(&s, 0, x, y), expected, "({x}, {y})");
+            }
+        }
+        // El tile se ve (no solo la capa de abajo): (2, 0) es el verde del tile 0; (3, 0) del
+        // espejado.
+        assert_ne!(composite_pixel(&s, 0, 2, 0), Rgba::rgb(255, 0, 0));
+        assert_ne!(composite_pixel(&s, 0, 3, 0), Rgba::rgb(255, 0, 0));
+        assert_eq!(composite_pixel(&s, 0, 4, 0), Rgba::rgb(255, 0, 0));
+        assert_eq!(
+            tilemap_pixel(&s, s.layer(LayerId(2)).unwrap(), 0, 2, 0),
+            Some(PixelValue::Rgba(Rgba::new(0, 255, 0, 128)))
+        );
     }
 
     #[test]

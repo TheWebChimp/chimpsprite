@@ -259,10 +259,10 @@ impl Tool for MagicWand {
             return selection(None);
         }
         let s = ctx.sprite;
-        let composed = cs_render::materialize_tilemaps(s, ctx.frame..ctx.frame + 1);
+        // `composite_pixel` lee los tilemaps tile a tile, sin materializar el sprite.
         let color = |x: i32, y: i32| {
             if ctx.sample_all {
-                cs_render::composite_pixel(&composed, ctx.frame, x, y)
+                cs_render::composite_pixel(s, ctx.frame, x, y)
             } else {
                 cs_render::resolve(s, s.pixel(ctx.layer, ctx.frame, x, y))
             }

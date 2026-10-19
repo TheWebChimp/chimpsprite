@@ -50,9 +50,8 @@ impl Tool for Eyedropper {
 /// Valor de píxel para el color visible en `p`, en el modo de color del sprite.
 pub fn visible_value(sprite: &cs_core::Sprite, frame: usize, p: Point) -> cs_core::PixelValue {
     use cs_core::{ColorMode, PixelValue};
-    // Los tilemaps se convierten en píxeles antes de leer lo visible.
-    let composed = cs_render::materialize_tilemaps(sprite, frame..frame + 1);
-    let c = cs_render::composite_pixel(&composed, frame, p.0, p.1);
+    // `composite_pixel` ya ve los tilemaps (un tile por capa, sin materializar).
+    let c = cs_render::composite_pixel(sprite, frame, p.0, p.1);
     match sprite.color_mode {
         ColorMode::Rgba => PixelValue::Rgba(c),
         ColorMode::Indexed { transparent_index } => {
