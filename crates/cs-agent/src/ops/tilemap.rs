@@ -238,7 +238,8 @@ impl Session {
             (None, None, None, None) => {
                 if grid.width as u64 * grid.height as u64 > MAX_READ_CELLS {
                     return Err(invalid(format!(
-                        "the grid has {}×{} cells, more than {MAX_READ_CELLS} per call; read it in                          parts with x, y, w, h (a rect of canvas cells; it starts at cell ({}, {}))",
+                        "the grid has {}×{} cells, more than {MAX_READ_CELLS} per call; read it in \
+                         parts with x, y, w, h (a rect of canvas cells; it starts at cell ({}, {}))",
                         grid.width, grid.height, first_cell[0], first_cell[1]
                     )));
                 }
@@ -247,7 +248,8 @@ impl Session {
             (Some(x), Some(y), Some(w), Some(h)) => {
                 if w == 0 || h == 0 || w as u64 * h as u64 > MAX_READ_CELLS {
                     return Err(invalid(format!(
-                        "the rect must be 1 or more cells per side and at most {MAX_READ_CELLS}                          cells in total (e.g. 256×256)"
+                        "the rect must be 1 or more cells per side and at most {MAX_READ_CELLS} \
+                         cells in total (e.g. 256×256)"
                     )));
                 }
                 Some((x, y, w, h))
@@ -489,6 +491,7 @@ mod tests {
         };
         let e = get(&s, json!({})).unwrap_err().to_string();
         assert!(e.contains("x, y, w, h"), "{e}");
+        assert!(!e.contains("  "), "no runs of spaces: {e}");
         // Un rectángulo de celdas del lienzo; lo que cae fuera de la grilla es 0.
         let page = json(&get(&s, json!({"x": 298, "y": 298, "w": 3, "h": 2})).unwrap());
         assert_eq!(page["rect"], json!({"x": 298, "y": 298, "w": 3, "h": 2}));
@@ -504,7 +507,8 @@ mod tests {
             json!({"x": 0, "y": 0, "w": 0, "h": 3}),
             json!({"x": 0, "y": 0, "w": 257, "h": 257}),
         ] {
-            assert!(get(&s, bad.clone()).is_err(), "{bad}");
+            let e = get(&s, bad.clone()).unwrap_err().to_string();
+            assert!(!e.contains("  "), "no runs of spaces: {e}");
         }
         // Una grilla chica sigue saliendo entera sin rectángulo.
         let small = json(&get(&tile_session_with_cell(), json!({})).unwrap());

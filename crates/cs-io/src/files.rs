@@ -79,7 +79,9 @@ pub fn missing_tiles_note(names: &[String]) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "Tileset {list} is missing tiles that its tilemaps use (probably an external tileset          file, which can't be loaded yet). The saved file keeps the tile numbers but not those          tiles nor a link to the external file."
+        "Tileset {list} is missing tiles that its tilemaps use (probably an external tileset \
+         file, which can't be loaded yet). The saved file keeps the tile numbers but not those \
+         tiles nor a link to the external file."
     )
 }
 
@@ -365,7 +367,9 @@ mod tests {
         );
         assert_eq!(tilesets_missing_tiles(&d, "m.chimp"), vec!["t".to_string()]);
         assert!(tilesets_missing_tiles(&d, "m.png").is_empty());
-        assert!(missing_tiles_note(&["t".to_string()]).contains("'t' is missing tiles"));
+        let note = missing_tiles_note(&["t".to_string()]);
+        assert!(note.contains("'t' is missing tiles"), "{note}");
+        assert!(!note.contains("  "), "no runs of spaces: {note}");
         // Solo cuentan los tiles que alguna grilla usa.
         for (_, cel) in s.cels.clone() {
             if let Some(grid) = s.tilemaps.get_mut(&cel.image) {

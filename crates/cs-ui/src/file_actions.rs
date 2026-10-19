@@ -296,11 +296,7 @@ impl ChimpApp {
                         );
                     }
                     if let Some(note) = &missing_note {
-                        body.push_str(
-                            "
-
-",
-                        );
+                        body.push_str("\n\n");
                         body.push_str(note);
                     }
                     self.show_message("Masks applied in the file", body);

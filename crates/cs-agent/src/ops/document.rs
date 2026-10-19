@@ -263,10 +263,7 @@ impl Session {
         }
         let missing = files::tilesets_missing_tiles(&d.document, &name);
         if !missing.is_empty() {
-            text.push_str(
-                "
-Warning: ",
-            );
+            text.push_str("\nWarning: ");
             text.push_str(&files::missing_tiles_note(&missing));
         }
         if files::converts_tilemaps(&d.document, &name) {
@@ -410,6 +407,49 @@ mod tests {
         s.close(p(json!({"doc": "d1"}))).unwrap();
         assert!(s.describe(p(json!({"doc": "d1"}))).is_err());
         assert!(s.open(p(json!({"path": "../x.chimp"}))).is_err());
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn saving_aseprite_reports_tilemap_notes_cleanly() {
+        let dir = std::env::temp_dir().join(format!("cs-agent-notes-{}", std::process::id()));
+        let mut s = Session::new(Some(dir.clone()));
+        s.new_document(p(json!({"width": 8, "height": 8}))).unwrap();
+        s.create_tileset(p(
+            json!({"doc": "d1", "name": "t", "tile_width": 4, "tile_height": 4}),
+        ))
+        .unwrap();
+        s.set_tile_pixels(p(json!({"doc": "d1", "tileset": 0, "tile": 1,
+            "pixels": [{"x": 0, "y": 0, "color": "#ff0000"}]})))
+            .unwrap();
+        s.add_tilemap_layer(p(json!({"doc": "d1", "tileset": 0, "name": "map"})))
+            .unwrap();
+        s.set_tiles(p(
+            json!({"doc": "d1", "layer": "map", "cells": [{"x": 0, "y": 0, "tile": 1}]}),
+        ))
+        .unwrap();
+        // Máscara en la tilemap y un tileset al que le falta el tile que usa la grilla.
+        let sprite = &mut s.doc_mut("d1").unwrap().document.artboards[0].sprite;
+        let layer = sprite.layers.iter_mut().find(|l| l.name == "map").unwrap();
+        layer.mask = Some(cs_core::LayerMask::filled(8, 8, 255));
+        sprite.tilesets[0].tiles.truncate(1);
+        let text = s
+            .save(p(json!({"doc": "d1", "path": "notes.aseprite"})))
+            .unwrap()
+            .text;
+        assert!(
+            text.contains("\nWarning: Tileset 't' is missing tiles"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\nNote: tilemap layers with a mask"),
+            "{text}"
+        );
+        assert!(
+            text.contains("\nNote: .aseprite has no layer/clipping masks"),
+            "{text}"
+        );
+        assert!(!text.contains("  "), "no runs of spaces: {text}");
         std::fs::remove_dir_all(dir).ok();
     }
 
