@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use cs_core::{
     AllowedFlips, AnimDirection, BlendMode, Cel, ColorMode, Frame, Image, Layer, LayerId,
-    LayerKind, Palette, PixelBuffer, RawChunk, Rgba, Slice, SliceKey, Sprite, Tag, Tile, TileGrid,
-    Tileset,
+    LayerKind, MAX_TILE_PIXELS, MAX_TILEMAP_PIXELS, Palette, PixelBuffer, RawChunk, Rgba, Slice,
+    SliceKey, Sprite, Tag, Tile, TileGrid, Tileset,
 };
 use flate2::Compression;
 use flate2::read::ZlibDecoder;
@@ -38,10 +38,6 @@ const TILESET_EMPTY_ZERO: u32 = 4;
 const TILESET_FLIP_X: u32 = 8;
 const TILESET_FLIP_Y: u32 = 16;
 const TILESET_FLIP_D: u32 = 32;
-
-/// Píxeles máximos de un cel tilemap (ancho × alto de la grilla en píxeles). Una grilla chica con
-/// tiles grandes ocupa poco en el archivo pero mucho al dibujarse: se descarta con un aviso.
-const MAX_TILEMAP_PIXELS: u64 = 1 << 26;
 
 /// Tiles máximos de un tileset. Cada tile es una imagen aparte: con tiles de 1×1 la tira
 /// comprimida es mínima pero la cuenta dispararía millones de asignaciones.
@@ -448,12 +444,26 @@ fn read_tileset(
             "tileset '{name}' has {tw}×{th} tiles"
         )));
     }
-    let mut tileset = Tileset::new(name, (tw, th), mode);
-    tileset.base_index = base_index;
-    tileset.allowed_flips = AllowedFlips {
-        x: flags & TILESET_FLIP_X != 0,
-        y: flags & TILESET_FLIP_Y != 0,
-        d: flags & TILESET_FLIP_D != 0,
+    // El tamaño viene del archivo (hasta 65535²): se valida antes de reservar cualquier tile.
+    if tw as u64 * th as u64 > MAX_TILE_PIXELS {
+        return Err(IoError::Corrupt(format!(
+            "tileset '{name}' has {tw}×{th} tiles (at most {MAX_TILE_PIXELS} pixels per tile are \
+             supported)"
+        )));
+    }
+    // Sin el tile 0 todavía: el caso embebido arma la lista desde la tira decodificada.
+    let mut tileset = Tileset {
+        name,
+        tile_size: (tw, th),
+        base_index,
+        allowed_flips: AllowedFlips {
+            x: flags & TILESET_FLIP_X != 0,
+            y: flags & TILESET_FLIP_Y != 0,
+            d: flags & TILESET_FLIP_D != 0,
+        },
+        tiles: Vec::new(),
+        user_data: None,
+        tile_user_data: Vec::new(),
     };
     if flags & TILESET_EMPTY_ZERO == 0 {
         report.warn(format!(
@@ -498,6 +508,10 @@ fn read_tileset(
             "tileset '{}' has no tiles in the file nor a link to one; it was loaded empty",
             tileset.name
         ));
+    }
+    // El tile 0 (vacío) siempre existe.
+    if tileset.tiles.is_empty() {
+        tileset.tiles.push(Arc::new(Image::new(tw, th, mode)));
     }
     Ok((id, tileset))
 }
@@ -1657,6 +1671,36 @@ mod tests {
             "{:?}",
             report.warnings
         );
+    }
+
+    #[test]
+    fn huge_tiles_are_rejected_before_allocating() {
+        // Tileset externo de tiles de 65535×65535: el archivo pesa unos bytes, pero el tile 0
+        // ocuparía 16 GiB.
+        let mut ts = tileset_header(TILESET_EXTERNAL | TILESET_EMPTY_ZERO, 1, u16::MAX, "huge");
+        ts.w_u32(1);
+        ts.w_u32(0);
+        let file = file_with(&[(CHUNK_TILESET, ts), (CHUNK_LAYER, tilemap_layer_chunk())]);
+        assert!(file.len() < 600, "{} bytes", file.len());
+        let start = std::time::Instant::now();
+        let result = read(&file);
+        assert!(
+            matches!(&result, Err(IoError::Corrupt(m)) if m.contains("65535")),
+            "{:?}",
+            result.map(|(_, r)| r.warnings)
+        );
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        // El límite es por área: 2048×2048 todavía se acepta, 2049×2049 no.
+        for (size, ok) in [(2048u16, true), (2049, false)] {
+            let mut ts = tileset_header(TILESET_EXTERNAL | TILESET_EMPTY_ZERO, 1, size, "t");
+            ts.w_u32(1);
+            ts.w_u32(0);
+            assert_eq!(
+                read(&file_with(&[(CHUNK_TILESET, ts)])).is_ok(),
+                ok,
+                "{size}"
+            );
+        }
     }
 
     /// Cel tilemap de `w`×`h` tiles vacíos en la capa 0.

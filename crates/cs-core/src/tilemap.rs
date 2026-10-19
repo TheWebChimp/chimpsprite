@@ -6,6 +6,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::{ColorMode, Image, RawChunk};
 
+/// Píxeles máximos de un cel tilemap (ancho × alto de la grilla en píxeles, 64 Mpx). Una grilla
+/// chica con tiles grandes ocupa poco en el archivo pero mucho al dibujarse: el lector descarta
+/// los cels más grandes y los comandos no dejan crearlos.
+pub const MAX_TILEMAP_PIXELS: u64 = 1 << 26;
+
+/// Píxeles máximos de un tile (4 Mpx, p. ej. 2048×2048: 16 MiB en RGBA). El tamaño de tile viene
+/// del archivo y cada tileset reserva al menos el tile 0, así que se valida antes de asignar.
+/// Alcanza para cualquier uso real (Aseprite crea tiles de 16×16 por defecto) y deja que una
+/// grilla de esos tiles todavía quepa en `MAX_TILEMAP_PIXELS`.
+pub const MAX_TILE_PIXELS: u64 = 1 << 22;
+
 /// Valor de una celda de tilemap, con el mismo layout que Aseprite:
 /// bits 0–28 índice del tile, bit 31 flip X, bit 30 flip Y, bit 29 flip D (transponer).
 /// Coincide con las máscaras estándar de Aseprite y con los flags del GID de Tiled.
