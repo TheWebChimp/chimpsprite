@@ -32,6 +32,8 @@ pub enum BlendMode {
 pub enum LayerKind {
     Image,
     Group,
+    /// Muestra otro artboard (un símbolo) con su propia línea de tiempo; no tiene cels.
+    Instance,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -51,6 +53,9 @@ pub struct Layer {
     /// abajo, del mismo padre, que no recorta).
     #[serde(default)]
     pub clip: bool,
+    /// Keys de la instancia; solo en capas `LayerKind::Instance`.
+    #[serde(default)]
+    pub instance: Option<crate::InstanceTrack>,
 }
 
 impl Layer {
@@ -66,6 +71,7 @@ impl Layer {
             blend: BlendMode::Normal,
             mask: None,
             clip: false,
+            instance: None,
         }
     }
 }
