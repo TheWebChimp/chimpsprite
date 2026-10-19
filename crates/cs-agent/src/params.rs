@@ -855,6 +855,12 @@ pub struct GetTiles {
     pub layer: Ref,
     #[serde(default)]
     pub frame: usize,
+    /// Optional rect of canvas cells to read (x, y, w, h together); needed for grids over
+    /// 65536 cells. At most 65536 cells per call.
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub w: Option<u32>,
+    pub h: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

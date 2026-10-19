@@ -11,6 +11,8 @@ use crate::{Reply, Session};
 
 /// Lado máximo de un tile.
 const MAX_TILE: u32 = 256;
+/// Celdas máximas que devuelve una llamada a `get_tiles` (256×256).
+const MAX_READ_CELLS: u64 = 256 * 256;
 /// Coordenada máxima (en celdas, en valor absoluto) que acepta `set_tiles`.
 const MAX_CELL: i32 = 4096;
 
@@ -227,11 +229,45 @@ impl Session {
                 "rows": [],
             })));
         };
-        let rows: Vec<Value> = (0..grid.height)
-            .map(|y| {
-                let row: Vec<Value> = (0..grid.width)
-                    .map(|x| {
-                        let t = grid.get(x, y).unwrap_or(Tile::EMPTY);
+        let first_cell = [
+            cel.position.0.div_euclid(tw as i32),
+            cel.position.1.div_euclid(th as i32),
+        ];
+        // Celdas del lienzo a leer: el rectángulo pedido o la grilla entera.
+        let rect = match (p.x, p.y, p.w, p.h) {
+            (None, None, None, None) => {
+                if grid.width as u64 * grid.height as u64 > MAX_READ_CELLS {
+                    return Err(invalid(format!(
+                        "the grid has {}×{} cells, more than {MAX_READ_CELLS} per call; read it in                          parts with x, y, w, h (a rect of canvas cells; it starts at cell ({}, {}))",
+                        grid.width, grid.height, first_cell[0], first_cell[1]
+                    )));
+                }
+                None
+            }
+            (Some(x), Some(y), Some(w), Some(h)) => {
+                if w == 0 || h == 0 || w as u64 * h as u64 > MAX_READ_CELLS {
+                    return Err(invalid(format!(
+                        "the rect must be 1 or more cells per side and at most {MAX_READ_CELLS}                          cells in total (e.g. 256×256)"
+                    )));
+                }
+                Some((x, y, w, h))
+            }
+            _ => return Err(invalid("give all of x, y, w, h for a rect, or none")),
+        };
+        let (x0, y0, w, h) =
+            rect.unwrap_or((first_cell[0], first_cell[1], grid.width, grid.height));
+        let rows: Vec<Value> = (0..h as i64)
+            .map(|r| {
+                let row: Vec<Value> = (0..w as i64)
+                    .map(|c| {
+                        // Celda del lienzo → celda de la grilla; fuera de la grilla, vacía.
+                        let gx = x0 as i64 + c - first_cell[0] as i64;
+                        let gy = y0 as i64 + r - first_cell[1] as i64;
+                        let t = u32::try_from(gx)
+                            .ok()
+                            .zip(u32::try_from(gy).ok())
+                            .and_then(|(gx, gy)| grid.get(gx, gy))
+                            .unwrap_or(Tile::EMPTY);
                         let mut v = json!({ "tile": t.index() });
                         if t.flip_x() {
                             v["flip_x"] = json!(true);
@@ -248,11 +284,7 @@ impl Session {
                 Value::from(row)
             })
             .collect();
-        let first_cell = [
-            cel.position.0.div_euclid(tw as i32),
-            cel.position.1.div_euclid(th as i32),
-        ];
-        Ok(Reply::json(json!({
+        let mut reply = json!({
             "layer": layer.0,
             "frame": frame,
             "tileset": index,
@@ -267,7 +299,14 @@ impl Session {
             },
             "rows": rows,
             "notes": "rows[r][c] is canvas cell (first_cell[0] + c, first_cell[1] + r); tile 0 is empty.",
-        })))
+        });
+        if rect.is_some() {
+            reply["rect"] = json!({ "x": x0, "y": y0, "w": w, "h": h });
+            reply["notes"] = json!(
+                "rows[r][c] is canvas cell (rect.x + c, rect.y + r); tile 0 is empty (also outside the grid)."
+            );
+        }
+        Ok(Reply::json(reply))
     }
 }
 
@@ -430,6 +469,52 @@ mod tests {
             json!([{"x": 0, "y": 0, "tile": 1}, {"x": 2047, "y": 2047, "tile": 1}]),
         )
         .unwrap();
+    }
+
+    #[test]
+    fn get_tiles_pages_large_grids_with_a_rect() {
+        let mut s = tile_session();
+        // 300×300 celdas: más que 256×256, hay que pedirlas por partes.
+        set(
+            &mut s,
+            json!([{"x": 0, "y": 0, "tile": 1}, {"x": 299, "y": 299, "tile": 1, "flip_y": true}]),
+        )
+        .unwrap();
+        let get = |s: &Session, extra: serde_json::Value| {
+            let mut v = json!({"doc": "d1", "layer": "map"});
+            v.as_object_mut()
+                .unwrap()
+                .extend(extra.as_object().unwrap().clone());
+            s.get_tiles(p(v))
+        };
+        let e = get(&s, json!({})).unwrap_err().to_string();
+        assert!(e.contains("x, y, w, h"), "{e}");
+        // Un rectángulo de celdas del lienzo; lo que cae fuera de la grilla es 0.
+        let page = json(&get(&s, json!({"x": 298, "y": 298, "w": 3, "h": 2})).unwrap());
+        assert_eq!(page["rect"], json!({"x": 298, "y": 298, "w": 3, "h": 2}));
+        assert_eq!(page["rows"].as_array().unwrap().len(), 2);
+        assert_eq!(page["rows"][1][1]["tile"], 1);
+        assert_eq!(page["rows"][1][1]["flip_y"], true);
+        assert_eq!(page["rows"][1][2]["tile"], 0, "outside the grid");
+        assert_eq!(page["rows"][0][0]["tile"], 0);
+        assert_eq!(page["cel"]["columns"], 300);
+        // Rectángulos inválidos o demasiado grandes.
+        for bad in [
+            json!({"x": 0, "y": 0, "w": 3}),
+            json!({"x": 0, "y": 0, "w": 0, "h": 3}),
+            json!({"x": 0, "y": 0, "w": 257, "h": 257}),
+        ] {
+            assert!(get(&s, bad.clone()).is_err(), "{bad}");
+        }
+        // Una grilla chica sigue saliendo entera sin rectángulo.
+        let small = json(&get(&tile_session_with_cell(), json!({})).unwrap());
+        assert_eq!(small["rows"][0][0]["tile"], 1);
+    }
+
+    fn tile_session_with_cell() -> Session {
+        let mut s = tile_session();
+        set(&mut s, json!([{"x": 0, "y": 0, "tile": 1}])).unwrap();
+        s
     }
 
     #[test]

@@ -229,7 +229,7 @@ impl ChimpServer {
     }
 
     #[tool(
-        description = "Read a tilemap layer's grid on a frame: tile index and flips of each cell, and the cel position."
+        description = "Read a tilemap layer's grid on a frame: tile index and flips of each cell, and the cel position. Grids over 65536 cells (256×256) must be read in parts: pass x, y, w, h, a rect of canvas cells (at most 65536 cells); cells outside the grid read as tile 0."
     )]
     fn get_tiles(&self, Parameters(p): Parameters<GetTiles>) -> CallToolResult {
         self.with(|s| s.get_tiles(p))
