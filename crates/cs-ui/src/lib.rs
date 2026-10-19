@@ -489,6 +489,8 @@ impl ChimpApp {
                 });
                 ui.menu_button("Layer", |ui| {
                     let layer = self.doc.editor.layer;
+                    timeline::instance_menu(ui, &mut self.doc.editor);
+                    ui.separator();
                     timeline::mask_menu(ui, &mut self.doc.editor, layer);
                 });
                 ui.menu_button("Select", |ui| {
@@ -592,6 +594,7 @@ impl ChimpApp {
                             })
                             .inner;
                         ui.add_space(12.0);
+                        ui.add_enabled_ui(!modal, |ui| panels::instance(ui, &mut self.doc.editor));
                         ui.add_enabled_ui(!modal, |ui| panels::slices(ui, &mut self.doc.editor));
                         open
                     })

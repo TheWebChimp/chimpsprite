@@ -523,6 +523,13 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView, notic
                 "Editing layer mask: white reveals, black hides",
             );
         }
+        let on_instance = s
+            .layer(editor.layer)
+            .is_some_and(|l| l.kind == cs_core::LayerKind::Instance);
+        if on_instance && editor.active_tool().paints() {
+            ui.separator();
+            ui.colored_label(theme::ACCENT, "Instance layer: edit the source artboard");
+        }
         if let Some(hint) = canvas.guide_hint {
             ui.separator();
             ui.colored_label(theme::GUIDE_LINE, hint);
@@ -597,6 +604,106 @@ pub fn artboards(
         resize = true;
     }
     resize
+}
+
+/// Propiedades de la instancia de la capa actual en el frame actual.
+pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) {
+    let Some(key) = editor.instance_key() else {
+        return;
+    };
+    ui.heading("Instance");
+    let is_key = editor.is_instance_keyframe(editor.layer, editor.frame);
+    if !is_key {
+        ui.weak("Changes create a keyframe on this frame.");
+    }
+    let names: Vec<(cs_core::ArtboardId, String)> = editor.instance_candidates();
+    let current = key
+        .source
+        .and_then(|s| editor.document.artboard(s))
+        .map_or("(missing)".to_string(), |a| a.name.clone());
+    egui::ComboBox::from_label("Source")
+        .selected_text(current)
+        .show_ui(ui, |ui| {
+            for (id, name) in names {
+                if ui.selectable_label(key.source == Some(id), name).clicked() {
+                    editor.update_instance_key(|k| k.source = Some(id));
+                }
+            }
+        });
+    let (mut x, mut y) = key.position;
+    ui.horizontal(|ui| {
+        ui.label("Position");
+        let cx = ui.add(egui::DragValue::new(&mut x)).changed();
+        let cy = ui.add(egui::DragValue::new(&mut y)).changed();
+        if cx || cy {
+            editor.update_instance_key(|k| k.position = (x, y));
+        }
+    });
+    let (mut fh, mut fv) = (key.flip_h, key.flip_v);
+    ui.horizontal(|ui| {
+        if ui.checkbox(&mut fh, "Flip H").changed() {
+            editor.update_instance_key(|k| k.flip_h = fh);
+        }
+        if ui.checkbox(&mut fv, "Flip V").changed() {
+            editor.update_instance_key(|k| k.flip_v = fv);
+        }
+    });
+    let mut opacity = key.opacity;
+    if ui
+        .add(egui::Slider::new(&mut opacity, 0..=255).text("Opacity"))
+        .changed()
+    {
+        editor.update_instance_key(|k| k.opacity = opacity);
+    }
+    use cs_core::{GraphicPlay, Timing};
+    let (mut first, mut mode) = match key.timing {
+        Timing::Graphic { first_frame, play } => (first_frame, Some(play)),
+        Timing::MovieClip { first_frame } => (first_frame, None),
+    };
+    let before = (first, mode);
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut mode, Some(GraphicPlay::Loop), "Loop")
+            .on_hover_text("Graphic: follows this artboard's frames, looping");
+        ui.selectable_value(&mut mode, Some(GraphicPlay::Once), "Once")
+            .on_hover_text("Graphic: plays once and holds the last frame");
+        ui.selectable_value(&mut mode, Some(GraphicPlay::Single), "Single")
+            .on_hover_text("Graphic: always the same frame");
+        ui.selectable_value(&mut mode, None, "Movie clip")
+            .on_hover_text("Plays on its own clock with its own frame durations");
+    });
+    let frames = key
+        .source
+        .and_then(|s| editor.document.artboard(s))
+        .map_or(1, |a| a.sprite.frames.len());
+    ui.horizontal(|ui| {
+        ui.label("First frame");
+        let mut shown = first + 1;
+        if ui
+            .add(egui::DragValue::new(&mut shown).range(1..=frames))
+            .changed()
+        {
+            first = shown - 1;
+        }
+    });
+    if (first, mode) != before {
+        editor.update_instance_key(|k| {
+            k.timing = match mode {
+                Some(play) => Timing::Graphic {
+                    first_frame: first,
+                    play,
+                },
+                None => Timing::MovieClip { first_frame: first },
+            }
+        });
+    }
+    if ui
+        .button("Edit Symbol")
+        .on_hover_text("Go to the source artboard (double-click with Move)")
+        .clicked()
+    {
+        editor.enter_instance();
+    }
+    ui.separator();
 }
 
 /// Panel de slices: lista, nombre, color, datos y la clave del frame actual (rect y pivote).

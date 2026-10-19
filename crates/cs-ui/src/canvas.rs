@@ -662,6 +662,15 @@ impl CanvasView {
         if response.double_clicked() && editor.active_tool() == ToolKind::PolygonLasso {
             editor.finish_gesture();
         }
+        if response.double_clicked()
+            && editor.active_tool() == ToolKind::Move
+            && editor.enter_instance()
+        {
+            let ((x0, y0), (x1, y1)) = editor.artboard().rect();
+            // Centra el artboard fuente sin cambiar el zoom.
+            let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
+            self.pan = -center * self.zoom;
+        }
 
         let cursor = if space {
             Some(egui::CursorIcon::Grab)
