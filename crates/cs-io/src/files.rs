@@ -176,4 +176,44 @@ mod tests {
         let (back, _) = aseprite::read(&bytes).unwrap();
         assert_eq!(back.layers[1].kind, cs_core::LayerKind::Image);
     }
+
+    #[test]
+    fn saving_aseprite_and_chimp_keeps_tilemaps() {
+        use cs_core::{LayerId, LayerKind, Tile};
+        let mut sprite = Sprite::new(8, 8, ColorMode::Rgba);
+        let mut ts = cs_core::Tileset::new("t", (4, 4), ColorMode::Rgba);
+        ts.tiles.push(std::sync::Arc::new(cs_core::Image::new(
+            4,
+            4,
+            ColorMode::Rgba,
+        )));
+        cs_commands::Command::SetTileset {
+            index: 0,
+            tileset: Some(ts),
+        }
+        .apply(&mut sprite)
+        .unwrap();
+        cs_commands::ops::new_tilemap_layer(&sprite.clone(), None, 0)
+            .apply(&mut sprite)
+            .unwrap();
+        let flipped = Tile::new(1, true, false, false);
+        cs_commands::ops::set_tiles(&sprite, LayerId(2), 0, &[(1, 1, flipped)])
+            .unwrap()
+            .apply(&mut sprite)
+            .unwrap();
+        let d = Document::with_sprite("map", sprite);
+        for name in ["x.aseprite", "x.chimp"] {
+            let (back, report) = decode(name, &encode(&d, name).unwrap()).unwrap();
+            assert!(report.warnings.is_empty(), "{name}: {:?}", report.warnings);
+            let s = &back.artboards[0].sprite;
+            assert_eq!(s.layers[1].kind, LayerKind::Tilemap, "{name}");
+            assert_eq!(s.tilesets, d.artboards[0].sprite.tilesets, "{name}");
+            let cel = s.cel(LayerId(2), 0).unwrap();
+            assert_eq!(
+                s.tilemap(cel.image).unwrap().get(1, 1),
+                Some(flipped),
+                "{name}"
+            );
+        }
+    }
 }

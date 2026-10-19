@@ -5,8 +5,9 @@ use std::io::{Read, Write};
 use std::sync::Arc;
 
 use cs_core::{
-    AnimDirection, BlendMode, Cel, ColorMode, Frame, Image, Layer, LayerId, LayerKind, Palette,
-    PixelBuffer, Rgba, Slice, SliceKey, Sprite, Tag,
+    AllowedFlips, AnimDirection, BlendMode, Cel, ColorMode, Frame, Image, Layer, LayerId,
+    LayerKind, Palette, PixelBuffer, RawChunk, Rgba, Slice, SliceKey, Sprite, Tag, Tile, TileGrid,
+    Tileset,
 };
 use flate2::Compression;
 use flate2::read::ZlibDecoder;
@@ -29,6 +30,18 @@ const CHUNK_TAGS: u16 = 0x2018;
 const CHUNK_PALETTE: u16 = 0x2019;
 const CHUNK_USER_DATA: u16 = 0x2020;
 const CHUNK_SLICE: u16 = 0x2022;
+const CHUNK_TILESET: u16 = 0x2023;
+
+const TILESET_EXTERNAL: u32 = 1;
+const TILESET_EMBEDDED: u32 = 2;
+const TILESET_EMPTY_ZERO: u32 = 4;
+const TILESET_FLIP_X: u32 = 8;
+const TILESET_FLIP_Y: u32 = 16;
+const TILESET_FLIP_D: u32 = 32;
+
+/// Píxeles máximos de un cel tilemap (ancho × alto de la grilla en píxeles). Una grilla chica con
+/// tiles grandes ocupa poco en el archivo pero mucho al dibujarse: se descarta con un aviso.
+const MAX_TILEMAP_PIXELS: u64 = 1 << 26;
 
 const LAYER_VISIBLE: u16 = 1;
 const LAYER_EDITABLE: u16 = 2;
@@ -115,6 +128,12 @@ enum UserDataTarget {
     Tags(usize),
     /// El slice con este índice recibe el user data (color y texto).
     Slice(usize),
+    /// Tras un tileset (índice en la lista que se va leyendo): `next` 0 es el tileset; `i + 1`,
+    /// su tile `i`.
+    Tileset {
+        index: usize,
+        next: usize,
+    },
 }
 
 // --- Lectura ---------------------------------------------------------------------------------
@@ -175,6 +194,8 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
     // Grupo más reciente en cada nivel de anidamiento (NOTE.1 de la spec).
     let mut groups_at_level: Vec<LayerId> = Vec::new();
     let mut user_data = UserDataTarget::None;
+    // Tilesets con su id del archivo; al final se ordenan por id.
+    let mut tilesets: Vec<(u32, Tileset)> = Vec::new();
 
     for frame in 0..frame_count {
         let frame_start = r.pos;
@@ -256,6 +277,30 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
                         }
                         user_data = UserDataTarget::None;
                     }
+                    UserDataTarget::Tileset { index, next } => {
+                        let data = c.rest().to_vec();
+                        // Un chunk vacío (flags 0) es lo mismo que no tener user data.
+                        let chunk =
+                            (data.get(..4) != Some(&[0, 0, 0, 0][..])).then_some(RawChunk {
+                                kind: CHUNK_USER_DATA,
+                                data,
+                            });
+                        let tileset = &mut tilesets[*index].1;
+                        match *next {
+                            0 => tileset.user_data = chunk,
+                            n if n <= tileset.tiles.len() => {
+                                if let Some(chunk) = chunk {
+                                    let i = n - 1;
+                                    if tileset.tile_user_data.len() <= i {
+                                        tileset.tile_user_data.resize(i + 1, None);
+                                    }
+                                    tileset.tile_user_data[i] = Some(chunk);
+                                }
+                            }
+                            _ => {}
+                        }
+                        *next += 1;
+                    }
                     UserDataTarget::None => {
                         report.warn("user data (text, colors, properties) is not kept yet");
                     }
@@ -263,6 +308,13 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
                 CHUNK_SLICE => {
                     sprite.slices.push(read_slice(&mut c)?);
                     user_data = UserDataTarget::Slice(sprite.slices.len() - 1);
+                }
+                CHUNK_TILESET => {
+                    tilesets.push(read_tileset(&mut c, depth, mode, &mut report)?);
+                    user_data = UserDataTarget::Tileset {
+                        index: tilesets.len() - 1,
+                        next: 0,
+                    };
                 }
                 CHUNK_COLOR_PROFILE => {}
                 other => {
@@ -298,6 +350,27 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
         tag.from = tag.from.min(last);
         tag.to = tag.to.clamp(tag.from, last);
     }
+    // Los tilesets quedan en el orden de su id; las capas pasan de id a índice.
+    tilesets.sort_by_key(|(id, _)| *id);
+    let ids: Vec<u32> = tilesets.iter().map(|(id, _)| *id).collect();
+    for layer in &mut sprite.layers {
+        let Some(id) = layer.tileset else {
+            continue;
+        };
+        match ids.iter().position(|&t| t == id) {
+            Some(i) => layer.tileset = Some(i as u32),
+            None => {
+                report.warn(format!(
+                    "tilemap layer '{}' uses missing tileset {id}",
+                    layer.name
+                ));
+                // Sin tileset la capa no dibuja nada; un id viejo podría apuntar a otro tileset.
+                layer.tileset = None;
+            }
+        }
+    }
+    sprite.tilesets = tilesets.into_iter().map(|(_, t)| t).collect();
+    drop_huge_tilemap_cels(&mut sprite, &mut report);
     Ok((sprite, report))
 }
 
@@ -352,6 +425,98 @@ fn read_old_palette(c: &mut Reader, palette: &mut Vec<Rgba>, six_bit: bool) -> R
     Ok(())
 }
 
+fn read_tileset(
+    c: &mut Reader,
+    depth: Depth,
+    mode: ColorMode,
+    report: &mut LoadReport,
+) -> Result<(u32, Tileset)> {
+    let id = c.u32()?;
+    let flags = c.u32()?;
+    let count = c.u32()?;
+    let tw = c.u16()? as u32;
+    let th = c.u16()? as u32;
+    let base_index = c.i16()?;
+    c.skip(14)?;
+    let name = c.string()?;
+    if tw == 0 || th == 0 {
+        return Err(IoError::Corrupt(format!(
+            "tileset '{name}' has {tw}×{th} tiles"
+        )));
+    }
+    let mut tileset = Tileset::new(name, (tw, th), mode);
+    tileset.base_index = base_index;
+    tileset.allowed_flips = AllowedFlips {
+        x: flags & TILESET_FLIP_X != 0,
+        y: flags & TILESET_FLIP_Y != 0,
+        d: flags & TILESET_FLIP_D != 0,
+    };
+    if flags & TILESET_EMPTY_ZERO == 0 {
+        report.warn(format!(
+            "tileset '{}' uses an old empty-tile format; tile 0 is treated as empty",
+            tileset.name
+        ));
+    }
+    if flags & TILESET_EXTERNAL != 0 {
+        c.skip(8)?;
+    }
+    if flags & TILESET_EMBEDDED != 0 {
+        let len = c.u32()? as usize;
+        let too_big = || IoError::Corrupt(format!("tileset '{}' is too large", tileset.name));
+        let strip_h = th.checked_mul(count).ok_or_else(too_big)?;
+        let expected = (tw as usize)
+            .checked_mul(strip_h as usize)
+            .and_then(|n| n.checked_mul(depth.bytes_per_pixel()))
+            .ok_or_else(too_big)?;
+        // `inflate` exige exactamente `expected` bytes: no reserva lo que el header promete.
+        let raw = inflate(c.bytes(len)?, expected)?;
+        if count > 0 {
+            let strip = decode_pixels(tw, strip_h, &raw, depth)?;
+            tileset.tiles = (0..count)
+                .map(|i| Arc::new(strip.crop(0, i * th, tw, th)))
+                .collect();
+        }
+    } else if flags & TILESET_EXTERNAL != 0 {
+        report.warn(format!(
+            "tileset '{}' is stored in an external file and was loaded without tiles",
+            tileset.name
+        ));
+    }
+    Ok((id, tileset))
+}
+
+/// Descarta los cels tilemap que, dibujados, serían enormes (ver `MAX_TILEMAP_PIXELS`).
+fn drop_huge_tilemap_cels(sprite: &mut Sprite, report: &mut LoadReport) {
+    let mut dropped = false;
+    let sizes: Vec<(LayerId, (u32, u32))> = sprite
+        .layers
+        .iter()
+        .filter(|l| l.kind == LayerKind::Tilemap)
+        .filter_map(|l| {
+            let ts = sprite.tilesets.get(l.tileset? as usize)?;
+            Some((l.id, ts.tile_size))
+        })
+        .collect();
+    for (layer, (tw, th)) in sizes {
+        let tilemaps = &sprite.tilemaps;
+        sprite.cels.retain(|&(l, _), cel| {
+            let Some(grid) = (l == layer).then(|| tilemaps.get(&cel.image)).flatten() else {
+                return true;
+            };
+            let w = grid.width as u64 * tw as u64;
+            let h = grid.height as u64 * th as u64;
+            let keep = w.saturating_mul(h) <= MAX_TILEMAP_PIXELS;
+            dropped |= !keep;
+            keep
+        });
+    }
+    if dropped {
+        report.warn("tilemap cels too large to draw were skipped");
+        let used: std::collections::HashSet<_> = sprite.cels.values().map(|c| c.image).collect();
+        sprite.tilemaps.retain(|id, _| used.contains(id));
+    }
+}
+
 fn read_layer(
     c: &mut Reader,
     sprite: &mut Sprite,
@@ -367,19 +532,16 @@ fn read_layer(
     let opacity = c.u8()?;
     c.skip(3)?;
     let name = c.string()?;
-    let kind = match kind_code {
-        1 => LayerKind::Group,
-        0 => LayerKind::Image,
-        2 => {
-            report.warn("tilemap layers are not supported yet; they were loaded as empty layers");
-            c.u32()?;
-            LayerKind::Image
-        }
+    let (kind, tileset) = match kind_code {
+        0 => (LayerKind::Image, None),
+        1 => (LayerKind::Group, None),
+        // Id del tileset en el archivo; `read` lo pasa a índice al terminar.
+        2 => (LayerKind::Tilemap, Some(c.u32()?)),
         other => {
             report.warn(format!(
                 "unknown layer type {other}; loaded as an image layer"
             ));
-            LayerKind::Image
+            (LayerKind::Image, None)
         }
     };
     if header_flags & HEADER_FLAG_LAYER_UUID != 0 {
@@ -417,7 +579,7 @@ fn read_layer(
         mask: None,
         clip: false,
         instance: None,
-        tileset: None,
+        tileset,
     });
     Ok(())
 }
@@ -441,7 +603,13 @@ fn read_cel(
             "cel references missing layer {layer_index}"
         )));
     };
+    let in_tilemap = sprite.layers[layer_index].kind == LayerKind::Tilemap;
     let cel = match cel_type {
+        // Una capa tilemap solo tiene grillas: un cel de píxeles ahí no se podría dibujar ni guardar.
+        CEL_RAW | CEL_COMPRESSED if in_tilemap => {
+            report.warn("an image cel in a tilemap layer was skipped");
+            return Ok(());
+        }
         CEL_RAW | CEL_COMPRESSED => {
             let w = c.u16()? as u32;
             let h = c.u16()? as u32;
@@ -471,8 +639,52 @@ fn read_cel(
             }
         }
         CEL_TILEMAP => {
-            report.warn("tilemap cels are not supported yet and were skipped");
-            return Ok(());
+            let w = c.u16()? as u32;
+            let h = c.u16()? as u32;
+            let bits = c.u16()?;
+            let index_mask = c.u32()?;
+            let (x_mask, y_mask, d_mask) = (c.u32()?, c.u32()?, c.u32()?);
+            c.skip(10)?;
+            if bits != 32 {
+                report.warn(format!(
+                    "a tilemap cel with {bits} bits per tile was skipped"
+                ));
+                return Ok(());
+            }
+            if !in_tilemap {
+                report.warn("a tilemap cel in a non-tilemap layer was skipped");
+                return Ok(());
+            }
+            let raw = inflate(c.rest(), w as usize * h as usize * 4)?;
+            // Cada valor se normaliza a las máscaras estándar de `Tile`.
+            let tiles = raw
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|b| {
+                    let v = u32::from_le_bytes(*b);
+                    Tile::new(
+                        v & index_mask,
+                        v & x_mask != 0,
+                        v & y_mask != 0,
+                        v & d_mask != 0,
+                    )
+                })
+                .collect();
+            let id = sprite.next_image_id();
+            sprite.tilemaps.insert(
+                id,
+                Arc::new(TileGrid {
+                    width: w,
+                    height: h,
+                    tiles,
+                }),
+            );
+            Cel {
+                position: (x, y),
+                opacity,
+                image: id,
+            }
         }
         other => {
             report.warn(format!("unknown cel type {other} was skipped"));
@@ -626,6 +838,19 @@ pub fn write(sprite: &Sprite) -> Vec<u8> {
             if !sprite.palette.is_empty() {
                 chunks.push((CHUNK_PALETTE, palette_chunk(&sprite.palette)));
             }
+            // Como Aseprite: los tilesets van antes de las capas, cada uno seguido de su user data.
+            for (index, tileset) in sprite.tilesets.iter().enumerate() {
+                chunks.push((CHUNK_TILESET, tileset_chunk(index, tileset)));
+                let has_data = tileset.user_data.is_some()
+                    || tileset.tile_user_data.iter().any(Option::is_some);
+                if has_data {
+                    chunks.push((CHUNK_USER_DATA, user_data_bytes(tileset.user_data.as_ref())));
+                    for i in 0..tileset.tiles.len() {
+                        let tile = tileset.tile_user_data.get(i).and_then(Option::as_ref);
+                        chunks.push((CHUNK_USER_DATA, user_data_bytes(tile)));
+                    }
+                }
+            }
             for layer in &sprite.layers {
                 chunks.push((CHUNK_LAYER, layer_chunk(sprite, layer)));
             }
@@ -730,7 +955,11 @@ fn layer_chunk(sprite: &Sprite, layer: &Layer) -> Vec<u8> {
     }
     let mut d = Vec::new();
     d.w_u16(flags);
-    d.w_u16(if layer.kind == LayerKind::Group { 1 } else { 0 });
+    d.w_u16(match layer.kind {
+        LayerKind::Group => 1,
+        LayerKind::Tilemap => 2,
+        LayerKind::Image | LayerKind::Instance => 0,
+    });
     d.w_u16(sprite.depth(layer.id) as u16);
     d.w_u16(0);
     d.w_u16(0);
@@ -738,6 +967,9 @@ fn layer_chunk(sprite: &Sprite, layer: &Layer) -> Vec<u8> {
     d.w_u8(layer.opacity);
     d.w_zeros(3);
     d.w_string(&layer.name);
+    if layer.kind == LayerKind::Tilemap {
+        d.w_u32(layer.tileset.unwrap_or(0));
+    }
     d
 }
 
@@ -809,9 +1041,49 @@ fn color_user_data(color: Rgba) -> Vec<u8> {
     d
 }
 
+fn tileset_chunk(index: usize, tileset: &Tileset) -> Vec<u8> {
+    let (tw, th) = tileset.tile_size;
+    let f = tileset.allowed_flips;
+    let flag = |on: bool, bit: u32| if on { bit } else { 0 };
+    let flags = TILESET_EMBEDDED
+        | TILESET_EMPTY_ZERO
+        | flag(f.x, TILESET_FLIP_X)
+        | flag(f.y, TILESET_FLIP_Y)
+        | flag(f.d, TILESET_FLIP_D);
+    let mut d = Vec::new();
+    d.w_u32(index as u32);
+    d.w_u32(flags);
+    d.w_u32(tileset.tiles.len() as u32);
+    d.w_u16(tw.min(u16::MAX as u32) as u16);
+    d.w_u16(th.min(u16::MAX as u32) as u16);
+    d.w_i16(tileset.base_index);
+    d.w_zeros(14);
+    d.w_string(&tileset.name);
+    // Tira vertical de todos los tiles, incluido el 0.
+    let raw: Vec<u8> = tileset.tiles.iter().flat_map(|t| raw_pixels(t)).collect();
+    let compressed = deflate(&raw);
+    d.w_u32(compressed.len() as u32);
+    d.extend_from_slice(&compressed);
+    d
+}
+
+/// Bytes de un chunk de user data; vacío (flags 0) si no hay.
+fn user_data_bytes(chunk: Option<&RawChunk>) -> Vec<u8> {
+    chunk.map_or_else(|| vec![0; 4], |c| c.data.clone())
+}
+
+/// Contenido de un cel según su capa.
+enum CelBody<'a> {
+    Pixels(&'a Image),
+    Tiles(&'a TileGrid),
+}
+
 fn cel_chunk(sprite: &Sprite, layer_index: usize, layer: LayerId, frame: usize) -> Option<Vec<u8>> {
     let cel = sprite.cel(layer, frame)?;
-    let image = sprite.image(cel.image)?;
+    let body = match sprite.layer(layer)?.kind {
+        LayerKind::Tilemap => CelBody::Tiles(sprite.tilemap(cel.image)?),
+        _ => CelBody::Pixels(sprite.image(cel.image)?),
+    };
     let mut d = Vec::new();
     d.w_u16(layer_index as u16);
     d.w_i16(cel.position.0.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
@@ -819,20 +1091,35 @@ fn cel_chunk(sprite: &Sprite, layer_index: usize, layer: LayerId, frame: usize) 
     d.w_u8(cel.opacity);
     // Vinculado si un frame anterior de la misma capa tiene el mismo cel.
     let link = (0..frame).find(|&f| sprite.cel(layer, f) == Some(cel));
-    match link {
-        Some(source) => {
+    match (link, body) {
+        (Some(source), _) => {
             d.w_u16(CEL_LINKED);
             d.w_i16(0);
             d.w_zeros(5);
             d.w_u16(source as u16);
         }
-        None => {
+        (None, CelBody::Pixels(image)) => {
             d.w_u16(CEL_COMPRESSED);
             d.w_i16(0);
             d.w_zeros(5);
             d.w_u16(image.width() as u16);
             d.w_u16(image.height() as u16);
             d.extend_from_slice(&deflate(&raw_pixels(image)));
+        }
+        (None, CelBody::Tiles(grid)) => {
+            d.w_u16(CEL_TILEMAP);
+            d.w_i16(0);
+            d.w_zeros(5);
+            d.w_u16(grid.width as u16);
+            d.w_u16(grid.height as u16);
+            d.w_u16(32);
+            d.w_u32(Tile::INDEX_MASK);
+            d.w_u32(Tile::FLIP_X);
+            d.w_u32(Tile::FLIP_Y);
+            d.w_u32(Tile::FLIP_D);
+            d.w_zeros(10);
+            let raw: Vec<u8> = grid.tiles.iter().flat_map(|t| t.0.to_le_bytes()).collect();
+            d.extend_from_slice(&deflate(&raw));
         }
     }
     Some(d)
@@ -890,6 +1177,7 @@ mod tests {
         assert_eq!(a.extra_chunks, b.extra_chunks);
         assert_eq!(a.slices, b.slices);
         assert_eq!(a.grid, b.grid);
+        assert_eq!(a.tilesets, b.tilesets);
         assert_eq!(a.layers.len(), b.layers.len());
         for (la, lb) in a.layers.iter().zip(&b.layers) {
             // Un grupo con opacidad 0 se lee como 255: así guarda Aseprite todos los grupos.
@@ -898,9 +1186,11 @@ mod tests {
                 (_, o) => o,
             };
             assert_eq!(
-                (&la.name, la.kind, la.visible, la.locked, opacity, la.blend),
                 (
-                    &lb.name, lb.kind, lb.visible, lb.locked, lb.opacity, lb.blend
+                    &la.name, la.kind, la.visible, la.locked, opacity, la.blend, la.tileset
+                ),
+                (
+                    &lb.name, lb.kind, lb.visible, lb.locked, lb.opacity, lb.blend, lb.tileset
                 )
             );
             let parent_index = |s: &Sprite, l: &Layer| l.parent.and_then(|p| s.layer_index(p));
@@ -911,11 +1201,19 @@ mod tests {
                 if let (Some(ca), Some(cb)) = (ca, cb) {
                     assert_eq!((ca.position, ca.opacity), (cb.position, cb.opacity));
                     assert_eq!(a.image(ca.image), b.image(cb.image));
+                    assert_eq!(a.tilemap(ca.image), b.tilemap(cb.image));
                 }
             }
         }
+        let (ma, mb) = (
+            cs_render::materialize_tilemaps(a, 0..a.frames.len()),
+            cs_render::materialize_tilemaps(b, 0..b.frames.len()),
+        );
         for f in 0..a.frames.len() {
-            assert_eq!(cs_render::render_frame(a, f), cs_render::render_frame(b, f));
+            assert_eq!(
+                cs_render::render_frame(&ma, f),
+                cs_render::render_frame(&mb, f)
+            );
         }
         assert_eq!(linked_pairs(a), linked_pairs(b));
     }
@@ -1147,6 +1445,267 @@ mod tests {
         assert_eq!(
             report.warnings,
             vec!["grayscale sprite converted to RGBA".to_string()]
+        );
+    }
+
+    /// Sprite con una capa de imagen y una tilemap (id 2) con un tileset de 4×4 con user data;
+    /// 2 frames con el cel tilemap vinculado, flips y la grilla corrida hacia la izquierda.
+    fn tilemap_sprite(mode: ColorMode) -> Sprite {
+        let mut s = Sprite::new(16, 12, mode);
+        let value = |i: u8| match mode {
+            ColorMode::Rgba => PixelValue::Rgba(Rgba::new(i * 30, 200 - i * 20, i * 7, 255)),
+            ColorMode::Indexed { .. } => PixelValue::Index(i + 1),
+        };
+        let mut ts = Tileset::new("terrain ✓", (4, 4), mode);
+        for i in 1..=3u8 {
+            let mut tile = Image::new(4, 4, mode);
+            tile.set(0, 0, value(i)).unwrap();
+            tile.set(3, 1, value(i + 1)).unwrap();
+            ts.tiles.push(Arc::new(tile));
+        }
+        ts.base_index = 0;
+        ts.allowed_flips = AllowedFlips {
+            x: true,
+            y: false,
+            d: true,
+        };
+        // Texto "grass" y color (flags 1 | 2).
+        let mut ud = Vec::new();
+        ud.w_u32(3);
+        ud.w_string("grass");
+        ud.extend_from_slice(&[1, 2, 3, 255]);
+        ts.user_data = Some(RawChunk {
+            kind: CHUNK_USER_DATA,
+            data: ud,
+        });
+        let mut tile_ud = Vec::new();
+        tile_ud.w_u32(1);
+        tile_ud.w_string("solid");
+        ts.tile_user_data = vec![
+            None,
+            None,
+            Some(RawChunk {
+                kind: CHUNK_USER_DATA,
+                data: tile_ud,
+            }),
+        ];
+        Command::SetTileset {
+            index: 0,
+            tileset: Some(ts),
+        }
+        .apply(&mut s)
+        .unwrap();
+        ops::new_tilemap_layer(&s.clone(), Some(LayerId(1)), 0)
+            .apply(&mut s)
+            .unwrap();
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(1, 1, value(4))],
+        }
+        .apply(&mut s)
+        .unwrap();
+        let cells = [
+            (0, 0, Tile::new(1, false, false, false)),
+            (1, 0, Tile::new(2, true, false, false)),
+            (2, 1, Tile::new(3, false, true, true)),
+            (3, 2, Tile::new(1, true, true, false)),
+            (-1, 0, Tile::new(2, false, false, false)),
+        ];
+        ops::set_tiles(&s, LayerId(2), 0, &cells)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        ops::duplicate_frame(&s.clone(), 0, true)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        s
+    }
+
+    #[test]
+    fn tilemaps_roundtrip_in_both_modes() {
+        for mode in [
+            ColorMode::Rgba,
+            ColorMode::Indexed {
+                transparent_index: 0,
+            },
+        ] {
+            let s = tilemap_sprite(mode);
+            assert_eq!(s.cel(LayerId(2), 0).unwrap().position, (-4, 0));
+            let back = roundtrip(&s);
+            assert_equivalent(&s, &back);
+            assert_eq!(back.layers[1].kind, LayerKind::Tilemap);
+            assert_eq!(back.layers[1].tileset, Some(0));
+            assert!(!linked_pairs(&back).is_empty(), "linked tilemap cels");
+            let rendered =
+                cs_render::render_frame(&cs_render::materialize_tilemaps(&back, 0..1), 0);
+            assert!(rendered.iter().any(|c| c.a > 0));
+        }
+    }
+
+    #[test]
+    fn tilemap_write_is_a_fixpoint() {
+        let once = write(&roundtrip(&tilemap_sprite(ColorMode::Rgba)));
+        let (again, _) = read(&once).unwrap();
+        assert_eq!(write(&again), once);
+    }
+
+    #[test]
+    fn corrupted_tilemap_files_never_panic() {
+        let bytes = write(&tilemap_sprite(ColorMode::Rgba));
+        for len in 0..bytes.len() {
+            let _ = read(&bytes[..len]);
+        }
+        for i in 0..bytes.len() {
+            let mut b = bytes.clone();
+            b[i] ^= 0xA5;
+            let _ = read(&b);
+        }
+    }
+
+    /// `.aseprite` de 8×8 y un frame con los chunks dados.
+    fn file_with(chunks: &[(u16, Vec<u8>)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        write_header(&mut out, &Sprite::new(8, 8, ColorMode::Rgba));
+        write_frame(&mut out, 100, chunks);
+        out
+    }
+
+    fn tilemap_layer_chunk() -> Vec<u8> {
+        let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+        s.layers[0].kind = LayerKind::Tilemap;
+        s.layers[0].tileset = Some(0);
+        layer_chunk(&s, &s.layers[0])
+    }
+
+    fn tileset_header(flags: u32, count: u32, size: u16, name: &str) -> Vec<u8> {
+        let mut d = Vec::new();
+        d.w_u32(0);
+        d.w_u32(flags);
+        d.w_u32(count);
+        d.w_u16(size);
+        d.w_u16(size);
+        d.w_i16(1);
+        d.w_zeros(14);
+        d.w_string(name);
+        d
+    }
+
+    #[test]
+    fn external_tilesets_load_empty_with_a_warning() {
+        let mut ts = tileset_header(TILESET_EXTERNAL | TILESET_EMPTY_ZERO, 3, 4, "outside");
+        ts.w_u32(1);
+        ts.w_u32(0);
+        let (s, report) = read(&file_with(&[
+            (CHUNK_TILESET, ts),
+            (CHUNK_LAYER, tilemap_layer_chunk()),
+        ]))
+        .unwrap();
+        assert_eq!(s.tilesets.len(), 1);
+        assert_eq!(s.tilesets[0].tiles.len(), 1, "only the empty tile");
+        assert_eq!(s.layers[0].kind, LayerKind::Tilemap);
+        assert_eq!(s.layers[0].tileset, Some(0));
+        assert!(
+            report.warnings.iter().any(|w| w.contains("external")),
+            "{:?}",
+            report.warnings
+        );
+    }
+
+    /// Cel tilemap de `w`×`h` tiles vacíos en la capa 0.
+    fn empty_tilemap_cel(w: u16, h: u16) -> Vec<u8> {
+        let mut cel = Vec::new();
+        cel.w_u16(0);
+        cel.w_i16(0);
+        cel.w_i16(0);
+        cel.w_u8(255);
+        cel.w_u16(CEL_TILEMAP);
+        cel.w_i16(0);
+        cel.w_zeros(5);
+        cel.w_u16(w);
+        cel.w_u16(h);
+        cel.w_u16(32);
+        cel.w_u32(Tile::INDEX_MASK);
+        cel.w_u32(Tile::FLIP_X);
+        cel.w_u32(Tile::FLIP_Y);
+        cel.w_u32(Tile::FLIP_D);
+        cel.w_zeros(10);
+        cel.extend_from_slice(&deflate(&vec![0; w as usize * h as usize * 4]));
+        cel
+    }
+
+    #[test]
+    fn missing_tilesets_and_huge_tilemap_cels_are_dropped_with_warnings() {
+        // Capa que pide el tileset 0 sin ningún tileset en el archivo.
+        let (s, report) = read(&file_with(&[
+            (CHUNK_LAYER, tilemap_layer_chunk()),
+            (CHUNK_CEL, empty_tilemap_cel(1, 1)),
+        ]))
+        .unwrap();
+        assert_eq!(s.layers[0].tileset, None);
+        assert!(
+            report
+                .warnings
+                .iter()
+                .any(|w| w.contains("missing tileset")),
+            "{:?}",
+            report.warnings
+        );
+        // Tiles de 2048×2048 en una grilla de 5×5: 10240² píxeles, más que MAX_TILEMAP_PIXELS. La
+        // tira del tileset (solo el tile 0) ocupa 16 MiB sin comprimir y unos KiB comprimida.
+        let mut ts = tileset_header(TILESET_EMBEDDED | TILESET_EMPTY_ZERO, 1, 2048, "big");
+        let pixels = deflate(&vec![0; 2048 * 2048 * 4]);
+        ts.w_u32(pixels.len() as u32);
+        ts.extend_from_slice(&pixels);
+        let (s, report) = read(&file_with(&[
+            (CHUNK_TILESET, ts),
+            (CHUNK_LAYER, tilemap_layer_chunk()),
+            (CHUNK_CEL, empty_tilemap_cel(5, 5)),
+        ]))
+        .unwrap();
+        assert!(s.cels.is_empty() && s.tilemaps.is_empty());
+        assert!(
+            report.warnings.iter().any(|w| w.contains("too large")),
+            "{:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn tilemap_cels_that_are_not_32_bit_are_skipped_with_a_warning() {
+        let mut ts = tileset_header(TILESET_EMBEDDED | TILESET_EMPTY_ZERO, 1, 2, "t");
+        let pixels = deflate(&[0; 16]);
+        ts.w_u32(pixels.len() as u32);
+        ts.extend_from_slice(&pixels);
+        let mut cel = Vec::new();
+        cel.w_u16(0);
+        cel.w_i16(0);
+        cel.w_i16(0);
+        cel.w_u8(255);
+        cel.w_u16(CEL_TILEMAP);
+        cel.w_i16(0);
+        cel.w_zeros(5);
+        cel.w_u16(1);
+        cel.w_u16(1);
+        cel.w_u16(16);
+        cel.w_u32(0x1fff);
+        cel.w_u32(0x2000);
+        cel.w_u32(0x4000);
+        cel.w_u32(0x8000);
+        cel.w_zeros(10);
+        cel.extend_from_slice(&deflate(&[1, 0]));
+        let (s, report) = read(&file_with(&[
+            (CHUNK_TILESET, ts),
+            (CHUNK_LAYER, tilemap_layer_chunk()),
+            (CHUNK_CEL, cel),
+        ]))
+        .unwrap();
+        assert!(s.cels.is_empty());
+        assert!(
+            report.warnings.iter().any(|w| w.contains("16 bits")),
+            "{:?}",
+            report.warnings
         );
     }
 
