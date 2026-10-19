@@ -259,6 +259,13 @@ fn resize_canvas(
         mask.position.0 += offset.0;
         mask.position.1 += offset.1;
     }
+    // Las instancias se mueven con el contenido.
+    for track in doc.layers.iter_mut().filter_map(|l| l.instance.as_mut()) {
+        for key in &mut track.keys {
+            key.position.0 += offset.0;
+            key.position.1 += offset.1;
+        }
+    }
     Ok(inverse)
 }
 
@@ -1029,6 +1036,24 @@ mod tests {
         assert_eq!(s, before);
         let inv = Command::RemoveFrame { index: 1 }.apply(&mut s).unwrap();
         assert_eq!(key_frames(&s), vec![0, 1]);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn resize_canvas_moves_instance_keys_and_undoes() {
+        let mut s = with_instance();
+        let before = s.clone();
+        let inv = Command::ResizeCanvas {
+            width: 10,
+            height: 6,
+            offset: (3, -2),
+        }
+        .apply(&mut s)
+        .unwrap();
+        let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+        let positions: Vec<_> = track.keys.iter().map(|k| k.position).collect();
+        assert_eq!(positions, vec![(3, -2), (7, 2)]);
         inv.apply(&mut s).unwrap();
         assert_eq!(s, before);
     }
