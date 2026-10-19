@@ -43,6 +43,10 @@ const TILESET_FLIP_D: u32 = 32;
 /// tiles grandes ocupa poco en el archivo pero mucho al dibujarse: se descarta con un aviso.
 const MAX_TILEMAP_PIXELS: u64 = 1 << 26;
 
+/// Tiles máximos de un tileset. Cada tile es una imagen aparte: con tiles de 1×1 la tira
+/// comprimida es mínima pero la cuenta dispararía millones de asignaciones.
+const MAX_TILESET_TILES: u32 = 1 << 16;
+
 const LAYER_VISIBLE: u16 = 1;
 const LAYER_EDITABLE: u16 = 2;
 
@@ -462,6 +466,14 @@ fn read_tileset(
     }
     if flags & TILESET_EMBEDDED != 0 {
         let len = c.u32()? as usize;
+        // Error y no tileset recortado: los índices de las grillas y el user data de los tiles
+        // dependen de la cuenta completa.
+        if count > MAX_TILESET_TILES {
+            return Err(IoError::Corrupt(format!(
+                "tileset '{}' has {count} tiles (at most {MAX_TILESET_TILES} are supported)",
+                tileset.name
+            )));
+        }
         let too_big = || IoError::Corrupt(format!("tileset '{}' is too large", tileset.name));
         let strip_h = th.checked_mul(count).ok_or_else(too_big)?;
         let expected = (tw as usize)
@@ -479,6 +491,11 @@ fn read_tileset(
     } else if flags & TILESET_EXTERNAL != 0 {
         report.warn(format!(
             "tileset '{}' is stored in an external file and was loaded without tiles",
+            tileset.name
+        ));
+    } else {
+        report.warn(format!(
+            "tileset '{}' has no tiles in the file nor a link to one; it was loaded empty",
             tileset.name
         ));
     }
@@ -1084,6 +1101,18 @@ fn cel_chunk(sprite: &Sprite, layer_index: usize, layer: LayerId, frame: usize) 
         LayerKind::Tilemap => CelBody::Tiles(sprite.tilemap(cel.image)?),
         _ => CelBody::Pixels(sprite.image(cel.image)?),
     };
+    // El cel guarda las medidas de la grilla en un WORD: truncarlas dejaría un archivo ilegible.
+    // Se omite (y con él los cels vinculados, que comparten la grilla).
+    if let CelBody::Tiles(grid) = body
+        && (grid.width > u16::MAX as u32 || grid.height > u16::MAX as u32)
+    {
+        log::warn!(
+            "tilemap cel of {}×{} tiles does not fit in .aseprite and was not saved",
+            grid.width,
+            grid.height
+        );
+        return None;
+    }
     let mut d = Vec::new();
     d.w_u16(layer_index as u16);
     d.w_i16(cel.position.0.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
@@ -1670,6 +1699,57 @@ mod tests {
             "{:?}",
             report.warnings
         );
+    }
+
+    #[test]
+    fn tilesets_with_too_many_tiles_are_rejected_before_allocating() {
+        // 1×1 tiles: la cuenta, no el tamaño de la tira, es lo que dispararía las asignaciones.
+        let mut ts = tileset_header(
+            TILESET_EMBEDDED | TILESET_EMPTY_ZERO,
+            100_000_000,
+            1,
+            "huge",
+        );
+        let pixels = deflate(&[0; 16]);
+        ts.w_u32(pixels.len() as u32);
+        ts.extend_from_slice(&pixels);
+        let start = std::time::Instant::now();
+        let result = read(&file_with(&[(CHUNK_TILESET, ts)]));
+        assert!(
+            matches!(&result, Err(IoError::Corrupt(m)) if m.contains("tiles")),
+            "{:?}",
+            result.map(|(_, r)| r.warnings)
+        );
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
+    fn tilesets_without_tiles_or_link_load_empty_with_a_warning() {
+        let ts = tileset_header(TILESET_EMPTY_ZERO, 3, 4, "nothing");
+        let (s, report) = read(&file_with(&[
+            (CHUNK_TILESET, ts),
+            (CHUNK_LAYER, tilemap_layer_chunk()),
+        ]))
+        .unwrap();
+        assert_eq!(s.tilesets[0].tiles.len(), 1, "only the empty tile");
+        assert!(
+            report.warnings.iter().any(|w| w.contains("no tiles")),
+            "{:?}",
+            report.warnings
+        );
+    }
+
+    #[test]
+    fn tilemap_cels_wider_than_the_format_are_not_written() {
+        let mut s = tilemap_sprite(ColorMode::Rgba);
+        let cel = *s.cel(LayerId(2), 0).unwrap();
+        // Una grilla de 65536 tiles de ancho no entra en el WORD del cel.
+        s.tilemaps
+            .insert(cel.image, Arc::new(TileGrid::new(u16::MAX as u32 + 1, 1)));
+        let (back, _) = read(&write(&s)).expect("the file stays readable");
+        assert!(back.cel(LayerId(2), 0).is_none() && back.cel(LayerId(2), 1).is_none());
+        assert_eq!(back.layers.len(), 2);
+        assert!(back.cel(LayerId(1), 0).is_some(), "other cels are kept");
     }
 
     #[test]
