@@ -16,11 +16,31 @@ use crate::render_frame;
 const MAX_DEPTH: u32 = 16;
 
 /// Copia del sprite donde las capas de instancia son capas de imagen con un cel en cada frame de
-/// `frames` en que se ve algo. Sin capas de instancia devuelve el mismo sprite.
+/// `frames` en que se ve algo. Sin capas de instancia devuelve el mismo sprite. Es para mostrar:
+/// las capas de instancia ocultas quedan sin cels.
 pub fn materialize<'a>(
     doc: &Document,
     sprite: &'a Sprite,
     frames: Range<usize>,
+) -> Cow<'a, Sprite> {
+    materialize_root(doc, sprite, frames, true)
+}
+
+/// `materialize` de todos los frames, para formatos sin instancias. `None` si no hay. Hornea
+/// también las capas de instancia ocultas, para que sus píxeles se guarden como los de cualquier
+/// capa oculta.
+pub fn bake_instances(doc: &Document, sprite: &Sprite) -> Option<Sprite> {
+    match materialize_root(doc, sprite, 0..sprite.frames.len(), false) {
+        Cow::Borrowed(_) => None,
+        Cow::Owned(s) => Some(s),
+    }
+}
+
+fn materialize_root<'a>(
+    doc: &Document,
+    sprite: &'a Sprite,
+    frames: Range<usize>,
+    skip_hidden: bool,
 ) -> Cow<'a, Sprite> {
     // Si el sprite es el de un artboard del documento, ese artboard ya está "en curso".
     let mut stack: Vec<ArtboardId> = doc
@@ -30,15 +50,7 @@ pub fn materialize<'a>(
         .map(|a| a.id)
         .into_iter()
         .collect();
-    materialize_at(doc, sprite, frames, &mut stack)
-}
-
-/// `materialize` de todos los frames, para formatos sin instancias. `None` si no hay.
-pub fn bake_instances(doc: &Document, sprite: &Sprite) -> Option<Sprite> {
-    match materialize(doc, sprite, 0..sprite.frames.len()) {
-        Cow::Borrowed(_) => None,
-        Cow::Owned(s) => Some(s),
-    }
+    materialize_at(doc, sprite, frames, &mut stack, skip_hidden)
 }
 
 fn materialize_at<'a>(
@@ -47,6 +59,8 @@ fn materialize_at<'a>(
     frames: Range<usize>,
     // Artboards que se están materializando (de afuera hacia adentro).
     stack: &mut Vec<ArtboardId>,
+    // Dejar sin cels las capas de instancia ocultas (no se ven al componer).
+    skip_hidden: bool,
 ) -> Cow<'a, Sprite> {
     if !sprite.layers.iter().any(|l| l.kind == LayerKind::Instance) {
         return Cow::Borrowed(sprite);
@@ -63,7 +77,7 @@ fn materialize_at<'a>(
             continue;
         };
         // Una capa oculta no se ve: no hace falta renderizar su fuente.
-        if !can_draw || !layer.visible {
+        if !can_draw || (skip_hidden && !layer.visible) {
             continue;
         }
         for frame in frames.clone() {
@@ -104,7 +118,8 @@ fn instance_image(
     let source = &doc.artboard(source_id)?.sprite;
     let sf = source_frame(key, parent, frame, source);
     stack.push(source_id);
-    let pixels = render_frame(&materialize_at(doc, source, sf..sf + 1, stack), sf);
+    // Adentro del símbolo solo importa lo que se ve.
+    let pixels = render_frame(&materialize_at(doc, source, sf..sf + 1, stack, true), sf);
     stack.pop();
     let (w, h) = (source.width, source.height);
     let at = |x: u32, y: u32| -> Rgba {
@@ -307,6 +322,12 @@ mod tests {
         let layer = m.layer(LayerId(2)).unwrap();
         assert_eq!(layer.kind, LayerKind::Image);
         assert!(m.cels.is_empty());
+        assert!(render_frame(&m, 0).iter().all(|c| c.a == 0));
+        // Al hornear (guardar/exportar) se conservan, como en cualquier capa oculta.
+        let baked = bake_instances(&d, &d.artboards[0].sprite).unwrap();
+        assert!((0..4).all(|f| baked.cel(LayerId(2), f).is_some()));
+        assert!(!baked.layer(LayerId(2)).unwrap().visible);
+        assert!(render_frame(&baked, 0).iter().all(|c| c.a == 0));
     }
 
     #[test]
