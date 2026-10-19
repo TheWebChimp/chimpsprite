@@ -540,7 +540,7 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
             // El mismo ícono que la herramienta Artboard: la capa muestra otro artboard.
             LayerKind::Instance => format!("🖼 {}", layer.name),
             // Grilla de tiles.
-            LayerKind::Tilemap => format!("▦ {}", layer.name),
+            LayerKind::Tilemap => format!("⊞ {}", layer.name),
             LayerKind::Image => layer.name.clone(),
         };
         let color = if visible_chain {
