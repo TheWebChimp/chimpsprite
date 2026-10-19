@@ -43,6 +43,37 @@ const TILESET_FLIP_D: u32 = 32;
 /// comprimida es mínima pero la cuenta dispararía millones de asignaciones.
 const MAX_TILESET_TILES: u32 = 1 << 16;
 
+/// Píxeles de tile que puede reservar la lectura de un archivo, sumando todos sus tilesets (64 Mpx,
+/// 256 MiB en RGBA). Cada chunk de tileset está acotado por `MAX_TILE_PIXELS` y
+/// `MAX_TILESET_TILES`, pero un archivo puede traer muchos chunks. Alcanza para el tileset más
+/// grande que se acepta con tiles de hasta 32×32 (65536 × 1024 px) y para cualquier archivo real.
+const MAX_TILESET_PIXELS: u64 = MAX_TILEMAP_PIXELS;
+
+/// Lo que llevan reservado los tilesets leídos hasta ahora.
+#[derive(Default)]
+struct TilesetBudget {
+    /// Píxeles reservados (tiras embebidas y tiles vacíos distintos).
+    pixels: u64,
+    /// Tile 0 de los tilesets sin tiles en el archivo, uno por tamaño: es transparente y nadie lo
+    /// dibuja, así que todos lo comparten.
+    empty: std::collections::HashMap<(u32, u32), Arc<Image>>,
+}
+
+impl TilesetBudget {
+    /// Descuenta `pixels` o falla si el total pasaría `MAX_TILESET_PIXELS`.
+    fn take(&mut self, pixels: u64) -> Result<()> {
+        match self.pixels.checked_add(pixels) {
+            Some(total) if total <= MAX_TILESET_PIXELS => {
+                self.pixels = total;
+                Ok(())
+            }
+            _ => Err(IoError::Corrupt(format!(
+                "the tilesets need more than {MAX_TILESET_PIXELS} pixels in total"
+            ))),
+        }
+    }
+}
+
 const LAYER_VISIBLE: u16 = 1;
 const LAYER_EDITABLE: u16 = 2;
 
@@ -196,6 +227,7 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
     let mut user_data = UserDataTarget::None;
     // Tilesets con su id del archivo; al final se ordenan por id.
     let mut tilesets: Vec<(u32, Tileset)> = Vec::new();
+    let mut budget = TilesetBudget::default();
 
     for frame in 0..frame_count {
         let frame_start = r.pos;
@@ -310,7 +342,7 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
                     user_data = UserDataTarget::Slice(sprite.slices.len() - 1);
                 }
                 CHUNK_TILESET => {
-                    tilesets.push(read_tileset(&mut c, depth, mode, &mut report)?);
+                    tilesets.push(read_tileset(&mut c, depth, mode, &mut budget, &mut report)?);
                     user_data = UserDataTarget::Tileset {
                         index: tilesets.len() - 1,
                         next: 0,
@@ -429,6 +461,7 @@ fn read_tileset(
     c: &mut Reader,
     depth: Depth,
     mode: ColorMode,
+    budget: &mut TilesetBudget,
     report: &mut LoadReport,
 ) -> Result<(u32, Tileset)> {
     let id = c.u32()?;
@@ -491,6 +524,8 @@ fn read_tileset(
             .and_then(|n| n.checked_mul(depth.bytes_per_pixel()))
             .ok_or_else(too_big)?;
         // `inflate` exige exactamente `expected` bytes: no reserva lo que el header promete.
+        // Antes de descomprimir: la tira (y sus tiles) se cuentan contra el total del archivo.
+        budget.take(tw as u64 * strip_h as u64)?;
         let raw = inflate(c.bytes(len)?, expected)?;
         if count > 0 {
             let strip = decode_pixels(tw, strip_h, &raw, depth)?;
@@ -509,9 +544,18 @@ fn read_tileset(
             tileset.name
         ));
     }
-    // El tile 0 (vacío) siempre existe.
+    // El tile 0 (vacío) siempre existe; uno compartido por tamaño (el modo es el del sprite).
     if tileset.tiles.is_empty() {
-        tileset.tiles.push(Arc::new(Image::new(tw, th, mode)));
+        let tile = match budget.empty.get(&(tw, th)) {
+            Some(tile) => tile.clone(),
+            None => {
+                budget.take(tw as u64 * th as u64)?;
+                let tile = Arc::new(Image::new(tw, th, mode));
+                budget.empty.insert((tw, th), tile.clone());
+                tile
+            }
+        };
+        tileset.tiles.push(tile);
     }
     Ok((id, tileset))
 }
@@ -1741,6 +1785,64 @@ mod tests {
                 "{size}"
             );
         }
+    }
+
+    fn external_tileset(id: u32, w: u16, h: u16) -> Vec<u8> {
+        let mut d = Vec::new();
+        d.w_u32(id);
+        d.w_u32(TILESET_EXTERNAL | TILESET_EMPTY_ZERO);
+        d.w_u32(1);
+        d.w_u16(w);
+        d.w_u16(h);
+        d.w_i16(1);
+        d.w_zeros(14);
+        d.w_string("x");
+        d.w_u32(1);
+        d.w_u32(0);
+        d
+    }
+
+    #[test]
+    fn many_large_tilesets_in_a_small_file_are_bounded() {
+        // 200 tilesets externos de tiles de 2048×2048: el tile 0 (vacío) de todos es el mismo.
+        let chunks: Vec<_> = (0..200)
+            .map(|i| (CHUNK_TILESET, external_tileset(i, 2048, 2048)))
+            .collect();
+        let file = file_with(&chunks);
+        assert!(file.len() < 12_000, "{} bytes", file.len());
+        let start = std::time::Instant::now();
+        let (s, _) = read(&file).unwrap();
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        assert_eq!(s.tilesets.len(), 200);
+        assert!(
+            s.tilesets
+                .iter()
+                .all(|t| Arc::ptr_eq(&t.tiles[0], &s.tilesets[0].tiles[0])),
+            "one shared empty tile"
+        );
+        // Con tamaños distintos no se pueden compartir: pasan el presupuesto total y se rechazan.
+        let chunks: Vec<_> = (0..200)
+            .map(|i| (CHUNK_TILESET, external_tileset(i, 2048, 2048 - i as u16)))
+            .collect();
+        let start = std::time::Instant::now();
+        let result = read(&file_with(&chunks));
+        assert!(
+            matches!(&result, Err(IoError::Corrupt(m)) if m.contains("in total")),
+            "{:?}",
+            result.map(|(_, r)| r.warnings)
+        );
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        // Un tileset embebido que solo por su cuenta pasa el presupuesto se rechaza antes de
+        // descomprimir (los datos ni siquiera son válidos).
+        let mut ts = tileset_header(TILESET_EMBEDDED | TILESET_EMPTY_ZERO, 17, 2048, "big");
+        ts.w_u32(4);
+        ts.w_u32(0);
+        let result = read(&file_with(&[(CHUNK_TILESET, ts)]));
+        assert!(
+            matches!(&result, Err(IoError::Corrupt(m)) if m.contains("in total")),
+            "{:?}",
+            result.map(|(_, r)| r.warnings)
+        );
     }
 
     /// Cel tilemap de `w`×`h` tiles vacíos en la capa 0.
