@@ -358,7 +358,11 @@ mod tests {
             },
         ];
         let (back, _) = read(&write(&d).unwrap()).unwrap();
-        let keys = &back.artboards[0].sprite.layers[1].instance.as_ref().unwrap().keys;
+        let keys = &back.artboards[0].sprite.layers[1]
+            .instance
+            .as_ref()
+            .unwrap()
+            .keys;
         let got: Vec<_> = keys.iter().map(|k| (k.frame, k.position)).collect();
         assert_eq!(got, vec![(0, (1, 1)), (3, (4, 4))]);
     }

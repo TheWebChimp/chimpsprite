@@ -6,8 +6,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use cs_core::{
-    ArtboardId, Cel, ColorMode, Document, Image, ImageId, InstanceKey, InstanceTrack, LayerKind, PixelValue,
-    Rgba, Sprite, source_frame,
+    ArtboardId, Cel, ColorMode, Document, Image, ImageId, InstanceKey, InstanceTrack, LayerKind,
+    PixelValue, Rgba, Sprite, source_frame,
 };
 
 use crate::render_frame;
