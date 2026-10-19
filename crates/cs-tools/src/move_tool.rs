@@ -24,6 +24,13 @@ fn move_output(ctx: &ToolContext, dx: i32, dy: i32) -> ToolOutput {
     if sprite.layer(ctx.layer).is_none_or(|l| l.locked) {
         return ToolOutput::default();
     }
+    // Las capas tilemap se editan por tiles (llega en el subproyecto 2): Move no hace nada.
+    if sprite
+        .layer(ctx.layer)
+        .is_some_and(|l| l.kind == cs_core::LayerKind::Tilemap)
+    {
+        return ToolOutput::default();
+    }
     if sprite
         .layer(ctx.layer)
         .is_some_and(|l| l.kind == cs_core::LayerKind::Instance)
@@ -113,6 +120,14 @@ mod tests {
         .apply(&mut s)
         .unwrap();
         s
+    }
+
+    #[test]
+    fn move_does_nothing_on_tilemap_layers() {
+        let mut s = with_dot();
+        s.layers[0].kind = cs_core::LayerKind::Tilemap;
+        let out = gesture(&ctx(&s), (0, 0), (2, 3));
+        assert!(out.command.is_none());
     }
 
     fn gesture(c: &ToolContext, a: Point, b: Point) -> ToolOutput {

@@ -1001,7 +1001,11 @@ impl CanvasView {
             let color = self.hover.and_then(|(x, y)| {
                 let s = editor.sprite();
                 let inside = x >= 0 && y >= 0 && x < s.width as i32 && y < s.height as i32;
-                inside.then(|| cs_render::composite_pixel(s, editor.frame, x, y))
+                inside.then(|| {
+                    let frame = editor.frame;
+                    let composed = cs_render::materialize_tilemaps(s, frame..frame + 1);
+                    cs_render::composite_pixel(&composed, frame, x, y)
+                })
             });
             draw_pipette(&painter, p, color);
         }

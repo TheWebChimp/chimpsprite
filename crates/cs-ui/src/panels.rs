@@ -537,6 +537,17 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView, notic
             ui.separator();
             ui.colored_label(theme::ACCENT, "Instance layer: edit the source artboard");
         }
+        let on_tilemap = s
+            .layer(editor.layer)
+            .is_some_and(|l| l.kind == cs_core::LayerKind::Tilemap);
+        let tool = editor.active_tool();
+        if on_tilemap && (tool.paints() || tool == ToolKind::Move) {
+            ui.separator();
+            ui.colored_label(
+                theme::ACCENT,
+                "Tilemap layer: tile editing comes in a later version",
+            );
+        }
         if let Some(hint) = canvas.guide_hint {
             ui.separator();
             ui.colored_label(theme::GUIDE_LINE, hint);
