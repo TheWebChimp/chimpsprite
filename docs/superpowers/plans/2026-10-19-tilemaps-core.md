@@ -2397,7 +2397,7 @@ end
 ts:tile(2).data = "solid"
 ts:tile(2).color = rgba(200, 0, 0)
 
-local FLIP_X, FLIP_Y, FLIP_D = 0x20000000, 0x40000000, 0x80000000
+local FLIP_X, FLIP_Y, FLIP_D = 0x80000000, 0x40000000, 0x20000000
 local function tile(i, fx, fy, fd)
   local flags = 0
   if fx then flags = flags | FLIP_X end
