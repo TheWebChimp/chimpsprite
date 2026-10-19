@@ -279,6 +279,10 @@ impl ChimpApp {
                         .iter()
                         .any(|a| !a.guides.is_empty());
                 let baked = files::bakes_masks(&self.doc.editor.document, &target_name);
+                let missing =
+                    files::tilesets_missing_tiles(&self.doc.editor.document, &target_name);
+                let missing_note =
+                    (!missing.is_empty()).then(|| files::missing_tiles_note(&missing));
                 if baked {
                     let mut body = String::from(
                         ".aseprite files have no layer or clipping masks, so they were applied to \
@@ -291,7 +295,17 @@ impl ChimpApp {
                              layers in that file so the mask could be applied.",
                         );
                     }
+                    if let Some(note) = &missing_note {
+                        body.push_str(
+                            "
+
+",
+                        );
+                        body.push_str(note);
+                    }
                     self.show_message("Masks applied in the file", body);
+                } else if let Some(note) = missing_note {
+                    self.show_message("Tiles missing from a tileset", note);
                 } else if lost_guides {
                     self.show_message(
                         "Saved without guides",

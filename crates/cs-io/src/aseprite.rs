@@ -883,6 +883,12 @@ pub fn write(sprite: &Sprite) -> Vec<u8> {
                 }
             }
             for layer in &sprite.layers {
+                if layer.kind == LayerKind::Tilemap && !has_tileset(sprite, layer) {
+                    log::warn!(
+                        "tilemap layer '{}' has no tileset; saved as an empty image layer",
+                        layer.name
+                    );
+                }
                 chunks.push((CHUNK_LAYER, layer_chunk(sprite, layer)));
             }
             if !sprite.tags.is_empty() {
@@ -976,6 +982,14 @@ fn palette_chunk(palette: &Palette) -> Vec<u8> {
     d
 }
 
+/// ¿La capa tilemap apunta a un tileset que existe? Si no, se guarda como capa de imagen vacía:
+/// escribir otro id (el 0) la ataría a un tileset ajeno.
+fn has_tileset(sprite: &Sprite, layer: &Layer) -> bool {
+    layer
+        .tileset
+        .is_some_and(|i| (i as usize) < sprite.tilesets.len())
+}
+
 fn layer_chunk(sprite: &Sprite, layer: &Layer) -> Vec<u8> {
     let mut flags = 0;
     if layer.visible {
@@ -986,10 +1000,11 @@ fn layer_chunk(sprite: &Sprite, layer: &Layer) -> Vec<u8> {
     }
     let mut d = Vec::new();
     d.w_u16(flags);
-    d.w_u16(match layer.kind {
-        LayerKind::Group => 1,
-        LayerKind::Tilemap => 2,
-        LayerKind::Image | LayerKind::Instance => 0,
+    let tileset = layer.tileset.filter(|_| has_tileset(sprite, layer));
+    d.w_u16(match (layer.kind, tileset) {
+        (LayerKind::Group, _) => 1,
+        (LayerKind::Tilemap, Some(_)) => 2,
+        (LayerKind::Tilemap, None) | (LayerKind::Image | LayerKind::Instance, _) => 0,
     });
     d.w_u16(sprite.depth(layer.id) as u16);
     d.w_u16(0);
@@ -998,8 +1013,8 @@ fn layer_chunk(sprite: &Sprite, layer: &Layer) -> Vec<u8> {
     d.w_u8(layer.opacity);
     d.w_zeros(3);
     d.w_string(&layer.name);
-    if layer.kind == LayerKind::Tilemap {
-        d.w_u32(layer.tileset.unwrap_or(0));
+    if let (LayerKind::Tilemap, Some(index)) = (layer.kind, tileset) {
+        d.w_u32(index);
     }
     d
 }
@@ -1111,7 +1126,10 @@ enum CelBody<'a> {
 
 fn cel_chunk(sprite: &Sprite, layer_index: usize, layer: LayerId, frame: usize) -> Option<Vec<u8>> {
     let cel = sprite.cel(layer, frame)?;
-    let body = match sprite.layer(layer)?.kind {
+    let l = sprite.layer(layer)?;
+    let body = match l.kind {
+        // Sin tileset la capa se guarda vacía (ver `has_tileset`).
+        LayerKind::Tilemap if !has_tileset(sprite, l) => return None,
         LayerKind::Tilemap => CelBody::Tiles(sprite.tilemap(cel.image)?),
         _ => CelBody::Pixels(sprite.image(cel.image)?),
     };
@@ -1567,6 +1585,25 @@ mod tests {
     }
 
     #[test]
+    fn tilemap_layers_without_a_tileset_are_written_as_empty_image_layers() {
+        for broken in [None, Some(7)] {
+            let mut s = tilemap_sprite(ColorMode::Rgba);
+            s.layer_mut(LayerId(2)).unwrap().tileset = broken;
+            let (back, report) = read(&write(&s)).expect("the file stays readable");
+            assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+            let layer = back.layer(LayerId(2)).unwrap();
+            assert_eq!(
+                (layer.kind, layer.tileset),
+                (LayerKind::Image, None),
+                "{broken:?}"
+            );
+            assert!(back.cel(LayerId(2), 0).is_none() && back.cel(LayerId(2), 1).is_none());
+            assert!(back.cel(LayerId(1), 0).is_some(), "other cels are kept");
+            assert_eq!(back.tilesets, s.tilesets);
+        }
+    }
+
+    #[test]
     fn tilemaps_roundtrip_in_both_modes() {
         for mode in [
             ColorMode::Rgba,
@@ -1632,8 +1669,11 @@ mod tests {
         out
     }
 
+    /// Capa tilemap que pide el tileset con id 0 del archivo.
     fn tilemap_layer_chunk() -> Vec<u8> {
         let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+        // El escritor solo guarda como tilemap una capa cuyo tileset existe.
+        s.tilesets.push(Tileset::new("t", (1, 1), ColorMode::Rgba));
         s.layers[0].kind = LayerKind::Tilemap;
         s.layers[0].tileset = Some(0);
         layer_chunk(&s, &s.layers[0])

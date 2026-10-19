@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use crate::{IoError, LoadReport, aseprite, chimp, import};
-use cs_core::Document;
+use cs_core::{Document, LayerKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
@@ -40,6 +40,47 @@ pub fn converts_tilemaps(doc: &Document, file_name: &str) -> bool {
             .artboards
             .iter()
             .any(|a| !cs_render::masked_tilemap_layers(&a.sprite).is_empty())
+}
+
+/// Tilesets a los que les faltan tiles que usan sus grillas (pasa con los tilesets externos, que
+/// se abren solo con el tile 0): al guardar como `.aseprite` o `.chimp` el archivo conserva los
+/// números de tile, pero no esos tiles ni el vínculo al archivo externo. Nombres, sin repetir.
+pub fn tilesets_missing_tiles(doc: &Document, file_name: &str) -> Vec<String> {
+    if !matches!(
+        kind_of(file_name),
+        Some(FileKind::Aseprite | FileKind::Chimp)
+    ) {
+        return Vec::new();
+    }
+    let mut names = Vec::new();
+    for sprite in doc.artboards.iter().map(|a| &a.sprite) {
+        for (index, tileset) in sprite.tilesets.iter().enumerate() {
+            let count = tileset.tiles.len() as u32;
+            let missing = sprite
+                .layers
+                .iter()
+                .filter(|l| l.kind == LayerKind::Tilemap && l.tileset == Some(index as u32))
+                .flat_map(|l| sprite.cels.iter().filter(move |((id, _), _)| *id == l.id))
+                .filter_map(|(_, cel)| sprite.tilemap(cel.image))
+                .any(|grid| grid.tiles.iter().any(|t| t.index() >= count));
+            if missing && !names.contains(&tileset.name) {
+                names.push(tileset.name.clone());
+            }
+        }
+    }
+    names
+}
+
+/// Aviso para el usuario sobre `tilesets_missing_tiles` (en inglés, como toda la UI).
+pub fn missing_tiles_note(names: &[String]) -> String {
+    let list = names
+        .iter()
+        .map(|n| format!("'{n}'"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "Tileset {list} is missing tiles that its tilemaps use (probably an external tileset          file, which can't be loaded yet). The saved file keeps the tile numbers but not those          tiles nor a link to the external file."
+    )
 }
 
 /// ¿Guardar en este formato convierte instancias en píxeles?
@@ -306,6 +347,33 @@ mod tests {
         assert!(s.is_valid_tree());
         let back = aseprite_roundtrip(s, true);
         assert_eq!(kind(&back, "Tilemap 2"), LayerKind::Image);
+    }
+
+    #[test]
+    fn saving_tilesets_with_missing_tiles_warns() {
+        use cs_core::Tile;
+        let mut s = masked_tilemap_sprite();
+        assert!(
+            tilesets_missing_tiles(&Document::with_sprite("m", s.clone()), "m.aseprite").is_empty()
+        );
+        // Como un tileset externo: solo queda el tile 0, pero las grillas usan el 1.
+        s.tilesets[0].tiles.truncate(1);
+        let d = Document::with_sprite("m", s.clone());
+        assert_eq!(
+            tilesets_missing_tiles(&d, "m.aseprite"),
+            vec!["t".to_string()]
+        );
+        assert_eq!(tilesets_missing_tiles(&d, "m.chimp"), vec!["t".to_string()]);
+        assert!(tilesets_missing_tiles(&d, "m.png").is_empty());
+        assert!(missing_tiles_note(&["t".to_string()]).contains("'t' is missing tiles"));
+        // Solo cuentan los tiles que alguna grilla usa.
+        for (_, cel) in s.cels.clone() {
+            if let Some(grid) = s.tilemaps.get_mut(&cel.image) {
+                let grid = std::sync::Arc::make_mut(grid);
+                grid.tiles.fill(Tile::EMPTY);
+            }
+        }
+        assert!(tilesets_missing_tiles(&Document::with_sprite("m", s), "m.aseprite").is_empty());
     }
 
     #[test]

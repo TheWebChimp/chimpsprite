@@ -261,6 +261,14 @@ impl Session {
                  in the file (the open document keeps them). Save as .chimp to keep them editable.",
             );
         }
+        let missing = files::tilesets_missing_tiles(&d.document, &name);
+        if !missing.is_empty() {
+            text.push_str(
+                "
+Warning: ",
+            );
+            text.push_str(&files::missing_tiles_note(&missing));
+        }
         if files::converts_tilemaps(&d.document, &name) {
             text.push_str(
                 "\nNote: tilemap layers with a mask or clipping were saved as image layers in \
