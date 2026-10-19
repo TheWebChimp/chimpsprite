@@ -14,6 +14,7 @@ mod slice_ops;
 use cs_io::files;
 mod guides;
 mod home;
+mod instance_ops;
 mod panels;
 mod platform;
 mod recent;

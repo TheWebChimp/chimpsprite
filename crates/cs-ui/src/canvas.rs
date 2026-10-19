@@ -773,6 +773,13 @@ impl CanvasView {
                 let sprite = &artboard.sprite;
                 let frame = editor.frame_of(artboard.id);
                 let onion = artboard.id == editor.active && editor.onion_enabled && !editor.playing;
+                // Las instancias se resuelven a capas normales antes de componer.
+                let frames = if onion {
+                    0..sprite.frames.len()
+                } else {
+                    frame..frame + 1
+                };
+                let sprite = &*cs_render::materialize(document, sprite, frames);
                 let mut pixels = if onion {
                     cs_render::render_onion(sprite, frame, &editor.onion)
                 } else {
