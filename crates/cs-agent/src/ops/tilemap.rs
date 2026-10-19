@@ -142,7 +142,7 @@ impl Session {
         let square = tileset.tile_size.0 == tileset.tile_size.1;
         let mut cells = Vec::with_capacity(p.cells.len());
         for c in &p.cells {
-            if c.x.abs() > MAX_CELL || c.y.abs() > MAX_CELL {
+            if !(-MAX_CELL..=MAX_CELL).contains(&c.x) || !(-MAX_CELL..=MAX_CELL).contains(&c.y) {
                 return Err(invalid(format!(
                     "cell ({}, {}) is too far; use -{MAX_CELL}..{MAX_CELL}",
                     c.x, c.y
@@ -160,29 +160,32 @@ impl Session {
             cells.push((c.x, c.y, Tile::new(c.tile, c.flip_x, c.flip_y, c.flip_d)));
         }
         let Some(cmd) = ops::set_tiles(sprite, layer, frame, &cells) else {
-            // `None` también significa "grilla > 4096 celdas de lado": se distingue calculando la extensión.
+            // `None` también significa "grilla > 4096 celdas de lado": se distingue replicando
+            // la extensión que calcula `ops::set_tiles` (relativa al origen del cel, incluyendo
+            // las celdas vacías, que también agrandan la grilla).
             let (tw, th) = tileset.tile_size;
-            let (mut x0, mut y0) = (i64::MAX, i64::MAX);
-            let (mut x1, mut y1) = (i64::MIN, i64::MIN);
-            for &(x, y, _) in &cells {
-                x0 = x0.min(x as i64);
-                y0 = y0.min(y as i64);
-                x1 = x1.max(x as i64);
-                y1 = y1.max(y as i64);
-            }
-            if let Some((c, g)) = sprite
+            let found = sprite
                 .cel(layer, frame)
-                .and_then(|c| Some((c, sprite.tilemap(c.image)?)))
-            {
-                let cx = c.position.0.div_euclid(tw as i32) as i64;
-                let cy = c.position.1.div_euclid(th as i32) as i64;
-                x0 = x0.min(cx);
-                y0 = y0.min(cy);
-                x1 = x1.max(cx + g.width as i64 - 1);
-                y1 = y1.max(cy + g.height as i64 - 1);
+                .and_then(|c| Some((c, sprite.tilemap(c.image)?)));
+            let (origin, (ow, oh)) = found.map_or(((0i64, 0i64), (0i64, 0i64)), |(c, g)| {
+                (
+                    (
+                        c.position.0.div_euclid(tw as i32) as i64,
+                        c.position.1.div_euclid(th as i32) as i64,
+                    ),
+                    (g.width as i64, g.height as i64),
+                )
+            });
+            let (mut x0, mut y0, mut x1, mut y1) = (0i64, 0i64, ow, oh);
+            for &(x, y, _) in &cells {
+                let (rx, ry) = (x as i64 - origin.0, y as i64 - origin.1);
+                x0 = x0.min(rx);
+                y0 = y0.min(ry);
+                x1 = x1.max(rx + 1);
+                y1 = y1.max(ry + 1);
             }
             let limit = ops::MAX_TILEMAP_SIDE as i64;
-            if x1 - x0 + 1 > limit || y1 - y0 + 1 > limit {
+            if x1 - x0 > limit || y1 - y0 > limit {
                 return Err(invalid(format!(
                     "the tilemap grid would exceed the {limit}-tile limit per side"
                 )));
@@ -347,5 +350,66 @@ mod tests {
             .find(|c| c["layer"] == layer["id"])
             .unwrap();
         assert_eq!(cel["grid"], json!([3, 2]));
+    }
+
+    fn tile_session() -> Session {
+        let mut s = session(16, 8);
+        s.create_tileset(p(
+            json!({"doc": "d1", "name": "t", "tile_width": 4, "tile_height": 4}),
+        ))
+        .unwrap();
+        s.set_tile_pixels(p(json!({"doc": "d1", "tileset": 0, "tile": 1,
+            "pixels": [{"x": 0, "y": 0, "color": "#ff0000"}]})))
+            .unwrap();
+        s.add_tilemap_layer(p(json!({"doc": "d1", "tileset": 0, "name": "map"})))
+            .unwrap();
+        s
+    }
+
+    fn set(s: &mut Session, cells: serde_json::Value) -> crate::error::Result<crate::Reply> {
+        s.set_tiles(p(json!({"doc": "d1", "layer": "map", "cells": cells})))
+    }
+
+    #[test]
+    fn set_tiles_rejects_extreme_coordinates_without_panicking() {
+        let mut s = tile_session();
+        for c in [
+            json!([{"x": i32::MIN, "y": 0, "tile": 1}]),
+            json!([{"x": 0, "y": i32::MIN, "tile": 1}]),
+            json!([{"x": i32::MAX, "y": 0, "tile": 1}]),
+        ] {
+            assert!(set(&mut s, c).is_err());
+        }
+    }
+
+    #[test]
+    fn set_tiles_reports_the_grid_limit() {
+        let mut s = tile_session();
+        // (a) Sin cel previo: 0 y 4096 abarcan 4097 celdas.
+        let e = set(
+            &mut s,
+            json!([{"x": 0, "y": 0, "tile": 1}, {"x": 4096, "y": 0, "tile": 1}]),
+        )
+        .unwrap_err();
+        assert!(e.to_string().contains("4096"), "{e}");
+        // (b) Con una grilla existente, una celda lejana la haría pasar el límite.
+        set(&mut s, json!([{"x": 0, "y": 0, "tile": 1}])).unwrap();
+        let e = set(&mut s, json!([{"x": 4096, "y": 0, "tile": 1}])).unwrap_err();
+        assert!(e.to_string().contains("4096"), "{e}");
+        // Una celda lejana que sí cabe agranda la grilla.
+        set(&mut s, json!([{"x": 4095, "y": 0, "tile": 1}])).unwrap();
+        // Borrar (tile 0) fuera de la grilla también la agranda, así que cuenta para el límite.
+        let mut s2 = tile_session();
+        set(&mut s2, json!([{"x": 0, "y": 0, "tile": 1}])).unwrap();
+        let e = set(&mut s2, json!([{"x": -4096, "y": 0, "tile": 0}])).unwrap_err();
+        assert!(e.to_string().contains("4096"), "{e}");
+    }
+
+    #[test]
+    fn set_tiles_with_no_change_says_so() {
+        let mut s = tile_session();
+        set(&mut s, json!([{"x": 0, "y": 0, "tile": 1}])).unwrap();
+        let r = set(&mut s, json!([{"x": 0, "y": 0, "tile": 1}])).unwrap();
+        assert_eq!(r.text, "Nothing changed.");
     }
 }

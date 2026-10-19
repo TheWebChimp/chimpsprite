@@ -222,7 +222,7 @@ impl ChimpServer {
     }
 
     #[tool(
-        description = "Place tiles on a tilemap layer. Cells are canvas grid cells: cell (x, y) starts at pixel (x * tile_width, y * tile_height). Tile 0 erases a cell; optional flip_x / flip_y / flip_d. The layer's grid grows as needed."
+        description = "Place tiles on a tilemap layer. Cells are canvas grid cells: cell (x, y) starts at pixel (x * tile_width, y * tile_height). Tile 0 erases a cell; optional flip_x / flip_y / flip_d. The layer's grid grows as needed, up to 4096 tiles per side."
     )]
     fn set_tiles(&self, Parameters(p): Parameters<SetTiles>) -> CallToolResult {
         self.with(|s| s.set_tiles(p))
