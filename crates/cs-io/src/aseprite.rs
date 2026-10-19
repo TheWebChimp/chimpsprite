@@ -1574,6 +1574,23 @@ mod tests {
     }
 
     #[test]
+    fn written_tilemap_cels_declare_aseprites_standard_masks() {
+        let bytes = write(&tilemap_sprite(ColorMode::Rgba));
+        let mut masks = Vec::new();
+        for m in [0x1fff_ffffu32, 0x8000_0000, 0x4000_0000, 0x2000_0000] {
+            masks.extend_from_slice(&m.to_le_bytes());
+        }
+        assert!(
+            bytes.windows(masks.len()).any(|w| w == masks.as_slice()),
+            "index/X/Y/D masks 0x1fffffff/0x80000000/0x40000000/0x20000000"
+        );
+        assert_eq!(
+            (Tile::FLIP_X, Tile::FLIP_Y, Tile::FLIP_D),
+            (0x8000_0000, 0x4000_0000, 0x2000_0000)
+        );
+    }
+
+    #[test]
     fn tilemap_write_is_a_fixpoint() {
         let once = write(&roundtrip(&tilemap_sprite(ColorMode::Rgba)));
         let (again, _) = read(&once).unwrap();

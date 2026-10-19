@@ -152,9 +152,24 @@ fn tilemap_file_renders_like_aseprite() {
     assert_eq!(cel.image, s.cel(ground, 1).unwrap().image, "linked cels");
     let grid = s.tilemap(cel.image).unwrap();
     assert!(grid.width >= 4 && grid.height >= 2);
-    assert!(grid.tiles.iter().any(|t| t.flip_x()));
-    assert!(grid.tiles.iter().any(|t| t.flip_y()));
-    assert!(grid.tiles.iter().any(|t| t.flip_d()));
+    // El generador Lua pone en la celda (x, y) de las 2 primeras filas combo = y * 4 + x, con
+    // flip X = bit 0, Y = bit 1, D = bit 2 de combo, e índice 1 + combo % 3.
+    for y in 0..2u32 {
+        for x in 0..4u32 {
+            let combo = y * 4 + x;
+            let t = grid.get(x, y).unwrap();
+            assert_eq!(
+                (t.index(), t.flip_x(), t.flip_y(), t.flip_d()),
+                (
+                    1 + combo % 3,
+                    combo & 1 != 0,
+                    combo & 2 != 0,
+                    combo & 4 != 0
+                ),
+                "cell ({x}, {y})"
+            );
+        }
+    }
     assert_matches_aseprite(&s, "tilemap_rgba");
 }
 

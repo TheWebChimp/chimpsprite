@@ -39,15 +39,16 @@ Fuera de alcance:
 
 ```rust
 /// Valor de una celda de tilemap, con el mismo layout que Aseprite:
-/// bits 0–28 índice del tile, bit 29 flip X, bit 30 flip Y, bit 31 flip D (transponer).
+/// bits 0–28 índice del tile, bit 31 flip X, bit 30 flip Y, bit 29 flip D (transponer).
+/// Coincide con los flags del GID de Tiled (bit 31 H, bit 30 V, bit 29 D).
 pub struct Tile(pub u32);
 
 impl Tile {
     pub const EMPTY: Tile = Tile(0);
     pub const INDEX_MASK: u32 = 0x1fff_ffff;
-    pub const FLIP_X: u32 = 1 << 29;
+    pub const FLIP_X: u32 = 1 << 31;
     pub const FLIP_Y: u32 = 1 << 30;
-    pub const FLIP_D: u32 = 1 << 31;
+    pub const FLIP_D: u32 = 1 << 29;
     pub fn new(index: u32, flip_x: bool, flip_y: bool, flip_d: bool) -> Tile;
     pub fn index(self) -> u32;
     pub fn flip_x(self) -> bool; // ídem flip_y, flip_d

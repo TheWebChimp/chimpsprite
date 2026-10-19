@@ -7,16 +7,17 @@ use serde::{Deserialize, Serialize};
 use crate::{ColorMode, Image, RawChunk};
 
 /// Valor de una celda de tilemap, con el mismo layout que Aseprite:
-/// bits 0–28 índice del tile, bit 29 flip X, bit 30 flip Y, bit 31 flip D (transponer).
+/// bits 0–28 índice del tile, bit 31 flip X, bit 30 flip Y, bit 29 flip D (transponer).
+/// Coincide con las máscaras estándar de Aseprite y con los flags del GID de Tiled.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tile(pub u32);
 
 impl Tile {
     pub const EMPTY: Tile = Tile(0);
     pub const INDEX_MASK: u32 = 0x1fff_ffff;
-    pub const FLIP_X: u32 = 1 << 29;
+    pub const FLIP_X: u32 = 1 << 31;
     pub const FLIP_Y: u32 = 1 << 30;
-    pub const FLIP_D: u32 = 1 << 31;
+    pub const FLIP_D: u32 = 1 << 29;
 
     pub fn new(index: u32, flip_x: bool, flip_y: bool, flip_d: bool) -> Tile {
         let flag = |on: bool, bit: u32| if on { bit } else { 0 };
@@ -133,7 +134,8 @@ mod tests {
     #[test]
     fn tiles_pack_index_and_flips_like_aseprite() {
         let t = Tile::new(5, true, false, true);
-        assert_eq!(t.0, 5 | 0x2000_0000 | 0x8000_0000);
+        assert_eq!(t.0, 5 | Tile::FLIP_X | Tile::FLIP_D);
+        assert_eq!(t.0, 5 | 0x8000_0000 | 0x2000_0000);
         assert_eq!(
             (t.index(), t.flip_x(), t.flip_y(), t.flip_d()),
             (5, true, false, true)

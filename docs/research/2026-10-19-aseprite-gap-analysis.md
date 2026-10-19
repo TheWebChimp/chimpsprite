@@ -12,7 +12,7 @@ Fuentes: `aseprite-features.md` y `chimpsprite-features.md` (rama `symbols`, HEA
 - Layer tipo `Tilemap` (layer type 2 en .aseprite) que referencia un `Tileset` por índice; varios layers pueden compartir el mismo tileset.
 - Tileset: `name`, tamaño de tile (= grid; w/h), `base index` (número que ve el usuario para el primer tile, por defecto 1), user data (texto + color + properties), user data por tile (1.3), opcional archivo externo.
 - Tile 0 = tile vacío (siempre transparente); los tiles se guardan como imágenes del mismo color mode que el sprite.
-- Valor de tile = u32: bits 0..28 = tile index (`0x1fffffff`), bit 29 = flip X, bit 30 = flip Y, bit 31 = flip D (diagonal/transposición; X+Y+D da las 8 orientaciones).
+- Valor de tile = u32: bits 0..28 = tile index (`0x1fffffff`), bit 31 = flip X, bit 30 = flip Y, bit 29 = flip D (diagonal/transposición; X+Y+D da las 8 orientaciones).
 - `Allowed flips` del tileset (X/Y/D): en modo Auto permite reconocer un tile como versión volteada de otro existente en vez de crear uno nuevo.
 
 **Edición**
