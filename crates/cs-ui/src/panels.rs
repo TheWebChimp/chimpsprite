@@ -455,10 +455,17 @@ fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
         return;
     };
     let mut c32 = to_color32(current);
-    // El cuadro de saturación/brillo ocupa todo el ancho del panel.
+    // El cuadro de saturación/brillo ocupa todo el ancho del panel. Se restaura después: si no,
+    // los sliders de los paneles siguientes heredan ese ancho y agrandan el panel en cada frame.
+    let slider_width = ui.spacing().slider_width;
     ui.spacing_mut().slider_width = (ui.available_width() - 8.0).max(120.0);
-    if egui::color_picker::color_picker_color32(ui, &mut c32, egui::color_picker::Alpha::OnlyBlend)
-    {
+    let picked = egui::color_picker::color_picker_color32(
+        ui,
+        &mut c32,
+        egui::color_picker::Alpha::OnlyBlend,
+    );
+    ui.spacing_mut().slider_width = slider_width;
+    if picked {
         let [r, g, b, a] = c32.to_srgba_unmultiplied();
         editor.primary = cs_core::PixelValue::Rgba(cs_core::Rgba::new(r, g, b, a));
     }
@@ -522,6 +529,13 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView, notic
                 theme::ACCENT,
                 "Editing layer mask: white reveals, black hides",
             );
+        }
+        let on_instance = s
+            .layer(editor.layer)
+            .is_some_and(|l| l.kind == cs_core::LayerKind::Instance);
+        if on_instance && editor.active_tool().paints() {
+            ui.separator();
+            ui.colored_label(theme::ACCENT, "Instance layer: edit the source artboard");
         }
         if let Some(hint) = canvas.guide_hint {
             ui.separator();
@@ -599,6 +613,142 @@ pub fn artboards(
     resize
 }
 
+/// Gesto sobre campos numéricos o sliders: un solo paso de undo por arrastre o edición.
+/// Llamar antes de aplicar el cambio; devuelve el grupo (id del widget que cambió) si cambió.
+/// El gesto anterior del mismo widget ya terminó en `gesture_end` (al soltar o perder el foco),
+/// así que acá solo se corta al tomar foco; cortar en `drag_started` partiría en dos el
+/// "clic (el slider salta) + arrastre".
+fn gesture_group(editor: &mut Editor, responses: &[&egui::Response]) -> Option<u64> {
+    if responses.iter().any(|r| r.gained_focus()) {
+        editor.end_group();
+    }
+    responses.iter().find(|r| r.changed()).map(|r| r.id.value())
+}
+
+/// Llamar después de aplicar: cierra el gesto si terminó (al soltar el botón, al perder el foco,
+/// o si el cambio no vino de un botón apretado ni de un campo con foco).
+fn gesture_end(editor: &mut Editor, responses: &[&egui::Response]) {
+    let ended = responses.iter().any(|r| {
+        r.drag_stopped()
+            || r.clicked()
+            || r.lost_focus()
+            || (r.changed() && !r.is_pointer_button_down_on() && !r.has_focus())
+    });
+    if ended {
+        editor.end_group();
+    }
+}
+
+/// Rango de los campos de posición de la instancia.
+const POSITION_RANGE: std::ops::RangeInclusive<i32> = -16384..=16384;
+
+/// Propiedades de la instancia de la capa actual en el frame actual. Devuelve `true` si se
+/// entró al símbolo (el lienzo debe centrarlo).
+pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
+    let Some(key) = editor.instance_key() else {
+        return false;
+    };
+    ui.heading("Instance");
+    let is_key = editor.is_instance_keyframe(editor.layer, editor.frame);
+    if !is_key {
+        ui.weak("Changes create a keyframe on this frame.");
+    }
+    let names: Vec<(cs_core::ArtboardId, String)> = editor.instance_candidates();
+    let current = key
+        .source
+        .and_then(|s| editor.document.artboard(s))
+        .map_or("(missing)".to_string(), |a| a.name.clone());
+    egui::ComboBox::from_label("Source")
+        .selected_text(current)
+        .show_ui(ui, |ui| {
+            for (id, name) in names {
+                if ui.selectable_label(key.source == Some(id), name).clicked() {
+                    editor.update_instance_key(|k| k.source = Some(id));
+                }
+            }
+        });
+    let (mut x, mut y) = key.position;
+    let (rx, ry) = ui
+        .horizontal(|ui| {
+            ui.label("Position");
+            let rx = widgets::number(ui, &mut x, POSITION_RANGE, "");
+            let ry = widgets::number(ui, &mut y, POSITION_RANGE, "");
+            (rx, ry)
+        })
+        .inner;
+    if let Some(group) = gesture_group(editor, &[&rx, &ry]) {
+        editor.update_instance_key_grouped(Some(group), |k| k.position = (x, y));
+    }
+    gesture_end(editor, &[&rx, &ry]);
+    let (mut fh, mut fv) = (key.flip_h, key.flip_v);
+    ui.horizontal(|ui| {
+        if ui.checkbox(&mut fh, "Flip H").changed() {
+            editor.update_instance_key(|k| k.flip_h = fh);
+        }
+        if ui.checkbox(&mut fv, "Flip V").changed() {
+            editor.update_instance_key(|k| k.flip_v = fv);
+        }
+    });
+    let mut opacity = key.opacity;
+    let r = ui.add(egui::Slider::new(&mut opacity, 0..=255).text("Opacity"));
+    if let Some(group) = gesture_group(editor, &[&r]) {
+        editor.update_instance_key_grouped(Some(group), |k| k.opacity = opacity);
+    }
+    gesture_end(editor, &[&r]);
+    use cs_core::{GraphicPlay, Timing};
+    let (mut first, mut mode) = match key.timing {
+        Timing::Graphic { first_frame, play } => (first_frame, Some(play)),
+        Timing::MovieClip { first_frame } => (first_frame, None),
+    };
+    let before = (first, mode);
+    ui.horizontal(|ui| {
+        ui.selectable_value(&mut mode, Some(GraphicPlay::Loop), "Loop")
+            .on_hover_text("Graphic: follows this artboard's frames, looping");
+        ui.selectable_value(&mut mode, Some(GraphicPlay::Once), "Once")
+            .on_hover_text("Graphic: plays once and holds the last frame");
+        ui.selectable_value(&mut mode, Some(GraphicPlay::Single), "Single")
+            .on_hover_text("Graphic: always the same frame");
+        ui.selectable_value(&mut mode, None, "Movie clip")
+            .on_hover_text("Plays on its own clock with its own frame durations");
+    });
+    let frames = key
+        .source
+        .and_then(|s| editor.document.artboard(s))
+        .map_or(1, |a| a.sprite.frames.len());
+    let first_response = ui
+        .horizontal(|ui| {
+            ui.label("First frame");
+            let mut shown = first + 1;
+            let r = widgets::number(ui, &mut shown, 1..=frames, "");
+            if r.changed() {
+                first = shown - 1;
+            }
+            r
+        })
+        .inner;
+    // El modo es un clic (paso propio); el primer frame se arrastra (un paso por gesto).
+    let group = gesture_group(editor, &[&first_response]).filter(|_| mode == before.1);
+    if (first, mode) != before {
+        editor.update_instance_key_grouped(group, |k| {
+            k.timing = match mode {
+                Some(play) => Timing::Graphic {
+                    first_frame: first,
+                    play,
+                },
+                None => Timing::MovieClip { first_frame: first },
+            }
+        });
+    }
+    gesture_end(editor, &[&first_response]);
+    let entered = ui
+        .button("Edit Symbol")
+        .on_hover_text("Go to the source artboard (double-click with Move)")
+        .clicked()
+        && editor.enter_instance();
+    ui.separator();
+    entered
+}
+
 /// Panel de slices: lista, nombre, color, datos y la clave del frame actual (rect y pivote).
 pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.horizontal(|ui| {
@@ -630,6 +780,7 @@ pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
             ui.painter()
                 .rect_filled(r, 2.0, Color32::from_rgb(color.r, color.g, color.b));
             if ui.selectable_label(editor.slice == Some(i), name).clicked() {
+                editor.end_group();
                 editor.slice = Some(i);
                 editor.set_tool(ToolKind::Slice);
             }
@@ -678,38 +829,48 @@ pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
         format!("Frame {} (from frame {})", frame + 1, key.frame + 1)
     });
     let (mut x, mut y, mut w, mut h) = key.bounds;
-    let mut changed = false;
-    ui.horizontal(|ui| {
-        ui.label("X");
-        changed |= widgets::number(ui, &mut x, -4096..=4096, "").changed();
-        ui.label("Y");
-        changed |= widgets::number(ui, &mut y, -4096..=4096, "").changed();
-    });
-    ui.horizontal(|ui| {
-        ui.label("W");
-        changed |= widgets::number(ui, &mut w, 1..=4096, "").changed();
-        ui.label("H");
-        changed |= widgets::number(ui, &mut h, 1..=4096, "").changed();
-    });
-    if changed {
-        editor.update_slice_key(|k| k.bounds = (x, y, w, h));
+    let (rx, ry) = ui
+        .horizontal(|ui| {
+            ui.label("X");
+            let rx = widgets::number(ui, &mut x, -4096..=4096, "");
+            ui.label("Y");
+            let ry = widgets::number(ui, &mut y, -4096..=4096, "");
+            (rx, ry)
+        })
+        .inner;
+    let (rw, rh) = ui
+        .horizontal(|ui| {
+            ui.label("W");
+            let rw = widgets::number(ui, &mut w, 1..=4096, "");
+            ui.label("H");
+            let rh = widgets::number(ui, &mut h, 1..=4096, "");
+            (rw, rh)
+        })
+        .inner;
+    let rect_fields = [&rx, &ry, &rw, &rh];
+    if let Some(group) = gesture_group(editor, &rect_fields) {
+        editor.update_slice_key_grouped(Some(group), |k| k.bounds = (x, y, w, h));
     }
+    gesture_end(editor, &rect_fields);
     let mut has_pivot = key.pivot.is_some();
     if ui.checkbox(&mut has_pivot, "Pivot").changed() {
         let default = (w as i32 / 2, h as i32);
         editor.update_slice_key(|k| k.pivot = has_pivot.then_some(default));
     }
     if let Some((mut px, mut py)) = key.pivot {
-        let mut moved = false;
-        ui.horizontal(|ui| {
-            ui.label("X");
-            moved |= widgets::number(ui, &mut px, -4096..=4096, "").changed();
-            ui.label("Y");
-            moved |= widgets::number(ui, &mut py, -4096..=4096, "").changed();
-        });
-        if moved {
-            editor.update_slice_key(|k| k.pivot = Some((px, py)));
+        let (rx, ry) = ui
+            .horizontal(|ui| {
+                ui.label("X");
+                let rx = widgets::number(ui, &mut px, -4096..=4096, "");
+                ui.label("Y");
+                let ry = widgets::number(ui, &mut py, -4096..=4096, "");
+                (rx, ry)
+            })
+            .inner;
+        if let Some(group) = gesture_group(editor, &[&rx, &ry]) {
+            editor.update_slice_key_grouped(Some(group), |k| k.pivot = Some((px, py)));
         }
+        gesture_end(editor, &[&rx, &ry]);
     }
     if own_key
         && slice.keys.first().is_some_and(|k| k.frame != frame)
@@ -734,5 +895,79 @@ pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
                 pivot: None,
             })
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cs_core::{ColorMode, Sprite};
+    use eframe::egui::{Event, PointerButton, Pos2, RawInput, pos2};
+
+    use super::*;
+
+    /// Corre un frame con un slider de opacidad conectado como en el panel de instancia;
+    /// devuelve el rect del slider.
+    fn frame(ctx: &egui::Context, editor: &mut Editor, events: Vec<Event>) -> Rect {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+            events,
+            ..Default::default()
+        };
+        let mut rect = Rect::NOTHING;
+        let mut output = ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let mut opacity = editor.instance_key().unwrap().opacity;
+                let r = ui.add(egui::Slider::new(&mut opacity, 0..=255));
+                if let Some(group) = gesture_group(editor, &[&r]) {
+                    editor.update_instance_key_grouped(Some(group), |k| k.opacity = opacity);
+                }
+                gesture_end(editor, &[&r]);
+                rect = r.rect;
+            });
+        });
+        output.textures_delta.clear();
+        rect
+    }
+
+    fn button(pos: Pos2, pressed: bool) -> Event {
+        Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        }
+    }
+
+    #[test]
+    fn slider_click_then_drag_is_one_undo_step() {
+        let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+        e.add_artboard(4, 4);
+        e.activate(cs_core::ArtboardId(1));
+        e.add_instance_layer(cs_core::ArtboardId(2));
+        let original = e.instance_key().unwrap();
+        let ctx = egui::Context::default();
+        let r = frame(&ctx, &mut e, vec![]);
+        let y = r.center().y;
+        let at = |t: f32| pos2(r.left() + r.width() * t, y);
+        // Clic en el 20 % (el valor salta), arrastre hasta el 30 % y suelta.
+        frame(&ctx, &mut e, vec![Event::PointerMoved(at(0.2))]);
+        frame(&ctx, &mut e, vec![button(at(0.2), true)]);
+        for t in [0.22, 0.25, 0.3] {
+            frame(&ctx, &mut e, vec![Event::PointerMoved(at(t))]);
+        }
+        frame(&ctx, &mut e, vec![button(at(0.3), false)]);
+        frame(&ctx, &mut e, vec![]);
+        let dragged = e.instance_key().unwrap().opacity;
+        assert_ne!(dragged, original.opacity, "the slider moved");
+        // Un segundo clic es otro paso.
+        frame(&ctx, &mut e, vec![Event::PointerMoved(at(0.6))]);
+        frame(&ctx, &mut e, vec![button(at(0.6), true)]);
+        frame(&ctx, &mut e, vec![button(at(0.6), false)]);
+        frame(&ctx, &mut e, vec![]);
+        assert_ne!(e.instance_key().unwrap().opacity, dragged);
+        e.undo();
+        assert_eq!(e.instance_key().unwrap().opacity, dragged);
+        e.undo();
+        assert_eq!(e.instance_key().unwrap(), original);
     }
 }

@@ -1,7 +1,9 @@
 //! Artboards, capas, frames, tags, cels e inbetween.
 
 use cs_commands::{Command, DocCommand, LayerProps, ops};
-use cs_core::{AnimDirection, Artboard, BlendMode, Cel, Frame, LayerKind, Rgba, Tag};
+use cs_core::{
+    AnimDirection, Artboard, BlendMode, Cel, Frame, GraphicPlay, LayerKind, Rgba, Tag, Timing,
+};
 
 use crate::error::{Result, invalid};
 use crate::ops::document::{blank_sprite, check_size};
@@ -435,6 +437,100 @@ impl Session {
         Ok(Reply::text(format!("Removed slice '{}'.", p.name)))
     }
 
+    // --- Instancias ---
+
+    pub fn add_instance_layer(&mut self, p: AddInstanceLayer) -> Result<Reply> {
+        let d = &self.doc(&p.doc)?.document;
+        let host = target::artboard(d, p.artboard.as_ref())?;
+        let source = target::artboard(d, Some(&p.source))?;
+        if d.would_cycle(host, source) {
+            return Err(invalid(
+                "the source artboard contains this one; that would be a cycle",
+            ));
+        }
+        let sprite = &d.artboard(host).expect("resolved").sprite;
+        if sprite.color_mode != cs_core::ColorMode::Rgba {
+            return Err(invalid("instances can only be placed in RGBA artboards"));
+        }
+        target::frame(sprite, p.frame)?;
+        let src = d.artboard(source).expect("resolved");
+        let x =
+            p.x.unwrap_or((sprite.width as i32 - src.sprite.width as i32) / 2);
+        let y =
+            p.y.unwrap_or((sprite.height as i32 - src.sprite.height as i32) / 2);
+        let name = p.name.clone().unwrap_or_else(|| src.name.clone());
+        // Arriba de todo, en el nivel raíz (no dentro del grupo de la última capa).
+        let cmd = ops::new_instance_layer(sprite, None, p.frame, source, &name, (x, y));
+        let reply = format!("Placed '{}' as layer '{name}'.", src.name);
+        self.run_on(&p.doc, host, vec![cmd])?;
+        Ok(Reply::text(reply))
+    }
+
+    pub fn set_instance_key(&mut self, p: SetInstanceKey) -> Result<Reply> {
+        let d = &self.doc(&p.doc)?.document;
+        let host = target::artboard(d, p.artboard.as_ref())?;
+        let source = p
+            .source
+            .as_ref()
+            .map(|r| target::artboard(d, Some(r)))
+            .transpose()?;
+        let sprite = &d.artboard(host).expect("resolved").sprite;
+        let layer = target::layer(sprite, &p.layer)?;
+        target::frame(sprite, p.frame)?;
+        let cmd = ops::update_instance_key(sprite, layer, p.frame, |k| {
+            if let Some(s) = source {
+                k.source = Some(s);
+            }
+            k.position = (p.x.unwrap_or(k.position.0), p.y.unwrap_or(k.position.1));
+            k.flip_h = p.flip_h.unwrap_or(k.flip_h);
+            k.flip_v = p.flip_v.unwrap_or(k.flip_v);
+            k.opacity = p.opacity.unwrap_or(k.opacity);
+            let first = p.first_frame.unwrap_or(match k.timing {
+                Timing::Graphic { first_frame, .. } | Timing::MovieClip { first_frame } => {
+                    first_frame
+                }
+            });
+            k.timing = match (&p.timing, k.timing) {
+                (Some(TimingArg::MovieClip), _) => Timing::MovieClip { first_frame: first },
+                (Some(t), _) => Timing::Graphic {
+                    first_frame: first,
+                    play: match t {
+                        TimingArg::Once => GraphicPlay::Once,
+                        TimingArg::Single => GraphicPlay::Single,
+                        _ => GraphicPlay::Loop,
+                    },
+                },
+                (None, Timing::Graphic { play, .. }) => Timing::Graphic {
+                    first_frame: first,
+                    play,
+                },
+                (None, Timing::MovieClip { .. }) => Timing::MovieClip { first_frame: first },
+            };
+        })
+        .ok_or_else(|| {
+            invalid(
+                "not an instance layer, no keyframe at or before that frame, or nothing changed",
+            )
+        })?;
+        self.run_on(&p.doc, host, vec![cmd])?;
+        Ok(Reply::text(format!(
+            "Instance key set at frame {}.",
+            p.frame
+        )))
+    }
+
+    pub fn remove_instance_key(&mut self, p: RemoveInstanceKey) -> Result<Reply> {
+        let (host, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let layer = target::layer(sprite, &p.layer)?;
+        let cmd = ops::remove_instance_key(sprite, layer, p.frame)
+            .ok_or_else(|| invalid(format!("no instance keyframe at frame {}", p.frame)))?;
+        self.run_on(&p.doc, host, vec![cmd])?;
+        Ok(Reply::text(format!(
+            "Removed the keyframe at frame {}.",
+            p.frame
+        )))
+    }
+
     // --- Cels ---
 
     pub fn link_cels(&mut self, p: CelRange) -> Result<Reply> {
@@ -678,6 +774,120 @@ mod tests {
         assert!(
             s.remove_slice(p(json!({"doc": "d1", "name": "hit"})))
                 .is_err()
+        );
+    }
+
+    #[test]
+    fn instance_layers_go_on_top_at_root_level() {
+        let mut s = session(8, 8);
+        s.add_artboard(p(
+            json!({"doc": "d1", "name": "coin", "width": 2, "height": 2}),
+        ))
+        .unwrap();
+        s.add_layer(p(json!({"doc": "d1", "name": "G", "group": true})))
+            .unwrap();
+        s.add_layer(p(json!({"doc": "d1", "name": "inner", "into": "G"})))
+            .unwrap();
+        s.add_instance_layer(p(json!({"doc": "d1", "source": "coin", "name": "Coin"})))
+            .unwrap();
+        let sprite = s.sprite("d1", None).unwrap().1;
+        let top = sprite.layers.last().unwrap();
+        assert_eq!(top.name, "Coin");
+        assert_eq!(top.parent, None, "not inside the last layer's group");
+    }
+
+    #[test]
+    fn instances_place_key_render_and_reject_cycles() {
+        let mut s = session(8, 8);
+        s.add_artboard(p(
+            json!({"doc": "d1", "name": "coin", "width": 2, "height": 2}),
+        ))
+        .unwrap();
+        s.draw_pixels(p(json!({"doc": "d1", "artboard": "coin",
+            "pixels": [{"x": 0, "y": 0, "color": "#ff0000"}]})))
+            .unwrap();
+        s.add_frame(p(json!({"doc": "d1"}))).unwrap();
+        s.add_instance_layer(p(json!({"doc": "d1", "source": "coin", "x": 3, "y": 4,
+            "name": "Coin"})))
+            .unwrap();
+        let red = |s: &Session, x: usize, y: usize| {
+            cs_render::render_frame(
+                &cs_render::materialize(
+                    &s.doc("d1").unwrap().document,
+                    s.sprite("d1", None).unwrap().1,
+                    0..2,
+                ),
+                1,
+            )[y * 8 + x]
+                .r
+        };
+        assert_eq!(red(&s, 3, 4), 255);
+        s.set_instance_key(p(json!({"doc": "d1", "layer": "Coin", "frame": 1,
+            "x": 5, "flip_h": true, "timing": "movie_clip"})))
+            .unwrap();
+        assert_eq!(red(&s, 6, 4), 255, "x=5 and flipped: the dot lands on 6");
+        let described = crate::ops::test_util::json(&s.describe(p(json!({"doc": "d1"}))).unwrap());
+        let layer = &described["artboards"][0]["layers_bottom_to_top"][1];
+        assert_eq!(layer["kind"], "instance");
+        assert_eq!(layer["instance"]["keys"].as_array().unwrap().len(), 2);
+        let image = &described["artboards"][0]["layers_bottom_to_top"][0];
+        assert!(
+            image.get("instance").is_none(),
+            "only instance layers say so"
+        );
+        s.remove_instance_key(p(json!({"doc": "d1", "layer": "Coin", "frame": 1})))
+            .unwrap();
+        let err = s
+            .add_instance_layer(p(json!({"doc": "d1", "artboard": "coin", "source": 1})))
+            .expect_err("coin cannot contain the artboard that contains it");
+        assert!(
+            err.to_string().contains("cycle"),
+            "error message should mention cycle: {}",
+            err
+        );
+
+        // Test that set_instance_key also rejects cycles
+        s.add_artboard(p(
+            json!({"doc": "d1", "name": "gem", "width": 2, "height": 2}),
+        ))
+        .unwrap();
+        s.add_instance_layer(p(
+            json!({"doc": "d1", "artboard": "coin", "source": "gem", "x": 0, "y": 0,
+            "name": "GemInstance"}),
+        ))
+        .unwrap();
+        let (_, coin_sprite) = s.sprite("d1", Some(&Ref::Name("coin".into()))).unwrap();
+        let gem_layer = target::layer(coin_sprite, &Ref::Name("GemInstance".into())).unwrap();
+        let err = s
+            .set_instance_key(p(
+                json!({"doc": "d1", "artboard": "coin", "layer": "GemInstance",
+            "frame": 0, "source": 1}),
+            ))
+            .expect_err("coin cannot re-point its instance to the artboard that contains it");
+        let err_msg = err.to_string();
+        assert!(
+            err_msg.contains("contain") || err_msg.contains("cycle"),
+            "error message should mention containing or cycle: {}",
+            err_msg
+        );
+        // Verify the layer's source is unchanged
+        let (_, coin_sprite_after) = s.sprite("d1", Some(&Ref::Name("coin".into()))).unwrap();
+        let layer = coin_sprite_after.layer(gem_layer).expect("layer exists");
+        let instance = layer.instance.as_ref().expect("is instance layer");
+        let key = instance.key_at(0).expect("key at frame 0");
+        let gem_id = s
+            .doc("d1")
+            .unwrap()
+            .document
+            .artboards
+            .iter()
+            .find(|a| a.name == "gem")
+            .map(|a| a.id)
+            .expect("gem artboard exists");
+        assert_eq!(
+            key.source,
+            Some(gem_id),
+            "source should still be gem, not the root artboard"
         );
     }
 

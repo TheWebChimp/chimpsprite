@@ -726,6 +726,63 @@ pub struct RemoveSlice {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TimingArg {
+    /// Follows the parent's frames (Animate "Graphic").
+    Loop,
+    /// Follows the parent's frames and stops on the last one.
+    Once,
+    /// Always shows `first_frame`.
+    Single,
+    /// Plays on its own clock with its own frame durations, looping (Animate "Movie clip").
+    MovieClip,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddInstanceLayer {
+    pub doc: String,
+    /// Artboard that will contain the instance (default: the first one).
+    pub artboard: Option<Ref>,
+    /// Artboard to place (the symbol).
+    pub source: Ref,
+    /// Layer name (default: the source artboard's name).
+    pub name: Option<String>,
+    /// First frame where the instance appears (default 0).
+    #[serde(default)]
+    pub frame: usize,
+    /// Top-left corner of the symbol in the container's pixels (default: centered).
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetInstanceKey {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Ref,
+    /// The change applies from this frame on (creates a keyframe there if needed).
+    #[serde(default)]
+    pub frame: usize,
+    pub source: Option<Ref>,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub flip_h: Option<bool>,
+    pub flip_v: Option<bool>,
+    pub opacity: Option<u8>,
+    pub timing: Option<TimingArg>,
+    /// Symbol frame to start from.
+    pub first_frame: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RemoveInstanceKey {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Ref,
+    pub frame: usize,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 pub struct ApplyCommands {
     pub doc: String,
     /// Serialized DocCommand values, applied atomically as one undo step, e.g.

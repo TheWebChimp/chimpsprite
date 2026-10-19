@@ -399,6 +399,9 @@ pub struct DocView<'a> {
     pub selection: Option<Mask>,
 }
 
+/// Lo que edita un gesto agrupado: artboard, capa, frame y slice seleccionados.
+type MergeTarget = (ArtboardId, LayerId, usize, Option<usize>);
+
 /// Estado del documento abierto y de la edición. No sabe nada de egui.
 pub struct Editor {
     pub document: Document,
@@ -451,6 +454,10 @@ pub struct Editor {
     /// Slice seleccionado del artboard activo (índice en `sprite.slices`).
     pub slice: Option<usize>,
     pub text_style: TextStyle,
+    /// Gesto en curso (p. ej. arrastrar un campo del panel) cuyos cambios se juntan en un solo
+    /// paso de undo: id del widget y lo que se estaba editando (artboard, capa, frame, slice).
+    /// El mismo widget sirve para todas las capas, así que el objetivo también tiene que coincidir.
+    merge: Option<(u64, MergeTarget)>,
 }
 
 impl Editor {
@@ -491,6 +498,7 @@ impl Editor {
             shift_at_press: false,
             text: None,
             text_style: TextStyle::default(),
+            merge: None,
             edit_mask: false,
             slice: None,
         };
@@ -549,6 +557,7 @@ impl Editor {
             return;
         }
         self.stop();
+        self.end_group();
         self.frame_range = None;
         self.views.insert(self.active, (self.layer, self.frame));
         self.active = id;
@@ -581,6 +590,7 @@ impl Editor {
     }
 
     pub fn execute_doc(&mut self, cmd: DocCommand) -> bool {
+        self.merge = None;
         match self.history.execute(&mut self.document, cmd) {
             Ok(()) => {
                 self.revision += 1;
@@ -595,7 +605,42 @@ impl Editor {
         }
     }
 
+    /// Como `execute`, pero los comandos seguidos del mismo `group` forman un solo paso de undo.
+    /// El comando debe reemplazar un estado completo (como `SetInstanceTrack` o `SetSlices`) para
+    /// que el inverso del primero deshaga todo el gesto.
+    pub fn execute_grouped(&mut self, cmd: Command, group: u64) -> bool {
+        let cmd = DocCommand::OnArtboard {
+            id: self.active,
+            cmd,
+        };
+        let target = (self.active, self.layer, self.frame, self.slice);
+        let result = if self.merge == Some((group, target)) {
+            self.history.execute_merged(&mut self.document, cmd)
+        } else {
+            self.history.execute(&mut self.document, cmd)
+        };
+        match result {
+            Ok(()) => {
+                self.merge = Some((group, target));
+                self.revision += 1;
+                self.doc_version += 1;
+                self.ensure_valid();
+                true
+            }
+            Err(e) => {
+                log::warn!("command rejected: {e}");
+                false
+            }
+        }
+    }
+
+    /// Termina el gesto agrupado en curso: el próximo cambio es un paso de undo nuevo.
+    pub fn end_group(&mut self) {
+        self.merge = None;
+    }
+
     pub fn undo(&mut self) {
+        self.merge = None;
         match self.history.undo(&mut self.document) {
             Ok(true) => {
                 self.revision += 1;
@@ -608,6 +653,7 @@ impl Editor {
     }
 
     pub fn redo(&mut self) {
+        self.merge = None;
         match self.history.redo(&mut self.document) {
             Ok(true) => {
                 self.revision += 1;

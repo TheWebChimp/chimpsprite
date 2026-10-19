@@ -3,7 +3,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use cs_core::{Cel, ImageId, Layer, LayerId, LayerKind, LayerMask, Mask, PixelValue, Sprite};
+use cs_core::{
+    ArtboardId, Cel, ImageId, InstanceKey, Layer, LayerId, LayerKind, LayerMask, Mask, PixelValue,
+    Sprite,
+};
 
 use crate::Command;
 
@@ -19,10 +22,10 @@ pub enum LayerDrop {
 /// Capa (o grupo) nueva justo encima de `above` (en su mismo grupo), o arriba de todo.
 pub fn new_layer(sprite: &Sprite, above: Option<LayerId>, kind: LayerKind) -> Command {
     let id = sprite.next_layer_id();
-    let prefix = if kind == LayerKind::Group {
-        "Group"
-    } else {
-        "Layer"
+    let prefix = match kind {
+        LayerKind::Group => "Group",
+        LayerKind::Instance => "Instance",
+        LayerKind::Image => "Layer",
     };
     let mut layer = Layer::new_image(id, format!("{prefix} {}", id.0));
     layer.kind = kind;
@@ -32,6 +35,57 @@ pub fn new_layer(sprite: &Sprite, above: Option<LayerId>, kind: LayerKind) -> Co
     };
     layer.parent = parent;
     Command::AddLayer { index, layer }
+}
+
+/// Capa de instancia de `source` sobre `above`, con una key en `frame`.
+pub fn new_instance_layer(
+    sprite: &Sprite,
+    above: Option<LayerId>,
+    frame: usize,
+    source: ArtboardId,
+    name: &str,
+    position: (i32, i32),
+) -> Command {
+    let Command::AddLayer { index, mut layer } = new_layer(sprite, above, LayerKind::Instance)
+    else {
+        unreachable!("new_layer devuelve AddLayer");
+    };
+    layer.name = name.to_string();
+    layer.instance = Some(cs_core::InstanceTrack {
+        keys: vec![InstanceKey::new(frame, source, position)],
+    });
+    Command::AddLayer { index, layer }
+}
+
+/// Cambia con `f` la key vigente de `layer` en `frame`; si `frame` no es keyframe, la copia ahí
+/// primero. `None` si no hay key vigente o nada cambia.
+pub fn update_instance_key(
+    sprite: &Sprite,
+    layer: LayerId,
+    frame: usize,
+    f: impl FnOnce(&mut InstanceKey),
+) -> Option<Command> {
+    let track = sprite.layer(layer)?.instance.as_ref()?;
+    let mut key = *track.key_at(frame)?;
+    key.frame = frame;
+    f(&mut key);
+    let mut new = track.clone();
+    new.set_key(key);
+    (new != *track).then_some(Command::SetInstanceTrack { layer, track: new })
+}
+
+/// Quita la key que empieza en `frame`. Si es la única, quita la capa.
+pub fn remove_instance_key(sprite: &Sprite, layer: LayerId, frame: usize) -> Option<Command> {
+    let track = sprite.layer(layer)?.instance.as_ref()?;
+    if !track.keys.iter().any(|k| k.frame == frame) {
+        return None;
+    }
+    if track.keys.len() == 1 {
+        return remove_layer_tree(sprite, layer);
+    }
+    let mut new = track.clone();
+    new.remove_key(frame);
+    Some(Command::SetInstanceTrack { layer, track: new })
 }
 
 /// Quita la capa y, si es un grupo, todo su contenido.
@@ -328,6 +382,56 @@ mod tests {
             .iter()
             .map(|l| (l.id.0, l.parent.map(|p| p.0)))
             .collect()
+    }
+
+    #[test]
+    fn instance_layer_keys_update_and_remove() {
+        let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+        for i in 1..4 {
+            crate::Command::AddFrame {
+                index: i,
+                frame: Frame { duration_ms: 100 },
+            }
+            .apply(&mut s)
+            .unwrap();
+        }
+        let cmd = new_instance_layer(&s, Some(LayerId(1)), 1, ArtboardId(2), "Hero", (3, 4));
+        cmd.apply(&mut s).unwrap();
+        let layer = s.layers.last().unwrap().clone();
+        assert_eq!(
+            (layer.kind, layer.name.as_str()),
+            (LayerKind::Instance, "Hero")
+        );
+        let id = layer.id;
+        let track = |s: &Sprite| s.layer(id).unwrap().instance.clone().unwrap();
+        assert_eq!(
+            track(&s).keys,
+            vec![InstanceKey::new(1, ArtboardId(2), (3, 4))]
+        );
+        // Editar en un frame sin key crea una copia de la vigente ahí.
+        update_instance_key(&s, id, 3, |k| k.flip_h = true)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        let t = track(&s);
+        assert_eq!(t.keys.len(), 2);
+        assert!(!t.key_at(2).unwrap().flip_h && t.key_at(3).unwrap().flip_h);
+        assert_eq!(t.key_at(3).unwrap().position, (3, 4));
+        // Sin cambios, no hay comando; antes de la primera key, tampoco.
+        assert!(update_instance_key(&s, id, 3, |_| {}).is_none());
+        assert!(update_instance_key(&s, id, 0, |k| k.opacity = 1).is_none());
+        // Borrar una key; borrar la única quita la capa.
+        remove_instance_key(&s, id, 3)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        assert_eq!(track(&s).keys.len(), 1);
+        assert!(remove_instance_key(&s, id, 2).is_none(), "no key there");
+        remove_instance_key(&s, id, 1)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+        assert!(s.layer(id).is_none());
     }
 
     #[test]

@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
+mod instance;
 mod normal;
+pub use instance::{bake_instances, materialize};
 pub use normal::normal_map;
 
 use cs_core::{BlendMode, ColorMode, Image, ImageId, Layer, LayerKind, PixelValue, Rgba, Sprite};
@@ -341,6 +343,13 @@ fn tinted(c: Rgba, tint: Rgba) -> Rgba {
     Rgba::new(mix(c.r, tint.r), mix(c.g, tint.g), mix(c.b, tint.b), c.a)
 }
 
+/// Frames que lee `render_onion` para `frame` (recortados a `0..len`): los que hay que
+/// materializar antes de llamarla.
+pub fn onion_frames(onion: &OnionSkin, frame: usize, len: usize) -> std::ops::Range<usize> {
+    let end = frame.saturating_add(onion.after).saturating_add(1).min(len);
+    frame.saturating_sub(onion.before).min(end)..end
+}
+
 /// Frame actual con los vecinos semitransparentes debajo (papel cebolla).
 pub fn render_onion(sprite: &Sprite, frame: usize, onion: &OnionSkin) -> Vec<Rgba> {
     let mut out = vec![Rgba::TRANSPARENT; (sprite.width * sprite.height) as usize];
@@ -371,6 +380,20 @@ pub fn render_onion(sprite: &Sprite, frame: usize, onion: &OnionSkin) -> Vec<Rgb
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn onion_frames_cover_neighbours_within_bounds() {
+        let onion = |before, after| OnionSkin {
+            before,
+            after,
+            ..Default::default()
+        };
+        assert_eq!(onion_frames(&onion(1, 1), 3, 10), 2..5);
+        assert_eq!(onion_frames(&onion(2, 3), 1, 10), 0..5);
+        assert_eq!(onion_frames(&onion(2, 3), 8, 10), 6..10);
+        assert_eq!(onion_frames(&onion(0, 0), 4, 10), 4..5);
+        assert_eq!(onion_frames(&onion(usize::MAX, usize::MAX), 4, 10), 0..10);
+    }
     use cs_commands::Command;
     use cs_core::*;
 

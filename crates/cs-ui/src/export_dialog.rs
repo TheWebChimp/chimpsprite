@@ -138,7 +138,9 @@ impl ExportDialog {
         editor: &Editor,
         file_name: &str,
     ) -> Result<Vec<(String, Vec<u8>)>, FileError> {
-        let sprite = editor.sprite();
+        // Las instancias se hornean en capas normales para exportar.
+        let baked = cs_render::bake_instances(&editor.document, editor.sprite());
+        let sprite = baked.as_ref().unwrap_or(editor.sprite());
         let name = editor.artboard().name.clone();
         let stem = files::stem(file_name).to_string();
         let json_name = format!("{stem}.json");
@@ -169,7 +171,8 @@ impl ExportDialog {
         json_name: &str,
         layout: SheetLayout,
     ) -> Result<Vec<(String, Vec<u8>)>, FileError> {
-        let sprite = editor.sprite();
+        let baked = cs_render::bake_instances(&editor.document, editor.sprite());
+        let sprite = baked.as_ref().unwrap_or(editor.sprite());
         let json_name = json_name.to_string();
         let sheet_png = || -> Result<Vec<u8>, FileError> {
             Ok(export::export_sheet(sprite, name, file_name, layout, self.scale, self.json)?.png)

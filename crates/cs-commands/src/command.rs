@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cs_core::{
-    ArtboardId, BlendMode, Cel, Frame, GridSettings, Image, ImageId, Layer, LayerId, LayerKind,
-    LayerMask, Palette, PixelValue, Slice, Sprite, Tag,
+    ArtboardId, BlendMode, Cel, Frame, GridSettings, Image, ImageId, InstanceKey, InstanceTrack,
+    Layer, LayerId, LayerKind, LayerMask, Palette, PixelValue, Slice, Sprite, Tag,
 };
 use serde::{Deserialize, Serialize};
 
@@ -39,6 +39,10 @@ pub enum CmdError {
     InvalidLayerTree,
     #[error("layer {0:?} has no mask")]
     NoMask(LayerId),
+    #[error("layer {0:?} is not an instance layer")]
+    NotInstanceLayer(LayerId),
+    #[error("an artboard cannot contain itself")]
+    InstanceCycle,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,6 +115,11 @@ pub enum Command {
     SetTags(Vec<Tag>),
     /// Reemplaza todos los slices (hitboxes, pivotes).
     SetSlices(Vec<Slice>),
+    /// Reemplaza las keys de una capa de instancia.
+    SetInstanceTrack {
+        layer: LayerId,
+        track: InstanceTrack,
+    },
     SetGrid(GridSettings),
     /// Reemplaza la paleta completa.
     SetPalette(Palette),
@@ -187,6 +196,21 @@ impl Command {
                 &mut doc.slices,
                 slices.clone(),
             ))),
+            Command::SetInstanceTrack { layer, track } => {
+                let l = doc
+                    .layer_mut(*layer)
+                    .ok_or(CmdError::LayerNotFound(*layer))?;
+                if l.kind != LayerKind::Instance {
+                    return Err(CmdError::NotInstanceLayer(*layer));
+                }
+                let mut track = track.clone();
+                track.normalize();
+                let old = l.instance.replace(track).unwrap_or_default();
+                Ok(Command::SetInstanceTrack {
+                    layer: *layer,
+                    track: old,
+                })
+            }
             Command::MoveLayer { id, index, parent } => move_layer(doc, *id, *index, *parent),
             Command::MoveFrame { from, to } => move_frame(doc, *from, *to),
             Command::SetFrameDuration { index, duration_ms } => {
@@ -236,6 +260,13 @@ fn resize_canvas(
     for mask in doc.layers.iter_mut().filter_map(|l| l.mask.as_mut()) {
         mask.position.0 += offset.0;
         mask.position.1 += offset.1;
+    }
+    // Las instancias se mueven con el contenido.
+    for track in doc.layers.iter_mut().filter_map(|l| l.instance.as_mut()) {
+        for key in &mut track.keys {
+            key.position.0 += offset.0;
+            key.position.1 += offset.1;
+        }
     }
     Ok(inverse)
 }
@@ -520,6 +551,29 @@ fn remap_frames(doc: &mut Sprite, f: impl Fn(usize) -> usize) {
         .collect();
 }
 
+/// Corre las keys de todas las capas de instancia por `f`; devuelve los comandos que las
+/// restauran (si dos caen en el mismo frame gana la última).
+fn remap_instances(doc: &mut Sprite, f: impl Fn(usize) -> usize) -> Vec<Command> {
+    let mut inverse = Vec::new();
+    for layer in &mut doc.layers {
+        let Some(track) = layer.instance.as_mut() else {
+            continue;
+        };
+        let old = std::mem::take(track);
+        for key in &old.keys {
+            track.set_key(InstanceKey {
+                frame: f(key.frame),
+                ..*key
+            });
+        }
+        inverse.push(Command::SetInstanceTrack {
+            layer: layer.id,
+            track: old,
+        });
+    }
+    inverse
+}
+
 fn add_frame(doc: &mut Sprite, index: usize, frame: Frame) -> Result<Command, CmdError> {
     if index > doc.frames.len() {
         return Err(CmdError::IndexOutOfRange(index));
@@ -532,11 +586,16 @@ fn add_frame(doc: &mut Sprite, index: usize, frame: Frame) -> Result<Command, Cm
     // Las claves en el frame insertado o después se corren, salvo la del frame 0 (vale desde el
     // principio).
     doc.slices = remap_slices(&old_slices, |f| if f >= index && f > 0 { f + 1 } else { f });
-    Ok(Command::Batch(vec![
+    let mut inverse = vec![
         Command::RemoveFrame { index },
         Command::SetTags(old_tags),
         Command::SetSlices(old_slices),
-    ]))
+    ];
+    // Igual que los slices: la key del frame 0 vale desde el principio y no se corre.
+    inverse.extend(remap_instances(doc, |f| {
+        if f >= index && f > 0 { f + 1 } else { f }
+    }));
+    Ok(Command::Batch(inverse))
 }
 
 fn remove_frame(doc: &mut Sprite, index: usize) -> Result<Command, CmdError> {
@@ -571,6 +630,18 @@ fn remove_frame(doc: &mut Sprite, index: usize) -> Result<Command, CmdError> {
     let old_slices = std::mem::take(&mut doc.slices);
     doc.slices = remap_slices(&old_slices, |f| if f > index { f - 1 } else { f });
     inverse.push(Command::SetSlices(old_slices));
+    inverse.extend(remap_instances(doc, |f| if f > index { f - 1 } else { f }));
+    // Una key en el último frame quitado queda fuera de rango: pasa al nuevo último frame si
+    // ahí no hay otra (si la hay, esa sigue mandando y la quitada se descarta).
+    let last = doc.frames.len() - 1;
+    for track in doc.layers.iter_mut().filter_map(|l| l.instance.as_mut()) {
+        let taken = track.keys.iter().any(|k| k.frame == last);
+        if taken {
+            track.keys.retain(|k| k.frame <= last);
+        } else if let Some(key) = track.keys.iter_mut().find(|k| k.frame > last) {
+            key.frame = last;
+        }
+    }
     Ok(Command::Batch(inverse))
 }
 
@@ -891,12 +962,203 @@ mod tests {
 
     #[test]
     fn commands_serialize() {
-        let c = Command::DrawPixels {
-            layer: LayerId(1),
-            frame: 0,
-            pixels: vec![(0, 0, PixelValue::Index(2))],
+        let cmds = [
+            Command::DrawPixels {
+                layer: LayerId(1),
+                frame: 0,
+                pixels: vec![(0, 0, PixelValue::Index(2))],
+            },
+            Command::SetInstanceTrack {
+                layer: LayerId(2),
+                track: InstanceTrack {
+                    keys: vec![InstanceKey::new(0, ArtboardId(2), (1, 2))],
+                },
+            },
+        ];
+        for c in cmds {
+            let json = serde_json::to_string(&c).unwrap();
+            assert_eq!(serde_json::from_str::<Command>(&json).unwrap(), c);
+        }
+    }
+
+    fn with_instance() -> Sprite {
+        let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+        for i in 1..3 {
+            Command::AddFrame {
+                index: i,
+                frame: Frame { duration_ms: 100 },
+            }
+            .apply(&mut s)
+            .unwrap();
+        }
+        let mut layer = Layer::new_image(LayerId(2), "inst");
+        layer.kind = LayerKind::Instance;
+        layer.instance = Some(InstanceTrack {
+            keys: vec![
+                InstanceKey::new(0, ArtboardId(2), (0, 0)),
+                InstanceKey::new(2, ArtboardId(2), (4, 4)),
+            ],
+        });
+        s.layers.push(layer);
+        s
+    }
+
+    fn key_frames(s: &Sprite) -> Vec<usize> {
+        let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+        track.keys.iter().map(|k| k.frame).collect()
+    }
+
+    #[test]
+    fn set_instance_track_roundtrip_and_rejects_image_layers() {
+        let mut s = with_instance();
+        let before = s.clone();
+        let track = InstanceTrack {
+            keys: vec![InstanceKey::new(1, ArtboardId(3), (1, 1))],
         };
-        let json = serde_json::to_string(&c).unwrap();
-        assert_eq!(serde_json::from_str::<Command>(&json).unwrap(), c);
+        let inv = Command::SetInstanceTrack {
+            layer: LayerId(2),
+            track: track.clone(),
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!(s.layer(LayerId(2)).unwrap().instance, Some(track));
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        assert_eq!(
+            Command::SetInstanceTrack {
+                layer: LayerId(1),
+                track: InstanceTrack::default(),
+            }
+            .apply(&mut s),
+            Err(CmdError::NotInstanceLayer(LayerId(1)))
+        );
+    }
+
+    #[test]
+    fn set_instance_track_normalizes_keys() {
+        let mut s = with_instance();
+        let before = s.clone();
+        let inv = Command::SetInstanceTrack {
+            layer: LayerId(2),
+            track: InstanceTrack {
+                keys: vec![
+                    InstanceKey::new(2, ArtboardId(2), (0, 0)),
+                    InstanceKey::new(0, ArtboardId(2), (1, 1)),
+                    InstanceKey::new(2, ArtboardId(2), (5, 5)),
+                ],
+            },
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!(key_frames(&s), vec![0, 2]);
+        let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+        assert_eq!(track.keys[1].position, (5, 5), "last wins");
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    fn set_keys(s: &mut Sprite, keys: Vec<InstanceKey>) {
+        s.layer_mut(LayerId(2)).unwrap().instance = Some(InstanceTrack { keys });
+    }
+
+    #[test]
+    fn removing_the_last_frame_moves_its_key_to_the_new_last() {
+        let mut s = with_instance();
+        set_keys(&mut s, vec![InstanceKey::new(2, ArtboardId(2), (4, 4))]);
+        let before = s.clone();
+        let inv = Command::RemoveFrame { index: 2 }.apply(&mut s).unwrap();
+        assert_eq!(key_frames(&s), vec![1]);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn removing_the_last_frame_keeps_an_existing_key_on_the_new_last() {
+        let mut s = with_instance();
+        set_keys(
+            &mut s,
+            vec![
+                InstanceKey::new(1, ArtboardId(2), (1, 1)),
+                InstanceKey::new(2, ArtboardId(2), (2, 2)),
+            ],
+        );
+        let before = s.clone();
+        let inv = Command::RemoveFrame { index: 2 }.apply(&mut s).unwrap();
+        let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+        let got: Vec<_> = track.keys.iter().map(|k| (k.frame, k.position)).collect();
+        assert_eq!(got, vec![(1, (1, 1))], "frame 1 keeps its own key");
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn removing_a_frame_between_two_keys_keeps_the_later_one() {
+        let mut s = with_instance();
+        set_keys(
+            &mut s,
+            vec![
+                InstanceKey::new(1, ArtboardId(2), (1, 1)),
+                InstanceKey::new(2, ArtboardId(2), (2, 2)),
+            ],
+        );
+        let before = s.clone();
+        let inv = Command::RemoveFrame { index: 1 }.apply(&mut s).unwrap();
+        let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+        let got: Vec<_> = track.keys.iter().map(|k| (k.frame, k.position)).collect();
+        assert_eq!(got, vec![(1, (2, 2))]);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn inserting_frame_zero_keeps_the_frame_zero_key() {
+        let mut s = with_instance();
+        let before = s.clone();
+        let inv = Command::AddFrame {
+            index: 0,
+            frame: Frame { duration_ms: 100 },
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!(key_frames(&s), vec![0, 3]);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn instance_keys_follow_inserted_and_removed_frames() {
+        let mut s = with_instance();
+        let before = s.clone();
+        let inv = Command::AddFrame {
+            index: 1,
+            frame: Frame { duration_ms: 100 },
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert_eq!(key_frames(&s), vec![0, 3]);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        let inv = Command::RemoveFrame { index: 1 }.apply(&mut s).unwrap();
+        assert_eq!(key_frames(&s), vec![0, 1]);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn resize_canvas_moves_instance_keys_and_undoes() {
+        let mut s = with_instance();
+        let before = s.clone();
+        let inv = Command::ResizeCanvas {
+            width: 10,
+            height: 6,
+            offset: (3, -2),
+        }
+        .apply(&mut s)
+        .unwrap();
+        let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+        let positions: Vec<_> = track.keys.iter().map(|k| k.position).collect();
+        assert_eq!(positions, vec![(3, -2), (7, 2)]);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
     }
 }

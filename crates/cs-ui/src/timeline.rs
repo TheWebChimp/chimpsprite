@@ -537,6 +537,9 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
     } else {
         let label = if layer.kind == LayerKind::Group {
             format!("📁 {}", layer.name)
+        } else if layer.kind == LayerKind::Instance {
+            // El mismo ícono que la herramienta Artboard: la capa muestra otro artboard.
+            format!("🖼 {}", layer.name)
         } else {
             layer.name.clone()
         };
@@ -598,6 +601,8 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
             ui.close();
         }
         ui.separator();
+        instance_menu(ui, editor);
+        ui.separator();
         mask_menu(ui, editor, id);
     });
 
@@ -624,9 +629,36 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
             );
         }
         let sprite = editor.sprite();
-        let cel = sprite.cel(id, f).copied();
         let center = r.center();
-        if let Some(cel) = cel {
+        if let Some(track) = sprite.layer(id).and_then(|l| l.instance.as_ref()) {
+            // Instancia: ◆ en cada keyframe y una barra mientras dura.
+            let color = ui.visuals().text_color();
+            if let Some(key) = track.key_at(f) {
+                let stroke = Stroke::new(2.0, color);
+                // Barra de "hold": viene del frame anterior y sigue al próximo.
+                if f > key.frame {
+                    painter.hline(r.left()..=center.x, center.y, stroke);
+                }
+                if f + 1 < editor.frame_count() {
+                    painter.hline(center.x..=r.right(), center.y, stroke);
+                }
+                if key.frame == f {
+                    let d = 4.5;
+                    let points = vec![
+                        pos2(center.x, center.y - d),
+                        pos2(center.x + d, center.y),
+                        pos2(center.x, center.y + d),
+                        pos2(center.x - d, center.y),
+                    ];
+                    let fill = if key.source.is_some() {
+                        color
+                    } else {
+                        theme::LABEL
+                    };
+                    painter.add(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
+                }
+            }
+        } else if let Some(cel) = sprite.cel(id, f).copied() {
             let linked_prev = f > 0 && sprite.cel(id, f - 1).is_some_and(|p| p.image == cel.image);
             if linked_prev {
                 painter.hline(
@@ -673,6 +705,30 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
             editor.set_frame(f);
         }
         response.context_menu(|ui| {
+            if layer.kind == LayerKind::Instance {
+                let is_key = editor.is_instance_keyframe(id, f);
+                // Antes de la primera key no hay nada que copiar.
+                let has_key = editor
+                    .sprite()
+                    .layer(id)
+                    .and_then(|l| l.instance.as_ref())
+                    .is_some_and(|t| t.key_at(f).is_some());
+                if ui
+                    .add_enabled(has_key && !is_key, egui::Button::new("Insert Keyframe"))
+                    .clicked()
+                {
+                    editor.insert_instance_key(id, f);
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(is_key, egui::Button::new("Delete Keyframe"))
+                    .clicked()
+                {
+                    editor.remove_instance_key(id, f);
+                    ui.close();
+                }
+                return;
+            }
             let (a, b) = editor.selected_frames();
             if editor.frame_range.is_some() && a != b && (a..=b).contains(&f) {
                 if ui.button(format!("Link {} cels", b - a + 1)).clicked() {
@@ -712,6 +768,23 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
             }
         });
     }
+}
+
+/// Submenú para colocar otro artboard como instancia (menú Layer y menú de capa).
+pub(crate) fn instance_menu(ui: &mut egui::Ui, editor: &mut Editor) {
+    let candidates = editor.instance_candidates();
+    ui.add_enabled_ui(!candidates.is_empty(), |ui| {
+        ui.menu_button("New Instance", |ui| {
+            for (id, name) in candidates {
+                if ui.button(name).clicked() {
+                    editor.add_instance_layer(id);
+                    ui.close();
+                }
+            }
+        })
+        .response
+        .on_disabled_hover_text("Needs another artboard, and an RGBA artboard to hold it");
+    });
 }
 
 /// Dónde cae una capa soltada sobre `row` según la altura del puntero.

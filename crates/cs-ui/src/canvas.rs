@@ -196,7 +196,15 @@ impl CanvasView {
                 self.pan = -center;
             }
             ZoomRequest::Fit => self.fit(rect, editor),
+            ZoomRequest::CenterActive => self.center_active(editor),
         }
+    }
+
+    /// Centra el artboard activo sin cambiar el zoom (p. ej. al entrar a un símbolo).
+    fn center_active(&mut self, editor: &Editor) {
+        let ((x0, y0), (x1, y1)) = editor.artboard().rect();
+        let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
+        self.pan = -center * self.zoom;
     }
 
     fn checker(&mut self, ctx: &egui::Context) -> egui::TextureId {
@@ -662,6 +670,12 @@ impl CanvasView {
         if response.double_clicked() && editor.active_tool() == ToolKind::PolygonLasso {
             editor.finish_gesture();
         }
+        if response.double_clicked()
+            && editor.active_tool() == ToolKind::Move
+            && editor.enter_instance()
+        {
+            self.center_active(editor);
+        }
 
         let cursor = if space {
             Some(egui::CursorIcon::Grab)
@@ -773,6 +787,13 @@ impl CanvasView {
                 let sprite = &artboard.sprite;
                 let frame = editor.frame_of(artboard.id);
                 let onion = artboard.id == editor.active && editor.onion_enabled && !editor.playing;
+                // Las instancias se resuelven a capas normales antes de componer.
+                let frames = if onion {
+                    cs_render::onion_frames(&editor.onion, frame, sprite.frames.len())
+                } else {
+                    frame..frame + 1
+                };
+                let sprite = &*cs_render::materialize(document, sprite, frames);
                 let mut pixels = if onion {
                     cs_render::render_onion(sprite, frame, &editor.onion)
                 } else {

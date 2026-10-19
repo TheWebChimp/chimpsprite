@@ -26,6 +26,7 @@ impl Editor {
     pub fn set_frame(&mut self, frame: usize) {
         let frame = frame.min(self.frame_count() - 1);
         if frame != self.frame {
+            self.end_group();
             self.frame = frame;
             self.revision += 1;
         }
@@ -176,6 +177,9 @@ impl Editor {
     /// Selecciona la capa para pintar sus píxeles (no su máscara).
     pub fn select_layer(&mut self, id: LayerId) {
         if self.sprite().layer(id).is_some() {
+            if id != self.layer {
+                self.end_group();
+            }
             self.layer = id;
             self.edit_mask = false;
         }

@@ -24,6 +24,9 @@ impl Editor {
             })
             .map(|(i, _)| i);
         if let Some(i) = hit {
+            if self.slice != Some(i) {
+                self.end_group();
+            }
             self.slice = Some(i);
         }
     }
@@ -34,6 +37,11 @@ impl Editor {
 
     /// Cambia el slice seleccionado con `f` (un paso de undo si algo cambió).
     pub fn update_slice(&mut self, f: impl FnOnce(&mut Slice)) {
+        self.update_slice_grouped(None, f);
+    }
+
+    /// `update_slice` como parte del gesto `group` (un solo paso de undo por gesto).
+    pub fn update_slice_grouped(&mut self, group: Option<u64>, f: impl FnOnce(&mut Slice)) {
         let Some(index) = self.slice else {
             return;
         };
@@ -43,14 +51,23 @@ impl Editor {
         };
         f(slice);
         if slices != self.sprite().slices {
-            self.execute(Command::SetSlices(slices));
+            let cmd = Command::SetSlices(slices);
+            match group {
+                Some(g) => self.execute_grouped(cmd, g),
+                None => self.execute(cmd),
+            };
         }
     }
 
     /// Cambia la clave del slice seleccionado en el frame actual (la crea si no había).
     pub fn update_slice_key(&mut self, f: impl FnOnce(&mut SliceKey)) {
+        self.update_slice_key_grouped(None, f);
+    }
+
+    /// `update_slice_key` como parte del gesto `group` (un solo paso de undo por gesto).
+    pub fn update_slice_key_grouped(&mut self, group: Option<u64>, f: impl FnOnce(&mut SliceKey)) {
         let frame = self.frame;
-        self.update_slice(|s| {
+        self.update_slice_grouped(group, |s| {
             let Some(mut key) = s.key_at(frame).copied() else {
                 return;
             };
@@ -126,5 +143,19 @@ mod tests {
         assert_eq!(e.slice, None);
         e.undo();
         assert_eq!(e.sprite().slices.len(), 2);
+    }
+
+    #[test]
+    fn grouped_slice_key_edits_undo_as_one_step() {
+        let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+        e.set_tool(ToolKind::Slice);
+        drag(&mut e, (1, 1), (4, 4));
+        let original = e.sprite().slices.clone();
+        for x in 2..5 {
+            e.update_slice_key_grouped(Some(1), |k| k.bounds.0 = x);
+        }
+        assert_eq!(e.selected_slice().unwrap().keys[0].bounds.0, 4);
+        e.undo();
+        assert_eq!(e.sprite().slices, original);
     }
 }

@@ -181,6 +181,25 @@ impl ChimpServer {
         self.with(|s| s.remove_slice(p))
     }
 
+    #[tool(
+        description = "Place another artboard inside this one as an instance layer (like an Adobe Animate symbol): it shows the source artboard with its own timeline, and editing the source updates every instance. Fails if it would make an artboard contain itself."
+    )]
+    fn add_instance_layer(&self, Parameters(p): Parameters<AddInstanceLayer>) -> CallToolResult {
+        self.with(|s| s.add_instance_layer(p))
+    }
+
+    #[tool(
+        description = "Change an instance layer from a frame on (creates a keyframe there): position, flip, opacity, source artboard and timing (loop / once / single follow the parent's frames; movie_clip plays on its own clock)."
+    )]
+    fn set_instance_key(&self, Parameters(p): Parameters<SetInstanceKey>) -> CallToolResult {
+        self.with(|s| s.set_instance_key(p))
+    }
+
+    #[tool(description = "Remove an instance keyframe; removing the only one removes the layer.")]
+    fn remove_instance_key(&self, Parameters(p): Parameters<RemoveInstanceKey>) -> CallToolResult {
+        self.with(|s| s.remove_instance_key(p))
+    }
+
     // --- Frames, tags y cels ---
 
     #[tool(description = "Add an empty frame, or duplicate an existing one (optionally linked).")]

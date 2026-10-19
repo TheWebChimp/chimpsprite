@@ -72,6 +72,8 @@ pub enum ZoomRequest {
     /// 100%.
     Actual,
     Fit,
+    /// Centra el artboard activo sin cambiar el zoom.
+    CenterActive,
 }
 
 /// Diálogo "Grid Settings" del artboard activo.
