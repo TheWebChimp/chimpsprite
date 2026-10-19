@@ -399,6 +399,9 @@ pub struct DocView<'a> {
     pub selection: Option<Mask>,
 }
 
+/// Lo que edita un gesto agrupado: artboard, capa, frame y slice seleccionados.
+type MergeTarget = (ArtboardId, LayerId, usize, Option<usize>);
+
 /// Estado del documento abierto y de la edición. No sabe nada de egui.
 pub struct Editor {
     pub document: Document,
@@ -452,8 +455,9 @@ pub struct Editor {
     pub slice: Option<usize>,
     pub text_style: TextStyle,
     /// Gesto en curso (p. ej. arrastrar un campo del panel) cuyos cambios se juntan en un solo
-    /// paso de undo; lo identifica el id del widget.
-    merge: Option<u64>,
+    /// paso de undo: id del widget y lo que se estaba editando (artboard, capa, frame, slice).
+    /// El mismo widget sirve para todas las capas, así que el objetivo también tiene que coincidir.
+    merge: Option<(u64, MergeTarget)>,
 }
 
 impl Editor {
@@ -553,6 +557,7 @@ impl Editor {
             return;
         }
         self.stop();
+        self.end_group();
         self.frame_range = None;
         self.views.insert(self.active, (self.layer, self.frame));
         self.active = id;
@@ -608,14 +613,15 @@ impl Editor {
             id: self.active,
             cmd,
         };
-        let result = if self.merge == Some(group) {
+        let target = (self.active, self.layer, self.frame, self.slice);
+        let result = if self.merge == Some((group, target)) {
             self.history.execute_merged(&mut self.document, cmd)
         } else {
             self.history.execute(&mut self.document, cmd)
         };
         match result {
             Ok(()) => {
-                self.merge = Some(group);
+                self.merge = Some((group, target));
                 self.revision += 1;
                 self.doc_version += 1;
                 self.ensure_valid();

@@ -24,6 +24,9 @@ impl Editor {
             })
             .map(|(i, _)| i);
         if let Some(i) = hit {
+            if self.slice != Some(i) {
+                self.end_group();
+            }
             self.slice = Some(i);
         }
     }

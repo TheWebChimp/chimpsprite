@@ -152,6 +152,37 @@ mod tests {
     }
 
     #[test]
+    fn groups_do_not_leak_across_layers() {
+        let mut e = editor();
+        e.add_instance_layer(ArtboardId(2));
+        let a = e.layer;
+        e.add_instance_layer(ArtboardId(2));
+        let b = e.layer;
+        let track = |e: &Editor, l| e.sprite().layer(l).unwrap().instance.clone();
+        let (a0, b0) = (track(&e, a), track(&e, b));
+        e.select_layer(a);
+        e.update_instance_key_grouped(Some(7), |k| k.position = (1, 1));
+        let a1 = track(&e, a);
+        // Mismo widget (mismo grupo), otra capa: otro paso de undo.
+        e.select_layer(b);
+        e.update_instance_key_grouped(Some(7), |k| k.position = (2, 2));
+        assert_ne!(track(&e, b), b0);
+        e.undo();
+        assert_eq!(track(&e, b), b0);
+        assert_eq!(track(&e, a), a1, "undoing B leaves A's change");
+        e.undo();
+        assert_eq!(track(&e, a), a0);
+        // Aunque la capa cambie sin pasar por select_layer, el objetivo distinto corta el grupo.
+        e.layer = a;
+        e.update_instance_key_grouped(Some(9), |k| k.position = (3, 3));
+        e.layer = b;
+        e.update_instance_key_grouped(Some(9), |k| k.position = (4, 4));
+        e.undo();
+        assert_eq!(track(&e, b), b0);
+        assert_ne!(track(&e, a), a0);
+    }
+
+    #[test]
     fn grouped_updates_undo_as_one_step() {
         let mut e = editor();
         e.add_instance_layer(ArtboardId(2));

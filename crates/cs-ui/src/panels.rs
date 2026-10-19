@@ -776,6 +776,7 @@ pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
             ui.painter()
                 .rect_filled(r, 2.0, Color32::from_rgb(color.r, color.g, color.b));
             if ui.selectable_label(editor.slice == Some(i), name).clicked() {
+                editor.end_group();
                 editor.slice = Some(i);
                 editor.set_tool(ToolKind::Slice);
             }
