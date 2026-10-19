@@ -343,13 +343,14 @@ fn tinted(c: Rgba, tint: Rgba) -> Rgba {
     Rgba::new(mix(c.r, tint.r), mix(c.g, tint.g), mix(c.b, tint.b), c.a)
 }
 
-/// Frame actual con los vecinos semitransparentes debajo (papel cebolla).
-/// Frames que lee `render_onion` para `frame` (recortados a `0..len`).
+/// Frames que lee `render_onion` para `frame` (recortados a `0..len`): los que hay que
+/// materializar antes de llamarla.
 pub fn onion_frames(onion: &OnionSkin, frame: usize, len: usize) -> std::ops::Range<usize> {
     let end = frame.saturating_add(onion.after).saturating_add(1).min(len);
     frame.saturating_sub(onion.before).min(end)..end
 }
 
+/// Frame actual con los vecinos semitransparentes debajo (papel cebolla).
 pub fn render_onion(sprite: &Sprite, frame: usize, onion: &OnionSkin) -> Vec<Rgba> {
     let mut out = vec![Rgba::TRANSPARENT; (sprite.width * sprite.height) as usize];
     let mut ghost = |f: usize, distance: usize, count: usize, tint: Rgba| {
