@@ -28,9 +28,15 @@ impl Session {
         let background = p.background.as_deref().map(target::hex).transpose()?;
         // Las instancias se materializan antes de componer.
         let d = &self.doc(&p.doc)?.document;
-        let composed = cs_render::materialize(d, sprite, 0..sprite.frames.len());
+        let onion = OnionSkin::default();
+        let frames = if p.onion {
+            cs_render::onion_frames(&onion, frame, sprite.frames.len())
+        } else {
+            frame..frame + 1
+        };
+        let composed = cs_render::materialize(d, sprite, frames);
         let mut pixels = if p.onion {
-            render_onion(&composed, frame, &OnionSkin::default())
+            render_onion(&composed, frame, &onion)
         } else {
             render_frame(&composed, frame)
         };

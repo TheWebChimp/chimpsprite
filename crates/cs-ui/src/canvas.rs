@@ -784,7 +784,7 @@ impl CanvasView {
                 let onion = artboard.id == editor.active && editor.onion_enabled && !editor.playing;
                 // Las instancias se resuelven a capas normales antes de componer.
                 let frames = if onion {
-                    0..sprite.frames.len()
+                    cs_render::onion_frames(&editor.onion, frame, sprite.frames.len())
                 } else {
                     frame..frame + 1
                 };
