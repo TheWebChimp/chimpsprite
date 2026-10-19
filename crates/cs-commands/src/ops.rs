@@ -99,10 +99,10 @@ pub fn new_tilemap_layer(sprite: &Sprite, above: Option<LayerId>, tileset: u32) 
     Command::AddLayer { index, layer }
 }
 
-/// Pone tiles en el cel tilemap `(layer, frame)`. Las coordenadas son celdas de la grilla del
 /// Lado máximo de una grilla de tilemap, en tiles (protege contra pedidos absurdos).
 pub const MAX_TILEMAP_SIDE: u32 = 4096;
 
+/// Pone tiles en el cel tilemap `(layer, frame)`. Las coordenadas son celdas de la grilla del
 /// lienzo: la celda `(x, y)` empieza en el píxel `(x · ancho_tile, y · alto_tile)` (corrida por el
 /// resto de la posición del cel si no está alineado). Sin cel, crea uno en (0, 0). Si las celdas
 /// caen fuera de la grilla, la agranda con vacíos y corre la posición del cel si crece hacia la
