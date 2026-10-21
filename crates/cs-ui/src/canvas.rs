@@ -11,8 +11,8 @@ use eframe::egui::{
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
 use crate::editor::{Editor, ToolKind};
 use crate::guides::{RULER_PX, SNAP_PX, SnapContext, after_drag, hit_guide, nice_step};
-use crate::theme;
 use crate::view::{ViewSettings, ZoomRequest};
+use crate::{theme, widgets};
 
 const ZOOM_LEVELS: [f32; 13] = [
     0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
@@ -26,6 +26,8 @@ const EDGE_SLOP_PX: f32 = 6.0;
 /// Etiqueta con el nombre sobre cada artboard (arrastrable para moverlo).
 const LABEL_SIZE: f32 = 12.0;
 const LABEL_GAP: f32 = 4.0;
+/// Los números de tile se dibujan solo si cada tile ocupa al menos esto en pantalla.
+const TILE_NUMBER_MIN_PX: f32 = 16.0;
 
 /// Vista del lienzo infinito: zoom, paneo y una textura por artboard.
 pub struct CanvasView {
@@ -861,6 +863,22 @@ impl CanvasView {
                     );
                 }
             }
+            // Modo Tiles: la grilla de tiles de la capa activa, independiente del grid de trabajo.
+            if artboard.id == editor.active
+                && view_settings.extras
+                && let Some(space) = editor.tile_space()
+            {
+                draw_grid(
+                    &painter,
+                    screen,
+                    GridSettings {
+                        size: space.tile_size,
+                        offset: space.offset,
+                    },
+                    self.zoom,
+                    theme::TILE_GRID,
+                );
+            }
             let active = artboard.id == editor.active;
             let (border, label_color) = if active {
                 (Stroke::new(2.0, theme::ACCENT), theme::ACCENT)
@@ -950,6 +968,40 @@ impl CanvasView {
             draw_marching_ants(&painter, mask, origin, self.zoom, phase);
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
         }
+        if let Some(origin) = active_origin
+            && view_settings.shows(view_settings.tile_numbers)
+            && let Some(space) = editor.tile_space()
+            && space.tile_size.0 as f32 * self.zoom >= TILE_NUMBER_MIN_PX
+            && space.tile_size.1 as f32 * self.zoom >= TILE_NUMBER_MIN_PX
+            && let Some(artboard) = document.artboard(editor.active)
+        {
+            let font = FontId::monospace(10.0);
+            // Solo las celdas dentro del área visible del lienzo.
+            let min = ((rect.min - origin) / self.zoom).floor();
+            let max = ((rect.max - origin) / self.zoom).ceil();
+            let view = (min.x as i32, min.y as i32, max.x as i32, max.y as i32);
+            let cells = crate::tile_ops::numbered_cells_in(
+                &artboard.sprite,
+                editor.layer,
+                editor.frame,
+                view,
+            );
+            for ((x, y), number) in cells {
+                // La celda parcial del borde empieza fuera del lienzo: el número se pega al borde.
+                let (x, y) = (x.max(0), y.max(0));
+                let at = origin + Vec2::new(x as f32, y as f32) * self.zoom + Vec2::splat(2.0);
+                if !rect.contains(at) {
+                    continue;
+                }
+                widgets::outlined_text(
+                    &painter,
+                    at,
+                    Align2::LEFT_TOP,
+                    &number.to_string(),
+                    font.clone(),
+                );
+            }
+        }
 
         // Contorno del pincel bajo el cursor.
         let space = ui.input(|i| i.key_down(egui::Key::Space));
@@ -972,12 +1024,29 @@ impl CanvasView {
                 1
             };
             let offset = -((size as i32 - 1) / 2);
-            let r = Rect::from_min_size(
-                origin + Vec2::new((hx + offset) as f32, (hy + offset) as f32) * self.zoom,
-                Vec2::splat(size as f32 * self.zoom),
-            );
-            // Las herramientas que pintan muestran el color primario bajo el cursor.
-            if tool.paints() && tool != ToolKind::Eraser && tool != ToolKind::Bucket {
+            // En modo Tiles el pincel cubre celdas enteras.
+            let cells = editor.tile_space().filter(|_| tool.uses_cells());
+            let r = match cells {
+                Some(space) => {
+                    let (cx, cy) = space.cell_at((hx, hy));
+                    let (x0, y0) = space.cell_origin((cx + offset, cy + offset));
+                    let (tw, th) = space.tile_size;
+                    Rect::from_min_size(
+                        origin + Vec2::new(x0 as f32, y0 as f32) * self.zoom,
+                        Vec2::new((size * tw) as f32, (size * th) as f32) * self.zoom,
+                    )
+                }
+                None => Rect::from_min_size(
+                    origin + Vec2::new((hx + offset) as f32, (hy + offset) as f32) * self.zoom,
+                    Vec2::splat(size as f32 * self.zoom),
+                ),
+            };
+            // Las herramientas que pintan píxeles muestran el color primario bajo el cursor.
+            if cells.is_none()
+                && tool.paints()
+                && tool != ToolKind::Eraser
+                && tool != ToolKind::Bucket
+            {
                 let c = editor.resolve(editor.primary);
                 painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a));
             }

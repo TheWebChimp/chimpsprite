@@ -79,6 +79,8 @@ impl ChimpApp {
     pub(crate) fn is_modal(&self) -> bool {
         self.canvas_size.is_some()
             || self.grid_dialog.is_some()
+            || self.new_tilemap.is_some()
+            || self.convert_tilemap.is_some()
             || self.export.is_some()
             || self.pending.is_some()
             || self.message.is_some()

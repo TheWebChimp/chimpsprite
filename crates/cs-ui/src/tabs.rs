@@ -20,6 +20,8 @@ pub(crate) struct DocState {
     pub saved_version: u64,
     /// Texto del nombre del artboard activo mientras se edita.
     pub artboard_name: (ArtboardId, String),
+    /// Miniaturas del panel Tileset.
+    pub tile_thumbs: crate::panels::TileThumbs,
 }
 
 impl DocState {
@@ -31,6 +33,7 @@ impl DocState {
             timeline: TimelineState::default(),
             location,
             artboard_name: (ArtboardId(0), String::new()),
+            tile_thumbs: Default::default(),
         }
     }
 

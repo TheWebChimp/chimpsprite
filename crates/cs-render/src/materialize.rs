@@ -5,11 +5,10 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 
 use cs_core::{
     ArtboardId, Cel, ColorMode, Document, Image, ImageId, InstanceKey, InstanceTrack, Layer,
-    LayerKind, PixelValue, Rgba, Sprite, Tile, TileGrid, Tileset, source_frame,
+    LayerKind, PixelValue, Rgba, Sprite, TileGrid, Tileset, source_frame,
 };
 
 use crate::render_frame;
@@ -291,7 +290,9 @@ fn tilemap_image(
     let mut image = Image::new((x1 - x0) as u32, (y1 - y0) as u32, sprite.color_mode);
     for y in y0..y1 {
         for x in x0..x1 {
-            if let Some(v) = grid_pixel(sprite.color_mode, tileset, grid, x - px, y - py) {
+            if let Some(v) =
+                cs_core::tile_grid_pixel(sprite.color_mode, tileset, grid, x - px, y - py)
+            {
                 image
                     .set((x - x0) as u32, (y - y0) as u32, v)
                     .expect("in bounds and same mode");
@@ -322,82 +323,13 @@ pub fn tilemap_pixel(
     let cel = sprite.cel(layer.id, frame)?;
     let tileset = sprite.tilesets.get(layer.tileset? as usize)?;
     let grid = sprite.tilemap(cel.image)?;
-    grid_pixel(
+    cs_core::tile_grid_pixel(
         sprite.color_mode,
         tileset,
         grid,
         x as i64 - cel.position.0 as i64,
         y as i64 - cel.position.1 as i64,
     )
-}
-
-/// Valor que dibuja la grilla en `(lx, ly)`, relativo a su esquina: una sola búsqueda de tile.
-/// `None` fuera de la grilla, en celdas que no dibujan (ver `tile_image`) o si el tile es de otro
-/// modo de color (datos corruptos).
-fn grid_pixel(
-    mode: ColorMode,
-    tileset: &Tileset,
-    grid: &TileGrid,
-    lx: i64,
-    ly: i64,
-) -> Option<PixelValue> {
-    let (tw, th) = tileset.tile_size;
-    if lx < 0 || ly < 0 || tw == 0 || th == 0 {
-        return None;
-    }
-    let gx = u32::try_from(lx / tw as i64).ok()?;
-    let gy = u32::try_from(ly / th as i64).ok()?;
-    let tile = grid.get(gx, gy)?;
-    let src = tile_image(tileset, tile)?;
-    let (sx, sy) = tile_source(
-        tile,
-        tw,
-        th,
-        (lx % tw as i64) as u32,
-        (ly % th as i64) as u32,
-    );
-    let value = src.get(sx, sy)?;
-    let same_mode = matches!(
-        (value, mode),
-        (PixelValue::Rgba(_), ColorMode::Rgba) | (PixelValue::Index(_), ColorMode::Indexed { .. })
-    );
-    same_mode.then_some(value)
-}
-
-/// Avisado una sola vez: flip D en tiles no cuadrados.
-static WARNED_DIAGONAL: AtomicBool = AtomicBool::new(false);
-
-/// Imagen del tile, o `None` si la celda no dibuja nada: tile vacío, índice fuera de rango, imagen
-/// de otro tamaño o flip D en un tile no cuadrado.
-fn tile_image(tileset: &Tileset, tile: Tile) -> Option<&Image> {
-    let index = tile.index() as usize;
-    if index == 0 {
-        return None;
-    }
-    let image = tileset.tiles.get(index)?;
-    let (tw, th) = tileset.tile_size;
-    if (image.width(), image.height()) != (tw, th) {
-        return None;
-    }
-    if tile.flip_d() && tw != th {
-        if !WARNED_DIAGONAL.swap(true, Ordering::Relaxed) {
-            log::warn!("diagonal flip on non-square tiles ({tw}×{th}) is not drawn");
-        }
-        return None;
-    }
-    Some(image)
-}
-
-/// Píxel del tile original que se ve en `(x, y)` del tile volteado. Equivale a aplicar a la imagen
-/// D (transponer), después X y después Y; el orden lo confirma `tilemap_file_renders_like_aseprite`
-/// en `cs-io/tests/aseprite_interop.rs`.
-fn tile_source(tile: Tile, w: u32, h: u32, x: u32, y: u32) -> (u32, u32) {
-    let mut sx = if tile.flip_x() { w - 1 - x } else { x };
-    let mut sy = if tile.flip_y() { h - 1 - y } else { y };
-    if tile.flip_d() {
-        std::mem::swap(&mut sx, &mut sy);
-    }
-    (sx, sy)
 }
 
 #[cfg(test)]

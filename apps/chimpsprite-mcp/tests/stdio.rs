@@ -92,6 +92,7 @@ fn draw_and_render_over_stdio() {
         "render",
         "read_pixels",
         "inbetween",
+        "convert_layer",
         "export",
     ] {
         assert!(

@@ -12,6 +12,8 @@ pub const RULER_BG: Color32 = Color32::from_rgb(0x22, 0x23, 0x2a);
 pub const RULER_TICK: Color32 = Color32::from_rgb(0x6a, 0x6b, 0x78);
 pub const LABEL: Color32 = Color32::from_rgb(0x9a, 0x9b, 0xa8);
 pub const BRUSH_OUTLINE: Color32 = Color32::from_rgba_premultiplied(230, 230, 230, 230);
+/// Grilla de tiles de la capa tilemap activa (naranja translúcido, distinto del grid de trabajo).
+pub const TILE_GRID: Color32 = Color32::from_rgba_premultiplied(140, 77, 22, 140);
 
 const PANEL: Color32 = Color32::from_rgb(0x26, 0x27, 0x2f);
 const WIDGET: Color32 = Color32::from_rgb(0x33, 0x34, 0x3e);

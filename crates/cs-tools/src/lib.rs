@@ -58,6 +58,9 @@ pub struct ToolContext<'a> {
     pub dither: Dither,
     /// Slice seleccionado (índice en `sprite.slices`) para moverlo o redimensionarlo.
     pub selected_slice: Option<usize>,
+    /// Modo Tiles: `sprite` es el proxy de celdas del editor (cada píxel codifica un tile). El
+    /// cuentagotas y la varita leen el valor exacto de la capa en vez del color visible.
+    pub tiles: bool,
 }
 
 impl ToolContext<'_> {
@@ -182,6 +185,7 @@ pub(crate) mod test_util {
             gradient_shape: Default::default(),
             dither: Default::default(),
             selected_slice: None,
+            tiles: false,
         }
     }
 

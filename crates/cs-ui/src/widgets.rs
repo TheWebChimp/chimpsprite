@@ -35,3 +35,22 @@ pub fn number<T: Numeric>(
     }
     response
 }
+
+/// Texto claro con contorno oscuro: se lee sobre cualquier fondo.
+pub fn outlined_text(
+    painter: &egui::Painter,
+    pos: egui::Pos2,
+    align: egui::Align2,
+    text: &str,
+    font: egui::FontId,
+) {
+    for d in [
+        egui::vec2(-1.0, 0.0),
+        egui::vec2(1.0, 0.0),
+        egui::vec2(0.0, -1.0),
+        egui::vec2(0.0, 1.0),
+    ] {
+        painter.text(pos + d, align, text, font.clone(), egui::Color32::BLACK);
+    }
+    painter.text(pos, align, text, font, egui::Color32::WHITE);
+}
