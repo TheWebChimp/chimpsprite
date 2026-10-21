@@ -536,7 +536,8 @@ fn replace_layer(sprite: &Sprite, layer: Layer) -> Option<[Command; 2]> {
 /// del cel. Una celda transparente es el tile vacío; las demás se comparan por igualdad exacta de
 /// píxeles (sin flips) y las nuevas se agregan al tileset. Cada cel pasa a una grilla cuya
 /// `position` es la esquina de su primera celda, con la misma opacidad; los cels vinculados siguen
-/// vinculados. Todo es un solo `Batch`. `None` si la capa no es de imagen, el tamaño de tile no es
+/// vinculados. Los cels de 0×0 (que no dibujan nada) se omiten. Todo es un solo `Batch`. `None` si
+/// la capa no es de imagen, algún cel apunta a una imagen que no existe, el tamaño de tile no es
 /// válido (0, más de `MAX_TILE_SIDE` o más de `MAX_TILE_PIXELS`), harían falta más de
 /// `MAX_TILESET_TILES` tiles o alguna grilla pasaría `MAX_TILEMAP_SIDE` / `tilemap_fits`.
 pub fn convert_to_tilemap(
@@ -569,12 +570,12 @@ pub fn convert_to_tilemap(
         let (grid_id, position) = match done.get(&(cel.image, cel.position)) {
             Some(&found) => found,
             None => {
-                let Some(image) = sprite.image(cel.image) else {
-                    continue;
-                };
+                // Un cel sin imagen es un documento roto: no se convierte (borraría el cel).
+                let image = sprite.image(cel.image)?;
                 let (px, py) = cel.position;
                 let (iw, ih) = (image.width() as i32, image.height() as i32);
                 if iw == 0 || ih == 0 {
+                    // Un cel de 0×0 no dibuja nada: se omite a propósito.
                     continue;
                 }
                 let (cx0, cy0) = (px.div_euclid(tw_i), py.div_euclid(th_i));
@@ -664,7 +665,9 @@ pub fn convert_to_tilemap(
 /// Convierte la capa tilemap `layer` en una capa de imagen: cada cel pasa a su grilla dibujada
 /// entera (sin recortar al lienzo, para no perder contenido), en la misma posición y con la misma
 /// opacidad; los cels vinculados siguen vinculados. El tileset queda en el sprite. Un solo
-/// `Batch`. `None` si la capa no es tilemap o su tileset no existe.
+/// `Batch`. Las grillas sin celdas (que no dibujan nada) se omiten. `None` si la capa no es
+/// tilemap, su tileset no existe, algún cel apunta a una grilla que no existe o una grilla dibujada
+/// pasaría `MAX_TILEMAP_PIXELS` (nunca se pierde un cel en silencio).
 pub fn convert_to_image(sprite: &Sprite, layer: LayerId) -> Option<Command> {
     let l = sprite.layer(layer)?;
     if l.kind != LayerKind::Tilemap {
@@ -681,12 +684,14 @@ pub fn convert_to_image(sprite: &Sprite, layer: LayerId) -> Option<Command> {
         let id = match done.get(&cel.image) {
             Some(&id) => id,
             None => {
-                let Some(grid) = sprite.tilemap(cel.image) else {
+                // Una grilla faltante es un documento roto: no se convierte (borraría el cel).
+                let grid = sprite.tilemap(cel.image)?;
+                if grid.width == 0 || grid.height == 0 {
+                    // Una grilla sin celdas no dibuja nada: el cel se omite a propósito.
                     continue;
-                };
-                let Some(image) = cs_core::draw_tile_grid(sprite.color_mode, tileset, grid) else {
-                    continue;
-                };
+                }
+                // Si no cabe (`MAX_TILEMAP_PIXELS`) se rechaza todo en vez de perder el cel.
+                let image = cs_core::draw_tile_grid(sprite.color_mode, tileset, grid)?;
                 let id = ImageId(next);
                 next += 1;
                 images.push(Command::SetImage {
@@ -1454,6 +1459,60 @@ mod tests {
         .unwrap();
         assert!(convert_to_tilemap(&big, LayerId(1), (1, 1)).is_none());
         assert!(convert_to_tilemap(&big, LayerId(1), (2, 2)).is_some());
+    }
+
+    #[test]
+    fn convert_to_tilemap_refuses_a_cel_with_a_missing_image() {
+        let mut s = two_equal_cells();
+        let cel = *s.cel(LayerId(1), 0).unwrap();
+        s.images.remove(&cel.image);
+        assert!(convert_to_tilemap(&s, LayerId(1), (4, 4)).is_none());
+    }
+
+    #[test]
+    fn convert_to_image_refuses_when_a_cel_would_be_lost() {
+        // Grilla de 33×32 tiles de 256×256: más de MAX_TILEMAP_PIXELS al dibujarla.
+        let mut s = Sprite::new(16, 16, ColorMode::Rgba);
+        Command::SetTileset {
+            index: 0,
+            tileset: Some(Tileset::new("big", (256, 256), ColorMode::Rgba)),
+        }
+        .apply(&mut s)
+        .unwrap();
+        new_tilemap_layer(&s.clone(), Some(LayerId(1)), 0)
+            .apply(&mut s)
+            .unwrap();
+        let id = s.next_image_id();
+        Command::SetTilemap {
+            id,
+            grid: Some(Arc::new(TileGrid::new(33, 32))),
+        }
+        .apply(&mut s)
+        .unwrap();
+        let cel = Cel {
+            image: id,
+            position: (0, 0),
+            opacity: 255,
+        };
+        Command::SetCel {
+            layer: LayerId(2),
+            frame: 0,
+            cel: Some(cel),
+        }
+        .apply(&mut s)
+        .unwrap();
+        assert!(convert_to_image(&s, LayerId(2)).is_none(), "over the limit");
+        // Una grilla que cabe sí se convierte; si falta del pool, se rechaza.
+        let mut ok = s.clone();
+        Command::SetTilemap {
+            id,
+            grid: Some(Arc::new(TileGrid::new(1, 1))),
+        }
+        .apply(&mut ok)
+        .unwrap();
+        assert!(convert_to_image(&ok, LayerId(2)).is_some());
+        s.tilemaps.remove(&id);
+        assert!(convert_to_image(&s, LayerId(2)).is_none(), "missing grid");
     }
 
     #[test]
