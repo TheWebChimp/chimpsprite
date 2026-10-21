@@ -2,12 +2,23 @@
 
 use std::sync::Arc;
 
-use cs_commands::Command;
+use cs_commands::{Command, ops};
 use cs_core::{Cel, ColorMode, Image, ImageId, LayerId, LayerKind, Mask, PixelValue, Rgba, Sprite};
 use cs_core::{Tile, Tileset};
 use cs_tools::Point;
 
 use crate::editor::Editor;
+
+/// Tileset de una capa tilemap nueva: uno del sprite o uno nuevo.
+#[derive(Clone, Debug, PartialEq)]
+pub enum TilesetChoice {
+    Existing(u32),
+    New {
+        name: String,
+        tile_size: (u32, u32),
+        base_index: i16,
+    },
+}
 
 /// Única capa del proxy (frame 0).
 pub const PROXY_LAYER: LayerId = LayerId(1);
@@ -335,6 +346,74 @@ impl Editor {
         let n = tile_number(self.brush_tile().index(), ts.base_index);
         Some(format!("Tiles mode: painting with tile {n}"))
     }
+
+    /// Nueva capa tilemap sobre la actual, con un tileset existente o uno nuevo (en el modo de
+    /// color del sprite). Un solo paso de undo; la capa nueva queda seleccionada.
+    pub fn add_tilemap_layer(&mut self, choice: &TilesetChoice) -> bool {
+        let sprite = self.sprite();
+        let mut cmds = Vec::new();
+        let index = match choice {
+            TilesetChoice::Existing(i) if (*i as usize) < sprite.tilesets.len() => *i,
+            TilesetChoice::Existing(_) => return false,
+            TilesetChoice::New {
+                name,
+                tile_size,
+                base_index,
+            } => {
+                let (w, h) = *tile_size;
+                if !(1..=ops::MAX_TILE_SIDE).contains(&w) || !(1..=ops::MAX_TILE_SIDE).contains(&h)
+                {
+                    return false;
+                }
+                let mut tileset = Tileset::new(name.clone(), (w, h), sprite.color_mode);
+                tileset.base_index = *base_index;
+                let index = sprite.tilesets.len();
+                cmds.push(Command::SetTileset {
+                    index,
+                    tileset: Some(tileset),
+                });
+                index as u32
+            }
+        };
+        let add = ops::new_tilemap_layer(sprite, Some(self.layer), index);
+        let Command::AddLayer { layer, .. } = &add else {
+            unreachable!("new_tilemap_layer devuelve AddLayer");
+        };
+        let id = layer.id;
+        cmds.push(add);
+        if self.execute(Command::Batch(cmds)) {
+            self.select_layer(id);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn can_convert_to_tilemap(&self) -> bool {
+        self.sprite()
+            .layer(self.layer)
+            .is_some_and(|l| l.kind == LayerKind::Image)
+    }
+
+    pub fn can_convert_to_image(&self) -> bool {
+        self.active_tileset().is_some()
+    }
+
+    /// `Layer -> Convert to Tilemap`: `false` si no se pudo (ver `ops::convert_to_tilemap`).
+    pub fn convert_to_tilemap(&mut self, tile_size: (u32, u32)) -> bool {
+        let Some(cmd) = ops::convert_to_tilemap(self.sprite(), self.layer, tile_size) else {
+            return false;
+        };
+        self.execute(cmd)
+    }
+
+    /// `Layer -> Convert to Image Layer`.
+    pub fn convert_to_image(&mut self) -> bool {
+        let Some(cmd) = ops::convert_to_image(self.sprite(), self.layer) else {
+            return false;
+        };
+        self.execute(cmd)
+    }
 }
 
 #[cfg(test)]
@@ -607,6 +686,68 @@ mod tests {
             back.points().collect::<Vec<_>>(),
             cells.points().collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn new_tilemap_layer_with_a_new_or_existing_tileset_is_one_undo_step() {
+        let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+        assert!(e.add_tilemap_layer(&TilesetChoice::New {
+            name: "ground".into(),
+            tile_size: (8, 4),
+            base_index: 1,
+        }));
+        assert_ne!(e.layer, LayerId(1), "the new layer is selected");
+        assert!(e.tiles_mode());
+        assert_eq!(e.sprite().tilesets[0].tile_size, (8, 4));
+        assert!(e.add_tilemap_layer(&TilesetChoice::Existing(0)));
+        assert_eq!(e.sprite().tilesets.len(), 1);
+        assert_eq!(e.sprite().layer(e.layer).unwrap().tileset, Some(0));
+        e.undo();
+        assert_eq!(e.sprite().layers.len(), 2);
+        e.undo();
+        assert_eq!(e.sprite().layers.len(), 1);
+        assert!(
+            e.sprite().tilesets.is_empty(),
+            "the new tileset goes away with the same undo"
+        );
+        assert!(!e.add_tilemap_layer(&TilesetChoice::Existing(3)));
+        // Cualquier modo de color: los tiles se crean en el modo del sprite.
+        let indexed = ColorMode::Indexed {
+            transparent_index: 0,
+        };
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, indexed));
+        assert!(e.add_tilemap_layer(&TilesetChoice::New {
+            name: "t".into(),
+            tile_size: (4, 4),
+            base_index: 1,
+        }));
+        assert_eq!(
+            e.sprite().tilesets[0].tiles[0].get(0, 0),
+            Some(PixelValue::Index(0))
+        );
+    }
+
+    #[test]
+    fn convert_layers_from_the_editor() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, red)],
+        });
+        assert!(e.can_convert_to_tilemap() && !e.can_convert_to_image());
+        assert!(!e.convert_to_tilemap((0, 4)));
+        assert!(e.convert_to_tilemap((4, 4)));
+        assert!(e.tiles_mode() && e.can_convert_to_image());
+        assert!(e.convert_to_image());
+        assert!(!e.tiles_mode());
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 0, 0), red);
+        e.undo();
+        assert!(e.tiles_mode());
+        e.undo();
+        assert!(e.can_convert_to_tilemap());
+        assert!(e.sprite().tilesets.is_empty());
     }
 }
 

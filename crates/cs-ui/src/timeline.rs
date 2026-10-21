@@ -48,6 +48,8 @@ pub struct TimelineState {
     range_anchor: Option<usize>,
     /// Capa en la que se está arrastrando una selección de cels.
     cel_drag: Option<LayerId>,
+    /// Se pidió el diálogo "New Tilemap Layer" (lo abre la app).
+    pub new_tilemap: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -128,6 +130,13 @@ fn controls(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState) {
         }
         if ui.button("+ Group").clicked() {
             editor.add_layer(LayerKind::Group);
+        }
+        if ui
+            .button("+ Tilemap")
+            .on_hover_text("New tilemap layer…")
+            .clicked()
+        {
+            state.new_tilemap = true;
         }
         let can_remove = editor
             .sprite()

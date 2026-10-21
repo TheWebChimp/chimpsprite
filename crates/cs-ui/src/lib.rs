@@ -21,6 +21,7 @@ mod recent;
 mod tabs;
 mod theme;
 mod tile_ops;
+mod tilemap_dialog;
 mod timeline;
 mod view;
 mod widgets;
@@ -46,6 +47,8 @@ pub struct ChimpApp {
     recent: recent::RecentFiles,
     view: view::ViewSettings,
     grid_dialog: Option<view::GridDialog>,
+    new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
+    convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
     fullscreen: bool,
     pending: Option<file_actions::Pending>,
     message: Option<file_actions::Message>,
@@ -80,6 +83,8 @@ impl ChimpApp {
             recent,
             view,
             grid_dialog: None,
+            new_tilemap: None,
+            convert_tilemap: None,
             fullscreen: false,
             pending: None,
             message: None,
@@ -117,6 +122,10 @@ impl ChimpApp {
                 d.set_width(d.width() + 24);
             }
         }
+        // Desarrollo: abre el diálogo de nueva capa tilemap para capturas (con --demo).
+        if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
+            app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
+        }
         app
     }
 
@@ -150,6 +159,52 @@ impl ChimpApp {
                 self.canvas_size = None;
             }
             canvas_size::DialogResult::Cancel => self.canvas_size = None,
+        }
+    }
+
+    fn update_tilemap_dialogs(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() {
+            self.new_tilemap = None;
+            self.convert_tilemap = None;
+            return;
+        }
+        if let Some(dialog) = &mut self.new_tilemap {
+            match dialog.show(ctx) {
+                tilemap_dialog::DialogResult::Open => {}
+                tilemap_dialog::DialogResult::Accept => {
+                    let choice = dialog.choice();
+                    self.new_tilemap = None;
+                    if !self.doc.editor.add_tilemap_layer(&choice) {
+                        self.show_message(
+                            "New Tilemap Layer",
+                            "Could not create the tilemap layer: check the tileset and the \
+                             tile size (1-256 px per side).",
+                        );
+                    }
+                }
+                tilemap_dialog::DialogResult::Cancel => self.new_tilemap = None,
+            }
+        }
+        if let Some(dialog) = &mut self.convert_tilemap {
+            match dialog.show(ctx) {
+                tilemap_dialog::DialogResult::Open => {}
+                tilemap_dialog::DialogResult::Accept => {
+                    let size = dialog.tile_size;
+                    self.convert_tilemap = None;
+                    if !self.doc.editor.convert_to_tilemap(size) {
+                        self.show_message(
+                            "Convert to Tilemap",
+                            format!(
+                                "Could not convert the layer: it would need more than {} \
+                                 different tiles, or a cel would exceed the tilemap size limit. \
+                                 Try a larger tile size.",
+                                cs_core::MAX_TILESET_TILES
+                            ),
+                        );
+                    }
+                }
+                tilemap_dialog::DialogResult::Cancel => self.convert_tilemap = None,
+            }
         }
     }
 
@@ -492,6 +547,31 @@ impl ChimpApp {
                     }
                 });
                 ui.menu_button("Layer", |ui| {
+                    if ui.button("New Tilemap Layer…").clicked() {
+                        self.new_tilemap =
+                            Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
+                        ui.close();
+                    }
+                    let to_tilemap = self.doc.editor.can_convert_to_tilemap();
+                    if ui
+                        .add_enabled(to_tilemap, egui::Button::new("Convert to Tilemap…"))
+                        .on_disabled_hover_text("Select an image layer")
+                        .clicked()
+                    {
+                        self.convert_tilemap =
+                            Some(tilemap_dialog::TileSizeDialog::new(&self.doc.editor));
+                        ui.close();
+                    }
+                    let to_image = self.doc.editor.can_convert_to_image();
+                    if ui
+                        .add_enabled(to_image, egui::Button::new("Convert to Image Layer"))
+                        .on_disabled_hover_text("Select a tilemap layer")
+                        .clicked()
+                    {
+                        self.doc.editor.convert_to_image();
+                        ui.close();
+                    }
+                    ui.separator();
                     let layer = self.doc.editor.layer;
                     timeline::instance_menu(ui, &mut self.doc.editor);
                     ui.separator();
@@ -574,6 +654,9 @@ impl ChimpApp {
                         timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline)
                     });
                 });
+        }
+        if std::mem::take(&mut self.doc.timeline.new_tilemap) {
+            self.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
         }
         egui::Panel::left("tools")
             .resizable(false)
@@ -681,6 +764,7 @@ impl eframe::App for ChimpApp {
         }
         self.update_canvas_size(&ctx);
         self.update_grid_dialog(&ctx);
+        self.update_tilemap_dialogs(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
         self.autosave(&ctx);
