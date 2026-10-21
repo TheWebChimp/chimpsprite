@@ -4,7 +4,7 @@ use std::collections::{HashMap, HashSet};
 use cs_commands::{Command, DocCommand, History};
 use cs_core::{
     AnimDirection, Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, PixelValue, Playback,
-    Rgba, Sprite,
+    Rgba, Sprite, Tile,
 };
 use cs_render::OnionSkin;
 use cs_tools::text::TextStyle;
@@ -13,6 +13,8 @@ use cs_tools::{
     MagicWand, Marquee, MarqueeShape, MoveTool, Pencil, Point, PolygonLasso, ShapeKind, ShapeTool,
     SliceTool, Spray, Tool, ToolContext, ToolOutput,
 };
+
+use crate::tile_ops::{self, TileProxy};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolKind {
@@ -173,6 +175,37 @@ impl ToolKind {
                 | ToolKind::Rectangle
                 | ToolKind::Ellipse
                 | ToolKind::Jumble
+        )
+    }
+
+    /// Herramientas que no actúan sobre una capa tilemap en modo Tiles (2A).
+    pub fn blocked_in_tiles(self) -> bool {
+        matches!(
+            self,
+            ToolKind::Spray
+                | ToolKind::Jumble
+                | ToolKind::Gradient
+                | ToolKind::Text
+                | ToolKind::Lasso
+                | ToolKind::PolygonLasso
+        )
+    }
+
+    /// Herramientas que en modo Tiles trabajan sobre el proxy de celdas (Move, Slice y Artboard
+    /// siguen en píxeles).
+    pub fn uses_cells(self) -> bool {
+        matches!(
+            self,
+            ToolKind::Pencil
+                | ToolKind::Eraser
+                | ToolKind::Line
+                | ToolKind::Rectangle
+                | ToolKind::Ellipse
+                | ToolKind::Bucket
+                | ToolKind::Eyedropper
+                | ToolKind::RectSelect
+                | ToolKind::EllipseSelect
+                | ToolKind::MagicWand
         )
     }
 }
@@ -399,6 +432,15 @@ pub struct DocView<'a> {
     pub selection: Option<Mask>,
 }
 
+/// Qué hace un trazo en modo Tiles.
+enum TilesEdit {
+    Apply(Command),
+    /// Nada cambia (o la capa está bloqueada).
+    Nothing,
+    /// La grilla pasaría el límite de tamaño de `ops::set_tiles`.
+    TooLarge,
+}
+
 /// Lo que edita un gesto agrupado: artboard, capa, frame y slice seleccionados.
 type MergeTarget = (ArtboardId, LayerId, usize, Option<usize>);
 
@@ -458,6 +500,12 @@ pub struct Editor {
     /// paso de undo: id del widget y lo que se estaba editando (artboard, capa, frame, slice).
     /// El mismo widget sirve para todas las capas, así que el objetivo también tiene que coincidir.
     merge: Option<(u64, MergeTarget)>,
+    /// Tile con el que pintan las herramientas en modo Tiles (índice y flips). Ver `brush_tile()`.
+    pub(crate) brush_tile: Tile,
+    /// Artboard y tileset para los que se eligió `brush_tile`; en otro tileset el pincel es el 1.
+    pub(crate) brush_tileset: Option<(ArtboardId, u32)>,
+    /// El último trazo en modo Tiles no se aplicó porque la grilla pasaría el límite de tamaño.
+    pub(crate) tile_limit: bool,
 }
 
 impl Editor {
@@ -501,6 +549,9 @@ impl Editor {
             merge: None,
             edit_mask: false,
             slice: None,
+            brush_tile: Tile::new(1, false, false, false),
+            brush_tileset: None,
+            tile_limit: false,
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
@@ -821,7 +872,7 @@ impl Editor {
             .get(self.active_tool())
             .is_some_and(|t| t.is_pending())
         {
-            let p = self.to_local(self.snapped(world));
+            let p = self.tool_point(world);
             self.with_tool(|tool, ctx| tool.hover(ctx, p));
         }
     }
@@ -909,15 +960,17 @@ impl Editor {
         }
     }
 
+    /// Shift restringe la forma, salvo en selección si al empezar eligió el modo Add.
+    fn constrain(&self) -> bool {
+        self.options.constrain && !(self.active_tool().is_selection() && self.shift_at_press)
+    }
+
     fn context(&self) -> ToolContext<'_> {
         let secondary = if self.painting_secondary {
             self.primary
         } else {
             self.secondary
         };
-        // En selección, Shift al empezar elige el modo Add y no restringe la forma.
-        let constrain =
-            self.options.constrain && !(self.active_tool().is_selection() && self.shift_at_press);
         ToolContext {
             sprite: self.sprite(),
             layer: self.layer,
@@ -928,7 +981,7 @@ impl Editor {
             pixel_perfect: self.options.pixel_perfect,
             filled: self.options.filled,
             contiguous: self.options.contiguous,
-            constrain,
+            constrain: self.constrain(),
             selection: self.selection.as_ref(),
             tolerance: self.options.tolerance,
             sample_all: self.options.sample_all,
@@ -941,13 +994,72 @@ impl Editor {
         }
     }
 
-    /// Corre `f` sobre la herramienta de sprite activa con un contexto que toma prestado el documento.
+    /// Contexto sobre el proxy de celdas: los dos colores son el tile del pincel codificado, el
+    /// pincel se mide en celdas y la selección es la del proxy. Pixel-perfect no aplica.
+    fn tiles_context<'a>(&'a self, proxy: &'a TileProxy) -> ToolContext<'a> {
+        let brush = PixelValue::Rgba(tile_ops::encode(self.brush_tile()));
+        ToolContext {
+            sprite: &proxy.sprite,
+            layer: tile_ops::PROXY_LAYER,
+            frame: 0,
+            color: brush,
+            secondary: brush,
+            brush_size: self.options.brush_size,
+            pixel_perfect: false,
+            filled: self.options.filled,
+            contiguous: self.options.contiguous,
+            constrain: self.constrain(),
+            selection: proxy.selection.as_ref(),
+            tolerance: 0,
+            sample_all: false,
+            spray_width: self.options.spray_width,
+            spray_speed: self.options.spray_speed,
+            gradient_shape: self.options.gradient_shape,
+            dither: self.options.dither,
+            selected_slice: None,
+            tiles: true,
+        }
+    }
+
+    /// Proxy de celdas para `kind` si la capa activa está en modo Tiles y la herramienta trabaja
+    /// en celdas.
+    fn cell_proxy(&self, kind: ToolKind) -> Option<TileProxy> {
+        if !kind.uses_cells() || !self.tiles_mode() {
+            return None;
+        }
+        TileProxy::build(
+            self.sprite(),
+            self.layer,
+            self.frame,
+            self.selection.as_ref(),
+        )
+    }
+
+    /// Punto de mundo → punto de la herramienta: píxel local o, en modo Tiles, el píxel del proxy
+    /// de la celda que contiene al puntero.
+    fn tool_point(&self, world: (f32, f32)) -> Point {
+        let p = self.to_local(self.snapped(world));
+        match self
+            .tile_space()
+            .filter(|_| self.active_tool().uses_cells())
+        {
+            Some(space) => space.proxy_pixel(space.cell_at(p)),
+            None => p,
+        }
+    }
+
+    /// Corre `f` sobre la herramienta de sprite activa con un contexto que toma prestado el
+    /// documento (o el proxy de celdas en modo Tiles).
     fn with_tool<R: Default>(&mut self, f: impl FnOnce(&mut dyn Tool, &ToolContext) -> R) -> R {
         let kind = self.active_tool();
+        let proxy = self.cell_proxy(kind);
         let mut tools = std::mem::replace(&mut self.tools, SpriteTools::new());
         let result = tools
             .get_mut(kind)
-            .map(|tool| f(tool, &self.context()))
+            .map(|tool| match &proxy {
+                Some(proxy) => f(tool, &self.tiles_context(proxy)),
+                None => f(tool, &self.context()),
+            })
             .unwrap_or_default();
         self.tools = tools;
         result
@@ -962,6 +1074,7 @@ impl Editor {
     /// `slop`: tolerancia en píxeles de mundo para tomar bordes de artboards.
     pub fn pointer_press(&mut self, world: (f32, f32), secondary: bool, alt: bool, slop: f32) {
         self.stop();
+        self.tile_limit = false;
         self.painting_secondary = secondary;
         // Alt es cuentagotas temporal solo en las herramientas que pintan.
         self.temp_eyedropper = alt && self.tool.paints();
@@ -987,7 +1100,11 @@ impl Editor {
         if let Some(id) = self.document.artboard_at(world) {
             self.activate(id);
         }
-        let p = self.to_local(self.snapped(world));
+        let p = self.tool_point(world);
+        // En modo Tiles algunas herramientas no actúan (la barra de estado lo avisa).
+        if self.tiles_mode() && self.active_tool().blocked_in_tiles() {
+            return;
+        }
         if self.active_tool() == ToolKind::Slice {
             self.select_slice_at(p);
         }
@@ -1006,8 +1123,10 @@ impl Editor {
             return;
         }
         // Mover sin selección: cambia a la capa que tiene algo dibujado bajo el puntero.
+        // En modo Tiles Move se queda en la capa tilemap.
         if self.active_tool() == ToolKind::Move
             && self.selection.is_none()
+            && !self.tiles_mode()
             && let Some(layer) = self.layer_at(p)
         {
             self.layer = layer;
@@ -1037,7 +1156,7 @@ impl Editor {
             self.artboard_tool.drag(world);
             return;
         }
-        let p = self.to_local(self.snapped(world));
+        let p = self.tool_point(world);
         self.with_tool(|tool, ctx| tool.drag(ctx, p));
     }
 
@@ -1093,6 +1212,10 @@ impl Editor {
             return;
         }
         let kind = self.active_tool();
+        if self.tiles_mode() && kind.blocked_in_tiles() {
+            self.temp_eyedropper = false;
+            return;
+        }
         let out = self.with_tool(|tool, ctx| tool.release(ctx));
         self.temp_eyedropper = false;
         self.apply_output(kind, out);
@@ -1149,6 +1272,10 @@ impl Editor {
     }
 
     fn apply_output(&mut self, kind: ToolKind, out: ToolOutput) {
+        if let Some(proxy) = self.cell_proxy(kind) {
+            self.apply_tiles_output(kind, out, &proxy);
+            return;
+        }
         let slices_before = self.sprite().slices.len();
         let applied = match out.command {
             Some(cmd) => {
@@ -1174,6 +1301,85 @@ impl Editor {
         let slices_after = self.sprite().slices.len();
         if kind == ToolKind::Slice && slices_after > slices_before {
             self.slice = Some(slices_after - 1);
+        }
+    }
+
+    /// Resultado de una herramienta sobre el proxy → tiles y selección del sprite real.
+    fn apply_tiles_output(&mut self, kind: ToolKind, out: ToolOutput, proxy: &TileProxy) {
+        let mut applied = true;
+        if let Some(cmd) = &out.command {
+            match self.tiles_edit(proxy, cmd) {
+                TilesEdit::Apply(cmd) => {
+                    applied = self.execute(cmd);
+                    self.tile_limit = false;
+                }
+                TilesEdit::Nothing => {}
+                TilesEdit::TooLarge => {
+                    self.tile_limit = true;
+                    applied = false;
+                }
+            }
+        }
+        if let Some(PixelValue::Rgba(code)) = out.pick {
+            self.set_brush_tile(tile_ops::decode(code));
+        }
+        if let Some(shape) = out.selection
+            && applied
+        {
+            let s = self.sprite();
+            let canvas = (s.width, s.height);
+            let shape = shape.map(|m| tile_ops::cells_to_pixels(&m, &proxy.space, canvas));
+            let combined = self.combine_selection(kind, shape);
+            self.set_selection(combined);
+        }
+    }
+
+    /// Traduce un `DrawPixels` del proxy a `ops::set_tiles` sobre la capa real.
+    fn tiles_edit(&self, proxy: &TileProxy, cmd: &Command) -> TilesEdit {
+        let locked = self.sprite().layer(proxy.layer).is_none_or(|l| l.locked);
+        let Some(cells) = proxy
+            .cells(cmd)
+            .filter(|cells| !locked && !proxy.unchanged(cells))
+        else {
+            return TilesEdit::Nothing;
+        };
+        match cs_commands::ops::set_tiles(self.sprite(), proxy.layer, proxy.frame, &cells) {
+            Some(cmd) => TilesEdit::Apply(cmd),
+            None => TilesEdit::TooLarge,
+        }
+    }
+
+    /// Vista previa de un gesto en modo Tiles: el trazo pasa por la misma traducción que al soltar.
+    fn tiles_view(&self, kind: ToolKind, out: ToolOutput, proxy: &TileProxy) -> DocView<'_> {
+        let s = self.sprite();
+        let canvas = (s.width, s.height);
+        let selection = match out.selection {
+            Some(shape) => self.combine_selection(
+                kind,
+                shape.map(|m| tile_ops::cells_to_pixels(&m, &proxy.space, canvas)),
+            ),
+            None => self.selection.clone(),
+        };
+        let edit = out.command.as_ref().map(|cmd| self.tiles_edit(proxy, cmd));
+        let Some(TilesEdit::Apply(cmd)) = edit else {
+            return DocView {
+                document: Cow::Borrowed(&self.document),
+                selection,
+            };
+        };
+        let mut doc = self.document.clone();
+        let applied = DocCommand::OnArtboard {
+            id: self.active,
+            cmd,
+        }
+        .apply(&mut doc);
+        DocView {
+            document: if applied.is_ok() {
+                Cow::Owned(doc)
+            } else {
+                Cow::Borrowed(&self.document)
+            },
+            selection,
         }
     }
 
@@ -1231,6 +1437,10 @@ impl Editor {
         else {
             return current();
         };
+        if let Some(proxy) = self.cell_proxy(kind) {
+            let out = tool.preview(&self.tiles_context(&proxy));
+            return self.tiles_view(kind, out, &proxy);
+        }
         let out = tool.preview(&self.context());
         let selection = match out.selection {
             Some(sel) => self.combine_selection(kind, sel),
@@ -1263,6 +1473,8 @@ impl Editor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tile_ops::test_util::{t, tile_at, tile_editor};
+    use cs_commands::ops;
 
     fn editor() -> Editor {
         Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba))
@@ -1658,5 +1870,223 @@ mod tests {
         ));
         assert_eq!(e.primary, PixelValue::Index(0));
         assert_eq!(e.secondary, PixelValue::Index(21));
+    }
+
+    #[test]
+    fn tiles_mode_pencil_paints_the_brush_tile_with_flips_and_previews_it() {
+        let mut e = tile_editor();
+        assert!(e.tiles_mode());
+        assert_eq!(e.brush_tile(), t(1), "the brush starts on tile 1");
+        let flipped = Tile::new(2, true, false, false);
+        e.set_brush_tile(flipped);
+        e.pointer_press((5.5, 9.5), false, false, 0.1); // celda (1, 2)
+        let preview = e.view().document.artboards[0].sprite.clone();
+        let shown = TileProxy::build(&preview, LayerId(2), 0, None).unwrap();
+        assert_eq!(shown.tile_at((1, 2)), flipped, "the preview shows the tile");
+        assert!(e.sprite().cel(LayerId(2), 0).is_none(), "preview only");
+        e.pointer_release();
+        assert_eq!(tile_at(&e, (1, 2)), flipped);
+        assert_eq!(tile_at(&e, (0, 0)), Tile::EMPTY);
+        e.undo();
+        assert!(e.sprite().cel(LayerId(2), 0).is_none());
+    }
+
+    #[test]
+    fn tiles_mode_shapes_are_exact_in_cells() {
+        let mut e = tile_editor();
+        e.set_tool(ToolKind::Line);
+        drag_local(&mut e, (1, 1), (13, 1), false, false);
+        for cx in 0..4 {
+            assert_eq!(tile_at(&e, (cx, 0)), t(1));
+        }
+        assert_eq!(tile_at(&e, (0, 1)), Tile::EMPTY);
+        e.undo();
+        e.set_tool(ToolKind::Rectangle);
+        e.options.filled = true;
+        drag_local(&mut e, (1, 1), (9, 9), false, false);
+        let proxy = TileProxy::build(e.sprite(), LayerId(2), 0, None).unwrap();
+        let filled: Vec<Point> = (0..4)
+            .flat_map(|y| (0..4).map(move |x| (x, y)))
+            .filter(|&c| proxy.tile_at(c) == t(1))
+            .collect();
+        assert_eq!(
+            filled,
+            vec![
+                (0, 0),
+                (1, 0),
+                (2, 0),
+                (0, 1),
+                (1, 1),
+                (2, 1),
+                (0, 2),
+                (1, 2),
+                (2, 2)
+            ]
+        );
+    }
+
+    #[test]
+    fn tiles_mode_bucket_fills_equal_tiles_contiguous_or_not() {
+        let mut e = tile_editor();
+        let flipped = Tile::new(1, true, false, false);
+        let cells = [
+            (0, 0, t(1)),
+            (1, 0, t(1)),
+            (2, 0, t(2)),
+            (3, 0, t(1)),
+            (0, 1, flipped),
+        ];
+        let cmd = ops::set_tiles(e.sprite(), LayerId(2), 0, &cells).unwrap();
+        e.execute(cmd);
+        let row = |e: &Editor| (0..4).map(|x| tile_at(e, (x, 0))).collect::<Vec<_>>();
+        e.set_tool(ToolKind::Bucket);
+        e.set_brush_tile(t(2));
+        click(&mut e, (5, 1), false, false); // celda (1, 0)
+        assert_eq!(row(&e), vec![t(2), t(2), t(2), t(1)]);
+        assert_eq!(
+            tile_at(&e, (0, 1)),
+            flipped,
+            "flips count: not the same tile"
+        );
+        e.undo();
+        e.options.contiguous = false;
+        click(&mut e, (5, 1), false, false);
+        assert_eq!(row(&e), vec![t(2); 4]);
+        assert_eq!(tile_at(&e, (0, 1)), flipped);
+        assert_eq!(tile_at(&e, (1, 1)), Tile::EMPTY);
+    }
+
+    #[test]
+    fn tiles_mode_eyedropper_picks_the_tile_and_its_flips() {
+        let mut e = tile_editor();
+        let flipped = Tile::new(2, false, true, false);
+        let cmd = ops::set_tiles(e.sprite(), LayerId(2), 0, &[(2, 0, flipped)]).unwrap();
+        e.execute(cmd);
+        e.set_tool(ToolKind::Eyedropper);
+        click(&mut e, (9, 1), false, false);
+        assert_eq!(e.brush_tile(), flipped);
+        click(&mut e, (1, 13), false, false);
+        assert_eq!(
+            e.brush_tile(),
+            Tile::EMPTY,
+            "clicking an empty cell picks the empty tile"
+        );
+    }
+
+    #[test]
+    fn tiles_mode_eraser_leaves_the_empty_tile() {
+        let mut e = tile_editor();
+        click(&mut e, (1, 1), false, false);
+        assert_eq!(tile_at(&e, (0, 0)), t(1));
+        e.set_tool(ToolKind::Eraser);
+        click(&mut e, (2, 2), false, false);
+        assert_eq!(tile_at(&e, (0, 0)), Tile::EMPTY);
+    }
+
+    #[test]
+    fn tiles_mode_marquee_selects_whole_cells_and_limits_painting() {
+        let mut e = tile_editor();
+        e.set_tool(ToolKind::RectSelect);
+        drag_local(&mut e, (1, 1), (5, 5), false, false);
+        let sel = e.selection.clone().unwrap();
+        assert_eq!(sel.bounds(), Some(((0, 0), (7, 7))));
+        assert_eq!(sel.points().count(), 64);
+        e.set_tool(ToolKind::Pencil);
+        drag_local(&mut e, (1, 1), (13, 1), false, false);
+        assert_eq!(tile_at(&e, (1, 0)), t(1));
+        assert_eq!(tile_at(&e, (2, 0)), Tile::EMPTY, "outside the selection");
+    }
+
+    #[test]
+    fn tiles_mode_move_steps_by_whole_tiles() {
+        let mut e = tile_editor();
+        click(&mut e, (1, 1), false, false); // tile 1 en la celda (0, 0)
+        e.set_tool(ToolKind::Move);
+        drag_local(&mut e, (1, 1), (2, 1), false, false); // 1 px: menos de medio tile
+        assert_eq!(e.sprite().cel(LayerId(2), 0).unwrap().position, (0, 0));
+        drag_local(&mut e, (1, 1), (4, 2), false, false); // 3 px → 1 tile; 1 px → 0
+        assert_eq!(e.sprite().cel(LayerId(2), 0).unwrap().position, (4, 0));
+        assert_eq!(tile_at(&e, (1, 0)), t(1));
+        assert_eq!(e.layer, LayerId(2), "Move keeps the tilemap layer");
+    }
+
+    #[test]
+    fn tiles_mode_blocks_spray_and_text() {
+        let mut e = tile_editor();
+        e.set_tool(ToolKind::Spray);
+        e.pointer_press((4.5, 4.5), false, false, 0.1);
+        e.tool_tick(1000.0);
+        e.pointer_release();
+        assert_eq!(
+            e.tiles_status().as_deref(),
+            Some("Not available in Tiles mode")
+        );
+        e.set_tool(ToolKind::Text);
+        click(&mut e, (1, 1), false, false);
+        assert!(e.text.is_none());
+        assert!(!e.history.can_undo(), "no commands");
+        e.set_tool(ToolKind::Pencil);
+        assert_eq!(
+            e.tiles_status().as_deref(),
+            Some("Tiles mode: painting with tile 1")
+        );
+        // Numeración del usuario: índice + base_index - 1.
+        let mut ts = e.sprite().tilesets[0].clone();
+        ts.base_index = 5;
+        e.execute(Command::SetTileset {
+            index: 0,
+            tileset: Some(ts),
+        });
+        e.set_brush_tile(t(2));
+        assert_eq!(
+            e.tiles_status().as_deref(),
+            Some("Tiles mode: painting with tile 6")
+        );
+    }
+
+    #[test]
+    fn tiles_mode_reports_the_grid_limit() {
+        use std::sync::Arc;
+
+        use cs_core::{Image, Tileset};
+        let mut s = Sprite::new(5000, 1, ColorMode::Rgba);
+        let mut ts = Tileset::new("t", (1, 1), ColorMode::Rgba);
+        ts.tiles.push(Arc::new(Image::new(1, 1, ColorMode::Rgba)));
+        s.tilesets.push(ts);
+        let add = ops::new_tilemap_layer(&s, Some(LayerId(1)), 0);
+        add.apply(&mut s).unwrap();
+        let mut e = Editor::with_sprite(s);
+        e.select_layer(LayerId(2));
+        e.set_tool(ToolKind::Line);
+        // 5000 celdas de ancho: más que MAX_TILEMAP_SIDE (4096).
+        drag_local(&mut e, (0, 0), (4999, 0), false, false);
+        assert!(e.sprite().cel(LayerId(2), 0).is_none());
+        assert_eq!(
+            e.tiles_status().as_deref(),
+            Some("Tiles mode: the tilemap would exceed its size limit")
+        );
+    }
+
+    #[test]
+    fn tiles_mode_paints_the_partial_edge_cell_of_an_unaligned_cel_with_a_selection() {
+        let mut e = tile_editor();
+        // Un tile en la celda (1, 1) y el cel corrido 2 px: offset (2, 2), la celda -1 se ve en
+        // los píxeles [0, 2) del borde.
+        let cmd = ops::set_tiles(e.sprite(), LayerId(2), 0, &[(1, 1, t(2))]).unwrap();
+        e.execute(cmd);
+        let mut cel = *e.sprite().cel(LayerId(2), 0).unwrap();
+        cel.position = (cel.position.0 + 2, cel.position.1 + 2);
+        e.execute(Command::SetCel {
+            layer: LayerId(2),
+            frame: 0,
+            cel: Some(cel),
+        });
+        e.select_all();
+        click(&mut e, (1, 1), false, false);
+        assert_eq!(tile_at(&e, (-1, -1)), t(1), "the edge cell is painted");
+        assert_eq!(tile_at(&e, (1, 1)), t(2));
+        // El puntero sobre un tile corrido cae en su celda.
+        click(&mut e, (6, 6), false, false);
+        assert_eq!(tile_at(&e, (1, 1)), t(1));
     }
 }

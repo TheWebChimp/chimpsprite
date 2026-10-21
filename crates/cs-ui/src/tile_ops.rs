@@ -3,9 +3,11 @@
 use std::sync::Arc;
 
 use cs_commands::Command;
-use cs_core::Tile;
 use cs_core::{Cel, ColorMode, Image, ImageId, LayerId, LayerKind, Mask, PixelValue, Rgba, Sprite};
+use cs_core::{Tile, Tileset};
 use cs_tools::Point;
+
+use crate::editor::Editor;
 
 /// Única capa del proxy (frame 0).
 pub const PROXY_LAYER: LayerId = LayerId(1);
@@ -118,7 +120,7 @@ impl TileSpace {
 pub struct TileProxy {
     /// Una capa de imagen (`PROXY_LAYER`) y un frame; cada píxel es `encode(tile)`.
     pub sprite: Sprite,
-    /// Selección del editor en celdas: una celda está seleccionada si su píxel de origen lo está.
+    /// Selección del editor en celdas (ver `pixels_to_cells`).
     pub selection: Option<Mask>,
     pub space: TileSpace,
     /// Capa y frame reales.
@@ -227,7 +229,10 @@ impl TileProxy {
 }
 
 /// Selección en píxeles → celdas del proxy (`size` = tamaño del proxy): una celda está
-/// seleccionada si su píxel de origen en el lienzo lo está.
+/// seleccionada si su primer píxel visible lo está. Es su píxel de origen, salvo en la celda
+/// parcial del borde (cel no alineado), cuyo origen cae fuera del lienzo: ahí se toma el origen
+/// llevado al lienzo (el primer píxel que se ve). Así `cells_to_pixels` y esta función van y
+/// vuelven sin perder la celda del borde, y un píxel suelto dentro de una celda no la selecciona.
 pub fn pixels_to_cells(pixels: &Mask, space: &TileSpace, size: (u32, u32)) -> Mask {
     let cells = (0..size.1 as i32).flat_map(|cy| (0..size.0 as i32).map(move |cx| (cx, cy)));
     Mask::from_points(
@@ -235,7 +240,7 @@ pub fn pixels_to_cells(pixels: &Mask, space: &TileSpace, size: (u32, u32)) -> Ma
         size.1,
         cells.filter(|&c| {
             let (x, y) = space.cell_origin(space.canvas_cell(c));
-            pixels.contains(x, y)
+            pixels.contains(x.max(0), y.max(0))
         }),
     )
 }
@@ -250,6 +255,72 @@ pub fn cells_to_pixels(cells: &Mask, space: &TileSpace, canvas: (u32, u32)) -> M
         (0..th).flat_map(move |dy| (0..tw).map(move |dx| (x0 + dx, y0 + dy)))
     });
     Mask::from_points(canvas.0, canvas.1, points)
+}
+
+impl Editor {
+    /// La capa activa es tilemap con un tileset válido y no se está editando su máscara: las
+    /// herramientas trabajan con tiles.
+    pub fn tiles_mode(&self) -> bool {
+        self.tile_space().is_some()
+    }
+
+    pub fn tile_space(&self) -> Option<TileSpace> {
+        if self.editing_mask() {
+            return None;
+        }
+        TileSpace::of(self.sprite(), self.layer, self.frame)
+    }
+
+    /// Índice y datos del tileset de la capa activa (si es tilemap y el tileset existe).
+    pub fn active_tileset(&self) -> Option<(u32, &Tileset)> {
+        let sprite = self.sprite();
+        let layer = sprite
+            .layer(self.layer)
+            .filter(|l| l.kind == LayerKind::Tilemap)?;
+        let index = layer.tileset?;
+        Some((index, sprite.tilesets.get(index as usize)?))
+    }
+
+    /// Tile del pincel para el tileset activo. El elegido pertenece a un tileset: en otro (o si
+    /// quedó fuera de rango) el pincel es el tile 1, o el vacío si el tileset no tiene tiles. Sin
+    /// flip D si los tiles no son cuadrados.
+    pub fn brush_tile(&self) -> Tile {
+        let Some((index, ts)) = self.active_tileset() else {
+            return self.brush_tile;
+        };
+        let fallback = Tile::new(u32::from(ts.tiles.len() > 1), false, false, false);
+        if self.brush_tileset != Some((self.active, index))
+            || self.brush_tile.index() as usize >= ts.tiles.len()
+        {
+            return fallback;
+        }
+        if ts.tile_size.0 != ts.tile_size.1 {
+            return Tile(self.brush_tile.0 & !Tile::FLIP_D);
+        }
+        self.brush_tile
+    }
+
+    /// Elige el tile del pincel para el tileset activo.
+    pub fn set_brush_tile(&mut self, tile: Tile) {
+        self.brush_tileset = self.active_tileset().map(|(i, _)| (self.active, i));
+        self.brush_tile = tile;
+    }
+
+    /// Aviso de la barra de estado en modo Tiles.
+    pub fn tiles_status(&self) -> Option<String> {
+        if !self.tiles_mode() {
+            return None;
+        }
+        if self.active_tool().blocked_in_tiles() {
+            return Some("Not available in Tiles mode".into());
+        }
+        if self.tile_limit {
+            return Some("Tiles mode: the tilemap would exceed its size limit".into());
+        }
+        let (_, ts) = self.active_tileset()?;
+        let n = tile_number(self.brush_tile().index(), ts.base_index);
+        Some(format!("Tiles mode: painting with tile {n}"))
+    }
 }
 
 #[cfg(test)]
@@ -437,5 +508,86 @@ mod tests {
         assert!(proxy.cells(&Command::SetGrid(Default::default())).is_none());
         assert!(proxy.unchanged(&[(0, 0, Tile::new(1, false, false, false))]));
         assert!(!proxy.unchanged(&[(0, 0, Tile::EMPTY)]));
+    }
+
+    #[test]
+    fn select_all_on_an_unaligned_cel_includes_the_partial_edge_cell() {
+        // Cel en (6, 3): la celda -1 del borde empieza fuera del lienzo, en (-2, -1).
+        let s = tiled(16, 8, (6, 3));
+        let all = Mask::all(16, 8);
+        let proxy = TileProxy::build(&s, LayerId(2), 0, Some(&all)).unwrap();
+        let cells = proxy.selection.clone().unwrap();
+        assert_eq!(
+            cells.points().count(),
+            15,
+            "the 5x3 proxy cells, edge ones included"
+        );
+        assert!(cells.contains(0, 0), "the partial edge cell is selected");
+        // Y se puede pintar: el trazo sobre el píxel 0 del proxy llega a la celda (-1, -1).
+        let tile = Tile::new(1, false, false, false);
+        let cmd = Command::DrawPixels {
+            layer: PROXY_LAYER,
+            frame: 0,
+            pixels: vec![(0, 0, PixelValue::Rgba(encode(tile)))],
+        };
+        assert_eq!(proxy.cells(&cmd).unwrap(), vec![(-1, -1, tile)]);
+    }
+
+    #[test]
+    fn selection_round_trips_through_cells_with_an_offset() {
+        let s = tiled(16, 8, (6, 3));
+        let space = TileSpace::of(&s, LayerId(2), 0).unwrap();
+        let size = space.proxy_size((16, 8));
+        // Celda del borde (0, 0), una interior y la parcial de abajo a la derecha.
+        let cells = Mask::from_points(size.0, size.1, [(0, 0), (2, 1), (4, 2)]);
+        let pixels = cells_to_pixels(&cells, &space, (16, 8));
+        // La celda (0, 0) del proxy es la -1: en el lienzo solo se ven sus píxeles [0, 2) x [0, 3).
+        assert!(pixels.contains(0, 0) && pixels.contains(1, 2));
+        assert!(!pixels.contains(2, 0));
+        let back = pixels_to_cells(&pixels, &space, size);
+        assert_eq!(
+            back.points().collect::<Vec<_>>(),
+            cells.points().collect::<Vec<_>>()
+        );
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    use std::sync::Arc;
+
+    use cs_core::{ColorMode, Image, LayerId, PixelValue, Rgba, Sprite, Tile, Tileset};
+    use cs_tools::Point;
+
+    use super::TileProxy;
+    use crate::editor::Editor;
+
+    /// Editor sobre un sprite de 16×16 con un tileset de 4×4 (tiles 1 y 2, distintos) y la capa
+    /// tilemap 2 activa, encima de la capa 1.
+    pub fn tile_editor() -> Editor {
+        let mut s = Sprite::new(16, 16, ColorMode::Rgba);
+        let mut ts = Tileset::new("t", (4, 4), ColorMode::Rgba);
+        for r in [255u8, 0] {
+            let mut img = Image::new(4, 4, ColorMode::Rgba);
+            img.set(0, 0, PixelValue::Rgba(Rgba::rgb(r, 0, 255 - r)))
+                .unwrap();
+            ts.tiles.push(Arc::new(img));
+        }
+        s.tilesets.push(ts);
+        let add = cs_commands::ops::new_tilemap_layer(&s, Some(LayerId(1)), 0);
+        add.apply(&mut s).unwrap();
+        let mut e = Editor::with_sprite(s);
+        e.select_layer(LayerId(2));
+        e
+    }
+
+    /// Tile de la celda `c` del lienzo en la capa activa.
+    pub fn tile_at(e: &Editor, c: Point) -> Tile {
+        let proxy = TileProxy::build(e.sprite(), e.layer, e.frame, None).expect("tiles mode");
+        proxy.tile_at(proxy.space.proxy_pixel(c))
+    }
+
+    pub fn t(index: u32) -> Tile {
+        Tile::new(index, false, false, false)
     }
 }
