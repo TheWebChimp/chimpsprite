@@ -906,6 +906,7 @@ name = "cs-commands"
 version = "0.1.0"
 dependencies = [
  "cs-core",
+ "cs-render",
  "log",
  "proptest",
  "serde",

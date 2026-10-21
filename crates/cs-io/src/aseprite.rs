@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use cs_core::{
     AllowedFlips, AnimDirection, BlendMode, Cel, ColorMode, Frame, Image, Layer, LayerId,
-    LayerKind, MAX_TILE_PIXELS, MAX_TILEMAP_PIXELS, Palette, PixelBuffer, RawChunk, Rgba, Slice,
-    SliceKey, Sprite, Tag, Tile, TileGrid, Tileset,
+    LayerKind, MAX_TILE_PIXELS, MAX_TILEMAP_PIXELS, MAX_TILESET_TILES, Palette, PixelBuffer,
+    RawChunk, Rgba, Slice, SliceKey, Sprite, Tag, Tile, TileGrid, Tileset,
 };
 use flate2::Compression;
 use flate2::read::ZlibDecoder;
@@ -38,10 +38,6 @@ const TILESET_EMPTY_ZERO: u32 = 4;
 const TILESET_FLIP_X: u32 = 8;
 const TILESET_FLIP_Y: u32 = 16;
 const TILESET_FLIP_D: u32 = 32;
-
-/// Tiles máximos de un tileset. Cada tile es una imagen aparte: con tiles de 1×1 la tira
-/// comprimida es mínima pero la cuenta dispararía millones de asignaciones.
-const MAX_TILESET_TILES: u32 = 1 << 16;
 
 /// Píxeles de tile que puede reservar la lectura de un archivo, sumando todos sus tilesets (64 Mpx,
 /// 256 MiB en RGBA). Cada chunk de tileset está acotado por `MAX_TILE_PIXELS` y

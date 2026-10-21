@@ -1,10 +1,11 @@
 //! Tilemaps: tilesets (las imágenes de los tiles) y las grillas de tiles de los cels.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ColorMode, Image, RawChunk};
+use crate::{ColorMode, Image, PixelValue, RawChunk};
 
 /// Píxeles máximos de un cel tilemap (ancho × alto de la grilla en píxeles, 64 Mpx). Una grilla
 /// chica con tiles grandes ocupa poco en el archivo pero mucho al dibujarse: el lector descarta
@@ -16,6 +17,11 @@ pub const MAX_TILEMAP_PIXELS: u64 = 1 << 26;
 /// Alcanza para cualquier uso real (Aseprite crea tiles de 16×16 por defecto) y deja que una
 /// grilla de esos tiles todavía quepa en `MAX_TILEMAP_PIXELS`.
 pub const MAX_TILE_PIXELS: u64 = 1 << 22;
+
+/// Tiles máximos de un tileset (incluido el vacío). Cada tile es una imagen aparte: con tiles de
+/// 1×1 la cuenta dispararía millones de asignaciones. Lo usan el lector de `.aseprite` y la
+/// conversión de capas a tilemap.
+pub const MAX_TILESET_TILES: u32 = 1 << 16;
 
 /// Valor de una celda de tilemap, con el mismo layout que Aseprite:
 /// bits 0–28 índice del tile, bit 31 flip X, bit 30 flip Y, bit 29 flip D (transponer).
@@ -135,6 +141,95 @@ impl Tileset {
             tile_user_data: Vec::new(),
         }
     }
+
+    /// Imagen que dibuja `tile`, o `None` si la celda no dibuja nada: tile vacío, índice fuera de
+    /// rango, imagen de otro tamaño o flip D en un tile no cuadrado.
+    pub fn drawn_tile(&self, tile: Tile) -> Option<&Image> {
+        let index = tile.index() as usize;
+        if index == 0 {
+            return None;
+        }
+        let image = self.tiles.get(index)?;
+        let (tw, th) = self.tile_size;
+        if (image.width(), image.height()) != (tw, th) {
+            return None;
+        }
+        if tile.flip_d() && tw != th {
+            if !WARNED_DIAGONAL.swap(true, Ordering::Relaxed) {
+                log::warn!("diagonal flip on non-square tiles ({tw}×{th}) is not drawn");
+            }
+            return None;
+        }
+        Some(image)
+    }
+}
+
+/// Avisado una sola vez: flip D en tiles no cuadrados.
+static WARNED_DIAGONAL: AtomicBool = AtomicBool::new(false);
+
+/// Píxel del tile original que se ve en `(x, y)` del tile volteado. Equivale a aplicar a la imagen
+/// D (transponer), después X y después Y; el orden lo confirma `tilemap_file_renders_like_aseprite`
+/// en `cs-io/tests/aseprite_interop.rs`.
+fn tile_source(tile: Tile, w: u32, h: u32, x: u32, y: u32) -> (u32, u32) {
+    let mut sx = if tile.flip_x() { w - 1 - x } else { x };
+    let mut sy = if tile.flip_y() { h - 1 - y } else { y };
+    if tile.flip_d() {
+        std::mem::swap(&mut sx, &mut sy);
+    }
+    (sx, sy)
+}
+
+/// Valor que dibuja la grilla en `(lx, ly)`, relativo a su esquina: una sola búsqueda de tile.
+/// `None` fuera de la grilla, en celdas que no dibujan (ver `Tileset::drawn_tile`) o si el tile es
+/// de otro modo de color (datos corruptos).
+pub fn tile_grid_pixel(
+    mode: ColorMode,
+    tileset: &Tileset,
+    grid: &TileGrid,
+    lx: i64,
+    ly: i64,
+) -> Option<PixelValue> {
+    let (tw, th) = tileset.tile_size;
+    if lx < 0 || ly < 0 || tw == 0 || th == 0 {
+        return None;
+    }
+    let gx = u32::try_from(lx / tw as i64).ok()?;
+    let gy = u32::try_from(ly / th as i64).ok()?;
+    let tile = grid.get(gx, gy)?;
+    let src = tileset.drawn_tile(tile)?;
+    let (sx, sy) = tile_source(
+        tile,
+        tw,
+        th,
+        (lx % tw as i64) as u32,
+        (ly % th as i64) as u32,
+    );
+    let value = src.get(sx, sy)?;
+    let same_mode = matches!(
+        (value, mode),
+        (PixelValue::Rgba(_), ColorMode::Rgba) | (PixelValue::Index(_), ColorMode::Indexed { .. })
+    );
+    same_mode.then_some(value)
+}
+
+/// La grilla entera dibujada (sin recortar), con cada tile copiado como valores y sus flips.
+/// `None` si la grilla no tiene celdas o pasaría `MAX_TILEMAP_PIXELS`.
+pub fn draw_tile_grid(mode: ColorMode, tileset: &Tileset, grid: &TileGrid) -> Option<Image> {
+    let (tw, th) = tileset.tile_size;
+    let w = grid.width as u64 * tw as u64;
+    let h = grid.height as u64 * th as u64;
+    if w == 0 || h == 0 || w * h > MAX_TILEMAP_PIXELS {
+        return None;
+    }
+    let mut image = Image::new(w as u32, h as u32, mode);
+    for y in 0..h as u32 {
+        for x in 0..w as u32 {
+            if let Some(v) = tile_grid_pixel(mode, tileset, grid, x as i64, y as i64) {
+                image.set(x, y, v).expect("in bounds and same mode");
+            }
+        }
+    }
+    Some(image)
 }
 
 #[cfg(test)]
@@ -252,5 +347,43 @@ mod tests {
         let back: Sprite = serde_json::from_value(old).unwrap();
         assert!(back.tilesets.is_empty() && back.tilemaps.is_empty());
         assert_eq!(back.layers[0].tileset, None);
+    }
+
+    #[test]
+    fn tile_grids_draw_with_flips_and_skip_cells_that_draw_nothing() {
+        let mode = ColorMode::Rgba;
+        let red = PixelValue::Rgba(crate::Rgba::rgb(255, 0, 0));
+        let mut ts = Tileset::new("t", (2, 2), mode);
+        let mut img = Image::new(2, 2, mode);
+        img.set(0, 0, red).unwrap();
+        ts.tiles.push(Arc::new(img));
+        let mut grid = TileGrid::new(3, 1);
+        grid.set(0, 0, Tile::new(1, false, false, false));
+        grid.set(1, 0, Tile::new(1, true, true, false));
+        grid.set(2, 0, Tile::new(9, false, false, false));
+        let out = draw_tile_grid(mode, &ts, &grid).unwrap();
+        assert_eq!((out.width(), out.height()), (6, 2));
+        assert_eq!(out.get(0, 0), Some(red));
+        assert_eq!(
+            out.get(3, 1),
+            Some(red),
+            "X+Y flips move it to the opposite corner"
+        );
+        assert_eq!(
+            out.get(4, 0),
+            Some(mode.transparent()),
+            "tile 9 does not exist"
+        );
+        assert_eq!(tile_grid_pixel(mode, &ts, &grid, 4, 0), None);
+        assert!(draw_tile_grid(mode, &ts, &TileGrid::new(0, 0)).is_none());
+        // Flip D en tiles no cuadrados: no dibuja.
+        let mut wide = Tileset::new("w", (4, 2), mode);
+        wide.tiles.push(Arc::new(Image::new(4, 2, mode)));
+        let mut g = TileGrid::new(1, 1);
+        g.set(0, 0, Tile::new(1, false, false, true));
+        assert!(wide.drawn_tile(Tile::new(1, false, false, false)).is_some());
+        assert!(wide.drawn_tile(Tile::new(1, false, false, true)).is_none());
+        assert_eq!(tile_grid_pixel(mode, &wide, &g, 0, 0), None);
+        assert_eq!(MAX_TILESET_TILES, 1 << 16);
     }
 }

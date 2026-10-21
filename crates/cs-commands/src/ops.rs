@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use cs_core::{
     ArtboardId, Cel, ColorMode, Image, ImageId, InstanceKey, Layer, LayerId, LayerKind, LayerMask,
-    Mask, PixelBuffer, PixelValue, Sprite, Tile, TileGrid,
+    MAX_TILESET_TILES, Mask, PixelBuffer, PixelValue, Sprite, Tile, TileGrid, Tileset,
 };
 
 use crate::Command;
@@ -495,6 +495,221 @@ pub fn is_linked(sprite: &Sprite, layer: LayerId, frame: usize) -> bool {
             .iter()
             .any(|(k, c)| *k != (layer, frame) && c.image == cel.image)
     })
+}
+
+/// Posición de un cel en el lienzo.
+type Pos = (i32, i32);
+
+/// Lado máximo de un tile al crear tilesets desde la UI o al convertir una capa.
+pub const MAX_TILE_SIDE: u32 = 256;
+
+/// Clave para comparar tiles por igualdad exacta de píxeles.
+fn pixel_key(image: &Image) -> Vec<u8> {
+    match image.pixels() {
+        PixelBuffer::Rgba(px) => px.iter().flat_map(|c| [c.r, c.g, c.b, c.a]).collect(),
+        PixelBuffer::Indexed(px) => px.clone(),
+    }
+}
+
+/// Un píxel que no se ve: alfa 0 en RGBA, el índice transparente en indexado.
+fn is_clear(value: PixelValue, mode: ColorMode) -> bool {
+    match value {
+        PixelValue::Rgba(c) => c.a == 0,
+        v => v == mode.transparent(),
+    }
+}
+
+/// Cambia el tipo de una capa conservando id, índice y propiedades: la quita (con sus cels; las
+/// imágenes y grillas que quedan sin uso salen del pool) y agrega `layer` en el mismo índice. El
+/// inverso de las dos restaura todo exacto.
+fn replace_layer(sprite: &Sprite, layer: Layer) -> Option<[Command; 2]> {
+    let index = sprite.layer_index(layer.id)?;
+    Some([
+        Command::RemoveLayer { id: layer.id },
+        Command::AddLayer { index, layer },
+    ])
+}
+
+/// Convierte la capa de imagen `layer` en una capa tilemap con un tileset nuevo (con el nombre de
+/// la capa) de tiles de `tile_size`. Cada cel se corta en celdas de la grilla del lienzo (la celda
+/// `(cx, cy)` son los píxeles `[cx·tw, (cx+1)·tw)`); solo cuentan las celdas que tocan la imagen
+/// del cel. Una celda transparente es el tile vacío; las demás se comparan por igualdad exacta de
+/// píxeles (sin flips) y las nuevas se agregan al tileset. Cada cel pasa a una grilla cuya
+/// `position` es la esquina de su primera celda, con la misma opacidad; los cels vinculados siguen
+/// vinculados. Todo es un solo `Batch`. `None` si la capa no es de imagen, el tamaño de tile no es
+/// válido (0, más de `MAX_TILE_SIDE` o más de `MAX_TILE_PIXELS`), harían falta más de
+/// `MAX_TILESET_TILES` tiles o alguna grilla pasaría `MAX_TILEMAP_SIDE` / `tilemap_fits`.
+pub fn convert_to_tilemap(
+    sprite: &Sprite,
+    layer: LayerId,
+    tile_size: (u32, u32),
+) -> Option<Command> {
+    let l = sprite.layer(layer)?;
+    let (tw, th) = tile_size;
+    if l.kind != LayerKind::Image
+        || !(1..=MAX_TILE_SIDE).contains(&tw)
+        || !(1..=MAX_TILE_SIDE).contains(&th)
+        || tw as u64 * th as u64 > cs_core::MAX_TILE_PIXELS
+    {
+        return None;
+    }
+    let mode = sprite.color_mode;
+    let index = sprite.tilesets.len();
+    let mut tileset = Tileset::new(l.name.clone(), tile_size, mode);
+    let mut known: HashMap<Vec<u8>, u32> = HashMap::new();
+    let mut next = sprite.next_image_id().0;
+    let (mut grids, mut cels) = (Vec::new(), Vec::new());
+    // Cels vinculados (misma imagen y posición) → la misma grilla.
+    let mut done: HashMap<(ImageId, Pos), (ImageId, Pos)> = HashMap::new();
+    let (tw_i, th_i) = (tw as i32, th as i32);
+    for frame in 0..sprite.frames.len() {
+        let Some(cel) = sprite.cel(layer, frame).copied() else {
+            continue;
+        };
+        let (grid_id, position) = match done.get(&(cel.image, cel.position)) {
+            Some(&found) => found,
+            None => {
+                let Some(image) = sprite.image(cel.image) else {
+                    continue;
+                };
+                let (px, py) = cel.position;
+                let (iw, ih) = (image.width() as i32, image.height() as i32);
+                if iw == 0 || ih == 0 {
+                    continue;
+                }
+                let (cx0, cy0) = (px.div_euclid(tw_i), py.div_euclid(th_i));
+                let (cx1, cy1) = (
+                    (px + iw - 1).div_euclid(tw_i),
+                    (py + ih - 1).div_euclid(th_i),
+                );
+                let (gw, gh) = ((cx1 - cx0 + 1) as u32, (cy1 - cy0 + 1) as u32);
+                if gw > MAX_TILEMAP_SIDE
+                    || gh > MAX_TILEMAP_SIDE
+                    || !tilemap_fits(gw as u64, gh as u64, tile_size)
+                {
+                    return None;
+                }
+                let mut grid = TileGrid::new(gw, gh);
+                for gy in 0..gh {
+                    for gx in 0..gw {
+                        let (x0, y0) = ((cx0 + gx as i32) * tw_i, (cy0 + gy as i32) * th_i);
+                        let mut tile = Image::new(tw, th, mode);
+                        let mut clear = true;
+                        for ty in 0..th {
+                            for tx in 0..tw {
+                                let (lx, ly) = (x0 + tx as i32 - px, y0 + ty as i32 - py);
+                                if lx < 0 || ly < 0 {
+                                    continue;
+                                }
+                                let Some(v) = image.get(lx as u32, ly as u32) else {
+                                    continue;
+                                };
+                                clear &= is_clear(v, mode);
+                                tile.set(tx, ty, v).ok()?;
+                            }
+                        }
+                        if clear {
+                            continue;
+                        }
+                        let key = pixel_key(&tile);
+                        let i = match known.get(&key) {
+                            Some(&i) => i,
+                            None => {
+                                if tileset.tiles.len() as u32 >= MAX_TILESET_TILES {
+                                    return None;
+                                }
+                                let i = tileset.tiles.len() as u32;
+                                tileset.tiles.push(Arc::new(tile));
+                                known.insert(key, i);
+                                i
+                            }
+                        };
+                        grid.set(gx, gy, Tile::new(i, false, false, false));
+                    }
+                }
+                let id = ImageId(next);
+                next += 1;
+                let position = (cx0 * tw_i, cy0 * th_i);
+                grids.push(Command::SetTilemap {
+                    id,
+                    grid: Some(Arc::new(grid)),
+                });
+                done.insert((cel.image, cel.position), (id, position));
+                (id, position)
+            }
+        };
+        cels.push(Command::SetCel {
+            layer,
+            frame,
+            cel: Some(Cel {
+                position,
+                opacity: cel.opacity,
+                image: grid_id,
+            }),
+        });
+    }
+    let mut new_layer = l.clone();
+    new_layer.kind = LayerKind::Tilemap;
+    new_layer.tileset = Some(index as u32);
+    let mut cmds = vec![Command::SetTileset {
+        index,
+        tileset: Some(tileset),
+    }];
+    cmds.extend(replace_layer(sprite, new_layer)?);
+    cmds.extend(grids);
+    cmds.extend(cels);
+    Some(Command::Batch(cmds))
+}
+
+/// Convierte la capa tilemap `layer` en una capa de imagen: cada cel pasa a su grilla dibujada
+/// entera (sin recortar al lienzo, para no perder contenido), en la misma posición y con la misma
+/// opacidad; los cels vinculados siguen vinculados. El tileset queda en el sprite. Un solo
+/// `Batch`. `None` si la capa no es tilemap o su tileset no existe.
+pub fn convert_to_image(sprite: &Sprite, layer: LayerId) -> Option<Command> {
+    let l = sprite.layer(layer)?;
+    if l.kind != LayerKind::Tilemap {
+        return None;
+    }
+    let tileset = sprite.tilesets.get(l.tileset? as usize)?;
+    let mut next = sprite.next_image_id().0;
+    let (mut images, mut cels) = (Vec::new(), Vec::new());
+    let mut done: HashMap<ImageId, ImageId> = HashMap::new();
+    for frame in 0..sprite.frames.len() {
+        let Some(cel) = sprite.cel(layer, frame).copied() else {
+            continue;
+        };
+        let id = match done.get(&cel.image) {
+            Some(&id) => id,
+            None => {
+                let Some(grid) = sprite.tilemap(cel.image) else {
+                    continue;
+                };
+                let Some(image) = cs_core::draw_tile_grid(sprite.color_mode, tileset, grid) else {
+                    continue;
+                };
+                let id = ImageId(next);
+                next += 1;
+                images.push(Command::SetImage {
+                    id,
+                    image: Some(Arc::new(image)),
+                });
+                done.insert(cel.image, id);
+                id
+            }
+        };
+        cels.push(Command::SetCel {
+            layer,
+            frame,
+            cel: Some(Cel { image: id, ..cel }),
+        });
+    }
+    let mut new_layer = l.clone();
+    new_layer.kind = LayerKind::Image;
+    new_layer.tileset = None;
+    let mut cmds = Vec::from(replace_layer(sprite, new_layer)?);
+    cmds.extend(images);
+    cmds.extend(cels);
+    Some(Command::Batch(cmds))
 }
 
 #[cfg(test)]
@@ -1089,5 +1304,195 @@ mod tests {
         assert_eq!(s.frames[1].duration_ms, 33);
         inv.apply(&mut s).unwrap();
         assert_eq!(s, before);
+    }
+
+    fn red() -> PixelValue {
+        PixelValue::Rgba(Rgba::rgb(255, 0, 0))
+    }
+
+    /// Lo que se ve del frame (con los tilemaps dibujados).
+    fn shown(s: &Sprite, frame: usize) -> Vec<Rgba> {
+        cs_render::render_frame(&cs_render::materialize_tilemaps(s, frame..frame + 1), frame)
+    }
+
+    /// 16×8 con la capa 1: un píxel rojo en la esquina de las celdas de 4×4 (0, 0) y (2, 0).
+    fn two_equal_cells() -> Sprite {
+        let mut s = Sprite::new(16, 8, ColorMode::Rgba);
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, red()), (8, 0, red())],
+        }
+        .apply(&mut s)
+        .unwrap();
+        s
+    }
+
+    #[test]
+    fn convert_to_tilemap_dedupes_cells_keeps_the_layer_and_undoes() {
+        let mut s = two_equal_cells();
+        crate::Command::SetLayerProps {
+            id: LayerId(1),
+            props: crate::LayerProps {
+                name: Some("ground".into()),
+                opacity: Some(128),
+                blend: Some(BlendMode::Multiply),
+                locked: Some(true),
+                ..Default::default()
+            },
+        }
+        .apply(&mut s)
+        .unwrap();
+        let before = s.clone();
+        let shown_before = shown(&s, 0);
+        let cmd = convert_to_tilemap(&s, LayerId(1), (4, 4)).unwrap();
+        let inv = cmd.apply(&mut s).unwrap();
+        let (layer, old) = (
+            s.layer(LayerId(1)).unwrap(),
+            before.layer(LayerId(1)).unwrap(),
+        );
+        assert_eq!((layer.kind, layer.tileset), (LayerKind::Tilemap, Some(0)));
+        assert_eq!(
+            (
+                &layer.name,
+                layer.opacity,
+                layer.blend,
+                layer.locked,
+                layer.visible
+            ),
+            (&old.name, old.opacity, old.blend, old.locked, old.visible)
+        );
+        assert_eq!((layer.parent, layer.clip), (old.parent, old.clip));
+        assert_eq!(s.layer_index(LayerId(1)), before.layer_index(LayerId(1)));
+        let ts = &s.tilesets[0];
+        assert_eq!(
+            (ts.name.as_str(), ts.tile_size, ts.tiles.len()),
+            ("ground", (4, 4), 2),
+            "one tile plus the empty tile"
+        );
+        let (cel, grid) = grid_of(&s, 1, 0);
+        assert_eq!(
+            (cel.position, cel.opacity, grid.width, grid.height),
+            ((0, 0), 255, 4, 2)
+        );
+        assert_eq!(grid.get(0, 0), Some(Tile::new(1, false, false, false)));
+        assert_eq!(grid.get(2, 0), grid.get(0, 0));
+        assert_eq!(grid.get(1, 0), Some(Tile::EMPTY));
+        assert!(s.images.is_empty(), "the old image left the pool");
+        assert_eq!(shown(&s, 0), shown_before);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+    }
+
+    #[test]
+    fn convert_to_tilemap_keeps_links_and_handles_unaligned_cels() {
+        let mut s = two_equal_cells();
+        Command::AddFrame {
+            index: 1,
+            frame: Frame { duration_ms: 100 },
+        }
+        .apply(&mut s)
+        .unwrap();
+        let cel = *s.cel(LayerId(1), 0).unwrap();
+        for frame in 0..2 {
+            Command::SetCel {
+                layer: LayerId(1),
+                frame,
+                cel: Some(Cel {
+                    position: (3, 2),
+                    ..cel
+                }),
+            }
+            .apply(&mut s)
+            .unwrap();
+        }
+        let before = (shown(&s, 0), shown(&s, 1));
+        let cmd = convert_to_tilemap(&s, LayerId(1), (4, 4)).unwrap();
+        cmd.apply(&mut s).unwrap();
+        let (c0, c1) = (
+            *s.cel(LayerId(1), 0).unwrap(),
+            *s.cel(LayerId(1), 1).unwrap(),
+        );
+        assert_eq!(c0.image, c1.image, "linked cels stay linked");
+        assert!(is_linked(&s, LayerId(1), 1));
+        assert_eq!(
+            c0.position,
+            (0, 0),
+            "the grid starts at the corner of its first cell"
+        );
+        assert_eq!(s.tilesets[0].tiles.len(), 2);
+        assert_eq!((shown(&s, 0), shown(&s, 1)), before);
+    }
+
+    #[test]
+    fn convert_to_tilemap_rejects_bad_sizes_other_layers_and_too_many_tiles() {
+        let s = two_equal_cells();
+        assert!(convert_to_tilemap(&s, LayerId(1), (0, 4)).is_none());
+        assert!(convert_to_tilemap(&s, LayerId(1), (MAX_TILE_SIDE + 1, 4)).is_none());
+        assert!(convert_to_tilemap(&s, LayerId(9), (4, 4)).is_none());
+        let t = with_tilemap_layer();
+        assert!(
+            convert_to_tilemap(&t, LayerId(2), (4, 4)).is_none(),
+            "already a tilemap"
+        );
+        // 257×256 píxeles distintos con tiles de 1×1: más de MAX_TILESET_TILES tiles.
+        let mut big = Sprite::new(257, 256, ColorMode::Rgba);
+        let pixels = (0..256i32)
+            .flat_map(|y| {
+                (0..257i32).map(move |x| {
+                    let c = Rgba::rgb(x as u8, y as u8, (x >> 8) as u8);
+                    (x, y, PixelValue::Rgba(c))
+                })
+            })
+            .collect();
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels,
+        }
+        .apply(&mut big)
+        .unwrap();
+        assert!(convert_to_tilemap(&big, LayerId(1), (1, 1)).is_none());
+        assert!(convert_to_tilemap(&big, LayerId(1), (2, 2)).is_some());
+    }
+
+    #[test]
+    fn convert_to_image_renders_the_same_keeps_off_canvas_tiles_and_undoes() {
+        let mut s = with_tilemap_layer();
+        let mut img = Image::new(4, 4, ColorMode::Rgba);
+        img.set(1, 1, red()).unwrap();
+        let cmd = set_tile_image(&s, 0, 1, img).unwrap();
+        cmd.apply(&mut s).unwrap();
+        let t1 = Tile::new(1, true, false, false);
+        let cmd = set_tiles(&s, LayerId(2), 0, &[(-1, 0, t1), (3, 3, t1)]).unwrap();
+        cmd.apply(&mut s).unwrap();
+        let before = s.clone();
+        let shown_before = shown(&s, 0);
+        let cmd = convert_to_image(&s, LayerId(2)).unwrap();
+        let inv = cmd.apply(&mut s).unwrap();
+        let layer = s.layer(LayerId(2)).unwrap();
+        assert_eq!((layer.kind, layer.tileset), (LayerKind::Image, None));
+        assert_eq!(s.tilesets.len(), 1, "the tileset stays");
+        assert!(s.tilemaps.is_empty(), "the grid left the pool");
+        let cel = *s.cel(LayerId(2), 0).unwrap();
+        let image = s.image(cel.image).unwrap();
+        assert_eq!(cel.position, (-4, 0));
+        assert_eq!(
+            (image.width(), image.height()),
+            (20, 16),
+            "not cropped to the canvas"
+        );
+        assert_eq!(
+            image.get(2, 1),
+            Some(red()),
+            "the off-canvas tile is kept, flipped"
+        );
+        assert_eq!(shown(&s, 0), shown_before);
+        inv.apply(&mut s).unwrap();
+        assert_eq!(s, before);
+        assert!(
+            convert_to_image(&s, LayerId(1)).is_none(),
+            "image layers stay"
+        );
     }
 }
