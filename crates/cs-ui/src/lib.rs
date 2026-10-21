@@ -49,6 +49,8 @@ pub struct ChimpApp {
     grid_dialog: Option<view::GridDialog>,
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
+    /// Desarrollo (`CHIMPSPRITE_DEMO_TILES`): al abrir el documento, activar su capa tilemap.
+    demo_tiles: bool,
     fullscreen: bool,
     pending: Option<file_actions::Pending>,
     message: Option<file_actions::Message>,
@@ -85,6 +87,7 @@ impl ChimpApp {
             grid_dialog: None,
             new_tilemap: None,
             convert_tilemap: None,
+            demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
             fullscreen: false,
             pending: None,
             message: None,
@@ -159,6 +162,26 @@ impl ChimpApp {
                 self.canvas_size = None;
             }
             canvas_size::DialogResult::Cancel => self.canvas_size = None,
+        }
+    }
+
+    /// Desarrollo: activa la capa tilemap de más arriba y los números de tile (para capturas).
+    fn demo_tiles(&mut self) {
+        if !self.demo_tiles || !self.has_doc() {
+            return;
+        }
+        self.demo_tiles = false;
+        self.view.tile_numbers = true;
+        let editor = &mut self.doc.editor;
+        let top = editor
+            .sprite()
+            .layers
+            .iter()
+            .rev()
+            .find(|l| l.kind == cs_core::LayerKind::Tilemap)
+            .map(|l| l.id);
+        if let Some(id) = top {
+            editor.select_layer(id);
         }
     }
 
@@ -287,6 +310,7 @@ impl ChimpApp {
                 ui.checkbox(&mut v.slices, "Slices");
                 ui.checkbox(&mut v.brush_preview, "Brush Preview");
                 ui.checkbox(&mut v.artboard_names, "Artboard Names");
+                ui.checkbox(&mut v.tile_numbers, "Tile Numbers");
             });
         });
         ui.menu_button("Guides", |ui| {
@@ -729,6 +753,7 @@ impl eframe::App for ChimpApp {
         self.handle_close_request(&ctx);
         self.handle_dropped_files(&ctx);
         self.handle_platform_events(&ctx);
+        self.demo_tiles();
         self.handle_shortcuts(&ctx);
         if self.has_doc() && self.doc.editor.playing {
             let dt_ms = ctx.input(|i| i.stable_dt) as f64 * 1000.0;

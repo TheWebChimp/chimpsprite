@@ -29,6 +29,8 @@ pub struct ViewSettings {
     pub snap_to_guides: bool,
     pub snap_to_grid: bool,
     pub lock_guides: bool,
+    /// Número de cada celda no vacía de la capa tilemap activa.
+    pub tile_numbers: bool,
 }
 
 impl Default for ViewSettings {
@@ -48,6 +50,7 @@ impl Default for ViewSettings {
             snap_to_guides: true,
             snap_to_grid: false,
             lock_guides: false,
+            tile_numbers: false,
         }
     }
 }
@@ -198,5 +201,8 @@ mod tests {
     fn settings_roundtrip_through_json_with_defaults() {
         let v: ViewSettings = serde_json::from_str(r#"{"grid":true}"#).unwrap();
         assert!(v.grid && v.pixel_grid && v.timeline);
+        assert!(!v.tile_numbers, "tile numbers start hidden");
+        let v: ViewSettings = serde_json::from_str(r#"{"tile_numbers":true}"#).unwrap();
+        assert!(v.tile_numbers && v.timeline);
     }
 }

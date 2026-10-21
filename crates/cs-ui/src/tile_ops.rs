@@ -268,6 +268,68 @@ pub fn cells_to_pixels(cells: &Mask, space: &TileSpace, canvas: (u32, u32)) -> M
     Mask::from_points(canvas.0, canvas.1, points)
 }
 
+/// Celdas no vacías de la capa tilemap con su esquina en píxeles y su número de usuario (para
+/// `View → Show Tile Numbers`). Vacío si la capa no es tilemap.
+#[cfg(test)]
+pub fn numbered_cells(sprite: &Sprite, layer: LayerId, frame: usize) -> Vec<((i32, i32), i64)> {
+    numbered_cells_in(
+        sprite,
+        layer,
+        frame,
+        (0, 0, sprite.width as i32, sprite.height as i32),
+    )
+}
+
+/// Como `numbered_cells`, pero solo recorre las celdas que tocan `view` (`x0, y0, x1, y1` en
+/// píxeles del lienzo, `x1`/`y1` exclusivos): el costo depende del área visible, no de la grilla.
+pub fn numbered_cells_in(
+    sprite: &Sprite,
+    layer: LayerId,
+    frame: usize,
+    view: (i32, i32, i32, i32),
+) -> Vec<((i32, i32), i64)> {
+    let Some(space) = TileSpace::of(sprite, layer, frame) else {
+        return Vec::new();
+    };
+    let Some(cel) = sprite.cel(layer, frame) else {
+        return Vec::new();
+    };
+    let Some(grid) = sprite.tilemap(cel.image) else {
+        return Vec::new();
+    };
+    let base = sprite
+        .layer(layer)
+        .and_then(|l| l.tileset)
+        .and_then(|i| sprite.tilesets.get(i as usize))
+        .map_or(1, |t| t.base_index);
+    // Se recorta la vista al lienzo; las celdas se identifican por la que contiene cada extremo.
+    let (x0, y0) = (view.0.max(0), view.1.max(0));
+    let (x1, y1) = (
+        view.2.min(sprite.width as i32),
+        view.3.min(sprite.height as i32),
+    );
+    if x0 >= x1 || y0 >= y1 {
+        return Vec::new();
+    }
+    let (c0, c1) = (space.cell_at((x0, y0)), space.cell_at((x1 - 1, y1 - 1)));
+    let (tw, th) = (space.tile_size.0 as i32, space.tile_size.1 as i32);
+    // Celda del lienzo donde empieza la grilla (igual que `TileProxy::build`).
+    let origin = (cel.position.0.div_euclid(tw), cel.position.1.div_euclid(th));
+    let mut out = Vec::new();
+    for cy in c0.1..=c1.1 {
+        for cx in c0.0..=c1.0 {
+            let tile = u32::try_from(cx - origin.0)
+                .ok()
+                .zip(u32::try_from(cy - origin.1).ok())
+                .and_then(|(gx, gy)| grid.get(gx, gy));
+            if let Some(tile) = tile.filter(|t| t.index() != 0) {
+                out.push((space.cell_origin((cx, cy)), tile_number(tile.index(), base)));
+            }
+        }
+    }
+    out
+}
+
 impl Editor {
     /// La capa activa es tilemap con un tileset válido y no se está editando su máscara: las
     /// herramientas trabajan con tiles.
@@ -515,6 +577,32 @@ mod tests {
             },
         );
         s
+    }
+
+    #[test]
+    fn numbered_cells_use_the_user_numbering() {
+        let mut s = tiled(16, 8, (0, 0));
+        s.tilesets[0].base_index = 10;
+        assert_eq!(
+            numbered_cells(&s, LayerId(2), 0),
+            vec![((0, 0), 10), ((4, 0), 11)]
+        );
+        assert!(numbered_cells(&s, LayerId(1), 0).is_empty());
+    }
+
+    #[test]
+    fn numbered_cells_in_only_visits_the_visible_cells() {
+        let s = tiled(16, 8, (0, 0));
+        assert_eq!(
+            numbered_cells_in(&s, LayerId(2), 0, (0, 0, 4, 4)),
+            vec![((0, 0), 1)]
+        );
+        assert_eq!(numbered_cells_in(&s, LayerId(2), 0, (3, 0, 16, 8)).len(), 2);
+        assert_eq!(
+            numbered_cells_in(&s, LayerId(2), 0, (-50, -50, 5, 1)).len(),
+            2
+        );
+        assert!(numbered_cells_in(&s, LayerId(2), 0, (8, 0, 16, 8)).is_empty());
     }
 
     #[test]
