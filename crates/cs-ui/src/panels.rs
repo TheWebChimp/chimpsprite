@@ -1,6 +1,7 @@
 use eframe::egui::{
     self, Color32, ColorImage, Rect, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2,
 };
+use std::sync::Arc;
 
 use cs_core::{ArtboardId, SymmetryMode, Tile};
 
@@ -509,11 +510,23 @@ pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
 /// Lado de las miniaturas del panel Tileset.
 const THUMB: f32 = 32.0;
 
-/// Miniaturas de los tiles del tileset activo, cacheadas por artboard, tileset y versión del
-/// documento.
+/// Identidad de las miniaturas: artboard, tileset, tamaño de tile, el `Arc` de cada tile (pintar
+/// celdas no los cambia; reemplazar la imagen de un tile sí) y la paleta (los indexados se
+/// resuelven con ella).
+#[derive(PartialEq)]
+struct ThumbKey {
+    artboard: ArtboardId,
+    index: u32,
+    tile_size: (u32, u32),
+    tiles: Vec<usize>,
+    palette: cs_core::Palette,
+}
+
+/// Miniaturas de los tiles del tileset activo, cacheadas por la identidad del tileset (no por la
+/// versión del documento: cada trazo de tiles la cambia).
 #[derive(Default)]
 pub struct TileThumbs {
-    key: Option<(ArtboardId, u32, u64)>,
+    key: Option<ThumbKey>,
     /// Una por tile (la 0 es el vacío y no se dibuja).
     textures: Vec<TextureHandle>,
 }
@@ -525,11 +538,17 @@ impl TileThumbs {
             self.textures.clear();
             return;
         };
-        let key = (editor.active, index, editor.doc_version);
-        if self.key == Some(key) {
+        let sprite = editor.sprite();
+        let key = ThumbKey {
+            artboard: editor.active,
+            index,
+            tile_size: ts.tile_size,
+            tiles: ts.tiles.iter().map(|t| Arc::as_ptr(t) as usize).collect(),
+            palette: sprite.palette.clone(),
+        };
+        if self.key.as_ref() == Some(&key) {
             return;
         }
-        let sprite = editor.sprite();
         self.textures = ts
             .tiles
             .iter()
@@ -1060,7 +1079,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn tile_thumbnails_are_cached_until_the_document_changes() {
+    fn tile_thumbnails_are_cached_until_a_tile_image_changes() {
         let ctx = egui::Context::default();
         let mut e = crate::tile_ops::test_util::tile_editor();
         let mut thumbs = TileThumbs::default();
@@ -1078,10 +1097,21 @@ mod tests {
         .unwrap();
         e.execute(cmd);
         thumbs.refresh(&ctx, &e);
+        assert_eq!(
+            thumbs.textures[1].id(),
+            first,
+            "a set_tiles stroke keeps the thumbnails"
+        );
+        let mut img = cs_core::Image::new(4, 4, ColorMode::Rgba);
+        img.set(1, 1, cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(9, 9, 9)))
+            .unwrap();
+        let cmd = cs_commands::ops::set_tile_image(e.sprite(), 0, 1, img).unwrap();
+        e.execute(cmd);
+        thumbs.refresh(&ctx, &e);
         assert_ne!(
             thumbs.textures[1].id(),
             first,
-            "rebuilt after a document change"
+            "rebuilt after replacing a tile image"
         );
         e.select_layer(cs_core::LayerId(1));
         thumbs.refresh(&ctx, &e);
