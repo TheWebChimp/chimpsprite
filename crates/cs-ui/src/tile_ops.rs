@@ -38,6 +38,9 @@ pub struct TileSpace {
     /// la celda `(cx, cy)` empieza en el píxel `(cx·tw + offset.0, cy·th + offset.1)`, como en
     /// `ops::set_tiles`.
     pub offset: (i32, i32),
+    /// Celda del lienzo que es el píxel `(0, 0)` del proxy: la primera que toca el lienzo
+    /// (`-1` en un eje si `offset > 0`, porque el tile parcial del borde pertenece a la celda -1).
+    pub first: (i32, i32),
 }
 
 impl TileSpace {
@@ -61,10 +64,14 @@ impl TileSpace {
         Some(TileSpace {
             tile_size: (tw, th),
             offset,
+            first: (
+                (-offset.0).div_euclid(tw as i32),
+                (-offset.1).div_euclid(th as i32),
+            ),
         })
     }
 
-    /// Celda que contiene el píxel `p` del lienzo.
+    /// Celda del lienzo (coordenadas de `set_tiles`) que contiene el píxel `p` del lienzo.
     pub fn cell_at(&self, p: Point) -> Point {
         let (tw, th) = (self.tile_size.0 as i32, self.tile_size.1 as i32);
         (
@@ -73,17 +80,35 @@ impl TileSpace {
         )
     }
 
-    /// Píxel del lienzo donde empieza la celda `c`.
+    /// Píxel del lienzo donde empieza la celda `c` del lienzo.
     pub fn cell_origin(&self, c: Point) -> Point {
         let (tw, th) = (self.tile_size.0 as i32, self.tile_size.1 as i32);
         (c.0 * tw + self.offset.0, c.1 * th + self.offset.1)
     }
 
-    /// Celdas que cubren un lienzo de `canvas` píxeles: `ceil(ancho / tw) × ceil(alto / th)`.
+    /// Celda del lienzo que corresponde al píxel `p` del proxy.
+    pub fn canvas_cell(&self, p: Point) -> Point {
+        (p.0 + self.first.0, p.1 + self.first.1)
+    }
+
+    /// Píxel del proxy que corresponde a la celda `c` del lienzo (puede quedar fuera del proxy).
+    pub fn proxy_pixel(&self, c: Point) -> Point {
+        (c.0 - self.first.0, c.1 - self.first.1)
+    }
+
+    /// Celdas del proxy: todas las que intersectan un lienzo de `canvas` píxeles, desde `first`
+    /// hasta cubrir el borde derecho/inferior.
     pub fn proxy_size(&self, canvas: (u32, u32)) -> (u32, u32) {
+        let (x0, y0) = self.cell_origin(self.first);
         (
-            canvas.0.div_ceil(self.tile_size.0),
-            canvas.1.div_ceil(self.tile_size.1),
+            (canvas.0 as i32 - x0)
+                .max(0)
+                .cast_unsigned()
+                .div_ceil(self.tile_size.0),
+            (canvas.1 as i32 - y0)
+                .max(0)
+                .cast_unsigned()
+                .div_ceil(self.tile_size.1),
         )
     }
 }
@@ -122,9 +147,11 @@ impl TileProxy {
             let origin = (position.0.div_euclid(tw), position.1.div_euclid(th));
             for cy in 0..ph as i32 {
                 for cx in 0..pw as i32 {
-                    let tile = u32::try_from(cx - origin.0)
+                    // Píxel del proxy → celda del lienzo → celda de la grilla.
+                    let (kx, ky) = space.canvas_cell((cx, cy));
+                    let tile = u32::try_from(kx - origin.0)
                         .ok()
-                        .zip(u32::try_from(cy - origin.1).ok())
+                        .zip(u32::try_from(ky - origin.1).ok())
                         .and_then(|(gx, gy)| grid.get(gx, gy))
                         .unwrap_or(Tile::EMPTY);
                     image
@@ -152,7 +179,7 @@ impl TileProxy {
         })
     }
 
-    /// Tile de la celda `c` (vacío fuera del proxy).
+    /// Tile del píxel `c` del proxy (vacío fuera del proxy).
     pub fn tile_at(&self, c: Point) -> Tile {
         match self.sprite.pixel(PROXY_LAYER, 0, c.0, c.1) {
             PixelValue::Rgba(v) => decode(v),
@@ -161,7 +188,8 @@ impl TileProxy {
     }
 
     /// Celdas que pide un `DrawPixels` del proxy, con el tile decodificado: solo las que caen
-    /// dentro del proxy y de la selección. `None` si el comando no es un `DrawPixels`.
+    /// dentro del proxy y de la selección. Las coordenadas devueltas son celdas del lienzo (las de
+    /// `ops::set_tiles`), no píxeles del proxy. `None` si el comando no es un `DrawPixels`.
     pub fn cells(&self, cmd: &Command) -> Option<Vec<(i32, i32, Tile)>> {
         let Command::DrawPixels { pixels, .. } = cmd else {
             return None;
@@ -182,38 +210,43 @@ impl TileProxy {
                         PixelValue::Rgba(c) => decode(c),
                         PixelValue::Index(_) => Tile::EMPTY,
                     };
-                    (x, y, tile)
+                    let (cx, cy) = self.space.canvas_cell((x, y));
+                    (cx, cy, tile)
                 })
                 .collect(),
         )
     }
 
-    /// `true` si poner `cells` no cambiaría ningún tile (incluido no tener celdas).
+    /// `true` si poner `cells` (celdas del lienzo, como las de `cells`) no cambiaría ningún tile
+    /// (incluido no tener celdas).
     pub fn unchanged(&self, cells: &[(i32, i32, Tile)]) -> bool {
-        cells.iter().all(|&(x, y, t)| self.tile_at((x, y)) == t)
+        cells
+            .iter()
+            .all(|&(x, y, t)| self.tile_at(self.space.proxy_pixel((x, y))) == t)
     }
 }
 
-/// Selección en píxeles → celdas (`size` = tamaño del proxy): una celda está seleccionada si su
-/// píxel de origen lo está.
+/// Selección en píxeles → celdas del proxy (`size` = tamaño del proxy): una celda está
+/// seleccionada si su píxel de origen en el lienzo lo está.
 pub fn pixels_to_cells(pixels: &Mask, space: &TileSpace, size: (u32, u32)) -> Mask {
     let cells = (0..size.1 as i32).flat_map(|cy| (0..size.0 as i32).map(move |cx| (cx, cy)));
     Mask::from_points(
         size.0,
         size.1,
         cells.filter(|&c| {
-            let (x, y) = space.cell_origin(c);
+            let (x, y) = space.cell_origin(space.canvas_cell(c));
             pixels.contains(x, y)
         }),
     )
 }
 
-/// Selección en celdas → píxeles del lienzo: cada celda cubre su rectángulo de `tw × th`.
+/// Selección en celdas del proxy → píxeles del lienzo: cada celda cubre su rectángulo de
+/// `tw × th` (lo que sale del lienzo se descarta).
 pub fn cells_to_pixels(cells: &Mask, space: &TileSpace, canvas: (u32, u32)) -> Mask {
     let space = *space;
     let (tw, th) = (space.tile_size.0 as i32, space.tile_size.1 as i32);
     let points = cells.points().flat_map(move |c| {
-        let (x0, y0) = space.cell_origin(c);
+        let (x0, y0) = space.cell_origin(space.canvas_cell(c));
         (0..th).flat_map(move |dy| (0..tw).map(move |dx| (x0 + dx, y0 + dy)))
     });
     Mask::from_points(canvas.0, canvas.1, points)
@@ -292,36 +325,70 @@ mod tests {
     }
 
     #[test]
-    fn proxy_of_an_unaligned_cel_uses_the_set_tiles_correction() {
-        // Cel en (6, 3): la grilla empieza en la celda (1, 0), corrida (2, 3) píxeles.
+    fn proxy_of_an_unaligned_cel_includes_the_partial_edge_cell() {
+        // Cel en (6, 3): la grilla empieza en la celda (1, 0), corrida (2, 3) píxeles; los
+        // píxeles [0, 2) x [0, 3) pertenecen a la celda -1 y el proxy también la contiene.
         let s = tiled(16, 8, (6, 3));
         let proxy = TileProxy::build(&s, LayerId(2), 0, None).unwrap();
-        assert_eq!((proxy.sprite.width, proxy.sprite.height), (4, 2));
         assert_eq!(proxy.space.offset, (2, 3));
+        assert_eq!(proxy.space.first, (-1, -1));
+        assert_eq!((proxy.sprite.width, proxy.sprite.height), (5, 3));
         assert_eq!(proxy.tile_at((0, 0)), Tile::EMPTY);
-        assert_eq!(proxy.tile_at((1, 0)), Tile::new(1, false, false, false));
-        assert_eq!(proxy.tile_at((2, 0)), Tile::new(2, true, false, false));
+        assert_eq!(proxy.tile_at((2, 1)), Tile::new(1, false, false, false));
+        assert_eq!(proxy.tile_at((3, 1)), Tile::new(2, true, false, false));
         // El puntero sobre un tile que se ve cae en la celda de ese tile.
         assert_eq!(proxy.space.cell_at((6, 3)), (1, 0));
         assert_eq!(proxy.space.cell_at((13, 6)), (2, 0));
         assert_eq!(proxy.space.cell_at((5, 3)), (0, 0));
         assert_eq!(proxy.space.cell_at((1, 1)), (-1, -1));
         assert_eq!(proxy.space.cell_origin((1, 0)), (6, 3));
-        // Lo que se escribe en la celda (1, 0) del proxy es la celda (0, 0) de la grilla.
-        let cmd = cs_commands::ops::set_tiles(
-            &s,
-            LayerId(2),
-            0,
-            &[(1, 0, Tile::new(2, false, false, false))],
-        )
-        .unwrap();
+        assert_eq!(proxy.space.proxy_pixel((1, 0)), (2, 1));
+        assert_eq!(proxy.space.canvas_cell((0, 0)), (-1, -1));
+        // Pintar el píxel 0 del proxy escribe la celda -1 del lienzo, visible en el borde.
+        let tile = Tile::new(3, false, false, false);
+        let cmd = Command::DrawPixels {
+            layer: PROXY_LAYER,
+            frame: 0,
+            pixels: vec![(0, 1, PixelValue::Rgba(encode(tile)))],
+        };
+        let cells = proxy.cells(&cmd).unwrap();
+        assert_eq!(cells, vec![(-1, 0, tile)]);
+        let cmd = cs_commands::ops::set_tiles(&s, LayerId(2), 0, &cells).unwrap();
         let mut after = s.clone();
         cmd.apply(&mut after).unwrap();
         let cel = after.cel(LayerId(2), 0).unwrap();
-        assert_eq!(
-            after.tilemap(cel.image).unwrap().get(0, 0),
-            Some(Tile::new(2, false, false, false))
-        );
+        assert_eq!(cel.position, (-2, 3), "la celda -1 empieza en el píxel -2");
+        let again = TileProxy::build(&after, LayerId(2), 0, None).unwrap();
+        assert_eq!(again.tile_at((0, 1)), tile);
+        assert_eq!(again.tile_at((2, 1)), Tile::new(1, false, false, false));
+    }
+
+    #[test]
+    fn negative_cel_position_and_canvas_not_multiple_of_the_tile() {
+        // Cel en (-6, -3) con tiles de 4×4: grilla en la celda (-2, -1), corrida (2, 1).
+        let s = tiled(10, 9, (-6, -3));
+        let space = TileSpace::of(&s, LayerId(2), 0).unwrap();
+        assert_eq!(space.offset, (2, 1));
+        assert_eq!(space.first, (-1, -1));
+        assert_eq!(space.cell_origin((-1, -1)), (-2, -3));
+        assert_eq!(space.cell_origin((-2, -1)), (-6, -3));
+        assert_eq!(space.cell_at((0, 0)), (-1, -1));
+        // Desde x = -2 hasta 10: 12 px = 3 celdas; desde y = -3 hasta 9: 12 px = 3 celdas.
+        assert_eq!(space.proxy_size((10, 9)), (3, 3));
+        let proxy = TileProxy::build(&s, LayerId(2), 0, None).unwrap();
+        assert_eq!((proxy.sprite.width, proxy.sprite.height), (3, 3));
+        // Las celdas de la grilla (0,0) y (1,0) están en las celdas del lienzo (-2,-1) y (-1,-1):
+        // la primera queda fuera del proxy y la segunda es su píxel (0, 0).
+        assert_eq!(proxy.tile_at((0, 0)), Tile::new(2, true, false, false));
+        assert_eq!(proxy.tile_at((1, 0)), Tile::EMPTY);
+    }
+
+    #[test]
+    fn aligned_canvas_not_multiple_of_the_tile_keeps_first_at_zero() {
+        let s = tiled(10, 9, (4, 0));
+        let space = TileSpace::of(&s, LayerId(2), 0).unwrap();
+        assert_eq!((space.offset, space.first), ((0, 0), (0, 0)));
+        assert_eq!(space.proxy_size((10, 9)), (3, 3));
     }
 
     #[test]
