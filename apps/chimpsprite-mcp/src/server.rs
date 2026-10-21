@@ -235,6 +235,13 @@ impl ChimpServer {
         self.with(|s| s.get_tiles(p))
     }
 
+    #[tool(
+        description = "Convert a layer between image and tilemap (one undo step; the layer keeps its id, name and properties). to = \"tilemap\" needs tile_width and tile_height (1-256): it cuts the image layer into cells of the canvas grid (cell (x, y) starts at pixel (x * tile_width, y * tile_height)), builds a new tileset named like the layer with the distinct cells (exact pixel match, no flips; transparent cells are the empty tile 0) and returns the tile count. to = \"image\" draws a tilemap layer back into pixels without cropping; the tileset stays."
+    )]
+    fn convert_layer(&self, Parameters(p): Parameters<ConvertLayer>) -> CallToolResult {
+        self.with(|s| s.convert_layer(p))
+    }
+
     // --- Frames, tags y cels ---
 
     #[tool(description = "Add an empty frame, or duplicate an existing one (optionally linked).")]

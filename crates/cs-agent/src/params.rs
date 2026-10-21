@@ -863,6 +863,27 @@ pub struct GetTiles {
     pub h: Option<u32>,
 }
 
+/// Tipo destino of `convert_layer`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum ConvertTo {
+    Tilemap,
+    Image,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ConvertLayer {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Ref,
+    /// "tilemap" (from an image layer) or "image" (from a tilemap layer).
+    pub to: ConvertTo,
+    /// Tile width in pixels (1-256); required with to = "tilemap".
+    pub tile_width: Option<u32>,
+    /// Tile height in pixels (1-256); required with to = "tilemap".
+    pub tile_height: Option<u32>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ApplyCommands {
     pub doc: String,

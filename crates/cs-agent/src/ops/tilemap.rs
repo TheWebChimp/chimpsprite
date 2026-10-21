@@ -5,7 +5,9 @@ use cs_core::{Image, LayerId, LayerKind, Sprite, Tile, Tileset};
 use serde_json::{Value, json};
 
 use crate::error::{Result, invalid};
-use crate::params::{AddTilemapLayer, CreateTileset, GetTiles, Ref, SetTilePixels, SetTiles};
+use crate::params::{
+    AddTilemapLayer, ConvertLayer, ConvertTo, CreateTileset, GetTiles, Ref, SetTilePixels, SetTiles,
+};
 use crate::target;
 use crate::{Reply, Session};
 
@@ -310,6 +312,79 @@ impl Session {
         }
         Ok(Reply::json(reply))
     }
+
+    /// Convierte una capa entre imagen y tilemap (un solo paso de deshacer).
+    pub fn convert_layer(&mut self, p: ConvertLayer) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let id = target::layer(sprite, &p.layer)?;
+        let layer = sprite.layer(id).expect("resolved");
+        let name = layer.name.clone();
+        match p.to {
+            ConvertTo::Tilemap => {
+                if layer.kind != LayerKind::Image {
+                    return Err(invalid(format!(
+                        "layer '{name}' is not an image layer; only image layers convert to \
+                         tilemaps"
+                    )));
+                }
+                let (Some(w), Some(h)) = (p.tile_width, p.tile_height) else {
+                    return Err(invalid(
+                        "tile_width and tile_height are required with to = \"tilemap\"",
+                    ));
+                };
+                if !(1..=MAX_TILE).contains(&w) || !(1..=MAX_TILE).contains(&h) {
+                    return Err(invalid(format!(
+                        "tile size {w}×{h} must be 1-{MAX_TILE} on each side"
+                    )));
+                }
+                let index = sprite.tilesets.len();
+                let Some(cmd) = ops::convert_to_tilemap(sprite, id, (w, h)) else {
+                    return Err(invalid(format!(
+                        "cannot convert '{name}' with {w}×{h} tiles: it would need more than {} \
+                         distinct tiles, or a cel's grid would exceed the tilemap limits; try \
+                         larger tiles",
+                        cs_core::MAX_TILESET_TILES
+                    )));
+                };
+                let tiles = match &cmd {
+                    Command::Batch(cmds) => cmds.iter().find_map(|c| match c {
+                        Command::SetTileset {
+                            tileset: Some(ts), ..
+                        } => Some(ts.tiles.len()),
+                        _ => None,
+                    }),
+                    _ => None,
+                }
+                .unwrap_or(1);
+                self.run_on(&p.doc, ab, vec![cmd])?;
+                Ok(Reply::json(json!({
+                    "layer": id.0,
+                    "kind": "tilemap",
+                    "tileset": index,
+                    "tile_size": [w, h],
+                    "tiles": tiles,
+                    "notes": "tiles counts the empty tile 0; the layer keeps its id, name and properties.",
+                })))
+            }
+            ConvertTo::Image => {
+                if layer.kind != LayerKind::Tilemap {
+                    return Err(invalid(format!(
+                        "layer '{name}' is not a tilemap layer; only tilemap layers convert to \
+                         image layers"
+                    )));
+                }
+                let Some(cmd) = ops::convert_to_image(sprite, id) else {
+                    return Err(invalid(format!(
+                        "tilemap layer '{name}' has no valid tileset"
+                    )));
+                };
+                self.run_on(&p.doc, ab, vec![cmd])?;
+                Ok(Reply::text(format!(
+                    "Converted '{name}' to an image layer; its tileset stays in the artboard."
+                )))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -328,6 +403,44 @@ mod tests {
         let d = &s.doc("d1").unwrap().document;
         cs_render::render_frame(&cs_render::materialize(d, sprite, 0..1), 0)
             [y * sprite.width as usize + x]
+    }
+
+    #[test]
+    fn convert_layer_both_ways_with_clear_errors() {
+        let mut s = session(16, 8);
+        s.draw_pixels(p(json!({"doc": "d1", "pixels": [
+            {"x": 0, "y": 0, "color": "#ff0000"}, {"x": 8, "y": 0, "color": "#ff0000"}]})))
+            .unwrap();
+        let e = s
+            .convert_layer(p(json!({"doc": "d1", "layer": 1, "to": "tilemap"})))
+            .unwrap_err();
+        assert!(e.to_string().contains("tile_width"), "{e}");
+        let e = s
+            .convert_layer(p(json!({"doc": "d1", "layer": 1, "to": "tilemap",
+                "tile_width": 0, "tile_height": 4})))
+            .unwrap_err();
+        assert!(e.to_string().contains("1-256"), "{e}");
+        let r = json(
+            &s.convert_layer(p(json!({"doc": "d1", "layer": 1, "to": "tilemap",
+                "tile_width": 4, "tile_height": 4})))
+                .unwrap(),
+        );
+        assert_eq!(r["tiles"], 2, "one tile plus the empty tile");
+        assert_eq!(r["tileset"], 0);
+        assert_eq!(px(&s, 0, 0), RED);
+        assert_eq!(px(&s, 8, 0), RED);
+        let e = s
+            .convert_layer(p(json!({"doc": "d1", "layer": 1, "to": "tilemap",
+                "tile_width": 4, "tile_height": 4})))
+            .unwrap_err();
+        assert!(e.to_string().contains("not an image layer"), "{e}");
+        s.convert_layer(p(json!({"doc": "d1", "layer": 1, "to": "image"})))
+            .unwrap();
+        assert_eq!(px(&s, 8, 0), RED);
+        let e = s
+            .convert_layer(p(json!({"doc": "d1", "layer": 1, "to": "image"})))
+            .unwrap_err();
+        assert!(e.to_string().contains("not a tilemap layer"), "{e}");
     }
 
     #[test]
