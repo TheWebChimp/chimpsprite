@@ -396,7 +396,13 @@ impl Editor {
     /// Aviso de la barra de estado en modo Tiles.
     pub fn tiles_status(&self) -> Option<String> {
         if !self.tiles_mode() {
-            return None;
+            // Capa tilemap sin tileset usable: avisa en vez de quedar mudo.
+            let broken = !self.editing_mask()
+                && self
+                    .sprite()
+                    .layer(self.layer)
+                    .is_some_and(|l| l.kind == LayerKind::Tilemap);
+            return broken.then(|| "Tilemap layer has no tileset".to_string());
         }
         if self.active_tool().blocked_in_tiles() {
             return Some("Not available in Tiles mode".into());
@@ -813,6 +819,21 @@ mod tests {
             e.sprite().tilesets[0].tiles[0].get(0, 0),
             Some(PixelValue::Index(0))
         );
+    }
+
+    #[test]
+    fn a_tilemap_layer_without_a_tileset_says_so() {
+        let mut s = test_util::tile_editor().sprite().clone();
+        s.layer_mut(LayerId(2)).unwrap().tileset = Some(9);
+        let mut e = Editor::with_sprite(s);
+        e.select_layer(LayerId(2));
+        assert!(!e.tiles_mode());
+        assert_eq!(
+            e.tiles_status().as_deref(),
+            Some("Tilemap layer has no tileset")
+        );
+        e.select_layer(LayerId(1));
+        assert_eq!(e.tiles_status(), None, "image layers stay quiet");
     }
 
     #[test]
