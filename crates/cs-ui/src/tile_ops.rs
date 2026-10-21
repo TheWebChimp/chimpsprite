@@ -393,6 +393,27 @@ impl Editor {
         self.set_brush_tile(tile);
     }
 
+    /// Pone el tile vacío en las celdas que toca la selección (las que ya tienen un tile), como un
+    /// solo paso de undo.
+    pub(crate) fn clear_selected_cells(&mut self) {
+        let (Some(mask), Some(proxy)) = (
+            &self.selection,
+            TileProxy::build(self.sprite(), self.layer, self.frame, None),
+        ) else {
+            return;
+        };
+        let cells: std::collections::BTreeSet<Point> =
+            mask.points().map(|p| proxy.space.cell_at(p)).collect();
+        let cells: Vec<(i32, i32, Tile)> = cells
+            .into_iter()
+            .filter(|&c| proxy.tile_at(proxy.space.proxy_pixel(c)) != Tile::EMPTY)
+            .map(|(x, y)| (x, y, Tile::EMPTY))
+            .collect();
+        if let Some(cmd) = ops::set_tiles(self.sprite(), self.layer, self.frame, &cells) {
+            self.execute(cmd);
+        }
+    }
+
     /// Aviso de la barra de estado en modo Tiles.
     pub fn tiles_status(&self) -> Option<String> {
         if !self.tiles_mode() {
@@ -834,6 +855,17 @@ mod tests {
         );
         e.select_layer(LayerId(1));
         assert_eq!(e.tiles_status(), None, "image layers stay quiet");
+    }
+
+    #[test]
+    fn selecting_another_layer_clears_the_size_limit_notice() {
+        let mut e = test_util::tile_editor();
+        e.tile_limit = true;
+        assert!(e.tiles_status().unwrap().contains("size limit"));
+        e.select_layer(LayerId(1));
+        assert!(!e.tile_limit);
+        e.select_layer(LayerId(2));
+        assert!(!e.tiles_status().unwrap().contains("size limit"));
     }
 
     #[test]

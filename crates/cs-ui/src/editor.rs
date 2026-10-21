@@ -825,6 +825,10 @@ impl Editor {
             });
             return;
         }
+        if self.tiles_mode() {
+            self.clear_selected_cells();
+            return;
+        }
         let t = self.sprite().color_mode.transparent();
         let pixels = mask.points().map(|(x, y)| (x, y, t)).collect();
         self.execute(Command::DrawPixels {
@@ -1666,6 +1670,29 @@ mod tests {
         let t = e.sprite().color_mode.transparent();
         assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 2), t);
         assert_eq!(e.sprite().pixel(LayerId(1), 0, 0, 0), e.primary);
+    }
+
+    #[test]
+    fn delete_in_tiles_mode_clears_the_selected_cells_in_one_undo_step() {
+        use crate::tile_ops::test_util::{t, tile_at, tile_editor};
+        let mut e = tile_editor();
+        let cmd = cs_commands::ops::set_tiles(
+            e.sprite(),
+            e.layer,
+            0,
+            &[(0, 0, t(1)), (1, 0, t(2)), (3, 3, t(1))],
+        )
+        .unwrap();
+        e.execute(cmd);
+        // Toca las celdas (0, 0) y (1, 0).
+        e.set_selection(Some(Mask::from_rect(16, 16, (3, 1), (5, 1))));
+        e.clear_selection_content();
+        assert_eq!(tile_at(&e, (0, 0)), cs_core::Tile::EMPTY);
+        assert_eq!(tile_at(&e, (1, 0)), cs_core::Tile::EMPTY);
+        assert_eq!(tile_at(&e, (3, 3)), t(1), "outside the selection");
+        e.undo();
+        assert_eq!(tile_at(&e, (0, 0)), t(1));
+        assert_eq!(tile_at(&e, (1, 0)), t(2));
     }
 
     #[test]

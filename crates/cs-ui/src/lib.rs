@@ -592,7 +592,12 @@ impl ChimpApp {
                         .on_disabled_hover_text("Select a tilemap layer")
                         .clicked()
                     {
-                        self.doc.editor.convert_to_image();
+                        if !self.doc.editor.convert_to_image() {
+                            self.show_message(
+                                "Convert to Image Layer",
+                                "Could not convert the layer: a tilemap would exceed the                                  image size limit.",
+                            );
+                        }
                         ui.close();
                     }
                     ui.separator();

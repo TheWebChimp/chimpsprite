@@ -987,6 +987,8 @@ impl CanvasView {
                 view,
             );
             for ((x, y), number) in cells {
+                // La celda parcial del borde empieza fuera del lienzo: el número se pega al borde.
+                let (x, y) = (x.max(0), y.max(0));
                 let at = origin + Vec2::new(x as f32, y as f32) * self.zoom + Vec2::splat(2.0);
                 if !rect.contains(at) {
                     continue;

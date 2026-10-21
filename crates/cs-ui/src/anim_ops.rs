@@ -179,6 +179,8 @@ impl Editor {
         if self.sprite().layer(id).is_some() {
             if id != self.layer {
                 self.end_group();
+                // El aviso de límite de tamaño era de la capa anterior.
+                self.tile_limit = false;
             }
             self.layer = id;
             self.edit_mask = false;

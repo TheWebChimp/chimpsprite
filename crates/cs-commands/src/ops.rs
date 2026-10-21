@@ -605,7 +605,14 @@ pub fn convert_to_tilemap(
                                 let Some(v) = image.get(lx as u32, ly as u32) else {
                                     continue;
                                 };
-                                clear &= is_clear(v, mode);
+                                // Los píxeles invisibles se normalizan para que tiles que se
+                                // ven igual (alfa 0 con distinto RGB) se deduplicen.
+                                let v = if is_clear(v, mode) {
+                                    mode.transparent()
+                                } else {
+                                    clear = false;
+                                    v
+                                };
                                 tile.set(tx, ty, v).ok()?;
                             }
                         }
@@ -1459,6 +1466,30 @@ mod tests {
         .unwrap();
         assert!(convert_to_tilemap(&big, LayerId(1), (1, 1)).is_none());
         assert!(convert_to_tilemap(&big, LayerId(1), (2, 2)).is_some());
+    }
+
+    #[test]
+    fn convert_to_tilemap_dedupes_tiles_that_differ_only_in_invisible_pixels() {
+        let mut s = Sprite::new(16, 8, ColorMode::Rgba);
+        let ghost = |r| PixelValue::Rgba(Rgba::new(r, 0, 0, 0));
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![
+                (0, 0, red()),
+                (1, 0, ghost(7)),
+                (8, 0, red()),
+                (9, 0, ghost(200)),
+            ],
+        }
+        .apply(&mut s)
+        .unwrap();
+        let mut c = s.clone();
+        convert_to_tilemap(&s, LayerId(1), (8, 8))
+            .unwrap()
+            .apply(&mut c)
+            .unwrap();
+        assert_eq!(c.tilesets[0].tiles.len(), 2, "empty + one shared tile");
     }
 
     #[test]
