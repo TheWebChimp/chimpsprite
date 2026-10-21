@@ -1696,6 +1696,31 @@ mod tests {
     }
 
     #[test]
+    fn delete_does_nothing_on_a_locked_tilemap_layer() {
+        use crate::tile_ops::test_util::{t, tile_at, tile_editor};
+        let mut e = tile_editor();
+        let cmd = cs_commands::ops::set_tiles(e.sprite(), e.layer, 0, &[(0, 0, t(1))]).unwrap();
+        e.execute(cmd);
+        e.execute(Command::SetLayerProps {
+            id: e.layer,
+            props: cs_commands::LayerProps {
+                locked: Some(true),
+                ..Default::default()
+            },
+        });
+        e.set_selection(Some(Mask::all(16, 16)));
+        let version = e.doc_version;
+        e.clear_selection_content();
+        assert_eq!(tile_at(&e, (0, 0)), t(1), "the locked layer is untouched");
+        assert_eq!(e.doc_version, version, "no command ran");
+        e.undo();
+        assert!(
+            !e.sprite().layer(e.layer).unwrap().locked,
+            "the last undo step was the lock, not a clear"
+        );
+    }
+
+    #[test]
     fn preview_shows_stroke_without_touching_document() {
         let mut e = editor();
         e.pointer_press((0.5, 0.5), false, false, 0.1);

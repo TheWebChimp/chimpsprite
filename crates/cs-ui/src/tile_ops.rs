@@ -394,8 +394,13 @@ impl Editor {
     }
 
     /// Pone el tile vacío en las celdas que toca la selección (las que ya tienen un tile), como un
-    /// solo paso de undo.
+    /// solo paso de undo. A diferencia de pintar (que usa el primer píxel visible de cada celda),
+    /// Delete borra toda celda que la selección toca, aunque sea con un solo píxel. No hace nada
+    /// en una capa bloqueada (los comandos de tiles no revisan el bloqueo).
     pub(crate) fn clear_selected_cells(&mut self) {
+        if self.sprite().layer(self.layer).is_none_or(|l| l.locked) {
+            return;
+        }
         let (Some(mask), Some(proxy)) = (
             &self.selection,
             TileProxy::build(self.sprite(), self.layer, self.frame, None),

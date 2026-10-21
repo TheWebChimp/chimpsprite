@@ -31,6 +31,10 @@ use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
 
 pub use editor::{Editor, ToolKind};
 
+/// Aviso cuando `Convert to Image Layer` no puede dibujar la capa.
+const CONVERT_TO_IMAGE_FAILED: &str =
+    "Could not convert the layer: a tilemap would exceed the image size limit.";
+
 const NEW_SPRITE_SIZE: u32 = 64;
 const RECENT_KEY: &str = "chimpsprite.recent";
 const VIEW_KEY: &str = "chimpsprite.view";
@@ -593,10 +597,7 @@ impl ChimpApp {
                         .clicked()
                     {
                         if !self.doc.editor.convert_to_image() {
-                            self.show_message(
-                                "Convert to Image Layer",
-                                "Could not convert the layer: a tilemap would exceed the                                  image size limit.",
-                            );
+                            self.show_message("Convert to Image Layer", CONVERT_TO_IMAGE_FAILED);
                         }
                         ui.close();
                     }
@@ -807,5 +808,13 @@ impl eframe::App for ChimpApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, RECENT_KEY, &self.recent);
         eframe::set_value(storage, VIEW_KEY, &self.view);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn convert_failure_message_has_no_stray_spaces() {
+        assert!(!super::CONVERT_TO_IMAGE_FAILED.contains("  "));
     }
 }
