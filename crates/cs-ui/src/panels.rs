@@ -1,13 +1,15 @@
-use eframe::egui::{self, Color32, Rect, Sense, Stroke, StrokeKind, Vec2};
+use eframe::egui::{
+    self, Color32, ColorImage, Rect, Sense, Stroke, StrokeKind, TextureHandle, TextureOptions, Vec2,
+};
 
-use cs_core::{ArtboardId, SymmetryMode};
+use cs_core::{ArtboardId, SymmetryMode, Tile};
 
 use crate::canvas::CanvasView;
 use cs_tools::text::FontChoice;
 use cs_tools::{Dither, GradientShape};
 
 use crate::editor::{Editor, SelectionMode, ToolKind};
-use crate::{theme, widgets};
+use crate::{theme, tile_ops, widgets};
 
 fn icon(kind: ToolKind) -> &'static str {
     match kind {
@@ -373,23 +375,27 @@ fn draw_symmetry_icon(painter: &egui::Painter, r: Rect, mode: SymmetryMode, colo
     }
 }
 
+/// Damero mínimo para que se note la transparencia.
+fn checker(painter: &egui::Painter, rect: Rect) {
+    let half = rect.size() / 2.0;
+    painter.rect_filled(rect, 0.0, theme::CHECKER_LIGHT);
+    painter.rect_filled(
+        Rect::from_min_size(rect.min, half),
+        0.0,
+        theme::CHECKER_DARK,
+    );
+    painter.rect_filled(
+        Rect::from_min_size(rect.min + half, half),
+        0.0,
+        theme::CHECKER_DARK,
+    );
+}
+
 fn swatch(ui: &mut egui::Ui, color: Color32, size: f32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
     let painter = ui.painter();
     if color.a() < 255 {
-        // Damero mínimo para que se note la transparencia.
-        let half = rect.size() / 2.0;
-        painter.rect_filled(rect, 0.0, theme::CHECKER_LIGHT);
-        painter.rect_filled(
-            Rect::from_min_size(rect.min, half),
-            0.0,
-            theme::CHECKER_DARK,
-        );
-        painter.rect_filled(
-            Rect::from_min_size(rect.min + half, half),
-            0.0,
-            theme::CHECKER_DARK,
-        );
+        checker(painter, rect);
     }
     painter.rect_filled(rect, 0.0, color);
     response
@@ -449,7 +455,7 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) {
 }
 
 /// Selector de color libre (RGBA): edita el color primario.
-fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
+pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
     let cs_core::PixelValue::Rgba(current) = editor.primary else {
         ui.weak("Indexed sprite: colors come from the palette.");
         return;
@@ -496,6 +502,150 @@ fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
             .clicked()
         {
             editor.add_to_palette(current);
+        }
+    });
+}
+
+/// Lado de las miniaturas del panel Tileset.
+const THUMB: f32 = 32.0;
+
+/// Miniaturas de los tiles del tileset activo, cacheadas por artboard, tileset y versión del
+/// documento.
+#[derive(Default)]
+pub struct TileThumbs {
+    key: Option<(ArtboardId, u32, u64)>,
+    /// Una por tile (la 0 es el vacío y no se dibuja).
+    textures: Vec<TextureHandle>,
+}
+
+impl TileThumbs {
+    fn refresh(&mut self, ctx: &egui::Context, editor: &Editor) {
+        let Some((index, ts)) = editor.active_tileset() else {
+            self.key = None;
+            self.textures.clear();
+            return;
+        };
+        let key = (editor.active, index, editor.doc_version);
+        if self.key == Some(key) {
+            return;
+        }
+        let sprite = editor.sprite();
+        self.textures = ts
+            .tiles
+            .iter()
+            .enumerate()
+            .map(|(i, tile)| {
+                let bytes: Vec<u8> = (0..tile.height())
+                    .flat_map(|y| (0..tile.width()).map(move |x| (x, y)))
+                    .flat_map(|(x, y)| {
+                        let c = tile.get(x, y).map_or(cs_core::Rgba::TRANSPARENT, |v| {
+                            cs_render::resolve(sprite, v)
+                        });
+                        [c.r, c.g, c.b, c.a]
+                    })
+                    .collect();
+                let size = [tile.width() as usize, tile.height() as usize];
+                let image = ColorImage::from_rgba_unmultiplied(size, &bytes);
+                let name = format!("tile-{}-{index}-{i}", editor.active.0);
+                ctx.load_texture(name, image, TextureOptions::NEAREST)
+            })
+            .collect();
+        self.key = Some(key);
+    }
+}
+
+/// Panel "Tileset" (reemplaza a la paleta con una capa tilemap activa): elegir el tile del pincel
+/// y sus flips.
+pub fn tileset(ui: &mut egui::Ui, editor: &mut Editor, thumbs: &mut TileThumbs) {
+    thumbs.refresh(ui.ctx(), editor);
+    let Some((_, ts)) = editor.active_tileset() else {
+        return;
+    };
+    let (name, (tw, th), count, base) =
+        (ts.name.clone(), ts.tile_size, ts.tiles.len(), ts.base_index);
+    ui.add_space(6.0);
+    ui.heading("Tileset");
+    ui.separator();
+    ui.label(format!(
+        "{name}  {tw}×{th}  {} tiles",
+        count.saturating_sub(1)
+    ));
+    let brush = editor.brush_tile();
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::splat(2.0);
+        for i in 0..count {
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(THUMB + 4.0), Sense::click());
+            let inner = rect.shrink(2.0);
+            let painter = ui.painter();
+            checker(painter, inner);
+            if i == 0 {
+                // El vacío: el dibujo de "transparente".
+                painter.line_segment(
+                    [inner.left_bottom(), inner.right_top()],
+                    Stroke::new(1.5, Color32::from_rgb(220, 60, 60)),
+                );
+            } else if let Some(tex) = thumbs.textures.get(i) {
+                let scale = THUMB / tw.max(th) as f32;
+                let size = Vec2::new(tw as f32 * scale, th as f32 * scale);
+                let uv = Rect::from_min_max(egui::Pos2::ZERO, egui::Pos2::new(1.0, 1.0));
+                painter.image(
+                    tex.id(),
+                    Rect::from_center_size(inner.center(), size),
+                    uv,
+                    Color32::WHITE,
+                );
+            }
+            let number = tile_ops::tile_number(i as u32, base);
+            widgets::outlined_text(
+                painter,
+                inner.left_top() + Vec2::new(1.0, 0.0),
+                egui::Align2::LEFT_TOP,
+                &number.to_string(),
+                egui::FontId::monospace(9.0),
+            );
+            if brush.index() as usize == i {
+                painter.rect_stroke(
+                    rect,
+                    0.0,
+                    Stroke::new(2.0, Color32::WHITE),
+                    StrokeKind::Inside,
+                );
+            }
+            if response.on_hover_text(format!("Tile {number}")).clicked() {
+                editor.set_brush_tile(Tile::new(
+                    i as u32,
+                    brush.flip_x(),
+                    brush.flip_y(),
+                    brush.flip_d(),
+                ));
+            }
+        }
+    });
+    ui.add_space(6.0);
+    ui.horizontal(|ui| {
+        ui.label("Flip:");
+        let brush = editor.brush_tile();
+        if ui
+            .selectable_label(brush.flip_x(), "X")
+            .on_hover_text("Flip horizontally (X)")
+            .clicked()
+        {
+            editor.toggle_brush_flip(Tile::FLIP_X);
+        }
+        if ui
+            .selectable_label(brush.flip_y(), "Y")
+            .on_hover_text("Flip vertically (Y)")
+            .clicked()
+        {
+            editor.toggle_brush_flip(Tile::FLIP_Y);
+        }
+        if ui
+            .add_enabled(tw == th, egui::Button::selectable(brush.flip_d(), "D"))
+            .on_hover_text("Flip diagonally (swap X and Y)")
+            .on_disabled_hover_text("Needs square tiles")
+            .clicked()
+        {
+            editor.toggle_brush_flip(Tile::FLIP_D);
         }
     });
 }
@@ -908,6 +1058,35 @@ mod tests {
     use eframe::egui::{Event, PointerButton, Pos2, RawInput, pos2};
 
     use super::*;
+
+    #[test]
+    fn tile_thumbnails_are_cached_until_the_document_changes() {
+        let ctx = egui::Context::default();
+        let mut e = crate::tile_ops::test_util::tile_editor();
+        let mut thumbs = TileThumbs::default();
+        thumbs.refresh(&ctx, &e);
+        assert_eq!(thumbs.textures.len(), 3, "the empty tile and tiles 1 and 2");
+        let first = thumbs.textures[1].id();
+        thumbs.refresh(&ctx, &e);
+        assert_eq!(thumbs.textures[1].id(), first, "cached");
+        let cmd = cs_commands::ops::set_tiles(
+            e.sprite(),
+            e.layer,
+            0,
+            &[(0, 0, cs_core::Tile::new(1, false, false, false))],
+        )
+        .unwrap();
+        e.execute(cmd);
+        thumbs.refresh(&ctx, &e);
+        assert_ne!(
+            thumbs.textures[1].id(),
+            first,
+            "rebuilt after a document change"
+        );
+        e.select_layer(cs_core::LayerId(1));
+        thumbs.refresh(&ctx, &e);
+        assert!(thumbs.textures.is_empty(), "no tileset on an image layer");
+    }
 
     /// Corre un frame con un slider de opacidad conectado como en el panel de instancia;
     /// devuelve el rect del slider.

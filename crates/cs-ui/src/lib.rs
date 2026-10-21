@@ -397,6 +397,9 @@ impl ChimpApp {
                 Key::ArrowUp => editor.step_layer(true),
                 Key::ArrowDown => editor.step_layer(false),
                 Key::F3 => editor.onion_enabled = !editor.onion_enabled,
+                // En modo Tiles no hay color secundario: X e Y voltean el tile del pincel.
+                Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
+                Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
                 Key::X => editor.swap_colors(),
                 Key::Delete | Key::Backspace => editor.clear_selection_content(),
                 _ => {}
@@ -583,7 +586,14 @@ impl ChimpApp {
             .show(ui, |ui| {
                 let open = egui::ScrollArea::vertical()
                     .show(ui, |ui| {
-                        panels::palette(ui, &mut self.doc.editor);
+                        if self.doc.editor.tiles_mode() {
+                            panels::tileset(ui, &mut self.doc.editor, &mut self.doc.tile_thumbs);
+                            // El selector de color sigue a mano (lo usa 2B).
+                            ui.add_space(10.0);
+                            panels::color_picker(ui, &mut self.doc.editor);
+                        } else {
+                            panels::palette(ui, &mut self.doc.editor);
+                        }
                         ui.add_space(12.0);
                         let open = ui
                             .add_enabled_ui(!modal, |ui| {

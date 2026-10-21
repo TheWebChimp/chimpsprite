@@ -306,6 +306,20 @@ impl Editor {
         self.brush_tile = tile;
     }
 
+    /// Invierte un flip del pincel (`Tile::FLIP_X`, `FLIP_Y` o `FLIP_D`). D solo existe con tiles
+    /// cuadrados.
+    pub fn toggle_brush_flip(&mut self, flip: u32) {
+        let Some((_, ts)) = self.active_tileset() else {
+            return;
+        };
+        let square = ts.tile_size.0 == ts.tile_size.1;
+        let mut tile = Tile(self.brush_tile().0 ^ flip);
+        if !square {
+            tile = Tile(tile.0 & !Tile::FLIP_D);
+        }
+        self.set_brush_tile(tile);
+    }
+
     /// Aviso de la barra de estado en modo Tiles.
     pub fn tiles_status(&self) -> Option<String> {
         if !self.tiles_mode() {
@@ -331,6 +345,50 @@ mod tests {
     use cs_core::{Sprite, Tile, TileGrid, Tileset};
 
     use super::*;
+
+    #[test]
+    fn brush_tile_flips_and_resets_with_the_tileset() {
+        use crate::tile_ops::test_util::{t, tile_editor};
+        let mut e = tile_editor();
+        assert_eq!(e.brush_tile(), t(1));
+        e.toggle_brush_flip(Tile::FLIP_X);
+        e.toggle_brush_flip(Tile::FLIP_D);
+        assert_eq!(
+            e.brush_tile(),
+            Tile::new(1, true, false, true),
+            "square tiles allow D"
+        );
+        e.toggle_brush_flip(Tile::FLIP_X);
+        assert_eq!(e.brush_tile(), Tile::new(1, false, false, true));
+        e.set_brush_tile(t(7));
+        assert_eq!(e.brush_tile(), t(1), "out of range goes back to tile 1");
+        e.set_brush_tile(t(2));
+        // Otra capa con otro tileset, de tiles no cuadrados.
+        let mut ts = Tileset::new("wide", (4, 2), ColorMode::Rgba);
+        ts.tiles.push(Arc::new(Image::new(4, 2, ColorMode::Rgba)));
+        let add = cs_commands::ops::new_tilemap_layer(e.sprite(), Some(e.layer), 1);
+        let id = match &add {
+            Command::AddLayer { layer, .. } => layer.id,
+            _ => unreachable!("new_tilemap_layer returns AddLayer"),
+        };
+        e.execute(Command::Batch(vec![
+            Command::SetTileset {
+                index: 1,
+                tileset: Some(ts),
+            },
+            add,
+        ]));
+        e.select_layer(id);
+        assert_eq!(e.brush_tile(), t(1), "another tileset starts on tile 1");
+        e.toggle_brush_flip(Tile::FLIP_D);
+        assert_eq!(e.brush_tile(), t(1), "no D on non-square tiles");
+        e.select_layer(LayerId(2));
+        assert_eq!(
+            e.brush_tile(),
+            t(1),
+            "the brush now belongs to the other tileset"
+        );
+    }
 
     #[test]
     fn encode_and_decode_round_trip_with_flips() {
