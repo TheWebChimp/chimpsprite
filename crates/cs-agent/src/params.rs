@@ -863,7 +863,7 @@ pub struct GetTiles {
     pub h: Option<u32>,
 }
 
-/// Tipo destino of `convert_layer`.
+/// Target layer kind for `convert_layer`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum ConvertTo {
