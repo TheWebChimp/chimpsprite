@@ -20,6 +20,9 @@ mod platform;
 mod recent;
 mod tabs;
 mod theme;
+// Lo conecta el editor en la Task 3 (hasta entonces nada lo usa fuera de los tests).
+#[allow(dead_code)]
+mod tile_ops;
 mod timeline;
 mod view;
 mod widgets;
