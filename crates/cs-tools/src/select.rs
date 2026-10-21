@@ -268,7 +268,16 @@ impl Tool for MagicWand {
             }
         };
         let seed = color(p.0, p.1);
-        let matches = |x: i32, y: i32| distance(color(x, y), seed) <= ctx.tolerance;
+        // En modo Tiles se comparan tiles exactos: el valor de la capa, sin tolerancia.
+        let raw = |x: i32, y: i32| s.pixel(ctx.layer, ctx.frame, x, y);
+        let seed_raw = raw(p.0, p.1);
+        let matches = |x: i32, y: i32| {
+            if ctx.tiles {
+                raw(x, y) == seed_raw
+            } else {
+                distance(color(x, y), seed) <= ctx.tolerance
+            }
+        };
         let points = if ctx.contiguous {
             flood_fill(s.width, s.height, p, matches)
         } else {
@@ -384,5 +393,33 @@ mod tests {
         assert_eq!(pick(&mut t, &c).points().count(), 3);
         t.press(&c, (9, 9));
         assert_eq!(t.release(&c).selection, Some(None));
+    }
+
+    #[test]
+    fn magic_wand_in_tiles_mode_compares_exact_values() {
+        let mut s = sprite();
+        let code = |i| PixelValue::Rgba(cs_core::Rgba::new(i, 0, 0, 0));
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, code(1)), (1, 0, code(1)), (2, 0, code(2))],
+        }
+        .apply(&mut s)
+        .unwrap();
+        let mut c = ctx(&s);
+        c.contiguous = false;
+        let mut t = MagicWand::new();
+        t.press(&c, (0, 0));
+        assert_eq!(
+            mask_of(t.release(&c)).points().count(),
+            64,
+            "by color, every alpha-0 value is the same"
+        );
+        c.tiles = true;
+        t.press(&c, (0, 0));
+        assert_eq!(
+            mask_of(t.release(&c)).points().collect::<Vec<_>>(),
+            vec![(0, 0), (1, 0)]
+        );
     }
 }

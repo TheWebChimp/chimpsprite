@@ -24,12 +24,30 @@ fn move_output(ctx: &ToolContext, dx: i32, dy: i32) -> ToolOutput {
     if sprite.layer(ctx.layer).is_none_or(|l| l.locked) {
         return ToolOutput::default();
     }
-    // Las capas tilemap se editan por tiles (llega en el subproyecto 2): Move no hace nada.
-    if sprite
+    // Capas tilemap: el cel entero se mueve en pasos de un tile (la selección no aplica).
+    if let Some(layer) = sprite
         .layer(ctx.layer)
-        .is_some_and(|l| l.kind == cs_core::LayerKind::Tilemap)
+        .filter(|l| l.kind == cs_core::LayerKind::Tilemap)
     {
-        return ToolOutput::default();
+        let Some(tileset) = layer.tileset.and_then(|i| sprite.tilesets.get(i as usize)) else {
+            return ToolOutput::default();
+        };
+        let snap = |d: i32, size: u32| {
+            let size = size.max(1) as i32;
+            (d as f64 / size as f64).round() as i32 * size
+        };
+        let (dx, dy) = (snap(dx, tileset.tile_size.0), snap(dy, tileset.tile_size.1));
+        return match sprite.cel(ctx.layer, ctx.frame) {
+            Some(cel) if (dx, dy) != (0, 0) => ToolOutput::command(Command::SetCel {
+                layer: ctx.layer,
+                frame: ctx.frame,
+                cel: Some(Cel {
+                    position: (cel.position.0 + dx, cel.position.1 + dy),
+                    ..*cel
+                }),
+            }),
+            _ => ToolOutput::default(),
+        };
     }
     if sprite
         .layer(ctx.layer)
@@ -123,7 +141,7 @@ mod tests {
     }
 
     #[test]
-    fn move_does_nothing_on_tilemap_layers() {
+    fn move_does_nothing_on_tilemap_layers_without_tileset() {
         let mut s = with_dot();
         s.layers[0].kind = cs_core::LayerKind::Tilemap;
         let out = gesture(&ctx(&s), (0, 0), (2, 3));
@@ -198,5 +216,47 @@ mod tests {
     fn zero_offset_is_noop() {
         let s = with_dot();
         assert_eq!(gesture(&ctx(&s), (1, 1), (1, 1)), ToolOutput::default());
+    }
+
+    #[test]
+    fn move_snaps_tilemap_cels_to_whole_tiles() {
+        use std::sync::Arc;
+
+        use cs_core::{ImageId, TileGrid, Tileset};
+        let mut s = sprite();
+        s.tilesets.push(Tileset::new("t", (4, 2), s.color_mode));
+        s.layers[0].kind = LayerKind::Tilemap;
+        s.layers[0].tileset = Some(0);
+        s.tilemaps.insert(ImageId(1), Arc::new(TileGrid::new(1, 1)));
+        s.cels.insert(
+            (LayerId(1), 0),
+            Cel {
+                position: (0, 0),
+                opacity: 255,
+                image: ImageId(1),
+            },
+        );
+        let at = |out: ToolOutput| match out.command {
+            Some(Command::SetCel { cel: Some(c), .. }) => c.position,
+            other => panic!("expected SetCel, got {other:?}"),
+        };
+        assert_eq!(
+            at(gesture(&ctx(&s), (0, 0), (3, 1))),
+            (4, 2),
+            "3 px → one 4 px tile; 1 px → one 2 px tile (halves round away from zero)"
+        );
+        assert_eq!(
+            gesture(&ctx(&s), (0, 0), (1, 0)),
+            ToolOutput::default(),
+            "less than half a tile"
+        );
+        assert_eq!(at(gesture(&ctx(&s), (0, 0), (-6, 0))), (-8, 0));
+        // Con selección también se mueve el cel entero.
+        let mask = Mask::from_rect(8, 8, (0, 0), (1, 1));
+        let mut c = ctx(&s);
+        c.selection = Some(&mask);
+        let out = gesture(&c, (0, 0), (4, 0));
+        assert!(out.selection.is_none(), "the selection does not move");
+        assert_eq!(at(out), (4, 0));
     }
 }

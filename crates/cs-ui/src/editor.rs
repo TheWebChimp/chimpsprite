@@ -937,6 +937,7 @@ impl Editor {
             gradient_shape: self.options.gradient_shape,
             dither: self.options.dither,
             selected_slice: self.slice,
+            tiles: false,
         }
     }
 

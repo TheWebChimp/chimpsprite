@@ -35,7 +35,12 @@ impl Tool for Eyedropper {
     fn preview(&self, ctx: &ToolContext) -> ToolOutput {
         match self.point {
             Some(p) if ctx.in_canvas(p) => ToolOutput {
-                pick: Some(visible_value(ctx.sprite, ctx.frame, p)),
+                pick: Some(if ctx.tiles {
+                    // Cada píxel del proxy es un tile: se toma tal cual (alfa incluido).
+                    ctx.sprite.pixel(ctx.layer, ctx.frame, p.0, p.1)
+                } else {
+                    visible_value(ctx.sprite, ctx.frame, p)
+                }),
                 ..Default::default()
             },
             _ => ToolOutput::default(),
@@ -187,5 +192,30 @@ mod tests {
             visible_value(&s, 0, (0, 0)),
             PixelValue::Rgba(Rgba::TRANSPARENT)
         );
+    }
+
+    #[test]
+    fn tiles_mode_picks_the_exact_layer_value() {
+        use cs_core::{PixelValue, Rgba};
+        let mut s = sprite();
+        // Un tile codificado tiene alfa 0: lo visible sería transparente.
+        let code = PixelValue::Rgba(Rgba::new(5, 0, 0, 0));
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(1, 1, code)],
+        }
+        .apply(&mut s)
+        .unwrap();
+        let mut c = ctx(&s);
+        let mut e = Eyedropper::new();
+        e.press(&c, (1, 1));
+        assert_eq!(
+            e.release(&c).pick,
+            Some(PixelValue::Rgba(Rgba::TRANSPARENT))
+        );
+        c.tiles = true;
+        e.press(&c, (1, 1));
+        assert_eq!(e.release(&c).pick, Some(code));
     }
 }
