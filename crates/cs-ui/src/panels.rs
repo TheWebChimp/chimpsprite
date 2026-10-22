@@ -126,6 +126,11 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
     if matches!(tool, ToolKind::Rectangle | ToolKind::Ellipse) {
         ui.checkbox(&mut options.filled, "Filled");
     }
+    if tool == ToolKind::Rectangle {
+        ui.label("Corner radius");
+        ui.add(egui::Slider::new(&mut options.corner_radius, 0..=32))
+            .on_hover_text("0 = square corners; large values make a pill or a circle");
+    }
     if tool.is_selection() {
         ui.label("Mode");
         for mode in SelectionMode::ALL {

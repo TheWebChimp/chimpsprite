@@ -266,6 +266,8 @@ pub struct ToolOptions {
     pub brush_size: u32,
     pub pixel_perfect: bool,
     pub filled: bool,
+    /// Radio de las esquinas del rectángulo (0 = rectas).
+    pub corner_radius: u32,
     pub contiguous: bool,
     /// Shift presionado (lo actualiza la UI cada frame).
     pub constrain: bool,
@@ -286,6 +288,7 @@ impl Default for ToolOptions {
             brush_size: 1,
             pixel_perfect: true,
             filled: false,
+            corner_radius: 0,
             contiguous: true,
             constrain: false,
             selection_mode: SelectionMode::Replace,
@@ -984,6 +987,7 @@ impl Editor {
             brush_size: self.options.brush_size,
             pixel_perfect: self.options.pixel_perfect,
             filled: self.options.filled,
+            corner_radius: self.options.corner_radius,
             contiguous: self.options.contiguous,
             constrain: self.constrain(),
             selection: self.selection.as_ref(),
@@ -1011,6 +1015,7 @@ impl Editor {
             brush_size: self.options.brush_size,
             pixel_perfect: false,
             filled: self.options.filled,
+            corner_radius: self.options.corner_radius,
             contiguous: self.options.contiguous,
             constrain: self.constrain(),
             selection: proxy.selection.as_ref(),
