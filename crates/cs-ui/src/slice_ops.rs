@@ -6,6 +6,16 @@ use cs_tools::Point;
 
 use crate::editor::Editor;
 
+/// Centro 9-slice inicial (relativo al slice): el tercio del medio en cada eje, al menos 1 px.
+pub fn default_center(w: u32, h: u32) -> (i32, i32, u32, u32) {
+    let axis = |size: u32| {
+        let edge = size / 3;
+        (edge as i32, size.saturating_sub(2 * edge).max(1))
+    };
+    let ((x, cw), (y, ch)) = (axis(w), axis(h));
+    (x, y, cw, ch)
+}
+
 impl Editor {
     /// Selecciona el slice de más arriba que contiene `p` en el frame actual (si hay).
     pub fn select_slice_at(&mut self, p: Point) {
@@ -106,6 +116,13 @@ mod tests {
 
     use super::*;
     use crate::editor::ToolKind;
+
+    #[test]
+    fn default_center_is_the_middle_third() {
+        assert_eq!(default_center(9, 6), (3, 2, 3, 2));
+        assert_eq!(default_center(10, 2), (3, 0, 4, 2));
+        assert_eq!(default_center(1, 1), (0, 0, 1, 1));
+    }
 
     fn drag(e: &mut Editor, a: Point, b: Point) {
         let at = |p: Point| (p.0 as f32 + 0.5, p.1 as f32 + 0.5);

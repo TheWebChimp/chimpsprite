@@ -1045,6 +1045,44 @@ pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
         }
         gesture_end(editor, &[&rx, &ry]);
     }
+    // 9-slice: el rect central (relativo al slice) se estira; las esquinas quedan fijas.
+    let mut nine = key.center.is_some();
+    if ui
+        .checkbox(&mut nine, "9-Slice")
+        .on_hover_text("Center area that stretches; corners keep their size")
+        .changed()
+    {
+        editor
+            .update_slice_key(|k| k.center = nine.then(|| crate::slice_ops::default_center(w, h)));
+    }
+    if let Some((mut cx, mut cy, mut cw, mut ch)) = key.center {
+        let fields = ui
+            .horizontal(|ui| {
+                ui.label("X");
+                let rx = widgets::number(ui, &mut cx, 0..=(w as i32 - 1).max(0), "");
+                ui.label("Y");
+                let ry = widgets::number(ui, &mut cy, 0..=(h as i32 - 1).max(0), "");
+                [rx, ry]
+            })
+            .inner;
+        let sizes = ui
+            .horizontal(|ui| {
+                ui.label("W");
+                let rw = widgets::number(ui, &mut cw, 1..=w.max(1), "");
+                ui.label("H");
+                let rh = widgets::number(ui, &mut ch, 1..=h.max(1), "");
+                [rw, rh]
+            })
+            .inner;
+        let all = [&fields[0], &fields[1], &sizes[0], &sizes[1]];
+        if let Some(group) = gesture_group(editor, &all) {
+            // El centro no puede salirse del slice.
+            let cw = cw.min(w.saturating_sub(cx as u32)).max(1);
+            let ch = ch.min(h.saturating_sub(cy as u32)).max(1);
+            editor.update_slice_key_grouped(Some(group), |k| k.center = Some((cx, cy, cw, ch)));
+        }
+        gesture_end(editor, &all);
+    }
     if own_key
         && slice.keys.first().is_some_and(|k| k.frame != frame)
         && ui.button("Remove key on this frame").clicked()

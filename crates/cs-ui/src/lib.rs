@@ -5,6 +5,7 @@ mod autosave;
 mod canvas;
 mod canvas_size;
 mod capture;
+mod clipboard;
 mod demo;
 mod editor;
 mod export_dialog;
@@ -39,6 +40,9 @@ const NEW_SPRITE_SIZE: u32 = 64;
 const RECENT_KEY: &str = "chimpsprite.recent";
 const VIEW_KEY: &str = "chimpsprite.view";
 
+/// Texto que queda en el portapapeles del sistema al copiar píxeles (ver `shortcuts`).
+const CLIPBOARD_MARKER: &str = "ChimpSprite pixels";
+
 pub struct ChimpApp {
     /// Documento de la pestaña activa (un marcador vacío si se está en Home).
     doc: tabs::DocState,
@@ -64,6 +68,8 @@ pub struct ChimpApp {
     /// Cerrar sin preguntar (ya se confirmó).
     allow_close: bool,
     title: String,
+    /// Lo último copiado o cortado (compartido entre pestañas).
+    clipboard: Option<clipboard::Clip>,
 }
 
 impl ChimpApp {
@@ -99,6 +105,7 @@ impl ChimpApp {
             last_export: export_dialog::ExportDialog::default(),
             allow_close: false,
             title: String::new(),
+            clipboard: None,
         };
         if launch.demo {
             app.open_demo();
@@ -441,6 +448,23 @@ impl ChimpApp {
         if ctx.egui_wants_keyboard_input() || self.doc.editor.is_painting() {
             return;
         }
+        // egui convierte Ctrl+C/X/V en eventos (no teclas); Paste solo llega si el portapapeles
+        // del sistema tiene texto, por eso `copy` deja ahí un marcador.
+        let (copy, cut, paste) = ctx.input(|i| {
+            let has = |f: fn(&egui::Event) -> bool| i.events.iter().any(f);
+            (
+                has(|e| matches!(e, egui::Event::Copy)),
+                has(|e| matches!(e, egui::Event::Cut)),
+                has(|e| matches!(e, egui::Event::Paste(_))),
+            )
+        });
+        if copy {
+            self.copy(ctx);
+        } else if cut {
+            self.cut(ctx);
+        } else if paste {
+            self.paste();
+        }
         let new_frame = KeyboardShortcut::new(Modifiers::ALT, Key::N);
         if ctx.input_mut(|i| i.consume_shortcut(&new_frame)) {
             self.doc.editor.duplicate_frame();
@@ -487,6 +511,26 @@ impl ChimpApp {
                 Key::Delete | Key::Backspace => editor.clear_selection_content(),
                 _ => {}
             }
+        }
+    }
+
+    fn copy(&mut self, ctx: &egui::Context) {
+        if let Some(clip) = self.doc.editor.copy() {
+            self.clipboard = Some(clip);
+            ctx.copy_text(CLIPBOARD_MARKER.into());
+        }
+    }
+
+    fn cut(&mut self, ctx: &egui::Context) {
+        if let Some(clip) = self.doc.editor.cut() {
+            self.clipboard = Some(clip);
+            ctx.copy_text(CLIPBOARD_MARKER.into());
+        }
+    }
+
+    fn paste(&mut self) {
+        if let Some(clip) = &self.clipboard {
+            self.doc.editor.paste(clip);
         }
     }
 
@@ -569,6 +613,18 @@ impl ChimpApp {
                     }
                     ui.separator();
                     let has_selection = self.doc.editor.selection.is_some();
+                    let cut = egui::Button::new("Cut").shortcut_text("Ctrl+X");
+                    if ui.add_enabled(has_selection, cut).clicked() {
+                        self.cut(ui.ctx());
+                    }
+                    let copy = egui::Button::new("Copy").shortcut_text("Ctrl+C");
+                    if ui.add_enabled(has_selection, copy).clicked() {
+                        self.copy(ui.ctx());
+                    }
+                    let paste = egui::Button::new("Paste").shortcut_text("Ctrl+V");
+                    if ui.add_enabled(self.clipboard.is_some(), paste).clicked() {
+                        self.paste();
+                    }
                     let clear = egui::Button::new("Clear").shortcut_text("Del");
                     if ui.add_enabled(has_selection, clear).clicked() {
                         self.doc.editor.clear_selection_content();

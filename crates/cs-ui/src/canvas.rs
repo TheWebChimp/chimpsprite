@@ -703,7 +703,12 @@ impl CanvasView {
             Some(artboard_cursor(
                 world.and_then(|w| hit_test(&editor.document, w, slop)),
             ))
-        } else if editor.active_tool() == ToolKind::Move {
+        } else if editor.active_tool() == ToolKind::Move
+            || pointer.is_some_and(|p| {
+                let world = self.to_world(rect, p);
+                editor.moves_selection_at(world, modifiers.shift, modifiers.alt)
+            })
+        {
             Some(egui::CursorIcon::Move)
         } else if editor.active_tool() == ToolKind::Eyedropper {
             self.draw_pipette = true;
@@ -1342,6 +1347,16 @@ fn draw_slices(
             Stroke::new(if selected { 2.0 } else { 1.0 }, color),
             StrokeKind::Inside,
         );
+        // 9-slice: líneas del centro de lado a lado del slice.
+        if let Some((cx, cy, cw, ch)) = key.center {
+            let stroke = Stroke::new(1.0, color.gamma_multiply(0.8));
+            for gx in [x + cx, x + cx + cw as i32] {
+                painter.line_segment([at(gx, y), at(gx, y + h as i32)], stroke);
+            }
+            for gy in [y + cy, y + cy + ch as i32] {
+                painter.line_segment([at(x, gy), at(x + w as i32, gy)], stroke);
+            }
+        }
         painter.text(
             r.left_top() + Vec2::new(2.0, -1.0),
             Align2::LEFT_BOTTOM,

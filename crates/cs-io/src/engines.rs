@@ -175,6 +175,24 @@ fn unity_pivot(sprite: &Sprite, frame: usize) -> (f32, f32) {
         .unwrap_or((0.5, 0.5))
 }
 
+/// Borde 9-slice de Unity del frame (izquierda, abajo, derecha, arriba; en píxeles escalados),
+/// tomado del primer slice con centro; sin centro, sin borde.
+fn unity_border(sprite: &Sprite, frame: usize, scale: u32) -> (u32, u32, u32, u32) {
+    sprite
+        .slices
+        .iter()
+        .filter_map(|s| s.key_at(frame))
+        .find_map(|k| {
+            let (cx, cy, cw, ch) = k.center?;
+            let (x0, y0) = (k.bounds.0 + cx, k.bounds.1 + cy);
+            let (x1, y1) = (x0 + cw as i32, y0 + ch as i32);
+            let (w, h) = (sprite.width as i32, sprite.height as i32);
+            let px = |v: i32, max: i32| v.clamp(0, max) as u32 * scale.max(1);
+            Some((px(x0, w), px(h - y1, h), px(w - x1, w), px(y0, h)))
+        })
+        .unwrap_or_default()
+}
+
 /// `.meta` de Unity para la hoja: textura en modo sprite múltiple, filtro point, sin compresión,
 /// y un sprite por frame (con el pivote de los slices). El guid es estable para no romper
 /// referencias al reexportar.
@@ -190,9 +208,10 @@ pub fn unity_meta(sprite: &Sprite, image_name: &str, layout: SheetLayout, scale:
     for (f, (x, y, w, h)) in rects.iter().enumerate() {
         let name = format!("{stem}_{f}");
         let (px, py) = unity_pivot(sprite, f);
+        let (bl, bb, br, bt) = unity_border(sprite, f, scale);
         let _ = write!(
             out,
-            "    - serializedVersion: 2\n      name: {name}\n      rect:\n        serializedVersion: 2\n        x: {x}\n        y: {}\n        width: {w}\n        height: {h}\n      alignment: 9\n      pivot: {{x: {px}, y: {py}}}\n      border: {{x: 0, y: 0, z: 0, w: 0}}\n      spriteID: {}\n      internalID: {}\n",
+            "    - serializedVersion: 2\n      name: {name}\n      rect:\n        serializedVersion: 2\n        x: {x}\n        y: {}\n        width: {w}\n        height: {h}\n      alignment: 9\n      pivot: {{x: {px}, y: {py}}}\n      border: {{x: {bl}, y: {bb}, z: {br}, w: {bt}}}\n      spriteID: {}\n      internalID: {}\n",
             sheet_h - y - h,
             stable_guid(&name),
             (fnv(&name) >> 1) as i64
@@ -235,8 +254,20 @@ pub fn bevy_atlas(sprite: &Sprite, image_name: &str, layout: SheetLayout, scale:
                     Some((px, py)) => format!("Some(({}, {}))", px * s, py * s),
                     None => "None".into(),
                 };
+                let center = match k.center {
+                    Some((cx, cy, cw, ch)) => {
+                        format!(
+                            "Some(({}, {}, {}, {}))",
+                            cx * s,
+                            cy * s,
+                            cw * scale,
+                            ch * scale
+                        )
+                    }
+                    None => "None".into(),
+                };
                 format!(
-                    "(frame: {}, rect: ({}, {}, {}, {}), pivot: {pivot})",
+                    "(frame: {}, rect: ({}, {}, {}, {}), pivot: {pivot}, center: {center})",
                     k.frame,
                     x * s,
                     y * s,
@@ -346,6 +377,14 @@ mod tests {
         // Frame 0 está arriba a la izquierda: en Unity y = alto - 0 - 4 = 4.
         assert!(meta.contains("x: 0\n        y: 4\n"));
         assert!(meta.contains("pivot: {x: 0.5, y: 0}"));
+        assert!(meta.contains("border: {x: 0, y: 0, z: 0, w: 0}"));
+        let mut nine = sprite();
+        nine.slices[0].keys[0].center = Some((1, 1, 2, 2));
+        let meta = unity_meta(&nine, "hero.png", SheetLayout::Horizontal, 2);
+        // Centro en x 3..5, y 1..3 de un frame de 8×4, a escala 2.
+        assert!(meta.contains("border: {x: 6, y: 2, z: 6, w: 2}"));
+        let ron = bevy_atlas(&nine, "hero.png", SheetLayout::Horizontal, 2);
+        assert!(ron.contains("center: Some((2, 2, 4, 4))"));
         assert_eq!(
             unity_meta(&sprite(), "hero.png", SheetLayout::Horizontal, 1)
                 .lines()
@@ -363,6 +402,8 @@ mod tests {
         assert!(
             ron.contains("\"hit\": (frames: [3, 2], durations_ms: [100, 100], looping: false)")
         );
-        assert!(ron.contains("\"feet\": [(frame: 0, rect: (4, 0, 8, 8), pivot: Some((4, 8)))]"));
+        assert!(ron.contains(
+            "\"feet\": [(frame: 0, rect: (4, 0, 8, 8), pivot: Some((4, 8)), center: None)]"
+        ));
     }
 }

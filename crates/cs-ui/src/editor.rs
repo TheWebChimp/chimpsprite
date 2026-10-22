@@ -466,6 +466,9 @@ pub struct Editor {
     painting_secondary: bool,
     /// Alt al presionar: cuentagotas temporal durante el gesto.
     temp_eyedropper: bool,
+    /// Arrastre dentro de la selección con una herramienta de selección: mueve su contenido
+    /// (como Move). Guarda el punto de partida y si el puntero ya se desplazó.
+    temp_move: Option<(Point, bool)>,
     /// Reproducción en curso.
     pub playing: bool,
     /// Estado de la reproducción: posición, rango (inclusivo) y dirección.
@@ -532,6 +535,7 @@ impl Editor {
             artboard_tool: ArtboardTool::new(),
             painting_secondary: false,
             temp_eyedropper: false,
+            temp_move: None,
             playing: false,
             playback: None,
             play_clock: 0.0,
@@ -842,6 +846,8 @@ impl Editor {
     pub fn active_tool(&self) -> ToolKind {
         if self.temp_eyedropper {
             ToolKind::Eyedropper
+        } else if self.temp_move.is_some() {
+            ToolKind::Move
         } else {
             self.tool
         }
@@ -1083,6 +1089,9 @@ impl Editor {
         // Alt es cuentagotas temporal solo en las herramientas que pintan.
         self.temp_eyedropper = alt && self.tool.paints();
         let shift = self.options.constrain;
+        self.temp_move = self
+            .moves_selection_at(world, shift, alt)
+            .then(|| (self.to_local(world), false));
         if self.tool.is_selection() && !self.tools.get(self.tool).is_some_and(|t| t.is_pending()) {
             self.shift_at_press = shift;
             self.gesture_mode = match (shift, alt) {
@@ -1138,6 +1147,23 @@ impl Editor {
         self.with_tool(|tool, ctx| tool.press(ctx, p));
     }
 
+    /// Presionar en `world` con una herramienta de selección movería lo seleccionado: el punto
+    /// cae dentro de la selección y no hay modificadores que cambien el modo de selección.
+    pub fn moves_selection_at(&self, world: (f32, f32), shift: bool, alt: bool) -> bool {
+        let p = self.to_local(world);
+        self.tool.is_selection()
+            && !shift
+            && !alt
+            && !self.tiles_mode()
+            && !self.editing_mask()
+            && !self.tools.get(self.tool).is_some_and(|t| t.is_pending())
+            && self.document.artboard_at(world) == Some(self.active)
+            && self
+                .selection
+                .as_ref()
+                .is_some_and(|m| m.contains(p.0, p.1))
+    }
+
     /// Capa de imagen más alta con un píxel visible en `p` (local), ignorando ocultas y bloqueadas.
     pub fn layer_at(&self, p: Point) -> Option<LayerId> {
         let sprite = self.sprite();
@@ -1161,6 +1187,10 @@ impl Editor {
             return;
         }
         let p = self.tool_point(world);
+        let local = self.to_local(world);
+        if let Some((from, moved)) = &mut self.temp_move {
+            *moved |= local != *from;
+        }
         self.with_tool(|tool, ctx| tool.drag(ctx, p));
     }
 
@@ -1222,6 +1252,18 @@ impl Editor {
         }
         let out = self.with_tool(|tool, ctx| tool.release(ctx));
         self.temp_eyedropper = false;
+        if let Some((from, moved)) = self.temp_move.take() {
+            if moved {
+                self.apply_output(kind, out);
+            } else {
+                // Un clic sin arrastrar es un clic normal de la herramienta de selección.
+                let kind = self.tool;
+                self.with_tool(|tool, ctx| tool.press(ctx, from));
+                let out = self.with_tool(|tool, ctx| tool.release(ctx));
+                self.apply_output(kind, out);
+            }
+            return;
+        }
         self.apply_output(kind, out);
     }
 
@@ -1909,6 +1951,37 @@ mod tests {
         e.toggle_visible(bottom);
         e.layer = LayerId(2);
         assert_eq!(e.layer_at((1, 1)), None);
+    }
+
+    #[test]
+    fn dragging_inside_the_selection_with_a_selection_tool_moves_its_content() {
+        let mut e = editor();
+        let red = e.primary;
+        let t = e.sprite().color_mode.transparent();
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(1, 1, red)],
+        });
+        e.set_tool(ToolKind::RectSelect);
+        drag_local(&mut e, (0, 0), (2, 2), false, false);
+        // Arrastrar desde dentro: mueve píxeles y selección, sin cambiar de herramienta.
+        drag_local(&mut e, (1, 1), (4, 3), false, false);
+        assert_eq!(e.tool, ToolKind::RectSelect);
+        assert_eq!(e.active_tool(), ToolKind::RectSelect);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 1), t);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 4, 3), red);
+        let bounds = e.selection.as_ref().and_then(|m| m.bounds());
+        assert_eq!(bounds, Some(((3, 2), (5, 4))));
+        e.undo();
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 1), red);
+        // Con Shift (Add) dentro de la selección se selecciona, no se mueve.
+        drag_local(&mut e, (4, 3), (6, 6), true, false);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 1), red);
+        assert!(e.selection.as_ref().unwrap().contains(6, 6));
+        // Un clic sin arrastrar dentro de la selección deselecciona, como siempre.
+        click(&mut e, (4, 4), false, false);
+        assert!(e.selection.is_none());
     }
 
     #[test]
