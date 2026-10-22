@@ -959,10 +959,17 @@ pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
             }
         });
     }
+    if editor.slice.is_some() {
+        ui.separator();
+        slice_properties(ui, editor);
+    }
+}
+
+/// Nombre, color, datos y clave del frame actual del slice seleccionado (panel y diálogo).
+pub fn slice_properties(ui: &mut egui::Ui, editor: &mut Editor) {
     let Some(slice) = editor.selected_slice().cloned() else {
         return;
     };
-    ui.separator();
     let mut name = slice.name.clone();
     ui.horizontal(|ui| {
         ui.label("Name");

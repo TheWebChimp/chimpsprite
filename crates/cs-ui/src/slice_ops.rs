@@ -17,11 +17,10 @@ pub fn default_center(w: u32, h: u32) -> (i32, i32, u32, u32) {
 }
 
 impl Editor {
-    /// Selecciona el slice de más arriba que contiene `p` en el frame actual (si hay).
-    pub fn select_slice_at(&mut self, p: Point) {
+    /// Slice de más arriba que contiene `p` en el frame actual.
+    pub fn slice_at(&self, p: Point) -> Option<usize> {
         let frame = self.frame;
-        let hit = self
-            .sprite()
+        self.sprite()
             .slices
             .iter()
             .enumerate()
@@ -32,8 +31,12 @@ impl Editor {
                     p.0 >= x && p.1 >= y && p.0 < x + w as i32 && p.1 < y + h as i32
                 })
             })
-            .map(|(i, _)| i);
-        if let Some(i) = hit {
+            .map(|(i, _)| i)
+    }
+
+    /// Selecciona el slice de más arriba que contiene `p` en el frame actual (si hay).
+    pub fn select_slice_at(&mut self, p: Point) {
+        if let Some(i) = self.slice_at(p) {
             if self.slice != Some(i) {
                 self.end_group();
             }
@@ -97,6 +100,23 @@ impl Editor {
         });
     }
 
+    /// Copia del slice seleccionado en el mismo lugar, encima de todo y seleccionada.
+    pub fn duplicate_slice(&mut self) {
+        let Some(slice) = self.selected_slice().cloned() else {
+            return;
+        };
+        let mut slices = self.sprite().slices.clone();
+        slices.push(Slice {
+            name: format!("{} Copy", slice.name),
+            ..slice
+        });
+        let index = slices.len() - 1;
+        if self.execute(Command::SetSlices(slices)) {
+            self.end_group();
+            self.slice = Some(index);
+        }
+    }
+
     pub fn delete_slice(&mut self) {
         let Some(index) = self.slice else {
             return;
@@ -158,6 +178,26 @@ mod tests {
         e.delete_slice();
         assert_eq!(e.sprite().slices.len(), 1);
         assert_eq!(e.slice, None);
+        e.undo();
+        assert_eq!(e.sprite().slices.len(), 2);
+    }
+
+    #[test]
+    fn slice_at_finds_the_topmost_and_duplicate_selects_the_copy() {
+        let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+        e.set_tool(ToolKind::Slice);
+        drag(&mut e, (1, 1), (6, 6));
+        drag(&mut e, (10, 10), (4, 4));
+        assert_eq!(e.slice_at((5, 5)), Some(1));
+        assert_eq!(e.slice_at((2, 2)), Some(0));
+        assert_eq!(e.slice_at((12, 12)), None);
+        e.slice = Some(0);
+        e.duplicate_slice();
+        assert_eq!(e.slice, Some(2));
+        let slices = &e.sprite().slices;
+        assert_eq!(slices[2].name, format!("{} Copy", slices[0].name));
+        assert_eq!(slices[2].keys, slices[0].keys);
+        assert_eq!(e.slice_at((2, 2)), Some(2), "the copy is on top");
         e.undo();
         assert_eq!(e.sprite().slices.len(), 2);
     }

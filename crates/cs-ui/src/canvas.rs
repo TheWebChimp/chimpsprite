@@ -57,6 +57,12 @@ pub struct CanvasView {
     over_ruler: bool,
     /// Dibujar el cursor de cuentagotas (el del sistema se oculta).
     draw_pipette: bool,
+    /// Nombre de artboard en edición (doble clic en su etiqueta) y si ya se le dio el foco.
+    renaming: Option<(ArtboardId, String, bool)>,
+    /// Clic derecho sobre un slice con la herramienta Slice: al soltar se abre su menú.
+    slice_menu: bool,
+    /// Diálogo Slice Properties abierto (para el slice seleccionado).
+    slice_properties: bool,
 }
 
 /// Margen (en pantalla) desde el borde del lienzo en el que empieza el auto-scroll.
@@ -133,6 +139,9 @@ impl Default for CanvasView {
             sym_drag: None,
             over_ruler: false,
             draw_pipette: false,
+            renaming: None,
+            slice_menu: false,
+            slice_properties: false,
         }
     }
 }
@@ -626,10 +635,34 @@ impl CanvasView {
             && let Some(p) = pointer
         {
             let world = self.to_world(rect, p);
+            let slice = (pressed_secondary && editor.active_tool() == ToolKind::Slice)
+                .then(|| editor.slice_at(editor.to_local(world)))
+                .flatten();
+            self.slice_menu = slice.is_some();
             match over_label {
                 Some(id) if pressed_primary => editor.press_artboard_label(id, world),
+                _ if slice.is_some() => {
+                    editor.end_group();
+                    editor.slice = slice;
+                }
                 _ => editor.pointer_press(world, pressed_secondary, modifiers.alt, slop),
             }
+        }
+        if self.slice_menu {
+            response.context_menu(|ui| {
+                if ui.button("Slice Properties…").clicked() {
+                    self.slice_properties = true;
+                    ui.close();
+                }
+                if ui.button("Duplicate Slice").clicked() {
+                    editor.duplicate_slice();
+                    ui.close();
+                }
+                if ui.button("Delete Slice").clicked() {
+                    editor.delete_slice();
+                    ui.close();
+                }
+            });
         }
         // Auto-scroll: arrastrando cerca o fuera del borde, la vista se desplaza.
         let dragging = editor.is_painting() || self.ruler_drag.is_some() || self.sym_drag.is_some();
@@ -668,6 +701,12 @@ impl CanvasView {
             && let Some(p) = pointer
         {
             editor.pointer_hover(self.to_world(rect, p));
+        }
+        if response.double_clicked()
+            && let Some(id) = over_label
+            && let Some(artboard) = editor.document.artboard(id)
+        {
+            self.renaming = Some((id, artboard.name.clone(), false));
         }
         if response.double_clicked() && editor.active_tool() == ToolKind::PolygonLasso {
             editor.finish_gesture();
@@ -891,7 +930,8 @@ impl CanvasView {
                 (Stroke::new(1.0, theme::CANVAS_BORDER), theme::LABEL)
             };
             painter.rect_stroke(screen, 0.0, border, StrokeKind::Outside);
-            if self.names_visible {
+            let renaming = self.renaming.as_ref().is_some_and(|r| r.0 == artboard.id);
+            if self.names_visible && !renaming {
                 painter.text(
                     screen.left_top() - Vec2::new(0.0, LABEL_GAP),
                     Align2::LEFT_BOTTOM,
@@ -1081,6 +1121,15 @@ impl CanvasView {
             });
             draw_pipette(&painter, p, color);
         }
+        self.rename_field(ui, rect, editor);
+        self.slice_properties &= editor.slice.is_some();
+        if self.slice_properties {
+            egui::Window::new("Slice Properties")
+                .open(&mut self.slice_properties)
+                .collapsible(false)
+                .resizable(false)
+                .show(ui.ctx(), |ui| crate::panels::slice_properties(ui, editor));
+        }
     }
 
     /// Reglas en píxeles del artboard activo (origen en su esquina superior izquierda).
@@ -1269,6 +1318,40 @@ fn label_text(artboard: &Artboard) -> String {
 }
 
 impl CanvasView {
+    /// Campo para renombrar el artboard sobre su etiqueta: Enter o clic afuera aplica, Esc cancela.
+    fn rename_field(&mut self, ui: &mut egui::Ui, rect: Rect, editor: &mut Editor) {
+        let Some((id, mut name, focused)) = self.renaming.take() else {
+            return;
+        };
+        let Some(artboard) = editor.document.artboard(id) else {
+            return;
+        };
+        let bottom_left = self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
+        let size = Vec2::new(160.0, LABEL_SIZE + 6.0);
+        let field = Rect::from_min_size(bottom_left - Vec2::new(0.0, size.y), size);
+        let response = ui.put(
+            field,
+            egui::TextEdit::singleline(&mut name)
+                .font(FontId::proportional(LABEL_SIZE))
+                .margin(Vec2::new(2.0, 1.0)),
+        );
+        if !focused {
+            response.request_focus();
+        }
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+            return;
+        }
+        if focused && response.lost_focus() {
+            let name = name.trim();
+            if !name.is_empty() {
+                editor.activate(id);
+                editor.rename_active_artboard(name.to_owned());
+            }
+            return;
+        }
+        self.renaming = Some((id, name, true));
+    }
+
     /// Artboard cuya etiqueta (nombre sobre el borde superior) está bajo `p`, el de más arriba primero.
     fn label_at(&self, ui: &egui::Ui, rect: Rect, editor: &Editor, p: Pos2) -> Option<ArtboardId> {
         editor.document.artboards.iter().rev().find_map(|artboard| {
@@ -1403,7 +1486,144 @@ fn draw_marching_ants(painter: &egui::Painter, mask: &Mask, origin: Pos2, zoom: 
 
 #[cfg(test)]
 mod tests {
+    use cs_core::{ColorMode, Sprite};
+    use egui::{Event, Key, PointerButton, RawInput};
+
     use super::*;
+
+    /// Lienzo de 800×600 manejado con eventos crudos, con el reloj avanzando 50 ms por frame.
+    struct Harness {
+        ctx: egui::Context,
+        canvas: CanvasView,
+        editor: Editor,
+        view: ViewSettings,
+        time: f64,
+        rect: Rect,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            let mut h = Self {
+                ctx: egui::Context::default(),
+                canvas: CanvasView::default(),
+                editor: Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba)),
+                view: ViewSettings::default(),
+                time: 0.0,
+                rect: Rect::NOTHING,
+            };
+            h.frame(vec![]);
+            h
+        }
+
+        fn frame(&mut self, events: Vec<Event>) {
+            self.time += 0.05;
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            };
+            let mut rect = Rect::NOTHING;
+            let mut output = self.ctx.run_ui(input, |ui| {
+                egui::CentralPanel::no_frame().show(ui, |ui| {
+                    rect = ui.max_rect();
+                    self.canvas.show(ui, &mut self.editor, None, &self.view);
+                });
+            });
+            output.textures_delta.clear();
+            self.rect = rect;
+        }
+
+        fn click(&mut self, pos: Pos2, button: PointerButton) {
+            let ev = |pressed| Event::PointerButton {
+                pos,
+                button,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![Event::PointerMoved(pos)]);
+            self.frame(vec![ev(true)]);
+            self.frame(vec![ev(false)]);
+        }
+
+        fn key(&mut self, key: Key) {
+            let ev = |pressed| Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![ev(true), ev(false)]);
+        }
+
+        /// Centro en pantalla del píxel local `p` del artboard activo.
+        fn screen(&self, p: (i32, i32)) -> Pos2 {
+            let (x, y) = self.editor.artboard().position;
+            self.canvas.to_screen(self.rect, (x + p.0, y + p.1))
+                + Vec2::splat(self.canvas.zoom / 2.0)
+        }
+    }
+
+    #[test]
+    fn double_clicking_an_artboard_label_renames_it() {
+        let mut h = Harness::new();
+        let label = h.canvas.to_screen(h.rect, h.editor.artboard().position)
+            - Vec2::new(-10.0, LABEL_GAP + LABEL_SIZE / 2.0);
+        h.click(label, PointerButton::Primary);
+        h.click(label, PointerButton::Primary);
+        h.frame(vec![]);
+        assert!(h.canvas.renaming.is_some(), "double click opens the field");
+        let mut erase = vec![];
+        for _ in 0..20 {
+            for pressed in [true, false] {
+                erase.push(Event::Key {
+                    key: Key::Backspace,
+                    physical_key: None,
+                    pressed,
+                    repeat: false,
+                    modifiers: Default::default(),
+                });
+            }
+        }
+        h.frame(erase);
+        h.frame(vec![Event::Text("Hero".into())]);
+        h.key(Key::Enter);
+        h.frame(vec![]);
+        assert_eq!(h.editor.artboard().name, "Hero");
+        assert!(h.canvas.renaming.is_none());
+        assert_eq!(
+            h.editor.artboard().position,
+            (0, 0),
+            "the clicks did not move it"
+        );
+    }
+
+    #[test]
+    fn right_clicking_a_slice_selects_it_and_opens_its_menu() {
+        let mut h = Harness::new();
+        h.editor.set_tool(ToolKind::Slice);
+        let drag = |e: &mut Editor, a: (f32, f32), b: (f32, f32)| {
+            e.pointer_press(a, false, false, 0.1);
+            e.pointer_drag(b);
+            e.pointer_release();
+        };
+        drag(&mut h.editor, (2.5, 2.5), (6.5, 6.5));
+        drag(&mut h.editor, (10.5, 10.5), (12.5, 12.5));
+        assert_eq!(h.editor.slice, Some(1));
+        let before = h.editor.sprite().slices.clone();
+        h.frame(vec![]);
+        h.click(h.screen((4, 4)), PointerButton::Secondary);
+        h.frame(vec![]);
+        assert_eq!(h.editor.slice, Some(0));
+        assert!(egui::Popup::is_any_open(&h.ctx), "context menu");
+        assert_eq!(h.editor.sprite().slices, before, "nothing created or moved");
+        // Fuera de un slice no hay menú.
+        h.key(Key::Escape);
+        h.click(h.screen((14, 1)), PointerButton::Secondary);
+        h.frame(vec![]);
+        assert!(!egui::Popup::is_any_open(&h.ctx));
+    }
 
     #[test]
     fn autoscroll_only_near_edges_and_grows_with_distance() {
