@@ -1,6 +1,6 @@
 use cs_raster::{
-    Point, constrain_line, constrain_square, ellipse_filled, ellipse_outline, line, rect_filled,
-    rect_outline, stamp,
+    Point, constrain_line, constrain_square, ellipse_filled, ellipse_outline, line,
+    rounded_rect_filled, rounded_rect_outline, stamp,
 };
 
 use crate::{Drag, Tool, ToolContext, ToolOutput};
@@ -39,8 +39,11 @@ impl ShapeTool {
         };
         match (self.kind, ctx.filled) {
             (ShapeKind::Line, _) => stamp(&line(a, b), ctx.brush_size),
-            (ShapeKind::Rectangle, true) => rect_filled(a, b),
-            (ShapeKind::Rectangle, false) => stamp(&rect_outline(a, b), ctx.brush_size),
+            (ShapeKind::Rectangle, true) => rounded_rect_filled(a, b, ctx.corner_radius),
+            (ShapeKind::Rectangle, false) => stamp(
+                &rounded_rect_outline(a, b, ctx.corner_radius),
+                ctx.brush_size,
+            ),
             (ShapeKind::Ellipse, true) => ellipse_filled(a, b),
             (ShapeKind::Ellipse, false) => stamp(&ellipse_outline(a, b), ctx.brush_size),
         }
@@ -104,6 +107,18 @@ mod tests {
         assert_eq!(run(ShapeKind::Rectangle, &c, (0, 0), (2, 2)).len(), 8);
         c.filled = true;
         assert_eq!(run(ShapeKind::Rectangle, &c, (0, 0), (2, 2)).len(), 9);
+    }
+
+    #[test]
+    fn corner_radius_rounds_the_rectangle() {
+        let s = sprite();
+        let mut c = ctx(&s);
+        c.corner_radius = 2;
+        let outline = run(ShapeKind::Rectangle, &c, (0, 0), (6, 6));
+        assert!(!outline.contains(&(0, 0)) && outline.contains(&(3, 0)));
+        c.filled = true;
+        let filled = run(ShapeKind::Rectangle, &c, (0, 0), (6, 6));
+        assert!(!filled.contains(&(0, 0)) && filled.contains(&(3, 3)));
     }
 
     #[test]

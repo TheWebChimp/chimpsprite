@@ -42,6 +42,8 @@ pub struct ToolContext<'a> {
     pub pixel_perfect: bool,
     /// Formas rellenas (rectángulo/elipse).
     pub filled: bool,
+    /// Radio de las esquinas del rectángulo (0 = rectas).
+    pub corner_radius: u32,
     /// Cubeta: solo la región conectada (si no, todos los píxeles del mismo color).
     pub contiguous: bool,
     /// Shift: líneas a 45°, cuadrados y círculos.
@@ -175,6 +177,7 @@ pub(crate) mod test_util {
             brush_size: 1,
             pixel_perfect: false,
             filled: false,
+            corner_radius: 0,
             contiguous: true,
             constrain: false,
             selection: None,
