@@ -3,7 +3,7 @@ use eframe::egui::{
 };
 use std::sync::Arc;
 
-use cs_core::{ArtboardId, SymmetryMode, Tile};
+use cs_core::{ArtboardId, PixelValue, SymmetryMode, Tile};
 
 use crate::canvas::CanvasView;
 use cs_tools::text::FontChoice;
@@ -407,6 +407,48 @@ fn swatch(ui: &mut egui::Ui, color: Color32, size: f32) -> egui::Response {
     response
 }
 
+/// Marco blanco si `value` es el color primario; del color de acento si es el secundario.
+fn mark_selected(ui: &egui::Ui, editor: &Editor, value: PixelValue, rect: Rect) {
+    let color = if value == editor.primary {
+        Color32::WHITE
+    } else if value == editor.secondary {
+        theme::ACCENT
+    } else {
+        return;
+    };
+    ui.painter()
+        .rect_stroke(rect, 0.0, Stroke::new(2.0, color), StrokeKind::Inside);
+}
+
+/// Swatch del color Mask (transparente): tablero con una diagonal roja.
+fn mask_swatch(ui: &mut egui::Ui, size: f32) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
+    paint_mask(ui.painter(), rect);
+    response
+}
+
+fn paint_mask(painter: &egui::Painter, rect: Rect) {
+    checker(painter, rect);
+    painter.line_segment(
+        [rect.left_bottom(), rect.right_top()],
+        Stroke::new(2.0, Color32::from_rgb(220, 40, 40)),
+    );
+}
+
+/// Swatch del color primario o secundario; el Mask se dibuja como tal.
+fn color_swatch(
+    ui: &mut egui::Ui,
+    editor: &Editor,
+    value: PixelValue,
+    size: f32,
+) -> egui::Response {
+    if editor.is_mask(value) {
+        mask_swatch(ui, size)
+    } else {
+        swatch(ui, to_color32(editor.resolve(value)), size)
+    }
+}
+
 fn to_color32(c: cs_core::Rgba) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
 }
@@ -416,10 +458,17 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.heading("Color");
     ui.separator();
     ui.horizontal(|ui| {
-        let primary = to_color32(editor.resolve(editor.primary));
-        let secondary = to_color32(editor.resolve(editor.secondary));
-        swatch(ui, primary, 36.0).on_hover_text("Primary (left click)");
-        swatch(ui, secondary, 24.0).on_hover_text("Secondary (right click)");
+        let name = |v| {
+            if editor.is_mask(v) {
+                " · Mask (transparent)"
+            } else {
+                ""
+            }
+        };
+        color_swatch(ui, editor, editor.primary, 36.0)
+            .on_hover_text(format!("Primary (left click){}", name(editor.primary)));
+        color_swatch(ui, editor, editor.secondary, 24.0)
+            .on_hover_text(format!("Secondary (right click){}", name(editor.secondary)));
         if ui.small_button("🔄").on_hover_text("Swap (X)").clicked() {
             editor.swap_colors();
         }
@@ -429,25 +478,23 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) {
     let size = 20.0;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::splat(2.0);
+        let mask = editor.mask_value();
+        let response =
+            mask_swatch(ui, size).on_hover_text("Mask (transparent): painting with it erases");
+        mark_selected(ui, editor, mask, response.rect);
+        if response.clicked() {
+            editor.primary = mask;
+        }
+        if response.secondary_clicked() {
+            editor.secondary = mask;
+        }
         let count = editor.sprite().palette.len().min(256);
         for i in 0..count {
             let index = i as u8;
             let value = editor.palette_value(index);
             let color = to_color32(editor.sprite().palette.colors()[i]);
             let response = swatch(ui, color, size).on_hover_text(format!("#{i}"));
-            if value == editor.primary || value == editor.secondary {
-                let stroke_color = if value == editor.primary {
-                    Color32::WHITE
-                } else {
-                    theme::ACCENT
-                };
-                ui.painter().rect_stroke(
-                    response.rect,
-                    0.0,
-                    Stroke::new(2.0, stroke_color),
-                    StrokeKind::Inside,
-                );
-            }
+            mark_selected(ui, editor, value, response.rect);
             if response.clicked() {
                 editor.primary = value;
             }

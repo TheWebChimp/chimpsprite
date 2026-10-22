@@ -762,6 +762,16 @@ impl Editor {
         }
     }
 
+    /// Color "Mask" (transparente) del sprite: en RGBA alfa 0, en indexado el índice transparente.
+    /// Pintar con él borra.
+    pub fn mask_value(&self) -> PixelValue {
+        self.sprite().color_mode.transparent()
+    }
+
+    pub fn is_mask(&self, value: PixelValue) -> bool {
+        value == self.mask_value()
+    }
+
     pub fn swap_colors(&mut self) {
         std::mem::swap(&mut self.primary, &mut self.secondary);
     }
@@ -1987,6 +1997,27 @@ mod tests {
         // Un clic sin arrastrar dentro de la selección deselecciona, como siempre.
         click(&mut e, (4, 4), false, false);
         assert!(e.selection.is_none());
+    }
+
+    #[test]
+    fn painting_with_the_mask_color_erases() {
+        let mut e = editor();
+        let red = e.primary;
+        click(&mut e, (2, 2), false, false);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 2), red);
+        e.secondary = e.mask_value();
+        assert!(e.is_mask(e.secondary) && !e.is_mask(e.primary));
+        click(&mut e, (2, 2), true, false);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 2), e.mask_value());
+
+        let indexed = Editor::with_sprite(Sprite::new(
+            4,
+            4,
+            ColorMode::Indexed {
+                transparent_index: 3,
+            },
+        ));
+        assert_eq!(indexed.mask_value(), PixelValue::Index(3));
     }
 
     #[test]
