@@ -61,7 +61,7 @@ pub fn decode_png(bytes: &[u8]) -> Result<Bitmap> {
 }
 
 /// Color de la paleta más cercano (distancia euclidiana RGB); transparente si alpha < 128.
-fn nearest_index(sprite: &Sprite, c: Rgba, transparent_index: u8) -> u8 {
+pub fn nearest_index(sprite: &Sprite, c: Rgba, transparent_index: u8) -> u8 {
     if c.a < 128 {
         return transparent_index;
     }
