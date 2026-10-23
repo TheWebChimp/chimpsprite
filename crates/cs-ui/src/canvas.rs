@@ -1187,6 +1187,8 @@ impl CanvasView {
             && !space
             && response.hovered()
             && tool != ToolKind::Artboard
+            // Bloqueada (modo Tiles o editando una máscara): no actúa, así que sin contorno.
+            && !editor.tool_blocked()
             && view_settings.shows(view_settings.brush_preview)
         {
             let size = if tool.uses_brush() {

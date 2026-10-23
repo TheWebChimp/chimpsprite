@@ -958,6 +958,10 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView, notic
                 "Editing layer mask: white reveals, black hides",
             );
         }
+        if let Some(text) = editor.mask_status() {
+            ui.separator();
+            ui.colored_label(theme::ACCENT, text);
+        }
         let on_instance = s
             .layer(editor.layer)
             .is_some_and(|l| l.kind == cs_core::LayerKind::Instance);

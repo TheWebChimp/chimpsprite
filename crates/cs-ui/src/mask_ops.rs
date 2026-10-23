@@ -20,6 +20,20 @@ impl Editor {
         self.edit_mask && self.layer_has_mask(self.layer)
     }
 
+    /// La herramienta activa no actúa ahora: bloqueada en modo Tiles o mientras se edita una
+    /// máscara. Tampoco muestra el contorno del pincel.
+    pub fn tool_blocked(&self) -> bool {
+        let kind = self.active_tool();
+        (self.tiles_mode() && kind.blocked_in_tiles())
+            || (self.editing_mask() && kind.blocked_on_mask())
+    }
+
+    /// Aviso de la barra de estado cuando la herramienta no actúa sobre la máscara.
+    pub fn mask_status(&self) -> Option<&'static str> {
+        (self.editing_mask() && self.active_tool().blocked_on_mask())
+            .then_some("Not available while editing a mask")
+    }
+
     pub fn layer_has_mask(&self, id: LayerId) -> bool {
         self.sprite().layer(id).is_some_and(|l| l.mask.is_some())
     }

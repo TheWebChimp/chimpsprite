@@ -217,6 +217,12 @@ impl ToolKind {
         )
     }
 
+    /// Herramientas que no actúan mientras se edita una máscara de capa: promedian o mezclan los
+    /// colores de la capa y los escribirían como niveles de la máscara.
+    pub fn blocked_on_mask(self) -> bool {
+        matches!(self, ToolKind::Jumble | ToolKind::Blur)
+    }
+
     /// Herramientas que en modo Tiles trabajan sobre el proxy de celdas (Move, Slice y Artboard
     /// siguen en píxeles).
     pub fn uses_cells(self) -> bool {
@@ -1219,8 +1225,9 @@ impl Editor {
             self.activate(id);
         }
         let p = self.tool_point(world);
-        // En modo Tiles algunas herramientas no actúan (la barra de estado lo avisa).
-        if self.tiles_mode() && self.active_tool().blocked_in_tiles() {
+        // En modo Tiles o editando una máscara algunas herramientas no actúan (la barra de
+        // estado lo avisa).
+        if self.tool_blocked() {
             return;
         }
         if self.active_tool() == ToolKind::Slice {
@@ -1374,7 +1381,7 @@ impl Editor {
             return;
         }
         let kind = self.active_tool();
-        if self.tiles_mode() && kind.blocked_in_tiles() {
+        if self.tool_blocked() {
             self.temp_eyedropper = false;
             return;
         }

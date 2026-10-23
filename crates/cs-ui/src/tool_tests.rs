@@ -294,3 +294,73 @@ mod blur {
         );
     }
 }
+
+/// Blur y Jumble promedian o mezclan colores de la capa: editando una máscara no actúan.
+mod on_a_mask {
+    use cs_core::{Rgba, Sprite};
+
+    use super::*;
+    use crate::mask_ops::NewMask;
+
+    /// Editor con un punto rojo y una máscara a medias (izquierda visible, derecha oculta), en
+    /// edición.
+    fn masked(tool: ToolKind) -> Editor {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        e.primary = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        stroke(&mut e, &[(4, 4)], false);
+        e.set_selection(Some(cs_core::Mask::from_rect(8, 8, (0, 0), (3, 7))));
+        e.add_mask(LayerId(1), NewMask::FromSelection);
+        assert!(e.editing_mask());
+        e.set_tool(tool);
+        e
+    }
+
+    fn mask(e: &Editor) -> cs_core::LayerMask {
+        e.sprite().layers[0].mask.clone().unwrap()
+    }
+
+    #[test]
+    fn blur_and_jumble_do_nothing_and_say_so() {
+        for tool in [ToolKind::Blur, ToolKind::Jumble] {
+            let mut e = masked(tool);
+            e.options.brush_size = 3;
+            let before = mask(&e);
+            let version = e.doc_version;
+            stroke(&mut e, &[(3, 4), (4, 4), (5, 4)], false);
+            assert_eq!(mask(&e), before, "{tool:?} left the mask alone");
+            assert_eq!(e.doc_version, version, "{tool:?}");
+            assert!(e.tool_blocked(), "{tool:?}: no brush outline");
+            assert_eq!(
+                e.mask_status(),
+                Some("Not available while editing a mask"),
+                "{tool:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_pencil_still_paints_the_mask() {
+        let mut e = masked(ToolKind::Pencil);
+        assert!(!e.tool_blocked());
+        assert_eq!(e.mask_status(), None);
+        e.primary = PixelValue::Rgba(Rgba::rgb(0, 0, 0));
+        stroke(&mut e, &[(1, 1)], false);
+        assert_eq!(mask(&e).get(1, 1), 0, "black hides");
+        // Fuera de la edición de máscara Blur vuelve a actuar.
+        e.set_tool(ToolKind::Blur);
+        e.select_layer(LayerId(1));
+        assert!(!e.tool_blocked());
+        assert_eq!(e.mask_status(), None);
+    }
+
+    #[test]
+    fn tools_blocked_in_tiles_mode_hide_their_outline() {
+        let mut e = crate::tile_ops::test_util::tile_editor();
+        for tool in [ToolKind::Spray, ToolKind::Blur, ToolKind::Jumble] {
+            e.set_tool(tool);
+            assert!(e.tool_blocked(), "{tool:?}");
+        }
+        e.set_tool(ToolKind::Pencil);
+        assert!(!e.tool_blocked());
+    }
+}
