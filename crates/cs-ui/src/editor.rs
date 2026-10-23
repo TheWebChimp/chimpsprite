@@ -15,7 +15,8 @@ use cs_tools::{
 };
 
 use crate::tile_ops::{self, TileProxy};
-use crate::transform::Floating;
+use crate::transform::{Floating, TransformDrag};
+use crate::transform_box::TransformHit;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolKind {
@@ -473,9 +474,6 @@ pub struct Editor {
     painting_secondary: bool,
     /// Alt al presionar: cuentagotas temporal durante el gesto.
     temp_eyedropper: bool,
-    /// Arrastre dentro de la selección con una herramienta de selección: mueve su contenido
-    /// (como Move). Guarda el punto de partida y si el puntero ya se desplazó.
-    temp_move: Option<(Point, bool)>,
     /// Reproducción en curso.
     pub playing: bool,
     /// Estado de la reproducción: posición, rango (inclusivo) y dirección.
@@ -518,6 +516,8 @@ pub struct Editor {
     pub(crate) tile_limit: bool,
     /// Contenido levantado que se está moviendo, escalando o rotando (ver `transform.rs`).
     pub(crate) floating: Option<Floating>,
+    /// Arrastre en curso para mover, escalar o rotar lo seleccionado.
+    pub(crate) transform_drag: Option<TransformDrag>,
 }
 
 impl Editor {
@@ -544,7 +544,6 @@ impl Editor {
             artboard_tool: ArtboardTool::new(),
             painting_secondary: false,
             temp_eyedropper: false,
-            temp_move: None,
             playing: false,
             playback: None,
             play_clock: 0.0,
@@ -566,6 +565,7 @@ impl Editor {
             brush_tileset: None,
             tile_limit: false,
             floating: None,
+            transform_drag: None,
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
@@ -882,8 +882,6 @@ impl Editor {
     pub fn active_tool(&self) -> ToolKind {
         if self.temp_eyedropper {
             ToolKind::Eyedropper
-        } else if self.temp_move.is_some() {
-            ToolKind::Move
         } else {
             self.tool
         }
@@ -895,7 +893,8 @@ impl Editor {
     }
 
     pub fn is_painting(&self) -> bool {
-        self.artboard_tool.is_active()
+        self.transform_drag.is_some()
+            || self.artboard_tool.is_active()
             || self
                 .tools
                 .get(self.active_tool())
@@ -1127,9 +1126,13 @@ impl Editor {
         // Alt es cuentagotas temporal solo en las herramientas que pintan.
         self.temp_eyedropper = alt && self.tool.paints();
         let shift = self.options.constrain;
-        self.temp_move = self
-            .moves_selection_at(world, shift, alt)
-            .then(|| (self.to_local(world), false));
+        // Arrastrar lo seleccionado (o cualquier punto con Move) lo levanta y lo deja flotando.
+        if self.moves_selection_at(world, shift, alt) {
+            self.press_transform(TransformHit::Move, world);
+            return;
+        }
+        // Un clic fuera de lo flotante lo confirma antes de seguir con la herramienta.
+        self.commit_floating();
         if self.tool.is_selection() && !self.tools.get(self.tool).is_some_and(|t| t.is_pending()) {
             self.shift_at_press = shift;
             self.gesture_mode = match (shift, alt) {
@@ -1185,17 +1188,22 @@ impl Editor {
         self.with_tool(|tool, ctx| tool.press(ctx, p));
     }
 
-    /// Presionar en `world` con una herramienta de selección movería lo seleccionado: el punto
-    /// cae dentro de la selección y no hay modificadores que cambien el modo de selección.
+    /// Presionar en `world` arrastraría lo seleccionado (levantándolo): con Move, desde cualquier
+    /// punto que no sea otro artboard; con una herramienta de selección, dentro de lo
+    /// seleccionado y sin modificadores que cambien el modo de selección.
     pub fn moves_selection_at(&self, world: (f32, f32), shift: bool, alt: bool) -> bool {
+        let artboard = self.document.artboard_at(world);
+        if !self.can_transform() || artboard.is_some_and(|id| id != self.active) {
+            return false;
+        }
+        if self.tool == ToolKind::Move {
+            return true;
+        }
         let p = self.to_local(world);
-        self.tool.is_selection()
-            && !shift
+        !shift
             && !alt
-            && !self.tiles_mode()
-            && !self.editing_mask()
             && !self.tools.get(self.tool).is_some_and(|t| t.is_pending())
-            && self.document.artboard_at(world) == Some(self.active)
+            && artboard == Some(self.active)
             && self
                 .selection
                 .as_ref()
@@ -1224,11 +1232,11 @@ impl Editor {
             self.artboard_tool.drag(world);
             return;
         }
-        let p = self.tool_point(world);
-        let local = self.to_local(world);
-        if let Some((from, moved)) = &mut self.temp_move {
-            *moved |= local != *from;
+        if self.transform_drag.is_some() {
+            self.drag_transform(world);
+            return;
         }
+        let p = self.tool_point(world);
         self.with_tool(|tool, ctx| tool.drag(ctx, p));
     }
 
@@ -1283,6 +1291,18 @@ impl Editor {
             }
             return;
         }
+        if self.transform_drag.is_some() {
+            if let Some(from) = self.release_transform() {
+                // Un clic sin arrastrar es un clic normal de la herramienta de selección.
+                let kind = self.tool;
+                self.gesture_mode = self.options.selection_mode;
+                self.shift_at_press = false;
+                self.with_tool(|tool, ctx| tool.press(ctx, from));
+                let out = self.with_tool(|tool, ctx| tool.release(ctx));
+                self.apply_output(kind, out);
+            }
+            return;
+        }
         let kind = self.active_tool();
         if self.tiles_mode() && kind.blocked_in_tiles() {
             self.temp_eyedropper = false;
@@ -1290,18 +1310,6 @@ impl Editor {
         }
         let out = self.with_tool(|tool, ctx| tool.release(ctx));
         self.temp_eyedropper = false;
-        if let Some((from, moved)) = self.temp_move.take() {
-            if moved {
-                self.apply_output(kind, out);
-            } else {
-                // Un clic sin arrastrar es un clic normal de la herramienta de selección.
-                let kind = self.tool;
-                self.with_tool(|tool, ctx| tool.press(ctx, from));
-                let out = self.with_tool(|tool, ctx| tool.release(ctx));
-                self.apply_output(kind, out);
-            }
-            return;
-        }
         self.apply_output(kind, out);
     }
 
@@ -2006,10 +2014,17 @@ mod tests {
         });
         e.set_tool(ToolKind::RectSelect);
         drag_local(&mut e, (0, 0), (2, 2), false, false);
-        // Arrastrar desde dentro: mueve píxeles y selección, sin cambiar de herramienta.
+        // Arrastrar desde dentro: el contenido flota y se mueve, sin cambiar de herramienta.
         drag_local(&mut e, (1, 1), (4, 3), false, false);
         assert_eq!(e.tool, ToolKind::RectSelect);
         assert_eq!(e.active_tool(), ToolKind::RectSelect);
+        assert!(e.is_floating(), "it floats until it is applied");
+        assert_eq!(
+            e.sprite().pixel(LayerId(1), 0, 1, 1),
+            red,
+            "not stamped yet"
+        );
+        assert!(e.commit_floating());
         assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 1), t);
         assert_eq!(e.sprite().pixel(LayerId(1), 0, 4, 3), red);
         let bounds = e.selection.as_ref().and_then(|m| m.bounds());
@@ -2020,9 +2035,72 @@ mod tests {
         drag_local(&mut e, (4, 3), (6, 6), true, false);
         assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 1), red);
         assert!(e.selection.as_ref().unwrap().contains(6, 6));
+        assert!(!e.is_floating());
         // Un clic sin arrastrar dentro de la selección deselecciona, como siempre.
         click(&mut e, (4, 4), false, false);
         assert!(e.selection.is_none());
+    }
+
+    #[test]
+    fn moving_the_selection_twice_only_carries_what_was_selected_first() {
+        // Bug del 2026-10-23: cada arrastre estampaba en la capa y el siguiente levantaba también
+        // el dibujo que había quedado dentro de la selección.
+        let mut e = editor();
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        let blue = PixelValue::Rgba(Rgba::rgb(0, 0, 255));
+        let t = e.sprite().color_mode.transparent();
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(1, 1, red), (5, 1, blue)],
+        });
+        e.set_tool(ToolKind::RectSelect);
+        drag_local(&mut e, (0, 0), (2, 2), false, false);
+        drag_local(&mut e, (1, 1), (5, 1), false, false); // el rojo pasa encima del azul
+        let shown = e.view().document.artboards[0]
+            .sprite
+            .pixel(LayerId(1), 0, 5, 1);
+        assert_eq!(shown, red, "the floating content is drawn on top");
+        drag_local(&mut e, (5, 1), (5, 5), false, false); // y se sigue moviendo
+        assert!(e.commit_floating());
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 5, 5), red);
+        assert_eq!(
+            e.sprite().pixel(LayerId(1), 0, 5, 1),
+            blue,
+            "the drawing below stays"
+        );
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 1), t);
+        e.undo();
+        assert_eq!(
+            e.sprite().pixel(LayerId(1), 0, 1, 1),
+            red,
+            "a single undo step"
+        );
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 5, 5), t);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 5, 1), blue);
+    }
+
+    #[test]
+    fn the_move_tool_floats_the_selection_and_a_click_outside_applies_it() {
+        let mut e = editor();
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(1, 1, red)],
+        });
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (2, 2))));
+        e.set_tool(ToolKind::Move);
+        drag_local(&mut e, (6, 6), (7, 6), false, false); // desde fuera de la selección
+        assert!(e.is_floating());
+        assert_eq!(
+            e.sprite().pixel(LayerId(1), 0, 1, 1),
+            red,
+            "not stamped yet"
+        );
+        click(&mut e, (6, 0), false, false); // fuera de lo flotante
+        assert!(!e.is_floating());
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 1), red);
     }
 
     #[test]

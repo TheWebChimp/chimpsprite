@@ -53,6 +53,13 @@ impl TransformBox {
     }
 }
 
+/// Qué se arrastra sobre lo seleccionado.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TransformHit {
+    /// Dentro de la selección (o cualquier punto con Move): mover.
+    Move,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

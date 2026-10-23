@@ -6,10 +6,10 @@ use std::borrow::Cow;
 
 use cs_commands::{Command, DocCommand};
 use cs_core::{ArtboardId, LayerId, LayerKind, Mask, PixelValue, Sprite};
-use cs_raster::{Block, RotationAlgorithm};
+use cs_raster::{Block, MAX_BLOCK_SIDE, RotationAlgorithm};
 
 use crate::editor::{DocView, Editor, ToolKind};
-use crate::transform_box::TransformBox;
+use crate::transform_box::{TransformBox, TransformHit};
 
 /// Contenido levantado de una capa mientras se transforma.
 #[derive(Clone, Debug)]
@@ -115,6 +115,20 @@ impl Floating {
     }
 }
 
+/// Arrastre en curso sobre lo seleccionado o sobre la caja de transformación.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TransformDrag {
+    hit: TransformHit,
+    /// Píxel local donde se presionó.
+    start_pixel: (i32, i32),
+    /// Caja al presionar: cada movimiento se calcula desde acá.
+    start_box: TransformBox,
+    /// Se presionó dentro de lo seleccionado.
+    inside: bool,
+    /// El arrastre ya cambió la caja (y lo seleccionado ya flota).
+    moved: bool,
+}
+
 impl Editor {
     pub fn floating(&self) -> Option<&Floating> {
         self.floating.as_ref()
@@ -184,6 +198,99 @@ impl Editor {
         true
     }
 
+    /// Empieza a mover, escalar o rotar lo seleccionado. Se levanta recién al cambiar algo, así
+    /// un clic no levanta nada.
+    pub fn press_transform(&mut self, hit: TransformHit, world: (f32, f32)) {
+        let Some(start_box) = self.transform_box() else {
+            return;
+        };
+        self.stop();
+        let start_pixel = self.to_local(world);
+        let inside = self
+            .selection
+            .as_ref()
+            .is_some_and(|m| m.contains(start_pixel.0, start_pixel.1));
+        self.transform_drag = Some(TransformDrag {
+            hit,
+            start_pixel,
+            start_box,
+            inside,
+            moved: false,
+        });
+        self.revision += 1;
+    }
+
+    pub(crate) fn drag_transform(&mut self, world: (f32, f32)) {
+        let Some(mut drag) = self.transform_drag else {
+            return;
+        };
+        let pixel = self.to_local(world);
+        let bbox = match drag.hit {
+            TransformHit::Move => drag
+                .start_box
+                .translated(pixel.0 - drag.start_pixel.0, pixel.1 - drag.start_pixel.1),
+        };
+        if Some(bbox) == self.transform_box() {
+            return;
+        }
+        if !drag.moved {
+            // Se levanta una sola vez, al primer cambio.
+            if !self.lift() {
+                self.transform_drag = None;
+                return;
+            }
+            drag.moved = true;
+            self.transform_drag = Some(drag);
+        }
+        self.set_floating_box(bbox, false);
+    }
+
+    /// Termina el arrastre. Devuelve el píxel presionado si fue un clic sin arrastrar dentro de la
+    /// selección con una herramienta de selección y sin nada flotando: es un clic normal de esa
+    /// herramienta (en Replace, deselecciona).
+    pub(crate) fn release_transform(&mut self) -> Option<(i32, i32)> {
+        let drag = self.transform_drag.take()?;
+        self.revision += 1;
+        if drag.moved {
+            // Durante el arrastre la rotación usa Fast; al soltar se calcula la elegida una vez.
+            if self
+                .floating
+                .as_ref()
+                .is_some_and(|f| f.rendered_with != self.options.rotation)
+            {
+                self.refresh_floating(false);
+            }
+            return None;
+        }
+        if self.floating.is_some() {
+            // Con Move, un clic fuera de lo flotante lo confirma.
+            if self.tool == ToolKind::Move && !drag.inside {
+                self.commit_floating();
+            }
+            return None;
+        }
+        (self.tool.is_selection() && drag.hit == TransformHit::Move).then_some(drag.start_pixel)
+    }
+
+    /// Cambia la caja de lo flotante si el resultado no pasa de `MAX_BLOCK_SIDE`; si pasa, el
+    /// handle se queda en el último tamaño válido.
+    fn set_floating_box(&mut self, bbox: TransformBox, fast: bool) -> bool {
+        let (w, h) = cs_raster::rotated_size(
+            bbox.width().unsigned_abs(),
+            bbox.height().unsigned_abs(),
+            bbox.angle,
+        );
+        if w > MAX_BLOCK_SIDE || h > MAX_BLOCK_SIDE {
+            return false;
+        }
+        let Some(f) = self.floating.as_mut() else {
+            return false;
+        };
+        f.bbox = bbox;
+        self.refresh_floating(fast);
+        true
+    }
+
     /// Recalcula lo transformado y la selección. `fast`: rotación Fast (durante un arrastre de
     /// rotación); si no, la elegida en las opciones.
     pub fn refresh_floating(&mut self, fast: bool) {
@@ -205,6 +312,7 @@ impl Editor {
         let Some(f) = self.floating.take() else {
             return false;
         };
+        self.transform_drag = None;
         let cmd = match self.document.artboard(f.artboard) {
             Some(artboard) if !f.unchanged() => Some(f.command(&artboard.sprite)),
             _ => None,
@@ -228,6 +336,7 @@ impl Editor {
         let Some(f) = self.floating.take() else {
             return false;
         };
+        self.transform_drag = None;
         let s = self.sprite();
         let size = (s.width, s.height);
         self.selection = f.before.filter(|m| (m.width(), m.height()) == size);
