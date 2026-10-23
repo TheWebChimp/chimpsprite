@@ -539,10 +539,18 @@ impl CanvasView {
 
         self.draw_pipette = false;
         self.draw_rotate = false;
-        // Paneo con botón medio o espacio + arrastre.
-        let space = ui.input(|i| i.key_down(egui::Key::Space));
+        // Paneo con botón medio o espacio + arrastre. La herramienta Hand se comporta como
+        // Espacio mantenido: el botón principal mueve la vista y no llega a ninguna herramienta.
+        // A diferencia de Espacio, con Hand las reglas, guías y el eje de simetría siguen
+        // funcionando; mientras se arrastra uno de ellos la vista no se mueve.
+        let space_key = ui.input(|i| i.key_down(egui::Key::Space));
+        let hand = editor.active_tool() == ToolKind::Hand;
+        let hand_pans = hand
+            && self.ruler_drag.is_none()
+            && self.sym_drag.is_none()
+            && self.dragging_guide.is_none();
         if response.dragged_by(egui::PointerButton::Middle)
-            || (space && response.dragged_by(egui::PointerButton::Primary))
+            || ((space_key || hand_pans) && response.dragged_by(egui::PointerButton::Primary))
         {
             self.pan += response.drag_delta();
         }
@@ -577,7 +585,7 @@ impl CanvasView {
             _ => None,
         };
         if let Some(d) = dialog {
-            if pressed_primary && response.hovered() && over_guide.is_some() && !space {
+            if pressed_primary && response.hovered() && over_guide.is_some() && !space_key {
                 self.dragging_guide = over_guide;
             }
             if let Some(edge) = self.dragging_guide {
@@ -603,7 +611,7 @@ impl CanvasView {
         });
         // Eje de simetría, reglas y guías (no con el diálogo Canvas Size abierto).
         self.guide_hint = None;
-        let sym_cursor = if modal || space {
+        let sym_cursor = if modal || space_key {
             None
         } else {
             self.symmetry_input(
@@ -616,7 +624,8 @@ impl CanvasView {
                 modifiers.command,
             )
         };
-        let ruler_cursor = if modal || space || sym_cursor.is_some() || self.sym_drag.is_some() {
+        let ruler_cursor = if modal || space_key || sym_cursor.is_some() || self.sym_drag.is_some()
+        {
             sym_cursor
         } else {
             self.guide_input(
@@ -637,7 +646,8 @@ impl CanvasView {
         if !modal
             && !ruler_busy
             && self.dragging_guide.is_none()
-            && !space
+            && !space_key
+            && !hand
             && response.hovered()
             && !editor.is_painting()
             && (pressed_primary || pressed_secondary)
@@ -686,7 +696,7 @@ impl CanvasView {
         let dragging = editor.is_painting() || self.ruler_drag.is_some() || self.sym_drag.is_some();
         if dragging
             && any_down
-            && !space
+            && !space_key
             && !modal
             && let Some(p) = pointer
         {
@@ -720,7 +730,9 @@ impl CanvasView {
         {
             editor.pointer_hover(self.to_world(rect, p));
         }
+        // Con Hand el doble clic sobre la etiqueta no la renombra: Hand solo mueve la vista.
         if response.double_clicked()
+            && !hand
             && let Some(id) = over_label
             && let Some(artboard) = editor.document.artboard(id)
         {
@@ -739,10 +751,18 @@ impl CanvasView {
         let transform_cursor = editor
             .transform_drag_hit()
             .or_else(|| pointer.and_then(|p| self.transform_hit(rect, editor, p)));
-        let cursor = if space {
-            Some(egui::CursorIcon::Grab)
+        let hand_dragging = hand_pans && response.dragged_by(egui::PointerButton::Primary);
+        let cursor = if space_key || hand_dragging {
+            Some(if response.dragged() {
+                egui::CursorIcon::Grabbing
+            } else {
+                egui::CursorIcon::Grab
+            })
         } else if guide_cursor.is_some() {
             guide_cursor
+        } else if hand {
+            // En reposo; sobre las reglas o una guía manda su cursor (arriba).
+            response.hovered().then_some(egui::CursorIcon::Grab)
         } else if modal {
             response.hovered().then_some(egui::CursorIcon::Default)
         } else if !response.hovered() {
@@ -1101,8 +1121,9 @@ impl CanvasView {
         }
 
         // Contorno del pincel bajo el cursor.
-        let space = ui.input(|i| i.key_down(egui::Key::Space));
         let tool = editor.active_tool();
+        // Con Espacio o Hand se está por mover la vista: sin contorno.
+        let space = ui.input(|i| i.key_down(egui::Key::Space)) || tool == ToolKind::Hand;
         if let (Some((hx, hy)), Some(origin)) = (self.hover, active_origin)
             && !modal
             && !self.over_label
@@ -1993,5 +2014,70 @@ mod tests {
             assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 2, 2), red);
             assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 6, 6), t);
         }
+    }
+
+    #[test]
+    fn the_hand_tool_pans_the_view_without_touching_the_document() {
+        let mut h = Harness::new();
+        h.editor.set_tool(ToolKind::Hand);
+        let from = h.screen((8, 8));
+        h.frame(vec![Event::PointerMoved(from)]);
+        assert_eq!(h.cursor, egui::CursorIcon::Grab, "at rest");
+        let (pan, version) = (h.canvas.pan, h.editor.doc_version);
+        let button = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let to = from + Vec2::new(40.0, 0.0);
+        h.frame(vec![button(from, true)]);
+        h.frame(vec![Event::PointerMoved(from + Vec2::new(20.0, 0.0))]);
+        assert_eq!(h.cursor, egui::CursorIcon::Grabbing, "while dragging");
+        h.frame(vec![Event::PointerMoved(to)]);
+        h.frame(vec![button(to, false)]);
+        let moved = h.canvas.pan - pan;
+        assert!(moved.x > 15.0 && moved.y == 0.0, "{moved:?}");
+        assert_eq!(h.editor.doc_version, version, "nothing painted");
+        assert!(h.editor.sprite().cels.is_empty());
+        h.frame(vec![]);
+        assert_eq!(h.cursor, egui::CursorIcon::Grab);
+        assert_eq!(h.editor.tool, ToolKind::Hand);
+    }
+
+    #[test]
+    fn with_the_hand_tool_a_ruler_drag_still_creates_a_guide() {
+        // El mismo arrastre con Pencil: la vista solo se mueve por el auto-scroll del borde.
+        let ruler_drag = |tool| {
+            let mut h = Harness::new();
+            h.editor.set_tool(tool);
+            let ruler = Pos2::new(h.rect.center().x, h.rect.top() + RULER_PX / 2.0);
+            h.frame(vec![Event::PointerMoved(ruler)]);
+            assert_eq!(h.cursor, egui::CursorIcon::ResizeVertical, "over the ruler");
+            h.drag(ruler, h.screen((8, 8)));
+            h.frame(vec![]);
+            assert_eq!(h.editor.guides().len(), 1, "a guide was created");
+            assert_eq!(h.editor.guides()[0].axis, Axis::Horizontal);
+            (h.editor.guides()[0].position, h.canvas.pan)
+        };
+        assert_eq!(
+            ruler_drag(ToolKind::Hand),
+            ruler_drag(ToolKind::Pencil),
+            "the hand did not pan"
+        );
+    }
+
+    #[test]
+    fn with_the_hand_tool_an_artboard_label_is_not_renamed_or_moved() {
+        let mut h = Harness::new();
+        h.editor.set_tool(ToolKind::Hand);
+        let label = h.canvas.to_screen(h.rect, h.editor.artboard().position)
+            - Vec2::new(-10.0, LABEL_GAP + LABEL_SIZE / 2.0);
+        h.click(label, PointerButton::Primary);
+        h.click(label, PointerButton::Primary);
+        h.frame(vec![]);
+        assert!(h.canvas.renaming.is_none(), "no rename field");
+        assert_eq!(h.cursor, egui::CursorIcon::Grab);
+        assert_eq!(h.editor.artboard().position, (0, 0));
     }
 }

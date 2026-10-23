@@ -142,6 +142,9 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
         }
     }
     match tool {
+        ToolKind::Hand => {
+            ui.weak("Drag to move the view. Space+drag or the middle button do it with any tool.");
+        }
         ToolKind::MagicWand => {
             ui.label("Tolerance");
             ui.add(egui::Slider::new(&mut options.tolerance, 0..=255));
