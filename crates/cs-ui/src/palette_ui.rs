@@ -1,10 +1,17 @@
 //! Ventana Palette Presets, menú … del panel de paleta y sus diálogos.
 
 use cs_core::Palette;
+#[cfg(not(target_arch = "wasm32"))]
+use cs_io::lospec::LospecSort;
+use cs_io::lospec::{LospecPage, LospecPalette};
 use cs_io::palette_files::{self, NamedPalette, PaletteFormat};
 use eframe::egui;
 
 use crate::ChimpApp;
+use crate::lospec_client::{self, Pending};
+#[cfg(not(target_arch = "wasm32"))]
+use crate::lospec_tab::CountKind;
+use crate::lospec_tab::LospecTab;
 use crate::palette_library::{Preset, PresetSource};
 use crate::panels::{self, PaletteAction};
 use crate::platform::{self, FileFilter, OpenPurpose};
@@ -36,12 +43,58 @@ const STRIP_COLORS: usize = 64;
 pub enum PresetsTab {
     #[default]
     Library,
+    Lospec,
 }
 
 #[derive(Default)]
 pub struct PresetsWindow {
     pub tab: PresetsTab,
     search: String,
+    lospec: LospecTab,
+    requests: LospecRequests,
+}
+
+/// Peticiones en curso, cada una con la `generation` con la que se pidió.
+#[derive(Default)]
+struct LospecRequests {
+    listing: Option<(u64, Pending<LospecPage>)>,
+    exact: Option<(u64, Pending<LospecPalette>)>,
+    lookup: Option<(u64, Pending<LospecPalette>)>,
+}
+
+impl LospecRequests {
+    /// Entrega a la pestaña lo que haya llegado.
+    fn poll(&mut self, tab: &mut LospecTab) {
+        if let Some((g, p)) = &self.listing
+            && let Some(r) = p.poll()
+        {
+            tab.finish_listing(*g, r);
+            self.listing = None;
+        }
+        if let Some((g, p)) = &self.exact
+            && let Some(r) = p.poll()
+        {
+            tab.finish_exact(*g, r);
+            self.exact = None;
+        }
+        if let Some((g, p)) = &self.lookup
+            && let Some(r) = p.poll()
+        {
+            tab.finish_lookup(*g, r);
+            self.lookup = None;
+        }
+    }
+}
+
+/// Lo que se guarda en la biblioteca para un resultado de Lospec.
+fn lospec_preset(p: &LospecPalette) -> (NamedPalette, Vec<String>) {
+    (p.named(), p.comments())
+}
+
+/// Clic en un botón de una fila de Lospec.
+enum LospecAction {
+    Apply(LospecPalette),
+    Save(LospecPalette),
 }
 
 /// Pedir el nombre para "Save as Preset" (y para "Set as Default" si la paleta no es un preset).
@@ -225,6 +278,9 @@ impl ChimpApp {
         let mut apply = None;
         let mut delete = None;
         let mut set_default = None;
+        // Se revisa aunque la pestaña Lospec no esté a la vista, para no perder respuestas.
+        window.requests.poll(&mut window.lospec);
+        let mut lospec_action = None;
         egui::Window::new("Palette Presets")
             .open(&mut open)
             .default_size([420.0, 480.0])
@@ -232,6 +288,7 @@ impl ChimpApp {
                 ui.add_enabled_ui(!modal, |ui| {
                     ui.horizontal(|ui| {
                         ui.selectable_value(&mut window.tab, PresetsTab::Library, "Library");
+                        ui.selectable_value(&mut window.tab, PresetsTab::Lospec, "Lospec");
                     });
                     ui.separator();
                     match window.tab {
@@ -275,6 +332,11 @@ impl ChimpApp {
                                 }
                             });
                         }
+                        PresetsTab::Lospec => {
+                            let library = &self.palettes;
+                            lospec_action =
+                                lospec_ui(ui, &mut window, |name| library.has_user(name));
+                        }
                     }
                 });
             });
@@ -286,6 +348,20 @@ impl ChimpApp {
         }
         if let Some(name) = delete {
             self.palette_confirm = Some(Confirm::Delete(name));
+        }
+        match lospec_action {
+            Some(LospecAction::Apply(p)) => {
+                self.doc.editor.apply_palette(p.palette.clone());
+                if !self.palettes.has_user(&p.title) {
+                    let (named, comments) = lospec_preset(&p);
+                    self.store_preset(named, comments, false);
+                }
+            }
+            Some(LospecAction::Save(p)) => {
+                let (named, comments) = lospec_preset(&p);
+                self.save_preset_asking(named, comments, false);
+            }
+            None => {}
         }
         if open {
             self.presets_window = Some(window);
@@ -407,6 +483,188 @@ fn preset_row(ui: &mut egui::Ui, preset: &Preset, is_default: bool) -> egui::Res
     .on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Contenido de la pestaña Lospec. Devuelve el botón que se pulsó en alguna fila.
+fn lospec_ui(
+    ui: &mut egui::Ui,
+    window: &mut PresetsWindow,
+    in_library: impl Fn(&str) -> bool,
+) -> Option<LospecAction> {
+    let ctx = ui.ctx().clone();
+    let PresetsWindow {
+        lospec: tab,
+        requests,
+        ..
+    } = window;
+    let mut action = None;
+
+    #[cfg(not(target_arch = "wasm32"))]
+    search_form(ui, &ctx, tab, requests);
+
+    ui.horizontal(|ui| {
+        ui.label("Paste a Lospec link or palette name");
+        let response = ui.text_edit_singleline(&mut tab.link);
+        let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if tab.lookup_loading() {
+            ui.spinner();
+        } else if (ui.button("Fetch").clicked() || enter)
+            && let Some((g, slug)) = tab.start_lookup()
+        {
+            requests.lookup = Some((g, lospec_client::fetch_palette(&ctx, &slug)));
+        }
+    });
+    #[cfg(target_arch = "wasm32")]
+    ui.weak("Search is available in the desktop app");
+
+    if let Some(error) = tab.error() {
+        ui.colored_label(ui.visuals().error_fg_color, error);
+    }
+    ui.separator();
+
+    egui::ScrollArea::vertical().show(ui, |ui| {
+        if let Some(p) = tab.lookup_result() {
+            lospec_row(ui, p, false, in_library(&p.title), &mut action);
+            ui.separator();
+        }
+        for p in tab.results() {
+            lospec_row(
+                ui,
+                p,
+                tab.is_exact(&p.slug),
+                in_library(&p.title),
+                &mut action,
+            );
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if tab.can_load_more() {
+            ui.vertical_centered(|ui| {
+                let (shown, total) = tab.shown_of_total();
+                if tab.listing_loading() {
+                    ui.spinner();
+                } else if ui
+                    .button(format!("Load more ({shown} of {total})"))
+                    .clicked()
+                    && let Some((g, query)) = tab.start_more()
+                {
+                    requests.listing = Some((g, lospec_client::fetch_listing(&ctx, &query)));
+                }
+            });
+        }
+    });
+    action
+}
+
+/// Solo escritorio: el listado de Lospec no admite peticiones desde la web (sin CORS).
+#[cfg(not(target_arch = "wasm32"))]
+fn search_form(
+    ui: &mut egui::Ui,
+    ctx: &egui::Context,
+    tab: &mut LospecTab,
+    requests: &mut LospecRequests,
+) {
+    let mut search = false;
+    ui.horizontal(|ui| {
+        ui.label("Tag");
+        let response = ui.text_edit_singleline(&mut tab.tag);
+        search |= response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        ui.label("Colors");
+        egui::ComboBox::from_id_salt("lospec_count")
+            .selected_text(format!("{:?}", tab.count_kind))
+            .show_ui(ui, |ui| {
+                for kind in [
+                    CountKind::Any,
+                    CountKind::Exact,
+                    CountKind::Min,
+                    CountKind::Max,
+                ] {
+                    ui.selectable_value(&mut tab.count_kind, kind, format!("{kind:?}"));
+                }
+            });
+        ui.add_enabled(
+            tab.count_kind != CountKind::Any,
+            egui::DragValue::new(&mut tab.count).range(1..=256),
+        );
+        ui.label("Sort");
+        egui::ComboBox::from_id_salt("lospec_sort")
+            .selected_text(format!("{:?}", tab.sort))
+            .show_ui(ui, |ui| {
+                for sort in [
+                    LospecSort::Default,
+                    LospecSort::Alphabetical,
+                    LospecSort::Downloads,
+                    LospecSort::Newest,
+                ] {
+                    ui.selectable_value(&mut tab.sort, sort, format!("{sort:?}"));
+                }
+            });
+        if tab.listing_loading() && tab.shown_of_total().0 == 0 {
+            ui.spinner();
+        } else {
+            search |= ui.button("Search").clicked();
+        }
+    });
+    if search {
+        // Una búsqueda nueva reemplaza las peticiones guardadas; la pestaña descarta las viejas.
+        let start = tab.start_search();
+        requests.listing = Some((
+            start.generation,
+            lospec_client::fetch_listing(ctx, &start.listing),
+        ));
+        requests.exact = start
+            .exact
+            .map(|slug| (start.generation, lospec_client::fetch_palette(ctx, &slug)));
+    }
+}
+
+/// Fila de un resultado: título, autor, colores, likes y descargas, tira, Apply/Save y link.
+fn lospec_row(
+    ui: &mut egui::Ui,
+    p: &LospecPalette,
+    exact: bool,
+    in_library: bool,
+    action: &mut Option<LospecAction>,
+) {
+    ui.group(|ui| {
+        ui.set_width(ui.available_width());
+        ui.horizontal(|ui| {
+            ui.strong(&p.title);
+            let mut meta = Vec::new();
+            if let Some(a) = &p.author {
+                meta.push(a.clone());
+            }
+            meta.push(format!("{} colors", p.palette.len()));
+            if let Some(l) = p.likes {
+                meta.push(format!("♥{l}"));
+            }
+            if let Some(d) = p.downloads {
+                meta.push(format!("⤓{d}"));
+            }
+            if exact {
+                meta.push("Exact match".into());
+            }
+            if in_library {
+                meta.push("In library".into());
+            }
+            ui.weak(meta.join(" · "));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                if ui.button("Save").clicked() {
+                    *action = Some(LospecAction::Save(p.clone()));
+                }
+                if ui.button("Apply").clicked() {
+                    *action = Some(LospecAction::Apply(p.clone()));
+                }
+            });
+        });
+        panels::palette_strip(ui, &p.palette, STRIP_COLORS, 8.0);
+        let url = cs_io::lospec::page_url(&p.slug);
+        // No se usa `hyperlink_to`: en escritorio no abre nada porque eframe va sin `links`.
+        if ui.link("lospec.com").on_hover_text(&url).clicked()
+            && let Err(e) = platform::open_url(ui.ctx(), &url)
+        {
+            log::warn!("could not open {url}: {e}");
+        }
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -433,5 +691,21 @@ mod tests {
         assert!(matches_search("Sweetie 16", "sweet"));
         assert!(matches_search("Sweetie 16", ""));
         assert!(!matches_search("PICO-8", "nes"));
+    }
+
+    #[test]
+    fn row_actions_save_with_lospec_comments() {
+        let p = cs_io::lospec::parse_palette(
+            br#"{"name":"Ice Cream GB","author":"Kerrie Lake","colors":["7c3f58","fff6d3"]}"#,
+            "ice-cream-gb",
+        )
+        .unwrap();
+        let (named, comments) = lospec_preset(&p);
+        assert_eq!(named.name, "Ice Cream GB");
+        assert_eq!(comments[0], "Author: Kerrie Lake");
+        assert_eq!(
+            comments[1],
+            "Source: https://lospec.com/palette-list/ice-cream-gb"
+        );
     }
 }

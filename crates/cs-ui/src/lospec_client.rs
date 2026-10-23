@@ -19,14 +19,10 @@ pub enum FetchError {
 
 /// Respuesta que todavía puede no haber llegado. `poll` la entrega una sola vez.
 pub struct Pending<T> {
-    // La pestaña de Lospec (Task 4) lo lee; hasta entonces no tiene llamadores.
-    #[allow(dead_code)]
     slot: Arc<Mutex<Option<Result<T, FetchError>>>>,
 }
 
 impl<T> Pending<T> {
-    // La pestaña de Lospec (Task 4) lo usa; hasta entonces no tiene llamadores.
-    #[allow(dead_code)]
     pub fn poll(&self) -> Option<Result<T, FetchError>> {
         self.slot.lock().ok()?.take()
     }
@@ -81,8 +77,6 @@ fn fetch<T: Send + 'static>(
     Pending { slot }
 }
 
-// La pestaña de Lospec (Task 4) lo usa; hasta entonces no tiene llamadores.
-#[allow(dead_code)]
 pub fn fetch_palette(ctx: &egui::Context, slug: &str) -> Pending<LospecPalette> {
     let owned = slug.to_string();
     fetch(ctx, lospec::palette_url(slug), move |b| {
@@ -91,9 +85,7 @@ pub fn fetch_palette(ctx: &egui::Context, slug: &str) -> Pending<LospecPalette> 
 }
 
 /// Solo escritorio: el listado de Lospec no acepta peticiones desde otros sitios (sin CORS).
-// La pestaña de Lospec (Task 4) lo usa; hasta entonces no tiene llamadores.
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(dead_code)]
 pub fn fetch_listing(
     ctx: &egui::Context,
     query: &lospec::LospecQuery,

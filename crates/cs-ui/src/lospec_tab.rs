@@ -7,6 +7,8 @@ use cs_io::lospec::{
 
 use crate::lospec_client::FetchError;
 
+// En web no hay búsqueda (el listado no tiene CORS): solo la usa el escritorio.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CountKind {
     #[default]
@@ -16,6 +18,8 @@ pub enum CountKind {
     Max,
 }
 
+// En web no hay búsqueda (el listado no tiene CORS): solo la usa el escritorio.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub struct SearchStart {
     pub generation: u64,
     pub listing: LospecQuery,
@@ -24,10 +28,15 @@ pub struct SearchStart {
 }
 
 pub struct LospecTab {
+    // tag, count_kind, count y sort: solo para la búsqueda de escritorio.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub tag: String,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub count_kind: CountKind,
     /// 1–256; solo cuenta si `count_kind` no es `Any`.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub count: u16,
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub sort: LospecSort,
     pub link: String,
     query: Option<LospecQuery>,
@@ -68,6 +77,8 @@ impl Default for LospecTab {
 }
 
 impl LospecTab {
+    // Solo escritorio (búsqueda).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn start_search(&mut self) -> SearchStart {
         let n = self.count.clamp(1, 256);
         let colors = match self.count_kind {
@@ -97,6 +108,8 @@ impl LospecTab {
         }
     }
 
+    // Solo escritorio (búsqueda).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn start_more(&mut self) -> Option<(u64, LospecQuery)> {
         if !self.can_load_more() || self.listing_loading {
             return None;
@@ -190,10 +203,14 @@ impl LospecTab {
         self.lookup.as_ref()
     }
 
+    // Solo escritorio (búsqueda).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn can_load_more(&self) -> bool {
         (self.results.len() as u32) < self.total
     }
 
+    // Solo escritorio (búsqueda).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn listing_loading(&self) -> bool {
         self.listing_loading
     }
@@ -207,6 +224,8 @@ impl LospecTab {
     }
 
     /// Para "Load more (10 of 412)".
+    // Solo escritorio (búsqueda).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn shown_of_total(&self) -> (usize, u32) {
         (self.results.len(), self.total)
     }
