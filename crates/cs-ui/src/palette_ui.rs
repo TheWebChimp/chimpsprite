@@ -640,7 +640,7 @@ fn lospec_row(
                 meta.push(format!("♥{l}"));
             }
             if let Some(d) = p.downloads {
-                meta.push(format!("⤓{d}"));
+                meta.push(format!("⬇{d}"));
             }
             if exact {
                 meta.push("Exact match".into());
