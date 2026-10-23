@@ -33,6 +33,14 @@ impl<T> Pending<T> {
             slot: Arc::new(Mutex::new(Some(result))),
         }
     }
+
+    /// Una petición que nunca responde (conexión colgada).
+    #[cfg(test)]
+    pub fn never() -> Self {
+        Self {
+            slot: Arc::new(Mutex::new(None)),
+        }
+    }
 }
 
 /// Lo que se hace con una respuesta: código de estado y luego el parseo.

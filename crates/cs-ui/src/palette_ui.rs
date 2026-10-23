@@ -8,7 +8,7 @@ use cs_io::palette_files::{self, NamedPalette, PaletteFormat};
 use eframe::egui;
 
 use crate::ChimpApp;
-use crate::lospec_client::{self, Pending};
+use crate::lospec_client::{self, FetchError, Pending};
 #[cfg(not(target_arch = "wasm32"))]
 use crate::lospec_tab::CountKind;
 use crate::lospec_tab::LospecTab;
@@ -54,35 +54,67 @@ pub struct PresetsWindow {
     requests: LospecRequests,
 }
 
-/// Peticiones en curso, cada una con la `generation` con la que se pidió.
+/// Plazo de una petición a Lospec. `ehttp` no corta una conexión colgada antes de recibir los
+/// encabezados, así que el corte se hace acá.
+const REQUEST_TIMEOUT_SECS: f64 = 30.0;
+
+/// Una petición en curso: la `generation` con la que se pidió y cuándo empezó (`i.time` de egui,
+/// en segundos; sirve también en web, a diferencia de `Instant`).
+struct InFlight<T> {
+    generation: u64,
+    started: f64,
+    pending: Pending<T>,
+}
+
+impl<T> InFlight<T> {
+    fn new(generation: u64, started: f64, pending: Pending<T>) -> Self {
+        Self {
+            generation,
+            started,
+            pending,
+        }
+    }
+}
+
+/// La respuesta de `slot` si llegó, o `Network` si venció el plazo; en los dos casos se suelta.
+fn take_response<T>(
+    slot: &mut Option<InFlight<T>>,
+    now: f64,
+) -> Option<(u64, Result<T, FetchError>)> {
+    let request = slot.as_ref()?;
+    let result = request.pending.poll().or_else(|| {
+        (now - request.started > REQUEST_TIMEOUT_SECS).then_some(Err(FetchError::Network))
+    })?;
+    let generation = request.generation;
+    *slot = None;
+    Some((generation, result))
+}
+
+/// Peticiones en curso.
 #[derive(Default)]
 struct LospecRequests {
-    listing: Option<(u64, Pending<LospecPage>)>,
-    exact: Option<(u64, Pending<LospecPalette>)>,
-    lookup: Option<(u64, Pending<LospecPalette>)>,
+    listing: Option<InFlight<LospecPage>>,
+    exact: Option<InFlight<LospecPalette>>,
+    lookup: Option<InFlight<LospecPalette>>,
 }
 
 impl LospecRequests {
-    /// Entrega a la pestaña lo que haya llegado.
-    fn poll(&mut self, tab: &mut LospecTab) {
-        if let Some((g, p)) = &self.listing
-            && let Some(r) = p.poll()
-        {
-            tab.finish_listing(*g, r);
-            self.listing = None;
+    /// Entrega a la pestaña lo que haya llegado y corta lo que pasó el plazo (`now`: `i.time`).
+    /// Si una respuesta llega después del corte, ya no hay quién la entregue.
+    fn poll(&mut self, tab: &mut LospecTab, now: f64) {
+        if let Some((g, r)) = take_response(&mut self.listing, now) {
+            tab.finish_listing(g, r);
         }
-        if let Some((g, p)) = &self.exact
-            && let Some(r) = p.poll()
-        {
-            tab.finish_exact(*g, r);
-            self.exact = None;
+        if let Some((g, r)) = take_response(&mut self.exact, now) {
+            tab.finish_exact(g, r);
         }
-        if let Some((g, p)) = &self.lookup
-            && let Some(r) = p.poll()
-        {
-            tab.finish_lookup(*g, r);
-            self.lookup = None;
+        if let Some((g, r)) = take_response(&mut self.lookup, now) {
+            tab.finish_lookup(g, r);
         }
+    }
+
+    fn is_busy(&self) -> bool {
+        self.listing.is_some() || self.exact.is_some() || self.lookup.is_some()
     }
 }
 
@@ -279,7 +311,13 @@ impl ChimpApp {
         let mut delete = None;
         let mut set_default = None;
         // Se revisa aunque la pestaña Lospec no esté a la vista, para no perder respuestas.
-        window.requests.poll(&mut window.lospec);
+        window
+            .requests
+            .poll(&mut window.lospec, ctx.input(|i| i.time));
+        // Sin repintados el plazo no se revisaría hasta que el usuario mueva algo.
+        if window.requests.is_busy() {
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        }
         let mut lospec_action = None;
         egui::Window::new("Palette Presets")
             .open(&mut open)
@@ -490,6 +528,7 @@ fn lospec_ui(
     in_library: impl Fn(&str) -> bool,
 ) -> Option<LospecAction> {
     let ctx = ui.ctx().clone();
+    let now = ctx.input(|i| i.time);
     let PresetsWindow {
         lospec: tab,
         requests,
@@ -509,7 +548,11 @@ fn lospec_ui(
         } else if (ui.button("Fetch").clicked() || enter)
             && let Some((g, slug)) = tab.start_lookup()
         {
-            requests.lookup = Some((g, lospec_client::fetch_palette(&ctx, &slug)));
+            requests.lookup = Some(InFlight::new(
+                g,
+                now,
+                lospec_client::fetch_palette(&ctx, &slug),
+            ));
         }
     });
     #[cfg(target_arch = "wasm32")]
@@ -545,7 +588,11 @@ fn lospec_ui(
                     .clicked()
                     && let Some((g, query)) = tab.start_more()
                 {
-                    requests.listing = Some((g, lospec_client::fetch_listing(&ctx, &query)));
+                    requests.listing = Some(InFlight::new(
+                        g,
+                        now,
+                        lospec_client::fetch_listing(&ctx, &query),
+                    ));
                 }
             });
         }
@@ -609,13 +656,19 @@ fn search_form(
     if search {
         // Una búsqueda nueva reemplaza las peticiones guardadas; la pestaña descarta las viejas.
         let start = tab.start_search();
-        requests.listing = Some((
+        let now = ctx.input(|i| i.time);
+        requests.listing = Some(InFlight::new(
             start.generation,
+            now,
             lospec_client::fetch_listing(ctx, &start.listing),
         ));
-        requests.exact = start
-            .exact
-            .map(|slug| (start.generation, lospec_client::fetch_palette(ctx, &slug)));
+        requests.exact = start.exact.map(|slug| {
+            InFlight::new(
+                start.generation,
+                now,
+                lospec_client::fetch_palette(ctx, &slug),
+            )
+        });
     }
 }
 
@@ -721,17 +774,23 @@ mod tests {
             raw_count: 1,
         };
         let mut requests = LospecRequests {
-            listing: Some((search.generation, Pending::ready(Ok(page)))),
-            exact: Some((
+            listing: Some(InFlight::new(
                 search.generation,
+                0.0,
+                Pending::ready(Ok(page)),
+            )),
+            exact: Some(InFlight::new(
+                search.generation,
+                0.0,
                 Pending::ready(Ok(lospec_palette("Sweetie 16", "sweetie-16"))),
             )),
-            lookup: Some((
+            lookup: Some(InFlight::new(
                 lookup_g,
+                0.0,
                 Pending::ready(Ok(lospec_palette("PICO-8", "pico-8"))),
             )),
         };
-        requests.poll(&mut tab);
+        requests.poll(&mut tab, 0.0);
         assert!(requests.listing.is_none());
         assert!(requests.exact.is_none());
         assert!(requests.lookup.is_none());
@@ -741,6 +800,31 @@ mod tests {
         assert!(tab.is_exact("sweetie-16"));
         assert_eq!(tab.results().len(), 2);
         assert_eq!(tab.lookup_result().unwrap().slug, "pico-8");
+    }
+
+    #[test]
+    fn stalled_requests_time_out() {
+        let mut tab = LospecTab::default();
+        tab.tag = "sweetie 16".into();
+        tab.link = "pico-8".into();
+        let search = tab.start_search();
+        let (lookup_g, _) = tab.start_lookup().unwrap();
+        let start = 100.0;
+        let mut requests = LospecRequests {
+            listing: Some(InFlight::new(search.generation, start, Pending::never())),
+            exact: Some(InFlight::new(search.generation, start, Pending::never())),
+            lookup: Some(InFlight::new(lookup_g, start, Pending::never())),
+        };
+        requests.poll(&mut tab, start + 10.0);
+        assert!(requests.is_busy());
+        assert!(tab.listing_loading());
+        assert!(tab.lookup_loading());
+        assert_eq!(tab.error(), None);
+        requests.poll(&mut tab, start + 31.0);
+        assert!(!requests.is_busy());
+        assert!(!tab.listing_loading());
+        assert!(!tab.lookup_loading());
+        assert_eq!(tab.error(), Some("Couldn't reach Lospec."));
     }
 
     #[test]
