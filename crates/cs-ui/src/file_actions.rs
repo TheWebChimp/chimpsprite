@@ -263,6 +263,8 @@ impl ChimpApp {
     }
 
     fn save_to(&mut self, target: SaveTarget) -> bool {
+        // Lo flotante todavía no está en el documento: se confirma antes de escribir.
+        self.doc.editor.commit_floating();
         let result =
             files::encode(&self.doc.editor.document, &target.file_name).and_then(|bytes| {
                 self.platform
@@ -359,6 +361,7 @@ impl ChimpApp {
     }
 
     pub(crate) fn open_export(&mut self) {
+        self.doc.editor.commit_floating();
         self.export = Some(self.last_export.clone());
     }
 

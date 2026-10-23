@@ -522,27 +522,12 @@ impl ChimpApp {
                 editor.set_tool(tool);
                 continue;
             }
-            match key {
-                Key::N if shift => editor.add_layer(cs_core::LayerKind::Image),
-                Key::Enter if editor.is_pending() => editor.finish_gesture(),
-                Key::Escape => editor.cancel_gesture(),
-                Key::Enter => editor.toggle_play(),
-                Key::Comma | Key::ArrowLeft => editor.prev_frame(),
-                Key::Period | Key::ArrowRight => editor.next_frame(),
-                Key::ArrowUp => editor.step_layer(true),
-                Key::ArrowDown => editor.step_layer(false),
-                Key::F3 => editor.onion_enabled = !editor.onion_enabled,
-                // En modo Tiles no hay color secundario: X e Y voltean el tile del pincel.
-                Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
-                Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
-                Key::X => editor.swap_colors(),
-                Key::Delete | Key::Backspace => editor.clear_selection_content(),
-                _ => {}
-            }
+            editor_key(editor, key, shift);
         }
     }
 
     fn copy(&mut self, ctx: &egui::Context) {
+        self.doc.editor.commit_floating();
         if let Some(clip) = self.doc.editor.copy() {
             self.clipboard = Some(clip);
             ctx.copy_text(CLIPBOARD_MARKER.into());
@@ -875,6 +860,10 @@ impl eframe::App for ChimpApp {
         self.handle_dropped_files(&ctx);
         self.handle_platform_events(&ctx);
         self.demo_tiles();
+        if self.has_doc() {
+            // Lo flotante se confirma o cancela si la capa, el frame o la herramienta cambiaron.
+            self.doc.editor.sync_floating();
+        }
         self.handle_shortcuts(&ctx);
         if self.has_doc() && self.doc.editor.playing {
             let dt_ms = ctx.input(|i| i.stable_dt) as f64 * 1000.0;
@@ -932,10 +921,64 @@ impl eframe::App for ChimpApp {
     }
 }
 
+/// Teclas sin Ctrl/Alt que actúan sobre el editor (las letras de herramienta van aparte).
+pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
+    match key {
+        Key::N if shift => editor.add_layer(cs_core::LayerKind::Image),
+        Key::Enter if editor.is_pending() => editor.finish_gesture(),
+        Key::Enter if editor.is_floating() => {
+            editor.commit_floating();
+        }
+        Key::Escape => editor.escape(),
+        Key::Enter => editor.toggle_play(),
+        Key::Comma | Key::ArrowLeft => editor.prev_frame(),
+        Key::Period | Key::ArrowRight => editor.next_frame(),
+        Key::ArrowUp => editor.step_layer(true),
+        Key::ArrowDown => editor.step_layer(false),
+        Key::F3 => editor.onion_enabled = !editor.onion_enabled,
+        // En modo Tiles no hay color secundario: X e Y voltean el tile del pincel.
+        Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
+        Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
+        Key::X => editor.swap_colors(),
+        Key::Delete | Key::Backspace => editor.clear_selection_content(),
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use cs_core::Mask;
+
+    use super::*;
+
     #[test]
     fn convert_failure_message_has_no_stray_spaces() {
         assert!(!super::CONVERT_TO_IMAGE_FAILED.contains("  "));
+    }
+
+    #[test]
+    fn enter_applies_floating_content_and_escape_cancels_it() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        e.set_tool(ToolKind::RectSelect);
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (1, 1))));
+        let drag = |e: &mut Editor| {
+            e.pointer_press((0.5, 0.5), false, false, 0.1);
+            e.pointer_drag((2.5, 0.5));
+            e.pointer_release();
+        };
+        drag(&mut e);
+        assert!(e.is_floating());
+        editor_key(&mut e, Key::Escape, false);
+        assert!(
+            !e.is_floating() && e.selection.is_some(),
+            "Esc cancels, keeps the selection"
+        );
+        drag(&mut e);
+        editor_key(&mut e, Key::Enter, false);
+        assert!(!e.is_floating(), "Enter applies");
+        assert!(!e.playing, "instead of playing the animation");
+        assert!(e.history.can_undo());
+        editor_key(&mut e, Key::Escape, false);
+        assert!(e.selection.is_none(), "with nothing else, Esc deselects");
     }
 }

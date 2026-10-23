@@ -367,6 +367,16 @@ impl Editor {
         true
     }
 
+    /// Esc hace una sola cosa por pulsación. Primero descarta el gesto o el texto a medio hacer,
+    /// después cancela lo flotante (sin deseleccionar) y, si no hay nada de eso, deselecciona.
+    pub fn escape(&mut self) {
+        if self.is_pending() {
+            self.cancel_gesture();
+        } else if !self.cancel_floating() {
+            self.deselect();
+        }
+    }
+
     /// Una vez por frame: confirma si cambió la capa, el frame, el artboard o la herramienta por
     /// un camino que no confirma solo (p. ej. ↑/↓), y cancela si la capa ya no se puede editar o
     /// cambió el tamaño del lienzo.
@@ -455,6 +465,32 @@ mod tests {
     fn moved(e: &mut Editor, dx: i32, dy: i32) {
         let b = e.transform_box().unwrap().translated(dx, dy);
         place(e, b);
+    }
+
+    #[test]
+    fn escape_cancels_the_gesture_then_the_floating_content_then_the_selection() {
+        let mut e = editor();
+        // Un lazo poligonal a medias: Esc lo descarta y la selección sigue.
+        e.set_tool(ToolKind::PolygonLasso);
+        e.pointer_press((6.5, 6.5), false, false, 0.1);
+        e.pointer_release();
+        assert!(e.is_pending());
+        e.escape();
+        assert!(!e.is_pending());
+        assert!(e.selection.is_some());
+        // Flotando: Esc cancela la transformación sin deseleccionar.
+        e.set_tool(ToolKind::RectSelect);
+        assert!(e.lift());
+        moved(&mut e, 2, 2);
+        e.escape();
+        assert!(!e.is_floating());
+        let bounds = e.selection.as_ref().and_then(|m| m.bounds());
+        assert_eq!(bounds, Some(((0, 0), (2, 2))));
+        assert_eq!(px(&e, 1, 1), red());
+        // Sin nada más: Esc deselecciona, como Deselect.
+        e.escape();
+        assert!(e.selection.is_none());
+        assert!(e.can_reselect());
     }
 
     #[test]
