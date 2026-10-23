@@ -10,6 +10,9 @@ use crate::palette_files::{MAX_COLORS, NamedPalette};
 
 const BASE: &str = "https://lospec.com/palette-list";
 
+/// Paletas por página del listado de Lospec.
+pub const PAGE_SIZE: u32 = 10;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ColorCount {
     Any,
@@ -107,6 +110,8 @@ impl LospecPalette {
 pub struct LospecPage {
     pub palettes: Vec<LospecPalette>,
     pub total: u32,
+    /// Entradas que mandó Lospec, contando las que no se pudieron leer.
+    pub raw_count: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
@@ -129,7 +134,11 @@ pub fn parse_listing(json: &[u8]) -> Result<LospecPage, LospecError> {
         .as_u64()
         .ok_or(LospecError::InvalidJson)? as u32;
     let palettes = entries.iter().filter_map(|e| parse_entry(e).ok()).collect();
-    Ok(LospecPage { palettes, total })
+    Ok(LospecPage {
+        palettes,
+        total,
+        raw_count: entries.len(),
+    })
 }
 
 fn parse_entry(e: &Value) -> Result<LospecPalette, LospecError> {
@@ -317,6 +326,7 @@ mod tests {
         let page = parse_listing(LISTING).unwrap();
         assert!(page.total >= 10);
         assert_eq!(page.palettes.len(), 10);
+        assert_eq!(page.raw_count, 10);
         let first = &page.palettes[0];
         assert_eq!(first.title, "Ice Cream GB");
         assert_eq!(first.slug, "ice-cream-gb");
@@ -340,6 +350,7 @@ mod tests {
         let page = parse_listing(json).unwrap();
         assert_eq!(page.total, 3);
         assert_eq!(page.palettes.len(), 1);
+        assert_eq!(page.raw_count, 7, "cuenta también las que se saltan");
         assert_eq!(page.palettes[0].downloads, Some(1234));
         assert_eq!(
             parse_listing(b"<html>").unwrap_err(),

@@ -2,7 +2,7 @@
 //! entrega la respuesta con `finish_*`. Las respuestas de búsquedas viejas se descartan.
 
 use cs_io::lospec::{
-    ColorCount, LospecPage, LospecPalette, LospecQuery, LospecSort, slug_from_input,
+    ColorCount, LospecPage, LospecPalette, LospecQuery, LospecSort, PAGE_SIZE, slug_from_input,
 };
 
 use crate::lospec_client::FetchError;
@@ -43,6 +43,8 @@ pub struct LospecTab {
     results: Vec<LospecPalette>,
     exact: Option<LospecPalette>,
     total: u32,
+    /// Lospec no tiene más páginas, aunque `total` diga otra cosa (se saltan entradas rotas).
+    exhausted: bool,
     generation: u64,
     /// Generación de la última `start_search`; la coincidencia exacta solo vale para esa.
     search_generation: u64,
@@ -65,6 +67,7 @@ impl Default for LospecTab {
             results: Vec::new(),
             exact: None,
             total: 0,
+            exhausted: false,
             generation: 0,
             search_generation: 0,
             listing_loading: false,
@@ -99,6 +102,7 @@ impl LospecTab {
         self.results.clear();
         self.exact = None;
         self.total = 0;
+        self.exhausted = false;
         self.listing_loading = true;
         self.error = None;
         SearchStart {
@@ -152,6 +156,9 @@ impl LospecTab {
         }
         match result {
             Ok(page) => {
+                let page_index = self.query.as_ref().map_or(0, |q| q.page);
+                self.exhausted =
+                    page.raw_count == 0 || (page_index + 1).saturating_mul(PAGE_SIZE) >= page.total;
                 self.total = page.total;
                 self.results.extend(page.palettes);
             }
@@ -206,7 +213,7 @@ impl LospecTab {
     // Solo escritorio (búsqueda).
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     pub fn can_load_more(&self) -> bool {
-        (self.results.len() as u32) < self.total
+        !self.exhausted && (self.results.len() as u32) < self.total
     }
 
     // Solo escritorio (búsqueda).
@@ -262,7 +269,58 @@ mod tests {
         LospecPage {
             palettes: slugs.iter().map(|s| pal(s)).collect(),
             total,
+            raw_count: slugs.len(),
         }
+    }
+
+    /// Página de Lospec con `raw` entradas, de las que solo se pudieron leer `slugs`.
+    fn page_raw(slugs: &[&str], total: u32, raw: usize) -> LospecPage {
+        LospecPage {
+            raw_count: raw,
+            ..page(slugs, total)
+        }
+    }
+
+    #[test]
+    fn empty_raw_page_stops_load_more() {
+        let mut tab = LospecTab::default();
+        let s = tab.start_search();
+        tab.finish_listing(s.generation, Ok(page_raw(&["a"], 100, 10)));
+        assert!(tab.can_load_more());
+        // Entradas rotas pero presentes: puede haber más.
+        let (g, _) = tab.start_more().unwrap();
+        tab.finish_listing(g, Ok(page_raw(&[], 100, 10)));
+        assert!(tab.can_load_more());
+        // Lospec ya no devuelve nada aunque `totalCount` diga 100.
+        let (g, _) = tab.start_more().unwrap();
+        tab.finish_listing(g, Ok(page_raw(&[], 100, 0)));
+        assert!(!tab.can_load_more());
+        assert!(tab.start_more().is_none());
+        assert_eq!(tab.shown_of_total(), (1, 100));
+    }
+
+    #[test]
+    fn last_page_by_count_stops_load_more_with_skipped_entries() {
+        let mut tab = LospecTab::default();
+        let s = tab.start_search();
+        let ten = ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j"];
+        // 25 en total: páginas 0, 1 y 2. Se salta una entrada rota por página.
+        tab.finish_listing(s.generation, Ok(page_raw(&ten[..9], 25, 10)));
+        assert!(tab.can_load_more());
+        let (g, q) = tab.start_more().unwrap();
+        assert_eq!(q.page, 1);
+        tab.finish_listing(g, Ok(page_raw(&ten[..9], 25, 10)));
+        assert!(tab.can_load_more());
+        let (g, q) = tab.start_more().unwrap();
+        assert_eq!(q.page, 2);
+        tab.finish_listing(g, Ok(page_raw(&ten[..4], 25, 5)));
+        assert_eq!(tab.shown_of_total(), (22, 25));
+        assert!(!tab.can_load_more());
+        assert!(tab.start_more().is_none());
+        // Una búsqueda nueva vuelve a permitirlo.
+        let s = tab.start_search();
+        tab.finish_listing(s.generation, Ok(page_raw(&ten, 25, 10)));
+        assert!(tab.can_load_more());
     }
 
     #[test]
@@ -275,15 +333,15 @@ mod tests {
         assert_eq!(s.listing.page, 0);
         assert_eq!(s.listing.tag, "gameboy");
         assert!(tab.listing_loading());
-        tab.finish_listing(s.generation, Ok(page(&["a", "b"], 3)));
+        tab.finish_listing(s.generation, Ok(page(&["a", "b"], 13)));
         assert!(!tab.listing_loading());
         assert!(tab.can_load_more());
         let (g, q) = tab.start_more().unwrap();
         assert_eq!(q.page, 1);
-        tab.finish_listing(g, Ok(page(&["c"], 3)));
+        tab.finish_listing(g, Ok(page(&["c"], 13)));
         assert_eq!(tab.results().len(), 3);
         assert!(!tab.can_load_more());
-        assert_eq!(tab.shown_of_total(), (3, 3));
+        assert_eq!(tab.shown_of_total(), (3, 13));
         let again = tab.start_search();
         assert!(tab.results().is_empty());
         assert_eq!(again.listing.page, 0);
@@ -335,7 +393,7 @@ mod tests {
             ..LospecTab::default()
         };
         let s = tab.start_search();
-        tab.finish_listing(s.generation, Ok(page(&["x"], 2)));
+        tab.finish_listing(s.generation, Ok(page(&["x"], 20)));
         let (g, _) = tab.start_more().unwrap();
         assert_ne!(g, s.generation);
         // La exacta de la búsqueda original llega con la generación vieja, pero sigue vigente.
@@ -351,12 +409,12 @@ mod tests {
         };
         let a = tab.start_search();
         let b = tab.start_search();
-        tab.finish_listing(b.generation, Ok(page(&["x"], 2)));
+        tab.finish_listing(b.generation, Ok(page(&["x"], 20)));
         let (g, _) = tab.start_more().unwrap();
         tab.finish_exact(a.generation, Ok(pal("sweetie-16")));
         assert!(!tab.is_exact("sweetie-16"));
         assert_eq!(tab.results().len(), 1);
-        tab.finish_listing(g, Ok(page(&["y"], 2)));
+        tab.finish_listing(g, Ok(page(&["y"], 20)));
         assert_eq!(tab.results().len(), 2);
     }
 

@@ -718,6 +718,7 @@ mod tests {
         let page = LospecPage {
             palettes: vec![lospec_palette("A", "a")],
             total: 5,
+            raw_count: 1,
         };
         let mut requests = LospecRequests {
             listing: Some((search.generation, Pending::ready(Ok(page)))),
