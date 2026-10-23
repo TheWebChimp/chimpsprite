@@ -1,6 +1,7 @@
 //! Herramientas como máquinas de estado: eventos de puntero → comandos.
 
 mod artboard;
+mod blur;
 mod bucket;
 mod contour;
 mod eyedropper;
@@ -16,6 +17,7 @@ mod spray;
 pub mod text;
 
 pub use artboard::{ArtboardHit, ArtboardTool, Edges, hit_test};
+pub use blur::Blur;
 pub use bucket::Bucket;
 pub use contour::Contour;
 pub use cs_raster::Point;
