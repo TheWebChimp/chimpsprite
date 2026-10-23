@@ -9,6 +9,8 @@ use serde_json::Value;
 use crate::palette_files::{MAX_COLORS, NamedPalette};
 
 const BASE: &str = "https://lospec.com/palette-list";
+/// De donde se sirven las imágenes de ejemplo (`<CDN>/palette-examples/<nombre>.png`).
+const CDN: &str = "https://cdn.lospec.com";
 
 /// Paletas por página del listado de Lospec.
 pub const PAGE_SIZE: u32 = 10;
@@ -77,6 +79,16 @@ pub fn page_url(slug: &str) -> String {
     format!("{BASE}/{slug}")
 }
 
+/// URL de una imagen de ejemplo a partir del `image` del listado. Solo se acepta
+/// `palette-examples/<nombre>.png` con `<nombre>` en `[a-z0-9-]+`: la ruta llega del JSON y se
+/// pide por red, así que no se deja salir del CDN ni pedir otra cosa.
+pub fn example_url(image: &str) -> Option<String> {
+    let name = image
+        .strip_prefix("palette-examples/")?
+        .strip_suffix(".png")?;
+    is_valid_slug(name).then(|| format!("{CDN}/{image}"))
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LospecPalette {
     pub slug: String,
@@ -85,6 +97,8 @@ pub struct LospecPalette {
     pub palette: Palette,
     pub likes: Option<u32>,
     pub downloads: Option<u32>,
+    /// URLs de las imágenes de ejemplo (solo las trae el listado).
+    pub examples: Vec<String>,
 }
 
 impl LospecPalette {
@@ -154,7 +168,17 @@ fn parse_entry(e: &Value) -> Result<LospecPalette, LospecError> {
         palette: parse_colors(&e["colors"])?,
         likes: e["likes"].as_u64().map(|n| n as u32),
         downloads: count(&e["downloads"]),
+        examples: examples(&e["examples"]),
     })
+}
+
+/// `examples: [{ image: "palette-examples/….png", … }]`; lo que no sirva se descarta.
+fn examples(v: &Value) -> Vec<String> {
+    v.as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|e| e["image"].as_str().and_then(example_url))
+        .collect()
 }
 
 /// `{ name, author, colors }` de `/palette-list/<slug>.json`.
@@ -177,6 +201,7 @@ pub fn parse_palette(json: &[u8], slug: &str) -> Result<LospecPalette, LospecErr
         palette: parse_colors(&root["colors"])?,
         likes: None,
         downloads: None,
+        examples: Vec::new(),
     })
 }
 
@@ -370,6 +395,63 @@ mod tests {
             parse_palette(SWEETIE, "x,/root").unwrap_err(),
             LospecError::InvalidJson
         );
+    }
+
+    #[test]
+    fn listing_entries_carry_example_urls() {
+        let page = parse_listing(LISTING).unwrap();
+        let first = &page.palettes[0];
+        assert_eq!(first.examples.len(), 5);
+        assert_eq!(
+            first.examples[0],
+            concat!(
+                "https://cdn.lospec.com/palette-examples/",
+                "ice-cream-gb-palette-example-palette-usage-example-by-kerrie-lake-5ae4d8.png"
+            )
+        );
+        assert!(page.palettes.iter().all(|p| !p.examples.is_empty()));
+        let p = parse_palette(SWEETIE, "sweetie-16").unwrap();
+        assert!(p.examples.is_empty(), "el JSON por slug no trae ejemplos");
+    }
+
+    #[test]
+    fn invalid_example_paths_are_dropped() {
+        let json = br#"{"totalCount":1,"palettes":[
+            {"title":"Ok","slug":"ok","colors":["000000"],"examples":[
+                {"image":"palette-examples/good-1.png"},
+                {"image":"../x.png"},
+                {"image":"palette-examples/a b.png"},
+                {"image":"https://evil/x.png"},
+                {"image":"palette-examples/x.gif"},
+                {"image":"palette-examples/../x.png"},
+                {"image":"palette-examples/.png"},
+                {"image":"palette-examples/Upper.png"},
+                {"image":"palette-examples/sub/x.png"},
+                {"image":42},
+                {"title":"no image"},
+                "palette-examples/plain-string.png"
+            ]},
+            {"title":"NoArray","slug":"no-array","colors":["000000"],"examples":"nope"}
+        ]}"#;
+        let page = parse_listing(json).unwrap();
+        assert_eq!(page.palettes.len(), 2, "un ejemplo raro no tira la paleta");
+        assert_eq!(
+            page.palettes[0].examples,
+            vec!["https://cdn.lospec.com/palette-examples/good-1.png".to_string()]
+        );
+        assert!(page.palettes[1].examples.is_empty());
+    }
+
+    #[test]
+    fn example_urls_from_paths() {
+        assert_eq!(
+            example_url("palette-examples/a-1.png").as_deref(),
+            Some("https://cdn.lospec.com/palette-examples/a-1.png")
+        );
+        assert_eq!(example_url("palette-examples/a.PNG"), None);
+        assert_eq!(example_url("palette-examples/a.png?x=1"), None);
+        assert_eq!(example_url("/palette-examples/a.png"), None);
+        assert_eq!(example_url(""), None);
     }
 
     #[test]

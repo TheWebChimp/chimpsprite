@@ -262,6 +262,7 @@ mod tests {
             palette: Palette::new(vec![Rgba::from_hex(0x102030)]),
             likes: None,
             downloads: None,
+            examples: Vec::new(),
         }
     }
 
