@@ -1982,6 +1982,59 @@ mod tests {
         }
     }
 
+    /// Editor 16×16 con un punto rojo en (3, 1), la selección (2, 0)–(4, 2), una guía vertical en
+    /// x = 4 que pega a 2 px y RectSelect.
+    fn guided_selection() -> Editor {
+        use cs_core::{Axis, Guide};
+        let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(3, 1, PixelValue::Rgba(Rgba::rgb(255, 0, 0)))],
+        });
+        e.set_guides(vec![Guide {
+            axis: Axis::Vertical,
+            position: 4,
+        }]);
+        e.snap = Some(crate::guides::SnapContext {
+            guides: e.guides().to_vec(),
+            grid: None,
+            tolerance: 2.0,
+        });
+        e.set_selection(Some(Mask::from_rect(16, 16, (2, 0), (4, 2))));
+        e.set_tool(ToolKind::RectSelect);
+        e
+    }
+
+    #[test]
+    fn a_drag_held_still_by_snapping_is_not_a_click() {
+        let mut e = guided_selection();
+        let before = e.selection.clone();
+        let version = e.doc_version;
+        // Presionar y arrastrar un píxel cerca de la guía: el ajuste deja la caja quieta.
+        e.pointer_press((4.5, 1.5), false, false, 0.1);
+        e.pointer_drag((5.5, 1.5));
+        e.pointer_release();
+        assert_eq!(e.selection, before, "not deselected");
+        assert!(!e.is_floating(), "nothing lifted");
+        assert_eq!(e.doc_version, version);
+    }
+
+    #[test]
+    fn moving_the_selection_measures_from_the_snapped_press_point() {
+        let mut e = guided_selection();
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        // El punto presionado (x = 2.5, píxel 2) pega a la guía y cae en el píxel 3; el soltado
+        // (x = 7.5) queda lejos: se mueve 4 px, no 5.
+        e.pointer_press((2.5, 1.5), false, false, 0.1);
+        e.pointer_drag((7.5, 1.5));
+        e.pointer_release();
+        let bounds = e.selection.as_ref().and_then(|m| m.bounds());
+        assert_eq!(bounds, Some(((6, 0), (8, 2))));
+        assert!(e.commit_floating());
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 7, 1), red);
+    }
+
     #[test]
     fn symmetric_strokes_are_one_undo_step_and_respect_selection() {
         use cs_core::{Symmetry, SymmetryMode};

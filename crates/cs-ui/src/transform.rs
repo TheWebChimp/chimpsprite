@@ -129,6 +129,9 @@ pub(crate) struct TransformDrag {
     inside: bool,
     /// El arrastre ya cambió la caja (y lo seleccionado ya flota).
     moved: bool,
+    /// El puntero (sin pegar) ya salió del píxel presionado: no es un clic aunque el ajuste haya
+    /// dejado la caja quieta.
+    dragged: bool,
 }
 
 impl Editor {
@@ -220,6 +223,7 @@ impl Editor {
             start_box,
             inside,
             moved: false,
+            dragged: false,
         });
         self.revision += 1;
     }
@@ -228,6 +232,10 @@ impl Editor {
         let Some(mut drag) = self.transform_drag else {
             return;
         };
+        if !drag.dragged && self.to_local(world) != drag.start_pixel {
+            drag.dragged = true;
+            self.transform_drag = Some(drag);
+        }
         // Pega a guías/grid como Move: el desplazamiento entre los dos puntos pegados.
         let pixel = self.to_local(self.snap_world(world));
         let bbox = match drag.hit {
@@ -251,6 +259,11 @@ impl Editor {
         self.set_floating_box(bbox, false);
     }
 
+    /// Hay un arrastre de transformación en curso.
+    pub fn is_transforming(&self) -> bool {
+        self.transform_drag.is_some()
+    }
+
     /// Termina el arrastre. Devuelve el píxel presionado si fue un clic sin arrastrar dentro de la
     /// selección con una herramienta de selección y sin nada flotando: es un clic normal de esa
     /// herramienta (en Replace, deselecciona).
@@ -266,6 +279,10 @@ impl Editor {
             {
                 self.refresh_floating(false);
             }
+            return None;
+        }
+        if drag.dragged {
+            // Arrastre retenido por el ajuste: no cambió nada, pero tampoco es un clic.
             return None;
         }
         if self.floating.is_some() {

@@ -743,6 +743,9 @@ impl CanvasView {
                 world.and_then(|w| hit_test(&editor.document, w, slop)),
             ))
         } else if editor.active_tool() == ToolKind::Move
+            // Durante el arrastre sigue Move aunque el puntero salga de lo seleccionado o del
+            // artboard, o cambien los modificadores.
+            || editor.is_transforming()
             || pointer.is_some_and(|p| {
                 let world = self.to_world(rect, p);
                 editor.moves_selection_at(world, modifiers.shift, modifiers.alt)
@@ -1499,6 +1502,8 @@ mod tests {
         view: ViewSettings,
         time: f64,
         rect: Rect,
+        /// Cursor pedido en el último frame.
+        cursor: egui::CursorIcon,
     }
 
     impl Harness {
@@ -1510,6 +1515,7 @@ mod tests {
                 view: ViewSettings::default(),
                 time: 0.0,
                 rect: Rect::NOTHING,
+                cursor: egui::CursorIcon::Default,
             };
             h.frame(vec![]);
             h
@@ -1532,6 +1538,7 @@ mod tests {
             });
             output.textures_delta.clear();
             self.rect = rect;
+            self.cursor = output.platform_output.cursor_icon;
         }
 
         fn click(&mut self, pos: Pos2, button: PointerButton) {
@@ -1563,6 +1570,36 @@ mod tests {
             self.canvas.to_screen(self.rect, (x + p.0, y + p.1))
                 + Vec2::splat(self.canvas.zoom / 2.0)
         }
+    }
+
+    #[test]
+    fn dragging_the_selection_keeps_the_move_cursor_off_the_artboard() {
+        let mut h = Harness::new();
+        h.editor.set_tool(ToolKind::RectSelect);
+        h.editor
+            .set_selection(Some(cs_core::Mask::from_rect(16, 16, (2, 2), (6, 6))));
+        let ev = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let from = h.screen((4, 4));
+        // Fuera del artboard pero dentro del lienzo.
+        let off = Pos2::new(h.rect.right() - 2.0, from.y);
+        let world = h.canvas.to_world(h.rect, off);
+        assert!(h.editor.document.artboard_at(world).is_none(), "{world:?}");
+        h.frame(vec![Event::PointerMoved(from)]);
+        assert_eq!(h.cursor, egui::CursorIcon::Move);
+        h.frame(vec![ev(from, true)]);
+        h.frame(vec![Event::PointerMoved(from + Vec2::new(5.0, 0.0))]);
+        h.frame(vec![Event::PointerMoved(off)]);
+        h.frame(vec![]);
+        assert!(h.editor.is_transforming());
+        assert_eq!(h.cursor, egui::CursorIcon::Move, "still moving");
+        h.frame(vec![ev(off, false)]);
+        h.frame(vec![]);
+        assert!(!h.editor.is_transforming());
     }
 
     #[test]
