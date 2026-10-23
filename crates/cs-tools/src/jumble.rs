@@ -43,7 +43,7 @@ impl Tool for Jumble {
         }
         let r = ctx.brush_size.max(1) as i32;
         let span = 2 * r as u64 + 1;
-        let mut points = stamp(&self.path, ctx.brush_size);
+        let mut points = stamp(&self.path, ctx.brush_size, ctx.brush_shape);
         points.sort_unstable();
         points.dedup();
         let pixels = points

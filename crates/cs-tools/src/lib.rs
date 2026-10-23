@@ -21,7 +21,7 @@ pub use blur::Blur;
 pub use bucket::Bucket;
 pub use contour::Contour;
 pub use cs_raster::Point;
-pub use cs_raster::{Dither, GradientShape};
+pub use cs_raster::{BrushShape, Dither, GradientShape};
 pub use eyedropper::Eyedropper;
 pub use gradient::{GradientTool, gradient_pixels, gradient_value};
 pub use jumble::Jumble;
@@ -43,6 +43,9 @@ pub struct ToolContext<'a> {
     /// El otro color (destino del degradado).
     pub secondary: PixelValue,
     pub brush_size: u32,
+    /// Forma del pincel: Pencil, Eraser, Spray, Jumble, Blur y el contorno de Line, Rectangle y
+    /// Ellipse.
+    pub brush_shape: BrushShape,
     pub pixel_perfect: bool,
     /// Formas rellenas (rectángulo/elipse).
     pub filled: bool,
@@ -161,7 +164,7 @@ impl Drag {
 pub(crate) mod test_util {
     use cs_core::{ColorMode, LayerId, PixelValue, Rgba, Sprite};
 
-    use crate::ToolContext;
+    use crate::{BrushShape, ToolContext};
 
     pub fn red() -> PixelValue {
         PixelValue::Rgba(Rgba::rgb(255, 0, 0))
@@ -179,6 +182,8 @@ pub(crate) mod test_util {
             color: red(),
             secondary: PixelValue::Rgba(Rgba::rgb(0, 0, 255)),
             brush_size: 1,
+            // Los tests de antes se escribieron con el pincel cuadrado.
+            brush_shape: BrushShape::Square,
             pixel_perfect: false,
             filled: false,
             corner_radius: 0,

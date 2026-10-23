@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use cs_core::{ColorMode, PixelValue, Rgba};
-use cs_raster::{Point, blur_average, brush_square, line};
+use cs_raster::{Point, blur_average, brush_points, line};
 
 use crate::{Tool, ToolContext, ToolOutput};
 
@@ -37,12 +37,13 @@ impl Blur {
     /// Una aplicación del pincel en `center`. Primero calcula todos los promedios con los
     /// colores de antes y después los guarda: así el orden de recorrido no sesga el resultado.
     fn apply(&mut self, ctx: &ToolContext, center: Point) {
-        let updates: Vec<(Point, PixelValue)> = brush_square(center, ctx.brush_size)
-            .into_iter()
-            .filter(|&p| ctx.in_canvas(p))
-            .filter(|&(x, y)| ctx.selection.is_none_or(|m| m.contains(x, y)))
-            .map(|p| (p, to_value(ctx, blur_average(p, |q| self.current(ctx, q)))))
-            .collect();
+        let updates: Vec<(Point, PixelValue)> =
+            brush_points(center, ctx.brush_size, ctx.brush_shape)
+                .into_iter()
+                .filter(|&p| ctx.in_canvas(p))
+                .filter(|&(x, y)| ctx.selection.is_none_or(|m| m.contains(x, y)))
+                .map(|p| (p, to_value(ctx, blur_average(p, |q| self.current(ctx, q)))))
+                .collect();
         self.done.extend(updates);
     }
 }
@@ -236,5 +237,20 @@ mod tests {
         let c = ctx(&s);
         t.press(&c, (1, 1));
         assert_eq!(pixels(&t.release(&c)), vec![(1, 1, PixelValue::Index(0))]);
+    }
+
+    #[test]
+    fn a_round_brush_blurs_a_cross() {
+        let mut s = sprite();
+        paint(&mut s, vec![(4, 4, red())]);
+        let mut c = ctx(&s);
+        c.brush_size = 3;
+        c.brush_shape = crate::BrushShape::Round;
+        let mut t = Blur::new();
+        t.press(&c, (4, 4));
+        let px = pixels(&t.release(&c));
+        assert_eq!(px.len(), 5, "{px:?}");
+        assert!(px.iter().all(|&(_, _, v)| v == soft()));
+        assert!(!px.iter().any(|&(x, y, _)| (x, y) == (3, 3)), "no corner");
     }
 }

@@ -37,15 +37,15 @@ impl ShapeTool {
             (true, ShapeKind::Line) => constrain_line(a, b),
             (true, _) => constrain_square(a, b),
         };
+        let (size, shape) = (ctx.brush_size, ctx.brush_shape);
         match (self.kind, ctx.filled) {
-            (ShapeKind::Line, _) => stamp(&line(a, b), ctx.brush_size),
+            (ShapeKind::Line, _) => stamp(&line(a, b), size, shape),
             (ShapeKind::Rectangle, true) => rounded_rect_filled(a, b, ctx.corner_radius),
-            (ShapeKind::Rectangle, false) => stamp(
-                &rounded_rect_outline(a, b, ctx.corner_radius),
-                ctx.brush_size,
-            ),
+            (ShapeKind::Rectangle, false) => {
+                stamp(&rounded_rect_outline(a, b, ctx.corner_radius), size, shape)
+            }
             (ShapeKind::Ellipse, true) => ellipse_filled(a, b),
-            (ShapeKind::Ellipse, false) => stamp(&ellipse_outline(a, b), ctx.brush_size),
+            (ShapeKind::Ellipse, false) => stamp(&ellipse_outline(a, b), size, shape),
         }
     }
 }
@@ -128,5 +128,18 @@ mod tests {
         c.constrain = true;
         let pts = run(ShapeKind::Ellipse, &c, (0, 0), (4, 2));
         assert!(pts.contains(&(2, 4)), "{pts:?}");
+    }
+
+    #[test]
+    fn the_outline_uses_the_brush_shape() {
+        let s = sprite();
+        let mut c = ctx(&s);
+        c.brush_size = 3;
+        c.brush_shape = crate::BrushShape::Round;
+        let mut t = ShapeTool::new(ShapeKind::Line);
+        t.press(&c, (2, 2));
+        let pts = coords(&t.release(&c));
+        assert_eq!(pts.len(), 5, "a one-point line is a cross: {pts:?}");
+        assert!(!pts.contains(&(1, 1)));
     }
 }

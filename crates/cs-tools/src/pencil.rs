@@ -22,7 +22,7 @@ impl Pencil {
         } else {
             self.path.clone()
         };
-        ToolOutput::command(ctx.draw(stamp(&path, ctx.brush_size), color))
+        ToolOutput::command(ctx.draw(stamp(&path, ctx.brush_size, ctx.brush_shape), color))
     }
 }
 
@@ -138,5 +138,27 @@ mod tests {
     fn release_without_press_is_empty() {
         let s = sprite();
         assert_eq!(Pencil::new().release(&ctx(&s)), ToolOutput::default());
+    }
+
+    #[test]
+    fn a_round_brush_of_5_skips_the_square_corners() {
+        use crate::BrushShape;
+        let s = sprite();
+        let mut c = ctx(&s);
+        c.brush_size = 5;
+        c.brush_shape = BrushShape::Round;
+        let mut p = Pencil::new();
+        p.press(&c, (3, 3));
+        let round = coords(&p.release(&c));
+        assert_eq!(round.len(), 21);
+        assert!(
+            !round.contains(&(1, 1)) && !round.contains(&(5, 5)),
+            "{round:?}"
+        );
+        c.brush_shape = BrushShape::Square;
+        p.press(&c, (3, 3));
+        let square = coords(&p.release(&c));
+        assert_eq!(square.len(), 25);
+        assert!(square.contains(&(1, 1)) && square.contains(&(5, 5)));
     }
 }

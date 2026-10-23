@@ -9,9 +9,9 @@ use cs_core::{
 use cs_render::OnionSkin;
 use cs_tools::text::TextStyle;
 use cs_tools::{
-    ArtboardTool, Blur, Bucket, Contour, Dither, Eraser, Eyedropper, GradientShape, GradientTool,
-    Jumble, Lasso, MagicWand, Marquee, MarqueeShape, MoveTool, Pencil, Point, PolygonLasso,
-    ShapeKind, ShapeTool, SliceTool, Spray, Tool, ToolContext, ToolOutput,
+    ArtboardTool, Blur, BrushShape, Bucket, Contour, Dither, Eraser, Eyedropper, GradientShape,
+    GradientTool, Jumble, Lasso, MagicWand, Marquee, MarqueeShape, MoveTool, Pencil, Point,
+    PolygonLasso, ShapeKind, ShapeTool, SliceTool, Spray, Tool, ToolContext, ToolOutput,
 };
 
 use crate::tile_ops::{self, TileProxy};
@@ -1069,6 +1069,8 @@ impl Editor {
             color: self.color(),
             secondary,
             brush_size: self.options.brush_size,
+            // La opción llega en la Task 11; hasta entonces, la forma por defecto.
+            brush_shape: BrushShape::Round,
             pixel_perfect: self.options.pixel_perfect,
             filled: self.options.filled,
             corner_radius: self.options.corner_radius,
@@ -1097,6 +1099,8 @@ impl Editor {
             color: brush,
             secondary: brush,
             brush_size: self.options.brush_size,
+            // En celdas el pincel sigue cuadrado: el contorno del lienzo dibuja celdas enteras.
+            brush_shape: BrushShape::Square,
             pixel_perfect: false,
             filled: self.options.filled,
             corner_radius: self.options.corner_radius,

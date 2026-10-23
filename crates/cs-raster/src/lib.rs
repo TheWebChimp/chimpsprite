@@ -16,7 +16,7 @@ pub use constrain::{constrain_line, constrain_square};
 pub use ellipse::{ellipse_filled, ellipse_outline};
 pub use fill::flood_fill;
 pub use gradient::{Dither, GradientShape, gradient_t};
-pub use line::{brush_square, line, pixel_perfect, stamp};
+pub use line::{BrushShape, brush_points, brush_square, line, pixel_perfect, stamp};
 pub use polygon::{polygon_filled, polygon_filled_nonzero};
 pub use rect::{rect_filled, rect_outline, rounded_rect_filled, rounded_rect_outline};
 pub use symmetry::{SymmetryMode, symmetric_points, symmetrize};
@@ -38,7 +38,12 @@ mod tests {
 
     #[test]
     fn stamp_dedupes_overlaps() {
-        assert_eq!(stamp(&[(0, 0), (1, 0)], 1), vec![(0, 0), (1, 0)]);
-        assert_eq!(stamp(&[(0, 0), (1, 0)], 2).len(), 6);
+        assert_eq!(
+            stamp(&[(0, 0), (1, 0)], 1, BrushShape::Square),
+            vec![(0, 0), (1, 0)]
+        );
+        assert_eq!(stamp(&[(0, 0), (1, 0)], 2, BrushShape::Square).len(), 6);
+        // Dos cruces (redondo de 3) vecinas: 5 + 5 menos los 2 píxeles compartidos.
+        assert_eq!(stamp(&[(0, 0), (1, 0)], 3, BrushShape::Round).len(), 8);
     }
 }
