@@ -35,6 +35,8 @@ pub struct LospecTab {
     exact: Option<LospecPalette>,
     total: u32,
     generation: u64,
+    /// Generación de la última `start_search`; la coincidencia exacta solo vale para esa.
+    search_generation: u64,
     listing_loading: bool,
     lookup: Option<LospecPalette>,
     lookup_generation: u64,
@@ -55,6 +57,7 @@ impl Default for LospecTab {
             exact: None,
             total: 0,
             generation: 0,
+            search_generation: 0,
             listing_loading: false,
             lookup: None,
             lookup_generation: 0,
@@ -80,6 +83,7 @@ impl LospecTab {
             page: 0,
         };
         self.generation += 1;
+        self.search_generation = self.generation;
         self.query = Some(query.clone());
         self.results.clear();
         self.exact = None;
@@ -138,9 +142,9 @@ impl LospecTab {
 
     /// La búsqueda exacta por slug es un extra: si falla, no se muestra error.
     pub fn finish_exact(&mut self, generation: u64, result: Result<LospecPalette, FetchError>) {
-        let current =
-            generation == self.generation || self.query.as_ref().is_some_and(|q| q.page > 0);
-        if current && let Ok(p) = result {
+        if generation == self.search_generation
+            && let Ok(p) = result
+        {
             self.exact = Some(p);
         }
     }
@@ -308,6 +312,23 @@ mod tests {
         // La exacta de la búsqueda original llega con la generación vieja, pero sigue vigente.
         tab.finish_exact(s.generation, Ok(pal("sweetie-16")));
         assert!(tab.is_exact("sweetie-16"));
+    }
+
+    #[test]
+    fn stale_exact_after_load_more_is_ignored() {
+        let mut tab = LospecTab {
+            tag: "Sweetie 16".into(),
+            ..LospecTab::default()
+        };
+        let a = tab.start_search();
+        let b = tab.start_search();
+        tab.finish_listing(b.generation, Ok(page(&["x"], 2)));
+        let (g, _) = tab.start_more().unwrap();
+        tab.finish_exact(a.generation, Ok(pal("sweetie-16")));
+        assert!(!tab.is_exact("sweetie-16"));
+        assert_eq!(tab.results().len(), 1);
+        tab.finish_listing(g, Ok(page(&["y"], 2)));
+        assert_eq!(tab.results().len(), 2);
     }
 
     #[test]
