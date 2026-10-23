@@ -62,6 +62,14 @@ pub fn palette_url(slug: &str) -> String {
     format!("{BASE}/{slug}.json")
 }
 
+/// Slug seguro para armar URLs y abrirlas: no vacío y solo `[a-z0-9-]`.
+pub fn is_valid_slug(slug: &str) -> bool {
+    !slug.is_empty()
+        && slug
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+}
+
 pub fn page_url(slug: &str) -> String {
     format!("{BASE}/{slug}")
 }
@@ -126,8 +134,12 @@ pub fn parse_listing(json: &[u8]) -> Result<LospecPage, LospecError> {
 
 fn parse_entry(e: &Value) -> Result<LospecPalette, LospecError> {
     let text = |v: &Value| v.as_str().map(str::to_string);
+    // El slug llega tal cual del JSON y termina en URLs que se abren: se valida.
+    let slug = text(&e["slug"])
+        .filter(|s| is_valid_slug(s))
+        .ok_or(LospecError::InvalidJson)?;
     Ok(LospecPalette {
-        slug: text(&e["slug"]).ok_or(LospecError::InvalidJson)?,
+        slug,
         title: text(&e["title"]).ok_or(LospecError::InvalidJson)?,
         author: text(&e["user"]["name"]).filter(|a| !a.trim().is_empty()),
         palette: parse_colors(&e["colors"])?,
@@ -138,6 +150,10 @@ fn parse_entry(e: &Value) -> Result<LospecPalette, LospecError> {
 
 /// `{ name, author, colors }` de `/palette-list/<slug>.json`.
 pub fn parse_palette(json: &[u8], slug: &str) -> Result<LospecPalette, LospecError> {
+    // Los slugs vienen de `slug_from_input`, que ya los limpia; esto es por si acaso.
+    if !is_valid_slug(slug) {
+        return Err(LospecError::InvalidJson);
+    }
     let root: Value = serde_json::from_slice(json).map_err(|_| LospecError::InvalidJson)?;
     Ok(LospecPalette {
         slug: slug.to_string(),
@@ -315,7 +331,11 @@ mod tests {
         let json = br#"{"totalCount":3,"palettes":[
             {"title":"Ok","slug":"ok","colors":["000000","ffffff"],"user":{"name":"A"},"downloads":"1,234","likes":5},
             {"title":"Bad","slug":"bad","colors":["zzzzzz"]},
-            {"title":"NoColors","slug":"none"}
+            {"title":"NoColors","slug":"none"},
+            {"title":"Comma","slug":"x,/root,C:\\","colors":["000000"]},
+            {"title":"Quote","slug":"a\"b","colors":["000000"]},
+            {"title":"Empty","slug":"","colors":["000000"]},
+            {"title":"Upper","slug":"Ice-Cream","colors":["000000"]}
         ]}"#;
         let page = parse_listing(json).unwrap();
         assert_eq!(page.total, 3);
@@ -335,6 +355,22 @@ mod tests {
         assert_eq!(p.palette.len(), 16);
         assert_eq!(p.palette.colors()[0], cs_core::Rgba::from_hex(0x1a1c2c));
         assert_eq!(p.author, None, "Lospec manda author vacío");
+        assert_eq!(
+            parse_palette(SWEETIE, "x,/root").unwrap_err(),
+            LospecError::InvalidJson
+        );
+    }
+
+    #[test]
+    fn valid_slugs_are_lowercase_digits_and_dashes() {
+        assert!(is_valid_slug("sweetie-16"));
+        assert!(is_valid_slug("pico-8"));
+        assert!(!is_valid_slug(""));
+        assert!(!is_valid_slug("Sweetie"));
+        assert!(!is_valid_slug("a b"));
+        assert!(!is_valid_slug("x,/root,C:\\"));
+        assert!(!is_valid_slug("a\"b"));
+        assert!(!is_valid_slug("../x"));
     }
 
     #[test]

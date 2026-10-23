@@ -562,10 +562,14 @@ fn search_form(
     requests: &mut LospecRequests,
 ) {
     let mut search = false;
+    // Mientras carga la primera página no se puede buscar (ni con Search ni con Enter).
+    let first_page_loading = tab.listing_loading() && tab.shown_of_total().0 == 0;
     ui.horizontal(|ui| {
         ui.label("Tag");
         let response = ui.text_edit_singleline(&mut tab.tag);
-        search |= response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        search |= !first_page_loading
+            && response.lost_focus()
+            && ui.input(|i| i.key_pressed(egui::Key::Enter));
         ui.label("Colors");
         egui::ComboBox::from_id_salt("lospec_count")
             .selected_text(format!("{:?}", tab.count_kind))
@@ -596,7 +600,7 @@ fn search_form(
                     ui.selectable_value(&mut tab.sort, sort, format!("{sort:?}"));
                 }
             });
-        if tab.listing_loading() && tab.shown_of_total().0 == 0 {
+        if first_page_loading {
             ui.spinner();
         } else {
             search |= ui.button("Search").clicked();
@@ -655,12 +659,15 @@ fn lospec_row(
             });
         });
         panels::palette_strip(ui, &p.palette, STRIP_COLORS, 8.0);
-        let url = cs_io::lospec::page_url(&p.slug);
-        // No se usa `hyperlink_to`: en escritorio no abre nada porque eframe va sin `links`.
-        if ui.link("lospec.com").on_hover_text(&url).clicked()
-            && let Err(e) = platform::open_url(ui.ctx(), &url)
-        {
-            log::warn!("could not open {url}: {e}");
+        // El link solo se abre con un slug validado: la URL va a `explorer`/`open`/`xdg-open`.
+        if cs_io::lospec::is_valid_slug(&p.slug) {
+            let url = cs_io::lospec::page_url(&p.slug);
+            // No se usa `hyperlink_to`: en escritorio no abre nada porque eframe va sin `links`.
+            if ui.link("lospec.com").on_hover_text(&url).clicked()
+                && let Err(e) = platform::open_url(ui.ctx(), &url)
+            {
+                log::warn!("could not open {url}: {e}");
+            }
         }
     });
 }
@@ -691,6 +698,48 @@ mod tests {
         assert!(matches_search("Sweetie 16", "sweet"));
         assert!(matches_search("Sweetie 16", ""));
         assert!(!matches_search("PICO-8", "nes"));
+    }
+
+    fn lospec_palette(name: &str, slug: &str) -> LospecPalette {
+        let json = format!(r#"{{"name":"{name}","author":"","colors":["000000"]}}"#);
+        cs_io::lospec::parse_palette(json.as_bytes(), slug).unwrap()
+    }
+
+    #[test]
+    fn requests_poll_routes_each_response_with_its_generation() {
+        let mut tab = LospecTab::default();
+        tab.tag = "sweetie 16".into();
+        tab.link = "pico-8".into();
+        tab.start_search();
+        // Generaciones distintas (búsqueda 2, lookup 1): un cruce se descartaría.
+        let search = tab.start_search();
+        let (lookup_g, _) = tab.start_lookup().unwrap();
+        assert_ne!(search.generation, lookup_g);
+        let page = LospecPage {
+            palettes: vec![lospec_palette("A", "a")],
+            total: 5,
+        };
+        let mut requests = LospecRequests {
+            listing: Some((search.generation, Pending::ready(Ok(page)))),
+            exact: Some((
+                search.generation,
+                Pending::ready(Ok(lospec_palette("Sweetie 16", "sweetie-16"))),
+            )),
+            lookup: Some((
+                lookup_g,
+                Pending::ready(Ok(lospec_palette("PICO-8", "pico-8"))),
+            )),
+        };
+        requests.poll(&mut tab);
+        assert!(requests.listing.is_none());
+        assert!(requests.exact.is_none());
+        assert!(requests.lookup.is_none());
+        assert!(!tab.listing_loading());
+        assert!(!tab.lookup_loading());
+        assert_eq!(tab.shown_of_total(), (1, 5));
+        assert!(tab.is_exact("sweetie-16"));
+        assert_eq!(tab.results().len(), 2);
+        assert_eq!(tab.lookup_result().unwrap().slug, "pico-8");
     }
 
     #[test]
