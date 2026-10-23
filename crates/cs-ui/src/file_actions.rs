@@ -650,9 +650,8 @@ fn pixel_unsaved(
     skin: &Skin,
     prompt: &UnsavedPrompt,
 ) -> Option<UnsavedChoice> {
-    let mut choice = None;
     let id = egui::Id::new("unsaved_changes");
-    pixel_ui::pixel_dialog(ctx, skin, id, "Unsaved changes", |ui| {
+    let dialog = pixel_ui::pixel_dialog(ctx, skin, id, "Unsaved changes", true, |ui| {
         ui.vertical_centered(|ui| {
             ui.label(&prompt.question);
             // `•` no está en la fuente pixel; `·` sí.
@@ -661,20 +660,22 @@ fn pixel_unsaved(
             }
         });
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = 4.0;
-            if pixel_ui::pixel_button(ui, skin, prompt.save).clicked() {
-                choice = Some(UnsavedChoice::Save);
-            }
-            if pixel_ui::pixel_button(ui, skin, prompt.discard).clicked() {
-                choice = Some(UnsavedChoice::Discard);
-            }
-            if pixel_ui::pixel_button(ui, skin, "Cancel").clicked() {
-                choice = Some(UnsavedChoice::Cancel);
-            }
-        });
+        let labels = [prompt.save, prompt.discard, "Cancel"];
+        let choices = [
+            UnsavedChoice::Save,
+            UnsavedChoice::Discard,
+            UnsavedChoice::Cancel,
+        ];
+        pixel_ui::pixel_buttons(ui, skin, &labels)
+            .iter()
+            .zip(choices)
+            .find_map(|(response, c)| response.clicked().then_some(c))
     });
-    choice
+    // Cerrar desde la barra de título es lo mismo que Cancel.
+    if dialog.closed {
+        return Some(UnsavedChoice::Cancel);
+    }
+    dialog.inner
 }
 
 /// Bytes del documento para guardarlo como `file_name`. Lo flotante todavía no está en el
@@ -836,10 +837,10 @@ mod tests {
     }
 
     #[test]
-    fn with_pixel_ui_the_unsaved_dialog_shows_the_three_buttons() {
+    fn with_pixel_ui_the_unsaved_dialog_shows_the_three_buttons_and_close() {
         let h = DialogHarness::new();
         assert!(h.app.pixel.skin().is_some());
-        assert_eq!(h.labels(), ["Cancel", "Discard", "Save"]);
+        assert_eq!(h.labels(), ["Cancel", "Close", "Discard", "Save"]);
     }
 
     #[test]
@@ -847,6 +848,17 @@ mod tests {
         let mut h = DialogHarness::new();
         h.click("Cancel");
         assert_eq!(h.app.pending, None);
+        assert!(
+            h.app.has_doc() && h.app.any_dirty(),
+            "the tab is still there, unsaved"
+        );
+    }
+
+    #[test]
+    fn the_close_button_cancels() {
+        let mut h = DialogHarness::new();
+        h.click("Close");
+        assert_eq!(h.app.pending, None, "the dialog is gone");
         assert!(
             h.app.has_doc() && h.app.any_dirty(),
             "the tab is still there, unsaved"

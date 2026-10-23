@@ -3,8 +3,8 @@
 //! redondeo).
 
 use eframe::egui::{
-    self, Align2, Color32, Id, Rect, Response, Sense, Shape, Stroke, StrokeKind, TextStyle, Ui,
-    Vec2, pos2, vec2,
+    self, Align2, Color32, Id, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, TextStyle,
+    Ui, Vec2, pos2, vec2,
 };
 use eframe::emath::GuiRounding as _;
 
@@ -13,14 +13,20 @@ use crate::skin::{IRect, Piece, Skin, WidgetState, nine_slice};
 /// Marco de los diálogos: la ventana de barra rosa del mockup de "Unsaved changes".
 const DIALOG_PIECE: &str = "window";
 const BUTTON_PIECE: &str = "button";
+/// Botón de cerrar de la barra de título.
+const CLOSE_PIECE: &str = "window.close";
 /// Margen entre el área del centro del 9-slice y lo de adentro (contenido o texto).
 const PADDING: f32 = 4.0;
+/// Espacio entre botones de una fila.
+const BUTTON_GAP: f32 = 4.0;
 /// Bordes del diálogo de respaldo (izquierda, arriba, derecha, abajo); arriba va la barra de
 /// título.
 const FALLBACK_DIALOG: [f32; 4] = [1.0, 13.0, 1.0, 1.0];
 /// Bordes y tamaño mínimo del botón de respaldo (el alto del botón del mockup).
 const FALLBACK_BUTTON: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const FALLBACK_BUTTON_SIZE: Vec2 = Vec2::new(32.0, 18.0);
+/// Tamaño del botón de cerrar de respaldo (el de la pieza del skin).
+const FALLBACK_CLOSE_SIZE: Vec2 = Vec2::new(9.0, 9.0);
 
 /// Bordes del 9-slice de la pieza en puntos (izquierda, arriba, derecha, abajo). Con la escala
 /// entera de Pixel UI, un punto es un píxel del skin.
@@ -95,13 +101,18 @@ fn flat_shapes(skin: &Skin, rect: Rect, title_bar: f32, pixels_per_point: f32) -
 /// Diálogo fijo en el centro de la pantalla, con el marco del skin en 9-slice. El título va
 /// centrado en la barra de arriba y el contenido en el área del centro, con 4 px de margen. El
 /// texto de adentro usa `color.text`.
+///
+/// Con `closable`, a la derecha de la barra va el botón de cerrar (`window.close`, o
+/// `window.close.hover` con el puntero encima; si el skin no lo trae, una × de líneas). Si se
+/// hace clic en él, [`DialogOutput::closed`] es `true`; qué hacer con eso lo decide quien llama.
 pub fn pixel_dialog<R>(
     ctx: &egui::Context,
     skin: &Skin,
     id: Id,
     title: &str,
+    closable: bool,
     add_contents: impl FnOnce(&mut Ui) -> R,
-) -> R {
+) -> DialogOutput<R> {
     let piece = skin.piece(DIALOG_PIECE, WidgetState::Normal);
     let [left, top, right, bottom] = piece.map_or(FALLBACK_DIALOG, borders);
     let side = |v: f32| (v + PADDING).min(i8::MAX as f32) as i8;
@@ -135,18 +146,142 @@ pub fn pixel_dialog<R>(
             let at = (bar.center() - galley.size() / 2.0).round_to_pixels(ppp);
             shapes.push(Shape::galley(at, galley, text));
             ui.painter().set(background, Shape::Vec(shapes));
-            inner.inner
+            let closed = closable && close_button(ui, skin, id.with("close"), bar);
+            DialogOutput {
+                inner: inner.inner,
+                closed,
+            }
         })
         .inner
 }
 
+/// Lo que devuelve [`pixel_dialog`]: lo que devolvió el contenido y si se hizo clic en el botón
+/// de cerrar de la barra de título.
+pub struct DialogOutput<R> {
+    pub inner: R,
+    pub closed: bool,
+}
+
+/// Botón de cerrar a la derecha de la barra de título `bar`, centrado en vertical y con el mismo
+/// margen a la derecha que arriba. Devuelve si se hizo clic.
+fn close_button(ui: &mut Ui, skin: &Skin, id: Id, bar: Rect) -> bool {
+    let size = skin
+        .piece(CLOSE_PIECE, WidgetState::Normal)
+        .map_or(FALLBACK_CLOSE_SIZE, |p| {
+            vec2(p.size[0] as f32, p.size[1] as f32)
+        });
+    let inset = ((bar.height() - size.y) / 2.0).floor().max(0.0);
+    let ppp = ui.ctx().pixels_per_point();
+    let rect = Rect::from_min_size(pos2(bar.max.x - inset - size.x, bar.min.y + inset), size)
+        .round_to_pixels(ppp);
+    let response = ui.interact(rect, id, Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Close"));
+    let state = if response.hovered() {
+        WidgetState::Hover
+    } else {
+        WidgetState::Normal
+    };
+    let shapes = match skin.piece(CLOSE_PIECE, state) {
+        Some(piece) => piece_shapes(piece, rect, ppp),
+        None => close_cross(rect, skin.colors().text, ppp),
+    };
+    ui.painter().extend(shapes);
+    response.clicked()
+}
+
+/// Respaldo del botón de cerrar: una × de dos líneas de 1 px, sin glifo.
+fn close_cross(rect: Rect, color: Color32, pixels_per_point: f32) -> Vec<Shape> {
+    let r = rect.shrink(2.0).round_to_pixels(pixels_per_point);
+    let stroke = Stroke::new(1.0, color);
+    vec![
+        Shape::line_segment([r.left_top(), r.right_bottom()], stroke),
+        Shape::line_segment([r.right_top(), r.left_bottom()], stroke),
+    ]
+}
+
+/// Tamaño del botón `label` ajustado al texto: 4 px de margen a cada lado del área del centro,
+/// sin bajar del tamaño de la pieza.
+fn button_size(ui: &Ui, skin: &Skin, label: &str) -> Vec2 {
+    let font = TextStyle::Button.resolve(ui.style());
+    let text = ui
+        .painter()
+        .layout_no_wrap(label.to_owned(), font, skin.colors().text)
+        .size();
+    let base = skin.piece(BUTTON_PIECE, WidgetState::Normal);
+    let [left, _, right, _] = base.map_or(FALLBACK_BUTTON, borders);
+    let min = base.map_or(FALLBACK_BUTTON_SIZE, |p| {
+        vec2(p.size[0] as f32, p.size[1] as f32)
+    });
+    vec2(
+        (left + PADDING + text.x + PADDING + right)
+            .ceil()
+            .max(min.x),
+        min.y,
+    )
+}
+
 /// Botón con `button` en reposo, `button.hover` con el puntero encima y `button.down` mientras
-/// se presiona.
+/// se presiona. Presionado, el texto baja 1 px.
 ///
 /// El ancho se ajusta al texto, con 4 px de margen a cada lado del área del centro, sin bajar
 /// del tamaño de la pieza. Devuelve un `Response` normal: clic, foco y teclado (Enter o Espacio
 /// con foco).
+// Para botones sueltos; por ahora los diálogos usan filas de `pixel_buttons`.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str) -> Response {
+    let size = button_size(ui, skin, label);
+    button_of_size(ui, skin, label, size)
+}
+
+/// Una fila de botones que ocupa todo el ancho disponible: el ancho se reparte en partes
+/// iguales, con 4 px entre botón y botón, y los píxeles que sobran van a los últimos (uno a cada
+/// uno, así los anchos son enteros y no difieren en más de 1 px). Ningún botón
+/// queda más angosto que su texto: si no entran, la fila se ensancha. Devuelve las respuestas en
+/// el orden de `labels`.
+///
+/// En la pasada de medición de un `Area` la fila mide lo justo, para no ensanchar el diálogo.
+pub fn pixel_buttons(ui: &mut Ui, skin: &Skin, labels: &[&str]) -> Vec<Response> {
+    let n = labels.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let sizes: Vec<Vec2> = labels.iter().map(|l| button_size(ui, skin, l)).collect();
+    let widest = sizes.iter().map(|s| s.x).fold(0.0, f32::max);
+    let gaps = BUTTON_GAP * (n - 1) as f32;
+    let needed = widest * n as f32 + gaps;
+    let total = if ui.is_sizing_pass() {
+        needed
+    } else {
+        ui.available_width().floor().max(needed)
+    };
+    let each = ((total - gaps) / n as f32).floor();
+    // Los píxeles que sobran (menos que `n`), uno por botón empezando por el último.
+    let extra = (total - gaps - each * n as f32) as usize;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = BUTTON_GAP;
+        labels
+            .iter()
+            .zip(&sizes)
+            .enumerate()
+            .map(|(i, (label, size))| {
+                let width = if i + extra >= n { each + 1.0 } else { each };
+                button_of_size(ui, skin, label, vec2(width, size.y))
+            })
+            .collect()
+    })
+    .inner
+}
+
+/// Dónde va el texto de un botón: centrado en `inner` y, presionado, 1 px más abajo. Alineado a
+/// píxeles de pantalla.
+fn label_pos(inner: Rect, size: Vec2, state: WidgetState, pixels_per_point: f32) -> Pos2 {
+    let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
+    (inner.center() - size / 2.0 + vec2(0.0, down)).round_to_pixels(pixels_per_point)
+}
+
+/// Un botón de `size` exacto, dibujado con la pieza del estado en que está.
+fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response {
     let colors = *skin.colors();
     let font = TextStyle::Button.resolve(ui.style());
     let galley = ui
@@ -154,13 +289,7 @@ pub fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str) -> Response {
         .layout_no_wrap(label.to_owned(), font, colors.text);
     let base = skin.piece(BUTTON_PIECE, WidgetState::Normal);
     let [left, top, right, bottom] = base.map_or(FALLBACK_BUTTON, borders);
-    let min = base.map_or(FALLBACK_BUTTON_SIZE, |p| {
-        vec2(p.size[0] as f32, p.size[1] as f32)
-    });
-    let width = (left + PADDING + galley.size().x + PADDING + right)
-        .ceil()
-        .max(min.x);
-    let (rect, response) = ui.allocate_exact_size(vec2(width, min.y), Sense::click());
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let enabled = ui.is_enabled();
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     if ui.is_rect_visible(rect) {
@@ -178,7 +307,7 @@ pub fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str) -> Response {
             None => painter.extend(flat_shapes(skin, rect, 0.0, ppp)),
         }
         let inner = Rect::from_min_max(rect.min + vec2(left, top), rect.max - vec2(right, bottom));
-        let at = (inner.center() - galley.size() / 2.0).round_to_pixels(ppp);
+        let at = label_pos(inner, galley.size(), state, ppp);
         painter.galley(at, galley, colors.text);
         if response.has_focus() {
             painter.rect_stroke(
@@ -194,7 +323,7 @@ pub fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str) -> Response {
 
 #[cfg(test)]
 mod tests {
-    use egui::{Event, PointerButton, Pos2, RawInput};
+    use egui::{Event, PointerButton, RawInput};
 
     use super::*;
 
@@ -269,7 +398,7 @@ mod tests {
         // El área se mide en el primer frame.
         for _ in 0..3 {
             frame(&ctx, screen(), |ui| {
-                pixel_dialog(ui.ctx(), &skin, id, "Unsaved changes", |ui| {
+                pixel_dialog(ui.ctx(), &skin, id, "Unsaved changes", false, |ui| {
                     content = ui.max_rect();
                     ui.label("Save changes before closing?");
                 });
@@ -332,5 +461,61 @@ mod tests {
         };
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
         assert_eq!(piece_shapes(&piece, rect, 1.0).len(), 4, "only the corners");
+    }
+
+    #[test]
+    fn a_row_of_buttons_fills_the_content_width_evenly() {
+        let ctx = egui::Context::default();
+        let skins = [
+            Skin::load(&ctx, crate::skin::EMBEDDED).unwrap(),
+            Skin::fallback(),
+        ];
+        for skin in &skins {
+            let id = Id::new((
+                "row",
+                skin.piece(BUTTON_PIECE, WidgetState::Normal).is_some(),
+            ));
+            let mut content = Rect::NOTHING;
+            let mut rects = Vec::new();
+            for _ in 0..3 {
+                frame(&ctx, screen(), |ui| {
+                    pixel_dialog(ui.ctx(), skin, id, "Unsaved changes", true, |ui| {
+                        content = ui.max_rect();
+                        ui.label("A long question that is wider than the buttons, surely?");
+                        rects = pixel_buttons(ui, skin, &["Save", "Discard", "Cancel"])
+                            .iter()
+                            .map(|r| r.rect)
+                            .collect();
+                    });
+                });
+            }
+            assert_eq!(rects.len(), 3);
+            assert_eq!(rects[0].min.x, content.min.x, "{rects:?} in {content:?}");
+            assert!(
+                (rects[2].max.x - content.max.x).abs() < 1.0,
+                "{rects:?} in {content:?}"
+            );
+            for pair in rects.windows(2) {
+                assert_eq!(pair[1].min.x - pair[0].max.x, BUTTON_GAP, "{rects:?}");
+            }
+            let widths: Vec<f32> = rects.iter().map(|r| r.width()).collect();
+            for w in &widths {
+                assert_eq!(w.fract(), 0.0, "whole pixels: {widths:?}");
+                assert!((w - widths[0]).abs() <= 1.0, "{widths:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn a_pressed_label_goes_one_point_down() {
+        let inner = Rect::from_min_size(pos2(10.0, 20.0), vec2(43.0, 10.0));
+        let size = vec2(20.3, 7.0);
+        for ppp in [1.0, 2.0, 3.0] {
+            let normal = label_pos(inner, size, WidgetState::Normal, ppp);
+            let hover = label_pos(inner, size, WidgetState::Hover, ppp);
+            let down = label_pos(inner, size, WidgetState::Down, ppp);
+            assert_eq!(hover, normal);
+            assert_eq!(down - normal, vec2(0.0, 1.0), "at {ppp}");
+        }
     }
 }
