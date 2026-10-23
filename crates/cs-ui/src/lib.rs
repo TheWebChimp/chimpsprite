@@ -16,6 +16,7 @@ use cs_io::files;
 mod guides;
 mod home;
 mod instance_ops;
+mod palette_library;
 mod panels;
 mod platform;
 mod recent;
