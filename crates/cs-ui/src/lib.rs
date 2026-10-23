@@ -19,6 +19,8 @@ mod guides;
 mod home;
 mod instance_ops;
 mod lospec_client;
+#[cfg(not(target_arch = "wasm32"))]
+mod lospec_examples;
 mod lospec_tab;
 mod palette_library;
 mod panels;

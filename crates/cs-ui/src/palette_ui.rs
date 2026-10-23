@@ -10,6 +10,8 @@ use eframe::egui;
 use crate::ChimpApp;
 use crate::lospec_client::{self, FetchError, Pending};
 #[cfg(not(target_arch = "wasm32"))]
+use crate::lospec_examples::{self, ExampleCache};
+#[cfg(not(target_arch = "wasm32"))]
 use crate::lospec_tab::CountKind;
 use crate::lospec_tab::LospecTab;
 use crate::palette_library::{Preset, PresetSource};
@@ -52,11 +54,14 @@ pub struct PresetsWindow {
     search: String,
     lospec: LospecTab,
     requests: LospecRequests,
+    /// Imágenes de ejemplo de Lospec; se sueltan al cerrar la ventana.
+    #[cfg(not(target_arch = "wasm32"))]
+    examples: ExampleCache,
 }
 
 /// Plazo de una petición a Lospec. `ehttp` no corta una conexión colgada antes de recibir los
 /// encabezados, así que el corte se hace acá.
-const REQUEST_TIMEOUT_SECS: f64 = 30.0;
+pub(crate) const REQUEST_TIMEOUT_SECS: f64 = 30.0;
 
 /// Una petición en curso: la `generation` con la que se pidió y cuándo empezó (`i.time` de egui,
 /// en segundos; sirve también en web, a diferencia de `Instant`).
@@ -311,11 +316,18 @@ impl ChimpApp {
         let mut delete = None;
         let mut set_default = None;
         // Se revisa aunque la pestaña Lospec no esté a la vista, para no perder respuestas.
-        window
-            .requests
-            .poll(&mut window.lospec, ctx.input(|i| i.time));
+        let now = ctx.input(|i| i.time);
+        window.requests.poll(&mut window.lospec, now);
+        #[cfg(not(target_arch = "wasm32"))]
+        window.examples.poll(now, |url, image| {
+            ctx.load_texture(url, image, egui::TextureOptions::NEAREST)
+        });
+        #[cfg(not(target_arch = "wasm32"))]
+        let busy = window.requests.is_busy() || window.examples.is_busy();
+        #[cfg(target_arch = "wasm32")]
+        let busy = window.requests.is_busy();
         // Sin repintados el plazo no se revisaría hasta que el usuario mueva algo.
-        if window.requests.is_busy() {
+        if busy {
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
         let mut lospec_action = None;
@@ -532,9 +544,17 @@ fn lospec_ui(
     let PresetsWindow {
         lospec: tab,
         requests,
+        #[cfg(not(target_arch = "wasm32"))]
+        examples,
         ..
     } = window;
     let mut action = None;
+    // Solo escritorio: el CDN de las imágenes no manda CORS.
+    #[cfg(not(target_arch = "wasm32"))]
+    let mut examples_ui =
+        |ui: &mut egui::Ui, p: &LospecPalette| lospec_examples::show(ui, p, examples, now);
+    #[cfg(target_arch = "wasm32")]
+    let mut examples_ui = |_: &mut egui::Ui, _: &LospecPalette| {};
 
     #[cfg(not(target_arch = "wasm32"))]
     search_form(ui, &ctx, tab, requests);
@@ -565,7 +585,14 @@ fn lospec_ui(
 
     egui::ScrollArea::vertical().show(ui, |ui| {
         if let Some(p) = tab.lookup_result() {
-            lospec_row(ui, p, false, in_library(&p.title), &mut action);
+            lospec_row(
+                ui,
+                p,
+                false,
+                in_library(&p.title),
+                &mut action,
+                &mut examples_ui,
+            );
             ui.separator();
         }
         for p in tab.results() {
@@ -575,6 +602,7 @@ fn lospec_ui(
                 tab.is_exact(&p.slug),
                 in_library(&p.title),
                 &mut action,
+                &mut examples_ui,
             );
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -672,13 +700,15 @@ fn search_form(
     }
 }
 
-/// Fila de un resultado: título, autor, colores, likes y descargas, tira, Apply/Save y link.
+/// Fila de un resultado: título, autor, colores, likes y descargas, tira, ejemplos (con
+/// `examples`), Apply/Save y link.
 fn lospec_row(
     ui: &mut egui::Ui,
     p: &LospecPalette,
     exact: bool,
     in_library: bool,
     action: &mut Option<LospecAction>,
+    examples: &mut impl FnMut(&mut egui::Ui, &LospecPalette),
 ) {
     ui.group(|ui| {
         ui.set_width(ui.available_width());
@@ -712,6 +742,7 @@ fn lospec_row(
             });
         });
         panels::palette_strip(ui, &p.palette, STRIP_COLORS, 8.0);
+        examples(ui, p);
         // El link solo se abre con un slug validado: la URL va a `explorer`/`open`/`xdg-open`.
         if cs_io::lospec::is_valid_slug(&p.slug) {
             let url = cs_io::lospec::page_url(&p.slug);

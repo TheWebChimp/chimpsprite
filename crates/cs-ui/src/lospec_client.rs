@@ -15,6 +15,9 @@ pub enum FetchError {
     NotFound,
     Status(u16),
     Parse(LospecError),
+    /// Imagen de ejemplo demasiado grande o que no es un PNG válido.
+    #[cfg(not(target_arch = "wasm32"))]
+    BadImage,
 }
 
 /// Respuesta que todavía puede no haber llegado. `poll` la entrega una sola vez.
@@ -49,17 +52,23 @@ pub fn classify<T>(
     bytes: &[u8],
     parse: impl FnOnce(&[u8]) -> Result<T, LospecError>,
 ) -> Result<T, FetchError> {
+    check_status(status)?;
+    parse(bytes).map_err(FetchError::Parse)
+}
+
+fn check_status(status: u16) -> Result<(), FetchError> {
     match status {
-        200..=299 => parse(bytes).map_err(FetchError::Parse),
+        200..=299 => Ok(()),
         404 => Err(FetchError::NotFound),
         other => Err(FetchError::Status(other)),
     }
 }
 
+/// `handle` recibe el código de estado y el cuerpo; corre en el hilo de `ehttp` (en escritorio).
 fn fetch<T: Send + 'static>(
     ctx: &egui::Context,
     url: String,
-    parse: impl FnOnce(&[u8]) -> Result<T, LospecError> + Send + 'static,
+    handle: impl FnOnce(u16, &[u8]) -> Result<T, FetchError> + Send + 'static,
 ) -> Pending<T> {
     let slot = Arc::new(Mutex::new(None));
     let out = Arc::clone(&slot);
@@ -71,7 +80,7 @@ fn fetch<T: Send + 'static>(
     );
     ehttp::fetch(request, move |response| {
         let result = match response {
-            Ok(r) => classify(r.status, &r.bytes, parse),
+            Ok(r) => handle(r.status, &r.bytes),
             Err(e) => {
                 log::warn!("lospec request failed: {e}");
                 Err(FetchError::Network)
@@ -87,8 +96,8 @@ fn fetch<T: Send + 'static>(
 
 pub fn fetch_palette(ctx: &egui::Context, slug: &str) -> Pending<LospecPalette> {
     let owned = slug.to_string();
-    fetch(ctx, lospec::palette_url(slug), move |b| {
-        lospec::parse_palette(b, &owned)
+    fetch(ctx, lospec::palette_url(slug), move |s, b| {
+        classify(s, b, |b| lospec::parse_palette(b, &owned))
     })
 }
 
@@ -98,7 +107,19 @@ pub fn fetch_listing(
     ctx: &egui::Context,
     query: &lospec::LospecQuery,
 ) -> Pending<lospec::LospecPage> {
-    fetch(ctx, query.listing_url(), lospec::parse_listing)
+    fetch(ctx, query.listing_url(), |s, b| {
+        classify(s, b, lospec::parse_listing)
+    })
+}
+
+/// Solo escritorio: el CDN de las imágenes de ejemplo no manda CORS. Se decodifica en el hilo
+/// de la petición para no frenar la UI.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn fetch_example(ctx: &egui::Context, url: &str) -> Pending<egui::ColorImage> {
+    fetch(ctx, url.to_string(), |s, b| {
+        check_status(s)?;
+        crate::lospec_examples::decode_example(b)
+    })
 }
 
 #[cfg(test)]
@@ -146,6 +167,11 @@ mod tests {
         let r = get(q.listing_url());
         let page = classify(r.status, &r.bytes, lospec::parse_listing).unwrap();
         assert!(!page.palettes.is_empty());
+        let url = page.palettes[0].examples[0].clone();
+        let r = get(url);
+        check_status(r.status).unwrap();
+        let image = crate::lospec_examples::decode_example(&r.bytes).unwrap();
+        assert!(image.size[0] > 0 && image.size[1] > 0);
         let r = get(lospec::palette_url("sweetie-16"));
         let p = classify(r.status, &r.bytes, |b| {
             lospec::parse_palette(b, "sweetie-16")
