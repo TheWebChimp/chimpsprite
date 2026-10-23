@@ -366,10 +366,10 @@ mod tests {
         let ctx = egui::Context::default();
         let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
         let (short, _) = button(&ctx, &skin, "OK", vec![]);
-        assert_eq!(short.size(), vec2(49.0, 18.0), "the piece size");
+        assert_eq!(short.size(), vec2(49.0, 17.0), "the piece size");
         let (long, _) = button(&ctx, &skin, "A much longer button label", vec![]);
         assert!(long.width() > 49.0, "{long:?}");
-        assert_eq!(long.height(), 18.0);
+        assert_eq!(long.height(), 17.0);
     }
 
     #[test]

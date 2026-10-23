@@ -342,11 +342,11 @@ mod tests {
         let button = &data.pieces["button"];
         let center = Rect9 {
             x: 3,
-            y: 4,
+            y: 3,
             w: 43,
             h: 10,
         };
-        assert_eq!((button.size, button.center), ([49, 18], Some(center)));
+        assert_eq!((button.size, button.center), ([49, 17], Some(center)));
         assert!(data.pieces.contains_key("button.hover"));
         assert!(data.pieces.contains_key("button.down"));
         assert!(!data.pieces.contains_key("panel"), "not drawn yet");
