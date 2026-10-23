@@ -119,6 +119,24 @@ impl Palette {
     pub fn is_empty(&self) -> bool {
         self.colors.is_empty()
     }
+
+    /// Índice del color más cercano (distancia euclidiana RGB), sin contar `transparent_index`.
+    /// Con alfa < 128, o si no hay otro color, devuelve `transparent_index`.
+    pub fn nearest(&self, c: Rgba, transparent_index: u8) -> u8 {
+        if c.a < 128 {
+            return transparent_index;
+        }
+        let dist = |p: &Rgba| {
+            let d = |a: u8, b: u8| (a as i32 - b as i32).pow(2);
+            d(p.r, c.r) + d(p.g, c.g) + d(p.b, c.b)
+        };
+        self.colors
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i as u8 != transparent_index)
+            .min_by_key(|(_, p)| dist(p))
+            .map_or(transparent_index, |(i, _)| i as u8)
+    }
 }
 
 #[cfg(test)]
@@ -139,5 +157,32 @@ mod tests {
         assert_eq!(Rgba::new(1, 2, 3, 4).to_hex(), "#01020304");
         assert_eq!(Rgba::parse_hex("#12"), None);
         assert_eq!(Rgba::parse_hex("#zzzzzz"), None);
+    }
+
+    #[test]
+    fn nearest_skips_the_transparent_index_and_low_alpha() {
+        let p = Palette::new(vec![
+            Rgba::rgb(0, 0, 0),
+            Rgba::rgb(10, 10, 10),
+            Rgba::rgb(250, 250, 250),
+        ]);
+        assert_eq!(
+            p.nearest(Rgba::rgb(5, 5, 5), 0),
+            1,
+            "index 0 is transparent"
+        );
+        assert_eq!(p.nearest(Rgba::rgb(200, 200, 200), 0), 2);
+        assert_eq!(p.nearest(Rgba::rgb(5, 5, 5), 1), 0);
+        assert_eq!(
+            p.nearest(Rgba::new(250, 250, 250, 127), 0),
+            0,
+            "alpha < 128"
+        );
+        let lone = Palette::new(vec![Rgba::rgb(1, 2, 3)]);
+        assert_eq!(
+            lone.nearest(Rgba::rgb(1, 2, 3), 0),
+            0,
+            "nothing else to pick"
+        );
     }
 }

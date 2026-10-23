@@ -62,21 +62,7 @@ pub fn decode_png(bytes: &[u8]) -> Result<Bitmap> {
 
 /// Color de la paleta más cercano (distancia euclidiana RGB); transparente si alpha < 128.
 pub fn nearest_index(sprite: &Sprite, c: Rgba, transparent_index: u8) -> u8 {
-    if c.a < 128 {
-        return transparent_index;
-    }
-    let dist = |p: &Rgba| {
-        let d = |a: u8, b: u8| (a as i32 - b as i32).pow(2);
-        d(p.r, c.r) + d(p.g, c.g) + d(p.b, c.b)
-    };
-    sprite
-        .palette
-        .colors()
-        .iter()
-        .enumerate()
-        .filter(|(i, _)| *i as u8 != transparent_index)
-        .min_by_key(|(_, p)| dist(p))
-        .map_or(transparent_index, |(i, _)| i as u8)
+    sprite.palette.nearest(c, transparent_index)
 }
 
 fn to_image(sprite: &Sprite, bitmap: &Bitmap) -> Image {
