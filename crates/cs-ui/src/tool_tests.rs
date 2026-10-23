@@ -108,6 +108,27 @@ fn tool_options_saved_without_the_brush_shape_read_as_round() {
 }
 
 #[test]
+fn saved_brush_size_is_clamped_and_the_selection_mode_is_not_saved() {
+    use crate::editor::{MAX_BRUSH_SIZE, SelectionMode, ToolOptions};
+    let read = |json: &str| serde_json::from_str::<ToolOptions>(json).unwrap();
+    assert_eq!(read(r#"{"brush_size":0}"#).brush_size, 1);
+    assert_eq!(read(r#"{"brush_size":4000}"#).brush_size, MAX_BRUSH_SIZE);
+    assert_eq!(read(r#"{"brush_size":7}"#).brush_size, 7);
+    assert_eq!(
+        read(r#"{"selection_mode":"Subtract"}"#).selection_mode,
+        SelectionMode::Replace,
+        "an old saved mode is ignored"
+    );
+    let add = ToolOptions {
+        selection_mode: SelectionMode::Add,
+        ..Default::default()
+    };
+    let json = serde_json::to_string(&add).unwrap();
+    assert!(!json.contains("selection_mode"), "{json}");
+    assert_eq!(read(&json).selection_mode, SelectionMode::Replace);
+}
+
+#[test]
 fn the_editor_paints_with_the_chosen_brush_shape() {
     use cs_tools::BrushShape;
     let mut e = editor(ToolKind::Pencil);

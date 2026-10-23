@@ -300,6 +300,8 @@ pub const MAX_BRUSH_SIZE: u32 = 32;
 #[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub struct ToolOptions {
+    /// Un ajuste guardado fuera de `1..=MAX_BRUSH_SIZE` se lleva al rango al leerlo.
+    #[serde(deserialize_with = "clamped_brush_size")]
     pub brush_size: u32,
     pub brush_shape: BrushShape,
     pub pixel_perfect: bool,
@@ -310,6 +312,8 @@ pub struct ToolOptions {
     /// Shift presionado (lo actualiza la UI cada frame). No se guarda.
     #[serde(skip)]
     pub constrain: bool,
+    /// No se guarda: cada sesión empieza en Replace.
+    #[serde(skip)]
     pub selection_mode: SelectionMode,
     /// Varita: diferencia máxima por canal.
     pub tolerance: u8,
@@ -321,6 +325,11 @@ pub struct ToolOptions {
     pub dither: Dither,
     /// Cómo se rota la selección (herramientas de selección y Move).
     pub rotation: cs_raster::RotationAlgorithm,
+}
+
+fn clamped_brush_size<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
+    let size = <u32 as serde::Deserialize>::deserialize(d)?;
+    Ok(size.clamp(1, MAX_BRUSH_SIZE))
 }
 
 impl Default for ToolOptions {
