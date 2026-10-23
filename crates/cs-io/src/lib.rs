@@ -8,6 +8,7 @@ mod error;
 pub mod export;
 pub mod files;
 pub mod import;
+pub mod lospec;
 pub mod palette_files;
 
 pub use error::{IoError, Result};
