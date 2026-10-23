@@ -547,6 +547,8 @@ impl CanvasView {
         // cambia el grosor. Se leen los eventos crudos con los modificadores de cada evento. egui
         // convierte Ctrl+rueda en `zoom_delta` y no en scroll, y nadie usa `zoom_delta`, así que
         // la interfaz no se agranda ni los paneles se desplazan.
+        // Durante un trazo el grosor no cambia: Ctrl+rueda se ignora (ni grosor ni zoom).
+        let painting = editor.is_painting();
         let brush = editor.active_tool().uses_brush();
         // Los restos de rueda de touchpad solo siguen sumando mientras dura el gesto: Ctrl
         // mantenido, herramienta de pincel y ninguna rueda sin Ctrl en el medio.
@@ -569,6 +571,9 @@ impl CanvasView {
             });
             let mut scroll = 0.0;
             for (unit, dy, command) in wheel {
+                if command && brush && painting {
+                    continue;
+                }
                 if command && brush {
                     let steps = brush_wheel_steps(&mut self.wheel_rest, unit, dy);
                     if steps != 0 {
@@ -1221,11 +1226,8 @@ impl CanvasView {
                         painter.rect_filled(row, 0.0, fill);
                     }
                 }
-                // Medio trazo hacia adentro, como `StrokeKind::Inside` del cuadrado.
-                for (a, b) in brush_edges(&points) {
-                    let (dx, dy) = ((b.0 - a.0) as f32, (b.1 - a.1) as f32);
-                    let inward = Vec2::new(-dy, dx) * (stroke.width / 2.0);
-                    painter.line_segment([at(a) + inward, at(b) + inward], stroke);
+                for segment in outline_segments(&points, at, stroke.width) {
+                    painter.line_segment(segment, stroke);
                 }
             } else {
                 let r = match cells {
@@ -1719,6 +1721,34 @@ fn brush_edges(points: &[(i32, i32)]) -> Vec<((i32, i32), (i32, i32))> {
         }
     }
     out
+}
+
+/// Segmentos en pantalla del borde de un pincel (`at` lleva una esquina de píxel a pantalla), a
+/// medio trazo hacia adentro como `StrokeKind::Inside` del cuadrado. En las esquinas interiores
+/// el segmento que llega se alarga un ancho de trazo: si no, entre los dos lados queda un hueco
+/// de `width`×`width`. Las exteriores ya se tocan y no se alargan (sobresaldrían del pincel).
+fn outline_segments(
+    points: &[(i32, i32)],
+    at: impl Fn((i32, i32)) -> Pos2,
+    width: f32,
+) -> Vec<[Pos2; 2]> {
+    let edges = brush_edges(points);
+    let next: HashMap<(i32, i32), (i32, i32)> = edges.iter().copied().collect();
+    edges
+        .iter()
+        .map(|&(a, b)| {
+            let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+            let dir = Vec2::new(dx as f32, dy as f32);
+            let inward = Vec2::new(-dir.y, dir.x) * (width / 2.0);
+            // Sentido horario: el lado siguiente dobla a la izquierda en una esquina interior.
+            let inner = next.get(&b).is_some_and(|&c| {
+                let (ex, ey) = (c.0 - b.0, c.1 - b.1);
+                dx * ey - dy * ex < 0
+            });
+            let reach = if inner { dir * width } else { Vec2::ZERO };
+            [at(a) + inward, at(b) + inward + reach]
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -2230,6 +2260,26 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_wheel_does_nothing_during_a_stroke() {
+        use egui::{Modifiers, MouseWheelUnit};
+        let mut h = Harness::new();
+        h.editor.set_tool(ToolKind::Pencil);
+        let zoom = h.canvas.zoom;
+        let pos = h.screen((8, 8));
+        h.frame(vec![Event::PointerMoved(pos)]);
+        h.frame(vec![Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        }]);
+        assert!(h.editor.is_painting());
+        h.wheel(MouseWheelUnit::Line, 1.0, Modifiers::COMMAND);
+        assert_eq!(h.editor.options.brush_size, 1, "same size mid-stroke");
+        assert_eq!(h.canvas.zoom, zoom, "and no zoom");
+    }
+
+    #[test]
     fn ctrl_wheel_zooms_without_a_brush_and_the_plain_wheel_always_zooms() {
         use egui::{Modifiers, MouseWheelUnit};
         for tool in [ToolKind::Hand, ToolKind::RectSelect] {
@@ -2283,6 +2333,34 @@ mod tests {
             let (dx, dy) = (b.0 - a.0, b.1 - a.1);
             let inside = (a.0.min(b.0) + (-dy).min(0), a.1.min(b.1) + dx.min(0));
             assert!(cross.contains(&inside), "{a:?}->{b:?}");
+        }
+    }
+
+    #[test]
+    fn round_outline_segments_close_the_inner_corners() {
+        use cs_tools::BrushShape;
+        // Zoom 10 y trazo de 1: medio píxel de pantalla hacia adentro.
+        let cross = cs_raster::brush_points((0, 0), 3, BrushShape::Round);
+        let at = |(x, y): (i32, i32)| Pos2::new(x as f32 * 10.0, y as f32 * 10.0);
+        let segments = outline_segments(&cross, at, 1.0);
+        assert_eq!(segments.len(), 12);
+        // Arriba del brazo izquierdo, hacia la derecha: termina en una esquina interior y se
+        // alarga un ancho de trazo para tapar el hueco con el lado del brazo de arriba.
+        assert!(
+            segments.contains(&[Pos2::new(-10.0, 0.5), Pos2::new(1.0, 0.5)]),
+            "{segments:?}"
+        );
+        // Arriba del brazo de arriba: dos esquinas exteriores, sin alargar (no sobresale).
+        assert!(segments.contains(&[Pos2::new(0.0, -9.5), Pos2::new(10.0, -9.5)]));
+        // Cuadrado de 2: solo esquinas exteriores.
+        let square = cs_raster::brush_points((0, 0), 2, BrushShape::Square);
+        for [a, b] in outline_segments(&square, at, 1.0) {
+            for p in [a, b] {
+                assert!(
+                    (0.0..=20.0).contains(&p.x) && (0.0..=20.0).contains(&p.y),
+                    "{p:?} sticks out"
+                );
+            }
         }
     }
 
