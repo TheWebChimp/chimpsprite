@@ -481,7 +481,7 @@ pub fn palette_strip(ui: &mut egui::Ui, palette: &Palette, max: usize, size: f32
     });
 }
 
-/// `menus`: con un diálogo abierto, Presets ▾ y ⋯ quedan desactivados.
+/// `menus`: con un diálogo abierto, Presets ⏷ y … quedan desactivados.
 pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<PaletteAction> {
     ui.add_space(6.0);
     ui.heading("Color");
@@ -507,10 +507,10 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<Pa
     ui.horizontal(|ui| {
         ui.label("Palette");
         ui.add_enabled_ui(menus, |ui| {
-            if ui.small_button("Presets ▾").clicked() {
+            if ui.small_button("Presets ⏷").clicked() {
                 action = Some(PaletteAction::OpenPresets);
             }
-            ui.menu_button("⋯", |ui| {
+            ui.menu_button("…", |ui| {
                 let mut item = |ui: &mut egui::Ui, label: &str, a: PaletteAction| {
                     if ui.button(label).clicked() {
                         action = Some(a);
@@ -564,6 +564,9 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<Pa
     action
 }
 
+/// Lado máximo del cuadro del selector de color, en puntos.
+const COLOR_PICKER_MAX: f32 = 240.0;
+
 /// Selector de color libre (RGBA): edita el color primario.
 pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
     let cs_core::PixelValue::Rgba(current) = editor.primary else {
@@ -571,10 +574,11 @@ pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
         return;
     };
     let mut c32 = to_color32(current);
-    // El cuadro de saturación/brillo ocupa todo el ancho del panel. Se restaura después: si no,
-    // los sliders de los paneles siguientes heredan ese ancho y agrandan el panel en cada frame.
+    // El cuadro de saturación/brillo ocupa el ancho del panel hasta `COLOR_PICKER_MAX` (es
+    // cuadrado: con un sidebar ancho se haría enorme). Se restaura después: si no, los sliders de
+    // los paneles siguientes heredan ese ancho y agrandan el panel en cada frame.
     let slider_width = ui.spacing().slider_width;
-    ui.spacing_mut().slider_width = (ui.available_width() - 8.0).max(120.0);
+    ui.spacing_mut().slider_width = (ui.available_width() - 8.0).clamp(120.0, COLOR_PICKER_MAX);
     let picked = egui::color_picker::color_picker_color32(
         ui,
         &mut c32,

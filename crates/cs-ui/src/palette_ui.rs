@@ -1,4 +1,4 @@
-//! Ventana Palette Presets, menú ⋯ del panel de paleta y sus diálogos.
+//! Ventana Palette Presets, menú … del panel de paleta y sus diálogos.
 
 use cs_core::Palette;
 use cs_io::palette_files::{self, NamedPalette, PaletteFormat};
