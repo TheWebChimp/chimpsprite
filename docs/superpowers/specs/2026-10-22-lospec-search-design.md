@@ -199,3 +199,21 @@ error.
   - Save con un nombre que ya existe pide confirmación.
 - **Contra Lospec real:** un test `#[ignore]` que busca `gameboy` y trae `sweetie-16`. Se corre
   a mano con `cargo test -- --ignored`.
+
+## 8. Imágenes de ejemplo (agregado el 2026-10-23)
+
+El usuario pidió ver los ejemplos de cada paleta, como en la web de Lospec.
+
+- **Datos:** cada paleta del listado trae `examples: [{ image: "palette-examples/<nombre>.png", … }]`.
+  La imagen se sirve desde `https://cdn.lospec.com/<image>` (verificado: 200, `image/png`).
+  El JSON de una paleta por slug no trae ejemplos.
+- **Solo escritorio:** el CDN no manda `Access-Control-Allow-Origin`, así que en web no se cargan.
+- **`cs-io::lospec`:** `LospecPalette` gana `examples: Vec<String>` con las URLs completas. Solo se
+  aceptan rutas `palette-examples/<nombre>.png` donde `<nombre>` es `[a-z0-9-]+`; las demás se
+  descartan. `parse_palette` deja la lista vacía.
+- **Carga:** con el mismo cliente (`ehttp`), solo para las filas visibles. Tope de 4 MB por imagen.
+  Se decodifica el PNG y se guarda como textura en una caché por URL mientras la ventana está
+  abierta. Si falla, la fila queda sin imagen y no se muestra error.
+- **Interfaz:** debajo de la tira de colores va el primer ejemplo, al ancho de la fila (como mucho
+  su tamaño ×4), con filtrado *nearest*. Con más de un ejemplo, ◀ ▶ y "1/5" para pasar entre ellos.
+- **Tests:** parseo de `examples` desde la fixture real y rutas inválidas descartadas.
