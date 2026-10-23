@@ -14,6 +14,9 @@ misma licencia que el repositorio (MIT o Apache-2.0, a elección; ver `LICENSE-M
 
 ## skin.aseprite
 
+El skin (incluido el arte copiado del mockup) es del autor del proyecto y se distribuye con la
+misma licencia que el repositorio, igual que la fuente.
+
 Las piezas de la interfaz. Se dibujan en la capa **"Skin (dibuja aquí)"**; la capa "Guías" queda
 oculta.
 

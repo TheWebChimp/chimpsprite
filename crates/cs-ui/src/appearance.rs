@@ -81,6 +81,11 @@ pub struct PixelUi {
     skin: Option<Skin>,
     /// Lo último aplicado: `(encendido, escala)`.
     applied: Option<(bool, u8)>,
+    /// El Ctrl+/- del usuario antes de encender Pixel UI; se devuelve al apagarlo.
+    prev_zoom: f32,
+    /// La escala entera ya rige (`pixels_per_point` la alcanzó): antes, los widgets pixel se
+    /// dibujarían un frame a otra escala.
+    scale_ready: bool,
     /// Recarga en vivo (`CHIMPSPRITE_SKIN`).
     #[cfg(not(target_arch = "wasm32"))]
     watcher: Option<crate::skin::watch::SkinWatcher>,
@@ -91,14 +96,16 @@ impl PixelUi {
         Self {
             skin: None,
             applied: None,
+            prev_zoom: 1.0,
+            scale_ready: false,
             #[cfg(not(target_arch = "wasm32"))]
             watcher: crate::skin::watch::SkinWatcher::from_env(),
         }
     }
 
-    /// El skin, solo con Pixel UI encendido.
+    /// El skin, solo con Pixel UI encendido y la escala entera ya aplicada.
     pub fn skin(&self) -> Option<&Skin> {
-        if self.applied.is_some_and(|(on, _)| on) {
+        if self.scale_ready && self.applied.is_some_and(|(on, _)| on) {
             self.skin.as_ref()
         } else {
             None
@@ -109,15 +116,22 @@ impl PixelUi {
     /// mantiene `pixels_per_point` entero aunque cambie la escala del sistema.
     pub fn update(&mut self, ctx: &egui::Context, view: &ViewSettings) {
         let state = (view.pixel_ui, view.pixel_scale());
+        let was_on = self.applied.is_some_and(|(on, _)| on);
         if view.pixel_ui {
+            if !was_on {
+                self.prev_zoom = ctx.zoom_factor();
+            }
             self.load_skin(ctx);
+            // Lo que rige en este frame; la escala nueva vale desde el siguiente.
+            self.scale_ready = ctx.pixels_per_point() == state.1 as f32;
             // No hace nada si ya es esa escala; egui la traduce a zoom = escala / la del sistema.
             ctx.set_pixels_per_point(state.1 as f32);
+        } else {
+            self.scale_ready = false;
         }
         if self.applied == Some(state) {
             return;
         }
-        let was_on = self.applied.is_some_and(|(on, _)| on);
         self.applied = Some(state);
         ctx.set_fonts(font_definitions(view.pixel_ui));
         apply_style(ctx, view.pixel_ui);
@@ -127,8 +141,8 @@ impl PixelUi {
             o.zoom_with_keyboard = !view.pixel_ui && !cfg!(target_arch = "wasm32");
         });
         if was_on && !view.pixel_ui {
-            // Vuelve a la escala del sistema.
-            ctx.set_zoom_factor(1.0);
+            // Devuelve el zoom que tenía el usuario.
+            ctx.set_zoom_factor(self.prev_zoom);
         }
     }
 
@@ -187,6 +201,7 @@ mod tests {
         };
         // La escala nueva vale desde el frame siguiente.
         frame(&ctx, &mut pixel, &view);
+        assert!(pixel.skin().is_none(), "the scale is not in effect yet");
         frame(&ctx, &mut pixel, &view);
         assert_eq!(ctx.pixels_per_point(), 3.0);
         let style = ctx.style_of(egui::Theme::Dark);
@@ -213,5 +228,25 @@ mod tests {
             defaults[&TextStyle::Body]
         );
         assert!(pixel.skin().is_none());
+    }
+
+    #[test]
+    fn switching_off_gives_back_the_users_zoom() {
+        let ctx = egui::Context::default();
+        let mut pixel = PixelUi::from_env();
+        ctx.set_zoom_factor(1.25);
+        let mut view = ViewSettings {
+            pixel_ui: true,
+            ui_scale: 3,
+            ..Default::default()
+        };
+        for _ in 0..3 {
+            frame(&ctx, &mut pixel, &view);
+        }
+        view.pixel_ui = false;
+        for _ in 0..3 {
+            frame(&ctx, &mut pixel, &view);
+        }
+        assert_eq!(ctx.zoom_factor(), 1.25);
     }
 }
