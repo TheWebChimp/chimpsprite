@@ -25,6 +25,7 @@ pub enum ToolKind {
     Lasso,
     PolygonLasso,
     MagicWand,
+    Hand,
     Move,
     Pencil,
     Spray,
@@ -37,13 +38,15 @@ pub enum ToolKind {
     Ellipse,
     Jumble,
     Text,
+    Contour,
+    Blur,
     Slice,
     Artboard,
 }
 
 impl ToolKind {
     /// Grupos de la barra (como en Aseprite); el primero de cada grupo es el predeterminado.
-    pub const GROUPS: [&'static [ToolKind]; 12] = [
+    pub const GROUPS: [&'static [ToolKind]; 13] = [
         &[
             ToolKind::RectSelect,
             ToolKind::EllipseSelect,
@@ -51,16 +54,17 @@ impl ToolKind {
             ToolKind::PolygonLasso,
             ToolKind::MagicWand,
         ],
-        &[ToolKind::Move],
+        &[ToolKind::Hand],
         &[ToolKind::Pencil, ToolKind::Spray],
         &[ToolKind::Eraser],
         &[ToolKind::Eyedropper],
-        &[ToolKind::Bucket, ToolKind::Gradient],
+        &[ToolKind::Bucket, ToolKind::Gradient, ToolKind::Jumble],
         &[ToolKind::Line],
         &[ToolKind::Rectangle, ToolKind::Ellipse],
-        &[ToolKind::Jumble],
         &[ToolKind::Text],
-        &[ToolKind::Slice],
+        &[ToolKind::Contour],
+        &[ToolKind::Blur],
+        &[ToolKind::Move, ToolKind::Slice],
         &[ToolKind::Artboard],
     ];
 
@@ -85,6 +89,9 @@ impl ToolKind {
             ToolKind::Text => "Text",
             ToolKind::Slice => "Slice",
             ToolKind::Artboard => "Artboard",
+            ToolKind::Hand => "Hand",
+            ToolKind::Contour => "Contour",
+            ToolKind::Blur => "Blur",
         }
     }
 
@@ -105,10 +112,13 @@ impl ToolKind {
             ToolKind::Line => "L",
             ToolKind::Rectangle => "U",
             ToolKind::Ellipse => "Shift+U",
-            ToolKind::Jumble => "R",
+            ToolKind::Jumble => "Shift+R",
             ToolKind::Text => "T",
             ToolKind::Slice => "Shift+C",
             ToolKind::Artboard => "Shift+O",
+            ToolKind::Hand => "H",
+            ToolKind::Contour => "D",
+            ToolKind::Blur => "R",
         }
     }
 
@@ -130,7 +140,10 @@ impl ToolKind {
             ('L', false) => ToolKind::Line,
             ('U', false) => ToolKind::Rectangle,
             ('U', true) => ToolKind::Ellipse,
-            ('R', false) => ToolKind::Jumble,
+            ('R', false) => ToolKind::Blur,
+            ('R', true) => ToolKind::Jumble,
+            ('H', false) => ToolKind::Hand,
+            ('D', false) => ToolKind::Contour,
             ('T', false) => ToolKind::Text,
             ('C', true) => ToolKind::Slice,
             ('O', true) => ToolKind::Artboard,
@@ -370,7 +383,12 @@ impl SpriteTools {
             ToolKind::Slice => &self.slice,
             ToolKind::Move => &self.mover,
             ToolKind::Eyedropper => &self.eyedropper,
-            ToolKind::Text | ToolKind::Artboard => return None,
+            // Hand la maneja el lienzo; Contour y Blur se conectan en las tareas siguientes.
+            ToolKind::Text
+            | ToolKind::Artboard
+            | ToolKind::Hand
+            | ToolKind::Contour
+            | ToolKind::Blur => return None,
         })
     }
 
@@ -393,7 +411,12 @@ impl SpriteTools {
             ToolKind::Slice => &mut self.slice,
             ToolKind::Move => &mut self.mover,
             ToolKind::Eyedropper => &mut self.eyedropper,
-            ToolKind::Text | ToolKind::Artboard => return None,
+            // Hand la maneja el lienzo; Contour y Blur se conectan en las tareas siguientes.
+            ToolKind::Text
+            | ToolKind::Artboard
+            | ToolKind::Hand
+            | ToolKind::Contour
+            | ToolKind::Blur => return None,
         })
     }
 }
