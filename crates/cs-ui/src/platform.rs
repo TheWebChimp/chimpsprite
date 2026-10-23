@@ -306,9 +306,9 @@ pub fn set_unsaved(unsaved: bool) {
 #[cfg(not(target_arch = "wasm32"))]
 pub fn set_unsaved(_unsaved: bool) {}
 
-/// Abre una carpeta en el explorador de archivos del sistema.
+/// Abre una carpeta o una URL con el programa del sistema.
 #[cfg(not(target_arch = "wasm32"))]
-pub fn open_folder(dir: &Path) -> Result<(), String> {
+fn open_with_system(target: &std::ffi::OsStr) -> Result<(), String> {
     let program = if cfg!(windows) {
         "explorer"
     } else if cfg!(target_os = "macos") {
@@ -317,10 +317,30 @@ pub fn open_folder(dir: &Path) -> Result<(), String> {
         "xdg-open"
     };
     std::process::Command::new(program)
-        .arg(dir)
+        .arg(target)
         .spawn()
         .map(|_| ())
         .map_err(|e| e.to_string())
+}
+
+/// Abre una carpeta en el explorador de archivos del sistema.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_folder(dir: &Path) -> Result<(), String> {
+    open_with_system(dir.as_os_str())
+}
+
+/// Abre una URL en el navegador. En escritorio no sirve `ctx.open_url`: eframe va sin la
+/// feature `links` (sin `webbrowser`), así que se usa el mismo programa que `open_folder`.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_url(_ctx: &egui::Context, url: &str) -> Result<(), String> {
+    open_with_system(url.as_ref())
+}
+
+/// En web eframe abre la URL en una pestaña nueva.
+#[cfg(target_arch = "wasm32")]
+pub fn open_url(ctx: &egui::Context, url: &str) -> Result<(), String> {
+    ctx.open_url(egui::OpenUrl::new_tab(url));
+    Ok(())
 }
 
 /// En web no hay carpetas: los presets viven en `localStorage`.

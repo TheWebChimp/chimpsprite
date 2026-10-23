@@ -199,7 +199,8 @@ impl PaletteLibrary {
     }
 }
 
-/// `<nombre>.gpl` sin caracteres que Windows no acepta.
+/// `<nombre>.gpl` sin caracteres que Windows no acepta, sin puntos ni espacios al final y sin
+/// nombres reservados (`CON`, `NUL`, `COM1`…: se les agrega `_`).
 #[cfg(not(target_arch = "wasm32"))]
 pub fn preset_file_name(name: &str) -> String {
     let clean: String = name
@@ -211,12 +212,36 @@ pub fn preset_file_name(name: &str) -> String {
             c => c,
         })
         .collect();
-    let clean = if clean.is_empty() {
+    let clean = clean.trim_end_matches(['.', ' ']);
+    let mut clean = if clean.is_empty() {
         "Palette".to_string()
     } else {
-        clean
+        clean.to_string()
     };
+    // Windows decide con lo que hay antes del primer punto, sin espacios al final.
+    let base = clean.split('.').next().unwrap_or("").trim_end();
+    if is_reserved_windows_name(base) {
+        let end = base.len();
+        clean.insert(end, '_');
+    }
     format!("{clean}.gpl")
+}
+
+/// Nombres de dispositivo de Windows: no sirven como archivo aunque lleven extensión.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_reserved_windows_name(base: &str) -> bool {
+    let upper = base.to_ascii_uppercase();
+    if matches!(upper.as_str(), "CON" | "PRN" | "AUX" | "NUL") {
+        return true;
+    }
+    let mut chars = upper.chars();
+    let prefix: String = chars.by_ref().take(3).collect();
+    let rest: String = chars.collect();
+    (prefix == "COM" || prefix == "LPT")
+        && matches!(
+            rest.as_str(),
+            "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+        )
 }
 
 /// Formatos que escribimos nosotros: los únicos que se pueden borrar o reemplazar.
@@ -485,6 +510,31 @@ mod tests {
     fn file_names_are_sanitized() {
         assert_eq!(preset_file_name("Night: blue/ish?"), "Night_ blue_ish_.gpl");
         assert_eq!(preset_file_name("  "), "Palette.gpl");
+    }
+
+    #[test]
+    fn windows_reserved_names_get_a_suffix() {
+        assert_eq!(preset_file_name("CON"), "CON_.gpl");
+        assert_eq!(preset_file_name("nul"), "nul_.gpl");
+        assert_eq!(preset_file_name("Aux"), "Aux_.gpl");
+        assert_eq!(preset_file_name("PRN"), "PRN_.gpl");
+        assert_eq!(preset_file_name("com1"), "com1_.gpl");
+        assert_eq!(preset_file_name("LPT9"), "LPT9_.gpl");
+        // Windows mira lo que hay antes del primer punto (y sin espacios al final).
+        assert_eq!(preset_file_name("con.txt"), "con_.txt.gpl");
+        assert_eq!(preset_file_name("NUL .x"), "NUL_ .x.gpl");
+        assert_eq!(preset_file_name("CON. "), "CON_.gpl");
+        // No reservados.
+        assert_eq!(preset_file_name("Console"), "Console.gpl");
+        assert_eq!(preset_file_name("COM10"), "COM10.gpl");
+        assert_eq!(preset_file_name("LPT"), "LPT.gpl");
+    }
+
+    #[test]
+    fn trailing_dots_and_spaces_are_stripped() {
+        assert_eq!(preset_file_name("Night..."), "Night.gpl");
+        assert_eq!(preset_file_name("Dots . ."), "Dots.gpl");
+        assert_eq!(preset_file_name("..."), "Palette.gpl");
     }
 
     #[test]
