@@ -121,6 +121,8 @@ pub(crate) struct TransformDrag {
     hit: TransformHit,
     /// Píxel local donde se presionó.
     start_pixel: (i32, i32),
+    /// El mismo punto pegado a guías/grid: el desplazamiento se mide desde acá.
+    start_snapped: (i32, i32),
     /// Caja al presionar: cada movimiento se calcula desde acá.
     start_box: TransformBox,
     /// Se presionó dentro de lo seleccionado.
@@ -206,6 +208,7 @@ impl Editor {
         };
         self.stop();
         let start_pixel = self.to_local(world);
+        let start_snapped = self.to_local(self.snap_world(world));
         let inside = self
             .selection
             .as_ref()
@@ -213,6 +216,7 @@ impl Editor {
         self.transform_drag = Some(TransformDrag {
             hit,
             start_pixel,
+            start_snapped,
             start_box,
             inside,
             moved: false,
@@ -224,11 +228,13 @@ impl Editor {
         let Some(mut drag) = self.transform_drag else {
             return;
         };
-        let pixel = self.to_local(world);
+        // Pega a guías/grid como Move: el desplazamiento entre los dos puntos pegados.
+        let pixel = self.to_local(self.snap_world(world));
         let bbox = match drag.hit {
-            TransformHit::Move => drag
-                .start_box
-                .translated(pixel.0 - drag.start_pixel.0, pixel.1 - drag.start_pixel.1),
+            TransformHit::Move => drag.start_box.translated(
+                pixel.0 - drag.start_snapped.0,
+                pixel.1 - drag.start_snapped.1,
+            ),
         };
         if Some(bbox) == self.transform_box() {
             return;

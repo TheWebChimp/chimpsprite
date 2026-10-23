@@ -1254,7 +1254,13 @@ impl Editor {
                 | ToolKind::Rectangle
                 | ToolKind::Ellipse
         );
-        let Some(ctx) = self.snap.as_ref().filter(|_| snaps) else {
+        if snaps { self.snap_world(world) } else { world }
+    }
+
+    /// Pega el punto a guías/grid, sin importar la herramienta (mover lo seleccionado pega
+    /// siempre, como Move).
+    pub(crate) fn snap_world(&self, world: (f32, f32)) -> (f32, f32) {
+        let Some(ctx) = self.snap.as_ref() else {
             return world;
         };
         let (ox, oy) = self.artboard().position;
@@ -1939,6 +1945,41 @@ mod tests {
         e.undo();
         e.undo();
         assert!(e.guides().is_empty(), "guides are undoable");
+    }
+
+    #[test]
+    fn moving_the_selection_snaps_to_guides_with_any_selection_tool_and_move() {
+        use cs_core::{Axis, Guide};
+        // Lasso no pega sus trazos, pero mover lo seleccionado sí (como Move).
+        for tool in [ToolKind::RectSelect, ToolKind::Lasso, ToolKind::Move] {
+            let mut e = editor();
+            let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+            e.execute(Command::DrawPixels {
+                layer: LayerId(1),
+                frame: 0,
+                pixels: vec![(1, 1, red)],
+            });
+            e.set_guides(vec![Guide {
+                axis: Axis::Vertical,
+                position: 4,
+            }]);
+            e.snap = Some(crate::guides::SnapContext {
+                guides: e.guides().to_vec(),
+                grid: None,
+                tolerance: 2.0,
+            });
+            e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (2, 2))));
+            e.set_tool(tool);
+            // Sin pegar el puntero caería en x = 5 (4 px); la guía en x = 4 lo deja en 3 px.
+            e.pointer_press((1.5, 1.5), false, false, 0.1);
+            e.pointer_drag((5.5, 1.5));
+            e.pointer_release();
+            assert!(e.is_floating(), "{tool:?}");
+            let bounds = e.selection.as_ref().and_then(|m| m.bounds());
+            assert_eq!(bounds, Some(((3, 0), (5, 2))), "{tool:?}");
+            assert!(e.commit_floating());
+            assert_eq!(e.sprite().pixel(LayerId(1), 0, 4, 1), red, "{tool:?}");
+        }
     }
 
     #[test]
