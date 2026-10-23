@@ -263,14 +263,11 @@ impl ChimpApp {
     }
 
     fn save_to(&mut self, target: SaveTarget) -> bool {
-        // Lo flotante todavía no está en el documento: se confirma antes de escribir.
-        self.doc.editor.commit_floating();
-        let result =
-            files::encode(&self.doc.editor.document, &target.file_name).and_then(|bytes| {
-                self.platform
-                    .write(&target, &bytes)
-                    .map_err(FileError::Platform)
-            });
+        let result = save_bytes(&mut self.doc.editor, &target.file_name).and_then(|bytes| {
+            self.platform
+                .write(&target, &bytes)
+                .map_err(FileError::Platform)
+        });
         let target_name = target.file_name.clone();
         match result {
             Ok(()) => {
@@ -515,7 +512,7 @@ impl ChimpApp {
         }
 
         if let Some(mut dialog) = self.export.take() {
-            match dialog.show(ctx, &self.doc.editor, &self.platform) {
+            match dialog.show(ctx, &mut self.doc.editor, &self.platform) {
                 ExportResult::Open => self.export = Some(dialog),
                 ExportResult::Cancel => self.last_export = dialog,
                 ExportResult::Done(files) => {
@@ -609,5 +606,44 @@ impl ChimpApp {
             (Pending::Quit, 1) => self.quit(ctx),
             _ => {}
         }
+    }
+}
+
+/// Bytes del documento para guardarlo como `file_name`. Lo flotante todavía no está en el
+/// documento: se confirma antes de escribir.
+pub(crate) fn save_bytes(editor: &mut Editor, file_name: &str) -> Result<Vec<u8>, FileError> {
+    editor.commit_floating();
+    files::encode(&editor.document, file_name)
+}
+
+#[cfg(test)]
+mod tests {
+    use cs_commands::Command;
+    use cs_core::{ColorMode, LayerId, Mask, PixelValue, Rgba, Sprite};
+
+    use super::*;
+    use crate::editor::ToolKind;
+
+    #[test]
+    fn saving_applies_floating_content_first() {
+        let mut e = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, red)],
+        });
+        e.tool = ToolKind::RectSelect;
+        e.set_selection(Some(Mask::from_rect(4, 4, (0, 0), (0, 0))));
+        e.pointer_press((0.5, 0.5), false, false, 0.1);
+        e.pointer_drag((2.5, 2.5));
+        e.pointer_release();
+        assert!(e.is_floating());
+        let bytes = save_bytes(&mut e, "hero.chimp").unwrap();
+        assert!(!e.is_floating(), "applied before writing");
+        let (doc, _) = files::decode("hero.chimp", &bytes).unwrap();
+        let saved = &doc.artboards[0].sprite;
+        assert_eq!(saved.pixel(LayerId(1), 0, 2, 2), red, "the file has it");
+        assert_ne!(saved.pixel(LayerId(1), 0, 0, 0), red);
     }
 }
