@@ -136,6 +136,49 @@ fn saved_brush_size_is_clamped_and_the_selection_mode_is_not_saved() {
 }
 
 #[test]
+fn a_group_remembers_the_last_tool_chosen_in_it() {
+    let marquee = ToolKind::RectSelect.group();
+    let mut e = editor(ToolKind::Pencil);
+    assert_eq!(e.group_tool(marquee), ToolKind::RectSelect, "the first one");
+    e.set_tool(ToolKind::Lasso);
+    e.set_tool(ToolKind::Pencil);
+    assert_eq!(e.group_tool(marquee), ToolKind::Lasso);
+    // La activa manda en su grupo aunque se haya recordado otra.
+    let pencil = ToolKind::Pencil.group();
+    e.options.group_choice.remember(ToolKind::Spray);
+    assert_eq!(e.group_tool(pencil), ToolKind::Pencil);
+}
+
+#[test]
+fn the_group_choice_is_saved_with_the_tool_options() {
+    use crate::editor::{GroupChoice, ToolOptions};
+    let mut options = ToolOptions::default();
+    options.group_choice.remember(ToolKind::Lasso);
+    options.group_choice.remember(ToolKind::Slice);
+    let json = serde_json::to_string(&options).unwrap();
+    assert!(json.contains(r#""Lasso""#), "{json}");
+    let back: ToolOptions = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.group_choice, options.group_choice);
+
+    // Un ajuste de antes no la trae: cada grupo con su primera herramienta.
+    let old: ToolOptions = serde_json::from_str(r#"{"brush_size":4}"#).unwrap();
+    assert_eq!(old.group_choice, GroupChoice::default());
+    assert_eq!(old.group_choice.get(0), ToolKind::RectSelect);
+
+    // Nombres desconocidos, de otro grupo o que faltan: la primera del grupo.
+    let odd: ToolOptions =
+        serde_json::from_str(r#"{"group_choice":["Teleport","Pencil","Spray"]}"#).unwrap();
+    assert_eq!(odd.group_choice.get(0), ToolKind::RectSelect, "unknown");
+    assert_eq!(
+        odd.group_choice.get(1),
+        ToolKind::Hand,
+        "Pencil is not a Hand tool"
+    );
+    assert_eq!(odd.group_choice.get(2), ToolKind::Spray);
+    assert_eq!(odd.group_choice.get(5), ToolKind::Bucket, "missing");
+}
+
+#[test]
 fn the_editor_paints_with_the_chosen_brush_shape() {
     use cs_tools::BrushShape;
     let mut e = editor(ToolKind::Pencil);

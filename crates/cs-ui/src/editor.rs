@@ -68,6 +68,14 @@ impl ToolKind {
         &[ToolKind::Artboard],
     ];
 
+    /// Índice en `GROUPS` del grupo que tiene a `self`.
+    pub fn group(self) -> usize {
+        ToolKind::GROUPS
+            .iter()
+            .position(|g| g.contains(&self))
+            .expect("every tool is in a group")
+    }
+
     pub fn label(self) -> &'static str {
         match self {
             ToolKind::RectSelect => "Rectangular Marquee",
@@ -292,6 +300,51 @@ pub struct TextDraft {
     pub text: String,
 }
 
+/// La herramienta que muestra cada grupo de la barra: la última elegida en él.
+///
+/// Se guarda con las opciones como una lista de nombres de variante (`"Lasso"`), uno por grupo en
+/// el orden de `GROUPS`. Si falta un nombre, no se conoce o es de otro grupo, ese grupo vuelve a su
+/// primera herramienta.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct GroupChoice([ToolKind; ToolKind::GROUPS.len()]);
+
+impl Default for GroupChoice {
+    fn default() -> Self {
+        Self(ToolKind::GROUPS.map(|g| g[0]))
+    }
+}
+
+impl GroupChoice {
+    /// La herramienta recordada del grupo `group`.
+    pub fn get(&self, group: usize) -> ToolKind {
+        self.0[group]
+    }
+
+    /// Recuerda `kind` como la elegida de su grupo.
+    pub fn remember(&mut self, kind: ToolKind) {
+        self.0[kind.group()] = kind;
+    }
+}
+
+impl serde::Serialize for GroupChoice {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(self.0.iter().map(|k| format!("{k:?}")))
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for GroupChoice {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let names = <Vec<String> as serde::Deserialize>::deserialize(d)?;
+        let mut choice = GroupChoice::default();
+        for (slot, (group, name)) in choice.0.iter_mut().zip(ToolKind::GROUPS.iter().zip(&names)) {
+            if let Some(&kind) = group.iter().find(|k| format!("{k:?}") == *name) {
+                *slot = kind;
+            }
+        }
+        Ok(choice)
+    }
+}
+
 /// Tamaño máximo del pincel (slider de Options y Ctrl+rueda).
 pub const MAX_BRUSH_SIZE: u32 = 32;
 
@@ -325,6 +378,8 @@ pub struct ToolOptions {
     pub dither: Dither,
     /// Cómo se rota la selección (herramientas de selección y Move).
     pub rotation: cs_raster::RotationAlgorithm,
+    /// La variante que muestra cada grupo de la barra.
+    pub group_choice: GroupChoice,
 }
 
 fn clamped_brush_size<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
@@ -350,6 +405,7 @@ impl Default for ToolOptions {
             gradient_shape: GradientShape::Linear,
             dither: Dither::None,
             rotation: cs_raster::RotationAlgorithm::RotSprite,
+            group_choice: GroupChoice::default(),
         }
     }
 }
@@ -899,12 +955,24 @@ impl Editor {
         self.last_selection.is_some()
     }
 
-    /// Cambia de herramienta descartando gestos de varios clics a medias.
+    /// Cambia de herramienta descartando gestos de varios clics a medias. La herramienta queda
+    /// como la elegida de su grupo en la barra.
     pub fn set_tool(&mut self, kind: ToolKind) {
+        self.options.group_choice.remember(kind);
         if kind != self.tool {
             self.commit_floating();
             self.cancel_gesture();
             self.tool = kind;
+        }
+    }
+
+    /// La herramienta que muestra el grupo `group` de la barra: la activa si es de ese grupo; si
+    /// no, la última elegida en él.
+    pub fn group_tool(&self, group: usize) -> ToolKind {
+        if ToolKind::GROUPS[group].contains(&self.tool) {
+            self.tool
+        } else {
+            self.options.group_choice.get(group)
         }
     }
 
