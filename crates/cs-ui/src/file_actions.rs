@@ -6,7 +6,9 @@ use eframe::egui;
 use crate::editor::Editor;
 use crate::export_dialog::ExportResult;
 use crate::files::{self, FileError, FileKind};
+use crate::pixel_ui;
 use crate::platform::{FileFilter, OpenPurpose, PlatformEvent, SaveTarget};
+use crate::skin::Skin;
 use crate::tabs::DocState;
 use crate::{ChimpApp, demo};
 
@@ -51,6 +53,22 @@ pub(crate) enum Pending {
 pub(crate) struct Message {
     pub title: String,
     pub body: String,
+}
+
+/// Qué eligió el usuario en "Unsaved changes".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UnsavedChoice {
+    Save,
+    Discard,
+    Cancel,
+}
+
+/// Textos de "Unsaved changes": la pregunta, los documentos y los botones.
+pub(crate) struct UnsavedPrompt {
+    pub question: String,
+    pub names: Vec<String>,
+    pub save: &'static str,
+    pub discard: &'static str,
 }
 
 /// Nombre y destino del documento abierto.
@@ -527,7 +545,7 @@ impl ChimpApp {
         }
     }
 
-    fn unsaved_dialog(&mut self, ctx: &egui::Context, pending: Pending) {
+    fn unsaved_prompt(&self, pending: Pending) -> UnsavedPrompt {
         let infos = self.tabs.infos(&self.doc);
         let (question, names): (String, Vec<String>) = match pending {
             Pending::CloseTab(i) => (
@@ -550,45 +568,38 @@ impl ChimpApp {
             Pending::CloseTab(_) => ("Save", "Discard"),
             Pending::Quit => ("Save all", "Discard all"),
         };
-        let mut choice = None;
-        egui::Window::new("Unsaved changes")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
-                ui.label(question);
-                for name in &names {
-                    ui.label(format!("• {name}"));
-                }
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button(save).clicked() {
-                        choice = Some(0);
-                    }
-                    if ui.button(discard).clicked() {
-                        choice = Some(1);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        choice = Some(2);
-                    }
-                });
-            });
+        UnsavedPrompt {
+            question,
+            names,
+            save,
+            discard,
+        }
+    }
+
+    /// "Unsaved changes". Con Pixel UI se dibuja con el skin; la lógica es la misma en los dos
+    /// modos (Esc cancela).
+    fn unsaved_dialog(&mut self, ctx: &egui::Context, pending: Pending) {
+        let prompt = self.unsaved_prompt(pending);
+        let mut choice = match self.pixel.skin() {
+            Some(skin) => pixel_unsaved(ctx, skin, &prompt),
+            None => plain_unsaved(ctx, &prompt),
+        };
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
-            choice = Some(2);
+            choice = Some(UnsavedChoice::Cancel);
         }
         let Some(choice) = choice else {
             return;
         };
         self.pending = None;
         match (pending, choice) {
-            (Pending::CloseTab(i), 0) => {
+            (Pending::CloseTab(i), UnsavedChoice::Save) => {
                 self.tabs.switch(&mut self.doc, i);
                 if self.save() {
                     self.close_tab(i);
                 }
             }
-            (Pending::CloseTab(i), 1) => self.close_tab(i),
-            (Pending::Quit, 0) => {
+            (Pending::CloseTab(i), UnsavedChoice::Discard) => self.close_tab(i),
+            (Pending::Quit, UnsavedChoice::Save) => {
                 // Guarda una por una; si alguna se cancela, no sale.
                 for i in self.tabs.dirty(&self.doc) {
                     self.tabs.switch(&mut self.doc, i);
@@ -598,10 +609,72 @@ impl ChimpApp {
                 }
                 self.quit(ctx);
             }
-            (Pending::Quit, 1) => self.quit(ctx),
-            _ => {}
+            (Pending::Quit, UnsavedChoice::Discard) => self.quit(ctx),
+            (_, UnsavedChoice::Cancel) => {}
         }
     }
+}
+
+/// "Unsaved changes" con los widgets de egui (Pixel UI apagado), como siempre.
+fn plain_unsaved(ctx: &egui::Context, prompt: &UnsavedPrompt) -> Option<UnsavedChoice> {
+    let mut choice = None;
+    egui::Window::new("Unsaved changes")
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+        .show(ctx, |ui| {
+            ui.label(&prompt.question);
+            for name in &prompt.names {
+                ui.label(format!("• {name}"));
+            }
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                if ui.button(prompt.save).clicked() {
+                    choice = Some(UnsavedChoice::Save);
+                }
+                if ui.button(prompt.discard).clicked() {
+                    choice = Some(UnsavedChoice::Discard);
+                }
+                if ui.button("Cancel").clicked() {
+                    choice = Some(UnsavedChoice::Cancel);
+                }
+            });
+        });
+    choice
+}
+
+/// "Unsaved changes" con el skin (Pixel UI): el mismo texto y los mismos botones, como en el
+/// mockup.
+fn pixel_unsaved(
+    ctx: &egui::Context,
+    skin: &Skin,
+    prompt: &UnsavedPrompt,
+) -> Option<UnsavedChoice> {
+    let mut choice = None;
+    let id = egui::Id::new("unsaved_changes");
+    pixel_ui::pixel_dialog(ctx, skin, id, "Unsaved changes", |ui| {
+        ui.vertical_centered(|ui| {
+            ui.label(&prompt.question);
+            // `•` no está en la fuente pixel; `·` sí.
+            for name in &prompt.names {
+                ui.label(format!("· {name}"));
+            }
+        });
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 4.0;
+            if pixel_ui::pixel_button(ui, skin, prompt.save).clicked() {
+                choice = Some(UnsavedChoice::Save);
+            }
+            if pixel_ui::pixel_button(ui, skin, prompt.discard).clicked() {
+                choice = Some(UnsavedChoice::Discard);
+            }
+            if pixel_ui::pixel_button(ui, skin, "Cancel").clicked() {
+                choice = Some(UnsavedChoice::Cancel);
+            }
+        });
+    });
+    choice
 }
 
 /// Bytes del documento para guardarlo como `file_name`. Lo flotante todavía no está en el
@@ -629,6 +702,179 @@ mod tests {
 
     use super::*;
     use crate::editor::ToolKind;
+
+    use std::path::PathBuf;
+
+    use cs_io::palette_files::NamedPalette;
+    use egui::{Event, PointerButton, Pos2, RawInput, Rect, Vec2};
+
+    use crate::palette_library::{PaletteLibrary, PresetStore, StoredPreset};
+    use crate::view::ViewSettings;
+
+    /// Sin presets de usuario: los tests no tocan la carpeta del usuario.
+    struct NoPresets;
+
+    impl PresetStore for NoPresets {
+        fn load(&self) -> Vec<StoredPreset> {
+            Vec::new()
+        }
+
+        fn save(&mut self, _: &NamedPalette, _: &[String]) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn delete(&mut self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn folder(&self) -> Option<PathBuf> {
+            None
+        }
+    }
+
+    /// La app con Pixel UI encendido y una pestaña con cambios a punto de cerrarse, manejada con
+    /// eventos crudos. Los botones se buscan por su nombre en el árbol de accesibilidad.
+    struct DialogHarness {
+        ctx: egui::Context,
+        app: ChimpApp,
+        time: f64,
+        /// Botones del último frame: nombre y rectángulo (en puntos).
+        buttons: Vec<(String, Rect)>,
+    }
+
+    impl DialogHarness {
+        fn new() -> Self {
+            let view = ViewSettings {
+                pixel_ui: true,
+                ..Default::default()
+            };
+            let palettes = PaletteLibrary::new(Box::new(NoPresets));
+            let mut app = ChimpApp::with_parts(Default::default(), view, palettes);
+            app.new_document();
+            app.doc.editor.execute(Command::DrawPixels {
+                layer: LayerId(1),
+                frame: 0,
+                pixels: vec![(0, 0, PixelValue::Rgba(Rgba::rgb(255, 0, 0)))],
+            });
+            app.request_close_tab(0);
+            assert_eq!(app.pending, Some(Pending::CloseTab(0)));
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut h = Self {
+                ctx,
+                app,
+                time: 0.0,
+                buttons: Vec::new(),
+            };
+            // La escala cambia un frame después y el diálogo se mide en el primero.
+            for _ in 0..3 {
+                h.frame(vec![]);
+            }
+            h
+        }
+
+        fn frame(&mut self, events: Vec<Event>) {
+            self.time += 0.05;
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            };
+            let app = &mut self.app;
+            let mut output = self.ctx.run_ui(input, |ui| {
+                let ctx = ui.ctx().clone();
+                app.pixel.update(&ctx, &app.view);
+                app.show_dialogs(&ctx);
+            });
+            // Las texturas (fuentes y skin) no se suben a ninguna GPU.
+            output.textures_delta.clear();
+            self.buttons = output
+                .platform_output
+                .accesskit_update
+                .map(|update| {
+                    update
+                        .nodes
+                        .iter()
+                        .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+                        .filter_map(|(_, n)| {
+                            let b = n.bounds()?;
+                            let rect = Rect::from_min_max(
+                                Pos2::new(b.x0 as f32, b.y0 as f32),
+                                Pos2::new(b.x1 as f32, b.y1 as f32),
+                            );
+                            Some((n.label()?.to_string(), rect))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+
+        fn labels(&self) -> Vec<&str> {
+            let mut labels: Vec<&str> = self.buttons.iter().map(|(l, _)| l.as_str()).collect();
+            labels.sort();
+            labels
+        }
+
+        fn click(&mut self, label: &str) {
+            let pos = self
+                .buttons
+                .iter()
+                .find(|(l, _)| l == label)
+                .map(|(_, r)| r.center())
+                .unwrap_or_else(|| panic!("no button {label:?} in {:?}", self.labels()));
+            let button = |pressed| Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![Event::PointerMoved(pos)]);
+            self.frame(vec![button(true)]);
+            self.frame(vec![button(false)]);
+        }
+    }
+
+    #[test]
+    fn with_pixel_ui_the_unsaved_dialog_shows_the_three_buttons() {
+        let h = DialogHarness::new();
+        assert!(h.app.pixel.skin().is_some());
+        assert_eq!(h.labels(), ["Cancel", "Discard", "Save"]);
+    }
+
+    #[test]
+    fn cancel_closes_the_dialog_without_changes() {
+        let mut h = DialogHarness::new();
+        h.click("Cancel");
+        assert_eq!(h.app.pending, None);
+        assert!(
+            h.app.has_doc() && h.app.any_dirty(),
+            "the tab is still there, unsaved"
+        );
+    }
+
+    #[test]
+    fn discard_closes_the_tab() {
+        let mut h = DialogHarness::new();
+        h.click("Discard");
+        assert_eq!(h.app.pending, None);
+        assert!(!h.app.has_doc(), "the only tab is gone");
+    }
+
+    #[test]
+    fn escape_cancels_in_pixel_ui_too() {
+        let mut h = DialogHarness::new();
+        let key = |pressed| Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Default::default(),
+        };
+        h.frame(vec![key(true), key(false)]);
+        assert_eq!(h.app.pending, None);
+        assert!(h.app.has_doc());
+    }
 
     #[test]
     fn saving_applies_floating_content_first() {

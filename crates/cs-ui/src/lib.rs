@@ -25,8 +25,6 @@ mod lospec_examples;
 mod lospec_tab;
 mod palette_library;
 mod panels;
-// Lo usa el diálogo pixel (siguiente tarea del plan); hasta entonces solo los tests.
-#[allow(dead_code)]
 mod pixel_ui;
 mod platform;
 mod recent;
@@ -113,35 +111,7 @@ impl ChimpApp {
                 .and_then(|s| eframe::get_value::<Option<String>>(s, DEFAULT_PALETTE_KEY))
                 .flatten(),
         );
-        let mut app = Self {
-            doc: tabs::DocState::untitled(""),
-            tabs: tabs::Tabs::default(),
-            capture: capture::Capture::from_env(),
-            canvas_size: None,
-            platform: platform::Platform::default(),
-            autosaver: autosave::Autosaver::default(),
-            restore: None,
-            recent,
-            view,
-            grid_dialog: None,
-            new_tilemap: None,
-            convert_tilemap: None,
-            demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
-            fullscreen: false,
-            pending: None,
-            message: None,
-            export: None,
-            last_export: export_dialog::ExportDialog::default(),
-            allow_close: false,
-            title: String::new(),
-            clipboard: None,
-            palettes,
-            presets_window: None,
-            preset_name: None,
-            palette_confirm: None,
-            pasted: false,
-            pixel: appearance::PixelUi::from_env(),
-        };
+        let mut app = Self::with_parts(recent, view, palettes);
         if launch.demo {
             app.open_demo();
         }
@@ -176,6 +146,43 @@ impl ChimpApp {
             app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
         }
         app
+    }
+
+    /// La app sin ventana, con lo guardado ya leído. `new` la usa y los tests la arman directo.
+    fn with_parts(
+        recent: recent::RecentFiles,
+        view: view::ViewSettings,
+        palettes: palette_library::PaletteLibrary,
+    ) -> Self {
+        Self {
+            doc: tabs::DocState::untitled(""),
+            tabs: tabs::Tabs::default(),
+            capture: capture::Capture::from_env(),
+            canvas_size: None,
+            platform: platform::Platform::default(),
+            autosaver: autosave::Autosaver::default(),
+            restore: None,
+            recent,
+            view,
+            grid_dialog: None,
+            new_tilemap: None,
+            convert_tilemap: None,
+            demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
+            fullscreen: false,
+            pending: None,
+            message: None,
+            export: None,
+            last_export: export_dialog::ExportDialog::default(),
+            allow_close: false,
+            title: String::new(),
+            clipboard: None,
+            palettes,
+            presets_window: None,
+            preset_name: None,
+            palette_confirm: None,
+            pasted: false,
+            pixel: appearance::PixelUi::from_env(),
+        }
     }
 
     /// `false` en Home.

@@ -97,8 +97,6 @@ impl PixelUi {
     }
 
     /// El skin, solo con Pixel UI encendido.
-    // Lo usa el diálogo pixel (siguiente tarea del plan); hasta entonces solo los tests.
-    #[allow(dead_code)]
     pub fn skin(&self) -> Option<&Skin> {
         if self.applied.is_some_and(|(on, _)| on) {
             self.skin.as_ref()
