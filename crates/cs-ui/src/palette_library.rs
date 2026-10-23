@@ -169,11 +169,42 @@ pub fn preset_file_name(name: &str) -> String {
 /// Escritorio: un archivo por preset.
 pub struct DirStore {
     dir: PathBuf,
+    /// Archivos ya avisados: un archivo ilegible se registra una sola vez.
+    warned: std::cell::RefCell<std::collections::HashSet<PathBuf>>,
 }
 
 impl DirStore {
     pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+        Self {
+            dir,
+            warned: Default::default(),
+        }
+    }
+
+    /// Borra los archivos de paleta cuyo nombre interno coincide (sin mayúsculas),
+    /// salvo `keep` (nombre de archivo, comparado sin mayúsculas: en Windows
+    /// `Mine.gpl` y `mine.gpl` son el mismo archivo).
+    fn remove_matching(&self, name: &str, keep: Option<&str>) -> Result<(), String> {
+        let Ok(entries) = std::fs::read_dir(&self.dir) else {
+            return Ok(());
+        };
+        for path in entries.flatten().map(|e| e.path()) {
+            let Some(file) = path.file_name().and_then(|n| n.to_str()) else {
+                continue;
+            };
+            if keep.is_some_and(|k| k.eq_ignore_ascii_case(file)) {
+                continue;
+            }
+            let matches = palette_files::format_for(file).is_some()
+                && std::fs::read(&path)
+                    .ok()
+                    .and_then(|b| palette_files::read_palette(file, &b).ok())
+                    .is_some_and(|p| p.name.eq_ignore_ascii_case(name));
+            if matches {
+                std::fs::remove_file(&path).map_err(|e| e.to_string())?;
+            }
+        }
+        Ok(())
     }
 }
 
@@ -195,7 +226,11 @@ impl PresetStore for DirStore {
                 .and_then(|b| palette_files::read_palette(name, &b).map_err(|e| e.to_string()))
             {
                 Ok(p) => out.push(p),
-                Err(e) => log::warn!("skipping palette {}: {e}", path.display()),
+                Err(e) => {
+                    if self.warned.borrow_mut().insert(path.clone()) {
+                        log::warn!("skipping palette {}: {e}", path.display());
+                    }
+                }
             }
         }
         out
@@ -203,30 +238,19 @@ impl PresetStore for DirStore {
 
     fn save(&mut self, palette: &NamedPalette, comments: &[String]) -> Result<(), String> {
         std::fs::create_dir_all(&self.dir).map_err(|e| e.to_string())?;
-        // Con otra extensión o mayúsculas distintas sería un duplicado: se borra primero.
-        let _ = self.delete(&palette.name);
-        let path = self.dir.join(preset_file_name(&palette.name));
-        std::fs::write(path, palette_files::write_gpl(palette, comments)).map_err(|e| e.to_string())
+        // Primero se escribe el nuevo: si falla, el anterior sigue intacto.
+        let file = preset_file_name(&palette.name);
+        std::fs::write(
+            self.dir.join(&file),
+            palette_files::write_gpl(palette, comments),
+        )
+        .map_err(|e| e.to_string())?;
+        // Con otra extensión o mayúsculas distintas sería un duplicado: se borra después.
+        self.remove_matching(&palette.name, Some(&file))
     }
 
     fn delete(&mut self, name: &str) -> Result<(), String> {
-        let Ok(entries) = std::fs::read_dir(&self.dir) else {
-            return Ok(());
-        };
-        for path in entries.flatten().map(|e| e.path()) {
-            let Some(file) = path.file_name().and_then(|n| n.to_str()) else {
-                continue;
-            };
-            let matches = palette_files::format_for(file).is_some()
-                && std::fs::read(&path)
-                    .ok()
-                    .and_then(|b| palette_files::read_palette(file, &b).ok())
-                    .is_some_and(|p| p.name.eq_ignore_ascii_case(name));
-            if matches {
-                std::fs::remove_file(&path).map_err(|e| e.to_string())?;
-            }
-        }
-        Ok(())
+        self.remove_matching(name, None)
     }
 
     fn folder(&self) -> Option<PathBuf> {
@@ -257,16 +281,23 @@ pub fn encode_web(list: &[NamedPalette]) -> String {
     serde_json::to_string(&items).unwrap_or_else(|_| "[]".into())
 }
 
-/// Lo ilegible se descarta (lista vacía o entradas sueltas).
+/// Lo ilegible se descarta entrada por entrada (una mala no tira las demás).
 pub fn decode_web(text: &str) -> Vec<NamedPalette> {
-    let items: Vec<WebPalette> = serde_json::from_str(text).unwrap_or_default();
+    let items: Vec<serde_json::Value> = serde_json::from_str(text).unwrap_or_default();
     items
         .into_iter()
-        .filter_map(|item| {
+        .filter_map(|value| {
+            let item = serde_json::from_value::<WebPalette>(value).ok()?;
             let colors: Option<Vec<Rgba>> = item
                 .colors
                 .iter()
-                .map(|h| u32::from_str_radix(h, 16).ok().map(Rgba::from_hex))
+                .map(|h| {
+                    let valid = h.len() == 6 && h.bytes().all(|b| b.is_ascii_hexdigit());
+                    if !valid {
+                        return None;
+                    }
+                    u32::from_str_radix(h, 16).ok().map(Rgba::from_hex)
+                })
                 .collect();
             let colors =
                 colors.filter(|c| !c.is_empty() && c.len() <= palette_files::MAX_COLORS)?;
@@ -380,6 +411,39 @@ mod tests {
         assert!(lib.user().is_empty());
         assert!(!dir.join("Mine.gpl").exists());
         std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn save_replaces_a_preset_with_another_extension_or_case() {
+        let dir = temp_dir("replace-ext");
+        std::fs::write(
+            dir.join("Mine.hex"),
+            "ff0000
+",
+        )
+        .unwrap();
+        let mut lib = PaletteLibrary::new(Box::new(DirStore::new(dir.clone())));
+        lib.save(&named("mine", &[0x00ff00]), &[]).unwrap();
+        assert_eq!(lib.user().len(), 1);
+        let found = lib.find("mine").unwrap();
+        assert_eq!(found.palette.colors()[0], Rgba::from_hex(0x00ff00));
+        assert!(!dir.join("Mine.hex").exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn web_decoding_skips_only_broken_entries() {
+        let json = r#"[
+            {"name":"ok","colors":["ff0000","00ff00"]},
+            {"name":"num","colors":[1]},
+            {"name":"nohex","colors":["zzzzzz"]},
+            {"name":"long","colors":["1ffffff"]}
+        ]"#;
+        let got = decode_web(json);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].name, "ok");
+        assert_eq!(got[0].palette.len(), 2);
     }
 
     #[test]
