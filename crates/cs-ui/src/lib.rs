@@ -54,6 +54,7 @@ const NEW_SPRITE_SIZE: u32 = 64;
 const RECENT_KEY: &str = "chimpsprite.recent";
 const VIEW_KEY: &str = "chimpsprite.view";
 const DEFAULT_PALETTE_KEY: &str = "chimpsprite.default_palette";
+const TOOL_OPTIONS_KEY: &str = "chimpsprite.tool_options";
 
 /// Texto que queda en el portapapeles del sistema al copiar píxeles (ver `shortcuts`).
 const CLIPBOARD_MARKER: &str = "ChimpSprite pixels";
@@ -93,6 +94,9 @@ pub struct ChimpApp {
     pasted: bool,
     /// View → Pixel UI: skin, fuente y escala aplicadas.
     pixel: appearance::PixelUi,
+    /// Opciones de herramienta de la última pestaña abierta (o las guardadas al arrancar). Cada
+    /// pestaña nueva empieza con las de la pestaña activa.
+    tool_options: editor::ToolOptions,
 }
 
 impl ChimpApp {
@@ -114,6 +118,10 @@ impl ChimpApp {
                 .flatten(),
         );
         let mut app = Self::with_parts(recent, view, palettes);
+        app.tool_options = cc
+            .storage
+            .and_then(|s| eframe::get_value(s, TOOL_OPTIONS_KEY))
+            .unwrap_or_default();
         if launch.demo {
             app.open_demo();
         }
@@ -184,6 +192,7 @@ impl ChimpApp {
             palette_confirm: None,
             pasted: false,
             pixel: appearance::PixelUi::from_env(),
+            tool_options: editor::ToolOptions::default(),
         }
     }
 
@@ -940,6 +949,7 @@ impl eframe::App for ChimpApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, RECENT_KEY, &self.recent);
         eframe::set_value(storage, VIEW_KEY, &self.view);
+        eframe::set_value(storage, TOOL_OPTIONS_KEY, &self.current_tool_options());
         eframe::set_value(
             storage,
             DEFAULT_PALETTE_KEY,

@@ -237,7 +237,7 @@ impl ToolKind {
 }
 
 /// Cómo se combina una selección nueva con la existente.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum SelectionMode {
     #[default]
     Replace,
@@ -286,16 +286,23 @@ pub struct TextDraft {
     pub text: String,
 }
 
-/// Opciones compartidas por las herramientas.
-#[derive(Clone, Copy, Debug)]
+/// Tamaño máximo del pincel (slider de Options y Ctrl+rueda).
+pub const MAX_BRUSH_SIZE: u32 = 32;
+
+/// Opciones compartidas por las herramientas. Se guardan al salir; lo que falte en un ajuste
+/// guardado (por ejemplo `brush_shape`, de antes de que existiera) toma el valor por defecto.
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct ToolOptions {
     pub brush_size: u32,
+    pub brush_shape: BrushShape,
     pub pixel_perfect: bool,
     pub filled: bool,
     /// Radio de las esquinas del rectángulo (0 = rectas).
     pub corner_radius: u32,
     pub contiguous: bool,
-    /// Shift presionado (lo actualiza la UI cada frame).
+    /// Shift presionado (lo actualiza la UI cada frame). No se guarda.
+    #[serde(skip)]
     pub constrain: bool,
     pub selection_mode: SelectionMode,
     /// Varita: diferencia máxima por canal.
@@ -314,6 +321,7 @@ impl Default for ToolOptions {
     fn default() -> Self {
         Self {
             brush_size: 1,
+            brush_shape: BrushShape::Round,
             pixel_perfect: true,
             filled: false,
             corner_radius: 0,
@@ -1069,8 +1077,7 @@ impl Editor {
             color: self.color(),
             secondary,
             brush_size: self.options.brush_size,
-            // La opción llega en la Task 11; hasta entonces, la forma por defecto.
-            brush_shape: BrushShape::Round,
+            brush_shape: self.options.brush_shape,
             pixel_perfect: self.options.pixel_perfect,
             filled: self.options.filled,
             corner_radius: self.options.corner_radius,

@@ -8,9 +8,9 @@ use cs_core::{ArtboardId, Palette, PixelValue, SymmetryMode, Tile};
 use crate::canvas::CanvasView;
 use cs_raster::RotationAlgorithm;
 use cs_tools::text::FontChoice;
-use cs_tools::{Dither, GradientShape};
+use cs_tools::{BrushShape, Dither, GradientShape};
 
-use crate::editor::{Editor, SelectionMode, ToolKind};
+use crate::editor::{Editor, MAX_BRUSH_SIZE, SelectionMode, ToolKind};
 use crate::{theme, tile_ops, widgets};
 
 fn icon(kind: ToolKind) -> &'static str {
@@ -199,8 +199,15 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
     let tool = editor.tool;
     let options = &mut editor.options;
     if tool.uses_brush() {
-        ui.label("Brush size");
-        ui.add(egui::Slider::new(&mut options.brush_size, 1..=32));
+        ui.horizontal(|ui| {
+            ui.label("Brush size");
+            brush_shape_buttons(ui, &mut options.brush_shape);
+        });
+        ui.add(egui::Slider::new(
+            &mut options.brush_size,
+            1..=MAX_BRUSH_SIZE,
+        ))
+        .on_hover_text("Ctrl+wheel over the canvas changes it");
     }
     if matches!(tool, ToolKind::Pencil | ToolKind::Eraser) {
         ui.checkbox(&mut options.pixel_perfect, "Pixel-perfect");
@@ -303,6 +310,41 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
     if tool.paints() {
         ui.weak("Alt+click: pick color");
     }
+}
+
+/// Botones Round y Square de la forma del pincel. El círculo y el cuadrado se pintan en vez de
+/// usar glifos: `●` solo está en Hack, que no entra en la familia proporcional de egui.
+fn brush_shape_buttons(ui: &mut egui::Ui, shape: &mut BrushShape) -> [egui::Response; 2] {
+    ui.horizontal(|ui| {
+        [(BrushShape::Round, "Round"), (BrushShape::Square, "Square")].map(|(value, name)| {
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
+            if response.clicked() {
+                *shape = value;
+            }
+            let selected = *shape == value;
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, true, selected, name)
+            });
+            let visuals = ui.style().interact_selectable(&response, selected);
+            let painter = ui.painter();
+            painter.rect(
+                rect,
+                visuals.corner_radius,
+                visuals.weak_bg_fill,
+                visuals.bg_stroke,
+                StrokeKind::Inside,
+            );
+            let icon = rect.shrink(5.0);
+            let color = visuals.fg_stroke.color;
+            if value == BrushShape::Round {
+                painter.circle_filled(icon.center(), icon.width() / 2.0, color);
+            } else {
+                painter.rect_filled(icon, 0.0, color);
+            }
+            response.on_hover_text(name)
+        })
+    })
+    .inner
 }
 
 fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor) {
@@ -1538,5 +1580,41 @@ mod tests {
         group_frame(&ctx, &mut e, bucket, 2.15, vec![]);
         assert_eq!(e.tool, ToolKind::Bucket);
         assert!(!Popup::is_any_open(&ctx));
+    }
+
+    #[test]
+    fn the_shape_buttons_pick_round_or_square() {
+        use cs_tools::BrushShape;
+        let ctx = egui::Context::default();
+        let run = |shape: &mut BrushShape, events: Vec<Event>| -> [Rect; 2] {
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
+                events,
+                ..Default::default()
+            };
+            let mut rects = [Rect::NOTHING; 2];
+            let mut output = ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| {
+                    rects = brush_shape_buttons(ui, shape).map(|r| r.rect);
+                });
+            });
+            output.textures_delta.clear();
+            rects
+        };
+        let click = |shape: &mut BrushShape, p: Pos2| {
+            run(shape, vec![Event::PointerMoved(p)]);
+            run(shape, vec![mouse(p, PointerButton::Primary, true)]);
+            run(shape, vec![mouse(p, PointerButton::Primary, false)]);
+        };
+        let mut shape = BrushShape::Round;
+        let [round, square] = run(&mut shape, vec![]);
+        assert!(
+            round.width() > 0.0 && square.left() >= round.right(),
+            "side by side"
+        );
+        click(&mut shape, square.center());
+        assert_eq!(shape, BrushShape::Square);
+        click(&mut shape, round.center());
+        assert_eq!(shape, BrushShape::Round);
     }
 }

@@ -88,6 +88,40 @@ fn new_shortcuts_and_every_shortcut_round_trips() {
     assert!(!e.history.can_undo(), "Hand never paints");
 }
 
+#[test]
+fn tool_options_saved_without_the_brush_shape_read_as_round() {
+    use crate::editor::ToolOptions;
+    use cs_tools::BrushShape;
+    let old: ToolOptions =
+        serde_json::from_str(r#"{"brush_size":4,"pixel_perfect":false}"#).unwrap();
+    assert_eq!(old.brush_shape, BrushShape::Round);
+    assert_eq!(old.brush_size, 4);
+    assert!(!old.pixel_perfect);
+    let square = ToolOptions {
+        brush_shape: BrushShape::Square,
+        constrain: true,
+        ..Default::default()
+    };
+    let back: ToolOptions = serde_json::from_str(&serde_json::to_string(&square).unwrap()).unwrap();
+    assert_eq!(back.brush_shape, BrushShape::Square);
+    assert!(!back.constrain, "Shift is not saved");
+}
+
+#[test]
+fn the_editor_paints_with_the_chosen_brush_shape() {
+    use cs_tools::BrushShape;
+    let mut e = editor(ToolKind::Pencil);
+    e.options.brush_size = 3;
+    assert_eq!(e.options.brush_shape, BrushShape::Round, "default");
+    stroke(&mut e, &[(3, 3)], false);
+    let t = e.sprite().color_mode.transparent();
+    assert_ne!(px(&e, 3, 2), t, "top of the cross");
+    assert_eq!(px(&e, 2, 2), t, "no corner");
+    e.options.brush_shape = BrushShape::Square;
+    stroke(&mut e, &[(6, 6)], false);
+    assert_ne!(px(&e, 5, 5), t, "the square has corners");
+}
+
 mod contour {
     use cs_core::{Mask, Symmetry, SymmetryMode};
 

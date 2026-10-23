@@ -114,10 +114,22 @@ impl ChimpApp {
         });
     }
 
-    /// Abre `doc` en una pestaña nueva (o en lugar de un Untitled intacto).
-    fn open_doc(&mut self, doc: DocState) {
+    /// Abre `doc` en una pestaña nueva (o en lugar de un Untitled intacto). Empieza con las
+    /// opciones de herramienta de la pestaña activa.
+    fn open_doc(&mut self, mut doc: DocState) {
         self.canvas_size = None;
+        self.tool_options = self.current_tool_options();
+        doc.editor.options = self.tool_options;
         self.tabs.open(&mut self.doc, doc);
+    }
+
+    /// Opciones de herramienta de la pestaña activa; en Home, las últimas conocidas.
+    pub(crate) fn current_tool_options(&self) -> crate::editor::ToolOptions {
+        if self.has_doc() {
+            self.doc.editor.options
+        } else {
+            self.tool_options
+        }
     }
 
     pub(crate) fn new_document(&mut self) {
@@ -940,5 +952,26 @@ mod tests {
         let pasted = s.cel(LayerId(1), 0).unwrap().image;
         let imported = s.cel(top, 0).unwrap().image;
         assert_ne!(pasted, imported, "each cel has its own image");
+    }
+
+    #[test]
+    fn a_new_tab_starts_with_the_tool_options_of_the_active_one() {
+        use cs_tools::BrushShape;
+        let palettes = PaletteLibrary::new(Box::new(NoPresets));
+        let mut app = ChimpApp::with_parts(Default::default(), ViewSettings::default(), palettes);
+        // Lo leído al arrancar.
+        app.tool_options.brush_shape = BrushShape::Square;
+        app.new_document();
+        assert_eq!(app.doc.editor.options.brush_shape, BrushShape::Square);
+        app.doc.editor.options.brush_size = 7;
+        app.doc.editor.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, PixelValue::Rgba(Rgba::rgb(255, 0, 0)))],
+        });
+        app.new_document();
+        assert_eq!(app.tabs.len(), 2, "a second tab");
+        assert_eq!(app.doc.editor.options.brush_size, 7);
+        assert_eq!(app.current_tool_options().brush_size, 7, "what gets saved");
     }
 }

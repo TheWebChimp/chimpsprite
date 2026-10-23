@@ -1,15 +1,15 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
 use cs_core::{Artboard, ArtboardId, Axis, GridSettings, Guide, Mask, SymmetryMode};
-use cs_tools::{ArtboardHit, Edges, hit_test};
+use cs_tools::{ArtboardHit, BrushShape, Edges, hit_test};
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Pos2, Rect, Sense, Stroke, StrokeKind,
     TextureHandle, TextureOptions, Vec2,
 };
 
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
-use crate::editor::{Editor, ToolKind};
+use crate::editor::{Editor, MAX_BRUSH_SIZE, ToolKind};
 use crate::guides::{RULER_PX, SNAP_PX, SnapContext, after_drag, hit_guide, nice_step};
 use crate::transform_box::{self, Handle, TransformBox, TransformHit};
 use crate::view::{ViewSettings, ZoomRequest};
@@ -70,12 +70,34 @@ pub struct CanvasView {
     slice_menu: bool,
     /// Diálogo Slice Properties abierto (para el slice seleccionado).
     slice_properties: bool,
+    /// Ctrl+rueda de touchpad: píxeles acumulados que todavía no suman un paso de grosor.
+    wheel_rest: f32,
 }
 
 /// Margen (en pantalla) desde el borde del lienzo en el que empieza el auto-scroll.
 const AUTOSCROLL_MARGIN: f32 = 24.0;
 /// Velocidad máxima del auto-scroll en píxeles de pantalla por segundo.
 const AUTOSCROLL_SPEED: f32 = 700.0;
+
+/// Píxeles de rueda (touchpad) que suman un paso de grosor con Ctrl+rueda.
+const BRUSH_WHEEL_PX: f32 = 50.0;
+
+/// Pasos enteros de grosor de un evento de rueda (positivo hacia arriba). Las ruedas de líneas o
+/// páginas dan un paso por evento; las de píxeles se acumulan en `rest` hasta `BRUSH_WHEEL_PX`.
+fn brush_wheel_steps(rest: &mut f32, unit: egui::MouseWheelUnit, dy: f32) -> i32 {
+    if dy == 0.0 {
+        return 0;
+    }
+    match unit {
+        egui::MouseWheelUnit::Point => {
+            *rest += dy;
+            let steps = (*rest / BRUSH_WHEEL_PX).trunc();
+            *rest -= steps * BRUSH_WHEEL_PX;
+            steps as i32
+        }
+        egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => dy.signum() as i32,
+    }
+}
 
 /// Velocidad de auto-scroll (px/s) cuando el puntero arrastra cerca o fuera de `area`.
 /// Negativa hacia la izquierda/arriba; crece con la distancia y se satura.
@@ -150,6 +172,7 @@ impl Default for CanvasView {
             renaming: None,
             slice_menu: false,
             slice_properties: false,
+            wheel_rest: 0.0,
         }
     }
 }
@@ -520,18 +543,41 @@ impl CanvasView {
         dialog: Option<&mut CanvasSizeDialog>,
         view: &ViewSettings,
     ) {
-        // Zoom con la rueda, anclado al cursor.
+        // Rueda: zoom anclado al cursor. Con Ctrl (Cmd en macOS) y una herramienta de pincel
+        // cambia el grosor. Se leen los eventos crudos con los modificadores de cada evento. egui
+        // convierte Ctrl+rueda en `zoom_delta` y no en scroll, y nadie usa `zoom_delta`, así que
+        // la interfaz no se agranda ni los paneles se desplazan.
         if let Some(pointer) = response.hover_pos() {
-            let scroll: f32 = ui.input(|i| {
+            let wheel: Vec<(egui::MouseWheelUnit, f32, bool)> = ui.input(|i| {
                 i.raw
                     .events
                     .iter()
                     .filter_map(|e| match e {
-                        egui::Event::MouseWheel { delta, .. } => Some(delta.y),
+                        egui::Event::MouseWheel {
+                            unit,
+                            delta,
+                            modifiers,
+                            ..
+                        } => Some((*unit, delta.y, modifiers.command)),
                         _ => None,
                     })
-                    .sum()
+                    .collect()
             });
+            let brush = editor.active_tool().uses_brush();
+            let mut scroll = 0.0;
+            for (unit, dy, command) in wheel {
+                if command && brush {
+                    let steps = brush_wheel_steps(&mut self.wheel_rest, unit, dy);
+                    if steps != 0 {
+                        let size = editor.options.brush_size as i32 + steps;
+                        editor.options.brush_size = size.clamp(1, MAX_BRUSH_SIZE as i32) as u32;
+                        // Options ya se dibujó en este frame: otro frame muestra el valor nuevo.
+                        ui.ctx().request_repaint();
+                    }
+                } else {
+                    scroll += dy;
+                }
+            }
             if scroll != 0.0 {
                 self.zoom_at(rect, pointer, scroll > 0.0);
             }
@@ -1141,40 +1187,55 @@ impl CanvasView {
             } else {
                 1
             };
+            let shape = editor.options.brush_shape;
             let offset = -((size as i32 - 1) / 2);
             // En modo Tiles el pincel cubre celdas enteras.
             let cells = editor.tile_space().filter(|_| tool.uses_cells());
-            let r = match cells {
-                Some(space) => {
-                    let (cx, cy) = space.cell_at((hx, hy));
-                    let (x0, y0) = space.cell_origin((cx + offset, cy + offset));
-                    let (tw, th) = space.tile_size;
-                    Rect::from_min_size(
-                        origin + Vec2::new(x0 as f32, y0 as f32) * self.zoom,
-                        Vec2::new((size * tw) as f32, (size * th) as f32) * self.zoom,
-                    )
-                }
-                None => Rect::from_min_size(
-                    origin + Vec2::new((hx + offset) as f32, (hy + offset) as f32) * self.zoom,
-                    Vec2::splat(size as f32 * self.zoom),
-                ),
-            };
             // Las herramientas que pintan píxeles muestran el color primario bajo el cursor.
-            if cells.is_none()
+            let fill = (cells.is_none()
                 && tool.paints()
                 && tool != ToolKind::Eraser
                 && tool != ToolKind::Bucket
-                && tool != ToolKind::Blur
-            {
-                let c = editor.resolve(editor.primary);
-                painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a));
+                && tool != ToolKind::Blur)
+                .then(|| {
+                    let c = editor.resolve(editor.primary);
+                    Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
+                });
+            let stroke = Stroke::new(1.0, theme::BRUSH_OUTLINE);
+            if cells.is_none() && tool.uses_brush() && shape == BrushShape::Round && size > 2 {
+                // Redondo: filas rellenas y el borde píxel a píxel (en 1 y 2 es un cuadrado).
+                let points = cs_raster::brush_points((hx, hy), size, shape);
+                let at = |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * self.zoom;
+                if let Some(fill) = fill {
+                    for (y, x0, x1) in brush_rows(&points) {
+                        let row = Rect::from_min_max(at((x0, y)), at((x1 + 1, y + 1)));
+                        painter.rect_filled(row, 0.0, fill);
+                    }
+                }
+                for (a, b) in brush_edges(&points) {
+                    painter.line_segment([at(a), at(b)], stroke);
+                }
+            } else {
+                let r = match cells {
+                    Some(space) => {
+                        let (cx, cy) = space.cell_at((hx, hy));
+                        let (x0, y0) = space.cell_origin((cx + offset, cy + offset));
+                        let (tw, th) = space.tile_size;
+                        Rect::from_min_size(
+                            origin + Vec2::new(x0 as f32, y0 as f32) * self.zoom,
+                            Vec2::new((size * tw) as f32, (size * th) as f32) * self.zoom,
+                        )
+                    }
+                    None => Rect::from_min_size(
+                        origin + Vec2::new((hx + offset) as f32, (hy + offset) as f32) * self.zoom,
+                        Vec2::splat(size as f32 * self.zoom),
+                    ),
+                };
+                if let Some(fill) = fill {
+                    painter.rect_filled(r, 0.0, fill);
+                }
+                painter.rect_stroke(r, 0.0, stroke, StrokeKind::Inside);
             }
-            painter.rect_stroke(
-                r,
-                0.0,
-                Stroke::new(1.0, theme::BRUSH_OUTLINE),
-                StrokeKind::Inside,
-            );
         }
 
         if view_settings.rulers {
@@ -1613,6 +1674,40 @@ fn draw_marching_ants(painter: &egui::Painter, mask: &Mask, origin: Pos2, zoom: 
     }
 }
 
+/// Filas `(y, x0, x1)` de un pincel, de punta a punta: las formas del pincel no tienen huecos
+/// dentro de una fila.
+fn brush_rows(points: &[(i32, i32)]) -> Vec<(i32, i32, i32)> {
+    let mut rows: BTreeMap<i32, (i32, i32)> = BTreeMap::new();
+    for &(x, y) in points {
+        let r = rows.entry(y).or_insert((x, x));
+        r.0 = r.0.min(x);
+        r.1 = r.1.max(x);
+    }
+    rows.into_iter().map(|(y, (x0, x1))| (y, x0, x1)).collect()
+}
+
+/// Borde de un pincel: cada lado de píxel sin vecino en `points`, como segmento entre dos
+/// esquinas de píxel.
+fn brush_edges(points: &[(i32, i32)]) -> Vec<((i32, i32), (i32, i32))> {
+    let set: HashSet<(i32, i32)> = points.iter().copied().collect();
+    let mut out = Vec::new();
+    for &(x, y) in points {
+        if !set.contains(&(x, y - 1)) {
+            out.push(((x, y), (x + 1, y)));
+        }
+        if !set.contains(&(x, y + 1)) {
+            out.push(((x, y + 1), (x + 1, y + 1)));
+        }
+        if !set.contains(&(x - 1, y)) {
+            out.push(((x, y), (x, y + 1)));
+        }
+        if !set.contains(&(x + 1, y)) {
+            out.push(((x + 1, y), (x + 1, y + 1)));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use cs_commands::Command;
@@ -1689,6 +1784,18 @@ mod tests {
                 modifiers: Default::default(),
             };
             self.frame(vec![ev(true), ev(false)]);
+        }
+
+        /// Un evento de rueda con el puntero sobre el píxel (8, 8).
+        fn wheel(&mut self, unit: egui::MouseWheelUnit, dy: f32, modifiers: egui::Modifiers) {
+            let pos = self.screen((8, 8));
+            self.frame(vec![Event::PointerMoved(pos)]);
+            self.frame(vec![Event::MouseWheel {
+                unit,
+                delta: Vec2::new(0.0, dy),
+                phase: egui::TouchPhase::Move,
+                modifiers,
+            }]);
         }
 
         /// Centro en pantalla del píxel local `p` del artboard activo.
@@ -2079,5 +2186,80 @@ mod tests {
         assert!(h.canvas.renaming.is_none(), "no rename field");
         assert_eq!(h.cursor, egui::CursorIcon::Grab);
         assert_eq!(h.editor.artboard().position, (0, 0));
+    }
+
+    #[test]
+    fn ctrl_wheel_changes_the_brush_size_of_brush_tools() {
+        use egui::{Modifiers, MouseWheelUnit};
+        let mut h = Harness::new();
+        h.editor.set_tool(ToolKind::Pencil);
+        let zoom = h.canvas.zoom;
+        h.wheel(MouseWheelUnit::Line, 1.0, Modifiers::COMMAND);
+        assert_eq!(h.editor.options.brush_size, 2, "one step up");
+        assert_eq!(h.canvas.zoom, zoom, "no zoom");
+        h.wheel(MouseWheelUnit::Line, -1.0, Modifiers::COMMAND);
+        h.wheel(MouseWheelUnit::Line, -1.0, Modifiers::COMMAND);
+        assert_eq!(h.editor.options.brush_size, 1, "not below 1");
+        h.editor.options.brush_size = 32;
+        h.wheel(MouseWheelUnit::Line, 1.0, Modifiers::COMMAND);
+        assert_eq!(h.editor.options.brush_size, 32, "not above 32");
+        // Touchpad: 50 px por paso.
+        h.editor.options.brush_size = 1;
+        h.wheel(MouseWheelUnit::Point, 30.0, Modifiers::COMMAND);
+        assert_eq!(h.editor.options.brush_size, 1, "30 px are not a step yet");
+        h.wheel(MouseWheelUnit::Point, 30.0, Modifiers::COMMAND);
+        assert_eq!(h.editor.options.brush_size, 2);
+        assert_eq!(h.canvas.zoom, zoom, "still no zoom");
+    }
+
+    #[test]
+    fn ctrl_wheel_zooms_without_a_brush_and_the_plain_wheel_always_zooms() {
+        use egui::{Modifiers, MouseWheelUnit};
+        for tool in [ToolKind::Hand, ToolKind::RectSelect] {
+            let mut h = Harness::new();
+            h.editor.set_tool(tool);
+            let zoom = h.canvas.zoom;
+            h.wheel(MouseWheelUnit::Line, -1.0, Modifiers::COMMAND);
+            assert!(h.canvas.zoom < zoom, "{tool:?} zooms out");
+            assert_eq!(h.editor.options.brush_size, 1);
+        }
+        let mut h = Harness::new();
+        h.editor.set_tool(ToolKind::Pencil);
+        let zoom = h.canvas.zoom;
+        h.wheel(MouseWheelUnit::Line, -1.0, Modifiers::NONE);
+        assert!(h.canvas.zoom < zoom, "without Ctrl it zooms");
+        assert_eq!(h.editor.options.brush_size, 1);
+    }
+
+    #[test]
+    fn pixel_wheel_steps_add_up_to_50_px() {
+        use egui::MouseWheelUnit::{Line, Point};
+        let mut rest = 0.0;
+        assert_eq!(brush_wheel_steps(&mut rest, Point, 20.0), 0);
+        assert_eq!(brush_wheel_steps(&mut rest, Point, 20.0), 0);
+        assert_eq!(brush_wheel_steps(&mut rest, Point, 20.0), 1); // 60: quedan 10
+        assert_eq!(brush_wheel_steps(&mut rest, Point, 120.0), 2); // 130: quedan 30
+        assert_eq!(brush_wheel_steps(&mut rest, Point, -80.0), -1); // -50: quedan 0
+        assert_eq!(
+            brush_wheel_steps(&mut rest, Line, 3.0),
+            1,
+            "one per line event"
+        );
+        assert_eq!(brush_wheel_steps(&mut rest, Line, -0.5), -1);
+        assert_eq!(brush_wheel_steps(&mut rest, Line, 0.0), 0);
+    }
+
+    #[test]
+    fn the_round_brush_outline_follows_its_pixels() {
+        use cs_tools::BrushShape;
+        // Redondo de 3: una cruz de 5 píxeles, con 12 lados de borde.
+        let cross = cs_raster::brush_points((0, 0), 3, BrushShape::Round);
+        let edges = brush_edges(&cross);
+        assert_eq!(edges.len(), 12);
+        assert!(edges.contains(&((0, -1), (1, -1))), "top of the cross");
+        assert!(!edges.contains(&((-1, -1), (0, -1))), "no square corner");
+        assert_eq!(brush_rows(&cross), vec![(-1, 0, 0), (0, -1, 1), (1, 0, 0)]);
+        let square = cs_raster::brush_points((0, 0), 2, BrushShape::Square);
+        assert_eq!(brush_edges(&square).len(), 8);
     }
 }
