@@ -1,6 +1,6 @@
 # Buscador de Lospec
 
-Fecha: 2026-10-22 · Estado: en revisión
+Fecha: 2026-10-22 · Estado: aprobado
 
 ## Contexto
 
