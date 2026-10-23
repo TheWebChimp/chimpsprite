@@ -73,6 +73,10 @@ pub struct Floating {
   transparentes) más la selección nueva: la máscara transformada. Un solo paso de undo. Se
   confirma con Enter, con clic fuera de la selección, al cambiar de herramienta, capa, frame o
   artboard, al copiar, cortar o borrar y al guardar o exportar.
+- **Esc** (pedido del usuario el 2026-10-23) hace una sola cosa por pulsación, en este orden:
+  1. si hay un gesto o un texto a medio hacer, lo cancela (como hoy, `Editor::cancel_gesture`);
+  2. si hay contenido flotante, cancela la transformación (ver abajo) sin deseleccionar;
+  3. si no, quita la selección, igual que Deselect (un paso de undo si así funciona hoy Deselect).
 - **Cancelar:** Esc, o Ctrl+Z mientras flota. Vuelve todo a como estaba antes de levantar, sin
   pasos en el historial. Si venía de pegar, la selección vuelve a la anterior al pegado.
 - **Mover:** arrastrar dentro de la selección levanta el contenido (si no flotaba ya) y solo cambia
@@ -115,5 +119,6 @@ pub struct Floating {
   flota sobre lo que hay debajo sin mezclarse; mover con contenido flotante; confirmar al cambiar
   de capa; **regresión del bug de mover:** mover la selección encima de otro dibujo, soltar y
   volver a moverla se lleva solo lo seleccionado al principio y el otro dibujo queda intacto.
+  **Esc:** cancela el gesto si hay uno; si flota, cancela sin deseleccionar; si no, deselecciona.
 - **Lienzo** (harness con eventos crudos de egui, como en los tests de renombrar): arrastrar el
   handle de una esquina escala; arrastrar fuera de una esquina rota; Enter confirma.
