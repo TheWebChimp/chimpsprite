@@ -61,7 +61,9 @@ pub struct Floating {
 }
 ```
 
-- **Levantar:** al empezar a arrastrar un handle o al pegar.
+- **Levantar:** al empezar a arrastrar un handle, al mover arrastrando dentro de la selección
+  (con Move o con una herramienta de selección) o al pegar. Se levanta una sola vez: lo que
+  quede debajo mientras flota no se mezcla ni se lleva en los arrastres siguientes.
   El hueco de origen queda transparente solo en la vista previa. Si viene de pegar, no hay hueco.
 - **Vista previa:** `Editor::view()` aplica a un clon del documento el comando que daría el
   commit (hueco + estampado), igual que hoy con los gestos, y muestra la selección transformada.
@@ -73,9 +75,11 @@ pub struct Floating {
   artboard, al copiar, cortar o borrar y al guardar o exportar.
 - **Cancelar:** Esc, o Ctrl+Z mientras flota. Vuelve todo a como estaba antes de levantar, sin
   pasos en el historial. Si venía de pegar, la selección vuelve a la anterior al pegado.
-- **Mover:** sin contenido flotante, arrastrar dentro de la selección sigue como hoy (escribe en la
-  capa, un paso de undo por arrastre). Con contenido flotante solo cambia `rect` y no toca la capa
-  hasta confirmar, así lo pegado o escalado se puede reacomodar sin mezclarse.
+- **Mover:** arrastrar dentro de la selección levanta el contenido (si no flotaba ya) y solo cambia
+  `rect`; la capa no se toca hasta confirmar. Así lo movido, pegado o escalado se puede reacomodar
+  varias veces sin llevarse lo que haya debajo (bug reportado el 2026-10-23: el mover de hoy
+  estampa en cada arrastre y el siguiente levanta también el dibujo que quedó dentro). Las
+  flechas del teclado, si mueven la selección, siguen la misma regla.
 - **Límites:** solo capas de imagen, sin bloquear, fuera del modo Tiles y sin editar la máscara,
   igual que el portapapeles. En los demás casos no aparecen handles.
 
@@ -109,6 +113,7 @@ pub struct Floating {
   nada; la máscara rota con los píxeles; RotSprite de una línea a 45° no deja píxeles sueltos.
 - **Editor:** levantar y escalar; confirmar es un paso de undo; cancelar no deja rastro; pegar
   flota sobre lo que hay debajo sin mezclarse; mover con contenido flotante; confirmar al cambiar
-  de capa.
+  de capa; **regresión del bug de mover:** mover la selección encima de otro dibujo, soltar y
+  volver a moverla se lleva solo lo seleccionado al principio y el otro dibujo queda intacto.
 - **Lienzo** (harness con eventos crudos de egui, como en los tests de renombrar): arrastrar el
   handle de una esquina escala; arrastrar fuera de una esquina rota; Enter confirma.
