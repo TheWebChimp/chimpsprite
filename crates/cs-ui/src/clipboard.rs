@@ -124,7 +124,7 @@ impl Clip {
 
 impl Editor {
     /// Capa de imagen actual, si se puede leer píxel a píxel (no tilemaps, grupos ni instancias).
-    fn clip_layer_ok(&self, write: bool) -> bool {
+    pub(crate) fn clip_layer_ok(&self, write: bool) -> bool {
         !self.editing_mask()
             && !self.tiles_mode()
             && self
@@ -160,6 +160,7 @@ impl Editor {
         if !self.clip_layer_ok(true) {
             return None;
         }
+        self.commit_floating();
         let clip = self.copy()?;
         self.clear_selection_content();
         Some(clip)

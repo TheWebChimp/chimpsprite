@@ -26,6 +26,7 @@ impl Editor {
     pub fn set_frame(&mut self, frame: usize) {
         let frame = frame.min(self.frame_count() - 1);
         if frame != self.frame {
+            self.commit_floating();
             self.end_group();
             self.frame = frame;
             self.revision += 1;
@@ -178,6 +179,7 @@ impl Editor {
     pub fn select_layer(&mut self, id: LayerId) {
         if self.sprite().layer(id).is_some() {
             if id != self.layer {
+                self.commit_floating();
                 self.end_group();
                 // El aviso de límite de tamaño era de la capa anterior.
                 self.tile_limit = false;

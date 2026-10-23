@@ -15,6 +15,7 @@ use cs_tools::{
 };
 
 use crate::tile_ops::{self, TileProxy};
+use crate::transform::Floating;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ToolKind {
@@ -280,6 +281,8 @@ pub struct ToolOptions {
     pub spray_speed: u32,
     pub gradient_shape: GradientShape,
     pub dither: Dither,
+    /// Cómo se rota la selección (herramientas de selección y Move).
+    pub rotation: cs_raster::RotationAlgorithm,
 }
 
 impl Default for ToolOptions {
@@ -298,6 +301,7 @@ impl Default for ToolOptions {
             spray_speed: 32,
             gradient_shape: GradientShape::Linear,
             dither: Dither::None,
+            rotation: cs_raster::RotationAlgorithm::RotSprite,
         }
     }
 }
@@ -512,6 +516,8 @@ pub struct Editor {
     pub(crate) brush_tileset: Option<(ArtboardId, u32)>,
     /// El último trazo en modo Tiles no se aplicó porque la grilla pasaría el límite de tamaño.
     pub(crate) tile_limit: bool,
+    /// Contenido levantado que se está moviendo, escalando o rotando (ver `transform.rs`).
+    pub(crate) floating: Option<Floating>,
 }
 
 impl Editor {
@@ -559,6 +565,7 @@ impl Editor {
             brush_tile: Tile::new(1, false, false, false),
             brush_tileset: None,
             tile_limit: false,
+            floating: None,
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
@@ -616,6 +623,7 @@ impl Editor {
         if id == self.active || self.document.artboard(id).is_none() {
             return;
         }
+        self.commit_floating();
         self.stop();
         self.end_group();
         self.frame_range = None;
@@ -700,6 +708,10 @@ impl Editor {
     }
 
     pub fn undo(&mut self) {
+        // Mientras flota, deshacer cancela la transformación (no hay paso en el historial).
+        if self.cancel_floating() {
+            return;
+        }
         self.merge = None;
         match self.history.undo(&mut self.document) {
             Ok(true) => {
@@ -713,6 +725,10 @@ impl Editor {
     }
 
     pub fn redo(&mut self) {
+        // Rehacer con algo flotando lo perdería: se ignora hasta confirmar o cancelar.
+        if self.floating.is_some() {
+            return;
+        }
         self.merge = None;
         match self.history.redo(&mut self.document) {
             Ok(true) => {
@@ -779,6 +795,8 @@ impl Editor {
     }
 
     pub fn set_selection(&mut self, selection: Option<Mask>) {
+        // Cambiar la selección (deseleccionar, seleccionar todo, un gesto…) confirma lo flotante.
+        self.commit_floating();
         let selection = selection.filter(|m| !m.is_empty());
         if selection.is_none()
             && let Some(old) = self.selection.take()
@@ -817,6 +835,7 @@ impl Editor {
     /// Cambia de herramienta descartando gestos de varios clics a medias.
     pub fn set_tool(&mut self, kind: ToolKind) {
         if kind != self.tool {
+            self.commit_floating();
             self.cancel_gesture();
             self.tool = kind;
         }
@@ -833,6 +852,8 @@ impl Editor {
 
     /// Borra (deja transparente) el contenido seleccionado de la capa actual.
     pub fn clear_selection_content(&mut self) {
+        // Delete confirma lo flotante y después borra lo seleccionado.
+        self.commit_floating();
         let Some(mask) = &self.selection else {
             return;
         };
@@ -1474,6 +1495,9 @@ impl Editor {
                 },
                 Err(_) => current(),
             };
+        }
+        if let Some(view) = self.floating_view() {
+            return view;
         }
         if let Some(cmd) = self.text_command() {
             let cmd = self.shape_paint(ToolKind::Text, cmd);
