@@ -41,10 +41,17 @@ fn thirteen_groups_in_the_toolbar_order() {
             Blur, Move, Artboard
         ]
     );
-    assert_eq!(ToolKind::GROUPS[5], &[Bucket, Gradient, Jumble]);
-    assert_eq!(ToolKind::GROUPS[11], &[Move, Slice]);
+    // Cada grupo por su contenido, no por su posición.
+    let group_of = |kind: ToolKind| {
+        *ToolKind::GROUPS
+            .iter()
+            .find(|g| g.contains(&kind))
+            .unwrap_or_else(|| panic!("{kind:?} in no group"))
+    };
+    assert_eq!(group_of(Jumble), &[Bucket, Gradient, Jumble]);
+    assert_eq!(group_of(Slice), &[Move, Slice]);
     assert_eq!(
-        ToolKind::GROUPS[12],
+        group_of(Artboard),
         &[Artboard],
         "Artboard has its own group"
     );
