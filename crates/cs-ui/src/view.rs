@@ -31,6 +31,10 @@ pub struct ViewSettings {
     pub lock_guides: bool,
     /// Número de cada celda no vacía de la capa tilemap activa.
     pub tile_numbers: bool,
+    /// Interfaz en pixel art (View → Pixel UI): fuente pixel, escala entera y skin.
+    pub pixel_ui: bool,
+    /// Escala de la UI con Pixel UI (1, 2 o 3): píxeles de pantalla por píxel del skin.
+    pub ui_scale: u8,
 }
 
 impl Default for ViewSettings {
@@ -51,6 +55,8 @@ impl Default for ViewSettings {
             snap_to_grid: false,
             lock_guides: false,
             tile_numbers: false,
+            pixel_ui: false,
+            ui_scale: 2,
         }
     }
 }
@@ -64,6 +70,11 @@ impl ViewSettings {
     pub fn grid_color(&self) -> Color32 {
         let [r, g, b, a] = self.grid_color;
         Color32::from_rgba_unmultiplied(r, g, b, a)
+    }
+
+    /// `ui_scale` entre 1 y 3 (un valor guardado a mano puede salirse).
+    pub fn pixel_scale(&self) -> u8 {
+        self.ui_scale.clamp(1, 3)
     }
 }
 
@@ -174,6 +185,23 @@ mod tests {
     use cs_core::{ColorMode, Sprite};
 
     use super::*;
+
+    #[test]
+    fn pixel_ui_settings_roundtrip_and_start_off() {
+        let v: ViewSettings = serde_json::from_str(r#"{"grid":true}"#).unwrap();
+        assert!(!v.pixel_ui);
+        assert_eq!(v.ui_scale, 2);
+        let on = ViewSettings {
+            pixel_ui: true,
+            ui_scale: 3,
+            ..Default::default()
+        };
+        let back: ViewSettings =
+            serde_json::from_str(&serde_json::to_string(&on).unwrap()).unwrap();
+        assert_eq!(back, on);
+        assert_eq!(ViewSettings { ui_scale: 9, ..on }.pixel_scale(), 3);
+        assert_eq!(ViewSettings { ui_scale: 0, ..on }.pixel_scale(), 1);
+    }
 
     #[test]
     fn extras_switch_hides_everything() {

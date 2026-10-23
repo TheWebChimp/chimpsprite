@@ -1,6 +1,7 @@
 //! Interfaz egui de ChimpSprite: capa delgada sobre el motor.
 
 mod anim_ops;
+mod appearance;
 mod autosave;
 mod canvas;
 mod canvas_size;
@@ -87,6 +88,8 @@ pub struct ChimpApp {
     palette_confirm: Option<palette_ui::Confirm>,
     /// Ya llegó el `Paste` de este Ctrl+V (ver `clipboard::paste_request`).
     pasted: bool,
+    /// View → Pixel UI: skin, fuente y escala aplicadas.
+    pixel: appearance::PixelUi,
 }
 
 impl ChimpApp {
@@ -134,6 +137,7 @@ impl ChimpApp {
             preset_name: None,
             palette_confirm: None,
             pasted: false,
+            pixel: appearance::PixelUi::from_env(),
         };
         if launch.demo {
             app.open_demo();
@@ -393,6 +397,15 @@ impl ChimpApp {
                 self.toggle_fullscreen(ui.ctx());
             }
         }
+        ui.separator();
+        ui.checkbox(&mut self.view.pixel_ui, "Pixel UI");
+        ui.add_enabled_ui(self.view.pixel_ui, |ui| {
+            ui.menu_button("UI Scale", |ui| {
+                for scale in 1..=3u8 {
+                    ui.radio_value(&mut self.view.ui_scale, scale, format!("{scale}×"));
+                }
+            });
+        });
         ui.separator();
         let canvas = &mut self.doc.canvas;
         if ui.add(item("Zoom In", "+")).clicked() {
@@ -856,6 +869,8 @@ fn new_editor(palette: cs_core::Palette) -> Editor {
 impl eframe::App for ChimpApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Pixel UI: fuente, escala entera, estilo y skin (con su recarga en vivo).
+        self.pixel.update(&ctx, &self.view);
         self.handle_close_request(&ctx);
         self.handle_dropped_files(&ctx);
         self.handle_platform_events(&ctx);
