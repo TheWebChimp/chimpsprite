@@ -6,6 +6,8 @@
 //! - Si falta una variante (`.hover`, `.down`, `.active`), se usa la base.
 
 pub mod nine;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod watch;
 
 use std::collections::{BTreeMap, HashMap};
 
