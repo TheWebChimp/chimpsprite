@@ -9,7 +9,7 @@ use cs_core::{ArtboardId, LayerId, LayerKind, Mask, PixelValue, Sprite};
 use cs_raster::{Block, MAX_BLOCK_SIDE, RotationAlgorithm};
 
 use crate::editor::{DocView, Editor, ToolKind};
-use crate::transform_box::{TransformBox, TransformHit};
+use crate::transform_box::{self, TransformBox, TransformHit};
 
 /// Contenido levantado de una capa mientras se transforma.
 #[derive(Clone, Debug)]
@@ -119,6 +119,8 @@ impl Floating {
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct TransformDrag {
     hit: TransformHit,
+    /// Punto local (con decimales) donde se presionó: escalar y rotar se miden desde acá.
+    start: (f32, f32),
     /// Píxel local donde se presionó.
     start_pixel: (i32, i32),
     /// El mismo punto pegado a guías/grid: el desplazamiento se mide desde acá.
@@ -230,6 +232,7 @@ impl Editor {
             .is_some_and(|m| m.contains(start_pixel.0, start_pixel.1));
         self.transform_drag = Some(TransformDrag {
             hit,
+            start: self.local_point(world),
             start_pixel,
             start_snapped,
             start_box,
@@ -248,13 +251,21 @@ impl Editor {
             drag.dragged = true;
             self.transform_drag = Some(drag);
         }
-        // Pega a guías/grid como Move: el desplazamiento entre los dos puntos pegados.
-        let pixel = self.to_local(self.snap_world(world));
+        let p = self.local_point(world);
+        let shift = self.options.constrain;
         let bbox = match drag.hit {
-            TransformHit::Move => drag.start_box.translated(
-                pixel.0 - drag.start_snapped.0,
-                pixel.1 - drag.start_snapped.1,
-            ),
+            TransformHit::Move => {
+                // Pega a guías/grid como Move: el desplazamiento entre los dos puntos pegados.
+                let pixel = self.to_local(self.snap_world(world));
+                drag.start_box.translated(
+                    pixel.0 - drag.start_snapped.0,
+                    pixel.1 - drag.start_snapped.1,
+                )
+            }
+            TransformHit::Handle(handle) => {
+                transform_box::resize(&drag.start_box, handle, drag.start, p, shift)
+            }
+            TransformHit::Rotate => transform_box::rotate(&drag.start_box, drag.start, p, shift),
         };
         if Some(bbox) == self.transform_box() {
             return;
@@ -268,7 +279,25 @@ impl Editor {
             drag.moved = true;
             self.transform_drag = Some(drag);
         }
-        self.set_floating_box(bbox, false);
+        // Escalando o rotando se usa Fast (RotSprite es lento para cada movimiento); al soltar se
+        // calcula la rotación elegida una vez.
+        self.set_floating_box(bbox, drag.hit != TransformHit::Move);
+    }
+
+    /// Punto de mundo → coordenadas locales del artboard activo, con decimales.
+    fn local_point(&self, world: (f32, f32)) -> (f32, f32) {
+        let (x, y) = self.artboard().position;
+        (world.0 - x as f32, world.1 - y as f32)
+    }
+
+    /// El lienzo muestra los 8 handles (y la franja de rotación).
+    pub fn shows_handles(&self) -> bool {
+        self.can_transform() && !self.is_pending()
+    }
+
+    /// Qué se está arrastrando (para el cursor).
+    pub fn transform_drag_hit(&self) -> Option<TransformHit> {
+        self.transform_drag.map(|d| d.hit)
     }
 
     /// Hay un arrastre de transformación en curso.
@@ -310,17 +339,24 @@ impl Editor {
     /// Cambia la caja de lo flotante si el resultado no pasa de `MAX_BLOCK_SIDE`; si pasa, el
     /// handle se queda en el último tamaño válido.
     fn set_floating_box(&mut self, bbox: TransformBox, fast: bool) -> bool {
-        let (w, h) = cs_raster::rotated_size(
-            bbox.width().unsigned_abs(),
-            bbox.height().unsigned_abs(),
-            bbox.angle,
-        );
-        if w > MAX_BLOCK_SIDE || h > MAX_BLOCK_SIDE {
+        // Ni lo escalado ni lo rotado pueden pasar del límite.
+        let (sw, sh) = (bbox.width().unsigned_abs(), bbox.height().unsigned_abs());
+        let (w, h) = cs_raster::rotated_size(sw, sh, bbox.angle);
+        if [sw, sh, w, h].iter().any(|&side| side > MAX_BLOCK_SIDE) {
             return false;
         }
         let Some(f) = self.floating.as_mut() else {
             return false;
         };
+        let (dx, dy) = (bbox.x0 - f.bbox.x0, bbox.y0 - f.bbox.y0);
+        if bbox == f.bbox.translated(dx, dy) {
+            // Solo se mueve: lo transformado (la caché) sirve igual, corrido.
+            f.bbox = bbox;
+            f.at = (f.at.0 + dx, f.at.1 + dy);
+            self.selection = f.mask();
+            self.revision += 1;
+            return true;
+        }
         f.bbox = bbox;
         self.refresh_floating(fast);
         true
@@ -434,12 +470,14 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
+    use std::f32::consts::{FRAC_PI_2, PI};
+
     use cs_commands::Command;
     use cs_core::{ColorMode, LayerId, LayerKind, Mask, PixelValue, Rgba, Sprite};
 
     use super::*;
     use crate::editor::ToolKind;
-    use crate::transform_box::TransformBox;
+    use crate::transform_box::{Handle, TransformBox, TransformHit};
 
     fn red() -> PixelValue {
         PixelValue::Rgba(Rgba::rgb(255, 0, 0))
@@ -613,5 +651,104 @@ mod tests {
             t,
             "the next undos undo the move and the drawing"
         );
+    }
+
+    #[test]
+    fn dragging_a_corner_handle_scales_and_shift_keeps_the_proportion() {
+        let mut e = editor();
+        e.press_transform(TransformHit::Handle(Handle::SE), (3.0, 3.0));
+        e.pointer_drag((6.0, 4.0));
+        e.pointer_release();
+        assert_eq!(e.transform_box(), Some(TransformBox::new(0, 0, 6, 4)));
+        assert!(e.cancel_floating());
+        e.options.constrain = true;
+        e.press_transform(TransformHit::Handle(Handle::SE), (3.0, 3.0));
+        e.pointer_drag((6.0, 4.0));
+        e.pointer_release();
+        assert_eq!(e.transform_box(), Some(TransformBox::new(0, 0, 6, 6)));
+    }
+
+    #[test]
+    fn dragging_around_the_center_rotates_and_shift_snaps_to_15_degrees() {
+        let mut e = editor();
+        let t = e.sprite().color_mode.transparent();
+        // 4×4 con el rojo en su esquina superior izquierda; centro (3, 3).
+        e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (4, 4))));
+        e.press_transform(TransformHit::Rotate, (6.0, 3.0));
+        e.pointer_drag((3.0, 6.0)); // de la derecha a abajo: +90°
+        assert_eq!(
+            e.floating().unwrap().rendered_with,
+            RotationAlgorithm::Fast,
+            "Fast while dragging"
+        );
+        e.pointer_release();
+        assert_eq!(
+            e.floating().unwrap().rendered_with,
+            RotationAlgorithm::RotSprite,
+            "the chosen rotation on release"
+        );
+        let b = e.transform_box().unwrap();
+        assert!((b.angle - FRAC_PI_2).abs() < 1e-4, "{}", b.angle);
+        assert!(e.commit_floating());
+        assert_eq!(
+            px(&e, 4, 1),
+            red(),
+            "the top-left corner went to the top-right"
+        );
+        assert_eq!(px(&e, 1, 1), t);
+        e.options.constrain = true;
+        e.press_transform(TransformHit::Rotate, (6.0, 3.0));
+        e.pointer_drag((3.0 + 3.0 * 0.9, 3.0 + 3.0 * 0.44)); // unos 26°
+        e.pointer_release();
+        let b = e.transform_box().unwrap();
+        assert!((b.angle - PI / 6.0).abs() < 1e-4, "{}", b.angle);
+    }
+
+    #[test]
+    fn moving_a_rotated_block_shifts_the_same_result() {
+        let mut e = editor();
+        e.press_transform(TransformHit::Rotate, (4.0, 1.5));
+        e.pointer_drag((1.5 + 2.5 * 0.8, 1.5 + 2.5 * 0.6)); // unos 37°
+        e.pointer_release();
+        let before = e.floating().unwrap().clone();
+        assert_eq!(before.rendered_with, RotationAlgorithm::RotSprite);
+        e.press_transform(TransformHit::Move, (1.5, 1.5));
+        e.pointer_drag((3.5, 2.5));
+        let after = e.floating().unwrap();
+        assert_eq!(
+            after.rendered_with,
+            RotationAlgorithm::RotSprite,
+            "not Fast"
+        );
+        assert_eq!(after.rendered, before.rendered, "the same pixels");
+        assert_eq!(after.at, (before.at.0 + 2, before.at.1 + 1));
+        e.pointer_release();
+    }
+
+    #[test]
+    fn a_handle_stops_at_the_size_limit() {
+        let mut e = editor();
+        e.press_transform(TransformHit::Handle(Handle::E), (3.0, 1.5));
+        e.pointer_drag((5000.0, 1.5));
+        assert_eq!(
+            e.transform_box(),
+            Some(TransformBox::new(0, 0, 3, 3)),
+            "too wide: keeps the last valid size"
+        );
+        e.pointer_drag((100.0, 1.5));
+        assert_eq!(e.transform_box().unwrap().width(), 100);
+        e.pointer_release();
+    }
+
+    #[test]
+    fn handles_show_only_where_the_clipboard_works() {
+        let mut e = editor();
+        assert!(e.shows_handles());
+        e.set_tool(ToolKind::Pencil);
+        assert!(!e.shows_handles(), "only selection tools and Move");
+        e.set_tool(ToolKind::Move);
+        assert!(e.shows_handles());
+        e.toggle_locked(LayerId(1));
+        assert!(!e.shows_handles(), "not on a locked layer");
     }
 }
