@@ -1,5 +1,6 @@
 //! Ventana Palette Presets, menú ⋯ del panel de paleta y sus diálogos.
 
+use cs_core::Palette;
 use cs_io::palette_files::{self, NamedPalette, PaletteFormat};
 use eframe::egui;
 
@@ -46,7 +47,11 @@ pub struct PresetsWindow {
 /// Pedir el nombre para "Save as Preset" (y para "Set as Default" si la paleta no es un preset).
 pub struct NameDialog {
     name: String,
+    /// La paleta al abrir el diálogo: es la que se guarda aunque luego cambie la del sprite.
+    palette: Palette,
     then_default: bool,
+    /// El foco se pide solo en el primer cuadro (después el usuario puede moverlo).
+    focused: bool,
 }
 
 /// Confirmaciones pendientes.
@@ -67,6 +72,15 @@ fn save_format(file_name: &str) -> PaletteFormat {
     }
 }
 
+/// Nombre final del archivo: si la extensión no es `.gpl`, `.hex` ni `.pal` (p. ej. `.png`),
+/// pasa a `.gpl` para no escribir texto GPL dentro de un `.png`.
+fn save_file_name(file_name: &str, stem: &str) -> String {
+    match palette_files::format_for(file_name) {
+        Some(PaletteFormat::Gpl | PaletteFormat::Hex | PaletteFormat::Pal) => file_name.to_string(),
+        _ => format!("{stem}.gpl"),
+    }
+}
+
 fn matches_search(name: &str, search: &str) -> bool {
     name.to_lowercase().contains(&search.trim().to_lowercase())
 }
@@ -83,12 +97,7 @@ impl ChimpApp {
                     .open_file(LOAD_FILTERS, OpenPurpose::LoadPalette, ctx)
             }
             PaletteAction::Save => self.save_palette_file(),
-            PaletteAction::SaveAsPreset => {
-                self.preset_name = Some(NameDialog {
-                    name: self.doc.tab_name_stem(),
-                    then_default: false,
-                })
-            }
+            PaletteAction::SaveAsPreset => self.open_name_dialog(false),
             PaletteAction::SetAsDefault => self.set_current_as_default(),
             PaletteAction::LoadDefault => {
                 let palette = self.palettes.default_palette();
@@ -121,11 +130,21 @@ impl ChimpApp {
         }
     }
 
+    fn open_name_dialog(&mut self, then_default: bool) {
+        self.preset_name = Some(NameDialog {
+            name: self.doc.tab_name_stem(),
+            palette: self.doc.editor.sprite().palette.clone(),
+            then_default,
+            focused: false,
+        });
+    }
+
     fn save_palette_file(&mut self) {
         let suggested = format!("{}.gpl", self.doc.tab_name_stem());
-        let Some(target) = self.platform.choose_save(&suggested, SAVE_FILTERS) else {
+        let Some(mut target) = self.platform.choose_save(&suggested, SAVE_FILTERS) else {
             return;
         };
+        target.file_name = save_file_name(&target.file_name, target.stem());
         let palette = self.current_palette(target.stem().to_string());
         let bytes = palette_files::write_palette(save_format(&target.file_name), &palette)
             .expect("Gpl, Hex y Pal se pueden escribir");
@@ -134,8 +153,10 @@ impl ChimpApp {
         }
     }
 
-    /// Si la paleta actual ya es un preset, lo marca; si no, primero pide un nombre.
+    /// Si la paleta actual ya es un preset, lo marca (primero los del usuario, con la
+    /// carpeta recién leída); si no, primero pide un nombre.
     fn set_current_as_default(&mut self) {
+        self.palettes.reload();
         let current = &self.doc.editor.sprite().palette;
         let existing = self
             .palettes
@@ -143,15 +164,10 @@ impl ChimpApp {
             .iter()
             .chain(self.palettes.builtin())
             .find(|p| p.palette == *current)
-            .map(|p| p.name.clone());
+            .map(|p| (p.source, p.name.clone()));
         match existing {
-            Some(name) => self.palettes.set_default(Some(name)),
-            None => {
-                self.preset_name = Some(NameDialog {
-                    name: self.doc.tab_name_stem(),
-                    then_default: true,
-                })
-            }
+            Some((source, name)) => self.palettes.set_default(source, &name),
+            None => self.open_name_dialog(true),
         }
     }
 
@@ -164,7 +180,7 @@ impl ChimpApp {
     ) {
         let name = palette.name.clone();
         match self.palettes.save(&palette, &comments) {
-            Ok(()) if then_default => self.palettes.set_default(Some(name)),
+            Ok(()) if then_default => self.palettes.set_default(PresetSource::User, &name),
             Ok(()) => {}
             Err(e) => self.show_message("Could not save the preset", e),
         }
@@ -188,19 +204,20 @@ impl ChimpApp {
         }
     }
 
-    pub(crate) fn update_palette_windows(&mut self, ctx: &egui::Context) {
+    /// `modal`: hay un diálogo abierto (este cuadro); la ventana de presets queda desactivada.
+    pub(crate) fn update_palette_windows(&mut self, ctx: &egui::Context, modal: bool) {
         if !self.has_doc() {
             self.presets_window = None;
             self.preset_name = None;
             self.palette_confirm = None;
             return;
         }
-        self.update_presets_window(ctx);
+        self.update_presets_window(ctx, modal);
         self.update_name_dialog(ctx);
         self.update_palette_confirm(ctx);
     }
 
-    fn update_presets_window(&mut self, ctx: &egui::Context) {
+    fn update_presets_window(&mut self, ctx: &egui::Context, modal: bool) {
         let Some(mut window) = self.presets_window.take() else {
             return;
         };
@@ -212,61 +229,60 @@ impl ChimpApp {
             .open(&mut open)
             .default_size([420.0, 480.0])
             .show(ctx, |ui| {
-                ui.horizontal(|ui| {
-                    ui.selectable_value(&mut window.tab, PresetsTab::Library, "Library");
-                });
-                ui.separator();
-                match window.tab {
-                    PresetsTab::Library => {
-                        ui.horizontal(|ui| {
-                            ui.label("Search");
-                            ui.text_edit_singleline(&mut window.search);
-                        });
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            let default = self.palettes.default_name();
-                            for (title, list) in [
-                                ("Built-in", self.palettes.builtin()),
-                                ("User", self.palettes.user()),
-                            ] {
-                                ui.strong(title);
-                                let shown: Vec<&Preset> = list
-                                    .iter()
-                                    .filter(|p| matches_search(&p.name, &window.search))
-                                    .collect();
-                                if shown.is_empty() {
-                                    ui.weak("No palettes");
-                                }
-                                for preset in shown {
-                                    let is_default = default
-                                        .is_some_and(|d| d.eq_ignore_ascii_case(&preset.name));
-                                    let response = preset_row(ui, preset, is_default);
-                                    if response.clicked() {
-                                        apply = Some(preset.palette.clone());
+                ui.add_enabled_ui(!modal, |ui| {
+                    ui.horizontal(|ui| {
+                        ui.selectable_value(&mut window.tab, PresetsTab::Library, "Library");
+                    });
+                    ui.separator();
+                    match window.tab {
+                        PresetsTab::Library => {
+                            ui.horizontal(|ui| {
+                                ui.label("Search");
+                                ui.text_edit_singleline(&mut window.search);
+                            });
+                            egui::ScrollArea::vertical().show(ui, |ui| {
+                                for (title, list) in [
+                                    ("Built-in", self.palettes.builtin()),
+                                    ("User", self.palettes.user()),
+                                ] {
+                                    ui.strong(title);
+                                    let shown: Vec<&Preset> = list
+                                        .iter()
+                                        .filter(|p| matches_search(&p.name, &window.search))
+                                        .collect();
+                                    if shown.is_empty() {
+                                        ui.weak("No palettes");
                                     }
-                                    response.context_menu(|ui| {
-                                        if ui.button("Set as Default").clicked() {
-                                            set_default = Some(preset.name.clone());
-                                            ui.close();
+                                    for preset in shown {
+                                        let is_default = self.palettes.is_default(preset);
+                                        let response = preset_row(ui, preset, is_default);
+                                        if response.clicked() {
+                                            apply = Some(preset.palette.clone());
                                         }
-                                        if preset.source == PresetSource::User
-                                            && ui.button("Delete").clicked()
-                                        {
-                                            delete = Some(preset.name.clone());
-                                            ui.close();
-                                        }
-                                    });
+                                        response.context_menu(|ui| {
+                                            if ui.button("Set as Default").clicked() {
+                                                set_default =
+                                                    Some((preset.source, preset.name.clone()));
+                                                ui.close();
+                                            }
+                                            if preset.deletable && ui.button("Delete").clicked() {
+                                                delete = Some(preset.name.clone());
+                                                ui.close();
+                                            }
+                                        });
+                                    }
+                                    ui.add_space(8.0);
                                 }
-                                ui.add_space(8.0);
-                            }
-                        });
+                            });
+                        }
                     }
-                }
+                });
             });
         if let Some(palette) = apply {
             self.doc.editor.apply_palette(palette);
         }
-        if let Some(name) = set_default {
-            self.palettes.set_default(Some(name));
+        if let Some((source, name)) = set_default {
+            self.palettes.set_default(source, &name);
         }
         if let Some(name) = delete {
             self.palette_confirm = Some(Confirm::Delete(name));
@@ -283,7 +299,10 @@ impl ChimpApp {
         let mut result = None;
         centered_dialog("Save as Preset").show(ctx, |ui| {
             let response = ui.text_edit_singleline(&mut dialog.name);
-            response.request_focus();
+            if !dialog.focused {
+                response.request_focus();
+                dialog.focused = true;
+            }
             let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
             ui.horizontal(|ui| {
                 let valid = !dialog.name.trim().is_empty();
@@ -299,7 +318,10 @@ impl ChimpApp {
             None => self.preset_name = Some(dialog),
             Some(false) => {}
             Some(true) => {
-                let palette = self.current_palette(dialog.name.trim().to_string());
+                let palette = NamedPalette {
+                    name: dialog.name.trim().to_string(),
+                    palette: dialog.palette,
+                };
                 self.save_preset_asking(palette, Vec::new(), dialog.then_default);
             }
         }
@@ -396,6 +418,14 @@ mod tests {
         assert_eq!(save_format("a.gpl"), PaletteFormat::Gpl);
         assert_eq!(save_format("a"), PaletteFormat::Gpl);
         assert_eq!(save_format("a.png"), PaletteFormat::Gpl);
+    }
+
+    #[test]
+    fn unknown_save_extensions_become_gpl() {
+        assert_eq!(save_file_name("a.hex", "a"), "a.hex");
+        assert_eq!(save_file_name("a.PAL", "a"), "a.PAL");
+        assert_eq!(save_file_name("a.png", "a"), "a.gpl");
+        assert_eq!(save_file_name("a", "a"), "a.gpl");
     }
 
     #[test]

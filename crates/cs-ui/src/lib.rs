@@ -93,7 +93,7 @@ impl ChimpApp {
             .and_then(|s| eframe::get_value(s, VIEW_KEY))
             .unwrap_or_default();
         let mut palettes = palette_library::PaletteLibrary::for_platform();
-        palettes.set_default(
+        palettes.set_stored_default(
             cc.storage
                 .and_then(|s| eframe::get_value::<Option<String>>(s, DEFAULT_PALETTE_KEY))
                 .flatten(),
@@ -780,7 +780,7 @@ impl ChimpApp {
                             panels::color_picker(ui, &mut self.doc.editor);
                         } else {
                             // Con un diálogo abierto, el menú de paleta no abre otro encima.
-                            if let Some(action) = panels::palette(ui, &mut self.doc.editor)
+                            if let Some(action) = panels::palette(ui, &mut self.doc.editor, !modal)
                                 && !modal
                             {
                                 self.palette_action(ui.ctx(), action);
@@ -871,7 +871,7 @@ impl eframe::App for ChimpApp {
             });
         }
         self.update_canvas_size(&ctx);
-        self.update_palette_windows(&ctx);
+        self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);
         self.update_tilemap_dialogs(&ctx);
         self.show_dialogs(&ctx);
@@ -886,7 +886,11 @@ impl eframe::App for ChimpApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, RECENT_KEY, &self.recent);
         eframe::set_value(storage, VIEW_KEY, &self.view);
-        eframe::set_value(storage, DEFAULT_PALETTE_KEY, &self.palettes.default_name());
+        eframe::set_value(
+            storage,
+            DEFAULT_PALETTE_KEY,
+            &self.palettes.stored_default(),
+        );
     }
 }
 

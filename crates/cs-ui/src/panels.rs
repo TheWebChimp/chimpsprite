@@ -481,7 +481,8 @@ pub fn palette_strip(ui: &mut egui::Ui, palette: &Palette, max: usize, size: f32
     });
 }
 
-pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) -> Option<PaletteAction> {
+/// `menus`: con un diálogo abierto, Presets ▾ y ⋯ quedan desactivados.
+pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<PaletteAction> {
     ui.add_space(6.0);
     ui.heading("Color");
     ui.separator();
@@ -505,27 +506,29 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) -> Option<PaletteAction> 
     let mut action = None;
     ui.horizontal(|ui| {
         ui.label("Palette");
-        if ui.small_button("Presets ▾").clicked() {
-            action = Some(PaletteAction::OpenPresets);
-        }
-        ui.menu_button("⋯", |ui| {
-            let mut item = |ui: &mut egui::Ui, label: &str, a: PaletteAction| {
-                if ui.button(label).clicked() {
-                    action = Some(a);
-                    ui.close();
-                }
-            };
-            item(ui, "Load Palette…", PaletteAction::Load);
-            item(ui, "Save Palette…", PaletteAction::Save);
-            item(ui, "Save as Preset…", PaletteAction::SaveAsPreset);
-            ui.separator();
-            item(ui, "Set as Default", PaletteAction::SetAsDefault);
-            item(ui, "Load Default", PaletteAction::LoadDefault);
-            #[cfg(not(target_arch = "wasm32"))]
-            {
-                ui.separator();
-                item(ui, "Open Folder", PaletteAction::OpenFolder);
+        ui.add_enabled_ui(menus, |ui| {
+            if ui.small_button("Presets ▾").clicked() {
+                action = Some(PaletteAction::OpenPresets);
             }
+            ui.menu_button("⋯", |ui| {
+                let mut item = |ui: &mut egui::Ui, label: &str, a: PaletteAction| {
+                    if ui.button(label).clicked() {
+                        action = Some(a);
+                        ui.close();
+                    }
+                };
+                item(ui, "Load Palette…", PaletteAction::Load);
+                item(ui, "Save Palette…", PaletteAction::Save);
+                item(ui, "Save as Preset…", PaletteAction::SaveAsPreset);
+                ui.separator();
+                item(ui, "Set as Default", PaletteAction::SetAsDefault);
+                item(ui, "Load Default", PaletteAction::LoadDefault);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    ui.separator();
+                    item(ui, "Open Folder", PaletteAction::OpenFolder);
+                }
+            });
         });
     });
     let size = 20.0;
