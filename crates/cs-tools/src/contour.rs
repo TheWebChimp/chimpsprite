@@ -1,4 +1,4 @@
-use cs_raster::{Point, line, polygon_filled_nonzero};
+use cs_raster::{Point, line, polygon_filled_nonzero_in};
 
 use crate::{Tool, ToolContext, ToolOutput};
 
@@ -33,8 +33,11 @@ impl Tool for Contour {
         if self.path.is_empty() {
             return ToolOutput::default();
         }
-        // Un solo punto da un píxel; un trazo sin área queda como el trazo.
-        let out = ToolOutput::command(ctx.draw(polygon_filled_nonzero(&self.path), ctx.color));
+        // Un solo punto da un píxel; un trazo sin área queda como el trazo. Solo lo que cae en
+        // el lienzo.
+        let (w, h) = (ctx.sprite.width as i32, ctx.sprite.height as i32);
+        let out =
+            ToolOutput::command(ctx.draw(polygon_filled_nonzero_in(&self.path, w, h), ctx.color));
         self.path.clear();
         out
     }
@@ -155,6 +158,24 @@ mod tests {
         let got = coords(&t.release(&c));
         assert!(got.contains(&(3, 3)));
         assert_eq!(got.len(), 49);
+    }
+
+    #[test]
+    fn a_contour_off_a_small_sprite_keeps_only_canvas_points() {
+        let s = cs_core::Sprite::new(4, 4, cs_core::ColorMode::Rgba);
+        let c = ctx(&s);
+        let mut t = Contour::new();
+        // Casi todo afuera: un cuadrado enorme que cubre el lienzo entero.
+        stroke(
+            &mut t,
+            &c,
+            &[(-500, -500), (500, -500), (500, 500), (-500, 500)],
+        );
+        let mut got = coords(&t.release(&c));
+        got.sort_unstable();
+        let mut want: Vec<Point> = (0..4).flat_map(|y| (0..4).map(move |x| (x, y))).collect();
+        want.sort_unstable();
+        assert_eq!(got, want);
     }
 
     #[test]

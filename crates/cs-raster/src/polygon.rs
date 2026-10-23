@@ -3,27 +3,38 @@ use crate::{Point, line};
 /// Píxeles de un polígono cerrado: los que tienen el centro dentro (regla par-impar) más el
 /// contorno, para que las figuras delgadas no queden vacías.
 pub fn polygon_filled(vertices: &[Point]) -> Vec<Point> {
-    fill(vertices, false)
+    fill(vertices, false, None)
 }
 
 /// Como `polygon_filled`, pero con la regla de winding no cero: donde el contorno se cruza a sí
 /// mismo o se solapa, el relleno no deja hoyos.
 pub fn polygon_filled_nonzero(vertices: &[Point]) -> Vec<Point> {
-    fill(vertices, true)
+    fill(vertices, true, None)
 }
 
-fn fill(vertices: &[Point], nonzero: bool) -> Vec<Point> {
+/// Como `polygon_filled_nonzero`, pero solo los píxeles dentro de `0..width` × `0..height`: las
+/// filas y los tramos se recortan antes de juntarlos, así un contorno que se va muy afuera de un
+/// lienzo chico no arma listas enormes.
+pub fn polygon_filled_nonzero_in(vertices: &[Point], width: i32, height: i32) -> Vec<Point> {
+    fill(vertices, true, Some((width, height)))
+}
+
+fn fill(vertices: &[Point], nonzero: bool, bounds: Option<(i32, i32)>) -> Vec<Point> {
     let Some(&first) = vertices.first() else {
         return Vec::new();
     };
     let mut out: Vec<Point> = Vec::new();
     for (i, &a) in vertices.iter().enumerate() {
         let b = vertices.get(i + 1).copied().unwrap_or(first);
-        out.extend(line(a, b));
+        out.extend(line(a, b).into_iter().filter(|&p| inside(p, bounds)));
     }
-    let (y0, y1) = vertices.iter().fold((i32::MAX, i32::MIN), |(lo, hi), p| {
+    let (mut y0, mut y1) = vertices.iter().fold((i32::MAX, i32::MIN), |(lo, hi), p| {
         (lo.min(p.1), hi.max(p.1))
     });
+    if let Some((_, h)) = bounds {
+        y0 = y0.max(0);
+        y1 = y1.min(h - 1);
+    }
     for y in y0..=y1 {
         let cy = y as f64 + 0.5;
         // Cruces de la fila con cada arista (vértices en el centro del píxel), con el sentido
@@ -45,8 +56,12 @@ fn fill(vertices: &[Point], nonzero: bool) -> Vec<Point> {
             // Par-impar: tramos entre el cruce 0 y 1, 2 y 3...; no cero: donde el winding != 0.
             let inside = if nonzero { winding != 0 } else { i % 2 == 0 };
             if inside {
-                let from = (pair[0].0 - 0.5).ceil() as i32;
-                let to = (pair[1].0 - 0.5).floor() as i32;
+                let mut from = (pair[0].0 - 0.5).ceil() as i32;
+                let mut to = (pair[1].0 - 0.5).floor() as i32;
+                if let Some((w, _)) = bounds {
+                    from = from.max(0);
+                    to = to.min(w - 1);
+                }
                 out.extend((from..=to).map(|x| (x, y)));
             }
         }
@@ -54,6 +69,10 @@ fn fill(vertices: &[Point], nonzero: bool) -> Vec<Point> {
     out.sort_unstable_by_key(|&(x, y)| (y, x));
     out.dedup();
     out
+}
+
+fn inside(p: Point, bounds: Option<(i32, i32)>) -> bool {
+    bounds.is_none_or(|(w, h)| p.0 >= 0 && p.1 >= 0 && p.0 < w && p.1 < h)
 }
 
 #[cfg(test)]
@@ -101,6 +120,18 @@ mod tests {
         // Los lóbulos son los triángulos izquierdo y derecho; arriba y abajo quedan vacíos.
         assert!(nz.contains(&(1, 3)) && nz.contains(&(5, 3)));
         assert!(!nz.contains(&(3, 1)) && !nz.contains(&(3, 5)));
+    }
+
+    #[test]
+    fn bounds_clip_rows_and_spans() {
+        let big = [(-100, -100), (100, -100), (100, 100), (-100, 100)];
+        let got = polygon_filled_nonzero_in(&big, 3, 2);
+        assert_eq!(got, vec![(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1)]);
+        // Lo que ya entra queda igual que sin límites.
+        assert_eq!(
+            polygon_filled_nonzero_in(&TWICE, 8, 8),
+            polygon_filled_nonzero(&TWICE)
+        );
     }
 
     #[test]
