@@ -6,7 +6,7 @@ use cs_core::{ColorMode, LayerKind, PixelValue, Rgba};
 use cs_raster::Block;
 use eframe::egui;
 
-use crate::editor::Editor;
+use crate::editor::{Editor, ToolKind};
 
 /// De dónde pegar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -169,13 +169,23 @@ impl Editor {
     /// Pega en la capa actual donde estaba lo copiado (o centrado, si es una imagen de otra app;
     /// corrido para que entre en el lienzo). Lo pegado queda flotando y seleccionado, listo para
     /// moverlo, escalarlo o rotarlo. Una imagen más grande que el lienzo flota entera y se recorta
-    /// al confirmar; lo transparente no borra lo de debajo.
+    /// al confirmar; lo transparente no borra lo de debajo. Con una herramienta de dibujo pasa a
+    /// Move (como Aseprite), así lo pegado sigue flotando en vez de confirmarse al frame siguiente.
     pub fn paste(&mut self, clip: &Clip) {
+        self.paste_clip(clip, true);
+    }
+
+    /// `keep_floating`: cambiar a Move si la herramienta no deja transformar.
+    fn paste_clip(&mut self, clip: &Clip, keep_floating: bool) {
         if !self.clip_layer_ok(true) {
             return;
         }
         self.cancel_gesture();
         self.commit_floating();
+        // Antes de levantar: cambiar de herramienta confirma lo flotante.
+        if keep_floating && !(self.tool.is_selection() || self.tool == ToolKind::Move) {
+            self.set_tool(ToolKind::Move);
+        }
         let sprite = self.sprite();
         let (w, h) = (sprite.width as i32, sprite.height as i32);
         let fit = |o: i32, size: u32, max: i32| o.min(max - size as i32).max(0);
@@ -205,10 +215,12 @@ impl Editor {
         let before = self.active;
         self.add_artboard(clip.size.0, clip.size.1);
         if self.active != before {
-            self.paste(&Clip {
+            // Se confirma en el momento: la herramienta no cambia.
+            let clip = Clip {
                 origin: (0, 0),
                 ..clip.clone()
-            });
+            };
+            self.paste_clip(&clip, false);
             self.commit_floating();
         }
     }
@@ -243,6 +255,7 @@ mod tests {
         let top = e.layer;
         let t = e.sprite().color_mode.transparent();
         e.paste(&clip);
+        e.sync_floating(); // el frame siguiente no lo confirma
         assert!(e.is_floating());
         assert_eq!(e.sprite().pixel(top, 0, 2, 2), t, "not applied yet");
         let shown = e.view().document.artboards[0].sprite.pixel(top, 0, 2, 2);
@@ -362,6 +375,7 @@ mod tests {
         let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
         let t = e.sprite().color_mode.transparent();
         e.paste(&clip.centered_in(8, 8));
+        e.sync_floating();
         assert!(
             e.is_floating(),
             "an external image floats like an internal clip"
@@ -386,6 +400,7 @@ mod tests {
         let big = Clip::from_rgba(10, 10, &[200; 400]).unwrap();
         let mut e = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
         e.paste(&big.centered_in(4, 4));
+        e.sync_floating();
         assert_eq!(
             e.transform_box().map(|b| (b.width(), b.height())),
             Some((10, 10)),
@@ -407,6 +422,8 @@ mod tests {
         let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
         let first = e.active;
         e.paste_in_new_artboard(&clip);
+        e.sync_floating();
+        assert_eq!(e.tool, ToolKind::Pencil, "nothing floats: the tool stays");
         assert_eq!(e.document.artboards.len(), 2);
         assert_ne!(e.active, first);
         assert!(
@@ -450,6 +467,7 @@ mod tests {
         e.set_selection(Some(Mask::from_rect(8, 8, (2, 2), (2, 2))));
         let clip = e.copy().unwrap();
         e.paste(&clip); // flota en (2, 2)
+        e.sync_floating();
         e.tool = ToolKind::RectSelect;
         // Pasa por encima del azul y se deja más abajo.
         e.pointer_press((2.5, 2.5), false, false, 0.1);
@@ -478,6 +496,7 @@ mod tests {
         e.set_selection(Some(Mask::from_rect(8, 8, (5, 5), (6, 6))));
         let version = e.doc_version;
         e.paste(&clip);
+        e.sync_floating();
         e.escape();
         assert!(!e.is_floating());
         assert_eq!(e.doc_version, version);
@@ -485,5 +504,42 @@ mod tests {
             e.selection.as_ref().unwrap().bounds(),
             Some(((5, 5), (6, 6)))
         );
+    }
+
+    #[test]
+    fn pasting_with_a_drawing_tool_switches_to_move_and_keeps_floating() {
+        let (mut e, red) = editor_with_dot();
+        assert_eq!(e.tool, ToolKind::Pencil);
+        e.set_selection(Some(Mask::from_rect(8, 8, (2, 2), (2, 2))));
+        let clip = e.copy().unwrap();
+        e.paste(&clip);
+        e.sync_floating();
+        assert!(e.is_floating(), "the next frame does not apply it");
+        assert_eq!(e.tool, ToolKind::Move);
+        assert!(e.commit_floating());
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 2), red);
+    }
+
+    #[test]
+    fn pasting_with_a_selection_tool_keeps_the_tool_and_floats() {
+        let (mut e, _) = editor_with_dot();
+        e.set_tool(ToolKind::RectSelect);
+        e.set_selection(Some(Mask::from_rect(8, 8, (2, 2), (2, 2))));
+        let clip = e.copy().unwrap();
+        e.paste(&clip);
+        e.sync_floating();
+        assert!(e.is_floating());
+        assert_eq!(e.tool, ToolKind::RectSelect);
+    }
+
+    #[test]
+    fn pasting_an_external_image_with_a_drawing_tool_switches_to_move() {
+        let clip = Clip::from_rgba(2, 1, &RED_AND_CLEAR).unwrap();
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        assert_eq!(e.tool, ToolKind::Pencil);
+        e.paste(&clip.centered_in(8, 8));
+        e.sync_floating();
+        assert!(e.is_floating());
+        assert_eq!(e.tool, ToolKind::Move);
     }
 }
