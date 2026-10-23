@@ -27,6 +27,12 @@ const FALLBACK_BUTTON: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const FALLBACK_BUTTON_SIZE: Vec2 = Vec2::new(32.0, 18.0);
 /// Tamaño del botón de cerrar de respaldo (el de la pieza del skin).
 const FALLBACK_CLOSE_SIZE: Vec2 = Vec2::new(9.0, 9.0);
+/// Marco de los botones de herramienta; `.active` cuando su grupo tiene la herramienta activa.
+const SLOT_PIECE: &str = "tool.slot";
+/// Tamaño del botón de herramienta de respaldo (el del marco del mockup).
+const FALLBACK_SLOT_SIZE: Vec2 = Vec2::new(23.0, 23.0);
+/// Lado de la marca de variantes, en píxeles del skin.
+const MORE_MARK: f32 = 3.0;
 
 /// Bordes del 9-slice de la pieza en puntos (izquierda, arriba, derecha, abajo). Con la escala
 /// entera de Pixel UI, un punto es un píxel del skin.
@@ -321,6 +327,105 @@ fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response
     response
 }
 
+/// Botón de herramienta de la barra de íconos: el marco `tool.slot` (`tool.slot.active` con
+/// `selected`) a tamaño de pieza y el ícono `icon` centrado en él. Presionado, el ícono baja 1 px.
+/// Con `more`, un triangulito de 3×3 en la esquina de abajo a la derecha del relleno marca que
+/// hay variantes.
+///
+/// Sin el ícono se dibuja la inicial de `label`; sin el marco, el respaldo plano (con un borde
+/// `accent` si está elegido). `label` es también el nombre accesible.
+// La toolbar de íconos lo usa desde la Task 5.
+#[cfg_attr(not(test), allow(dead_code))]
+pub fn tool_button(
+    ui: &mut Ui,
+    skin: &Skin,
+    icon: &str,
+    label: &str,
+    selected: bool,
+    more: bool,
+) -> Response {
+    let base = skin.piece(SLOT_PIECE, WidgetState::Normal);
+    let size = base.map_or(FALLBACK_SLOT_SIZE, |p| {
+        vec2(p.size[0] as f32, p.size[1] as f32)
+    });
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
+    });
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let pressed = response.is_pointer_button_down_on();
+    let state = if selected {
+        WidgetState::Active
+    } else if pressed {
+        WidgetState::Down
+    } else if response.hovered() {
+        WidgetState::Hover
+    } else {
+        WidgetState::Normal
+    };
+    let colors = *skin.colors();
+    let ppp = ui.ctx().pixels_per_point();
+    let mut shapes = match skin.piece(SLOT_PIECE, state) {
+        Some(piece) => piece_shapes(piece, rect, ppp),
+        None => {
+            let mut flat = flat_shapes(skin, rect, 0.0, ppp);
+            if selected {
+                flat.push(Shape::rect_stroke(
+                    rect.shrink(1.0).round_to_pixels(ppp),
+                    0.0,
+                    Stroke::new(1.0, colors.accent),
+                    StrokeKind::Inside,
+                ));
+            }
+            flat
+        }
+    };
+    let icon_state = if pressed {
+        WidgetState::Down
+    } else {
+        WidgetState::Normal
+    };
+    match skin.piece(icon, WidgetState::Normal) {
+        Some(piece) => {
+            let icon_size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+            let at = label_pos(rect, icon_size, icon_state, ppp);
+            shapes.extend(piece_shapes(piece, Rect::from_min_size(at, icon_size), ppp));
+        }
+        None => {
+            let initial: String = label.chars().take(1).collect();
+            let font = TextStyle::Button.resolve(ui.style());
+            let galley = ui.painter().layout_no_wrap(initial, font, colors.text);
+            let at = label_pos(rect, galley.size(), icon_state, ppp);
+            shapes.push(Shape::galley(at, galley, colors.text));
+        }
+    }
+    if more {
+        let [_, _, right, bottom] = base.map_or(FALLBACK_BUTTON, borders);
+        let corner = rect.max - vec2(right, bottom);
+        shapes.extend(
+            more_mark(corner, ppp)
+                .into_iter()
+                .map(|r| Shape::rect_filled(r, 0.0, colors.text_dim)),
+        );
+    }
+    ui.painter().extend(shapes);
+    response
+}
+
+/// Triangulito de 3×3 px que marca un grupo con variantes, con el ángulo recto abajo a la
+/// derecha, en `corner`: tres filas de 1, 2 y 3 px, alineadas a píxeles de pantalla.
+fn more_mark(corner: Pos2, pixels_per_point: f32) -> [Rect; 3] {
+    let top = corner.y - MORE_MARK;
+    [1.0, 2.0, 3.0].map(|w| {
+        let y = top + w - 1.0;
+        Rect::from_min_max(pos2(corner.x - w, y), pos2(corner.x, y + 1.0))
+            .round_to_pixels(pixels_per_point)
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use egui::{Event, PointerButton, RawInput};
@@ -503,6 +608,87 @@ mod tests {
                 assert_eq!(w.fract(), 0.0, "whole pixels: {widths:?}");
                 assert!((w - widths[0]).abs() <= 1.0, "{widths:?}");
             }
+        }
+    }
+
+    /// Un frame con un botón de herramienta (Lasso, con variantes): su rectángulo, si se hizo
+    /// clic y las texturas que se dibujaron.
+    fn tool(
+        ctx: &egui::Context,
+        skin: &Skin,
+        selected: bool,
+        events: Vec<Event>,
+    ) -> (Rect, bool, Vec<egui::TextureId>) {
+        let mut out = (Rect::NOTHING, false);
+        let input = RawInput { events, ..screen() };
+        let mut output = ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let r = tool_button(ui, skin, "icon.lasso", "Lasso", selected, true);
+                out = (r.rect, r.clicked());
+            });
+        });
+        // Las texturas (fuentes y skin) no se suben a ninguna GPU.
+        output.textures_delta.clear();
+        let mut textures = Vec::new();
+        for clipped in &output.shapes {
+            collect_textures(&clipped.shape, &mut textures);
+        }
+        (out.0, out.1, textures)
+    }
+
+    fn collect_textures(shape: &Shape, out: &mut Vec<egui::TextureId>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_textures(s, out)),
+            Shape::Mesh(mesh) => out.push(mesh.texture_id),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn a_tool_button_is_the_slot_with_its_icon_and_the_active_slot_when_selected() {
+        let ctx = egui::Context::default();
+        let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
+        let id = |name: &str| skin.piece(name, WidgetState::Normal).unwrap().texture.id();
+        let (rect, _, textures) = tool(&ctx, &skin, false, vec![]);
+        assert_eq!(rect.size(), vec2(23.0, 23.0), "the slot size");
+        assert!(textures.contains(&id("tool.slot")));
+        assert!(textures.contains(&id("icon.lasso")));
+        let (_, _, textures) = tool(&ctx, &skin, true, vec![]);
+        assert!(textures.contains(&id("tool.slot.active")));
+        assert!(!textures.contains(&id("tool.slot")));
+    }
+
+    #[test]
+    fn a_tool_button_clicks_with_the_skin_and_with_the_flat_fallback() {
+        let ctx = egui::Context::default();
+        let skins = [
+            Skin::load(&ctx, crate::skin::EMBEDDED).unwrap(),
+            Skin::fallback(),
+        ];
+        for skin in &skins {
+            let (rect, _, _) = tool(&ctx, skin, false, vec![]);
+            assert_eq!(rect.size(), vec2(23.0, 23.0));
+            let at = rect.center();
+            tool(&ctx, skin, false, vec![Event::PointerMoved(at)]);
+            tool(&ctx, skin, false, vec![press(at, true)]);
+            let (_, clicked, _) = tool(&ctx, skin, false, vec![press(at, false)]);
+            assert!(clicked);
+        }
+    }
+
+    #[test]
+    fn the_variants_mark_is_a_three_pixel_triangle_in_the_corner() {
+        for ppp in [1.0, 2.0, 3.0] {
+            let rows = more_mark(pos2(21.0, 21.0), ppp);
+            assert_eq!(
+                rows,
+                [
+                    Rect::from_min_max(pos2(20.0, 18.0), pos2(21.0, 19.0)),
+                    Rect::from_min_max(pos2(19.0, 19.0), pos2(21.0, 20.0)),
+                    Rect::from_min_max(pos2(18.0, 20.0), pos2(21.0, 21.0)),
+                ],
+                "at {ppp}"
+            );
         }
     }
 
