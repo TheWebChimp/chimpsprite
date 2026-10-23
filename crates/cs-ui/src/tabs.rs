@@ -57,8 +57,9 @@ impl DocState {
         crate::files::stem(&self.location.name).to_string()
     }
 
+    /// Hay cambios sin guardar. Lo flotante cuenta: todavía no está en el documento.
     pub fn is_dirty(&self) -> bool {
-        self.editor.doc_version != self.saved_version
+        self.editor.doc_version != self.saved_version || self.editor.is_floating()
     }
 
     /// Recién creado y sin tocar: se puede reemplazar al abrir otro archivo.
@@ -135,8 +136,10 @@ impl Tabs {
     }
 
     /// Guarda el documento activo en su pestaña y deja en `current` un marcador.
+    /// Lo flotante se confirma antes: cambiar de pestaña, ir a Home o abrir otra lo aplica.
     fn stash(&mut self, current: &mut DocState) {
         if let Some(a) = self.active {
+            current.editor.commit_floating();
             self.slots[a] = Some(std::mem::replace(current, DocState::untitled("")));
         }
     }
@@ -330,5 +333,56 @@ mod tests {
         assert_eq!(tabs.active(), Some(0));
         tabs.cycle(&mut current, false); // 0 → Home
         assert_eq!(tabs.active(), None);
+    }
+    /// Documento con un punto levantado y movido (flotando, sin cambios en el documento).
+    fn floating(name: &str) -> DocState {
+        let mut doc = named(name);
+        touch(&mut doc);
+        doc.saved_version = doc.editor.doc_version;
+        let e = &mut doc.editor;
+        e.tool = crate::editor::ToolKind::RectSelect;
+        let (w, h) = (e.sprite().width, e.sprite().height);
+        e.set_selection(Some(cs_core::Mask::from_rect(w, h, (0, 0), (0, 0))));
+        let (x, y) = e.artboard().position;
+        let world = |p: i32| ((x + p) as f32 + 0.5, (y + p) as f32 + 0.5);
+        e.pointer_press(world(0), false, false, 0.1);
+        e.pointer_drag(world(2));
+        e.pointer_release();
+        assert!(e.is_floating());
+        doc
+    }
+
+    #[test]
+    fn floating_content_counts_as_unsaved() {
+        let doc = floating("a");
+        assert_eq!(doc.editor.doc_version, doc.saved_version);
+        assert!(doc.is_dirty());
+        assert!(!doc.is_pristine());
+    }
+
+    #[test]
+    fn switching_tabs_applies_the_floating_content() {
+        let mut tabs = Tabs::default();
+        let mut current = named("");
+        tabs.open(&mut current, floating("a"));
+        tabs.open(&mut current, named("b"));
+        tabs.switch(&mut current, 0);
+        assert!(!current.editor.is_floating(), "applied when it was stashed");
+        let white = PixelValue::Rgba(Rgba::rgb(1, 1, 1));
+        assert_eq!(current.editor.sprite().pixel(LayerId(1), 0, 2, 2), white);
+        assert!(current.is_dirty());
+        tabs.go_home(&mut current);
+        assert_eq!(tabs.dirty(&current), vec![0]);
+    }
+
+    #[test]
+    fn closing_a_tab_with_floating_content_asks_first() {
+        let mut tabs = Tabs::default();
+        let mut current = named("");
+        tabs.open(&mut current, named("a"));
+        touch(&mut current);
+        tabs.open(&mut current, floating("b"));
+        // `request_close_tab` pregunta por las pestañas de esta lista.
+        assert_eq!(tabs.dirty(&current), vec![0, 1]);
     }
 }
