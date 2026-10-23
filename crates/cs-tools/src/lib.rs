@@ -2,6 +2,7 @@
 
 mod artboard;
 mod bucket;
+mod contour;
 mod eyedropper;
 mod gradient;
 mod jumble;
@@ -16,6 +17,7 @@ pub mod text;
 
 pub use artboard::{ArtboardHit, ArtboardTool, Edges, hit_test};
 pub use bucket::Bucket;
+pub use contour::Contour;
 pub use cs_raster::Point;
 pub use cs_raster::{Dither, GradientShape};
 pub use eyedropper::Eyedropper;
