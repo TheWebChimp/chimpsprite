@@ -11,167 +11,39 @@ use cs_tools::text::FontChoice;
 use cs_tools::{BrushShape, Dither, GradientShape};
 
 use crate::editor::{Editor, MAX_BRUSH_SIZE, SelectionMode, ToolKind};
-use crate::{theme, tile_ops, widgets};
+use crate::{theme, tile_ops, tool_group, widgets};
 
-fn icon(kind: ToolKind) -> &'static str {
-    match kind {
-        ToolKind::RectSelect => "🔲",
-        ToolKind::EllipseSelect => "🔘",
-        ToolKind::Lasso => "➰",
-        ToolKind::PolygonLasso => "🔷",
-        ToolKind::MagicWand => "✨",
-        ToolKind::Move => "✚",
-        ToolKind::Hand => "✋",
-        ToolKind::Contour => "➿",
-        ToolKind::Blur => "☁",
-        ToolKind::Pencil => "✏",
-        ToolKind::Spray => "💨",
-        ToolKind::Eraser => "🗑",
-        ToolKind::Eyedropper => "💧",
-        ToolKind::Bucket => "🍶",
-        ToolKind::Gradient => "🌈",
-        ToolKind::Line => "📏",
-        ToolKind::Rectangle => "⬜",
-        ToolKind::Ellipse => "⭕",
-        ToolKind::Jumble => "🎲",
-        ToolKind::Text => "🔤",
-        ToolKind::Slice => "✂",
-        ToolKind::Artboard => "🖼",
-    }
-}
-
-/// Mantener presionado el botón de un grupo este tiempo (en segundos) abre la lista de variantes.
-const LONG_PRESS_S: f64 = 0.4;
-
-/// Qué pasa con el botón de un grupo mantenido presionado, en este frame.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Hold {
-    /// Nada que hacer.
-    Idle,
-    /// Se cumplió el tiempo: abrir la lista.
-    Open,
-    /// Se suelta el botón con la lista abierta por esta presión: el clic no elige ni cierra.
-    Release,
-}
-
-/// Lleva la cuenta de una presión larga con el botón principal sobre `response`.
-fn hold_state(ui: &egui::Ui, response: &egui::Response) -> Hold {
-    let id = response.id.with("long_press");
-    let opened = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
-    let (down, held) = ui.input(|i| {
-        let held = i.pointer.press_start_time().map(|t| i.time - t);
-        (i.pointer.primary_down(), held.unwrap_or(0.0))
-    });
-    if down && response.is_pointer_button_down_on() {
-        if opened {
-            return Hold::Idle;
-        }
-        if held >= LONG_PRESS_S {
-            ui.data_mut(|d| d.insert_temp(id, true));
-            return Hold::Open;
-        }
-        // Sin eventos egui no vuelve a pintar: pide un frame para cuando se cumpla el tiempo.
-        ui.ctx()
-            .request_repaint_after_secs((LONG_PRESS_S - held) as f32);
-        return Hold::Idle;
-    }
-    if opened {
-        ui.data_mut(|d| d.remove::<bool>(id));
-        return Hold::Release;
-    }
-    Hold::Idle
-}
-
-/// Lista de variantes de un grupo junto al puntero. Se abre con clic derecho o manteniendo
-/// presionado, y un clic normal en el botón la cierra. Usa el mismo id que `context_menu`.
-fn variants_popup(response: &egui::Response, hold: Hold, add_contents: impl FnOnce(&mut egui::Ui)) {
-    use egui::{Popup, PopupCloseBehavior, SetOpenCommand};
-    let open = if hold == Hold::Open || response.secondary_clicked() {
-        Some(SetOpenCommand::Bool(true))
-    } else if response.clicked() && hold != Hold::Release {
-        Some(SetOpenCommand::Bool(false))
-    } else {
-        None
-    };
-    let mut popup = Popup::menu(response).open_memory(open).at_pointer_fixed();
-    if hold == Hold::Release {
-        // Soltar el botón cuenta como clic: no tiene que cerrar la lista recién abierta.
-        popup = popup.close_behavior(PopupCloseBehavior::IgnoreClicks);
-    }
-    popup.show(add_contents);
-}
-
-/// Fila de un grupo: la herramienta actual del grupo y, si hay más, un desplegable con las demás
-/// (también con clic derecho o manteniendo presionado), como en Aseprite. Devuelve la respuesta
-/// del botón.
-fn tool_group(
-    ui: &mut egui::Ui,
-    editor: &mut Editor,
-    index: usize,
-    group: &[ToolKind],
-) -> egui::Response {
-    let memory = ui.id().with(("tool_group", index));
-    if group.contains(&editor.tool) {
-        ui.data_mut(|d| d.insert_temp(memory, editor.tool));
-    }
-    let shown = ui
-        .data(|d| d.get_temp::<ToolKind>(memory))
-        .unwrap_or(group[0]);
-    let mut pick = None;
-    let response = ui
-        .horizontal(|ui| {
-            let more = group.len() > 1;
-            ui.spacing_mut().item_spacing.x = 2.0;
-            let width = ui.available_width() - if more { 22.0 } else { 0.0 };
-            let label = format!("{} {}", icon(shown), shown.label());
-            let button = egui::Button::selectable(editor.tool == shown, label)
+/// Fila de un grupo en la barra con nombres: el botón con la herramienta que muestra el grupo y,
+/// si hay más, un desplegable con las demás (también con clic derecho o manteniendo presionado),
+/// como en Aseprite. Devuelve la respuesta del botón.
+fn tool_group(ui: &mut egui::Ui, editor: &mut Editor, index: usize) -> egui::Response {
+    let group = ToolKind::GROUPS[index];
+    let more = group.len() > 1;
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        let width = ui.available_width() - if more { 22.0 } else { 0.0 };
+        let response = tool_group::group_button(ui, editor, None, index, |ui, shown, state| {
+            let label = format!("{} {}", tool_group::emoji(shown), shown.label());
+            let button = egui::Button::selectable(state.selected, label)
                 .shortcut_text("")
                 .truncate();
-            let response = ui.add_sized([width, 24.0], button).on_hover_text(format!(
-                "{} ({})",
-                shown.label(),
-                shown.shortcut()
-            ));
-            let hold = if more {
-                hold_state(ui, &response)
-            } else {
-                Hold::Idle
-            };
-            if response.clicked() && hold != Hold::Release {
-                pick = Some(shown);
+            ui.add_sized([width, 24.0], button)
+        });
+        if more {
+            let current = editor.tool;
+            let mut pick = None;
+            ui.menu_button("⏷", |ui| {
+                pick = tool_group::variants_list(ui, None, current, group);
+            })
+            .response
+            .on_hover_text("More tools (or right-click, or hold)");
+            if let Some(kind) = pick {
+                editor.set_tool(kind);
             }
-            if more {
-                let current = editor.tool;
-                variants_popup(&response, hold, |ui| {
-                    group_menu(ui, current, group, &mut pick)
-                });
-                ui.menu_button("⏷", |ui| group_menu(ui, current, group, &mut pick))
-                    .response
-                    .on_hover_text("More tools (or right-click, or hold)");
-            }
-            response
-        })
-        .inner;
-    if let Some(kind) = pick {
-        editor.set_tool(kind);
-    }
-    response
-}
-
-fn group_menu(
-    ui: &mut egui::Ui,
-    current: ToolKind,
-    group: &[ToolKind],
-    pick: &mut Option<ToolKind>,
-) {
-    for &kind in group {
-        let label = format!("{} {}", icon(kind), kind.label());
-        let item = egui::Button::selectable(current == kind, label).shortcut_text(kind.shortcut());
-        if ui.add(item).clicked() {
-            *pick = Some(kind);
-            ui.close();
         }
-    }
+        response
+    })
+    .inner
 }
 
 pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor) {
@@ -179,8 +51,8 @@ pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.heading("Tools");
     ui.separator();
     ui.spacing_mut().item_spacing.y = 3.0;
-    for (index, group) in ToolKind::GROUPS.iter().enumerate() {
-        tool_group(ui, editor, index, group);
+    for index in 0..ToolKind::GROUPS.len() {
+        tool_group(ui, editor, index);
     }
 
     ui.add_space(10.0);
@@ -1514,7 +1386,7 @@ mod tests {
         let mut rect = Rect::NOTHING;
         let mut output = ctx.run_ui(input, |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                rect = tool_group(ui, editor, group, ToolKind::GROUPS[group]).rect;
+                rect = tool_group(ui, editor, group).rect;
             });
         });
         output.textures_delta.clear();

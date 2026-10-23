@@ -34,6 +34,7 @@ mod theme;
 mod tile_ops;
 mod tilemap_dialog;
 mod timeline;
+mod tool_group;
 #[cfg(test)]
 mod tool_tests;
 mod transform;
