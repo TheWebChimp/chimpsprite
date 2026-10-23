@@ -393,28 +393,41 @@ mod tests {
                 .iter()
                 .any(|&(a, b)| (a, b) != (x, y) && (a - x).abs() <= 1 && (b - y).abs() <= 1);
             assert!(touches, "loose pixel at ({x}, {y})");
-            // Un punto que solo toca en diagonal también es una mota suelta.
-            let joined = filled
-                .iter()
-                .any(|&(a, b)| (a - x).abs() + (b - y).abs() == 1);
-            assert!(joined, "pixel only touching diagonally at ({x}, {y})");
         }
-        // Fast deja puntas sueltas en los extremos; RotSprite los redondea y queda con menos.
-        let fast = rotate_fast(&line, FRAC_PI_4).0.points().count();
-        assert!(filled.len() < fast, "{} vs fast {fast}", filled.len());
         for y in 0..out.height as i32 {
             let row = (0..out.width as i32)
                 .filter(|&x| out.get(x, y).is_some())
                 .count();
             assert!(row <= 2, "row {y} has {row} pixels");
         }
+        // Escalera limpia de 1 px; Fast deja además una punta arriba y otra abajo.
+        let drawn: Vec<String> = (0..out.height as i32)
+            .map(|y| {
+                (0..out.width as i32)
+                    .map(|x| if out.get(x, y).is_some() { '#' } else { '.' })
+                    .collect()
+            })
+            .collect();
+        assert_eq!(
+            drawn,
+            [
+                ".......", ".##....", "..##...", "...##..", "....##.", ".....##", ".......",
+            ]
+        );
     }
 
     #[test]
     fn big_blocks_use_fast() {
-        let mut b = Block::<u8>::new(257, 256);
-        b.set(0, 0, Some(1));
-        b.set(200, 100, Some(2));
-        assert_eq!(rotsprite(&b, 0.5), rotate_fast(&b, 0.5));
+        // Diagonal que Scale2x redondea: solo coincide con Fast si se cae en el respaldo.
+        let diagonal = |mut b: Block<u8>| {
+            for i in 0..60 {
+                b.set(100 + i, 100 + i, Some(1));
+            }
+            b
+        };
+        let big = diagonal(Block::new(257, 256));
+        assert_eq!(rotsprite(&big, 0.5), rotate_fast(&big, 0.5));
+        let small = diagonal(Block::new(256, 256));
+        assert_ne!(rotsprite(&small, 0.5), rotate_fast(&small, 0.5));
     }
 }
