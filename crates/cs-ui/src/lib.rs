@@ -527,7 +527,6 @@ impl ChimpApp {
     }
 
     fn copy(&mut self, ctx: &egui::Context) {
-        self.doc.editor.commit_floating();
         if let Some(clip) = self.doc.editor.copy() {
             self.clipboard = Some(clip);
             ctx.copy_text(CLIPBOARD_MARKER.into());
@@ -980,5 +979,23 @@ mod tests {
         assert!(e.history.can_undo());
         editor_key(&mut e, Key::Escape, false);
         assert!(e.selection.is_none(), "with nothing else, Esc deselects");
+    }
+    #[test]
+    fn enter_with_a_pending_gesture_finishes_the_gesture_first() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        e.set_tool(ToolKind::PolygonLasso);
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (1, 1))));
+        // Un lazo a medio hacer (fuera de la selección) y, a la vez, algo flotando.
+        for p in [(4.5, 4.5), (7.5, 4.5), (7.5, 7.5)] {
+            e.pointer_press(p, false, false, 0.1);
+            e.pointer_release();
+        }
+        assert!(e.is_pending());
+        assert!(e.lift());
+        editor_key(&mut e, Key::Enter, false);
+        assert!(!e.is_pending(), "Enter finishes the lasso");
+        let bounds = e.selection.as_ref().and_then(|m| m.bounds());
+        assert_eq!(bounds, Some(((4, 4), (7, 7))), "the lasso is the selection");
+        assert!(!e.is_floating());
     }
 }

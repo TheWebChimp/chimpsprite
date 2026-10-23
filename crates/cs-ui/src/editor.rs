@@ -657,7 +657,15 @@ impl Editor {
         })
     }
 
+    /// Ejecuta un comando sobre el documento. Antes confirma lo flotante: guarda índices (capa,
+    /// frame) y una vista previa que otro cambio dejaría desactualizados.
     pub fn execute_doc(&mut self, cmd: DocCommand) -> bool {
+        self.commit_floating();
+        self.apply_doc(cmd)
+    }
+
+    /// Ejecuta sin confirmar lo flotante (lo usa la confirmación misma).
+    pub(crate) fn apply_doc(&mut self, cmd: DocCommand) -> bool {
         self.merge = None;
         match self.history.execute(&mut self.document, cmd) {
             Ok(()) => {
@@ -677,6 +685,8 @@ impl Editor {
     /// El comando debe reemplazar un estado completo (como `SetInstanceTrack` o `SetSlices`) para
     /// que el inverso del primero deshaga todo el gesto.
     pub fn execute_grouped(&mut self, cmd: Command, group: u64) -> bool {
+        // Como `execute_doc`: lo flotante se confirma antes (y corta el grupo).
+        self.commit_floating();
         let cmd = DocCommand::OnArtboard {
             id: self.active,
             cmd,
@@ -852,8 +862,10 @@ impl Editor {
 
     /// Borra (deja transparente) el contenido seleccionado de la capa actual.
     pub fn clear_selection_content(&mut self) {
-        // Delete confirma lo flotante y después borra lo seleccionado.
-        self.commit_floating();
+        // Mientras flota, Delete descarta lo pegado o deja solo el hueco de lo levantado.
+        if self.delete_floating() {
+            return;
+        }
         let Some(mask) = &self.selection else {
             return;
         };
@@ -1127,9 +1139,16 @@ impl Editor {
         self.temp_eyedropper = alt && self.tool.paints();
         let shift = self.options.constrain;
         // Arrastrar lo seleccionado (o cualquier punto con Move) lo levanta y lo deja flotando.
+        // Solo con el botón principal: con el derecho, Move no hace nada y las herramientas de
+        // selección siguen con su gesto.
         if self.moves_selection_at(world, shift, alt) {
-            self.press_transform(TransformHit::Move, world);
-            return;
+            if !secondary {
+                self.press_transform(TransformHit::Move, world);
+                return;
+            }
+            if self.tool == ToolKind::Move {
+                return;
+            }
         }
         // Un clic fuera de lo flotante lo confirma antes de seguir con la herramienta.
         self.commit_floating();

@@ -3,9 +3,10 @@
 //! queda debajo mientras flota no se mezcla ni se lleva en los arrastres siguientes.
 
 use std::borrow::Cow;
+use std::cell::OnceCell;
 
 use cs_commands::{Command, DocCommand};
-use cs_core::{ArtboardId, LayerId, LayerKind, Mask, PixelValue, Sprite};
+use cs_core::{ArtboardId, Document, LayerId, LayerKind, Mask, PixelValue, Sprite};
 use cs_raster::{Block, MAX_BLOCK_SIDE, RotationAlgorithm};
 
 use crate::editor::{DocView, Editor, ToolKind};
@@ -34,6 +35,13 @@ pub struct Floating {
     at: (i32, i32),
     /// Rotación con la que se calculó `rendered`.
     rendered_with: RotationAlgorithm,
+    /// Vista previa (el documento con lo flotante aplicado; `None` si no se pudo aplicar) y el
+    /// `doc_version` con el que se armó. Se descarta al cambiar la caja o lo transformado; la capa,
+    /// el frame y el artboard no cambian mientras flota.
+    preview: OnceCell<(u64, Option<Document>)>,
+    /// Veces que se armó la vista previa (para los tests de la caché).
+    #[cfg(test)]
+    builds: std::cell::Cell<u32>,
 }
 
 impl Floating {
@@ -59,6 +67,9 @@ impl Floating {
             from_paste,
             before,
             canvas,
+            preview: OnceCell::new(),
+            #[cfg(test)]
+            builds: Default::default(),
         }
     }
 
@@ -70,6 +81,20 @@ impl Floating {
         self.rendered = rotated;
         self.at = (b.left() + dx, b.top() + dy);
         self.rendered_with = algorithm;
+        self.preview.take();
+    }
+
+    /// Documento con lo flotante aplicado (hueco y estampado); `None` si el comando no se aplica.
+    fn build_preview(&self, document: &Document) -> Option<Document> {
+        #[cfg(test)]
+        self.builds.set(self.builds.get() + 1);
+        let sprite = &document.artboard(self.artboard)?.sprite;
+        let cmd = DocCommand::OnArtboard {
+            id: self.artboard,
+            cmd: self.command(sprite),
+        };
+        let mut doc = document.clone();
+        cmd.apply(&mut doc).ok().map(|_| doc)
     }
 
     /// Sigue igual que al levantar: confirmar no cambiaría nada.
@@ -353,6 +378,7 @@ impl Editor {
             // Solo se mueve: lo transformado (la caché) sirve igual, corrido.
             f.bbox = bbox;
             f.at = (f.at.0 + dx, f.at.1 + dy);
+            f.preview.take();
             self.selection = f.mask();
             self.revision += 1;
             return true;
@@ -390,8 +416,14 @@ impl Editor {
         ))
     }
 
-    /// Deja lo flotante en su capa (un solo paso de undo) y selecciona lo transformado.
+    /// Deja lo flotante en su capa (un solo paso de undo) y selecciona lo transformado. Si el
+    /// destino ya no sirve (otro tamaño de lienzo, capa bloqueada o borrada…), cancela.
     pub fn commit_floating(&mut self) -> bool {
+        match &self.floating {
+            None => return false,
+            Some(f) if !self.floating_valid(f) => return self.cancel_floating(),
+            Some(_) => {}
+        }
         let Some(f) = self.floating.take() else {
             return false;
         };
@@ -400,15 +432,20 @@ impl Editor {
             Some(artboard) if !f.unchanged() => Some(f.command(&artboard.sprite)),
             _ => None,
         };
+        // `apply_doc` y no `execute_doc`: este es el comando que confirma, no hay nada antes.
         let applied = match cmd {
             Some(Command::DrawPixels { ref pixels, .. }) if pixels.is_empty() => true,
-            Some(cmd) => self.execute_doc(DocCommand::OnArtboard {
+            Some(cmd) => self.apply_doc(DocCommand::OnArtboard {
                 id: f.artboard,
                 cmd,
             }),
             None => true,
         };
-        self.selection = if applied { f.mask() } else { f.before };
+        self.selection = if applied {
+            f.mask()
+        } else {
+            self.selection_before(f.before)
+        };
         self.revision += 1;
         true
     }
@@ -420,11 +457,66 @@ impl Editor {
             return false;
         };
         self.transform_drag = None;
-        let s = self.sprite();
-        let size = (s.width, s.height);
-        self.selection = f.before.filter(|m| (m.width(), m.height()) == size);
+        self.selection = self.selection_before(f.before);
         self.revision += 1;
         true
+    }
+
+    /// La selección de antes de levantar, si todavía tiene el tamaño del lienzo.
+    fn selection_before(&self, before: Option<Mask>) -> Option<Mask> {
+        let s = self.sprite();
+        let size = (s.width, s.height);
+        before.filter(|m| (m.width(), m.height()) == size)
+    }
+
+    /// Delete mientras flota. Lo pegado se descarta (no borra lo de debajo); lo levantado de la
+    /// capa deja solo el hueco en el origen, en un paso de undo. `false` si no flotaba nada.
+    pub(crate) fn delete_floating(&mut self) -> bool {
+        let valid = match &self.floating {
+            None => return false,
+            Some(f) => self.floating_valid(f),
+        };
+        if !valid || self.floating.as_ref().is_some_and(|f| f.from_paste) {
+            return self.cancel_floating();
+        }
+        let Some(f) = self.floating.take() else {
+            return false;
+        };
+        self.transform_drag = None;
+        let clear = self
+            .document
+            .artboard(f.artboard)
+            .map(|a| a.sprite.color_mode.transparent());
+        if let Some(clear) = clear {
+            let (ox, oy) = f.origin;
+            let pixels = f
+                .source
+                .points()
+                .map(|(x, y, _)| (ox + x, oy + y, clear))
+                .collect();
+            self.apply_doc(DocCommand::OnArtboard {
+                id: f.artboard,
+                cmd: Command::DrawPixels {
+                    layer: f.layer,
+                    frame: f.frame,
+                    pixels,
+                },
+            });
+        }
+        self.revision += 1;
+        true
+    }
+
+    /// El destino de lo flotante sigue igual: mismo tamaño de lienzo, el frame existe y la capa
+    /// es de imagen y no está bloqueada.
+    fn floating_valid(&self, f: &Floating) -> bool {
+        self.document.artboard(f.artboard).is_some_and(|a| {
+            let s = &a.sprite;
+            (s.width, s.height) == f.canvas
+                && f.frame < s.frames.len()
+                && s.layer(f.layer)
+                    .is_some_and(|l| l.kind == LayerKind::Image && !l.locked)
+        })
     }
 
     /// Esc hace una sola cosa por pulsación. Primero descarta el gesto o el texto a medio hacer,
@@ -441,16 +533,18 @@ impl Editor {
     /// un camino que no confirma solo (p. ej. ↑/↓), y cancela si la capa ya no se puede editar o
     /// cambió el tamaño del lienzo.
     pub fn sync_floating(&mut self) {
+        let version = self.doc_version;
+        let Some(f) = &mut self.floating else {
+            return;
+        };
+        // Una vista previa de otra versión del documento ya no sirve.
+        if f.preview.get().is_some_and(|(v, _)| *v != version) {
+            f.preview.take();
+        }
         let Some(f) = &self.floating else {
             return;
         };
-        let valid = self.document.artboard(f.artboard).is_some_and(|a| {
-            let s = &a.sprite;
-            (s.width, s.height) == f.canvas
-                && f.frame < s.frames.len()
-                && s.layer(f.layer)
-                    .is_some_and(|l| l.kind == LayerKind::Image && !l.locked)
-        });
+        let valid = self.floating_valid(f);
         let same_target = (f.artboard, f.layer, f.frame) == (self.active, self.layer, self.frame);
         let tool_ok = self.tool.is_selection() || self.tool == ToolKind::Move;
         if !valid {
@@ -460,18 +554,23 @@ impl Editor {
         }
     }
 
-    /// Vista previa: el documento con lo flotante aplicado (hueco y estampado) en un clon.
+    /// Vista previa: el documento con lo flotante aplicado (hueco y estampado) en un clon. Se
+    /// arma una vez y se reusa en los frames siguientes hasta que algo cambia.
     pub(crate) fn floating_view(&self) -> Option<DocView<'_>> {
         let f = self.floating.as_ref()?;
-        let sprite = &self.document.artboard(f.artboard)?.sprite;
-        let cmd = DocCommand::OnArtboard {
-            id: f.artboard,
-            cmd: f.command(sprite),
-        };
-        let mut doc = self.document.clone();
-        let document = match cmd.apply(&mut doc) {
-            Ok(_) => Cow::Owned(doc),
-            Err(_) => Cow::Borrowed(&self.document),
+        self.document.artboard(f.artboard)?;
+        let version = self.doc_version;
+        let cached = f
+            .preview
+            .get_or_init(|| (version, f.build_preview(&self.document)));
+        let document = match cached {
+            (v, Some(doc)) if *v == version => Cow::Borrowed(doc),
+            (v, None) if *v == version => Cow::Borrowed(&self.document),
+            // Otra versión del documento: se arma sin guardar (`sync_floating` la descarta).
+            _ => match f.build_preview(&self.document) {
+                Some(doc) => Cow::Owned(doc),
+                None => Cow::Borrowed(&self.document),
+            },
         };
         Some(DocView {
             document,
@@ -635,10 +734,30 @@ mod tests {
         e.set_selection(Some(Mask::from_rect(8, 8, (4, 0), (6, 2))));
         assert!(e.lift());
         moved(&mut e, 0, 3);
+        // Bloquear con el comando (un cambio de propiedades) confirma antes.
         e.toggle_locked(LayerId(1));
+        assert!(!e.is_floating());
+        assert_eq!(px(&e, 5, 4), red(), "committed before locking");
+        e.toggle_locked(LayerId(1));
+
+        // Bloqueada por un camino que no confirma: el frame siguiente cancela.
+        e.set_selection(Some(Mask::from_rect(8, 8, (4, 3), (6, 5))));
+        assert!(e.lift());
+        moved(&mut e, 0, -3);
+        let lock = cs_commands::DocCommand::OnArtboard {
+            id: e.active,
+            cmd: Command::SetLayerProps {
+                id: LayerId(1),
+                props: cs_commands::LayerProps {
+                    locked: Some(true),
+                    ..Default::default()
+                },
+            },
+        };
+        e.history.execute(&mut e.document, lock).unwrap();
         e.sync_floating();
         assert!(!e.is_floating());
-        assert_eq!(px(&e, 5, 1), red(), "nothing moved");
+        assert_eq!(px(&e, 5, 4), red(), "nothing moved");
         assert!(!e.lift(), "a locked layer cannot be lifted");
     }
 
@@ -788,6 +907,229 @@ mod tests {
         e.pointer_drag((100.0, 1.5));
         assert_eq!(e.transform_box().unwrap().width(), 100);
         e.pointer_release();
+    }
+
+    fn pxf(e: &Editor, frame: usize, x: i32, y: i32) -> PixelValue {
+        e.sprite().pixel(LayerId(1), frame, x, y)
+    }
+
+    /// Tres frames con el punto rojo en (1, 1) (copias independientes) y el frame 0 activo.
+    fn three_frames() -> Editor {
+        let mut e = editor();
+        e.duplicate_frame();
+        e.duplicate_frame();
+        e.set_frame(0);
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (2, 2))));
+        e
+    }
+
+    #[test]
+    fn removing_the_frame_while_floating_commits_on_the_lifted_frame_first() {
+        let mut e = three_frames();
+        let t = e.sprite().color_mode.transparent();
+        e.set_frame(1);
+        assert!(e.lift());
+        moved(&mut e, 3, 3);
+        e.remove_frame();
+        e.sync_floating();
+        e.commit_floating();
+        assert!(!e.is_floating());
+        assert_eq!(e.frame_count(), 2);
+        for f in 0..2 {
+            assert_eq!(pxf(&e, f, 1, 1), red(), "frame {f} untouched");
+            assert_eq!(pxf(&e, f, 4, 4), t, "frame {f} untouched");
+        }
+        e.undo();
+        assert_eq!(e.frame_count(), 3);
+        assert_eq!(pxf(&e, 1, 4, 4), red(), "the move was applied on its frame");
+        assert_eq!(pxf(&e, 1, 1, 1), t);
+    }
+
+    #[test]
+    fn moving_the_frame_while_floating_keeps_the_content_on_the_lifted_frame() {
+        let mut e = three_frames();
+        let t = e.sprite().color_mode.transparent();
+        assert!(e.lift());
+        moved(&mut e, 3, 3);
+        e.move_frame(0, 2);
+        e.sync_floating();
+        e.commit_floating();
+        assert!(!e.is_floating());
+        // El frame levantado ahora es el 2.
+        assert_eq!(pxf(&e, 2, 4, 4), red());
+        assert_eq!(pxf(&e, 2, 1, 1), t);
+        for f in 0..2 {
+            assert_eq!(pxf(&e, f, 1, 1), red(), "frame {f} untouched");
+            assert_eq!(pxf(&e, f, 4, 4), t, "frame {f} untouched");
+        }
+    }
+
+    #[test]
+    fn a_palette_change_while_floating_commits_first() {
+        let mut e = editor();
+        let t = e.sprite().color_mode.transparent();
+        assert!(e.lift());
+        moved(&mut e, 3, 3);
+        let mut colors = e.sprite().palette.colors().to_vec();
+        colors.reverse();
+        assert!(e.apply_palette(cs_core::Palette::new(colors)));
+        assert!(!e.is_floating());
+        assert_eq!(px(&e, 4, 4), red());
+        assert_eq!(px(&e, 1, 1), t);
+        e.undo(); // la paleta
+        e.undo(); // el movimiento
+        assert_eq!(px(&e, 1, 1), red());
+        assert_eq!(px(&e, 4, 4), t);
+    }
+
+    #[test]
+    fn the_preview_is_cached_until_the_box_or_the_algorithm_changes() {
+        let mut e = editor();
+        assert!(e.lift());
+        moved(&mut e, 1, 0);
+        let builds = |e: &Editor| e.floating().unwrap().builds.get();
+        let start = builds(&e);
+        e.view();
+        e.view();
+        assert_eq!(builds(&e), start + 1, "an idle frame reuses the preview");
+        let b = e.transform_box().unwrap().translated(1, 1);
+        assert!(e.set_floating_box(b, false));
+        e.view();
+        e.view();
+        assert_eq!(builds(&e), start + 2, "moving rebuilds it once");
+        assert_eq!(shown(&e, 3, 2), red());
+        e.options.rotation = RotationAlgorithm::Fast;
+        e.refresh_floating(false);
+        e.view();
+        assert_eq!(builds(&e), start + 3, "another algorithm rebuilds it");
+    }
+
+    #[test]
+    fn commit_after_a_canvas_resize_cancels_without_a_wrong_size_selection() {
+        let mut e = editor();
+        assert!(e.lift());
+        moved(&mut e, 1, 1);
+        let version = e.doc_version;
+        // Un cambio de tamaño que no pasa por `execute_doc` (no confirma antes).
+        let resize = cs_commands::DocCommand::OnArtboard {
+            id: e.active,
+            cmd: Command::ResizeCanvas {
+                width: 16,
+                height: 16,
+                offset: (0, 0),
+            },
+        };
+        e.history.execute(&mut e.document, resize).unwrap();
+        assert!(e.commit_floating());
+        assert!(!e.is_floating());
+        assert_eq!(e.doc_version, version, "nothing applied");
+        assert!(
+            e.selection
+                .as_ref()
+                .is_none_or(|m| (m.width(), m.height()) == (16, 16)),
+            "no selection of the old size"
+        );
+        assert_eq!(px(&e, 1, 1), red());
+    }
+
+    #[test]
+    fn delete_while_floating_a_paste_discards_it_without_erasing_below() {
+        let mut e = editor();
+        let version = e.doc_version;
+        // Un pegado transparente encima del punto rojo.
+        let clip = crate::clipboard::Clip::from_rgba(3, 3, &[0; 3 * 3 * 4]).unwrap();
+        e.paste(&clip);
+        assert!(e.is_floating());
+        e.clear_selection_content();
+        assert!(!e.is_floating());
+        assert_eq!(px(&e, 1, 1), red(), "the artwork under the paste stays");
+        assert_eq!(e.doc_version, version, "no undo step");
+    }
+
+    #[test]
+    fn delete_while_floating_lifted_content_only_leaves_the_hole_in_one_step() {
+        let mut e = editor();
+        let t = e.sprite().color_mode.transparent();
+        assert!(e.lift());
+        moved(&mut e, 3, 3);
+        let version = e.doc_version;
+        e.clear_selection_content();
+        assert!(!e.is_floating());
+        assert_eq!(e.doc_version, version + 1, "one undo step");
+        assert_eq!(px(&e, 1, 1), t, "the lifted pixels are gone");
+        assert_eq!(px(&e, 4, 4), t, "nothing stamped");
+        e.undo();
+        assert_eq!(px(&e, 1, 1), red());
+    }
+
+    #[test]
+    fn indexed_lift_move_and_commit_keep_the_indices() {
+        let mut e = Editor::with_sprite(Sprite::new(
+            8,
+            8,
+            ColorMode::Indexed {
+                transparent_index: 0,
+            },
+        ));
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(1, 1, PixelValue::Index(5)), (2, 1, PixelValue::Index(9))],
+        });
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (2, 2))));
+        e.tool = ToolKind::RectSelect;
+        assert!(e.lift());
+        moved(&mut e, 3, 2);
+        assert!(e.commit_floating());
+        assert_eq!(px(&e, 4, 3), PixelValue::Index(5));
+        assert_eq!(px(&e, 5, 3), PixelValue::Index(9));
+        assert_eq!(px(&e, 1, 1), PixelValue::Index(0));
+    }
+
+    #[test]
+    fn undo_of_a_move_whose_hole_and_stamp_overlap_restores_everything() {
+        let mut e = editor();
+        let t = e.sprite().color_mode.transparent();
+        let blue = PixelValue::Rgba(Rgba::rgb(0, 0, 255));
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, blue), (2, 2, blue)],
+        });
+        let before: Vec<PixelValue> = (0..8)
+            .flat_map(|y| (0..8).map(move |x| (x, y)))
+            .map(|(x, y)| px(&e, x, y))
+            .collect();
+        assert!(e.lift());
+        moved(&mut e, 1, 0); // la mitad del bloque cae sobre su propio hueco
+        assert!(e.commit_floating());
+        assert_eq!(px(&e, 0, 0), t);
+        assert_eq!(px(&e, 1, 0), blue);
+        assert_eq!(px(&e, 2, 1), red());
+        assert_eq!(px(&e, 3, 2), blue);
+        e.undo();
+        let after: Vec<PixelValue> = (0..8)
+            .flat_map(|y| (0..8).map(move |x| (x, y)))
+            .map(|(x, y)| px(&e, x, y))
+            .collect();
+        assert_eq!(after, before);
+    }
+
+    #[test]
+    fn copy_while_floating_applies_it_first() {
+        let mut e = editor();
+        assert!(e.lift());
+        moved(&mut e, 3, 3);
+        let clip = e.copy().expect("something selected");
+        assert!(!e.is_floating(), "copy confirms first");
+        assert_eq!(px(&e, 4, 4), red());
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (2, 2))));
+        e.paste(&clip);
+        assert_eq!(
+            e.transform_box(),
+            Some(TransformBox::new(3, 3, 3, 3)),
+            "copied from where it was moved"
+        );
     }
 
     #[test]

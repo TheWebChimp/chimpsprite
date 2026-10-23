@@ -94,6 +94,8 @@ impl Editor {
 
     /// Duplica el frame actual (copias independientes) y se mueve a la copia.
     pub fn duplicate_frame(&mut self) {
+        // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
+        self.commit_floating();
         if let Some(cmd) = ops::duplicate_frame(self.sprite(), self.frame, false)
             && self.execute(cmd)
         {
@@ -334,6 +336,8 @@ impl Editor {
 
     /// Vincula el cel con el del frame anterior de la misma capa.
     pub fn link_to_previous(&mut self, layer: LayerId, frame: usize) {
+        // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
+        self.commit_floating();
         if let Some(prev) = frame.checked_sub(1)
             && let Some(cmd) = ops::link_cel(self.sprite(), layer, frame, prev)
         {
@@ -342,6 +346,8 @@ impl Editor {
     }
 
     pub fn unlink(&mut self, layer: LayerId, frame: usize) {
+        // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
+        self.commit_floating();
         if let Some(cmd) = ops::unlink_cel(self.sprite(), layer, frame) {
             self.execute(cmd);
         }
@@ -349,12 +355,16 @@ impl Editor {
 
     /// Vincula los cels del rango seleccionado de una capa (un paso de undo).
     pub fn link_range(&mut self, layer: LayerId, from: usize, to: usize) {
+        // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
+        self.commit_floating();
         if let Some(cmd) = ops::link_range(self.sprite(), layer, from, to) {
             self.execute(cmd);
         }
     }
 
     pub fn unlink_range(&mut self, layer: LayerId, from: usize, to: usize) {
+        // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
+        self.commit_floating();
         if let Some(cmd) = ops::unlink_range(self.sprite(), layer, from, to) {
             self.execute(cmd);
         }

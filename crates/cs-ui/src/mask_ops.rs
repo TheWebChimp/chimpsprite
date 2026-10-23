@@ -50,6 +50,8 @@ impl Editor {
     }
 
     pub fn apply_mask(&mut self, id: LayerId) {
+        // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
+        self.commit_floating();
         if let Some(cmd) = ops::apply_mask(self.sprite(), id) {
             self.execute(cmd);
         }

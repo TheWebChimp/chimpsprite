@@ -3,7 +3,7 @@
 //! escritorio también se pegan imágenes copiadas en otras apps (Aseprite, el navegador…).
 
 use cs_core::{ColorMode, LayerKind, PixelValue, Rgba};
-use cs_raster::Block;
+use cs_raster::{Block, MAX_BLOCK_SIDE};
 use eframe::egui;
 
 use crate::editor::{Editor, ToolKind};
@@ -133,8 +133,10 @@ impl Editor {
                 .is_some_and(|l| l.kind == LayerKind::Image && !(write && l.locked))
     }
 
-    /// Copia lo seleccionado de la capa actual (sin selección no hay nada que copiar).
-    pub fn copy(&self) -> Option<Clip> {
+    /// Copia lo seleccionado de la capa actual (sin selección no hay nada que copiar). Lo flotante
+    /// se confirma antes, así se copia lo que se ve.
+    pub fn copy(&mut self) -> Option<Clip> {
+        self.commit_floating();
         let mask = self.selection.as_ref()?;
         let ((x0, y0), (x1, y1)) = mask.bounds()?;
         if !self.clip_layer_ok(false) {
@@ -186,13 +188,19 @@ impl Editor {
         if keep_floating && !(self.tool.is_selection() || self.tool == ToolKind::Move) {
             self.set_tool(ToolKind::Move);
         }
+        // Más grande que `MAX_BLOCK_SIDE` no se podría mover ni transformar: se conserva el centro
+        // (en su lugar) y se descarta lo que sobra a los costados.
+        let keep = |size: u32| size.min(MAX_BLOCK_SIDE);
+        let size = (keep(clip.size.0), keep(clip.size.1));
+        let crop = (
+            ((clip.size.0 - size.0) / 2) as i32,
+            ((clip.size.1 - size.1) / 2) as i32,
+        );
+        let origin = (clip.origin.0 + crop.0, clip.origin.1 + crop.1);
         let sprite = self.sprite();
         let (w, h) = (sprite.width as i32, sprite.height as i32);
         let fit = |o: i32, size: u32, max: i32| o.min(max - size as i32).max(0);
-        let (ox, oy) = (
-            fit(clip.origin.0, clip.size.0, w),
-            fit(clip.origin.1, clip.size.1, h),
-        );
+        let (ox, oy) = (fit(origin.0, size.0, w), fit(origin.1, size.1, h));
         let clear = sprite.color_mode.transparent();
         let value = |c: Rgba| match sprite.color_mode {
             _ if c.a == 0 => clear,
@@ -202,9 +210,9 @@ impl Editor {
             }
         };
         // Los puntos transparentes también viajan: dan la forma de la selección.
-        let mut block = Block::new(clip.size.0, clip.size.1);
+        let mut block = Block::new(size.0, size.1);
         for &(x, y, c) in &clip.pixels {
-            block.set(x, y, Some(value(c)));
+            block.set(x - crop.0, y - crop.1, Some(value(c)));
         }
         self.float_pasted(block, (ox, oy));
     }
@@ -541,5 +549,42 @@ mod tests {
         e.sync_floating();
         assert!(e.is_floating());
         assert_eq!(e.tool, ToolKind::Move);
+    }
+
+    #[test]
+    fn a_paste_wider_than_the_block_limit_is_cropped_and_can_be_moved() {
+        let side = cs_raster::MAX_BLOCK_SIDE;
+        let mut rgba = vec![0u8; 5000 * 10 * 4];
+        // Se conserva el centro: las columnas 452..4548. Una marca roja en la primera que queda y
+        // una azul en la última que se descarta a la izquierda.
+        let mut mark = |x: usize, c: [u8; 4]| {
+            let at = (5 * 5000 + x) * 4;
+            rgba[at..at + 4].copy_from_slice(&c);
+        };
+        mark(452, [255, 0, 0, 255]);
+        mark(451, [0, 0, 255, 255]);
+        let clip = Clip::from_rgba(5000, 10, &rgba).unwrap();
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        e.paste(&clip.centered_in(8, 8));
+        assert!(e.is_floating());
+        let b = e.transform_box().unwrap();
+        assert!(
+            b.width() as u32 <= side && b.height() as u32 <= side,
+            "{b:?}"
+        );
+        assert_eq!(b.width() as u32, side);
+        assert_eq!(b.height(), 10);
+        // Se mueve con Move.
+        assert_eq!(e.tool, ToolKind::Move);
+        e.pointer_press((1.5, 1.5), false, false, 0.1);
+        e.pointer_drag((3.5, 2.5));
+        e.pointer_release();
+        assert_eq!(e.transform_box(), Some(b.translated(2, 1)));
+        assert!(e.commit_floating());
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        let t = e.sprite().color_mode.transparent();
+        // Lo pegado quedó en (0, 0) (corrido para entrar en el lienzo) y se movió (2, 1).
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 6), red);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 6), t, "cropped out");
     }
 }

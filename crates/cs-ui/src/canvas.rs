@@ -1684,9 +1684,14 @@ mod tests {
 
         /// Arrastre con el botón principal de `from` a `to` (en pantalla), en varios frames.
         fn drag(&mut self, from: Pos2, to: Pos2) {
+            self.drag_with(from, to, PointerButton::Primary);
+        }
+
+        /// Arrastre con `button` de `from` a `to` (en pantalla), en varios frames.
+        fn drag_with(&mut self, from: Pos2, to: Pos2, button: PointerButton) {
             let button = |pos, pressed| Event::PointerButton {
                 pos,
-                button: PointerButton::Primary,
+                button,
                 pressed,
                 modifiers: Default::default(),
             };
@@ -1971,5 +1976,21 @@ mod tests {
             Vec2::new(-AUTOSCROLL_SPEED, -AUTOSCROLL_SPEED),
             "saturates"
         );
+    }
+    #[test]
+    fn a_right_drag_does_not_lift_or_move_the_selection() {
+        for tool in [ToolKind::Move, ToolKind::RectSelect] {
+            let mut h = Harness::new();
+            let red = h.selected_dot((2, 2), (2, 2), (3, 3));
+            let t = h.editor.sprite().color_mode.transparent();
+            h.editor.set_tool(tool);
+            h.frame(vec![]);
+            let version = h.editor.doc_version;
+            h.drag_with(h.screen((2, 2)), h.screen((6, 6)), PointerButton::Secondary);
+            assert!(!h.editor.is_floating(), "{tool:?}");
+            assert_eq!(h.editor.doc_version, version, "{tool:?}");
+            assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 2, 2), red);
+            assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 6, 6), t);
+        }
     }
 }
