@@ -1,4 +1,4 @@
-use cs_raster::{Point, line, polygon_filled};
+use cs_raster::{Point, line, polygon_filled_nonzero};
 
 use crate::{Tool, ToolContext, ToolOutput};
 
@@ -34,7 +34,7 @@ impl Tool for Contour {
             return ToolOutput::default();
         }
         // Un solo punto da un píxel; un trazo sin área queda como el trazo.
-        let out = ToolOutput::command(ctx.draw(polygon_filled(&self.path), ctx.color));
+        let out = ToolOutput::command(ctx.draw(polygon_filled_nonzero(&self.path), ctx.color));
         self.path.clear();
         out
     }
@@ -130,5 +130,64 @@ mod tests {
         };
         assert!(!pixels.is_empty());
         assert!(pixels.iter().all(|&(_, _, v)| v == blue));
+    }
+
+    #[test]
+    fn a_self_crossing_stroke_has_no_holes() {
+        let s = sprite();
+        let c = ctx(&s);
+        let mut t = Contour::new();
+        // Dos vueltas al mismo cuadrado: el interior se solapa.
+        stroke(
+            &mut t,
+            &c,
+            &[
+                (0, 0),
+                (6, 0),
+                (6, 6),
+                (0, 6),
+                (0, 0),
+                (6, 0),
+                (6, 6),
+                (0, 6),
+            ],
+        );
+        let got = coords(&t.release(&c));
+        assert!(got.contains(&(3, 3)));
+        assert_eq!(got.len(), 49);
+    }
+
+    #[test]
+    fn a_u_shape_fills_exactly() {
+        let s = sprite();
+        let c = ctx(&s);
+        let mut t = Contour::new();
+        // U: brazos de x 0..=1 y 4..=5, base en y 4..=5; el hueco (2..=3, 0..=3) queda vacío.
+        stroke(
+            &mut t,
+            &c,
+            &[
+                (0, 0),
+                (0, 5),
+                (5, 5),
+                (5, 0),
+                (4, 0),
+                (4, 4),
+                (1, 4),
+                (1, 0),
+            ],
+        );
+        let mut got = coords(&t.release(&c));
+        got.sort_unstable();
+        let mut want: Vec<Point> = Vec::new();
+        for y in 0..=5 {
+            for x in 0..=5 {
+                if !(y <= 3 && (2..=3).contains(&x)) {
+                    want.push((x, y));
+                }
+            }
+        }
+        want.sort_unstable();
+        assert_eq!(got, want);
     }
 }
