@@ -378,6 +378,18 @@ impl Editor {
         self.revision += 1;
     }
 
+    /// Texto para la barra de estado mientras flota: tamaño, ángulo y teclas.
+    pub fn floating_status(&self) -> Option<String> {
+        let b = self.floating.as_ref()?.bbox;
+        let degrees = (b.angle.to_degrees().round() as i32).rem_euclid(360);
+        Some(format!(
+            "{}×{}  {}°  Enter to apply · Esc to cancel",
+            b.width().unsigned_abs(),
+            b.height().unsigned_abs(),
+            degrees
+        ))
+    }
+
     /// Deja lo flotante en su capa (un solo paso de undo) y selecciona lo transformado.
     pub fn commit_floating(&mut self) -> bool {
         let Some(f) = self.floating.take() else {
@@ -723,6 +735,44 @@ mod tests {
         assert_eq!(after.rendered, before.rendered, "the same pixels");
         assert_eq!(after.at, (before.at.0 + 2, before.at.1 + 1));
         e.pointer_release();
+    }
+
+    #[test]
+    fn status_shows_size_angle_and_keys_while_floating() {
+        let mut e = editor();
+        assert_eq!(e.floating_status(), None);
+        assert!(e.lift());
+        place(
+            &mut e,
+            TransformBox {
+                x0: 6,
+                y0: 0,
+                x1: 0,
+                y1: 3,
+                angle: FRAC_PI_2,
+            },
+        );
+        assert_eq!(
+            e.floating_status().as_deref(),
+            Some("6×3  90°  Enter to apply · Esc to cancel")
+        );
+    }
+
+    #[test]
+    fn changing_the_rotation_option_recomputes_the_floating_content() {
+        let mut e = editor();
+        // Lift, rotate about 30 degrees by dragging and release: renders with RotSprite.
+        e.press_transform(TransformHit::Rotate, (4.0, 1.5));
+        e.pointer_drag((1.5 + 2.5 * 0.866, 1.5 + 2.5 * 0.5));
+        e.pointer_release();
+        assert_eq!(
+            e.floating().unwrap().rendered_with,
+            RotationAlgorithm::RotSprite
+        );
+        // Switching the option re-renders the floating content with the new algorithm.
+        e.options.rotation = RotationAlgorithm::Fast;
+        e.refresh_floating(false);
+        assert_eq!(e.floating().unwrap().rendered_with, RotationAlgorithm::Fast);
     }
 
     #[test]
