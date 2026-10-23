@@ -210,13 +210,35 @@ fn read_pal(text: &str) -> Result<Vec<Rgba>, PaletteError> {
     Ok(colors)
 }
 
-// Task 2 las reemplaza.
-fn read_png(_data: &[u8]) -> Result<Vec<Rgba>, PaletteError> {
-    Err(PaletteError::UnknownFormat)
+/// PNG indexado: su PLTE. Si no: los colores opacos únicos en orden de aparición.
+fn read_png(data: &[u8]) -> Result<Vec<Rgba>, PaletteError> {
+    let image_error = |e: String| PaletteError::Image(e);
+    let decoder = png::Decoder::new(std::io::Cursor::new(data));
+    let reader = decoder
+        .read_info()
+        .map_err(|e| image_error(e.to_string()))?;
+    let info = reader.info();
+    if info.color_type == png::ColorType::Indexed
+        && let Some(plte) = &info.palette
+    {
+        let (chunks, _) = plte.as_chunks::<3>();
+        return Ok(chunks.iter().map(|c| Rgba::rgb(c[0], c[1], c[2])).collect());
+    }
+    let bitmap = crate::import::decode_png(data).map_err(|e| image_error(e.to_string()))?;
+    let mut colors: Vec<Rgba> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for c in bitmap.pixels.into_iter().filter(|c| c.a == 255) {
+        if seen.insert(c) {
+            colors.push(c);
+        }
+    }
+    Ok(colors)
 }
 
-fn read_aseprite(_data: &[u8]) -> Result<Vec<Rgba>, PaletteError> {
-    Err(PaletteError::UnknownFormat)
+fn read_aseprite(data: &[u8]) -> Result<Vec<Rgba>, PaletteError> {
+    let (sprite, _) =
+        crate::aseprite::read(data).map_err(|e| PaletteError::Image(e.to_string()))?;
+    Ok(sprite.palette.colors().to_vec())
 }
 
 #[cfg(test)]
@@ -228,6 +250,67 @@ mod tests {
             name: name.into(),
             palette: Palette::new(colors.iter().map(|&c| Rgba::from_hex(c)).collect()),
         }
+    }
+
+    fn encode_png(color: png::ColorType, palette: Option<&[u8]>, data: &[u8], w: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, w, 1);
+            enc.set_color(color);
+            enc.set_depth(png::BitDepth::Eight);
+            if let Some(p) = palette {
+                enc.set_palette(p.to_vec());
+            }
+            let mut writer = enc.write_header().unwrap();
+            writer.write_image_data(data).unwrap();
+        }
+        out
+    }
+
+    #[test]
+    fn indexed_png_uses_its_plte() {
+        let plte = [255, 0, 0, 0, 255, 0, 0, 0, 255];
+        let bytes = encode_png(png::ColorType::Indexed, Some(&plte), &[2, 2], 2);
+        let p = read_palette("rgb.png", &bytes).unwrap();
+        assert_eq!(p, named("rgb", &[0xff0000, 0x00ff00, 0x0000ff]));
+    }
+
+    #[test]
+    fn rgba_png_uses_unique_opaque_colors_in_order() {
+        let px = [
+            0, 0, 255, 255, // azul
+            9, 9, 9, 0, // transparente: se ignora
+            255, 0, 0, 255, // rojo
+            0, 0, 255, 255, // azul repetido
+        ];
+        let bytes = encode_png(png::ColorType::Rgba, None, &px, 4);
+        let p = read_palette("strip.png", &bytes).unwrap();
+        assert_eq!(p, named("strip", &[0x0000ff, 0xff0000]));
+    }
+
+    #[test]
+    fn rgba_png_with_too_many_colors_is_rejected() {
+        let px: Vec<u8> = (0..300u32)
+            .flat_map(|i| [(i >> 8) as u8, i as u8, 0, 255])
+            .collect();
+        let bytes = encode_png(png::ColorType::Rgba, None, &px, 300);
+        assert_eq!(
+            read_palette("many.png", &bytes).unwrap_err(),
+            PaletteError::TooManyColors(300)
+        );
+    }
+
+    #[test]
+    fn aseprite_palette_is_read() {
+        let mut sprite = cs_core::Sprite::new(2, 2, cs_core::ColorMode::Rgba);
+        sprite.palette = Palette::new(vec![Rgba::from_hex(0x123456), Rgba::from_hex(0xabcdef)]);
+        let bytes = crate::aseprite::write(&sprite);
+        let p = read_palette("hero.aseprite", &bytes).unwrap();
+        assert_eq!(p, named("hero", &[0x123456, 0xabcdef]));
+        assert!(matches!(
+            read_palette("bad.ase", b"nope").unwrap_err(),
+            PaletteError::Image(_)
+        ));
     }
 
     #[test]
