@@ -34,7 +34,13 @@ oculta.
   base.
 - **Piezas sin dibujar:** una pieza totalmente transparente cuenta como que no existe; la app
   dibuja un respaldo plano con los colores del skin.
-- **Íconos:** `icon.<herramienta>` miden 16×16; `tool.slot` es el marco detrás del ícono.
+- **Íconos de herramientas:** `icon.<herramienta>` miden 17×17 sobre fondo transparente (los
+  nombres están en `icon_piece`, `crates/cs-ui/src/tool_group.rs`). Se dibujan centrados en el
+  marco.
+- **Marcos de herramienta:** `tool.slot` (normal) y `tool.slot.active` (la herramienta elegida)
+  miden 23×23, con centro (2,2,19,19). `tool.slot.hover` está sin dibujar y cae al normal.
+- **Origen:** los íconos, los marcos y los botones se copiaron del mockup del autor
+  (`.design/Design.aseprite`, que no se versiona).
 - **Botones:** `button`, `button.hover` y `button.down` vienen del mockup del diálogo "Unsaved
   changes".
 

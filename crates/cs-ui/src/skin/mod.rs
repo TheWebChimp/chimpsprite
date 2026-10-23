@@ -256,6 +256,32 @@ mod tests {
 
     use super::*;
 
+    /// Los 22 íconos de herramientas del mockup (`icon.<nombre>`).
+    const TOOL_ICONS: [&str; 22] = [
+        "marquee",
+        "hand",
+        "pencil",
+        "eraser",
+        "eyedropper",
+        "bucket",
+        "line",
+        "rectangle",
+        "text",
+        "contour",
+        "blur",
+        "move",
+        "artboard",
+        "ellipse_marquee",
+        "lasso",
+        "polygon_lasso",
+        "magic_wand",
+        "spray",
+        "gradient",
+        "jumble",
+        "ellipse",
+        "slice",
+    ];
+
     fn slice(name: &str, bounds: (i32, i32, u32, u32)) -> Slice {
         Slice {
             name: name.into(),
@@ -350,6 +376,35 @@ mod tests {
         assert!(data.pieces.contains_key("button.hover"));
         assert!(data.pieces.contains_key("button.down"));
         assert!(!data.pieces.contains_key("panel"), "not drawn yet");
+    }
+
+    #[test]
+    fn the_embedded_skin_has_the_tool_icons_and_slots_of_the_mockup() {
+        let data = decode(EMBEDDED).unwrap();
+        // `decode` descarta las piezas transparentes: si está, tiene algo dibujado.
+        for name in TOOL_ICONS {
+            let icon = data
+                .pieces
+                .get(&format!("icon.{name}"))
+                .unwrap_or_else(|| panic!("icon.{name}"));
+            assert_eq!((icon.size, icon.center), ([17, 17], None), "icon.{name}");
+        }
+        let center = Rect9 {
+            x: 2,
+            y: 2,
+            w: 19,
+            h: 19,
+        };
+        for name in ["tool.slot", "tool.slot.active"] {
+            let slot = &data.pieces[name];
+            assert_eq!((slot.size, slot.center), ([23, 23], Some(center)), "{name}");
+            // Esquinas redondeadas: transparentes.
+            assert_eq!(slot.rgba[3], 0, "{name}");
+        }
+        assert!(
+            !data.pieces.contains_key("tool.slot.hover"),
+            "not drawn yet: falls back to tool.slot"
+        );
     }
 
     #[test]
