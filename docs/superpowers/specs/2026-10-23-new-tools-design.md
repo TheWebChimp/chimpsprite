@@ -104,3 +104,48 @@ Como la tinta Blur de Aseprite.
   bloqueada.
 - **Variantes:** clic derecho en el botón de un grupo abre la lista.
   - Se prueba con el harness.
+
+## Pincel: forma redonda o cuadrada y grosor con Ctrl+rueda (agregado el 2026-10-23)
+
+### Forma del pincel
+- `cs_raster::BrushShape` tiene dos valores, `Round` y `Square`, y el valor por defecto es `Round`.
+- `brush_points(center, size, shape)` devuelve los puntos del pincel:
+  - `Square`: igual que el `brush_square` de hoy.
+  - `Round`: un círculo relleno de `size` de diámetro, hecho con el mismo rasterizador de elipse
+    rellena que usa la herramienta Ellipse (dentro de una caja de `size × size` centrada igual que
+    el cuadrado), para que los dos se vean igual.
+  - En tamaños 1 y 2 el redondo sale igual que el cuadrado.
+- `stamp(points, size)` se convierte en `stamp(points, size, shape)`.
+- `ToolContext` gana `brush_shape`, y todas las herramientas que usan pincel lo respetan:
+  - Pencil, Spray, Eraser;
+  - el contorno de Line, Rectangle y Ellipse;
+  - Jumble y Blur.
+- **Options:** junto a *Brush size* van dos botones para elegir la forma, Round y Square. Sus
+  glifos tienen que existir en las fuentes.
+- La forma se guarda con las demás opciones de herramienta. Un ajuste guardado antes de este
+  cambio se lee como `Round`.
+- La vista previa del pincel en el lienzo (el contorno que sigue al puntero) dibuja la forma
+  elegida.
+
+### Grosor con Ctrl+rueda
+- Con Ctrl (Cmd en macOS) presionado, la rueda cambia *Brush size* en ±1 por paso, entre 1 y 32.
+  - Solo pasa si la herramienta activa usa pincel (`ToolKind::uses_brush`).
+  - El slider muestra el valor nuevo al momento.
+- Si la herramienta no usa pincel, Ctrl+rueda hace zoom, como hoy.
+- La rueda sin Ctrl sigue haciendo zoom.
+- **Pasos de la rueda:** los de líneas cuentan uno por evento con `delta.y ≠ 0`. Los de píxeles
+  (touchpad) se acumulan hasta sumar 50 px, para que el grosor no salte con cada evento chico.
+
+### Tests
+- **`brush_points`:**
+  - Round en 1 y 2 da lo mismo que Square.
+  - Round en 3 da el círculo esperado y en 5 una forma simétrica sin esquinas.
+  - Square sigue igual.
+- **Herramientas:**
+  - Un clic de Pencil con tamaño 5 Round no pinta las esquinas del cuadrado.
+  - Con Square sí las pinta.
+- **Ctrl+rueda (harness del lienzo con eventos crudos):**
+  - Con Pencil, un paso hacia arriba sube el grosor en 1 y no cambia el zoom.
+  - Con Hand o Marquee hace zoom y no cambia el grosor.
+  - El grosor no baja de 1 ni sube de 32.
+- **Ajustes:** un `ToolOptions` guardado sin la forma se lee como `Round`.
