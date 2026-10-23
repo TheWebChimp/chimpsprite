@@ -112,13 +112,20 @@ esto se arregla el bug de mover: cada arrastre ya no estampa ni levanta lo de de
   barra de opciones arriba. Como el resto de `ToolOptions`, no se guarda entre sesiones.
 - **Shift en una esquina:** usa el mayor de los dos factores de escala.
 - **Autosave:** guarda el documento sin lo flotante. No hace falta confirmar para eso.
-- **Rama `paste-external`** (sin mergear): modifica `Editor::paste` y agrega `Clip::from_rgba`,
-  `centered_in` y `paste_in_new_artboard`, que no existen en esta rama.
-  - Al juntar las ramas, `paste` va a tener conflicto. Hay que quedarse con el cuerpo de esta rama
-    (flotante).
-  - El recorte `inside` de `paste-external` ya no hace falta: lo que cae fuera del lienzo se
-    pierde al confirmar.
-  - `paste_in_new_artboard` llama a `paste` y queda flotando en el artboard nuevo.
+- **`paste-external` ya está integrado** en esta rama (commit `1bb9e33`, sobre este plan). El
+  plan parte de ese código: `Clip::{from_rgba, size, centered_in}`,
+  `clipboard::{PasteRequest, paste_request, system_image}`, `ChimpApp::paste(request)`,
+  `Editor::paste_in_new_artboard` y Edit → Paste as New Artboard (Ctrl+Shift+V).
+  - Lo copiado en ChimpSprite y las imágenes de otras apps (ya centradas por `ChimpApp::paste`)
+    pasan por `Editor::paste` y las dos flotan. `ChimpApp::paste` no cambia.
+  - Una imagen más grande que el lienzo flota entera, en vez de recortarse al pegar como hacía
+    `paste-external`. Se puede achicar con los handles antes de confirmar. Lo que quede fuera se
+    pierde al confirmar, y la selección es solo la parte dentro del lienzo. La posición sigue la
+    regla de hoy (`fit`: la esquina queda en 0 si no entra).
+  - **Paste as New Artboard estampa directo, sin flotar.** El artboard nuevo tiene justo el tamaño
+    de lo pegado, así que no hay nada que acomodar, y dejarlo flotando solo obligaría a un Enter
+    extra. `paste_in_new_artboard` llama a `paste` y confirma en el momento. Crear el artboard y
+    pegar quedan como dos pasos de undo, igual que en `paste-external`.
 
 ## Archivos
 
@@ -130,7 +137,7 @@ esto se arregla el bug de mover: cada arrastre ya no estampa ni levanta lo de de
 | Crear `crates/cs-ui/src/transform.rs` | `impl Editor`: `Floating`, levantar, arrastres, confirmar, cancelar, Esc, estado |
 | Modificar `crates/cs-ui/src/editor.rs` | Campos nuevos, `ToolOptions::rotation`, ganchos de confirmación, puntero, `view`, undo y tests |
 | Modificar `crates/cs-ui/src/anim_ops.rs` | Confirmar en `select_layer` y `set_frame` |
-| Modificar `crates/cs-ui/src/clipboard.rs` | `cut` confirma; `paste` flota; `clip_layer_ok` pasa a `pub(crate)` |
+| Modificar `crates/cs-ui/src/clipboard.rs` | `cut` confirma; `paste` flota (interno e imágenes de otras apps); `paste_in_new_artboard` confirma en el momento; `clip_layer_ok` pasa a `pub(crate)` |
 | Modificar `crates/cs-ui/src/lib.rs` | Módulos, `editor_key`, `sync_floating` por frame, copiar confirma |
 | Modificar `crates/cs-ui/src/file_actions.rs` | Confirmar antes de guardar y exportar |
 | Modificar `crates/cs-ui/src/canvas.rs` | Handles, hit-test, cursores, cursor de rotación, tests con el harness |
@@ -1936,21 +1943,40 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 6: Pegar deja lo pegado flotando
+### Task 6: Pegar deja lo pegado flotando (portapapeles interno e imágenes de otras apps)
+
+`paste-external` ya está integrado en esta rama (commit `1bb9e33`). Esta tarea parte de ese código:
+- `ChimpApp::paste(request)` en `lib.rs` resuelve `PasteRequest::{Internal, System}`.
+  - Una imagen de otra app viene de `clipboard::system_image()` y se centra con
+    `Clip::centered_in`.
+  - Lo interno viene de `self.clipboard`.
+  - Después llama a `Editor::paste` o a `Editor::paste_in_new_artboard`.
+- `ChimpApp::paste` no cambia. Las dos fuentes pasan por `Editor::paste`, así que las dos quedan
+  flotando.
 
 **Files:**
 - Modify: `crates/cs-ui/src/transform.rs`
-- Modify: `crates/cs-ui/src/clipboard.rs`
+- Modify: `crates/cs-ui/src/clipboard.rs` (`paste`, `paste_in_new_artboard`, imports y tests)
 
 **Interfaces:**
-- Consumes: `Floating::new`, `Editor::{commit_floating, refresh_floating, escape}` (Tasks 3–5),
-  `cs_raster::Block`.
-- Produces: `Editor::float_pasted(&mut self, block: Block<PixelValue>, at: (i32, i32))`
-  (`pub(crate)`). `Editor::paste` mantiene su firma.
+- Consumes:
+  - `Floating::new`, `Editor::{commit_floating, refresh_floating, escape, is_floating}`
+    (Tasks 3–5).
+  - `cs_raster::Block`.
+  - De `paste-external`: `Clip::{from_rgba, size, centered_in}`,
+    `clipboard::{PasteRequest, paste_request, system_image}` y `ChimpApp::paste(request)`.
+- Produces:
+  - `Editor::float_pasted(&mut self, block: Block<PixelValue>, at: (i32, i32))` (`pub(crate)`).
+  - `Editor::paste(&mut self, clip: &Clip)` mantiene la firma; ahora deja lo pegado flotando.
+  - `Editor::paste_in_new_artboard(&mut self, clip: &Clip)` mantiene la firma; pega y confirma en
+    el momento.
 
 - [ ] **Step 1: Escribir los tests que fallan**
 
-En `crates/cs-ui/src/clipboard.rs`, reemplazar el módulo `tests` entero por:
+En `crates/cs-ui/src/clipboard.rs`, reemplazar el módulo `tests` entero por el de abajo. Se
+conservan `release_v`, `paste_requests_from_events` y `RED_AND_CLEAR` de `paste-external` tal
+cual. Los tests de pegar ahora confirman con `commit_floating` antes de mirar la capa, y hay tres
+tests nuevos.
 
 ```rust
 #[cfg(test)]
@@ -2036,6 +2062,123 @@ mod tests {
         assert_eq!(indexed.resolve(v), e.resolve(red));
     }
 
+    fn release_v(modifiers: egui::Modifiers) -> egui::Event {
+        egui::Event::Key {
+            key: egui::Key::V,
+            physical_key: None,
+            pressed: false,
+            repeat: false,
+            modifiers,
+        }
+    }
+
+    #[test]
+    fn paste_requests_from_events() {
+        use egui::{Event, Modifiers};
+        let none = Modifiers::NONE;
+        let shift = Modifiers::COMMAND | Modifiers::SHIFT;
+        let mut seen = false;
+        let marker = Event::Paste(crate::CLIPBOARD_MARKER.into());
+        // Lo copiado en ChimpSprite: llega Paste al presionar y la tecla al soltar.
+        assert_eq!(
+            paste_request(std::slice::from_ref(&marker), none, &mut seen),
+            Some(PasteRequest::Internal {
+                new_artboard: false
+            })
+        );
+        assert_eq!(
+            paste_request(&[release_v(Modifiers::COMMAND)], none, &mut seen),
+            None
+        );
+        // Imagen de otra app: egui no manda Paste (no hay texto), solo la tecla al soltar.
+        assert_eq!(
+            paste_request(&[release_v(Modifiers::COMMAND)], none, &mut seen),
+            Some(PasteRequest::System {
+                new_artboard: false
+            })
+        );
+        assert_eq!(
+            paste_request(&[release_v(shift)], none, &mut seen),
+            Some(PasteRequest::System { new_artboard: true })
+        );
+        assert_eq!(
+            paste_request(&[marker], shift, &mut seen),
+            Some(PasteRequest::Internal { new_artboard: true })
+        );
+        seen = false;
+        assert_eq!(
+            paste_request(&[Event::Paste("hello".into())], none, &mut seen),
+            Some(PasteRequest::System {
+                new_artboard: false
+            })
+        );
+        assert_eq!(paste_request(&[release_v(none)], none, &mut false), None);
+    }
+
+    /// 2×1: rojo opaco y un píxel transparente.
+    const RED_AND_CLEAR: [u8; 8] = [255, 0, 0, 255, 0, 0, 0, 0];
+
+    #[test]
+    fn external_images_are_pasted_centered_and_float() {
+        let clip = Clip::from_rgba(2, 1, &RED_AND_CLEAR).unwrap();
+        assert_eq!(clip.size(), (2, 1));
+        assert_eq!(Clip::from_rgba(2, 2, &RED_AND_CLEAR), None, "faltan bytes");
+        assert_eq!(Clip::from_rgba(0, 1, &[]), None);
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let t = e.sprite().color_mode.transparent();
+        e.paste(&clip.centered_in(8, 8));
+        assert!(e.is_floating(), "an external image floats like an internal clip");
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 3, 3), t, "not applied yet");
+        assert_eq!(
+            e.selection.as_ref().unwrap().bounds(),
+            Some(((3, 3), (4, 3)))
+        );
+        assert!(e.commit_floating());
+        let red = PixelValue::Rgba(Rgba::new(255, 0, 0, 255));
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 3, 3), red);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 4, 3), t, "the clear pixel does not erase");
+    }
+
+    #[test]
+    fn images_larger_than_the_canvas_float_whole_and_are_cropped_on_apply() {
+        let big = Clip::from_rgba(10, 10, &[200; 400]).unwrap();
+        let mut e = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
+        e.paste(&big.centered_in(4, 4));
+        assert_eq!(
+            e.transform_box().map(|b| (b.width(), b.height())),
+            Some((10, 10)),
+            "the whole image floats: it can be scaled down before applying"
+        );
+        assert_eq!(
+            e.selection.as_ref().unwrap().bounds(),
+            Some(((0, 0), (3, 3))),
+            "the selection is the part inside the canvas"
+        );
+        assert!(e.commit_floating());
+        let c = PixelValue::Rgba(Rgba::new(200, 200, 200, 200));
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 3, 3), c);
+    }
+
+    #[test]
+    fn paste_in_a_new_artboard_of_the_clip_size_applies_at_once() {
+        let clip = Clip::from_rgba(2, 1, &RED_AND_CLEAR).unwrap();
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let first = e.active;
+        e.paste_in_new_artboard(&clip);
+        assert_eq!(e.document.artboards.len(), 2);
+        assert_ne!(e.active, first);
+        assert!(!e.is_floating(), "the artboard is the clip's size: nothing to place");
+        let sprite = e.sprite();
+        assert_eq!((sprite.width, sprite.height), (2, 1));
+        assert_eq!(sprite.palette, Sprite::new(1, 1, ColorMode::Rgba).palette);
+        let red = PixelValue::Rgba(Rgba::new(255, 0, 0, 255));
+        assert_eq!(sprite.pixel(e.layer, 0, 0, 0), red);
+        assert_eq!(
+            e.selection.as_ref().unwrap().bounds(),
+            Some(((0, 0), (1, 0)))
+        );
+    }
+
     #[test]
     fn locked_layers_are_not_cut_or_pasted() {
         let (mut e, red) = editor_with_dot();
@@ -2096,8 +2239,9 @@ mod tests {
 - [ ] **Step 2: Correr los tests y comprobar que fallan**
 
 Run: `cargo test -p cs-ui clipboard::`
-Expected: FAIL. `copy_needs_a_selection_and_paste_floats_until_applied` falla en
-`assert!(e.is_floating())`, porque hoy pegar escribe en la capa.
+Expected: FAIL. Los tests de pegar fallan en `assert!(e.is_floating())`, porque hoy pegar escribe
+en la capa. `images_larger_than_the_canvas_float_whole…` falla porque no hay caja flotante.
+`paste_requests_from_events` pasa.
 
 - [ ] **Step 3: Implementar**
 
@@ -2119,21 +2263,25 @@ En `crates/cs-ui/src/transform.rs`, dentro de `impl Editor`:
 
 En `crates/cs-ui/src/clipboard.rs`:
 
-1. Imports de arriba (`Command` y `Mask` pasan a usarse solo en los tests):
+1. Imports de arriba. `Command` y `Mask` pasan a usarse solo en los tests; `egui` sigue, por
+   `paste_request`.
 
 ```rust
 use cs_core::{ColorMode, LayerKind, PixelValue, Rgba};
 use cs_raster::Block;
+use eframe::egui;
 
 use crate::editor::Editor;
 ```
 
-2. Reemplazar `paste` entera por:
+2. Reemplazar `paste` entera. El cuerpo de `paste-external` recortaba al lienzo con `inside` y
+   ejecutaba `DrawPixels`; ahora queda así:
 
 ```rust
-    /// Pega en la capa actual donde estaba lo copiado (corrido para que entre en el lienzo). Lo
-    /// pegado queda flotando y seleccionado, listo para moverlo, escalarlo o rotarlo; al
-    /// confirmar, lo transparente no borra lo de debajo.
+    /// Pega en la capa actual donde estaba lo copiado (o centrado, si es una imagen de otra app;
+    /// corrido para que entre en el lienzo). Lo pegado queda flotando y seleccionado, listo para
+    /// moverlo, escalarlo o rotarlo. Una imagen más grande que el lienzo flota entera y se recorta
+    /// al confirmar; lo transparente no borra lo de debajo.
     pub fn paste(&mut self, clip: &Clip) {
         if !self.clip_layer_ok(true) {
             return;
@@ -2164,16 +2312,39 @@ use crate::editor::Editor;
     }
 ```
 
+3. Reemplazar `paste_in_new_artboard` entera. En el artboard nuevo lo pegado se confirma en el
+   momento (ver Desviaciones/decisiones):
+
+```rust
+    /// Crea un artboard del tamaño de lo copiado (con la paleta y el modo del actual) y lo pega
+    /// en su esquina, ya aplicado: el artboard tiene justo ese tamaño, no hay nada que acomodar.
+    pub fn paste_in_new_artboard(&mut self, clip: &Clip) {
+        let before = self.active;
+        self.add_artboard(clip.size.0, clip.size.1);
+        if self.active != before {
+            self.paste(&Clip {
+                origin: (0, 0),
+                ..clip.clone()
+            });
+            self.commit_floating();
+        }
+    }
+```
+
+`ChimpApp::paste(request)` y el menú Edit (`Paste`, `Paste as New Artboard`) en `lib.rs` no
+cambian.
+
 - [ ] **Step 4: Correr los tests y comprobar que pasan**
 
-Run: `cargo fmt --all` y `cargo test -p cs-ui`
-Expected: PASS.
+Run: `cargo fmt --all`, `cargo test -p cs-ui` y
+`cargo check -p cs-ui --target wasm32-unknown-unknown` (en wasm `system_image()` devuelve `None`)
+Expected: PASS; wasm compila.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add crates/cs-ui/src
-git commit -m "Pegar deja lo pegado flotando sobre lo de debajo hasta confirmar
+git commit -m "Pegar (lo copiado o una imagen de otra app) deja lo pegado flotando hasta confirmar
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -3160,8 +3331,13 @@ CARGO_TARGET_DIR=target/gui-transform cargo run --bin chimpsprite
   - Con un lazo poligonal a medias, Esc lo descarta.
   - Flotando, Esc vuelve todo atrás y la selección sigue.
   - Otro Esc deselecciona.
-- **Pegar:** Ctrl+C y Ctrl+V. Lo pegado flota sobre el dibujo sin mezclarse. Se mueve, escala o
-  rota, y Enter lo aplica. Ctrl+Z mientras flota lo cancela.
+- **Pegar:**
+  - Ctrl+C y Ctrl+V: lo pegado flota sobre el dibujo sin mezclarse. Se mueve, escala o rota, y
+    Enter lo aplica. Ctrl+Z mientras flota lo cancela.
+  - Copiar una imagen en Aseprite o en el navegador y pegarla con Ctrl+V: aparece centrada y
+    flotando. Si es más grande que el lienzo, se puede achicar con los handles antes de Enter.
+  - Ctrl+Shift+V (Paste as New Artboard): crea un artboard del tamaño de lo copiado, con el
+    contenido ya aplicado y seleccionado, sin flotar.
 - **Confirmación:**
   - Cambiar de herramienta, de capa (también con ↑/↓) o de frame confirma.
   - Ctrl+S con algo flotando guarda lo transformado.
@@ -3175,9 +3351,8 @@ cp /tmp/chimpsprite-app.ron.bak "$APPDATA/ChimpSprite/data/app.ron"
 
 - [ ] **Step 3: Sin push ni PR**
 
-El usuario junta todas las ramas al final. Al juntar con `paste-external` hay que resolver
-`Editor::paste`: queda el cuerpo de esta rama, que deja lo pegado flotando (ver
-Desviaciones/decisiones).
+El usuario junta todas las ramas al final. `paste-external` ya está integrado en esta rama
+(commit `1bb9e33`), así que no queda conflicto pendiente en `Editor::paste`.
 
 ---
 
@@ -3191,7 +3366,7 @@ Desviaciones/decisiones).
 - **§2 Estado flotante:**
   - `Floating`: Task 3.
   - Levantar al arrastrar un handle: Task 7. Al mover arrastrando, con Move o con selección:
-    Task 4. Al pegar: Task 6.
+    Task 4. Al pegar, con lo copiado o con una imagen de otra app: Task 6 (Paste as New Artboard confirma en el momento).
   - Levantar una sola vez y no mezclar: Task 4 (test de regresión).
   - El hueco solo en la vista previa: Task 3 (`floating_view`).
   - Fast durante el arrastre y RotSprite al soltar, con caché: Tasks 4 y 7
