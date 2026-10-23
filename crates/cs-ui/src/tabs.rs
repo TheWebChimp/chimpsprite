@@ -42,7 +42,6 @@ impl DocState {
     }
 
     /// Documento nuevo con la paleta por defecto del usuario.
-    #[allow(dead_code)] // Lo usa la UI de paletas (Task 6).
     pub fn untitled_with_palette(name: impl Into<String>, palette: cs_core::Palette) -> Self {
         Self::new(
             crate::new_editor(palette),
@@ -51,6 +50,11 @@ impl DocState {
                 target: None,
             },
         )
+    }
+
+    /// Nombre de la pestaña sin extensión (para sugerir nombres de archivo).
+    pub fn tab_name_stem(&self) -> String {
+        crate::files::stem(&self.location.name).to_string()
     }
 
     pub fn is_dirty(&self) -> bool {

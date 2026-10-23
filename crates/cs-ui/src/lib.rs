@@ -12,6 +12,7 @@ mod export_dialog;
 mod file_actions;
 mod mask_ops;
 mod palette_ops;
+mod palette_ui;
 mod slice_ops;
 use cs_io::files;
 mod guides;
@@ -41,6 +42,7 @@ const CONVERT_TO_IMAGE_FAILED: &str =
 const NEW_SPRITE_SIZE: u32 = 64;
 const RECENT_KEY: &str = "chimpsprite.recent";
 const VIEW_KEY: &str = "chimpsprite.view";
+const DEFAULT_PALETTE_KEY: &str = "chimpsprite.default_palette";
 
 /// Texto que queda en el portapapeles del sistema al copiar píxeles (ver `shortcuts`).
 const CLIPBOARD_MARKER: &str = "ChimpSprite pixels";
@@ -72,6 +74,10 @@ pub struct ChimpApp {
     title: String,
     /// Lo último copiado o cortado (compartido entre pestañas).
     clipboard: Option<clipboard::Clip>,
+    palettes: palette_library::PaletteLibrary,
+    presets_window: Option<palette_ui::PresetsWindow>,
+    preset_name: Option<palette_ui::NameDialog>,
+    palette_confirm: Option<palette_ui::Confirm>,
 }
 
 impl ChimpApp {
@@ -86,6 +92,12 @@ impl ChimpApp {
             .storage
             .and_then(|s| eframe::get_value(s, VIEW_KEY))
             .unwrap_or_default();
+        let mut palettes = palette_library::PaletteLibrary::for_platform();
+        palettes.set_default(
+            cc.storage
+                .and_then(|s| eframe::get_value::<Option<String>>(s, DEFAULT_PALETTE_KEY))
+                .flatten(),
+        );
         let mut app = Self {
             doc: tabs::DocState::untitled(""),
             tabs: tabs::Tabs::default(),
@@ -108,6 +120,10 @@ impl ChimpApp {
             allow_close: false,
             title: String::new(),
             clipboard: None,
+            palettes,
+            presets_window: None,
+            preset_name: None,
+            palette_confirm: None,
         };
         if launch.demo {
             app.open_demo();
@@ -763,7 +779,12 @@ impl ChimpApp {
                             ui.add_space(10.0);
                             panels::color_picker(ui, &mut self.doc.editor);
                         } else {
-                            panels::palette(ui, &mut self.doc.editor);
+                            // Con un diálogo abierto, el menú de paleta no abre otro encima.
+                            if let Some(action) = panels::palette(ui, &mut self.doc.editor)
+                                && !modal
+                            {
+                                self.palette_action(ui.ctx(), action);
+                            }
                         }
                         ui.add_space(12.0);
                         let open = ui
@@ -850,6 +871,7 @@ impl eframe::App for ChimpApp {
             });
         }
         self.update_canvas_size(&ctx);
+        self.update_palette_windows(&ctx);
         self.update_grid_dialog(&ctx);
         self.update_tilemap_dialogs(&ctx);
         self.show_dialogs(&ctx);
@@ -864,6 +886,7 @@ impl eframe::App for ChimpApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, RECENT_KEY, &self.recent);
         eframe::set_value(storage, VIEW_KEY, &self.view);
+        eframe::set_value(storage, DEFAULT_PALETTE_KEY, &self.palettes.default_name());
     }
 }
 

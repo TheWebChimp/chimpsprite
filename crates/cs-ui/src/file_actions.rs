@@ -85,6 +85,8 @@ impl ChimpApp {
             || self.pending.is_some()
             || self.message.is_some()
             || self.restore.is_some()
+            || self.preset_name.is_some()
+            || self.palette_confirm.is_some()
     }
 
     pub(crate) fn show_message(&mut self, title: &str, body: impl Into<String>) {
@@ -102,7 +104,10 @@ impl ChimpApp {
 
     pub(crate) fn new_document(&mut self) {
         let name = self.tabs.untitled_name(&self.doc);
-        self.open_doc(DocState::untitled(name));
+        self.open_doc(DocState::untitled_with_palette(
+            name,
+            self.palettes.default_palette(),
+        ));
     }
 
     pub(crate) fn open_demo(&mut self) {
@@ -170,6 +175,10 @@ impl ChimpApp {
                             self.import_layer_bytes(&loaded)
                         }
                         OpenPurpose::ImportLayer => {}
+                        OpenPurpose::LoadPalette if self.has_doc() => {
+                            self.load_palette_bytes(&loaded.name, &loaded.bytes)
+                        }
+                        OpenPurpose::LoadPalette => {}
                     }
                 }
                 PlatformEvent::Error(e) => self.show_message("Could not read the file", e),

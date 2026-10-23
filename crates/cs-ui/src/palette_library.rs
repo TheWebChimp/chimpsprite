@@ -1,5 +1,3 @@
-#![allow(dead_code)] // provisional: Task 6 lo quita cuando la UI use la biblioteca
-
 //! Biblioteca de paletas: presets incluidos más los del usuario.
 //!
 //! En escritorio, los presets del usuario son archivos en `<storage_dir>/palettes/`. En web,
@@ -148,6 +146,7 @@ impl PaletteLibrary {
 }
 
 /// `<nombre>.gpl` sin caracteres que Windows no acepta.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // solo escritorio
 pub fn preset_file_name(name: &str) -> String {
     let clean: String = name
         .trim()
@@ -167,12 +166,14 @@ pub fn preset_file_name(name: &str) -> String {
 }
 
 /// Escritorio: un archivo por preset.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // solo escritorio
 pub struct DirStore {
     dir: PathBuf,
     /// Archivos ya avisados: un archivo ilegible se registra una sola vez.
     warned: std::cell::RefCell<std::collections::HashSet<PathBuf>>,
 }
 
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))] // solo escritorio
 impl DirStore {
     pub fn new(dir: PathBuf) -> Self {
         Self {
@@ -258,6 +259,7 @@ impl PresetStore for DirStore {
     }
 }
 
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))] // solo web (y los tests en escritorio)
 #[derive(Serialize, Deserialize)]
 struct WebPalette {
     name: String,
@@ -265,6 +267,7 @@ struct WebPalette {
 }
 
 /// Lista JSON de `{ name, colors: ["rrggbb", …] }` (lo que se guarda en web).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))] // solo web (y los tests en escritorio)
 pub fn encode_web(list: &[NamedPalette]) -> String {
     let items: Vec<WebPalette> = list
         .iter()
@@ -282,6 +285,7 @@ pub fn encode_web(list: &[NamedPalette]) -> String {
 }
 
 /// Lo ilegible se descarta entrada por entrada (una mala no tira las demás).
+#[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))] // solo web (y los tests en escritorio)
 pub fn decode_web(text: &str) -> Vec<NamedPalette> {
     let items: Vec<serde_json::Value> = serde_json::from_str(text).unwrap_or_default();
     items
