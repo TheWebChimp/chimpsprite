@@ -110,10 +110,15 @@ pub fn write_palette(format: PaletteFormat, palette: &NamedPalette) -> Option<Ve
 }
 
 /// `.gpl` con `Name:` y líneas `# …` (sin el `#`) antes de los colores.
+/// Los saltos de línea del nombre y de los comentarios pasan a espacios (romperían el archivo).
 pub fn write_gpl(palette: &NamedPalette, comments: &[String]) -> Vec<u8> {
-    let mut out = format!("GIMP Palette\nName: {}\nColumns: 0\n", palette.name);
+    let one_line = |s: &str| s.replace(['\r', '\n'], " ");
+    let mut out = format!(
+        "GIMP Palette\nName: {}\nColumns: 0\n",
+        one_line(&palette.name)
+    );
     for c in comments {
-        out.push_str(&format!("# {c}\n"));
+        out.push_str(&format!("# {}\n", one_line(c)));
     }
     out.push_str("#\n");
     for c in palette.palette.colors() {
@@ -250,6 +255,19 @@ mod tests {
             name: name.into(),
             palette: Palette::new(colors.iter().map(|&c| Rgba::from_hex(c)).collect()),
         }
+    }
+
+    #[test]
+    fn write_gpl_keeps_name_and_comments_on_one_line() {
+        let palette = named("Night\r\nName: evil", &[0x102030]);
+        let comments = ["a\nb".to_string(), "c\rd".to_string()];
+        let text = String::from_utf8(write_gpl(&palette, &comments)).unwrap();
+        assert!(text.contains("Name: Night  Name: evil\n"));
+        assert!(text.contains("# a b\n# c d\n"));
+        assert!(!text.contains('\r'));
+        let back = read_palette("x.gpl", text.as_bytes()).unwrap();
+        assert_eq!(back.name, "Night  Name: evil");
+        assert_eq!(back.palette.len(), 1);
     }
 
     fn encode_png(color: png::ColorType, palette: Option<&[u8]>, data: &[u8], w: u32) -> Vec<u8> {
