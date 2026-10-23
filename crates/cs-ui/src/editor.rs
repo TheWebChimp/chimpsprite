@@ -9,9 +9,9 @@ use cs_core::{
 use cs_render::OnionSkin;
 use cs_tools::text::TextStyle;
 use cs_tools::{
-    ArtboardTool, Bucket, Contour, Dither, Eraser, Eyedropper, GradientShape, GradientTool, Jumble,
-    Lasso, MagicWand, Marquee, MarqueeShape, MoveTool, Pencil, Point, PolygonLasso, ShapeKind,
-    ShapeTool, SliceTool, Spray, Tool, ToolContext, ToolOutput,
+    ArtboardTool, Blur, Bucket, Contour, Dither, Eraser, Eyedropper, GradientShape, GradientTool,
+    Jumble, Lasso, MagicWand, Marquee, MarqueeShape, MoveTool, Pencil, Point, PolygonLasso,
+    ShapeKind, ShapeTool, SliceTool, Spray, Tool, ToolContext, ToolOutput,
 };
 
 use crate::tile_ops::{self, TileProxy};
@@ -177,7 +177,14 @@ impl ToolKind {
                 | ToolKind::Jumble
                 | ToolKind::Text
                 | ToolKind::Contour
+                | ToolKind::Blur
         )
+    }
+
+    /// Herramientas que pintan con la simetría del artboard. Text no (el texto se leería al
+    /// revés) y Blur tampoco (como en Aseprite).
+    pub fn mirrors(self) -> bool {
+        self.paints() && !matches!(self, ToolKind::Text | ToolKind::Blur)
     }
 
     /// Herramientas que usan el tamaño de pincel.
@@ -191,6 +198,7 @@ impl ToolKind {
                 | ToolKind::Rectangle
                 | ToolKind::Ellipse
                 | ToolKind::Jumble
+                | ToolKind::Blur
         )
     }
 
@@ -205,6 +213,7 @@ impl ToolKind {
                 | ToolKind::Lasso
                 | ToolKind::PolygonLasso
                 | ToolKind::Contour
+                | ToolKind::Blur
         )
     }
 
@@ -339,6 +348,7 @@ struct SpriteTools {
     ellipse: ShapeTool,
     jumble: Jumble,
     contour: Contour,
+    blur: Blur,
     slice: SliceTool,
     mover: MoveTool,
     eyedropper: Eyedropper,
@@ -362,6 +372,7 @@ impl SpriteTools {
             ellipse: ShapeTool::new(ShapeKind::Ellipse),
             jumble: Jumble::new(),
             contour: Contour::new(),
+            blur: Blur::new(),
             slice: SliceTool::new(),
             mover: MoveTool::new(),
             eyedropper: Eyedropper::new(),
@@ -388,8 +399,9 @@ impl SpriteTools {
             ToolKind::Move => &self.mover,
             ToolKind::Eyedropper => &self.eyedropper,
             ToolKind::Contour => &self.contour,
-            // Hand la maneja el lienzo; Blur se conecta en la tarea siguiente.
-            ToolKind::Text | ToolKind::Artboard | ToolKind::Hand | ToolKind::Blur => return None,
+            ToolKind::Blur => &self.blur,
+            // Text y Artboard no son herramientas de sprite; Hand la maneja el lienzo.
+            ToolKind::Text | ToolKind::Artboard | ToolKind::Hand => return None,
         })
     }
 
@@ -413,8 +425,9 @@ impl SpriteTools {
             ToolKind::Move => &mut self.mover,
             ToolKind::Eyedropper => &mut self.eyedropper,
             ToolKind::Contour => &mut self.contour,
-            // Hand la maneja el lienzo; Blur se conecta en la tarea siguiente.
-            ToolKind::Text | ToolKind::Artboard | ToolKind::Hand | ToolKind::Blur => return None,
+            ToolKind::Blur => &mut self.blur,
+            // Text y Artboard no son herramientas de sprite; Hand la maneja el lienzo.
+            ToolKind::Text | ToolKind::Artboard | ToolKind::Hand => return None,
         })
     }
 }
@@ -1365,10 +1378,10 @@ impl Editor {
             return cmd;
         }
         let artboard = self.artboard();
-        let cmd = if kind == ToolKind::Text {
-            cmd
-        } else {
+        let cmd = if kind.mirrors() {
             mirror(cmd, artboard.symmetry, artboard.symmetry_center2())
+        } else {
+            cmd
         };
         let cmd = match &self.selection {
             Some(mask) => clip(cmd, mask),

@@ -187,6 +187,9 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
         ToolKind::Contour => {
             ui.weak("Draw the outline: it closes and fills when you release.");
         }
+        ToolKind::Blur => {
+            ui.weak("Softens the pixels under the brush. Go over an area again to blur it more.");
+        }
         ToolKind::Text => {
             text_style_options(ui, editor);
             ui.weak("Click on the canvas to place text.");

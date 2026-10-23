@@ -1143,6 +1143,7 @@ impl CanvasView {
                 && tool.paints()
                 && tool != ToolKind::Eraser
                 && tool != ToolKind::Bucket
+                && tool != ToolKind::Blur
             {
                 let c = editor.resolve(editor.primary);
                 painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a));

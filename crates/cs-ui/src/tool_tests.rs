@@ -157,3 +157,106 @@ mod contour {
         assert_eq!(e.doc_version, version);
     }
 }
+
+mod blur {
+    use cs_commands::{Command, LayerProps};
+    use cs_core::{Mask, Rgba, Symmetry, SymmetryMode};
+
+    use super::*;
+
+    fn red() -> PixelValue {
+        PixelValue::Rgba(Rgba::rgb(255, 0, 0))
+    }
+
+    /// Rojo con un noveno del alfa.
+    fn soft() -> PixelValue {
+        PixelValue::Rgba(Rgba::new(255, 0, 0, 28))
+    }
+
+    fn dot(e: &mut Editor, p: (i32, i32)) {
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(p.0, p.1, red())],
+        });
+    }
+
+    fn all(e: &Editor) -> Vec<PixelValue> {
+        (0..8)
+            .flat_map(|y| (0..8).map(move |x| (x, y)))
+            .map(|(x, y)| px(e, x, y))
+            .collect()
+    }
+
+    #[test]
+    fn only_changes_selected_pixels() {
+        let mut e = editor(ToolKind::Blur);
+        e.options.brush_size = 3;
+        dot(&mut e, (4, 4));
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (3, 7))));
+        stroke(&mut e, &[(4, 4)], false);
+        assert_eq!(px(&e, 3, 4), soft());
+        assert_eq!(px(&e, 4, 4), red(), "not selected");
+        assert_eq!(px(&e, 5, 4), e.sprite().color_mode.transparent());
+    }
+
+    #[test]
+    fn a_stroke_is_one_undo_step() {
+        let mut e = editor(ToolKind::Blur);
+        e.options.brush_size = 3;
+        dot(&mut e, (4, 4));
+        let before = all(&e);
+        stroke(&mut e, &[(4, 4), (4, 5), (4, 6)], false);
+        assert_ne!(all(&e), before);
+        e.undo();
+        assert_eq!(all(&e), before, "one undo brings back the dot");
+    }
+
+    #[test]
+    fn does_nothing_on_a_locked_layer() {
+        let mut e = editor(ToolKind::Blur);
+        dot(&mut e, (4, 4));
+        e.execute(Command::SetLayerProps {
+            id: LayerId(1),
+            props: LayerProps {
+                locked: Some(true),
+                ..Default::default()
+            },
+        });
+        let version = e.doc_version;
+        stroke(&mut e, &[(4, 4), (5, 4)], false);
+        assert_eq!(e.doc_version, version);
+        assert_eq!(px(&e, 4, 4), red());
+    }
+
+    #[test]
+    fn ignores_symmetry() {
+        let mut e = editor(ToolKind::Blur);
+        dot(&mut e, (1, 4));
+        e.set_symmetry(Symmetry {
+            mode: SymmetryMode::Horizontal,
+            center2: None,
+        });
+        stroke(&mut e, &[(1, 4)], false);
+        assert_eq!(px(&e, 1, 4), soft());
+        assert_eq!(
+            px(&e, 6, 4),
+            e.sprite().color_mode.transparent(),
+            "no mirrored copy"
+        );
+    }
+
+    #[test]
+    fn uses_the_brush_and_is_blocked_in_tiles_mode() {
+        assert!(ToolKind::Blur.uses_brush());
+        let mut e = crate::tile_ops::test_util::tile_editor();
+        e.set_tool(ToolKind::Blur);
+        let version = e.doc_version;
+        stroke(&mut e, &[(1, 1), (6, 6)], false);
+        assert_eq!(e.doc_version, version);
+        assert_eq!(
+            e.tiles_status().as_deref(),
+            Some("Not available in Tiles mode")
+        );
+    }
+}
