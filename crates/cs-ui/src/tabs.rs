@@ -38,13 +38,23 @@ impl DocState {
     }
 
     pub fn untitled(name: impl Into<String>) -> Self {
+        Self::untitled_with_palette(name, cs_core::Palette::db32())
+    }
+
+    /// Documento nuevo con la paleta por defecto del usuario.
+    pub fn untitled_with_palette(name: impl Into<String>, palette: cs_core::Palette) -> Self {
         Self::new(
-            crate::new_editor(),
+            crate::new_editor(palette),
             DocLocation {
                 name: name.into(),
                 target: None,
             },
         )
+    }
+
+    /// Nombre de la pestaña sin extensión (para sugerir nombres de archivo).
+    pub fn tab_name_stem(&self) -> String {
+        crate::files::stem(&self.location.name).to_string()
     }
 
     pub fn is_dirty(&self) -> bool {

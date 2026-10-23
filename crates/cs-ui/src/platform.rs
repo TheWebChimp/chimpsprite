@@ -61,6 +61,8 @@ pub enum OpenPurpose {
     Dropped,
     /// Agregar como capa.
     ImportLayer,
+    /// Cargar una paleta (`.gpl`, `.hex`, `.pal`, `.png`, `.aseprite`).
+    LoadPalette,
 }
 
 pub enum PlatformEvent {
@@ -303,6 +305,29 @@ pub fn set_unsaved(unsaved: bool) {
 
 #[cfg(not(target_arch = "wasm32"))]
 pub fn set_unsaved(_unsaved: bool) {}
+
+/// Abre una carpeta en el explorador de archivos del sistema.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn open_folder(dir: &Path) -> Result<(), String> {
+    let program = if cfg!(windows) {
+        "explorer"
+    } else if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(program)
+        .arg(dir)
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// En web no hay carpetas: los presets viven en `localStorage`.
+#[cfg(target_arch = "wasm32")]
+pub fn open_folder(_dir: &Path) -> Result<(), String> {
+    Ok(())
+}
 
 /// Escribe un temporal y lo renombra, así un fallo no deja el archivo a medias.
 #[cfg(not(target_arch = "wasm32"))]

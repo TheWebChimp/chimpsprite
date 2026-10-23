@@ -562,7 +562,9 @@ impl Editor {
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
-        editor.secondary = editor.palette_value(21);
+        // El 21 es el blanco de DB32; con paletas más cortas, el último color.
+        let last = editor.sprite().palette.len().saturating_sub(1).min(21) as u8;
+        editor.secondary = editor.palette_value(last);
         editor
     }
 

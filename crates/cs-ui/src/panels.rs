@@ -3,7 +3,7 @@ use eframe::egui::{
 };
 use std::sync::Arc;
 
-use cs_core::{ArtboardId, PixelValue, SymmetryMode, Tile};
+use cs_core::{ArtboardId, Palette, PixelValue, SymmetryMode, Tile};
 
 use crate::canvas::CanvasView;
 use cs_tools::text::FontChoice;
@@ -453,7 +453,36 @@ fn to_color32(c: cs_core::Rgba) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
 }
 
-pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) {
+/// Lo que se pidió desde el encabezado del panel de paleta (lo resuelve `ChimpApp`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PaletteAction {
+    OpenPresets,
+    Load,
+    Save,
+    SaveAsPreset,
+    SetAsDefault,
+    LoadDefault,
+    /// Solo escritorio: en web no hay carpeta que abrir.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    OpenFolder,
+}
+
+/// Tira de colores de una paleta: como mucho `max` y termina en "…" si hay más.
+pub fn palette_strip(ui: &mut egui::Ui, palette: &Palette, max: usize, size: f32) {
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::ZERO;
+        for &c in palette.colors().iter().take(max) {
+            let (rect, _) = ui.allocate_exact_size(Vec2::splat(size), Sense::hover());
+            ui.painter().rect_filled(rect, 0.0, to_color32(c));
+        }
+        if palette.len() > max {
+            ui.weak("…");
+        }
+    });
+}
+
+/// `menus`: con un diálogo abierto, Presets ⏷ y … quedan desactivados.
+pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<PaletteAction> {
     ui.add_space(6.0);
     ui.heading("Color");
     ui.separator();
@@ -474,7 +503,34 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) {
         }
     });
     ui.add_space(8.0);
-    ui.label("Palette");
+    let mut action = None;
+    ui.horizontal(|ui| {
+        ui.label("Palette");
+        ui.add_enabled_ui(menus, |ui| {
+            if ui.small_button("Presets ⏷").clicked() {
+                action = Some(PaletteAction::OpenPresets);
+            }
+            ui.menu_button("…", |ui| {
+                let mut item = |ui: &mut egui::Ui, label: &str, a: PaletteAction| {
+                    if ui.button(label).clicked() {
+                        action = Some(a);
+                        ui.close();
+                    }
+                };
+                item(ui, "Load Palette…", PaletteAction::Load);
+                item(ui, "Save Palette…", PaletteAction::Save);
+                item(ui, "Save as Preset…", PaletteAction::SaveAsPreset);
+                ui.separator();
+                item(ui, "Set as Default", PaletteAction::SetAsDefault);
+                item(ui, "Load Default", PaletteAction::LoadDefault);
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    ui.separator();
+                    item(ui, "Open Folder", PaletteAction::OpenFolder);
+                }
+            });
+        });
+    });
     let size = 20.0;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::splat(2.0);
@@ -505,7 +561,11 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor) {
     });
     ui.add_space(10.0);
     color_picker(ui, editor);
+    action
 }
+
+/// Lado máximo del cuadro del selector de color, en puntos.
+const COLOR_PICKER_MAX: f32 = 240.0;
 
 /// Selector de color libre (RGBA): edita el color primario.
 pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
@@ -514,10 +574,11 @@ pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
         return;
     };
     let mut c32 = to_color32(current);
-    // El cuadro de saturación/brillo ocupa todo el ancho del panel. Se restaura después: si no,
-    // los sliders de los paneles siguientes heredan ese ancho y agrandan el panel en cada frame.
+    // El cuadro de saturación/brillo ocupa el ancho del panel hasta `COLOR_PICKER_MAX` (es
+    // cuadrado: con un sidebar ancho se haría enorme). Se restaura después: si no, los sliders de
+    // los paneles siguientes heredan ese ancho y agrandan el panel en cada frame.
     let slider_width = ui.spacing().slider_width;
-    ui.spacing_mut().slider_width = (ui.available_width() - 8.0).max(120.0);
+    ui.spacing_mut().slider_width = (ui.available_width() - 8.0).clamp(120.0, COLOR_PICKER_MAX);
     let picked = egui::color_picker::color_picker_color32(
         ui,
         &mut c32,
