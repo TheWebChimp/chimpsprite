@@ -26,6 +26,7 @@ mod palette_library;
 mod panels;
 mod platform;
 mod recent;
+pub mod skin;
 mod tabs;
 mod theme;
 mod tile_ops;
