@@ -31,6 +31,8 @@ mod theme;
 mod tile_ops;
 mod tilemap_dialog;
 mod timeline;
+mod transform;
+mod transform_box;
 mod view;
 mod widgets;
 
@@ -82,6 +84,8 @@ pub struct ChimpApp {
     presets_window: Option<palette_ui::PresetsWindow>,
     preset_name: Option<palette_ui::NameDialog>,
     palette_confirm: Option<palette_ui::Confirm>,
+    /// Ya llegó el `Paste` de este Ctrl+V (ver `clipboard::paste_request`).
+    pasted: bool,
 }
 
 impl ChimpApp {
@@ -128,6 +132,7 @@ impl ChimpApp {
             presets_window: None,
             preset_name: None,
             palette_confirm: None,
+            pasted: false,
         };
         if launch.demo {
             app.open_demo();
@@ -472,20 +477,21 @@ impl ChimpApp {
         }
         // egui convierte Ctrl+C/X/V en eventos (no teclas); Paste solo llega si el portapapeles
         // del sistema tiene texto, por eso `copy` deja ahí un marcador.
-        let (copy, cut, paste) = ctx.input(|i| {
+        let (copy, cut) = ctx.input(|i| {
             let has = |f: fn(&egui::Event) -> bool| i.events.iter().any(f);
             (
                 has(|e| matches!(e, egui::Event::Copy)),
                 has(|e| matches!(e, egui::Event::Cut)),
-                has(|e| matches!(e, egui::Event::Paste(_))),
             )
         });
+        let paste =
+            ctx.input(|i| clipboard::paste_request(&i.events, i.modifiers, &mut self.pasted));
         if copy {
             self.copy(ctx);
         } else if cut {
             self.cut(ctx);
-        } else if paste {
-            self.paste();
+        } else if let Some(request) = paste {
+            self.paste(request);
         }
         let new_frame = KeyboardShortcut::new(Modifiers::ALT, Key::N);
         if ctx.input_mut(|i| i.consume_shortcut(&new_frame)) {
@@ -516,23 +522,7 @@ impl ChimpApp {
                 editor.set_tool(tool);
                 continue;
             }
-            match key {
-                Key::N if shift => editor.add_layer(cs_core::LayerKind::Image),
-                Key::Enter if editor.is_pending() => editor.finish_gesture(),
-                Key::Escape => editor.cancel_gesture(),
-                Key::Enter => editor.toggle_play(),
-                Key::Comma | Key::ArrowLeft => editor.prev_frame(),
-                Key::Period | Key::ArrowRight => editor.next_frame(),
-                Key::ArrowUp => editor.step_layer(true),
-                Key::ArrowDown => editor.step_layer(false),
-                Key::F3 => editor.onion_enabled = !editor.onion_enabled,
-                // En modo Tiles no hay color secundario: X e Y voltean el tile del pincel.
-                Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
-                Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
-                Key::X => editor.swap_colors(),
-                Key::Delete | Key::Backspace => editor.clear_selection_content(),
-                _ => {}
-            }
+            editor_key(editor, key, shift);
         }
     }
 
@@ -550,9 +540,28 @@ impl ChimpApp {
         }
     }
 
-    fn paste(&mut self) {
-        if let Some(clip) = &self.clipboard {
-            self.doc.editor.paste(clip);
+    /// Pega lo copiado en ChimpSprite o una imagen de otra app (centrada, como en Aseprite).
+    fn paste(&mut self, request: clipboard::PasteRequest) {
+        use clipboard::PasteRequest;
+        let (system, new_artboard) = match request {
+            PasteRequest::Internal { new_artboard } => (None, new_artboard),
+            PasteRequest::System { new_artboard } => (clipboard::system_image(), new_artboard),
+        };
+        let editor = &mut self.doc.editor;
+        let clip = match system {
+            Some(image) => {
+                let sprite = editor.sprite();
+                image.centered_in(sprite.width, sprite.height)
+            }
+            None => match &self.clipboard {
+                Some(clip) => clip.clone(),
+                None => return,
+            },
+        };
+        if new_artboard {
+            editor.paste_in_new_artboard(&clip);
+        } else {
+            editor.paste(&clip);
         }
     }
 
@@ -643,9 +652,18 @@ impl ChimpApp {
                     if ui.add_enabled(has_selection, copy).clicked() {
                         self.copy(ui.ctx());
                     }
+                    // En escritorio puede haber una imagen de otra app aunque no se haya copiado nada.
+                    let can_paste = self.clipboard.is_some() || cfg!(not(target_arch = "wasm32"));
                     let paste = egui::Button::new("Paste").shortcut_text("Ctrl+V");
-                    if ui.add_enabled(self.clipboard.is_some(), paste).clicked() {
-                        self.paste();
+                    if ui.add_enabled(can_paste, paste).clicked() {
+                        self.paste(clipboard::PasteRequest::System {
+                            new_artboard: false,
+                        });
+                    }
+                    let as_artboard =
+                        egui::Button::new("Paste as New Artboard").shortcut_text("Ctrl+Shift+V");
+                    if ui.add_enabled(can_paste, as_artboard).clicked() {
+                        self.paste(clipboard::PasteRequest::System { new_artboard: true });
                     }
                     let clear = egui::Button::new("Clear").shortcut_text("Del");
                     if ui.add_enabled(has_selection, clear).clicked() {
@@ -841,6 +859,10 @@ impl eframe::App for ChimpApp {
         self.handle_dropped_files(&ctx);
         self.handle_platform_events(&ctx);
         self.demo_tiles();
+        if self.has_doc() {
+            // Lo flotante se confirma o cancela si la capa, el frame o la herramienta cambiaron.
+            self.doc.editor.sync_floating();
+        }
         self.handle_shortcuts(&ctx);
         if self.has_doc() && self.doc.editor.playing {
             let dt_ms = ctx.input(|i| i.stable_dt) as f64 * 1000.0;
@@ -898,10 +920,82 @@ impl eframe::App for ChimpApp {
     }
 }
 
+/// Teclas sin Ctrl/Alt que actúan sobre el editor (las letras de herramienta van aparte).
+pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
+    match key {
+        Key::N if shift => editor.add_layer(cs_core::LayerKind::Image),
+        Key::Enter if editor.is_pending() => editor.finish_gesture(),
+        Key::Enter if editor.is_floating() => {
+            editor.commit_floating();
+        }
+        Key::Escape => editor.escape(),
+        Key::Enter => editor.toggle_play(),
+        Key::Comma | Key::ArrowLeft => editor.prev_frame(),
+        Key::Period | Key::ArrowRight => editor.next_frame(),
+        Key::ArrowUp => editor.step_layer(true),
+        Key::ArrowDown => editor.step_layer(false),
+        Key::F3 => editor.onion_enabled = !editor.onion_enabled,
+        // En modo Tiles no hay color secundario: X e Y voltean el tile del pincel.
+        Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
+        Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
+        Key::X => editor.swap_colors(),
+        Key::Delete | Key::Backspace => editor.clear_selection_content(),
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use cs_core::Mask;
+
+    use super::*;
+
     #[test]
     fn convert_failure_message_has_no_stray_spaces() {
         assert!(!super::CONVERT_TO_IMAGE_FAILED.contains("  "));
+    }
+
+    #[test]
+    fn enter_applies_floating_content_and_escape_cancels_it() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        e.set_tool(ToolKind::RectSelect);
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (1, 1))));
+        let drag = |e: &mut Editor| {
+            e.pointer_press((0.5, 0.5), false, false, 0.1);
+            e.pointer_drag((2.5, 0.5));
+            e.pointer_release();
+        };
+        drag(&mut e);
+        assert!(e.is_floating());
+        editor_key(&mut e, Key::Escape, false);
+        assert!(
+            !e.is_floating() && e.selection.is_some(),
+            "Esc cancels, keeps the selection"
+        );
+        drag(&mut e);
+        editor_key(&mut e, Key::Enter, false);
+        assert!(!e.is_floating(), "Enter applies");
+        assert!(!e.playing, "instead of playing the animation");
+        assert!(e.history.can_undo());
+        editor_key(&mut e, Key::Escape, false);
+        assert!(e.selection.is_none(), "with nothing else, Esc deselects");
+    }
+    #[test]
+    fn enter_with_a_pending_gesture_finishes_the_gesture_first() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        e.set_tool(ToolKind::PolygonLasso);
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (1, 1))));
+        // Un lazo a medio hacer (fuera de la selección) y, a la vez, algo flotando.
+        for p in [(4.5, 4.5), (7.5, 4.5), (7.5, 7.5)] {
+            e.pointer_press(p, false, false, 0.1);
+            e.pointer_release();
+        }
+        assert!(e.is_pending());
+        assert!(e.lift());
+        editor_key(&mut e, Key::Enter, false);
+        assert!(!e.is_pending(), "Enter finishes the lasso");
+        let bounds = e.selection.as_ref().and_then(|m| m.bounds());
+        assert_eq!(bounds, Some(((4, 4), (7, 7))), "the lasso is the selection");
+        assert!(!e.is_floating());
     }
 }

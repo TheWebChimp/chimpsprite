@@ -244,13 +244,15 @@ impl ExportDialog {
         })
     }
 
-    /// Genera y escribe (o descarga) los archivos junto a `target`.
+    /// Genera y escribe (o descarga) los archivos junto a `target`. Lo flotante se confirma antes:
+    /// el diálogo no es modal y se pudo haber movido algo mientras estaba abierto.
     pub fn export(
         &self,
-        editor: &Editor,
+        editor: &mut Editor,
         target: &SaveTarget,
         platform: &Platform,
     ) -> Result<Vec<String>, FileError> {
+        editor.commit_floating();
         let mut written = Vec::new();
         for (name, bytes) in self.build(editor, &target.file_name)? {
             let file = target.sibling(&name);
@@ -263,7 +265,7 @@ impl ExportDialog {
     pub fn show(
         &mut self,
         ctx: &egui::Context,
-        editor: &Editor,
+        editor: &mut Editor,
         platform: &Platform,
     ) -> ExportResult {
         let mut result = ExportResult::Open;
@@ -368,7 +370,7 @@ impl ExportDialog {
         result
     }
 
-    fn pick_and_export(&self, editor: &Editor, platform: &Platform) -> ExportResult {
+    fn pick_and_export(&self, editor: &mut Editor, platform: &Platform) -> ExportResult {
         let ext = self.format.extension();
         let default_name = match self.format {
             ExportFormat::Atlas => format!("atlas.{ext}"),
@@ -441,13 +443,43 @@ mod tests {
     fn export_writes_next_to_target() {
         let dir = std::env::temp_dir().join(format!("chimpsprite-export-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
-        let editor = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
+        let mut editor = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
         let target = SaveTarget::from_path(&dir.join("hero.png")).unwrap();
         let files = ExportDialog::default()
-            .export(&editor, &target, &Platform::default())
+            .export(&mut editor, &target, &Platform::default())
             .unwrap();
         assert_eq!(files.len(), 2);
         assert!(dir.join("hero.png").exists() && dir.join("hero.json").exists());
+        std::fs::remove_dir_all(dir).ok();
+    }
+    #[test]
+    fn export_applies_floating_content_first() {
+        use cs_commands::Command;
+        use cs_core::{LayerId, Mask, PixelValue, Rgba};
+        let dir = std::env::temp_dir().join(format!(
+            "chimpsprite-export-floating-{}",
+            std::process::id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut editor = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        editor.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, red)],
+        });
+        editor.tool = crate::editor::ToolKind::RectSelect;
+        editor.set_selection(Some(Mask::from_rect(4, 4, (0, 0), (0, 0))));
+        editor.pointer_press((0.5, 0.5), false, false, 0.1);
+        editor.pointer_drag((2.5, 2.5));
+        editor.pointer_release();
+        assert!(editor.is_floating());
+        let target = SaveTarget::from_path(&dir.join("hero.png")).unwrap();
+        ExportDialog::default()
+            .export(&mut editor, &target, &Platform::default())
+            .unwrap();
+        assert!(!editor.is_floating(), "applied before exporting");
+        assert_eq!(editor.sprite().pixel(LayerId(1), 0, 2, 2), red);
         std::fs::remove_dir_all(dir).ok();
     }
 }

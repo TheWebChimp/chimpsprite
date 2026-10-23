@@ -495,6 +495,8 @@ impl Editor {
 
     /// `Layer -> Convert to Tilemap`: `false` si no se pudo (ver `ops::convert_to_tilemap`).
     pub fn convert_to_tilemap(&mut self, tile_size: (u32, u32)) -> bool {
+        // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
+        self.commit_floating();
         let Some(cmd) = ops::convert_to_tilemap(self.sprite(), self.layer, tile_size) else {
             return false;
         };
@@ -503,6 +505,8 @@ impl Editor {
 
     /// `Layer -> Convert to Image Layer`.
     pub fn convert_to_image(&mut self) -> bool {
+        // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
+        self.commit_floating();
         let Some(cmd) = ops::convert_to_image(self.sprite(), self.layer) else {
             return false;
         };

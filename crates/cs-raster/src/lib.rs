@@ -8,6 +8,7 @@ mod line;
 mod polygon;
 mod rect;
 mod symmetry;
+mod transform;
 
 pub use constrain::{constrain_line, constrain_square};
 pub use ellipse::{ellipse_filled, ellipse_outline};
@@ -17,6 +18,10 @@ pub use line::{brush_square, line, pixel_perfect, stamp};
 pub use polygon::polygon_filled;
 pub use rect::{rect_filled, rect_outline, rounded_rect_filled, rounded_rect_outline};
 pub use symmetry::{SymmetryMode, symmetric_points, symmetrize};
+pub use transform::{
+    Block, MAX_BLOCK_SIDE, ROTSPRITE_MAX_AREA, RotationAlgorithm, rotate_fast, rotated_size,
+    rotsprite, scale_nearest,
+};
 
 pub type Point = (i32, i32);
 

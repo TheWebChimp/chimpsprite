@@ -6,6 +6,7 @@ use std::sync::Arc;
 use cs_core::{ArtboardId, Palette, PixelValue, SymmetryMode, Tile};
 
 use crate::canvas::CanvasView;
+use cs_raster::RotationAlgorithm;
 use cs_tools::text::FontChoice;
 use cs_tools::{Dither, GradientShape};
 
@@ -188,6 +189,19 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
             ui.weak("Drag to create a slice (hitbox, pivot…). Drag the selected one to move it or its edges to resize it: changes apply from the current frame on.");
         }
         _ => {}
+    }
+    if tool.is_selection() || tool == ToolKind::Move {
+        let before = editor.options.rotation;
+        ui.horizontal(|ui| {
+            ui.label("Rotation:");
+            for algorithm in RotationAlgorithm::ALL {
+                ui.radio_value(&mut editor.options.rotation, algorithm, algorithm.label());
+            }
+        });
+        if editor.options.rotation != before {
+            editor.refresh_floating(false);
+        }
+        ui.weak("Drag the handles to scale, or just outside a corner to rotate. Shift keeps the proportions or snaps to 15°.");
     }
     if matches!(
         tool,
@@ -820,6 +834,10 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView, notic
             ui.colored_label(theme::ACCENT, "Instance layer: edit the source artboard");
         }
         if let Some(text) = editor.tiles_status() {
+            ui.separator();
+            ui.colored_label(theme::ACCENT, text);
+        }
+        if let Some(text) = editor.floating_status() {
             ui.separator();
             ui.colored_label(theme::ACCENT, text);
         }
