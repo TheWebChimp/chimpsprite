@@ -47,6 +47,16 @@ fn tool_group(ui: &mut egui::Ui, editor: &mut Editor, index: usize) -> egui::Res
     .inner
 }
 
+/// Scroll del panel de herramientas: solo con la rueda y la barra. Arrastrar (también con el
+/// dedo) no lo mueve, así mantener presionado un botón de grupo abre sus variantes.
+pub fn tools_scroll_area() -> egui::ScrollArea {
+    use egui::containers::scroll_area::ScrollSource;
+    egui::ScrollArea::vertical()
+        .id_salt("tools_scroll")
+        .auto_shrink([false, false])
+        .scroll_source(ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL)
+}
+
 /// La barra de íconos de Pixel UI: una columna con un botón por grupo, alineada a la izquierda.
 /// Los marcos van pegados, uno debajo del otro. Cada botón lleva un id propio de su grupo, así su
 /// lista de variantes (y la presión larga) no depende de lo que haya antes en la barra.
@@ -1525,9 +1535,9 @@ mod tests {
         assert_eq!(shape, BrushShape::Round);
     }
 
-    /// La columna de íconos con el skin embebido, manejada con eventos crudos (el reloj avanza
-    /// 50 ms por frame). Guarda los botones del árbol de accesibilidad (nombre y rect) y las
-    /// texturas dibujadas.
+    /// La columna de íconos con el skin embebido dentro del scroll del panel, manejada con
+    /// eventos crudos (el reloj avanza 50 ms por frame). Guarda los botones del árbol de
+    /// accesibilidad (nombre y rect), las texturas dibujadas y el desplazamiento del scroll.
     struct ColumnHarness {
         ctx: egui::Context,
         editor: Editor,
@@ -1537,6 +1547,7 @@ mod tests {
         height: f32,
         buttons: Vec<(String, Rect)>,
         textures: Vec<egui::TextureId>,
+        offset: f32,
     }
 
     impl ColumnHarness {
@@ -1552,6 +1563,7 @@ mod tests {
                 height,
                 buttons: Vec::new(),
                 textures: Vec::new(),
+                offset: 0.0,
             };
             h.frame(vec![]);
             h
@@ -1573,10 +1585,18 @@ mod tests {
                 ..Default::default()
             };
             let (editor, skin) = (&mut self.editor, &self.skin);
+            let mut offset = 0.0;
             let mut output = self.ctx.run_ui(input, |ui| {
-                egui::CentralPanel::default().show(ui, |ui| tool_column(ui, editor, skin));
+                egui::CentralPanel::default().show(ui, |ui| {
+                    offset = tools_scroll_area()
+                        .show(ui, |ui| tool_column(ui, editor, skin))
+                        .state
+                        .offset
+                        .y;
+                });
             });
             output.textures_delta.clear();
+            self.offset = offset;
             self.textures.clear();
             for clipped in &output.shapes {
                 collect_textures(&clipped.shape, &mut self.textures);
@@ -1739,5 +1759,45 @@ mod tests {
         unique.dedup();
         assert_eq!(unique.len(), plain.len());
         assert_eq!(plain, column_ids(true));
+    }
+
+    #[test]
+    fn dragging_over_a_tool_button_does_not_scroll_the_panel() {
+        let mut h = ColumnHarness::new(150.0);
+        // Con una pantalla táctil, egui arrastra el contenido de un ScrollArea por defecto.
+        let touch = |phase| Event::Touch {
+            device_id: egui::TouchDeviceId(1),
+            id: egui::TouchId(1),
+            phase,
+            pos: pos2(199.0, 1.0),
+            force: None,
+        };
+        h.frame(vec![
+            touch(egui::TouchPhase::Start),
+            touch(egui::TouchPhase::End),
+        ]);
+        assert!(h.ctx.input(|i| i.has_touch_screen()));
+        let from = h.press("Pencil", PointerButton::Primary);
+        for dy in [10.0, 25.0, 40.0] {
+            h.frame(vec![Event::PointerMoved(from - Vec2::new(0.0, dy))]);
+        }
+        h.frame(vec![mouse(
+            from - Vec2::new(0.0, 40.0),
+            PointerButton::Primary,
+            false,
+        )]);
+        h.frame(vec![]);
+        assert_eq!(h.offset, 0.0, "the panel did not scroll");
+    }
+
+    #[test]
+    fn holding_a_tool_button_in_the_scrolling_panel_opens_its_variants() {
+        let mut h = ColumnHarness::new(150.0);
+        h.press("Pencil", PointerButton::Primary);
+        h.frame_after(0.45, vec![]);
+        h.frame(vec![]);
+        assert!(egui::Popup::is_any_open(&h.ctx));
+        assert!(h.labels().contains(&item(ToolKind::Spray).as_str()));
+        assert_eq!(h.offset, 0.0);
     }
 }
