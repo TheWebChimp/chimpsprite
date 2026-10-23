@@ -82,6 +82,8 @@ pub struct ChimpApp {
     presets_window: Option<palette_ui::PresetsWindow>,
     preset_name: Option<palette_ui::NameDialog>,
     palette_confirm: Option<palette_ui::Confirm>,
+    /// Ya llegó el `Paste` de este Ctrl+V (ver `clipboard::paste_request`).
+    pasted: bool,
 }
 
 impl ChimpApp {
@@ -128,6 +130,7 @@ impl ChimpApp {
             presets_window: None,
             preset_name: None,
             palette_confirm: None,
+            pasted: false,
         };
         if launch.demo {
             app.open_demo();
@@ -472,20 +475,21 @@ impl ChimpApp {
         }
         // egui convierte Ctrl+C/X/V en eventos (no teclas); Paste solo llega si el portapapeles
         // del sistema tiene texto, por eso `copy` deja ahí un marcador.
-        let (copy, cut, paste) = ctx.input(|i| {
+        let (copy, cut) = ctx.input(|i| {
             let has = |f: fn(&egui::Event) -> bool| i.events.iter().any(f);
             (
                 has(|e| matches!(e, egui::Event::Copy)),
                 has(|e| matches!(e, egui::Event::Cut)),
-                has(|e| matches!(e, egui::Event::Paste(_))),
             )
         });
+        let paste =
+            ctx.input(|i| clipboard::paste_request(&i.events, i.modifiers, &mut self.pasted));
         if copy {
             self.copy(ctx);
         } else if cut {
             self.cut(ctx);
-        } else if paste {
-            self.paste();
+        } else if let Some(request) = paste {
+            self.paste(request);
         }
         let new_frame = KeyboardShortcut::new(Modifiers::ALT, Key::N);
         if ctx.input_mut(|i| i.consume_shortcut(&new_frame)) {
@@ -550,9 +554,28 @@ impl ChimpApp {
         }
     }
 
-    fn paste(&mut self) {
-        if let Some(clip) = &self.clipboard {
-            self.doc.editor.paste(clip);
+    /// Pega lo copiado en ChimpSprite o una imagen de otra app (centrada, como en Aseprite).
+    fn paste(&mut self, request: clipboard::PasteRequest) {
+        use clipboard::PasteRequest;
+        let (system, new_artboard) = match request {
+            PasteRequest::Internal { new_artboard } => (None, new_artboard),
+            PasteRequest::System { new_artboard } => (clipboard::system_image(), new_artboard),
+        };
+        let editor = &mut self.doc.editor;
+        let clip = match system {
+            Some(image) => {
+                let sprite = editor.sprite();
+                image.centered_in(sprite.width, sprite.height)
+            }
+            None => match &self.clipboard {
+                Some(clip) => clip.clone(),
+                None => return,
+            },
+        };
+        if new_artboard {
+            editor.paste_in_new_artboard(&clip);
+        } else {
+            editor.paste(&clip);
         }
     }
 
@@ -643,9 +666,18 @@ impl ChimpApp {
                     if ui.add_enabled(has_selection, copy).clicked() {
                         self.copy(ui.ctx());
                     }
+                    // En escritorio puede haber una imagen de otra app aunque no se haya copiado nada.
+                    let can_paste = self.clipboard.is_some() || cfg!(not(target_arch = "wasm32"));
                     let paste = egui::Button::new("Paste").shortcut_text("Ctrl+V");
-                    if ui.add_enabled(self.clipboard.is_some(), paste).clicked() {
-                        self.paste();
+                    if ui.add_enabled(can_paste, paste).clicked() {
+                        self.paste(clipboard::PasteRequest::System {
+                            new_artboard: false,
+                        });
+                    }
+                    let as_artboard =
+                        egui::Button::new("Paste as New Artboard").shortcut_text("Ctrl+Shift+V");
+                    if ui.add_enabled(can_paste, as_artboard).clicked() {
+                        self.paste(clipboard::PasteRequest::System { new_artboard: true });
                     }
                     let clear = egui::Button::new("Clear").shortcut_text("Del");
                     if ui.add_enabled(has_selection, clear).clicked() {
