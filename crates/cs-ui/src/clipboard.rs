@@ -2,8 +2,8 @@
 //! sirve entre pestañas) y guarda colores resueltos para pegar en cualquier modo de color. En
 //! escritorio también se pegan imágenes copiadas en otras apps (Aseprite, el navegador…).
 
-use cs_commands::Command;
-use cs_core::{ColorMode, LayerKind, Mask, PixelValue, Rgba};
+use cs_core::{ColorMode, LayerKind, PixelValue, Rgba};
+use cs_raster::Block;
 use eframe::egui;
 
 use crate::editor::Editor;
@@ -166,13 +166,16 @@ impl Editor {
         Some(clip)
     }
 
-    /// Pega en la capa actual donde estaba lo copiado (corrido para que entre en el lienzo) y
-    /// selecciona lo pegado, listo para arrastrarlo. Lo transparente no borra.
+    /// Pega en la capa actual donde estaba lo copiado (o centrado, si es una imagen de otra app;
+    /// corrido para que entre en el lienzo). Lo pegado queda flotando y seleccionado, listo para
+    /// moverlo, escalarlo o rotarlo. Una imagen más grande que el lienzo flota entera y se recorta
+    /// al confirmar; lo transparente no borra lo de debajo.
     pub fn paste(&mut self, clip: &Clip) {
         if !self.clip_layer_ok(true) {
             return;
         }
         self.cancel_gesture();
+        self.commit_floating();
         let sprite = self.sprite();
         let (w, h) = (sprite.width as i32, sprite.height as i32);
         let fit = |o: i32, size: u32, max: i32| o.min(max - size as i32).max(0);
@@ -180,44 +183,24 @@ impl Editor {
             fit(clip.origin.0, clip.size.0, w),
             fit(clip.origin.1, clip.size.1, h),
         );
+        let clear = sprite.color_mode.transparent();
         let value = |c: Rgba| match sprite.color_mode {
+            _ if c.a == 0 => clear,
             ColorMode::Rgba => PixelValue::Rgba(c),
             ColorMode::Indexed { transparent_index } => {
                 PixelValue::Index(cs_io::import::nearest_index(sprite, c, transparent_index))
             }
         };
-        // Lo que no entra en el lienzo (una imagen más grande) se recorta.
-        let inside = |&(x, y, _): &&(i32, i32, Rgba)| {
-            (0..w).contains(&(ox + x)) && (0..h).contains(&(oy + y))
-        };
-        let pixels: Vec<_> = clip
-            .pixels
-            .iter()
-            .filter(inside)
-            .filter(|(_, _, c)| c.a > 0)
-            .map(|&(x, y, c)| (ox + x, oy + y, value(c)))
-            .collect();
-        let mask = Mask::from_points(
-            sprite.width,
-            sprite.height,
-            clip.pixels
-                .iter()
-                .filter(inside)
-                .map(|&(x, y, _)| (ox + x, oy + y)),
-        );
-        let applied = pixels.is_empty()
-            || self.execute(Command::DrawPixels {
-                layer: self.layer,
-                frame: self.frame,
-                pixels,
-            });
-        if applied {
-            self.set_selection(Some(mask));
+        // Los puntos transparentes también viajan: dan la forma de la selección.
+        let mut block = Block::new(clip.size.0, clip.size.1);
+        for &(x, y, c) in &clip.pixels {
+            block.set(x, y, Some(value(c)));
         }
+        self.float_pasted(block, (ox, oy));
     }
 
     /// Crea un artboard del tamaño de lo copiado (con la paleta y el modo del actual) y lo pega
-    /// en su esquina.
+    /// en su esquina, ya aplicado: el artboard tiene justo ese tamaño, no hay nada que acomodar.
     pub fn paste_in_new_artboard(&mut self, clip: &Clip) {
         let before = self.active;
         self.add_artboard(clip.size.0, clip.size.1);
@@ -226,15 +209,18 @@ impl Editor {
                 origin: (0, 0),
                 ..clip.clone()
             });
+            self.commit_floating();
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use cs_core::{LayerId, Sprite};
+    use cs_commands::Command;
+    use cs_core::{LayerId, Mask, Sprite};
 
     use super::*;
+    use crate::editor::ToolKind;
 
     fn editor_with_dot() -> (Editor, PixelValue) {
         let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
@@ -248,28 +234,27 @@ mod tests {
     }
 
     #[test]
-    fn copy_needs_a_selection_and_paste_selects_what_was_pasted() {
+    fn copy_needs_a_selection_and_paste_floats_until_applied() {
         let (mut e, red) = editor_with_dot();
         assert_eq!(e.copy(), None);
         e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (3, 3))));
         let clip = e.copy().unwrap();
         e.add_layer(LayerKind::Image);
         let top = e.layer;
+        let t = e.sprite().color_mode.transparent();
         e.paste(&clip);
-        assert_eq!(
-            e.sprite().pixel(top, 0, 2, 2),
-            red,
-            "same place, current layer"
-        );
+        assert!(e.is_floating());
+        assert_eq!(e.sprite().pixel(top, 0, 2, 2), t, "not applied yet");
+        let shown = e.view().document.artboards[0].sprite.pixel(top, 0, 2, 2);
+        assert_eq!(shown, red, "same place, current layer");
         assert_eq!(
             e.selection.as_ref().unwrap().bounds(),
             Some(((1, 1), (3, 3)))
         );
+        assert!(e.commit_floating());
+        assert_eq!(e.sprite().pixel(top, 0, 2, 2), red);
         e.undo();
-        assert_eq!(
-            e.sprite().pixel(top, 0, 2, 2),
-            e.sprite().color_mode.transparent()
-        );
+        assert_eq!(e.sprite().pixel(top, 0, 2, 2), t);
     }
 
     #[test]
@@ -282,6 +267,7 @@ mod tests {
 
         let mut small = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
         small.paste(&clip);
+        assert!(small.commit_floating());
         assert_eq!(
             small.sprite().pixel(LayerId(1), 0, 0, 0),
             red,
@@ -306,6 +292,7 @@ mod tests {
             },
         ));
         indexed.paste(&clip);
+        assert!(indexed.commit_floating());
         let v = indexed.sprite().pixel(LayerId(1), 0, 2, 2);
         assert_eq!(indexed.resolve(v), e.resolve(red));
     }
@@ -367,47 +354,74 @@ mod tests {
     const RED_AND_CLEAR: [u8; 8] = [255, 0, 0, 255, 0, 0, 0, 0];
 
     #[test]
-    fn external_images_are_pasted_centered() {
+    fn external_images_are_pasted_centered_and_float() {
         let clip = Clip::from_rgba(2, 1, &RED_AND_CLEAR).unwrap();
         assert_eq!(clip.size(), (2, 1));
         assert_eq!(Clip::from_rgba(2, 2, &RED_AND_CLEAR), None, "faltan bytes");
         assert_eq!(Clip::from_rgba(0, 1, &[]), None);
         let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let t = e.sprite().color_mode.transparent();
         e.paste(&clip.centered_in(8, 8));
-        let red = PixelValue::Rgba(Rgba::new(255, 0, 0, 255));
-        assert_eq!(e.sprite().pixel(LayerId(1), 0, 3, 3), red);
+        assert!(
+            e.is_floating(),
+            "an external image floats like an internal clip"
+        );
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 3, 3), t, "not applied yet");
         assert_eq!(
             e.selection.as_ref().unwrap().bounds(),
             Some(((3, 3), (4, 3)))
         );
-    }
-
-    #[test]
-    fn images_larger_than_the_canvas_are_cropped() {
-        let big = Clip::from_rgba(10, 10, &[200; 400]).unwrap();
-        let mut e = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
-        e.paste(&big.centered_in(4, 4));
-        let c = PixelValue::Rgba(Rgba::new(200, 200, 200, 200));
-        assert_eq!(e.sprite().pixel(LayerId(1), 0, 3, 3), c);
+        assert!(e.commit_floating());
+        let red = PixelValue::Rgba(Rgba::new(255, 0, 0, 255));
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 3, 3), red);
         assert_eq!(
-            e.selection.as_ref().unwrap().bounds(),
-            Some(((0, 0), (3, 3)))
+            e.sprite().pixel(LayerId(1), 0, 4, 3),
+            t,
+            "the clear pixel does not erase"
         );
     }
 
     #[test]
-    fn paste_in_a_new_artboard_of_the_clip_size() {
+    fn images_larger_than_the_canvas_float_whole_and_are_cropped_on_apply() {
+        let big = Clip::from_rgba(10, 10, &[200; 400]).unwrap();
+        let mut e = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
+        e.paste(&big.centered_in(4, 4));
+        assert_eq!(
+            e.transform_box().map(|b| (b.width(), b.height())),
+            Some((10, 10)),
+            "the whole image floats: it can be scaled down before applying"
+        );
+        assert_eq!(
+            e.selection.as_ref().unwrap().bounds(),
+            Some(((0, 0), (3, 3))),
+            "the selection is the part inside the canvas"
+        );
+        assert!(e.commit_floating());
+        let c = PixelValue::Rgba(Rgba::new(200, 200, 200, 200));
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 3, 3), c);
+    }
+
+    #[test]
+    fn paste_in_a_new_artboard_of_the_clip_size_applies_at_once() {
         let clip = Clip::from_rgba(2, 1, &RED_AND_CLEAR).unwrap();
         let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
         let first = e.active;
         e.paste_in_new_artboard(&clip);
         assert_eq!(e.document.artboards.len(), 2);
         assert_ne!(e.active, first);
+        assert!(
+            !e.is_floating(),
+            "the artboard is the clip's size: nothing to place"
+        );
         let sprite = e.sprite();
         assert_eq!((sprite.width, sprite.height), (2, 1));
         assert_eq!(sprite.palette, Sprite::new(1, 1, ColorMode::Rgba).palette);
         let red = PixelValue::Rgba(Rgba::new(255, 0, 0, 255));
         assert_eq!(sprite.pixel(e.layer, 0, 0, 0), red);
+        assert_eq!(
+            e.selection.as_ref().unwrap().bounds(),
+            Some(((0, 0), (1, 0)))
+        );
     }
 
     #[test]
@@ -421,5 +435,55 @@ mod tests {
         let version = e.doc_version;
         e.paste(&clip);
         assert_eq!(e.doc_version, version);
+        assert!(!e.is_floating());
+    }
+
+    #[test]
+    fn pasted_content_floats_over_the_drawing_below_without_mixing() {
+        let (mut e, red) = editor_with_dot();
+        let blue = e.palette_value(9);
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(6, 2, blue)],
+        });
+        e.set_selection(Some(Mask::from_rect(8, 8, (2, 2), (2, 2))));
+        let clip = e.copy().unwrap();
+        e.paste(&clip); // flota en (2, 2)
+        e.tool = ToolKind::RectSelect;
+        // Pasa por encima del azul y se deja más abajo.
+        e.pointer_press((2.5, 2.5), false, false, 0.1);
+        e.pointer_drag((6.5, 2.5));
+        e.pointer_drag((6.5, 5.5));
+        e.pointer_release();
+        assert!(e.commit_floating());
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 6, 5), red);
+        assert_eq!(
+            e.sprite().pixel(LayerId(1), 0, 6, 2),
+            blue,
+            "the drawing below is intact"
+        );
+        assert_eq!(
+            e.sprite().pixel(LayerId(1), 0, 2, 2),
+            red,
+            "pasting leaves no hole"
+        );
+    }
+
+    #[test]
+    fn cancelling_a_paste_restores_the_previous_selection() {
+        let (mut e, _) = editor_with_dot();
+        e.set_selection(Some(Mask::from_rect(8, 8, (2, 2), (2, 2))));
+        let clip = e.copy().unwrap();
+        e.set_selection(Some(Mask::from_rect(8, 8, (5, 5), (6, 6))));
+        let version = e.doc_version;
+        e.paste(&clip);
+        e.escape();
+        assert!(!e.is_floating());
+        assert_eq!(e.doc_version, version);
+        assert_eq!(
+            e.selection.as_ref().unwrap().bounds(),
+            Some(((5, 5), (6, 6)))
+        );
     }
 }

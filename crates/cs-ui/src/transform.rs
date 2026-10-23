@@ -203,6 +203,18 @@ impl Editor {
         true
     }
 
+    /// Deja `block` flotando con su esquina en `at` (pegar). No deja hueco; si se cancela, vuelve
+    /// la selección de antes del pegado.
+    pub(crate) fn float_pasted(&mut self, block: Block<PixelValue>, at: (i32, i32)) {
+        self.commit_floating();
+        let s = self.sprite();
+        let canvas = (s.width, s.height);
+        let target = (self.active, self.layer, self.frame);
+        let before = self.selection.clone();
+        self.floating = Some(Floating::new(block, at, target, true, before, canvas));
+        self.refresh_floating(false);
+    }
+
     /// Empieza a mover, escalar o rotar lo seleccionado. Se levanta recién al cambiar algo, así
     /// un clic no levanta nada.
     pub fn press_transform(&mut self, hit: TransformHit, world: (f32, f32)) {
