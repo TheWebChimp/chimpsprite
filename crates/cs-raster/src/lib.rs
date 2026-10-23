@@ -1,5 +1,6 @@
 //! Algoritmos de rasterizado puros sobre coordenadas enteras.
 
+mod blur;
 mod constrain;
 mod ellipse;
 mod fill;
@@ -10,6 +11,7 @@ mod rect;
 mod symmetry;
 mod transform;
 
+pub use blur::blur_average;
 pub use constrain::{constrain_line, constrain_square};
 pub use ellipse::{ellipse_filled, ellipse_outline};
 pub use fill::flood_fill;
