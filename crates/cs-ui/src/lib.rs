@@ -11,6 +11,7 @@ mod editor;
 mod export_dialog;
 mod file_actions;
 mod mask_ops;
+mod palette_ops;
 mod slice_ops;
 use cs_io::files;
 mod guides;
@@ -802,12 +803,10 @@ impl ChimpApp {
     }
 }
 
-fn new_editor() -> Editor {
-    Editor::with_sprite(Sprite::new(
-        NEW_SPRITE_SIZE,
-        NEW_SPRITE_SIZE,
-        ColorMode::Rgba,
-    ))
+fn new_editor(palette: cs_core::Palette) -> Editor {
+    let mut sprite = Sprite::new(NEW_SPRITE_SIZE, NEW_SPRITE_SIZE, ColorMode::Rgba);
+    sprite.palette = palette;
+    Editor::with_sprite(sprite)
 }
 
 impl eframe::App for ChimpApp {

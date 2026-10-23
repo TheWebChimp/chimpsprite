@@ -38,8 +38,14 @@ impl DocState {
     }
 
     pub fn untitled(name: impl Into<String>) -> Self {
+        Self::untitled_with_palette(name, cs_core::Palette::db32())
+    }
+
+    /// Documento nuevo con la paleta por defecto del usuario.
+    #[allow(dead_code)] // Lo usa la UI de paletas (Task 6).
+    pub fn untitled_with_palette(name: impl Into<String>, palette: cs_core::Palette) -> Self {
         Self::new(
-            crate::new_editor(),
+            crate::new_editor(palette),
             DocLocation {
                 name: name.into(),
                 target: None,
