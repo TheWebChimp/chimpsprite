@@ -25,6 +25,9 @@ mod lospec_examples;
 mod lospec_tab;
 mod palette_library;
 mod panels;
+// Lo usa el diálogo pixel (siguiente tarea del plan); hasta entonces solo los tests.
+#[allow(dead_code)]
+mod pixel_ui;
 mod platform;
 mod recent;
 pub mod skin;
