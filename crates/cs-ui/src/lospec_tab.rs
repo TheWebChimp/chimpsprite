@@ -113,6 +113,9 @@ impl LospecTab {
     pub fn start_lookup(&mut self) -> Option<(u64, String)> {
         self.lookup = None;
         let Some(slug) = slug_from_input(&self.link) else {
+            // Invalida cualquier búsqueda anterior aún en vuelo.
+            self.lookup_generation += 1;
+            self.lookup_loading = false;
             self.error = Some("Paste a lospec.com palette link or a palette name.".into());
             return None;
         };
@@ -127,6 +130,13 @@ impl LospecTab {
             return;
         }
         self.listing_loading = false;
+        // Un Load more fallido no avanza la página: el reintento pide la misma.
+        if result.is_err()
+            && let Some(q) = self.query.as_mut()
+            && q.page > 0
+        {
+            q.page -= 1;
+        }
         match result {
             Ok(page) => {
                 self.total = page.total;
@@ -329,6 +339,34 @@ mod tests {
         assert_eq!(tab.results().len(), 1);
         tab.finish_listing(g, Ok(page(&["y"], 2)));
         assert_eq!(tab.results().len(), 2);
+    }
+
+    #[test]
+    fn failed_load_more_retries_the_same_page() {
+        let mut tab = LospecTab::default();
+        let s = tab.start_search();
+        tab.finish_listing(s.generation, Ok(page(&["a"], 30)));
+        let (g, q) = tab.start_more().unwrap();
+        assert_eq!(q.page, 1);
+        tab.finish_listing(g, Err(FetchError::Network));
+        assert_eq!(tab.results().len(), 1);
+        let (_, q) = tab.start_more().unwrap();
+        assert_eq!(q.page, 1);
+    }
+
+    #[test]
+    fn invalid_link_discards_pending_lookup() {
+        let mut tab = LospecTab {
+            link: "sweetie-16".into(),
+            ..LospecTab::default()
+        };
+        let (g, _) = tab.start_lookup().unwrap();
+        tab.link = "https://example.com/x".into();
+        assert!(tab.start_lookup().is_none());
+        assert!(!tab.lookup_loading());
+        tab.finish_lookup(g, Ok(pal("sweetie-16")));
+        assert!(tab.lookup_result().is_none());
+        assert!(tab.error().is_some());
     }
 
     #[test]
