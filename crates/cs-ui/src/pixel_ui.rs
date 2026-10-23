@@ -334,10 +334,12 @@ fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response
 ///
 /// Sin el ícono se dibuja la inicial de `label`; sin el marco, el respaldo plano (con un borde
 /// `accent` si está elegido). `label` es también el nombre accesible.
-// La toolbar de íconos lo usa desde la Task 5.
-#[cfg_attr(not(test), allow(dead_code))]
+///
+/// `id` es el del botón (y de su lista de variantes): fijo por grupo, no depende del orden de los
+/// widgets de la barra.
 pub fn tool_button(
     ui: &mut Ui,
+    id: egui::Id,
     skin: &Skin,
     icon: &str,
     label: &str,
@@ -348,7 +350,9 @@ pub fn tool_button(
     let size = base.map_or(FALLBACK_SLOT_SIZE, |p| {
         vec2(p.size[0] as f32, p.size[1] as f32)
     });
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let (_, space) = ui.allocate_space(size);
+    let response = ui.interact(space, id, Sense::click());
+    let rect = egui::Align2::CENTER_CENTER.align_size_within_rect(size, space);
     let enabled = ui.is_enabled();
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, label)
@@ -623,7 +627,15 @@ mod tests {
         let input = RawInput { events, ..screen() };
         let mut output = ctx.run_ui(input, |ui| {
             egui::CentralPanel::default().show(ui, |ui| {
-                let r = tool_button(ui, skin, "icon.lasso", "Lasso", selected, true);
+                let r = tool_button(
+                    ui,
+                    egui::Id::new("lasso"),
+                    skin,
+                    "icon.lasso",
+                    "Lasso",
+                    selected,
+                    true,
+                );
                 out = (r.rect, r.clicked());
             });
         });

@@ -825,11 +825,14 @@ impl ChimpApp {
             .exact_size(184.0)
             .show(ui, |ui| {
                 // Con la UI a 2× o 3× las herramientas y sus opciones no caben: scroll vertical.
+                let skin = self.pixel.skin();
                 egui::ScrollArea::vertical()
                     .id_salt("tools_scroll")
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.doc.editor));
+                        ui.add_enabled_ui(!modal, |ui| {
+                            panels::toolbar(ui, &mut self.doc.editor, skin)
+                        });
                     });
             });
         egui::Panel::right("palette")

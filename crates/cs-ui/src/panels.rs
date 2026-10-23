@@ -11,7 +11,8 @@ use cs_tools::text::FontChoice;
 use cs_tools::{BrushShape, Dither, GradientShape};
 
 use crate::editor::{Editor, MAX_BRUSH_SIZE, SelectionMode, ToolKind};
-use crate::{theme, tile_ops, tool_group, widgets};
+use crate::skin::Skin;
+use crate::{pixel_ui, theme, tile_ops, tool_group, widgets};
 
 /// Fila de un grupo en la barra con nombres: el botón con la herramienta que muestra el grupo y,
 /// si hay más, un desplegable con las demás (también con clic derecho o manteniendo presionado),
@@ -46,13 +47,43 @@ fn tool_group(ui: &mut egui::Ui, editor: &mut Editor, index: usize) -> egui::Res
     .inner
 }
 
-pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor) {
+/// La barra de íconos de Pixel UI: una columna con un botón por grupo, alineada a la izquierda.
+/// Los marcos van pegados, uno debajo del otro. Cada botón lleva un id propio de su grupo, así su
+/// lista de variantes (y la presión larga) no depende de lo que haya antes en la barra.
+fn tool_column(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
+    ui.vertical(|ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for index in 0..ToolKind::GROUPS.len() {
+            let id = ui.id().with(("tool_group", index));
+            tool_group::group_button(ui, editor, Some(skin), index, |ui, shown, state| {
+                pixel_ui::tool_button(
+                    ui,
+                    id,
+                    skin,
+                    tool_group::icon_piece(shown),
+                    shown.label(),
+                    state.selected,
+                    state.more,
+                )
+            });
+        }
+    });
+}
+
+/// Herramientas, Options y Symmetry. Con `skin` (Pixel UI) las herramientas son una columna de
+/// íconos; sin él, filas con nombre.
+pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
     ui.add_space(6.0);
     ui.heading("Tools");
     ui.separator();
     ui.spacing_mut().item_spacing.y = 3.0;
-    for index in 0..ToolKind::GROUPS.len() {
-        tool_group(ui, editor, index);
+    match skin {
+        Some(skin) => tool_column(ui, editor, skin),
+        None => {
+            for index in 0..ToolKind::GROUPS.len() {
+                tool_group(ui, editor, index);
+            }
+        }
     }
 
     ui.add_space(10.0);
@@ -1492,5 +1523,221 @@ mod tests {
         assert_eq!(shape, BrushShape::Square);
         click(&mut shape, round.center());
         assert_eq!(shape, BrushShape::Round);
+    }
+
+    /// La columna de íconos con el skin embebido, manejada con eventos crudos (el reloj avanza
+    /// 50 ms por frame). Guarda los botones del árbol de accesibilidad (nombre y rect) y las
+    /// texturas dibujadas.
+    struct ColumnHarness {
+        ctx: egui::Context,
+        editor: Editor,
+        skin: Skin,
+        time: f64,
+        /// Alto de la pantalla: con 150 la columna (13 × 23) no entra y hay scroll.
+        height: f32,
+        buttons: Vec<(String, Rect)>,
+        textures: Vec<egui::TextureId>,
+    }
+
+    impl ColumnHarness {
+        fn new(height: f32) -> Self {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
+            let mut h = Self {
+                ctx,
+                editor: Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba)),
+                skin,
+                time: 0.0,
+                height,
+                buttons: Vec::new(),
+                textures: Vec::new(),
+            };
+            h.frame(vec![]);
+            h
+        }
+
+        fn frame(&mut self, events: Vec<Event>) {
+            self.frame_after(0.05, events);
+        }
+
+        fn frame_after(&mut self, dt: f64, events: Vec<Event>) {
+            self.time += dt;
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(
+                    Pos2::ZERO,
+                    Vec2::new(200.0, self.height),
+                )),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            };
+            let (editor, skin) = (&mut self.editor, &self.skin);
+            let mut output = self.ctx.run_ui(input, |ui| {
+                egui::CentralPanel::default().show(ui, |ui| tool_column(ui, editor, skin));
+            });
+            output.textures_delta.clear();
+            self.textures.clear();
+            for clipped in &output.shapes {
+                collect_textures(&clipped.shape, &mut self.textures);
+            }
+            self.buttons = output
+                .platform_output
+                .accesskit_update
+                .map(|update| {
+                    update
+                        .nodes
+                        .iter()
+                        .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+                        .filter_map(|(_, n)| {
+                            let b = n.bounds()?;
+                            let rect = Rect::from_min_max(
+                                pos2(b.x0 as f32, b.y0 as f32),
+                                pos2(b.x1 as f32, b.y1 as f32),
+                            );
+                            Some((n.label()?.to_string(), rect))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+        }
+
+        fn at(&self, label: &str) -> Pos2 {
+            self.buttons
+                .iter()
+                .find(|(l, _)| l == label)
+                .map(|(_, r)| r.center())
+                .unwrap_or_else(|| panic!("no button {label:?} in {:?}", self.buttons))
+        }
+
+        fn labels(&self) -> Vec<&str> {
+            self.buttons.iter().map(|(l, _)| l.as_str()).collect()
+        }
+
+        fn press(&mut self, label: &str, button: PointerButton) -> Pos2 {
+            let pos = self.at(label);
+            self.frame(vec![Event::PointerMoved(pos)]);
+            self.frame(vec![mouse(pos, button, true)]);
+            pos
+        }
+
+        fn click(&mut self, label: &str, button: PointerButton) {
+            let pos = self.press(label, button);
+            self.frame(vec![mouse(pos, button, false)]);
+            self.frame(vec![]);
+        }
+
+        fn texture(&self, piece: &str) -> egui::TextureId {
+            self.skin
+                .piece(piece, crate::skin::WidgetState::Normal)
+                .unwrap()
+                .texture
+                .id()
+        }
+    }
+
+    fn collect_textures(shape: &egui::Shape, out: &mut Vec<egui::TextureId>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_textures(s, out)),
+            egui::Shape::Mesh(mesh) => out.push(mesh.texture_id),
+            _ => {}
+        }
+    }
+
+    /// Nombre accesible de una fila de la lista de variantes: el nombre y el atajo.
+    fn item(kind: ToolKind) -> String {
+        format!("{} {}", kind.label(), kind.shortcut())
+    }
+
+    #[test]
+    fn the_icon_column_has_a_named_button_per_group_and_a_click_picks() {
+        let mut h = ColumnHarness::new(600.0);
+        let mut column = h.buttons.clone();
+        column.sort_by(|a, b| a.1.min.y.total_cmp(&b.1.min.y));
+        let names: Vec<&str> = column.iter().map(|(l, _)| l.as_str()).collect();
+        let expected: Vec<&str> = ToolKind::GROUPS.iter().map(|g| g[0].label()).collect();
+        assert_eq!(names, expected);
+        assert!(
+            column.iter().all(|(_, r)| r.size() == Vec2::splat(23.0)),
+            "{column:?}"
+        );
+        h.click("Paint Bucket", PointerButton::Primary);
+        assert_eq!(h.editor.tool, ToolKind::Bucket);
+    }
+
+    #[test]
+    fn right_click_lists_the_five_marquee_tools_and_holding_opens_the_list_too() {
+        use egui::Popup;
+        let mut h = ColumnHarness::new(600.0);
+        h.click("Rectangular Marquee", PointerButton::Secondary);
+        assert!(Popup::is_any_open(&h.ctx));
+        for &kind in ToolKind::GROUPS[0] {
+            assert!(h.labels().contains(&item(kind).as_str()), "{kind:?}");
+        }
+        assert_eq!(h.editor.tool, ToolKind::Pencil, "right-click does not pick");
+        h.frame(vec![escape()]);
+        h.frame(vec![]);
+        assert!(!Popup::is_any_open(&h.ctx));
+
+        // Mantener presionado 400 ms abre la lista.
+        h.press("Rectangular Marquee", PointerButton::Primary);
+        h.frame_after(0.45, vec![]);
+        h.frame(vec![]);
+        assert!(Popup::is_any_open(&h.ctx), "held for 400 ms");
+    }
+
+    #[test]
+    fn the_group_shows_and_picks_the_variant_chosen_in_the_list() {
+        let mut h = ColumnHarness::new(600.0);
+        h.click("Rectangular Marquee", PointerButton::Secondary);
+        h.click(&item(ToolKind::Lasso), PointerButton::Primary);
+        assert_eq!(h.editor.tool, ToolKind::Lasso);
+        h.click("Pencil", PointerButton::Primary);
+        assert_eq!(h.editor.tool, ToolKind::Pencil);
+        assert!(h.textures.contains(&h.texture("icon.lasso")));
+        assert!(!h.textures.contains(&h.texture("icon.marquee")));
+        // El botón del grupo ahora es Lasso: un clic vuelve a Lasso.
+        h.click("Lasso", PointerButton::Primary);
+        assert_eq!(h.editor.tool, ToolKind::Lasso);
+    }
+
+    /// Ids de los botones de la columna (por nombre), con o sin un widget antes de la columna.
+    fn column_ids(prefix: bool) -> Vec<(String, egui::accesskit::NodeId)> {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
+        let mut editor = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let mut output = ctx.run_ui(RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                if prefix {
+                    let _ = ui.button("Before");
+                }
+                tool_column(ui, &mut editor, &skin);
+            });
+        });
+        output.textures_delta.clear();
+        let mut ids: Vec<_> = output
+            .platform_output
+            .accesskit_update
+            .unwrap()
+            .nodes
+            .iter()
+            .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+            .filter_map(|(id, n)| Some((n.label()?.to_string(), *id)))
+            .filter(|(l, _)| l != "Before")
+            .collect();
+        ids.sort();
+        ids
+    }
+
+    #[test]
+    fn each_group_button_has_its_own_id_that_does_not_depend_on_what_comes_before() {
+        let plain = column_ids(false);
+        assert_eq!(plain.len(), ToolKind::GROUPS.len());
+        let mut unique: Vec<_> = plain.iter().map(|(_, id)| *id).collect();
+        unique.sort();
+        unique.dedup();
+        assert_eq!(unique.len(), plain.len());
+        assert_eq!(plain, column_ids(true));
     }
 }
