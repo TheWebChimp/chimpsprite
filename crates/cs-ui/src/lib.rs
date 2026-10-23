@@ -19,6 +19,9 @@ mod guides;
 mod home;
 mod instance_ops;
 mod lospec_client;
+// La pestaña Lospec (Task 4) usa este módulo; allí se quita el allow.
+#[allow(dead_code)]
+mod lospec_tab;
 mod palette_library;
 mod panels;
 mod platform;
