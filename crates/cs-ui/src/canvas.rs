@@ -11,6 +11,7 @@ use eframe::egui::{
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
 use crate::editor::{Editor, ToolKind};
 use crate::guides::{RULER_PX, SNAP_PX, SnapContext, after_drag, hit_guide, nice_step};
+use crate::transform_box::{self, Handle, TransformBox, TransformHit};
 use crate::view::{ViewSettings, ZoomRequest};
 use crate::{theme, widgets};
 
@@ -28,6 +29,10 @@ const LABEL_SIZE: f32 = 12.0;
 const LABEL_GAP: f32 = 4.0;
 /// Los números de tile se dibujan solo si cada tile ocupa al menos esto en pantalla.
 const TILE_NUMBER_MIN_PX: f32 = 16.0;
+/// Lado en pantalla de cada handle de la selección, sea cual sea el zoom.
+const HANDLE_PX: f32 = 8.0;
+/// Franja en pantalla por fuera de cada esquina que rota la selección.
+const ROTATE_PX: f32 = 12.0;
 
 /// Vista del lienzo infinito: zoom, paneo y una textura por artboard.
 pub struct CanvasView {
@@ -57,6 +62,8 @@ pub struct CanvasView {
     over_ruler: bool,
     /// Dibujar el cursor de cuentagotas (el del sistema se oculta).
     draw_pipette: bool,
+    /// Dibujar el cursor de rotación (egui no trae uno; el del sistema se oculta).
+    draw_rotate: bool,
     /// Nombre de artboard en edición (doble clic en su etiqueta) y si ya se le dio el foco.
     renaming: Option<(ArtboardId, String, bool)>,
     /// Clic derecho sobre un slice con la herramienta Slice: al soltar se abre su menú.
@@ -139,6 +146,7 @@ impl Default for CanvasView {
             sym_drag: None,
             over_ruler: false,
             draw_pipette: false,
+            draw_rotate: false,
             renaming: None,
             slice_menu: false,
             slice_properties: false,
@@ -530,6 +538,7 @@ impl CanvasView {
         }
 
         self.draw_pipette = false;
+        self.draw_rotate = false;
         // Paneo con botón medio o espacio + arrastre.
         let space = ui.input(|i| i.key_down(egui::Key::Space));
         if response.dragged_by(egui::PointerButton::Middle)
@@ -639,13 +648,22 @@ impl CanvasView {
                 .then(|| editor.slice_at(editor.to_local(world)))
                 .flatten();
             self.slice_menu = slice.is_some();
+            // Un handle o la franja de rotación ganan sobre el gesto de la herramienta.
+            let transform = if pressed_primary {
+                self.transform_hit(rect, editor, p)
+            } else {
+                None
+            };
             match over_label {
                 Some(id) if pressed_primary => editor.press_artboard_label(id, world),
                 _ if slice.is_some() => {
                     editor.end_group();
                     editor.slice = slice;
                 }
-                _ => editor.pointer_press(world, pressed_secondary, modifiers.alt, slop),
+                _ => match transform {
+                    Some(hit) => editor.press_transform(hit, world),
+                    None => editor.pointer_press(world, pressed_secondary, modifiers.alt, slop),
+                },
             }
         }
         if self.slice_menu {
@@ -718,6 +736,9 @@ impl CanvasView {
             self.center_active(editor);
         }
 
+        let transform_cursor = editor
+            .transform_drag_hit()
+            .or_else(|| pointer.and_then(|p| self.transform_hit(rect, editor, p)));
         let cursor = if space {
             Some(egui::CursorIcon::Grab)
         } else if guide_cursor.is_some() {
@@ -737,6 +758,15 @@ impl CanvasView {
             ))))
         } else if over_label.is_some() && !editor.is_painting() {
             Some(egui::CursorIcon::Grab)
+        } else if let Some(hit) = transform_cursor {
+            match hit {
+                TransformHit::Rotate => {
+                    self.draw_rotate = true;
+                    Some(egui::CursorIcon::None)
+                }
+                TransformHit::Handle(handle) => Some(handle_cursor(handle)),
+                TransformHit::Move => Some(egui::CursorIcon::Move),
+            }
         } else if editor.active_tool() == ToolKind::Artboard {
             let world = pointer.map(|p| self.to_world(rect, p));
             Some(artboard_cursor(
@@ -783,6 +813,19 @@ impl CanvasView {
         .filter(|(_, d)| *d <= EDGE_SLOP_PX)
         .min_by(|x, y| x.1.total_cmp(&y.1))
         .map(|(edge, _)| edge)
+    }
+
+    /// Handle o franja de rotación bajo `p` (en pantalla), si se muestran los handles.
+    fn transform_hit(&self, rect: Rect, editor: &Editor, p: Pos2) -> Option<TransformHit> {
+        if !editor.shows_handles() {
+            return None;
+        }
+        let b = editor.transform_box()?;
+        let (wx, wy) = self.to_world(rect, p);
+        let (ax, ay) = editor.artboard().position;
+        let local = (wx - ax as f32, wy - ay as f32);
+        let handle = (HANDLE_PX / 2.0 + 1.0) / self.zoom;
+        transform_box::hit(&b, local, handle, ROTATE_PX / self.zoom)
     }
 
     /// `dialog`: diálogo Canvas Size abierto; sus guías se dibujan y se pueden arrastrar.
@@ -1017,6 +1060,12 @@ impl CanvasView {
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
         }
         if let Some(origin) = active_origin
+            && editor.shows_handles()
+            && let Some(b) = editor.transform_box()
+        {
+            draw_transform_box(&painter, &b, origin, self.zoom);
+        }
+        if let Some(origin) = active_origin
             && view_settings.shows(view_settings.tile_numbers)
             && let Some(space) = editor.tile_space()
             && space.tile_size.0 as f32 * self.zoom >= TILE_NUMBER_MIN_PX
@@ -1123,6 +1172,11 @@ impl CanvasView {
                 inside.then(|| cs_render::composite_pixel(s, editor.frame, x, y))
             });
             draw_pipette(&painter, p, color);
+        }
+        if self.draw_rotate
+            && let Some(p) = response.hover_pos()
+        {
+            draw_rotate_cursor(&painter, p);
         }
         self.rename_field(ui, rect, editor);
         self.slice_properties &= editor.slice.is_some();
@@ -1404,6 +1458,49 @@ fn artboard_cursor(hit: Option<ArtboardHit>) -> egui::CursorIcon {
     }
 }
 
+/// Cursor de redimensionar según la dirección del handle (sin tener en cuenta la rotación).
+fn handle_cursor(handle: Handle) -> egui::CursorIcon {
+    use egui::CursorIcon as C;
+    match handle.dirs() {
+        (0, _) => C::ResizeVertical,
+        (_, 0) => C::ResizeHorizontal,
+        (x, y) if x == y => C::ResizeNwSe,
+        _ => C::ResizeNeSw,
+    }
+}
+
+/// Contorno (rotado) de la caja de transformación y sus 8 handles de tamaño fijo en pantalla.
+fn draw_transform_box(painter: &egui::Painter, b: &TransformBox, origin: Pos2, zoom: f32) {
+    let at = |(x, y): (f32, f32)| origin + Vec2::new(x, y) * zoom;
+    let outline: Vec<Pos2> = b.corners().into_iter().map(at).collect();
+    painter.add(egui::Shape::closed_line(
+        outline,
+        Stroke::new(1.0, theme::ACCENT),
+    ));
+    for handle in Handle::ALL {
+        let r = Rect::from_center_size(at(b.handle_point(handle)), Vec2::splat(HANDLE_PX));
+        painter.rect_filled(r, 0.0, Color32::WHITE);
+        painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
+    }
+}
+
+/// Flecha curva (sentido horario) en el puntero, para rotar: egui no trae ese cursor.
+fn draw_rotate_cursor(painter: &egui::Painter, at: Pos2) {
+    use std::f32::consts::PI;
+    let r = 7.0;
+    let arc: Vec<Pos2> = (0..=12)
+        .map(|i| at + Vec2::angled(-PI / 2.0 + i as f32 * (1.5 * PI / 12.0)) * r)
+        .collect();
+    let end = arc[arc.len() - 1];
+    // Al final del arco (a la izquierda) el sentido horario apunta hacia arriba.
+    let head = vec![end + Vec2::new(-3.0, 4.0), end, end + Vec2::new(3.0, 4.0)];
+    for (width, color) in [(3.0, Color32::BLACK), (1.5, Color32::WHITE)] {
+        let stroke = Stroke::new(width, color);
+        painter.add(egui::Shape::line(arc.clone(), stroke));
+        painter.add(egui::Shape::line(head.clone(), stroke));
+    }
+}
+
 /// Rectángulos de los slices del frame actual, con nombre y pivote; el seleccionado, más grueso.
 fn draw_slices(
     painter: &egui::Painter,
@@ -1489,7 +1586,8 @@ fn draw_marching_ants(painter: &egui::Painter, mask: &Mask, origin: Pos2, zoom: 
 
 #[cfg(test)]
 mod tests {
-    use cs_core::{ColorMode, Sprite};
+    use cs_commands::Command;
+    use cs_core::{ColorMode, LayerId, PixelValue, Rgba, Sprite};
     use egui::{Event, Key, PointerButton, RawInput};
 
     use super::*;
@@ -1570,6 +1668,133 @@ mod tests {
             self.canvas.to_screen(self.rect, (x + p.0, y + p.1))
                 + Vec2::splat(self.canvas.zoom / 2.0)
         }
+
+        /// Esquina en pantalla del píxel local `p` del artboard activo (no su centro).
+        fn corner(&self, p: (i32, i32)) -> Pos2 {
+            let (x, y) = self.editor.artboard().position;
+            self.canvas.to_screen(self.rect, (x + p.0, y + p.1))
+        }
+
+        /// Arrastre con el botón principal de `from` a `to` (en pantalla), en varios frames.
+        fn drag(&mut self, from: Pos2, to: Pos2) {
+            let button = |pos, pressed| Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![Event::PointerMoved(from)]);
+            self.frame(vec![button(from, true)]);
+            self.frame(vec![Event::PointerMoved(from.lerp(to, 0.5))]);
+            self.frame(vec![Event::PointerMoved(to)]);
+            self.frame(vec![button(to, false)]);
+        }
+
+        /// Un punto rojo en `at` y la selección `a`–`b` con el marco rectangular.
+        fn selected_dot(&mut self, at: (i32, i32), a: (i32, i32), b: (i32, i32)) -> PixelValue {
+            let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+            self.editor.execute(Command::DrawPixels {
+                layer: LayerId(1),
+                frame: 0,
+                pixels: vec![(at.0, at.1, red)],
+            });
+            self.editor.set_tool(ToolKind::RectSelect);
+            self.editor
+                .set_selection(Some(Mask::from_rect(16, 16, a, b)));
+            self.frame(vec![]);
+            red
+        }
+    }
+
+    #[test]
+    fn dragging_a_corner_handle_scales_and_enter_applies() {
+        let mut h = Harness::new();
+        let red = h.selected_dot((2, 2), (2, 2), (3, 3));
+        let t = h.editor.sprite().color_mode.transparent();
+        h.drag(h.corner((4, 4)), h.corner((6, 6)));
+        assert_eq!(
+            h.editor.transform_box(),
+            Some(TransformBox::new(2, 2, 4, 4))
+        );
+        assert_eq!(
+            h.editor.sprite().pixel(LayerId(1), 0, 3, 3),
+            t,
+            "still floating"
+        );
+        crate::editor_key(&mut h.editor, Key::Enter, false);
+        assert!(!h.editor.is_floating());
+        for (x, y) in [(2, 2), (3, 2), (2, 3), (3, 3)] {
+            assert_eq!(
+                h.editor.sprite().pixel(LayerId(1), 0, x, y),
+                red,
+                "({x}, {y})"
+            );
+        }
+        assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 4, 4), t);
+    }
+
+    #[test]
+    fn dragging_just_outside_a_corner_rotates() {
+        let mut h = Harness::new();
+        let red = h.selected_dot((2, 2), (2, 2), (5, 5));
+        let t = h.editor.sprite().color_mode.transparent();
+        let center = h.corner((4, 4));
+        // 8 px por fuera de la esquina NE: fuera del handle, dentro de la franja de 12 px.
+        let start = h.corner((6, 2)) + Vec2::new(8.0, -8.0);
+        let v = start - center;
+        h.drag(start, center + Vec2::new(-v.y, v.x)); // un cuarto de vuelta horario
+        let angle = h.editor.transform_box().unwrap().angle;
+        assert!(
+            (angle - std::f32::consts::FRAC_PI_2).abs() < 1e-3,
+            "{angle}"
+        );
+        crate::editor_key(&mut h.editor, Key::Enter, false);
+        assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 5, 2), red);
+        assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 2, 2), t);
+    }
+
+    #[test]
+    fn dragging_inside_the_selection_still_moves_it() {
+        let mut h = Harness::new();
+        let red = h.selected_dot((2, 2), (2, 2), (3, 3));
+        h.drag(h.screen((2, 2)), h.screen((5, 2)));
+        assert_eq!(
+            h.editor.transform_box(),
+            Some(TransformBox::new(5, 2, 2, 2))
+        );
+        crate::editor_key(&mut h.editor, Key::Enter, false);
+        assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 5, 2), red);
+    }
+
+    #[test]
+    fn hovering_the_handles_shows_resize_and_rotate_cursors() {
+        let mut h = Harness::new();
+        h.selected_dot((2, 2), (2, 2), (5, 5));
+        let hover = |h: &mut Harness, p: Pos2| {
+            h.frame(vec![Event::PointerMoved(p)]);
+            h.frame(vec![]);
+            h.cursor
+        };
+        let (se, ne, n, w) = (
+            h.corner((6, 6)),
+            h.corner((6, 2)),
+            h.corner((4, 2)),
+            h.corner((2, 4)),
+        );
+        let (inside, outside) = (h.screen((3, 3)), ne + Vec2::new(8.0, -8.0));
+        assert_eq!(hover(&mut h, se), egui::CursorIcon::ResizeNwSe);
+        assert_eq!(hover(&mut h, ne), egui::CursorIcon::ResizeNeSw);
+        assert_eq!(hover(&mut h, n), egui::CursorIcon::ResizeVertical);
+        assert_eq!(hover(&mut h, w), egui::CursorIcon::ResizeHorizontal);
+        assert_eq!(hover(&mut h, inside), egui::CursorIcon::Move);
+        assert_eq!(
+            hover(&mut h, outside),
+            egui::CursorIcon::None,
+            "rotate: drawn by hand"
+        );
+        // Con una herramienta de dibujo no hay handles.
+        h.editor.set_tool(ToolKind::Pencil);
+        assert_eq!(hover(&mut h, se), egui::CursorIcon::Crosshair);
     }
 
     #[test]

@@ -153,8 +153,6 @@ const MAX_DRAG: i32 = 1 << 20;
 /// Handle o franja de rotación bajo `p`. `handle` es medio lado del cuadrado de cada handle y
 /// `band` el ancho de la franja de rotación fuera de las esquinas, los dos en píxeles locales.
 /// Dentro de la caja no devuelve nada: mover lo decide el editor con la máscara.
-// El lienzo la usa al conectar los handles (sabe el zoom); hasta entonces solo los tests.
-#[allow(dead_code)]
 pub fn hit(b: &TransformBox, p: (f32, f32), handle: f32, band: f32) -> Option<TransformHit> {
     let q = b.to_frame(p);
     let near = |h: (f32, f32), r: f32| (q.0 - h.0).abs() <= r && (q.1 - h.1).abs() <= r;
