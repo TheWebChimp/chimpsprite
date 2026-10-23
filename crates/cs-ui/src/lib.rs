@@ -794,7 +794,7 @@ impl ChimpApp {
             }
         });
         if home {
-            self.tabs.go_home(&mut self.doc);
+            self.go_home();
         }
         if let Some(i) = switch_to {
             self.tabs.switch(&mut self.doc, i);

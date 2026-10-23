@@ -164,10 +164,18 @@ impl ChimpApp {
         }
     }
 
+    /// Pasa a Home (la pestaña activa queda abierta). Home recuerda sus opciones de herramienta.
+    pub(crate) fn go_home(&mut self) {
+        self.tool_options = self.current_tool_options();
+        self.tabs.go_home(&mut self.doc);
+    }
+
     fn close_tab(&mut self, index: usize) {
         if self.tabs.active() == Some(index) {
             self.canvas_size = None;
         }
+        // Si se cierra la última, Home se queda con las opciones de la pestaña activa.
+        self.tool_options = self.current_tool_options();
         self.tabs.close(&mut self.doc, index);
     }
 
@@ -973,5 +981,21 @@ mod tests {
         assert_eq!(app.tabs.len(), 2, "a second tab");
         assert_eq!(app.doc.editor.options.brush_size, 7);
         assert_eq!(app.current_tool_options().brush_size, 7, "what gets saved");
+        // Cerrar hasta llegar a Home guarda las opciones de la última pestaña.
+        app.doc.editor.options.brush_size = 9;
+        app.close_tab(0);
+        app.close_tab(0);
+        assert!(!app.has_doc(), "Home");
+        assert_eq!(app.current_tool_options().brush_size, 9, "kept on Home");
+        app.new_document();
+        assert_eq!(
+            app.doc.editor.options.brush_size, 9,
+            "the new tab gets them"
+        );
+        // Ir a Home con el botón también.
+        app.doc.editor.options.brush_size = 11;
+        app.go_home();
+        assert!(!app.has_doc());
+        assert_eq!(app.current_tool_options().brush_size, 11);
     }
 }

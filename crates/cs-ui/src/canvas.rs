@@ -547,6 +547,10 @@ impl CanvasView {
         // cambia el grosor. Se leen los eventos crudos con los modificadores de cada evento. egui
         // convierte Ctrl+rueda en `zoom_delta` y no en scroll, y nadie usa `zoom_delta`, así que
         // la interfaz no se agranda ni los paneles se desplazan.
+        let brush = editor.active_tool().uses_brush();
+        // Los restos de rueda de touchpad solo siguen sumando mientras dura el gesto: Ctrl
+        // mantenido, herramienta de pincel y ninguna rueda sin Ctrl en el medio.
+        let mut keep_rest = brush && ui.input(|i| i.modifiers.command);
         if let Some(pointer) = response.hover_pos() {
             let wheel: Vec<(egui::MouseWheelUnit, f32, bool)> = ui.input(|i| {
                 i.raw
@@ -563,7 +567,6 @@ impl CanvasView {
                     })
                     .collect()
             });
-            let brush = editor.active_tool().uses_brush();
             let mut scroll = 0.0;
             for (unit, dy, command) in wheel {
                 if command && brush {
@@ -575,12 +578,16 @@ impl CanvasView {
                         ui.ctx().request_repaint();
                     }
                 } else {
+                    keep_rest = false;
                     scroll += dy;
                 }
             }
             if scroll != 0.0 {
                 self.zoom_at(rect, pointer, scroll > 0.0);
             }
+        }
+        if !keep_rest {
+            self.wheel_rest = 0.0;
         }
 
         self.draw_pipette = false;
@@ -1212,8 +1219,11 @@ impl CanvasView {
                         painter.rect_filled(row, 0.0, fill);
                     }
                 }
+                // Medio trazo hacia adentro, como `StrokeKind::Inside` del cuadrado.
                 for (a, b) in brush_edges(&points) {
-                    painter.line_segment([at(a), at(b)], stroke);
+                    let (dx, dy) = ((b.0 - a.0) as f32, (b.1 - a.1) as f32);
+                    let inward = Vec2::new(-dy, dx) * (stroke.width / 2.0);
+                    painter.line_segment([at(a) + inward, at(b) + inward], stroke);
                 }
             } else {
                 let r = match cells {
@@ -1687,7 +1697,8 @@ fn brush_rows(points: &[(i32, i32)]) -> Vec<(i32, i32, i32)> {
 }
 
 /// Borde de un pincel: cada lado de píxel sin vecino en `points`, como segmento entre dos
-/// esquinas de píxel.
+/// esquinas de píxel. Van en sentido horario en pantalla: el pincel queda a la derecha de cada
+/// segmento, o sea hacia `(-dy, dx)`.
 fn brush_edges(points: &[(i32, i32)]) -> Vec<((i32, i32), (i32, i32))> {
     let set: HashSet<(i32, i32)> = points.iter().copied().collect();
     let mut out = Vec::new();
@@ -1696,10 +1707,10 @@ fn brush_edges(points: &[(i32, i32)]) -> Vec<((i32, i32), (i32, i32))> {
             out.push(((x, y), (x + 1, y)));
         }
         if !set.contains(&(x, y + 1)) {
-            out.push(((x, y + 1), (x + 1, y + 1)));
+            out.push(((x + 1, y + 1), (x, y + 1)));
         }
         if !set.contains(&(x - 1, y)) {
-            out.push(((x, y), (x, y + 1)));
+            out.push(((x, y + 1), (x, y)));
         }
         if !set.contains(&(x + 1, y)) {
             out.push(((x + 1, y), (x + 1, y + 1)));
@@ -1787,9 +1798,13 @@ mod tests {
         }
 
         /// Un evento de rueda con el puntero sobre el píxel (8, 8).
+        /// `modifiers` quedan mantenidos (`ModifiersChanged`) hasta el próximo cambio.
         fn wheel(&mut self, unit: egui::MouseWheelUnit, dy: f32, modifiers: egui::Modifiers) {
             let pos = self.screen((8, 8));
-            self.frame(vec![Event::PointerMoved(pos)]);
+            self.frame(vec![
+                Event::ModifiersChanged(modifiers),
+                Event::PointerMoved(pos),
+            ]);
             self.frame(vec![Event::MouseWheel {
                 unit,
                 delta: Vec2::new(0.0, dy),
@@ -2261,5 +2276,37 @@ mod tests {
         assert_eq!(brush_rows(&cross), vec![(-1, 0, 0), (0, -1, 1), (1, 0, 0)]);
         let square = cs_raster::brush_points((0, 0), 2, BrushShape::Square);
         assert_eq!(brush_edges(&square).len(), 8);
+        // Sentido horario: el pincel queda hacia (-dy, dx) de cada lado (ahí se dibuja el trazo).
+        for (a, b) in edges {
+            let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+            let inside = (a.0.min(b.0) + (-dy).min(0), a.1.min(b.1) + dx.min(0));
+            assert!(cross.contains(&inside), "{a:?}->{b:?}");
+        }
+    }
+
+    #[test]
+    fn leftover_wheel_pixels_do_not_carry_into_the_next_gesture() {
+        use egui::{Modifiers, MouseWheelUnit::Point};
+        let mut h = Harness::new();
+        h.editor.set_tool(ToolKind::Pencil);
+        let ctrl = Modifiers::COMMAND;
+        // Soltar Ctrl.
+        h.wheel(Point, 30.0, ctrl);
+        h.frame(vec![Event::ModifiersChanged(Modifiers::NONE)]);
+        h.wheel(Point, 30.0, ctrl);
+        assert_eq!(h.editor.options.brush_size, 1, "Ctrl released in between");
+        // Una rueda sin Ctrl.
+        h.wheel(Point, 1.0, Modifiers::NONE);
+        h.wheel(Point, 30.0, ctrl);
+        assert_eq!(h.editor.options.brush_size, 1, "plain wheel in between");
+        // Otra herramienta.
+        h.editor.set_tool(ToolKind::Hand);
+        h.wheel(Point, 30.0, ctrl);
+        h.editor.set_tool(ToolKind::Pencil);
+        h.wheel(Point, 30.0, ctrl);
+        assert_eq!(h.editor.options.brush_size, 1, "tool changed in between");
+        // Sin nada en el medio sí se suman.
+        h.wheel(Point, 30.0, ctrl);
+        assert_eq!(h.editor.options.brush_size, 2);
     }
 }
