@@ -184,6 +184,9 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
         ToolKind::Jumble => {
             ui.weak("Scrambles pixels within the brush radius.");
         }
+        ToolKind::Contour => {
+            ui.weak("Draw the outline: it closes and fills when you release.");
+        }
         ToolKind::Text => {
             text_style_options(ui, editor);
             ui.weak("Click on the canvas to place text.");

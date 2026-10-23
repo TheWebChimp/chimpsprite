@@ -9,9 +9,9 @@ use cs_core::{
 use cs_render::OnionSkin;
 use cs_tools::text::TextStyle;
 use cs_tools::{
-    ArtboardTool, Bucket, Dither, Eraser, Eyedropper, GradientShape, GradientTool, Jumble, Lasso,
-    MagicWand, Marquee, MarqueeShape, MoveTool, Pencil, Point, PolygonLasso, ShapeKind, ShapeTool,
-    SliceTool, Spray, Tool, ToolContext, ToolOutput,
+    ArtboardTool, Bucket, Contour, Dither, Eraser, Eyedropper, GradientShape, GradientTool, Jumble,
+    Lasso, MagicWand, Marquee, MarqueeShape, MoveTool, Pencil, Point, PolygonLasso, ShapeKind,
+    ShapeTool, SliceTool, Spray, Tool, ToolContext, ToolOutput,
 };
 
 use crate::tile_ops::{self, TileProxy};
@@ -176,6 +176,7 @@ impl ToolKind {
                 | ToolKind::Ellipse
                 | ToolKind::Jumble
                 | ToolKind::Text
+                | ToolKind::Contour
         )
     }
 
@@ -203,6 +204,7 @@ impl ToolKind {
                 | ToolKind::Text
                 | ToolKind::Lasso
                 | ToolKind::PolygonLasso
+                | ToolKind::Contour
         )
     }
 
@@ -336,6 +338,7 @@ struct SpriteTools {
     rectangle: ShapeTool,
     ellipse: ShapeTool,
     jumble: Jumble,
+    contour: Contour,
     slice: SliceTool,
     mover: MoveTool,
     eyedropper: Eyedropper,
@@ -358,6 +361,7 @@ impl SpriteTools {
             rectangle: ShapeTool::new(ShapeKind::Rectangle),
             ellipse: ShapeTool::new(ShapeKind::Ellipse),
             jumble: Jumble::new(),
+            contour: Contour::new(),
             slice: SliceTool::new(),
             mover: MoveTool::new(),
             eyedropper: Eyedropper::new(),
@@ -383,12 +387,9 @@ impl SpriteTools {
             ToolKind::Slice => &self.slice,
             ToolKind::Move => &self.mover,
             ToolKind::Eyedropper => &self.eyedropper,
-            // Hand la maneja el lienzo; Contour y Blur se conectan en las tareas siguientes.
-            ToolKind::Text
-            | ToolKind::Artboard
-            | ToolKind::Hand
-            | ToolKind::Contour
-            | ToolKind::Blur => return None,
+            ToolKind::Contour => &self.contour,
+            // Hand la maneja el lienzo; Blur se conecta en la tarea siguiente.
+            ToolKind::Text | ToolKind::Artboard | ToolKind::Hand | ToolKind::Blur => return None,
         })
     }
 
@@ -411,12 +412,9 @@ impl SpriteTools {
             ToolKind::Slice => &mut self.slice,
             ToolKind::Move => &mut self.mover,
             ToolKind::Eyedropper => &mut self.eyedropper,
-            // Hand la maneja el lienzo; Contour y Blur se conectan en las tareas siguientes.
-            ToolKind::Text
-            | ToolKind::Artboard
-            | ToolKind::Hand
-            | ToolKind::Contour
-            | ToolKind::Blur => return None,
+            ToolKind::Contour => &mut self.contour,
+            // Hand la maneja el lienzo; Blur se conecta en la tarea siguiente.
+            ToolKind::Text | ToolKind::Artboard | ToolKind::Hand | ToolKind::Blur => return None,
         })
     }
 }

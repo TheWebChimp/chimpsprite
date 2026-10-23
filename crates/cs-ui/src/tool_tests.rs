@@ -87,3 +87,73 @@ fn new_shortcuts_and_every_shortcut_round_trips() {
     assert_eq!(px(&e, 1, 1), e.sprite().color_mode.transparent());
     assert!(!e.history.can_undo(), "Hand never paints");
 }
+
+mod contour {
+    use cs_core::{Mask, Symmetry, SymmetryMode};
+
+    use super::*;
+
+    #[test]
+    fn fills_with_the_button_color_in_one_undo_step() {
+        let mut e = editor(ToolKind::Contour);
+        let t = e.sprite().color_mode.transparent();
+        stroke(&mut e, &[(0, 0), (0, 4), (4, 4)], false);
+        assert_eq!(px(&e, 0, 0), e.primary);
+        assert_eq!(px(&e, 1, 3), e.primary, "inside the triangle");
+        assert_eq!(px(&e, 3, 1), t, "outside the triangle");
+        e.undo();
+        assert!(e.sprite().cels.is_empty(), "the whole stroke was one step");
+        assert!(!e.history.can_undo());
+        stroke(&mut e, &[(0, 0), (0, 4), (4, 4)], true);
+        assert_eq!(px(&e, 1, 3), e.secondary, "right button: secondary color");
+    }
+
+    #[test]
+    fn is_clipped_to_the_selection() {
+        let mut e = editor(ToolKind::Contour);
+        let t = e.sprite().color_mode.transparent();
+        e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (1, 7))));
+        stroke(&mut e, &[(0, 0), (0, 4), (4, 4)], false);
+        assert_eq!(px(&e, 1, 3), e.primary);
+        assert_eq!(px(&e, 2, 3), t, "inside the triangle but not selected");
+    }
+
+    #[test]
+    fn a_click_paints_one_pixel_mirrored() {
+        let mut e = editor(ToolKind::Contour);
+        e.set_symmetry(Symmetry {
+            mode: SymmetryMode::Horizontal,
+            center2: None,
+        });
+        stroke(&mut e, &[(1, 1)], false);
+        let painted: Vec<(i32, i32)> = (0..8)
+            .flat_map(|y| (0..8).map(move |x| (x, y)))
+            .filter(|&(x, y)| px(&e, x, y) == e.primary)
+            .collect();
+        assert_eq!(painted, vec![(1, 1), (6, 1)]);
+    }
+
+    #[test]
+    fn does_nothing_in_tiles_mode() {
+        let mut e = crate::tile_ops::test_util::tile_editor();
+        e.set_tool(ToolKind::Contour);
+        let version = e.doc_version;
+        stroke(&mut e, &[(1, 1), (1, 6), (6, 6)], false);
+        assert_eq!(e.doc_version, version);
+        assert_eq!(
+            e.tiles_status().as_deref(),
+            Some("Not available in Tiles mode")
+        );
+    }
+
+    #[test]
+    fn does_nothing_on_a_locked_layer() {
+        let mut e = editor(ToolKind::Contour);
+        e.toggle_locked(LayerId(1));
+        let version = e.doc_version;
+        let t = e.sprite().color_mode.transparent();
+        stroke(&mut e, &[(0, 0), (0, 4), (4, 4)], false);
+        assert_eq!(px(&e, 1, 3), t);
+        assert_eq!(e.doc_version, version);
+    }
+}
