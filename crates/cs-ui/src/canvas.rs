@@ -817,7 +817,7 @@ impl CanvasView {
 
     /// Handle o franja de rotación bajo `p` (en pantalla), si se muestran los handles.
     fn transform_hit(&self, rect: Rect, editor: &Editor, p: Pos2) -> Option<TransformHit> {
-        if !editor.shows_handles() {
+        if !handles_active(editor) {
             return None;
         }
         let b = editor.transform_box()?;
@@ -1060,7 +1060,7 @@ impl CanvasView {
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
         }
         if let Some(origin) = active_origin
-            && editor.shows_handles()
+            && handles_active(editor)
             && let Some(b) = editor.transform_box()
         {
             draw_transform_box(&painter, &b, origin, self.zoom);
@@ -1469,7 +1469,13 @@ fn handle_cursor(handle: Handle) -> egui::CursorIcon {
     }
 }
 
-/// Contorno (rotado) de la caja de transformación y sus 8 handles de tamaño fijo en pantalla.
+/// Se muestran (y se pueden tomar) los handles: no durante el gesto de otra herramienta.
+fn handles_active(editor: &Editor) -> bool {
+    editor.shows_handles() && (!editor.is_painting() || editor.is_transforming())
+}
+
+/// Contorno (rotado) de la caja de transformación y sus 8 handles de tamaño fijo en pantalla,
+/// por fuera de la caja (donde se toman).
 fn draw_transform_box(painter: &egui::Painter, b: &TransformBox, origin: Pos2, zoom: f32) {
     let at = |(x, y): (f32, f32)| origin + Vec2::new(x, y) * zoom;
     let outline: Vec<Pos2> = b.corners().into_iter().map(at).collect();
@@ -1478,7 +1484,8 @@ fn draw_transform_box(painter: &egui::Painter, b: &TransformBox, origin: Pos2, z
         Stroke::new(1.0, theme::ACCENT),
     ));
     for handle in Handle::ALL {
-        let r = Rect::from_center_size(at(b.handle_point(handle)), Vec2::splat(HANDLE_PX));
+        let center = b.handle_center(handle, HANDLE_PX / 2.0 / zoom);
+        let r = Rect::from_center_size(at(center), Vec2::splat(HANDLE_PX));
         painter.rect_filled(r, 0.0, Color32::WHITE);
         painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
     }
@@ -1711,7 +1718,9 @@ mod tests {
         let mut h = Harness::new();
         let red = h.selected_dot((2, 2), (2, 2), (3, 3));
         let t = h.editor.sprite().color_mode.transparent();
-        h.drag(h.corner((4, 4)), h.corner((6, 6)));
+        // Los handles quedan por fuera de la caja: se toma la esquina un poco hacia afuera.
+        let out = Vec2::splat(3.0);
+        h.drag(h.corner((4, 4)) + out, h.corner((6, 6)) + out);
         assert_eq!(
             h.editor.transform_box(),
             Some(TransformBox::new(2, 2, 4, 4))
@@ -1739,8 +1748,8 @@ mod tests {
         let red = h.selected_dot((2, 2), (2, 2), (5, 5));
         let t = h.editor.sprite().color_mode.transparent();
         let center = h.corner((4, 4));
-        // 8 px por fuera de la esquina NE: fuera del handle, dentro de la franja de 12 px.
-        let start = h.corner((6, 2)) + Vec2::new(8.0, -8.0);
+        // 16 px por fuera de la esquina NE: más allá del handle (10 px), dentro de la franja.
+        let start = h.corner((6, 2)) + Vec2::new(16.0, -16.0);
         let v = start - center;
         h.drag(start, center + Vec2::new(-v.y, v.x)); // un cuarto de vuelta horario
         let angle = h.editor.transform_box().unwrap().angle;
@@ -1766,6 +1775,63 @@ mod tests {
         assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 5, 2), red);
     }
 
+    /// Zoom 4 (los handles de 10 px cubren más de un píxel del sprite).
+    fn zoomed_out() -> Harness {
+        let mut h = Harness::new();
+        h.canvas.zoom = 4.0;
+        h.canvas.pan = -Vec2::splat(8.0) * 4.0;
+        h.frame(vec![]);
+        h
+    }
+
+    #[test]
+    fn a_small_selection_moves_from_inside_at_low_zoom() {
+        let mut h = zoomed_out();
+        let red = h.selected_dot((2, 2), (2, 2), (3, 3));
+        h.drag(h.screen((2, 2)), h.screen((5, 2)));
+        assert_eq!(
+            h.editor.transform_box(),
+            Some(TransformBox::new(5, 2, 2, 2))
+        );
+        crate::editor_key(&mut h.editor, Key::Enter, false);
+        assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 5, 2), red);
+    }
+
+    #[test]
+    fn pressing_just_inside_an_edge_moves_instead_of_scaling() {
+        let mut h = zoomed_out();
+        h.selected_dot((2, 2), (2, 2), (5, 5));
+        // 2 px de pantalla adentro del lado E, a media altura.
+        let from = h.corner((6, 4)) - Vec2::new(2.0, 0.0);
+        h.drag(from, from + Vec2::new(12.0, 0.0));
+        assert_eq!(
+            h.editor.transform_box(),
+            Some(TransformBox::new(5, 2, 4, 4))
+        );
+    }
+
+    #[test]
+    fn no_handles_during_another_selection_gesture() {
+        let mut h = Harness::new();
+        h.selected_dot((2, 2), (2, 2), (5, 5));
+        let press = |pos| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed: true,
+            modifiers: Default::default(),
+        };
+        // Un marco nuevo desde fuera de la selección pasa por encima del handle SE.
+        let from = h.screen((12, 12));
+        let se = h.corner((6, 6)) + Vec2::new(3.0, 3.0);
+        h.frame(vec![Event::PointerMoved(from)]);
+        h.frame(vec![press(from)]);
+        h.frame(vec![Event::PointerMoved(from.lerp(se, 0.5))]);
+        h.frame(vec![Event::PointerMoved(se)]);
+        h.frame(vec![]);
+        assert!(h.editor.is_painting() && !h.editor.is_transforming());
+        assert_eq!(h.cursor, egui::CursorIcon::Crosshair);
+    }
+
     #[test]
     fn hovering_the_handles_shows_resize_and_rotate_cursors() {
         let mut h = Harness::new();
@@ -1775,13 +1841,15 @@ mod tests {
             h.frame(vec![]);
             h.cursor
         };
+        // Los handles quedan por fuera de la caja.
         let (se, ne, n, w) = (
-            h.corner((6, 6)),
-            h.corner((6, 2)),
-            h.corner((4, 2)),
-            h.corner((2, 4)),
+            h.corner((6, 6)) + Vec2::new(3.0, 3.0),
+            h.corner((6, 2)) + Vec2::new(3.0, -3.0),
+            h.corner((4, 2)) + Vec2::new(0.0, -3.0),
+            h.corner((2, 4)) + Vec2::new(-3.0, 0.0),
         );
-        let (inside, outside) = (h.screen((3, 3)), ne + Vec2::new(8.0, -8.0));
+        let inside = h.screen((3, 3));
+        let outside = h.corner((6, 2)) + Vec2::new(16.0, -16.0);
         assert_eq!(hover(&mut h, se), egui::CursorIcon::ResizeNwSe);
         assert_eq!(hover(&mut h, ne), egui::CursorIcon::ResizeNeSw);
         assert_eq!(hover(&mut h, n), egui::CursorIcon::ResizeVertical);

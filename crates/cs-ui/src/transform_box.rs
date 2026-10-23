@@ -82,6 +82,15 @@ impl TransformBox {
         rotate_point(self.unrotated(handle.dirs()), self.center(), self.angle)
     }
 
+    /// Centro del cuadrado de un handle de medio lado `half`, corrido hacia afuera para que su
+    /// borde interior quede sobre la caja (rotado). Así el interior de la caja siempre mueve.
+    pub fn handle_center(&self, handle: Handle, half: f32) -> (f32, f32) {
+        let (dx, dy) = handle.dirs();
+        let (x, y) = self.unrotated((dx, dy));
+        let p = (x + dx as f32 * half, y + dy as f32 * half);
+        rotate_point(p, self.center(), self.angle)
+    }
+
     /// Esquinas rotadas en orden NW, NE, SE, SW.
     pub fn corners(&self) -> [(f32, f32); 4] {
         [Handle::NW, Handle::NE, Handle::SE, Handle::SW].map(|h| self.handle_point(h))
@@ -151,24 +160,29 @@ pub fn rotate_point(p: (f32, f32), c: (f32, f32), angle: f32) -> (f32, f32) {
 const MAX_DRAG: i32 = 1 << 20;
 
 /// Handle o franja de rotación bajo `p`. `handle` es medio lado del cuadrado de cada handle y
-/// `band` el ancho de la franja de rotación fuera de las esquinas, los dos en píxeles locales.
-/// Dentro de la caja no devuelve nada: mover lo decide el editor con la máscara.
+/// `band` el ancho de la franja de rotación más allá de los handles de las esquinas, los dos en
+/// píxeles locales. Los handles quedan por fuera de la caja, así que dentro de ella no devuelve
+/// nada (por chica que sea): mover lo decide el editor con la máscara.
 pub fn hit(b: &TransformBox, p: (f32, f32), handle: f32, band: f32) -> Option<TransformHit> {
     let q = b.to_frame(p);
     let near = |h: (f32, f32), r: f32| (q.0 - h.0).abs() <= r && (q.1 - h.1).abs() <= r;
+    let (l, t) = b.unrotated((-1, -1));
+    let (r, bottom) = b.unrotated((1, 1));
+    // Estrictamente adentro: mover. El borde ya es de los handles.
+    if q.0 > l && q.0 < r && q.1 > t && q.1 < bottom {
+        return None;
+    }
+    let frame = TransformBox { angle: 0.0, ..*b };
     if let Some(h) = Handle::ALL
         .into_iter()
-        .find(|h| near(b.unrotated(h.dirs()), handle))
+        .find(|&h| near(frame.handle_center(h, handle), handle))
     {
         return Some(TransformHit::Handle(h));
     }
-    let (l, t) = b.unrotated((-1, -1));
-    let (r, bottom) = b.unrotated((1, 1));
-    let outside = q.0 < l || q.0 > r || q.1 < t || q.1 > bottom;
     let corner = [Handle::NW, Handle::NE, Handle::SE, Handle::SW]
         .into_iter()
-        .any(|h| near(b.unrotated(h.dirs()), band));
-    (outside && corner).then_some(TransformHit::Rotate)
+        .any(|h| near(b.unrotated(h.dirs()), 2.0 * handle + band));
+    corner.then_some(TransformHit::Rotate)
 }
 
 /// Mueve el borde `b` (o `a`) `d` píxeles sin dejar el tamaño en 0; `start_size` da el signo.
@@ -298,7 +312,25 @@ mod tests {
             None,
             "inside: the editor moves it"
         );
-        assert_eq!(hit(&b, (6.4, 1.6), 0.25, 0.5), Some(TransformHit::Rotate));
+        assert_eq!(
+            hit(&b, (6.4, 1.6), 0.25, 0.5),
+            Some(TransformHit::Handle(Handle::NE)),
+            "the corner handle lies outside the box"
+        );
+        assert_eq!(hit(&b, (6.8, 1.2), 0.25, 0.5), Some(TransformHit::Rotate));
+        assert_eq!(
+            hit(&b, (5.9, 4.0), 0.25, 0.5),
+            None,
+            "just inside the E side"
+        );
+        // Una caja de 1×1 con handles más grandes que ella: adentro sigue sin haber handle.
+        let tiny = TransformBox::new(2, 2, 1, 1);
+        assert_eq!(hit(&tiny, (2.5, 2.5), 1.0, 0.5), None);
+        assert_eq!(
+            hit(&tiny, (2.5, 1.5), 1.0, 0.5),
+            Some(TransformHit::Handle(Handle::N)),
+            "just above it"
+        );
         assert_eq!(
             hit(&b, (7.0, 4.0), 0.25, 0.5),
             None,
@@ -310,7 +342,7 @@ mod tests {
             ..TransformBox::new(0, 0, 4, 2)
         };
         assert_eq!(
-            hit(&r, (2.0, 3.0), 0.25, 0.5),
+            hit(&r, (2.0, 3.2), 0.25, 0.5),
             Some(TransformHit::Handle(Handle::E))
         );
     }
