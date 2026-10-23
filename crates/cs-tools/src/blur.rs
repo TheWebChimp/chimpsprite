@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use cs_core::{ColorMode, PixelValue, Rgba};
-use cs_raster::{Point, blur_average, brush_points, line};
+use cs_raster::{BrushShape, Point, blur_average, brush_points, line};
 
 use crate::{Tool, ToolContext, ToolOutput};
 
@@ -14,6 +14,10 @@ pub struct Blur {
     /// Lo ya suavizado en este trazo. El documento no cambia hasta soltar, así que lo demás se
     /// lee de la capa.
     done: HashMap<Point, PixelValue>,
+    /// Píxeles del pincel alrededor de (0, 0), para el tamaño y la forma de `brush_key`: se
+    /// calculan una vez y no en cada aplicación (como en `stamp`).
+    brush: Vec<Point>,
+    brush_key: Option<(u32, BrushShape)>,
 }
 
 impl Blur {
@@ -21,29 +25,59 @@ impl Blur {
         Self::default()
     }
 
-    /// Color resuelto de `p` en este momento del trazo; `None` fuera del lienzo.
-    fn current(&self, ctx: &ToolContext, p: Point) -> Option<Rgba> {
-        if !ctx.in_canvas(p) {
-            return None;
-        }
-        let value = self
-            .done
+    /// Valor de `p` en este momento del trazo (dentro del lienzo).
+    fn value(&self, ctx: &ToolContext, p: Point) -> PixelValue {
+        self.done
             .get(&p)
             .copied()
-            .unwrap_or_else(|| ctx.sprite.pixel(ctx.layer, ctx.frame, p.0, p.1));
-        Some(cs_render::resolve(ctx.sprite, value))
+            .unwrap_or_else(|| ctx.sprite.pixel(ctx.layer, ctx.frame, p.0, p.1))
     }
 
     /// Una aplicación del pincel en `center`. Primero calcula todos los promedios con los
     /// colores de antes y después los guarda: así el orden de recorrido no sesga el resultado.
     fn apply(&mut self, ctx: &ToolContext, center: Point) {
-        let updates: Vec<(Point, PixelValue)> =
-            brush_points(center, ctx.brush_size, ctx.brush_shape)
-                .into_iter()
-                .filter(|&p| ctx.in_canvas(p))
-                .filter(|&(x, y)| ctx.selection.is_none_or(|m| m.contains(x, y)))
-                .map(|p| (p, to_value(ctx, blur_average(p, |q| self.current(ctx, q)))))
-                .collect();
+        let key = (ctx.brush_size, ctx.brush_shape);
+        if self.brush_key != Some(key) {
+            self.brush = brush_points((0, 0), key.0, key.1);
+            self.brush_key = Some(key);
+        }
+        let targets: Vec<Point> = self
+            .brush
+            .iter()
+            .map(|&(dx, dy)| (center.0 + dx, center.1 + dy))
+            .filter(|&p| ctx.in_canvas(p))
+            .filter(|&(x, y)| ctx.selection.is_none_or(|m| m.contains(x, y)))
+            .collect();
+        // Cada píxel que hace falta se lee y se resuelve una sola vez por aplicación.
+        let mut source: HashMap<Point, (PixelValue, Rgba)> = HashMap::new();
+        for &(x, y) in &targets {
+            for dy in -1..=1 {
+                for dx in -1..=1 {
+                    let q = (x + dx, y + dy);
+                    if ctx.in_canvas(q) {
+                        source.entry(q).or_insert_with(|| {
+                            let v = self.value(ctx, q);
+                            (v, cs_render::resolve(ctx.sprite, v))
+                        });
+                    }
+                }
+            }
+        }
+        let updates: Vec<(Point, PixelValue)> = targets
+            .into_iter()
+            .map(|p| {
+                let average = blur_average(p, |q| source.get(&q).map(|&(_, c)| c));
+                let (value, color) = source[&p];
+                // Si el promedio es el color que ya tiene, se queda con su valor: en indexado,
+                // con colores repetidos en la paleta, `nearest` podría elegir otro índice.
+                let value = if average == color {
+                    value
+                } else {
+                    to_value(ctx, average)
+                };
+                (p, value)
+            })
+            .collect();
         self.done.extend(updates);
     }
 }
@@ -237,6 +271,29 @@ mod tests {
         let c = ctx(&s);
         t.press(&c, (1, 1));
         assert_eq!(pixels(&t.release(&c)), vec![(1, 1, PixelValue::Index(0))]);
+    }
+
+    #[test]
+    fn indexed_flat_area_with_a_duplicate_color_is_not_remapped() {
+        // 1 y 2 son el mismo rojo: `nearest` daría 1, pero el área pintada con 2 ya tiene el
+        // promedio y no debe cambiar (ni dejar un paso de undo).
+        let mode = ColorMode::Indexed {
+            transparent_index: 0,
+        };
+        let mut s = Sprite::new(4, 4, mode);
+        s.palette = Palette::new(vec![
+            Rgba::rgb(0, 0, 0),
+            Rgba::rgb(255, 0, 0),
+            Rgba::rgb(255, 0, 0),
+        ]);
+        let all = (0..4).flat_map(|y| (0..4).map(move |x| (x, y, PixelValue::Index(2))));
+        paint(&mut s, all.collect());
+        let mut c = ctx(&s);
+        c.brush_size = 3;
+        let mut t = Blur::new();
+        t.press(&c, (1, 1));
+        t.drag(&c, (2, 2));
+        assert_eq!(t.release(&c), ToolOutput::default());
     }
 
     #[test]
