@@ -425,7 +425,7 @@ mod on_a_mask {
     }
 
     #[test]
-    fn tools_blocked_in_tiles_mode_hide_their_outline() {
+    fn spray_blur_and_jumble_are_blocked_in_tiles_mode_and_the_pencil_is_not() {
         let mut e = crate::tile_ops::test_util::tile_editor();
         for tool in [ToolKind::Spray, ToolKind::Blur, ToolKind::Jumble] {
             e.set_tool(tool);
@@ -433,5 +433,56 @@ mod on_a_mask {
         }
         e.set_tool(ToolKind::Pencil);
         assert!(!e.tool_blocked());
+    }
+
+    /// Editor con un punto rojo, Blur de 3 px y una máscara que muestra todo, sin editarla.
+    fn blur_beside_a_mask() -> Editor {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        e.primary = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        stroke(&mut e, &[(4, 4)], false);
+        e.add_mask(LayerId(1), NewMask::RevealAll);
+        e.set_edit_mask(false);
+        assert!(!e.editing_mask());
+        e.set_tool(ToolKind::Blur);
+        e.options.brush_size = 3;
+        e
+    }
+
+    #[test]
+    fn entering_the_mask_mid_stroke_cancels_the_blur_stroke() {
+        let mut e = blur_beside_a_mask();
+        let version = e.doc_version;
+        e.pointer_press(at((3, 4)), false, false, 0.1);
+        assert!(e.is_painting());
+        e.set_edit_mask(true);
+        assert!(!e.is_painting(), "the stroke is cancelled");
+        let before = mask(&e);
+        e.pointer_drag(at((5, 4)));
+        e.pointer_release();
+        assert_eq!(mask(&e), before, "nothing reached the mask");
+        assert_eq!(e.doc_version, version, "nothing was applied");
+    }
+
+    #[test]
+    fn a_stroke_left_blocked_by_the_mask_is_cancelled_on_the_next_drag() {
+        let mut e = blur_beside_a_mask();
+        e.pointer_press(at((3, 4)), false, false, 0.1);
+        // Sin pasar por `set_edit_mask`.
+        e.edit_mask = true;
+        e.pointer_drag(at((5, 4)));
+        assert!(!e.is_painting());
+    }
+
+    #[test]
+    fn switching_to_a_tilemap_layer_mid_stroke_cancels_the_stroke() {
+        let mut e = crate::tile_ops::test_util::tile_editor();
+        e.select_layer(LayerId(1));
+        assert!(!e.tiles_mode());
+        e.set_tool(ToolKind::Blur);
+        e.pointer_press(at((3, 4)), false, false, 0.1);
+        assert!(e.is_painting());
+        e.select_layer(LayerId(2));
+        assert!(e.tiles_mode());
+        assert!(!e.is_painting(), "the stroke is cancelled");
     }
 }

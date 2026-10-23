@@ -484,6 +484,33 @@ impl SpriteTools {
         })
     }
 
+    /// Deja la herramienta `kind` como recién creada: descarta un trazo a medias aunque la
+    /// herramienta no sepa cancelarse (`Tool::cancel` no hace nada en las de pincel).
+    fn reset(&mut self, kind: ToolKind) {
+        match kind {
+            ToolKind::RectSelect => self.rect_select = Marquee::new(MarqueeShape::Rectangle),
+            ToolKind::EllipseSelect => self.ellipse_select = Marquee::new(MarqueeShape::Ellipse),
+            ToolKind::Lasso => self.lasso = Lasso::new(),
+            ToolKind::PolygonLasso => self.polygon_lasso = PolygonLasso::new(),
+            ToolKind::MagicWand => self.magic_wand = MagicWand::new(),
+            ToolKind::Pencil => self.pencil = Pencil::new(),
+            ToolKind::Spray => self.spray = Spray::new(),
+            ToolKind::Eraser => self.eraser = Eraser::new(),
+            ToolKind::Bucket => self.bucket = Bucket::new(),
+            ToolKind::Gradient => self.gradient = GradientTool::new(),
+            ToolKind::Line => self.line = ShapeTool::new(ShapeKind::Line),
+            ToolKind::Rectangle => self.rectangle = ShapeTool::new(ShapeKind::Rectangle),
+            ToolKind::Ellipse => self.ellipse = ShapeTool::new(ShapeKind::Ellipse),
+            ToolKind::Jumble => self.jumble = Jumble::new(),
+            ToolKind::Slice => self.slice = SliceTool::new(),
+            ToolKind::Move => self.mover = MoveTool::new(),
+            ToolKind::Eyedropper => self.eyedropper = Eyedropper::new(),
+            ToolKind::Contour => self.contour = Contour::new(),
+            ToolKind::Blur => self.blur = Blur::new(),
+            ToolKind::Text | ToolKind::Artboard | ToolKind::Hand => {}
+        }
+    }
+
     fn get_mut(&mut self, kind: ToolKind) -> Option<&mut dyn Tool> {
         Some(match kind {
             ToolKind::RectSelect => &mut self.rect_select,
@@ -1088,6 +1115,28 @@ impl Editor {
         self.revision += 1;
     }
 
+    /// A qué pinta la herramienta ahora: `(editando la máscara, modo Tiles)`.
+    pub(crate) fn paint_target(&self) -> (bool, bool) {
+        (self.editing_mask(), self.tiles_mode())
+    }
+
+    /// Si a mitad de un trazo cambió a qué pinta la herramienta (`before` es el
+    /// [`paint_target`](Self::paint_target) de antes del cambio), lo corta sin aplicarlo.
+    pub(crate) fn cancel_if_target_changed(&mut self, before: (bool, bool)) {
+        if self.is_painting() && self.paint_target() != before {
+            self.abort_stroke();
+        }
+    }
+
+    /// Corta el trazo en curso sin aplicarlo (`cancel_gesture` y la herramienta como recién
+    /// creada). Si no, el trazo quedaría colgado: al soltar, una herramienta bloqueada no se
+    /// suelta.
+    fn abort_stroke(&mut self) {
+        self.cancel_gesture();
+        self.tools.reset(self.active_tool());
+        self.temp_eyedropper = false;
+    }
+
     /// Aplica el texto en edición con el color primario (un paso de undo).
     pub fn commit_text(&mut self) {
         let Some(cmd) = self.text_command() else {
@@ -1384,6 +1433,14 @@ impl Editor {
             self.drag_transform(world);
             return;
         }
+        // Si la herramienta quedó bloqueada a mitad del trazo (entró al modo máscara o al modo
+        // Tiles sin pasar por `set_edit_mask`/`select_layer`), el trazo se corta.
+        if self.tool_blocked() {
+            if self.is_painting() {
+                self.abort_stroke();
+            }
+            return;
+        }
         let p = self.tool_point(world);
         self.with_tool(|tool, ctx| tool.drag(ctx, p));
     }
@@ -1459,6 +1516,9 @@ impl Editor {
         }
         let kind = self.active_tool();
         if self.tool_blocked() {
+            if self.is_painting() {
+                self.abort_stroke();
+            }
             self.temp_eyedropper = false;
             return;
         }

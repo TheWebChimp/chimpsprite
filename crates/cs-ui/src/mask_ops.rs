@@ -20,6 +20,14 @@ impl Editor {
         self.edit_mask && self.layer_has_mask(self.layer)
     }
 
+    /// Entra o sale de la edición de la máscara de la capa actual. Si eso cambia a qué pinta la
+    /// herramienta a mitad de un trazo, el trazo se corta.
+    pub fn set_edit_mask(&mut self, on: bool) {
+        let before = self.paint_target();
+        self.edit_mask = on;
+        self.cancel_if_target_changed(before);
+    }
+
     /// La herramienta activa no actúa ahora: bloqueada en modo Tiles o mientras se edita una
     /// máscara. Tampoco muestra el contorno del pincel.
     pub fn tool_blocked(&self) -> bool {
@@ -49,8 +57,10 @@ impl Editor {
             id,
             mask: Some(mask),
         }) {
+            let before = self.paint_target();
             self.layer = id;
             self.edit_mask = true;
+            self.cancel_if_target_changed(before);
             if how == NewMask::FromSelection {
                 self.deselect();
             }

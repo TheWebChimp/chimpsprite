@@ -518,7 +518,7 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
         if response.clicked() {
             let editing_now = editor.layer == id && editor.edit_mask;
             editor.select_layer(id);
-            editor.edit_mask = !editing_now;
+            editor.set_edit_mask(!editing_now);
         }
         response.context_menu(|ui| mask_menu(ui, editor, id));
     }
@@ -834,7 +834,7 @@ pub(crate) fn mask_menu(ui: &mut egui::Ui, editor: &mut Editor, id: LayerId) {
                 .clicked()
             {
                 editor.select_layer(id);
-                editor.edit_mask = !editing;
+                editor.set_edit_mask(!editing);
                 ui.close();
             }
             if ui

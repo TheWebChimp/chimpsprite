@@ -180,6 +180,7 @@ impl Editor {
     /// Selecciona la capa para pintar sus píxeles (no su máscara).
     pub fn select_layer(&mut self, id: LayerId) {
         if self.sprite().layer(id).is_some() {
+            let before = self.paint_target();
             if id != self.layer {
                 self.commit_floating();
                 self.end_group();
@@ -188,6 +189,8 @@ impl Editor {
             }
             self.layer = id;
             self.edit_mask = false;
+            // Pasar a una capa tilemap (o salir de la máscara) a mitad de un trazo lo corta.
+            self.cancel_if_target_changed(before);
         }
     }
 

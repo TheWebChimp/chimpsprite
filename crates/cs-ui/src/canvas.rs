@@ -2389,4 +2389,28 @@ mod tests {
         h.wheel(Point, 30.0, ctrl);
         assert_eq!(h.editor.options.brush_size, 2);
     }
+
+    #[test]
+    fn entering_the_mask_mid_blur_stroke_leaves_no_stroke_hanging() {
+        use crate::mask_ops::NewMask;
+        let mut h = Harness::new();
+        h.editor.add_mask(LayerId(1), NewMask::RevealAll);
+        h.editor.set_edit_mask(false);
+        h.editor.set_tool(ToolKind::Blur);
+        let (from, to) = (h.screen((4, 4)), h.screen((8, 4)));
+        let button = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.frame(vec![Event::PointerMoved(from)]);
+        h.frame(vec![button(from, true)]);
+        assert!(h.editor.is_painting());
+        h.editor.set_edit_mask(true);
+        h.frame(vec![Event::PointerMoved(to)]);
+        h.frame(vec![button(to, false)]);
+        h.frame(vec![]);
+        assert!(!h.editor.is_painting(), "no stroke left hanging");
+    }
 }
