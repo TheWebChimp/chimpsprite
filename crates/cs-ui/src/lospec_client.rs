@@ -122,4 +122,27 @@ mod tests {
         assert_eq!(p.poll(), Some(Ok(5)));
         assert_eq!(p.poll(), None);
     }
+
+    /// Contra lospec.com de verdad: `cargo test -p cs-ui -- --ignored live_lospec`.
+    #[test]
+    #[ignore]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn live_lospec() {
+        let get = |url: String| ehttp::fetch_blocking(&ehttp::Request::get(url)).unwrap();
+        let q = lospec::LospecQuery {
+            tag: "gameboy".into(),
+            colors: lospec::ColorCount::Any,
+            sort: lospec::LospecSort::Default,
+            page: 0,
+        };
+        let r = get(q.listing_url());
+        let page = classify(r.status, &r.bytes, lospec::parse_listing).unwrap();
+        assert!(!page.palettes.is_empty());
+        let r = get(lospec::palette_url("sweetie-16"));
+        let p = classify(r.status, &r.bytes, |b| {
+            lospec::parse_palette(b, "sweetie-16")
+        })
+        .unwrap();
+        assert_eq!(p.palette.len(), 16);
+    }
 }
