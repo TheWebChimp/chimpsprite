@@ -470,7 +470,8 @@ impl Editor {
     }
 
     /// Delete mientras flota. Lo pegado se descarta (no borra lo de debajo); lo levantado de la
-    /// capa deja solo el hueco en el origen, en un paso de undo. `false` si no flotaba nada.
+    /// capa deja solo el hueco en el origen, en un paso de undo, y la selección queda en el hueco.
+    /// `false` si no flotaba nada.
     pub(crate) fn delete_floating(&mut self) -> bool {
         let valid = match &self.floating {
             None => return false,
@@ -503,6 +504,7 @@ impl Editor {
                 },
             });
         }
+        self.selection = self.selection_before(f.before);
         self.revision += 1;
         true
     }
@@ -1058,6 +1060,8 @@ mod tests {
         assert_eq!(e.doc_version, version + 1, "one undo step");
         assert_eq!(px(&e, 1, 1), t, "the lifted pixels are gone");
         assert_eq!(px(&e, 4, 4), t, "nothing stamped");
+        let bounds = e.selection.as_ref().and_then(|m| m.bounds());
+        assert_eq!(bounds, Some(((0, 0), (2, 2))), "the selection is the hole");
         e.undo();
         assert_eq!(px(&e, 1, 1), red());
     }

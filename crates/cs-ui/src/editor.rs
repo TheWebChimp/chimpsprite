@@ -1423,6 +1423,8 @@ impl Editor {
 
     /// Resultado de una herramienta sobre el proxy → tiles y selección del sprite real.
     fn apply_tiles_output(&mut self, kind: ToolKind, out: ToolOutput, proxy: &TileProxy) {
+        // `set_tiles` reserva el próximo id de imagen: lo flotante se confirma antes de armarlo.
+        self.commit_floating();
         let mut applied = true;
         if let Some(cmd) = &out.command {
             match self.tiles_edit(proxy, cmd) {

@@ -188,9 +188,16 @@ impl Editor {
         if keep_floating && !(self.tool.is_selection() || self.tool == ToolKind::Move) {
             self.set_tool(ToolKind::Move);
         }
-        // Más grande que `MAX_BLOCK_SIDE` no se podría mover ni transformar: se conserva el centro
-        // (en su lugar) y se descarta lo que sobra a los costados.
-        let keep = |size: u32| size.min(MAX_BLOCK_SIDE);
+        // Si va a quedar flotando, más grande que `MAX_BLOCK_SIDE` no se podría mover ni
+        // transformar: se conserva el centro (en su lugar) y se descarta lo que sobra a los
+        // costados. Si se confirma en el momento (artboard nuevo) se pega entero.
+        let keep = |size: u32| {
+            if keep_floating {
+                size.min(MAX_BLOCK_SIDE)
+            } else {
+                size
+            }
+        };
         let size = (keep(clip.size.0), keep(clip.size.1));
         let crop = (
             ((clip.size.0 - size.0) / 2) as i32,
@@ -586,5 +593,22 @@ mod tests {
         // Lo pegado quedó en (0, 0) (corrido para entrar en el lienzo) y se movió (2, 1).
         assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 6), red);
         assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 6), t, "cropped out");
+    }
+
+    #[test]
+    fn paste_in_a_new_artboard_keeps_the_whole_image_even_past_the_block_limit() {
+        let mut rgba = vec![0u8; 5000 * 10 * 4];
+        rgba[..4].copy_from_slice(&[255, 0, 0, 255]);
+        let last = (9 * 5000 + 4999) * 4;
+        rgba[last..last + 4].copy_from_slice(&[255, 0, 0, 255]);
+        let clip = Clip::from_rgba(5000, 10, &rgba).unwrap();
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        e.paste_in_new_artboard(&clip);
+        assert!(!e.is_floating());
+        let s = e.sprite();
+        assert_eq!((s.width, s.height), (5000, 10));
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        assert_eq!(s.pixel(LayerId(1), 0, 0, 0), red);
+        assert_eq!(s.pixel(LayerId(1), 0, 4999, 9), red);
     }
 }

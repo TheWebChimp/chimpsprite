@@ -338,12 +338,7 @@ impl ChimpApp {
 
     fn import_layer_bytes(&mut self, loaded: &Loaded) {
         let name = files::stem(&loaded.name).to_string();
-        let result = cs_io::import::import_png_layer(
-            self.doc.editor.sprite(),
-            &loaded.bytes,
-            self.doc.editor.frame,
-            &name,
-        );
+        let result = import_layer_command(&mut self.doc.editor, &loaded.bytes, &name);
         match result {
             Ok(cmd) => {
                 if self.doc.editor.execute(cmd)
@@ -616,6 +611,17 @@ pub(crate) fn save_bytes(editor: &mut Editor, file_name: &str) -> Result<Vec<u8>
     files::encode(&editor.document, file_name)
 }
 
+/// Comando que agrega el PNG como capa nueva en el frame actual. Lo flotante se confirma antes
+/// de armarlo: el comando reserva el próximo id de imagen, que la confirmación podría usar.
+pub(crate) fn import_layer_command(
+    editor: &mut Editor,
+    bytes: &[u8],
+    name: &str,
+) -> cs_io::Result<cs_commands::Command> {
+    editor.commit_floating();
+    cs_io::import::import_png_layer(editor.sprite(), bytes, editor.frame, name)
+}
+
 #[cfg(test)]
 mod tests {
     use cs_commands::Command;
@@ -645,5 +651,36 @@ mod tests {
         let saved = &doc.artboards[0].sprite;
         assert_eq!(saved.pixel(LayerId(1), 0, 2, 2), red, "the file has it");
         assert_ne!(saved.pixel(LayerId(1), 0, 0, 0), red);
+    }
+
+    #[test]
+    fn importing_a_layer_while_a_paste_floats_keeps_the_pasted_pixels() {
+        let mut e = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        assert!(e.sprite().cel(LayerId(1), 0).is_none(), "empty layer");
+        let clip = crate::clipboard::Clip::from_rgba(1, 1, &[255, 0, 0, 255]).unwrap();
+        e.paste(&clip);
+        assert!(e.is_floating());
+        let mut png = Sprite::new(2, 2, ColorMode::Rgba);
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(1, 1, PixelValue::Rgba(Rgba::rgb(0, 0, 255)))],
+        }
+        .apply(&mut png)
+        .unwrap();
+        let bytes = cs_io::export::export_png(&png, 0, 1).unwrap();
+        let cmd = import_layer_command(&mut e, &bytes, "imported").unwrap();
+        assert!(e.execute(cmd));
+        let s = e.sprite();
+        assert_eq!(
+            s.pixel(LayerId(1), 0, 0, 0),
+            red,
+            "the pasted pixel survives"
+        );
+        let top = s.layers.last().unwrap().id;
+        let pasted = s.cel(LayerId(1), 0).unwrap().image;
+        let imported = s.cel(top, 0).unwrap().image;
+        assert_ne!(pasted, imported, "each cel has its own image");
     }
 }
