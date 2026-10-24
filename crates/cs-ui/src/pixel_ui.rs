@@ -142,6 +142,28 @@ pub fn pixel_dialog<R>(
     closable: bool,
     add_contents: impl FnOnce(&mut Ui) -> R,
 ) -> DialogOutput<R> {
+    pixel_dialog_at(
+        ctx,
+        skin,
+        id,
+        title,
+        closable,
+        (Align2::CENTER_CENTER, Vec2::ZERO),
+        add_contents,
+    )
+}
+
+/// Igual que [`pixel_dialog`], pero anclado en `anchor` (alineación y desfase) en vez de en el
+/// centro; sirve para los diálogos que no deben tapar el lienzo.
+pub fn pixel_dialog_at<R>(
+    ctx: &egui::Context,
+    skin: &Skin,
+    id: Id,
+    title: &str,
+    closable: bool,
+    anchor: (Align2, Vec2),
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> DialogOutput<R> {
     let piece = skin.piece(DIALOG_PIECE, WidgetState::Normal);
     let [left, top, right, bottom] = piece.map_or(FALLBACK_DIALOG, borders);
     let side = |v: f32| (v + PADDING).min(i8::MAX as f32) as i8;
@@ -154,7 +176,7 @@ pub fn pixel_dialog<R>(
     let text = skin.colors().text;
     egui::Area::new(id)
         .order(egui::Order::Foreground)
-        .anchor(Align2::CENTER_CENTER, Vec2::ZERO)
+        .anchor(anchor.0, anchor.1)
         .show(ctx, |ui| {
             // El marco se pinta detrás, cuando ya se sabe el tamaño del contenido.
             let background = ui.painter().add(Shape::Noop);

@@ -9,6 +9,8 @@ use crate::skin::{Skin, SkinColors};
 use crate::{pixel_ui, theme, widgets};
 
 const MAX_SIZE: i64 = 16384;
+/// Arriba a la derecha, para no tapar la vista previa del lienzo (con y sin Pixel UI).
+const ANCHOR: (egui::Align2, Vec2) = (egui::Align2::RIGHT_TOP, Vec2::new(-240.0, 40.0));
 const BORDER_RANGE: std::ops::RangeInclusive<i32> = -(MAX_SIZE as i32)..=MAX_SIZE as i32;
 
 /// Estado del diálogo. Los bordes pueden ser negativos (recortan).
@@ -232,7 +234,7 @@ fn pixel_window(
 ) -> (DialogResult, bool) {
     let id = egui::Id::new("canvas_size");
     let palette = Palette::of_skin(skin.colors());
-    let out = pixel_ui::pixel_dialog(ctx, skin, id, "Canvas Size", true, |ui| {
+    let out = pixel_ui::pixel_dialog_at(ctx, skin, id, "Canvas Size", true, ANCHOR, |ui| {
         contents(ui, dialog, palette);
         ui.add_space(6.0);
         let buttons = pixel_ui::pixel_buttons(ui, skin, &["OK", "Cancel"]);
@@ -257,7 +259,7 @@ fn plain_window(ctx: &egui::Context, dialog: &mut CanvasSizeDialog) -> (DialogRe
         .open(&mut open)
         .collapsible(false)
         .resizable(false)
-        .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-240.0, 40.0))
+        .anchor(ANCHOR.0, ANCHOR.1)
         .show(ctx, |ui| {
             contents(ui, dialog, Palette::PLAIN);
             ui.separator();

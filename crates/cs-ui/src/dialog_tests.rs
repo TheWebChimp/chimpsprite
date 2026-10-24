@@ -227,6 +227,28 @@ fn with_pixel_ui_canvas_size_is_a_pixel_dialog() {
 }
 
 #[test]
+fn with_pixel_ui_canvas_size_anchors_top_right_like_the_plain_window() {
+    let screen = Rect::from_min_size(Pos2::ZERO, Vec2::new(1200.0, 800.0));
+    let h = canvas_size(true);
+    let pixel = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new("canvas_size")))
+        .expect("el diálogo pixel");
+    // El ancla de `plain_window`: RIGHT_TOP con desfase (-240, 40).
+    let (right, top) = (screen.right() - 240.0, screen.top() + 40.0);
+    assert!(
+        (pixel.right() - right).abs() < 1.0,
+        "borde derecho: {pixel:?}"
+    );
+    assert!((pixel.top() - top).abs() < 1.0, "borde superior: {pixel:?}");
+    assert!(pixel.right() <= screen.right() - 200.0, "{pixel:?}");
+    assert!(
+        !pixel.contains(screen.center()),
+        "no tapa el centro (la vista previa): {pixel:?}"
+    );
+}
+
+#[test]
 fn with_pixel_ui_the_anchor_grid_uses_the_skin_colors() {
     let h = canvas_size(true);
     let colors = *h.app.pixel.skin().unwrap().colors();
