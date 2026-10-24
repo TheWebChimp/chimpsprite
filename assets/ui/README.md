@@ -82,6 +82,12 @@ oculta.
     humo juntos), copiados de los 3 frames de `home animation.aseprite`. Van a 3 px del borde
     izquierdo, arriba de todo. `home.ground` (58×1) es el suelo sobre la línea grabada, desde el
     borde izquierdo.
+- **Artboards con Pixel UI** (la ventana del frame 4 del diseño, en (209,235), 173×123): el
+  marco es `window` en 9-slice, el "○" de la derecha es `window.close` y el "≡" de la izquierda
+  es `artboard.menu` (9×9, fondo transparente, rayas de 6 px en las filas 2, 4 y 6 desde la
+  columna 2). `window.menu` no sirve: sus rayas miden 7. Las tres juntas dan la ventana del
+  diseño sin un píxel de diferencia. El área de píxeles del artboard es el cuerpo: 2 px adentro
+  a los lados, 12 abajo de la barra y 1 arriba del borde de abajo.
 - **Animaciones:** las piezas `<nombre>.0`, `<nombre>.1`… son los frames, en orden. Lo que dura
   cada uno va en el user data del slice (Slice Properties → User Data), en una línea
   `duration=<ms>`, igual que la duración del frame en Aseprite. Sin esa línea, dura 100 ms.

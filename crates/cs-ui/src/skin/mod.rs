@@ -447,6 +447,27 @@ mod tests {
     }
 
     #[test]
+    fn the_embedded_skin_has_the_artboard_menu_icon_of_the_mockup() {
+        let data = decode(EMBEDDED).unwrap();
+        let menu = &data.pieces["artboard.menu"];
+        assert_eq!(menu.size, [9, 9]);
+        assert_eq!(menu.center, None);
+        // Tres rayas de 6 px en las filas 2, 4 y 6, desde la columna 2; el resto transparente.
+        for y in 0..9 {
+            for x in 0..9 {
+                let i = ((y * 9 + x) * 4) as usize;
+                let ink = [2, 4, 6].contains(&y) && (2..8).contains(&x);
+                let expected: &[u8] = if ink {
+                    &[100, 54, 75, 255]
+                } else {
+                    &[0, 0, 0, 0]
+                };
+                assert_eq!(&menu.rgba[i..i + 4], expected, "({x},{y})");
+            }
+        }
+    }
+
+    #[test]
     fn the_embedded_skin_has_the_mockup_colors_window_and_buttons() {
         let data = decode(EMBEDDED).unwrap();
         for name in COLOR_NAMES {
