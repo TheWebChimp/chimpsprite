@@ -251,9 +251,9 @@ fn with_pixel_ui_the_toolbar_is_5_points_the_box_and_5_points_below_the_options_
         "{marquee:?} in {tools:?}"
     );
     assert_eq!(tools.right() - marquee.right(), 7.0);
-    // La caja empieza 34 px debajo de la barra de opciones, como en el mockup.
+    // La caja empieza 5 px debajo de la barra de opciones, igual que el aire a los lados.
     let options = h.panel("tool_options");
-    assert_eq!(marquee.top() - 2.0 - options.bottom(), 34.0, "{marquee:?}");
+    assert_eq!(marquee.top() - 2.0 - options.bottom(), 5.0, "{marquee:?}");
     // Los botones siguen pegados.
     assert_eq!(h.button("Hand").top(), marquee.bottom());
     // Y sigue a todo el alto, al lado de la línea de tiempo.

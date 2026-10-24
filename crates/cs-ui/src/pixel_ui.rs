@@ -43,9 +43,9 @@ const FALLBACK_BOX_INSET: f32 = 2.0;
 const MORE_MARK: f32 = 3.0;
 /// Margen de la barra de íconos a cada lado de la caja, en puntos: 5 px de fondo en el mockup.
 pub const TOOLBAR_MARGIN: i8 = 5;
-/// Margen de arriba de la barra de íconos: en el mockup la caja empieza 34 px debajo de la barra
-/// de opciones.
-pub const TOOLBAR_TOP_MARGIN: i8 = 34;
+/// Margen de arriba de la barra de íconos: 5 px de fondo bajo la barra de opciones, igual que a
+/// los lados.
+pub const TOOLBAR_TOP_MARGIN: i8 = 5;
 /// Marco de los botones de prender y apagar de la barra de opciones (los ejes de simetría);
 /// `.active` cuando están prendidos.
 const TOGGLE_PIECE: &str = "sym.slot";
