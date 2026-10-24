@@ -68,14 +68,7 @@ impl WindowLayout {
     /// La ventana alrededor del área de píxeles `pixels` (en pantalla), alineada a píxeles de
     /// pantalla hacia afuera para no dejar huecos entre el marco y los píxeles.
     pub fn around(pixels: Rect, pixels_per_point: f32) -> WindowLayout {
-        let ppp = pixels_per_point;
-        let [left, top, right, bottom] = INSETS;
-        let min = (pixels.min.to_vec2() * ppp).floor() / ppp;
-        let max = (pixels.max.to_vec2() * ppp).ceil() / ppp;
-        let frame = Rect::from_min_max(
-            pos2(min.x - left, min.y - top),
-            pos2(max.x + right, max.y + bottom),
-        );
+        let frame = Self::frame_around(pixels, pixels_per_point);
         let bar = Rect::from_min_size(frame.min, vec2(frame.width(), TITLE_BAR));
         // Los dos íconos con su margen a cada lado.
         let icons = frame.width() >= 2.0 * (ICON_INSET + ICON);
@@ -102,9 +95,23 @@ impl WindowLayout {
         }
     }
 
-    /// Qué parte de la barra está bajo `p`, si está en la barra.
+    /// Solo el marco de `around`, sin el resto: alcanza para descartar los artboards fuera de
+    /// la vista o para saber cuál está arriba bajo el puntero.
+    pub fn frame_around(pixels: Rect, pixels_per_point: f32) -> Rect {
+        let ppp = pixels_per_point;
+        let [left, top, right, bottom] = INSETS;
+        let min = (pixels.min.to_vec2() * ppp).floor() / ppp;
+        let max = (pixels.max.to_vec2() * ppp).ceil() / ppp;
+        Rect::from_min_max(
+            pos2(min.x - left, min.y - top),
+            pos2(max.x + right, max.y + bottom),
+        )
+    }
+
+    /// Qué parte de la barra está bajo `p`, si está en la barra. Abajo es semiabierta: la fila
+    /// `y == bar.bottom()` ya es del área de píxeles.
     pub fn hit(&self, p: Pos2) -> Option<TitleHit> {
-        if !self.bar.contains(p) {
+        if !self.bar.contains(p) || p.y >= self.bar.bottom() {
             return None;
         }
         Some(if self.menu.is_some_and(|r| r.contains(p)) {
@@ -302,6 +309,9 @@ mod tests {
             None,
             "the pixels are not the bar"
         );
+        // Semiabierta: la fila de arriba del área de píxeles es de los píxeles.
+        assert_eq!(l.hit(pos2(150.0, 199.5)), Some(TitleHit::Bar));
+        assert_eq!(l.hit(pos2(150.0, 200.0)), None, "the boundary row");
     }
 
     #[test]

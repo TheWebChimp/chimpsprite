@@ -650,7 +650,8 @@ impl CanvasView {
         });
         editor.options.constrain = modifiers.shift;
         let slop = EDGE_SLOP_PX / self.zoom;
-        let over_label = pointer.and_then(|p| self.title_at(ui, rect, editor, p));
+        let area = self.canvas_area(rect, view);
+        let over_label = pointer.and_then(|p| self.title_at(ui, rect, area, editor, p));
         self.over_label = over_label.is_some();
 
         // Con el diálogo Canvas Size abierto el lienzo es modal: solo guías, paneo y zoom.
@@ -784,11 +785,6 @@ impl CanvasView {
             && !modal
             && let Some(p) = pointer
         {
-            let area = if view.rulers {
-                Rect::from_min_max(rect.min + Vec2::splat(self.ruler_px()), rect.max)
-            } else {
-                rect
-            };
             let velocity = autoscroll_velocity(area, p);
             if velocity != Vec2::ZERO {
                 let dt = ui.input(|i| i.stable_dt).min(0.05);
@@ -1027,11 +1023,17 @@ impl CanvasView {
         for artboard in &document.artboards {
             let screen = self.pixel_rect(rect, artboard);
             let active = artboard.id == editor.active;
-            // Con Pixel UI, la ventana del skin: el marco va detrás de los píxeles.
-            let window = self
-                .artboard_window
-                .as_ref()
-                .map(|w| (w, WindowLayout::around(screen, ppp)));
+            // Con Pixel UI, la ventana del skin: el marco va detrás de los píxeles. Si la ventana
+            // queda fuera del lienzo, no se arma ni se dibuja nada del artboard.
+            let window = match &self.artboard_window {
+                Some(w) => {
+                    if !WindowLayout::frame_around(screen, ppp).intersects(rect) {
+                        continue;
+                    }
+                    Some((w, WindowLayout::around(screen, ppp)))
+                }
+                None => None,
+            };
             if let Some((w, layout)) = &window {
                 painter.extend(w.frame_shapes(layout, active, ppp));
             }
@@ -1651,22 +1653,55 @@ impl CanvasView {
         )
     }
 
+    /// Lo visible del lienzo: `rect` sin las reglas, si se muestran.
+    fn canvas_area(&self, rect: Rect, view: &ViewSettings) -> Rect {
+        if view.rulers {
+            Rect::from_min_max(rect.min + Vec2::splat(self.ruler_px()), rect.max)
+        } else {
+            rect
+        }
+    }
+
     /// Artboard cuya etiqueta (nombre sobre el borde superior) o, con Pixel UI, cuya barra de
     /// título está bajo `p`, y qué parte; el de más arriba primero. La barra de Pixel UI responde
-    /// aunque los nombres estén ocultos (la ventana se ve igual).
+    /// aunque los nombres estén ocultos (la ventana se ve igual). Solo dentro de `area` (lo
+    /// visible del lienzo): bajo las reglas o fuera del lienzo no hay barra.
     fn title_at(
         &self,
         ui: &egui::Ui,
         rect: Rect,
+        area: Rect,
         editor: &Editor,
         p: Pos2,
     ) -> Option<(ArtboardId, TitleHit)> {
+        if !area.contains(p) {
+            return None;
+        }
         let ppp = ui.ctx().pixels_per_point();
-        editor.document.artboards.iter().rev().find_map(|artboard| {
-            if self.artboard_window.is_some() {
-                let layout = WindowLayout::around(self.pixel_rect(rect, artboard), ppp);
-                return layout.hit(p).map(|hit| (artboard.id, hit));
+        if self.artboard_window.is_some() {
+            // Decide la ventana de más arriba que tiene a `p` (marco, barra o píxeles): las barras
+            // de los de abajo quedan tapadas.
+            let (artboard, pixels) = editor.document.artboards.iter().rev().find_map(|a| {
+                let pixels = self.pixel_rect(rect, a);
+                WindowLayout::frame_around(pixels, ppp)
+                    .contains(p)
+                    .then_some((a, pixels))
+            })?;
+            let hit = WindowLayout::around(pixels, ppp).hit(p)?;
+            // Con la herramienta Artboard, cerca del borde de arriba o de sus esquinas (con la
+            // tolerancia de la herramienta) redimensionar gana a la barra.
+            if editor.active_tool() == ToolKind::Artboard {
+                let slop = EDGE_SLOP_PX / self.zoom;
+                let world = self.to_world(rect, p);
+                if let Some(ArtboardHit::Edge(id, _)) = hit_test(&editor.document, world, slop)
+                    && id == artboard.id
+                {
+                    return None;
+                }
             }
+            return Some((artboard.id, hit));
+        }
+        editor.document.artboards.iter().rev().find_map(|artboard| {
             if !self.names_visible {
                 return None;
             }
@@ -2898,6 +2933,125 @@ mod tests {
                 "no name at {zoom}"
             );
         }
+    }
+
+    /// Dos artboards a zoom 8 con la herramienta Artboard: el de atrás (0) en (0, 0) y el de
+    /// adelante (1) en `front`, el de atrás activo.
+    fn two_windows(front: (i32, i32)) -> (Harness, ArtboardId, ArtboardId) {
+        let mut h = Harness::new();
+        h.canvas.zoom = 8.0;
+        h.editor.add_artboard(16, 16);
+        h.editor.document.artboards[1].position = front;
+        let (back, front) = (
+            h.editor.document.artboards[0].id,
+            h.editor.document.artboards[1].id,
+        );
+        h.editor.activate(back);
+        h.editor.set_tool(ToolKind::Artboard);
+        with_window(&mut h);
+        (h, back, front)
+    }
+
+    #[test]
+    fn a_bar_covered_by_another_artboard_does_not_take_the_click() {
+        // Los píxeles del de adelante tapan toda la barra del de atrás.
+        let (mut h, back, front) = two_windows((0, -16));
+        let at = h.pixels_of(0).left_top() + Vec2::new(60.0, -10.0);
+        assert!(h.pixels_of(1).contains(at));
+        h.frame(vec![Event::PointerMoved(at)]);
+        assert_eq!(h.cursor, egui::CursorIcon::Move, "the front artboard");
+        h.drag(at, at + Vec2::new(16.0, 8.0));
+        assert_eq!(h.editor.active, front);
+        assert_eq!(h.editor.document.artboards[0].position, (0, 0));
+        assert_eq!(h.editor.document.artboards[1].position, (2, -15));
+        assert_ne!(h.editor.active, back);
+    }
+
+    #[test]
+    fn a_visible_bar_under_another_window_still_moves_its_artboard() {
+        let (mut h, back, _) = two_windows((0, -40));
+        let at = h.pixels_of(0).left_top() + Vec2::new(60.0, -10.0);
+        h.frame(vec![Event::PointerMoved(at)]);
+        assert_eq!(h.cursor, egui::CursorIcon::Grab);
+        h.drag(at, at + Vec2::new(16.0, 8.0));
+        assert_eq!(h.editor.active, back);
+        assert_eq!(h.editor.document.artboards[0].position, (2, 1));
+        assert_eq!(h.editor.document.artboards[1].position, (0, -40));
+    }
+
+    /// Un artboard de 16×16 a zoom 8, con Pixel UI y la herramienta Artboard.
+    fn artboard_tool_window() -> Harness {
+        let mut h = Harness::new();
+        h.canvas.zoom = 8.0;
+        h.editor.set_tool(ToolKind::Artboard);
+        with_window(&mut h);
+        h
+    }
+
+    fn rect_of(h: &Harness) -> ((i32, i32), (u32, u32)) {
+        let a = &h.editor.document.artboards[0];
+        (a.position, (a.sprite.width, a.sprite.height))
+    }
+
+    #[test]
+    fn with_the_artboard_tool_the_top_edge_resizes_from_the_bar() {
+        let mut h = artboard_tool_window();
+        let at = h.pixels_of(0).center_top() - Vec2::new(0.0, 3.0);
+        h.frame(vec![Event::PointerMoved(at)]);
+        assert_eq!(h.cursor, egui::CursorIcon::ResizeVertical);
+        h.drag(at, at - Vec2::new(0.0, 16.0));
+        assert_eq!(rect_of(&h), ((0, -2), (16, 18)));
+    }
+
+    #[test]
+    fn with_the_artboard_tool_the_middle_of_the_bar_moves() {
+        let mut h = artboard_tool_window();
+        let at = h.pixels_of(0).center_top() - Vec2::new(0.0, 10.0);
+        h.frame(vec![Event::PointerMoved(at)]);
+        assert_eq!(h.cursor, egui::CursorIcon::Grab);
+        h.drag(at, at + Vec2::new(16.0, 8.0));
+        assert_eq!(rect_of(&h), ((2, 1), (16, 16)));
+    }
+
+    #[test]
+    fn with_the_artboard_tool_a_top_corner_resizes_from_the_bar() {
+        let mut h = artboard_tool_window();
+        // Sobre la barra (y el "≡"), a 2 de la esquina de los píxeles.
+        let at = h.pixels_of(0).left_top() + Vec2::new(2.0, -3.0);
+        h.frame(vec![Event::PointerMoved(at)]);
+        assert_eq!(h.cursor, egui::CursorIcon::ResizeNwSe);
+        h.drag(at, at - Vec2::new(16.0, 16.0));
+        assert_eq!(rect_of(&h), ((-2, -2), (18, 18)));
+        let mut h = artboard_tool_window();
+        let at = h.pixels_of(0).right_top() + Vec2::new(-2.0, -3.0);
+        h.frame(vec![Event::PointerMoved(at)]);
+        assert_eq!(h.cursor, egui::CursorIcon::ResizeNeSw);
+        h.drag(at, at + Vec2::new(16.0, -16.0));
+        assert_eq!(rect_of(&h), ((0, -2), (18, 18)));
+    }
+
+    #[test]
+    fn the_first_row_of_pixels_is_not_the_bar() {
+        let mut h = Harness::new();
+        h.canvas.zoom = 8.0;
+        with_window(&mut h);
+        let at = h.pixels_of(0).center_top();
+        h.frame(vec![Event::PointerMoved(at)]);
+        assert_ne!(h.cursor, egui::CursorIcon::Grab);
+        assert!(!h.canvas.over_label);
+    }
+
+    #[test]
+    fn an_off_screen_artboard_draws_no_window() {
+        let mut h = Harness::new();
+        let skin = with_window(&mut h);
+        h.canvas.pan += Vec2::new(5000.0, 0.0);
+        h.frame(vec![]);
+        for name in ["window", "artboard.menu", "window.close"] {
+            assert!(h.meshes(piece_id(&skin, name)).is_empty(), "{name}");
+        }
+        let checker = h.canvas.checker.as_ref().unwrap().id();
+        assert!(h.meshes(checker).is_empty());
     }
 
     #[test]
