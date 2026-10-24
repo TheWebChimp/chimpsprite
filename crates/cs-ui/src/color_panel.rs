@@ -36,6 +36,7 @@ use eframe::emath::GuiRounding as _;
 
 use cs_core::{PixelValue, Rgba};
 
+use crate::artboard_window;
 use crate::bar_fields::{self, NumberLook};
 use crate::editor::Editor;
 use crate::menus::{self, MenuLook, galley, ink_width, solid};
@@ -206,10 +207,7 @@ pub fn palette_grid(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &label));
         let response = response.on_hover_text(label);
         // La entrada elegida: con la paleta desbloqueada, el editor de color la edita.
-        if response.clicked() || response.secondary_clicked() {
-            editor.palette_entry = Some(index as u8);
-        }
-        panels::pick_on_click(editor, &response, value);
+        panels::pick_on_click(editor, &response, value, Some(index as u8));
     }
     // La marca para agregar el primario, en la celda siguiente.
     let add_piece = piece(skin, ADD);
@@ -249,16 +247,20 @@ struct TopButton {
 /// columna:
 /// - A la izquierda, el grupo `palette.buttons` (73×16, un botón cada 24 con
 ///   `palette.buttons.sep` entre dos):
-///   - el candado bloquea la paleta: sus colores no se editan uno por uno. Bloqueada (lo normal)
-///     se ve como en el diseño; desbloqueada, apretado;
+///   - el candado es el interruptor "Lock palette": bloqueada (lo normal), sus colores no se
+///     editan uno por uno ni se reemplaza la paleta con la hoja. Prendido (apretado y anunciado
+///     elegido) mientras está bloqueada; desbloqueada se ve normal;
 ///   - ≡ abre el menú de la paleta: Presets… (la ventana) y lo que tenía el menú "…";
-///   - la hoja hace una paleta nueva con el color primario (`Editor::new_palette`).
+///   - la hoja pide una paleta nueva con el color primario (`PaletteAction::NewPalette`: la app
+///     la hace, o pregunta antes en indexado). Con la paleta bloqueada queda desactivada, con el
+///     ícono apagado.
 /// - A la derecha, el damero (`palette.button`, 24×16): elige el color Mask como primario, o
 ///   vuelve al de antes si ya lo es (prendido mientras el primario es el Mask). Clic derecho: el
-///   Mask como secundario.
+///   Mask como secundario. Como en los cuadritos, el editor de color pasa al color elegido.
 ///
 /// Prendido o apretado, el botón lleva `palette.button.active` sobre su bisel y su relleno. Los
 /// íconos van centrados en el relleno. `menus`: con un diálogo abierto, ≡ queda desactivado.
+/// Devuelve lo que se eligió en el menú ≡ o `NewPalette`.
 pub fn palette_buttons(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -314,8 +316,9 @@ pub fn palette_buttons(
             rect: at(0),
             label: "Lock palette",
             icon: "palette.icon.lock",
-            // En el diseño (bloqueada) no está apretado: se aprieta al desbloquear.
-            on: !editor.palette_locked,
+            // Prendido mientras está bloqueada (el diseño solo tiene el ícono del candado
+            // cerrado): apretado = bloqueada.
+            on: editor.palette_locked,
         },
         TopButton {
             rect: at(1),
@@ -338,19 +341,21 @@ pub fn palette_buttons(
     ];
     let mut responses = Vec::with_capacity(buttons.len());
     for (k, button) in buttons.iter().enumerate() {
-        let sense = if k == 1 && !menus {
-            Sense::hover()
-        } else {
+        // ≡ sin menús (un diálogo abierto) y la hoja con la paleta bloqueada no se aprietan.
+        let usable = match k {
+            1 => menus,
+            2 => !editor.palette_locked,
+            _ => true,
+        };
+        let sense = if usable {
             Sense::click()
+        } else {
+            Sense::hover()
         };
         let response = ui.interact(button.rect, id.with(k), sense);
         // El candado y el damero se anuncian prendidos: bloqueada, Mask elegido.
-        let selected = match k {
-            0 => Some(editor.palette_locked),
-            3 => Some(button.on),
-            _ => None,
-        };
-        let on_now = enabled && (k != 1 || menus);
+        let selected = matches!(k, 0 | 3).then_some(button.on);
+        let on_now = enabled && usable;
         response.widget_info(|| match selected {
             Some(s) => WidgetInfo::selected(WidgetType::Button, on_now, s, button.label),
             None => WidgetInfo::labeled(WidgetType::Button, on_now, button.label),
@@ -367,21 +372,25 @@ pub fn palette_buttons(
             }));
         }
         let inside = fill.shrink(1.0);
+        // La hoja desactivada (paleta bloqueada): el ícono apagado hacia `text_dim`.
+        let dim = k == 2 && !usable;
         match piece(skin, button.icon) {
             Some(p) => {
                 let size = size_of(p);
                 let min = inside.min + ((inside.size() - size) / 2.0).floor();
-                shapes.extend(pixel_ui::piece_shapes(
-                    p,
-                    Rect::from_min_size(min, size),
-                    ppp,
-                ));
+                let icon = pixel_ui::piece_shapes(p, Rect::from_min_size(min, size), ppp);
+                shapes.extend(if dim {
+                    artboard_window::tinted(icon, dim_tint(&colors))
+                } else {
+                    icon
+                });
             }
             // Sin el ícono, la inicial.
             None => {
-                let text = galley(ui, &button.label[..1], colors.text);
+                let color = if dim { colors.text_dim } else { colors.text };
+                let text = galley(ui, &button.label[..1], color);
                 let min = inside.center() - text.size() / 2.0;
-                shapes.push(Shape::galley(min.round(), text, colors.text));
+                shapes.push(Shape::galley(min.round(), text, color));
             }
         }
         ui.painter().extend(shapes);
@@ -389,25 +398,26 @@ pub fn palette_buttons(
     }
     let [lock, menu, new, mask] = <[egui::Response; 4]>::try_from(responses).ok()?;
     let lock_tip = if editor.palette_locked {
-        "Palette locked: its colors are not edited one by one. Click to unlock"
+        "Palette locked: colors can't be edited one by one"
     } else {
-        "Palette unlocked: the color editor edits the picked palette color. Click to lock"
+        "Palette unlocked: the color editor edits the picked swatch"
     };
     if lock.on_hover_text(lock_tip).clicked() {
         editor.palette_locked = !editor.palette_locked;
     }
-    if new
-        .on_hover_text("New palette (with the primary color)")
-        .clicked()
-    {
-        editor.new_palette();
-    }
+    let new_tip = if editor.palette_locked {
+        "New palette: unlock the palette first"
+    } else {
+        "New palette (with the primary color)"
+    };
+    let new_palette = (new.on_hover_text(new_tip).clicked() && !editor.palette_locked)
+        .then_some(PaletteAction::NewPalette);
     let mask = mask.on_hover_text(panels::MASK_HINT);
     if mask.clicked() {
         editor.toggle_mask();
     }
     if mask.secondary_clicked() {
-        editor.secondary = editor.mask_value();
+        editor.pick_color(editor.mask_value(), true, None);
     }
     let menu = menu.on_hover_text("Presets and palette files");
     let look = MenuLook::new(skin, menu.rect.top());
@@ -436,6 +446,13 @@ pub fn palette_buttons(
         action
     })
     .flatten()
+    .or(new_palette)
+}
+
+/// El tinte de un ícono desactivado: apagado hacia `text_dim`, como los marcos inactivos de los
+/// artboards.
+fn dim_tint(colors: &SkinColors) -> Color32 {
+    Color32::WHITE.lerp_to_gamma(colors.text_dim, 0.6)
 }
 
 /// El estado del editor entre frames: el último color y su HSV, para no perder el tono de los

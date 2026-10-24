@@ -661,13 +661,15 @@ pub struct Editor {
     /// Con la paleta bloqueada (lo normal), sus colores no se editan uno por uno: el editor de
     /// color cambia el color primario y nada más. Ver `palette_entry_of`.
     pub palette_locked: bool,
-    /// La última entrada de la paleta elegida con un clic en su cuadrito (Pixel UI): con la
-    /// paleta desbloqueada, el editor de color la edita mientras el color sea el suyo.
-    pub palette_entry: Option<u8>,
+    /// La entrada de la paleta elegida con un clic en su cuadrito (Pixel UI) para cada color:
+    /// `[primario, secundario]`. Con la paleta desbloqueada, el editor de color edita la del
+    /// color que edita, mientras el color siga siendo el suyo. Ver `pick_color`.
+    pub palette_entry: [Option<u8>; 2],
     /// El color primario de antes de elegir el Mask con su botón, para volver al apagarlo.
     pub(crate) before_mask: Option<PixelValue>,
-    /// Con Pixel UI, el editor de color edita el secundario (se elige con un clic en la mitad
-    /// de abajo de la caja de los colores). Ver `edited_color`.
+    /// Con Pixel UI, el editor de color edita el secundario: se elige con un clic en la mitad
+    /// de abajo de la caja de los colores, o al elegir un color con clic derecho (`pick_color`).
+    /// Sin Pixel UI vuelve a `false` (`ChimpApp::layout`). Ver `edited_color`.
     pub editing_secondary: bool,
 }
 
@@ -718,7 +720,7 @@ impl Editor {
             floating: None,
             transform_drag: None,
             palette_locked: true,
-            palette_entry: None,
+            palette_entry: [None; 2],
             before_mask: None,
             editing_secondary: false,
         };
@@ -964,6 +966,8 @@ impl Editor {
 
     pub fn swap_colors(&mut self) {
         std::mem::swap(&mut self.primary, &mut self.secondary);
+        // Cada color se lleva su cuadrito de la paleta.
+        self.palette_entry.swap(0, 1);
     }
 
     pub fn set_selection(&mut self, selection: Option<Mask>) {
@@ -1613,11 +1617,10 @@ impl Editor {
             None => true,
         };
         if let Some(v) = out.pick {
-            if self.painting_secondary {
-                self.secondary = v;
-            } else {
-                self.primary = v;
-            }
+            // Como un clic en un cuadrito: el editor de color pasa al color elegido. No salió de
+            // un cuadrito, así que no hay entrada de la paleta que editar (en indexado, la del
+            // índice).
+            self.pick_color(v, self.painting_secondary, None);
         }
         if let Some(selection) = out.selection
             && applied
@@ -1987,6 +1990,20 @@ mod tests {
         e.tool = ToolKind::Eyedropper;
         click(&mut e, (0, 0), true, false);
         assert_eq!(e.secondary, e.sprite().color_mode.transparent());
+    }
+
+    #[test]
+    fn the_eyedropper_switches_the_color_editor_to_the_color_it_picks() {
+        let mut e = editor();
+        e.tool = ToolKind::Eyedropper;
+        e.editing_secondary = true;
+        e.palette_entry = [Some(4), Some(5)];
+        click(&mut e, (0, 0), false, false);
+        assert!(!e.editing_secondary, "left: the primary");
+        assert_eq!(e.palette_entry[0], None, "no swatch was picked");
+        click(&mut e, (0, 0), true, false);
+        assert!(e.editing_secondary, "right: the secondary");
+        assert_eq!(e.palette_entry[1], None);
     }
 
     #[test]

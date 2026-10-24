@@ -1724,3 +1724,106 @@ fn without_pixel_ui_the_colors_stay_in_the_right_panel() {
         "{texts:?}"
     );
 }
+
+/// Un sprite indexado de 8×8 (con la paleta DB32) en la pestaña activa.
+fn indexed_doc(h: &mut LayoutHarness) {
+    let sprite = cs_core::Sprite::new(
+        8,
+        8,
+        cs_core::ColorMode::Indexed {
+            transparent_index: 0,
+        },
+    );
+    h.app.doc.editor = crate::editor::Editor::with_sprite(sprite);
+    h.frame();
+}
+
+#[test]
+fn turning_pixel_ui_off_resets_which_color_the_editor_edits() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.click(h.button("Secondary color").center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.editing_secondary);
+    // Otra pestaña, también con el secundario elegido; queda guardada al cambiar.
+    h.app.new_document();
+    h.frame();
+    h.click(h.button("Secondary color").center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.editing_secondary);
+    h.app.view.pixel_ui = false;
+    h.frame();
+    h.frame();
+    assert!(!h.app.doc.editor.editing_secondary);
+    // Al volver a prenderlo, ninguna pestaña sigue en el secundario.
+    h.app.view.pixel_ui = true;
+    h.frame();
+    h.frame();
+    assert!(!h.app.doc.editor.editing_secondary);
+    h.app.tabs.switch(&mut h.app.doc, 0);
+    h.frame();
+    assert!(!h.app.doc.editor.editing_secondary);
+}
+
+#[test]
+fn with_pixel_ui_new_palette_on_an_indexed_sprite_asks_first() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    indexed_doc(&mut h);
+    h.app.view.palette_locked = false;
+    h.frame();
+    let before = h.app.doc.editor.sprite().palette.clone();
+    h.click(h.button("New palette").center(), PointerButton::Primary);
+    assert!(
+        matches!(
+            h.app.palette_confirm,
+            Some(crate::palette_ui::Confirm::NewPalette)
+        ),
+        "asks"
+    );
+    assert_eq!(h.app.doc.editor.sprite().palette, before);
+}
+
+#[test]
+fn with_pixel_ui_new_palette_on_an_rgba_sprite_needs_no_confirmation() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.view.palette_locked = false;
+    h.app.doc.editor.primary = PixelValue::Rgba(Rgba::rgb(1, 2, 3));
+    h.frame();
+    h.click(h.button("New palette").center(), PointerButton::Primary);
+    assert!(h.app.palette_confirm.is_none());
+    assert_eq!(
+        h.app.doc.editor.sprite().palette.colors(),
+        &[Rgba::rgb(1, 2, 3)]
+    );
+}
+
+/// Un `eframe::Storage` en memoria.
+#[derive(Default)]
+struct MemoryStorage(std::collections::HashMap<String, String>);
+
+impl eframe::Storage for MemoryStorage {
+    fn get_string(&self, key: &str) -> Option<String> {
+        self.0.get(key).cloned()
+    }
+
+    fn set_string(&mut self, key: &str, value: String) {
+        self.0.insert(key.to_owned(), value);
+    }
+
+    fn remove_string(&mut self, key: &str) {
+        self.0.remove(key);
+    }
+
+    fn flush(&mut self) {}
+}
+
+#[test]
+fn toggling_the_palette_lock_is_saved_with_the_view() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert!(h.app.view.palette_locked);
+    h.click(h.button("Lock palette").center(), PointerButton::Primary);
+    assert!(!h.app.doc.editor.palette_locked);
+    // El candado pasa a la vista en el mismo frame, y la vista es lo que se guarda.
+    assert!(!h.app.view.palette_locked);
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(&mut h.app, &mut storage);
+    let saved: ViewSettings = eframe::get_value(&storage, crate::VIEW_KEY).expect("saved");
+    assert!(!saved.palette_locked);
+}

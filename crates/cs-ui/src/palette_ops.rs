@@ -1,7 +1,7 @@
 //! Aplicar una paleta al sprite activo (`Editor::apply_palette`).
 
 use cs_commands::Command;
-use cs_core::{Palette, PixelValue, Rgba};
+use cs_core::{ColorMode, Palette, PixelValue, Rgba};
 
 use crate::Editor;
 
@@ -50,8 +50,7 @@ impl Editor {
         let colors = self.sprite().palette.colors();
         match value {
             PixelValue::Index(i) => ((i as usize) < colors.len()).then_some(i),
-            PixelValue::Rgba(c) => self
-                .palette_entry
+            PixelValue::Rgba(c) => self.palette_entry[self.editing_secondary as usize]
                 .filter(|&i| colors.get(i as usize) == Some(&c)),
         }
     }
@@ -75,19 +74,47 @@ impl Editor {
     }
 
     /// Una paleta nueva con solo el color primario (negro si el primario es el Mask), en un paso
-    /// de undo. Se puede con la paleta bloqueada: no edita un color, la reemplaza entera.
+    /// de undo. Con la paleta bloqueada no hace nada: el candado la protege. En indexado, los
+    /// píxeles guardan su índice: los de los colores que se van quedan transparentes (por eso la
+    /// app pide confirmación antes, ver `needs_new_palette_confirmation`).
     pub fn new_palette(&mut self) -> bool {
+        if self.palette_locked {
+            return false;
+        }
         let color = if self.is_mask(self.primary) {
             Rgba::rgb(0, 0, 0)
         } else {
             self.resolve(self.primary)
         };
-        self.palette_entry = None;
+        self.palette_entry = [None; 2];
         self.apply_palette(Palette::new(vec![color]))
     }
 
-    /// El botón del Mask: lo elige como color primario o, si ya lo es, vuelve al de antes.
+    /// Elige un color como al hacer clic: `value` va al primario (clic, o el gotero con el botón
+    /// izquierdo) o, con `secondary`, al secundario (clic derecho), y el editor de color pasa a
+    /// editar ese color. `entry`: el cuadrito de la paleta de donde salió (`None` si no salió de
+    /// uno, como con el gotero); es la entrada que edita el editor de color con la paleta
+    /// desbloqueada.
+    pub fn pick_color(&mut self, value: PixelValue, secondary: bool, entry: Option<u8>) {
+        if secondary {
+            self.secondary = value;
+        } else {
+            self.primary = value;
+        }
+        self.editing_secondary = secondary;
+        self.palette_entry[secondary as usize] = entry;
+    }
+
+    /// Si "New palette" tiene que preguntar antes: en indexado los píxeles apuntan a índices de
+    /// la paleta, y los que se van cambian de color.
+    pub fn needs_new_palette_confirmation(&self) -> bool {
+        matches!(self.sprite().color_mode, ColorMode::Indexed { .. })
+    }
+
+    /// El botón del Mask: lo elige como color primario o, si ya lo es, vuelve al de antes. Como
+    /// un clic en un cuadrito, el editor de color pasa a editar el primario.
     pub fn toggle_mask(&mut self) {
+        self.editing_secondary = false;
         if self.is_mask(self.primary) {
             let back = self.before_mask.take().filter(|v| !self.is_mask(*v));
             self.primary = back.unwrap_or_else(|| self.palette_value(0));
@@ -112,7 +139,8 @@ impl Editor {
 
 #[cfg(test)]
 mod tests {
-    use cs_core::{ColorMode, Palette, PixelValue, Rgba, Sprite};
+    use cs_commands::Command;
+    use cs_core::{ColorMode, LayerId, Palette, PixelValue, Rgba, Sprite};
 
     use crate::Editor;
 
@@ -165,7 +193,7 @@ mod tests {
         let mut e = rgba_editor();
         assert!(e.palette_locked);
         e.primary = e.palette_value(2);
-        e.palette_entry = Some(2);
+        e.palette_entry = [Some(2), None];
         assert_eq!(e.palette_entry_of(e.primary), None, "locked");
         assert!(!e.set_palette_color(2, Rgba::rgb(9, 9, 9), 1));
         assert_eq!(e.sprite().palette, colors(4));
@@ -176,7 +204,7 @@ mod tests {
         let mut e = rgba_editor();
         e.palette_locked = false;
         e.primary = e.palette_value(2);
-        e.palette_entry = Some(2);
+        e.palette_entry = [Some(2), None];
         assert_eq!(e.palette_entry_of(e.primary), Some(2));
         // Otro color (o ninguna entrada elegida): no hay entrada.
         assert_eq!(
@@ -212,14 +240,94 @@ mod tests {
     #[test]
     fn a_new_palette_has_just_the_primary_and_is_undone() {
         let mut e = rgba_editor();
+        e.palette_locked = false;
         e.primary = PixelValue::Rgba(Rgba::rgb(1, 2, 3));
-        assert!(e.new_palette(), "also when locked");
+        assert!(e.new_palette());
         assert_eq!(e.sprite().palette.colors(), &[Rgba::rgb(1, 2, 3)]);
         e.undo();
         assert_eq!(e.sprite().palette, colors(4));
         e.primary = e.mask_value();
         assert!(e.new_palette());
         assert_eq!(e.sprite().palette.colors(), &[Rgba::rgb(0, 0, 0)]);
+    }
+
+    #[test]
+    fn a_locked_palette_is_not_replaced_by_a_new_one() {
+        let mut e = rgba_editor();
+        assert!(e.palette_locked);
+        e.primary = PixelValue::Rgba(Rgba::rgb(1, 2, 3));
+        assert!(!e.new_palette());
+        assert_eq!(e.sprite().palette, colors(4));
+    }
+
+    fn indexed_editor() -> Editor {
+        let mut sprite = Sprite::new(
+            4,
+            4,
+            ColorMode::Indexed {
+                transparent_index: 0,
+            },
+        );
+        sprite.palette = colors(8);
+        Editor::with_sprite(sprite)
+    }
+
+    /// Lo que pasa hoy con los píxeles cuyo índice queda fuera de la paleta nueva: guardan su
+    /// índice (no se tocan) y se ven transparentes mientras no haya color en ese índice.
+    /// Deshacer vuelve la paleta y con ella su color.
+    #[test]
+    fn indexed_pixels_outside_a_new_palette_keep_their_index_and_turn_transparent() {
+        let mut e = indexed_editor();
+        e.palette_locked = false;
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(1, 1, PixelValue::Index(5)), (2, 2, PixelValue::Index(1))],
+        });
+        let five = e.sprite().palette.colors()[5];
+        assert_eq!(cs_render::composite_pixel(e.sprite(), 0, 1, 1), five);
+        e.primary = PixelValue::Index(3);
+        assert!(e.new_palette());
+        assert_eq!(e.sprite().palette.colors(), &[colors(8).colors()[3]]);
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 1), PixelValue::Index(5));
+        assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 2), PixelValue::Index(1));
+        assert_eq!(
+            cs_render::composite_pixel(e.sprite(), 0, 1, 1),
+            Rgba::TRANSPARENT
+        );
+        assert_eq!(e.primary, PixelValue::Index(0), "the primary is fitted");
+        e.undo();
+        assert_eq!(e.sprite().palette, colors(8));
+        assert_eq!(cs_render::composite_pixel(e.sprite(), 0, 1, 1), five);
+    }
+
+    #[test]
+    fn picking_a_color_switches_the_editor_to_it_and_remembers_its_swatch() {
+        let mut e = rgba_editor();
+        e.palette_locked = false;
+        // Elegida la mitad de abajo, un clic en #2 pasa a editar el primario y su entrada.
+        e.editing_secondary = true;
+        e.pick_color(e.palette_value(2), false, Some(2));
+        assert!(!e.editing_secondary);
+        assert_eq!(e.edited_color(), e.palette_value(2));
+        assert_eq!(e.palette_entry_of(e.edited_color()), Some(2));
+        assert!(e.set_palette_color(2, Rgba::rgb(9, 9, 9), 1));
+        e.end_group_of(1);
+        // Clic derecho en #3: el secundario, y el editor pasa a él.
+        e.pick_color(e.palette_value(3), true, Some(3));
+        assert!(e.editing_secondary);
+        assert_eq!(e.edited_color(), e.palette_value(3));
+        assert_eq!(e.palette_entry_of(e.edited_color()), Some(3));
+        // Cada color recuerda su cuadrito: volver al primario edita otra vez el #2.
+        e.primary = e.palette_value(2);
+        e.editing_secondary = false;
+        assert_eq!(e.palette_entry_of(e.edited_color()), Some(2));
+        // Intercambiar los colores intercambia sus cuadritos.
+        e.swap_colors();
+        assert_eq!(e.palette_entry_of(e.edited_color()), Some(3));
+        // Sin cuadrito (el gotero), no hay entrada.
+        e.pick_color(e.palette_value(1), false, None);
+        assert_eq!(e.palette_entry_of(e.edited_color()), None);
     }
 
     #[test]

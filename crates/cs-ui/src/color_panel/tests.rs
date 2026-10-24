@@ -745,8 +745,39 @@ fn selected(output: &egui::FullOutput, label: &str) -> Option<bool> {
 }
 
 impl Harness {
+    /// Si el botón `label` se anuncia desactivado, en un frame sin eventos.
+    fn is_disabled(&mut self, label: &str) -> Option<bool> {
+        let output = self.quiet_output();
+        let update = output.platform_output.accesskit_update.as_ref()?;
+        update
+            .nodes
+            .iter()
+            .find(|(_, n)| n.label().is_some_and(|l| l == label))
+            .map(|(_, n)| n.is_disabled())
+    }
+
+    /// El tinte de la malla dibujada en `rect` en el último frame.
+    fn mesh_tint(&self, rect: Rect) -> Option<Color32> {
+        fn find(shape: &egui::Shape, rect: Rect) -> Option<Color32> {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().find_map(|s| find(s, rect)),
+                egui::Shape::Mesh(mesh) if mesh.calc_bounds() == rect => {
+                    mesh.vertices.first().map(|v| v.color)
+                }
+                _ => None,
+            }
+        }
+        self.shapes.iter().find_map(|c| find(&c.shape, rect))
+    }
+
     /// Si el botón `label` se anuncia elegido (prendido), en un frame sin eventos.
     fn is_selected(&mut self, label: &str) -> Option<bool> {
+        let output = self.quiet_output();
+        selected(&output, label)
+    }
+
+    /// Un frame sin eventos (y sin guardar lo dibujado).
+    fn quiet_output(&mut self) -> egui::FullOutput {
         self.time += 0.05;
         let input = RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(600.0, 800.0))),
@@ -755,7 +786,7 @@ impl Harness {
         };
         let editor = &mut self.editor;
         let skin = self.skin.as_ref();
-        let output = self.ctx.run_ui(input, |ui| {
+        self.ctx.run_ui(input, |ui| {
             egui::Panel::right("palette")
                 .default_size(220.0)
                 .show(ui, |ui| {
@@ -763,8 +794,7 @@ impl Harness {
                         panels::palette(ui, editor, true, skin);
                     });
                 });
-        });
-        selected(&output, label)
+        })
     }
 }
 
@@ -830,8 +860,15 @@ fn with_pixel_ui_the_top_buttons_are_the_design_group_and_the_checker() {
         h.drawn("palette.icon.mask")[0].min,
         checker.min + vec2(3.0, 3.0)
     );
-    // Nada prendido: el diseño, con la paleta bloqueada y sin el Mask.
-    assert!(h.drawn("palette.button.active").is_empty());
+    // Lo único prendido es el candado: la paleta empieza bloqueada (sin el Mask).
+    let lock = h.node("Lock palette");
+    assert_eq!(
+        h.drawn_boxes("palette.button.active"),
+        vec![Rect::from_min_size(
+            lock.min + vec2(1.0, 1.0),
+            vec2(23.0, 13.0)
+        )]
+    );
 }
 
 #[test]
@@ -845,10 +882,7 @@ fn with_pixel_ui_the_lock_starts_on_and_blocks_editing_a_palette_color() {
     h.type_into("R", "200");
     assert_eq!(h.primary().r, 200);
     assert_eq!(h.editor.sprite().palette, before);
-    // Desbloqueada: el botón se ve apretado y el mismo cambio edita la entrada #3.
-    h.click_at(h.node("Lock palette").center());
-    assert!(!h.editor.palette_locked);
-    assert_eq!(h.is_selected("Lock palette"), Some(false));
+    // Bloqueada se ve apretado (es un interruptor "Lock palette" prendido).
     let lock = h.node("Lock palette");
     assert_eq!(
         h.drawn_boxes("palette.button.active"),
@@ -857,6 +891,11 @@ fn with_pixel_ui_the_lock_starts_on_and_blocks_editing_a_palette_color() {
             vec2(23.0, 13.0)
         )]
     );
+    // Desbloqueada: el botón se ve normal, se anuncia apagado y el mismo cambio edita la #3.
+    h.click_at(h.node("Lock palette").center());
+    assert!(!h.editor.palette_locked);
+    assert_eq!(h.is_selected("Lock palette"), Some(false));
+    assert!(h.drawn_boxes("palette.button.active").is_empty());
     h.click_at(h.node("#3").center());
     h.type_into("R", "201");
     let edited = h.editor.sprite().palette.colors()[3];
@@ -906,14 +945,55 @@ fn with_pixel_ui_the_menu_button_opens_the_presets_and_palette_menu() {
 }
 
 #[test]
-fn with_pixel_ui_the_page_button_makes_a_new_palette() {
+fn with_pixel_ui_the_page_button_asks_for_a_new_palette_only_when_unlocked() {
     let mut h = Harness::new(true);
     let before = h.editor.sprite().palette.clone();
+    // Bloqueada: el botón está desactivado (apagado, con la ayuda de desbloquear) y no hace nada.
+    assert_eq!(h.is_disabled("New palette"), Some(true));
+    let icon = h.drawn("palette.icon.new")[0];
+    assert_ne!(h.mesh_tint(icon), Some(Color32::WHITE), "dimmed");
     h.click_at(h.node("New palette").center());
-    assert_eq!(h.editor.sprite().palette.colors(), &[Rgba::rgb(10, 20, 30)]);
-    assert!(h.has("#0") && !h.has("#1"));
-    h.editor.undo();
+    assert_eq!(h.action, None);
     assert_eq!(h.editor.sprite().palette, before);
+    // Desbloqueada: la pide a la app (que la hace, o pregunta en indexado).
+    h.click_at(h.node("Lock palette").center());
+    assert_eq!(h.is_disabled("New palette"), Some(false));
+    assert_eq!(h.mesh_tint(icon), Some(Color32::WHITE));
+    let new = h.node("New palette").center();
+    h.frame(vec![Event::PointerMoved(new)]);
+    h.press(new, PointerButton::Primary, true);
+    h.press(new, PointerButton::Primary, false);
+    assert_eq!(h.action, Some(panels::PaletteAction::NewPalette));
+    assert_eq!(h.editor.sprite().palette, before, "the app makes it");
+}
+
+#[test]
+fn with_pixel_ui_picking_a_swatch_switches_the_color_editor_to_that_color() {
+    let mut h = Harness::new(true);
+    h.click_at(h.node("Lock palette").center());
+    assert!(!h.editor.palette_locked);
+    // Con la mitad de abajo elegida, un clic en #3 vuelve a editar el primario y su entrada.
+    h.editor.editing_secondary = true;
+    h.frame(vec![]);
+    h.click_at(h.node("#3").center());
+    assert!(!h.editor.editing_secondary);
+    h.type_into("R", "201");
+    assert_eq!(h.editor.sprite().palette.colors()[3].r, 201);
+    assert_eq!(h.primary(), h.editor.sprite().palette.colors()[3]);
+    // Clic derecho en #5: el editor pasa al secundario y edita la #5.
+    let primary = h.editor.primary;
+    h.click_with(h.node("#5").center(), PointerButton::Secondary);
+    assert!(h.editor.editing_secondary);
+    h.type_into("R", "99");
+    let five = h.editor.sprite().palette.colors()[5];
+    assert_eq!(five.r, 99);
+    assert_eq!(h.editor.secondary, PixelValue::Rgba(five));
+    assert_eq!(h.editor.primary, primary);
+    // El Mask, con clic: vuelve al primario; con clic derecho, al secundario.
+    h.click_at(h.node("Mask").center());
+    assert!(!h.editor.editing_secondary);
+    h.click_with(h.node("Mask").center(), PointerButton::Secondary);
+    assert!(h.editor.editing_secondary);
 }
 
 #[test]
@@ -923,13 +1003,15 @@ fn with_pixel_ui_the_checker_button_toggles_the_mask() {
     h.click_at(h.node("Mask").center());
     assert!(h.editor.is_mask(h.editor.primary));
     assert_eq!(h.is_selected("Mask"), Some(true));
+    // Prendido, junto al candado (la paleta sigue bloqueada).
     let checker = h.node("Mask");
+    let lock = h.node("Lock palette");
     assert_eq!(
         h.drawn_boxes("palette.button.active"),
-        vec![Rect::from_min_size(
-            checker.min + vec2(1.0, 1.0),
-            vec2(22.0, 13.0)
-        )]
+        vec![
+            Rect::from_min_size(lock.min + vec2(1.0, 1.0), vec2(23.0, 13.0)),
+            Rect::from_min_size(checker.min + vec2(1.0, 1.0), vec2(22.0, 13.0)),
+        ]
     );
     h.click_at(h.node("Mask").center());
     assert_eq!(h.primary(), Rgba::rgb(10, 20, 30));

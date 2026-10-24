@@ -293,7 +293,7 @@ pub fn fit_title(
 }
 
 /// Las mallas de `shapes` multiplicadas por `tint`.
-fn tinted(shapes: Vec<Shape>, tint: Color32) -> Vec<Shape> {
+pub(crate) fn tinted(shapes: Vec<Shape>, tint: Color32) -> Vec<Shape> {
     if tint == Color32::WHITE {
         return shapes;
     }

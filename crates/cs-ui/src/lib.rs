@@ -853,6 +853,13 @@ impl ChimpApp {
             }
         };
         let pixel = self.pixel.skin().is_some();
+        if !pixel {
+            // Sin Pixel UI no hay caja de los colores: ninguna pestaña queda editando el
+            // secundario para cuando se vuelva a prender.
+            for doc in self.tabs.docs_mut(&mut self.doc) {
+                doc.editor.editing_secondary = false;
+            }
+        }
         let mut menu = egui::Panel::top("menu").show_separator_line(!pixel);
         if pixel {
             // Sin margen abajo y con `MENU_TEXT_TOP` arriba: las mayúsculas quedan en la fila

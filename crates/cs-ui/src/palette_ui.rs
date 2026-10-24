@@ -16,6 +16,7 @@ use crate::lospec_tab::CountKind;
 use crate::lospec_tab::LospecTab;
 use crate::palette_library::{Preset, PresetSource};
 use crate::panels::{self, PaletteAction};
+use crate::pixel_ui;
 use crate::platform::{self, FileFilter, OpenPurpose};
 
 const LOAD_FILTERS: &[FileFilter] = &[FileFilter {
@@ -152,6 +153,8 @@ pub enum Confirm {
         then_default: bool,
     },
     Delete(String),
+    /// "New palette" en un sprite indexado: los píxeles de los colores que se van cambian.
+    NewPalette,
 }
 
 /// Formato al guardar, según la extensión elegida (`.gpl` si no se reconoce).
@@ -189,6 +192,14 @@ impl ChimpApp {
             PaletteAction::Save => self.save_palette_file(),
             PaletteAction::SaveAsPreset => self.open_name_dialog(false),
             PaletteAction::SetAsDefault => self.set_current_as_default(),
+            // Bloqueada no se reemplaza; en indexado se pregunta antes (`Confirm::NewPalette`).
+            PaletteAction::NewPalette if self.doc.editor.palette_locked => {}
+            PaletteAction::NewPalette if self.doc.editor.needs_new_palette_confirmation() => {
+                self.palette_confirm = Some(Confirm::NewPalette);
+            }
+            PaletteAction::NewPalette => {
+                self.doc.editor.new_palette();
+            }
             PaletteAction::LoadDefault => {
                 let palette = self.palettes.default_palette();
                 self.doc.editor.apply_palette(palette);
@@ -468,19 +479,33 @@ impl ChimpApp {
                 format!("\"{name}\" will be removed from your presets."),
                 "Delete",
             ),
+            Confirm::NewPalette => ("New palette", NEW_PALETTE_QUESTION.to_owned(), "OK"),
         };
-        let mut result = None;
-        centered_dialog(title).show(ctx, |ui| {
-            ui.label(body);
-            ui.horizontal(|ui| {
-                if ui.button(ok).clicked() {
-                    result = Some(true);
-                }
-                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                    result = Some(false);
-                }
-            });
-        });
+        // "New palette" con Pixel UI va en el diálogo pixel, como "Unsaved changes".
+        let skin = matches!(confirm, Confirm::NewPalette)
+            .then(|| self.pixel.skin())
+            .flatten();
+        let mut result = match skin {
+            Some(skin) => pixel_confirm(ctx, skin, title, &body, ok),
+            None => {
+                let mut result = None;
+                centered_dialog(title).show(ctx, |ui| {
+                    ui.label(body);
+                    ui.horizontal(|ui| {
+                        if ui.button(ok).clicked() {
+                            result = Some(true);
+                        }
+                        if ui.button("Cancel").clicked() {
+                            result = Some(false);
+                        }
+                    });
+                });
+                result
+            }
+        };
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+            result = Some(false);
+        }
         match (result, confirm) {
             (None, confirm) => self.palette_confirm = Some(confirm),
             (Some(false), _) => {}
@@ -492,6 +517,9 @@ impl ChimpApp {
                     then_default,
                 },
             ) => self.store_preset(palette, comments, then_default),
+            (Some(true), Confirm::NewPalette) => {
+                self.doc.editor.new_palette();
+            }
             (Some(true), Confirm::Delete(name)) => {
                 if let Err(e) = self.palettes.delete(&name) {
                     self.show_message("Could not delete the preset", e);
@@ -499,6 +527,33 @@ impl ChimpApp {
             }
         }
     }
+}
+
+/// La pregunta de "New palette" en un sprite indexado.
+const NEW_PALETTE_QUESTION: &str = "Replace the palette? Pixels using removed colors will change.";
+
+/// Una confirmación con el skin (Pixel UI), como "Unsaved changes": la pregunta, `ok` y Cancel.
+/// Cerrar desde la barra de título es Cancel.
+fn pixel_confirm(
+    ctx: &egui::Context,
+    skin: &crate::skin::Skin,
+    title: &str,
+    body: &str,
+    ok: &str,
+) -> Option<bool> {
+    let id = egui::Id::new("new_palette");
+    let dialog = pixel_ui::pixel_dialog(ctx, skin, id, title, true, |ui| {
+        ui.vertical_centered(|ui| ui.label(body));
+        ui.add_space(6.0);
+        pixel_ui::pixel_buttons(ui, skin, &[ok, "Cancel"])
+            .iter()
+            .zip([true, false])
+            .find_map(|(response, ok)| response.clicked().then_some(ok))
+    });
+    if dialog.closed {
+        return Some(false);
+    }
+    dialog.inner
 }
 
 /// Diálogo fijo en el centro, como "Unsaved changes" (`file_actions.rs`).

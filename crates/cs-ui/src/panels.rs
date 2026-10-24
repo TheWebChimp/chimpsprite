@@ -1056,13 +1056,19 @@ pub(crate) fn mark_selected(ui: &egui::Ui, editor: &Editor, value: PixelValue, r
         .rect_stroke(rect, 0.0, Stroke::new(2.0, color), StrokeKind::Inside);
 }
 
-/// Clic elige `value` como color primario; clic derecho, como secundario.
-pub(crate) fn pick_on_click(editor: &mut Editor, response: &egui::Response, value: PixelValue) {
+/// Clic elige `value` como color primario; clic derecho, como secundario (`Editor::pick_color`).
+/// `entry`: el cuadrito de la paleta, si `value` sale de uno.
+pub(crate) fn pick_on_click(
+    editor: &mut Editor,
+    response: &egui::Response,
+    value: PixelValue,
+    entry: Option<u8>,
+) {
     if response.clicked() {
-        editor.primary = value;
+        editor.pick_color(value, false, entry);
     }
     if response.secondary_clicked() {
-        editor.secondary = value;
+        editor.pick_color(value, true, entry);
     }
 }
 
@@ -1111,6 +1117,8 @@ pub enum PaletteAction {
     SaveAsPreset,
     SetAsDefault,
     LoadDefault,
+    /// Una paleta nueva con el color primario (Pixel UI). En indexado se pide confirmación.
+    NewPalette,
     /// Solo escritorio: en web no hay carpeta que abrir.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     OpenFolder,
@@ -1204,7 +1212,7 @@ pub fn palette(
         let mask = editor.mask_value();
         let response = mask_swatch(ui, size).on_hover_text(MASK_HINT);
         mark_selected(ui, editor, mask, response.rect);
-        pick_on_click(editor, &response, mask);
+        pick_on_click(editor, &response, mask, None);
         let count = editor.sprite().palette.len().min(256);
         for i in 0..count {
             let index = i as u8;
@@ -1212,7 +1220,7 @@ pub fn palette(
             let color = to_color32(editor.sprite().palette.colors()[i]);
             let response = swatch(ui, color, size).on_hover_text(format!("#{i}"));
             mark_selected(ui, editor, value, response.rect);
-            pick_on_click(editor, &response, value);
+            pick_on_click(editor, &response, value, Some(index));
         }
     });
     ui.add_space(10.0);

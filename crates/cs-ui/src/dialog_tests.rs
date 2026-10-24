@@ -76,6 +76,7 @@ impl DialogHarness {
             app.update_canvas_size(&ctx);
             app.update_tilemap_dialogs(&ctx);
             app.show_dialogs(&ctx);
+            app.update_palette_windows(&ctx, false);
         });
         // Las texturas (fuentes y skin) no se suben a ninguna GPU.
         output.textures_delta.clear();
@@ -696,4 +697,106 @@ fn with_pixel_ui_a_reopened_dialog_starts_at_its_default_place() {
     h.app.request_close_tab(0);
     h.settle();
     assert_near(h.dialog_rect("unsaved_changes"), home, "centered again");
+}
+
+// --- "New palette" en un sprite indexado ---
+
+const REPLACE_PALETTE: &str = "Replace the palette? Pixels using removed colors will change.";
+
+/// Un sprite indexado con un píxel del color #5, la paleta desbloqueada y "New palette" pedida.
+fn new_palette_on_indexed(pixel_ui: bool) -> DialogHarness {
+    use cs_core::{ColorMode, LayerId, PixelValue, Sprite};
+    let mut h = DialogHarness::new(pixel_ui);
+    let sprite = Sprite::new(
+        8,
+        8,
+        ColorMode::Indexed {
+            transparent_index: 0,
+        },
+    );
+    let editor = &mut h.app.doc.editor;
+    *editor = crate::editor::Editor::with_sprite(sprite);
+    editor.execute(cs_commands::Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: vec![(1, 1, PixelValue::Index(5))],
+    });
+    editor.primary = PixelValue::Index(3);
+    editor.palette_locked = false;
+    h.app.view.palette_locked = false;
+    let ctx = h.ctx.clone();
+    h.app
+        .palette_action(&ctx, crate::panels::PaletteAction::NewPalette);
+    h.settle();
+    h
+}
+
+fn color_at_1_1(h: &DialogHarness) -> cs_core::Rgba {
+    cs_render::composite_pixel(h.app.doc.editor.sprite(), 0, 1, 1)
+}
+
+#[test]
+fn new_palette_on_an_indexed_sprite_asks_and_cancel_keeps_everything() {
+    for pixel_ui in [true, false] {
+        let mut h = new_palette_on_indexed(pixel_ui);
+        let palette = cs_core::Palette::db32();
+        assert!(
+            h.texts.iter().any(|t| t == REPLACE_PALETTE),
+            "pixel_ui {pixel_ui}: {:?}",
+            h.texts
+        );
+        h.button("OK");
+        h.button("Cancel");
+        assert_eq!(h.has_area("new_palette"), pixel_ui, "the pixel dialog");
+        if pixel_ui {
+            assert!(h.drew_piece("window") && h.drew_piece("button"));
+        }
+        assert_eq!(h.app.doc.editor.sprite().palette, palette, "not yet");
+        h.click("Cancel");
+        assert!(h.app.palette_confirm.is_none());
+        assert_eq!(h.app.doc.editor.sprite().palette, palette);
+        assert_eq!(color_at_1_1(&h), palette.colors()[5]);
+        assert!(!h.texts.iter().any(|t| t == REPLACE_PALETTE));
+        // Esc también cancela.
+        let ctx = h.ctx.clone();
+        h.app
+            .palette_action(&ctx, crate::panels::PaletteAction::NewPalette);
+        h.settle();
+        h.key(Key::Escape);
+        assert!(h.app.palette_confirm.is_none());
+        assert_eq!(h.app.doc.editor.sprite().palette, palette);
+    }
+}
+
+#[test]
+fn new_palette_on_an_indexed_sprite_ok_applies_and_undo_restores() {
+    for pixel_ui in [true, false] {
+        let mut h = new_palette_on_indexed(pixel_ui);
+        let palette = cs_core::Palette::db32();
+        h.click("OK");
+        assert!(h.app.palette_confirm.is_none());
+        assert_eq!(
+            h.app.doc.editor.sprite().palette.colors(),
+            &[palette.colors()[3]]
+        );
+        assert_eq!(color_at_1_1(&h), cs_core::Rgba::TRANSPARENT, "#5 is gone");
+        h.app.doc.editor.undo();
+        assert_eq!(h.app.doc.editor.sprite().palette, palette);
+        assert_eq!(color_at_1_1(&h), palette.colors()[5]);
+    }
+}
+
+#[test]
+fn new_palette_does_nothing_with_the_palette_locked() {
+    let mut h = new_palette_on_indexed(true);
+    h.click("Cancel");
+    h.app.doc.editor.palette_locked = true;
+    h.app.view.palette_locked = true;
+    let ctx = h.ctx.clone();
+    h.app
+        .palette_action(&ctx, crate::panels::PaletteAction::NewPalette);
+    h.settle();
+    assert!(h.app.palette_confirm.is_none());
+    assert!(!h.texts.iter().any(|t| t == REPLACE_PALETTE));
+    assert_eq!(h.app.doc.editor.sprite().palette, cs_core::Palette::db32());
 }

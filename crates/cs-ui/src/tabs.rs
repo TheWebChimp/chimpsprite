@@ -112,6 +112,14 @@ impl Tabs {
         (0..self.len()).map(|i| self.get(current, i)).collect()
     }
 
+    /// Todos los documentos, el activo (`current`) y los guardados en sus pestañas.
+    pub fn docs_mut<'a>(
+        &'a mut self,
+        current: &'a mut DocState,
+    ) -> impl Iterator<Item = &'a mut DocState> {
+        std::iter::once(current).chain(self.slots.iter_mut().flatten())
+    }
+
     pub fn infos(&self, current: &DocState) -> Vec<TabInfo> {
         (0..self.len())
             .map(|i| {
