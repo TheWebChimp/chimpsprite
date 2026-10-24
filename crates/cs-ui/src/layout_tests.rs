@@ -1827,3 +1827,148 @@ fn toggling_the_palette_lock_is_saved_with_the_view() {
     let saved: ViewSettings = eframe::get_value(&storage, crate::VIEW_KEY).expect("saved");
     assert!(!saved.palette_locked);
 }
+
+/// Arrastre con el botón principal de `from` a `to`, en 4 pasos.
+fn drag(h: &mut LayoutHarness, from: Pos2, to: Pos2) {
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, true)]);
+    for k in 1..=4 {
+        h.frame_with(vec![Event::PointerMoved(from.lerp(to, k as f32 / 4.0))]);
+    }
+    h.frame_with(vec![button(to, false)]);
+    h.frame();
+}
+
+impl LayoutHarness {
+    fn node(&self, label: &str) -> Rect {
+        self.nodes
+            .iter()
+            .find(|(l, _)| l == label)
+            .map(|(_, r)| *r)
+            .unwrap_or_else(|| panic!("no {label:?} in {:?}", self.nodes))
+    }
+
+    /// Las piezas `name` dibujadas, con las partes de un 9-slice (que se tocan) unidas.
+    fn drawn_boxes(&self, name: &str) -> Vec<Rect> {
+        let mut boxes: Vec<Rect> = Vec::new();
+        for rect in self.drawn(name) {
+            match boxes.iter_mut().find(|b| b.intersects(rect)) {
+                Some(b) => *b = b.union(rect),
+                None => boxes.push(rect),
+            }
+        }
+        boxes
+    }
+}
+
+/// Con Pixel UI, el editor de color entero: dentro del panel derecho y arriba de la línea de
+/// tiempo, hasta el borde de abajo de la barra del alfa.
+fn assert_color_editor_whole(h: &LayoutHarness) {
+    let panel = h.panel("palette");
+    let timeline = h.panel("timeline");
+    let bars = h.drawn_boxes("picker.bars");
+    assert_eq!(bars.len(), 1, "{bars:?}");
+    let bars = bars[0];
+    let alpha = h.node("Alpha");
+    assert!(bars.contains_rect(alpha), "{alpha:?} in {bars:?}");
+    assert!(
+        bars.bottom() <= timeline.top() && bars.bottom() <= panel.bottom(),
+        "{bars:?} above {timeline:?}, in {panel:?}"
+    );
+    for label in [
+        "Copy color",
+        "R",
+        "G",
+        "B",
+        "A",
+        "Hex",
+        "Saturation and value",
+        "Hue",
+    ] {
+        let rect = h.node(label);
+        assert!(panel.contains_rect(rect), "{label} {rect:?} in {panel:?}");
+    }
+}
+
+#[test]
+fn with_pixel_ui_the_color_editor_is_whole_above_the_timeline() {
+    let h = LayoutHarness::new(pixel_ui(), true);
+    assert!(h.app.view.timeline);
+    assert_eq!(h.screen().size(), Vec2::new(1200.0, 800.0));
+    assert_color_editor_whole(&h);
+    // La caja de la paleta, la de fábrica (207); el cuadro S/V, de 64.
+    assert_eq!(h.drawn_boxes("palette.box")[0].height(), 207.0);
+    assert_eq!(h.node("Saturation and value").height(), 64.0);
+    // Aunque lo guardado no entre, o la ventana sea baja: se achica la paleta, no el editor.
+    let tall = ViewSettings {
+        palette_height: 5000.0,
+        ..pixel_ui()
+    };
+    let h = LayoutHarness::new(tall, true);
+    assert_color_editor_whole(&h);
+    let short = LayoutHarness::with_tabs_in(&[("Short", false)], Some(0), Vec2::new(1200.0, 560.0));
+    assert_color_editor_whole(&short);
+    let pbox = short.drawn_boxes("palette.box")[0];
+    assert!(pbox.height() < 207.0 && pbox.height() >= 33.0, "{pbox:?}");
+}
+
+#[test]
+fn with_pixel_ui_dragging_the_palette_splitter_changes_its_height_and_is_saved() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let pbox = h.drawn_boxes("palette.box")[0];
+    let split = h.node("Palette height");
+    assert_eq!(split.top(), pbox.bottom());
+    drag(
+        &mut h,
+        split.center(),
+        split.center() + Vec2::new(0.0, -40.0),
+    );
+    assert_eq!(h.drawn_boxes("palette.box")[0].height(), 167.0);
+    assert_eq!(h.app.view.palette_height, 167.0);
+    assert_color_editor_whole(&h);
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(&mut h.app, &mut storage);
+    let saved: ViewSettings = eframe::get_value(&storage, crate::VIEW_KEY).expect("saved");
+    assert_eq!(saved.palette_height, 167.0);
+    // Abajo de más: la caja llega hasta donde el editor sigue entero.
+    let split = h.node("Palette height");
+    drag(
+        &mut h,
+        split.center(),
+        split.center() + Vec2::new(0.0, 600.0),
+    );
+    assert!(h.drawn_boxes("palette.box")[0].height() > 207.0);
+    assert_color_editor_whole(&h);
+}
+
+#[test]
+fn with_pixel_ui_the_right_panel_can_not_be_narrower_than_its_minimum() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let panel = h.panel("palette");
+    let edge = Pos2::new(panel.left(), panel.center().y);
+    drag(&mut h, edge, edge + Vec2::new(500.0, 0.0));
+    let narrow = h.panel("palette");
+    assert!(narrow.width() < panel.width(), "{panel:?} -> {narrow:?}");
+    // 120 de la fila de RGBA, 16 de márgenes y la línea contra el lienzo.
+    assert_eq!(narrow.width(), 137.0, "{narrow:?}");
+    for label in ["Copy color", "R", "G", "B", "A", "Hex", "Mask"] {
+        let rect = h.node(label);
+        assert!(narrow.contains_rect(rect), "{label} {rect:?} in {narrow:?}");
+    }
+    assert_color_editor_whole(&h);
+}
+
+#[test]
+fn without_pixel_ui_the_right_panel_has_no_splitter_and_keeps_its_scroll() {
+    let h = LayoutHarness::editor();
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Palette height"));
+    assert_eq!(h.app.view.palette_height, 207.0, "untouched");
+    // El selector de egui, en el scroll de siempre.
+    assert!(h.texts.iter().any(|(t, _)| t == "Color"));
+}

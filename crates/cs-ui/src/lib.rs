@@ -991,24 +991,36 @@ impl ChimpApp {
         let mut palette_action = None;
         // El candado de la paleta es de la app (se guarda con la vista), no de cada pestaña.
         self.doc.editor.palette_locked = self.view.palette_locked;
-        let open = egui::Panel::right("palette")
-            .default_size(220.0)
+        let tiles = self.doc.editor.tiles_mode();
+        let mut panel = egui::Panel::right("palette").default_size(220.0);
+        if let Some(skin) = skin {
+            // Con Pixel UI no se achica más que la fila más ancha que no se parte, con los
+            // márgenes del panel.
+            panel = panel.min_size(color_panel::panel_min_size(ui, skin));
+        }
+        let open = panel
             .show(ui, |ui| {
+                // Con un diálogo abierto, el menú de paleta no abre otro encima.
+                let palette = |ui: &mut egui::Ui, editor: &mut editor::Editor, height: &mut f32| {
+                    panels::palette(ui, editor, !modal, skin, height).filter(|_| !modal)
+                };
+                // Con Pixel UI, la paleta y el editor de color van arriba, fuera del scroll: el
+                // editor se ve siempre entero (si falta lugar, se achica la caja de la paleta).
+                let fixed = skin.is_some() && !tiles;
+                if fixed {
+                    palette_action =
+                        palette(ui, &mut self.doc.editor, &mut self.view.palette_height);
+                }
                 egui::ScrollArea::vertical()
                     .show(ui, |ui| {
-                        if self.doc.editor.tiles_mode() {
+                        if tiles {
                             panels::tileset(ui, &mut self.doc.editor, &mut self.doc.tile_thumbs);
                             // El selector de color sigue a mano (lo usa 2B).
                             ui.add_space(10.0);
                             panels::color_picker(ui, &mut self.doc.editor, skin);
-                        } else {
-                            // Con un diálogo abierto, el menú de paleta no abre otro encima.
-                            if let Some(action) =
-                                panels::palette(ui, &mut self.doc.editor, !modal, skin)
-                                && !modal
-                            {
-                                palette_action = Some(action);
-                            }
+                        } else if !fixed {
+                            palette_action =
+                                palette(ui, &mut self.doc.editor, &mut self.view.palette_height);
                         }
                         ui.add_space(12.0);
                         let open = ui

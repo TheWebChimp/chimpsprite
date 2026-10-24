@@ -7,6 +7,7 @@ use eframe::egui::{
     StrokeKind, TextStyle, Ui, Vec2, pos2, vec2,
 };
 use eframe::emath::GuiRounding as _;
+use std::ops::Range;
 
 use crate::skin::{IRect, Piece, Skin, SkinColors, WidgetState, nine_slice};
 use crate::tab_bar;
@@ -878,6 +879,38 @@ fn etched(dark: Rect, light: Rect, colors: &SkinColors, pixels_per_point: f32) -
     Shape::mesh(mesh)
 }
 
+/// Reparte en filas, en orden, los grupos de una barra pixel que no se parten (botones, tiras de
+/// campos): cada fila lleva los que entran en `available`, y el que no entra pasa a la fila
+/// siguiente.
+/// - `widths[i]`: el ancho del grupo `i` solo en su fila, con sus dos puntas.
+/// - `joins[i]` (uno menos que `widths`): cuánto cambia el ancho de la fila cuando los grupos `i`
+///   e `i + 1` van juntos. El aire entre los dos, o un número negativo si al juntarse pierden sus
+///   puntas y comparten una línea.
+///
+/// Un grupo más ancho que `available` va solo en su fila (no hay dónde partirlo). Devuelve las
+/// filas como rangos de índices de `widths`.
+pub(crate) fn wrap_rows(available: f32, widths: &[f32], joins: &[f32]) -> Vec<Range<usize>> {
+    debug_assert_eq!(joins.len() + 1, widths.len().max(1));
+    let mut rows = Vec::new();
+    let mut start = 0;
+    let mut used = 0.0;
+    for (i, &width) in widths.iter().enumerate() {
+        if i > start && used + joins[i - 1] + width > available {
+            rows.push(start..i);
+            start = i;
+        }
+        used = if i == start {
+            width
+        } else {
+            used + joins[i - 1] + width
+        };
+    }
+    if start < widths.len() {
+        rows.push(start..widths.len());
+    }
+    rows
+}
+
 /// Los rects de color liso de una forma (las mallas, de a cuatro vértices), para los tests.
 #[cfg(test)]
 pub(crate) fn colored_rects(shape: &Shape) -> Vec<(Color32, Rect)> {
@@ -1498,5 +1531,23 @@ mod tests {
             assert_eq!(hover, normal);
             assert_eq!(down - normal, vec2(0.0, 1.0), "at {ppp}");
         }
+    }
+
+    #[test]
+    fn wrap_rows_keeps_each_group_whole_and_moves_what_does_not_fit_to_the_next_row() {
+        // Como el encabezado del editor de color: copiar (25), RGBA (116) y hex (46), con 2 de
+        // aire entre los dos primeros y 4 menos al juntar RGBA con el hex (comparten la punta).
+        let widths = [25.0, 116.0, 46.0];
+        let joins = [2.0, -4.0];
+        // Todo junto mide 25 + 2 + 116 - 4 + 46 = 185.
+        assert_eq!(wrap_rows(185.0, &widths, &joins), vec![0..3]);
+        assert_eq!(wrap_rows(400.0, &widths, &joins), vec![0..3]);
+        assert_eq!(wrap_rows(184.0, &widths, &joins), vec![0..2, 2..3]);
+        assert_eq!(wrap_rows(143.0, &widths, &joins), vec![0..2, 2..3]);
+        assert_eq!(wrap_rows(142.0, &widths, &joins), vec![0..1, 1..2, 2..3]);
+        // Más angosto que un grupo: igual va entero, solo en su fila.
+        assert_eq!(wrap_rows(50.0, &widths, &joins), vec![0..1, 1..2, 2..3]);
+        assert_eq!(wrap_rows(10.0, &[25.0], &[]), vec![0..1]);
+        assert!(wrap_rows(10.0, &[], &[]).is_empty());
     }
 }

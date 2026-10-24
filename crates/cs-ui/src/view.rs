@@ -40,6 +40,9 @@ pub struct ViewSettings {
     /// El candado de la paleta (Pixel UI): bloqueada, sus colores no se editan uno por uno
     /// (`Editor::palette_locked`). Bloqueada de fábrica.
     pub palette_locked: bool,
+    /// El alto de la caja de la paleta (Pixel UI), elegido con la división que la separa del
+    /// editor de color. De fábrica, el del diseño; el panel lo achica si no entra.
+    pub palette_height: f32,
 }
 
 impl Default for ViewSettings {
@@ -63,6 +66,7 @@ impl Default for ViewSettings {
             pixel_ui: true,
             ui_scale: 2,
             palette_locked: true,
+            palette_height: crate::color_panel::PALETTE_DEFAULT_HEIGHT,
         }
     }
 }
@@ -234,6 +238,21 @@ mod tests {
         let back: ViewSettings =
             serde_json::from_str(&serde_json::to_string(&open).unwrap()).unwrap();
         assert_eq!(back, open);
+    }
+
+    #[test]
+    fn the_palette_height_is_saved_and_starts_at_the_design_one() {
+        assert_eq!(ViewSettings::default().palette_height, 207.0);
+        // Lo guardado antes de que existiera la división: el de fábrica.
+        let v: ViewSettings = serde_json::from_str(r#"{"grid":true}"#).unwrap();
+        assert_eq!(v.palette_height, 207.0);
+        let tall = ViewSettings {
+            palette_height: 260.0,
+            ..Default::default()
+        };
+        let back: ViewSettings =
+            serde_json::from_str(&serde_json::to_string(&tall).unwrap()).unwrap();
+        assert_eq!(back.palette_height, 260.0);
     }
 
     #[test]

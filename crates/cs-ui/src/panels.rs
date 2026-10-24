@@ -1139,12 +1139,15 @@ pub fn palette_strip(ui: &mut egui::Ui, palette: &Palette, max: usize, size: f32
 }
 
 /// `menus`: con un diálogo abierto, Presets ⏷ y … quedan desactivados. Con Pixel UI (`skin`), la
-/// grilla de la paleta y el editor de color son los del diseño (`color_panel`).
+/// grilla de la paleta y el editor de color son los del diseño (`color_panel`), con la caja de
+/// `palette_height` de alto (lo que se elige con la división). Van fuera del scroll del panel: el
+/// editor se ve siempre entero.
 pub fn palette(
     ui: &mut egui::Ui,
     editor: &mut Editor,
     menus: bool,
     skin: Option<&Skin>,
+    palette_height: &mut f32,
 ) -> Option<PaletteAction> {
     if let Some(skin) = skin {
         // Con Pixel UI, los colores primario y secundario (y el intercambio) van en la caja de
@@ -1153,9 +1156,7 @@ pub fn palette(
         ui.add_space(6.0);
         let action = color_panel::palette_buttons(ui, editor, skin, menus);
         ui.add_space(color_panel::BUTTONS_GAP - ui.spacing().item_spacing.y);
-        color_panel::palette_grid(ui, editor, skin);
-        ui.add_space(color_panel::EDITOR_GAP - ui.spacing().item_spacing.y);
-        color_picker(ui, editor, Some(skin));
+        color_panel::palette_and_editor(ui, editor, skin, palette_height);
         return action;
     }
     ui.add_space(6.0);
@@ -1232,7 +1233,7 @@ pub fn palette(
 pub(crate) const INDEXED_HINT: &str = "Indexed sprite: colors come from the palette.";
 
 /// Lado máximo del cuadro del selector de color, en puntos. Con Pixel UI, el ancho máximo del
-/// editor (su cuadro S/V mide 86 de alto).
+/// editor (su cuadro S/V mide 64 de alto).
 pub(crate) const COLOR_PICKER_MAX: f32 = 240.0;
 
 /// Selector de color libre (RGBA): edita el color primario. Con Pixel UI (`skin`), el editor del

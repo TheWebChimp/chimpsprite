@@ -18,12 +18,17 @@ fn test_palette() -> Palette {
     )
 }
 
-/// El panel derecho como en la app (`lib.rs`): la paleta y el editor de color en el scroll del
-/// panel. El reloj avanza 50 ms por frame.
+/// El panel derecho como en la app (`lib.rs`): con Pixel UI, la paleta y el editor de color
+/// arriba, fuera del scroll del panel; sin Pixel UI, en el scroll. El reloj avanza 50 ms por
+/// frame.
 struct Harness {
     ctx: egui::Context,
     editor: Editor,
     skin: Option<Skin>,
+    /// El ancho del panel con sus márgenes (`None`: el de fábrica, que crece con lo de adentro).
+    width: Option<f32>,
+    /// El alto de la caja de la paleta elegido con la división (`ViewSettings::palette_height`).
+    palette_height: f32,
     time: f64,
     nodes: Vec<(String, Rect)>,
     shapes: Vec<egui::epaint::ClippedShape>,
@@ -51,6 +56,8 @@ impl Harness {
             ctx,
             editor,
             skin,
+            width: None,
+            palette_height: crate::color_panel::PALETTE_DEFAULT_HEIGHT,
             time: 0.0,
             nodes: Vec::new(),
             shapes: Vec::new(),
@@ -72,15 +79,10 @@ impl Harness {
         };
         let editor = &mut self.editor;
         let skin = self.skin.as_ref();
+        let (width, height) = (self.width, &mut self.palette_height);
         let mut action = None;
         let mut output = self.ctx.run_ui(input, |ui| {
-            egui::Panel::right("palette")
-                .default_size(220.0)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        action = panels::palette(ui, editor, true, skin);
-                    });
-                });
+            action = right_panel(ui, editor, skin, width, height);
         });
         self.action = action;
         output.textures_delta.clear();
@@ -249,6 +251,32 @@ impl Harness {
     }
 }
 
+/// El panel derecho de la app, de `width` de ancho (con sus márgenes) si se pide.
+fn right_panel(
+    ui: &mut egui::Ui,
+    editor: &mut Editor,
+    skin: Option<&Skin>,
+    width: Option<f32>,
+    palette_height: &mut f32,
+) -> Option<panels::PaletteAction> {
+    let mut panel = egui::Panel::right("palette").default_size(220.0);
+    if let Some(width) = width {
+        panel = panel.exact_size(width);
+    }
+    panel
+        .show(ui, |ui| match skin {
+            Some(_) => panels::palette(ui, editor, true, skin, palette_height),
+            None => {
+                egui::ScrollArea::vertical()
+                    .show(ui, |ui| {
+                        panels::palette(ui, editor, true, skin, palette_height)
+                    })
+                    .inner
+            }
+        })
+        .inner
+}
+
 fn nodes(output: &egui::FullOutput) -> Vec<(String, Rect)> {
     let Some(update) = &output.platform_output.accesskit_update else {
         return Vec::new();
@@ -327,12 +355,11 @@ fn with_pixel_ui_the_swatches_are_the_design_cells_inside_the_palette_box() {
     let boxes = h.drawn_boxes("palette.box");
     assert_eq!(boxes.len(), 1, "{boxes:?}");
     let pbox = boxes[0];
-    // La caja del diseño mide 207 de alto (x 784..972, y 120..326).
-    assert!(pbox.height() >= 207.0, "{pbox:?}");
-    // El editor, 5 filas debajo de la caja (y 327..331 del diseño), con el botón de copiar 2 px
-    // adentro.
+    // De fábrica, la caja del diseño: 207 de alto (x 784..972, y 120..326).
+    assert_eq!(pbox.height(), 207.0, "{pbox:?}");
+    // El editor, debajo de la división de 6 filas, con el botón de copiar 2 px adentro.
     let copy = h.drawn("picker.copy")[0];
-    assert_eq!(copy.min, pos2(pbox.left() + 2.0, pbox.bottom() + 5.0));
+    assert_eq!(copy.min, pos2(pbox.left() + 2.0, pbox.bottom() + 6.0));
     // Los 21 colores: cuadritos de 13×13 (borde de 1 compartido), uno cada 12, desde 4 px
     // adentro de la caja (el Mask es el botón del damero, arriba).
     let cells: Vec<Rect> = (0..21).map(|i| h.node(&format!("#{i}"))).collect();
@@ -500,14 +527,23 @@ fn with_pixel_ui_dragging_in_the_sv_square_changes_s_and_v_and_the_cursor_follow
     let mut h = Harness::new(true);
     h.set_primary(Rgba::rgb(255, 0, 0));
     let sv = h.node("Saturation and value");
-    // El cuadro del diseño: 86 de alto, 3 px adentro de su caja; el ancho, el del panel con el
-    // máximo del selector.
-    assert_eq!(sv.height(), 86.0);
+    // El cuadro: 64 de alto (86 en el diseño), 3 px adentro de su caja; el ancho, el del panel
+    // con el máximo del selector.
+    assert_eq!(sv.height(), 64.0);
     assert!(sv.width() <= panels::COLOR_PICKER_MAX, "{sv:?}");
     let sv_box = h.drawn_boxes("picker.sv")[0];
     assert_eq!(sv.min, sv_box.min + vec2(3.0, 3.0));
+    // La caja se estira a 70 (3 arriba, el cuadro y 3 abajo) y las barras siguen como antes,
+    // pegadas debajo: 31 de alto, con el tono y el alfa de 13.
+    assert_eq!(sv_box.height(), 70.0, "{sv_box:?}");
+    let bars_box = h.drawn_boxes("picker.bars")[0];
+    assert_eq!(bars_box.top(), sv_box.bottom());
+    assert_eq!(bars_box.height(), 31.0);
+    assert_eq!(h.node("Hue").height(), 13.0);
+    assert_eq!(h.node("Alpha").height(), 13.0);
+    assert_eq!(h.node("Hue").top(), bars_box.top() + 2.0);
     // Al medio: la mitad de saturación y de brillo, el mismo tono.
-    let p = sv.min + vec2(91.5, 43.5);
+    let p = sv.min + vec2(91.5, 31.5);
     h.frame(vec![Event::PointerMoved(p)]);
     h.press(p, PointerButton::Primary, true);
     let picked = hsv(h.primary());
@@ -786,14 +822,9 @@ impl Harness {
         };
         let editor = &mut self.editor;
         let skin = self.skin.as_ref();
+        let (width, height) = (self.width, &mut self.palette_height);
         self.ctx.run_ui(input, |ui| {
-            egui::Panel::right("palette")
-                .default_size(220.0)
-                .show(ui, |ui| {
-                    egui::ScrollArea::vertical().show(ui, |ui| {
-                        panels::palette(ui, editor, true, skin);
-                    });
-                });
+            right_panel(ui, editor, skin, width, height);
         })
     }
 }
@@ -1019,4 +1050,285 @@ fn with_pixel_ui_the_checker_button_toggles_the_mask() {
     // Clic derecho: el Mask como secundario.
     h.click_with(h.node("Mask").center(), PointerButton::Secondary);
     assert!(h.editor.is_mask(h.editor.secondary));
+}
+
+impl Harness {
+    /// Con Pixel UI y el panel de `width` de ancho (con sus márgenes).
+    fn with_width(width: f32) -> Self {
+        let mut h = Self::new(true);
+        h.width = Some(width);
+        h.set_primary(Rgba::new(10, 20, 30, 200));
+        h.frame(vec![]);
+        h
+    }
+
+    /// Arrastre con el botón principal desde `from`, `delta` en 4 pasos.
+    fn drag_by(&mut self, from: Pos2, delta: Vec2) {
+        self.frame(vec![Event::PointerMoved(from)]);
+        self.press(from, PointerButton::Primary, true);
+        let mut at = from;
+        for _ in 0..4 {
+            at += delta / 4.0;
+            self.frame(vec![Event::PointerMoved(at)]);
+        }
+        self.press(at, PointerButton::Primary, false);
+        self.frame(vec![]);
+    }
+
+    /// La caja de la paleta (a todo el ancho de la columna).
+    fn palette_box(&self) -> Rect {
+        let boxes = self.drawn_boxes("palette.box");
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        boxes[0]
+    }
+}
+
+/// Las partes del encabezado: copiar, R, G, B, A y el hex.
+const HEADER: [&str; 6] = ["Copy color", "R", "G", "B", "A", "Hex"];
+
+/// Nada del encabezado pasa de los bordes de la columna (los de la caja de la paleta) y se ven
+/// los cuatro números y el hex, cada uno adentro de su tramo.
+fn assert_header_fits(h: &Harness) {
+    let column = h.palette_box();
+    for label in HEADER {
+        let rect = h.node(label);
+        assert!(
+            rect.left() >= column.left() && rect.right() <= column.right(),
+            "{label} {rect:?} in {column:?}"
+        );
+    }
+    for piece in [
+        "picker.copy",
+        "channel.r",
+        "channel.g",
+        "channel.b",
+        "channel.a",
+        "channel.hex",
+        "channel.sep",
+    ] {
+        for rect in h.drawn(piece) {
+            assert!(
+                rect.left() >= column.left() && rect.right() <= column.right(),
+                "{piece} {rect:?} in {column:?}"
+            );
+        }
+    }
+    for (label, value) in [("R", "10"), ("G", "20"), ("B", "30"), ("A", "200")] {
+        let (_, ink) = h.text(value);
+        let segment = h.node(label);
+        assert!(segment.contains_rect(ink), "{value} {ink:?} in {segment:?}");
+    }
+    let (_, ink) = h.text("#0a141ec8");
+    let hex = h.drawn_boxes("channel.hex")[0];
+    assert!(
+        hex.contains_rect(ink) && ink.right() <= column.right() - 2.0,
+        "{ink:?} in {hex:?}"
+    );
+}
+
+#[test]
+fn with_pixel_ui_a_wide_panel_keeps_the_header_in_one_row_as_in_the_design() {
+    for width in [220.0, 400.0] {
+        let h = Harness::with_width(width);
+        assert_header_fits(&h);
+        let top = h.node("Copy color").top();
+        for label in &HEADER[..5] {
+            assert_eq!(h.node(label).top(), top, "{label} at {width}");
+        }
+        assert_eq!(h.drawn_boxes("channel.hex")[0].top(), top, "at {width}");
+        // Las 4 líneas entre tramos y sin puntas sueltas.
+        assert_eq!(h.drawn("channel.sep").len(), 4, "at {width}");
+        assert_eq!(h.drawn("channel.cap.l"), vec![], "at {width}");
+        assert_eq!(h.drawn("channel.cap.r"), vec![], "at {width}");
+        // El cuadro S/V, 3 filas debajo de la tira (19 desde arriba, como en el diseño).
+        let sv_box = h.drawn_boxes("picker.sv")[0];
+        assert_eq!(sv_box.top(), top + 19.0, "at {width}");
+    }
+}
+
+#[test]
+fn with_pixel_ui_a_narrow_panel_puts_the_hex_on_its_own_row() {
+    let h = Harness::with_width(180.0);
+    let column = h.palette_box();
+    // Todo junto (copiar, RGBA y un hex con alfa) no entra.
+    assert!(column.width() < 190.0, "{column:?}");
+    assert_header_fits(&h);
+    let copy = h.node("Copy color");
+    let r = h.drawn_boxes("channel.r")[0];
+    let a_end = h.node("A").right();
+    // Arriba, copiar y RGBA como en el diseño, cerrado con la punta derecha y sin la línea
+    // contra el hex.
+    assert_eq!(r.min, pos2(copy.right() + 2.0, copy.top()));
+    assert_eq!(h.drawn("channel.sep").len(), 3);
+    assert_eq!(
+        h.drawn("channel.cap.r"),
+        vec![Rect::from_min_size(
+            pos2(a_end, copy.top()),
+            vec2(2.0, 16.0)
+        )]
+    );
+    // 3 filas más abajo, el hex con su punta izquierda a 2 px del borde, hasta 2 px antes del
+    // otro.
+    let row = copy.top() + 16.0 + 3.0;
+    assert_eq!(
+        h.drawn("channel.cap.l"),
+        vec![Rect::from_min_size(
+            pos2(column.left() + 2.0, row),
+            vec2(3.0, 16.0)
+        )]
+    );
+    let hex = h.drawn_boxes("channel.hex")[0];
+    assert_eq!(hex.min, pos2(column.left() + 5.0, row));
+    assert_eq!(hex.right(), column.right() - 2.0);
+    let sv_box = h.drawn_boxes("picker.sv")[0];
+    assert_eq!(sv_box.top(), row + 19.0);
+}
+
+#[test]
+fn with_pixel_ui_a_narrower_panel_gives_each_group_its_own_row() {
+    let mut h = Harness::with_width(145.0);
+    let column = h.palette_box();
+    // Ni copiar con RGBA entra.
+    assert!(column.width() < 147.0, "{column:?}");
+    assert_header_fits(&h);
+    let copy = h.node("Copy color");
+    assert_eq!(copy.left(), column.left() + 2.0);
+    let r = h.drawn_boxes("channel.r")[0];
+    // RGBA entero en la segunda fila, a 2 px del borde.
+    assert_eq!(r.min, pos2(column.left() + 2.0, copy.top() + 19.0));
+    for label in ["G", "B", "A"] {
+        assert_eq!(h.node(label).top(), r.top(), "{label}");
+    }
+    assert_eq!(h.drawn("channel.sep").len(), 3);
+    assert_eq!(h.drawn("channel.cap.r").len(), 1);
+    // El hex en la tercera.
+    let hex = h.drawn_boxes("channel.hex")[0];
+    assert_eq!(hex.top(), copy.top() + 38.0);
+    assert_eq!(
+        h.drawn("channel.cap.l")[0].min,
+        pos2(column.left() + 2.0, hex.top())
+    );
+    let sv_box = h.drawn_boxes("picker.sv")[0];
+    assert_eq!(sv_box.top(), hex.top() + 19.0);
+    // Los canales se siguen arrastrando en su fila.
+    let a = h.node("A");
+    h.drag(a.center(), -40.0);
+    assert!(h.primary().a < 200, "{:?}", h.primary());
+}
+
+#[test]
+fn with_pixel_ui_the_minimum_width_fits_the_rgba_group_and_the_top_buttons() {
+    let mut h = Harness::new(true);
+    let skin = h.skin.take().unwrap();
+    let (mut min, mut panel) = (0.0, 0.0);
+    let _ = h.ctx.run_ui(RawInput::default(), |ui| {
+        min = crate::color_panel::min_width(ui, &skin);
+        panel = crate::color_panel::panel_min_size(ui, &skin);
+    });
+    h.skin = Some(skin);
+    // 2 + la punta de R (3) + 4 tramos de 27 + 3 líneas + la punta derecha (2) + 2.
+    assert_eq!(min, 120.0);
+    // Con los márgenes del panel (8 de cada lado) y la línea contra el lienzo.
+    assert_eq!(panel, 137.0);
+    // En ese ancho, todo se ve.
+    h.width = Some(panel);
+    h.set_primary(Rgba::new(10, 20, 30, 200));
+    h.frame(vec![]);
+    assert_eq!(h.palette_box().width(), min);
+    assert_header_fits(&h);
+    let column = h.palette_box();
+    let mask = h.node("Mask");
+    assert!(
+        mask.right() <= column.right() - 2.0,
+        "the checker button {mask:?}"
+    );
+    assert!(h.node("New palette").right() < h.node("Mask").left());
+}
+
+#[test]
+fn with_pixel_ui_the_splitter_changes_the_height_of_the_palette() {
+    let mut h = Harness::new(true);
+    let pbox = h.palette_box();
+    let split = h.node("Palette height");
+    // La división: las 6 filas entre la caja y el editor, a todo el ancho, con el separador
+    // grabado en el medio.
+    assert_eq!(
+        split,
+        Rect::from_min_size(pbox.left_bottom(), vec2(pbox.width(), 6.0))
+    );
+    let colors = *h.skin.as_ref().unwrap().colors();
+    let rects = h.colored_rects();
+    for (color, y) in [(colors.canvas, 2.0), (colors.highlight, 3.0)] {
+        let line = Rect::from_min_size(split.min + vec2(0.0, y), vec2(split.width(), 1.0));
+        assert!(rects.contains(&(color, line)), "{line:?}");
+    }
+    // Abajo 30: la caja crece y el editor la sigue.
+    h.drag_by(split.center(), vec2(0.0, 30.0));
+    assert_eq!(h.palette_box().height(), 237.0);
+    assert_eq!(h.palette_height, 237.0);
+    assert_eq!(
+        h.drawn("picker.copy")[0].top(),
+        h.palette_box().bottom() + 6.0
+    );
+    // Arriba de más: 2 filas de cuadritos (4 + 2 × 12 + 1 + 4).
+    let split = h.node("Palette height");
+    h.drag_by(split.center(), vec2(0.0, -400.0));
+    assert_eq!(h.palette_box().height(), 33.0);
+    assert_eq!(h.palette_height, 33.0);
+    // Abajo de más: el editor queda entero en el panel (800 de alto).
+    let split = h.node("Palette height");
+    h.drag_by(split.center(), vec2(0.0, 2000.0));
+    let alpha = h.node("Alpha");
+    let bars = h.drawn_boxes("picker.bars")[0];
+    assert!(
+        bars.bottom() <= 800.0 && alpha.bottom() < bars.bottom(),
+        "{bars:?}"
+    );
+    assert!(
+        bars.bottom() >= 780.0,
+        "the palette took the rest: {bars:?}"
+    );
+}
+
+#[test]
+fn with_pixel_ui_colors_that_do_not_fit_scroll_inside_the_palette_box() {
+    let mut h = Harness::new(true);
+    let palette = Palette::new((0..120u8).map(|i| Rgba::rgb(i, i, i)).collect());
+    assert!(h.editor.apply_palette(palette));
+    h.palette_height = 33.0;
+    h.frame(vec![]);
+    h.frame(vec![]);
+    let pbox = h.palette_box();
+    assert_eq!(pbox.height(), 33.0);
+    let first = h.node("#0");
+    assert_eq!(first.min, pbox.min + vec2(4.0, 4.0));
+    // Lo que no entra queda recortado adentro de las líneas de la caja.
+    let inside = h.node("#60").shrink(1.0);
+    let clip = h
+        .shapes
+        .iter()
+        .find(|c| matches!(&c.shape, egui::Shape::Rect(r) if r.rect == inside))
+        .map(|c| c.clip_rect)
+        .expect("drawn");
+    assert!(clip.bottom() <= pbox.bottom() - 3.0, "{clip:?}");
+    // Con la rueda, se desplazan adentro.
+    h.frame(vec![Event::PointerMoved(pbox.center())]);
+    h.frame(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: Vec2::new(0.0, -24.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Default::default(),
+    }]);
+    for _ in 0..20 {
+        h.frame(vec![]);
+    }
+    let moved = h.drawn("palette.swatch")[0];
+    assert!(moved.top() < first.top(), "{moved:?} vs {first:?}");
+    assert_eq!(h.palette_box(), pbox, "the box stays");
+}
+
+#[test]
+fn without_pixel_ui_there_is_no_splitter() {
+    let h = Harness::new(false);
+    assert!(!h.has("Palette height"));
 }

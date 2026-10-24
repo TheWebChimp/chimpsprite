@@ -3,11 +3,15 @@
 //! son píxeles del diseño, que con la escala entera de Pixel UI son puntos:
 //!
 //! - **Paleta** (y 120..326): la caja `palette.box` (9-slice, transparente adentro) de todo el
-//!   ancho y al menos 207 de alto. Los cuadritos empiezan 4 px adentro, uno cada 12: cada uno es
+//!   ancho y 207 de alto de fábrica. Los cuadritos empiezan 4 px adentro, uno cada 12: cada uno es
 //!   `palette.swatch` (13×13, borde negro de 1 compartido con los vecinos) con el color en sus
-//!   11×11. El primero es el color Mask. En la celda que sigue al último, a (3,3), la marca
-//!   `palette.add` (Ⅲ): agrega el color primario a la paleta.
-//! - **Editor** (5 filas debajo de la caja, y 332..473):
+//!   11×11 (el Mask es el botón del damero de arriba). En la celda que sigue al último, a (3,3), la marca
+//!   `palette.add` (Ⅲ): agrega el color primario a la paleta. Si los colores no entran, la
+//!   caja se desplaza por dentro.
+//! - **División** (no está en el diseño): entre la caja y el editor, 6 filas con el separador
+//!   grabado en el medio. Se arrastra para cambiar el alto de la caja (que se guarda con la
+//!   vista), de 2 filas de cuadritos hasta lo que deja el editor entero en el panel.
+//! - **Editor** (debajo de la división; en el diseño, y 332..473):
 //!   - Arriba, `picker.copy` (25×16, 2 px desde la izquierda) copia el color en hex. 2 px
 //!     después, la tira de canales (16 de alto, hasta 2 px antes del borde derecho):
 //!     `channel.r` (la punta y el tramo rojo, 30), `channel.g` y `channel.b` (27),
@@ -16,10 +20,14 @@
 //!     (`channel.dot.*`, 6×6) 2 px después del comienzo del tramo y 4 filas abajo, y su número 9
 //!     px después; el hex, 3 px después. Las mayúsculas en la fila 3 (los dígitos, una más
 //!     abajo), en `field_text`.
-//!   - 3 filas más abajo, la caja del cuadro S/V (`picker.sv`, 92 de alto con la línea que lo
-//!     separa de las barras): el cuadro mide 86 de alto y va 3 px adentro. Debajo,
-//!     `picker.bars` (31): el tono y el alfa, de 13 cada uno, 2 filas desde arriba y con el
-//!     ancho del cuadro.
+//!   - Si no entra todo en una fila, el encabezado se parte entre grupos, nunca adentro de uno
+//!     (`pixel_ui::wrap_rows`): [copiar][RGBA] y [hex] abajo; si tampoco, [copiar], [RGBA] y
+//!     [hex], una fila cada uno, a 3 filas de distancia. El grupo RGBA solo cierra con
+//!     `channel.cap.r` y el hex solo abre con `channel.cap.l` (sacadas de las puntas de la tira).
+//!   - 3 filas más abajo, la caja del cuadro S/V (`picker.sv`, 70 de alto con la línea que lo
+//!     separa de las barras): el cuadro va 3 px adentro y mide 64 de alto (86 en el diseño).
+//!     Debajo, `picker.bars` (31): el tono y el alfa, de 13 cada uno, 2 filas desde arriba y con
+//!     el ancho del cuadro.
 //!   - Los degradés se calculan acá, como en el selector de egui (HSV "gamma"). El alfa va
 //!     sobre un damero gris (128/192) de celdas de 17×7.
 //!   - Los cursores: `picker.cursor` (9×9) centrado en el S/V, recortado al cuadro;
@@ -27,6 +35,7 @@
 //!     derecha (1), 3 filas abajo del borde de la barra. Son los "○ ○" sueltos del diseño
 //!     (x 786..806, y 483..491), iguales a los dibujados sobre el cuadro y las barras.
 
+use eframe::egui::containers::scroll_area::ScrollSource;
 use eframe::egui::ecolor::{Hsva, HsvaGamma};
 use eframe::egui::{
     self, Align, Color32, Layout, Mesh, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui,
@@ -45,8 +54,10 @@ use crate::pixel_ui;
 use crate::skin::{Piece, Skin, SkinColors, WidgetState};
 use crate::tab_bar;
 
-/// Filas entre la caja de la paleta y el editor de color (y 327..331 del diseño).
-pub const EDITOR_GAP: f32 = 5.0;
+/// La división entre la caja de la paleta y el editor: 2 filas de aire, el separador grabado (2)
+/// y 2 de aire. En el diseño, sin división, eran 5 filas de aire (y 327..331).
+pub const SPLITTER_HEIGHT: f32 = 6.0;
+const SPLITTER_LINE: f32 = 2.0;
 /// Filas entre los botones de arriba y la caja de la paleta (y 115..119 del diseño).
 pub const BUTTONS_GAP: f32 = 5.0;
 
@@ -73,9 +84,24 @@ const CURSOR: &str = "picker.cursor";
 const BAR_CURSOR: &str = "picker.cursor.bar";
 const SEPARATOR: &str = "channel.sep";
 const HEX: &str = "channel.hex";
+/// Las puntas sueltas: la izquierda del hex cuando va solo en su fila y la derecha del grupo RGBA
+/// cuando el hex va en otra.
+const CAP_LEFT: &str = "channel.cap.l";
+const CAP_RIGHT: &str = "channel.cap.r";
+const CAP_LEFT_WIDTH: f32 = 3.0;
+const CAP_RIGHT_WIDTH: f32 = 2.0;
 
-/// Alto mínimo de la caja de la paleta (la del diseño).
-const PALETTE_MIN_HEIGHT: f32 = 207.0;
+/// Alto de fábrica de la caja de la paleta (el del diseño).
+pub const PALETTE_DEFAULT_HEIGHT: f32 = 207.0;
+/// La caja nunca baja de 2 filas de cuadritos.
+const PALETTE_MIN_ROWS: f32 = 2.0;
+/// Con el panel en su mínimo, la grilla tiene al menos 8 columnas.
+const PALETTE_MIN_COLUMNS: f32 = 8.0;
+/// De la caja a lo que se desplaza adentro: sus dos líneas y el aire entre ellas (los cuadritos no
+/// las pisan al desplazarse).
+const BOX_BORDER: f32 = 3.0;
+/// Entre el grupo de botones de arriba y el damero, como mínimo.
+const BUTTONS_MIN_GAP: f32 = 2.0;
 /// De la caja a la grilla, a cada lado.
 const GRID_INSET: f32 = 4.0;
 /// De cuadrito a cuadrito (comparten el borde).
@@ -96,8 +122,14 @@ const STRIP_HEIGHT: f32 = 16.0;
 const STRIP_END: f32 = 3.0;
 /// El tramo de un canal sin su línea divisoria.
 const SEGMENT: f32 = 27.0;
-/// El tramo del hex como mínimo (con la punta derecha).
+/// El tramo del hex como mínimo (con la punta derecha), el del diseño.
 const HEX_MIN: f32 = 43.0;
+/// El hex más ancho que se escribe (con alfa), para que siempre se vea entero.
+const WIDEST_HEX: &str = "#ffffffff";
+/// Del hex a la punta derecha de su tramo.
+const HEX_TEXT_RIGHT: f32 = 2.0;
+/// Entre las filas del encabezado, cuando se parte.
+const HEADER_ROW_GAP: f32 = 3.0;
 /// Del comienzo del tramo al punto, al número y (en el hex) al texto.
 const DOT_LEFT: f32 = 2.0;
 const DOT_TOP: f32 = 4.0;
@@ -111,11 +143,14 @@ const UNDERLINE: f32 = 2.0;
 /// El tramo del alfa repite un período del damero de su línea.
 const ALPHA_TILE: f32 = 4.0;
 
-/// La caja del cuadro S/V y las barras, desde arriba de la tira.
-const PICKER_TOP: f32 = 19.0;
-const SV_BOX_HEIGHT: f32 = 92.0;
+/// La caja del cuadro S/V, desde abajo del encabezado (en el diseño, 19 desde arriba de la tira).
+const PICKER_GAP: f32 = 3.0;
+/// El cuadro S/V mide 64 de alto (86 en el diseño): el editor entra en el panel con la línea de
+/// tiempo abierta. Con 64 filas, cada una es un paso de 4 de los 256 del brillo. La caja lleva 3
+/// arriba (borde y aire) y 3 abajo (aire, borde y la línea contra las barras).
 const SV_INSET: f32 = 3.0;
-const SV_HEIGHT: f32 = 86.0;
+const SV_HEIGHT: f32 = 64.0;
+const SV_BOX_HEIGHT: f32 = SV_INSET + SV_HEIGHT + 3.0;
 const BARS_BOX_HEIGHT: f32 = 31.0;
 const BARS_TOP: f32 = 2.0;
 const BAR_HEIGHT: f32 = 13.0;
@@ -164,9 +199,15 @@ fn outline(rect: Rect, color: Color32, ppp: f32) -> Shape {
     )
 }
 
-/// La paleta en su caja: el color Mask, los de la paleta y la marca para agregar el primario. Clic
-/// elige el primario; clic derecho, el secundario.
-pub fn palette_grid(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
+/// El alto mínimo de la caja: 2 filas de cuadritos.
+fn palette_min_height() -> f32 {
+    2.0 * GRID_INSET + PALETTE_MIN_ROWS * CELL + 1.0
+}
+
+/// La paleta en su caja de `height` de alto: los colores de la paleta y la marca para agregar el
+/// primario. Clic elige el primario; clic derecho, el secundario. Si no entran, se desplazan
+/// adentro de la caja (con la rueda o la barra).
+pub fn palette_grid(ui: &mut Ui, editor: &mut Editor, skin: &Skin, height: f32) {
     let ppp = ui.ctx().pixels_per_point();
     let width = ui.available_width().floor();
     let columns = (((width - 2.0 * GRID_INSET - 1.0) / CELL).floor() as usize).max(1);
@@ -175,7 +216,6 @@ pub fn palette_grid(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
     let cells = count + 1;
     let rows = cells.div_ceil(columns);
     let grid_height = rows as f32 * CELL + 1.0;
-    let height = PALETTE_MIN_HEIGHT.max(grid_height + 2.0 * GRID_INSET);
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), rect.size());
     let colors = *skin.colors();
@@ -183,11 +223,97 @@ pub fn palette_grid(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
         .extend(piece_or(skin, PALETTE_BOX, rect, ppp, || {
             vec![outline(rect, colors.outline, ppp)]
         }));
-    let origin = rect.min + Vec2::splat(GRID_INSET);
+    let id = ui.id().with("pixel_palette");
+    // Lo que se desplaza: adentro de las líneas de la caja.
+    let view = rect.shrink(BOX_BORDER);
+    let mut inner = ui.new_child(
+        UiBuilder::new()
+            .id_salt("pixel_palette_view")
+            .max_rect(view)
+            .layout(Layout::top_down(Align::Min)),
+    );
+    inner.set_clip_rect(view.intersect(ui.clip_rect()));
+    egui::ScrollArea::vertical()
+        .id_salt("pixel_palette_scroll")
+        .auto_shrink([false, false])
+        .max_height(view.height())
+        .scroll_source(ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL)
+        .show(&mut inner, |ui| {
+            let pad = GRID_INSET - BOX_BORDER;
+            let (area, _) =
+                ui.allocate_exact_size(vec2(view.width(), grid_height + 2.0 * pad), Sense::hover());
+            let origin = area.min + Vec2::splat(pad);
+            grid_cells(ui, editor, skin, id, origin, columns, count);
+        });
+}
+
+/// Con Pixel UI, la caja de la paleta, la división y el editor de color, en el alto que queda en
+/// `ui`. La caja mide `palette_height` (lo elegido con la división, que se guarda con la vista),
+/// pero nunca menos de 2 filas de cuadritos ni tanto que el editor no entre entero: si falta
+/// lugar, se achica la caja (y sus colores se desplazan adentro).
+pub fn palette_and_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin, palette_height: &mut f32) {
+    let min = palette_min_height();
+    let room = (ui.available_height() - SPLITTER_HEIGHT - editor_height(ui, skin)).floor();
+    let max = room.max(min);
+    // Lo elegido, dentro de lo que entra; se arrastra desde ahí (sin redondear, para que los
+    // medios puntos de cada frame no se acumulen).
+    let chosen = palette_height.clamp(min, max);
+    // La caja, la división y el editor van pegados.
+    let spacing = ui.spacing().item_spacing.y;
+    ui.spacing_mut().item_spacing.y = 0.0;
+    palette_grid(ui, editor, skin, chosen.round());
+    if let Some(dragged) = splitter(ui, skin, chosen, min..=max) {
+        *palette_height = dragged;
+    }
+    ui.spacing_mut().item_spacing.y = spacing;
+    color_editor(ui, editor, skin);
+}
+
+/// La división entre la caja y el editor: el separador grabado a todo el ancho, que se arrastra
+/// (con el cursor de cambiar el alto) para cambiar el alto de la caja dentro de `range`. Devuelve
+/// el alto nuevo mientras se arrastra.
+fn splitter(
+    ui: &mut Ui,
+    skin: &Skin,
+    height: f32,
+    range: std::ops::RangeInclusive<f32>,
+) -> Option<f32> {
+    let ppp = ui.ctx().pixels_per_point();
+    let width = ui.available_width().floor();
+    let (rect, _) = ui.allocate_exact_size(vec2(width, SPLITTER_HEIGHT), Sense::hover());
+    let rect = Rect::from_min_size(rect.min.round(), rect.size());
+    let line = rect.top() + ((SPLITTER_HEIGHT - SPLITTER_LINE) / 2.0).floor();
+    ui.painter().add(pixel_ui::etched_hline(
+        rect.x_range(),
+        line,
+        skin.colors(),
+        ppp,
+    ));
+    let response = ui.interact(rect, ui.id().with("palette_splitter"), Sense::drag());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, enabled, "Palette height"));
+    if response.hovered() || response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeVertical);
+    }
+    let dy = response.drag_delta().y;
+    (response.dragged() && dy != 0.0).then(|| (height + dy).clamp(*range.start(), *range.end()))
+}
+
+/// Los cuadritos y la marca, desde `origin` en `columns` columnas.
+fn grid_cells(
+    ui: &mut Ui,
+    editor: &mut Editor,
+    skin: &Skin,
+    id: egui::Id,
+    origin: Pos2,
+    columns: usize,
+    count: usize,
+) {
+    let ppp = ui.ctx().pixels_per_point();
+    let enabled = ui.is_enabled();
+    let colors = *skin.colors();
     let cell_at =
         |i: usize| origin + vec2((i % columns) as f32 * CELL, (i / columns) as f32 * CELL);
-    let id = ui.id().with("pixel_palette");
-    let enabled = ui.is_enabled();
     for index in 0..count {
         let cell = Rect::from_min_size(cell_at(index), Vec2::splat(SWATCH_SIDE));
         let inside = cell.shrink(1.0);
@@ -490,27 +616,18 @@ pub fn color_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
     };
     let ppp = ui.ctx().pixels_per_point();
     let colors = *skin.colors();
-    // El ancho del panel, con el máximo de siempre del selector.
-    let width = ui.available_width().min(COLOR_PICKER_MAX).floor();
-    let height = PICKER_TOP + SV_BOX_HEIGHT + BARS_BOX_HEIGHT;
+    let width = editor_width(ui);
+    let header = Header::new(ui, skin, width);
+    let picker_top = header.height + PICKER_GAP;
+    let height = picker_top + SV_BOX_HEIGHT + BARS_BOX_HEIGHT;
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), rect.size());
+    let header = header.translate(rect.min.to_vec2());
     let id = ui.id().with("pixel_color_editor");
 
-    // Copiar.
-    let copy_piece = piece(skin, COPY);
-    let copy = Rect::from_min_size(
-        rect.min + vec2(COPY_LEFT, 0.0),
-        copy_piece.map_or(FALLBACK_COPY_SIZE, size_of),
-    );
-    copy_button(ui, skin, id.with("copy"), copy, current);
-
-    // La tira de canales.
-    let strip = Rect::from_min_max(
-        pos2(copy.right() + STRIP_GAP, rect.top()),
-        pos2(rect.right() - STRIP_RIGHT, rect.top() + STRIP_HEIGHT),
-    );
-    let mut color = channel_strip(ui, skin, &colors, id, strip, current);
+    // Copiar y la tira de canales.
+    copy_button(ui, skin, id.with("copy"), header.copy, current);
+    let mut color = channel_strip(ui, skin, &colors, id, &header, current);
 
     // El cuadro S/V y las barras.
     let remembered = ui
@@ -518,7 +635,7 @@ pub fn color_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
         .filter(|r| r.color == color)
         .map_or_else(|| hsv_of(color), |r| r.hsv);
     let mut hsv = remembered;
-    let sv_box = Rect::from_min_size(rect.min + vec2(0.0, PICKER_TOP), vec2(width, SV_BOX_HEIGHT));
+    let sv_box = Rect::from_min_size(rect.min + vec2(0.0, picker_top), vec2(width, SV_BOX_HEIGHT));
     let bars_box = Rect::from_min_size(
         pos2(rect.left(), sv_box.bottom()),
         vec2(width, BARS_BOX_HEIGHT),
@@ -558,6 +675,147 @@ pub fn color_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
     // El arrastre terminó: el próximo cambio de la entrada es otro paso de undo.
     if !ui.input(|i| i.pointer.any_down()) {
         editor.end_group_of(group);
+    }
+}
+
+/// El ancho del editor: el del panel, con el máximo de siempre del selector.
+fn editor_width(ui: &Ui) -> f32 {
+    ui.available_width().min(COLOR_PICKER_MAX).floor()
+}
+
+/// El alto del editor de color con el ancho que tiene en `ui` (el encabezado puede ir en 1, 2 o 3
+/// filas).
+pub fn editor_height(ui: &Ui, skin: &Skin) -> f32 {
+    let header = Header::new(ui, skin, editor_width(ui));
+    header.height + PICKER_GAP + SV_BOX_HEIGHT + BARS_BOX_HEIGHT
+}
+
+/// Las medidas de la tira que dependen de la fuente: el tramo de un canal (el del diseño o más,
+/// si "255" no entra) y el mínimo del tramo del hex (el del diseño o más, si el hex con alfa no
+/// entra).
+fn strip_metrics(ui: &Ui, colors: &SkinColors) -> (f32, f32) {
+    let widest = ink_width(&galley(ui, "255", colors.field_text));
+    let segment = SEGMENT.max(VALUE_LEFT + widest + 2.0);
+    let hex = ink_width(&galley(ui, WIDEST_HEX, colors.field_text));
+    let hex_min = HEX_MIN.max(HEX_TEXT_LEFT + hex + HEX_TEXT_RIGHT + 2.0);
+    (segment, hex_min)
+}
+
+/// Los grupos del encabezado y sus medidas, para `pixel_ui::wrap_rows`.
+struct Groups {
+    /// Copiar, el grupo RGBA y el hex, cada uno solo en su fila (con sus puntas).
+    widths: [f32; 3],
+    /// Lo que cambia al juntarse con el siguiente: entre copiar y R, el aire; junto al hex, el
+    /// grupo RGBA pierde su punta derecha y el hex su punta izquierda, y entre los dos va la
+    /// línea de siempre.
+    joins: [f32; 2],
+    segment: f32,
+    hex_min: f32,
+}
+
+impl Groups {
+    fn new(ui: &Ui, skin: &Skin) -> Self {
+        let (segment, hex_min) = strip_metrics(ui, skin.colors());
+        let copy = piece(skin, COPY).map_or(FALLBACK_COPY_SIZE, size_of).x;
+        Self {
+            widths: [
+                copy,
+                rgba_width(segment) + CAP_RIGHT_WIDTH,
+                CAP_LEFT_WIDTH + hex_min,
+            ],
+            joins: [STRIP_GAP, 1.0 - CAP_RIGHT_WIDTH - CAP_LEFT_WIDTH],
+            segment,
+            hex_min,
+        }
+    }
+}
+
+/// El grupo RGBA de la punta de R al final de A, con las 3 líneas entre tramos.
+fn rgba_width(segment: f32) -> f32 {
+    STRIP_END + 4.0 * segment + 3.0
+}
+
+/// El ancho mínimo de la columna de la derecha con Pixel UI (sin los márgenes del panel): entran
+/// la fila más ancha que no se parte (el grupo RGBA solo, a 2 px de cada borde), la fila de
+/// botones de arriba y 8 columnas de cuadritos.
+pub fn min_width(ui: &Ui, skin: &Skin) -> f32 {
+    let groups = Groups::new(ui, skin);
+    let widest = groups.widths.into_iter().fold(0.0, f32::max);
+    let header = COPY_LEFT + widest + STRIP_RIGHT;
+    let buttons = 2.0 * BUTTONS_SIDE + GROUP_WIDTH + BUTTONS_MIN_GAP + CHECKER_WIDTH;
+    let grid = 2.0 * GRID_INSET + PALETTE_MIN_COLUMNS * CELL + 1.0;
+    header.max(buttons).max(grid).ceil()
+}
+
+/// El ancho mínimo del panel derecho con Pixel UI: `min_width` más los márgenes del panel (los de
+/// su marco y la línea que lo separa del lienzo).
+pub fn panel_min_size(ui: &Ui, skin: &Skin) -> f32 {
+    let style = ui.style();
+    let frame = egui::Frame::side_top_panel(style).total_margin().sum().x;
+    let line = style.visuals.widgets.noninteractive.bg_stroke.width.round();
+    min_width(ui, skin) + frame + line
+}
+
+/// Dónde va cada parte del encabezado del editor.
+#[derive(Clone, Copy, Debug)]
+struct Header {
+    copy: Rect,
+    /// La esquina de arriba a la izquierda del grupo RGBA (la punta de R).
+    rgba: Pos2,
+    /// El hex va en otra fila: el grupo RGBA cierra con su punta derecha (si no, con la línea
+    /// contra el hex).
+    rgba_alone: bool,
+    /// El tramo del hex, con su punta izquierda si abre su fila (`rgba_alone`).
+    hex: Rect,
+    segment: f32,
+    height: f32,
+}
+
+impl Header {
+    /// El encabezado en `width` (desde 0,0): los grupos en las filas que hagan falta, cada fila a
+    /// 2 px de los bordes; el hex llega hasta el final de la suya.
+    fn new(ui: &Ui, skin: &Skin, width: f32) -> Self {
+        let groups = Groups::new(ui, skin);
+        let widths = groups.widths;
+        let rows = pixel_ui::wrap_rows(width - COPY_LEFT - STRIP_RIGHT, &widths, &groups.joins);
+        let row_of = |i: usize| rows.iter().position(|r| r.contains(&i)).unwrap_or(0);
+        let top = |row: usize| row as f32 * (STRIP_HEIGHT + HEADER_ROW_GAP);
+        let copy = Rect::from_min_size(
+            pos2(COPY_LEFT, top(row_of(0))),
+            vec2(widths[0], STRIP_HEIGHT),
+        );
+        let rgba = if row_of(1) == row_of(0) {
+            pos2(copy.right() + STRIP_GAP, copy.top())
+        } else {
+            pos2(COPY_LEFT, top(row_of(1)))
+        };
+        let rgba_alone = row_of(1) != row_of(2);
+        let (hex_left, hex_min) = if rgba_alone {
+            (COPY_LEFT, CAP_LEFT_WIDTH + groups.hex_min)
+        } else {
+            // Después de A y de la línea.
+            (rgba.x + rgba_width(groups.segment) + 1.0, groups.hex_min)
+        };
+        let hex_top = top(row_of(2));
+        let right = (width - STRIP_RIGHT).max(hex_left + hex_min);
+        let hex = Rect::from_min_max(pos2(hex_left, hex_top), pos2(right, hex_top + STRIP_HEIGHT));
+        Self {
+            copy,
+            rgba,
+            rgba_alone,
+            hex,
+            segment: groups.segment,
+            height: top(rows.len().saturating_sub(1)) + STRIP_HEIGHT,
+        }
+    }
+
+    fn translate(self, by: Vec2) -> Self {
+        Self {
+            copy: self.copy.translate(by),
+            rgba: self.rgba + by,
+            hex: self.hex.translate(by),
+            ..self
+        }
     }
 }
 
@@ -650,20 +908,19 @@ fn flat_segment(rect: Rect, underline: Color32, colors: &SkinColors, ppp: f32) -
     ]
 }
 
-/// La tira de canales en `strip`: R, G, B y A (se arrastran o se escriben) y el hex (se escribe).
-/// Devuelve el color con lo editado.
+/// La tira de canales como dice `header`: R, G, B y A (se arrastran o se escriben) y el hex (se
+/// escribe). Devuelve el color con lo editado.
 fn channel_strip(
     ui: &mut Ui,
     skin: &Skin,
     colors: &SkinColors,
     id: egui::Id,
-    strip: Rect,
+    header: &Header,
     current: Rgba,
 ) -> Rgba {
     let ppp = ui.ctx().pixels_per_point();
     // Los tramos miden lo del diseño; si el número más ancho no entra con la fuente, crecen.
-    let widest = ink_width(&galley(ui, "255", colors.field_text));
-    let segment = SEGMENT.max(VALUE_LEFT + widest + 2.0);
+    let segment = header.segment;
     let mut values = [current.r, current.g, current.b, current.a];
     let look = NumberLook {
         text: colors.field_text,
@@ -673,17 +930,18 @@ fn channel_strip(
     // Dónde empiezan las mayúsculas de un texto en la tira (para el `DragValue` y el hex).
     let probe = galley(ui, "0", colors.field_text);
     let caps = -tab_bar::text_pos(&probe, 0.0, 0.0, ppp).y;
-    let text_rect = |left: f32, right: f32| {
+    let text_rect = |left: f32, right: f32, top: f32| {
         Rect::from_min_max(
-            pos2(left, strip.top() + STRIP_CAPS - caps),
-            pos2(right, strip.top() + STRIP_CAPS - caps + probe.size().y),
+            pos2(left, top + STRIP_CAPS - caps),
+            pos2(right, top + STRIP_CAPS - caps + probe.size().y),
         )
     };
-    let mut left = strip.left();
+    let top = header.rgba.y;
+    let mut left = header.rgba.x;
     for (i, channel) in CHANNELS.iter().enumerate() {
         // El tramo rojo trae la punta izquierda de la tira.
         let end = if i == 0 { STRIP_END } else { 0.0 };
-        let rect = Rect::from_min_size(pos2(left, strip.top()), vec2(end + segment, STRIP_HEIGHT));
+        let rect = Rect::from_min_size(pos2(left, top), vec2(end + segment, STRIP_HEIGHT));
         let fill_left = left + end;
         let mut shapes = match piece(skin, channel.piece) {
             // El alfa repite su pieza (un período del damero), recortada al tramo.
@@ -701,7 +959,7 @@ fn channel_strip(
             Some(p) => pixel_ui::piece_shapes(p, rect, ppp),
             None => flat_segment(rect, channel.underline, colors, ppp),
         };
-        let dot = Rect::from_min_size(pos2(fill_left + DOT_LEFT, strip.top() + DOT_TOP), DOT_SIZE);
+        let dot = Rect::from_min_size(pos2(fill_left + DOT_LEFT, top + DOT_TOP), DOT_SIZE);
         shapes.extend(piece_or(skin, channel.dot, dot, ppp, || {
             vec![Shape::circle_filled(dot.center(), 3.0, channel.underline)]
         }));
@@ -709,7 +967,7 @@ fn channel_strip(
             .with_clip_rect(rect.intersect(ui.clip_rect()))
             .extend(shapes);
         // El número: se arrastra en todo el tramo o se escribe con un clic.
-        let inner = text_rect(fill_left + VALUE_LEFT, rect.right() - 1.0);
+        let inner = text_rect(fill_left + VALUE_LEFT, rect.right() - 1.0, top);
         let (response, zone) = bar_fields::drag_number(
             ui,
             rect,
@@ -725,18 +983,35 @@ fn channel_strip(
         zone.widget_info(|| WidgetInfo::labeled(WidgetType::DragValue, enabled, channel.label));
         response.on_hover_text(channel.label);
         left = rect.right();
+        if i == CHANNELS.len() - 1 && header.rgba_alone {
+            // El hex va en otra fila: la punta derecha cierra el grupo.
+            let cap = Rect::from_min_size(pos2(left, top), vec2(CAP_RIGHT_WIDTH, STRIP_HEIGHT));
+            ui.painter().extend(piece_or(skin, CAP_RIGHT, cap, ppp, || {
+                vec![solid(cap.with_max_x(left + 1.0), colors.field_text, ppp)]
+            }));
+            break;
+        }
         // La línea entre tramos.
-        let sep = Rect::from_min_size(pos2(left, strip.top()), vec2(1.0, STRIP_HEIGHT));
+        let sep = Rect::from_min_size(pos2(left, top), vec2(1.0, STRIP_HEIGHT));
         ui.painter().extend(piece_or(skin, SEPARATOR, sep, ppp, || {
             vec![solid(sep, colors.field_text, ppp)]
         }));
         left += 1.0;
     }
     let edited = Rgba::new(values[0], values[1], values[2], values[3]);
-    // El hex, en lo que queda (con la punta derecha).
-    let hex = Rect::from_min_max(pos2(left, strip.top()), strip.right_bottom()).union(
-        Rect::from_min_size(pos2(left, strip.top()), vec2(HEX_MIN, STRIP_HEIGHT)),
-    );
+    // El hex, hasta el final de su fila (con la punta derecha y, si abre la fila, la izquierda).
+    let mut hex = header.hex;
+    if header.rgba_alone {
+        let cap = hex.with_max_x(hex.left() + CAP_LEFT_WIDTH);
+        ui.painter().extend(piece_or(skin, CAP_LEFT, cap, ppp, || {
+            vec![solid(
+                cap.with_max_x(cap.left() + 1.0),
+                colors.field_text,
+                ppp,
+            )]
+        }));
+        hex.min.x = cap.right();
+    }
     ui.painter().extend(piece_or(skin, HEX, hex, ppp, || {
         flat_segment(hex, colors.highlight, colors, ppp)
     }));
@@ -748,7 +1023,11 @@ fn channel_strip(
         Some(stash) if stash.text != stash.shown => stash.text,
         _ => hex_now.clone(),
     };
-    let inner = text_rect(hex.left() + HEX_TEXT_LEFT, hex.right() - 2.0);
+    let inner = text_rect(
+        hex.left() + HEX_TEXT_LEFT,
+        hex.right() - HEX_TEXT_RIGHT,
+        hex.top(),
+    );
     let mut child = ui.new_child(
         UiBuilder::new()
             .id_salt("pixel_hex")
