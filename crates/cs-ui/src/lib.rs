@@ -830,11 +830,13 @@ impl ChimpApp {
     /// Los paneles de la ventana, en el orden en que egui les reparte el espacio: el primero que
     /// se declara se queda con el borde. Devuelve el rect del lienzo (`None` en Home).
     fn layout(&mut self, ui: &mut egui::Ui, modal: bool) -> Option<egui::Rect> {
-        // Con Pixel UI, como en el mockup: el menú de 14 de alto y las pestañas de 23, sin línea
+        // Con Pixel UI, como en el mockup: el menú de 16 de alto y las pestañas de 23, sin línea
         // entre los dos; la barra de pestañas termina en un separador grabado (en vez de la línea
         // de egui). Detrás, contra el borde derecho, el degradé del final de la barra.
         let fade = self.pixel.skin().and_then(|skin| {
-            tab_bar::fade_shapes(skin, ui.max_rect(), ui.ctx().pixels_per_point())
+            let screen = ui.max_rect();
+            let bottom = screen.top() + tab_bar::FADE_BOTTOM;
+            tab_bar::fade_shapes(skin, screen, bottom, ui.ctx().pixels_per_point())
         });
         let paint_fade = |ui: &egui::Ui| {
             if let Some(fade) = &fade {
@@ -844,7 +846,8 @@ impl ChimpApp {
         let pixel = self.pixel.skin().is_some();
         let mut menu = egui::Panel::top("menu").show_separator_line(!pixel);
         if pixel {
-            // Sin margen abajo y con `MENU_TEXT_TOP` arriba: el texto queda en las filas del mockup.
+            // Sin margen abajo y con `MENU_TEXT_TOP` arriba: las mayúsculas quedan en la fila
+            // `MENU_CAPS_TOP`, con lugar arriba para la caja del título abierto.
             let frame = egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin {
                 left: tab_bar::MENU_LEFT,
                 right: 8,

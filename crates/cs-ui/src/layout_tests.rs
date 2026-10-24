@@ -517,11 +517,12 @@ fn union(rects: &[Rect]) -> Option<Rect> {
 }
 
 #[test]
-fn with_pixel_ui_the_menu_is_14_high_and_the_tabs_23_like_the_mockup() {
+fn with_pixel_ui_the_menu_is_16_high_and_the_tabs_23() {
     let h = two_tabs(Some(0));
-    // El mockup: el menú de la fila 34 a la 47 y las pestañas de la 48 a la 70 (con el grabado
-    // en la 69 y la 70); la barra de opciones empieza en la 71.
-    assert_eq!(h.panel("menu").height(), 14.0);
+    // El mockup: el menú de la fila 34 a la 47 (14) y las pestañas de la 48 a la 70 (con el
+    // grabado en la 69 y la 70). El menú tiene 2 filas más que en el mockup para que la caja del
+    // título abierto entre entera arriba de las mayúsculas, como en el diseño.
+    assert_eq!(h.panel("menu").height(), 16.0);
     assert_eq!(h.panel("tabs").height(), 23.0);
     assert_eq!(h.panel("tabs").top(), h.panel("menu").bottom());
     // Sin Pixel UI, los de siempre.
@@ -765,13 +766,17 @@ fn the_fade_is_drawn_at_the_top_right_corner_behind_the_menu() {
     let h = two_tabs(Some(0));
     let fade = h.drawn("menubar.fade");
     let screen = h.screen();
-    // 122×34 en el mockup: desde la primera fila del menú hasta la de arriba del grabado.
+    // Como en el mockup: desde la primera fila del menú hasta la de arriba del aire sobre el
+    // grabado. La pieza mide 122×34; con el menú 2 filas más alto, sus 2 últimas filas se repiten
+    // abajo (el tramado tiene período 2).
     let expected = Rect::from_min_max(
         Pos2::new(screen.right() - 122.0, screen.top()),
-        Pos2::new(screen.right(), screen.top() + 34.0),
+        Pos2::new(screen.right(), screen.top() + 36.0),
     );
     assert_eq!(union(&fade), Some(expected), "{fade:?}");
     assert_eq!(expected.bottom(), h.panel("tabs").bottom() - 3.0);
+    let piece = Rect::from_min_size(expected.min, Vec2::new(122.0, 34.0));
+    assert!(fade.contains(&piece), "the piece at its size: {fade:?}");
     // También en Home.
     let home = two_tabs(None);
     assert_eq!(union(&home.drawn("menubar.fade")), Some(expected));
@@ -939,10 +944,10 @@ fn with_pixel_ui_the_menu_has_the_mockup_color_and_spacing() {
             *rect
         })
         .collect();
-    // El mockup: la primera palabra a 3 px del borde y 11 px de aire entre la tinta de una y la
-    // siguiente. Las letras de la fuente pixel empiezan en su borde y dejan 1 px vacío después:
+    // El diseño: la primera palabra a 5 px del borde (lo que la caja del título abierto necesita
+    // a la izquierda) y 11 px de aire entre la tinta de una y la siguiente. Las letras de la fuente pixel empiezan en su borde y dejan 1 px vacío después:
     // del final de un texto al comienzo del siguiente van 10.
-    assert_eq!(rects[0].left() - menu.left(), 3.0, "{rects:?}");
+    assert_eq!(rects[0].left() - menu.left(), 5.0, "{rects:?}");
     for pair in rects.windows(2) {
         assert_eq!(pair[1].left() - pair[0].right(), 10.0, "{pair:?}");
     }
@@ -1058,9 +1063,9 @@ fn text_rect(h: &LayoutHarness, text: &str) -> (Rect, egui::Color32) {
 }
 
 /// Del borde de arriba de un texto de la fuente pixel a la fila de arriba de sus mayúsculas:
-/// las de los títulos están en la fila 3 del menú.
+/// las de los títulos están en la fila 5 del menú.
 fn caps_offset(h: &LayoutHarness) -> f32 {
-    h.panel("menu").top() + 3.0 - text_rect(h, "File").0.top()
+    h.panel("menu").top() + 5.0 - text_rect(h, "File").0.top()
 }
 
 #[test]
@@ -1088,12 +1093,19 @@ fn the_panel_hangs_from_the_open_title_like_in_the_design() {
         let boxed = union(&h.drawn("menu.title.open")).expect("the box");
         let panel = union(&h.drawn("menu.panel")).expect("the panel");
         // El diseño: la caja empieza 5 px antes del texto, termina 4 después (la tinta, más 5)
-        // y empieza 5 filas arriba de las mayúsculas. Aquí no hay lugar arriba ni, para File, a
-        // la izquierda: la caja empieza en el borde de la ventana.
-        let left = (text.left() - 5.0).max(h.screen().left());
-        assert_eq!(boxed.left(), left, "{title}: {boxed:?} {text:?}");
+        // y empieza 5 filas arriba de las mayúsculas, sin recortes: la de File entra justo
+        // contra el borde de arriba y el izquierdo de la ventana.
+        assert_eq!(
+            boxed.left(),
+            text.left() - 5.0,
+            "{title}: {boxed:?} {text:?}"
+        );
         assert_eq!(boxed.right(), text.right() + 4.0, "{title}");
+        assert_eq!(boxed.top(), caps - 5.0, "{title}");
         assert_eq!(boxed.top(), menu.top(), "{title}");
+        if title == "File" {
+            assert_eq!(boxed.left(), h.screen().left(), "{boxed:?}");
+        }
         // El panel empieza 11 filas debajo de las mayúsculas (justo debajo del menú) y en el
         // mismo borde izquierdo que la caja; las dos filas de abajo de la caja tapan su borde.
         assert_eq!(panel.top(), caps + 11.0, "{title}");

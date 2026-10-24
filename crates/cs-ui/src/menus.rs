@@ -185,15 +185,12 @@ pub(crate) fn bar_menu<R>(
         solid(line, color, ppp)
     });
     ui.painter().galley(at, text.clone(), color);
-    // La caja: alrededor del texto; si no entra arriba o a la izquierda, contra el borde de la
-    // ventana (el 9-slice achica el relleno).
-    let screen = ui.ctx().content_rect();
+    // La caja: alrededor del texto, como en el diseño. La barra deja lugar justo arriba y a la
+    // izquierda (`tab_bar::MENU_CAPS_TOP` y `tab_bar::MENU_LEFT`): la de File empieza en la
+    // esquina de la ventana.
     let panel_top = look.caps_top + PANEL_TOP;
     let title_box = Rect::from_min_max(
-        pos2(
-            (text_left - BOX_LEFT).max(screen.left()),
-            (look.caps_top - BOX_TOP).max(screen.top()),
-        ),
+        pos2(text_left - BOX_LEFT, look.caps_top - BOX_TOP),
         pos2(text_left + text.size().x + BOX_RIGHT, panel_top + BOX_JOIN),
     );
     let config = menu::MenuConfig::new().style(pixel_menu_style);

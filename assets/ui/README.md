@@ -84,7 +84,8 @@ oculta.
   punta de las marcas chicas `color.canvas`.
 - **Degradé del menú:** `menubar.fade` mide 122×34, sin centro: el tramado café que va a
   tamaño de pieza contra la esquina de arriba a la derecha de la ventana, detrás del menú y de
-  las pestañas.
+  las pestañas. Como el menú de la app mide 2 filas más que el del mockup, sus 2 últimas filas
+  se repiten debajo, hasta una fila antes del grabado de las pestañas.
 - **Origen:** los íconos, los marcos y los botones se copiaron del mockup del autor
   (`.design/Design.aseprite`, que no se versiona).
 - **Botones:** `button`, `button.hover` y `button.down` vienen del mockup del diálogo "Unsaved

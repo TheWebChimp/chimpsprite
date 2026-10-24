@@ -12,7 +12,8 @@
 //!   tiene "…"). Nunca hay scroll ni segunda fila.
 //!
 //! Al final de la barra del menú, contra el borde derecho de la ventana, va el degradé tramado
-//! `menubar.fade`, detrás del menú y de las pestañas.
+//! `menubar.fade`, detrás del menú y de las pestañas: desde arriba de todo hasta una fila antes
+//! del grabado, como en el mockup.
 
 use std::sync::Arc;
 
@@ -26,18 +27,22 @@ use crate::pixel_ui;
 use crate::skin::{Skin, WidgetState};
 use crate::tabs::TabInfo;
 
-/// Alto de la barra del menú con Pixel UI: las filas 34 a 47 del mockup.
-pub const MENU_HEIGHT: f32 = 14.0;
-/// Margen de arriba del menú con Pixel UI. egui centra el texto en el botón del menú, más alto
-/// que la barra: con −2, las mayúsculas quedan en la fila 3, como en el mockup.
-pub const MENU_TEXT_TOP: i8 = -2;
-/// La fila de arriba de las mayúsculas de los títulos del menú, como en el mockup.
-pub const MENU_CAPS_TOP: f32 = 3.0;
-/// Los títulos del menú con Pixel UI: el primero empieza 3 px adentro (margen más relleno) y
-/// entre la tinta de uno y la del siguiente hay 11 px, como en el mockup. Las letras de la fuente
-/// pixel dejan 1 px vacío al final, así que entre texto y texto quedan 10: el relleno de los dos
-/// lados y el espacio.
-pub const MENU_LEFT: i8 = 0;
+/// Alto de la barra del menú con Pixel UI: las filas 34 a 47 del mockup (14) y 2 más, para que
+/// la caja del título abierto (`menu.title.open`) entre entera arriba de las mayúsculas, como en
+/// el diseño.
+pub const MENU_HEIGHT: f32 = 16.0;
+/// Margen de arriba del menú con Pixel UI. egui centra el texto en el botón del menú, de 16 de
+/// alto como la barra: sin margen, las mayúsculas quedan en la fila 5.
+pub const MENU_TEXT_TOP: i8 = 0;
+/// La fila de arriba de las mayúsculas de los títulos del menú: la caja del título abierto
+/// empieza 5 filas más arriba, en la fila 0.
+pub const MENU_CAPS_TOP: f32 = 5.0;
+/// Los títulos del menú con Pixel UI: el primero empieza 5 px adentro (margen más relleno), lo
+/// justo para la caja del título abierto, que empieza 5 px antes del texto. Entre la tinta de uno
+/// y la del siguiente hay 11 px, como en el mockup. Las letras de la fuente pixel dejan 1 px
+/// vacío al final, así que entre texto y texto quedan 10: el relleno de los dos lados y el
+/// espacio.
+pub const MENU_LEFT: i8 = 2;
 pub const MENU_ITEM_PADDING: f32 = 3.0;
 pub const MENU_ITEM_GAP: f32 = 4.0;
 /// Alto de la barra de pestañas con Pixel UI, con la línea grabada de abajo: las filas 48 a 70
@@ -121,13 +126,38 @@ pub(crate) enum TabAction {
     Close(usize),
 }
 
+/// Dónde termina el degradé, desde arriba de la ventana: como en el mockup, una fila arriba del
+/// grabado de la barra de pestañas.
+pub const FADE_BOTTOM: f32 = MENU_HEIGHT + TABS_HEIGHT - pixel_ui::ETCHED_SIZE - 1.0;
+/// Las filas del final del degradé que se repiten si la pieza no llega abajo: el tramado tiene
+/// período 2.
+const FADE_PERIOD: u32 = 2;
+
 /// El degradé tramado del final de la barra, a tamaño de pieza contra la esquina de arriba a la
-/// derecha de `screen`. `None` si el skin no lo trae.
-pub(crate) fn fade_shapes(skin: &Skin, screen: Rect, pixels_per_point: f32) -> Option<Vec<Shape>> {
+/// derecha de `screen`. Si no llega hasta `bottom`, sus últimas filas se repiten debajo
+/// (`FADE_PERIOD` cada vez) hasta llegar. `None` si el skin no lo trae.
+pub(crate) fn fade_shapes(
+    skin: &Skin,
+    screen: Rect,
+    bottom: f32,
+    pixels_per_point: f32,
+) -> Option<Vec<Shape>> {
     let piece = skin.piece(FADE_PIECE, WidgetState::Normal)?;
     let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
     let rect = Rect::from_min_size(pos2(screen.right() - size.x, screen.top()), size);
-    Some(pixel_ui::piece_shapes(piece, rect, pixels_per_point))
+    let mut shapes = pixel_ui::piece_shapes(piece, rect, pixels_per_point);
+    let rows = piece.size[1].min(FADE_PERIOD) as f32;
+    let uv = Rect::from_min_max(pos2(0.0, 1.0 - rows / size.y), pos2(1.0, 1.0));
+    let mut top = rect.bottom();
+    while top < bottom {
+        let h = rows.min(bottom - top);
+        let part = Rect::from_min_max(uv.min, pos2(1.0, uv.min.y + h / size.y));
+        let at = Rect::from_min_size(pos2(rect.left(), top), vec2(size.x, h))
+            .round_to_pixels(pixels_per_point);
+        shapes.push(Shape::image(piece.texture.id(), at, part, Color32::WHITE));
+        top += h;
+    }
+    Some(shapes)
 }
 
 /// La barra de pestañas con el skin en todo `ui.max_rect()` (de `TABS_HEIGHT` de alto, con la
@@ -493,6 +523,50 @@ mod tests {
         // Duraciones distintas.
         assert_eq!(at(&[50, 200], 0.06), Some((1, 0.19)));
         assert_eq!(at(&[], 1.0), None);
+    }
+
+    /// Las formas de imagen de `shapes`: rect en pantalla y rect de uv.
+    fn image_rects(shapes: &[Shape]) -> Vec<(Rect, Rect)> {
+        shapes
+            .iter()
+            .map(|s| match s {
+                Shape::Mesh(mesh) => {
+                    let pos =
+                        Rect::from_points(&mesh.vertices.iter().map(|v| v.pos).collect::<Vec<_>>());
+                    let uv =
+                        Rect::from_points(&mesh.vertices.iter().map(|v| v.uv).collect::<Vec<_>>());
+                    (pos, uv)
+                }
+                other => panic!("not an image: {other:?}"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_fade_reaches_down_to_bottom_repeating_its_last_two_rows() {
+        let ctx = egui::Context::default();
+        let skin = Skin::embedded(&ctx);
+        let screen = Rect::from_min_size(pos2(0.0, 0.0), vec2(950.0, 600.0));
+        // Hasta la fila 36: la pieza (34) y sus 2 últimas filas repetidas debajo.
+        let shapes = fade_shapes(&skin, screen, 36.0, 1.0).expect("the piece");
+        let full = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+        let last_two = Rect::from_min_max(pos2(0.0, 32.0 / 34.0), pos2(1.0, 1.0));
+        assert_eq!(
+            image_rects(&shapes),
+            vec![
+                (
+                    Rect::from_min_size(pos2(828.0, 0.0), vec2(122.0, 34.0)),
+                    full
+                ),
+                (
+                    Rect::from_min_size(pos2(828.0, 34.0), vec2(122.0, 2.0)),
+                    last_two
+                ),
+            ]
+        );
+        // Si la pieza llega sola, va sola.
+        let shapes = fade_shapes(&skin, screen, 34.0, 1.0).expect("the piece");
+        assert_eq!(image_rects(&shapes).len(), 1);
     }
 
     #[test]
