@@ -1185,6 +1185,44 @@ fn the_new_row_has_the_ctrl_badge_a_plus_and_the_key_in_the_dim_color() {
 }
 
 #[test]
+fn ctrl_shift_shortcuts_draw_the_ctrl_and_the_shift_badges() {
+    let mut h = two_tabs(Some(0));
+    let offset = caps_offset(&h);
+    open_menu(&mut h, "File");
+    let colors = *h.app.pixel.skin().unwrap().colors();
+    // Save As… (Ctrl+Shift+S): Ctrl, 1 px, el +, 1 px, Shift, 1 px, el +, 1 px y la S, todo a
+    // la altura de las mayúsculas de la fila.
+    let shifts = h.drawn("key.shift");
+    assert_eq!(
+        shifts.len(),
+        1,
+        "only Save As has Shift in File: {shifts:?}"
+    );
+    let shift = shifts[0];
+    assert_eq!(shift.size(), Vec2::new(22.0, 7.0));
+    let ctrl = h
+        .drawn("key.ctrl")
+        .into_iter()
+        .find(|r| r.top() == shift.top())
+        .unwrap_or_else(|| panic!("Ctrl on the Shift row at {shift:?}"));
+    assert_eq!(shift.left() - ctrl.right(), 7.0, "1 + 5 + 1 between them");
+    let rects = h.colored_rects();
+    let plus = Rect::from_min_size(ctrl.right_top() + Vec2::new(1.0, 3.0), Vec2::new(5.0, 1.0));
+    assert!(rects.contains(&(colors.ruler_tick, plus)), "{plus:?}");
+    let plus = Rect::from_min_size(shift.right_top() + Vec2::new(1.0, 3.0), Vec2::new(5.0, 1.0));
+    assert!(rects.contains(&(colors.ruler_tick, plus)), "{plus:?}");
+    let key = h
+        .text_rects
+        .iter()
+        .find(|(t, r, _)| t == "S" && r.top() + offset == shift.top())
+        .unwrap_or_else(|| panic!("S on the Shift row in {:?}", h.text_rects));
+    assert_eq!(key.1.left(), shift.right() + 7.0, "after the +");
+    assert_eq!(key.2, colors.ruler_tick, "the dim key");
+    // Ya no es la tecla genérica con el nombre escrito.
+    assert!(!h.texts.iter().any(|(t, _)| t == "Shift"), "{:?}", h.texts);
+}
+
+#[test]
 fn separators_are_the_etched_line_of_the_design() {
     let mut h = two_tabs(Some(0));
     open_menu(&mut h, "File");

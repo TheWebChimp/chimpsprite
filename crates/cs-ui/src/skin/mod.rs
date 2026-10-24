@@ -729,6 +729,15 @@ mod tests {
         assert_ne!(ctrl.rgba, key.rgba, "Ctrl has its letters");
         assert_eq!(alpha(key, 0, 0), 0, "rounded corner");
         assert_eq!(alpha(key, 9, 3), 255, "no text");
+        // La tecla Shift del diseño (Layer 4, frame 4), como Ctrl: sin centro, con las letras
+        // y las esquinas caladas.
+        let shift = &data.pieces["key.shift"];
+        assert_eq!((shift.size, shift.center), ([22, 7], None));
+        assert_eq!(alpha(shift, 0, 0), 0, "rounded corner");
+        assert_eq!(alpha(shift, 21, 6), 0, "rounded corner");
+        assert_eq!(alpha(shift, 1, 0), 255, "the top");
+        assert_eq!(alpha(shift, 0, 3), 255, "the left side");
+        assert_eq!(alpha(shift, 4, 1), 0, "the S, cut out");
         // El brillo del separador; la otra línea es `background` y el atajo, `ruler_tick`.
         assert_eq!(data.colors["menu_highlight"], Rgba::rgb(255, 255, 255));
         assert_eq!(data.colors["background"], Rgba::rgb(221, 206, 191));

@@ -5,8 +5,8 @@
 //!   una caja redondeada arriba (`menu.title.open`) que se une al panel sin línea entre los dos.
 //! - **Panel:** `menu.panel` en 9-slice, colgado de la caja: mismo borde izquierdo, y su borde de
 //!   arriba empieza donde termina la caja.
-//! - **Ítems:** filas de 13 px con el texto a la izquierda y el atajo a la derecha. Ctrl es la
-//!   tecla dibujada (`key.ctrl`); las demás teclas con nombre (Shift, Alt, Del…) van en `key`
+//! - **Ítems:** filas de 13 px con el texto a la izquierda y el atajo a la derecha. Ctrl y Shift
+//!   son las teclas dibujadas (`key.ctrl`, `key.shift`); las demás con nombre (Alt, Del…) van en `key`
 //!   estirada con el nombre en la fuente pixel. Entre tecla y tecla, un + de 5×5 hecho con rects,
 //!   y al final la tecla en el color tenue (`ruler_tick`, el del diseño).
 //! - **Separadores:** la línea grabada del diseño, `menu_highlight` y debajo `background`.
@@ -36,6 +36,7 @@ const LOOK_TAG: &str = "chimpsprite_pixel_menu";
 const TITLE_OPEN: &str = "menu.title.open";
 const PANEL: &str = "menu.panel";
 const KEY_CTRL: &str = "key.ctrl";
+const KEY_SHIFT: &str = "key.shift";
 const KEY: &str = "key";
 
 /// La caja del título abierto: empieza 5 px antes del texto (línea, bisel y 3 de relleno) y 5
@@ -87,6 +88,7 @@ pub(crate) struct MenuLook {
     title_open: Option<Piece>,
     panel: Option<Piece>,
     key_ctrl: Option<Piece>,
+    key_shift: Option<Piece>,
     key: Option<Piece>,
     colors: SkinColors,
     /// La fila de arriba de las mayúsculas de los títulos.
@@ -105,6 +107,7 @@ impl MenuLook {
             title_open: piece(TITLE_OPEN),
             panel: piece(PANEL),
             key_ctrl: piece(KEY_CTRL),
+            key_shift: piece(KEY_SHIFT),
             key: piece(KEY),
             colors: *skin.colors(),
             caps_top: bar_top + tab_bar::MENU_CAPS_TOP,
@@ -439,12 +442,19 @@ fn shortcut_parts(keys: &str) -> Vec<KeyPart<'_>> {
     parts
 }
 
-/// El ancho de una tecla dibujada: la pieza de Ctrl tal cual; las demás, el nombre con 2 px de
-/// cada lado de la tinta.
+/// La pieza dibujada de la tecla `name`, si el skin la trae: Ctrl y Shift.
+fn drawn_key<'a>(look: &'a MenuLook, name: &str) -> Option<&'a Piece> {
+    match name {
+        "Ctrl" => look.key_ctrl.as_ref(),
+        "Shift" => look.key_shift.as_ref(),
+        _ => None,
+    }
+}
+
+/// El ancho de una tecla dibujada: la pieza de Ctrl o Shift tal cual; las demás, el nombre con
+/// 2 px de cada lado de la tinta.
 fn cap_width(ui: &Ui, look: &MenuLook, name: &str) -> f32 {
-    if name == "Ctrl"
-        && let Some(piece) = &look.key_ctrl
-    {
+    if let Some(piece) = drawn_key(look, name) {
         return piece.size[0] as f32;
     }
     ink_width(&galley(ui, name, Color32::PLACEHOLDER)) + 2.0 * KEY_PAD_X
@@ -515,7 +525,7 @@ fn parts_shapes(
     shapes
 }
 
-/// Una tecla dibujada en `left`: Ctrl, la pieza tal cual a la altura de las mayúsculas; las
+/// Una tecla dibujada en `left`: Ctrl o Shift, la pieza tal cual a la altura de las mayúsculas; las
 /// demás, `key` estirada 1 fila más arriba y abajo con el nombre en el color del panel (como las
 /// letras caladas de Ctrl).
 fn cap_shapes(
@@ -537,9 +547,7 @@ fn cap_shapes(
         }
         shapes
     };
-    if name == "Ctrl"
-        && let Some(piece) = &look.key_ctrl
-    {
+    if let Some(piece) = drawn_key(look, name) {
         let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
         let rect = Rect::from_min_size(pos2(left, caps), size);
         return tinted(pixel_ui::piece_shapes(piece, rect, ppp));

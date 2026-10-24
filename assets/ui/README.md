@@ -108,6 +108,7 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     la derecha en espejo (la usan los submenús).
   - `key.ctrl` (19×7): la tecla Ctrl como está dibujada; sus letras y esquinas son
     transparentes (en el diseño, el relleno del panel). `key` (19×7, centro (1,1,17,5)): la
-    misma tecla sin letras, para las otras teclas con nombre.
+    misma tecla sin letras, para las otras teclas con nombre. `key.shift` (22×7): la tecla
+    Shift del diseño (Layer 4, frame 4), igual que Ctrl: letras y esquinas transparentes.
   - `color.menu_highlight` (blanco): el brillo del panel y la línea clara de los separadores;
     la otra línea es `background`. El atajo tenue (el "+N") es `ruler_tick`.
