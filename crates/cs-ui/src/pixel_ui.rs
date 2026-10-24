@@ -73,7 +73,7 @@ fn borders(piece: &Piece) -> [f32; 4] {
 
 /// Formas que dibujan `piece` estirada sobre `rect` (en 9-slice si tiene centro), alineadas a
 /// píxeles de pantalla.
-fn piece_shapes(piece: &Piece, rect: Rect, pixels_per_point: f32) -> Vec<Shape> {
+pub(crate) fn piece_shapes(piece: &Piece, rect: Rect, pixels_per_point: f32) -> Vec<Shape> {
     let ppp = pixels_per_point;
     let min = (rect.min.to_vec2() * ppp).round();
     let max = (rect.max.to_vec2() * ppp).round();

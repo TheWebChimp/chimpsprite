@@ -1,11 +1,19 @@
 //! Acomodo de los paneles de la ventana: la app entera, con una pestaña abierta, manejada con
 //! eventos crudos. Los rects de los paneles salen del `PanelState` que egui guarda de cada uno.
 
-use eframe::egui::{self, Pos2, RawInput, Rect, Vec2, containers::panel::PanelState};
+use cs_commands::Command;
+use cs_core::{LayerId, PixelValue, Rgba};
+use eframe::egui::{
+    self, Event, PointerButton, Pos2, RawInput, Rect, TextureId, Vec2,
+    containers::panel::PanelState,
+};
 
 use crate::ChimpApp;
+use crate::file_actions::Pending;
 use crate::palette_library::PaletteLibrary;
 use crate::palette_library::test_util::NoPresets;
+use crate::skin::WidgetState;
+use crate::tabs::DocState;
 use crate::view::ViewSettings;
 
 struct LayoutHarness {
@@ -18,6 +26,10 @@ struct LayoutHarness {
     buttons: Vec<(String, Rect)>,
     /// Lo dibujado en el último frame.
     shapes: Vec<egui::epaint::ClippedShape>,
+    /// Las mallas con textura del último frame (piezas del skin): textura y rect.
+    textures: Vec<(TextureId, Rect)>,
+    /// Los textos del último frame y dónde empiezan.
+    texts: Vec<(String, Pos2)>,
 }
 
 impl LayoutHarness {
@@ -29,6 +41,25 @@ impl LayoutHarness {
         if doc {
             app.new_document();
         }
+        Self::start(app)
+    }
+
+    /// Con Pixel UI y una pestaña por cada `(nombre, con cambios)` de `docs`; activa la `active`
+    /// (`None`: Home).
+    fn with_tabs(docs: &[(&str, bool)], active: Option<usize>) -> Self {
+        let palettes = PaletteLibrary::new(Box::new(NoPresets));
+        let mut app = ChimpApp::with_parts(Default::default(), pixel_ui(), palettes);
+        for &(name, dirty) in docs {
+            app.tabs.open(&mut app.doc, touched(name, dirty));
+        }
+        match active {
+            Some(i) => app.tabs.switch(&mut app.doc, i),
+            None => app.go_home(),
+        }
+        Self::start(app)
+    }
+
+    fn start(app: ChimpApp) -> Self {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         let mut h = Self {
@@ -38,6 +69,8 @@ impl LayoutHarness {
             canvas: None,
             buttons: Vec::new(),
             shapes: Vec::new(),
+            textures: Vec::new(),
+            texts: Vec::new(),
         };
         for _ in 0..3 {
             h.frame();
@@ -51,10 +84,15 @@ impl LayoutHarness {
     }
 
     fn frame(&mut self) {
+        self.frame_with(Vec::new());
+    }
+
+    fn frame_with(&mut self, events: Vec<Event>) {
         self.time += 0.05;
         let input = RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1200.0, 800.0))),
             time: Some(self.time),
+            events,
             ..Default::default()
         };
         let app = &mut self.app;
@@ -68,6 +106,11 @@ impl LayoutHarness {
         output.textures_delta.clear();
         self.canvas = canvas;
         self.shapes = std::mem::take(&mut output.shapes);
+        self.textures.clear();
+        self.texts.clear();
+        for clipped in &self.shapes {
+            collect(&clipped.shape, &mut self.textures, &mut self.texts);
+        }
         self.buttons = output
             .platform_output
             .accesskit_update
@@ -87,6 +130,37 @@ impl LayoutHarness {
                     .collect()
             })
             .unwrap_or_default();
+    }
+
+    /// Clic con `button` en `pos`: mover, apretar y soltar, un frame cada uno.
+    fn click(&mut self, pos: Pos2, button: PointerButton) {
+        let press = |pressed| Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: Default::default(),
+        };
+        self.frame_with(vec![Event::PointerMoved(pos)]);
+        self.frame_with(vec![press(true)]);
+        self.frame_with(vec![press(false)]);
+        self.frame();
+    }
+
+    /// La textura de la pieza `name` del skin.
+    fn piece(&self, name: &str) -> TextureId {
+        let skin = self.app.pixel.skin().expect("Pixel UI is on");
+        let piece = skin.piece(name, WidgetState::Normal);
+        piece.unwrap_or_else(|| panic!("{name}")).texture.id()
+    }
+
+    /// Los rects (uno por malla) de lo dibujado con la pieza `name`.
+    fn drawn(&self, name: &str) -> Vec<Rect> {
+        let id = self.piece(name);
+        self.textures
+            .iter()
+            .filter(|(t, _)| *t == id)
+            .map(|(_, r)| *r)
+            .collect()
     }
 
     fn button(&self, label: &str) -> Rect {
@@ -142,6 +216,36 @@ impl LayoutHarness {
         lines.retain(|r| r.expand(0.5).intersects(area));
         lines
     }
+}
+
+/// Junta las mallas con textura y los textos de `shape`.
+fn collect(
+    shape: &egui::Shape,
+    textures: &mut Vec<(TextureId, Rect)>,
+    texts: &mut Vec<(String, Pos2)>,
+) {
+    match shape {
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, textures, texts)),
+        egui::Shape::Mesh(mesh) if mesh.texture_id != TextureId::default() => {
+            textures.push((mesh.texture_id, mesh.calc_bounds()));
+        }
+        egui::Shape::Text(text) => texts.push((text.galley.text().to_owned(), text.pos)),
+        _ => {}
+    }
+}
+
+/// Un documento `name` con un trazo; sin cambios (`dirty` falso) si se guardó después.
+fn touched(name: &str, dirty: bool) -> DocState {
+    let mut doc = DocState::untitled(name);
+    doc.editor.execute(Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: vec![(0, 0, PixelValue::Rgba(Rgba::rgb(255, 0, 0)))],
+    });
+    if !dirty {
+        doc.saved_version = doc.editor.doc_version;
+    }
+    doc
 }
 
 /// Solo las líneas verticales: las horizontales de la línea de tiempo y de la barra de estado
@@ -306,18 +410,22 @@ fn with_pixel_ui_the_tabs_and_the_options_bar_end_in_etched_lines() {
     );
     let width = h.screen().x_range();
     // Las dos líneas del mockup: debajo de las pestañas (y 69/70) y abajo de la barra (88/89).
-    for panel in [tabs, options] {
+    // La de las pestañas se corta debajo de la activa (la tapa su caja): va en dos tramos.
+    let active = h.button("Untitled");
+    for (panel, spans) in [
+        (
+            tabs,
+            vec![width.min..=active.left(), active.right()..=width.max],
+        ),
+        (options, vec![width.min..=width.max]),
+    ] {
         let y = panel.bottom() - 2.0;
-        let dark = Rect::from_x_y_ranges(width, y..=y + 1.0);
-        let light = dark.translate(Vec2::new(0.0, 1.0));
-        assert!(
-            rects.contains(&(colors.canvas, dark)),
-            "{dark:?} in {rects:?}"
-        );
-        assert!(
-            rects.contains(&(colors.highlight, light)),
-            "{light:?} in {rects:?}"
-        );
+        for x in spans {
+            let dark = Rect::from_x_y_ranges(x, y..=y + 1.0);
+            let light = dark.translate(Vec2::new(0.0, 1.0));
+            assert!(rects.contains(&(colors.canvas, dark)), "{dark:?}");
+            assert!(rects.contains(&(colors.highlight, light)), "{light:?}");
+        }
     }
     // Sin las líneas de egui: ni entre el menú y las pestañas, ni debajo de ellas, ni en la
     // barra, ni contra la barra de íconos.
@@ -353,4 +461,260 @@ fn without_pixel_ui_the_panels_keep_the_egui_lines() {
         !vertical(h.separator_lines_in(edge)).is_empty(),
         "toolbar edge"
     );
+}
+
+// Pestañas con Pixel UI (el mockup: `.design/Design.aseprite`, frame 3).
+
+/// Las pestañas `Design.chimp` (con cambios) y `Otro.chimp` (sin cambios), con `active` activa.
+fn two_tabs(active: Option<usize>) -> LayoutHarness {
+    LayoutHarness::with_tabs(&[("Design.chimp", true), ("Otro.chimp", false)], active)
+}
+
+/// La unión de los rects.
+fn union(rects: &[Rect]) -> Option<Rect> {
+    rects.iter().copied().reduce(|a, b| a.union(b))
+}
+
+#[test]
+fn with_pixel_ui_the_menu_is_14_high_and_the_tabs_23_like_the_mockup() {
+    let h = two_tabs(Some(0));
+    // El mockup: el menú de la fila 34 a la 47 y las pestañas de la 48 a la 70 (con el grabado
+    // en la 69 y la 70); la barra de opciones empieza en la 71.
+    assert_eq!(h.panel("menu").height(), 14.0);
+    assert_eq!(h.panel("tabs").height(), 23.0);
+    assert_eq!(h.panel("tabs").top(), h.panel("menu").bottom());
+    // Sin Pixel UI, los de siempre.
+    let plain = LayoutHarness::editor();
+    let heights = (plain.panel("menu").height(), plain.panel("tabs").height());
+    assert_eq!(heights, (23.0, 23.0));
+}
+
+#[test]
+fn the_active_tab_is_tab_active_and_the_others_are_tab() {
+    let docs = [("a.chimp", true), ("b.chimp", true), ("c.chimp", true)];
+    let h = LayoutHarness::with_tabs(&docs, Some(1));
+    let active = union(&h.drawn("tab.active")).expect("the active box");
+    assert_eq!(active, h.button("b.chimp"), "the box of the active tab");
+    // La caja activa mide 17 (baja sobre el grabado); las otras, 15.
+    assert_eq!(active.height(), 17.0);
+    let boxes = h.drawn("tab");
+    for name in ["a.chimp", "c.chimp"] {
+        let tab = h.button(name);
+        assert_eq!(tab.height(), 15.0, "{name}");
+        let parts: Vec<Rect> = boxes
+            .iter()
+            .copied()
+            .filter(|r| tab.contains_rect(*r))
+            .collect();
+        assert_eq!(union(&parts), Some(tab), "{name}");
+    }
+    assert!(
+        boxes.iter().all(|r| !active.intersects(*r)),
+        "no inactive box under the active one"
+    );
+    // Arriba, alineadas: la activa empieza en la misma fila que las otras.
+    assert_eq!(active.top(), h.button("a.chimp").top());
+    assert_eq!(
+        active.top() - h.panel("tabs").top(),
+        6.0,
+        "the mockup's row 54"
+    );
+}
+
+#[test]
+fn on_home_every_tab_is_inactive_and_home_has_no_box() {
+    let h = two_tabs(None);
+    assert_eq!(h.drawn("tab.active"), vec![], "no active box");
+    for name in ["Design.chimp", "Otro.chimp"] {
+        let tab = h.button(name);
+        assert!(
+            h.drawn("tab").iter().any(|r| tab.contains_rect(*r)),
+            "{name}"
+        );
+    }
+    // Home: la casita, el humo y el suelo, siempre igual.
+    let home = h.button("Home");
+    for piece in ["icon.home", "icon.home_smoke", "home.ground"] {
+        assert_eq!(h.drawn(piece).len(), 1, "{piece}");
+    }
+    let house = h.drawn("icon.home")[0];
+    assert_eq!(
+        house,
+        h.drawn("icon.home_smoke")[0],
+        "the smoke goes over the house"
+    );
+    let tabs = h.panel("tabs");
+    assert_eq!(
+        house.min - tabs.min,
+        Vec2::new(4.0, 0.0),
+        "the mockup's (32,48)"
+    );
+    assert!(home.contains_rect(house));
+    // Con una pestaña activa, Home se ve igual.
+    let other = two_tabs(Some(0));
+    assert_eq!(other.drawn("icon.home"), vec![house]);
+    assert!(!other.drawn("tab.active").is_empty());
+}
+
+#[test]
+fn the_marker_is_a_circle_with_unsaved_changes_and_a_cross_without() {
+    let h = two_tabs(Some(0));
+    let (dirty, clean) = (h.button("Design.chimp"), h.button("Otro.chimp"));
+    let dots = h.drawn("icon.tab_dirty");
+    let crosses = h.drawn("icon.tab_close");
+    assert_eq!(dots.len(), 1);
+    assert_eq!(crosses.len(), 1);
+    assert!(dirty.contains_rect(dots[0]), "{dots:?} in {dirty:?}");
+    assert!(clean.contains_rect(crosses[0]), "{crosses:?} in {clean:?}");
+    // 5 px antes del borde derecho y 7 debajo del de arriba, como en el mockup.
+    for (tab, mark) in [(dirty, dots[0]), (clean, crosses[0])] {
+        assert_eq!(mark.size(), Vec2::new(5.0, 5.0));
+        assert_eq!(tab.right() - mark.right(), 5.0);
+        assert_eq!(mark.top() - tab.top(), 7.0);
+    }
+    // El nombre empieza 5 px adentro.
+    let text = h
+        .texts
+        .iter()
+        .find(|(t, _)| t == "Design.chimp")
+        .expect("the name");
+    assert_eq!(text.1.x - dirty.left(), 5.0);
+}
+
+#[test]
+fn clicking_the_marker_closes_a_clean_tab() {
+    let mut h = two_tabs(Some(0));
+    let mark = h.button("Close Otro.chimp");
+    h.click(mark.center(), PointerButton::Primary);
+    assert_eq!(h.app.pending, None, "no question");
+    assert_eq!(h.app.tabs.len(), 1);
+    assert_eq!(h.app.doc.location.name, "Design.chimp");
+}
+
+#[test]
+fn clicking_the_marker_of_a_dirty_tab_asks_first() {
+    let mut h = two_tabs(Some(1));
+    let mark = h.button("Close Design.chimp");
+    h.click(mark.center(), PointerButton::Primary);
+    assert_eq!(
+        h.app.pending,
+        Some(Pending::CloseTab(0)),
+        "the Unsaved dialog"
+    );
+    assert_eq!(h.app.tabs.len(), 2, "still open");
+    assert_eq!(
+        h.app.tabs.active(),
+        Some(1),
+        "the click does not switch tabs"
+    );
+}
+
+#[test]
+fn tabs_switch_on_click_go_home_and_close_with_the_middle_button() {
+    let mut h = two_tabs(Some(0));
+    h.click(h.button("Otro.chimp").center(), PointerButton::Primary);
+    assert_eq!(h.app.tabs.active(), Some(1));
+    h.click(h.button("Home").center(), PointerButton::Primary);
+    assert_eq!(h.app.tabs.active(), None);
+    h.click(h.button("Otro.chimp").center(), PointerButton::Middle);
+    assert_eq!(h.app.tabs.len(), 1, "closed: it had no changes");
+}
+
+#[test]
+fn hovering_an_inactive_tab_does_not_change_it() {
+    let mut h = two_tabs(Some(0));
+    let before = h.textures.clone();
+    let tab = h.button("Otro.chimp");
+    h.frame_with(vec![Event::PointerMoved(
+        tab.left_center() + Vec2::new(8.0, 0.0),
+    )]);
+    h.frame();
+    assert_eq!(h.textures, before);
+}
+
+#[test]
+fn with_many_tabs_the_names_end_in_an_ellipsis_and_every_tab_fits() {
+    let names: Vec<String> = (0..14)
+        .map(|i| format!("A sprite with a very long name {i}.chimp"))
+        .collect();
+    // La mitad, con cambios.
+    let docs: Vec<(&str, bool)> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.as_str(), i % 2 == 0))
+        .collect();
+    let h = LayoutHarness::with_tabs(&docs, Some(3));
+    let right = h.screen().right();
+    let tabs: Vec<Rect> = names.iter().map(|n| h.button(n)).collect();
+    for pair in tabs.windows(2) {
+        assert!(pair[0].right() < pair[1].left(), "in a row: {pair:?}");
+        assert_eq!(pair[0].top(), pair[1].top(), "no wrapping");
+    }
+    assert!(tabs.last().unwrap().right() <= right, "{tabs:?} in {right}");
+    // Se achican parejo: no difieren en más de 1 px.
+    let widths: Vec<f32> = tabs.iter().map(|r| r.width()).collect();
+    for w in &widths {
+        assert!((w - widths[0]).abs() <= 1.0, "{widths:?}");
+        assert_eq!(w.fract(), 0.0, "whole pixels: {widths:?}");
+    }
+    let shown: Vec<&String> = h
+        .texts
+        .iter()
+        .map(|(t, _)| t)
+        .filter(|t| t.starts_with("A sprite"))
+        .collect();
+    assert_eq!(shown.len(), names.len(), "{shown:?}");
+    assert!(shown.iter().all(|t| t.ends_with('…')), "{shown:?}");
+    // Con pocas, el nombre entero.
+    let few = two_tabs(Some(0));
+    assert!(few.texts.iter().any(|(t, _)| t == "Otro.chimp"));
+}
+
+#[test]
+fn the_fade_is_drawn_at_the_top_right_corner_behind_the_menu() {
+    let h = two_tabs(Some(0));
+    let fade = h.drawn("menubar.fade");
+    let screen = h.screen();
+    // 122×34 en el mockup: desde la primera fila del menú hasta la de arriba del grabado.
+    let expected = Rect::from_min_max(
+        Pos2::new(screen.right() - 122.0, screen.top()),
+        Pos2::new(screen.right(), screen.top() + 34.0),
+    );
+    assert_eq!(union(&fade), Some(expected), "{fade:?}");
+    assert_eq!(expected.bottom(), h.panel("tabs").bottom() - 3.0);
+    // También en Home.
+    let home = two_tabs(None);
+    assert_eq!(union(&home.drawn("menubar.fade")), Some(expected));
+}
+
+#[test]
+fn the_etched_line_under_the_tabs_stops_at_the_active_tab() {
+    let h = two_tabs(Some(0));
+    let colors = *h.app.pixel.skin().expect("on").colors();
+    let active = h.button("Design.chimp");
+    let y = h.panel("tabs").bottom() - 2.0;
+    let rows: Vec<Rect> = h
+        .colored_rects()
+        .into_iter()
+        .filter(|(c, r)| *c == colors.canvas && r.top() == y && r.height() == 1.0)
+        .map(|(_, r)| r)
+        .collect();
+    assert_eq!(
+        rows,
+        vec![
+            Rect::from_x_y_ranges(h.screen().left()..=active.left(), y..=y + 1.0),
+            Rect::from_x_y_ranges(active.right()..=h.screen().right(), y..=y + 1.0),
+        ]
+    );
+    // En Home, entera.
+    let home = two_tabs(None);
+    let full = Rect::from_x_y_ranges(home.screen().x_range(), y..=y + 1.0);
+    assert!(home.colored_rects().contains(&(colors.canvas, full)));
+}
+
+#[test]
+fn without_pixel_ui_the_tab_bar_does_not_use_the_skin() {
+    let h = LayoutHarness::editor();
+    assert!(h.app.pixel.skin().is_none());
+    assert!(h.texts.iter().any(|(t, _)| t == "🏠 Home"), "the egui tabs");
 }

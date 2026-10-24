@@ -15,6 +15,7 @@ mod mask_ops;
 mod palette_ops;
 mod palette_ui;
 mod slice_ops;
+mod tab_bar;
 use cs_io::files;
 mod guides;
 mod home;
@@ -810,34 +811,58 @@ impl ChimpApp {
     /// Los paneles de la ventana, en el orden en que egui les reparte el espacio: el primero que
     /// se declara se queda con el borde. Devuelve el rect del lienzo (`None` en Home).
     fn layout(&mut self, ui: &mut egui::Ui, modal: bool) -> Option<egui::Rect> {
-        // Con Pixel UI, como en el mockup: entre el menú y las pestañas no hay línea, y debajo de
-        // las pestañas va un separador grabado (en vez de la línea de egui) en el lugar que le
-        // deja el margen de abajo.
-        let pixel = self.pixel.skin().map(|skin| *skin.colors());
-        egui::Panel::top("menu")
-            .show_separator_line(pixel.is_none())
-            .show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
+        // Con Pixel UI, como en el mockup: el menú de 14 de alto y las pestañas de 23, sin línea
+        // entre los dos; la barra de pestañas termina en un separador grabado (en vez de la línea
+        // de egui). Detrás, contra el borde derecho, el degradé del final de la barra.
+        let fade = self.pixel.skin().and_then(|skin| {
+            tab_bar::fade_shapes(skin, ui.max_rect(), ui.ctx().pixels_per_point())
+        });
+        let paint_fade = |ui: &egui::Ui| {
+            if let Some(fade) = &fade {
+                ui.painter().extend(fade.iter().cloned());
+            }
+        };
+        let pixel = self.pixel.skin().is_some();
+        let mut menu = egui::Panel::top("menu").show_separator_line(!pixel);
+        if pixel {
+            // Sin margen abajo y con `MENU_TEXT_TOP` arriba: el texto queda en las filas del mockup.
+            let frame = egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin {
+                left: 8,
+                right: 8,
+                top: tab_bar::MENU_TEXT_TOP,
+                bottom: 0,
             });
-        let mut tabs_frame = egui::Frame::side_top_panel(ui.style());
-        if pixel.is_some() {
-            tabs_frame.outer_margin.bottom += pixel_ui::ETCHED_SIZE as i8;
+            menu = menu.exact_size(tab_bar::MENU_HEIGHT).frame(frame);
         }
-        let tabs = egui::Panel::top("tabs")
-            .frame(tabs_frame)
-            .show_separator_line(pixel.is_none())
-            .show(ui, |ui| {
+        menu.show(ui, |ui| {
+            paint_fade(ui);
+            ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
+        });
+        if let Some(skin) = self.pixel.skin() {
+            let infos = self.tabs.infos(&self.doc);
+            let active = self.tabs.active();
+            let action = egui::Panel::top("tabs")
+                .exact_size(tab_bar::TABS_HEIGHT)
+                .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0))
+                .show_separator_line(false)
+                .show(ui, |ui| {
+                    paint_fade(ui);
+                    ui.add_enabled_ui(!modal, |ui| {
+                        tab_bar::pixel_tab_bar(ui, skin, &infos, active)
+                    })
+                    .inner
+                })
+                .inner;
+            match action {
+                Some(tab_bar::TabAction::Home) => self.go_home(),
+                Some(tab_bar::TabAction::Switch(i)) => self.tabs.switch(&mut self.doc, i),
+                Some(tab_bar::TabAction::Close(i)) => self.request_close_tab(i),
+                None => {}
+            }
+        } else {
+            egui::Panel::top("tabs").show(ui, |ui| {
                 ui.add_enabled_ui(!modal, |ui| self.tab_bar(ui));
-            })
-            .response
-            .rect;
-        if let Some(colors) = pixel {
-            ui.painter().add(pixel_ui::etched_hline(
-                tabs.x_range(),
-                tabs.bottom() - pixel_ui::ETCHED_SIZE,
-                &colors,
-                ui.ctx().pixels_per_point(),
-            ));
+            });
         }
         // Antes que los laterales: la barra de estado va a todo el ancho.
         egui::Panel::bottom("status").show(ui, |ui| {
