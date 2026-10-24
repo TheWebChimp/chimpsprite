@@ -79,7 +79,8 @@ oculta.
   - `icon.tab_dirty` (○, cambios sin guardar) e `icon.tab_close` (×, sin cambios) miden 5×5. El
     mockup no muestra otro aspecto al pasar el puntero: no hay `.hover`.
   - Home: la casita animada son `icon.home.0`, `icon.home.1` e `icon.home.2` (21×21, casita y
-    humo juntos), copiados de los 3 frames de `home animation.aseprite`. Van a 3 px del borde
+    humo juntos), copiados de los 3 frames de `home animation.aseprite`, de 300 ms cada uno
+    (`duration=300`). Van a 3 px del borde
     izquierdo, arriba de todo. `home.ground` (58×1) es el suelo sobre la línea grabada, desde el
     borde izquierdo.
 - **Artboards con Pixel UI** (la ventana del frame 4 del diseño, en (209,235), 173×123): el

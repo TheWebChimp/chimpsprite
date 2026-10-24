@@ -681,14 +681,14 @@ mod tests {
             }
             assert_eq!(alpha(tab, 0, height - 1), 255, "{name}: the left side");
         }
-        // La casita animada: 3 frames de 21×21 (casita y humo juntos) de 100 ms, como en
-        // `home animation.aseprite`. Las piezas sueltas de antes ya no están.
+        // La casita animada: 3 frames de 21×21 (casita y humo juntos) de 300 ms, los de
+        // `home animation.aseprite` al ritmo que pidió el usuario. Las piezas sueltas de antes ya no están.
         for i in 0..3 {
             let name = format!("icon.home.{i}");
             let icon = data.pieces.get(&name).unwrap_or_else(|| panic!("{name}"));
             assert_eq!(
                 (icon.size, icon.center, icon.duration_ms),
-                ([21, 21], None, Some(100)),
+                ([21, 21], None, Some(300)),
                 "{name}"
             );
         }

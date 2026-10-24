@@ -637,8 +637,9 @@ fn home_frames(h: &LayoutHarness) -> Vec<Rect> {
 #[test]
 fn the_home_house_shows_the_frame_of_the_time_and_asks_for_the_next_one() {
     let mut h = two_tabs(None);
-    // 0,25 s: el tercer frame, y faltan 50 ms para el siguiente.
-    for (time, frame, next) in [(9.0, 0, 0.1), (9.1, 1, 0.1), (9.25, 2, 0.05)] {
+    // Frames de 300 ms (vuelta de 0,9 s): a los 9 s empieza una vuelta; a los 9,75 s va el
+    // tercer frame, y faltan 150 ms para el siguiente.
+    for (time, frame, next) in [(9.0, 0, 0.3), (9.3, 1, 0.3), (9.75, 2, 0.15)] {
         h.time = time - 0.05;
         h.frame();
         let drawn: Vec<usize> = (0..3)
