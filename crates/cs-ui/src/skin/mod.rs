@@ -4,6 +4,8 @@
 //! - Los slices `color.*` dan un color: el de su píxel central.
 //! - Una pieza sin dibujar (toda transparente) cuenta como que no existe.
 //! - Si falta una variante (`.hover`, `.down`, `.active`), se usa la base.
+//! - Una animación son las piezas `<nombre>.0`, `<nombre>.1`…; cada frame dura lo que dice el
+//!   texto (user data) de su slice, `duration=<ms>`, como la duración del frame en Aseprite.
 
 pub mod nine;
 #[cfg(not(target_arch = "wasm32"))]
@@ -72,6 +74,8 @@ pub struct PieceImage {
     /// RGBA sin premultiplicar, fila por fila.
     pub rgba: Vec<u8>,
     pub center: Option<Rect9>,
+    /// Si es un frame de una animación: cuánto dura, en milisegundos (`duration=<ms>`).
+    pub duration_ms: Option<u32>,
 }
 
 /// Lo que se lee de `skin.aseprite`, sin egui (se prueba sin contexto).
@@ -129,10 +133,20 @@ pub fn decode(bytes: &[u8]) -> Result<SkinData, SkinError> {
                 size: [w, h],
                 rgba,
                 center,
+                duration_ms: parse_duration(&slice.text),
             },
         );
     }
     Ok(data)
+}
+
+/// La duración de un frame en el texto de su slice: una línea `duration=<ms>` (más de 0).
+fn parse_duration(text: &str) -> Option<u32> {
+    text.lines()
+        .filter_map(|line| line.split_once('='))
+        .find(|(key, _)| key.trim() == "duration")
+        .and_then(|(_, ms)| ms.trim().parse().ok())
+        .filter(|&ms| ms > 0)
 }
 
 /// Colores del skin. Los que el skin no trae salen del tema oscuro (`theme.rs`).
@@ -213,6 +227,8 @@ pub struct Piece {
     pub texture: egui::TextureHandle,
     pub size: [u32; 2],
     pub center: Option<Rect9>,
+    /// Si es un frame de una animación: cuánto dura, en milisegundos.
+    pub duration_ms: Option<u32>,
 }
 
 pub struct Skin {
@@ -254,6 +270,7 @@ impl Skin {
                     texture,
                     size: img.size,
                     center: img.center,
+                    duration_ms: img.duration_ms,
                 };
                 (name, piece)
             })
@@ -273,6 +290,13 @@ impl Skin {
             return Some(piece);
         }
         self.pieces.get(name)
+    }
+
+    /// Los frames de la animación `name`: `name.0`, `name.1`… hasta el primero que falte.
+    pub fn animation(&self, name: &str) -> Vec<&Piece> {
+        (0..)
+            .map_while(|i| self.pieces.get(&format!("{name}.{i}")))
+            .collect()
     }
 
     pub fn colors(&self) -> &SkinColors {
@@ -367,6 +391,32 @@ mod tests {
         assert_eq!(&data.pieces["solid"].rgba[..4], &[255, 0, 0, 255]);
         assert!(!data.pieces.contains_key("empty"), "nothing drawn: missing");
         assert_eq!(data.colors["text"], Rgba::rgb(0, 255, 0));
+    }
+
+    #[test]
+    fn the_frame_duration_comes_from_the_slice_text() {
+        assert_eq!(parse_duration("duration=100"), Some(100));
+        assert_eq!(parse_duration("algo\nduration = 250 "), Some(250));
+        assert_eq!(parse_duration("color: se usa el píxel central"), None);
+        assert_eq!(
+            parse_duration("duration=0"),
+            None,
+            "a frame lasts something"
+        );
+        assert_eq!(parse_duration(""), None);
+    }
+
+    #[test]
+    fn animations_are_the_numbered_pieces_in_order() {
+        let ctx = egui::Context::default();
+        let skin = Skin::load(&ctx, EMBEDDED).unwrap();
+        let frames = skin.animation("icon.home");
+        assert_eq!(frames.len(), 3);
+        for (i, frame) in frames.iter().enumerate() {
+            let piece = skin.piece(&format!("icon.home.{i}"), WidgetState::Normal);
+            assert_eq!(frame.texture.id(), piece.unwrap().texture.id());
+        }
+        assert!(skin.animation("icon.nothing").is_empty());
     }
 
     #[test]
@@ -561,11 +611,26 @@ mod tests {
             }
             assert_eq!(alpha(tab, 0, height - 1), 255, "{name}: the left side");
         }
-        // La casita y el humo, del mismo tamaño: uno encima del otro son el dibujo del mockup.
-        for name in ["icon.home", "icon.home_smoke"] {
-            let icon = data.pieces.get(name).unwrap_or_else(|| panic!("{name}"));
-            assert_eq!((icon.size, icon.center), ([18, 21], None), "{name}");
+        // La casita animada: 3 frames de 21×21 (casita y humo juntos) de 100 ms, como en
+        // `home animation.aseprite`. Las piezas sueltas de antes ya no están.
+        for i in 0..3 {
+            let name = format!("icon.home.{i}");
+            let icon = data.pieces.get(&name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!(
+                (icon.size, icon.center, icon.duration_ms),
+                ([21, 21], None, Some(100)),
+                "{name}"
+            );
         }
+        assert!(!data.pieces.contains_key("icon.home.3"));
+        for name in ["icon.home", "icon.home_smoke"] {
+            assert!(!data.pieces.contains_key(name), "{name}: replaced");
+        }
+        // Los frames son distintos (el humo se mueve) y la casita, la misma.
+        assert_ne!(
+            data.pieces["icon.home.0"].rgba,
+            data.pieces["icon.home.1"].rgba
+        );
         let ground = &data.pieces["home.ground"];
         assert_eq!(ground.size, [58, 1]);
         for name in ["icon.tab_dirty", "icon.tab_close"] {

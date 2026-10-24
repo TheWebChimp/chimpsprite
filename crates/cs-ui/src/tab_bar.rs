@@ -1,7 +1,8 @@
 //! Barra de pestañas con Pixel UI, como en el mockup:
 //!
-//! - **Home:** sin caja. La casita (`icon.home`) con el humo encima (`icon.home_smoke`, aparte
-//!   para animarlo), "Home" y el suelo (`home.ground`) sobre la línea grabada.
+//! - **Home:** sin caja. La casita animada (`icon.home.0`, `.1`, `.2`: casita y humo juntos, de
+//!   `home animation.aseprite`), "Home" y el suelo (`home.ground`) sobre la línea grabada. El
+//!   frame sale del tiempo; se pide un repintado justo cuando toca el siguiente.
 //! - **Documentos:** una caja por pestaña. La activa es `tab.active`, clara y abierta abajo: tapa
 //!   e interrumpe la línea grabada. Las demás son `tab`, café. Con Home activo, todas son `tab`.
 //! - **La marca del final:** ○ (`icon.tab_dirty`) con cambios sin guardar y × (`icon.tab_close`)
@@ -42,16 +43,18 @@ pub const MENU_ITEM_GAP: f32 = 4.0;
 pub const TABS_HEIGHT: f32 = 23.0;
 
 const TAB_PIECE: &str = "tab";
+/// La animación de la casita: `icon.home.0`, `icon.home.1`…
 const HOME_ICON: &str = "icon.home";
-/// Va encima de la casita, en el mismo lugar: es otra pieza para poder animarla.
-const HOME_SMOKE: &str = "icon.home_smoke";
+/// Lo que dura un frame sin `duration=` en su slice: lo de Aseprite por defecto.
+const DEFAULT_FRAME_MS: u32 = 100;
 const HOME_GROUND: &str = "home.ground";
 const DIRTY_MARK: &str = "icon.tab_dirty";
 const CLOSE_MARK: &str = "icon.tab_close";
 const FADE_PIECE: &str = "menubar.fade";
 
-/// La casita y el humo, a 4 px del borde izquierdo y arriba de todo.
-const HOME_ICON_X: f32 = 4.0;
+/// Los frames de la casita (21×21), a 3 px del borde izquierdo y arriba de todo: la casita
+/// empieza 1 px adentro del frame, así que su cuerpo cae donde está en el mockup.
+const HOME_ICON_X: f32 = 3.0;
 /// "Home": a 26 px del borde, con las mayúsculas desde la fila 11.
 const HOME_TEXT_X: f32 = 26.0;
 const HOME_TEXT_TOP: f32 = 11.0;
@@ -85,6 +88,26 @@ fn ellipsis() -> &'static str {
     } else {
         "..."
     }
+}
+
+/// El frame de una animación con frames de `durations` milisegundos que se repite desde el
+/// tiempo 0, en el tiempo `time` (segundos), y los segundos que le faltan para pasar al
+/// siguiente. `None` sin frames.
+pub(crate) fn animation_frame(durations: &[u32], time: f64) -> Option<(usize, f64)> {
+    // En microsegundos enteros: 0,1 s cae justo en el borde del frame, sin errores de redondeo.
+    let total: u64 = durations.iter().map(|&ms| u64::from(ms) * 1000).sum();
+    if total == 0 {
+        return None;
+    }
+    let mut t = ((time.max(0.0) * 1e6).round() as u64) % total;
+    for (i, &ms) in durations.iter().enumerate() {
+        let d = u64::from(ms) * 1000;
+        if t < d {
+            return Some((i, (d - t) as f64 / 1e6));
+        }
+        t -= d;
+    }
+    None
 }
 
 /// Lo que se pidió en la barra.
@@ -157,11 +180,21 @@ fn home(ui: &mut Ui, skin: &Skin, bar: Rect, ground: f32) -> bool {
         let at = Rect::from_min_size(pos2(bar.left(), ground), size);
         shapes.extend(pixel_ui::piece_shapes(piece, at, ppp));
     }
-    for name in [HOME_ICON, HOME_SMOKE] {
-        if let Some(piece) = skin.piece(name, WidgetState::Normal) {
-            let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
-            let at = Rect::from_min_size(bar.min + vec2(HOME_ICON_X, 0.0), size);
-            shapes.extend(pixel_ui::piece_shapes(piece, at, ppp));
+    let frames = skin.animation(HOME_ICON);
+    let durations: Vec<u32> = frames
+        .iter()
+        .map(|f| f.duration_ms.unwrap_or(DEFAULT_FRAME_MS))
+        .collect();
+    let time = ui.input(|i| i.time);
+    if let Some((i, left)) = animation_frame(&durations, time) {
+        let piece = frames[i];
+        let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+        let at = Rect::from_min_size(bar.min + vec2(HOME_ICON_X, 0.0), size);
+        shapes.extend(pixel_ui::piece_shapes(piece, at, ppp));
+        // Un solo frame no se anima.
+        if frames.len() > 1 {
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(left));
         }
     }
     let color = skin.colors().home_text;
@@ -433,6 +466,26 @@ fn flat_mark(rect: Rect, dirty: bool, color: Color32, ppp: f32) -> Vec<Shape> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `(frame, segundos hasta el siguiente)`, con los segundos redondeados al microsegundo.
+    fn at(durations: &[u32], time: f64) -> Option<(usize, f64)> {
+        animation_frame(durations, time).map(|(i, left)| (i, (left * 1e6).round() / 1e6))
+    }
+
+    #[test]
+    fn the_home_frame_follows_the_time_and_wraps_around() {
+        let home = [100, 100, 100];
+        assert_eq!(at(&home, 0.0), Some((0, 0.1)));
+        assert_eq!(at(&home, 0.1), Some((1, 0.1)));
+        assert_eq!(at(&home, 0.25), Some((2, 0.05)));
+        // Al final vuelve a empezar.
+        assert_eq!(at(&home, 0.3), Some((0, 0.1)));
+        assert_eq!(at(&home, 0.65), Some((0, 0.05)));
+        assert_eq!(at(&home, 3.0 * 1000.0 + 0.12), Some((1, 0.08)));
+        // Duraciones distintas.
+        assert_eq!(at(&[50, 200], 0.06), Some((1, 0.19)));
+        assert_eq!(at(&[], 1.0), None);
+    }
 
     #[test]
     fn widths_that_fit_stay_natural() {

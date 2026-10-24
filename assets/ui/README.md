@@ -63,9 +63,13 @@ oculta.
   interrumpe. Se copiaron sin el texto de las pestañas del mockup.
   - `icon.tab_dirty` (○, cambios sin guardar) e `icon.tab_close` (×, sin cambios) miden 5×5. El
     mockup no muestra otro aspecto al pasar el puntero: no hay `.hover`.
-  - Home: `icon.home` (la casita) e `icon.home_smoke` (el humo) miden 18×21 y van uno encima del
-    otro en el mismo lugar; el humo es otra pieza para animarlo. `home.ground` (58×1) es el
-    suelo sobre la línea grabada, desde el borde izquierdo.
+  - Home: la casita animada son `icon.home.0`, `icon.home.1` e `icon.home.2` (21×21, casita y
+    humo juntos), copiados de los 3 frames de `home animation.aseprite`. Van a 3 px del borde
+    izquierdo, arriba de todo. `home.ground` (58×1) es el suelo sobre la línea grabada, desde el
+    borde izquierdo.
+- **Animaciones:** las piezas `<nombre>.0`, `<nombre>.1`… son los frames, en orden. Lo que dura
+  cada uno va en el user data del slice (Slice Properties → User Data), en una línea
+  `duration=<ms>`, igual que la duración del frame en Aseprite. Sin esa línea, dura 100 ms.
   - Colores: `color.tab_text_dim` (el nombre de las pestañas inactivas) y `color.home_text`
     ("Home" y los títulos del menú).
   - Los "○ ×" sueltos del mockup son iguales a las marcas: con el puntero encima, la ○ pasa a

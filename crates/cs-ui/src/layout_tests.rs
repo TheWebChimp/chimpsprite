@@ -34,6 +34,8 @@ struct LayoutHarness {
     text_rects: Vec<(String, Rect, egui::Color32)>,
     /// Tamaño de la ventana.
     size: Vec2,
+    /// Cuándo pidió egui el próximo frame después del último.
+    repaint_delay: std::time::Duration,
 }
 
 impl LayoutHarness {
@@ -86,6 +88,7 @@ impl LayoutHarness {
             texts: Vec::new(),
             text_rects: Vec::new(),
             size,
+            repaint_delay: std::time::Duration::MAX,
         };
         for _ in 0..3 {
             h.frame();
@@ -119,6 +122,10 @@ impl LayoutHarness {
         });
         // Las texturas (fuentes, skin y lienzo) no se suben a ninguna GPU.
         output.textures_delta.clear();
+        self.repaint_delay = output
+            .viewport_output
+            .get(&egui::ViewportId::ROOT)
+            .map_or(std::time::Duration::MAX, |v| v.repaint_delay);
         self.canvas = canvas;
         self.shapes = std::mem::take(&mut output.shapes);
         self.textures.clear();
@@ -562,28 +569,59 @@ fn on_home_every_tab_is_inactive_and_home_has_no_box() {
             "{name}"
         );
     }
-    // Home: la casita, el humo y el suelo, siempre igual.
+    // Home: un frame de la casita animada y el suelo.
     let home = h.button("Home");
-    for piece in ["icon.home", "icon.home_smoke", "home.ground"] {
-        assert_eq!(h.drawn(piece).len(), 1, "{piece}");
-    }
-    let house = h.drawn("icon.home")[0];
-    assert_eq!(
-        house,
-        h.drawn("icon.home_smoke")[0],
-        "the smoke goes over the house"
-    );
+    assert_eq!(h.drawn("home.ground").len(), 1);
+    let house = union(&home_frames(&h)).expect("a frame of the house");
+    assert_eq!(home_frames(&h).len(), 1, "a single frame");
     let tabs = h.panel("tabs");
+    // El frame mide 21×21 y su casita empieza 1 px más a la derecha que la del mockup: en
+    // (31,48), el cuerpo de la casita cae en la x 34 del mockup, como antes.
     assert_eq!(
-        house.min - tabs.min,
-        Vec2::new(4.0, 0.0),
-        "the mockup's (32,48)"
+        Rect::from_min_size(house.min - tabs.min.to_vec2(), house.size()),
+        Rect::from_min_size(Pos2::new(3.0, 0.0), Vec2::splat(21.0)),
+        "the mockup's (31,48)"
     );
     assert!(home.contains_rect(house));
     // Con una pestaña activa, Home se ve igual.
     let other = two_tabs(Some(0));
-    assert_eq!(other.drawn("icon.home"), vec![house]);
+    assert_eq!(union(&home_frames(&other)), Some(house));
     assert!(!other.drawn("tab.active").is_empty());
+}
+
+/// Los rects de los frames de la casita (`icon.home.N`) dibujados.
+fn home_frames(h: &LayoutHarness) -> Vec<Rect> {
+    (0..3)
+        .flat_map(|i| h.drawn(&format!("icon.home.{i}")))
+        .collect()
+}
+
+#[test]
+fn the_home_house_shows_the_frame_of_the_time_and_asks_for_the_next_one() {
+    let mut h = two_tabs(None);
+    // 0,25 s: el tercer frame, y faltan 50 ms para el siguiente.
+    for (time, frame, next) in [(9.0, 0, 0.1), (9.1, 1, 0.1), (9.25, 2, 0.05)] {
+        h.time = time - 0.05;
+        h.frame();
+        let drawn: Vec<usize> = (0..3)
+            .filter(|i| !h.drawn(&format!("icon.home.{i}")).is_empty())
+            .collect();
+        assert_eq!(drawn, vec![frame], "at {time}");
+        // egui adelanta el pedido lo que dura un frame (`predicted_dt`, 1/60 s por defecto).
+        let delay = h.repaint_delay.as_secs_f64() + 1.0 / 60.0;
+        assert!(
+            (delay - next).abs() < 1e-3,
+            "a repaint {next} s later, not a continuous one: {delay} at {time}"
+        );
+    }
+    // Sin Pixel UI no hay casita animada ni repintado: en Home, egui no pide otro frame.
+    let mut plain = LayoutHarness::new(ViewSettings::default(), false);
+    plain.frame();
+    assert_eq!(
+        plain.repaint_delay,
+        std::time::Duration::MAX,
+        "no animation"
+    );
 }
 
 #[test]
@@ -653,11 +691,15 @@ fn tabs_switch_on_click_go_home_and_close_with_the_middle_button() {
 #[test]
 fn hovering_an_inactive_tab_does_not_change_it() {
     let mut h = two_tabs(Some(0));
+    // El tiempo de cada foto, el mismo: la casita de Home está animada.
+    let time = h.time;
     let before = h.textures.clone();
     let tab = h.button("Otro.chimp");
+    h.time = time - 0.05;
     h.frame_with(vec![Event::PointerMoved(
         tab.left_center() + Vec2::new(8.0, 0.0),
     )]);
+    h.time = time - 0.05;
     h.frame();
     assert_eq!(h.textures, before);
 }
