@@ -249,6 +249,15 @@ mod tests {
         assert!(!pixel_font_has('…'));
     }
 
+    #[test]
+    fn the_colon_sits_on_the_baseline_and_only_the_semicolon_has_a_tail() {
+        let font = fontdue::Font::from_bytes(PIXEL_FONT, fontdue::FontSettings::default()).unwrap();
+        // `ymin` es el borde de abajo del glifo respecto a la línea base (negativo: baja de ella).
+        let bottom = |c: char| font.metrics(c, 16.0).ymin;
+        assert!(bottom(':') >= 0, "':' no baja de la línea base como ';'");
+        assert!(bottom(';') < 0, "';' lleva su colita");
+    }
+
     fn frame(ctx: &egui::Context, pixel: &mut PixelUi, view: &ViewSettings) {
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| pixel.update(ui.ctx(), view));
         // Las texturas (fuentes y skin) no se suben a ninguna GPU.
