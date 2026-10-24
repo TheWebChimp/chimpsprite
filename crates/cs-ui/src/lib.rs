@@ -856,8 +856,9 @@ impl ChimpApp {
         // Alrededor de los artboards: el color `canvas` del skin con Pixel UI.
         self.doc.canvas.background = canvas::background_for(skin);
         let (width, frame) = match skin {
-            // Con Pixel UI, la columna de íconos: el marco más el margen a cada lado, y la línea
-            // que separa el panel del lienzo (egui la pone en el margen exterior).
+            // Con Pixel UI, la columna de íconos: la caja más el margen a cada lado, y la línea
+            // que separa el panel del lienzo (egui la pone en el margen exterior). Arriba, el
+            // margen del mockup hasta la barra de opciones.
             Some(skin) => {
                 let line = ui
                     .style()
@@ -867,7 +868,12 @@ impl ChimpApp {
                     .bg_stroke
                     .width
                     .round();
-                let margin = egui::Margin::symmetric(pixel_ui::TOOLBAR_MARGIN, 2);
+                let margin = egui::Margin {
+                    left: pixel_ui::TOOLBAR_MARGIN,
+                    right: pixel_ui::TOOLBAR_MARGIN,
+                    top: pixel_ui::TOOLBAR_TOP_MARGIN,
+                    bottom: 2,
+                };
                 (
                     pixel_ui::toolbar_width(skin) + line,
                     egui::Frame::side_top_panel(ui.style()).inner_margin(margin),

@@ -177,7 +177,7 @@ fn on_home_there_is_no_options_bar() {
 }
 
 #[test]
-fn with_pixel_ui_the_toolbar_is_the_slot_plus_its_margin() {
+fn with_pixel_ui_the_toolbar_is_5_points_the_box_and_5_points_below_the_options_bar() {
     use crate::skin::WidgetState;
     let view = ViewSettings {
         pixel_ui: true,
@@ -185,7 +185,7 @@ fn with_pixel_ui_the_toolbar_is_the_slot_plus_its_margin() {
     };
     let h = LayoutHarness::new(view, true);
     let skin = h.app.pixel.skin().expect("the integer scale is in effect");
-    let slot = skin.piece("tool.slot", WidgetState::Normal).unwrap().size[0] as f32;
+    let frame = skin.piece("toolbar.box", WidgetState::Normal).unwrap().size[0] as f32;
     let line = h
         .ctx
         .global_style()
@@ -196,12 +196,23 @@ fn with_pixel_ui_the_toolbar_is_the_slot_plus_its_margin() {
         .width
         .round();
     let tools = h.panel("tools");
-    assert_eq!(tools.width() - line, slot + 8.0, "{tools:?}");
-    // El marco del lápiz, a 4 puntos de cada borde (sin contar la línea).
-    let pencil = h.button("Pencil");
-    assert_eq!(pencil.width(), slot);
-    assert_eq!(pencil.left() - tools.left(), 4.0, "{pencil:?} in {tools:?}");
-    assert_eq!(tools.right() - line - pencil.right(), 4.0);
+    // El mockup: 5 px de fondo, la caja de 27 y 5 px (sin contar la línea).
+    assert_eq!(tools.width() - line, 5.0 + frame + 5.0, "{tools:?}");
+    assert_eq!(tools.width() - line, 37.0, "{tools:?}");
+    // El primer botón, a 1 px de línea y 1 de aire dentro de la caja: a 7 puntos de cada borde.
+    let marquee = h.button("Rectangular Marquee");
+    assert_eq!(marquee.width(), 23.0);
+    assert_eq!(
+        marquee.left() - tools.left(),
+        7.0,
+        "{marquee:?} in {tools:?}"
+    );
+    assert_eq!(tools.right() - line - marquee.right(), 7.0);
+    // La caja empieza 34 px debajo de la barra de opciones, como en el mockup.
+    let options = h.panel("tool_options");
+    assert_eq!(marquee.top() - 2.0 - options.bottom(), 34.0, "{marquee:?}");
+    // Los botones siguen pegados.
+    assert_eq!(h.button("Hand").top(), marquee.bottom());
     // Y sigue a todo el alto, al lado de la línea de tiempo.
     assert!(tools.bottom() > h.panel("timeline").top());
 }

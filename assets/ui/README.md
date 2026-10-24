@@ -39,8 +39,18 @@ oculta.
 - **Íconos de herramientas:** `icon.<herramienta>` miden 17×17 sobre fondo transparente (los
   nombres están en `icon_piece`, `crates/cs-ui/src/tool_group.rs`). Se dibujan centrados en el
   marco.
-- **Marcos de herramienta:** `tool.slot` (normal) y `tool.slot.active` (la herramienta elegida)
-  miden 23×23, con centro (2,2,19,19). `tool.slot.hover` está sin dibujar y cae al normal.
+- **Marcos de herramienta:** los tramos de la columna del mockup, pegados uno debajo del otro.
+  Todos con centro (2,2,19,19); el ícono va a (3,3).
+  - `tool.slot.first` (el de arriba, redondeado arriba) y `tool.slot` (los del medio) miden
+    23×22: traen el borde de arriba y no el de abajo, que es el del botón siguiente.
+  - `tool.slot.last` (el de abajo, redondeado abajo) mide 23×23: trae los dos bordes.
+  - Cada uno tiene su `.active` (la herramienta elegida): el botón activo suelto del mockup, con
+    el bisel invertido (blanco ↔ (221,206,191)) y el relleno café tramado en la misma posición.
+  - Si falta `.first` o `.last`, se usa `tool.slot`. `tool.slot.hover` está sin dibujar y cae
+    al normal.
+- **Caja de la barra:** `toolbar.box` mide 27×7, con centro (3,3,21,1): la línea redondeada
+  (189,164,153) que rodea la columna, con 1 px de aire hasta los botones. Se estira en vertical.
+  El panel mide 5 + el ancho de la caja + 5.
 - **Botones de simetría:** `sym.slot` (eje apagado) y `sym.slot.active` (prendido) miden 13×14,
   sin centro. El cuadro de 11×11 empieza en (1,1) y su interior de 9×9, transparente, en (2,2):
   ahí va el ícono `icon.sym_vertical`, `icon.sym_horizontal`, `icon.sym_diag_down` o

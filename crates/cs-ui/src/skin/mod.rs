@@ -257,6 +257,15 @@ impl Skin {
     pub fn colors(&self) -> &SkinColors {
         &self.colors
     }
+
+    /// El mismo skin sin las piezas `names`, para probar los respaldos.
+    #[cfg(test)]
+    pub fn without(mut self, names: &[&str]) -> Skin {
+        for name in names {
+            self.pieces.remove(*name);
+        }
+        self
+    }
 }
 
 #[cfg(test)]
@@ -407,16 +416,60 @@ mod tests {
             w: 19,
             h: 19,
         };
-        for name in ["tool.slot", "tool.slot.active"] {
-            let slot = &data.pieces[name];
-            assert_eq!((slot.size, slot.center), ([23, 23], Some(center)), "{name}");
-            // Esquinas redondeadas: transparentes.
-            assert_eq!(slot.rgba[3], 0, "{name}");
+        let alpha = |piece: &PieceImage, x: u32, y: u32| {
+            piece.rgba[((y * piece.size[0] + x) * 4 + 3) as usize]
+        };
+        // Los tramos de la columna del mockup: el primero (arriba redondeado) y los del medio
+        // miden 23×22 (borde de arriba, sin el de abajo, que es el del siguiente); el último,
+        // 23×23 (con el borde de abajo, redondeado).
+        for (name, height, round_top, round_bottom) in [
+            ("tool.slot.first", 22, true, false),
+            ("tool.slot", 22, false, false),
+            ("tool.slot.last", 23, false, true),
+        ] {
+            for name in [name.to_owned(), format!("{name}.active")] {
+                let slot = data.pieces.get(&name).unwrap_or_else(|| panic!("{name}"));
+                assert_eq!(
+                    (slot.size, slot.center),
+                    ([23, height], Some(center)),
+                    "{name}"
+                );
+                let bottom = height - 1;
+                // Esquinas redondeadas: transparentes; las cuadradas, borde.
+                for (x, y, round) in [
+                    (0, 0, round_top),
+                    (22, 0, round_top),
+                    (0, bottom, round_bottom),
+                    (22, bottom, round_bottom),
+                ] {
+                    let expected = if round { 0 } else { 255 };
+                    assert_eq!(alpha(slot, x, y), expected, "{name} ({x},{y})");
+                }
+            }
         }
+        // El activo es otro dibujo: el relleno del mockup es café y tramado.
+        assert_ne!(
+            data.pieces["tool.slot"].rgba,
+            data.pieces["tool.slot.active"].rgba
+        );
         assert!(
             !data.pieces.contains_key("tool.slot.hover"),
             "not drawn yet: falls back to tool.slot"
         );
+        // La caja de la barra: 27 de ancho (el botón de 23 más 1 px de aire y 1 de línea a cada
+        // lado) y un centro que se estira en vertical.
+        let frame = &data.pieces["toolbar.box"];
+        let center = Rect9 {
+            x: 3,
+            y: 3,
+            w: 21,
+            h: 1,
+        };
+        assert_eq!((frame.size, frame.center), ([27, 7], Some(center)));
+        assert_eq!(alpha(frame, 0, 0), 0, "rounded corner");
+        assert_eq!(alpha(frame, 0, 3), 255, "left line");
+        assert_eq!(alpha(frame, 1, 3), 0, "the air inside");
+        assert_eq!(alpha(frame, 13, 3), 0, "the buttons go inside");
     }
 
     #[test]

@@ -27,14 +27,25 @@ const FALLBACK_BUTTON: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const FALLBACK_BUTTON_SIZE: Vec2 = Vec2::new(32.0, 18.0);
 /// Tamaño del botón de cerrar de respaldo (el de la pieza del skin).
 const FALLBACK_CLOSE_SIZE: Vec2 = Vec2::new(9.0, 9.0);
-/// Marco de los botones de herramienta; `.active` cuando su grupo tiene la herramienta activa.
+/// Marcos de los botones de herramienta, los tramos de la columna del mockup: el primero
+/// (redondeado arriba), los del medio y el último (redondeado abajo). `.active` cuando su grupo
+/// tiene la herramienta activa.
 const SLOT_PIECE: &str = "tool.slot";
+const FIRST_SLOT_PIECE: &str = "tool.slot.first";
+const LAST_SLOT_PIECE: &str = "tool.slot.last";
 /// Tamaño del botón de herramienta de respaldo (el del marco del mockup).
 const FALLBACK_SLOT_SIZE: Vec2 = Vec2::new(23.0, 23.0);
+/// Caja redondeada alrededor de la columna de botones, en 9-slice: se estira en vertical.
+const BOX_PIECE: &str = "toolbar.box";
+/// Línea y aire de la caja de respaldo a cada lado de los botones: 1 px de cada uno.
+const FALLBACK_BOX_INSET: f32 = 2.0;
 /// Lado de la marca de variantes, en píxeles del skin.
 const MORE_MARK: f32 = 3.0;
-/// Margen de la barra de íconos a cada lado del marco, en puntos.
-pub const TOOLBAR_MARGIN: i8 = 4;
+/// Margen de la barra de íconos a cada lado de la caja, en puntos: 5 px de fondo en el mockup.
+pub const TOOLBAR_MARGIN: i8 = 5;
+/// Margen de arriba de la barra de íconos: en el mockup la caja empieza 34 px debajo de la barra
+/// de opciones.
+pub const TOOLBAR_TOP_MARGIN: i8 = 34;
 /// Marco de los botones de prender y apagar de la barra de opciones (los ejes de simetría);
 /// `.active` cuando están prendidos.
 const TOGGLE_PIECE: &str = "sym.slot";
@@ -338,41 +349,130 @@ fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response
     response
 }
 
-/// Tamaño del marco de los botones de herramienta: el de la pieza `tool.slot` o el de respaldo.
-fn slot_size(skin: &Skin) -> Vec2 {
-    skin.piece(SLOT_PIECE, WidgetState::Normal)
-        .map_or(FALLBACK_SLOT_SIZE, |p| {
-            vec2(p.size[0] as f32, p.size[1] as f32)
-        })
+/// Qué tramo de la columna es un botón: los botones van pegados y solo las puntas son
+/// redondeadas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SlotPos {
+    /// El de arriba: `tool.slot.first`.
+    First,
+    /// Los del medio: `tool.slot`.
+    Middle,
+    /// El de abajo, con el borde de cierre: `tool.slot.last`.
+    Last,
 }
 
-/// Ancho de la barra de íconos sin la línea que la separa del lienzo: el marco `tool.slot` más
-/// `TOOLBAR_MARGIN` a cada lado. Sale de la pieza, así sigue al skin.
+impl SlotPos {
+    /// El tramo del botón `index` en una columna de `len` botones.
+    pub fn of(index: usize, len: usize) -> SlotPos {
+        if index == 0 {
+            SlotPos::First
+        } else if index + 1 >= len {
+            SlotPos::Last
+        } else {
+            SlotPos::Middle
+        }
+    }
+
+    fn piece_name(self) -> &'static str {
+        match self {
+            SlotPos::First => FIRST_SLOT_PIECE,
+            SlotPos::Middle => SLOT_PIECE,
+            SlotPos::Last => LAST_SLOT_PIECE,
+        }
+    }
+}
+
+/// El marco del tramo `slot` en `state`; si el skin no trae ese tramo, el del medio.
+fn slot_piece(skin: &Skin, slot: SlotPos, state: WidgetState) -> Option<&Piece> {
+    skin.piece(slot.piece_name(), state)
+        .or_else(|| skin.piece(SLOT_PIECE, state))
+}
+
+/// Tamaño del marco del tramo `slot`: el de su pieza o el de respaldo.
+fn slot_size(skin: &Skin, slot: SlotPos) -> Vec2 {
+    slot_piece(skin, slot, WidgetState::Normal).map_or(FALLBACK_SLOT_SIZE, |p| {
+        vec2(p.size[0] as f32, p.size[1] as f32)
+    })
+}
+
+/// Ancho de la caja de la barra: el de `toolbar.box` o, sin ella, el botón con la línea y el
+/// aire de respaldo a cada lado.
+fn box_width(skin: &Skin) -> f32 {
+    skin.piece(BOX_PIECE, WidgetState::Normal).map_or(
+        slot_size(skin, SlotPos::Middle).x + 2.0 * FALLBACK_BOX_INSET,
+        |p| p.size[0] as f32,
+    )
+}
+
+/// Distancia de la caja a los botones, a cada lado: lo que sobra del ancho de la caja, repartido
+/// (1 px de línea y 1 de aire en el mockup). Arriba y abajo es la misma.
+fn box_inset(skin: &Skin) -> f32 {
+    ((box_width(skin) - slot_size(skin, SlotPos::Middle).x) / 2.0)
+        .floor()
+        .max(0.0)
+}
+
+/// Ancho de la barra de íconos sin la línea que la separa del lienzo: la caja `toolbar.box` más
+/// `TOOLBAR_MARGIN` a cada lado. Sale de las piezas, así sigue al skin.
 pub fn toolbar_width(skin: &Skin) -> f32 {
-    slot_size(skin).x + 2.0 * f32::from(TOOLBAR_MARGIN)
+    box_width(skin) + 2.0 * f32::from(TOOLBAR_MARGIN)
 }
 
-/// Botón de herramienta de la barra de íconos: el marco `tool.slot` (`tool.slot.active` con
-/// `selected`) a tamaño de pieza y el ícono `icon` centrado en él. Presionado, el ícono baja 1 px.
-/// Con `more`, un triangulito de 3×3 en la esquina de abajo a la derecha del relleno marca que
-/// hay variantes.
+/// La caja de la barra de íconos alrededor de lo que agregue `add_contents` (la columna de
+/// botones), con la línea y el aire de la pieza a cada lado. La pieza se estira en vertical
+/// hasta el alto de la columna; sin ella, un borde `outline` de 1 px. Devuelve el rect de la
+/// caja.
+pub fn toolbar_box(ui: &mut Ui, skin: &Skin, add_contents: impl FnOnce(&mut Ui)) -> Rect {
+    let inset = box_inset(skin);
+    // La caja se pinta detrás, cuando ya se sabe el alto de la columna.
+    let background = ui.painter().add(Shape::Noop);
+    let margin = egui::Margin::same(inset.min(f32::from(i8::MAX)) as i8);
+    let inner = egui::Frame::NONE
+        .inner_margin(margin)
+        .show(ui, add_contents);
+    let rect = Rect::from_min_size(
+        inner.response.rect.min,
+        vec2(box_width(skin), inner.response.rect.height()),
+    );
+    let ppp = ui.ctx().pixels_per_point();
+    let shapes = match skin.piece(BOX_PIECE, WidgetState::Normal) {
+        Some(piece) => piece_shapes(piece, rect, ppp),
+        None => vec![Shape::rect_stroke(
+            rect.round_to_pixels(ppp),
+            0.0,
+            Stroke::new(1.0, skin.colors().outline),
+            StrokeKind::Inside,
+        )],
+    };
+    ui.painter().set(background, Shape::Vec(shapes));
+    rect
+}
+
+/// Botón de herramienta de la barra de íconos: el marco del tramo `slot` de la columna
+/// (`tool.slot.first`, `tool.slot` o `tool.slot.last`; con `selected`, su `.active`) a tamaño
+/// de pieza y el ícono `icon` centrado en el relleno (el centro del 9-slice). Presionado, el
+/// ícono baja 1 px. Con `more`, un triangulito de 3×3 en la esquina de abajo a la derecha del
+/// relleno marca que hay variantes.
 ///
-/// Sin el ícono se dibuja la inicial de `label`; sin el marco, el respaldo plano (con un borde
-/// `accent` si está elegido). `label` es también el nombre accesible.
+/// Sin el marco del tramo se usa el del medio. Sin el ícono se dibuja la inicial de `label`; sin
+/// ningún marco, el respaldo plano (con un borde `accent` si está elegido). `label` es también el
+/// nombre accesible.
 ///
 /// `id` es el del botón (y de su lista de variantes): fijo por grupo, no depende del orden de los
 /// widgets de la barra.
+#[allow(clippy::too_many_arguments)]
 pub fn tool_button(
     ui: &mut Ui,
     id: egui::Id,
     skin: &Skin,
+    slot: SlotPos,
     icon: &str,
     label: &str,
     selected: bool,
     more: bool,
 ) -> Response {
-    let base = skin.piece(SLOT_PIECE, WidgetState::Normal);
-    let size = slot_size(skin);
+    let base = slot_piece(skin, slot, WidgetState::Normal);
+    let size = slot_size(skin, slot);
     let (_, space) = ui.allocate_space(size);
     let response = ui.interact(space, id, Sense::click());
     let rect = egui::Align2::CENTER_CENTER.align_size_within_rect(size, space);
@@ -395,7 +495,7 @@ pub fn tool_button(
     };
     let colors = *skin.colors();
     let ppp = ui.ctx().pixels_per_point();
-    let mut shapes = match skin.piece(SLOT_PIECE, state) {
+    let mut shapes = match slot_piece(skin, slot, state) {
         Some(piece) => piece_shapes(piece, rect, ppp),
         None => {
             let mut flat = flat_shapes(skin, rect, 0.0, ppp);
@@ -415,23 +515,26 @@ pub fn tool_button(
     } else {
         WidgetState::Normal
     };
+    // El relleno: el centro del 9-slice del marco (o 1 px adentro del respaldo). El ícono de 17
+    // queda a 1 px de su borde, como en el mockup.
+    let [left, top, right, bottom] = base.map_or(FALLBACK_BUTTON, borders);
+    let fill = Rect::from_min_max(rect.min + vec2(left, top), rect.max - vec2(right, bottom));
     match skin.piece(icon, WidgetState::Normal) {
         Some(piece) => {
             let icon_size = vec2(piece.size[0] as f32, piece.size[1] as f32);
-            let at = label_pos(rect, icon_size, icon_state, ppp);
+            let at = label_pos(fill, icon_size, icon_state, ppp);
             shapes.extend(piece_shapes(piece, Rect::from_min_size(at, icon_size), ppp));
         }
         None => {
             let initial: String = label.chars().take(1).collect();
             let font = TextStyle::Button.resolve(ui.style());
             let galley = ui.painter().layout_no_wrap(initial, font, colors.text);
-            let at = label_pos(rect, galley.size(), icon_state, ppp);
+            let at = label_pos(fill, galley.size(), icon_state, ppp);
             shapes.push(Shape::galley(at, galley, colors.text));
         }
     }
     if more {
-        let [_, _, right, bottom] = base.map_or(FALLBACK_BUTTON, borders);
-        let corner = rect.max - vec2(right, bottom);
+        let corner = fill.max;
         shapes.extend(
             more_mark(corner, ppp)
                 .into_iter()
@@ -701,59 +804,139 @@ mod tests {
         }
     }
 
-    /// Un frame con un botón de herramienta (Lasso, con variantes): su rectángulo, si se hizo
-    /// clic y las texturas que se dibujaron.
+    /// Un frame con un botón de herramienta (Lasso, con variantes) en el tramo `slot` de la
+    /// columna: su rectángulo, si se hizo clic y las texturas que se dibujaron con su rect.
     fn tool(
         ctx: &egui::Context,
         skin: &Skin,
+        slot: SlotPos,
         selected: bool,
         events: Vec<Event>,
-    ) -> (Rect, bool, Vec<egui::TextureId>) {
+    ) -> (Rect, bool, Vec<(egui::TextureId, Rect)>) {
         let mut out = (Rect::NOTHING, false);
         let input = RawInput { events, ..screen() };
+        let textures = run(ctx, input, |ui| {
+            let r = tool_button(
+                ui,
+                egui::Id::new("lasso"),
+                skin,
+                slot,
+                "icon.lasso",
+                "Lasso",
+                selected,
+                true,
+            );
+            out = (r.rect, r.clicked());
+        });
+        (out.0, out.1, textures)
+    }
+
+    /// Un frame con `add` en un panel central; devuelve las texturas dibujadas con su rect.
+    fn run(
+        ctx: &egui::Context,
+        input: RawInput,
+        mut add: impl FnMut(&mut Ui),
+    ) -> Vec<(egui::TextureId, Rect)> {
         let mut output = ctx.run_ui(input, |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                let r = tool_button(
-                    ui,
-                    egui::Id::new("lasso"),
-                    skin,
-                    "icon.lasso",
-                    "Lasso",
-                    selected,
-                    true,
-                );
-                out = (r.rect, r.clicked());
-            });
+            egui::CentralPanel::default().show(ui, |ui| add(ui));
         });
         // Las texturas (fuentes y skin) no se suben a ninguna GPU.
         output.textures_delta.clear();
         let mut textures = Vec::new();
         for clipped in &output.shapes {
-            collect_textures(&clipped.shape, &mut textures);
+            collect_meshes(&clipped.shape, &mut textures);
         }
-        (out.0, out.1, textures)
+        textures
     }
 
-    fn collect_textures(shape: &Shape, out: &mut Vec<egui::TextureId>) {
+    fn collect_meshes(shape: &Shape, out: &mut Vec<(egui::TextureId, Rect)>) {
         match shape {
-            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_textures(s, out)),
-            Shape::Mesh(mesh) => out.push(mesh.texture_id),
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_meshes(s, out)),
+            Shape::Mesh(mesh) => out.push((mesh.texture_id, mesh.calc_bounds())),
             _ => {}
         }
     }
 
+    fn collect_textures(shape: &Shape, out: &mut Vec<egui::TextureId>) {
+        let mut meshes = Vec::new();
+        collect_meshes(shape, &mut meshes);
+        out.extend(meshes.into_iter().map(|(t, _)| t));
+    }
+
+    /// Rect de lo dibujado con la textura `texture` (la unión de sus partes).
+    fn drawn(textures: &[(egui::TextureId, Rect)], texture: egui::TextureId) -> Option<Rect> {
+        textures
+            .iter()
+            .filter(|(t, _)| *t == texture)
+            .map(|(_, r)| *r)
+            .reduce(|a, b| a.union(b))
+    }
+
+    /// Cuáles de los seis marcos de la columna se dibujaron.
+    fn drawn_slots(skin: &Skin, textures: &[(egui::TextureId, Rect)]) -> Vec<&'static str> {
+        [
+            "tool.slot.first",
+            "tool.slot",
+            "tool.slot.last",
+            "tool.slot.first.active",
+            "tool.slot.active",
+            "tool.slot.last.active",
+        ]
+        .into_iter()
+        .filter(|name| {
+            let id = skin.piece(name, WidgetState::Normal).unwrap().texture.id();
+            textures.iter().any(|(t, _)| *t == id)
+        })
+        .collect()
+    }
+
     #[test]
-    fn a_tool_button_is_the_slot_with_its_icon_and_the_active_slot_when_selected() {
+    fn a_tool_button_is_its_column_slot_with_the_icon_and_the_active_slot_when_selected() {
         let ctx = egui::Context::default();
         let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
         let id = |name: &str| skin.piece(name, WidgetState::Normal).unwrap().texture.id();
-        let (rect, _, textures) = tool(&ctx, &skin, false, vec![]);
-        assert_eq!(rect.size(), vec2(23.0, 23.0), "the slot size");
-        assert!(textures.contains(&id("tool.slot")));
-        assert!(textures.contains(&id("icon.lasso")));
-        let (_, _, textures) = tool(&ctx, &skin, true, vec![]);
-        assert!(textures.contains(&id("tool.slot.active")));
-        assert!(!textures.contains(&id("tool.slot")));
+        for (slot, name, active, height) in [
+            (
+                SlotPos::First,
+                "tool.slot.first",
+                "tool.slot.first.active",
+                22.0,
+            ),
+            (SlotPos::Middle, "tool.slot", "tool.slot.active", 22.0),
+            (
+                SlotPos::Last,
+                "tool.slot.last",
+                "tool.slot.last.active",
+                23.0,
+            ),
+        ] {
+            let (rect, _, textures) = tool(&ctx, &skin, slot, false, vec![]);
+            assert_eq!(rect.size(), vec2(23.0, height), "{name}: the piece size");
+            assert_eq!(drawn_slots(&skin, &textures), [name], "{slot:?}");
+            assert_eq!(drawn(&textures, id(name)), Some(rect), "{name}");
+            // El ícono de 17 va a (3,3) del tramo: 1 px adentro del relleno, como en el mockup.
+            let icon = drawn(&textures, id("icon.lasso")).expect("the icon");
+            assert_eq!(icon.min - rect.min, vec2(3.0, 3.0), "{name}");
+            let (_, _, textures) = tool(&ctx, &skin, slot, true, vec![]);
+            assert_eq!(drawn_slots(&skin, &textures), [active], "{slot:?} selected");
+        }
+    }
+
+    #[test]
+    fn without_first_and_last_pieces_the_ends_use_the_middle_slot() {
+        let ctx = egui::Context::default();
+        let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap().without(&[
+            "tool.slot.first",
+            "tool.slot.first.active",
+            "tool.slot.last",
+            "tool.slot.last.active",
+        ]);
+        let middle = skin.piece("tool.slot", WidgetState::Normal).unwrap();
+        for slot in [SlotPos::First, SlotPos::Last] {
+            let (rect, _, textures) = tool(&ctx, &skin, slot, false, vec![]);
+            assert_eq!(rect.size(), vec2(23.0, 22.0), "{slot:?}");
+            assert_eq!(drawn(&textures, middle.texture.id()), Some(rect));
+        }
     }
 
     #[test]
@@ -763,13 +946,15 @@ mod tests {
             Skin::load(&ctx, crate::skin::EMBEDDED).unwrap(),
             Skin::fallback(),
         ];
-        for skin in &skins {
-            let (rect, _, _) = tool(&ctx, skin, false, vec![]);
-            assert_eq!(rect.size(), vec2(23.0, 23.0));
+        // Con el skin, el tramo del medio mide 23×22; el respaldo, 23×23.
+        for (skin, size) in skins.iter().zip([vec2(23.0, 22.0), vec2(23.0, 23.0)]) {
+            let middle = SlotPos::Middle;
+            let (rect, _, _) = tool(&ctx, skin, middle, false, vec![]);
+            assert_eq!(rect.size(), size);
             let at = rect.center();
-            tool(&ctx, skin, false, vec![Event::PointerMoved(at)]);
-            tool(&ctx, skin, false, vec![press(at, true)]);
-            let (_, clicked, _) = tool(&ctx, skin, false, vec![press(at, false)]);
+            tool(&ctx, skin, middle, false, vec![Event::PointerMoved(at)]);
+            tool(&ctx, skin, middle, false, vec![press(at, true)]);
+            let (_, clicked, _) = tool(&ctx, skin, middle, false, vec![press(at, false)]);
             assert!(clicked);
         }
     }
@@ -841,16 +1026,70 @@ mod tests {
     }
 
     #[test]
-    fn the_toolbar_is_as_wide_as_the_slot_plus_the_margin() {
+    fn the_toolbar_is_5_points_the_box_and_5_points() {
         let ctx = egui::Context::default();
         let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
-        let slot = skin.piece(SLOT_PIECE, WidgetState::Normal).unwrap().size[0] as f32;
-        assert_eq!(toolbar_width(&skin), slot + 8.0);
+        let frame = skin.piece(BOX_PIECE, WidgetState::Normal).unwrap().size[0] as f32;
+        assert_eq!(frame, 27.0);
+        assert_eq!(toolbar_width(&skin), 5.0 + frame + 5.0);
+        assert_eq!(toolbar_width(&skin), 37.0, "the mockup");
+        // El respaldo: el botón de 23 con 1 px de aire y 1 de línea a cada lado.
+        assert_eq!(toolbar_width(&Skin::fallback()), 37.0, "the fallback");
+    }
+
+    /// Un frame con dos botones dentro de la caja de la barra: el rect de la caja (lo que
+    /// devuelve `toolbar_box`), el de cada botón y las texturas dibujadas.
+    fn boxed(ctx: &egui::Context, skin: &Skin) -> (Rect, [Rect; 2], Vec<(egui::TextureId, Rect)>) {
+        let mut out = (Rect::NOTHING, [Rect::NOTHING; 2]);
+        let textures = run(ctx, screen(), |ui| {
+            let mut buttons = [Rect::NOTHING; 2];
+            let frame = toolbar_box(ui, skin, |ui| {
+                ui.spacing_mut().item_spacing.y = 0.0;
+                for (i, slot) in [SlotPos::First, SlotPos::Last].into_iter().enumerate() {
+                    let id = egui::Id::new(("boxed", i));
+                    let r = tool_button(ui, id, skin, slot, "icon.pencil", "Pencil", false, false);
+                    buttons[i] = r.rect;
+                }
+            });
+            out = (frame, buttons);
+        });
+        (out.0, out.1, textures)
+    }
+
+    #[test]
+    fn the_toolbar_box_goes_around_the_buttons_with_one_pixel_of_air() {
+        let ctx = egui::Context::default();
+        let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
+        let (frame, [first, last], textures) = boxed(&ctx, &skin);
+        let id = skin
+            .piece(BOX_PIECE, WidgetState::Normal)
+            .unwrap()
+            .texture
+            .id();
         assert_eq!(
-            toolbar_width(&Skin::fallback()),
-            23.0 + 8.0,
-            "the fallback slot"
+            drawn(&textures, id),
+            Some(frame),
+            "the box piece, stretched"
         );
+        // 1 px de línea y 1 de aire: los botones empiezan 2 px adentro, en los dos ejes.
+        assert_eq!(
+            first.min - frame.min,
+            vec2(2.0, 2.0),
+            "{first:?} in {frame:?}"
+        );
+        assert_eq!(
+            frame.max - last.max,
+            vec2(2.0, 2.0),
+            "{last:?} in {frame:?}"
+        );
+        assert_eq!(frame.size(), vec2(27.0, 22.0 + 23.0 + 4.0));
+        assert_eq!(last.min.y, first.max.y, "no gap");
+        // Sin la pieza, la caja de respaldo mide lo mismo y los botones van igual.
+        let fallback = Skin::fallback();
+        let (frame, [first, last], _) = boxed(&ctx, &fallback);
+        assert_eq!(frame.width(), 27.0);
+        assert_eq!(first.min - frame.min, vec2(2.0, 2.0));
+        assert_eq!(frame.max - last.max, vec2(2.0, 2.0));
     }
 
     #[test]

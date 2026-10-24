@@ -57,19 +57,24 @@ pub fn tools_scroll_area() -> egui::ScrollArea {
         .scroll_source(ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL)
 }
 
-/// La barra de íconos de Pixel UI: una columna con un botón por grupo, alineada a la izquierda.
-/// Los marcos van pegados, uno debajo del otro. Cada botón lleva un id propio de su grupo, así su
-/// lista de variantes (y la presión larga) no depende de lo que haya antes en la barra.
+/// La barra de íconos de Pixel UI: una columna con un botón por grupo dentro de la caja
+/// redondeada (`toolbar.box`), alineada a la izquierda. Los marcos van pegados, uno debajo del
+/// otro: el primero redondeado arriba, el último abajo y los del medio cuadrados. Cada botón
+/// lleva un id propio de su grupo, así su lista de variantes (y la presión larga) no depende de
+/// lo que haya antes en la barra.
 fn tool_column(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
-    ui.vertical(|ui| {
+    let base = ui.id();
+    let len = ToolKind::GROUPS.len();
+    pixel_ui::toolbar_box(ui, skin, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        for index in 0..ToolKind::GROUPS.len() {
-            let id = ui.id().with(("tool_group", index));
+        for index in 0..len {
+            let id = base.with(("tool_group", index));
             tool_group::group_button(ui, editor, Some(skin), index, |ui, shown, state| {
                 pixel_ui::tool_button(
                     ui,
                     id,
                     skin,
+                    pixel_ui::SlotPos::of(index, len),
                     tool_group::icon_piece(shown),
                     shown.label(),
                     state.selected,
@@ -1697,18 +1702,24 @@ mod tests {
         editor: Editor,
         skin: Skin,
         time: f64,
-        /// Alto de la pantalla: con 150 la columna (13 × 23) no entra y hay scroll.
+        /// Alto de la pantalla: con 150 la columna (13 × 22) no entra y hay scroll.
         height: f32,
         buttons: Vec<(String, Rect)>,
         textures: Vec<egui::TextureId>,
+        /// Lo dibujado con cada textura y su rect.
+        meshes: Vec<(egui::TextureId, Rect)>,
         offset: f32,
     }
 
     impl ColumnHarness {
         fn new(height: f32) -> Self {
             let ctx = egui::Context::default();
-            ctx.enable_accesskit();
             let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
+            Self::with_skin(ctx, skin, height)
+        }
+
+        fn with_skin(ctx: egui::Context, skin: Skin, height: f32) -> Self {
+            ctx.enable_accesskit();
             let mut h = Self {
                 ctx,
                 editor: Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba)),
@@ -1717,6 +1728,7 @@ mod tests {
                 height,
                 buttons: Vec::new(),
                 textures: Vec::new(),
+                meshes: Vec::new(),
                 offset: 0.0,
             };
             h.frame(vec![]);
@@ -1751,10 +1763,11 @@ mod tests {
             });
             output.textures_delta.clear();
             self.offset = offset;
-            self.textures.clear();
+            self.meshes.clear();
             for clipped in &output.shapes {
-                collect_textures(&clipped.shape, &mut self.textures);
+                collect_meshes(&clipped.shape, &mut self.meshes);
             }
+            self.textures = self.meshes.iter().map(|(t, _)| *t).collect();
             self.buttons = output
                 .platform_output
                 .accesskit_update
@@ -1810,10 +1823,10 @@ mod tests {
         }
     }
 
-    fn collect_textures(shape: &egui::Shape, out: &mut Vec<egui::TextureId>) {
+    fn collect_meshes(shape: &egui::Shape, out: &mut Vec<(egui::TextureId, Rect)>) {
         match shape {
-            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_textures(s, out)),
-            egui::Shape::Mesh(mesh) => out.push(mesh.texture_id),
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_meshes(s, out)),
+            egui::Shape::Mesh(mesh) => out.push((mesh.texture_id, mesh.calc_bounds())),
             _ => {}
         }
     }
@@ -1831,12 +1844,114 @@ mod tests {
         let names: Vec<&str> = column.iter().map(|(l, _)| l.as_str()).collect();
         let expected: Vec<&str> = ToolKind::GROUPS.iter().map(|g| g[0].label()).collect();
         assert_eq!(names, expected);
-        assert!(
-            column.iter().all(|(_, r)| r.size() == Vec2::splat(23.0)),
-            "{column:?}"
-        );
+        // Los tramos del mockup: 23×22 y el último, con el borde de abajo, 23×23.
+        let last = column.len() - 1;
+        for (i, (label, r)) in column.iter().enumerate() {
+            let height = if i == last { 23.0 } else { 22.0 };
+            assert_eq!(r.size(), Vec2::new(23.0, height), "{label}");
+        }
         h.click("Paint Bucket", PointerButton::Primary);
         assert_eq!(h.editor.tool, ToolKind::Bucket);
+    }
+
+    /// Botones de la columna de arriba abajo.
+    fn column(h: &ColumnHarness) -> Vec<(String, Rect)> {
+        let mut column = h.buttons.clone();
+        column.sort_by(|a, b| a.1.min.y.total_cmp(&b.1.min.y));
+        column
+    }
+
+    #[test]
+    fn the_buttons_are_stacked_without_gaps_in_one_column() {
+        let skins = |ctx: &egui::Context| {
+            [
+                Skin::load(ctx, crate::skin::EMBEDDED).unwrap(),
+                Skin::fallback(),
+            ]
+        };
+        for i in 0..2 {
+            let ctx = egui::Context::default();
+            let skin = skins(&ctx).into_iter().nth(i).unwrap();
+            let h = ColumnHarness::with_skin(ctx, skin, 600.0);
+            let column = column(&h);
+            assert_eq!(column.len(), ToolKind::GROUPS.len());
+            for pair in column.windows(2) {
+                let ((_, above), (label, below)) = (&pair[0], &pair[1]);
+                assert_eq!(below.top(), above.bottom(), "{label}: no gap ({i})");
+                assert_eq!(below.left(), above.left(), "{label}: one column ({i})");
+            }
+        }
+    }
+
+    #[test]
+    fn the_first_button_is_rounded_on_top_the_last_below_and_the_active_one_is_brown() {
+        let mut h = ColumnHarness::new(600.0);
+        let column = column(&h);
+        // Los botones que se dibujaron enteros con `piece` (sus partes del 9-slice, unidas, cubren
+        // el botón) y si quedan partes de `piece` fuera de los botones.
+        let drawn = |h: &ColumnHarness, piece: &str| -> Vec<Rect> {
+            let id = h.texture(piece);
+            let parts: Vec<Rect> = h
+                .meshes
+                .iter()
+                .filter(|(t, _)| *t == id)
+                .map(|(_, r)| *r)
+                .collect();
+            assert!(
+                parts
+                    .iter()
+                    .all(|p| column.iter().any(|(_, r)| r.contains_rect(*p))),
+                "{piece}: {parts:?}"
+            );
+            column
+                .iter()
+                .map(|(_, r)| *r)
+                .filter(|r| {
+                    let inside = parts.iter().filter(|p| r.contains_rect(**p));
+                    inside.copied().reduce(|a, b| a.union(b)) == Some(*r)
+                })
+                .collect()
+        };
+        let rect = |i: usize| column[i].1;
+        let last = column.len() - 1;
+        // Con el lápiz (un grupo del medio): el primer tramo arriba, el último abajo y los del
+        // medio con `tool.slot`, salvo el del lápiz, que va activo.
+        assert_eq!(h.editor.tool, ToolKind::Pencil);
+        let pencil = column.iter().position(|(l, _)| l == "Pencil").unwrap();
+        assert_eq!(drawn(&h, "tool.slot.first"), [rect(0)]);
+        assert_eq!(drawn(&h, "tool.slot.last"), [rect(last)]);
+        assert_eq!(drawn(&h, "tool.slot.active"), [rect(pencil)]);
+        let middle: Vec<Rect> = (1..last).filter(|&i| i != pencil).map(rect).collect();
+        assert_eq!(drawn(&h, "tool.slot"), middle);
+        assert!(drawn(&h, "tool.slot.first.active").is_empty());
+        assert!(drawn(&h, "tool.slot.last.active").is_empty());
+        // Activos en las puntas: `.first.active` y `.last.active`.
+        h.click("Rectangular Marquee", PointerButton::Primary);
+        assert_eq!(drawn(&h, "tool.slot.first.active"), [rect(0)]);
+        assert!(drawn(&h, "tool.slot.first").is_empty());
+        assert!(drawn(&h, "tool.slot.active").is_empty());
+        h.click("Artboard", PointerButton::Primary);
+        assert_eq!(drawn(&h, "tool.slot.last.active"), [rect(last)]);
+        assert!(drawn(&h, "tool.slot.last").is_empty());
+    }
+
+    #[test]
+    fn the_column_goes_in_the_toolbar_box_with_one_pixel_of_air() {
+        let h = ColumnHarness::new(600.0);
+        let column = column(&h);
+        let id = h.texture("toolbar.box");
+        let frame = h
+            .meshes
+            .iter()
+            .filter(|(t, _)| *t == id)
+            .map(|(_, r)| *r)
+            .reduce(|a, b| a.union(b))
+            .expect("the box is drawn");
+        let (first, last) = (column[0].1, column[column.len() - 1].1);
+        assert_eq!(first.min - frame.min, Vec2::splat(2.0), "{frame:?}");
+        assert_eq!(frame.max - last.max, Vec2::splat(2.0), "{frame:?}");
+        // El mockup: 27 × 291.
+        assert_eq!(frame.size(), Vec2::new(27.0, 291.0));
     }
 
     #[test]
