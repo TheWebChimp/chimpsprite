@@ -16,6 +16,8 @@ struct LayoutHarness {
     canvas: Option<Rect>,
     /// Botones del último frame: nombre y rect (en puntos).
     buttons: Vec<(String, Rect)>,
+    /// Lo dibujado en el último frame.
+    shapes: Vec<egui::epaint::ClippedShape>,
 }
 
 impl LayoutHarness {
@@ -35,6 +37,7 @@ impl LayoutHarness {
             time: 0.0,
             canvas: None,
             buttons: Vec::new(),
+            shapes: Vec::new(),
         };
         for _ in 0..3 {
             h.frame();
@@ -64,6 +67,7 @@ impl LayoutHarness {
         // Las texturas (fuentes, skin y lienzo) no se suben a ninguna GPU.
         output.textures_delta.clear();
         self.canvas = canvas;
+        self.shapes = std::mem::take(&mut output.shapes);
         self.buttons = output
             .platform_output
             .accesskit_update
@@ -102,6 +106,54 @@ impl LayoutHarness {
 
     fn screen(&self) -> Rect {
         self.ctx.content_rect()
+    }
+
+    /// Los rects de color liso dibujados (los separadores grabados).
+    fn colored_rects(&self) -> Vec<(egui::Color32, Rect)> {
+        self.shapes
+            .iter()
+            .flat_map(|c| crate::pixel_ui::colored_rects(&c.shape))
+            .collect()
+    }
+
+    /// Las líneas de egui del color de sus separadores que tocan `area`.
+    fn separator_lines_in(&self, area: Rect) -> Vec<Rect> {
+        let color = self
+            .ctx
+            .global_style()
+            .visuals
+            .widgets
+            .noninteractive
+            .bg_stroke
+            .color;
+        fn collect(shape: &egui::Shape, color: egui::Color32, out: &mut Vec<Rect>) {
+            match shape {
+                egui::Shape::LineSegment { points, stroke } if stroke.color == color => {
+                    out.push(Rect::from_two_pos(points[0], points[1]));
+                }
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect(s, color, out)),
+                _ => {}
+            }
+        }
+        let mut lines = Vec::new();
+        for c in &self.shapes {
+            collect(&c.shape, color, &mut lines);
+        }
+        lines.retain(|r| r.expand(0.5).intersects(area));
+        lines
+    }
+}
+
+/// Solo las líneas verticales: las horizontales de la línea de tiempo y de la barra de estado
+/// tocan el borde de la barra de íconos.
+fn vertical(lines: Vec<Rect>) -> Vec<Rect> {
+    lines.into_iter().filter(|r| r.width() == 0.0).collect()
+}
+
+fn pixel_ui() -> ViewSettings {
+    ViewSettings {
+        pixel_ui: true,
+        ..Default::default()
     }
 }
 
@@ -186,19 +238,10 @@ fn with_pixel_ui_the_toolbar_is_5_points_the_box_and_5_points_below_the_options_
     let h = LayoutHarness::new(view, true);
     let skin = h.app.pixel.skin().expect("the integer scale is in effect");
     let frame = skin.piece("toolbar.box", WidgetState::Normal).unwrap().size[0] as f32;
-    let line = h
-        .ctx
-        .global_style()
-        .visuals
-        .widgets
-        .noninteractive
-        .bg_stroke
-        .width
-        .round();
     let tools = h.panel("tools");
-    // El mockup: 5 px de fondo, la caja de 27 y 5 px (sin contar la línea).
-    assert_eq!(tools.width() - line, 5.0 + frame + 5.0, "{tools:?}");
-    assert_eq!(tools.width() - line, 37.0, "{tools:?}");
+    // El mockup: 5 px de fondo, la caja de 27 y 5 px, sin línea contra el lienzo.
+    assert_eq!(tools.width(), 5.0 + frame + 5.0, "{tools:?}");
+    assert_eq!(tools.width(), 37.0, "{tools:?}");
     // El primer botón, a 1 px de línea y 1 de aire dentro de la caja: a 7 puntos de cada borde.
     let marquee = h.button("Rectangular Marquee");
     assert_eq!(marquee.width(), 23.0);
@@ -207,7 +250,7 @@ fn with_pixel_ui_the_toolbar_is_5_points_the_box_and_5_points_below_the_options_
         7.0,
         "{marquee:?} in {tools:?}"
     );
-    assert_eq!(tools.right() - line - marquee.right(), 7.0);
+    assert_eq!(tools.right() - marquee.right(), 7.0);
     // La caja empieza 34 px debajo de la barra de opciones, como en el mockup.
     let options = h.panel("tool_options");
     assert_eq!(marquee.top() - 2.0 - options.bottom(), 34.0, "{marquee:?}");
@@ -247,4 +290,67 @@ fn with_pixel_ui_the_options_bar_is_19_high() {
 fn without_pixel_ui_the_named_toolbar_keeps_its_width() {
     let h = LayoutHarness::editor();
     assert_eq!(h.panel("tools").width(), 184.0);
+}
+
+#[test]
+fn with_pixel_ui_the_tabs_and_the_options_bar_end_in_etched_lines() {
+    let h = LayoutHarness::new(pixel_ui(), true);
+    let colors = *h.app.pixel.skin().expect("on").colors();
+    let rects = h.colored_rects();
+    let (tabs, options) = (h.panel("tabs"), h.panel("tool_options"));
+    assert_eq!(tabs.bottom(), options.top(), "the bar right under the tabs");
+    assert_eq!(
+        options.height(),
+        19.0,
+        "the mockup's 19: 17 rows and the etched line"
+    );
+    let width = h.screen().x_range();
+    // Las dos líneas del mockup: debajo de las pestañas (y 69/70) y abajo de la barra (88/89).
+    for panel in [tabs, options] {
+        let y = panel.bottom() - 2.0;
+        let dark = Rect::from_x_y_ranges(width, y..=y + 1.0);
+        let light = dark.translate(Vec2::new(0.0, 1.0));
+        assert!(
+            rects.contains(&(colors.canvas, dark)),
+            "{dark:?} in {rects:?}"
+        );
+        assert!(
+            rects.contains(&(colors.highlight, light)),
+            "{light:?} in {rects:?}"
+        );
+    }
+    // Sin las líneas de egui: ni entre el menú y las pestañas, ni debajo de ellas, ni en la
+    // barra, ni contra la barra de íconos.
+    // (La del panel derecho empieza justo debajo de la barra: queda fuera.)
+    let top = Rect::from_x_y_ranges(width, h.screen().top()..=options.bottom() - 1.0);
+    assert_eq!(h.separator_lines_in(top), vec![], "menu, tabs and bar");
+    let tools = h.panel("tools");
+    let edge = Rect::from_x_y_ranges(
+        tools.right()..=tools.right(),
+        tools.top() + 1.0..=tools.bottom() - 1.0,
+    );
+    assert_eq!(vertical(h.separator_lines_in(edge)), vec![], "toolbar edge");
+}
+
+#[test]
+fn without_pixel_ui_the_panels_keep_the_egui_lines() {
+    let h = LayoutHarness::editor();
+    let thin: Vec<_> = h
+        .colored_rects()
+        .into_iter()
+        .filter(|(_, r)| r.width() == 1.0 || r.height() == 1.0)
+        .collect();
+    assert_eq!(thin, vec![], "no etched lines");
+    let options = h.panel("tool_options");
+    let top = Rect::from_x_y_ranges(h.screen().x_range(), h.screen().top()..=options.bottom());
+    assert!(h.separator_lines_in(top).len() >= 3, "menu, tabs and bar");
+    let tools = h.panel("tools");
+    let edge = Rect::from_x_y_ranges(
+        tools.right()..=tools.right(),
+        tools.top() + 1.0..=tools.bottom() - 1.0,
+    );
+    assert!(
+        !vertical(h.separator_lines_in(edge)).is_empty(),
+        "toolbar edge"
+    );
 }

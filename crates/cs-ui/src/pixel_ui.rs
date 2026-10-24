@@ -3,12 +3,12 @@
 //! redondeo).
 
 use eframe::egui::{
-    self, Align2, Color32, Id, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, TextStyle,
-    Ui, Vec2, pos2, vec2,
+    self, Align2, Color32, Id, Mesh, Pos2, Rangef, Rect, Response, Sense, Shape, Stroke,
+    StrokeKind, TextStyle, Ui, Vec2, pos2, vec2,
 };
 use eframe::emath::GuiRounding as _;
 
-use crate::skin::{IRect, Piece, Skin, WidgetState, nine_slice};
+use crate::skin::{IRect, Piece, Skin, SkinColors, WidgetState, nine_slice};
 
 /// Marco de los diálogos: la ventana de barra rosa del mockup de "Unsaved changes".
 const DIALOG_PIECE: &str = "window";
@@ -619,6 +619,60 @@ fn more_mark(corner: Pos2, pixels_per_point: f32) -> [Rect; 3] {
     })
 }
 
+/// Grosor de un separador grabado, en puntos: la línea oscura y el brillo, de 1 px de skin cada
+/// una.
+pub const ETCHED_SIZE: f32 = 2.0;
+
+/// Separador grabado horizontal del mockup: la línea oscura (`canvas`) en la fila `top` y el
+/// brillo (`highlight`) en la de abajo, a lo largo de `x`. Alineado a píxeles físicos y como
+/// malla: sin el difuminado de los trazos de egui.
+pub fn etched_hline(x: Rangef, top: f32, colors: &SkinColors, pixels_per_point: f32) -> Shape {
+    let dark = Rect::from_x_y_ranges(x, top..=top + 1.0);
+    etched(
+        dark,
+        dark.translate(vec2(0.0, 1.0)),
+        colors,
+        pixels_per_point,
+    )
+}
+
+/// Separador grabado vertical del mockup: la línea oscura (`canvas`) en la columna `left` y el
+/// brillo (`highlight`) en la de la derecha, a lo largo de `y`. Como [`etched_hline`].
+pub fn etched_vline(left: f32, y: Rangef, colors: &SkinColors, pixels_per_point: f32) -> Shape {
+    let dark = Rect::from_x_y_ranges(left..=left + 1.0, y);
+    etched(
+        dark,
+        dark.translate(vec2(1.0, 0.0)),
+        colors,
+        pixels_per_point,
+    )
+}
+
+/// Las dos líneas de un separador grabado, cada una redondeada a píxeles físicos.
+fn etched(dark: Rect, light: Rect, colors: &SkinColors, pixels_per_point: f32) -> Shape {
+    let mut mesh = Mesh::default();
+    mesh.add_colored_rect(dark.round_to_pixels(pixels_per_point), colors.canvas);
+    mesh.add_colored_rect(light.round_to_pixels(pixels_per_point), colors.highlight);
+    Shape::mesh(mesh)
+}
+
+/// Los rects de color liso de una forma (las mallas, de a cuatro vértices), para los tests.
+#[cfg(test)]
+pub(crate) fn colored_rects(shape: &Shape) -> Vec<(Color32, Rect)> {
+    match shape {
+        Shape::Mesh(mesh) if mesh.texture_id == egui::TextureId::default() => mesh
+            .vertices
+            .chunks(4)
+            .map(|quad| {
+                let rect = Rect::from_points(&quad.iter().map(|v| v.pos).collect::<Vec<_>>());
+                (quad[0].color, rect)
+            })
+            .collect(),
+        Shape::Vec(shapes) => shapes.iter().flat_map(colored_rects).collect(),
+        _ => Vec::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use egui::{Event, PointerButton, RawInput};
@@ -1022,6 +1076,108 @@ mod tests {
             toggle(&ctx, skin, "icon.nope", false, vec![press(at, true)]);
             let (_, clicked, _) = toggle(&ctx, skin, "icon.nope", false, vec![press(at, false)]);
             assert!(clicked);
+        }
+    }
+
+    /// Los colores del skin embebido.
+    fn mockup_colors() -> SkinColors {
+        let ctx = egui::Context::default();
+        *Skin::load(&ctx, crate::skin::EMBEDDED).unwrap().colors()
+    }
+
+    /// Los píxeles físicos de un rect a `ppp`.
+    fn physical(r: Rect, ppp: f32) -> [f32; 4] {
+        [r.min.x * ppp, r.min.y * ppp, r.max.x * ppp, r.max.y * ppp]
+    }
+
+    #[test]
+    fn the_etched_lines_are_one_dark_and_one_light_pixel_of_the_mockup() {
+        let colors = mockup_colors();
+        let dark = Color32::from_rgb(189, 164, 153);
+        let light = Color32::from_rgb(241, 235, 219);
+        assert_eq!((colors.canvas, colors.highlight), (dark, light));
+        for ppp in [1.0, 2.0, 3.0] {
+            // Horizontal: la oscura en la fila 69 y el brillo debajo, en la 70.
+            let h = colored_rects(&etched_hline(Rangef::new(28.0, 978.0), 69.0, &colors, ppp));
+            assert_eq!(
+                h,
+                vec![
+                    (
+                        dark,
+                        Rect::from_min_max(pos2(28.0, 69.0), pos2(978.0, 70.0))
+                    ),
+                    (
+                        light,
+                        Rect::from_min_max(pos2(28.0, 70.0), pos2(978.0, 71.0))
+                    ),
+                ],
+                "at {ppp}"
+            );
+            // Vertical: la oscura en la columna 852 y el brillo a la derecha, en la 853.
+            let v = colored_rects(&etched_vline(852.0, Rangef::new(70.0, 88.0), &colors, ppp));
+            assert_eq!(
+                v,
+                vec![
+                    (
+                        dark,
+                        Rect::from_min_max(pos2(852.0, 70.0), pos2(853.0, 88.0))
+                    ),
+                    (
+                        light,
+                        Rect::from_min_max(pos2(853.0, 70.0), pos2(854.0, 88.0))
+                    ),
+                ],
+                "at {ppp}"
+            );
+            // Cada línea mide `ppp` píxeles físicos.
+            let [_, top, _, bottom] = physical(h[0].1, ppp);
+            assert_eq!(bottom - top, ppp);
+        }
+    }
+
+    #[test]
+    fn the_etched_lines_snap_to_physical_pixels_and_are_not_blurred() {
+        let colors = mockup_colors();
+        for ppp in [1.0, 2.0, 3.0] {
+            let shapes = [
+                etched_hline(Rangef::new(10.3, 50.6), 20.4, &colors, ppp),
+                etched_vline(30.7, Rangef::new(5.2, 40.1), &colors, ppp),
+            ];
+            for shape in &shapes {
+                let rects = colored_rects(shape);
+                assert_eq!(rects.len(), 2, "{shape:?}");
+                for (_, r) in rects {
+                    for v in physical(r, ppp) {
+                        assert_eq!(v, v.round(), "{r:?} at {ppp}");
+                    }
+                }
+            }
+            // Teselado: solo los dos colores, sin vértices semitransparentes de difuminado.
+            let mut tessellator = egui::epaint::Tessellator::new(
+                ppp,
+                egui::epaint::TessellationOptions::default(),
+                [1, 1],
+                Vec::new(),
+            );
+            let clipped: Vec<egui::epaint::ClippedShape> = shapes
+                .iter()
+                .map(|s| egui::epaint::ClippedShape {
+                    clip_rect: Rect::EVERYTHING,
+                    shape: s.clone(),
+                })
+                .collect();
+            for primitive in tessellator.tessellate_shapes(clipped) {
+                let egui::epaint::Primitive::Mesh(mesh) = primitive.primitive else {
+                    panic!("only meshes");
+                };
+                for v in mesh.vertices {
+                    assert!(
+                        v.color == colors.canvas || v.color == colors.highlight,
+                        "{:?} at {ppp}",
+                        v.color
+                    );
+                }
+            }
         }
     }
 

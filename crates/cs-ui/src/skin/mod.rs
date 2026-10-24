@@ -22,7 +22,7 @@ use crate::theme;
 pub const EMBEDDED: &[u8] = include_bytes!("../../../../assets/ui/skin.aseprite");
 
 /// Colores del skin (`color.<nombre>`).
-pub const COLOR_NAMES: [&str; 10] = [
+pub const COLOR_NAMES: [&str; 11] = [
     "desktop",
     "text",
     "text_dim",
@@ -33,6 +33,7 @@ pub const COLOR_NAMES: [&str; 10] = [
     "scroll",
     "background",
     "canvas",
+    "highlight",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -144,8 +145,11 @@ pub struct SkinColors {
     pub scroll: Color32,
     /// Fondo de la app: menú, pestañas, barra de opciones y paneles.
     pub background: Color32,
-    /// Alrededor del lienzo (el área central, detrás de los artboards).
+    /// Alrededor del lienzo (el área central, detrás de los artboards). Es también la línea
+    /// oscura de los separadores grabados.
     pub canvas: Color32,
+    /// El brillo de los separadores grabados: la línea clara al lado de la oscura.
+    pub highlight: Color32,
 }
 
 impl SkinColors {
@@ -161,6 +165,7 @@ impl SkinColors {
             scroll: theme::WIDGET_HOVER,
             background: theme::PANEL,
             canvas: theme::CANVAS_BG,
+            highlight: theme::WIDGET_HOVER,
         }
     }
 
@@ -177,6 +182,7 @@ impl SkinColors {
             ("scroll", &mut c.scroll),
             ("background", &mut c.background),
             ("canvas", &mut c.canvas),
+            ("highlight", &mut c.highlight),
         ];
         for (name, slot) in slots {
             if let Some(v) = colors.get(name) {
@@ -365,6 +371,7 @@ mod tests {
         );
         assert_eq!(skin.colors().background, theme::PANEL);
         assert_eq!(skin.colors().canvas, theme::CANVAS_BG);
+        assert_eq!(skin.colors().highlight, theme::WIDGET_HOVER);
     }
 
     #[test]
@@ -477,6 +484,8 @@ mod tests {
         let data = decode(EMBEDDED).unwrap();
         assert_eq!(data.colors["background"], Rgba::rgb(221, 206, 191));
         assert_eq!(data.colors["canvas"], Rgba::rgb(189, 164, 153));
+        // El brillo de los separadores grabados del mockup (debajo o a la derecha de la línea).
+        assert_eq!(data.colors["highlight"], Rgba::rgb(241, 235, 219));
         let alpha = |piece: &PieceImage, x: u32, y: u32| {
             piece.rgba[((y * piece.size[0] + x) * 4 + 3) as usize]
         };

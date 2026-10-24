@@ -29,9 +29,11 @@ oculta.
   - El centro se estira en las dos direcciones.
   - En `window`, la franja de arriba del centro es la barra de título (13 px).
 - **Colores:** los slices `color.*` (`desktop`, `text`, `text_dim`, `accent`, `panel`,
-  `outline`, `selection`, `scroll`, `background`, `canvas`) dan el color de su píxel central.
-  Con Pixel UI, `background` es el fondo de la app (menú, pestañas, barra de opciones y paneles)
-  y `canvas`, el del área alrededor de los artboards.
+  `outline`, `selection`, `scroll`, `background`, `canvas`, `highlight`) dan el color de su
+  píxel central. Con Pixel UI, `background` es el fondo de la app (menú, pestañas, barra de
+  opciones y paneles) y `canvas`, el del área alrededor de los artboards.
+  - Los separadores grabados del mockup son una línea `canvas` de 1 px con una `highlight` de
+    1 px debajo (horizontales) o a la derecha (verticales).
 - **Variantes:** `.hover`, `.down` y `.active` son opcionales; si falta una, se usa la pieza
   base.
 - **Piezas sin dibujar:** una pieza totalmente transparente cuenta como que no existe; la app

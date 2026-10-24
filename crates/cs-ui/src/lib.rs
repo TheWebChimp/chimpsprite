@@ -810,12 +810,35 @@ impl ChimpApp {
     /// Los paneles de la ventana, en el orden en que egui les reparte el espacio: el primero que
     /// se declara se queda con el borde. Devuelve el rect del lienzo (`None` en Home).
     fn layout(&mut self, ui: &mut egui::Ui, modal: bool) -> Option<egui::Rect> {
-        egui::Panel::top("menu").show(ui, |ui| {
-            ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
-        });
-        egui::Panel::top("tabs").show(ui, |ui| {
-            ui.add_enabled_ui(!modal, |ui| self.tab_bar(ui));
-        });
+        // Con Pixel UI, como en el mockup: entre el menú y las pestañas no hay línea, y debajo de
+        // las pestañas va un separador grabado (en vez de la línea de egui) en el lugar que le
+        // deja el margen de abajo.
+        let pixel = self.pixel.skin().map(|skin| *skin.colors());
+        egui::Panel::top("menu")
+            .show_separator_line(pixel.is_none())
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
+            });
+        let mut tabs_frame = egui::Frame::side_top_panel(ui.style());
+        if pixel.is_some() {
+            tabs_frame.outer_margin.bottom += pixel_ui::ETCHED_SIZE as i8;
+        }
+        let tabs = egui::Panel::top("tabs")
+            .frame(tabs_frame)
+            .show_separator_line(pixel.is_none())
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| self.tab_bar(ui));
+            })
+            .response
+            .rect;
+        if let Some(colors) = pixel {
+            ui.painter().add(pixel_ui::etched_hline(
+                tabs.x_range(),
+                tabs.bottom() - pixel_ui::ETCHED_SIZE,
+                &colors,
+                ui.ctx().pixels_per_point(),
+            ));
+        }
         // Antes que los laterales: la barra de estado va a todo el ancho.
         egui::Panel::bottom("status").show(ui, |ui| {
             let notice = self
@@ -842,32 +865,22 @@ impl ChimpApp {
     /// Paneles del editor (cuando hay un documento activo). Devuelve el rect del lienzo.
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
         let skin = self.pixel.skin();
-        // La barra de opciones, a todo el ancho debajo de las pestañas: 19 de alto con Pixel UI.
-        egui::Panel::top("tool_options")
-            .exact_size(panels::options_bar_height(skin))
-            .frame(panels::options_bar_frame(ui.style(), skin))
-            .show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| {
-                    panels::tool_options_bar(ui, &mut self.doc.editor, skin)
-                });
+        // La barra de opciones, a todo el ancho debajo de las pestañas: 19 de alto con Pixel UI,
+        // con el separador grabado abajo.
+        panels::options_bar_panel(ui.style(), skin).show(ui, |ui| {
+            ui.add_enabled_ui(!modal, |ui| {
+                panels::tool_options_bar(ui, &mut self.doc.editor, skin)
             });
+        });
         // La toolbar antes que la línea de tiempo: va a todo el alto, hasta la barra de estado, y
         // la línea de tiempo empieza a su derecha.
         // Alrededor de los artboards: el color `canvas` del skin con Pixel UI.
         self.doc.canvas.background = canvas::background_for(skin);
         let (width, frame) = match skin {
-            // Con Pixel UI, la columna de íconos: la caja más el margen a cada lado, y la línea
-            // que separa el panel del lienzo (egui la pone en el margen exterior). Arriba, el
-            // margen del mockup hasta la barra de opciones.
+            // Con Pixel UI, la columna de íconos: la caja más el margen a cada lado, sin línea
+            // contra el lienzo (el mockup no la tiene). Arriba, el margen del mockup hasta la
+            // barra de opciones.
             Some(skin) => {
-                let line = ui
-                    .style()
-                    .visuals
-                    .widgets
-                    .noninteractive
-                    .bg_stroke
-                    .width
-                    .round();
                 let margin = egui::Margin {
                     left: pixel_ui::TOOLBAR_MARGIN,
                     right: pixel_ui::TOOLBAR_MARGIN,
@@ -875,7 +888,7 @@ impl ChimpApp {
                     bottom: 2,
                 };
                 (
-                    pixel_ui::toolbar_width(skin) + line,
+                    pixel_ui::toolbar_width(skin),
                     egui::Frame::side_top_panel(ui.style()).inner_margin(margin),
                 )
             }
@@ -886,6 +899,7 @@ impl ChimpApp {
             .resizable(false)
             .exact_size(width)
             .frame(frame)
+            .show_separator_line(skin.is_none())
             .show(ui, |ui| {
                 // Con la UI a 2× o 3× y la ventana baja, la barra no cabe: scroll vertical.
                 panels::tools_scroll_area().show(ui, |ui| {

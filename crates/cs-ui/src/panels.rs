@@ -106,8 +106,12 @@ pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
 /// Alto de la barra de opciones, con su margen: el mismo con todas las herramientas, así el lienzo
 /// no se mueve al cambiar de herramienta.
 pub const OPTIONS_BAR_HEIGHT: f32 = 32.0;
-/// Alto de la barra de opciones con Pixel UI: la del mockup, de 19 px de skin.
+/// Alto de la barra de opciones con Pixel UI: la del mockup, de 19 px de skin. Son 17 filas de
+/// controles y, abajo, el separador grabado (la línea grabada de arriba es la de las pestañas).
 pub const PIXEL_OPTIONS_BAR_HEIGHT: f32 = 19.0;
+/// Aire entre un separador grabado de la barra y lo que tiene a cada lado: en el mockup, 5 px
+/// entre el brillo y "Symmetry".
+const ETCHED_GAP: f32 = 5.0;
 /// Alto de los controles de la barra con Pixel UI (sliders, campos, casillas y botones).
 const PIXEL_CONTROL_HEIGHT: f32 = 13.0;
 
@@ -122,13 +126,62 @@ pub fn options_bar_height(skin: Option<&Skin>) -> f32 {
 }
 
 /// El marco del panel de la barra: con Pixel UI, sin margen vertical (los controles de 13 y el
-/// texto de la fuente pixel ocupan el alto justo); sin él, el de siempre.
+/// texto de la fuente pixel ocupan el alto justo) y con lugar abajo para el separador grabado;
+/// sin él, el de siempre.
 pub fn options_bar_frame(style: &egui::Style, skin: Option<&Skin>) -> egui::Frame {
     let frame = egui::Frame::side_top_panel(style);
     match skin {
-        Some(_) => frame.inner_margin(egui::Margin::symmetric(8, 0)),
+        Some(_) => frame
+            .inner_margin(egui::Margin::symmetric(8, 0))
+            .outer_margin(egui::Margin {
+                bottom: pixel_ui::ETCHED_SIZE as i8,
+                ..Default::default()
+            }),
         None => frame,
     }
+}
+
+/// El panel de la barra de opciones, a todo el ancho: de `options_bar_height` y con
+/// `options_bar_frame`. Con Pixel UI, sin la línea de egui: la reemplaza el separador grabado que
+/// dibuja `tool_options_bar`.
+pub fn options_bar_panel(style: &egui::Style, skin: Option<&Skin>) -> egui::Panel {
+    egui::Panel::top("tool_options")
+        .exact_size(options_bar_height(skin))
+        .frame(options_bar_frame(style, skin))
+        .show_separator_line(skin.is_none())
+}
+
+/// Los separadores grabados de la barra con Pixel UI: sus colores y las filas que cubren los
+/// verticales (desde el brillo de la línea de las pestañas hasta la línea de abajo, sin tocarla).
+#[derive(Clone, Copy)]
+struct BarEtch {
+    colors: crate::skin::SkinColors,
+    rows: egui::Rangef,
+}
+
+/// Separador vertical entre grupos de la barra: con Pixel UI (`etch`), el grabado del mockup con
+/// `ETCHED_GAP` de aire a cada lado; sin él, el de egui.
+fn bar_separator(ui: &mut egui::Ui, etch: Option<BarEtch>) {
+    let Some(etch) = etch else {
+        ui.separator();
+        return;
+    };
+    // El layout ya dejó `item_spacing` después del widget anterior y lo vuelve a dejar después de
+    // este: se descuenta para que el aire sea justo `ETCHED_GAP` (puede ser negativo).
+    let gap = ETCHED_GAP - ui.spacing().item_spacing.x;
+    ui.add_space(gap);
+    let (rect, _) = ui.allocate_exact_size(egui::vec2(pixel_ui::ETCHED_SIZE, 0.0), Sense::hover());
+    ui.add_space(gap);
+    // Las filas del grabado pasan por arriba del alto de la fila (y del recorte del scroll): se
+    // recorta solo a lo ancho.
+    let mut painter = ui.painter().clone();
+    painter.set_clip_rect(Rect::from_x_y_ranges(ui.clip_rect().x_range(), etch.rows));
+    painter.add(pixel_ui::etched_vline(
+        rect.left(),
+        etch.rows,
+        &etch.colors,
+        ui.ctx().pixels_per_point(),
+    ));
 }
 
 /// Barra de opciones, debajo de las pestañas: las opciones de la herramienta activa en una sola
@@ -140,6 +193,14 @@ pub fn tool_options_bar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Sk
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
     // La rueda de siempre (vertical) mueve la fila de lado, sin Shift.
     ui.style_mut().always_scroll_the_only_direction = true;
+    // Con Pixel UI: el panel entero (su recorte, con el margen de abajo que deja
+    // `options_bar_frame`) y las filas de los separadores verticales.
+    let bar = ui.clip_rect();
+    let line = bar.bottom() - pixel_ui::ETCHED_SIZE;
+    let etch = skin.map(|skin| BarEtch {
+        colors: *skin.colors(),
+        rows: egui::Rangef::new(bar.top() - 1.0, line),
+    });
     if skin.is_some() {
         let spacing = ui.spacing_mut();
         spacing.interact_size.y = PIXEL_CONTROL_HEIGHT;
@@ -151,13 +212,23 @@ pub fn tool_options_bar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Sk
     // De derecha a izquierda: Symmetry queda pegado al borde y las opciones usan lo que sobra.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         symmetry_buttons(ui, editor, skin);
-        ui.separator();
+        bar_separator(ui, etch);
         options_scroll_area().show(ui, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                tool_options(ui, editor, skin.is_some())
+                tool_options(ui, editor, etch)
             });
         });
     });
+    // El separador grabado de abajo, a todo el ancho, después de los controles: queda encima si
+    // alguno se pasa de las 17 filas.
+    if let Some(etch) = etch {
+        ui.painter().add(pixel_ui::etched_hline(
+            bar.x_range(),
+            line,
+            &etch.colors,
+            ui.ctx().pixels_per_point(),
+        ));
+    }
     text_window(ui.ctx(), editor);
 }
 
@@ -177,27 +248,31 @@ pub fn row_scroll_area(id_salt: &'static str) -> egui::ScrollArea {
 }
 
 /// Separadores entre los grupos de la barra de opciones: una línea antes de cada grupo, menos el
-/// primero.
-#[derive(Default)]
+/// primero (grabada con Pixel UI, `bar_separator`).
 struct Groups {
     started: bool,
+    etch: Option<BarEtch>,
 }
 
 impl Groups {
     fn next(&mut self, ui: &mut egui::Ui) {
         if self.started {
-            ui.separator();
+            bar_separator(ui, self.etch);
         }
         self.started = true;
     }
 }
 
 /// Las opciones de la herramienta activa, en fila: cada etiqueta al lado de su control y un
-/// separador entre grupos. La ayuda de la herramienta va en el mismo orden que antes. `compact`
-/// (Pixel UI): los botones de forma son de 13×13.
-fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, compact: bool) {
+/// separador entre grupos. La ayuda de la herramienta va en el mismo orden que antes. Con `etch`
+/// (Pixel UI), los separadores son grabados y los botones de forma, de 13×13.
+fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, etch: Option<BarEtch>) {
     let tool = editor.tool;
-    let mut groups = Groups::default();
+    let compact = etch.is_some();
+    let mut groups = Groups {
+        started: false,
+        etch,
+    };
     let options = &mut editor.options;
     if tool.uses_brush() {
         groups.next(ui);
@@ -2101,6 +2176,8 @@ mod tests {
         width: f32,
         bar: Rect,
         nodes: Vec<(String, Rect)>,
+        /// Lo dibujado en el último frame.
+        shapes: Vec<egui::epaint::ClippedShape>,
     }
 
     impl BarHarness {
@@ -2126,6 +2203,7 @@ mod tests {
                 width,
                 bar: Rect::NOTHING,
                 nodes: Vec::new(),
+                shapes: Vec::new(),
             };
             h.frame(vec![]);
             h
@@ -2146,9 +2224,7 @@ mod tests {
             let skin = self.skin.as_ref();
             let mut bar = Rect::NOTHING;
             let mut output = self.ctx.run_ui(input, |ui| {
-                bar = egui::Panel::top("tool_options")
-                    .exact_size(options_bar_height(skin))
-                    .frame(options_bar_frame(ui.style(), skin))
+                bar = options_bar_panel(ui.style(), skin)
                     .show(ui, |ui| tool_options_bar(ui, editor, skin))
                     .response
                     .rect;
@@ -2156,6 +2232,35 @@ mod tests {
             output.textures_delta.clear();
             self.bar = bar;
             self.nodes = nodes(&output);
+            self.shapes = output.shapes;
+        }
+
+        /// Los rects de color liso dibujados (los separadores grabados).
+        fn colored_rects(&self) -> Vec<(Color32, Rect)> {
+            self.shapes
+                .iter()
+                .flat_map(|c| pixel_ui::colored_rects(&c.shape))
+                .collect()
+        }
+
+        /// Las líneas de egui del color de sus separadores (`ui.separator()`, la del panel).
+        fn separator_lines(&self) -> usize {
+            let color = self
+                .ctx
+                .global_style()
+                .visuals
+                .widgets
+                .noninteractive
+                .bg_stroke
+                .color;
+            fn count(shape: &egui::Shape, color: Color32) -> usize {
+                match shape {
+                    egui::Shape::LineSegment { stroke, .. } => usize::from(stroke.color == color),
+                    egui::Shape::Vec(shapes) => shapes.iter().map(|s| count(s, color)).sum(),
+                    _ => 0,
+                }
+            }
+            self.shapes.iter().map(|c| count(&c.shape, color)).sum()
         }
 
         fn has(&self, text: &str) -> bool {
@@ -2296,6 +2401,62 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn with_pixel_ui_the_bar_ends_in_an_etched_line_and_symmetry_has_one_before_it() {
+        let h = BarHarness::with_skin(1200.0, true);
+        let colors = *h.skin.as_ref().unwrap().colors();
+        let (dark, light) = (colors.canvas, colors.highlight);
+        let rects = h.colored_rects();
+        let bar = h.bar;
+        assert_eq!(bar.height(), 19.0);
+        // Abajo, a todo el ancho: la línea oscura en la fila 17 de la barra y el brillo en la 18
+        // (en el mockup, y 88 y 89 de la barra de y 71..89).
+        let line = bar.bottom() - 2.0;
+        let x = bar.x_range();
+        for (color, y) in [(dark, line), (light, line + 1.0)] {
+            let want = Rect::from_x_y_ranges(x, y..=y + 1.0);
+            assert!(rects.contains(&(color, want)), "{want:?} in {rects:?}");
+        }
+        // Antes de "Symmetry", con 5 px entre el brillo y el texto (en el mockup, x 852/853 y
+        // "Symmetry" desde x 859). Va desde el brillo de la línea de las pestañas (una fila
+        // arriba de la barra) hasta la línea de abajo, sin tocarla: y 70..87 en el mockup.
+        let symmetry = h.rect("Symmetry");
+        let left = symmetry.left() - 5.0 - 2.0;
+        let rows = egui::Rangef::new(bar.top() - 1.0, line);
+        for (color, x) in [(dark, left), (light, left + 1.0)] {
+            let want = Rect::from_x_y_ranges(x..=x + 1.0, rows);
+            assert!(rects.contains(&(color, want)), "{want:?} in {rects:?}");
+        }
+    }
+
+    #[test]
+    fn with_pixel_ui_the_bar_has_etched_separators_and_no_egui_lines() {
+        let mut h = BarHarness::with_skin(1200.0, true);
+        let dark = h.skin.as_ref().unwrap().colors().canvas;
+        for kind in [ToolKind::Pencil, ToolKind::MagicWand, ToolKind::Rectangle] {
+            h.editor.set_tool(kind);
+            h.frame(vec![]);
+            h.frame(vec![]);
+            assert_eq!(h.separator_lines(), 0, "{kind:?}");
+            // Los verticales: el de Symmetry y uno entre cada par de grupos.
+            let vertical = h
+                .colored_rects()
+                .into_iter()
+                .filter(|(c, r)| *c == dark && r.width() == 1.0 && r.height() > 1.0)
+                .count();
+            assert!(vertical >= 2, "{kind:?}: {vertical}");
+        }
+        // Sin Pixel UI, los de siempre.
+        let h = BarHarness::new(1200.0);
+        assert!(h.separator_lines() > 0);
+        let thin: Vec<_> = h
+            .colored_rects()
+            .into_iter()
+            .filter(|(_, r)| r.width() == 1.0 || r.height() == 1.0)
+            .collect();
+        assert_eq!(thin, vec![], "no etched lines");
     }
 
     #[test]
