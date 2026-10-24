@@ -36,6 +36,8 @@ struct LayoutHarness {
     size: Vec2,
     /// Cuándo pidió egui el próximo frame después del último.
     repaint_delay: std::time::Duration,
+    /// Si la ventana tiene el foco.
+    focused: bool,
 }
 
 impl LayoutHarness {
@@ -89,6 +91,7 @@ impl LayoutHarness {
             text_rects: Vec::new(),
             size,
             repaint_delay: std::time::Duration::MAX,
+            focused: true,
         };
         for _ in 0..3 {
             h.frame();
@@ -111,6 +114,7 @@ impl LayoutHarness {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
             time: Some(self.time),
             events,
+            focused: self.focused,
             ..Default::default()
         };
         let app = &mut self.app;
@@ -622,6 +626,19 @@ fn the_home_house_shows_the_frame_of_the_time_and_asks_for_the_next_one() {
         std::time::Duration::MAX,
         "no animation"
     );
+}
+
+#[test]
+fn without_window_focus_the_home_house_stops_and_asks_for_no_repaint() {
+    let mut h = two_tabs(None);
+    h.focused = false;
+    for _ in 0..3 {
+        h.frame();
+    }
+    // La casita se sigue dibujando (quieta), pero no pide frames: la app en segundo plano no
+    // repinta 10 veces por segundo.
+    assert_eq!(home_frames(&h).len(), 1);
+    assert_eq!(h.repaint_delay, std::time::Duration::MAX);
 }
 
 #[test]

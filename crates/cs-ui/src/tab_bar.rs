@@ -193,8 +193,9 @@ fn home(ui: &mut Ui, skin: &Skin, bar: Rect, ground: f32) -> bool {
         let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
         let at = Rect::from_min_size(bar.min + vec2(HOME_ICON_X, 0.0), size);
         shapes.extend(pixel_ui::piece_shapes(piece, at, ppp));
-        // Un solo frame no se anima.
-        if frames.len() > 1 {
+        // Un solo frame no se anima, y sin el foco de la ventana la casita se queda quieta para
+        // no repintar la app en segundo plano.
+        if frames.len() > 1 && ui.input(|i| i.focused) {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_secs_f64(left));
         }
