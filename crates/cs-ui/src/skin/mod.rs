@@ -24,7 +24,7 @@ use crate::theme;
 pub const EMBEDDED: &[u8] = include_bytes!("../../../../assets/ui/skin.aseprite");
 
 /// Colores del skin (`color.<nombre>`).
-pub const COLOR_NAMES: [&str; 15] = [
+pub const COLOR_NAMES: [&str; 16] = [
     "desktop",
     "text",
     "text_dim",
@@ -40,6 +40,7 @@ pub const COLOR_NAMES: [&str; 15] = [
     "home_text",
     "ruler_tick",
     "menu_highlight",
+    "field_text",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -177,6 +178,8 @@ pub struct SkinColors {
     /// El brillo de los menús desplegables: el bisel del panel y la línea clara de sus
     /// separadores (la otra es `background`).
     pub menu_highlight: Color32,
+    /// El texto de la tira de canales del editor de color (y su borde).
+    pub field_text: Color32,
 }
 
 impl SkinColors {
@@ -197,6 +200,7 @@ impl SkinColors {
             home_text: egui::Visuals::dark().strong_text_color(),
             ruler_tick: theme::RULER_TICK,
             menu_highlight: theme::WIDGET_HOVER,
+            field_text: egui::Visuals::dark().strong_text_color(),
         }
     }
 
@@ -218,6 +222,7 @@ impl SkinColors {
             ("home_text", &mut c.home_text),
             ("ruler_tick", &mut c.ruler_tick),
             ("menu_highlight", &mut c.menu_highlight),
+            ("field_text", &mut c.field_text),
         ];
         for (name, slot) in slots {
             if let Some(v) = colors.get(name) {
@@ -938,6 +943,98 @@ mod tests {
         assert_eq!(at(check, 2, 6), Rgba::rgb(71, 114, 56), "the green check");
         assert_ne!(check.size, data.pieces["menu.check.on"].size);
         assert!(!data.pieces.contains_key("field.check"), "not drawn yet");
+    }
+
+    #[test]
+    fn the_embedded_skin_has_the_palette_and_color_editor_pieces_of_the_design() {
+        let data = decode(EMBEDDED).unwrap();
+        let at = |piece: &PieceImage, x: u32, y: u32| {
+            let i = ((y * piece.size[0] + x) * 4) as usize;
+            Rgba::new(
+                piece.rgba[i],
+                piece.rgba[i + 1],
+                piece.rgba[i + 2],
+                piece.rgba[i + 3],
+            )
+        };
+        let rect9 = |x, y, w, h| Some(Rect9 { x, y, w, h });
+        // (nombre, tamaño, centro) de cada pieza (frame 4, capa Mockup).
+        let pieces = [
+            ("palette.box", [9, 9], rect9(4, 4, 1, 1)),
+            ("palette.swatch", [13, 13], rect9(1, 1, 11, 11)),
+            ("palette.add", [6, 7], None),
+            ("picker.cursor", [9, 9], None),
+            ("picker.cursor.bar", [7, 7], None),
+            ("picker.sv", [7, 7], rect9(3, 3, 1, 1)),
+            ("picker.bars", [7, 6], rect9(3, 2, 1, 1)),
+            ("picker.copy", [25, 16], None),
+            ("channel.r", [4, 16], rect9(3, 0, 1, 16)),
+            ("channel.sep", [1, 16], None),
+            ("channel.g", [1, 16], rect9(0, 0, 1, 16)),
+            ("channel.b", [1, 16], rect9(0, 0, 1, 16)),
+            ("channel.a", [4, 16], None),
+            ("channel.hex", [5, 16], rect9(0, 0, 1, 16)),
+            ("channel.dot.r", [6, 6], None),
+            ("channel.dot.g", [6, 6], None),
+            ("channel.dot.b", [6, 6], None),
+            ("channel.dot.a", [6, 6], None),
+        ];
+        for (name, size, center) in pieces {
+            let piece = data.pieces.get(name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!((piece.size, piece.center), (size, center), "{name}");
+        }
+        let p = |name: &str| &data.pieces[name];
+        let clear = |c: Rgba| c.a == 0;
+        let etch = Rgba::rgb(189, 164, 153);
+        let dark = Rgba::rgb(89, 77, 77);
+        // La caja de la paleta: línea grabada afuera, 1 de aire y la línea oscura; adentro,
+        // transparente (el fondo del panel). Esquinas redondeadas.
+        let pbox = p("palette.box");
+        assert!(clear(at(pbox, 0, 0)), "rounded corner");
+        assert_eq!(at(pbox, 0, 4), etch);
+        assert!(clear(at(pbox, 1, 4)));
+        assert_eq!(at(pbox, 2, 4), dark);
+        assert!(clear(at(pbox, 4, 4)), "inside");
+        // El cuadrito: borde negro de 1, el centro sin color.
+        let swatch = p("palette.swatch");
+        assert_eq!(at(swatch, 0, 0), Rgba::rgb(0, 0, 0));
+        assert_eq!(at(swatch, 12, 6), Rgba::rgb(0, 0, 0));
+        assert!(clear(at(swatch, 6, 6)));
+        // La caja del editor: arriba el cuadro S/V y la línea que lo separa de las barras.
+        let sv = p("picker.sv");
+        assert!(clear(at(sv, 0, 0)), "rounded corner");
+        assert_eq!(at(sv, 0, 3), etch);
+        assert_eq!(at(sv, 2, 3), dark);
+        assert!(clear(at(sv, 3, 3)), "the gradient goes inside");
+        assert_eq!(
+            at(sv, 3, 6),
+            etch,
+            "the line between the square and the bars"
+        );
+        let bars = p("picker.bars");
+        assert_eq!(at(bars, 3, 1), dark);
+        assert!(clear(at(bars, 3, 2)));
+        assert_eq!(at(bars, 3, 5), etch);
+        // Los cursores: anillo oscuro con blanco y el medio transparente.
+        let black = Rgba::rgb(5, 4, 3);
+        let white = Rgba::rgb(255, 255, 255);
+        let cursor = p("picker.cursor");
+        assert_eq!((at(cursor, 4, 0), at(cursor, 4, 1)), (white, black));
+        assert!(clear(at(cursor, 4, 4)));
+        let bar = p("picker.cursor.bar");
+        assert_eq!((at(bar, 3, 0), at(bar, 3, 1)), (black, white));
+        assert!(clear(at(bar, 3, 3)));
+        // La tira: rojo, verde y azul abajo; el alfa, un damero; los puntos de cada canal.
+        assert_eq!(at(p("channel.r"), 3, 13), Rgba::rgb(241, 36, 36));
+        assert_eq!(at(p("channel.g"), 0, 13), Rgba::rgb(97, 165, 63));
+        assert_eq!(at(p("channel.b"), 0, 13), Rgba::rgb(39, 137, 205));
+        assert_ne!(at(p("channel.a"), 0, 13), at(p("channel.a"), 2, 13));
+        assert_eq!(at(p("channel.hex"), 0, 5), white);
+        assert_eq!(at(p("channel.r"), 3, 0), dark, "the border on top");
+        assert_eq!(at(p("channel.dot.r"), 1, 1), Rgba::rgb(241, 36, 36));
+        assert!(clear(at(p("channel.dot.r"), 0, 0)), "round dot");
+        // El texto de la tira.
+        assert_eq!(data.colors["field_text"], dark);
     }
 
     #[test]

@@ -131,6 +131,28 @@ oculta.
 
     Si falta, la opción elegida usa `button.down`.
 
+- **Paleta y editor de color** (frame 4 del diseño, capa Mockup, columna x 784..972; el skin
+  creció a 320×272 y estas piezas van en y 236..267):
+  - `palette.box` (9×9, centro (4,4,1,1)): la caja de la paleta, con la línea grabada
+    (189,164,153), 1 px de aire y la línea (89,77,77), esquinas redondeadas; adentro,
+    transparente.
+  - `palette.swatch` (13×13, centro (1,1,11,11)): el borde negro de un cuadrito, sin el color.
+    Van uno cada 12 (comparten el borde), 4 px adentro de la caja.
+  - `palette.add` (6×7): la marca Ⅲ que va a (3,3) de la celda siguiente al último color;
+    agrega el color primario a la paleta.
+  - `picker.copy` (25×16): el botón de copiar (dos hojas), entero; copia el color en hex.
+  - La tira de canales (16 de alto): `channel.r` (4×16, centro (3,0,1,16): la punta izquierda y
+    el tramo rojo), `channel.g` y `channel.b` (1×16, se estiran), `channel.a` (4×16, sin
+    centro: un período del damero de su línea, que se repite), `channel.hex` (5×16, centro
+    (0,0,1,16): el tramo del hex con la punta derecha) y `channel.sep` (1×16, la línea entre
+    tramos). Los puntos `channel.dot.r/g/b/a` (6×6) llevan las esquinas transparentes.
+    `color.field_text` (89,77,77) es el color de sus números.
+  - `picker.sv` (7×7, centro (3,3,1,1)): la caja del cuadro S/V hasta la línea que lo separa
+    de las barras (incluida). `picker.bars` (7×6, centro (3,2,1,1)): la caja de las barras de
+    tono y alfa. El centro es transparente: los degradés los calcula la app.
+  - `picker.cursor` (9×9) y `picker.cursor.bar` (7×7): los cursores "○ ○" sueltos debajo del
+    editor; son iguales, píxel por píxel, a los dibujados sobre el cuadro S/V y las barras.
+
 ### Probar cambios en vivo (escritorio)
 
     CHIMPSPRITE_SKIN=/ruta/a/skin.aseprite cargo run -p chimpsprite
