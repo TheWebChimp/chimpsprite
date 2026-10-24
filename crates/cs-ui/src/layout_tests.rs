@@ -1415,12 +1415,24 @@ fn menu_checkboxes_use_the_design_box_and_a_click_toggles_them() {
     assert!(checked);
     assert_eq!(row.height(), 13.0, "{row:?}");
     assert_eq!(caps, row.top() + 3.0);
-    // Onion Skin (sin marcar): sin la casilla marcada, con el texto en el mismo lugar.
+    // Onion Skin (sin marcar): la casilla sin marcar del diseño (`menu.check`), en el mismo
+    // lugar y del mismo tamaño, y el texto alineado con el de Timeline.
     let (onion, _) = text_rect(&h, "Onion Skin");
     let onion_caps = onion.top() + offset;
     assert!(
         !boxes.iter().any(|r| r.top() == onion_caps - 2.0),
         "{boxes:?}"
+    );
+    let off_boxes = h.drawn("menu.check");
+    let off = *off_boxes
+        .iter()
+        .find(|r| r.top() == onion_caps - 2.0)
+        .unwrap_or_else(|| panic!("the box on the Onion Skin row: {off_boxes:?}"));
+    assert_eq!(off.size(), Vec2::new(11.0, 12.0));
+    assert_eq!(off.left(), on.left());
+    assert!(
+        !off_boxes.iter().any(|r| r.top() == caps - 2.0),
+        "Timeline is checked: {off_boxes:?}"
     );
     assert_eq!(onion.left(), timeline.left());
     assert!(!check(&h, "Onion Skin").1);
@@ -1435,6 +1447,11 @@ fn menu_checkboxes_use_the_design_box_and_a_click_toggles_them() {
     assert!(
         boxes.iter().any(|r| r.top() == onion_caps - 2.0),
         "{boxes:?}"
+    );
+    let off_boxes = h.drawn("menu.check");
+    assert!(
+        !off_boxes.iter().any(|r| r.top() == onion_caps - 2.0),
+        "checked now: {off_boxes:?}"
     );
     assert!(check(&h, "Onion Skin").1);
     h.click(onion.center(), PointerButton::Primary);

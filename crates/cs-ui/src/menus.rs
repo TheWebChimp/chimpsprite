@@ -10,9 +10,9 @@
 //!   estirada con el nombre en la fuente pixel. Entre tecla y tecla, un + de 5×5 hecho con rects,
 //!   y al final la tecla en el color tenue (`ruler_tick`, el del diseño).
 //! - **Separadores:** la línea grabada del diseño, `menu_highlight` y debajo `background`.
-//! - **Casillas:** la casilla del diseño (`menu.check.on`, 11×12) al borde del texto de los
-//!   ítems, 2 filas arriba de las mayúsculas, y el texto 3 px después. Sin marcar va `menu.check`;
-//!   mientras el skin no la traiga (no está dibujada), un cuadro plano de respaldo.
+//! - **Casillas:** las casillas del diseño, `menu.check.on` (marcada) y `menu.check` (sin
+//!   marcar), de 11×12, al borde del texto de los ítems, 2 filas arriba de las mayúsculas, y el
+//!   texto 3 px después. Si el skin no trae la pieza, un cuadro plano de respaldo.
 //! - **Sin diseño todavía:** la fila con el puntero encima va en `selection`; los ítems
 //!   deshabilitados, en `text_dim`; los submenús llevan un ▸ hecho con rects y el mismo panel.
 //!

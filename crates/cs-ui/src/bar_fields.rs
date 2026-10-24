@@ -12,7 +12,8 @@
 //!   columnas.
 //! - **Casilla:** `field.check.on`, 13×14 desde la fila 3, y el texto 3 px después. Sin marcar va
 //!   `field.check`; mientras el skin no la traiga (el diseño no la muestra), un cuadro plano de
-//!   respaldo, como en los menús.
+//!   respaldo. Las de los menús (`menu.check`, `menu.check.on`) no sirven: son otro dibujo, de
+//!   11×12.
 //! - **Opciones** (los grupos de radios: Sample, Linear/Radial, Rotation): botones de un clic,
 //!   uno por opción. El diseño no los muestra; van con la pieza `button` de los diálogos (49×17
 //!   con centro) a 16 de alto en las filas de los campos, `button.active` el elegido (o

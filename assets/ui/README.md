@@ -69,9 +69,11 @@ oculta.
     derecha y la esquina redondeada. En la barra mide 27.
   - `field.unit` (17×16, sin centro): la unidad "px". Empieza en la última columna blanca del
     campo y tapa sus 2 últimas columnas.
-  - `field.check.on` (13×14, sin centro): la casilla marcada de la barra (no es la del menú). El
-    texto va 3 px después. `field.check` (sin marcar) todavía no está dibujada: hasta entonces va
-    un cuadro plano de respaldo.
+  - `field.check.on` (13×14, sin centro): la casilla marcada de la barra (no es la del menú, que
+    es más chica: 11×12). El texto va 3 px después. `field.check` (sin marcar) todavía no está
+    dibujada (el diseño no la muestra): hasta entonces va un cuadro plano de respaldo.
+  - El combo, el campo, la unidad y la casilla llevan una fila de sombra (230,231,240) abajo del
+    relleno blanco; la unidad termina en una esquina redondeada (x 318..319 del diseño).
 - **Pestañas:** `tab` (inactiva, café) mide 7×15 y `tab.active` (clara) 7×17, las dos con
   centro (3,0,1,alto): se estiran solo a lo ancho. Las esquinas de arriba son redondeadas y
   abajo quedan abiertas. La activa baja sobre las dos filas de la línea grabada de abajo y la
@@ -205,10 +207,11 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     transparentes (en el diseño, el relleno del panel). `key` (19×7, centro (1,1,17,5)): la
     misma tecla sin letras, para las otras teclas con nombre. `key.shift` (22×7): la tecla
     Shift del diseño (Layer 4, frame 4), igual que Ctrl: letras y esquinas transparentes.
-  - `menu.check.on` (11×12, sin centro): la casilla marcada de los menús (Layer 4, frame 4),
-    con las esquinas de afuera transparentes. Va al borde del texto de los ítems, 2 filas
-    arriba de las mayúsculas, y el texto 3 px después. `menu.check` (sin marcar) todavía no
-    está dibujada: mientras falte, la app usa un cuadro plano de respaldo.
+  - `menu.check.on` y `menu.check` (11×12, sin centro): las casillas marcada y sin marcar de
+    los menús (Layer 4, frame 4, junto a "Onion Skin": x 34..44, y 87..98 y 102..113), con
+    las 4 esquinas de afuera transparentes (el relleno (234,224,221) del panel) y una fila de
+    sombra (230,231,240) abajo del interior blanco. Van al borde del texto de los ítems, 2
+    filas arriba de las mayúsculas, y el texto 3 px después. No son las de la barra (13×14).
   - `color.menu_highlight` (blanco): el brillo del panel y la línea clara de los separadores;
     la otra línea es `background`. El atajo tenue (el "+N") es `ruler_tick`.
 - **Tooltip de la barra de íconos** (del mockup, frame 2, junto a la barra):

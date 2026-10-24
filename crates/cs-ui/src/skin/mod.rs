@@ -858,20 +858,42 @@ mod tests {
         assert_eq!(alpha(shift, 1, 0), 255, "the top");
         assert_eq!(alpha(shift, 0, 3), 255, "the left side");
         assert_eq!(alpha(shift, 4, 1), 0, "the S, cut out");
-        // La casilla marcada del diseño (Layer 4, frame 4): 11×12, sin centro, con las
-        // esquinas de afuera caladas y el interior blanco. La sin marcar no está dibujada.
-        let on = &data.pieces["menu.check.on"];
-        assert_eq!((on.size, on.center), ([11, 12], None));
-        assert_eq!(alpha(on, 0, 0), 0, "rounded corner");
-        assert_eq!(alpha(on, 10, 0), 0, "rounded corner");
-        assert_eq!(alpha(on, 1, 0), 255, "the top");
-        assert_eq!(alpha(on, 0, 1), 255, "the left side");
-        let at = |x: u32, y: u32| {
-            let i = ((y * on.size[0] + x) * 4) as usize;
-            Rgba::new(on.rgba[i], on.rgba[i + 1], on.rgba[i + 2], on.rgba[i + 3])
+        // Las casillas del diseño (Layer 4, frame 4), marcada y sin marcar: 11×12, sin centro,
+        // con las 4 esquinas de afuera caladas, el interior blanco y una fila de sombra
+        // (230,231,240) abajo del interior. La marcada lleva la marca verde.
+        let at = |piece: &PieceImage, x: u32, y: u32| {
+            let i = ((y * piece.size[0] + x) * 4) as usize;
+            Rgba::new(
+                piece.rgba[i],
+                piece.rgba[i + 1],
+                piece.rgba[i + 2],
+                piece.rgba[i + 3],
+            )
         };
-        assert_eq!(at(1, 1), Rgba::rgb(255, 255, 255), "white inside");
-        assert!(!data.pieces.contains_key("menu.check"), "not drawn yet");
+        let green = Rgba::rgb(71, 114, 56);
+        for name in ["menu.check.on", "menu.check"] {
+            let check = &data.pieces[name];
+            assert_eq!((check.size, check.center), ([11, 12], None), "{name}");
+            for (x, y) in [(0, 0), (10, 0), (0, 11), (10, 11)] {
+                assert_eq!(alpha(check, x, y), 0, "{name}: rounded corner ({x},{y})");
+            }
+            assert_eq!(alpha(check, 1, 0), 255, "{name}: the top");
+            assert_eq!(alpha(check, 0, 1), 255, "{name}: the left side");
+            assert_eq!(
+                at(check, 1, 1),
+                Rgba::rgb(255, 255, 255),
+                "{name}: white inside"
+            );
+            assert_eq!(
+                at(check, 1, 9),
+                Rgba::rgb(230, 231, 240),
+                "{name}: the shade"
+            );
+            let greens = (0..11 * 12)
+                .filter(|i| at(check, i % 11, i / 11) == green)
+                .count();
+            assert_eq!(greens > 0, name == "menu.check.on", "{name}: the check");
+        }
         // El brillo del separador; la otra línea es `background` y el atajo, `ruler_tick`.
         assert_eq!(data.colors["menu_highlight"], Rgba::rgb(255, 255, 255));
         assert_eq!(data.colors["background"], Rgba::rgb(221, 206, 191));
@@ -932,7 +954,25 @@ mod tests {
         assert_eq!(at(unit, 1, 5), border, "the divider");
         assert_eq!(at(unit, 3, 5), Rgba::rgb(189, 164, 153), "the grey box");
         assert_eq!(at(unit, 4, 5), Rgba::rgb(89, 77, 77), "the p");
+        // La esquina redondeada de la derecha (los 8 px que cambió el diseño en x 318..319).
         assert_eq!(at(unit, 16, 0).a, 0, "rounded corner");
+        assert_eq!(at(unit, 15, 0), border, "the top, up to the corner");
+        assert_eq!(at(unit, 15, 1), Rgba::rgb(189, 164, 153), "the grey box");
+        assert_eq!(at(unit, 16, 1), border, "the right side");
+        assert_eq!(at(unit, 16, 13), border, "the right side, below");
+        assert_eq!(
+            at(unit, 16, 14),
+            Rgba::rgb(241, 235, 219),
+            "the light below"
+        );
+        assert_eq!(at(unit, 16, 15).a, 0, "rounded corner");
+        // La fila de sombra (230,231,240) de abajo del relleno blanco, en el combo, el campo y la
+        // casilla.
+        let shade = Rgba::rgb(230, 231, 240);
+        assert_eq!(at(combo, 1, 12), shade, "combo: the shade, left");
+        assert_eq!(at(combo, 2, 13), shade, "combo: the shade, middle");
+        assert_eq!(at(number, 1, 12), shade, "number: the shade, left");
+        assert_eq!(at(number, 2, 13), shade, "number: the shade, middle");
         // La casilla marcada de la barra: 13×14, como el cuadro de `sym.slot` con el interior
         // blanco y la marca verde. No es la del menú (11×12). La sin marcar no está dibujada.
         let check = &data.pieces["field.check.on"];
@@ -941,6 +981,7 @@ mod tests {
         assert_eq!(at(check, 1, 0), border, "the top");
         assert_eq!(at(check, 1, 1), white, "white inside");
         assert_eq!(at(check, 2, 6), Rgba::rgb(71, 114, 56), "the green check");
+        assert_eq!(at(check, 1, 11), shade, "the shade");
         assert_ne!(check.size, data.pieces["menu.check.on"].size);
         assert!(!data.pieces.contains_key("field.check"), "not drawn yet");
     }
