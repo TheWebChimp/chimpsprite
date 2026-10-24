@@ -405,3 +405,99 @@ fn without_pixel_ui_new_tilemap_layer_is_the_egui_window_as_always() {
     assert!(h.app.new_tilemap.is_none());
     assert_eq!(tilemaps(&h), (0, vec![]));
 }
+
+// --- Convert to Tilemap ---
+
+fn convert_tilemap(pixel_ui: bool) -> DialogHarness {
+    let mut h = DialogHarness::new(pixel_ui);
+    let red = cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0));
+    h.app.doc.editor.execute(cs_commands::Command::DrawPixels {
+        layer: cs_core::LayerId(1),
+        frame: 0,
+        pixels: vec![(0, 0, red)],
+    });
+    h.app.convert_tilemap = Some(crate::tilemap_dialog::TileSizeDialog::new(
+        &h.app.doc.editor,
+    ));
+    h.settle();
+    assert!(h.app.convert_tilemap.is_some());
+    h
+}
+
+/// La capa activa es tilemap y los tamaños de tile de los tilesets.
+fn converted(h: &DialogHarness) -> (bool, Vec<(u32, u32)>) {
+    let e = &h.app.doc.editor;
+    let s = e.sprite();
+    let tilemap = s
+        .layers
+        .iter()
+        .any(|l| l.id == e.layer && l.kind == cs_core::LayerKind::Tilemap);
+    (tilemap, s.tilesets.iter().map(|t| t.tile_size).collect())
+}
+
+#[test]
+fn with_pixel_ui_convert_to_tilemap_is_a_pixel_dialog() {
+    let h = convert_tilemap(true);
+    assert!(h.has_area("convert_to_tilemap"), "the pixel dialog");
+    assert!(
+        !h.buttons.iter().any(|(l, _)| l == "Close window"),
+        "no egui window"
+    );
+    assert!(h.drew_piece("window"), "the dialog frame");
+    assert!(h.drew_piece("button"), "pixel buttons");
+    assert!(
+        h.drew_text("Convert to Tilemap"),
+        "the title: {:?}",
+        h.texts
+    );
+    for label in ["OK", "Cancel", "Close"] {
+        h.button(label);
+    }
+    assert_eq!(h.numbers.len(), 2, "tile width and height");
+}
+
+#[test]
+fn with_pixel_ui_ok_and_enter_convert_the_layer() {
+    for how in ["OK", "Enter"] {
+        let mut h = convert_tilemap(true);
+        assert_eq!(converted(&h), (false, vec![]));
+        h.drag_number(1, 20.0);
+        let size = h.app.convert_tilemap.as_ref().unwrap().tile_size;
+        assert!(size.1 > 16, "the tile height field works: {size:?}");
+        match how {
+            "Enter" => h.key(Key::Enter),
+            label => h.click(label),
+        }
+        assert!(h.app.convert_tilemap.is_none(), "{how} closes it");
+        assert_eq!(converted(&h), (true, vec![size]), "{how}");
+        assert!(h.app.message.is_none(), "{how}: no error");
+    }
+}
+
+#[test]
+fn with_pixel_ui_close_cancel_and_escape_do_not_convert() {
+    for how in ["Close", "Cancel", "Escape"] {
+        let mut h = convert_tilemap(true);
+        match how {
+            "Escape" => h.key(Key::Escape),
+            label => h.click(label),
+        }
+        assert!(h.app.convert_tilemap.is_none(), "{how} closes it");
+        assert_eq!(converted(&h), (false, vec![]), "{how} changes nothing");
+    }
+}
+
+#[test]
+fn without_pixel_ui_convert_to_tilemap_is_the_egui_window_as_always() {
+    let mut h = convert_tilemap(false);
+    assert!(h.drew_text("Convert to Tilemap"), "{:?}", h.texts);
+    h.button("Close window");
+    assert!(!h.has_area("convert_to_tilemap"), "no pixel dialog");
+    h.click("OK");
+    assert!(h.app.convert_tilemap.is_none());
+    assert_eq!(converted(&h), (true, vec![(16, 16)]));
+    let mut h = convert_tilemap(false);
+    h.key(Key::Escape);
+    assert!(h.app.convert_tilemap.is_none());
+    assert_eq!(converted(&h), (false, vec![]));
+}

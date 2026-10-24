@@ -190,10 +190,11 @@ impl TileSizeDialog {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> DialogResult {
+    /// Con `skin` (Pixel UI), en el diálogo pixel del skin.
+    pub fn show(&mut self, ctx: &egui::Context, skin: Option<&Skin>) -> DialogResult {
         let (result, open) = dialog_window(
             ctx,
-            None,
+            skin,
             "convert_to_tilemap",
             "Convert to Tilemap",
             |ui| {

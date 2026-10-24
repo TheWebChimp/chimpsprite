@@ -281,7 +281,7 @@ impl ChimpApp {
             }
         }
         if let Some(dialog) = &mut self.convert_tilemap {
-            match dialog.show(ctx) {
+            match dialog.show(ctx, self.pixel.skin()) {
                 tilemap_dialog::DialogResult::Open => {}
                 tilemap_dialog::DialogResult::Accept => {
                     let size = dialog.tile_size;
