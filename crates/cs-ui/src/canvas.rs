@@ -11,6 +11,7 @@ use eframe::egui::{
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
 use crate::editor::{Editor, MAX_BRUSH_SIZE, ToolKind};
 use crate::guides::{RULER_PX, SNAP_PX, SnapContext, after_drag, hit_guide, nice_step};
+use crate::skin::Skin;
 use crate::transform_box::{self, Handle, TransformBox, TransformHit};
 use crate::view::{ViewSettings, ZoomRequest};
 use crate::{theme, widgets};
@@ -72,6 +73,13 @@ pub struct CanvasView {
     slice_properties: bool,
     /// Ctrl+rueda de touchpad: píxeles acumulados que todavía no suman un paso de grosor.
     wheel_rest: f32,
+    /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
+    pub background: Color32,
+}
+
+/// Color alrededor de los artboards: `canvas` del skin con Pixel UI; si no, el del tema.
+pub fn background_for(skin: Option<&Skin>) -> Color32 {
+    skin.map_or(theme::CANVAS_BG, |skin| skin.colors().canvas)
 }
 
 /// Margen (en pantalla) desde el borde del lienzo en el que empieza el auto-scroll.
@@ -173,6 +181,7 @@ impl Default for CanvasView {
             slice_menu: false,
             slice_properties: false,
             wheel_rest: 0.0,
+            background: theme::CANVAS_BG,
         }
     }
 }
@@ -991,7 +1000,7 @@ impl CanvasView {
 
         let checker = self.checker(&ctx);
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0.0, theme::CANVAS_BG);
+        painter.rect_filled(rect, 0.0, self.background);
 
         for artboard in &document.artboards {
             let ((x0, y0), (x1, y1)) = artboard.rect();
@@ -2314,6 +2323,37 @@ mod tests {
         );
         assert_eq!(brush_wheel_steps(&mut rest, Line, -0.5), -1);
         assert_eq!(brush_wheel_steps(&mut rest, Line, 0.0), 0);
+    }
+
+    #[test]
+    fn with_pixel_ui_the_canvas_surround_is_the_skin_canvas_color() {
+        let ctx = egui::Context::default();
+        let skin = Skin::embedded(&ctx);
+        assert_eq!(background_for(None), theme::CANVAS_BG);
+        assert_eq!(
+            background_for(Some(&skin)),
+            Color32::from_rgb(189, 164, 153)
+        );
+        // El lienzo pinta su fondo con ese color.
+        let mut h = Harness::new();
+        h.canvas.background = background_for(Some(&skin));
+        let mut shapes = Vec::new();
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
+            ..Default::default()
+        };
+        let output = h.ctx.run_ui(input, |ui| {
+            egui::CentralPanel::no_frame().show(ui, |ui| {
+                h.canvas.show(ui, &mut h.editor, None, &h.view);
+            });
+        });
+        for clipped in output.shapes {
+            shapes.push(clipped.shape);
+        }
+        let fills_with_canvas = shapes.iter().any(
+            |s| matches!(s, egui::Shape::Rect(r) if r.fill == Color32::from_rgb(189, 164, 153)),
+        );
+        assert!(fills_with_canvas);
     }
 
     #[test]

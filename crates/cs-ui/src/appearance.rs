@@ -4,10 +4,11 @@
 use std::sync::Arc;
 
 use eframe::egui::{
-    self, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, FontTweak, TextStyle,
+    self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, FontTweak, Shadow,
+    Stroke, TextStyle,
 };
 
-use crate::skin::Skin;
+use crate::skin::{Skin, SkinColors};
 use crate::theme;
 use crate::view::ViewSettings;
 
@@ -40,16 +41,73 @@ pub fn font_definitions(pixel: bool) -> FontDefinitions {
     fonts
 }
 
-/// El tema de siempre. Con `pixel`, además, la fuente pixel a 16 en los textos proporcionales y
-/// nada redondeado (ventanas, menús y widgets).
-pub fn apply_style(ctx: &egui::Context, pixel: bool) {
+/// Mitad y mitad de `a` y `b`.
+fn mix(a: Color32, b: Color32) -> Color32 {
+    a.lerp_to_gamma(b, 0.5)
+}
+
+/// Los colores de egui con Pixel UI, armados con los del skin: tema claro, sin redondeo ni
+/// sombras.
+/// - Paneles en `background`; ventanas, campos de texto y el fondo de las barras de scroll en
+///   `panel`.
+/// - Texto en `text` y el débil en `text_dim`; selección `selection` con borde `outline`.
+/// - Botones (`weak_bg_fill`) en `panel`, más oscuros al pasar y al presionar; borde `outline`.
+/// - `bg_fill` (casillas, sliders y la manija del scroll) en `selection`, y `scroll` al pasar o
+///   arrastrar.
+/// - Separadores en `canvas`, como la línea bajo la barra del mockup.
+pub fn pixel_visuals(c: &SkinColors) -> egui::Visuals {
+    let mut v = egui::Visuals::light();
+    v.dark_mode = false;
+    v.override_text_color = Some(c.text);
+    v.weak_text_color = Some(c.text_dim);
+    v.panel_fill = c.background;
+    v.window_fill = c.panel;
+    v.window_stroke = Stroke::new(1.0, c.outline);
+    v.extreme_bg_color = c.panel;
+    v.code_bg_color = c.panel;
+    v.faint_bg_color = mix(c.background, c.panel);
+    v.selection.bg_fill = c.selection;
+    v.selection.stroke = Stroke::new(1.0, c.outline);
+    v.hyperlink_color = c.accent;
+    v.window_shadow = Shadow::NONE;
+    v.popup_shadow = Shadow::NONE;
+    v.window_corner_radius = CornerRadius::ZERO;
+    v.menu_corner_radius = CornerRadius::ZERO;
+    let w = &mut v.widgets;
+    w.noninteractive.bg_fill = c.background;
+    w.noninteractive.weak_bg_fill = c.background;
+    w.noninteractive.bg_stroke = Stroke::new(1.0, c.canvas);
+    w.noninteractive.fg_stroke = Stroke::new(1.0, c.text);
+    w.noninteractive.corner_radius = CornerRadius::ZERO;
+    let states = [
+        (&mut w.inactive, c.panel, c.selection),
+        (&mut w.hovered, mix(c.panel, c.background), c.scroll),
+        (&mut w.active, c.background, c.scroll),
+        (&mut w.open, c.background, c.selection),
+    ];
+    for (state, weak, strong) in states {
+        state.weak_bg_fill = weak;
+        state.bg_fill = strong;
+        state.bg_stroke = Stroke::new(1.0, c.outline);
+        state.fg_stroke = Stroke::new(1.0, c.text);
+        state.corner_radius = CornerRadius::ZERO;
+        state.expansion = 0.0;
+    }
+    v
+}
+
+/// El tema de siempre. Con `pixel` (los colores del skin), además, la fuente pixel a 16 en los
+/// textos proporcionales y los colores de `pixel_visuals`, sin nada redondeado.
+pub fn apply_style(ctx: &egui::Context, pixel: Option<&SkinColors>) {
     theme::apply(ctx);
     let defaults = egui::Style::default().text_styles;
     ctx.all_styles_mut(|style| {
         style.text_styles = defaults.clone();
-        if !pixel {
+        // La manija del scroll: `bg_fill` con Pixel UI; el color del texto, como siempre, sin él.
+        style.spacing.scroll.foreground_color = pixel.is_none();
+        let Some(colors) = pixel else {
             return;
-        }
+        };
         for text in [
             TextStyle::Small,
             TextStyle::Body,
@@ -60,18 +118,7 @@ pub fn apply_style(ctx: &egui::Context, pixel: bool) {
                 .text_styles
                 .insert(text, FontId::proportional(PIXEL_FONT_SIZE));
         }
-        let visuals = &mut style.visuals;
-        visuals.window_corner_radius = CornerRadius::ZERO;
-        visuals.menu_corner_radius = CornerRadius::ZERO;
-        for w in [
-            &mut visuals.widgets.noninteractive,
-            &mut visuals.widgets.inactive,
-            &mut visuals.widgets.hovered,
-            &mut visuals.widgets.active,
-            &mut visuals.widgets.open,
-        ] {
-            w.corner_radius = CornerRadius::ZERO;
-        }
+        style.visuals = pixel_visuals(colors);
     });
 }
 
@@ -86,6 +133,8 @@ pub struct PixelUi {
     /// La escala entera ya rige (`pixels_per_point` la alcanzó): antes, los widgets pixel se
     /// dibujarían un frame a otra escala.
     scale_ready: bool,
+    /// El skin se recargó (`CHIMPSPRITE_SKIN`): sus colores se vuelven a aplicar a egui.
+    skin_changed: bool,
     /// Recarga en vivo (`CHIMPSPRITE_SKIN`).
     #[cfg(not(target_arch = "wasm32"))]
     watcher: Option<crate::skin::watch::SkinWatcher>,
@@ -98,6 +147,7 @@ impl PixelUi {
             applied: None,
             prev_zoom: 1.0,
             scale_ready: false,
+            skin_changed: false,
             #[cfg(not(target_arch = "wasm32"))]
             watcher: crate::skin::watch::SkinWatcher::from_env(),
         }
@@ -129,12 +179,13 @@ impl PixelUi {
         } else {
             self.scale_ready = false;
         }
-        if self.applied == Some(state) {
+        if self.applied == Some(state) && !std::mem::take(&mut self.skin_changed) {
             return;
         }
         self.applied = Some(state);
         ctx.set_fonts(font_definitions(view.pixel_ui));
-        apply_style(ctx, view.pixel_ui);
+        let colors = self.skin.as_ref().map(|skin| *skin.colors());
+        apply_style(ctx, colors.as_ref().filter(|_| view.pixel_ui));
         // El Ctrl+/- de egui rompería la escala entera. En la web viene apagado (lo maneja el
         // navegador).
         ctx.options_mut(|o| {
@@ -155,7 +206,11 @@ impl PixelUi {
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
             if let Some(bytes) = watcher.poll(ctx.input(|i| i.time)) {
                 match Skin::load(ctx, &bytes) {
-                    Ok(skin) => self.skin = Some(skin),
+                    Ok(skin) => {
+                        self.skin = Some(skin);
+                        // Sus colores se vuelven a aplicar a egui en `update`.
+                        self.skin_changed = true;
+                    }
                     Err(e) => log::warn!("{e} (keeping the previous skin)"),
                 }
             }
@@ -228,6 +283,54 @@ mod tests {
             defaults[&TextStyle::Body]
         );
         assert!(pixel.skin().is_none());
+    }
+
+    #[test]
+    fn with_pixel_ui_the_egui_colors_come_from_the_skin_and_off_they_are_the_theme_again() {
+        let ctx = egui::Context::default();
+        let mut pixel = PixelUi::from_env();
+        let mut view = ViewSettings {
+            pixel_ui: true,
+            ui_scale: 2,
+            ..Default::default()
+        };
+        frame(&ctx, &mut pixel, &view);
+        frame(&ctx, &mut pixel, &view);
+        let colors = *pixel.skin().expect("on").colors();
+        assert_eq!(colors.background, Color32::from_rgb(221, 206, 191));
+        let visuals = ctx.style_of(egui::Theme::Dark).visuals.clone();
+        assert_eq!(visuals.panel_fill, colors.background);
+        assert_eq!(visuals.override_text_color, Some(colors.text));
+        assert_eq!(visuals.weak_text_color, Some(colors.text_dim));
+        assert_eq!(visuals.window_fill, colors.panel);
+        assert_eq!(visuals.extreme_bg_color, colors.panel);
+        assert_eq!(visuals.selection.bg_fill, colors.selection);
+        assert_eq!(visuals.widgets.inactive.bg_stroke.color, colors.outline);
+        assert_eq!(visuals.window_shadow, Shadow::NONE);
+        assert!(!visuals.dark_mode);
+        assert_eq!(visuals.widgets.inactive.corner_radius, CornerRadius::ZERO);
+        assert!(
+            !ctx.style_of(egui::Theme::Dark)
+                .spacing
+                .scroll
+                .foreground_color
+        );
+
+        view.pixel_ui = false;
+        frame(&ctx, &mut pixel, &view);
+        let plain = egui::Context::default();
+        theme::apply(&plain);
+        assert_eq!(
+            ctx.style_of(egui::Theme::Dark).visuals,
+            plain.style_of(egui::Theme::Dark).visuals,
+            "the dark theme of always"
+        );
+        assert!(
+            ctx.style_of(egui::Theme::Dark)
+                .spacing
+                .scroll
+                .foreground_color
+        );
     }
 
     #[test]

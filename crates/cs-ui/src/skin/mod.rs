@@ -22,7 +22,7 @@ use crate::theme;
 pub const EMBEDDED: &[u8] = include_bytes!("../../../../assets/ui/skin.aseprite");
 
 /// Colores del skin (`color.<nombre>`).
-pub const COLOR_NAMES: [&str; 8] = [
+pub const COLOR_NAMES: [&str; 10] = [
     "desktop",
     "text",
     "text_dim",
@@ -31,6 +31,8 @@ pub const COLOR_NAMES: [&str; 8] = [
     "outline",
     "selection",
     "scroll",
+    "background",
+    "canvas",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -140,6 +142,10 @@ pub struct SkinColors {
     pub outline: Color32,
     pub selection: Color32,
     pub scroll: Color32,
+    /// Fondo de la app: menú, pestañas, barra de opciones y paneles.
+    pub background: Color32,
+    /// Alrededor del lienzo (el área central, detrás de los artboards).
+    pub canvas: Color32,
 }
 
 impl SkinColors {
@@ -153,6 +159,8 @@ impl SkinColors {
             outline: theme::CANVAS_BORDER,
             selection: theme::ACCENT,
             scroll: theme::WIDGET_HOVER,
+            background: theme::PANEL,
+            canvas: theme::CANVAS_BG,
         }
     }
 
@@ -167,6 +175,8 @@ impl SkinColors {
             ("outline", &mut c.outline),
             ("selection", &mut c.selection),
             ("scroll", &mut c.scroll),
+            ("background", &mut c.background),
+            ("canvas", &mut c.canvas),
         ];
         for (name, slot) in slots {
             if let Some(v) = colors.get(name) {
@@ -344,6 +354,8 @@ mod tests {
             theme::ACCENT,
             "not in the skin: theme color"
         );
+        assert_eq!(skin.colors().background, theme::PANEL);
+        assert_eq!(skin.colors().canvas, theme::CANVAS_BG);
     }
 
     #[test]

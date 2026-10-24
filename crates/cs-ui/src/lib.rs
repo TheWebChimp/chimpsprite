@@ -852,6 +852,8 @@ impl ChimpApp {
         // La toolbar antes que la línea de tiempo: va a todo el alto, hasta la barra de estado, y
         // la línea de tiempo empieza a su derecha.
         let skin = self.pixel.skin();
+        // Alrededor de los artboards: el color `canvas` del skin con Pixel UI.
+        self.doc.canvas.background = canvas::background_for(skin);
         let (width, frame) = match skin {
             // Con Pixel UI, la columna de íconos: el marco más el margen a cada lado, y la línea
             // que separa el panel del lienzo (egui la pone en el margen exterior).

@@ -207,6 +207,20 @@ fn with_pixel_ui_the_toolbar_is_the_slot_plus_its_margin() {
 }
 
 #[test]
+fn with_pixel_ui_the_canvas_has_the_skin_canvas_color() {
+    let view = ViewSettings {
+        pixel_ui: true,
+        ..Default::default()
+    };
+    let h = LayoutHarness::new(view, true);
+    let canvas = h.app.pixel.skin().expect("on").colors().canvas;
+    assert_eq!(h.app.doc.canvas.background, canvas);
+    // Sin Pixel UI, el fondo del tema.
+    let h = LayoutHarness::editor();
+    assert_eq!(h.app.doc.canvas.background, crate::theme::CANVAS_BG);
+}
+
+#[test]
 fn without_pixel_ui_the_named_toolbar_keeps_its_width() {
     let h = LayoutHarness::editor();
     assert_eq!(h.panel("tools").width(), 184.0);

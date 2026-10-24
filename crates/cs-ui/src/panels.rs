@@ -2027,7 +2027,8 @@ mod tests {
     #[test]
     fn with_pixel_ui_style_every_node_of_the_options_bar_fits_inside_it() {
         let mut h = BarHarness::new(800.0);
-        crate::appearance::apply_style(&h.ctx, true);
+        let skin = Skin::embedded(&h.ctx);
+        crate::appearance::apply_style(&h.ctx, Some(skin.colors()));
         for kind in [ToolKind::Pencil, ToolKind::MagicWand, ToolKind::Text] {
             h.editor.set_tool(kind);
             h.frame(vec![]);
