@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
-use cs_core::{Artboard, ArtboardId, Axis, GridSettings, Guide, Mask, SymmetryMode};
+use cs_core::{Artboard, ArtboardId, Axis, GridSettings, Guide, Mask};
 use cs_tools::{ArtboardHit, BrushShape, Edges, hit_test};
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Pos2, Rect, Sense, Stroke, StrokeKind,
@@ -132,20 +132,6 @@ enum SymHandle {
     Center,
     X,
     Y,
-}
-
-fn has_vertical_axis(mode: SymmetryMode) -> bool {
-    matches!(
-        mode,
-        SymmetryMode::Horizontal | SymmetryMode::Both | SymmetryMode::All
-    )
-}
-
-fn has_horizontal_axis(mode: SymmetryMode) -> bool {
-    matches!(
-        mode,
-        SymmetryMode::Vertical | SymmetryMode::Both | SymmetryMode::All
-    )
 }
 
 /// Arrastre de una guía: `index` es la guía original si se está moviendo una existente.
@@ -308,7 +294,7 @@ impl CanvasView {
         ctrl: bool,
     ) -> Option<egui::CursorIcon> {
         let symmetry = editor.symmetry();
-        if symmetry.mode == SymmetryMode::None {
+        if !symmetry.axes.any() {
             self.sym_drag = None;
             return None;
         }
@@ -356,12 +342,12 @@ impl CanvasView {
         );
         let handle = if p.distance(center) <= 7.0 {
             Some(SymHandle::Center)
-        } else if has_vertical_axis(symmetry.mode)
+        } else if symmetry.axes.vertical
             && (p.x - center.x).abs() <= 4.0
             && artboard.y_range().contains(p.y)
         {
             Some(SymHandle::X)
-        } else if has_horizontal_axis(symmetry.mode)
+        } else if symmetry.axes.horizontal
             && (p.y - center.y).abs() <= 4.0
             && artboard.x_range().contains(p.x)
         {
@@ -386,8 +372,8 @@ impl CanvasView {
 
     /// Ejes de simetría punteados sobre el artboard activo y su centro.
     fn draw_symmetry(&self, painter: &egui::Painter, rect: Rect, editor: &Editor) {
-        let mode = editor.symmetry().mode;
-        if mode == SymmetryMode::None {
+        let axes = editor.symmetry().axes;
+        if !axes.any() {
             return;
         }
         let a = editor.artboard();
@@ -400,23 +386,23 @@ impl CanvasView {
         let (c, _) = self.symmetry_center(rect, editor);
         let stroke = Stroke::new(1.5, theme::ACCENT);
         let mut segments = Vec::new();
-        if has_vertical_axis(mode) {
+        if axes.vertical {
             segments.push([
                 Pos2::new(c.x, screen.top()),
                 Pos2::new(c.x, screen.bottom()),
             ]);
         }
-        if has_horizontal_axis(mode) {
+        if axes.horizontal {
             segments.push([
                 Pos2::new(screen.left(), c.y),
                 Pos2::new(screen.right(), c.y),
             ]);
         }
         let k = screen.width().max(screen.height());
-        if matches!(mode, SymmetryMode::DiagonalDown | SymmetryMode::All) {
+        if axes.diagonal_down {
             segments.push([c - Vec2::splat(k), c + Vec2::splat(k)]);
         }
-        if matches!(mode, SymmetryMode::DiagonalUp | SymmetryMode::All) {
+        if axes.diagonal_up {
             segments.push([c + Vec2::new(-k, k), c + Vec2::new(k, -k)]);
         }
         for seg in segments {
@@ -2354,6 +2340,28 @@ mod tests {
             |s| matches!(s, egui::Shape::Rect(r) if r.fill == Color32::from_rgb(189, 164, 153)),
         );
         assert!(fills_with_canvas);
+    }
+
+    #[test]
+    fn a_click_with_both_straight_axes_paints_four_pixels() {
+        let mut h = Harness::new();
+        h.editor.set_symmetry(cs_core::Symmetry {
+            axes: cs_core::SymmetryAxes {
+                vertical: true,
+                horizontal: true,
+                ..cs_core::SymmetryAxes::NONE
+            },
+            center2: None,
+        });
+        assert_eq!(h.editor.tool, ToolKind::Pencil);
+        h.click(h.screen((1, 2)), PointerButton::Primary);
+        let primary = h.editor.primary;
+        let sprite = h.editor.sprite();
+        let painted: Vec<(i32, i32)> = (0..16)
+            .flat_map(|y| (0..16).map(move |x| (x, y)))
+            .filter(|&(x, y)| sprite.pixel(LayerId(1), 0, x, y) == primary)
+            .collect();
+        assert_eq!(painted, vec![(1, 2), (14, 2), (1, 13), (14, 13)]);
     }
 
     #[test]

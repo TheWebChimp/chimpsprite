@@ -398,7 +398,11 @@ mod tests {
                 position: 2,
             }],
             symmetry: cs_core::Symmetry {
-                mode: cs_core::SymmetryMode::Both,
+                axes: cs_core::SymmetryAxes {
+                    vertical: true,
+                    horizontal: true,
+                    ..cs_core::SymmetryAxes::NONE
+                },
                 center2: Some((5, 3)),
             },
             id: ArtboardId(7),

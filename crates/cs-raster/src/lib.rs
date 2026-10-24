@@ -19,7 +19,7 @@ pub use gradient::{Dither, GradientShape, gradient_t};
 pub use line::{BrushShape, brush_points, brush_square, line, pixel_perfect, stamp};
 pub use polygon::{polygon_filled, polygon_filled_nonzero, polygon_filled_nonzero_in};
 pub use rect::{rect_filled, rect_outline, rounded_rect_filled, rounded_rect_outline};
-pub use symmetry::{SymmetryMode, symmetric_points, symmetrize};
+pub use symmetry::{SymmetryAxes, symmetric_points, symmetrize};
 pub use transform::{
     Block, MAX_BLOCK_SIDE, ROTSPRITE_MAX_AREA, RotationAlgorithm, rotate_fast, rotated_size,
     rotsprite, scale_nearest,

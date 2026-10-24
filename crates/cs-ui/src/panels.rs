@@ -3,7 +3,7 @@ use eframe::egui::{
 };
 use std::sync::Arc;
 
-use cs_core::{ArtboardId, Palette, PixelValue, SymmetryMode, Tile};
+use cs_core::{ArtboardId, Palette, PixelValue, SymmetryAxes, Tile};
 
 use crate::canvas::CanvasView;
 use cs_raster::RotationAlgorithm;
@@ -419,28 +419,57 @@ fn text_window(ctx: &egui::Context, editor: &mut Editor) {
     }
 }
 
-const SYMMETRY_MODES: [(SymmetryMode, &str); 7] = [
-    (SymmetryMode::None, "Off"),
-    (SymmetryMode::Horizontal, "Horizontal (left ↔ right)"),
-    (SymmetryMode::Vertical, "Vertical (top ↔ bottom)"),
-    (SymmetryMode::Both, "Horizontal + vertical"),
-    (SymmetryMode::DiagonalDown, "Diagonal ╲"),
-    (SymmetryMode::DiagonalUp, "Diagonal ╱"),
-    (SymmetryMode::All, "All 8 directions"),
+/// Un eje de simetría de la barra.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SymAxis {
+    Vertical,
+    Horizontal,
+    DiagonalDown,
+    DiagonalUp,
+}
+
+impl SymAxis {
+    /// Si el eje está prendido en `axes`.
+    fn on(self, axes: SymmetryAxes) -> bool {
+        match self {
+            SymAxis::Vertical => axes.vertical,
+            SymAxis::Horizontal => axes.horizontal,
+            SymAxis::DiagonalDown => axes.diagonal_down,
+            SymAxis::DiagonalUp => axes.diagonal_up,
+        }
+    }
+
+    /// `axes` con este eje cambiado y los demás igual.
+    fn toggled(self, mut axes: SymmetryAxes) -> SymmetryAxes {
+        let flag = match self {
+            SymAxis::Vertical => &mut axes.vertical,
+            SymAxis::Horizontal => &mut axes.horizontal,
+            SymAxis::DiagonalDown => &mut axes.diagonal_down,
+            SymAxis::DiagonalUp => &mut axes.diagonal_up,
+        };
+        *flag = !*flag;
+        axes
+    }
+}
+
+/// Los ejes en el orden del mockup (│ ─ ╲ ╱), con su nombre, que es también el tooltip. Las
+/// diagonales se nombran con `\` y `/`: ╲ y ╱ no están en las fuentes proporcionales.
+const SYMMETRY_AXES: [(SymAxis, &str); 4] = [
+    (SymAxis::Vertical, "Vertical axis (left ↔ right)"),
+    (SymAxis::Horizontal, "Horizontal axis (top ↔ bottom)"),
+    (SymAxis::DiagonalDown, "Diagonal axis \\"),
+    (SymAxis::DiagonalUp, "Diagonal axis /"),
 ];
 
-/// Ayuda de los ejes, en el tooltip de los botones de simetría cuando hay una activa.
+/// Ayuda de los ejes, en el tooltip de los botones de simetría cuando hay alguno prendido.
 const AXES_HINT: &str = "Ctrl+drag the dashed axes to move them";
 
 /// Symmetry, al final de la barra de opciones. Se arma de derecha a izquierda (la barra lo pone
-/// pegado al borde): "Center axes" si los ejes se movieron, los siete modos en orden inverso y el
-/// título. En pantalla se leen en el orden de siempre.
+/// pegado al borde): "Center axes" si los ejes se movieron, los cuatro ejes en orden inverso y el
+/// título. En pantalla se leen │ ─ ╲ ╱. Cada botón prende o apaga solo su eje.
 fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor) {
     let current = editor.symmetry();
-    if current.mode != SymmetryMode::None
-        && current.center2.is_some()
-        && ui.small_button("Center axes").clicked()
-    {
+    if current.axes.any() && current.center2.is_some() && ui.small_button("Center axes").clicked() {
         editor.set_symmetry(cs_core::Symmetry {
             center2: None,
             ..current
@@ -448,81 +477,61 @@ fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor) {
     }
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
-        for (mode, tip) in SYMMETRY_MODES.into_iter().rev() {
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
-            let selected = current.mode == mode;
-            let enabled = ui.is_enabled();
-            response.widget_info(|| {
-                egui::WidgetInfo::selected(
-                    egui::WidgetType::SelectableLabel,
-                    enabled,
-                    selected,
-                    tip,
-                )
-            });
-            let visuals = ui.style().interact_selectable(&response, selected);
-            let painter = ui.painter();
-            painter.rect_filled(rect, 3.0, visuals.weak_bg_fill);
-            let color = if selected {
-                theme::ACCENT
-            } else {
-                visuals.fg_stroke.color
-            };
-            draw_symmetry_icon(painter, rect.shrink(5.0), mode, color);
-            let response = if current.mode == SymmetryMode::None {
-                response.on_hover_text(tip)
-            } else {
+        for (axis, tip) in SYMMETRY_AXES.into_iter().rev() {
+            let response = symmetry_toggle(ui, axis, tip, axis.on(current.axes));
+            let response = if current.axes.any() {
                 response.on_hover_text(format!("{tip}\n{AXES_HINT}"))
+            } else {
+                response.on_hover_text(tip)
             };
             if response.clicked() {
-                editor.set_symmetry(cs_core::Symmetry { mode, ..current });
+                editor.set_symmetry(cs_core::Symmetry {
+                    axes: axis.toggled(current.axes),
+                    ..current
+                });
             }
         }
     });
     ui.label("Symmetry");
 }
 
-fn draw_symmetry_icon(painter: &egui::Painter, r: Rect, mode: SymmetryMode, color: Color32) {
-    let stroke = Stroke::new(1.5, color);
+/// Un botón de prender y apagar un eje, dibujado con figuras.
+fn symmetry_toggle(ui: &mut egui::Ui, axis: SymAxis, tip: &str, on: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, on, tip)
+    });
+    let visuals = ui.style().interact_selectable(&response, on);
+    let painter = ui.painter();
+    painter.rect_filled(rect, 3.0, visuals.weak_bg_fill);
+    let color = if on {
+        theme::ACCENT
+    } else {
+        visuals.fg_stroke.color
+    };
+    let r = rect.shrink(5.0);
     painter.rect_stroke(
         r,
         1.0,
         Stroke::new(1.0, color.gamma_multiply(0.5)),
         StrokeKind::Inside,
     );
-    let (c, tl, br) = (r.center(), r.left_top(), r.right_bottom());
-    let (tr, bl) = (r.right_top(), r.left_bottom());
-    let vertical = || painter.vline(c.x, r.y_range(), stroke);
-    let horizontal = || painter.hline(r.x_range(), c.y, stroke);
-    let down = || painter.line_segment([tl, br], stroke);
-    let up = || painter.line_segment([bl, tr], stroke);
-    match mode {
-        SymmetryMode::None => {
-            painter.circle_filled(c, 1.5, color);
-        }
-        SymmetryMode::Horizontal => {
-            vertical();
-        }
-        SymmetryMode::Vertical => {
-            horizontal();
-        }
-        SymmetryMode::Both => {
-            vertical();
-            horizontal();
-        }
-        SymmetryMode::DiagonalDown => {
-            down();
-        }
-        SymmetryMode::DiagonalUp => {
-            up();
-        }
-        SymmetryMode::All => {
-            vertical();
-            horizontal();
-            down();
-            up();
-        }
-    }
+    painter.extend(axis_shapes(r, axis, color));
+    response
+}
+
+/// El eje como una línea de lado a lado de `r`.
+fn axis_shapes(r: Rect, axis: SymAxis, color: Color32) -> Vec<egui::Shape> {
+    let stroke = Stroke::new(1.5, color);
+    let c = r.center();
+    let segment = match axis {
+        SymAxis::Vertical => [egui::pos2(c.x, r.top()), egui::pos2(c.x, r.bottom())],
+        SymAxis::Horizontal => [egui::pos2(r.left(), c.y), egui::pos2(r.right(), c.y)],
+        SymAxis::DiagonalDown => [r.left_top(), r.right_bottom()],
+        SymAxis::DiagonalUp => [r.left_bottom(), r.right_top()],
+    };
+    vec![egui::Shape::line_segment(segment, stroke)]
 }
 
 /// Damero mínimo para que se note la transparencia.
@@ -1962,6 +1971,20 @@ mod tests {
             self.nodes.iter().any(|(t, _)| t == text)
         }
 
+        /// Clic con el botón principal en el centro del nodo `text`, en tres frames.
+        fn click(&mut self, text: &str) {
+            let at = self.rect(text).center();
+            let press = |pressed| Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![Event::PointerMoved(at)]);
+            self.frame(vec![press(true)]);
+            self.frame(vec![press(false)]);
+        }
+
         fn rect(&self, text: &str) -> Rect {
             self.nodes
                 .iter()
@@ -1980,20 +2003,23 @@ mod tests {
         }
         // Etiqueta y control uno al lado del otro: la forma va a la derecha del texto.
         assert!(h.rect("Round").left() > h.rect("Brush size").right());
-        assert!(h.has("Off"), "Symmetry");
+        assert!(h.has("Vertical axis (left ↔ right)"), "Symmetry");
         h.editor.set_tool(ToolKind::Hand);
         h.frame(vec![]);
         for text in ["Brush size", "Round", "Square"] {
             assert!(!h.has(text), "{text}");
         }
-        assert!(h.has("Off"), "Symmetry is always there");
+        assert!(
+            h.has("Vertical axis (left ↔ right)"),
+            "Symmetry is always there"
+        );
         assert!(h.has("Symmetry"));
     }
 
     #[test]
     fn symmetry_is_at_the_right_end_of_the_bar_in_the_usual_order() {
         let h = BarHarness::new(1200.0);
-        let names: Vec<&str> = SYMMETRY_MODES.iter().map(|(_, tip)| *tip).collect();
+        let names: Vec<&str> = SYMMETRY_AXES.iter().map(|(_, tip)| *tip).collect();
         let rects: Vec<Rect> = names.iter().map(|n| h.rect(n)).collect();
         for pair in rects.windows(2) {
             assert!(pair[0].right() <= pair[1].left(), "{names:?}: {rects:?}");
@@ -2005,6 +2031,31 @@ mod tests {
             h.bar
         );
         assert!(h.rect("Symmetry").right() <= rects[0].left());
+    }
+
+    #[test]
+    fn each_symmetry_button_turns_its_own_axis_on_and_off() {
+        let mut h = BarHarness::new(1200.0);
+        let [vertical, horizontal, down, up] = SYMMETRY_AXES.map(|(_, name)| name);
+        h.click(vertical);
+        h.click(horizontal);
+        let axes = h.editor.symmetry().axes;
+        assert!(axes.vertical && axes.horizontal, "{axes:?}");
+        assert!(!axes.diagonal_down && !axes.diagonal_up, "{axes:?}");
+        h.click(up);
+        h.click(vertical);
+        assert_eq!(
+            h.editor.symmetry().axes,
+            SymmetryAxes {
+                horizontal: true,
+                diagonal_up: true,
+                ..SymmetryAxes::NONE
+            }
+        );
+        assert!(!h.editor.symmetry().axes.diagonal_down, "{down} untouched");
+        // Cada clic es un paso de undo.
+        h.editor.undo();
+        assert!(h.editor.symmetry().axes.vertical);
     }
 
     #[test]
@@ -2063,7 +2114,10 @@ mod tests {
         let after = h.rect("Round");
         assert!(after.left() < before.left(), "{before:?} -> {after:?}");
         assert_eq!(after.top(), before.top(), "still one row");
-        assert!(h.rect("Off").right() <= 320.0, "Symmetry stays in view");
+        assert!(
+            h.rect("Vertical axis (left ↔ right)").right() <= 320.0,
+            "Symmetry stays in view"
+        );
     }
 
     #[test]
@@ -2078,7 +2132,12 @@ mod tests {
             });
             output.textures_delta.clear();
             let texts: Vec<String> = nodes(&output).into_iter().map(|(t, _)| t).collect();
-            for gone in ["Options", "Symmetry", "Brush size", "Off"] {
+            for gone in [
+                "Options",
+                "Symmetry",
+                "Brush size",
+                "Vertical axis (left ↔ right)",
+            ] {
                 assert!(!texts.iter().any(|t| t == gone), "{gone} in {texts:?}");
             }
             assert!(texts.iter().any(|t| t.contains("Pencil")), "{texts:?}");

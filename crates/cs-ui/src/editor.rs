@@ -545,10 +545,10 @@ fn mirror(cmd: Command, symmetry: cs_core::Symmetry, center2: (i32, i32)) -> Com
             layer,
             frame,
             pixels,
-        } if symmetry.mode != cs_core::SymmetryMode::None => Command::DrawPixels {
+        } if symmetry.axes.any() => Command::DrawPixels {
             layer,
             frame,
-            pixels: cs_raster::symmetrize(&pixels, symmetry.mode, center2),
+            pixels: cs_raster::symmetrize(&pixels, symmetry.axes, center2),
         },
         other => other,
     }
@@ -2247,10 +2247,13 @@ mod tests {
 
     #[test]
     fn symmetric_strokes_are_one_undo_step_and_respect_selection() {
-        use cs_core::{Symmetry, SymmetryMode};
+        use cs_core::{Symmetry, SymmetryAxes};
         let mut e = editor(); // 8×8
         e.set_symmetry(Symmetry {
-            mode: SymmetryMode::Horizontal,
+            axes: SymmetryAxes {
+                vertical: true,
+                ..SymmetryAxes::NONE
+            },
             center2: None,
         });
         click(&mut e, (1, 1), false, false);

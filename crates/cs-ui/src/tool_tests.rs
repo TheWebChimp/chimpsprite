@@ -194,7 +194,7 @@ fn the_editor_paints_with_the_chosen_brush_shape() {
 }
 
 mod contour {
-    use cs_core::{Mask, Symmetry, SymmetryMode};
+    use cs_core::{Mask, Symmetry, SymmetryAxes};
 
     use super::*;
 
@@ -227,7 +227,10 @@ mod contour {
     fn a_click_paints_one_pixel_mirrored() {
         let mut e = editor(ToolKind::Contour);
         e.set_symmetry(Symmetry {
-            mode: SymmetryMode::Horizontal,
+            axes: SymmetryAxes {
+                vertical: true,
+                ..SymmetryAxes::NONE
+            },
             center2: None,
         });
         stroke(&mut e, &[(1, 1)], false);
@@ -265,7 +268,7 @@ mod contour {
 
 mod blur {
     use cs_commands::{Command, LayerProps};
-    use cs_core::{Mask, Rgba, Symmetry, SymmetryMode};
+    use cs_core::{Mask, Rgba, Symmetry, SymmetryAxes};
 
     use super::*;
 
@@ -339,7 +342,10 @@ mod blur {
         let mut e = editor(ToolKind::Blur);
         dot(&mut e, (1, 4));
         e.set_symmetry(Symmetry {
-            mode: SymmetryMode::Horizontal,
+            axes: SymmetryAxes {
+                vertical: true,
+                ..SymmetryAxes::NONE
+            },
             center2: None,
         });
         stroke(&mut e, &[(1, 4)], false);
