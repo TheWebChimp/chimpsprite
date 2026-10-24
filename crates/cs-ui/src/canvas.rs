@@ -21,8 +21,8 @@ use crate::{theme, widgets};
 const ZOOM_LEVELS: [f32; 13] = [
     0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
 ];
-/// Lado en pantalla de cada cuadro del damero de transparencia, en puntos (píxeles del skin con
-/// Pixel UI): no cambia con el zoom, como en Aseprite, y empieza en la esquina del artboard.
+/// Lado de cada cuadro del damero de transparencia, en píxeles del sprite (como Aseprite): siempre
+/// 16×16 del dibujo, así que crece y se achica con el zoom. Empieza en la esquina del artboard.
 const CHECKER_CELL: f32 = 16.0;
 /// Velocidad de las "marching ants" (pasos por segundo).
 const ANTS_SPEED: f64 = 6.0;
@@ -1053,7 +1053,8 @@ impl CanvasView {
             if let Some((w, layout)) = &window {
                 painter.extend(w.frame_shapes(layout, active, ppp));
             }
-            let uv = checker_uv(screen.size());
+            let ((x0, y0), (x1, y1)) = artboard.rect();
+            let uv = checker_uv((x1 - x0) as u32, (y1 - y0) as u32);
             painter.image(checker, screen, uv, Color32::WHITE);
             if let Some(tex) = self.textures.get(&artboard.id) {
                 let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
@@ -1963,9 +1964,10 @@ fn outline_segments(
         .collect()
 }
 
-/// Coordenadas de la textura del damero (un par claro/oscuro por repetición) para un artboard que
-/// mide `size` puntos en pantalla.
-fn checker_uv(size: Vec2) -> Rect {
+/// Coordenadas de la textura del damero (un par claro/oscuro por repetición) para un artboard de
+/// `width`×`height` píxeles del sprite: no dependen del zoom.
+fn checker_uv(width: u32, height: u32) -> Rect {
+    let size = Vec2::new(width as f32, height as f32);
     Rect::from_min_max(Pos2::ZERO, (size / (CHECKER_CELL * 2.0)).to_pos2())
 }
 
@@ -1979,12 +1981,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn checker_cells_are_16_points_on_screen_at_any_zoom() {
-        // 64×64 puntos en pantalla llevan 4×4 cuadros: la textura repite 2×2 veces su par
-        // claro/oscuro, sea un artboard de 64×64 al 100 % o de 16×16 al 400 %.
-        assert_eq!(checker_uv(Vec2::splat(64.0)).max, Pos2::new(2.0, 2.0));
-        assert_eq!(checker_uv(Vec2::new(40.0, 8.0)).max, Pos2::new(1.25, 0.25));
-        assert_eq!(checker_uv(Vec2::new(40.0, 8.0)).min, Pos2::ZERO);
+    fn checker_cells_are_16_sprite_pixels_at_any_zoom() {
+        // Un artboard de 64×64 lleva 4×4 cuadros (la textura repite 2×2 veces su par
+        // claro/oscuro) al 100 % y al 800 %: al hacer zoom los cuadros crecen con el dibujo.
+        assert_eq!(checker_uv(64, 64).max, Pos2::new(2.0, 2.0));
+        assert_eq!(checker_uv(40, 8).max, Pos2::new(1.25, 0.25));
+        assert_eq!(checker_uv(40, 8).min, Pos2::ZERO);
     }
 
     /// Lienzo de 800×600 manejado con eventos crudos, con el reloj avanzando 50 ms por frame.
