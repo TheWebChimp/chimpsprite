@@ -184,7 +184,8 @@ pub fn variants_list(
 /// - Clic derecho o mantener presionado 400 ms (si el grupo tiene variantes): abre la lista;
 ///   soltar después de mantener no cuenta como clic.
 /// - Elegir en la lista: cambia la herramienta, que queda recordada en el grupo.
-/// - Tooltip: "Nombre (Atajo)" y, con variantes, cómo verlas.
+/// - Tooltip: "Nombre (Atajo)" y, con variantes, cómo verlas. Con skin (Pixel UI), en el globo
+///   del diseño (`pixel_ui::bubble_tooltip`).
 pub fn group_button(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -219,7 +220,12 @@ pub fn group_button(
     if let Some(kind) = pick {
         editor.set_tool(kind);
     }
-    response.on_hover_text(tooltip(shown, state.more))
+    let text = tooltip(shown, state.more);
+    match skin {
+        // Pixel UI: el globo del diseño, a la derecha del botón.
+        Some(skin) => crate::pixel_ui::bubble_tooltip(response, skin, &text),
+        None => response.on_hover_text(text),
+    }
 }
 
 #[cfg(test)]

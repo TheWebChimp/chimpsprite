@@ -86,7 +86,7 @@ const MARK_TOP: f32 = 7.0;
 /// Lo que la marca agranda su zona de clic a cada lado.
 const MARK_HIT: f32 = 2.0;
 /// Alto de las mayúsculas de la fuente pixel.
-const CAP_HEIGHT: f32 = 7.0;
+pub(crate) const CAP_HEIGHT: f32 = 7.0;
 /// El final de los nombres cortados: "…" si la fuente pixel lo tiene; si no, tres puntos (el
 /// "…" de la fuente de respaldo de egui no es pixel art y se ve borroso).
 pub(crate) fn ellipsis() -> &'static str {

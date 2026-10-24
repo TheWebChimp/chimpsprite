@@ -1798,7 +1798,13 @@ mod tests {
         textures: Vec<egui::TextureId>,
         /// Lo dibujado con cada textura y su rect.
         meshes: Vec<(egui::TextureId, Rect)>,
+        /// Los textos dibujados: el texto, su rect y su color.
+        texts: Vec<(String, Rect, Color32)>,
+        /// Los textos del árbol de accesibilidad (rol `Label`).
+        label_nodes: Vec<String>,
         offset: f32,
+        /// Sin Pixel UI: la barra con nombres (`toolbar` sin skin) en vez de la columna.
+        named: bool,
     }
 
     impl ColumnHarness {
@@ -1819,10 +1825,51 @@ mod tests {
                 buttons: Vec::new(),
                 textures: Vec::new(),
                 meshes: Vec::new(),
+                texts: Vec::new(),
+                label_nodes: Vec::new(),
                 offset: 0.0,
+                named: false,
             };
             h.frame(vec![]);
             h
+        }
+
+        /// Con la fuente pixel y los colores del skin, como con Pixel UI encendido. La fuente rige
+        /// desde el frame siguiente.
+        fn pixel_style(mut self) -> Self {
+            self.ctx
+                .set_fonts(crate::appearance::font_definitions(true));
+            crate::appearance::apply_style(&self.ctx, Some(self.skin.colors()));
+            self.frame(vec![]);
+            self
+        }
+
+        /// Pixel UI apagado: la barra con nombres, sin skin.
+        fn named(mut self) -> Self {
+            self.named = true;
+            self.frame(vec![]);
+            self
+        }
+
+        /// Deja el puntero quieto sobre el botón `label` hasta que pasa la demora del tooltip.
+        /// Devuelve el rect del botón.
+        fn hover(&mut self, label: &str) -> Rect {
+            let rect = self.rect(label);
+            self.frame(vec![Event::PointerMoved(rect.center())]);
+            let delay = self.ctx.global_style().interaction.tooltip_delay as f64;
+            self.frame_after(delay + 0.1, vec![]);
+            self.frame(vec![]);
+            // Que termine de aparecer (el área de egui entra con un fundido).
+            self.frame_after(0.5, vec![]);
+            rect
+        }
+
+        fn rect(&self, label: &str) -> Rect {
+            self.buttons
+                .iter()
+                .find(|(l, _)| l == label)
+                .map(|(_, r)| *r)
+                .unwrap_or_else(|| panic!("no button {label:?} in {:?}", self.buttons))
         }
 
         fn frame(&mut self, events: Vec<Event>) {
@@ -1840,12 +1887,18 @@ mod tests {
                 events,
                 ..Default::default()
             };
-            let (editor, skin) = (&mut self.editor, &self.skin);
+            let (editor, skin, named) = (&mut self.editor, &self.skin, self.named);
             let mut offset = 0.0;
             let mut output = self.ctx.run_ui(input, |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
                     offset = tools_scroll_area()
-                        .show(ui, |ui| tool_column(ui, editor, skin))
+                        .show(ui, |ui| {
+                            if named {
+                                toolbar(ui, editor, None);
+                            } else {
+                                tool_column(ui, editor, skin);
+                            }
+                        })
                         .state
                         .offset
                         .y;
@@ -1854,9 +1907,24 @@ mod tests {
             output.textures_delta.clear();
             self.offset = offset;
             self.meshes.clear();
+            self.texts.clear();
             for clipped in &output.shapes {
                 collect_meshes(&clipped.shape, &mut self.meshes);
+                collect_texts(&clipped.shape, &mut self.texts);
             }
+            self.label_nodes = output
+                .platform_output
+                .accesskit_update
+                .as_ref()
+                .map(|update| {
+                    update
+                        .nodes
+                        .iter()
+                        .filter(|(_, n)| n.role() == egui::accesskit::Role::Label)
+                        .filter_map(|(_, n)| n.label().or(n.value()).map(str::to_owned))
+                        .collect()
+                })
+                .unwrap_or_default();
             self.textures = self.meshes.iter().map(|(t, _)| *t).collect();
             self.buttons = output
                 .platform_output
@@ -1919,6 +1987,97 @@ mod tests {
             egui::Shape::Mesh(mesh) => out.push((mesh.texture_id, mesh.calc_bounds())),
             _ => {}
         }
+    }
+
+    fn collect_texts(shape: &egui::Shape, out: &mut Vec<(String, Rect, Color32)>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_texts(s, out)),
+            egui::Shape::Text(text) => out.push((
+                text.galley.text().to_owned(),
+                text.visual_bounding_rect(),
+                text.fallback_color,
+            )),
+            _ => {}
+        }
+    }
+
+    /// Lo dibujado con `texture`, unido en un rect.
+    fn drawn_union(h: &ColumnHarness, texture: egui::TextureId) -> Option<Rect> {
+        h.meshes
+            .iter()
+            .filter(|(t, _)| *t == texture)
+            .map(|(_, r)| *r)
+            .reduce(|a, b| a.union(b))
+    }
+
+    #[test]
+    fn with_pixel_ui_the_tooltip_is_the_bubble_pointing_at_the_button() {
+        let mut h = ColumnHarness::new(600.0).pixel_style();
+        let bubble = h.texture("tooltip.bubble");
+        assert_eq!(drawn_union(&h, bubble), None, "no bubble before hovering");
+        let button = h.hover("Hand");
+        let drawn = drawn_union(&h, bubble).expect("the bubble is drawn");
+        // La punta de la cola, 6 px a la derecha del botón (el aire del mockup), y su fila de
+        // arriba en el centro del botón: el cuerpo empieza 8 filas antes.
+        assert_eq!(drawn.left(), button.right() + 6.0, "{drawn:?} {button:?}");
+        assert_eq!(drawn.top() + 8.0, button.center().y, "{drawn:?} {button:?}");
+        // Una línea: el alto del globo del mockup.
+        assert_eq!(drawn.height(), 20.0, "{drawn:?}");
+        let (text, rect, color) = h
+            .texts
+            .iter()
+            .find(|(t, ..)| t == "Hand (H)")
+            .cloned()
+            .unwrap_or_else(|| panic!("the tooltip text in {:?}", h.texts));
+        assert_eq!(color, h.skin.colors().text, "{text}");
+        // El texto va en el cuerpo (sin la cola de 8), con 6 px de aire a la izquierda.
+        let body = Rect::from_min_max(drawn.min + Vec2::new(8.0, 0.0), drawn.max);
+        assert!(body.contains_rect(rect), "{rect:?} in {body:?}");
+        assert_eq!(rect.left(), body.left() + 6.0, "{rect:?} {body:?}");
+        // El tooltip sigue teniendo su texto en el árbol de accesibilidad.
+        assert!(
+            h.label_nodes.iter().any(|l| l == "Hand (H)"),
+            "{:?}",
+            h.label_nodes
+        );
+    }
+
+    #[test]
+    fn with_pixel_ui_the_bubble_grows_with_the_second_line_of_the_groups() {
+        let mut h = ColumnHarness::new(600.0).pixel_style();
+        let button = h.hover("Rectangular Marquee");
+        let drawn = drawn_union(&h, h.texture("tooltip.bubble")).expect("the bubble is drawn");
+        assert_eq!(drawn.left(), button.right() + 6.0, "{drawn:?} {button:?}");
+        assert_eq!(drawn.top() + 8.0, button.center().y, "{drawn:?} {button:?}");
+        assert!(drawn.height() > 20.0, "two lines: {drawn:?}");
+        let text = tool_group::tooltip(ToolKind::RectSelect, true);
+        let (_, rect, _) = h
+            .texts
+            .iter()
+            .find(|(t, ..)| *t == text)
+            .cloned()
+            .unwrap_or_else(|| panic!("the tooltip text in {:?}", h.texts));
+        let body = Rect::from_min_max(drawn.min + Vec2::new(8.0, 0.0), drawn.max);
+        assert!(body.contains_rect(rect), "{rect:?} in {body:?}");
+        assert_eq!(rect.left(), body.left() + 6.0, "{rect:?} {body:?}");
+    }
+
+    #[test]
+    fn without_pixel_ui_the_tooltip_is_the_egui_one_and_there_is_no_bubble() {
+        let mut h = ColumnHarness::new(600.0).named();
+        let hand = h
+            .labels()
+            .into_iter()
+            .find(|l| l.contains("Hand"))
+            .expect("the Hand button")
+            .to_owned();
+        h.hover(&hand);
+        assert!(
+            h.texts.iter().any(|(t, ..)| t == "Hand (H)"),
+            "the egui tooltip: {:?}",
+            h.texts
+        );
+        assert_eq!(drawn_union(&h, h.texture("tooltip.bubble")), None);
     }
 
     /// Nombre accesible de una fila de la lista de variantes: el nombre y el atajo.

@@ -9,6 +9,7 @@ use eframe::egui::{
 use eframe::emath::GuiRounding as _;
 
 use crate::skin::{IRect, Piece, Skin, SkinColors, WidgetState, nine_slice};
+use crate::tab_bar;
 
 /// Marco de los diálogos: la ventana de barra rosa del mockup de "Unsaved changes".
 const DIALOG_PIECE: &str = "window";
@@ -620,6 +621,92 @@ fn more_mark(corner: Pos2, pixels_per_point: f32) -> [Rect; 3] {
         Rect::from_min_max(pos2(corner.x - w, y), pos2(corner.x, y + 1.0))
             .round_to_pixels(pixels_per_point)
     })
+}
+
+/// Globo de los tooltips de la barra de íconos: el del mockup (frame 2, junto a la barra), con
+/// la cola a la izquierda. Su 9-slice deja la cola fija: las filas de la cola van en el borde de
+/// arriba y sus columnas en el de la izquierda, así el globo crece a la derecha y hacia abajo.
+const BUBBLE_PIECE: &str = "tooltip.bubble";
+/// Ancho de la cola: el cuerpo empieza en la columna 8 de la pieza.
+const BUBBLE_TAIL: f32 = 8.0;
+/// Fila de la punta de la cola, contada desde arriba del cuerpo.
+const BUBBLE_TIP_ROW: f32 = 8.0;
+/// Aire entre el botón y la punta de la cola: en el mockup el botón termina en la x 55 y la cola
+/// empieza en la 62.
+const BUBBLE_GAP: f32 = 6.0;
+/// Aire del cuerpo alrededor del texto. En el mockup, una línea de mayúsculas (7 px) centrada en
+/// las 19 filas de relleno del cuerpo deja 6 arriba y 6 abajo; a los lados va el mismo.
+const BUBBLE_PADDING: f32 = 6.0;
+/// La fila de sombra debajo del relleno del cuerpo.
+const BUBBLE_SHADOW: f32 = 1.0;
+
+/// Alto del texto de `galley` en la fuente pixel: de la fila de arriba de las mayúsculas de la
+/// primera línea a la de abajo de las de la última.
+fn caps_block_height(galley: &egui::Galley) -> f32 {
+    let baselines: Vec<f32> = galley
+        .rows
+        .iter()
+        .filter_map(|row| row.glyphs.first().map(|g| row.pos.y + g.pos.y))
+        .collect();
+    match (baselines.first(), baselines.last()) {
+        (Some(first), Some(last)) => last - first + tab_bar::CAP_HEIGHT,
+        _ => tab_bar::CAP_HEIGHT,
+    }
+}
+
+/// El tooltip de un botón de la barra de íconos: `text` en el globo `tooltip.bubble`, a la
+/// derecha del botón, con la punta de la cola a `BUBBLE_GAP` de su borde y la fila de arriba de
+/// la punta en su centro. El cuerpo crece con el texto (`color.text`, con `BUBBLE_PADDING` de
+/// aire).
+///
+/// Aparece y se va como los tooltips de egui (`Tooltip::for_enabled`, con su demora). El texto
+/// queda en el árbol de accesibilidad como etiqueta. Sin la pieza, el tooltip de egui.
+pub fn bubble_tooltip(response: Response, skin: &Skin, text: &str) -> Response {
+    let Some(piece) = skin.piece(BUBBLE_PIECE, WidgetState::Normal) else {
+        return response.on_hover_text(text);
+    };
+    let button = response.rect;
+    let mut tooltip = egui::Tooltip::for_enabled(&response);
+    // Sin marco y siempre a la derecha, arriba alineado con el botón: el área empieza en la
+    // punta de la cola.
+    tooltip.popup = tooltip
+        .popup
+        .frame(egui::Frame::NONE)
+        .align(egui::RectAlign::RIGHT_START)
+        .align_alternatives(&[])
+        .gap(BUBBLE_GAP);
+    tooltip.show(|ui| {
+        let ppp = ui.ctx().pixels_per_point();
+        let colors = *skin.colors();
+        let font = TextStyle::Body.resolve(ui.style());
+        let galley = ui
+            .painter()
+            .layout_no_wrap(text.to_owned(), font, colors.text);
+        let body = vec2(
+            (2.0 * BUBBLE_PADDING + galley.size().x).ceil(),
+            2.0 * BUBBLE_PADDING + caps_block_height(&galley) + BUBBLE_SHADOW,
+        );
+        let origin = ui.max_rect().min;
+        // La fila del centro del botón (con alto impar, la que lo contiene).
+        let tip = origin.y + (button.height() / 2.0).floor();
+        let rect = Rect::from_min_size(
+            pos2(origin.x, tip - BUBBLE_TIP_ROW),
+            vec2(BUBBLE_TAIL + body.x, body.y),
+        );
+        let space = rect.union(Rect::from_min_size(origin, Vec2::ZERO));
+        let label = ui.allocate_rect(space, Sense::hover());
+        label.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+        let at = tab_bar::text_pos(
+            &galley,
+            rect.left() + BUBBLE_TAIL + BUBBLE_PADDING,
+            rect.top() + BUBBLE_PADDING,
+            ppp,
+        );
+        let mut shapes = piece_shapes(piece, rect, ppp);
+        shapes.push(Shape::galley(at, galley, colors.text));
+        ui.painter().extend(shapes);
+    });
+    response
 }
 
 const WORKSPACE_PIECE: &str = "workspace.box";

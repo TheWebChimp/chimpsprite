@@ -116,3 +116,11 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     está dibujada: mientras falte, la app usa un cuadro plano de respaldo.
   - `color.menu_highlight` (blanco): el brillo del panel y la línea clara de los separadores;
     la otra línea es `background`. El atajo tenue (el "+N") es `ruler_tick`.
+- **Tooltip de la barra de íconos** (del mockup, frame 2, junto a la barra):
+  - `tooltip.bubble` (49×20, centro (11,13,34,4)): el globo naranja con la cola a la izquierda.
+    La cola mide 8 de ancho y su punta está en la fila 8; el cuerpo (41×20) tiene las esquinas
+    redondeadas, el brillo arriba a la derecha y una fila de sombra abajo. El centro deja la
+    cola en los bordes de arriba y de la izquierda: el globo se estira a la derecha y hacia
+    abajo sin deformarla.
+  - La app pone la punta 6 px a la derecha del botón, con su fila en el centro del botón, y el
+    texto (`color.text`) con 6 px de aire en el cuerpo.

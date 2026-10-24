@@ -759,6 +759,45 @@ mod tests {
     }
 
     #[test]
+    fn the_embedded_skin_has_the_tooltip_bubble_of_the_mockup() {
+        let data = decode(EMBEDDED).unwrap();
+        let bubble = data.pieces.get("tooltip.bubble").expect("tooltip.bubble");
+        // El globo junto a la barra del mockup (frame 2): la cola de 8 a la izquierda y el
+        // cuerpo de 41×20. El centro deja afuera la cola (filas 8..12, columnas 0..7), las
+        // esquinas redondeadas, el brillo de arriba a la derecha y la sombra de abajo.
+        let center = Rect9 {
+            x: 11,
+            y: 13,
+            w: 34,
+            h: 4,
+        };
+        assert_eq!((bubble.size, bubble.center), ([49, 20], Some(center)));
+        let at = |x: u32, y: u32| {
+            let i = ((y * bubble.size[0] + x) * 4) as usize;
+            Rgba::new(
+                bubble.rgba[i],
+                bubble.rgba[i + 1],
+                bubble.rgba[i + 2],
+                bubble.rgba[i + 3],
+            )
+        };
+        let fill = Rgba::rgb(232, 138, 54);
+        assert_eq!(at(0, 8), fill, "the tip of the tail");
+        assert_eq!(at(0, 9), Rgba::rgb(176, 91, 44), "the tail's shadow");
+        assert_eq!(at(0, 7).a, 0, "above the tail");
+        assert_eq!(
+            at(0, 13).a,
+            0,
+            "below the tail, the stretched rows are empty"
+        );
+        assert_eq!(at(8, 0).a, 0, "rounded corner");
+        assert_eq!(at(10, 0), fill, "the top");
+        assert_eq!(at(20, 10), fill, "the fill");
+        assert_eq!(at(20, 19), Rgba::rgb(176, 91, 44), "the shadow below");
+        assert_eq!(at(47, 2), Rgba::rgb(248, 197, 58), "the shine, top right");
+    }
+
+    #[test]
     fn variants_are_used_when_they_exist() {
         let ctx = egui::Context::default();
         let skin = Skin::load(&ctx, EMBEDDED).unwrap();
