@@ -20,8 +20,9 @@ use crate::{theme, widgets};
 const ZOOM_LEVELS: [f32; 13] = [
     0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
 ];
-/// Tamaño en pantalla de cada cuadro del damero de transparencia.
-const CHECKER_PX: f32 = 8.0;
+/// Lado de cada cuadro del damero de transparencia, en píxeles del sprite (como Aseprite): crece
+/// con el zoom y empieza en la esquina del artboard.
+const CHECKER_CELL: f32 = 16.0;
 /// Velocidad de las "marching ants" (pasos por segundo).
 const ANTS_SPEED: f64 = 6.0;
 /// Tolerancia en pantalla para tomar bordes de artboards.
@@ -1008,7 +1009,7 @@ impl CanvasView {
                 self.to_screen(rect, (x0, y0)),
                 self.to_screen(rect, (x1, y1)),
             );
-            let uv = Rect::from_min_max(Pos2::ZERO, (screen.size() / (CHECKER_PX * 2.0)).to_pos2());
+            let uv = checker_uv((x1 - x0, y1 - y0));
             painter.image(checker, screen, uv, Color32::WHITE);
             if let Some(tex) = self.textures.get(&artboard.id) {
                 let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
@@ -1831,6 +1832,13 @@ fn outline_segments(
         .collect()
 }
 
+/// Coordenadas de la textura del damero (un par claro/oscuro por repetición) para un artboard de
+/// `size` píxeles del sprite.
+fn checker_uv(size: (i32, i32)) -> Rect {
+    let reps = Vec2::new(size.0 as f32, size.1 as f32) / (CHECKER_CELL * 2.0);
+    Rect::from_min_max(Pos2::ZERO, reps.to_pos2())
+}
+
 #[cfg(test)]
 mod tests {
     use cs_commands::Command;
@@ -1838,6 +1846,14 @@ mod tests {
     use egui::{Event, Key, PointerButton, RawInput};
 
     use super::*;
+
+    #[test]
+    fn checker_cells_are_16_sprite_pixels_at_any_zoom() {
+        // Un artboard de 64×64 lleva 4×4 cuadros: la textura repite 2×2 veces su par claro/oscuro.
+        assert_eq!(checker_uv((64, 64)).max, Pos2::new(2.0, 2.0));
+        assert_eq!(checker_uv((40, 8)).max, Pos2::new(1.25, 0.25));
+        assert_eq!(checker_uv((40, 8)).min, Pos2::ZERO);
+    }
 
     /// Lienzo de 800×600 manejado con eventos crudos, con el reloj avanzando 50 ms por frame.
     struct Harness {
