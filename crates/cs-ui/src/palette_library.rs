@@ -732,3 +732,33 @@ mod tests {
         assert!(decode_web("{nope").is_empty());
     }
 }
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    use std::path::PathBuf;
+
+    use cs_io::palette_files::NamedPalette;
+
+    use super::{PresetStore, StoredPreset};
+
+    /// Sin presets de usuario: los tests no tocan la carpeta del usuario.
+    pub(crate) struct NoPresets;
+
+    impl PresetStore for NoPresets {
+        fn load(&self) -> Vec<StoredPreset> {
+            Vec::new()
+        }
+
+        fn save(&mut self, _: &NamedPalette, _: &[String]) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn delete(&mut self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn folder(&self) -> Option<PathBuf> {
+            None
+        }
+    }
+}

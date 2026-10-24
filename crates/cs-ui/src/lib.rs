@@ -19,6 +19,8 @@ use cs_io::files;
 mod guides;
 mod home;
 mod instance_ops;
+#[cfg(test)]
+mod layout_tests;
 mod lospec_client;
 #[cfg(not(target_arch = "wasm32"))]
 mod lospec_examples;
@@ -805,8 +807,40 @@ impl ChimpApp {
         }
     }
 
-    /// Paneles del editor (cuando hay un documento activo).
-    fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) {
+    /// Los paneles de la ventana, en el orden en que egui les reparte el espacio: el primero que
+    /// se declara se queda con el borde. Devuelve el rect del lienzo (`None` en Home).
+    fn layout(&mut self, ui: &mut egui::Ui, modal: bool) -> Option<egui::Rect> {
+        egui::Panel::top("menu").show(ui, |ui| {
+            ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
+        });
+        egui::Panel::top("tabs").show(ui, |ui| {
+            ui.add_enabled_ui(!modal, |ui| self.tab_bar(ui));
+        });
+        // Antes que los laterales: la barra de estado va a todo el ancho.
+        egui::Panel::bottom("status").show(ui, |ui| {
+            let notice = self
+                .autosaver
+                .disabled_reason
+                .as_ref()
+                .map(|r| format!("Autosave off: {r}"));
+            if self.has_doc() {
+                panels::status_bar(ui, &self.doc.editor, &self.doc.canvas, notice.as_deref());
+            } else {
+                ui.label(format!("ChimpSprite {}", env!("CARGO_PKG_VERSION")));
+            }
+        });
+        if self.has_doc() {
+            Some(self.editor_panels(ui, modal))
+        } else {
+            egui::CentralPanel::default().show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| self.home(ui));
+            });
+            None
+        }
+    }
+
+    /// Paneles del editor (cuando hay un documento activo). Devuelve el rect del lienzo.
+    fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
         // La barra de opciones, a todo el ancho debajo de las pestañas.
         egui::Panel::top("tool_options")
             .exact_size(panels::OPTIONS_BAR_HEIGHT)
@@ -815,6 +849,19 @@ impl ChimpApp {
                     panels::tool_options_bar(ui, &mut self.doc.editor)
                 });
             });
+        // La toolbar antes que la línea de tiempo: va a todo el alto, hasta la barra de estado, y
+        // la línea de tiempo empieza a su derecha.
+        egui::Panel::left("tools")
+            .resizable(false)
+            .exact_size(184.0)
+            .show(ui, |ui| {
+                // Con la UI a 2× o 3× y la ventana baja, la barra no cabe: scroll vertical.
+                let skin = self.pixel.skin();
+                panels::tools_scroll_area().show(ui, |ui| {
+                    ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.doc.editor, skin));
+                });
+            });
+        // La línea de tiempo antes que el panel derecho: pasa por debajo de él, como siempre.
         if self.view.timeline {
             egui::Panel::bottom("timeline")
                 .resizable(true)
@@ -828,16 +875,6 @@ impl ChimpApp {
         if std::mem::take(&mut self.doc.timeline.new_tilemap) {
             self.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
         }
-        egui::Panel::left("tools")
-            .resizable(false)
-            .exact_size(184.0)
-            .show(ui, |ui| {
-                // Con la UI a 2× o 3× las herramientas y sus opciones no caben: scroll vertical.
-                let skin = self.pixel.skin();
-                panels::tools_scroll_area().show(ui, |ui| {
-                    ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.doc.editor, skin));
-                });
-            });
         egui::Panel::right("palette")
             .default_size(220.0)
             .show(ui, |ui| {
@@ -883,14 +920,17 @@ impl ChimpApp {
                     self.open_canvas_size();
                 }
             });
-        egui::CentralPanel::no_frame().show(ui, |ui| {
-            self.doc.canvas.show(
-                ui,
-                &mut self.doc.editor,
-                self.canvas_size.as_mut(),
-                &self.view,
-            )
-        });
+        egui::CentralPanel::no_frame()
+            .show(ui, |ui| {
+                self.doc.canvas.show(
+                    ui,
+                    &mut self.doc.editor,
+                    self.canvas_size.as_mut(),
+                    &self.view,
+                )
+            })
+            .response
+            .rect
     }
 }
 
@@ -921,31 +961,7 @@ impl eframe::App for ChimpApp {
         }
 
         let modal = self.is_modal();
-        egui::Panel::top("menu").show(ui, |ui| {
-            ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
-        });
-        egui::Panel::top("tabs").show(ui, |ui| {
-            ui.add_enabled_ui(!modal, |ui| self.tab_bar(ui));
-        });
-        egui::Panel::bottom("status").show(ui, |ui| {
-            let notice = self
-                .autosaver
-                .disabled_reason
-                .as_ref()
-                .map(|r| format!("Autosave off: {r}"));
-            if self.has_doc() {
-                panels::status_bar(ui, &self.doc.editor, &self.doc.canvas, notice.as_deref());
-            } else {
-                ui.label(format!("ChimpSprite {}", env!("CARGO_PKG_VERSION")));
-            }
-        });
-        if self.has_doc() {
-            self.editor_panels(ui, modal);
-        } else {
-            egui::CentralPanel::default().show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| self.home(ui));
-            });
-        }
+        self.layout(ui, modal);
         self.update_canvas_size(&ctx);
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);

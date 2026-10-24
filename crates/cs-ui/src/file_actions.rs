@@ -724,34 +724,11 @@ mod tests {
     use super::*;
     use crate::editor::ToolKind;
 
-    use std::path::PathBuf;
-
-    use cs_io::palette_files::NamedPalette;
     use egui::{Event, PointerButton, Pos2, RawInput, Rect, Vec2};
 
-    use crate::palette_library::{PaletteLibrary, PresetStore, StoredPreset};
+    use crate::palette_library::PaletteLibrary;
+    use crate::palette_library::test_util::NoPresets;
     use crate::view::ViewSettings;
-
-    /// Sin presets de usuario: los tests no tocan la carpeta del usuario.
-    struct NoPresets;
-
-    impl PresetStore for NoPresets {
-        fn load(&self) -> Vec<StoredPreset> {
-            Vec::new()
-        }
-
-        fn save(&mut self, _: &NamedPalette, _: &[String]) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn delete(&mut self, _: &str) -> Result<(), String> {
-            Ok(())
-        }
-
-        fn folder(&self) -> Option<PathBuf> {
-            None
-        }
-    }
 
     /// La app con Pixel UI encendido y una pestaña con cambios a punto de cerrarse, manejada con
     /// eventos crudos. Los botones se buscan por su nombre en el árbol de accesibilidad.
