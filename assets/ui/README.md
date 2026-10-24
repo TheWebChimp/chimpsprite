@@ -111,6 +111,20 @@ oculta.
   (`.design/Design.aseprite`, que no se versiona).
 - **Botones:** `button`, `button.hover` y `button.down` vienen del mockup del diálogo "Unsaved
   changes".
+  - `button.active` (220,100, 49×17, mismo centro (3,3,43,10) que `button`) es la opción
+    elegida de los grupos de la barra (Sample, Linear/Radial, Rotation). El diseño no tiene un
+    botón de texto activo, así que se derivó de `button` con el mismo mapeo normal → activo que
+    llevó `tool.slot` a `tool.slot.active`, leyendo los píxeles con Lua:
+
+    | `button` | `button.active` |
+    | --- | --- |
+    | (89,77,77) borde y (136,110,106) sombra | igual |
+    | (255,255,255) | (221,206,191) |
+    | (221,206,191) | (255,255,255) |
+    | (234,224,221) relleno, 12 filas | el tramado café (189,164,153)/(174,152,142) del relleno de `tool.slot.active`: la fila `r` (0 a 11) toma la fila `round(r·18/11)` de las 19 de la herramienta, y las columnas repiten su tramado de período 2 |
+    | transparente | transparente |
+
+    Si falta, la opción elegida usa `button.down`.
 
 ### Probar cambios en vivo (escritorio)
 

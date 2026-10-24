@@ -15,7 +15,8 @@
 //!   respaldo, como en los menús.
 //! - **Opciones** (los grupos de radios: Sample, Linear/Radial, Rotation): botones de un clic,
 //!   uno por opción. El diseño no los muestra; van con la pieza `button` de los diálogos (49×17
-//!   con centro) a 16 de alto en las filas de los campos, `button.down` el elegido, y el texto
+//!   con centro) a 16 de alto en las filas de los campos, `button.active` el elegido (o
+//!   `button.down` si el skin no lo trae), y el texto
 //!   centrado con las mayúsculas en la fila de los textos. `sym.slot` no sirve: no tiene centro y
 //!   no se estira.
 
@@ -63,6 +64,8 @@ const CHECK_GAP: f32 = 3.0;
 /// Los botones de opción (los grupos de radios): la pieza de los botones de los diálogos, que
 /// tiene centro y se estira a lo ancho; acá, con el alto de los campos.
 const BUTTON: &str = "button";
+/// El botón de la opción elegida. Sin él, `button.down`.
+const BUTTON_ACTIVE: &str = "button.active";
 /// De cada borde del botón de opción a la tinta de su texto: el mismo relleno que el combo.
 const OPTION_TEXT_PAD: f32 = 6.0;
 /// Entre botón y botón de opción, como entre los cuadritos de Mode (de pieza a pieza).
@@ -205,7 +208,7 @@ pub fn choices<T: PartialEq + Copy>(
 }
 
 /// Los grupos chicos de opciones exclusivas (los que sin Pixel UI son radios): una fila de
-/// botones de un clic, uno por cada `value` con su `name`. El elegido va con `button.down`, los
+/// botones de un clic, uno por cada `value` con su `name`. El elegido va con `button.active`, los
 /// otros con `button` (o `button.hover` con el puntero encima). Un clic elige esa opción; otro
 /// clic en la elegida no la apaga, como con radios. Devuelve si cambió `current`.
 pub fn options<T: PartialEq + Copy>(
@@ -240,14 +243,18 @@ fn option_button(ui: &mut Ui, look: BarLook, on: bool, label: &str) -> Response 
         let ppp = ui.ctx().pixels_per_point();
         let drawn =
             Rect::from_min_size(pos2(rect.left().round(), look.top + FIELD_TOP), rect.size());
-        let state = if on {
-            WidgetState::Down
+        // El elegido va con `button.active` (el relleno café de la herramienta activa) o, si el
+        // skin no lo trae, con `button.down`.
+        let piece = if on {
+            look.skin
+                .piece(BUTTON_ACTIVE, WidgetState::Normal)
+                .or_else(|| look.skin.piece(BUTTON, WidgetState::Down))
         } else if response.hovered() {
-            WidgetState::Hover
+            look.skin.piece(BUTTON, WidgetState::Hover)
         } else {
-            WidgetState::Normal
+            look.skin.piece(BUTTON, WidgetState::Normal)
         };
-        let mut shapes = match look.skin.piece(BUTTON, state) {
+        let mut shapes = match piece {
             Some(piece) => pixel_ui::piece_shapes(piece, drawn, ppp),
             None => {
                 let mut flat = flat_box(look, drawn, ppp);

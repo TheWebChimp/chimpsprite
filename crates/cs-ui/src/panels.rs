@@ -3063,6 +3063,7 @@ mod tests {
                 "button",
                 "button.hover",
                 "button.down",
+                "button.active",
             ] {
                 for rect in h.drawn(piece) {
                     assert!(
@@ -3075,7 +3076,7 @@ mod tests {
             // Las herramientas con grupos de radios (Sample, Linear/Radial, Rotation) los
             // dibujan como botones: la prueba de arriba no es vacía para ellos.
             if kind != ToolKind::Pencil && kind != ToolKind::Text {
-                assert!(!h.drawn("button.down").is_empty(), "{kind:?}: no buttons");
+                assert!(!h.drawn("button.active").is_empty(), "{kind:?}: no buttons");
             }
         }
     }
@@ -3288,7 +3289,7 @@ mod tests {
         let mut normal = h.drawn_boxes("button");
         normal.extend(h.drawn_boxes("button.hover"));
         normal.sort_by(|a, b| a.left().total_cmp(&b.left()));
-        (normal, h.drawn_boxes("button.down"))
+        (normal, h.drawn_boxes("button.active"))
     }
 
     /// Un grupo de radios de la barra con Pixel UI: la herramienta, sus opciones (el nombre de
@@ -3379,6 +3380,8 @@ mod tests {
             let inside = |boxes: &[Rect]| boxes.iter().filter(|b| span.intersects(**b)).count();
             assert_eq!(inside(&active), 1, "{tool:?}: {active:?}");
             assert_eq!(inside(&normal), options.len() - 1, "{tool:?}: {normal:?}");
+            // El elegido es `button.active`, no `button.down` (que casi no se distingue).
+            assert_eq!(inside(&h.drawn_boxes("button.down")), 0, "{tool:?}");
             // En fila, sin solaparse.
             for pair in options.windows(2) {
                 assert!(pair[1].left() > pair[0].right(), "{tool:?}: {pair:?}");
@@ -3392,6 +3395,19 @@ mod tests {
                 assert!(!combo, "{tool:?}: {label} in a combo");
             }
         }
+    }
+
+    #[test]
+    fn without_the_active_button_piece_the_current_option_falls_back_to_button_down() {
+        let mut h = pixel_bar(ToolKind::Gradient);
+        h.skin = h.skin.take().map(|s| s.without(&["button.active"]));
+        h.frame(vec![]);
+        let current = h.rect("Linear");
+        let down = h.drawn_boxes("button.down");
+        assert_eq!(down.len(), 1, "{down:?}");
+        assert!(down[0].x_range().contains(current.center().x), "{down:?}");
+        let normal = h.drawn_boxes("button");
+        assert!(normal.iter().any(|b| b.contains(h.rect("Radial").center())));
     }
 
     #[test]

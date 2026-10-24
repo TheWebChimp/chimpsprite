@@ -500,6 +500,43 @@ mod tests {
     }
 
     #[test]
+    fn the_active_button_is_the_button_with_the_brown_fill_of_the_active_tool() {
+        let data = decode(EMBEDDED).unwrap();
+        let button = &data.pieces["button"];
+        let active = data.pieces.get("button.active").expect("button.active");
+        // Mismo tamaño y mismo 9-slice: se estira igual que `button`.
+        assert_eq!((active.size, active.center), (button.size, button.center));
+        let at = |piece: &PieceImage, x: u32, y: u32| {
+            let i = ((y * piece.size[0] + x) * 4) as usize;
+            Rgba::new(
+                piece.rgba[i],
+                piece.rgba[i + 1],
+                piece.rgba[i + 2],
+                piece.rgba[i + 3],
+            )
+        };
+        // El relleno (columnas 2 a 46, filas 2 a 13), leído del skin: ningún píxel queda igual
+        // al de `button`, y es el café tramado de `tool.slot.active`.
+        let browns = [Rgba::rgb(189, 164, 153), Rgba::rgb(174, 152, 142)];
+        for y in 2..14 {
+            for x in 2..47 {
+                let (normal, on) = (at(button, x, y), at(active, x, y));
+                assert_ne!(on, normal, "fill ({x},{y})");
+                assert!(browns.contains(&on), "fill ({x},{y}): {on:?}");
+            }
+        }
+        // Tramado: claro arriba y oscuro abajo, con las dos tintas.
+        assert_eq!(at(active, 24, 2), browns[0], "light on top");
+        assert_eq!(at(active, 24, 13), browns[1], "dark below");
+        // El borde queda; el blanco y el bisel claro se cambian.
+        let (white, bevel) = (Rgba::rgb(255, 255, 255), Rgba::rgb(221, 206, 191));
+        assert_eq!(at(active, 2, 0), at(button, 2, 0), "the outline");
+        assert_eq!((at(button, 24, 1), at(active, 24, 1)), (white, bevel));
+        assert_eq!((at(button, 1, 8), at(active, 1, 8)), (bevel, white));
+        assert_eq!(at(active, 0, 0).a, 0, "rounded corner");
+    }
+
+    #[test]
     fn the_embedded_skin_has_the_tool_icons_and_slots_of_the_mockup() {
         let data = decode(EMBEDDED).unwrap();
         // `decode` descarta las piezas transparentes: si está, tiene algo dibujado.
