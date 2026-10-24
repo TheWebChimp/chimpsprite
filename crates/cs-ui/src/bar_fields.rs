@@ -15,15 +15,14 @@
 //!   respaldo, como en los menús.
 
 use std::ops::RangeInclusive;
-use std::sync::Arc;
 
 use eframe::egui::{
-    self, Color32, Galley, Layout, Mesh, Rect, Response, Sense, Shape, Stroke, StrokeKind,
-    TextStyle, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType, emath, pos2, vec2,
+    self, Color32, Layout, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
+    WidgetInfo, WidgetType, emath, pos2, vec2,
 };
 use eframe::emath::GuiRounding as _;
 
-use crate::menus::{self, MenuLook};
+use crate::menus::{self, MenuLook, galley, ink_width, solid};
 use crate::pixel_ui;
 use crate::skin::{Piece, Skin, WidgetState};
 use crate::tab_bar;
@@ -70,25 +69,8 @@ impl BarLook<'_> {
     }
 }
 
-fn galley(ui: &Ui, text: &str, color: Color32) -> Arc<Galley> {
-    ui.painter()
-        .layout_no_wrap(text.to_owned(), TextStyle::Body.resolve(ui.style()), color)
-}
-
-/// La tinta de un texto de la fuente pixel: su ancho menos el píxel vacío del final.
-fn ink_width(text: &Galley) -> f32 {
-    (text.size().x - 1.0).max(0.0).round()
-}
-
 fn size_of(piece: &Piece) -> Vec2 {
     vec2(piece.size[0] as f32, piece.size[1] as f32)
-}
-
-/// Un rect de color liso, alineado a píxeles físicos.
-fn solid(rect: Rect, color: Color32, ppp: f32) -> Shape {
-    let mut mesh = Mesh::default();
-    mesh.add_colored_rect(rect.round_to_pixels(ppp), color);
-    Shape::mesh(mesh)
 }
 
 /// Un cuadro plano de respaldo (sin la pieza): `panel` con borde `outline`.
@@ -263,27 +245,61 @@ pub fn number<Num: emath::Numeric>(
         pos2(field.left() + 1.0, look.top + CAPS_TOP - caps),
         vec2(NUMBER_WIDTH - 2.0, probe.size().y),
     );
+    // Todo lo dibujado (el campo y la unidad) responde al clic y al arrastre, no solo el texto:
+    // esta zona va debajo del `DragValue`, que gana donde se solapan.
+    let (start, end) = (range.start().to_f64(), range.end().to_f64());
+    let speed = ((end - start) / 128.0).clamp(0.1, 1.0);
+    let whole = Rect::from_min_max(
+        field.min,
+        pos2(rect.right().max(field.right()), field.bottom()),
+    );
+    let zone = ui.interact(
+        whole,
+        ui.id().with(("bar_number_zone", id_salt)),
+        Sense::click_and_drag(),
+    );
+    if zone.hovered() || zone.dragged() {
+        ui.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
+    }
+    if zone.drag_started() {
+        ui.data_mut(|d| d.insert_temp(zone.id, value.to_f64()));
+    }
+    if zone.dragged() {
+        // Se acumula en `f64`: con enteros y velocidad baja, cada paso solo no llegaría a 1.
+        let mut acc = ui
+            .data(|d| d.get_temp::<f64>(zone.id))
+            .unwrap_or_else(|| value.to_f64());
+        acc = (acc + f64::from(zone.drag_delta().x) * speed).clamp(start, end);
+        ui.data_mut(|d| d.insert_temp(zone.id, acc));
+        *value = Num::from_f64(acc);
+    }
     let mut child = ui.new_child(
         UiBuilder::new()
             .id_salt(("bar_number", id_salt))
             .max_rect(inner)
             .layout(Layout::top_down(egui::Align::Center)),
     );
-    plain_field_style(child.style_mut(), inner.size(), colors.text);
-    let (start, end) = (range.start().to_f64(), range.end().to_f64());
-    let speed = ((end - start) / 128.0).clamp(0.1, 1.0);
-    child.add(egui::DragValue::new(value).range(range).speed(speed))
+    plain_field_style(child.style_mut(), inner.size(), colors.text, colors.outline);
+    let response = child.add(egui::DragValue::new(value).range(range).speed(speed));
+    // Un clic en la zona de afuera del texto también entra a escribir.
+    if zone.clicked() {
+        ui.memory_mut(|m| m.request_focus(response.id));
+    }
+    response
 }
 
 /// El estilo del `DragValue` del campo: del tamaño del blanco, sin marco ni fondo (los pone la
-/// pieza), con el texto en `text` y sin el borde de foco de egui.
-fn plain_field_style(style: &mut egui::Style, size: Vec2, text: Color32) {
+/// pieza), con el texto en `text`, el cursor en `outline` y sin el borde de foco de egui.
+fn plain_field_style(style: &mut egui::Style, size: Vec2, text: Color32, outline: Color32) {
     style.spacing.interact_size = size;
     style.spacing.button_padding = Vec2::ZERO;
     let v = &mut style.visuals;
     v.button_frame = false;
     v.text_edit_bg_color = Some(Color32::TRANSPARENT);
     v.selection.stroke = Stroke::NONE;
+    // El cursor de escribir, fino y en el contorno del skin: el de egui es azul claro de 2 px y
+    // sobre el blanco del campo casi no se ve.
+    v.text_cursor.stroke = Stroke::new(1.0, outline);
     v.override_text_color = Some(text);
     for w in [
         &mut v.widgets.noninteractive,
@@ -334,4 +350,244 @@ pub fn checkbox(ui: &mut Ui, look: BarLook, checked: &mut bool, label: &str) -> 
         painter(ui, look).extend(shapes);
     }
     response
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use eframe::egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput};
+
+    /// Un campo numérico (con unidad) en una barra de prueba, manejado con eventos crudos.
+    struct Bar {
+        ctx: egui::Context,
+        skin: Skin,
+        value: i32,
+        time: f64,
+        /// Lo que dibujó el último frame.
+        shapes: Vec<egui::epaint::ClippedShape>,
+    }
+
+    impl Bar {
+        fn new() -> Self {
+            let ctx = egui::Context::default();
+            let skin = Skin::embedded(&ctx);
+            let mut bar = Self {
+                ctx,
+                skin,
+                value: 50,
+                time: 0.0,
+                shapes: vec![],
+            };
+            bar.frame(vec![]);
+            bar.frame(vec![]);
+            bar
+        }
+
+        fn frame(&mut self, events: Vec<Event>) {
+            self.time += 0.05;
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(300.0, 100.0))),
+                time: Some(self.time),
+                focused: true,
+                events,
+                ..Default::default()
+            };
+            let (skin, value) = (&self.skin, &mut self.value);
+            let mut out = self.ctx.run_ui(input, |ui| {
+                egui::CentralPanel::no_frame().show(ui, |ui| {
+                    ui.spacing_mut().item_spacing = Vec2::ZERO;
+                    let look = BarLook { skin, top: 0.0 };
+                    number(ui, look, "f", value, 0..=100, true);
+                });
+            });
+            out.textures_delta.clear();
+            self.shapes = out.shapes;
+        }
+
+        fn button(&mut self, pos: Pos2, pressed: bool) {
+            self.frame(vec![Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Modifiers::NONE,
+            }]);
+        }
+
+        fn click(&mut self, pos: Pos2) {
+            self.frame(vec![Event::PointerMoved(pos)]);
+            self.button(pos, true);
+            self.button(pos, false);
+        }
+
+        /// Arrastra 30 puntos a la derecha desde `from`.
+        fn drag(&mut self, from: Pos2) {
+            self.frame(vec![Event::PointerMoved(from)]);
+            self.button(from, true);
+            for step in 1..=3 {
+                self.frame(vec![Event::PointerMoved(
+                    from + vec2(10.0 * step as f32, 0.0),
+                )]);
+            }
+            self.button(from + vec2(30.0, 0.0), false);
+        }
+
+        fn key(&mut self, key: Key) {
+            let ev = |pressed| Event::Key {
+                key,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: Modifiers::NONE,
+            };
+            self.frame(vec![ev(true), ev(false)]);
+        }
+
+        fn type_text(&mut self, text: &str) {
+            self.frame(vec![Event::Text(text.to_owned())]);
+        }
+
+        fn focused(&self) -> bool {
+            self.ctx.memory(|m| m.focused()).is_some()
+        }
+
+        /// Entra a escribir (clic al centro del blanco) y borra lo que había.
+        fn start_editing(&mut self) {
+            self.click(pos2(13.0, 10.0));
+            self.frame(vec![]);
+            assert!(self.focused(), "no entró a editar");
+            self.frame(vec![Event::Key {
+                key: Key::A,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: Modifiers::COMMAND,
+            }]);
+            self.key(Key::Backspace);
+        }
+
+        /// ¿Se dibujó algo plano del color `color` dentro de `area`? (el cursor y la selección;
+        /// no las piezas del skin, que son texturas).
+        fn drew_color_in(&self, color: Color32, area: Rect) -> bool {
+            fn hit(shape: &Shape, color: Color32, area: Rect) -> bool {
+                match shape {
+                    Shape::Vec(v) => v.iter().any(|s| hit(s, color, area)),
+                    Shape::LineSegment { points, stroke } => {
+                        stroke.color == color && area.intersects(Rect::from_points(points))
+                    }
+                    Shape::Rect(r) => {
+                        (r.fill == color || r.stroke.color == color) && area.intersects(r.rect)
+                    }
+                    Shape::Mesh(m) => {
+                        m.texture_id == egui::TextureId::default()
+                            && m.vertices.iter().any(|v| v.color == color)
+                            && area.intersects(m.calc_bounds())
+                    }
+                    _ => false,
+                }
+            }
+            self.shapes.iter().any(|s| hit(&s.shape, color, area))
+        }
+    }
+
+    #[test]
+    fn dragging_from_the_top_row_of_the_field_changes_the_value() {
+        let mut bar = Bar::new();
+        bar.drag(pos2(13.0, FIELD_TOP + 0.5));
+        assert_ne!(bar.value, 50);
+    }
+
+    #[test]
+    fn dragging_from_the_bottom_row_and_the_border_changes_the_value() {
+        let mut bar = Bar::new();
+        bar.drag(pos2(13.0, FIELD_TOP + FIELD_HEIGHT - 0.5));
+        assert_ne!(bar.value, 50);
+        bar.value = 50;
+        bar.drag(pos2(0.5, 10.0));
+        assert_ne!(bar.value, 50);
+    }
+
+    #[test]
+    fn dragging_from_the_px_unit_changes_the_value() {
+        let mut bar = Bar::new();
+        bar.drag(pos2(NUMBER_WIDTH + 10.0, 10.0));
+        assert_ne!(bar.value, 50);
+    }
+
+    #[test]
+    fn clicking_the_px_unit_starts_editing() {
+        let mut bar = Bar::new();
+        bar.click(pos2(NUMBER_WIDTH + 10.0, 10.0));
+        bar.frame(vec![]);
+        assert!(bar.focused());
+    }
+
+    #[test]
+    fn clicking_the_top_row_starts_editing() {
+        let mut bar = Bar::new();
+        bar.click(pos2(13.0, FIELD_TOP + 0.5));
+        bar.frame(vec![]);
+        assert!(bar.focused());
+    }
+
+    #[test]
+    fn escape_while_editing_leaves_edit_mode_keeping_only_the_value_already_applied() {
+        let mut bar = Bar::new();
+        bar.start_editing();
+        bar.type_text("7");
+        bar.key(Key::Escape);
+        bar.frame(vec![]);
+        // El `DragValue` de egui aplica el número mientras se escribe: Esc no lo revierte, pero sí
+        // sale de editar sin dejar texto pendiente.
+        assert_eq!(bar.value, 7);
+        assert!(!bar.focused(), "Esc sale de editar");
+        // Volver a editar parte del valor actual, no del texto a medias.
+        bar.click(pos2(13.0, 10.0));
+        bar.frame(vec![]);
+        bar.frame(vec![]);
+        assert_eq!(bar.value, 7, "entrar a editar no cambia el valor");
+        bar.start_editing();
+        bar.type_text("9");
+        bar.key(Key::Enter);
+        bar.frame(vec![]);
+        assert_eq!(bar.value, 9);
+    }
+
+    #[test]
+    fn clicking_away_commits_the_typed_value() {
+        let mut bar = Bar::new();
+        bar.start_editing();
+        bar.type_text("42");
+        bar.click(pos2(200.0, 80.0));
+        bar.frame(vec![]);
+        assert_eq!(bar.value, 42);
+        assert!(!bar.focused());
+    }
+
+    #[test]
+    fn enter_commits_the_typed_value() {
+        let mut bar = Bar::new();
+        bar.start_editing();
+        bar.type_text("33");
+        bar.key(Key::Enter);
+        bar.frame(vec![]);
+        assert_eq!(bar.value, 33);
+    }
+
+    #[test]
+    fn while_editing_the_field_draws_an_edit_cursor_in_the_outline_color() {
+        let mut bar = Bar::new();
+        let outline = bar.skin.colors().outline;
+        let field = Rect::from_min_size(pos2(0.0, FIELD_TOP), vec2(NUMBER_WIDTH, FIELD_HEIGHT));
+        let inner = field.shrink(2.0);
+        assert!(!bar.drew_color_in(outline, inner));
+        bar.start_editing();
+        bar.type_text("4");
+        // El cursor parpadea: se mira en varios frames.
+        let mut seen = false;
+        for _ in 0..40 {
+            bar.frame(vec![]);
+            seen |= bar.drew_color_in(outline, inner);
+        }
+        assert!(seen, "no se dibujó cursor mientras se escribe");
+    }
 }

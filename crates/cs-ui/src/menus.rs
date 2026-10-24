@@ -156,7 +156,7 @@ fn font(ui: &Ui) -> egui::FontId {
     TextStyle::Body.resolve(ui.style())
 }
 
-fn galley(ui: &Ui, text: &str, color: Color32) -> Arc<Galley> {
+pub(crate) fn galley(ui: &Ui, text: &str, color: Color32) -> Arc<Galley> {
     ui.painter()
         .layout_no_wrap(text.to_owned(), font(ui), color)
 }
@@ -168,7 +168,7 @@ fn shown(text: &str) -> String {
 }
 
 /// Un rect de color liso, alineado a píxeles físicos (como los separadores grabados).
-fn solid(rect: Rect, color: Color32, ppp: f32) -> Shape {
+pub(crate) fn solid(rect: Rect, color: Color32, ppp: f32) -> Shape {
     let mut mesh = Mesh::default();
     mesh.add_colored_rect(rect.round_to_pixels(ppp), color);
     Shape::mesh(mesh)
@@ -577,7 +577,7 @@ fn cap_width(ui: &Ui, look: &MenuLook, name: &str) -> f32 {
 }
 
 /// La tinta de un texto de la fuente pixel: su ancho menos el píxel vacío del final.
-fn ink_width(text: &Galley) -> f32 {
+pub(crate) fn ink_width(text: &Galley) -> f32 {
     (text.size().x - 1.0).max(0.0).round()
 }
 
