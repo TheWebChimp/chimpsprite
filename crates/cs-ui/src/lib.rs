@@ -985,14 +985,20 @@ impl ChimpApp {
             });
         // La línea de tiempo antes que el panel derecho: pasa por debajo de él, como siempre.
         if self.view.timeline {
-            egui::Panel::bottom("timeline")
+            let mut panel = egui::Panel::bottom("timeline")
                 .resizable(true)
-                .default_size(190.0)
-                .show(ui, |ui| {
-                    ui.add_enabled_ui(!modal, |ui| {
-                        timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline)
-                    });
+                .default_size(190.0);
+            // Con Pixel UI, la caja del diseño sobre el fondo del skin, sin la línea de egui.
+            if let Some(skin) = skin {
+                panel = panel
+                    .frame(timeline::pixel_panel_frame(skin))
+                    .show_separator_line(false);
+            }
+            panel.show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline, skin)
                 });
+            });
         }
         if std::mem::take(&mut self.doc.timeline.new_tilemap) {
             self.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));

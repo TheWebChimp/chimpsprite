@@ -1,4 +1,7 @@
-//! Panel inferior: controles de reproducción, capas × frames, tags.
+//! Panel inferior: controles de reproducción, capas × frames, tags. Con Pixel UI, la barra y la
+//! tabla del diseño (`pixel`).
+
+mod pixel;
 
 use cs_commands::ops::{self, LayerDrop};
 use cs_core::{AnimDirection, BlendMode, LayerId, LayerKind, Tag};
@@ -8,15 +11,91 @@ use eframe::egui::{
 
 use crate::editor::Editor;
 use crate::mask_ops::NewMask;
+use crate::skin::Skin;
 use crate::{menus, theme, widgets};
 
-const ROW_H: f32 = 22.0;
-const CELL_W: f32 = 22.0;
-const LEFT_W: f32 = 230.0;
-const TAG_H: f32 = 16.0;
-const HEADER_H: f32 = 18.0;
-const ICON_W: f32 = 20.0;
-const INDENT: f32 = 12.0;
+pub use pixel::panel_frame as pixel_panel_frame;
+
+/// Medidas de la grilla de capas × frames: las de siempre o, con Pixel UI, las del diseño.
+#[derive(Clone, Copy)]
+struct Grid<'a> {
+    /// Con Pixel UI: el skin de las piezas y los colores.
+    skin: Option<&'a Skin>,
+    /// Alto de una fila de capa (con Pixel UI, con su línea de abajo).
+    row_h: f32,
+    header_h: f32,
+    tag_h: f32,
+    /// Ancho de la columna de un frame (con Pixel UI, con su línea de la derecha).
+    cell_w: f32,
+    /// Ancho de la parte de la izquierda: ojo, candado y nombre.
+    left_w: f32,
+    eye_w: f32,
+    lock_w: f32,
+    indent: f32,
+    fold_w: f32,
+    /// La miniatura de la máscara.
+    chip: Vec2,
+}
+
+impl<'a> Grid<'a> {
+    const CLASSIC: Grid<'static> = Grid {
+        skin: None,
+        row_h: 22.0,
+        header_h: 18.0,
+        tag_h: 16.0,
+        cell_w: 22.0,
+        left_w: 230.0,
+        eye_w: 20.0,
+        lock_w: 20.0,
+        indent: 12.0,
+        fold_w: 14.0,
+        chip: vec2(16.0, 14.0),
+    };
+
+    fn pixel(skin: &'a Skin) -> Grid<'a> {
+        Grid {
+            skin: Some(skin),
+            row_h: pixel::ROW_H,
+            header_h: pixel::ROW_H,
+            tag_h: pixel::ROW_H,
+            cell_w: pixel::CELL_W,
+            left_w: pixel::EYE_W + pixel::LOCK_W + pixel::NAME_W,
+            eye_w: pixel::EYE_W,
+            lock_w: pixel::LOCK_W,
+            indent: 8.0,
+            fold_w: 10.0,
+            chip: vec2(12.0, 9.0),
+        }
+    }
+
+    /// El texto de la grilla.
+    fn text(&self, ui: &egui::Ui) -> Color32 {
+        self.skin
+            .map_or(ui.visuals().text_color(), |s| s.colors().text)
+    }
+
+    /// Lo apagado: capas ocultas, cels vacíos, bordes.
+    fn dim(&self) -> Color32 {
+        self.skin.map_or(theme::LABEL, |s| s.colors().text_dim)
+    }
+
+    /// Lo elegido: con Pixel UI, el color de selección del skin.
+    fn accent(&self) -> Color32 {
+        self.skin.map_or(theme::ACCENT, |s| s.colors().selection)
+    }
+
+    /// Rectángulo de la columna del frame `f` dentro de una fila que empieza en `left`.
+    fn cell_rect(&self, row: Rect, f: usize) -> Rect {
+        Rect::from_min_size(
+            pos2(row.left() + self.left_w + f as f32 * self.cell_w, row.top()),
+            vec2(self.cell_w, row.height()),
+        )
+    }
+
+    fn row_width(&self, editor: &Editor) -> f32 {
+        self.left_w + editor.frame_count() as f32 * self.cell_w
+    }
+}
 
 const BLEND_MODES: [BlendMode; 9] = [
     BlendMode::Normal,
@@ -62,17 +141,39 @@ fn to_color32(c: cs_core::Rgba) -> Color32 {
     Color32::from_rgb(c.r, c.g, c.b)
 }
 
-pub fn show(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState) {
+/// El timeline. Con Pixel UI (`skin`), la caja, la barra y la tabla del diseño.
+pub fn show(
+    ui: &mut egui::Ui,
+    editor: &mut Editor,
+    state: &mut TimelineState,
+    skin: Option<&Skin>,
+) {
+    if let Some(skin) = skin {
+        pixel::show(ui, editor, state, skin);
+        return;
+    }
     controls(ui, editor, state);
     ui.separator();
+    grid(ui, editor, state, Grid::CLASSIC);
+}
+
+/// Tags, encabezado y una fila por capa, con scroll en las dos direcciones.
+fn grid(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, grid: Grid) {
     egui::ScrollArea::both()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
-            tags_row(ui, editor);
-            header_row(ui, editor, state);
+            if grid.skin.is_some() {
+                // El scroll empieza una fila antes: ahí suben las líneas de las columnas.
+                ui.add_space(1.0);
+            }
+            // Con Pixel UI, la fila de tags solo si hay tags (el diseño no la tiene).
+            if grid.skin.is_none() || !editor.sprite().tags.is_empty() {
+                tags_row(ui, editor, grid);
+            }
+            header_row(ui, editor, state, grid);
             for id in editor.timeline_layers() {
-                layer_row(ui, editor, state, id);
+                layer_row(ui, editor, state, id, grid);
             }
         });
 }
@@ -219,36 +320,29 @@ fn controls_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineStat
     });
 }
 
-/// Rectángulo de la columna del frame `f` dentro de una fila que empieza en `left`.
-fn cell_rect(row: Rect, f: usize) -> Rect {
-    Rect::from_min_size(
-        pos2(row.left() + LEFT_W + f as f32 * CELL_W, row.top()),
-        vec2(CELL_W, row.height()),
-    )
-}
-
-fn row_width(editor: &Editor) -> f32 {
-    LEFT_W + editor.frame_count() as f32 * CELL_W
-}
-
-fn tags_row(ui: &mut egui::Ui, editor: &mut Editor) {
-    let (row, _) = ui.allocate_exact_size(vec2(row_width(editor), TAG_H), Sense::hover());
+fn tags_row(ui: &mut egui::Ui, editor: &mut Editor, grid: Grid) {
+    let (row, _) = ui.allocate_exact_size(vec2(grid.row_width(editor), grid.tag_h), Sense::hover());
     let tags = editor.sprite().tags.clone();
     for (i, tag) in tags.iter().enumerate() {
         let r = Rect::from_min_max(
-            cell_rect(row, tag.from).min + vec2(1.0, 2.0),
-            cell_rect(row, tag.to).max - vec2(1.0, 1.0),
+            grid.cell_rect(row, tag.from).min + vec2(1.0, 2.0),
+            grid.cell_rect(row, tag.to).max - vec2(1.0, 1.0),
         );
         let response = ui.interact(r, ui.id().with(("tag", i)), Sense::click());
-        let painter = ui.painter();
-        painter.rect_filled(r, 2.0, to_color32(tag.color).gamma_multiply(0.85));
-        painter.text(
-            r.left_center() + vec2(4.0, 0.0),
-            Align2::LEFT_CENTER,
-            &tag.name,
-            FontId::proportional(11.0),
-            Color32::BLACK,
-        );
+        match grid.skin {
+            Some(skin) => pixel::tag(ui, skin, r, to_color32(tag.color), &tag.name),
+            None => {
+                let painter = ui.painter();
+                painter.rect_filled(r, 2.0, to_color32(tag.color).gamma_multiply(0.85));
+                painter.text(
+                    r.left_center() + vec2(4.0, 0.0),
+                    Align2::LEFT_CENTER,
+                    &tag.name,
+                    FontId::proportional(11.0),
+                    Color32::BLACK,
+                );
+            }
+        }
         if response.clicked() {
             editor.set_frame(tag.from);
             editor.frame_range = Some((tag.from, tag.to));
@@ -305,52 +399,67 @@ fn tag_menu(ui: &mut egui::Ui, editor: &mut Editor, index: usize, tag: &Tag) {
     }
 }
 
-fn header_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState) {
-    let (row, _) = ui.allocate_exact_size(vec2(row_width(editor), HEADER_H), Sense::hover());
-    ui.painter().text(
-        row.left_center() + vec2(6.0, 0.0),
-        Align2::LEFT_CENTER,
-        "Layers",
-        FontId::proportional(11.0),
-        theme::LABEL,
-    );
+fn header_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, grid: Grid) {
+    let (row, _) =
+        ui.allocate_exact_size(vec2(grid.row_width(editor), grid.header_h), Sense::hover());
+    match grid.skin {
+        // Con Pixel UI: las líneas, el ojo abierto y el candado cerrado de las columnas.
+        Some(skin) => pixel::header_left(ui, skin, row, editor.frame_count()),
+        None => {
+            ui.painter().text(
+                row.left_center() + vec2(6.0, 0.0),
+                Align2::LEFT_CENTER,
+                "Layers",
+                FontId::proportional(11.0),
+                theme::LABEL,
+            );
+        }
+    }
     let (sel_a, sel_b) = editor.selected_frames();
     for f in 0..editor.frame_count() {
-        let r = cell_rect(row, f);
+        let r = grid.cell_rect(row, f);
         let response = ui.interact(r, ui.id().with(("frame", f)), Sense::click_and_drag());
         let in_range = editor.frame_range.is_some() && (sel_a..=sel_b).contains(&f);
         let painter = ui.painter();
-        if f == editor.frame {
-            painter.rect_filled(r.shrink(1.0), 2.0, theme::ACCENT.gamma_multiply(0.7));
-        } else if in_range {
-            painter.rect_filled(r.shrink(1.0), 2.0, theme::ACCENT.gamma_multiply(0.3));
+        match grid.skin {
+            Some(skin) => {
+                pixel::frame_number(ui, skin, r, f, f == editor.frame, in_range);
+            }
+            None => {
+                if f == editor.frame {
+                    painter.rect_filled(r.shrink(1.0), 2.0, theme::ACCENT.gamma_multiply(0.7));
+                } else if in_range {
+                    painter.rect_filled(r.shrink(1.0), 2.0, theme::ACCENT.gamma_multiply(0.3));
+                }
+                if response.hovered() {
+                    painter.rect_stroke(
+                        r.shrink(1.0),
+                        2.0,
+                        Stroke::new(1.0, theme::LABEL),
+                        StrokeKind::Inside,
+                    );
+                }
+                painter.text(
+                    r.center(),
+                    Align2::CENTER_CENTER,
+                    (f + 1).to_string(),
+                    FontId::monospace(10.0),
+                    if f == editor.frame {
+                        Color32::BLACK
+                    } else {
+                        ui.visuals().text_color()
+                    },
+                );
+            }
         }
-        if response.hovered() {
-            painter.rect_stroke(
-                r.shrink(1.0),
-                2.0,
-                Stroke::new(1.0, theme::LABEL),
-                StrokeKind::Inside,
-            );
-        }
-        painter.text(
-            r.center(),
-            Align2::CENTER_CENTER,
-            (f + 1).to_string(),
-            FontId::monospace(10.0),
-            if f == editor.frame {
-                Color32::BLACK
-            } else {
-                ui.visuals().text_color()
-            },
-        );
+        let painter = ui.painter();
 
         // Arrastrar un encabezado reordena frames.
         if response.drag_started() {
             response.dnd_set_drag_payload(FramePayload(f));
         }
         if response.dnd_hover_payload::<FramePayload>().is_some() {
-            painter.vline(r.left(), r.y_range(), Stroke::new(2.0, theme::ACCENT));
+            painter.vline(r.left(), r.y_range(), Stroke::new(2.0, grid.accent()));
         }
         if let Some(p) = response.dnd_release_payload::<FramePayload>() {
             editor.move_frame(p.0, f);
@@ -398,8 +507,14 @@ fn header_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState)
     }
 }
 
-fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, id: LayerId) {
-    let (row, _) = ui.allocate_exact_size(vec2(row_width(editor), ROW_H), Sense::hover());
+fn layer_row(
+    ui: &mut egui::Ui,
+    editor: &mut Editor,
+    state: &mut TimelineState,
+    id: LayerId,
+    grid: Grid,
+) {
+    let (row, _) = ui.allocate_exact_size(vec2(grid.row_width(editor), grid.row_h), Sense::hover());
     let Some(layer) = editor.sprite().layer(id).cloned() else {
         return;
     };
@@ -409,19 +524,29 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
     let visible_chain = editor.sprite().is_visible(id);
 
     let painter = ui.painter().clone();
-    let left = Rect::from_min_size(row.min, vec2(LEFT_W, ROW_H));
-    if active {
-        painter.rect_filled(left, 0.0, theme::ACCENT.gamma_multiply(0.35));
+    let left = Rect::from_min_size(row.min, vec2(grid.left_w, grid.row_h));
+    // Con Pixel UI, sin la línea de abajo (y de la derecha): donde va el contenido.
+    let inner = |r: Rect| match grid.skin {
+        Some(_) => pixel::content(r),
+        None => r,
+    };
+    match grid.skin {
+        Some(skin) => pixel::layer_left(ui, skin, row, editor.frame_count(), active),
+        None => {
+            if active {
+                painter.rect_filled(left, 0.0, theme::ACCENT.gamma_multiply(0.35));
+            }
+            painter.hline(
+                row.x_range(),
+                row.bottom() - 0.5,
+                Stroke::new(1.0, theme::CANVAS_BG),
+            );
+        }
     }
-    painter.hline(
-        row.x_range(),
-        row.bottom() - 0.5,
-        Stroke::new(1.0, theme::CANVAS_BG),
-    );
 
     // Ojo y candado.
-    let eye = Rect::from_min_size(row.min, vec2(ICON_W, ROW_H));
-    let lock = eye.translate(vec2(ICON_W, 0.0));
+    let eye = Rect::from_min_size(row.min, vec2(grid.eye_w, grid.row_h));
+    let lock = Rect::from_min_size(eye.right_top(), vec2(grid.lock_w, grid.row_h));
     let icon_color = |on: bool| {
         if on {
             ui.visuals().text_color()
@@ -429,57 +554,86 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
             theme::LABEL.gamma_multiply(0.5)
         }
     };
-    if ui
-        .interact(eye, ui.id().with(("eye", id)), Sense::click())
-        .on_hover_text("Show / hide")
-        .clicked()
-    {
+    let eye_response = ui
+        .interact(inner(eye), ui.id().with(("eye", id)), Sense::click())
+        .on_hover_text("Show / hide");
+    let lock_response = ui
+        .interact(inner(lock), ui.id().with(("lock", id)), Sense::click())
+        .on_hover_text("Lock / unlock");
+    match grid.skin {
+        Some(skin) => {
+            // Con Pixel UI, con nombre accesible (y estado) para encontrarlos.
+            let enabled = ui.is_enabled();
+            eye_response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    enabled,
+                    layer.visible,
+                    format!("Visible: {}", layer.name),
+                )
+            });
+            lock_response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::Checkbox,
+                    enabled,
+                    layer.locked,
+                    format!("Locked: {}", layer.name),
+                )
+            });
+            pixel::eye_and_lock(ui, skin, eye, lock, layer.visible, layer.locked);
+        }
+        None => {
+            painter.text(
+                eye.center(),
+                Align2::CENTER_CENTER,
+                if layer.visible { "👁" } else { "–" },
+                FontId::proportional(12.0),
+                icon_color(layer.visible),
+            );
+            painter.text(
+                lock.center(),
+                Align2::CENTER_CENTER,
+                if layer.locked { "🔒" } else { "🔓" },
+                FontId::proportional(11.0),
+                icon_color(layer.locked),
+            );
+        }
+    }
+    if eye_response.clicked() {
         editor.toggle_visible(id);
     }
-    painter.text(
-        eye.center(),
-        Align2::CENTER_CENTER,
-        if layer.visible { "👁" } else { "–" },
-        FontId::proportional(12.0),
-        icon_color(layer.visible),
-    );
-    if ui
-        .interact(lock, ui.id().with(("lock", id)), Sense::click())
-        .on_hover_text("Lock / unlock")
-        .clicked()
-    {
+    if lock_response.clicked() {
         editor.toggle_locked(id);
     }
-    painter.text(
-        lock.center(),
-        Align2::CENTER_CENTER,
-        if layer.locked { "🔒" } else { "🔓" },
-        FontId::proportional(11.0),
-        icon_color(layer.locked),
-    );
 
     // Flecha de colapsar (grupos) y nombre.
-    let mut x = lock.right() + 4.0 + depth * INDENT;
+    let name_left = lock.right()
+        + if grid.skin.is_some() {
+            pixel::NAME_PAD
+        } else {
+            4.0
+        };
+    let mut x = name_left + depth * grid.indent;
+    let content = inner(row);
     if layer.kind == LayerKind::Group {
-        let arrow = Rect::from_min_size(pos2(x, row.top()), vec2(14.0, ROW_H));
+        let arrow = Rect::from_min_max(
+            pos2(x, content.top()),
+            pos2(x + grid.fold_w, content.bottom()),
+        );
         if ui
             .interact(arrow, ui.id().with(("fold", id)), Sense::click())
             .clicked()
         {
             editor.toggle_collapsed(id);
         }
-        draw_fold_arrow(
-            &painter,
-            arrow.center(),
-            collapsed,
-            ui.visuals().text_color(),
-        );
-        x += 14.0;
+        let size = if grid.skin.is_some() { 3.0 } else { 4.0 };
+        draw_fold_arrow(&painter, arrow.center(), collapsed, grid.text(ui), size);
+        x += grid.fold_w;
     }
     // Recortadas: sangría con flecha hacia la capa base.
     if layer.clip {
-        let stroke = Stroke::new(1.5, theme::ACCENT);
-        let (top, mid) = (row.top() + 4.0, row.center().y + 1.0);
+        let stroke = Stroke::new(1.5, grid.accent());
+        let (top, mid) = (content.top() + 4.0, content.center().y + 1.0);
         let (x0, x1) = (x + 3.0, x + 10.0);
         painter.line_segment([pos2(x0, top), pos2(x0, mid)], stroke);
         painter.line_segment([pos2(x0, mid), pos2(x1, mid)], stroke);
@@ -488,10 +642,16 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
         x += 14.0;
     }
     // Miniatura de la máscara: clic para pintarla (o volver a la capa).
-    let mut right = left.right();
+    let left_content = inner(left);
+    let mut right = left_content.right();
     if let Some(mask) = &layer.mask {
-        let chip =
-            Rect::from_center_size(pos2(left.right() - 12.0, row.center().y), vec2(16.0, 14.0));
+        let chip = Rect::from_center_size(
+            pos2(
+                left_content.right() - 4.0 - grid.chip.x / 2.0,
+                content.center().y,
+            ),
+            grid.chip,
+        );
         right = chip.left() - 2.0;
         let editing = active && editor.edit_mask;
         let response = ui
@@ -523,7 +683,7 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
             2.0,
             Stroke::new(
                 if editing { 2.0 } else { 1.0 },
-                if editing { theme::ACCENT } else { theme::LABEL },
+                if editing { grid.accent() } else { grid.dim() },
             ),
             StrokeKind::Outside,
         );
@@ -534,7 +694,7 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
         }
         response.context_menu(|ui| mask_menu(ui, editor, id));
     }
-    let name_rect = Rect::from_min_max(pos2(x, row.top()), pos2(right, row.bottom()));
+    let name_rect = Rect::from_min_max(pos2(x, content.top()), pos2(right, content.bottom()));
     let name_response = ui.interact(
         name_rect,
         ui.id().with(("name", id)),
@@ -544,10 +704,17 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
     let renaming = matches!(&state.renaming, Some((rid, _)) if *rid == id);
     if renaming {
         let (_, text) = state.renaming.as_mut().expect("renaming");
-        let edit = ui.put(
-            name_rect.shrink2(vec2(0.0, 2.0)),
-            egui::TextEdit::singleline(text).font(FontId::proportional(12.0)),
-        );
+        let edit = match grid.skin {
+            // Con Pixel UI, la fila es baja: el campo ocupa todo el nombre, con la fuente pixel.
+            Some(_) => ui.put(
+                name_rect,
+                egui::TextEdit::singleline(text).margin(Vec2::ZERO),
+            ),
+            None => ui.put(
+                name_rect.shrink2(vec2(0.0, 2.0)),
+                egui::TextEdit::singleline(text).font(FontId::proportional(12.0)),
+            ),
+        };
         if !edit.has_focus() && !edit.lost_focus() {
             edit.request_focus();
         }
@@ -564,18 +731,33 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
             LayerKind::Tilemap => format!("⊞ {}", layer.name),
             LayerKind::Image => layer.name.clone(),
         };
-        let color = if visible_chain {
-            ui.visuals().text_color()
-        } else {
-            theme::LABEL.gamma_multiply(0.6)
-        };
-        painter.text(
-            name_rect.left_center(),
-            Align2::LEFT_CENTER,
-            label,
-            FontId::proportional(12.0),
-            color,
-        );
+        match grid.skin {
+            Some(skin) => {
+                // Como en el diseño, el nombre de una capa oculta va en negro (lo dice el ojo);
+                // apagado solo si la esconde un grupo de arriba.
+                let colors = skin.colors();
+                let color = if visible_chain || !layer.visible {
+                    colors.text
+                } else {
+                    colors.text_dim
+                };
+                pixel::name(ui, name_rect, &label, color);
+            }
+            None => {
+                let color = if visible_chain {
+                    ui.visuals().text_color()
+                } else {
+                    theme::LABEL.gamma_multiply(0.6)
+                };
+                painter.text(
+                    name_rect.left_center(),
+                    Align2::LEFT_CENTER,
+                    label,
+                    FontId::proportional(12.0),
+                    color,
+                );
+            }
+        }
     }
 
     if name_response.clicked() {
@@ -592,7 +774,7 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
         && name_response.dnd_hover_payload::<LayerPayload>().is_some()
     {
         let drop = drop_kind(row, pointer, &layer);
-        draw_drop_hint(&painter, left, drop);
+        draw_drop_hint(&painter, left, drop, grid.accent());
     }
     if let Some(payload) = name_response.dnd_release_payload::<LayerPayload>()
         && let Some(pointer) = ui.ctx().pointer_interact_pos()
@@ -632,30 +814,44 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
         return;
     }
     for f in 0..editor.frame_count() {
-        let r = cell_rect(row, f);
+        let r = grid.cell_rect(row, f);
         let response = ui.interact(r, ui.id().with(("cel", id, f)), Sense::click_and_drag());
         let (sel_a, sel_b) = editor.selected_frames();
         let in_range = active && editor.frame_range.is_some() && (sel_a..=sel_b).contains(&f);
-        if in_range {
-            painter.rect_filled(r.shrink(1.0), 2.0, theme::ACCENT.gamma_multiply(0.35));
-        } else if f == editor.frame {
-            painter.rect_filled(r, 0.0, theme::ACCENT.gamma_multiply(0.15));
-        }
-        if active && f == editor.frame {
-            painter.rect_stroke(
-                r.shrink(1.0),
-                2.0,
-                Stroke::new(1.0, theme::ACCENT),
-                StrokeKind::Inside,
-            );
+        if grid.skin.is_some() {
+            // Con Pixel UI, el cel elegido y el rango en el color de selección del skin.
+            if in_range || (active && f == editor.frame) {
+                pixel::select(ui, inner(r), grid.accent());
+            }
+        } else {
+            if in_range {
+                painter.rect_filled(r.shrink(1.0), 2.0, theme::ACCENT.gamma_multiply(0.35));
+            } else if f == editor.frame {
+                painter.rect_filled(r, 0.0, theme::ACCENT.gamma_multiply(0.15));
+            }
+            if active && f == editor.frame {
+                painter.rect_stroke(
+                    r.shrink(1.0),
+                    2.0,
+                    Stroke::new(1.0, theme::ACCENT),
+                    StrokeKind::Inside,
+                );
+            }
         }
         let sprite = editor.sprite();
+        let r = inner(r);
         let center = r.center();
+        // Con Pixel UI, todo más chico: la fila mide 11 de alto.
+        let (thick, d) = if grid.skin.is_some() {
+            (1.0, 3.0)
+        } else {
+            (2.0, 4.5)
+        };
         if let Some(track) = sprite.layer(id).and_then(|l| l.instance.as_ref()) {
             // Instancia: ◆ en cada keyframe y una barra mientras dura.
-            let color = ui.visuals().text_color();
+            let color = grid.text(ui);
             if let Some(key) = track.key_at(f) {
-                let stroke = Stroke::new(2.0, color);
+                let stroke = Stroke::new(thick, color);
                 // Barra de "hold": viene del frame anterior y sigue al próximo.
                 if f > key.frame {
                     painter.hline(r.left()..=center.x, center.y, stroke);
@@ -664,7 +860,6 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
                     painter.hline(center.x..=r.right(), center.y, stroke);
                 }
                 if key.frame == f {
-                    let d = 4.5;
                     let points = vec![
                         pos2(center.x, center.y - d),
                         pos2(center.x + d, center.y),
@@ -674,27 +869,37 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
                     let fill = if key.source.is_some() {
                         color
                     } else {
-                        theme::LABEL
+                        grid.dim()
                     };
                     painter.add(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
                 }
             }
         } else if let Some(cel) = sprite.cel(id, f).copied() {
             let linked_prev = f > 0 && sprite.cel(id, f - 1).is_some_and(|p| p.image == cel.image);
-            if linked_prev {
-                painter.hline(
-                    (center.x - CELL_W)..=center.x,
-                    center.y,
-                    Stroke::new(2.0, ui.visuals().text_color()),
-                );
+            match grid.skin {
+                Some(skin) => pixel::cel(ui, skin, r, true, linked_prev),
+                None => {
+                    if linked_prev {
+                        painter.hline(
+                            (center.x - grid.cell_w)..=center.x,
+                            center.y,
+                            Stroke::new(2.0, ui.visuals().text_color()),
+                        );
+                    }
+                    painter.circle_filled(center, 4.0, ui.visuals().text_color());
+                }
             }
-            painter.circle_filled(center, 4.0, ui.visuals().text_color());
         } else {
-            painter.circle_stroke(
-                center,
-                3.5,
-                Stroke::new(1.0, theme::LABEL.gamma_multiply(0.6)),
-            );
+            match grid.skin {
+                Some(skin) => pixel::cel(ui, skin, r, false, false),
+                None => {
+                    painter.circle_stroke(
+                        center,
+                        3.5,
+                        Stroke::new(1.0, theme::LABEL.gamma_multiply(0.6)),
+                    );
+                }
+            }
         }
         // Arrastrar sobre los cels de una capa selecciona un rango de frames.
         if response.drag_started() {
@@ -899,8 +1104,8 @@ fn drop_kind(row: Rect, pointer: Pos2, target: &cs_core::Layer) -> LayerDrop {
     }
 }
 
-fn draw_drop_hint(painter: &egui::Painter, left: Rect, drop: LayerDrop) {
-    let stroke = Stroke::new(2.0, theme::ACCENT);
+fn draw_drop_hint(painter: &egui::Painter, left: Rect, drop: LayerDrop, color: Color32) {
+    let stroke = Stroke::new(2.0, color);
     match drop {
         LayerDrop::Above(_) => {
             painter.hline(left.x_range(), left.top() + 1.0, stroke);
@@ -914,8 +1119,8 @@ fn draw_drop_hint(painter: &egui::Painter, left: Rect, drop: LayerDrop) {
     }
 }
 
-fn draw_fold_arrow(painter: &egui::Painter, center: Pos2, collapsed: bool, color: Color32) {
-    let s = 4.0;
+/// El triángulo de abrir y cerrar un grupo, de `s` de radio.
+fn draw_fold_arrow(painter: &egui::Painter, center: Pos2, collapsed: bool, color: Color32, s: f32) {
     let points = if collapsed {
         vec![
             center + vec2(-s * 0.6, -s),
@@ -939,6 +1144,22 @@ mod tests {
 
     use super::*;
 
+    /// Los íconos de los botones de la barra, de 21×11.
+    const TOOLBAR_ICONS: [&str; 12] = [
+        "timeline.icon.first",
+        "timeline.icon.prev",
+        "timeline.icon.play",
+        "timeline.icon.next",
+        "timeline.icon.last",
+        "timeline.icon.frame_add",
+        "timeline.icon.frame_remove",
+        "timeline.icon.layer_add",
+        "timeline.icon.layer_remove",
+        "timeline.icon.group_add",
+        "timeline.icon.tilemap_add",
+        "timeline.icon.onion",
+    ];
+
     /// La línea de tiempo en un panel de abajo, con eventos crudos (50 ms por frame).
     struct Harness {
         ctx: egui::Context,
@@ -949,12 +1170,26 @@ mod tests {
         nodes: Vec<(String, Rect)>,
         /// Posición del texto "Layers" del encabezado de la grilla.
         grid: Pos2,
+        /// Con Pixel UI: el skin embebido.
+        skin: Option<Skin>,
+        /// Las texturas dibujadas en el último frame, con dónde.
+        images: Vec<(egui::TextureId, Rect)>,
     }
 
     impl Harness {
         fn new(width: f32) -> Self {
+            Self::with(width, false)
+        }
+
+        /// Con Pixel UI: el skin embebido y el marco del panel de la app.
+        fn pixel(width: f32) -> Self {
+            Self::with(width, true)
+        }
+
+        fn with(width: f32, pixel: bool) -> Self {
             let ctx = egui::Context::default();
             ctx.enable_accesskit();
+            let skin = pixel.then(|| Skin::embedded(&ctx));
             let mut h = Self {
                 ctx,
                 editor: Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba)),
@@ -963,6 +1198,8 @@ mod tests {
                 width,
                 nodes: Vec::new(),
                 grid: Pos2::ZERO,
+                skin,
+                images: Vec::new(),
             };
             for _ in 0..3 {
                 h.frame(vec![]);
@@ -978,13 +1215,21 @@ mod tests {
                 events,
                 ..Default::default()
             };
-            let (editor, state) = (&mut self.editor, &mut self.state);
+            let (editor, state, skin) = (&mut self.editor, &mut self.state, self.skin.as_ref());
             let mut output = self.ctx.run_ui(input, |ui| {
-                egui::Panel::bottom("timeline")
-                    .exact_size(190.0)
-                    .show(ui, |ui| show(ui, editor, state));
+                let mut panel = egui::Panel::bottom("timeline").exact_size(190.0);
+                if let Some(skin) = skin {
+                    panel = panel
+                        .frame(pixel_panel_frame(skin))
+                        .show_separator_line(false);
+                }
+                panel.show(ui, |ui| show(ui, editor, state, skin));
             });
             output.textures_delta.clear();
+            self.images.clear();
+            for clipped in &output.shapes {
+                collect_images(&clipped.shape, &mut self.images);
+            }
             self.nodes = output
                 .platform_output
                 .accesskit_update
@@ -1045,6 +1290,346 @@ mod tests {
                 self.frame(vec![]);
             }
         }
+
+        /// Un clic en `at`, con `modifiers`.
+        fn click_at_with(&mut self, at: Pos2, modifiers: egui::Modifiers) {
+            let button = |pressed| Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers,
+            };
+            // egui toma las teclas apretadas de `ModifiersChanged`, no del evento del clic.
+            self.frame(vec![
+                Event::ModifiersChanged(modifiers),
+                Event::PointerMoved(at),
+            ]);
+            self.frame(vec![button(true)]);
+            self.frame(vec![button(false)]);
+            self.frame(vec![Event::ModifiersChanged(Default::default())]);
+        }
+
+        fn click_at(&mut self, at: Pos2) {
+            self.click_at_with(at, Default::default());
+        }
+
+        /// Un clic en el centro del widget con nombre `text`.
+        fn click(&mut self, text: &str) {
+            let at = self.rect(text).center();
+            self.click_at(at);
+        }
+
+        /// Dónde se dibujó la pieza `name` del skin en el último frame.
+        fn drawn(&self, name: &str) -> Vec<Rect> {
+            let skin = self.skin.as_ref().expect("pixel harness");
+            let id = skin
+                .piece(name, crate::skin::WidgetState::Normal)
+                .unwrap_or_else(|| panic!("{name} in the skin"))
+                .texture
+                .id();
+            self.images
+                .iter()
+                .filter(|(t, _)| *t == id)
+                .map(|(_, r)| *r)
+                .collect()
+        }
+
+        /// Cuántas veces se dibujó la pieza `name` (una pieza con centro son varias partes; acá
+        /// se cuentan las que no tienen centro).
+        fn count(&self, name: &str) -> usize {
+            self.drawn(name).len()
+        }
+
+        fn layer(&self, i: usize) -> &cs_core::Layer {
+            &self.editor.sprite().layers[i]
+        }
+    }
+
+    /// Las imágenes (mallas con textura) de una forma, con su rect.
+    fn collect_images(shape: &egui::Shape, out: &mut Vec<(egui::TextureId, Rect)>) {
+        match shape {
+            egui::Shape::Vec(shapes) => {
+                for s in shapes {
+                    collect_images(s, out);
+                }
+            }
+            egui::Shape::Mesh(mesh) if mesh.texture_id != egui::TextureId::default() => {
+                out.push((mesh.texture_id, mesh.calc_bounds()));
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn with_pixel_ui_the_toolbar_draws_every_group_and_field_of_the_design() {
+        let h = Harness::pixel(1200.0);
+        for icon in TOOLBAR_ICONS {
+            assert_eq!(h.count(icon), 1, "{icon}");
+        }
+        // Los cuatro grupos de botones, sus 12 celdas y las 8 líneas entre celdas.
+        assert!(h.count("timeline.group") >= 4);
+        assert_eq!(h.count("timeline.button"), 12);
+        assert_eq!(h.count("timeline.button.sep"), 8);
+        for name in [
+            "timeline.onion_range",
+            "timeline.icon.clock",
+            "timeline.combo",
+            "timeline.divider",
+            "workspace.box",
+        ] {
+            assert!(h.count(name) >= 1, "{name}");
+        }
+        // − y + de la opacidad y de la duración.
+        assert_eq!(h.count("timeline.stepper.minus"), 2);
+        assert_eq!(h.count("timeline.stepper.plus"), 2);
+        for label in [
+            "First frame",
+            "Previous frame",
+            "Play",
+            "Next frame",
+            "Last frame",
+            "New frame",
+            "Delete frame",
+            "New layer",
+            "Delete layer",
+            "New group",
+            "New tilemap layer",
+            "Onion skin",
+            "Opacity",
+            "Less opacity",
+            "More opacity",
+            "Normal",
+            "Shorter frame",
+            "Longer frame",
+        ] {
+            h.rect(label);
+        }
+        // Todo en una fila, como en el diseño: los grupos arriba a 3 del interior de la caja.
+        let first = h.rect("First frame");
+        let longer = h.rect("Longer frame");
+        assert_eq!(first.top(), longer.top(), "one row");
+        let group = h.drawn("timeline.button")[0];
+        let divider = h.drawn("timeline.divider")[0];
+        assert_eq!(
+            divider.top() - group.top(),
+            17.0,
+            "button top 563, divider 580"
+        );
+    }
+
+    #[test]
+    fn with_pixel_ui_play_new_frame_new_layer_and_onion_work() {
+        let mut h = Harness::pixel(1200.0);
+        h.click("Play");
+        assert!(h.editor.playing);
+        assert!(
+            h.rect("Pause").is_positive(),
+            "the button says what it does now"
+        );
+        h.click("Pause");
+        assert!(!h.editor.playing);
+
+        h.click("New frame");
+        assert_eq!(h.editor.frame_count(), 2);
+        h.click("Delete frame");
+        assert_eq!(h.editor.frame_count(), 1);
+
+        let layers = h.editor.sprite().layers.len();
+        h.click("New layer");
+        assert_eq!(h.editor.sprite().layers.len(), layers + 1);
+        h.click("New group");
+        assert_eq!(h.editor.sprite().layers.len(), layers + 2);
+        h.click("New tilemap layer");
+        assert!(h.state.new_tilemap, "asks the app for the dialog");
+
+        assert!(!h.editor.onion_enabled);
+        assert_eq!(h.count("timeline.icon.onion"), 1, "off: the cut onion");
+        h.click("Onion skin");
+        assert!(h.editor.onion_enabled);
+        assert_eq!(h.count("timeline.icon.onion.on"), 1, "on: the whole onion");
+        assert_eq!(h.count("timeline.icon.onion"), 0);
+    }
+
+    #[test]
+    fn with_pixel_ui_the_playback_buttons_move_through_the_frames() {
+        let mut h = Harness::pixel(1200.0);
+        for _ in 0..3 {
+            h.editor.duplicate_frame();
+        }
+        h.click("First frame");
+        assert_eq!(h.editor.frame, 0);
+        h.click("Next frame");
+        assert_eq!(h.editor.frame, 1);
+        h.click("Last frame");
+        assert_eq!(h.editor.frame, 3);
+        h.click("Previous frame");
+        assert_eq!(h.editor.frame, 2);
+    }
+
+    #[test]
+    fn with_pixel_ui_opacity_minus_and_plus_change_the_layer_opacity() {
+        let mut h = Harness::pixel(1200.0);
+        let layer = h.editor.layer;
+        let opacity = |h: &Harness| h.editor.sprite().layer(layer).unwrap().opacity;
+        assert_eq!(opacity(&h), 255);
+        h.click("Less opacity");
+        assert_eq!(opacity(&h), 254);
+        h.click("Less opacity");
+        assert_eq!(opacity(&h), 253);
+        h.click("More opacity");
+        assert_eq!(opacity(&h), 254);
+        // Con Shift, de a 10.
+        let at = h.rect("Less opacity").center();
+        h.click_at_with(at, egui::Modifiers::SHIFT);
+        assert_eq!(opacity(&h), 244);
+        // Lo muestra el campo.
+        h.rect("244");
+    }
+
+    #[test]
+    fn with_pixel_ui_duration_minus_and_plus_change_the_frame_duration() {
+        let mut h = Harness::pixel(1200.0);
+        let ms = |h: &Harness| h.editor.sprite().frames[h.editor.frame].duration_ms;
+        assert_eq!(ms(&h), 100);
+        // El número se arrastra o se escribe; "ms" va dibujado al lado.
+        h.rect("100");
+        h.click("Longer frame");
+        assert_eq!(ms(&h), 110);
+        h.click("Shorter frame");
+        h.click("Shorter frame");
+        assert_eq!(ms(&h), 90);
+        h.rect("90");
+    }
+
+    #[test]
+    fn with_pixel_ui_the_blend_combo_picks_a_mode() {
+        let mut h = Harness::pixel(1200.0);
+        let layer = h.editor.layer;
+        assert_eq!(
+            h.count("timeline.combo"),
+            3,
+            "the combo of the design, in 9-slice"
+        );
+        h.click("Normal");
+        h.click("Multiply");
+        assert_eq!(
+            h.editor.sprite().layer(layer).unwrap().blend,
+            BlendMode::Multiply
+        );
+        h.rect("Multiply");
+    }
+
+    #[test]
+    fn with_pixel_ui_the_onion_range_shows_the_frames_before_and_after() {
+        let mut h = Harness::pixel(1200.0);
+        h.editor.onion.before = 2;
+        h.editor.onion.after = 5;
+        h.frame(vec![]);
+        let range = h.drawn("timeline.onion_range")[0];
+        let (before, after) = (h.rect("2"), h.rect("5"));
+        let mid = range.left() + RANGE_MID_FOR_TESTS;
+        assert!(range.x_range().contains(before.center().x) && before.center().x < mid);
+        assert!(range.x_range().contains(after.center().x) && after.center().x > mid);
+    }
+
+    /// La línea del medio del rango del onion skin, en la columna 29 de su pieza.
+    const RANGE_MID_FOR_TESTS: f32 = 29.0;
+
+    #[test]
+    fn with_pixel_ui_the_table_shows_eye_lock_and_cel_pieces_by_state() {
+        let mut h = Harness::pixel(1200.0);
+        // La capa de abajo con un cel; arriba, una nueva sin cel, oculta y bloqueada.
+        h.editor.execute(cs_commands::Command::DrawPixels {
+            layer: h.layer(0).id,
+            frame: 0,
+            pixels: vec![(0, 0, cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(9, 9, 9)))],
+        });
+        h.editor.add_layer(LayerKind::Image);
+        let top = h.editor.layer;
+        h.editor.toggle_visible(top);
+        h.editor.toggle_locked(top);
+        h.frame(vec![]);
+        // El encabezado tiene el ojo abierto y el candado cerrado de las columnas.
+        assert_eq!(h.count("timeline.eye"), 2, "header + the visible layer");
+        assert_eq!(h.count("timeline.eye.closed"), 1, "the hidden layer");
+        assert_eq!(h.count("palette.icon.lock"), 2, "header + the locked layer");
+        assert_eq!(h.count("palette.icon.lock.open"), 1, "the unlocked layer");
+        assert_eq!(h.count("timeline.cel"), 1);
+        assert_eq!(h.count("timeline.cel.empty"), 1);
+        // Las filas miden 13 y los íconos van donde en el diseño.
+        let eyes = h.drawn("timeline.eye");
+        let closed = h.drawn("timeline.eye.closed")[0];
+        let header_eye = eyes.iter().map(|r| r.top()).fold(f32::MAX, f32::min);
+        assert_eq!(closed.top() - header_eye, 13.0, "the first layer row");
+        let cel = h.drawn("timeline.cel")[0];
+        let empty = h.drawn("timeline.cel.empty")[0];
+        assert_eq!(
+            cel.top() - empty.top(),
+            13.0,
+            "the cel layer is the second row"
+        );
+        assert_eq!(cel.left(), empty.left());
+    }
+
+    #[test]
+    fn with_pixel_ui_clicking_the_eye_and_the_lock_toggles_them() {
+        let mut h = Harness::pixel(1200.0);
+        let id = h.editor.layer;
+        let name = h.editor.sprite().layer(id).unwrap().name.clone();
+        let layer = |h: &Harness| h.editor.sprite().layer(id).unwrap().clone();
+        assert!(layer(&h).visible && !layer(&h).locked);
+        h.click(&format!("Visible: {name}"));
+        assert!(!layer(&h).visible);
+        assert_eq!(h.count("timeline.eye.closed"), 1);
+        h.click(&format!("Visible: {name}"));
+        assert!(layer(&h).visible);
+        h.click(&format!("Locked: {name}"));
+        assert!(layer(&h).locked);
+        h.click(&format!("Locked: {name}"));
+        assert!(!layer(&h).locked);
+    }
+
+    #[test]
+    fn with_pixel_ui_a_narrow_timeline_wraps_the_toolbar_and_nothing_overflows() {
+        let mut h = Harness::pixel(420.0);
+        let (first, longer) = (h.rect("First frame"), h.rect("Longer frame"));
+        assert!(longer.top() > first.top(), "the duration went down a row");
+        for label in ["Onion skin", "Less opacity", "Normal", "Longer frame"] {
+            let r = h.rect(label);
+            assert!(r.left() >= 0.0 && r.right() <= 420.0, "{label}: {r:?}");
+        }
+        // Y todavía se usa.
+        h.click("Longer frame");
+        assert_eq!(h.editor.sprite().frames[0].duration_ms, 110);
+    }
+
+    #[test]
+    fn without_pixel_ui_the_timeline_does_not_use_the_skin() {
+        let h = Harness::new(1200.0);
+        let skin = Skin::embedded(&h.ctx);
+        let ours: Vec<egui::TextureId> = [
+            "timeline.group",
+            "timeline.button",
+            "timeline.divider",
+            "timeline.eye",
+            "timeline.cel",
+            "workspace.box",
+            "palette.icon.lock",
+        ]
+        .iter()
+        .map(|n| {
+            skin.piece(n, crate::skin::WidgetState::Normal)
+                .unwrap()
+                .texture
+                .id()
+        })
+        .collect();
+        assert!(h.images.iter().all(|(t, _)| !ours.contains(t)));
+        // Los controles de siempre, con sus textos.
+        for label in ["+ Frame", "+ Layer", "+ Group", "+ Tilemap", "Onion"] {
+            h.rect(label);
+        }
+        assert_ne!(h.grid, Pos2::ZERO, "the \"Layers\" header");
     }
 
     #[test]

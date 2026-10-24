@@ -1025,7 +1025,14 @@ fn with_pixel_ui_the_menu_has_the_mockup_color_and_spacing() {
 #[test]
 fn with_pixel_ui_the_workspace_box_is_5_px_from_its_neighbours() {
     let h = LayoutHarness::new(pixel_ui(), true);
-    let workspace = union(&h.drawn("workspace.box")).expect("the box");
+    // La del área de trabajo; la línea de tiempo, debajo, tiene la suya.
+    let timeline = h.panel("timeline").top();
+    let boxes: Vec<Rect> = h
+        .drawn("workspace.box")
+        .into_iter()
+        .filter(|r| r.bottom() <= timeline)
+        .collect();
+    let workspace = union(&boxes).expect("the box");
     let toolbar = union(&h.drawn("toolbar.box")).expect("the toolbar box");
     // El mockup: la caja de la barra de íconos termina en la x 59, quedan 5 px de fondo
     // (60..64) y la del área de trabajo empieza en la 65. Arriba, las dos en la fila 95, 5 px
