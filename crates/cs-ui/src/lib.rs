@@ -3,6 +3,7 @@
 mod anim_ops;
 mod appearance;
 mod autosave;
+mod bar_fields;
 mod canvas;
 mod canvas_size;
 mod capture;

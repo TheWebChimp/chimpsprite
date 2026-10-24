@@ -10,9 +10,10 @@ use cs_raster::RotationAlgorithm;
 use cs_tools::text::FontChoice;
 use cs_tools::{BrushShape, Dither, GradientShape};
 
+use crate::bar_fields::{self, BarLook};
 use crate::editor::{Editor, MAX_BRUSH_SIZE, SelectionMode, ToolKind};
 use crate::skin::Skin;
-use crate::{pixel_ui, theme, tile_ops, tool_group, widgets};
+use crate::{menus, pixel_ui, theme, tile_ops, tool_group, widgets};
 
 /// Fila de un grupo en la barra con nombres: el botón con la herramienta que muestra el grupo y,
 /// si hay más, un desplegable con las demás (también con clic derecho o manteniendo presionado),
@@ -113,10 +114,27 @@ pub const PIXEL_OPTIONS_BAR_HEIGHT: f32 = 21.0;
 /// Aire entre un separador grabado de la barra y lo que tiene a cada lado: en el mockup, 5 px
 /// entre el brillo y "Symmetry".
 const ETCHED_GAP: f32 = 5.0;
-/// Con Pixel UI, como en el mockup (frame 4): del texto "Symmetry" al primer botón de simetría
-/// y del último botón al borde derecho de la barra.
-const SYMMETRY_LABEL_GAP: f32 = 5.0;
+/// Con Pixel UI, como en el mockup (frame 4): del texto "Symmetry" (que deja 1 px vacío después
+/// de la tinta) al primer botón de simetría, y del último botón al borde derecho de la barra.
+/// La tinta termina en la x 903 y el cuadro del botón empieza en la 909 (la pieza, con su
+/// columna transparente, en la 908).
+const SYMMETRY_LABEL_GAP: f32 = 3.0;
 const PIXEL_BAR_RIGHT: i8 = 3;
+/// Con Pixel UI, del borde izquierdo de la barra a la tinta del primer texto (en el diseño, el
+/// área de la app empieza en la x 28 y "Mode" en la 35).
+const PIXEL_BAR_LEFT: i8 = 7;
+/// Espacios de la barra con Pixel UI, medidos en el diseño (frame 4), entre lo que tiene cada
+/// lado (el texto con su píxel vacío del final; las piezas con sus columnas transparentes):
+/// - entre grupos: del combo a "Brush Size" (x 213..226);
+/// - entre controles de un grupo: del campo a la casilla (x 320..324);
+/// - de una etiqueta a su campo: de "Brush Size" al campo (x 276..277);
+/// - de una etiqueta a su primer botón: de "Mode" a la pieza del botón (x 56..59);
+/// - entre botones, y de los botones al combo (las piezas, de 15, dejan 4 px entre cuadros).
+const GROUP_GAP: f32 = 14.0;
+const CONTROL_GAP: f32 = 5.0;
+const LABEL_FIELD_GAP: f32 = 2.0;
+const LABEL_TOGGLE_GAP: f32 = 4.0;
+const TOGGLE_GAP: f32 = 2.0;
 /// Alto de los controles de la barra con Pixel UI (sliders, campos, casillas y botones).
 const PIXEL_CONTROL_HEIGHT: f32 = 13.0;
 
@@ -139,7 +157,7 @@ pub fn options_bar_frame(style: &egui::Style, skin: Option<&Skin>) -> egui::Fram
     match skin {
         Some(_) => frame
             .inner_margin(egui::Margin {
-                left: 8,
+                left: PIXEL_BAR_LEFT,
                 right: PIXEL_BAR_RIGHT,
                 top: 0,
                 bottom: 0,
@@ -170,8 +188,8 @@ struct BarEtch {
     rows: egui::Rangef,
 }
 
-/// Separador vertical entre grupos de la barra: con Pixel UI (`etch`), el grabado del mockup con
-/// `ETCHED_GAP` de aire a cada lado; sin él, el de egui.
+/// Separador vertical de la barra, antes de Symmetry: con Pixel UI (`etch`), el grabado del
+/// mockup con `ETCHED_GAP` de aire a cada lado; sin él, el de egui.
 fn bar_separator(ui: &mut egui::Ui, etch: Option<BarEtch>) {
     let Some(etch) = etch else {
         ui.separator();
@@ -221,12 +239,16 @@ pub fn tool_options_bar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Sk
         spacing.scroll.floating = true;
     }
     // De derecha a izquierda: Symmetry queda pegado al borde y las opciones usan lo que sobra.
+    let look = skin.map(|skin| BarLook {
+        skin,
+        top: bar.top(),
+    });
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        symmetry_buttons(ui, editor, skin);
+        symmetry_buttons(ui, editor, look);
         bar_separator(ui, etch);
         options_scroll_area().show(ui, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                tool_options(ui, editor, etch)
+                tool_options(ui, editor, look)
             });
         });
     });
@@ -259,147 +281,331 @@ pub fn row_scroll_area(id_salt: &'static str) -> egui::ScrollArea {
 }
 
 /// Separadores entre los grupos de la barra de opciones: una línea antes de cada grupo, menos el
-/// primero (grabada con Pixel UI, `bar_separator`).
+/// primero. Con Pixel UI (`pixel`), en vez de la línea, `GROUP_GAP` de aire: el diseño (frame 4)
+/// no tiene líneas entre los grupos, solo antes de Symmetry.
 struct Groups {
     started: bool,
-    etch: Option<BarEtch>,
+    pixel: bool,
 }
 
 impl Groups {
     fn next(&mut self, ui: &mut egui::Ui) {
         if self.started {
-            bar_separator(ui, self.etch);
+            if self.pixel {
+                gap(ui, GROUP_GAP);
+            } else {
+                ui.separator();
+            }
         }
         self.started = true;
     }
 }
 
+/// `px` de aire después del último control: el layout ya deja `item_spacing`, así que se
+/// descuenta (puede ser negativo).
+fn gap(ui: &mut egui::Ui, px: f32) {
+    ui.add_space(px - ui.spacing().item_spacing.x);
+}
+
 /// Las opciones de la herramienta activa, en fila: cada etiqueta al lado de su control y un
-/// separador entre grupos. La ayuda de la herramienta va en el mismo orden que antes. Con `etch`
-/// (Pixel UI), los separadores son grabados y los botones de forma, de 13×13.
-fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, etch: Option<BarEtch>) {
+/// separador entre grupos. La ayuda de la herramienta va en el mismo orden que antes. Con `look`
+/// (Pixel UI), los controles del diseño (`bar_fields`): textos en la fila del diseño, campos
+/// numéricos en vez de sliders, combos en vez de grupos de radios, casillas del skin, los modos de
+/// selección con íconos y aire en vez de separadores; los botones de forma, de 13×13.
+fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
     let tool = editor.tool;
-    let compact = etch.is_some();
     let mut groups = Groups {
         started: false,
-        etch,
+        pixel: look.is_some(),
     };
     let options = &mut editor.options;
     if tool.uses_brush() {
         groups.next(ui);
-        ui.label("Brush size");
-        ui.add(egui::Slider::new(
-            &mut options.brush_size,
-            1..=MAX_BRUSH_SIZE,
-        ))
-        .on_hover_text("Ctrl+wheel over the canvas changes it");
-        let side = if compact { PIXEL_CONTROL_HEIGHT } else { 20.0 };
+        let size = match look {
+            Some(look) => {
+                bar_fields::label(ui, look, "Brush Size");
+                gap(ui, LABEL_FIELD_GAP);
+                bar_fields::number(
+                    ui,
+                    look,
+                    "brush_size",
+                    &mut options.brush_size,
+                    1..=MAX_BRUSH_SIZE,
+                    true,
+                )
+            }
+            None => {
+                ui.label("Brush size");
+                ui.add(egui::Slider::new(
+                    &mut options.brush_size,
+                    1..=MAX_BRUSH_SIZE,
+                ))
+            }
+        };
+        size.on_hover_text("Ctrl+wheel over the canvas changes it");
+        let side = if look.is_some() {
+            gap(ui, CONTROL_GAP);
+            PIXEL_CONTROL_HEIGHT
+        } else {
+            20.0
+        };
         brush_shape_buttons(ui, &mut options.brush_shape, side);
     }
     if matches!(tool, ToolKind::Pencil | ToolKind::Eraser) {
-        groups.next(ui);
-        ui.checkbox(&mut options.pixel_perfect, "Pixel-perfect");
+        match look {
+            // Como en el diseño: en el grupo del pincel, al lado del campo.
+            Some(look) => {
+                gap(ui, CONTROL_GAP);
+                bar_fields::checkbox(ui, look, &mut options.pixel_perfect, "Pixel Perfect");
+            }
+            None => {
+                groups.next(ui);
+                ui.checkbox(&mut options.pixel_perfect, "Pixel-perfect");
+            }
+        }
     }
     if matches!(tool, ToolKind::Rectangle | ToolKind::Ellipse) {
         groups.next(ui);
-        ui.checkbox(&mut options.filled, "Filled");
+        check_option(ui, look, &mut options.filled, "Filled");
     }
     if tool == ToolKind::Rectangle {
         groups.next(ui);
-        ui.label("Corner radius");
-        ui.add(egui::Slider::new(&mut options.corner_radius, 0..=32))
-            .on_hover_text("0 = square corners; large values make a pill or a circle");
+        let radius = match look {
+            Some(look) => {
+                bar_fields::label(ui, look, "Corner radius");
+                gap(ui, LABEL_FIELD_GAP);
+                bar_fields::number(
+                    ui,
+                    look,
+                    "corner_radius",
+                    &mut options.corner_radius,
+                    0..=32,
+                    true,
+                )
+            }
+            None => {
+                ui.label("Corner radius");
+                ui.add(egui::Slider::new(&mut options.corner_radius, 0..=32))
+            }
+        };
+        radius.on_hover_text("0 = square corners; large values make a pill or a circle");
     }
     if tool.is_selection() {
         groups.next(ui);
-        ui.label("Mode");
-        for mode in SelectionMode::ALL {
-            ui.radio_value(&mut options.selection_mode, mode, mode.label());
+        match look {
+            Some(look) => selection_mode_buttons(ui, look, &mut options.selection_mode),
+            None => {
+                ui.label("Mode");
+                for mode in SelectionMode::ALL {
+                    ui.radio_value(&mut options.selection_mode, mode, mode.label());
+                }
+            }
         }
     }
     match tool {
         ToolKind::Hand => {
             groups.next(ui);
-            ui.weak("Drag to move the view. Space+drag or the middle button do it with any tool.");
+            hint(
+                ui,
+                look,
+                "Drag to move the view. Space+drag or the middle button do it with any tool.",
+            );
         }
         ToolKind::MagicWand => {
             groups.next(ui);
-            ui.label("Tolerance");
-            ui.add(egui::Slider::new(&mut options.tolerance, 0..=255));
-            ui.checkbox(&mut options.contiguous, "Contiguous");
-            ui.label("Sample:");
-            ui.radio_value(&mut options.sample_all, false, "Layer");
-            ui.radio_value(&mut options.sample_all, true, "All layers");
+            match look {
+                Some(look) => {
+                    bar_fields::label(ui, look, "Tolerance");
+                    gap(ui, LABEL_FIELD_GAP);
+                    bar_fields::number(
+                        ui,
+                        look,
+                        "tolerance",
+                        &mut options.tolerance,
+                        0..=255,
+                        false,
+                    );
+                    gap(ui, CONTROL_GAP);
+                    bar_fields::checkbox(ui, look, &mut options.contiguous, "Contiguous");
+                    gap(ui, CONTROL_GAP);
+                    bar_fields::label(ui, look, "Sample:");
+                    gap(ui, LABEL_FIELD_GAP);
+                    let name = |all| if all { "All layers" } else { "Layer" };
+                    bar_fields::combo(ui, look, "sample", name(options.sample_all), |ui| {
+                        bar_fields::choices(ui, &mut options.sample_all, [false, true], name)
+                    });
+                }
+                None => {
+                    ui.label("Tolerance");
+                    ui.add(egui::Slider::new(&mut options.tolerance, 0..=255));
+                    ui.checkbox(&mut options.contiguous, "Contiguous");
+                    ui.label("Sample:");
+                    ui.radio_value(&mut options.sample_all, false, "Layer");
+                    ui.radio_value(&mut options.sample_all, true, "All layers");
+                }
+            }
         }
         ToolKind::Lasso => {
             groups.next(ui);
-            ui.weak("Drag around the area; it closes when you release.");
+            hint(
+                ui,
+                look,
+                "Drag around the area; it closes when you release.",
+            );
         }
         ToolKind::PolygonLasso => {
             groups.next(ui);
-            ui.weak("Click to add points. Click the first point, double-click or press Enter to close; Esc cancels.");
+            hint(
+                ui,
+                look,
+                "Click to add points. Click the first point, double-click or press Enter to close; Esc cancels.",
+            );
         }
         ToolKind::Bucket => {
             groups.next(ui);
-            ui.checkbox(&mut options.contiguous, "Contiguous");
+            check_option(ui, look, &mut options.contiguous, "Contiguous");
         }
         ToolKind::Spray => {
             groups.next(ui);
-            ui.label("Spray width");
-            ui.add(egui::Slider::new(&mut options.spray_width, 1..=64));
-            ui.label("Spray speed");
-            ui.add(egui::Slider::new(&mut options.spray_speed, 1..=100));
+            match look {
+                Some(look) => {
+                    bar_fields::label(ui, look, "Spray width");
+                    gap(ui, LABEL_FIELD_GAP);
+                    bar_fields::number(
+                        ui,
+                        look,
+                        "spray_width",
+                        &mut options.spray_width,
+                        1..=64,
+                        true,
+                    );
+                    gap(ui, CONTROL_GAP);
+                    bar_fields::label(ui, look, "Spray speed");
+                    gap(ui, LABEL_FIELD_GAP);
+                    bar_fields::number(
+                        ui,
+                        look,
+                        "spray_speed",
+                        &mut options.spray_speed,
+                        1..=100,
+                        false,
+                    );
+                }
+                None => {
+                    ui.label("Spray width");
+                    ui.add(egui::Slider::new(&mut options.spray_width, 1..=64));
+                    ui.label("Spray speed");
+                    ui.add(egui::Slider::new(&mut options.spray_speed, 1..=100));
+                }
+            }
         }
         ToolKind::Gradient => {
             groups.next(ui);
-            ui.radio_value(&mut options.gradient_shape, GradientShape::Linear, "Linear");
-            ui.radio_value(&mut options.gradient_shape, GradientShape::Radial, "Radial");
-            egui::ComboBox::from_id_salt("dither")
-                .selected_text(options.dither.label())
-                .show_ui(ui, |ui| {
-                    for d in Dither::ALL {
-                        ui.selectable_value(&mut options.dither, d, d.label());
-                    }
-                });
+            match look {
+                Some(look) => {
+                    let name = |shape| match shape {
+                        GradientShape::Linear => "Linear",
+                        GradientShape::Radial => "Radial",
+                    };
+                    let shape = &mut options.gradient_shape;
+                    bar_fields::combo(ui, look, "gradient_shape", name(*shape), |ui| {
+                        let shapes = [GradientShape::Linear, GradientShape::Radial];
+                        bar_fields::choices(ui, shape, shapes, name)
+                    });
+                    gap(ui, CONTROL_GAP);
+                    let dither = &mut options.dither;
+                    bar_fields::combo(ui, look, "dither", dither.label(), |ui| {
+                        bar_fields::choices(ui, dither, Dither::ALL, Dither::label)
+                    });
+                }
+                None => {
+                    ui.radio_value(&mut options.gradient_shape, GradientShape::Linear, "Linear");
+                    ui.radio_value(&mut options.gradient_shape, GradientShape::Radial, "Radial");
+                    egui::ComboBox::from_id_salt("dither")
+                        .selected_text(options.dither.label())
+                        .show_ui(ui, |ui| {
+                            for d in Dither::ALL {
+                                ui.selectable_value(&mut options.dither, d, d.label());
+                            }
+                        });
+                }
+            }
             groups.next(ui);
-            ui.weak("Drag from the primary to the secondary color. Right-drag swaps them.");
+            hint(
+                ui,
+                look,
+                "Drag from the primary to the secondary color. Right-drag swaps them.",
+            );
         }
         ToolKind::Jumble => {
             groups.next(ui);
-            ui.weak("Scrambles pixels within the brush radius.");
+            hint(ui, look, "Scrambles pixels within the brush radius.");
         }
         ToolKind::Contour => {
             groups.next(ui);
-            ui.weak("Draw the outline: it closes and fills when you release.");
+            hint(
+                ui,
+                look,
+                "Draw the outline: it closes and fills when you release.",
+            );
         }
         ToolKind::Blur => {
             groups.next(ui);
-            ui.weak("Softens the pixels under the brush. Go over an area again to blur it more.");
+            hint(
+                ui,
+                look,
+                "Softens the pixels under the brush. Go over an area again to blur it more.",
+            );
         }
         ToolKind::Text => {
             groups.next(ui);
-            text_style_options(ui, editor);
+            text_style_options(ui, editor, look);
             groups.next(ui);
-            ui.weak("Click on the canvas to place text.");
+            hint(ui, look, "Click on the canvas to place text.");
         }
         ToolKind::Slice => {
             groups.next(ui);
-            ui.weak("Drag to create a slice (hitbox, pivot…). Drag the selected one to move it or its edges to resize it: changes apply from the current frame on.");
+            hint(
+                ui,
+                look,
+                "Drag to create a slice (hitbox, pivot…). Drag the selected one to move it or its edges to resize it: changes apply from the current frame on.",
+            );
         }
         _ => {}
     }
     if tool.is_selection() || tool == ToolKind::Move {
         groups.next(ui);
         let before = editor.options.rotation;
-        ui.label("Rotation:");
-        for algorithm in RotationAlgorithm::ALL {
-            ui.radio_value(&mut editor.options.rotation, algorithm, algorithm.label());
+        match look {
+            Some(look) => {
+                bar_fields::label(ui, look, "Rotation:");
+                gap(ui, LABEL_FIELD_GAP);
+                let rotation = &mut editor.options.rotation;
+                bar_fields::combo(ui, look, "rotation", rotation.label(), |ui| {
+                    bar_fields::choices(
+                        ui,
+                        rotation,
+                        RotationAlgorithm::ALL,
+                        RotationAlgorithm::label,
+                    )
+                });
+            }
+            None => {
+                ui.label("Rotation:");
+                for algorithm in RotationAlgorithm::ALL {
+                    ui.radio_value(&mut editor.options.rotation, algorithm, algorithm.label());
+                }
+            }
         }
         if editor.options.rotation != before {
             editor.refresh_floating(false);
         }
         groups.next(ui);
-        ui.weak("Drag the handles to scale, or just outside a corner to rotate. Shift keeps the proportions or snaps to 15°.");
+        hint(
+            ui,
+            look,
+            "Drag the handles to scale, or just outside a corner to rotate. Shift keeps the proportions or snaps to 15°.",
+        );
     }
     if matches!(
         tool,
@@ -407,12 +613,91 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, etch: Option<BarEtch>) {
     ) || matches!(tool, ToolKind::RectSelect | ToolKind::EllipseSelect)
     {
         groups.next(ui);
-        ui.weak("Shift: constrain");
+        hint(ui, look, "Shift: constrain");
     }
     if tool.paints() {
         groups.next(ui);
-        ui.weak("Alt+click: pick color");
+        hint(ui, look, "Alt+click: pick color");
     }
+}
+
+/// Una ayuda de la barra: con Pixel UI, en la fila de los textos del diseño; sin él, `ui.weak`.
+fn hint(ui: &mut egui::Ui, look: Option<BarLook>, text: &str) {
+    match look {
+        Some(look) => {
+            bar_fields::hint(ui, look, text);
+        }
+        None => {
+            ui.weak(text);
+        }
+    }
+}
+
+/// Una casilla de la barra: con Pixel UI, la del diseño; sin él, la de egui.
+fn check_option(ui: &mut egui::Ui, look: Option<BarLook>, checked: &mut bool, label: &str) {
+    match look {
+        Some(look) => {
+            bar_fields::checkbox(ui, look, checked, label);
+        }
+        None => {
+            ui.checkbox(checked, label);
+        }
+    }
+}
+
+/// El ícono del skin de cada modo de selección.
+fn selection_mode_icon(mode: SelectionMode) -> &'static str {
+    match mode {
+        SelectionMode::Replace => "icon.sel_replace",
+        SelectionMode::Add => "icon.sel_add",
+        SelectionMode::Subtract => "icon.sel_subtract",
+        SelectionMode::Intersect => "icon.sel_intersect",
+    }
+}
+
+/// Con Pixel UI, "Mode" y los cuatro modos como botones de ícono, como en el diseño: los marcos
+/// son los de simetría (`sym.slot`, y `sym.slot.active` el elegido; el diseño no muestra otro). Se
+/// elige uno solo, como con radios. Cada botón tiene el nombre del modo de tooltip y de nombre
+/// accesible.
+fn selection_mode_buttons(ui: &mut egui::Ui, look: BarLook, mode: &mut SelectionMode) {
+    bar_fields::label(ui, look, "Mode");
+    gap(ui, LABEL_TOGGLE_GAP);
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.x = TOGGLE_GAP;
+        for value in SelectionMode::ALL {
+            let on = *mode == value;
+            let response = pixel_ui::toggle_button(
+                ui,
+                look.skin,
+                selection_mode_icon(value),
+                value.label(),
+                on,
+                |r, color| selection_mode_shapes(r, value, color),
+            )
+            .on_hover_text(value.label());
+            if response.clicked() {
+                *mode = value;
+            }
+        }
+    });
+}
+
+/// Sin el ícono del skin: dos cuadrados que se superponen, con la parte del modo pintada.
+fn selection_mode_shapes(r: Rect, mode: SelectionMode, color: Color32) -> Vec<egui::Shape> {
+    let a = Rect::from_min_size(r.min, r.size() * 0.6);
+    let b = Rect::from_min_max(r.max - r.size() * 0.6, r.max);
+    let stroke = Stroke::new(1.0, color);
+    let fill = match mode {
+        SelectionMode::Replace => b,
+        SelectionMode::Add => a.union(b),
+        SelectionMode::Subtract => a,
+        SelectionMode::Intersect => a.intersect(b),
+    };
+    vec![
+        egui::Shape::rect_stroke(a, 0.0, stroke, StrokeKind::Inside),
+        egui::Shape::rect_stroke(b, 0.0, stroke, StrokeKind::Inside),
+        egui::Shape::rect_filled(fill.shrink(1.0), 0.0, color),
+    ]
 }
 
 /// Botones Round y Square de la forma del pincel, cuadrados de `side`. El círculo y el cuadrado
@@ -456,24 +741,45 @@ fn brush_shape_buttons(
     .inner
 }
 
-fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor) {
+/// Las opciones del texto: la fuente, cargar una y el tamaño. Con `look` (Pixel UI, en la barra),
+/// los controles del diseño; sin él (o en la ventana del texto), los de egui.
+fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
     let style = &mut editor.text_style;
     let mut fonts = vec![FontChoice::Pixel, FontChoice::Hack, FontChoice::Ubuntu];
     if let FontChoice::Custom { .. } = style.font {
         fonts.push(style.font.clone());
     }
-    egui::ComboBox::from_label("Font")
-        .selected_text(style.font.name())
-        .show_ui(ui, |ui| {
-            for font in fonts {
-                let name = font.name();
-                let selected = style.font == font;
-                if ui.selectable_label(selected, name).clicked() && !selected {
-                    style.size = if font == FontChoice::Pixel { 1 } else { 16 };
-                    style.font = font;
-                }
+    let pick = |ui: &mut egui::Ui, style: &mut cs_tools::text::TextStyle| {
+        for font in fonts {
+            let name = font.name();
+            let selected = style.font == font;
+            let clicked = match look {
+                Some(_) => ui.add(menus::choice(selected, &name)).clicked(),
+                None => ui.selectable_label(selected, name).clicked(),
+            };
+            if clicked && !selected {
+                style.size = if font == FontChoice::Pixel { 1 } else { 16 };
+                style.font = font;
             }
-        });
+        }
+    };
+    match look {
+        Some(look) => {
+            bar_fields::label(ui, look, "Font");
+            gap(ui, LABEL_FIELD_GAP);
+            let selected = style.font.name();
+            bar_fields::combo(ui, look, "font", &selected, |ui| pick(ui, style));
+        }
+        None => {
+            egui::ComboBox::from_label("Font")
+                .selected_text(style.font.name())
+                .show_ui(ui, |ui| pick(ui, style));
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if look.is_some() {
+        gap(ui, CONTROL_GAP);
+    }
     #[cfg(not(target_arch = "wasm32"))]
     if ui.button("Load font…").clicked()
         && let Some(path) = rfd::FileDialog::new()
@@ -496,11 +802,29 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor) {
             Err(e) => log::warn!("could not load font {}: {e}", path.display()),
         }
     }
-    if style.font == FontChoice::Pixel {
-        ui.add(egui::Slider::new(&mut style.size, 1..=8).text("Scale"));
-    } else {
-        ui.add(egui::Slider::new(&mut style.size, 6..=96).text("Size"));
-        ui.checkbox(&mut style.antialias, "Antialias");
+    match look {
+        Some(look) => {
+            gap(ui, CONTROL_GAP);
+            if style.font == FontChoice::Pixel {
+                bar_fields::label(ui, look, "Scale");
+                gap(ui, LABEL_FIELD_GAP);
+                bar_fields::number(ui, look, "text_scale", &mut style.size, 1..=8, false);
+            } else {
+                bar_fields::label(ui, look, "Size");
+                gap(ui, LABEL_FIELD_GAP);
+                bar_fields::number(ui, look, "text_size", &mut style.size, 6..=96, true);
+                gap(ui, CONTROL_GAP);
+                bar_fields::checkbox(ui, look, &mut style.antialias, "Antialias");
+            }
+        }
+        None => {
+            if style.font == FontChoice::Pixel {
+                ui.add(egui::Slider::new(&mut style.size, 1..=8).text("Scale"));
+            } else {
+                ui.add(egui::Slider::new(&mut style.size, 6..=96).text("Size"));
+                ui.checkbox(&mut style.antialias, "Antialias");
+            }
+        }
     }
 }
 
@@ -517,7 +841,7 @@ fn text_window(ctx: &egui::Context, editor: &mut Editor) {
         .default_width(260.0)
         .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 90.0))
         .show(ctx, |ui| {
-            text_style_options(ui, editor);
+            text_style_options(ui, editor, None);
             let Some(draft) = editor.text.as_mut() else {
                 return;
             };
@@ -608,9 +932,11 @@ const AXES_HINT: &str = "Ctrl+drag the dashed axes to move them";
 
 /// Symmetry, al final de la barra de opciones. Se arma de derecha a izquierda (la barra lo pone
 /// pegado al borde): "Center axes" si los ejes se movieron, los cuatro ejes en orden inverso y el
-/// título. En pantalla se leen │ ─ ╲ ╱. Cada botón prende o apaga solo su eje. Con `skin`
-/// (Pixel UI), los botones son las piezas `sym.slot` con su ícono.
-fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
+/// título. En pantalla se leen │ ─ ╲ ╱. Cada botón prende o apaga solo su eje. Con `look`
+/// (Pixel UI), los botones son las piezas `sym.slot` con su ícono y el título va en la fila de
+/// los textos del diseño.
+fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
+    let skin = look.map(|l| l.skin);
     let current = editor.symmetry();
     if current.axes.any() && current.center2.is_some() && ui.small_button("Center axes").clicked() {
         editor.set_symmetry(cs_core::Symmetry {
@@ -643,11 +969,15 @@ fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>)
             }
         }
     });
-    if skin.is_some() {
-        // El layout deja `item_spacing` entre los botones y el texto: se descuenta.
-        ui.add_space(SYMMETRY_LABEL_GAP - ui.spacing().item_spacing.x);
+    match look {
+        Some(look) => {
+            gap(ui, SYMMETRY_LABEL_GAP);
+            bar_fields::label(ui, look, "Symmetry");
+        }
+        None => {
+            ui.label("Symmetry");
+        }
     }
-    ui.label("Symmetry");
 }
 
 /// Un botón de prender y apagar un eje, dibujado con figuras.
@@ -2483,6 +2813,92 @@ mod tests {
             rects.sort_by(|a, b| a.left().total_cmp(&b.left()));
             rects
         }
+
+        /// Como `drawn`, con las partes de un 9-slice (que se tocan) unidas en un rect.
+        fn drawn_boxes(&self, name: &str) -> Vec<Rect> {
+            let mut boxes: Vec<Rect> = Vec::new();
+            for rect in self.drawn(name) {
+                match boxes.iter_mut().find(|b| b.intersects(rect)) {
+                    Some(b) => *b = b.union(rect),
+                    None => boxes.push(rect),
+                }
+            }
+            boxes
+        }
+
+        /// Los textos dibujados en el último frame: texto, tinta (para la fuente pixel, el rect
+        /// visible) y color.
+        fn texts(&self) -> Vec<(String, Rect, Color32)> {
+            let mut texts = Vec::new();
+            for clipped in &self.shapes {
+                collect_texts(&clipped.shape, &mut texts);
+            }
+            texts
+        }
+
+        /// El color y la tinta del primer texto `text` dibujado.
+        fn text(&self, text: &str) -> (Color32, Rect) {
+            self.texts()
+                .into_iter()
+                .find(|(t, _, _)| t == text)
+                .map(|(_, r, c)| (c, r))
+                .unwrap_or_else(|| panic!("no text {text:?} in {:?}", self.texts()))
+        }
+
+        /// Clic en el combo `text` y dos frames más: la lista se mide en el primero (invisible) y
+        /// se muestra en el segundo.
+        fn open(&mut self, text: &str) {
+            self.click(text);
+            self.frame(vec![]);
+            self.frame(vec![]);
+        }
+
+        /// Arrastre con el botón principal desde `from`, `dx` puntos a la derecha en 4 pasos.
+        fn drag(&mut self, from: Pos2, dx: f32) {
+            let press = |pos, pressed| Event::PointerButton {
+                pos,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![Event::PointerMoved(from)]);
+            self.frame(vec![press(from, true)]);
+            let mut at = from;
+            for _ in 0..4 {
+                at.x += dx / 4.0;
+                self.frame(vec![Event::PointerMoved(at)]);
+            }
+            self.frame(vec![press(at, false)]);
+            self.frame(vec![]);
+        }
+
+        /// Clic con el botón principal en `at`, en tres frames.
+        fn click_at(&mut self, at: Pos2) {
+            let press = |pressed| Event::PointerButton {
+                pos: at,
+                button: PointerButton::Primary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![Event::PointerMoved(at)]);
+            self.frame(vec![press(true)]);
+            self.frame(vec![press(false)]);
+        }
+
+        /// Escribe `text` y aprieta Enter.
+        fn type_and_enter(&mut self, text: &str) {
+            self.frame(vec![Event::Text(text.to_owned())]);
+            let key = |pressed| Event::Key {
+                key: egui::Key::Enter,
+                physical_key: None,
+                pressed,
+                repeat: false,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![key(true)]);
+            self.frame(vec![key(false)]);
+            self.frame(vec![]);
+        }
     }
 
     #[test]
@@ -2579,10 +2995,15 @@ mod tests {
             let expected = Rect::from_min_size(slot.min + Vec2::splat(2.0), Vec2::splat(11.0));
             assert_eq!(icon, vec![expected], "{name}");
         }
-        // Del texto "Symmetry" (que deja 1 px vacío después de la tinta) al primer botón, 5 px;
-        // del último al borde derecho, 3 (en el mockup, la tinta termina en la x 903, los
-        // botones van de la 909 a la 974 y el área de la app termina en la 977).
-        assert_eq!(slots[0].left() - h.rect("Symmetry").right(), 5.0);
+        // De la tinta de "Symmetry" al cuadro del primer botón, 5 px: el texto deja 1 px vacío y
+        // la pieza empieza con una columna transparente, así que entre los rects quedan 3. Del
+        // último al borde derecho, 3 (en el mockup, la tinta termina en la x 903, los cuadros
+        // van de la 909 a la 974 y el área de la app termina en la 977). Las mayúsculas, en la
+        // fila 5 de la barra (y 76).
+        assert_eq!(slots[0].left() - h.rect("Symmetry").right(), 3.0);
+        let (_, ink) = h.text("Symmetry");
+        assert_eq!(slots[0].left() + 1.0 - ink.right(), 5.0, "{ink:?}");
+        assert_eq!(ink.top(), h.bar.top() + 5.0, "{ink:?}");
         assert_eq!(h.bar.right() - slots[3].right(), 3.0, "{:?}", h.bar);
         // A 2×, igual: sin medio punto (que sería medio píxel del skin).
         let mut double = BarHarness::with_skin(1200.0, true);
@@ -2618,7 +3039,13 @@ mod tests {
     #[test]
     fn with_pixel_ui_the_bar_is_21_and_every_node_fits_inside_it() {
         let mut h = BarHarness::with_skin(800.0, true);
-        for kind in [ToolKind::Pencil, ToolKind::MagicWand, ToolKind::Text] {
+        for kind in [
+            ToolKind::Pencil,
+            ToolKind::RectSelect,
+            ToolKind::MagicWand,
+            ToolKind::Text,
+            ToolKind::Gradient,
+        ] {
             h.editor.set_tool(kind);
             h.frame(vec![]);
             h.frame(vec![]);
@@ -2631,7 +3058,324 @@ mod tests {
                     h.bar
                 );
             }
+            // Las piezas de los controles, en las 19 filas de arriba del grabado.
+            for piece in [
+                "field.combo",
+                "field.number",
+                "field.unit",
+                "field.check.on",
+                "sym.slot",
+                "sym.slot.active",
+            ] {
+                for rect in h.drawn(piece) {
+                    assert!(
+                        rect.top() >= h.bar.top() && rect.bottom() <= h.bar.bottom() - 2.0,
+                        "{kind:?}: {piece} {rect:?} out of {:?}",
+                        h.bar
+                    );
+                }
+            }
         }
+    }
+
+    /// La barra con Pixel UI y `tool`, después de dos frames (los textos y las piezas se
+    /// acomodan en el segundo).
+    fn pixel_bar(tool: ToolKind) -> BarHarness {
+        let mut h = BarHarness::with_skin(1200.0, true);
+        h.editor.set_tool(tool);
+        h.frame(vec![]);
+        h.frame(vec![]);
+        h
+    }
+
+    /// Las piezas de los modos: `sym.slot` y `sym.slot.active` a la izquierda de Symmetry.
+    fn mode_slots(h: &BarHarness) -> (Vec<Rect>, Vec<Rect>) {
+        let left_of_symmetry = |r: &Rect| r.right() < h.rect("Symmetry").left();
+        let normal = h.drawn("sym.slot").into_iter().filter(left_of_symmetry);
+        let active = h
+            .drawn("sym.slot.active")
+            .into_iter()
+            .filter(left_of_symmetry);
+        (normal.collect(), active.collect())
+    }
+
+    const MODE_ICONS: [&str; 4] = [
+        "icon.sel_replace",
+        "icon.sel_add",
+        "icon.sel_subtract",
+        "icon.sel_intersect",
+    ];
+
+    #[test]
+    fn with_pixel_ui_the_marquee_mode_is_four_icon_buttons_like_in_the_design() {
+        let h = pixel_bar(ToolKind::RectSelect);
+        let bar = h.bar;
+        // Como en el diseño (frame 4, barra desde (28,71)): la tinta de "Mode" en x 35..54 y las
+        // mayúsculas en la y 76, en el color del texto.
+        let colors = *h.skin.as_ref().unwrap().colors();
+        let (color, ink) = h.text("Mode");
+        assert_eq!(color, colors.text);
+        assert_eq!(ink.min, bar.min + Vec2::new(7.0, 5.0), "{ink:?}");
+        assert_eq!(ink.width(), 20.0);
+        // Los cuatro cuadritos: las piezas en x 60, 77, 94 y 111 y en la y 73 (la pieza tiene
+        // una columna transparente antes del cuadro, que va en 61). Replace es el elegido.
+        let (normal, active) = mode_slots(&h);
+        let expected: Vec<Rect> = [32.0, 49.0, 66.0, 83.0]
+            .map(|x| Rect::from_min_size(bar.min + Vec2::new(x, 2.0), Vec2::new(15.0, 16.0)))
+            .into();
+        assert_eq!(active, vec![expected[0]]);
+        assert_eq!(normal, expected[1..].to_vec());
+        // Cada ícono, de 11×11, en el interior de su cuadro (2 px adentro de la pieza).
+        for (icon, slot) in MODE_ICONS.into_iter().zip(&expected) {
+            let at = Rect::from_min_size(slot.min + Vec2::splat(2.0), Vec2::splat(11.0));
+            assert_eq!(h.drawn(icon), vec![at], "{icon}");
+        }
+        // Un botón por modo, con su nombre; ya no están los radios.
+        for mode in SelectionMode::ALL {
+            assert_eq!(h.rect(mode.label()).size(), Vec2::new(15.0, 16.0));
+            let radio_text = h.texts().into_iter().any(|(t, _, _)| t == mode.label());
+            assert!(!radio_text, "{mode:?}: no radio text");
+        }
+        // Del último cuadro al grupo de Rotation, el aire de entre grupos.
+        assert_eq!(h.rect("Rotation:").left() - expected[3].right(), 14.0);
+    }
+
+    #[test]
+    fn with_pixel_ui_clicking_a_mode_icon_picks_that_mode_only() {
+        let mut h = pixel_bar(ToolKind::RectSelect);
+        assert_eq!(h.editor.options.selection_mode, SelectionMode::Replace);
+        let subtract = SelectionMode::Subtract.label();
+        let at = h.rect(subtract);
+        h.click(subtract);
+        h.frame(vec![]);
+        assert_eq!(h.editor.options.selection_mode, SelectionMode::Subtract);
+        // El marco activo pasa al botón elegido; los otros tres, normales.
+        let (normal, active) = mode_slots(&h);
+        assert_eq!(active.len(), 1);
+        assert_eq!(active[0].left(), at.left().round());
+        assert_eq!(normal.len(), 3);
+        // Otro clic en el mismo no lo apaga: siempre hay un modo, como con radios.
+        h.click(subtract);
+        assert_eq!(h.editor.options.selection_mode, SelectionMode::Subtract);
+        h.click(SelectionMode::Intersect.label());
+        assert_eq!(h.editor.options.selection_mode, SelectionMode::Intersect);
+    }
+
+    #[test]
+    fn with_pixel_ui_the_mode_buttons_have_the_mode_name_as_tooltip() {
+        let mut h = pixel_bar(ToolKind::MagicWand);
+        let add = SelectionMode::Add.label();
+        // El botón no tiene texto: el nombre aparece solo en el tooltip.
+        let drawn = |h: &BarHarness| h.texts().into_iter().any(|(t, _, _)| t == add);
+        assert!(!drawn(&h), "no text before hovering");
+        let at = h.rect(add).center();
+        h.frame(vec![Event::PointerMoved(at)]);
+        for _ in 0..20 {
+            h.frame(vec![]);
+        }
+        assert!(drawn(&h), "tooltip {add:?} in {:?}", h.texts());
+    }
+
+    #[test]
+    fn with_pixel_ui_brush_size_is_the_number_field_with_its_px_unit() {
+        let mut h = pixel_bar(ToolKind::Pencil);
+        let bar = h.bar;
+        // "Brush Size" en x 227..274 del diseño (7 desde el borde) y, 3 px después de la tinta,
+        // el campo de x 278 a 304 y la unidad "px" hasta la 319: 42 de ancho en total, de la y
+        // 73 a la 88.
+        let (_, ink) = h.text("Brush Size");
+        assert_eq!(ink.min, bar.min + Vec2::new(7.0, 5.0), "{ink:?}");
+        assert_eq!(ink.width(), 48.0);
+        let field = h.drawn_boxes("field.number");
+        let left = ink.right() + 3.0;
+        assert_eq!(
+            field,
+            vec![Rect::from_min_size(
+                pos2(left, bar.top() + 2.0),
+                Vec2::new(27.0, 16.0)
+            )]
+        );
+        let unit = h.drawn("field.unit");
+        assert_eq!(
+            unit,
+            vec![Rect::from_min_size(
+                pos2(left + 25.0, bar.top() + 2.0),
+                Vec2::new(17.0, 16.0)
+            )]
+        );
+        // El número, en la fila de los textos (los dígitos miden 6, una fila menos que las
+        // mayúsculas, y apoyan en la misma línea: terminan en la fila 11) y adentro del blanco.
+        let size = h.editor.options.brush_size;
+        let (color, digits) = h.text(&size.to_string());
+        assert_eq!(color, h.skin.as_ref().unwrap().colors().text);
+        assert_eq!(digits.bottom(), bar.top() + 12.0, "{digits:?}");
+        assert!(digits.left() > left + 1.0 && digits.right() < left + 26.0);
+        // Arrastrar a la derecha lo agranda.
+        h.drag(field[0].center(), 40.0);
+        let dragged = h.editor.options.brush_size;
+        assert!(dragged > size, "{size} -> {dragged}");
+        // Un clic lo deja escribir: el número escrito reemplaza al de antes.
+        h.click_at(field[0].center());
+        h.type_and_enter("12");
+        assert_eq!(h.editor.options.brush_size, 12);
+        // Fuera del rango, el máximo.
+        h.click_at(field[0].center());
+        h.type_and_enter("500");
+        assert_eq!(h.editor.options.brush_size, MAX_BRUSH_SIZE);
+    }
+
+    #[test]
+    fn with_pixel_ui_fields_without_a_unit_have_no_px() {
+        let h = pixel_bar(ToolKind::MagicWand);
+        // Tolerance no tiene unidad: el campo solo.
+        let (_, ink) = h.text("Tolerance");
+        let field = h.drawn_boxes("field.number");
+        assert_eq!(field.len(), 1, "{field:?}");
+        assert_eq!(field[0].left(), ink.right() + 3.0);
+        assert_eq!(field[0].size(), Vec2::new(27.0, 16.0));
+        assert_eq!(h.drawn("field.unit"), vec![]);
+        // Spray: el ancho en px y la velocidad sin unidad.
+        let h = pixel_bar(ToolKind::Spray);
+        assert_eq!(
+            h.drawn_boxes("field.number").len(),
+            3,
+            "brush, width and speed"
+        );
+        assert_eq!(h.drawn("field.unit").len(), 2, "brush and width");
+    }
+
+    #[test]
+    fn with_pixel_ui_a_combo_is_the_field_combo_and_picking_an_option_works() {
+        let mut h = pixel_bar(ToolKind::Gradient);
+        let bar = h.bar;
+        // La forma y el tramado: dos combos del diseño, de la y 73 a la 88.
+        let combos = h.drawn_boxes("field.combo");
+        assert_eq!(combos.len(), 2, "{combos:?}");
+        // El texto, 6 px adentro y en la fila de los textos; 5 px de su tinta a la parte de la
+        // flecha, las últimas 10 columnas (en el diseño, x 128..212, tinta en 134..197).
+        let (_, ink) = h.text("Linear");
+        let combo = combos[0];
+        assert_eq!(combo.top(), bar.top() + 2.0);
+        assert_eq!(combo.height(), 16.0);
+        assert_eq!(ink.left() - combo.left(), 6.0);
+        assert_eq!(ink.top(), bar.top() + 5.0);
+        assert_eq!(combo.right() - ink.right(), 5.0 + 10.0);
+        // Un clic abre la lista en el panel de los menús, colgada del combo.
+        assert!(!h.has("Radial"), "closed: only the chosen one");
+        h.open("Linear");
+        assert!(h.has("Radial"), "{:?}", h.nodes);
+        let panel = h.drawn_boxes("menu.panel");
+        assert_eq!(panel.len(), 1, "{panel:?}");
+        assert_eq!(panel[0].left_top(), combo.left_bottom());
+        assert!(panel[0].width() >= combo.width());
+        h.click("Radial");
+        assert_eq!(h.editor.options.gradient_shape, GradientShape::Radial);
+        for _ in 0..10 {
+            h.frame(vec![]);
+        }
+        assert_eq!(h.drawn_boxes("menu.panel"), vec![], "closed after picking");
+        assert!(h.has("Radial") && !h.has("Linear"));
+        // El tramado, igual.
+        let other = Dither::ALL
+            .into_iter()
+            .find(|d| *d != h.editor.options.dither)
+            .unwrap();
+        h.open(h.editor.options.dither.label());
+        h.click(other.label());
+        assert_eq!(h.editor.options.dither, other);
+    }
+
+    #[test]
+    fn with_pixel_ui_the_radio_groups_are_combos_too() {
+        let mut h = pixel_bar(ToolKind::MagicWand);
+        assert_eq!(h.drawn_boxes("field.combo").len(), 2, "sample and rotation");
+        h.open("Layer");
+        h.click("All layers");
+        assert!(h.editor.options.sample_all);
+        let current = h.editor.options.rotation;
+        h.open(current.label());
+        let other = RotationAlgorithm::ALL
+            .into_iter()
+            .find(|r| *r != current)
+            .unwrap();
+        h.click(other.label());
+        assert_eq!(h.editor.options.rotation, other);
+    }
+
+    #[test]
+    fn with_pixel_ui_pixel_perfect_is_the_bar_checkbox_and_a_click_toggles_it() {
+        let mut h = pixel_bar(ToolKind::Pencil);
+        let bar = h.bar;
+        // Sin marcar: la pieza no está dibujada y va el cuadro de respaldo.
+        h.editor.options.pixel_perfect = false;
+        h.frame(vec![]);
+        assert_eq!(h.drawn("field.check.on"), vec![], "unchecked");
+        let before = h.rect("Pixel Perfect");
+        h.click("Pixel Perfect");
+        h.frame(vec![]);
+        assert!(h.editor.options.pixel_perfect);
+        // Marcada: la casilla del diseño, 13×14 de la y 74 a la 87, 5 px después del control
+        // anterior (en el diseño, del campo; acá, de los botones de forma), y la tinta del texto
+        // 3 px después, en la fila de los textos.
+        let check = h.drawn("field.check.on");
+        let at = Rect::from_min_size(pos2(before.left(), bar.top() + 3.0), Vec2::new(13.0, 14.0));
+        assert_eq!(check, vec![at]);
+        assert_eq!(check[0].left() - h.rect("Square").right(), 5.0);
+        let (_, ink) = h.text("Pixel Perfect");
+        assert_eq!(ink.left() - check[0].right(), 3.0);
+        assert_eq!(ink.top(), bar.top() + 5.0);
+        h.click("Pixel Perfect");
+        h.frame(vec![]);
+        assert!(!h.editor.options.pixel_perfect);
+        assert_eq!(h.drawn("field.check.on"), vec![]);
+    }
+
+    #[test]
+    fn with_pixel_ui_every_text_of_the_bar_is_in_the_design_row() {
+        for tool in [
+            ToolKind::Pencil,
+            ToolKind::RectSelect,
+            ToolKind::MagicWand,
+            ToolKind::Text,
+            ToolKind::Gradient,
+            ToolKind::Rectangle,
+        ] {
+            let h = pixel_bar(tool);
+            // "Load font…" es un botón de egui: el diseño no tiene botones.
+            for (text, ink, _) in h.texts().into_iter().filter(|(t, _, _)| t != "Load font…") {
+                // Las mayúsculas en la fila 5 (los textos sin mayúsculas, como los números o
+                // "px", no bajan de ahí).
+                assert!(ink.top() >= h.bar.top() + 5.0, "{tool:?}: {text:?} {ink:?}");
+                let caps = text.chars().any(|c| c.is_ascii_uppercase());
+                if caps {
+                    assert_eq!(ink.top(), h.bar.top() + 5.0, "{tool:?}: {text:?} {ink:?}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn without_pixel_ui_the_bar_keeps_the_egui_controls() {
+        let mut h = BarHarness::new(1200.0);
+        assert!(h.has("Brush size") && h.has("Pixel-perfect"));
+        assert!(!h.has("Brush Size") && !h.has("Pixel Perfect"));
+        // El slider del pincel (su texto de valor) sigue ahí.
+        h.editor.set_tool(ToolKind::RectSelect);
+        h.frame(vec![]);
+        // Los cuatro radios con su texto, y Rotation con los suyos.
+        for mode in SelectionMode::ALL {
+            assert!(
+                h.texts().iter().any(|(t, _, _)| t == mode.label()),
+                "{mode:?}"
+            );
+        }
+        h.click(SelectionMode::Add.label());
+        assert_eq!(h.editor.options.selection_mode, SelectionMode::Add);
+        h.editor.set_tool(ToolKind::Gradient);
+        h.frame(vec![]);
+        assert!(h.has("Linear") && h.has("Radial"), "both radios");
+        // Ninguna pieza del skin: no hay skin.
+        assert!(h.skin.is_none());
     }
 
     #[test]
@@ -2663,7 +3407,7 @@ mod tests {
     }
 
     #[test]
-    fn with_pixel_ui_the_bar_has_etched_separators_and_no_egui_lines() {
+    fn with_pixel_ui_the_bar_has_one_etched_separator_and_no_egui_lines() {
         let mut h = BarHarness::with_skin(1200.0, true);
         let dark = h.skin.as_ref().unwrap().colors().canvas;
         for kind in [ToolKind::Pencil, ToolKind::MagicWand, ToolKind::Rectangle] {
@@ -2671,13 +3415,14 @@ mod tests {
             h.frame(vec![]);
             h.frame(vec![]);
             assert_eq!(h.separator_lines(), 0, "{kind:?}");
-            // Los verticales: el de Symmetry y uno entre cada par de grupos.
+            // Un solo vertical, el de Symmetry: el diseño (frame 4) no tiene líneas entre los
+            // grupos de opciones, solo aire.
             let vertical = h
                 .colored_rects()
                 .into_iter()
                 .filter(|(c, r)| *c == dark && r.width() == 1.0 && r.height() > 1.0)
                 .count();
-            assert!(vertical >= 2, "{kind:?}: {vertical}");
+            assert_eq!(vertical, 1, "{kind:?}");
         }
         // Sin Pixel UI, los de siempre.
         let h = BarHarness::new(1200.0);

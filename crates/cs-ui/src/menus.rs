@@ -745,6 +745,76 @@ pub(crate) fn submenu<R>(
     InnerResponse::new(open.map(|i| i.inner), response)
 }
 
+/// La lista de un combo pixel (los de la barra de opciones): el mismo panel de los menús, colgado
+/// debajo de `anchor` (lo dibujado del combo) y al menos de su ancho. Se abre y se cierra con los
+/// clics en `response`, como `Popup::menu`; elegir una fila la cierra.
+pub(crate) fn dropdown<R>(
+    look: &MenuLook,
+    response: &Response,
+    anchor: Rect,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    let config = menu::MenuConfig::new().style(pixel_menu_style);
+    let min_width = anchor.width() - PANEL_MARGIN.sum().x;
+    Popup::menu(response)
+        .anchor(anchor)
+        .align(RectAlign::BOTTOM_START)
+        .align_alternatives(&[RectAlign::TOP_START])
+        .gap(0.0)
+        .frame(Frame::NONE.inner_margin(PANEL_MARGIN))
+        .style(pixel_menu_style)
+        .info(
+            UiStackInfo::new(UiKind::Menu)
+                .with_tag_value(menu::MenuConfig::MENU_CONFIG_TAG, config),
+        )
+        .show(|ui| {
+            ui.set_min_width(min_width);
+            panel(ui, look, None, content)
+        })
+        .map(|i| i.inner)
+}
+
+/// Una opción de una lista, como `Button::selectable(selected, label)`.
+pub(crate) struct Choice<'a> {
+    selected: bool,
+    label: &'a str,
+}
+
+/// Una opción de una lista: en un panel pixel, una fila como las de los menús, en `selection`
+/// si es la elegida (o tiene el puntero encima); si no, la opción de egui.
+pub(crate) fn choice(selected: bool, label: &str) -> Choice<'_> {
+    Choice { selected, label }
+}
+
+impl Widget for Choice<'_> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        let Some(look) = look(ui) else {
+            return egui::Button::selectable(self.selected, self.label).ui(ui);
+        };
+        let enabled = ui.is_enabled();
+        let text_color = if enabled {
+            look.colors.text
+        } else {
+            look.colors.text_dim
+        };
+        let label = galley(ui, &shown(self.label), text_color);
+        let (rect, response) = row(ui, &label, 0.0, self.label);
+        let selected = self.selected;
+        response.widget_info(|| {
+            WidgetInfo::selected(WidgetType::SelectableLabel, enabled, selected, self.label)
+        });
+        if ui.is_rect_visible(rect) {
+            let ppp = ui.ctx().pixels_per_point();
+            let mut shapes = row_shapes(ui, &look, rect, &label, text_color, &response);
+            if selected && !response.hovered() {
+                shapes.insert(0, row_highlight(&look, rect, ppp));
+            }
+            row_painter(ui, &look).extend(shapes);
+        }
+        response
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
