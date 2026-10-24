@@ -420,13 +420,13 @@ fn with_pixel_ui_the_canvas_has_the_skin_canvas_color() {
 }
 
 #[test]
-fn with_pixel_ui_the_options_bar_is_19_high() {
+fn with_pixel_ui_the_options_bar_is_21_high() {
     let view = ViewSettings {
         pixel_ui: true,
         ..Default::default()
     };
     let h = LayoutHarness::new(view, true);
-    assert_eq!(h.panel("tool_options").height(), 19.0);
+    assert_eq!(h.panel("tool_options").height(), 21.0);
     // Sin Pixel UI, la de siempre.
     assert_eq!(LayoutHarness::editor().panel("tool_options").height(), 32.0);
 }
@@ -446,11 +446,11 @@ fn with_pixel_ui_the_tabs_and_the_options_bar_end_in_etched_lines() {
     assert_eq!(tabs.bottom(), options.top(), "the bar right under the tabs");
     assert_eq!(
         options.height(),
-        19.0,
-        "the mockup's 19: 17 rows and the etched line"
+        21.0,
+        "the mockup's 21: 19 rows and the etched line"
     );
     let width = h.screen().x_range();
-    // Las dos líneas del mockup: debajo de las pestañas (y 69/70) y abajo de la barra (88/89).
+    // Las dos líneas del mockup: debajo de las pestañas (y 69/70) y abajo de la barra (90/91 en el frame 4).
     // La de las pestañas se corta debajo de la activa (la tapa su caja): va en dos tramos.
     let active = h.button("Untitled");
     for (panel, spans) in [
@@ -970,7 +970,7 @@ fn with_pixel_ui_the_workspace_box_is_5_px_from_its_neighbours() {
     let toolbar = union(&h.drawn("toolbar.box")).expect("the toolbar box");
     // El mockup: la caja de la barra de íconos termina en la x 59, quedan 5 px de fondo
     // (60..64) y la del área de trabajo empieza en la 65. Arriba, las dos en la fila 95, 5 px
-    // debajo del grabado de la barra de opciones (88/89).
+    // debajo del grabado de la barra de opciones (90/91 en el frame 4).
     assert_eq!(
         workspace.left() - toolbar.right(),
         5.0,

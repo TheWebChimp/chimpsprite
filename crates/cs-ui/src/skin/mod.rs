@@ -561,15 +561,20 @@ mod tests {
         let alpha = |piece: &PieceImage, x: u32, y: u32| {
             piece.rgba[((y * piece.size[0] + x) * 4 + 3) as usize]
         };
+        // Los botones agrandados del mockup (frame 4): 15×16.
         for name in ["sym.slot", "sym.slot.active"] {
             let slot = &data.pieces[name];
-            assert_eq!((slot.size, slot.center), ([13, 14], None), "{name}");
-            // El borde del cuadro de 11×11 empieza en (1,1); su interior (el del ícono) está vacío.
+            assert_eq!((slot.size, slot.center), ([15, 16], None), "{name}");
+            // El borde del cuadro de 13×13 empieza en (1,1); su interior (el del ícono, de 11×11
+            // desde (2,2)) está vacío.
             assert_eq!(alpha(slot, 2, 1), 255, "{name}: top border");
             assert_eq!(alpha(slot, 1, 2), 255, "{name}: left border");
-            assert_eq!(alpha(slot, 6, 6), 0, "{name}: empty inside");
+            for (x, y) in [(2, 2), (7, 7), (12, 12)] {
+                assert_eq!(alpha(slot, x, y), 0, "{name}: empty inside at ({x},{y})");
+            }
+            assert_eq!(alpha(slot, 13, 13), 255, "{name}: bottom right border");
         }
-        // Lo dibujado de cada ícono de 9×9 es su eje: una línea de 9 píxeles.
+        // Lo dibujado de cada ícono de 11×11 es su eje: una línea de 11 píxeles.
         for name in [
             "icon.sym_vertical",
             "icon.sym_horizontal",
@@ -577,14 +582,14 @@ mod tests {
             "icon.sym_diag_up",
         ] {
             let icon = &data.pieces[name];
-            assert_eq!((icon.size, icon.center), ([9, 9], None), "{name}");
-            for y in 0..9 {
-                for x in 0..9 {
+            assert_eq!((icon.size, icon.center), ([11, 11], None), "{name}");
+            for y in 0..11 {
+                for x in 0..11 {
                     let on_axis = match name {
-                        "icon.sym_vertical" => x == 4,
-                        "icon.sym_horizontal" => y == 4,
+                        "icon.sym_vertical" => x == 5,
+                        "icon.sym_horizontal" => y == 5,
                         "icon.sym_diag_down" => x == y,
-                        _ => x + y == 8,
+                        _ => x + y == 10,
                     };
                     assert_eq!(alpha(icon, x, y) == 255, on_axis, "{name} ({x},{y})");
                 }

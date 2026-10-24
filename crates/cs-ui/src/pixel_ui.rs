@@ -50,11 +50,11 @@ pub const TOOLBAR_TOP_MARGIN: i8 = 5;
 /// `.active` cuando están prendidos.
 const TOGGLE_PIECE: &str = "sym.slot";
 /// Tamaño del botón de prender y apagar de respaldo (el de la pieza del mockup).
-const FALLBACK_TOGGLE_SIZE: Vec2 = Vec2::new(13.0, 14.0);
-/// Esquina del ícono dentro de `sym.slot`: el interior del cuadro de 11×11 empieza en (2,2).
+const FALLBACK_TOGGLE_SIZE: Vec2 = Vec2::new(15.0, 16.0);
+/// Esquina del ícono dentro de `sym.slot`: el interior del cuadro de 13×13 empieza en (2,2).
 const TOGGLE_ICON_OFFSET: Vec2 = Vec2::new(2.0, 2.0);
 /// Lado del interior de `sym.slot`, donde va el ícono.
-const TOGGLE_ICON_SIZE: Vec2 = Vec2::new(9.0, 9.0);
+const TOGGLE_ICON_SIZE: Vec2 = Vec2::new(11.0, 11.0);
 
 /// Bordes del 9-slice de la pieza en puntos (izquierda, arriba, derecha, abajo). Con la escala
 /// entera de Pixel UI, un punto es un píxel del skin.
@@ -572,6 +572,9 @@ pub fn toggle_button(
     if !ui.is_rect_visible(rect) {
         return response;
     }
+    // Centrado en la fila puede caer en medio punto (16 en 19): se dibuja en puntos enteros, que
+    // con la escala entera de Pixel UI son píxeles del skin enteros.
+    let rect = Rect::from_min_size(rect.min.round(), size);
     let colors = *skin.colors();
     let ppp = ui.ctx().pixels_per_point();
     let state = if on {
@@ -1077,7 +1080,7 @@ mod tests {
         let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
         let id = |name: &str| skin.piece(name, WidgetState::Normal).unwrap().texture.id();
         let (rect, _, textures) = toggle(&ctx, &skin, "icon.sym_vertical", false, vec![]);
-        assert_eq!(rect.size(), vec2(13.0, 14.0), "the piece size");
+        assert_eq!(rect.size(), vec2(15.0, 16.0), "the piece size");
         assert!(textures.contains(&id("sym.slot")));
         assert!(textures.contains(&id("icon.sym_vertical")));
         let (_, _, textures) = toggle(&ctx, &skin, "icon.sym_vertical", true, vec![]);
@@ -1095,7 +1098,7 @@ mod tests {
         for skin in &skins {
             // Sin el ícono (`icon.nope`), dibuja el respaldo.
             let (rect, _, _) = toggle(&ctx, skin, "icon.nope", false, vec![]);
-            assert_eq!(rect.size(), vec2(13.0, 14.0));
+            assert_eq!(rect.size(), vec2(15.0, 16.0));
             let at = rect.center();
             toggle(
                 &ctx,

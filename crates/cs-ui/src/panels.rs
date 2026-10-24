@@ -106,12 +106,17 @@ pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
 /// Alto de la barra de opciones, con su margen: el mismo con todas las herramientas, así el lienzo
 /// no se mueve al cambiar de herramienta.
 pub const OPTIONS_BAR_HEIGHT: f32 = 32.0;
-/// Alto de la barra de opciones con Pixel UI: la del mockup, de 19 px de skin. Son 17 filas de
-/// controles y, abajo, el separador grabado (la línea grabada de arriba es la de las pestañas).
-pub const PIXEL_OPTIONS_BAR_HEIGHT: f32 = 19.0;
+/// Alto de la barra de opciones con Pixel UI: la del mockup (frame 4), de 21 px de skin. Son 19
+/// filas de controles y, abajo, el separador grabado (la línea grabada de arriba es la de las
+/// pestañas). Los botones de simetría, de 16, van 2 filas abajo del borde y 1 arriba del grabado.
+pub const PIXEL_OPTIONS_BAR_HEIGHT: f32 = 21.0;
 /// Aire entre un separador grabado de la barra y lo que tiene a cada lado: en el mockup, 5 px
 /// entre el brillo y "Symmetry".
 const ETCHED_GAP: f32 = 5.0;
+/// Con Pixel UI, como en el mockup (frame 4): del texto "Symmetry" al primer botón de simetría
+/// y del último botón al borde derecho de la barra.
+const SYMMETRY_LABEL_GAP: f32 = 5.0;
+const PIXEL_BAR_RIGHT: i8 = 3;
 /// Alto de los controles de la barra con Pixel UI (sliders, campos, casillas y botones).
 const PIXEL_CONTROL_HEIGHT: f32 = 13.0;
 
@@ -126,13 +131,19 @@ pub fn options_bar_height(skin: Option<&Skin>) -> f32 {
 }
 
 /// El marco del panel de la barra: con Pixel UI, sin margen vertical (los controles de 13 y el
-/// texto de la fuente pixel ocupan el alto justo) y con lugar abajo para el separador grabado;
-/// sin él, el de siempre.
+/// texto de la fuente pixel ocupan el alto justo), con `PIXEL_BAR_RIGHT` a la derecha (los
+/// botones de simetría casi contra el borde, como en el mockup) y con lugar abajo para el
+/// separador grabado; sin él, el de siempre.
 pub fn options_bar_frame(style: &egui::Style, skin: Option<&Skin>) -> egui::Frame {
     let frame = egui::Frame::side_top_panel(style);
     match skin {
         Some(_) => frame
-            .inner_margin(egui::Margin::symmetric(8, 0))
+            .inner_margin(egui::Margin {
+                left: 8,
+                right: PIXEL_BAR_RIGHT,
+                top: 0,
+                bottom: 0,
+            })
             .outer_margin(egui::Margin {
                 bottom: pixel_ui::ETCHED_SIZE as i8,
                 ..Default::default()
@@ -220,7 +231,7 @@ pub fn tool_options_bar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Sk
         });
     });
     // El separador grabado de abajo, a todo el ancho, después de los controles: queda encima si
-    // alguno se pasa de las 17 filas.
+    // alguno se pasa de las 19 filas.
     if let Some(etch) = etch {
         ui.painter().add(pixel_ui::etched_hline(
             bar.x_range(),
@@ -632,6 +643,10 @@ fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>)
             }
         }
     });
+    if skin.is_some() {
+        // El layout deja `item_spacing` entre los botones y el texto: se descuenta.
+        ui.add_space(SYMMETRY_LABEL_GAP - ui.spacing().item_spacing.x);
+    }
     ui.label("Symmetry");
 }
 
@@ -2288,6 +2303,27 @@ mod tests {
                 .map(|(_, r)| *r)
                 .unwrap_or_else(|| panic!("no {text:?} in {:?}", self.nodes))
         }
+
+        /// Dónde se dibujó la pieza `name` del skin, de izquierda a derecha.
+        fn drawn(&self, name: &str) -> Vec<Rect> {
+            let skin = self.skin.as_ref().expect("with Pixel UI");
+            let id = skin
+                .piece(name, crate::skin::WidgetState::Normal)
+                .unwrap()
+                .texture
+                .id();
+            let mut meshes = Vec::new();
+            for clipped in &self.shapes {
+                collect_meshes(&clipped.shape, &mut meshes);
+            }
+            let mut rects: Vec<Rect> = meshes
+                .into_iter()
+                .filter(|(t, _)| *t == id)
+                .map(|(_, r)| r)
+                .collect();
+            rects.sort_by(|a, b| a.left().total_cmp(&b.left()));
+            rects
+        }
     }
 
     #[test]
@@ -2357,10 +2393,46 @@ mod tests {
     #[test]
     fn with_pixel_ui_the_symmetry_buttons_are_the_skin_pieces_and_toggle_their_axis() {
         let mut h = BarHarness::with_skin(1200.0, true);
-        let [vertical, horizontal, ..] = SYMMETRY_AXES.map(|(_, name)| name);
-        // Los botones miden lo que la pieza `sym.slot` y la forma del pincel, 13×13.
-        assert_eq!(h.rect(vertical).size(), Vec2::new(13.0, 14.0));
+        let [vertical, horizontal, down, up] = SYMMETRY_AXES.map(|(_, name)| name);
+        // Los botones miden lo que la pieza `sym.slot` (15×16, la del mockup) y la forma del
+        // pincel, 13×13.
+        assert_eq!(h.rect(vertical).size(), Vec2::new(15.0, 16.0));
         assert_eq!(h.rect("Round").size(), Vec2::splat(13.0));
+        // En orden y del mismo tamaño, con 2 de aire entre uno y otro.
+        let buttons = [vertical, horizontal, down, up].map(|name| h.rect(name));
+        for pair in buttons.windows(2) {
+            assert_eq!(pair[1].left() - pair[0].right(), 2.0, "{pair:?}");
+        }
+        // Como en el mockup (frame 4): un botón cada 17 px, 2 filas debajo del borde de arriba
+        // de la barra y 1 arriba del grabado de abajo, en puntos enteros (con la escala entera,
+        // píxeles del skin enteros). Los íconos, de 11×11, 2 px adentro.
+        let slots = h.drawn("sym.slot");
+        assert_eq!(slots.len(), 4, "{slots:?}");
+        for pair in slots.windows(2) {
+            assert_eq!(pair[1].left() - pair[0].right(), 2.0, "{pair:?}");
+        }
+        let names = ["vertical", "horizontal", "diag_down", "diag_up"];
+        for (slot, name) in slots.iter().zip(names) {
+            assert_eq!(slot.top(), h.bar.top() + 2.0, "{slot:?} in {:?}", h.bar);
+            assert_eq!(slot.bottom(), h.bar.bottom() - 2.0 - 1.0, "{slot:?}");
+            assert_eq!(slot.left(), slot.left().round(), "{slot:?}");
+            let icon = h.drawn(&format!("icon.sym_{name}"));
+            let expected = Rect::from_min_size(slot.min + Vec2::splat(2.0), Vec2::splat(11.0));
+            assert_eq!(icon, vec![expected], "{name}");
+        }
+        // Del texto "Symmetry" (que deja 1 px vacío después de la tinta) al primer botón, 5 px;
+        // del último al borde derecho, 3 (en el mockup, la tinta termina en la x 903, los
+        // botones van de la 909 a la 974 y el área de la app termina en la 977).
+        assert_eq!(slots[0].left() - h.rect("Symmetry").right(), 5.0);
+        assert_eq!(h.bar.right() - slots[3].right(), 3.0, "{:?}", h.bar);
+        // A 2×, igual: sin medio punto (que sería medio píxel del skin).
+        let mut double = BarHarness::with_skin(1200.0, true);
+        double.ctx.set_pixels_per_point(2.0);
+        double.frame(vec![]);
+        double.frame(vec![]);
+        for slot in double.drawn("sym.slot") {
+            assert_eq!(slot.top(), double.bar.top() + 2.0, "{slot:?}");
+        }
         h.click(vertical);
         h.click(horizontal);
         let axes = h.editor.symmetry().axes;
@@ -2385,13 +2457,13 @@ mod tests {
     }
 
     #[test]
-    fn with_pixel_ui_the_bar_is_19_and_every_node_fits_inside_it() {
+    fn with_pixel_ui_the_bar_is_21_and_every_node_fits_inside_it() {
         let mut h = BarHarness::with_skin(800.0, true);
         for kind in [ToolKind::Pencil, ToolKind::MagicWand, ToolKind::Text] {
             h.editor.set_tool(kind);
             h.frame(vec![]);
             h.frame(vec![]);
-            assert_eq!(h.bar.height(), 19.0, "{kind:?}");
+            assert_eq!(h.bar.height(), 21.0, "{kind:?}");
             assert!(h.nodes.len() > 2, "{kind:?}: {:?}", h.nodes);
             for (text, rect) in &h.nodes {
                 assert!(
@@ -2410,9 +2482,9 @@ mod tests {
         let (dark, light) = (colors.canvas, colors.highlight);
         let rects = h.colored_rects();
         let bar = h.bar;
-        assert_eq!(bar.height(), 19.0);
-        // Abajo, a todo el ancho: la línea oscura en la fila 17 de la barra y el brillo en la 18
-        // (en el mockup, y 88 y 89 de la barra de y 71..89).
+        assert_eq!(bar.height(), 21.0);
+        // Abajo, a todo el ancho: la línea oscura en la fila 19 de la barra y el brillo en la 20
+        // (en el mockup, frame 4, y 90 y 91 de la barra de y 71..91).
         let line = bar.bottom() - 2.0;
         let x = bar.x_range();
         for (color, y) in [(dark, line), (light, line + 1.0)] {

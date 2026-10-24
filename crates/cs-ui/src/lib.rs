@@ -912,7 +912,7 @@ impl ChimpApp {
     /// Paneles del editor (cuando hay un documento activo). Devuelve el rect del lienzo.
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
         let skin = self.pixel.skin();
-        // La barra de opciones, a todo el ancho debajo de las pestañas: 19 de alto con Pixel UI,
+        // La barra de opciones, a todo el ancho debajo de las pestañas: 21 de alto con Pixel UI,
         // con el separador grabado abajo.
         panels::options_bar_panel(ui.style(), skin).show(ui, |ui| {
             ui.add_enabled_ui(!modal, |ui| {

@@ -53,10 +53,11 @@ oculta.
 - **Caja de la barra:** `toolbar.box` mide 27×7, con centro (3,3,21,1): la línea redondeada
   (189,164,153) que rodea la columna, con 1 px de aire hasta los botones. Se estira en vertical.
   El panel mide 5 + el ancho de la caja + 5.
-- **Botones de simetría:** `sym.slot` (eje apagado) y `sym.slot.active` (prendido) miden 13×14,
-  sin centro. El cuadro de 11×11 empieza en (1,1) y su interior de 9×9, transparente, en (2,2):
-  ahí va el ícono `icon.sym_vertical`, `icon.sym_horizontal`, `icon.sym_diag_down` o
-  `icon.sym_diag_up` (9×9, fondo transparente).
+- **Botones de simetría:** `sym.slot` (eje apagado) y `sym.slot.active` (prendido) miden 15×16,
+  sin centro (los agrandados del mockup, frame 4). El cuadro de 13×13 empieza en (1,1) y su
+  interior de 11×11, transparente, en (2,2): ahí va el ícono `icon.sym_vertical`,
+  `icon.sym_horizontal`, `icon.sym_diag_down` o `icon.sym_diag_up` (11×11, fondo
+  transparente). En la barra van uno cada 17 px.
 - **Pestañas:** `tab` (inactiva, café) mide 7×15 y `tab.active` (clara) 7×17, las dos con
   centro (3,0,1,alto): se estiran solo a lo ancho. Las esquinas de arriba son redondeadas y
   abajo quedan abiertas. La activa baja sobre las dos filas de la línea grabada de abajo y la
