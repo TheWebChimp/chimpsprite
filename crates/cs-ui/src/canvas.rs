@@ -83,6 +83,8 @@ pub struct CanvasView {
     /// Con Pixel UI, la ventana del skin alrededor de cada artboard (`None`: el borde y la
     /// etiqueta de siempre); lo pone la app en cada frame.
     pub artboard_window: Option<ArtboardWindow>,
+    /// Píxeles físicos por punto del último frame: [`Self::origin`] se alinea a ellos.
+    ppp: f32,
 }
 
 /// Color alrededor de los artboards: `canvas` del skin con Pixel UI; si no, el del tema.
@@ -178,14 +180,21 @@ impl Default for CanvasView {
             background: theme::CANVAS_BG,
             pixel_rulers: None,
             artboard_window: None,
+            ppp: 1.0,
         }
     }
 }
 
 impl CanvasView {
-    /// Posición en pantalla del origen del mundo.
+    /// Posición en pantalla del origen del mundo, alineada a píxeles físicos (`self.ppp`).
+    ///
+    /// Es el único lugar donde se redondea la vista: con zoom entero (en píxeles físicos), las
+    /// coordenadas enteras del mundo caen justo en píxeles de pantalla, así que la textura, las
+    /// guías, los overlays y la entrada (`to_screen` / `to_world`) coinciden. Se redondea al
+    /// usarlo, no en `pan`: el pan guardado sigue fraccionario y los arrastres no derivan.
     fn origin(&self, rect: Rect) -> Pos2 {
-        rect.center() + self.pan
+        let ppp = self.ppp;
+        (((rect.center() + self.pan).to_vec2() * ppp).round() / ppp).to_pos2()
     }
 
     fn to_screen(&self, rect: Rect, world: (i32, i32)) -> Pos2 {
@@ -942,6 +951,8 @@ impl CanvasView {
     ) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let ctx = ui.ctx().clone();
+        // Antes de cualquier uso de `origin` en este frame (zoom, entrada, dibujo).
+        self.ppp = ctx.pixels_per_point();
         if !self.fitted && rect.width() > 0.0 {
             self.fit(rect, editor);
         }
@@ -1023,6 +1034,9 @@ impl CanvasView {
         for artboard in &document.artboards {
             // Alineada a píxeles de pantalla: el damero y la textura caen justo en píxeles y la
             // ventana de Pixel UI se arma alrededor de este mismo rect (blanco de 1 px exacto).
+            // Con zoom entero en píxeles físicos `origin` ya lo deja alineado y el redondeo no
+            // cambia nada; solo actúa con zoom fraccionario (p. ej. 50 %), donde los bordes del
+            // artboard caen entre píxeles y se apartan de `to_screen` en menos de medio píxel.
             let screen = WindowLayout::pixels_on_screen(self.pixel_rect(rect, artboard), ppp);
             let active = artboard.id == editor.active;
             // Con Pixel UI, la ventana del skin: el marco va detrás de los píxeles. Si la ventana
@@ -3117,6 +3131,115 @@ mod tests {
                         pixels.max + Vec2::new(2.0, 2.0)
                     ),
                     "{at}"
+                );
+            }
+        }
+    }
+
+    /// Las líneas de 1 px dibujadas con `color` (guías), como `(x o y, eje)`.
+    fn lines_of(h: &Harness, color: Color32) -> Vec<(f32, Axis)> {
+        h.shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::Shape::LineSegment { points, stroke } if stroke.color == color => {
+                    let [a, b] = *points;
+                    Some(if a.x == b.x {
+                        (a.x, Axis::Vertical)
+                    } else {
+                        (a.y, Axis::Horizontal)
+                    })
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn with_a_fractional_pan_texture_corners_guides_and_hover_agree() {
+        let mut h = Harness::new();
+        h.view.extras = true;
+        h.view.guides = true;
+        h.editor.set_guides(vec![
+            Guide {
+                axis: Axis::Vertical,
+                position: 3,
+            },
+            Guide {
+                axis: Axis::Horizontal,
+                position: 5,
+            },
+        ]);
+        let id = h.editor.artboard().id;
+        h.canvas.zoom = 8.0;
+        for pan in [
+            Vec2::new(0.37, 0.81),
+            Vec2::new(0.62, 0.5),
+            Vec2::new(-0.5, 0.12),
+            Vec2::new(-3.7, 11.49),
+        ] {
+            h.canvas.pan = pan;
+            h.frame(vec![]);
+            let at = format!("pan {pan:?}");
+            // La textura dibujada y `to_screen` de las esquinas son el mismo rect.
+            let drawn = h.meshes(h.canvas.textures[&id].id());
+            assert_eq!(drawn, vec![h.pixels_of(0)], "texture vs to_screen, {at}");
+            let drawn = drawn[0];
+            // Las guías caen en la fila/columna de píxeles de pantalla que empieza en su borde.
+            let mut guides = lines_of(&h, theme::GUIDE_LINE);
+            guides.sort_by(|a, b| a.0.total_cmp(&b.0));
+            let mut expected = vec![
+                (drawn.left() + 3.0 * 8.0 + 0.5, Axis::Vertical),
+                (drawn.top() + 5.0 * 8.0 + 0.5, Axis::Horizontal),
+            ];
+            expected.sort_by(|a, b| a.0.total_cmp(&b.0));
+            assert_eq!(guides, expected, "guides, {at}");
+            // El píxel bajo el puntero es el que se ve: justo a cada lado del borde (3, 3).
+            let edge = drawn.min + Vec2::splat(3.0 * 8.0);
+            h.frame(vec![Event::PointerMoved(edge + Vec2::splat(0.05))]);
+            assert_eq!(h.canvas.hover, Some((3, 3)), "inside, {at}");
+            h.frame(vec![Event::PointerMoved(edge - Vec2::splat(0.05))]);
+            assert_eq!(h.canvas.hover, Some((2, 2)), "outside, {at}");
+        }
+    }
+
+    #[test]
+    fn the_origin_snaps_to_physical_pixels() {
+        let mut h = Harness::new();
+        for ppp in [1.0, 1.5, 2.0] {
+            h.canvas.ppp = ppp;
+            h.canvas.pan = Vec2::new(0.37, -0.81);
+            let o = h.canvas.origin(h.rect) * ppp;
+            assert_eq!(o, o.round(), "ppp {ppp}");
+            let corner = h.canvas.to_screen(h.rect, (3, -2)) * ppp;
+            assert_eq!(corner, corner.round(), "ppp {ppp}");
+        }
+    }
+
+    #[test]
+    fn panning_keeps_the_stored_pan_and_zoom_keeps_the_point_under_the_cursor() {
+        let mut h = Harness::new();
+        h.canvas.zoom = 8.0;
+        let start = h.canvas.origin(h.rect);
+        // Pans fraccionarios repetidos: el pan guardado no se redondea, no hay deriva.
+        for _ in 0..10 {
+            h.canvas.pan += Vec2::new(0.3, -0.3);
+        }
+        h.frame(vec![]);
+        let moved = h.canvas.origin(h.rect) - start;
+        assert_eq!(moved, Vec2::new(3.0, -3.0));
+        // Zoom hacia el cursor: el punto del mundo bajo el cursor sigue ahí (a < 1 px físico).
+        for ppp in [1.0, 2.0] {
+            h.canvas.ppp = ppp;
+            for step_in in [true, true, false, true, false, false] {
+                let anchor = Pos2::new(311.37, 207.81);
+                let (wx, wy) = h.canvas.to_world(h.rect, anchor);
+                h.canvas.zoom_at(h.rect, anchor, step_in);
+                let back = h.canvas.origin(h.rect) + Vec2::new(wx, wy) * h.canvas.zoom;
+                let off = (back - anchor) * ppp;
+                assert!(
+                    off.x.abs() <= 1.0 && off.y.abs() <= 1.0,
+                    "ppp {ppp}, zoom {}: {off:?}",
+                    h.canvas.zoom
                 );
             }
         }
