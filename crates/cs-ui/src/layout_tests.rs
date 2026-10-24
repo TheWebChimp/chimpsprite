@@ -99,9 +99,9 @@ impl LayoutHarness {
         h
     }
 
-    /// El editor con los paneles de siempre (línea de tiempo visible).
+    /// El editor sin Pixel UI, con los paneles de siempre (línea de tiempo visible).
     fn editor() -> Self {
-        Self::new(ViewSettings::default(), true)
+        Self::new(plain(), true)
     }
 
     fn frame(&mut self) {
@@ -295,11 +295,33 @@ fn vertical(lines: Vec<Rect>) -> Vec<Rect> {
     lines.into_iter().filter(|r| r.width() == 0.0).collect()
 }
 
+/// Sin Pixel UI (la app abre con Pixel UI).
+fn plain() -> ViewSettings {
+    ViewSettings {
+        pixel_ui: false,
+        ..Default::default()
+    }
+}
+
 fn pixel_ui() -> ViewSettings {
     ViewSettings {
         pixel_ui: true,
         ..Default::default()
     }
+}
+
+#[test]
+fn the_app_opens_with_pixel_ui_on_home_and_in_the_editor() {
+    // Lo de fábrica: Pixel UI. En los tres primeros frames ya rige (skin, menú de 16, Home con
+    // su casita).
+    let home = LayoutHarness::new(ViewSettings::default(), false);
+    assert!(home.app.pixel.skin().is_some(), "Pixel UI on");
+    assert_eq!(home.panel("menu").height(), 16.0);
+    assert_eq!(home_frames(&home).len(), 1, "the Home house");
+    let editor = LayoutHarness::new(ViewSettings::default(), true);
+    assert!(editor.app.pixel.skin().is_some());
+    assert_eq!(editor.panel("tool_options").height(), 21.0);
+    assert!(!editor.drawn("toolbar.box").is_empty(), "the pixel toolbar");
 }
 
 #[test]
@@ -367,7 +389,7 @@ fn the_right_panel_keeps_ending_above_the_timeline() {
 
 #[test]
 fn on_home_there_is_no_options_bar() {
-    let h = LayoutHarness::new(ViewSettings::default(), false);
+    let h = LayoutHarness::new(plain(), false);
     assert!(h.canvas.is_none());
     assert!(PanelState::load(&h.ctx, egui::Id::new("tool_options")).is_none());
     assert!(PanelState::load(&h.ctx, egui::Id::new("tools")).is_none());
@@ -620,7 +642,7 @@ fn the_home_house_shows_the_frame_of_the_time_and_asks_for_the_next_one() {
         );
     }
     // Sin Pixel UI no hay casita animada ni repintado: en Home, egui no pide otro frame.
-    let mut plain = LayoutHarness::new(ViewSettings::default(), false);
+    let mut plain = LayoutHarness::new(plain(), false);
     plain.frame();
     assert_eq!(
         plain.repaint_delay,

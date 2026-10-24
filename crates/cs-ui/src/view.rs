@@ -31,7 +31,9 @@ pub struct ViewSettings {
     pub lock_guides: bool,
     /// Número de cada celda no vacía de la capa tilemap activa.
     pub tile_numbers: bool,
-    /// Interfaz en pixel art (View → Pixel UI): fuente pixel, escala entera y skin.
+    /// Interfaz en pixel art (View → Pixel UI): fuente pixel, escala entera y skin. Encendida
+    /// de fábrica, también si lo guardado no la trae (`serde(default)`); apagada solo si se
+    /// guardó apagada.
     pub pixel_ui: bool,
     /// Escala de la UI con Pixel UI (1, 2 o 3): píxeles de pantalla por píxel del skin.
     pub ui_scale: u8,
@@ -55,7 +57,7 @@ impl Default for ViewSettings {
             snap_to_grid: false,
             lock_guides: false,
             tile_numbers: false,
-            pixel_ui: false,
+            pixel_ui: true,
             ui_scale: 2,
         }
     }
@@ -187,10 +189,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn pixel_ui_settings_roundtrip_and_start_off() {
+    fn pixel_ui_settings_roundtrip_and_start_on() {
+        // La app abre con Pixel UI, también con lo guardado antes de que existiera.
+        assert!(ViewSettings::default().pixel_ui);
         let v: ViewSettings = serde_json::from_str(r#"{"grid":true}"#).unwrap();
-        assert!(!v.pixel_ui);
+        assert!(v.pixel_ui);
         assert_eq!(v.ui_scale, 2);
+        // Quien lo apagó y guardó, lo sigue teniendo apagado.
+        let off = ViewSettings {
+            pixel_ui: false,
+            ..Default::default()
+        };
+        let back: ViewSettings =
+            serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
+        assert_eq!(back, off);
+        let v: ViewSettings = serde_json::from_str(r#"{"grid":true,"pixel_ui":false}"#).unwrap();
+        assert!(!v.pixel_ui && v.grid);
         let on = ViewSettings {
             pixel_ui: true,
             ui_scale: 3,

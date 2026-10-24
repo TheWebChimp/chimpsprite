@@ -141,8 +141,9 @@ pub struct PixelUi {
     applied: Option<(bool, u8)>,
     /// El Ctrl+/- del usuario antes de encender Pixel UI; se devuelve al apagarlo.
     prev_zoom: f32,
-    /// La escala entera ya rige (`pixels_per_point` la alcanzó): antes, los widgets pixel se
-    /// dibujarían un frame a otra escala.
+    /// La escala entera y la fuente pixel ya rigen (`pixels_per_point` la alcanzó y las fuentes
+    /// se aplicaron en un frame anterior): antes, los widgets pixel se dibujarían un frame a otra
+    /// escala o con la fuente de egui.
     scale_ready: bool,
     /// El skin se recargó (`CHIMPSPRITE_SKIN`): sus colores se vuelven a aplicar a egui.
     skin_changed: bool,
@@ -183,8 +184,10 @@ impl PixelUi {
                 self.prev_zoom = ctx.zoom_factor();
             }
             self.load_skin(ctx);
-            // Lo que rige en este frame; la escala nueva vale desde el siguiente.
-            self.scale_ready = ctx.pixels_per_point() == state.1 as f32;
+            // Lo que rige en este frame: la escala y las fuentes nuevas valen desde el siguiente
+            // (al arrancar con Pixel UI, aunque la pantalla ya esté a esa escala).
+            self.scale_ready =
+                self.applied == Some(state) && ctx.pixels_per_point() == state.1 as f32;
             // No hace nada si ya es esa escala; egui la traduce a zoom = escala / la del sistema.
             ctx.set_pixels_per_point(state.1 as f32);
         } else {
@@ -195,6 +198,8 @@ impl PixelUi {
         }
         self.applied = Some(state);
         ctx.set_fonts(font_definitions(view.pixel_ui));
+        // Las fuentes nuevas rigen desde el frame siguiente: se pide ya, sin esperar un evento.
+        ctx.request_repaint();
         let colors = self.skin.as_ref().map(|skin| *skin.colors());
         apply_style(ctx, colors.as_ref().filter(|_| view.pixel_ui));
         // El Ctrl+/- de egui rompería la escala entera. En la web viene apagado (lo maneja el
@@ -350,6 +355,49 @@ mod tests {
                 .scroll
                 .foreground_color
         );
+    }
+
+    /// Un frame con la pantalla a `native` píxeles por punto: si egui pidió otro enseguida.
+    fn frame_on(
+        ctx: &egui::Context,
+        pixel: &mut PixelUi,
+        view: &ViewSettings,
+        native: f32,
+    ) -> bool {
+        let mut input = egui::RawInput::default();
+        input
+            .viewports
+            .entry(egui::ViewportId::ROOT)
+            .or_default()
+            .native_pixels_per_point = Some(native);
+        let mut output = ctx.run_ui(input, |ui| pixel.update(ui.ctx(), view));
+        output.textures_delta.clear();
+        output.viewport_output[&egui::ViewportId::ROOT].repaint_delay == std::time::Duration::ZERO
+    }
+
+    /// La fuente pixel ya rige en `ctx`.
+    fn pixel_font_active(ctx: &egui::Context) -> bool {
+        ctx.fonts(|f| f.definitions().font_data.contains_key(PIXEL_FONT_NAME))
+    }
+
+    #[test]
+    fn at_startup_the_skin_waits_for_the_pixel_font_and_the_scale_and_asks_for_the_frame() {
+        // La app abre con Pixel UI, con la pantalla a 1× (la escala cambia) o ya a 2× (no
+        // cambia): en los dos casos el primer frame es sin skin (la fuente pixel y la escala
+        // valen desde el siguiente) y pide el siguiente enseguida, sin esperar un evento.
+        for native in [1.0, 2.0] {
+            let ctx = egui::Context::default();
+            let mut pixel = PixelUi::from_env();
+            let view = ViewSettings::default();
+            assert!(view.pixel_ui, "on by default");
+            let again = frame_on(&ctx, &mut pixel, &view, native);
+            assert!(pixel.skin().is_none(), "{native}: not on the first frame");
+            assert!(again, "{native}: asks for the second frame");
+            frame_on(&ctx, &mut pixel, &view, native);
+            assert_eq!(ctx.pixels_per_point(), 2.0, "{native}");
+            assert!(pixel_font_active(&ctx), "{native}");
+            assert!(pixel.skin().is_some(), "{native}: on from the second frame");
+        }
     }
 
     #[test]
