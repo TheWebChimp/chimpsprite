@@ -8,6 +8,7 @@ use eframe::egui::{
     TextureHandle, TextureOptions, Vec2,
 };
 
+use crate::artboard_window::{ArtboardWindow, TitleHit, WindowLayout};
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
 use crate::editor::{Editor, MAX_BRUSH_SIZE, ToolKind};
 use crate::guides::{RULER_PX, SNAP_PX, SnapContext, after_drag, hit_guide, nice_step};
@@ -79,6 +80,9 @@ pub struct CanvasView {
     pub background: Color32,
     /// Las reglas del skin con Pixel UI (`None`: las de siempre); lo pone la app en cada frame.
     pub pixel_rulers: Option<PixelRulers>,
+    /// Con Pixel UI, la ventana del skin alrededor de cada artboard (`None`: el borde y la
+    /// etiqueta de siempre); lo pone la app en cada frame.
+    pub artboard_window: Option<ArtboardWindow>,
 }
 
 /// Color alrededor de los artboards: `canvas` del skin con Pixel UI; si no, el del tema.
@@ -173,6 +177,7 @@ impl Default for CanvasView {
             wheel_rest: 0.0,
             background: theme::CANVAS_BG,
             pixel_rulers: None,
+            artboard_window: None,
         }
     }
 }
@@ -240,6 +245,12 @@ impl CanvasView {
             ZoomRequest::Fit => self.fit(rect, editor),
             ZoomRequest::CenterActive => self.center_active(editor),
         }
+    }
+
+    /// La textura del artboard `id`, para los tests de la app.
+    #[cfg(test)]
+    pub(crate) fn artboard_texture(&self, id: ArtboardId) -> Option<egui::TextureId> {
+        self.textures.get(&id).map(|t| t.id())
     }
 
     /// Centra el artboard activo sin cambiar el zoom (p. ej. al entrar a un símbolo).
@@ -639,9 +650,7 @@ impl CanvasView {
         });
         editor.options.constrain = modifiers.shift;
         let slop = EDGE_SLOP_PX / self.zoom;
-        let over_label = pointer
-            .filter(|_| self.names_visible)
-            .and_then(|p| self.label_at(ui, rect, editor, p));
+        let over_label = pointer.and_then(|p| self.title_at(ui, rect, editor, p));
         self.over_label = over_label.is_some();
 
         // Con el diálogo Canvas Size abierto el lienzo es modal: solo guías, paneo y zoom.
@@ -733,7 +742,14 @@ impl CanvasView {
                 None
             };
             match over_label {
-                Some(id) if pressed_primary => editor.press_artboard_label(id, world),
+                Some((id, TitleHit::Bar)) if pressed_primary => {
+                    editor.press_artboard_label(id, world)
+                }
+                // "≡": no hay menú contextual de artboards, así que solo lo selecciona.
+                Some((id, TitleHit::Menu)) if pressed_primary => editor.activate(id),
+                // "○": decorativo por ahora (el usuario va a definir qué hace); el clic no
+                // llega a la herramienta.
+                Some((_, TitleHit::Close)) if pressed_primary => {}
                 _ if slice.is_some() => {
                     editor.end_group();
                     editor.slice = slice;
@@ -801,7 +817,7 @@ impl CanvasView {
         // Con Hand el doble clic sobre la etiqueta no la renombra: Hand solo mueve la vista.
         if response.double_clicked()
             && !hand
-            && let Some(id) = over_label
+            && let Some((id, TitleHit::Bar)) = over_label
             && let Some(artboard) = editor.document.artboard(id)
         {
             self.renaming = Some((id, artboard.name.clone(), false));
@@ -844,8 +860,12 @@ impl CanvasView {
                 editor.active,
                 edges,
             ))))
-        } else if over_label.is_some() && !editor.is_painting() {
-            Some(egui::CursorIcon::Grab)
+        } else if let Some((_, hit)) = over_label.filter(|_| !editor.is_painting()) {
+            Some(match hit {
+                TitleHit::Bar => egui::CursorIcon::Grab,
+                TitleHit::Menu => egui::CursorIcon::PointingHand,
+                TitleHit::Close => egui::CursorIcon::Default,
+            })
         } else if let Some(hit) = transform_cursor {
             match hit {
                 TransformHit::Rotate => {
@@ -1003,12 +1023,18 @@ impl CanvasView {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, self.background);
 
+        let ppp = ctx.pixels_per_point();
         for artboard in &document.artboards {
-            let ((x0, y0), (x1, y1)) = artboard.rect();
-            let screen = Rect::from_min_max(
-                self.to_screen(rect, (x0, y0)),
-                self.to_screen(rect, (x1, y1)),
-            );
+            let screen = self.pixel_rect(rect, artboard);
+            let active = artboard.id == editor.active;
+            // Con Pixel UI, la ventana del skin: el marco va detrás de los píxeles.
+            let window = self
+                .artboard_window
+                .as_ref()
+                .map(|w| (w, WindowLayout::around(screen, ppp)));
+            if let Some((w, layout)) = &window {
+                painter.extend(w.frame_shapes(layout, active, ppp));
+            }
             let uv = checker_uv(screen.size());
             painter.image(checker, screen, uv, Color32::WHITE);
             if let Some(tex) = self.textures.get(&artboard.id) {
@@ -1057,14 +1083,24 @@ impl CanvasView {
                     theme::TILE_GRID,
                 );
             }
-            let active = artboard.id == editor.active;
+            let renaming = self.renaming.as_ref().is_some_and(|r| r.0 == artboard.id);
+            if let Some((w, layout)) = &window {
+                // La barra de título reemplaza a la etiqueta. Sin el borde naranja del activo:
+                // taparía el borde y la barra de la ventana; los inactivos se ven apagados.
+                let title = if self.names_visible && !renaming {
+                    label_text(artboard)
+                } else {
+                    String::new()
+                };
+                painter.extend(w.bar_shapes(&painter, layout, &title, active, ppp));
+                continue;
+            }
             let (border, label_color) = if active {
                 (Stroke::new(2.0, theme::ACCENT), theme::ACCENT)
             } else {
                 (Stroke::new(1.0, theme::CANVAS_BORDER), theme::LABEL)
             };
             painter.rect_stroke(screen, 0.0, border, StrokeKind::Outside);
-            let renaming = self.renaming.as_ref().is_some_and(|r| r.0 == artboard.id);
             if self.names_visible && !renaming {
                 painter.text(
                     screen.left_top() - Vec2::new(0.0, LABEL_GAP),
@@ -1561,13 +1597,32 @@ impl CanvasView {
         let Some(artboard) = editor.document.artboard(id) else {
             return;
         };
-        let bottom_left = self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
-        let size = Vec2::new(160.0, LABEL_SIZE + 6.0);
-        let field = Rect::from_min_size(bottom_left - Vec2::new(0.0, size.y), size);
+        let (field, font) = match self.artboard_window {
+            // Con Pixel UI, sobre el título de la barra.
+            Some(_) => {
+                let ppp = ui.ctx().pixels_per_point();
+                let layout = WindowLayout::around(self.pixel_rect(rect, artboard), ppp);
+                let area = layout.text.unwrap_or(layout.bar);
+                let font = ArtboardWindow::font();
+                let height = font.size + 2.0;
+                let field = Rect::from_min_size(
+                    Pos2::new(area.left(), layout.bar.center().y - height / 2.0),
+                    Vec2::new(area.width().max(80.0), height),
+                );
+                (field, font)
+            }
+            None => {
+                let bottom_left =
+                    self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
+                let size = Vec2::new(160.0, LABEL_SIZE + 6.0);
+                let field = Rect::from_min_size(bottom_left - Vec2::new(0.0, size.y), size);
+                (field, FontId::proportional(LABEL_SIZE))
+            }
+        };
         let response = ui.put(
             field,
             egui::TextEdit::singleline(&mut name)
-                .font(FontId::proportional(LABEL_SIZE))
+                .font(font)
                 .margin(Vec2::new(2.0, 1.0)),
         );
         if !focused {
@@ -1587,9 +1642,34 @@ impl CanvasView {
         self.renaming = Some((id, name, true));
     }
 
-    /// Artboard cuya etiqueta (nombre sobre el borde superior) está bajo `p`, el de más arriba primero.
-    fn label_at(&self, ui: &egui::Ui, rect: Rect, editor: &Editor, p: Pos2) -> Option<ArtboardId> {
+    /// Área de píxeles del artboard en pantalla.
+    fn pixel_rect(&self, rect: Rect, artboard: &Artboard) -> Rect {
+        let ((x0, y0), (x1, y1)) = artboard.rect();
+        Rect::from_min_max(
+            self.to_screen(rect, (x0, y0)),
+            self.to_screen(rect, (x1, y1)),
+        )
+    }
+
+    /// Artboard cuya etiqueta (nombre sobre el borde superior) o, con Pixel UI, cuya barra de
+    /// título está bajo `p`, y qué parte; el de más arriba primero. La barra de Pixel UI responde
+    /// aunque los nombres estén ocultos (la ventana se ve igual).
+    fn title_at(
+        &self,
+        ui: &egui::Ui,
+        rect: Rect,
+        editor: &Editor,
+        p: Pos2,
+    ) -> Option<(ArtboardId, TitleHit)> {
+        let ppp = ui.ctx().pixels_per_point();
         editor.document.artboards.iter().rev().find_map(|artboard| {
+            if self.artboard_window.is_some() {
+                let layout = WindowLayout::around(self.pixel_rect(rect, artboard), ppp);
+                return layout.hit(p).map(|hit| (artboard.id, hit));
+            }
+            if !self.names_visible {
+                return None;
+            }
             let galley = ui.painter().layout_no_wrap(
                 label_text(artboard),
                 FontId::proportional(LABEL_SIZE),
@@ -1599,7 +1679,7 @@ impl CanvasView {
             let label =
                 Rect::from_min_size(bottom_left - Vec2::new(0.0, galley.size().y), galley.size())
                     .expand(2.0);
-            label.contains(p).then_some(artboard.id)
+            label.contains(p).then_some((artboard.id, TitleHit::Bar))
         })
     }
 }
@@ -1865,6 +1945,8 @@ mod tests {
         rect: Rect,
         /// Cursor pedido en el último frame.
         cursor: egui::CursorIcon,
+        /// Lo dibujado en el último frame, aplanado.
+        shapes: Vec<egui::Shape>,
     }
 
     impl Harness {
@@ -1877,6 +1959,7 @@ mod tests {
                 time: 0.0,
                 rect: Rect::NOTHING,
                 cursor: egui::CursorIcon::Default,
+                shapes: Vec::new(),
             };
             h.frame(vec![]);
             h
@@ -1900,6 +1983,44 @@ mod tests {
             output.textures_delta.clear();
             self.rect = rect;
             self.cursor = output.platform_output.cursor_icon;
+            self.shapes.clear();
+            for clipped in output.shapes {
+                flatten(clipped.shape, &mut self.shapes);
+            }
+        }
+
+        /// Rects de las mallas con la textura `id` en el último frame.
+        fn meshes(&self, id: egui::TextureId) -> Vec<Rect> {
+            self.shapes
+                .iter()
+                .filter_map(|s| match s {
+                    egui::Shape::Mesh(m) if m.texture_id == id => Some(m.calc_bounds()),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        /// Textos del último frame con su rect.
+        fn texts(&self) -> Vec<(String, Rect)> {
+            self.shapes
+                .iter()
+                .filter_map(|s| match s {
+                    egui::Shape::Text(t) => Some((
+                        t.galley.text().to_owned(),
+                        Rect::from_min_size(t.pos, t.galley.size()),
+                    )),
+                    _ => None,
+                })
+                .collect()
+        }
+
+        /// Área de píxeles del artboard `i` en pantalla.
+        fn pixels_of(&self, i: usize) -> Rect {
+            let ((x0, y0), (x1, y1)) = self.editor.document.artboards[i].rect();
+            Rect::from_min_max(
+                self.canvas.to_screen(self.rect, (x0, y0)),
+                self.canvas.to_screen(self.rect, (x1, y1)),
+            )
         }
 
         fn click(&mut self, pos: Pos2, button: PointerButton) {
@@ -2584,5 +2705,219 @@ mod tests {
         h.frame(vec![button(to, false)]);
         h.frame(vec![]);
         assert!(!h.editor.is_painting(), "no stroke left hanging");
+    }
+
+    /// Aplana los `Shape::Vec`.
+    fn flatten(shape: egui::Shape, out: &mut Vec<egui::Shape>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.into_iter().for_each(|s| flatten(s, out)),
+            other => out.push(other),
+        }
+    }
+
+    /// Con Pixel UI: la ventana del skin alrededor de los artboards.
+    fn with_window(h: &mut Harness) -> Skin {
+        let skin = Skin::embedded(&h.ctx);
+        h.canvas.artboard_window = Some(ArtboardWindow::from_skin(&skin));
+        h.frame(vec![]);
+        skin
+    }
+
+    fn piece_id(skin: &Skin, name: &str) -> egui::TextureId {
+        skin.piece(name, crate::skin::WidgetState::Normal)
+            .unwrap_or_else(|| panic!("{name}"))
+            .texture
+            .id()
+    }
+
+    fn union(rects: &[Rect]) -> Rect {
+        rects.iter().fold(Rect::NOTHING, |a, r| a.union(*r))
+    }
+
+    #[test]
+    fn with_pixel_ui_the_window_wraps_the_pixels_and_its_bar_does_not_zoom() {
+        let mut h = Harness::new();
+        let skin = with_window(&mut h);
+        let mut bars = Vec::new();
+        for zoom in [1.0, 8.0, 16.0] {
+            h.canvas.zoom = zoom;
+            h.frame(vec![]);
+            let pixels = h.pixels_of(0);
+            let frame = union(&h.meshes(piece_id(&skin, "window")));
+            assert_eq!(
+                frame,
+                Rect::from_min_max(
+                    pixels.min - Vec2::new(2.0, 12.0),
+                    pixels.max + Vec2::new(2.0, 1.0)
+                ),
+                "zoom {zoom}"
+            );
+            bars.push(pixels.top() - frame.top());
+            // Los íconos van en la barra, encima del área de píxeles.
+            for name in ["artboard.menu", "window.close"] {
+                let icon = union(&h.meshes(piece_id(&skin, name)));
+                assert!(
+                    icon.bottom() <= pixels.top() && icon.top() >= frame.top(),
+                    "{name} {icon:?}"
+                );
+            }
+            // El nombre va en la barra, en lugar de la etiqueta de arriba (a zoom 1 el
+            // artboard de 16 no tiene lugar para el nombre y a 8 se corta con "...").
+            if zoom < 16.0 {
+                continue;
+            }
+            let label = label_text(h.editor.artboard());
+            let (_, text) = h
+                .texts()
+                .into_iter()
+                .find(|(t, _)| *t == label)
+                .unwrap_or_else(|| panic!("the name in the bar: {:?}", h.texts()));
+            assert!(text.center().y > frame.top() && text.center().y < pixels.top());
+        }
+        assert_eq!(bars, vec![12.0; 3], "the bar is 12 at any zoom");
+    }
+
+    #[test]
+    fn with_pixel_ui_the_pixels_and_the_checker_do_not_move() {
+        let mut h = Harness::new();
+        let id = h.editor.artboard().id;
+        let drawn = |h: &Harness| {
+            let tex = h.canvas.textures[&id].id();
+            let checker = h.canvas.checker.as_ref().unwrap().id();
+            (h.meshes(tex), h.meshes(checker))
+        };
+        let off = drawn(&h);
+        assert_eq!(off.0, vec![h.pixels_of(0)]);
+        with_window(&mut h);
+        assert_eq!(drawn(&h), off);
+    }
+
+    #[test]
+    fn dragging_the_title_bar_moves_the_artboard() {
+        let mut h = Harness::new();
+        h.canvas.zoom = 8.0;
+        with_window(&mut h);
+        let from = h.pixels_of(0).left_top() + Vec2::new(60.0, -6.0);
+        h.frame(vec![Event::PointerMoved(from)]);
+        assert_eq!(h.cursor, egui::CursorIcon::Grab);
+        h.drag(from, from + Vec2::new(16.0, 8.0));
+        assert_eq!(h.editor.artboard().position, (2, 1));
+        assert!(h.editor.sprite().cels.is_empty(), "nothing painted");
+    }
+
+    #[test]
+    fn double_clicking_the_title_bar_renames_the_artboard() {
+        let mut h = Harness::new();
+        with_window(&mut h);
+        let bar = h.pixels_of(0).left_top() + Vec2::new(40.0, -6.0);
+        h.click(bar, PointerButton::Primary);
+        h.click(bar, PointerButton::Primary);
+        h.frame(vec![]);
+        assert!(h.canvas.renaming.is_some(), "double click opens the field");
+        assert_eq!(h.editor.artboard().position, (0, 0));
+    }
+
+    #[test]
+    fn the_menu_icon_selects_its_artboard_and_the_circle_does_nothing() {
+        let mut h = Harness::new();
+        h.editor.add_artboard(8, 8);
+        let first = h.editor.document.artboards[0].id;
+        assert_ne!(h.editor.active, first);
+        with_window(&mut h);
+        let pixels = h.pixels_of(0);
+        // "○", a 2 px del borde derecho de la ventana: ni selecciona ni mueve.
+        let circle = Pos2::new(pixels.right() + 2.0 - 2.0 - 4.5, pixels.top() - 12.0 + 6.5);
+        h.drag(circle, circle + Vec2::new(30.0, 0.0));
+        assert_ne!(h.editor.active, first, "the circle is decorative");
+        assert_eq!(h.editor.document.artboards[0].position, (0, 0));
+        // "≡": no hay menú contextual de artboards, así que lo selecciona.
+        let menu = pixels.left_top() + Vec2::new(-2.0 + 2.0 + 4.5, -12.0 + 6.5);
+        h.click(menu, PointerButton::Primary);
+        assert_eq!(h.editor.active, first);
+        assert_eq!(
+            h.editor.artboard().position,
+            (0, 0),
+            "a click does not move it"
+        );
+        assert!(h.canvas.renaming.is_none());
+    }
+
+    #[test]
+    fn inactive_windows_are_dimmed_and_the_active_one_is_not() {
+        let mut h = Harness::new();
+        h.editor.add_artboard(16, 16);
+        h.canvas.zoom = 4.0;
+        let skin = with_window(&mut h);
+        let id = piece_id(&skin, "window");
+        let tints: Vec<(Rect, Color32)> = h
+            .shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::Shape::Mesh(m) if m.texture_id == id => {
+                    Some((m.calc_bounds(), m.vertices[0].color))
+                }
+                _ => None,
+            })
+            .collect();
+        let (first, second) = (h.pixels_of(0), h.pixels_of(1));
+        let tint_of = |pixels: Rect| {
+            tints
+                .iter()
+                .filter(|(r, _)| r.intersects(pixels.expand(1.0)))
+                .map(|(_, c)| *c)
+                .collect::<HashSet<_>>()
+        };
+        // El activo es el último que se agregó.
+        assert_eq!(tint_of(second), HashSet::from([Color32::WHITE]));
+        let dim = tint_of(first);
+        assert_eq!(dim.len(), 1);
+        assert!(!dim.contains(&Color32::WHITE), "{dim:?}");
+    }
+
+    #[test]
+    fn a_narrow_artboard_keeps_its_bar_inside_the_window() {
+        let mut h = Harness::new();
+        let skin = with_window(&mut h);
+        let label = label_text(h.editor.artboard());
+        // 16 px de artboard a 1.5 (ventana de 28): íconos sin nombre; a 1 y 0.5, solo la barra.
+        for (zoom, icons) in [(1.5, true), (1.0, false), (0.5, false)] {
+            h.canvas.zoom = zoom;
+            h.frame(vec![]);
+            let pixels = h.pixels_of(0);
+            let frames = h.meshes(piece_id(&skin, "window"));
+            let frame = union(&frames);
+            assert_eq!(frame.width(), pixels.width() + 4.0, "zoom {zoom}");
+            assert_eq!(pixels.top() - frame.top(), 12.0, "zoom {zoom}");
+            for name in ["artboard.menu", "window.close"] {
+                let drawn = h.meshes(piece_id(&skin, name));
+                assert_eq!(!drawn.is_empty(), icons, "{name} at {zoom}");
+                assert!(drawn.iter().all(|r| frame.contains_rect(*r)), "{name}");
+            }
+            assert!(
+                h.texts().iter().all(|(t, _)| !t.starts_with(&label[..3])),
+                "no name at {zoom}"
+            );
+        }
+    }
+
+    #[test]
+    fn without_pixel_ui_the_label_and_the_orange_border_stay() {
+        let h = Harness::new();
+        let pixels = h.pixels_of(0);
+        let label = label_text(h.editor.artboard());
+        let (_, text) = h
+            .texts()
+            .into_iter()
+            .find(|(t, _)| *t == label)
+            .expect("the label");
+        assert_eq!(text.bottom(), pixels.top() - LABEL_GAP);
+        assert_eq!(text.left(), pixels.left());
+        let border = h.shapes.iter().any(|s| {
+            matches!(s, egui::Shape::Rect(r)
+                if r.rect == pixels && r.stroke == Stroke::new(2.0, theme::ACCENT))
+        });
+        assert!(border, "the orange border of the active artboard");
+        let skin = Skin::embedded(&h.ctx);
+        assert!(h.meshes(piece_id(&skin, "window")).is_empty());
     }
 }

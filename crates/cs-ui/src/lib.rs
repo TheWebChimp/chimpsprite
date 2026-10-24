@@ -2,6 +2,7 @@
 
 mod anim_ops;
 mod appearance;
+mod artboard_window;
 mod autosave;
 mod bar_fields;
 mod canvas;
@@ -931,6 +932,8 @@ impl ChimpApp {
         self.doc.canvas.background = canvas::background_for(skin);
         // Con Pixel UI, las reglas del mockup.
         self.doc.canvas.pixel_rulers = skin.map(pixel_rulers::PixelRulers::from_skin);
+        // Con Pixel UI, cada artboard es una ventana del skin.
+        self.doc.canvas.artboard_window = skin.map(artboard_window::ArtboardWindow::from_skin);
         let (width, frame) = match skin {
             // Con Pixel UI, la columna de íconos: la caja más el margen a cada lado, sin línea
             // contra el lienzo (el mockup no la tiene). Arriba, el margen del mockup hasta la

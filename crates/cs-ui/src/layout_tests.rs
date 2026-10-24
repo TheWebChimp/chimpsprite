@@ -1426,3 +1426,72 @@ fn without_pixel_ui_the_menus_are_egui_menus() {
     h.click(new.center(), PointerButton::Primary);
     assert_ne!(h.app.doc.location.name, before, "a new document");
 }
+
+// --- Artboards con Pixel UI ---
+
+/// El área de píxeles del artboard activo en el último frame (la malla de su textura).
+fn artboard_pixels(h: &LayoutHarness) -> Rect {
+    let id = h.app.doc.editor.artboard().id;
+    let tex = h.app.doc.canvas.artboard_texture(id).expect("rendered");
+    h.textures
+        .iter()
+        .find(|(t, _)| *t == tex)
+        .map(|(_, r)| *r)
+        .expect("the artboard is drawn")
+}
+
+#[test]
+fn with_pixel_ui_the_artboard_is_a_pink_window_whose_bar_does_not_zoom() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::Actual);
+    h.frame();
+    let mut bars = Vec::new();
+    for zoom in [1.0, 8.0] {
+        h.app.doc.canvas.zoom = zoom;
+        h.frame();
+        let pixels = artboard_pixels(&h);
+        let frame = union(&h.drawn("window")).expect("the window frame");
+        assert_eq!(frame.left(), pixels.left() - 2.0, "zoom {zoom}");
+        assert_eq!(frame.right(), pixels.right() + 2.0, "zoom {zoom}");
+        assert_eq!(frame.bottom(), pixels.bottom() + 1.0, "zoom {zoom}");
+        bars.push(pixels.top() - frame.top());
+        assert_eq!(h.drawn("artboard.menu").len(), 1, "≡");
+        assert_eq!(h.drawn("window.close").len(), 1, "○");
+    }
+    assert_eq!(bars, vec![12.0, 12.0]);
+
+    // Arrastrar la barra mueve el artboard (zoom 1: un punto, un píxel).
+    h.app.doc.canvas.zoom = 1.0;
+    h.frame();
+    let from = artboard_pixels(&h).left_top() + Vec2::new(30.0, -6.0);
+    let to = from + Vec2::new(10.0, 5.0);
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, true)]);
+    h.frame_with(vec![Event::PointerMoved(from.lerp(to, 0.5))]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.frame_with(vec![button(to, false)]);
+    h.frame();
+    assert_eq!(h.app.doc.editor.artboard().position, (10, 5));
+}
+
+#[test]
+fn without_pixel_ui_the_artboard_has_no_window() {
+    let h = LayoutHarness::editor();
+    let skin = crate::skin::Skin::embedded(&h.ctx);
+    let window = skin
+        .piece("window", WidgetState::Normal)
+        .unwrap()
+        .texture
+        .id();
+    assert!(h.textures.iter().all(|(t, _)| *t != window));
+    assert!(h.app.doc.canvas.artboard_window.is_none());
+}

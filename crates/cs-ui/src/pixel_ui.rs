@@ -110,7 +110,16 @@ pub(crate) fn piece_shapes(piece: &Piece, rect: Rect, pixels_per_point: f32) -> 
 /// Respaldo plano: fondo `panel`, borde `outline` de 1 px y, si `title_bar > 0`, la barra de
 /// título en `accent`. Alineado a píxeles de pantalla, como las piezas.
 fn flat_shapes(skin: &Skin, rect: Rect, title_bar: f32, pixels_per_point: f32) -> Vec<Shape> {
-    let colors = skin.colors();
+    flat_frame(skin.colors(), rect, title_bar, pixels_per_point)
+}
+
+/// [`flat_shapes`] con los colores sueltos (para quien guarda solo los colores del skin).
+pub(crate) fn flat_frame(
+    colors: &SkinColors,
+    rect: Rect,
+    title_bar: f32,
+    pixels_per_point: f32,
+) -> Vec<Shape> {
     let rect = rect.round_to_pixels(pixels_per_point);
     let mut shapes = vec![Shape::rect_filled(rect, 0.0, colors.panel)];
     if title_bar > 0.0 {
