@@ -305,3 +305,103 @@ fn without_pixel_ui_canvas_size_is_the_egui_window_as_always() {
     assert!(h.app.canvas_size.is_none());
     assert_eq!(h.sprite_size(), (64, 64));
 }
+
+// --- New Tilemap Layer ---
+
+fn new_tilemap(pixel_ui: bool) -> DialogHarness {
+    let mut h = DialogHarness::new(pixel_ui);
+    h.app.new_tilemap = Some(crate::tilemap_dialog::NewTilemapDialog::new(
+        &h.app.doc.editor,
+    ));
+    h.settle();
+    assert!(h.app.new_tilemap.is_some());
+    h
+}
+
+/// Cuántas capas tilemap hay y los tilesets del sprite (nombre y tamaño de tile).
+type Tilemaps = (usize, Vec<(String, (u32, u32))>);
+
+fn tilemaps(h: &DialogHarness) -> Tilemaps {
+    let s = h.app.doc.editor.sprite();
+    let layers = s
+        .layers
+        .iter()
+        .filter(|l| l.kind == cs_core::LayerKind::Tilemap)
+        .count();
+    let sets = s
+        .tilesets
+        .iter()
+        .map(|t| (t.name.clone(), t.tile_size))
+        .collect();
+    (layers, sets)
+}
+
+#[test]
+fn with_pixel_ui_new_tilemap_layer_is_a_pixel_dialog() {
+    let h = new_tilemap(true);
+    assert!(h.has_area("new_tilemap_layer"), "the pixel dialog");
+    assert!(
+        !h.buttons.iter().any(|(l, _)| l == "Close window"),
+        "no egui window"
+    );
+    assert!(h.drew_piece("window"), "the dialog frame");
+    assert!(h.drew_piece("button"), "pixel buttons");
+    assert!(h.drew_text("New Tilemap Layer"), "the title: {:?}", h.texts);
+    for label in ["OK", "Cancel", "Close"] {
+        h.button(label);
+    }
+    assert!(h.drew_text("Tileset 1"), "the name field: {:?}", h.texts);
+    assert_eq!(h.numbers.len(), 3, "tile width, tile height and base index");
+}
+
+#[test]
+fn with_pixel_ui_ok_and_enter_create_the_tilemap_layer() {
+    for how in ["OK", "Enter"] {
+        let mut h = new_tilemap(true);
+        assert_eq!(tilemaps(&h), (0, vec![]));
+        // Arrastrar el campo del ancho del tile lo agranda.
+        h.drag_number(0, 20.0);
+        let size = h.app.new_tilemap.as_ref().unwrap().tile_size;
+        assert!(size.0 > 16, "the tile width field works: {size:?}");
+        match how {
+            "Enter" => h.key(Key::Enter),
+            label => h.click(label),
+        }
+        assert!(h.app.new_tilemap.is_none(), "{how} closes it");
+        assert_eq!(
+            tilemaps(&h),
+            (1, vec![("Tileset 1".to_string(), size)]),
+            "{how}"
+        );
+        assert!(h.app.message.is_none(), "{how}: no error");
+    }
+}
+
+#[test]
+fn with_pixel_ui_close_cancel_and_escape_create_no_tilemap_layer() {
+    for how in ["Close", "Cancel", "Escape"] {
+        let mut h = new_tilemap(true);
+        match how {
+            "Escape" => h.key(Key::Escape),
+            label => h.click(label),
+        }
+        assert!(h.app.new_tilemap.is_none(), "{how} closes it");
+        assert_eq!(tilemaps(&h), (0, vec![]), "{how} changes nothing");
+        assert!(!h.app.doc.editor.history.can_undo(), "{how}");
+    }
+}
+
+#[test]
+fn without_pixel_ui_new_tilemap_layer_is_the_egui_window_as_always() {
+    let mut h = new_tilemap(false);
+    assert!(h.drew_text("New Tilemap Layer"), "{:?}", h.texts);
+    h.button("Close window");
+    assert!(!h.has_area("new_tilemap_layer"), "no pixel dialog");
+    h.click("OK");
+    assert!(h.app.new_tilemap.is_none());
+    assert_eq!(tilemaps(&h).0, 1);
+    let mut h = new_tilemap(false);
+    h.key(Key::Escape);
+    assert!(h.app.new_tilemap.is_none());
+    assert_eq!(tilemaps(&h), (0, vec![]));
+}

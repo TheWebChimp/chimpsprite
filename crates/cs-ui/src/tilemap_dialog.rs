@@ -4,8 +4,9 @@ use cs_commands::ops::MAX_TILE_SIDE;
 use eframe::egui;
 
 use crate::editor::Editor;
+use crate::skin::Skin;
 use crate::tile_ops::TilesetChoice;
-use crate::widgets;
+use crate::{pixel_ui, widgets};
 
 /// Lo que el usuario decidió en este frame.
 pub enum DialogResult {
@@ -47,6 +48,51 @@ fn buttons(ui: &mut egui::Ui, result: &mut DialogResult) {
             *result = DialogResult::Cancel;
         }
     });
+}
+
+/// La ventana de un diálogo de tilemaps con lo que agregue `add_contents` y, abajo, OK y Cancel.
+/// Con `skin` (Pixel UI) es el diálogo pixel del skin con los botones pixel y el botón de cerrar
+/// (que cancela); sin él, la ventana de egui de siempre. `id` es el del diálogo pixel. Devuelve
+/// lo elegido con los botones y si sigue abierta.
+fn dialog_window(
+    ctx: &egui::Context,
+    skin: Option<&Skin>,
+    id: &str,
+    title: &str,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) -> (DialogResult, bool) {
+    match skin {
+        Some(skin) => {
+            let out = pixel_ui::pixel_dialog(ctx, skin, egui::Id::new(id), title, true, |ui| {
+                add_contents(ui);
+                ui.add_space(6.0);
+                let buttons = pixel_ui::pixel_buttons(ui, skin, &["OK", "Cancel"]);
+                if buttons[0].clicked() {
+                    DialogResult::Accept
+                } else if buttons[1].clicked() {
+                    DialogResult::Cancel
+                } else {
+                    DialogResult::Open
+                }
+            });
+            // Cerrar desde la barra de título es lo mismo que Cancel.
+            (out.inner, !out.closed)
+        }
+        None => {
+            let mut result = DialogResult::Open;
+            let mut open = true;
+            egui::Window::new(title)
+                .open(&mut open)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
+                .show(ctx, |ui| {
+                    add_contents(ui);
+                    buttons(ui, &mut result);
+                });
+            (result, open)
+        }
+    }
 }
 
 fn tileset_label(t: &(u32, String, (u32, u32))) -> String {
@@ -92,15 +138,10 @@ impl NewTilemapDialog {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> DialogResult {
-        let mut result = DialogResult::Open;
-        let mut open = true;
-        egui::Window::new("New Tilemap Layer")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
+    /// Con `skin` (Pixel UI), en el diálogo pixel del skin.
+    pub fn show(&mut self, ctx: &egui::Context, skin: Option<&Skin>) -> DialogResult {
+        let (result, open) =
+            dialog_window(ctx, skin, "new_tilemap_layer", "New Tilemap Layer", |ui| {
                 let selected = self
                     .existing
                     .and_then(|i| self.tilesets.iter().find(|t| t.0 == i))
@@ -132,7 +173,6 @@ impl NewTilemapDialog {
                             ui.end_row();
                         });
                 }
-                buttons(ui, &mut result);
             });
         finish(ctx, open, result)
     }
@@ -151,14 +191,12 @@ impl TileSizeDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context) -> DialogResult {
-        let mut result = DialogResult::Open;
-        let mut open = true;
-        egui::Window::new("Convert to Tilemap")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
+        let (result, open) = dialog_window(
+            ctx,
+            None,
+            "convert_to_tilemap",
+            "Convert to Tilemap",
+            |ui| {
                 egui::Grid::new("convert_tile_size")
                     .num_columns(2)
                     .spacing([8.0, 6.0])
@@ -173,8 +211,8 @@ impl TileSizeDialog {
                 ui.weak(
                     "Cuts the layer into cells of the canvas grid; identical cells share a tile.",
                 );
-                buttons(ui, &mut result);
-            });
+            },
+        );
         finish(ctx, open, result)
     }
 }

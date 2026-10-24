@@ -264,7 +264,7 @@ impl ChimpApp {
             return;
         }
         if let Some(dialog) = &mut self.new_tilemap {
-            match dialog.show(ctx) {
+            match dialog.show(ctx, self.pixel.skin()) {
                 tilemap_dialog::DialogResult::Open => {}
                 tilemap_dialog::DialogResult::Accept => {
                     let choice = dialog.choice();
