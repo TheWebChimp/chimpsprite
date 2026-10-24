@@ -221,6 +221,18 @@ fn with_pixel_ui_the_canvas_has_the_skin_canvas_color() {
 }
 
 #[test]
+fn with_pixel_ui_the_options_bar_is_19_high() {
+    let view = ViewSettings {
+        pixel_ui: true,
+        ..Default::default()
+    };
+    let h = LayoutHarness::new(view, true);
+    assert_eq!(h.panel("tool_options").height(), 19.0);
+    // Sin Pixel UI, la de siempre.
+    assert_eq!(LayoutHarness::editor().panel("tool_options").height(), 32.0);
+}
+
+#[test]
 fn without_pixel_ui_the_named_toolbar_keeps_its_width() {
     let h = LayoutHarness::editor();
     assert_eq!(h.panel("tools").width(), 184.0);

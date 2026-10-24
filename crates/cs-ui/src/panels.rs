@@ -101,22 +101,55 @@ pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
 /// Alto de la barra de opciones, con su margen: el mismo con todas las herramientas, así el lienzo
 /// no se mueve al cambiar de herramienta.
 pub const OPTIONS_BAR_HEIGHT: f32 = 32.0;
+/// Alto de la barra de opciones con Pixel UI: la del mockup, de 19 px de skin.
+pub const PIXEL_OPTIONS_BAR_HEIGHT: f32 = 19.0;
+/// Alto de los controles de la barra con Pixel UI (sliders, campos, casillas y botones).
+const PIXEL_CONTROL_HEIGHT: f32 = 13.0;
+
+/// Alto de la barra de opciones: `PIXEL_OPTIONS_BAR_HEIGHT` con Pixel UI (`skin`) y
+/// `OPTIONS_BAR_HEIGHT` sin él.
+pub fn options_bar_height(skin: Option<&Skin>) -> f32 {
+    if skin.is_some() {
+        PIXEL_OPTIONS_BAR_HEIGHT
+    } else {
+        OPTIONS_BAR_HEIGHT
+    }
+}
+
+/// El marco del panel de la barra: con Pixel UI, sin margen vertical (los controles de 13 y el
+/// texto de la fuente pixel ocupan el alto justo); sin él, el de siempre.
+pub fn options_bar_frame(style: &egui::Style, skin: Option<&Skin>) -> egui::Frame {
+    let frame = egui::Frame::side_top_panel(style);
+    match skin {
+        Some(_) => frame.inner_margin(egui::Margin::symmetric(8, 0)),
+        None => frame,
+    }
+}
 
 /// Barra de opciones, debajo de las pestañas: las opciones de la herramienta activa en una sola
 /// fila y Symmetry a la derecha. Si las opciones no caben, hacen scroll horizontal con la rueda o
-/// la barra (sin arrastre); no se parten en dos renglones.
-pub fn tool_options_bar(ui: &mut egui::Ui, editor: &mut Editor) {
+/// la barra (sin arrastre); no se parten en dos renglones. Con `skin` (Pixel UI), los controles
+/// son de 13 de alto y los botones de simetría usan las piezas del skin.
+pub fn tool_options_bar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
     // Los textos no se parten: la fila se alarga y hace scroll.
     ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
     // La rueda de siempre (vertical) mueve la fila de lado, sin Shift.
     ui.style_mut().always_scroll_the_only_direction = true;
+    if skin.is_some() {
+        let spacing = ui.spacing_mut();
+        spacing.interact_size.y = PIXEL_CONTROL_HEIGHT;
+        spacing.button_padding.y = 0.0;
+        spacing.item_spacing.y = 0.0;
+        // La barra de scroll de la fila flota sobre los controles, sin sumar alto.
+        spacing.scroll.floating = true;
+    }
     // De derecha a izquierda: Symmetry queda pegado al borde y las opciones usan lo que sobra.
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-        symmetry_buttons(ui, editor);
+        symmetry_buttons(ui, editor, skin);
         ui.separator();
         options_scroll_area().show(ui, |ui| {
             ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                tool_options(ui, editor)
+                tool_options(ui, editor, skin.is_some())
             });
         });
     });
@@ -155,8 +188,9 @@ impl Groups {
 }
 
 /// Las opciones de la herramienta activa, en fila: cada etiqueta al lado de su control y un
-/// separador entre grupos. La ayuda de la herramienta va en el mismo orden que antes.
-fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
+/// separador entre grupos. La ayuda de la herramienta va en el mismo orden que antes. `compact`
+/// (Pixel UI): los botones de forma son de 13×13.
+fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, compact: bool) {
     let tool = editor.tool;
     let mut groups = Groups::default();
     let options = &mut editor.options;
@@ -168,7 +202,8 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
             1..=MAX_BRUSH_SIZE,
         ))
         .on_hover_text("Ctrl+wheel over the canvas changes it");
-        brush_shape_buttons(ui, &mut options.brush_shape);
+        let side = if compact { PIXEL_CONTROL_HEIGHT } else { 20.0 };
+        brush_shape_buttons(ui, &mut options.brush_shape, side);
     }
     if matches!(tool, ToolKind::Pencil | ToolKind::Eraser) {
         groups.next(ui);
@@ -289,12 +324,17 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
     }
 }
 
-/// Botones Round y Square de la forma del pincel. El círculo y el cuadrado se pintan en vez de
-/// usar glifos: `●` solo está en Hack, que no entra en la familia proporcional de egui.
-fn brush_shape_buttons(ui: &mut egui::Ui, shape: &mut BrushShape) -> [egui::Response; 2] {
+/// Botones Round y Square de la forma del pincel, cuadrados de `side`. El círculo y el cuadrado
+/// se pintan en vez de usar glifos: `●` solo está en Hack, que no entra en la familia
+/// proporcional de egui.
+fn brush_shape_buttons(
+    ui: &mut egui::Ui,
+    shape: &mut BrushShape,
+    side: f32,
+) -> [egui::Response; 2] {
     ui.horizontal(|ui| {
         [(BrushShape::Round, "Round"), (BrushShape::Square, "Square")].map(|(value, name)| {
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(20.0), Sense::click());
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(side), Sense::click());
             if response.clicked() {
                 *shape = value;
             }
@@ -311,7 +351,8 @@ fn brush_shape_buttons(ui: &mut egui::Ui, shape: &mut BrushShape) -> [egui::Resp
                 visuals.bg_stroke,
                 StrokeKind::Inside,
             );
-            let icon = rect.shrink(5.0);
+            // El dibujo deja un cuarto del lado de margen: 5 de 20, 3 de 13.
+            let icon = rect.shrink((side / 4.0).floor());
             let color = visuals.fg_stroke.color;
             if value == BrushShape::Round {
                 painter.circle_filled(icon.center(), icon.width() / 2.0, color);
@@ -429,6 +470,16 @@ enum SymAxis {
 }
 
 impl SymAxis {
+    /// Ícono del skin del eje.
+    fn icon(self) -> &'static str {
+        match self {
+            SymAxis::Vertical => "icon.sym_vertical",
+            SymAxis::Horizontal => "icon.sym_horizontal",
+            SymAxis::DiagonalDown => "icon.sym_diag_down",
+            SymAxis::DiagonalUp => "icon.sym_diag_up",
+        }
+    }
+
     /// Si el eje está prendido en `axes`.
     fn on(self, axes: SymmetryAxes) -> bool {
         match self {
@@ -466,8 +517,9 @@ const AXES_HINT: &str = "Ctrl+drag the dashed axes to move them";
 
 /// Symmetry, al final de la barra de opciones. Se arma de derecha a izquierda (la barra lo pone
 /// pegado al borde): "Center axes" si los ejes se movieron, los cuatro ejes en orden inverso y el
-/// título. En pantalla se leen │ ─ ╲ ╱. Cada botón prende o apaga solo su eje.
-fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor) {
+/// título. En pantalla se leen │ ─ ╲ ╱. Cada botón prende o apaga solo su eje. Con `skin`
+/// (Pixel UI), los botones son las piezas `sym.slot` con su ícono.
+fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let current = editor.symmetry();
     if current.axes.any() && current.center2.is_some() && ui.small_button("Center axes").clicked() {
         editor.set_symmetry(cs_core::Symmetry {
@@ -478,7 +530,15 @@ fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor) {
     ui.scope(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         for (axis, tip) in SYMMETRY_AXES.into_iter().rev() {
-            let response = symmetry_toggle(ui, axis, tip, axis.on(current.axes));
+            let on = axis.on(current.axes);
+            let response = match skin {
+                Some(skin) => {
+                    pixel_ui::toggle_button(ui, skin, axis.icon(), tip, on, |r, color| {
+                        axis_shapes(r, axis, color)
+                    })
+                }
+                None => symmetry_toggle(ui, axis, tip, on),
+            };
             let response = if current.axes.any() {
                 response.on_hover_text(format!("{tip}\n{AXES_HINT}"))
             } else {
@@ -1606,7 +1666,7 @@ mod tests {
             let mut rects = [Rect::NOTHING; 2];
             let mut output = ctx.run_ui(input, |ui| {
                 egui::CentralPanel::default().show(ui, |ui| {
-                    rects = brush_shape_buttons(ui, shape).map(|r| r.rect);
+                    rects = brush_shape_buttons(ui, shape, 20.0).map(|r| r.rect);
                 });
             });
             output.textures_delta.clear();
@@ -1920,6 +1980,8 @@ mod tests {
     struct BarHarness {
         ctx: egui::Context,
         editor: Editor,
+        /// Con Pixel UI: el skin embebido (y el estilo de `apply_style` con sus colores).
+        skin: Option<Skin>,
         time: f64,
         width: f32,
         bar: Rect,
@@ -1928,11 +1990,23 @@ mod tests {
 
     impl BarHarness {
         fn new(width: f32) -> Self {
+            Self::with_skin(width, false)
+        }
+
+        /// Con `pixel`, la barra de Pixel UI: el estilo con los colores del skin y la fuente
+        /// pixel, y el skin embebido.
+        fn with_skin(width: f32, pixel: bool) -> Self {
             let ctx = egui::Context::default();
             ctx.enable_accesskit();
+            let skin = pixel.then(|| Skin::embedded(&ctx));
+            if let Some(skin) = &skin {
+                ctx.set_fonts(crate::appearance::font_definitions(true));
+                crate::appearance::apply_style(&ctx, Some(skin.colors()));
+            }
             let mut h = Self {
                 ctx,
                 editor: Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba)),
+                skin,
                 time: 0.0,
                 width,
                 bar: Rect::NOTHING,
@@ -1954,11 +2028,13 @@ mod tests {
                 ..Default::default()
             };
             let editor = &mut self.editor;
+            let skin = self.skin.as_ref();
             let mut bar = Rect::NOTHING;
             let mut output = self.ctx.run_ui(input, |ui| {
                 bar = egui::Panel::top("tool_options")
-                    .exact_size(OPTIONS_BAR_HEIGHT)
-                    .show(ui, |ui| tool_options_bar(ui, editor))
+                    .exact_size(options_bar_height(skin))
+                    .frame(options_bar_frame(ui.style(), skin))
+                    .show(ui, |ui| tool_options_bar(ui, editor, skin))
                     .response
                     .rect;
             });
@@ -2059,6 +2135,19 @@ mod tests {
     }
 
     #[test]
+    fn with_pixel_ui_the_symmetry_buttons_are_the_skin_pieces_and_toggle_their_axis() {
+        let mut h = BarHarness::with_skin(1200.0, true);
+        let [vertical, horizontal, ..] = SYMMETRY_AXES.map(|(_, name)| name);
+        // Los botones miden lo que la pieza `sym.slot` y la forma del pincel, 13×13.
+        assert_eq!(h.rect(vertical).size(), Vec2::new(13.0, 14.0));
+        assert_eq!(h.rect("Round").size(), Vec2::splat(13.0));
+        h.click(vertical);
+        h.click(horizontal);
+        let axes = h.editor.symmetry().axes;
+        assert!(axes.vertical && axes.horizontal, "{axes:?}");
+    }
+
+    #[test]
     fn the_options_bar_is_one_row_of_the_same_height_with_every_tool() {
         let mut h = BarHarness::new(800.0);
         for &kind in ToolKind::GROUPS.iter().flat_map(|g| g.iter()) {
@@ -2076,15 +2165,13 @@ mod tests {
     }
 
     #[test]
-    fn with_pixel_ui_style_every_node_of_the_options_bar_fits_inside_it() {
-        let mut h = BarHarness::new(800.0);
-        let skin = Skin::embedded(&h.ctx);
-        crate::appearance::apply_style(&h.ctx, Some(skin.colors()));
+    fn with_pixel_ui_the_bar_is_19_and_every_node_fits_inside_it() {
+        let mut h = BarHarness::with_skin(800.0, true);
         for kind in [ToolKind::Pencil, ToolKind::MagicWand, ToolKind::Text] {
             h.editor.set_tool(kind);
             h.frame(vec![]);
             h.frame(vec![]);
-            assert_eq!(h.bar.height(), OPTIONS_BAR_HEIGHT, "{kind:?}");
+            assert_eq!(h.bar.height(), 19.0, "{kind:?}");
             assert!(h.nodes.len() > 2, "{kind:?}: {:?}", h.nodes);
             for (text, rect) in &h.nodes {
                 assert!(

@@ -841,17 +841,18 @@ impl ChimpApp {
 
     /// Paneles del editor (cuando hay un documento activo). Devuelve el rect del lienzo.
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
-        // La barra de opciones, a todo el ancho debajo de las pestañas.
+        let skin = self.pixel.skin();
+        // La barra de opciones, a todo el ancho debajo de las pestañas: 19 de alto con Pixel UI.
         egui::Panel::top("tool_options")
-            .exact_size(panels::OPTIONS_BAR_HEIGHT)
+            .exact_size(panels::options_bar_height(skin))
+            .frame(panels::options_bar_frame(ui.style(), skin))
             .show(ui, |ui| {
                 ui.add_enabled_ui(!modal, |ui| {
-                    panels::tool_options_bar(ui, &mut self.doc.editor)
+                    panels::tool_options_bar(ui, &mut self.doc.editor, skin)
                 });
             });
         // La toolbar antes que la línea de tiempo: va a todo el alto, hasta la barra de estado, y
         // la línea de tiempo empieza a su derecha.
-        let skin = self.pixel.skin();
         // Alrededor de los artboards: el color `canvas` del skin con Pixel UI.
         self.doc.canvas.background = canvas::background_for(skin);
         let (width, frame) = match skin {

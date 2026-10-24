@@ -35,6 +35,15 @@ const FALLBACK_SLOT_SIZE: Vec2 = Vec2::new(23.0, 23.0);
 const MORE_MARK: f32 = 3.0;
 /// Margen de la barra de íconos a cada lado del marco, en puntos.
 pub const TOOLBAR_MARGIN: i8 = 4;
+/// Marco de los botones de prender y apagar de la barra de opciones (los ejes de simetría);
+/// `.active` cuando están prendidos.
+const TOGGLE_PIECE: &str = "sym.slot";
+/// Tamaño del botón de prender y apagar de respaldo (el de la pieza del mockup).
+const FALLBACK_TOGGLE_SIZE: Vec2 = Vec2::new(13.0, 14.0);
+/// Esquina del ícono dentro de `sym.slot`: el interior del cuadro de 11×11 empieza en (2,2).
+const TOGGLE_ICON_OFFSET: Vec2 = Vec2::new(2.0, 2.0);
+/// Lado del interior de `sym.slot`, donde va el ícono.
+const TOGGLE_ICON_SIZE: Vec2 = Vec2::new(9.0, 9.0);
 
 /// Bordes del 9-slice de la pieza en puntos (izquierda, arriba, derecha, abajo). Con la escala
 /// entera de Pixel UI, un punto es un píxel del skin.
@@ -433,6 +442,69 @@ pub fn tool_button(
     response
 }
 
+/// Botón de prender y apagar de la barra de opciones: el marco `sym.slot` (`sym.slot.active`
+/// con `on`) a tamaño de pieza y el ícono `icon` en su interior.
+///
+/// - Sin el marco: el respaldo plano, con un borde `accent` si está prendido.
+/// - Sin el ícono: lo que dibuje `fallback` en el interior (rect y color del texto).
+/// - `label` es el nombre accesible.
+pub fn toggle_button(
+    ui: &mut Ui,
+    skin: &Skin,
+    icon: &str,
+    label: &str,
+    on: bool,
+    fallback: impl FnOnce(Rect, Color32) -> Vec<Shape>,
+) -> Response {
+    let size = skin
+        .piece(TOGGLE_PIECE, WidgetState::Normal)
+        .map_or(FALLBACK_TOGGLE_SIZE, |p| {
+            vec2(p.size[0] as f32, p.size[1] as f32)
+        });
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, on, label)
+    });
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let colors = *skin.colors();
+    let ppp = ui.ctx().pixels_per_point();
+    let state = if on {
+        WidgetState::Active
+    } else {
+        WidgetState::Normal
+    };
+    let mut shapes = match skin.piece(TOGGLE_PIECE, state) {
+        Some(piece) => piece_shapes(piece, rect, ppp),
+        None => {
+            let mut flat = flat_shapes(skin, rect, 0.0, ppp);
+            if on {
+                flat.push(Shape::rect_stroke(
+                    rect.shrink(1.0).round_to_pixels(ppp),
+                    0.0,
+                    Stroke::new(1.0, colors.accent),
+                    StrokeKind::Inside,
+                ));
+            }
+            flat
+        }
+    };
+    let inner =
+        Rect::from_min_size(rect.min + TOGGLE_ICON_OFFSET, TOGGLE_ICON_SIZE).round_to_pixels(ppp);
+    match skin.piece(icon, WidgetState::Normal) {
+        Some(piece) => {
+            let icon_size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+            let at = Rect::from_min_size(inner.min, icon_size);
+            shapes.extend(piece_shapes(piece, at, ppp));
+        }
+        None => shapes.extend(fallback(inner, colors.text)),
+    }
+    ui.painter().extend(shapes);
+    response
+}
+
 /// Triangulito de 3×3 px que marca un grupo con variantes, con el ángulo recto abajo a la
 /// derecha, en `corner`: tres filas de 1, 2 y 3 px, alineadas a píxeles de pantalla.
 fn more_mark(corner: Pos2, pixels_per_point: f32) -> [Rect; 3] {
@@ -698,6 +770,72 @@ mod tests {
             tool(&ctx, skin, false, vec![Event::PointerMoved(at)]);
             tool(&ctx, skin, false, vec![press(at, true)]);
             let (_, clicked, _) = tool(&ctx, skin, false, vec![press(at, false)]);
+            assert!(clicked);
+        }
+    }
+
+    /// Un frame con un botón de prender y apagar: su rect, si se hizo clic y las texturas
+    /// dibujadas.
+    fn toggle(
+        ctx: &egui::Context,
+        skin: &Skin,
+        icon: &str,
+        on: bool,
+        events: Vec<Event>,
+    ) -> (Rect, bool, Vec<egui::TextureId>) {
+        let mut out = (Rect::NOTHING, false);
+        let input = RawInput { events, ..screen() };
+        let mut output = ctx.run_ui(input, |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                let r = toggle_button(ui, skin, icon, "Vertical axis", on, |r, color| {
+                    vec![Shape::rect_filled(r, 0.0, color)]
+                });
+                out = (r.rect, r.clicked());
+            });
+        });
+        output.textures_delta.clear();
+        let mut textures = Vec::new();
+        for clipped in &output.shapes {
+            collect_textures(&clipped.shape, &mut textures);
+        }
+        (out.0, out.1, textures)
+    }
+
+    #[test]
+    fn a_toggle_is_the_symmetry_slot_with_its_icon_and_the_active_slot_when_on() {
+        let ctx = egui::Context::default();
+        let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
+        let id = |name: &str| skin.piece(name, WidgetState::Normal).unwrap().texture.id();
+        let (rect, _, textures) = toggle(&ctx, &skin, "icon.sym_vertical", false, vec![]);
+        assert_eq!(rect.size(), vec2(13.0, 14.0), "the piece size");
+        assert!(textures.contains(&id("sym.slot")));
+        assert!(textures.contains(&id("icon.sym_vertical")));
+        let (_, _, textures) = toggle(&ctx, &skin, "icon.sym_vertical", true, vec![]);
+        assert!(textures.contains(&id("sym.slot.active")));
+        assert!(!textures.contains(&id("sym.slot")));
+    }
+
+    #[test]
+    fn a_toggle_clicks_with_the_skin_and_with_the_flat_fallback() {
+        let ctx = egui::Context::default();
+        let skins = [
+            Skin::load(&ctx, crate::skin::EMBEDDED).unwrap(),
+            Skin::fallback(),
+        ];
+        for skin in &skins {
+            // Sin el ícono (`icon.nope`), dibuja el respaldo.
+            let (rect, _, _) = toggle(&ctx, skin, "icon.nope", false, vec![]);
+            assert_eq!(rect.size(), vec2(13.0, 14.0));
+            let at = rect.center();
+            toggle(
+                &ctx,
+                skin,
+                "icon.nope",
+                false,
+                vec![Event::PointerMoved(at)],
+            );
+            toggle(&ctx, skin, "icon.nope", false, vec![press(at, true)]);
+            let (_, clicked, _) = toggle(&ctx, skin, "icon.nope", false, vec![press(at, false)]);
             assert!(clicked);
         }
     }
