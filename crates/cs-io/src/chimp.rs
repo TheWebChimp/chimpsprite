@@ -463,4 +463,49 @@ mod tests {
             Err(IoError::Unsupported(_))
         ));
     }
+
+    #[test]
+    fn an_old_chimp_with_the_symmetry_mode_opens_with_its_axes() {
+        // Manifiesto como lo escribía la versión anterior: `mode` en vez de `axes`.
+        let sprite = Sprite::new(4, 4, ColorMode::Rgba);
+        let file = aseprite::write(&sprite);
+        let modes = [
+            ("None", [false, false, false, false]),
+            ("Horizontal", [true, false, false, false]),
+            ("Vertical", [false, true, false, false]),
+            ("Both", [true, true, false, false]),
+            ("DiagonalDown", [false, false, true, false]),
+            ("DiagonalUp", [false, false, false, true]),
+            ("All", [true, true, true, true]),
+        ];
+        for (mode, [v, h, down, up]) in modes {
+            let manifest = format!(
+                r#"{{"format":"chimp","version":1,"artboards":[{{"id":1,"name":"a","position":[0,0],"file":"artboards/1.aseprite","symmetry":{{"mode":"{mode}","center2":[3,5]}}}}]}}"#
+            );
+            let zip = zip_with(&[
+                (MANIFEST, manifest.as_bytes()),
+                ("artboards/1.aseprite", &file),
+            ]);
+            let (doc, _) = read(&zip).unwrap();
+            let s = doc.artboards[0].symmetry;
+            let axes = s.axes;
+            assert_eq!(
+                [
+                    axes.vertical,
+                    axes.horizontal,
+                    axes.diagonal_down,
+                    axes.diagonal_up
+                ],
+                [v, h, down, up],
+                "{mode}"
+            );
+            assert_eq!(s.center2, Some((3, 5)), "{mode}");
+            // Al guardar se escribe el formato nuevo.
+            let again = write(&doc).unwrap();
+            let mut archive = ZipArchive::new(Cursor::new(again.as_slice())).unwrap();
+            let text = String::from_utf8(read_entry(&mut archive, MANIFEST).unwrap()).unwrap();
+            assert!(text.contains("\"axes\""), "{text}");
+            assert!(!text.contains("\"mode\""), "{text}");
+        }
+    }
 }
