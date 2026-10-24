@@ -80,60 +80,106 @@ fn tool_column(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
     });
 }
 
-/// Herramientas, Options y Symmetry. Con `skin` (Pixel UI) las herramientas son una columna de
-/// íconos; sin él, filas con nombre.
+/// La barra de herramientas: solo los botones de grupo. Con `skin` (Pixel UI) es una columna de
+/// íconos; sin él, filas con nombre bajo el título "Tools". Las opciones de la herramienta y
+/// Symmetry van en la barra de opciones (`tool_options_bar`).
 pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
-    ui.add_space(6.0);
-    ui.heading("Tools");
-    ui.separator();
-    ui.spacing_mut().item_spacing.y = 3.0;
     match skin {
         Some(skin) => tool_column(ui, editor, skin),
         None => {
+            ui.add_space(6.0);
+            ui.heading("Tools");
+            ui.separator();
+            ui.spacing_mut().item_spacing.y = 3.0;
             for index in 0..ToolKind::GROUPS.len() {
                 tool_group(ui, editor, index);
             }
         }
     }
+}
 
-    ui.add_space(10.0);
-    ui.heading("Options");
-    ui.separator();
-    tool_options(ui, editor);
+/// Alto de la barra de opciones, con su margen: el mismo con todas las herramientas, así el lienzo
+/// no se mueve al cambiar de herramienta.
+pub const OPTIONS_BAR_HEIGHT: f32 = 32.0;
 
-    ui.add_space(10.0);
-    ui.heading("Symmetry");
-    ui.separator();
-    symmetry_buttons(ui, editor);
+/// Barra de opciones, debajo de las pestañas: las opciones de la herramienta activa en una sola
+/// fila y Symmetry a la derecha. Si las opciones no caben, hacen scroll horizontal con la rueda o
+/// la barra (sin arrastre); no se parten en dos renglones.
+pub fn tool_options_bar(ui: &mut egui::Ui, editor: &mut Editor) {
+    // Los textos no se parten: la fila se alarga y hace scroll.
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    // La rueda de siempre (vertical) mueve la fila de lado, sin Shift.
+    ui.style_mut().always_scroll_the_only_direction = true;
+    // De derecha a izquierda: Symmetry queda pegado al borde y las opciones usan lo que sobra.
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        symmetry_buttons(ui, editor);
+        ui.separator();
+        options_scroll_area().show(ui, |ui| {
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                tool_options(ui, editor)
+            });
+        });
+    });
     text_window(ui.ctx(), editor);
 }
 
+/// Scroll de las opciones de la barra: horizontal, solo con la rueda y la barra.
+fn options_scroll_area() -> egui::ScrollArea {
+    use egui::containers::scroll_area::ScrollSource;
+    egui::ScrollArea::horizontal()
+        .id_salt("tool_options_scroll")
+        .auto_shrink([false, false])
+        .scroll_source(ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL)
+}
+
+/// Separadores entre los grupos de la barra de opciones: una línea antes de cada grupo, menos el
+/// primero.
+#[derive(Default)]
+struct Groups {
+    started: bool,
+}
+
+impl Groups {
+    fn next(&mut self, ui: &mut egui::Ui) {
+        if self.started {
+            ui.separator();
+        }
+        self.started = true;
+    }
+}
+
+/// Las opciones de la herramienta activa, en fila: cada etiqueta al lado de su control y un
+/// separador entre grupos. La ayuda de la herramienta va en el mismo orden que antes.
 fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
     let tool = editor.tool;
+    let mut groups = Groups::default();
     let options = &mut editor.options;
     if tool.uses_brush() {
-        ui.horizontal(|ui| {
-            ui.label("Brush size");
-            brush_shape_buttons(ui, &mut options.brush_shape);
-        });
+        groups.next(ui);
+        ui.label("Brush size");
         ui.add(egui::Slider::new(
             &mut options.brush_size,
             1..=MAX_BRUSH_SIZE,
         ))
         .on_hover_text("Ctrl+wheel over the canvas changes it");
+        brush_shape_buttons(ui, &mut options.brush_shape);
     }
     if matches!(tool, ToolKind::Pencil | ToolKind::Eraser) {
+        groups.next(ui);
         ui.checkbox(&mut options.pixel_perfect, "Pixel-perfect");
     }
     if matches!(tool, ToolKind::Rectangle | ToolKind::Ellipse) {
+        groups.next(ui);
         ui.checkbox(&mut options.filled, "Filled");
     }
     if tool == ToolKind::Rectangle {
+        groups.next(ui);
         ui.label("Corner radius");
         ui.add(egui::Slider::new(&mut options.corner_radius, 0..=32))
             .on_hover_text("0 = square corners; large values make a pill or a circle");
     }
     if tool.is_selection() {
+        groups.next(ui);
         ui.label("Mode");
         for mode in SelectionMode::ALL {
             ui.radio_value(&mut options.selection_mode, mode, mode.label());
@@ -141,38 +187,41 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
     }
     match tool {
         ToolKind::Hand => {
+            groups.next(ui);
             ui.weak("Drag to move the view. Space+drag or the middle button do it with any tool.");
         }
         ToolKind::MagicWand => {
+            groups.next(ui);
             ui.label("Tolerance");
             ui.add(egui::Slider::new(&mut options.tolerance, 0..=255));
             ui.checkbox(&mut options.contiguous, "Contiguous");
-            ui.horizontal(|ui| {
-                ui.label("Sample:");
-                ui.radio_value(&mut options.sample_all, false, "Layer");
-                ui.radio_value(&mut options.sample_all, true, "All layers");
-            });
+            ui.label("Sample:");
+            ui.radio_value(&mut options.sample_all, false, "Layer");
+            ui.radio_value(&mut options.sample_all, true, "All layers");
         }
         ToolKind::Lasso => {
+            groups.next(ui);
             ui.weak("Drag around the area; it closes when you release.");
         }
         ToolKind::PolygonLasso => {
+            groups.next(ui);
             ui.weak("Click to add points. Click the first point, double-click or press Enter to close; Esc cancels.");
         }
         ToolKind::Bucket => {
+            groups.next(ui);
             ui.checkbox(&mut options.contiguous, "Contiguous");
         }
         ToolKind::Spray => {
+            groups.next(ui);
             ui.label("Spray width");
             ui.add(egui::Slider::new(&mut options.spray_width, 1..=64));
             ui.label("Spray speed");
             ui.add(egui::Slider::new(&mut options.spray_speed, 1..=100));
         }
         ToolKind::Gradient => {
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut options.gradient_shape, GradientShape::Linear, "Linear");
-                ui.radio_value(&mut options.gradient_shape, GradientShape::Radial, "Radial");
-            });
+            groups.next(ui);
+            ui.radio_value(&mut options.gradient_shape, GradientShape::Linear, "Linear");
+            ui.radio_value(&mut options.gradient_shape, GradientShape::Radial, "Radial");
             egui::ComboBox::from_id_salt("dither")
                 .selected_text(options.dither.label())
                 .show_ui(ui, |ui| {
@@ -180,37 +229,44 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
                         ui.selectable_value(&mut options.dither, d, d.label());
                     }
                 });
+            groups.next(ui);
             ui.weak("Drag from the primary to the secondary color. Right-drag swaps them.");
         }
         ToolKind::Jumble => {
+            groups.next(ui);
             ui.weak("Scrambles pixels within the brush radius.");
         }
         ToolKind::Contour => {
+            groups.next(ui);
             ui.weak("Draw the outline: it closes and fills when you release.");
         }
         ToolKind::Blur => {
+            groups.next(ui);
             ui.weak("Softens the pixels under the brush. Go over an area again to blur it more.");
         }
         ToolKind::Text => {
+            groups.next(ui);
             text_style_options(ui, editor);
+            groups.next(ui);
             ui.weak("Click on the canvas to place text.");
         }
         ToolKind::Slice => {
+            groups.next(ui);
             ui.weak("Drag to create a slice (hitbox, pivot…). Drag the selected one to move it or its edges to resize it: changes apply from the current frame on.");
         }
         _ => {}
     }
     if tool.is_selection() || tool == ToolKind::Move {
+        groups.next(ui);
         let before = editor.options.rotation;
-        ui.horizontal(|ui| {
-            ui.label("Rotation:");
-            for algorithm in RotationAlgorithm::ALL {
-                ui.radio_value(&mut editor.options.rotation, algorithm, algorithm.label());
-            }
-        });
+        ui.label("Rotation:");
+        for algorithm in RotationAlgorithm::ALL {
+            ui.radio_value(&mut editor.options.rotation, algorithm, algorithm.label());
+        }
         if editor.options.rotation != before {
             editor.refresh_floating(false);
         }
+        groups.next(ui);
         ui.weak("Drag the handles to scale, or just outside a corner to rotate. Shift keeps the proportions or snaps to 15°.");
     }
     if matches!(
@@ -218,9 +274,11 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
         ToolKind::Line | ToolKind::Rectangle | ToolKind::Ellipse | ToolKind::Gradient
     ) || matches!(tool, ToolKind::RectSelect | ToolKind::EllipseSelect)
     {
+        groups.next(ui);
         ui.weak("Shift: constrain");
     }
     if tool.paints() {
+        groups.next(ui);
         ui.weak("Alt+click: pick color");
     }
 }
@@ -365,13 +423,37 @@ const SYMMETRY_MODES: [(SymmetryMode, &str); 7] = [
     (SymmetryMode::All, "All 8 directions"),
 ];
 
+/// Ayuda de los ejes, en el tooltip de los botones de simetría cuando hay una activa.
+const AXES_HINT: &str = "Ctrl+drag the dashed axes to move them";
+
+/// Symmetry, al final de la barra de opciones. Se arma de derecha a izquierda (la barra lo pone
+/// pegado al borde): "Center axes" si los ejes se movieron, los siete modos en orden inverso y el
+/// título. En pantalla se leen en el orden de siempre.
 fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor) {
     let current = editor.symmetry();
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::splat(2.0);
-        for (mode, tip) in SYMMETRY_MODES {
+    if current.mode != SymmetryMode::None
+        && current.center2.is_some()
+        && ui.small_button("Center axes").clicked()
+    {
+        editor.set_symmetry(cs_core::Symmetry {
+            center2: None,
+            ..current
+        });
+    }
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.x = 2.0;
+        for (mode, tip) in SYMMETRY_MODES.into_iter().rev() {
             let (rect, response) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
             let selected = current.mode == mode;
+            let enabled = ui.is_enabled();
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(
+                    egui::WidgetType::SelectableLabel,
+                    enabled,
+                    selected,
+                    tip,
+                )
+            });
             let visuals = ui.style().interact_selectable(&response, selected);
             let painter = ui.painter();
             painter.rect_filled(rect, 3.0, visuals.weak_bg_fill);
@@ -381,20 +463,17 @@ fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor) {
                 visuals.fg_stroke.color
             };
             draw_symmetry_icon(painter, rect.shrink(5.0), mode, color);
-            if response.on_hover_text(tip).clicked() {
+            let response = if current.mode == SymmetryMode::None {
+                response.on_hover_text(tip)
+            } else {
+                response.on_hover_text(format!("{tip}\n{AXES_HINT}"))
+            };
+            if response.clicked() {
                 editor.set_symmetry(cs_core::Symmetry { mode, ..current });
             }
         }
     });
-    if current.mode != SymmetryMode::None {
-        ui.weak("Ctrl+drag the dashed axes to move them");
-        if current.center2.is_some() && ui.small_button("Center axes").clicked() {
-            editor.set_symmetry(cs_core::Symmetry {
-                center2: None,
-                ..current
-            });
-        }
-    }
+    ui.label("Symmetry");
 }
 
 fn draw_symmetry_icon(painter: &egui::Painter, r: Rect, mode: SymmetryMode, color: Color32) {
@@ -1799,5 +1878,183 @@ mod tests {
         assert!(egui::Popup::is_any_open(&h.ctx));
         assert!(h.labels().contains(&item(ToolKind::Spray).as_str()));
         assert_eq!(h.offset, 0.0);
+    }
+
+    /// Nombre (o texto, en las etiquetas) y rect de cada nodo del árbol de accesibilidad.
+    fn nodes(output: &egui::FullOutput) -> Vec<(String, Rect)> {
+        let Some(update) = &output.platform_output.accesskit_update else {
+            return Vec::new();
+        };
+        update
+            .nodes
+            .iter()
+            .filter_map(|(_, n)| {
+                let b = n.bounds()?;
+                let text = n.label().or_else(|| n.value())?.to_string();
+                let rect = Rect::from_min_max(
+                    pos2(b.x0 as f32, b.y0 as f32),
+                    pos2(b.x1 as f32, b.y1 as f32),
+                );
+                Some((text, rect))
+            })
+            .collect()
+    }
+
+    /// La barra de opciones en su panel de arriba, como en la app, manejada con eventos crudos (el
+    /// reloj avanza 50 ms por frame). Guarda el rect del panel y los nodos de accesibilidad.
+    struct BarHarness {
+        ctx: egui::Context,
+        editor: Editor,
+        time: f64,
+        width: f32,
+        bar: Rect,
+        nodes: Vec<(String, Rect)>,
+    }
+
+    impl BarHarness {
+        fn new(width: f32) -> Self {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut h = Self {
+                ctx,
+                editor: Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba)),
+                time: 0.0,
+                width,
+                bar: Rect::NOTHING,
+                nodes: Vec::new(),
+            };
+            h.frame(vec![]);
+            h
+        }
+
+        fn frame(&mut self, events: Vec<Event>) {
+            self.time += 0.05;
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(
+                    Pos2::ZERO,
+                    Vec2::new(self.width, 300.0),
+                )),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            };
+            let editor = &mut self.editor;
+            let mut bar = Rect::NOTHING;
+            let mut output = self.ctx.run_ui(input, |ui| {
+                bar = egui::Panel::top("tool_options")
+                    .exact_size(OPTIONS_BAR_HEIGHT)
+                    .show(ui, |ui| tool_options_bar(ui, editor))
+                    .response
+                    .rect;
+            });
+            output.textures_delta.clear();
+            self.bar = bar;
+            self.nodes = nodes(&output);
+        }
+
+        fn has(&self, text: &str) -> bool {
+            self.nodes.iter().any(|(t, _)| t == text)
+        }
+
+        fn rect(&self, text: &str) -> Rect {
+            self.nodes
+                .iter()
+                .find(|(t, _)| t == text)
+                .map(|(_, r)| *r)
+                .unwrap_or_else(|| panic!("no {text:?} in {:?}", self.nodes))
+        }
+    }
+
+    #[test]
+    fn the_options_bar_has_the_brush_with_the_pencil_but_not_with_the_hand() {
+        let mut h = BarHarness::new(1200.0);
+        assert_eq!(h.editor.tool, ToolKind::Pencil);
+        for text in ["Brush size", "Round", "Square", "Pixel-perfect"] {
+            assert!(h.has(text), "{text}");
+        }
+        // Etiqueta y control uno al lado del otro: la forma va a la derecha del texto.
+        assert!(h.rect("Round").left() > h.rect("Brush size").right());
+        assert!(h.has("Off"), "Symmetry");
+        h.editor.set_tool(ToolKind::Hand);
+        h.frame(vec![]);
+        for text in ["Brush size", "Round", "Square"] {
+            assert!(!h.has(text), "{text}");
+        }
+        assert!(h.has("Off"), "Symmetry is always there");
+        assert!(h.has("Symmetry"));
+    }
+
+    #[test]
+    fn symmetry_is_at_the_right_end_of_the_bar_in_the_usual_order() {
+        let h = BarHarness::new(1200.0);
+        let names: Vec<&str> = SYMMETRY_MODES.iter().map(|(_, tip)| *tip).collect();
+        let rects: Vec<Rect> = names.iter().map(|n| h.rect(n)).collect();
+        for pair in rects.windows(2) {
+            assert!(pair[0].right() <= pair[1].left(), "{names:?}: {rects:?}");
+        }
+        let last = rects[rects.len() - 1];
+        assert!(
+            h.bar.right() - last.right() < 12.0,
+            "{last:?} in {:?}",
+            h.bar
+        );
+        assert!(h.rect("Symmetry").right() <= rects[0].left());
+    }
+
+    #[test]
+    fn the_options_bar_is_one_row_of_the_same_height_with_every_tool() {
+        let mut h = BarHarness::new(800.0);
+        for &kind in ToolKind::GROUPS.iter().flat_map(|g| g.iter()) {
+            h.editor.set_tool(kind);
+            h.frame(vec![]);
+            assert_eq!(h.bar.height(), OPTIONS_BAR_HEIGHT, "{kind:?}");
+            for (text, rect) in &h.nodes {
+                assert!(
+                    rect.top() >= h.bar.top() && rect.bottom() <= h.bar.bottom(),
+                    "{kind:?}: {text:?} {rect:?} out of {:?}",
+                    h.bar
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_options_scroll_sideways_with_the_wheel_when_they_do_not_fit() {
+        let mut h = BarHarness::new(320.0);
+        let before = h.rect("Round");
+        let over = pos2(40.0, h.bar.center().y);
+        h.frame(vec![Event::PointerMoved(over)]);
+        h.frame(vec![Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: Vec2::new(0.0, -60.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Default::default(),
+        }]);
+        for _ in 0..20 {
+            h.frame(vec![]);
+        }
+        let after = h.rect("Round");
+        assert!(after.left() < before.left(), "{before:?} -> {after:?}");
+        assert_eq!(after.top(), before.top(), "still one row");
+        assert!(h.rect("Off").right() <= 320.0, "Symmetry stays in view");
+    }
+
+    #[test]
+    fn the_toolbar_has_only_the_tool_buttons() {
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
+        let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
+        let mut editor = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        for skin in [None, Some(&skin)] {
+            let mut output = ctx.run_ui(RawInput::default(), |ui| {
+                egui::CentralPanel::default().show(ui, |ui| toolbar(ui, &mut editor, skin));
+            });
+            output.textures_delta.clear();
+            let texts: Vec<String> = nodes(&output).into_iter().map(|(t, _)| t).collect();
+            for gone in ["Options", "Symmetry", "Brush size", "Off"] {
+                assert!(!texts.iter().any(|t| t == gone), "{gone} in {texts:?}");
+            }
+            assert!(texts.iter().any(|t| t.contains("Pencil")), "{texts:?}");
+        }
     }
 }

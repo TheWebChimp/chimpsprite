@@ -807,6 +807,14 @@ impl ChimpApp {
 
     /// Paneles del editor (cuando hay un documento activo).
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) {
+        // La barra de opciones, a todo el ancho debajo de las pestañas.
+        egui::Panel::top("tool_options")
+            .exact_size(panels::OPTIONS_BAR_HEIGHT)
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    panels::tool_options_bar(ui, &mut self.doc.editor)
+                });
+            });
         if self.view.timeline {
             egui::Panel::bottom("timeline")
                 .resizable(true)
