@@ -840,6 +840,7 @@ fn the_palette_buttons_are_in_the_embedded_skin() {
         ("palette.button", [5, 6]),
         ("palette.button.active", [3, 3]),
         ("palette.icon.lock", [7, 9]),
+        ("palette.icon.lock.open", [7, 9]),
         ("palette.icon.menu", [7, 7]),
         ("palette.icon.new", [9, 9]),
         ("palette.icon.mask", [18, 9]),
@@ -891,15 +892,9 @@ fn with_pixel_ui_the_top_buttons_are_the_design_group_and_the_checker() {
         h.drawn("palette.icon.mask")[0].min,
         checker.min + vec2(3.0, 3.0)
     );
-    // Lo único prendido es el candado: la paleta empieza bloqueada (sin el Mask).
-    let lock = h.node("Lock palette");
-    assert_eq!(
-        h.drawn_boxes("palette.button.active"),
-        vec![Rect::from_min_size(
-            lock.min + vec2(1.0, 1.0),
-            vec2(23.0, 13.0)
-        )]
-    );
+    // Nada prendido: la paleta empieza bloqueada, con el candado cerrado en un botón normal,
+    // como en el diseño (sin el Mask).
+    assert!(h.drawn_boxes("palette.button.active").is_empty());
 }
 
 #[test]
@@ -913,20 +908,10 @@ fn with_pixel_ui_the_lock_starts_on_and_blocks_editing_a_palette_color() {
     h.type_into("R", "200");
     assert_eq!(h.primary().r, 200);
     assert_eq!(h.editor.sprite().palette, before);
-    // Bloqueada se ve apretado (es un interruptor "Lock palette" prendido).
-    let lock = h.node("Lock palette");
-    assert_eq!(
-        h.drawn_boxes("palette.button.active"),
-        vec![Rect::from_min_size(
-            lock.min + vec2(1.0, 1.0),
-            vec2(23.0, 13.0)
-        )]
-    );
-    // Desbloqueada: el botón se ve normal, se anuncia apagado y el mismo cambio edita la #3.
+    // Desbloqueada: se anuncia apagado y el mismo cambio edita la #3.
     h.click_at(h.node("Lock palette").center());
     assert!(!h.editor.palette_locked);
     assert_eq!(h.is_selected("Lock palette"), Some(false));
-    assert!(h.drawn_boxes("palette.button.active").is_empty());
     h.click_at(h.node("#3").center());
     h.type_into("R", "201");
     let edited = h.editor.sprite().palette.colors()[3];
@@ -946,6 +931,36 @@ fn with_pixel_ui_the_lock_starts_on_and_blocks_editing_a_palette_color() {
     assert!(h.editor.palette_locked);
     h.click_at(h.node("Add to palette").center());
     assert_eq!(h.editor.sprite().palette.len(), 22);
+}
+
+#[test]
+fn with_pixel_ui_the_lock_button_shows_the_closed_or_the_open_lock() {
+    let mut h = Harness::new(true);
+    let lock = h.node("Lock palette");
+    // El ícono, donde está en el diseño: 9 px adentro del botón y 3 abajo.
+    let icon_at = lock.min + vec2(9.0, 3.0);
+    // Bloqueada: el candado cerrado, en un botón normal (sin `palette.button.active`).
+    assert!(h.editor.palette_locked);
+    assert_eq!(
+        h.drawn("palette.icon.lock"),
+        vec![Rect::from_min_size(icon_at, vec2(7.0, 9.0))]
+    );
+    assert!(h.drawn("palette.icon.lock.open").is_empty());
+    assert!(h.drawn_boxes("palette.button.active").is_empty());
+    // Desbloqueada: el candado abierto, en el mismo lugar, y sigue sin verse apretado.
+    h.click_at(lock.center());
+    assert!(!h.editor.palette_locked);
+    assert_eq!(
+        h.drawn("palette.icon.lock.open"),
+        vec![Rect::from_min_size(icon_at, vec2(7.0, 9.0))]
+    );
+    assert!(h.drawn("palette.icon.lock").is_empty());
+    assert!(h.drawn_boxes("palette.button.active").is_empty());
+    // Otro clic: bloqueada otra vez, con el cerrado.
+    h.click_at(lock.center());
+    assert!(h.editor.palette_locked);
+    assert_eq!(h.drawn("palette.icon.lock").len(), 1);
+    assert!(h.drawn("palette.icon.lock.open").is_empty());
 }
 
 #[test]
@@ -1034,15 +1049,14 @@ fn with_pixel_ui_the_checker_button_toggles_the_mask() {
     h.click_at(h.node("Mask").center());
     assert!(h.editor.is_mask(h.editor.primary));
     assert_eq!(h.is_selected("Mask"), Some(true));
-    // Prendido, junto al candado (la paleta sigue bloqueada).
+    // Prendido (el candado no: su estado lo dice el ícono).
     let checker = h.node("Mask");
-    let lock = h.node("Lock palette");
     assert_eq!(
         h.drawn_boxes("palette.button.active"),
-        vec![
-            Rect::from_min_size(lock.min + vec2(1.0, 1.0), vec2(23.0, 13.0)),
-            Rect::from_min_size(checker.min + vec2(1.0, 1.0), vec2(22.0, 13.0)),
-        ]
+        vec![Rect::from_min_size(
+            checker.min + vec2(1.0, 1.0),
+            vec2(22.0, 13.0)
+        )]
     );
     h.click_at(h.node("Mask").center());
     assert_eq!(h.primary(), Rgba::rgb(10, 20, 30));

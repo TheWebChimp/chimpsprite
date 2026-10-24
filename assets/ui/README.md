@@ -172,8 +172,10 @@ oculta.
   - `palette.button` (5×6, centro (2,2,1,1)): el botón suelto del damero (x 947..970), 24×16.
   - `palette.button.active` (3×3, centro (1,1,1,1)): no está en el diseño. Es el bisel y el
     relleno del primer botón con el bisel invertido (blanco <-> (221,206,191)) y el relleno
-    (189,164,153), como `tool.slot.active`. Va sobre el bisel y el relleno de un botón prendido
-    (el candado desbloqueado, el Mask elegido) o apretado.
+    (189,164,153), como `tool.slot.active`. Va sobre el bisel y el relleno del damero prendido (el
+    Mask elegido) o de un botón apretado.
+  - El candado no se ve prendido: bloqueada lleva `palette.icon.lock` (el cerrado, como en el
+    diseño) y desbloqueada `palette.icon.lock.open` (el abierto), los dos en el botón normal.
   - Íconos, con el relleno (234,224,221) transparente: `palette.icon.lock` (7×9),
     `palette.icon.menu` (7×7), `palette.icon.new` (9×9) y `palette.icon.mask` (18×9, el
     damero). Van centrados en el relleno de su botón (con piso), que es donde están en el

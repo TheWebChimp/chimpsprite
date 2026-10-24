@@ -66,6 +66,9 @@ const GROUP: &str = "palette.buttons";
 const GROUP_SEP: &str = "palette.buttons.sep";
 const CHECKER: &str = "palette.button";
 const ACTIVE: &str = "palette.button.active";
+/// El candado cerrado (paleta bloqueada) y el abierto (desbloqueada).
+const LOCK: &str = "palette.icon.lock";
+const LOCK_OPEN: &str = "palette.icon.lock.open";
 const BUTTON_HEIGHT: f32 = 16.0;
 /// De cada lado de la columna a los botones.
 const BUTTONS_SIDE: f32 = 2.0;
@@ -375,7 +378,10 @@ struct TopButton {
     rect: Rect,
     label: &'static str,
     icon: &'static str,
+    /// Prendido: se anuncia elegido (el candado y el damero).
     on: bool,
+    /// Se ve apretado (`palette.button.active`) aunque no se lo esté apretando.
+    lit: bool,
 }
 
 /// Los botones de arriba de la paleta (y 99..114 del diseño), 2 px adentro de cada lado de la
@@ -383,8 +389,10 @@ struct TopButton {
 /// - A la izquierda, el grupo `palette.buttons` (73×16, un botón cada 24 con
 ///   `palette.buttons.sep` entre dos):
 ///   - el candado es el interruptor "Lock palette": bloqueada (lo normal), sus colores no se
-///     editan uno por uno ni se reemplaza la paleta con la hoja. Prendido (apretado y anunciado
-///     elegido) mientras está bloqueada; desbloqueada se ve normal;
+///     editan uno por uno ni se reemplaza la paleta con la hoja. Bloqueada lleva el candado
+///     cerrado (`palette.icon.lock`) y desbloqueada el abierto (`palette.icon.lock.open`), los
+///     dos en un botón normal: el ícono ya dice el estado, y así el botón bloqueado queda como
+///     en el diseño (cerrado y sin apretar). Se anuncia elegido mientras está bloqueada;
 ///   - ≡ abre el menú de la paleta: Presets… (la ventana) y lo que tenía el menú "…";
 ///   - la hoja pide una paleta nueva con el color primario (`PaletteAction::NewPalette`: la app
 ///     la hace, o pregunta antes en indexado). Con la paleta bloqueada queda desactivada, con el
@@ -393,7 +401,8 @@ struct TopButton {
 ///   vuelve al de antes si ya lo es (prendido mientras el primario es el Mask). Clic derecho: el
 ///   Mask como secundario. Como en los cuadritos, el editor de color pasa al color elegido.
 ///
-/// Prendido o apretado, el botón lleva `palette.button.active` sobre su bisel y su relleno. Los
+/// El damero prendido, o cualquier botón apretado, lleva `palette.button.active` sobre su bisel y
+/// su relleno. Los
 /// íconos van centrados en el relleno. `menus`: con un diálogo abierto, ≡ queda desactivado.
 /// Devuelve lo que se eligió en el menú ≡ o `NewPalette`.
 pub fn palette_buttons(
@@ -450,28 +459,34 @@ pub fn palette_buttons(
         TopButton {
             rect: at(0),
             label: "Lock palette",
-            icon: "palette.icon.lock",
-            // Prendido mientras está bloqueada (el diseño solo tiene el ícono del candado
-            // cerrado): apretado = bloqueada.
+            icon: if editor.palette_locked {
+                LOCK
+            } else {
+                LOCK_OPEN
+            },
             on: editor.palette_locked,
+            lit: false,
         },
         TopButton {
             rect: at(1),
             label: "Palette menu",
             icon: "palette.icon.menu",
             on: false,
+            lit: false,
         },
         TopButton {
             rect: at(2),
             label: "New palette",
             icon: "palette.icon.new",
             on: false,
+            lit: false,
         },
         TopButton {
             rect: checker,
             label: "Mask",
             icon: "palette.icon.mask",
             on: editor.is_mask(editor.primary),
+            lit: editor.is_mask(editor.primary),
         },
     ];
     let mut responses = Vec::with_capacity(buttons.len());
@@ -501,7 +516,7 @@ pub fn palette_buttons(
             pos2(button.rect.right() - 1.0, button.rect.bottom() - 2.0),
         );
         let mut shapes = Vec::new();
-        if button.on || response.is_pointer_button_down_on() {
+        if button.lit || response.is_pointer_button_down_on() {
             shapes.extend(piece_or(skin, ACTIVE, fill, ppp, || {
                 vec![solid(fill, colors.outline.gamma_multiply(0.3), ppp)]
             }));
