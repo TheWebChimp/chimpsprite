@@ -334,14 +334,47 @@ pub fn number<Num: emath::Numeric>(
         pos2(field.left() + 1.0, look.top + CAPS_TOP - caps),
         vec2(NUMBER_WIDTH - 2.0, probe.size().y),
     );
-    // Todo lo dibujado (el campo y la unidad) responde al clic y al arrastre, no solo el texto:
-    // esta zona va debajo del `DragValue`, que gana donde se solapan.
+    // Todo lo dibujado (el campo y la unidad) responde al clic y al arrastre, no solo el texto.
     let (start, end) = (range.start().to_f64(), range.end().to_f64());
     let speed = ((end - start) / 128.0).clamp(0.1, 1.0);
     let whole = Rect::from_min_max(
         field.min,
         pos2(rect.right().max(field.right()), field.bottom()),
     );
+    let look = NumberLook {
+        text: colors.text,
+        outline: colors.outline,
+        align: egui::Align::Center,
+    };
+    drag_number(ui, whole, inner, id_salt, value, range, speed, look).0
+}
+
+/// Cómo se ve el texto de [`drag_number`]: su color, el del cursor de escribir y hacia dónde se
+/// alinea en su rect.
+#[derive(Clone, Copy)]
+pub(crate) struct NumberLook {
+    pub text: Color32,
+    pub outline: Color32,
+    pub align: egui::Align,
+}
+
+/// Un número que se arrastra en toda la zona `whole` y se escribe con el `DragValue` de egui sin
+/// marco que va en `inner` (el texto, alineado según el layout de `ui`). Un clic en la zona entra
+/// a escribir. Lo usan el campo numérico de la barra y la tira de canales del editor de color.
+/// Devuelve la respuesta del `DragValue` y la de la zona.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn drag_number<Num: emath::Numeric>(
+    ui: &mut Ui,
+    whole: Rect,
+    inner: Rect,
+    id_salt: impl std::hash::Hash + std::fmt::Debug + Copy,
+    value: &mut Num,
+    range: RangeInclusive<Num>,
+    speed: f64,
+    look: NumberLook,
+) -> (Response, Response) {
+    let (start, end) = (range.start().to_f64(), range.end().to_f64());
+    // La zona va debajo del `DragValue`, que gana donde se solapan.
     let zone = ui.interact(
         whole,
         ui.id().with(("bar_number_zone", id_salt)),
@@ -366,20 +399,25 @@ pub fn number<Num: emath::Numeric>(
         UiBuilder::new()
             .id_salt(("bar_number", id_salt))
             .max_rect(inner)
-            .layout(Layout::top_down(egui::Align::Center)),
+            .layout(Layout::top_down(look.align)),
     );
-    plain_field_style(child.style_mut(), inner.size(), colors.text, colors.outline);
+    plain_field_style(child.style_mut(), inner.size(), look.text, look.outline);
     let response = child.add(egui::DragValue::new(value).range(range).speed(speed));
     // Un clic en la zona de afuera del texto también entra a escribir.
     if zone.clicked() {
         ui.memory_mut(|m| m.request_focus(response.id));
     }
-    response
+    (response, zone)
 }
 
 /// El estilo del `DragValue` del campo: del tamaño del blanco, sin marco ni fondo (los pone la
 /// pieza), con el texto en `text`, el cursor en `outline` y sin el borde de foco de egui.
-fn plain_field_style(style: &mut egui::Style, size: Vec2, text: Color32, outline: Color32) {
+pub(crate) fn plain_field_style(
+    style: &mut egui::Style,
+    size: Vec2,
+    text: Color32,
+    outline: Color32,
+) {
     style.spacing.interact_size = size;
     style.spacing.button_padding = Vec2::ZERO;
     let v = &mut style.visuals;

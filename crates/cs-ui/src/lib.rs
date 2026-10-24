@@ -9,6 +9,7 @@ mod canvas;
 mod canvas_size;
 mod capture;
 mod clipboard;
+mod color_panel;
 mod demo;
 #[cfg(test)]
 mod dialog_tests;
@@ -978,22 +979,25 @@ impl ChimpApp {
         if std::mem::take(&mut self.doc.timeline.new_tilemap) {
             self.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
         }
-        egui::Panel::right("palette")
+        // Lo pedido desde el panel se resuelve después: el panel tiene prestado el skin.
+        let mut palette_action = None;
+        let open = egui::Panel::right("palette")
             .default_size(220.0)
             .show(ui, |ui| {
-                let open = egui::ScrollArea::vertical()
+                egui::ScrollArea::vertical()
                     .show(ui, |ui| {
                         if self.doc.editor.tiles_mode() {
                             panels::tileset(ui, &mut self.doc.editor, &mut self.doc.tile_thumbs);
                             // El selector de color sigue a mano (lo usa 2B).
                             ui.add_space(10.0);
-                            panels::color_picker(ui, &mut self.doc.editor);
+                            panels::color_picker(ui, &mut self.doc.editor, skin);
                         } else {
                             // Con un diálogo abierto, el menú de paleta no abre otro encima.
-                            if let Some(action) = panels::palette(ui, &mut self.doc.editor, !modal)
+                            if let Some(action) =
+                                panels::palette(ui, &mut self.doc.editor, !modal, skin)
                                 && !modal
                             {
-                                self.palette_action(ui.ctx(), action);
+                                palette_action = Some(action);
                             }
                         }
                         ui.add_space(12.0);
@@ -1018,11 +1022,15 @@ impl ChimpApp {
                         ui.add_enabled_ui(!modal, |ui| panels::slices(ui, &mut self.doc.editor));
                         open
                     })
-                    .inner;
-                if open {
-                    self.open_canvas_size();
-                }
-            });
+                    .inner
+            })
+            .inner;
+        if let Some(action) = palette_action {
+            self.palette_action(ui.ctx(), action);
+        }
+        if open {
+            self.open_canvas_size();
+        }
         // Otra vez: el panel derecho necesita `self` entero.
         let Some(skin) = self.pixel.skin() else {
             return egui::CentralPanel::no_frame()

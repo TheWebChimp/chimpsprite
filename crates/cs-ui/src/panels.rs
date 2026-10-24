@@ -13,7 +13,7 @@ use cs_tools::{BrushShape, Dither, GradientShape};
 use crate::bar_fields::{self, BarLook};
 use crate::editor::{Editor, MAX_BRUSH_SIZE, SelectionMode, ToolKind};
 use crate::skin::Skin;
-use crate::{menus, pixel_ui, theme, tile_ops, tool_group, widgets};
+use crate::{color_panel, menus, pixel_ui, theme, tile_ops, tool_group, widgets};
 
 /// Fila de un grupo en la barra con nombres: el botón con la herramienta que muestra el grupo y,
 /// si hay más, un desplegable con las demás (también con clic derecho o manteniendo presionado),
@@ -1014,7 +1014,7 @@ fn axis_shapes(r: Rect, axis: SymAxis, color: Color32) -> Vec<egui::Shape> {
 }
 
 /// Damero mínimo para que se note la transparencia.
-fn checker(painter: &egui::Painter, rect: Rect) {
+pub(crate) fn checker(painter: &egui::Painter, rect: Rect) {
     let half = rect.size() / 2.0;
     painter.rect_filled(rect, 0.0, theme::CHECKER_LIGHT);
     painter.rect_filled(
@@ -1040,7 +1040,7 @@ fn swatch(ui: &mut egui::Ui, color: Color32, size: f32) -> egui::Response {
 }
 
 /// Marco blanco si `value` es el color primario; del color de acento si es el secundario.
-fn mark_selected(ui: &egui::Ui, editor: &Editor, value: PixelValue, rect: Rect) {
+pub(crate) fn mark_selected(ui: &egui::Ui, editor: &Editor, value: PixelValue, rect: Rect) {
     let color = if value == editor.primary {
         Color32::WHITE
     } else if value == editor.secondary {
@@ -1052,6 +1052,19 @@ fn mark_selected(ui: &egui::Ui, editor: &Editor, value: PixelValue, rect: Rect) 
         .rect_stroke(rect, 0.0, Stroke::new(2.0, color), StrokeKind::Inside);
 }
 
+/// Clic elige `value` como color primario; clic derecho, como secundario.
+pub(crate) fn pick_on_click(editor: &mut Editor, response: &egui::Response, value: PixelValue) {
+    if response.clicked() {
+        editor.primary = value;
+    }
+    if response.secondary_clicked() {
+        editor.secondary = value;
+    }
+}
+
+/// Ayuda del swatch del color Mask.
+pub(crate) const MASK_HINT: &str = "Mask (transparent): painting with it erases";
+
 /// Swatch del color Mask (transparente): tablero con una diagonal roja.
 fn mask_swatch(ui: &mut egui::Ui, size: f32) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::splat(size), Sense::click());
@@ -1059,7 +1072,7 @@ fn mask_swatch(ui: &mut egui::Ui, size: f32) -> egui::Response {
     response
 }
 
-fn paint_mask(painter: &egui::Painter, rect: Rect) {
+pub(crate) fn paint_mask(painter: &egui::Painter, rect: Rect) {
     checker(painter, rect);
     painter.line_segment(
         [rect.left_bottom(), rect.right_top()],
@@ -1081,7 +1094,7 @@ fn color_swatch(
     }
 }
 
-fn to_color32(c: cs_core::Rgba) -> Color32 {
+pub(crate) fn to_color32(c: cs_core::Rgba) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
 }
 
@@ -1113,8 +1126,14 @@ pub fn palette_strip(ui: &mut egui::Ui, palette: &Palette, max: usize, size: f32
     });
 }
 
-/// `menus`: con un diálogo abierto, Presets ⏷ y … quedan desactivados.
-pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<PaletteAction> {
+/// `menus`: con un diálogo abierto, Presets ⏷ y … quedan desactivados. Con Pixel UI (`skin`), la
+/// grilla de la paleta y el editor de color son los del diseño (`color_panel`).
+pub fn palette(
+    ui: &mut egui::Ui,
+    editor: &mut Editor,
+    menus: bool,
+    skin: Option<&Skin>,
+) -> Option<PaletteAction> {
     ui.add_space(6.0);
     ui.heading("Color");
     ui.separator();
@@ -1163,19 +1182,19 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<Pa
             });
         });
     });
+    if let Some(skin) = skin {
+        color_panel::palette_grid(ui, editor, skin);
+        ui.add_space(color_panel::EDITOR_GAP - ui.spacing().item_spacing.y);
+        color_picker(ui, editor, Some(skin));
+        return action;
+    }
     let size = 20.0;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::splat(2.0);
         let mask = editor.mask_value();
-        let response =
-            mask_swatch(ui, size).on_hover_text("Mask (transparent): painting with it erases");
+        let response = mask_swatch(ui, size).on_hover_text(MASK_HINT);
         mark_selected(ui, editor, mask, response.rect);
-        if response.clicked() {
-            editor.primary = mask;
-        }
-        if response.secondary_clicked() {
-            editor.secondary = mask;
-        }
+        pick_on_click(editor, &response, mask);
         let count = editor.sprite().palette.len().min(256);
         for i in 0..count {
             let index = i as u8;
@@ -1183,28 +1202,29 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<Pa
             let color = to_color32(editor.sprite().palette.colors()[i]);
             let response = swatch(ui, color, size).on_hover_text(format!("#{i}"));
             mark_selected(ui, editor, value, response.rect);
-            if response.clicked() {
-                editor.primary = value;
-            }
-            if response.secondary_clicked() {
-                editor.secondary = value;
-            }
+            pick_on_click(editor, &response, value);
         }
     });
     ui.add_space(10.0);
-    color_picker(ui, editor);
+    color_picker(ui, editor, None);
     action
 }
 
-/// Lado máximo del cuadro del selector de color, en puntos.
-const COLOR_PICKER_MAX: f32 = 240.0;
+/// Lado máximo del cuadro del selector de color, en puntos. Con Pixel UI, el ancho máximo del
+/// editor (su cuadro S/V mide 86 de alto).
+pub(crate) const COLOR_PICKER_MAX: f32 = 240.0;
 
-/// Selector de color libre (RGBA): edita el color primario.
-pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
+/// Selector de color libre (RGBA): edita el color primario. Con Pixel UI (`skin`), el editor del
+/// diseño (`color_panel`).
+pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let cs_core::PixelValue::Rgba(current) = editor.primary else {
         ui.weak("Indexed sprite: colors come from the palette.");
         return;
     };
+    if let Some(skin) = skin {
+        color_panel::color_editor(ui, editor, skin, current);
+        return;
+    }
     let mut c32 = to_color32(current);
     // El cuadro de saturación/brillo ocupa el ancho del panel hasta `COLOR_PICKER_MAX` (es
     // cuadrado: con un sidebar ancho se haría enorme). Se restaura después: si no, los sliders de
