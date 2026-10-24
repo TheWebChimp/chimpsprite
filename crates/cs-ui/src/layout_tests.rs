@@ -14,6 +14,8 @@ struct LayoutHarness {
     time: f64,
     /// Rect del lienzo en el último frame (`None` en Home).
     canvas: Option<Rect>,
+    /// Botones del último frame: nombre y rect (en puntos).
+    buttons: Vec<(String, Rect)>,
 }
 
 impl LayoutHarness {
@@ -25,11 +27,14 @@ impl LayoutHarness {
         if doc {
             app.new_document();
         }
+        let ctx = egui::Context::default();
+        ctx.enable_accesskit();
         let mut h = Self {
-            ctx: egui::Context::default(),
+            ctx,
             app,
             time: 0.0,
             canvas: None,
+            buttons: Vec::new(),
         };
         for _ in 0..3 {
             h.frame();
@@ -59,6 +64,33 @@ impl LayoutHarness {
         // Las texturas (fuentes, skin y lienzo) no se suben a ninguna GPU.
         output.textures_delta.clear();
         self.canvas = canvas;
+        self.buttons = output
+            .platform_output
+            .accesskit_update
+            .map(|update| {
+                update
+                    .nodes
+                    .iter()
+                    .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+                    .filter_map(|(_, n)| {
+                        let b = n.bounds()?;
+                        let rect = Rect::from_min_max(
+                            Pos2::new(b.x0 as f32, b.y0 as f32),
+                            Pos2::new(b.x1 as f32, b.y1 as f32),
+                        );
+                        Some((n.label()?.to_string(), rect))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+    }
+
+    fn button(&self, label: &str) -> Rect {
+        self.buttons
+            .iter()
+            .find(|(l, _)| l == label)
+            .map(|(_, r)| *r)
+            .unwrap_or_else(|| panic!("no button {label:?} in {:?}", self.buttons))
     }
 
     /// Rect exterior del panel `id` (con su margen y la línea que lo separa del resto).
@@ -142,4 +174,40 @@ fn on_home_there_is_no_options_bar() {
     assert!(h.canvas.is_none());
     assert!(PanelState::load(&h.ctx, egui::Id::new("tool_options")).is_none());
     assert!(PanelState::load(&h.ctx, egui::Id::new("tools")).is_none());
+}
+
+#[test]
+fn with_pixel_ui_the_toolbar_is_the_slot_plus_its_margin() {
+    use crate::skin::WidgetState;
+    let view = ViewSettings {
+        pixel_ui: true,
+        ..Default::default()
+    };
+    let h = LayoutHarness::new(view, true);
+    let skin = h.app.pixel.skin().expect("the integer scale is in effect");
+    let slot = skin.piece("tool.slot", WidgetState::Normal).unwrap().size[0] as f32;
+    let line = h
+        .ctx
+        .global_style()
+        .visuals
+        .widgets
+        .noninteractive
+        .bg_stroke
+        .width
+        .round();
+    let tools = h.panel("tools");
+    assert_eq!(tools.width() - line, slot + 8.0, "{tools:?}");
+    // El marco del lápiz, a 4 puntos de cada borde (sin contar la línea).
+    let pencil = h.button("Pencil");
+    assert_eq!(pencil.width(), slot);
+    assert_eq!(pencil.left() - tools.left(), 4.0, "{pencil:?} in {tools:?}");
+    assert_eq!(tools.right() - line - pencil.right(), 4.0);
+    // Y sigue a todo el alto, al lado de la línea de tiempo.
+    assert!(tools.bottom() > h.panel("timeline").top());
+}
+
+#[test]
+fn without_pixel_ui_the_named_toolbar_keeps_its_width() {
+    let h = LayoutHarness::editor();
+    assert_eq!(h.panel("tools").width(), 184.0);
 }

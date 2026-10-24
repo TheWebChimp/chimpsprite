@@ -33,6 +33,8 @@ const SLOT_PIECE: &str = "tool.slot";
 const FALLBACK_SLOT_SIZE: Vec2 = Vec2::new(23.0, 23.0);
 /// Lado de la marca de variantes, en píxeles del skin.
 const MORE_MARK: f32 = 3.0;
+/// Margen de la barra de íconos a cada lado del marco, en puntos.
+pub const TOOLBAR_MARGIN: i8 = 4;
 
 /// Bordes del 9-slice de la pieza en puntos (izquierda, arriba, derecha, abajo). Con la escala
 /// entera de Pixel UI, un punto es un píxel del skin.
@@ -327,6 +329,20 @@ fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response
     response
 }
 
+/// Tamaño del marco de los botones de herramienta: el de la pieza `tool.slot` o el de respaldo.
+fn slot_size(skin: &Skin) -> Vec2 {
+    skin.piece(SLOT_PIECE, WidgetState::Normal)
+        .map_or(FALLBACK_SLOT_SIZE, |p| {
+            vec2(p.size[0] as f32, p.size[1] as f32)
+        })
+}
+
+/// Ancho de la barra de íconos sin la línea que la separa del lienzo: el marco `tool.slot` más
+/// `TOOLBAR_MARGIN` a cada lado. Sale de la pieza, así sigue al skin.
+pub fn toolbar_width(skin: &Skin) -> f32 {
+    slot_size(skin).x + 2.0 * f32::from(TOOLBAR_MARGIN)
+}
+
 /// Botón de herramienta de la barra de íconos: el marco `tool.slot` (`tool.slot.active` con
 /// `selected`) a tamaño de pieza y el ícono `icon` centrado en él. Presionado, el ícono baja 1 px.
 /// Con `more`, un triangulito de 3×3 en la esquina de abajo a la derecha del relleno marca que
@@ -347,9 +363,7 @@ pub fn tool_button(
     more: bool,
 ) -> Response {
     let base = skin.piece(SLOT_PIECE, WidgetState::Normal);
-    let size = base.map_or(FALLBACK_SLOT_SIZE, |p| {
-        vec2(p.size[0] as f32, p.size[1] as f32)
-    });
+    let size = slot_size(skin);
     let (_, space) = ui.allocate_space(size);
     let response = ui.interact(space, id, Sense::click());
     let rect = egui::Align2::CENTER_CENTER.align_size_within_rect(size, space);
@@ -686,6 +700,19 @@ mod tests {
             let (_, clicked, _) = tool(&ctx, skin, false, vec![press(at, false)]);
             assert!(clicked);
         }
+    }
+
+    #[test]
+    fn the_toolbar_is_as_wide_as_the_slot_plus_the_margin() {
+        let ctx = egui::Context::default();
+        let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
+        let slot = skin.piece(SLOT_PIECE, WidgetState::Normal).unwrap().size[0] as f32;
+        assert_eq!(toolbar_width(&skin), slot + 8.0);
+        assert_eq!(
+            toolbar_width(&Skin::fallback()),
+            23.0 + 8.0,
+            "the fallback slot"
+        );
     }
 
     #[test]

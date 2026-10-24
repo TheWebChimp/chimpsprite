@@ -851,12 +851,34 @@ impl ChimpApp {
             });
         // La toolbar antes que la línea de tiempo: va a todo el alto, hasta la barra de estado, y
         // la línea de tiempo empieza a su derecha.
+        let skin = self.pixel.skin();
+        let (width, frame) = match skin {
+            // Con Pixel UI, la columna de íconos: el marco más el margen a cada lado, y la línea
+            // que separa el panel del lienzo (egui la pone en el margen exterior).
+            Some(skin) => {
+                let line = ui
+                    .style()
+                    .visuals
+                    .widgets
+                    .noninteractive
+                    .bg_stroke
+                    .width
+                    .round();
+                let margin = egui::Margin::symmetric(pixel_ui::TOOLBAR_MARGIN, 2);
+                (
+                    pixel_ui::toolbar_width(skin) + line,
+                    egui::Frame::side_top_panel(ui.style()).inner_margin(margin),
+                )
+            }
+            // Sin Pixel UI, la barra con nombres.
+            None => (184.0, egui::Frame::side_top_panel(ui.style())),
+        };
         egui::Panel::left("tools")
             .resizable(false)
-            .exact_size(184.0)
+            .exact_size(width)
+            .frame(frame)
             .show(ui, |ui| {
                 // Con la UI a 2× o 3× y la ventana baja, la barra no cabe: scroll vertical.
-                let skin = self.pixel.skin();
                 panels::tools_scroll_area().show(ui, |ui| {
                     ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.doc.editor, skin));
                 });
