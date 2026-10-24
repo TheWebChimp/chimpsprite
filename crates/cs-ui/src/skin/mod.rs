@@ -1151,6 +1151,93 @@ mod tests {
     }
 
     #[test]
+    fn the_embedded_skin_has_the_timeline_pieces_of_the_design() {
+        let data = decode(EMBEDDED).unwrap();
+        let rect9 = |x, y, w, h| Some(Rect9 { x, y, w, h });
+        let mut pieces: Vec<(String, [u32; 2], Option<Rect9>)> = vec![
+            ("timeline.group".into(), [3, 16], rect9(1, 1, 1, 14)),
+            ("timeline.button".into(), [23, 14], None),
+            ("timeline.button.sep".into(), [1, 14], None),
+            ("timeline.icon.onion.on".into(), [15, 17], None),
+            ("timeline.onion_range".into(), [59, 17], None),
+            ("timeline.stepper.minus".into(), [15, 17], None),
+            ("timeline.stepper.plus".into(), [15, 17], None),
+            ("timeline.stepper.field".into(), [7, 17], rect9(0, 0, 1, 17)),
+            ("timeline.combo".into(), [13, 17], rect9(2, 0, 1, 17)),
+            ("timeline.icon.clock".into(), [16, 18], None),
+            ("timeline.divider".into(), [11, 3], rect9(5, 0, 1, 3)),
+            ("timeline.eye".into(), [9, 7], None),
+            ("timeline.eye.closed".into(), [9, 7], None),
+            ("timeline.cel".into(), [7, 7], None),
+            ("timeline.cel.empty".into(), [7, 7], None),
+            ("palette.icon.lock".into(), [7, 9], None),
+            ("palette.icon.lock.open".into(), [7, 9], None),
+            ("workspace.box".into(), [7, 7], rect9(3, 3, 1, 1)),
+        ];
+        // Los íconos de los botones de la barra, el interior de 21×11 de cada celda.
+        for icon in [
+            "first",
+            "prev",
+            "play",
+            "next",
+            "last",
+            "frame_add",
+            "frame_remove",
+            "layer_add",
+            "layer_remove",
+            "group_add",
+            "tilemap_add",
+            "onion",
+        ] {
+            pieces.push((format!("timeline.icon.{icon}"), [21, 11], None));
+        }
+        for (name, size, center) in pieces {
+            let piece = data.pieces.get(&name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!((piece.size, piece.center), (size, center), "{name}");
+        }
+        let at = |name: &str, x: u32, y: u32| {
+            let p = &data.pieces[name];
+            let i = ((y * p.size[0] + x) * 4) as usize;
+            [p.rgba[i], p.rgba[i + 1], p.rgba[i + 2], p.rgba[i + 3]]
+        };
+        let dark = [89, 77, 77, 255];
+        // El marco del grupo: esquinas redondeadas, la línea oscura y el centro vacío.
+        assert_eq!(at("timeline.group", 0, 0)[3], 0, "rounded corner");
+        assert_eq!(at("timeline.group", 0, 1), dark);
+        assert_eq!(at("timeline.group", 1, 0), dark);
+        assert_eq!(at("timeline.group", 1, 5)[3], 0, "the cells go inside");
+        // La celda: bisel claro arriba, sombra abajo; los íconos, sin el relleno.
+        assert_eq!(at("timeline.button", 5, 0), [255, 255, 255, 255]);
+        assert_eq!(at("timeline.button", 5, 13), [136, 110, 106, 255]);
+        // Vacía: el relleno liso, sin el ícono de ningún botón.
+        for y in 1..12 {
+            for x in 1..22 {
+                assert_eq!(
+                    at("timeline.button", x, y),
+                    [234, 224, 221, 255],
+                    "({x},{y})"
+                );
+            }
+        }
+        assert_eq!(
+            at("timeline.icon.play", 0, 0)[3],
+            0,
+            "transparent background"
+        );
+        // El candado abierto: sin la pata izquierda.
+        assert_eq!(at("palette.icon.lock", 1, 2)[3], 255);
+        assert_eq!(at("palette.icon.lock.open", 1, 2)[3], 0);
+        assert_ne!(
+            data.pieces["timeline.eye"].rgba,
+            data.pieces["timeline.eye.closed"].rgba
+        );
+        assert_ne!(
+            data.pieces["timeline.cel"].rgba,
+            data.pieces["timeline.cel.empty"].rgba
+        );
+    }
+
+    #[test]
     fn variants_are_used_when_they_exist() {
         let ctx = egui::Context::default();
         let skin = Skin::load(&ctx, EMBEDDED).unwrap();

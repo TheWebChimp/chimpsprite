@@ -219,3 +219,24 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     abajo sin deformarla.
   - La app pone la punta 6 px a la derecha del botón, con su fila en el centro del botón, y el
     texto (`color.text`) con 6 px de aire en el cuerpo.
+- **Timeline** (del diseño de `Design.aseprite`, frame 4, capa Mockup; la caja va de (65,556) a
+  (972,762) y es `workspace.box`). Fila de 336 a 388 del skin:
+  - `timeline.group` (3×16, centro (1,1,1,14)): el marco redondeado de un grupo de botones; el
+    centro es transparente. `timeline.button` (23×14): una celda vacía (la del botón suelto del
+    diseño); `timeline.button.sep` (1×14): la línea tramada entre dos celdas.
+  - `timeline.icon.<nombre>` (21×11, relleno transparente): el interior de cada celda, `first`,
+    `prev`, `play`, `next`, `last`, `frame_add`, `frame_remove`, `layer_add`, `layer_remove`,
+    `group_add`, `tilemap_add` y `onion` (el onion skin apagado, la cebolla cortada).
+    `timeline.icon.onion.on` (15×17): la cebolla entera suelta del diseño, para el onion skin
+    prendido.
+  - `timeline.onion_range` (59×17): ◂ [antes | después] ▸ del onion skin, con su brillo abajo.
+  - `timeline.stepper.minus` y `.plus` (15×17) y `timeline.stepper.field` (7×17, centro
+    (0,0,1,17)): − [campo] + de la opacidad y la duración; el campo se estira por su columna
+    blanca y deja el brillo de la derecha. `timeline.combo` (13×17, centro (2,0,1,17)): el combo
+    del modo de mezcla (sin las marcas oscuras sueltas del borde del diseño).
+  - `timeline.icon.clock` (16×18) y `timeline.divider` (11×3, centro (5,0,1,3)): la línea
+    grabada entre la barra y la tabla, con sus uniones a los lados de la caja.
+  - `timeline.eye` / `timeline.eye.closed` (9×7): capa visible / oculta.
+    `timeline.cel` / `timeline.cel.empty` (7×7): cel con imagen / vacío. El candado de la tabla
+    es `palette.icon.lock`; el abierto, `palette.icon.lock.open` (7×9), es el segundo de los
+    botones sueltos de la paleta, con el relleno transparente.
