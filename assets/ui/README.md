@@ -58,6 +58,20 @@ oculta.
   interior de 11×11, transparente, en (2,2): ahí va el ícono `icon.sym_vertical`,
   `icon.sym_horizontal`, `icon.sym_diag_down` o `icon.sym_diag_up` (11×11, fondo
   transparente). En la barra van uno cada 17 px.
+- **Barra de opciones** (frame 4 del diseño, capa Mockup):
+  - Modos de selección: `icon.sel_replace`, `icon.sel_add`, `icon.sel_subtract` e
+    `icon.sel_intersect` (11×11, fondo transparente), en los marcos de simetría (`sym.slot`, y
+    `sym.slot.active` el modo elegido): los cuadritos de Mode del diseño son iguales a esos.
+  - `field.combo` (13×16, centro (2,10,1,3)): el combo. 2 columnas de borde a la izquierda, 1 de
+    relleno que se estira y, a la derecha, 10 con el brillo y la flecha ▾. El texto va 6 px
+    adentro y 5 px antes de la flecha.
+  - `field.number` (10×16, centro (2,10,1,3)): el campo numérico, con el brillo de arriba a la
+    derecha y la esquina redondeada. En la barra mide 27.
+  - `field.unit` (17×16, sin centro): la unidad "px". Empieza en la última columna blanca del
+    campo y tapa sus 2 últimas columnas.
+  - `field.check.on` (13×14, sin centro): la casilla marcada de la barra (no es la del menú). El
+    texto va 3 px después. `field.check` (sin marcar) todavía no está dibujada: hasta entonces va
+    un cuadro plano de respaldo.
 - **Pestañas:** `tab` (inactiva, café) mide 7×15 y `tab.active` (clara) 7×17, las dos con
   centro (3,0,1,alto): se estiran solo a lo ancho. Las esquinas de arriba son redondeadas y
   abajo quedan abiertas. La activa baja sobre las dos filas de la línea grabada de abajo y la

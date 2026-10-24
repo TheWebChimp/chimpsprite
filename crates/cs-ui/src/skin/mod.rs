@@ -759,6 +759,73 @@ mod tests {
     }
 
     #[test]
+    fn the_embedded_skin_has_the_options_bar_fields_of_the_design() {
+        let data = decode(EMBEDDED).unwrap();
+        let at = |piece: &PieceImage, x: u32, y: u32| {
+            let i = ((y * piece.size[0] + x) * 4) as usize;
+            Rgba::new(
+                piece.rgba[i],
+                piece.rgba[i + 1],
+                piece.rgba[i + 2],
+                piece.rgba[i + 3],
+            )
+        };
+        let rect9 = |x, y, w, h| Some(Rect9 { x, y, w, h });
+        let white = Rgba::rgb(255, 255, 255);
+        let border = Rgba::rgb(136, 110, 106);
+        // Los íconos de los modos de selección (frame 4): el interior de 11×11 de cada cuadrito,
+        // que es el de `sym.slot`. Fondo transparente.
+        for name in ["replace", "add", "subtract", "intersect"] {
+            let icon = &data.pieces[&format!("icon.sel_{name}")];
+            assert_eq!((icon.size, icon.center), ([11, 11], None), "{name}");
+            let drawn = (0..11 * 11).filter(|i| icon.rgba[i * 4 + 3] == 255).count();
+            assert!((10..121).contains(&drawn), "{name}: {drawn}");
+        }
+        // El combo: borde izquierdo de 2, relleno de 1 que se estira y a la derecha la flecha
+        // (10 columnas). 16 filas con el brillo de abajo.
+        let combo = &data.pieces["field.combo"];
+        assert_eq!((combo.size, combo.center), ([13, 16], rect9(2, 10, 1, 3)));
+        assert_eq!(at(combo, 0, 0).a, 0, "rounded corner");
+        assert_eq!(at(combo, 0, 2), border, "the left side");
+        assert_eq!(at(combo, 2, 5), white, "the fill");
+        assert_eq!(at(combo, 12, 5), border, "the right side");
+        let arrow = Rgba::rgb(5, 4, 3);
+        for (x, y) in [(3, 7), (7, 7), (4, 8), (6, 8), (5, 9)] {
+            assert_eq!(at(combo, x, y), arrow, "the arrow ({x},{y})");
+        }
+        assert_eq!(
+            at(combo, 2, 15),
+            Rgba::rgb(241, 235, 219),
+            "the light below"
+        );
+        // El campo numérico: el mismo borde, con el brillo de arriba a la derecha; la unidad "px",
+        // que tapa las 2 últimas columnas del campo.
+        let number = &data.pieces["field.number"];
+        assert_eq!((number.size, number.center), ([10, 16], rect9(2, 10, 1, 3)));
+        assert_eq!(at(number, 0, 2), border);
+        assert_eq!(at(number, 9, 2), border);
+        assert_eq!(at(number, 9, 0).a, 0, "rounded corner");
+        assert_eq!(at(number, 3, 2), Rgba::rgb(236, 235, 231), "the shine");
+        let unit = &data.pieces["field.unit"];
+        assert_eq!((unit.size, unit.center), ([17, 16], None));
+        assert_eq!(at(unit, 0, 5), white, "the last column of the field");
+        assert_eq!(at(unit, 1, 5), border, "the divider");
+        assert_eq!(at(unit, 3, 5), Rgba::rgb(189, 164, 153), "the grey box");
+        assert_eq!(at(unit, 4, 5), Rgba::rgb(89, 77, 77), "the p");
+        assert_eq!(at(unit, 16, 0).a, 0, "rounded corner");
+        // La casilla marcada de la barra: 13×14, como el cuadro de `sym.slot` con el interior
+        // blanco y la marca verde. No es la del menú (11×12). La sin marcar no está dibujada.
+        let check = &data.pieces["field.check.on"];
+        assert_eq!((check.size, check.center), ([13, 14], None));
+        assert_eq!(at(check, 0, 0).a, 0, "rounded corner");
+        assert_eq!(at(check, 1, 0), border, "the top");
+        assert_eq!(at(check, 1, 1), white, "white inside");
+        assert_eq!(at(check, 2, 6), Rgba::rgb(71, 114, 56), "the green check");
+        assert_ne!(check.size, data.pieces["menu.check.on"].size);
+        assert!(!data.pieces.contains_key("field.check"), "not drawn yet");
+    }
+
+    #[test]
     fn the_embedded_skin_has_the_tooltip_bubble_of_the_mockup() {
         let data = decode(EMBEDDED).unwrap();
         let bubble = data.pieces.get("tooltip.bubble").expect("tooltip.bubble");
