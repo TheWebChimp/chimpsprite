@@ -1972,3 +1972,97 @@ fn without_pixel_ui_the_right_panel_has_no_splitter_and_keeps_its_scroll() {
     // El selector de egui, en el scroll de siempre.
     assert!(h.texts.iter().any(|(t, _)| t == "Color"));
 }
+
+/// Con Pixel UI y la paleta guardada enorme (5000), en una ventana de `size`: el panel derecho
+/// sigue dando lugar a las secciones de abajo (Artboards...) y el editor de color queda entero.
+fn assert_sections_below_reachable(size: Vec2) {
+    let palettes = PaletteLibrary::new(Box::new(NoPresets));
+    let view = ViewSettings {
+        palette_height: 5000.0,
+        ..pixel_ui()
+    };
+    let mut app = ChimpApp::with_parts(Default::default(), view, palettes);
+    app.new_document();
+    let mut h = LayoutHarness::start_in(app, size);
+    assert_color_editor_whole(&h);
+    assert_eq!(h.app.view.palette_height, 5000.0, "lo guardado no se toca");
+    let panel = h.panel("palette");
+    let timeline = h.panel("timeline");
+    // El encabezado de Artboards se ve entero dentro del panel y arriba de la línea de tiempo.
+    let (_, heading, _) = h
+        .text_rects
+        .iter()
+        .find(|(t, _, _)| t == "Artboards")
+        .unwrap_or_else(|| panic!("no Artboards heading in {:?}", h.text_rects))
+        .clone();
+    assert!(
+        panel.contains_rect(heading) && heading.bottom() <= timeline.top(),
+        "{heading:?} in {panel:?} above {timeline:?}"
+    );
+    // Y se puede tocar: el ➕ crea un artboard.
+    let add = h.button("➕");
+    assert!(
+        panel.contains_rect(add) && add.bottom() <= timeline.top(),
+        "{add:?}"
+    );
+    let before = h.app.doc.editor.document.artboards.len();
+    h.click(add.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.document.artboards.len(), before + 1);
+}
+
+#[test]
+fn with_pixel_ui_a_huge_palette_height_keeps_the_artboards_section_reachable() {
+    assert_sections_below_reachable(Vec2::new(1200.0, 800.0));
+}
+
+#[test]
+fn with_pixel_ui_a_short_window_keeps_the_artboards_section_reachable() {
+    assert_sections_below_reachable(Vec2::new(1200.0, 560.0));
+}
+
+/// Aprieta `key` con Ctrl un frame.
+fn press_ctrl(h: &mut LayoutHarness, key: egui::Key) {
+    h.frame_with(vec![Event::Key {
+        key,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    }]);
+}
+
+/// Un documento con el campo hex del editor de color con el foco (se necesita Pixel UI).
+fn typing_in_hex() -> LayoutHarness {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.click(h.node("Hex").center(), PointerButton::Primary);
+    assert!(h.ctx.egui_wants_keyboard_input(), "the hex field has focus");
+    h
+}
+
+#[test]
+fn ctrl_a_with_a_text_field_focused_leaves_the_canvas_selection_alone() {
+    let mut h = typing_in_hex();
+    press_ctrl(&mut h, egui::Key::A);
+    assert!(h.app.doc.editor.selection.is_none());
+    assert!(h.ctx.egui_wants_keyboard_input(), "the field keeps the focus");
+}
+
+#[test]
+fn ctrl_a_without_a_focused_field_selects_all_the_canvas() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert!(!h.ctx.egui_wants_keyboard_input());
+    press_ctrl(&mut h, egui::Key::A);
+    assert!(h.app.doc.editor.selection.is_some());
+}
+
+#[test]
+fn ctrl_z_with_a_text_field_focused_does_not_undo_the_document() {
+    let mut h = typing_in_hex();
+    h.app.doc.editor.add_layer(cs_core::LayerKind::Image);
+    h.frame();
+    assert!(h.app.doc.editor.history.can_undo());
+    let revision = h.app.doc.editor.revision;
+    press_ctrl(&mut h, egui::Key::Z);
+    assert_eq!(h.app.doc.editor.revision, revision);
+    assert!(h.app.doc.editor.history.can_undo());
+}

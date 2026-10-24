@@ -247,14 +247,23 @@ pub fn palette_grid(ui: &mut Ui, editor: &mut Editor, skin: &Skin, height: f32) 
         });
 }
 
+/// Lo que siempre queda para el scroll de abajo (Artboards, instancia, slices...): 12 de aire, 6
+/// del espacio de la sección, ~22 del encabezado con sus botones, ~8 del separador y 3 filas de
+/// ~20 (la lista de artboards): el encabezado de Artboards y unas filas siempre se alcanzan.
+const BELOW_RESERVE: f32 = 110.0;
+
 /// Con Pixel UI, la caja de la paleta, la división y el editor de color, en el alto que queda en
-/// `ui`. La caja mide `palette_height` (lo elegido con la división, que se guarda con la vista),
-/// pero nunca menos de 2 filas de cuadritos ni tanto que el editor no entre entero: si falta
-/// lugar, se achica la caja (y sus colores se desplazan adentro).
+/// `ui`. La caja mide `palette_height` (lo elegido con la división, que se guarda con la vista;
+/// acá solo se recorta el alto efectivo, no lo guardado), pero nunca menos de 2 filas de
+/// cuadritos ni tanto que el editor no entre entero o que falte `BELOW_RESERVE` para el scroll de
+/// abajo. Si no alcanza para todo, se cede en este orden: 1) el editor entero y la reserva se
+/// mantienen y se achica la caja (sus colores se desplazan adentro); 2) la caja llega a su
+/// mínimo; 3) recién entonces la reserva se achica (el scroll de abajo recibe lo que sobra).
 pub fn palette_and_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin, palette_height: &mut f32) {
     let min = palette_min_height();
     let room = (ui.available_height() - SPLITTER_HEIGHT - editor_height(ui, skin)).floor();
-    let max = room.max(min);
+    // Primero la reserva; si ni así entra el mínimo de la caja, el mínimo gana (3).
+    let max = (room - BELOW_RESERVE).max(min);
     // Lo elegido, dentro de lo que entra; se arrastra desde ahí (sin redondear, para que los
     // medios puntos de cada frame no se acumulen).
     let chosen = palette_height.clamp(min, max);

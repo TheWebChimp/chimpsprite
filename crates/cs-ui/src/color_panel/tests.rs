@@ -1284,9 +1284,14 @@ fn with_pixel_ui_the_splitter_changes_the_height_of_the_palette() {
         bars.bottom() <= 800.0 && alpha.bottom() < bars.bottom(),
         "{bars:?}"
     );
+    // La caja toma lo que sobra, menos la reserva que queda para el scroll de abajo.
     assert!(
-        bars.bottom() >= 780.0,
+        bars.bottom() >= 780.0 - super::BELOW_RESERVE,
         "the palette took the rest: {bars:?}"
+    );
+    assert!(
+        bars.bottom() <= 800.0 - super::BELOW_RESERVE + 1.0,
+        "the reserve stays: {bars:?}"
     );
 }
 
