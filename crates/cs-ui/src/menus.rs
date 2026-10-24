@@ -10,10 +10,14 @@
 //!   estirada con el nombre en la fuente pixel. Entre tecla y tecla, un + de 5×5 hecho con rects,
 //!   y al final la tecla en el color tenue (`ruler_tick`, el del diseño).
 //! - **Separadores:** la línea grabada del diseño, `menu_highlight` y debajo `background`.
+//! - **Casillas:** la casilla del diseño (`menu.check.on`, 11×12) al borde del texto de los
+//!   ítems, 2 filas arriba de las mayúsculas, y el texto 3 px después. Sin marcar va `menu.check`;
+//!   mientras el skin no la traiga (no está dibujada), un cuadro plano de respaldo.
 //! - **Sin diseño todavía:** la fila con el puntero encima va en `selection`; los ítems
 //!   deshabilitados, en `text_dim`; los submenús llevan un ▸ hecho con rects y el mismo panel.
 //!
-//! Los ítems ([`item`], [`plain`]), los separadores ([`separator`]) y los submenús
+//! Los ítems ([`item`], [`plain`]), las casillas ([`check`]), los separadores ([`separator`]) y
+//! los submenús
 //! ([`submenu`]) se ven así solo dentro de un panel pixel; en cualquier otro lado (o sin Pixel
 //! UI) son los de egui de siempre.
 
@@ -38,6 +42,8 @@ const PANEL: &str = "menu.panel";
 const KEY_CTRL: &str = "key.ctrl";
 const KEY_SHIFT: &str = "key.shift";
 const KEY: &str = "key";
+const CHECK: &str = "menu.check";
+const CHECK_ON: &str = "menu.check.on";
 
 /// La caja del título abierto: empieza 5 px antes del texto (línea, bisel y 3 de relleno) y 5
 /// filas arriba de las mayúsculas, y termina 4 px después del texto (la fuente deja 1 vacío).
@@ -78,6 +84,11 @@ const KEY_GAP: f32 = 1.0;
 /// de cada lado de la tinta.
 const KEY_PAD_X: f32 = 2.0;
 const KEY_PAD_Y: f32 = 1.0;
+/// La casilla: 2 filas arriba de las mayúsculas, del tamaño de la pieza (la de respaldo, la del
+/// diseño) y con 3 px de aire hasta el texto.
+const CHECK_TOP: f32 = 2.0;
+const FALLBACK_CHECK_SIZE: egui::Vec2 = vec2(11.0, 12.0);
+const CHECK_GAP: f32 = 3.0;
 /// La flecha de los submenús: un triángulo de 3×5 a 1 fila de las mayúsculas.
 const ARROW_TOP: f32 = 1.0;
 
@@ -90,6 +101,8 @@ pub(crate) struct MenuLook {
     key_ctrl: Option<Piece>,
     key_shift: Option<Piece>,
     key: Option<Piece>,
+    check: Option<Piece>,
+    check_on: Option<Piece>,
     colors: SkinColors,
     /// La fila de arriba de las mayúsculas de los títulos.
     caps_top: f32,
@@ -109,6 +122,8 @@ impl MenuLook {
             key_ctrl: piece(KEY_CTRL),
             key_shift: piece(KEY_SHIFT),
             key: piece(KEY),
+            check: piece(CHECK),
+            check_on: piece(CHECK_ON),
             colors: *skin.colors(),
             caps_top: bar_top + tab_bar::MENU_CAPS_TOP,
             opacity: 1.0,
@@ -362,6 +377,107 @@ impl Widget for Item<'_> {
     }
 }
 
+/// Una casilla de menú, como `Checkbox::new(checked, label)`.
+pub(crate) struct Check<'a> {
+    checked: &'a mut bool,
+    label: &'a str,
+}
+
+/// Una casilla que prende y apaga `checked`, como `ui.checkbox(checked, label)`.
+pub(crate) fn check<'a>(checked: &'a mut bool, label: &'a str) -> Check<'a> {
+    Check { checked, label }
+}
+
+impl Widget for Check<'_> {
+    fn ui(self, ui: &mut Ui) -> Response {
+        let Check { checked, label } = self;
+        let Some(look) = look(ui) else {
+            return egui::Checkbox::new(checked, label).ui(ui);
+        };
+        let enabled = ui.is_enabled();
+        let colors = &look.colors;
+        let text_color = if enabled {
+            colors.text
+        } else {
+            colors.text_dim
+        };
+        let text = galley(ui, &shown(label), text_color);
+        let box_size = look
+            .check_on
+            .as_ref()
+            .or(look.check.as_ref())
+            .map_or(FALLBACK_CHECK_SIZE, |p| {
+                vec2(p.size[0] as f32, p.size[1] as f32)
+            });
+        let indent = box_size.x + CHECK_GAP;
+        let width = (indent + text.size().x).ceil();
+        let (rect, mut response) = ui.allocate_at_least(vec2(width, ROW_HEIGHT), Sense::click());
+        if response.clicked() {
+            *checked = !*checked;
+            response.mark_changed();
+        }
+        let on = *checked;
+        response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, on, label));
+        if ui.is_rect_visible(rect) {
+            let ppp = ui.ctx().pixels_per_point();
+            let caps = rect.top() + ROW_CAPS_TOP;
+            let mut shapes = Vec::new();
+            if enabled && response.hovered() {
+                shapes.push(row_highlight(&look, rect, ppp));
+            }
+            let at = Rect::from_min_size(pos2(rect.left(), caps - CHECK_TOP), box_size);
+            shapes.extend(check_shapes(&look, at, on, enabled, ppp));
+            let pos = tab_bar::text_pos(&text, rect.left() + indent, caps, ppp);
+            shapes.push(Shape::galley(pos, text, text_color));
+            row_painter(ui, &look).extend(shapes);
+        }
+        response
+    }
+}
+
+/// La casilla en `rect`: `menu.check.on` marcada y `menu.check` sin marcar. Sin la pieza, un
+/// cuadro plano (`panel` con borde `outline`) y, si está marcada, un cuadrito `text` adentro.
+/// Deshabilitada, más clara.
+fn check_shapes(look: &MenuLook, rect: Rect, on: bool, enabled: bool, ppp: f32) -> Vec<Shape> {
+    let piece = if on { &look.check_on } else { &look.check };
+    if let Some(piece) = piece {
+        let tint = if enabled {
+            Color32::WHITE
+        } else {
+            Color32::from_white_alpha(128)
+        };
+        return tinted(pixel_ui::piece_shapes(piece, rect, ppp), tint);
+    }
+    let square = Rect::from_min_size(rect.min, egui::Vec2::splat(rect.width()));
+    let colors = &look.colors;
+    let mut shapes = vec![
+        solid(square, colors.panel, ppp),
+        Shape::rect_stroke(
+            square.round_to_pixels(ppp),
+            0.0,
+            egui::Stroke::new(1.0, colors.outline),
+            egui::StrokeKind::Inside,
+        ),
+    ];
+    if on {
+        shapes.push(solid(square.shrink(3.0), colors.text, ppp));
+    }
+    shapes
+}
+
+/// Las mallas de `shapes` teñidas con `tint` (blanco: tal cual; más transparente para lo
+/// deshabilitado).
+fn tinted(mut shapes: Vec<Shape>, tint: Color32) -> Vec<Shape> {
+    for shape in &mut shapes {
+        if let Shape::Mesh(mesh) = shape {
+            for v in &mut Arc::make_mut(mesh).vertices {
+                v.color = tint;
+            }
+        }
+    }
+    shapes
+}
+
 /// Reserva una fila para un texto de `label` más `extra` a la derecha (a todo el ancho del panel)
 /// y le pone el nombre accesible `a11y`.
 fn row(ui: &mut Ui, label: &Galley, extra: f32, a11y: &str) -> (Rect, Response) {
@@ -537,20 +653,10 @@ fn cap_shapes(
     tint: Color32,
     ppp: f32,
 ) -> Vec<Shape> {
-    let tinted = |mut shapes: Vec<Shape>| {
-        for shape in &mut shapes {
-            if let Shape::Mesh(mesh) = shape {
-                for v in &mut Arc::make_mut(mesh).vertices {
-                    v.color = tint;
-                }
-            }
-        }
-        shapes
-    };
     if let Some(piece) = drawn_key(look, name) {
         let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
         let rect = Rect::from_min_size(pos2(left, caps), size);
-        return tinted(pixel_ui::piece_shapes(piece, rect, ppp));
+        return tinted(pixel_ui::piece_shapes(piece, rect, ppp), tint);
     }
     let text = galley(ui, name, look.colors.panel);
     let width = ink_width(&text) + 2.0 * KEY_PAD_X;
@@ -559,7 +665,7 @@ fn cap_shapes(
         vec2(width, CAP_HEIGHT + 2.0 * KEY_PAD_Y),
     );
     let mut shapes = match &look.key {
-        Some(piece) => tinted(pixel_ui::piece_shapes(piece, rect, ppp)),
+        Some(piece) => tinted(pixel_ui::piece_shapes(piece, rect, ppp), tint),
         None => vec![solid(rect, look.colors.ruler_tick, ppp)],
     };
     let at = tab_bar::text_pos(&text, left + KEY_PAD_X, caps, ppp);

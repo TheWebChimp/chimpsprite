@@ -24,6 +24,8 @@ struct LayoutHarness {
     canvas: Option<Rect>,
     /// Botones del último frame: nombre y rect (en puntos).
     buttons: Vec<(String, Rect)>,
+    /// Casillas del último frame: nombre, rect y si está marcada.
+    checks: Vec<(String, Rect, bool)>,
     /// Lo dibujado en el último frame.
     shapes: Vec<egui::epaint::ClippedShape>,
     /// Las mallas con textura del último frame (piezas del skin): textura y rect.
@@ -85,6 +87,7 @@ impl LayoutHarness {
             time: 0.0,
             canvas: None,
             buttons: Vec::new(),
+            checks: Vec::new(),
             shapes: Vec::new(),
             textures: Vec::new(),
             texts: Vec::new(),
@@ -139,25 +142,33 @@ impl LayoutHarness {
             collect(&clipped.shape, &mut self.textures, &mut self.texts);
             collect_text_rects(&clipped.shape, &mut self.text_rects);
         }
-        self.buttons = output
+        let nodes = output
             .platform_output
             .accesskit_update
-            .map(|update| {
-                update
-                    .nodes
-                    .iter()
-                    .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
-                    .filter_map(|(_, n)| {
-                        let b = n.bounds()?;
-                        let rect = Rect::from_min_max(
-                            Pos2::new(b.x0 as f32, b.y0 as f32),
-                            Pos2::new(b.x1 as f32, b.y1 as f32),
-                        );
-                        Some((n.label()?.to_string(), rect))
-                    })
-                    .collect()
-            })
+            .map(|update| update.nodes)
             .unwrap_or_default();
+        let named = |role: egui::accesskit::Role| {
+            nodes
+                .iter()
+                .filter(move |(_, n)| n.role() == role)
+                .filter_map(|(_, n)| {
+                    let b = n.bounds()?;
+                    let rect = Rect::from_min_max(
+                        Pos2::new(b.x0 as f32, b.y0 as f32),
+                        Pos2::new(b.x1 as f32, b.y1 as f32),
+                    );
+                    Some((n.label()?.to_string(), rect, n))
+                })
+        };
+        self.buttons = named(egui::accesskit::Role::Button)
+            .map(|(label, rect, _)| (label, rect))
+            .collect();
+        self.checks = named(egui::accesskit::Role::CheckBox)
+            .map(|(label, rect, n)| {
+                let on = n.toggled() == Some(egui::accesskit::Toggled::True);
+                (label, rect, on)
+            })
+            .collect();
     }
 
     /// Clic con `button` en `pos`: mover, apretar y soltar, un frame cada uno.
@@ -1339,11 +1350,75 @@ fn submenus_have_an_arrow_of_shapes_and_the_same_panel() {
     assert!(sub.contains_rect(text_rect(&h, "Rulers").0), "{sub:?}");
 }
 
+/// La casilla `label` del último frame: su rect y si está marcada.
+fn check(h: &LayoutHarness, label: &str) -> (Rect, bool) {
+    h.checks
+        .iter()
+        .find(|(t, _, _)| t == label)
+        .map(|(_, r, on)| (*r, *on))
+        .unwrap_or_else(|| panic!("no {label:?} checkbox in {:?}", h.checks))
+}
+
+#[test]
+fn menu_checkboxes_use_the_design_box_and_a_click_toggles_them() {
+    let mut h = two_tabs(Some(0));
+    let offset = caps_offset(&h);
+    open_menu(&mut h, "View");
+    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    // Timeline (marcada): la casilla del diseño, de 11×12, en el borde del texto de los ítems
+    // (5 px adentro del panel) y 2 filas arriba de las mayúsculas; el texto, 3 px después.
+    let (timeline, _) = text_rect(&h, "Timeline");
+    let caps = timeline.top() + offset;
+    let boxes = h.drawn("menu.check.on");
+    let on = *boxes
+        .iter()
+        .find(|r| r.top() == caps - 2.0)
+        .unwrap_or_else(|| panic!("the box on the Timeline row: {boxes:?}"));
+    assert_eq!(on.size(), Vec2::new(11.0, 12.0));
+    assert_eq!(on.left(), panel.left() + 5.0);
+    assert_eq!(timeline.left(), on.right() + 3.0);
+    // Una fila de 13, como los demás ítems.
+    let (row, checked) = check(&h, "Timeline");
+    assert!(checked);
+    assert_eq!(row.height(), 13.0, "{row:?}");
+    assert_eq!(caps, row.top() + 3.0);
+    // Onion Skin (sin marcar): sin la casilla marcada, con el texto en el mismo lugar.
+    let (onion, _) = text_rect(&h, "Onion Skin");
+    let onion_caps = onion.top() + offset;
+    assert!(
+        !boxes.iter().any(|r| r.top() == onion_caps - 2.0),
+        "{boxes:?}"
+    );
+    assert_eq!(onion.left(), timeline.left());
+    assert!(!check(&h, "Onion Skin").1);
+    // Un clic la marca (y cierra el menú, como cualquier ítem de egui).
+    assert!(!h.app.doc.editor.onion_enabled);
+    h.click(onion.center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.onion_enabled, "toggled on");
+    open_menu(&mut h, "View");
+    let (onion, _) = text_rect(&h, "Onion Skin");
+    let onion_caps = onion.top() + offset;
+    let boxes = h.drawn("menu.check.on");
+    assert!(
+        boxes.iter().any(|r| r.top() == onion_caps - 2.0),
+        "{boxes:?}"
+    );
+    assert!(check(&h, "Onion Skin").1);
+    h.click(onion.center(), PointerButton::Primary);
+    assert!(!h.app.doc.editor.onion_enabled, "toggled off");
+}
+
 #[test]
 fn without_pixel_ui_the_menus_are_egui_menus() {
     let mut h = LayoutHarness::editor();
-    open_menu(&mut h, "File");
+    open_menu(&mut h, "View");
     assert!(h.app.pixel.skin().is_none());
+    // Las casillas son las de egui: siguen marcando con un clic.
+    let (onion, checked) = check(&h, "Onion Skin");
+    assert!(!checked);
+    h.click(onion.center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.onion_enabled);
+    open_menu(&mut h, "File");
     // El atajo es el texto de egui, sin teclas dibujadas.
     assert!(h.texts.iter().any(|(t, _)| t == "Ctrl+N"), "{:?}", h.texts);
     let before = h.app.doc.location.name.clone();

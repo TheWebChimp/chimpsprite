@@ -738,6 +738,20 @@ mod tests {
         assert_eq!(alpha(shift, 1, 0), 255, "the top");
         assert_eq!(alpha(shift, 0, 3), 255, "the left side");
         assert_eq!(alpha(shift, 4, 1), 0, "the S, cut out");
+        // La casilla marcada del diseño (Layer 4, frame 4): 11×12, sin centro, con las
+        // esquinas de afuera caladas y el interior blanco. La sin marcar no está dibujada.
+        let on = &data.pieces["menu.check.on"];
+        assert_eq!((on.size, on.center), ([11, 12], None));
+        assert_eq!(alpha(on, 0, 0), 0, "rounded corner");
+        assert_eq!(alpha(on, 10, 0), 0, "rounded corner");
+        assert_eq!(alpha(on, 1, 0), 255, "the top");
+        assert_eq!(alpha(on, 0, 1), 255, "the left side");
+        let at = |x: u32, y: u32| {
+            let i = ((y * on.size[0] + x) * 4) as usize;
+            Rgba::new(on.rgba[i], on.rgba[i + 1], on.rgba[i + 2], on.rgba[i + 3])
+        };
+        assert_eq!(at(1, 1), Rgba::rgb(255, 255, 255), "white inside");
+        assert!(!data.pieces.contains_key("menu.check"), "not drawn yet");
         // El brillo del separador; la otra línea es `background` y el atajo, `ruler_tick`.
         assert_eq!(data.colors["menu_highlight"], Rgba::rgb(255, 255, 255));
         assert_eq!(data.colors["background"], Rgba::rgb(221, 206, 191));

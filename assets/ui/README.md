@@ -110,5 +110,9 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     transparentes (en el diseño, el relleno del panel). `key` (19×7, centro (1,1,17,5)): la
     misma tecla sin letras, para las otras teclas con nombre. `key.shift` (22×7): la tecla
     Shift del diseño (Layer 4, frame 4), igual que Ctrl: letras y esquinas transparentes.
+  - `menu.check.on` (11×12, sin centro): la casilla marcada de los menús (Layer 4, frame 4),
+    con las esquinas de afuera transparentes. Va al borde del texto de los ítems, 2 filas
+    arriba de las mayúsculas, y el texto 3 px después. `menu.check` (sin marcar) todavía no
+    está dibujada: mientras falte, la app usa un cuadro plano de respaldo.
   - `color.menu_highlight` (blanco): el brillo del panel y la línea clara de los separadores;
     la otra línea es `background`. El atajo tenue (el "+N") es `ruler_tick`.

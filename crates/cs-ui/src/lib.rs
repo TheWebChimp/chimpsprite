@@ -367,25 +367,28 @@ impl ChimpApp {
 
     fn view_menu(&mut self, ui: &mut egui::Ui) {
         let v = &mut self.view;
-        ui.add(egui::Checkbox::new(&mut v.extras, "Extras"))
+        ui.add(menus::check(&mut v.extras, "Extras"))
             .on_hover_text("Ctrl+H: show or hide all extras");
         menus::submenu(ui, "Show", |ui| {
-            ui.checkbox(&mut v.rulers, "Rulers");
+            ui.add(menus::check(&mut v.rulers, "Rulers"));
             ui.add_enabled_ui(v.extras, |ui| {
-                ui.checkbox(&mut v.guides, "Guides");
-                ui.checkbox(&mut v.pixel_grid, "Pixel Grid");
-                ui.checkbox(&mut v.grid, "Grid");
-                ui.checkbox(&mut v.selection_edges, "Selection Edges");
-                ui.checkbox(&mut v.slices, "Slices");
-                ui.checkbox(&mut v.brush_preview, "Brush Preview");
-                ui.checkbox(&mut v.artboard_names, "Artboard Names");
-                ui.checkbox(&mut v.tile_numbers, "Tile Numbers");
+                ui.add(menus::check(&mut v.guides, "Guides"));
+                ui.add(menus::check(&mut v.pixel_grid, "Pixel Grid"));
+                ui.add(menus::check(&mut v.grid, "Grid"));
+                ui.add(menus::check(&mut v.selection_edges, "Selection Edges"));
+                ui.add(menus::check(&mut v.slices, "Slices"));
+                ui.add(menus::check(&mut v.brush_preview, "Brush Preview"));
+                ui.add(menus::check(&mut v.artboard_names, "Artboard Names"));
+                ui.add(menus::check(&mut v.tile_numbers, "Tile Numbers"));
             });
         });
         menus::submenu(ui, "Guides", |ui| {
-            ui.checkbox(&mut self.view.guides, "Show Guides");
-            ui.checkbox(&mut self.view.snap_to_guides, "Snap to Guides");
-            ui.checkbox(&mut self.view.lock_guides, "Lock Guides");
+            ui.add(menus::check(&mut self.view.guides, "Show Guides"));
+            ui.add(menus::check(
+                &mut self.view.snap_to_guides,
+                "Snap to Guides",
+            ));
+            ui.add(menus::check(&mut self.view.lock_guides, "Lock Guides"));
             menus::separator(ui);
             let has_guides = !self.doc.editor.guides().is_empty();
             if ui
@@ -398,25 +401,25 @@ impl ChimpApp {
             ui.weak("Drag from a ruler to add a guide;\ndrag it back to remove it.");
         });
         menus::submenu(ui, "Grid", |ui| {
-            ui.checkbox(&mut self.view.grid, "Show Grid");
-            ui.checkbox(&mut self.view.snap_to_grid, "Snap to Grid");
+            ui.add(menus::check(&mut self.view.grid, "Show Grid"));
+            ui.add(menus::check(&mut self.view.snap_to_grid, "Snap to Grid"));
             if ui.add(menus::plain("Grid Settings…")).clicked() {
                 self.grid_dialog = Some(view::GridDialog::new(&self.doc.editor, &self.view));
                 ui.close();
             }
         });
         menus::separator(ui);
-        ui.add(egui::Checkbox::new(
+        ui.add(menus::check(
             &mut self.doc.editor.onion_enabled,
             "Onion Skin",
         ))
         .on_hover_text("F3");
-        ui.add(egui::Checkbox::new(&mut self.view.timeline, "Timeline"))
+        ui.add(menus::check(&mut self.view.timeline, "Timeline"))
             .on_hover_text("Tab");
         if !cfg!(target_arch = "wasm32") {
             let mut fullscreen = self.fullscreen;
             if ui
-                .add(egui::Checkbox::new(&mut fullscreen, "Full Screen"))
+                .add(menus::check(&mut fullscreen, "Full Screen"))
                 .on_hover_text("F11")
                 .changed()
             {
@@ -424,7 +427,7 @@ impl ChimpApp {
             }
         }
         menus::separator(ui);
-        ui.checkbox(&mut self.view.pixel_ui, "Pixel UI");
+        ui.add(menus::check(&mut self.view.pixel_ui, "Pixel UI"));
         ui.add_enabled_ui(self.view.pixel_ui, |ui| {
             menus::submenu(ui, "UI Scale", |ui| {
                 for scale in 1..=3u8 {
