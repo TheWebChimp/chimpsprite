@@ -1038,6 +1038,80 @@ mod tests {
     }
 
     #[test]
+    fn the_alpha_segment_is_plain_white_inside_with_the_checker_only_in_its_underline() {
+        // `channel.a` se repite cada 4 a lo largo del tramo: si trae algo del punto o de los
+        // dígitos del diseño, aparecen manchas lavanda detrás del texto y en los bordes.
+        let data = decode(EMBEDDED).unwrap();
+        let piece = &data.pieces["channel.a"];
+        let at = |x: u32, y: u32| {
+            let i = ((y * piece.size[0] + x) * 4) as usize;
+            [
+                piece.rgba[i],
+                piece.rgba[i + 1],
+                piece.rgba[i + 2],
+                piece.rgba[i + 3],
+            ]
+        };
+        let dark = [89, 77, 77, 255];
+        for x in 0..piece.size[0] {
+            assert_eq!(at(x, 0), dark, "the border on top, column {x}");
+            assert_eq!(at(x, 15), dark, "the border below, column {x}");
+            for y in 1..13 {
+                assert_eq!(at(x, y), [255, 255, 255, 255], "inside at ({x},{y})");
+            }
+        }
+        // El damero de 2×2 de la línea, en (154,151,185) y (230,231,240), solo en las filas 13
+        // y 14.
+        let (lilac, pale) = ([154, 151, 185, 255], [230, 231, 240, 255]);
+        assert_eq!(
+            [at(0, 13), at(1, 13), at(2, 13), at(3, 13)],
+            [lilac, lilac, pale, pale]
+        );
+        assert_eq!(
+            [at(0, 14), at(1, 14), at(2, 14), at(3, 14)],
+            [pale, pale, lilac, lilac]
+        );
+    }
+
+    #[test]
+    fn the_loose_strip_caps_come_from_the_tips_of_the_strip() {
+        let data = decode(EMBEDDED).unwrap();
+        let p = |name: &str| &data.pieces[name];
+        let at = |piece: &PieceImage, x: u32, y: u32| {
+            let i = ((y * piece.size[0] + x) * 4) as usize;
+            piece.rgba[i..i + 4].to_vec()
+        };
+        let (left, right) = (p("channel.cap.l"), p("channel.cap.r"));
+        assert_eq!((left.size, left.center), ([3, 16], None));
+        assert_eq!((right.size, right.center), ([2, 16], None));
+        let (r, hex) = (p("channel.r"), p("channel.hex"));
+        let hex_line = vec![197, 199, 221, 255];
+        let alpha_line = vec![154, 151, 185, 255];
+        for y in 0..16 {
+            // La punta de R con la línea del hex en vez de la roja.
+            for x in 0..3 {
+                let tip = at(r, x, y);
+                let expected = if tip[3] == 255 && tip[0] > 150 && tip[1] < 50 {
+                    hex_line.clone()
+                } else {
+                    tip
+                };
+                assert_eq!(at(left, x, y), expected, "cap.l ({x},{y})");
+            }
+            // La punta del hex con la línea del alfa.
+            for x in 0..2 {
+                let tip = at(hex, x + 3, y);
+                let expected = if tip == hex_line {
+                    alpha_line.clone()
+                } else {
+                    tip
+                };
+                assert_eq!(at(right, x, y), expected, "cap.r ({x},{y})");
+            }
+        }
+    }
+
+    #[test]
     fn the_embedded_skin_has_the_tooltip_bubble_of_the_mockup() {
         let data = decode(EMBEDDED).unwrap();
         let bubble = data.pieces.get("tooltip.bubble").expect("tooltip.bubble");

@@ -147,6 +147,14 @@ oculta.
     (0,0,1,16): el tramo del hex con la punta derecha) y `channel.sep` (1×16, la línea entre
     tramos). Los puntos `channel.dot.r/g/b/a` (6×6) llevan las esquinas transparentes.
     `color.field_text` (89,77,77) es el color de sus números.
+  - `channel.a` es blanco liso adentro (filas 1..12): el damero va solo en su línea (filas 13 y
+    14). Se había copiado de las columnas 900..903, que tienen la mitad del punto del alfa, y
+    al repetirse dejaba manchas lavanda detrás del texto.
+  - Las puntas sueltas, para cuando el encabezado del editor se parte en filas (y 252, desde
+    x 113), sacadas del mismo skin: `channel.cap.l` (3×16) es la punta izquierda de
+    `channel.r` con la línea del hex (197,199,221) en vez de la roja, y abre el hex solo en su
+    fila; `channel.cap.r` (2×16) es la punta derecha de `channel.hex` con la línea del alfa
+    (154,151,185), y cierra el grupo RGBA cuando el hex va en otra fila.
   - `picker.sv` (7×7, centro (3,3,1,1)): la caja del cuadro S/V hasta la línea que lo separa
     de las barras (incluida). `picker.bars` (7×6, centro (3,2,1,1)): la caja de las barras de
     tono y alfa. El centro es transparente: los degradés los calcula la app.
