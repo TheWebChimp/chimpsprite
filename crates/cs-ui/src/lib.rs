@@ -8,6 +8,8 @@ mod canvas_size;
 mod capture;
 mod clipboard;
 mod demo;
+#[cfg(test)]
+mod dialog_tests;
 mod editor;
 mod export_dialog;
 mod file_actions;
@@ -223,7 +225,7 @@ impl ChimpApp {
             self.canvas_size = None;
             return;
         }
-        match canvas_size::show(ctx, dialog) {
+        match canvas_size::show(ctx, dialog, self.pixel.skin()) {
             canvas_size::DialogResult::Open => {}
             canvas_size::DialogResult::Accept => {
                 if let Some(cmd) = dialog.command(&self.doc.editor.document) {

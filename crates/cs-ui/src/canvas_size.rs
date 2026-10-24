@@ -3,8 +3,10 @@
 use cs_commands::{Command, DocCommand};
 use cs_core::{Artboard, ArtboardId, Document};
 use eframe::egui::{self, Color32, Pos2, Sense, Stroke, Vec2};
+use eframe::emath::GuiRounding as _;
 
-use crate::{theme, widgets};
+use crate::skin::{Skin, SkinColors};
+use crate::{pixel_ui, theme, widgets};
 
 const MAX_SIZE: i64 = 16384;
 const BORDER_RANGE: std::ops::RangeInclusive<i32> = -(MAX_SIZE as i32)..=MAX_SIZE as i32;
@@ -158,74 +160,55 @@ pub enum DialogResult {
     Cancel,
 }
 
-/// Dibuja la ventana. Enter acepta, Escape cancela.
-pub fn show(ctx: &egui::Context, dialog: &mut CanvasSizeDialog) -> DialogResult {
-    let mut result = DialogResult::Open;
-    let mut open = true;
-    egui::Window::new("Canvas Size")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-240.0, 40.0))
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                egui::Grid::new("canvas_size_dims")
-                    .num_columns(2)
-                    .spacing([8.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.label("Width:");
-                        let mut w = dialog.width();
-                        if widgets::number(ui, &mut w, 1..=MAX_SIZE, " px").changed() {
-                            dialog.set_width(w);
-                        }
-                        ui.end_row();
-                        ui.label("Height:");
-                        let mut h = dialog.height();
-                        if widgets::number(ui, &mut h, 1..=MAX_SIZE, " px").changed() {
-                            dialog.set_height(h);
-                        }
-                        ui.end_row();
-                    });
-                ui.add_space(12.0);
-                anchor_grid(ui, dialog);
-            });
+/// Colores del diálogo: los del tema de siempre o, con Pixel UI, los del skin.
+#[derive(Clone, Copy)]
+struct Palette {
+    /// El aviso de tamaño inválido y el cuadrado del ancla.
+    accent: Color32,
+    /// Celdas de la grilla del ancla: `None` usa las de los widgets de egui, como siempre.
+    cells: Option<CellColors>,
+}
 
-            ui.add_space(6.0);
-            ui.label(egui::RichText::new("Borders").strong());
-            egui::Grid::new("canvas_size_borders")
-                .num_columns(4)
-                .spacing([8.0, 6.0])
-                .show(ui, |ui| {
-                    ui.label("Left:");
-                    widgets::number(ui, &mut dialog.left, BORDER_RANGE, " px");
-                    ui.label("Top:");
-                    widgets::number(ui, &mut dialog.top, BORDER_RANGE, " px");
-                    ui.end_row();
-                    ui.label("Right:");
-                    widgets::number(ui, &mut dialog.right, BORDER_RANGE, " px");
-                    ui.label("Bottom:");
-                    widgets::number(ui, &mut dialog.bottom, BORDER_RANGE, " px");
-                    ui.end_row();
-                });
+/// Celdas del ancla con Pixel UI: fondo, fondo con el puntero encima, borde y flecha.
+#[derive(Clone, Copy)]
+struct CellColors {
+    fill: Color32,
+    hover: Color32,
+    outline: Color32,
+    arrow: Color32,
+}
 
-            ui.add_space(6.0);
-            ui.checkbox(&mut dialog.trim, "Trim content outside the canvas");
-            if !dialog.is_valid() {
-                ui.colored_label(theme::ACCENT, "Size must be between 1 and 16384 px");
-            }
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(dialog.is_valid(), egui::Button::new("OK"))
-                    .clicked()
-                {
-                    result = DialogResult::Accept;
-                }
-                if ui.button("Cancel").clicked() {
-                    result = DialogResult::Cancel;
-                }
-            });
-        });
+impl Palette {
+    const PLAIN: Palette = Palette {
+        accent: theme::ACCENT,
+        cells: None,
+    };
+
+    fn of_skin(colors: &SkinColors) -> Palette {
+        Palette {
+            accent: colors.accent,
+            cells: Some(CellColors {
+                fill: colors.panel,
+                hover: colors.selection,
+                outline: colors.outline,
+                arrow: colors.text,
+            }),
+        }
+    }
+}
+
+/// Dibuja la ventana. Enter acepta, Escape cancela. Con `skin` (Pixel UI) es el diálogo pixel
+/// del skin, con su botón de cerrar (que cancela) y los botones pixel; sin él, la ventana de
+/// egui de siempre.
+pub fn show(
+    ctx: &egui::Context,
+    dialog: &mut CanvasSizeDialog,
+    skin: Option<&Skin>,
+) -> DialogResult {
+    let (result, open) = match skin {
+        Some(skin) => pixel_window(ctx, skin, dialog),
+        None => plain_window(ctx, dialog),
+    };
     let (enter, escape) = ctx.input(|i| {
         (
             i.key_pressed(egui::Key::Enter),
@@ -241,11 +224,113 @@ pub fn show(ctx: &egui::Context, dialog: &mut CanvasSizeDialog) -> DialogResult 
     }
 }
 
+/// El diálogo pixel del skin (Pixel UI). Devuelve lo elegido y si sigue abierto.
+fn pixel_window(
+    ctx: &egui::Context,
+    skin: &Skin,
+    dialog: &mut CanvasSizeDialog,
+) -> (DialogResult, bool) {
+    let id = egui::Id::new("canvas_size");
+    let palette = Palette::of_skin(skin.colors());
+    let out = pixel_ui::pixel_dialog(ctx, skin, id, "Canvas Size", true, |ui| {
+        contents(ui, dialog, palette);
+        ui.add_space(6.0);
+        let buttons = pixel_ui::pixel_buttons(ui, skin, &["OK", "Cancel"]);
+        // Los botones pixel no se deshabilitan: OK no hace nada con un tamaño inválido.
+        if buttons[0].clicked() && dialog.is_valid() {
+            DialogResult::Accept
+        } else if buttons[1].clicked() {
+            DialogResult::Cancel
+        } else {
+            DialogResult::Open
+        }
+    });
+    // Cerrar desde la barra de título es lo mismo que Cancel.
+    (out.inner, !out.closed)
+}
+
+/// La ventana de egui de siempre (Pixel UI apagado). Devuelve lo elegido y si sigue abierta.
+fn plain_window(ctx: &egui::Context, dialog: &mut CanvasSizeDialog) -> (DialogResult, bool) {
+    let mut result = DialogResult::Open;
+    let mut open = true;
+    egui::Window::new("Canvas Size")
+        .open(&mut open)
+        .collapsible(false)
+        .resizable(false)
+        .anchor(egui::Align2::RIGHT_TOP, Vec2::new(-240.0, 40.0))
+        .show(ctx, |ui| {
+            contents(ui, dialog, Palette::PLAIN);
+            ui.separator();
+            ui.horizontal(|ui| {
+                if ui
+                    .add_enabled(dialog.is_valid(), egui::Button::new("OK"))
+                    .clicked()
+                {
+                    result = DialogResult::Accept;
+                }
+                if ui.button("Cancel").clicked() {
+                    result = DialogResult::Cancel;
+                }
+            });
+        });
+    (result, open)
+}
+
+/// Lo de adentro del diálogo, sin los botones: tamaño, ancla, bordes, recorte y el aviso.
+fn contents(ui: &mut egui::Ui, dialog: &mut CanvasSizeDialog, palette: Palette) {
+    ui.horizontal(|ui| {
+        egui::Grid::new("canvas_size_dims")
+            .num_columns(2)
+            .spacing([8.0, 6.0])
+            .show(ui, |ui| {
+                ui.label("Width:");
+                let mut w = dialog.width();
+                if widgets::number(ui, &mut w, 1..=MAX_SIZE, " px").changed() {
+                    dialog.set_width(w);
+                }
+                ui.end_row();
+                ui.label("Height:");
+                let mut h = dialog.height();
+                if widgets::number(ui, &mut h, 1..=MAX_SIZE, " px").changed() {
+                    dialog.set_height(h);
+                }
+                ui.end_row();
+            });
+        ui.add_space(12.0);
+        anchor_grid(ui, dialog, palette);
+    });
+
+    ui.add_space(6.0);
+    ui.label(egui::RichText::new("Borders").strong());
+    egui::Grid::new("canvas_size_borders")
+        .num_columns(4)
+        .spacing([8.0, 6.0])
+        .show(ui, |ui| {
+            ui.label("Left:");
+            widgets::number(ui, &mut dialog.left, BORDER_RANGE, " px");
+            ui.label("Top:");
+            widgets::number(ui, &mut dialog.top, BORDER_RANGE, " px");
+            ui.end_row();
+            ui.label("Right:");
+            widgets::number(ui, &mut dialog.right, BORDER_RANGE, " px");
+            ui.label("Bottom:");
+            widgets::number(ui, &mut dialog.bottom, BORDER_RANGE, " px");
+            ui.end_row();
+        });
+
+    ui.add_space(6.0);
+    ui.checkbox(&mut dialog.trim, "Trim content outside the canvas");
+    if !dialog.is_valid() {
+        ui.colored_label(palette.accent, "Size must be between 1 and 16384 px");
+    }
+}
+
 /// Grilla 3×3 del ancla. Cada celda muestra una flecha hacia donde crece el lienzo.
-fn anchor_grid(ui: &mut egui::Ui, dialog: &mut CanvasSizeDialog) {
+fn anchor_grid(ui: &mut egui::Ui, dialog: &mut CanvasSizeDialog, palette: Palette) {
     const CELL: f32 = 24.0;
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(CELL * 3.0), Sense::hover());
     let (ac, ar) = dialog.anchor();
+    let ppp = ui.ctx().pixels_per_point();
     for row in 0..3u8 {
         for col in 0..3u8 {
             let min = rect.min + Vec2::new(col as f32, row as f32) * CELL;
@@ -257,14 +342,31 @@ fn anchor_grid(ui: &mut egui::Ui, dialog: &mut CanvasSizeDialog) {
             }
             let visuals = ui.style().interact(&response);
             let painter = ui.painter();
-            painter.rect_filled(cell, 2.0, visuals.weak_bg_fill);
-            let color = visuals.fg_stroke.color;
+            let (color, rounding) = match palette.cells {
+                // Con Pixel UI: celdas cuadradas con los colores del skin, alineadas a píxeles.
+                Some(c) => {
+                    let square = cell.round_to_pixels(ppp);
+                    let fill = if response.hovered() { c.hover } else { c.fill };
+                    painter.rect_filled(square, 0.0, fill);
+                    painter.rect_stroke(
+                        square,
+                        0.0,
+                        Stroke::new(1.0, c.outline),
+                        egui::StrokeKind::Inside,
+                    );
+                    (c.arrow, 0.0)
+                }
+                None => {
+                    painter.rect_filled(cell, 2.0, visuals.weak_bg_fill);
+                    (visuals.fg_stroke.color, 1.0)
+                }
+            };
             let dir = Vec2::new(col as f32 - ac as f32, row as f32 - ar as f32);
             if dir == Vec2::ZERO {
                 painter.rect_filled(
                     egui::Rect::from_center_size(cell.center(), Vec2::splat(8.0)),
-                    1.0,
-                    theme::ACCENT,
+                    rounding,
+                    palette.accent,
                 );
             } else {
                 arrow(painter, cell.center(), dir.normalized() * 7.0, color);
