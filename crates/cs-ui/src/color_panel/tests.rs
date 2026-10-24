@@ -603,3 +603,124 @@ fn without_pixel_ui_the_palette_and_the_picker_are_the_egui_ones() {
     h.click_at(first.center());
     assert_eq!(h.editor.primary, h.editor.palette_value(0));
 }
+
+fn key(key: egui::Key, pressed: bool, modifiers: egui::Modifiers) -> Event {
+    Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers,
+    }
+}
+
+impl Harness {
+    /// Clic en el hex y todo su texto seleccionado (para escribir encima).
+    fn focus_hex(&mut self) {
+        self.click_at(self.node("Hex").center());
+        self.frame(vec![key(egui::Key::A, true, egui::Modifiers::COMMAND)]);
+        self.frame(vec![key(egui::Key::A, false, egui::Modifiers::COMMAND)]);
+    }
+
+    fn press_key(&mut self, k: egui::Key) {
+        self.frame(vec![key(k, true, Default::default())]);
+        self.frame(vec![key(k, false, Default::default())]);
+        self.frame(vec![]);
+    }
+
+    /// Clic en el canal `label` y escribir `text` con Enter.
+    fn type_into(&mut self, label: &str, text: &str) {
+        self.click_at(self.node(label).center());
+        self.frame(vec![key(egui::Key::A, true, egui::Modifiers::COMMAND)]);
+        self.type_and_enter(text);
+    }
+
+    fn has_text(&self, text: &str) -> bool {
+        self.texts().iter().any(|(t, _, _)| t == text)
+    }
+}
+
+#[test]
+fn with_pixel_ui_escape_in_the_hex_cancels_and_restores_the_hex_of_the_color() {
+    let mut h = Harness::new(true);
+    h.focus_hex();
+    h.frame(vec![Event::Text("#336699".to_owned())]);
+    h.press_key(egui::Key::Escape);
+    assert_eq!(h.primary(), Rgba::rgb(10, 20, 30), "Esc does not apply");
+    h.frame(vec![]);
+    assert!(h.has_text("#0a141e"), "{:?}", h.texts());
+    assert!(!h.has_text("#336699"));
+    // Al volver a entrar, el texto es el del color, no lo escrito antes.
+    h.click_at(h.node("Hex").center());
+    assert!(h.has_text("#0a141e"), "{:?}", h.texts());
+}
+
+#[test]
+fn losing_the_hex_focus_does_not_undo_an_edit_of_another_channel_in_the_same_frame() {
+    let current = Rgba::rgb(10, 20, 30);
+    let edited = Rgba::rgb(99, 20, 30);
+    // Con otro canal editado en el mismo frame, gana esa edición.
+    assert_eq!(
+        super::strip_result(current, edited, Some("#ffffff")),
+        edited
+    );
+    // Sin otra edición, el hex escrito se aplica; si no es válido, queda el color.
+    assert_eq!(
+        super::strip_result(current, current, Some("#ffffff")),
+        Rgba::rgb(255, 255, 255)
+    );
+    assert_eq!(super::strip_result(current, current, Some("zz")), current);
+    assert_eq!(super::strip_result(current, current, None), current);
+}
+
+#[test]
+fn with_pixel_ui_the_focused_hex_follows_the_color_until_the_user_types() {
+    let mut h = Harness::new(true);
+    h.focus_hex();
+    // El color cambia por otro lado (el S/V, el gotero) con el hex enfocado: sin escribir, el
+    // texto sigue al color, y Enter no vuelve al de antes.
+    h.set_primary(Rgba::rgb(1, 2, 3));
+    h.frame(vec![]);
+    assert!(h.has_text("#010203"), "{:?}", h.texts());
+    h.press_key(egui::Key::Enter);
+    assert_eq!(h.primary(), Rgba::rgb(1, 2, 3));
+    // Con algo escrito, lo escrito no se pisa.
+    h.focus_hex();
+    h.frame(vec![Event::Text("#4455".to_owned())]);
+    h.set_primary(Rgba::rgb(7, 8, 9));
+    h.frame(vec![]);
+    assert!(h.has_text("#4455"), "{:?}", h.texts());
+    h.frame(vec![Event::Text("66".to_owned())]);
+    h.press_key(egui::Key::Enter);
+    assert_eq!(h.primary(), Rgba::rgb(0x44, 0x55, 0x66));
+}
+
+#[test]
+fn with_pixel_ui_a_channel_clamps_what_is_typed_to_0_255() {
+    let mut h = Harness::new(true);
+    h.type_into("R", "300");
+    assert_eq!(h.primary(), Rgba::rgb(255, 20, 30));
+    h.type_into("G", "-5");
+    assert_eq!(h.primary(), Rgba::rgb(255, 0, 30));
+}
+
+#[test]
+fn with_pixel_ui_an_invalid_hex_keeps_the_color() {
+    let mut h = Harness::new(true);
+    h.focus_hex();
+    h.type_and_enter("#zz12");
+    assert_eq!(h.primary(), Rgba::rgb(10, 20, 30));
+    h.frame(vec![]);
+    assert!(h.has_text("#0a141e"), "{:?}", h.texts());
+}
+
+#[test]
+fn with_pixel_ui_typing_into_g_b_and_a_changes_the_color() {
+    let mut h = Harness::new(true);
+    h.type_into("G", "100");
+    assert_eq!(h.primary(), Rgba::rgb(10, 100, 30));
+    h.type_into("B", "200");
+    assert_eq!(h.primary(), Rgba::rgb(10, 100, 200));
+    h.type_into("A", "128");
+    assert_eq!(h.primary(), Rgba::new(10, 100, 200, 128));
+}

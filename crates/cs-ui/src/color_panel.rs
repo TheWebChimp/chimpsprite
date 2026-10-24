@@ -490,9 +490,13 @@ fn channel_strip(
         flat_segment(hex, colors.highlight, colors, ppp)
     }));
     let text_id = id.with("hex");
-    let mut text = ui
-        .data_mut(|d| d.get_temp::<String>(text_id))
-        .unwrap_or_else(|| edited.to_hex());
+    let hex_now = edited.to_hex();
+    // Lo guardado mientras el hex tiene el foco. Si no se escribió nada (el texto es el hex que
+    // se mostraba) y el color cambió por otro lado (el S/V, el gotero), el texto lo sigue.
+    let mut text = match ui.data_mut(|d| d.get_temp::<HexStash>(text_id)) {
+        Some(stash) if stash.text != stash.shown => stash.text,
+        _ => hex_now.clone(),
+    };
     let inner = text_rect(hex.left() + HEX_TEXT_LEFT, hex.right() - 2.0);
     let mut child = ui.new_child(
         UiBuilder::new()
@@ -515,16 +519,34 @@ fn channel_strip(
     let enabled = ui.is_enabled();
     response.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, enabled, "Hex"));
     if response.has_focus() {
-        ui.data_mut(|d| d.insert_temp(text_id, text.clone()));
+        let stash = HexStash {
+            text: text.clone(),
+            shown: hex_now,
+        };
+        ui.data_mut(|d| d.insert_temp(text_id, stash));
     } else {
-        ui.data_mut(|d| d.remove::<String>(text_id));
+        ui.data_mut(|d| d.remove::<HexStash>(text_id));
     }
-    if response.lost_focus()
-        && let Some(c) = Rgba::parse_hex(&text)
-    {
-        return c;
+    // Esc cancela: no se aplica lo escrito (y el texto vuelve al hex del color).
+    let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
+    let typed = (response.lost_focus() && !cancelled).then_some(text.as_str());
+    strip_result(current, edited, typed)
+}
+
+/// Lo escrito en el hex mientras tiene el foco y el hex del color que mostraba entonces.
+#[derive(Clone)]
+struct HexStash {
+    text: String,
+    shown: String,
+}
+
+/// El color que deja la tira: si un canal cambió en este frame, esa edición; si no, el hex
+/// escrito (`typed`, al perder el foco) cuando es válido; si no, el color de antes.
+fn strip_result(current: Rgba, edited: Rgba, typed: Option<&str>) -> Rgba {
+    if edited != current {
+        return edited;
     }
-    edited
+    typed.and_then(Rgba::parse_hex).unwrap_or(edited)
 }
 
 /// El cuadro de saturación (a lo ancho) y brillo (de abajo arriba), con el cursor.
