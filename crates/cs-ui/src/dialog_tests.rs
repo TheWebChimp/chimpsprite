@@ -193,6 +193,32 @@ impl DialogHarness {
             .is_some()
     }
 
+    /// El rect del diálogo pixel `id` en el último frame.
+    fn dialog_rect(&self, id: &str) -> Rect {
+        self.ctx
+            .memory(|m| m.area_rect(egui::Id::new(id)))
+            .unwrap_or_else(|| panic!("no dialog {id:?}"))
+    }
+
+    /// Aprieta en `from`, arrastra en 4 pasos hasta `to` y suelta.
+    fn drag(&mut self, from: Pos2, to: Pos2) {
+        let press = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        self.frame(vec![Event::PointerMoved(from)]);
+        self.frame(vec![press(from, true)]);
+        for i in 1..=4 {
+            let at = from + (to - from) * (i as f32 / 4.0);
+            self.frame(vec![Event::PointerMoved(at)]);
+        }
+        self.frame(vec![press(to, false)]);
+        self.frame(vec![]);
+        self.frame(vec![]);
+    }
+
     fn sprite_size(&self) -> (u32, u32) {
         let s = self.app.doc.editor.sprite();
         (s.width, s.height)
@@ -522,4 +548,152 @@ fn without_pixel_ui_convert_to_tilemap_is_the_egui_window_as_always() {
     h.key(Key::Escape);
     assert!(h.app.convert_tilemap.is_none());
     assert_eq!(converted(&h), (false, vec![]));
+}
+
+// --- Mover los diálogos pixel desde la barra de título ---
+
+/// "Unsaved changes" con Pixel UI: la pestaña con un cambio, a punto de cerrarse.
+fn unsaved() -> DialogHarness {
+    let mut h = DialogHarness::new(true);
+    h.app.doc.editor.execute(cs_commands::Command::DrawPixels {
+        layer: cs_core::LayerId(1),
+        frame: 0,
+        pixels: vec![(
+            0,
+            0,
+            cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0)),
+        )],
+    });
+    h.app.request_close_tab(0);
+    h.settle();
+    assert!(h.app.pending.is_some());
+    h
+}
+
+/// Un punto de la barra de título rosa de `rect`, lejos del botón de cerrar.
+fn title_bar_point(rect: Rect) -> Pos2 {
+    rect.left_top() + Vec2::new(20.0, 4.0)
+}
+
+fn assert_near(a: Rect, b: Rect, what: &str) {
+    assert!(
+        (a.min - b.min).length() < 0.5 && (a.size() - b.size()).length() < 0.5,
+        "{what}: {a:?} != {b:?}"
+    );
+}
+
+#[test]
+fn with_pixel_ui_dragging_the_title_bar_moves_the_dialog_by_the_drag_delta() {
+    for (id, mut h) in [
+        ("unsaved_changes", unsaved()),
+        ("canvas_size", canvas_size(true)),
+    ] {
+        let before = h.dialog_rect(id);
+        let from = title_bar_point(before);
+        let delta = Vec2::new(-150.0, 60.0);
+        h.drag(from, from + delta);
+        assert_near(h.dialog_rect(id), before.translate(delta), id);
+        // Se queda donde quedó mientras siga abierto.
+        h.settle();
+        assert_near(h.dialog_rect(id), before.translate(delta), id);
+        // Y se puede volver a mover desde ahí.
+        let from = title_bar_point(h.dialog_rect(id));
+        h.drag(from, from + Vec2::new(30.0, -20.0));
+        assert_near(
+            h.dialog_rect(id),
+            before.translate(delta + Vec2::new(30.0, -20.0)),
+            id,
+        );
+    }
+}
+
+#[test]
+fn with_pixel_ui_dragging_inside_the_dialog_body_does_not_move_it() {
+    let mut h = unsaved();
+    let before = h.dialog_rect("unsaved_changes");
+    // El margen izquierdo y el texto de la pregunta: cuerpo, no barra.
+    for from in [
+        Pos2::new(before.left() + 3.0, before.center().y),
+        Pos2::new(before.center().x, before.top() + 22.0),
+    ] {
+        h.drag(from, from + Vec2::new(-120.0, 80.0));
+        assert_near(h.dialog_rect("unsaved_changes"), before, "body");
+    }
+    assert!(h.app.pending.is_some(), "still open");
+    // Canvas Size: arrastrar en el margen tampoco lo mueve ni cambia los campos.
+    let mut h = canvas_size(true);
+    let before = h.dialog_rect("canvas_size");
+    let width = h.app.canvas_size.as_ref().unwrap().width();
+    let from = Pos2::new(before.left() + 3.0, before.center().y);
+    h.drag(from, from + Vec2::new(-120.0, 80.0));
+    assert_near(h.dialog_rect("canvas_size"), before, "canvas size body");
+    assert_eq!(h.app.canvas_size.as_ref().unwrap().width(), width);
+}
+
+#[test]
+fn with_pixel_ui_dragging_from_the_close_button_does_not_move_and_it_still_closes() {
+    let mut h = unsaved();
+    let before = h.dialog_rect("unsaved_changes");
+    let from = h.button("Close").center();
+    h.drag(from, from + Vec2::new(-150.0, 60.0));
+    assert_near(h.dialog_rect("unsaved_changes"), before, "close button");
+    assert!(h.app.pending.is_some(), "released away from the button");
+    h.click("Close");
+    assert_eq!(h.app.pending, None, "closed");
+    assert!(h.app.any_dirty(), "the tab is still there, unsaved");
+}
+
+#[test]
+fn with_pixel_ui_a_dialog_cannot_be_dragged_off_the_screen() {
+    let mut h = canvas_size(true);
+    let screen = h.ctx.content_rect();
+    let size = h.dialog_rect("canvas_size").size();
+    // Muy arriba a la izquierda: queda contra la esquina.
+    let from = title_bar_point(h.dialog_rect("canvas_size"));
+    h.drag(from, from - Vec2::new(3000.0, 3000.0));
+    let rect = h.dialog_rect("canvas_size");
+    assert_near(rect, Rect::from_min_size(screen.min, size), "top left");
+    // Muy abajo a la derecha: queda contra la otra esquina.
+    let from = title_bar_point(rect);
+    h.drag(from, from + Vec2::new(3000.0, 3000.0));
+    let rect = h.dialog_rect("canvas_size");
+    assert_near(
+        rect,
+        Rect::from_min_size(screen.max - size, size),
+        "bottom right",
+    );
+    // Desde ahí se mueve enseguida: la posición guardada no quedó afuera.
+    let from = title_bar_point(rect);
+    h.drag(from, from - Vec2::new(50.0, 50.0));
+    assert_near(
+        h.dialog_rect("canvas_size"),
+        Rect::from_min_size(screen.max - size - Vec2::splat(50.0), size),
+        "back in",
+    );
+}
+
+#[test]
+fn with_pixel_ui_a_reopened_dialog_starts_at_its_default_place() {
+    let mut h = canvas_size(true);
+    let home = h.dialog_rect("canvas_size");
+    let from = title_bar_point(home);
+    h.drag(from, from + Vec2::new(-300.0, 200.0));
+    assert!(h.dialog_rect("canvas_size").min != home.min, "moved");
+    h.click("Cancel");
+    assert!(h.app.canvas_size.is_none());
+    h.settle();
+    h.app.open_canvas_size();
+    h.settle();
+    assert_near(h.dialog_rect("canvas_size"), home, "top right again");
+    // El de Unsaved, centrado.
+    let mut h = unsaved();
+    let home = h.dialog_rect("unsaved_changes");
+    let from = title_bar_point(home);
+    h.drag(from, from + Vec2::new(100.0, 100.0));
+    h.click("Cancel");
+    assert_eq!(h.app.pending, None);
+    h.settle();
+    h.app.request_close_tab(0);
+    h.settle();
+    assert_near(h.dialog_rect("unsaved_changes"), home, "centered again");
 }

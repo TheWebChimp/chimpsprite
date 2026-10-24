@@ -28,6 +28,11 @@ const FALLBACK_BUTTON: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const FALLBACK_BUTTON_SIZE: Vec2 = Vec2::new(32.0, 18.0);
 /// Tamaño del botón de cerrar de respaldo (el de la pieza del skin).
 const FALLBACK_CLOSE_SIZE: Vec2 = Vec2::new(9.0, 9.0);
+/// En la memoria de egui, con el id del diálogo: la posición a la que se lo arrastró y la pasada
+/// en que se mostró por última vez.
+const MOVED_KEY: &str = "pixel_dialog_moved";
+/// En la memoria de egui, con el id del diálogo: dónde estaba al empezar a arrastrar la barra.
+const DRAG_START_KEY: &str = "pixel_dialog_drag_start";
 /// Marcos de los botones de herramienta, los tramos de la columna del mockup: el primero
 /// (redondeado arriba), los del medio y el último (redondeado abajo). `.active` cuando su grupo
 /// tiene la herramienta activa.
@@ -136,9 +141,12 @@ pub(crate) fn flat_frame(
     shapes
 }
 
-/// Diálogo fijo en el centro de la pantalla, con el marco del skin en 9-slice. El título va
-/// centrado en la barra de arriba y el contenido en el área del centro, con 4 px de margen. El
-/// texto de adentro usa `color.text`.
+/// Diálogo en el centro de la pantalla, con el marco del skin en 9-slice. El título va centrado en
+/// la barra de arriba y el contenido en el área del centro, con 4 px de margen. El texto de
+/// adentro usa `color.text`.
+///
+/// Se mueve arrastrando la barra de título (no el cuerpo ni el botón de cerrar) y no sale de la
+/// pantalla. Queda donde se lo dejó mientras siga abierto; al abrirlo de nuevo, vuelve al centro.
 ///
 /// Con `closable`, a la derecha de la barra va el botón de cerrar (`window.close`, o
 /// `window.close.hover` con el puntero encima; si el skin no lo trae, una × de líneas). Si se
@@ -183,36 +191,45 @@ pub fn pixel_dialog_at<R>(
         bottom: side(bottom),
     };
     let text = skin.colors().text;
-    egui::Area::new(id)
+    // Abre en su lugar (el ancla) y, si se lo arrastró de la barra de título, sigue donde quedó.
+    // Un `Area` anclado no se mueve aunque sea `movable`: la posición movida va en la memoria.
+    let moved = moved_dialog_pos(ctx, id);
+    let area = egui::Area::new(id)
         .order(egui::Order::Foreground)
-        .anchor(anchor.0, anchor.1)
-        .show(ctx, |ui| {
-            // El marco se pinta detrás, cuando ya se sabe el tamaño del contenido.
-            let background = ui.painter().add(Shape::Noop);
-            let font = TextStyle::Body.resolve(ui.style());
-            let galley = ui.painter().layout_no_wrap(title.to_owned(), font, text);
-            let inner = egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
-                ui.visuals_mut().override_text_color = Some(text);
-                ui.set_min_width(galley.size().x);
-                add_contents(ui)
-            });
-            let rect = inner.response.rect;
-            let ppp = ui.ctx().pixels_per_point();
-            let mut shapes = match piece {
-                Some(p) => piece_shapes(p, rect, ppp),
-                None => flat_shapes(skin, rect, top, ppp),
-            };
-            let bar = Rect::from_min_size(rect.min, vec2(rect.width(), top));
-            let at = (bar.center() - galley.size() / 2.0).round_to_pixels(ppp);
-            shapes.push(Shape::galley(at, galley, text));
-            ui.painter().set(background, Shape::Vec(shapes));
-            let closed = closable && close_button(ui, skin, id.with("close"), bar);
-            DialogOutput {
-                inner: inner.inner,
-                closed,
-            }
-        })
-        .inner
+        .movable(false);
+    let area = match moved {
+        Some(pos) => area.current_pos(pos),
+        None => area.anchor(anchor.0, anchor.1),
+    };
+    area.show(ctx, |ui| {
+        // El marco se pinta detrás, cuando ya se sabe el tamaño del contenido.
+        let background = ui.painter().add(Shape::Noop);
+        let font = TextStyle::Body.resolve(ui.style());
+        let galley = ui.painter().layout_no_wrap(title.to_owned(), font, text);
+        let inner = egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
+            ui.visuals_mut().override_text_color = Some(text);
+            ui.set_min_width(galley.size().x);
+            add_contents(ui)
+        });
+        let rect = inner.response.rect;
+        let ppp = ui.ctx().pixels_per_point();
+        let mut shapes = match piece {
+            Some(p) => piece_shapes(p, rect, ppp),
+            None => flat_shapes(skin, rect, top, ppp),
+        };
+        let bar = Rect::from_min_size(rect.min, vec2(rect.width(), top));
+        let at = (bar.center() - galley.size() / 2.0).round_to_pixels(ppp);
+        shapes.push(Shape::galley(at, galley, text));
+        ui.painter().set(background, Shape::Vec(shapes));
+        let close = closable.then(|| close_rect(skin, bar, ppp));
+        drag_title_bar(ui, id, rect, bar, close);
+        let closed = close.is_some_and(|r| close_button(ui, skin, id.with("close"), r));
+        DialogOutput {
+            inner: inner.inner,
+            closed,
+        }
+    })
+    .inner
 }
 
 /// Lo que devuelve [`pixel_dialog`]: lo que devolvió el contenido y si se hizo clic en el botón
@@ -222,18 +239,72 @@ pub struct DialogOutput<R> {
     pub closed: bool,
 }
 
-/// Botón de cerrar a la derecha de la barra de título `bar`, centrado en vertical y con el mismo
-/// margen a la derecha que arriba. Devuelve si se hizo clic.
-fn close_button(ui: &mut Ui, skin: &Skin, id: Id, bar: Rect) -> bool {
+/// La posición a la que se arrastró el diálogo `id`, si sigue abierto desde entonces. Solo vale
+/// si se mostró en la pasada anterior: al cerrarlo se olvida, y al abrirlo de nuevo vuelve a su
+/// lugar de siempre.
+fn moved_dialog_pos(ctx: &egui::Context, id: Id) -> Option<Pos2> {
+    let key = id.with(MOVED_KEY);
+    let pass = ctx.cumulative_pass_nr();
+    ctx.data_mut(|d| {
+        let kept = d
+            .get_temp::<(Pos2, u64)>(key)
+            .filter(|&(_, last)| last + 1 >= pass)
+            .map(|(pos, _)| pos);
+        if let Some(pos) = kept {
+            d.insert_temp(key, (pos, pass));
+        } else {
+            d.remove::<(Pos2, u64)>(key);
+        }
+        kept
+    })
+}
+
+/// Mover el diálogo `id` (que ocupa `rect`) arrastrando su barra de título `bar`. Lo que empieza
+/// en el botón de cerrar (`close`) no lo mueve. Queda entero dentro de la pantalla; la posición
+/// nueva rige desde el frame siguiente.
+fn drag_title_bar(ui: &Ui, id: Id, rect: Rect, bar: Rect, close: Option<Rect>) {
+    let ctx = ui.ctx();
+    let start_key = id.with(DRAG_START_KEY);
+    let response = ui.interact(bar, id.with("title_bar"), Sense::drag());
+    if response.drag_started() {
+        let origin = ctx.input(|i| i.pointer.press_origin());
+        let on_close = origin.zip(close).is_some_and(|(p, c)| c.contains(p));
+        if !on_close {
+            ctx.data_mut(|d| d.insert_temp(start_key, rect.min));
+        }
+    }
+    let start = ctx.data(|d| d.get_temp::<Pos2>(start_key));
+    if let Some(start) = start
+        && response.dragged()
+    {
+        let screen = ctx.content_rect();
+        let max = (screen.max - rect.size()).max(screen.min);
+        let to = (start + response.total_drag_delta().unwrap_or_default()).clamp(screen.min, max);
+        let pass = ctx.cumulative_pass_nr();
+        ctx.data_mut(|d| d.insert_temp(id.with(MOVED_KEY), (to, pass)));
+        ctx.request_repaint();
+    }
+    if start.is_some() && !response.dragged() {
+        ctx.data_mut(|d| d.remove::<Pos2>(start_key));
+    }
+}
+
+/// El botón de cerrar de la barra de título `bar`: a la derecha, centrado en vertical y con el
+/// mismo margen a la derecha que arriba.
+fn close_rect(skin: &Skin, bar: Rect, pixels_per_point: f32) -> Rect {
     let size = skin
         .piece(CLOSE_PIECE, WidgetState::Normal)
         .map_or(FALLBACK_CLOSE_SIZE, |p| {
             vec2(p.size[0] as f32, p.size[1] as f32)
         });
     let inset = ((bar.height() - size.y) / 2.0).floor().max(0.0);
+    Rect::from_min_size(pos2(bar.max.x - inset - size.x, bar.min.y + inset), size)
+        .round_to_pixels(pixels_per_point)
+}
+
+/// Botón de cerrar en `rect` (ver [`close_rect`]). Devuelve si se hizo clic.
+fn close_button(ui: &mut Ui, skin: &Skin, id: Id, rect: Rect) -> bool {
     let ppp = ui.ctx().pixels_per_point();
-    let rect = Rect::from_min_size(pos2(bar.max.x - inset - size.x, bar.min.y + inset), size)
-        .round_to_pixels(ppp);
     let response = ui.interact(rect, id, Sense::click());
     let enabled = ui.is_enabled();
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Close"));
