@@ -336,7 +336,10 @@ impl ChimpApp {
     /// Atajos del menú View (funcionan aunque no haya foco en el lienzo).
     fn view_shortcuts(&mut self, ctx: &egui::Context) {
         let shortcut = |m, k| KeyboardShortcut::new(m, k);
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::H))) {
+        // Ctrl+H es borrar hacia atrás en algunos campos de texto: con uno enfocado, le toca a él.
+        if !ctx.egui_wants_keyboard_input()
+            && ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::H)))
+        {
             self.view.extras = !self.view.extras;
         }
         let fit = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Num0);
@@ -496,6 +499,13 @@ impl ChimpApp {
         if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::E))) {
             self.open_export();
         }
+        // Nuevo, abrir, pestañas, cerrar, guardar y exportar (arriba y aquí) no chocan con la
+        // edición de texto y valen aun escribiendo. Lo que sigue sí choca: deshacer/rehacer y
+        // seleccionar todo son del campo de texto enfocado (si no, tocarían el arte), y el resto
+        // (deseleccionar, invertir, recorte) se deja quieto para no actuar a espaldas del campo.
+        if ctx.egui_wants_keyboard_input() {
+            return;
+        }
         let redo_shift = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
         let redo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
         let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
@@ -524,7 +534,7 @@ impl ChimpApp {
         if ctx.input_mut(|i| i.consume_shortcut(&inverse)) {
             self.doc.editor.invert_selection();
         }
-        if ctx.egui_wants_keyboard_input() || self.doc.editor.is_painting() {
+        if self.doc.editor.is_painting() {
             return;
         }
         // egui convierte Ctrl+C/X/V en eventos (no teclas); Paste solo llega si el portapapeles

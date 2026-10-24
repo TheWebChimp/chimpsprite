@@ -131,6 +131,8 @@ impl LayoutHarness {
         let mut output = self.ctx.run_ui(input, |ui| {
             let ctx = ui.ctx().clone();
             app.pixel.update(&ctx, &app.view);
+            // Como `App::ui`: los atajos corren antes de dibujar los paneles.
+            app.handle_shortcuts(&ctx);
             canvas = app.layout(ui, false);
         });
         // Las texturas (fuentes, skin y lienzo) no se suben a ninguna GPU.
@@ -2044,7 +2046,10 @@ fn ctrl_a_with_a_text_field_focused_leaves_the_canvas_selection_alone() {
     let mut h = typing_in_hex();
     press_ctrl(&mut h, egui::Key::A);
     assert!(h.app.doc.editor.selection.is_none());
-    assert!(h.ctx.egui_wants_keyboard_input(), "the field keeps the focus");
+    assert!(
+        h.ctx.egui_wants_keyboard_input(),
+        "the field keeps the focus"
+    );
 }
 
 #[test]
