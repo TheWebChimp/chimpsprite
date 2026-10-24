@@ -1154,6 +1154,16 @@ pub fn palette(
         }
     });
     ui.add_space(8.0);
+    if let Some(skin) = skin {
+        // Con Pixel UI, los botones del diseño reemplazan al combo Presets y al menú "…": todo
+        // lo de los dos queda en el menú del botón ≡.
+        let action = color_panel::palette_buttons(ui, editor, skin, menus);
+        ui.add_space(color_panel::BUTTONS_GAP - ui.spacing().item_spacing.y);
+        color_panel::palette_grid(ui, editor, skin);
+        ui.add_space(color_panel::EDITOR_GAP - ui.spacing().item_spacing.y);
+        color_picker(ui, editor, Some(skin));
+        return action;
+    }
     let mut action = None;
     ui.horizontal(|ui| {
         ui.label("Palette");
@@ -1182,12 +1192,6 @@ pub fn palette(
             });
         });
     });
-    if let Some(skin) = skin {
-        color_panel::palette_grid(ui, editor, skin);
-        ui.add_space(color_panel::EDITOR_GAP - ui.spacing().item_spacing.y);
-        color_picker(ui, editor, Some(skin));
-        return action;
-    }
     let size = 20.0;
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::splat(2.0);
@@ -1210,6 +1214,9 @@ pub fn palette(
     action
 }
 
+/// El selector de color con un sprite indexado (y la paleta bloqueada, con Pixel UI).
+pub(crate) const INDEXED_HINT: &str = "Indexed sprite: colors come from the palette.";
+
 /// Lado máximo del cuadro del selector de color, en puntos. Con Pixel UI, el ancho máximo del
 /// editor (su cuadro S/V mide 86 de alto).
 pub(crate) const COLOR_PICKER_MAX: f32 = 240.0;
@@ -1217,14 +1224,14 @@ pub(crate) const COLOR_PICKER_MAX: f32 = 240.0;
 /// Selector de color libre (RGBA): edita el color primario. Con Pixel UI (`skin`), el editor del
 /// diseño (`color_panel`).
 pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
-    let cs_core::PixelValue::Rgba(current) = editor.primary else {
-        ui.weak("Indexed sprite: colors come from the palette.");
-        return;
-    };
     if let Some(skin) = skin {
-        color_panel::color_editor(ui, editor, skin, current);
+        color_panel::color_editor(ui, editor, skin);
         return;
     }
+    let cs_core::PixelValue::Rgba(current) = editor.primary else {
+        ui.weak(INDEXED_HINT);
+        return;
+    };
     let mut c32 = to_color32(current);
     // El cuadro de saturación/brillo ocupa el ancho del panel hasta `COLOR_PICKER_MAX` (es
     // cuadrado: con un sidebar ancho se haría enorme). Se restaura después: si no, los sliders de

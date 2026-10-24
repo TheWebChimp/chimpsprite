@@ -38,14 +38,29 @@ use cs_core::{PixelValue, Rgba};
 
 use crate::bar_fields::{self, NumberLook};
 use crate::editor::Editor;
-use crate::menus::{galley, ink_width, solid};
-use crate::panels::{self, COLOR_PICKER_MAX};
+use crate::menus::{self, MenuLook, galley, ink_width, solid};
+use crate::panels::{self, COLOR_PICKER_MAX, PaletteAction};
 use crate::pixel_ui;
 use crate::skin::{Piece, Skin, SkinColors, WidgetState};
 use crate::tab_bar;
 
 /// Filas entre la caja de la paleta y el editor de color (y 327..331 del diseño).
 pub const EDITOR_GAP: f32 = 5.0;
+/// Filas entre los botones de arriba y la caja de la paleta (y 115..119 del diseño).
+pub const BUTTONS_GAP: f32 = 5.0;
+
+/// Los botones de arriba de la paleta (x 786..858 y 947..970, y 99..114 del diseño).
+const GROUP: &str = "palette.buttons";
+const GROUP_SEP: &str = "palette.buttons.sep";
+const CHECKER: &str = "palette.button";
+const ACTIVE: &str = "palette.button.active";
+const BUTTON_HEIGHT: f32 = 16.0;
+/// De cada lado de la columna a los botones.
+const BUTTONS_SIDE: f32 = 2.0;
+/// Un botón del grupo cada 24 (comparten la línea del borde): el grupo de 3 mide 73.
+const BUTTON_PITCH: f32 = 24.0;
+const GROUP_WIDTH: f32 = 3.0 * BUTTON_PITCH + 1.0;
+const CHECKER_WIDTH: f32 = 24.0;
 
 const PALETTE_BOX: &str = "palette.box";
 const SWATCH: &str = "palette.swatch";
@@ -155,8 +170,8 @@ pub fn palette_grid(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
     let width = ui.available_width().floor();
     let columns = (((width - 2.0 * GRID_INSET - 1.0) / CELL).floor() as usize).max(1);
     let count = editor.sprite().palette.len().min(256);
-    // El Mask, los colores y la marca.
-    let cells = count + 2;
+    // Los colores y la marca.
+    let cells = count + 1;
     let rows = cells.div_ceil(columns);
     let grid_height = rows as f32 * CELL + 1.0;
     let height = PALETTE_MIN_HEIGHT.max(grid_height + 2.0 * GRID_INSET);
@@ -172,40 +187,34 @@ pub fn palette_grid(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
         |i: usize| origin + vec2((i % columns) as f32 * CELL, (i / columns) as f32 * CELL);
     let id = ui.id().with("pixel_palette");
     let enabled = ui.is_enabled();
-    for i in 0..count + 1 {
-        let cell = Rect::from_min_size(cell_at(i), Vec2::splat(SWATCH_SIDE));
+    for index in 0..count {
+        let cell = Rect::from_min_size(cell_at(index), Vec2::splat(SWATCH_SIDE));
         let inside = cell.shrink(1.0);
-        let response = ui.interact(cell, id.with(i), Sense::click());
+        let response = ui.interact(cell, id.with(index), Sense::click());
         let painter = ui.painter();
-        // La primera celda es el Mask; las demás, los colores de la paleta.
-        let (value, label) = if i == 0 {
-            panels::paint_mask(painter, inside);
-            (editor.mask_value(), "Mask".to_owned())
-        } else {
-            let index = i - 1;
-            let color = panels::to_color32(editor.sprite().palette.colors()[index]);
-            if color.a() < 255 {
-                panels::checker(painter, inside);
-            }
-            painter.rect_filled(inside, 0.0, color);
-            (editor.palette_value(index as u8), format!("#{index}"))
-        };
+        let color = panels::to_color32(editor.sprite().palette.colors()[index]);
+        if color.a() < 255 {
+            panels::checker(painter, inside);
+        }
+        painter.rect_filled(inside, 0.0, color);
+        let value = editor.palette_value(index as u8);
+        let label = format!("#{index}");
         painter.extend(piece_or(skin, SWATCH, cell, ppp, || {
             vec![outline(cell, Color32::BLACK, ppp)]
         }));
         panels::mark_selected(ui, editor, value, inside);
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &label));
-        let response = if i == 0 {
-            response.on_hover_text(panels::MASK_HINT)
-        } else {
-            response.on_hover_text(label)
-        };
+        let response = response.on_hover_text(label);
+        // La entrada elegida: con la paleta desbloqueada, el editor de color la edita.
+        if response.clicked() || response.secondary_clicked() {
+            editor.palette_entry = Some(index as u8);
+        }
         panels::pick_on_click(editor, &response, value);
     }
     // La marca para agregar el primario, en la celda siguiente.
     let add_piece = piece(skin, ADD);
     let add = Rect::from_min_size(
-        cell_at(count + 1) + ADD_OFFSET,
+        cell_at(count) + ADD_OFFSET,
         add_piece.map_or(FALLBACK_ADD_SIZE, size_of),
     );
     let response = ui.interact(add, id.with("add"), Sense::click());
@@ -227,6 +236,208 @@ pub fn palette_grid(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
     }
 }
 
+/// Un botón de arriba de la paleta: su rect (con las dos líneas de borde, compartidas en el
+/// grupo), su nombre accesible, su ícono y si está prendido.
+struct TopButton {
+    rect: Rect,
+    label: &'static str,
+    icon: &'static str,
+    on: bool,
+}
+
+/// Los botones de arriba de la paleta (y 99..114 del diseño), 2 px adentro de cada lado de la
+/// columna:
+/// - A la izquierda, el grupo `palette.buttons` (73×16, un botón cada 24 con
+///   `palette.buttons.sep` entre dos):
+///   - el candado bloquea la paleta: sus colores no se editan uno por uno. Bloqueada (lo normal)
+///     se ve como en el diseño; desbloqueada, apretado;
+///   - ≡ abre el menú de la paleta: Presets… (la ventana) y lo que tenía el menú "…";
+///   - la hoja hace una paleta nueva con el color primario (`Editor::new_palette`).
+/// - A la derecha, el damero (`palette.button`, 24×16): elige el color Mask como primario, o
+///   vuelve al de antes si ya lo es (prendido mientras el primario es el Mask). Clic derecho: el
+///   Mask como secundario.
+///
+/// Prendido o apretado, el botón lleva `palette.button.active` sobre su bisel y su relleno. Los
+/// íconos van centrados en el relleno. `menus`: con un diálogo abierto, ≡ queda desactivado.
+pub fn palette_buttons(
+    ui: &mut Ui,
+    editor: &mut Editor,
+    skin: &Skin,
+    menus: bool,
+) -> Option<PaletteAction> {
+    let ppp = ui.ctx().pixels_per_point();
+    let colors = *skin.colors();
+    let width = ui.available_width().floor();
+    let (row, _) = ui.allocate_exact_size(vec2(width, BUTTON_HEIGHT), Sense::hover());
+    let row = Rect::from_min_size(row.min.round(), row.size());
+    let id = ui.id().with("palette_buttons");
+    let enabled = ui.is_enabled();
+
+    // El grupo: el marco, los separadores y después cada botón.
+    let group = Rect::from_min_size(
+        row.min + vec2(BUTTONS_SIDE, 0.0),
+        vec2(GROUP_WIDTH, BUTTON_HEIGHT),
+    );
+    let mut shapes = piece_or(skin, GROUP, group, ppp, || {
+        vec![
+            solid(group, colors.panel, ppp),
+            outline(group, colors.outline, ppp),
+        ]
+    });
+    for k in 1..3 {
+        let x = group.left() + BUTTON_PITCH * k as f32 - 1.0;
+        let sep = Rect::from_min_size(pos2(x, group.top()), vec2(3.0, BUTTON_HEIGHT));
+        shapes.extend(piece_or(skin, GROUP_SEP, sep, ppp, || {
+            vec![solid(sep.shrink2(vec2(1.0, 0.0)), colors.outline, ppp)]
+        }));
+    }
+    let checker = Rect::from_min_size(
+        pos2(row.right() - BUTTONS_SIDE - CHECKER_WIDTH, row.top()),
+        vec2(CHECKER_WIDTH, BUTTON_HEIGHT),
+    );
+    shapes.extend(piece_or(skin, CHECKER, checker, ppp, || {
+        vec![
+            solid(checker, colors.panel, ppp),
+            outline(checker, colors.outline, ppp),
+        ]
+    }));
+    ui.painter().extend(shapes);
+
+    let at = |k: usize| {
+        Rect::from_min_size(
+            group.min + vec2(BUTTON_PITCH * k as f32, 0.0),
+            vec2(BUTTON_PITCH + 1.0, BUTTON_HEIGHT),
+        )
+    };
+    let buttons = [
+        TopButton {
+            rect: at(0),
+            label: "Lock palette",
+            icon: "palette.icon.lock",
+            // En el diseño (bloqueada) no está apretado: se aprieta al desbloquear.
+            on: !editor.palette_locked,
+        },
+        TopButton {
+            rect: at(1),
+            label: "Palette menu",
+            icon: "palette.icon.menu",
+            on: false,
+        },
+        TopButton {
+            rect: at(2),
+            label: "New palette",
+            icon: "palette.icon.new",
+            on: false,
+        },
+        TopButton {
+            rect: checker,
+            label: "Mask",
+            icon: "palette.icon.mask",
+            on: editor.is_mask(editor.primary),
+        },
+    ];
+    let mut responses = Vec::with_capacity(buttons.len());
+    for (k, button) in buttons.iter().enumerate() {
+        let sense = if k == 1 && !menus {
+            Sense::hover()
+        } else {
+            Sense::click()
+        };
+        let response = ui.interact(button.rect, id.with(k), sense);
+        // El candado y el damero se anuncian prendidos: bloqueada, Mask elegido.
+        let selected = match k {
+            0 => Some(editor.palette_locked),
+            3 => Some(button.on),
+            _ => None,
+        };
+        let on_now = enabled && (k != 1 || menus);
+        response.widget_info(|| match selected {
+            Some(s) => WidgetInfo::selected(WidgetType::Button, on_now, s, button.label),
+            None => WidgetInfo::labeled(WidgetType::Button, on_now, button.label),
+        });
+        // El bisel y el relleno: 1 px adentro del borde.
+        let fill = Rect::from_min_max(
+            button.rect.min + vec2(1.0, 1.0),
+            pos2(button.rect.right() - 1.0, button.rect.bottom() - 2.0),
+        );
+        let mut shapes = Vec::new();
+        if button.on || response.is_pointer_button_down_on() {
+            shapes.extend(piece_or(skin, ACTIVE, fill, ppp, || {
+                vec![solid(fill, colors.outline.gamma_multiply(0.3), ppp)]
+            }));
+        }
+        let inside = fill.shrink(1.0);
+        match piece(skin, button.icon) {
+            Some(p) => {
+                let size = size_of(p);
+                let min = inside.min + ((inside.size() - size) / 2.0).floor();
+                shapes.extend(pixel_ui::piece_shapes(
+                    p,
+                    Rect::from_min_size(min, size),
+                    ppp,
+                ));
+            }
+            // Sin el ícono, la inicial.
+            None => {
+                let text = galley(ui, &button.label[..1], colors.text);
+                let min = inside.center() - text.size() / 2.0;
+                shapes.push(Shape::galley(min.round(), text, colors.text));
+            }
+        }
+        ui.painter().extend(shapes);
+        responses.push(response);
+    }
+    let [lock, menu, new, mask] = <[egui::Response; 4]>::try_from(responses).ok()?;
+    let lock_tip = if editor.palette_locked {
+        "Palette locked: its colors are not edited one by one. Click to unlock"
+    } else {
+        "Palette unlocked: the color editor edits the picked palette color. Click to lock"
+    };
+    if lock.on_hover_text(lock_tip).clicked() {
+        editor.palette_locked = !editor.palette_locked;
+    }
+    if new
+        .on_hover_text("New palette (with the primary color)")
+        .clicked()
+    {
+        editor.new_palette();
+    }
+    let mask = mask.on_hover_text(panels::MASK_HINT);
+    if mask.clicked() {
+        editor.toggle_mask();
+    }
+    if mask.secondary_clicked() {
+        editor.secondary = editor.mask_value();
+    }
+    let menu = menu.on_hover_text("Presets and palette files");
+    let look = MenuLook::new(skin, menu.rect.top());
+    let anchor = menu.rect;
+    menus::dropdown(&look, &menu, anchor, |ui| {
+        let mut action = None;
+        let mut item = |ui: &mut Ui, label: &str, a: PaletteAction| {
+            if ui.add(menus::plain(label)).clicked() {
+                action = Some(a);
+                ui.close();
+            }
+        };
+        item(ui, "Presets…", PaletteAction::OpenPresets);
+        menus::separator(ui);
+        item(ui, "Load Palette…", PaletteAction::Load);
+        item(ui, "Save Palette…", PaletteAction::Save);
+        item(ui, "Save as Preset…", PaletteAction::SaveAsPreset);
+        menus::separator(ui);
+        item(ui, "Set as Default", PaletteAction::SetAsDefault);
+        item(ui, "Load Default", PaletteAction::LoadDefault);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            menus::separator(ui);
+            item(ui, "Open Folder", PaletteAction::OpenFolder);
+        }
+        action
+    })
+    .flatten()
+}
+
 /// El estado del editor entre frames: el último color y su HSV, para no perder el tono de los
 /// grises (como el caché del selector de egui).
 #[derive(Clone, Copy)]
@@ -244,9 +455,21 @@ fn rgba_of(hsv: HsvaGamma) -> Rgba {
     Rgba::new(r, g, b, a)
 }
 
-/// El editor del color primario (`current`): copiar, la tira de canales, el cuadro S/V y las
-/// barras de tono y alfa.
-pub fn color_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin, current: Rgba) {
+/// El editor del color primario: copiar, la tira de canales, el cuadro S/V y las barras de tono y
+/// alfa. Con la paleta desbloqueada, si el color es el de una entrada de la paleta
+/// (`Editor::palette_entry_of`), la edita también (en indexado, solo la entrada); un arrastre es
+/// un solo paso de undo. Un sprite indexado con la paleta bloqueada no tiene nada que editar.
+pub fn color_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
+    let value = editor.primary;
+    let entry = editor.palette_entry_of(value);
+    let current = match (value, entry) {
+        (PixelValue::Rgba(c), _) => c,
+        (PixelValue::Index(_), Some(i)) => editor.sprite().palette.colors()[i as usize],
+        (PixelValue::Index(_), None) => {
+            ui.weak(panels::INDEXED_HINT);
+            return;
+        }
+    };
     let ppp = ui.ctx().pixels_per_point();
     let colors = *skin.colors();
     // El ancho del panel, con el máximo de siempre del selector.
@@ -305,8 +528,18 @@ pub fn color_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin, current: Rgba
         color = rgba_of(hsv);
     }
     ui.data_mut(|d| d.insert_temp(id, Remembered { color, hsv }));
+    let group = id.value();
     if color != current {
-        editor.primary = PixelValue::Rgba(color);
+        if let Some(i) = entry {
+            editor.set_palette_color(i, color, group);
+        }
+        if let PixelValue::Rgba(_) = value {
+            editor.primary = PixelValue::Rgba(color);
+        }
+    }
+    // El arrastre terminó: el próximo cambio de la entrada es otro paso de undo.
+    if !ui.input(|i| i.pointer.any_down()) {
+        editor.end_group_of(group);
     }
 }
 

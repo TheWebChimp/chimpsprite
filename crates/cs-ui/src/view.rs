@@ -37,6 +37,9 @@ pub struct ViewSettings {
     pub pixel_ui: bool,
     /// Escala de la UI con Pixel UI (1, 2 o 3): píxeles de pantalla por píxel del skin.
     pub ui_scale: u8,
+    /// El candado de la paleta (Pixel UI): bloqueada, sus colores no se editan uno por uno
+    /// (`Editor::palette_locked`). Bloqueada de fábrica.
+    pub palette_locked: bool,
 }
 
 impl Default for ViewSettings {
@@ -59,6 +62,7 @@ impl Default for ViewSettings {
             tile_numbers: false,
             pixel_ui: true,
             ui_scale: 2,
+            palette_locked: true,
         }
     }
 }
@@ -215,6 +219,21 @@ mod tests {
         assert_eq!(back, on);
         assert_eq!(ViewSettings { ui_scale: 9, ..on }.pixel_scale(), 3);
         assert_eq!(ViewSettings { ui_scale: 0, ..on }.pixel_scale(), 1);
+    }
+
+    #[test]
+    fn the_palette_lock_is_saved_and_starts_locked() {
+        // Bloqueada de fábrica, también con lo guardado antes de que existiera.
+        assert!(ViewSettings::default().palette_locked);
+        let v: ViewSettings = serde_json::from_str(r#"{"grid":true}"#).unwrap();
+        assert!(v.palette_locked);
+        let open = ViewSettings {
+            palette_locked: false,
+            ..Default::default()
+        };
+        let back: ViewSettings =
+            serde_json::from_str(&serde_json::to_string(&open).unwrap()).unwrap();
+        assert_eq!(back, open);
     }
 
     #[test]

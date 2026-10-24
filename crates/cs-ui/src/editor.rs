@@ -658,6 +658,14 @@ pub struct Editor {
     pub(crate) floating: Option<Floating>,
     /// Arrastre en curso para mover, escalar o rotar lo seleccionado.
     pub(crate) transform_drag: Option<TransformDrag>,
+    /// Con la paleta bloqueada (lo normal), sus colores no se editan uno por uno: el editor de
+    /// color cambia el color primario y nada más. Ver `palette_entry_of`.
+    pub palette_locked: bool,
+    /// La última entrada de la paleta elegida con un clic en su cuadrito (Pixel UI): con la
+    /// paleta desbloqueada, el editor de color la edita mientras el color sea el suyo.
+    pub palette_entry: Option<u8>,
+    /// El color primario de antes de elegir el Mask con su botón, para volver al apagarlo.
+    pub(crate) before_mask: Option<PixelValue>,
 }
 
 impl Editor {
@@ -706,6 +714,9 @@ impl Editor {
             tile_limit: false,
             floating: None,
             transform_drag: None,
+            palette_locked: true,
+            palette_entry: None,
+            before_mask: None,
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);
@@ -855,6 +866,13 @@ impl Editor {
     /// Termina el gesto agrupado en curso: el próximo cambio es un paso de undo nuevo.
     pub fn end_group(&mut self) {
         self.merge = None;
+    }
+
+    /// Como `end_group`, solo si el gesto en curso es el de `group`.
+    pub fn end_group_of(&mut self, group: u64) {
+        if self.merge.is_some_and(|(g, _)| g == group) {
+            self.merge = None;
+        }
     }
 
     pub fn undo(&mut self) {

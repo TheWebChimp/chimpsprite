@@ -981,6 +981,8 @@ impl ChimpApp {
         }
         // Lo pedido desde el panel se resuelve después: el panel tiene prestado el skin.
         let mut palette_action = None;
+        // El candado de la paleta es de la app (se guarda con la vista), no de cada pestaña.
+        self.doc.editor.palette_locked = self.view.palette_locked;
         let open = egui::Panel::right("palette")
             .default_size(220.0)
             .show(ui, |ui| {
@@ -1025,6 +1027,7 @@ impl ChimpApp {
                     .inner
             })
             .inner;
+        self.view.palette_locked = self.doc.editor.palette_locked;
         if let Some(action) = palette_action {
             self.palette_action(ui.ctx(), action);
         }

@@ -29,6 +29,8 @@ struct Harness {
     shapes: Vec<egui::epaint::ClippedShape>,
     /// Lo copiado al portapapeles en cada frame.
     copied: Vec<String>,
+    /// Lo pedido desde el panel en el último frame.
+    action: Option<panels::PaletteAction>,
 }
 
 impl Harness {
@@ -53,6 +55,7 @@ impl Harness {
             nodes: Vec::new(),
             shapes: Vec::new(),
             copied: Vec::new(),
+            action: None,
         };
         h.frame(vec![]);
         h.frame(vec![]);
@@ -69,15 +72,17 @@ impl Harness {
         };
         let editor = &mut self.editor;
         let skin = self.skin.as_ref();
+        let mut action = None;
         let mut output = self.ctx.run_ui(input, |ui| {
             egui::Panel::right("palette")
                 .default_size(220.0)
                 .show(ui, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        panels::palette(ui, editor, true, skin);
+                        action = panels::palette(ui, editor, true, skin);
                     });
                 });
         });
+        self.action = action;
         output.textures_delta.clear();
         self.nodes = nodes(&output);
         self.copied = output
@@ -328,10 +333,9 @@ fn with_pixel_ui_the_swatches_are_the_design_cells_inside_the_palette_box() {
     // adentro.
     let copy = h.drawn("picker.copy")[0];
     assert_eq!(copy.min, pos2(pbox.left() + 2.0, pbox.bottom() + 5.0));
-    // El Mask y después los 21 colores: cuadritos de 13×13 (borde de 1 compartido), uno cada
-    // 12, desde 4 px adentro de la caja.
-    let mut cells = vec![h.node("Mask")];
-    cells.extend((0..21).map(|i| h.node(&format!("#{i}"))));
+    // Los 21 colores: cuadritos de 13×13 (borde de 1 compartido), uno cada 12, desde 4 px
+    // adentro de la caja (el Mask es el botón del damero, arriba).
+    let cells: Vec<Rect> = (0..21).map(|i| h.node(&format!("#{i}"))).collect();
     assert_eq!(cells[0].min, pbox.min + vec2(4.0, 4.0));
     let columns = ((pbox.width() - 9.0) / 12.0).floor() as usize;
     for (i, cell) in cells.iter().enumerate() {
@@ -346,9 +350,9 @@ fn with_pixel_ui_the_swatches_are_the_design_cells_inside_the_palette_box() {
         assert_eq!(h.drawn_in("palette.swatch", *cell), Some(*cell), "cell {i}");
     }
     let rects = h.colored_rects();
-    for i in 0..21 {
+    for (i, cell) in cells.iter().enumerate() {
         let color = to_color32(h.editor.sprite().palette.colors()[i]);
-        let inside = cells[i + 1].shrink(1.0);
+        let inside = cell.shrink(1.0);
         assert!(
             rects.iter().any(|&(c, r)| c == color && r == inside),
             "#{i} {color:?} in {inside:?}"
@@ -363,8 +367,6 @@ fn with_pixel_ui_clicking_a_swatch_picks_the_primary_and_right_click_the_seconda
     assert_eq!(h.editor.primary, h.editor.palette_value(3));
     h.click_with(h.node("#5").center(), PointerButton::Secondary);
     assert_eq!(h.editor.secondary, h.editor.palette_value(5));
-    h.click_at(h.node("Mask").center());
-    assert_eq!(h.editor.primary, h.editor.mask_value());
 }
 
 #[test]
@@ -582,6 +584,12 @@ fn with_pixel_ui_the_hue_and_alpha_bars_work_with_their_cursors() {
 fn without_pixel_ui_the_palette_and_the_picker_are_the_egui_ones() {
     let mut h = Harness::new(false);
     assert!(!h.has("Add to palette") && !h.has("Copy color") && !h.has("Hue"));
+    // Sin los botones del diseño: el combo Presets y el menú de siempre.
+    for label in ["Lock palette", "Palette menu", "New palette"] {
+        assert!(!h.has(label), "{label}");
+    }
+    assert!(h.has("Presets ⏷") && h.has("…"), "{:?}", h.nodes);
+    assert!(h.editor.palette_locked);
     // Los cuadritos de 20 de siempre y el selector de egui con sus campos "R ".
     let color = to_color32(h.editor.sprite().palette.colors()[0]);
     assert!(
@@ -723,4 +731,210 @@ fn with_pixel_ui_typing_into_g_b_and_a_changes_the_color() {
     assert_eq!(h.primary(), Rgba::rgb(10, 100, 200));
     h.type_into("A", "128");
     assert_eq!(h.primary(), Rgba::new(10, 100, 200, 128));
+}
+
+/// Si el nodo de accesibilidad `label` se anuncia elegido (prendido).
+fn selected(output: &egui::FullOutput, label: &str) -> Option<bool> {
+    let update = output.platform_output.accesskit_update.as_ref()?;
+    update
+        .nodes
+        .iter()
+        .find(|(_, n)| n.label().is_some_and(|l| l == label))
+        .and_then(|(_, n)| n.toggled())
+        .map(|t| t == egui::accesskit::Toggled::True)
+}
+
+impl Harness {
+    /// Si el botón `label` se anuncia elegido (prendido), en un frame sin eventos.
+    fn is_selected(&mut self, label: &str) -> Option<bool> {
+        self.time += 0.05;
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(600.0, 800.0))),
+            time: Some(self.time),
+            ..Default::default()
+        };
+        let editor = &mut self.editor;
+        let skin = self.skin.as_ref();
+        let output = self.ctx.run_ui(input, |ui| {
+            egui::Panel::right("palette")
+                .default_size(220.0)
+                .show(ui, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        panels::palette(ui, editor, true, skin);
+                    });
+                });
+        });
+        selected(&output, label)
+    }
+}
+
+#[test]
+fn the_palette_buttons_are_in_the_embedded_skin() {
+    let ctx = egui::Context::default();
+    let skin = Skin::embedded(&ctx);
+    let size = |name: &str| skin.piece(name, WidgetState::Normal).map(|p| p.size);
+    for (name, piece) in [
+        ("palette.buttons", [5, 6]),
+        ("palette.buttons.sep", [3, 16]),
+        ("palette.button", [5, 6]),
+        ("palette.button.active", [3, 3]),
+        ("palette.icon.lock", [7, 9]),
+        ("palette.icon.menu", [7, 7]),
+        ("palette.icon.new", [9, 9]),
+        ("palette.icon.mask", [18, 9]),
+    ] {
+        assert_eq!(size(name), Some(piece), "{name}");
+    }
+}
+
+#[test]
+fn with_pixel_ui_the_top_buttons_are_the_design_group_and_the_checker() {
+    let h = Harness::new(true);
+    let pbox = h.drawn_boxes("palette.box")[0];
+    // El grupo (x 786..858, y 99..114): 2 px adentro de la columna y 5 filas arriba de la caja.
+    let group = h.drawn_boxes("palette.buttons");
+    assert_eq!(group.len(), 1, "{group:?}");
+    let group = group[0];
+    assert_eq!(group.size(), vec2(73.0, 16.0));
+    assert_eq!(
+        group.left_bottom(),
+        pos2(pbox.left() + 2.0, pbox.top() - 5.0)
+    );
+    // Los separadores, en la 809 y la 833.
+    let seps: Vec<f32> = h
+        .drawn("palette.buttons.sep")
+        .iter()
+        .map(|r| r.left())
+        .collect();
+    assert_eq!(seps, vec![group.left() + 23.0, group.left() + 47.0]);
+    // Un botón cada 24, con su ícono donde está en el diseño.
+    for (k, (label, icon, at)) in [
+        ("Lock palette", "palette.icon.lock", vec2(9.0, 3.0)),
+        ("Palette menu", "palette.icon.menu", vec2(33.0, 4.0)),
+        ("New palette", "palette.icon.new", vec2(56.0, 3.0)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let button = h.node(label);
+        assert_eq!(button.left(), group.left() + 24.0 * k as f32, "{label}");
+        assert_eq!((button.top(), button.height()), (group.top(), 16.0));
+        assert_eq!(h.drawn(icon)[0].min, group.min + at, "{icon}");
+    }
+    // El damero (x 947..970): 24 de ancho, 2 px antes del borde derecho, a la altura del grupo.
+    let checker = h.drawn_boxes("palette.button")[0];
+    assert_eq!(checker.size(), vec2(24.0, 16.0));
+    assert_eq!(checker.right_top(), pos2(pbox.right() - 2.0, group.top()));
+    assert_eq!(h.node("Mask"), checker);
+    assert_eq!(
+        h.drawn("palette.icon.mask")[0].min,
+        checker.min + vec2(3.0, 3.0)
+    );
+    // Nada prendido: el diseño, con la paleta bloqueada y sin el Mask.
+    assert!(h.drawn("palette.button.active").is_empty());
+}
+
+#[test]
+fn with_pixel_ui_the_lock_starts_on_and_blocks_editing_a_palette_color() {
+    let mut h = Harness::new(true);
+    assert!(h.editor.palette_locked);
+    assert_eq!(h.is_selected("Lock palette"), Some(true));
+    let before = h.editor.sprite().palette.clone();
+    // Bloqueada: elegir #3 y cambiar el rojo cambia el primario, no la paleta.
+    h.click_at(h.node("#3").center());
+    h.type_into("R", "200");
+    assert_eq!(h.primary().r, 200);
+    assert_eq!(h.editor.sprite().palette, before);
+    // Desbloqueada: el botón se ve apretado y el mismo cambio edita la entrada #3.
+    h.click_at(h.node("Lock palette").center());
+    assert!(!h.editor.palette_locked);
+    assert_eq!(h.is_selected("Lock palette"), Some(false));
+    let lock = h.node("Lock palette");
+    assert_eq!(
+        h.drawn_boxes("palette.button.active"),
+        vec![Rect::from_min_size(
+            lock.min + vec2(1.0, 1.0),
+            vec2(23.0, 13.0)
+        )]
+    );
+    h.click_at(h.node("#3").center());
+    h.type_into("R", "201");
+    let edited = h.editor.sprite().palette.colors()[3];
+    assert_eq!(edited.r, 201);
+    assert_eq!(h.primary(), edited, "the primary follows the entry");
+    // Arrastrar el S/V también la edita, en un solo paso de undo.
+    let sv = h.node("Saturation and value");
+    h.drag(sv.center(), 30.0);
+    assert_ne!(h.editor.sprite().palette.colors()[3], edited);
+    assert_eq!(h.editor.sprite().palette.colors()[3], h.primary());
+    h.editor.undo();
+    assert_eq!(h.editor.sprite().palette.colors()[3], edited);
+    h.editor.undo();
+    assert_eq!(h.editor.sprite().palette, before);
+    // Agregar con la marca se puede siempre, también bloqueada.
+    h.click_at(h.node("Lock palette").center());
+    assert!(h.editor.palette_locked);
+    h.click_at(h.node("Add to palette").center());
+    assert_eq!(h.editor.sprite().palette.len(), 22);
+}
+
+#[test]
+fn with_pixel_ui_the_menu_button_opens_the_presets_and_palette_menu() {
+    let mut h = Harness::new(true);
+    // El combo Presets y el menú de antes ya no están: sus funciones van en el botón del menú.
+    assert!(!h.has("Presets ⏷") && !h.has("…"), "{:?}", h.nodes);
+    assert!(!h.has("Presets…"));
+    h.click_at(h.node("Palette menu").center());
+    for label in [
+        "Presets…",
+        "Load Palette…",
+        "Save Palette…",
+        "Save as Preset…",
+        "Set as Default",
+        "Load Default",
+        "Open Folder",
+    ] {
+        assert!(h.has(label), "{label} in {:?}", h.nodes);
+    }
+    let presets = h.node("Presets…").center();
+    h.frame(vec![Event::PointerMoved(presets)]);
+    h.press(presets, PointerButton::Primary, true);
+    h.press(presets, PointerButton::Primary, false);
+    assert_eq!(h.action, Some(panels::PaletteAction::OpenPresets));
+    h.frame(vec![]);
+    assert!(!h.has("Presets…"), "choosing closes the menu");
+}
+
+#[test]
+fn with_pixel_ui_the_page_button_makes_a_new_palette() {
+    let mut h = Harness::new(true);
+    let before = h.editor.sprite().palette.clone();
+    h.click_at(h.node("New palette").center());
+    assert_eq!(h.editor.sprite().palette.colors(), &[Rgba::rgb(10, 20, 30)]);
+    assert!(h.has("#0") && !h.has("#1"));
+    h.editor.undo();
+    assert_eq!(h.editor.sprite().palette, before);
+}
+
+#[test]
+fn with_pixel_ui_the_checker_button_toggles_the_mask() {
+    let mut h = Harness::new(true);
+    assert_eq!(h.is_selected("Mask"), Some(false));
+    h.click_at(h.node("Mask").center());
+    assert!(h.editor.is_mask(h.editor.primary));
+    assert_eq!(h.is_selected("Mask"), Some(true));
+    let checker = h.node("Mask");
+    assert_eq!(
+        h.drawn_boxes("palette.button.active"),
+        vec![Rect::from_min_size(
+            checker.min + vec2(1.0, 1.0),
+            vec2(22.0, 13.0)
+        )]
+    );
+    h.click_at(h.node("Mask").center());
+    assert_eq!(h.primary(), Rgba::rgb(10, 20, 30));
+    assert_eq!(h.is_selected("Mask"), Some(false));
+    // Clic derecho: el Mask como secundario.
+    h.click_with(h.node("Mask").center(), PointerButton::Secondary);
+    assert!(h.editor.is_mask(h.editor.secondary));
 }

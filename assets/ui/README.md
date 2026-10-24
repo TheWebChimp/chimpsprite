@@ -152,6 +152,22 @@ oculta.
     tono y alfa. El centro es transparente: los degradés los calcula la app.
   - `picker.cursor` (9×9) y `picker.cursor.bar` (7×7): los cursores "○ ○" sueltos debajo del
     editor; son iguales, píxel por píxel, a los dibujados sobre el cuadro S/V y las barras.
+- **Botones de arriba de la paleta** (frame 4, capa Mockup, y 99..114; en el skin, y 236..251
+  desde x 120):
+  - `palette.buttons` (5×6, centro (2,2,1,1)): el marco del grupo de tres botones (x 786..858)
+    sin íconos: la línea (89,77,77), el brillo blanco arriba y a la derecha, (221,206,191) a la
+    izquierda y abajo y una fila de sombra (136,110,106). La app lo estira a 73×16.
+  - `palette.buttons.sep` (3×16): entre dos botones (x 809..811): el brillo del de la izquierda,
+    la línea y el brillo del siguiente. Va cada 24.
+  - `palette.button` (5×6, centro (2,2,1,1)): el botón suelto del damero (x 947..970), 24×16.
+  - `palette.button.active` (3×3, centro (1,1,1,1)): no está en el diseño. Es el bisel y el
+    relleno del primer botón con el bisel invertido (blanco <-> (221,206,191)) y el relleno
+    (189,164,153), como `tool.slot.active`. Va sobre el bisel y el relleno de un botón prendido
+    (el candado desbloqueado, el Mask elegido) o apretado.
+  - Íconos, con el relleno (234,224,221) transparente: `palette.icon.lock` (7×9),
+    `palette.icon.menu` (7×7), `palette.icon.new` (9×9) y `palette.icon.mask` (18×9, el
+    damero). Van centrados en el relleno de su botón (con piso), que es donde están en el
+    diseño.
 
 ### Probar cambios en vivo (escritorio)
 
