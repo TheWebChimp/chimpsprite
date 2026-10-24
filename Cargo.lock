@@ -985,6 +985,7 @@ dependencies = [
  "cs-tools",
  "eframe",
  "ehttp",
+ "fontdue",
  "js-sys",
  "log",
  "png",

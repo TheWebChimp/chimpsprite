@@ -606,7 +606,18 @@ impl ChimpApp {
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let has_doc = self.has_doc();
-        egui::MenuBar::new().ui(ui, |ui| {
+        let mut bar = egui::MenuBar::new();
+        // Con Pixel UI, los títulos del mockup: su color y su espaciado (solo la barra; los menús
+        // que se abren quedan como estaban).
+        if let Some(color) = self.pixel.skin().map(|skin| skin.colors().home_text) {
+            bar = bar.style(move |style: &mut egui::Style| {
+                egui::containers::menu::menu_style(style);
+                style.spacing.button_padding.x = tab_bar::MENU_ITEM_PADDING;
+                style.spacing.item_spacing.x = tab_bar::MENU_ITEM_GAP;
+                style.visuals.override_text_color = Some(color);
+            });
+        }
+        bar.ui(ui, |ui| {
             ui.menu_button("File", |ui| {
                 let ctx = ui.ctx().clone();
                 let item = |text: &str, keys: &str| egui::Button::new(text).shortcut_text(keys);
@@ -827,7 +838,7 @@ impl ChimpApp {
         if pixel {
             // Sin margen abajo y con `MENU_TEXT_TOP` arriba: el texto queda en las filas del mockup.
             let frame = egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin {
-                left: 8,
+                left: tab_bar::MENU_LEFT,
                 right: 8,
                 top: tab_bar::MENU_TEXT_TOP,
                 bottom: 0,

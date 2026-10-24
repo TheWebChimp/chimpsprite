@@ -5,9 +5,10 @@
 //! - **Documentos:** una caja por pestaña. La activa es `tab.active`, clara y abierta abajo: tapa
 //!   e interrumpe la línea grabada. Las demás son `tab`, café. Con Home activo, todas son `tab`.
 //! - **La marca del final:** ○ (`icon.tab_dirty`) con cambios sin guardar y × (`icon.tab_close`)
-//!   sin ellos. Un clic en ella cierra la pestaña (preguntando si tiene cambios).
-//! - **Muchas pestañas:** se achican parejo y los nombres terminan en "…". Nunca hay scroll ni
-//!   segunda fila.
+//!   sin ellos o con el puntero encima. Un clic en ella cierra la pestaña (preguntando si tiene
+//!   cambios). Si la pestaña es más angosta que su marco, no hay marca.
+//! - **Muchas pestañas:** se achican parejo y los nombres terminan en "..." (la fuente pixel no
+//!   tiene "…"). Nunca hay scroll ni segunda fila.
 //!
 //! Al final de la barra del menú, contra el borde derecho de la ventana, va el degradé tramado
 //! `menubar.fade`, detrás del menú y de las pestañas.
@@ -29,6 +30,13 @@ pub const MENU_HEIGHT: f32 = 14.0;
 /// Margen de arriba del menú con Pixel UI. egui centra el texto en el botón del menú, más alto
 /// que la barra: con −2, las mayúsculas quedan en la fila 3, como en el mockup.
 pub const MENU_TEXT_TOP: i8 = -2;
+/// Los títulos del menú con Pixel UI: el primero empieza 3 px adentro (margen más relleno) y
+/// entre la tinta de uno y la del siguiente hay 11 px, como en el mockup. Las letras de la fuente
+/// pixel dejan 1 px vacío al final, así que entre texto y texto quedan 10: el relleno de los dos
+/// lados y el espacio.
+pub const MENU_LEFT: i8 = 0;
+pub const MENU_ITEM_PADDING: f32 = 3.0;
+pub const MENU_ITEM_GAP: f32 = 4.0;
 /// Alto de la barra de pestañas con Pixel UI, con la línea grabada de abajo: las filas 48 a 70
 /// del mockup.
 pub const TABS_HEIGHT: f32 = 23.0;
@@ -69,7 +77,15 @@ const MARK_TOP: f32 = 7.0;
 const MARK_HIT: f32 = 2.0;
 /// Alto de las mayúsculas de la fuente pixel.
 const CAP_HEIGHT: f32 = 7.0;
-const ELLIPSIS: char = '…';
+/// El final de los nombres cortados: "…" si la fuente pixel lo tiene; si no, tres puntos (el
+/// "…" de la fuente de respaldo de egui no es pixel art y se ve borroso).
+fn ellipsis() -> &'static str {
+    if crate::appearance::pixel_font_has('…') {
+        "…"
+    } else {
+        "..."
+    }
+}
 
 /// Lo que se pidió en la barra.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -212,7 +228,7 @@ fn layout_tabs(ui: &Ui, bar: Rect, tabs: &[TabInfo]) -> Vec<PlacedTab> {
     let room = (bar.right() - bar.left() - FIRST_TAB_X - gaps)
         .floor()
         .max(0.0);
-    let min = text_width(ui, &ELLIPSIS.to_string()) + TAB_CHROME;
+    let min = text_width(ui, ellipsis()) + TAB_CHROME;
     let widths = fit_widths(&natural, room, min);
     let mut left = bar.left() + FIRST_TAB_X;
     tabs.iter()
@@ -263,19 +279,18 @@ fn fit_widths(natural: &[f32], room: f32, min: f32) -> Vec<f32> {
     natural.iter().map(|w| w.min(cap)).collect()
 }
 
-/// `name` entero si mide hasta `room`; si no, lo más largo que entre seguido de "…" (o nada si
-/// ni "…" entra).
+/// `name` entero si mide hasta `room`; si no, lo más largo que entre seguido de `ellipsis()` (o
+/// nada si ni eso entra).
 fn truncated(ui: &Ui, name: &str, room: f32) -> String {
     if text_width(ui, name) <= room {
         return name.to_owned();
     }
     let chars: Vec<char> = name.chars().collect();
-    // Búsqueda binaria del prefijo más largo que entra con el "…".
+    let end = ellipsis();
+    let cut = |k: usize| chars[..k].iter().collect::<String>() + end;
+    // Búsqueda binaria del prefijo más largo que entra con el final.
     let (mut lo, mut hi) = (0, chars.len());
-    let fits = |k: usize| {
-        let s: String = chars[..k].iter().chain([&ELLIPSIS]).collect();
-        text_width(ui, &s) <= room
-    };
+    let fits = |k: usize| text_width(ui, &cut(k)) <= room;
     if !fits(0) {
         return String::new();
     }
@@ -287,7 +302,7 @@ fn truncated(ui: &Ui, name: &str, room: f32) -> String {
             hi = mid - 1;
         }
     }
-    chars[..lo].iter().chain([&ELLIPSIS]).collect()
+    cut(lo)
 }
 
 /// Dónde va un texto para que sus mayúsculas empiecen en la fila `cap_top`, alineado a píxeles.
@@ -324,18 +339,23 @@ fn tab_widget(
         ),
         vec2(MARK_SIZE, MARK_SIZE),
     );
-    // Después de la pestaña: la marca gana el clic.
-    let close = ui
-        .interact(
-            mark.expand(MARK_HIT),
-            ui.id().with(("tab_close", index)),
-            Sense::click(),
-        )
-        .on_hover_cursor(CursorIcon::PointingHand)
-        .on_hover_text("Close");
-    let label = format!("Close {}", info.name);
-    close.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
-    // Pasar el puntero no cambia nada: el mockup no muestra otro aspecto.
+    // En una pestaña más angosta que su marco no hay marca ni zona de clic: se saldrían de la
+    // caja y le robarían el clic a la vecina. Se cierra con el botón del medio.
+    let close = (rect.width() >= TAB_CHROME).then(|| {
+        // Después de la pestaña: la marca gana el clic.
+        let close = ui
+            .interact(
+                mark.expand(MARK_HIT),
+                ui.id().with(("tab_close", index)),
+                Sense::click(),
+            )
+            .on_hover_cursor(CursorIcon::PointingHand)
+            .on_hover_text("Close");
+        let label = format!("Close {}", info.name);
+        close.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
+        close
+    });
+    // Pasar el puntero por la caja no cambia nada: el mockup no muestra otro aspecto.
     let state = if active {
         WidgetState::Active
     } else {
@@ -357,13 +377,18 @@ fn tab_widget(
         ppp,
     );
     shapes.push(Shape::galley(at, tab.text.clone(), color));
-    let mark_piece = if info.dirty { DIRTY_MARK } else { CLOSE_MARK };
-    match skin.piece(mark_piece, WidgetState::Normal) {
-        Some(piece) => shapes.extend(pixel_ui::piece_shapes(piece, mark, ppp)),
-        None => shapes.extend(flat_mark(mark, info.dirty, colors.text_dim, ppp)),
+    if let Some(close) = &close {
+        // La ○ de los cambios sin guardar pasa a × con el puntero encima: un clic la cierra.
+        let dot = info.dirty && !close.hovered();
+        let mark_piece = if dot { DIRTY_MARK } else { CLOSE_MARK };
+        match skin.piece(mark_piece, WidgetState::Normal) {
+            Some(piece) => shapes.extend(pixel_ui::piece_shapes(piece, mark, ppp)),
+            None => shapes.extend(flat_mark(mark, dot, colors.text_dim, ppp)),
+        }
     }
     ui.painter().extend(shapes);
-    if close.clicked() || response.middle_clicked() {
+    let close_clicked = close.is_some_and(|c| c.clicked());
+    if close_clicked || response.middle_clicked() {
         Some(TabAction::Close(index))
     } else if response.clicked() {
         Some(TabAction::Switch(index))
@@ -420,6 +445,11 @@ mod tests {
         let w = fit_widths(&[40.0, 200.0, 180.0], 300.0, 30.0);
         assert_eq!(w, vec![40.0, 130.0, 130.0]);
         assert!(w.iter().sum::<f32>() <= 300.0);
+    }
+
+    #[test]
+    fn names_are_cut_with_three_dots_since_the_pixel_font_has_no_ellipsis() {
+        assert_eq!(ellipsis(), "...");
     }
 
     #[test]

@@ -30,6 +30,10 @@ struct LayoutHarness {
     textures: Vec<(TextureId, Rect)>,
     /// Los textos del último frame y dónde empiezan.
     texts: Vec<(String, Pos2)>,
+    /// Los textos del último frame con su rect y su color.
+    text_rects: Vec<(String, Rect, egui::Color32)>,
+    /// Tamaño de la ventana.
+    size: Vec2,
 }
 
 impl LayoutHarness {
@@ -47,6 +51,11 @@ impl LayoutHarness {
     /// Con Pixel UI y una pestaña por cada `(nombre, con cambios)` de `docs`; activa la `active`
     /// (`None`: Home).
     fn with_tabs(docs: &[(&str, bool)], active: Option<usize>) -> Self {
+        Self::with_tabs_in(docs, active, Vec2::new(1200.0, 800.0))
+    }
+
+    /// Como `with_tabs`, en una ventana de `size`.
+    fn with_tabs_in(docs: &[(&str, bool)], active: Option<usize>, size: Vec2) -> Self {
         let palettes = PaletteLibrary::new(Box::new(NoPresets));
         let mut app = ChimpApp::with_parts(Default::default(), pixel_ui(), palettes);
         for &(name, dirty) in docs {
@@ -56,10 +65,14 @@ impl LayoutHarness {
             Some(i) => app.tabs.switch(&mut app.doc, i),
             None => app.go_home(),
         }
-        Self::start(app)
+        Self::start_in(app, size)
     }
 
     fn start(app: ChimpApp) -> Self {
+        Self::start_in(app, Vec2::new(1200.0, 800.0))
+    }
+
+    fn start_in(app: ChimpApp, size: Vec2) -> Self {
         let ctx = egui::Context::default();
         ctx.enable_accesskit();
         let mut h = Self {
@@ -71,6 +84,8 @@ impl LayoutHarness {
             shapes: Vec::new(),
             textures: Vec::new(),
             texts: Vec::new(),
+            text_rects: Vec::new(),
+            size,
         };
         for _ in 0..3 {
             h.frame();
@@ -90,7 +105,7 @@ impl LayoutHarness {
     fn frame_with(&mut self, events: Vec<Event>) {
         self.time += 0.05;
         let input = RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1200.0, 800.0))),
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, self.size)),
             time: Some(self.time),
             events,
             ..Default::default()
@@ -108,8 +123,10 @@ impl LayoutHarness {
         self.shapes = std::mem::take(&mut output.shapes);
         self.textures.clear();
         self.texts.clear();
+        self.text_rects.clear();
         for clipped in &self.shapes {
             collect(&clipped.shape, &mut self.textures, &mut self.texts);
+            collect_text_rects(&clipped.shape, &mut self.text_rects);
         }
         self.buttons = output
             .platform_output
@@ -230,6 +247,19 @@ fn collect(
             textures.push((mesh.texture_id, mesh.calc_bounds()));
         }
         egui::Shape::Text(text) => texts.push((text.galley.text().to_owned(), text.pos)),
+        _ => {}
+    }
+}
+
+/// Los textos de `shape` con su rect (el del galley) y su color.
+fn collect_text_rects(shape: &egui::Shape, out: &mut Vec<(String, Rect, egui::Color32)>) {
+    match shape {
+        egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_text_rects(s, out)),
+        egui::Shape::Text(text) => {
+            let rect = Rect::from_min_size(text.pos, text.galley.size());
+            let color = text.override_text_color.unwrap_or(text.fallback_color);
+            out.push((text.galley.text().to_owned(), rect, color));
+        }
         _ => {}
     }
 }
@@ -664,7 +694,8 @@ fn with_many_tabs_the_names_end_in_an_ellipsis_and_every_tab_fits() {
         .filter(|t| t.starts_with("A sprite"))
         .collect();
     assert_eq!(shown.len(), names.len(), "{shown:?}");
-    assert!(shown.iter().all(|t| t.ends_with('…')), "{shown:?}");
+    // La fuente pixel no tiene "…": se corta con tres puntos.
+    assert!(shown.iter().all(|t| t.ends_with("...")), "{shown:?}");
     // Con pocas, el nombre entero.
     let few = two_tabs(Some(0));
     assert!(few.texts.iter().any(|(t, _)| t == "Otro.chimp"));
@@ -717,4 +748,151 @@ fn without_pixel_ui_the_tab_bar_does_not_use_the_skin() {
     let h = LayoutHarness::editor();
     assert!(h.app.pixel.skin().is_none());
     assert!(h.texts.iter().any(|(t, _)| t == "🏠 Home"), "the egui tabs");
+}
+
+#[test]
+fn hovering_the_dirty_marker_turns_it_into_a_cross() {
+    let mut h = two_tabs(Some(1));
+    let tab = h.button("Design.chimp");
+    let dot = h.drawn("icon.tab_dirty");
+    assert_eq!(dot.len(), 1, "a circle before hovering");
+    let mark = dot[0];
+    // El puntero sobre la marca, con eventos crudos: el hover rige desde el frame siguiente.
+    h.frame_with(vec![Event::PointerMoved(mark.center())]);
+    h.frame();
+    assert_eq!(h.drawn("icon.tab_dirty"), vec![], "no circle while hovered");
+    let crosses = h.drawn("icon.tab_close");
+    assert!(
+        crosses.contains(&mark),
+        "a cross where the circle was: {crosses:?}"
+    );
+    assert!(tab.contains_rect(mark));
+    // En otra parte de la pestaña vuelve el círculo.
+    h.frame_with(vec![Event::PointerMoved(
+        tab.left_center() + Vec2::new(3.0, 0.0),
+    )]);
+    h.frame();
+    assert_eq!(h.drawn("icon.tab_dirty"), vec![mark]);
+    // Una pestaña sin cambios muestra la cruz siempre.
+    let clean = h.button("Otro.chimp");
+    assert!(
+        h.drawn("icon.tab_close")
+            .iter()
+            .any(|r| clean.contains_rect(*r))
+    );
+}
+
+/// `n` pestañas con nombres largos (la mitad con cambios) en una ventana de `width` de ancho.
+fn many_tabs(n: usize, width: f32) -> (LayoutHarness, Vec<String>) {
+    let names: Vec<String> = (0..n).map(|i| format!("Sprite number {i}.chimp")).collect();
+    let docs: Vec<(&str, bool)> = names
+        .iter()
+        .enumerate()
+        .map(|(i, n)| (n.as_str(), i % 2 == 0))
+        .collect();
+    let h = LayoutHarness::with_tabs_in(&docs, Some(0), Vec2::new(width, 600.0));
+    (h, names)
+}
+
+#[test]
+fn every_marker_and_its_hit_area_stay_inside_their_tab() {
+    // De pestañas anchas a tan angostas que la marca no entra.
+    for (n, width) in [
+        (3, 600.0),
+        (8, 400.0),
+        (12, 400.0),
+        (16, 400.0),
+        (24, 400.0),
+    ] {
+        let (h, names) = many_tabs(n, width);
+        let tabs: Vec<Rect> = names.iter().map(|name| h.button(name)).collect();
+        assert!(
+            tabs.last().unwrap().right() <= width,
+            "{n} in {width}: {tabs:?}"
+        );
+        let marks: Vec<Rect> = ["icon.tab_dirty", "icon.tab_close"]
+            .iter()
+            .flat_map(|piece| h.drawn(piece))
+            .collect();
+        for mark in &marks {
+            assert!(
+                tabs.iter().any(|t| t.contains_rect(*mark)),
+                "{n} in {width}: {mark:?} out of every tab {tabs:?}"
+            );
+        }
+        for (name, tab) in names.iter().zip(&tabs) {
+            let close = h
+                .buttons
+                .iter()
+                .find(|(l, _)| *l == format!("Close {name}"));
+            if let Some((_, hit)) = close {
+                assert!(
+                    tab.contains_rect(*hit),
+                    "{n} in {width}: {hit:?} in {tab:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn tabs_too_narrow_for_the_marker_hide_it_and_its_hit_area() {
+    let (mut h, names) = many_tabs(24, 400.0);
+    let tabs: Vec<Rect> = names.iter().map(|name| h.button(name)).collect();
+    assert!(tabs.iter().all(|t| t.width() < 20.0), "narrow: {tabs:?}");
+    assert_eq!(h.drawn("icon.tab_dirty"), vec![], "no circle");
+    assert_eq!(h.drawn("icon.tab_close"), vec![], "no cross");
+    assert!(
+        !h.buttons.iter().any(|(l, _)| l.starts_with("Close ")),
+        "no hit area"
+    );
+    // Un clic donde iría la marca cambia de pestaña, no cierra nada.
+    let tab = tabs[3];
+    h.click(
+        Pos2::new(tab.right() - 2.0, tab.top() + 9.0),
+        PointerButton::Primary,
+    );
+    assert_eq!(h.app.tabs.len(), 24);
+    assert_eq!(h.app.pending, None);
+    assert_eq!(h.app.tabs.active(), Some(3));
+}
+
+#[test]
+fn with_pixel_ui_the_menu_has_the_mockup_color_and_spacing() {
+    let h = two_tabs(Some(0));
+    let color = h.app.pixel.skin().expect("on").colors().home_text;
+    assert_eq!(
+        color,
+        egui::Color32::from_rgb(51, 39, 42),
+        "the mockup's menu text"
+    );
+    let menu = h.panel("menu");
+    let titles = ["File", "Sprite", "View", "Edit", "Layer", "Select"];
+    let rects: Vec<Rect> = titles
+        .iter()
+        .map(|t| {
+            let (_, rect, c) = h
+                .text_rects
+                .iter()
+                .find(|(s, r, _)| s == t && r.top() < menu.bottom())
+                .unwrap_or_else(|| panic!("no {t:?} in the menu"));
+            assert_eq!(*c, color, "{t}");
+            *rect
+        })
+        .collect();
+    // El mockup: la primera palabra a 3 px del borde y 11 px de aire entre la tinta de una y la
+    // siguiente. Las letras de la fuente pixel empiezan en su borde y dejan 1 px vacío después:
+    // del final de un texto al comienzo del siguiente van 10.
+    assert_eq!(rects[0].left() - menu.left(), 3.0, "{rects:?}");
+    for pair in rects.windows(2) {
+        assert_eq!(pair[1].left() - pair[0].right(), 10.0, "{pair:?}");
+    }
+    // Sin Pixel UI, el menú de egui con sus colores.
+    let plain = LayoutHarness::editor();
+    let file = plain
+        .text_rects
+        .iter()
+        .find(|(s, _, _)| s == "File")
+        .unwrap();
+    assert_ne!(file.2, color);
 }

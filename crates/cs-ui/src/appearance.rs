@@ -1,7 +1,7 @@
 //! Apariencia de View → Pixel UI: la fuente pixel, la escala entera de la UI, el estilo sin
 //! redondeo y el skin. Apagado, todo queda con el tema de siempre.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use eframe::egui::{
     self, Color32, CornerRadius, FontData, FontDefinitions, FontFamily, FontId, FontTweak, Shadow,
@@ -39,6 +39,17 @@ pub fn font_definitions(pixel: bool) -> FontDefinitions {
             .insert(0, PIXEL_FONT_NAME.to_owned());
     }
     fonts
+}
+
+/// Si la fuente pixel tiene el glifo `c` (sin contar las de respaldo de egui). La fuente se lee
+/// una sola vez.
+pub fn pixel_font_has(c: char) -> bool {
+    static FONT: OnceLock<Option<fontdue::Font>> = OnceLock::new();
+    FONT.get_or_init(|| {
+        fontdue::Font::from_bytes(PIXEL_FONT, fontdue::FontSettings::default()).ok()
+    })
+    .as_ref()
+    .is_some_and(|font| font.has_glyph(c))
 }
 
 /// Mitad y mitad de `a` y `b`.
@@ -224,6 +235,14 @@ impl PixelUi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_pixel_font_knows_its_glyphs() {
+        assert!(pixel_font_has('F'));
+        assert!(pixel_font_has('.'));
+        // Sin "…": egui lo toma de su fuente de respaldo, que no es pixel art.
+        assert!(!pixel_font_has('…'));
+    }
 
     fn frame(ctx: &egui::Context, pixel: &mut PixelUi, view: &ViewSettings) {
         let mut output = ctx.run_ui(egui::RawInput::default(), |ui| pixel.update(ui.ctx(), view));

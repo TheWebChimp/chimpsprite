@@ -154,7 +154,7 @@ pub struct SkinColors {
     pub highlight: Color32,
     /// El nombre de las pestañas inactivas (el de la activa va en `text`).
     pub tab_text_dim: Color32,
-    /// El texto "Home" de la barra de pestañas.
+    /// El texto "Home" de la barra de pestañas y los títulos del menú.
     pub home_text: Color32,
 }
 
