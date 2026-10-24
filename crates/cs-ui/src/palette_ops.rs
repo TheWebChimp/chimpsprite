@@ -20,6 +20,25 @@ impl Editor {
         true
     }
 
+    /// El color que edita el editor de color con Pixel UI: el primario o, si se eligió la mitad
+    /// de abajo de la caja de los colores, el secundario.
+    pub fn edited_color(&self) -> PixelValue {
+        if self.editing_secondary {
+            self.secondary
+        } else {
+            self.primary
+        }
+    }
+
+    /// Cambia el color que edita el editor de color (ver `edited_color`).
+    pub fn set_edited_color(&mut self, value: PixelValue) {
+        if self.editing_secondary {
+            self.secondary = value;
+        } else {
+            self.primary = value;
+        }
+    }
+
     /// La entrada de la paleta que el editor de color edita junto con `value` (el color que se
     /// está editando): solo con la paleta desbloqueada. En indexado, la del índice (salvo el
     /// Mask); en RGBA, la última elegida con un clic (`palette_entry`) mientras siga siendo ese

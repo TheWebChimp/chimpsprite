@@ -26,6 +26,10 @@ struct LayoutHarness {
     buttons: Vec<(String, Rect)>,
     /// Casillas del último frame: nombre, rect y si está marcada.
     checks: Vec<(String, Rect, bool)>,
+    /// Botones de prender y apagar del último frame: nombre y si está prendido.
+    selected: Vec<(String, bool)>,
+    /// Todo lo que tiene nombre en el último frame (botones, sliders, campos): nombre y rect.
+    nodes: Vec<(String, Rect)>,
     /// Lo dibujado en el último frame.
     shapes: Vec<egui::epaint::ClippedShape>,
     /// Las mallas con textura del último frame (piezas del skin): textura y rect.
@@ -88,6 +92,8 @@ impl LayoutHarness {
             canvas: None,
             buttons: Vec::new(),
             checks: Vec::new(),
+            selected: Vec::new(),
+            nodes: Vec::new(),
             shapes: Vec::new(),
             textures: Vec::new(),
             texts: Vec::new(),
@@ -162,6 +168,23 @@ impl LayoutHarness {
         };
         self.buttons = named(egui::accesskit::Role::Button)
             .map(|(label, rect, _)| (label, rect))
+            .collect();
+        self.selected = named(egui::accesskit::Role::Button)
+            .filter_map(|(label, _, n)| {
+                let on = n.toggled()? == egui::accesskit::Toggled::True;
+                Some((label, on))
+            })
+            .collect();
+        self.nodes = nodes
+            .iter()
+            .filter_map(|(_, n)| {
+                let b = n.bounds()?;
+                let rect = Rect::from_min_max(
+                    Pos2::new(b.x0 as f32, b.y0 as f32),
+                    Pos2::new(b.x1 as f32, b.y1 as f32),
+                );
+                Some((n.label()?.to_string(), rect))
+            })
             .collect();
         self.checks = named(egui::accesskit::Role::CheckBox)
             .map(|(label, rect, n)| {
@@ -1497,4 +1520,207 @@ fn without_pixel_ui_the_artboard_has_no_window() {
         .id();
     assert!(h.textures.iter().all(|(t, _)| *t != window));
     assert!(h.app.doc.canvas.artboard_window.is_none());
+}
+
+impl LayoutHarness {
+    /// La caja de los colores (la pieza `fgbg.box`), que tiene que estar una sola vez.
+    fn colors_box(&self) -> Rect {
+        let boxes = self.drawn("fgbg.box");
+        assert_eq!(boxes.len(), 1, "{boxes:?}");
+        boxes[0]
+    }
+
+    /// Si el botón `label` se anuncia elegido.
+    fn selected(&self, label: &str) -> bool {
+        self.selected.iter().any(|(l, on)| l == label && *on)
+    }
+}
+
+/// El editor de color con Pixel UI muestra el hex del color que edita.
+fn hex_shown(h: &LayoutHarness, color: Rgba) -> bool {
+    h.text_rects.iter().any(|(t, _, _)| *t == color.to_hex())
+}
+
+#[test]
+fn with_pixel_ui_the_colors_box_goes_under_the_toolbar_box() {
+    let h = LayoutHarness::new(pixel_ui(), true);
+    let tools = h.panel("tools");
+    assert_eq!(tools.width(), 37.0, "the toolbar keeps its width");
+    let toolbar = h.drawn("toolbar.box");
+    let toolbar = toolbar
+        .iter()
+        .copied()
+        .reduce(|a, b| a.union(b))
+        .expect("the toolbar box");
+    // La caja del mockup (x 33..59, y 425..473): 27×49, en la columna de la caja de la barra y 4
+    // filas debajo (lo que hay en el mockup de la caja de la barra a la caja de abajo).
+    let colors = h.colors_box();
+    assert_eq!(colors.size(), Vec2::new(27.0, 49.0));
+    assert_eq!(colors.left(), toolbar.left());
+    assert_eq!(
+        colors.top(),
+        toolbar.bottom() + 4.0,
+        "{colors:?} {toolbar:?}"
+    );
+    assert!(tools.contains_rect(colors));
+    // El botón redondo al medio (x 42..50, y 445..453) y las dos mitades.
+    assert_eq!(
+        h.drawn("fgbg.swap"),
+        vec![Rect::from_min_size(
+            colors.min + Vec2::new(9.0, 20.0),
+            Vec2::splat(9.0)
+        )]
+    );
+    assert_eq!(
+        h.button("Primary color"),
+        Rect::from_min_size(colors.min + Vec2::new(3.0, 3.0), Vec2::splat(21.0))
+    );
+    assert_eq!(
+        h.button("Secondary color"),
+        Rect::from_min_size(colors.min + Vec2::new(3.0, 25.0), Vec2::splat(21.0))
+    );
+    // El primario arriba y el secundario abajo, en sus 19×19.
+    let editor = &h.app.doc.editor;
+    let fill = |v| crate::panels::to_color32(editor.resolve(v));
+    let rects = h.colored_rects();
+    let top = Rect::from_min_size(colors.min + Vec2::new(4.0, 4.0), Vec2::splat(19.0));
+    let bottom = Rect::from_min_size(colors.min + Vec2::new(4.0, 26.0), Vec2::splat(19.0));
+    assert!(rects.contains(&(fill(editor.primary), top)), "{top:?}");
+    assert!(
+        rects.contains(&(fill(editor.secondary), bottom)),
+        "{bottom:?}"
+    );
+}
+
+#[test]
+fn with_pixel_ui_a_transparent_secondary_shows_the_checker_behind() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.doc.editor.secondary = PixelValue::Rgba(Rgba::TRANSPARENT);
+    h.frame();
+    let colors = h.colors_box();
+    let bottom = Rect::from_min_size(colors.min + Vec2::new(4.0, 26.0), Vec2::splat(19.0));
+    let top = Rect::from_min_size(colors.min + Vec2::new(4.0, 4.0), Vec2::splat(19.0));
+    // El damero del mockup, en mosaico desde la esquina de la mitad: 3×3 tiras de 8.
+    let tiles = h.drawn("fgbg.checker");
+    assert_eq!(tiles.len(), 9, "{tiles:?}");
+    assert!(tiles.iter().all(|t| t.size() == Vec2::splat(8.0)));
+    assert!(tiles.contains(&Rect::from_min_size(bottom.min, Vec2::splat(8.0))));
+    assert!(
+        tiles
+            .iter()
+            .all(|t| t.intersects(bottom) && !t.intersects(top))
+    );
+    // Con alfa, el color encima del damero.
+    let half = Rgba::new(255, 0, 0, 128);
+    h.app.doc.editor.secondary = PixelValue::Rgba(half);
+    h.frame();
+    assert_eq!(h.drawn("fgbg.checker").len(), 9);
+    assert!(
+        h.colored_rects()
+            .contains(&(crate::panels::to_color32(half), bottom))
+    );
+}
+
+#[test]
+fn with_pixel_ui_the_round_button_swaps_the_colors() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let (primary, secondary) = (h.app.doc.editor.primary, h.app.doc.editor.secondary);
+    assert_ne!(primary, secondary);
+    let swap = h.button("Swap colors");
+    assert_eq!(swap, h.drawn("fgbg.swap")[0]);
+    h.click(swap.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.primary, secondary);
+    assert_eq!(h.app.doc.editor.secondary, primary);
+}
+
+#[test]
+fn with_pixel_ui_clicking_a_half_picks_the_color_the_editor_edits() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.doc.editor.primary = PixelValue::Rgba(Rgba::rgb(1, 2, 3));
+    h.app.doc.editor.secondary = PixelValue::Rgba(Rgba::rgb(4, 5, 6));
+    h.frame();
+    assert!(h.selected("Primary color") && !h.selected("Secondary color"));
+    assert!(hex_shown(&h, Rgba::rgb(1, 2, 3)));
+    // Abajo: el editor de color pasa al secundario, con una marca en su mitad.
+    h.click(h.button("Secondary color").center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.editing_secondary);
+    assert!(h.selected("Secondary color") && !h.selected("Primary color"));
+    assert!(hex_shown(&h, Rgba::rgb(4, 5, 6)));
+    assert!(!hex_shown(&h, Rgba::rgb(1, 2, 3)));
+    let colors = h.colors_box();
+    let accent = h.app.pixel.skin().unwrap().colors().accent;
+    let bottom = Rect::from_min_size(colors.min + Vec2::new(4.0, 26.0), Vec2::splat(19.0));
+    let marks: Vec<Rect> = h
+        .colored_rects()
+        .into_iter()
+        .filter(|&(c, r)| c == accent && bottom.contains_rect(r))
+        .map(|(_, r)| r)
+        .collect();
+    assert_eq!(marks.len(), 4, "a 1 px outline: {marks:?}");
+    // Arrastrar el S/V cambia el secundario y no el primario.
+    let sv = h
+        .nodes
+        .iter()
+        .find(|(l, _)| l == "Saturation and value")
+        .map(|(_, r)| *r)
+        .expect("the S/V square");
+    let from = sv.center();
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![press(from, true)]);
+    h.frame_with(vec![press(from, false)]);
+    h.frame();
+    assert_eq!(
+        h.app.doc.editor.primary,
+        PixelValue::Rgba(Rgba::rgb(1, 2, 3))
+    );
+    assert_ne!(
+        h.app.doc.editor.secondary,
+        PixelValue::Rgba(Rgba::rgb(4, 5, 6))
+    );
+    // Arriba: otra vez el primario.
+    h.click(h.button("Primary color").center(), PointerButton::Primary);
+    assert!(!h.app.doc.editor.editing_secondary);
+    assert!(hex_shown(&h, Rgba::rgb(1, 2, 3)));
+}
+
+#[test]
+fn with_pixel_ui_the_right_panel_has_no_primary_and_secondary_swatches() {
+    let h = LayoutHarness::new(pixel_ui(), true);
+    let palette = h.panel("palette");
+    let texts: Vec<&str> = h
+        .text_rects
+        .iter()
+        .filter(|(_, r, _)| palette.intersects(*r))
+        .map(|(t, _, _)| t.as_str())
+        .collect();
+    assert!(!texts.contains(&"Color"), "{texts:?}");
+    assert!(!texts.contains(&"🔄"), "{texts:?}");
+    // Los dos colores y el intercambio están en la caja de la izquierda (y la X sigue).
+    assert!(h.panel("tools").contains_rect(h.button("Swap colors")));
+}
+
+#[test]
+fn without_pixel_ui_the_colors_stay_in_the_right_panel() {
+    let h = LayoutHarness::editor();
+    assert_eq!(h.panel("tools").width(), 184.0);
+    for label in ["Primary color", "Secondary color", "Swap colors"] {
+        assert!(!h.buttons.iter().any(|(l, _)| l == label), "{label}");
+    }
+    let palette = h.panel("palette");
+    let texts: Vec<&str> = h
+        .text_rects
+        .iter()
+        .filter(|(_, r, _)| palette.intersects(*r))
+        .map(|(t, _, _)| t.as_str())
+        .collect();
+    assert!(
+        texts.contains(&"Color") && texts.contains(&"🔄"),
+        "{texts:?}"
+    );
 }

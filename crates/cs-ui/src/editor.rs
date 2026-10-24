@@ -666,6 +666,9 @@ pub struct Editor {
     pub palette_entry: Option<u8>,
     /// El color primario de antes de elegir el Mask con su botón, para volver al apagarlo.
     pub(crate) before_mask: Option<PixelValue>,
+    /// Con Pixel UI, el editor de color edita el secundario (se elige con un clic en la mitad
+    /// de abajo de la caja de los colores). Ver `edited_color`.
+    pub editing_secondary: bool,
 }
 
 impl Editor {
@@ -717,6 +720,7 @@ impl Editor {
             palette_locked: true,
             palette_entry: None,
             before_mask: None,
+            editing_secondary: false,
         };
         editor.ensure_valid();
         editor.primary = editor.palette_value(0);

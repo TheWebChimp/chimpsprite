@@ -455,12 +455,13 @@ fn rgba_of(hsv: HsvaGamma) -> Rgba {
     Rgba::new(r, g, b, a)
 }
 
-/// El editor del color primario: copiar, la tira de canales, el cuadro S/V y las barras de tono y
+/// El editor del color primario (o del secundario, si se eligió en la caja de los colores de la
+/// barra de íconos: `Editor::edited_color`): copiar, la tira de canales, el cuadro S/V y las barras de tono y
 /// alfa. Con la paleta desbloqueada, si el color es el de una entrada de la paleta
 /// (`Editor::palette_entry_of`), la edita también (en indexado, solo la entrada); un arrastre es
 /// un solo paso de undo. Un sprite indexado con la paleta bloqueada no tiene nada que editar.
 pub fn color_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
-    let value = editor.primary;
+    let value = editor.edited_color();
     let entry = editor.palette_entry_of(value);
     let current = match (value, entry) {
         (PixelValue::Rgba(c), _) => c,
@@ -534,7 +535,7 @@ pub fn color_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
             editor.set_palette_color(i, color, group);
         }
         if let PixelValue::Rgba(_) = value {
-            editor.primary = PixelValue::Rgba(color);
+            editor.set_edited_color(PixelValue::Rgba(color));
         }
     }
     // El arrastre terminó: el próximo cambio de la entrada es otro paso de undo.

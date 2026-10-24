@@ -13,7 +13,7 @@ use cs_tools::{BrushShape, Dither, GradientShape};
 use crate::bar_fields::{self, BarLook};
 use crate::editor::{Editor, MAX_BRUSH_SIZE, SelectionMode, ToolKind};
 use crate::skin::Skin;
-use crate::{color_panel, menus, pixel_ui, theme, tile_ops, tool_group, widgets};
+use crate::{color_panel, fg_bg, menus, pixel_ui, theme, tile_ops, tool_group, widgets};
 
 /// Fila de un grupo en la barra con nombres: el botón con la herramienta que muestra el grupo y,
 /// si hay más, un desplegable con las demás (también con clic derecho o manteniendo presionado),
@@ -63,6 +63,8 @@ pub fn tools_scroll_area() -> egui::ScrollArea {
 /// otro: el primero redondeado arriba, el último abajo y los del medio cuadrados. Cada botón
 /// lleva un id propio de su grupo, así su lista de variantes (y la presión larga) no depende de
 /// lo que haya antes en la barra.
+///
+/// Debajo, la caja de los colores primario y secundario (`fg_bg`).
 fn tool_column(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
     let base = ui.id();
     let len = ToolKind::GROUPS.len();
@@ -84,6 +86,8 @@ fn tool_column(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
             });
         }
     });
+    ui.add_space(fg_bg::GAP - ui.spacing().item_spacing.y);
+    fg_bg::fg_bg(ui, editor, skin);
 }
 
 /// La barra de herramientas: solo los botones de grupo. Con `skin` (Pixel UI) es una columna de
@@ -1134,6 +1138,18 @@ pub fn palette(
     menus: bool,
     skin: Option<&Skin>,
 ) -> Option<PaletteAction> {
+    if let Some(skin) = skin {
+        // Con Pixel UI, los colores primario y secundario (y el intercambio) van en la caja de
+        // debajo de la barra de íconos (`fg_bg`); los botones del diseño reemplazan al combo
+        // Presets y al menú "…": todo lo de los dos queda en el menú del botón ≡.
+        ui.add_space(6.0);
+        let action = color_panel::palette_buttons(ui, editor, skin, menus);
+        ui.add_space(color_panel::BUTTONS_GAP - ui.spacing().item_spacing.y);
+        color_panel::palette_grid(ui, editor, skin);
+        ui.add_space(color_panel::EDITOR_GAP - ui.spacing().item_spacing.y);
+        color_picker(ui, editor, Some(skin));
+        return action;
+    }
     ui.add_space(6.0);
     ui.heading("Color");
     ui.separator();
@@ -1154,16 +1170,6 @@ pub fn palette(
         }
     });
     ui.add_space(8.0);
-    if let Some(skin) = skin {
-        // Con Pixel UI, los botones del diseño reemplazan al combo Presets y al menú "…": todo
-        // lo de los dos queda en el menú del botón ≡.
-        let action = color_panel::palette_buttons(ui, editor, skin, menus);
-        ui.add_space(color_panel::BUTTONS_GAP - ui.spacing().item_spacing.y);
-        color_panel::palette_grid(ui, editor, skin);
-        ui.add_space(color_panel::EDITOR_GAP - ui.spacing().item_spacing.y);
-        color_picker(ui, editor, Some(skin));
-        return action;
-    }
     let mut action = None;
     ui.horizontal(|ui| {
         ui.label("Palette");
@@ -2293,6 +2299,8 @@ mod tests {
                             );
                             Some((n.label()?.to_string(), rect))
                         })
+                        // Solo los botones de herramienta: sin los de la caja de los colores.
+                        .filter(|(l, _)| !fg_bg::LABELS.contains(&l.as_str()))
                         .collect()
                 })
                 .unwrap_or_default();
@@ -2613,7 +2621,7 @@ mod tests {
             .iter()
             .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
             .filter_map(|(id, n)| Some((n.label()?.to_string(), *id)))
-            .filter(|(l, _)| l != "Before")
+            .filter(|(l, _)| l != "Before" && !fg_bg::LABELS.contains(&l.as_str()))
             .collect();
         ids.sort();
         ids

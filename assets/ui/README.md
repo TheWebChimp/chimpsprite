@@ -168,6 +168,16 @@ oculta.
     `palette.icon.menu` (7×7), `palette.icon.new` (9×9) y `palette.icon.mask` (18×9, el
     damero). Van centrados en el relleno de su botón (con piso), que es donde están en el
     diseño.
+- **Colores primario y secundario** (frame 4, capa Mockup, x 33..59, y 425..473, debajo de la
+  barra de íconos; el skin creció a 320×328 y estas piezas van en y 276..324). La caja de
+  arriba de esa (y 393..418, con las flechas curvas) no se usa.
+  - `fgbg.box` (27×49): la caja con la línea grabada y la línea (89,77,77) que separa las
+    mitades. Las dos mitades (19×19 en (4,4) y (4,26)) son transparentes: los colores los pinta
+    la app.
+  - `fgbg.swap` (9×9): el botón redondo de intercambiar, en (9,20) de la caja; lo de afuera del
+    círculo (el negro y el damero de las mitades) es transparente.
+  - `fgbg.checker` (8×8): un período del damero (197,199,221)/(230,231,240) de celdas de 4×4,
+    en fase con la esquina de la mitad. Va en mosaico detrás de un color con alfa.
 
 ### Probar cambios en vivo (escritorio)
 

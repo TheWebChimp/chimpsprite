@@ -15,6 +15,7 @@ mod demo;
 mod dialog_tests;
 mod editor;
 mod export_dialog;
+mod fg_bg;
 mod file_actions;
 mod mask_ops;
 mod menus;
