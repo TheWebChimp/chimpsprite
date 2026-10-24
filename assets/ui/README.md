@@ -57,6 +57,20 @@ oculta.
   sin centro. El cuadro de 11×11 empieza en (1,1) y su interior de 9×9, transparente, en (2,2):
   ahí va el ícono `icon.sym_vertical`, `icon.sym_horizontal`, `icon.sym_diag_down` o
   `icon.sym_diag_up` (9×9, fondo transparente).
+- **Pestañas:** `tab` (inactiva, café) mide 7×15 y `tab.active` (clara) 7×17, las dos con
+  centro (3,0,1,alto): se estiran solo a lo ancho. Las esquinas de arriba son redondeadas y
+  abajo quedan abiertas. La activa baja sobre las dos filas de la línea grabada de abajo y la
+  interrumpe. Se copiaron sin el texto de las pestañas del mockup.
+  - `icon.tab_dirty` (○, cambios sin guardar) e `icon.tab_close` (×, sin cambios) miden 5×5. El
+    mockup no muestra otro aspecto al pasar el puntero: no hay `.hover`.
+  - Home: `icon.home` (la casita) e `icon.home_smoke` (el humo) miden 18×21 y van uno encima del
+    otro en el mismo lugar; el humo es otra pieza para animarlo. `home.ground` (58×1) es el
+    suelo sobre la línea grabada, desde el borde izquierdo.
+  - Colores: `color.tab_text_dim` (el nombre de las pestañas inactivas) y `color.home_text`
+    ("Home").
+- **Degradé del menú:** `menubar.fade` mide 122×34, sin centro: el tramado café que va a
+  tamaño de pieza contra la esquina de arriba a la derecha de la ventana, detrás del menú y de
+  las pestañas.
 - **Origen:** los íconos, los marcos y los botones se copiaron del mockup del autor
   (`.design/Design.aseprite`, que no se versiona).
 - **Botones:** `button`, `button.hover` y `button.down` vienen del mockup del diálogo "Unsaved

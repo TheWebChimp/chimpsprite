@@ -22,7 +22,7 @@ use crate::theme;
 pub const EMBEDDED: &[u8] = include_bytes!("../../../../assets/ui/skin.aseprite");
 
 /// Colores del skin (`color.<nombre>`).
-pub const COLOR_NAMES: [&str; 11] = [
+pub const COLOR_NAMES: [&str; 13] = [
     "desktop",
     "text",
     "text_dim",
@@ -34,6 +34,8 @@ pub const COLOR_NAMES: [&str; 11] = [
     "background",
     "canvas",
     "highlight",
+    "tab_text_dim",
+    "home_text",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -150,6 +152,10 @@ pub struct SkinColors {
     pub canvas: Color32,
     /// El brillo de los separadores grabados: la línea clara al lado de la oscura.
     pub highlight: Color32,
+    /// El nombre de las pestañas inactivas (el de la activa va en `text`).
+    pub tab_text_dim: Color32,
+    /// El texto "Home" de la barra de pestañas.
+    pub home_text: Color32,
 }
 
 impl SkinColors {
@@ -166,6 +172,8 @@ impl SkinColors {
             background: theme::PANEL,
             canvas: theme::CANVAS_BG,
             highlight: theme::WIDGET_HOVER,
+            tab_text_dim: theme::LABEL,
+            home_text: egui::Visuals::dark().strong_text_color(),
         }
     }
 
@@ -183,6 +191,8 @@ impl SkinColors {
             ("background", &mut c.background),
             ("canvas", &mut c.canvas),
             ("highlight", &mut c.highlight),
+            ("tab_text_dim", &mut c.tab_text_dim),
+            ("home_text", &mut c.home_text),
         ];
         for (name, slot) in slots {
             if let Some(v) = colors.get(name) {
@@ -518,6 +528,60 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_embedded_skin_has_the_tabs_home_markers_and_fade_of_the_mockup() {
+        let data = decode(EMBEDDED).unwrap();
+        let alpha = |piece: &PieceImage, x: u32, y: u32| {
+            piece.rgba[((y * piece.size[0] + x) * 4 + 3) as usize]
+        };
+        // Las pestañas se estiran solo a lo ancho: 3 columnas fijas de cada lado y la del medio.
+        for (name, height) in [("tab", 15), ("tab.active", 17)] {
+            let tab = data.pieces.get(name).unwrap_or_else(|| panic!("{name}"));
+            let center = Rect9 {
+                x: 3,
+                y: 0,
+                w: 1,
+                h: height,
+            };
+            assert_eq!(
+                (tab.size, tab.center),
+                ([7, height], Some(center)),
+                "{name}"
+            );
+            // Esquinas de arriba redondeadas; abajo, abierta.
+            for (x, y) in [(0, 0), (1, 0), (0, 1), (5, 0), (6, 0), (6, 1)] {
+                assert_eq!(alpha(tab, x, y), 0, "{name} ({x},{y})");
+            }
+            assert_eq!(alpha(tab, 0, height - 1), 255, "{name}: the left side");
+        }
+        // La casita y el humo, del mismo tamaño: uno encima del otro son el dibujo del mockup.
+        for name in ["icon.home", "icon.home_smoke"] {
+            let icon = data.pieces.get(name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!((icon.size, icon.center), ([18, 21], None), "{name}");
+        }
+        let ground = &data.pieces["home.ground"];
+        assert_eq!(ground.size, [58, 1]);
+        for name in ["icon.tab_dirty", "icon.tab_close"] {
+            let mark = data.pieces.get(name).unwrap_or_else(|| panic!("{name}"));
+            assert_eq!((mark.size, mark.center), ([5, 5], None), "{name}");
+        }
+        assert!(
+            !data.pieces.contains_key("icon.tab_dirty.hover"),
+            "no hover look"
+        );
+        assert!(
+            !data.pieces.contains_key("icon.tab_close.hover"),
+            "no hover look"
+        );
+        let fade = &data.pieces["menubar.fade"];
+        assert_eq!((fade.size, fade.center), ([122, 34], None));
+        // Contra el borde derecho es todo café; a la izquierda, casi nada.
+        assert_eq!(alpha(fade, 121, 0), 255);
+        assert_eq!(alpha(fade, 0, 0), 0);
+        assert_eq!(data.colors["tab_text_dim"], Rgba::rgb(89, 77, 77));
+        assert_eq!(data.colors["home_text"], Rgba::rgb(51, 39, 42));
     }
 
     #[test]
