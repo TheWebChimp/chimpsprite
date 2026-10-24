@@ -323,6 +323,7 @@ fn controls_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineStat
 fn tags_row(ui: &mut egui::Ui, editor: &mut Editor, grid: Grid) {
     let (row, _) = ui.allocate_exact_size(vec2(grid.row_width(editor), grid.tag_h), Sense::hover());
     let tags = editor.sprite().tags.clone();
+    let mut action = None;
     for (i, tag) in tags.iter().enumerate() {
         let r = Rect::from_min_max(
             grid.cell_rect(row, tag.from).min + vec2(1.0, 2.0),
@@ -349,11 +350,28 @@ fn tags_row(ui: &mut egui::Ui, editor: &mut Editor, grid: Grid) {
         }
         response
             .on_hover_text(format!("{} ({}–{})", tag.name, tag.from + 1, tag.to + 1))
-            .context_menu(|ui| tag_menu(ui, editor, i, tag));
+            .context_menu(|ui| {
+                if let Some(a) = tag_menu(ui, editor, i, tag) {
+                    action = Some(a);
+                }
+            });
+    }
+    // Después del bucle: borrar un tag corre los índices de los que siguen.
+    match action {
+        Some(TagAction::Set(i, tag)) => editor.set_tag(i, tag),
+        Some(TagAction::Remove(i)) => editor.remove_tag(i),
+        None => {}
     }
 }
 
-fn tag_menu(ui: &mut egui::Ui, editor: &mut Editor, index: usize, tag: &Tag) {
+/// Un cambio a la lista de tags pedido desde el menú de un tag.
+enum TagAction {
+    Set(usize, Tag),
+    Remove(usize),
+}
+
+/// El menú de un tag. Devuelve el cambio pedido, para aplicarlo fuera del bucle de los tags.
+fn tag_menu(ui: &mut egui::Ui, editor: &Editor, index: usize, tag: &Tag) -> Option<TagAction> {
     let mut edited = tag.clone();
     ui.horizontal(|ui| {
         ui.label("Name");
@@ -389,14 +407,13 @@ fn tag_menu(ui: &mut egui::Ui, editor: &mut Editor, index: usize, tag: &Tag) {
     {
         (edited.from, edited.to) = (a, b);
     }
-    if edited != *tag {
-        editor.set_tag(index, edited);
-    }
+    let mut action = (edited != *tag).then_some(TagAction::Set(index, edited));
     ui.separator();
     if ui.button("Delete tag").clicked() {
-        editor.remove_tag(index);
+        action = Some(TagAction::Remove(index));
         ui.close();
     }
+    action
 }
 
 fn header_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, grid: Grid) {
@@ -416,6 +433,9 @@ fn header_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState,
         }
     }
     let (sel_a, sel_b) = editor.selected_frames();
+    // Lo que cambia la lista de frames (borrar, insertar, mover) se aplica después del bucle:
+    // si no, al borrar un frame las vueltas que quedan leen más allá del final.
+    let mut action = None;
     for f in 0..editor.frame_count() {
         let r = grid.cell_rect(row, f);
         let response = ui.interact(r, ui.id().with(("frame", f)), Sense::click_and_drag());
@@ -462,7 +482,7 @@ fn header_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState,
             painter.vline(r.left(), r.y_range(), Stroke::new(2.0, grid.accent()));
         }
         if let Some(p) = response.dnd_release_payload::<FramePayload>() {
-            editor.move_frame(p.0, f);
+            action = Some(FrameAction::Move(p.0, f));
         }
 
         if response.clicked() {
@@ -486,25 +506,47 @@ fn header_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState,
                     ui.close();
                 }
                 if ui.button("Duplicate frame").clicked() {
-                    editor.set_frame(f);
-                    editor.duplicate_frame();
+                    action = Some(FrameAction::Duplicate(f));
                     ui.close();
                 }
                 if ui.button("Insert empty frame").clicked() {
-                    editor.set_frame(f);
-                    editor.insert_empty_frame();
+                    action = Some(FrameAction::InsertEmpty(f));
                     ui.close();
                 }
                 if ui
                     .add_enabled(editor.frame_count() > 1, egui::Button::new("Delete frame"))
                     .clicked()
                 {
-                    editor.set_frame(f);
-                    editor.remove_frame();
+                    action = Some(FrameAction::Remove(f));
                     ui.close();
                 }
             });
     }
+    match action {
+        Some(FrameAction::Move(from, to)) => editor.move_frame(from, to),
+        Some(FrameAction::Duplicate(f)) => {
+            editor.set_frame(f);
+            editor.duplicate_frame();
+        }
+        Some(FrameAction::InsertEmpty(f)) => {
+            editor.set_frame(f);
+            editor.insert_empty_frame();
+        }
+        Some(FrameAction::Remove(f)) => {
+            editor.set_frame(f);
+            editor.remove_frame();
+        }
+        None => {}
+    }
+}
+
+/// Un cambio a la lista de frames pedido desde el encabezado; se aplica al terminar el bucle.
+enum FrameAction {
+    /// Soltar el frame `.0` sobre el `.1`.
+    Move(usize, usize),
+    Duplicate(usize),
+    InsertEmpty(usize),
+    Remove(usize),
 }
 
 fn layer_row(
@@ -1309,6 +1351,34 @@ mod tests {
             self.frame(vec![Event::ModifiersChanged(Default::default())]);
         }
 
+        /// Un clic derecho en `at`: abre el menú contextual de lo que haya ahí.
+        fn right_click_at(&mut self, at: Pos2) {
+            let button = |pressed| Event::PointerButton {
+                pos: at,
+                button: egui::PointerButton::Secondary,
+                pressed,
+                modifiers: Default::default(),
+            };
+            self.frame(vec![Event::PointerMoved(at)]);
+            self.frame(vec![button(true)]);
+            self.frame(vec![button(false)]);
+            self.frame(vec![]);
+        }
+
+        /// Centro de la celda del frame `f` en el encabezado de la grilla clásica.
+        fn header_cell(&self, f: usize) -> Pos2 {
+            let row_left = self.grid.x - 6.0;
+            let cell = Grid::CLASSIC.left_w + Grid::CLASSIC.cell_w * (f as f32 + 0.5);
+            pos2(row_left + cell, self.grid.y + 6.0)
+        }
+
+        /// Un punto sobre el nombre de la fila `row` (0 = la de más arriba) de la grilla clásica.
+        fn layer_name(&self, row: usize) -> Pos2 {
+            let header = self.header_cell(0).y + Grid::CLASSIC.header_h / 2.0;
+            let y = header + Grid::CLASSIC.row_h * (row as f32 + 0.5);
+            pos2(self.grid.x - 6.0 + 100.0, y)
+        }
+
         fn click_at(&mut self, at: Pos2) {
             self.click_at_with(at, Default::default());
         }
@@ -1660,5 +1730,66 @@ mod tests {
         assert_eq!(h.rect("+ Layer").center().y, frame_y, "one line");
         assert_eq!(h.duration().center().y, frame_y, "one line");
         assert_eq!(h.grid, grid, "the grid did not move");
+    }
+    #[test]
+    fn deleting_a_frame_from_its_header_menu_does_not_crash() {
+        let mut h = Harness::new(1200.0);
+        h.editor.duplicate_frame();
+        h.editor.duplicate_frame();
+        h.frame(vec![]);
+        assert_eq!(h.editor.frame_count(), 3);
+        h.right_click_at(h.header_cell(1));
+        // Con la grilla clásica, "Delete frame" es solo el del menú (la barra dice "− Frame").
+        h.click("Delete frame");
+        h.frame(vec![]);
+        assert_eq!(h.editor.frame_count(), 2);
+    }
+
+    #[test]
+    fn deleting_the_last_frame_from_its_header_menu_does_not_crash() {
+        let mut h = Harness::new(1200.0);
+        h.editor.duplicate_frame();
+        h.editor.duplicate_frame();
+        h.frame(vec![]);
+        h.right_click_at(h.header_cell(2));
+        h.click("Delete frame");
+        h.frame(vec![]);
+        assert_eq!(h.editor.frame_count(), 2);
+        assert_eq!(h.editor.frame, 1);
+    }
+
+    #[test]
+    fn deleting_a_layer_from_its_row_menu_does_not_crash() {
+        let mut h = Harness::new(1200.0);
+        h.editor.add_layer(LayerKind::Image);
+        h.editor.add_layer(LayerKind::Image);
+        h.frame(vec![]);
+        let layers = h.editor.sprite().layers.len();
+        assert!(layers >= 3);
+        let top = h.editor.timeline_layers()[0];
+        h.right_click_at(h.layer_name(0));
+        h.click("Delete");
+        h.frame(vec![]);
+        assert_eq!(h.editor.sprite().layers.len(), layers - 1);
+        assert!(
+            h.editor.sprite().layer(top).is_none(),
+            "deleted the row's layer"
+        );
+    }
+
+    #[test]
+    fn deleting_a_tag_from_its_menu_does_not_crash() {
+        let mut h = Harness::new(1200.0);
+        h.editor.duplicate_frame();
+        h.editor.add_tag();
+        h.editor.add_tag();
+        h.frame(vec![]);
+        assert_eq!(h.editor.sprite().tags.len(), 2);
+        // Los dos tags van sobre el frame actual (el 2).
+        let tag = pos2(h.header_cell(1).x, h.grid.y - Grid::CLASSIC.tag_h / 2.0);
+        h.right_click_at(tag);
+        h.click("Delete tag");
+        h.frame(vec![]);
+        assert_eq!(h.editor.sprite().tags.len(), 1);
     }
 }
