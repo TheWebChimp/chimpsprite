@@ -1454,15 +1454,17 @@ fn with_pixel_ui_the_artboard_is_a_pink_window_whose_bar_does_not_zoom() {
         h.app.doc.canvas.zoom = zoom;
         h.frame();
         let pixels = artboard_pixels(&h);
-        let frame = union(&h.drawn("window")).expect("the window frame");
+        let frame = union(&h.drawn("artboard.frame")).expect("the window frame");
+        // Borde (1) + blanco (1) a los lados y abajo.
         assert_eq!(frame.left(), pixels.left() - 2.0, "zoom {zoom}");
         assert_eq!(frame.right(), pixels.right() + 2.0, "zoom {zoom}");
-        assert_eq!(frame.bottom(), pixels.bottom() + 1.0, "zoom {zoom}");
+        assert_eq!(frame.bottom(), pixels.bottom() + 2.0, "zoom {zoom}");
         bars.push(pixels.top() - frame.top());
         assert_eq!(h.drawn("artboard.menu").len(), 1, "≡");
         assert_eq!(h.drawn("window.close").len(), 1, "○");
     }
-    assert_eq!(bars, vec![12.0, 12.0]);
+    // La barra de 13 y la fila blanca no cambian con el zoom.
+    assert_eq!(bars, vec![14.0, 14.0]);
 
     // Arrastrar la barra mueve el artboard (zoom 1: un punto, un píxel).
     h.app.doc.canvas.zoom = 1.0;
@@ -1489,7 +1491,7 @@ fn without_pixel_ui_the_artboard_has_no_window() {
     let h = LayoutHarness::editor();
     let skin = crate::skin::Skin::embedded(&h.ctx);
     let window = skin
-        .piece("window", WidgetState::Normal)
+        .piece("artboard.frame", WidgetState::Normal)
         .unwrap()
         .texture
         .id();

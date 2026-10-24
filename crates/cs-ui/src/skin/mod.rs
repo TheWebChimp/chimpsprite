@@ -447,6 +447,63 @@ mod tests {
     }
 
     #[test]
+    fn the_embedded_skin_has_the_artboard_frame_with_a_white_ring() {
+        let data = decode(EMBEDDED).unwrap();
+        let frame = &data.pieces["artboard.frame"];
+        let window = &data.pieces["window"];
+        let (w, h) = (24, 24);
+        assert_eq!(frame.size, [w, h]);
+        assert_eq!(
+            frame.center,
+            Some(Rect9 {
+                x: 2,
+                y: 14,
+                w: 20,
+                h: 8
+            }),
+            "border + white on the sides, 13 of bar + white on top, white + border below"
+        );
+        let px = |p: &PieceImage, x: u32, y: u32| {
+            let i = ((y * p.size[0] + x) * 4) as usize;
+            [p.rgba[i], p.rgba[i + 1], p.rgba[i + 2], p.rgba[i + 3]]
+        };
+        // De dónde sale cada píxel en `window` (64×48): las dos columnas de cada lado, la del
+        // medio estirada; la barra con una fila rosa más (10) y las dos filas de abajo.
+        let src_x = |x: u32| match x {
+            0 | 1 => x,
+            _ if x >= w - 2 => 64 - (w - x),
+            _ => 2,
+        };
+        let src_y = |y: u32| match y {
+            0 | 1 => y,
+            2..=11 => 2,
+            12 => 11,
+            _ if y == h - 2 => 46,
+            _ if y == h - 1 => 47,
+            _ => 20,
+        };
+        const BORDER: [u8; 4] = [5, 4, 3, 255];
+        for y in 0..h {
+            for x in 0..w {
+                let got = px(frame, x, y);
+                let from = px(window, src_x(x), src_y(y));
+                let expected = if y < 13 || from == BORDER || from[3] == 0 {
+                    // La barra entera, el borde oscuro y las esquinas: iguales a `window`.
+                    from
+                } else if y == 13 || y == h - 2 || x == 1 || x == w - 2 {
+                    [255, 255, 255, 255]
+                } else {
+                    [0, 0, 0, 0]
+                };
+                assert_eq!(got, expected, "({x},{y})");
+            }
+        }
+        // La fila rosa agregada arriba del contenido es igual a las otras.
+        assert_eq!(px(frame, 5, 2), [226, 114, 133, 255]);
+        assert_eq!(px(frame, 5, 11), [226, 114, 133, 255]);
+    }
+
+    #[test]
     fn the_embedded_skin_has_the_artboard_menu_icon_of_the_mockup() {
         let data = decode(EMBEDDED).unwrap();
         let menu = &data.pieces["artboard.menu"];

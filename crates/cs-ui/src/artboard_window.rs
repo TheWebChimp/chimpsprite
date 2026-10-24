@@ -3,14 +3,19 @@
 //! la izquierda y "○" a la derecha, borde oscuro de 1 px con las esquinas redondeadas y cuerpo
 //! claro.
 //!
-//! - **Piezas:** el marco es `window` en 9-slice (el mismo de los diálogos pixel), el "○" es
-//!   `window.close` y el "≡" es `artboard.menu` (el `window.menu` del skin tiene las rayas de 7 px;
-//!   las del mockup miden 6). Ventana del mockup = las tres piezas, sin un píxel de diferencia.
+//! - **Piezas:** el marco es `artboard.frame` en 9-slice, el "○" es `window.close` y el "≡" es
+//!   `artboard.menu` (el `window.menu` del skin tiene las rayas de 7 px; las del mockup miden 6).
+//! - **`artboard.frame`** sale de `window` (el marco de los diálogos pixel), con el mismo borde
+//!   oscuro y las mismas esquinas redondeadas, pero sin el bisel ni el cuerpo: adentro del borde
+//!   hay un anillo blanco de 1 px y el resto es transparente. La barra tiene una fila rosa más
+//!   arriba del contenido (13 en vez de 12), así el título y los íconos quedan 1 px más abajo.
 //! - **Cuerpo = área de píxeles:** el damero y los píxeles del artboard quedan donde siempre, al
 //!   mismo zoom; el marco se dibuja alrededor, a escala de la UI (no cambia con el zoom). Del
-//!   borde de la ventana al área de píxeles hay 2 px a los lados (borde y bisel), 12 arriba (la
-//!   barra de título) y 1 abajo (el borde). Las dos esquinas del bisel en la fila de abajo quedan
-//!   bajo los píxeles.
+//!   borde de la ventana al área de píxeles hay borde (1) + blanco (1) a los lados y abajo, y
+//!   barra (13) + blanco (1) arriba.
+//! - **Pixel perfect:** los píxeles se dibujan en su rect redondeado a píxeles de pantalla
+//!   ([`WindowLayout::pixels_on_screen`]) y el marco se arma alrededor de ese mismo rect. Con un
+//!   pan o un zoom fraccionarios, el blanco mide siempre 1 px de la UI de cada lado.
 //! - **Barra angosta:** primero se pierde el nombre y después los íconos; la barra queda siempre.
 
 use std::sync::Arc;
@@ -21,13 +26,26 @@ use eframe::emath::GuiRounding as _;
 use crate::pixel_ui;
 use crate::skin::{Piece, Skin, SkinColors, WidgetState};
 
-/// Del borde de la ventana al área de píxeles (izquierda, arriba, derecha, abajo), en puntos.
-pub const INSETS: [f32; 4] = [2.0, TITLE_BAR, 2.0, 1.0];
-/// Alto de la barra de título: borde, brillo, 9 filas rosas y la línea oscura de abajo.
-pub const TITLE_BAR: f32 = 12.0;
-/// Franja donde se centra el título: la de arriba del 9-slice, como en `pixel_dialog`.
+/// Del borde de la ventana al área de píxeles (izquierda, arriba, derecha, abajo), en puntos:
+/// borde + blanco a los lados y abajo; barra + blanco arriba.
+pub const INSETS: [f32; 4] = [
+    BORDER + PADDING,
+    TITLE_BAR + PADDING,
+    BORDER + PADDING,
+    BORDER + PADDING,
+];
+/// Borde oscuro de la ventana.
+const BORDER: f32 = 1.0;
+/// Blanco entre el borde (o la barra) y los píxeles.
+const PADDING: f32 = 1.0;
+/// Alto de la barra de título: borde, brillo, 10 filas rosas y la línea oscura de abajo.
+pub const TITLE_BAR: f32 = 13.0;
+/// Fila rosa agregada arriba del contenido de la barra: baja el título y los íconos 1 px.
+const BAR_EXTRA: f32 = 1.0;
+/// Franja donde se centra el título (debajo de la fila agregada): 13, como en `pixel_dialog`.
 const TITLE_BAND: f32 = 13.0;
-/// Lado de los íconos de la barra (`artboard.menu`, `window.close`) y su margen al borde.
+/// Lado de los íconos de la barra (`artboard.menu`, `window.close`) y su margen al borde de los
+/// lados; arriba, uno más (la fila agregada).
 const ICON: f32 = 9.0;
 const ICON_INSET: f32 = 2.0;
 /// Aire entre un ícono y el título.
@@ -35,7 +53,7 @@ const TEXT_GAP: f32 = 2.0;
 /// Lo que se agrega al final de un título que no entra.
 const ELLIPSIS: &str = "...";
 
-const FRAME_PIECE: &str = "window";
+const FRAME_PIECE: &str = "artboard.frame";
 const MENU_PIECE: &str = "artboard.menu";
 const CLOSE_PIECE: &str = "window.close";
 
@@ -65,18 +83,19 @@ pub enum TitleHit {
 }
 
 impl WindowLayout {
-    /// La ventana alrededor del área de píxeles `pixels` (en pantalla), alineada a píxeles de
-    /// pantalla hacia afuera para no dejar huecos entre el marco y los píxeles.
+    /// La ventana alrededor del área de píxeles `pixels` (en pantalla), tal como se dibuja
+    /// (ver [`Self::pixels_on_screen`]).
     pub fn around(pixels: Rect, pixels_per_point: f32) -> WindowLayout {
         let frame = Self::frame_around(pixels, pixels_per_point);
         let bar = Rect::from_min_size(frame.min, vec2(frame.width(), TITLE_BAR));
         // Los dos íconos con su margen a cada lado.
         let icons = frame.width() >= 2.0 * (ICON_INSET + ICON);
+        let top = frame.min.y + BAR_EXTRA + ICON_INSET;
         let menu = icons
-            .then(|| Rect::from_min_size(frame.min + Vec2::splat(ICON_INSET), Vec2::splat(ICON)));
+            .then(|| Rect::from_min_size(pos2(frame.min.x + ICON_INSET, top), Vec2::splat(ICON)));
         let close = icons.then(|| {
             Rect::from_min_size(
-                pos2(frame.max.x - ICON_INSET - ICON, frame.min.y + ICON_INSET),
+                pos2(frame.max.x - ICON_INSET - ICON, top),
                 Vec2::splat(ICON),
             )
         });
@@ -95,21 +114,29 @@ impl WindowLayout {
         }
     }
 
+    /// Dónde se dibujan de verdad los píxeles del área `pixels`: redondeada a píxeles de
+    /// pantalla. El lienzo dibuja el damero y la textura en este rect (si quedaran en una
+    /// fracción, la GPU los cortaría en el píxel más cercano y el marco no sabría dónde).
+    pub fn pixels_on_screen(pixels: Rect, pixels_per_point: f32) -> Rect {
+        pixels.round_to_pixels(pixels_per_point)
+    }
+
     /// Solo el marco de `around`, sin el resto: alcanza para descartar los artboards fuera de
     /// la vista o para saber cuál está arriba bajo el puntero.
+    ///
+    /// Va pegado al rect de [`Self::pixels_on_screen`]: con la escala entera de Pixel UI, `INSETS`
+    /// son píxeles de pantalla enteros y el marco cae justo en píxeles.
     pub fn frame_around(pixels: Rect, pixels_per_point: f32) -> Rect {
-        let ppp = pixels_per_point;
         let [left, top, right, bottom] = INSETS;
-        let min = (pixels.min.to_vec2() * ppp).floor() / ppp;
-        let max = (pixels.max.to_vec2() * ppp).ceil() / ppp;
+        let p = Self::pixels_on_screen(pixels, pixels_per_point);
         Rect::from_min_max(
-            pos2(min.x - left, min.y - top),
-            pos2(max.x + right, max.y + bottom),
+            pos2(p.min.x - left, p.min.y - top),
+            pos2(p.max.x + right, p.max.y + bottom),
         )
     }
 
     /// Qué parte de la barra está bajo `p`, si está en la barra. Abajo es semiabierta: la fila
-    /// `y == bar.bottom()` ya es del área de píxeles.
+    /// `y == bar.bottom()` ya es la blanca de debajo de la barra.
     pub fn hit(&self, p: Pos2) -> Option<TitleHit> {
         if !self.bar.contains(p) || p.y >= self.bar.bottom() {
             return None;
@@ -160,11 +187,21 @@ impl ArtboardWindow {
         }
     }
 
-    /// El marco, que va detrás del damero y los píxeles (el centro del 9-slice queda tapado).
+    /// El marco, que va detrás del damero y los píxeles (el centro del 9-slice es transparente
+    /// y queda tapado).
     pub fn frame_shapes(&self, layout: &WindowLayout, active: bool, ppp: f32) -> Vec<Shape> {
         let shapes = match &self.frame {
             Some(piece) => pixel_ui::piece_shapes(piece, layout.frame, ppp),
-            None => pixel_ui::flat_frame(&self.colors, layout.frame, TITLE_BAR, ppp),
+            None => {
+                // Respaldo plano, también con el anillo blanco adentro del borde.
+                let mut shapes = pixel_ui::flat_frame(&self.colors, layout.frame, TITLE_BAR, ppp);
+                let white = Rect::from_min_max(
+                    pos2(layout.frame.left() + BORDER, layout.bar.bottom()),
+                    layout.frame.max - Vec2::splat(BORDER),
+                );
+                shapes.push(Shape::rect_filled(white, 0.0, Color32::WHITE));
+                shapes
+            }
         };
         tinted(shapes, self.tint(active))
     }
@@ -212,7 +249,10 @@ impl ArtboardWindow {
             && !title.is_empty()
             && let Some(galley) = fit_title(painter, title, area.width(), color)
         {
-            let band = Rect::from_min_size(layout.bar.min, vec2(layout.bar.width(), TITLE_BAND));
+            let band = Rect::from_min_size(
+                layout.bar.min + vec2(0.0, BAR_EXTRA),
+                vec2(layout.bar.width(), TITLE_BAND),
+            );
             let y = band.center().y - galley.size().y / 2.0;
             let at = pos2(area.left(), y).round_to_pixels(ppp);
             shapes.push(Shape::galley(at, galley, color));
@@ -280,38 +320,73 @@ mod tests {
     }
 
     #[test]
-    fn the_window_wraps_the_pixels_with_a_12_point_title_bar_on_top() {
+    fn the_window_wraps_the_pixels_with_a_13_point_title_bar_and_a_white_point() {
         let l = WindowLayout::around(pixels(128.0, 64.0), 1.0);
+        // Borde (1) + blanco (1) a los lados y abajo; barra (13) + blanco (1) arriba.
         assert_eq!(
             l.frame,
-            Rect::from_min_max(pos2(98.0, 188.0), pos2(230.0, 265.0))
+            Rect::from_min_max(pos2(98.0, 186.0), pos2(230.0, 266.0))
         );
         assert_eq!(
             l.bar,
-            Rect::from_min_max(pos2(98.0, 188.0), pos2(230.0, 200.0))
+            Rect::from_min_max(pos2(98.0, 186.0), pos2(230.0, 199.0))
         );
-        assert_eq!(l.bar.bottom(), 200.0, "the bar ends where the pixels start");
-        // Los íconos como en el mockup: a 2 px de la esquina de la ventana.
+        // Los íconos a 2 px del borde de la izquierda/derecha y a 3 del de arriba (la fila de
+        // más arriba del contenido de la barra).
         assert_eq!(
             l.menu,
-            Some(Rect::from_min_size(pos2(100.0, 190.0), Vec2::splat(9.0)))
+            Some(Rect::from_min_size(pos2(100.0, 189.0), Vec2::splat(9.0)))
         );
         assert_eq!(
             l.close,
-            Some(Rect::from_min_size(pos2(219.0, 190.0), Vec2::splat(9.0)))
+            Some(Rect::from_min_size(pos2(219.0, 189.0), Vec2::splat(9.0)))
         );
         assert_eq!(l.text.unwrap().x_range(), 111.0..=217.0);
-        assert_eq!(l.hit(pos2(104.0, 194.0)), Some(TitleHit::Menu));
-        assert_eq!(l.hit(pos2(223.0, 194.0)), Some(TitleHit::Close));
-        assert_eq!(l.hit(pos2(150.0, 194.0)), Some(TitleHit::Bar));
+        assert_eq!(l.hit(pos2(104.0, 193.0)), Some(TitleHit::Menu));
+        assert_eq!(l.hit(pos2(223.0, 193.0)), Some(TitleHit::Close));
+        assert_eq!(l.hit(pos2(150.0, 193.0)), Some(TitleHit::Bar));
         assert_eq!(
             l.hit(pos2(150.0, 201.0)),
             None,
             "the pixels are not the bar"
         );
-        // Semiabierta: la fila de arriba del área de píxeles es de los píxeles.
-        assert_eq!(l.hit(pos2(150.0, 199.5)), Some(TitleHit::Bar));
-        assert_eq!(l.hit(pos2(150.0, 200.0)), None, "the boundary row");
+        // Semiabierta: la fila blanca de debajo de la barra ya no es la barra.
+        assert_eq!(l.hit(pos2(150.0, 198.5)), Some(TitleHit::Bar));
+        assert_eq!(l.hit(pos2(150.0, 199.0)), None, "the white row");
+        assert_eq!(l.hit(pos2(150.0, 200.0)), None, "the first row of pixels");
+    }
+
+    #[test]
+    fn the_frame_hugs_the_drawn_pixels_with_one_white_point_at_any_zoom_and_pan() {
+        // Los píxeles se dibujan en su rect redondeado a píxeles físicos (como el lienzo); el
+        // marco tiene que quedar a borde (1) + blanco (1) de ese rect, sin importar la fracción.
+        for ppp in [1.0, 2.0] {
+            for zoom in [1.0, 8.0] {
+                for pan in [
+                    vec2(0.0, 0.0),
+                    vec2(0.37, 0.81),
+                    vec2(0.5, 0.25),
+                    vec2(0.73, 0.5),
+                ] {
+                    let pixels = Rect::from_min_size(
+                        pos2(100.0, 200.0) + pan,
+                        vec2(16.0 * zoom, 16.0 * zoom),
+                    );
+                    let drawn = WindowLayout::pixels_on_screen(pixels, ppp);
+                    assert_eq!(drawn, pixels.round_to_pixels(ppp));
+                    let frame = WindowLayout::frame_around(pixels, ppp);
+                    let at = format!("ppp {ppp}, zoom {zoom}, pan {pan:?}");
+                    assert_eq!(frame.left() + 1.0 + 1.0, drawn.left(), "left, {at}");
+                    assert_eq!(frame.right() - 1.0 - 1.0, drawn.right(), "right, {at}");
+                    assert_eq!(frame.bottom() - 1.0 - 1.0, drawn.bottom(), "bottom, {at}");
+                    assert_eq!(frame.top() + TITLE_BAR + 1.0, drawn.top(), "top, {at}");
+                    // El marco cae en píxeles físicos enteros.
+                    for v in [frame.left(), frame.top(), frame.right(), frame.bottom()] {
+                        assert_eq!((v * ppp).fract(), 0.0, "{v}, {at}");
+                    }
+                }
+            }
+        }
     }
 
     #[test]
@@ -325,6 +400,7 @@ mod tests {
         // Medio píxel de artboard (zoom 0.5): la barra queda, de 5 de ancho.
         let l = WindowLayout::around(pixels(0.5, 0.5), 1.0);
         assert_eq!(l.frame.width(), 5.0);
+        assert_eq!(l.frame.height(), TITLE_BAR + 1.0 + 1.0 + 1.0 + 1.0);
         assert_eq!(l.bar.height(), TITLE_BAR);
     }
 

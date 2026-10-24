@@ -84,11 +84,15 @@ oculta.
     izquierdo, arriba de todo. `home.ground` (58×1) es el suelo sobre la línea grabada, desde el
     borde izquierdo.
 - **Artboards con Pixel UI** (la ventana del frame 4 del diseño, en (209,235), 173×123): el
-  marco es `window` en 9-slice, el "○" de la derecha es `window.close` y el "≡" de la izquierda
+  marco es `artboard.frame`, el "○" de la derecha es `window.close` y el "≡" de la izquierda
   es `artboard.menu` (9×9, fondo transparente, rayas de 6 px en las filas 2, 4 y 6 desde la
-  columna 2). `window.menu` no sirve: sus rayas miden 7. Las tres juntas dan la ventana del
-  diseño sin un píxel de diferencia. El área de píxeles del artboard es el cuerpo: 2 px adentro
-  a los lados, 12 abajo de la barra y 1 arriba del borde de abajo.
+  columna 2). `window.menu` no sirve: sus rayas miden 7.
+  - `artboard.frame` (24×24, centro (2,14,20,8)) sale de `window` con Lua: el mismo borde
+    oscuro y las mismas esquinas redondeadas; la barra con una fila rosa más (13 filas: borde,
+    brillo, 10 rosas y la línea oscura) y, debajo, un anillo blanco de 1 px pegado al borde y
+    a la barra. El resto de adentro es transparente: ahí van el damero y los píxeles.
+  - El área de píxeles del artboard es el hueco: 2 px adentro a los lados y abajo (borde y
+    blanco) y 14 abajo del borde de arriba (barra y blanco).
 - **Animaciones:** las piezas `<nombre>.0`, `<nombre>.1`… son los frames, en orden. Lo que dura
   cada uno va en el user data del slice (Slice Properties → User Data), en una línea
   `duration=<ms>`, igual que la duración del frame en Aseprite. Sin esa línea, dura 100 ms.

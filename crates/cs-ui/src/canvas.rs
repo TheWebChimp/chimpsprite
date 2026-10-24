@@ -1021,7 +1021,9 @@ impl CanvasView {
 
         let ppp = ctx.pixels_per_point();
         for artboard in &document.artboards {
-            let screen = self.pixel_rect(rect, artboard);
+            // Alineada a píxeles de pantalla: el damero y la textura caen justo en píxeles y la
+            // ventana de Pixel UI se arma alrededor de este mismo rect (blanco de 1 px exacto).
+            let screen = WindowLayout::pixels_on_screen(self.pixel_rect(rect, artboard), ppp);
             let active = artboard.id == editor.active;
             // Con Pixel UI, la ventana del skin: el marco va detrás de los píxeles. Si la ventana
             // queda fuera del lienzo, no se arma ni se dibuja nada del artboard.
@@ -1957,6 +1959,7 @@ fn checker_uv(size: Vec2) -> Rect {
 mod tests {
     use cs_commands::Command;
     use cs_core::{ColorMode, LayerId, PixelValue, Rgba, Sprite};
+    use eframe::emath::GuiRounding as _;
     use egui::{Event, Key, PointerButton, RawInput};
 
     use super::*;
@@ -2778,12 +2781,13 @@ mod tests {
             h.canvas.zoom = zoom;
             h.frame(vec![]);
             let pixels = h.pixels_of(0);
-            let frame = union(&h.meshes(piece_id(&skin, "window")));
+            let frame = union(&h.meshes(piece_id(&skin, "artboard.frame")));
+            // Borde + 1 de blanco a los lados y abajo; barra de 13 + 1 de blanco arriba.
             assert_eq!(
                 frame,
                 Rect::from_min_max(
-                    pixels.min - Vec2::new(2.0, 12.0),
-                    pixels.max + Vec2::new(2.0, 1.0)
+                    pixels.min - Vec2::new(2.0, 14.0),
+                    pixels.max + Vec2::new(2.0, 2.0)
                 ),
                 "zoom {zoom}"
             );
@@ -2808,8 +2812,15 @@ mod tests {
                 .find(|(t, _)| *t == label)
                 .unwrap_or_else(|| panic!("the name in the bar: {:?}", h.texts()));
             assert!(text.center().y > frame.top() && text.center().y < pixels.top());
+            // Centrado en la franja de 13 que empieza debajo de la fila rosa agregada arriba.
+            let band_center = frame.top() + 1.0 + 13.0 / 2.0;
+            assert_eq!(text.top(), (band_center - text.height() / 2.0).round());
         }
-        assert_eq!(bars, vec![12.0; 3], "the bar is 12 at any zoom");
+        assert_eq!(
+            bars,
+            vec![14.0; 3],
+            "the bar (13) and the white (1) do not zoom"
+        );
     }
 
     #[test]
@@ -2861,12 +2872,12 @@ mod tests {
         with_window(&mut h);
         let pixels = h.pixels_of(0);
         // "○", a 2 px del borde derecho de la ventana: ni selecciona ni mueve.
-        let circle = Pos2::new(pixels.right() + 2.0 - 2.0 - 4.5, pixels.top() - 12.0 + 6.5);
+        let circle = Pos2::new(pixels.right() + 2.0 - 2.0 - 4.5, pixels.top() - 14.0 + 7.5);
         h.drag(circle, circle + Vec2::new(30.0, 0.0));
         assert_ne!(h.editor.active, first, "the circle is decorative");
         assert_eq!(h.editor.document.artboards[0].position, (0, 0));
         // "≡": no hay menú contextual de artboards, así que lo selecciona.
-        let menu = pixels.left_top() + Vec2::new(-2.0 + 2.0 + 4.5, -12.0 + 6.5);
+        let menu = pixels.left_top() + Vec2::new(-2.0 + 2.0 + 4.5, -14.0 + 7.5);
         h.click(menu, PointerButton::Primary);
         assert_eq!(h.editor.active, first);
         assert_eq!(
@@ -2883,7 +2894,7 @@ mod tests {
         h.editor.add_artboard(16, 16);
         h.canvas.zoom = 4.0;
         let skin = with_window(&mut h);
-        let id = piece_id(&skin, "window");
+        let id = piece_id(&skin, "artboard.frame");
         let tints: Vec<(Rect, Color32)> = h
             .shapes
             .iter()
@@ -2919,10 +2930,10 @@ mod tests {
             h.canvas.zoom = zoom;
             h.frame(vec![]);
             let pixels = h.pixels_of(0);
-            let frames = h.meshes(piece_id(&skin, "window"));
+            let frames = h.meshes(piece_id(&skin, "artboard.frame"));
             let frame = union(&frames);
             assert_eq!(frame.width(), pixels.width() + 4.0, "zoom {zoom}");
-            assert_eq!(pixels.top() - frame.top(), 12.0, "zoom {zoom}");
+            assert_eq!(pixels.top() - frame.top(), 14.0, "zoom {zoom}");
             for name in ["artboard.menu", "window.close"] {
                 let drawn = h.meshes(piece_id(&skin, name));
                 assert_eq!(!drawn.is_empty(), icons, "{name} at {zoom}");
@@ -3047,7 +3058,7 @@ mod tests {
         let skin = with_window(&mut h);
         h.canvas.pan += Vec2::new(5000.0, 0.0);
         h.frame(vec![]);
-        for name in ["window", "artboard.menu", "window.close"] {
+        for name in ["artboard.frame", "artboard.menu", "window.close"] {
             assert!(h.meshes(piece_id(&skin, name)).is_empty(), "{name}");
         }
         let checker = h.canvas.checker.as_ref().unwrap().id();
@@ -3072,6 +3083,42 @@ mod tests {
         });
         assert!(border, "the orange border of the active artboard");
         let skin = Skin::embedded(&h.ctx);
-        assert!(h.meshes(piece_id(&skin, "window")).is_empty());
+        assert!(h.meshes(piece_id(&skin, "artboard.frame")).is_empty());
+    }
+
+    #[test]
+    fn with_a_fractional_pan_the_frame_hugs_the_drawn_pixels_with_one_white_point() {
+        let mut h = Harness::new();
+        let skin = with_window(&mut h);
+        let id = h.editor.artboard().id;
+        for zoom in [1.0, 8.0] {
+            for pan in [
+                Vec2::new(0.37, 0.81),
+                Vec2::new(0.62, 0.5),
+                Vec2::new(0.5, 0.12),
+            ] {
+                h.canvas.zoom = zoom;
+                h.canvas.pan = pan;
+                h.frame(vec![]);
+                let at = format!("zoom {zoom}, pan {pan:?}");
+                // Los píxeles y el damero se dibujan alineados a píxeles de pantalla.
+                let pixels = h.pixels_of(0).round_to_pixels(1.0);
+                let tex = h.canvas.textures[&id].id();
+                assert_eq!(h.meshes(tex), vec![pixels], "texture, {at}");
+                let checker = h.canvas.checker.as_ref().unwrap().id();
+                assert_eq!(h.meshes(checker), vec![pixels], "checker, {at}");
+                // El marco: borde (1) + blanco (1) a los lados y abajo, barra (13) + blanco (1)
+                // arriba; ni un píxel más ni menos.
+                let frame = union(&h.meshes(piece_id(&skin, "artboard.frame")));
+                assert_eq!(
+                    frame,
+                    Rect::from_min_max(
+                        pixels.min - Vec2::new(2.0, 14.0),
+                        pixels.max + Vec2::new(2.0, 2.0)
+                    ),
+                    "{at}"
+                );
+            }
+        }
     }
 }
