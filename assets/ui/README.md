@@ -67,7 +67,17 @@ oculta.
     otro en el mismo lugar; el humo es otra pieza para animarlo. `home.ground` (58×1) es el
     suelo sobre la línea grabada, desde el borde izquierdo.
   - Colores: `color.tab_text_dim` (el nombre de las pestañas inactivas) y `color.home_text`
-    ("Home").
+    ("Home" y los títulos del menú).
+  - Los "○ ×" sueltos del mockup son iguales a las marcas: con el puntero encima, la ○ pasa a
+    ser la × de `icon.tab_close`.
+- **Área de trabajo:** `workspace.box` mide 7×7, con centro (3,3,1,1): la línea clara
+  redondeada (como la de `toolbar.box`), 1 px de aire y una línea (89,77,77) con las puntas
+  cortadas. Rodea las reglas y el lienzo, con 5 px de fondo alrededor.
+- **Reglas:** `digit.0` … `digit.9` son las cifras del mockup, de 3×5 (el 1, de 1×5), sin
+  fondo; van con 1 px entre cifra y cifra. `ruler.corner` (11×11) es la esquina café con la
+  carita. `color.ruler_tick` (136,110,106) es el de las marcas, el signo menos y la línea entre
+  las reglas y el lienzo; el relleno es `color.background`, el brillo `color.highlight` y la
+  punta de las marcas chicas `color.canvas`.
 - **Degradé del menú:** `menubar.fade` mide 122×34, sin centro: el tramado café que va a
   tamaño de pieza contra la esquina de arriba a la derecha de la ventana, detrás del menú y de
   las pestañas.

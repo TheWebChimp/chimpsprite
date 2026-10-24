@@ -11,6 +11,7 @@ use eframe::egui::{
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
 use crate::editor::{Editor, MAX_BRUSH_SIZE, ToolKind};
 use crate::guides::{RULER_PX, SNAP_PX, SnapContext, after_drag, hit_guide, nice_step};
+use crate::pixel_rulers::{self, PixelRulers};
 use crate::skin::Skin;
 use crate::transform_box::{self, Handle, TransformBox, TransformHit};
 use crate::view::{ViewSettings, ZoomRequest};
@@ -75,6 +76,8 @@ pub struct CanvasView {
     wheel_rest: f32,
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
     pub background: Color32,
+    /// Las reglas del skin con Pixel UI (`None`: las de siempre); lo pone la app en cada frame.
+    pub pixel_rulers: Option<PixelRulers>,
 }
 
 /// Color alrededor de los artboards: `canvas` del skin con Pixel UI; si no, el del tema.
@@ -168,6 +171,7 @@ impl Default for CanvasView {
             slice_properties: false,
             wheel_rest: 0.0,
             background: theme::CANVAS_BG,
+            pixel_rulers: None,
         }
     }
 }
@@ -254,15 +258,24 @@ impl CanvasView {
             .id()
     }
 
-    /// Reglas superior e izquierda (sin la esquina).
-    fn ruler_rects(rect: Rect) -> (Rect, Rect) {
+    /// Grosor de las reglas: el del mockup con Pixel UI; si no, el de siempre.
+    fn ruler_px(&self) -> f32 {
+        if self.pixel_rulers.is_some() {
+            pixel_rulers::RULER_PX
+        } else {
+            RULER_PX
+        }
+    }
+
+    /// Reglas superior e izquierda (sin la esquina), de `px` de grosor.
+    fn ruler_rects(rect: Rect, px: f32) -> (Rect, Rect) {
         let top = Rect::from_min_max(
-            rect.min + Vec2::new(RULER_PX, 0.0),
-            Pos2::new(rect.right(), rect.top() + RULER_PX),
+            rect.min + Vec2::new(px, 0.0),
+            Pos2::new(rect.right(), rect.top() + px),
         );
         let left = Rect::from_min_max(
-            rect.min + Vec2::new(0.0, RULER_PX),
-            Pos2::new(rect.left() + RULER_PX, rect.bottom()),
+            rect.min + Vec2::new(0.0, px),
+            Pos2::new(rect.left() + px, rect.bottom()),
         );
         (top, left)
     }
@@ -437,12 +450,13 @@ impl CanvasView {
             let w = (p - screen_origin) / zoom;
             (w.x - origin.0 as f32, w.y - origin.1 as f32)
         };
+        let ruler_px = self.ruler_px();
         let on_ruler = |p: Pos2| {
             view.rulers && {
-                let (top, left) = Self::ruler_rects(rect);
+                let (top, left) = Self::ruler_rects(rect, ruler_px);
                 top.contains(p)
                     || left.contains(p)
-                    || p.x < rect.left() + RULER_PX && p.y < rect.top() + RULER_PX
+                    || p.x < rect.left() + ruler_px && p.y < rect.top() + ruler_px
             }
         };
         let axis_cursor = |axis: Axis| match axis {
@@ -478,7 +492,7 @@ impl CanvasView {
         }
         let p = pointer?;
         if on_ruler(p) {
-            let (top, left) = Self::ruler_rects(rect);
+            let (top, left) = Self::ruler_rects(rect, ruler_px);
             let axis = if top.contains(p) {
                 Some(Axis::Horizontal)
             } else if left.contains(p) {
@@ -754,7 +768,7 @@ impl CanvasView {
             && let Some(p) = pointer
         {
             let area = if view.rulers {
-                Rect::from_min_max(rect.min + Vec2::splat(RULER_PX), rect.max)
+                Rect::from_min_max(rect.min + Vec2::splat(self.ruler_px()), rect.max)
             } else {
                 rect
             };
@@ -1249,7 +1263,10 @@ impl CanvasView {
 
         if view_settings.rulers {
             let pointer = response.hover_pos().or(ui.ctx().pointer_interact_pos());
-            self.draw_rulers(&painter, rect, editor, pointer);
+            match self.pixel_rulers {
+                Some(look) => self.draw_pixel_rulers(&painter, rect, editor, pointer, &look),
+                None => self.draw_rulers(&painter, rect, editor, pointer),
+            }
         }
 
         if self.draw_pipette
@@ -1289,7 +1306,7 @@ impl CanvasView {
         editor: &Editor,
         pointer: Option<Pos2>,
     ) {
-        let (top, left) = Self::ruler_rects(rect);
+        let (top, left) = Self::ruler_rects(rect, RULER_PX);
         let corner = Rect::from_min_size(rect.min, Vec2::splat(RULER_PX));
         for r in [top, left, corner] {
             painter.rect_filled(r, 0.0, theme::RULER_BG);
@@ -1307,10 +1324,7 @@ impl CanvasView {
 
         let origin = editor.artboard().position;
         let major = nice_step(self.zoom, 50.0);
-        let minor = [major / 10, major / 5, major / 2]
-            .into_iter()
-            .find(|&m| m >= 1 && m as f32 * self.zoom >= 6.0)
-            .unwrap_or(major);
+        let minor = minor_step(major, self.zoom);
         let font = FontId::monospace(9.0);
         let tick = Stroke::new(1.0, theme::RULER_TICK);
         // Rango local visible en cada eje.
@@ -1364,6 +1378,77 @@ impl CanvasView {
             let mark = Stroke::new(1.0, theme::ACCENT);
             painter.vline(p.x, top.y_range(), mark);
             painter.hline(left.x_range(), p.y, mark);
+        }
+    }
+}
+
+/// Las marcas visibles de una regla: `(valor local, posición en pantalla, es grande)` para el
+/// rango de mundo `w0..w1`, con el artboard en `origin` del eje. `screen` pasa de mundo a
+/// pantalla.
+fn ruler_ticks(
+    w0: f32,
+    w1: f32,
+    origin: i32,
+    major: i32,
+    minor: i32,
+    screen: impl Fn(i32) -> f32,
+) -> impl Iterator<Item = (i32, f32, bool)> {
+    let a = ((w0 - origin as f32) / minor as f32).floor() as i32 - 1;
+    let b = ((w1 - origin as f32) / minor as f32).ceil() as i32 + 1;
+    (a..=b).map(move |k| {
+        let u = k * minor;
+        (u, screen(origin + u), u.rem_euclid(major) == 0)
+    })
+}
+
+/// La marca chica: un décimo, un quinto o la mitad de la grande, la primera que mida al menos
+/// 6 puntos en pantalla.
+fn minor_step(major: i32, zoom: f32) -> i32 {
+    [major / 10, major / 5, major / 2]
+        .into_iter()
+        .find(|&m| m >= 1 && m as f32 * zoom >= 6.0)
+        .unwrap_or(major)
+}
+
+impl CanvasView {
+    /// Las reglas con Pixel UI, como en el mockup (ver `pixel_rulers`): la misma escala que las
+    /// de siempre, con marcas grandes cada `MAJOR_MIN_PX` como mínimo. Cada marca va en la
+    /// columna (o fila) de píxeles justo antes de su borde: el 0 del mockup cae sobre la línea
+    /// oscura y el lienzo empieza al lado.
+    fn draw_pixel_rulers(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        editor: &Editor,
+        pointer: Option<Pos2>,
+        look: &PixelRulers,
+    ) {
+        painter.extend(look.frame_shapes(rect));
+        let origin = editor.artboard().position;
+        let major = nice_step(self.zoom, pixel_rulers::MAJOR_MIN_PX);
+        let minor = minor_step(major, self.zoom);
+        let (wx0, wy0) = self.to_world(rect, rect.min);
+        let (wx1, wy1) = self.to_world(rect, rect.max);
+        // Cada regla recorta lo suyo: las marcas no pisan la esquina ni el lienzo.
+        let clip = |strip: Rect| painter.with_clip_rect(strip.intersect(painter.clip_rect()));
+        let top = clip(PixelRulers::top_strip(rect));
+        let screen_x = |x: i32| self.to_screen(rect, (x, 0)).x.round() - 1.0;
+        for (u, x, is_major) in ruler_ticks(wx0, wx1, origin.0, major, minor, screen_x) {
+            top.add(look.top_tick(x, rect.top(), is_major));
+            if is_major {
+                top.extend(look.top_label(u, x, rect.top()));
+            }
+        }
+        let left = clip(PixelRulers::left_strip(rect));
+        let screen_y = |y: i32| self.to_screen(rect, (0, y)).y.round() - 1.0;
+        for (u, y, is_major) in ruler_ticks(wy0, wy1, origin.1, major, minor, screen_y) {
+            left.add(look.left_tick(y, rect.left(), is_major));
+            if is_major {
+                left.extend(look.left_label(u, y, rect.left()));
+            }
+        }
+        if let Some(p) = pointer.filter(|p| rect.contains(*p)) {
+            painter.add(look.pointer_shapes(rect, p));
         }
     }
 }
@@ -2214,6 +2299,29 @@ mod tests {
             ruler_drag(ToolKind::Pencil),
             "the hand did not pan"
         );
+    }
+
+    #[test]
+    fn with_pixel_rulers_the_ruler_is_12_thick_for_guides_and_the_pointer() {
+        let mut h = Harness::new();
+        let skin = Skin::embedded(&h.ctx);
+        h.canvas.pixel_rulers = Some(crate::pixel_rulers::PixelRulers::from_skin(&skin));
+        h.frame(vec![]);
+        // La fila 11 (la línea oscura) todavía es regla; la 12 ya es lienzo.
+        let on = Pos2::new(h.rect.center().x, h.rect.top() + 11.5);
+        h.frame(vec![Event::PointerMoved(on)]);
+        assert_eq!(h.cursor, egui::CursorIcon::ResizeVertical, "over the ruler");
+        let off = Pos2::new(h.rect.center().x, h.rect.top() + 12.5);
+        h.frame(vec![Event::PointerMoved(off)]);
+        assert_ne!(h.cursor, egui::CursorIcon::ResizeVertical, "on the canvas");
+        h.drag(on, h.screen((8, 8)));
+        h.frame(vec![]);
+        assert_eq!(h.editor.guides().len(), 1, "a guide was created");
+        assert_eq!(h.editor.guides()[0].axis, Axis::Horizontal);
+        // Las coordenadas no cambian: el mismo píxel bajo el mismo punto.
+        let p = h.screen((3, 5));
+        h.frame(vec![Event::PointerMoved(p)]);
+        assert_eq!(h.canvas.hover, Some((3, 5)));
     }
 
     #[test]

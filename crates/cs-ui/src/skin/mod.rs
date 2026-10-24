@@ -22,7 +22,7 @@ use crate::theme;
 pub const EMBEDDED: &[u8] = include_bytes!("../../../../assets/ui/skin.aseprite");
 
 /// Colores del skin (`color.<nombre>`).
-pub const COLOR_NAMES: [&str; 13] = [
+pub const COLOR_NAMES: [&str; 14] = [
     "desktop",
     "text",
     "text_dim",
@@ -36,6 +36,7 @@ pub const COLOR_NAMES: [&str; 13] = [
     "highlight",
     "tab_text_dim",
     "home_text",
+    "ruler_tick",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -156,6 +157,8 @@ pub struct SkinColors {
     pub tab_text_dim: Color32,
     /// El texto "Home" de la barra de pestañas y los títulos del menú.
     pub home_text: Color32,
+    /// Las reglas con Pixel UI: las marcas, el signo menos y la línea contra el lienzo.
+    pub ruler_tick: Color32,
 }
 
 impl SkinColors {
@@ -174,6 +177,7 @@ impl SkinColors {
             highlight: theme::WIDGET_HOVER,
             tab_text_dim: theme::LABEL,
             home_text: egui::Visuals::dark().strong_text_color(),
+            ruler_tick: theme::RULER_TICK,
         }
     }
 
@@ -193,6 +197,7 @@ impl SkinColors {
             ("highlight", &mut c.highlight),
             ("tab_text_dim", &mut c.tab_text_dim),
             ("home_text", &mut c.home_text),
+            ("ruler_tick", &mut c.ruler_tick),
         ];
         for (name, slot) in slots {
             if let Some(v) = colors.get(name) {
@@ -582,6 +587,42 @@ mod tests {
         assert_eq!(alpha(fade, 0, 0), 0);
         assert_eq!(data.colors["tab_text_dim"], Rgba::rgb(89, 77, 77));
         assert_eq!(data.colors["home_text"], Rgba::rgb(51, 39, 42));
+    }
+
+    #[test]
+    fn the_embedded_skin_has_the_ruler_digits_smiley_and_workspace_box_of_the_mockup() {
+        let data = decode(EMBEDDED).unwrap();
+        // Las cifras del mockup miden 3×5, salvo el 1, de 1×5.
+        for d in 0..10 {
+            let name = format!("digit.{d}");
+            let digit = data.pieces.get(&name).unwrap_or_else(|| panic!("{name}"));
+            let width = if d == 1 { 1 } else { 3 };
+            assert_eq!((digit.size, digit.center), ([width, 5], None), "{name}");
+        }
+        let corner = &data.pieces["ruler.corner"];
+        assert_eq!((corner.size, corner.center), ([11, 11], None));
+        // La caja: línea clara redondeada, aire y línea oscura con la punta cortada; el centro,
+        // vacío, se estira.
+        let frame = &data.pieces["workspace.box"];
+        let center = Rect9 {
+            x: 3,
+            y: 3,
+            w: 1,
+            h: 1,
+        };
+        assert_eq!((frame.size, frame.center), ([7, 7], Some(center)));
+        let alpha = |x: u32, y: u32| frame.rgba[((y * 7 + x) * 4 + 3) as usize];
+        assert_eq!(alpha(0, 0), 0, "rounded corner");
+        assert_eq!(alpha(0, 3), 255, "the light line");
+        assert_eq!(alpha(1, 3), 0, "the air");
+        assert_eq!(alpha(2, 3), 255, "the dark line");
+        assert_eq!(alpha(2, 2), 0, "the dark line's cut corner");
+        assert_eq!(alpha(3, 3), 0, "the canvas goes inside");
+        assert_ne!(
+            data.pieces["workspace.box"].rgba, data.pieces["toolbar.box"].rgba,
+            "not the toolbar's box: this one has the dark line"
+        );
+        assert_eq!(data.colors["ruler_tick"], Rgba::rgb(136, 110, 106));
     }
 
     #[test]

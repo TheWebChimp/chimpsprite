@@ -896,3 +896,83 @@ fn with_pixel_ui_the_menu_has_the_mockup_color_and_spacing() {
         .unwrap();
     assert_ne!(file.2, color);
 }
+
+// El área de trabajo con Pixel UI: la caja y las reglas del mockup.
+
+#[test]
+fn with_pixel_ui_the_workspace_box_is_5_px_from_its_neighbours() {
+    let h = LayoutHarness::new(pixel_ui(), true);
+    let workspace = union(&h.drawn("workspace.box")).expect("the box");
+    let toolbar = union(&h.drawn("toolbar.box")).expect("the toolbar box");
+    // El mockup: la caja de la barra de íconos termina en la x 59, quedan 5 px de fondo
+    // (60..64) y la del área de trabajo empieza en la 65. Arriba, las dos en la fila 95, 5 px
+    // debajo del grabado de la barra de opciones (88/89).
+    assert_eq!(
+        workspace.left() - toolbar.right(),
+        5.0,
+        "{workspace:?} {toolbar:?}"
+    );
+    assert_eq!(workspace.top(), toolbar.top());
+    assert_eq!(workspace.top() - h.panel("tool_options").bottom(), 5.0);
+    // A la derecha, 5 px hasta el panel (en el mockup, hasta su caja: 776..780); abajo, 5 hasta
+    // la línea de tiempo (el mockup no la tiene: el mismo aire).
+    assert_eq!(h.panel("palette").left() - workspace.right(), 5.0);
+    assert_eq!(h.panel("timeline").top() - workspace.bottom(), 5.0);
+    // Las reglas y el lienzo, dentro de la línea clara, el aire y la línea oscura.
+    let canvas = h.canvas.expect("a document is open");
+    assert_eq!(canvas, workspace.shrink(3.0));
+}
+
+#[test]
+fn with_pixel_ui_the_rulers_are_12_thick_with_the_smiley_and_the_digit_pieces() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    // El zoom del mockup: una marca chica por píxel y un número cada 5.
+    h.app.doc.canvas.zoom = 8.0;
+    h.frame();
+    h.frame();
+    let canvas = h.canvas.expect("a document is open");
+    let colors = *h.app.pixel.skin().expect("on").colors();
+    assert_eq!(
+        h.drawn("ruler.corner"),
+        vec![Rect::from_min_size(canvas.min, Vec2::splat(11.0))],
+        "the smiley in the corner"
+    );
+    let rects = h.colored_rects();
+    let row =
+        |y: f32, x0: f32| Rect::from_min_max(Pos2::new(x0, y), Pos2::new(canvas.right(), y + 1.0));
+    // El brillo en la fila 10 y la línea oscura en la 11: el lienzo empieza en la 12.
+    assert!(rects.contains(&(
+        colors.highlight,
+        row(canvas.top() + 10.0, canvas.left() + 12.0)
+    )));
+    assert!(rects.contains(&(colors.ruler_tick, row(canvas.top() + 11.0, canvas.left()))));
+    // Los números con las cifras del skin: algún "10" es un 1 y, 2 px después, un 0.
+    let zeros = h.drawn("digit.0");
+    let tens = h
+        .drawn("digit.1")
+        .into_iter()
+        .filter(|one| {
+            let zero = Rect::from_min_size(one.min + Vec2::new(2.0, 0.0), Vec2::new(3.0, 5.0));
+            zeros.contains(&zero)
+        })
+        .count();
+    assert!(
+        tens > 0,
+        "a 10: ones {:?} zeros {zeros:?}",
+        h.drawn("digit.1")
+    );
+    assert!(!h.drawn("digit.5").is_empty(), "a label every 5");
+    // Y ningún número de las reglas de egui.
+    assert!(!h.texts.iter().any(|(t, _)| t == "10"), "{:?}", h.texts);
+}
+
+#[test]
+fn without_pixel_ui_the_canvas_has_no_box_and_the_egui_rulers() {
+    let h = LayoutHarness::editor();
+    let canvas = h.canvas.expect("a document is open");
+    assert_eq!(canvas.left(), h.panel("tools").right(), "no air");
+    assert_eq!(canvas.top(), h.panel("tool_options").bottom());
+    assert_eq!(canvas.right(), h.panel("palette").left());
+    // Los números de las reglas son textos de egui.
+    assert!(h.texts.iter().any(|(t, _)| t == "0"), "{:?}", h.texts);
+}

@@ -619,6 +619,36 @@ fn more_mark(corner: Pos2, pixels_per_point: f32) -> [Rect; 3] {
     })
 }
 
+const WORKSPACE_PIECE: &str = "workspace.box";
+/// Aire de fondo entre la caja del área de trabajo y lo que la rodea: arriba, a la derecha y
+/// abajo. A la izquierda ya está el de la barra de íconos (`TOOLBAR_MARGIN`).
+pub const WORKSPACE_MARGIN: i8 = 5;
+/// Borde de la caja sin la pieza: la línea, el aire y otra línea, como en el mockup.
+const FALLBACK_WORKSPACE_BORDER: f32 = 3.0;
+
+/// La caja del área de trabajo del mockup (`workspace.box`, en 9-slice) en `rect`. Devuelve el
+/// interior, donde van las reglas y el lienzo: `rect` sin los bordes de la pieza. Sin la pieza,
+/// un borde `outline` de 1 px.
+pub fn workspace_box(ui: &Ui, skin: &Skin, rect: Rect) -> Rect {
+    let ppp = ui.ctx().pixels_per_point();
+    match skin.piece(WORKSPACE_PIECE, WidgetState::Normal) {
+        Some(piece) => {
+            ui.painter().extend(piece_shapes(piece, rect, ppp));
+            let [left, top, right, bottom] = borders(piece);
+            Rect::from_min_max(rect.min + vec2(left, top), rect.max - vec2(right, bottom))
+        }
+        None => {
+            ui.painter().rect_stroke(
+                rect.round_to_pixels(ppp),
+                0.0,
+                Stroke::new(1.0, skin.colors().outline),
+                StrokeKind::Inside,
+            );
+            rect.shrink(FALLBACK_WORKSPACE_BORDER)
+        }
+    }
+}
+
 /// Grosor de un separador grabado, en puntos: la línea oscura y el brillo, de 1 px de skin cada
 /// una.
 pub const ETCHED_SIZE: f32 = 2.0;

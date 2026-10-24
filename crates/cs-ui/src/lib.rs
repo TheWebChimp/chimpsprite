@@ -28,6 +28,7 @@ mod lospec_examples;
 mod lospec_tab;
 mod palette_library;
 mod panels;
+mod pixel_rulers;
 mod pixel_ui;
 mod platform;
 mod recent;
@@ -912,6 +913,8 @@ impl ChimpApp {
         // la línea de tiempo empieza a su derecha.
         // Alrededor de los artboards: el color `canvas` del skin con Pixel UI.
         self.doc.canvas.background = canvas::background_for(skin);
+        // Con Pixel UI, las reglas del mockup.
+        self.doc.canvas.pixel_rulers = skin.map(pixel_rulers::PixelRulers::from_skin);
         let (width, frame) = match skin {
             // Con Pixel UI, la columna de íconos: la caja más el margen a cada lado, sin línea
             // contra el lienzo (el mockup no la tiene). Arriba, el margen del mockup hasta la
@@ -1001,17 +1004,43 @@ impl ChimpApp {
                     self.open_canvas_size();
                 }
             });
-        egui::CentralPanel::no_frame()
+        // Otra vez: el panel derecho necesita `self` entero.
+        let Some(skin) = self.pixel.skin() else {
+            return egui::CentralPanel::no_frame()
+                .show(ui, |ui| {
+                    self.doc.canvas.show(
+                        ui,
+                        &mut self.doc.editor,
+                        self.canvas_size.as_mut(),
+                        &self.view,
+                    )
+                })
+                .response
+                .rect;
+        };
+        // Con Pixel UI, como en el mockup: el lienzo y sus reglas en una caja, con 5 px de fondo
+        // alrededor (a la izquierda, los de la barra de íconos).
+        let margin = pixel_ui::WORKSPACE_MARGIN;
+        let frame = egui::Frame::new()
+            .fill(skin.colors().background)
+            .inner_margin(egui::Margin {
+                left: 0,
+                right: margin,
+                top: margin,
+                bottom: margin,
+            });
+        let doc = &mut self.doc;
+        let (dialog, view) = (self.canvas_size.as_mut(), &self.view);
+        egui::CentralPanel::default()
+            .frame(frame)
             .show(ui, |ui| {
-                self.doc.canvas.show(
-                    ui,
-                    &mut self.doc.editor,
-                    self.canvas_size.as_mut(),
-                    &self.view,
-                )
+                let inner = pixel_ui::workspace_box(ui, skin, ui.max_rect());
+                ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                    doc.canvas.show(ui, &mut doc.editor, dialog, view)
+                });
+                inner
             })
-            .response
-            .rect
+            .inner
     }
 }
 
