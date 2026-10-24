@@ -310,7 +310,8 @@ fn gap(ui: &mut egui::Ui, px: f32) {
 /// Las opciones de la herramienta activa, en fila: cada etiqueta al lado de su control y un
 /// separador entre grupos. La ayuda de la herramienta va en el mismo orden que antes. Con `look`
 /// (Pixel UI), los controles del diseño (`bar_fields`): textos en la fila del diseño, campos
-/// numéricos en vez de sliders, combos en vez de grupos de radios, casillas del skin, los modos de
+/// numéricos en vez de sliders, botones de un clic en vez de grupos de radios, combos para las
+/// listas (tramado, fuente), casillas del skin, los modos de
 /// selección con íconos y aire en vez de separadores; los botones de forma, de 13×13.
 fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
     let tool = editor.tool;
@@ -431,9 +432,7 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
                     bar_fields::label(ui, look, "Sample:");
                     gap(ui, LABEL_FIELD_GAP);
                     let name = |all| if all { "All layers" } else { "Layer" };
-                    bar_fields::combo(ui, look, "sample", name(options.sample_all), |ui| {
-                        bar_fields::choices(ui, &mut options.sample_all, [false, true], name)
-                    });
+                    bar_fields::options(ui, look, &mut options.sample_all, [false, true], name);
                 }
                 None => {
                     ui.label("Tolerance");
@@ -507,11 +506,8 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
                         GradientShape::Linear => "Linear",
                         GradientShape::Radial => "Radial",
                     };
-                    let shape = &mut options.gradient_shape;
-                    bar_fields::combo(ui, look, "gradient_shape", name(*shape), |ui| {
-                        let shapes = [GradientShape::Linear, GradientShape::Radial];
-                        bar_fields::choices(ui, shape, shapes, name)
-                    });
+                    let shapes = [GradientShape::Linear, GradientShape::Radial];
+                    bar_fields::options(ui, look, &mut options.gradient_shape, shapes, name);
                     gap(ui, CONTROL_GAP);
                     let dither = &mut options.dither;
                     bar_fields::combo(ui, look, "dither", dither.label(), |ui| {
@@ -580,15 +576,13 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
             Some(look) => {
                 bar_fields::label(ui, look, "Rotation:");
                 gap(ui, LABEL_FIELD_GAP);
-                let rotation = &mut editor.options.rotation;
-                bar_fields::combo(ui, look, "rotation", rotation.label(), |ui| {
-                    bar_fields::choices(
-                        ui,
-                        rotation,
-                        RotationAlgorithm::ALL,
-                        RotationAlgorithm::label,
-                    )
-                });
+                bar_fields::options(
+                    ui,
+                    look,
+                    &mut editor.options.rotation,
+                    RotationAlgorithm::ALL,
+                    RotationAlgorithm::label,
+                );
             }
             None => {
                 ui.label("Rotation:");
@@ -3066,6 +3060,9 @@ mod tests {
                 "field.check.on",
                 "sym.slot",
                 "sym.slot.active",
+                "button",
+                "button.hover",
+                "button.down",
             ] {
                 for rect in h.drawn(piece) {
                     assert!(
@@ -3074,6 +3071,11 @@ mod tests {
                         h.bar
                     );
                 }
+            }
+            // Las herramientas con grupos de radios (Sample, Linear/Radial, Rotation) los
+            // dibujan como botones: la prueba de arriba no es vacía para ellos.
+            if kind != ToolKind::Pencil && kind != ToolKind::Text {
+                assert!(!h.drawn("button.down").is_empty(), "{kind:?}: no buttons");
             }
         }
     }
@@ -3248,12 +3250,14 @@ mod tests {
     fn with_pixel_ui_a_combo_is_the_field_combo_and_picking_an_option_works() {
         let mut h = pixel_bar(ToolKind::Gradient);
         let bar = h.bar;
-        // La forma y el tramado: dos combos del diseño, de la y 73 a la 88.
+        // El tramado es una lista de verdad: el único combo del diseño, de la y 73 a la 88 (la
+        // forma, Linear/Radial, son botones).
         let combos = h.drawn_boxes("field.combo");
-        assert_eq!(combos.len(), 2, "{combos:?}");
+        assert_eq!(combos.len(), 1, "{combos:?}");
         // El texto, 6 px adentro y en la fila de los textos; 5 px de su tinta a la parte de la
         // flecha, las últimas 10 columnas (en el diseño, x 128..212, tinta en 134..197).
-        let (_, ink) = h.text("Linear");
+        let current = h.editor.options.dither;
+        let (_, ink) = h.text(current.label());
         let combo = combos[0];
         assert_eq!(combo.top(), bar.top() + 2.0);
         assert_eq!(combo.height(), 16.0);
@@ -3261,45 +3265,150 @@ mod tests {
         assert_eq!(ink.top(), bar.top() + 5.0);
         assert_eq!(combo.right() - ink.right(), 5.0 + 10.0);
         // Un clic abre la lista en el panel de los menús, colgada del combo.
-        assert!(!h.has("Radial"), "closed: only the chosen one");
-        h.open("Linear");
-        assert!(h.has("Radial"), "{:?}", h.nodes);
+        let other = Dither::ALL.into_iter().find(|d| *d != current).unwrap();
+        assert!(!h.has(other.label()), "closed: only the chosen one");
+        h.open(current.label());
+        assert!(h.has(other.label()), "{:?}", h.nodes);
         let panel = h.drawn_boxes("menu.panel");
         assert_eq!(panel.len(), 1, "{panel:?}");
         assert_eq!(panel[0].left_top(), combo.left_bottom());
         assert!(panel[0].width() >= combo.width());
-        h.click("Radial");
-        assert_eq!(h.editor.options.gradient_shape, GradientShape::Radial);
+        h.click(other.label());
+        assert_eq!(h.editor.options.dither, other);
         for _ in 0..10 {
             h.frame(vec![]);
         }
         assert_eq!(h.drawn_boxes("menu.panel"), vec![], "closed after picking");
-        assert!(h.has("Radial") && !h.has("Linear"));
-        // El tramado, igual.
-        let other = Dither::ALL
-            .into_iter()
-            .find(|d| *d != h.editor.options.dither)
-            .unwrap();
-        h.open(h.editor.options.dither.label());
-        h.click(other.label());
-        assert_eq!(h.editor.options.dither, other);
+        assert!(h.has(other.label()) && !h.has(current.label()));
+    }
+
+    /// Las cajas de los botones de opción dibujados: (normales, activos). Los normales pueden
+    /// estar con el puntero encima (`button.hover`).
+    fn option_buttons(h: &BarHarness) -> (Vec<Rect>, Vec<Rect>) {
+        let mut normal = h.drawn_boxes("button");
+        normal.extend(h.drawn_boxes("button.hover"));
+        normal.sort_by(|a, b| a.left().total_cmp(&b.left()));
+        (normal, h.drawn_boxes("button.down"))
+    }
+
+    /// Un grupo de radios de la barra con Pixel UI: la herramienta, sus opciones (el nombre de
+    /// cada botón) y cuál está elegida.
+    struct RadioGroup {
+        tool: ToolKind,
+        options: Vec<&'static str>,
+        current: fn(&Editor) -> &'static str,
+    }
+
+    fn radio_groups() -> Vec<RadioGroup> {
+        vec![
+            RadioGroup {
+                tool: ToolKind::MagicWand,
+                options: vec!["Layer", "All layers"],
+                current: |e| {
+                    if e.options.sample_all {
+                        "All layers"
+                    } else {
+                        "Layer"
+                    }
+                },
+            },
+            RadioGroup {
+                tool: ToolKind::Gradient,
+                options: vec!["Linear", "Radial"],
+                current: |e| match e.options.gradient_shape {
+                    GradientShape::Linear => "Linear",
+                    GradientShape::Radial => "Radial",
+                },
+            },
+            RadioGroup {
+                tool: ToolKind::RectSelect,
+                options: RotationAlgorithm::ALL.map(|r| r.label()).into(),
+                current: |e| e.options.rotation.label(),
+            },
+        ]
+    }
+
+    /// La caja del botón `label`: la pieza dibujada debajo de su nodo.
+    fn button_box(h: &BarHarness, label: &str) -> (Rect, bool) {
+        let at = h.rect(label);
+        let (normal, active) = option_buttons(h);
+        let hit = |b: &Rect| b.x_range().contains(at.center().x);
+        match active.iter().find(|b| hit(b)) {
+            Some(b) => (*b, true),
+            None => (
+                *normal
+                    .iter()
+                    .find(|b| hit(b))
+                    .unwrap_or_else(|| panic!("no button under {label:?}")),
+                false,
+            ),
+        }
     }
 
     #[test]
-    fn with_pixel_ui_the_radio_groups_are_combos_too() {
-        let mut h = pixel_bar(ToolKind::MagicWand);
-        assert_eq!(h.drawn_boxes("field.combo").len(), 2, "sample and rotation");
-        h.open("Layer");
-        h.click("All layers");
-        assert!(h.editor.options.sample_all);
-        let current = h.editor.options.rotation;
-        h.open(current.label());
-        let other = RotationAlgorithm::ALL
-            .into_iter()
-            .find(|r| *r != current)
-            .unwrap();
-        h.click(other.label());
-        assert_eq!(h.editor.options.rotation, other);
+    fn with_pixel_ui_each_radio_option_is_a_button_and_the_current_one_is_active() {
+        for group in radio_groups() {
+            let h = pixel_bar(group.tool);
+            let bar = h.bar;
+            let tool = group.tool;
+            let current = (group.current)(&h.editor);
+            let (normal, active) = option_buttons(&h);
+            // Un botón por opción; solo el elegido con la pieza activa.
+            let options: Vec<Rect> = group
+                .options
+                .iter()
+                .map(|label| {
+                    let (b, on) = button_box(&h, label);
+                    assert_eq!(on, *label == current, "{tool:?}: {label}");
+                    // En las filas de los campos (la y 73 a la 88 del diseño).
+                    assert_eq!(b.top(), bar.top() + 2.0, "{tool:?}: {label} {b:?}");
+                    assert_eq!(b.height(), 16.0, "{tool:?}: {label}");
+                    // El texto, centrado en el botón y con las mayúsculas en la fila de los
+                    // textos, en el color del texto.
+                    let (color, ink) = h.text(label);
+                    assert_eq!(color, h.skin.as_ref().unwrap().colors().text);
+                    assert_eq!(ink.top(), bar.top() + 5.0, "{tool:?}: {label} {ink:?}");
+                    assert_eq!(ink.center().x, b.center().x, "{tool:?}: {label}");
+                    assert!(b.contains_rect(ink), "{tool:?}: {label}");
+                    b
+                })
+                .collect();
+            // En lo que ocupa el grupo (Magic Wand también tiene Rotation): un activo y los
+            // demás normales, ni una pieza de más.
+            let span = options.iter().fold(Rect::NOTHING, |a, b| a.union(*b));
+            let inside = |boxes: &[Rect]| boxes.iter().filter(|b| span.intersects(**b)).count();
+            assert_eq!(inside(&active), 1, "{tool:?}: {active:?}");
+            assert_eq!(inside(&normal), options.len() - 1, "{tool:?}: {normal:?}");
+            // En fila, sin solaparse.
+            for pair in options.windows(2) {
+                assert!(pair[1].left() > pair[0].right(), "{tool:?}: {pair:?}");
+            }
+            // Ya no hay combo para el grupo.
+            for label in &group.options {
+                let combo = h
+                    .drawn_boxes("field.combo")
+                    .into_iter()
+                    .any(|c| c.contains(h.rect(label).center()));
+                assert!(!combo, "{tool:?}: {label} in a combo");
+            }
+        }
+    }
+
+    #[test]
+    fn with_pixel_ui_one_click_on_a_radio_button_picks_that_option() {
+        for group in radio_groups() {
+            let mut h = pixel_bar(group.tool);
+            let tool = group.tool;
+            for label in group.options.iter().rev().chain(&group.options) {
+                h.click(label);
+                assert_eq!((group.current)(&h.editor), *label, "{tool:?}");
+                h.frame(vec![]);
+                // La pieza activa pasa al elegido; los otros, normales.
+                for other in &group.options {
+                    assert_eq!(button_box(&h, other).1, other == label, "{tool:?}: {other}");
+                }
+            }
+        }
     }
 
     #[test]

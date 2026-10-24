@@ -13,6 +13,11 @@
 //! - **Casilla:** `field.check.on`, 13×14 desde la fila 3, y el texto 3 px después. Sin marcar va
 //!   `field.check`; mientras el skin no la traiga (el diseño no la muestra), un cuadro plano de
 //!   respaldo, como en los menús.
+//! - **Opciones** (los grupos de radios: Sample, Linear/Radial, Rotation): botones de un clic,
+//!   uno por opción. El diseño no los muestra; van con la pieza `button` de los diálogos (49×17
+//!   con centro) a 16 de alto en las filas de los campos, `button.down` el elegido, y el texto
+//!   centrado con las mayúsculas en la fila de los textos. `sym.slot` no sirve: no tiene centro y
+//!   no se estira.
 
 use std::ops::RangeInclusive;
 
@@ -55,6 +60,13 @@ const CHECK_TOP: f32 = 3.0;
 const FALLBACK_CHECK_SIZE: Vec2 = vec2(13.0, 14.0);
 /// De la casilla a la tinta de su texto.
 const CHECK_GAP: f32 = 3.0;
+/// Los botones de opción (los grupos de radios): la pieza de los botones de los diálogos, que
+/// tiene centro y se estira a lo ancho; acá, con el alto de los campos.
+const BUTTON: &str = "button";
+/// De cada borde del botón de opción a la tinta de su texto: el mismo relleno que el combo.
+const OPTION_TEXT_PAD: f32 = 6.0;
+/// Entre botón y botón de opción, como entre los cuadritos de Mode (de pieza a pieza).
+const OPTION_GAP: f32 = 2.0;
 
 /// Lo que necesitan los controles pixel de la barra: el skin y la fila de arriba de la barra.
 #[derive(Clone, Copy)]
@@ -190,6 +202,76 @@ pub fn choices<T: PartialEq + Copy>(
             *current = value;
         }
     }
+}
+
+/// Los grupos chicos de opciones exclusivas (los que sin Pixel UI son radios): una fila de
+/// botones de un clic, uno por cada `value` con su `name`. El elegido va con `button.down`, los
+/// otros con `button` (o `button.hover` con el puntero encima). Un clic elige esa opción; otro
+/// clic en la elegida no la apaga, como con radios. Devuelve si cambió `current`.
+pub fn options<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    look: BarLook,
+    current: &mut T,
+    values: impl IntoIterator<Item = T>,
+    name: impl Fn(T) -> &'static str,
+) -> bool {
+    let before = *current;
+    ui.scope(|ui| {
+        ui.spacing_mut().item_spacing.x = OPTION_GAP;
+        for value in values {
+            if option_button(ui, look, *current == value, name(value)).clicked() {
+                *current = value;
+            }
+        }
+    });
+    *current != before
+}
+
+/// Un botón de opción: la pieza `button` en 9-slice, de las filas de los campos (2 a 17), con
+/// `label` centrado y las mayúsculas en `CAPS_TOP` también si está elegido (`on`).
+fn option_button(ui: &mut Ui, look: BarLook, on: bool, label: &str) -> Response {
+    let colors = look.skin.colors();
+    let shown = galley(ui, label, colors.text);
+    let width = OPTION_TEXT_PAD + ink_width(&shown) + OPTION_TEXT_PAD;
+    let (rect, response) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, enabled, on, label));
+    if ui.is_rect_visible(rect) {
+        let ppp = ui.ctx().pixels_per_point();
+        let drawn =
+            Rect::from_min_size(pos2(rect.left().round(), look.top + FIELD_TOP), rect.size());
+        let state = if on {
+            WidgetState::Down
+        } else if response.hovered() {
+            WidgetState::Hover
+        } else {
+            WidgetState::Normal
+        };
+        let mut shapes = match look.skin.piece(BUTTON, state) {
+            Some(piece) => pixel_ui::piece_shapes(piece, drawn, ppp),
+            None => {
+                let mut flat = flat_box(look, drawn, ppp);
+                if on {
+                    flat.push(Shape::rect_stroke(
+                        drawn.shrink(1.0).round_to_pixels(ppp),
+                        0.0,
+                        Stroke::new(1.0, colors.accent),
+                        StrokeKind::Inside,
+                    ));
+                }
+                flat
+            }
+        };
+        let at = tab_bar::text_pos(
+            &shown,
+            drawn.left() + OPTION_TEXT_PAD,
+            look.top + CAPS_TOP,
+            ppp,
+        );
+        shapes.push(Shape::galley(at, shown, colors.text));
+        painter(ui, look).extend(shapes);
+    }
+    response
 }
 
 /// Un campo numérico: `field.number` y, con `px`, la unidad `field.unit` a la derecha. Adentro va
