@@ -125,9 +125,15 @@ pub fn tool_options_bar(ui: &mut egui::Ui, editor: &mut Editor) {
 
 /// Scroll de las opciones de la barra: horizontal, solo con la rueda y la barra.
 fn options_scroll_area() -> egui::ScrollArea {
+    row_scroll_area("tool_options_scroll")
+}
+
+/// Scroll horizontal de una fila de controles que no se parte: solo con la rueda y la barra (sin
+/// arrastre). Cada fila lleva su propio `id_salt`.
+pub fn row_scroll_area(id_salt: &'static str) -> egui::ScrollArea {
     use egui::containers::scroll_area::ScrollSource;
     egui::ScrollArea::horizontal()
-        .id_salt("tool_options_scroll")
+        .id_salt(id_salt)
         .auto_shrink([false, false])
         .scroll_source(ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL)
 }
@@ -2008,6 +2014,26 @@ mod tests {
             h.editor.set_tool(kind);
             h.frame(vec![]);
             assert_eq!(h.bar.height(), OPTIONS_BAR_HEIGHT, "{kind:?}");
+            for (text, rect) in &h.nodes {
+                assert!(
+                    rect.top() >= h.bar.top() && rect.bottom() <= h.bar.bottom(),
+                    "{kind:?}: {text:?} {rect:?} out of {:?}",
+                    h.bar
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn with_pixel_ui_style_every_node_of_the_options_bar_fits_inside_it() {
+        let mut h = BarHarness::new(800.0);
+        crate::appearance::apply_style(&h.ctx, true);
+        for kind in [ToolKind::Pencil, ToolKind::MagicWand, ToolKind::Text] {
+            h.editor.set_tool(kind);
+            h.frame(vec![]);
+            h.frame(vec![]);
+            assert_eq!(h.bar.height(), OPTIONS_BAR_HEIGHT, "{kind:?}");
+            assert!(h.nodes.len() > 2, "{kind:?}: {:?}", h.nodes);
             for (text, rect) in &h.nodes {
                 assert!(
                     rect.top() >= h.bar.top() && rect.bottom() <= h.bar.bottom(),

@@ -77,7 +77,19 @@ pub fn show(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState) {
         });
 }
 
+/// La fila de controles: una sola línea que, si no cabe, hace scroll horizontal con la rueda o la
+/// barra (como la barra de opciones). Alta como su contenido, no como el panel.
 fn controls(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState) {
+    ui.scope(|ui| {
+        ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+        ui.style_mut().always_scroll_the_only_direction = true;
+        crate::panels::row_scroll_area("timeline_controls_scroll")
+            .auto_shrink([false, true])
+            .show(ui, |ui| controls_row(ui, editor, state));
+    });
+}
+
+fn controls_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState) {
     ui.horizontal(|ui| {
         let last = editor.frame_count() - 1;
         if ui.button("⏮").on_hover_text("First frame").clicked() {
@@ -921,4 +933,150 @@ fn draw_fold_arrow(painter: &egui::Painter, center: Pos2, collapsed: bool, color
         ]
     };
     painter.add(egui::Shape::convex_polygon(points, color, Stroke::NONE));
+}
+
+#[cfg(test)]
+mod tests {
+    use cs_core::{ColorMode, Sprite};
+    use eframe::egui::{Event, Pos2, RawInput};
+
+    use super::*;
+
+    /// La línea de tiempo en un panel de abajo, con eventos crudos (50 ms por frame).
+    struct Harness {
+        ctx: egui::Context,
+        editor: Editor,
+        state: TimelineState,
+        time: f64,
+        width: f32,
+        nodes: Vec<(String, Rect)>,
+        /// Posición del texto "Layers" del encabezado de la grilla.
+        grid: Pos2,
+    }
+
+    impl Harness {
+        fn new(width: f32) -> Self {
+            let ctx = egui::Context::default();
+            ctx.enable_accesskit();
+            let mut h = Self {
+                ctx,
+                editor: Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba)),
+                state: TimelineState::default(),
+                time: 0.0,
+                width,
+                nodes: Vec::new(),
+                grid: Pos2::ZERO,
+            };
+            for _ in 0..3 {
+                h.frame(vec![]);
+            }
+            h
+        }
+
+        fn frame(&mut self, events: Vec<Event>) {
+            self.time += 0.05;
+            let input = RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(self.width, 400.0))),
+                time: Some(self.time),
+                events,
+                ..Default::default()
+            };
+            let (editor, state) = (&mut self.editor, &mut self.state);
+            let mut output = self.ctx.run_ui(input, |ui| {
+                egui::Panel::bottom("timeline")
+                    .exact_size(190.0)
+                    .show(ui, |ui| show(ui, editor, state));
+            });
+            output.textures_delta.clear();
+            self.nodes = output
+                .platform_output
+                .accesskit_update
+                .map(|u| {
+                    u.nodes
+                        .iter()
+                        .filter_map(|(_, n)| {
+                            let b = n.bounds()?;
+                            let text = n.label().or_else(|| n.value())?.to_string();
+                            Some((
+                                text,
+                                Rect::from_min_max(
+                                    pos2(b.x0 as f32, b.y0 as f32),
+                                    pos2(b.x1 as f32, b.y1 as f32),
+                                ),
+                            ))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            for clipped in &output.shapes {
+                if let egui::Shape::Text(t) = &clipped.shape
+                    && t.galley.text() == "Layers"
+                {
+                    self.grid = t.pos;
+                }
+            }
+        }
+
+        fn rect(&self, text: &str) -> Rect {
+            self.nodes
+                .iter()
+                .find(|(t, _)| t == text)
+                .map(|(_, r)| *r)
+                .unwrap_or_else(|| panic!("no {text:?} in {:?}", self.nodes))
+        }
+
+        /// Rect del campo de duración (el último control de la fila).
+        fn duration(&self) -> Rect {
+            self.nodes
+                .iter()
+                .filter(|(t, _)| t.contains("ms"))
+                .map(|(_, r)| *r)
+                .next_back()
+                .unwrap_or_else(|| panic!("no duration in {:?}", self.nodes))
+        }
+
+        fn wheel(&mut self, dy: f32) {
+            let over = pos2(100.0, self.rect("+ Frame").center().y);
+            self.frame(vec![Event::PointerMoved(over)]);
+            self.frame(vec![Event::MouseWheel {
+                unit: egui::MouseWheelUnit::Point,
+                delta: vec2(0.0, dy),
+                phase: egui::TouchPhase::Move,
+                modifiers: Default::default(),
+            }]);
+            for _ in 0..20 {
+                self.frame(vec![]);
+            }
+        }
+    }
+
+    #[test]
+    fn the_last_control_can_be_scrolled_into_view_in_a_narrow_window() {
+        let mut h = Harness::new(1000.0);
+        assert!(h.duration().right() > 1000.0, "it starts clipped");
+        for _ in 0..6 {
+            h.wheel(-300.0);
+        }
+        let d = h.duration();
+        assert!(d.right() <= 1000.0 && d.left() >= 0.0, "{d:?}");
+    }
+
+    #[test]
+    fn the_controls_stay_on_one_line_and_the_grid_does_not_move() {
+        let wide = Harness::new(2000.0);
+        let mut h = Harness::new(1000.0);
+        let (frame_y, grid) = (h.rect("+ Frame").center().y, h.grid);
+        assert_eq!(
+            grid, wide.grid,
+            "same grid position as when everything fits"
+        );
+        assert_eq!(frame_y, wide.rect("+ Frame").center().y);
+        for _ in 0..3 {
+            h.wheel(-300.0);
+        }
+        assert_eq!(h.rect("+ Frame").center().y, frame_y, "one line");
+        assert_eq!(h.rect("+ Layer").center().y, frame_y, "one line");
+        assert_eq!(h.duration().center().y, frame_y, "one line");
+        assert_eq!(h.grid, grid, "the grid did not move");
+    }
 }
