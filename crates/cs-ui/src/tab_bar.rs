@@ -31,6 +31,8 @@ pub const MENU_HEIGHT: f32 = 14.0;
 /// Margen de arriba del menú con Pixel UI. egui centra el texto en el botón del menú, más alto
 /// que la barra: con −2, las mayúsculas quedan en la fila 3, como en el mockup.
 pub const MENU_TEXT_TOP: i8 = -2;
+/// La fila de arriba de las mayúsculas de los títulos del menú, como en el mockup.
+pub const MENU_CAPS_TOP: f32 = 3.0;
 /// Los títulos del menú con Pixel UI: el primero empieza 3 px adentro (margen más relleno) y
 /// entre la tinta de uno y la del siguiente hay 11 px, como en el mockup. Las letras de la fuente
 /// pixel dejan 1 px vacío al final, así que entre texto y texto quedan 10: el relleno de los dos
@@ -82,7 +84,7 @@ const MARK_HIT: f32 = 2.0;
 const CAP_HEIGHT: f32 = 7.0;
 /// El final de los nombres cortados: "…" si la fuente pixel lo tiene; si no, tres puntos (el
 /// "…" de la fuente de respaldo de egui no es pixel art y se ve borroso).
-fn ellipsis() -> &'static str {
+pub(crate) fn ellipsis() -> &'static str {
     if crate::appearance::pixel_font_has('…') {
         "…"
     } else {
@@ -339,7 +341,12 @@ fn truncated(ui: &Ui, name: &str, room: f32) -> String {
 }
 
 /// Dónde va un texto para que sus mayúsculas empiecen en la fila `cap_top`, alineado a píxeles.
-fn text_pos(galley: &Galley, left: f32, cap_top: f32, pixels_per_point: f32) -> egui::Pos2 {
+pub(crate) fn text_pos(
+    galley: &Galley,
+    left: f32,
+    cap_top: f32,
+    pixels_per_point: f32,
+) -> egui::Pos2 {
     let baseline = galley
         .rows
         .first()

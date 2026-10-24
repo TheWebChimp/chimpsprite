@@ -12,6 +12,7 @@ mod editor;
 mod export_dialog;
 mod file_actions;
 mod mask_ops;
+mod menus;
 mod palette_ops;
 mod palette_ui;
 mod slice_ops;
@@ -365,11 +366,10 @@ impl ChimpApp {
     }
 
     fn view_menu(&mut self, ui: &mut egui::Ui) {
-        let item = |text: &str, keys: &str| egui::Button::new(text).shortcut_text(keys);
         let v = &mut self.view;
         ui.add(egui::Checkbox::new(&mut v.extras, "Extras"))
             .on_hover_text("Ctrl+H: show or hide all extras");
-        ui.menu_button("Show", |ui| {
+        menus::submenu(ui, "Show", |ui| {
             ui.checkbox(&mut v.rulers, "Rulers");
             ui.add_enabled_ui(v.extras, |ui| {
                 ui.checkbox(&mut v.guides, "Guides");
@@ -382,14 +382,14 @@ impl ChimpApp {
                 ui.checkbox(&mut v.tile_numbers, "Tile Numbers");
             });
         });
-        ui.menu_button("Guides", |ui| {
+        menus::submenu(ui, "Guides", |ui| {
             ui.checkbox(&mut self.view.guides, "Show Guides");
             ui.checkbox(&mut self.view.snap_to_guides, "Snap to Guides");
             ui.checkbox(&mut self.view.lock_guides, "Lock Guides");
-            ui.separator();
+            menus::separator(ui);
             let has_guides = !self.doc.editor.guides().is_empty();
             if ui
-                .add_enabled(has_guides, egui::Button::new("Clear Guides"))
+                .add_enabled(has_guides, menus::plain("Clear Guides"))
                 .clicked()
             {
                 self.doc.editor.set_guides(Vec::new());
@@ -397,15 +397,15 @@ impl ChimpApp {
             }
             ui.weak("Drag from a ruler to add a guide;\ndrag it back to remove it.");
         });
-        ui.menu_button("Grid", |ui| {
+        menus::submenu(ui, "Grid", |ui| {
             ui.checkbox(&mut self.view.grid, "Show Grid");
             ui.checkbox(&mut self.view.snap_to_grid, "Snap to Grid");
-            if ui.button("Grid Settings…").clicked() {
+            if ui.add(menus::plain("Grid Settings…")).clicked() {
                 self.grid_dialog = Some(view::GridDialog::new(&self.doc.editor, &self.view));
                 ui.close();
             }
         });
-        ui.separator();
+        menus::separator(ui);
         ui.add(egui::Checkbox::new(
             &mut self.doc.editor.onion_enabled,
             "Onion Skin",
@@ -423,27 +423,30 @@ impl ChimpApp {
                 self.toggle_fullscreen(ui.ctx());
             }
         }
-        ui.separator();
+        menus::separator(ui);
         ui.checkbox(&mut self.view.pixel_ui, "Pixel UI");
         ui.add_enabled_ui(self.view.pixel_ui, |ui| {
-            ui.menu_button("UI Scale", |ui| {
+            menus::submenu(ui, "UI Scale", |ui| {
                 for scale in 1..=3u8 {
                     ui.radio_value(&mut self.view.ui_scale, scale, format!("{scale}×"));
                 }
             });
         });
-        ui.separator();
+        menus::separator(ui);
         let canvas = &mut self.doc.canvas;
-        if ui.add(item("Zoom In", "+")).clicked() {
+        if ui.add(menus::item("Zoom In", "+")).clicked() {
             canvas.request_zoom(view::ZoomRequest::In);
         }
-        if ui.add(item("Zoom Out", "-")).clicked() {
+        if ui.add(menus::item("Zoom Out", "-")).clicked() {
             canvas.request_zoom(view::ZoomRequest::Out);
         }
-        if ui.add(item("Actual Size", "Ctrl+0")).clicked() {
+        if ui.add(menus::item("Actual Size", "Ctrl+0")).clicked() {
             canvas.request_zoom(view::ZoomRequest::Actual);
         }
-        if ui.add(item("Fit to Screen", "Ctrl+Shift+0")).clicked() {
+        if ui
+            .add(menus::item("Fit to Screen", "Ctrl+Shift+0"))
+            .clicked()
+        {
             canvas.request_zoom(view::ZoomRequest::Fit);
         }
     }
@@ -607,9 +610,17 @@ impl ChimpApp {
 
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let has_doc = self.has_doc();
+        // Con Pixel UI, los menús del diseño: el menú empieza `MENU_TEXT_TOP` arriba del
+        // contenido del panel.
+        let bar_top = ui.max_rect().top() - f32::from(tab_bar::MENU_TEXT_TOP);
+        let look = self
+            .pixel
+            .skin()
+            .map(|skin| menus::MenuLook::new(skin, bar_top));
+        let look = look.as_ref();
         let mut bar = egui::MenuBar::new();
-        // Con Pixel UI, los títulos del mockup: su color y su espaciado (solo la barra; los menús
-        // que se abren quedan como estaban).
+        // Con Pixel UI, el espaciado de los títulos del mockup (solo la barra; los paneles
+        // tienen su estilo en `menus`).
         if let Some(color) = self.pixel.skin().map(|skin| skin.colors().home_text) {
             bar = bar.style(move |style: &mut egui::Style| {
                 egui::containers::menu::menu_style(style);
@@ -619,16 +630,16 @@ impl ChimpApp {
             });
         }
         bar.ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
+            menus::bar_menu(ui, look, "File", |ui| {
                 let ctx = ui.ctx().clone();
-                let item = |text: &str, keys: &str| egui::Button::new(text).shortcut_text(keys);
+                let item = menus::item;
                 if ui.add(item("New", "Ctrl+N")).clicked() {
                     self.new_document();
                 }
                 if ui.add(item("Open…", "Ctrl+O")).clicked() {
                     self.open_dialog(&ctx);
                 }
-                ui.separator();
+                menus::separator(ui);
                 let (save, save_as) = if self.platform.saves_by_download() {
                     ("Save (download)", "Save As… (download)")
                 } else {
@@ -656,9 +667,9 @@ impl ChimpApp {
                 {
                     self.request_close_tab(i);
                 }
-                ui.separator();
+                menus::separator(ui);
                 if ui
-                    .add_enabled(has_doc, egui::Button::new("Import PNG as Layer…"))
+                    .add_enabled(has_doc, menus::plain("Import PNG as Layer…"))
                     .clicked()
                 {
                     self.import_layer(&ctx);
@@ -666,70 +677,69 @@ impl ChimpApp {
                 if ui.add_enabled(has_doc, item("Export…", "Ctrl+E")).clicked() {
                     self.open_export();
                 }
-                ui.separator();
-                if ui.button("Quit").clicked() {
+                menus::separator(ui);
+                if ui.add(menus::plain("Quit")).clicked() {
                     self.request_quit(&ctx);
                 }
             });
             ui.add_enabled_ui(has_doc, |ui| {
-                ui.menu_button("Sprite", |ui| {
-                    if ui.button("Canvas Size…").clicked() {
+                menus::bar_menu(ui, look, "Sprite", |ui| {
+                    if ui.add(menus::plain("Canvas Size…")).clicked() {
                         self.open_canvas_size();
                     }
                 });
-                ui.menu_button("View", |ui| self.view_menu(ui));
-                ui.menu_button("Edit", |ui| {
-                    let undo = egui::Button::new("Undo").shortcut_text("Ctrl+Z");
+                menus::bar_menu(ui, look, "View", |ui| self.view_menu(ui));
+                menus::bar_menu(ui, look, "Edit", |ui| {
+                    let undo = menus::item("Undo", "Ctrl+Z");
                     if ui
                         .add_enabled(self.doc.editor.history.can_undo(), undo)
                         .clicked()
                     {
                         self.doc.editor.undo();
                     }
-                    let redo = egui::Button::new("Redo").shortcut_text("Ctrl+Y");
+                    let redo = menus::item("Redo", "Ctrl+Y");
                     if ui
                         .add_enabled(self.doc.editor.history.can_redo(), redo)
                         .clicked()
                     {
                         self.doc.editor.redo();
                     }
-                    ui.separator();
+                    menus::separator(ui);
                     let has_selection = self.doc.editor.selection.is_some();
-                    let cut = egui::Button::new("Cut").shortcut_text("Ctrl+X");
+                    let cut = menus::item("Cut", "Ctrl+X");
                     if ui.add_enabled(has_selection, cut).clicked() {
                         self.cut(ui.ctx());
                     }
-                    let copy = egui::Button::new("Copy").shortcut_text("Ctrl+C");
+                    let copy = menus::item("Copy", "Ctrl+C");
                     if ui.add_enabled(has_selection, copy).clicked() {
                         self.copy(ui.ctx());
                     }
                     // En escritorio puede haber una imagen de otra app aunque no se haya copiado nada.
                     let can_paste = self.clipboard.is_some() || cfg!(not(target_arch = "wasm32"));
-                    let paste = egui::Button::new("Paste").shortcut_text("Ctrl+V");
+                    let paste = menus::item("Paste", "Ctrl+V");
                     if ui.add_enabled(can_paste, paste).clicked() {
                         self.paste(clipboard::PasteRequest::System {
                             new_artboard: false,
                         });
                     }
-                    let as_artboard =
-                        egui::Button::new("Paste as New Artboard").shortcut_text("Ctrl+Shift+V");
+                    let as_artboard = menus::item("Paste as New Artboard", "Ctrl+Shift+V");
                     if ui.add_enabled(can_paste, as_artboard).clicked() {
                         self.paste(clipboard::PasteRequest::System { new_artboard: true });
                     }
-                    let clear = egui::Button::new("Clear").shortcut_text("Del");
+                    let clear = menus::item("Clear", "Del");
                     if ui.add_enabled(has_selection, clear).clicked() {
                         self.doc.editor.clear_selection_content();
                     }
                 });
-                ui.menu_button("Layer", |ui| {
-                    if ui.button("New Tilemap Layer…").clicked() {
+                menus::bar_menu(ui, look, "Layer", |ui| {
+                    if ui.add(menus::plain("New Tilemap Layer…")).clicked() {
                         self.new_tilemap =
                             Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
                         ui.close();
                     }
                     let to_tilemap = self.doc.editor.can_convert_to_tilemap();
                     if ui
-                        .add_enabled(to_tilemap, egui::Button::new("Convert to Tilemap…"))
+                        .add_enabled(to_tilemap, menus::plain("Convert to Tilemap…"))
                         .on_disabled_hover_text("Select an image layer")
                         .clicked()
                     {
@@ -739,7 +749,7 @@ impl ChimpApp {
                     }
                     let to_image = self.doc.editor.can_convert_to_image();
                     if ui
-                        .add_enabled(to_image, egui::Button::new("Convert to Image Layer"))
+                        .add_enabled(to_image, menus::plain("Convert to Image Layer"))
                         .on_disabled_hover_text("Select a tilemap layer")
                         .clicked()
                     {
@@ -748,33 +758,30 @@ impl ChimpApp {
                         }
                         ui.close();
                     }
-                    ui.separator();
+                    menus::separator(ui);
                     let layer = self.doc.editor.layer;
                     timeline::instance_menu(ui, &mut self.doc.editor);
-                    ui.separator();
+                    menus::separator(ui);
                     timeline::mask_menu(ui, &mut self.doc.editor, layer);
                 });
-                ui.menu_button("Select", |ui| {
+                menus::bar_menu(ui, look, "Select", |ui| {
                     let editor = &mut self.doc.editor;
                     let has_selection = editor.selection.is_some();
-                    if ui
-                        .add(egui::Button::new("All").shortcut_text("Ctrl+A"))
-                        .clicked()
-                    {
+                    if ui.add(menus::item("All", "Ctrl+A")).clicked() {
                         editor.select_all();
                     }
-                    let deselect = egui::Button::new("Deselect").shortcut_text("Ctrl+D");
+                    let deselect = menus::item("Deselect", "Ctrl+D");
                     if ui.add_enabled(has_selection, deselect).clicked() {
                         editor.deselect();
                     }
-                    let reselect = egui::Button::new("Reselect").shortcut_text("Ctrl+Shift+D");
+                    let reselect = menus::item("Reselect", "Ctrl+Shift+D");
                     if ui
                         .add_enabled(!has_selection && editor.can_reselect(), reselect)
                         .clicked()
                     {
                         editor.reselect();
                     }
-                    let inverse = egui::Button::new("Inverse").shortcut_text("Ctrl+Shift+I");
+                    let inverse = menus::item("Inverse", "Ctrl+Shift+I");
                     if ui.add(inverse).clicked() {
                         editor.invert_selection();
                     }

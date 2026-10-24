@@ -1018,3 +1018,247 @@ fn without_pixel_ui_the_canvas_has_no_box_and_the_egui_rulers() {
     // Los números de las reglas son textos de egui.
     assert!(h.texts.iter().any(|(t, _)| t == "0"), "{:?}", h.texts);
 }
+
+// Los menús desplegables con Pixel UI: el diseño de `Design.aseprite` (frame 3, "Layer 4").
+
+/// Abre (o cierra) el menú `title` de la barra con un clic y espera a que termine de aparecer
+/// (egui lo muestra con un fundido).
+fn open_menu(h: &mut LayoutHarness, title: &str) {
+    let at = h.button(title).center();
+    h.click(at, PointerButton::Primary);
+    for _ in 0..4 {
+        h.frame();
+    }
+}
+
+/// El texto `text` dibujado (el primero) con su rect y su color.
+fn text_rect(h: &LayoutHarness, text: &str) -> (Rect, egui::Color32) {
+    h.text_rects
+        .iter()
+        .find(|(t, _, _)| t == text)
+        .map(|(_, r, c)| (*r, *c))
+        .unwrap_or_else(|| panic!("no {text:?} in {:?}", h.texts))
+}
+
+/// Del borde de arriba de un texto de la fuente pixel a la fila de arriba de sus mayúsculas:
+/// las de los títulos están en la fila 3 del menú.
+fn caps_offset(h: &LayoutHarness) -> f32 {
+    h.panel("menu").top() + 3.0 - text_rect(h, "File").0.top()
+}
+
+#[test]
+fn opening_file_draws_the_open_title_box_and_the_panel() {
+    let mut h = two_tabs(Some(0));
+    assert_eq!(h.drawn("menu.title.open"), vec![], "closed");
+    assert_eq!(h.drawn("menu.panel"), vec![]);
+    open_menu(&mut h, "File");
+    assert!(!h.drawn("menu.title.open").is_empty(), "the open title box");
+    assert!(!h.drawn("menu.panel").is_empty(), "the panel");
+    // El texto del título sigue donde estaba, sobre la caja.
+    let color = h.app.pixel.skin().unwrap().colors().home_text;
+    assert_eq!(text_rect(&h, "File").1, color);
+}
+
+#[test]
+fn the_panel_hangs_from_the_open_title_like_in_the_design() {
+    let mut h = two_tabs(Some(0));
+    let offset = caps_offset(&h);
+    let menu = h.panel("menu");
+    for title in ["File", "Edit"] {
+        open_menu(&mut h, title);
+        let text = text_rect(&h, title).0;
+        let caps = text.top() + offset;
+        let boxed = union(&h.drawn("menu.title.open")).expect("the box");
+        let panel = union(&h.drawn("menu.panel")).expect("the panel");
+        // El diseño: la caja empieza 5 px antes del texto, termina 4 después (la tinta, más 5)
+        // y empieza 5 filas arriba de las mayúsculas. Aquí no hay lugar arriba ni, para File, a
+        // la izquierda: la caja empieza en el borde de la ventana.
+        let left = (text.left() - 5.0).max(h.screen().left());
+        assert_eq!(boxed.left(), left, "{title}: {boxed:?} {text:?}");
+        assert_eq!(boxed.right(), text.right() + 4.0, "{title}");
+        assert_eq!(boxed.top(), menu.top(), "{title}");
+        // El panel empieza 11 filas debajo de las mayúsculas (justo debajo del menú) y en el
+        // mismo borde izquierdo que la caja; las dos filas de abajo de la caja tapan su borde.
+        assert_eq!(panel.top(), caps + 11.0, "{title}");
+        assert_eq!(panel.top(), menu.bottom(), "{title}");
+        assert_eq!(panel.left(), boxed.left(), "{title}");
+        assert_eq!(boxed.bottom(), panel.top() + 2.0, "{title}");
+        assert!(panel.right() > boxed.right(), "{title}");
+        // Otro clic en el título lo cierra.
+        open_menu(&mut h, title);
+        assert_eq!(h.drawn("menu.panel"), vec![], "{title}: closed");
+    }
+}
+
+#[test]
+fn the_new_row_has_the_ctrl_badge_a_plus_and_the_key_in_the_dim_color() {
+    let mut h = two_tabs(Some(0));
+    let offset = caps_offset(&h);
+    open_menu(&mut h, "File");
+    let colors = *h.app.pixel.skin().unwrap().colors();
+    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let (new, color) = text_rect(&h, "New");
+    assert_eq!(color, colors.text);
+    // "New": 5 px adentro del borde y sus mayúsculas, 5 filas debajo del borde de arriba.
+    let caps = new.top() + offset;
+    assert_eq!(new.left(), panel.left() + 5.0);
+    assert_eq!(caps, panel.top() + 5.0);
+    // La tecla Ctrl a la altura de las mayúsculas; después, 1 px, el + de 5×5, 1 px y la N.
+    let badges = h.drawn("key.ctrl");
+    let badge = *badges
+        .iter()
+        .find(|r| r.top() == caps)
+        .unwrap_or_else(|| panic!("Ctrl on the New row: {badges:?}"));
+    assert_eq!(badge.size(), Vec2::new(19.0, 7.0));
+    let rects = h.colored_rects();
+    let plus_h = Rect::from_min_size(badge.right_top() + Vec2::new(1.0, 3.0), Vec2::new(5.0, 1.0));
+    let plus_v = Rect::from_min_size(badge.right_top() + Vec2::new(3.0, 1.0), Vec2::new(1.0, 5.0));
+    for plus in [plus_h, plus_v] {
+        let dim: Vec<_> = rects
+            .iter()
+            .filter(|(c, _)| *c == colors.ruler_tick)
+            .collect();
+        assert!(
+            rects.contains(&(colors.ruler_tick, plus)),
+            "the + {plus:?} in {dim:?}"
+        );
+    }
+    let key = h
+        .text_rects
+        .iter()
+        .find(|(t, r, _)| t == "N" && r.left() == badge.right() + 7.0)
+        .unwrap_or_else(|| panic!("N after the + in {:?}", h.text_rects));
+    assert_eq!(key.2, colors.ruler_tick, "the dim key");
+    // La tinta de la N termina 5 px antes del borde derecho (la fuente deja 1 px después).
+    assert_eq!(key.1.right() - 1.0, panel.right() - 5.0);
+}
+
+#[test]
+fn separators_are_the_etched_line_of_the_design() {
+    let mut h = two_tabs(Some(0));
+    open_menu(&mut h, "File");
+    let colors = *h.app.pixel.skin().unwrap().colors();
+    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let rects = h.colored_rects();
+    // Entre los biseles: de la x 2 del panel a 2 antes del borde derecho.
+    let x = egui::Rangef::new(panel.left() + 2.0, panel.right() - 2.0);
+    let lights: Vec<Rect> = rects
+        .iter()
+        .filter(|(c, r)| *c == colors.menu_highlight && r.height() == 1.0 && r.x_range() == x)
+        .map(|(_, r)| *r)
+        .collect();
+    // El menú File tiene tres separadores.
+    assert_eq!(lights.len(), 3, "{lights:?}");
+    for light in lights {
+        let dark = light.translate(Vec2::new(0.0, 1.0));
+        assert!(rects.contains(&(colors.background, dark)), "{dark:?}");
+    }
+    assert_eq!(colors.menu_highlight, egui::Color32::WHITE);
+    assert_eq!(colors.background, egui::Color32::from_rgb(221, 206, 191));
+}
+
+#[test]
+fn closed_titles_underline_their_first_letter_and_the_open_one_does_not() {
+    let mut h = two_tabs(Some(0));
+    let offset = caps_offset(&h);
+    let color = h.app.pixel.skin().unwrap().colors().home_text;
+    let underline = |h: &LayoutHarness, title: &str| {
+        let text = text_rect(h, title).0;
+        let line = Rect::from_min_size(
+            Pos2::new(text.left(), text.top() + offset + 8.0),
+            Vec2::new(5.0, 1.0),
+        );
+        h.colored_rects().contains(&(color, line))
+    };
+    for title in ["File", "Sprite", "View", "Edit", "Layer", "Select"] {
+        assert!(underline(&h, title), "{title}");
+    }
+    open_menu(&mut h, "Edit");
+    assert!(!underline(&h, "Edit"), "the open title has no underline");
+    assert!(underline(&h, "File"));
+}
+
+#[test]
+fn clicking_a_pixel_menu_item_still_runs_its_action() {
+    let mut h = two_tabs(Some(0));
+    open_menu(&mut h, "File");
+    let new = h.button("New Ctrl+N");
+    h.click(new.center(), PointerButton::Primary);
+    assert_eq!(h.app.tabs.len(), 3, "a new document");
+    assert_eq!(h.drawn("menu.panel"), vec![], "the menu closes");
+}
+
+#[test]
+fn hovered_rows_use_the_selection_color_and_disabled_ones_dim_text() {
+    // En Home no hay documento: Save está deshabilitado.
+    let mut h = two_tabs(None);
+    open_menu(&mut h, "File");
+    let colors = *h.app.pixel.skin().unwrap().colors();
+    assert_eq!(text_rect(&h, "Save").1, colors.text_dim, "disabled");
+    // La fuente pixel no tiene "…": tres puntos, como en las pestañas.
+    assert_eq!(text_rect(&h, "Open...").1, colors.text);
+    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let inside: Vec<&String> = h
+        .texts
+        .iter()
+        .filter(|(_, at)| panel.contains(*at))
+        .map(|(t, _)| t)
+        .collect();
+    assert!(!inside.iter().any(|t| t.contains('…')), "{inside:?}");
+    let open = h.button("Open… Ctrl+O");
+    assert_eq!(open.height(), 13.0, "the row height");
+    h.frame_with(vec![Event::PointerMoved(open.center())]);
+    h.frame();
+    // La fila entera, entre los biseles.
+    let row = Rect::from_x_y_ranges(panel.left() + 2.0..=panel.right() - 2.0, open.y_range());
+    let selected: Vec<_> = h
+        .colored_rects()
+        .into_iter()
+        .filter(|(c, _)| *c == colors.selection)
+        .collect();
+    assert_eq!(selected, vec![(colors.selection, row)]);
+}
+
+#[test]
+fn submenus_have_an_arrow_of_shapes_and_the_same_panel() {
+    let mut h = two_tabs(Some(0));
+    open_menu(&mut h, "View");
+    let colors = *h.app.pixel.skin().unwrap().colors();
+    let show = h.button("Show");
+    // La flecha: un triángulo de 3×5 hecho con rects del color del texto, contra la derecha.
+    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let arrow: Vec<Rect> = h
+        .colored_rects()
+        .into_iter()
+        .filter(|(c, r)| *c == colors.text && show.intersects(*r) && r.width() == 1.0)
+        .map(|(_, r)| r)
+        .collect();
+    let heights: Vec<f32> = arrow.iter().map(|r| r.height()).collect();
+    assert_eq!(heights, vec![5.0, 3.0, 1.0], "{arrow:?}");
+    assert_eq!(arrow[2].right(), panel.right() - 5.0);
+    assert!(!h.texts.iter().any(|(t, _)| t.contains('⏵')), "no glyph");
+    h.frame_with(vec![Event::PointerMoved(show.center())]);
+    h.frame();
+    h.frame();
+    let panels = h.drawn("menu.panel");
+    let sub = panels
+        .iter()
+        .filter(|r| r.left() >= panel.right())
+        .copied()
+        .reduce(|a, b| a.union(b))
+        .expect("a second panel, to the right");
+    assert!(sub.contains_rect(text_rect(&h, "Rulers").0), "{sub:?}");
+}
+
+#[test]
+fn without_pixel_ui_the_menus_are_egui_menus() {
+    let mut h = LayoutHarness::editor();
+    open_menu(&mut h, "File");
+    assert!(h.app.pixel.skin().is_none());
+    // El atajo es el texto de egui, sin teclas dibujadas.
+    assert!(h.texts.iter().any(|(t, _)| t == "Ctrl+N"), "{:?}", h.texts);
+    let before = h.app.doc.location.name.clone();
+    let new = h.button("New Ctrl+N");
+    h.click(new.center(), PointerButton::Primary);
+    assert_ne!(h.app.doc.location.name, before, "a new document");
+}

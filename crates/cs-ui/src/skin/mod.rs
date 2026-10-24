@@ -24,7 +24,7 @@ use crate::theme;
 pub const EMBEDDED: &[u8] = include_bytes!("../../../../assets/ui/skin.aseprite");
 
 /// Colores del skin (`color.<nombre>`).
-pub const COLOR_NAMES: [&str; 14] = [
+pub const COLOR_NAMES: [&str; 15] = [
     "desktop",
     "text",
     "text_dim",
@@ -39,6 +39,7 @@ pub const COLOR_NAMES: [&str; 14] = [
     "tab_text_dim",
     "home_text",
     "ruler_tick",
+    "menu_highlight",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -173,6 +174,9 @@ pub struct SkinColors {
     pub home_text: Color32,
     /// Las reglas con Pixel UI: las marcas, el signo menos y la línea contra el lienzo.
     pub ruler_tick: Color32,
+    /// El brillo de los menús desplegables: el bisel del panel y la línea clara de sus
+    /// separadores (la otra es `background`).
+    pub menu_highlight: Color32,
 }
 
 impl SkinColors {
@@ -192,6 +196,7 @@ impl SkinColors {
             tab_text_dim: theme::LABEL,
             home_text: egui::Visuals::dark().strong_text_color(),
             ruler_tick: theme::RULER_TICK,
+            menu_highlight: theme::WIDGET_HOVER,
         }
     }
 
@@ -212,6 +217,7 @@ impl SkinColors {
             ("tab_text_dim", &mut c.tab_text_dim),
             ("home_text", &mut c.home_text),
             ("ruler_tick", &mut c.ruler_tick),
+            ("menu_highlight", &mut c.menu_highlight),
         ];
         for (name, slot) in slots {
             if let Some(v) = colors.get(name) {
@@ -223,6 +229,7 @@ impl SkinColors {
 }
 
 /// Una pieza lista para dibujar, sin suavizado.
+#[derive(Clone)]
 pub struct Piece {
     pub texture: egui::TextureHandle,
     pub size: [u32; 2],
@@ -687,6 +694,39 @@ mod tests {
             data.pieces["workspace.box"].rgba, data.pieces["toolbar.box"].rgba,
             "not the toolbar's box: this one has the dark line"
         );
+        assert_eq!(data.colors["ruler_tick"], Rgba::rgb(136, 110, 106));
+    }
+
+    #[test]
+    fn the_embedded_skin_has_the_menu_pieces_of_the_design() {
+        let data = decode(EMBEDDED).unwrap();
+        let alpha = |piece: &PieceImage, x: u32, y: u32| {
+            piece.rgba[((y * piece.size[0] + x) * 4 + 3) as usize]
+        };
+        let rect9 = |x, y, w, h| Some(Rect9 { x, y, w, h });
+        // La caja del título abierto: redondeada arriba, abierta abajo (se une al panel).
+        let title = &data.pieces["menu.title.open"];
+        assert_eq!((title.size, title.center), ([25, 18], rect9(2, 2, 21, 14)));
+        assert_eq!(alpha(title, 0, 0), 0, "rounded corner");
+        assert_eq!(alpha(title, 0, 2), 255, "the left side");
+        assert_eq!(alpha(title, 12, 17), 255, "open below: filled");
+        // El panel: bordes de 2 (línea y bisel) y un centro liso.
+        let panel = &data.pieces["menu.panel"];
+        assert_eq!((panel.size, panel.center), ([5, 5], rect9(2, 2, 1, 1)));
+        for (x, y) in [(0, 0), (4, 0), (0, 4), (4, 4)] {
+            assert_eq!(alpha(panel, x, y), 0, "rounded ({x},{y})");
+        }
+        // La tecla Ctrl como está dibujada (sin centro) y la tecla sin texto, que se estira.
+        let ctrl = &data.pieces["key.ctrl"];
+        assert_eq!((ctrl.size, ctrl.center), ([19, 7], None));
+        let key = &data.pieces["key"];
+        assert_eq!((key.size, key.center), ([19, 7], rect9(1, 1, 17, 5)));
+        assert_ne!(ctrl.rgba, key.rgba, "Ctrl has its letters");
+        assert_eq!(alpha(key, 0, 0), 0, "rounded corner");
+        assert_eq!(alpha(key, 9, 3), 255, "no text");
+        // El brillo del separador; la otra línea es `background` y el atajo, `ruler_tick`.
+        assert_eq!(data.colors["menu_highlight"], Rgba::rgb(255, 255, 255));
+        assert_eq!(data.colors["background"], Rgba::rgb(221, 206, 191));
         assert_eq!(data.colors["ruler_tick"], Rgba::rgb(136, 110, 106));
     }
 

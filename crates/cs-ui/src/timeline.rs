@@ -8,7 +8,7 @@ use eframe::egui::{
 
 use crate::editor::Editor;
 use crate::mask_ops::NewMask;
-use crate::{theme, widgets};
+use crate::{menus, theme, widgets};
 
 const ROW_H: f32 = 22.0;
 const CELL_W: f32 = 22.0;
@@ -795,9 +795,9 @@ fn layer_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, 
 pub(crate) fn instance_menu(ui: &mut egui::Ui, editor: &mut Editor) {
     let candidates = editor.instance_candidates();
     ui.add_enabled_ui(!candidates.is_empty(), |ui| {
-        ui.menu_button("New Instance", |ui| {
+        menus::submenu(ui, "New Instance", |ui| {
             for (id, name) in candidates {
-                if ui.button(name).clicked() {
+                if ui.add(menus::plain(&name)).clicked() {
                     editor.add_instance_layer(id);
                     ui.close();
                 }
@@ -816,18 +816,18 @@ pub(crate) fn mask_menu(ui: &mut egui::Ui, editor: &mut Editor, id: LayerId) {
     };
     match &layer.mask {
         None => {
-            ui.menu_button("Add Layer Mask", |ui| {
-                if ui.button("Reveal All").clicked() {
+            menus::submenu(ui, "Add Layer Mask", |ui| {
+                if ui.add(menus::plain("Reveal All")).clicked() {
                     editor.add_mask(id, NewMask::RevealAll);
                     ui.close();
                 }
-                if ui.button("Hide All").clicked() {
+                if ui.add(menus::plain("Hide All")).clicked() {
                     editor.add_mask(id, NewMask::HideAll);
                     ui.close();
                 }
                 let has_selection = editor.selection.is_some();
                 if ui
-                    .add_enabled(has_selection, egui::Button::new("From Selection"))
+                    .add_enabled(has_selection, menus::plain("From Selection"))
                     .clicked()
                 {
                     editor.add_mask(id, NewMask::FromSelection);
@@ -838,11 +838,11 @@ pub(crate) fn mask_menu(ui: &mut egui::Ui, editor: &mut Editor, id: LayerId) {
         Some(mask) => {
             let editing = editor.layer == id && editor.edit_mask;
             if ui
-                .button(if editing {
+                .add(menus::plain(if editing {
                     "Edit Layer Pixels"
                 } else {
                     "Edit Mask"
-                })
+                }))
                 .clicked()
             {
                 editor.select_layer(id);
@@ -850,31 +850,28 @@ pub(crate) fn mask_menu(ui: &mut egui::Ui, editor: &mut Editor, id: LayerId) {
                 ui.close();
             }
             if ui
-                .button(if mask.enabled {
+                .add(menus::plain(if mask.enabled {
                     "Disable Mask"
                 } else {
                     "Enable Mask"
-                })
+                }))
                 .clicked()
             {
                 editor.toggle_mask_enabled(id);
                 ui.close();
             }
-            if ui.button("Mask to Selection").clicked() {
+            if ui.add(menus::plain("Mask to Selection")).clicked() {
                 editor.mask_to_selection(id);
                 ui.close();
             }
             if ui
-                .add_enabled(
-                    layer.kind == LayerKind::Image,
-                    egui::Button::new("Apply Mask"),
-                )
+                .add_enabled(layer.kind == LayerKind::Image, menus::plain("Apply Mask"))
                 .clicked()
             {
                 editor.apply_mask(id);
                 ui.close();
             }
-            if ui.button("Delete Mask").clicked() {
+            if ui.add(menus::plain("Delete Mask")).clicked() {
                 editor.delete_mask(id);
                 ui.close();
             }

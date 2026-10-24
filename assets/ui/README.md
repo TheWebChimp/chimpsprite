@@ -96,3 +96,16 @@ oculta.
 
 Con Pixel UI encendido, la app vuelve a leer ese archivo al guardarlo (lo revisa una vez por
 segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en el log.
+- **Menús desplegables** (del diseño de `Design.aseprite`, frame 3, capa "Layer 4"):
+  - `menu.title.open` (25×18, centro (2,2,21,14)): la caja del título abierto, redondeada
+    arriba y sin el texto. Las dos filas de abajo se dibujan sobre el borde de arriba del panel
+    para unir los dos.
+  - `menu.panel` (5×5, centro (2,2,1,1)): el panel en 9-slice; línea (89,77,77), bisel claro
+    arriba y a la derecha y (221,206,191) a la izquierda y abajo, esquinas cortadas. En el
+    diseño, la esquina de arriba a la izquierda queda tapada por la caja: en la pieza es la de
+    la derecha en espejo (la usan los submenús).
+  - `key.ctrl` (19×7): la tecla Ctrl como está dibujada; sus letras y esquinas son
+    transparentes (en el diseño, el relleno del panel). `key` (19×7, centro (1,1,17,5)): la
+    misma tecla sin letras, para las otras teclas con nombre.
+  - `color.menu_highlight` (blanco): el brillo del panel y la línea clara de los separadores;
+    la otra línea es `background`. El atajo tenue (el "+N") es `ruler_tick`.
