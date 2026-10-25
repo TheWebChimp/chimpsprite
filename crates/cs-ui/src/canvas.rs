@@ -93,6 +93,8 @@ pub struct CanvasView {
     pub artboard_window: Option<ArtboardWindow>,
     /// Con Pixel UI: los cursores y la selección del diseño; lo pone la app en cada frame.
     pub pixel_ui: bool,
+    /// Con Pixel UI, los cursores del skin; lo pone la app en cada frame.
+    pub cursors: Option<pixel_cursors::CursorSet>,
     /// Píxeles físicos por punto del último frame: [`Self::origin`] se alinea a ellos.
     ppp: f32,
 }
@@ -193,6 +195,7 @@ impl Default for CanvasView {
             pixel_rulers: None,
             artboard_window: None,
             pixel_ui: false,
+            cursors: None,
             ppp: 1.0,
         }
     }
@@ -217,6 +220,11 @@ impl CanvasView {
     fn to_world(&self, rect: Rect, p: Pos2) -> (f32, f32) {
         let w = (p - self.origin(rect)) / self.zoom;
         (w.x, w.y)
+    }
+
+    /// Si se dibuja el cursor del diseño `kind` (Pixel UI y el skin lo trae).
+    fn can_draw(&self, kind: PixelCursor) -> bool {
+        self.pixel_ui && self.cursors.as_ref().is_some_and(|c| c.has(kind))
     }
 
     /// Color que se ve en el punto de pantalla `p` del lienzo: el píxel del artboard de más arriba
@@ -944,7 +952,7 @@ impl CanvasView {
         } else if let Some(hit) = transform_cursor {
             match hit {
                 TransformHit::Rotate => {
-                    if self.pixel_ui {
+                    if self.can_draw(PixelCursor::Rotate) {
                         self.pixel_cursor = Some(PixelCursor::Rotate);
                     } else {
                         self.draw_rotate = true;
@@ -969,12 +977,14 @@ impl CanvasView {
             })
         {
             Some(egui::CursorIcon::Move)
-        } else if self.pixel_ui {
-            self.pixel_cursor = Some(match editor.active_tool() {
-                ToolKind::Eyedropper => PixelCursor::Eyedropper,
-                tool if tool.is_selection() => PixelCursor::Marquee,
-                _ => PixelCursor::Cross,
-            });
+        } else if let Some(kind) = Some(match editor.active_tool() {
+            ToolKind::Eyedropper => PixelCursor::Eyedropper,
+            tool if tool.is_selection() => PixelCursor::Marquee,
+            _ => PixelCursor::Cross,
+        })
+        .filter(|&k| self.can_draw(k))
+        {
+            self.pixel_cursor = Some(kind);
             Some(egui::CursorIcon::None)
         } else if editor.active_tool() == ToolKind::Eyedropper {
             self.draw_pipette = true;
@@ -1438,7 +1448,8 @@ impl CanvasView {
             );
             let color = (cursor == PixelCursor::Eyedropper).then(picked).flatten();
             let under = |q: Pos2| self.color_under(rect, editor, q);
-            pixel_cursors::draw(&painter, cursor, p, cell, color, under);
+            let cursors = self.cursors.as_ref().expect("checked by can_draw");
+            pixel_cursors::draw(&painter, cursors, cursor, p, cell, color, under);
         }
         if self.draw_rotate
             && let Some(p) = response.hover_pos()
@@ -2443,6 +2454,14 @@ mod tests {
     fn with_pixel_ui_the_tools_draw_the_design_cursors() {
         let mut h = Harness::new();
         h.canvas.pixel_ui = true;
+        // Sin los cursores del skin, los del sistema.
+        h.frame(vec![Event::PointerMoved(h.screen((3, 3)))]);
+        h.frame(vec![]);
+        assert_eq!(h.cursor, egui::CursorIcon::Crosshair, "no skin cursors");
+        let data = crate::skin::decode(crate::skin::EMBEDDED).expect("the embedded skin");
+        h.canvas.cursors = Some(pixel_cursors::CursorSet::from_pieces(|name| {
+            data.pieces.get(name).map(|p| (p.size, p.rgba.clone()))
+        }));
         // Los píxeles de los cursores: de un punto, con una de las dos tintas.
         let ink = |h: &Harness| -> Vec<Rect> {
             h.shapes

@@ -2,7 +2,7 @@
 //! un botón por panel (Artboards, Slices) que lo abre flotando a su izquierda. Así esas secciones
 //! no le quitan lugar a la paleta y al editor de color.
 
-use eframe::egui::{self, Color32, Rect, Sense, Shape, Ui, Vec2, vec2};
+use eframe::egui::{self, Rect, Sense, Shape, Ui, Vec2, vec2};
 
 use crate::editor::Editor;
 use crate::panels;
@@ -28,75 +28,6 @@ const FLYOUT_MARGIN: i8 = 8;
 /// Entre el botón y su panel flotante.
 const FLYOUT_GAP: f32 = 3.0;
 
-/// Ícono de Artboards: la hoja con la esquina doblada. `a` contorno, `j` y `k` el doblez, `.` el
-/// fondo de la app; ` ` transparente.
-const ICON_ARTBOARDS: [&str; 13] = [
-    " aaaaaaaaa   ",
-    "a......jjka  ",
-    "a.......jkka ",
-    "a.......jkkka",
-    "a.......jjjja",
-    "a..........ja",
-    "a...........a",
-    "a...........a",
-    "a...........a",
-    "aj..........a",
-    "a.j.........a",
-    "aj.j........a",
-    " aaaaaaaaaaa ",
-];
-/// Ícono de Slices: la grilla azul del 9-slice. `F` el borde, `G` las líneas, `.` el fondo.
-const ICON_SLICES: [&str; 17] = [
-    "      .     .      ",
-    "      .     .      ",
-    "   .FFFFFFFFFFF.   ",
-    "   F  G     G  F   ",
-    "   F  G     G  F   ",
-    " ..FGGFGGGGGFGGF.. ",
-    "   F  G     G  F   ",
-    "   F  G     G  F   ",
-    "   F  G     G  F   ",
-    "   F  G     G  F   ",
-    "   F  G     G  F   ",
-    " ..FGGFGGGGGFGGF.. ",
-    "   F  G     G  F   ",
-    "   F  G     G  F   ",
-    "   .FFFFFFFFFFF.   ",
-    "      .     .      ",
-    "      .     .      ",
-];
-
-/// Ícono de Lospec: la "L" blanca con borde. `j` el borde, `b` el blanco, `i` la sombra.
-const ICON_LOSPEC: [&str; 13] = [
-    "jjjjj    ",
-    "jbbbj    ",
-    "jbbbj    ",
-    "jbbbj    ",
-    "jbbbj    ",
-    "jbbbj    ",
-    "jbbbjjjjj",
-    "jbbbjbbbj",
-    "jbbbjbbbj",
-    "jbbbbbbbj",
-    "jbbbbbbbj",
-    "ijjjjjjji",
-    "iiiiiiiii",
-];
-
-fn icon_color(c: u8) -> Option<Color32> {
-    Some(match c {
-        b'b' => Color32::WHITE,
-        b'i' => Color32::from_rgb(0x88, 0x6e, 0x6a),
-        b'a' => Color32::from_rgb(0x59, 0x4d, 0x4d),
-        b'j' => Color32::from_rgb(0xbd, 0xa4, 0x99),
-        b'k' => Color32::from_rgb(0xf1, 0xeb, 0xdb),
-        b'.' => Color32::from_rgb(0xdd, 0xce, 0xbf),
-        b'F' => Color32::from_rgb(0x2b, 0x4e, 0x95),
-        b'G' => Color32::from_rgb(0x27, 0x89, 0xcd),
-        _ => return None,
-    })
-}
-
 /// Los paneles del dock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DockPanel {
@@ -117,11 +48,12 @@ impl DockPanel {
         }
     }
 
-    fn icon(self) -> &'static [&'static str] {
+    /// Su ícono: una pieza del skin.
+    fn icon(self) -> &'static str {
         match self {
-            DockPanel::Artboards => &ICON_ARTBOARDS,
-            DockPanel::Slices => &ICON_SLICES,
-            DockPanel::Lospec => &ICON_LOSPEC,
+            DockPanel::Artboards => "icon.dock.artboards",
+            DockPanel::Slices => "icon.dock.slices",
+            DockPanel::Lospec => "icon.dock.lospec",
         }
     }
 
@@ -153,8 +85,9 @@ fn pixel_button(ui: &mut Ui, skin: &Skin, panel: DockPanel, open: bool) -> egui:
         selected: Some(open),
         ..pixel_draw::ButtonInfo::new(ui.id().with(("dock", panel.label())), panel.label())
     };
+    let ppp = ui.ctx().pixels_per_point();
     pixel_draw::skin_button(ui, skin, rect, info, |r| {
-        pixel_draw::ascii_centered(panel.icon(), r, icon_color)
+        pixel_draw::piece_centered(skin, panel.icon(), r, ppp)
     })
     .on_hover_text(panel.label())
 }

@@ -1,6 +1,5 @@
-//! Lo que comparten los dibujos de Pixel UI hechos en código: los íconos escritos como texto
-//! (una letra por píxel, cada una con su color), los textos con las mayúsculas en una fila y el
-//! botón chico con la pieza `button` del skin.
+//! Lo que comparten los dibujos de Pixel UI: las piezas sueltas del skin (íconos) a su tamaño o
+//! centradas, los textos con las mayúsculas en una fila y el botón chico con la pieza `button`.
 
 use eframe::egui::{self, Color32, Pos2, Rect, Response, Sense, Shape, TextStyle, Ui, Vec2, vec2};
 
@@ -8,38 +7,36 @@ use crate::pixel_ui;
 use crate::skin::{Skin, WidgetState};
 use crate::tab_bar;
 
-/// Ancho y alto de un dibujo de texto.
-pub fn ascii_size(rows: &[&str]) -> Vec2 {
-    vec2(
-        rows.first().map_or(0, |r| r.len()) as f32,
-        rows.len() as f32,
-    )
+/// El tamaño de la pieza `name` del skin (cero si no está).
+pub fn piece_size(skin: &Skin, name: &str) -> Vec2 {
+    skin.piece(name, WidgetState::Normal)
+        .map_or(Vec2::ZERO, |p| vec2(p.size[0] as f32, p.size[1] as f32))
 }
 
-/// Los píxeles de `rows` con la esquina en `at`: un cuadrado de un punto por letra con color
-/// (`color` devuelve `None` para lo transparente).
-pub fn ascii_shapes(rows: &[&str], at: Pos2, color: impl Fn(u8) -> Option<Color32>) -> Vec<Shape> {
-    let mut out = Vec::new();
-    for (y, row) in rows.iter().enumerate() {
-        for (x, c) in row.bytes().enumerate() {
-            if let Some(color) = color(c) {
-                let r = Rect::from_min_size(at + vec2(x as f32, y as f32), Vec2::splat(1.0));
-                out.push(Shape::rect_filled(r, 0.0, color));
-            }
-        }
-    }
-    out
+/// La pieza `name` del skin a su tamaño, con la esquina en `at` (nada si no está). `ppp`: los
+/// píxeles físicos por punto, para alinearla.
+pub fn piece_at(skin: &Skin, name: &str, at: Pos2, ppp: f32) -> Vec<Shape> {
+    skin.piece(name, WidgetState::Normal)
+        .map(|p| {
+            let size = vec2(p.size[0] as f32, p.size[1] as f32);
+            pixel_ui::piece_shapes(p, Rect::from_min_size(at, size), ppp)
+        })
+        .unwrap_or_default()
 }
 
-/// [`ascii_shapes`] centrado en `rect` (redondeado hacia arriba y a la izquierda).
-pub fn ascii_centered(
-    rows: &[&str],
-    rect: Rect,
-    color: impl Fn(u8) -> Option<Color32>,
-) -> Vec<Shape> {
-    let at = (rect.min + (rect.size() - ascii_size(rows)) / 2.0).floor();
-    ascii_shapes(rows, at, color)
+/// [`piece_at`] centrada en `rect` (redondeada hacia arriba y a la izquierda).
+pub fn piece_centered(skin: &Skin, name: &str, rect: Rect, ppp: f32) -> Vec<Shape> {
+    let at = (rect.min + (rect.size() - piece_size(skin, name)) / 2.0).floor();
+    piece_at(skin, name, at, ppp)
 }
+
+/// `shapes` medio transparentes: un ícono desactivado.
+pub fn dimmed(shapes: Vec<Shape>) -> Vec<Shape> {
+    crate::artboard_window::tinted(shapes, Color32::WHITE.gamma_multiply(DIM_ALPHA))
+}
+
+/// Cuánto se ve un ícono desactivado.
+pub const DIM_ALPHA: f32 = 0.35;
 
 /// `text` con su borde izquierdo en `left` y las mayúsculas empezando en la fila `cap_top`, en
 /// la fuente de los textos. Devuelve la forma y el ancho.
@@ -133,36 +130,21 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ascii_drawings_are_one_rect_per_colored_letter() {
-        let rows = ["a.", " a"];
-        let shapes = ascii_shapes(&rows, Pos2::new(10.0, 20.0), |c| {
-            (c == b'a').then_some(Color32::RED)
-        });
-        let rects: Vec<Rect> = shapes
+    fn skin_icons_are_drawn_at_their_size_and_centered() {
+        let ctx = egui::Context::default();
+        let skin = Skin::embedded(&ctx);
+        assert_eq!(piece_size(&skin, "bar.info"), vec2(12.0, 13.0));
+        assert_eq!(piece_size(&skin, "nope"), Vec2::ZERO);
+        assert!(piece_at(&skin, "nope", Pos2::ZERO, 1.0).is_empty());
+        let rect = Rect::from_min_size(Pos2::ZERO, vec2(25.0, 16.0));
+        let shapes = piece_centered(&skin, "icon.section.add", rect, 1.0);
+        let bounds = shapes
             .iter()
-            .map(|s| match s {
-                Shape::Rect(r) => r.rect,
-                _ => panic!("{s:?}"),
-            })
-            .collect();
+            .fold(Rect::NOTHING, |b, s| b.union(s.visual_bounding_rect()));
+        // 7×7 en 25×16: desde (9, 4).
         assert_eq!(
-            rects,
-            vec![
-                Rect::from_min_size(Pos2::new(10.0, 20.0), Vec2::splat(1.0)),
-                Rect::from_min_size(Pos2::new(11.0, 21.0), Vec2::splat(1.0)),
-            ]
+            bounds,
+            Rect::from_min_size(Pos2::new(9.0, 4.0), vec2(7.0, 7.0))
         );
-        assert_eq!(ascii_size(&rows), vec2(2.0, 2.0));
-    }
-
-    #[test]
-    fn centered_drawings_round_toward_the_top_left() {
-        let rows = ["aaa"];
-        let rect = Rect::from_min_size(Pos2::ZERO, vec2(8.0, 4.0));
-        let shapes = ascii_centered(&rows, rect, |_| Some(Color32::RED));
-        let Shape::Rect(first) = &shapes[0] else {
-            panic!()
-        };
-        assert_eq!(first.rect.min, Pos2::new(2.0, 1.0));
     }
 }

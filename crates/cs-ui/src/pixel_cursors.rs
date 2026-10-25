@@ -1,8 +1,10 @@
 //! Con Pixel UI, los cursores del diseño sobre el lienzo: la cruz de las herramientas de dibujo,
-//! las esquinas de las de selección y el cuentagotas. Cada píxel del dibujo mide un punto.
+//! las esquinas de las de selección, el cuentagotas y la flecha de rotar. Los dibujos son piezas
+//! del skin ([`CursorSet`]); las esquinas se arman acá. Cada píxel del dibujo mide un punto.
 
 use eframe::egui::{Color32, Painter, Pos2, Rect, Stroke, Vec2};
 
+use crate::skin::{Skin, WidgetState};
 use crate::theme;
 
 /// La tinta oscura de los cursores (la del diseño); la clara es el blanco.
@@ -22,61 +24,87 @@ pub enum PixelCursor {
     Rotate,
 }
 
-/// `#` es tinta, `o` su contrario (el blanco del diseño) y `.` transparente. Como en Aseprite, cada
-/// píxel se invierte según lo que tenga debajo: `#` es negro sobre lo claro y blanco sobre lo
-/// oscuro.
-const CROSS: [&str; 7] = [
-    "...#...", //
-    "...#...", //
-    ".......", //
-    "##.#.##", //
-    ".......", //
-    "...#...", //
-    "...#...", //
-];
-/// El píxel de `CROSS` que cae en el puntero.
-const CROSS_HOT: (usize, usize) = (3, 3);
+/// Un cursor del skin: sus píxeles con el desfase desde el punto que cae en el puntero.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Bitmap {
+    pixels: Vec<(i32, i32, Color32)>,
+}
 
-const EYEDROPPER: [&str; 16] = [
-    "............###.",
-    "...........#####",
-    "..........######",
-    ".........#####o#",
-    "........#####o#.",
-    ".....#######o#..",
-    "......#####o#...",
-    ".....#o###o#....",
-    "....#o.o###.....",
-    "...#o.o.o##.....",
-    "..#o.o.o#.#.....",
-    ".#o.o.o#........",
-    ".#o..o#.........",
-    ".#ooo#..........",
-    "#o###...........",
-    "##..............",
-];
-const ROTATE: [&str; 15] = [
-    "...oo..........",
-    "..o#oooooo.....",
-    ".o########o....",
-    "o##########o...",
-    ".o##########o..",
-    "..o#ooooo####o.",
-    "...oo....o###o.",
-    ".........o###o.",
-    ".........o###o.",
-    ".........o###o.",
-    "........oo###oo",
-    "........o#####o",
-    ".........o###o.",
-    "..........o#o..",
-    "...........o...",
-];
-/// `ROTATE` va centrado en el puntero.
-const ROTATE_HOT: (usize, usize) = (7, 7);
+impl Bitmap {
+    /// Los píxeles con algo de `rgba` (`size`, RGBA sin premultiplicar), con `hot` en el origen.
+    fn new(size: [u32; 2], rgba: &[u8], hot: (u32, u32)) -> Self {
+        let mut pixels = Vec::new();
+        for y in 0..size[1] {
+            for x in 0..size[0] {
+                let i = ((y * size[0] + x) * 4) as usize;
+                let c = &rgba[i..i + 4];
+                if c[3] > 0 {
+                    let color = Color32::from_rgb(c[0], c[1], c[2]);
+                    pixels.push((x as i32 - hot.0 as i32, y as i32 - hot.1 as i32, color));
+                }
+            }
+        }
+        Self { pixels }
+    }
 
-/// La punta de `EYEDROPPER`.
-const EYEDROPPER_HOT: (usize, usize) = (0, 15);
+    /// Cada píxel en pantalla con el punto caliente en el punto de `pointer`, y su color.
+    fn placed(&self, pointer: Pos2) -> impl Iterator<Item = (Rect, Color32)> + '_ {
+        let origin = point_at(pointer);
+        self.pixels.iter().map(move |&(x, y, c)| {
+            let min = origin + Vec2::new(x as f32, y as f32);
+            (Rect::from_min_size(min, Vec2::splat(1.0)), c)
+        })
+    }
+}
+
+/// Los cursores del skin (`cursor.cross`, `cursor.eyedropper`, `cursor.rotate`). En la cruz y el
+/// cuentagotas lo oscuro es tinta y lo claro su contrario: cada píxel se invierte según lo que
+/// tenga debajo (como en Aseprite). El de rotar trae su contorno y se dibuja tal cual. Sin la
+/// pieza, el cursor del sistema.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CursorSet {
+    cross: Option<Bitmap>,
+    eyedropper: Option<Bitmap>,
+    rotate: Option<Bitmap>,
+}
+
+impl CursorSet {
+    pub fn from_skin(skin: &Skin) -> Self {
+        Self::from_pieces(|name| {
+            skin.piece(name, WidgetState::Normal)
+                .map(|p| (p.size, p.rgba.clone()))
+        })
+    }
+
+    /// Con `piece` que da el tamaño y los píxeles de cada pieza (sin egui, para los tests).
+    pub fn from_pieces(piece: impl Fn(&str) -> Option<([u32; 2], Vec<u8>)>) -> Self {
+        // El punto caliente: el centro de la cruz y de la flecha; la punta (abajo a la izquierda)
+        // del cuentagotas.
+        let load = |name: &str, hot: fn([u32; 2]) -> (u32, u32)| {
+            piece(name).map(|(size, rgba)| Bitmap::new(size, &rgba, hot(size)))
+        };
+        Self {
+            cross: load("cursor.cross", |[w, h]| (w / 2, h / 2)),
+            eyedropper: load("cursor.eyedropper", |[_, h]| (0, h.saturating_sub(1))),
+            rotate: load("cursor.rotate", |[w, h]| (w / 2, h / 2)),
+        }
+    }
+
+    /// Si se puede dibujar `cursor` (las esquinas de selección no son una pieza: siempre).
+    pub fn has(&self, cursor: PixelCursor) -> bool {
+        match cursor {
+            PixelCursor::Cross => self.cross.is_some(),
+            PixelCursor::Marquee => true,
+            PixelCursor::Eyedropper => self.eyedropper.is_some(),
+            PixelCursor::Rotate => self.rotate.is_some(),
+        }
+    }
+}
+
+/// Si `c` es tinta (lo oscuro de la cruz y el cuentagotas).
+fn is_ink(c: Color32) -> bool {
+    (c.r() as u32 + c.g() as u32 + c.b() as u32) < 3 * 128
+}
 
 /// Largo de cada brazo de las esquinas de `Marquee`, contando el vértice.
 const ARM: f32 = 3.0;
@@ -101,32 +129,11 @@ fn paper_over(under: Color32) -> Color32 {
     }
 }
 
-/// Los píxeles de `rows` con `hot` en el punto de `pointer`; `true` si son de tinta (`#`).
-fn bitmap(rows: &[&str], hot: (usize, usize), pointer: Pos2) -> Vec<(Rect, bool)> {
-    let origin = point_at(pointer) - Vec2::new(hot.0 as f32, hot.1 as f32);
-    let mut out = Vec::new();
-    for (y, row) in rows.iter().enumerate() {
-        for (x, c) in row.bytes().enumerate() {
-            let ink = match c {
-                b'#' => true,
-                b'o' => false,
-                _ => continue,
-            };
-            let min = origin + Vec2::new(x as f32, y as f32);
-            out.push((Rect::from_min_size(min, Vec2::splat(1.0)), ink));
-        }
-    }
-    out
-}
-
-/// La cruz con su centro en el punto de `pointer`.
-pub fn cross_pixels(pointer: Pos2) -> Vec<(Rect, bool)> {
-    bitmap(&CROSS, CROSS_HOT, pointer)
-}
-
-/// El cuentagotas con la punta en el punto de `pointer`.
-pub fn eyedropper_pixels(pointer: Pos2) -> Vec<(Rect, bool)> {
-    bitmap(&EYEDROPPER, EYEDROPPER_HOT, pointer)
+/// Los píxeles de `bitmap` en `pointer`; `true` si son de tinta.
+fn inked(bitmap: Option<&Bitmap>, pointer: Pos2) -> Vec<(Rect, bool)> {
+    bitmap
+        .map(|b| b.placed(pointer).map(|(r, c)| (r, is_ink(c))).collect())
+        .unwrap_or_default()
 }
 
 /// Las 4 esquinas en L por fuera de `cell` (el píxel del sprite bajo el puntero, en pantalla):
@@ -175,6 +182,7 @@ pub fn marquee_pixels(cell: Rect, pointer: Pos2) -> Vec<Rect> {
 /// punto de pantalla (para invertir cada píxel).
 pub fn draw(
     painter: &Painter,
+    cursors: &CursorSet,
     cursor: PixelCursor,
     pointer: Pos2,
     cell: Rect,
@@ -182,15 +190,15 @@ pub fn draw(
     under: impl Fn(Pos2) -> Color32,
 ) {
     let pixels = match cursor {
-        PixelCursor::Cross => cross_pixels(pointer),
+        PixelCursor::Cross => inked(cursors.cross.as_ref(), pointer),
         PixelCursor::Marquee => marquee_pixels(cell, pointer)
             .into_iter()
             .map(|r| (r, true))
             .collect(),
-        PixelCursor::Eyedropper => eyedropper_pixels(pointer),
+        PixelCursor::Eyedropper => inked(cursors.eyedropper.as_ref(), pointer),
         PixelCursor::Rotate => {
-            for (r, ink) in bitmap(&ROTATE, ROTATE_HOT, pointer) {
-                painter.rect_filled(r, 0.0, if ink { INK } else { Color32::WHITE });
+            for (r, c) in cursors.rotate.iter().flat_map(|b| b.placed(pointer)) {
+                painter.rect_filled(r, 0.0, c);
             }
             return;
         }
@@ -228,6 +236,31 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Los cursores del skin embebido.
+    fn embedded() -> CursorSet {
+        let data = crate::skin::decode(crate::skin::EMBEDDED).expect("the embedded skin");
+        CursorSet::from_pieces(|name| data.pieces.get(name).map(|p| (p.size, p.rgba.clone())))
+    }
+
+    fn cross_pixels(pointer: Pos2) -> Vec<(Rect, bool)> {
+        inked(embedded().cross.as_ref(), pointer)
+    }
+
+    fn eyedropper_pixels(pointer: Pos2) -> Vec<(Rect, bool)> {
+        inked(embedded().eyedropper.as_ref(), pointer)
+    }
+
+    /// La cruz del diseño.
+    const CROSS: [&str; 7] = [
+        "...#...", //
+        "...#...", //
+        ".......", //
+        "##.#.##", //
+        ".......", //
+        "...#...", //
+        "...#...", //
+    ];
 
     /// `rects` pintados como en el diseño: `#` donde hay algo, relativo a `origin`.
     fn ascii(rects: &[Rect], origin: Pos2, size: (usize, usize)) -> Vec<String> {

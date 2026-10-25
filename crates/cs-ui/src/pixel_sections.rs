@@ -44,72 +44,11 @@ const FIELD_TEXT_LEFT: f32 = 5.0;
 /// Entre filas de campos.
 const FIELD_ROW_GAP: f32 = 3.0;
 
-/// Colores de los dibujos del diseño.
-const OUTLINE: Color32 = Color32::from_rgb(0x59, 0x4d, 0x4d);
-const FIELD_LINE: Color32 = Color32::from_rgb(0x88, 0x6e, 0x6a);
-const FIELD_BOTTOM: Color32 = Color32::from_rgb(0xe6, 0xe7, 0xf0);
-const FIELD_SHINE: Color32 = Color32::from_rgb(0xf1, 0xeb, 0xdb);
-
-/// Íconos de los botones, del diseño. `a` contorno; el resto, sus colores (`icon_color`).
-pub const ICON_ADD: [&str; 7] = [
-    "...a...", //
-    "...a...", //
-    "...a...", //
-    "aaaaaaa", //
-    "...a...", //
-    "...a...", //
-    "...a...", //
-];
-pub const ICON_TRASH: [&str; 11] = [
-    "....aaa....",
-    "...aeeea...",
-    ".aaafgfaaa.",
-    "ahhhhhhheea",
-    "aaggggfffaa",
-    ".afgfghfea.",
-    ".afgfghfea.",
-    ".afgfghfea.",
-    ".afgfghfea.",
-    ".afgfghfea.",
-    ".afgfghfea.",
-];
-pub const ICON_CANVAS_SIZE: [&str; 9] = [
-    "j.....j....",
-    "ijijiji....",
-    "j.....j....",
-    "...........",
-    "aaaaaaa.jij",
-    "ajjjjja..j.",
-    "ajjjjja..i.",
-    "ajjjjja..j.",
-    "aaaaaaa.jij",
-];
-
-fn icon_color(c: u8) -> Option<Color32> {
-    Some(match c {
-        b'a' => OUTLINE,
-        b'e' => Color32::from_rgb(0xe3, 0xcd, 0xdf),
-        b'f' => Color32::from_rgb(0x87, 0x73, 0x8f),
-        b'g' => Color32::from_rgb(0x56, 0x4f, 0x5b),
-        b'h' => Color32::from_rgb(0xbf, 0xa5, 0xc9),
-        b'i' => FIELD_LINE,
-        b'j' => Color32::from_rgb(0xbd, 0xa4, 0x99),
-        _ => return None,
-    })
-}
-
-/// El color de cada letra de los íconos; desactivado, apagado.
-fn icon_paint(enabled: bool) -> impl Fn(u8) -> Option<Color32> {
-    move |c| {
-        icon_color(c).map(|color| {
-            if enabled {
-                color
-            } else {
-                color.gamma_multiply(0.35)
-            }
-        })
-    }
-}
+/// Las piezas del skin: los íconos de los botones y el campo de texto (en 9-slice).
+pub const ICON_ADD: &str = "icon.section.add";
+pub const ICON_TRASH: &str = "icon.section.trash";
+pub const ICON_CANVAS_SIZE: &str = "icon.section.canvas_size";
+const FIELD_PIECE: &str = "field.text";
 
 /// Un botón chico en `rect` (de `BUTTON_SIZE`) con `content` adentro. Su nombre accesible es
 /// `label`, que es también su tooltip.
@@ -128,23 +67,23 @@ fn button_at(
     pixel_draw::skin_button(ui, skin, rect, info, content).on_hover_text(label)
 }
 
-/// `icon` centrado en `rect`.
-fn centered(rows: &[&str], rect: Rect, enabled: bool) -> Vec<Shape> {
-    pixel_draw::ascii_centered(rows, rect, icon_paint(enabled))
+/// La pieza `icon` centrada en `rect`; desactivada, apagada.
+fn centered(skin: &Skin, icon: &str, rect: Rect, enabled: bool, ppp: f32) -> Vec<Shape> {
+    let shapes = pixel_draw::piece_centered(skin, icon, rect, ppp);
+    if enabled {
+        shapes
+    } else {
+        pixel_draw::dimmed(shapes)
+    }
 }
 
 /// Un botón chico con un ícono, en el lugar que sigue de `ui`.
-pub fn icon_button(
-    ui: &mut Ui,
-    skin: &Skin,
-    icon: &[&str],
-    label: &str,
-    enabled: bool,
-) -> Response {
+pub fn icon_button(ui: &mut Ui, skin: &Skin, icon: &str, label: &str, enabled: bool) -> Response {
     let (rect, _) = ui.allocate_exact_size(BUTTON_SIZE, Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), BUTTON_SIZE);
+    let ppp = ui.ctx().pixels_per_point();
     button_at(ui, skin, rect, label, enabled, |r| {
-        centered(icon, r, enabled)
+        centered(skin, icon, r, enabled, ppp)
     })
 }
 
@@ -152,11 +91,12 @@ pub fn icon_button(
 pub fn color_button(ui: &mut Ui, skin: &Skin, color: Color32, label: &str) -> Response {
     let (rect, _) = ui.allocate_exact_size(BUTTON_SIZE, Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), BUTTON_SIZE);
+    let outline = skin.colors().field_text;
     button_at(ui, skin, rect, label, true, |r| {
         let size = vec2(11.0, 9.0);
         let swatch = Rect::from_min_size((r.center() - size / 2.0).floor(), size);
         vec![
-            Shape::rect_filled(swatch, 0.0, OUTLINE),
+            Shape::rect_filled(swatch, 0.0, outline),
             Shape::rect_filled(swatch.shrink(1.0), 0.0, color),
         ]
     })
@@ -202,15 +142,16 @@ pub fn header(
     let delete_rect = Rect::from_min_size(pos2(right - BUTTON_SIZE.x, row.top()), BUTTON_SIZE);
     let add_rect = delete_rect.translate(vec2(-(BUTTON_SIZE.x + BUTTON_GAP), 0.0));
     let mut action = None;
+    let ppp = ui.ctx().pixels_per_point();
     if button_at(ui, skin, add_rect, add, true, |r| {
-        centered(&ICON_ADD, r, true)
+        centered(skin, ICON_ADD, r, true, ppp)
     })
     .clicked()
     {
         action = Some(HeaderAction::Add);
     }
     if button_at(ui, skin, delete_rect, delete, can_delete, |r| {
-        centered(&ICON_TRASH, r, can_delete)
+        centered(skin, ICON_TRASH, r, can_delete, ppp)
     })
     .clicked()
     {
@@ -299,7 +240,7 @@ pub fn tabs(ui: &mut Ui, skin: &Skin, tabs: &[Tab], active: Option<usize>) -> Op
                 pos2(text_left, rect.top() + TAB_CAPS_TOP),
                 Vec2::splat(SWATCH),
             );
-            shapes.push(Shape::rect_filled(swatch, 0.0, OUTLINE));
+            shapes.push(Shape::rect_filled(swatch, 0.0, colors.field_text));
             shapes.push(Shape::rect_filled(swatch.shrink(1.0), 0.0, color));
             text_left += SWATCH + SWATCH_GAP;
         }
@@ -321,53 +262,6 @@ pub fn tabs(ui: &mut Ui, skin: &Skin, tabs: &[Tab], active: Option<usize>) -> Op
     clicked
 }
 
-/// El borde del campo de texto del diseño en `rect` (17 de alto con el brillo): blanco, con las
-/// esquinas redondeadas un píxel y la fila de abajo más fría.
-fn field_shapes(rect: Rect) -> Vec<Shape> {
-    let (l, t) = (rect.left(), rect.top());
-    let (w, h) = (rect.width(), rect.height());
-    let row = |x0: f32, x1: f32, y: f32, color: Color32| {
-        Shape::rect_filled(
-            Rect::from_min_max(pos2(l + x0, t + y), pos2(l + x1, t + y + 1.0)),
-            0.0,
-            color,
-        )
-    };
-    let col = |x: f32, y0: f32, y1: f32, color: Color32| {
-        Shape::rect_filled(
-            Rect::from_min_max(pos2(l + x, t + y0), pos2(l + x + 1.0, t + y1)),
-            0.0,
-            color,
-        )
-    };
-    vec![
-        // Relleno.
-        Shape::rect_filled(
-            Rect::from_min_max(pos2(l + 1.0, t + 1.0), pos2(l + w - 1.0, t + h - 3.0)),
-            0.0,
-            Color32::WHITE,
-        ),
-        // Arriba y los lados, con las esquinas cortadas.
-        row(2.0, w - 2.0, 0.0, FIELD_LINE),
-        col(1.0, 1.0, 2.0, FIELD_LINE),
-        col(w - 2.0, 1.0, 2.0, FIELD_LINE),
-        col(0.0, 2.0, h - 3.0, FIELD_LINE),
-        col(w - 1.0, 2.0, h - 3.0, FIELD_LINE),
-        // La fila fría de abajo, el borde de abajo y el brillo.
-        row(1.0, 2.0, h - 4.0, FIELD_BOTTOM),
-        row(w - 2.0, w - 1.0, h - 4.0, FIELD_BOTTOM),
-        row(2.0, w - 2.0, h - 3.0, FIELD_BOTTOM),
-        row(0.0, 1.0, h - 3.0, FIELD_SHINE),
-        row(1.0, 2.0, h - 3.0, FIELD_LINE),
-        row(w - 2.0, w - 1.0, h - 3.0, FIELD_LINE),
-        row(w - 1.0, w, h - 3.0, FIELD_SHINE),
-        row(1.0, 2.0, h - 2.0, FIELD_SHINE),
-        row(2.0, w - 2.0, h - 2.0, FIELD_LINE),
-        row(w - 2.0, w - 1.0, h - 2.0, FIELD_SHINE),
-        row(2.0, w - 2.0, h - 1.0, FIELD_SHINE),
-    ]
-}
-
 /// Un campo de texto del diseño de `width`, con `hint` cuando está vacío. Su nombre accesible
 /// es `label`.
 pub fn text_field(
@@ -380,7 +274,21 @@ pub fn text_field(
 ) -> Response {
     let (rect, _) = ui.allocate_exact_size(vec2(width.floor(), FIELD_HEIGHT), Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), rect.size());
-    ui.painter().extend(field_shapes(rect));
+    // La pieza `field.text` en 9-slice (sin ella, un borde de 1 px sobre blanco).
+    let ppp = ui.ctx().pixels_per_point();
+    let shapes = match skin.piece(FIELD_PIECE, WidgetState::Normal) {
+        Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
+        None => vec![
+            Shape::rect_filled(rect, 0.0, Color32::WHITE),
+            Shape::rect_stroke(
+                rect.shrink(0.5),
+                0.0,
+                (1.0, skin.colors().outline),
+                egui::StrokeKind::Middle,
+            ),
+        ],
+    };
+    ui.painter().extend(shapes);
     let colors = *skin.colors();
     let inner = Rect::from_min_max(
         pos2(rect.left() + FIELD_TEXT_LEFT, rect.top() + 1.0),

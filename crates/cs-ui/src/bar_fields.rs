@@ -131,42 +131,21 @@ pub fn label(ui: &mut Ui, look: BarLook, label: &str) -> Response {
     text(ui, look, label, look.skin.colors().text)
 }
 
-/// El ícono de info del diseño: `#` contorno, `b` azul, `o` blanco, `d` el brillo de abajo.
-const INFO: [&str; 13] = [
-    "...######...",
-    "..#bbbbbb#..",
-    ".#bbboobbb#.",
-    "#bbbboobbbb#",
-    "#bbbbbbbbbb#",
-    "#bbbooobbbb#",
-    "#bbbboobbbb#",
-    "#bbbboobbbb#",
-    "#bbbboobbbb#",
-    "d#bboooobb#d",
-    ".d#bbbbbb#d.",
-    "..d######d..",
-    "...dddddd...",
-];
+/// El ícono de info: una pieza del skin.
+const INFO: &str = "bar.info";
 
 /// El ícono de info, centrado en la fila de los campos, con `text` en su tooltip. Su nombre
 /// accesible es `text`.
 pub fn info(ui: &mut Ui, look: BarLook, text: &str) -> Response {
-    let size = crate::pixel_draw::ascii_size(&INFO);
+    let size = crate::pixel_draw::piece_size(look.skin, INFO);
     let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
     let enabled = ui.is_enabled();
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, enabled, text));
     if ui.is_rect_visible(rect) {
         let top = look.top + FIELD_TOP + ((FIELD_HEIGHT - size.y) / 2.0).floor();
         let origin = pos2(rect.left().round(), top);
-        let shapes = crate::pixel_draw::ascii_shapes(&INFO, origin, |c| {
-            Some(match c {
-                b'#' => Color32::from_rgb(0x59, 0x4d, 0x4d),
-                b'b' => Color32::from_rgb(0x27, 0x89, 0xcd),
-                b'o' => Color32::WHITE,
-                b'd' => Color32::from_rgb(0xf1, 0xeb, 0xdb),
-                _ => return None,
-            })
-        });
+        let ppp = ui.ctx().pixels_per_point();
+        let shapes = crate::pixel_draw::piece_at(look.skin, INFO, origin, ppp);
         painter(ui, look).extend(shapes);
     }
     response.on_hover_text(text)

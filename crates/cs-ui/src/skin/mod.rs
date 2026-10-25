@@ -180,6 +180,10 @@ pub struct SkinColors {
     pub menu_highlight: Color32,
     /// El texto de la tira de canales del editor de color (y su borde).
     pub field_text: Color32,
+    /// Los enlaces de Home (el nombre de cada reciente).
+    pub link: Color32,
+    /// Lo que acompaña a un enlace (la ruta de cada reciente).
+    pub path: Color32,
 }
 
 impl SkinColors {
@@ -201,6 +205,8 @@ impl SkinColors {
             ruler_tick: theme::RULER_TICK,
             menu_highlight: theme::WIDGET_HOVER,
             field_text: egui::Visuals::dark().strong_text_color(),
+            link: theme::ACCENT,
+            path: theme::LABEL,
         }
     }
 
@@ -223,6 +229,8 @@ impl SkinColors {
             ("ruler_tick", &mut c.ruler_tick),
             ("menu_highlight", &mut c.menu_highlight),
             ("field_text", &mut c.field_text),
+            ("link", &mut c.link),
+            ("path", &mut c.path),
         ];
         for (name, slot) in slots {
             if let Some(v) = colors.get(name) {
@@ -241,6 +249,22 @@ pub struct Piece {
     pub center: Option<Rect9>,
     /// Si es un frame de una animación: cuánto dura, en milisegundos.
     pub duration_ms: Option<u32>,
+    /// Los píxeles (RGBA sin premultiplicar, fila por fila), para quien los lee uno por uno
+    /// (los cursores, que se invierten según lo de abajo).
+    pub rgba: Vec<u8>,
+}
+
+impl Piece {
+    /// El color del píxel `(x, y)` (transparente fuera de la pieza).
+    pub fn pixel(&self, x: u32, y: u32) -> Color32 {
+        let [w, h] = self.size;
+        if x >= w || y >= h {
+            return Color32::TRANSPARENT;
+        }
+        let i = ((y * w + x) * 4) as usize;
+        let c = &self.rgba[i..i + 4];
+        Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3])
+    }
 }
 
 pub struct Skin {
@@ -283,6 +307,7 @@ impl Skin {
                     size: img.size,
                     center: img.center,
                     duration_ms: img.duration_ms,
+                    rgba: img.rgba,
                 };
                 (name, piece)
             })

@@ -1120,6 +1120,7 @@ mod tests {
             size: window.size,
             center: Some(crate::skin::Rect9::new(3, 13, 0, 0, window.size).unwrap()),
             duration_ms: None,
+            rgba: window.rgba.clone(),
         };
         let rect = Rect::from_min_size(Pos2::ZERO, vec2(200.0, 100.0));
         assert_eq!(piece_shapes(&piece, rect, 1.0).len(), 4, "only the corners");

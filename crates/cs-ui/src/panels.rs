@@ -1537,17 +1537,17 @@ pub fn pixel_status_bar(
     };
     let mut sections = vec![
         Section {
-            icon: Some(&ICON_ARTBOARD),
+            icon: Some(ICON_ARTBOARD),
             text: format!("{} {}\u{d7}{}", editor.artboard().name, s.width, s.height),
             color: None,
         },
         Section {
-            icon: Some(&ICON_POINTER),
+            icon: Some(ICON_POINTER),
             text: pointer,
             color: None,
         },
         Section {
-            icon: Some(&ICON_FRAME),
+            icon: Some(ICON_FRAME),
             text: format!("{}/{}", editor.frame + 1, s.frames.len()),
             color: None,
         },
@@ -1684,7 +1684,7 @@ pub fn pixel_artboards(
             pixel_sections::icon_button(
                 ui,
                 skin,
-                &pixel_sections::ICON_CANVAS_SIZE,
+                pixel_sections::ICON_CANVAS_SIZE,
                 "Canvas Size…",
                 true,
             )

@@ -191,6 +191,28 @@ oculta.
   - `fgbg.checker` (8×8): un período del damero (197,199,221)/(230,231,240) de celdas de 4×4,
     en fase con la esquina de la mitad. Va en mosaico detrás de un color con alfa.
 
+- **Íconos, cursores y el campo de texto** (de los frames 4 y 5 de `Design.aseprite`; el skin
+  creció a 320×429 y van en y 404..420). Antes estaban dibujados en el código; ahora se editan
+  acá. Se dibujan a su tamaño (o centrados en su botón), sin estirarse.
+  - Secciones del dock (Artboards, Slices): `icon.section.add` (7×7), `icon.section.trash`
+    (11×11) e `icon.section.canvas_size` (11×9); desactivados, la app los apaga.
+  - Botones del dock (centrados en `button` de 23×24): `icon.dock.artboards` (13×13),
+    `icon.dock.slices` (19×17) e `icon.dock.lospec` (9×13).
+  - Barra de estado (apoyados en la fila 17 de la barra): `icon.status.artboard` (13×13),
+    `icon.status.pointer` (11×11) e `icon.status.frame` (11×12).
+  - Home: `home.icon.new` (6×7) y `home.icon.open` (10×8) en los botones; `home.icon.files`
+    (13×11) y `home.icon.folders` (14×9) en los títulos de las listas.
+  - `bar.info` (12×13): el ícono de info de la barra de opciones (las ayudas, en su tooltip).
+  - Cursores del lienzo: `cursor.cross` (7×7, el centro cae en el puntero), `cursor.eyedropper`
+    (16×16, la punta abajo a la izquierda) y `cursor.rotate` (15×15, centrado). En la cruz y el
+    cuentagotas lo oscuro es tinta y lo claro su contrario: cada píxel se pinta negro o blanco
+    según lo que tenga debajo, como en Aseprite. El de rotar se dibuja tal cual. Si falta una
+    pieza, se usa el cursor de siempre.
+  - `field.text` (12×17, centro (2,2,8,11)): el campo de texto de Artboards y Slices, con las
+    esquinas redondeadas, la fila fría y el brillo de abajo.
+  - Colores: `color.link` (178,82,102), el nombre de cada reciente de Home, y `color.path`
+    (105,102,130), su ruta.
+
 ### Probar cambios en vivo (escritorio)
 
     CHIMPSPRITE_SKIN=/ruta/a/skin.aseprite cargo run -p chimpsprite

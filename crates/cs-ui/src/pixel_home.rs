@@ -43,78 +43,14 @@ const LIST_GAP: f32 = 21.0;
 const LIST_WIDTH: f32 = 230.0;
 const FEED_GAP: f32 = 24.0;
 
-/// Colores del diseño que el skin no tiene: el nombre de cada reciente y su ruta.
-const NAME_COLOR: Color32 = Color32::from_rgb(0xb2, 0x52, 0x66);
-const PATH_COLOR: Color32 = Color32::from_rgb(0x69, 0x66, 0x82);
-
-/// Íconos del diseño. `a` contorno, `j` el tono claro, `.` el fondo de la app, `d` tinta, `A`–`C`
-/// los grises de la hoja, `D`–`E` los amarillos de la carpeta; ` ` transparente.
-const ICON_NEW: [&str; 7] = [
-    "aaaa  ", //
-    "a  .a ", //
-    "a  ..a", //
-    "a    a", //
-    "a    a", //
-    "a    a", //
-    "aaaaaa", //
-];
-const ICON_OPEN: [&str; 8] = [
-    "       aaj",
-    "  jaaaajja",
-    "  ajjjjjja",
-    " aaaaaajja",
-    " a     aja",
-    "  a    aja",
-    "  a     aa",
-    "  jaaaaaaj",
-];
-const ICON_FILES: [&str; 11] = [
-    "   dddddddd  ",
-    "   dAccccBAd ",
-    "   dcccccBAAd",
-    "   dcccccBBBd",
-    "   dccccccccd",
-    "   dcBCccCBcd",
-    "   dccccccccd",
-    "   dcBCCCCBcd",
-    "   dccccccccd",
-    "   dAccccccAd",
-    "   dddddddddd",
-];
-const ICON_FOLDERS: [&str; 9] = [
-    "   ddddd      ",
-    "  dDDDDEddddd ",
-    "  dDDDDDDDDDEd",
-    "  dDDDDDDDDDDd",
-    "  dDDDDDDDDDDd",
-    "  dEDDDDDDDDDd",
-    "  dDEDDDDDDDDd",
-    "  dEDEDDDDDDEd",
-    "   dddddddddd ",
-];
+/// Los íconos: piezas del skin.
+const ICON_NEW: &str = "home.icon.new";
+const ICON_OPEN: &str = "home.icon.open";
+const ICON_FILES: &str = "home.icon.files";
+const ICON_FOLDERS: &str = "home.icon.folders";
 /// Fila de la caja del título donde empieza cada ícono.
 const FILES_ICON_TOP: f32 = 3.0;
 const FOLDERS_ICON_TOP: f32 = 4.0;
-
-fn icon_color(c: u8) -> Option<Color32> {
-    Some(match c {
-        b'a' => Color32::from_rgb(0x59, 0x4d, 0x4d),
-        b'j' => Color32::from_rgb(0xbd, 0xa4, 0x99),
-        b'.' => Color32::from_rgb(0xdd, 0xce, 0xbf),
-        b'c' => Color32::from_rgb(0xea, 0xe0, 0xdd),
-        b'd' => Color32::from_rgb(0x05, 0x04, 0x03),
-        b'A' => Color32::from_rgb(0xcb, 0xc6, 0xc1),
-        b'B' => Color32::from_rgb(0xa6, 0x9e, 0x9a),
-        b'C' => Color32::from_rgb(0x59, 0x57, 0x57),
-        b'D' => Color32::from_rgb(0xf8, 0xc5, 0x3a),
-        b'E' => Color32::from_rgb(0xe8, 0x8a, 0x36),
-        _ => return None,
-    })
-}
-
-fn icon_shapes(rows: &[&str], at: Pos2) -> Vec<Shape> {
-    pixel_draw::ascii_shapes(rows, at, icon_color)
-}
 
 fn text_shape(ui: &Ui, text: &str, left: f32, cap_top: f32, color: Color32) -> (Shape, f32) {
     pixel_draw::caps_text(ui, text, left, cap_top, color)
@@ -132,9 +68,10 @@ enum HomeAction {
 }
 
 /// Un botón de la columna: la pieza `button` del skin, el ícono y el texto.
-fn button(ui: &mut Ui, skin: &Skin, rect: Rect, icon: (&[&str], f32), label: &str) -> bool {
+fn button(ui: &mut Ui, skin: &Skin, rect: Rect, icon: (&str, f32), label: &str) -> bool {
     let info = pixel_draw::ButtonInfo::new(ui.id().with(("home_button", label)), label);
-    let (rows, icon_left) = icon;
+    let (icon, icon_left) = icon;
+    let ppp = ui.ctx().pixels_per_point();
     // El texto se arma antes (necesita `ui`) y baja con el botón apretado.
     let left = rect.left() + BUTTON_TEXT_LEFT;
     let (mut text, _) = text_shape(
@@ -145,7 +82,8 @@ fn button(ui: &mut Ui, skin: &Skin, rect: Rect, icon: (&[&str], f32), label: &st
         skin.colors().text,
     );
     pixel_draw::skin_button(ui, skin, rect, info, |r| {
-        let mut shapes = icon_shapes(rows, r.min + vec2(icon_left, BUTTON_ICON_TOP));
+        let at = r.min + vec2(icon_left, BUTTON_ICON_TOP);
+        let mut shapes = pixel_draw::piece_at(skin, icon, at, ppp);
         text.translate(r.min - rect.min);
         shapes.push(text);
         shapes
@@ -155,11 +93,20 @@ fn button(ui: &mut Ui, skin: &Skin, rect: Rect, icon: (&[&str], f32), label: &st
 
 /// Un elemento de una lista: el nombre (clic) y la ruta debajo, en `top` (mayúsculas del
 /// nombre). Los textos se recortan a `right`.
-fn item(ui: &mut Ui, origin: Pos2, top: f32, right: f32, name: &str, path: &str) -> bool {
+fn item(
+    ui: &mut Ui,
+    skin: &Skin,
+    origin: Pos2,
+    top: f32,
+    right: f32,
+    name: &str,
+    path: &str,
+) -> bool {
+    let colors = skin.colors();
     let left = origin.x + LIST_TEXT_X;
     let clip = Rect::from_x_y_ranges(left..=right, top - 4.0..=top + PATH_BELOW + 10.0);
-    let (name_shape, width) = text_shape(ui, name, left, top, NAME_COLOR);
-    let (path_shape, _) = text_shape(ui, path, left, top + PATH_BELOW, PATH_COLOR);
+    let (name_shape, width) = text_shape(ui, name, left, top, colors.link);
+    let (path_shape, _) = text_shape(ui, path, left, top + PATH_BELOW, colors.path);
     let painter = ui.painter().with_clip_rect(clip.intersect(ui.clip_rect()));
     painter.add(name_shape);
     painter.add(path_shape);
@@ -172,7 +119,7 @@ fn item(ui: &mut Ui, origin: Pos2, top: f32, right: f32, name: &str, path: &str)
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Link, enabled, name));
     if response.hovered() {
         let y = (top + 8.0).round();
-        painter.hline(left..=left + width, y, (1.0, NAME_COLOR));
+        painter.hline(left..=left + width, y, (1.0, colors.link));
     }
     response.clicked()
 }
@@ -205,10 +152,10 @@ impl ChimpApp {
                     ui.painter().add(name);
                 }
             }
-            let buttons: [(&[&str], f32, &str, HomeAction); 3] = [
-                (&ICON_NEW, 5.0, "New file", HomeAction::New),
-                (&ICON_OPEN, 2.0, "Open file…", HomeAction::Open),
-                (&ICON_OPEN, 2.0, "Open demo", HomeAction::Demo),
+            let buttons: [(&str, f32, &str, HomeAction); 3] = [
+                (ICON_NEW, 5.0, "New file", HomeAction::New),
+                (ICON_OPEN, 2.0, "Open file…", HomeAction::Open),
+                (ICON_OPEN, 2.0, "Open demo", HomeAction::Demo),
             ];
             for (i, (rows, left, label, a)) in buttons.into_iter().enumerate() {
                 let at = origin + BUTTONS_AT + vec2(0.0, i as f32 * BUTTON_PITCH);
@@ -231,8 +178,10 @@ impl ChimpApp {
                 .rect_filled(dark.translate(vec2(1.0, 0.0)), 0.0, colors.highlight);
             // Las listas.
             let list_right = origin.x + LIST_TEXT_X + LIST_WIDTH;
-            let heading = |ui: &mut Ui, top: f32, icon: &[&str], icon_top: f32, title: &str| {
-                let mut shapes = icon_shapes(icon, pos2(origin.x + LIST_ICON_X, top + icon_top));
+            let ppp = ui.ctx().pixels_per_point();
+            let heading = |ui: &mut Ui, top: f32, icon: &str, icon_top: f32, title: &str| {
+                let at = pos2(origin.x + LIST_ICON_X, top + icon_top);
+                let mut shapes = pixel_draw::piece_at(skin, icon, at, ppp);
                 let (text, _) = text_shape(
                     ui,
                     title,
@@ -248,11 +197,11 @@ impl ChimpApp {
             {
                 let files = self.recent.files().to_vec();
                 let folders = self.recent.folders();
-                heading(ui, top, &ICON_FILES, FILES_ICON_TOP, "Recent Files");
+                heading(ui, top, ICON_FILES, FILES_ICON_TOP, "Recent Files");
                 let mut y = top + HEADING_TO_ITEM;
                 if files.is_empty() {
                     let (note, _) =
-                        text_shape(ui, "Nothing yet.", origin.x + LIST_TEXT_X, y, PATH_COLOR);
+                        text_shape(ui, "Nothing yet.", origin.x + LIST_TEXT_X, y, colors.path);
                     ui.painter().add(note);
                     y += ITEM_PITCH;
                 }
@@ -260,17 +209,25 @@ impl ChimpApp {
                     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("?");
                     let dir = path.parent().map(|d| d.display().to_string());
                     let shown = dir.unwrap_or_default();
-                    if item(ui, origin, y, list_right, name, &shown) {
+                    if item(ui, skin, origin, y, list_right, name, &shown) {
                         action = Some(HomeAction::OpenRecent(path.clone()));
                     }
                     y += ITEM_PITCH;
                 }
                 top = y - HEADING_TO_ITEM + LIST_GAP;
-                heading(ui, top, &ICON_FOLDERS, FOLDERS_ICON_TOP, "Recent Folders");
+                heading(ui, top, ICON_FOLDERS, FOLDERS_ICON_TOP, "Recent Folders");
                 let mut y = top + HEADING_TO_ITEM;
                 for dir in &folders {
                     let name = dir.file_name().and_then(|n| n.to_str()).unwrap_or("?");
-                    if item(ui, origin, y, list_right, name, &dir.display().to_string()) {
+                    if item(
+                        ui,
+                        skin,
+                        origin,
+                        y,
+                        list_right,
+                        name,
+                        &dir.display().to_string(),
+                    ) {
                         action = Some(HomeAction::OpenIn(dir.clone()));
                     }
                     y += ITEM_PITCH;
@@ -278,14 +235,14 @@ impl ChimpApp {
             }
             #[cfg(target_arch = "wasm32")]
             {
-                heading(ui, top, &ICON_FILES, FILES_ICON_TOP, "In the browser");
+                heading(ui, top, ICON_FILES, FILES_ICON_TOP, "In the browser");
                 let lines = [
                     "Files open from your computer and save as downloads.",
                     "Unsaved documents are kept in this browser.",
                 ];
                 for (i, line) in lines.iter().enumerate() {
                     let y = top + HEADING_TO_ITEM + i as f32 * PATH_BELOW;
-                    let (t, _) = text_shape(ui, line, origin.x + LIST_TEXT_X, y, PATH_COLOR);
+                    let (t, _) = text_shape(ui, line, origin.x + LIST_TEXT_X, y, colors.path);
                     ui.painter().add(t);
                 }
                 let _ = &mut top;

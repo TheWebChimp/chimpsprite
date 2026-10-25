@@ -1047,6 +1047,7 @@ impl ChimpApp {
         self.doc.canvas.artboard_window = skin.map(artboard_window::ArtboardWindow::from_skin);
         // Con Pixel UI, los cursores y la selección del diseño.
         self.doc.canvas.pixel_ui = skin.is_some();
+        self.doc.canvas.cursors = skin.map(pixel_cursors::CursorSet::from_skin);
         let (width, frame) = match skin {
             // Con Pixel UI, la columna de íconos: la caja más el margen a cada lado, sin línea
             // contra el lienzo (el mockup no la tiene). Arriba, el margen del mockup hasta la

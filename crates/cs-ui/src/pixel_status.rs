@@ -19,63 +19,15 @@ const CAPS_TOP: f32 = 7.0;
 /// Fila de abajo de los íconos (todos apoyados ahí), desde arriba de la barra.
 const ICON_BOTTOM: f32 = 17.0;
 
-/// `a` contorno, `j` el tono claro, `.` el fondo; ` ` transparente.
-pub const ICON_ARTBOARD: [&str; 13] = [
-    " aaaaaaaaa   ",
-    "a......jjka  ",
-    "a.......jkka ",
-    "a.......jkkka",
-    "a.......jjjja",
-    "a..........ja",
-    "a...........a",
-    "a...........a",
-    "a...........a",
-    "aj..........a",
-    "a.j.........a",
-    "aj.j........a",
-    " aaaaaaaaaaa ",
-];
-pub const ICON_POINTER: [&str; 11] = [
-    "     j     ",
-    "     a     ",
-    "     a     ",
-    "     a     ",
-    "    aaa    ",
-    "jaaaa aaaaj",
-    "    aaa    ",
-    "     a     ",
-    "     a     ",
-    "     a     ",
-    "     j     ",
-];
-pub const ICON_FRAME: [&str; 12] = [
-    "jaaaaaaaaaj",
-    "a aaaaaaa a",
-    "aaaaaaaaaaa",
-    "a aaaaaaa a",
-    "aaaaaaaaaaa",
-    "a aaaaaaa a",
-    "aaaaaaaaaaa",
-    "a aaaaaaa a",
-    "aaaaaaaaaaa",
-    "a aaaaaaa a",
-    "aaaaaaaaaaa",
-    "a aaaaaaa a",
-];
-
-fn icon_color(c: u8) -> Option<Color32> {
-    Some(match c {
-        b'a' => Color32::from_rgb(0x59, 0x4d, 0x4d),
-        b'j' => Color32::from_rgb(0xbd, 0xa4, 0x99),
-        b'k' => Color32::from_rgb(0xf1, 0xeb, 0xdb),
-        b'.' => Color32::from_rgb(0xdd, 0xce, 0xbf),
-        _ => return None,
-    })
-}
+/// Los íconos de las secciones: piezas del skin.
+pub const ICON_ARTBOARD: &str = "icon.status.artboard";
+pub const ICON_POINTER: &str = "icon.status.pointer";
+pub const ICON_FRAME: &str = "icon.status.frame";
 
 /// Una sección: ícono (opcional), texto y su color.
 pub struct Section<'a> {
-    pub icon: Option<&'a [&'a str]>,
+    /// La pieza del skin del ícono.
+    pub icon: Option<&'a str>,
     pub text: String,
     pub color: Option<Color32>,
 }
@@ -110,10 +62,10 @@ pub fn show(ui: &mut Ui, skin: &Skin, sections: &[Section]) {
             ));
             x += etched + AIR;
         }
-        if let Some(rows) = section.icon {
-            let size = vec2(rows[0].len() as f32, rows.len() as f32);
+        if let Some(name) = section.icon {
+            let size = pixel_draw::piece_size(skin, name);
             let at = pos2(x, bar.top() + ICON_BOTTOM - size.y);
-            shapes.extend(pixel_draw::ascii_shapes(rows, at, icon_color));
+            shapes.extend(pixel_draw::piece_at(skin, name, at, ppp));
             x += size.x + AIR;
         }
         let color = section.color.unwrap_or(colors.text);
