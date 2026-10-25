@@ -103,6 +103,9 @@ pub(crate) struct MenuLook {
     key: Option<Piece>,
     check: Option<Piece>,
     check_on: Option<Piece>,
+    /// El círculo de las opciones de una lista (`menu.radio`, `menu.radio.on` la elegida).
+    radio: Option<Piece>,
+    radio_on: Option<Piece>,
     colors: SkinColors,
     /// La fila de arriba de las mayúsculas de los títulos.
     caps_top: f32,
@@ -124,6 +127,8 @@ impl MenuLook {
             key: piece(KEY),
             check: piece(CHECK),
             check_on: piece(CHECK_ON),
+            radio: piece("menu.radio"),
+            radio_on: piece("menu.radio.on"),
             colors: *skin.colors(),
             caps_top: bar_top + tab_bar::MENU_CAPS_TOP,
             opacity: 1.0,
@@ -798,16 +803,36 @@ impl Widget for Choice<'_> {
             look.colors.text_dim
         };
         let label = galley(ui, &shown(self.label), text_color);
-        let (rect, response) = row(ui, &label, 0.0, self.label);
         let selected = self.selected;
+        // A la izquierda, el radio (prendido en la elegida), como la casilla de `Check`.
+        let radio = if selected {
+            &look.radio_on
+        } else {
+            &look.radio
+        };
+        let radio = radio.clone().or_else(|| look.radio.clone());
+        let indent = radio.as_ref().map_or(0.0, |p| p.size[0] as f32 + CHECK_GAP);
+        let (rect, response) = row(ui, &label, indent, self.label);
         response.widget_info(|| {
             WidgetInfo::selected(WidgetType::SelectableLabel, enabled, selected, self.label)
         });
         if ui.is_rect_visible(rect) {
             let ppp = ui.ctx().pixels_per_point();
             let mut shapes = row_shapes(ui, &look, rect, &label, text_color, &response);
+            // El texto, después del radio.
+            if let Some(Shape::Text(text)) = shapes.last_mut() {
+                text.pos.x += indent;
+            }
             if selected && !response.hovered() {
                 shapes.insert(0, row_highlight(&look, rect, ppp));
+            }
+            if let Some(piece) = &radio {
+                let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+                let caps = rect.top() + ROW_CAPS_TOP;
+                // Centrado con las mayúsculas (como la casilla).
+                let top = (caps + (CAP_HEIGHT - size.y) / 2.0).floor();
+                let at = Rect::from_min_size(pos2(rect.left(), top), size);
+                shapes.extend(pixel_ui::piece_shapes(piece, at, ppp));
             }
             row_painter(ui, &look).extend(shapes);
         }
