@@ -38,22 +38,9 @@ fn finish(ctx: &egui::Context, open: bool, result: DialogResult) -> DialogResult
     }
 }
 
-fn buttons(ui: &mut egui::Ui, result: &mut DialogResult) {
-    ui.separator();
-    ui.horizontal(|ui| {
-        if ui.button("OK").clicked() {
-            *result = DialogResult::Accept;
-        }
-        if ui.button("Cancel").clicked() {
-            *result = DialogResult::Cancel;
-        }
-    });
-}
-
-/// La ventana de un diálogo de tilemaps con lo que agregue `add_contents` y, abajo, OK y Cancel.
-/// Con `skin` (Pixel UI) es el diálogo pixel del skin con los botones pixel y el botón de cerrar
-/// (que cancela); sin él, la ventana de egui de siempre. `id` es el del diálogo pixel. Devuelve
-/// lo elegido con los botones y si sigue abierta.
+/// La ventana de un diálogo de tilemaps (la de la app: con `skin`, la de Pixel UI) con lo que
+/// agregue `add_contents` y, abajo, OK y Cancel. Cerrar con la × es Cancel. Devuelve lo elegido
+/// con los botones y si sigue abierta.
 fn dialog_window(
     ctx: &egui::Context,
     skin: Option<&Skin>,
@@ -61,38 +48,25 @@ fn dialog_window(
     title: &str,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) -> (DialogResult, bool) {
-    match skin {
-        Some(skin) => {
-            let out = pixel_ui::pixel_dialog(ctx, skin, egui::Id::new(id), title, true, |ui| {
-                add_contents(ui);
-                ui.add_space(6.0);
-                let buttons = pixel_ui::pixel_buttons(ui, skin, &["OK", "Cancel"]);
-                if buttons[0].clicked() {
-                    DialogResult::Accept
-                } else if buttons[1].clicked() {
-                    DialogResult::Cancel
-                } else {
-                    DialogResult::Open
-                }
-            });
-            // Cerrar desde la barra de título es lo mismo que Cancel.
-            (out.inner, !out.closed)
-        }
-        None => {
-            let mut result = DialogResult::Open;
-            let mut open = true;
-            egui::Window::new(title)
-                .open(&mut open)
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .show(ctx, |ui| {
-                    add_contents(ui);
-                    buttons(ui, &mut result);
-                });
-            (result, open)
-        }
-    }
+    let mut result = DialogResult::Open;
+    let (_, closed) = pixel_ui::app_window(
+        ctx,
+        skin,
+        id,
+        title,
+        true,
+        (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+        |ui| {
+            add_contents(ui);
+            ui.add_space(6.0);
+            match pixel_ui::dialog_buttons(ui, skin, &["OK", "Cancel"]) {
+                Some(0) => result = DialogResult::Accept,
+                Some(_) => result = DialogResult::Cancel,
+                None => {}
+            }
+        },
+    );
+    (result, !closed)
 }
 
 fn tileset_label(t: &(u32, String, (u32, u32))) -> String {

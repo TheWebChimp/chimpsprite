@@ -38,6 +38,7 @@ mod lospec_tab;
 mod palette_library;
 mod panels;
 mod pixel_cursors;
+mod pixel_draw;
 mod pixel_home;
 mod pixel_rulers;
 mod pixel_sections;

@@ -2,10 +2,11 @@
 //! un botón por panel (Artboards, Slices) que lo abre flotando a su izquierda. Así esas secciones
 //! no le quitan lugar a la paleta y al editor de color.
 
-use eframe::egui::{self, Color32, Rect, Sense, Shape, Ui, Vec2, WidgetInfo, WidgetType, vec2};
+use eframe::egui::{self, Color32, Rect, Sense, Shape, Ui, Vec2, vec2};
 
 use crate::editor::Editor;
 use crate::panels;
+use crate::pixel_draw;
 use crate::pixel_ui;
 use crate::skin::{Skin, WidgetState};
 use cs_core::ArtboardId;
@@ -14,7 +15,6 @@ use cs_core::ArtboardId;
 /// aire entre uno y otro.
 pub const BUTTON_SIZE: Vec2 = vec2(23.0, 24.0);
 const BUTTON_GAP: f32 = 3.0;
-const BUTTON_PIECE: &str = "button";
 /// Ancho del dock: los botones y 3 de aire hasta el panel derecho.
 pub const WIDTH: f32 = 26.0;
 pub const RIGHT_MARGIN: i8 = 3;
@@ -149,37 +149,14 @@ pub struct DockOutput {
 fn pixel_button(ui: &mut Ui, skin: &Skin, panel: DockPanel, open: bool) -> egui::Response {
     let (rect, _) = ui.allocate_exact_size(BUTTON_SIZE, Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), BUTTON_SIZE);
-    let response = ui.interact(rect, ui.id().with(("dock", panel.label())), Sense::click());
-    let enabled = ui.is_enabled();
-    response.widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, open, panel.label()));
-    let state = if response.is_pointer_button_down_on() {
-        WidgetState::Down
-    } else if open {
-        WidgetState::Active
-    } else if response.hovered() {
-        WidgetState::Hover
-    } else {
-        WidgetState::Normal
+    let info = pixel_draw::ButtonInfo {
+        selected: Some(open),
+        ..pixel_draw::ButtonInfo::new(ui.id().with(("dock", panel.label())), panel.label())
     };
-    let ppp = ui.ctx().pixels_per_point();
-    let mut shapes = skin
-        .piece(BUTTON_PIECE, state)
-        .map(|p| pixel_ui::piece_shapes(p, rect, ppp))
-        .unwrap_or_default();
-    let rows = panel.icon();
-    let size = vec2(rows[0].len() as f32, rows.len() as f32);
-    let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
-    let at = (rect.min + (rect.size() - size) / 2.0).floor() + vec2(0.0, down);
-    for (y, row) in rows.iter().enumerate() {
-        for (x, c) in row.bytes().enumerate() {
-            if let Some(color) = icon_color(c) {
-                let px = Rect::from_min_size(at + vec2(x as f32, y as f32), Vec2::splat(1.0));
-                shapes.push(Shape::rect_filled(px, 0.0, color));
-            }
-        }
-    }
-    ui.painter().extend(shapes);
-    response.on_hover_text(panel.label())
+    pixel_draw::skin_button(ui, skin, rect, info, |r| {
+        pixel_draw::ascii_centered(panel.icon(), r, icon_color)
+    })
+    .on_hover_text(panel.label())
 }
 
 /// El panel abierto (en la memoria de egui, por pestaña de la app: no se guarda).

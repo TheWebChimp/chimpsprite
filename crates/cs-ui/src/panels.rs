@@ -1465,41 +1465,56 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView, notic
         ui.label(format!("{}%", (canvas.zoom * 100.0) as u32));
         ui.separator();
         ui.label(format!("Frame {}/{}", editor.frame + 1, s.frames.len()));
-        if editor.editing_mask() {
+        for (text, guide) in status_notices(editor, canvas, notice) {
             ui.separator();
-            ui.colored_label(
-                theme::ACCENT,
-                "Editing layer mask: white reveals, black hides",
-            );
-        }
-        if let Some(text) = editor.mask_status() {
-            ui.separator();
-            ui.colored_label(theme::ACCENT, text);
-        }
-        let on_instance = s
-            .layer(editor.layer)
-            .is_some_and(|l| l.kind == cs_core::LayerKind::Instance);
-        if on_instance && editor.active_tool().paints() {
-            ui.separator();
-            ui.colored_label(theme::ACCENT, "Instance layer: edit the source artboard");
-        }
-        if let Some(text) = editor.tiles_status() {
-            ui.separator();
-            ui.colored_label(theme::ACCENT, text);
-        }
-        if let Some(text) = editor.floating_status() {
-            ui.separator();
-            ui.colored_label(theme::ACCENT, text);
-        }
-        if let Some(hint) = canvas.guide_hint {
-            ui.separator();
-            ui.colored_label(theme::GUIDE_LINE, hint);
-        }
-        if let Some(notice) = notice {
-            ui.separator();
-            ui.colored_label(theme::ACCENT, notice);
+            let color = if guide {
+                theme::GUIDE_LINE
+            } else {
+                theme::ACCENT
+            };
+            ui.colored_label(color, text);
         }
     });
+}
+
+/// Los avisos de la barra de estado en este momento (las dos barras muestran los mismos):
+/// máscara, instancia, tiles, lo flotante, la guía bajo el puntero (`true`: se pinta en el color
+/// de las guías) y `notice` (autosave).
+fn status_notices(
+    editor: &Editor,
+    canvas: &CanvasView,
+    notice: Option<&str>,
+) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    if editor.editing_mask() {
+        out.push((
+            "Editing layer mask: white reveals, black hides".to_owned(),
+            false,
+        ));
+    }
+    if let Some(text) = editor.mask_status() {
+        out.push((text.to_string(), false));
+    }
+    let on_instance = editor
+        .sprite()
+        .layer(editor.layer)
+        .is_some_and(|l| l.kind == cs_core::LayerKind::Instance);
+    if on_instance && editor.active_tool().paints() {
+        out.push(("Instance layer: edit the source artboard".to_owned(), false));
+    }
+    if let Some(text) = editor.tiles_status() {
+        out.push((text.to_string(), false));
+    }
+    if let Some(text) = editor.floating_status() {
+        out.push((text, false));
+    }
+    if let Some(hint) = canvas.guide_hint {
+        out.push((hint.to_string(), true));
+    }
+    if let Some(notice) = notice {
+        out.push((notice.to_owned(), false));
+    }
+    out
 }
 
 /// Con Pixel UI, la barra de estado del diseño: el artboard con su tamaño, el píxel bajo el
@@ -1542,38 +1557,17 @@ pub fn pixel_status_bar(
             color: None,
         },
     ];
+    // Los avisos, sin ícono y en el acento del skin.
     let accent = skin.colors().accent;
-    let mut warn = |text: String| {
-        sections.push(Section {
-            icon: None,
-            text,
-            color: Some(accent),
-        })
-    };
-    if editor.editing_mask() {
-        warn("Editing layer mask: white reveals, black hides".to_owned());
-    }
-    if let Some(text) = editor.mask_status() {
-        warn(text.to_string());
-    }
-    let on_instance = s
-        .layer(editor.layer)
-        .is_some_and(|l| l.kind == cs_core::LayerKind::Instance);
-    if on_instance && editor.active_tool().paints() {
-        warn("Instance layer: edit the source artboard".to_owned());
-    }
-    if let Some(text) = editor.tiles_status() {
-        warn(text.to_string());
-    }
-    if let Some(text) = editor.floating_status() {
-        warn(text);
-    }
-    if let Some(hint) = canvas.guide_hint {
-        warn(hint.to_string());
-    }
-    if let Some(notice) = notice {
-        warn(notice.to_owned());
-    }
+    sections.extend(
+        status_notices(editor, canvas, notice)
+            .into_iter()
+            .map(|(text, _)| Section {
+                icon: None,
+                text,
+                color: Some(accent),
+            }),
+    );
     pixel_status::show(ui, skin, &sections);
 }
 

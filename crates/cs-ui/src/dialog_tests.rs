@@ -803,33 +803,36 @@ fn new_palette_does_nothing_with_the_palette_locked() {
     assert_eq!(h.app.doc.editor.sprite().palette, cs_core::Palette::db32());
 }
 
-/// Cada ventana se abre con su id en los dos modos; con Pixel UI, con el marco `window` del skin.
+/// Cada ventana se abre en los dos modos; con Pixel UI es el diálogo pixel (su área y el marco
+/// `window` del skin).
 #[test]
 fn every_window_is_the_app_window() {
     type Open = fn(&mut ChimpApp, &egui::Context);
-    let windows: [(&str, Open); 5] = [
-        ("palette_presets_window", |app, ctx| {
+    let windows: [(&str, &str, Open); 5] = [
+        ("palette_presets_window", "Palette Presets", |app, ctx| {
             app.palette_action(ctx, crate::panels::PaletteAction::OpenPresets)
         }),
-        ("export_window", |app, _| app.open_export()),
-        ("grid_settings_window", |app, _| {
+        ("export_window", "Export", |app, _| app.open_export()),
+        ("grid_settings_window", "Grid Settings", |app, _| {
             app.grid_dialog = Some(crate::view::GridDialog::new(&app.doc.editor, &app.view))
         }),
-        ("message_window", |app, _| {
+        ("message_window", "Hello", |app, _| {
             app.show_message("Hello", "World")
         }),
-        ("slice_properties_window", |app, _| {
+        ("slice_properties_window", "Slice Properties", |app, _| {
             app.doc.editor.add_slice();
             app.doc.canvas.slice_properties = true;
         }),
     ];
-    for (id, open) in windows {
+    for (id, title, open) in windows {
         for pixel_ui in [true, false] {
             let mut h = DialogHarness::new(pixel_ui);
             let ctx = h.ctx.clone();
             open(&mut h.app, &ctx);
             h.settle();
-            assert!(h.has_area(id), "{id}: pixel_ui {pixel_ui}");
+            assert!(h.drew_text(title), "{id}: pixel_ui {pixel_ui}");
+            // El área del diálogo pixel, solo con Pixel UI (sin él, la ventana de egui).
+            assert_eq!(h.has_area(id), pixel_ui, "{id}: pixel_ui {pixel_ui}");
             if pixel_ui {
                 assert!(h.drew_piece("window"), "{id}");
             }

@@ -527,24 +527,7 @@ impl ChimpApp {
         };
         // Con Pixel UI, en el diálogo pixel, como "Unsaved changes".
         let skin = self.pixel.skin();
-        let mut result = match skin {
-            Some(skin) => pixel_confirm(ctx, skin, title, &body, ok),
-            None => {
-                let mut result = None;
-                centered_dialog(title).show(ctx, |ui| {
-                    ui.label(body);
-                    ui.horizontal(|ui| {
-                        if ui.button(ok).clicked() {
-                            result = Some(true);
-                        }
-                        if ui.button("Cancel").clicked() {
-                            result = Some(false);
-                        }
-                    });
-                });
-                result
-            }
-        };
+        let mut result = confirm_window(ctx, skin, title, &body, ok);
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             result = Some(false);
         }
@@ -574,40 +557,37 @@ impl ChimpApp {
 /// La pregunta de "New palette" en un sprite indexado.
 const NEW_PALETTE_QUESTION: &str = "Replace the palette? Pixels using removed colors will change.";
 
-/// Una confirmación con el skin (Pixel UI), como "Unsaved changes": la pregunta, `ok` y Cancel.
-/// Cerrar desde la barra de título es Cancel.
-fn pixel_confirm(
+/// Una confirmación en la ventana de la app, como "Unsaved changes": la pregunta, `ok` y Cancel.
+/// Cerrar con la × es Cancel.
+fn confirm_window(
     ctx: &egui::Context,
-    skin: &crate::skin::Skin,
+    skin: Option<&crate::skin::Skin>,
     title: &str,
     body: &str,
     ok: &str,
 ) -> Option<bool> {
-    let id = egui::Id::new("palette_confirm");
-    let dialog = pixel_ui::pixel_dialog(ctx, skin, id, title, true, |ui| {
-        ui.vertical_centered(|ui| ui.label(body));
-        ui.add_space(6.0);
-        pixel_ui::pixel_buttons(ui, skin, &[ok, "Cancel"])
-            .iter()
-            .zip([true, false])
-            .find_map(|(response, ok)| response.clicked().then_some(ok))
-    });
-    if dialog.closed {
+    let mut result = None;
+    let (_, closed) = pixel_ui::app_window(
+        ctx,
+        skin,
+        "palette_confirm",
+        title,
+        true,
+        (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+        |ui| {
+            ui.vertical_centered(|ui| ui.label(body));
+            ui.add_space(6.0);
+            result = pixel_ui::dialog_buttons(ui, skin, &[ok, "Cancel"]).map(|i| i == 0);
+        },
+    );
+    if closed {
         return Some(false);
     }
-    dialog.inner
+    result
 }
 
 /// El tamaño del contenido de la ventana de presets.
 const PRESETS_SIZE: egui::Vec2 = egui::vec2(420.0, 440.0);
-
-/// Diálogo fijo en el centro, como "Unsaved changes" (`file_actions.rs`).
-fn centered_dialog(title: &str) -> egui::Window<'static> {
-    egui::Window::new(title.to_string())
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-}
 
 /// Fila de la ventana: nombre, cantidad de colores y tira. Toda la fila es clicable.
 fn preset_row(ui: &mut egui::Ui, preset: &Preset, is_default: bool) -> egui::Response {

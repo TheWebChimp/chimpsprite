@@ -605,10 +605,7 @@ impl ChimpApp {
     /// modos (Esc cancela).
     fn unsaved_dialog(&mut self, ctx: &egui::Context, pending: Pending) {
         let prompt = self.unsaved_prompt(pending);
-        let mut choice = match self.pixel.skin() {
-            Some(skin) => pixel_unsaved(ctx, skin, &prompt),
-            None => plain_unsaved(ctx, &prompt),
-        };
+        let mut choice = unsaved_window(ctx, self.pixel.skin(), &prompt);
         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             choice = Some(UnsavedChoice::Cancel);
         }
@@ -640,67 +637,43 @@ impl ChimpApp {
     }
 }
 
-/// "Unsaved changes" con los widgets de egui (Pixel UI apagado), como siempre.
-fn plain_unsaved(ctx: &egui::Context, prompt: &UnsavedPrompt) -> Option<UnsavedChoice> {
-    let mut choice = None;
-    egui::Window::new("Unsaved changes")
-        .collapsible(false)
-        .resizable(false)
-        .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-        .show(ctx, |ui| {
-            ui.label(&prompt.question);
-            for name in &prompt.names {
-                ui.label(format!("• {name}"));
-            }
-            ui.add_space(6.0);
-            ui.horizontal(|ui| {
-                if ui.button(prompt.save).clicked() {
-                    choice = Some(UnsavedChoice::Save);
-                }
-                if ui.button(prompt.discard).clicked() {
-                    choice = Some(UnsavedChoice::Discard);
-                }
-                if ui.button("Cancel").clicked() {
-                    choice = Some(UnsavedChoice::Cancel);
-                }
-            });
-        });
-    choice
-}
-
-/// "Unsaved changes" con el skin (Pixel UI): el mismo texto y los mismos botones, como en el
-/// mockup.
-fn pixel_unsaved(
+/// "Unsaved changes" en la ventana de la app (con `skin`, la de Pixel UI): la pregunta, los
+/// documentos y Save / Discard / Cancel. Cerrar con la × es Cancel.
+fn unsaved_window(
     ctx: &egui::Context,
-    skin: &Skin,
+    skin: Option<&Skin>,
     prompt: &UnsavedPrompt,
 ) -> Option<UnsavedChoice> {
-    let id = egui::Id::new("unsaved_changes");
-    let dialog = pixel_ui::pixel_dialog(ctx, skin, id, "Unsaved changes", true, |ui| {
-        ui.vertical_centered(|ui| {
-            ui.label(&prompt.question);
-            // `•` no está en la fuente pixel; `·` sí.
-            for name in &prompt.names {
-                ui.label(format!("· {name}"));
-            }
-        });
-        ui.add_space(6.0);
-        let labels = [prompt.save, prompt.discard, "Cancel"];
-        let choices = [
-            UnsavedChoice::Save,
-            UnsavedChoice::Discard,
-            UnsavedChoice::Cancel,
-        ];
-        pixel_ui::pixel_buttons(ui, skin, &labels)
-            .iter()
-            .zip(choices)
-            .find_map(|(response, c)| response.clicked().then_some(c))
-    });
-    // Cerrar desde la barra de título es lo mismo que Cancel.
-    if dialog.closed {
+    let mut choice = None;
+    let (_, closed) = pixel_ui::app_window(
+        ctx,
+        skin,
+        "unsaved_changes",
+        "Unsaved changes",
+        true,
+        (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+        |ui| {
+            ui.vertical_centered(|ui| {
+                ui.label(&prompt.question);
+                // `•` no está en la fuente pixel; `·` sí.
+                let bullet = if skin.is_some() { "·" } else { "•" };
+                for name in &prompt.names {
+                    ui.label(format!("{bullet} {name}"));
+                }
+            });
+            ui.add_space(6.0);
+            let labels = [prompt.save, prompt.discard, "Cancel"];
+            choice = pixel_ui::dialog_buttons(ui, skin, &labels).map(|i| match i {
+                0 => UnsavedChoice::Save,
+                1 => UnsavedChoice::Discard,
+                _ => UnsavedChoice::Cancel,
+            });
+        },
+    );
+    if closed {
         return Some(UnsavedChoice::Cancel);
     }
-    dialog.inner
+    choice
 }
 
 /// Bytes del documento para guardarlo como `file_name`. Lo flotante todavía no está en el

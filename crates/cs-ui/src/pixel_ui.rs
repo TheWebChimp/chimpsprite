@@ -142,7 +142,7 @@ pub(crate) fn flat_frame(
     shapes
 }
 
-/// Diálogo en el centro de la pantalla, con el marco del skin en 9-slice. El título va centrado en
+/// Diálogo con el marco del skin en 9-slice, anclado en `anchor` (alineación y desfase). El título va centrado en
 /// la barra de arriba y el contenido en el área del centro, con 4 px de margen. El texto de
 /// adentro usa `color.text`.
 ///
@@ -152,27 +152,6 @@ pub(crate) fn flat_frame(
 /// Con `closable`, a la derecha de la barra va el botón de cerrar (`window.close`, o
 /// `window.close.hover` con el puntero encima; si el skin no lo trae, una × de líneas). Si se
 /// hace clic en él, [`DialogOutput::closed`] es `true`; qué hacer con eso lo decide quien llama.
-pub fn pixel_dialog<R>(
-    ctx: &egui::Context,
-    skin: &Skin,
-    id: Id,
-    title: &str,
-    closable: bool,
-    add_contents: impl FnOnce(&mut Ui) -> R,
-) -> DialogOutput<R> {
-    pixel_dialog_at(
-        ctx,
-        skin,
-        id,
-        title,
-        closable,
-        (Align2::CENTER_CENTER, Vec2::ZERO),
-        add_contents,
-    )
-}
-
-/// Igual que [`pixel_dialog`], pero anclado en `anchor` (alineación y desfase) en vez de en el
-/// centro; sirve para los diálogos que no deben tapar el lienzo.
 pub fn pixel_dialog_at<R>(
     ctx: &egui::Context,
     skin: &Skin,
@@ -233,7 +212,7 @@ pub fn pixel_dialog_at<R>(
     .inner
 }
 
-/// Lo que devuelve [`pixel_dialog`]: lo que devolvió el contenido y si se hizo clic en el botón
+/// Lo que devuelve [`pixel_dialog_at`]: lo que devolvió el contenido y si se hizo clic en el botón
 /// de cerrar de la barra de título.
 pub struct DialogOutput<R> {
     pub inner: R,
@@ -913,7 +892,7 @@ pub(crate) fn wrap_rows(available: f32, widths: &[f32], joins: &[f32]) -> Vec<Ra
 
 /// La ventana de la app, la misma en todos lados: con Pixel UI (`skin`), [`pixel_dialog_at`] (el
 /// marco `window` del skin, el título centrado, la × si `closable` y se mueve de la barra); sin
-/// él, la ventana de egui de siempre, fija y sin plegar. `id` la identifica en las dos.
+/// él, la ventana de egui de siempre, fija y sin plegar. `id` es el del área del diálogo pixel.
 /// Devuelve lo que devolvió el contenido (`None` si egui no lo mostró) y si se cerró con la ×.
 pub fn app_window<R>(
     ctx: &egui::Context,
@@ -939,8 +918,9 @@ pub fn app_window<R>(
         }
         None => {
             let mut open = true;
+            // Otro id que el del diálogo pixel: el área `id` es solo la de Pixel UI.
             let window = egui::Window::new(title.to_owned())
-                .id(Id::new(id))
+                .id(Id::new(id).with("egui"))
                 .collapsible(false)
                 .resizable(false)
                 .anchor(anchor.0, anchor.1);
@@ -1071,10 +1051,18 @@ mod tests {
         // El área se mide en el primer frame.
         for _ in 0..3 {
             frame(&ctx, screen(), |ui| {
-                pixel_dialog(ui.ctx(), &skin, id, "Unsaved changes", false, |ui| {
-                    content = ui.max_rect();
-                    ui.label("Save changes before closing?");
-                });
+                pixel_dialog_at(
+                    ui.ctx(),
+                    &skin,
+                    id,
+                    "Unsaved changes",
+                    false,
+                    (Align2::CENTER_CENTER, Vec2::ZERO),
+                    |ui| {
+                        content = ui.max_rect();
+                        ui.label("Save changes before closing?");
+                    },
+                );
             });
         }
         let frame = ctx
@@ -1153,14 +1141,22 @@ mod tests {
             let mut rects = Vec::new();
             for _ in 0..3 {
                 frame(&ctx, screen(), |ui| {
-                    pixel_dialog(ui.ctx(), skin, id, "Unsaved changes", true, |ui| {
-                        content = ui.max_rect();
-                        ui.label("A long question that is wider than the buttons, surely?");
-                        rects = pixel_buttons(ui, skin, &["Save", "Discard", "Cancel"])
-                            .iter()
-                            .map(|r| r.rect)
-                            .collect();
-                    });
+                    pixel_dialog_at(
+                        ui.ctx(),
+                        skin,
+                        id,
+                        "Unsaved changes",
+                        true,
+                        (Align2::CENTER_CENTER, Vec2::ZERO),
+                        |ui| {
+                            content = ui.max_rect();
+                            ui.label("A long question that is wider than the buttons, surely?");
+                            rects = pixel_buttons(ui, skin, &["Save", "Discard", "Cancel"])
+                                .iter()
+                                .map(|r| r.rect)
+                                .collect();
+                        },
+                    );
                 });
             }
             assert_eq!(rects.len(), 3);

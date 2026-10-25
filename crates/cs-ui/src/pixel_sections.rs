@@ -3,18 +3,17 @@
 //! `tab.active`) sobre la línea grabada y, debajo, los campos de lo elegido.
 
 use eframe::egui::{
-    self, Align, Color32, Layout, Pos2, Rect, Response, Sense, Shape, TextStyle, Ui, UiBuilder,
-    Vec2, WidgetInfo, WidgetType, pos2, vec2,
+    self, Align, Color32, Layout, Rect, Response, Sense, Shape, TextStyle, Ui, UiBuilder, Vec2,
+    WidgetInfo, WidgetType, pos2, vec2,
 };
 
 use crate::bar_fields;
+use crate::pixel_draw;
 use crate::pixel_ui;
 use crate::skin::{Skin, WidgetState};
-use crate::tab_bar;
 
 /// Los botones chicos del diseño: `button` del skin en 9-slice, de 25×16.
 pub const BUTTON_SIZE: Vec2 = vec2(25.0, 16.0);
-const BUTTON_PIECE: &str = "button";
 /// Entre los botones del título (x 943 → 946 en el diseño).
 const BUTTON_GAP: f32 = 2.0;
 /// Del borde derecho del panel a los botones del título; los de los campos llegan al borde.
@@ -99,33 +98,21 @@ fn icon_color(c: u8) -> Option<Color32> {
     })
 }
 
-/// Las formas de un ícono con su esquina en `at` (en puntos enteros).
-fn icon_shapes(rows: &[&str], at: Pos2, enabled: bool) -> Vec<Shape> {
-    let mut out = Vec::new();
-    for (y, row) in rows.iter().enumerate() {
-        for (x, c) in row.bytes().enumerate() {
-            let Some(color) = icon_color(c) else {
-                continue;
-            };
-            let color = if enabled {
+/// El color de cada letra de los íconos; desactivado, apagado.
+fn icon_paint(enabled: bool) -> impl Fn(u8) -> Option<Color32> {
+    move |c| {
+        icon_color(c).map(|color| {
+            if enabled {
                 color
             } else {
                 color.gamma_multiply(0.35)
-            };
-            let r = Rect::from_min_size(at + vec2(x as f32, y as f32), Vec2::splat(1.0));
-            out.push(Shape::rect_filled(r, 0.0, color));
-        }
+            }
+        })
     }
-    out
 }
 
-/// Tamaño de un ícono.
-fn icon_size(rows: &[&str]) -> Vec2 {
-    vec2(rows[0].len() as f32, rows.len() as f32)
-}
-
-/// Un botón chico en `rect` (de `BUTTON_SIZE`): la pieza `button` del skin según su estado y
-/// `content` centrado adentro. Su nombre accesible es `label`, que es también su tooltip.
+/// Un botón chico en `rect` (de `BUTTON_SIZE`) con `content` adentro. Su nombre accesible es
+/// `label`, que es también su tooltip.
 fn button_at(
     ui: &mut Ui,
     skin: &Skin,
@@ -134,47 +121,16 @@ fn button_at(
     enabled: bool,
     content: impl FnOnce(Rect) -> Vec<Shape>,
 ) -> Response {
-    let sense = if enabled {
-        Sense::click()
-    } else {
-        Sense::hover()
+    let info = pixel_draw::ButtonInfo {
+        enabled,
+        ..pixel_draw::ButtonInfo::new(ui.id().with(("pixel_button", label)), label)
     };
-    let response = ui.interact(rect, ui.id().with(("pixel_button", label)), sense);
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
-    let state = if !enabled {
-        WidgetState::Normal
-    } else if response.is_pointer_button_down_on() {
-        WidgetState::Down
-    } else if response.hovered() {
-        WidgetState::Hover
-    } else {
-        WidgetState::Normal
-    };
-    let ppp = ui.ctx().pixels_per_point();
-    let mut shapes = match skin.piece(BUTTON_PIECE, state) {
-        Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
-        None => vec![Shape::rect_stroke(
-            rect.shrink(0.5),
-            0.0,
-            (1.0, OUTLINE),
-            egui::StrokeKind::Middle,
-        )],
-    };
-    // Apretado, lo de adentro baja una fila (como los botones del skin).
-    let inner = rect.translate(vec2(
-        0.0,
-        if state == WidgetState::Down { 1.0 } else { 0.0 },
-    ));
-    shapes.extend(content(inner));
-    ui.painter().extend(shapes);
-    response.on_hover_text(label)
+    pixel_draw::skin_button(ui, skin, rect, info, content).on_hover_text(label)
 }
 
-/// `icon` centrado en `rect` (la fila de arriba, redondeada hacia arriba).
+/// `icon` centrado en `rect`.
 fn centered(rows: &[&str], rect: Rect, enabled: bool) -> Vec<Shape> {
-    let size = icon_size(rows);
-    let at = (rect.min + (rect.size() - size) / 2.0).floor();
-    icon_shapes(rows, at, enabled)
+    pixel_draw::ascii_centered(rows, rect, icon_paint(enabled))
 }
 
 /// Un botón chico con un ícono, en el lugar que sigue de `ui`.
@@ -208,11 +164,7 @@ pub fn color_button(ui: &mut Ui, skin: &Skin, color: Color32, label: &str) -> Re
 
 /// Un texto con sus mayúsculas en la fila `cap_top` y su borde izquierdo en `left`.
 fn text_shape(ui: &Ui, text: &str, left: f32, cap_top: f32, color: Color32) -> Shape {
-    let font = TextStyle::Body.resolve(ui.style());
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
-    let ppp = ui.ctx().pixels_per_point();
-    let at = tab_bar::text_pos(&galley, left, cap_top, ppp);
-    Shape::galley(at, galley, color)
+    pixel_draw::caps_text(ui, text, left, cap_top, color).0
 }
 
 fn text_width(ui: &Ui, text: &str) -> f32 {

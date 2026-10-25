@@ -6,12 +6,11 @@
 // En web no hay recientes: las medidas de las listas quedan sin usar.
 #![cfg_attr(target_arch = "wasm32", allow(dead_code, unused_variables))]
 
-use eframe::egui::{self, Color32, Pos2, Rect, Sense, Shape, TextStyle, Ui, Vec2, pos2, vec2};
+use eframe::egui::{self, Color32, Pos2, Rect, Sense, Shape, Ui, Vec2, pos2, vec2};
 
 use crate::ChimpApp;
-use crate::pixel_ui;
-use crate::skin::{Skin, WidgetState};
-use crate::tab_bar;
+use crate::pixel_draw;
+use crate::skin::Skin;
 
 /// Medidas del diseño, desde la esquina de arriba a la izquierda del contenido.
 const LOGO_AT: Vec2 = vec2(6.0, 21.0);
@@ -114,25 +113,11 @@ fn icon_color(c: u8) -> Option<Color32> {
 }
 
 fn icon_shapes(rows: &[&str], at: Pos2) -> Vec<Shape> {
-    let mut out = Vec::new();
-    for (y, row) in rows.iter().enumerate() {
-        for (x, c) in row.bytes().enumerate() {
-            if let Some(color) = icon_color(c) {
-                let r = Rect::from_min_size(at + vec2(x as f32, y as f32), Vec2::splat(1.0));
-                out.push(Shape::rect_filled(r, 0.0, color));
-            }
-        }
-    }
-    out
+    pixel_draw::ascii_shapes(rows, at, icon_color)
 }
 
 fn text_shape(ui: &Ui, text: &str, left: f32, cap_top: f32, color: Color32) -> (Shape, f32) {
-    let font = TextStyle::Body.resolve(ui.style());
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
-    let width = galley.size().x;
-    let ppp = ui.ctx().pixels_per_point();
-    let at = tab_bar::text_pos(&galley, left, cap_top, ppp);
-    (Shape::galley(at, galley, color), width)
+    pixel_draw::caps_text(ui, text, left, cap_top, color)
 }
 
 /// Lo que se pidió desde Home.
@@ -146,39 +131,26 @@ enum HomeAction {
     OpenIn(std::path::PathBuf),
 }
 
-/// Un botón de la columna: la pieza `button` del skin según su estado, el ícono y el texto.
+/// Un botón de la columna: la pieza `button` del skin, el ícono y el texto.
 fn button(ui: &mut Ui, skin: &Skin, rect: Rect, icon: (&[&str], f32), label: &str) -> bool {
-    let response = ui.interact(rect, ui.id().with(("home_button", label)), Sense::click());
-    let enabled = ui.is_enabled();
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
-    let state = if response.is_pointer_button_down_on() {
-        WidgetState::Down
-    } else if response.hovered() {
-        WidgetState::Hover
-    } else {
-        WidgetState::Normal
-    };
-    let ppp = ui.ctx().pixels_per_point();
-    let mut shapes = skin
-        .piece("button", state)
-        .map(|p| pixel_ui::piece_shapes(p, rect, ppp))
-        .unwrap_or_default();
-    let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
+    let info = pixel_draw::ButtonInfo::new(ui.id().with(("home_button", label)), label);
     let (rows, icon_left) = icon;
-    shapes.extend(icon_shapes(
-        rows,
-        rect.min + vec2(icon_left, BUTTON_ICON_TOP + down),
-    ));
-    let (text, _) = text_shape(
+    // El texto se arma antes (necesita `ui`) y baja con el botón apretado.
+    let left = rect.left() + BUTTON_TEXT_LEFT;
+    let (mut text, _) = text_shape(
         ui,
         label,
-        rect.left() + BUTTON_TEXT_LEFT,
-        rect.top() + BUTTON_CAPS_TOP + down,
+        left,
+        rect.top() + BUTTON_CAPS_TOP,
         skin.colors().text,
     );
-    shapes.push(text);
-    ui.painter().extend(shapes);
-    response.clicked()
+    pixel_draw::skin_button(ui, skin, rect, info, |r| {
+        let mut shapes = icon_shapes(rows, r.min + vec2(icon_left, BUTTON_ICON_TOP));
+        text.translate(r.min - rect.min);
+        shapes.push(text);
+        shapes
+    })
+    .clicked()
 }
 
 /// Un elemento de una lista: el nombre (clic) y la ruta debajo, en `top` (mayúsculas del

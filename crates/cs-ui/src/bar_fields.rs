@@ -151,27 +151,23 @@ const INFO: [&str; 13] = [
 /// El ícono de info, centrado en la fila de los campos, con `text` en su tooltip. Su nombre
 /// accesible es `text`.
 pub fn info(ui: &mut Ui, look: BarLook, text: &str) -> Response {
-    let size = vec2(INFO[0].len() as f32, INFO.len() as f32);
+    let size = crate::pixel_draw::ascii_size(&INFO);
     let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
     let enabled = ui.is_enabled();
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, enabled, text));
     if ui.is_rect_visible(rect) {
         let top = look.top + FIELD_TOP + ((FIELD_HEIGHT - size.y) / 2.0).floor();
         let origin = pos2(rect.left().round(), top);
-        let painter = painter(ui, look);
-        for (y, row) in INFO.iter().enumerate() {
-            for (x, c) in row.bytes().enumerate() {
-                let color = match c {
-                    b'#' => Color32::from_rgb(0x59, 0x4d, 0x4d),
-                    b'b' => Color32::from_rgb(0x27, 0x89, 0xcd),
-                    b'o' => Color32::WHITE,
-                    b'd' => Color32::from_rgb(0xf1, 0xeb, 0xdb),
-                    _ => continue,
-                };
-                let px = Rect::from_min_size(origin + vec2(x as f32, y as f32), Vec2::splat(1.0));
-                painter.rect_filled(px, 0.0, color);
-            }
-        }
+        let shapes = crate::pixel_draw::ascii_shapes(&INFO, origin, |c| {
+            Some(match c {
+                b'#' => Color32::from_rgb(0x59, 0x4d, 0x4d),
+                b'b' => Color32::from_rgb(0x27, 0x89, 0xcd),
+                b'o' => Color32::WHITE,
+                b'd' => Color32::from_rgb(0xf1, 0xeb, 0xdb),
+                _ => return None,
+            })
+        });
+        painter(ui, look).extend(shapes);
     }
     response.on_hover_text(text)
 }

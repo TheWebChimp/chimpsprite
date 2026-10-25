@@ -42,7 +42,7 @@ const PADDING: f32 = 1.0;
 pub const TITLE_BAR: f32 = 13.0;
 /// Fila rosa agregada arriba del contenido de la barra: baja el título y los íconos 1 px.
 const BAR_EXTRA: f32 = 1.0;
-/// Franja donde se centra el título (debajo de la fila agregada): 13, como en `pixel_dialog`.
+/// Franja donde se centra el título (debajo de la fila agregada): 13, como en `pixel_dialog_at`.
 const TITLE_BAND: f32 = 13.0;
 /// Lado de los íconos de la barra (`artboard.menu`, `window.close`) y su margen al borde de los
 /// lados; arriba, uno más (la fila agregada).

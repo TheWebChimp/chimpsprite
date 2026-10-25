@@ -2,8 +2,9 @@
 //! y secciones de ícono + texto (artboard, puntero, frame) separadas por líneas grabadas
 //! verticales; después, sin ícono, lo que la barra avisa a veces (zoom, lo flotante…).
 
-use eframe::egui::{Color32, Pos2, Rect, Sense, Shape, TextStyle, Ui, Vec2, pos2, vec2};
+use eframe::egui::{Color32, Rect, Sense, Shape, TextStyle, Ui, pos2, vec2};
 
+use crate::pixel_draw;
 use crate::pixel_ui;
 use crate::skin::Skin;
 use crate::tab_bar;
@@ -112,7 +113,7 @@ pub fn show(ui: &mut Ui, skin: &Skin, sections: &[Section]) {
         if let Some(rows) = section.icon {
             let size = vec2(rows[0].len() as f32, rows.len() as f32);
             let at = pos2(x, bar.top() + ICON_BOTTOM - size.y);
-            shapes.extend(icon_shapes(rows, at));
+            shapes.extend(pixel_draw::ascii_shapes(rows, at, icon_color));
             x += size.x + AIR;
         }
         let color = section.color.unwrap_or(colors.text);
@@ -131,17 +132,4 @@ pub fn show(ui: &mut Ui, skin: &Skin, sections: &[Section]) {
         x += width + AIR;
     }
     ui.painter().with_clip_rect(bar).extend(shapes);
-}
-
-fn icon_shapes(rows: &[&str], at: Pos2) -> Vec<Shape> {
-    let mut out = Vec::new();
-    for (y, row) in rows.iter().enumerate() {
-        for (x, c) in row.bytes().enumerate() {
-            if let Some(color) = icon_color(c) {
-                let r = Rect::from_min_size(at + vec2(x as f32, y as f32), Vec2::splat(1.0));
-                out.push(Shape::rect_filled(r, 0.0, color));
-            }
-        }
-    }
-    out
 }

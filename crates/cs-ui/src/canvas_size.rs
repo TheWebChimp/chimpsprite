@@ -199,83 +199,45 @@ impl Palette {
     }
 }
 
-/// Dibuja la ventana. Enter acepta, Escape cancela. Con `skin` (Pixel UI) es el diálogo pixel
-/// del skin, con su botón de cerrar (que cancela) y los botones pixel; sin él, la ventana de
-/// egui de siempre.
+/// Dibuja la ventana de la app (con `skin`, la de Pixel UI y sus colores). Enter acepta,
+/// Escape y la × cancelan. OK no hace nada con un tamaño inválido.
 pub fn show(
     ctx: &egui::Context,
     dialog: &mut CanvasSizeDialog,
     skin: Option<&Skin>,
 ) -> DialogResult {
-    let (result, open) = match skin {
-        Some(skin) => pixel_window(ctx, skin, dialog),
-        None => plain_window(ctx, dialog),
-    };
+    let palette = skin.map_or(Palette::PLAIN, |s| Palette::of_skin(s.colors()));
+    let mut result = DialogResult::Open;
+    let (_, closed) = pixel_ui::app_window(
+        ctx,
+        skin,
+        "canvas_size",
+        "Canvas Size",
+        true,
+        ANCHOR,
+        |ui| {
+            contents(ui, dialog, palette);
+            ui.add_space(6.0);
+            match pixel_ui::dialog_buttons(ui, skin, &["OK", "Cancel"]) {
+                Some(0) if dialog.is_valid() => result = DialogResult::Accept,
+                Some(1) => result = DialogResult::Cancel,
+                _ => {}
+            }
+        },
+    );
     let (enter, escape) = ctx.input(|i| {
         (
             i.key_pressed(egui::Key::Enter),
             i.key_pressed(egui::Key::Escape),
         )
     });
-    if !open || escape {
+    if closed || escape {
         DialogResult::Cancel
     } else if enter && dialog.is_valid() {
         DialogResult::Accept
     } else {
         result
     }
-}
-
-/// El diálogo pixel del skin (Pixel UI). Devuelve lo elegido y si sigue abierto.
-fn pixel_window(
-    ctx: &egui::Context,
-    skin: &Skin,
-    dialog: &mut CanvasSizeDialog,
-) -> (DialogResult, bool) {
-    let id = egui::Id::new("canvas_size");
-    let palette = Palette::of_skin(skin.colors());
-    let out = pixel_ui::pixel_dialog_at(ctx, skin, id, "Canvas Size", true, ANCHOR, |ui| {
-        contents(ui, dialog, palette);
-        ui.add_space(6.0);
-        let buttons = pixel_ui::pixel_buttons(ui, skin, &["OK", "Cancel"]);
-        // Los botones pixel no se deshabilitan: OK no hace nada con un tamaño inválido.
-        if buttons[0].clicked() && dialog.is_valid() {
-            DialogResult::Accept
-        } else if buttons[1].clicked() {
-            DialogResult::Cancel
-        } else {
-            DialogResult::Open
-        }
-    });
-    // Cerrar desde la barra de título es lo mismo que Cancel.
-    (out.inner, !out.closed)
-}
-
-/// La ventana de egui de siempre (Pixel UI apagado). Devuelve lo elegido y si sigue abierta.
-fn plain_window(ctx: &egui::Context, dialog: &mut CanvasSizeDialog) -> (DialogResult, bool) {
-    let mut result = DialogResult::Open;
-    let mut open = true;
-    egui::Window::new("Canvas Size")
-        .open(&mut open)
-        .collapsible(false)
-        .resizable(false)
-        .anchor(ANCHOR.0, ANCHOR.1)
-        .show(ctx, |ui| {
-            contents(ui, dialog, Palette::PLAIN);
-            ui.separator();
-            ui.horizontal(|ui| {
-                if ui
-                    .add_enabled(dialog.is_valid(), egui::Button::new("OK"))
-                    .clicked()
-                {
-                    result = DialogResult::Accept;
-                }
-                if ui.button("Cancel").clicked() {
-                    result = DialogResult::Cancel;
-                }
-            });
-        });
-    (result, open)
 }
 
 /// Lo de adentro del diálogo, sin los botones: tamaño, ancla, bordes, recorte y el aviso.
