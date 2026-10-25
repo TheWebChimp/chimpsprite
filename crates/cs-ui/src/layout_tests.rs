@@ -2043,6 +2043,12 @@ fn with_pixel_ui_the_status_bar_is_the_design_one() {
     let status = h.panel("status");
     assert_eq!(status.height(), 20.0);
     assert_eq!(status.bottom(), h.screen().bottom());
+    // Con el fondo del skin (sin él, el panel quedaba negro).
+    let background = h.app.pixel.skin().unwrap().colors().background;
+    let filled = h.shapes.iter().any(|c| {
+        matches!(&c.shape, egui::Shape::Rect(r) if r.fill == background && r.rect == status)
+    });
+    assert!(filled, "the status bar has the skin background");
     let name = h.app.doc.editor.artboard().name.clone();
     let (artboard, _) = text_rect(&h, &format!("{name} 64×64"));
     let (frame, _) = text_rect(&h, "1/1");

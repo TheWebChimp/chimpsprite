@@ -948,10 +948,10 @@ impl ChimpApp {
         // Con Pixel UI, la del diseño: 20 de alto, sin el margen ni la línea de egui.
         let skin = self.pixel.skin();
         let mut status = egui::Panel::bottom("status");
-        if skin.is_some() {
+        if let Some(skin) = skin {
             status = status
                 .exact_size(pixel_status::HEIGHT)
-                .frame(egui::Frame::NONE)
+                .frame(egui::Frame::NONE.fill(skin.colors().background))
                 .show_separator_line(false);
         }
         status.show(ui, |ui| {

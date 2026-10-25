@@ -508,7 +508,7 @@ pub fn palette_buttons(
             }));
         }
         let inside = fill.shrink(1.0);
-        // La hoja desactivada (paleta bloqueada): el ícono apagado hacia `text_dim`.
+        // La hoja desactivada (paleta bloqueada): el ícono medio transparente.
         let dim = k == 2 && !usable;
         match piece(skin, button.icon) {
             Some(p) => {
@@ -516,7 +516,7 @@ pub fn palette_buttons(
                 let min = inside.min + ((inside.size() - size) / 2.0).floor();
                 let icon = pixel_ui::piece_shapes(p, Rect::from_min_size(min, size), ppp);
                 shapes.extend(if dim {
-                    artboard_window::tinted(icon, dim_tint(&colors))
+                    artboard_window::tinted(icon, dim_tint())
                 } else {
                     icon
                 });
@@ -585,11 +585,14 @@ pub fn palette_buttons(
     .or(new_palette)
 }
 
-/// El tinte de un ícono desactivado: apagado hacia `text_dim`, como los marcos inactivos de los
-/// artboards.
-fn dim_tint(colors: &SkinColors) -> Color32 {
-    Color32::WHITE.lerp_to_gamma(colors.text_dim, 0.6)
+/// El tinte de un ícono desactivado: el mismo dibujo, medio transparente (se apaga hacia el
+/// relleno del botón, sin oscurecerse).
+fn dim_tint() -> Color32 {
+    Color32::WHITE.gamma_multiply(DIM_ALPHA)
 }
+
+/// Cuánto se ve un ícono desactivado.
+const DIM_ALPHA: f32 = 0.4;
 
 /// El estado del editor entre frames: el último color y su HSV, para no perder el tono de los
 /// grises (como el caché del selector de egui).
