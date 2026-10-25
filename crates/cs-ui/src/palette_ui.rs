@@ -387,7 +387,7 @@ impl ChimpApp {
                         PresetsTab::Library => {
                             ui.horizontal(|ui| {
                                 ui.label("Search");
-                                ui.text_edit_singleline(&mut window.search);
+                                crate::widgets::text_line(ui, &mut window.search);
                             });
                             crate::pixel_ui::scroll(ui, egui::ScrollArea::vertical(), |ui| {
                                 for (title, list) in [
@@ -476,7 +476,7 @@ impl ChimpApp {
             true,
             (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
             |ui| {
-                let response = ui.text_edit_singleline(&mut dialog.name);
+                let response = crate::widgets::text_line(ui, &mut dialog.name);
                 if !dialog.focused {
                     response.request_focus();
                     dialog.focused = true;
@@ -642,7 +642,7 @@ fn lospec_ui(
 
     ui.horizontal(|ui| {
         ui.label("Paste a Lospec link or palette name");
-        let response = ui.text_edit_singleline(&mut tab.link);
+        let response = crate::widgets::text_line(ui, &mut tab.link);
         let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if tab.lookup_loading() {
             ui.spinner();
@@ -724,40 +724,36 @@ fn search_form(
     let first_page_loading = tab.listing_loading() && tab.shown_of_total().0 == 0;
     ui.horizontal(|ui| {
         ui.label("Tag");
-        let response = ui.text_edit_singleline(&mut tab.tag);
+        let response = crate::widgets::text_line(ui, &mut tab.tag);
         search |= !first_page_loading
             && response.lost_focus()
             && ui.input(|i| i.key_pressed(egui::Key::Enter));
         ui.label("Colors");
-        egui::ComboBox::from_id_salt("lospec_count")
-            .selected_text(format!("{:?}", tab.count_kind))
-            .show_ui(ui, |ui| {
-                for kind in [
-                    CountKind::Any,
-                    CountKind::Exact,
-                    CountKind::Min,
-                    CountKind::Max,
-                ] {
-                    ui.selectable_value(&mut tab.count_kind, kind, format!("{kind:?}"));
-                }
-            });
+        crate::widgets::combo(ui, "lospec_count", &format!("{:?}", tab.count_kind), |ui| {
+            for kind in [
+                CountKind::Any,
+                CountKind::Exact,
+                CountKind::Min,
+                CountKind::Max,
+            ] {
+                crate::widgets::choice(ui, &mut tab.count_kind, kind, &format!("{kind:?}"));
+            }
+        });
         ui.add_enabled(
             tab.count_kind != CountKind::Any,
             egui::DragValue::new(&mut tab.count).range(1..=256),
         );
         ui.label("Sort");
-        egui::ComboBox::from_id_salt("lospec_sort")
-            .selected_text(format!("{:?}", tab.sort))
-            .show_ui(ui, |ui| {
-                for sort in [
-                    LospecSort::Default,
-                    LospecSort::Alphabetical,
-                    LospecSort::Downloads,
-                    LospecSort::Newest,
-                ] {
-                    ui.selectable_value(&mut tab.sort, sort, format!("{sort:?}"));
-                }
-            });
+        crate::widgets::combo(ui, "lospec_sort", &format!("{:?}", tab.sort), |ui| {
+            for sort in [
+                LospecSort::Default,
+                LospecSort::Alphabetical,
+                LospecSort::Downloads,
+                LospecSort::Newest,
+            ] {
+                crate::widgets::choice(ui, &mut tab.sort, sort, &format!("{sort:?}"));
+            }
+        });
         if first_page_loading {
             ui.spinner();
         } else {

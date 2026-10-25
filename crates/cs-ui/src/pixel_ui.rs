@@ -748,36 +748,25 @@ pub fn bubble_tooltip(response: Response, skin: &Skin, text: &str) -> Response {
     }
 }
 
-/// Lo del skin que usan los tooltips ([`Tip::tip`]) y los botones sueltos ([`text_button`]) de
-/// este frame: el globo y el botón. Lo guarda la app con [`set_bubble`] para usarlo sin tener el
-/// skin a mano.
+/// El skin de este frame para los widgets que no lo reciben (tooltips, botones sueltos, scroll,
+/// campos): lo guarda la app con [`set_bubble`] en la memoria de egui, en un `Arc` (no se copia).
 fn frame_skin_id() -> Id {
     Id::new("pixel_frame_skin")
 }
 
-/// El skin de los tooltips y botones sueltos de este frame (ver [`set_bubble`]).
-fn frame_skin(ctx: &egui::Context) -> Option<Skin> {
-    ctx.data(|d| d.get_temp::<Skin>(frame_skin_id()))
+/// El skin de este frame (ver [`set_bubble`]); `None` sin Pixel UI.
+pub fn frame_skin(ctx: &egui::Context) -> Option<std::sync::Arc<Skin>> {
+    ctx.data(|d| d.get_temp::<std::sync::Arc<Skin>>(frame_skin_id()))
 }
 
-/// Con Pixel UI (`skin`), los tooltips de este frame son el globo del skin y los botones sueltos
-/// los del skin; sin él, los de egui.
-pub fn set_bubble(ctx: &egui::Context, skin: Option<&Skin>) {
-    let small = skin.map(|s| {
-        s.subset(&[
-            BUBBLE_PIECE,
-            BUTTON_PIECE,
-            SCROLL_TRACK_V,
-            SCROLL_THUMB_V,
-            SCROLL_TRACK_H,
-            SCROLL_THUMB_H,
-        ])
-    });
-    ctx.data_mut(|d| match small {
+/// Con Pixel UI (`skin`), los widgets de este frame usan el skin (el globo, los botones, el
+/// scroll y los campos del diseño); sin él, los de egui.
+pub fn set_bubble(ctx: &egui::Context, skin: Option<std::sync::Arc<Skin>>) {
+    ctx.data_mut(|d| match skin {
         Some(s) => {
             d.insert_temp(frame_skin_id(), s);
         }
-        None => d.remove::<Skin>(frame_skin_id()),
+        None => d.remove::<std::sync::Arc<Skin>>(frame_skin_id()),
     });
 }
 
@@ -1322,7 +1311,7 @@ mod tests {
         // Las mallas con `id` dibujadas en un frame con el contenido más alto que el área.
         let drawn = |pixel: bool| {
             let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
-                set_bubble(ui.ctx(), pixel.then_some(&skin));
+                set_bubble(ui.ctx(), pixel.then(|| std::sync::Arc::new(skin.clone())));
                 scroll(ui, egui::ScrollArea::vertical().max_height(100.0), |ui| {
                     ui.allocate_space(vec2(50.0, 400.0));
                 });

@@ -180,7 +180,9 @@ pub fn apply_style(ctx: &egui::Context, pixel: Option<&SkinColors>) {
 /// Pixel UI en la app: el skin y lo último aplicado.
 pub struct PixelUi {
     /// Se lee la primera vez que se enciende.
-    skin: Option<Skin>,
+    /// En un `Arc`: la app lo deja cada frame en la memoria de egui (`pixel_ui::set_bubble`) sin
+    /// copiarlo.
+    skin: Option<Arc<Skin>>,
     /// Lo último aplicado: `(encendido, escala)`.
     applied: Option<(bool, u8)>,
     /// El Ctrl+/- del usuario antes de encender Pixel UI; se devuelve al apagarlo.
@@ -212,7 +214,7 @@ impl PixelUi {
     /// El skin, solo con Pixel UI encendido y la escala entera ya aplicada.
     pub fn skin(&self) -> Option<&Skin> {
         if self.scale_ready && self.applied.is_some_and(|(on, _)| on) {
-            self.skin.as_ref()
+            self.skin.as_deref()
         } else {
             None
         }
@@ -238,7 +240,7 @@ impl PixelUi {
             self.scale_ready = false;
         }
         // Los tooltips de este frame: el globo del skin con Pixel UI; sin él, los de egui.
-        crate::pixel_ui::set_bubble(ctx, self.skin.as_ref().filter(|_| view.pixel_ui));
+        crate::pixel_ui::set_bubble(ctx, self.skin.clone().filter(|_| view.pixel_ui));
         if self.applied == Some(state) && !std::mem::take(&mut self.skin_changed) {
             return;
         }
@@ -269,7 +271,7 @@ impl PixelUi {
             if let Some(bytes) = watcher.poll(ctx.input(|i| i.time)) {
                 match Skin::load(ctx, &bytes) {
                     Ok(skin) => {
-                        self.skin = Some(skin);
+                        self.skin = Some(Arc::new(skin));
                         // Sus colores se vuelven a aplicar a egui en `update`.
                         self.skin_changed = true;
                     }
@@ -278,7 +280,7 @@ impl PixelUi {
             }
         }
         if self.skin.is_none() {
-            self.skin = Some(Skin::embedded(ctx));
+            self.skin = Some(Arc::new(Skin::embedded(ctx)));
         }
     }
 }

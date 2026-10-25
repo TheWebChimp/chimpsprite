@@ -45,7 +45,7 @@ const CHECK_ON: &str = "field.check.on";
 pub const CAPS_TOP: f32 = 5.0;
 /// La fila de arriba del combo y del campo numérico (y 73 en el diseño), que miden 16 con el
 /// brillo de abajo.
-const FIELD_TOP: f32 = 2.0;
+pub(crate) const FIELD_TOP: f32 = 2.0;
 const FIELD_HEIGHT: f32 = 16.0;
 /// Combo: de su borde izquierdo a la tinta del texto, y de la tinta a la parte de la flecha.
 const COMBO_TEXT_LEFT: f32 = 6.0;

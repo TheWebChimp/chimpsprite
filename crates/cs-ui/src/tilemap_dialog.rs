@@ -120,21 +120,27 @@ impl NewTilemapDialog {
                     .existing
                     .and_then(|i| self.tilesets.iter().find(|t| t.0 == i))
                     .map_or_else(|| "New tileset".to_string(), tileset_label);
-                egui::ComboBox::from_label("Tileset")
-                    .selected_text(selected)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.existing, None, "New tileset");
+                ui.horizontal(|ui| {
+                    crate::widgets::combo(ui, "tileset", &selected, |ui| {
+                        crate::widgets::choice(ui, &mut self.existing, None, "New tileset");
                         for t in &self.tilesets {
-                            ui.selectable_value(&mut self.existing, Some(t.0), tileset_label(t));
+                            crate::widgets::choice(
+                                ui,
+                                &mut self.existing,
+                                Some(t.0),
+                                &tileset_label(t),
+                            );
                         }
                     });
+                    ui.label("Tileset");
+                });
                 if self.existing.is_none() {
                     egui::Grid::new("new_tileset")
                         .num_columns(2)
                         .spacing([8.0, 6.0])
                         .show(ui, |ui| {
                             ui.label("Name:");
-                            ui.text_edit_singleline(&mut self.name);
+                            crate::widgets::text_line(ui, &mut self.name);
                             ui.end_row();
                             ui.label("Tile width:");
                             widgets::number(ui, &mut self.tile_size.0, 1..=MAX_TILE_SIDE, " px");

@@ -283,7 +283,7 @@ fn contents(ui: &mut egui::Ui, dialog: &mut CanvasSizeDialog, palette: Palette) 
         });
 
     ui.add_space(6.0);
-    ui.checkbox(&mut dialog.trim, "Trim content outside the canvas");
+    crate::widgets::checkbox(ui, &mut dialog.trim, "Trim content outside the canvas");
     if !dialog.is_valid() {
         ui.colored_label(palette.accent, "Size must be between 1 and 16384 px");
     }

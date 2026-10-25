@@ -280,7 +280,7 @@ impl ExportDialog {
             (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
             |ui| {
                 for format in ExportFormat::ALL {
-                    ui.radio_value(&mut self.format, format, format.label());
+                    crate::widgets::radio_value(ui, &mut self.format, format, format.label());
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -291,20 +291,41 @@ impl ExportDialog {
                     ExportFormat::Gif => {
                         ui.horizontal(|ui| {
                             ui.label("Frames");
-                            ui.radio_value(&mut self.gif_range, GifRange::All, "All");
-                            ui.radio_value(
+                            crate::widgets::radio_value(
+                                ui,
+                                &mut self.gif_range,
+                                GifRange::All,
+                                "All",
+                            );
+                            crate::widgets::radio_value(
+                                ui,
                                 &mut self.gif_range,
                                 GifRange::CurrentTag,
                                 "Current tag",
                             );
-                            ui.radio_value(&mut self.gif_range, GifRange::Selection, "Selection");
+                            crate::widgets::radio_value(
+                                ui,
+                                &mut self.gif_range,
+                                GifRange::Selection,
+                                "Selection",
+                            );
                         });
                     }
                     format if format.uses_sheet() => {
                         ui.horizontal(|ui| {
                             ui.label("Layout");
-                            ui.radio_value(&mut self.layout, SheetLayout::Horizontal, "Horizontal");
-                            ui.radio_value(&mut self.layout, SheetLayout::Vertical, "Vertical");
+                            crate::widgets::radio_value(
+                                ui,
+                                &mut self.layout,
+                                SheetLayout::Horizontal,
+                                "Horizontal",
+                            );
+                            crate::widgets::radio_value(
+                                ui,
+                                &mut self.layout,
+                                SheetLayout::Vertical,
+                                "Vertical",
+                            );
                             let grid = SheetLayout::Grid {
                                 columns: self.columns,
                             };
@@ -324,7 +345,7 @@ impl ExportDialog {
                         if format == ExportFormat::Godot {
                             ui.horizontal(|ui| {
                                 ui.label("Godot folder");
-                                ui.text_edit_singleline(&mut self.godot_folder);
+                                crate::widgets::text_line(ui, &mut self.godot_folder);
                             });
                         }
                     }
@@ -332,7 +353,7 @@ impl ExportDialog {
                     _ => {}
                 }
                 if self.format.supports_normals() {
-                    ui.checkbox(&mut self.normal_map, "Also export normal map (_n.png)")
+                    crate::widgets::checkbox(ui, &mut self.normal_map, "Also export normal map (_n.png)")
                         .tip("Lighting normals from the sprite's shape, for 2D lights in Godot/Unity/Bevy");
                 }
                 match self.format {
@@ -396,8 +417,8 @@ impl ExportDialog {
 fn json_options(ui: &mut egui::Ui, json: &mut JsonFormat) {
     ui.horizontal(|ui| {
         ui.label("JSON");
-        ui.radio_value(json, JsonFormat::Hash, "Hash");
-        ui.radio_value(json, JsonFormat::Array, "Array");
+        crate::widgets::radio_value(ui, json, JsonFormat::Hash, "Hash");
+        crate::widgets::radio_value(ui, json, JsonFormat::Array, "Array");
     });
 }
 

@@ -403,6 +403,10 @@ fn with_pixel_ui_new_tilemap_layer_is_a_pixel_dialog() {
     }
     assert!(h.drew_text("Tileset 1"), "the name field: {:?}", h.texts);
     assert_eq!(h.numbers.len(), 3, "tile width, tile height and base index");
+    // Los campos son los del skin: el combo, el de texto y los numéricos (con `px`).
+    for piece in ["field.combo", "field.text", "field.number", "field.unit"] {
+        assert!(h.drew_piece(piece), "{piece}");
+    }
 }
 
 #[test]

@@ -362,7 +362,7 @@ fn tag_menu(ui: &mut egui::Ui, editor: &Editor, index: usize, tag: &Tag) -> Opti
     let mut edited = tag.clone();
     ui.horizontal(|ui| {
         ui.label("Name");
-        ui.text_edit_singleline(&mut edited.name);
+        crate::widgets::text_line(ui, &mut edited.name);
     });
     ui.horizontal(|ui| {
         for (dir, label) in [
@@ -371,7 +371,7 @@ fn tag_menu(ui: &mut egui::Ui, editor: &Editor, index: usize, tag: &Tag) -> Opti
             (AnimDirection::PingPong, "Ping-pong"),
             (AnimDirection::PingPongReverse, "Ping-pong ←"),
         ] {
-            ui.radio_value(&mut edited.direction, dir, label);
+            crate::widgets::radio_value(ui, &mut edited.direction, dir, label);
         }
     });
     ui.horizontal(|ui| {

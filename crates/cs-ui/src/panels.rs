@@ -369,7 +369,7 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
             }
             None => {
                 groups.next(ui);
-                ui.checkbox(&mut options.pixel_perfect, "Pixel-perfect");
+                crate::widgets::checkbox(ui, &mut options.pixel_perfect, "Pixel-perfect");
             }
         }
     }
@@ -406,7 +406,12 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
             None => {
                 ui.label("Mode");
                 for mode in SelectionMode::ALL {
-                    ui.radio_value(&mut options.selection_mode, mode, mode.label());
+                    crate::widgets::radio_value(
+                        ui,
+                        &mut options.selection_mode,
+                        mode,
+                        mode.label(),
+                    );
                 }
             }
         }
@@ -442,10 +447,10 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
                 None => {
                     ui.label("Tolerance");
                     ui.add(egui::Slider::new(&mut options.tolerance, 0..=255));
-                    ui.checkbox(&mut options.contiguous, "Contiguous");
+                    crate::widgets::checkbox(ui, &mut options.contiguous, "Contiguous");
                     ui.label("Sample:");
-                    ui.radio_value(&mut options.sample_all, false, "Layer");
-                    ui.radio_value(&mut options.sample_all, true, "All layers");
+                    crate::widgets::radio_value(ui, &mut options.sample_all, false, "Layer");
+                    crate::widgets::radio_value(ui, &mut options.sample_all, true, "All layers");
                 }
             }
         }
@@ -511,8 +516,18 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
                     });
                 }
                 None => {
-                    ui.radio_value(&mut options.gradient_shape, GradientShape::Linear, "Linear");
-                    ui.radio_value(&mut options.gradient_shape, GradientShape::Radial, "Radial");
+                    crate::widgets::radio_value(
+                        ui,
+                        &mut options.gradient_shape,
+                        GradientShape::Linear,
+                        "Linear",
+                    );
+                    crate::widgets::radio_value(
+                        ui,
+                        &mut options.gradient_shape,
+                        GradientShape::Radial,
+                        "Radial",
+                    );
                     egui::ComboBox::from_id_salt("dither")
                         .selected_text(options.dither.label())
                         .show_ui(ui, |ui| {
@@ -563,7 +578,12 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
             None => {
                 ui.label("Rotation:");
                 for algorithm in RotationAlgorithm::ALL {
-                    ui.radio_value(&mut editor.options.rotation, algorithm, algorithm.label());
+                    crate::widgets::radio_value(
+                        ui,
+                        &mut editor.options.rotation,
+                        algorithm,
+                        algorithm.label(),
+                    );
                 }
             }
         }
@@ -620,7 +640,7 @@ fn check_option(ui: &mut egui::Ui, look: Option<BarLook>, checked: &mut bool, la
             bar_fields::checkbox(ui, look, checked, label);
         }
         None => {
-            ui.checkbox(checked, label);
+            crate::widgets::checkbox(ui, checked, label);
         }
     }
 }
@@ -802,7 +822,7 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
                 ui.add(egui::Slider::new(&mut style.size, 1..=8).text("Scale"));
             } else {
                 ui.add(egui::Slider::new(&mut style.size, 6..=96).text("Size"));
-                ui.checkbox(&mut style.antialias, "Antialias");
+                crate::widgets::checkbox(ui, &mut style.antialias, "Antialias");
             }
         }
     }
@@ -1870,15 +1890,18 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         .source
         .and_then(|s| editor.document.artboard(s))
         .map_or("(missing)".to_string(), |a| a.name.clone());
-    egui::ComboBox::from_label("Source")
-        .selected_text(current)
-        .show_ui(ui, |ui| {
+    ui.horizontal(|ui| {
+        let mut source = key.source;
+        widgets::combo(ui, "instance_source", &current, |ui| {
             for (id, name) in names {
-                if ui.selectable_label(key.source == Some(id), name).clicked() {
-                    editor.update_instance_key(|k| k.source = Some(id));
-                }
+                widgets::choice(ui, &mut source, Some(id), &name);
             }
         });
+        ui.label("Source");
+        if source != key.source {
+            editor.update_instance_key(|k| k.source = source);
+        }
+    });
     let (mut x, mut y) = key.position;
     let (rx, ry) = ui
         .horizontal(|ui| {
@@ -1894,10 +1917,10 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     gesture_end(editor, &[&rx, &ry]);
     let (mut fh, mut fv) = (key.flip_h, key.flip_v);
     ui.horizontal(|ui| {
-        if ui.checkbox(&mut fh, "Flip H").changed() {
+        if crate::widgets::checkbox(ui, &mut fh, "Flip H").changed() {
             editor.update_instance_key(|k| k.flip_h = fh);
         }
-        if ui.checkbox(&mut fv, "Flip V").changed() {
+        if crate::widgets::checkbox(ui, &mut fv, "Flip V").changed() {
             editor.update_instance_key(|k| k.flip_v = fv);
         }
     });
@@ -2011,7 +2034,7 @@ pub fn slice_properties(ui: &mut egui::Ui, editor: &mut Editor) {
     let mut name = slice.name.clone();
     ui.horizontal(|ui| {
         ui.label("Name");
-        if ui.text_edit_singleline(&mut name).lost_focus() && name != slice.name {
+        if crate::widgets::text_line(ui, &mut name).lost_focus() && name != slice.name {
             editor.update_slice(|s| s.name = name.clone());
         }
     });
@@ -2079,7 +2102,7 @@ fn slice_key_properties(ui: &mut egui::Ui, editor: &mut Editor) {
     }
     gesture_end(editor, &rect_fields);
     let mut has_pivot = key.pivot.is_some();
-    if ui.checkbox(&mut has_pivot, "Pivot").changed() {
+    if crate::widgets::checkbox(ui, &mut has_pivot, "Pivot").changed() {
         let default = (w as i32 / 2, h as i32);
         editor.update_slice_key(|k| k.pivot = has_pivot.then_some(default));
     }
