@@ -266,8 +266,15 @@ fn text(bytes: &[u8]) -> Result<&str, FetchError> {
 }
 
 /// Un título de una línea a partir de un texto largo (los posts de Mastodon no tienen título).
+/// Sin los caracteres invisibles que acompañan a los emojis (el selector de variante y la unión
+/// de secuencias): la fuente de los emojis no los tiene y se verían como cajitas.
 fn headline(text: &str) -> String {
     const MAX: usize = 80;
+    let text: String = text
+        .chars()
+        .filter(|c| !matches!(c, '\u{FE0E}' | '\u{FE0F}' | '\u{200D}'))
+        .collect();
+    let text = text.as_str();
     if text.chars().count() <= MAX {
         return text.to_owned();
     }
@@ -286,7 +293,7 @@ pub fn parse_reddit(bytes: &[u8]) -> Result<Vec<Post>, FetchError> {
         .filter_map(|entry| {
             let author = element(entry, "name").map(unescape).unwrap_or_default();
             Some(Post {
-                title: unescape(element(entry, "title")?),
+                title: headline(&unescape(element(entry, "title")?)),
                 author: author.trim().trim_start_matches("/u/").to_owned(),
                 url: unescape(attribute(entry, "link", "href")?),
                 image_url: unescape(attribute(entry, "media:thumbnail", "url")?),
@@ -312,7 +319,7 @@ pub fn parse_itch(bytes: &[u8]) -> Result<Vec<Post>, FetchError> {
                 .to_owned();
             let title = element(item, "plainTitle").or_else(|| element(item, "title"))?;
             Some(Post {
-                title: unescape(title),
+                title: headline(&unescape(title)),
                 author,
                 url,
                 image_url: unescape(element(item, "imageurl")?),
@@ -406,7 +413,7 @@ pub fn parse_pixeljoint(bytes: &[u8]) -> Result<Vec<Post>, FetchError> {
                 }
             };
             Some(Post {
-                title: unescape(title),
+                title: headline(&unescape(title)),
                 author: unescape(author),
                 url: absolute(link),
                 image_url: absolute(image),
@@ -900,6 +907,7 @@ mod tests {
             "a & b  A <i> &bogus"
         );
         assert_eq!(strip_tags("<p>Hi <b>there</b>&nbsp;!</p>"), "Hi there !");
+        assert_eq!(headline("Love \u{2764}\u{FE0F} it"), "Love \u{2764} it");
         let long = "x".repeat(100);
         assert_eq!(headline(&long).chars().count(), 81);
         assert_eq!(

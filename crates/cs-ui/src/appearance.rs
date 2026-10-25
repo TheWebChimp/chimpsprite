@@ -23,6 +23,12 @@ const SMALL_FONT: &[u8] = include_bytes!("../../../assets/ui/chimpfont.ttf");
 pub const SMALL_FONT_NAME: &str = "chimpfont";
 /// A 8 puntos, un píxel de su grilla mide un punto.
 pub const SMALL_FONT_SIZE: f32 = 8.0;
+/// Los emojis y símbolos en pixel art de GNU Unifont (SIL OFL 1.1), recortados a esos rangos:
+/// lo que las fuentes pixel no tienen (❤ ✨ ☀, 🎨 🎃…), antes que las fuentes de egui.
+const UNIFONT_SYMBOLS: &[u8] = include_bytes!("../../../assets/ui/unifont_symbols.otf");
+const UNIFONT_EMOJI: &[u8] = include_bytes!("../../../assets/ui/unifont_emoji.otf");
+const UNIFONT_SYMBOLS_NAME: &str = "unifont_symbols";
+const UNIFONT_EMOJI_NAME: &str = "unifont_emoji";
 /// La altura de las mayúsculas de chimpfont (las de la fuente pixel: `tab_bar::CAP_HEIGHT`).
 pub const SMALL_CAP_HEIGHT: f32 = 5.0;
 
@@ -45,11 +51,19 @@ pub fn font_definitions(pixel: bool) -> FontDefinitions {
             PIXEL_FONT_NAME.to_owned(),
             Arc::new(FontData::from_static(PIXEL_FONT).tweak(tweak.clone())),
         );
-        fonts
-            .families
-            .entry(FontFamily::Proportional)
-            .or_default()
-            .insert(0, PIXEL_FONT_NAME.to_owned());
+        for (name, bytes) in [
+            (UNIFONT_SYMBOLS_NAME, UNIFONT_SYMBOLS),
+            (UNIFONT_EMOJI_NAME, UNIFONT_EMOJI),
+        ] {
+            fonts.font_data.insert(
+                name.to_owned(),
+                Arc::new(FontData::from_static(bytes).tweak(tweak.clone())),
+            );
+        }
+        let proportional = fonts.families.entry(FontFamily::Proportional).or_default();
+        proportional.insert(0, UNIFONT_EMOJI_NAME.to_owned());
+        proportional.insert(0, UNIFONT_SYMBOLS_NAME.to_owned());
+        proportional.insert(0, PIXEL_FONT_NAME.to_owned());
         fonts.font_data.insert(
             SMALL_FONT_NAME.to_owned(),
             Arc::new(FontData::from_static(SMALL_FONT).tweak(tweak)),
@@ -307,6 +321,11 @@ mod tests {
         let pixel = font_definitions(true);
         let proportional = &pixel.families[&FontFamily::Proportional];
         assert_eq!(proportional[0], PIXEL_FONT_NAME);
+        // Los emojis de Unifont, antes que las de egui.
+        assert_eq!(
+            proportional[1..3],
+            [UNIFONT_SYMBOLS_NAME, UNIFONT_EMOJI_NAME]
+        );
         assert!(proportional.len() > 1, "egui fonts stay as fallback");
         // Los textos chicos: chimpfont primero y la proporcional detrás.
         let small = &pixel.families[&small_family()];

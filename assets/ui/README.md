@@ -12,6 +12,19 @@ misma licencia que el repositorio (MIT o Apache-2.0, a elección; ver `LICENSE-M
 - Mayúsculas de 7 px; las colas bajan 2 px.
 - Incluye acentos, ñ, ¿, ¡, € y °. Los glifos que no tiene (•, …, ▸) salen de las fuentes de egui.
 
+## chimpfont.ttf
+
+La fuente de los textos chicos con Pixel UI (`TextStyle::Small`): solo mayúsculas de 5 px y
+ASCII, a 8 puntos (un píxel de su grilla, un punto). La usan la barra de estado, los globos de
+los tooltips, las rutas de Home y los textos de Pixnews.
+
+## unifont_symbols.otf y unifont_emoji.otf
+
+Los emojis y símbolos en pixel art (16×16, de un color) de GNU Unifont 18.0.01, recortados a
+esos rangos con `fontTools.subset` (`unifont_symbols`: flechas, ☀ ❤ ✨ y dingbats;
+`unifont_emoji`: U+1F000..1FAFF). Van detrás de las fuentes pixel, antes que las de egui.
+Licencia: SIL OFL 1.1 (ver `UNIFONT-OFL.txt`).
+
 ## skin.aseprite
 
 El skin (incluido el arte copiado del mockup) es del autor del proyecto y se distribuye con la
