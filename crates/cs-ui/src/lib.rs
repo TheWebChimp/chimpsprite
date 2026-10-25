@@ -30,6 +30,7 @@ mod home;
 mod instance_ops;
 #[cfg(test)]
 mod layout_tests;
+mod logo;
 mod lospec_client;
 #[cfg(not(target_arch = "wasm32"))]
 mod lospec_examples;
@@ -44,6 +45,8 @@ mod pixel_status;
 mod pixel_ui;
 mod platform;
 mod recent;
+#[cfg(not(target_arch = "wasm32"))]
+mod reddit;
 pub mod skin;
 mod tabs;
 mod theme;
@@ -88,6 +91,14 @@ pub struct ChimpApp {
     recent: recent::RecentFiles,
     view: view::ViewSettings,
     grid_dialog: Option<view::GridDialog>,
+    /// El logo animado de Home: se carga la primera vez que se muestra Home (`None` hasta
+    /// entonces; `Some(None)` si no se pudo leer).
+    logo: Option<Option<logo::Logo>>,
+    /// El feed de r/PixelArt de Home y cómo se pide (en los tests, sin red). Solo escritorio.
+    #[cfg(not(target_arch = "wasm32"))]
+    reddit: reddit::RedditFeed,
+    #[cfg(not(target_arch = "wasm32"))]
+    reddit_fetcher: Box<dyn reddit::Fetcher>,
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
     /// Desarrollo (`CHIMPSPRITE_DEMO_TILES`): al abrir el documento, activar su capa tilemap.
@@ -192,6 +203,11 @@ impl ChimpApp {
             recent,
             view,
             grid_dialog: None,
+            logo: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            reddit: reddit::RedditFeed::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            reddit_fetcher: reddit::default_fetcher(),
             new_tilemap: None,
             convert_tilemap: None,
             demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
@@ -1102,14 +1118,21 @@ impl ChimpApp {
         let mut dock_frame = egui::Frame::side_top_panel(ui.style());
         dock_frame.inner_margin.left = 0;
         dock_frame.inner_margin.right = dock::RIGHT_MARGIN;
-        let open = egui::Panel::right("dock")
+        let lospec_open = self.lospec_open();
+        let dock_out = egui::Panel::right("dock")
             .resizable(false)
             .exact_size(dock::WIDTH)
             .frame(dock_frame)
             .show_separator_line(skin.is_none())
             .show(ui, |ui| {
                 ui.add_enabled_ui(!modal, |ui| {
-                    dock::show(ui, &mut self.doc.editor, &mut self.doc.artboard_name, skin)
+                    dock::show(
+                        ui,
+                        &mut self.doc.editor,
+                        &mut self.doc.artboard_name,
+                        skin,
+                        lospec_open,
+                    )
                 })
                 .inner
             })
@@ -1137,8 +1160,11 @@ impl ChimpApp {
         if let Some(action) = palette_action {
             self.palette_action(ui.ctx(), action);
         }
-        if open {
+        if dock_out.canvas_size {
             self.open_canvas_size();
+        }
+        if dock_out.toggle_lospec {
+            self.toggle_lospec();
         }
         // Otra vez: el panel derecho necesita `self` entero.
         let Some(skin) = self.pixel.skin() else {

@@ -12,7 +12,18 @@ impl ChimpApp {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             ui.vertical(|ui| {
-                ui.label(RichText::new("ChimpSprite").size(28.0).color(theme::ACCENT));
+                // El logo animado; si no se pudo leer, el nombre en texto.
+                let logo = self
+                    .logo
+                    .get_or_insert_with(|| crate::logo::Logo::embedded(&ctx));
+                match logo {
+                    Some(logo) => {
+                        logo.show(ui);
+                    }
+                    None => {
+                        ui.label(RichText::new("ChimpSprite").size(28.0).color(theme::ACCENT));
+                    }
+                }
                 ui.label(RichText::new("Sprite & pixel-art editor").color(theme::LABEL));
                 ui.add_space(16.0);
                 if ui.button("📄  New file").clicked() {
@@ -33,6 +44,24 @@ impl ChimpApp {
                 ui.label(RichText::new("In the browser").strong());
                 ui.label("Files open from your computer and save as downloads.");
                 ui.label("Unsaved documents are kept in this browser and offered back next time.");
+            });
+            // A la derecha, lo que queda: el feed de r/PixelArt (en web, solo el enlace: Reddit
+            // no manda CORS).
+            ui.add_space(48.0);
+            ui.vertical(|ui| {
+                ui.set_width((ui.available_width() - 16.0).max(0.0));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let action = self.reddit.ui(ui, self.reddit_fetcher.as_ref());
+                    if let Some(crate::reddit::FeedAction::Open(url)) = action {
+                        ctx.open_url(egui::OpenUrl::new_tab(url));
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                ui.hyperlink_to(
+                    "r/PixelArt · Top this week",
+                    "https://www.reddit.com/r/PixelArt/top/?t=week",
+                );
             });
         });
     }

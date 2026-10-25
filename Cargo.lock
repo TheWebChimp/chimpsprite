@@ -986,6 +986,7 @@ dependencies = [
  "eframe",
  "ehttp",
  "fontdue",
+ "image",
  "js-sys",
  "log",
  "png",
@@ -1941,6 +1942,8 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
+ "zune-core",
+ "zune-jpeg",
 ]
 
 [[package]]

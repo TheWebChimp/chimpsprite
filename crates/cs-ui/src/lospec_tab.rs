@@ -244,6 +244,8 @@ fn message(e: &FetchError) -> String {
         FetchError::NotFound => "Palette not found on Lospec.".into(),
         FetchError::Status(code) => format!("Lospec returned an error ({code})."),
         FetchError::Parse(_) => "That palette can't be loaded.".into(),
+        #[cfg(not(target_arch = "wasm32"))]
+        FetchError::Invalid => "That palette can't be loaded.".into(),
         // Las imágenes de ejemplo no muestran errores; esto no debería verse.
         #[cfg(not(target_arch = "wasm32"))]
         FetchError::BadImage => "That image can't be loaded.".into(),

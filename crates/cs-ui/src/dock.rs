@@ -66,8 +66,27 @@ const ICON_SLICES: [&str; 17] = [
     "      .     .      ",
 ];
 
+/// Ícono de Lospec: la "L" blanca con borde. `j` el borde, `b` el blanco, `i` la sombra.
+const ICON_LOSPEC: [&str; 13] = [
+    "jjjjj    ",
+    "jbbbj    ",
+    "jbbbj    ",
+    "jbbbj    ",
+    "jbbbj    ",
+    "jbbbj    ",
+    "jbbbjjjjj",
+    "jbbbjbbbj",
+    "jbbbjbbbj",
+    "jbbbbbbbj",
+    "jbbbbbbbj",
+    "ijjjjjjji",
+    "iiiiiiiii",
+];
+
 fn icon_color(c: u8) -> Option<Color32> {
     Some(match c {
+        b'b' => Color32::WHITE,
+        b'i' => Color32::from_rgb(0x88, 0x6e, 0x6a),
         b'a' => Color32::from_rgb(0x59, 0x4d, 0x4d),
         b'j' => Color32::from_rgb(0xbd, 0xa4, 0x99),
         b'k' => Color32::from_rgb(0xf1, 0xeb, 0xdb),
@@ -83,15 +102,18 @@ fn icon_color(c: u8) -> Option<Color32> {
 pub enum DockPanel {
     Artboards,
     Slices,
+    /// No es un panel flotante: abre la ventana de presets en la pestaña Lospec (no cabe acá).
+    Lospec,
 }
 
 impl DockPanel {
-    pub const ALL: [DockPanel; 2] = [DockPanel::Artboards, DockPanel::Slices];
+    pub const ALL: [DockPanel; 3] = [DockPanel::Artboards, DockPanel::Slices, DockPanel::Lospec];
 
     pub fn label(self) -> &'static str {
         match self {
             DockPanel::Artboards => "Artboards",
             DockPanel::Slices => "Slices",
+            DockPanel::Lospec => "Lospec",
         }
     }
 
@@ -99,6 +121,7 @@ impl DockPanel {
         match self {
             DockPanel::Artboards => &ICON_ARTBOARDS,
             DockPanel::Slices => &ICON_SLICES,
+            DockPanel::Lospec => &ICON_LOSPEC,
         }
     }
 
@@ -107,8 +130,18 @@ impl DockPanel {
         match self {
             DockPanel::Artboards => "🗋",
             DockPanel::Slices => "#",
+            DockPanel::Lospec => "L",
         }
     }
+}
+
+/// Lo que pidió el dock y la app resuelve (necesita más que el editor).
+#[derive(Default)]
+pub struct DockOutput {
+    /// Abrir el diálogo Canvas Size (desde Artboards).
+    pub canvas_size: bool,
+    /// Abrir o cerrar la ventana de Lospec.
+    pub toggle_lospec: bool,
 }
 
 /// Un botón del dock con Pixel UI: la pieza `button` según el estado (`Active` si su panel está
@@ -163,19 +196,24 @@ pub fn set_open(ctx: &egui::Context, panel: Option<DockPanel>) {
     ctx.data_mut(|d| d.insert_temp(open_id(), panel));
 }
 
-/// El dock: sus botones y el panel abierto, flotando a la izquierda de su botón. Devuelve
-/// `true` si se pidió abrir el diálogo Canvas Size (desde Artboards).
+/// El dock: sus botones y el panel abierto, flotando a la izquierda de su botón. `lospec_open`:
+/// la ventana de Lospec está abierta (su botón se ve prendido).
 pub fn show(
     ui: &mut Ui,
     editor: &mut Editor,
     name_buffer: &mut (ArtboardId, String),
     skin: Option<&Skin>,
-) -> bool {
+    lospec_open: bool,
+) -> DockOutput {
+    let mut out = DockOutput::default();
     let open = open_panel(ui.ctx());
     let mut anchors = Vec::new();
     ui.spacing_mut().item_spacing.y = BUTTON_GAP;
     for panel in DockPanel::ALL {
-        let is_open = open == Some(panel);
+        let is_open = match panel {
+            DockPanel::Lospec => lospec_open,
+            _ => open == Some(panel),
+        };
         let response = match skin {
             Some(skin) => pixel_button(ui, skin, panel, is_open),
             None => ui
@@ -187,19 +225,24 @@ pub fn show(
                 .on_hover_text(panel.label()),
         };
         if response.clicked() {
-            set_open(ui.ctx(), (!is_open).then_some(panel));
+            if panel == DockPanel::Lospec {
+                out.toggle_lospec = true;
+            } else {
+                set_open(ui.ctx(), (!is_open).then_some(panel));
+            }
         }
         anchors.push((panel, response.rect));
     }
     let Some(panel) = open_panel(ui.ctx()) else {
-        return false;
+        return out;
     };
     let anchor = anchors
         .iter()
         .find(|(p, _)| *p == panel)
         .map(|(_, r)| *r)
         .unwrap_or(Rect::NOTHING);
-    flyout(ui, panel, anchor, editor, name_buffer, skin)
+    out.canvas_size = flyout(ui, panel, anchor, editor, name_buffer, skin);
+    out
 }
 
 /// El panel flotante a la izquierda de `anchor` (su botón), arriba alineado con él.
@@ -236,6 +279,7 @@ fn flyout(
                     }
                     (DockPanel::Slices, Some(skin)) => panels::pixel_slices(ui, editor, skin),
                     (DockPanel::Slices, None) => panels::slices(ui, editor),
+                    (DockPanel::Lospec, _) => {}
                 });
             });
             // Con Pixel UI, la caja del panel detrás del contenido.

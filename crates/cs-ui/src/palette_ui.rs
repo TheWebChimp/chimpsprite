@@ -305,6 +305,28 @@ impl ChimpApp {
         }
     }
 
+    /// La ventana de presets está abierta en la pestaña Lospec (el botón del dock).
+    pub(crate) fn lospec_open(&self) -> bool {
+        self.presets_window
+            .as_ref()
+            .is_some_and(|w| w.tab == PresetsTab::Lospec)
+    }
+
+    /// El botón Lospec del dock: abre la ventana de presets en la pestaña Lospec (o pasa a esa
+    /// pestaña si estaba en otra); si ya estaba ahí, la cierra.
+    pub(crate) fn toggle_lospec(&mut self) {
+        if self.lospec_open() {
+            self.presets_window = None;
+            return;
+        }
+        if self.presets_window.is_none() {
+            self.palettes.reload();
+        }
+        self.presets_window
+            .get_or_insert_with(PresetsWindow::default)
+            .tab = PresetsTab::Lospec;
+    }
+
     /// `modal`: hay un diálogo abierto (este cuadro); la ventana de presets queda desactivada.
     pub(crate) fn update_palette_windows(&mut self, ctx: &egui::Context, modal: bool) {
         if !self.has_doc() {

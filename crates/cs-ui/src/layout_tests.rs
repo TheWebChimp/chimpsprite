@@ -683,21 +683,19 @@ fn the_home_house_shows_the_frame_of_the_time_and_asks_for_the_next_one() {
             .filter(|i| !h.drawn(&format!("icon.home.{i}")).is_empty())
             .collect();
         assert_eq!(drawn, vec![frame], "at {time}");
-        // egui adelanta el pedido lo que dura un frame (`predicted_dt`, 1/60 s por defecto).
+        // egui adelanta el pedido lo que dura un frame (`predicted_dt`, 1/60 s por defecto). El
+        // logo de Home (frames de 100 ms) puede pedirlo antes, pero nunca un repintado continuo.
         let delay = h.repaint_delay.as_secs_f64() + 1.0 / 60.0;
         assert!(
-            (delay - next).abs() < 1e-3,
-            "a repaint {next} s later, not a continuous one: {delay} at {time}"
+            delay <= next + 1e-3 && delay > 1.0 / 60.0 + 1e-3,
+            "a repaint at most {next} s later, not a continuous one: {delay} at {time}"
         );
     }
-    // Sin Pixel UI no hay casita animada ni repintado: en Home, egui no pide otro frame.
+    // Sin Pixel UI no hay casita animada: en Home solo se repinta para el logo (≤ 100 ms).
     let mut plain = LayoutHarness::new(plain(), false);
     plain.frame();
-    assert_eq!(
-        plain.repaint_delay,
-        std::time::Duration::MAX,
-        "no animation"
-    );
+    let delay = plain.repaint_delay.as_secs_f64() + 1.0 / 60.0;
+    assert!(delay <= 0.1 + 1e-3, "the logo's next frame: {delay}");
 }
 
 #[test]
@@ -2045,9 +2043,9 @@ fn with_pixel_ui_the_status_bar_is_the_design_one() {
     assert_eq!(status.bottom(), h.screen().bottom());
     // Con el fondo del skin (sin él, el panel quedaba negro).
     let background = h.app.pixel.skin().unwrap().colors().background;
-    let filled = h.shapes.iter().any(|c| {
-        matches!(&c.shape, egui::Shape::Rect(r) if r.fill == background && r.rect == status)
-    });
+    let filled = h.shapes.iter().any(
+        |c| matches!(&c.shape, egui::Shape::Rect(r) if r.fill == background && r.rect == status),
+    );
     assert!(filled, "the status bar has the skin background");
     let name = h.app.doc.editor.artboard().name.clone();
     let (artboard, _) = text_rect(&h, &format!("{name} 64×64"));
@@ -2108,6 +2106,26 @@ fn with_pixel_ui_the_artboards_are_tabs_with_the_design_buttons() {
     assert!(h.app.canvas_size.is_none());
     h.click(h.button("Canvas Size…").center(), PointerButton::Primary);
     assert!(h.app.canvas_size.is_some());
+}
+
+#[test]
+fn the_lospec_dock_button_opens_and_closes_the_lospec_window() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    // El de la columna del dock (la ventana también tiene una pestaña "Lospec").
+    let dock = h.panel("dock");
+    let button = |h: &LayoutHarness| {
+        h.buttons
+            .iter()
+            .find(|(l, r)| l == "Lospec" && dock.contains_rect(*r))
+            .map(|(_, r)| *r)
+            .expect("the Lospec dock button")
+    };
+    assert_eq!(button(&h).size(), Vec2::new(23.0, 24.0));
+    assert!(!h.app.lospec_open());
+    h.click(button(&h).center(), PointerButton::Primary);
+    assert!(h.app.lospec_open(), "opens on the Lospec tab");
+    h.click(button(&h).center(), PointerButton::Primary);
+    assert!(h.app.presets_window.is_none(), "and closes it");
 }
 
 #[test]

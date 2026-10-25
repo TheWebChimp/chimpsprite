@@ -18,6 +18,9 @@ pub enum FetchError {
     /// Imagen de ejemplo demasiado grande o que no es un PNG válido.
     #[cfg(not(target_arch = "wasm32"))]
     BadImage,
+    /// Una respuesta que no se puede leer (fuera de Lospec: el feed de Reddit, solo escritorio).
+    #[cfg(not(target_arch = "wasm32"))]
+    Invalid,
 }
 
 /// Respuesta que todavía puede no haber llegado. `poll` la entrega una sola vez.
@@ -56,7 +59,7 @@ pub fn classify<T>(
     parse(bytes).map_err(FetchError::Parse)
 }
 
-fn check_status(status: u16) -> Result<(), FetchError> {
+pub(crate) fn check_status(status: u16) -> Result<(), FetchError> {
     match status {
         200..=299 => Ok(()),
         404 => Err(FetchError::NotFound),
@@ -65,7 +68,7 @@ fn check_status(status: u16) -> Result<(), FetchError> {
 }
 
 /// `handle` recibe el código de estado y el cuerpo; corre en el hilo de `ehttp` (en escritorio).
-fn fetch<T: Send + 'static>(
+pub(crate) fn fetch<T: Send + 'static>(
     ctx: &egui::Context,
     url: String,
     handle: impl FnOnce(u16, &[u8]) -> Result<T, FetchError> + Send + 'static,
@@ -82,7 +85,7 @@ fn fetch<T: Send + 'static>(
         let result = match response {
             Ok(r) => handle(r.status, &r.bytes),
             Err(e) => {
-                log::warn!("lospec request failed: {e}");
+                log::warn!("request failed: {e}");
                 Err(FetchError::Network)
             }
         };
