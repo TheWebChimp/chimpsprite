@@ -198,7 +198,13 @@ pub fn pixel_dialog_at<R>(
             None => flat_shapes(skin, rect, top, ppp),
         };
         let bar = Rect::from_min_size(rect.min, vec2(rect.width(), top));
-        let at = (bar.center() - galley.size() / 2.0).round_to_pixels(ppp);
+        // Las mayúsculas y lo que baja de la línea (p, y, g) centrados entre el borde de arriba y
+        // la línea de abajo de la barra: nada se encima en la línea.
+        let room = top - 2.0;
+        let ink = crate::tab_bar::CAP_HEIGHT + TITLE_DESCENT;
+        let caps = bar.top() + 1.0 + ((room - ink) / 2.0).round();
+        let left = (bar.center().x - galley.size().x / 2.0).round();
+        let at = crate::tab_bar::text_pos(&galley, left, caps, ppp);
         shapes.push(Shape::galley(at, galley, text));
         ui.painter().set(background, Shape::Vec(shapes));
         let close = closable.then(|| close_rect(skin, bar, ppp));
@@ -211,6 +217,9 @@ pub fn pixel_dialog_at<R>(
     })
     .inner
 }
+
+/// Lo que bajan de la línea las letras con descendente en el título (p, y, g).
+const TITLE_DESCENT: f32 = 2.0;
 
 /// Lo que devuelve [`pixel_dialog_at`]: lo que devolvió el contenido y si se hizo clic en el botón
 /// de cerrar de la barra de título.
@@ -1253,8 +1262,8 @@ mod tests {
         let frame = ctx
             .memory(|m| m.area_rect(id))
             .expect("the dialog is shown");
-        // `window`: bordes de 3 px y barra de título de 13, más 4 px de margen.
-        assert_eq!(content.min - frame.min, vec2(7.0, 17.0));
+        // `window`: bordes de 3 px y barra de título de 14, más 4 px de margen.
+        assert_eq!(content.min - frame.min, vec2(7.0, 18.0));
         assert!(
             frame.center().distance(Pos2::new(400.0, 300.0)) <= 1.0,
             "{frame:?}"

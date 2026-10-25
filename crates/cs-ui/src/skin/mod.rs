@@ -534,9 +534,10 @@ mod tests {
         let src_y = |y: u32| match y {
             0 | 1 => y,
             2..=11 => 2,
-            12 => 11,
-            _ if y == h - 2 => 46,
-            _ if y == h - 1 => 47,
+            // La línea de abajo de la barra (la de `window` tiene una fila más de rosa).
+            12 => 12,
+            _ if y == h - 2 => 47,
+            _ if y == h - 1 => 48,
             _ => 20,
         };
         const BORDER: [u8; 4] = [5, 4, 3, 255];
@@ -595,7 +596,7 @@ mod tests {
         let window = &data.pieces["window.active"];
         let center = Rect9 {
             x: 3,
-            y: 13,
+            y: 14,
             w: 58,
             h: 32,
         };
