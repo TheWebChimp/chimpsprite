@@ -45,15 +45,24 @@ impl ChimpApp {
                 ui.label("Files open from your computer and save as downloads.");
                 ui.label("Unsaved documents are kept in this browser and offered back next time.");
             });
-            // A la derecha, lo que queda: el feed de r/PixelArt (en web, solo el enlace: Reddit
-            // no manda CORS).
+            // A la derecha, lo que queda: Pixnews, con una fila para elegir la fuente (en web,
+            // solo el enlace: no todas mandan CORS).
             ui.add_space(48.0);
             ui.vertical(|ui| {
                 ui.set_width((ui.available_width() - 16.0).max(0.0));
                 #[cfg(not(target_arch = "wasm32"))]
                 {
-                    let action = self.reddit.ui(ui, self.reddit_fetcher.as_ref());
-                    if let Some(crate::reddit::FeedAction::Open(url)) = action {
+                    ui.horizontal_wrapped(|ui| {
+                        for source in crate::news::Source::ALL {
+                            let on = self.news.source == source;
+                            if ui.selectable_label(on, source.label()).clicked() {
+                                self.news.select(source);
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+                    let action = self.news.ui(ui, self.news_fetcher.as_ref());
+                    if let Some(crate::news::FeedAction::Open(url)) = action {
                         ctx.open_url(egui::OpenUrl::new_tab(url));
                     }
                 }

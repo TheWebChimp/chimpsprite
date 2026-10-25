@@ -15,7 +15,9 @@ use crate::skin::Skin;
 /// Medidas del diseño, desde la esquina de arriba a la izquierda del contenido.
 const LOGO_AT: Vec2 = vec2(6.0, 21.0);
 const BUTTONS_AT: Vec2 = vec2(12.0, 103.0);
-const BUTTON_SIZE: Vec2 = vec2(78.0, 17.0);
+const BUTTON_SIZE: Vec2 = vec2(71.0, 17.0);
+/// De un botón al de su derecha (New file, Open file… en la primera fila; Open demo debajo).
+const BUTTON_STEP_X: f32 = 74.0;
 /// De un botón al siguiente.
 const BUTTON_PITCH: f32 = 20.0;
 /// Dentro del botón: el texto empieza en la x 15 con las mayúsculas en la fila 4; el ícono, en
@@ -39,9 +41,22 @@ const ITEM_PITCH: f32 = 32.0;
 const PATH_BELOW: f32 = 10.0;
 /// Del último elemento de una lista al título de la siguiente (además de `ITEM_PITCH`).
 const LIST_GAP: f32 = 21.0;
-/// Ancho de las listas; a su derecha va el feed.
-const LIST_WIDTH: f32 = 230.0;
-const FEED_GAP: f32 = 24.0;
+/// Hasta dónde llegan los textos de las listas: a la izquierda de Pixnews.
+const LIST_RIGHT: f32 = 384.0;
+/// Pixnews (frame 5): el título (pieza) y el subtítulo, la línea de abajo, la columna de íconos
+/// de las fuentes y la línea vertical que la separa del feed.
+const NEWS_TITLE_AT: Vec2 = vec2(393.0, 13.0);
+const NEWS_SUBTITLE_CAPS: f32 = 27.0;
+const NEWS_LINE_Y: f32 = 37.0;
+/// El borde izquierdo de la pestaña activa, los íconos y la línea vertical.
+const NEWS_TAB_LEFT: f32 = 391.0;
+const NEWS_ICON_X: f32 = 393.0;
+const NEWS_DIVIDER_X: f32 = 421.0;
+/// El primer ícono y de uno al siguiente; cada pestaña mide 32 de alto.
+const NEWS_FIRST_ICON: f32 = 39.0;
+const NEWS_TAB_STEP: f32 = 32.0;
+/// El aire del feed dentro de su área.
+const NEWS_PAD: f32 = 10.0;
 
 /// Los íconos: piezas del skin.
 const ICON_NEW: &str = "home.icon.new";
@@ -125,6 +140,93 @@ fn item(
 }
 
 impl ChimpApp {
+    /// Pixnews: el título, la columna de fuentes (la elegida, en su pestaña) y el feed de la
+    /// elegida. Devuelve la URL a abrir, si se tocó algo.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn pixnews(&mut self, ui: &mut Ui, origin: Pos2, area: Rect) -> Option<String> {
+        use crate::news::Source;
+        let skin = self.pixel.skin()?;
+        let colors = *skin.colors();
+        let ppp = ui.ctx().pixels_per_point();
+        let mut shapes = pixel_draw::piece_at(skin, "news.title", origin + NEWS_TITLE_AT, ppp);
+        let subtitle = "Latest news in the pixel art world";
+        let left = origin.x + NEWS_TITLE_AT.x;
+        let caps = origin.y + NEWS_SUBTITLE_CAPS;
+        shapes.push(text_shape(ui, subtitle, left, caps, colors.text).0);
+        // Las líneas (1 px, el color `canvas`): la de abajo del título, la vertical y el marco de
+        // la pestaña elegida, que las une abierto hacia el feed.
+        let line = colors.canvas;
+        let px = |x0: f32, x1: f32, y0: f32, y1: f32| {
+            Shape::rect_filled(
+                Rect::from_min_max(
+                    pos2(origin.x + x0, origin.y + y0),
+                    pos2(origin.x + x1, origin.y + y1),
+                ),
+                0.0,
+                line,
+            )
+        };
+        let right = area.right() - origin.x - 1.0;
+        let bottom = area.bottom() - origin.y;
+        let selected = Source::ALL
+            .iter()
+            .position(|s| *s == self.news.source)
+            .unwrap_or(0) as f32;
+        let top = NEWS_LINE_Y + selected * NEWS_TAB_STEP;
+        let (l, d) = (NEWS_TAB_LEFT, NEWS_DIVIDER_X);
+        if selected == 0.0 {
+            shapes.push(px(l + 3.0, right, NEWS_LINE_Y, NEWS_LINE_Y + 1.0));
+        } else {
+            shapes.push(px(d, right, NEWS_LINE_Y, NEWS_LINE_Y + 1.0));
+            shapes.push(px(d, d + 1.0, NEWS_LINE_Y, top));
+            shapes.push(px(l + 3.0, d + 1.0, top, top + 1.0));
+        }
+        // Las esquinas redondeadas y el lado izquierdo.
+        shapes.push(px(l + 2.0, l + 3.0, top + 1.0, top + 2.0));
+        shapes.push(px(l + 1.0, l + 2.0, top + 2.0, top + 3.0));
+        shapes.push(px(l, l + 1.0, top + 3.0, top + 29.0));
+        shapes.push(px(l + 1.0, l + 2.0, top + 29.0, top + 30.0));
+        shapes.push(px(l + 2.0, l + 3.0, top + 30.0, top + 31.0));
+        shapes.push(px(l + 3.0, d + 1.0, top + 31.0, top + 32.0));
+        shapes.push(px(d, d + 1.0, top + 31.0, bottom));
+        ui.painter().extend(shapes);
+        // Los íconos de las fuentes: clic elige.
+        for (i, source) in Source::ALL.into_iter().enumerate() {
+            let at = origin + vec2(NEWS_ICON_X, NEWS_FIRST_ICON + i as f32 * NEWS_TAB_STEP);
+            let size = pixel_draw::piece_size(skin, source.icon());
+            let rect = Rect::from_min_size(at, size);
+            ui.painter()
+                .extend(pixel_draw::piece_at(skin, source.icon(), at, ppp));
+            let response = ui
+                .interact(rect, ui.id().with(("news_source", i)), Sense::click())
+                .on_hover_text(format!("{} · {}", source.label(), source.detail()))
+                .on_hover_cursor(egui::CursorIcon::PointingHand);
+            let on = self.news.source == source;
+            let enabled = ui.is_enabled();
+            response.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, source.label())
+            });
+            if response.clicked() {
+                self.news.select(source);
+            }
+        }
+        // El feed de la elegida, a la derecha de la línea vertical.
+        let feed = Rect::from_min_max(
+            pos2(
+                origin.x + d + 1.0 + NEWS_PAD,
+                origin.y + NEWS_LINE_Y + 1.0 + NEWS_PAD,
+            ),
+            pos2(area.right() - NEWS_PAD, area.bottom() - NEWS_PAD),
+        );
+        if feed.width() < 160.0 {
+            return None;
+        }
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(feed));
+        self.news
+            .ui(&mut child, self.news_fetcher.as_ref())
+            .map(|crate::news::FeedAction::Open(url)| url)
+    }
+
     /// El Home de Pixel UI en todo `ui` (ver el módulo).
     pub(crate) fn pixel_home(&mut self, ui: &mut Ui) {
         let ctx = ui.ctx().clone();
@@ -158,7 +260,9 @@ impl ChimpApp {
                 (ICON_OPEN, 2.0, "Open demo", HomeAction::Demo),
             ];
             for (i, (rows, left, label, a)) in buttons.into_iter().enumerate() {
-                let at = origin + BUTTONS_AT + vec2(0.0, i as f32 * BUTTON_PITCH);
+                // Dos por fila.
+                let (col, row) = ((i % 2) as f32, (i / 2) as f32);
+                let at = origin + BUTTONS_AT + vec2(col * BUTTON_STEP_X, row * BUTTON_PITCH);
                 if button(
                     ui,
                     skin,
@@ -177,7 +281,7 @@ impl ChimpApp {
             ui.painter()
                 .rect_filled(dark.translate(vec2(1.0, 0.0)), 0.0, colors.highlight);
             // Las listas.
-            let list_right = origin.x + LIST_TEXT_X + LIST_WIDTH;
+            let list_right = origin.x + LIST_RIGHT;
             let ppp = ui.ctx().pixels_per_point();
             let heading = |ui: &mut Ui, top: f32, icon: &str, icon_top: f32, title: &str| {
                 let at = pos2(origin.x + LIST_ICON_X, top + icon_top);
@@ -248,21 +352,10 @@ impl ChimpApp {
                 let _ = &mut top;
             }
         }
-        // A la derecha de las listas, el feed de r/PixelArt (solo escritorio).
+        // A la derecha de las listas, Pixnews (solo escritorio: no todas las fuentes mandan CORS).
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            let left = origin.x + LIST_TEXT_X + LIST_WIDTH + FEED_GAP;
-            let feed = Rect::from_min_max(
-                pos2(left, origin.y + FIRST_HEADING_TOP),
-                pos2(area.right() - 16.0, area.bottom() - 8.0),
-            );
-            if feed.width() > 160.0 {
-                let mut child = ui.new_child(egui::UiBuilder::new().max_rect(feed));
-                let fetched = self.reddit.ui(&mut child, self.reddit_fetcher.as_ref());
-                if let Some(crate::reddit::FeedAction::Open(url)) = fetched {
-                    ctx.open_url(egui::OpenUrl::new_tab(url));
-                }
-            }
+        if let Some(url) = self.pixnews(ui, origin, area) {
+            ctx.open_url(egui::OpenUrl::new_tab(url));
         }
         match action {
             Some(HomeAction::New) => self.new_document(),

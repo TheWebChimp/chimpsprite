@@ -35,6 +35,8 @@ mod lospec_client;
 #[cfg(not(target_arch = "wasm32"))]
 mod lospec_examples;
 mod lospec_tab;
+#[cfg(not(target_arch = "wasm32"))]
+mod news;
 mod palette_library;
 mod panels;
 mod pixel_cursors;
@@ -47,8 +49,6 @@ mod pixel_status;
 mod pixel_ui;
 mod platform;
 mod recent;
-#[cfg(not(target_arch = "wasm32"))]
-mod reddit;
 pub mod skin;
 mod tabs;
 mod theme;
@@ -96,11 +96,11 @@ pub struct ChimpApp {
     /// El logo animado de Home: se carga la primera vez que se muestra Home (`None` hasta
     /// entonces; `Some(None)` si no se pudo leer).
     logo: Option<Option<logo::Logo>>,
-    /// El feed de r/PixelArt de Home y cómo se pide (en los tests, sin red). Solo escritorio.
+    /// Pixnews, las novedades de Home, y cómo se piden (en los tests, sin red). Solo escritorio.
     #[cfg(not(target_arch = "wasm32"))]
-    reddit: reddit::RedditFeed,
+    news: news::News,
     #[cfg(not(target_arch = "wasm32"))]
-    reddit_fetcher: Box<dyn reddit::Fetcher>,
+    news_fetcher: Box<dyn news::Fetcher>,
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
     /// Desarrollo (`CHIMPSPRITE_DEMO_TILES`): al abrir el documento, activar su capa tilemap.
@@ -207,9 +207,9 @@ impl ChimpApp {
             grid_dialog: None,
             logo: None,
             #[cfg(not(target_arch = "wasm32"))]
-            reddit: reddit::RedditFeed::default(),
+            news: news::News::default(),
             #[cfg(not(target_arch = "wasm32"))]
-            reddit_fetcher: reddit::default_fetcher(),
+            news_fetcher: news::default_fetcher(),
             new_tilemap: None,
             convert_tilemap: None,
             demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),

@@ -26,8 +26,8 @@ fontdue = "0.9"
 # Imágenes copiadas en otras apps (mismas features que usa egui-winit: no compila nada extra).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
-# Las miniaturas del feed de Reddit (JPEG y PNG); ya entra con arboard.
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# Las miniaturas de Pixnews (JPEG, PNG y GIF); ya entra con arboard.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

@@ -432,13 +432,21 @@ fn with_pixel_ui_home_is_the_design_one() {
     assert!(!h.app.has_doc());
     // Sin barra de estado (frame 5 del diseño): sin el texto de la versión que mostraba.
     assert!(!h.texts.iter().any(|(t, _)| t.starts_with("ChimpSprite ")));
-    // Los tres botones de 78×17, uno debajo del otro cada 20.
+    // Los botones de 71×17: New file y Open file… en una fila (cada 74), Open demo debajo (20).
     let new = h.button("New file");
     let open = h.button("Open file…");
     let demo = h.button("Open demo");
-    assert_eq!(new.size(), Vec2::new(78.0, 17.0));
-    assert_eq!(open.top() - new.top(), 20.0);
-    assert_eq!(demo.top() - open.top(), 20.0);
+    assert_eq!(new.size(), Vec2::new(71.0, 17.0));
+    assert_eq!((open.left() - new.left(), open.top()), (74.0, new.top()));
+    assert_eq!((demo.left(), demo.top() - new.top()), (new.left(), 20.0));
+    // Pixnews: una pestaña por fuente, la primera elegida.
+    for source in crate::news::Source::ALL {
+        let tab = h.button(source.label());
+        assert_eq!(tab.size(), Vec2::new(26.0, 28.0), "{source:?}");
+    }
+    assert!(h.drawn("news.title").len() == 1);
+    h.click(h.button("itch.io").center(), PointerButton::Primary);
+    assert_eq!(h.app.news.source, crate::news::Source::Itch);
     assert!(h.drawn("button").len() >= 3, "the skin's button piece");
     assert!(h.texts.iter().any(|(t, _)| t == "Recent Files"));
     assert!(h.texts.iter().any(|(t, _)| t == "Recent Folders"));
