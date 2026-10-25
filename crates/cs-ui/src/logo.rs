@@ -69,18 +69,32 @@ impl Logo {
         self.size * SCALE
     }
 
-    /// El frame de este momento, en el lugar que sigue de `ui`. Pide el repintado para el
-    /// siguiente (sin el foco de la ventana se queda quieto, como la casita de Home).
-    pub fn show(&self, ui: &mut egui::Ui) -> egui::Response {
+    /// La textura del frame de este momento. Pide el repintado para el siguiente (sin el foco
+    /// de la ventana se queda quieto, como la casita de Home).
+    fn current(&self, ui: &egui::Ui) -> &TextureHandle {
         let time = ui.input(|i| i.time);
         let (index, left) = tab_bar::animation_frame(&self.durations_ms, time).unwrap_or((0, 0.0));
         if self.frames.len() > 1 && ui.input(|i| i.focused) {
             ui.ctx()
                 .request_repaint_after(std::time::Duration::from_secs_f64(left));
         }
-        let texture = &self.frames[index.min(self.frames.len() - 1)];
+        &self.frames[index.min(self.frames.len() - 1)]
+    }
+
+    /// El frame de este momento, en el lugar que sigue de `ui`.
+    pub fn show(&self, ui: &mut egui::Ui) -> egui::Response {
+        let texture = self.current(ui);
         ui.add(egui::Image::new((texture.id(), self.size())))
             .on_hover_text("ChimpSprite")
+    }
+
+    /// El frame de este momento con su esquina en `at` (sin ocupar lugar en `ui`).
+    pub fn paint_at(&self, ui: &egui::Ui, at: egui::Pos2) {
+        let texture = self.current(ui);
+        let rect = egui::Rect::from_min_size(at, self.size());
+        let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+        ui.painter()
+            .image(texture.id(), rect, uv, egui::Color32::WHITE);
     }
 }
 

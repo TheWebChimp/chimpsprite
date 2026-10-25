@@ -427,6 +427,27 @@ fn the_right_panel_goes_down_beside_the_timeline() {
 }
 
 #[test]
+fn with_pixel_ui_home_is_the_design_one() {
+    let mut h = LayoutHarness::new(pixel_ui(), false);
+    assert!(!h.app.has_doc());
+    // Sin barra de estado (frame 5 del diseño): sin el texto de la versión que mostraba.
+    assert!(!h.texts.iter().any(|(t, _)| t.starts_with("ChimpSprite ")));
+    // Los tres botones de 78×17, uno debajo del otro cada 20.
+    let new = h.button("New file");
+    let open = h.button("Open file…");
+    let demo = h.button("Open demo");
+    assert_eq!(new.size(), Vec2::new(78.0, 17.0));
+    assert_eq!(open.top() - new.top(), 20.0);
+    assert_eq!(demo.top() - open.top(), 20.0);
+    assert!(h.drawn("button").len() >= 3, "the skin's button piece");
+    assert!(h.texts.iter().any(|(t, _)| t == "Recent Files"));
+    assert!(h.texts.iter().any(|(t, _)| t == "Recent Folders"));
+    // New file abre un documento.
+    h.click(new.center(), PointerButton::Primary);
+    assert!(h.app.has_doc());
+}
+
+#[test]
 fn on_home_there_is_no_options_bar() {
     let h = LayoutHarness::new(plain(), false);
     assert!(h.canvas.is_none());

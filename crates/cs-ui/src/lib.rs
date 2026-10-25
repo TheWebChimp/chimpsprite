@@ -38,6 +38,7 @@ mod lospec_tab;
 mod palette_library;
 mod panels;
 mod pixel_cursors;
+mod pixel_home;
 mod pixel_rulers;
 mod pixel_sections;
 mod pixel_selection;
@@ -970,48 +971,56 @@ impl ChimpApp {
                 .frame(egui::Frame::NONE.fill(skin.colors().background))
                 .show_separator_line(false);
         }
-        status.show(ui, |ui| {
-            let notice = self
-                .autosaver
-                .disabled_reason
-                .as_ref()
-                .map(|r| format!("Autosave off: {r}"));
-            if self.has_doc() {
-                match skin {
-                    Some(skin) => panels::pixel_status_bar(
-                        ui,
-                        &self.doc.editor,
-                        &self.doc.canvas,
-                        notice.as_deref(),
-                        skin,
-                    ),
-                    None => panels::status_bar(
-                        ui,
-                        &self.doc.editor,
-                        &self.doc.canvas,
-                        notice.as_deref(),
-                    ),
+        // Con Pixel UI, Home no tiene barra de estado (frame 5 del diseño).
+        let hidden = skin.is_some() && !self.has_doc();
+        if !hidden {
+            status.show(ui, |ui| {
+                let notice = self
+                    .autosaver
+                    .disabled_reason
+                    .as_ref()
+                    .map(|r| format!("Autosave off: {r}"));
+                if self.has_doc() {
+                    match skin {
+                        Some(skin) => panels::pixel_status_bar(
+                            ui,
+                            &self.doc.editor,
+                            &self.doc.canvas,
+                            notice.as_deref(),
+                            skin,
+                        ),
+                        None => panels::status_bar(
+                            ui,
+                            &self.doc.editor,
+                            &self.doc.canvas,
+                            notice.as_deref(),
+                        ),
+                    }
+                } else {
+                    ui.label(format!("ChimpSprite {}", env!("CARGO_PKG_VERSION")));
                 }
-            } else if let Some(skin) = skin {
-                let version = format!("ChimpSprite {}", env!("CARGO_PKG_VERSION"));
-                pixel_status::show(
-                    ui,
-                    skin,
-                    &[pixel_status::Section {
-                        icon: None,
-                        text: version,
-                        color: None,
-                    }],
-                );
-            } else {
-                ui.label(format!("ChimpSprite {}", env!("CARGO_PKG_VERSION")));
-            }
-        });
+            });
+        }
         if self.has_doc() {
             Some(self.editor_panels(ui, modal))
         } else {
-            egui::CentralPanel::default().show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| self.home(ui));
+            // Con Pixel UI, el Home del diseño (frame 5) sobre el fondo del skin.
+            let frame = self
+                .pixel
+                .skin()
+                .map(|skin| egui::Frame::NONE.fill(skin.colors().background));
+            let mut panel = egui::CentralPanel::default();
+            if let Some(frame) = frame {
+                panel = panel.frame(frame);
+            }
+            panel.show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    if self.pixel.skin().is_some() {
+                        self.pixel_home(ui);
+                    } else {
+                        self.home(ui);
+                    }
+                });
             });
             None
         }
