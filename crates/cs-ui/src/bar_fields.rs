@@ -131,10 +131,49 @@ pub fn label(ui: &mut Ui, look: BarLook, label: &str) -> Response {
     text(ui, look, label, look.skin.colors().text)
 }
 
-/// Una ayuda de la barra, en el color tenue de `ui.weak`.
-pub fn hint(ui: &mut Ui, look: BarLook, hint: &str) -> Response {
-    let color = ui.visuals().weak_text_color();
-    text(ui, look, hint, color)
+/// El ícono de info del diseño: `#` contorno, `b` azul, `o` blanco, `d` el brillo de abajo.
+const INFO: [&str; 13] = [
+    "...######...",
+    "..#bbbbbb#..",
+    ".#bbboobbb#.",
+    "#bbbboobbbb#",
+    "#bbbbbbbbbb#",
+    "#bbbooobbbb#",
+    "#bbbboobbbb#",
+    "#bbbboobbbb#",
+    "#bbbboobbbb#",
+    "d#bboooobb#d",
+    ".d#bbbbbb#d.",
+    "..d######d..",
+    "...dddddd...",
+];
+
+/// El ícono de info, centrado en la fila de los campos, con `text` en su tooltip. Su nombre
+/// accesible es `text`.
+pub fn info(ui: &mut Ui, look: BarLook, text: &str) -> Response {
+    let size = vec2(INFO[0].len() as f32, INFO.len() as f32);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, enabled, text));
+    if ui.is_rect_visible(rect) {
+        let top = look.top + FIELD_TOP + ((FIELD_HEIGHT - size.y) / 2.0).floor();
+        let origin = pos2(rect.left().round(), top);
+        let painter = painter(ui, look);
+        for (y, row) in INFO.iter().enumerate() {
+            for (x, c) in row.bytes().enumerate() {
+                let color = match c {
+                    b'#' => Color32::from_rgb(0x59, 0x4d, 0x4d),
+                    b'b' => Color32::from_rgb(0x27, 0x89, 0xcd),
+                    b'o' => Color32::WHITE,
+                    b'd' => Color32::from_rgb(0xf1, 0xeb, 0xdb),
+                    _ => continue,
+                };
+                let px = Rect::from_min_size(origin + vec2(x as f32, y as f32), Vec2::splat(1.0));
+                painter.rect_filled(px, 0.0, color);
+            }
+        }
+    }
+    response.on_hover_text(text)
 }
 
 /// Un combo: `field.combo` con `selected` adentro y su lista en el panel de los menús. `content`

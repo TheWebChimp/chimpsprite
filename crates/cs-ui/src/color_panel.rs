@@ -54,10 +54,9 @@ use crate::pixel_ui;
 use crate::skin::{Piece, Skin, SkinColors, WidgetState};
 use crate::tab_bar;
 
-/// La división entre la caja de la paleta y el editor: 2 filas de aire, el separador grabado (2)
-/// y 2 de aire. En el diseño, sin división, eran 5 filas de aire (y 327..331).
+/// La división entre la caja de la paleta y el editor: 6 filas de aire, sin línea (se arrastra
+/// igual). En el diseño, sin división, eran 5 filas de aire (y 327..331).
 pub const SPLITTER_HEIGHT: f32 = 6.0;
-const SPLITTER_LINE: f32 = 2.0;
 /// Filas entre los botones de arriba y la caja de la paleta (y 115..119 del diseño).
 pub const BUTTONS_GAP: f32 = 5.0;
 
@@ -274,33 +273,20 @@ pub fn palette_and_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin, palette
     let spacing = ui.spacing().item_spacing.y;
     ui.spacing_mut().item_spacing.y = 0.0;
     palette_grid(ui, editor, skin, chosen.round());
-    if let Some(dragged) = splitter(ui, skin, chosen, min..=max) {
+    if let Some(dragged) = splitter(ui, chosen, min..=max) {
         *palette_height = dragged;
     }
     ui.spacing_mut().item_spacing.y = spacing;
     color_editor(ui, editor, skin);
 }
 
-/// La división entre la caja y el editor: el separador grabado a todo el ancho, que se arrastra
+/// La división entre la caja y el editor: una franja de aire a todo el ancho, que se arrastra
 /// (con el cursor de cambiar el alto) para cambiar el alto de la caja dentro de `range`. Devuelve
 /// el alto nuevo mientras se arrastra.
-fn splitter(
-    ui: &mut Ui,
-    skin: &Skin,
-    height: f32,
-    range: std::ops::RangeInclusive<f32>,
-) -> Option<f32> {
-    let ppp = ui.ctx().pixels_per_point();
+fn splitter(ui: &mut Ui, height: f32, range: std::ops::RangeInclusive<f32>) -> Option<f32> {
     let width = ui.available_width().floor();
     let (rect, _) = ui.allocate_exact_size(vec2(width, SPLITTER_HEIGHT), Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), rect.size());
-    let line = rect.top() + ((SPLITTER_HEIGHT - SPLITTER_LINE) / 2.0).floor();
-    ui.painter().add(pixel_ui::etched_hline(
-        rect.x_range(),
-        line,
-        skin.colors(),
-        ppp,
-    ));
     let response = ui.interact(rect, ui.id().with("palette_splitter"), Sense::drag());
     let enabled = ui.is_enabled();
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Other, enabled, "Palette height"));

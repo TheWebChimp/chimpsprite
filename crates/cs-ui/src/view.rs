@@ -131,15 +131,21 @@ impl GridDialog {
         })
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> GridDialogResult {
+    /// La ventana (la de la app: con `skin`, la de Pixel UI).
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        skin: Option<&crate::skin::Skin>,
+    ) -> GridDialogResult {
         let mut result = GridDialogResult::Open;
-        let mut open = true;
-        egui::Window::new("Grid Settings")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
+        let (_, closed) = crate::pixel_ui::app_window(
+            ctx,
+            skin,
+            "grid_settings_window",
+            "Grid Settings",
+            true,
+            (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+            |ui| {
                 egui::Grid::new("grid_settings")
                     .num_columns(4)
                     .spacing([8.0, 6.0])
@@ -164,23 +170,21 @@ impl GridDialog {
                     );
                     ui.weak("(shared by all documents)");
                 });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() {
-                        result = GridDialogResult::Accept;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        result = GridDialogResult::Cancel;
-                    }
-                });
-            });
+                ui.add_space(6.0);
+                match crate::pixel_ui::dialog_buttons(ui, skin, &["OK", "Cancel"]) {
+                    Some(0) => result = GridDialogResult::Accept,
+                    Some(_) => result = GridDialogResult::Cancel,
+                    None => {}
+                }
+            },
+        );
         let (enter, escape) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Enter),
                 i.key_pressed(egui::Key::Escape),
             )
         });
-        if !open || escape {
+        if closed || escape {
             GridDialogResult::Cancel
         } else if enter {
             GridDialogResult::Accept

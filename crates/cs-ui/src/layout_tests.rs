@@ -408,18 +408,21 @@ fn the_status_bar_spans_the_window_under_everything() {
 }
 
 #[test]
-fn the_right_panel_keeps_ending_above_the_timeline() {
+fn the_right_panel_goes_down_beside_the_timeline() {
     let h = LayoutHarness::editor();
     let (palette, timeline) = (h.panel("palette"), h.panel("timeline"));
     assert!(
-        palette.bottom() <= timeline.top(),
-        "{palette:?} vs {timeline:?}"
+        palette.bottom() > timeline.top(),
+        "full height: {palette:?} vs {timeline:?}"
     );
-    // La fila de controles de la línea de tiempo no se parte: si es más ancha que el panel, el
-    // rect del panel pasa del borde (egui recorta lo que sobra).
+    assert_eq!(
+        palette.bottom(),
+        timeline.bottom(),
+        "hasta la barra de estado"
+    );
     assert!(
-        timeline.right() >= h.screen().right(),
-        "under the right panel too: {timeline:?}"
+        timeline.right() <= palette.left(),
+        "the timeline ends to its left: {timeline:?} vs {palette:?}"
     );
 }
 
@@ -593,11 +596,20 @@ fn with_pixel_ui_the_menu_is_16_high_and_the_tabs_23() {
 fn the_active_tab_is_tab_active_and_the_others_are_tab() {
     let docs = [("a.chimp", true), ("b.chimp", true), ("c.chimp", true)];
     let h = LayoutHarness::with_tabs(&docs, Some(1));
-    let active = union(&h.drawn("tab.active")).expect("the active box");
+    // Solo las de la barra de pestañas (las de Artboards, en el panel derecho, usan las mismas
+    // piezas).
+    let bar = h.panel("tabs");
+    let in_bar = |name: &str| -> Vec<Rect> {
+        h.drawn(name)
+            .into_iter()
+            .filter(|r| bar.intersects(*r))
+            .collect()
+    };
+    let active = union(&in_bar("tab.active")).expect("the active box");
     assert_eq!(active, h.button("b.chimp"), "the box of the active tab");
     // La caja activa mide 17 (baja sobre el grabado); las otras, 15.
     assert_eq!(active.height(), 17.0);
-    let boxes = h.drawn("tab");
+    let boxes = in_bar("tab");
     for name in ["a.chimp", "c.chimp"] {
         let tab = h.button(name);
         assert_eq!(tab.height(), 15.0, "{name}");
@@ -1044,9 +1056,9 @@ fn with_pixel_ui_the_workspace_box_is_5_px_from_its_neighbours() {
     );
     assert_eq!(workspace.top(), toolbar.top());
     assert_eq!(workspace.top() - h.panel("tool_options").bottom(), 5.0);
-    // A la derecha, 5 px hasta el panel (en el mockup, hasta su caja: 776..780); abajo, 5 hasta
-    // la línea de tiempo (el mockup no la tiene: el mismo aire).
-    assert_eq!(h.panel("palette").left() - workspace.right(), 5.0);
+    // A la derecha, 3 px hasta los botones del dock (754 → 758 en el mockup); abajo, 5 hasta la
+    // línea de tiempo (el mockup no la tiene: el mismo aire).
+    assert_eq!(h.panel("dock").left() - workspace.right(), 3.0);
     assert_eq!(h.panel("timeline").top() - workspace.bottom(), 5.0);
     // Las reglas y el lienzo, dentro de la línea clara, el aire y la línea oscura.
     let canvas = h.canvas.expect("a document is open");
@@ -1102,7 +1114,7 @@ fn without_pixel_ui_the_canvas_has_no_box_and_the_egui_rulers() {
     let canvas = h.canvas.expect("a document is open");
     assert_eq!(canvas.left(), h.panel("tools").right(), "no air");
     assert_eq!(canvas.top(), h.panel("tool_options").bottom());
-    assert_eq!(canvas.right(), h.panel("palette").left());
+    assert_eq!(canvas.right(), h.panel("dock").left());
     // Los números de las reglas son textos de egui.
     assert!(h.texts.iter().any(|(t, _)| t == "0"), "{:?}", h.texts);
 }
@@ -1893,20 +1905,16 @@ impl LayoutHarness {
     }
 }
 
-/// Con Pixel UI, el editor de color entero: dentro del panel derecho y arriba de la línea de
-/// tiempo, hasta el borde de abajo de la barra del alfa.
+/// Con Pixel UI, el editor de color entero dentro del panel derecho, hasta el borde de abajo de
+/// la barra del alfa.
 fn assert_color_editor_whole(h: &LayoutHarness) {
     let panel = h.panel("palette");
-    let timeline = h.panel("timeline");
     let bars = h.drawn_boxes("picker.bars");
     assert_eq!(bars.len(), 1, "{bars:?}");
     let bars = bars[0];
     let alpha = h.node("Alpha");
     assert!(bars.contains_rect(alpha), "{alpha:?} in {bars:?}");
-    assert!(
-        bars.bottom() <= timeline.top() && bars.bottom() <= panel.bottom(),
-        "{bars:?} above {timeline:?}, in {panel:?}"
-    );
+    assert!(bars.bottom() <= panel.bottom(), "{bars:?} in {panel:?}");
     for label in [
         "Copy color",
         "R",
@@ -1923,7 +1931,7 @@ fn assert_color_editor_whole(h: &LayoutHarness) {
 }
 
 #[test]
-fn with_pixel_ui_the_color_editor_is_whole_above_the_timeline() {
+fn with_pixel_ui_the_color_editor_is_whole() {
     let h = LayoutHarness::new(pixel_ui(), true);
     assert!(h.app.view.timeline);
     assert_eq!(h.screen().size(), Vec2::new(1200.0, 800.0));
@@ -1938,7 +1946,7 @@ fn with_pixel_ui_the_color_editor_is_whole_above_the_timeline() {
     };
     let h = LayoutHarness::new(tall, true);
     assert_color_editor_whole(&h);
-    let short = LayoutHarness::with_tabs_in(&[("Short", false)], Some(0), Vec2::new(1200.0, 560.0));
+    let short = LayoutHarness::with_tabs_in(&[("Short", false)], Some(0), Vec2::new(1200.0, 400.0));
     assert_color_editor_whole(&short);
     let pbox = short.drawn_boxes("palette.box")[0];
     assert!(pbox.height() < 207.0 && pbox.height() >= 33.0, "{pbox:?}");
@@ -1999,8 +2007,8 @@ fn without_pixel_ui_the_right_panel_has_no_splitter_and_keeps_its_scroll() {
     assert!(h.texts.iter().any(|(t, _)| t == "Color"));
 }
 
-/// Con Pixel UI y la paleta guardada enorme (5000), en una ventana de `size`: el panel derecho
-/// sigue dando lugar a las secciones de abajo (Artboards...) y el editor de color queda entero.
+/// Con Pixel UI y la paleta guardada enorme (5000), en una ventana de `size`: el editor de color
+/// queda entero y Artboards (en el dock) se abre y se puede usar.
 fn assert_sections_below_reachable(size: Vec2) {
     let palettes = PaletteLibrary::new(Box::new(NoPresets));
     let view = ViewSettings {
@@ -2012,37 +2020,127 @@ fn assert_sections_below_reachable(size: Vec2) {
     let mut h = LayoutHarness::start_in(app, size);
     assert_color_editor_whole(&h);
     assert_eq!(h.app.view.palette_height, 5000.0, "lo guardado no se toca");
-    let panel = h.panel("palette");
-    let timeline = h.panel("timeline");
-    // El encabezado de Artboards se ve entero dentro del panel y arriba de la línea de tiempo.
+    h.click(h.button("Artboards").center(), PointerButton::Primary);
+    // El encabezado de Artboards se ve, dentro de la ventana.
     let (_, heading, _) = h
         .text_rects
         .iter()
         .find(|(t, _, _)| t == "Artboards")
         .unwrap_or_else(|| panic!("no Artboards heading in {:?}", h.text_rects))
         .clone();
-    assert!(
-        panel.contains_rect(heading) && heading.bottom() <= timeline.top(),
-        "{heading:?} in {panel:?} above {timeline:?}"
-    );
-    // Y se puede tocar: el ➕ crea un artboard.
-    let add = h.button("➕");
-    assert!(
-        panel.contains_rect(add) && add.bottom() <= timeline.top(),
-        "{add:?}"
-    );
+    assert!(h.screen().contains_rect(heading), "{heading:?}");
+    // Y se puede tocar: el + crea un artboard.
+    let add = h.button("New 64×64 artboard");
+    assert!(h.screen().contains_rect(add), "{add:?}");
     let before = h.app.doc.editor.document.artboards.len();
     h.click(add.center(), PointerButton::Primary);
     assert_eq!(h.app.doc.editor.document.artboards.len(), before + 1);
 }
 
 #[test]
-fn with_pixel_ui_a_huge_palette_height_keeps_the_artboards_section_reachable() {
+fn with_pixel_ui_the_status_bar_is_the_design_one() {
+    let h = LayoutHarness::new(pixel_ui(), true);
+    let status = h.panel("status");
+    assert_eq!(status.height(), 20.0);
+    assert_eq!(status.bottom(), h.screen().bottom());
+    let name = h.app.doc.editor.artboard().name.clone();
+    let (artboard, _) = text_rect(&h, &format!("{name} 64×64"));
+    let (frame, _) = text_rect(&h, "1/1");
+    // En la barra, de izquierda a derecha: el artboard (ícono de 13 + 3 de aire desde el borde
+    // y 3 hasta el texto) y el frame después.
+    assert!(status.contains_rect(artboard) && status.contains_rect(frame));
+    assert_eq!(artboard.left(), status.left() + 3.0 + 13.0 + 3.0);
+    assert!(frame.left() > artboard.right());
+}
+
+#[test]
+fn with_pixel_ui_the_artboards_are_tabs_with_the_design_buttons() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    // Están en el dock: no en el panel derecho hasta abrirlas.
+    assert!(!h.buttons.iter().any(|(l, _)| l == "New 64×64 artboard"));
+    let dock = h.button("Artboards");
+    assert_eq!(dock.size(), Vec2::new(23.0, 24.0));
+    assert!(h.panel("dock").contains_rect(dock));
+    h.click(dock.center(), PointerButton::Primary);
+    // El panel flotante, a la izquierda del botón.
+    let panel = Rect::from_min_max(Pos2::ZERO, Pos2::new(dock.left(), 10000.0));
+    let inside = |h: &LayoutHarness, name: &str| -> Vec<Rect> {
+        h.drawn(name)
+            .into_iter()
+            .filter(|r| panel.contains_rect(*r) && r.top() >= dock.top())
+            .collect()
+    };
+    let add = h.button("New 64×64 artboard");
+    assert_eq!(add.size(), Vec2::new(25.0, 16.0));
+    assert!(!h.app.doc.editor.document.artboards.is_empty());
+    h.click(add.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.document.artboards.len(), 2);
+    // Cada artboard, una pestaña; la del activo es `tab.active`. Sin la marca ○.
+    let names: Vec<String> = h
+        .app
+        .doc
+        .editor
+        .document
+        .artboards
+        .iter()
+        .map(|a| a.name.clone())
+        .collect();
+    for name in &names {
+        assert!(panel.contains_rect(h.node(name)), "{name}");
+    }
+    assert!(!inside(&h, "tab.active").is_empty());
+    assert!(inside(&h, "icon.tab_close").is_empty(), "no mark");
+    // Clic en la otra pestaña: se activa.
+    let first = h.app.doc.editor.document.artboards[0].id;
+    assert_ne!(h.app.doc.editor.active, first);
+    h.click(h.node(&names[0]).center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.active, first);
+    // El tacho borra el activo.
+    h.click(h.button("Delete artboard").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.document.artboards.len(), 1);
+    // El botón del ícono abre Canvas Size.
+    assert!(h.app.canvas_size.is_none());
+    h.click(h.button("Canvas Size…").center(), PointerButton::Primary);
+    assert!(h.app.canvas_size.is_some());
+}
+
+#[test]
+fn with_pixel_ui_slices_are_tabs_too() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert!(h.app.doc.editor.sprite().slices.is_empty());
+    h.click(h.button("Slices").center(), PointerButton::Primary);
+    h.click(h.button("New slice").center(), PointerButton::Primary);
+    let slices = &h.app.doc.editor.sprite().slices;
+    assert_eq!(slices.len(), 1);
+    assert_eq!(slices[0].name, "Slice 1");
+    assert_eq!(h.app.doc.editor.slice, Some(0));
+    let dock = h.button("Slices");
+    for label in ["Slice 1", "Slice name"] {
+        assert!(
+            h.node(label).right() <= dock.left(),
+            "{label} left of the dock"
+        );
+    }
+    assert!(h.button("Slice color").right() <= dock.left());
+    // Abrir Artboards cierra Slices: uno por vez.
+    h.click(h.button("Artboards").center(), PointerButton::Primary);
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Slice name"));
+    assert!(h.buttons.iter().any(|(l, _)| l == "New 64×64 artboard"));
+    // Y su botón lo vuelve a cerrar.
+    h.click(h.button("Artboards").center(), PointerButton::Primary);
+    assert!(!h.buttons.iter().any(|(l, _)| l == "New 64×64 artboard"));
+    h.click(h.button("Slices").center(), PointerButton::Primary);
+    h.click(h.button("Delete slice").center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.sprite().slices.is_empty());
+}
+
+#[test]
+fn with_pixel_ui_a_huge_palette_height_keeps_artboards_reachable() {
     assert_sections_below_reachable(Vec2::new(1200.0, 800.0));
 }
 
 #[test]
-fn with_pixel_ui_a_short_window_keeps_the_artboards_section_reachable() {
+fn with_pixel_ui_a_short_window_keeps_artboards_reachable() {
     assert_sections_below_reachable(Vec2::new(1200.0, 560.0));
 }
 

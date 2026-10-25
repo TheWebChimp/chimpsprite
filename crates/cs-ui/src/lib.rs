@@ -13,6 +13,7 @@ mod color_panel;
 mod demo;
 #[cfg(test)]
 mod dialog_tests;
+mod dock;
 mod editor;
 mod export_dialog;
 mod fg_bg;
@@ -35,7 +36,11 @@ mod lospec_examples;
 mod lospec_tab;
 mod palette_library;
 mod panels;
+mod pixel_cursors;
 mod pixel_rulers;
+mod pixel_sections;
+mod pixel_selection;
+mod pixel_status;
 mod pixel_ui;
 mod platform;
 mod recent;
@@ -307,11 +312,31 @@ impl ChimpApp {
         }
     }
 
+    /// La ventana Slice Properties (pedida desde el menú del slice en el lienzo).
+    fn show_slice_properties(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() || !self.doc.canvas.slice_properties {
+            return;
+        }
+        let editor = &mut self.doc.editor;
+        let (_, closed) = pixel_ui::app_window(
+            ctx,
+            self.pixel.skin(),
+            "slice_properties_window",
+            "Slice Properties",
+            true,
+            (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+            |ui| panels::slice_properties(ui, editor),
+        );
+        if closed {
+            self.doc.canvas.slice_properties = false;
+        }
+    }
+
     fn update_grid_dialog(&mut self, ctx: &egui::Context) {
         let Some(dialog) = &mut self.grid_dialog else {
             return;
         };
-        match dialog.show(ctx) {
+        match dialog.show(ctx, self.pixel.skin()) {
             view::GridDialogResult::Open => {}
             view::GridDialogResult::Accept => {
                 let [r, g, b, a] = dialog.color.to_srgba_unmultiplied();
@@ -749,6 +774,13 @@ impl ChimpApp {
                     if ui.add_enabled(has_selection, clear).clicked() {
                         self.doc.editor.clear_selection_content();
                     }
+                    menus::separator(ui);
+                    if ui.add(menus::item("Flip Horizontal", "Shift+H")).clicked() {
+                        self.doc.editor.flip(true);
+                    }
+                    if ui.add(menus::item("Flip Vertical", "Shift+V")).clicked() {
+                        self.doc.editor.flip(false);
+                    }
                 });
                 menus::bar_menu(ui, look, "Layer", |ui| {
                     if ui.add(menus::plain("New Tilemap Layer…")).clicked() {
@@ -913,14 +945,48 @@ impl ChimpApp {
             });
         }
         // Antes que los laterales: la barra de estado va a todo el ancho.
-        egui::Panel::bottom("status").show(ui, |ui| {
+        // Con Pixel UI, la del diseño: 20 de alto, sin el margen ni la línea de egui.
+        let skin = self.pixel.skin();
+        let mut status = egui::Panel::bottom("status");
+        if skin.is_some() {
+            status = status
+                .exact_size(pixel_status::HEIGHT)
+                .frame(egui::Frame::NONE)
+                .show_separator_line(false);
+        }
+        status.show(ui, |ui| {
             let notice = self
                 .autosaver
                 .disabled_reason
                 .as_ref()
                 .map(|r| format!("Autosave off: {r}"));
             if self.has_doc() {
-                panels::status_bar(ui, &self.doc.editor, &self.doc.canvas, notice.as_deref());
+                match skin {
+                    Some(skin) => panels::pixel_status_bar(
+                        ui,
+                        &self.doc.editor,
+                        &self.doc.canvas,
+                        notice.as_deref(),
+                        skin,
+                    ),
+                    None => panels::status_bar(
+                        ui,
+                        &self.doc.editor,
+                        &self.doc.canvas,
+                        notice.as_deref(),
+                    ),
+                }
+            } else if let Some(skin) = skin {
+                let version = format!("ChimpSprite {}", env!("CARGO_PKG_VERSION"));
+                pixel_status::show(
+                    ui,
+                    skin,
+                    &[pixel_status::Section {
+                        icon: None,
+                        text: version,
+                        color: None,
+                    }],
+                );
             } else {
                 ui.label(format!("ChimpSprite {}", env!("CARGO_PKG_VERSION")));
             }
@@ -953,6 +1019,8 @@ impl ChimpApp {
         self.doc.canvas.pixel_rulers = skin.map(pixel_rulers::PixelRulers::from_skin);
         // Con Pixel UI, cada artboard es una ventana del skin.
         self.doc.canvas.artboard_window = skin.map(artboard_window::ArtboardWindow::from_skin);
+        // Con Pixel UI, los cursores y la selección del diseño.
+        self.doc.canvas.pixel_ui = skin.is_some();
         let (width, frame) = match skin {
             // Con Pixel UI, la columna de íconos: la caja más el margen a cada lado, sin línea
             // contra el lienzo (el mockup no la tiene). Arriba, el margen del mockup hasta la
@@ -983,7 +1051,69 @@ impl ChimpApp {
                     ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.doc.editor, skin));
                 });
             });
-        // La línea de tiempo antes que el panel derecho: pasa por debajo de él, como siempre.
+        // El panel derecho antes que la línea de tiempo: va a todo el alto, hasta la barra de
+        // estado, y la línea de tiempo termina a su izquierda.
+        // Lo pedido desde el panel se resuelve después: el panel tiene prestado el skin.
+        let mut palette_action = None;
+        // El candado de la paleta es de la app (se guarda con la vista), no de cada pestaña.
+        self.doc.editor.palette_locked = self.view.palette_locked;
+        let tiles = self.doc.editor.tiles_mode();
+        let mut panel = egui::Panel::right("palette").default_size(220.0);
+        if let Some(skin) = skin {
+            // Con Pixel UI no se achica más que la fila más ancha que no se parte, con los
+            // márgenes del panel.
+            panel = panel.min_size(color_panel::panel_min_size(ui, skin));
+        }
+        panel.show(ui, |ui| {
+            // Con un diálogo abierto, el menú de paleta no abre otro encima.
+            let palette = |ui: &mut egui::Ui, editor: &mut editor::Editor, height: &mut f32| {
+                panels::palette(ui, editor, !modal, skin, height).filter(|_| !modal)
+            };
+            // Con Pixel UI, la paleta y el editor de color van arriba, fuera del scroll: el
+            // editor se ve siempre entero (si falta lugar, se achica la caja de la paleta).
+            let fixed = skin.is_some() && !tiles;
+            if fixed {
+                palette_action = palette(ui, &mut self.doc.editor, &mut self.view.palette_height);
+            }
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                if tiles {
+                    panels::tileset(ui, &mut self.doc.editor, &mut self.doc.tile_thumbs);
+                    // El selector de color sigue a mano (lo usa 2B).
+                    ui.add_space(10.0);
+                    panels::color_picker(ui, &mut self.doc.editor, skin);
+                } else if !fixed {
+                    palette_action =
+                        palette(ui, &mut self.doc.editor, &mut self.view.palette_height);
+                }
+                // Artboards y Slices van en el dock (a la izquierda de este panel).
+                ui.add_space(12.0);
+                let entered = ui
+                    .add_enabled_ui(!modal, |ui| panels::instance(ui, &mut self.doc.editor))
+                    .inner;
+                if entered {
+                    self.doc
+                        .canvas
+                        .request_zoom(view::ZoomRequest::CenterActive);
+                }
+            })
+        });
+        self.view.palette_locked = self.doc.editor.palette_locked;
+        // El dock de "otros paneles", a la izquierda del derecho y también a todo el alto.
+        let mut dock_frame = egui::Frame::side_top_panel(ui.style());
+        dock_frame.inner_margin.left = 0;
+        dock_frame.inner_margin.right = dock::RIGHT_MARGIN;
+        let open = egui::Panel::right("dock")
+            .resizable(false)
+            .exact_size(dock::WIDTH)
+            .frame(dock_frame)
+            .show_separator_line(skin.is_none())
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    dock::show(ui, &mut self.doc.editor, &mut self.doc.artboard_name, skin)
+                })
+                .inner
+            })
+            .inner;
         if self.view.timeline {
             let mut panel = egui::Panel::bottom("timeline")
                 .resizable(true)
@@ -1003,67 +1133,7 @@ impl ChimpApp {
         if std::mem::take(&mut self.doc.timeline.new_tilemap) {
             self.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
         }
-        // Lo pedido desde el panel se resuelve después: el panel tiene prestado el skin.
-        let mut palette_action = None;
-        // El candado de la paleta es de la app (se guarda con la vista), no de cada pestaña.
-        self.doc.editor.palette_locked = self.view.palette_locked;
-        let tiles = self.doc.editor.tiles_mode();
-        let mut panel = egui::Panel::right("palette").default_size(220.0);
-        if let Some(skin) = skin {
-            // Con Pixel UI no se achica más que la fila más ancha que no se parte, con los
-            // márgenes del panel.
-            panel = panel.min_size(color_panel::panel_min_size(ui, skin));
-        }
-        let open = panel
-            .show(ui, |ui| {
-                // Con un diálogo abierto, el menú de paleta no abre otro encima.
-                let palette = |ui: &mut egui::Ui, editor: &mut editor::Editor, height: &mut f32| {
-                    panels::palette(ui, editor, !modal, skin, height).filter(|_| !modal)
-                };
-                // Con Pixel UI, la paleta y el editor de color van arriba, fuera del scroll: el
-                // editor se ve siempre entero (si falta lugar, se achica la caja de la paleta).
-                let fixed = skin.is_some() && !tiles;
-                if fixed {
-                    palette_action =
-                        palette(ui, &mut self.doc.editor, &mut self.view.palette_height);
-                }
-                egui::ScrollArea::vertical()
-                    .show(ui, |ui| {
-                        if tiles {
-                            panels::tileset(ui, &mut self.doc.editor, &mut self.doc.tile_thumbs);
-                            // El selector de color sigue a mano (lo usa 2B).
-                            ui.add_space(10.0);
-                            panels::color_picker(ui, &mut self.doc.editor, skin);
-                        } else if !fixed {
-                            palette_action =
-                                palette(ui, &mut self.doc.editor, &mut self.view.palette_height);
-                        }
-                        ui.add_space(12.0);
-                        let open = ui
-                            .add_enabled_ui(!modal, |ui| {
-                                panels::artboards(
-                                    ui,
-                                    &mut self.doc.editor,
-                                    &mut self.doc.artboard_name,
-                                )
-                            })
-                            .inner;
-                        ui.add_space(12.0);
-                        let entered = ui
-                            .add_enabled_ui(!modal, |ui| panels::instance(ui, &mut self.doc.editor))
-                            .inner;
-                        if entered {
-                            self.doc
-                                .canvas
-                                .request_zoom(view::ZoomRequest::CenterActive);
-                        }
-                        ui.add_enabled_ui(!modal, |ui| panels::slices(ui, &mut self.doc.editor));
-                        open
-                    })
-                    .inner
-            })
-            .inner;
-        self.view.palette_locked = self.doc.editor.palette_locked;
+        // Después de los paneles: lo pedido desde el derecho necesita `self` entero.
         if let Some(action) = palette_action {
             self.palette_action(ui.ctx(), action);
         }
@@ -1085,13 +1155,13 @@ impl ChimpApp {
                 .rect;
         };
         // Con Pixel UI, como en el mockup: el lienzo y sus reglas en una caja, con 5 px de fondo
-        // alrededor (a la izquierda, los de la barra de íconos).
+        // alrededor (a la izquierda, los de la barra de íconos; a la derecha, 3 hasta el dock).
         let margin = pixel_ui::WORKSPACE_MARGIN;
         let frame = egui::Frame::new()
             .fill(skin.colors().background)
             .inner_margin(egui::Margin {
                 left: 0,
-                right: margin,
+                right: dock::LEFT_AIR,
                 top: margin,
                 bottom: margin,
             });
@@ -1141,6 +1211,7 @@ impl eframe::App for ChimpApp {
         self.update_canvas_size(&ctx);
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);
+        self.show_slice_properties(&ctx);
         self.update_tilemap_dialogs(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
@@ -1167,6 +1238,13 @@ impl eframe::App for ChimpApp {
 pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
     match key {
         Key::N if shift => editor.add_layer(cs_core::LayerKind::Image),
+        // Como en Aseprite: Shift+H y Shift+V voltean lo seleccionado (o la capa).
+        Key::H if shift => {
+            editor.flip(true);
+        }
+        Key::V if shift => {
+            editor.flip(false);
+        }
         Key::Enter if editor.is_pending() => editor.finish_gesture(),
         Key::Enter if editor.is_floating() => {
             editor.commit_floating();

@@ -911,6 +911,72 @@ pub(crate) fn wrap_rows(available: f32, widths: &[f32], joins: &[f32]) -> Vec<Ra
     rows
 }
 
+/// La ventana de la app, la misma en todos lados: con Pixel UI (`skin`), [`pixel_dialog_at`] (el
+/// marco `window` del skin, el título centrado, la × si `closable` y se mueve de la barra); sin
+/// él, la ventana de egui de siempre, fija y sin plegar. `id` la identifica en las dos.
+/// Devuelve lo que devolvió el contenido (`None` si egui no lo mostró) y si se cerró con la ×.
+pub fn app_window<R>(
+    ctx: &egui::Context,
+    skin: Option<&Skin>,
+    id: &str,
+    title: &str,
+    closable: bool,
+    anchor: (Align2, Vec2),
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> (Option<R>, bool) {
+    match skin {
+        Some(skin) => {
+            let out = pixel_dialog_at(
+                ctx,
+                skin,
+                Id::new(id),
+                title,
+                closable,
+                anchor,
+                add_contents,
+            );
+            (Some(out.inner), out.closed)
+        }
+        None => {
+            let mut open = true;
+            let window = egui::Window::new(title.to_owned())
+                .id(Id::new(id))
+                .collapsible(false)
+                .resizable(false)
+                .anchor(anchor.0, anchor.1);
+            let window = if closable {
+                window.open(&mut open)
+            } else {
+                window
+            };
+            let inner = window.show(ctx, add_contents).and_then(|r| r.inner);
+            (inner, !open)
+        }
+    }
+}
+
+/// La fila de botones de una ventana ([`app_window`]): con Pixel UI, [`pixel_buttons`] (los del
+/// skin, del mismo ancho); sin él, los de egui en fila. Devuelve cuál se tocó.
+pub fn dialog_buttons(ui: &mut Ui, skin: Option<&Skin>, labels: &[&str]) -> Option<usize> {
+    match skin {
+        Some(skin) => pixel_buttons(ui, skin, labels)
+            .iter()
+            .position(|r| r.clicked()),
+        None => {
+            ui.horizontal(|ui| {
+                let mut clicked = None;
+                for (i, label) in labels.iter().enumerate() {
+                    if ui.button(*label).clicked() {
+                        clicked = Some(i);
+                    }
+                }
+                clicked
+            })
+            .inner
+        }
+    }
+}
+
 /// Los rects de color liso de una forma (las mallas, de a cuatro vértices), para los tests.
 #[cfg(test)]
 pub(crate) fn colored_rects(shape: &Shape) -> Vec<(Color32, Rect)> {

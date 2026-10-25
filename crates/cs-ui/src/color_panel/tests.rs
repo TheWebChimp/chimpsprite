@@ -1264,18 +1264,18 @@ fn with_pixel_ui_the_splitter_changes_the_height_of_the_palette() {
     let mut h = Harness::new(true);
     let pbox = h.palette_box();
     let split = h.node("Palette height");
-    // La división: las 6 filas entre la caja y el editor, a todo el ancho, con el separador
-    // grabado en el medio.
+    // La división: las 6 filas entre la caja y el editor, a todo el ancho, sin línea.
     assert_eq!(
         split,
         Rect::from_min_size(pbox.left_bottom(), vec2(pbox.width(), 6.0))
     );
-    let colors = *h.skin.as_ref().unwrap().colors();
     let rects = h.colored_rects();
-    for (color, y) in [(colors.canvas, 2.0), (colors.highlight, 3.0)] {
-        let line = Rect::from_min_size(split.min + vec2(0.0, y), vec2(split.width(), 1.0));
-        assert!(rects.contains(&(color, line)), "{line:?}");
-    }
+    assert!(
+        !rects
+            .iter()
+            .any(|(_, r)| split.contains_rect(*r) && r.height() == 1.0),
+        "no line in {split:?}"
+    );
     // Abajo 30: la caja crece y el editor la sigue.
     h.drag_by(split.center(), vec2(0.0, 30.0));
     assert_eq!(h.palette_box().height(), 237.0);

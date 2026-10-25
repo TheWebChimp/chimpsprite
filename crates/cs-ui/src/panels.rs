@@ -6,6 +6,7 @@ use std::sync::Arc;
 use cs_core::{ArtboardId, Palette, PixelValue, SymmetryAxes, Tile};
 
 use crate::canvas::CanvasView;
+use crate::pixel_sections::{self, HeaderAction};
 use cs_raster::RotationAlgorithm;
 use cs_tools::text::FontChoice;
 use cs_tools::{BrushShape, Dither, GradientShape};
@@ -266,7 +267,7 @@ pub fn tool_options_bar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Sk
             ui.ctx().pixels_per_point(),
         ));
     }
-    text_window(ui.ctx(), editor);
+    text_window(ui.ctx(), editor, skin);
 }
 
 /// Scroll de las opciones de la barra: horizontal, solo con la rueda y la barra.
@@ -323,6 +324,8 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
         started: false,
         pixel: look.is_some(),
     };
+    // Las ayudas van al final: con Pixel UI, juntas detrás del ícono de info.
+    let mut hints: Vec<&'static str> = Vec::new();
     let options = &mut editor.options;
     if tool.uses_brush() {
         groups.next(ui);
@@ -409,10 +412,7 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
     }
     match tool {
         ToolKind::Hand => {
-            groups.next(ui);
-            hint(
-                ui,
-                look,
+            hints.push(
                 "Drag to move the view. Space+drag or the middle button do it with any tool.",
             );
         }
@@ -449,19 +449,10 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
             }
         }
         ToolKind::Lasso => {
-            groups.next(ui);
-            hint(
-                ui,
-                look,
-                "Drag around the area; it closes when you release.",
-            );
+            hints.push("Drag around the area; it closes when you release.");
         }
         ToolKind::PolygonLasso => {
-            groups.next(ui);
-            hint(
-                ui,
-                look,
-                "Click to add points. Click the first point, double-click or press Enter to close; Esc cancels.",
+            hints.push("Click to add points. Click the first point, double-click or press Enter to close; Esc cancels.",
             );
         }
         ToolKind::Bucket => {
@@ -530,45 +521,25 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
                         });
                 }
             }
-            groups.next(ui);
-            hint(
-                ui,
-                look,
-                "Drag from the primary to the secondary color. Right-drag swaps them.",
-            );
+            hints.push("Drag from the primary to the secondary color. Right-drag swaps them.");
         }
         ToolKind::Jumble => {
-            groups.next(ui);
-            hint(ui, look, "Scrambles pixels within the brush radius.");
+            hints.push("Scrambles pixels within the brush radius.");
         }
         ToolKind::Contour => {
-            groups.next(ui);
-            hint(
-                ui,
-                look,
-                "Draw the outline: it closes and fills when you release.",
-            );
+            hints.push("Draw the outline: it closes and fills when you release.");
         }
         ToolKind::Blur => {
-            groups.next(ui);
-            hint(
-                ui,
-                look,
-                "Softens the pixels under the brush. Go over an area again to blur it more.",
-            );
+            hints
+                .push("Softens the pixels under the brush. Go over an area again to blur it more.");
         }
         ToolKind::Text => {
             groups.next(ui);
             text_style_options(ui, editor, look);
-            groups.next(ui);
-            hint(ui, look, "Click on the canvas to place text.");
+            hints.push("Click on the canvas to place text.");
         }
         ToolKind::Slice => {
-            groups.next(ui);
-            hint(
-                ui,
-                look,
-                "Drag to create a slice (hitbox, pivot…). Drag the selected one to move it or its edges to resize it: changes apply from the current frame on.",
+            hints.push("Drag to create a slice (hitbox, pivot…). Drag the selected one to move it or its edges to resize it: changes apply from the current frame on.",
             );
         }
         _ => {}
@@ -598,11 +569,7 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
         if editor.options.rotation != before {
             editor.refresh_floating(false);
         }
-        groups.next(ui);
-        hint(
-            ui,
-            look,
-            "Drag the handles to scale, or just outside a corner to rotate. Shift keeps the proportions or snaps to 15°.",
+        hints.push("Drag the handles to scale, or just outside a corner to rotate. Shift keeps the proportions or snaps to 15°.",
         );
     }
     if matches!(
@@ -610,23 +577,37 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
         ToolKind::Line | ToolKind::Rectangle | ToolKind::Ellipse | ToolKind::Gradient
     ) || matches!(tool, ToolKind::RectSelect | ToolKind::EllipseSelect)
     {
-        groups.next(ui);
-        hint(ui, look, "Shift: constrain");
+        hints.push("Shift: constrain");
     }
     if tool.paints() {
-        groups.next(ui);
-        hint(ui, look, "Alt+click: pick color");
+        hints.push("Alt+click: pick color");
     }
+    show_hints(ui, look, &mut groups, &hints);
 }
 
-/// Una ayuda de la barra: con Pixel UI, en la fila de los textos del diseño; sin él, `ui.weak`.
-fn hint(ui: &mut egui::Ui, look: Option<BarLook>, text: &str) {
+/// Las ayudas de la herramienta, al final de la barra: con Pixel UI, el ícono de info con todas
+/// en su tooltip (una por línea); sin él, cada una con `ui.weak`, en su grupo.
+fn show_hints(ui: &mut egui::Ui, look: Option<BarLook>, groups: &mut Groups, hints: &[&str]) {
+    if hints.is_empty() {
+        return;
+    }
     match look {
         Some(look) => {
-            bar_fields::hint(ui, look, text);
+            groups.next(ui);
+            bar_fields::info(
+                ui,
+                look,
+                &hints.join(
+                    "
+",
+                ),
+            );
         }
         None => {
-            ui.weak(text);
+            for hint in hints {
+                groups.next(ui);
+                ui.weak(*hint);
+            }
         }
     }
 }
@@ -827,18 +808,21 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
 }
 
 /// Ventana flotante para escribir el texto que se está colocando.
-fn text_window(ctx: &egui::Context, editor: &mut Editor) {
+fn text_window(ctx: &egui::Context, editor: &mut Editor, skin: Option<&Skin>) {
     if editor.text.is_none() {
         return;
     }
     let mut commit = false;
     let mut cancel = false;
-    egui::Window::new("Text")
-        .collapsible(false)
-        .resizable(false)
-        .default_width(260.0)
-        .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 90.0))
-        .show(ctx, |ui| {
+    let (_, closed) = pixel_ui::app_window(
+        ctx,
+        skin,
+        "text_window",
+        "Text",
+        true,
+        (egui::Align2::CENTER_TOP, Vec2::new(0.0, 90.0)),
+        |ui| {
+            ui.set_width(260.0);
             text_style_options(ui, editor, None);
             let Some(draft) = editor.text.as_mut() else {
                 return;
@@ -861,11 +845,13 @@ fn text_window(ctx: &egui::Context, editor: &mut Editor) {
                 )
             });
             ui.weak("Click the canvas to move it. Ctrl+Enter applies.");
-            ui.horizontal(|ui| {
-                commit = ui.button("OK").clicked() || enter;
-                cancel = ui.button("Cancel").clicked() || esc;
-            });
-        });
+            ui.add_space(6.0);
+            let clicked = pixel_ui::dialog_buttons(ui, skin, &["OK", "Cancel"]);
+            commit = clicked == Some(0) || enter;
+            cancel = clicked == Some(1) || esc;
+        },
+    );
+    cancel |= closed;
     if commit {
         editor.commit_text();
     } else if cancel {
@@ -1516,6 +1502,81 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView, notic
     });
 }
 
+/// Con Pixel UI, la barra de estado del diseño: el artboard con su tamaño, el píxel bajo el
+/// puntero y el frame, cada uno con su ícono; después, sin ícono, el zoom y los avisos de ese
+/// momento (máscara, instancia, tiles, lo flotante, guías, autosave).
+pub fn pixel_status_bar(
+    ui: &mut egui::Ui,
+    editor: &Editor,
+    canvas: &CanvasView,
+    notice: Option<&str>,
+    skin: &Skin,
+) {
+    use crate::pixel_status::{self, ICON_ARTBOARD, ICON_FRAME, ICON_POINTER, Section};
+    let s = editor.sprite();
+    let pointer = match canvas.hover {
+        Some((x, y)) if x >= 0 && y >= 0 && x < s.width as i32 && y < s.height as i32 => {
+            format!("{x} {y}")
+        }
+        _ => "\u{2014}".to_owned(),
+    };
+    let mut sections = vec![
+        Section {
+            icon: Some(&ICON_ARTBOARD),
+            text: format!("{} {}\u{d7}{}", editor.artboard().name, s.width, s.height),
+            color: None,
+        },
+        Section {
+            icon: Some(&ICON_POINTER),
+            text: pointer,
+            color: None,
+        },
+        Section {
+            icon: Some(&ICON_FRAME),
+            text: format!("{}/{}", editor.frame + 1, s.frames.len()),
+            color: None,
+        },
+        Section {
+            icon: None,
+            text: format!("{}%", (canvas.zoom * 100.0) as u32),
+            color: None,
+        },
+    ];
+    let accent = skin.colors().accent;
+    let mut warn = |text: String| {
+        sections.push(Section {
+            icon: None,
+            text,
+            color: Some(accent),
+        })
+    };
+    if editor.editing_mask() {
+        warn("Editing layer mask: white reveals, black hides".to_owned());
+    }
+    if let Some(text) = editor.mask_status() {
+        warn(text.to_string());
+    }
+    let on_instance = s
+        .layer(editor.layer)
+        .is_some_and(|l| l.kind == cs_core::LayerKind::Instance);
+    if on_instance && editor.active_tool().paints() {
+        warn("Instance layer: edit the source artboard".to_owned());
+    }
+    if let Some(text) = editor.tiles_status() {
+        warn(text.to_string());
+    }
+    if let Some(text) = editor.floating_status() {
+        warn(text);
+    }
+    if let Some(hint) = canvas.guide_hint {
+        warn(hint.to_string());
+    }
+    if let Some(notice) = notice {
+        warn(notice.to_owned());
+    }
+    pixel_status::show(ui, skin, &sections);
+}
+
 /// Lista de artboards: activar, crear, renombrar y eliminar.
 /// Devuelve `true` si se pidió abrir el diálogo de tamaño.
 pub fn artboards(
@@ -1579,6 +1640,195 @@ pub fn artboards(
         resize = true;
     }
     resize
+}
+
+/// Con Pixel UI, la sección Artboards del diseño: el título con + y tacho, los artboards como
+/// pestañas (sin marca) y, debajo, el nombre del activo y el botón de Canvas Size. Devuelve
+/// `true` si se pidió abrir el diálogo de tamaño.
+pub fn pixel_artboards(
+    ui: &mut egui::Ui,
+    editor: &mut Editor,
+    name_buffer: &mut (ArtboardId, String),
+    skin: &Skin,
+) -> bool {
+    let can_remove = editor.document.artboards.len() > 1;
+    match pixel_sections::header(
+        ui,
+        skin,
+        "Artboards",
+        "New 64×64 artboard",
+        "Delete artboard",
+        can_remove,
+    ) {
+        Some(HeaderAction::Add) => editor.add_artboard(64, 64),
+        Some(HeaderAction::Delete) => editor.remove_active_artboard(),
+        None => {}
+    }
+    let ids: Vec<ArtboardId> = editor.document.artboards.iter().map(|a| a.id).collect();
+    let tabs: Vec<pixel_sections::Tab> = editor
+        .document
+        .artboards
+        .iter()
+        .map(|a| pixel_sections::Tab {
+            name: a.name.clone(),
+            color: None,
+        })
+        .collect();
+    let active = ids.iter().position(|id| *id == editor.active);
+    if let Some(i) = pixel_sections::tabs(ui, skin, &tabs, active) {
+        editor.activate(ids[i]);
+    }
+    if name_buffer.0 != editor.active {
+        *name_buffer = (editor.active, editor.artboard().name.clone());
+    }
+    let (response, resize) = pixel_sections::field_row(
+        ui,
+        |ui, width| {
+            pixel_sections::text_field(ui, skin, &mut name_buffer.1, width, "Artboard name", "Name")
+        },
+        |ui| {
+            pixel_sections::icon_button(
+                ui,
+                skin,
+                &pixel_sections::ICON_CANVAS_SIZE,
+                "Canvas Size…",
+                true,
+            )
+            .clicked()
+        },
+    );
+    if response.lost_focus() {
+        let name = name_buffer.1.trim().to_string();
+        if name.is_empty() {
+            name_buffer.1 = editor.artboard().name.clone();
+        } else {
+            editor.rename_active_artboard(name);
+        }
+    } else if !response.has_focus() {
+        name_buffer.1 = editor.artboard().name.clone();
+    }
+    resize
+}
+
+/// Un campo del diseño que edita `current`: mientras tiene el foco guarda lo escrito (en la
+/// memoria de egui, con `id`); al perderlo devuelve el texto si cambió (Esc lo descarta).
+fn pixel_buffered_field(
+    ui: &mut egui::Ui,
+    skin: &Skin,
+    id: egui::Id,
+    current: &str,
+    width: f32,
+    label: &str,
+    hint: &str,
+) -> Option<String> {
+    let mut text = ui
+        .data_mut(|d| d.get_temp::<String>(id))
+        .unwrap_or_else(|| current.to_owned());
+    let response = pixel_sections::text_field(ui, skin, &mut text, width, label, hint);
+    if response.has_focus() {
+        ui.data_mut(|d| d.insert_temp(id, text));
+        return None;
+    }
+    ui.data_mut(|d| d.remove::<String>(id));
+    let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
+    (response.lost_focus() && !cancelled && text != current).then_some(text)
+}
+
+/// Con Pixel UI, la sección Slices como la de Artboards: el título con + (un slice del tamaño de
+/// la selección o del lienzo) y tacho, los slices como pestañas con su color y, del elegido, el
+/// nombre con el botón de color, los datos y la clave del frame actual.
+pub fn pixel_slices(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
+    let selected = editor.slice;
+    match pixel_sections::header(
+        ui,
+        skin,
+        "Slices",
+        "New slice",
+        "Delete slice",
+        selected.is_some(),
+    ) {
+        Some(HeaderAction::Add) => editor.add_slice(),
+        Some(HeaderAction::Delete) => editor.delete_slice(),
+        None => {}
+    }
+    let tabs: Vec<pixel_sections::Tab> = editor
+        .sprite()
+        .slices
+        .iter()
+        .map(|s| pixel_sections::Tab {
+            name: s.name.clone(),
+            color: Some(Color32::from_rgb(s.color.r, s.color.g, s.color.b)),
+        })
+        .collect();
+    if tabs.is_empty() {
+        pixel_sections::note(
+            ui,
+            skin,
+            "No slices. Use the Slice tool (Shift+C) to mark hitboxes and pivots.",
+        );
+        return;
+    }
+    if let Some(i) = pixel_sections::tabs(ui, skin, &tabs, editor.slice) {
+        editor.end_group();
+        editor.slice = Some(i);
+        editor.set_tool(ToolKind::Slice);
+    }
+    let Some(index) = editor.slice else {
+        return;
+    };
+    let Some(slice) = editor.selected_slice().cloned() else {
+        return;
+    };
+    let base = ui.id().with(("pixel_slice", index));
+    let (name, color_button) = pixel_sections::field_row(
+        ui,
+        |ui, width| {
+            pixel_buffered_field(
+                ui,
+                skin,
+                base.with("name"),
+                &slice.name,
+                width,
+                "Slice name",
+                "Name",
+            )
+        },
+        |ui| {
+            let c = slice.color;
+            pixel_sections::color_button(ui, skin, Color32::from_rgb(c.r, c.g, c.b), "Slice color")
+        },
+    );
+    if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
+        editor.update_slice(|s| s.name = name.trim().to_owned());
+    }
+    let mut c32 = Color32::from_rgb(slice.color.r, slice.color.g, slice.color.b);
+    egui::Popup::from_toggle_button_response(&color_button)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show(|ui| {
+            if egui::color_picker::color_picker_color32(
+                ui,
+                &mut c32,
+                egui::color_picker::Alpha::Opaque,
+            ) {
+                let [r, g, b, _] = c32.to_array();
+                editor.update_slice(|s| s.color = cs_core::Rgba::rgb(r, g, b));
+            }
+        });
+    let data = pixel_sections::field_alone(ui, |ui, width| {
+        pixel_buffered_field(
+            ui,
+            skin,
+            base.with("data"),
+            &slice.text,
+            width,
+            "Slice data",
+            "Data (e.g. damage=3)",
+        )
+    });
+    if let Some(text) = data {
+        editor.update_slice(|s| s.text = text);
+    }
+    slice_key_properties(ui, editor);
 }
 
 /// Gesto sobre campos numéricos o sliders: un solo paso de undo por arrastre o edición.
@@ -1792,6 +2042,14 @@ pub fn slice_properties(ui: &mut egui::Ui, editor: &mut Editor) {
             editor.update_slice(|s| s.text = text.clone());
         }
     });
+    slice_key_properties(ui, editor);
+}
+
+/// La clave del frame actual del slice seleccionado: rect, pivote, 9-slice y ocultar.
+fn slice_key_properties(ui: &mut egui::Ui, editor: &mut Editor) {
+    let Some(slice) = editor.selected_slice().cloned() else {
+        return;
+    };
     let frame = editor.frame;
     let Some(key) = slice.key_at(frame).copied() else {
         ui.weak(format!("Hidden on frame {}", frame + 1));
@@ -3072,6 +3330,30 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn with_pixel_ui_the_hints_go_behind_the_info_icon() {
+        let mut h = BarHarness::with_skin(800.0, true);
+        h.editor.set_tool(ToolKind::Rectangle);
+        h.frame(vec![]);
+        // Un solo ícono de 12×13 con las dos ayudas en su tooltip, una por línea.
+        let label = "Shift: constrain
+Alt+click: pick color";
+        let (_, icon) = h
+            .nodes
+            .iter()
+            .find(|(t, _)| t == label)
+            .unwrap_or_else(|| panic!("no info icon in {:?}", h.nodes));
+        assert_eq!(icon.size(), Vec2::new(12.0, 13.0));
+        // Y su texto no está escrito en la barra.
+        let written = |shape: &egui::Shape| matches!(shape, egui::Shape::Text(t) if t.galley.text().contains("Alt+click"));
+        assert!(!h.shapes.iter().any(|c| written(&c.shape)));
+        // Sin Pixel UI, siguen como texto.
+        let mut h = BarHarness::new(800.0);
+        h.editor.set_tool(ToolKind::Rectangle);
+        h.frame(vec![]);
+        assert!(h.has("Shift: constrain") && h.has("Alt+click: pick color"));
     }
 
     #[test]

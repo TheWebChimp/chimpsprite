@@ -12,7 +12,10 @@ use crate::artboard_window::{ArtboardWindow, TitleHit, WindowLayout};
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
 use crate::editor::{Editor, MAX_BRUSH_SIZE, ToolKind};
 use crate::guides::{RULER_PX, SNAP_PX, SnapContext, after_drag, hit_guide, nice_step};
+use crate::menus;
+use crate::pixel_cursors::{self, PixelCursor};
 use crate::pixel_rulers::{self, PixelRulers};
+use crate::pixel_selection;
 use crate::skin::Skin;
 use crate::transform_box::{self, Handle, TransformBox, TransformHit};
 use crate::view::{ViewSettings, ZoomRequest};
@@ -68,12 +71,17 @@ pub struct CanvasView {
     draw_pipette: bool,
     /// Dibujar el cursor de rotación (egui no trae uno; el del sistema se oculta).
     draw_rotate: bool,
+    /// Con Pixel UI, el cursor del diseño a dibujar (el del sistema se oculta).
+    pixel_cursor: Option<PixelCursor>,
     /// Nombre de artboard en edición (doble clic en su etiqueta) y si ya se le dio el foco.
     renaming: Option<(ArtboardId, String, bool)>,
     /// Clic derecho sobre un slice con la herramienta Slice: al soltar se abre su menú.
     slice_menu: bool,
+    /// Clic derecho dentro de la selección con una herramienta de selección o Move: al soltar se
+    /// abre su menú (voltear…).
+    selection_menu: bool,
     /// Diálogo Slice Properties abierto (para el slice seleccionado).
-    slice_properties: bool,
+    pub slice_properties: bool,
     /// Ctrl+rueda de touchpad: píxeles acumulados que todavía no suman un paso de grosor.
     wheel_rest: f32,
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
@@ -83,6 +91,8 @@ pub struct CanvasView {
     /// Con Pixel UI, la ventana del skin alrededor de cada artboard (`None`: el borde y la
     /// etiqueta de siempre); lo pone la app en cada frame.
     pub artboard_window: Option<ArtboardWindow>,
+    /// Con Pixel UI: los cursores y la selección del diseño; lo pone la app en cada frame.
+    pub pixel_ui: bool,
     /// Píxeles físicos por punto del último frame: [`Self::origin`] se alinea a ellos.
     ppp: f32,
 }
@@ -173,13 +183,16 @@ impl Default for CanvasView {
             over_ruler: false,
             draw_pipette: false,
             draw_rotate: false,
+            pixel_cursor: None,
             renaming: None,
             slice_menu: false,
+            selection_menu: false,
             slice_properties: false,
             wheel_rest: 0.0,
             background: theme::CANVAS_BG,
             pixel_rulers: None,
             artboard_window: None,
+            pixel_ui: false,
             ppp: 1.0,
         }
     }
@@ -204,6 +217,40 @@ impl CanvasView {
     fn to_world(&self, rect: Rect, p: Pos2) -> (f32, f32) {
         let w = (p - self.origin(rect)) / self.zoom;
         (w.x, w.y)
+    }
+
+    /// Color que se ve en el punto de pantalla `p` del lienzo: el píxel del artboard de más arriba
+    /// sobre el damero, o el fondo fuera de los artboards (para invertir los cursores).
+    fn color_under(&self, rect: Rect, editor: &Editor, p: Pos2) -> Color32 {
+        let world = self.to_world(rect, p);
+        let Some(artboard) = editor
+            .document
+            .artboard_at(world)
+            .and_then(|id| editor.document.artboard(id))
+        else {
+            return self.background;
+        };
+        let (ax, ay) = artboard.position;
+        let (x, y) = (world.0.floor() as i32 - ax, world.1.floor() as i32 - ay);
+        let sprite = if artboard.id == editor.active {
+            editor.sprite()
+        } else {
+            &artboard.sprite
+        };
+        let c = cs_render::composite_pixel(sprite, editor.frame_of(artboard.id), x, y);
+        let cell = CHECKER_CELL as i32;
+        let checker = if (x.div_euclid(cell) + y.div_euclid(cell)) % 2 == 0 {
+            theme::CHECKER_LIGHT
+        } else {
+            theme::CHECKER_DARK
+        };
+        let a = c.a as f32 / 255.0;
+        let mix = |v: u8, b: u8| (v as f32 * a + b as f32 * (1.0 - a)).round() as u8;
+        Color32::from_rgb(
+            mix(c.r, checker.r()),
+            mix(c.g, checker.g()),
+            mix(c.b, checker.b()),
+        )
     }
 
     fn fit(&mut self, rect: Rect, editor: &Editor) {
@@ -627,6 +674,7 @@ impl CanvasView {
 
         self.draw_pipette = false;
         self.draw_rotate = false;
+        self.pixel_cursor = None;
         // Paneo con botón medio o espacio + arrastre. La herramienta Hand se comporta como
         // Espacio mantenido: el botón principal mueve la vista y no llega a ninguna herramienta.
         // A diferencia de Espacio, con Hand las reglas, guías y el eje de simetría siguen
@@ -745,6 +793,14 @@ impl CanvasView {
                 .then(|| editor.slice_at(editor.to_local(world)))
                 .flatten();
             self.slice_menu = slice.is_some();
+            let tool = editor.active_tool();
+            self.selection_menu = pressed_secondary
+                && slice.is_none()
+                && (tool.is_selection() || tool == ToolKind::Move)
+                && editor.selection.as_ref().is_some_and(|m| {
+                    let (x, y) = editor.to_local(world);
+                    m.contains(x, y)
+                });
             // Un handle o la franja de rotación ganan sobre el gesto de la herramienta.
             let transform = if pressed_primary {
                 self.transform_hit(rect, editor, p)
@@ -764,11 +820,25 @@ impl CanvasView {
                     editor.end_group();
                     editor.slice = slice;
                 }
+                // El clic derecho abre el menú de la selección en vez de llegar a la herramienta.
+                _ if self.selection_menu => {}
                 _ => match transform {
                     Some(hit) => editor.press_transform(hit, world),
                     None => editor.pointer_press(world, pressed_secondary, modifiers.alt, slop),
                 },
             }
+        }
+        if self.selection_menu {
+            response.context_menu(|ui| {
+                if ui.add(menus::item("Flip Horizontal", "Shift+H")).clicked() {
+                    editor.flip(true);
+                    ui.close();
+                }
+                if ui.add(menus::item("Flip Vertical", "Shift+V")).clicked() {
+                    editor.flip(false);
+                    ui.close();
+                }
+            });
         }
         if self.slice_menu {
             response.context_menu(|ui| {
@@ -874,7 +944,11 @@ impl CanvasView {
         } else if let Some(hit) = transform_cursor {
             match hit {
                 TransformHit::Rotate => {
-                    self.draw_rotate = true;
+                    if self.pixel_ui {
+                        self.pixel_cursor = Some(PixelCursor::Rotate);
+                    } else {
+                        self.draw_rotate = true;
+                    }
                     Some(egui::CursorIcon::None)
                 }
                 TransformHit::Handle(handle) => Some(handle_cursor(handle)),
@@ -895,6 +969,13 @@ impl CanvasView {
             })
         {
             Some(egui::CursorIcon::Move)
+        } else if self.pixel_ui {
+            self.pixel_cursor = Some(match editor.active_tool() {
+                ToolKind::Eyedropper => PixelCursor::Eyedropper,
+                tool if tool.is_selection() => PixelCursor::Marquee,
+                _ => PixelCursor::Cross,
+            });
+            Some(egui::CursorIcon::None)
         } else if editor.active_tool() == ToolKind::Eyedropper {
             self.draw_pipette = true;
             Some(egui::CursorIcon::None)
@@ -1199,14 +1280,14 @@ impl CanvasView {
             && view_settings.shows(view_settings.selection_edges)
         {
             let phase = (ctx.input(|i| i.time) * ANTS_SPEED) as i32;
-            draw_marching_ants(&painter, mask, origin, self.zoom, phase);
+            draw_marching_ants(&painter, mask, origin, self.zoom, phase, self.pixel_ui);
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
         }
         if let Some(origin) = active_origin
             && handles_active(editor)
             && let Some(b) = editor.transform_box()
         {
-            draw_transform_box(&painter, &b, origin, self.zoom);
+            draw_transform_box(&painter, &b, origin, self.zoom, self.pixel_ui);
         }
         if let Some(origin) = active_origin
             && view_settings.shows(view_settings.tile_numbers)
@@ -1325,18 +1406,39 @@ impl CanvasView {
             }
         }
 
-        if self.draw_pipette
-            && let Some(p) = response.hover_pos()
-        {
-            // Color que se tomaría: lo que se ve (todas las capas visibles).
-            let color = self.hover.and_then(|(x, y)| {
+        // Color que tomaría el cuentagotas: lo que se ve (todas las capas visibles).
+        let picked = || {
+            self.hover.and_then(|(x, y)| {
                 let s = editor.sprite();
                 let inside = x >= 0 && y >= 0 && x < s.width as i32 && y < s.height as i32;
                 // `composite_pixel` lee los tilemaps tile a tile: no hace falta materializar en
                 // cada frame de hover.
                 inside.then(|| cs_render::composite_pixel(s, editor.frame, x, y))
-            });
-            draw_pipette(&painter, p, color);
+            })
+        };
+        if self.draw_pipette
+            && let Some(p) = response.hover_pos()
+        {
+            draw_pipette(&painter, p, picked());
+        }
+        if let Some(cursor) = self.pixel_cursor
+            && let Some(p) = response.hover_pos()
+        {
+            // El píxel del sprite bajo el puntero, en pantalla y alineado a píxeles físicos.
+            let (wx, wy) = self.to_world(rect, p);
+            let (x, y) = (wx.floor() as i32, wy.floor() as i32);
+            let cell = Rect::from_min_max(
+                self.to_screen(rect, (x, y)),
+                self.to_screen(rect, (x + 1, y + 1)),
+            );
+            let ppp = self.ppp;
+            let cell = Rect::from_min_max(
+                (cell.min.to_vec2() * ppp).round().to_pos2() / ppp,
+                (cell.max.to_vec2() * ppp).round().to_pos2() / ppp,
+            );
+            let color = (cursor == PixelCursor::Eyedropper).then(picked).flatten();
+            let under = |q: Pos2| self.color_under(rect, editor, q);
+            pixel_cursors::draw(&painter, cursor, p, cell, color, under);
         }
         if self.draw_rotate
             && let Some(p) = response.hover_pos()
@@ -1344,14 +1446,8 @@ impl CanvasView {
             draw_rotate_cursor(&painter, p);
         }
         self.rename_field(ui, rect, editor);
+        // La ventana Slice Properties la muestra la app (con el skin): `slice_properties`.
         self.slice_properties &= editor.slice.is_some();
-        if self.slice_properties {
-            egui::Window::new("Slice Properties")
-                .open(&mut self.slice_properties)
-                .collapsible(false)
-                .resizable(false)
-                .show(ui.ctx(), |ui| crate::panels::slice_properties(ui, editor));
-        }
     }
 
     /// Reglas en píxeles del artboard activo (origen en su esquina superior izquierda).
@@ -1785,9 +1881,26 @@ fn handles_active(editor: &Editor) -> bool {
 }
 
 /// Contorno (rotado) de la caja de transformación y sus 8 handles de tamaño fijo en pantalla,
-/// por fuera de la caja (donde se toman).
-fn draw_transform_box(painter: &egui::Painter, b: &TransformBox, origin: Pos2, zoom: f32) {
+/// por fuera de la caja (donde se toman). Con `pixel` (Pixel UI) y sin rotar, los del diseño.
+fn draw_transform_box(
+    painter: &egui::Painter,
+    b: &TransformBox,
+    origin: Pos2,
+    zoom: f32,
+    pixel: bool,
+) {
     let at = |(x, y): (f32, f32)| origin + Vec2::new(x, y) * zoom;
+    if pixel && b.angle == 0.0 {
+        let r = Rect::from_min_max(
+            at((b.x0 as f32, b.y0 as f32)),
+            at((b.x1 as f32, b.y1 as f32)),
+        );
+        pixel_selection::paint(painter, pixel_selection::rect_outline(r, 0));
+        for handle in Handle::ALL {
+            pixel_selection::draw_handle(painter, pixel_selection::handle_rect(r, handle.dirs()));
+        }
+        return;
+    }
     let outline: Vec<Pos2> = b.corners().into_iter().map(at).collect();
     painter.add(egui::Shape::closed_line(
         outline,
@@ -1875,9 +1988,51 @@ fn draw_slices(
     }
 }
 
-/// Dibuja el borde de la máscara con segmentos blanco/negro que se desplazan con `phase`.
-fn draw_marching_ants(painter: &egui::Painter, mask: &Mask, origin: Pos2, zoom: f32, phase: i32) {
+/// Dibuja el borde de la máscara con segmentos blanco/negro que se desplazan con `phase`. Con
+/// `pixel` (Pixel UI), el del diseño: 1 punto con tramos de 4.
+fn draw_marching_ants(
+    painter: &egui::Painter,
+    mask: &Mask,
+    origin: Pos2,
+    zoom: f32,
+    phase: i32,
+    pixel: bool,
+) {
     let at = |x: i32, y: i32| origin + Vec2::new(x as f32, y as f32) * zoom;
+    if pixel {
+        let clip = painter.clip_rect();
+        let p = |x: i32, y: i32| {
+            let s = at(x, y);
+            (s.x.round() as i32, s.y.round() as i32)
+        };
+        for (x, y) in mask.points() {
+            let (l, t) = p(x, y);
+            let (r, b) = p(x + 1, y + 1);
+            let px = Rect::from_min_max(
+                Pos2::new(l as f32, t as f32),
+                Pos2::new(r as f32 + 1.0, b as f32 + 1.0),
+            );
+            if !clip.intersects(px) {
+                continue;
+            }
+            // Cada lado del píxel sin vecino seleccionado es borde.
+            let mut dashes = Vec::new();
+            if !mask.contains(x, y - 1) {
+                dashes.extend(pixel_selection::hline(l, r, t, phase));
+            }
+            if !mask.contains(x, y + 1) {
+                dashes.extend(pixel_selection::hline(l, r, b, phase));
+            }
+            if !mask.contains(x - 1, y) {
+                dashes.extend(pixel_selection::vline(l, t, b, phase));
+            }
+            if !mask.contains(x + 1, y) {
+                dashes.extend(pixel_selection::vline(r, t, b, phase));
+            }
+            pixel_selection::paint(painter, dashes);
+        }
+        return;
+    }
     let color = |n: i32| {
         if (n + phase).rem_euclid(2) == 0 {
             Color32::WHITE
@@ -2282,6 +2437,94 @@ mod tests {
         h.frame(vec![]);
         assert!(h.editor.is_painting() && !h.editor.is_transforming());
         assert_eq!(h.cursor, egui::CursorIcon::Crosshair);
+    }
+
+    #[test]
+    fn with_pixel_ui_the_tools_draw_the_design_cursors() {
+        let mut h = Harness::new();
+        h.canvas.pixel_ui = true;
+        // Los píxeles de los cursores: de un punto, con una de las dos tintas.
+        let ink = |h: &Harness| -> Vec<Rect> {
+            h.shapes
+                .iter()
+                .filter_map(|s| match s {
+                    egui::Shape::Rect(r)
+                        if r.rect.size() == Vec2::splat(1.0)
+                            && [pixel_cursors::INK, Color32::WHITE].contains(&r.fill) =>
+                    {
+                        Some(r.rect)
+                    }
+                    _ => None,
+                })
+                .collect()
+        };
+        let p = h.screen((3, 3)) + Vec2::splat(0.5);
+        for tool in [ToolKind::Pencil, ToolKind::RectSelect, ToolKind::Eyedropper] {
+            h.editor.set_tool(tool);
+            h.frame(vec![Event::PointerMoved(p)]);
+            h.frame(vec![]);
+            assert_eq!(h.cursor, egui::CursorIcon::None, "{tool:?}");
+            assert!(!ink(&h).is_empty(), "{tool:?}");
+        }
+        // Las esquinas de selección, por fuera del píxel (3, 3).
+        h.editor.set_tool(ToolKind::RectSelect);
+        h.frame(vec![]);
+        let cell = Rect::from_min_max(h.corner((3, 3)), h.corner((4, 4)));
+        let bounds = ink(&h).iter().fold(Rect::NOTHING, |b, r| b.union(*r));
+        assert_eq!(bounds, cell.expand(3.0));
+        // Cada píxel se invierte según lo de debajo: sobre un píxel negro, blanco; sobre uno
+        // blanco, la tinta.
+        let fill_at = |h: &Harness, q: Pos2| {
+            h.shapes.iter().rev().find_map(|s| match s {
+                egui::Shape::Rect(r) if r.rect.size() == Vec2::splat(1.0) && r.rect.contains(q) => {
+                    Some(r.fill)
+                }
+                _ => None,
+            })
+        };
+        for (color, expected) in [
+            (Rgba::rgb(0, 0, 0), Color32::WHITE),
+            (Rgba::rgb(255, 255, 255), pixel_cursors::INK),
+        ] {
+            h.editor.execute(Command::DrawPixels {
+                layer: LayerId(1),
+                frame: 0,
+                pixels: vec![(2, 2, PixelValue::Rgba(color))],
+            });
+            h.frame(vec![]);
+            // El vértice de arriba a la izquierda, sobre el píxel (2, 2) del sprite.
+            let q = h.corner((3, 3)) - Vec2::splat(0.5);
+            assert_eq!(fill_at(&h, q), Some(expected), "{color:?}");
+        }
+        // Sin Pixel UI, el del sistema.
+        h.canvas.pixel_ui = false;
+        h.editor.set_tool(ToolKind::Pencil);
+        h.frame(vec![]);
+        assert_eq!(h.cursor, egui::CursorIcon::Crosshair);
+    }
+
+    #[test]
+    fn right_click_inside_the_selection_opens_its_menu_to_flip() {
+        let mut h = Harness::new();
+        let red = h.selected_dot((2, 3), (2, 2), (5, 5));
+        h.click(h.screen((3, 3)), PointerButton::Secondary);
+        h.frame(vec![]);
+        let item = h
+            .texts()
+            .into_iter()
+            .find(|(t, _)| t == "Flip Horizontal")
+            .map(|(_, r)| r)
+            .unwrap_or_else(|| panic!("no menu in {:?}", h.texts()));
+        assert!(h.texts().iter().any(|(t, _)| t == "Flip Vertical"));
+        assert!(
+            !h.editor.is_floating(),
+            "the right click does not reach the tool"
+        );
+        h.click(item.center(), PointerButton::Primary);
+        h.frame(vec![]);
+        assert!(h.editor.is_floating());
+        crate::editor_key(&mut h.editor, Key::Enter, false);
+        assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 5, 3), red);
     }
 
     #[test]

@@ -459,25 +459,24 @@ impl ChimpApp {
             return;
         };
         let mut choice = None;
-        egui::Window::new("Restore last session")
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
+        let skin = self.pixel.skin();
+        crate::pixel_ui::app_window(
+            ctx,
+            skin,
+            "restore_window",
+            "Restore last session",
+            false,
+            (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+            |ui| {
                 ui.label("These documents have unsaved changes from your last visit:");
                 for r in restore {
                     ui.label(format!("• {}", r.name));
                 }
                 ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    if ui.button("Restore").clicked() {
-                        choice = Some(true);
-                    }
-                    if ui.button("Discard").clicked() {
-                        choice = Some(false);
-                    }
-                });
-            });
+                choice = crate::pixel_ui::dialog_buttons(ui, skin, &["Restore", "Discard"])
+                    .map(|i| i == 0);
+            },
+        );
         match choice {
             Some(true) => {
                 for r in self.restore.take().expect("restore") {
@@ -525,17 +524,23 @@ impl ChimpApp {
 
         if let Some(message) = &self.message {
             let mut close = false;
-            egui::Window::new(&message.title)
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-                .show(ctx, |ui| {
+            let skin = self.pixel.skin();
+            let (_, closed) = crate::pixel_ui::app_window(
+                ctx,
+                skin,
+                "message_window",
+                &message.title,
+                true,
+                (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+                |ui| {
                     ui.label(&message.body);
                     ui.add_space(6.0);
-                    if ui.button("OK").clicked() {
+                    if crate::pixel_ui::dialog_buttons(ui, skin, &["OK"]).is_some() {
                         close = true;
                     }
-                });
+                },
+            );
+            close |= closed;
             if close
                 || ctx
                     .input(|i| i.key_pressed(egui::Key::Enter) || i.key_pressed(egui::Key::Escape))
@@ -545,7 +550,7 @@ impl ChimpApp {
         }
 
         if let Some(mut dialog) = self.export.take() {
-            match dialog.show(ctx, &mut self.doc.editor, &self.platform) {
+            match dialog.show(ctx, &mut self.doc.editor, &self.platform, self.pixel.skin()) {
                 ExportResult::Open => self.export = Some(dialog),
                 ExportResult::Cancel => self.last_export = dialog,
                 ExportResult::Done(files) => {

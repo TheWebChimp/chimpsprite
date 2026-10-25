@@ -388,6 +388,62 @@ impl Editor {
         true
     }
 
+    /// Voltea en horizontal (`horizontal`) o en vertical, como Edit → Flip de Aseprite. Con algo
+    /// seleccionado o flotando, lo levanta y lo deja volteado dentro de su caja (sigue flotando con
+    /// las herramientas que transforman; con las demás se confirma enseguida). Sin selección,
+    /// voltea la capa entera en el frame actual, en un paso de undo.
+    pub fn flip(&mut self, horizontal: bool) -> bool {
+        if !self.clip_layer_ok(true) {
+            return false;
+        }
+        if self.floating.is_none() && self.selection.is_none() {
+            return self.flip_layer(horizontal);
+        }
+        if !self.lift() {
+            return false;
+        }
+        self.stop();
+        self.transform_drag = None;
+        let Some(f) = self.floating.as_mut() else {
+            return false;
+        };
+        let b = &mut f.bbox;
+        if horizontal {
+            std::mem::swap(&mut b.x0, &mut b.x1);
+        } else {
+            std::mem::swap(&mut b.y0, &mut b.y1);
+        }
+        // Espejar una caja rotada en pantalla = espejarla sin rotar y rotar al revés.
+        b.angle = -b.angle;
+        self.refresh_floating(false);
+        if !self.can_transform() {
+            self.commit_floating();
+        }
+        true
+    }
+
+    /// Voltea la capa actual entera (todo el lienzo) en el frame actual.
+    fn flip_layer(&mut self, horizontal: bool) -> bool {
+        let sprite = self.sprite();
+        let (w, h) = (sprite.width as i32, sprite.height as i32);
+        let mut pixels = Vec::with_capacity((w * h) as usize);
+        for y in 0..h {
+            for x in 0..w {
+                let (sx, sy) = if horizontal {
+                    (w - 1 - x, y)
+                } else {
+                    (x, h - 1 - y)
+                };
+                pixels.push((x, y, sprite.pixel(self.layer, self.frame, sx, sy)));
+            }
+        }
+        self.execute(Command::DrawPixels {
+            layer: self.layer,
+            frame: self.frame,
+            pixels,
+        })
+    }
+
     /// Recalcula lo transformado y la selección. `fast`: rotación Fast (durante un arrastre de
     /// rotación); si no, la elegida en las opciones.
     pub fn refresh_floating(&mut self, fast: bool) {
@@ -611,6 +667,84 @@ mod tests {
 
     fn px(e: &Editor, x: i32, y: i32) -> PixelValue {
         e.sprite().pixel(LayerId(1), 0, x, y)
+    }
+
+    /// `editor()` con el punto rojo en `at` (dentro de la selección de 3×3) en vez de en (1, 1).
+    fn editor_with_dot(at: (i32, i32)) -> Editor {
+        let mut e = editor();
+        let t = e.sprite().color_mode.transparent();
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(1, 1, t), (at.0, at.1, red())],
+        });
+        e
+    }
+
+    #[test]
+    fn flipping_a_selection_leaves_it_floating_and_flipped_in_its_box() {
+        let mut e = editor_with_dot((0, 1));
+        let t = e.sprite().color_mode.transparent();
+        assert!(e.flip(true));
+        assert!(e.is_floating(), "with a selection tool it keeps floating");
+        assert_eq!(e.transform_box().map(|b| (b.left(), b.top())), Some((0, 0)));
+        assert!(e.commit_floating());
+        assert_eq!(px(&e, 2, 1), red());
+        assert_eq!(px(&e, 0, 1), t);
+        // Un solo paso de undo.
+        e.undo();
+        assert_eq!(px(&e, 0, 1), red());
+        assert_eq!(px(&e, 2, 1), t);
+    }
+
+    #[test]
+    fn flipping_vertically_mirrors_top_and_bottom() {
+        let mut e = editor_with_dot((1, 0));
+        assert!(e.flip(false));
+        e.commit_floating();
+        assert_eq!(px(&e, 1, 2), red());
+        assert_eq!(px(&e, 1, 0), e.sprite().color_mode.transparent());
+    }
+
+    #[test]
+    fn flipping_twice_gets_back_where_it_was() {
+        let mut e = editor_with_dot((0, 1));
+        e.flip(true);
+        e.flip(true);
+        e.commit_floating();
+        assert_eq!(px(&e, 0, 1), red());
+    }
+
+    #[test]
+    fn with_a_painting_tool_the_flip_applies_right_away() {
+        let mut e = editor_with_dot((0, 1));
+        e.tool = ToolKind::Pencil;
+        assert!(e.flip(true));
+        assert!(!e.is_floating());
+        assert_eq!(px(&e, 2, 1), red());
+        assert!(e.selection.is_some(), "the selection stays");
+    }
+
+    #[test]
+    fn without_a_selection_the_whole_layer_flips() {
+        let mut e = editor();
+        e.set_selection(None);
+        assert!(e.flip(true));
+        assert_eq!(px(&e, 6, 1), red());
+        assert_eq!(px(&e, 1, 1), e.sprite().color_mode.transparent());
+        e.undo();
+        assert_eq!(px(&e, 1, 1), red());
+        assert!(e.flip(false));
+        assert_eq!(px(&e, 1, 6), red());
+    }
+
+    #[test]
+    fn a_locked_layer_does_not_flip() {
+        let mut e = editor();
+        e.set_selection(None);
+        e.toggle_locked(LayerId(1));
+        assert!(!e.flip(true));
+        assert_eq!(px(&e, 1, 1), red());
     }
 
     /// Lo que muestra el lienzo (con lo flotante aplicado).

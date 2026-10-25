@@ -267,15 +267,17 @@ impl ExportDialog {
         ctx: &egui::Context,
         editor: &mut Editor,
         platform: &Platform,
+        skin: Option<&crate::skin::Skin>,
     ) -> ExportResult {
         let mut result = ExportResult::Open;
-        let mut open = true;
-        egui::Window::new("Export")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
+        let (_, closed) = crate::pixel_ui::app_window(
+            ctx,
+            skin,
+            "export_window",
+            "Export",
+            true,
+            (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+            |ui| {
                 for format in ExportFormat::ALL {
                     ui.radio_value(&mut self.format, format, format.label());
                 }
@@ -334,7 +336,9 @@ impl ExportDialog {
                 }
                 match self.format {
                     ExportFormat::Godot => {
-                        ui.weak("Animations come from tags; durations become per-frame multipliers.");
+                        ui.weak(
+                            "Animations come from tags; durations become per-frame multipliers.",
+                        );
                     }
                     ExportFormat::Unity => {
                         ui.weak("One sprite per frame; pivots come from slices with a pivot.");
@@ -354,17 +358,15 @@ impl ExportDialog {
                         sprite.frames.len()
                     ),
                 });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("Export…").clicked() {
-                        result = self.pick_and_export(editor, platform);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        result = ExportResult::Cancel;
-                    }
-                });
-            });
-        if !open || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                ui.add_space(6.0);
+                match crate::pixel_ui::dialog_buttons(ui, skin, &["Export…", "Cancel"]) {
+                    Some(0) => result = self.pick_and_export(editor, platform),
+                    Some(_) => result = ExportResult::Cancel,
+                    None => {}
+                }
+            },
+        );
+        if closed || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             return ExportResult::Cancel;
         }
         result

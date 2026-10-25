@@ -77,6 +77,8 @@ impl DialogHarness {
             app.update_tilemap_dialogs(&ctx);
             app.show_dialogs(&ctx);
             app.update_palette_windows(&ctx, false);
+            app.update_grid_dialog(&ctx);
+            app.show_slice_properties(&ctx);
         });
         // Las texturas (fuentes y skin) no se suben a ninguna GPU.
         output.textures_delta.clear();
@@ -747,7 +749,7 @@ fn new_palette_on_an_indexed_sprite_asks_and_cancel_keeps_everything() {
         );
         h.button("OK");
         h.button("Cancel");
-        assert_eq!(h.has_area("new_palette"), pixel_ui, "the pixel dialog");
+        assert_eq!(h.has_area("palette_confirm"), pixel_ui, "the pixel dialog");
         if pixel_ui {
             assert!(h.drew_piece("window") && h.drew_piece("button"));
         }
@@ -799,4 +801,38 @@ fn new_palette_does_nothing_with_the_palette_locked() {
     assert!(h.app.palette_confirm.is_none());
     assert!(!h.texts.iter().any(|t| t == REPLACE_PALETTE));
     assert_eq!(h.app.doc.editor.sprite().palette, cs_core::Palette::db32());
+}
+
+/// Cada ventana se abre con su id en los dos modos; con Pixel UI, con el marco `window` del skin.
+#[test]
+fn every_window_is_the_app_window() {
+    type Open = fn(&mut ChimpApp, &egui::Context);
+    let windows: [(&str, Open); 5] = [
+        ("palette_presets_window", |app, ctx| {
+            app.palette_action(ctx, crate::panels::PaletteAction::OpenPresets)
+        }),
+        ("export_window", |app, _| app.open_export()),
+        ("grid_settings_window", |app, _| {
+            app.grid_dialog = Some(crate::view::GridDialog::new(&app.doc.editor, &app.view))
+        }),
+        ("message_window", |app, _| {
+            app.show_message("Hello", "World")
+        }),
+        ("slice_properties_window", |app, _| {
+            app.doc.editor.add_slice();
+            app.doc.canvas.slice_properties = true;
+        }),
+    ];
+    for (id, open) in windows {
+        for pixel_ui in [true, false] {
+            let mut h = DialogHarness::new(pixel_ui);
+            let ctx = h.ctx.clone();
+            open(&mut h.app, &ctx);
+            h.settle();
+            assert!(h.has_area(id), "{id}: pixel_ui {pixel_ui}");
+            if pixel_ui {
+                assert!(h.drew_piece("window"), "{id}");
+            }
+        }
+    }
 }

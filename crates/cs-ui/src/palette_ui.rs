@@ -342,10 +342,18 @@ impl ChimpApp {
             ctx.request_repaint_after(std::time::Duration::from_secs(1));
         }
         let mut lospec_action = None;
-        egui::Window::new("Palette Presets")
-            .open(&mut open)
-            .default_size([420.0, 480.0])
-            .show(ctx, |ui| {
+        let skin = self.pixel.skin();
+        let (_, closed) = pixel_ui::app_window(
+            ctx,
+            skin,
+            "palette_presets_window",
+            "Palette Presets",
+            true,
+            (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+            |ui| {
+                // Tamaño fijo (la ventana no se estira): la lista scrollea adentro.
+                ui.set_width(PRESETS_SIZE.x);
+                ui.set_height(PRESETS_SIZE.y);
                 ui.add_enabled_ui(!modal, |ui| {
                     ui.horizontal(|ui| {
                         ui.selectable_value(&mut window.tab, PresetsTab::Library, "Library");
@@ -400,7 +408,9 @@ impl ChimpApp {
                         }
                     }
                 });
-            });
+            },
+        );
+        open &= !closed;
         if let Some(palette) = apply {
             self.doc.editor.apply_palette(palette);
         }
@@ -434,23 +444,35 @@ impl ChimpApp {
             return;
         };
         let mut result = None;
-        centered_dialog("Save as Preset").show(ctx, |ui| {
-            let response = ui.text_edit_singleline(&mut dialog.name);
-            if !dialog.focused {
-                response.request_focus();
-                dialog.focused = true;
-            }
-            let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-            ui.horizontal(|ui| {
+        let skin = self.pixel.skin();
+        let (_, closed) = pixel_ui::app_window(
+            ctx,
+            skin,
+            "save_preset_window",
+            "Save as Preset",
+            true,
+            (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+            |ui| {
+                let response = ui.text_edit_singleline(&mut dialog.name);
+                if !dialog.focused {
+                    response.request_focus();
+                    dialog.focused = true;
+                }
+                let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let valid = !dialog.name.trim().is_empty();
-                if ui.add_enabled(valid, egui::Button::new("Save")).clicked() || (enter && valid) {
+                ui.add_space(6.0);
+                let clicked = pixel_ui::dialog_buttons(ui, skin, &["Save", "Cancel"]);
+                if (clicked == Some(0) || enter) && valid {
                     result = Some(true);
                 }
-                if ui.button("Cancel").clicked() || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                if clicked == Some(1) || ui.input(|i| i.key_pressed(egui::Key::Escape)) {
                     result = Some(false);
                 }
-            });
-        });
+            },
+        );
+        if closed {
+            result = Some(false);
+        }
         match result {
             None => self.preset_name = Some(dialog),
             Some(false) => {}
@@ -481,10 +503,8 @@ impl ChimpApp {
             ),
             Confirm::NewPalette => ("New palette", NEW_PALETTE_QUESTION.to_owned(), "OK"),
         };
-        // "New palette" con Pixel UI va en el diálogo pixel, como "Unsaved changes".
-        let skin = matches!(confirm, Confirm::NewPalette)
-            .then(|| self.pixel.skin())
-            .flatten();
+        // Con Pixel UI, en el diálogo pixel, como "Unsaved changes".
+        let skin = self.pixel.skin();
         let mut result = match skin {
             Some(skin) => pixel_confirm(ctx, skin, title, &body, ok),
             None => {
@@ -541,7 +561,7 @@ fn pixel_confirm(
     body: &str,
     ok: &str,
 ) -> Option<bool> {
-    let id = egui::Id::new("new_palette");
+    let id = egui::Id::new("palette_confirm");
     let dialog = pixel_ui::pixel_dialog(ctx, skin, id, title, true, |ui| {
         ui.vertical_centered(|ui| ui.label(body));
         ui.add_space(6.0);
@@ -555,6 +575,9 @@ fn pixel_confirm(
     }
     dialog.inner
 }
+
+/// El tamaño del contenido de la ventana de presets.
+const PRESETS_SIZE: egui::Vec2 = egui::vec2(420.0, 440.0);
 
 /// Diálogo fijo en el centro, como "Unsaved changes" (`file_actions.rs`).
 fn centered_dialog(title: &str) -> egui::Window<'static> {
