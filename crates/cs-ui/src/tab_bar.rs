@@ -24,6 +24,7 @@ use eframe::egui::{
 use eframe::emath::GuiRounding as _;
 
 use crate::pixel_ui;
+use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
 use crate::tabs::TabInfo;
 
@@ -421,7 +422,7 @@ fn tab_widget(
                 Sense::click(),
             )
             .on_hover_cursor(CursorIcon::PointingHand)
-            .on_hover_text("Close");
+            .tip("Close");
         let label = format!("Close {}", info.name);
         close.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
         close

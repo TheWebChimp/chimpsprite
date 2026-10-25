@@ -7,6 +7,7 @@ use cs_core::{ArtboardId, Palette, PixelValue, SymmetryAxes, Tile};
 
 use crate::canvas::CanvasView;
 use crate::pixel_sections::{self, HeaderAction};
+use crate::pixel_ui::Tip as _;
 use cs_raster::RotationAlgorithm;
 use cs_tools::text::FontChoice;
 use cs_tools::{BrushShape, Dither, GradientShape};
@@ -39,7 +40,7 @@ fn tool_group(ui: &mut egui::Ui, editor: &mut Editor, index: usize) -> egui::Res
                 pick = tool_group::variants_list(ui, None, current, group);
             })
             .response
-            .on_hover_text("More tools (or right-click, or hold)");
+            .tip("More tools (or right-click, or hold)");
             if let Some(kind) = pick {
                 editor.set_tool(kind);
             }
@@ -350,7 +351,7 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
                 ))
             }
         };
-        size.on_hover_text("Ctrl+wheel over the canvas changes it");
+        size.tip("Ctrl+wheel over the canvas changes it");
         let side = if look.is_some() {
             gap(ui, CONTROL_GAP);
             PIXEL_CONTROL_HEIGHT
@@ -396,7 +397,7 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
                 ui.add(egui::Slider::new(&mut options.corner_radius, 0..=32))
             }
         };
-        radius.on_hover_text("0 = square corners; large values make a pill or a circle");
+        radius.tip("0 = square corners; large values make a pill or a circle");
     }
     if tool.is_selection() {
         groups.next(ui);
@@ -653,7 +654,7 @@ fn selection_mode_buttons(ui: &mut egui::Ui, look: BarLook, mode: &mut Selection
                 on,
                 |r, color| selection_mode_shapes(r, value, color),
             )
-            .on_hover_text(value.label());
+            .tip(value.label());
             if response.clicked() {
                 *mode = value;
             }
@@ -714,7 +715,7 @@ fn brush_shape_buttons(
             } else {
                 painter.rect_filled(icon, 0.0, color);
             }
-            response.on_hover_text(name)
+            response.tip(name)
         })
     })
     .inner
@@ -760,7 +761,7 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
         gap(ui, CONTROL_GAP);
     }
     #[cfg(not(target_arch = "wasm32"))]
-    if ui.button("Load font…").clicked()
+    if crate::pixel_ui::text_button(ui, "Load font…").clicked()
         && let Some(path) = rfd::FileDialog::new()
             .add_filter("Fonts", &["ttf", "otf"])
             .pick_file()
@@ -922,7 +923,10 @@ const AXES_HINT: &str = "Ctrl+drag the dashed axes to move them";
 fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
     let skin = look.map(|l| l.skin);
     let current = editor.symmetry();
-    if current.axes.any() && current.center2.is_some() && ui.small_button("Center axes").clicked() {
+    if current.axes.any()
+        && current.center2.is_some()
+        && crate::pixel_ui::text_button(ui, "Center axes").clicked()
+    {
         editor.set_symmetry(cs_core::Symmetry {
             center2: None,
             ..current
@@ -941,9 +945,9 @@ fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook
                 None => symmetry_toggle(ui, axis, tip, on),
             };
             let response = if current.axes.any() {
-                response.on_hover_text(format!("{tip}\n{AXES_HINT}"))
+                response.tip(format!("{tip}\n{AXES_HINT}"))
             } else {
-                response.on_hover_text(tip)
+                response.tip(tip)
             };
             if response.clicked() {
                 editor.set_symmetry(cs_core::Symmetry {
@@ -1157,10 +1161,10 @@ pub fn palette(
             }
         };
         color_swatch(ui, editor, editor.primary, 36.0)
-            .on_hover_text(format!("Primary (left click){}", name(editor.primary)));
+            .tip(format!("Primary (left click){}", name(editor.primary)));
         color_swatch(ui, editor, editor.secondary, 24.0)
-            .on_hover_text(format!("Secondary (right click){}", name(editor.secondary)));
-        if ui.small_button("🔄").on_hover_text("Swap (X)").clicked() {
+            .tip(format!("Secondary (right click){}", name(editor.secondary)));
+        if ui.small_button("🔄").tip("Swap (X)").clicked() {
             editor.swap_colors();
         }
     });
@@ -1197,7 +1201,7 @@ pub fn palette(
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::splat(2.0);
         let mask = editor.mask_value();
-        let response = mask_swatch(ui, size).on_hover_text(MASK_HINT);
+        let response = mask_swatch(ui, size).tip(MASK_HINT);
         mark_selected(ui, editor, mask, response.rect);
         pick_on_click(editor, &response, mask, None);
         let count = editor.sprite().palette.len().min(256);
@@ -1205,7 +1209,7 @@ pub fn palette(
             let index = i as u8;
             let value = editor.palette_value(index);
             let color = to_color32(editor.sprite().palette.colors()[i]);
-            let response = swatch(ui, color, size).on_hover_text(format!("#{i}"));
+            let response = swatch(ui, color, size).tip(format!("#{i}"));
             mark_selected(ui, editor, value, response.rect);
             pick_on_click(editor, &response, value, Some(index));
         }
@@ -1272,7 +1276,7 @@ pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>)
         let in_palette = editor.sprite().palette.colors().contains(&current);
         if ui
             .add_enabled(!in_palette, egui::Button::new("+").small())
-            .on_hover_text("Add to palette")
+            .tip("Add to palette")
             .clicked()
         {
             editor.add_to_palette(current);
@@ -1403,7 +1407,7 @@ pub fn tileset(ui: &mut egui::Ui, editor: &mut Editor, thumbs: &mut TileThumbs) 
                     StrokeKind::Inside,
                 );
             }
-            if response.on_hover_text(format!("Tile {number}")).clicked() {
+            if response.tip(format!("Tile {number}")).clicked() {
                 editor.set_brush_tile(Tile::new(
                     i as u32,
                     brush.flip_x(),
@@ -1419,21 +1423,21 @@ pub fn tileset(ui: &mut egui::Ui, editor: &mut Editor, thumbs: &mut TileThumbs) 
         let brush = editor.brush_tile();
         if ui
             .selectable_label(brush.flip_x(), "X")
-            .on_hover_text("Flip horizontally (X)")
+            .tip("Flip horizontally (X)")
             .clicked()
         {
             editor.toggle_brush_flip(Tile::FLIP_X);
         }
         if ui
             .selectable_label(brush.flip_y(), "Y")
-            .on_hover_text("Flip vertically (Y)")
+            .tip("Flip vertically (Y)")
             .clicked()
         {
             editor.toggle_brush_flip(Tile::FLIP_Y);
         }
         if ui
             .add_enabled(tw == th, egui::Button::selectable(brush.flip_d(), "D"))
-            .on_hover_text("Flip diagonally (swap X and Y)")
+            .tip("Flip diagonally (swap X and Y)")
             .on_disabled_hover_text("Needs square tiles")
             .clicked()
         {
@@ -1586,16 +1590,12 @@ pub fn artboards(
             let can_remove = editor.document.artboards.len() > 1;
             if ui
                 .add_enabled(can_remove, egui::Button::new("🗑").small())
-                .on_hover_text("Delete artboard")
+                .tip("Delete artboard")
                 .clicked()
             {
                 editor.remove_active_artboard();
             }
-            if ui
-                .small_button("➕")
-                .on_hover_text("New 64×64 artboard")
-                .clicked()
-            {
+            if ui.small_button("➕").tip("New 64×64 artboard").clicked() {
                 editor.add_artboard(64, 64);
             }
         });
@@ -1915,13 +1915,13 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     let before = (first, mode);
     ui.horizontal(|ui| {
         ui.selectable_value(&mut mode, Some(GraphicPlay::Loop), "Loop")
-            .on_hover_text("Graphic: follows this artboard's frames, looping");
+            .tip("Graphic: follows this artboard's frames, looping");
         ui.selectable_value(&mut mode, Some(GraphicPlay::Once), "Once")
-            .on_hover_text("Graphic: plays once and holds the last frame");
+            .tip("Graphic: plays once and holds the last frame");
         ui.selectable_value(&mut mode, Some(GraphicPlay::Single), "Single")
-            .on_hover_text("Graphic: always the same frame");
+            .tip("Graphic: always the same frame");
         ui.selectable_value(&mut mode, None, "Movie clip")
-            .on_hover_text("Plays on its own clock with its own frame durations");
+            .tip("Plays on its own clock with its own frame durations");
     });
     let frames = key
         .source
@@ -1952,9 +1952,8 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         });
     }
     gesture_end(editor, &[&first_response]);
-    let entered = ui
-        .button("Edit Symbol")
-        .on_hover_text("Go to the source artboard (double-click with Move)")
+    let entered = crate::pixel_ui::text_button(ui, "Edit Symbol")
+        .tip("Go to the source artboard (double-click with Move)")
         .clicked()
         && editor.enter_instance();
     ui.separator();
@@ -1968,7 +1967,7 @@ pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .add_enabled(editor.slice.is_some(), egui::Button::new("🗑").small())
-                .on_hover_text("Delete slice")
+                .tip("Delete slice")
                 .clicked()
             {
                 editor.delete_slice();
@@ -2029,7 +2028,7 @@ pub fn slice_properties(ui: &mut egui::Ui, editor: &mut Editor) {
         ui.label("Data");
         if ui
             .text_edit_singleline(&mut text)
-            .on_hover_text("Free text exported with the slice (e.g. damage=3)")
+            .tip("Free text exported with the slice (e.g. damage=3)")
             .lost_focus()
             && text != slice.text
         {
@@ -2103,7 +2102,7 @@ fn slice_key_properties(ui: &mut egui::Ui, editor: &mut Editor) {
     let mut nine = key.center.is_some();
     if ui
         .checkbox(&mut nine, "9-Slice")
-        .on_hover_text("Center area that stretches; corners keep their size")
+        .tip("Center area that stretches; corners keep their size")
         .changed()
     {
         editor
@@ -2139,14 +2138,13 @@ fn slice_key_properties(ui: &mut egui::Ui, editor: &mut Editor) {
     }
     if own_key
         && slice.keys.first().is_some_and(|k| k.frame != frame)
-        && ui.button("Remove key on this frame").clicked()
+        && crate::pixel_ui::text_button(ui, "Remove key on this frame").clicked()
     {
         editor.remove_slice_key();
     }
     let mut hide = false;
-    if ui
-        .small_button("Hide from this frame")
-        .on_hover_text("Adds an empty key: the slice disappears from here on")
+    if crate::pixel_ui::text_button(ui, "Hide from this frame")
+        .tip("Adds an empty key: the slice disappears from here on")
         .clicked()
     {
         hide = true;

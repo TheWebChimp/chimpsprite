@@ -3,6 +3,8 @@
 use eframe::egui::{self, RichText};
 
 use crate::ChimpApp;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::pixel_ui::Tip as _;
 use crate::theme;
 
 impl ChimpApp {
@@ -96,11 +98,7 @@ impl ChimpApp {
                     .map(|d| d.display().to_string())
                     .unwrap_or_default();
                 ui.horizontal(|ui| {
-                    if ui
-                        .link(&name)
-                        .on_hover_text(path.display().to_string())
-                        .clicked()
-                    {
+                    if ui.link(&name).tip(path.display().to_string()).clicked() {
                         if path.exists() {
                             self.platform
                                 .open_path(&path, crate::platform::OpenPurpose::Open);
@@ -122,11 +120,7 @@ impl ChimpApp {
                     .unwrap_or("?")
                     .to_string();
                 ui.horizontal(|ui| {
-                    if ui
-                        .link(&name)
-                        .on_hover_text(dir.display().to_string())
-                        .clicked()
-                    {
+                    if ui.link(&name).tip(dir.display().to_string()).clicked() {
                         self.platform.open_file_in(
                             crate::file_actions::SPRITE_FILTERS,
                             &dir,

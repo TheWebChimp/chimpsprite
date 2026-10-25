@@ -31,6 +31,7 @@ use eframe::emath::GuiRounding as _;
 
 use crate::menus::{self, MenuLook, galley, ink_width, solid};
 use crate::pixel_ui;
+use crate::pixel_ui::Tip as _;
 use crate::skin::{Piece, Skin, WidgetState};
 use crate::tab_bar;
 
@@ -148,7 +149,7 @@ pub fn info(ui: &mut Ui, look: BarLook, text: &str) -> Response {
         let shapes = crate::pixel_draw::piece_at(look.skin, INFO, origin, ppp);
         painter(ui, look).extend(shapes);
     }
-    response.on_hover_text(text)
+    response.tip(text)
 }
 
 /// Un combo: `field.combo` con `selected` adentro y su lista en el panel de los menús. `content`

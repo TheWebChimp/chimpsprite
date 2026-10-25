@@ -24,6 +24,7 @@ mod palette_ops;
 mod palette_ui;
 mod slice_ops;
 mod tab_bar;
+use crate::pixel_ui::Tip as _;
 use cs_io::files;
 mod guides;
 mod home;
@@ -420,7 +421,7 @@ impl ChimpApp {
     fn view_menu(&mut self, ui: &mut egui::Ui) {
         let v = &mut self.view;
         ui.add(menus::check(&mut v.extras, "Extras"))
-            .on_hover_text("Ctrl+H: show or hide all extras");
+            .tip("Ctrl+H: show or hide all extras");
         menus::submenu(ui, "Show", |ui| {
             ui.add(menus::check(&mut v.rulers, "Rulers"));
             ui.add_enabled_ui(v.extras, |ui| {
@@ -465,14 +466,14 @@ impl ChimpApp {
             &mut self.doc.editor.onion_enabled,
             "Onion Skin",
         ))
-        .on_hover_text("F3");
+        .tip("F3");
         ui.add(menus::check(&mut self.view.timeline, "Timeline"))
-            .on_hover_text("Tab");
+            .tip("Tab");
         if !cfg!(target_arch = "wasm32") {
             let mut fullscreen = self.fullscreen;
             if ui
                 .add(menus::check(&mut fullscreen, "Full Screen"))
-                .on_hover_text("F11")
+                .tip("F11")
                 .changed()
             {
                 self.toggle_fullscreen(ui.ctx());
@@ -880,7 +881,7 @@ impl ChimpApp {
                 if response.middle_clicked() {
                     close = Some(i);
                 }
-                if ui.small_button("×").on_hover_text("Close").clicked() {
+                if ui.small_button("×").tip("Close").clicked() {
                     close = Some(i);
                 }
             }
@@ -972,9 +973,7 @@ impl ChimpApp {
                 .frame(egui::Frame::NONE.fill(skin.colors().background))
                 .show_separator_line(false);
         }
-        // Con Pixel UI, Home no tiene barra de estado (frame 5 del diseño).
-        let hidden = skin.is_some() && !self.has_doc();
-        if !hidden {
+        {
             status.show(ui, |ui| {
                 let notice = self
                     .autosaver
@@ -998,7 +997,22 @@ impl ChimpApp {
                         ),
                     }
                 } else {
-                    ui.label(format!("ChimpSprite {}", env!("CARGO_PKG_VERSION")));
+                    // En Home, la versión (con Pixel UI, en la barra del diseño).
+                    let version = format!("ChimpSprite {}", env!("CARGO_PKG_VERSION"));
+                    match skin {
+                        Some(skin) => pixel_status::show(
+                            ui,
+                            skin,
+                            &[pixel_status::Section {
+                                icon: None,
+                                text: version,
+                                color: None,
+                            }],
+                        ),
+                        None => {
+                            ui.label(version);
+                        }
+                    }
                 }
             });
         }

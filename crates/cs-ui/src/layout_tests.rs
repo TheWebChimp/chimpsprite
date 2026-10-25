@@ -430,8 +430,8 @@ fn the_right_panel_goes_down_beside_the_timeline() {
 fn with_pixel_ui_home_is_the_design_one() {
     let mut h = LayoutHarness::new(pixel_ui(), false);
     assert!(!h.app.has_doc());
-    // Sin barra de estado (frame 5 del diseño): sin el texto de la versión que mostraba.
-    assert!(!h.texts.iter().any(|(t, _)| t.starts_with("ChimpSprite ")));
+    // Abajo, la barra con la versión.
+    assert!(h.texts.iter().any(|(t, _)| t.starts_with("ChimpSprite ")));
     // Los botones de 71×17: New file y Open file… en una fila (cada 74), Open demo debajo (20).
     let new = h.button("New file");
     let open = h.button("Open file...");
@@ -445,6 +445,12 @@ fn with_pixel_ui_home_is_the_design_one() {
         assert_eq!(tab.size(), Vec2::new(26.0, 28.0), "{source:?}");
     }
     assert!(h.drawn("news.title").len() == 1);
+    // Los botones sueltos (Open de Pixnews) también son la pieza `button` del skin.
+    let open_site = h.button("Open");
+    assert!(
+        h.drawn("button").iter().any(|r| r.intersects(open_site)),
+        "{open_site:?}"
+    );
     h.click(h.button("itch.io").center(), PointerButton::Primary);
     assert_eq!(h.app.news.source, crate::news::Source::Itch);
     assert!(h.drawn("button").len() >= 3, "the skin's button piece");
@@ -453,6 +459,32 @@ fn with_pixel_ui_home_is_the_design_one() {
     // New file abre un documento.
     h.click(new.center(), PointerButton::Primary);
     assert!(h.app.has_doc());
+}
+
+/// Con el puntero quieto sobre `at` hasta que aparece el tooltip: los rects del globo.
+fn bubble_over(h: &mut LayoutHarness, at: Pos2) -> Vec<Rect> {
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    for _ in 0..30 {
+        h.frame();
+    }
+    h.drawn("tooltip.bubble")
+}
+
+#[test]
+fn with_pixel_ui_every_tooltip_is_the_bubble_and_it_flips_at_the_right_edge() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    // Un botón con lugar a la derecha: el globo sale hacia la derecha.
+    let dock = h.button("Artboards");
+    let bubble = union(&bubble_over(&mut h, dock.center())).expect("the bubble");
+    assert!(
+        bubble.left() >= dock.right(),
+        "{bubble:?} right of {dock:?}"
+    );
+    // Pegado al borde derecho: sale a la izquierda (espejado).
+    let mask = h.button("Mask");
+    let bubble = union(&bubble_over(&mut h, mask.center())).expect("the bubble");
+    assert!(bubble.right() <= mask.left(), "{bubble:?} left of {mask:?}");
+    assert!(h.screen().contains_rect(bubble));
 }
 
 #[test]

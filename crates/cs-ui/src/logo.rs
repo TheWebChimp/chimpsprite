@@ -4,6 +4,7 @@
 use cs_core::Rgba;
 use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions, Vec2, vec2};
 
+use crate::pixel_ui::Tip as _;
 use crate::tab_bar;
 
 pub const EMBEDDED: &[u8] = include_bytes!("../../../assets/ui/logo.aseprite");
@@ -85,7 +86,7 @@ impl Logo {
     pub fn show(&self, ui: &mut egui::Ui) -> egui::Response {
         let texture = self.current(ui);
         ui.add(egui::Image::new((texture.id(), self.size())))
-            .on_hover_text("ChimpSprite")
+            .tip("ChimpSprite")
     }
 
     /// El frame de este momento con su esquina en `at` (sin ocupar lugar en `ui`).

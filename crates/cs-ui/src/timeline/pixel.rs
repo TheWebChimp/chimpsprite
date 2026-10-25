@@ -32,6 +32,7 @@ use crate::bar_fields::{self, NumberLook};
 use crate::editor::Editor;
 use crate::menus::{self, MenuLook};
 use crate::pixel_ui;
+use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
 use crate::tab_bar;
 
@@ -532,7 +533,7 @@ fn group(ui: &mut Ui, skin: &Skin, origin: Pos2, buttons: &[Btn]) -> Vec<Respons
                     skin.colors().text,
                 );
             }
-            response.on_hover_text(b.tip)
+            response.tip(b.tip)
         })
         .collect()
 }
@@ -601,7 +602,7 @@ fn onion_range(ui: &mut Ui, editor: &mut Editor, skin: &Skin, origin: Pos2) {
         };
         let (field, _) =
             bar_fields::drag_number(ui, whole, inner, id, value, 0..=ONION_MAX, 0.1, look);
-        field.on_hover_text(if i == 0 {
+        field.tip(if i == 0 {
             "Onion skin: frames before"
         } else {
             "Onion skin: frames after"
@@ -637,7 +638,7 @@ fn stepper(
         let response = ui.interact(hit, ui.id().with(("timeline_step", label)), Sense::click());
         response
             .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
-        response.on_hover_text(label)
+        response.tip(label)
     };
     let minus_response = button(minus, labels[0]);
     let plus_response = button(plus, labels[1]);
@@ -704,7 +705,7 @@ fn opacity(
         1.0,
         number_look(skin),
     );
-    let response = response.on_hover_text("Layer opacity");
+    let response = response.tip("Layer opacity");
     if value != before {
         state.opacity_edit = Some(value);
     }
@@ -748,7 +749,7 @@ fn blend(ui: &mut Ui, editor: &mut Editor, skin: &Skin, origin: Pos2, width: f32
         origin.y + LABEL_CAPS,
         colors.text,
     );
-    let response = response.on_hover_text("Blend mode");
+    let response = response.tip("Blend mode");
     let look = MenuLook::new(skin, origin.y);
     menus::dropdown(&look, &response, rect, |ui| {
         for m in BLEND_MODES {
@@ -822,7 +823,7 @@ fn duration(
             skin.colors().text,
         );
     }
-    let response = response.on_hover_text("Duration of the selected frames");
+    let response = response.tip("Duration of the selected frames");
     if ms != before {
         state.duration_edit = Some(ms);
     }

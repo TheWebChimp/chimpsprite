@@ -21,6 +21,7 @@ use crate::editor::Editor;
 use crate::menus::solid;
 use crate::panels;
 use crate::pixel_ui;
+use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
 
 /// Filas entre la caja de la barra de íconos y esta: en el diseño, de la caja de la barra (que
@@ -149,13 +150,13 @@ pub fn fg_bg(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
             editor.secondary
         };
         let tip = format!("{tip}{}. Click to edit it", name(editor, value));
-        if response.on_hover_text(tip).clicked() {
+        if response.tip(tip).clicked() {
             editor.editing_secondary = k == 1;
         }
     }
     let response = ui.interact(swap, id.with("swap"), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, LABELS[2]));
-    if response.on_hover_text("Swap (X)").clicked() {
+    if response.tip("Swap (X)").clicked() {
         editor.swap_colors();
     }
 }

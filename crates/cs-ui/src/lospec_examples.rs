@@ -171,11 +171,11 @@ pub fn show(ui: &mut egui::Ui, p: &LospecPalette, cache: &mut ExampleCache, now:
     if len > 1 {
         ui.horizontal(|ui| {
             let mut next = index;
-            if ui.small_button("◀").clicked() {
+            if crate::pixel_ui::text_button(ui, "<").clicked() {
                 next = step(index, len, false);
             }
             ui.weak(format!("{}/{len}", index + 1));
-            if ui.small_button("▶").clicked() {
+            if crate::pixel_ui::text_button(ui, ">").clicked() {
                 next = step(index, len, true);
             }
             if next != index {

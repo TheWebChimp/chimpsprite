@@ -8,6 +8,7 @@ use crate::editor::Editor;
 use crate::panels;
 use crate::pixel_draw;
 use crate::pixel_ui;
+use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
 use cs_core::ArtboardId;
 
@@ -89,7 +90,7 @@ fn pixel_button(ui: &mut Ui, skin: &Skin, panel: DockPanel, open: bool) -> egui:
     pixel_draw::skin_button(ui, skin, rect, info, |r| {
         pixel_draw::piece_centered(skin, panel.icon(), r, ppp)
     })
-    .on_hover_text(panel.label())
+    .tip(panel.label())
 }
 
 /// El panel abierto (en la memoria de egui, por pestaña de la app: no se guarda).
@@ -132,7 +133,7 @@ pub fn show(
                         .selected(is_open)
                         .min_size(BUTTON_SIZE),
                 )
-                .on_hover_text(panel.label()),
+                .tip(panel.label()),
         };
         if response.clicked() {
             if panel == DockPanel::Lospec {

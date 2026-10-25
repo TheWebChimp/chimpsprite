@@ -13,6 +13,7 @@ use std::collections::HashMap;
 use eframe::egui::{self, Color32, Rect, Sense, Vec2, vec2};
 
 use crate::lospec_client::{self, FetchError, Pending};
+use crate::pixel_ui::Tip as _;
 
 /// Tope del cuerpo de una miniatura.
 const MAX_THUMB_BYTES: usize = 6 * 1024 * 1024;
@@ -618,9 +619,8 @@ impl News {
         ui.horizontal(|ui| {
             ui.strong(source.label());
             ui.weak(format!("· {}", source.detail()));
-            if ui
-                .small_button("Open")
-                .on_hover_text(source.site_url())
+            if crate::pixel_ui::text_button(ui, "Open")
+                .tip(source.site_url())
                 .clicked()
             {
                 action = Some(FeedAction::Open(source.site_url().to_owned()));
@@ -629,7 +629,7 @@ impl News {
                 self.listings.get(&source),
                 Some(Listing::Ready(_) | Listing::Failed(_))
             );
-            if done && ui.small_button("Refresh").clicked() {
+            if done && crate::pixel_ui::text_button(ui, "Refresh").clicked() {
                 self.listings.remove(&source);
                 ctx.request_repaint();
             }
@@ -725,7 +725,7 @@ impl News {
             .response;
         let response = ui
             .interact(response.rect, ui.id().with(&post.url), Sense::click())
-            .on_hover_text(post.title.as_str())
+            .tip(post.title.as_str())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
         response.clicked()
     }

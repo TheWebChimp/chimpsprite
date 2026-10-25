@@ -271,6 +271,7 @@ impl Piece {
     }
 }
 
+#[derive(Clone)]
 pub struct Skin {
     pieces: HashMap<String, Piece>,
     colors: SkinColors,
@@ -342,6 +343,28 @@ impl Skin {
 
     pub fn colors(&self) -> &SkinColors {
         &self.colors
+    }
+
+    /// El mismo skin con solo las piezas `names` (y sus variantes `.hover`, `.down`, `.active`):
+    /// una copia chica para guardar en la memoria de egui.
+    pub fn subset(&self, names: &[&str]) -> Skin {
+        let pieces = self
+            .pieces
+            .iter()
+            .filter(|(name, _)| {
+                names.iter().any(|n| {
+                    name.as_str() == *n
+                        || name
+                            .strip_prefix(*n)
+                            .is_some_and(|rest| [".hover", ".down", ".active"].contains(&rest))
+                })
+            })
+            .map(|(name, piece)| (name.clone(), piece.clone()))
+            .collect();
+        Skin {
+            pieces,
+            colors: self.colors,
+        }
     }
 
     /// El mismo skin sin las piezas `names`, para probar los respaldos.

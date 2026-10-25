@@ -17,6 +17,7 @@ use crate::lospec_tab::LospecTab;
 use crate::palette_library::{Preset, PresetSource};
 use crate::panels::{self, PaletteAction};
 use crate::pixel_ui;
+use crate::pixel_ui::Tip as _;
 use crate::platform::{self, FileFilter, OpenPurpose};
 
 const LOAD_FILTERS: &[FileFilter] = &[FileFilter {
@@ -645,7 +646,7 @@ fn lospec_ui(
         let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
         if tab.lookup_loading() {
             ui.spinner();
-        } else if (ui.button("Fetch").clicked() || enter)
+        } else if (crate::pixel_ui::text_button(ui, "Fetch").clicked() || enter)
             && let Some((g, slug)) = tab.start_lookup()
         {
             requests.lookup = Some(InFlight::new(
@@ -691,9 +692,11 @@ fn lospec_ui(
                 let (shown, total) = tab.shown_of_total();
                 if tab.listing_loading() {
                     ui.spinner();
-                } else if ui
-                    .button(format!("Load more ({shown} of {total})"))
-                    .clicked()
+                } else if crate::pixel_ui::text_button(
+                    ui,
+                    &format!("Load more ({shown} of {total})"),
+                )
+                .clicked()
                     && let Some((g, query)) = tab.start_more()
                 {
                     requests.listing = Some(InFlight::new(
@@ -758,7 +761,7 @@ fn search_form(
         if first_page_loading {
             ui.spinner();
         } else {
-            search |= ui.button("Search").clicked();
+            search |= crate::pixel_ui::text_button(ui, "Search").clicked();
         }
     });
     if search {
@@ -813,10 +816,10 @@ fn lospec_row(
             }
             ui.weak(meta.join(" · "));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("Save").clicked() {
+                if crate::pixel_ui::text_button(ui, "Save").clicked() {
                     *action = Some(LospecAction::Save(p.clone()));
                 }
-                if ui.button("Apply").clicked() {
+                if crate::pixel_ui::text_button(ui, "Apply").clicked() {
                     *action = Some(LospecAction::Apply(p.clone()));
                 }
             });
@@ -827,7 +830,7 @@ fn lospec_row(
         if cs_io::lospec::is_valid_slug(&p.slug) {
             let url = cs_io::lospec::page_url(&p.slug);
             // No se usa `hyperlink_to`: en escritorio no abre nada porque eframe va sin `links`.
-            if ui.link("lospec.com").on_hover_text(&url).clicked()
+            if ui.link("lospec.com").tip(&url).clicked()
                 && let Err(e) = platform::open_url(ui.ctx(), &url)
             {
                 log::warn!("could not open {url}: {e}");

@@ -10,6 +10,7 @@ use eframe::egui::{
 use crate::bar_fields;
 use crate::pixel_draw;
 use crate::pixel_ui;
+use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
 
 /// Los botones chicos del diseño: `button` del skin en 9-slice, de 25×16.
@@ -64,7 +65,7 @@ fn button_at(
         enabled,
         ..pixel_draw::ButtonInfo::new(ui.id().with(("pixel_button", label)), label)
     };
-    pixel_draw::skin_button(ui, skin, rect, info, content).on_hover_text(label)
+    pixel_draw::skin_button(ui, skin, rect, info, content).tip(label)
 }
 
 /// La pieza `icon` centrada en `rect`; desactivada, apagada.

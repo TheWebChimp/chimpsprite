@@ -11,6 +11,7 @@ use eframe::egui::{
 
 use crate::editor::Editor;
 use crate::mask_ops::NewMask;
+use crate::pixel_ui::Tip as _;
 use crate::skin::Skin;
 use crate::{menus, theme, widgets};
 
@@ -193,28 +194,20 @@ fn controls(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState) {
 fn controls_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState) {
     ui.horizontal(|ui| {
         let last = editor.frame_count() - 1;
-        if ui.button("⏮").on_hover_text("First frame").clicked() {
+        if ui.button("⏮").tip("First frame").clicked() {
             editor.set_frame(0);
         }
-        if ui
-            .button("⏪")
-            .on_hover_text("Previous frame (,)")
-            .clicked()
-        {
+        if ui.button("⏪").tip("Previous frame (,)").clicked() {
             editor.prev_frame();
         }
         let play = if editor.playing { "⏸" } else { "▶" };
-        if ui
-            .button(play)
-            .on_hover_text("Play / pause (Enter)")
-            .clicked()
-        {
+        if ui.button(play).tip("Play / pause (Enter)").clicked() {
             editor.toggle_play();
         }
-        if ui.button("⏩").on_hover_text("Next frame (.)").clicked() {
+        if ui.button("⏩").tip("Next frame (.)").clicked() {
             editor.next_frame();
         }
-        if ui.button("⏭").on_hover_text("Last frame").clicked() {
+        if ui.button("⏭").tip("Last frame").clicked() {
             editor.set_frame(last);
         }
         ui.label(format!("{}/{}", editor.frame + 1, last + 1));
@@ -222,7 +215,7 @@ fn controls_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineStat
         ui.separator();
         if ui
             .button("+ Frame")
-            .on_hover_text("Duplicate frame (Alt+N)")
+            .tip("Duplicate frame (Alt+N)")
             .clicked()
         {
             editor.duplicate_frame();
@@ -234,21 +227,13 @@ fn controls_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineStat
             editor.remove_frame();
         }
         ui.separator();
-        if ui
-            .button("+ Layer")
-            .on_hover_text("New layer (Shift+N)")
-            .clicked()
-        {
+        if ui.button("+ Layer").tip("New layer (Shift+N)").clicked() {
             editor.add_layer(LayerKind::Image);
         }
         if ui.button("+ Group").clicked() {
             editor.add_layer(LayerKind::Group);
         }
-        if ui
-            .button("+ Tilemap")
-            .on_hover_text("New tilemap layer…")
-            .clicked()
-        {
+        if ui.button("+ Tilemap").tip("New tilemap layer…").clicked() {
             state.new_tilemap = true;
         }
         let can_remove = editor
@@ -264,7 +249,7 @@ fn controls_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineStat
 
         ui.separator();
         ui.toggle_value(&mut editor.onion_enabled, "Onion")
-            .on_hover_text("Onion skin (F3)");
+            .tip("Onion skin (F3)");
         if editor.onion_enabled {
             let mut before = editor.onion.before as u32;
             let mut after = editor.onion.after as u32;
@@ -280,7 +265,7 @@ fn controls_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineStat
             let mut opacity = state.opacity_edit.unwrap_or(l.opacity);
             let response = ui
                 .add(egui::Slider::new(&mut opacity, 0..=255).text("Opacity"))
-                .on_hover_text("Layer opacity");
+                .tip("Layer opacity");
             if response.changed() {
                 state.opacity_edit = Some(opacity);
             }
@@ -306,8 +291,8 @@ fn controls_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineStat
         ui.separator();
         let current = editor.sprite().frames[editor.frame].duration_ms;
         let mut ms = state.duration_edit.unwrap_or(current);
-        let response = widgets::number(ui, &mut ms, 1..=60000, " ms")
-            .on_hover_text("Duration of the selected frames");
+        let response =
+            widgets::number(ui, &mut ms, 1..=60000, " ms").tip("Duration of the selected frames");
         if response.changed() {
             state.duration_edit = Some(ms);
         }
@@ -349,7 +334,7 @@ fn tags_row(ui: &mut egui::Ui, editor: &mut Editor, grid: Grid) {
             editor.frame_range = Some((tag.from, tag.to));
         }
         response
-            .on_hover_text(format!("{} ({}–{})", tag.name, tag.from + 1, tag.to + 1))
+            .tip(format!("{} ({}–{})", tag.name, tag.from + 1, tag.to + 1))
             .context_menu(|ui| {
                 if let Some(a) = tag_menu(ui, editor, i, tag) {
                     action = Some(a);
@@ -499,7 +484,7 @@ fn header_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState,
         }
         let duration = editor.sprite().frames[f].duration_ms;
         response
-            .on_hover_text(format!("Frame {} · {duration} ms", f + 1))
+            .tip(format!("Frame {} · {duration} ms", f + 1))
             .context_menu(|ui| {
                 if ui.button("New tag from selection").clicked() {
                     editor.add_tag();
@@ -598,10 +583,10 @@ fn layer_row(
     };
     let eye_response = ui
         .interact(inner(eye), ui.id().with(("eye", id)), Sense::click())
-        .on_hover_text("Show / hide");
+        .tip("Show / hide");
     let lock_response = ui
         .interact(inner(lock), ui.id().with(("lock", id)), Sense::click())
-        .on_hover_text("Lock / unlock");
+        .tip("Lock / unlock");
     match grid.skin {
         Some(skin) => {
             // Con Pixel UI, con nombre accesible (y estado) para encontrarlos.
@@ -698,7 +683,7 @@ fn layer_row(
         let editing = active && editor.edit_mask;
         let response = ui
             .interact(chip, ui.id().with(("mask", id)), Sense::click())
-            .on_hover_text(if editing {
+            .tip(if editing {
                 "Editing the mask (click to edit the layer)"
             } else {
                 "Layer mask (click to paint it)"
@@ -1128,7 +1113,7 @@ pub(crate) fn mask_menu(ui: &mut egui::Ui, editor: &mut Editor, id: LayerId) {
     let toggle = egui::Checkbox::new(&mut clip, "Clipping Mask");
     if ui
         .add(toggle)
-        .on_hover_text("Show this layer only where the layer below has pixels (Ctrl+Alt+G)")
+        .tip("Show this layer only where the layer below has pixels (Ctrl+Alt+G)")
         .clicked()
     {
         editor.toggle_clip(id);

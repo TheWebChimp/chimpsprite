@@ -10,6 +10,7 @@ use eframe::egui::{self, Color32, Pos2, Rect, Sense, Shape, Ui, Vec2, pos2, vec2
 
 use crate::ChimpApp;
 use crate::pixel_draw;
+use crate::pixel_ui::Tip as _;
 use crate::skin::Skin;
 
 /// Medidas del diseño, desde la esquina de arriba a la izquierda del contenido.
@@ -61,6 +62,7 @@ const NEWS_PAD: f32 = 10.0;
 /// Los íconos: piezas del skin.
 const ICON_NEW: &str = "home.icon.new";
 const ICON_OPEN: &str = "home.icon.open";
+const ICON_DEMO: &str = "home.icon.demo";
 const ICON_FILES: &str = "home.icon.files";
 const ICON_FOLDERS: &str = "home.icon.folders";
 /// Fila de la caja del título donde empieza cada ícono.
@@ -129,7 +131,7 @@ fn item(
     let response = ui
         .interact(hit, ui.id().with(("home_item", path, name)), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand)
-        .on_hover_text(path);
+        .tip(path);
     let enabled = ui.is_enabled();
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Link, enabled, name));
     if response.hovered() {
@@ -199,7 +201,7 @@ impl ChimpApp {
                 .extend(pixel_draw::piece_at(skin, source.icon(), at, ppp));
             let response = ui
                 .interact(rect, ui.id().with(("news_source", i)), Sense::click())
-                .on_hover_text(format!("{} · {}", source.label(), source.detail()))
+                .tip(format!("{} · {}", source.label(), source.detail()))
                 .on_hover_cursor(egui::CursorIcon::PointingHand);
             let on = self.news.source == source;
             let enabled = ui.is_enabled();
@@ -258,7 +260,7 @@ impl ChimpApp {
                 (ICON_NEW, 5.0, "New file", HomeAction::New),
                 // Tres puntos de texto, como en el diseño (no `…`).
                 (ICON_OPEN, 2.0, "Open file...", HomeAction::Open),
-                (ICON_OPEN, 2.0, "Open demo", HomeAction::Demo),
+                (ICON_DEMO, 3.0, "Open demo", HomeAction::Demo),
             ];
             for (i, (rows, left, label, a)) in buttons.into_iter().enumerate() {
                 // Dos por fila.

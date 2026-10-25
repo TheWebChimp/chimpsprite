@@ -193,6 +193,8 @@ impl PixelUi {
         } else {
             self.scale_ready = false;
         }
+        // Los tooltips de este frame: el globo del skin con Pixel UI; sin él, los de egui.
+        crate::pixel_ui::set_bubble(ctx, self.skin.as_ref().filter(|_| view.pixel_ui));
         if self.applied == Some(state) && !std::mem::take(&mut self.skin_changed) {
             return;
         }

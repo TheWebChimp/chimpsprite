@@ -5,6 +5,7 @@
 use eframe::egui::{self, Response, Ui, vec2};
 
 use crate::editor::{Editor, ToolKind};
+use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
 
 /// Mantener presionado el botón de un grupo este tiempo (en segundos) abre la lista de variantes.
@@ -224,7 +225,7 @@ pub fn group_button(
     match skin {
         // Pixel UI: el globo del diseño, a la derecha del botón.
         Some(skin) => crate::pixel_ui::bubble_tooltip(response, skin, &text),
-        None => response.on_hover_text(text),
+        None => response.tip(text),
     }
 }
 

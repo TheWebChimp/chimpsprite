@@ -338,8 +338,6 @@ fn button_size(ui: &Ui, skin: &Skin, label: &str) -> Vec2 {
 /// El ancho se ajusta al texto, con 4 px de margen a cada lado del área del centro, sin bajar
 /// del tamaño de la pieza. Devuelve un `Response` normal: clic, foco y teclado (Enter o Espacio
 /// con foco).
-// Para botones sueltos; por ahora los diálogos usan filas de `pixel_buttons`.
-#[cfg_attr(not(test), allow(dead_code))]
 pub fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str) -> Response {
     let size = button_size(ui, skin, label);
     button_of_size(ui, skin, label, size)
@@ -744,32 +742,108 @@ fn caps_block_height(galley: &egui::Galley) -> f32 {
 /// Aparece y se va como los tooltips de egui (`Tooltip::for_enabled`, con su demora). El texto
 /// queda en el árbol de accesibilidad como etiqueta. Sin la pieza, el tooltip de egui.
 pub fn bubble_tooltip(response: Response, skin: &Skin, text: &str) -> Response {
-    let Some(piece) = skin.piece(BUBBLE_PIECE, WidgetState::Normal) else {
-        return response.on_hover_text(text);
-    };
+    match skin.piece(BUBBLE_PIECE, WidgetState::Normal) {
+        Some(piece) => show_bubble(response, piece, skin.colors().text, text),
+        None => response.on_hover_text(text),
+    }
+}
+
+/// Lo del skin que usan los tooltips ([`Tip::tip`]) y los botones sueltos ([`text_button`]) de
+/// este frame: el globo y el botón. Lo guarda la app con [`set_bubble`] para usarlo sin tener el
+/// skin a mano.
+fn frame_skin_id() -> Id {
+    Id::new("pixel_frame_skin")
+}
+
+/// El skin de los tooltips y botones sueltos de este frame (ver [`set_bubble`]).
+fn frame_skin(ctx: &egui::Context) -> Option<Skin> {
+    ctx.data(|d| d.get_temp::<Skin>(frame_skin_id()))
+}
+
+/// Con Pixel UI (`skin`), los tooltips de este frame son el globo del skin y los botones sueltos
+/// los del skin; sin él, los de egui.
+pub fn set_bubble(ctx: &egui::Context, skin: Option<&Skin>) {
+    let small = skin.map(|s| s.subset(&[BUBBLE_PIECE, BUTTON_PIECE]));
+    ctx.data_mut(|d| match small {
+        Some(s) => {
+            d.insert_temp(frame_skin_id(), s);
+        }
+        None => d.remove::<Skin>(frame_skin_id()),
+    });
+}
+
+/// Un botón suelto con texto: con Pixel UI, el `button` del skin ([`pixel_button`]); sin él, el
+/// de egui.
+pub fn text_button(ui: &mut Ui, label: &str) -> Response {
+    match frame_skin(ui.ctx()) {
+        Some(skin) => pixel_button(ui, &skin, label),
+        None => ui.button(label),
+    }
+}
+
+/// Los tooltips de la app: con Pixel UI, el globo del skin (como los de la barra de íconos);
+/// sin él, el tooltip de egui.
+pub trait Tip {
+    fn tip(self, text: impl AsRef<str>) -> Response;
+}
+
+impl Tip for Response {
+    fn tip(self, text: impl AsRef<str>) -> Response {
+        let text = text.as_ref();
+        let skin = frame_skin(&self.ctx);
+        match skin.as_ref().and_then(|s| {
+            s.piece(BUBBLE_PIECE, WidgetState::Normal)
+                .map(|p| (p.clone(), s.colors().text))
+        }) {
+            Some((piece, color)) => show_bubble(self, &piece, color, text),
+            None => self.on_hover_text(text),
+        }
+    }
+}
+
+/// `shapes` espejados de izquierda a derecha alrededor del centro de `rect` (el globo con la cola
+/// a la derecha).
+fn mirrored(shapes: Vec<Shape>, rect: Rect) -> Vec<Shape> {
+    let axis = rect.left() + rect.right();
+    shapes
+        .into_iter()
+        .map(|shape| match shape {
+            Shape::Mesh(mesh) => {
+                let mut mesh = (*mesh).clone();
+                for v in &mut mesh.vertices {
+                    v.pos.x = axis - v.pos.x;
+                }
+                Shape::mesh(mesh)
+            }
+            other => other,
+        })
+        .collect()
+}
+
+/// El globo de `piece` con `text` junto a `response`: a la derecha, con la cola hacia el
+/// elemento; si ahí no entra, a la izquierda y espejado (la cola del otro lado).
+fn show_bubble(response: Response, piece: &Piece, color: Color32, text: &str) -> Response {
     let button = response.rect;
     let mut tooltip = egui::Tooltip::for_enabled(&response);
-    // Sin marco y siempre a la derecha, arriba alineado con el botón: el área empieza en la
-    // punta de la cola.
+    // Sin marco, arriba alineado con el elemento: el área empieza en la punta de la cola.
     tooltip.popup = tooltip
         .popup
         .frame(egui::Frame::NONE)
         .align(egui::RectAlign::RIGHT_START)
-        .align_alternatives(&[])
+        .align_alternatives(&[egui::RectAlign::LEFT_START])
         .gap(BUBBLE_GAP);
     tooltip.show(|ui| {
         let ppp = ui.ctx().pixels_per_point();
-        let colors = *skin.colors();
         let font = TextStyle::Body.resolve(ui.style());
-        let galley = ui
-            .painter()
-            .layout_no_wrap(text.to_owned(), font, colors.text);
+        let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
         let body = vec2(
             (2.0 * BUBBLE_PADDING + galley.size().x).ceil(),
             2.0 * BUBBLE_PADDING + caps_block_height(&galley) + BUBBLE_SHADOW,
         );
         let origin = ui.max_rect().min;
-        // La fila del centro del botón (con alto impar, la que lo contiene).
+        // ¿Quedó a la izquierda del elemento? Entonces va espejado.
+        let left = origin.x < button.left();
+        // La fila del centro del elemento (con alto impar, la que lo contiene).
         let tip = origin.y + (button.height() / 2.0).floor();
         let rect = Rect::from_min_size(
             pos2(origin.x, tip - BUBBLE_TIP_ROW),
@@ -778,14 +852,22 @@ pub fn bubble_tooltip(response: Response, skin: &Skin, text: &str) -> Response {
         let space = rect.union(Rect::from_min_size(origin, Vec2::ZERO));
         let label = ui.allocate_rect(space, Sense::hover());
         label.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+        let body_left = if left {
+            rect.left()
+        } else {
+            rect.left() + BUBBLE_TAIL
+        };
         let at = tab_bar::text_pos(
             &galley,
-            rect.left() + BUBBLE_TAIL + BUBBLE_PADDING,
+            body_left + BUBBLE_PADDING,
             rect.top() + BUBBLE_PADDING,
             ppp,
         );
         let mut shapes = piece_shapes(piece, rect, ppp);
-        shapes.push(Shape::galley(at, galley, colors.text));
+        if left {
+            shapes = mirrored(shapes, rect);
+        }
+        shapes.push(Shape::galley(at, galley, color));
         ui.painter().extend(shapes);
     });
     response

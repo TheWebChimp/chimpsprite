@@ -51,6 +51,7 @@ use crate::editor::Editor;
 use crate::menus::{self, MenuLook, galley, ink_width, solid};
 use crate::panels::{self, COLOR_PICKER_MAX, PaletteAction};
 use crate::pixel_ui;
+use crate::pixel_ui::Tip as _;
 use crate::skin::{Piece, Skin, SkinColors, WidgetState};
 use crate::tab_bar;
 
@@ -329,7 +330,7 @@ fn grid_cells(
         }));
         panels::mark_selected(ui, editor, value, inside);
         response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &label));
-        let response = response.on_hover_text(label);
+        let response = response.tip(label);
         // La entrada elegida: con la paleta desbloqueada, el editor de color la edita.
         panels::pick_on_click(editor, &response, value, Some(index as u8));
     }
@@ -352,7 +353,7 @@ fn grid_cells(
             .collect(),
     };
     ui.painter().extend(shapes);
-    if response.on_hover_text("Add to palette").clicked() && !editor.is_mask(editor.primary) {
+    if response.tip("Add to palette").clicked() && !editor.is_mask(editor.primary) {
         let color = editor.resolve(editor.primary);
         editor.add_to_palette(color);
     }
@@ -538,7 +539,7 @@ pub fn palette_buttons(
     } else {
         "Palette unlocked: the color editor edits the picked swatch"
     };
-    if lock.on_hover_text(lock_tip).clicked() {
+    if lock.tip(lock_tip).clicked() {
         editor.palette_locked = !editor.palette_locked;
     }
     let new_tip = if editor.palette_locked {
@@ -546,16 +547,16 @@ pub fn palette_buttons(
     } else {
         "New palette (with the primary color)"
     };
-    let new_palette = (new.on_hover_text(new_tip).clicked() && !editor.palette_locked)
-        .then_some(PaletteAction::NewPalette);
-    let mask = mask.on_hover_text(panels::MASK_HINT);
+    let new_palette =
+        (new.tip(new_tip).clicked() && !editor.palette_locked).then_some(PaletteAction::NewPalette);
+    let mask = mask.tip(panels::MASK_HINT);
     if mask.clicked() {
         editor.toggle_mask();
     }
     if mask.secondary_clicked() {
         editor.pick_color(editor.mask_value(), true, None);
     }
-    let menu = menu.on_hover_text("Presets and palette files");
+    let menu = menu.tip("Presets and palette files");
     let look = MenuLook::new(skin, menu.rect.top());
     let anchor = menu.rect;
     menus::dropdown(&look, &menu, anchor, |ui| {
@@ -856,10 +857,7 @@ fn copy_button(ui: &mut Ui, skin: &Skin, id: egui::Id, rect: Rect, current: Rgba
         }
     };
     ui.painter().extend(shapes);
-    if response
-        .on_hover_text(format!("Copy {}", current.to_hex()))
-        .clicked()
-    {
+    if response.tip(format!("Copy {}", current.to_hex())).clicked() {
         ui.ctx().copy_text(current.to_hex());
     }
 }
@@ -994,7 +992,7 @@ fn channel_strip(
         let enabled = ui.is_enabled();
         // La zona del tramo lleva el nombre del canal.
         zone.widget_info(|| WidgetInfo::labeled(WidgetType::DragValue, enabled, channel.label));
-        response.on_hover_text(channel.label);
+        response.tip(channel.label);
         left = rect.right();
         if i == CHANNELS.len() - 1 && header.rgba_alone {
             // El hex va en otra fila: la punta derecha cierra el grupo.

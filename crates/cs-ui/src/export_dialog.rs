@@ -6,6 +6,7 @@ use eframe::egui;
 
 use crate::editor::Editor;
 use crate::files::{self, FileError};
+use crate::pixel_ui::Tip as _;
 use crate::platform::{FileFilter, Platform, SaveTarget};
 use crate::widgets;
 
@@ -332,7 +333,7 @@ impl ExportDialog {
                 }
                 if self.format.supports_normals() {
                     ui.checkbox(&mut self.normal_map, "Also export normal map (_n.png)")
-                        .on_hover_text("Lighting normals from the sprite's shape, for 2D lights in Godot/Unity/Bevy");
+                        .tip("Lighting normals from the sprite's shape, for 2D lights in Godot/Unity/Bevy");
                 }
                 match self.format {
                     ExportFormat::Godot => {
