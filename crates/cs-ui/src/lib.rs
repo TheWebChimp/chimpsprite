@@ -74,6 +74,8 @@ const CONVERT_TO_IMAGE_FAILED: &str =
     "Could not convert the layer: a tilemap would exceed the image size limit.";
 
 const NEW_SPRITE_SIZE: u32 = 64;
+/// Con Pixel UI, del mono que corre (arriba a la derecha) al borde derecho de la ventana.
+const RUNNER_RIGHT: f32 = 5.0;
 const RECENT_KEY: &str = "chimpsprite.recent";
 const VIEW_KEY: &str = "chimpsprite.view";
 const DEFAULT_PALETTE_KEY: &str = "chimpsprite.default_palette";
@@ -97,6 +99,8 @@ pub struct ChimpApp {
     /// El logo animado de Home: se carga la primera vez que se muestra Home (`None` hasta
     /// entonces; `Some(None)` si no se pudo leer).
     logo: Option<Option<logo::Logo>>,
+    /// El mono que corre arriba a la derecha con Pixel UI (como `logo`).
+    runner: Option<Option<logo::Logo>>,
     /// Pixnews, las novedades de Home, y cómo se piden (en los tests, sin red). Solo escritorio.
     #[cfg(not(target_arch = "wasm32"))]
     news: news::News,
@@ -207,6 +211,7 @@ impl ChimpApp {
             view,
             grid_dialog: None,
             logo: None,
+            runner: None,
             #[cfg(not(target_arch = "wasm32"))]
             news: news::News::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -903,6 +908,7 @@ impl ChimpApp {
         // Con Pixel UI, como en el mockup: el menú de 16 de alto y las pestañas de 23, sin línea
         // entre los dos; la barra de pestañas termina en un separador grabado (en vez de la línea
         // de egui). Detrás, contra el borde derecho, el degradé del final de la barra.
+        let window = ui.max_rect();
         let fade = self.pixel.skin().and_then(|skin| {
             let screen = ui.max_rect();
             let bottom = screen.top() + tab_bar::FADE_BOTTOM;
@@ -952,6 +958,16 @@ impl ChimpApp {
                     .inner
                 })
                 .inner;
+            // El mono que corre, sobre el degradé: arriba de todo y a 5 del borde derecho, como en
+            // el diseño (frame 4).
+            let ctx = ui.ctx().clone();
+            if let Some(runner) = self.runner.get_or_insert_with(|| logo::Logo::running(&ctx)) {
+                let at = egui::pos2(
+                    window.right() - RUNNER_RIGHT - runner.size().x,
+                    window.top(),
+                );
+                runner.paint_at(ui, at.round());
+            }
             match action {
                 Some(tab_bar::TabAction::Home) => self.go_home(),
                 Some(tab_bar::TabAction::Switch(i)) => self.tabs.switch(&mut self.doc, i),

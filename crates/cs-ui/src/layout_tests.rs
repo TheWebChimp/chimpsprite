@@ -488,6 +488,21 @@ fn with_pixel_ui_every_tooltip_is_the_bubble_and_it_flips_at_the_right_edge() {
 }
 
 #[test]
+fn with_pixel_ui_the_running_monkey_is_at_the_top_right() {
+    let h = LayoutHarness::new(pixel_ui(), true);
+    let screen = h.screen();
+    // 38×35, arriba de todo y a 5 del borde derecho (frame 4 del diseño).
+    let expected = Rect::from_min_size(
+        Pos2::new(screen.right() - 5.0 - 38.0, screen.top()),
+        Vec2::new(38.0, 35.0),
+    );
+    assert!(
+        h.textures.iter().any(|(_, r)| *r == expected),
+        "no monkey at {expected:?}"
+    );
+}
+
+#[test]
 fn on_home_there_is_no_options_bar() {
     let h = LayoutHarness::new(plain(), false);
     assert!(h.canvas.is_none());

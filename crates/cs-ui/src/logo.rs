@@ -1,5 +1,6 @@
-//! El logo animado de Home: `assets/ui/logo.aseprite` (embebido), un frame por textura, al
-//! ritmo de sus duraciones.
+//! Las animaciones de la UI hechas en Aseprite (embebidas), un frame por textura, al ritmo de
+//! sus duraciones: el logo de Home (`assets/ui/logo.aseprite`) y el mono que corre arriba a la
+//! derecha, sobre el degradé de la barra de menú (`assets/ui/running.aseprite`).
 
 use cs_core::Rgba;
 use eframe::egui::{self, ColorImage, TextureHandle, TextureOptions, Vec2, vec2};
@@ -8,6 +9,7 @@ use crate::pixel_ui::Tip as _;
 use crate::tab_bar;
 
 pub const EMBEDDED: &[u8] = include_bytes!("../../../assets/ui/logo.aseprite");
+pub const RUNNING: &[u8] = include_bytes!("../../../assets/ui/running.aseprite");
 /// Cada píxel del logo, en puntos: con la escala entera de Pixel UI sigue nítido.
 pub const SCALE: f32 = 2.0;
 
@@ -40,6 +42,8 @@ pub fn decode(bytes: &[u8]) -> Option<LogoFrames> {
 /// El logo cargado en egui.
 pub struct Logo {
     size: Vec2,
+    /// Puntos por píxel del dibujo.
+    scale: f32,
     frames: Vec<TextureHandle>,
     durations_ms: Vec<u32>,
 }
@@ -47,7 +51,17 @@ pub struct Logo {
 impl Logo {
     /// El logo embebido; `None` si no se pudo leer.
     pub fn embedded(ctx: &egui::Context) -> Option<Logo> {
-        let data = decode(EMBEDDED)?;
+        Self::load(ctx, EMBEDDED, "logo", SCALE)
+    }
+
+    /// El mono que corre (a tamaño real); `None` si no se pudo leer.
+    pub fn running(ctx: &egui::Context) -> Option<Logo> {
+        Self::load(ctx, RUNNING, "running", 1.0)
+    }
+
+    /// La animación de `bytes` (un `.aseprite`), con sus texturas llamadas `name.N`.
+    fn load(ctx: &egui::Context, bytes: &[u8], name: &str, scale: f32) -> Option<Logo> {
+        let data = decode(bytes)?;
         let frames = data
             .frames
             .iter()
@@ -55,11 +69,12 @@ impl Logo {
             .map(|(i, pixels)| {
                 let rgba: Vec<u8> = pixels.iter().flat_map(|c| [c.r, c.g, c.b, c.a]).collect();
                 let image = ColorImage::from_rgba_unmultiplied(data.size, &rgba);
-                ctx.load_texture(format!("logo.{i}"), image, TextureOptions::NEAREST)
+                ctx.load_texture(format!("{name}.{i}"), image, TextureOptions::NEAREST)
             })
             .collect();
         Some(Logo {
             size: vec2(data.size[0] as f32, data.size[1] as f32),
+            scale,
             frames,
             durations_ms: data.durations_ms,
         })
@@ -67,7 +82,7 @@ impl Logo {
 
     /// Tamaño en pantalla (puntos).
     pub fn size(&self) -> Vec2 {
-        self.size * SCALE
+        self.size * self.scale
     }
 
     /// La textura del frame de este momento. Pide el repintado para el siguiente (sin el foco
@@ -102,6 +117,14 @@ impl Logo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_running_monkey_is_animated() {
+        let run = decode(RUNNING).expect("the embedded animation");
+        assert_eq!(run.size, [38, 35]);
+        assert_eq!(run.frames.len(), 4);
+        assert!(run.durations_ms.iter().all(|&d| d > 0));
+    }
 
     #[test]
     fn the_embedded_logo_is_animated() {
