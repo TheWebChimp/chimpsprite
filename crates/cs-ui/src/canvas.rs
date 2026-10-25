@@ -88,6 +88,8 @@ pub struct CanvasView {
     pub background: Color32,
     /// Las reglas del skin con Pixel UI (`None`: las de siempre); lo pone la app en cada frame.
     pub pixel_rulers: Option<PixelRulers>,
+    /// Si las reglas se ven en este frame (tapan el borde de la vista).
+    rulers_shown: bool,
     /// Con Pixel UI, la ventana del skin alrededor de cada artboard (`None`: el borde y la
     /// etiqueta de siempre); lo pone la app en cada frame.
     pub artboard_window: Option<ArtboardWindow>,
@@ -196,6 +198,7 @@ impl Default for CanvasView {
             wheel_rest: 0.0,
             background: theme::CANVAS_BG,
             pixel_rulers: None,
+            rulers_shown: false,
             artboard_window: None,
             pixel_ui: false,
             cursors: None,
@@ -360,6 +363,15 @@ impl CanvasView {
         (top, left)
     }
 
+    /// Lo que se ve del lienzo: `rect` sin las reglas (si se ven).
+    fn visible(&self, rect: Rect) -> Rect {
+        if !self.rulers_shown {
+            return rect;
+        }
+        let px = self.ruler_px();
+        Rect::from_min_max(rect.min + Vec2::splat(px), rect.max)
+    }
+
     /// Centro de simetría efectivo en pantalla (con el arrastre en curso, si lo hay).
     fn symmetry_center(&self, rect: Rect, editor: &Editor) -> (Pos2, (i32, i32)) {
         let a = editor.artboard();
@@ -427,12 +439,14 @@ impl CanvasView {
         }
         let p = pointer?;
         let (center, c2) = self.symmetry_center(rect, editor);
+        // Lo visible del artboard: los handles se pegan al borde de la vista (como se dibujan).
         let artboard = Rect::from_min_max(
             origin,
             origin
                 + Vec2::new(editor.sprite().width as f32, editor.sprite().height as f32)
                     * self.zoom,
-        );
+        )
+        .intersect(self.visible(rect));
         let handle = if p.distance(center) <= 7.0 {
             Some(SymHandle::Center)
         } else if symmetry.axes.vertical
@@ -448,10 +462,25 @@ impl CanvasView {
         } else {
             None
         }?;
-        let grabbable = matches!(
-            editor.active_tool(),
-            ToolKind::RectSelect | ToolKind::EllipseSelect | ToolKind::Move | ToolKind::Artboard
-        ) || ctrl;
+        // El control de la simetría (el centro y los handles de las puntas de cada eje) se agarra
+        // con cualquier herramienta; el resto de la línea, solo con las que no dibujan (o con
+        // Ctrl), para poder dibujar sobre el eje.
+        let end = crate::pixel_selection::HANDLE + 2.0;
+        let near_end = |v: f32, range: egui::Rangef| v - range.min <= end || range.max - v <= end;
+        let on_control = match handle {
+            SymHandle::Center => true,
+            SymHandle::X => near_end(p.y, artboard.y_range()),
+            SymHandle::Y => near_end(p.x, artboard.x_range()),
+        };
+        let grabbable = on_control
+            || ctrl
+            || matches!(
+                editor.active_tool(),
+                ToolKind::RectSelect
+                    | ToolKind::EllipseSelect
+                    | ToolKind::Move
+                    | ToolKind::Artboard
+            );
         if !grabbable {
             self.guide_hint = Some("Symmetry axis: hold Ctrl and drag to move it");
             return None;
@@ -478,7 +507,15 @@ impl CanvasView {
         let painter = painter.with_clip_rect(screen.intersect(rect));
         let (c, _) = self.symmetry_center(rect, editor);
         if let Some(color) = self.symmetry_color {
-            draw_pixel_symmetry(&painter, axes, c, screen, color);
+            // Pegados a lo visible: con zoom, los handles quedan en el borde de la vista aunque
+            // el artboard siga más allá.
+            draw_pixel_symmetry(
+                &painter,
+                axes,
+                c,
+                screen.intersect(self.visible(rect)),
+                color,
+            );
             return;
         }
         let stroke = Stroke::new(1.5, theme::ACCENT);
@@ -1052,6 +1089,7 @@ impl CanvasView {
         let ctx = ui.ctx().clone();
         // Antes de cualquier uso de `origin` en este frame (zoom, entrada, dibujo).
         self.ppp = ctx.pixels_per_point();
+        self.rulers_shown = view_settings.rulers;
         if !self.fitted && rect.width() > 0.0 {
             self.fit(rect, editor);
         }
@@ -1305,7 +1343,9 @@ impl CanvasView {
             && handles_active(editor)
             && let Some(b) = editor.transform_box()
         {
-            draw_transform_box(&painter, &b, origin, self.zoom, self.pixel_ui);
+            let phase = (ctx.input(|i| i.time) * ANTS_SPEED) as i32;
+            draw_transform_box(&painter, &b, origin, self.zoom, phase, self.pixel_ui);
+            ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
         }
         if let Some(origin) = active_origin
             && view_settings.shows(view_settings.tile_numbers)
@@ -1906,6 +1946,7 @@ fn draw_transform_box(
     b: &TransformBox,
     origin: Pos2,
     zoom: f32,
+    phase: i32,
     pixel: bool,
 ) {
     let at = |(x, y): (f32, f32)| origin + Vec2::new(x, y) * zoom;
@@ -1914,7 +1955,7 @@ fn draw_transform_box(
             at((b.x0 as f32, b.y0 as f32)),
             at((b.x1 as f32, b.y1 as f32)),
         );
-        pixel_selection::paint(painter, pixel_selection::rect_outline(r, 0));
+        pixel_selection::paint(painter, pixel_selection::rect_outline(r, phase));
         for handle in Handle::ALL {
             pixel_selection::draw_handle(painter, pixel_selection::handle_rect(r, handle.dirs()));
         }
@@ -2668,6 +2709,84 @@ mod tests {
                 .iter()
                 .all(|r| r.center().x.floor() == vertical.left())
         );
+    }
+
+    #[test]
+    fn with_zoom_the_symmetry_handles_stick_to_the_edges_of_the_view() {
+        let mut h = Harness::new();
+        h.canvas.symmetry_color = Some(Color32::from_rgb(0, 73, 255));
+        h.editor.set_symmetry(cs_core::Symmetry {
+            axes: cs_core::SymmetryAxes {
+                vertical: true,
+                ..Default::default()
+            },
+            center2: None,
+        });
+        h.frame(vec![]);
+        // Tan cerca que el artboard pasa los bordes de la vista.
+        h.canvas.zoom = 64.0;
+        h.canvas.request_zoom(ZoomRequest::CenterActive);
+        h.frame(vec![]);
+        h.frame(vec![]);
+        let pixels = h.pixels_of(0);
+        assert!(pixels.top() < h.rect.top() && pixels.bottom() > h.rect.bottom());
+        let view = h.canvas.visible(h.rect);
+        let handles: Vec<Rect> = h
+            .shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::Shape::Rect(r)
+                    if r.fill == crate::pixel_cursors::INK && r.rect.size() == Vec2::splat(5.0) =>
+                {
+                    Some(r.rect)
+                }
+                _ => None,
+            })
+            .collect();
+        assert_eq!(handles.len(), 2, "{handles:?}");
+        let top = handles.iter().map(|r| r.top()).fold(f32::MAX, f32::min);
+        let bottom = handles.iter().map(|r| r.bottom()).fold(f32::MIN, f32::max);
+        assert_eq!(top, view.top().round(), "under the ruler");
+        assert_eq!(bottom, view.bottom().round(), "at the bottom of the view");
+    }
+
+    #[test]
+    fn the_symmetry_control_moves_with_any_tool() {
+        let mut h = Harness::new();
+        h.canvas.symmetry_color = Some(Color32::from_rgb(0, 73, 255));
+        h.editor.set_tool(ToolKind::Pencil);
+        h.editor.set_symmetry(cs_core::Symmetry {
+            axes: cs_core::SymmetryAxes {
+                vertical: true,
+                ..Default::default()
+            },
+            center2: None,
+        });
+        h.frame(vec![]);
+        let before = h.editor.symmetry().center2;
+        let pixels = h.pixels_of(0);
+        // El handle de arriba del eje vertical (en el centro del artboard).
+        let from = Pos2::new(pixels.center().x, pixels.top() + 2.0);
+        let to = from + Vec2::new(h.canvas.zoom * 2.0, 0.0);
+        let press = |pos, pressed| Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.frame(vec![Event::PointerMoved(from)]);
+        h.frame(vec![press(from, true)]);
+        h.frame(vec![Event::PointerMoved(to)]);
+        h.frame(vec![press(to, false)]);
+        h.frame(vec![]);
+        assert_ne!(h.editor.symmetry().center2, before, "the axis moved");
+        let sprite = h.editor.sprite();
+        let t = sprite.color_mode.transparent();
+        let layer = h.editor.layer;
+        let drawn = (0..sprite.width as i32)
+            .flat_map(|x| (0..sprite.height as i32).map(move |y| (x, y)))
+            .any(|(x, y)| sprite.pixel(layer, 0, x, y) != t);
+        assert!(!drawn, "the pencil did not draw");
     }
 
     #[test]

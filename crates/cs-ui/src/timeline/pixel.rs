@@ -135,7 +135,8 @@ pub fn panel_frame(skin: &Skin) -> egui::Frame {
         .fill(skin.colors().background)
         .inner_margin(egui::Margin {
             left: 0,
-            right: margin,
+            // Termina junto al dock, como la caja del lienzo de arriba.
+            right: crate::dock::LEFT_AIR,
             top: 0,
             bottom: margin,
         })

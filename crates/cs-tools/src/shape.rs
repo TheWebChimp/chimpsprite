@@ -95,8 +95,13 @@ mod tests {
         let mut c = ctx(&s);
         c.constrain = true;
         assert_eq!(
-            run(ShapeKind::Line, &c, (0, 0), (3, 1)),
-            vec![(0, 0), (1, 0), (2, 0), (3, 0)]
+            run(ShapeKind::Line, &c, (0, 0), (5, 1)),
+            vec![(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0)]
+        );
+        // Cerca de 2×1: tramos de 2.
+        assert_eq!(
+            run(ShapeKind::Line, &c, (0, 0), (4, 2)),
+            vec![(0, 0), (1, 0), (2, 1), (3, 1)]
         );
     }
 

@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use cs_commands::{Command, DocCommand, History};
+use cs_commands::{Command, DocCommand, History, sprite_ops};
 use cs_core::{
     AnimDirection, Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, PixelValue, Playback,
     Rgba, Sprite, Tile,
@@ -954,6 +954,127 @@ impl Editor {
         }
     }
 
+    /// Reemplaza el sprite del artboard activo (un paso de undo); `None` no hace nada.
+    fn replace_sprite(&mut self, sprite: Option<Sprite>) -> bool {
+        let Some(sprite) = sprite else {
+            return false;
+        };
+        self.execute_doc(DocCommand::SetSprite {
+            id: self.active,
+            sprite: Box::new(sprite),
+        })
+    }
+
+    /// `Sprite → Rotate Canvas`: gira todo el sprite (no con instancias ni tilemaps).
+    pub fn rotate_canvas(&mut self, rotation: sprite_ops::Rotation) -> bool {
+        self.commit_floating();
+        let rotated = sprite_ops::rotate(self.sprite(), rotation);
+        self.replace_sprite(rotated)
+    }
+
+    /// `Sprite → Sprite Size`: escala todo el sprite (no con instancias ni tilemaps).
+    pub fn scale_sprite(&mut self, width: u32, height: u32) -> bool {
+        self.commit_floating();
+        let scaled = sprite_ops::scale(self.sprite(), width, height);
+        self.replace_sprite(scaled)
+    }
+
+    /// `Sprite → Color Mode`: pasa a RGBA o a indexado con la paleta del sprite.
+    pub fn set_color_mode(&mut self, indexed: bool) -> bool {
+        self.commit_floating();
+        let converted = if indexed {
+            sprite_ops::to_indexed(self.sprite())
+        } else {
+            sprite_ops::to_rgba(self.sprite())
+        };
+        self.replace_sprite(converted)
+    }
+
+    /// Cambia el índice transparente de un sprite indexado (los píxeles no cambian).
+    pub fn set_transparent_index(&mut self, index: u8) -> bool {
+        let ColorMode::Indexed { transparent_index } = self.sprite().color_mode else {
+            return false;
+        };
+        if transparent_index == index {
+            return false;
+        }
+        let mut sprite = self.sprite().clone();
+        sprite.color_mode = ColorMode::Indexed {
+            transparent_index: index,
+        };
+        self.replace_sprite(Some(sprite))
+    }
+
+    /// Recorta el lienzo al rectángulo `(x, y, w, h)` (local) y descarta lo de fuera; el
+    /// contenido queda en su lugar del mundo.
+    fn crop_canvas(&mut self, (x, y, w, h): (i32, i32, u32, u32)) -> bool {
+        let sprite = self.sprite();
+        if (x, y, w, h) == (0, 0, sprite.width, sprite.height) || w == 0 || h == 0 {
+            return false;
+        }
+        let (ax, ay) = self.artboard().position;
+        let id = self.active;
+        self.execute_doc(DocCommand::Batch(vec![
+            DocCommand::OnArtboard {
+                id,
+                cmd: Command::ResizeCanvas {
+                    width: w,
+                    height: h,
+                    offset: (-x, -y),
+                },
+            },
+            DocCommand::OnArtboard {
+                id,
+                cmd: Command::TrimToCanvas,
+            },
+            DocCommand::SetArtboardProps {
+                id,
+                name: None,
+                position: Some((ax + x, ay + y)),
+            },
+        ]))
+    }
+
+    /// `Sprite → Crop`: el lienzo pasa a ser el rectángulo de la selección.
+    pub fn crop_to_selection(&mut self) -> bool {
+        self.commit_floating();
+        let Some(((x0, y0), (x1, y1))) = self.selection.as_ref().and_then(|m| m.bounds()) else {
+            return false;
+        };
+        self.crop_canvas((x0, y0, (x1 - x0 + 1) as u32, (y1 - y0 + 1) as u32))
+    }
+
+    /// `Sprite → Trim`: el lienzo se ajusta a lo que tiene píxeles visibles.
+    pub fn trim_canvas(&mut self) -> bool {
+        self.commit_floating();
+        match sprite_ops::content_bounds(self.sprite()) {
+            Some(bounds) => self.crop_canvas(bounds),
+            None => false,
+        }
+    }
+
+    /// `Sprite → Duplicate`: una copia del artboard activo con `name`, a la derecha de todo, y
+    /// la activa.
+    pub fn duplicate_artboard(&mut self, name: String) -> bool {
+        self.commit_floating();
+        let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
+        let id = self.document.next_artboard_id();
+        let artboard = Artboard {
+            id,
+            name,
+            position: (x1 + 16, y0),
+            ..self.artboard().clone()
+        };
+        let added = self.execute_doc(DocCommand::AddArtboard {
+            index: self.document.artboards.len(),
+            artboard: Box::new(artboard),
+        });
+        if added {
+            self.activate(id);
+        }
+        added
+    }
+
     /// Color "Mask" (transparente) del sprite: en RGBA alfa 0, en indexado el índice transparente.
     /// Pintar con él borra.
     pub fn mask_value(&self) -> PixelValue {
@@ -1832,6 +1953,48 @@ mod tests {
         e.pointer_drag(at(b));
         e.pointer_release();
         e.options.constrain = false;
+    }
+
+    #[test]
+    fn sprite_menu_crop_trim_rotate_and_duplicate() {
+        let mut e = editor();
+        let red = PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0));
+        let layer = e.layer;
+        e.execute(Command::DrawPixels {
+            layer,
+            frame: 0,
+            pixels: vec![(2, 3, red), (5, 4, red)],
+        });
+        let start = e.artboard().position;
+        assert!(e.trim_canvas());
+        let s = e.sprite();
+        assert_eq!((s.width, s.height), (4, 2));
+        assert_eq!(s.pixel(layer, 0, 0, 0), red);
+        assert_eq!(
+            e.artboard().position,
+            (start.0 + 2, start.1 + 3),
+            "stays in the world"
+        );
+        assert!(!e.trim_canvas(), "nothing left to trim");
+        assert!(e.rotate_canvas(sprite_ops::Rotation::Clockwise));
+        assert_eq!((e.sprite().width, e.sprite().height), (2, 4));
+        e.selection = Some(cs_core::Mask::from_points(2, 4, [(0, 0), (1, 1)]));
+        assert!(e.crop_to_selection());
+        assert_eq!((e.sprite().width, e.sprite().height), (2, 2));
+        let before = e.document.artboards.len();
+        assert!(e.duplicate_artboard("Copy".into()));
+        assert_eq!(e.document.artboards.len(), before + 1);
+        assert_eq!(e.artboard().name, "Copy");
+        assert_eq!((e.sprite().width, e.sprite().height), (2, 2));
+        e.undo();
+        e.undo();
+        e.undo();
+        e.undo();
+        assert_eq!(
+            (e.sprite().width, e.sprite().height),
+            (8, 8),
+            "every step undoes"
+        );
     }
 
     #[test]

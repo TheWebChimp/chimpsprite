@@ -215,6 +215,8 @@ pub fn tabs(ui: &mut Ui, skin: &Skin, tabs: &[Tab], active: Option<usize>) -> Op
         .map(|s| pixel_ui::etched_hline(s, bottom, &colors, ppp))
         .collect();
     let mut clicked = None;
+    // Los nombres van encima de las pestañas (se pintan después).
+    let mut texts = Vec::with_capacity(tabs.len());
     for (i, (tab, rect)) in tabs.iter().zip(&rects).enumerate() {
         let is_active = active == Some(i);
         let response = ui.interact(*rect, ui.id().with(("pixel_tab", i)), Sense::click());
@@ -252,11 +254,12 @@ pub fn tabs(ui: &mut Ui, skin: &Skin, tabs: &[Tab], active: Option<usize>) -> Op
         };
         // Recortado a la pestaña: un nombre muy largo no se sale.
         let text = text_shape(ui, &tab.name, text_left, rect.top() + TAB_CAPS_TOP, color);
-        ui.painter()
-            .with_clip_rect(rect.shrink2(vec2(1.0, 0.0)))
-            .add(text);
+        texts.push((rect.shrink2(vec2(1.0, 0.0)), text));
     }
     ui.painter().extend(shapes);
+    for (clip, text) in texts {
+        ui.painter().with_clip_rect(clip).add(text);
+    }
     let used = Rect::from_x_y_ranges(left..=right, top..=bottom + etched);
     ui.allocate_rect(used, Sense::hover());
     ui.add_space(TABS_FIELDS_GAP - ui.spacing().item_spacing.y);

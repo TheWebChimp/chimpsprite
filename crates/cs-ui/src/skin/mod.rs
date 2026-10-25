@@ -1026,7 +1026,7 @@ mod tests {
         assert_eq!(at(number, 1, 12), shade, "number: the shade, left");
         assert_eq!(at(number, 2, 13), shade, "number: the shade, middle");
         // La casilla marcada de la barra: 13×14, como el cuadro de `sym.slot` con el interior
-        // blanco y la marca verde. No es la del menú (11×12). La sin marcar no está dibujada.
+        // blanco y la marca verde. No es la del menú (11×12). La sin marcar, la misma sin marca.
         let check = &data.pieces["field.check.on"];
         assert_eq!((check.size, check.center), ([13, 14], None));
         assert_eq!(at(check, 0, 0).a, 0, "rounded corner");
@@ -1035,7 +1035,10 @@ mod tests {
         assert_eq!(at(check, 2, 6), Rgba::rgb(71, 114, 56), "the green check");
         assert_eq!(at(check, 1, 11), shade, "the shade");
         assert_ne!(check.size, data.pieces["menu.check.on"].size);
-        assert!(!data.pieces.contains_key("field.check"), "not drawn yet");
+        let empty = &data.pieces["field.check"];
+        assert_eq!(empty.size, check.size);
+        assert_eq!(at(empty, 2, 6), white, "no check");
+        assert_eq!(at(empty, 1, 0), border, "the same box");
     }
 
     #[test]

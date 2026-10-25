@@ -278,15 +278,13 @@ fn with_pixel_ui_canvas_size_anchors_top_right_like_the_plain_window() {
 }
 
 #[test]
-fn with_pixel_ui_the_anchor_grid_uses_the_skin_colors() {
+fn with_pixel_ui_the_anchor_grid_is_the_design_one() {
     let h = canvas_size(true);
-    let colors = *h.app.pixel.skin().unwrap().colors();
-    assert!(
-        h.fills.contains(&colors.panel),
-        "the anchor cells: {:?}",
-        h.fills
-    );
-    assert!(h.fills.contains(&colors.accent), "the anchor square");
+    assert!(h.drew_piece("anchor.grid"), "the box");
+    assert!(h.drew_piece("anchor.center"), "the monkey on the anchor");
+    for arrow in ["anchor.n", "anchor.ne", "anchor.e", "anchor.se", "anchor.s"] {
+        assert!(h.drew_piece(arrow), "the arrow {arrow}");
+    }
     assert!(
         !h.fills.contains(&crate::theme::ACCENT),
         "no dark theme accent"

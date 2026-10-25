@@ -579,12 +579,31 @@ impl Editor {
 
     /// Esc hace una sola cosa por pulsación. Primero descarta el gesto o el texto a medio hacer,
     /// después cancela lo flotante (sin deseleccionar) y, si no hay nada de eso, deselecciona.
+    /// Esc: corta el gesto a medias; si flota algo pegado, lo descarta; si flota lo seleccionado,
+    /// lo deja donde quedó (lo confirma, la selección sigue ahí y Ctrl+Z lo deshace); si no,
+    /// deselecciona.
     pub fn escape(&mut self) {
         if self.is_pending() {
             self.cancel_gesture();
-        } else if !self.cancel_floating() {
+        } else if self.floating.as_ref().is_some_and(|f| f.from_paste) {
+            self.cancel_floating();
+        } else if self.is_floating() {
+            self.commit_floating();
+        } else {
             self.deselect();
         }
+    }
+
+    /// Las flechas con algo seleccionado: mueven lo seleccionado `(dx, dy)` píxeles (lo levantan
+    /// si hace falta). `false` si no se puede transformar.
+    pub fn nudge(&mut self, dx: i32, dy: i32) -> bool {
+        if !self.can_transform() || !self.lift() {
+            return false;
+        }
+        let Some(bbox) = self.floating.as_ref().map(|f| f.bbox.translated(dx, dy)) else {
+            return false;
+        };
+        self.set_floating_box(bbox, false)
     }
 
     /// Una vez por frame: confirma si cambió la capa, el frame, el artboard o la herramienta por
@@ -765,7 +784,7 @@ mod tests {
     }
 
     #[test]
-    fn escape_cancels_the_gesture_then_the_floating_content_then_the_selection() {
+    fn escape_cancels_the_gesture_then_applies_the_floating_content_then_deselects() {
         let mut e = editor();
         // Un lazo poligonal a medias: Esc lo descarta y la selección sigue.
         e.set_tool(ToolKind::PolygonLasso);
@@ -775,15 +794,15 @@ mod tests {
         e.escape();
         assert!(!e.is_pending());
         assert!(e.selection.is_some());
-        // Flotando: Esc cancela la transformación sin deseleccionar.
+        // Flotando: Esc lo deja donde se movió, sin deseleccionar.
         e.set_tool(ToolKind::RectSelect);
         assert!(e.lift());
         moved(&mut e, 2, 2);
         e.escape();
         assert!(!e.is_floating());
         let bounds = e.selection.as_ref().and_then(|m| m.bounds());
-        assert_eq!(bounds, Some(((0, 0), (2, 2))));
-        assert_eq!(px(&e, 1, 1), red());
+        assert_eq!(bounds, Some(((2, 2), (4, 4))));
+        assert_eq!(px(&e, 3, 3), red());
         // Sin nada más: Esc deselecciona, como Deselect.
         e.escape();
         assert!(e.selection.is_none());

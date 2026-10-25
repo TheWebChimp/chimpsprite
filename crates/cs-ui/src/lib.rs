@@ -23,6 +23,7 @@ mod menus;
 mod palette_ops;
 mod palette_ui;
 mod slice_ops;
+mod sprite_dialogs;
 mod tab_bar;
 use crate::pixel_ui::Tip as _;
 use cs_io::files;
@@ -90,6 +91,8 @@ pub struct ChimpApp {
     tabs: tabs::Tabs,
     capture: capture::Capture,
     canvas_size: Option<canvas_size::CanvasSizeDialog>,
+    /// El diálogo del menú Sprite abierto (propiedades, duplicar, tamaño).
+    sprite_dialog: Option<sprite_dialogs::SpriteDialog>,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
@@ -204,6 +207,7 @@ impl ChimpApp {
             tabs: tabs::Tabs::default(),
             capture: capture::Capture::from_env(),
             canvas_size: None,
+            sprite_dialog: None,
             platform: platform::Platform::default(),
             autosaver: autosave::Autosaver::default(),
             restore: None,
@@ -246,6 +250,117 @@ impl ChimpApp {
         self.canvas_size = Some(canvas_size::CanvasSizeDialog::new(
             self.doc.editor.artboard(),
         ));
+    }
+
+    /// El menú Sprite, como el de Aseprite.
+    fn sprite_menu(&mut self, ui: &mut egui::Ui) {
+        use cs_commands::sprite_ops::{self, Rotation};
+        use sprite_dialogs::{DuplicateDialog, PropertiesDialog, SpriteDialog, SpriteSizeDialog};
+        const NO_TRANSFORM: &str = "Not available with instance or tilemap layers";
+        if ui.add(menus::item("Properties…", "Ctrl+P")).clicked() {
+            self.open_sprite_dialog(|a| SpriteDialog::Properties(PropertiesDialog::new(a)));
+        }
+        let indexed = matches!(
+            self.doc.editor.sprite().color_mode,
+            cs_core::ColorMode::Indexed { .. }
+        );
+        menus::submenu(ui, "Color Mode", |ui| {
+            for (label, to_indexed) in [("RGB Color", false), ("Indexed", true)] {
+                if ui
+                    .add(menus::choice(indexed == to_indexed, label))
+                    .clicked()
+                {
+                    if indexed != to_indexed {
+                        self.doc.editor.set_color_mode(to_indexed);
+                    }
+                    ui.close();
+                }
+            }
+        });
+        menus::separator(ui);
+        if ui.add(menus::plain("Duplicate…")).clicked() {
+            self.open_sprite_dialog(|a| SpriteDialog::Duplicate(DuplicateDialog::new(a)));
+        }
+        menus::separator(ui);
+        let transformable = sprite_ops::can_transform(self.doc.editor.sprite());
+        let size = menus::item("Sprite Size…", "Ctrl+Alt+I");
+        if ui
+            .add_enabled(transformable, size)
+            .on_disabled_hover_text(NO_TRANSFORM)
+            .clicked()
+        {
+            self.open_sprite_dialog(|a| SpriteDialog::Size(SpriteSizeDialog::new(a)));
+        }
+        if ui.add(menus::item("Canvas Size…", "C")).clicked() {
+            self.open_canvas_size();
+        }
+        ui.add_enabled_ui(transformable, |ui| {
+            menus::submenu(ui, "Rotate Canvas", |ui| {
+                for (label, rotation) in [
+                    ("180°", Rotation::Half),
+                    ("90° CW", Rotation::Clockwise),
+                    ("90° CCW", Rotation::CounterClockwise),
+                ] {
+                    if ui.add(menus::plain(label)).clicked() {
+                        self.doc.editor.rotate_canvas(rotation);
+                        ui.close();
+                    }
+                }
+            })
+            .response
+            .on_disabled_hover_text(NO_TRANSFORM);
+        });
+        menus::separator(ui);
+        let has_selection = self.doc.editor.selection.is_some();
+        if ui
+            .add_enabled(has_selection, menus::plain("Crop"))
+            .clicked()
+        {
+            self.doc.editor.crop_to_selection();
+        }
+        if ui.add(menus::plain("Trim")).clicked() {
+            self.doc.editor.trim_canvas();
+        }
+    }
+
+    fn open_sprite_dialog(
+        &mut self,
+        dialog: impl FnOnce(&cs_core::Artboard) -> sprite_dialogs::SpriteDialog,
+    ) {
+        self.sprite_dialog = Some(dialog(self.doc.editor.artboard()));
+    }
+
+    fn update_sprite_dialog(&mut self, ctx: &egui::Context) {
+        use sprite_dialogs::SpriteDialog;
+        if !self.has_doc() {
+            self.sprite_dialog = None;
+            return;
+        }
+        let Some(dialog) = &mut self.sprite_dialog else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Cancel => self.sprite_dialog = None,
+            tilemap_dialog::DialogResult::Accept => {
+                let editor = &mut self.doc.editor;
+                match self.sprite_dialog.take() {
+                    Some(SpriteDialog::Properties(d)) => {
+                        editor.rename_active_artboard(d.name);
+                        if let Some(index) = d.transparent_index {
+                            editor.set_transparent_index(index);
+                        }
+                    }
+                    Some(SpriteDialog::Duplicate(d)) => {
+                        editor.duplicate_artboard(d.name);
+                    }
+                    Some(SpriteDialog::Size(d)) => {
+                        editor.scale_sprite(d.width, d.height);
+                    }
+                    None => {}
+                }
+            }
+        }
     }
 
     fn update_canvas_size(&mut self, ctx: &egui::Context) {
@@ -548,6 +663,19 @@ impl ChimpApp {
         if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::E))) {
             self.open_export();
         }
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::P))) {
+            self.open_sprite_dialog(|a| {
+                sprite_dialogs::SpriteDialog::Properties(sprite_dialogs::PropertiesDialog::new(a))
+            });
+        }
+        let sprite_size = shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::I);
+        if ctx.input_mut(|i| i.consume_shortcut(&sprite_size))
+            && cs_commands::sprite_ops::can_transform(self.doc.editor.sprite())
+        {
+            self.open_sprite_dialog(|a| {
+                sprite_dialogs::SpriteDialog::Size(sprite_dialogs::SpriteSizeDialog::new(a))
+            });
+        }
         // Nuevo, abrir, pestañas, cerrar, guardar y exportar (arriba y aquí) no chocan con la
         // edición de texto y valen aun escribiendo. Lo que sigue sí choca: deshacer/rehacer y
         // seleccionar todo son del campo de texto enfocado (si no, tocarían el arte), y el resto
@@ -627,6 +755,11 @@ impl ChimpApp {
                 .collect()
         });
         for (key, shift) in pressed {
+            // C (sin Shift, que es el slice) abre Canvas Size, como en Aseprite.
+            if key == Key::C && !shift {
+                self.open_canvas_size();
+                return;
+            }
             let editor = &mut self.doc.editor;
             let letter = key.name().chars().next().filter(|_| key.name().len() == 1);
             if let Some(tool) = letter.and_then(|c| ToolKind::from_key(c, shift)) {
@@ -751,11 +884,7 @@ impl ChimpApp {
                 }
             });
             ui.add_enabled_ui(has_doc, |ui| {
-                menus::bar_menu(ui, look, "Sprite", |ui| {
-                    if ui.add(menus::plain("Canvas Size…")).clicked() {
-                        self.open_canvas_size();
-                    }
-                });
+                menus::bar_menu(ui, look, "Sprite", |ui| self.sprite_menu(ui));
                 menus::bar_menu(ui, look, "View", |ui| self.view_menu(ui));
                 menus::bar_menu(ui, look, "Edit", |ui| {
                     let undo = menus::item("Undo", "Ctrl+Z");
@@ -1120,9 +1249,11 @@ impl ChimpApp {
         if let Some(skin) = skin {
             // Con Pixel UI no se achica más que la fila más ancha que no se parte, con los
             // márgenes del panel.
-            panel = panel.min_size(color_panel::panel_min_size(ui, skin));
+            panel = panel
+                .min_size(color_panel::panel_min_size(ui, skin))
+                .show_separator_line(false);
         }
-        panel.show(ui, |ui| {
+        let palette_panel = panel.show(ui, |ui| {
             // Con un diálogo abierto, el menú de paleta no abre otro encima.
             let palette = |ui: &mut egui::Ui, editor: &mut editor::Editor, height: &mut f32| {
                 panels::palette(ui, editor, !modal, skin, height).filter(|_| !modal)
@@ -1155,6 +1286,17 @@ impl ChimpApp {
                 }
             })
         });
+        // Con Pixel UI, la línea del borde grabada (la oscura y su brillo), como las demás.
+        if let Some(skin) = skin {
+            let rect = palette_panel.response.rect;
+            let ppp = ui.ctx().pixels_per_point();
+            ui.painter().add(pixel_ui::etched_vline(
+                rect.left().round(),
+                rect.y_range(),
+                skin.colors(),
+                ppp,
+            ));
+        }
         self.view.palette_locked = self.doc.editor.palette_locked;
         // El dock de "otros paneles", a la izquierda del derecho y también a todo el alto.
         let mut dock_frame = egui::Frame::side_top_panel(ui.style());
@@ -1277,6 +1419,7 @@ impl eframe::App for ChimpApp {
         let modal = self.is_modal();
         self.layout(ui, modal);
         self.update_canvas_size(&ctx);
+        self.update_sprite_dialog(&ctx);
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);
         self.show_slice_properties(&ctx);
@@ -1318,6 +1461,19 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
             editor.commit_floating();
         }
         Key::Escape => editor.escape(),
+        // Con algo seleccionado (y una herramienta que transforma), las flechas lo mueven 1 px.
+        Key::ArrowLeft if editor.can_transform() => {
+            editor.nudge(-1, 0);
+        }
+        Key::ArrowRight if editor.can_transform() => {
+            editor.nudge(1, 0);
+        }
+        Key::ArrowUp if editor.can_transform() => {
+            editor.nudge(0, -1);
+        }
+        Key::ArrowDown if editor.can_transform() => {
+            editor.nudge(0, 1);
+        }
         Key::Enter => editor.toggle_play(),
         Key::Comma | Key::ArrowLeft => editor.prev_frame(),
         Key::Period | Key::ArrowRight => editor.next_frame(),
@@ -1345,23 +1501,28 @@ mod tests {
     }
 
     #[test]
-    fn enter_applies_floating_content_and_escape_cancels_it() {
+    fn enter_and_escape_apply_floating_content_where_it_was_moved() {
         let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
         e.set_tool(ToolKind::RectSelect);
         e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (1, 1))));
-        let drag = |e: &mut Editor| {
-            e.pointer_press((0.5, 0.5), false, false, 0.1);
-            e.pointer_drag((2.5, 0.5));
+        // Arrastra lo seleccionado 2 px a la derecha desde la columna `x`.
+        let drag = |e: &mut Editor, x: f32| {
+            e.pointer_press((x, 0.5), false, false, 0.1);
+            e.pointer_drag((x + 2.0, 0.5));
             e.pointer_release();
         };
-        drag(&mut e);
+        drag(&mut e, 0.5);
         assert!(e.is_floating());
         editor_key(&mut e, Key::Escape, false);
-        assert!(
-            !e.is_floating() && e.selection.is_some(),
-            "Esc cancels, keeps the selection"
+        assert!(!e.is_floating(), "Esc applies");
+        let bounds = e.selection.as_ref().and_then(|m| m.bounds());
+        assert_eq!(
+            bounds,
+            Some(((2, 0), (3, 1))),
+            "the selection stays where it was moved"
         );
-        drag(&mut e);
+        assert!(e.history.can_undo());
+        drag(&mut e, 2.5);
         editor_key(&mut e, Key::Enter, false);
         assert!(!e.is_floating(), "Enter applies");
         assert!(!e.playing, "instead of playing the animation");
@@ -1369,6 +1530,32 @@ mod tests {
         editor_key(&mut e, Key::Escape, false);
         assert!(e.selection.is_none(), "with nothing else, Esc deselects");
     }
+    #[test]
+    fn arrows_move_the_selection_one_pixel() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let red = cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0));
+        let layer = e.layer;
+        e.execute(cs_commands::Command::DrawPixels {
+            layer,
+            frame: 0,
+            pixels: vec![(1, 1, red)],
+        });
+        e.set_tool(ToolKind::RectSelect);
+        e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (1, 1))));
+        editor_key(&mut e, Key::ArrowRight, false);
+        editor_key(&mut e, Key::ArrowDown, false);
+        editor_key(&mut e, Key::ArrowDown, false);
+        let bounds = e.selection.as_ref().and_then(|m| m.bounds());
+        assert_eq!(bounds, Some(((2, 3), (2, 3))));
+        assert_eq!(e.frame, 0, "not the next frame");
+        editor_key(&mut e, Key::Enter, false);
+        assert_eq!(e.sprite().pixel(layer, 0, 2, 3), red, "the pixels moved");
+        assert_ne!(e.sprite().pixel(layer, 0, 1, 1), red);
+        // Sin selección, las flechas siguen siendo frames y capas.
+        e.deselect();
+        assert!(!e.can_transform());
+    }
+
     #[test]
     fn enter_with_a_pending_gesture_finishes_the_gesture_first() {
         let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));

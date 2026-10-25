@@ -378,11 +378,34 @@ impl ChimpApp {
                 ui.set_width(PRESETS_SIZE.x);
                 ui.set_height(PRESETS_SIZE.y);
                 ui.add_enabled_ui(!modal, |ui| {
-                    ui.horizontal(|ui| {
-                        ui.selectable_value(&mut window.tab, PresetsTab::Library, "Library");
-                        ui.selectable_value(&mut window.tab, PresetsTab::Lospec, "Lospec");
-                    });
-                    ui.separator();
+                    // Con Pixel UI, las pestañas del diseño (como las de Artboards).
+                    const TABS: [(PresetsTab, &str); 2] = [
+                        (PresetsTab::Library, "Library"),
+                        (PresetsTab::Lospec, "Lospec"),
+                    ];
+                    match skin {
+                        Some(skin) => {
+                            let tabs: Vec<_> = TABS
+                                .iter()
+                                .map(|(_, name)| crate::pixel_sections::Tab {
+                                    name: (*name).to_owned(),
+                                    color: None,
+                                })
+                                .collect();
+                            let active = TABS.iter().position(|(t, _)| *t == window.tab);
+                            if let Some(i) = crate::pixel_sections::tabs(ui, skin, &tabs, active) {
+                                window.tab = TABS[i].0;
+                            }
+                        }
+                        None => {
+                            ui.horizontal(|ui| {
+                                for (tab, name) in TABS {
+                                    ui.selectable_value(&mut window.tab, tab, name);
+                                }
+                            });
+                            ui.separator();
+                        }
+                    }
                     match window.tab {
                         PresetsTab::Library => {
                             ui.horizontal(|ui| {
@@ -739,10 +762,9 @@ fn search_form(
                 crate::widgets::choice(ui, &mut tab.count_kind, kind, &format!("{kind:?}"));
             }
         });
-        ui.add_enabled(
-            tab.count_kind != CountKind::Any,
-            egui::DragValue::new(&mut tab.count).range(1..=256),
-        );
+        ui.add_enabled_ui(tab.count_kind != CountKind::Any, |ui| {
+            crate::widgets::number(ui, &mut tab.count, 1..=256, "");
+        });
         ui.label("Sort");
         crate::widgets::combo(ui, "lospec_sort", &format!("{:?}", tab.sort), |ui| {
             for sort in [
