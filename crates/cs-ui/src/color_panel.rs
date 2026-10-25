@@ -794,9 +794,31 @@ impl Header {
     fn new(ui: &Ui, skin: &Skin, width: f32) -> Self {
         let groups = Groups::new(ui, skin);
         let widths = groups.widths;
-        let rows = pixel_ui::wrap_rows(width - COPY_LEFT - STRIP_RIGHT, &widths, &groups.joins);
+        let room = width - COPY_LEFT - STRIP_RIGHT;
+        let rows = pixel_ui::wrap_rows(room, &widths, &groups.joins);
         let row_of = |i: usize| rows.iter().position(|r| r.contains(&i)).unwrap_or(0);
         let top = |row: usize| row as f32 * (STRIP_HEIGHT + HEADER_ROW_GAP);
+        // Si el botón no entra al lado de RGBA y el hex quedaría solo en su fila, el botón va al
+        // lado del hex (RGBA arriba): dos filas en vez de tres.
+        let beside_hex = row_of(0) != row_of(1)
+            && row_of(1) != row_of(2)
+            && widths[0] + STRIP_GAP + CAP_LEFT_WIDTH + groups.hex_min <= room;
+        if beside_hex {
+            let rgba = pos2(COPY_LEFT, 0.0);
+            let copy = Rect::from_min_size(pos2(COPY_LEFT, top(1)), vec2(widths[0], STRIP_HEIGHT));
+            let hex_left = copy.right() + STRIP_GAP;
+            let right = (width - STRIP_RIGHT).max(hex_left + CAP_LEFT_WIDTH + groups.hex_min);
+            let hex =
+                Rect::from_min_max(pos2(hex_left, top(1)), pos2(right, top(1) + STRIP_HEIGHT));
+            return Self {
+                copy,
+                rgba,
+                rgba_alone: true,
+                hex,
+                segment: groups.segment,
+                height: top(1) + STRIP_HEIGHT,
+            };
+        }
         let copy = Rect::from_min_size(
             pos2(COPY_LEFT, top(row_of(0))),
             vec2(widths[0], STRIP_HEIGHT),

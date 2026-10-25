@@ -1199,29 +1199,28 @@ fn with_pixel_ui_a_narrow_panel_puts_the_hex_on_its_own_row() {
 }
 
 #[test]
-fn with_pixel_ui_a_narrower_panel_gives_each_group_its_own_row() {
+fn with_pixel_ui_a_narrower_panel_puts_the_copy_button_beside_the_hex() {
     let mut h = Harness::with_width(145.0);
     let column = h.palette_box();
     // Ni copiar con RGBA entra.
     assert!(column.width() < 147.0, "{column:?}");
     assert_header_fits(&h);
-    let copy = h.node("Copy color");
-    assert_eq!(copy.left(), column.left() + 2.0);
     let r = h.drawn_boxes("channel.r")[0];
-    // RGBA entero en la segunda fila, a 2 px del borde.
-    assert_eq!(r.min, pos2(column.left() + 2.0, copy.top() + 19.0));
+    // RGBA entero en la primera fila, a 2 px del borde.
+    assert_eq!(r.left(), column.left() + 2.0);
     for label in ["G", "B", "A"] {
         assert_eq!(h.node(label).top(), r.top(), "{label}");
     }
     assert_eq!(h.drawn("channel.sep").len(), 3);
     assert_eq!(h.drawn("channel.cap.r").len(), 1);
-    // El hex en la tercera.
+    // Abajo, el botón de copiar y, a su lado, el hex (con su punta izquierda): dos filas.
+    let copy = h.node("Copy color");
+    assert_eq!(copy.left(), column.left() + 2.0);
+    assert_eq!(copy.top(), r.top() + 19.0);
     let hex = h.drawn_boxes("channel.hex")[0];
-    assert_eq!(hex.top(), copy.top() + 38.0);
-    assert_eq!(
-        h.drawn("channel.cap.l")[0].min,
-        pos2(column.left() + 2.0, hex.top())
-    );
+    assert_eq!(hex.top(), copy.top());
+    let cap = h.drawn("channel.cap.l")[0];
+    assert!(cap.left() > copy.right(), "{cap:?} after {copy:?}");
     let sv_box = h.drawn_boxes("picker.sv")[0];
     assert_eq!(sv_box.top(), hex.top() + 19.0);
     // Los canales se siguen arrastrando en su fila.
