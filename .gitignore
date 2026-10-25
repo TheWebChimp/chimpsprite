@@ -2,3 +2,7 @@
 **/*.rs.bk
 .DS_Store
 dist/
+
+# Fuente Picotron (FontStruct, no comercial): la licencia no permite redistribuirla.
+.design/picotron-v7.otf/
+.design/picotron-v7.*.zip
