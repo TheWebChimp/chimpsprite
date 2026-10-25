@@ -434,7 +434,7 @@ fn with_pixel_ui_home_is_the_design_one() {
     assert!(!h.texts.iter().any(|(t, _)| t.starts_with("ChimpSprite ")));
     // Los botones de 71×17: New file y Open file… en una fila (cada 74), Open demo debajo (20).
     let new = h.button("New file");
-    let open = h.button("Open file…");
+    let open = h.button("Open file...");
     let demo = h.button("Open demo");
     assert_eq!(new.size(), Vec2::new(71.0, 17.0));
     assert_eq!((open.left() - new.left(), open.top()), (74.0, new.top()));

@@ -1048,6 +1048,7 @@ impl ChimpApp {
         // Con Pixel UI, los cursores y la selección del diseño.
         self.doc.canvas.pixel_ui = skin.is_some();
         self.doc.canvas.cursors = skin.map(pixel_cursors::CursorSet::from_skin);
+        self.doc.canvas.symmetry_color = skin.map(|s| s.colors().symmetry);
         let (width, frame) = match skin {
             // Con Pixel UI, la columna de íconos: la caja más el margen a cada lado, sin línea
             // contra el lienzo (el mockup no la tiene). Arriba, el margen del mockup hasta la

@@ -184,6 +184,8 @@ pub struct SkinColors {
     pub link: Color32,
     /// Lo que acompaña a un enlace (la ruta de cada reciente).
     pub path: Color32,
+    /// Los ejes de simetría sobre el lienzo.
+    pub symmetry: Color32,
 }
 
 impl SkinColors {
@@ -207,6 +209,7 @@ impl SkinColors {
             field_text: egui::Visuals::dark().strong_text_color(),
             link: theme::ACCENT,
             path: theme::LABEL,
+            symmetry: theme::ACCENT,
         }
     }
 
@@ -231,6 +234,7 @@ impl SkinColors {
             ("field_text", &mut c.field_text),
             ("link", &mut c.link),
             ("path", &mut c.path),
+            ("symmetry", &mut c.symmetry),
         ];
         for (name, slot) in slots {
             if let Some(v) = colors.get(name) {

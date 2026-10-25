@@ -256,7 +256,8 @@ impl ChimpApp {
             }
             let buttons: [(&str, f32, &str, HomeAction); 3] = [
                 (ICON_NEW, 5.0, "New file", HomeAction::New),
-                (ICON_OPEN, 2.0, "Open file…", HomeAction::Open),
+                // Tres puntos de texto, como en el diseño (no `…`).
+                (ICON_OPEN, 2.0, "Open file...", HomeAction::Open),
                 (ICON_OPEN, 2.0, "Open demo", HomeAction::Demo),
             ];
             for (i, (rows, left, label, a)) in buttons.into_iter().enumerate() {

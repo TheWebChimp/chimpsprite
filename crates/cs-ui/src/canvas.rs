@@ -93,6 +93,9 @@ pub struct CanvasView {
     pub artboard_window: Option<ArtboardWindow>,
     /// Con Pixel UI: los cursores y la selección del diseño; lo pone la app en cada frame.
     pub pixel_ui: bool,
+    /// Con Pixel UI, el color de los ejes de simetría del skin (y se dibujan como en Aseprite);
+    /// lo pone la app en cada frame.
+    pub symmetry_color: Option<Color32>,
     /// Con Pixel UI, los cursores del skin; lo pone la app en cada frame.
     pub cursors: Option<pixel_cursors::CursorSet>,
     /// Píxeles físicos por punto del último frame: [`Self::origin`] se alinea a ellos.
@@ -196,6 +199,7 @@ impl Default for CanvasView {
             artboard_window: None,
             pixel_ui: false,
             cursors: None,
+            symmetry_color: None,
             ppp: 1.0,
         }
     }
@@ -473,6 +477,10 @@ impl CanvasView {
         );
         let painter = painter.with_clip_rect(screen.intersect(rect));
         let (c, _) = self.symmetry_center(rect, editor);
+        if let Some(color) = self.symmetry_color {
+            draw_pixel_symmetry(&painter, axes, c, screen, color);
+            return;
+        }
         let stroke = Stroke::new(1.5, theme::ACCENT);
         let mut segments = Vec::new();
         if axes.vertical {
@@ -1925,6 +1933,69 @@ fn draw_transform_box(
     }
 }
 
+/// Con Pixel UI, los ejes de simetría como en Aseprite: líneas de 1 punto en `color`, enteras
+/// de borde a borde del artboard (`screen`). Las rectas llevan un handle de 5×5 (los de la
+/// selección) en cada punta, adentro del artboard; las diagonales son una escalera de píxeles
+/// que pasa por el centro `c`.
+fn draw_pixel_symmetry(
+    painter: &egui::Painter,
+    axes: cs_core::SymmetryAxes,
+    c: Pos2,
+    screen: Rect,
+    color: Color32,
+) {
+    let handle = crate::pixel_selection::HANDLE;
+    let half = (handle / 2.0).floor();
+    let screen = Rect::from_min_max(screen.min.round(), screen.max.round());
+    let (x, y) = (c.x.floor(), c.y.floor());
+    let px = |r: Rect| egui::Shape::rect_filled(r, 0.0, color);
+    let mut shapes = Vec::new();
+    let mut handles = Vec::new();
+    if axes.vertical {
+        let line = Rect::from_x_y_ranges(
+            x..=x + 1.0,
+            screen.top() + handle..=screen.bottom() - handle,
+        );
+        shapes.push(px(line));
+        for top in [screen.top(), screen.bottom() - handle] {
+            handles.push(Rect::from_min_size(
+                Pos2::new(x - half, top),
+                Vec2::splat(handle),
+            ));
+        }
+    }
+    if axes.horizontal {
+        let line = Rect::from_x_y_ranges(
+            screen.left() + handle..=screen.right() - handle,
+            y..=y + 1.0,
+        );
+        shapes.push(px(line));
+        for left in [screen.left(), screen.right() - handle] {
+            handles.push(Rect::from_min_size(
+                Pos2::new(left, y - half),
+                Vec2::splat(handle),
+            ));
+        }
+    }
+    // Las diagonales: un punto por fila, desde el centro hacia los dos lados.
+    let rows = (screen.height().max(screen.width())) as i32;
+    for (on, dir) in [(axes.diagonal_down, 1.0), (axes.diagonal_up, -1.0)] {
+        if !on {
+            continue;
+        }
+        for i in -rows..=rows {
+            let at = Pos2::new(x + dir * i as f32, y + i as f32);
+            if screen.contains(at) {
+                shapes.push(px(Rect::from_min_size(at, Vec2::splat(1.0))));
+            }
+        }
+    }
+    painter.extend(shapes);
+    for r in handles {
+        crate::pixel_selection::draw_handle(painter, r);
+    }
+}
+
 /// Flecha curva (sentido horario) en el puntero, para rotar: egui no trae ese cursor.
 fn draw_rotate_cursor(painter: &egui::Painter, at: Pos2) {
     use std::f32::consts::PI;
@@ -2544,6 +2615,59 @@ mod tests {
         assert!(h.editor.is_floating());
         crate::editor_key(&mut h.editor, Key::Enter, false);
         assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 5, 3), red);
+    }
+
+    #[test]
+    fn with_pixel_ui_the_symmetry_axes_are_one_point_lines_with_handles() {
+        let mut h = Harness::new();
+        let blue = Color32::from_rgb(0, 73, 255);
+        h.canvas.symmetry_color = Some(blue);
+        h.editor.set_symmetry(cs_core::Symmetry {
+            axes: cs_core::SymmetryAxes {
+                vertical: true,
+                diagonal_down: true,
+                ..Default::default()
+            },
+            center2: None,
+        });
+        h.frame(vec![]);
+        let fills = |color: Color32| -> Vec<Rect> {
+            h.shapes
+                .iter()
+                .filter_map(|s| match s {
+                    egui::Shape::Rect(r) if r.fill == color => Some(r.rect),
+                    _ => None,
+                })
+                .collect()
+        };
+        let pixels = h.pixels_of(0);
+        let lines = fills(blue);
+        // El eje vertical: 1 punto de ancho, de handle a handle (5 adentro de cada borde).
+        let vertical = lines
+            .iter()
+            .find(|r| r.width() == 1.0 && r.height() > 1.0)
+            .expect("the vertical axis");
+        assert_eq!(vertical.top(), pixels.top().round() + 5.0);
+        assert_eq!(vertical.bottom(), pixels.bottom().round() - 5.0);
+        // La diagonal: una escalera de puntos.
+        assert!(
+            lines
+                .iter()
+                .filter(|r| r.size() == Vec2::splat(1.0))
+                .count()
+                > 10
+        );
+        // Los handles de 5×5 (tinta), arriba y abajo del eje.
+        let handles: Vec<Rect> = fills(crate::pixel_cursors::INK)
+            .into_iter()
+            .filter(|r| r.size() == Vec2::splat(5.0))
+            .collect();
+        assert_eq!(handles.len(), 2, "{handles:?}");
+        assert!(
+            handles
+                .iter()
+                .all(|r| r.center().x.floor() == vertical.left())
+        );
     }
 
     #[test]

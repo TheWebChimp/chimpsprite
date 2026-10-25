@@ -6,7 +6,8 @@ license.workspace = true
 
 [dependencies]
 cs-ui.workspace = true
-eframe = { workspace = true, features = ["wgpu", "default_fonts", "accesskit", "wayland", "x11"] }
+# `links`: abrir enlaces en el navegador (Pixnews, Lospec…); sin ella, `open_url` no hace nada.
+eframe = { workspace = true, features = ["wgpu", "default_fonts", "accesskit", "wayland", "x11", "links"] }
 log.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
