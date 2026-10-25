@@ -41,7 +41,19 @@ pub const DIM_ALPHA: f32 = 0.35;
 /// `text` con su borde izquierdo en `left` y las mayúsculas empezando en la fila `cap_top`, en
 /// la fuente de los textos. Devuelve la forma y el ancho.
 pub fn caps_text(ui: &Ui, text: &str, left: f32, cap_top: f32, color: Color32) -> (Shape, f32) {
-    let font = TextStyle::Body.resolve(ui.style());
+    caps_text_in(ui, TextStyle::Body, text, left, cap_top, color)
+}
+
+/// [`caps_text`] en el estilo `style` (`Small`: los textos chicos).
+pub fn caps_text_in(
+    ui: &Ui,
+    style: TextStyle,
+    text: &str,
+    left: f32,
+    cap_top: f32,
+    color: Color32,
+) -> (Shape, f32) {
+    let font = style.resolve(ui.style());
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
     let width = galley.size().x.ceil();
     let ppp = ui.ctx().pixels_per_point();

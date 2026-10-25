@@ -729,8 +729,8 @@ fn caps_block_height(galley: &egui::Galley) -> f32 {
         .filter_map(|row| row.glyphs.first().map(|g| row.pos.y + g.pos.y))
         .collect();
     match (baselines.first(), baselines.last()) {
-        (Some(first), Some(last)) => last - first + tab_bar::CAP_HEIGHT,
-        _ => tab_bar::CAP_HEIGHT,
+        (Some(first), Some(last)) => last - first + tab_bar::cap_height(galley),
+        _ => tab_bar::cap_height(galley),
     }
 }
 
@@ -834,7 +834,8 @@ fn show_bubble(response: Response, piece: &Piece, color: Color32, text: &str) ->
         .gap(BUBBLE_GAP);
     tooltip.show(|ui| {
         let ppp = ui.ctx().pixels_per_point();
-        let font = TextStyle::Body.resolve(ui.style());
+        // Los textos chicos (chimpfont con Pixel UI).
+        let font = TextStyle::Small.resolve(ui.style());
         let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
         let body = vec2(
             (2.0 * BUBBLE_PADDING + galley.size().x).ceil(),

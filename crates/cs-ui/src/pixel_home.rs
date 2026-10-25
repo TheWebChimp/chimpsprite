@@ -123,7 +123,15 @@ fn item(
     let left = origin.x + LIST_TEXT_X;
     let clip = Rect::from_x_y_ranges(left..=right, top - 4.0..=top + PATH_BELOW + 10.0);
     let (name_shape, width) = text_shape(ui, name, left, top, colors.link);
-    let (path_shape, _) = text_shape(ui, path, left, top + PATH_BELOW, colors.path);
+    // La ruta, en los textos chicos.
+    let (path_shape, _) = pixel_draw::caps_text_in(
+        ui,
+        egui::TextStyle::Small,
+        path,
+        left,
+        top + PATH_BELOW,
+        colors.path,
+    );
     let painter = ui.painter().with_clip_rect(clip.intersect(ui.clip_rect()));
     painter.add(name_shape);
     painter.add(path_shape);

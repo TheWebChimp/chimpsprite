@@ -372,6 +372,21 @@ fn truncated(ui: &Ui, name: &str, room: f32) -> String {
     cut(lo)
 }
 
+/// La altura de las mayúsculas de la fuente de `galley`: la de chimpfont en los textos chicos;
+/// si no, la de la fuente pixel.
+pub(crate) fn cap_height(galley: &Galley) -> f32 {
+    let small = galley
+        .job
+        .sections
+        .first()
+        .is_some_and(|s| s.format.font_id.family == crate::appearance::small_family());
+    if small {
+        crate::appearance::SMALL_CAP_HEIGHT
+    } else {
+        CAP_HEIGHT
+    }
+}
+
 /// Dónde va un texto para que sus mayúsculas empiecen en la fila `cap_top`, alineado a píxeles.
 pub(crate) fn text_pos(
     galley: &Galley,
@@ -379,12 +394,13 @@ pub(crate) fn text_pos(
     cap_top: f32,
     pixels_per_point: f32,
 ) -> egui::Pos2 {
+    let caps = cap_height(galley);
     let baseline = galley
         .rows
         .first()
         .and_then(|row| row.glyphs.first().map(|g| row.pos.y + g.pos.y))
-        .unwrap_or(CAP_HEIGHT);
-    pos2(left, cap_top - (baseline - CAP_HEIGHT)).round_to_pixels(pixels_per_point)
+        .unwrap_or(caps);
+    pos2(left, cap_top - (baseline - caps)).round_to_pixels(pixels_per_point)
 }
 
 /// Una pestaña: la caja, el nombre y la marca. Devuelve lo que se pidió en ella.

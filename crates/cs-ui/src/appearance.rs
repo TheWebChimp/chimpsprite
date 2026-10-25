@@ -17,6 +17,19 @@ const PIXEL_FONT: &[u8] = include_bytes!("../../../assets/ui/chimpsprite.ttf");
 pub const PIXEL_FONT_NAME: &str = "chimpsprite";
 /// A 16 puntos, un píxel de la grilla de la fuente mide un punto (un píxel del skin).
 pub const PIXEL_FONT_SIZE: f32 = 16.0;
+/// La fuente de los textos chicos (chimpfont): solo mayúsculas de 5 px, ASCII. Con Pixel UI es
+/// la de `TextStyle::Small`: la barra de estado, los globos, las rutas de Home y Pixnews.
+const SMALL_FONT: &[u8] = include_bytes!("../../../assets/ui/chimpfont.ttf");
+pub const SMALL_FONT_NAME: &str = "chimpfont";
+/// A 8 puntos, un píxel de su grilla mide un punto.
+pub const SMALL_FONT_SIZE: f32 = 8.0;
+/// La altura de las mayúsculas de chimpfont (las de la fuente pixel: `tab_bar::CAP_HEIGHT`).
+pub const SMALL_CAP_HEIGHT: f32 = 5.0;
+
+/// La familia de los textos chicos. Siempre existe (sin Pixel UI tiene las fuentes de egui).
+pub fn small_family() -> FontFamily {
+    FontFamily::Name("small".into())
+}
 
 /// Fuentes de egui. Con `pixel`, la fuente pixel va primera en la proporcional, y las de egui
 /// quedan detrás para los glifos que no tiene (`•`, `…`, `▸`). La monoespaciada no cambia.
@@ -30,14 +43,32 @@ pub fn font_definitions(pixel: bool) -> FontDefinitions {
         };
         fonts.font_data.insert(
             PIXEL_FONT_NAME.to_owned(),
-            Arc::new(FontData::from_static(PIXEL_FONT).tweak(tweak)),
+            Arc::new(FontData::from_static(PIXEL_FONT).tweak(tweak.clone())),
         );
         fonts
             .families
             .entry(FontFamily::Proportional)
             .or_default()
             .insert(0, PIXEL_FONT_NAME.to_owned());
+        fonts.font_data.insert(
+            SMALL_FONT_NAME.to_owned(),
+            Arc::new(FontData::from_static(SMALL_FONT).tweak(tweak)),
+        );
     }
+    // Los textos chicos: chimpfont con Pixel UI y, detrás, la proporcional (los glifos que no
+    // tiene: acentos, `…`).
+    let mut small: Vec<String> = Vec::new();
+    if pixel {
+        small.push(SMALL_FONT_NAME.to_owned());
+    }
+    small.extend(
+        fonts
+            .families
+            .get(&FontFamily::Proportional)
+            .cloned()
+            .unwrap_or_default(),
+    );
+    fonts.families.insert(small_family(), small);
     fonts
 }
 
@@ -119,16 +150,15 @@ pub fn apply_style(ctx: &egui::Context, pixel: Option<&SkinColors>) {
         let Some(colors) = pixel else {
             return;
         };
-        for text in [
-            TextStyle::Small,
-            TextStyle::Body,
-            TextStyle::Button,
-            TextStyle::Heading,
-        ] {
+        for text in [TextStyle::Body, TextStyle::Button, TextStyle::Heading] {
             style
                 .text_styles
                 .insert(text, FontId::proportional(PIXEL_FONT_SIZE));
         }
+        style.text_styles.insert(
+            TextStyle::Small,
+            FontId::new(SMALL_FONT_SIZE, small_family()),
+        );
         style.visuals = pixel_visuals(colors);
     });
 }
@@ -269,11 +299,19 @@ mod tests {
     #[test]
     fn the_pixel_font_goes_first_only_in_the_proportional_family() {
         let plain = font_definitions(false);
-        assert_eq!(plain, FontDefinitions::default());
+        // Sin Pixel UI, las de egui y la familia de los textos chicos con las proporcionales.
+        let mut expected = FontDefinitions::default();
+        let proportional = expected.families[&FontFamily::Proportional].clone();
+        expected.families.insert(small_family(), proportional);
+        assert_eq!(plain, expected);
         let pixel = font_definitions(true);
         let proportional = &pixel.families[&FontFamily::Proportional];
         assert_eq!(proportional[0], PIXEL_FONT_NAME);
         assert!(proportional.len() > 1, "egui fonts stay as fallback");
+        // Los textos chicos: chimpfont primero y la proporcional detrás.
+        let small = &pixel.families[&small_family()];
+        assert_eq!(small[0], SMALL_FONT_NAME);
+        assert_eq!(&small[1..], proportional.as_slice());
         assert_eq!(
             pixel.families[&FontFamily::Monospace],
             plain.families[&FontFamily::Monospace]

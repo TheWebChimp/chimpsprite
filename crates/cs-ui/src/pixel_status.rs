@@ -14,8 +14,9 @@ pub const HEIGHT: f32 = 20.0;
 /// El aire de todo: del borde al ícono, del ícono al texto, del texto a la línea y de la línea
 /// a lo siguiente.
 const AIR: f32 = 3.0;
-/// Fila de las mayúsculas, desde arriba de la barra.
-const CAPS_TOP: f32 = 7.0;
+/// Fila de las mayúsculas (de 5, los textos chicos), desde arriba de la barra: centradas donde
+/// iban las de 7 (filas 7..13).
+const CAPS_TOP: f32 = 8.0;
 /// Fila de abajo de los íconos (todos apoyados ahí), desde arriba de la barra.
 const ICON_BOTTOM: f32 = 17.0;
 
@@ -47,7 +48,8 @@ pub fn show(ui: &mut Ui, skin: &Skin, sections: &[Section]) {
         &colors,
         ppp,
     )];
-    let font = TextStyle::Body.resolve(ui.style());
+    // Los textos chicos (chimpfont).
+    let font = TextStyle::Small.resolve(ui.style());
     let mut x = bar.left() + AIR;
     for (i, section) in sections.iter().enumerate() {
         if i > 0 {

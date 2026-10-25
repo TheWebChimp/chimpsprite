@@ -2639,8 +2639,9 @@ mod tests {
         // arriba en el centro del botón: el cuerpo empieza 8 filas antes.
         assert_eq!(drawn.left(), button.right() + 6.0, "{drawn:?} {button:?}");
         assert_eq!(drawn.top() + 8.0, button.center().y, "{drawn:?} {button:?}");
-        // Una línea: el alto del globo del mockup.
-        assert_eq!(drawn.height(), 20.0, "{drawn:?}");
+        // Una línea en los textos chicos (mayúsculas de 5): 6 de aire arriba y abajo, y la fila
+        // de sombra.
+        assert_eq!(drawn.height(), 18.0, "{drawn:?}");
         let (text, rect, color) = h
             .texts
             .iter()

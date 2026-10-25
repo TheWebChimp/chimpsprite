@@ -719,8 +719,11 @@ impl News {
                     }
                     _ => {}
                 }
-                ui.add(egui::Label::new(post.title.as_str()).truncate());
-                ui.weak(post.author.as_str());
+                // Los textos chicos.
+                ui.add(
+                    egui::Label::new(egui::RichText::new(post.title.as_str()).small()).truncate(),
+                );
+                ui.label(egui::RichText::new(post.author.as_str()).small().weak());
             })
             .response;
         let response = ui
