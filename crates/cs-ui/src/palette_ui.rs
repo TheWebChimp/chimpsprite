@@ -389,7 +389,7 @@ impl ChimpApp {
                                 ui.label("Search");
                                 ui.text_edit_singleline(&mut window.search);
                             });
-                            egui::ScrollArea::vertical().show(ui, |ui| {
+                            crate::pixel_ui::scroll(ui, egui::ScrollArea::vertical(), |ui| {
                                 for (title, list) in [
                                     ("Built-in", self.palettes.builtin()),
                                     ("User", self.palettes.user()),
@@ -664,7 +664,7 @@ fn lospec_ui(
     }
     ui.separator();
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    crate::pixel_ui::scroll(ui, egui::ScrollArea::vertical(), |ui| {
         if let Some(p) = tab.lookup_result() {
             lospec_row(
                 ui,

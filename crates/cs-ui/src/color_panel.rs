@@ -236,18 +236,21 @@ pub fn palette_grid(ui: &mut Ui, editor: &mut Editor, skin: &Skin, height: f32) 
             .layout(Layout::top_down(Align::Min)),
     );
     inner.set_clip_rect(view.intersect(ui.clip_rect()));
-    egui::ScrollArea::vertical()
-        .id_salt("pixel_palette_scroll")
-        .auto_shrink([false, false])
-        .max_height(view.height())
-        .scroll_source(ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL)
-        .show(&mut inner, |ui| {
+    crate::pixel_ui::scroll(
+        &mut inner,
+        egui::ScrollArea::vertical()
+            .id_salt("pixel_palette_scroll")
+            .auto_shrink([false, false])
+            .max_height(view.height())
+            .scroll_source(ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL),
+        |ui| {
             let pad = GRID_INSET - BOX_BORDER;
             let (area, _) =
                 ui.allocate_exact_size(vec2(view.width(), grid_height + 2.0 * pad), Sense::hover());
             let origin = area.min + Vec2::splat(pad);
             grid_cells(ui, editor, skin, id, origin, columns, count);
-        });
+        },
+    );
 }
 
 /// Lo que siempre queda para el scroll de abajo (Artboards, instancia, slices...): 12 de aire, 6

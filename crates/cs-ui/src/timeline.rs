@@ -160,9 +160,10 @@ pub fn show(
 
 /// Tags, encabezado y una fila por capa, con scroll en las dos direcciones.
 fn grid(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, grid: Grid) {
-    egui::ScrollArea::both()
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
+    crate::pixel_ui::scroll(
+        ui,
+        egui::ScrollArea::both().auto_shrink([false, false]),
+        |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
             if grid.skin.is_some() {
                 // El scroll empieza una fila antes: ahí suben las líneas de las columnas.
@@ -176,7 +177,8 @@ fn grid(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, grid:
             for id in editor.timeline_layers() {
                 layer_row(ui, editor, state, id, grid);
             }
-        });
+        },
+    );
 }
 
 /// La fila de controles: una sola línea que, si no cabe, hace scroll horizontal con la rueda o la

@@ -670,10 +670,12 @@ impl News {
         let columns = ((ui.available_width() + GAP) / (CELL + GAP))
             .floor()
             .max(1.0) as usize;
-        egui::ScrollArea::vertical()
-            .id_salt(("news_feed", source.label()))
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
+        crate::pixel_ui::scroll(
+            ui,
+            egui::ScrollArea::vertical()
+                .id_salt(("news_feed", source.label()))
+                .auto_shrink([false, false]),
+            |ui| {
                 for row in posts.chunks(columns) {
                     ui.horizontal_top(|ui| {
                         ui.spacing_mut().item_spacing.x = GAP;
@@ -685,7 +687,8 @@ impl News {
                     });
                     ui.add_space(GAP);
                 }
-            });
+            },
+        );
         action
     }
 

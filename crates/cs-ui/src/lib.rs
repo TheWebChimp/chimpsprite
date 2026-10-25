@@ -1133,7 +1133,7 @@ impl ChimpApp {
             if fixed {
                 palette_action = palette(ui, &mut self.doc.editor, &mut self.view.palette_height);
             }
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            crate::pixel_ui::scroll(ui, egui::ScrollArea::vertical(), |ui| {
                 if tiles {
                     panels::tileset(ui, &mut self.doc.editor, &mut self.doc.tile_thumbs);
                     // El selector de color sigue a mano (lo usa 2B).

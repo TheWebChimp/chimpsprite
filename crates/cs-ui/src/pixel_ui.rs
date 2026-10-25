@@ -763,7 +763,16 @@ fn frame_skin(ctx: &egui::Context) -> Option<Skin> {
 /// Con Pixel UI (`skin`), los tooltips de este frame son el globo del skin y los botones sueltos
 /// los del skin; sin él, los de egui.
 pub fn set_bubble(ctx: &egui::Context, skin: Option<&Skin>) {
-    let small = skin.map(|s| s.subset(&[BUBBLE_PIECE, BUTTON_PIECE]));
+    let small = skin.map(|s| {
+        s.subset(&[
+            BUBBLE_PIECE,
+            BUTTON_PIECE,
+            SCROLL_TRACK_V,
+            SCROLL_THUMB_V,
+            SCROLL_TRACK_H,
+            SCROLL_THUMB_H,
+        ])
+    });
     ctx.data_mut(|d| match small {
         Some(s) => {
             d.insert_temp(frame_skin_id(), s);
@@ -779,6 +788,110 @@ pub fn text_button(ui: &mut Ui, label: &str) -> Response {
         Some(skin) => pixel_button(ui, &skin, label),
         None => ui.button(label),
     }
+}
+
+/// Las barras de scroll del diseño (frame 4): el track violeta de 10 con su borde claro y el
+/// pulgar con las estrías, en 9-slice (las estrías van en el borde fijo).
+const SCROLL_TRACK_V: &str = "scroll.track.v";
+const SCROLL_THUMB_V: &str = "scroll.thumb.v";
+const SCROLL_TRACK_H: &str = "scroll.track.h";
+const SCROLL_THUMB_H: &str = "scroll.thumb.h";
+/// El ancho de la barra y el largo mínimo del pulgar (entra entero, con sus estrías).
+const SCROLL_BAR: f32 = 10.0;
+const SCROLL_THUMB_MIN: f32 = 46.0;
+/// Del borde del track al pulgar (de cada lado: 10 = 1 + 8 + 1).
+const SCROLL_THUMB_INSET: f32 = 1.0;
+
+/// Un `ScrollArea` de la app: con Pixel UI, con las barras del diseño. Las de egui siguen
+/// manejando el arrastre y la rueda, pero invisibles (de 10, sin márgenes ni flotar); encima se
+/// pintan el track y el pulgar del skin donde egui los tiene. Sin Pixel UI, las de siempre.
+pub fn scroll<R>(
+    ui: &mut Ui,
+    area: egui::ScrollArea,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let skin =
+        frame_skin(ui.ctx()).filter(|s| s.piece(SCROLL_THUMB_V, WidgetState::Normal).is_some());
+    let Some(skin) = skin else {
+        return area.show(ui, add_contents).inner;
+    };
+    ui.scope(|ui| {
+        let s = &mut ui.spacing_mut().scroll;
+        s.floating = false;
+        s.bar_width = SCROLL_BAR;
+        s.bar_inner_margin = 0.0;
+        s.bar_outer_margin = 0.0;
+        s.handle_min_length = SCROLL_THUMB_MIN;
+        s.dormant_background_opacity = 0.0;
+        s.active_background_opacity = 0.0;
+        s.interact_background_opacity = 0.0;
+        s.dormant_handle_opacity = 0.0;
+        s.active_handle_opacity = 0.0;
+        s.interact_handle_opacity = 0.0;
+        let out = area.show(ui, add_contents);
+        let ppp = ui.ctx().pixels_per_point();
+        let inner = out.inner_rect;
+        let mut shapes = Vec::new();
+        for vertical in [true, false] {
+            let (content, view) = if vertical {
+                (out.content_size.y, inner.height())
+            } else {
+                (out.content_size.x, inner.width())
+            };
+            if content <= view + 0.5 {
+                continue;
+            }
+            let offset = if vertical {
+                out.state.offset.y
+            } else {
+                out.state.offset.x
+            };
+            let track = if vertical {
+                Rect::from_x_y_ranges(inner.right()..=inner.right() + SCROLL_BAR, inner.y_range())
+            } else {
+                Rect::from_x_y_ranges(
+                    inner.x_range(),
+                    inner.bottom()..=inner.bottom() + SCROLL_BAR,
+                )
+            };
+            let track = track.round_to_pixels(ppp);
+            let span = if vertical {
+                track.height()
+            } else {
+                track.width()
+            };
+            let len = (span * view / content)
+                .max(SCROLL_THUMB_MIN)
+                .min(span)
+                .round();
+            let max = (content - view).max(1.0);
+            let at = ((offset / max).clamp(0.0, 1.0) * (span - len)).round();
+            let thumb = if vertical {
+                Rect::from_min_size(
+                    pos2(track.left() + SCROLL_THUMB_INSET, track.top() + at),
+                    vec2(SCROLL_BAR - 2.0 * SCROLL_THUMB_INSET, len),
+                )
+            } else {
+                Rect::from_min_size(
+                    pos2(track.left() + at, track.top() + SCROLL_THUMB_INSET),
+                    vec2(len, SCROLL_BAR - 2.0 * SCROLL_THUMB_INSET),
+                )
+            };
+            let (track_piece, thumb_piece) = if vertical {
+                (SCROLL_TRACK_V, SCROLL_THUMB_V)
+            } else {
+                (SCROLL_TRACK_H, SCROLL_THUMB_H)
+            };
+            for (name, rect) in [(track_piece, track), (thumb_piece, thumb)] {
+                if let Some(piece) = skin.piece(name, WidgetState::Normal) {
+                    shapes.extend(piece_shapes(piece, rect, ppp));
+                }
+            }
+        }
+        ui.painter().extend(shapes);
+        out.inner
+    })
+    .inner
 }
 
 /// Los tooltips de la app: con Pixel UI, el globo del skin (como los de la barra de íconos);
@@ -1189,6 +1302,60 @@ mod tests {
                 .collect();
             assert_eq!(flat.len(), 2, "background and title bar");
             assert_on_pixels(&flat, ppp);
+        }
+    }
+
+    #[test]
+    fn with_pixel_ui_scroll_areas_draw_the_design_bars() {
+        let ctx = egui::Context::default();
+        let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
+        let thumb = skin
+            .piece(SCROLL_THUMB_V, WidgetState::Normal)
+            .unwrap()
+            .texture
+            .id();
+        let track = skin
+            .piece(SCROLL_TRACK_V, WidgetState::Normal)
+            .unwrap()
+            .texture
+            .id();
+        // Las mallas con `id` dibujadas en un frame con el contenido más alto que el área.
+        let drawn = |pixel: bool| {
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                set_bubble(ui.ctx(), pixel.then_some(&skin));
+                scroll(ui, egui::ScrollArea::vertical().max_height(100.0), |ui| {
+                    ui.allocate_space(vec2(50.0, 400.0));
+                });
+            });
+            output.textures_delta.clear();
+            let mut found = Vec::new();
+            for clipped in &output.shapes {
+                for (id, rect) in meshes(&clipped.shape) {
+                    if id == thumb || id == track {
+                        found.push((id, rect));
+                    }
+                }
+            }
+            found
+        };
+        let found = drawn(true);
+        assert!(found.iter().any(|(id, _)| *id == track), "the track");
+        let thumb_rect = found
+            .iter()
+            .filter(|(id, _)| *id == thumb)
+            .fold(Rect::NOTHING, |b, (_, r)| b.union(*r));
+        // El pulgar: 8 de ancho y, con 100 de 400 a la vista, el largo mínimo (46).
+        assert_eq!(thumb_rect.width(), 8.0, "{thumb_rect:?}");
+        assert_eq!(thumb_rect.height(), SCROLL_THUMB_MIN, "{thumb_rect:?}");
+        assert!(drawn(false).is_empty(), "without Pixel UI, egui's bar");
+    }
+
+    /// Las mallas (con su textura) de una forma, aplanada.
+    fn meshes(shape: &Shape) -> Vec<(egui::TextureId, Rect)> {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().flat_map(meshes).collect(),
+            Shape::Mesh(m) => vec![(m.texture_id, m.calc_bounds())],
+            _ => Vec::new(),
         }
     }
 
