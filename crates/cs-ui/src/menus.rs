@@ -91,6 +91,9 @@ const KEY_PAD_Y: f32 = 1.0;
 const CHECK_TOP: f32 = 2.0;
 const FALLBACK_CHECK_SIZE: egui::Vec2 = vec2(11.0, 12.0);
 const CHECK_GAP: f32 = 3.0;
+/// Lo que egui separa el panel de un submenú del de su menú (la mitad de los márgenes y 2, menos
+/// el margen derecho del panel).
+const SUBMENU_PULL: f32 = 2.0;
 /// La flecha de los submenús: un triángulo de 3×5 a 1 fila de las mayúsculas.
 const ARROW_TOP: f32 = 1.0;
 
@@ -748,9 +751,13 @@ pub(crate) fn submenu<R>(
     let painter = row_painter(ui, &look);
     painter.extend(shapes);
     let config = menu::MenuConfig::new().style(pixel_menu_style);
+    // egui deja el submenú 2 px más allá del borde del panel; con la fila acortada, su panel
+    // queda pegado al de este menú.
+    let mut anchor = response.clone();
+    anchor.interact_rect.max.x -= SUBMENU_PULL;
     let open = menu::SubMenu::new()
         .config(config)
-        .show(ui, &response, |ui| panel(ui, &look, None, content));
+        .show(ui, &anchor, |ui| panel(ui, &look, None, content));
     if enabled && (open.is_some() || response.hovered()) {
         painter.set(back, row_highlight(&look, rect, ppp));
     }

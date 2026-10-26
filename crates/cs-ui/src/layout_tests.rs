@@ -1468,6 +1468,8 @@ fn submenus_have_an_arrow_of_shapes_and_the_same_panel() {
         .reduce(|a, b| a.union(b))
         .expect("a second panel, to the right");
     assert!(sub.contains_rect(text_rect(&h, "Rulers").0), "{sub:?}");
+    // Pegado al panel del menú, sin aire entre los dos.
+    assert_eq!(sub.left(), panel.right(), "{sub:?} {panel:?}");
 }
 
 /// La casilla `label` del último frame: su rect y si está marcada.
