@@ -391,7 +391,12 @@ impl CanvasView {
 
     /// Centro de simetría efectivo en pantalla (con el arrastre en curso, si lo hay).
     fn symmetry_center(&self, rect: Rect, editor: &Editor) -> (Pos2, (i32, i32)) {
-        let a = editor.artboard();
+        self.symmetry_center_of(rect, editor.artboard())
+    }
+
+    /// Como `symmetry_center`, del artboard `a` (el que se ve: mientras se mueve, en su lugar
+    /// nuevo).
+    fn symmetry_center_of(&self, rect: Rect, a: &cs_core::Artboard) -> (Pos2, (i32, i32)) {
         let c2 = self
             .sym_drag
             .map_or_else(|| a.symmetry_center2(), |(_, c)| c);
@@ -509,20 +514,29 @@ impl CanvasView {
         Some(cursor(handle))
     }
 
-    /// Ejes de simetría punteados sobre el artboard activo y su centro.
-    fn draw_symmetry(&self, painter: &egui::Painter, rect: Rect, editor: &Editor) {
-        let axes = editor.symmetry().axes;
+    /// Ejes de simetría punteados sobre el artboard activo y su centro, como se ve en `document`
+    /// (mientras se arrastra el artboard, se mueven con él).
+    fn draw_symmetry(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        editor: &Editor,
+        document: &cs_core::Document,
+    ) {
+        let a = document
+            .artboard(editor.active)
+            .unwrap_or_else(|| editor.artboard());
+        let axes = a.symmetry.axes;
         if !axes.any() {
             return;
         }
-        let a = editor.artboard();
         let ((x0, y0), (x1, y1)) = a.rect();
         let screen = Rect::from_min_max(
             self.to_screen(rect, (x0, y0)),
             self.to_screen(rect, (x1, y1)),
         );
         let painter = painter.with_clip_rect(screen.intersect(rect));
-        let (c, _) = self.symmetry_center(rect, editor);
+        let (c, _) = self.symmetry_center_of(rect, a);
         if let Some(color) = self.symmetry_color {
             // Pegados a lo visible: con zoom, los handles quedan en el borde de la vista aunque
             // el artboard siga más allá.
@@ -1343,7 +1357,7 @@ impl CanvasView {
         }
 
         if !modal {
-            self.draw_symmetry(&painter, rect, editor);
+            self.draw_symmetry(&painter, rect, editor, document);
         }
 
         if let Some((min, max)) = guide {
@@ -2814,6 +2828,50 @@ mod tests {
         assert!(h.editor.is_floating());
         crate::editor_key(&mut h.editor, Key::Enter, false);
         assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 5, 3), red);
+    }
+
+    #[test]
+    fn the_symmetry_axis_moves_with_the_artboard_while_dragging_it() {
+        let mut h = Harness::new();
+        let blue = Color32::from_rgb(0, 73, 255);
+        h.canvas.symmetry_color = Some(blue);
+        h.editor.set_symmetry(cs_core::Symmetry {
+            axes: cs_core::SymmetryAxes {
+                vertical: true,
+                ..Default::default()
+            },
+            center2: None,
+        });
+        h.editor.set_tool(ToolKind::Artboard);
+        h.frame(vec![]);
+        let axis_x = |h: &Harness| {
+            h.shapes
+                .iter()
+                .find_map(|s| match s {
+                    egui::Shape::Rect(r)
+                        if r.fill == blue && r.rect.width() == 1.0 && r.rect.height() > 1.0 =>
+                    {
+                        Some(r.rect.left())
+                    }
+                    _ => None,
+                })
+                .expect("the vertical axis")
+        };
+        let before = axis_x(&h);
+        // Se agarra el artboard y se mueve 3 píxeles, sin soltar.
+        let from = h.screen((4, 4));
+        let to = from + Vec2::new(3.0 * h.canvas.zoom, 0.0);
+        let press = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.frame(vec![Event::PointerMoved(from)]);
+        h.frame(vec![press(from, true)]);
+        h.frame(vec![Event::PointerMoved(from.lerp(to, 0.5))]);
+        h.frame(vec![Event::PointerMoved(to)]);
+        assert_eq!(axis_x(&h), before + 3.0 * h.canvas.zoom);
     }
 
     #[test]
