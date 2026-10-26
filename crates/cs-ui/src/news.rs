@@ -754,10 +754,10 @@ impl News {
                     }
                     _ => {}
                 }
-                // Los textos chicos.
-                ui.add(
-                    egui::Label::new(egui::RichText::new(post.title.as_str()).small()).truncate(),
-                );
+                // Los textos chicos; el título cortado con los puntos de la fuente pixel.
+                let small = egui::TextStyle::Small.resolve(ui.style());
+                let title = crate::tab_bar::fit_text(ui, &post.title, &small, ui.available_width());
+                ui.add(egui::Label::new(egui::RichText::new(title).small()).truncate());
                 ui.label(egui::RichText::new(post.author.as_str()).small().weak());
             })
             .response;

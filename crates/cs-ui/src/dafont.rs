@@ -215,8 +215,14 @@ fn take_open_request(ctx: &egui::Context) -> bool {
 /// Una fuente sacada del zip: su nombre y sus bytes.
 type FontFile = (String, Vec<u8>);
 
+/// Las vistas previas se piden de a estas (solo las que se ven).
+const MAX_IN_FLIGHT: usize = 4;
+/// Una petición que no respondió en este tiempo se da por perdida.
+const TIMEOUT_SECS: f64 = 20.0;
+
 enum Preview {
-    Loading(Pending<egui::ColorImage>),
+    /// La petición y cuándo se hizo.
+    Loading(Pending<egui::ColorImage>, f64),
     Ready(egui::TextureHandle),
     Failed,
 }
@@ -229,8 +235,13 @@ pub struct DafontWindow {
     /// La última página pedida y su petición en curso.
     page: u32,
     listing: Option<Pending<Vec<DafontFont>>>,
+    /// La lista no llegó: se puede volver a pedir la página.
+    listing_failed: bool,
     /// La fuente que se está bajando.
     download: Option<(DafontFont, Pending<FontFile>)>,
+    /// Cuándo se pidió la lista o la descarga en curso.
+    listing_since: f64,
+    download_since: f64,
     previews: HashMap<String, Preview>,
     /// El último problema, para mostrarlo.
     error: Option<String>,
@@ -267,6 +278,9 @@ impl DafontWindow {
 
     fn load_page(&mut self, ctx: &egui::Context, page: u32) {
         self.page = page;
+        self.error = None;
+        self.listing_failed = false;
+        self.listing_since = ctx.input(|i| i.time);
         let url = listing_url(page, &self.shown_sample);
         self.listing = Some(lospec_client::fetch(ctx, url, |status, bytes| {
             if status != 200 {
@@ -284,6 +298,7 @@ impl DafontWindow {
             extract_font(bytes).ok_or(FetchError::Invalid)
         });
         self.error = None;
+        self.download_since = ctx.input(|i| i.time);
         self.download = Some((font, pending));
     }
 
@@ -300,17 +315,32 @@ impl DafontWindow {
         if self.fonts.is_empty() && self.listing.is_none() && self.error.is_none() && !self.end {
             self.load_page(ctx, 1);
         }
-        // Lo que llegó.
-        if let Some(result) = self.listing.as_ref().and_then(Pending::poll) {
+        // Lo que llegó (o lo que tardó demasiado: dafont no respondió).
+        let now = ctx.input(|i| i.time);
+        let late = |since: f64| now - since > TIMEOUT_SECS;
+        let listing = match self.listing.as_ref().map(Pending::poll) {
+            Some(None) if late(self.listing_since) => Some(Err(FetchError::Network)),
+            Some(result) => result,
+            None => None,
+        };
+        if let Some(result) = listing {
             self.listing = None;
             match result {
                 Ok(fonts) if fonts.is_empty() => self.end = true,
                 Ok(fonts) => self.fonts.extend(fonts),
-                Err(e) => self.error = Some(describe(&e)),
+                Err(e) => {
+                    self.error = Some(describe(&e));
+                    self.listing_failed = true;
+                }
             }
         }
         let mut picked = None;
-        if let Some(result) = self.download.as_ref().and_then(|(_, p)| p.poll()) {
+        let download = match self.download.as_ref().map(|(_, p)| p.poll()) {
+            Some(None) if late(self.download_since) => Some(Err(FetchError::Network)),
+            Some(result) => result,
+            None => None,
+        };
+        if let Some(result) = download {
             let (font, _) = self.download.take().expect("polled");
             // Cada falla con su aviso: la descarga no fue un zip con la fuente o la fuente no se lee.
             let loaded = result
@@ -336,25 +366,30 @@ impl DafontWindow {
             }
         }
         for preview in self.previews.values_mut() {
-            if let Preview::Loading(p) = preview
-                && let Some(result) = p.poll()
-            {
-                *preview = match result {
-                    Ok(image) => Preview::Ready(ctx.load_texture(
-                        "dafont_preview",
-                        image,
-                        egui::TextureOptions::NEAREST,
-                    )),
-                    Err(_) => Preview::Failed,
-                };
+            if let Preview::Loading(p, since) = preview {
+                match p.poll() {
+                    Some(Ok(image)) => {
+                        *preview = Preview::Ready(ctx.load_texture(
+                            "dafont_preview",
+                            image,
+                            egui::TextureOptions::NEAREST,
+                        ));
+                    }
+                    Some(Err(_)) => *preview = Preview::Failed,
+                    None if late(*since) => *preview = Preview::Failed,
+                    None => {}
+                }
             }
         }
-        if self.listing.is_some() || self.download.is_some() {
-            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        // Las respuestas piden su frame; este es para darse cuenta de las que no llegan.
+        if self.listing.is_some() || self.download.is_some() || self.in_flight() > 0 {
+            ctx.request_repaint_after(std::time::Duration::from_millis(500));
         }
         let mut chosen = None;
         let mut more = false;
         let mut try_sample = false;
+        let mut retry = false;
+        let mut visible = Vec::new();
         let (_, closed) = pixel_ui::app_window(
             ctx,
             skin,
@@ -377,7 +412,12 @@ impl DafontWindow {
                     try_sample = enter && self.sample.trim() != self.shown_sample;
                 });
                 if let Some(error) = &self.error {
-                    ui.colored_label(Color32::from_rgb(0xc0, 0x40, 0x40), error);
+                    ui.horizontal(|ui| {
+                        ui.colored_label(Color32::from_rgb(0xc0, 0x40, 0x40), error);
+                        if self.listing_failed {
+                            retry = pixel_ui::text_button(ui, "Retry").clicked();
+                        }
+                    });
                 }
                 ui.add_space(4.0);
                 pixel_ui::scroll(
@@ -387,9 +427,13 @@ impl DafontWindow {
                         .max_height((ctx.content_rect().height() - LIST_CHROME).max(420.0))
                         .auto_shrink([false, false]),
                     |ui| {
-                        for font in &self.fonts {
-                            if self.font_row(ui, font) {
+                        for (k, font) in self.fonts.iter().enumerate() {
+                            let (use_it, shown) = self.font_row(ui, font);
+                            if use_it {
                                 chosen = Some(font.clone());
+                            }
+                            if shown {
+                                visible.push(k);
                             }
                             ui.add_space(6.0);
                         }
@@ -413,6 +457,9 @@ impl DafontWindow {
         if more {
             self.load_page(ctx, self.page + 1);
         }
+        if retry {
+            self.load_page(ctx, self.page);
+        }
         // Otro texto: la lista vuelve a empezar con sus vistas previas nuevas.
         if try_sample {
             self.shown_sample = self.sample.trim().to_string();
@@ -422,8 +469,11 @@ impl DafontWindow {
             self.error = None;
             self.load_page(ctx, 1);
         }
-        // Las vistas previas que todavía no se pidieron (las de lo listado).
-        for font in &self.fonts {
+        // Las vistas previas que se ven y todavía no se pidieron, de a `MAX_IN_FLIGHT`.
+        for font in visible.into_iter().filter_map(|k| self.fonts.get(k)) {
+            if self.in_flight() >= MAX_IN_FLIGHT {
+                break;
+            }
             if let Some(url) = &font.preview_url
                 && !self.previews.contains_key(&font.slug)
             {
@@ -434,18 +484,27 @@ impl DafontWindow {
                     crate::news::decode_thumb(bytes)
                 });
                 self.previews
-                    .insert(font.slug.clone(), Preview::Loading(pending));
+                    .insert(font.slug.clone(), Preview::Loading(pending, now));
             }
         }
         picked
     }
 
+    fn in_flight(&self) -> usize {
+        self.previews
+            .values()
+            .filter(|p| matches!(p, Preview::Loading(..)))
+            .count()
+    }
+
     /// Una fila: la vista previa, el nombre, el autor, el tamaño, la licencia y "Use". Devuelve
-    /// si se eligió.
-    fn font_row(&self, ui: &mut egui::Ui, font: &DafontFont) -> bool {
+    /// si se eligió y si su vista previa se ve.
+    fn font_row(&self, ui: &mut egui::Ui, font: &DafontFont) -> (bool, bool) {
         let mut use_it = false;
+        let mut shown = false;
         ui.horizontal_top(|ui| {
             let (rect, _) = ui.allocate_exact_size(vec2(PREVIEW_W, 40.0), egui::Sense::hover());
+            shown = ui.is_rect_visible(rect);
             match self.previews.get(&font.slug) {
                 Some(Preview::Ready(texture)) => {
                     let size = texture.size_vec2();
@@ -503,7 +562,7 @@ impl DafontWindow {
                 }
             });
         });
-        use_it
+        (use_it, shown)
     }
 }
 

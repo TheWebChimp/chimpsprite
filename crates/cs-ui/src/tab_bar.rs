@@ -273,8 +273,12 @@ fn font(ui: &Ui) -> egui::FontId {
 
 /// Ancho de `text` sin cortar.
 fn text_width(ui: &Ui, text: &str) -> f32 {
+    width_in(ui, text, &font(ui))
+}
+
+fn width_in(ui: &Ui, text: &str, font: &egui::FontId) -> f32 {
     ui.painter()
-        .layout_no_wrap(text.to_owned(), font(ui), Color32::WHITE)
+        .layout_no_wrap(text.to_owned(), font.clone(), Color32::WHITE)
         .size()
         .x
         .ceil()
@@ -349,7 +353,14 @@ fn fit_widths(natural: &[f32], room: f32, min: f32) -> Vec<f32> {
 /// `name` entero si mide hasta `room`; si no, lo más largo que entre seguido de `ellipsis()` (o
 /// nada si ni eso entra).
 fn truncated(ui: &Ui, name: &str, room: f32) -> String {
-    if text_width(ui, name) <= room {
+    fit_text(ui, name, &font(ui), room)
+}
+
+/// Como [`truncated`], con la fuente `font`: para cortar textos fuera de las pestañas con los
+/// puntos de la fuente pixel (el corte de egui usa el "…" borroso de la de respaldo).
+pub(crate) fn fit_text(ui: &Ui, name: &str, font: &egui::FontId, room: f32) -> String {
+    let width = |text: &str| width_in(ui, text, font);
+    if width(name) <= room {
         return name.to_owned();
     }
     let chars: Vec<char> = name.chars().collect();
@@ -357,7 +368,7 @@ fn truncated(ui: &Ui, name: &str, room: f32) -> String {
     let cut = |k: usize| chars[..k].iter().collect::<String>() + end;
     // Búsqueda binaria del prefijo más largo que entra con el final.
     let (mut lo, mut hi) = (0, chars.len());
-    let fits = |k: usize| text_width(ui, &cut(k)) <= room;
+    let fits = |k: usize| width(&cut(k)) <= room;
     if !fits(0) {
         return String::new();
     }
