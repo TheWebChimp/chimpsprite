@@ -576,11 +576,11 @@ pub fn palette_buttons(
                 ui.close();
             }
         };
-        item(ui, "Presets…", PaletteAction::OpenPresets);
+        item(ui, "Presets", PaletteAction::OpenPresets);
         menus::separator(ui);
-        item(ui, "Load Palette…", PaletteAction::Load);
-        item(ui, "Save Palette…", PaletteAction::Save);
-        item(ui, "Save as Preset…", PaletteAction::SaveAsPreset);
+        item(ui, "Load Palette", PaletteAction::Load);
+        item(ui, "Save Palette", PaletteAction::Save);
+        item(ui, "Save as Preset", PaletteAction::SaveAsPreset);
         menus::separator(ui);
         item(ui, "Set as Default", PaletteAction::SetAsDefault);
         item(ui, "Load Default", PaletteAction::LoadDefault);

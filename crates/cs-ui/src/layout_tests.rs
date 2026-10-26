@@ -432,9 +432,9 @@ fn with_pixel_ui_home_is_the_design_one() {
     assert!(!h.app.has_doc());
     // Abajo, la barra con la versión.
     assert!(h.texts.iter().any(|(t, _)| t.starts_with("ChimpSprite ")));
-    // Los botones de 71×17: New file y Open file… en una fila (cada 74), Open demo debajo (20).
+    // Los botones de 71×17: New file y Open file en una fila (cada 74), Open demo debajo (20).
     let new = h.button("New file");
-    let open = h.button("Open file...");
+    let open = h.button("Open file");
     let demo = h.button("Open demo");
     assert_eq!(new.size(), Vec2::new(71.0, 17.0));
     assert_eq!((open.left() - new.left(), open.top()), (74.0, new.top()));
@@ -1415,8 +1415,8 @@ fn hovered_rows_use_the_selection_color_and_disabled_ones_dim_text() {
     open_menu(&mut h, "File");
     let colors = *h.app.pixel.skin().unwrap().colors();
     assert_eq!(text_rect(&h, "Save").1, colors.text_dim, "disabled");
-    // La fuente pixel no tiene "…": tres puntos, como en las pestañas.
-    assert_eq!(text_rect(&h, "Open...").1, colors.text);
+    // Sin puntos suspensivos (en ningún lado de la app).
+    assert_eq!(text_rect(&h, "Open").1, colors.text);
     let panel = union(&h.drawn("menu.panel")).expect("the panel");
     let inside: Vec<&String> = h
         .texts
@@ -1425,7 +1425,7 @@ fn hovered_rows_use_the_selection_color_and_disabled_ones_dim_text() {
         .map(|(t, _)| t)
         .collect();
     assert!(!inside.iter().any(|t| t.contains('…')), "{inside:?}");
-    let open = h.button("Open… Ctrl+O");
+    let open = h.button("Open Ctrl+O");
     assert_eq!(open.height(), 13.0, "the row height");
     h.frame_with(vec![Event::PointerMoved(open.center())]);
     h.frame();
@@ -2181,7 +2181,7 @@ fn with_pixel_ui_the_artboards_are_tabs_with_the_design_buttons() {
     assert_eq!(h.app.doc.editor.document.artboards.len(), 1);
     // El botón del ícono abre Canvas Size.
     assert!(h.app.canvas_size.is_none());
-    h.click(h.button("Canvas Size…").center(), PointerButton::Primary);
+    h.click(h.button("Canvas Size").center(), PointerButton::Primary);
     assert!(h.app.canvas_size.is_some());
 }
 

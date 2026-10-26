@@ -297,7 +297,7 @@ impl ChimpApp {
         use cs_commands::sprite_ops::{self, Rotation};
         use sprite_dialogs::{DuplicateDialog, PropertiesDialog, SpriteDialog, SpriteSizeDialog};
         const NO_TRANSFORM: &str = "Not available with instance or tilemap layers";
-        if ui.add(menus::item("Properties…", "Ctrl+P")).clicked() {
+        if ui.add(menus::item("Properties", "Ctrl+P")).clicked() {
             self.open_sprite_dialog(|a| SpriteDialog::Properties(PropertiesDialog::new(a)));
         }
         let indexed = matches!(
@@ -318,12 +318,12 @@ impl ChimpApp {
             }
         });
         menus::separator(ui);
-        if ui.add(menus::plain("Duplicate…")).clicked() {
+        if ui.add(menus::plain("Duplicate")).clicked() {
             self.open_sprite_dialog(|a| SpriteDialog::Duplicate(DuplicateDialog::new(a)));
         }
         menus::separator(ui);
         let transformable = sprite_ops::can_transform(self.doc.editor.sprite());
-        let size = menus::item("Sprite Size…", "Ctrl+Alt+I");
+        let size = menus::item("Sprite Size", "Ctrl+Alt+I");
         if ui
             .add_enabled(transformable, size)
             .on_disabled_hover_text(NO_TRANSFORM)
@@ -331,7 +331,7 @@ impl ChimpApp {
         {
             self.open_sprite_dialog(|a| SpriteDialog::Size(SpriteSizeDialog::new(a)));
         }
-        if ui.add(menus::item("Canvas Size…", "C")).clicked() {
+        if ui.add(menus::item("Canvas Size", "C")).clicked() {
             self.open_canvas_size();
         }
         ui.add_enabled_ui(transformable, |ui| {
@@ -637,7 +637,7 @@ impl ChimpApp {
         menus::submenu(ui, "Grid", |ui| {
             ui.add(menus::check(&mut self.view.grid, "Show Grid"));
             ui.add(menus::check(&mut self.view.snap_to_grid, "Snap to Grid"));
-            if ui.add(menus::plain("Grid Settings…")).clicked() {
+            if ui.add(menus::plain("Grid Settings")).clicked() {
                 self.grid_dialog = Some(view::GridDialog::new(&self.doc.editor, &self.view));
                 ui.close();
             }
@@ -898,14 +898,14 @@ impl ChimpApp {
                 if ui.add(item("New", "Ctrl+N")).clicked() {
                     self.new_document();
                 }
-                if ui.add(item("Open…", "Ctrl+O")).clicked() {
+                if ui.add(item("Open", "Ctrl+O")).clicked() {
                     self.open_dialog(&ctx);
                 }
                 menus::separator(ui);
                 let (save, save_as) = if self.platform.saves_by_download() {
-                    ("Save (download)", "Save As… (download)")
+                    ("Save (download)", "Save As (download)")
                 } else {
-                    ("Save", "Save As…")
+                    ("Save", "Save As")
                 };
                 if ui.add_enabled(has_doc, item(save, "Ctrl+S")).clicked() {
                     self.save();
@@ -931,12 +931,12 @@ impl ChimpApp {
                 }
                 menus::separator(ui);
                 if ui
-                    .add_enabled(has_doc, menus::plain("Import PNG as Layer…"))
+                    .add_enabled(has_doc, menus::plain("Import PNG as Layer"))
                     .clicked()
                 {
                     self.import_layer(&ctx);
                 }
-                if ui.add_enabled(has_doc, item("Export…", "Ctrl+E")).clicked() {
+                if ui.add_enabled(has_doc, item("Export", "Ctrl+E")).clicked() {
                     self.open_export();
                 }
                 menus::separator(ui);
@@ -1001,14 +1001,14 @@ impl ChimpApp {
                     }
                 });
                 menus::bar_menu(ui, look, "Layer", |ui| {
-                    if ui.add(menus::plain("New Tilemap Layer…")).clicked() {
+                    if ui.add(menus::plain("New Tilemap Layer")).clicked() {
                         self.new_tilemap =
                             Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
                         ui.close();
                     }
                     let to_tilemap = self.doc.editor.can_convert_to_tilemap();
                     if ui
-                        .add_enabled(to_tilemap, menus::plain("Convert to Tilemap…"))
+                        .add_enabled(to_tilemap, menus::plain("Convert to Tilemap"))
                         .on_disabled_hover_text("Select an image layer")
                         .clicked()
                     {

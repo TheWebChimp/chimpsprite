@@ -644,7 +644,7 @@ impl News {
         ui.add_space(6.0);
         let posts = match self.listings.get(&source) {
             None | Some(Listing::Loading(..)) => {
-                ui.weak(format!("Loading {}…", source.label()));
+                ui.weak(format!("Loading {}", source.label()));
                 return action;
             }
             Some(Listing::Failed(e)) => {

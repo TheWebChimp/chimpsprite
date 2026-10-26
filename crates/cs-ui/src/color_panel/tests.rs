@@ -624,7 +624,7 @@ fn without_pixel_ui_the_palette_and_the_picker_are_the_egui_ones() {
     for label in ["Lock palette", "Palette menu", "New palette"] {
         assert!(!h.has(label), "{label}");
     }
-    assert!(h.has("Presets ⏷") && h.has("…"), "{:?}", h.nodes);
+    assert!(h.has("Presets ⏷") && h.has("≡"), "{:?}", h.nodes);
     assert!(h.editor.palette_locked);
     // Los cuadritos de 20 de siempre y el selector de egui con sus campos "R ".
     let color = to_color32(h.editor.sprite().palette.colors()[0]);
@@ -970,27 +970,27 @@ fn with_pixel_ui_the_lock_button_shows_the_closed_or_the_open_lock() {
 fn with_pixel_ui_the_menu_button_opens_the_presets_and_palette_menu() {
     let mut h = Harness::new(true);
     // El combo Presets y el menú de antes ya no están: sus funciones van en el botón del menú.
-    assert!(!h.has("Presets ⏷") && !h.has("…"), "{:?}", h.nodes);
-    assert!(!h.has("Presets…"));
+    assert!(!h.has("Presets ⏷") && !h.has("≡"), "{:?}", h.nodes);
+    assert!(!h.has("Presets"));
     h.click_at(h.node("Palette menu").center());
     for label in [
-        "Presets…",
-        "Load Palette…",
-        "Save Palette…",
-        "Save as Preset…",
+        "Presets",
+        "Load Palette",
+        "Save Palette",
+        "Save as Preset",
         "Set as Default",
         "Load Default",
         "Open Folder",
     ] {
         assert!(h.has(label), "{label} in {:?}", h.nodes);
     }
-    let presets = h.node("Presets…").center();
+    let presets = h.node("Presets").center();
     h.frame(vec![Event::PointerMoved(presets)]);
     h.press(presets, PointerButton::Primary, true);
     h.press(presets, PointerButton::Primary, false);
     assert_eq!(h.action, Some(panels::PaletteAction::OpenPresets));
     h.frame(vec![]);
-    assert!(!h.has("Presets…"), "choosing closes the menu");
+    assert!(!h.has("Presets"), "choosing closes the menu");
 }
 
 #[test]

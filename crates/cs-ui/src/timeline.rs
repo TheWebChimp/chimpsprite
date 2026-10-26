@@ -235,7 +235,7 @@ fn controls_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineStat
         if ui.button("+ Group").clicked() {
             editor.add_layer(LayerKind::Group);
         }
-        if ui.button("+ Tilemap").tip("New tilemap layer…").clicked() {
+        if ui.button("+ Tilemap").tip("New tilemap layer").clicked() {
             state.new_tilemap = true;
         }
         let can_remove = editor

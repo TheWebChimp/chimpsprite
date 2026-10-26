@@ -928,7 +928,7 @@ impl CanvasView {
         }
         if self.slice_menu {
             response.context_menu(|ui| {
-                if ui.button("Slice Properties…").clicked() {
+                if ui.button("Slice Properties").clicked() {
                     self.slice_properties = true;
                     ui.close();
                 }
@@ -1951,7 +1951,7 @@ impl CanvasView {
             self.renaming = Some((id, artboard.name.clone(), false));
             ui.close();
         }
-        if ui.add(menus::item("Properties…", "Ctrl+P")).clicked() {
+        if ui.add(menus::item("Properties", "Ctrl+P")).clicked() {
             self.artboard_request = Some(ArtboardRequest::Properties);
             ui.close();
         }
@@ -1963,13 +1963,13 @@ impl CanvasView {
         menus::separator(ui);
         let transformable = cs_commands::sprite_ops::can_transform(editor.sprite());
         if ui
-            .add_enabled(transformable, menus::item("Sprite Size…", "Ctrl+Alt+I"))
+            .add_enabled(transformable, menus::item("Sprite Size", "Ctrl+Alt+I"))
             .clicked()
         {
             self.artboard_request = Some(ArtboardRequest::SpriteSize);
             ui.close();
         }
-        if ui.add(menus::item("Canvas Size…", "C")).clicked() {
+        if ui.add(menus::item("Canvas Size", "C")).clicked() {
             self.artboard_request = Some(ArtboardRequest::CanvasSize);
             ui.close();
         }
@@ -3591,7 +3591,7 @@ mod tests {
                 _ => None,
             })
             .collect();
-        for item in ["Rename", "Duplicate", "Canvas Size…", "Delete"] {
+        for item in ["Rename", "Duplicate", "Canvas Size", "Delete"] {
             assert!(texts.iter().any(|t| t == item), "{item} in {texts:?}");
         }
         h.click(menu, PointerButton::Primary);
@@ -3766,10 +3766,10 @@ mod tests {
     fn every_item_of_the_artboard_menu_works() {
         for item in [
             "Rename",
-            "Properties…",
+            "Properties",
             "Duplicate",
-            "Sprite Size…",
-            "Canvas Size…",
+            "Sprite Size",
+            "Canvas Size",
             "Delete",
         ] {
             let mut h = Harness::new();

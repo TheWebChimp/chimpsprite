@@ -393,7 +393,7 @@ fn unit(
                 Btn::new(
                     "timeline.icon.tilemap_add",
                     "New tilemap layer",
-                    "New tilemap layer…",
+                    "New tilemap layer",
                 ),
             ];
             let r = group(ui, skin, origin, &buttons);

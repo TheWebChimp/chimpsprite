@@ -317,7 +317,7 @@ impl DafontWindow {
                             ui.add_space(6.0);
                         }
                         if self.listing.is_some() {
-                            ui.weak("Loading…");
+                            ui.weak("Loading");
                         } else if !self.end && !self.fonts.is_empty() {
                             more = pixel_ui::text_button(ui, "More fonts").clicked();
                         }
@@ -407,7 +407,7 @@ impl DafontWindow {
                     .as_ref()
                     .is_some_and(|(f, _)| f.slug == font.slug);
                 if downloading {
-                    ui.weak("Downloading…");
+                    ui.weak("Downloading");
                 } else {
                     ui.add_enabled_ui(self.download.is_none(), |ui| {
                         use_it = pixel_ui::text_button(ui, "Use").clicked();

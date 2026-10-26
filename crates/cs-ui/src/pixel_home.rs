@@ -1,5 +1,5 @@
 //! Con Pixel UI, el Home del diseño (frame 5 de `Design.aseprite`): a la izquierda el logo y los
-//! botones New file / Open file… / Open demo, separados por una línea grabada vertical; a la
+//! botones New file / Open file / Open demo, separados por una línea grabada vertical; a la
 //! derecha Recent Files y Recent Folders (nombre y ruta en dos líneas) y, al lado, el feed de
 //! r/PixelArt. Sin barra de estado.
 
@@ -17,7 +17,7 @@ use crate::skin::Skin;
 const LOGO_AT: Vec2 = vec2(6.0, 21.0);
 const BUTTONS_AT: Vec2 = vec2(12.0, 103.0);
 const BUTTON_SIZE: Vec2 = vec2(71.0, 17.0);
-/// De un botón al de su derecha (New file, Open file… en la primera fila; Open demo debajo).
+/// De un botón al de su derecha (New file, Open file en la primera fila; Open demo debajo).
 const BUTTON_STEP_X: f32 = 74.0;
 /// De un botón al siguiente.
 const BUTTON_PITCH: f32 = 20.0;
@@ -267,7 +267,7 @@ impl ChimpApp {
             let buttons: [(&str, f32, &str, HomeAction); 3] = [
                 (ICON_NEW, 5.0, "New file", HomeAction::New),
                 // Tres puntos de texto, como en el diseño (no `…`).
-                (ICON_OPEN, 2.0, "Open file...", HomeAction::Open),
+                (ICON_OPEN, 2.0, "Open file", HomeAction::Open),
                 (ICON_DEMO, 3.0, "Open demo", HomeAction::Demo),
             ];
             for (i, (rows, left, label, a)) in buttons.into_iter().enumerate() {

@@ -381,7 +381,7 @@ impl ExportDialog {
                     ),
                 });
                 ui.add_space(6.0);
-                match crate::pixel_ui::dialog_buttons(ui, skin, &["Export…", "Cancel"]) {
+                match crate::pixel_ui::dialog_buttons(ui, skin, &["Export", "Cancel"]) {
                     Some(0) => result = self.pick_and_export(editor, platform),
                     Some(_) => result = ExportResult::Cancel,
                     None => {}

@@ -31,7 +31,7 @@ impl ChimpApp {
                 if ui.button("📄  New file").clicked() {
                     self.new_document();
                 }
-                if ui.button("📂  Open file…").clicked() {
+                if ui.button("📂  Open file").clicked() {
                     self.open_dialog(&ctx);
                 }
                 if ui.button("🐵  Open demo").clicked() {

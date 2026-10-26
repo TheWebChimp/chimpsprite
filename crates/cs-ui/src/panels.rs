@@ -564,7 +564,7 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
             hints.push("Click on the canvas to place text.");
         }
         ToolKind::Slice => {
-            hints.push("Drag to create a slice (hitbox, pivot…). Drag the selected one to move it or its edges to resize it: changes apply from the current frame on.",
+            hints.push("Drag to create a slice (hitboxes, pivots). Drag the selected one to move it or its edges to resize it: changes apply from the current frame on.",
             );
         }
         _ => {}
@@ -791,7 +791,7 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
     }
     // Las fuentes pixel de dafont.com: la ventana la abre la app.
     #[cfg(not(target_arch = "wasm32"))]
-    if crate::pixel_ui::text_button(ui, "Dafont…")
+    if crate::pixel_ui::text_button(ui, "Dafont")
         .tip("Pixel fonts from dafont.com")
         .clicked()
     {
@@ -802,7 +802,7 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
         gap(ui, CONTROL_GAP);
     }
     #[cfg(not(target_arch = "wasm32"))]
-    if crate::pixel_ui::text_button(ui, "Load font…").clicked()
+    if crate::pixel_ui::text_button(ui, "Load font").clicked()
         && let Some(path) = rfd::FileDialog::new()
             .add_filter("Fonts", &["ttf", "otf"])
             .pick_file()
@@ -872,7 +872,7 @@ fn text_window(ctx: &egui::Context, editor: &mut Editor, skin: Option<&Skin>) {
             let edit = egui::TextEdit::multiline(&mut draft.text)
                 .desired_rows(3)
                 .desired_width(f32::INFINITY)
-                .hint_text("Type here…");
+                .hint_text("Type here");
             let response = ui.add(edit);
             if draft.text.is_empty() && !response.has_focus() {
                 response.request_focus();
@@ -1193,7 +1193,7 @@ pub fn palette_strip(ui: &mut egui::Ui, palette: &Palette, max: usize, size: f32
             ui.painter().rect_filled(rect, 0.0, to_color32(c));
         }
         if palette.len() > max {
-            ui.weak("…");
+            ui.weak("≡");
         }
     });
 }
@@ -1246,16 +1246,16 @@ pub fn palette(
             if ui.small_button("Presets ⏷").clicked() {
                 action = Some(PaletteAction::OpenPresets);
             }
-            ui.menu_button("…", |ui| {
+            ui.menu_button("≡", |ui| {
                 let mut item = |ui: &mut egui::Ui, label: &str, a: PaletteAction| {
                     if ui.button(label).clicked() {
                         action = Some(a);
                         ui.close();
                     }
                 };
-                item(ui, "Load Palette…", PaletteAction::Load);
-                item(ui, "Save Palette…", PaletteAction::Save);
-                item(ui, "Save as Preset…", PaletteAction::SaveAsPreset);
+                item(ui, "Load Palette", PaletteAction::Load);
+                item(ui, "Save Palette", PaletteAction::Save);
+                item(ui, "Save as Preset", PaletteAction::SaveAsPreset);
                 ui.separator();
                 item(ui, "Set as Default", PaletteAction::SetAsDefault);
                 item(ui, "Load Default", PaletteAction::LoadDefault);
@@ -1707,7 +1707,7 @@ pub fn artboards(
     } else if !response.has_focus() {
         name_buffer.1 = editor.artboard().name.clone();
     }
-    if ui.button("Canvas Size…").clicked() {
+    if ui.button("Canvas Size").clicked() {
         resize = true;
     }
     resize
@@ -1762,7 +1762,7 @@ pub fn pixel_artboards(
                 ui,
                 skin,
                 pixel_sections::ICON_CANVAS_SIZE,
-                "Canvas Size…",
+                "Canvas Size",
                 true,
             )
             .clicked()
@@ -3924,7 +3924,7 @@ Alt+click: pick color";
             let h = pixel_bar(tool);
             // "Load font…" y "Dafont…" son botones de texto (centrado en el botón): el diseño no
             // los tiene.
-            let buttons = ["Load font…", "Dafont…"];
+            let buttons = ["Load font", "Dafont"];
             for (text, ink, _) in h
                 .texts()
                 .into_iter()
