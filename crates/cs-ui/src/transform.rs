@@ -35,6 +35,9 @@ pub struct Floating {
     at: (i32, i32),
     /// Rotación con la que se calculó `rendered`.
     rendered_with: RotationAlgorithm,
+    /// Selección espejo: los ejes (vertical y horizontal) y el centro (en medios píxeles). Al
+    /// trasladar, lo de cada lado del eje se mueve al revés que lo del otro.
+    mirror: Option<(cs_core::SymmetryAxes, (i32, i32))>,
     /// Vista previa (el documento con lo flotante aplicado; `None` si no se pudo aplicar) y el
     /// `doc_version` con el que se armó. Se descarta al cambiar la caja o lo transformado; la capa,
     /// el frame y el artboard no cambian mientras flota.
@@ -58,6 +61,7 @@ impl Floating {
             rendered: source.clone(),
             at: origin,
             rendered_with: RotationAlgorithm::Fast,
+            mirror: None,
             source,
             origin,
             bbox,
@@ -73,8 +77,62 @@ impl Floating {
         }
     }
 
+    /// Con la selección espejo y la caja solo trasladada `(dx, dy)`: cada píxel se mueve hacia su
+    /// lado del eje (los de un lado `+dx`, los del otro `-dx`; igual en vertical con el eje
+    /// horizontal). Lo que está justo sobre el eje no se mueve en ese sentido.
+    fn render_mirrored(&mut self) -> bool {
+        let Some((axes, center2)) = self.mirror else {
+            return false;
+        };
+        let b = self.bbox;
+        let (w, h) = (self.source.width as i32, self.source.height as i32);
+        if b.angle != 0.0 || b.width() != w || b.height() != h {
+            return false;
+        }
+        let (dx, dy) = (b.left() - self.origin.0, b.top() - self.origin.1);
+        let shift = |c: i32, axis: bool, center: i32, d: i32| {
+            // `center` está en medios píxeles: el centro del píxel `c` es `2c + 1`.
+            match (axis, (2 * c + 1).cmp(&center)) {
+                (false, _) => c + d,
+                (true, std::cmp::Ordering::Less) => c + d,
+                (true, std::cmp::Ordering::Greater) => c - d,
+                (true, std::cmp::Ordering::Equal) => c,
+            }
+        };
+        let moved: Vec<(i32, i32, PixelValue)> = self
+            .source
+            .points()
+            .map(|(x, y, v)| {
+                let (cx, cy) = (self.origin.0 + x, self.origin.1 + y);
+                (
+                    shift(cx, axes.vertical, center2.0, dx),
+                    shift(cy, axes.horizontal, center2.1, dy),
+                    v,
+                )
+            })
+            .collect();
+        let Some(x0) = moved.iter().map(|p| p.0).min() else {
+            return false;
+        };
+        let y0 = moved.iter().map(|p| p.1).min().unwrap_or(0);
+        let x1 = moved.iter().map(|p| p.0).max().unwrap_or(x0);
+        let y1 = moved.iter().map(|p| p.1).max().unwrap_or(y0);
+        let mut block = Block::new((x1 - x0 + 1) as u32, (y1 - y0 + 1) as u32);
+        for (x, y, v) in moved {
+            block.set(x - x0, y - y0, Some(v));
+        }
+        self.rendered = block;
+        self.at = (x0, y0);
+        self.preview.take();
+        true
+    }
+
     /// Escala (con volteos) y rota lo levantado según la caja.
     fn render(&mut self, algorithm: RotationAlgorithm) {
+        if self.render_mirrored() {
+            self.rendered_with = algorithm;
+            return;
+        }
         let b = self.bbox;
         let scaled = cs_raster::scale_nearest(&self.source, b.width(), b.height());
         let (rotated, (dx, dy)) = algorithm.rotate(&scaled, b.angle);
@@ -218,14 +276,10 @@ impl Editor {
         }
         let canvas = (sprite.width, sprite.height);
         let target = (self.active, self.layer, self.frame);
-        self.floating = Some(Floating::new(
-            source,
-            (x0, y0),
-            target,
-            false,
-            Some(mask),
-            canvas,
-        ));
+        let mut floating = Floating::new(source, (x0, y0), target, false, Some(mask), canvas);
+        // Con la selección espejo, al trasladar cada lado se mueve como en un espejo.
+        floating.mirror = self.move_mirror();
+        self.floating = Some(floating);
         self.revision += 1;
         true
     }
@@ -374,7 +428,8 @@ impl Editor {
             return false;
         };
         let (dx, dy) = (bbox.x0 - f.bbox.x0, bbox.y0 - f.bbox.y0);
-        if bbox == f.bbox.translated(dx, dy) {
+        // (Con el espejo, trasladar cambia lo transformado: no sirve correrlo.)
+        if f.mirror.is_none() && bbox == f.bbox.translated(dx, dy) {
             // Solo se mueve: lo transformado (la caché) sirve igual, corrido.
             f.bbox = bbox;
             f.at = (f.at.0 + dx, f.at.1 + dy);

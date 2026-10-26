@@ -940,13 +940,27 @@ const SYMMETRY_AXES: [(SymAxis, &str); 4] = [
 const AXES_HINT: &str = "Ctrl+drag the dashed axes to move them";
 
 /// Symmetry, al final de la barra de opciones. Se arma de derecha a izquierda (la barra lo pone
-/// pegado al borde): "Center axes" si los ejes se movieron, los cuatro ejes en orden inverso y el
-/// título. En pantalla se leen │ ─ ╲ ╱. Cada botón prende o apaga solo su eje. Con `look`
+/// pegado al borde): "Mirror Selection" con las herramientas de selección, "Center axes" si los
+/// ejes se movieron, los cuatro ejes en orden inverso y el título. En pantalla se leen │ ─ ╲ ╱. Cada botón prende o apaga solo su eje. Con `look`
 /// (Pixel UI), los botones son las piezas `sym.slot` con su ícono y el título va en la fila de
 /// los textos del diseño.
 fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
     let skin = look.map(|l| l.skin);
     let current = editor.symmetry();
+    // Con las herramientas de selección y Move: la selección espejo (refleja lo seleccionado
+    // en los ejes y al moverlo cada lado va como en un espejo). Es lo de más a la derecha.
+    let tool = editor.active_tool();
+    if tool.is_selection() || tool == ToolKind::Move {
+        let mirror = &mut editor.options.mirror_selection;
+        let response = match look {
+            Some(look) => bar_fields::checkbox(ui, look, mirror, "Mirror Selection"),
+            None => crate::widgets::checkbox(ui, mirror, "Mirror selection"),
+        };
+        response.tip("Select and move mirrored across the symmetry axes");
+        if look.is_some() {
+            gap(ui, CONTROL_GAP);
+        }
+    }
     if current.axes.any()
         && current.center2.is_some()
         && crate::pixel_ui::text_button(ui, "Center axes").clicked()

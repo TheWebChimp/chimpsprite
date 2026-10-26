@@ -380,6 +380,9 @@ pub struct ToolOptions {
     pub rotation: cs_raster::RotationAlgorithm,
     /// La variante que muestra cada grupo de la barra.
     pub group_choice: GroupChoice,
+    /// Selección espejo: con simetría, lo seleccionado se refleja en los ejes, y al moverlo la
+    /// parte reflejada se mueve como en un espejo.
+    pub mirror_selection: bool,
 }
 
 fn clamped_brush_size<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
@@ -406,6 +409,7 @@ impl Default for ToolOptions {
             dither: Dither::None,
             rotation: cs_raster::RotationAlgorithm::RotSprite,
             group_choice: GroupChoice::default(),
+            mirror_selection: false,
         }
     }
 }
@@ -1887,10 +1891,39 @@ impl Editor {
     /// Combina la forma de un gesto de selección con la selección actual según el modo.
     fn combine_selection(&self, kind: ToolKind, shape: Option<Mask>) -> Option<Mask> {
         if kind.is_selection() {
+            let shape = shape.map(|m| self.mirrored_selection(m));
             self.gesture_mode.combine(self.selection.as_ref(), shape)
         } else {
             shape
         }
+    }
+
+    /// Con la selección espejo y algún eje de simetría, `mask` junto con sus reflejos.
+    fn mirrored_selection(&self, mask: Mask) -> Mask {
+        let symmetry = self.symmetry();
+        if !self.options.mirror_selection || !symmetry.axes.any() {
+            return mask;
+        }
+        let center2 = self.artboard().symmetry_center2();
+        let points: Vec<_> = mask
+            .points()
+            .flat_map(|p| cs_raster::symmetric_points(p, symmetry.axes, center2))
+            .collect();
+        Mask::from_points(mask.width(), mask.height(), points)
+    }
+
+    /// El espejo para mover lo levantado: los ejes vertical y horizontal (las diagonales solo
+    /// reflejan al seleccionar) y el centro, si la selección espejo está prendida.
+    pub(crate) fn move_mirror(&self) -> Option<(cs_core::SymmetryAxes, (i32, i32))> {
+        let axes = self.symmetry().axes;
+        (self.options.mirror_selection && (axes.vertical || axes.horizontal)).then(|| {
+            let axes = cs_core::SymmetryAxes {
+                vertical: axes.vertical,
+                horizontal: axes.horizontal,
+                ..Default::default()
+            };
+            (axes, self.artboard().symmetry_center2())
+        })
     }
 
     /// Documento a mostrar: el actual o un clon con el gesto en curso aplicado.
@@ -2042,6 +2075,52 @@ mod tests {
             (8, 8),
             "every step undoes"
         );
+    }
+
+    #[test]
+    fn mirror_selection_selects_and_moves_like_a_mirror() {
+        let mut e = editor(); // 8×8: el eje vertical por defecto pasa por x = 4.
+        let red = PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0));
+        let layer = e.layer;
+        e.execute(Command::DrawPixels {
+            layer,
+            frame: 0,
+            pixels: vec![(1, 1, red), (6, 1, red)],
+        });
+        e.set_symmetry(cs_core::Symmetry {
+            axes: cs_core::SymmetryAxes {
+                vertical: true,
+                ..Default::default()
+            },
+            center2: None,
+        });
+        e.options.mirror_selection = true;
+        e.set_tool(ToolKind::RectSelect);
+        // Seleccionar a la izquierda también selecciona el reflejo a la derecha.
+        drag_local(&mut e, (0, 0), (2, 2), false, false);
+        let sel = e.selection.clone().unwrap();
+        assert!(sel.contains(1, 1) && sel.contains(6, 1), "both sides");
+        assert!(!sel.contains(4, 1), "not the middle");
+        // Moverlo 1 a la derecha: la mitad de la izquierda va a la derecha y la de la derecha a
+        // la izquierda (las dos se acercan al eje, como en un espejo).
+        assert!(e.nudge(1, 0));
+        e.commit_floating();
+        let s = e.sprite();
+        assert_eq!(s.pixel(layer, 0, 2, 1), red, "the left half moved right");
+        assert_eq!(s.pixel(layer, 0, 5, 1), red, "the right half moved left");
+        assert_ne!(s.pixel(layer, 0, 1, 1), red);
+        assert_ne!(s.pixel(layer, 0, 6, 1), red);
+        let sel = e.selection.clone().unwrap();
+        assert!(
+            sel.contains(2, 1) && sel.contains(5, 1),
+            "the selection followed"
+        );
+        // Sin la opción, mover es mover todo igual.
+        e.options.mirror_selection = false;
+        assert!(e.nudge(1, 0));
+        e.commit_floating();
+        assert_eq!(e.sprite().pixel(layer, 0, 3, 1), red);
+        assert_eq!(e.sprite().pixel(layer, 0, 6, 1), red);
     }
 
     #[test]
