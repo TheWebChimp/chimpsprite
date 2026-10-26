@@ -400,13 +400,29 @@ impl NotesView {
             }
             // Sin la barra, el papel liso empieza en la línea de la barra.
             let shown = if bar { paper } else { plain_paper(paper) };
+            // Sin la barra (como en el diseño): la nota de la barra entera, desde la línea de la
+            // barra para abajo, y esa línea es su borde de arriba. Así los detalles del papel
+            // quedan pegados a ese borde.
+            let with_piece = piece_of(with).or_else(|| piece_of(PIECE));
+            let piece = if bar { piece } else { with_piece.or(piece) };
             match piece {
                 // La pieza trae la sombra: 1 columna y 2 filas más que el papel.
-                Some(piece) => painter.extend(pixel_ui::piece_shapes(
+                Some(piece) if bar => painter.extend(pixel_ui::piece_shapes(
                     piece,
-                    Rect::from_min_max(shown.min, shown.max + SHADOW),
+                    Rect::from_min_max(paper.min, paper.max + SHADOW),
                     ppp,
                 )),
+                Some(piece) => {
+                    let below = Rect::from_min_max(shown.min, paper.max + SHADOW);
+                    let clipped = painter.with_clip_rect(below.intersect(painter.clip_rect()));
+                    clipped.extend(pixel_ui::piece_shapes(
+                        piece,
+                        Rect::from_min_max(paper.min, paper.max + SHADOW),
+                        ppp,
+                    ));
+                    let top = Rect::from_min_size(shown.min, vec2(shown.width(), 1.0));
+                    clipped.rect_filled(top, 0.0, INK);
+                }
                 None => {
                     painter.rect_filled(
                         shown.translate(SHADOW),

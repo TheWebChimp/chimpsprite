@@ -3664,8 +3664,9 @@ mod tests {
     /// Una nota en el mundo (0, 0) con Pixel UI y su papel en pantalla.
     fn with_note(h: &mut Harness) -> (u32, Rect) {
         let skin = with_window(h);
-        // Sin el puntero encima, el papel liso (sin la barra).
-        h.note_texture = Some(piece_id(&skin, "note.plain"));
+        // Sin el puntero encima, la nota desde la línea de la barra (la pieza de la barra,
+        // recortada).
+        h.note_texture = Some(piece_id(&skin, "note"));
         crate::pixel_ui::set_bubble(&h.ctx, Some(std::sync::Arc::new(skin)));
         h.editor.set_tool(ToolKind::Pencil);
         let id = h.editor.add_note((0, 0)).unwrap();
@@ -3734,22 +3735,31 @@ mod tests {
     fn the_bar_of_a_note_shows_only_with_the_pointer_over_it() {
         let mut h = Harness::new();
         let skin = with_window(&mut h);
-        let (plain, bar) = (piece_id(&skin, "note.plain"), piece_id(&skin, "note"));
+        let bar = piece_id(&skin, "note");
         crate::pixel_ui::set_bubble(&h.ctx, Some(std::sync::Arc::new(skin)));
         h.editor.add_note((0, 0)).unwrap();
         h.frame(vec![]);
-        let drew = |h: &Harness, t: egui::TextureId| {
+        let paper = h.canvas.to_screen(h.rect, (0, 0)).round();
+        let width = crate::notes::NEW_SIZE.0 as f32;
+        // Sin la barra, su línea es el borde de arriba del papel (en tinta).
+        let top_line = |h: &Harness| {
+            h.shapes.iter().any(|s| {
+                matches!(s, egui::Shape::Rect(r)
+                    if r.fill == Color32::from_rgb(5, 4, 3)
+                        && r.rect == Rect::from_min_size(paper + Vec2::new(0.0, 11.0), Vec2::new(width, 1.0)))
+            })
+        };
+        let drew = |h: &Harness| {
             h.shapes
                 .iter()
-                .any(|s| matches!(s, egui::Shape::Mesh(m) if m.texture_id == t))
+                .any(|s| matches!(s, egui::Shape::Mesh(m) if m.texture_id == bar))
         };
-        assert!(drew(&h, plain) && !drew(&h, bar), "away: the plain paper");
-        let paper = h.canvas.to_screen(h.rect, (0, 0)).round();
+        assert!(drew(&h) && top_line(&h), "away: from the line of the bar");
         h.frame(vec![egui::Event::PointerMoved(
             paper + Vec2::new(40.0, 40.0),
         )]);
         h.frame(vec![]);
-        assert!(drew(&h, bar) && !drew(&h, plain), "hovered: with its bar");
+        assert!(drew(&h) && !top_line(&h), "hovered: with its bar");
     }
 
     #[test]
