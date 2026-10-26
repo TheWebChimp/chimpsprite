@@ -952,17 +952,16 @@ const SYMMETRY_AXES: [(SymAxis, &str); 4] = [
 const AXES_HINT: &str = "Ctrl+drag the dashed axes to move them";
 
 /// Symmetry, al final de la barra de opciones. Se arma de derecha a izquierda (la barra lo pone
-/// pegado al borde): "Mirror Selection" con las herramientas de selección, "Center axes" si los
+/// pegado al borde): el botón de "Mirror Selection", "Center axes" si los
 /// ejes se movieron, los cuatro ejes en orden inverso y el título. En pantalla se leen │ ─ ╲ ╱. Cada botón prende o apaga solo su eje. Con `look`
 /// (Pixel UI), los botones son las piezas `sym.slot` con su ícono y el título va en la fila de
 /// los textos del diseño.
 fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
     let skin = look.map(|l| l.skin);
     let current = editor.symmetry();
-    // Con las herramientas de selección y Move: la selección espejo (refleja lo seleccionado
-    // en los ejes y al moverlo cada lado va como en un espejo). Es lo de más a la derecha.
-    let tool = editor.active_tool();
-    if tool.is_selection() || tool == ToolKind::Move {
+    // La selección espejo (refleja lo seleccionado en los ejes y al moverlo cada lado va como
+    // en un espejo), siempre a la vista. Es lo de más a la derecha.
+    {
         let mirror = &mut editor.options.mirror_selection;
         let response = match look {
             // El botón del espejo del diseño, prendido o apagado.
@@ -3308,10 +3307,13 @@ mod tests {
         for pair in rects.windows(2) {
             assert!(pair[0].right() <= pair[1].left(), "{names:?}: {rects:?}");
         }
+        // Después de los ejes, el espejo de la selección, contra el borde derecho.
         let last = rects[rects.len() - 1];
+        let mirror = h.rect("Mirror selection");
+        assert!(last.right() <= mirror.left(), "{last:?} {mirror:?}");
         assert!(
-            h.bar.right() - last.right() < 12.0,
-            "{last:?} in {:?}",
+            h.bar.right() - mirror.right() < 12.0,
+            "{mirror:?} in {:?}",
             h.bar
         );
         assert!(h.rect("Symmetry").right() <= rects[0].left());
@@ -3381,7 +3383,11 @@ mod tests {
         let (_, ink) = h.text("Symmetry");
         assert_eq!(slots[0].left() + 1.0 - ink.right(), 5.0, "{ink:?}");
         assert_eq!(ink.top(), h.bar.top() + 5.0, "{ink:?}");
-        assert_eq!(h.bar.right() - slots[3].right(), 3.0, "{:?}", h.bar);
+        // Después de los ejes, a 5, el botón del espejo (25×16) y del espejo al borde, 3.
+        let mirror = h.rect("Mirror Selection");
+        assert_eq!(mirror.size(), Vec2::new(25.0, 16.0));
+        assert_eq!(mirror.left() - slots[3].right(), 5.0);
+        assert_eq!(h.bar.right() - mirror.right(), 3.0, "{:?}", h.bar);
         // A 2×, igual: sin medio punto (que sería medio píxel del skin).
         let mut double = BarHarness::with_skin(1200.0, true);
         double.ctx.set_pixels_per_point(2.0);

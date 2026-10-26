@@ -308,8 +308,10 @@ pub fn text_field(
             .layout(Layout::top_down(Align::Min)),
     );
     bar_fields::plain_field_style(child.style_mut(), inner.size(), colors.text, colors.outline);
-    // egui pinta el fondo de la selección del alto de la fila: lo pintamos nosotros (abajo).
+    // egui pinta el fondo de la selección y el cursor del alto de la fila: los pintamos nosotros
+    // (abajo), en las filas del diseño.
     child.style_mut().visuals.selection.bg_fill = Color32::TRANSPARENT;
+    child.style_mut().visuals.text_cursor.stroke = egui::Stroke::NONE;
     let output = egui::TextEdit::singleline(text)
         .frame(egui::Frame::NONE)
         .margin(egui::Margin::ZERO)
@@ -320,18 +322,37 @@ pub fn text_field(
         .show(&mut child);
     // Lo seleccionado, como en el diseño: rosa, con 1 px de aire contra el borde de arriba y
     // contra la sombra de abajo (el texto, blanco: `plain_field_style`).
-    if let Some(range) = output.cursor_range.filter(|r| !r.is_empty()) {
-        let [a, b] = range.sorted_cursors();
-        let x = |c| output.galley_pos.x + output.galley.pos_from_cursor(c).min.x;
-        let span = Rect::from_x_y_ranges(
-            x(a).round()..=x(b).round(),
-            rect.top() + SELECTION_TOP..=rect.bottom() - SELECTION_BOTTOM,
-        )
-        .intersect(output.text_clip_rect.expand2(vec2(1.0, 0.0)));
-        if span.width() > 0.0 {
-            ui.painter()
-                .set(selection, Shape::rect_filled(span, 0.0, SELECTION));
+    let x = |c| output.galley_pos.x + output.galley.pos_from_cursor(c).min.x;
+    let rows = rect.top() + SELECTION_TOP..=rect.bottom() - SELECTION_BOTTOM;
+    let clip = output.text_clip_rect.expand2(vec2(1.0, 0.0));
+    match output.cursor_range {
+        Some(range) if !range.is_empty() => {
+            let [a, b] = range.sorted_cursors();
+            let span = Rect::from_x_y_ranges(x(a).round()..=x(b).round(), rows).intersect(clip);
+            if span.width() > 0.0 {
+                ui.painter()
+                    .set(selection, Shape::rect_filled(span, 0.0, SELECTION));
+            }
         }
+        // El cursor de escribir: 1 px de ancho, en las mismas filas que la selección, y
+        // parpadeando (medio segundo prendido y medio apagado).
+        Some(range) if output.response.response.has_focus() => {
+            let time = ui.input(|i| i.time);
+            if time.fract() < CARET_ON {
+                let left = x(range.primary).round();
+                let caret = Rect::from_x_y_ranges(left..=left + 1.0, rows).intersect(clip);
+                ui.painter()
+                    .set(selection, Shape::rect_filled(caret, 0.0, colors.outline));
+            }
+            let wait = if time.fract() < CARET_ON {
+                CARET_ON - time.fract()
+            } else {
+                1.0 - time.fract()
+            };
+            ui.ctx()
+                .request_repaint_after(std::time::Duration::from_secs_f64(wait.max(0.01)));
+        }
+        _ => {}
     }
     let response = output.response.response;
     let enabled = ui.is_enabled();
@@ -344,6 +365,8 @@ pub fn text_field(
 const SELECTION: Color32 = Color32::from_rgb(0xe2, 0x72, 0x85);
 const SELECTION_TOP: f32 = 2.0;
 const SELECTION_BOTTOM: f32 = 4.0;
+/// Del segundo, la parte en que se ve el cursor de escribir.
+const CARET_ON: f64 = 0.5;
 
 /// Lo que queda para un campo con un botón chico a su derecha.
 pub fn field_width_with_button(ui: &Ui) -> f32 {
