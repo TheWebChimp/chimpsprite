@@ -39,6 +39,7 @@ mod lospec_examples;
 mod lospec_tab;
 #[cfg(not(target_arch = "wasm32"))]
 mod news;
+mod notes;
 mod palette_library;
 mod panels;
 mod pixel_cursors;
@@ -193,6 +194,16 @@ impl ChimpApp {
         if std::env::var_os("CHIMPSPRITE_DEMO_SELECT").is_some() && app.has_doc() {
             app.doc.editor.set_tool(ToolKind::RectSelect);
         }
+        // Desarrollo: una nota con texto, para capturas.
+        if std::env::var_os("CHIMPSPRITE_DEMO_NOTE").is_some() && app.has_doc() {
+            // A la derecha del primer artboard (la vista todavía no se acomodó).
+            let at = app.doc.editor.document.artboards[0].rect().1;
+            if let Some(id) = app.doc.editor.add_note((at.0 + 4, 0)) {
+                app.doc
+                    .editor
+                    .set_note_text(id, "Revisar la animación del mono 🐒".into());
+            }
+        }
         // Desarrollo: abre Sprite Size para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_SPRITE_SIZE").is_some() && app.has_doc() {
             app.open_sprite_dialog(|a| {
@@ -260,6 +271,17 @@ impl ChimpApp {
         self.canvas_size = Some(canvas_size::CanvasSizeDialog::new(
             self.doc.editor.artboard(),
         ));
+    }
+
+    /// Una nota (post-it) nueva al centro de lo que se ve, lista para escribir.
+    fn new_note(&mut self) {
+        let at = self.doc.canvas.new_note_position();
+        if let Some(id) = self.doc.editor.add_note(at) {
+            self.doc
+                .canvas
+                .notes
+                .start_editing(&mut self.doc.editor, id);
+        }
     }
 
     /// El menú Sprite, como el de Aseprite.
@@ -964,6 +986,10 @@ impl ChimpApp {
                     }
                     if ui.add(menus::item("Flip Vertical", "Shift+V")).clicked() {
                         self.doc.editor.flip(false);
+                    }
+                    menus::separator(ui);
+                    if ui.add(menus::plain("New Note")).clicked() {
+                        self.new_note();
                     }
                 });
                 menus::bar_menu(ui, look, "Layer", |ui| {

@@ -82,6 +82,8 @@ pub struct CanvasView {
     selection_menu: bool,
     /// Diálogo Slice Properties abierto (para el slice seleccionado).
     pub slice_properties: bool,
+    /// Las notas (post-its) del lienzo: su arrastre, su edición y su cursor.
+    pub notes: crate::notes::NotesView,
     /// Lo pedido desde el menú "≡" de un artboard que abre un diálogo de la app (la app lo toma
     /// y lo deja en `None`).
     pub artboard_request: Option<ArtboardRequest>,
@@ -198,6 +200,7 @@ impl Default for CanvasView {
             slice_menu: false,
             selection_menu: false,
             slice_properties: false,
+            notes: Default::default(),
             artboard_request: None,
             wheel_rest: 0.0,
             background: theme::CANVAS_BG,
@@ -222,6 +225,16 @@ impl CanvasView {
     fn origin(&self, rect: Rect) -> Pos2 {
         let ppp = self.ppp;
         (((rect.center() + self.pan).to_vec2() * ppp).round() / ppp).to_pos2()
+    }
+
+    /// Dónde va una nota nueva: centrada en lo que se ve (su tamaño es de interfaz).
+    pub fn new_note_position(&self) -> (i32, i32) {
+        let size = Vec2::new(
+            crate::notes::NEW_SIZE.0 as f32,
+            crate::notes::NEW_SIZE.1 as f32,
+        );
+        let w = (-self.pan - size / 2.0) / self.zoom;
+        (w.x.round() as i32, w.y.round() as i32)
     }
 
     fn to_screen(&self, rect: Rect, world: (i32, i32)) -> Pos2 {
@@ -834,9 +847,29 @@ impl CanvasView {
         let ruler_busy =
             ruler_cursor.is_some() || self.ruler_drag.is_some() || self.sym_drag.is_some();
         guide_cursor = guide_cursor.or(ruler_cursor);
+        // Las notas van encima de todo: sobre una (o arrastrándola), las herramientas no reciben
+        // el clic.
+        let (origin, zoom) = (self.origin(rect), self.zoom);
+        let to_screen = move |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * zoom;
+        if !modal && !space_key && !hand && !ruler_busy && !editor.is_painting() {
+            let in_area = pointer.filter(|p| area.contains(*p));
+            self.notes.input(
+                editor,
+                &to_screen,
+                zoom,
+                in_area,
+                pressed_primary && response.hovered(),
+                any_down,
+                response.double_clicked(),
+            );
+        } else {
+            self.notes.cursor = None;
+        }
+        let over_note = self.notes.busy() || self.notes.cursor.is_some();
 
         if !modal
             && !ruler_busy
+            && !over_note
             && self.dragging_guide.is_none()
             && !space_key
             && !hand
@@ -990,6 +1023,8 @@ impl CanvasView {
             None
         } else if ruler_busy {
             Some(egui::CursorIcon::Default)
+        } else if let Some(c) = self.notes.cursor {
+            Some(c)
         } else if editor.artboard_gesture().moving() {
             Some(egui::CursorIcon::Grabbing)
         } else if let Some(edges) = editor.artboard_gesture().resizing() {
@@ -1465,6 +1500,17 @@ impl CanvasView {
             }
         }
 
+        // Las notas (post-its): encima de los artboards y debajo de las reglas.
+        {
+            let (origin, zoom) = (self.origin(rect), self.zoom);
+            let to_screen = move |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * zoom;
+            let skin = crate::pixel_ui::frame_skin(ui.ctx());
+            let note_painter = painter.with_clip_rect(self.canvas_area(rect, view_settings));
+            let menus = self
+                .notes
+                .show(ui, &note_painter, editor, skin.as_deref(), &to_screen);
+            self.notes.menus(ui, editor, menus);
+        }
         if view_settings.rulers {
             let pointer = response.hover_pos().or(ui.ctx().pointer_interact_pos());
             match self.pixel_rulers {
@@ -2371,6 +2417,8 @@ mod tests {
         cursor: egui::CursorIcon,
         /// Lo dibujado en el último frame, aplanado.
         shapes: Vec<egui::Shape>,
+        /// La textura de la pieza `note` (con `with_note`).
+        note_texture: Option<egui::TextureId>,
     }
 
     impl Harness {
@@ -2384,6 +2432,7 @@ mod tests {
                 rect: Rect::NOTHING,
                 cursor: egui::CursorIcon::Default,
                 shapes: Vec::new(),
+                note_texture: None,
             };
             h.frame(vec![]);
             h
@@ -3513,6 +3562,107 @@ mod tests {
         assert!(h.editor.document.artboard(first).is_none(), "deleted");
         h.editor.undo();
         assert!(h.editor.document.artboard(first).is_some(), "undone");
+    }
+
+    /// Una nota en el mundo (0, 0) con Pixel UI y su papel en pantalla.
+    fn with_note(h: &mut Harness) -> (u32, Rect) {
+        let skin = with_window(h);
+        h.note_texture = Some(piece_id(&skin, "note"));
+        crate::pixel_ui::set_bubble(&h.ctx, Some(std::sync::Arc::new(skin)));
+        h.editor.set_tool(ToolKind::Pencil);
+        let id = h.editor.add_note((0, 0)).unwrap();
+        h.frame(vec![]);
+        let at = h.canvas.to_screen(h.rect, (0, 0)).round();
+        let size = crate::notes::NEW_SIZE;
+        (
+            id,
+            Rect::from_min_size(at, Vec2::new(size.0 as f32, size.1 as f32)),
+        )
+    }
+
+    #[test]
+    fn a_note_is_drawn_over_the_artboard_and_takes_the_clicks() {
+        let mut h = Harness::new();
+        let (_, paper) = with_note(&mut h);
+        let texture = h.note_texture.unwrap();
+        let drawn = h
+            .shapes
+            .iter()
+            .any(|s| matches!(s, egui::Shape::Mesh(m) if m.texture_id == texture));
+        assert!(drawn, "the note piece");
+        let before = h.editor.sprite().clone();
+        // Un clic en el cuerpo de la nota, sobre el artboard: no pinta.
+        h.click(paper.center(), PointerButton::Primary);
+        assert_eq!(*h.editor.sprite(), before, "the pencil did not draw");
+    }
+
+    #[test]
+    fn dragging_the_bar_moves_the_note_in_one_undo_step() {
+        let mut h = Harness::new();
+        let (id, paper) = with_note(&mut h);
+        let zoom = h.canvas.zoom;
+        let bar = paper.left_top() + Vec2::new(40.0, 5.0);
+        h.drag(bar, bar + Vec2::new(zoom * 3.0, zoom * 2.0));
+        let note = |h: &Harness| {
+            h.editor
+                .document
+                .notes
+                .iter()
+                .find(|n| n.id == id)
+                .cloned()
+                .unwrap()
+        };
+        assert_eq!(note(&h).position, (3, 2));
+        h.editor.undo();
+        assert_eq!(note(&h).position, (0, 0), "one step");
+    }
+
+    #[test]
+    fn the_corner_resizes_and_the_circle_deletes_the_note() {
+        let mut h = Harness::new();
+        let (id, paper) = with_note(&mut h);
+        let corner = paper.right_bottom() - Vec2::splat(3.0);
+        h.drag(corner, corner + Vec2::new(30.0, 20.0));
+        let note = h
+            .editor
+            .document
+            .notes
+            .iter()
+            .find(|n| n.id == id)
+            .cloned()
+            .unwrap();
+        assert_eq!(
+            note.size,
+            (crate::notes::NEW_SIZE.0 + 30, crate::notes::NEW_SIZE.1 + 20)
+        );
+        // El "○", contra el borde derecho de la nota ya agrandada.
+        let circle = Pos2::new(paper.right() + 30.0 - 9.0, paper.top() + 6.0);
+        h.click(circle, PointerButton::Primary);
+        assert!(h.editor.document.notes.is_empty(), "deleted");
+        h.editor.undo();
+        assert_eq!(h.editor.document.notes.len(), 1, "undone");
+    }
+
+    #[test]
+    fn typing_in_a_note_saves_its_text_in_one_step() {
+        let mut h = Harness::new();
+        let (id, _) = with_note(&mut h);
+        h.canvas.notes.start_editing(&mut h.editor, id);
+        h.frame(vec![]);
+        h.frame(vec![egui::Event::Text("hola".into())]);
+        h.frame(vec![egui::Event::Key {
+            key: egui::Key::Escape,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+        h.frame(vec![]);
+        let note = h.editor.document.notes.iter().find(|n| n.id == id).unwrap();
+        assert_eq!(note.text, "hola");
+        h.editor.undo();
+        let note = h.editor.document.notes.iter().find(|n| n.id == id).unwrap();
+        assert_eq!(note.text, "", "one step");
     }
 
     /// Dónde está dibujado el texto `label` en el último frame (los "…" del menú pixel son los

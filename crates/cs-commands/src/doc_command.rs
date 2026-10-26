@@ -1,4 +1,4 @@
-use cs_core::{Artboard, ArtboardId, Document, Guide, Sprite, Symmetry};
+use cs_core::{Artboard, ArtboardId, Document, Guide, Note, Sprite, Symmetry};
 use serde::{Deserialize, Serialize};
 
 use crate::{CmdError, Command};
@@ -37,6 +37,8 @@ pub enum DocCommand {
         id: ArtboardId,
         sprite: Box<Sprite>,
     },
+    /// Reemplaza las notas del documento (agregar, mover, editar o borrar una).
+    SetNotes(Vec<Note>),
     /// Transacción: se aplica completa o nada.
     Batch(Vec<DocCommand>),
 }
@@ -127,6 +129,10 @@ impl DocCommand {
                     symmetry: old,
                 })
             }
+            DocCommand::SetNotes(notes) => {
+                let old = std::mem::replace(&mut doc.notes, notes.clone());
+                Ok(DocCommand::SetNotes(old))
+            }
             DocCommand::SetSprite { id, sprite } => {
                 if sprite.width == 0 || sprite.height == 0 {
                     return Err(CmdError::InvalidSize(sprite.width, sprite.height));
@@ -193,6 +199,23 @@ mod tests {
             position: (10, 0),
             sprite: Sprite::new(2, 2, ColorMode::Rgba),
         }
+    }
+
+    #[test]
+    fn set_notes_undoes() {
+        let mut doc = Document::with_sprite("a", Sprite::new(4, 4, ColorMode::Rgba));
+        let note = cs_core::Note {
+            id: 1,
+            position: (5, 5),
+            size: (100, 80),
+            text: "hola".into(),
+        };
+        let inverse = DocCommand::SetNotes(vec![note.clone()])
+            .apply(&mut doc)
+            .unwrap();
+        assert_eq!(doc.notes, vec![note]);
+        inverse.apply(&mut doc).unwrap();
+        assert!(doc.notes.is_empty());
     }
 
     #[test]

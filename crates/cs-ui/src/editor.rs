@@ -1075,6 +1075,53 @@ impl Editor {
         added
     }
 
+    /// Reemplaza las notas del documento (un paso de undo).
+    pub fn set_notes(&mut self, notes: Vec<cs_core::Note>) -> bool {
+        if notes == self.document.notes {
+            return false;
+        }
+        self.execute_doc(DocCommand::SetNotes(notes))
+    }
+
+    /// Una nota nueva con su esquina en `position` (mundo); devuelve su id.
+    pub fn add_note(&mut self, position: (i32, i32)) -> Option<u32> {
+        let id = self.document.notes.iter().map(|n| n.id).max().unwrap_or(0) + 1;
+        let mut notes = self.document.notes.clone();
+        notes.push(cs_core::Note {
+            id,
+            position,
+            size: crate::notes::NEW_SIZE,
+            text: String::new(),
+        });
+        self.set_notes(notes).then_some(id)
+    }
+
+    pub fn set_note_text(&mut self, id: u32, text: String) -> bool {
+        let mut notes = self.document.notes.clone();
+        match notes.iter_mut().find(|n| n.id == id) {
+            Some(n) if n.text != text => n.text = text,
+            _ => return false,
+        }
+        self.set_notes(notes)
+    }
+
+    pub fn remove_note(&mut self, id: u32) -> bool {
+        let mut notes = self.document.notes.clone();
+        notes.retain(|n| n.id != id);
+        self.set_notes(notes)
+    }
+
+    /// Lleva la nota `id` encima de las demás.
+    pub fn note_to_front(&mut self, id: u32) -> bool {
+        let mut notes = self.document.notes.clone();
+        let Some(i) = notes.iter().position(|n| n.id == id) else {
+            return false;
+        };
+        let note = notes.remove(i);
+        notes.push(note);
+        self.set_notes(notes)
+    }
+
     /// Color "Mask" (transparente) del sprite: en RGBA alfa 0, en indexado el índice transparente.
     /// Pintar con él borra.
     pub fn mask_value(&self) -> PixelValue {

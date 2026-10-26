@@ -163,15 +163,30 @@ impl Artboard {
     }
 }
 
-/// Documento: varios artboards; el orden es el z-order (el último queda arriba).
+/// Una nota (post-it) sobre el lienzo, entre los artboards. Su esquina está en coordenadas de
+/// mundo (se mueve con la vista); su tamaño es de interfaz (no cambia con el zoom, para que el
+/// texto siempre se lea).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Note {
+    pub id: u32,
+    pub position: (i32, i32),
+    pub size: (u32, u32),
+    pub text: String,
+}
+
+/// Documento: varios artboards; el orden es el z-order (el último queda arriba). Las notas van
+/// encima de todo.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Document {
     pub artboards: Vec<Artboard>,
+    #[serde(default)]
+    pub notes: Vec<Note>,
 }
 
 impl Document {
     pub fn with_sprite(name: impl Into<String>, sprite: Sprite) -> Self {
         Self {
+            notes: Vec::new(),
             artboards: vec![Artboard {
                 guides: Vec::new(),
                 symmetry: Default::default(),
@@ -308,7 +323,7 @@ mod tests {
     #[test]
     fn bounds_union() {
         assert_eq!(doc().bounds(), Some(((0, 0), (15, 10))));
-        assert_eq!(Document { artboards: vec![] }.bounds(), None);
+        assert_eq!(Document::default().bounds(), None);
     }
 
     fn instancing(ids: &[(u32, &[u32])]) -> Document {
@@ -334,7 +349,10 @@ mod tests {
                 }
             })
             .collect();
-        Document { artboards }
+        Document {
+            artboards,
+            notes: Vec::new(),
+        }
     }
 
     #[test]

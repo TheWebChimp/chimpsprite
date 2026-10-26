@@ -400,6 +400,7 @@ mod tests {
     fn doc(host: Sprite) -> Document {
         Document {
             artboards: vec![artboard(1, host), artboard(2, symbol())],
+            notes: Vec::new(),
         }
     }
 

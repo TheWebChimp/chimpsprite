@@ -6,7 +6,8 @@ use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 use cs_core::{
-    Artboard, ArtboardId, Document, Guide, InstanceTrack, LayerKind, LayerMask, Sprite, Symmetry,
+    Artboard, ArtboardId, Document, Guide, InstanceTrack, LayerKind, LayerMask, Note, Sprite,
+    Symmetry,
 };
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
@@ -25,6 +26,9 @@ struct Manifest {
     format: String,
     version: u32,
     artboards: Vec<Entry>,
+    /// Las notas (post-its) del lienzo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    notes: Vec<Note>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -180,6 +184,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
         format: FORMAT.into(),
         version: VERSION,
         artboards: entries,
+        notes: doc.notes.clone(),
     };
     zip.start_file(MANIFEST, options).map_err(zip_error)?;
     zip.write_all(&serde_json::to_vec_pretty(&manifest)?)?;
@@ -237,7 +242,10 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
             sprite,
         });
     }
-    let mut doc = Document { artboards };
+    let mut doc = Document {
+        artboards,
+        notes: manifest.notes,
+    };
     // Un archivo editado a mano podría tener instancias en ciclo: se quitan esas keys.
     for id in doc.artboards.iter().map(|a| a.id).collect::<Vec<_>>() {
         if doc.cycle_free(id) {
@@ -269,6 +277,25 @@ mod tests {
     use cs_core::*;
 
     use super::*;
+
+    #[test]
+    fn notes_roundtrip() {
+        let mut d = doc();
+        d.notes.push(cs_core::Note {
+            id: 1,
+            position: (-20, 40),
+            size: (120, 90),
+            text: "Revisar la
+animación ✨"
+                .into(),
+        });
+        let (back, _) = read(&write(&d).unwrap()).unwrap();
+        assert_eq!(back.notes, d.notes);
+        // Sin notas, el manifest no las menciona.
+        let bytes = write(&doc()).unwrap();
+        let (back, _) = read(&bytes).unwrap();
+        assert!(back.notes.is_empty());
+    }
 
     #[test]
     fn masks_and_clipping_roundtrip() {
