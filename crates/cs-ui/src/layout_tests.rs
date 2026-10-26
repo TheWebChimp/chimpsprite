@@ -217,6 +217,28 @@ impl LayoutHarness {
         piece.unwrap_or_else(|| panic!("{name}")).texture.id()
     }
 
+    /// Lo que se ve de la pieza `name`: cada malla recortada por su clip.
+    fn visible(&self, name: &str) -> Vec<Rect> {
+        fn walk(shape: &egui::Shape, clip: Rect, id: TextureId, out: &mut Vec<Rect>) {
+            match shape {
+                egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, clip, id, out)),
+                egui::Shape::Mesh(mesh) if mesh.texture_id == id => {
+                    let seen = mesh.calc_bounds().intersect(clip);
+                    if seen.is_positive() {
+                        out.push(seen);
+                    }
+                }
+                _ => {}
+            }
+        }
+        let id = self.piece(name);
+        let mut out = Vec::new();
+        for clipped in &self.shapes {
+            walk(&clipped.shape, clipped.clip_rect, id, &mut out);
+        }
+        out
+    }
+
     /// Los rects (uno por malla) de lo dibujado con la pieza `name`.
     fn drawn(&self, name: &str) -> Vec<Rect> {
         let id = self.piece(name);
@@ -1265,6 +1287,20 @@ fn the_panel_hangs_from_the_open_title_like_in_the_design() {
         assert_eq!(panel.top(), menu.bottom() + 1.0, "{title}");
         assert_eq!(panel.left(), boxed.left() + 1.0, "{title}");
         assert_eq!(boxed.bottom(), panel.top() + 2.0, "{title}");
+        // Sin huecos: la fila entre la barra y el panel también se ve de la caja.
+        let gap = Rect::from_min_size(
+            Pos2::new(boxed.left(), menu.bottom()),
+            Vec2::new(boxed.width(), 1.0),
+        );
+        // (las mallas de la pieza en 9-slice: sus anchos en esa fila suman el de la caja).
+        let seen: f32 = h
+            .visible("menu.title.open")
+            .iter()
+            .map(|r| r.intersect(gap))
+            .filter(|r| r.is_positive())
+            .map(|r| r.width())
+            .sum();
+        assert_eq!(seen, gap.width(), "{title}: the row under the bar");
         assert!(panel.right() > boxed.right(), "{title}");
         // Otro clic en el título lo cierra.
         open_menu(&mut h, title);

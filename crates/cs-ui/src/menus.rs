@@ -308,9 +308,14 @@ fn panel<R>(
     };
     ui.painter().set(back, Shape::Vec(shapes));
     if let Some(title_box) = title_box {
-        // Las filas de la caja que bajan sobre el panel; las de arriba van en la barra.
+        // Las filas de la caja que bajan sobre el panel; las de arriba van en la barra. También
+        // la fila entre la barra y el panel (`PANEL_SHIFT`): la barra no pinta fuera de sí.
+        let gap = Rect::from_min_max(
+            pos2(title_box.left(), rect.top() - PANEL_SHIFT.y),
+            pos2(title_box.right(), rect.top()),
+        );
         ui.painter()
-            .with_clip_rect(rect)
+            .with_clip_rect(rect.union(gap))
             .set(join, Shape::Vec(box_shapes(&look, title_box, ppp)));
     }
     inner.inner
