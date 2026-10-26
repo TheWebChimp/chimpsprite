@@ -113,10 +113,12 @@ pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
 /// Alto de la barra de opciones, con su margen: el mismo con todas las herramientas, así el lienzo
 /// no se mueve al cambiar de herramienta.
 pub const OPTIONS_BAR_HEIGHT: f32 = 32.0;
-/// Alto de la barra de opciones con Pixel UI: la del mockup (frame 4), de 21 px de skin. Son 19
-/// filas de controles y, abajo, el separador grabado (la línea grabada de arriba es la de las
-/// pestañas). Los botones de simetría, de 16, van 2 filas abajo del borde y 1 arriba del grabado.
-pub const PIXEL_OPTIONS_BAR_HEIGHT: f32 = 21.0;
+/// Alto de la barra de opciones con Pixel UI: 23 px de skin. Son 19 filas de controles, 2 de aire
+/// y, abajo, el separador grabado (la línea grabada de arriba es la de las pestañas). Los
+/// controles, de 16 y su luz, van 2 filas abajo del borde.
+pub const PIXEL_OPTIONS_BAR_HEIGHT: f32 = 23.0;
+/// El aire de abajo de la barra con Pixel UI, entre los controles y el separador grabado.
+const PIXEL_BAR_AIR: i8 = 2;
 /// Aire entre un separador grabado de la barra y lo que tiene a cada lado: en el mockup, 5 px
 /// entre el brillo y "Symmetry".
 const ETCHED_GAP: f32 = 5.0;
@@ -166,7 +168,7 @@ pub fn options_bar_frame(style: &egui::Style, skin: Option<&Skin>) -> egui::Fram
                 left: PIXEL_BAR_LEFT,
                 right: PIXEL_BAR_RIGHT,
                 top: 0,
-                bottom: 0,
+                bottom: PIXEL_BAR_AIR,
             })
             .outer_margin(egui::Margin {
                 bottom: pixel_ui::ETCHED_SIZE as i8,
@@ -3377,7 +3379,7 @@ mod tests {
             assert_eq!(pair[1].left() - pair[0].right(), 2.0, "{pair:?}");
         }
         // Como en el mockup (frame 4): un botón cada 17 px, 2 filas debajo del borde de arriba
-        // de la barra y 1 arriba del grabado de abajo, en puntos enteros (con la escala entera,
+        // de la barra y 3 arriba del grabado de abajo (1 y los 2 de aire), en puntos enteros (con la escala entera,
         // píxeles del skin enteros). Los íconos, de 11×11, 2 px adentro.
         let slots = h.drawn("sym.slot");
         assert_eq!(slots.len(), 4, "{slots:?}");
@@ -3387,7 +3389,7 @@ mod tests {
         let names = ["vertical", "horizontal", "diag_down", "diag_up"];
         for (slot, name) in slots.iter().zip(names) {
             assert_eq!(slot.top(), h.bar.top() + 2.0, "{slot:?} in {:?}", h.bar);
-            assert_eq!(slot.bottom(), h.bar.bottom() - 2.0 - 1.0, "{slot:?}");
+            assert_eq!(slot.bottom(), h.bar.bottom() - 2.0 - 3.0, "{slot:?}");
             assert_eq!(slot.left(), slot.left().round(), "{slot:?}");
             let icon = h.drawn(&format!("icon.sym_{name}"));
             let expected = Rect::from_min_size(slot.min + Vec2::splat(2.0), Vec2::splat(11.0));
@@ -3473,7 +3475,7 @@ Alt+click: pick color";
     }
 
     #[test]
-    fn with_pixel_ui_the_bar_is_21_and_every_node_fits_inside_it() {
+    fn with_pixel_ui_the_bar_is_23_and_every_node_fits_inside_it() {
         let mut h = BarHarness::with_skin(800.0, true);
         for kind in [
             ToolKind::Pencil,
@@ -3485,7 +3487,7 @@ Alt+click: pick color";
             h.editor.set_tool(kind);
             h.frame(vec![]);
             h.frame(vec![]);
-            assert_eq!(h.bar.height(), 21.0, "{kind:?}");
+            assert_eq!(h.bar.height(), 23.0, "{kind:?}");
             assert!(h.nodes.len() > 2, "{kind:?}: {:?}", h.nodes);
             for (text, rect) in &h.nodes {
                 assert!(
@@ -3981,9 +3983,9 @@ Alt+click: pick color";
         let (dark, light) = (colors.canvas, colors.highlight);
         let rects = h.colored_rects();
         let bar = h.bar;
-        assert_eq!(bar.height(), 21.0);
-        // Abajo, a todo el ancho: la línea oscura en la fila 19 de la barra y el brillo en la 20
-        // (en el mockup, frame 4, y 90 y 91 de la barra de y 71..91).
+        assert_eq!(bar.height(), 23.0);
+        // Abajo, a todo el ancho: la línea oscura en la fila 21 de la barra y el brillo en la 22
+        // (19 filas de controles y 2 de aire).
         let line = bar.bottom() - 2.0;
         let x = bar.x_range();
         for (color, y) in [(dark, line), (light, line + 1.0)] {

@@ -378,7 +378,7 @@ fn the_app_opens_with_pixel_ui_on_home_and_in_the_editor() {
     assert_eq!(home_frames(&home).len(), 1, "the Home house");
     let editor = LayoutHarness::new(ViewSettings::default(), true);
     assert!(editor.app.pixel.skin().is_some());
-    assert_eq!(editor.panel("tool_options").height(), 21.0);
+    assert_eq!(editor.panel("tool_options").height(), 23.0);
     assert!(!editor.drawn("toolbar.box").is_empty(), "the pixel toolbar");
 }
 
@@ -579,13 +579,13 @@ fn with_pixel_ui_the_canvas_has_the_skin_canvas_color() {
 }
 
 #[test]
-fn with_pixel_ui_the_options_bar_is_21_high() {
+fn with_pixel_ui_the_options_bar_is_23_high() {
     let view = ViewSettings {
         pixel_ui: true,
         ..Default::default()
     };
     let h = LayoutHarness::new(view, true);
-    assert_eq!(h.panel("tool_options").height(), 21.0);
+    assert_eq!(h.panel("tool_options").height(), 23.0);
     // Sin Pixel UI, la de siempre.
     assert_eq!(LayoutHarness::editor().panel("tool_options").height(), 32.0);
 }
@@ -605,8 +605,8 @@ fn with_pixel_ui_the_tabs_and_the_options_bar_end_in_etched_lines() {
     assert_eq!(tabs.bottom(), options.top(), "the bar right under the tabs");
     assert_eq!(
         options.height(),
-        21.0,
-        "the mockup's 21: 19 rows and the etched line"
+        23.0,
+        "19 rows, 2 of air and the etched line"
     );
     let width = h.screen().x_range();
     // Las dos líneas del mockup: debajo de las pestañas (y 69/70) y abajo de la barra (90/91 en el frame 4).
