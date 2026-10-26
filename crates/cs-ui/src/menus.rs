@@ -876,9 +876,12 @@ pub(crate) fn side_menu<R>(
     let painter = response.ctx.layer_painter(inner.response.layer_id);
     let (x, top, bottom) = (slot.right() - 1.0, slot.top(), slot.bottom());
     let fill = Rect::from_min_max(pos2(x, top + 2.0), pos2(x + 2.0, bottom - 2.0));
+    // Arriba, la línea sigue del botón al panel (sus esquinas redondeadas dejaban un hueco).
+    let line = Rect::from_min_max(pos2(x - 2.0, top), pos2(x + 3.0, top + 1.0));
     let shine = Rect::from_min_max(pos2(x, top + 1.0), pos2(x + 2.0, top + 2.0));
     let bevel = Rect::from_min_max(pos2(x, bottom - 2.0), pos2(x + 1.0, bottom - 1.0));
     painter.extend([
+        solid(line, PANEL_LINE, ppp),
         solid(fill, look.colors.panel, ppp),
         solid(shine, look.colors.menu_highlight, ppp),
         solid(bevel, look.colors.background, ppp),
@@ -944,6 +947,9 @@ pub(crate) fn tool_row(
     }
     response
 }
+
+/// La línea del panel de los menús (la de su pieza).
+const PANEL_LINE: Color32 = Color32::from_rgb(89, 77, 77);
 
 /// Las filas del menú de herramientas: del alto del ícono (17) y 2 de aire arriba y abajo; el
 /// texto, 4 después del ícono.

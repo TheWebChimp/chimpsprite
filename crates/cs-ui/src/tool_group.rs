@@ -159,6 +159,19 @@ fn demo_open(ui: &Ui, group: usize) -> Option<egui::SetOpenCommand> {
     Some(egui::SetOpenCommand::Bool(true))
 }
 
+/// Con Pixel UI la lista se abre (o se cierra) con el clic mismo, además de con clic derecho o
+/// manteniendo: el clic también elige la herramienta que muestra el botón.
+fn pixel_open_command(response: &Response, hold: Hold) -> Option<egui::SetOpenCommand> {
+    use egui::SetOpenCommand;
+    if hold == Hold::Open || response.secondary_clicked() {
+        Some(SetOpenCommand::Bool(true))
+    } else if response.clicked() && hold != Hold::Release {
+        Some(SetOpenCommand::Toggle)
+    } else {
+        None
+    }
+}
+
 /// Abrir la lista (clic derecho o mantener) o cerrarla (un clic que no es el de soltar).
 fn open_command(response: &Response, hold: Hold) -> Option<egui::SetOpenCommand> {
     use egui::SetOpenCommand;
@@ -267,7 +280,7 @@ pub fn group_button(
                     &look,
                     &response,
                     response.rect,
-                    open_command(&response, hold).or_else(|| demo_open(ui, group)),
+                    pixel_open_command(&response, hold).or_else(|| demo_open(ui, group)),
                     hold == Hold::Release,
                     |ui| pixel_variants(ui, skin, current, members),
                 );
