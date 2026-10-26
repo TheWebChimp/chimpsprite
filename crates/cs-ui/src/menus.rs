@@ -44,6 +44,9 @@ const KEY_SHIFT: &str = "key.shift";
 const KEY: &str = "key";
 const CHECK: &str = "menu.check";
 const CHECK_ON: &str = "menu.check.on";
+/// Las casillas sobre la fila con el puntero: el borde y la luz de abajo en los rosas.
+const CHECK_HOVER: &str = "menu.check.hover";
+const CHECK_ON_HOVER: &str = "menu.check.on.hover";
 
 /// La caja del título abierto: empieza 5 px antes del texto (línea, bisel y 3 de relleno) y 5
 /// filas arriba de las mayúsculas, y termina 4 px después del texto (la fuente deja 1 vacío).
@@ -57,16 +60,19 @@ const BOX_JOIN: f32 = 2.0;
 /// El panel de un menú de la barra va 1 px abajo de donde lo deja la caja; a la izquierda, su
 /// borde sigue el de la caja, como en el diseño (frame 4: la línea de File baja derecho).
 const PANEL_SHIFT: Vec2 = vec2(0.0, 1.0);
-/// Del borde del panel al contenido: la línea y el bisel arriba y abajo; a los lados, además, 3
-/// px de relleno (el texto de los ítems queda 5 px adentro, como en el diseño).
+/// Del borde del panel al contenido: la línea y el bisel arriba y abajo, y 1 fila de aire para
+/// que la fila con el puntero no toque el bisel (abajo, 2: esa fila baja 1 más que la suya); a
+/// los lados, además, 3 px de relleno (el texto de los ítems queda 5 px adentro, como en el
+/// diseño).
 const PANEL_MARGIN: Margin = Margin {
     left: 5,
     right: 5,
-    top: 2,
-    bottom: 2,
+    top: 3,
+    bottom: 4,
 };
-/// Lo que la fila con el puntero encima se extiende a cada lado, hasta los biseles.
+/// Lo que la fila con el puntero encima se extiende a cada lado, hasta los biseles, y abajo.
 const ROW_BLEED: f32 = 3.0;
+const ROW_HOVER_BELOW: f32 = 1.0;
 /// Alto de una fila: 3 filas, las mayúsculas (7) y 3 más (las colas y 1).
 pub const ROW_HEIGHT: f32 = 13.0;
 const ROW_CAPS_TOP: f32 = 3.0;
@@ -109,6 +115,8 @@ pub(crate) struct MenuLook {
     key: Option<Piece>,
     check: Option<Piece>,
     check_on: Option<Piece>,
+    check_hover: Option<Piece>,
+    check_on_hover: Option<Piece>,
     /// El círculo de las opciones de una lista (`menu.radio`, `menu.radio.on` la elegida).
     radio: Option<Piece>,
     radio_on: Option<Piece>,
@@ -133,6 +141,8 @@ impl MenuLook {
             key: piece(KEY),
             check: piece(CHECK),
             check_on: piece(CHECK_ON),
+            check_hover: piece(CHECK_HOVER),
+            check_on_hover: piece(CHECK_ON_HOVER),
             radio: piece("menu.radio"),
             radio_on: piece("menu.radio.on"),
             colors: *skin.colors(),
@@ -443,11 +453,12 @@ impl Widget for Check<'_> {
             let ppp = ui.ctx().pixels_per_point();
             let caps = rect.top() + ROW_CAPS_TOP;
             let mut shapes = Vec::new();
-            if enabled && response.hovered() {
+            let hovered = enabled && response.hovered();
+            if hovered {
                 shapes.push(row_highlight(&look, rect, ppp));
             }
             let at = Rect::from_min_size(pos2(rect.left(), caps - CHECK_TOP), box_size);
-            shapes.extend(check_shapes(&look, at, on, enabled, ppp));
+            shapes.extend(check_shapes(&look, at, on, enabled, hovered, ppp));
             let pos = tab_bar::text_pos(&text, rect.left() + indent, caps, ppp);
             shapes.push(Shape::galley(pos, text, text_color));
             row_painter(ui, &look).extend(shapes);
@@ -456,11 +467,27 @@ impl Widget for Check<'_> {
     }
 }
 
-/// La casilla en `rect`: `menu.check.on` marcada y `menu.check` sin marcar. Sin la pieza, un
-/// cuadro plano (`panel` con borde `outline`) y, si está marcada, un cuadrito `text` adentro.
-/// Deshabilitada, más clara.
-fn check_shapes(look: &MenuLook, rect: Rect, on: bool, enabled: bool, ppp: f32) -> Vec<Shape> {
-    let piece = if on { &look.check_on } else { &look.check };
+/// La casilla en `rect`: `menu.check.on` marcada y `menu.check` sin marcar (`hovered`: sobre la
+/// fila con el puntero, sus versiones `.hover`). Sin la pieza, un cuadro plano (`panel` con borde
+/// `outline`) y, si está marcada, un cuadrito `text` adentro. Deshabilitada, más clara.
+fn check_shapes(
+    look: &MenuLook,
+    rect: Rect,
+    on: bool,
+    enabled: bool,
+    hovered: bool,
+    ppp: f32,
+) -> Vec<Shape> {
+    let hover = if on {
+        &look.check_on_hover
+    } else {
+        &look.check_hover
+    };
+    let piece = match (hovered, hover) {
+        (true, Some(_)) => hover,
+        _ if on => &look.check_on,
+        _ => &look.check,
+    };
     if let Some(piece) = piece {
         let tint = if enabled {
             Color32::WHITE
@@ -530,11 +557,23 @@ fn row_shapes(
 
 /// La fila resaltada, de bisel a bisel.
 fn row_highlight(look: &MenuLook, rect: Rect, ppp: f32) -> Shape {
-    solid(
-        rect.expand2(vec2(ROW_BLEED, 0.0)),
-        look.colors.selection,
-        ppp,
-    )
+    // El rosa de lo elegido de lado a lado, 1 fila más abajo que la fila; los biseles del panel
+    // a su altura, en el rosa oscuro (el de la izquierda) y el claro (el de la derecha).
+    let colors = &look.colors;
+    let fill = Rect::from_min_max(
+        rect.min - vec2(ROW_BLEED, 0.0),
+        rect.max + vec2(ROW_BLEED, ROW_HOVER_BELOW),
+    );
+    let bevel = |x: f32| Rect::from_min_max(pos2(x, fill.top()), pos2(x + 1.0, fill.bottom()));
+    Shape::Vec(vec![
+        solid(fill, colors.timeline_selection, ppp),
+        solid(
+            bevel(fill.left() - 1.0),
+            colors.timeline_selection_dark,
+            ppp,
+        ),
+        solid(bevel(fill.right()), colors.timeline_selection_light, ppp),
+    ])
 }
 
 /// Una parte de un atajo.

@@ -1330,10 +1330,11 @@ fn the_new_row_has_the_ctrl_badge_a_plus_and_the_key_in_the_dim_color() {
     let panel = union(&h.drawn("menu.panel")).expect("the panel");
     let (new, color) = text_rect(&h, "New");
     assert_eq!(color, colors.text);
-    // "New": 5 px adentro del borde y sus mayúsculas, 5 filas debajo del borde de arriba.
+    // "New": 5 px adentro del borde y sus mayúsculas, 6 filas debajo del borde de arriba (la
+    // línea, el bisel, 1 de aire y las 3 de arriba de la fila).
     let caps = new.top() + offset;
     assert_eq!(new.left(), panel.left() + 5.0);
-    assert_eq!(caps, panel.top() + 5.0);
+    assert_eq!(caps, panel.top() + 6.0);
     // La tecla Ctrl a la altura de las mayúsculas; después, 1 px, el + de 5×5, 1 px y la N.
     let badges = h.drawn("key.ctrl");
     let badge = *badges
@@ -1458,7 +1459,7 @@ fn clicking_a_pixel_menu_item_still_runs_its_action() {
 }
 
 #[test]
-fn hovered_rows_use_the_selection_color_and_disabled_ones_dim_text() {
+fn hovered_rows_are_pink_with_pink_bevels_and_disabled_ones_dim_text() {
     // En Home no hay documento: Save está deshabilitado.
     let mut h = two_tabs(None);
     open_menu(&mut h, "File");
@@ -1478,14 +1479,30 @@ fn hovered_rows_use_the_selection_color_and_disabled_ones_dim_text() {
     assert_eq!(open.height(), 13.0, "the row height");
     h.frame_with(vec![Event::PointerMoved(open.center())]);
     h.frame();
-    // La fila entera, entre los biseles.
-    let row = Rect::from_x_y_ranges(panel.left() + 2.0..=panel.right() - 2.0, open.y_range());
-    let selected: Vec<_> = h
-        .colored_rects()
-        .into_iter()
-        .filter(|(c, _)| *c == colors.selection)
-        .collect();
-    assert_eq!(selected, vec![(colors.selection, row)]);
+    // La fila entera, entre los biseles y 1 fila más abajo, en el rosa de lo elegido; los
+    // biseles a su altura, el de la izquierda en el rosa oscuro y el de la derecha en el claro.
+    let row = Rect::from_x_y_ranges(
+        panel.left() + 2.0..=panel.right() - 2.0,
+        open.top()..=open.bottom() + 1.0,
+    );
+    let rects = h.colored_rects();
+    let pink = |color| {
+        rects
+            .iter()
+            .filter(|(c, _)| *c == color)
+            .map(|(_, r)| *r)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(pink(colors.timeline_selection), vec![row]);
+    let bevel = |x: f32| Rect::from_x_y_ranges(x..=x + 1.0, row.y_range());
+    assert_eq!(
+        pink(colors.timeline_selection_dark),
+        vec![bevel(panel.left() + 1.0)]
+    );
+    assert_eq!(
+        pink(colors.timeline_selection_light),
+        vec![bevel(panel.right() - 2.0)]
+    );
 }
 
 #[test]
@@ -1528,6 +1545,19 @@ fn check(h: &LayoutHarness, label: &str) -> (Rect, bool) {
         .find(|(t, _, _)| t == label)
         .map(|(_, r, on)| (*r, *on))
         .unwrap_or_else(|| panic!("no {label:?} checkbox in {:?}", h.checks))
+}
+
+#[test]
+fn a_checkbox_under_the_pointer_uses_its_hover_piece() {
+    let mut h = two_tabs(Some(0));
+    open_menu(&mut h, "View");
+    assert!(h.drawn("menu.check.on.hover").is_empty());
+    let (timeline, _) = text_rect(&h, "Timeline");
+    h.frame_with(vec![Event::PointerMoved(timeline.center())]);
+    h.frame();
+    let hovered = h.drawn("menu.check.on.hover");
+    assert_eq!(hovered.len(), 1, "only the Timeline box: {hovered:?}");
+    assert_eq!(hovered[0].right() + 3.0, timeline.left());
 }
 
 #[test]
