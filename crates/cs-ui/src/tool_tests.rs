@@ -50,6 +50,7 @@ fn thirteen_groups_in_the_toolbar_order() {
     };
     assert_eq!(group_of(Jumble), &[Bucket, Gradient, Jumble]);
     assert_eq!(group_of(Slice), &[Move, Slice]);
+    assert_eq!(group_of(Polygon), &[Rectangle, Ellipse, Polygon]);
     assert_eq!(
         group_of(Artboard),
         &[Artboard],
@@ -60,7 +61,7 @@ fn thirteen_groups_in_the_toolbar_order() {
         .iter()
         .flat_map(|g| g.iter().copied())
         .collect();
-    assert_eq!(all.len(), 22);
+    assert_eq!(all.len(), 23);
     for (i, kind) in all.iter().enumerate() {
         assert!(!all[..i].contains(kind), "{kind:?} twice");
     }
@@ -491,4 +492,22 @@ mod on_a_mask {
         assert!(e.tiles_mode());
         assert!(!e.is_painting(), "the stroke is cancelled");
     }
+}
+
+#[test]
+fn the_polygon_tool_paints_the_outline_closed_with_a_click_on_the_first_vertex() {
+    let mut e = editor(ToolKind::Polygon);
+    assert_eq!(ToolKind::from_key('D', true), Some(ToolKind::Polygon));
+    for p in [(1, 1), (6, 1), (1, 6), (1, 1)] {
+        e.pointer_press(at(p), false, false, 0.1);
+        e.pointer_release();
+    }
+    assert!(!e.is_pending());
+    assert_ne!(
+        px(&e, 3, 1),
+        px(&e, 3, 3),
+        "the edge is painted, the inside is not"
+    );
+    e.undo();
+    assert_eq!(px(&e, 3, 1), px(&e, 3, 3), "one undo step");
 }

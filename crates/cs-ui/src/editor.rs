@@ -11,7 +11,7 @@ use cs_tools::text::TextStyle;
 use cs_tools::{
     ArtboardTool, Blur, BrushShape, Bucket, Contour, Dither, Eraser, Eyedropper, GradientShape,
     GradientTool, Jumble, Lasso, MagicWand, Marquee, MarqueeShape, MoveTool, Pencil, Point,
-    PolygonLasso, ShapeKind, ShapeTool, SliceTool, Spray, Tool, ToolContext, ToolOutput,
+    Polygon, PolygonLasso, ShapeKind, ShapeTool, SliceTool, Spray, Tool, ToolContext, ToolOutput,
 };
 
 use crate::tile_ops::{self, TileProxy};
@@ -36,6 +36,7 @@ pub enum ToolKind {
     Line,
     Rectangle,
     Ellipse,
+    Polygon,
     Jumble,
     Text,
     Contour,
@@ -60,7 +61,7 @@ impl ToolKind {
         &[ToolKind::Eyedropper],
         &[ToolKind::Bucket, ToolKind::Gradient, ToolKind::Jumble],
         &[ToolKind::Line],
-        &[ToolKind::Rectangle, ToolKind::Ellipse],
+        &[ToolKind::Rectangle, ToolKind::Ellipse, ToolKind::Polygon],
         &[ToolKind::Text],
         &[ToolKind::Contour],
         &[ToolKind::Blur],
@@ -93,6 +94,7 @@ impl ToolKind {
             ToolKind::Line => "Line",
             ToolKind::Rectangle => "Rectangle",
             ToolKind::Ellipse => "Ellipse",
+            ToolKind::Polygon => "Polygon",
             ToolKind::Jumble => "Jumble",
             ToolKind::Text => "Text",
             ToolKind::Slice => "Slice",
@@ -120,6 +122,7 @@ impl ToolKind {
             ToolKind::Line => "L",
             ToolKind::Rectangle => "U",
             ToolKind::Ellipse => "Shift+U",
+            ToolKind::Polygon => "Shift+D",
             ToolKind::Jumble => "Shift+R",
             ToolKind::Text => "T",
             ToolKind::Slice => "Shift+C",
@@ -152,6 +155,7 @@ impl ToolKind {
             ('R', true) => ToolKind::Jumble,
             ('H', false) => ToolKind::Hand,
             ('D', false) => ToolKind::Contour,
+            ('D', true) => ToolKind::Polygon,
             ('T', false) => ToolKind::Text,
             ('C', true) => ToolKind::Slice,
             ('O', true) => ToolKind::Artboard,
@@ -182,6 +186,7 @@ impl ToolKind {
                 | ToolKind::Line
                 | ToolKind::Rectangle
                 | ToolKind::Ellipse
+                | ToolKind::Polygon
                 | ToolKind::Jumble
                 | ToolKind::Text
                 | ToolKind::Contour
@@ -205,6 +210,7 @@ impl ToolKind {
                 | ToolKind::Line
                 | ToolKind::Rectangle
                 | ToolKind::Ellipse
+                | ToolKind::Polygon
                 | ToolKind::Jumble
                 | ToolKind::Blur
         )
@@ -221,6 +227,7 @@ impl ToolKind {
                 | ToolKind::Lasso
                 | ToolKind::PolygonLasso
                 | ToolKind::Contour
+                | ToolKind::Polygon
                 | ToolKind::Blur
         )
     }
@@ -429,6 +436,7 @@ struct SpriteTools {
     line: ShapeTool,
     rectangle: ShapeTool,
     ellipse: ShapeTool,
+    polygon: Polygon,
     jumble: Jumble,
     contour: Contour,
     blur: Blur,
@@ -453,6 +461,7 @@ impl SpriteTools {
             line: ShapeTool::new(ShapeKind::Line),
             rectangle: ShapeTool::new(ShapeKind::Rectangle),
             ellipse: ShapeTool::new(ShapeKind::Ellipse),
+            polygon: Polygon::new(),
             jumble: Jumble::new(),
             contour: Contour::new(),
             blur: Blur::new(),
@@ -477,6 +486,7 @@ impl SpriteTools {
             ToolKind::Line => &self.line,
             ToolKind::Rectangle => &self.rectangle,
             ToolKind::Ellipse => &self.ellipse,
+            ToolKind::Polygon => &self.polygon,
             ToolKind::Jumble => &self.jumble,
             ToolKind::Slice => &self.slice,
             ToolKind::Move => &self.mover,
@@ -505,6 +515,7 @@ impl SpriteTools {
             ToolKind::Line => self.line = ShapeTool::new(ShapeKind::Line),
             ToolKind::Rectangle => self.rectangle = ShapeTool::new(ShapeKind::Rectangle),
             ToolKind::Ellipse => self.ellipse = ShapeTool::new(ShapeKind::Ellipse),
+            ToolKind::Polygon => self.polygon = Polygon::new(),
             ToolKind::Jumble => self.jumble = Jumble::new(),
             ToolKind::Slice => self.slice = SliceTool::new(),
             ToolKind::Move => self.mover = MoveTool::new(),
@@ -530,6 +541,7 @@ impl SpriteTools {
             ToolKind::Line => &mut self.line,
             ToolKind::Rectangle => &mut self.rectangle,
             ToolKind::Ellipse => &mut self.ellipse,
+            ToolKind::Polygon => &mut self.polygon,
             ToolKind::Jumble => &mut self.jumble,
             ToolKind::Slice => &mut self.slice,
             ToolKind::Move => &mut self.mover,
@@ -1664,6 +1676,7 @@ impl Editor {
             ToolKind::RectSelect
                 | ToolKind::EllipseSelect
                 | ToolKind::PolygonLasso
+                | ToolKind::Polygon
                 | ToolKind::Gradient
                 | ToolKind::Text
                 | ToolKind::Move

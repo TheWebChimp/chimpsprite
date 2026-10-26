@@ -382,7 +382,10 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
             }
         }
     }
-    if matches!(tool, ToolKind::Rectangle | ToolKind::Ellipse) {
+    if matches!(
+        tool,
+        ToolKind::Rectangle | ToolKind::Ellipse | ToolKind::Polygon
+    ) {
         groups.next(ui);
         check_option(ui, look, &mut options.filled, "Filled");
     }
@@ -468,6 +471,10 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
         }
         ToolKind::PolygonLasso => {
             hints.push("Click to add points. Click the first point, double-click or press Enter to close; Esc cancels.",
+            );
+        }
+        ToolKind::Polygon => {
+            hints.push("Click to add corners. Click the first one, double-click or press Enter to paint it; Esc cancels.",
             );
         }
         ToolKind::Bucket => {

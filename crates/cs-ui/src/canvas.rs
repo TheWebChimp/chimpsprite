@@ -997,7 +997,12 @@ impl CanvasView {
         {
             self.renaming = Some((id, artboard.name.clone(), false));
         }
-        if response.double_clicked() && editor.active_tool() == ToolKind::PolygonLasso {
+        if response.double_clicked()
+            && matches!(
+                editor.active_tool(),
+                ToolKind::PolygonLasso | ToolKind::Polygon
+            )
+        {
             editor.finish_gesture();
         }
         if response.double_clicked()
