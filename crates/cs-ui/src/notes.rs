@@ -1,5 +1,7 @@
 //! Las notas (post-its) sobre el lienzo: se dibujan encima de los artboards con la pieza `note`
-//! del skin (o un rect amarillo sin ella), se mueven desde la barra, se agrandan desde la esquina
+//! del skin (o un rect amarillo sin ella). La barra (con "≡" y "○") solo se ve con el puntero
+//! encima (o arrastrando o escribiendo); si no, `note.plain`, el papel liso. Se mueven desde la
+//! barra, se agrandan desde la esquina
 //! de abajo a la derecha, se escriben con doble clic, el "≡" abre su menú y el "○" las borra.
 //!
 //! Su esquina está en coordenadas de mundo (se mueven con la vista) y su tamaño en puntos de
@@ -13,6 +15,8 @@ use crate::skin::{Skin, WidgetState};
 use crate::{menus, pixel_ui};
 
 const PIECE: &str = "note";
+/// La nota sin la barra: el papel liso, cuando no tiene el puntero encima.
+const PIECE_PLAIN: &str = "note.plain";
 /// El papel de una nota nueva (el del diseño, sin la sombra) y el mínimo al agrandarla.
 pub const NEW_SIZE: (u32, u32) = (86, 89);
 const MIN_SIZE: Vec2 = vec2(60.0, 44.0);
@@ -67,6 +71,8 @@ pub struct NotesView {
     editing: Option<(u32, String)>,
     /// El cursor que piden las notas en este frame (encima de una, o arrastrando).
     pub cursor: Option<egui::CursorIcon>,
+    /// La nota con el puntero encima en este frame (la que muestra su barra).
+    hovered: Option<u32>,
 }
 
 /// El papel de una nota en pantalla (sin la sombra): su esquina en el mundo y su tamaño en puntos.
@@ -145,6 +151,7 @@ impl NotesView {
     ) {
         self.cursor = None;
         let hit = pointer.and_then(|p| self.hit(editor, to_screen, p));
+        self.hovered = hit.map(|(id, _)| id);
         if let Some(drag) = self.drag.clone() {
             match pointer {
                 Some(p) if down => {
@@ -259,6 +266,11 @@ impl NotesView {
     ) -> Vec<(u32, Rect)> {
         let ppp = ui.ctx().pixels_per_point();
         let piece = skin.and_then(|s| s.piece(PIECE, WidgetState::Normal));
+        let plain = skin.and_then(|s| s.piece(PIECE_PLAIN, WidgetState::Normal));
+        // Con barra: la del puntero, la que se arrastra y la que se escribe.
+        let dragged = self.drag.as_ref().map(|d| d.id);
+        let edited = self.editing.as_ref().map(|(id, _)| *id);
+        let with_bar = |id: u32| [self.hovered, dragged, edited].contains(&Some(id));
         let font = egui::TextStyle::Body.resolve(ui.style());
         let mut menus = Vec::new();
         for note in &editor.document.notes {
@@ -266,7 +278,10 @@ impl NotesView {
             if !painter.clip_rect().intersects(paper.expand(4.0)) {
                 continue;
             }
+            let bar = with_bar(note.id);
+            // El menú del "≡" sigue abierto aunque el puntero se vaya al desplegable.
             menus.push((note.id, MENU.translate(paper.min.to_vec2())));
+            let piece = if bar { piece } else { plain.or(piece) };
             match piece {
                 // La pieza trae la sombra: 1 columna y 2 filas más que el papel.
                 Some(piece) => painter.extend(pixel_ui::piece_shapes(
@@ -282,20 +297,22 @@ impl NotesView {
                     );
                     painter.rect_filled(paper, 2.0, PAPER);
                     painter.rect_stroke(paper, 2.0, Stroke::new(1.0, INK), StrokeKind::Inside);
-                    painter.text(
-                        paper.min + vec2(4.0, 1.0),
-                        egui::Align2::LEFT_TOP,
-                        "≡",
-                        font.clone(),
-                        INK,
-                    );
-                    painter.text(
-                        close_rect(paper).center(),
-                        egui::Align2::CENTER_CENTER,
-                        "○",
-                        font.clone(),
-                        INK,
-                    );
+                    if bar {
+                        painter.text(
+                            paper.min + vec2(4.0, 1.0),
+                            egui::Align2::LEFT_TOP,
+                            "≡",
+                            font.clone(),
+                            INK,
+                        );
+                        painter.text(
+                            close_rect(paper).center(),
+                            egui::Align2::CENTER_CENTER,
+                            "○",
+                            font.clone(),
+                            INK,
+                        );
+                    }
                 }
             }
             let editing = self.editing.as_ref().is_some_and(|(id, _)| *id == note.id);
@@ -378,6 +395,17 @@ mod tests {
         assert_eq!(hit_part(paper, pos2(140.0, 100.0)), Some(NoteHit::Body));
         assert_eq!(hit_part(paper, pos2(183.0, 137.0)), Some(NoteHit::Resize));
         assert_eq!(hit_part(paper, pos2(99.0, 55.0)), None);
+    }
+
+    #[test]
+    fn the_plain_note_is_the_note_without_its_bar() {
+        let ctx = egui::Context::default();
+        let skin = Skin::embedded(&ctx);
+        let note = skin.piece(PIECE, WidgetState::Normal).expect("note");
+        let plain = skin
+            .piece(PIECE_PLAIN, WidgetState::Normal)
+            .expect("note.plain");
+        assert_eq!((plain.size, plain.center), (note.size, note.center));
     }
 
     #[test]

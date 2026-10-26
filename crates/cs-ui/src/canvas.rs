@@ -2417,7 +2417,7 @@ mod tests {
         cursor: egui::CursorIcon,
         /// Lo dibujado en el último frame, aplanado.
         shapes: Vec<egui::Shape>,
-        /// La textura de la pieza `note` (con `with_note`).
+        /// La textura de la nota sin el puntero encima, `note.plain` (con `with_note`).
         note_texture: Option<egui::TextureId>,
     }
 
@@ -3567,7 +3567,8 @@ mod tests {
     /// Una nota en el mundo (0, 0) con Pixel UI y su papel en pantalla.
     fn with_note(h: &mut Harness) -> (u32, Rect) {
         let skin = with_window(h);
-        h.note_texture = Some(piece_id(&skin, "note"));
+        // Sin el puntero encima, el papel liso (sin la barra).
+        h.note_texture = Some(piece_id(&skin, "note.plain"));
         crate::pixel_ui::set_bubble(&h.ctx, Some(std::sync::Arc::new(skin)));
         h.editor.set_tool(ToolKind::Pencil);
         let id = h.editor.add_note((0, 0)).unwrap();
@@ -3594,6 +3595,28 @@ mod tests {
         // Un clic en el cuerpo de la nota, sobre el artboard: no pinta.
         h.click(paper.center(), PointerButton::Primary);
         assert_eq!(*h.editor.sprite(), before, "the pencil did not draw");
+    }
+
+    #[test]
+    fn the_bar_of_a_note_shows_only_with_the_pointer_over_it() {
+        let mut h = Harness::new();
+        let skin = with_window(&mut h);
+        let (plain, bar) = (piece_id(&skin, "note.plain"), piece_id(&skin, "note"));
+        crate::pixel_ui::set_bubble(&h.ctx, Some(std::sync::Arc::new(skin)));
+        h.editor.add_note((0, 0)).unwrap();
+        h.frame(vec![]);
+        let drew = |h: &Harness, t: egui::TextureId| {
+            h.shapes
+                .iter()
+                .any(|s| matches!(s, egui::Shape::Mesh(m) if m.texture_id == t))
+        };
+        assert!(drew(&h, plain) && !drew(&h, bar), "away: the plain paper");
+        let paper = h.canvas.to_screen(h.rect, (0, 0)).round();
+        h.frame(vec![egui::Event::PointerMoved(
+            paper + Vec2::new(40.0, 40.0),
+        )]);
+        h.frame(vec![]);
+        assert!(drew(&h, bar) && !drew(&h, plain), "hovered: with its bar");
     }
 
     #[test]
