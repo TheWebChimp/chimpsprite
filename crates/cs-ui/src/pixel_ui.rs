@@ -792,6 +792,7 @@ pub fn set_bubble(ctx: &egui::Context, skin: Option<std::sync::Arc<Skin>>) {
 /// Un botón de 25×16 con el ícono `icon` del skin al centro (como el de la forma del pincel):
 /// `label` es su nombre accesible y su tooltip. Con `on`, prendido (`button.active`). Sin Pixel UI
 /// (o sin el ícono), un botón de texto con `label`.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn icon_button(
     ui: &mut Ui,
     skin: Option<&Skin>,

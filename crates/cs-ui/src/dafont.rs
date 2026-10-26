@@ -46,13 +46,35 @@ impl DafontFont {
     }
 }
 
-/// La página `page` (desde 1) de la categoría Bitmap.
-fn listing_url(page: u32) -> String {
-    if page <= 1 {
+/// La página `page` (desde 1) de la categoría Bitmap; con `sample`, las vistas previas muestran
+/// ese texto (la "Custom preview" de dafont).
+fn listing_url(page: u32, sample: &str) -> String {
+    let mut query = Vec::new();
+    if !sample.trim().is_empty() {
+        query.push(format!("text={}", encode(sample.trim())));
+    }
+    if page > 1 {
+        query.push(format!("page={page}"));
+    }
+    if query.is_empty() {
         format!("{SITE}/bitmap.php")
     } else {
-        format!("{SITE}/bitmap.php?page={page}")
+        format!("{SITE}/bitmap.php?{}", query.join("&"))
     }
+}
+
+/// `text` para una dirección: letras y números tal cual, los espacios como `+` y lo demás en
+/// `%XX` (UTF-8).
+fn encode(text: &str) -> String {
+    let mut out = String::new();
+    for b in text.bytes() {
+        match b {
+            b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b'.' => out.push(b as char),
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 /// El texto entre `start` y `end` a partir de `from` (y dónde termina).
@@ -106,8 +128,14 @@ pub fn parse_listing(html: &str) -> Vec<DafontFont> {
             let license = between(block, 0, "faq.php#copyright\">", "</a>")
                 .map(|(l, _)| unescape(l))
                 .unwrap_or_default();
-            let preview_url =
-                between(block, 0, "background-image:url(", ")").map(|(p, _)| format!("{SITE}{p}"));
+            // Las de siempre (`/img/preview/…`) o, con texto propio, las de `//img.dafont.com`.
+            let preview_url = between(block, 0, "background-image:url(", ")").map(|(p, _)| {
+                if p.starts_with("//") {
+                    format!("https:{}", unescape(p))
+                } else {
+                    format!("{SITE}{}", unescape(p))
+                }
+            });
             (!slug.contains('"') && !slug.contains('/')).then(|| DafontFont {
                 name: unescape(name),
                 slug: slug.to_string(),
@@ -189,6 +217,9 @@ pub struct DafontWindow {
     error: Option<String>,
     /// No hay más páginas (la última vino vacía).
     end: bool,
+    /// El texto para probar las fuentes (lo que se escribe) y el que muestra la lista.
+    sample: String,
+    shown_sample: String,
 }
 
 /// Lo que eligió el usuario: la fuente bajada, lista para la herramienta de texto.
@@ -206,18 +237,24 @@ fn describe(e: &FetchError) -> String {
 }
 
 impl DafontWindow {
+    pub fn is_open(&self) -> bool {
+        self.open
+    }
+
+    /// Abre o cierra la ventana (el botón del dock).
+    pub fn toggle(&mut self) {
+        self.open = !self.open;
+    }
+
     fn load_page(&mut self, ctx: &egui::Context, page: u32) {
         self.page = page;
-        self.listing = Some(lospec_client::fetch(
-            ctx,
-            listing_url(page),
-            |status, bytes| {
-                if status != 200 {
-                    return Err(FetchError::Status(status));
-                }
-                Ok(parse_listing(&decode_html(bytes)))
-            },
-        ));
+        let url = listing_url(page, &self.shown_sample);
+        self.listing = Some(lospec_client::fetch(ctx, url, |status, bytes| {
+            if status != 200 {
+                return Err(FetchError::Status(status));
+            }
+            Ok(parse_listing(&decode_html(bytes)))
+        }));
     }
 
     fn download(&mut self, ctx: &egui::Context, font: DafontFont) {
@@ -287,6 +324,7 @@ impl DafontWindow {
         }
         let mut chosen = None;
         let mut more = false;
+        let mut try_sample = false;
         let (_, closed) = pixel_ui::app_window(
             ctx,
             skin,
@@ -300,6 +338,14 @@ impl DafontWindow {
                     "Pixel (bitmap) fonts from dafont.com. Each font has its author's license: \
                      check it before using the font in your work.",
                 );
+                // Probar las fuentes con un texto propio: las vistas previas lo muestran.
+                ui.horizontal(|ui| {
+                    ui.label("Try it");
+                    let response = crate::widgets::text_line_named(ui, &mut self.sample, "Try it");
+                    let enter =
+                        response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+                    try_sample = enter && self.sample.trim() != self.shown_sample;
+                });
                 if let Some(error) = &self.error {
                     ui.colored_label(Color32::from_rgb(0xc0, 0x40, 0x40), error);
                 }
@@ -333,6 +379,15 @@ impl DafontWindow {
         }
         if more {
             self.load_page(ctx, self.page + 1);
+        }
+        // Otro texto: la lista vuelve a empezar con sus vistas previas nuevas.
+        if try_sample {
+            self.shown_sample = self.sample.trim().to_string();
+            self.fonts.clear();
+            self.previews.clear();
+            self.end = false;
+            self.error = None;
+            self.load_page(ctx, 1);
         }
         // Las vistas previas que todavía no se pidieron (las de lo listado).
         for font in &self.fonts {
@@ -449,6 +504,28 @@ mod tests {
             "https://dl.dafont.com/dl/?f=minecraft"
         );
         assert!(parse_listing("<html>nothing here</html>").is_empty());
+    }
+
+    #[test]
+    fn the_sample_text_goes_in_the_listing_and_its_previews_are_absolute() {
+        assert_eq!(listing_url(1, ""), "https://www.dafont.com/bitmap.php");
+        assert_eq!(
+            listing_url(2, "  "),
+            "https://www.dafont.com/bitmap.php?page=2"
+        );
+        assert_eq!(
+            listing_url(3, "Hola mono!"),
+            "https://www.dafont.com/bitmap.php?text=Hola+mono%21&page=3"
+        );
+        assert_eq!(encode("ñ"), "%C3%B1");
+        let html = r#"<div class="lv1left dfbg"><a href="minecraft.font"><strong>Minecraft</strong></a></div><div style="background-image:url(//img.dafont.com/preview_bitmap.php?text=Hola+mono&amp;ttf=minecraft0&amp;ext=1&amp;size=12)" class="preview"></div>"#;
+        let fonts = parse_listing(html);
+        assert_eq!(
+            fonts[0].preview_url.as_deref(),
+            Some(
+                "https://img.dafont.com/preview_bitmap.php?text=Hola+mono&ttf=minecraft0&ext=1&size=12"
+            )
+        );
     }
 
     #[test]

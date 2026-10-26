@@ -1378,6 +1378,10 @@ impl ChimpApp {
         let mut dock_frame = egui::Frame::side_top_panel(ui.style());
         dock_frame.inner_margin.left = 0;
         dock_frame.inner_margin.right = dock::RIGHT_MARGIN;
+        #[cfg(not(target_arch = "wasm32"))]
+        let dafont_open = self.dafont.is_open();
+        #[cfg(target_arch = "wasm32")]
+        let dafont_open = false;
         let lospec_open = self.lospec_open();
         let dock_out = egui::Panel::right("dock")
             .resizable(false)
@@ -1392,6 +1396,7 @@ impl ChimpApp {
                         &mut self.doc.artboard_name,
                         skin,
                         lospec_open,
+                        dafont_open,
                     )
                 })
                 .inner
@@ -1422,6 +1427,10 @@ impl ChimpApp {
         }
         if dock_out.canvas_size {
             self.open_canvas_size();
+        }
+        #[cfg(not(target_arch = "wasm32"))]
+        if dock_out.toggle_dafont {
+            self.dafont.toggle();
         }
         if dock_out.toggle_lospec {
             self.toggle_lospec();

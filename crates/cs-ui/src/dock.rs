@@ -36,9 +36,20 @@ pub enum DockPanel {
     Slices,
     /// No es un panel flotante: abre la ventana de presets en la pestaña Lospec (no cabe acá).
     Lospec,
+    /// Tampoco: abre la ventana de las fuentes de dafont (solo escritorio).
+    Dafont,
 }
 
 impl DockPanel {
+    #[cfg(not(target_arch = "wasm32"))]
+    pub const ALL: [DockPanel; 4] = [
+        DockPanel::Artboards,
+        DockPanel::Slices,
+        DockPanel::Lospec,
+        DockPanel::Dafont,
+    ];
+    /// En la web no hay dafont (el sitio no acepta peticiones desde otras páginas).
+    #[cfg(target_arch = "wasm32")]
     pub const ALL: [DockPanel; 3] = [DockPanel::Artboards, DockPanel::Slices, DockPanel::Lospec];
 
     pub fn label(self) -> &'static str {
@@ -46,6 +57,7 @@ impl DockPanel {
             DockPanel::Artboards => "Artboards",
             DockPanel::Slices => "Slices",
             DockPanel::Lospec => "Lospec",
+            DockPanel::Dafont => "Dafont",
         }
     }
 
@@ -55,6 +67,7 @@ impl DockPanel {
             DockPanel::Artboards => "icon.dock.artboards",
             DockPanel::Slices => "icon.dock.slices",
             DockPanel::Lospec => "icon.dock.lospec",
+            DockPanel::Dafont => "icon.dock.dafont",
         }
     }
 
@@ -64,6 +77,7 @@ impl DockPanel {
             DockPanel::Artboards => "🗋",
             DockPanel::Slices => "#",
             DockPanel::Lospec => "L",
+            DockPanel::Dafont => "Aa",
         }
     }
 }
@@ -75,6 +89,8 @@ pub struct DockOutput {
     pub canvas_size: bool,
     /// Abrir o cerrar la ventana de Lospec.
     pub toggle_lospec: bool,
+    /// Abrir o cerrar la ventana de dafont.
+    pub toggle_dafont: bool,
 }
 
 /// Un botón del dock con Pixel UI: la pieza `button` según el estado (`Active` si su panel está
@@ -107,14 +123,15 @@ pub fn set_open(ctx: &egui::Context, panel: Option<DockPanel>) {
     ctx.data_mut(|d| d.insert_temp(open_id(), panel));
 }
 
-/// El dock: sus botones y el panel abierto, flotando a la izquierda de su botón. `lospec_open`:
-/// la ventana de Lospec está abierta (su botón se ve prendido).
+/// El dock: sus botones y el panel abierto, flotando a la izquierda de su botón. `lospec_open` y
+/// `dafont_open`: esas ventanas están abiertas (su botón se ve prendido).
 pub fn show(
     ui: &mut Ui,
     editor: &mut Editor,
     name_buffer: &mut (ArtboardId, String),
     skin: Option<&Skin>,
     lospec_open: bool,
+    dafont_open: bool,
 ) -> DockOutput {
     let mut out = DockOutput::default();
     let open = open_panel(ui.ctx());
@@ -123,6 +140,7 @@ pub fn show(
     for panel in DockPanel::ALL {
         let is_open = match panel {
             DockPanel::Lospec => lospec_open,
+            DockPanel::Dafont => dafont_open,
             _ => open == Some(panel),
         };
         let response = match skin {
@@ -138,6 +156,8 @@ pub fn show(
         if response.clicked() {
             if panel == DockPanel::Lospec {
                 out.toggle_lospec = true;
+            } else if panel == DockPanel::Dafont {
+                out.toggle_dafont = true;
             } else {
                 set_open(ui.ctx(), (!is_open).then_some(panel));
             }
@@ -190,7 +210,7 @@ fn flyout(
                     }
                     (DockPanel::Slices, Some(skin)) => panels::pixel_slices(ui, editor, skin),
                     (DockPanel::Slices, None) => panels::slices(ui, editor),
-                    (DockPanel::Lospec, _) => {}
+                    (DockPanel::Lospec | DockPanel::Dafont, _) => {}
                 });
             });
             // Con Pixel UI, la caja del panel detrás del contenido.
