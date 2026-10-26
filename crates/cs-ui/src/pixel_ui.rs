@@ -384,7 +384,7 @@ pub fn pixel_buttons(ui: &mut Ui, skin: &Skin, labels: &[&str]) -> Vec<Response>
             .enumerate()
             .map(|(i, (label, size))| {
                 let width = if i + extra >= n { each + 1.0 } else { each };
-                button_of_size(ui, skin, label, vec2(width, size.y))
+                button_of_size_at(ui, skin, label, vec2(width, size.y), DIALOG_TEXT_DY)
             })
             .collect()
     })
@@ -396,6 +396,15 @@ pub fn pixel_buttons(ui: &mut Ui, skin: &Skin, labels: &[&str]) -> Vec<Response>
 fn label_pos(inner: Rect, size: Vec2, state: WidgetState, pixels_per_point: f32) -> Pos2 {
     let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
     (inner.center() - size / 2.0 + vec2(0.0, down)).round_to_pixels(pixels_per_point)
+}
+
+/// Los botones de los diálogos (y los de los paneles con luz) llevan el texto 1 fila más abajo
+/// que los de la barra: 4 filas entre el borde y las mayúsculas, como en los diseños nuevos.
+const DIALOG_TEXT_DY: f32 = 1.0;
+
+/// Un botón con `button` del skin de `size` exacto (en los diálogos con su lugar del diseño).
+pub fn pixel_button_sized(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response {
+    button_of_size_at(ui, skin, label, size, DIALOG_TEXT_DY)
 }
 
 /// Un botón de `size` exacto, dibujado con la pieza del estado en que está.

@@ -179,9 +179,16 @@ pub fn show(
         true,
         ANCHOR,
         |ui| {
-            contents(ui, dialog, accent, skin);
-            ui.add_space(6.0);
-            match pixel_ui::dialog_buttons(ui, skin, &["OK", "Cancel"]) {
+            let clicked = match skin.filter(|s| s.piece(GRID_PIECE, WidgetState::Normal).is_some())
+            {
+                Some(skin) => pixel_contents(ui, dialog, accent, skin),
+                None => {
+                    contents(ui, dialog, accent, skin);
+                    ui.add_space(6.0);
+                    pixel_ui::dialog_buttons(ui, skin, &["OK", "Cancel"])
+                }
+            };
+            match clicked {
                 Some(0) if dialog.is_valid() => result = DialogResult::Accept,
                 Some(1) => result = DialogResult::Cancel,
                 _ => {}
@@ -202,6 +209,143 @@ pub fn show(
         result
     }
 }
+
+/// El diálogo con Pixel UI, como en el diseño (cada cosa en su lugar, desde la esquina del
+/// contenido): Width y Height a la izquierda, centrados con el ancla; la línea grabada de lado a
+/// lado; "Border" con sus cuatro campos en dos columnas; Trim; OK hasta el ancla y Cancel con
+/// el resto. Devuelve el botón que se apretó.
+fn pixel_contents(
+    ui: &mut egui::Ui,
+    dialog: &mut CanvasSizeDialog,
+    accent: Color32,
+    skin: &Skin,
+) -> Option<usize> {
+    let (area, _) = ui.allocate_exact_size(PIXEL_SIZE, Sense::hover());
+    // La ventana deja 5 filas arriba que el diseño no tiene: se dibuja desde ahí.
+    let o = area.min.round() - DESIGN_SHIFT;
+    let at = |x: f32, y: f32, w: f32, h: f32| {
+        egui::Rect::from_min_size(o + Vec2::new(x, y), Vec2::new(w, h))
+    };
+    // Un renglón: el texto a la izquierda y el campo en su columna, centrados a lo alto.
+    let row = |ui: &mut egui::Ui, rect: egui::Rect, add: &mut dyn FnMut(&mut egui::Ui)| {
+        let mut child = ui.new_child(
+            egui::UiBuilder::new()
+                .max_rect(rect)
+                .layout(egui::Layout::left_to_right(egui::Align::Center)),
+        );
+        add(&mut child);
+    };
+    let field_row = |ui: &mut egui::Ui, x: f32, y: f32, label: &str, field_x: f32| {
+        // El texto, 1 px adentro y 1 fila abajo de lo que lo centraría egui (el diseño).
+        let label_rect = at(x + LABEL_DX, y + LABEL_DY, field_x - x - LABEL_DX, FIELD_H);
+        row(ui, label_rect, &mut |ui| {
+            ui.label(label);
+        });
+        at(field_x, y, 60.0, FIELD_H)
+    };
+    // Tamaño.
+    let rect = field_row(ui, 0.0, SIZE_TOP, "Width:", FIELD_X);
+    row(ui, rect, &mut |ui| {
+        let mut w = dialog.width();
+        if widgets::number(ui, &mut w, 1..=MAX_SIZE, " px").changed() {
+            dialog.set_width(w);
+        }
+    });
+    let rect = field_row(ui, 0.0, SIZE_TOP + ROW_STEP, "Height:", FIELD_X);
+    row(ui, rect, &mut |ui| {
+        let mut h = dialog.height();
+        if widgets::number(ui, &mut h, 1..=MAX_SIZE, " px").changed() {
+            dialog.set_height(h);
+        }
+    });
+    // El ancla.
+    let mut grid_ui =
+        ui.new_child(egui::UiBuilder::new().max_rect(at(GRID_X, GRID_TOP, 88.0, 88.0)));
+    pixel_anchor_grid(&mut grid_ui, dialog, skin);
+    // La línea grabada, de borde a borde de la ventana.
+    let ppp = ui.ctx().pixels_per_point();
+    let line = egui::Rangef::new(o.x - WINDOW_SIDE, o.x + CONTENT_W + WINDOW_SIDE);
+    ui.painter().add(pixel_ui::etched_hline(
+        line,
+        o.y + LINE_TOP,
+        skin.colors(),
+        ppp,
+    ));
+    // Los bordes.
+    row(ui, at(0.0, BORDER_TOP, CONTENT_W, FIELD_H), &mut |ui| {
+        ui.label("Border");
+        if !dialog.is_valid() {
+            ui.colored_label(accent, "Size must be between 1 and 16384 px");
+        }
+    });
+    let fields: [(&str, f32, f32, f32); 4] = [
+        ("Left:", 0.0, FIELDS_TOP, FIELD_X),
+        ("Top:", COLUMN_2, FIELDS_TOP, FIELD_2_X),
+        ("Right:", 0.0, FIELDS_TOP + ROW_STEP, FIELD_X),
+        ("Bottom:", COLUMN_2, FIELDS_TOP + ROW_STEP, FIELD_2_X),
+    ];
+    for (i, (label, x, y, field_x)) in fields.into_iter().enumerate() {
+        let rect = field_row(ui, x, y, label, field_x);
+        let value = match i {
+            0 => &mut dialog.left,
+            1 => &mut dialog.top,
+            2 => &mut dialog.right,
+            _ => &mut dialog.bottom,
+        };
+        row(ui, rect, &mut |ui| {
+            widgets::number(ui, value, BORDER_RANGE, " px");
+        });
+    }
+    row(ui, at(1.0, TRIM_TOP, CONTENT_W, 14.0), &mut |ui| {
+        crate::widgets::checkbox(ui, &mut dialog.trim, "Trim content outside the canvas");
+    });
+    // OK hasta el ancla y Cancel con lo que queda.
+    let mut clicked = None;
+    let buttons = [
+        ("OK", at(0.0, BUTTONS_TOP, GRID_X, BUTTON_H)),
+        (
+            "Cancel",
+            at(
+                GRID_X + 4.0,
+                BUTTONS_TOP,
+                CONTENT_W - GRID_X - 4.0,
+                BUTTON_H,
+            ),
+        ),
+    ];
+    for (i, (label, rect)) in buttons.into_iter().enumerate() {
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+        if pixel_ui::pixel_button_sized(&mut child, skin, label, rect.size()).clicked() {
+            clicked = Some(i);
+        }
+    }
+    clicked
+}
+
+/// Las medidas del diálogo con Pixel UI (desde la esquina del contenido, como en el diseño):
+/// el contenido, de los textos al borde derecho del ancla, y lo que le queda a la ventana a los
+/// lados (para la línea).
+const PIXEL_SIZE: Vec2 = Vec2::new(179.0, 208.0);
+const DESIGN_SHIFT: Vec2 = Vec2::new(0.0, 5.0);
+/// El ancho del contenido en el diseño (de los textos al borde derecho del ancla).
+const CONTENT_W: f32 = 179.0;
+const WINDOW_SIDE: f32 = 6.0;
+const GRID_X: f32 = 91.0;
+const GRID_TOP: f32 = 5.0;
+const FIELD_X: f32 = 39.0;
+const FIELD_H: f32 = 16.0;
+const ROW_STEP: f32 = 24.0;
+const SIZE_TOP: f32 = 30.0;
+const LINE_TOP: f32 = 100.0;
+const BORDER_TOP: f32 = 102.0;
+const FIELDS_TOP: f32 = 120.0;
+const COLUMN_2: f32 = 98.0;
+const LABEL_DX: f32 = 1.0;
+const LABEL_DY: f32 = 1.0;
+const FIELD_2_X: f32 = 137.0;
+const TRIM_TOP: f32 = 171.0;
+const BUTTONS_TOP: f32 = 196.0;
+const BUTTON_H: f32 = 16.0;
 
 /// Lo de adentro del diálogo, sin los botones: tamaño, ancla, bordes, recorte y el aviso.
 fn contents(
