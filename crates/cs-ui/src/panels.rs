@@ -977,13 +977,13 @@ fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook
         let mirror = &mut editor.options.mirror_selection;
         let response = match look {
             // El botón del espejo del diseño, prendido o apagado.
-            // El botón del espejo con su LED (verde prendido, gris apagado).
-            Some(look) => crate::pixel_ui::led_button(
+            // El botón del espejo, como en el diseño: 25×16 con su ícono (prendido, hundido).
+            Some(look) => crate::pixel_ui::icon_button(
                 ui,
                 Some(look.skin),
                 "icon.mirror",
                 "Mirror Selection",
-                *mirror,
+                Some(*mirror),
             ),
             None => crate::widgets::checkbox(ui, mirror, "Mirror selection"),
         };
@@ -3402,20 +3402,21 @@ mod tests {
         let (_, ink) = h.text("Symmetry");
         assert_eq!(slots[0].left() + 1.0 - ink.right(), 5.0, "{ink:?}");
         assert_eq!(ink.top(), h.bar.top() + 6.0, "{ink:?}");
-        // Después de los ejes, a 5, el botón del espejo con su LED (28×16: el ícono de 11, el
-        // LED de 7 y su aire) y del espejo al borde, 3. Apagado, el LED gris.
+        // Después de los ejes, a 5, el botón del espejo (25×16 con su ícono, como en el diseño)
+        // y del espejo al borde, 3. Un clic lo prende.
         let mirror = h.rect("Mirror Selection");
-        assert_eq!(mirror.size(), Vec2::new(28.0, 16.0));
+        assert_eq!(mirror.size(), Vec2::new(25.0, 16.0));
         assert_eq!(mirror.left() - slots[3].right(), 5.0);
         assert_eq!(h.bar.right() - mirror.right(), 3.0, "{:?}", h.bar);
-        let led = |h: &BarHarness, name: &str| {
-            h.drawn_boxes(name).iter().any(|r| mirror.contains_rect(*r))
-        };
-        assert!(led(&h, "button.dot.off") && !led(&h, "button.dot.on"));
+        assert!(
+            h.drawn_boxes("icon.mirror")
+                .iter()
+                .any(|r| mirror.contains_rect(*r)),
+            "the icon"
+        );
         h.click("Mirror Selection");
         h.frame(vec![]);
         assert!(h.editor.options.mirror_selection);
-        assert!(led(&h, "button.dot.on"), "prendido, el LED verde");
         // A 2×, igual: sin medio punto (que sería medio píxel del skin).
         let mut double = BarHarness::with_skin(1200.0, true);
         double.ctx.set_pixels_per_point(2.0);
