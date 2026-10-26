@@ -7,7 +7,9 @@
 //! - **Marcas chicas:** 4 px contra el lienzo; la punta, del color del lienzo (`canvas`).
 //! - **Números:** las cifras del skin (`digit.0` … `digit.9`), con 1 px entre cifra y cifra. El
 //!   mockup no tiene signo menos: es un guion de 2×1 en el color de las marcas.
-//! - **Esquina:** la carita (`ruler.corner`).
+//! - **Esquina:** la carita (`ruler.corner`), que parpadea (`ruler.corner.blink`); se sorprende
+//!   mientras se arrastra una guía (`ruler.corner.surprised`) y se calla con las guías bloqueadas
+//!   (`ruler.corner.quiet`).
 //!
 //! Todo se arma con mallas de color liso y piezas a tamaño de skin, alineadas a píxeles.
 
@@ -35,6 +37,25 @@ const MINUS_WIDTH: f32 = 2.0;
 const MINUS_ROW: f32 = 2.0;
 
 const CORNER_PIECE: &str = "ruler.corner";
+const CORNER_BLINK: &str = "ruler.corner.blink";
+const CORNER_SURPRISED: &str = "ruler.corner.surprised";
+const CORNER_QUIET: &str = "ruler.corner.quiet";
+
+/// La cara de la carita de la esquina.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mood {
+    Normal,
+    /// Con los ojos cerrados: un instante cada tanto.
+    Blink,
+    /// Arrastrando una guía.
+    Surprised,
+    /// Con las guías bloqueadas.
+    Quiet,
+}
+
+/// Cada cuánto parpadea la carita y cuánto le dura (en segundos).
+pub const BLINK_EVERY: f64 = 3.0;
+pub const BLINK_FOR: f64 = 0.15;
 const DIGIT_PIECES: [&str; 10] = [
     "digit.0", "digit.1", "digit.2", "digit.3", "digit.4", "digit.5", "digit.6", "digit.7",
     "digit.8", "digit.9",
@@ -71,6 +92,10 @@ impl Glyph {
 pub struct PixelRulers {
     digits: [Option<Glyph>; 10],
     corner: Option<Glyph>,
+    /// Las otras caras: con los ojos cerrados, sorprendida y callada.
+    blink: Option<Glyph>,
+    surprised: Option<Glyph>,
+    quiet: Option<Glyph>,
     fill: Color32,
     tick: Color32,
     tip: Color32,
@@ -85,12 +110,29 @@ impl PixelRulers {
         Self {
             digits: DIGIT_PIECES.map(|name| Glyph::of(skin, name)),
             corner: Glyph::of(skin, CORNER_PIECE),
+            blink: Glyph::of(skin, CORNER_BLINK),
+            surprised: Glyph::of(skin, CORNER_SURPRISED),
+            quiet: Glyph::of(skin, CORNER_QUIET),
             fill: colors.background,
             tick: colors.ruler_tick,
             tip: colors.canvas,
             highlight: colors.highlight,
             pointer: colors.accent,
         }
+    }
+
+    /// Las reglas con la carita en `mood` (si el skin no trae esa cara, la de siempre).
+    pub fn with_mood(mut self, mood: Mood) -> Self {
+        let face = match mood {
+            Mood::Normal => None,
+            Mood::Blink => self.blink,
+            Mood::Surprised => self.surprised,
+            Mood::Quiet => self.quiet,
+        };
+        if let Some(face) = face {
+            self.corner = Some(face);
+        }
+        self
     }
 
     /// La regla de arriba (sin la esquina): de ahí salen las marcas y los números.
@@ -412,6 +454,21 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[test]
+    fn each_mood_has_its_own_face() {
+        let ctx = egui::Context::default();
+        let skin = Skin::embedded(&ctx);
+        let rulers = PixelRulers::from_skin(&skin);
+        let faces: Vec<_> = [Mood::Normal, Mood::Blink, Mood::Surprised, Mood::Quiet]
+            .map(|m| rulers.with_mood(m).corner.expect("a face").texture)
+            .into();
+        for (i, a) in faces.iter().enumerate() {
+            for b in &faces[i + 1..] {
+                assert_ne!(a, b, "four different faces");
+            }
+        }
     }
 
     #[test]

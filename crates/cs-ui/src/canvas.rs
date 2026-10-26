@@ -1505,7 +1505,33 @@ impl CanvasView {
         if view_settings.rulers {
             let pointer = response.hover_pos().or(ui.ctx().pointer_interact_pos());
             match self.pixel_rulers {
-                Some(look) => self.draw_pixel_rulers(&painter, rect, editor, pointer, &look),
+                Some(look) => {
+                    // La carita: sorprendida si se arrastra una guía, callada si están
+                    // bloqueadas; si no, parpadea cada tanto.
+                    use pixel_rulers::{BLINK_EVERY, BLINK_FOR, Mood};
+                    let time = ui.input(|i| i.time);
+                    let phase = time % BLINK_EVERY;
+                    let mood = if self.ruler_drag.is_some() {
+                        Mood::Surprised
+                    } else if view_settings.lock_guides {
+                        Mood::Quiet
+                    } else if phase < BLINK_FOR {
+                        Mood::Blink
+                    } else {
+                        Mood::Normal
+                    };
+                    if matches!(mood, Mood::Normal | Mood::Blink) {
+                        let wait = if phase < BLINK_FOR {
+                            BLINK_FOR - phase
+                        } else {
+                            BLINK_EVERY - phase
+                        };
+                        ui.ctx()
+                            .request_repaint_after(Duration::from_secs_f64(wait.max(0.01)));
+                    }
+                    let look = look.with_mood(mood);
+                    self.draw_pixel_rulers(&painter, rect, editor, pointer, &look)
+                }
                 None => self.draw_rulers(&painter, rect, editor, pointer),
             }
         }

@@ -674,7 +674,13 @@ fn layer_row(
         x += grid.fold_w;
     }
     // Recortadas: sangría con flecha hacia la capa base.
-    if layer.clip {
+    if layer.clip
+        && let Some(skin) = grid.skin
+    {
+        // Con Pixel UI, la flecha del diseño, 3 px después de lo anterior.
+        pixel::clip_arrow(ui, skin, pos2(x + 3.0, content.top()), active);
+        x += 14.0;
+    } else if layer.clip {
         let stroke = Stroke::new(1.5, grid.accent());
         let (top, mid) = (content.top() + 4.0, content.center().y + 1.0);
         let (x0, x1) = (x + 3.0, x + 10.0);

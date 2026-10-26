@@ -64,6 +64,8 @@ pub(super) const FOLDER_W: f32 = 16.0;
 const FOLDER: &str = "timeline.folder";
 const FOLDER_OPEN: &str = "timeline.folder.open";
 const TILEMAP: &str = "timeline.tilemap";
+const CLIP: &str = "timeline.clip";
+const CLIP_TOP: f32 = 2.0;
 /// Las carpetitas terminan 2 filas arriba del final del contenido de la fila (como en el diseño).
 const FOLDER_BOTTOM: f32 = 10.0;
 /// La versión de un ícono para lo elegido (sobre el rosa).
@@ -993,6 +995,12 @@ pub(super) fn folder(ui: &Ui, skin: &Skin, rect: Rect, collapsed: bool, selected
     let size = piece_size(skin, name).unwrap_or(Vec2::ZERO);
     let at = pos2(rect.left(), rect.top() + FOLDER_BOTTOM - size.y);
     icon_at(ui, skin, name, at, selected);
+}
+
+/// La flecha de una capa recortada (máscara de recorte) con su esquina de arriba en `at`, 2 filas
+/// debajo de lo de arriba del contenido; en la capa activa, en su versión para lo elegido.
+pub(super) fn clip_arrow(ui: &Ui, skin: &Skin, at: Pos2, selected: bool) {
+    icon_at(ui, skin, CLIP, at + vec2(0.0, CLIP_TOP), selected);
 }
 
 /// El ícono de una capa tilemap al principio de `rect` (donde va la carpetita de los grupos); en
