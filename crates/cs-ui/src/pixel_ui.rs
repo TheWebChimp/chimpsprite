@@ -849,7 +849,8 @@ pub fn led_button(ui: &mut Ui, skin: Option<&Skin>, icon: &str, label: &str, on:
     let response = crate::pixel_draw::skin_button(ui, skin, rect, info, |inner| {
         // En el relleno (sin las filas de abajo del botón), centrados a lo alto.
         let fill = Rect::from_min_max(inner.min, inner.max - vec2(0.0, 2.0));
-        let middle = |h: f32| (fill.center().y - h / 2.0).floor();
+        // Si no cabe justo a la mitad, el pixel de sobra queda arriba (como en el diseño).
+        let middle = |h: f32| (fill.center().y - h / 2.0).ceil();
         let icon_at = pos2(rect.left() + LED_PAD, middle(icon_size.y));
         let led_at = pos2(icon_at.x + icon_size.x + LED_GAP, middle(led_size.y));
         let mut shapes = crate::pixel_draw::piece_at(skin, icon, icon_at, ppp);

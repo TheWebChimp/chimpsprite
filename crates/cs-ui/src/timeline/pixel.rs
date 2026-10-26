@@ -63,6 +63,12 @@ const CEL_AT: Vec2 = vec2(2.0, 2.0);
 pub(super) const FOLDER_W: f32 = 16.0;
 const FOLDER: &str = "timeline.folder";
 const FOLDER_OPEN: &str = "timeline.folder.open";
+/// La flechita de un grupo (▾ abierto, ▸ cerrado): 2 después de la carpetita abierta, centrada
+/// con ella, y 3 de aire hasta el nombre.
+const FOLD_OPEN: &str = "timeline.fold.open";
+const FOLD_CLOSED: &str = "timeline.fold.closed";
+const FOLD_LEFT: f32 = 15.0;
+pub(super) const FOLD_ARROW_W: f32 = 7.0;
 const TILEMAP: &str = "timeline.tilemap";
 const CLIP: &str = "timeline.clip";
 const CLIP_TOP: f32 = 2.0;
@@ -995,6 +1001,11 @@ pub(super) fn folder(ui: &Ui, skin: &Skin, rect: Rect, collapsed: bool, selected
     let size = piece_size(skin, name).unwrap_or(Vec2::ZERO);
     let at = pos2(rect.left(), rect.top() + FOLDER_BOTTOM - size.y);
     icon_at(ui, skin, name, at, selected);
+    let arrow = if collapsed { FOLD_CLOSED } else { FOLD_OPEN };
+    let size = piece_size(skin, arrow).unwrap_or(Vec2::ZERO);
+    let middle = rect.top() + FOLDER_BOTTOM - 4.5;
+    let at = pos2(rect.left() + FOLD_LEFT, (middle - size.y / 2.0).floor());
+    icon_at(ui, skin, arrow, at, selected);
 }
 
 /// La flecha de una capa recortada (máscara de recorte) con su esquina de arriba en `at`, 2 filas

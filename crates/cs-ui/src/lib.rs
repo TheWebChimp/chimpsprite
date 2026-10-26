@@ -210,6 +210,15 @@ impl ChimpApp {
                 app.doc.editor.set_note_color(id, cs_core::NoteColor::Blue);
             }
         }
+        // Desarrollo: dos grupos (uno colapsado), para capturas de sus carpetitas.
+        if std::env::var_os("CHIMPSPRITE_DEMO_GROUP").is_some() && app.has_doc() {
+            let editor = &mut app.doc.editor;
+            editor.add_layer(cs_core::LayerKind::Group);
+            if let Some(id) = editor.sprite().layers.last().map(|l| l.id) {
+                editor.toggle_collapsed(id);
+            }
+            editor.add_layer(cs_core::LayerKind::Group);
+        }
         // Desarrollo: abre Sprite Size para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_SPRITE_SIZE").is_some() && app.has_doc() {
             app.open_sprite_dialog(|a| {

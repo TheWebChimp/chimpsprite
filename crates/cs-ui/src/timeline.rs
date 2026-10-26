@@ -645,10 +645,14 @@ fn layer_row(
     let mut x = name_left + depth * grid.indent;
     let content = inner(row);
     if layer.kind == LayerKind::Group {
-        let arrow = Rect::from_min_max(
-            pos2(x, content.top()),
-            pos2(x + grid.fold_w, content.bottom()),
-        );
+        // Con Pixel UI, la carpetita lleva su flechita (▾/▸) a un lado.
+        let fold_w = grid.fold_w
+            + if grid.skin.is_some() {
+                pixel::FOLD_ARROW_W
+            } else {
+                0.0
+            };
+        let arrow = Rect::from_min_max(pos2(x, content.top()), pos2(x + fold_w, content.bottom()));
         if ui
             .interact(arrow, ui.id().with(("fold", id)), Sense::click())
             .clicked()
@@ -660,7 +664,7 @@ fn layer_row(
             Some(skin) => pixel::folder(ui, skin, arrow, collapsed, active),
             None => draw_fold_arrow(&painter, arrow.center(), collapsed, grid.text(ui), 4.0),
         }
-        x += grid.fold_w;
+        x += fold_w;
     }
     // Con Pixel UI, las capas tilemap llevan su ícono donde los grupos su carpetita.
     if layer.kind == LayerKind::Tilemap

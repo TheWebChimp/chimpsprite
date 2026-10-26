@@ -279,7 +279,7 @@ fn headline(text: &str) -> String {
         return text.to_owned();
     }
     let cut: String = text.chars().take(MAX).collect();
-    format!("{}…", cut.trim_end())
+    format!("{}{}", cut.trim_end(), crate::tab_bar::ellipsis())
 }
 
 /// r/PixelArt: el feed Atom. Salta los que no traen miniatura (texto) y los marcados NSFW.
@@ -979,7 +979,8 @@ mod tests {
         assert_eq!(strip_tags("<p>Hi <b>there</b>&nbsp;!</p>"), "Hi there !");
         assert_eq!(headline("Love \u{2764}\u{FE0F} it"), "Love \u{2764} it");
         let long = "x".repeat(100);
-        assert_eq!(headline(&long).chars().count(), 81);
+        let cut = 80 + crate::tab_bar::ellipsis().chars().count();
+        assert_eq!(headline(&long).chars().count(), cut);
         assert_eq!(
             element("<a><title>t</title><titleX>u</titleX></a>", "title"),
             Some("t")
