@@ -1280,12 +1280,12 @@ fn the_panel_hangs_from_the_open_title_like_in_the_design() {
         if title == "File" {
             assert_eq!(boxed.left(), h.screen().left() + 1.0, "{boxed:?}");
         }
-        // El panel empieza 12 filas debajo de las mayúsculas (1 debajo del menú) y 1 px a la
-        // derecha de la caja, para que no se vea pegado; las dos filas de abajo de la caja tapan
-        // su borde.
+        // El panel empieza 12 filas debajo de las mayúsculas (1 debajo del menú) y con su borde
+        // izquierdo en el de la caja (una sola línea); las dos filas de abajo de la caja tapan su
+        // borde de arriba.
         assert_eq!(panel.top(), caps + 12.0, "{title}");
         assert_eq!(panel.top(), menu.bottom() + 1.0, "{title}");
-        assert_eq!(panel.left(), boxed.left() + 1.0, "{title}");
+        assert_eq!(panel.left(), boxed.left(), "{title}");
         assert_eq!(boxed.bottom(), panel.top() + 2.0, "{title}");
         // Sin huecos: la fila entre la barra y el panel también se ve de la caja.
         let gap = Rect::from_min_size(
@@ -1301,6 +1301,19 @@ fn the_panel_hangs_from_the_open_title_like_in_the_design() {
             .map(|r| r.width())
             .sum();
         assert_eq!(seen, gap.width(), "{title}: the row under the bar");
+        // Y su columna de la izquierda hasta abajo, sobre la del panel.
+        let left = Rect::from_min_max(
+            Pos2::new(boxed.left(), menu.bottom()),
+            Pos2::new(boxed.left() + 1.0, boxed.bottom()),
+        );
+        let seen: f32 = h
+            .visible("menu.title.open")
+            .iter()
+            .map(|r| r.intersect(left))
+            .filter(|r| r.is_positive())
+            .map(|r| r.height())
+            .sum();
+        assert_eq!(seen, left.height(), "{title}: the left column");
         assert!(panel.right() > boxed.right(), "{title}");
         // Otro clic en el título lo cierra.
         open_menu(&mut h, title);

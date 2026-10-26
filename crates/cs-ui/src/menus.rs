@@ -54,8 +54,9 @@ const BOX_TOP: f32 = 5.0;
 /// filas más y tapa ese borde y el bisel.
 const PANEL_TOP: f32 = 11.0;
 const BOX_JOIN: f32 = 2.0;
-/// El panel de un menú de la barra va 1 px a la derecha y 1 abajo de donde lo deja la caja.
-const PANEL_SHIFT: Vec2 = vec2(1.0, 1.0);
+/// El panel de un menú de la barra va 1 px abajo de donde lo deja la caja; a la izquierda, su
+/// borde sigue el de la caja, como en el diseño (frame 4: la línea de File baja derecho).
+const PANEL_SHIFT: Vec2 = vec2(0.0, 1.0);
 /// Del borde del panel al contenido: la línea y el bisel arriba y abajo; a los lados, además, 3
 /// px de relleno (el texto de los ítems queda 5 px adentro, como en el diseño).
 const PANEL_MARGIN: Margin = Margin {
@@ -225,7 +226,7 @@ pub(crate) fn bar_menu<R>(
         ),
     );
     let config = menu::MenuConfig::new().style(pixel_menu_style);
-    // El panel cuelga de la caja, corrido `PANEL_SHIFT` (para que no se vea pegado a ella): su
+    // El panel cuelga de la caja, corrido `PANEL_SHIFT` (1 fila abajo): su
     // esquina de arriba a la izquierda, siempre la misma.
     let anchor = Rect::from_min_max(
         pos2(title_box.left(), panel_top),
@@ -309,10 +310,10 @@ fn panel<R>(
     ui.painter().set(back, Shape::Vec(shapes));
     if let Some(title_box) = title_box {
         // Las filas de la caja que bajan sobre el panel; las de arriba van en la barra. También
-        // la fila entre la barra y el panel (`PANEL_SHIFT`): la barra no pinta fuera de sí.
+        // la fila entre la barra y el panel (`PANEL_SHIFT`: la barra no pinta fuera de sí).
         let gap = Rect::from_min_max(
             pos2(title_box.left(), rect.top() - PANEL_SHIFT.y),
-            pos2(title_box.right(), rect.top()),
+            pos2(title_box.right(), title_box.bottom()),
         );
         ui.painter()
             .with_clip_rect(rect.union(gap))
