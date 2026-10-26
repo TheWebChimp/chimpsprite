@@ -227,6 +227,17 @@ pub fn palette_grid(ui: &mut Ui, editor: &mut Editor, skin: &Skin, height: f32) 
             vec![outline(rect, colors.outline, ppp)]
         }));
     let id = ui.id().with("pixel_palette");
+    // Un clic fuera de la caja: la paleta deja de ser lo último tocado y se suelta lo
+    // seleccionado de a varios.
+    if ui.input(|i| i.pointer.primary_pressed())
+        && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
+        && !rect.contains(pos)
+    {
+        focus_palette(ui, false);
+        if editor.palette_range().is_some_and(|r| r.end() > r.start()) {
+            editor.palette_selection = None;
+        }
+    }
     // Lo que se desplaza: adentro de las líneas de la caja.
     let view = rect.shrink(BOX_BORDER);
     let mut inner = ui.new_child(
@@ -322,10 +333,53 @@ fn grid_cells(
     let colors = *skin.colors();
     let cell_at =
         |i: usize| origin + vec2((i % columns) as f32 * CELL, (i / columns) as f32 * CELL);
+    // De la posición del puntero a su cuadrito (para seleccionar arrastrando).
+    let index_at = |pos: Pos2| {
+        let rel = pos - origin;
+        let col = ((rel.x / CELL).floor().max(0.0) as usize).min(columns - 1);
+        let row = (rel.y / CELL).floor().max(0.0) as usize;
+        (row * columns + col).min(count.saturating_sub(1))
+    };
+    let mut delete = None;
     for index in 0..count {
         let cell = Rect::from_min_size(cell_at(index), Vec2::splat(SWATCH_SIDE));
         let inside = cell.shrink(1.0);
-        let response = ui.interact(cell, id.with(index), Sense::click());
+        let response = ui.interact(cell, id.with(index), Sense::click_and_drag());
+        // Seleccionar: un clic elige uno, Shift+clic llega hasta él y arrastrar elige los de en
+        // medio (para borrarlos, por ejemplo).
+        if response.clicked() {
+            let shift = ui.input(|i| i.modifiers.shift);
+            editor.palette_selection = match editor.palette_selection {
+                Some((anchor, _)) if shift => Some((anchor, index)),
+                _ => Some((index, index)),
+            };
+            focus_palette(ui, true);
+        }
+        if response.dragged()
+            && let Some(pos) = response.interact_pointer_pos()
+        {
+            editor.palette_selection = Some((index, index_at(pos)));
+            focus_palette(ui, true);
+        }
+        response.context_menu(|ui| {
+            let range = editor
+                .palette_range()
+                .filter(|r| r.contains(&index))
+                .unwrap_or(index..=index);
+            let n = range.end() - range.start() + 1;
+            let label = if n == 1 {
+                "Delete color".to_string()
+            } else {
+                format!("Delete {n} colors")
+            };
+            if ui
+                .add_enabled(n < count, egui::Button::new(label))
+                .clicked()
+            {
+                delete = Some(range);
+                ui.close();
+            }
+        });
         let painter = ui.painter();
         let color = panels::to_color32(editor.sprite().palette.colors()[index]);
         if color.a() < 255 {
@@ -342,6 +396,33 @@ fn grid_cells(
         let response = response.tip(label);
         // La entrada elegida: con la paleta desbloqueada, el editor de color la edita.
         panels::pick_on_click(editor, &response, value, Some(index as u8));
+    }
+    // Lo seleccionado (de a más de uno): el marco blanco con su línea oscura alrededor, por fila.
+    if let Some(range) = editor.palette_range()
+        && range.end() > range.start()
+    {
+        let (lo, hi) = (*range.start(), *range.end());
+        let mut shapes = Vec::new();
+        for row in lo / columns..=hi / columns {
+            let a = lo.max(row * columns);
+            let b = hi.min(row * columns + columns - 1);
+            let seg = Rect::from_min_max(cell_at(a), cell_at(b) + Vec2::splat(SWATCH_SIDE));
+            shapes.extend(selection_frame(seg, colors.outline, ppp));
+        }
+        ui.painter().extend(shapes);
+    }
+    // Delete (o Backspace) borra lo seleccionado si lo último que se tocó fue la paleta.
+    let typing = ui.ctx().memory(|m| m.focused().is_some());
+    if !typing
+        && palette_focused(ui)
+        && let Some(range) = editor.palette_range()
+        && range.end() > range.start()
+        && ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
+    {
+        delete = Some(range);
+    }
+    if let Some(range) = delete {
+        editor.delete_palette_entries(range);
     }
     // La marca para agregar el primario, en la celda siguiente. Un clic agrega uno; arrastrarla
     // agrega hasta la celda donde se suelta (mientras, se ven las celdas nuevas).
@@ -404,6 +485,49 @@ fn grid_cells(
     } else if target > count {
         ui.data_mut(|d| d.insert_temp(id.with("add_target"), target));
     }
+}
+
+/// El marco de lo seleccionado alrededor de `seg` (los cuadritos con su borde): 1 px blanco y,
+/// afuera, 1 px oscuro sin las esquinas.
+fn selection_frame(seg: Rect, dark: Color32, ppp: f32) -> Vec<Shape> {
+    let ring = |r: Rect, color: Color32, corners: bool| {
+        let inset = if corners { 0.0 } else { 1.0 };
+        [
+            Rect::from_min_max(
+                pos2(r.left() + inset, r.top()),
+                pos2(r.right() - inset, r.top() + 1.0),
+            ),
+            Rect::from_min_max(
+                pos2(r.left() + inset, r.bottom() - 1.0),
+                pos2(r.right() - inset, r.bottom()),
+            ),
+            Rect::from_min_max(
+                pos2(r.left(), r.top() + 1.0),
+                pos2(r.left() + 1.0, r.bottom() - 1.0),
+            ),
+            Rect::from_min_max(
+                pos2(r.right() - 1.0, r.top() + 1.0),
+                pos2(r.right(), r.bottom() - 1.0),
+            ),
+        ]
+        .into_iter()
+        .map(move |side| solid(side, color, ppp))
+    };
+    ring(seg.expand(2.0), dark, false)
+        .chain(ring(seg.expand(1.0), Color32::WHITE, true))
+        .collect()
+}
+
+/// Lo último que se tocó fue la paleta (para que Delete borre sus colores y no lo del lienzo).
+fn palette_focused(ui: &Ui) -> bool {
+    ui.ctx()
+        .data(|d| d.get_temp::<bool>(egui::Id::new("palette_focus")))
+        .unwrap_or(false)
+}
+
+fn focus_palette(ui: &Ui, on: bool) {
+    ui.ctx()
+        .data_mut(|d| d.insert_temp(egui::Id::new("palette_focus"), on));
 }
 
 /// Un botón de arriba de la paleta: su rect (con las dos líneas de borde, compartidas en el

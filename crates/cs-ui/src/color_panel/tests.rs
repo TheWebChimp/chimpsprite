@@ -404,7 +404,10 @@ fn with_pixel_ui_the_add_mark_follows_the_last_swatch_and_adds_the_primary_color
     // Se agarra toda la celda siguiente.
     let last = h.node("#20");
     let cell = h.node("Add to palette");
-    assert_eq!(cell, Rect::from_min_size(last.min + vec2(12.0, 0.0), vec2(13.0, 13.0)));
+    assert_eq!(
+        cell,
+        Rect::from_min_size(last.min + vec2(12.0, 0.0), vec2(13.0, 13.0))
+    );
     let at = last.min + vec2(12.0 + 3.0, 3.0);
     let add = Rect::from_min_size(at, vec2(6.0, 7.0));
     assert_eq!(h.drawn("palette.add"), vec![add]);
@@ -423,6 +426,32 @@ fn with_pixel_ui_the_add_mark_follows_the_last_swatch_and_adds_the_primary_color
 }
 
 #[test]
+fn dragging_over_swatches_selects_them_and_delete_removes_them() {
+    let mut h = Harness::new(true);
+    let before = h.editor.sprite().palette.colors().to_vec();
+    // De #2 a #5 arrastrando: los cuatro, con su marco.
+    let from = h.node("#2").center();
+    h.drag(from, 12.0 * 3.0);
+    assert_eq!(h.editor.palette_range(), Some(2..=5));
+    let white = h
+        .colored_rects()
+        .into_iter()
+        .filter(|&(c, _)| c == Color32::WHITE)
+        .count();
+    assert!(white >= 4, "the white frame");
+    h.frame(vec![
+        key(egui::Key::Delete, true, egui::Modifiers::NONE),
+        key(egui::Key::Delete, false, egui::Modifiers::NONE),
+    ]);
+    let after = h.editor.sprite().palette.colors().to_vec();
+    assert_eq!(after.len(), before.len() - 4);
+    assert_eq!(after[2], before[6]);
+    assert_eq!(h.editor.palette_range(), None);
+    h.editor.undo();
+    assert_eq!(h.editor.sprite().palette.colors(), &before[..]);
+}
+
+#[test]
 fn dragging_the_add_mark_adds_one_color_per_cell_in_one_undo_step() {
     let mut h = Harness::new(true);
     h.set_primary(Rgba::rgb(10, 20, 30));
@@ -431,8 +460,16 @@ fn dragging_the_add_mark_adds_one_color_per_cell_in_one_undo_step() {
     let from = h.node("Add to palette").center();
     h.drag(from, 12.0 * 3.0);
     let palette = h.editor.sprite().palette.colors().to_vec();
-    assert_eq!(palette.len(), before + 4, "the cell under the mark and three more");
-    assert!(palette[before..].iter().all(|&c| c == Rgba::rgb(10, 20, 30)));
+    assert_eq!(
+        palette.len(),
+        before + 4,
+        "the cell under the mark and three more"
+    );
+    assert!(
+        palette[before..]
+            .iter()
+            .all(|&c| c == Rgba::rgb(10, 20, 30))
+    );
     h.editor.undo();
     assert_eq!(h.editor.sprite().palette.len(), before);
 }

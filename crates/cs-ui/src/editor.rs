@@ -669,6 +669,9 @@ pub struct Editor {
     /// `[primario, secundario]`. Con la paleta desbloqueada, el editor de color edita la del
     /// color que edita, mientras el color siga siendo el suyo. Ver `pick_color`.
     pub palette_entry: [Option<u8>; 2],
+    /// Los cuadritos de la paleta seleccionados (Pixel UI): de dónde empezó (con un clic) a dónde
+    /// llega (con Shift+clic o arrastrando). Ver `palette_range`.
+    pub palette_selection: Option<(usize, usize)>,
     /// El color primario de antes de elegir el Mask con su botón, para volver al apagarlo.
     pub(crate) before_mask: Option<PixelValue>,
     /// Con Pixel UI, el editor de color edita el secundario: se elige con un clic en la mitad
@@ -725,6 +728,7 @@ impl Editor {
             transform_drag: None,
             palette_locked: true,
             palette_entry: [None; 2],
+            palette_selection: None,
             before_mask: None,
             editing_secondary: false,
         };

@@ -1,13 +1,11 @@
 //! Aplicar una paleta al sprite activo (`Editor::apply_palette`).
 
 use cs_commands::Command;
-use cs_core::{ColorMode, Palette, PixelValue, Rgba};
+use cs_core::{ColorMode, Image, Palette, PixelBuffer, PixelValue, Rgba};
 
 use crate::Editor;
 
 impl Editor {
-    /// Cambia la paleta del sprite activo en un paso de undo. En RGBA los píxeles no cambian; en
-    /// indexado cada índice toma el color nuevo de su posición, como en Aseprite.
     /// Agrega al final de la paleta del sprite los colores de `palette` que no tiene (hasta 256).
     /// Un paso de undo. Devuelve si cambió.
     pub fn append_palette(&mut self, palette: &Palette) -> bool {
@@ -23,6 +21,90 @@ impl Editor {
         self.apply_palette(Palette::new(colors))
     }
 
+    /// Los cuadritos seleccionados de la paleta, en orden (dentro de la paleta).
+    pub fn palette_range(&self) -> Option<std::ops::RangeInclusive<usize>> {
+        let (a, b) = self.palette_selection?;
+        let len = self.sprite().palette.len();
+        let (lo, hi) = (a.min(b), a.max(b).min(len.checked_sub(1)?));
+        (lo <= hi).then_some(lo..=hi)
+    }
+
+    /// Borra las entradas `range` de la paleta (queda al menos una), en un paso de undo. En
+    /// indexado los píxeles siguen con su color: los índices de después se corren y los de las
+    /// borradas pasan al color más parecido que queda; la entrada transparente no se borra.
+    pub fn delete_palette_entries(&mut self, range: std::ops::RangeInclusive<usize>) -> bool {
+        let old = self.sprite().palette.clone();
+        let (lo, hi) = (
+            *range.start(),
+            (*range.end()).min(old.len().saturating_sub(1)),
+        );
+        if lo > hi || hi - lo + 1 >= old.len() {
+            return false;
+        }
+        let kept: Vec<Rgba> = old
+            .colors()
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| !(lo..=hi).contains(i))
+            .map(|(_, &c)| c)
+            .collect();
+        let new = Palette::new(kept);
+        let mut commands = Vec::new();
+        let mut map: Option<Vec<u8>> = None;
+        if let ColorMode::Indexed { transparent_index } = self.sprite().color_mode {
+            let t = transparent_index as usize;
+            // La transparente no se borra ni se corre (su índice es parte del modo).
+            if t >= lo {
+                return false;
+            }
+            let removed = hi - lo + 1;
+            let table: Vec<u8> = (0..256usize)
+                .map(|i| {
+                    if i < lo {
+                        i as u8
+                    } else if i > hi {
+                        (i - removed).min(255) as u8
+                    } else {
+                        let c = old.colors()[i];
+                        new.nearest(c, transparent_index)
+                    }
+                })
+                .collect();
+            for (&id, image) in &self.sprite().images {
+                if let PixelBuffer::Indexed(pixels) = image.pixels() {
+                    let remapped = pixels.iter().map(|&p| table[p as usize]).collect();
+                    let Some(img) = Image::from_buffer(
+                        image.width(),
+                        image.height(),
+                        PixelBuffer::Indexed(remapped),
+                    ) else {
+                        continue;
+                    };
+                    commands.push(Command::SetImage {
+                        id,
+                        image: Some(std::sync::Arc::new(img)),
+                    });
+                }
+            }
+            map = Some(table);
+        }
+        commands.push(Command::SetPalette(new));
+        if !self.execute(Command::Batch(commands)) {
+            return false;
+        }
+        let fix = |value: PixelValue, map: &Option<Vec<u8>>| match (value, map) {
+            (PixelValue::Index(i), Some(table)) => PixelValue::Index(table[i as usize]),
+            (value, _) => value,
+        };
+        self.primary = self.fit_to_palette(fix(self.primary, &map));
+        self.secondary = self.fit_to_palette(fix(self.secondary, &map));
+        self.palette_entry = [None; 2];
+        self.palette_selection = None;
+        true
+    }
+
+    /// Cambia la paleta del sprite activo en un paso de undo. En RGBA los píxeles no cambian; en
+    /// indexado cada índice toma el color nuevo de su posición, como en Aseprite.
     pub fn apply_palette(&mut self, palette: Palette) -> bool {
         if palette.is_empty() || palette == self.sprite().palette {
             return false;
@@ -196,6 +278,39 @@ mod tests {
         assert!(!e.append_palette(&more), "nothing new");
         e.undo();
         assert_eq!(e.sprite().palette, colors(3));
+    }
+
+    #[test]
+    fn deleting_indexed_entries_keeps_the_pixels_colors() {
+        use cs_core::{Image, ImageId, PixelBuffer};
+        use std::sync::Arc;
+        let mut sprite = Sprite::new(
+            3,
+            1,
+            ColorMode::Indexed {
+                transparent_index: 0,
+            },
+        );
+        sprite.palette = colors(6);
+        let image = Image::from_buffer(3, 1, PixelBuffer::Indexed(vec![1, 3, 5])).unwrap();
+        let id = ImageId(77);
+        sprite.images.insert(id, Arc::new(image));
+        let mut e = Editor::with_sprite(sprite);
+        e.primary = PixelValue::Index(5);
+        // Se borran la 2 y la 3: la 5 pasa a ser la 3 y la 3 al color más parecido que queda
+        // (el 0x040404, ahora la 2).
+        assert!(e.delete_palette_entries(2..=3));
+        assert_eq!(e.sprite().palette.len(), 4);
+        let img = e.sprite().image(id).unwrap();
+        let PixelBuffer::Indexed(p) = img.pixels() else {
+            panic!("indexed")
+        };
+        assert_eq!(p, &vec![1, 2, 3]);
+        assert_eq!(e.primary, PixelValue::Index(3));
+        e.undo();
+        assert_eq!(e.sprite().palette.len(), 6);
+        assert!(!e.delete_palette_entries(0..=1), "not the transparent one");
+        assert!(!e.delete_palette_entries(0..=5), "not all of them");
     }
 
     #[test]

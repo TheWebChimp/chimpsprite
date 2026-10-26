@@ -201,6 +201,10 @@ impl ChimpApp {
         if std::env::var_os("CHIMPSPRITE_DEMO_SELECT").is_some() && app.has_doc() {
             app.doc.editor.set_tool(ToolKind::RectSelect);
         }
+        // Desarrollo: cuatro colores de la paleta seleccionados, para capturas.
+        if std::env::var_os("CHIMPSPRITE_DEMO_PALETTE_SELECTION").is_some() && app.has_doc() {
+            app.doc.editor.palette_selection = Some((2, 5));
+        }
         // Desarrollo: una nota con texto, para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_NOTE").is_some() && app.has_doc() {
             // A la derecha del primer artboard (la vista todavía no se acomodó).
@@ -1613,7 +1617,12 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
         Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
         Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
         Key::X => editor.swap_colors(),
-        Key::Delete | Key::Backspace => editor.clear_selection_content(),
+        // Con colores de la paleta seleccionados, Delete es para ellos (lo hace la paleta).
+        Key::Delete | Key::Backspace
+            if !editor.palette_range().is_some_and(|r| r.end() > r.start()) =>
+        {
+            editor.clear_selection_content()
+        }
         _ => {}
     }
 }
