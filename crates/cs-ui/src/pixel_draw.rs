@@ -131,7 +131,12 @@ pub fn skin_button(
             egui::StrokeKind::Middle,
         )],
     };
-    let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
+    // Hundido (apretado o prendido): lo de adentro baja 1 px con el botón.
+    let down = if matches!(state, WidgetState::Down | WidgetState::Active) {
+        1.0
+    } else {
+        0.0
+    };
     shapes.extend(content(rect.translate(vec2(0.0, down))));
     ui.painter().extend(shapes);
     response
