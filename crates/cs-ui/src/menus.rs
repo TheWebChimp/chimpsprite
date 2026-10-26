@@ -839,6 +839,115 @@ pub(crate) fn dropdown<R>(
         .map(|i| i.inner)
 }
 
+/// El menú de las variantes de una herramienta (frame del diseño): el panel sale a la derecha del
+/// botón `slot`, arriba alineado con él y compartiendo su línea, y el botón queda abierto, unido
+/// al panel (sin su borde de la derecha). `open`: abrirlo o cerrarlo en este frame; con
+/// `keep_open`, un clic (el de soltar después de mantener) no lo cierra.
+pub(crate) fn side_menu<R>(
+    look: &MenuLook,
+    response: &Response,
+    slot: Rect,
+    open: Option<egui::SetOpenCommand>,
+    keep_open: bool,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    let config = menu::MenuConfig::new().style(pixel_menu_style);
+    // El panel empieza en la línea de la derecha del botón.
+    let anchor = Rect::from_min_max(slot.min, slot.max - vec2(1.0, 0.0));
+    let mut popup = Popup::menu(response)
+        .open_memory(open)
+        .anchor(anchor)
+        .align(RectAlign::RIGHT_START)
+        .align_alternatives(&[])
+        .gap(0.0)
+        .frame(Frame::NONE.inner_margin(PANEL_MARGIN))
+        .style(pixel_menu_style)
+        .info(
+            UiStackInfo::new(UiKind::Menu)
+                .with_tag_value(menu::MenuConfig::MENU_CONFIG_TAG, config),
+        );
+    if keep_open {
+        popup = popup.close_behavior(egui::PopupCloseBehavior::IgnoreClicks);
+    }
+    let inner = popup.show(|ui| panel(ui, look, None, content))?;
+    // La unión: donde el panel toca al botón, ni la línea del botón ni la del panel; arriba, el
+    // brillo sigue de uno al otro.
+    let ppp = response.ctx.pixels_per_point();
+    let painter = response.ctx.layer_painter(inner.response.layer_id);
+    let (x, top, bottom) = (slot.right() - 1.0, slot.top(), slot.bottom());
+    let fill = Rect::from_min_max(pos2(x, top + 2.0), pos2(x + 2.0, bottom - 2.0));
+    let shine = Rect::from_min_max(pos2(x, top + 1.0), pos2(x + 2.0, top + 2.0));
+    let bevel = Rect::from_min_max(pos2(x, bottom - 2.0), pos2(x + 1.0, bottom - 1.0));
+    painter.extend([
+        solid(fill, look.colors.panel, ppp),
+        solid(shine, look.colors.menu_highlight, ppp),
+        solid(bevel, look.colors.background, ppp),
+    ]);
+    Some(inner.inner)
+}
+
+/// Una herramienta en el menú de sus variantes: su ícono (`icon`, de 17), su nombre y su atajo,
+/// en una fila de su alto. `selected`: la que está elegida (su nombre en el color de lo elegido).
+pub(crate) fn tool_row(
+    ui: &mut Ui,
+    icon: Option<&crate::skin::Piece>,
+    label: &str,
+    shortcut: &str,
+    selected: bool,
+) -> Response {
+    let Some(look) = look(ui) else {
+        return ui.add(egui::Button::selectable(selected, label).shortcut_text(shortcut));
+    };
+    let colors = &look.colors;
+    let color = if selected {
+        colors.timeline_selection_dark
+    } else {
+        colors.text
+    };
+    let text = galley(ui, label, color);
+    let parts = shortcut_parts(shortcut);
+    let icon_w = icon.map_or(0.0, |p| p.size[0] as f32 + TOOL_ICON_GAP);
+    let width = (icon_w + text.size().x + SHORTCUT_GAP + parts_width(ui, &look, &parts)).ceil();
+    let (rect, response) = ui.allocate_at_least(vec2(width, TOOL_ROW_HEIGHT), Sense::click());
+    let enabled = ui.is_enabled();
+    response.widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, selected, label));
+    if ui.is_rect_visible(rect) {
+        let ppp = ui.ctx().pixels_per_point();
+        let mut shapes = Vec::new();
+        if enabled && response.hovered() {
+            shapes.push(row_highlight(&look, rect, ppp));
+        }
+        if let Some(piece) = icon {
+            let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+            let at = pos2(rect.left(), (rect.center().y - size.y / 2.0).floor());
+            shapes.extend(pixel_ui::piece_shapes(
+                piece,
+                Rect::from_min_size(at, size),
+                ppp,
+            ));
+        }
+        let caps = (rect.center().y - CAP_HEIGHT / 2.0).floor();
+        let at = tab_bar::text_pos(&text, rect.left() + icon_w, caps, ppp);
+        shapes.push(Shape::galley(at, text, color));
+        shapes.extend(parts_shapes(
+            ui,
+            &look,
+            &parts,
+            rect.right(),
+            caps,
+            enabled,
+            ppp,
+        ));
+        row_painter(ui, &look).extend(shapes);
+    }
+    response
+}
+
+/// Las filas del menú de herramientas: del alto del ícono (17) y 2 de aire arriba y abajo; el
+/// texto, 4 después del ícono.
+const TOOL_ROW_HEIGHT: f32 = 21.0;
+const TOOL_ICON_GAP: f32 = 4.0;
+
 /// Una opción de una lista, como `Button::selectable(selected, label)`.
 pub(crate) struct Choice<'a> {
     selected: bool,

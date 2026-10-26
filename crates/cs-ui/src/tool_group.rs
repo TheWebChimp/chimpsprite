@@ -131,20 +131,65 @@ fn hold_state(ui: &Ui, response: &Response) -> Hold {
 /// Lista de variantes de un grupo junto al puntero. Se abre con clic derecho o manteniendo
 /// presionado, y un clic normal en el botón la cierra. Usa el mismo id que `context_menu`.
 fn variants_popup(response: &Response, hold: Hold, add_contents: impl FnOnce(&mut Ui)) {
-    use egui::{Popup, PopupCloseBehavior, SetOpenCommand};
-    let open = if hold == Hold::Open || response.secondary_clicked() {
-        Some(SetOpenCommand::Bool(true))
-    } else if response.clicked() && hold != Hold::Release {
-        Some(SetOpenCommand::Bool(false))
-    } else {
-        None
-    };
+    use egui::{Popup, PopupCloseBehavior};
+    let open = open_command(response, hold);
     let mut popup = Popup::menu(response).open_memory(open).at_pointer_fixed();
     if hold == Hold::Release {
         // Soltar el botón cuenta como clic: no tiene que cerrar la lista recién abierta.
         popup = popup.close_behavior(PopupCloseBehavior::IgnoreClicks);
     }
     popup.show(add_contents);
+}
+
+/// Desarrollo: `CHIMPSPRITE_DEMO_TOOL_MENU=<grupo>` abre el menú de ese grupo al arrancar (una
+/// vez), para capturas.
+fn demo_open(ui: &Ui, group: usize) -> Option<egui::SetOpenCommand> {
+    let wanted = std::env::var("CHIMPSPRITE_DEMO_TOOL_MENU").ok()?;
+    if wanted.trim().parse::<usize>().ok()? != group {
+        return None;
+    }
+    let id = egui::Id::new(("demo_tool_menu", group));
+    let done = ui.data(|d| d.get_temp::<bool>(id)).unwrap_or(false);
+    if done || ui.input(|i| i.time) < 1.0 {
+        return None;
+    }
+    ui.data_mut(|d| d.insert_temp(id, true));
+    Some(egui::SetOpenCommand::Bool(true))
+}
+
+/// Abrir la lista (clic derecho o mantener) o cerrarla (un clic que no es el de soltar).
+fn open_command(response: &Response, hold: Hold) -> Option<egui::SetOpenCommand> {
+    use egui::SetOpenCommand;
+    if hold == Hold::Open || response.secondary_clicked() {
+        Some(SetOpenCommand::Bool(true))
+    } else if response.clicked() && hold != Hold::Release {
+        Some(SetOpenCommand::Bool(false))
+    } else {
+        None
+    }
+}
+
+/// Con Pixel UI: las herramientas del grupo con su ícono, su nombre y su atajo, separadas por la
+/// línea de los menús. Devuelve la elegida y cierra el menú.
+fn pixel_variants(
+    ui: &mut Ui,
+    skin: &Skin,
+    current: ToolKind,
+    group: &[ToolKind],
+) -> Option<ToolKind> {
+    let mut pick = None;
+    for (i, &kind) in group.iter().enumerate() {
+        if i > 0 {
+            crate::menus::separator(ui);
+        }
+        let icon = skin.piece(icon_piece(kind), WidgetState::Normal);
+        let row = crate::menus::tool_row(ui, icon, kind.label(), kind.shortcut(), current == kind);
+        if row.clicked() {
+            pick = Some(kind);
+            ui.close();
+        }
+    }
+    pick
 }
 
 /// Las herramientas de un grupo, una por fila con su atajo. Con skin, cada una lleva su ícono a
@@ -212,11 +257,28 @@ pub fn group_button(
     }
     if state.more {
         let current = editor.tool;
-        variants_popup(&response, hold, |ui| {
-            if let Some(kind) = variants_list(ui, skin, current, members) {
-                pick = Some(kind);
+        match skin {
+            // Pixel UI: el panel del diseño, saliendo del botón, una herramienta por fila.
+            Some(skin) => {
+                let look = crate::menus::MenuLook::new(skin, response.rect.top());
+                let picked = crate::menus::side_menu(
+                    &look,
+                    &response,
+                    response.rect,
+                    open_command(&response, hold).or_else(|| demo_open(ui, group)),
+                    hold == Hold::Release,
+                    |ui| pixel_variants(ui, skin, current, members),
+                );
+                if let Some(Some(kind)) = picked {
+                    pick = Some(kind);
+                }
             }
-        });
+            None => variants_popup(&response, hold, |ui| {
+                if let Some(kind) = variants_list(ui, skin, current, members) {
+                    pick = Some(kind);
+                }
+            }),
+        }
     }
     if let Some(kind) = pick {
         editor.set_tool(kind);
