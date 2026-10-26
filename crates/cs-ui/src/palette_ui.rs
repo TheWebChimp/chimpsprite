@@ -1140,35 +1140,36 @@ fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool) {
         }
         return;
     }
-    // Apagado (con "Any"): el relleno del panel, sus líneas y el número tenue.
-    let row = |y: f32, color| {
+    // Apagado (con "Any"): el relleno del panel, sus líneas sin las esquinas de la derecha, el
+    // brillo de arriba de los campos y el número tenue (frame 8, pixel por pixel).
+    let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
+    let px = |x0: f32, y0: f32, x1: f32, y1: f32, color| {
         egui::Shape::rect_filled(
-            egui::Rect::from_min_max(
-                egui::pos2(rect.left(), y),
-                egui::pos2(rect.right(), y + 1.0),
-            )
-            .round_to_pixels(ppp),
+            egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1)).round_to_pixels(ppp),
             0.0,
             color,
         )
     };
-    let body = egui::Rect::from_min_max(rect.min, rect.max - egui::vec2(0.0, 2.0));
-    let shapes = vec![
-        egui::Shape::rect_filled(body.round_to_pixels(ppp), 0.0, skin.colors().panel),
-        row(rect.top(), COUNT_BORDER),
-        row(rect.bottom() - 3.0, COUNT_SHADE_OFF),
-        row(rect.bottom() - 2.0, COUNT_BORDER),
-        row(rect.bottom() - 1.0, COUNT_LIGHT),
-        egui::Shape::rect_filled(
-            egui::Rect::from_min_max(
-                egui::pos2(rect.right() - 1.0, rect.top()),
-                egui::pos2(rect.right(), rect.bottom() - 1.0),
-            )
-            .round_to_pixels(ppp),
-            0.0,
-            COUNT_BORDER,
-        ),
+    let mut shapes = vec![
+        px(l, t + 1.0, r - 1.0, b - 3.0, skin.colors().panel),
+        px(l, t, r - 1.0, t + 1.0, COUNT_BORDER),
+        px(r - 1.0, t + 1.0, r, b - 2.0, COUNT_BORDER),
+        px(l, b - 3.0, r - 1.0, b - 2.0, COUNT_SHADE_OFF),
+        px(l, b - 2.0, r - 1.0, b - 1.0, COUNT_BORDER),
+        px(r - 1.0, b - 2.0, r, b - 1.0, COUNT_LIGHT),
+        px(l, b - 1.0, r - 1.0, b, COUNT_LIGHT),
     ];
+    // El brillo de la esquina de arriba a la derecha, como el de `field.text`.
+    for (dx, dy, w) in [
+        (7.0, 2.0, 1.0),
+        (5.0, 2.0, 3.0),
+        (3.0, 3.0, 1.0),
+        (3.0, 4.0, 1.0),
+        (3.0, 6.0, 1.0),
+    ] {
+        let x = r - dx;
+        shapes.push(px(x, t + dy, x + w, t + dy + 1.0, COUNT_LIGHT));
+    }
     ui.painter().extend(shapes);
     // A la altura del texto de su combo.
     let galley = crate::menus::galley(ui, &count.to_string(), COUNT_TEXT_OFF);
