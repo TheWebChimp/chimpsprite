@@ -58,6 +58,13 @@ const TEXT_CAPS: f32 = 1.0;
 const EYE_AT: Vec2 = vec2(3.0, 2.0);
 const LOCK_AT: Vec2 = vec2(4.0, 1.0);
 const CEL_AT: Vec2 = vec2(2.0, 2.0);
+/// La carpetita de los grupos (`timeline.folder`, `timeline.folder.open`): el ancho de la abierta
+/// (la más ancha) y 3 de aire hasta el nombre.
+pub(super) const FOLDER_W: f32 = 16.0;
+const FOLDER: &str = "timeline.folder";
+const FOLDER_OPEN: &str = "timeline.folder.open";
+/// Las carpetitas terminan 2 filas arriba del final del contenido de la fila (como en el diseño).
+const FOLDER_BOTTOM: f32 = 10.0;
 /// La versión de un ícono para lo elegido (sobre el rosa).
 const SELECTED: &str = ".selected";
 
@@ -976,6 +983,15 @@ pub(super) fn eye_and_lock(
     icon_at(ui, skin, eye_name, eye.min + EYE_AT, selected);
     let lock_name = if locked { LOCK } else { LOCK_OPEN };
     icon_at(ui, skin, lock_name, lock.min + LOCK_AT, selected);
+}
+
+/// La carpetita de un grupo al principio de `rect` (su lugar en la columna del nombre): cerrada si
+/// está `collapsed`; en la capa activa (`selected`), en su versión para lo elegido.
+pub(super) fn folder(ui: &Ui, skin: &Skin, rect: Rect, collapsed: bool, selected: bool) {
+    let name = if collapsed { FOLDER } else { FOLDER_OPEN };
+    let size = piece_size(skin, name).unwrap_or(Vec2::ZERO);
+    let at = pos2(rect.left(), rect.top() + FOLDER_BOTTOM - size.y);
+    icon_at(ui, skin, name, at, selected);
 }
 
 /// Lo elegido, como en el diseño: la celda `cell` (contenido y su línea de la derecha y de

@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use eframe::egui::{self, Color32, Rect, Sense, Vec2, vec2};
+use eframe::egui::{self, Color32, Rect, Sense, Vec2, pos2, vec2};
 
 use crate::lospec_client::{self, FetchError, Pending};
 use crate::pixel_ui::Tip as _;
@@ -698,7 +698,17 @@ impl News {
         let response = ui
             .vertical(|ui| {
                 ui.set_width(CELL);
-                let (rect, _) = ui.allocate_exact_size(Vec2::splat(CELL), Sense::hover());
+                // La imagen a lo ancho de la celda, con su proporción (hasta el doble de alta que
+                // ancha); mientras carga, un cuadrado. Alrededor, el marco.
+                let room = vec2(CELL - FRAME_SIDES, (CELL - FRAME_SIDES) * 2.0);
+                let image = match self.thumbs.get(&post.image_url) {
+                    Some(Thumb::Ready(texture)) => fit(texture.size_vec2(), room),
+                    _ => Vec2::splat(room.x),
+                };
+                let (rect, _) = ui.allocate_exact_size(
+                    vec2(CELL, image.y + FRAME_SIDES + FRAME_BELOW),
+                    Sense::hover(),
+                );
                 if ui.is_rect_visible(rect)
                     && !self.thumbs.contains_key(&post.image_url)
                     && self.in_flight() < MAX_IN_FLIGHT
@@ -707,20 +717,21 @@ impl News {
                     self.thumbs
                         .insert(post.image_url.clone(), Thumb::Loading(pending, now));
                 }
+                // En puntos enteros: el pixel art agrandado queda nítido.
+                let left = (rect.center().x - image.x / 2.0).round();
+                let at = Rect::from_min_size(pos2(left, rect.top() + 1.0), image);
                 let painter = ui.painter();
-                painter.rect_filled(rect, 0.0, ui.visuals().extreme_bg_color);
+                painter.rect_filled(at, 0.0, ui.visuals().extreme_bg_color);
+                image_frame(ui, at);
+                let painter = ui.painter();
                 match self.thumbs.get(&post.image_url) {
                     Some(Thumb::Ready(texture)) => {
-                        let size = fit(texture.size_vec2(), rect.size());
-                        // En puntos enteros: el pixel art agrandado queda nítido.
-                        let min = (rect.center() - size / 2.0).round();
-                        let at = Rect::from_min_size(min, size);
                         let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
                         painter.image(texture.id(), at, uv, Color32::WHITE);
                     }
                     Some(Thumb::Failed) => {
                         painter.text(
-                            rect.center(),
+                            at.center(),
                             egui::Align2::CENTER_CENTER,
                             "×",
                             egui::TextStyle::Body.resolve(ui.style()),
@@ -746,6 +757,36 @@ impl News {
 
 /// `size` achicado (o agrandado) para entrar entero en `room`, sin deformar. Lo chico (pixel art)
 /// se agranda por un entero, para que siga nítido.
+/// El marco de las imágenes: 1 px a los lados y arriba; abajo, el borde y su brillo.
+const FRAME_SIDES: f32 = 2.0;
+const FRAME_BELOW: f32 = 1.0;
+const IMAGE_FRAME: &str = "image.frame";
+
+/// El marco de una imagen en `at`: con Pixel UI, `image.frame` (borde con esquinas de 1 px y el
+/// brillo de abajo, como los campos); sin él, una línea.
+fn image_frame(ui: &egui::Ui, at: Rect) {
+    let around = Rect::from_min_max(at.min - Vec2::splat(1.0), at.max + vec2(1.0, 2.0));
+    let ppp = ui.ctx().pixels_per_point();
+    let skin = crate::pixel_ui::frame_skin(ui.ctx());
+    match skin
+        .as_ref()
+        .and_then(|s| s.piece(IMAGE_FRAME, crate::skin::WidgetState::Normal))
+    {
+        Some(piece) => {
+            ui.painter()
+                .extend(crate::pixel_ui::piece_shapes(piece, around, ppp));
+        }
+        None => {
+            ui.painter().rect_stroke(
+                at.expand(0.5),
+                0.0,
+                egui::Stroke::new(1.0, ui.visuals().weak_text_color()),
+                egui::StrokeKind::Middle,
+            );
+        }
+    }
+}
+
 fn fit(size: Vec2, room: Vec2) -> Vec2 {
     if size.x <= 0.0 || size.y <= 0.0 {
         return Vec2::ZERO;

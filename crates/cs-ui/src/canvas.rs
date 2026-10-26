@@ -82,6 +82,9 @@ pub struct CanvasView {
     selection_menu: bool,
     /// Diálogo Slice Properties abierto (para el slice seleccionado).
     pub slice_properties: bool,
+    /// Lo pedido desde el menú "≡" de un artboard que abre un diálogo de la app (la app lo toma
+    /// y lo deja en `None`).
+    pub artboard_request: Option<ArtboardRequest>,
     /// Ctrl+rueda de touchpad: píxeles acumulados que todavía no suman un paso de grosor.
     wheel_rest: f32,
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
@@ -195,6 +198,7 @@ impl Default for CanvasView {
             slice_menu: false,
             selection_menu: false,
             slice_properties: false,
+            artboard_request: None,
             wheel_rest: 0.0,
             background: theme::CANVAS_BG,
             pixel_rulers: None,
@@ -864,11 +868,15 @@ impl CanvasView {
                 Some((id, TitleHit::Bar)) if pressed_primary => {
                     editor.press_artboard_label(id, world)
                 }
-                // "≡": no hay menú contextual de artboards, así que solo lo selecciona.
+                // "≡": lo activa; su menú se abre al soltar (`artboard_menus`).
                 Some((id, TitleHit::Menu)) if pressed_primary => editor.activate(id),
-                // "○": decorativo por ahora (el usuario va a definir qué hace); el clic no
-                // llega a la herramienta.
-                Some((_, TitleHit::Close)) if pressed_primary => {}
+                // "○": borra el artboard (se deshace con Ctrl+Z; el último no se borra).
+                Some((id, TitleHit::Close)) if pressed_primary => {
+                    if editor.document.artboards.len() > 1 {
+                        editor.activate(id);
+                        editor.remove_active_artboard();
+                    }
+                }
                 _ if slice.is_some() => {
                     editor.end_group();
                     editor.slice = slice;
@@ -881,6 +889,7 @@ impl CanvasView {
                 },
             }
         }
+        self.artboard_menus(ui, rect, editor);
         if self.selection_menu {
             response.context_menu(|ui| {
                 if ui.add(menus::item("Flip Horizontal", "Shift+H")).clicked() {
@@ -1834,6 +1843,81 @@ impl CanvasView {
         }
     }
 
+    /// El menú del "≡" de cada ventana de artboard (con Pixel UI): se abre al hacer clic, como un
+    /// desplegable de la barra de menús.
+    fn artboard_menus(&mut self, ui: &egui::Ui, rect: Rect, editor: &mut Editor) {
+        if self.artboard_window.is_none() {
+            return;
+        }
+        let ppp = ui.ctx().pixels_per_point();
+        let menus: Vec<(ArtboardId, Rect)> = editor
+            .document
+            .artboards
+            .iter()
+            .filter_map(|a| {
+                let layout = WindowLayout::around(self.pixel_rect(rect, a), ppp);
+                Some((a.id, layout.menu?))
+            })
+            .filter(|(_, r)| rect.intersects(*r))
+            .collect();
+        for (id, menu_rect) in menus {
+            let response = ui.interact(
+                menu_rect,
+                ui.id().with(("artboard_menu", id)),
+                Sense::click(),
+            );
+            let content = |ui: &mut egui::Ui| self.artboard_menu(ui, editor, id);
+            match crate::pixel_ui::frame_skin(ui.ctx()) {
+                Some(skin) => {
+                    let look = menus::MenuLook::new(&skin, menu_rect.top());
+                    menus::dropdown(&look, &response, menu_rect, content);
+                }
+                None => {
+                    egui::Popup::menu(&response).show(content);
+                }
+            }
+        }
+    }
+
+    /// Lo que hay en el menú "≡" del artboard `id`.
+    fn artboard_menu(&mut self, ui: &mut egui::Ui, editor: &mut Editor, id: ArtboardId) {
+        editor.activate(id);
+        if ui.add(menus::plain("Rename")).clicked()
+            && let Some(artboard) = editor.document.artboard(id)
+        {
+            self.renaming = Some((id, artboard.name.clone(), false));
+            ui.close();
+        }
+        if ui.add(menus::item("Properties…", "Ctrl+P")).clicked() {
+            self.artboard_request = Some(ArtboardRequest::Properties);
+            ui.close();
+        }
+        if ui.add(menus::plain("Duplicate")).clicked() {
+            let name = format!("{} Copy", editor.artboard().name);
+            editor.duplicate_artboard(name);
+            ui.close();
+        }
+        menus::separator(ui);
+        let transformable = cs_commands::sprite_ops::can_transform(editor.sprite());
+        if ui
+            .add_enabled(transformable, menus::item("Sprite Size…", "Ctrl+Alt+I"))
+            .clicked()
+        {
+            self.artboard_request = Some(ArtboardRequest::SpriteSize);
+            ui.close();
+        }
+        if ui.add(menus::item("Canvas Size…", "C")).clicked() {
+            self.artboard_request = Some(ArtboardRequest::CanvasSize);
+            ui.close();
+        }
+        menus::separator(ui);
+        let can_delete = editor.document.artboards.len() > 1;
+        if ui.add_enabled(can_delete, menus::plain("Delete")).clicked() {
+            editor.remove_active_artboard();
+            ui.close();
+        }
+    }
+
     /// Artboard cuya etiqueta (nombre sobre el borde superior) o, con Pixel UI, cuya barra de
     /// título está bajo `p`, y qué parte; el de más arriba primero. La barra de Pixel UI responde
     /// aunque los nombres estén ocultos (la ventana se ve igual). Solo dentro de `area` (lo
@@ -1889,6 +1973,14 @@ impl CanvasView {
             label.contains(p).then_some((artboard.id, TitleHit::Bar))
         })
     }
+}
+
+/// Lo que el menú "≡" de un artboard le pide a la app (abrir uno de sus diálogos).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArtboardRequest {
+    Properties,
+    SpriteSize,
+    CanvasSize,
 }
 
 fn artboard_cursor(hit: Option<ArtboardHit>) -> egui::CursorIcon {
@@ -3385,19 +3477,14 @@ mod tests {
     }
 
     #[test]
-    fn the_menu_icon_selects_its_artboard_and_the_circle_does_nothing() {
+    fn the_menu_icon_opens_the_artboard_menu_and_the_circle_deletes_it() {
         let mut h = Harness::new();
         h.editor.add_artboard(8, 8);
         let first = h.editor.document.artboards[0].id;
         assert_ne!(h.editor.active, first);
         with_window(&mut h);
         let pixels = h.pixels_of(0);
-        // "○", a 2 px del borde derecho de la ventana: ni selecciona ni mueve.
-        let circle = Pos2::new(pixels.right() + 2.0 - 2.0 - 4.5, pixels.top() - 14.0 + 7.5);
-        h.drag(circle, circle + Vec2::new(30.0, 0.0));
-        assert_ne!(h.editor.active, first, "the circle is decorative");
-        assert_eq!(h.editor.document.artboards[0].position, (0, 0));
-        // "≡": no hay menú contextual de artboards, así que lo selecciona.
+        // "≡": lo selecciona y abre su menú, sin moverlo.
         let menu = pixels.left_top() + Vec2::new(-2.0 + 2.0 + 4.5, -14.0 + 7.5);
         h.click(menu, PointerButton::Primary);
         assert_eq!(h.editor.active, first);
@@ -3407,6 +3494,25 @@ mod tests {
             "a click does not move it"
         );
         assert!(h.canvas.renaming.is_none());
+        h.frame(vec![]);
+        let texts: Vec<String> = h
+            .shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::Shape::Text(t) => Some(t.galley.text().to_owned()),
+                _ => None,
+            })
+            .collect();
+        for item in ["Rename", "Duplicate", "Canvas Size…", "Delete"] {
+            assert!(texts.iter().any(|t| t == item), "{item} in {texts:?}");
+        }
+        h.click(menu, PointerButton::Primary);
+        // "○", a 2 px del borde derecho de la ventana: borra el artboard (se deshace).
+        let circle = Pos2::new(pixels.right() + 2.0 - 2.0 - 4.5, pixels.top() - 14.0 + 7.5);
+        h.click(circle, PointerButton::Primary);
+        assert!(h.editor.document.artboard(first).is_none(), "deleted");
+        h.editor.undo();
+        assert!(h.editor.document.artboard(first).is_some(), "undone");
     }
 
     #[test]

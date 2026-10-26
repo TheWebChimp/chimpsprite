@@ -366,7 +366,7 @@ pub fn number<Num: emath::Numeric>(
 }
 
 /// Un campo numérico con su unidad escrita adentro, a la derecha (el `%` de Sprite Size): el
-/// mismo `field.number`, del ancho del número con la unidad `px`, y el número a la izquierda.
+/// mismo `field.number`, de `SUFFIX_FIELD_WIDTH`, y el número a la izquierda.
 pub fn number_with_suffix<Num: emath::Numeric>(
     ui: &mut Ui,
     look: BarLook,
@@ -376,11 +376,7 @@ pub fn number_with_suffix<Num: emath::Numeric>(
     suffix: &str,
 ) -> Response {
     let colors = *look.skin.colors();
-    let unit_width = look
-        .piece(UNIT)
-        .map_or(FALLBACK_UNIT_WIDTH, |p| size_of(p).x)
-        - UNIT_OVERLAP;
-    let width = NUMBER_WIDTH + unit_width;
+    let width = SUFFIX_FIELD_WIDTH;
     let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
     let field = Rect::from_min_size(
         pos2(rect.left().round(), look.top + FIELD_TOP),
@@ -413,6 +409,8 @@ pub fn number_with_suffix<Num: emath::Numeric>(
     drag_number(ui, field, inner, id_salt, value, range, speed, look).0
 }
 
+/// El ancho de [`number_with_suffix`], como el campo del `%` del diseño.
+const SUFFIX_FIELD_WIDTH: f32 = 59.0;
 /// Del borde del blanco al número y a la unidad de [`number_with_suffix`].
 const SUFFIX_PAD: f32 = 4.0;
 

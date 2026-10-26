@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use eframe::egui::{
     self, Color32, Frame, Galley, InnerResponse, Margin, Mesh, Popup, Rect, RectAlign, Response,
-    Sense, Shape, Style, TextStyle, Ui, UiBuilder, UiKind, UiStackInfo, Widget, WidgetInfo,
+    Sense, Shape, Style, TextStyle, Ui, UiBuilder, UiKind, UiStackInfo, Vec2, Widget, WidgetInfo,
     WidgetType, containers::menu, pos2, vec2,
 };
 use eframe::emath::GuiRounding as _;
@@ -54,6 +54,8 @@ const BOX_TOP: f32 = 5.0;
 /// filas más y tapa ese borde y el bisel.
 const PANEL_TOP: f32 = 11.0;
 const BOX_JOIN: f32 = 2.0;
+/// El panel de un menú de la barra va 1 px a la derecha y 1 abajo de donde lo deja la caja.
+const PANEL_SHIFT: Vec2 = vec2(1.0, 1.0);
 /// Del borde del panel al contenido: la línea y el bisel arriba y abajo; a los lados, además, 3
 /// px de relleno (el texto de los ítems queda 5 px adentro, como en el diseño).
 const PANEL_MARGIN: Margin = Margin {
@@ -214,14 +216,19 @@ pub(crate) fn bar_menu<R>(
     let panel_top = look.caps_top + PANEL_TOP;
     let title_box = Rect::from_min_max(
         pos2(text_left - BOX_LEFT, look.caps_top - BOX_TOP),
-        pos2(text_left + text.size().x + BOX_RIGHT, panel_top + BOX_JOIN),
+        pos2(
+            text_left + text.size().x + BOX_RIGHT,
+            panel_top + PANEL_SHIFT.y + BOX_JOIN,
+        ),
     );
     let config = menu::MenuConfig::new().style(pixel_menu_style);
-    // El panel cuelga de la caja: su esquina de arriba a la izquierda, siempre la misma.
+    // El panel cuelga de la caja, corrido `PANEL_SHIFT` (para que no se vea pegado a ella): su
+    // esquina de arriba a la izquierda, siempre la misma.
     let anchor = Rect::from_min_max(
         pos2(title_box.left(), panel_top),
         pos2(title_box.right(), panel_top),
-    );
+    )
+    .translate(PANEL_SHIFT);
     let inner = Popup::menu(&response)
         .anchor(anchor)
         .align(RectAlign::BOTTOM_START)

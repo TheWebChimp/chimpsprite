@@ -1258,11 +1258,12 @@ fn the_panel_hangs_from_the_open_title_like_in_the_design() {
         if title == "File" {
             assert_eq!(boxed.left(), h.screen().left(), "{boxed:?}");
         }
-        // El panel empieza 11 filas debajo de las mayúsculas (justo debajo del menú) y en el
-        // mismo borde izquierdo que la caja; las dos filas de abajo de la caja tapan su borde.
-        assert_eq!(panel.top(), caps + 11.0, "{title}");
-        assert_eq!(panel.top(), menu.bottom(), "{title}");
-        assert_eq!(panel.left(), boxed.left(), "{title}");
+        // El panel empieza 12 filas debajo de las mayúsculas (1 debajo del menú) y 1 px a la
+        // derecha de la caja, para que no se vea pegado; las dos filas de abajo de la caja tapan
+        // su borde.
+        assert_eq!(panel.top(), caps + 12.0, "{title}");
+        assert_eq!(panel.top(), menu.bottom() + 1.0, "{title}");
+        assert_eq!(panel.left(), boxed.left() + 1.0, "{title}");
         assert_eq!(boxed.bottom(), panel.top() + 2.0, "{title}");
         assert!(panel.right() > boxed.right(), "{title}");
         // Otro clic en el título lo cierra.

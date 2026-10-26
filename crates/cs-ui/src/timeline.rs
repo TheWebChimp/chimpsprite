@@ -64,7 +64,7 @@ impl<'a> Grid<'a> {
             eye_w: pixel::EYE_W,
             lock_w: pixel::LOCK_W,
             indent: 8.0,
-            fold_w: 10.0,
+            fold_w: pixel::FOLDER_W,
             chip: vec2(12.0, 9.0),
         }
     }
@@ -655,8 +655,11 @@ fn layer_row(
         {
             editor.toggle_collapsed(id);
         }
-        let size = if grid.skin.is_some() { 3.0 } else { 4.0 };
-        draw_fold_arrow(&painter, arrow.center(), collapsed, grid.text(ui), size);
+        match grid.skin {
+            // Con Pixel UI, la carpetita del diseño: cerrada si el grupo está colapsado.
+            Some(skin) => pixel::folder(ui, skin, arrow, collapsed, active),
+            None => draw_fold_arrow(&painter, arrow.center(), collapsed, grid.text(ui), 4.0),
+        }
         x += grid.fold_w;
     }
     // Recortadas: sangría con flecha hacia la capa base.
@@ -1680,6 +1683,24 @@ mod tests {
         // El ojo y el candado de la capa activa, en su versión para lo elegido.
         assert_eq!(h.count("timeline.eye.selected"), 1);
         assert_eq!(h.count("palette.icon.lock.open.selected"), 1);
+    }
+
+    #[test]
+    fn with_pixel_ui_groups_show_the_open_or_closed_folder() {
+        let mut h = Harness::pixel(1200.0);
+        h.editor.add_layer(LayerKind::Group);
+        let group = h.editor.layer;
+        h.frame(vec![]);
+        // La capa activa: la carpetita en su versión para lo elegido; abierta.
+        assert_eq!(h.count("timeline.folder.open.selected"), 1);
+        assert_eq!(h.count("timeline.folder.selected"), 0);
+        h.editor.toggle_collapsed(group);
+        h.frame(vec![]);
+        assert_eq!(h.count("timeline.folder.selected"), 1, "collapsed: closed");
+        // Otra capa activa: la carpetita de siempre.
+        h.editor.add_layer(LayerKind::Image);
+        h.frame(vec![]);
+        assert_eq!(h.count("timeline.folder"), 1);
     }
 
     #[test]

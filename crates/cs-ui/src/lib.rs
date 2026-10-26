@@ -457,6 +457,27 @@ impl ChimpApp {
         }
     }
 
+    /// Lo pedido desde el menú "≡" de un artboard en el lienzo: los diálogos del menú Sprite.
+    fn artboard_request(&mut self) {
+        use canvas::ArtboardRequest;
+        use sprite_dialogs::{PropertiesDialog, SpriteDialog, SpriteSizeDialog};
+        let Some(request) = self.doc.canvas.artboard_request.take() else {
+            return;
+        };
+        if !self.has_doc() {
+            return;
+        }
+        match request {
+            ArtboardRequest::Properties => {
+                self.open_sprite_dialog(|a| SpriteDialog::Properties(PropertiesDialog::new(a)));
+            }
+            ArtboardRequest::SpriteSize => {
+                self.open_sprite_dialog(|a| SpriteDialog::Size(SpriteSizeDialog::new(a)));
+            }
+            ArtboardRequest::CanvasSize => self.open_canvas_size(),
+        }
+    }
+
     /// La ventana Slice Properties (pedida desde el menú del slice en el lienzo).
     fn show_slice_properties(&mut self, ctx: &egui::Context) {
         if !self.has_doc() || !self.doc.canvas.slice_properties {
@@ -1429,6 +1450,7 @@ impl eframe::App for ChimpApp {
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);
         self.show_slice_properties(&ctx);
+        self.artboard_request();
         self.update_tilemap_dialogs(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);

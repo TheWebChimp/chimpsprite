@@ -1024,19 +1024,30 @@ mod tests {
         assert_eq!(at(unit, 15, 1), Rgba::rgb(189, 164, 153), "the grey box");
         assert_eq!(at(unit, 16, 1), border, "the right side");
         assert_eq!(at(unit, 16, 13), border, "the right side, below");
+        // Abajo, la esquina redondeada de 1 px: el borde y el brillo en la esquina.
+        assert_eq!(at(unit, 15, 14), border, "the bottom");
         assert_eq!(
             at(unit, 16, 14),
             Rgba::rgb(241, 235, 219),
-            "the light below"
+            "the light at the corner"
         );
         assert_eq!(at(unit, 16, 15).a, 0, "rounded corner");
-        // La fila de sombra (230,231,240) de abajo del relleno blanco, en el combo, el campo y la
-        // casilla.
+        // Las esquinas de 1 px del diseño: abajo, la fila de sombra (230,231,240) de lado a
+        // lado, el borde con el brillo en las esquinas y la fila de brillo debajo.
         let shade = Rgba::rgb(230, 231, 240);
-        assert_eq!(at(combo, 1, 12), shade, "combo: the shade, left");
-        assert_eq!(at(combo, 2, 13), shade, "combo: the shade, middle");
-        assert_eq!(at(number, 1, 12), shade, "number: the shade, left");
-        assert_eq!(at(number, 2, 13), shade, "number: the shade, middle");
+        let light = Rgba::rgb(241, 235, 219);
+        for (name, p) in [("combo", combo), ("number", number)] {
+            let w = p.size[0];
+            assert_eq!(at(p, 1, 12), white, "{name}: white down to the shade");
+            assert_eq!(at(p, 1, 13), shade, "{name}: the shade, left");
+            assert_eq!(at(p, w - 2, 13), shade, "{name}: the shade, right");
+            assert_eq!(at(p, 0, 14), light, "{name}: the light corner");
+            assert_eq!(at(p, 1, 14), border, "{name}: the bottom");
+            assert_eq!(at(p, 0, 15).a, 0, "{name}: rounded corner");
+            assert_eq!(at(p, 1, 15), light, "{name}: the light below");
+            assert_eq!(at(p, 0, 1), border, "{name}: 1 px corner, the side");
+            assert_eq!(at(p, 1, 0), border, "{name}: 1 px corner, the top");
+        }
         // La casilla marcada de la barra: 13×14, como el cuadro de `sym.slot` con el interior
         // blanco y la marca verde. No es la del menú (11×12). La sin marcar, la misma sin marca.
         let check = &data.pieces["field.check.on"];
