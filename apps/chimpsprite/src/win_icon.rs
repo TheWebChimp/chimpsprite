@@ -2,7 +2,7 @@
 //!
 //! eframe pone en la ventana el ícono grande (barra de tareas, Alt+Tab) y el chico (barra de
 //! título) escalando la imagen que se le pasa, y el pixel art reescalado se ve borroso. Acá se
-//! cargan los dos del recurso, cada uno en el tamaño que pide el sistema: Windows elige del `.ico`
+//! cargan los dos del recurso, cada uno en el tamaño en que se dibuja: Windows elige del `.ico`
 //! el dibujado a mano que toca (16, 24, 32 o 48). Como eframe los pone en los primeros frames (cuando
 //! la ventana ya está activa), [`WindowIcons::keep`] revisa en cada frame que sigan siendo estos.
 
@@ -12,7 +12,7 @@ use windows_sys::Win32::Foundation::{HWND, LPARAM};
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::UI::WindowsAndMessaging::{
     GetSystemMetrics, HICON, ICON_BIG, ICON_SMALL, IMAGE_ICON, LR_DEFAULTCOLOR, LoadImageW,
-    SM_CXICON, SM_CXSMICON, SM_CYICON, SM_CYSMICON, SendMessageW, WM_GETICON, WM_SETICON,
+    SM_CXSMICON, SendMessageW, WM_GETICON, WM_SETICON,
 };
 
 /// El id del ícono en los recursos del `.exe` (el que usa `winresource::set_icon`).
@@ -34,11 +34,13 @@ impl WindowIcons {
             return None;
         };
         let hwnd = win32.hwnd.get() as HWND;
+        // El chico, el de la barra de título (16 al 100 %). El grande es el de la barra de tareas
+        // de Windows 11, que dibuja los íconos a 1.5× el chico (24 al 100 %): con el tamaño de
+        // sistema (32) lo reduciría y se vería borroso.
+        // SAFETY: lee una métrica del sistema.
+        let small = unsafe { GetSystemMetrics(SM_CXSMICON) };
         let mut icons = Vec::new();
-        for (kind, cx, cy) in [
-            (ICON_SMALL, SM_CXSMICON, SM_CYSMICON),
-            (ICON_BIG, SM_CXICON, SM_CYICON),
-        ] {
+        for (kind, side) in [(ICON_SMALL, small), (ICON_BIG, small * 3 / 2)] {
             // SAFETY: el módulo del proceso y un id de recurso; LoadImageW devuelve nulo si no
             // está. Los íconos viven lo que la app (no se liberan).
             let icon = unsafe {
@@ -46,8 +48,8 @@ impl WindowIcons {
                     GetModuleHandleW(std::ptr::null()),
                     ICON_ID as usize as *const u16,
                     IMAGE_ICON,
-                    GetSystemMetrics(cx),
-                    GetSystemMetrics(cy),
+                    side,
+                    side,
                     LR_DEFAULTCOLOR,
                 )
             };
