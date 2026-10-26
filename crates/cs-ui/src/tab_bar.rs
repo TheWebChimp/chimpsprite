@@ -28,22 +28,22 @@ use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
 use crate::tabs::TabInfo;
 
-/// Alto de la barra del menú con Pixel UI: las filas 34 a 47 del mockup (14) y 2 más, para que
-/// la caja del título abierto (`menu.title.open`) entre entera arriba de las mayúsculas, como en
-/// el diseño.
-pub const MENU_HEIGHT: f32 = 16.0;
+/// Alto de la barra del menú con Pixel UI: las filas 34 a 47 del mockup (14) y 3 más, para que
+/// la caja del título abierto (`menu.title.open`) entre entera arriba de las mayúsculas, con 1
+/// fila de aire hasta el borde de la ventana.
+pub const MENU_HEIGHT: f32 = 17.0;
 /// Margen de arriba del menú con Pixel UI. egui centra el texto en el botón del menú, de 16 de
-/// alto como la barra: sin margen, las mayúsculas quedan en la fila 5.
-pub const MENU_TEXT_TOP: i8 = 0;
+/// alto: con 1 de margen, las mayúsculas quedan en la fila 6.
+pub const MENU_TEXT_TOP: i8 = 1;
 /// La fila de arriba de las mayúsculas de los títulos del menú: la caja del título abierto
-/// empieza 5 filas más arriba, en la fila 0.
-pub const MENU_CAPS_TOP: f32 = 5.0;
-/// Los títulos del menú con Pixel UI: el primero empieza 5 px adentro (margen más relleno), lo
-/// justo para la caja del título abierto, que empieza 5 px antes del texto. Entre la tinta de uno
+/// empieza 5 filas más arriba, en la fila 1 (sin tocar el borde de la ventana).
+pub const MENU_CAPS_TOP: f32 = 6.0;
+/// Los títulos del menú con Pixel UI: el primero empieza 6 px adentro (margen más relleno), lo
+/// justo para la caja del título abierto, que empieza 5 px antes del texto, y 1 de aire. Entre la tinta de uno
 /// y la del siguiente hay 11 px, como en el mockup. Las letras de la fuente pixel dejan 1 px
 /// vacío al final, así que entre texto y texto quedan 10: el relleno de los dos lados y el
 /// espacio.
-pub const MENU_LEFT: i8 = 2;
+pub const MENU_LEFT: i8 = 3;
 pub const MENU_ITEM_PADDING: f32 = 3.0;
 pub const MENU_ITEM_GAP: f32 = 4.0;
 /// Alto de la barra de pestañas con Pixel UI, con la línea grabada de abajo: las filas 48 a 70

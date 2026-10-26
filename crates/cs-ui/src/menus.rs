@@ -211,8 +211,8 @@ pub(crate) fn bar_menu<R>(
     });
     ui.painter().galley(at, text.clone(), color);
     // La caja: alrededor del texto, como en el diseño. La barra deja lugar justo arriba y a la
-    // izquierda (`tab_bar::MENU_CAPS_TOP` y `tab_bar::MENU_LEFT`): la de File empieza en la
-    // esquina de la ventana.
+    // izquierda (`tab_bar::MENU_CAPS_TOP` y `tab_bar::MENU_LEFT`): la de File queda a 1 px
+    // de la esquina de la ventana.
     let panel_top = look.caps_top + PANEL_TOP;
     let title_box = Rect::from_min_max(
         pos2(text_left - BOX_LEFT, look.caps_top - BOX_TOP),
