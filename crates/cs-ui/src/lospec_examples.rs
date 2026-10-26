@@ -139,9 +139,17 @@ impl ExampleCache {
     }
 }
 
-/// Debajo de la tira de colores: el ejemplo actual (o un hueco con spinner mientras carga) y,
-/// si hay más de uno, ◀ 1/5 ▶ para pasar entre ellos. Si falla, no se muestra nada.
-pub fn show(ui: &mut egui::Ui, p: &LospecPalette, cache: &mut ExampleCache, now: f64) {
+/// El marco de los ejemplos: 1 px blanco alrededor y la sombra debajo (como en el diseño).
+const FRAME: egui::Color32 = egui::Color32::WHITE;
+const FRAME_SHADOW: egui::Color32 = egui::Color32::from_rgb(136, 110, 106);
+/// Las piezas del paginador (◀ 1/5 ▶) y el color de su texto.
+const PAGER_PREV: &str = "lospec.pager.prev";
+const PAGER_FIELD: &str = "lospec.pager.field";
+const PAGER_NEXT: &str = "lospec.pager.next";
+const PAGER_TEXT: egui::Color32 = egui::Color32::from_rgb(89, 77, 77);
+
+/// El ejemplo actual a todo el ancho, en su marco (o un hueco mientras carga). Si falla, nada.
+pub fn image(ui: &mut egui::Ui, p: &LospecPalette, cache: &mut ExampleCache, now: f64) {
     let len = p.examples.len();
     if len == 0 {
         return;
@@ -149,39 +157,105 @@ pub fn show(ui: &mut egui::Ui, p: &LospecPalette, cache: &mut ExampleCache, now:
     let index = cache.shown.get(&p.slug).copied().unwrap_or(0).min(len - 1);
     let url = &p.examples[index];
     let width = ui.available_width();
+    let inner_w = (width - 2.0).max(1.0);
+    let size = match cache.images.get(url) {
+        Some(Example::Ready(texture)) => example_size(texture.size(), inner_w).floor(),
+        Some(Example::Failed) => return,
+        _ => egui::vec2(inner_w, PLACEHOLDER_HEIGHT),
+    };
+    let (rect, _) = ui.allocate_exact_size(size + egui::vec2(2.0, 3.0), egui::Sense::hover());
+    if !ui.is_rect_visible(rect) {
+        return;
+    }
+    let ppp = ui.ctx().pixels_per_point();
+    let framed = egui::Rect::from_min_size(rect.min, size + egui::vec2(2.0, 2.0));
+    let painter = ui.painter();
+    use eframe::emath::GuiRounding as _;
+    painter.rect_filled(framed.round_to_pixels(ppp), 0.0, FRAME);
+    let shadow = egui::Rect::from_min_max(
+        egui::pos2(framed.left(), framed.bottom()),
+        egui::pos2(framed.right(), framed.bottom() + 1.0),
+    );
+    painter.rect_filled(shadow.round_to_pixels(ppp), 0.0, FRAME_SHADOW);
+    let at = egui::Rect::from_min_size(framed.min + egui::vec2(1.0, 1.0), size);
     match cache.images.get(url) {
         Some(Example::Ready(texture)) => {
-            let size = example_size(texture.size(), width);
-            ui.add(
-                egui::Image::new(egui::load::SizedTexture::new(texture.id(), size))
-                    .fit_to_exact_size(size),
-            );
+            let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
+            painter.image(texture.id(), at, uv, egui::Color32::WHITE);
         }
-        Some(Example::Failed) => {}
-        Some(Example::Loading { .. }) | None => {
-            let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(width, PLACEHOLDER_HEIGHT), egui::Sense::hover());
-            if ui.is_rect_visible(rect) {
-                let ctx = ui.ctx().clone();
-                cache.request(url, now, || lospec_client::fetch_example(&ctx, url));
-                ui.put(rect, egui::Spinner::new());
-            }
+        _ => {
+            let ctx = ui.ctx().clone();
+            cache.request(url, now, || lospec_client::fetch_example(&ctx, url));
+            ui.put(at, egui::Spinner::new());
         }
     }
-    if len > 1 {
-        ui.horizontal(|ui| {
-            let mut next = index;
-            if crate::pixel_ui::text_button(ui, "<").clicked() {
+}
+
+/// ◀ 1/5 ▶ para pasar entre los ejemplos, si hay más de uno: las piezas del diseño (sin ellas,
+/// botones de texto).
+pub fn pager(ui: &mut egui::Ui, p: &LospecPalette, cache: &mut ExampleCache) {
+    let len = p.examples.len();
+    if len < 2 {
+        return;
+    }
+    let index = cache.shown.get(&p.slug).copied().unwrap_or(0).min(len - 1);
+    let text = format!("{}/{len}", index + 1);
+    let mut next = index;
+    let skin = crate::pixel_ui::frame_skin(ui.ctx());
+    let piece = |name: &str| {
+        skin.as_ref()
+            .and_then(|s| s.piece(name, crate::skin::WidgetState::Normal).cloned())
+    };
+    match (piece(PAGER_PREV), piece(PAGER_FIELD), piece(PAGER_NEXT)) {
+        (Some(prev), Some(field), Some(next_piece)) => {
+            let ppp = ui.ctx().pixels_per_point();
+            let size = |p: &crate::skin::Piece| egui::vec2(p.size[0] as f32, p.size[1] as f32);
+            let total = size(&prev).x + size(&field).x + size(&next_piece).x;
+            let (rect, _) =
+                ui.allocate_exact_size(egui::vec2(total, size(&prev).y), egui::Sense::hover());
+            let prev_at = egui::Rect::from_min_size(rect.min, size(&prev));
+            let field_at = egui::Rect::from_min_size(prev_at.right_top(), size(&field));
+            let next_at = egui::Rect::from_min_size(field_at.right_top(), size(&next_piece));
+            let mut shapes = Vec::new();
+            for (piece, at) in [(&prev, prev_at), (&field, field_at), (&next_piece, next_at)] {
+                shapes.extend(crate::pixel_ui::piece_shapes(piece, at, ppp));
+            }
+            let galley = crate::menus::galley(ui, &text, PAGER_TEXT);
+            // Centrado en lo blanco del campo (sin sus filas de abajo).
+            let left = (field_at.center().x - galley.size().x / 2.0).round();
+            let caps = (field_at.top() + 4.0).round();
+            let pos = crate::tab_bar::text_pos(&galley, left, caps, ppp);
+            shapes.push(egui::Shape::galley(pos, galley, PAGER_TEXT));
+            ui.painter().extend(shapes);
+            let button = |at: egui::Rect, label: &str| {
+                ui.interact(
+                    at,
+                    ui.id().with(("lospec_pager", &p.slug, label)),
+                    egui::Sense::click(),
+                )
+                .on_hover_text(label)
+            };
+            if button(prev_at, "Previous example").clicked() {
                 next = step(index, len, false);
             }
-            ui.weak(format!("{}/{len}", index + 1));
-            if crate::pixel_ui::text_button(ui, ">").clicked() {
+            if button(next_at, "Next example").clicked() {
                 next = step(index, len, true);
             }
-            if next != index {
-                cache.shown.insert(p.slug.clone(), next);
-            }
-        });
+        }
+        _ => {
+            ui.horizontal(|ui| {
+                if crate::pixel_ui::text_button(ui, "<").clicked() {
+                    next = step(index, len, false);
+                }
+                ui.weak(&text);
+                if crate::pixel_ui::text_button(ui, ">").clicked() {
+                    next = step(index, len, true);
+                }
+            });
+        }
+    }
+    if next != index {
+        cache.shown.insert(p.slug.clone(), next);
     }
 }
 

@@ -807,8 +807,11 @@ pub fn icon_button(
             None => ui.button(label),
         };
     };
-    let (rect, _) = ui.allocate_exact_size(ICON_BUTTON, Sense::hover());
-    let rect = Rect::from_min_size(rect.min.round(), ICON_BUTTON);
+    // Los íconos anchos (la cadena de Lospec) llevan 5 px de aire a cada lado.
+    let icon_w = crate::pixel_draw::piece_size(skin, icon).x;
+    let size = vec2(ICON_BUTTON.x.max(icon_w + 10.0), ICON_BUTTON.y);
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let rect = Rect::from_min_size(rect.min.round(), size);
     let ppp = ui.ctx().pixels_per_point();
     let info = crate::pixel_draw::ButtonInfo {
         selected: on,

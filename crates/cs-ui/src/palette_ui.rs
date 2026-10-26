@@ -56,6 +56,8 @@ pub struct PresetsWindow {
     search: String,
     lospec: LospecTab,
     requests: LospecRequests,
+    /// El campo del link de una paleta (el botón de la cadena).
+    link_open: bool,
     /// Imágenes de ejemplo de Lospec; se sueltan al cerrar la ventana.
     #[cfg(not(target_arch = "wasm32"))]
     examples: ExampleCache,
@@ -319,25 +321,37 @@ impl ChimpApp {
             Some(window) => window,
             None => {
                 self.palettes.reload();
-                PresetsWindow {
+                #[allow(unused_mut)]
+                let mut window = PresetsWindow {
                     tab: PresetsTab::Lospec,
                     ..Default::default()
+                };
+                // Para empezar con algo: las paletas más nuevas.
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    window.lospec.sort = LospecSort::Newest;
+                    start_search(ctx, &mut window.lospec, &mut window.requests);
                 }
+                window
             }
         };
         poll_lospec(ctx, &mut window);
         let mut action = None;
         let library = &self.palettes;
+        let skin = self.pixel.skin();
         crate::dock::flyout(
             ctx,
             crate::dock::DockPanel::Lospec,
             anchor,
-            self.pixel.skin(),
-            PRESETS_SIZE.x,
+            skin,
+            LOSPEC_PANEL_W,
             |ui| {
-                ui.set_height(PRESETS_SIZE.y);
+                lospec_band(ui, skin);
                 ui.add_enabled_ui(!modal, |ui| {
-                    action = lospec_ui(ui, &mut window, |name| library.has_user(name));
+                    // La lista hasta abajo de la pantalla.
+                    let bottom = ctx.content_rect().bottom() - LOSPEC_BELOW;
+                    action =
+                        lospec_ui(ui, &mut window, |name| library.has_user(name), Some(bottom));
                 });
             },
         );
@@ -476,7 +490,7 @@ impl ChimpApp {
                         PresetsTab::Lospec => {
                             let library = &self.palettes;
                             lospec_action =
-                                lospec_ui(ui, &mut window, |name| library.has_user(name));
+                                lospec_ui(ui, &mut window, |name| library.has_user(name), None);
                         }
                     }
                 });
@@ -626,6 +640,98 @@ fn confirm_window(
 /// El tamaño del contenido de la ventana de presets.
 const PRESETS_SIZE: egui::Vec2 = egui::vec2(420.0, 440.0);
 
+/// El panel Lospec del dock: el ancho de su contenido y lo que queda debajo de la lista (el borde
+/// del panel y la barra de estado).
+const LOSPEC_PANEL_W: f32 = 364.0;
+const LOSPEC_BELOW: f32 = 40.0;
+/// La franja de arriba del panel (frame 8): el logo de Lospec y las franjas de colores (de 25 px,
+/// contra la luz de la derecha), de 29 de alto, debajo de la luz de arriba.
+const BAND_H: f32 = 29.0;
+const BAND_STRIPE: f32 = 25.0;
+const BAND_LOGO: egui::Vec2 = egui::vec2(5.0, 6.0);
+const BAND_COLORS: [egui::Color32; 12] = [
+    egui::Color32::from_rgb(158, 68, 145),
+    egui::Color32::from_rgb(99, 54, 98),
+    egui::Color32::from_rgb(144, 61, 98),
+    egui::Color32::from_rgb(189, 81, 90),
+    egui::Color32::from_rgb(214, 154, 78),
+    egui::Color32::from_rgb(243, 208, 64),
+    egui::Color32::from_rgb(255, 232, 140),
+    egui::Color32::from_rgb(242, 242, 240),
+    egui::Color32::from_rgb(148, 224, 146),
+    egui::Color32::from_rgb(31, 153, 131),
+    egui::Color32::from_rgb(34, 99, 107),
+    egui::Color32::from_rgb(70, 71, 98),
+];
+
+/// Arriba del panel Lospec, de borde a borde: el logo (clic: lospec.com) y las franjas; debajo,
+/// la línea grabada. Ocupa su lugar en `ui`.
+fn lospec_band(ui: &mut egui::Ui, skin: Option<&crate::skin::Skin>) {
+    use eframe::emath::GuiRounding as _;
+    let margin = f32::from(crate::dock::FLYOUT_MARGIN);
+    let content = ui.max_rect();
+    let top = ui.cursor().top();
+    // Dentro de la línea y la luz del panel.
+    let band = egui::Rect::from_min_max(
+        egui::pos2(content.left() - margin + 2.0, top - margin + 2.0),
+        egui::pos2(content.right() + margin - 2.0, top - margin + 2.0 + BAND_H),
+    );
+    let ppp = ui.ctx().pixels_per_point();
+    let painter = ui.painter().with_clip_rect(band);
+    for (k, &color) in BAND_COLORS.iter().rev().enumerate() {
+        let right = band.right() - k as f32 * BAND_STRIPE;
+        let stripe = egui::Rect::from_min_max(
+            egui::pos2(right - BAND_STRIPE, band.top()),
+            egui::pos2(right, band.bottom()),
+        );
+        painter.rect_filled(stripe.round_to_pixels(ppp), 0.0, color);
+    }
+    let logo = skin.and_then(|s| s.piece("lospec.logo", crate::skin::WidgetState::Normal));
+    let size = logo.map_or(egui::vec2(60.0, 18.0), |p| {
+        egui::vec2(p.size[0] as f32, p.size[1] as f32)
+    });
+    let at = egui::Rect::from_min_size(band.min + BAND_LOGO, size);
+    match logo {
+        Some(piece) => painter.extend(pixel_ui::piece_shapes(piece, at, ppp)),
+        None => {
+            painter.text(
+                at.left_center(),
+                egui::Align2::LEFT_CENTER,
+                "LOSPEC",
+                egui::TextStyle::Body.resolve(ui.style()),
+                ui.visuals().text_color(),
+            );
+        }
+    }
+    let response = ui
+        .interact(at, ui.id().with("lospec_logo"), egui::Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .tip("lospec.com");
+    if response.clicked()
+        && let Err(e) = platform::open_url(ui.ctx(), "https://lospec.com/palette-list")
+    {
+        log::warn!("could not open lospec.com: {e}");
+    }
+    // Lo que la franja ocupa del contenido, y la línea grabada justo debajo.
+    let (_, _) = ui.allocate_exact_size(
+        egui::vec2(content.width(), (band.bottom() - top).max(0.0)),
+        egui::Sense::hover(),
+    );
+    if let Some(skin) = skin {
+        let line = egui::Rangef::new(
+            content.left() - margin + 1.0,
+            content.right() + margin - 1.0,
+        );
+        ui.painter().add(pixel_ui::etched_hline(
+            line,
+            band.bottom(),
+            skin.colors(),
+            ppp,
+        ));
+    }
+    ui.add_space(pixel_ui::ETCHED_SIZE + 2.0);
+}
+
 /// Lo que llegó de Lospec (listas e imágenes de ejemplo).
 fn poll_lospec(ctx: &egui::Context, window: &mut PresetsWindow) {
     let now = ctx.input(|i| i.time);
@@ -673,75 +779,104 @@ fn lospec_ui(
     ui: &mut egui::Ui,
     window: &mut PresetsWindow,
     in_library: impl Fn(&str) -> bool,
+    list_h: Option<f32>,
 ) -> Option<LospecAction> {
     let ctx = ui.ctx().clone();
     let now = ctx.input(|i| i.time);
     let PresetsWindow {
         lospec: tab,
         requests,
+        link_open,
         #[cfg(not(target_arch = "wasm32"))]
         examples,
         ..
     } = window;
     let mut action = None;
-    // Solo escritorio: el CDN de las imágenes no manda CORS.
+
     #[cfg(not(target_arch = "wasm32"))]
-    let mut examples_ui =
-        |ui: &mut egui::Ui, p: &LospecPalette| lospec_examples::show(ui, p, examples, now);
+    search_form(ui, &ctx, tab, requests, link_open);
     #[cfg(target_arch = "wasm32")]
-    let mut examples_ui = |_: &mut egui::Ui, _: &LospecPalette| {};
+    {
+        // En la web no hay búsqueda: el link (o el nombre) es lo único.
+        *link_open = true;
+    }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    search_form(ui, &ctx, tab, requests);
-
-    ui.horizontal(|ui| {
-        ui.label("Paste a Lospec link or palette name");
-        let response = crate::widgets::text_line(ui, &mut tab.link);
-        let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        if tab.lookup_loading() {
-            ui.spinner();
-        } else if (crate::pixel_ui::text_button(ui, "Fetch").clicked() || enter)
-            && let Some((g, slug)) = tab.start_lookup()
-        {
-            requests.lookup = Some(InFlight::new(
-                g,
-                now,
-                lospec_client::fetch_palette(&ctx, &slug),
-            ));
-        }
-    });
+    // El link de una paleta (o su nombre): con el botón de la cadena.
+    if *link_open {
+        ui.horizontal(|ui| {
+            ui.label("Paste a Lospec link or palette name");
+            let response = crate::widgets::text_line(ui, &mut tab.link);
+            let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if tab.lookup_loading() {
+                ui.spinner();
+            } else if (crate::pixel_ui::text_button(ui, "Fetch").clicked() || enter)
+                && let Some((g, slug)) = tab.start_lookup()
+            {
+                requests.lookup = Some(InFlight::new(
+                    g,
+                    now,
+                    lospec_client::fetch_palette(&ctx, &slug),
+                ));
+            }
+        });
+    }
     #[cfg(target_arch = "wasm32")]
     ui.weak("Search is available in the desktop app");
 
     if let Some(error) = tab.error() {
         ui.colored_label(ui.visuals().error_fg_color, error);
     }
-    ui.separator();
+    // La línea grabada de lado a lado (en el panel del dock, de borde a borde).
+    etched_rule(ui, list_h.is_some());
 
-    crate::pixel_ui::scroll(ui, egui::ScrollArea::vertical(), |ui| {
+    let mut area = egui::ScrollArea::vertical();
+    if let Some(h) = list_h {
+        let h = (h - ui.cursor().top()).max(120.0);
+        area = area
+            .max_height(h)
+            .min_scrolled_height(h)
+            .auto_shrink([false, false]);
+    }
+    crate::pixel_ui::scroll(ui, area, |ui| {
+        ui.set_max_width(ui.available_width() - LOSPEC_SCROLL_GAP);
         if let Some(p) = tab.lookup_result() {
+            #[cfg(not(target_arch = "wasm32"))]
             lospec_row(
                 ui,
                 p,
                 false,
                 in_library(&p.title),
                 &mut action,
-                &mut examples_ui,
+                examples,
+                now,
             );
-            ui.separator();
+            #[cfg(target_arch = "wasm32")]
+            lospec_row(ui, p, false, in_library(&p.title), &mut action);
         }
         for p in tab.results() {
+            #[cfg(not(target_arch = "wasm32"))]
             lospec_row(
                 ui,
                 p,
                 tab.is_exact(&p.slug),
                 in_library(&p.title),
                 &mut action,
-                &mut examples_ui,
+                examples,
+                now,
+            );
+            #[cfg(target_arch = "wasm32")]
+            lospec_row(
+                ui,
+                p,
+                tab.is_exact(&p.slug),
+                in_library(&p.title),
+                &mut action,
             );
         }
         #[cfg(not(target_arch = "wasm32"))]
-        if tab.can_load_more() {
+        if tab.listing_loading() && tab.shown_of_total().0 == 0 {
+            ui.weak("Loading");
+        } else if tab.can_load_more() {
             ui.vertical_centered(|ui| {
                 let (shown, total) = tab.shown_of_total();
                 if tab.listing_loading() {
@@ -765,130 +900,300 @@ fn lospec_ui(
     action
 }
 
-/// Solo escritorio: el listado de Lospec no admite peticiones desde la web (sin CORS).
+/// La línea grabada a lo ancho (`edge`: hasta los bordes del panel del dock).
+fn etched_rule(ui: &mut egui::Ui, edge: bool) {
+    let Some(skin) = pixel_ui::frame_skin(ui.ctx()) else {
+        ui.separator();
+        return;
+    };
+    let (rect, _) = ui.allocate_exact_size(
+        egui::vec2(ui.available_width(), pixel_ui::ETCHED_SIZE),
+        egui::Sense::hover(),
+    );
+    let x = if edge {
+        rect.x_range()
+            .expand(f32::from(crate::dock::FLYOUT_MARGIN) - 1.0)
+    } else {
+        rect.x_range()
+    };
+    let ppp = ui.ctx().pixels_per_point();
+    ui.painter()
+        .add(pixel_ui::etched_hline(x, rect.top(), skin.colors(), ppp));
+}
+
+/// Entre las paletas y la barra de scroll.
+const LOSPEC_SCROLL_GAP: f32 = 5.0;
+/// Los campos de arriba, como en el diseño: el del tag y el del orden.
+#[cfg(not(target_arch = "wasm32"))]
+const TAG_W: f32 = 124.0;
+#[cfg(not(target_arch = "wasm32"))]
+const LINK_ICON: &str = "icon.lospec.link";
+
+/// Solo escritorio: el listado de Lospec no admite peticiones desde la web (sin CORS). Tag,
+/// Colors (y cuántos), Sort By, Search y el botón de la cadena (el campo del link).
 #[cfg(not(target_arch = "wasm32"))]
 fn search_form(
     ui: &mut egui::Ui,
     ctx: &egui::Context,
     tab: &mut LospecTab,
     requests: &mut LospecRequests,
+    link_open: &mut bool,
 ) {
     let mut search = false;
     // Mientras carga la primera página no se puede buscar (ni con Search ni con Enter).
     let first_page_loading = tab.listing_loading() && tab.shown_of_total().0 == 0;
-    ui.horizontal(|ui| {
-        ui.label("Tag");
-        let response = crate::widgets::text_line(ui, &mut tab.tag);
-        search |= !first_page_loading
-            && response.lost_focus()
-            && ui.input(|i| i.key_pressed(egui::Key::Enter));
-        ui.label("Colors");
-        crate::widgets::combo(ui, "lospec_count", &format!("{:?}", tab.count_kind), |ui| {
-            for kind in [
-                CountKind::Any,
-                CountKind::Exact,
-                CountKind::Min,
-                CountKind::Max,
-            ] {
-                crate::widgets::choice(ui, &mut tab.count_kind, kind, &format!("{kind:?}"));
-            }
+    let skin = crate::pixel_ui::frame_skin(ui.ctx());
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.label("Tag");
+            let response = match &skin {
+                Some(skin) => crate::pixel_sections::text_field(
+                    ui,
+                    skin,
+                    &mut tab.tag,
+                    TAG_W,
+                    "Tag",
+                    "Enter a tag",
+                ),
+                None => ui.add(
+                    egui::TextEdit::singleline(&mut tab.tag)
+                        .hint_text("Enter a tag")
+                        .desired_width(TAG_W),
+                ),
+            };
+            search |= !first_page_loading
+                && response.lost_focus()
+                && ui.input(|i| i.key_pressed(egui::Key::Enter));
         });
-        ui.add_enabled_ui(tab.count_kind != CountKind::Any, |ui| {
-            crate::widgets::number(ui, &mut tab.count, 1..=256, "");
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.label("Colors");
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 0.0;
+                crate::widgets::combo(ui, "lospec_count", &format!("{:?}", tab.count_kind), |ui| {
+                    for kind in [
+                        CountKind::Any,
+                        CountKind::Exact,
+                        CountKind::Min,
+                        CountKind::Max,
+                    ] {
+                        crate::widgets::choice(ui, &mut tab.count_kind, kind, &format!("{kind:?}"));
+                    }
+                });
+                ui.add_enabled_ui(tab.count_kind != CountKind::Any, |ui| {
+                    crate::widgets::number(ui, &mut tab.count, 1..=256, "");
+                });
+            });
         });
-        ui.label("Sort");
-        crate::widgets::combo(ui, "lospec_sort", &format!("{:?}", tab.sort), |ui| {
-            for sort in [
-                LospecSort::Default,
-                LospecSort::Alphabetical,
-                LospecSort::Downloads,
-                LospecSort::Newest,
-            ] {
-                crate::widgets::choice(ui, &mut tab.sort, sort, &format!("{sort:?}"));
-            }
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.label("Sort By");
+            crate::widgets::combo(ui, "lospec_sort", &format!("{:?}", tab.sort), |ui| {
+                for sort in [
+                    LospecSort::Default,
+                    LospecSort::Alphabetical,
+                    LospecSort::Downloads,
+                    LospecSort::Newest,
+                ] {
+                    crate::widgets::choice(ui, &mut tab.sort, sort, &format!("{sort:?}"));
+                }
+            });
         });
-        if first_page_loading {
-            ui.spinner();
-        } else {
-            let skin = crate::pixel_ui::frame_skin(ui.ctx());
-            search |=
-                crate::pixel_ui::icon_button(ui, skin.as_deref(), "icon.search", "Search", None)
-                    .clicked();
-        }
+        ui.vertical(|ui| {
+            ui.spacing_mut().item_spacing.y = 1.0;
+            ui.label(" ");
+            ui.horizontal(|ui| {
+                ui.spacing_mut().item_spacing.x = 5.0;
+                if first_page_loading {
+                    ui.spinner();
+                } else {
+                    search |= crate::pixel_ui::text_button(ui, "Search").clicked();
+                }
+                if crate::pixel_ui::icon_button(
+                    ui,
+                    skin.as_deref(),
+                    LINK_ICON,
+                    "Paste a Lospec link",
+                    Some(*link_open),
+                )
+                .clicked()
+                {
+                    *link_open = !*link_open;
+                }
+            });
+        });
     });
     if search {
-        // Una búsqueda nueva reemplaza las peticiones guardadas; la pestaña descarta las viejas.
-        let start = tab.start_search();
-        let now = ctx.input(|i| i.time);
-        requests.listing = Some(InFlight::new(
-            start.generation,
-            now,
-            lospec_client::fetch_listing(ctx, &start.listing),
-        ));
-        requests.exact = start.exact.map(|slug| {
-            InFlight::new(
-                start.generation,
-                now,
-                lospec_client::fetch_palette(ctx, &slug),
-            )
-        });
+        start_search(ctx, tab, requests);
     }
 }
 
-/// Fila de un resultado: título, autor, colores, likes y descargas, tira, ejemplos (con
-/// `examples`), Apply/Save y link.
+/// Una búsqueda nueva: reemplaza las peticiones guardadas (la pestaña descarta las viejas).
+#[cfg(not(target_arch = "wasm32"))]
+fn start_search(ctx: &egui::Context, tab: &mut LospecTab, requests: &mut LospecRequests) {
+    let start = tab.start_search();
+    let now = ctx.input(|i| i.time);
+    requests.listing = Some(InFlight::new(
+        start.generation,
+        now,
+        lospec_client::fetch_listing(ctx, &start.listing),
+    ));
+    requests.exact = start.exact.map(|slug| {
+        InFlight::new(
+            start.generation,
+            now,
+            lospec_client::fetch_palette(ctx, &slug),
+        )
+    });
+}
+
+/// Los colores del diseño (frame 8): el borde de la tira de colores y lo chico del autor.
+const SWATCH_BORDER: egui::Color32 = egui::Color32::from_rgb(189, 164, 153);
+const SWATCH: f32 = 16.0;
+
+/// Una paleta: el título (clic: su página en lospec.com) y "CREATED BY" el autor; a la derecha
+/// sus colores, likes y descargas. Debajo la tira de colores y ◀ 1/5 ▶, el ejemplo a todo el
+/// ancho y abajo Apply y Save.
 fn lospec_row(
     ui: &mut egui::Ui,
     p: &LospecPalette,
     exact: bool,
     in_library: bool,
     action: &mut Option<LospecAction>,
-    examples: &mut impl FnMut(&mut egui::Ui, &LospecPalette),
+    #[cfg(not(target_arch = "wasm32"))] examples: &mut ExampleCache,
+    #[cfg(not(target_arch = "wasm32"))] now: f64,
 ) {
-    ui.group(|ui| {
-        ui.set_width(ui.available_width());
-        ui.horizontal(|ui| {
-            ui.strong(&p.title);
-            let mut meta = Vec::new();
-            if let Some(a) = &p.author {
-                meta.push(a.clone());
-            }
-            meta.push(format!("{} colors", p.palette.len()));
-            if let Some(l) = p.likes {
-                meta.push(format!("♥{l}"));
-            }
-            if let Some(d) = p.downloads {
-                meta.push(format!("⬇{d}"));
-            }
-            if exact {
-                meta.push("Exact match".into());
-            }
-            if in_library {
-                meta.push("In library".into());
-            }
-            ui.weak(meta.join(" · "));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if crate::pixel_ui::text_button(ui, "Save").clicked() {
-                    *action = Some(LospecAction::Save(p.clone()));
-                }
-                if crate::pixel_ui::text_button(ui, "Apply").clicked() {
-                    *action = Some(LospecAction::Apply(p.clone()));
-                }
-            });
-        });
-        panels::palette_strip(ui, &p.palette, STRIP_COLORS, 8.0);
-        examples(ui, p);
+    let skin = pixel_ui::frame_skin(ui.ctx());
+    let text = ui.visuals().text_color();
+    let ppp = ui.ctx().pixels_per_point();
+    ui.add_space(4.0);
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let title = ui.add(egui::Label::new(&p.title).sense(egui::Sense::click()));
+        if let Some(author) = p.author.as_deref().filter(|a| !a.is_empty()) {
+            ui.label(
+                egui::RichText::new(format!("CREATED BY {}", author.to_uppercase()))
+                    .small()
+                    .color(text),
+            );
+        }
         // El link solo se abre con un slug validado: la URL va a `explorer`/`open`/`xdg-open`.
         if cs_io::lospec::is_valid_slug(&p.slug) {
             let url = cs_io::lospec::page_url(&p.slug);
-            // No se usa `hyperlink_to`: en escritorio no abre nada porque eframe va sin `links`.
-            if ui.link("lospec.com").tip(&url).clicked()
+            let title = title
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .tip(&url);
+            if title.clicked()
                 && let Err(e) = platform::open_url(ui.ctx(), &url)
             {
                 log::warn!("could not open {url}: {e}");
             }
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 1.0;
+            let stat = |ui: &mut egui::Ui, icon: &str, plain: &str, value: String| {
+                ui.label(value);
+                match skin
+                    .as_ref()
+                    .and_then(|s| s.piece(icon, crate::skin::WidgetState::Normal))
+                {
+                    Some(piece) => {
+                        let size = egui::vec2(piece.size[0] as f32, piece.size[1] as f32);
+                        let (rect, _) = ui.allocate_exact_size(
+                            egui::vec2(size.x, ui.spacing().interact_size.y.min(13.0)),
+                            egui::Sense::hover(),
+                        );
+                        let at = egui::Rect::from_min_size(
+                            egui::pos2(rect.left(), (rect.center().y - size.y / 2.0).round()),
+                            size,
+                        );
+                        ui.painter().extend(pixel_ui::piece_shapes(piece, at, ppp));
+                    }
+                    None => {
+                        ui.label(plain);
+                    }
+                }
+                ui.add_space(5.0);
+            };
+            if let Some(d) = p.downloads {
+                stat(ui, "icon.lospec.downloads", "⬇", d.to_string());
+            }
+            if let Some(l) = p.likes {
+                stat(ui, "icon.lospec.likes", "♥", l.to_string());
+            }
+            stat(
+                ui,
+                "icon.lospec.colors",
+                "",
+                format!("{} colors", p.palette.len()),
+            );
+        });
     });
+    ui.horizontal_top(|ui| {
+        swatches(ui, &p.palette);
+        #[cfg(not(target_arch = "wasm32"))]
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            lospec_examples::pager(ui, p, examples);
+        });
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    lospec_examples::image(ui, p, examples, now);
+    // Abajo: lo que se sabe de ella y Apply / Save.
+    ui.horizontal(|ui| {
+        let mut notes = Vec::new();
+        if exact {
+            notes.push("Exact match");
+        }
+        if in_library {
+            notes.push("In library");
+        }
+        if !notes.is_empty() {
+            ui.weak(notes.join(" · "));
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
+            if crate::pixel_ui::text_button(ui, "Save").clicked() {
+                *action = Some(LospecAction::Save(p.clone()));
+            }
+            if crate::pixel_ui::text_button(ui, "Apply").clicked() {
+                *action = Some(LospecAction::Apply(p.clone()));
+            }
+        });
+    });
+    ui.add_space(6.0);
+}
+
+/// La tira de colores en su caja (borde y 1 px blanco), de 16×16 cada uno; las que no caben a lo
+/// ancho siguen abajo.
+fn swatches(ui: &mut egui::Ui, palette: &Palette) {
+    use eframe::emath::GuiRounding as _;
+    let colors = palette.colors();
+    if colors.is_empty() {
+        return;
+    }
+    let room = (ui.available_width() * 0.6).max(SWATCH * 4.0 + 4.0);
+    let per_row = (((room - 4.0) / SWATCH).floor() as usize).clamp(1, colors.len());
+    let rows = colors.len().div_ceil(per_row);
+    let size = egui::vec2(per_row as f32 * SWATCH + 4.0, rows as f32 * SWATCH + 4.0);
+    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let ppp = ui.ctx().pixels_per_point();
+    let painter = ui.painter();
+    painter.rect_filled(rect.round_to_pixels(ppp), 0.0, SWATCH_BORDER);
+    painter.rect_filled(
+        rect.shrink(1.0).round_to_pixels(ppp),
+        0.0,
+        egui::Color32::WHITE,
+    );
+    for (k, &c) in colors.iter().enumerate() {
+        let (row, col) = (k / per_row, k % per_row);
+        let at = egui::Rect::from_min_size(
+            rect.min + egui::vec2(2.0 + col as f32 * SWATCH, 2.0 + row as f32 * SWATCH),
+            egui::Vec2::splat(SWATCH),
+        );
+        painter.rect_filled(at.round_to_pixels(ppp), 0.0, panels::to_color32(c));
+    }
 }
 
 #[cfg(test)]
