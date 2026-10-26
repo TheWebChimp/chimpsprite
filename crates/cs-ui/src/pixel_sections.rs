@@ -38,7 +38,7 @@ const SWATCH_GAP: f32 = 3.0;
 const TABS_FIELDS_GAP: f32 = 9.0;
 /// Los campos de texto del diseño: 16 de alto con la fila del brillo de abajo (como los combos,
 /// los campos numéricos y los botones).
-pub const FIELD_HEIGHT: f32 = 16.0;
+pub const FIELD_HEIGHT: f32 = pixel_ui::CONTROL_HEIGHT;
 /// Entre un campo y su botón (x 945 → 949).
 const FIELD_BUTTON_GAP: f32 = 3.0;
 /// Del borde del campo al texto.

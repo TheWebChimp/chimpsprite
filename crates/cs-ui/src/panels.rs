@@ -3403,7 +3403,7 @@ mod tests {
         assert_eq!(slots[0].left() - h.rect("Symmetry").right(), 3.0);
         let (_, ink) = h.text("Symmetry");
         assert_eq!(slots[0].left() + 1.0 - ink.right(), 5.0, "{ink:?}");
-        assert_eq!(ink.top(), h.bar.top() + 5.0, "{ink:?}");
+        assert_eq!(ink.top(), h.bar.top() + 6.0, "{ink:?}");
         // Después de los ejes, a 5, el botón del espejo con su LED (28×16: el ícono de 11, el
         // LED de 7 y su aire) y del espejo al borde, 3. Apagado, el LED gris.
         let mirror = h.rect("Mirror Selection");
@@ -3563,7 +3563,7 @@ Alt+click: pick color";
         let colors = *h.skin.as_ref().unwrap().colors();
         let (color, ink) = h.text("Mode");
         assert_eq!(color, colors.text);
-        assert_eq!(ink.min, bar.min + Vec2::new(7.0, 5.0), "{ink:?}");
+        assert_eq!(ink.min, bar.min + Vec2::new(7.0, 6.0), "{ink:?}");
         assert_eq!(ink.width(), 20.0);
         // Los cuatro cuadritos: las piezas en x 60, 77, 94 y 111 y en la y 73 (la pieza tiene
         // una columna transparente antes del cuadro, que va en 61). Replace es el elegido.
@@ -3632,7 +3632,7 @@ Alt+click: pick color";
         // el campo de x 278 a 304 y la unidad "px" hasta la 319: 42 de ancho en total, de la y
         // 73 a la 88.
         let (_, ink) = h.text("Brush Size");
-        assert_eq!(ink.min, bar.min + Vec2::new(7.0, 5.0), "{ink:?}");
+        assert_eq!(ink.min, bar.min + Vec2::new(7.0, 6.0), "{ink:?}");
         assert_eq!(ink.width(), 46.0);
         let field = h.drawn_boxes("field.number");
         let left = ink.right() + 3.0;
@@ -3640,15 +3640,15 @@ Alt+click: pick color";
             field,
             vec![Rect::from_min_size(
                 pos2(left, bar.top() + 2.0),
-                Vec2::new(27.0, 16.0)
+                Vec2::new(27.0, 17.0)
             )]
         );
-        let unit = h.drawn("field.unit");
+        let unit = h.drawn_boxes("field.unit");
         assert_eq!(
             unit,
             vec![Rect::from_min_size(
                 pos2(left + 25.0, bar.top() + 2.0),
-                Vec2::new(17.0, 16.0)
+                Vec2::new(17.0, 17.0)
             )]
         );
         // El número, en la fila de los textos (los dígitos miden 6, una fila menos que las
@@ -3656,7 +3656,7 @@ Alt+click: pick color";
         let size = h.editor.options.brush_size;
         let (color, digits) = h.text(&size.to_string());
         assert_eq!(color, h.skin.as_ref().unwrap().colors().text);
-        assert_eq!(digits.bottom(), bar.top() + 12.0, "{digits:?}");
+        assert_eq!(digits.bottom(), bar.top() + 13.0, "{digits:?}");
         assert!(digits.left() > left + 1.0 && digits.right() < left + 26.0);
         // Arrastrar a la derecha lo agranda.
         h.drag(field[0].center(), 40.0);
@@ -3680,7 +3680,7 @@ Alt+click: pick color";
         let field = h.drawn_boxes("field.number");
         assert_eq!(field.len(), 1, "{field:?}");
         assert_eq!(field[0].left(), ink.right() + 3.0);
-        assert_eq!(field[0].size(), Vec2::new(27.0, 16.0));
+        assert_eq!(field[0].size(), Vec2::new(27.0, 17.0));
         assert_eq!(h.drawn("field.unit"), vec![]);
         // Spray: el ancho en px y la velocidad sin unidad.
         let h = pixel_bar(ToolKind::Spray);
@@ -3689,7 +3689,7 @@ Alt+click: pick color";
             3,
             "brush, width and speed"
         );
-        assert_eq!(h.drawn("field.unit").len(), 2, "brush and width");
+        assert_eq!(h.drawn_boxes("field.unit").len(), 2, "brush and width");
     }
 
     #[test]
@@ -3706,9 +3706,9 @@ Alt+click: pick color";
         let (_, ink) = h.text(current.label());
         let combo = combos[0];
         assert_eq!(combo.top(), bar.top() + 2.0);
-        assert_eq!(combo.height(), 16.0);
+        assert_eq!(combo.height(), 17.0);
         assert_eq!(ink.left() - combo.left(), 6.0);
-        assert_eq!(ink.top(), bar.top() + 5.0);
+        assert_eq!(ink.top(), bar.top() + 6.0);
         assert_eq!(combo.right() - ink.right(), 5.0 + 10.0);
         // Un clic abre la lista en el panel de los menús, colgada del combo.
         let other = Dither::ALL.into_iter().find(|d| *d != current).unwrap();
@@ -3822,7 +3822,7 @@ Alt+click: pick color";
                         colors.option_text_off
                     };
                     assert_eq!(color, want, "{tool:?}: {label}");
-                    assert_eq!(ink.top(), bar.top() + 5.0, "{tool:?}: {label} {ink:?}");
+                    assert_eq!(ink.top(), bar.top() + 6.0, "{tool:?}: {label} {ink:?}");
                     // La tinta 12 px adentro (el punto de 7 y su aire) y 4 antes del borde.
                     assert_eq!(ink.left(), b.left() + 12.0, "{tool:?}: {label}");
                     assert_eq!(ink.right() + 5.0, b.right(), "{tool:?}: {label}");
@@ -3914,7 +3914,7 @@ Alt+click: pick color";
         assert_eq!(check[0].left() - h.rect("Round brush").right(), 5.0);
         let (_, ink) = h.text("Pixel Perfect");
         assert_eq!(ink.left() - check[0].right(), 3.0);
-        assert_eq!(ink.top(), bar.top() + 5.0);
+        assert_eq!(ink.top(), bar.top() + 6.0);
         h.click("Pixel Perfect");
         h.frame(vec![]);
         assert!(!h.editor.options.pixel_perfect);
@@ -3942,10 +3942,10 @@ Alt+click: pick color";
             {
                 // Las mayúsculas en la fila 5 (los textos sin mayúsculas, como los números o
                 // "px", no bajan de ahí).
-                assert!(ink.top() >= h.bar.top() + 5.0, "{tool:?}: {text:?} {ink:?}");
+                assert!(ink.top() >= h.bar.top() + 6.0, "{tool:?}: {text:?} {ink:?}");
                 let caps = text.chars().any(|c| c.is_ascii_uppercase());
                 if caps {
-                    assert_eq!(ink.top(), h.bar.top() + 5.0, "{tool:?}: {text:?} {ink:?}");
+                    assert_eq!(ink.top(), h.bar.top() + 6.0, "{tool:?}: {text:?} {ink:?}");
                 }
             }
         }

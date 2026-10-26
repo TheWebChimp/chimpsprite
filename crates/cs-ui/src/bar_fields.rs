@@ -42,11 +42,11 @@ const CHECK: &str = "field.check";
 const CHECK_ON: &str = "field.check.on";
 
 /// La fila de las mayúsculas de los textos, desde el borde de arriba de la barra.
-pub const CAPS_TOP: f32 = 5.0;
+pub const CAPS_TOP: f32 = FIELD_TOP + pixel_ui::CONTROL_CAPS;
 /// La fila de arriba del combo y del campo numérico (y 73 en el diseño), que miden 16 con el
 /// brillo de abajo.
 pub(crate) const FIELD_TOP: f32 = 2.0;
-pub(crate) const FIELD_HEIGHT: f32 = 16.0;
+pub(crate) const FIELD_HEIGHT: f32 = pixel_ui::CONTROL_HEIGHT;
 /// Combo: de su borde izquierdo a la tinta del texto, y de la tinta a la parte de la flecha.
 const COMBO_TEXT_LEFT: f32 = 6.0;
 const COMBO_TEXT_GAP: f32 = 5.0;
@@ -225,7 +225,7 @@ pub fn combo_sized<R>(
         let at = tab_bar::text_pos(
             &shown,
             drawn.left() + COMBO_TEXT_LEFT,
-            look.top + CAPS_TOP + (height - FIELD_HEIGHT).max(0.0),
+            look.top + CAPS_TOP,
             ppp,
         );
         shapes.push(Shape::galley(at, shown, colors.text));
@@ -287,7 +287,10 @@ pub fn options<T: PartialEq + Copy>(
     let mut shapes = Vec::new();
     let mut seps = Vec::new();
     for (i, &value) in values.iter().enumerate() {
-        let drawn = Rect::from_min_size(pos2(left, top), vec2(widths[i], FIELD_HEIGHT));
+        // El cuerpo del botón; debajo, su luz.
+        let drawn = Rect::from_min_size(pos2(left, top), vec2(widths[i], pixel_ui::CONTROL_BODY));
+        let light = Rect::from_min_size(drawn.left_bottom(), vec2(widths[i], 1.0));
+        shapes.push(solid(light, colors.highlight, ppp));
         let id = group.with(("bar_option", i));
         let response = ui.interact(drawn, id, Sense::click());
         let on = *current == value;
@@ -377,8 +380,9 @@ pub fn brush_shape(
     let (rect, _) = ui.allocate_exact_size(vec2(BRUSH_BUTTON_W, FIELD_HEIGHT), Sense::hover());
     let drawn = Rect::from_min_size(
         pos2(rect.left().round(), look.top + FIELD_TOP),
-        vec2(BRUSH_BUTTON_W, FIELD_HEIGHT),
+        vec2(BRUSH_BUTTON_W, pixel_ui::CONTROL_BODY),
     );
+    pixel_ui::under_light(ui, drawn);
     let label = match shape {
         BrushShape::Round => "Round brush",
         BrushShape::Square => "Square brush",
@@ -457,7 +461,9 @@ pub fn number<Num: emath::Numeric>(
         let at = pos2(field.right() - UNIT_OVERLAP, field.top());
         shapes.extend(match unit {
             Some(piece) => {
-                pixel_ui::piece_shapes(piece, Rect::from_min_size(at, size_of(piece)), ppp)
+                // A lo alto, el del campo (la pieza estira sus filas de abajo).
+                let size = vec2(size_of(piece).x, FIELD_HEIGHT);
+                pixel_ui::piece_shapes(piece, Rect::from_min_size(at, size), ppp)
             }
             None => flat_box(
                 look,

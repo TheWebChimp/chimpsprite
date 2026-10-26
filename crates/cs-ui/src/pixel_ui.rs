@@ -384,7 +384,7 @@ pub fn pixel_buttons(ui: &mut Ui, skin: &Skin, labels: &[&str]) -> Vec<Response>
             .enumerate()
             .map(|(i, (label, size))| {
                 let width = if i + extra >= n { each + 1.0 } else { each };
-                button_of_size_at(ui, skin, label, vec2(width, size.y), DIALOG_TEXT_DY)
+                button_of_size(ui, skin, label, vec2(width, size.y))
             })
             .collect()
     })
@@ -398,22 +398,15 @@ fn label_pos(inner: Rect, size: Vec2, state: WidgetState, pixels_per_point: f32)
     (inner.center() - size / 2.0 + vec2(0.0, down)).round_to_pixels(pixels_per_point)
 }
 
-/// Los botones de los diálogos (y los de los paneles con luz) llevan el texto 1 fila más abajo
-/// que los de la barra: 4 filas entre el borde y las mayúsculas, como en los diseños nuevos.
-const DIALOG_TEXT_DY: f32 = 1.0;
-
 /// Un botón con `button` del skin de `size` exacto (en los diálogos con su lugar del diseño).
 pub fn pixel_button_sized(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response {
-    button_of_size_at(ui, skin, label, size, DIALOG_TEXT_DY)
+    button_of_size(ui, skin, label, size)
 }
 
 /// Un botón de `size` exacto, dibujado con la pieza del estado en que está.
+/// Un botón de `size` (el cuerpo; debajo va la luz: ocupa 1 fila más), con la pieza del estado
+/// en que está y el texto con las mayúsculas en [`CONTROL_CAPS`].
 fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response {
-    button_of_size_at(ui, skin, label, size, 0.0)
-}
-
-/// [`button_of_size`] con el texto `text_dy` filas más abajo.
-fn button_of_size_at(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2, text_dy: f32) -> Response {
     let colors = *skin.colors();
     let font = TextStyle::Button.resolve(ui.style());
     let galley = ui
@@ -421,7 +414,12 @@ fn button_of_size_at(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2, text_dy:
         .layout_no_wrap(label.to_owned(), font, colors.text);
     let base = skin.piece(BUTTON_PIECE, WidgetState::Normal);
     let [left, top, right, bottom] = base.map_or(FALLBACK_BUTTON, borders);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let (slot, response) = ui.allocate_exact_size(
+        vec2(size.x, size.y + CONTROL_HEIGHT - CONTROL_BODY),
+        Sense::click(),
+    );
+    let rect = Rect::from_min_size(slot.min, size);
+    under_light(ui, rect);
     let enabled = ui.is_enabled();
     response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
     if ui.is_rect_visible(rect) {
@@ -447,7 +445,10 @@ fn button_of_size_at(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2, text_dy:
             None => painter.extend(flat_shapes(skin, rect, 0.0, ppp)),
         }
         let inner = Rect::from_min_max(rect.min + vec2(left, top), rect.max - vec2(right, bottom));
-        let at = label_pos(inner, galley.size(), state, ppp) + vec2(0.0, text_dy);
+        let at = label_pos(inner, galley.size(), state, ppp);
+        // A lo alto, las mayúsculas en su fila (como en los campos).
+        let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
+        let at = crate::tab_bar::text_pos(&galley, at.x, rect.top() + CONTROL_CAPS + down, ppp);
         painter.galley(at, galley, text_color);
         if response.has_focus() {
             painter.rect_stroke(
@@ -824,8 +825,9 @@ pub fn icon_button(
     // Los íconos anchos (la cadena de Lospec) llevan 5 px de aire a cada lado.
     let icon_w = crate::pixel_draw::piece_size(skin, icon).x;
     let size = vec2(ICON_BUTTON.x.max(icon_w + 10.0), ICON_BUTTON.y);
-    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-    let rect = Rect::from_min_size(rect.min.round(), size);
+    let (slot, _) = ui.allocate_exact_size(vec2(size.x, CONTROL_HEIGHT), Sense::hover());
+    let rect = Rect::from_min_size(slot.min.round(), size);
+    under_light(ui, rect);
     let ppp = ui.ctx().pixels_per_point();
     let info = crate::pixel_draw::ButtonInfo {
         selected: on,
@@ -862,8 +864,9 @@ pub fn led_button(ui: &mut Ui, skin: Option<&Skin>, icon: &str, label: &str, on:
     let led_size = crate::pixel_draw::piece_size(skin, led);
     let width = LED_PAD + icon_size.x + LED_GAP + led_size.x + LED_PAD;
     let size = vec2(width, ICON_BUTTON.y);
-    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-    let rect = Rect::from_min_size(rect.min.round(), size);
+    let (slot, _) = ui.allocate_exact_size(vec2(width, CONTROL_HEIGHT), Sense::hover());
+    let rect = Rect::from_min_size(slot.min.round(), size);
+    under_light(ui, rect);
     // Prendido o apagado lo dice el LED: el botón no queda hundido.
     let info = crate::pixel_draw::ButtonInfo {
         selected: None,
@@ -893,19 +896,17 @@ const LED_OFF: &str = "button.dot.off";
 const LED_PAD: f32 = 4.0;
 const LED_GAP: f32 = 2.0;
 
-/// Un [`text_button`] con la luz de abajo de los campos (1 fila debajo, como en los paneles de
-/// Dafont y Lospec): queda del alto de sus campos.
+/// La norma de los controles con Pixel UI (botones, campos, combos, grupos de opciones): 17 de
+/// alto, el cuerpo de 16 y debajo 1 fila de luz (`highlight`). En los campos la luz viene en su
+/// pieza; a los botones se la pone [`under_light`]. Las mayúsculas de los textos van 4 filas
+/// debajo del borde de arriba.
+pub const CONTROL_HEIGHT: f32 = 17.0;
+pub const CONTROL_BODY: f32 = 16.0;
+pub const CONTROL_CAPS: f32 = 4.0;
+
+/// Antes era el botón "con luz" de los paneles; ahora todos los botones la llevan.
 pub fn lit_button(ui: &mut Ui, label: &str) -> Response {
-    let response = match frame_skin(ui.ctx()) {
-        // Con su luz mide lo que los campos: el texto va 1 fila más abajo (frames 7 y 8).
-        Some(skin) => {
-            let size = button_size(ui, &skin, label);
-            button_of_size_at(ui, &skin, label, size, 1.0)
-        }
-        None => ui.button(label),
-    };
-    under_light(ui, response.rect);
-    response
+    text_button(ui, label)
 }
 
 /// La luz de 1 fila debajo de `rect` (la de abajo de los campos), con Pixel UI.
@@ -1379,10 +1380,10 @@ mod tests {
         let ctx = egui::Context::default();
         let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
         let (short, _) = button(&ctx, &skin, "OK", vec![]);
-        assert_eq!(short.size(), vec2(49.0, 16.0), "the piece size");
+        assert_eq!(short.size(), vec2(49.0, 17.0), "the piece and its light");
         let (long, _) = button(&ctx, &skin, "A much longer button label", vec![]);
         assert!(long.width() > 49.0, "{long:?}");
-        assert_eq!(long.height(), 16.0);
+        assert_eq!(long.height(), 17.0);
     }
 
     #[test]

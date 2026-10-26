@@ -1041,7 +1041,14 @@ mod tests {
         assert_eq!(at(number, 9, 0).a, 0, "rounded corner");
         assert_eq!(at(number, 3, 2), Rgba::rgb(236, 235, 231), "the shine");
         let unit = &data.pieces["field.unit"];
-        assert_eq!((unit.size, unit.center), ([17, 16], None));
+        // La unidad estira sus filas de abajo (debajo del "px") para medir los 17 de la norma.
+        let center = Rect9 {
+            x: 2,
+            y: 10,
+            w: 13,
+            h: 3,
+        };
+        assert_eq!((unit.size, unit.center), ([17, 16], Some(center)));
         assert_eq!(at(unit, 0, 5), white, "the last column of the field");
         assert_eq!(at(unit, 1, 5), border, "the divider");
         assert_eq!(at(unit, 3, 5), Rgba::rgb(189, 164, 153), "the grey box");
