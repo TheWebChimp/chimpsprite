@@ -285,9 +285,8 @@ mod tests {
             id: 1,
             position: (-20, 40),
             size: (120, 90),
-            text: "Revisar la
-animación ✨"
-                .into(),
+            text: "Revisar la\nanimación ✨".into(),
+            color: cs_core::NoteColor::Blue,
         });
         let (back, _) = read(&write(&d).unwrap()).unwrap();
         assert_eq!(back.notes, d.notes);

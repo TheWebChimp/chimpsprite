@@ -3620,6 +3620,29 @@ mod tests {
     }
 
     #[test]
+    fn the_color_strip_shows_with_the_bar_and_a_swatch_changes_the_color() {
+        let mut h = Harness::new();
+        let (id, paper) = with_note(&mut h);
+        // Con el puntero en la nota aparece la tira; el rosa es el segundo cuadrito.
+        h.frame(vec![egui::Event::PointerMoved(paper.center())]);
+        h.frame(vec![]);
+        let pink = Pos2::new(paper.right() + 3.0 + 8.0, paper.top() + 1.0 + 8.0 + 11.0);
+        h.click(pink, PointerButton::Primary);
+        let color = |h: &Harness| {
+            h.editor
+                .document
+                .notes
+                .iter()
+                .find(|n| n.id == id)
+                .unwrap()
+                .color
+        };
+        assert_eq!(color(&h), cs_core::NoteColor::Pink);
+        h.editor.undo();
+        assert_eq!(color(&h), cs_core::NoteColor::Yellow, "one step");
+    }
+
+    #[test]
     fn dragging_the_bar_moves_the_note_in_one_undo_step() {
         let mut h = Harness::new();
         let (id, paper) = with_note(&mut h);

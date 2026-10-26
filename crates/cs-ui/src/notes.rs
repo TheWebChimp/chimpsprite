@@ -7,7 +7,7 @@
 //! Su esquina está en coordenadas de mundo (se mueven con la vista) y su tamaño en puntos de
 //! interfaz (no cambia con el zoom). Cada gesto (mover, agrandar, escribir) es un paso de undo.
 
-use cs_core::Note;
+use cs_core::{Note, NoteColor};
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
 
 use crate::editor::Editor;
@@ -17,6 +17,34 @@ use crate::{menus, pixel_ui};
 const PIECE: &str = "note";
 /// La nota sin la barra: el papel liso, cuando no tiene el puntero encima.
 const PIECE_PLAIN: &str = "note.plain";
+/// La tira de los colores, a la derecha de la nota (con la barra): un cuadrito por color.
+const COLORS_PIECE: &str = "note.colors";
+const COLORS_GAP: f32 = 3.0;
+const COLORS_SIZE: Vec2 = vec2(17.0, 50.0);
+/// Los cuadritos de la tira: 9×9, desde (4, 4), uno cada 11 filas (en el orden de `NoteColor::ALL`).
+const SWATCH_AT: Vec2 = vec2(4.0, 4.0);
+const SWATCH: f32 = 9.0;
+const SWATCH_STEP: f32 = 11.0;
+
+/// Las piezas de una nota de `color`: con la barra y sin ella.
+fn pieces(color: NoteColor) -> (&'static str, &'static str) {
+    match color {
+        NoteColor::Yellow => (PIECE, PIECE_PLAIN),
+        NoteColor::Pink => ("note.pink", "note.plain.pink"),
+        NoteColor::Blue => ("note.blue", "note.plain.blue"),
+        NoteColor::Green => ("note.green", "note.plain.green"),
+    }
+}
+
+/// El papel de cada color sin el skin.
+fn paper_color(color: NoteColor) -> Color32 {
+    match color {
+        NoteColor::Yellow => PAPER,
+        NoteColor::Pink => Color32::from_rgb(246, 162, 168),
+        NoteColor::Blue => Color32::from_rgb(151, 220, 243),
+        NoteColor::Green => Color32::from_rgb(194, 228, 144),
+    }
+}
 /// El papel de una nota nueva (el del diseño, sin la sombra) y el mínimo al agrandarla.
 pub const NEW_SIZE: (u32, u32) = (86, 89);
 const MIN_SIZE: Vec2 = vec2(60.0, 44.0);
@@ -46,6 +74,8 @@ pub enum NoteHit {
     Close,
     Resize,
     Body,
+    /// Un cuadrito de la tira de colores.
+    Color(NoteColor),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -88,6 +118,28 @@ fn close_rect(paper: Rect) -> Rect {
     )
 }
 
+/// La tira de colores, a la derecha del papel.
+fn colors_rect(paper: Rect) -> Rect {
+    Rect::from_min_size(
+        pos2(paper.right() + COLORS_GAP, paper.top() + 1.0),
+        COLORS_SIZE,
+    )
+}
+
+/// El color del cuadrito de la tira en `p`.
+fn color_at(paper: Rect, p: Pos2) -> Option<NoteColor> {
+    let strip = colors_rect(paper);
+    NoteColor::ALL
+        .into_iter()
+        .enumerate()
+        .find_map(|(i, color)| {
+            let at = strip.min + SWATCH_AT + vec2(0.0, i as f32 * SWATCH_STEP);
+            Rect::from_min_size(at, Vec2::splat(SWATCH))
+                .contains(p)
+                .then_some(color)
+        })
+}
+
 fn text_rect(paper: Rect) -> Rect {
     Rect::from_min_max(
         paper.min + vec2(TEXT_MARGIN, BAR_H + TEXT_MARGIN),
@@ -115,19 +167,35 @@ fn hit_part(paper: Rect, p: Pos2) -> Option<NoteHit> {
 }
 
 impl NotesView {
-    /// La nota de más arriba bajo `p` y qué parte.
+    /// La nota de más arriba bajo `p` y qué parte. La tira de colores cuenta solo para la nota
+    /// que la muestra (la del puntero).
     pub fn hit(
         &self,
         editor: &Editor,
         to_screen: &dyn Fn((i32, i32)) -> Pos2,
         p: Pos2,
     ) -> Option<(u32, NoteHit)> {
-        editor
+        let shown = editor
             .document
             .notes
             .iter()
-            .rev()
-            .find_map(|n| hit_part(paper(n, to_screen), p).map(|h| (n.id, h)))
+            .find(|n| Some(n.id) == self.hovered)
+            .and_then(|n| {
+                let paper = paper(n, to_screen);
+                colors_rect(paper).contains(p).then(|| {
+                    // Entre los cuadritos, la tira es de la nota (no se pierde el hover).
+                    let part = color_at(paper, p).map_or(NoteHit::Bar, NoteHit::Color);
+                    (n.id, part)
+                })
+            });
+        shown.or_else(|| {
+            editor
+                .document
+                .notes
+                .iter()
+                .rev()
+                .find_map(|n| hit_part(paper(n, to_screen), p).map(|h| (n.id, h)))
+        })
     }
 
     /// Si las notas tienen el puntero (encima de una o arrastrando): entonces las herramientas
@@ -198,7 +266,7 @@ impl NotesView {
         };
         self.cursor = Some(match part {
             NoteHit::Bar => egui::CursorIcon::Grab,
-            NoteHit::Menu | NoteHit::Close => egui::CursorIcon::PointingHand,
+            NoteHit::Menu | NoteHit::Close | NoteHit::Color(_) => egui::CursorIcon::PointingHand,
             NoteHit::Resize => egui::CursorIcon::ResizeNwSe,
             NoteHit::Body => egui::CursorIcon::Text,
         });
@@ -236,6 +304,9 @@ impl NotesView {
                 self.finish_editing(editor);
                 editor.remove_note(id);
             }
+            NoteHit::Color(color) => {
+                editor.set_note_color(id, color);
+            }
             NoteHit::Menu | NoteHit::Body => {}
         }
     }
@@ -265,8 +336,8 @@ impl NotesView {
         to_screen: &dyn Fn((i32, i32)) -> Pos2,
     ) -> Vec<(u32, Rect)> {
         let ppp = ui.ctx().pixels_per_point();
-        let piece = skin.and_then(|s| s.piece(PIECE, WidgetState::Normal));
-        let plain = skin.and_then(|s| s.piece(PIECE_PLAIN, WidgetState::Normal));
+        let piece_of = |name: &str| skin.and_then(|s| s.piece(name, WidgetState::Normal));
+        let strip = piece_of(COLORS_PIECE);
         // Con barra: la del puntero, la que se arrastra y la que se escribe.
         let dragged = self.drag.as_ref().map(|d| d.id);
         let edited = self.editing.as_ref().map(|(id, _)| *id);
@@ -281,7 +352,32 @@ impl NotesView {
             let bar = with_bar(note.id);
             // El menú del "≡" sigue abierto aunque el puntero se vaya al desplegable.
             menus.push((note.id, MENU.translate(paper.min.to_vec2())));
-            let piece = if bar { piece } else { plain.or(piece) };
+            let (with, without) = pieces(note.color);
+            let piece = if bar {
+                piece_of(with).or_else(|| piece_of(PIECE))
+            } else {
+                piece_of(without)
+                    .or_else(|| piece_of(with))
+                    .or_else(|| piece_of(PIECE))
+            };
+            // Con la barra, la tira de los colores a la derecha.
+            if bar {
+                let rect = colors_rect(paper);
+                match strip {
+                    Some(strip) => painter.extend(pixel_ui::piece_shapes(strip, rect, ppp)),
+                    None => {
+                        painter.rect_filled(rect, 2.0, PAPER);
+                        for (i, color) in NoteColor::ALL.into_iter().enumerate() {
+                            let at = rect.min + SWATCH_AT + vec2(0.0, i as f32 * SWATCH_STEP);
+                            painter.rect_filled(
+                                Rect::from_min_size(at, Vec2::splat(SWATCH)),
+                                0.0,
+                                paper_color(color),
+                            );
+                        }
+                    }
+                }
+            }
             match piece {
                 // La pieza trae la sombra: 1 columna y 2 filas más que el papel.
                 Some(piece) => painter.extend(pixel_ui::piece_shapes(
@@ -295,7 +391,7 @@ impl NotesView {
                         2.0,
                         Color32::from_black_alpha(80),
                     );
-                    painter.rect_filled(paper, 2.0, PAPER);
+                    painter.rect_filled(paper, 2.0, paper_color(note.color));
                     painter.rect_stroke(paper, 2.0, Stroke::new(1.0, INK), StrokeKind::Inside);
                     if bar {
                         painter.text(
@@ -406,6 +502,34 @@ mod tests {
             .piece(PIECE_PLAIN, WidgetState::Normal)
             .expect("note.plain");
         assert_eq!((plain.size, plain.center), (note.size, note.center));
+    }
+
+    #[test]
+    fn every_color_has_its_pieces_and_the_strip_has_a_swatch_for_each() {
+        let ctx = egui::Context::default();
+        let skin = Skin::embedded(&ctx);
+        for color in NoteColor::ALL {
+            let (with, without) = pieces(color);
+            assert!(skin.piece(with, WidgetState::Normal).is_some(), "{with}");
+            assert!(
+                skin.piece(without, WidgetState::Normal).is_some(),
+                "{without}"
+            );
+        }
+        let strip = skin
+            .piece(COLORS_PIECE, WidgetState::Normal)
+            .expect("note.colors");
+        assert_eq!(
+            vec2(strip.size[0] as f32, strip.size[1] as f32),
+            COLORS_SIZE
+        );
+        // Un cuadrito por color, en el orden de la tira.
+        let paper = Rect::from_min_size(pos2(0.0, 0.0), vec2(86.0, 89.0));
+        let strip = colors_rect(paper);
+        for (i, color) in NoteColor::ALL.into_iter().enumerate() {
+            let at = strip.min + SWATCH_AT + vec2(4.0, 4.0 + i as f32 * SWATCH_STEP);
+            assert_eq!(color_at(paper, at), Some(color));
+        }
     }
 
     #[test]

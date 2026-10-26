@@ -207,6 +207,7 @@ impl ChimpApp {
                 app.doc
                     .editor
                     .set_note_text(id, "Revisar la animación del mono 🐒".into());
+                app.doc.editor.set_note_color(id, cs_core::NoteColor::Blue);
             }
         }
         // Desarrollo: abre Sprite Size para capturas.

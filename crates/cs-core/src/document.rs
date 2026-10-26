@@ -172,6 +172,27 @@ pub struct Note {
     pub position: (i32, i32),
     pub size: (u32, u32),
     pub text: String,
+    #[serde(default)]
+    pub color: NoteColor,
+}
+
+/// El color del papel de una nota.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum NoteColor {
+    #[default]
+    Yellow,
+    Pink,
+    Blue,
+    Green,
+}
+
+impl NoteColor {
+    pub const ALL: [NoteColor; 4] = [
+        NoteColor::Yellow,
+        NoteColor::Pink,
+        NoteColor::Blue,
+        NoteColor::Green,
+    ];
 }
 
 /// Documento: varios artboards; el orden es el z-order (el último queda arriba). Las notas van

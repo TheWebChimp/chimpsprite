@@ -1096,6 +1096,7 @@ impl Editor {
             position,
             size: crate::notes::NEW_SIZE,
             text: String::new(),
+            color: Default::default(),
         });
         self.set_notes(notes).then_some(id)
     }
@@ -1104,6 +1105,15 @@ impl Editor {
         let mut notes = self.document.notes.clone();
         match notes.iter_mut().find(|n| n.id == id) {
             Some(n) if n.text != text => n.text = text,
+            _ => return false,
+        }
+        self.set_notes(notes)
+    }
+
+    pub fn set_note_color(&mut self, id: u32, color: cs_core::NoteColor) -> bool {
+        let mut notes = self.document.notes.clone();
+        match notes.iter_mut().find(|n| n.id == id) {
+            Some(n) if n.color != color => n.color = color,
             _ => return false,
         }
         self.set_notes(notes)

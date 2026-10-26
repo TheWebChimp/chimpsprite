@@ -209,6 +209,7 @@ mod tests {
             position: (5, 5),
             size: (100, 80),
             text: "hola".into(),
+            color: Default::default(),
         };
         let inverse = DocCommand::SetNotes(vec![note.clone()])
             .apply(&mut doc)
