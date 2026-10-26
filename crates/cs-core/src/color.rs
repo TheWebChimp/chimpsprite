@@ -100,6 +100,16 @@ impl Palette {
         Self { colors }
     }
 
+    /// La paleta de fábrica de los documentos nuevos: AAP-Splendor128.
+    pub fn splendor128() -> Self {
+        Self::new(
+            crate::palettes::AAP_SPLENDOR128
+                .iter()
+                .map(|&h| Rgba::from_hex(h))
+                .collect(),
+        )
+    }
+
     pub fn db32() -> Self {
         Self::new(DB32.iter().map(|&h| Rgba::from_hex(h)).collect())
     }

@@ -38,7 +38,7 @@ impl DocState {
     }
 
     pub fn untitled(name: impl Into<String>) -> Self {
-        Self::untitled_with_palette(name, cs_core::Palette::db32())
+        Self::untitled_with_palette(name, cs_core::Palette::splendor128())
     }
 
     /// Documento nuevo con la paleta por defecto del usuario.
