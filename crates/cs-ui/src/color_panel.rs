@@ -1282,6 +1282,8 @@ fn channel_strip(
         colors.field_text,
         colors.field_text,
     );
+    // La selección y el cursor en las filas de los demás campos.
+    child.set_clip_rect(crate::pixel_sections::text_clip(ui, hex, inner));
     let response = child.add(
         egui::TextEdit::singleline(&mut text)
             .frame(egui::Frame::NONE)

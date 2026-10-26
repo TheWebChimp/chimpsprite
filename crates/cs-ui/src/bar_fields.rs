@@ -592,6 +592,8 @@ pub(crate) fn drag_number<Num: emath::Numeric>(
             .layout(Layout::top_down(look.align)),
     );
     plain_field_style(child.style_mut(), inner.size(), look.text, look.outline);
+    // Al escribir, la selección y el cursor de egui en las filas de los demás campos.
+    child.set_clip_rect(crate::pixel_sections::text_clip(ui, whole, inner));
     let response = child.add(egui::DragValue::new(value).range(range).speed(speed));
     // Un clic en la zona de afuera del texto también entra a escribir.
     if zone.clicked() {

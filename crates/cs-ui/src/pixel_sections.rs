@@ -362,7 +362,7 @@ fn text_field_framed(
     // Lo seleccionado, como en el diseño: rosa, con 1 px de aire contra el borde de arriba y
     // contra la sombra de abajo (el texto, blanco: `plain_field_style`).
     let x = |c| output.galley_pos.x + output.galley.pos_from_cursor(c).min.x;
-    let rows = rect.top() + SELECTION_TOP..=rect.bottom() - SELECTION_BOTTOM;
+    let rows = text_rows(rect);
     let clip = output.text_clip_rect.expand2(vec2(1.0, 0.0));
     match output.cursor_range {
         Some(range) if !range.is_empty() => {
@@ -406,6 +406,22 @@ const SELECTION_TOP: f32 = 2.0;
 const SELECTION_BOTTOM: f32 = 4.0;
 /// Del segundo, la parte en que se ve el cursor de escribir.
 const CARET_ON: f64 = 0.5;
+
+/// Las filas de un campo (`field`, con su borde) donde van la selección y el cursor de escribir:
+/// las mismas en todos los campos (texto, números, hex).
+pub(crate) fn text_rows(field: Rect) -> egui::Rangef {
+    egui::Rangef::new(
+        field.top() + SELECTION_TOP,
+        field.bottom() - SELECTION_BOTTOM,
+    )
+}
+
+/// El recorte de lo que egui pinta al escribir en un campo (`DragValue`, `TextEdit` sin la
+/// selección propia): su selección y su cursor quedan en [`text_rows`], dentro del texto
+/// (`inner`), como en [`text_field`].
+pub(crate) fn text_clip(ui: &Ui, field: Rect, inner: Rect) -> Rect {
+    Rect::from_x_y_ranges(inner.x_range().expand(1.0), text_rows(field)).intersect(ui.clip_rect())
+}
 
 /// Lo que queda para un campo con un botón chico a su derecha.
 pub fn field_width_with_button(ui: &Ui) -> f32 {
