@@ -330,6 +330,10 @@ impl ChimpApp {
                 // Para empezar con algo: las paletas más nuevas.
                 #[cfg(not(target_arch = "wasm32"))]
                 {
+                    // Desarrollo: con CHIMPSPRITE_DEMO_LOSPEC=exact, el número de colores prendido.
+                    if std::env::var("CHIMPSPRITE_DEMO_LOSPEC").as_deref() == Ok("exact") {
+                        window.lospec.count_kind = CountKind::Exact;
+                    }
                     window.lospec.sort = LospecSort::Newest;
                     start_search(ctx, &mut window.lospec, &mut window.requests);
                 }
@@ -1009,11 +1013,24 @@ fn search_form(
         column(ui, "Colors", &mut |ui| {
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                crate::widgets::combo_sized(
+                const KINDS: [CountKind; 4] = [
+                    CountKind::Any,
+                    CountKind::Exact,
+                    CountKind::Min,
+                    CountKind::Max,
+                ];
+                // Del ancho de la opción más larga: no brinca al cambiar.
+                let widest = skin.as_ref().map(|skin| {
+                    KINDS
+                        .iter()
+                        .map(|k| crate::bar_fields::combo_width(ui, skin, &format!("{k:?}")))
+                        .fold(0.0, f32::max)
+                });
+                let combo = crate::widgets::combo_sized(
                     ui,
                     "lospec_count",
                     &format!("{:?}", tab.count_kind),
-                    None,
+                    widest,
                     PANEL_FIELD_H,
                     |ui| {
                         for kind in [
@@ -1031,7 +1048,12 @@ fn search_form(
                         }
                     },
                 );
-                count_field(ui, &mut tab.count, tab.count_kind != CountKind::Any);
+                count_field(
+                    ui,
+                    &mut tab.count,
+                    tab.count_kind != CountKind::Any,
+                    combo.rect,
+                );
             });
         });
         column(ui, "Sort By", &mut |ui| {
@@ -1092,11 +1114,27 @@ const COUNT_SHADE_OFF: egui::Color32 = egui::Color32::from_rgb(221, 206, 191);
 const COUNT_LIGHT: egui::Color32 = egui::Color32::from_rgb(241, 235, 219);
 #[cfg(not(target_arch = "wasm32"))]
 const COUNT_TEXT_OFF: egui::Color32 = egui::Color32::from_rgb(101, 73, 86);
+/// Prendido: la sombra de abajo, la división con el combo y el brillo de la esquina.
+#[cfg(not(target_arch = "wasm32"))]
+const COUNT_SHADE_ON: egui::Color32 = egui::Color32::from_rgb(230, 231, 240);
+#[cfg(not(target_arch = "wasm32"))]
+const COUNT_DIVIDER: egui::Color32 = egui::Color32::from_rgb(189, 164, 153);
+#[cfg(not(target_arch = "wasm32"))]
+const COUNT_SHINE_ON: egui::Color32 = egui::Color32::from_rgb(236, 235, 231);
+/// El brillo de arriba a la derecha de los campos: desde el borde derecho, fila y ancho.
+#[cfg(not(target_arch = "wasm32"))]
+const COUNT_SHINE: [(f32, f32, f32); 5] = [
+    (7.0, 2.0, 1.0),
+    (5.0, 2.0, 3.0),
+    (3.0, 3.0, 1.0),
+    (3.0, 4.0, 1.0),
+    (3.0, 6.0, 1.0),
+];
 
 /// El número de colores, pegado a la derecha de su combo (comparten la línea): apagado con
 /// "Any" (el relleno del panel), blanco y editable si no.
 #[cfg(not(target_arch = "wasm32"))]
-fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool) {
+fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool, combo: egui::Rect) {
     use eframe::emath::GuiRounding as _;
     let Some(skin) = pixel_ui::frame_skin(ui.ctx()) else {
         ui.add_enabled_ui(enabled, |ui| {
@@ -1113,20 +1151,53 @@ fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool) {
         egui::Rect::from_min_max((slot.min - egui::vec2(1.0, 0.0)).round(), slot.max.round());
     let ppp = ui.ctx().pixels_per_point();
     if enabled {
-        // Editable: el campo de texto de siempre (la selección rosa, el cursor pixel), con su
-        // línea izquierda sobre la del combo. Lo escrito se confirma al salir (o con Enter).
+        // Prendido (frame 8): combo y número son una sola caja blanca; entre los dos, la línea
+        // clara en lugar del borde del combo, y el número con el brillo de la esquina.
+        let (l, r, t, b) = (rect.left(), rect.right(), rect.top(), rect.bottom());
+        let px = |x0: f32, y0: f32, x1: f32, y1: f32, color| {
+            egui::Shape::rect_filled(
+                egui::Rect::from_min_max(egui::pos2(x0, y0), egui::pos2(x1, y1))
+                    .round_to_pixels(ppp),
+                0.0,
+                color,
+            )
+        };
+        let mut shapes = vec![
+            px(l, t + 1.0, r - 1.0, b - 3.0, egui::Color32::WHITE),
+            px(l, t, r - 1.0, t + 1.0, COUNT_BORDER),
+            px(r - 1.0, t + 1.0, r, b - 2.0, COUNT_BORDER),
+            px(l, b - 3.0, r - 1.0, b - 2.0, COUNT_SHADE_ON),
+            px(l, b - 2.0, r - 1.0, b - 1.0, COUNT_BORDER),
+            px(r - 1.0, b - 2.0, r, b - 1.0, COUNT_LIGHT),
+            px(l, b - 1.0, r - 1.0, b, COUNT_LIGHT),
+            // La división: sobre el borde derecho del combo, de su borde de arriba a su sombra.
+            px(
+                combo.right() - 1.0,
+                t + 1.0,
+                combo.right(),
+                b - 2.0,
+                COUNT_DIVIDER,
+            ),
+        ];
+        for (dx, dy, w) in COUNT_SHINE {
+            let x = r - dx;
+            shapes.push(px(x, t + dy, x + w, t + dy + 1.0, COUNT_SHINE_ON));
+        }
+        ui.painter().extend(shapes);
+        // El número: el texto de los campos (la selección rosa, el cursor pixel), sin su caja.
+        // Lo escrito se confirma al salir (o con Enter).
         let id = ui.id().with("lospec_count_text");
         let mut text = ui
             .data(|d| d.get_temp::<String>(id))
             .unwrap_or_else(|| count.to_string());
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
-        let response = crate::pixel_sections::text_field_sized(
+        let field = egui::Rect::from_min_max(egui::pos2(l + 1.0, t), egui::pos2(r, b));
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(field));
+        let response = crate::pixel_sections::text_field_bare(
             &mut child,
             &skin,
             &mut text,
-            rect.size(),
+            field.size(),
             "Colors count",
-            "",
         );
         text.retain(|c| c.is_ascii_digit());
         text.truncate(3);
@@ -1160,13 +1231,7 @@ fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool) {
         px(l, b - 1.0, r - 1.0, b, COUNT_LIGHT),
     ];
     // El brillo de la esquina de arriba a la derecha, como el de `field.text`.
-    for (dx, dy, w) in [
-        (7.0, 2.0, 1.0),
-        (5.0, 2.0, 3.0),
-        (3.0, 3.0, 1.0),
-        (3.0, 4.0, 1.0),
-        (3.0, 6.0, 1.0),
-    ] {
+    for (dx, dy, w) in COUNT_SHINE {
         let x = r - dx;
         shapes.push(px(x, t + dy, x + w, t + dy + 1.0, COUNT_LIGHT));
     }

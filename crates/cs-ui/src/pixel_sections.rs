@@ -289,23 +289,49 @@ pub fn text_field_sized(
     label: &str,
     hint: &str,
 ) -> Response {
+    text_field_framed(ui, skin, text, size, label, hint, true)
+}
+
+/// Como [`text_field_sized`] pero sin la caja (la dibuja quien lo usa): solo el texto, su
+/// selección y su cursor.
+pub fn text_field_bare(
+    ui: &mut Ui,
+    skin: &Skin,
+    text: &mut String,
+    size: Vec2,
+    label: &str,
+) -> Response {
+    text_field_framed(ui, skin, text, size, label, "", false)
+}
+
+fn text_field_framed(
+    ui: &mut Ui,
+    skin: &Skin,
+    text: &mut String,
+    size: Vec2,
+    label: &str,
+    hint: &str,
+    framed: bool,
+) -> Response {
     let (rect, _) = ui.allocate_exact_size(vec2(size.x.floor(), size.y), Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), rect.size());
     // La pieza `field.text` en 9-slice (sin ella, un borde de 1 px sobre blanco).
     let ppp = ui.ctx().pixels_per_point();
-    let shapes = match skin.piece(FIELD_PIECE, WidgetState::Normal) {
-        Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
-        None => vec![
-            Shape::rect_filled(rect, 0.0, Color32::WHITE),
-            Shape::rect_stroke(
-                rect.shrink(0.5),
-                0.0,
-                (1.0, skin.colors().outline),
-                egui::StrokeKind::Middle,
-            ),
-        ],
-    };
-    ui.painter().extend(shapes);
+    if framed {
+        let shapes = match skin.piece(FIELD_PIECE, WidgetState::Normal) {
+            Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
+            None => vec![
+                Shape::rect_filled(rect, 0.0, Color32::WHITE),
+                Shape::rect_stroke(
+                    rect.shrink(0.5),
+                    0.0,
+                    (1.0, skin.colors().outline),
+                    egui::StrokeKind::Middle,
+                ),
+            ],
+        };
+        ui.painter().extend(shapes);
+    }
     // La selección va entre el campo y el texto: se pinta después, cuando se sabe qué hay.
     let selection = ui.painter().add(Shape::Noop);
     let colors = *skin.colors();

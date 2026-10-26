@@ -167,6 +167,17 @@ pub fn combo<R>(
     combo_sized(ui, look, id_salt, selected, None, FIELD_HEIGHT, content)
 }
 
+/// El ancho de un [`combo`] con `selected` (para que uno con varias opciones mida lo de la más
+/// larga y no brinque al cambiar).
+pub fn combo_width(ui: &Ui, skin: &Skin, selected: &str) -> f32 {
+    let shown = galley(ui, selected, skin.colors().text);
+    let right = skin
+        .piece(COMBO, WidgetState::Normal)
+        .and_then(|p| p.center.map(|c| (p.size[0] - c.x - c.w) as f32))
+        .unwrap_or(FALLBACK_COMBO_RIGHT);
+    COMBO_TEXT_LEFT + ink_width(&shown) + COMBO_TEXT_GAP + right
+}
+
 /// Como [`combo`], de `height` y, con `width`, de ese ancho (si no, el de su texto).
 pub fn combo_sized<R>(
     ui: &mut Ui,
