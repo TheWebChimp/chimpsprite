@@ -1,4 +1,5 @@
-//! Captura de pantalla automática para desarrollo: `CHIMPSPRITE_SCREENSHOT=<ruta.png>`.
+//! Captura de pantalla automática para desarrollo: `CHIMPSPRITE_SCREENSHOT=<ruta.png>` (y
+//! `CHIMPSPRITE_SCREENSHOT_DELAY=<segundos>` para esperar, por ejemplo, lo que baja de la red).
 
 use std::path::{Path, PathBuf};
 
@@ -10,6 +11,8 @@ const WARMUP_FRAMES: u32 = 10;
 #[derive(Default)]
 pub struct Capture {
     path: Option<PathBuf>,
+    /// Segundos a esperar además de los frames de calentamiento.
+    delay: f64,
     frames: u32,
     requested: bool,
 }
@@ -18,6 +21,10 @@ impl Capture {
     pub fn from_env() -> Self {
         Self {
             path: std::env::var_os("CHIMPSPRITE_SCREENSHOT").map(PathBuf::from),
+            delay: std::env::var("CHIMPSPRITE_SCREENSHOT_DELAY")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.0),
             ..Default::default()
         }
     }
@@ -28,7 +35,8 @@ impl Capture {
         };
         self.frames += 1;
         ctx.request_repaint();
-        if !self.requested && self.frames >= WARMUP_FRAMES {
+        let waited = ctx.input(|i| i.time) >= self.delay;
+        if !self.requested && self.frames >= WARMUP_FRAMES && waited {
             ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(Default::default()));
             self.requested = true;
         }

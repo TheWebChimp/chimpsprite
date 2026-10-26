@@ -13,7 +13,7 @@ use crate::theme;
 use crate::view::ViewSettings;
 
 /// Fuente pixel del autor del proyecto: grilla de 16 px por em, mayúsculas de 7 px.
-const PIXEL_FONT: &[u8] = include_bytes!("../../../assets/ui/chimpsprite.ttf");
+pub(crate) const PIXEL_FONT: &[u8] = include_bytes!("../../../assets/ui/chimpsprite.ttf");
 pub const PIXEL_FONT_NAME: &str = "chimpsprite";
 /// A 16 puntos, un píxel de la grilla de la fuente mide un punto (un píxel del skin).
 pub const PIXEL_FONT_SIZE: f32 = 16.0;

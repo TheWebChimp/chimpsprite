@@ -50,6 +50,18 @@ impl FontChoice {
         })
     }
 
+    /// Los caracteres que tiene la fuente, en orden (los visibles: sin los de control ni el
+    /// espacio).
+    pub fn chars(&self) -> Vec<char> {
+        let mut chars: Vec<char> = match self.vector() {
+            None => (33u8..=126).map(char::from).collect(),
+            Some(font) => font.chars().keys().copied().collect(),
+        };
+        chars.retain(|c| !c.is_control() && !c.is_whitespace());
+        chars.sort_unstable();
+        chars
+    }
+
     fn vector(&self) -> Option<&fontdue::Font> {
         static HACK: OnceLock<fontdue::Font> = OnceLock::new();
         static UBUNTU: OnceLock<fontdue::Font> = OnceLock::new();

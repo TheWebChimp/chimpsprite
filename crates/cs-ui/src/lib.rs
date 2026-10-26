@@ -212,6 +212,18 @@ impl ChimpApp {
                 app.doc.editor.set_note_color(id, cs_core::NoteColor::Blue);
             }
         }
+        // Desarrollo: el panel Dafont del dock abierto, para capturas.
+        #[cfg(not(target_arch = "wasm32"))]
+        if std::env::var_os("CHIMPSPRITE_DEMO_DAFONT").is_some() && app.has_doc() {
+            dock::set_open(&cc.egui_ctx, Some(dock::DockPanel::Dafont));
+            // Con `detail`, el detalle de la fuente de la app.
+            if std::env::var("CHIMPSPRITE_DEMO_DAFONT").as_deref() == Ok("detail")
+                && let Ok(font) =
+                    cs_tools::text::FontChoice::load("ChimpSprite", appearance::PIXEL_FONT)
+            {
+                app.dafont.demo_detail(font);
+            }
+        }
         // Desarrollo: el panel Lospec del dock abierto, para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_LOSPEC").is_some() && app.has_doc() {
             dock::set_open(&cc.egui_ctx, Some(dock::DockPanel::Lospec));
