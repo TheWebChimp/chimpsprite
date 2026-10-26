@@ -397,19 +397,15 @@ fn grid_cells(
         // La entrada elegida: con la paleta desbloqueada, el editor de color la edita.
         panels::pick_on_click(editor, &response, value, Some(index as u8));
     }
-    // Lo seleccionado (de a más de uno): el marco blanco con su línea oscura alrededor, por fila.
+    // Lo seleccionado (de a más de uno): un solo contorno alrededor de todos sus cuadritos, el
+    // blanco pegado a ellos y la línea oscura afuera (frame del diseño).
     if let Some(range) = editor.palette_range()
         && range.end() > range.start()
     {
-        let (lo, hi) = (*range.start(), *range.end());
-        let mut shapes = Vec::new();
-        for row in lo / columns..=hi / columns {
-            let a = lo.max(row * columns);
-            let b = hi.min(row * columns + columns - 1);
-            let seg = Rect::from_min_max(cell_at(a), cell_at(b) + Vec2::splat(SWATCH_SIDE));
-            shapes.extend(selection_frame(seg, colors.outline, ppp));
-        }
-        ui.painter().extend(shapes);
+        let cells: Vec<Rect> = range
+            .map(|i| Rect::from_min_size(cell_at(i), Vec2::splat(SWATCH_SIDE)))
+            .collect();
+        ui.painter().extend(selection_contour(&cells, ppp));
     }
     // Delete (o Backspace) borra lo seleccionado si lo último que se tocó fue la paleta.
     let typing = ui.ctx().memory(|m| m.focused().is_some());
@@ -487,35 +483,69 @@ fn grid_cells(
     }
 }
 
-/// El marco de lo seleccionado alrededor de `seg` (los cuadritos con su borde): 1 px blanco y,
-/// afuera, 1 px oscuro sin las esquinas.
-fn selection_frame(seg: Rect, dark: Color32, ppp: f32) -> Vec<Shape> {
-    let ring = |r: Rect, color: Color32, corners: bool| {
-        let inset = if corners { 0.0 } else { 1.0 };
-        [
-            Rect::from_min_max(
-                pos2(r.left() + inset, r.top()),
-                pos2(r.right() - inset, r.top() + 1.0),
-            ),
-            Rect::from_min_max(
-                pos2(r.left() + inset, r.bottom() - 1.0),
-                pos2(r.right() - inset, r.bottom()),
-            ),
-            Rect::from_min_max(
-                pos2(r.left(), r.top() + 1.0),
-                pos2(r.left() + 1.0, r.bottom() - 1.0),
-            ),
-            Rect::from_min_max(
-                pos2(r.right() - 1.0, r.top() + 1.0),
-                pos2(r.right(), r.bottom() - 1.0),
-            ),
-        ]
-        .into_iter()
-        .map(move |side| solid(side, color, ppp))
+/// El oscuro del contorno de lo seleccionado (el del diseño: medio transparente).
+const SELECTION_DARK: Color32 = Color32::from_rgba_unmultiplied_const(5, 4, 3, 163);
+
+/// El contorno de la unión de `cells` (cuadritos con su borde): 1 px blanco pegado a ellos (con
+/// las esquinas) y afuera 1 px oscuro sin las esquinas de afuera. Se calcula pixel por pixel:
+/// dos filas de cuadritos seleccionados forman una sola figura.
+fn selection_contour(cells: &[Rect], ppp: f32) -> Vec<Shape> {
+    let Some(bounds) = cells.iter().copied().reduce(|a, b| a.union(b)) else {
+        return Vec::new();
     };
-    ring(seg.expand(2.0), dark, false)
-        .chain(ring(seg.expand(1.0), Color32::WHITE, true))
-        .collect()
+    let area = bounds.expand(2.0);
+    let (w, h) = (area.width().round() as i32, area.height().round() as i32);
+    let inside = |x: i32, y: i32| {
+        let p = pos2(area.left() + x as f32 + 0.5, area.top() + y as f32 + 0.5);
+        cells.iter().any(|c| c.contains(p))
+    };
+    let mut mask = vec![false; (w * h) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            mask[(y * w + x) as usize] = inside(x, y);
+        }
+    }
+    let at = |x: i32, y: i32| x >= 0 && y >= 0 && x < w && y < h && mask[(y * w + x) as usize];
+    let near = |x: i32, y: i32, r: i32, cut: bool| {
+        (-r..=r).any(|dy| {
+            (-r..=r).any(|dx| !(cut && dx.abs() == r && dy.abs() == r) && at(x + dx, y + dy))
+        })
+    };
+    let mut shapes = Vec::new();
+    for y in 0..h {
+        let mut x = 0;
+        while x < w {
+            let class = |x: i32| {
+                if at(x, y) {
+                    0
+                } else if near(x, y, 1, false) {
+                    1
+                } else if near(x, y, 2, true) {
+                    2
+                } else {
+                    0
+                }
+            };
+            let c = class(x);
+            let start = x;
+            while x < w && class(x) == c {
+                x += 1;
+            }
+            if c != 0 {
+                let run = Rect::from_min_size(
+                    pos2(area.left() + start as f32, area.top() + y as f32),
+                    vec2((x - start) as f32, 1.0),
+                );
+                let color = if c == 1 {
+                    Color32::WHITE
+                } else {
+                    SELECTION_DARK
+                };
+                shapes.push(solid(run, color, ppp));
+            }
+        }
+    }
+    shapes
 }
 
 /// Lo último que se tocó fue la paleta (para que Delete borre sus colores y no lo del lienzo).

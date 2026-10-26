@@ -202,8 +202,13 @@ impl ChimpApp {
             app.doc.editor.set_tool(ToolKind::RectSelect);
         }
         // Desarrollo: cuatro colores de la paleta seleccionados, para capturas.
-        if std::env::var_os("CHIMPSPRITE_DEMO_PALETTE_SELECTION").is_some() && app.has_doc() {
-            app.doc.editor.palette_selection = Some((2, 5));
+        // (`a,b` elige de la a a la b.)
+        if let Ok(range) = std::env::var("CHIMPSPRITE_DEMO_PALETTE_SELECTION")
+            && app.has_doc()
+        {
+            let mut ends = range.split(',').filter_map(|n| n.trim().parse().ok());
+            let a = ends.next().unwrap_or(2);
+            app.doc.editor.palette_selection = Some((a, ends.next().unwrap_or(a + 3)));
         }
         // Desarrollo: una nota con texto, para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_NOTE").is_some() && app.has_doc() {
