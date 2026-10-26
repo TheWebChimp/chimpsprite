@@ -609,7 +609,7 @@ fn layer_row(
                     format!("Locked: {}", layer.name),
                 )
             });
-            pixel::eye_and_lock(ui, skin, eye, lock, layer.visible, layer.locked);
+            pixel::eye_and_lock(ui, skin, eye, lock, layer.visible, layer.locked, active);
         }
         None => {
             painter.text(
@@ -847,10 +847,11 @@ fn layer_row(
         let response = ui.interact(r, ui.id().with(("cel", id, f)), Sense::click_and_drag());
         let (sel_a, sel_b) = editor.selected_frames();
         let in_range = active && editor.frame_range.is_some() && (sel_a..=sel_b).contains(&f);
-        if grid.skin.is_some() {
-            // Con Pixel UI, el cel elegido y el rango en el color de selección del skin.
-            if in_range || (active && f == editor.frame) {
-                pixel::select(ui, inner(r), grid.accent());
+        let selected = in_range || (active && f == editor.frame);
+        if let Some(skin) = grid.skin {
+            // Con Pixel UI, el cel elegido y el rango, como en el diseño.
+            if selected {
+                pixel::select(ui, skin, r, row.left(), false);
             }
         } else {
             if in_range {
@@ -906,7 +907,7 @@ fn layer_row(
         } else if let Some(cel) = sprite.cel(id, f).copied() {
             let linked_prev = f > 0 && sprite.cel(id, f - 1).is_some_and(|p| p.image == cel.image);
             match grid.skin {
-                Some(skin) => pixel::cel(ui, skin, r, true, linked_prev),
+                Some(skin) => pixel::cel(ui, skin, r, true, linked_prev, selected),
                 None => {
                     if linked_prev {
                         painter.hline(
@@ -920,7 +921,7 @@ fn layer_row(
             }
         } else {
             match grid.skin {
-                Some(skin) => pixel::cel(ui, skin, r, false, false),
+                Some(skin) => pixel::cel(ui, skin, r, false, false, selected),
                 None => {
                     painter.circle_stroke(
                         center,
@@ -1203,6 +1204,8 @@ mod tests {
         skin: Option<Skin>,
         /// Las texturas dibujadas en el último frame, con dónde.
         images: Vec<(egui::TextureId, Rect)>,
+        /// Los colores de las mallas lisas (sin textura) del último frame.
+        flat_colors: Vec<Color32>,
     }
 
     impl Harness {
@@ -1229,6 +1232,7 @@ mod tests {
                 grid: Pos2::ZERO,
                 skin,
                 images: Vec::new(),
+                flat_colors: Vec::new(),
             };
             for _ in 0..3 {
                 h.frame(vec![]);
@@ -1256,8 +1260,10 @@ mod tests {
             });
             output.textures_delta.clear();
             self.images.clear();
+            self.flat_colors.clear();
             for clipped in &output.shapes {
                 collect_images(&clipped.shape, &mut self.images);
+                collect_flat_colors(&clipped.shape, &mut self.flat_colors);
             }
             self.nodes = output
                 .platform_output
@@ -1399,6 +1405,22 @@ mod tests {
 
         fn layer(&self, i: usize) -> &cs_core::Layer {
             &self.editor.sprite().layers[i]
+        }
+    }
+
+    /// Los colores de las mallas lisas (los rects de las líneas y de lo elegido).
+    fn collect_flat_colors(shape: &egui::Shape, out: &mut Vec<Color32>) {
+        match shape {
+            egui::Shape::Vec(shapes) => {
+                for s in shapes {
+                    collect_flat_colors(s, out);
+                }
+            }
+            egui::Shape::Mesh(mesh) if mesh.texture_id == egui::TextureId::default() => {
+                out.extend(mesh.vertices.iter().map(|v| v.color));
+            }
+            egui::Shape::Rect(r) => out.push(r.fill),
+            _ => {}
         }
     }
 
@@ -1606,26 +1628,58 @@ mod tests {
         h.editor.toggle_visible(top);
         h.editor.toggle_locked(top);
         h.frame(vec![]);
-        // El encabezado tiene el ojo abierto y el candado cerrado de las columnas.
+        // El encabezado tiene el ojo abierto y el candado cerrado de las columnas. La capa de
+        // arriba es la activa: sus íconos van en la versión para lo elegido.
         assert_eq!(h.count("timeline.eye"), 2, "header + the visible layer");
-        assert_eq!(h.count("timeline.eye.closed"), 1, "the hidden layer");
-        assert_eq!(h.count("palette.icon.lock"), 2, "header + the locked layer");
+        assert_eq!(
+            h.count("timeline.eye.closed.selected"),
+            1,
+            "the hidden layer"
+        );
+        assert_eq!(h.count("timeline.eye.closed"), 0);
+        assert_eq!(h.count("palette.icon.lock"), 1, "the header");
+        assert_eq!(h.count("palette.icon.lock.selected"), 1, "the locked layer");
         assert_eq!(h.count("palette.icon.lock.open"), 1, "the unlocked layer");
         assert_eq!(h.count("timeline.cel"), 1);
-        assert_eq!(h.count("timeline.cel.empty"), 1);
+        assert_eq!(
+            h.count("timeline.cel.empty.selected"),
+            1,
+            "the active layer's cel"
+        );
         // Las filas miden 13 y los íconos van donde en el diseño.
         let eyes = h.drawn("timeline.eye");
-        let closed = h.drawn("timeline.eye.closed")[0];
+        let closed = h.drawn("timeline.eye.closed.selected")[0];
         let header_eye = eyes.iter().map(|r| r.top()).fold(f32::MAX, f32::min);
         assert_eq!(closed.top() - header_eye, 13.0, "the first layer row");
         let cel = h.drawn("timeline.cel")[0];
-        let empty = h.drawn("timeline.cel.empty")[0];
+        let empty = h.drawn("timeline.cel.empty.selected")[0];
         assert_eq!(
             cel.top() - empty.top(),
             13.0,
             "the cel layer is the second row"
         );
         assert_eq!(cel.left(), empty.left());
+    }
+
+    #[test]
+    fn with_pixel_ui_the_active_layer_and_frame_are_pink_like_the_design() {
+        let h = Harness::pixel(1200.0);
+        let colors = *h.skin.as_ref().unwrap().colors();
+        let drawn = &h.flat_colors;
+        for (color, what) in [
+            (colors.timeline_selection, "the fill"),
+            (colors.timeline_selection_dark, "the dark lines"),
+            (colors.timeline_selection_light, "the light lines"),
+        ] {
+            assert!(drawn.contains(&color), "{what}");
+        }
+        assert!(
+            !drawn.contains(&colors.selection),
+            "not the old purple selection"
+        );
+        // El ojo y el candado de la capa activa, en su versión para lo elegido.
+        assert_eq!(h.count("timeline.eye.selected"), 1);
+        assert_eq!(h.count("palette.icon.lock.open.selected"), 1);
     }
 
     #[test]
@@ -1637,7 +1691,11 @@ mod tests {
         assert!(layer(&h).visible && !layer(&h).locked);
         h.click(&format!("Visible: {name}"));
         assert!(!layer(&h).visible);
-        assert_eq!(h.count("timeline.eye.closed"), 1);
+        assert_eq!(
+            h.count("timeline.eye.closed.selected"),
+            1,
+            "the active layer"
+        );
         h.click(&format!("Visible: {name}"));
         assert!(layer(&h).visible);
         h.click(&format!("Locked: {name}"));

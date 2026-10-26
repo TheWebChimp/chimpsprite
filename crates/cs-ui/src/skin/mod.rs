@@ -186,6 +186,11 @@ pub struct SkinColors {
     pub path: Color32,
     /// Los ejes de simetría sobre el lienzo.
     pub symmetry: Color32,
+    /// Lo elegido en la línea de tiempo (la capa activa, el frame actual, el rango): el relleno,
+    /// la línea oscura y su brillo.
+    pub timeline_selection: Color32,
+    pub timeline_selection_dark: Color32,
+    pub timeline_selection_light: Color32,
 }
 
 impl SkinColors {
@@ -210,6 +215,9 @@ impl SkinColors {
             link: theme::ACCENT,
             path: theme::LABEL,
             symmetry: theme::ACCENT,
+            timeline_selection: theme::ACCENT,
+            timeline_selection_dark: theme::CANVAS_BORDER,
+            timeline_selection_light: theme::WIDGET_HOVER,
         }
     }
 
@@ -235,6 +243,9 @@ impl SkinColors {
             ("link", &mut c.link),
             ("path", &mut c.path),
             ("symmetry", &mut c.symmetry),
+            ("timeline_selection", &mut c.timeline_selection),
+            ("timeline_selection_dark", &mut c.timeline_selection_dark),
+            ("timeline_selection_light", &mut c.timeline_selection_light),
         ];
         for (name, slot) in slots {
             if let Some(v) = colors.get(name) {

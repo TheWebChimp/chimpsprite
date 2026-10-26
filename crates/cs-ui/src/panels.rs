@@ -1053,7 +1053,8 @@ fn swatch(ui: &mut egui::Ui, color: Color32, size: f32) -> egui::Response {
     response
 }
 
-/// Marco blanco si `value` es el color primario; del color de acento si es el secundario.
+/// Marco blanco si `value` es el color primario; del color de acento si es el secundario. Con
+/// Pixel UI (`frame_skin`), de 1 px, como en el diseño; si no, de 2.
 pub(crate) fn mark_selected(ui: &egui::Ui, editor: &Editor, value: PixelValue, rect: Rect) {
     let color = if value == editor.primary {
         Color32::WHITE
@@ -1062,8 +1063,13 @@ pub(crate) fn mark_selected(ui: &egui::Ui, editor: &Editor, value: PixelValue, r
     } else {
         return;
     };
+    let width = if crate::pixel_ui::frame_skin(ui.ctx()).is_some() {
+        1.0
+    } else {
+        2.0
+    };
     ui.painter()
-        .rect_stroke(rect, 0.0, Stroke::new(2.0, color), StrokeKind::Inside);
+        .rect_stroke(rect, 0.0, Stroke::new(width, color), StrokeKind::Inside);
 }
 
 /// Clic elige `value` como color primario; clic derecho, como secundario (`Editor::pick_color`).
@@ -3530,7 +3536,7 @@ Alt+click: pick color";
         // 73 a la 88.
         let (_, ink) = h.text("Brush Size");
         assert_eq!(ink.min, bar.min + Vec2::new(7.0, 5.0), "{ink:?}");
-        assert_eq!(ink.width(), 48.0);
+        assert_eq!(ink.width(), 46.0);
         let field = h.drawn_boxes("field.number");
         let left = ink.right() + 3.0;
         assert_eq!(

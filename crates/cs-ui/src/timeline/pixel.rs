@@ -15,10 +15,12 @@
 //!     `timeline.icon.clock`.
 //! - **Línea de abajo de la barra:** `timeline.divider`, con sus uniones a la caja.
 //! - **Tabla:** filas de 13 (11 de contenido y la línea grabada) y columnas con su línea a la
-//!   derecha: ojo 17, candado 16, nombre 83 y un frame 12. Ojo `timeline.eye` (visible) o
+//!   derecha: ojo 17, candado 17, nombre 83 y un frame 13. Ojo `timeline.eye` (visible) o
 //!   `timeline.eye.closed` (oculta); candado `palette.icon.lock` (bloqueada) o
-//!   `palette.icon.lock.open`; cel `timeline.cel` o `timeline.cel.empty`. Lo elegido va en el color
-//!   `selection` del skin.
+//!   `palette.icon.lock.open`; cel `timeline.cel` o `timeline.cel.empty`.
+//! - **Lo elegido** (frame 6 del diseño): la celda en `timeline_selection` con sus líneas grabadas
+//!   en `timeline_selection_dark` y `timeline_selection_light` (las de arriba y la de la izquierda
+//!   también, aunque sean de la celda vecina), y sus íconos en la versión `.selected`.
 
 use eframe::egui::{
     self, Color32, Mesh, Pos2, Rect, Response, Sense, Shape, Ui, UiBuilder, Vec2, pos2, vec2,
@@ -40,11 +42,11 @@ use crate::tab_bar;
 
 /// Alto de una fila de la tabla: 11 de contenido y la línea grabada (oscura y brillo).
 pub(super) const ROW_H: f32 = 13.0;
-/// Ancho de la columna de un frame: 10 de contenido y su línea.
-pub(super) const CELL_W: f32 = 12.0;
-/// Columnas de la izquierda, cada una con su línea: ojo (15), candado (14) y nombre (81).
+/// Ancho de la columna de un frame: 11 de contenido y su línea.
+pub(super) const CELL_W: f32 = 13.0;
+/// Columnas de la izquierda, cada una con su línea: ojo (15), candado (15) y nombre (81).
 pub(super) const EYE_W: f32 = 17.0;
-pub(super) const LOCK_W: f32 = 16.0;
+pub(super) const LOCK_W: f32 = 17.0;
 pub(super) const NAME_W: f32 = 83.0;
 /// De la línea del candado a la tinta del nombre.
 pub(super) const NAME_PAD: f32 = 4.0;
@@ -54,8 +56,10 @@ const LINE: f32 = 2.0;
 const TEXT_CAPS: f32 = 1.0;
 /// Dónde van los íconos en su celda.
 const EYE_AT: Vec2 = vec2(3.0, 2.0);
-const LOCK_AT: Vec2 = vec2(3.0, 1.0);
-const CEL_AT: Vec2 = vec2(1.0, 2.0);
+const LOCK_AT: Vec2 = vec2(4.0, 1.0);
+const CEL_AT: Vec2 = vec2(2.0, 2.0);
+/// La versión de un ícono para lo elegido (sobre el rosa).
+const SELECTED: &str = ".selected";
 
 const EYE: &str = "timeline.eye";
 const EYE_CLOSED: &str = "timeline.eye.closed";
@@ -177,6 +181,15 @@ fn piece(ui: &Ui, skin: &Skin, name: &str, rect: Rect) -> bool {
 fn piece_at(ui: &Ui, skin: &Skin, name: &str, at: Pos2) -> bool {
     let size = piece_size(skin, name).unwrap_or(Vec2::ZERO);
     piece(ui, skin, name, Rect::from_min_size(at, size))
+}
+
+/// Un ícono: con `selected`, su versión `.selected` (si el skin la tiene).
+fn icon_at(ui: &Ui, skin: &Skin, name: &str, at: Pos2, selected: bool) -> bool {
+    let chosen = format!("{name}{SELECTED}");
+    if selected && skin.piece(&chosen, WidgetState::Normal).is_some() {
+        return piece_at(ui, skin, &chosen, at);
+    }
+    piece_at(ui, skin, name, at)
 }
 
 fn piece_size(skin: &Skin, name: &str) -> Option<Vec2> {
@@ -938,18 +951,18 @@ pub(super) fn header_left(ui: &Ui, skin: &Skin, row: Rect, frames: usize) {
     piece_at(ui, skin, LOCK, lock.min + LOCK_AT);
 }
 
-/// Una fila de capa: las líneas y, si es la activa, el ojo, el candado y el nombre en el color de
-/// selección.
+/// Una fila de capa: las líneas y, si es la activa, el ojo, el candado y el nombre elegidos.
 pub(super) fn layer_left(ui: &Ui, skin: &Skin, row: Rect, frames: usize, active: bool) {
     row_lines(ui, skin, row, frames);
     if active {
         for column in left_columns(row) {
-            select(ui, content(column), skin.colors().selection);
+            select(ui, skin, column, row.left(), false);
         }
     }
 }
 
 /// El ojo (abierto si se ve, cerrado si no) y el candado (cerrado si está bloqueada) de una capa.
+/// En la capa activa (`selected`), en su versión para lo elegido.
 pub(super) fn eye_and_lock(
     ui: &Ui,
     skin: &Skin,
@@ -957,24 +970,58 @@ pub(super) fn eye_and_lock(
     lock: Rect,
     visible: bool,
     locked: bool,
+    selected: bool,
 ) {
-    piece_at(
-        ui,
-        skin,
-        if visible { EYE } else { EYE_CLOSED },
-        eye.min + EYE_AT,
-    );
-    piece_at(
-        ui,
-        skin,
-        if locked { LOCK } else { LOCK_OPEN },
-        lock.min + LOCK_AT,
-    );
+    let eye_name = if visible { EYE } else { EYE_CLOSED };
+    icon_at(ui, skin, eye_name, eye.min + EYE_AT, selected);
+    let lock_name = if locked { LOCK } else { LOCK_OPEN };
+    icon_at(ui, skin, lock_name, lock.min + LOCK_AT, selected);
 }
 
-/// Lo elegido: el contenido de una celda en el color de selección.
-pub(super) fn select(ui: &Ui, rect: Rect, color: Color32) {
-    solid(ui, rect, color);
+/// Lo elegido, como en el diseño: la celda `cell` (contenido y su línea de la derecha y de
+/// abajo) en `timeline_selection`, enmarcada con las líneas grabadas en rosa: la oscura de arriba
+/// y su brillo, la de la izquierda y su brillo (si la celda no es la primera, en `table_left`), la
+/// oscura de la derecha y la de abajo. `header`: la fila de los números, donde la línea de arriba
+/// es la de la barra (va solo sobre la celda).
+pub(super) fn select(ui: &Ui, skin: &Skin, cell: Rect, table_left: f32, header: bool) {
+    let colors = skin.colors();
+    let (fill, dark, light) = (
+        colors.timeline_selection,
+        colors.timeline_selection_dark,
+        colors.timeline_selection_light,
+    );
+    let inner = content(cell);
+    let (x0, y0, x1, y1) = (inner.left(), inner.top(), inner.right(), inner.bottom());
+    let first = x0 <= table_left;
+    let px = |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(pos2(x, y), vec2(w, h));
+    let ppp = ui.ctx().pixels_per_point();
+    let mut mesh = Mesh::default();
+    let mut rect = |r: Rect, color: Color32| mesh.add_colored_rect(r.round_to_pixels(ppp), color);
+    rect(inner, fill);
+    // Arriba: la línea oscura y su brillo (en la fila de los números, la de la barra y solo
+    // sobre la celda).
+    let (dark_from, dark_to) = if header {
+        (x0 - 1.0, x1)
+    } else if first {
+        (x0, x1 + 1.0)
+    } else {
+        (x0 - 2.0, x1 + 1.0)
+    };
+    rect(px(dark_from, y0 - 2.0, dark_to - dark_from, 1.0), dark);
+    let light_from = if first { x0 } else { x0 - 1.0 };
+    rect(px(light_from, y0 - 1.0, x1 - light_from, 1.0), light);
+    // La izquierda (si hay una celda antes): la oscura y su brillo.
+    if !first {
+        let top = if header { y0 - 1.0 } else { y0 - 2.0 };
+        rect(px(x0 - 2.0, top, 1.0, y1 + 1.0 - top), dark);
+        rect(px(x0 - 1.0, y0 - 1.0, 1.0, y1 - y0 + 1.0), light);
+    }
+    // La derecha y abajo: las oscuras.
+    let top = if header { y0 - 1.0 } else { y0 - 2.0 };
+    rect(px(x1, top, 1.0, y1 + 1.0 - top), dark);
+    let left = if first { x0 } else { x0 - 2.0 };
+    rect(px(left, y1, x1 + 1.0 - left, 1.0), dark);
+    ui.painter().add(Shape::mesh(mesh));
 }
 
 /// El número del frame `f` en su columna del encabezado, centrado; el actual y los del rango, en
@@ -990,7 +1037,7 @@ pub(super) fn frame_number(
     let colors = skin.colors();
     let inner = content(cell);
     if current || in_range {
-        select(ui, inner, colors.selection);
+        select(ui, skin, cell, f32::NEG_INFINITY, true);
     }
     let label = (f + 1).to_string();
     let left = inner.left() + ((inner.width() - ink(ui, &label)) / 2.0).floor();
@@ -1020,7 +1067,14 @@ pub(super) fn name(ui: &Ui, rect: Rect, label: &str, color: Color32) {
 
 /// Un cel en el contenido `inner` de su celda: ● con imagen, ○ vacío. Si comparte la imagen con el
 /// anterior, una línea lo une con el ● de la izquierda.
-pub(super) fn cel(ui: &Ui, skin: &Skin, inner: Rect, full: bool, linked_prev: bool) {
+pub(super) fn cel(
+    ui: &Ui,
+    skin: &Skin,
+    inner: Rect,
+    full: bool,
+    linked_prev: bool,
+    selected: bool,
+) {
     let at = inner.min + CEL_AT;
     let name = if full { CEL } else { CEL_EMPTY };
     if linked_prev {
@@ -1033,7 +1087,7 @@ pub(super) fn cel(ui: &Ui, skin: &Skin, inner: Rect, full: bool, linked_prev: bo
             skin.colors().field_text,
         );
     }
-    if !piece_at(ui, skin, name, at) {
+    if !icon_at(ui, skin, name, at, selected) {
         let center = inner.center();
         let color = skin.colors().field_text;
         if full {

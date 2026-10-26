@@ -931,6 +931,9 @@ fn with_pixel_ui_the_lock_starts_on_and_blocks_editing_a_palette_color() {
     assert!(h.editor.palette_locked);
     h.click_at(h.node("Add to palette").center());
     assert_eq!(h.editor.sprite().palette.len(), 22);
+    // Con un color que ya está, también: una entrada nueva para editar.
+    h.click_at(h.node("Add to palette").center());
+    assert_eq!(h.editor.sprite().palette.len(), 23);
 }
 
 #[test]

@@ -178,7 +178,7 @@ impl SpriteSizeDialog {
         ui.add_space(4.0);
         egui::Grid::new("sprite_size")
             .num_columns(3)
-            .spacing([8.0, 6.0])
+            .spacing([4.0, 4.0])
             .show(ui, |ui| {
                 let (ow, oh) = self.original;
                 ui.label("Width:");

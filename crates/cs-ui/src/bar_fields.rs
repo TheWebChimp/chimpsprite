@@ -365,6 +365,57 @@ pub fn number<Num: emath::Numeric>(
     drag_number(ui, whole, inner, id_salt, value, range, speed, look).0
 }
 
+/// Un campo numérico con su unidad escrita adentro, a la derecha (el `%` de Sprite Size): el
+/// mismo `field.number`, del ancho del número con la unidad `px`, y el número a la izquierda.
+pub fn number_with_suffix<Num: emath::Numeric>(
+    ui: &mut Ui,
+    look: BarLook,
+    id_salt: &str,
+    value: &mut Num,
+    range: RangeInclusive<Num>,
+    suffix: &str,
+) -> Response {
+    let colors = *look.skin.colors();
+    let unit_width = look
+        .piece(UNIT)
+        .map_or(FALLBACK_UNIT_WIDTH, |p| size_of(p).x)
+        - UNIT_OVERLAP;
+    let width = NUMBER_WIDTH + unit_width;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
+    let field = Rect::from_min_size(
+        pos2(rect.left().round(), look.top + FIELD_TOP),
+        vec2(width, FIELD_HEIGHT),
+    );
+    let ppp = ui.ctx().pixels_per_point();
+    let mut shapes = match look.piece(NUMBER) {
+        Some(piece) => pixel_ui::piece_shapes(piece, field, ppp),
+        None => flat_box(look, field, ppp),
+    };
+    // La unidad, contra el borde derecho del blanco.
+    let unit = galley(ui, suffix, colors.text);
+    let unit_left = (field.right() - SUFFIX_PAD - unit.size().x).round();
+    let at = tab_bar::text_pos(&unit, unit_left, look.top + CAPS_TOP, ppp);
+    shapes.push(Shape::galley(at, unit, colors.text));
+    painter(ui, look).extend(shapes);
+    let probe = galley(ui, "0", colors.text);
+    let caps = -tab_bar::text_pos(&probe, 0.0, 0.0, ppp).y;
+    let inner = Rect::from_min_max(
+        pos2(field.left() + SUFFIX_PAD, look.top + CAPS_TOP - caps),
+        pos2(unit_left - 1.0, look.top + CAPS_TOP - caps + probe.size().y),
+    );
+    let (start, end) = (range.start().to_f64(), range.end().to_f64());
+    let speed = ((end - start) / 128.0).clamp(0.1, 1.0);
+    let look = NumberLook {
+        text: colors.text,
+        outline: colors.outline,
+        align: egui::Align::Min,
+    };
+    drag_number(ui, field, inner, id_salt, value, range, speed, look).0
+}
+
+/// Del borde del blanco al número y a la unidad de [`number_with_suffix`].
+const SUFFIX_PAD: f32 = 4.0;
+
 /// Cómo se ve el texto de [`drag_number`]: su color, el del cursor de escribir y hacia dónde se
 /// alinea en su rect.
 #[derive(Clone, Copy)]

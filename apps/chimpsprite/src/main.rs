@@ -5,11 +5,17 @@ fn main() -> eframe::Result {
     use eframe::egui;
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("ChimpSprite")
+        .with_inner_size([1280.0, 800.0])
+        .with_min_inner_size([640.0, 400.0]);
+    // El ícono de la ventana (en Windows, el del `.exe` ya viene de `build.rs`).
+    match eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/icon-48.png")) {
+        Ok(icon) => viewport = viewport.with_icon(icon),
+        Err(e) => log::warn!("app icon: {e}"),
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("ChimpSprite")
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([640.0, 400.0]),
+        viewport,
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };

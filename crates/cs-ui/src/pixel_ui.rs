@@ -797,8 +797,37 @@ const SCROLL_THUMB_H: &str = "scroll.thumb.h";
 /// El ancho de la barra y el largo mínimo del pulgar (entra entero, con sus estrías).
 const SCROLL_BAR: f32 = 10.0;
 const SCROLL_THUMB_MIN: f32 = 46.0;
-/// Del borde del track al pulgar (de cada lado: 10 = 1 + 8 + 1).
+/// Del borde del track al pulgar, de los cuatro lados (10 = 1 + 8 + 1 a lo ancho; a lo largo,
+/// el pulgar no toca las puntas del track).
 const SCROLL_THUMB_INSET: f32 = 1.0;
+
+/// El pulgar del scroll en `track` (vertical o no) para `content` de largo visto en `view` y
+/// desplazado `offset`: con 1 px de padding de cada lado del track, también en las puntas.
+fn scroll_thumb(track: Rect, vertical: bool, content: f32, view: f32, offset: f32) -> Rect {
+    // Lo que recorre el pulgar: el track sin el padding de las puntas.
+    let span = if vertical {
+        track.height()
+    } else {
+        track.width()
+    } - 2.0 * SCROLL_THUMB_INSET;
+    let len = (span * view / content)
+        .max(SCROLL_THUMB_MIN)
+        .min(span)
+        .round();
+    let max = (content - view).max(1.0);
+    let at = SCROLL_THUMB_INSET + ((offset / max).clamp(0.0, 1.0) * (span - len)).round();
+    if vertical {
+        Rect::from_min_size(
+            pos2(track.left() + SCROLL_THUMB_INSET, track.top() + at),
+            vec2(SCROLL_BAR - 2.0 * SCROLL_THUMB_INSET, len),
+        )
+    } else {
+        Rect::from_min_size(
+            pos2(track.left() + at, track.top() + SCROLL_THUMB_INSET),
+            vec2(len, SCROLL_BAR - 2.0 * SCROLL_THUMB_INSET),
+        )
+    }
+}
 
 /// Un `ScrollArea` de la app: con Pixel UI, con las barras del diseño. Las de egui siguen
 /// manejando el arrastre y la rueda, pero invisibles (de 10, sin márgenes ni flotar); encima se
@@ -853,28 +882,7 @@ pub fn scroll<R>(
                 )
             };
             let track = track.round_to_pixels(ppp);
-            let span = if vertical {
-                track.height()
-            } else {
-                track.width()
-            };
-            let len = (span * view / content)
-                .max(SCROLL_THUMB_MIN)
-                .min(span)
-                .round();
-            let max = (content - view).max(1.0);
-            let at = ((offset / max).clamp(0.0, 1.0) * (span - len)).round();
-            let thumb = if vertical {
-                Rect::from_min_size(
-                    pos2(track.left() + SCROLL_THUMB_INSET, track.top() + at),
-                    vec2(SCROLL_BAR - 2.0 * SCROLL_THUMB_INSET, len),
-                )
-            } else {
-                Rect::from_min_size(
-                    pos2(track.left() + at, track.top() + SCROLL_THUMB_INSET),
-                    vec2(len, SCROLL_BAR - 2.0 * SCROLL_THUMB_INSET),
-                )
-            };
+            let thumb = scroll_thumb(track, vertical, content, view, offset);
             let (track_piece, thumb_piece) = if vertical {
                 (SCROLL_TRACK_V, SCROLL_THUMB_V)
             } else {
@@ -1170,6 +1178,21 @@ pub(crate) fn colored_rects(shape: &Shape) -> Vec<(Color32, Rect)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_scroll_thumb_has_1_px_of_padding_on_every_side() {
+        let track = Rect::from_min_size(pos2(100.0, 20.0), vec2(SCROLL_BAR, 200.0));
+        // Arriba de todo y abajo de todo: a 1 px de las puntas y de los lados.
+        let top = super::scroll_thumb(track, true, 1000.0, 200.0, 0.0);
+        assert_eq!(top.min, pos2(101.0, 21.0));
+        assert_eq!(top.width(), SCROLL_BAR - 2.0);
+        let bottom = super::scroll_thumb(track, true, 1000.0, 200.0, 800.0);
+        assert_eq!(bottom.bottom(), track.bottom() - 1.0);
+        // A lo ancho, igual.
+        let track = Rect::from_min_size(pos2(0.0, 50.0), vec2(300.0, SCROLL_BAR));
+        let right = super::scroll_thumb(track, false, 900.0, 300.0, 600.0);
+        assert_eq!((right.right(), right.top()), (299.0, 51.0));
+    }
+
     use egui::{Event, PointerButton, RawInput};
 
     use super::*;

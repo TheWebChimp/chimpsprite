@@ -10,6 +10,10 @@ cs-ui.workspace = true
 eframe = { workspace = true, features = ["wgpu", "default_fonts", "accesskit", "wayland", "x11", "links"] }
 log.workspace = true
 
+[build-dependencies]
+# El ícono adentro del `.exe` en Windows (usa el rc.exe del SDK).
+winresource = "0.1"
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger.workspace = true
 

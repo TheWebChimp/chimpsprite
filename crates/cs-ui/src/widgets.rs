@@ -38,13 +38,12 @@ pub fn number<T: Numeric>(
             top: here(ui),
         };
         let unit = suffix.trim();
-        let px = unit == "px";
         let id = salt(ui);
-        let response = bar_fields::number(ui, look, &id, value, range, px);
-        if !px && !unit.is_empty() {
-            ui.label(unit);
-        }
-        return response;
+        return match unit {
+            "" | "px" => bar_fields::number(ui, look, &id, value, range, unit == "px"),
+            // Otra unidad (%, ms…), escrita adentro del campo.
+            _ => bar_fields::number_with_suffix(ui, look, &id, value, range, unit),
+        };
     }
     let mut response = ui.add(
         egui::DragValue::new(value)

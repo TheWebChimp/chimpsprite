@@ -374,14 +374,22 @@ impl Editor {
     }
 
     /// Agrega un color al final de la paleta (si no está ya).
-    pub fn add_to_palette(&mut self, color: Rgba) {
+    /// Agrega `color` como una entrada nueva al final de la paleta (aunque ya esté: así se puede
+    /// partir de un color y editarlo) y la elige como primario. `false` si ya hay 256.
+    pub fn add_to_palette(&mut self, color: Rgba) -> bool {
         let palette = &self.sprite().palette;
-        if palette.colors().contains(&color) || palette.len() >= 256 {
-            return;
+        if palette.len() >= 256 {
+            return false;
         }
+        let index = palette.len() as u8;
         let mut colors = palette.colors().to_vec();
         colors.push(color);
-        self.execute(Command::SetPalette(cs_core::Palette::new(colors)));
+        if !self.execute(Command::SetPalette(cs_core::Palette::new(colors))) {
+            return false;
+        }
+        let value = self.palette_value(index);
+        self.pick_color(value, false, Some(index));
+        true
     }
 
     pub fn clear_cel(&mut self, layer: LayerId, frame: usize) {
@@ -512,14 +520,22 @@ mod tests {
     }
 
     #[test]
-    fn palette_add_is_undoable_and_skips_duplicates() {
+    fn palette_add_appends_even_repeated_colors_and_is_undoable() {
         let mut e = editor_with_frames(1);
         let n = e.sprite().palette.len();
-        e.add_to_palette(Rgba::rgb(1, 2, 3));
-        e.add_to_palette(Rgba::rgb(1, 2, 3));
-        assert_eq!(e.sprite().palette.len(), n + 1);
+        assert!(e.add_to_palette(Rgba::rgb(1, 2, 3)));
+        assert!(
+            e.add_to_palette(Rgba::rgb(1, 2, 3)),
+            "a repeated color is a new entry"
+        );
+        assert_eq!(e.sprite().palette.len(), n + 2);
+        assert_eq!(
+            e.primary,
+            e.palette_value((n + 1) as u8),
+            "the new entry is picked"
+        );
         e.undo();
-        assert_eq!(e.sprite().palette.len(), n);
+        assert_eq!(e.sprite().palette.len(), n + 1);
     }
 
     #[test]

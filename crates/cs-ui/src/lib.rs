@@ -189,6 +189,12 @@ impl ChimpApp {
                 d.set_width(d.width() + 24);
             }
         }
+        // Desarrollo: abre Sprite Size para capturas.
+        if std::env::var_os("CHIMPSPRITE_DEMO_SPRITE_SIZE").is_some() && app.has_doc() {
+            app.open_sprite_dialog(|a| {
+                sprite_dialogs::SpriteDialog::Size(sprite_dialogs::SpriteSizeDialog::new(a))
+            });
+        }
         // Desarrollo: abre el diálogo de nueva capa tilemap para capturas (con --demo).
         if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
             app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
