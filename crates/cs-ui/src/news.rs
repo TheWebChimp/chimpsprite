@@ -676,17 +676,31 @@ impl News {
                 .id_salt(("news_feed", source.label()))
                 .auto_shrink([false, false]),
             |ui| {
-                for row in posts.chunks(columns) {
-                    ui.horizontal_top(|ui| {
-                        ui.spacing_mut().item_spacing.x = GAP;
-                        for post in row {
-                            if self.cell(ui, post, fetcher, now) {
-                                action = Some(FeedAction::Open(post.url.clone()));
-                            }
-                        }
-                    });
-                    ui.add_space(GAP);
+                // Masonry: cada celda va en la columna más corta, en el orden del feed. Las
+                // alturas son las dibujadas (la imagen con su proporción y los textos).
+                let origin = ui.cursor().min;
+                let mut bottoms = vec![origin.y; columns];
+                for post in &posts {
+                    let column = shortest(&bottoms);
+                    let left = origin.x + column as f32 * (CELL + GAP);
+                    let at =
+                        Rect::from_min_size(pos2(left, bottoms[column]), vec2(CELL, CELL_ROOM));
+                    let mut cell_ui = ui.new_child(
+                        egui::UiBuilder::new()
+                            .max_rect(at)
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    if self.cell(&mut cell_ui, post, fetcher, now) {
+                        action = Some(FeedAction::Open(post.url.clone()));
+                    }
+                    bottoms[column] = cell_ui.min_rect().bottom() + GAP;
                 }
+                let bottom = bottoms.iter().copied().fold(origin.y, f32::max);
+                let width = columns as f32 * (CELL + GAP) - GAP;
+                ui.allocate_rect(
+                    Rect::from_min_size(origin, vec2(width, bottom - origin.y)),
+                    Sense::hover(),
+                );
             },
         );
         action
@@ -757,6 +771,18 @@ impl News {
 
 /// `size` achicado (o agrandado) para entrar entero en `room`, sin deformar. Lo chico (pixel art)
 /// se agranda por un entero, para que siga nítido.
+/// El alto del lugar de cada celda de Masonry: de sobra (la celda mide lo que dibuja).
+const CELL_ROOM: f32 = 1.0e6;
+
+/// La columna de Masonry donde va la siguiente celda: la más corta (la primera, si empatan).
+fn shortest(bottoms: &[f32]) -> usize {
+    bottoms
+        .iter()
+        .enumerate()
+        .min_by(|a, b| a.1.total_cmp(b.1))
+        .map_or(0, |(i, _)| i)
+}
+
 /// El marco de las imágenes: 1 px a los lados y arriba; abajo, el borde y su brillo.
 const FRAME_SIDES: f32 = 2.0;
 const FRAME_BELOW: f32 = 1.0;
@@ -969,6 +995,12 @@ mod tests {
             .unwrap();
         assert_eq!(decode_thumb(&png).unwrap().size, [3, 2]);
         assert_eq!(decode_thumb(b"not an image"), Err(FetchError::Invalid));
+    }
+
+    #[test]
+    fn masonry_puts_each_cell_in_the_shortest_column() {
+        assert_eq!(shortest(&[10.0, 4.0, 7.0]), 1);
+        assert_eq!(shortest(&[5.0, 5.0, 5.0]), 0, "ties go left");
     }
 
     #[test]
