@@ -910,7 +910,9 @@ pub(crate) fn tool_row(
     let width = (icon_w + text.size().x + SHORTCUT_GAP + parts_width(ui, &look, &parts)).ceil();
     let (rect, response) = ui.allocate_at_least(vec2(width, TOOL_ROW_HEIGHT), Sense::click());
     let enabled = ui.is_enabled();
-    response.widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, selected, label));
+    // El nombre accesible, como el de los ítems: el nombre y el atajo.
+    let a11y = format!("{label} {shortcut}");
+    response.widget_info(|| WidgetInfo::selected(WidgetType::Button, enabled, selected, &a11y));
     if ui.is_rect_visible(rect) {
         let ppp = ui.ctx().pixels_per_point();
         let mut shapes = Vec::new();

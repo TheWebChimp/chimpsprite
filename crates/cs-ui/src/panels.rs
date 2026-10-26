@@ -2860,8 +2860,8 @@ mod tests {
     }
 
     #[test]
-    fn the_first_button_is_rounded_on_top_the_last_below_and_the_active_one_is_brown() {
-        let mut h = ColumnHarness::new(600.0);
+    fn the_first_button_is_rounded_on_top_the_last_below_and_the_active_one_is_framed_in_pink() {
+        let h = ColumnHarness::new(600.0);
         let column = column(&h);
         // Los botones que se dibujaron enteros con `piece` (sus partes del 9-slice, unidas, cubren
         // el botón) y si quedan partes de `piece` fuera de los botones.
@@ -2891,24 +2891,15 @@ mod tests {
         let rect = |i: usize| column[i].1;
         let last = column.len() - 1;
         // Con el lápiz (un grupo del medio): el primer tramo arriba, el último abajo y los del
-        // medio con `tool.slot`, salvo el del lápiz, que va activo.
+        // medio con `tool.slot`, también el del lápiz (la elegida no se hunde: lleva su marco
+        // rosa por dentro del borde).
         assert_eq!(h.editor.tool, ToolKind::Pencil);
         let pencil = column.iter().position(|(l, _)| l == "Pencil").unwrap();
         assert_eq!(drawn(&h, "tool.slot.first"), [rect(0)]);
         assert_eq!(drawn(&h, "tool.slot.last"), [rect(last)]);
-        assert_eq!(drawn(&h, "tool.slot.active"), [rect(pencil)]);
-        let middle: Vec<Rect> = (1..last).filter(|&i| i != pencil).map(rect).collect();
+        let middle: Vec<Rect> = (1..last).map(rect).collect();
         assert_eq!(drawn(&h, "tool.slot"), middle);
-        assert!(drawn(&h, "tool.slot.first.active").is_empty());
-        assert!(drawn(&h, "tool.slot.last.active").is_empty());
-        // Activos en las puntas: `.first.active` y `.last.active`.
-        h.click("Rectangular Marquee", PointerButton::Primary);
-        assert_eq!(drawn(&h, "tool.slot.first.active"), [rect(0)]);
-        assert!(drawn(&h, "tool.slot.first").is_empty());
-        assert!(drawn(&h, "tool.slot.active").is_empty());
-        h.click("Artboard", PointerButton::Primary);
-        assert_eq!(drawn(&h, "tool.slot.last.active"), [rect(last)]);
-        assert!(drawn(&h, "tool.slot.last").is_empty());
+        assert!(drawn(&h, "tool.slot.active").is_empty(), "{pencil}");
     }
 
     #[test]

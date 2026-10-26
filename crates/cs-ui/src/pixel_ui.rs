@@ -597,9 +597,9 @@ pub fn tool_button(
         return response;
     }
     let pressed = response.is_pointer_button_down_on();
-    let state = if selected {
-        WidgetState::Active
-    } else if pressed {
+    // La elegida no se hunde: el botón de siempre con su relleno liso y 1 px rosa por dentro
+    // del borde (abajo).
+    let state = if pressed {
         WidgetState::Down
     } else if response.hovered() {
         WidgetState::Hover
@@ -609,6 +609,33 @@ pub fn tool_button(
     let colors = *skin.colors();
     let ppp = ui.ctx().pixels_per_point();
     let mut shapes = match slot_piece(skin, slot, state) {
+        Some(piece) if selected && !pressed => {
+            let mut shapes = piece_shapes(piece, rect, ppp);
+            let [left, top, right, bottom] = borders(piece);
+            // Adentro del borde (sin el brillo ni el bisel): el relleno y su marco rosa.
+            let inner = Rect::from_min_max(
+                rect.min + vec2(left.min(1.0), top.min(1.0)),
+                rect.max - vec2(right.min(1.0), bottom.min(1.0)),
+            );
+            shapes.push(Shape::rect_filled(
+                inner.round_to_pixels(ppp),
+                0.0,
+                colors.panel,
+            ));
+            shapes.extend(
+                [
+                    Rect::from_min_max(inner.min, pos2(inner.right(), inner.top() + 1.0)),
+                    Rect::from_min_max(pos2(inner.left(), inner.bottom() - 1.0), inner.max),
+                    Rect::from_min_max(inner.min, pos2(inner.left() + 1.0, inner.bottom())),
+                    Rect::from_min_max(pos2(inner.right() - 1.0, inner.top()), inner.max),
+                ]
+                .into_iter()
+                .map(|r| {
+                    Shape::rect_filled(r.round_to_pixels(ppp), 0.0, colors.timeline_selection)
+                }),
+            );
+            shapes
+        }
         Some(piece) => piece_shapes(piece, rect, ppp),
         None => {
             let mut flat = flat_shapes(skin, rect, 0.0, ppp);
@@ -1706,7 +1733,9 @@ mod tests {
             let icon = drawn(&textures, id("icon.lasso")).expect("the icon");
             assert_eq!(icon.min - rect.min, vec2(3.0, 3.0), "{name}");
             let (_, _, textures) = tool(&ctx, &skin, slot, true, vec![]);
-            assert_eq!(drawn_slots(&skin, &textures), [active], "{slot:?} selected");
+            // Elegido: el mismo tramo (no se hunde), con su marco rosa por dentro.
+            let _ = active;
+            assert_eq!(drawn_slots(&skin, &textures), [name], "{slot:?} selected");
         }
     }
 
