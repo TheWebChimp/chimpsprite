@@ -256,8 +256,11 @@ const CELL_W: f32 = 26.0;
 const CELL_PAD: f32 = 5.0;
 const CELL_CODE_TOP: f32 = 15.0;
 const CELL_GLYPH_TOP: f32 = 22.0;
-/// Los campos de arriba: el de la muestra y el del orden (en la lista), como en el diseño.
+/// Los campos de arriba: el de la muestra y el del orden (en la lista), como en el diseño, de 17
+/// de alto como sus botones.
 const SAMPLE_W: f32 = 158.0;
+const SORT_W: f32 = 89.0;
+const FIELD_H: f32 = 17.0;
 /// La frase y el abecedario del detalle.
 const PANGRAM: &str = "the quick brown fox jumps over the lazy dog";
 const CHARSET: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789";
@@ -478,7 +481,7 @@ impl DafontPanel {
             ui.horizontal(|ui| {
                 ui.colored_label(Color32::from_rgb(0xc0, 0x40, 0x40), error);
                 if self.listing_failed && self.detail.is_none() {
-                    asked.retry = pixel_ui::text_button(ui, "Retry").clicked();
+                    asked.retry = pixel_ui::lit_button(ui, "Retry").clicked();
                 }
             });
         }
@@ -519,7 +522,7 @@ impl DafontPanel {
                     } else if self.end && self.fonts.is_empty() {
                         ui.weak("No fonts found");
                     } else if !self.end && !self.fonts.is_empty() {
-                        asked.more = pixel_ui::text_button(ui, "More fonts").clicked();
+                        asked.more = pixel_ui::lit_button(ui, "More fonts").clicked();
                     }
                 },
             );
@@ -707,11 +710,11 @@ impl DafontPanel {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 ui.label("Preview");
                 let response = match &skin {
-                    Some(skin) => crate::pixel_sections::text_field(
+                    Some(skin) => crate::pixel_sections::text_field_sized(
                         ui,
                         skin,
                         &mut self.sample,
-                        field_w,
+                        vec2(field_w, FIELD_H),
                         "Custom preview",
                         "Custom preview",
                     ),
@@ -730,11 +733,18 @@ impl DafontPanel {
                     ui.spacing_mut().item_spacing.y = 1.0;
                     ui.label("Sort by");
                     let before = self.sort;
-                    crate::widgets::combo(ui, "dafont_sort", self.sort.label(), |ui| {
-                        for sort in Sort::ALL {
-                            crate::widgets::choice(ui, &mut self.sort, sort, sort.label());
-                        }
-                    });
+                    crate::widgets::combo_sized(
+                        ui,
+                        "dafont_sort",
+                        self.sort.label(),
+                        Some(SORT_W),
+                        FIELD_H,
+                        |ui| {
+                            for sort in Sort::ALL {
+                                crate::widgets::choice(ui, &mut self.sort, sort, sort.label());
+                            }
+                        },
+                    );
                     asked.sort = self.sort != before;
                 });
             }
@@ -742,7 +752,7 @@ impl DafontPanel {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
                     ui.label(" ");
-                    if pixel_ui::text_button(ui, "Submit").clicked() {
+                    if pixel_ui::lit_button(ui, "Submit").clicked() {
                         asked.submit = true;
                     }
                 });
@@ -848,14 +858,14 @@ impl DafontPanel {
             ui.label(&font.downloads);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 5.0;
-                if pixel_ui::text_button(ui, "View more").clicked() {
+                if pixel_ui::lit_button(ui, "View more").clicked() {
                     asked.view = Some(font.clone());
                 }
                 if self.downloading(&font.slug) {
                     ui.weak("Downloading");
                 } else if ui
                     .add_enabled_ui(self.download.is_none(), |ui| {
-                        pixel_ui::text_button(ui, "Use font")
+                        pixel_ui::lit_button(ui, "Use font")
                     })
                     .inner
                     .clicked()
@@ -892,7 +902,7 @@ fn detail_ui(
             "Couldn't load this font"
         });
         ui.horizontal(|ui| {
-            asked.back = pixel_ui::text_button(ui, "Back").clicked();
+            asked.back = pixel_ui::lit_button(ui, "Back").clicked();
         });
         return;
     };
@@ -953,9 +963,9 @@ fn detail_ui(
         y += h + CARD_PAD;
     }
     ui.horizontal(|ui| {
-        asked.back = pixel_ui::text_button(ui, "Back").clicked();
+        asked.back = pixel_ui::lit_button(ui, "Back").clicked();
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if pixel_ui::text_button(ui, "Use font").clicked() {
+            if pixel_ui::lit_button(ui, "Use font").clicked() {
                 asked.use_font = Some(detail.font.clone());
             }
         });

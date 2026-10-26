@@ -818,9 +818,15 @@ pub fn icon_button(
         ..crate::pixel_draw::ButtonInfo::new(ui.id().with(("icon_button", label)), label)
     };
     crate::pixel_draw::skin_button(ui, skin, rect, info, |inner| {
-        // Centrado en el relleno (sin las filas de abajo del botón).
+        // Centrado en el relleno (sin las filas de abajo del botón); si no cabe justo a la mitad,
+        // el pixel de sobra queda arriba (como en el diseño y en `led_button`).
         let fill = Rect::from_min_max(inner.min, inner.max - vec2(0.0, 2.0));
-        crate::pixel_draw::piece_centered(skin, icon, fill, ppp)
+        let size = crate::pixel_draw::piece_size(skin, icon);
+        let at = pos2(
+            (fill.center().x - size.x / 2.0).floor(),
+            (fill.center().y - size.y / 2.0).ceil(),
+        );
+        crate::pixel_draw::piece_at(skin, icon, at, ppp)
     })
     .tip(label)
 }
@@ -872,6 +878,30 @@ const LED_ON: &str = "button.dot.on";
 const LED_OFF: &str = "button.dot.off";
 const LED_PAD: f32 = 4.0;
 const LED_GAP: f32 = 2.0;
+
+/// Un [`text_button`] con la luz de abajo de los campos (1 fila debajo, como en los paneles de
+/// Dafont y Lospec): queda del alto de sus campos.
+pub fn lit_button(ui: &mut Ui, label: &str) -> Response {
+    let response = text_button(ui, label);
+    under_light(ui, response.rect);
+    response
+}
+
+/// La luz de 1 fila debajo de `rect` (la de abajo de los campos), con Pixel UI.
+pub fn under_light(ui: &Ui, rect: Rect) {
+    if let Some(skin) = frame_skin(ui.ctx()) {
+        let ppp = ui.ctx().pixels_per_point();
+        let row = Rect::from_min_max(
+            pos2(rect.left(), rect.bottom()),
+            pos2(rect.right(), rect.bottom() + 1.0),
+        );
+        ui.painter().add(Shape::rect_filled(
+            eframe::emath::GuiRounding::round_to_pixels(row, ppp),
+            0.0,
+            skin.colors().highlight,
+        ));
+    }
+}
 
 pub fn text_button(ui: &mut Ui, label: &str) -> Response {
     match frame_skin(ui.ctx()) {

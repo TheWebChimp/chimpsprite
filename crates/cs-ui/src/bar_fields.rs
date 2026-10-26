@@ -46,7 +46,7 @@ pub const CAPS_TOP: f32 = 5.0;
 /// La fila de arriba del combo y del campo numérico (y 73 en el diseño), que miden 16 con el
 /// brillo de abajo.
 pub(crate) const FIELD_TOP: f32 = 2.0;
-const FIELD_HEIGHT: f32 = 16.0;
+pub(crate) const FIELD_HEIGHT: f32 = 16.0;
 /// Combo: de su borde izquierdo a la tinta del texto, y de la tinta a la parte de la flecha.
 const COMBO_TEXT_LEFT: f32 = 6.0;
 const COMBO_TEXT_GAP: f32 = 5.0;
@@ -164,14 +164,28 @@ pub fn combo<R>(
     selected: &str,
     content: impl FnOnce(&mut Ui) -> R,
 ) -> Response {
+    combo_sized(ui, look, id_salt, selected, None, FIELD_HEIGHT, content)
+}
+
+/// Como [`combo`], de `height` y, con `width`, de ese ancho (si no, el de su texto).
+pub fn combo_sized<R>(
+    ui: &mut Ui,
+    look: BarLook,
+    id_salt: &str,
+    selected: &str,
+    width: Option<f32>,
+    height: f32,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> Response {
     let colors = look.skin.colors();
     let shown = galley(ui, selected, colors.text);
     let piece = look.piece(COMBO);
     let right = piece
         .and_then(|p| p.center.map(|c| (p.size[0] - c.x - c.w) as f32))
         .unwrap_or(FALLBACK_COMBO_RIGHT);
-    let width = COMBO_TEXT_LEFT + ink_width(&shown) + COMBO_TEXT_GAP + right;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
+    let natural = COMBO_TEXT_LEFT + ink_width(&shown) + COMBO_TEXT_GAP + right;
+    let width = width.map_or(natural, |w| w.max(natural));
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let response = ui.interact(rect, ui.id().with(("bar_combo", id_salt)), Sense::click());
     let enabled = ui.is_enabled();
     response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, enabled, selected));

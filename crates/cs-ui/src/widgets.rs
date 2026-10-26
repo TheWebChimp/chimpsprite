@@ -182,13 +182,32 @@ pub fn combo(
     selected: &str,
     content: impl FnOnce(&mut egui::Ui),
 ) -> egui::Response {
+    combo_sized(
+        ui,
+        id_salt,
+        selected,
+        None,
+        bar_fields::FIELD_HEIGHT,
+        content,
+    )
+}
+
+/// Como [`combo`], de `height` y, con `width`, al menos de ese ancho.
+pub fn combo_sized(
+    ui: &mut egui::Ui,
+    id_salt: &str,
+    selected: &str,
+    width: Option<f32>,
+    height: f32,
+    content: impl FnOnce(&mut egui::Ui),
+) -> egui::Response {
     match pixel_ui::frame_skin(ui.ctx()) {
         Some(skin) => {
             let look = BarLook {
                 skin: &skin,
                 top: here(ui),
             };
-            bar_fields::combo(ui, look, id_salt, selected, content)
+            bar_fields::combo_sized(ui, look, id_salt, selected, width, height, content)
         }
         None => {
             egui::ComboBox::from_id_salt(id_salt)

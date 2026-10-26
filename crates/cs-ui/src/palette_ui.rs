@@ -135,6 +135,7 @@ fn lospec_preset(p: &LospecPalette) -> (NamedPalette, Vec<String>) {
 /// Clic en un botón de una fila de Lospec.
 enum LospecAction {
     Apply(LospecPalette),
+    Append(LospecPalette),
     Save(LospecPalette),
 }
 
@@ -376,6 +377,9 @@ impl ChimpApp {
             Some(LospecAction::Save(p)) => {
                 let (named, comments) = lospec_preset(&p);
                 self.save_preset_asking(named, comments, false);
+            }
+            Some(LospecAction::Append(p)) => {
+                self.doc.editor.append_palette(&p.palette);
             }
             None => {}
         }
@@ -803,13 +807,21 @@ fn lospec_ui(
 
     // El link de una paleta (o su nombre): con el botón de la cadena.
     if *link_open {
-        ui.horizontal(|ui| {
-            ui.label("Paste a Lospec link or palette name");
-            let response = crate::widgets::text_line(ui, &mut tab.link);
-            let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+        // Su texto arriba, como los de la búsqueda; el campo llena lo que deja Fetch.
+        ui.spacing_mut().item_spacing.y = 1.0;
+        ui.label("Paste a Lospec link or palette name");
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+            ui.spacing_mut().item_spacing.x = 5.0;
+            let mut fetch = false;
             if tab.lookup_loading() {
                 ui.spinner();
-            } else if (crate::pixel_ui::text_button(ui, "Fetch").clicked() || enter)
+            } else {
+                fetch = crate::pixel_ui::lit_button(ui, "Fetch").clicked();
+            }
+            let response = panel_field(ui, &mut tab.link, ui.available_width(), "Link", "");
+            fetch |= response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            if fetch
+                && !tab.lookup_loading()
                 && let Some((g, slug)) = tab.start_lookup()
             {
                 requests.lookup = Some(InFlight::new(
@@ -819,6 +831,7 @@ fn lospec_ui(
                 ));
             }
         });
+        ui.spacing_mut().item_spacing.y = 4.0;
     }
     #[cfg(target_arch = "wasm32")]
     ui.weak("Search is available in the desktop app");
@@ -923,14 +936,44 @@ fn etched_rule(ui: &mut egui::Ui, edge: bool) {
 
 /// Entre las paletas y la barra de scroll.
 const LOSPEC_SCROLL_GAP: f32 = 5.0;
-/// Los campos de arriba, como en el diseño: el del tag y el del orden.
+/// Los campos de arriba miden 17, como sus botones (el diseño); el orden, 83 de ancho, y el
+/// número de colores 19 pegado a su combo.
+const PANEL_FIELD_H: f32 = 17.0;
 #[cfg(not(target_arch = "wasm32"))]
-const TAG_W: f32 = 124.0;
+const SORT_W: f32 = 83.0;
+#[cfg(not(target_arch = "wasm32"))]
+const COUNT_W: f32 = 19.0;
 #[cfg(not(target_arch = "wasm32"))]
 const LINK_ICON: &str = "icon.lospec.link";
 
-/// Solo escritorio: el listado de Lospec no admite peticiones desde la web (sin CORS). Tag,
-/// Colors (y cuántos), Sort By, Search y el botón de la cadena (el campo del link).
+/// Un campo de texto de los paneles: el del diseño de 17 (sin Pixel UI, el de egui).
+fn panel_field(
+    ui: &mut egui::Ui,
+    text: &mut String,
+    width: f32,
+    label: &str,
+    hint: &str,
+) -> egui::Response {
+    match pixel_ui::frame_skin(ui.ctx()) {
+        Some(skin) => crate::pixel_sections::text_field_sized(
+            ui,
+            &skin,
+            text,
+            egui::vec2(width, PANEL_FIELD_H),
+            label,
+            hint,
+        ),
+        None => ui.add(
+            egui::TextEdit::singleline(text)
+                .hint_text(hint)
+                .desired_width(width),
+        ),
+    }
+}
+
+/// Solo escritorio: el listado de Lospec no admite peticiones desde la web (sin CORS). Tag (lo
+/// que sobra del ancho), Colors (y cuántos), Sort By, Search y el botón de la cadena (el campo
+/// del link), cada uno con su texto arriba.
 #[cfg(not(target_arch = "wasm32"))]
 fn search_form(
     ui: &mut egui::Ui,
@@ -943,90 +986,210 @@ fn search_form(
     // Mientras carga la primera página no se puede buscar (ni con Search ni con Enter).
     let first_page_loading = tab.listing_loading() && tab.shown_of_total().0 == 0;
     let skin = crate::pixel_ui::frame_skin(ui.ctx());
-    ui.horizontal_top(|ui| {
-        ui.spacing_mut().item_spacing.x = 5.0;
+    let column = |ui: &mut egui::Ui, label: &str, add: &mut dyn FnMut(&mut egui::Ui)| {
         ui.vertical(|ui| {
             ui.spacing_mut().item_spacing.y = 1.0;
-            ui.label("Tag");
-            let response = match &skin {
-                Some(skin) => crate::pixel_sections::text_field(
-                    ui,
-                    skin,
-                    &mut tab.tag,
-                    TAG_W,
-                    "Tag",
-                    "Enter a tag",
-                ),
-                None => ui.add(
-                    egui::TextEdit::singleline(&mut tab.tag)
-                        .hint_text("Enter a tag")
-                        .desired_width(TAG_W),
-                ),
-            };
+            ui.label(label);
+            add(ui);
+        });
+    };
+    // El tag llena lo que deja lo demás (su ancho se mide en cada frame para el siguiente).
+    let rest_id = ui.id().with("lospec_form_rest");
+    let rest_w: f32 = ui.data(|d| d.get_temp(rest_id)).unwrap_or(240.0);
+    ui.horizontal_top(|ui| {
+        ui.spacing_mut().item_spacing.x = 5.0;
+        let tag_w = (ui.available_width() - rest_w - 5.0).max(60.0);
+        column(ui, "Tag", &mut |ui| {
+            let response = panel_field(ui, &mut tab.tag, tag_w, "Tag", "Enter a tag");
             search |= !first_page_loading
                 && response.lost_focus()
                 && ui.input(|i| i.key_pressed(egui::Key::Enter));
         });
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            ui.label("Colors");
-            ui.horizontal(|ui| {
+        let start = ui.cursor().left();
+        column(ui, "Colors", &mut |ui| {
+            ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 0.0;
-                crate::widgets::combo(ui, "lospec_count", &format!("{:?}", tab.count_kind), |ui| {
-                    for kind in [
-                        CountKind::Any,
-                        CountKind::Exact,
-                        CountKind::Min,
-                        CountKind::Max,
+                crate::widgets::combo_sized(
+                    ui,
+                    "lospec_count",
+                    &format!("{:?}", tab.count_kind),
+                    None,
+                    PANEL_FIELD_H,
+                    |ui| {
+                        for kind in [
+                            CountKind::Any,
+                            CountKind::Exact,
+                            CountKind::Min,
+                            CountKind::Max,
+                        ] {
+                            crate::widgets::choice(
+                                ui,
+                                &mut tab.count_kind,
+                                kind,
+                                &format!("{kind:?}"),
+                            );
+                        }
+                    },
+                );
+                count_field(ui, &mut tab.count, tab.count_kind != CountKind::Any);
+            });
+        });
+        column(ui, "Sort By", &mut |ui| {
+            crate::widgets::combo_sized(
+                ui,
+                "lospec_sort",
+                &format!("{:?}", tab.sort),
+                Some(SORT_W),
+                PANEL_FIELD_H,
+                |ui| {
+                    for sort in [
+                        LospecSort::Default,
+                        LospecSort::Alphabetical,
+                        LospecSort::Downloads,
+                        LospecSort::Newest,
                     ] {
-                        crate::widgets::choice(ui, &mut tab.count_kind, kind, &format!("{kind:?}"));
+                        crate::widgets::choice(ui, &mut tab.sort, sort, &format!("{sort:?}"));
                     }
-                });
-                ui.add_enabled_ui(tab.count_kind != CountKind::Any, |ui| {
-                    crate::widgets::number(ui, &mut tab.count, 1..=256, "");
-                });
-            });
+                },
+            );
         });
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            ui.label("Sort By");
-            crate::widgets::combo(ui, "lospec_sort", &format!("{:?}", tab.sort), |ui| {
-                for sort in [
-                    LospecSort::Default,
-                    LospecSort::Alphabetical,
-                    LospecSort::Downloads,
-                    LospecSort::Newest,
-                ] {
-                    crate::widgets::choice(ui, &mut tab.sort, sort, &format!("{sort:?}"));
-                }
-            });
-        });
-        ui.vertical(|ui| {
-            ui.spacing_mut().item_spacing.y = 1.0;
-            ui.label(" ");
-            ui.horizontal(|ui| {
+        column(ui, " ", &mut |ui| {
+            ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = 5.0;
                 if first_page_loading {
                     ui.spinner();
                 } else {
-                    search |= crate::pixel_ui::text_button(ui, "Search").clicked();
+                    search |= crate::pixel_ui::lit_button(ui, "Search").clicked();
                 }
-                if crate::pixel_ui::icon_button(
+                let link = crate::pixel_ui::icon_button(
                     ui,
                     skin.as_deref(),
                     LINK_ICON,
                     "Paste a Lospec link",
                     Some(*link_open),
-                )
-                .clicked()
-                {
+                );
+                crate::pixel_ui::under_light(ui, link.rect);
+                if link.clicked() {
                     *link_open = !*link_open;
                 }
             });
         });
+        let used = ui.min_rect().right() - start;
+        ui.data_mut(|d| d.insert_temp(rest_id, used));
     });
     if search {
         start_search(ctx, tab, requests);
+    }
+}
+
+/// Los colores del número de colores pegado a su combo (frame 8): su borde y luz, el relleno
+/// apagado (con "Any") y el texto.
+#[cfg(not(target_arch = "wasm32"))]
+const COUNT_BORDER: egui::Color32 = egui::Color32::from_rgb(136, 110, 106);
+#[cfg(not(target_arch = "wasm32"))]
+const COUNT_SHADE_OFF: egui::Color32 = egui::Color32::from_rgb(221, 206, 191);
+#[cfg(not(target_arch = "wasm32"))]
+const COUNT_SHADE_ON: egui::Color32 = egui::Color32::from_rgb(230, 231, 240);
+#[cfg(not(target_arch = "wasm32"))]
+const COUNT_LIGHT: egui::Color32 = egui::Color32::from_rgb(241, 235, 219);
+#[cfg(not(target_arch = "wasm32"))]
+const COUNT_TEXT_OFF: egui::Color32 = egui::Color32::from_rgb(101, 73, 86);
+
+/// El número de colores, pegado a la derecha de su combo (comparten la línea): apagado con
+/// "Any" (el relleno del panel), blanco y editable si no.
+#[cfg(not(target_arch = "wasm32"))]
+fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool) {
+    use eframe::emath::GuiRounding as _;
+    let Some(skin) = pixel_ui::frame_skin(ui.ctx()) else {
+        ui.add_enabled_ui(enabled, |ui| {
+            crate::widgets::number(ui, count, 1..=256, "");
+        });
+        return;
+    };
+    let (slot, _) = ui.allocate_exact_size(
+        egui::vec2(COUNT_W - 1.0, PANEL_FIELD_H),
+        egui::Sense::hover(),
+    );
+    // Empieza en la línea derecha del combo.
+    let rect =
+        egui::Rect::from_min_max((slot.min - egui::vec2(1.0, 0.0)).round(), slot.max.round());
+    let ppp = ui.ctx().pixels_per_point();
+    let row = |y: f32, color| {
+        egui::Shape::rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.left(), y),
+                egui::pos2(rect.right(), y + 1.0),
+            )
+            .round_to_pixels(ppp),
+            0.0,
+            color,
+        )
+    };
+    let fill = if enabled {
+        egui::Color32::WHITE
+    } else {
+        skin.colors().panel
+    };
+    let body = egui::Rect::from_min_max(rect.min, rect.max - egui::vec2(0.0, 2.0));
+    let mut shapes = vec![
+        egui::Shape::rect_filled(body.round_to_pixels(ppp), 0.0, fill),
+        row(rect.top(), COUNT_BORDER),
+        row(
+            rect.bottom() - 3.0,
+            if enabled {
+                COUNT_SHADE_ON
+            } else {
+                COUNT_SHADE_OFF
+            },
+        ),
+        row(rect.bottom() - 2.0, COUNT_BORDER),
+        row(rect.bottom() - 1.0, COUNT_LIGHT),
+    ];
+    shapes.push(egui::Shape::rect_filled(
+        egui::Rect::from_min_max(
+            egui::pos2(rect.right() - 1.0, rect.top()),
+            egui::pos2(rect.right(), rect.bottom() - 1.0),
+        )
+        .round_to_pixels(ppp),
+        0.0,
+        COUNT_BORDER,
+    ));
+    ui.painter().extend(shapes);
+    let inner = egui::Rect::from_min_max(
+        rect.min + egui::vec2(1.0, 1.0),
+        rect.max - egui::vec2(1.0, 3.0),
+    );
+    if !enabled {
+        let galley = crate::menus::galley(ui, &count.to_string(), COUNT_TEXT_OFF);
+        let left = (inner.center().x - galley.size().x / 2.0).round();
+        let pos = crate::tab_bar::text_pos(&galley, left, rect.top() + 5.0, ppp);
+        ui.painter().galley(pos, galley, COUNT_TEXT_OFF);
+        return;
+    }
+    // Editable: lo escrito se confirma al salir del campo (o con Enter).
+    let id = ui.id().with("lospec_count_text");
+    let mut text = ui
+        .data(|d| d.get_temp::<String>(id))
+        .unwrap_or_else(|| count.to_string());
+    let response = ui.put(
+        inner,
+        egui::TextEdit::singleline(&mut text)
+            .frame(egui::Frame::NONE)
+            .horizontal_align(egui::Align::Center)
+            .text_color(skin.colors().text)
+            .desired_width(inner.width()),
+    );
+    if response.changed() {
+        text.retain(|c| c.is_ascii_digit());
+        text.truncate(3);
+    }
+    if response.lost_focus() {
+        if let Ok(n) = text.parse::<u16>() {
+            *count = n.clamp(1, 256);
+        }
+        ui.data_mut(|d| d.remove::<String>(id));
+    } else if response.has_focus() {
+        ui.data_mut(|d| d.insert_temp(id, text));
     }
 }
 
@@ -1154,10 +1317,17 @@ fn lospec_row(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
-            if crate::pixel_ui::text_button(ui, "Save").clicked() {
+            if crate::pixel_ui::lit_button(ui, "Save").clicked() {
                 *action = Some(LospecAction::Save(p.clone()));
             }
-            if crate::pixel_ui::text_button(ui, "Apply").clicked() {
+            // Sus colores al final de la paleta del sprite (los que no tiene).
+            if crate::pixel_ui::lit_button(ui, "Append")
+                .tip("Add its colors to the sprite's palette")
+                .clicked()
+            {
+                *action = Some(LospecAction::Append(p.clone()));
+            }
+            if crate::pixel_ui::lit_button(ui, "Apply").clicked() {
                 *action = Some(LospecAction::Apply(p.clone()));
             }
         });

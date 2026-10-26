@@ -277,7 +277,19 @@ pub fn text_field(
     label: &str,
     hint: &str,
 ) -> Response {
-    let (rect, _) = ui.allocate_exact_size(vec2(width.floor(), FIELD_HEIGHT), Sense::hover());
+    text_field_sized(ui, skin, text, vec2(width, FIELD_HEIGHT), label, hint)
+}
+
+/// Como [`text_field`], de `size` (los paneles del dock los usan de 17, como sus botones).
+pub fn text_field_sized(
+    ui: &mut Ui,
+    skin: &Skin,
+    text: &mut String,
+    size: Vec2,
+    label: &str,
+    hint: &str,
+) -> Response {
+    let (rect, _) = ui.allocate_exact_size(vec2(size.x.floor(), size.y), Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), rect.size());
     // La pieza `field.text` en 9-slice (sin ella, un borde de 1 px sobre blanco).
     let ppp = ui.ctx().pixels_per_point();

@@ -8,6 +8,21 @@ use crate::Editor;
 impl Editor {
     /// Cambia la paleta del sprite activo en un paso de undo. En RGBA los píxeles no cambian; en
     /// indexado cada índice toma el color nuevo de su posición, como en Aseprite.
+    /// Agrega al final de la paleta del sprite los colores de `palette` que no tiene (hasta 256).
+    /// Un paso de undo. Devuelve si cambió.
+    pub fn append_palette(&mut self, palette: &Palette) -> bool {
+        let mut colors = self.sprite().palette.colors().to_vec();
+        for &c in palette.colors() {
+            if colors.len() >= 256 {
+                break;
+            }
+            if !colors.contains(&c) {
+                colors.push(c);
+            }
+        }
+        self.apply_palette(Palette::new(colors))
+    }
+
     pub fn apply_palette(&mut self, palette: Palette) -> bool {
         if palette.is_empty() || palette == self.sprite().palette {
             return false;
@@ -164,6 +179,23 @@ mod tests {
             !e.apply_palette(Palette::new(Vec::new())),
             "vacía no se aplica"
         );
+    }
+
+    #[test]
+    fn append_adds_only_the_missing_colors_in_one_undo_step() {
+        let mut e = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
+        assert!(e.apply_palette(colors(3)));
+        // 0x020202 ya está; 0x030303 y 0x040404 no.
+        let more = Palette::new(vec![
+            Rgba::from_hex(0x020202),
+            Rgba::from_hex(0x030303),
+            Rgba::from_hex(0x040404),
+        ]);
+        assert!(e.append_palette(&more));
+        assert_eq!(e.sprite().palette, colors(5));
+        assert!(!e.append_palette(&more), "nothing new");
+        e.undo();
+        assert_eq!(e.sprite().palette, colors(3));
     }
 
     #[test]
