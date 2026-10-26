@@ -336,6 +336,65 @@ pub fn options<T: PartialEq + Copy>(
     *current != before
 }
 
+/// El botón de la forma del pincel, como en el diseño: un `button` de 25×16 con la huella del
+/// pincel (la de `brush_points`, la misma que pinta) en el café oscuro de los íconos, a su tamaño
+/// hasta `BRUSH_ICON_MAX` (más grande se ve como el de 9). Un clic cambia entre redondo y
+/// cuadrado.
+pub fn brush_shape(
+    ui: &mut Ui,
+    look: BarLook,
+    shape: &mut cs_raster::BrushShape,
+    size: u32,
+) -> Response {
+    use cs_raster::BrushShape;
+    let (rect, _) = ui.allocate_exact_size(vec2(BRUSH_BUTTON_W, FIELD_HEIGHT), Sense::hover());
+    let drawn = Rect::from_min_size(
+        pos2(rect.left().round(), look.top + FIELD_TOP),
+        vec2(BRUSH_BUTTON_W, FIELD_HEIGHT),
+    );
+    let label = match shape {
+        BrushShape::Round => "Round brush",
+        BrushShape::Square => "Square brush",
+    };
+    let id = ui.id().with("brush_shape");
+    let color = look.skin.colors().tab_text_dim;
+    let points = cs_raster::brush_points((0, 0), size.clamp(1, BRUSH_ICON_MAX), *shape);
+    let ppp = ui.ctx().pixels_per_point();
+    let response = crate::pixel_draw::skin_button(
+        ui,
+        look.skin,
+        drawn,
+        crate::pixel_draw::ButtonInfo::new(id, label),
+        |inner| {
+            // Centrada en el relleno del botón (sin el brillo de arriba ni las filas de abajo).
+            let center = pos2(
+                (inner.left() + BRUSH_ICON_CENTER.x).floor(),
+                (inner.top() + BRUSH_ICON_CENTER.y).floor(),
+            );
+            points
+                .iter()
+                .map(|&(x, y)| {
+                    let at = center + vec2(x as f32, y as f32);
+                    solid(Rect::from_min_size(at, Vec2::splat(1.0)), color, ppp)
+                })
+                .collect()
+        },
+    );
+    if response.clicked() {
+        *shape = match shape {
+            BrushShape::Round => BrushShape::Square,
+            BrushShape::Square => BrushShape::Round,
+        };
+    }
+    response
+}
+
+/// El botón de la forma del pincel: su ancho, el píxel del centro de la huella (desde su esquina)
+/// y el tamaño más grande que se dibuja.
+const BRUSH_BUTTON_W: f32 = 25.0;
+const BRUSH_ICON_CENTER: Vec2 = vec2(12.0, 7.0);
+const BRUSH_ICON_MAX: u32 = 9;
+
 /// Un campo numérico: `field.number` y, con `px`, la unidad `field.unit` a la derecha. Adentro va
 /// un `DragValue` de egui sin marco (se arrastra o, con un clic, se escribe), con la velocidad
 /// según el rango. Devuelve su respuesta.

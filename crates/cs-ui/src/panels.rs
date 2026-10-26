@@ -352,13 +352,17 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
             }
         };
         size.tip("Ctrl+wheel over the canvas changes it");
-        let side = if look.is_some() {
-            gap(ui, CONTROL_GAP);
-            PIXEL_CONTROL_HEIGHT
-        } else {
-            20.0
-        };
-        brush_shape_buttons(ui, &mut options.brush_shape, side);
+        match look {
+            // Como en el diseño: un botón con la forma al tamaño del pincel; un clic la cambia.
+            Some(look) => {
+                gap(ui, CONTROL_GAP);
+                bar_fields::brush_shape(ui, look, &mut options.brush_shape, options.brush_size)
+                    .tip("Brush shape (click to switch Round / Square)");
+            }
+            None => {
+                brush_shape_buttons(ui, &mut options.brush_shape, 20.0);
+            }
+        }
     }
     if matches!(tool, ToolKind::Pencil | ToolKind::Eraser) {
         match look {
@@ -3299,9 +3303,9 @@ mod tests {
         let mut h = BarHarness::with_skin(1200.0, true);
         let [vertical, horizontal, down, up] = SYMMETRY_AXES.map(|(_, name)| name);
         // Los botones miden lo que la pieza `sym.slot` (15×16, la del mockup) y la forma del
-        // pincel, 13×13.
+        // pincel, el botón de 25×16 del diseño.
         assert_eq!(h.rect(vertical).size(), Vec2::new(15.0, 16.0));
-        assert_eq!(h.rect("Round").size(), Vec2::splat(13.0));
+        assert_eq!(h.rect("Round brush").size(), Vec2::new(25.0, 16.0));
         // En orden y del mismo tamaño, con 2 de aire entre uno y otro.
         let buttons = [vertical, horizontal, down, up].map(|name| h.rect(name));
         for pair in buttons.windows(2) {
@@ -3785,6 +3789,31 @@ Alt+click: pick color";
     }
 
     #[test]
+    fn with_pixel_ui_the_brush_shape_button_shows_the_brush_at_its_size_up_to_nine() {
+        let mut h = pixel_bar(ToolKind::Pencil);
+        let ink = h.skin.as_ref().unwrap().colors().tab_text_dim;
+        let icon = |h: &BarHarness, label: &str| {
+            let button = h.rect(label);
+            h.colored_rects()
+                .into_iter()
+                .filter(|(c, r)| *c == ink && button.contains_rect(*r))
+                .count()
+        };
+        // Redondo de 1: un punto. Cuadrado de 3: 3×3. De 20: como el de 9 (el más grande).
+        assert_eq!(icon(&h, "Round brush"), 1);
+        h.click("Round brush");
+        assert_eq!(h.editor.options.brush_shape, cs_tools::BrushShape::Square);
+        h.editor.options.brush_size = 3;
+        h.frame(vec![]);
+        assert_eq!(icon(&h, "Square brush"), 9);
+        h.editor.options.brush_size = 20;
+        h.frame(vec![]);
+        assert_eq!(icon(&h, "Square brush"), 81);
+        h.click("Square brush");
+        assert_eq!(h.editor.options.brush_shape, cs_tools::BrushShape::Round);
+    }
+
+    #[test]
     fn with_pixel_ui_pixel_perfect_is_the_bar_checkbox_and_a_click_toggles_it() {
         let mut h = pixel_bar(ToolKind::Pencil);
         let bar = h.bar;
@@ -3802,7 +3831,7 @@ Alt+click: pick color";
         let check = h.drawn("field.check.on");
         let at = Rect::from_min_size(pos2(before.left(), bar.top() + 3.0), Vec2::new(13.0, 14.0));
         assert_eq!(check, vec![at]);
-        assert_eq!(check[0].left() - h.rect("Square").right(), 5.0);
+        assert_eq!(check[0].left() - h.rect("Round brush").right(), 5.0);
         let (_, ink) = h.text("Pixel Perfect");
         assert_eq!(ink.left() - check[0].right(), 3.0);
         assert_eq!(ink.top(), bar.top() + 5.0);
