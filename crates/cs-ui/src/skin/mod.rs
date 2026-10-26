@@ -191,6 +191,10 @@ pub struct SkinColors {
     pub timeline_selection: Color32,
     pub timeline_selection_dark: Color32,
     pub timeline_selection_light: Color32,
+    /// El texto de un botón deshabilitado (el botón se ve igual, sin apagarse).
+    pub button_text_disabled: Color32,
+    /// El texto de las opciones no elegidas de un grupo de botones.
+    pub option_text_off: Color32,
 }
 
 impl SkinColors {
@@ -218,6 +222,8 @@ impl SkinColors {
             timeline_selection: theme::ACCENT,
             timeline_selection_dark: theme::CANVAS_BORDER,
             timeline_selection_light: theme::WIDGET_HOVER,
+            button_text_disabled: theme::LABEL,
+            option_text_off: theme::LABEL,
         }
     }
 
@@ -246,6 +252,8 @@ impl SkinColors {
             ("timeline_selection", &mut c.timeline_selection),
             ("timeline_selection_dark", &mut c.timeline_selection_dark),
             ("timeline_selection_light", &mut c.timeline_selection_light),
+            ("button_text_disabled", &mut c.button_text_disabled),
+            ("option_text_off", &mut c.option_text_off),
         ];
         for (name, slot) in slots {
             if let Some(v) = colors.get(name) {
@@ -617,21 +625,17 @@ mod tests {
             x: 3,
             y: 3,
             w: 43,
-            h: 10,
+            h: 9,
         };
-        assert_eq!((button.size, button.center), ([49, 17], Some(center)));
+        assert_eq!((button.size, button.center), ([49, 16], Some(center)));
         assert!(data.pieces.contains_key("button.hover"));
         assert!(data.pieces.contains_key("button.down"));
         assert!(!data.pieces.contains_key("panel"), "not drawn yet");
     }
 
     #[test]
-    fn the_active_button_is_the_button_with_the_brown_fill_of_the_active_tool() {
+    fn the_buttons_have_one_pixel_corners_and_the_active_one_is_sunk_with_the_brown_fill() {
         let data = decode(EMBEDDED).unwrap();
-        let button = &data.pieces["button"];
-        let active = data.pieces.get("button.active").expect("button.active");
-        // Mismo tamaño y mismo 9-slice: se estira igual que `button`.
-        assert_eq!((active.size, active.center), (button.size, button.center));
         let at = |piece: &PieceImage, x: u32, y: u32| {
             let i = ((y * piece.size[0] + x) * 4) as usize;
             Rgba::new(
@@ -641,25 +645,49 @@ mod tests {
                 piece.rgba[i + 3],
             )
         };
-        // El relleno (columnas 2 a 46, filas 2 a 13), leído del skin: ningún píxel queda igual
-        // al de `button`, y es el café tramado de `tool.slot.active`.
+        let outline = Rgba::rgb(89, 77, 77);
+        let white = Rgba::rgb(255, 255, 255);
+        let button = &data.pieces["button"];
+        assert_eq!(button.size, [49, 16]);
+        // Esquinas de 1 px: arriba, el borde empieza en la columna 1; abajo, igual.
+        assert_eq!(at(button, 0, 0).a, 0);
+        assert_eq!(at(button, 1, 0), outline);
+        assert_eq!(at(button, 0, 1), outline);
+        assert_eq!(at(button, 0, 15).a, 0);
+        assert_eq!(at(button, 1, 1), white, "the light on top");
+        assert_eq!(at(button, 47, 5), white, "the light on the right");
+        assert_eq!(
+            at(button, 24, 14),
+            Rgba::rgb(136, 110, 106),
+            "the dark row below"
+        );
+        // Hover: el relleno blanco adentro de un marco del relleno de siempre.
+        let hover = &data.pieces["button.hover"];
+        assert_eq!(at(hover, 24, 6), white);
+        assert_eq!(
+            at(hover, 2, 6),
+            at(button, 24, 6),
+            "the frame of the usual fill"
+        );
+        // Presionado: una fila más abajo, sin la fila oscura.
+        let down = &data.pieces["button.down"];
+        assert_eq!(at(down, 24, 0).a, 0, "sunk one row");
+        assert_eq!(at(down, 24, 1), outline);
+        assert_eq!(at(down, 24, 15), outline);
+        // Activo: la forma del presionado con el café tramado de la herramienta activa.
+        let active = &data.pieces["button.active"];
+        assert_eq!((active.size, active.center), (button.size, button.center));
         let browns = [Rgba::rgb(189, 164, 153), Rgba::rgb(174, 152, 142)];
-        for y in 2..14 {
-            for x in 2..47 {
-                let (normal, on) = (at(button, x, y), at(active, x, y));
-                assert_ne!(on, normal, "fill ({x},{y})");
-                assert!(browns.contains(&on), "fill ({x},{y}): {on:?}");
+        for y in 3..14 {
+            for x in 3..46 {
+                assert!(browns.contains(&at(active, x, y)), "fill ({x},{y})");
             }
         }
-        // Tramado: claro arriba y oscuro abajo, con las dos tintas.
-        assert_eq!(at(active, 24, 2), browns[0], "light on top");
-        assert_eq!(at(active, 24, 13), browns[1], "dark below");
-        // El borde queda; el blanco y el bisel claro se cambian.
-        let (white, bevel) = (Rgba::rgb(255, 255, 255), Rgba::rgb(221, 206, 191));
-        assert_eq!(at(active, 2, 0), at(button, 2, 0), "the outline");
-        assert_eq!((at(button, 24, 1), at(active, 24, 1)), (white, bevel));
-        assert_eq!((at(button, 1, 8), at(active, 1, 8)), (bevel, white));
-        assert_eq!(at(active, 0, 0).a, 0, "rounded corner");
+        assert_eq!(at(active, 24, 0).a, 0, "sunk one row");
+        // Los puntos de los grupos y su separador.
+        assert_eq!(data.pieces["button.dot.on"].size, [7, 7]);
+        assert_eq!(data.pieces["button.dot.off"].size, [7, 7]);
+        assert_eq!(data.pieces["button.sep"].size, [3, 16]);
     }
 
     #[test]

@@ -189,6 +189,10 @@ impl ChimpApp {
                 d.set_width(d.width() + 24);
             }
         }
+        // Desarrollo: la herramienta de selección (sus opciones en la barra) para capturas.
+        if std::env::var_os("CHIMPSPRITE_DEMO_SELECT").is_some() && app.has_doc() {
+            app.doc.editor.set_tool(ToolKind::RectSelect);
+        }
         // Desarrollo: abre Sprite Size para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_SPRITE_SIZE").is_some() && app.has_doc() {
             app.open_sprite_dialog(|a| {

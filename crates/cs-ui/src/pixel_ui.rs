@@ -418,7 +418,15 @@ fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response
         } else {
             WidgetState::Normal
         };
-        let painter = ui.painter();
+        // Deshabilitado, como en el diseño: el mismo botón (sin la transparencia de egui) con el
+        // texto en `button_text_disabled`.
+        let mut painter = ui.painter().clone();
+        let text_color = if enabled {
+            colors.text
+        } else {
+            painter.set_opacity(1.0);
+            colors.button_text_disabled
+        };
         let ppp = ui.ctx().pixels_per_point();
         match skin.piece(BUTTON_PIECE, state) {
             Some(piece) => painter.extend(piece_shapes(piece, rect, ppp)),
@@ -426,7 +434,7 @@ fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response
         }
         let inner = Rect::from_min_max(rect.min + vec2(left, top), rect.max - vec2(right, bottom));
         let at = label_pos(inner, galley.size(), state, ppp);
-        painter.galley(at, galley, colors.text);
+        painter.galley(at, galley, text_color);
         if response.has_focus() {
             painter.rect_stroke(
                 rect.expand(1.0).round_to_pixels(ppp),
@@ -1236,10 +1244,10 @@ mod tests {
         let ctx = egui::Context::default();
         let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
         let (short, _) = button(&ctx, &skin, "OK", vec![]);
-        assert_eq!(short.size(), vec2(49.0, 17.0), "the piece size");
+        assert_eq!(short.size(), vec2(49.0, 16.0), "the piece size");
         let (long, _) = button(&ctx, &skin, "A much longer button label", vec![]);
         assert!(long.width() > 49.0, "{long:?}");
-        assert_eq!(long.height(), 17.0);
+        assert_eq!(long.height(), 16.0);
     }
 
     #[test]

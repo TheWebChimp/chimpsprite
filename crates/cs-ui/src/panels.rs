@@ -2639,11 +2639,22 @@ mod tests {
     fn collect_texts(shape: &egui::Shape, out: &mut Vec<(String, Rect, Color32)>) {
         match shape {
             egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_texts(s, out)),
-            egui::Shape::Text(text) => out.push((
-                text.galley.text().to_owned(),
-                text.visual_bounding_rect(),
-                text.fallback_color,
-            )),
+            egui::Shape::Text(text) => {
+                // El color con que se ve: el de la galería, si lo trae; si no, el de respaldo.
+                let color = text
+                    .galley
+                    .job
+                    .sections
+                    .first()
+                    .map(|s| s.format.color)
+                    .filter(|c| *c != Color32::PLACEHOLDER)
+                    .unwrap_or(text.fallback_color);
+                out.push((
+                    text.galley.text().to_owned(),
+                    text.visual_bounding_rect(),
+                    color,
+                ));
+            }
             _ => {}
         }
     }
@@ -3411,7 +3422,9 @@ Alt+click: pick color";
                 "button",
                 "button.hover",
                 "button.down",
-                "button.active",
+                "button.sep",
+                "button.dot.on",
+                "button.dot.off",
             ] {
                 for rect in h.drawn(piece) {
                     assert!(
@@ -3424,7 +3437,7 @@ Alt+click: pick color";
             // Las herramientas con grupos de radios (Sample, Linear/Radial, Rotation) los
             // dibujan como botones: la prueba de arriba no es vacía para ellos.
             if kind != ToolKind::Pencil && kind != ToolKind::Text {
-                assert!(!h.drawn("button.active").is_empty(), "{kind:?}: no buttons");
+                assert!(!h.drawn("button.dot.on").is_empty(), "{kind:?}: no buttons");
             }
         }
     }
@@ -3631,13 +3644,13 @@ Alt+click: pick color";
         assert!(h.has(other.label()) && !h.has(current.label()));
     }
 
-    /// Las cajas de los botones de opción dibujados: (normales, activos). Los normales pueden
-    /// estar con el puntero encima (`button.hover`).
-    fn option_buttons(h: &BarHarness) -> (Vec<Rect>, Vec<Rect>) {
-        let mut normal = h.drawn_boxes("button");
-        normal.extend(h.drawn_boxes("button.hover"));
-        normal.sort_by(|a, b| a.left().total_cmp(&b.left()));
-        (normal, h.drawn_boxes("button.active"))
+    /// Las cajas de los botones de opción dibujados (`button`, o `button.hover` con el puntero
+    /// encima), de izquierda a derecha.
+    fn option_buttons(h: &BarHarness) -> Vec<Rect> {
+        let mut boxes = h.drawn_boxes("button");
+        boxes.extend(h.drawn_boxes("button.hover"));
+        boxes.sort_by(|a, b| a.left().total_cmp(&b.left()));
+        boxes
     }
 
     /// Un grupo de radios de la barra con Pixel UI: la herramienta, sus opciones (el nombre de
@@ -3677,32 +3690,38 @@ Alt+click: pick color";
         ]
     }
 
-    /// La caja del botón `label`: la pieza dibujada debajo de su nodo.
+    /// La caja del botón `label` (su nodo, con la pieza dibujada debajo) y si es el elegido (con
+    /// el punto verde, `button.dot.on`, adentro).
     fn button_box(h: &BarHarness, label: &str) -> (Rect, bool) {
-        let at = h.rect(label);
-        let (normal, active) = option_buttons(h);
-        let hit = |b: &Rect| b.x_range().contains(at.center().x);
-        match active.iter().find(|b| hit(b)) {
-            Some(b) => (*b, true),
-            None => (
-                *normal
-                    .iter()
-                    .find(|b| hit(b))
-                    .unwrap_or_else(|| panic!("no button under {label:?}")),
-                false,
-            ),
-        }
+        // El nodo del botón es el botón dibujado (los del grupo se tocan: sus piezas se juntan
+        // en una caja).
+        let b = h.rect(label);
+        assert!(
+            option_buttons(h).iter().any(|g| g.contains_rect(b)),
+            "no button under {label:?}"
+        );
+        let on = h
+            .drawn_boxes("button.dot.on")
+            .iter()
+            .any(|d| b.contains_rect(*d));
+        let off = h
+            .drawn_boxes("button.dot.off")
+            .iter()
+            .any(|d| b.contains_rect(*d));
+        assert!(on != off, "{label}: one dot");
+        (b, on)
     }
 
     #[test]
-    fn with_pixel_ui_each_radio_option_is_a_button_and_the_current_one_is_active() {
+    fn with_pixel_ui_each_radio_option_is_a_button_of_the_group_with_its_dot() {
         for group in radio_groups() {
             let h = pixel_bar(group.tool);
             let bar = h.bar;
             let tool = group.tool;
             let current = (group.current)(&h.editor);
-            let (normal, active) = option_buttons(&h);
-            // Un botón por opción; solo el elegido con la pieza activa.
+            let colors = *h.skin.as_ref().unwrap().colors();
+            // Un botón por opción, como en el diseño: el elegido con el punto verde y su texto en
+            // el color del texto; los demás, con el anillo gris y el texto apagado.
             let options: Vec<Rect> = group
                 .options
                 .iter()
@@ -3712,28 +3731,31 @@ Alt+click: pick color";
                     // En las filas de los campos (la y 73 a la 88 del diseño).
                     assert_eq!(b.top(), bar.top() + 2.0, "{tool:?}: {label} {b:?}");
                     assert_eq!(b.height(), 16.0, "{tool:?}: {label}");
-                    // El texto, centrado en el botón y con las mayúsculas en la fila de los
-                    // textos, en el color del texto.
                     let (color, ink) = h.text(label);
-                    assert_eq!(color, h.skin.as_ref().unwrap().colors().text);
+                    let want = if on {
+                        colors.text
+                    } else {
+                        colors.option_text_off
+                    };
+                    assert_eq!(color, want, "{tool:?}: {label}");
                     assert_eq!(ink.top(), bar.top() + 5.0, "{tool:?}: {label} {ink:?}");
-                    assert_eq!(ink.center().x, b.center().x, "{tool:?}: {label}");
-                    assert!(b.contains_rect(ink), "{tool:?}: {label}");
+                    // La tinta 12 px adentro (el punto de 7 y su aire) y 4 antes del borde.
+                    assert_eq!(ink.left(), b.left() + 12.0, "{tool:?}: {label}");
+                    assert_eq!(ink.right() + 5.0, b.right(), "{tool:?}: {label}");
                     b
                 })
                 .collect();
-            // En lo que ocupa el grupo (Magic Wand también tiene Rotation): un activo y los
-            // demás normales, ni una pieza de más.
-            let span = options.iter().fold(Rect::NOTHING, |a, b| a.union(*b));
-            let inside = |boxes: &[Rect]| boxes.iter().filter(|b| span.intersects(**b)).count();
-            assert_eq!(inside(&active), 1, "{tool:?}: {active:?}");
-            assert_eq!(inside(&normal), options.len() - 1, "{tool:?}: {normal:?}");
-            // El elegido es `button.active`, no `button.down` (que casi no se distingue).
-            assert_eq!(inside(&h.drawn_boxes("button.down")), 0, "{tool:?}");
-            // En fila, sin solaparse.
+            // Pegados: cada uno empieza en la última columna del anterior, con el separador.
             for pair in options.windows(2) {
-                assert!(pair[1].left() > pair[0].right(), "{tool:?}: {pair:?}");
+                assert_eq!(pair[1].left(), pair[0].right() - 1.0, "{tool:?}: {pair:?}");
             }
+            let span = options.iter().fold(Rect::NOTHING, |a, b| a.union(*b));
+            let seps = h
+                .drawn_boxes("button.sep")
+                .into_iter()
+                .filter(|r| span.intersects(*r))
+                .count();
+            assert_eq!(seps, options.len() - 1, "{tool:?}");
             // Ya no hay combo para el grupo.
             for label in &group.options {
                 let combo = h
@@ -3746,19 +3768,6 @@ Alt+click: pick color";
     }
 
     #[test]
-    fn without_the_active_button_piece_the_current_option_falls_back_to_button_down() {
-        let mut h = pixel_bar(ToolKind::Gradient);
-        h.skin = h.skin.take().map(|s| s.without(&["button.active"]));
-        h.frame(vec![]);
-        let current = h.rect("Linear");
-        let down = h.drawn_boxes("button.down");
-        assert_eq!(down.len(), 1, "{down:?}");
-        assert!(down[0].x_range().contains(current.center().x), "{down:?}");
-        let normal = h.drawn_boxes("button");
-        assert!(normal.iter().any(|b| b.contains(h.rect("Radial").center())));
-    }
-
-    #[test]
     fn with_pixel_ui_one_click_on_a_radio_button_picks_that_option() {
         for group in radio_groups() {
             let mut h = pixel_bar(group.tool);
@@ -3767,7 +3776,7 @@ Alt+click: pick color";
                 h.click(label);
                 assert_eq!((group.current)(&h.editor), *label, "{tool:?}");
                 h.frame(vec![]);
-                // La pieza activa pasa al elegido; los otros, normales.
+                // El punto verde pasa al elegido; los otros, con el anillo.
                 for other in &group.options {
                     assert_eq!(button_box(&h, other).1, other == label, "{tool:?}: {other}");
                 }
