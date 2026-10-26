@@ -209,10 +209,11 @@ pub fn combo_sized<R>(
                 flat
             }
         };
+        // Más alto que el de la barra: el texto baja lo que crece (como en los paneles del dock).
         let at = tab_bar::text_pos(
             &shown,
             drawn.left() + COMBO_TEXT_LEFT,
-            look.top + CAPS_TOP,
+            look.top + CAPS_TOP + (height - FIELD_HEIGHT).max(0.0),
             ppp,
         );
         shapes.push(Shape::galley(at, shown, colors.text));

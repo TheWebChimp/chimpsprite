@@ -400,6 +400,11 @@ fn label_pos(inner: Rect, size: Vec2, state: WidgetState, pixels_per_point: f32)
 
 /// Un botón de `size` exacto, dibujado con la pieza del estado en que está.
 fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response {
+    button_of_size_at(ui, skin, label, size, 0.0)
+}
+
+/// [`button_of_size`] con el texto `text_dy` filas más abajo.
+fn button_of_size_at(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2, text_dy: f32) -> Response {
     let colors = *skin.colors();
     let font = TextStyle::Button.resolve(ui.style());
     let galley = ui
@@ -433,7 +438,7 @@ fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response
             None => painter.extend(flat_shapes(skin, rect, 0.0, ppp)),
         }
         let inner = Rect::from_min_max(rect.min + vec2(left, top), rect.max - vec2(right, bottom));
-        let at = label_pos(inner, galley.size(), state, ppp);
+        let at = label_pos(inner, galley.size(), state, ppp) + vec2(0.0, text_dy);
         painter.galley(at, galley, text_color);
         if response.has_focus() {
             painter.rect_stroke(
@@ -882,7 +887,14 @@ const LED_GAP: f32 = 2.0;
 /// Un [`text_button`] con la luz de abajo de los campos (1 fila debajo, como en los paneles de
 /// Dafont y Lospec): queda del alto de sus campos.
 pub fn lit_button(ui: &mut Ui, label: &str) -> Response {
-    let response = text_button(ui, label);
+    let response = match frame_skin(ui.ctx()) {
+        // Con su luz mide lo que los campos: el texto va 1 fila más abajo (frames 7 y 8).
+        Some(skin) => {
+            let size = button_size(ui, &skin, label);
+            button_of_size_at(ui, &skin, label, size, 1.0)
+        }
+        None => ui.button(label),
+    };
     under_light(ui, response.rect);
     response
 }

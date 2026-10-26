@@ -1089,8 +1089,6 @@ const COUNT_BORDER: egui::Color32 = egui::Color32::from_rgb(136, 110, 106);
 #[cfg(not(target_arch = "wasm32"))]
 const COUNT_SHADE_OFF: egui::Color32 = egui::Color32::from_rgb(221, 206, 191);
 #[cfg(not(target_arch = "wasm32"))]
-const COUNT_SHADE_ON: egui::Color32 = egui::Color32::from_rgb(230, 231, 240);
-#[cfg(not(target_arch = "wasm32"))]
 const COUNT_LIGHT: egui::Color32 = egui::Color32::from_rgb(241, 235, 219);
 #[cfg(not(target_arch = "wasm32"))]
 const COUNT_TEXT_OFF: egui::Color32 = egui::Color32::from_rgb(101, 73, 86);
@@ -1114,6 +1112,35 @@ fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool) {
     let rect =
         egui::Rect::from_min_max((slot.min - egui::vec2(1.0, 0.0)).round(), slot.max.round());
     let ppp = ui.ctx().pixels_per_point();
+    if enabled {
+        // Editable: el campo de texto de siempre (la selección rosa, el cursor pixel), con su
+        // línea izquierda sobre la del combo. Lo escrito se confirma al salir (o con Enter).
+        let id = ui.id().with("lospec_count_text");
+        let mut text = ui
+            .data(|d| d.get_temp::<String>(id))
+            .unwrap_or_else(|| count.to_string());
+        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+        let response = crate::pixel_sections::text_field_sized(
+            &mut child,
+            &skin,
+            &mut text,
+            rect.size(),
+            "Colors count",
+            "",
+        );
+        text.retain(|c| c.is_ascii_digit());
+        text.truncate(3);
+        if response.lost_focus() {
+            if let Ok(n) = text.parse::<u16>() {
+                *count = n.clamp(1, 256);
+            }
+            ui.data_mut(|d| d.remove::<String>(id));
+        } else if response.has_focus() {
+            ui.data_mut(|d| d.insert_temp(id, text));
+        }
+        return;
+    }
+    // Apagado (con "Any"): el relleno del panel, sus líneas y el número tenue.
     let row = |y: f32, color| {
         egui::Shape::rect_filled(
             egui::Rect::from_min_max(
@@ -1125,73 +1152,35 @@ fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool) {
             color,
         )
     };
-    let fill = if enabled {
-        egui::Color32::WHITE
-    } else {
-        skin.colors().panel
-    };
     let body = egui::Rect::from_min_max(rect.min, rect.max - egui::vec2(0.0, 2.0));
-    let mut shapes = vec![
-        egui::Shape::rect_filled(body.round_to_pixels(ppp), 0.0, fill),
+    let shapes = vec![
+        egui::Shape::rect_filled(body.round_to_pixels(ppp), 0.0, skin.colors().panel),
         row(rect.top(), COUNT_BORDER),
-        row(
-            rect.bottom() - 3.0,
-            if enabled {
-                COUNT_SHADE_ON
-            } else {
-                COUNT_SHADE_OFF
-            },
-        ),
+        row(rect.bottom() - 3.0, COUNT_SHADE_OFF),
         row(rect.bottom() - 2.0, COUNT_BORDER),
         row(rect.bottom() - 1.0, COUNT_LIGHT),
+        egui::Shape::rect_filled(
+            egui::Rect::from_min_max(
+                egui::pos2(rect.right() - 1.0, rect.top()),
+                egui::pos2(rect.right(), rect.bottom() - 1.0),
+            )
+            .round_to_pixels(ppp),
+            0.0,
+            COUNT_BORDER,
+        ),
     ];
-    shapes.push(egui::Shape::rect_filled(
-        egui::Rect::from_min_max(
-            egui::pos2(rect.right() - 1.0, rect.top()),
-            egui::pos2(rect.right(), rect.bottom() - 1.0),
-        )
-        .round_to_pixels(ppp),
-        0.0,
-        COUNT_BORDER,
-    ));
     ui.painter().extend(shapes);
-    let inner = egui::Rect::from_min_max(
-        rect.min + egui::vec2(1.0, 1.0),
-        rect.max - egui::vec2(1.0, 3.0),
-    );
-    if !enabled {
-        let galley = crate::menus::galley(ui, &count.to_string(), COUNT_TEXT_OFF);
-        let left = (inner.center().x - galley.size().x / 2.0).round();
-        let pos = crate::tab_bar::text_pos(&galley, left, rect.top() + 5.0, ppp);
-        ui.painter().galley(pos, galley, COUNT_TEXT_OFF);
-        return;
-    }
-    // Editable: lo escrito se confirma al salir del campo (o con Enter).
-    let id = ui.id().with("lospec_count_text");
-    let mut text = ui
-        .data(|d| d.get_temp::<String>(id))
-        .unwrap_or_else(|| count.to_string());
-    let response = ui.put(
-        inner,
-        egui::TextEdit::singleline(&mut text)
-            .frame(egui::Frame::NONE)
-            .horizontal_align(egui::Align::Center)
-            .text_color(skin.colors().text)
-            .desired_width(inner.width()),
-    );
-    if response.changed() {
-        text.retain(|c| c.is_ascii_digit());
-        text.truncate(3);
-    }
-    if response.lost_focus() {
-        if let Ok(n) = text.parse::<u16>() {
-            *count = n.clamp(1, 256);
-        }
-        ui.data_mut(|d| d.remove::<String>(id));
-    } else if response.has_focus() {
-        ui.data_mut(|d| d.insert_temp(id, text));
-    }
+    // A la altura del texto de su combo.
+    let galley = crate::menus::galley(ui, &count.to_string(), COUNT_TEXT_OFF);
+    let left = (rect.center().x - galley.size().x / 2.0).round();
+    let pos = crate::tab_bar::text_pos(&galley, left, rect.top() + COUNT_CAPS, ppp);
+    ui.painter().galley(pos, galley, COUNT_TEXT_OFF);
 }
+
+/// Las mayúsculas del número apagado, desde arriba del campo (las del texto de su combo; los
+/// números de la fuente empiezan 1 fila más abajo).
+#[cfg(not(target_arch = "wasm32"))]
+const COUNT_CAPS: f32 = 4.0;
 
 /// Una búsqueda nueva: reemplaza las peticiones guardadas (la pestaña descarta las viejas).
 #[cfg(not(target_arch = "wasm32"))]
@@ -1215,6 +1204,9 @@ fn start_search(ctx: &egui::Context, tab: &mut LospecTab, requests: &mut LospecR
 /// Los colores del diseño (frame 8): el borde de la tira de colores y lo chico del autor.
 const SWATCH_BORDER: egui::Color32 = egui::Color32::from_rgb(189, 164, 153);
 const SWATCH: f32 = 16.0;
+/// El paginador de ejemplos (◀ 1/5 ▶): sus tres piezas.
+#[cfg(not(target_arch = "wasm32"))]
+const PAGER_W: f32 = 62.0;
 
 /// Una paleta: el título (clic: su página en lospec.com) y "CREATED BY" el autor; a la derecha
 /// sus colores, likes y descargas. Debajo la tira de colores y ◀ 1/5 ▶, el ejemplo a todo el
@@ -1295,7 +1287,16 @@ fn lospec_row(
         });
     });
     ui.horizontal_top(|ui| {
-        swatches(ui, &p.palette);
+        // La tira llega hasta el paginador (o hasta el borde si no hay).
+        #[cfg(not(target_arch = "wasm32"))]
+        let pager_w = if p.examples.len() > 1 {
+            PAGER_W + 5.0
+        } else {
+            0.0
+        };
+        #[cfg(target_arch = "wasm32")]
+        let pager_w = 0.0;
+        swatches(ui, &p.palette, ui.available_width() - pager_w);
         #[cfg(not(target_arch = "wasm32"))]
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             lospec_examples::pager(ui, p, examples);
@@ -1335,35 +1336,63 @@ fn lospec_row(
     ui.add_space(6.0);
 }
 
-/// La tira de colores en su caja (borde y 1 px blanco), de 16×16 cada uno; las que no caben a lo
-/// ancho siguen abajo.
-fn swatches(ui: &mut egui::Ui, palette: &Palette) {
+/// La tira de colores en su caja (el borde sin las esquinas y 1 px blanco), de 16 de alto: tan
+/// anchos como caben en `room` (hasta 16) para que entren en una fila; si ni a 4 de ancho caben,
+/// siguen abajo y la caja sigue a la última fila.
+fn swatches(ui: &mut egui::Ui, palette: &Palette, room: f32) {
     use eframe::emath::GuiRounding as _;
+    const MIN_W: f32 = 4.0;
     let colors = palette.colors();
     if colors.is_empty() {
         return;
     }
-    let room = (ui.available_width() * 0.6).max(SWATCH * 4.0 + 4.0);
-    let per_row = (((room - 4.0) / SWATCH).floor() as usize).clamp(1, colors.len());
-    let rows = colors.len().div_ceil(per_row);
-    let size = egui::vec2(per_row as f32 * SWATCH + 4.0, rows as f32 * SWATCH + 4.0);
+    let n = colors.len();
+    let inner_room = (room - 4.0).max(MIN_W);
+    let cell_w = (inner_room / n as f32).floor().clamp(MIN_W, SWATCH);
+    let per_row = ((inner_room / cell_w).floor() as usize).clamp(1, n);
+    let rows = n.div_ceil(per_row);
+    let last = n - (rows - 1) * per_row;
+    let size = egui::vec2(per_row as f32 * cell_w + 4.0, rows as f32 * SWATCH + 4.0);
     let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
     let ppp = ui.ctx().pixels_per_point();
-    let painter = ui.painter();
-    painter.rect_filled(rect.round_to_pixels(ppp), 0.0, SWATCH_BORDER);
-    painter.rect_filled(
-        rect.shrink(1.0).round_to_pixels(ppp),
-        0.0,
-        egui::Color32::WHITE,
-    );
+    let origin = rect.min + egui::vec2(2.0, 2.0);
+    // Las filas llenas y la última (más corta, si no se llenó).
+    let full_rows = if last == per_row { rows } else { rows - 1 };
+    let mut blocks = Vec::new();
+    if full_rows > 0 {
+        blocks.push(egui::Rect::from_min_size(
+            origin,
+            egui::vec2(per_row as f32 * cell_w, full_rows as f32 * SWATCH),
+        ));
+    }
+    if last != per_row {
+        blocks.push(egui::Rect::from_min_size(
+            origin + egui::vec2(0.0, full_rows as f32 * SWATCH),
+            egui::vec2(last as f32 * cell_w, SWATCH),
+        ));
+    }
+    let mut shapes = Vec::new();
+    let mut fill = |r: egui::Rect, color| {
+        shapes.push(egui::Shape::rect_filled(r.round_to_pixels(ppp), 0.0, color));
+    };
+    // El borde de cada bloque sin sus esquinas; donde se juntan, uno tapa las del otro.
+    for b in &blocks {
+        let outer = b.expand(2.0);
+        fill(outer.shrink2(egui::vec2(1.0, 0.0)), SWATCH_BORDER);
+        fill(outer.shrink2(egui::vec2(0.0, 1.0)), SWATCH_BORDER);
+    }
+    for b in &blocks {
+        fill(b.expand(1.0), egui::Color32::WHITE);
+    }
     for (k, &c) in colors.iter().enumerate() {
         let (row, col) = (k / per_row, k % per_row);
         let at = egui::Rect::from_min_size(
-            rect.min + egui::vec2(2.0 + col as f32 * SWATCH, 2.0 + row as f32 * SWATCH),
-            egui::Vec2::splat(SWATCH),
+            origin + egui::vec2(col as f32 * cell_w, row as f32 * SWATCH),
+            egui::vec2(cell_w, SWATCH),
         );
-        painter.rect_filled(at.round_to_pixels(ppp), 0.0, panels::to_color32(c));
+        fill(at, panels::to_color32(c));
     }
+    ui.painter().extend(shapes);
 }
 
 #[cfg(test)]
