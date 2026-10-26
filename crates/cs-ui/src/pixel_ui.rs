@@ -789,6 +789,41 @@ pub fn set_bubble(ctx: &egui::Context, skin: Option<std::sync::Arc<Skin>>) {
 
 /// Un botón suelto con texto: con Pixel UI, el `button` del skin ([`pixel_button`]); sin él, el
 /// de egui.
+/// Un botón de 25×16 con el ícono `icon` del skin al centro (como el de la forma del pincel):
+/// `label` es su nombre accesible y su tooltip. Con `on`, prendido (`button.active`). Sin Pixel UI
+/// (o sin el ícono), un botón de texto con `label`.
+pub fn icon_button(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    icon: &str,
+    label: &str,
+    on: Option<bool>,
+) -> Response {
+    let skin = skin.filter(|s| s.piece(icon, WidgetState::Normal).is_some());
+    let Some(skin) = skin else {
+        return match on {
+            Some(on) => ui.selectable_label(on, label),
+            None => ui.button(label),
+        };
+    };
+    let (rect, _) = ui.allocate_exact_size(ICON_BUTTON, Sense::hover());
+    let rect = Rect::from_min_size(rect.min.round(), ICON_BUTTON);
+    let ppp = ui.ctx().pixels_per_point();
+    let info = crate::pixel_draw::ButtonInfo {
+        selected: on,
+        ..crate::pixel_draw::ButtonInfo::new(ui.id().with(("icon_button", label)), label)
+    };
+    crate::pixel_draw::skin_button(ui, skin, rect, info, |inner| {
+        // Centrado en el relleno (sin las filas de abajo del botón).
+        let fill = Rect::from_min_max(inner.min, inner.max - vec2(0.0, 2.0));
+        crate::pixel_draw::piece_centered(skin, icon, fill, ppp)
+    })
+    .tip(label)
+}
+
+/// El botón con ícono: 25×16, como los de la barra.
+const ICON_BUTTON: Vec2 = vec2(25.0, 16.0);
+
 pub fn text_button(ui: &mut Ui, label: &str) -> Response {
     match frame_skin(ui.ctx()) {
         Some(skin) => pixel_button(ui, &skin, label),

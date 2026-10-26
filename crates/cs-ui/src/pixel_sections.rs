@@ -36,8 +36,9 @@ const SWATCH: f32 = 7.0;
 const SWATCH_GAP: f32 = 3.0;
 /// De la línea grabada de las pestañas a los campos.
 const TABS_FIELDS_GAP: f32 = 9.0;
-/// Los campos de texto del diseño: 16 de alto más la fila del brillo de abajo.
-pub const FIELD_HEIGHT: f32 = 17.0;
+/// Los campos de texto del diseño: 16 de alto con la fila del brillo de abajo (como los combos,
+/// los campos numéricos y los botones).
+pub const FIELD_HEIGHT: f32 = 16.0;
 /// Entre un campo y su botón (x 945 → 949).
 const FIELD_BUTTON_GAP: f32 = 3.0;
 /// Del borde del campo al texto.
@@ -293,6 +294,8 @@ pub fn text_field(
         ],
     };
     ui.painter().extend(shapes);
+    // La selección va entre el campo y el texto: se pinta después, cuando se sabe qué hay.
+    let selection = ui.painter().add(Shape::Noop);
     let colors = *skin.colors();
     let inner = Rect::from_min_max(
         pos2(rect.left() + FIELD_TEXT_LEFT, rect.top() + 1.0),
@@ -305,19 +308,42 @@ pub fn text_field(
             .layout(Layout::top_down(Align::Min)),
     );
     bar_fields::plain_field_style(child.style_mut(), inner.size(), colors.text, colors.outline);
-    let response = child.add(
-        egui::TextEdit::singleline(text)
-            .frame(egui::Frame::NONE)
-            .margin(egui::Margin::ZERO)
-            .vertical_align(Align::Center)
-            .min_size(inner.size())
-            .hint_text(hint)
-            .desired_width(inner.width()),
-    );
+    // egui pinta el fondo de la selección del alto de la fila: lo pintamos nosotros (abajo).
+    child.style_mut().visuals.selection.bg_fill = Color32::TRANSPARENT;
+    let output = egui::TextEdit::singleline(text)
+        .frame(egui::Frame::NONE)
+        .margin(egui::Margin::ZERO)
+        .vertical_align(Align::Center)
+        .min_size(inner.size())
+        .hint_text(hint)
+        .desired_width(inner.width())
+        .show(&mut child);
+    // Lo seleccionado, como en el diseño: rosa, con 1 px de aire contra el borde de arriba y
+    // contra la sombra de abajo (el texto, blanco: `plain_field_style`).
+    if let Some(range) = output.cursor_range.filter(|r| !r.is_empty()) {
+        let [a, b] = range.sorted_cursors();
+        let x = |c| output.galley_pos.x + output.galley.pos_from_cursor(c).min.x;
+        let span = Rect::from_x_y_ranges(
+            x(a).round()..=x(b).round(),
+            rect.top() + SELECTION_TOP..=rect.bottom() - SELECTION_BOTTOM,
+        )
+        .intersect(output.text_clip_rect.expand2(vec2(1.0, 0.0)));
+        if span.width() > 0.0 {
+            ui.painter()
+                .set(selection, Shape::rect_filled(span, 0.0, SELECTION));
+        }
+    }
+    let response = output.response.response;
     let enabled = ui.is_enabled();
     response.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, enabled, label));
     response
 }
+
+/// Lo seleccionado en un campo de texto: el rosa del diseño, de la fila 2 del campo hasta 1 arriba
+/// de la sombra de abajo.
+const SELECTION: Color32 = Color32::from_rgb(0xe2, 0x72, 0x85);
+const SELECTION_TOP: f32 = 2.0;
+const SELECTION_BOTTOM: f32 = 4.0;
 
 /// Lo que queda para un campo con un botón chico a su derecha.
 pub fn field_width_with_button(ui: &Ui) -> f32 {

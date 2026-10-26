@@ -779,7 +779,10 @@ fn search_form(
         if first_page_loading {
             ui.spinner();
         } else {
-            search |= crate::pixel_ui::text_button(ui, "Search").clicked();
+            let skin = crate::pixel_ui::frame_skin(ui.ctx());
+            search |=
+                crate::pixel_ui::icon_button(ui, skin.as_deref(), "icon.search", "Search", None)
+                    .clicked();
         }
     });
     if search {

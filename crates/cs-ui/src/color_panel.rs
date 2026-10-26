@@ -637,6 +637,27 @@ pub fn color_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
             return;
         }
     };
+    let id = ui.id().with("pixel_color_editor");
+    let color = picker(ui, skin, id, current);
+    let group = id.value();
+    if color != current {
+        if let Some(i) = entry {
+            editor.set_palette_color(i, color, group);
+        }
+        if let PixelValue::Rgba(_) = value {
+            editor.set_edited_color(PixelValue::Rgba(color));
+        }
+    }
+    // El arrastre terminó: el próximo cambio de la entrada es otro paso de undo.
+    if !ui.input(|i| i.pointer.any_down()) {
+        editor.end_group_of(group);
+    }
+}
+
+/// El selector de color del diseño, del ancho de `ui` (hasta el de siempre): copiar, la tira de
+/// canales, el cuadro S/V y las barras de tono y alfa. Devuelve el color con lo que se cambió en
+/// este frame (`current` si nada). Lo usan el editor de color y el color de los slices.
+pub fn picker(ui: &mut Ui, skin: &Skin, id: egui::Id, current: Rgba) -> Rgba {
     let ppp = ui.ctx().pixels_per_point();
     let colors = *skin.colors();
     let width = editor_width(ui);
@@ -646,7 +667,6 @@ pub fn color_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), rect.size());
     let header = header.translate(rect.min.to_vec2());
-    let id = ui.id().with("pixel_color_editor");
 
     // Copiar y la tira de canales.
     copy_button(ui, skin, id.with("copy"), header.copy, current);
@@ -686,19 +706,7 @@ pub fn color_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
         color = rgba_of(hsv);
     }
     ui.data_mut(|d| d.insert_temp(id, Remembered { color, hsv }));
-    let group = id.value();
-    if color != current {
-        if let Some(i) = entry {
-            editor.set_palette_color(i, color, group);
-        }
-        if let PixelValue::Rgba(_) = value {
-            editor.set_edited_color(PixelValue::Rgba(color));
-        }
-    }
-    // El arrastre terminó: el próximo cambio de la entrada es otro paso de undo.
-    if !ui.input(|i| i.pointer.any_down()) {
-        editor.end_group_of(group);
-    }
+    color
 }
 
 /// El ancho del editor: el del panel, con el máximo de siempre del selector.

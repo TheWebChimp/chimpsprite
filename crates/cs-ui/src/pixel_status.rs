@@ -31,6 +31,8 @@ pub struct Section<'a> {
     pub icon: Option<&'a str>,
     pub text: String,
     pub color: Option<Color32>,
+    /// Un texto de muestra para el ancho mínimo (la sección no cambia de ancho con su texto).
+    pub min_text: Option<&'a str>,
 }
 
 /// La barra en `ui` (todo su ancho): la línea grabada arriba y las secciones de izquierda a
@@ -74,7 +76,14 @@ pub fn show(ui: &mut Ui, skin: &Skin, sections: &[Section]) {
         let galley = ui
             .painter()
             .layout_no_wrap(section.text.clone(), font.clone(), color);
-        let width = galley.size().x.ceil();
+        // Con `min_text`, al menos su ancho: los números que cambian no mueven lo de la derecha.
+        let min = section.min_text.map_or(0.0, |sample| {
+            ui.painter()
+                .layout_no_wrap(sample.to_owned(), font.clone(), color)
+                .size()
+                .x
+        });
+        let width = galley.size().x.max(min).ceil();
         let at = tab_bar::text_pos(&galley, x, bar.top() + CAPS_TOP, ppp);
         let label = Rect::from_min_size(pos2(x, bar.top() + etched), vec2(width, HEIGHT - etched));
         let response = ui.interact(label, ui.id().with(("status", i)), Sense::hover());

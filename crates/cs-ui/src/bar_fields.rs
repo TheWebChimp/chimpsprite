@@ -586,7 +586,9 @@ pub(crate) fn plain_field_style(
     let v = &mut style.visuals;
     v.button_frame = false;
     v.text_edit_bg_color = Some(Color32::TRANSPARENT);
-    v.selection.stroke = Stroke::NONE;
+    // Lo seleccionado: blanco sobre el rosa del diseño.
+    v.selection.bg_fill = Color32::from_rgb(0xe2, 0x72, 0x85);
+    v.selection.stroke = Stroke::new(1.0, Color32::WHITE);
     // El cursor de escribir, fino y en el contorno del skin: el de egui es azul claro de 2 px y
     // sobre el blanco del campo casi no se ve.
     v.text_cursor.stroke = Stroke::new(1.0, outline);

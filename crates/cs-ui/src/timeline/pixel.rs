@@ -63,6 +63,7 @@ const CEL_AT: Vec2 = vec2(2.0, 2.0);
 pub(super) const FOLDER_W: f32 = 16.0;
 const FOLDER: &str = "timeline.folder";
 const FOLDER_OPEN: &str = "timeline.folder.open";
+const TILEMAP: &str = "timeline.tilemap";
 /// Las carpetitas terminan 2 filas arriba del final del contenido de la fila (como en el diseño).
 const FOLDER_BOTTOM: f32 = 10.0;
 /// La versión de un ícono para lo elegido (sobre el rosa).
@@ -992,6 +993,14 @@ pub(super) fn folder(ui: &Ui, skin: &Skin, rect: Rect, collapsed: bool, selected
     let size = piece_size(skin, name).unwrap_or(Vec2::ZERO);
     let at = pos2(rect.left(), rect.top() + FOLDER_BOTTOM - size.y);
     icon_at(ui, skin, name, at, selected);
+}
+
+/// El ícono de una capa tilemap al principio de `rect` (donde va la carpetita de los grupos); en
+/// la capa activa (`selected`), en su versión para lo elegido.
+pub(super) fn tilemap_icon(ui: &Ui, skin: &Skin, rect: Rect, selected: bool) {
+    let size = piece_size(skin, TILEMAP).unwrap_or(Vec2::ZERO);
+    let at = pos2(rect.left(), rect.top() + FOLDER_BOTTOM - size.y);
+    icon_at(ui, skin, TILEMAP, at, selected);
 }
 
 /// Lo elegido, como en el diseño: la celda `cell` (contenido y su línea de la derecha y de

@@ -965,10 +965,20 @@ fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook
     if tool.is_selection() || tool == ToolKind::Move {
         let mirror = &mut editor.options.mirror_selection;
         let response = match look {
-            Some(look) => bar_fields::checkbox(ui, look, mirror, "Mirror Selection"),
+            // El botón del espejo del diseño, prendido o apagado.
+            Some(look) => crate::pixel_ui::icon_button(
+                ui,
+                Some(look.skin),
+                "icon.mirror",
+                "Mirror Selection",
+                Some(*mirror),
+            ),
             None => crate::widgets::checkbox(ui, mirror, "Mirror selection"),
         };
-        response.tip("Select and move mirrored across the symmetry axes");
+        if look.is_some() && response.clicked() {
+            *mirror = !*mirror;
+        }
+        response.tip("Mirror Selection: select and move mirrored across the symmetry axes");
         if look.is_some() {
             gap(ui, CONTROL_GAP);
         }
@@ -1593,28 +1603,34 @@ pub fn pixel_status_bar(
         Some((x, y)) if x >= 0 && y >= 0 && x < s.width as i32 && y < s.height as i32 => {
             format!("{x} {y}")
         }
-        _ => "\u{2014}".to_owned(),
+        // Fuera del lienzo, el guion de la fuente chica (el "—" no está en ella y sale de otra).
+        _ => "-".to_owned(),
     };
     let mut sections = vec![
         Section {
             icon: Some(ICON_ARTBOARD),
             text: format!("{} {}\u{d7}{}", editor.artboard().name, s.width, s.height),
             color: None,
+            min_text: None,
         },
         Section {
             icon: Some(ICON_POINTER),
             text: pointer,
             color: None,
+            // De ancho fijo: las coordenadas cambian con cada movimiento.
+            min_text: Some("9999 9999"),
         },
         Section {
             icon: Some(ICON_FRAME),
             text: format!("{}/{}", editor.frame + 1, s.frames.len()),
             color: None,
+            min_text: None,
         },
         Section {
             icon: None,
             text: format!("{}%", (canvas.zoom * 100.0) as u32),
             color: None,
+            min_text: None,
         },
     ];
     // Los avisos, sin ícono y en el acento del skin.
@@ -1626,6 +1642,7 @@ pub fn pixel_status_bar(
                 icon: None,
                 text,
                 color: Some(accent),
+                min_text: None,
             }),
     );
     pixel_status::show(ui, skin, &sections);
@@ -1851,19 +1868,18 @@ pub fn pixel_slices(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
     if let Some(name) = name.filter(|n| !n.trim().is_empty()) {
         editor.update_slice(|s| s.name = name.trim().to_owned());
     }
-    let mut c32 = Color32::from_rgb(slice.color.r, slice.color.g, slice.color.b);
-    egui::Popup::from_toggle_button_response(&color_button)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            if egui::color_picker::color_picker_color32(
-                ui,
-                &mut c32,
-                egui::color_picker::Alpha::Opaque,
-            ) {
-                let [r, g, b, _] = c32.to_array();
-                editor.update_slice(|s| s.color = cs_core::Rgba::rgb(r, g, b));
-            }
-        });
+    // El color: el selector de la columna derecha, en el panel de los menús, colgado del botón.
+    let look = menus::MenuLook::new(skin, color_button.rect.top());
+    let current = cs_core::Rgba::rgb(slice.color.r, slice.color.g, slice.color.b);
+    let picked = menus::dropdown(&look, &color_button, color_button.rect, |ui| {
+        ui.set_width(SLICE_PICKER_W);
+        let id = ui.id().with("slice_color");
+        crate::color_panel::picker(ui, skin, id, current)
+    });
+    if let Some(color) = picked.filter(|c| *c != current) {
+        let rgb = cs_core::Rgba::rgb(color.r, color.g, color.b);
+        editor.update_slice(|s| s.color = rgb);
+    }
     let data = pixel_sections::field_alone(ui, |ui, width| {
         pixel_buffered_field(
             ui,
@@ -1880,6 +1896,9 @@ pub fn pixel_slices(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
     }
     slice_key_properties(ui, editor);
 }
+
+/// El ancho del selector de color de los slices.
+const SLICE_PICKER_W: f32 = 180.0;
 
 /// Gesto sobre campos numéricos o sliders: un solo paso de undo por arrastre o edición.
 /// Llamar antes de aplicar el cambio; devuelve el grupo (id del widget que cambió) si cambió.
@@ -2159,8 +2178,7 @@ fn slice_key_properties(ui: &mut egui::Ui, editor: &mut Editor) {
     }
     // 9-slice: el rect central (relativo al slice) se estira; las esquinas quedan fijas.
     let mut nine = key.center.is_some();
-    if ui
-        .checkbox(&mut nine, "9-Slice")
+    if crate::widgets::checkbox(ui, &mut nine, "9-Slice")
         .tip("Center area that stretches; corners keep their size")
         .changed()
     {

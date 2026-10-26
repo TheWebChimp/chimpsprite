@@ -662,6 +662,17 @@ fn layer_row(
         }
         x += grid.fold_w;
     }
+    // Con Pixel UI, las capas tilemap llevan su ícono donde los grupos su carpetita.
+    if layer.kind == LayerKind::Tilemap
+        && let Some(skin) = grid.skin
+    {
+        let at = Rect::from_min_max(
+            pos2(x, content.top()),
+            pos2(x + grid.fold_w, content.bottom()),
+        );
+        pixel::tilemap_icon(ui, skin, at, active);
+        x += grid.fold_w;
+    }
     // Recortadas: sangría con flecha hacia la capa base.
     if layer.clip {
         let stroke = Stroke::new(1.5, grid.accent());
@@ -756,6 +767,8 @@ fn layer_row(
         }
     } else {
         let label = match layer.kind {
+            // Con Pixel UI, los grupos y los tilemaps ya tienen su ícono.
+            LayerKind::Group | LayerKind::Tilemap if grid.skin.is_some() => layer.name.clone(),
             LayerKind::Group => format!("📁 {}", layer.name),
             // El mismo ícono que la herramienta Artboard: la capa muestra otro artboard.
             LayerKind::Instance => format!("🖼 {}", layer.name),

@@ -1217,6 +1217,7 @@ impl ChimpApp {
                                 icon: None,
                                 text: version,
                                 color: None,
+                                min_text: None,
                             }],
                         ),
                         None => {
@@ -1351,15 +1352,25 @@ impl ChimpApp {
                 }
             })
         });
-        // Con Pixel UI, la línea del borde grabada (la oscura y su brillo), como las demás.
+        // Con Pixel UI, la línea del borde grabada (la oscura y su brillo), como las demás. Arriba,
+        // la oscura cruza el brillo de la línea de la barra de opciones (como los separadores de
+        // la barra).
         if let Some(skin) = skin {
             let rect = palette_panel.response.rect;
             let ppp = ui.ctx().pixels_per_point();
+            let left = rect.left().round();
             ui.painter().add(pixel_ui::etched_vline(
-                rect.left().round(),
+                left,
                 rect.y_range(),
                 skin.colors(),
                 ppp,
+            ));
+            let cross =
+                egui::Rect::from_min_size(egui::pos2(left, rect.top() - 1.0), egui::vec2(1.0, 1.0));
+            ui.painter().add(egui::Shape::rect_filled(
+                eframe::emath::GuiRounding::round_to_pixels(cross, ppp),
+                0.0,
+                skin.colors().canvas,
             ));
         }
         self.view.palette_locked = self.doc.editor.palette_locked;
