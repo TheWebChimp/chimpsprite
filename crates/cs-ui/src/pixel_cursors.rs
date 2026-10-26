@@ -57,10 +57,10 @@ impl Bitmap {
     }
 }
 
-/// Los cursores del skin (`cursor.cross`, `cursor.eyedropper`, `cursor.rotate`). En la cruz y el
-/// cuentagotas lo oscuro es tinta y lo claro su contrario: cada píxel se invierte según lo que
-/// tenga debajo (como en Aseprite). El de rotar trae su contorno y se dibuja tal cual. Sin la
-/// pieza, el cursor del sistema.
+/// Los cursores del skin (`cursor.cross`, `cursor.eyedropper`, `cursor.rotate`). En la cruz lo
+/// oscuro es tinta y lo claro su contrario: cada píxel se invierte según lo que tenga debajo
+/// (como en Aseprite). El cuentagotas y el de rotar traen su contorno blanco (siempre se ven) y
+/// se dibujan tal cual. Sin la pieza, el cursor del sistema.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CursorSet {
     cross: Option<Bitmap>,
@@ -78,14 +78,14 @@ impl CursorSet {
 
     /// Con `piece` que da el tamaño y los píxeles de cada pieza (sin egui, para los tests).
     pub fn from_pieces(piece: impl Fn(&str) -> Option<([u32; 2], Vec<u8>)>) -> Self {
-        // El punto caliente: el centro de la cruz y de la flecha; la punta (abajo a la izquierda)
-        // del cuentagotas.
+        // El punto caliente: el centro de la cruz y de la flecha; la punta del cuentagotas, abajo
+        // a la izquierda, un píxel adentro de su contorno blanco.
         let load = |name: &str, hot: fn([u32; 2]) -> (u32, u32)| {
             piece(name).map(|(size, rgba)| Bitmap::new(size, &rgba, hot(size)))
         };
         Self {
             cross: load("cursor.cross", |[w, h]| (w / 2, h / 2)),
-            eyedropper: load("cursor.eyedropper", |[_, h]| (0, h.saturating_sub(1))),
+            eyedropper: load("cursor.eyedropper", |[_, h]| (1, h.saturating_sub(2))),
             rotate: load("cursor.rotate", |[w, h]| (w / 2, h / 2)),
         }
     }
@@ -195,7 +195,13 @@ pub fn draw(
             .into_iter()
             .map(|r| (r, true))
             .collect(),
-        PixelCursor::Eyedropper => inked(cursors.eyedropper.as_ref(), pointer),
+        PixelCursor::Eyedropper => {
+            for (r, c) in cursors.eyedropper.iter().flat_map(|b| b.placed(pointer)) {
+                painter.rect_filled(r, 0.0, c);
+            }
+            eyedropper_swatch(painter, pointer, color);
+            return;
+        }
         PixelCursor::Rotate => {
             for (r, c) in cursors.rotate.iter().flat_map(|b| b.placed(pointer)) {
                 painter.rect_filled(r, 0.0, c);
@@ -212,12 +218,14 @@ pub fn draw(
         };
         painter.rect_filled(r, 0.0, c);
     }
-    if cursor != PixelCursor::Eyedropper {
-        return;
-    }
-    // Abajo a la derecha de la punta, el color que se tomaría, en un marco que contrasta.
+}
+
+/// Abajo a la derecha de la punta del cuentagotas, el color que se tomaría: en un marco negro con
+/// el contorno blanco, como el cursor (siempre se ve).
+fn eyedropper_swatch(painter: &Painter, pointer: Pos2, color: Option<cs_core::Rgba>) {
     let swatch = Rect::from_min_size(point_at(pointer) + Vec2::new(4.0, 3.0), Vec2::splat(10.0));
-    painter.rect_filled(swatch, 0.0, ink_over(under(swatch.center())));
+    painter.rect_filled(swatch.expand(1.0), 0.0, Color32::WHITE);
+    painter.rect_filled(swatch, 0.0, INK);
     let inside = swatch.shrink(1.0);
     match color {
         Some(c) if c.a > 0 => {
@@ -291,18 +299,50 @@ mod tests {
     }
 
     #[test]
-    fn the_eyedropper_tip_is_on_the_pointer() {
+    fn the_eyedropper_tip_is_on_the_pointer_inside_its_white_outline() {
         let px = eyedropper_pixels(Pos2::new(30.5, 40.5));
         let tip = Rect::from_min_size(Pos2::new(30.0, 40.0), Vec2::splat(1.0));
         assert!(px.iter().any(|(r, ink)| *r == tip && *ink), "{px:?}");
-        assert!(px.iter().any(|(_, ink)| !*ink), "the white of the glass");
-        // Entero, como en el diseño: 16×16.
+        assert!(px.iter().any(|(_, ink)| !*ink), "the white outline");
+        // Entero, como en el diseño: 18×18, con el contorno un píxel alrededor de la punta.
         let bounds = px.iter().fold(Rect::NOTHING, |b, (r, _)| b.union(*r));
-        assert_eq!(bounds.size(), Vec2::new(16.0, 16.0));
-        // Nada abajo ni a la izquierda de la punta.
+        assert_eq!(bounds.size(), Vec2::new(18.0, 18.0));
         assert!(
             px.iter()
-                .all(|(r, _)| r.left() >= 30.0 && r.bottom() <= 41.0)
+                .all(|(r, _)| r.left() >= 29.0 && r.bottom() <= 42.0)
+        );
+    }
+
+    #[test]
+    fn the_eyedropper_keeps_its_own_colors_over_anything() {
+        let ctx = eframe::egui::Context::default();
+        let skin = Skin::embedded(&ctx);
+        let cursors = CursorSet::from_skin(&skin);
+        // Lo que dibuja sobre un fondo de color `below`: los rects y sus colores.
+        let draw_over = |below: Color32| {
+            let out = ctx.run_ui(eframe::egui::RawInput::default(), |ui| {
+                let painter = ui.ctx().layer_painter(eframe::egui::LayerId::background());
+                draw(
+                    &painter,
+                    &cursors,
+                    PixelCursor::Eyedropper,
+                    Pos2::new(30.5, 40.5),
+                    Rect::NOTHING,
+                    None,
+                    |_| below,
+                );
+            });
+            let mut out = out;
+            out.textures_delta.clear();
+            out.shapes
+                .iter()
+                .map(|c| format!("{:?}", c.shape))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            draw_over(Color32::BLACK),
+            draw_over(Color32::WHITE),
+            "no inversion"
         );
     }
 
