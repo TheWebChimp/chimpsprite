@@ -343,13 +343,35 @@ fn grid_cells(
         // La entrada elegida: con la paleta desbloqueada, el editor de color la edita.
         panels::pick_on_click(editor, &response, value, Some(index as u8));
     }
-    // La marca para agregar el primario, en la celda siguiente.
+    // La marca para agregar el primario, en la celda siguiente. Un clic agrega uno; arrastrarla
+    // agrega hasta la celda donde se suelta (mientras, se ven las celdas nuevas).
     let add_piece = piece(skin, ADD);
-    let add = Rect::from_min_size(
-        cell_at(count) + ADD_OFFSET,
-        add_piece.map_or(FALLBACK_ADD_SIZE, size_of),
-    );
-    let response = ui.interact(add, id.with("add"), Sense::click());
+    let add_size = add_piece.map_or(FALLBACK_ADD_SIZE, size_of);
+    let grab = Rect::from_min_size(cell_at(count), Vec2::splat(SWATCH_SIDE));
+    let response = ui.interact(grab, id.with("add"), Sense::click_and_drag());
+    let can_add = !editor.is_mask(editor.primary) && count < 256;
+    let target = match response.interact_pointer_pos() {
+        Some(pos) if response.dragged() && can_add => {
+            let rel = pos - origin;
+            let col = ((rel.x / CELL).floor().max(0.0) as usize).min(columns - 1);
+            let row = (rel.y / CELL).floor().max(0.0) as usize;
+            (row * columns + col + 1).clamp(count, 256)
+        }
+        _ => count,
+    };
+    if target > count {
+        // Las celdas que se agregarían, con el primario.
+        let color = panels::to_color32(editor.resolve(editor.primary));
+        for index in count..target {
+            let cell = Rect::from_min_size(cell_at(index), Vec2::splat(SWATCH_SIDE));
+            ui.painter().rect_filled(cell.shrink(1.0), 0.0, color);
+            ui.painter().extend(piece_or(skin, SWATCH, cell, ppp, || {
+                vec![outline(cell, Color32::BLACK, ppp)]
+            }));
+        }
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    }
+    let add = Rect::from_min_size(cell_at(target.min(255)) + ADD_OFFSET, add_size);
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, "Add to palette"));
     let shapes = match add_piece {
         Some(p) => pixel_ui::piece_shapes(p, add, ppp),
@@ -362,9 +384,25 @@ fn grid_cells(
             .collect(),
     };
     ui.painter().extend(shapes);
-    if response.tip("Add to palette").clicked() && !editor.is_mask(editor.primary) {
+    let response = response.tip("Add to palette (drag to add more)");
+    if response.hovered() && !response.dragged() {
+        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+    }
+    if response.clicked() && can_add {
         let color = editor.resolve(editor.primary);
         editor.add_to_palette(color);
+    }
+    // Al soltar, todas las nuevas de una vez (un paso de undo).
+    if response.drag_stopped() && can_add {
+        let id = id.with("add_target");
+        if let Some(target) = ui.data_mut(|d| d.remove_temp::<usize>(id))
+            && target > count
+        {
+            let color = editor.resolve(editor.primary);
+            editor.grow_palette(color, target - count);
+        }
+    } else if target > count {
+        ui.data_mut(|d| d.insert_temp(id.with("add_target"), target));
     }
 }
 

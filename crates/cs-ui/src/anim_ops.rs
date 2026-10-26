@@ -377,13 +377,20 @@ impl Editor {
     /// Agrega `color` como una entrada nueva al final de la paleta (aunque ya esté: así se puede
     /// partir de un color y editarlo) y la elige como primario. `false` si ya hay 256.
     pub fn add_to_palette(&mut self, color: Rgba) -> bool {
+        self.grow_palette(color, 1)
+    }
+
+    /// Agrega `n` entradas con `color` al final de la paleta (hasta 256), en un paso de undo, y
+    /// elige la primera de ellas. Devuelve si cambió.
+    pub fn grow_palette(&mut self, color: Rgba, n: usize) -> bool {
         let palette = &self.sprite().palette;
-        if palette.len() >= 256 {
+        let n = n.min(256 - palette.len().min(256));
+        if n == 0 {
             return false;
         }
         let index = palette.len() as u8;
         let mut colors = palette.colors().to_vec();
-        colors.push(color);
+        colors.extend(std::iter::repeat_n(color, n));
         if !self.execute(Command::SetPalette(cs_core::Palette::new(colors))) {
             return false;
         }

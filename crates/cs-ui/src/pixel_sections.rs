@@ -294,6 +294,7 @@ pub fn text_field_sized(
 
 /// Como [`text_field_sized`] pero sin la caja (la dibuja quien lo usa): solo el texto, su
 /// selección y su cursor.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn text_field_bare(
     ui: &mut Ui,
     skin: &Skin,

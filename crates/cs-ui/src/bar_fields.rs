@@ -169,6 +169,7 @@ pub fn combo<R>(
 
 /// El ancho de un [`combo`] con `selected` (para que uno con varias opciones mida lo de la más
 /// larga y no brinque al cambiar).
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 pub fn combo_width(ui: &Ui, skin: &Skin, selected: &str) -> f32 {
     let shown = galley(ui, selected, skin.colors().text);
     let right = skin
