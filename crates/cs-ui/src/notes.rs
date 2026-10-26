@@ -6,7 +6,10 @@
 //! "○" las borra.
 //!
 //! Su esquina está en coordenadas de mundo (se mueven con la vista) y su tamaño en puntos de
-//! interfaz (no cambia con el zoom). Cada gesto (mover, agrandar, escribir) es un paso de undo.
+//! interfaz (no cambia con el zoom: el texto se lee siempre igual). Si de lejos taparía mucho del
+//! artboard (más de la mitad de su ancho o de su alto), se ve solo su pin: un cuadrito de su
+//! color en su esquina; con el puntero encima se abre. Cada gesto (mover, agrandar, escribir) es
+//! un paso de undo.
 
 use cs_core::{Note, NoteColor};
 use eframe::egui::{self, Color32, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2};
@@ -144,6 +147,17 @@ fn color_at(paper: Rect, p: Pos2) -> Option<NoteColor> {
         })
 }
 
+/// El pin de una nota cerrada: un cuadrito de su color, con su borde y su sombra, en la esquina
+/// de su papel liso.
+const PIN: f32 = 11.0;
+
+fn pin_rect(paper: Rect) -> Rect {
+    Rect::from_min_size(plain_paper(paper).min, Vec2::splat(PIN))
+}
+
+/// Una nota se cierra (queda su pin) si abierta taparía más de esta parte del artboard activo.
+const COLLAPSE_SHARE: f32 = 0.5;
+
 /// El papel liso (sin la barra): empieza en la línea de abajo de la barra.
 fn plain_paper(paper: Rect) -> Rect {
     Rect::from_min_max(pos2(paper.left(), paper.top() + BAR_H - 1.0), paper.max)
@@ -199,14 +213,40 @@ impl NotesView {
             });
         shown.or_else(|| {
             editor.document.notes.iter().rev().find_map(|n| {
-                // Sin la barra, arriba del papel liso no hay nota.
+                // Cerrada, la nota es su pin (con el puntero encima, se abre).
                 let full = paper(n, to_screen);
+                if self.collapsed(n, editor, to_screen) {
+                    return pin_rect(full).contains(p).then_some((n.id, NoteHit::Body));
+                }
+                // Sin la barra, arriba del papel liso no hay nota.
                 if Some(n.id) != self.hovered && !plain_paper(full).contains(p) {
                     return None;
                 }
                 hit_part(full, p).map(|h| (n.id, h))
             })
         })
+    }
+
+    /// La nota se ve cerrada (solo su pin): de lejos taparía mucho del artboard activo, y no tiene
+    /// el puntero encima ni se arrastra ni se escribe.
+    fn collapsed(
+        &self,
+        note: &Note,
+        editor: &Editor,
+        to_screen: &dyn Fn((i32, i32)) -> Pos2,
+    ) -> bool {
+        let open = [
+            self.hovered,
+            self.drag.as_ref().map(|d| d.id),
+            self.editing.as_ref().map(|(id, _)| *id),
+        ];
+        if open.contains(&Some(note.id)) {
+            return false;
+        }
+        let (a, b) = editor.artboard().rect();
+        let (a, b) = (to_screen(a), to_screen(b));
+        note.size.0 as f32 > (b.x - a.x) * COLLAPSE_SHARE
+            || note.size.1 as f32 > (b.y - a.y) * COLLAPSE_SHARE
     }
 
     /// Si las notas tienen el puntero (encima de una o arrastrando): entonces las herramientas
@@ -367,6 +407,18 @@ impl NotesView {
         for note in &editor.document.notes {
             let paper = paper(note, to_screen);
             if !painter.clip_rect().intersects(paper.expand(4.0)) {
+                continue;
+            }
+            // Cerrada: su pin.
+            if self.collapsed(note, editor, to_screen) {
+                let pin = pin_rect(paper);
+                painter.rect_filled(pin.translate(SHADOW), 0.0, Color32::from_black_alpha(80));
+                painter.rect_filled(pin, 0.0, paper_color(note.color));
+                painter.rect_stroke(pin, 0.0, Stroke::new(1.0, INK), StrokeKind::Inside);
+                // Una rayita de texto adentro: es una nota.
+                let line = Rect::from_min_size(pin.min + vec2(3.0, 4.0), vec2(PIN - 6.0, 1.0));
+                painter.rect_filled(line, 0.0, INK);
+                painter.rect_filled(line.translate(vec2(0.0, 2.0)), 0.0, INK);
                 continue;
             }
             let bar = with_bar(note.id);

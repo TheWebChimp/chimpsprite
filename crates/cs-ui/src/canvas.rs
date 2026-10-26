@@ -3732,6 +3732,27 @@ mod tests {
     }
 
     #[test]
+    fn far_away_a_note_is_its_pin_and_opens_with_the_pointer_over_it() {
+        let mut h = Harness::new();
+        with_note(&mut h);
+        let texture = h.note_texture.unwrap();
+        let drew_note = |h: &Harness| {
+            h.shapes
+                .iter()
+                .any(|s| matches!(s, egui::Shape::Mesh(m) if m.texture_id == texture))
+        };
+        assert!(drew_note(&h), "near: the note");
+        // Lejos (el artboard de 16 a 2 puntos por píxel: 32), la nota taparía todo: su pin.
+        h.canvas.zoom = 2.0;
+        h.frame(vec![egui::Event::PointerMoved(Pos2::new(790.0, 590.0))]);
+        assert!(!drew_note(&h), "far: only its pin");
+        let pin = h.canvas.to_screen(h.rect, (0, 0)).round() + Vec2::new(5.0, 11.0 + 5.0);
+        h.frame(vec![egui::Event::PointerMoved(pin)]);
+        h.frame(vec![]);
+        assert!(drew_note(&h), "the pointer over the pin opens it");
+    }
+
+    #[test]
     fn the_bar_of_a_note_shows_only_with_the_pointer_over_it() {
         let mut h = Harness::new();
         let skin = with_window(&mut h);
