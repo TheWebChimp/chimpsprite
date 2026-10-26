@@ -2186,7 +2186,7 @@ fn with_pixel_ui_the_artboards_are_tabs_with_the_design_buttons() {
 }
 
 #[test]
-fn the_lospec_dock_button_opens_and_closes_the_lospec_window() {
+fn the_lospec_dock_button_opens_and_closes_the_lospec_panel() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     // El de la columna del dock (la ventana también tiene una pestaña "Lospec").
     let dock = h.panel("dock");
@@ -2200,9 +2200,10 @@ fn the_lospec_dock_button_opens_and_closes_the_lospec_window() {
     assert_eq!(button(&h).size(), Vec2::new(23.0, 24.0));
     assert!(!h.app.lospec_open());
     h.click(button(&h).center(), PointerButton::Primary);
-    assert!(h.app.lospec_open(), "opens on the Lospec tab");
+    assert!(h.app.lospec_open(), "opens the panel");
+    assert!(h.app.presets_window.is_none(), "not the presets window");
     h.click(button(&h).center(), PointerButton::Primary);
-    assert!(h.app.presets_window.is_none(), "and closes it");
+    assert!(!h.app.lospec_open(), "and closes it");
 }
 
 #[test]

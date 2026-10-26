@@ -34,9 +34,10 @@ const FLYOUT_GAP: f32 = 3.0;
 pub enum DockPanel {
     Artboards,
     Slices,
-    /// No es un panel flotante: abre la ventana de presets en la pestaña Lospec (no cabe acá).
+    /// Las paletas de Lospec y las fuentes de dafont (solo escritorio): su contenido lo pone la
+    /// app (ver [`DockOutput::app_panel`]).
     Lospec,
-    /// Tampoco: abre la ventana de las fuentes de dafont (solo escritorio).
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Dafont,
 }
 
@@ -87,10 +88,8 @@ impl DockPanel {
 pub struct DockOutput {
     /// Abrir el diálogo Canvas Size (desde Artboards).
     pub canvas_size: bool,
-    /// Abrir o cerrar la ventana de Lospec.
-    pub toggle_lospec: bool,
-    /// Abrir o cerrar la ventana de dafont.
-    pub toggle_dafont: bool,
+    /// El panel abierto es de la app (Lospec, Dafont): cuál y su botón, para [`flyout`].
+    pub app_panel: Option<(DockPanel, Rect)>,
 }
 
 /// Un botón del dock con Pixel UI: la pieza `button` según el estado (`Active` si su panel está
@@ -123,26 +122,19 @@ pub fn set_open(ctx: &egui::Context, panel: Option<DockPanel>) {
     ctx.data_mut(|d| d.insert_temp(open_id(), panel));
 }
 
-/// El dock: sus botones y el panel abierto, flotando a la izquierda de su botón. `lospec_open` y
-/// `dafont_open`: esas ventanas están abiertas (su botón se ve prendido).
+/// El dock: sus botones y el panel abierto, flotando a la izquierda de su botón.
 pub fn show(
     ui: &mut Ui,
     editor: &mut Editor,
     name_buffer: &mut (ArtboardId, String),
     skin: Option<&Skin>,
-    lospec_open: bool,
-    dafont_open: bool,
 ) -> DockOutput {
     let mut out = DockOutput::default();
     let open = open_panel(ui.ctx());
     let mut anchors = Vec::new();
     ui.spacing_mut().item_spacing.y = BUTTON_GAP;
     for panel in DockPanel::ALL {
-        let is_open = match panel {
-            DockPanel::Lospec => lospec_open,
-            DockPanel::Dafont => dafont_open,
-            _ => open == Some(panel),
-        };
+        let is_open = open == Some(panel);
         let response = match skin {
             Some(skin) => pixel_button(ui, skin, panel, is_open),
             None => ui
@@ -154,13 +146,7 @@ pub fn show(
                 .tip(panel.label()),
         };
         if response.clicked() {
-            if panel == DockPanel::Lospec {
-                out.toggle_lospec = true;
-            } else if panel == DockPanel::Dafont {
-                out.toggle_dafont = true;
-            } else {
-                set_open(ui.ctx(), (!is_open).then_some(panel));
-            }
+            set_open(ui.ctx(), (!is_open).then_some(panel));
         }
         anchors.push((panel, response.rect));
     }
@@ -172,27 +158,43 @@ pub fn show(
         .find(|(p, _)| *p == panel)
         .map(|(_, r)| *r)
         .unwrap_or(Rect::NOTHING);
-    out.canvas_size = flyout(ui, panel, anchor, editor, name_buffer, skin);
+    let enabled = ui.is_enabled();
+    match panel {
+        DockPanel::Artboards | DockPanel::Slices => {
+            flyout(ui.ctx(), panel, anchor, skin, FLYOUT_WIDTH, |ui| {
+                ui.add_enabled_ui(enabled, |ui| match (panel, skin) {
+                    (DockPanel::Artboards, Some(skin)) => {
+                        out.canvas_size = panels::pixel_artboards(ui, editor, name_buffer, skin);
+                    }
+                    (DockPanel::Artboards, None) => {
+                        out.canvas_size = panels::artboards(ui, editor, name_buffer);
+                    }
+                    (DockPanel::Slices, Some(skin)) => panels::pixel_slices(ui, editor, skin),
+                    (_, _) => panels::slices(ui, editor),
+                });
+            });
+        }
+        DockPanel::Lospec | DockPanel::Dafont => out.app_panel = Some((panel, anchor)),
+    }
     out
 }
 
-/// El panel flotante a la izquierda de `anchor` (su botón), arriba alineado con él.
-fn flyout(
-    ui: &mut Ui,
+/// El panel flotante de `panel` a la izquierda de `anchor` (su botón), arriba alineado con él, de
+/// `width` de contenido; con Pixel UI, en la caja del skin.
+pub fn flyout(
+    ctx: &egui::Context,
     panel: DockPanel,
     anchor: Rect,
-    editor: &mut Editor,
-    name_buffer: &mut (ArtboardId, String),
     skin: Option<&Skin>,
-) -> bool {
-    let enabled = ui.is_enabled();
+    width: f32,
+    add_contents: impl FnOnce(&mut Ui),
+) {
     let pos = anchor.left_top() - vec2(FLYOUT_GAP, 0.0);
-    let mut canvas_size = false;
     egui::Area::new(egui::Id::new(("dock_flyout", panel.label())))
         .order(egui::Order::Foreground)
         .fixed_pos(pos)
         .pivot(egui::Align2::RIGHT_TOP)
-        .show(ui.ctx(), |ui| {
+        .show(ctx, |ui| {
             let frame = match skin {
                 Some(_) => egui::Frame::NONE.inner_margin(FLYOUT_MARGIN),
                 None => egui::Frame::popup(ui.style()),
@@ -200,18 +202,8 @@ fn flyout(
             // Lugar para la caja, detrás del contenido (se llena al final, cuando se sabe su tamaño).
             let background = ui.painter().add(Shape::Noop);
             let response = frame.show(ui, |ui| {
-                ui.set_width(FLYOUT_WIDTH);
-                ui.add_enabled_ui(enabled, |ui| match (panel, skin) {
-                    (DockPanel::Artboards, Some(skin)) => {
-                        canvas_size = panels::pixel_artboards(ui, editor, name_buffer, skin);
-                    }
-                    (DockPanel::Artboards, None) => {
-                        canvas_size = panels::artboards(ui, editor, name_buffer);
-                    }
-                    (DockPanel::Slices, Some(skin)) => panels::pixel_slices(ui, editor, skin),
-                    (DockPanel::Slices, None) => panels::slices(ui, editor),
-                    (DockPanel::Lospec | DockPanel::Dafont, _) => {}
-                });
+                ui.set_width(width);
+                add_contents(ui);
             });
             // Con Pixel UI, la caja del panel detrás del contenido.
             if let Some(piece) = skin.and_then(|s| s.piece(FLYOUT_PIECE, WidgetState::Normal)) {
@@ -224,5 +216,4 @@ fn flyout(
                 ui.painter().set(background, Shape::Vec(shapes));
             }
         });
-    canvas_size
 }

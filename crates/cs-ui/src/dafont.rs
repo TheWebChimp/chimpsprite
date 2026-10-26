@@ -1,27 +1,28 @@
 //! Fuentes pixel de dafont.com (solo escritorio: el sitio no acepta peticiones desde otras
-//! páginas). La ventana lista la categoría Bitmap con la vista previa, el autor, el tamaño
+//! páginas). El panel del dock lista la categoría Bitmap con la vista previa, el autor, el tamaño
 //! recomendado y la licencia de cada fuente; "Use" la descarga (el zip de dafont), saca el
 //! `.ttf`/`.otf` y la deja en la herramienta de texto, a su tamaño y sin antialias.
 //!
-//! Las licencias son de cada autor (muchas solo para uso personal): la ventana las muestra y
+//! Las licencias son de cada autor (muchas solo para uso personal): el panel las muestra y
 //! recuerda revisarlas.
 
 use std::collections::HashMap;
 use std::io::Read as _;
 
-use eframe::egui::{self, Color32, Vec2, vec2};
+use eframe::egui::{self, Color32, vec2};
 
 use crate::lospec_client::{self, FetchError, Pending};
 use crate::pixel_ui;
-use crate::skin::Skin;
 
 const SITE: &str = "https://www.dafont.com";
 /// Lo que se acepta de un zip y de una fuente (de sobra para una fuente pixel).
 const MAX_ZIP_BYTES: usize = 8 * 1024 * 1024;
 const MAX_FONT_BYTES: u64 = 4 * 1024 * 1024;
-/// Lo que ocupa la ventana fuera de la lista (título, texto, Try it y márgenes), para que quepa
-/// en la pantalla.
-const LIST_CHROME: f32 = 200.0;
+/// Ancho del panel.
+pub const WIDTH: f32 = PREVIEW_W + 140.0;
+/// Lo que queda debajo de la lista hasta el final de la pantalla (el borde del panel y la barra
+/// de estado).
+const LIST_BELOW: f32 = 40.0;
 /// El ancho de las vistas previas en la lista.
 const PREVIEW_W: f32 = 320.0;
 
@@ -202,14 +203,9 @@ pub fn extract_font(zip: &[u8]) -> Option<(String, Vec<u8>)> {
     Some((stem, bytes))
 }
 
-/// Pide abrir la ventana (desde la barra de opciones de la herramienta de texto).
+/// Abre el panel (desde la barra de opciones de la herramienta de texto).
 pub fn request_open(ctx: &egui::Context) {
-    ctx.data_mut(|d| d.insert_temp(egui::Id::new("dafont_open_request"), true));
-}
-
-fn take_open_request(ctx: &egui::Context) -> bool {
-    ctx.data_mut(|d| d.remove_temp::<bool>(egui::Id::new("dafont_open_request")))
-        .unwrap_or(false)
+    crate::dock::set_open(ctx, Some(crate::dock::DockPanel::Dafont));
 }
 
 /// Una fuente sacada del zip: su nombre y sus bytes.
@@ -227,10 +223,9 @@ enum Preview {
     Failed,
 }
 
-/// La ventana de Dafont.
+/// El panel de Dafont.
 #[derive(Default)]
-pub struct DafontWindow {
-    open: bool,
+pub struct DafontPanel {
     fonts: Vec<DafontFont>,
     /// La última página pedida y su petición en curso.
     page: u32,
@@ -266,16 +261,7 @@ fn describe(e: &FetchError) -> String {
     }
 }
 
-impl DafontWindow {
-    pub fn is_open(&self) -> bool {
-        self.open
-    }
-
-    /// Abre o cierra la ventana (el botón del dock).
-    pub fn toggle(&mut self) {
-        self.open = !self.open;
-    }
-
+impl DafontPanel {
     fn load_page(&mut self, ctx: &egui::Context, page: u32) {
         self.page = page;
         self.error = None;
@@ -302,15 +288,10 @@ impl DafontWindow {
         self.download = Some((font, pending));
     }
 
-    /// Muestra la ventana (con `skin`, la de Pixel UI) si está abierta o se pidió abrirla.
-    /// Devuelve la fuente elegida cuando termina de bajar.
-    pub fn show(&mut self, ctx: &egui::Context, skin: Option<&Skin>) -> Option<Picked> {
-        if take_open_request(ctx) {
-            self.open = true;
-        }
-        if !self.open {
-            return None;
-        }
+    /// El panel (flotando junto a su botón del dock). Devuelve la fuente elegida cuando termina
+    /// de bajar; entonces el panel se cierra.
+    pub fn ui(&mut self, ui: &mut egui::Ui) -> Option<Picked> {
+        let ctx = &ui.ctx().clone();
         // Solo la primera vez: si la lista vino vacía (`end`), no se vuelve a pedir en cada frame.
         if self.fonts.is_empty() && self.listing.is_none() && self.error.is_none() && !self.end {
             self.load_page(ctx, 1);
@@ -360,7 +341,7 @@ impl DafontWindow {
                         font: choice,
                         size_px: font.size_px,
                     });
-                    self.open = false;
+                    crate::dock::set_open(ctx, None);
                 }
                 Err(e) => self.error = Some(format!("{}: {e}", font.name)),
             }
@@ -390,67 +371,54 @@ impl DafontWindow {
         let mut try_sample = false;
         let mut retry = false;
         let mut visible = Vec::new();
-        let (_, closed) = pixel_ui::app_window(
-            ctx,
-            skin,
-            "dafont_window",
-            "Dafont · Pixel fonts",
-            true,
-            (egui::Align2::CENTER_CENTER, Vec2::ZERO),
-            |ui| {
-                ui.set_width(PREVIEW_W + 140.0);
-                ui.label(
-                    "Pixel (bitmap) fonts from dafont.com. Each font has its author's license: \
-                     check it before using the font in your work.",
-                );
-                // Probar las fuentes con un texto propio: las vistas previas lo muestran.
-                ui.horizontal(|ui| {
-                    ui.label("Try it");
-                    let response = crate::widgets::text_line_named(ui, &mut self.sample, "Try it");
-                    let enter =
-                        response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                    try_sample = enter && self.sample.trim() != self.shown_sample;
-                });
-                if let Some(error) = &self.error {
-                    ui.horizontal(|ui| {
-                        ui.colored_label(Color32::from_rgb(0xc0, 0x40, 0x40), error);
-                        if self.listing_failed {
-                            retry = pixel_ui::text_button(ui, "Retry").clicked();
-                        }
-                    });
+        ui.set_width(WIDTH);
+        ui.label(
+            "Pixel (bitmap) fonts from dafont.com. Each font has its author's license: \
+             check it before using the font in your work.",
+        );
+        // Probar las fuentes con un texto propio: las vistas previas lo muestran.
+        ui.horizontal(|ui| {
+            ui.label("Try it");
+            let response = crate::widgets::text_line_named(ui, &mut self.sample, "Try it");
+            let enter = response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            try_sample = enter && self.sample.trim() != self.shown_sample;
+        });
+        if let Some(error) = &self.error {
+            ui.horizontal(|ui| {
+                ui.colored_label(Color32::from_rgb(0xc0, 0x40, 0x40), error);
+                if self.listing_failed {
+                    retry = pixel_ui::text_button(ui, "Retry").clicked();
                 }
-                ui.add_space(4.0);
-                pixel_ui::scroll(
-                    ui,
-                    egui::ScrollArea::vertical()
-                        // Casi todo el alto de la pantalla: se ven varias fuentes a la vez.
-                        .max_height((ctx.content_rect().height() - LIST_CHROME).max(420.0))
-                        .auto_shrink([false, false]),
-                    |ui| {
-                        for (k, font) in self.fonts.iter().enumerate() {
-                            let (use_it, shown) = self.font_row(ui, font);
-                            if use_it {
-                                chosen = Some(font.clone());
-                            }
-                            if shown {
-                                visible.push(k);
-                            }
-                            ui.add_space(6.0);
-                        }
-                        if self.listing.is_some() {
-                            ui.weak("Loading");
-                        } else if self.end && self.fonts.is_empty() {
-                            ui.weak("No fonts found");
-                        } else if !self.end && !self.fonts.is_empty() {
-                            more = pixel_ui::text_button(ui, "More fonts").clicked();
-                        }
-                    },
-                );
+            });
+        }
+        ui.add_space(4.0);
+        // Hasta abajo de la pantalla: se ven varias fuentes a la vez.
+        let list_h = (ctx.content_rect().bottom() - ui.cursor().top() - LIST_BELOW).max(160.0);
+        pixel_ui::scroll(
+            ui,
+            egui::ScrollArea::vertical()
+                .max_height(list_h)
+                .auto_shrink([false, false]),
+            |ui| {
+                for (k, font) in self.fonts.iter().enumerate() {
+                    let (use_it, shown) = self.font_row(ui, font);
+                    if use_it {
+                        chosen = Some(font.clone());
+                    }
+                    if shown {
+                        visible.push(k);
+                    }
+                    ui.add_space(6.0);
+                }
+                if self.listing.is_some() {
+                    ui.weak("Loading");
+                } else if self.end && self.fonts.is_empty() {
+                    ui.weak("No fonts found");
+                } else if !self.end && !self.fonts.is_empty() {
+                    more = pixel_ui::text_button(ui, "More fonts").clicked();
+                }
             },
         );
-        if closed {
-            self.open = false;
-        }
         if let Some(font) = chosen {
             self.download(ctx, font);
         }

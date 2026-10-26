@@ -98,7 +98,7 @@ pub struct ChimpApp {
     sprite_dialog: Option<sprite_dialogs::SpriteDialog>,
     /// Las fuentes pixel de dafont.com para la herramienta de texto (solo escritorio).
     #[cfg(not(target_arch = "wasm32"))]
-    dafont: dafont::DafontWindow,
+    dafont: dafont::DafontPanel,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
@@ -132,6 +132,8 @@ pub struct ChimpApp {
     clipboard: Option<clipboard::Clip>,
     palettes: palette_library::PaletteLibrary,
     presets_window: Option<palette_ui::PresetsWindow>,
+    /// El panel Lospec del dock (mientras está abierto).
+    lospec_dock: Option<palette_ui::PresetsWindow>,
     preset_name: Option<palette_ui::NameDialog>,
     palette_confirm: Option<palette_ui::Confirm>,
     /// Ya llegó el `Paste` de este Ctrl+V (ver `clipboard::paste_request`).
@@ -210,6 +212,10 @@ impl ChimpApp {
                 app.doc.editor.set_note_color(id, cs_core::NoteColor::Blue);
             }
         }
+        // Desarrollo: el panel Lospec del dock abierto, para capturas.
+        if std::env::var_os("CHIMPSPRITE_DEMO_LOSPEC").is_some() && app.has_doc() {
+            dock::set_open(&cc.egui_ctx, Some(dock::DockPanel::Lospec));
+        }
         // Desarrollo: dos grupos (uno colapsado), para capturas de sus carpetitas.
         if std::env::var_os("CHIMPSPRITE_DEMO_GROUP").is_some() && app.has_doc() {
             let editor = &mut app.doc.editor;
@@ -271,6 +277,7 @@ impl ChimpApp {
             clipboard: None,
             palettes,
             presets_window: None,
+            lospec_dock: None,
             preset_name: None,
             palette_confirm: None,
             pasted: false,
@@ -451,6 +458,30 @@ impl ChimpApp {
             .map(|l| l.id);
         if let Some(id) = top {
             editor.select_layer(id);
+        }
+    }
+
+    /// El panel Dafont del dock, junto a su botón (`anchor`). La fuente elegida queda en la
+    /// herramienta de texto, a su tamaño y nítida.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dafont_panel(&mut self, ctx: &egui::Context, anchor: egui::Rect, modal: bool) {
+        let mut picked = None;
+        let dafont = &mut self.dafont;
+        dock::flyout(
+            ctx,
+            dock::DockPanel::Dafont,
+            anchor,
+            self.pixel.skin(),
+            dafont::WIDTH,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| picked = dafont.ui(ui));
+            },
+        );
+        if let Some(picked) = picked {
+            let style = &mut self.doc.editor.text_style;
+            style.font = picked.font;
+            style.size = picked.size_px.unwrap_or(16);
+            style.antialias = false;
         }
     }
 
@@ -1387,11 +1418,6 @@ impl ChimpApp {
         let mut dock_frame = egui::Frame::side_top_panel(ui.style());
         dock_frame.inner_margin.left = 0;
         dock_frame.inner_margin.right = dock::RIGHT_MARGIN;
-        #[cfg(not(target_arch = "wasm32"))]
-        let dafont_open = self.dafont.is_open();
-        #[cfg(target_arch = "wasm32")]
-        let dafont_open = false;
-        let lospec_open = self.lospec_open();
         let dock_out = egui::Panel::right("dock")
             .resizable(false)
             .exact_size(dock::WIDTH)
@@ -1399,14 +1425,7 @@ impl ChimpApp {
             .show_separator_line(skin.is_none())
             .show(ui, |ui| {
                 ui.add_enabled_ui(!modal, |ui| {
-                    dock::show(
-                        ui,
-                        &mut self.doc.editor,
-                        &mut self.doc.artboard_name,
-                        skin,
-                        lospec_open,
-                        dafont_open,
-                    )
+                    dock::show(ui, &mut self.doc.editor, &mut self.doc.artboard_name, skin)
                 })
                 .inner
             })
@@ -1437,12 +1456,15 @@ impl ChimpApp {
         if dock_out.canvas_size {
             self.open_canvas_size();
         }
-        #[cfg(not(target_arch = "wasm32"))]
-        if dock_out.toggle_dafont {
-            self.dafont.toggle();
+        // Los paneles del dock que son de la app.
+        match dock_out.app_panel {
+            Some((dock::DockPanel::Lospec, anchor)) => self.lospec_panel(ui.ctx(), anchor, modal),
+            #[cfg(not(target_arch = "wasm32"))]
+            Some((dock::DockPanel::Dafont, anchor)) => self.dafont_panel(ui.ctx(), anchor, modal),
+            _ => {}
         }
-        if dock_out.toggle_lospec {
-            self.toggle_lospec();
+        if !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {
+            self.close_lospec_panel();
         }
         // Otra vez: el panel derecho necesita `self` entero.
         let Some(skin) = self.pixel.skin() else {
@@ -1514,14 +1536,6 @@ impl eframe::App for ChimpApp {
         self.layout(ui, modal);
         self.update_canvas_size(&ctx);
         self.update_sprite_dialog(&ctx);
-        // La fuente elegida en dafont queda en la herramienta de texto, a su tamaño y nítida.
-        #[cfg(not(target_arch = "wasm32"))]
-        if let Some(picked) = self.dafont.show(&ctx, self.pixel.skin()) {
-            let style = &mut self.doc.editor.text_style;
-            style.font = picked.font;
-            style.size = picked.size_px.unwrap_or(16);
-            style.antialias = false;
-        }
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);
         self.show_slice_properties(&ctx);

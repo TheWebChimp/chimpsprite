@@ -789,7 +789,7 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
     if look.is_some() {
         gap(ui, CONTROL_GAP);
     }
-    // Las fuentes pixel de dafont.com: la ventana la abre la app.
+    // Las fuentes pixel de dafont.com: abre su panel del dock.
     #[cfg(not(target_arch = "wasm32"))]
     if crate::pixel_ui::text_button(ui, "Dafont")
         .tip("Pixel fonts from dafont.com")

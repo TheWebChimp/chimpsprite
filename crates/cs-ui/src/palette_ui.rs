@@ -307,25 +307,64 @@ impl ChimpApp {
     }
 
     /// La ventana de presets está abierta en la pestaña Lospec (el botón del dock).
+    #[cfg(test)]
     pub(crate) fn lospec_open(&self) -> bool {
-        self.presets_window
-            .as_ref()
-            .is_some_and(|w| w.tab == PresetsTab::Lospec)
+        self.lospec_dock.is_some()
     }
 
-    /// El botón Lospec del dock: abre la ventana de presets en la pestaña Lospec (o pasa a esa
-    /// pestaña si estaba en otra); si ya estaba ahí, la cierra.
-    pub(crate) fn toggle_lospec(&mut self) {
-        if self.lospec_open() {
-            self.presets_window = None;
-            return;
+    /// El panel Lospec del dock, flotando junto a su botón (`anchor`): lo mismo que la pestaña
+    /// Lospec de Palette Presets. Su estado vive mientras está abierto (ver `close_lospec_panel`).
+    pub(crate) fn lospec_panel(&mut self, ctx: &egui::Context, anchor: egui::Rect, modal: bool) {
+        let mut window = match self.lospec_dock.take() {
+            Some(window) => window,
+            None => {
+                self.palettes.reload();
+                PresetsWindow {
+                    tab: PresetsTab::Lospec,
+                    ..Default::default()
+                }
+            }
+        };
+        poll_lospec(ctx, &mut window);
+        let mut action = None;
+        let library = &self.palettes;
+        crate::dock::flyout(
+            ctx,
+            crate::dock::DockPanel::Lospec,
+            anchor,
+            self.pixel.skin(),
+            PRESETS_SIZE.x,
+            |ui| {
+                ui.set_height(PRESETS_SIZE.y);
+                ui.add_enabled_ui(!modal, |ui| {
+                    action = lospec_ui(ui, &mut window, |name| library.has_user(name));
+                });
+            },
+        );
+        self.lospec_action(action);
+        self.lospec_dock = Some(window);
+    }
+
+    /// Cerrado el panel Lospec, se sueltan sus imágenes y peticiones.
+    pub(crate) fn close_lospec_panel(&mut self) {
+        self.lospec_dock = None;
+    }
+
+    fn lospec_action(&mut self, action: Option<LospecAction>) {
+        match action {
+            Some(LospecAction::Apply(p)) => {
+                self.doc.editor.apply_palette(p.palette.clone());
+                if !self.palettes.has_user(&p.title) {
+                    let (named, comments) = lospec_preset(&p);
+                    self.store_preset(named, comments, false);
+                }
+            }
+            Some(LospecAction::Save(p)) => {
+                let (named, comments) = lospec_preset(&p);
+                self.save_preset_asking(named, comments, false);
+            }
+            None => {}
         }
-        if self.presets_window.is_none() {
-            self.palettes.reload();
-        }
-        self.presets_window
-            .get_or_insert_with(PresetsWindow::default)
-            .tab = PresetsTab::Lospec;
     }
 
     /// `modal`: hay un diálogo abierto (este cuadro); la ventana de presets queda desactivada.
@@ -350,20 +389,7 @@ impl ChimpApp {
         let mut delete = None;
         let mut set_default = None;
         // Se revisa aunque la pestaña Lospec no esté a la vista, para no perder respuestas.
-        let now = ctx.input(|i| i.time);
-        window.requests.poll(&mut window.lospec, now);
-        #[cfg(not(target_arch = "wasm32"))]
-        window.examples.poll(now, |url, image| {
-            ctx.load_texture(url, image, egui::TextureOptions::NEAREST)
-        });
-        #[cfg(not(target_arch = "wasm32"))]
-        let busy = window.requests.is_busy() || window.examples.is_busy();
-        #[cfg(target_arch = "wasm32")]
-        let busy = window.requests.is_busy();
-        // Sin repintados el plazo no se revisaría hasta que el usuario mueva algo.
-        if busy {
-            ctx.request_repaint_after(std::time::Duration::from_secs(1));
-        }
+        poll_lospec(ctx, &mut window);
         let mut lospec_action = None;
         let skin = self.pixel.skin();
         let (_, closed) = pixel_ui::app_window(
@@ -466,20 +492,7 @@ impl ChimpApp {
         if let Some(name) = delete {
             self.palette_confirm = Some(Confirm::Delete(name));
         }
-        match lospec_action {
-            Some(LospecAction::Apply(p)) => {
-                self.doc.editor.apply_palette(p.palette.clone());
-                if !self.palettes.has_user(&p.title) {
-                    let (named, comments) = lospec_preset(&p);
-                    self.store_preset(named, comments, false);
-                }
-            }
-            Some(LospecAction::Save(p)) => {
-                let (named, comments) = lospec_preset(&p);
-                self.save_preset_asking(named, comments, false);
-            }
-            None => {}
-        }
+        self.lospec_action(lospec_action);
         if open {
             self.presets_window = Some(window);
         }
@@ -612,6 +625,24 @@ fn confirm_window(
 
 /// El tamaño del contenido de la ventana de presets.
 const PRESETS_SIZE: egui::Vec2 = egui::vec2(420.0, 440.0);
+
+/// Lo que llegó de Lospec (listas e imágenes de ejemplo).
+fn poll_lospec(ctx: &egui::Context, window: &mut PresetsWindow) {
+    let now = ctx.input(|i| i.time);
+    window.requests.poll(&mut window.lospec, now);
+    #[cfg(not(target_arch = "wasm32"))]
+    window.examples.poll(now, |url, image| {
+        ctx.load_texture(url, image, egui::TextureOptions::NEAREST)
+    });
+    #[cfg(not(target_arch = "wasm32"))]
+    let busy = window.requests.is_busy() || window.examples.is_busy();
+    #[cfg(target_arch = "wasm32")]
+    let busy = window.requests.is_busy();
+    // Sin repintados el plazo no se revisaría hasta que el usuario mueva algo.
+    if busy {
+        ctx.request_repaint_after(std::time::Duration::from_secs(1));
+    }
+}
 
 /// Fila de la ventana: nombre, cantidad de colores y tira. Toda la fila es clicable.
 fn preset_row(ui: &mut egui::Ui, preset: &Preset, is_default: bool) -> egui::Response {
