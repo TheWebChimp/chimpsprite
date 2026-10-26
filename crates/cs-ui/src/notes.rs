@@ -1,8 +1,9 @@
 //! Las notas (post-its) sobre el lienzo: se dibujan encima de los artboards con la pieza `note`
 //! del skin (o un rect amarillo sin ella). La barra (con "≡" y "○") solo se ve con el puntero
-//! encima (o arrastrando o escribiendo); si no, `note.plain`, el papel liso. Se mueven desde la
-//! barra, se agrandan desde la esquina
-//! de abajo a la derecha, se escriben con doble clic, el "≡" abre su menú y el "○" las borra.
+//! encima (o arrastrando o escribiendo); si no, `note.plain`, el papel liso y sin el lugar de la
+//! barra (empieza en su línea, como en el diseño). Se mueven desde la barra, se agrandan desde la
+//! esquina de abajo a la derecha, se escriben con un clic en el papel, el "≡" abre su menú y el
+//! "○" las borra.
 //!
 //! Su esquina está en coordenadas de mundo (se mueven con la vista) y su tamaño en puntos de
 //! interfaz (no cambia con el zoom). Cada gesto (mover, agrandar, escribir) es un paso de undo.
@@ -103,6 +104,9 @@ pub struct NotesView {
     pub cursor: Option<egui::CursorIcon>,
     /// La nota con el puntero encima en este frame (la que muestra su barra).
     hovered: Option<u32>,
+    /// La nota cuyo papel se apretó: al soltar encima, se escribe en ella (al soltar, para que
+    /// el clic no le quite el foco al campo recién puesto).
+    pressed_body: Option<u32>,
 }
 
 /// El papel de una nota en pantalla (sin la sombra): su esquina en el mundo y su tamaño en puntos.
@@ -138,6 +142,11 @@ fn color_at(paper: Rect, p: Pos2) -> Option<NoteColor> {
                 .contains(p)
                 .then_some(color)
         })
+}
+
+/// El papel liso (sin la barra): empieza en la línea de abajo de la barra.
+fn plain_paper(paper: Rect) -> Rect {
+    Rect::from_min_max(pos2(paper.left(), paper.top() + BAR_H - 1.0), paper.max)
 }
 
 fn text_rect(paper: Rect) -> Rect {
@@ -189,12 +198,14 @@ impl NotesView {
                 })
             });
         shown.or_else(|| {
-            editor
-                .document
-                .notes
-                .iter()
-                .rev()
-                .find_map(|n| hit_part(paper(n, to_screen), p).map(|h| (n.id, h)))
+            editor.document.notes.iter().rev().find_map(|n| {
+                // Sin la barra, arriba del papel liso no hay nota.
+                let full = paper(n, to_screen);
+                if Some(n.id) != self.hovered && !plain_paper(full).contains(p) {
+                    return None;
+                }
+                hit_part(full, p).map(|h| (n.id, h))
+            })
         })
     }
 
@@ -220,6 +231,9 @@ impl NotesView {
         self.cursor = None;
         let hit = pointer.and_then(|p| self.hit(editor, to_screen, p));
         self.hovered = hit.map(|(id, _)| id);
+        if !down && hit.is_none() {
+            self.pressed_body = None;
+        }
         if let Some(drag) = self.drag.clone() {
             match pointer {
                 Some(p) if down => {
@@ -270,7 +284,13 @@ impl NotesView {
             NoteHit::Resize => egui::CursorIcon::ResizeNwSe,
             NoteHit::Body => egui::CursorIcon::Text,
         });
-        if double_clicked && part == NoteHit::Body {
+        // Un clic en el papel escribe (el doble clic también): al soltar.
+        let editing_it = self.editing.as_ref().is_some_and(|(e, _)| *e == id);
+        if pressed && part == NoteHit::Body && !editing_it {
+            self.pressed_body = Some(id);
+        }
+        let released = !down && self.pressed_body.take() == Some(id);
+        if (released || double_clicked) && part == NoteHit::Body && !editing_it {
             self.start_editing(editor, id);
             return;
         }
@@ -378,21 +398,23 @@ impl NotesView {
                     }
                 }
             }
+            // Sin la barra, el papel liso empieza en la línea de la barra.
+            let shown = if bar { paper } else { plain_paper(paper) };
             match piece {
                 // La pieza trae la sombra: 1 columna y 2 filas más que el papel.
                 Some(piece) => painter.extend(pixel_ui::piece_shapes(
                     piece,
-                    Rect::from_min_max(paper.min, paper.max + SHADOW),
+                    Rect::from_min_max(shown.min, shown.max + SHADOW),
                     ppp,
                 )),
                 None => {
                     painter.rect_filled(
-                        paper.translate(SHADOW),
+                        shown.translate(SHADOW),
                         2.0,
                         Color32::from_black_alpha(80),
                     );
-                    painter.rect_filled(paper, 2.0, paper_color(note.color));
-                    painter.rect_stroke(paper, 2.0, Stroke::new(1.0, INK), StrokeKind::Inside);
+                    painter.rect_filled(shown, 2.0, paper_color(note.color));
+                    painter.rect_stroke(shown, 2.0, Stroke::new(1.0, INK), StrokeKind::Inside);
                     if bar {
                         painter.text(
                             paper.min + vec2(4.0, 1.0),

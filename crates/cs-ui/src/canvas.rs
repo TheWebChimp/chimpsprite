@@ -3679,6 +3679,42 @@ mod tests {
     }
 
     #[test]
+    fn a_click_on_a_note_writes_in_it() {
+        let mut h = Harness::new();
+        let (id, paper) = with_note(&mut h);
+        let at = paper.center();
+        let press = |pressed| Event::PointerButton {
+            pos: at,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.frame(vec![Event::PointerMoved(at)]);
+        h.frame(vec![press(true)]);
+        h.frame(vec![press(false)]);
+        h.frame(vec![]);
+        h.frame(vec![Event::Text("hola".into())]);
+        h.frame(vec![]);
+        h.canvas.notes.finish_editing(&mut h.editor);
+        let note = h.editor.document.notes.iter().find(|n| n.id == id).unwrap();
+        assert_eq!(note.text, "hola");
+    }
+
+    #[test]
+    fn typing_in_a_new_note_writes_its_text() {
+        let mut h = Harness::new();
+        let (id, _) = with_note(&mut h);
+        h.canvas.notes.start_editing(&mut h.editor, id);
+        h.frame(vec![]);
+        h.frame(vec![]);
+        h.frame(vec![Event::Text("hola".into())]);
+        h.frame(vec![]);
+        h.canvas.notes.finish_editing(&mut h.editor);
+        let note = h.editor.document.notes.iter().find(|n| n.id == id).unwrap();
+        assert_eq!(note.text, "hola");
+    }
+
+    #[test]
     fn a_note_is_drawn_over_the_artboard_and_takes_the_clicks() {
         let mut h = Harness::new();
         let (_, paper) = with_note(&mut h);
@@ -3745,6 +3781,8 @@ mod tests {
         let (id, paper) = with_note(&mut h);
         let zoom = h.canvas.zoom;
         let bar = paper.left_top() + Vec2::new(40.0, 5.0);
+        // La barra sale con el puntero sobre el papel.
+        h.frame(vec![Event::PointerMoved(paper.center())]);
         h.drag(bar, bar + Vec2::new(zoom * 3.0, zoom * 2.0));
         let note = |h: &Harness| {
             h.editor

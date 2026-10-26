@@ -2395,3 +2395,40 @@ fn ctrl_z_with_a_text_field_focused_does_not_undo_the_document() {
     assert_eq!(h.app.doc.editor.revision, revision);
     assert!(h.app.doc.editor.history.can_undo());
 }
+
+#[test]
+fn a_new_note_from_the_edit_menu_takes_what_is_typed() {
+    let mut h = two_tabs(Some(0));
+    open_menu(&mut h, "Edit");
+    h.click(h.button("New Note").center(), PointerButton::Primary);
+    h.frame();
+    // Como un teclado de verdad: la tecla y su texto (las letras son atajos de herramientas).
+    for (key, text) in [
+        (egui::Key::H, "h"),
+        (egui::Key::O, "o"),
+        (egui::Key::L, "l"),
+        (egui::Key::A, "a"),
+    ] {
+        let press = |pressed| Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Default::default(),
+        };
+        h.frame_with(vec![press(true), Event::Text(text.into())]);
+        h.frame_with(vec![press(false)]);
+    }
+    h.frame();
+    h.frame_with(vec![Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+    h.frame();
+    let notes = &h.app.doc.editor.document.notes;
+    assert_eq!(notes.len(), 1);
+    assert_eq!(notes[0].text, "hola");
+}
