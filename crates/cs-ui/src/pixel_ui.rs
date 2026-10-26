@@ -824,6 +824,50 @@ pub fn icon_button(
 /// El botón con ícono: 25×16, como los de la barra.
 const ICON_BUTTON: Vec2 = vec2(25.0, 16.0);
 
+/// Un botón que se prende y se apaga con su LED: el `button` de siempre (no se hunde) con el ícono
+/// `icon` y, a su derecha, el punto de los grupos de opciones (`button.dot.on` prendido,
+/// `button.dot.off` apagado). `label` es su nombre y su tooltip. Sin Pixel UI, una opción de egui.
+pub fn led_button(ui: &mut Ui, skin: Option<&Skin>, icon: &str, label: &str, on: bool) -> Response {
+    let skin = skin.filter(|s| s.piece(icon, WidgetState::Normal).is_some());
+    let Some(skin) = skin else {
+        return ui.selectable_label(on, label);
+    };
+    let ppp = ui.ctx().pixels_per_point();
+    let icon_size = crate::pixel_draw::piece_size(skin, icon);
+    let led = if on { LED_ON } else { LED_OFF };
+    let led_size = crate::pixel_draw::piece_size(skin, led);
+    let width = LED_PAD + icon_size.x + LED_GAP + led_size.x + LED_PAD;
+    let size = vec2(width, ICON_BUTTON.y);
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let rect = Rect::from_min_size(rect.min.round(), size);
+    // Prendido o apagado lo dice el LED: el botón no queda hundido.
+    let info = crate::pixel_draw::ButtonInfo {
+        selected: None,
+        ..crate::pixel_draw::ButtonInfo::new(ui.id().with(("led_button", label)), label)
+    };
+    let response = crate::pixel_draw::skin_button(ui, skin, rect, info, |inner| {
+        // En el relleno (sin las filas de abajo del botón), centrados a lo alto.
+        let fill = Rect::from_min_max(inner.min, inner.max - vec2(0.0, 2.0));
+        let middle = |h: f32| (fill.center().y - h / 2.0).floor();
+        let icon_at = pos2(rect.left() + LED_PAD, middle(icon_size.y));
+        let led_at = pos2(icon_at.x + icon_size.x + LED_GAP, middle(led_size.y));
+        let mut shapes = crate::pixel_draw::piece_at(skin, icon, icon_at, ppp);
+        shapes.extend(crate::pixel_draw::piece_at(skin, led, led_at, ppp));
+        shapes
+    });
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Checkbox, ui.is_enabled(), on, label)
+    });
+    response.tip(label)
+}
+
+/// El LED de un [`led_button`] (el de los grupos de opciones), del borde a lo de adentro y del
+/// ícono al LED.
+const LED_ON: &str = "button.dot.on";
+const LED_OFF: &str = "button.dot.off";
+const LED_PAD: f32 = 4.0;
+const LED_GAP: f32 = 2.0;
+
 pub fn text_button(ui: &mut Ui, label: &str) -> Response {
     match frame_skin(ui.ctx()) {
         Some(skin) => pixel_button(ui, &skin, label),
