@@ -16,6 +16,8 @@ use cs_core::ArtboardId;
 /// aire entre uno y otro.
 pub const BUTTON_SIZE: Vec2 = vec2(23.0, 24.0);
 const BUTTON_GAP: f32 = 3.0;
+/// Arriba de los botones: el primero empieza a la altura de la caja del lienzo (sus reglas).
+const TOP_AIR: f32 = 5.0;
 /// Ancho del dock: los botones y 3 de aire hasta el panel derecho.
 pub const WIDTH: f32 = 26.0;
 pub const RIGHT_MARGIN: i8 = 3;
@@ -92,13 +94,14 @@ pub struct DockOutput {
     pub app_panel: Option<(DockPanel, Rect)>,
 }
 
-/// Un botón del dock con Pixel UI: la pieza `button` según el estado (`Active` si su panel está
-/// abierto) y el ícono centrado.
+/// Un botón del dock con Pixel UI: la pieza `button` según el estado (con su panel abierto, el
+/// marco rosa de la herramienta elegida) y el ícono centrado.
 fn pixel_button(ui: &mut Ui, skin: &Skin, panel: DockPanel, open: bool) -> egui::Response {
     let (rect, _) = ui.allocate_exact_size(BUTTON_SIZE, Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), BUTTON_SIZE);
     let info = pixel_draw::ButtonInfo {
         selected: Some(open),
+        framed: true,
         ..pixel_draw::ButtonInfo::new(ui.id().with(("dock", panel.label())), panel.label())
     };
     let ppp = ui.ctx().pixels_per_point();
@@ -133,6 +136,9 @@ pub fn show(
     let open = open_panel(ui.ctx());
     let mut anchors = Vec::new();
     ui.spacing_mut().item_spacing.y = BUTTON_GAP;
+    if skin.is_some() {
+        ui.add_space(TOP_AIR);
+    }
     for panel in DockPanel::ALL {
         let is_open = open == Some(panel);
         let response = match skin {

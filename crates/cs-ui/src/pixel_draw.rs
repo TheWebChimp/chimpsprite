@@ -68,6 +68,8 @@ pub struct ButtonInfo<'a> {
     pub label: &'a str,
     pub enabled: bool,
     pub selected: Option<bool>,
+    /// Prendido como la herramienta elegida (sin hundirse, con su marco rosa); si no, hundido.
+    pub framed: bool,
 }
 
 impl<'a> ButtonInfo<'a> {
@@ -78,6 +80,7 @@ impl<'a> ButtonInfo<'a> {
             label,
             enabled: true,
             selected: None,
+            framed: false,
         }
     }
 }
@@ -98,6 +101,7 @@ pub fn skin_button(
         label,
         enabled,
         selected,
+        framed,
     } = info;
     let sense = if enabled {
         Sense::click()
@@ -114,7 +118,7 @@ pub fn skin_button(
         WidgetState::Normal
     } else if response.is_pointer_button_down_on() {
         WidgetState::Down
-    } else if selected == Some(true) {
+    } else if selected == Some(true) && !framed {
         WidgetState::Active
     } else if response.hovered() {
         WidgetState::Hover
@@ -122,7 +126,9 @@ pub fn skin_button(
         WidgetState::Normal
     };
     let ppp = ui.ctx().pixels_per_point();
+    let lit = framed && enabled && selected == Some(true) && state != WidgetState::Down;
     let mut shapes = match skin.piece("button", state) {
+        Some(piece) if lit => pixel_ui::selected_shapes(piece, rect, true, skin.colors(), ppp),
         Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
         None => vec![Shape::rect_stroke(
             rect.shrink(0.5),

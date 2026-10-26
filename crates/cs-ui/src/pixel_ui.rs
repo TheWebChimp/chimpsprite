@@ -561,6 +561,41 @@ pub fn toolbar_box(ui: &mut Ui, skin: &Skin, add_contents: impl FnOnce(&mut Ui))
     rect
 }
 
+/// Un botón elegido como en la barra de herramientas: no se hunde; la pieza de siempre con su
+/// relleno liso y 1 px rosa por dentro del borde (sin el brillo ni el bisel). Abajo cubre también
+/// la luz; con `bottom_line`, hasta la línea de abajo de la pieza.
+pub(crate) fn selected_shapes(
+    piece: &Piece,
+    rect: Rect,
+    bottom_line: bool,
+    colors: &SkinColors,
+    ppp: f32,
+) -> Vec<Shape> {
+    let mut shapes = piece_shapes(piece, rect, ppp);
+    let [left, top, right, bottom] = borders(piece);
+    let below = if bottom_line { bottom.min(1.0) } else { 0.0 };
+    let inner = Rect::from_min_max(
+        rect.min + vec2(left.min(1.0), top.min(1.0)),
+        rect.max - vec2(right.min(1.0), below),
+    );
+    shapes.push(Shape::rect_filled(
+        inner.round_to_pixels(ppp),
+        0.0,
+        colors.panel,
+    ));
+    shapes.extend(
+        [
+            Rect::from_min_max(inner.min, pos2(inner.right(), inner.top() + 1.0)),
+            Rect::from_min_max(pos2(inner.left(), inner.bottom() - 1.0), inner.max),
+            Rect::from_min_max(inner.min, pos2(inner.left() + 1.0, inner.bottom())),
+            Rect::from_min_max(pos2(inner.right() - 1.0, inner.top()), inner.max),
+        ]
+        .into_iter()
+        .map(|r| Shape::rect_filled(r.round_to_pixels(ppp), 0.0, colors.timeline_selection)),
+    );
+    shapes
+}
+
 /// Botón de herramienta de la barra de íconos: el marco del tramo `slot` de la columna
 /// (`tool.slot.first`, `tool.slot` o `tool.slot.last`; con `selected`, su `.active`) a tamaño
 /// de pieza y el ícono `icon` centrado en el relleno (el centro del 9-slice). Presionado, el
@@ -609,39 +644,10 @@ pub fn tool_button(
     let colors = *skin.colors();
     let ppp = ui.ctx().pixels_per_point();
     let mut shapes = match slot_piece(skin, slot, state) {
+        // Los tramos de arriba y del medio terminan en la luz (la línea es la de arriba del
+        // siguiente); el último trae su línea de abajo.
         Some(piece) if selected && !pressed => {
-            let mut shapes = piece_shapes(piece, rect, ppp);
-            let [left, top, right, bottom] = borders(piece);
-            // Adentro del borde (sin el brillo ni el bisel): el relleno y su marco rosa. Abajo
-            // cubre también la luz: los tramos de arriba y del medio terminan en ella (la línea
-            // es la de arriba del siguiente); el último trae su línea de abajo.
-            let below = if slot == SlotPos::Last {
-                bottom.min(1.0)
-            } else {
-                0.0
-            };
-            let inner = Rect::from_min_max(
-                rect.min + vec2(left.min(1.0), top.min(1.0)),
-                rect.max - vec2(right.min(1.0), below),
-            );
-            shapes.push(Shape::rect_filled(
-                inner.round_to_pixels(ppp),
-                0.0,
-                colors.panel,
-            ));
-            shapes.extend(
-                [
-                    Rect::from_min_max(inner.min, pos2(inner.right(), inner.top() + 1.0)),
-                    Rect::from_min_max(pos2(inner.left(), inner.bottom() - 1.0), inner.max),
-                    Rect::from_min_max(inner.min, pos2(inner.left() + 1.0, inner.bottom())),
-                    Rect::from_min_max(pos2(inner.right() - 1.0, inner.top()), inner.max),
-                ]
-                .into_iter()
-                .map(|r| {
-                    Shape::rect_filled(r.round_to_pixels(ppp), 0.0, colors.timeline_selection)
-                }),
-            );
-            shapes
+            selected_shapes(piece, rect, slot == SlotPos::Last, &colors, ppp)
         }
         Some(piece) => piece_shapes(piece, rect, ppp),
         None => {
