@@ -19,6 +19,9 @@ const SITE: &str = "https://www.dafont.com";
 /// Lo que se acepta de un zip y de una fuente (de sobra para una fuente pixel).
 const MAX_ZIP_BYTES: usize = 8 * 1024 * 1024;
 const MAX_FONT_BYTES: u64 = 4 * 1024 * 1024;
+/// Lo que ocupa la ventana fuera de la lista (título, texto, Try it y márgenes), para que quepa
+/// en la pantalla.
+const LIST_CHROME: f32 = 200.0;
 /// El ancho de las vistas previas en la lista.
 const PREVIEW_W: f32 = 320.0;
 
@@ -34,6 +37,9 @@ pub struct DafontFont {
     /// "100% Free", "Free for personal use", "Public domain / GPL / OFL"…
     pub license: String,
     pub preview_url: Option<String>,
+    /// El botón Download del listado; no siempre es el `slug` (`vcr-osd-mono` baja con
+    /// `f=vcr_osd_mono`).
+    pub download_url: Option<String>,
 }
 
 impl DafontFont {
@@ -42,7 +48,12 @@ impl DafontFont {
     }
 
     fn download_url(&self) -> String {
-        format!("https://dl.dafont.com/dl/?f={}", self.slug)
+        self.download_url.clone().unwrap_or_else(|| {
+            format!(
+                "https://dl.dafont.com/dl/?f={}",
+                self.slug.replace('-', "_")
+            )
+        })
     }
 }
 
@@ -136,6 +147,11 @@ pub fn parse_listing(html: &str) -> Vec<DafontFont> {
                     format!("{SITE}{}", unescape(p))
                 }
             });
+            let download_url = between(block, 0, "class=\"dl\"", "</a>")
+                .and_then(|(link, _)| between(link, 0, "href=\"", "\""))
+                .map(|(href, _)| unescape(href))
+                .filter(|href| href.starts_with("//dl.dafont.com/"))
+                .map(|href| format!("https:{href}"));
             (!slug.contains('"') && !slug.contains('/')).then(|| DafontFont {
                 name: unescape(name),
                 slug: slug.to_string(),
@@ -143,6 +159,7 @@ pub fn parse_listing(html: &str) -> Vec<DafontFont> {
                 size_px,
                 license,
                 preview_url,
+                download_url,
             })
         })
         .collect()
@@ -292,9 +309,19 @@ impl DafontWindow {
         let mut picked = None;
         if let Some(result) = self.download.as_ref().and_then(|(_, p)| p.poll()) {
             let (font, _) = self.download.take().expect("polled");
-            match result.and_then(|(name, bytes)| {
-                cs_tools::text::FontChoice::load(name, &bytes).map_err(|_| FetchError::Invalid)
-            }) {
+            // Cada falla con su aviso: la descarga no fue un zip con la fuente o la fuente no se lee.
+            let loaded = result
+                .map_err(|e| match e {
+                    FetchError::Invalid => {
+                        "the download isn't a zip with a .ttf or .otf font.".into()
+                    }
+                    e => describe(&e),
+                })
+                .and_then(|(name, bytes)| {
+                    cs_tools::text::FontChoice::load(name, &bytes)
+                        .map_err(|_| "ChimpSprite can't read this font file.".to_string())
+                });
+            match loaded {
                 Ok(choice) => {
                     picked = Some(Picked {
                         font: choice,
@@ -302,7 +329,7 @@ impl DafontWindow {
                     });
                     self.open = false;
                 }
-                Err(e) => self.error = Some(format!("{}: {}", font.name, describe(&e))),
+                Err(e) => self.error = Some(format!("{}: {e}", font.name)),
             }
         }
         for preview in self.previews.values_mut() {
@@ -353,8 +380,9 @@ impl DafontWindow {
                 pixel_ui::scroll(
                     ui,
                     egui::ScrollArea::vertical()
-                        .max_height(420.0)
-                        .auto_shrink([false, true]),
+                        // Casi todo el alto de la pantalla: se ven varias fuentes a la vez.
+                        .max_height((ctx.content_rect().height() - LIST_CHROME).max(420.0))
+                        .auto_shrink([false, false]),
                     |ui| {
                         for font in &self.fonts {
                             if self.font_row(ui, font) {
@@ -494,6 +522,7 @@ mod tests {
                 size_px: Some(16),
                 license: "100% Free".into(),
                 preview_url: Some("https://www.dafont.com/img/preview/m/i/minecraft0.png".into()),
+                download_url: Some("https://dl.dafont.com/dl/?f=minecraft".into()),
             }
         );
         assert_eq!(fonts[1].name, "Kiwi Soda");
@@ -504,6 +533,16 @@ mod tests {
             "https://dl.dafont.com/dl/?f=minecraft"
         );
         assert!(parse_listing("<html>nothing here</html>").is_empty());
+        // Sin el botón en el listado, los guiones del nombre van como guiones bajos.
+        let vcr = DafontFont {
+            slug: "vcr-osd-mono".into(),
+            download_url: None,
+            ..fonts[1].clone()
+        };
+        assert_eq!(
+            vcr.download_url(),
+            "https://dl.dafont.com/dl/?f=vcr_osd_mono"
+        );
     }
 
     #[test]
