@@ -777,10 +777,13 @@ impl DafontPanel {
         if response.clicked() {
             ui.ctx().open_url(egui::OpenUrl::new_tab(SITE));
         }
-        // Debajo de lo más alto (los campos o el logo), la línea grabada.
-        let bottom = ui.cursor().top().max(at.bottom() + 1.0);
+        // La línea grabada a 1 fila del logo (o debajo de los campos, si bajan más).
+        let line_top = ui.cursor().top().max(at.bottom() + 1.0);
         let (line, _) = ui.allocate_exact_size(
-            vec2(ui.available_width(), bottom - ui.cursor().top() + 4.0),
+            vec2(
+                ui.available_width(),
+                line_top + pixel_ui::ETCHED_SIZE - ui.cursor().top(),
+            ),
             egui::Sense::hover(),
         );
         if let Some(skin) = &skin {
