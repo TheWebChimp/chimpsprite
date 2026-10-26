@@ -579,7 +579,6 @@ impl CanvasView {
         pointer: Option<Pos2>,
         pressed: bool,
         down: bool,
-        ctrl: bool,
     ) -> Option<egui::CursorIcon> {
         let origin = editor.artboard().position;
         // Copias para no tomar prestado `self` dentro de los closures.
@@ -655,17 +654,10 @@ impl CanvasView {
             return None;
         }
         let index = hit_guide(editor.guides(), local(p), SNAP_PX / self.zoom)?;
-        let grabbable = matches!(
-            editor.active_tool(),
-            ToolKind::RectSelect | ToolKind::EllipseSelect | ToolKind::Move | ToolKind::Artboard
-        ) || ctrl;
+        // Con cualquier herramienta: la guía bajo el puntero se agarra, salvo que estén
+        // bloqueadas.
         if view.lock_guides {
             self.guide_hint = Some("Guides are locked (View › Guides › Lock Guides)");
-            return None;
-        }
-        if !grabbable {
-            self.guide_hint =
-                Some("Guide: hold Ctrl and drag to move it · drop it on a ruler to remove it");
             return None;
         }
         self.guide_hint = Some("Drag to move the guide · drop it on a ruler to remove it");
@@ -841,7 +833,6 @@ impl CanvasView {
                 pointer,
                 pressed_primary,
                 any_down,
-                modifiers.command,
             )
         };
         let ruler_busy =
@@ -3114,6 +3105,28 @@ mod tests {
         h.frame(vec![]);
         assert_eq!(h.cursor, egui::CursorIcon::Grab);
         assert_eq!(h.editor.tool, ToolKind::Hand);
+    }
+
+    #[test]
+    fn any_tool_moves_a_guide_unless_they_are_locked() {
+        let mut h = Harness::new();
+        h.editor.set_tool(ToolKind::Pencil);
+        // Una guía horizontal en la fila 8, desde la regla.
+        let ruler = Pos2::new(h.rect.center().x, h.rect.top() + RULER_PX / 2.0);
+        h.drag(ruler, h.screen((8, 8)));
+        assert_eq!(h.editor.guides()[0].position, 8);
+        let before = h.editor.sprite().clone();
+        // Con el lápiz se agarra y se mueve (no pinta).
+        let on_guide = h.canvas.to_screen(h.rect, (4, 8));
+        let target = h.canvas.to_screen(h.rect, (4, 12));
+        h.drag(on_guide, target);
+        assert_eq!(h.editor.guides()[0].position, 12, "moved with the pencil");
+        assert_eq!(*h.editor.sprite(), before, "the pencil did not draw");
+        // Bloqueadas, no se mueven.
+        h.view.lock_guides = true;
+        let on_guide = h.canvas.to_screen(h.rect, (4, 12));
+        h.drag(on_guide, h.screen((4, 14)));
+        assert_eq!(h.editor.guides()[0].position, 12, "locked");
     }
 
     #[test]
