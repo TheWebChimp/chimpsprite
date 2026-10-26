@@ -713,8 +713,10 @@ dependencies = [
  "eframe",
  "env_logger",
  "log",
+ "raw-window-handle",
  "wasm-bindgen-futures",
  "wgpu",
+ "windows-sys 0.59.0",
  "winresource",
 ]
 

@@ -1,5 +1,8 @@
 //! Punto de entrada: ventana nativa en escritorio, `<canvas>` en el navegador.
 
+#[cfg(windows)]
+mod win_icon;
+
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     use eframe::egui;
@@ -22,7 +25,16 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "ChimpSprite",
         options,
-        Box::new(|cc| Ok(Box::new(cs_ui::ChimpApp::new(cc)))),
+        Box::new(|cc| {
+            let app = cs_ui::ChimpApp::new(cc);
+            // En Windows, los íconos dibujados a mano en su tamaño (no el de 48 reducido).
+            #[cfg(windows)]
+            let app = win_icon::WithIcons {
+                icons: win_icon::WindowIcons::load(cc),
+                app,
+            };
+            Ok(Box::new(app))
+        }),
     )
 }
 

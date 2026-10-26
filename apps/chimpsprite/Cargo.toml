@@ -14,6 +14,11 @@ log.workspace = true
 # El ícono adentro del `.exe` en Windows (usa el rc.exe del SDK).
 winresource = "0.1"
 
+[target.'cfg(windows)'.dependencies]
+# Los íconos de la ventana desde los recursos del `.exe` (ver src/win_icon.rs).
+raw-window-handle = "0.6"
+windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_UI_WindowsAndMessaging"] }
+
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger.workspace = true
 

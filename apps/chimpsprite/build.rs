@@ -1,4 +1,4 @@
-//! En Windows, el ícono de la app (16, 32 y 48 px, dibujados a mano) va adentro del `.exe`: es el
+//! En Windows, el ícono de la app (16, 24, 32 y 48 px, dibujados a mano) va adentro del `.exe`: es el
 //! que muestran el Explorador y la barra de tareas.
 
 fn main() {
