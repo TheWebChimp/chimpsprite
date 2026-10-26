@@ -3515,6 +3515,46 @@ mod tests {
         assert!(h.editor.document.artboard(first).is_some(), "undone");
     }
 
+    /// Dónde está dibujado el texto `label` en el último frame (los "…" del menú pixel son los
+    /// de la fuente, `tab_bar::ellipsis`).
+    fn text_rect(h: &Harness, label: &str) -> Option<Rect> {
+        let shown = label.replace('…', crate::tab_bar::ellipsis());
+        h.shapes.iter().find_map(|s| match s {
+            egui::Shape::Text(t) if t.galley.text() == shown => Some(t.visual_bounding_rect()),
+            _ => None,
+        })
+    }
+
+    /// Con Pixel UI (el desplegable pixel, anclado al "≡" de 9 px) se abre sin tronar y cada
+    /// opción cierra el menú.
+    #[test]
+    fn every_item_of_the_artboard_menu_works() {
+        for item in [
+            "Rename",
+            "Properties…",
+            "Duplicate",
+            "Sprite Size…",
+            "Canvas Size…",
+            "Delete",
+        ] {
+            let mut h = Harness::new();
+            h.editor.add_artboard(8, 8);
+            let skin = with_window(&mut h);
+            // Con el skin del frame, como en la app: el menú es el desplegable pixel.
+            crate::pixel_ui::set_bubble(&h.ctx, Some(std::sync::Arc::new(skin)));
+            let pixels = h.pixels_of(0);
+            let menu = pixels.left_top() + Vec2::new(-2.0 + 2.0 + 4.5, -14.0 + 7.5);
+            h.click(menu, PointerButton::Primary);
+            h.frame(vec![]);
+            let at = text_rect(&h, item).unwrap_or_else(|| panic!("no {item}"));
+            h.click(at.center(), PointerButton::Primary);
+            for _ in 0..3 {
+                h.frame(vec![]);
+            }
+            assert!(text_rect(&h, item).is_none(), "{item}: the menu closed");
+        }
+    }
+
     #[test]
     fn inactive_windows_are_dimmed_and_the_active_one_is_not() {
         let mut h = Harness::new();

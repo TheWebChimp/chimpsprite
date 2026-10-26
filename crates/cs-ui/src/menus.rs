@@ -767,7 +767,8 @@ pub(crate) fn dropdown<R>(
     content: impl FnOnce(&mut Ui) -> R,
 ) -> Option<R> {
     let config = menu::MenuConfig::new().style(pixel_menu_style);
-    let min_width = anchor.width() - PANEL_MARGIN.sum().x;
+    // Un ancla angosta (el "≡" de un artboard) no deja un ancho negativo: egui lo rechaza.
+    let min_width = (anchor.width() - PANEL_MARGIN.sum().x).max(0.0);
     Popup::menu(response)
         .anchor(anchor)
         .align(RectAlign::BOTTOM_START)
