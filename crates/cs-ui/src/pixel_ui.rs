@@ -612,10 +612,17 @@ pub fn tool_button(
         Some(piece) if selected && !pressed => {
             let mut shapes = piece_shapes(piece, rect, ppp);
             let [left, top, right, bottom] = borders(piece);
-            // Adentro del borde (sin el brillo ni el bisel): el relleno y su marco rosa.
+            // Adentro del borde (sin el brillo ni el bisel): el relleno y su marco rosa. Abajo
+            // cubre también la luz: los tramos de arriba y del medio terminan en ella (la línea
+            // es la de arriba del siguiente); el último trae su línea de abajo.
+            let below = if slot == SlotPos::Last {
+                bottom.min(1.0)
+            } else {
+                0.0
+            };
             let inner = Rect::from_min_max(
                 rect.min + vec2(left.min(1.0), top.min(1.0)),
-                rect.max - vec2(right.min(1.0), bottom.min(1.0)),
+                rect.max - vec2(right.min(1.0), below),
             );
             shapes.push(Shape::rect_filled(
                 inner.round_to_pixels(ppp),
