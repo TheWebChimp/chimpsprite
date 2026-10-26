@@ -243,6 +243,13 @@ const HEADER_GAP: f32 = 2.0;
 const BADGE_PAD: f32 = 2.0;
 /// Lo de adentro de las tarjetas del detalle.
 const CARD_PAD: f32 = 4.0;
+/// El aire a los lados de la vista previa en su tarjeta.
+const IMAGE_PAD: f32 = 5.0;
+/// Entre el contenido y la barra de scroll.
+const SCROLL_GAP: f32 = 5.0;
+/// Del borde del panel a su contenido, y lo que ocupan su línea y su luz.
+const PANEL_MARGIN: f32 = crate::dock::FLYOUT_MARGIN as f32;
+const PANEL_EDGE: f32 = 2.0;
 /// Una celda de la cuadrícula: al menos 26 de ancho (con su línea), 5 px de aire, el carácter y
 /// su código arriba y el glifo debajo.
 const CELL_W: f32 = 26.0;
@@ -480,12 +487,13 @@ impl DafontPanel {
             (ctx.content_rect().bottom() - ui.cursor().top() - LIST_BELOW).max(120.0)
         };
         let downloading = self.download.as_ref().map(|(f, _, _)| f.slug.clone());
-        let shown_sample = self.shown_sample.clone();
+        // En el detalle la muestra sigue al campo mientras se escribe.
+        let live_sample = self.sample.clone();
         if let Some(detail) = &mut self.detail {
             detail_ui(
                 ui,
                 detail,
-                &shown_sample,
+                &live_sample,
                 downloading.as_deref(),
                 list_h,
                 &mut asked,
@@ -496,8 +504,10 @@ impl DafontPanel {
                 ui,
                 egui::ScrollArea::vertical()
                     .max_height(height)
+                    .min_scrolled_height(height)
                     .auto_shrink([false, false]),
                 |ui| {
+                    ui.set_max_width(ui.available_width() - SCROLL_GAP);
                     for (k, font) in self.fonts.iter().enumerate() {
                         if self.font_card(ui, font, &mut asked) {
                             asked.visible.push(k);
@@ -600,9 +610,9 @@ impl DafontPanel {
 
     /// Lo pedido en el frame. Devuelve la fuente del detalle si se eligió (ya está bajada).
     fn answer(&mut self, ctx: &egui::Context, asked: Asked, now: f64) -> Option<Picked> {
-        if asked.submit && self.sample.trim() != self.shown_sample {
+        // Al volver del detalle, la lista también muestra lo que se escribió ahí.
+        if (asked.submit || asked.back) && self.sample.trim() != self.shown_sample {
             self.shown_sample = self.sample.trim().to_string();
-            // La muestra del detalle se vuelve a dibujar con el texto nuevo.
             self.reload(ctx);
         }
         if asked.sort {
@@ -686,9 +696,10 @@ impl DafontPanel {
         let right = ui.max_rect().right();
         ui.horizontal_top(|ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
-            // El campo de la muestra: en el detalle, hasta Submit (no hay orden).
+            // El campo de la muestra: en el detalle, hasta el logo (no hay orden ni Submit: la
+            // muestra cambia al escribir).
             let field_w = if in_detail {
-                (WIDTH - logo_size.x - 60.0).max(SAMPLE_W)
+                (WIDTH - logo_size.x - 10.0).max(SAMPLE_W)
             } else {
                 SAMPLE_W
             };
@@ -727,16 +738,23 @@ impl DafontPanel {
                     asked.sort = self.sort != before;
                 });
             }
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                ui.label(" ");
-                if pixel_ui::text_button(ui, "Submit").clicked() {
-                    asked.submit = true;
-                }
-            });
+            if !in_detail {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    ui.label(" ");
+                    if pixel_ui::text_button(ui, "Submit").clicked() {
+                        asked.submit = true;
+                    }
+                });
+            }
         });
         // El logo, arriba a la derecha: abre dafont.com.
-        let at = egui::Rect::from_min_size(egui::pos2(right - logo_size.x, top), logo_size);
+        // En la esquina de arriba a la derecha del panel, contra su luz.
+        let corner = egui::pos2(
+            right + PANEL_MARGIN - PANEL_EDGE,
+            top - PANEL_MARGIN + PANEL_EDGE,
+        );
+        let at = egui::Rect::from_min_size(corner - vec2(logo_size.x, 0.0), logo_size);
         let response = ui
             .interact(at, ui.id().with("dafont_logo"), egui::Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -768,7 +786,8 @@ impl DafontPanel {
         if let Some(skin) = &skin {
             let ppp = ui.ctx().pixels_per_point();
             ui.painter().add(pixel_ui::etched_hline(
-                line.x_range(),
+                // De lado a lado del panel: de la línea de un borde a la del otro.
+                line.x_range().expand(PANEL_MARGIN - 1.0),
                 line.bottom() - pixel_ui::ETCHED_SIZE,
                 skin.colors(),
                 ppp,
@@ -788,8 +807,9 @@ impl DafontPanel {
             _ => None,
         };
         let height = texture.map_or(40.0, |t| t.size_vec2().y);
-        let inner = card(ui, width, height);
-        let shown = ui.is_rect_visible(inner);
+        let card_rect = card(ui, width, height);
+        let shown = ui.is_rect_visible(card_rect);
+        let inner = card_rect.shrink2(vec2(IMAGE_PAD, 0.0));
         let loading = matches!(self.previews.get(&font.slug), Some(Preview::Loading(..)));
         match texture {
             Some(texture) => {
@@ -947,8 +967,12 @@ fn detail_ui(
         ui,
         egui::ScrollArea::vertical()
             .max_height(height)
+            .min_scrolled_height(height)
             .auto_shrink([false, false]),
-        |ui| glyph_grid(ui, detail, &font, cell),
+        |ui| {
+            ui.set_max_width(ui.available_width() - SCROLL_GAP);
+            glyph_grid(ui, detail, &font, cell);
+        },
     );
 }
 

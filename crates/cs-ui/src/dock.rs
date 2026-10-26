@@ -25,7 +25,7 @@ pub const LEFT_AIR: i8 = 3;
 const FLYOUT_WIDTH: f32 = 210.0;
 /// Marco de los paneles flotantes: la pieza `panel` del skin y su aire adentro.
 const FLYOUT_PIECE: &str = "menu.panel";
-const FLYOUT_MARGIN: i8 = 8;
+pub const FLYOUT_MARGIN: i8 = 8;
 /// Entre el botón y su panel flotante.
 const FLYOUT_GAP: f32 = 3.0;
 
