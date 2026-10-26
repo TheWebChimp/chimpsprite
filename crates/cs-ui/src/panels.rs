@@ -210,6 +210,7 @@ fn bar_separator(ui: &mut egui::Ui, etch: Option<BarEtch>) {
     // Las filas del grabado pasan por arriba del alto de la fila (y del recorte del scroll): se
     // recorta solo a lo ancho.
     let mut painter = ui.painter().clone();
+    painter.set_opacity(1.0);
     painter.set_clip_rect(Rect::from_x_y_ranges(ui.clip_rect().x_range(), etch.rows));
     painter.add(pixel_ui::etched_vline(
         rect.left(),
@@ -260,8 +261,12 @@ pub fn tool_options_bar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Sk
     });
     // El separador grabado de abajo, a todo el ancho, después de los controles: queda encima si
     // alguno se pasa de las 19 filas.
+    // Con un diálogo abierto la barra queda deshabilitada (egui la dibuja medio transparente):
+    // las líneas grabadas se ven igual.
     if let Some(etch) = etch {
-        ui.painter().add(pixel_ui::etched_hline(
+        let mut painter = ui.painter().clone();
+        painter.set_opacity(1.0);
+        painter.add(pixel_ui::etched_hline(
             bar.x_range(),
             line,
             &etch.colors,
@@ -1778,6 +1783,23 @@ pub fn pixel_artboards(
 
 /// Un campo del diseño que edita `current`: mientras tiene el foco guarda lo escrito (en la
 /// memoria de egui, con `id`); al perderlo devuelve el texto si cambió (Esc lo descarta).
+/// Un campo de una línea (`widgets::text_line`) que edita una copia de `current`: lo escrito se
+/// guarda mientras tiene el foco y se devuelve al terminar (Enter o al salir) si cambió; Escape
+/// lo descarta.
+fn buffered_line(ui: &mut egui::Ui, id: egui::Id, current: &str, label: &str) -> Option<String> {
+    let mut text = ui
+        .data_mut(|d| d.get_temp::<String>(id))
+        .unwrap_or_else(|| current.to_owned());
+    let response = crate::widgets::text_line_named(ui, &mut text, label);
+    if response.has_focus() {
+        ui.data_mut(|d| d.insert_temp(id, text));
+        return None;
+    }
+    ui.data_mut(|d| d.remove::<String>(id));
+    let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
+    (response.lost_focus() && !cancelled && text != current).then_some(text)
+}
+
 fn pixel_buffered_field(
     ui: &mut egui::Ui,
     skin: &Skin,
@@ -2085,11 +2107,15 @@ pub fn slice_properties(ui: &mut egui::Ui, editor: &mut Editor) {
     let Some(slice) = editor.selected_slice().cloned() else {
         return;
     };
-    let mut name = slice.name.clone();
+    // El nombre y los datos se guardan mientras se escriben (si no, cada frame volverían a ser
+    // los del slice) y se aplican al terminar.
+    let base = ui.id().with(("slice_props", editor.slice));
     ui.horizontal(|ui| {
         ui.label("Name");
-        if crate::widgets::text_line(ui, &mut name).lost_focus() && name != slice.name {
-            editor.update_slice(|s| s.name = name.clone());
+        if let Some(name) = buffered_line(ui, base.with("name"), &slice.name, "Slice name")
+            .filter(|n| !n.trim().is_empty())
+        {
+            editor.update_slice(|s| s.name = name.trim().to_owned());
         }
     });
     let mut c32 = Color32::from_rgb(slice.color.r, slice.color.g, slice.color.b);
@@ -2100,16 +2126,10 @@ pub fn slice_properties(ui: &mut egui::Ui, editor: &mut Editor) {
             editor.update_slice(|s| s.color = cs_core::Rgba::rgb(r, g, b));
         }
     });
-    let mut text = slice.text.clone();
     ui.horizontal(|ui| {
         ui.label("Data");
-        if ui
-            .text_edit_singleline(&mut text)
-            .tip("Free text exported with the slice (e.g. damage=3)")
-            .lost_focus()
-            && text != slice.text
-        {
-            editor.update_slice(|s| s.text = text.clone());
+        if let Some(text) = buffered_line(ui, base.with("data"), &slice.text, "Slice data") {
+            editor.update_slice(|s| s.text = text);
         }
     });
     slice_key_properties(ui, editor);

@@ -88,10 +88,15 @@ pub fn outlined_text(
 
 /// Un campo de texto de una línea: con Pixel UI, el del diseño (`field.text`); sin él, el de egui.
 pub fn text_line(ui: &mut egui::Ui, text: &mut String) -> egui::Response {
+    text_line_named(ui, text, "")
+}
+
+/// Como [`text_line`], con `label` de nombre accesible (y para distinguir el campo).
+pub fn text_line_named(ui: &mut egui::Ui, text: &mut String, label: &str) -> egui::Response {
     match pixel_ui::frame_skin(ui.ctx()) {
         Some(skin) => {
             let width = ui.spacing().text_edit_width.min(ui.available_width());
-            crate::pixel_sections::text_field(ui, &skin, text, width, "", "")
+            crate::pixel_sections::text_field(ui, &skin, text, width, label, "")
         }
         None => ui.text_edit_singleline(text),
     }

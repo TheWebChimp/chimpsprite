@@ -2206,6 +2206,25 @@ fn the_lospec_dock_button_opens_and_closes_the_lospec_window() {
 }
 
 #[test]
+fn with_pixel_ui_a_slice_can_be_renamed() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.click(h.button("Slices").center(), PointerButton::Primary);
+    h.click(h.button("New slice").center(), PointerButton::Primary);
+    h.click(h.node("Slice name").center(), PointerButton::Primary);
+    h.frame_with(vec![Event::Text("x".into())]);
+    let key = |pressed| Event::Key {
+        key: egui::Key::Enter,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![key(true), key(false)]);
+    h.frame();
+    assert_eq!(h.app.doc.editor.sprite().slices[0].name, "Slice 1x");
+}
+
+#[test]
 fn with_pixel_ui_slices_are_tabs_too() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     assert!(h.app.doc.editor.sprite().slices.is_empty());

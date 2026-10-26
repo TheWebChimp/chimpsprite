@@ -19,6 +19,8 @@ struct DialogHarness {
     buttons: Vec<(String, Rect)>,
     /// Campos numéricos del último frame, de arriba abajo y de izquierda a derecha.
     numbers: Vec<Rect>,
+    /// Campos de texto del último frame: nombre y rect.
+    inputs: Vec<(String, Rect)>,
     /// Texturas dibujadas en el último frame.
     textures: Vec<TextureId>,
     /// Textos dibujados en el último frame.
@@ -45,6 +47,7 @@ impl DialogHarness {
             time: 0.0,
             buttons: Vec::new(),
             numbers: Vec::new(),
+            inputs: Vec::new(),
             textures: Vec::new(),
             texts: Vec::new(),
             fills: Vec::new(),
@@ -112,6 +115,11 @@ impl DialogHarness {
             .collect();
         self.numbers
             .sort_by(|a, b| (a.min.y, a.min.x).partial_cmp(&(b.min.y, b.min.x)).unwrap());
+        self.inputs = nodes
+            .iter()
+            .filter(|(_, n)| n.role() == egui::accesskit::Role::TextInput)
+            .filter_map(|(_, n)| Some((n.label()?.to_string(), bounds(n)?)))
+            .collect();
     }
 
     fn collect(&mut self, shape: &Shape) {
@@ -807,6 +815,35 @@ fn new_palette_does_nothing_with_the_palette_locked() {
 
 /// Cada ventana se abre en los dos modos; con Pixel UI es el diálogo pixel (su área y el marco
 /// `window` del skin).
+#[test]
+fn with_pixel_ui_a_slice_can_be_renamed_in_slice_properties() {
+    let mut h = DialogHarness::new(true);
+    h.app.doc.editor.add_slice();
+    h.app.doc.canvas.slice_properties = true;
+    h.settle();
+    let field = h
+        .inputs
+        .iter()
+        .find(|(l, _)| l == "Slice name")
+        .map(|(_, r)| *r)
+        .unwrap_or_else(|| panic!("no Slice name in {:?}", h.inputs));
+    let press = |pressed| Event::PointerButton {
+        pos: field.center(),
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame(vec![Event::PointerMoved(field.center())]);
+    h.frame(vec![press(true)]);
+    h.frame(vec![press(false)]);
+    h.frame(vec![Event::Text("y".into())]);
+    // Varios frames escribiendo: lo escrito no se pierde.
+    h.frame(vec![]);
+    h.frame(vec![Event::Text("z".into())]);
+    h.key(Key::Enter);
+    assert_eq!(h.app.doc.editor.sprite().slices[0].name, "Slice 1yz");
+}
+
 #[test]
 fn every_window_is_the_app_window() {
     type Open = fn(&mut ChimpApp, &egui::Context);
