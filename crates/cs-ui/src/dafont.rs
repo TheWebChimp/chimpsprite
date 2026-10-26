@@ -127,7 +127,9 @@ pub fn parse_listing(html: &str) -> Vec<DafontFont> {
         .filter_map(|(k, &start)| {
             let end = starts.get(k + 1).copied().unwrap_or(html.len());
             let block = &html[start..end];
-            let (slug, _) = between(block, 0, "<a href=\"", ".font\"")?;
+            // Con texto propio, los enlaces llevan `?text=…` (`minecraft.font?text=Hola+mono`).
+            let (href, _) = between(block, 0, "<a href=\"", "\"")?;
+            let slug = href.split('?').next()?.strip_suffix(".font")?;
             let (name, _) = between(block, 0, "<strong>", "</strong>")?;
             let author = block
                 .find(" by <a href=\"")
@@ -294,7 +296,8 @@ impl DafontWindow {
         if !self.open {
             return None;
         }
-        if self.fonts.is_empty() && self.listing.is_none() && self.error.is_none() {
+        // Solo la primera vez: si la lista vino vacía (`end`), no se vuelve a pedir en cada frame.
+        if self.fonts.is_empty() && self.listing.is_none() && self.error.is_none() && !self.end {
             self.load_page(ctx, 1);
         }
         // Lo que llegó.
@@ -392,6 +395,8 @@ impl DafontWindow {
                         }
                         if self.listing.is_some() {
                             ui.weak("Loading");
+                        } else if self.end && self.fonts.is_empty() {
+                            ui.weak("No fonts found");
                         } else if !self.end && !self.fonts.is_empty() {
                             more = pixel_ui::text_button(ui, "More fonts").clicked();
                         }
@@ -557,8 +562,9 @@ mod tests {
             "https://www.dafont.com/bitmap.php?text=Hola+mono%21&page=3"
         );
         assert_eq!(encode("ñ"), "%C3%B1");
-        let html = r#"<div class="lv1left dfbg"><a href="minecraft.font"><strong>Minecraft</strong></a></div><div style="background-image:url(//img.dafont.com/preview_bitmap.php?text=Hola+mono&amp;ttf=minecraft0&amp;ext=1&amp;size=12)" class="preview"></div>"#;
+        let html = r#"<div class="lv1left dfbg"><a href="minecraft.font?text=Hola+mono"><strong>Minecraft</strong></a></div><div style="background-image:url(//img.dafont.com/preview_bitmap.php?text=Hola+mono&amp;ttf=minecraft0&amp;ext=1&amp;size=12)" class="preview"></div>"#;
         let fonts = parse_listing(html);
+        assert_eq!(fonts[0].slug, "minecraft");
         assert_eq!(
             fonts[0].preview_url.as_deref(),
             Some(
