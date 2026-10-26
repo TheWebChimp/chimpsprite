@@ -784,6 +784,18 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
     if look.is_some() {
         gap(ui, CONTROL_GAP);
     }
+    // Las fuentes pixel de dafont.com: la ventana la abre la app.
+    #[cfg(not(target_arch = "wasm32"))]
+    if crate::pixel_ui::text_button(ui, "Dafont…")
+        .tip("Pixel fonts from dafont.com")
+        .clicked()
+    {
+        crate::dafont::request_open(ui.ctx());
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    if look.is_some() {
+        gap(ui, CONTROL_GAP);
+    }
     #[cfg(not(target_arch = "wasm32"))]
     if crate::pixel_ui::text_button(ui, "Load font…").clicked()
         && let Some(path) = rfd::FileDialog::new()
@@ -3866,8 +3878,14 @@ Alt+click: pick color";
             ToolKind::Rectangle,
         ] {
             let h = pixel_bar(tool);
-            // "Load font…" es un botón de egui: el diseño no tiene botones.
-            for (text, ink, _) in h.texts().into_iter().filter(|(t, _, _)| t != "Load font…") {
+            // "Load font…" y "Dafont…" son botones de texto (centrado en el botón): el diseño no
+            // los tiene.
+            let buttons = ["Load font…", "Dafont…"];
+            for (text, ink, _) in h
+                .texts()
+                .into_iter()
+                .filter(|(t, _, _)| !buttons.contains(&t.as_str()))
+            {
                 // Las mayúsculas en la fila 5 (los textos sin mayúsculas, como los números o
                 // "px", no bajan de ahí).
                 assert!(ink.top() >= h.bar.top() + 5.0, "{tool:?}: {text:?} {ink:?}");

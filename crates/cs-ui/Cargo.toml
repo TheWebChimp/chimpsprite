@@ -28,6 +28,8 @@ fontdue = "0.9"
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
 # Las miniaturas de Pixnews (JPEG, PNG y GIF); ya entra con arboard.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
+# Los zips de las fuentes de dafont (la misma versión que usa cs-io).
+zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"

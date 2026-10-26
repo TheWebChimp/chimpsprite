@@ -10,6 +10,8 @@ mod canvas_size;
 mod capture;
 mod clipboard;
 mod color_panel;
+#[cfg(not(target_arch = "wasm32"))]
+mod dafont;
 mod demo;
 #[cfg(test)]
 mod dialog_tests;
@@ -94,6 +96,9 @@ pub struct ChimpApp {
     canvas_size: Option<canvas_size::CanvasSizeDialog>,
     /// El diálogo del menú Sprite abierto (propiedades, duplicar, tamaño).
     sprite_dialog: Option<sprite_dialogs::SpriteDialog>,
+    /// Las fuentes pixel de dafont.com para la herramienta de texto (solo escritorio).
+    #[cfg(not(target_arch = "wasm32"))]
+    dafont: dafont::DafontWindow,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
@@ -229,6 +234,8 @@ impl ChimpApp {
             capture: capture::Capture::from_env(),
             canvas_size: None,
             sprite_dialog: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            dafont: Default::default(),
             platform: platform::Platform::default(),
             autosaver: autosave::Autosaver::default(),
             restore: None,
@@ -1477,6 +1484,14 @@ impl eframe::App for ChimpApp {
         self.layout(ui, modal);
         self.update_canvas_size(&ctx);
         self.update_sprite_dialog(&ctx);
+        // La fuente elegida en dafont queda en la herramienta de texto, a su tamaño y nítida.
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(picked) = self.dafont.show(&ctx, self.pixel.skin()) {
+            let style = &mut self.doc.editor.text_style;
+            style.font = picked.font;
+            style.size = picked.size_px.unwrap_or(16);
+            style.antialias = false;
+        }
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);
         self.show_slice_properties(&ctx);
