@@ -70,7 +70,7 @@ impl Source {
             Source::Itch => "New pixel art games",
             Source::Mastodon => "#pixelart",
             Source::Retronator => "Daily picks",
-            Source::PixelJoint => "Gallery",
+            Source::PixelJoint => "Weekly Showcase",
             Source::PixelArtJourney => "On Bluesky",
         }
     }
@@ -95,7 +95,7 @@ impl Source {
             Source::Itch => "https://itch.io/games/tag-pixel-art.xml",
             Source::Mastodon => "https://mastodon.social/tags/pixelart.rss",
             Source::Retronator => "https://www.retronator.com/rss",
-            Source::PixelJoint => "https://pixeljoint.com/pixels/new_icons.asp",
+            Source::PixelJoint => "https://pixeljoint.com/pixels/new_icons.asp?ob=showcase",
             Source::PixelArtJourney => {
                 "https://public.api.bsky.app/xrpc/app.bsky.feed.getAuthorFeed?actor=pixelartjourney.bsky.social&limit=30&filter=posts_with_media"
             }
@@ -109,7 +109,7 @@ impl Source {
             Source::Itch => "https://itch.io/games/tag-pixel-art",
             Source::Mastodon => "https://mastodon.social/tags/pixelart",
             Source::Retronator => "https://www.retronator.com/",
-            Source::PixelJoint => "https://pixeljoint.com/pixels/new_icons.asp",
+            Source::PixelJoint => "https://pixeljoint.com/pixels/new_icons.asp?ob=showcase",
             Source::PixelArtJourney => "https://bsky.app/profile/pixelartjourney.bsky.social",
         }
     }
