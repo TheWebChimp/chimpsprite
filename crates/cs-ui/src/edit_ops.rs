@@ -70,7 +70,7 @@ impl Editor {
         };
         let color = self.primary;
         let pixels = mask.points().map(|(x, y)| (x, y, color)).collect();
-        self.draw(pixels)
+        self.named("Fill", |e| e.draw(pixels))
     }
 
     /// Edit → Shift: corre lo seleccionado (sin selección, la capa entera) 1 píxel en
@@ -94,7 +94,7 @@ impl Editor {
                 (x, y, sprite.pixel(self.layer, self.frame, sx, sy))
             })
             .collect();
-        self.draw(pixels)
+        self.named("Shift", |e| e.draw(pixels))
     }
 
     /// Edit → Transform (Ctrl+T): levanta lo seleccionado (sin selección, la capa entera) con la
@@ -158,7 +158,7 @@ impl Editor {
             .into_iter()
             .map(|(x, y, c)| (x, y, self.value_of(c)))
             .collect();
-        self.draw(pixels)
+        self.named("Invert", |e| e.draw(pixels))
     }
 }
 

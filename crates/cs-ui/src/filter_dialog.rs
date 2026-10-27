@@ -37,18 +37,6 @@ impl FilterDialog {
         }
     }
 
-    fn title(&self) -> &'static str {
-        match self.filter {
-            Filter::ReplaceColor { .. } => "Replace Color",
-            Filter::BrightnessContrast { .. } => "Brightness/Contrast",
-            Filter::HueSaturation { .. } => "Hue/Saturation",
-            Filter::Outline { .. } => "Outline",
-            Filter::Despeckle { .. } => "Despeckle",
-            Filter::Convolution(_) => "Convolution Matrix",
-            Filter::ColorCurve(_) => "Color Curve",
-        }
-    }
-
     /// Quita la vista previa del lienzo, si había.
     fn unpreview(&mut self, editor: &mut Editor) {
         if self.applied {
@@ -69,7 +57,7 @@ impl FilterDialog {
             ctx,
             skin,
             "filter_dialog",
-            self.title(),
+            self.filter.title(),
             true,
             (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
             |ui| {

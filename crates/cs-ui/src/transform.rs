@@ -26,6 +26,9 @@ pub struct Floating {
     artboard: ArtboardId,
     /// Viene de pegar: no deja hueco en el origen.
     from_paste: bool,
+    /// El nombre del paso al confirmar: "Paste", "Move" o lo último que le hizo algo más que
+    /// moverlo ("Transform", "Rotate", "Flip Horizontal"…).
+    label: &'static str,
     /// Selección de antes de levantar; cancelar vuelve a ella.
     before: Option<Mask>,
     /// Tamaño del lienzo al levantar; si cambia, se cancela.
@@ -45,6 +48,15 @@ pub struct Floating {
     /// Veces que se armó la vista previa (para los tests de la caché).
     #[cfg(test)]
     builds: std::cell::Cell<u32>,
+}
+
+/// El nombre de Edit → Flip en el historial.
+fn flip_label(horizontal: bool) -> &'static str {
+    if horizontal {
+        "Flip Horizontal"
+    } else {
+        "Flip Vertical"
+    }
 }
 
 impl Floating {
@@ -69,6 +81,7 @@ impl Floating {
             layer: target.1,
             frame: target.2,
             from_paste,
+            label: if from_paste { "Paste" } else { "Move" },
             before,
             canvas,
             preview: OnceCell::new(),
@@ -361,6 +374,16 @@ impl Editor {
         // Escalando o rotando se usa Fast (RotSprite es lento para cada movimiento); al soltar se
         // calcula la rotación elegida una vez.
         self.set_floating_box(bbox, drag.hit != TransformHit::Move);
+        if drag.hit != TransformHit::Move {
+            self.name_floating("Transform");
+        }
+    }
+
+    /// El nombre del paso que dejará lo flotante al confirmarse (lo pegado sigue siendo "Paste").
+    fn name_floating(&mut self, label: &'static str) {
+        if let Some(f) = self.floating.as_mut().filter(|f| !f.from_paste) {
+            f.label = label;
+        }
     }
 
     /// Punto de mundo → coordenadas locales del artboard activo, con decimales.
@@ -459,6 +482,7 @@ impl Editor {
         }
         self.stop();
         self.transform_drag = None;
+        self.name_floating(flip_label(horizontal));
         let Some(f) = self.floating.as_mut() else {
             return false;
         };
@@ -491,6 +515,7 @@ impl Editor {
         }
         self.stop();
         self.transform_drag = None;
+        self.name_floating("Rotate");
         let Some(f) = self.floating.as_mut() else {
             return false;
         };
@@ -517,11 +542,14 @@ impl Editor {
                 pixels.push((x, y, sprite.pixel(self.layer, self.frame, sx, sy)));
             }
         }
-        self.execute(Command::DrawPixels {
-            layer: self.layer,
-            frame: self.frame,
-            pixels,
-        })
+        self.execute_named(
+            Command::DrawPixels {
+                layer: self.layer,
+                frame: self.frame,
+                pixels,
+            },
+            flip_label(horizontal),
+        )
     }
 
     /// Recalcula lo transformado y la selección. `fast`: rotación Fast (durante un arrastre de
@@ -571,10 +599,16 @@ impl Editor {
         // `apply_doc` y no `execute_doc`: este es el comando que confirma, no hay nada antes.
         let applied = match cmd {
             Some(Command::DrawPixels { ref pixels, .. }) if pixels.is_empty() => true,
-            Some(cmd) => self.apply_doc(DocCommand::OnArtboard {
-                id: f.artboard,
-                cmd,
-            }),
+            Some(cmd) => {
+                let applied = self.apply_doc(DocCommand::OnArtboard {
+                    id: f.artboard,
+                    cmd,
+                });
+                if applied {
+                    self.history.rename_last(f.label);
+                }
+                applied
+            }
             None => true,
         };
         self.selection = if applied {

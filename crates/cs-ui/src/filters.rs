@@ -188,6 +188,19 @@ pub enum Filter {
 }
 
 impl Filter {
+    /// El nombre del filtro (el de su ventana y su paso en el historial).
+    pub fn title(&self) -> &'static str {
+        match self {
+            Filter::ReplaceColor { .. } => "Replace Color",
+            Filter::BrightnessContrast { .. } => "Brightness/Contrast",
+            Filter::HueSaturation { .. } => "Hue/Saturation",
+            Filter::Outline { .. } => "Outline",
+            Filter::Despeckle { .. } => "Despeckle",
+            Filter::Convolution(_) => "Convolution Matrix",
+            Filter::ColorCurve(_) => "Color Curve",
+        }
+    }
+
     /// El color nuevo de un píxel (los que miran a los vecinos usan `at`, el color en el lienzo).
     fn apply(&self, x: i32, y: i32, at: &dyn Fn(i32, i32) -> Rgba) -> Rgba {
         let c = at(x, y);
@@ -371,11 +384,14 @@ impl Editor {
             .map(|(x, y, c)| (x, y, self.value_of(c)))
             .collect();
         !pixels.is_empty()
-            && self.execute(cs_commands::Command::DrawPixels {
-                layer: self.layer,
-                frame: self.frame,
-                pixels,
-            })
+            && self.execute_named(
+                cs_commands::Command::DrawPixels {
+                    layer: self.layer,
+                    frame: self.frame,
+                    pixels,
+                },
+                filter.title(),
+            )
     }
 }
 

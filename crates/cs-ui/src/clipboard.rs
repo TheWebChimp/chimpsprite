@@ -192,7 +192,7 @@ impl Editor {
         }
         self.commit_floating();
         let clip = self.copy()?;
-        self.clear_selection_content();
+        self.named("Cut", Self::clear_selection_content);
         Some(clip)
     }
 

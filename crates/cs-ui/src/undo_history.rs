@@ -157,4 +157,38 @@ mod tests {
             e.sprite().color_mode.transparent()
         );
     }
+
+    #[test]
+    fn steps_are_named_after_the_tool_or_the_menu_item() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        e.primary = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        e.set_tool(crate::editor::ToolKind::Pencil);
+        crate::tool_tests::stroke(&mut e, &[(1, 1), (3, 1)], false);
+        e.select_all();
+        e.fill_selection();
+        e.flip(true);
+        e.commit_floating();
+        let clip = e.copy().expect("copied");
+        e.paste(&clip);
+        e.commit_floating();
+        e.invert_colors();
+        e.apply_filter(&crate::filters::Filter::ReplaceColor {
+            from: Rgba::rgb(0, 255, 255),
+            to: Rgba::rgb(0, 0, 255),
+            tolerance: 0,
+        });
+        e.cut();
+        assert_eq!(
+            e.history.done().collect::<Vec<_>>(),
+            [
+                "Pencil",
+                "Fill",
+                "Flip Horizontal",
+                "Paste",
+                "Invert",
+                "Replace Color",
+                "Cut"
+            ]
+        );
+    }
 }

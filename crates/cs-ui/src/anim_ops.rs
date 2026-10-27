@@ -97,7 +97,7 @@ impl Editor {
         // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
         self.commit_floating();
         if let Some(cmd) = ops::duplicate_frame(self.sprite(), self.frame, false)
-            && self.execute(cmd)
+            && self.execute_named(cmd, "Duplicate Frame")
         {
             self.set_frame(self.frame + 1);
         }
@@ -269,15 +269,21 @@ impl Editor {
         self.execute(Command::SetLayerProps { id, props });
     }
 
+    /// `set_layer_props` con `label` como nombre del paso.
+    fn named_props(&mut self, id: LayerId, props: LayerProps, label: &'static str) {
+        self.execute_named(Command::SetLayerProps { id, props }, label);
+    }
+
     pub fn toggle_visible(&mut self, id: LayerId) {
         if let Some(l) = self.sprite().layer(id) {
             let visible = Some(!l.visible);
-            self.set_layer_props(
+            self.named_props(
                 id,
                 LayerProps {
                     visible,
                     ..Default::default()
                 },
+                "Layer Visibility",
             );
         }
     }
@@ -285,12 +291,13 @@ impl Editor {
     pub fn toggle_locked(&mut self, id: LayerId) {
         if let Some(l) = self.sprite().layer(id) {
             let locked = Some(!l.locked);
-            self.set_layer_props(
+            self.named_props(
                 id,
                 LayerProps {
                     locked,
                     ..Default::default()
                 },
+                "Layer Lock",
             );
         }
     }
@@ -301,36 +308,39 @@ impl Editor {
             .layer(id)
             .is_some_and(|l| l.opacity != opacity)
         {
-            self.set_layer_props(
+            self.named_props(
                 id,
                 LayerProps {
                     opacity: Some(opacity),
                     ..Default::default()
                 },
+                "Layer Opacity",
             );
         }
     }
 
     pub fn set_blend(&mut self, id: LayerId, blend: BlendMode) {
         if self.sprite().layer(id).is_some_and(|l| l.blend != blend) {
-            self.set_layer_props(
+            self.named_props(
                 id,
                 LayerProps {
                     blend: Some(blend),
                     ..Default::default()
                 },
+                "Blend Mode",
             );
         }
     }
 
     pub fn rename_layer(&mut self, id: LayerId, name: String) {
         if self.sprite().layer(id).is_some_and(|l| l.name != name) && !name.is_empty() {
-            self.set_layer_props(
+            self.named_props(
                 id,
                 LayerProps {
                     name: Some(name),
                     ..Default::default()
                 },
+                "Rename Layer",
             );
         }
     }
@@ -344,7 +354,7 @@ impl Editor {
         if let Some(prev) = frame.checked_sub(1)
             && let Some(cmd) = ops::link_cel(self.sprite(), layer, frame, prev)
         {
-            self.execute(cmd);
+            self.execute_named(cmd, "Link Cels");
         }
     }
 
@@ -352,7 +362,7 @@ impl Editor {
         // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
         self.commit_floating();
         if let Some(cmd) = ops::unlink_cel(self.sprite(), layer, frame) {
-            self.execute(cmd);
+            self.execute_named(cmd, "Unlink Cels");
         }
     }
 
@@ -361,7 +371,7 @@ impl Editor {
         // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
         self.commit_floating();
         if let Some(cmd) = ops::link_range(self.sprite(), layer, from, to) {
-            self.execute(cmd);
+            self.execute_named(cmd, "Link Cels");
         }
     }
 
@@ -369,7 +379,7 @@ impl Editor {
         // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
         self.commit_floating();
         if let Some(cmd) = ops::unlink_range(self.sprite(), layer, from, to) {
-            self.execute(cmd);
+            self.execute_named(cmd, "Unlink Cels");
         }
     }
 
@@ -448,7 +458,7 @@ impl Editor {
             })
             .collect();
         if !cmds.is_empty() {
-            self.execute(Command::Batch(cmds));
+            self.execute_named(Command::Batch(cmds), "Clear Cels");
         }
     }
 
@@ -485,7 +495,8 @@ impl Editor {
         let Some(cmd) = ops::move_cels(sprite, &moves, copy) else {
             return;
         };
-        if !self.execute(cmd) {
+        let label = if copy { "Copy Cels" } else { "Move Cels" };
+        if !self.execute_named(cmd, label) {
             return;
         }
         // El rango va con los cels.

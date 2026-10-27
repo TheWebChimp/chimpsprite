@@ -122,6 +122,10 @@ impl Editor {
 
     /// Copia y quita lo copiado: los cels quedan vacíos; los frames se borran (si no son todos).
     pub fn cut_timeline(&mut self) -> Option<TimelineClip> {
+        self.named("Cut", Self::cut_timeline_content)
+    }
+
+    fn cut_timeline_content(&mut self) -> Option<TimelineClip> {
         let clip = self.copy_timeline()?;
         match &clip {
             TimelineClip::Frames(frames) => {
@@ -170,7 +174,7 @@ impl Editor {
                         }
                     }
                 }
-                if self.execute(Command::Batch(cmds)) {
+                if self.execute_named(Command::Batch(cmds), "Paste") {
                     self.set_frame(at);
                     self.frame_range = Some((at, at + frames.len() - 1));
                     self.frames_picked = true;
@@ -213,7 +217,7 @@ impl Editor {
                         _ => {}
                     }
                 }
-                if cmds.is_empty() || !self.execute(Command::Batch(cmds)) {
+                if cmds.is_empty() || !self.execute_named(Command::Batch(cmds), "Paste") {
                     return;
                 }
                 let bottom = order[(top + rows - 1).min(order.len() - 1)];

@@ -812,6 +812,28 @@ impl Editor {
         })
     }
 
+    /// Como `execute`, con `label` como nombre del paso en el historial (el de la herramienta o
+    /// el del menú: "Pencil", "Fill"… en vez del del comando).
+    pub fn execute_named(&mut self, cmd: Command, label: &'static str) -> bool {
+        let applied = self.execute(cmd);
+        if applied {
+            self.history.rename_last(label);
+        }
+        applied
+    }
+
+    /// Corre `f` (que puede ejecutar varios comandos, o ninguno) y, si dejó pasos nuevos, le pone
+    /// `label` al último. Lo flotante se confirma antes si hace falta (si no, su paso podría
+    /// quedarse con el nombre).
+    pub(crate) fn named<R>(&mut self, label: &'static str, f: impl FnOnce(&mut Self) -> R) -> R {
+        let before = self.history.done_count();
+        let result = f(self);
+        if self.history.done_count() > before {
+            self.history.rename_last(label);
+        }
+        result
+    }
+
     /// Ejecuta un comando sobre el documento. Antes confirma lo flotante: guarda índices (capa,
     /// frame) y una vista previa que otro cambio dejaría desactualizados.
     pub fn execute_doc(&mut self, cmd: DocCommand) -> bool {
@@ -1216,6 +1238,10 @@ impl Editor {
 
     /// Borra (deja transparente) el contenido seleccionado de la capa actual.
     pub fn clear_selection_content(&mut self) {
+        self.named("Clear", Self::clear_content);
+    }
+
+    fn clear_content(&mut self) {
         // Mientras flota, Delete descarta lo pegado o deja solo el hueco de lo levantado.
         if self.delete_floating() {
             return;
@@ -1267,11 +1293,14 @@ impl Editor {
         if pixels.is_empty() {
             return;
         }
-        self.execute(Command::DrawPixels {
-            layer: self.layer,
-            frame: self.frame,
-            pixels,
-        });
+        self.execute_named(
+            Command::DrawPixels {
+                layer: self.layer,
+                frame: self.frame,
+                pixels,
+            },
+            "Stroke",
+        );
     }
 
     /// Herramienta efectiva (considera el cuentagotas temporal).
@@ -1391,7 +1420,7 @@ impl Editor {
         };
         self.text = None;
         let cmd = self.shape_paint(ToolKind::Text, cmd);
-        self.execute(cmd);
+        self.execute_named(cmd, ToolKind::Text.label());
     }
 
     fn text_command(&self) -> Option<Command> {
@@ -1833,7 +1862,7 @@ impl Editor {
         let applied = match out.command {
             Some(cmd) => {
                 let cmd = self.shape_paint(kind, cmd);
-                self.execute(cmd)
+                self.execute_named(cmd, kind.label())
             }
             None => true,
         };
@@ -1864,7 +1893,7 @@ impl Editor {
         if let Some(cmd) = &out.command {
             match self.tiles_edit(proxy, cmd) {
                 TilesEdit::Apply(cmd) => {
-                    applied = self.execute(cmd);
+                    applied = self.execute_named(cmd, kind.label());
                     self.tile_limit = false;
                 }
                 TilesEdit::Nothing => {}

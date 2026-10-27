@@ -72,6 +72,19 @@ impl<C: Undoable> History<C> {
         !self.redo.is_empty()
     }
 
+    /// Le pone `label` al último paso hecho (p. ej. el de la herramienta o el del menú, más claro
+    /// que el del comando).
+    pub fn rename_last(&mut self, label: &'static str) {
+        if let Some(last) = self.undo.last_mut() {
+            last.1 = label;
+        }
+    }
+
+    /// Cuántos pasos hay hechos.
+    pub fn done_count(&self) -> usize {
+        self.undo.len()
+    }
+
     /// Los nombres de los pasos hechos, del primero al último.
     pub fn done(&self) -> impl Iterator<Item = &'static str> + '_ {
         self.undo.iter().map(|(_, label)| *label)
@@ -121,6 +134,20 @@ mod tests {
         fn label(&self) -> &'static str {
             if self.0 % 2 == 0 { "Even" } else { "Odd" }
         }
+    }
+
+    #[test]
+    fn the_last_step_can_be_renamed_and_keeps_the_name_through_undo() {
+        let mut v = 0;
+        let mut h = History::new();
+        h.execute(&mut v, Set(1)).unwrap();
+        h.rename_last("Pencil");
+        assert_eq!(h.done().collect::<Vec<_>>(), ["Pencil"]);
+        h.undo(&mut v).unwrap();
+        assert_eq!(h.undone().collect::<Vec<_>>(), ["Pencil"]);
+        h.redo(&mut v).unwrap();
+        assert_eq!(h.done().collect::<Vec<_>>(), ["Pencil"]);
+        assert_eq!(h.done_count(), 1);
     }
 
     #[test]
