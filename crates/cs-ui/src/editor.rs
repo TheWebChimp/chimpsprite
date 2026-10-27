@@ -1352,6 +1352,20 @@ impl Editor {
         }
     }
 
+    /// Con un trazo de la herramienta en curso, el clic del otro botón (`secondary`: el derecho)
+    /// lo corta sin aplicarlo. Devuelve si lo cortó (entonces ese clic no empieza otro).
+    pub fn cancel_with_other_button(&mut self, secondary: bool) -> bool {
+        let stroking = self
+            .tools
+            .get(self.active_tool())
+            .is_some_and(|t| t.is_active());
+        if !stroking || secondary == self.painting_secondary {
+            return false;
+        }
+        self.abort_stroke();
+        true
+    }
+
     /// Corta el trazo en curso sin aplicarlo (`cancel_gesture` y la herramienta como recién
     /// creada). Si no, el trazo quedaría colgado: al soltar, una herramienta bloqueada no se
     /// suelta.
@@ -2268,6 +2282,27 @@ mod tests {
         assert!(e.sprite().cels.is_empty());
         e.redo();
         assert!(!e.sprite().cels.is_empty());
+    }
+
+    #[test]
+    fn the_other_button_cancels_the_stroke() {
+        let mut e = editor();
+        let at = |p: Point| (p.0 as f32 + 0.5, p.1 as f32 + 0.5);
+        for secondary in [false, true] {
+            e.pointer_press(at((1, 1)), secondary, false, 0.1);
+            e.pointer_drag(at((5, 1)));
+            assert!(
+                !e.cancel_with_other_button(secondary),
+                "the same button does nothing"
+            );
+            assert!(e.cancel_with_other_button(!secondary));
+            assert!(!e.is_painting());
+            e.pointer_release();
+            assert!(e.sprite().cels.is_empty(), "nothing painted");
+            assert!(!e.history.can_undo(), "nothing to undo");
+        }
+        // Sin trazo, el otro botón no corta nada.
+        assert!(!e.cancel_with_other_button(true));
     }
 
     #[test]

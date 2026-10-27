@@ -872,7 +872,13 @@ impl CanvasView {
         }
         let over_note = self.notes.busy() || self.notes.cursor.is_some();
 
+        // Con un trazo a medias, el clic del otro botón lo cancela (y no empieza otro).
+        let cancelled = editor.is_painting()
+            && ((pressed_primary && editor.cancel_with_other_button(false))
+                || (pressed_secondary && editor.cancel_with_other_button(true)));
+
         if !modal
+            && !cancelled
             && !ruler_busy
             && !over_note
             && self.dragging_guide.is_none()
@@ -2617,6 +2623,32 @@ mod tests {
                 .set_selection(Some(Mask::from_rect(16, 16, a, b)));
             self.frame(vec![]);
             red
+        }
+    }
+
+    #[test]
+    fn the_other_button_cancels_a_stroke_without_starting_another() {
+        let mut h = Harness::new();
+        let t = h.editor.sprite().color_mode.transparent();
+        let event = |pos, button, pressed| Event::PointerButton {
+            pos,
+            button,
+            pressed,
+            modifiers: Default::default(),
+        };
+        let (a, b) = (h.screen((2, 2)), h.screen((6, 2)));
+        h.frame(vec![Event::PointerMoved(a)]);
+        h.frame(vec![event(a, PointerButton::Primary, true)]);
+        h.frame(vec![Event::PointerMoved(b)]);
+        assert!(h.editor.is_painting());
+        // El derecho, con el izquierdo todavía abajo: se cancela.
+        h.frame(vec![event(b, PointerButton::Secondary, true)]);
+        assert!(!h.editor.is_painting(), "cancelled, and no new stroke");
+        h.frame(vec![event(b, PointerButton::Secondary, false)]);
+        h.frame(vec![event(b, PointerButton::Primary, false)]);
+        h.frame(vec![]);
+        for x in 2..=6 {
+            assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, x, 2), t, "({x}, 2)");
         }
     }
 
