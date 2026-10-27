@@ -41,7 +41,11 @@ struct Play {
 }
 
 pub struct Preview {
+    /// La textura propia: la de un frame que no es el del lienzo (reproduciendo) o cuando el
+    /// lienzo muestra otra cosa (papel cebolla, máscara).
     texture: Option<TextureHandle>,
+    /// Lo que se ve este frame: la textura del lienzo o la propia, y su tamaño.
+    shown: Option<(egui::TextureId, Vec2)>,
     checker: Option<TextureHandle>,
     /// Lo que tiene la textura: el artboard, su frame y la revisión del documento.
     rendered: Option<(ArtboardId, usize, u64)>,
@@ -52,25 +56,37 @@ pub struct Preview {
     /// El tamaño de la vista.
     size: Vec2,
     play: Option<Play>,
+    /// La textura del lienzo de este frame (ver `show`).
+    canvas: Option<(egui::TextureId, Vec2)>,
 }
 
 impl Default for Preview {
     fn default() -> Self {
         Self {
             texture: None,
+            shown: None,
             checker: None,
             rendered: None,
             zoom: None,
             pan: Vec2::ZERO,
             size: VIEW,
             play: None,
+            canvas: None,
         }
     }
 }
 
 impl Preview {
-    /// La ventana. Devuelve si se cerró con la ×.
-    pub fn show(&mut self, ctx: &egui::Context, editor: &Editor, skin: Option<&Skin>) -> bool {
+    /// La ventana. `canvas`: la textura del lienzo con el frame del editor tal cual, si la hay
+    /// (se usa en vez de componer otra). Devuelve si se cerró con la ×.
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        editor: &Editor,
+        skin: Option<&Skin>,
+        canvas: Option<(egui::TextureId, Vec2)>,
+    ) -> bool {
+        self.canvas = canvas;
         let anchor = (Align2::RIGHT_BOTTOM, OFFSET);
         let closed = match skin {
             // Con Pixel UI, play o pausa (si hay animación) y centrar van en la barra de título,
@@ -169,16 +185,30 @@ impl Preview {
         }
     }
 
-    /// Recompone la textura si cambió el artboard, el frame o el documento (o hay un trazo).
+    /// Lo que se ve: la textura del lienzo si muestra este mismo frame; si no, la propia,
+    /// recompuesta si cambió el artboard, el frame o el documento (o hay un trazo).
     fn update(&mut self, ctx: &egui::Context, editor: &Editor) {
         let frame = self.frame(editor);
+        if frame == editor.frame_of(editor.active)
+            && let Some(canvas) = self.canvas
+        {
+            self.shown = Some(canvas);
+            // La propia ya no hace falta.
+            self.texture = None;
+            self.rendered = None;
+            return;
+        }
         let view = editor.view();
         let document = view.document.as_ref();
         let Some(artboard) = document.artboard(editor.active) else {
             return;
         };
         let key = (artboard.id, frame, editor.revision);
-        if self.texture.is_some() && self.rendered == Some(key) && !editor.is_painting() {
+        if let Some(texture) = &self.texture
+            && self.rendered == Some(key)
+            && !editor.is_painting()
+        {
+            self.shown = Some((texture.id(), texture.size_vec2()));
             return;
         }
         let sprite = &*cs_render::materialize(document, &artboard.sprite, frame..frame + 1);
@@ -193,6 +223,7 @@ impl Preview {
             }
         }
         self.rendered = Some(key);
+        self.shown = self.texture.as_ref().map(|t| (t.id(), t.size_vec2()));
     }
 
     /// Lo de adentro; con `play_button`, arriba el botón de play (sin Pixel UI, que no tiene la
@@ -217,7 +248,7 @@ impl Preview {
         let background = skin.map_or(theme::CANVAS_BG, |s| s.colors().canvas);
         painter.rect_filled(rect, 0.0, background);
         self.grip(ui, rect, skin);
-        let Some((texture, size)) = self.texture.as_ref().map(|t| (t.id(), t.size_vec2())) else {
+        let Some((texture, size)) = self.shown else {
             return;
         };
         if response.double_clicked() {
@@ -466,5 +497,28 @@ mod tests {
         assert_eq!(preview.frame(&editor), 0, "it loops");
         preview.toggle_play(&editor);
         assert!(!preview.playing());
+    }
+
+    #[test]
+    fn it_shows_the_canvas_texture_unless_it_plays_another_frame() {
+        let ctx = egui::Context::default();
+        let mut editor = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        editor.insert_empty_frame();
+        editor.set_frame(0);
+        let canvas = (egui::TextureId::User(7), vec2(8.0, 8.0));
+        let mut preview = Preview {
+            canvas: Some(canvas),
+            ..Default::default()
+        };
+        preview.update(&ctx, &editor);
+        assert_eq!(preview.shown, Some(canvas), "the canvas one");
+        assert!(preview.texture.is_none(), "no texture of its own");
+        // Reproduciendo, en el frame 1 (el lienzo sigue en el 0): la suya.
+        preview.toggle_play(&editor);
+        let duration = editor.sprite().frames[0].duration_ms as f64;
+        preview.tick(&editor, duration);
+        preview.update(&ctx, &editor);
+        assert!(preview.texture.is_some());
+        assert_ne!(preview.shown, Some(canvas));
     }
 }

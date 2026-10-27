@@ -220,6 +220,17 @@ impl Default for CanvasView {
 }
 
 impl CanvasView {
+    /// La textura del artboard activo y su tamaño si muestra el frame del editor tal cual (sin
+    /// papel cebolla ni la máscara en rojo): la vista previa la reusa en vez de componer otra.
+    pub fn plain_texture(&self, editor: &Editor) -> Option<(egui::TextureId, Vec2)> {
+        let onion = editor.onion_enabled && !editor.playing;
+        if onion || editor.editing_mask() {
+            return None;
+        }
+        let texture = self.textures.get(&editor.active)?;
+        Some((texture.id(), texture.size_vec2()))
+    }
+
     /// Posición en pantalla del origen del mundo, alineada a píxeles físicos (`self.ppp`).
     ///
     /// Es el único lugar donde se redondea la vista: con zoom entero (en píxeles físicos), las

@@ -2068,10 +2068,14 @@ A pixel art editor."
         if dock_out.canvas_size {
             self.open_canvas_size();
         }
+        let canvas_texture = self.doc.canvas.plain_texture(&self.doc.editor);
         if self.view.preview
-            && self
-                .preview
-                .show(ui.ctx(), &self.doc.editor, self.pixel.skin())
+            && self.preview.show(
+                ui.ctx(),
+                &self.doc.editor,
+                self.pixel.skin(),
+                canvas_texture,
+            )
         {
             self.view.preview = false;
         }
