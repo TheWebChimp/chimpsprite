@@ -260,7 +260,7 @@ const CELL_GLYPH_TOP: f32 = 22.0;
 /// de alto como sus botones.
 const SAMPLE_W: f32 = 158.0;
 const SORT_W: f32 = 89.0;
-const FIELD_H: f32 = 17.0;
+const FIELD_H: f32 = crate::pixel_ui::CONTROL_HEIGHT;
 /// La frase y el abecedario del detalle.
 const PANGRAM: &str = "the quick brown fox jumps over the lazy dog";
 const CHARSET: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789";

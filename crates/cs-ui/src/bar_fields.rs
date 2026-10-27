@@ -47,6 +47,17 @@ pub const CAPS_TOP: f32 = FIELD_TOP + pixel_ui::CONTROL_CAPS;
 /// brillo de abajo.
 pub(crate) const FIELD_TOP: f32 = 2.0;
 pub(crate) const FIELD_HEIGHT: f32 = pixel_ui::CONTROL_HEIGHT;
+
+/// `add` con lo de arriba a la altura de los campos de la barra (`FIELD_TOP` debajo de su
+/// borde): para un control que no lo hace solo (un botón con ícono, por ejemplo).
+pub(crate) fn at_field_top<R>(ui: &mut Ui, look: BarLook, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let drop = (look.top + FIELD_TOP - ui.cursor().top()).max(0.0);
+    ui.vertical(|ui| {
+        ui.add_space(drop);
+        add(ui)
+    })
+    .inner
+}
 /// Combo: de su borde izquierdo a la tinta del texto, y de la tinta a la parte de la flecha.
 const COMBO_TEXT_LEFT: f32 = 6.0;
 const COMBO_TEXT_GAP: f32 = 5.0;

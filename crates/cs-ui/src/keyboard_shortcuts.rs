@@ -226,7 +226,7 @@ const DIVIDER_AIR: f32 = 4.0;
 const ROW_GAP: f32 = 3.0;
 const SCROLL_GAP: f32 = 5.0;
 /// El campo de las teclas: el alto de los campos de la app.
-const FIELD_HEIGHT: f32 = 17.0;
+const FIELD_HEIGHT: f32 = crate::pixel_ui::CONTROL_HEIGHT;
 
 /// Una acción: su nombre y, contra la derecha, sus teclas en el campo de la app (un clic para
 /// cambiarlas; esperando, en el rosa de lo elegido) con Reset a su izquierda si no son las de

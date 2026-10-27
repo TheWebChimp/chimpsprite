@@ -947,7 +947,7 @@ fn etched_rule(ui: &mut egui::Ui, edge: bool) {
 const LOSPEC_SCROLL_GAP: f32 = 5.0;
 /// Los campos de arriba miden 17, como sus botones (el diseño); el orden, 83 de ancho, y el
 /// número de colores 19 pegado a su combo.
-const PANEL_FIELD_H: f32 = 17.0;
+const PANEL_FIELD_H: f32 = crate::pixel_ui::CONTROL_HEIGHT;
 #[cfg(not(target_arch = "wasm32"))]
 const SORT_W: f32 = 83.0;
 #[cfg(not(target_arch = "wasm32"))]

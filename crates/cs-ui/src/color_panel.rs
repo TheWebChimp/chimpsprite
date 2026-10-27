@@ -69,7 +69,8 @@ const ACTIVE: &str = "palette.button.active";
 /// El candado cerrado (paleta bloqueada) y el abierto (desbloqueada).
 const LOCK: &str = "palette.icon.lock";
 const LOCK_OPEN: &str = "palette.icon.lock.open";
-const BUTTON_HEIGHT: f32 = 16.0;
+/// Los botones de la columna: el cuerpo de la norma de los controles.
+const BUTTON_HEIGHT: f32 = crate::pixel_ui::CONTROL_BODY;
 /// De cada lado de la columna a los botones.
 const BUTTONS_SIDE: f32 = 2.0;
 /// Un botón del grupo cada 24 (comparten la línea del borde): el grupo de 3 mide 73.

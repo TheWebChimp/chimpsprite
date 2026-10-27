@@ -333,7 +333,7 @@ const WINDOW_SIDE: f32 = 6.0;
 const GRID_X: f32 = 91.0;
 const GRID_TOP: f32 = 5.0;
 const FIELD_X: f32 = 39.0;
-const FIELD_H: f32 = 17.0;
+const FIELD_H: f32 = crate::pixel_ui::CONTROL_HEIGHT;
 const ROW_STEP: f32 = 24.0;
 const SIZE_TOP: f32 = 30.0;
 const LINE_TOP: f32 = 100.0;
@@ -345,7 +345,7 @@ const LABEL_DY: f32 = 1.0;
 const FIELD_2_X: f32 = 137.0;
 const TRIM_TOP: f32 = 171.0;
 const BUTTONS_TOP: f32 = 196.0;
-const BUTTON_H: f32 = 16.0;
+const BUTTON_H: f32 = crate::pixel_ui::CONTROL_BODY;
 
 /// Lo de adentro del diálogo, sin los botones: tamaño, ancla, bordes, recorte y el aviso.
 fn contents(

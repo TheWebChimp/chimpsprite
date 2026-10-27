@@ -401,20 +401,15 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
                 // El botón del redondeo (en vez del nombre): lo prende y lo apaga; al prenderlo
                 // vuelve el último radio.
                 let on = options.corner_radius > 0;
-                // A la altura de los campos de la barra (desde `FIELD_TOP`).
-                let drop = (look.top + bar_fields::FIELD_TOP - ui.cursor().top()).max(0.0);
-                let toggle = ui
-                    .vertical(|ui| {
-                        ui.add_space(drop);
-                        crate::pixel_ui::icon_button(
-                            ui,
-                            Some(look.skin),
-                            "icon.corner_radius",
-                            "Corner radius",
-                            Some(on),
-                        )
-                    })
-                    .inner;
+                let toggle = bar_fields::at_field_top(ui, look, |ui| {
+                    crate::pixel_ui::icon_button(
+                        ui,
+                        Some(look.skin),
+                        "icon.corner_radius",
+                        "Corner radius",
+                        Some(on),
+                    )
+                });
                 let last_id = egui::Id::new("last_corner_radius");
                 if on {
                     ui.data_mut(|d| d.insert_temp(last_id, options.corner_radius));
