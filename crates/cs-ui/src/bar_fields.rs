@@ -386,6 +386,7 @@ pub fn brush_shape(
     let label = match shape {
         BrushShape::Round => "Round brush",
         BrushShape::Square => "Square brush",
+        BrushShape::Custom => "Custom brush",
     };
     let id = ui.id().with("brush_shape");
     let color = look.skin.colors().tab_text_dim;
@@ -402,8 +403,10 @@ pub fn brush_shape(
                 (inner.left() + BRUSH_ICON_CENTER.x).floor(),
                 (inner.top() + BRUSH_ICON_CENTER.y).floor(),
             );
+            // El personalizado puede ser más grande que el botón: lo que entra.
             points
                 .iter()
+                .filter(|&&(x, y)| x.abs() <= 10 && y.abs() <= 5)
                 .map(|&(x, y)| {
                     let at = center + vec2(x as f32, y as f32);
                     solid(Rect::from_min_size(at, Vec2::splat(1.0)), color, ppp)
@@ -412,9 +415,10 @@ pub fn brush_shape(
         },
     );
     if response.clicked() {
+        // Redondo y cuadrado; del personalizado (Edit → New Brush) vuelve al redondo.
         *shape = match shape {
             BrushShape::Round => BrushShape::Square,
-            BrushShape::Square => BrushShape::Round,
+            BrushShape::Square | BrushShape::Custom => BrushShape::Round,
         };
     }
     response

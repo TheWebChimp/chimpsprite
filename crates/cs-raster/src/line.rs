@@ -13,12 +13,35 @@ pub enum BrushShape {
     #[default]
     Round,
     Square,
+    /// El pincel personalizado (Edit → New Brush): la forma que dejó [`set_custom_brush`], sin
+    /// importar el tamaño. Sin forma, un píxel.
+    Custom,
+}
+
+/// La forma del pincel personalizado: sus puntos, relativos a su centro.
+static CUSTOM_BRUSH: std::sync::RwLock<Vec<Point>> = std::sync::RwLock::new(Vec::new());
+
+/// Deja `points` (relativos al centro) como la forma de [`BrushShape::Custom`].
+pub fn set_custom_brush(points: Vec<Point>) {
+    if let Ok(mut brush) = CUSTOM_BRUSH.write() {
+        *brush = points;
+    }
 }
 
 /// Puntos del pincel de lado `size` centrado en `center`. Las dos formas ocupan la misma caja
 /// (sesgo hacia abajo/derecha en tamaños pares); en 1 y 2 son iguales.
 pub fn brush_points(center: Point, size: u32, shape: BrushShape) -> Vec<Point> {
     match shape {
+        BrushShape::Custom => {
+            let brush = CUSTOM_BRUSH.read().map(|b| b.clone()).unwrap_or_default();
+            if brush.is_empty() {
+                return vec![center];
+            }
+            brush
+                .into_iter()
+                .map(|(x, y)| (center.0 + x, center.1 + y))
+                .collect()
+        }
         BrushShape::Square => brush_square(center, size),
         BrushShape::Round => {
             let size = size.max(1) as i32;

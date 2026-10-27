@@ -112,6 +112,32 @@ impl Editor {
         self.lift()
     }
 
+    /// Edit → New Brush (Ctrl+B): lo pintado dentro de la selección (o, si no hay nada pintado,
+    /// la forma de la selección) pasa a ser la forma del pincel personalizado, centrada en la
+    /// caja de la selección; se elige ese pincel y se quita la selección. Pinta con el color
+    /// primario.
+    pub fn new_brush(&mut self) -> bool {
+        self.commit_floating();
+        let Some(mask) = &self.selection else {
+            return false;
+        };
+        let Some(((x0, y0), (x1, y1))) = mask.bounds() else {
+            return false;
+        };
+        let (cx, cy) = ((x0 + x1) / 2, (y0 + y1) / 2);
+        let sprite = self.sprite();
+        let painted =
+            |&(x, y): &(i32, i32)| self.resolve(sprite.pixel(self.layer, self.frame, x, y)).a > 0;
+        let mut points: Vec<(i32, i32)> = mask.points().filter(painted).collect();
+        if points.is_empty() {
+            points = mask.points().collect();
+        }
+        cs_raster::set_custom_brush(points.into_iter().map(|(x, y)| (x - cx, y - cy)).collect());
+        self.options.brush_shape = cs_raster::BrushShape::Custom;
+        self.deselect();
+        true
+    }
+
     /// Edit → Invert (Ctrl+I): invierte el color (no la transparencia) de lo seleccionado; sin
     /// selección, de la capa entera.
     pub fn invert_colors(&mut self) -> bool {
@@ -211,6 +237,24 @@ mod tests {
             "the top left corner goes to the top right"
         );
         assert_eq!(at(&e, 0, 0), e.sprite().color_mode.transparent());
+    }
+
+    #[test]
+    fn new_brush_takes_the_painted_pixels_of_the_selection() {
+        let (mut e, red) = editor();
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(2, 1, red)],
+        });
+        e.set_selection(Some(Mask::from_rect(6, 4, (0, 0), (2, 2))));
+        assert!(e.new_brush());
+        assert!(e.selection.is_none(), "deselected");
+        assert_eq!(e.options.brush_shape, cs_raster::BrushShape::Custom);
+        // Centrado en (1, 1): el punto de (1, 1) y el de (2, 1).
+        let mut brush = cs_raster::brush_points((10, 10), 1, cs_raster::BrushShape::Custom);
+        brush.sort();
+        assert_eq!(brush, vec![(10, 10), (11, 10)]);
     }
 
     #[test]

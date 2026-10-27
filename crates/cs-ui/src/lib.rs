@@ -917,6 +917,10 @@ impl ChimpApp {
         {
             self.doc.editor.transform_selection();
         }
+        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::B)))
+        {
+            self.doc.editor.new_brush();
+        }
         if self.doc.editor.is_painting() {
             return;
         }
@@ -1154,6 +1158,12 @@ impl ChimpApp {
             }
         });
         menus::separator(ui);
+        if ui
+            .add_enabled(has_selection, menus::item("New Brush", "Ctrl+B"))
+            .clicked()
+        {
+            self.doc.editor.new_brush();
+        }
         let from_selection = menus::item("New Artboard From Selection", "Ctrl+Alt+N");
         if ui.add_enabled(has_selection, from_selection).clicked() {
             self.new_artboard_from_selection();
