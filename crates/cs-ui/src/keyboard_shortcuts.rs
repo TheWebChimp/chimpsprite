@@ -174,7 +174,8 @@ fn contents(ui: &mut Ui, window: &mut ShortcutsWindow, keymap: &mut Keymap, skin
                 Sense::hover(),
             );
             ui.painter().add(crate::pixel_ui::etched_hline(
-                rect.x_range(),
+                // De punta a punta de la ventana: pasando el margen de adentro.
+                rect.expand2(vec2(crate::pixel_ui::PADDING, 0.0)).x_range(),
                 rect.top().round(),
                 skin.colors(),
                 ppp,
@@ -194,6 +195,9 @@ fn contents(ui: &mut Ui, window: &mut ShortcutsWindow, keymap: &mut Keymap, skin
             .auto_shrink([false, true]),
         |ui| {
             ui.spacing_mut().item_spacing.y = ROW_GAP;
+            // Aire entre los campos y la barra de scroll.
+            let width = ui.available_width() - SCROLL_GAP;
+            ui.set_max_width(width);
             let mut section = "";
             for row in rows {
                 if row.section() != section {
@@ -220,6 +224,7 @@ fn contents(ui: &mut Ui, window: &mut ShortcutsWindow, keymap: &mut Keymap, skin
 /// Entre el buscador y el divisor, y entre el divisor y la lista.
 const DIVIDER_AIR: f32 = 4.0;
 const ROW_GAP: f32 = 3.0;
+const SCROLL_GAP: f32 = 5.0;
 /// El campo de las teclas: el alto de los campos de la app.
 const FIELD_HEIGHT: f32 = 17.0;
 
