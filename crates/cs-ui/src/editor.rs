@@ -211,6 +211,11 @@ enum TilesEdit {
 /// Lo que edita un gesto agrupado: artboard, capa, frame y slice seleccionados.
 type MergeTarget = (ArtboardId, LayerId, usize, Option<usize>);
 
+/// El pincel personalizado con los valores del sprite, compartido con cada contexto de las
+/// herramientas; y para qué versión del pincel, artboard y documento se armó.
+type BrushImage = std::rc::Rc<[((i32, i32), PixelValue)]>;
+type BrushImageKey = (u64, ArtboardId, u64);
+
 /// Estado del documento abierto y de la edición. No sabe nada de egui.
 pub struct Editor {
     pub document: Document,
@@ -256,6 +261,9 @@ pub struct Editor {
     pub doc_version: u64,
     /// A qué se pegan las herramientas de forma (lo actualiza el lienzo cada frame).
     pub snap: Option<crate::guides::SnapContext>,
+    /// El pincel personalizado con sus colores ya pasados al sprite, y para qué lo estaba: la
+    /// versión del pincel, el artboard y la del documento (ver `brush_image`).
+    brush_image: std::cell::RefCell<Option<(BrushImageKey, BrushImage)>>,
     /// Última selección descartada (para Reselect).
     last_selection: Option<Mask>,
     /// Modo de combinación del gesto de selección en curso.
@@ -336,6 +344,7 @@ impl Editor {
             onion: OnionSkin::default(),
             doc_version: 0,
             snap: None,
+            brush_image: Default::default(),
             last_selection: None,
             gesture_mode: SelectionMode::Replace,
             shift_at_press: false,

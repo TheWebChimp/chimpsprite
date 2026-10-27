@@ -51,7 +51,7 @@ pub struct ToolContext<'a> {
     pub brush_shape: BrushShape,
     /// Con el pincel personalizado y sus colores: cada punto (relativo al centro) con su color.
     /// Pencil, Line, Rectangle, Ellipse y Polygon lo pintan así en vez de con `color`.
-    pub brush_image: Option<Vec<(Point, PixelValue)>>,
+    pub brush_image: Option<std::rc::Rc<[(Point, PixelValue)]>>,
     pub pixel_perfect: bool,
     /// Formas rellenas (rectángulo/elipse).
     pub filled: bool,

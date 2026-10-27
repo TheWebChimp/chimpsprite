@@ -162,17 +162,29 @@ impl Editor {
     }
 
     /// Los puntos del pincel personalizado con sus colores en este sprite, si pinta con ellos.
-    fn brush_image(&self) -> Option<Vec<((i32, i32), PixelValue)>> {
+    /// Se arman una vez por pincel, artboard y versión del documento (el modo de color y la
+    /// paleta deciden los valores), no en cada movimiento del puntero.
+    fn brush_image(&self) -> Option<BrushImage> {
         if self.options.brush_shape != BrushShape::Custom || !self.options.brush_colors {
             return None;
         }
-        let brush = cs_raster::custom_brush();
-        (!brush.is_empty()).then(|| {
-            brush
-                .into_iter()
-                .map(|(p, c)| (p, self.value_of(c)))
-                .collect()
-        })
+        let key = (
+            cs_raster::custom_brush_version(),
+            self.active,
+            self.doc_version,
+        );
+        let mut cache = self.brush_image.borrow_mut();
+        if let Some((k, image)) = cache.as_ref()
+            && *k == key
+        {
+            return (!image.is_empty()).then(|| image.clone());
+        }
+        let image: BrushImage = cs_raster::custom_brush()
+            .into_iter()
+            .map(|(p, c)| (p, self.value_of(c)))
+            .collect();
+        *cache = Some((key, image.clone()));
+        (!image.is_empty()).then_some(image)
     }
 
     pub(super) fn context(&self) -> ToolContext<'_> {

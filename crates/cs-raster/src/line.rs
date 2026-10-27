@@ -25,11 +25,19 @@ thread_local! {
     /// del dibujo del que salió). Es del hilo de la interfaz (cada test tiene el suyo).
     static CUSTOM_BRUSH: std::cell::RefCell<Vec<(Point, Rgba)>> =
         const { std::cell::RefCell::new(Vec::new()) };
+    /// Sube cada vez que cambia el pincel personalizado (para las cachés de quien lo usa).
+    static CUSTOM_BRUSH_VERSION: std::cell::Cell<u64> = const { std::cell::Cell::new(0) };
 }
 
 /// Deja `brush` (puntos relativos al centro y sus colores) como [`BrushShape::Custom`].
 pub fn set_custom_brush(brush: Vec<(Point, Rgba)>) {
     CUSTOM_BRUSH.with(|custom| *custom.borrow_mut() = brush);
+    CUSTOM_BRUSH_VERSION.with(|v| v.set(v.get() + 1));
+}
+
+/// La versión del pincel personalizado: cambia cada vez que se reemplaza.
+pub fn custom_brush_version() -> u64 {
+    CUSTOM_BRUSH_VERSION.with(|v| v.get())
 }
 
 /// El pincel personalizado: sus puntos relativos al centro y sus colores (vacío si no hay).

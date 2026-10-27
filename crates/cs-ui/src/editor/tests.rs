@@ -1029,3 +1029,33 @@ fn tiles_mode_paints_the_partial_edge_cell_of_an_unaligned_cel_with_a_selection(
     click(&mut e, (6, 6), false, false);
     assert_eq!(tile_at(&e, (1, 1)), t(1));
 }
+
+#[test]
+fn the_custom_brush_colors_are_converted_once_per_brush_and_document() {
+    let mut e = editor();
+    let red = Rgba::rgb(255, 0, 0);
+    cs_raster::set_custom_brush(vec![((0, 0), red), ((1, 0), red)]);
+    e.options.brush_shape = BrushShape::Custom;
+    let image = |e: &Editor| e.context().brush_image.expect("with its colors");
+    let first = image(&e);
+    assert_eq!(first[0], ((0, 0), PixelValue::Rgba(red)));
+    assert!(
+        std::rc::Rc::ptr_eq(&first, &image(&e)),
+        "the same, not rebuilt"
+    );
+    // Otro pincel: se rearma.
+    cs_raster::set_custom_brush(vec![((0, 0), red)]);
+    let second = image(&e);
+    assert!(!std::rc::Rc::ptr_eq(&first, &second));
+    assert_eq!(second.len(), 1);
+    // Un cambio al documento (podría ser la paleta): también.
+    e.execute(Command::DrawPixels {
+        layer: e.layer,
+        frame: 0,
+        pixels: vec![(0, 0, PixelValue::Rgba(red))],
+    });
+    assert!(!std::rc::Rc::ptr_eq(&second, &image(&e)));
+    // Sin sus colores, nada.
+    e.options.brush_colors = false;
+    assert!(e.context().brush_image.is_none());
+}
