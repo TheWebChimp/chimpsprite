@@ -278,6 +278,20 @@ impl ChimpApp {
             app.doc.editor.set_tool(tool);
             app.doc.editor.options.corner_radius = 3;
         }
+        // Desarrollo: dos tags más (encimados), para capturas de la fila de tags.
+        if std::env::var_os("CHIMPSPRITE_DEMO_TAGS").is_some() && app.has_doc() {
+            let editor = &mut app.doc.editor;
+            for (range, name) in [((1, 2), "Blink"), ((3, 3), "Hold")] {
+                editor.frame_range = Some(range);
+                editor.add_tag();
+                let i = editor.sprite().tags.len() - 1;
+                if let Some(mut tag) = editor.sprite().tags.get(i).cloned() {
+                    tag.name = name.into();
+                    editor.set_tag(i, tag);
+                }
+            }
+            editor.frame_range = None;
+        }
         // Desarrollo: Keyboard Shortcuts o Preferences abiertas, para capturas.
         match std::env::var("CHIMPSPRITE_DEMO_WINDOW").as_deref() {
             Ok("shortcuts") => app.shortcuts = Some(Default::default()),

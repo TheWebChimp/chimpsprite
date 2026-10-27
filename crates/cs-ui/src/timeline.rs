@@ -416,17 +416,36 @@ fn controls_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineStat
 }
 
 fn tags_row(ui: &mut egui::Ui, editor: &mut Editor, grid: Grid) {
-    let (row, _) = ui.allocate_exact_size(vec2(grid.row_width(editor), grid.tag_h), Sense::hover());
     let tags = editor.sprite().tags.clone();
+    // Con Pixel UI, como en Aseprite: cada tag con su nombre en una cajita y un corchete que baja
+    // hasta sus frames; los que se enciman, en pisos distintos.
+    let levels = tag_levels(&tags);
+    let floors = levels.iter().max().map_or(1, |l| l + 1);
+    let height = match grid.skin {
+        Some(_) => floors as f32 * pixel::TAG_LEVEL + pixel::TAG_FOOT,
+        None => grid.tag_h,
+    };
+    let (row, _) = ui.allocate_exact_size(vec2(grid.row_width(editor), height), Sense::hover());
     let mut action = None;
     for (i, tag) in tags.iter().enumerate() {
-        let r = Rect::from_min_max(
-            grid.cell_rect(row, tag.from).min + vec2(1.0, 2.0),
-            grid.cell_rect(row, tag.to).max - vec2(1.0, 1.0),
+        let span = Rect::from_min_max(
+            grid.cell_rect(row, tag.from).min,
+            grid.cell_rect(row, tag.to).max,
         );
+        let r = match grid.skin {
+            Some(_) => pixel::tag_hit(span, levels[i]),
+            None => Rect::from_min_max(span.min + vec2(1.0, 2.0), span.max - vec2(1.0, 1.0)),
+        };
         let response = ui.interact(r, ui.id().with(("tag", i)), Sense::click());
         match grid.skin {
-            Some(skin) => pixel::tag(ui, skin, r, to_color32(tag.color), &tag.name),
+            Some(_) => pixel::tag(
+                ui,
+                span,
+                row.bottom(),
+                levels[i],
+                to_color32(tag.color),
+                &tag.name,
+            ),
             None => {
                 let painter = ui.painter();
                 painter.rect_filled(r, 2.0, to_color32(tag.color).gamma_multiply(0.85));
@@ -458,11 +477,46 @@ fn tags_row(ui: &mut egui::Ui, editor: &mut Editor, grid: Grid) {
     }
 }
 
+/// El piso de cada tag (0, el de arriba): cada uno en el más alto donde no se encima con otro.
+fn tag_levels(tags: &[Tag]) -> Vec<usize> {
+    let mut order: Vec<usize> = (0..tags.len()).collect();
+    order.sort_by_key(|&i| (tags[i].from, std::cmp::Reverse(tags[i].to)));
+    // El último frame ocupado de cada piso.
+    let mut ends: Vec<usize> = Vec::new();
+    let mut levels = vec![0; tags.len()];
+    for i in order {
+        let tag = &tags[i];
+        let level = ends
+            .iter()
+            .position(|&end| end < tag.from)
+            .unwrap_or(ends.len());
+        if level == ends.len() {
+            ends.push(tag.to);
+        } else {
+            ends[level] = tag.to;
+        }
+        levels[i] = level;
+    }
+    levels
+}
+
 /// Un cambio a la lista de tags pedido desde el menú de un tag.
 enum TagAction {
     Set(usize, Tag),
     Remove(usize),
 }
+
+/// Los colores para elegir en el menú de un tag.
+const TAG_COLORS: [cs_core::Rgba; 8] = [
+    cs_core::Rgba::rgb(0, 0, 0),
+    cs_core::Rgba::rgb(240, 128, 32),
+    cs_core::Rgba::rgb(226, 114, 133),
+    cs_core::Rgba::rgb(204, 51, 51),
+    cs_core::Rgba::rgb(240, 200, 48),
+    cs_core::Rgba::rgb(80, 160, 72),
+    cs_core::Rgba::rgb(48, 128, 208),
+    cs_core::Rgba::rgb(128, 80, 176),
+];
 
 /// El menú de un tag. Devuelve el cambio pedido, para aplicarlo fuera del bucle de los tags.
 fn tag_menu(ui: &mut egui::Ui, editor: &Editor, index: usize, tag: &Tag) -> Option<TagAction> {
@@ -483,15 +537,29 @@ fn tag_menu(ui: &mut egui::Ui, editor: &Editor, index: usize, tag: &Tag) -> Opti
     });
     ui.horizontal(|ui| {
         ui.label("Color");
-        let mut c = to_color32(edited.color);
-        if egui::color_picker::color_edit_button_srgba(
-            ui,
-            &mut c,
-            egui::color_picker::Alpha::Opaque,
-        )
-        .changed()
-        {
-            edited.color = cs_core::Rgba::rgb(c.r(), c.g(), c.b());
+        // Los colores de los tags, en cuadritos como los de la paleta.
+        for color in TAG_COLORS {
+            let (rect, response) = ui.allocate_exact_size(vec2(11.0, 11.0), Sense::click());
+            let painter = ui.painter();
+            painter.rect_filled(rect, 0.0, to_color32(color));
+            let chosen = edited.color == color;
+            let border = if chosen {
+                Color32::WHITE
+            } else {
+                Color32::from_rgb(89, 77, 77)
+            };
+            painter.rect_stroke(rect, 0.0, Stroke::new(1.0, border), StrokeKind::Inside);
+            if chosen {
+                painter.rect_stroke(
+                    rect.expand(1.0),
+                    0.0,
+                    Stroke::new(1.0, Color32::from_rgb(89, 77, 77)),
+                    StrokeKind::Inside,
+                );
+            }
+            if response.clicked() {
+                edited.color = color;
+            }
         }
     });
     let (a, b) = editor.selected_frames();
@@ -2074,6 +2142,23 @@ mod tests {
         // Un clic suelto deja un solo cel.
         h.click_at(h.cel(1, 3));
         assert!(!h.editor.has_cel_range());
+    }
+
+    #[test]
+    fn overlapping_tags_go_on_different_floors() {
+        let tag = |from, to| Tag {
+            name: "t".into(),
+            from,
+            to,
+            direction: AnimDirection::Forward,
+            color: cs_core::Rgba::rgb(0, 0, 0),
+            repeat: 0,
+        };
+        // 0–3 y 5–6 caben en el mismo piso; 1–2 se encima con el primero; 3–5, con 0–3 y 5–6
+        // pero no con 1–2: va en su piso.
+        let tags = [tag(0, 3), tag(1, 2), tag(5, 6), tag(3, 5), tag(2, 4)];
+        assert_eq!(tag_levels(&tags), vec![0, 1, 0, 1, 2]);
+        assert!(tag_levels(&[]).is_empty());
     }
 
     #[test]

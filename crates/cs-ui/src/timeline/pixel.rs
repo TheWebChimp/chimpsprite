@@ -1170,16 +1170,62 @@ pub(super) fn cel(
     }
 }
 
-/// Un tag en la fila de tags: su color liso y el nombre.
-pub(super) fn tag(ui: &Ui, skin: &Skin, rect: Rect, color: Color32, name: &str) {
-    solid(ui, rect, color);
-    let painter = ui.painter().with_clip_rect(rect.intersect(ui.clip_rect()));
+/// El alto de cada piso de la fila de tags (la cajita del nombre y 2 de aire) y lo que bajan los
+/// corchetes después del último piso, hasta los números de los frames.
+pub(super) const TAG_LEVEL: f32 = 13.0;
+pub(super) const TAG_FOOT: f32 = 4.0;
+/// La cajita del nombre: su alto y el aire a los lados de la tinta.
+const TAG_BOX_H: f32 = 11.0;
+const TAG_BOX_PAD: f32 = 3.0;
+
+/// Dónde se toca un tag del piso `level` cuyos frames ocupan `span`: la cajita y la línea de
+/// arriba del corchete, de punta a punta.
+pub(super) fn tag_hit(span: Rect, level: usize) -> Rect {
+    let top = span.top() + level as f32 * TAG_LEVEL;
+    Rect::from_min_max(pos2(span.left(), top), pos2(span.right(), top + TAG_BOX_H))
+}
+
+/// Un tag como en Aseprite: su nombre en una cajita del color del tag (arriba, en el piso
+/// `level`) y un corchete de su color desde la cajita hasta `bottom` (los números), en los
+/// bordes de sus frames (`span`).
+pub(super) fn tag(ui: &Ui, span: Rect, bottom: f32, level: usize, color: Color32, name: &str) {
+    let top = span.top() + level as f32 * TAG_LEVEL;
+    let (left, right) = (span.left() + 1.0, span.right() - 2.0);
+    let mid = top + (TAG_BOX_H / 2.0).floor();
+    // El corchete: arriba de punta a punta y los lados hasta abajo.
+    solid(
+        ui,
+        Rect::from_min_max(pos2(left, mid), pos2(right + 1.0, mid + 1.0)),
+        color,
+    );
+    solid(
+        ui,
+        Rect::from_min_max(pos2(left, mid), pos2(left + 1.0, bottom)),
+        color,
+    );
+    solid(
+        ui,
+        Rect::from_min_max(pos2(right, mid), pos2(right + 1.0, bottom)),
+        color,
+    );
+    // La cajita con el nombre, en blanco o negro según lo claro del color.
+    // Tan ancha como el nombre, aunque el tag sea más angosto (como en Aseprite).
+    let width = ink(ui, name) + 2.0 * TAG_BOX_PAD;
+    let label = Rect::from_min_size(pos2(left, top), vec2(width.max(4.0), TAG_BOX_H));
+    solid(ui, label, color);
+    let luma = 0.299 * color.r() as f32 + 0.587 * color.g() as f32 + 0.114 * color.b() as f32;
+    let ink_color = if luma > 150.0 {
+        Color32::BLACK
+    } else {
+        Color32::WHITE
+    };
+    let painter = ui.painter().with_clip_rect(label.intersect(ui.clip_rect()));
     text(
         ui,
         &painter,
         name,
-        rect.left() + 2.0,
-        rect.top(),
-        skin.colors().text,
+        label.left() + TAG_BOX_PAD,
+        label.top() + 2.0,
+        ink_color,
     );
 }
