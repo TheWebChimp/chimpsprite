@@ -304,6 +304,7 @@ impl Preview {
 /// Las piezas del diseño: el play y centrar de la barra de título, y la agarradera de la
 /// esquina.
 const PLAY_PIECE: &str = "preview.play";
+const PAUSE_PIECE: &str = "preview.pause";
 const CENTER_PIECE: &str = "preview.center";
 const GRIP_PIECE: &str = "preview.grip";
 /// Del borde izquierdo de la barra al primer ícono, y entre uno y otro.
@@ -336,8 +337,8 @@ fn grip_size(skin: Option<&Skin>) -> Vec2 {
         })
 }
 
-/// A la izquierda de la barra de título, centrados en su alto: el play (reproduciendo, la pausa:
-/// dos barritas con su tinta), solo si hay animación, y centrar (volver al zoom y al lugar de
+/// A la izquierda de la barra de título, centrados en su alto: el play (reproduciendo, la
+/// pausa), solo si hay animación, y centrar (volver al zoom y al lugar de
 /// entrada). Devuelve cuál se tocó.
 fn bar_icons(ui: &mut Ui, skin: &Skin, bar: Rect, animated: bool, playing: bool) -> (bool, bool) {
     let ppp = ui.ctx().pixels_per_point();
@@ -346,32 +347,32 @@ fn bar_icons(ui: &mut Ui, skin: &Skin, bar: Rect, animated: bool, playing: bool)
             .map_or(vec2(5.0, 5.0), |p| vec2(p.size[0] as f32, p.size[1] as f32))
     };
     let mut x = bar.left() + BAR_LEFT;
-    let mut icon = |ui: &mut Ui, name: &str, label: &str| {
+    // Cada ícono en un lugar de `slot` de ancho (el play y la pausa, el de la más ancha: así
+    // centrar no se mueve al cambiar entre ellos).
+    let mut icon = |ui: &mut Ui, name: &str, label: &str, slot: f32| {
         let s = size(name);
         let at = egui::pos2(x, (bar.center().y - s.y / 2.0).floor());
-        x += s.x + BAR_GAP;
+        let hit = Rect::from_min_size(egui::pos2(x, at.y), vec2(slot, s.y)).expand(2.0);
+        x += slot + BAR_GAP;
         // Un poco más grande que el dibujo, para atinarle.
-        let hit = Rect::from_min_size(at, s).expand(2.0);
-        let response = ui.interact(hit, ui.id().with(("preview_bar", name)), Sense::click());
+        let response = ui.interact(hit, ui.id().with(("preview_bar", label)), Sense::click());
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
         (at, response.on_hover_text(label))
     };
     let mut play = false;
     if animated {
-        let (at, response) = icon(ui, PLAY_PIECE, if playing { "Pause" } else { "Play" });
-        if playing {
-            let ink = Color32::from_rgb(100, 54, 75);
-            for dx in [1.0, 5.0] {
-                let r = Rect::from_min_size(at + vec2(dx, 0.0), vec2(2.0, 5.0));
-                ui.painter().rect_filled(r.round_to_pixels(ppp), 0.0, ink);
-            }
+        let (piece, label) = if playing {
+            (PAUSE_PIECE, "Pause")
         } else {
-            ui.painter()
-                .extend(crate::pixel_draw::piece_at(skin, PLAY_PIECE, at, ppp));
-        }
+            (PLAY_PIECE, "Play")
+        };
+        let slot = size(PLAY_PIECE).x.max(size(PAUSE_PIECE).x);
+        let (at, response) = icon(ui, piece, label, slot);
+        ui.painter()
+            .extend(crate::pixel_draw::piece_at(skin, piece, at, ppp));
         play = response.clicked();
     }
-    let (at, center) = icon(ui, CENTER_PIECE, "Center");
+    let (at, center) = icon(ui, CENTER_PIECE, "Center", size(CENTER_PIECE).x);
     ui.painter()
         .extend(crate::pixel_draw::piece_at(skin, CENTER_PIECE, at, ppp));
     (play, center.clicked())
