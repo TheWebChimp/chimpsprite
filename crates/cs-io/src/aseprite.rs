@@ -1260,6 +1260,11 @@ pub(crate) fn linked_pairs(sprite: &Sprite) -> Vec<(usize, usize, usize)> {
 
 #[cfg(test)]
 mod tests {
+    /// Lo que puede tardar en rechazar un archivo armado para trabar la lectura: lo normal es
+    /// mucho menos, pero con todas las pruebas corriendo a la vez la máquina va más lenta (con 1 s
+    /// fallaba a veces sin motivo). Lo que se cuida es no tardar minutos.
+    const FAST_ENOUGH: std::time::Duration = std::time::Duration::from_secs(5);
+
     use cs_commands::Command;
     use cs_commands::ops::{self, LayerDrop};
     use cs_core::*;
@@ -1769,7 +1774,7 @@ mod tests {
             "{:?}",
             result.map(|(_, r)| r.warnings)
         );
-        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        assert!(start.elapsed() < FAST_ENOUGH, "{:?}", start.elapsed());
         // El límite es por área: 2048×2048 todavía se acepta, 2049×2049 no.
         for (size, ok) in [(2048u16, true), (2049, false)] {
             let mut ts = tileset_header(TILESET_EXTERNAL | TILESET_EMPTY_ZERO, 1, size, "t");
@@ -1808,7 +1813,7 @@ mod tests {
         assert!(file.len() < 12_000, "{} bytes", file.len());
         let start = std::time::Instant::now();
         let (s, _) = read(&file).unwrap();
-        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        assert!(start.elapsed() < FAST_ENOUGH, "{:?}", start.elapsed());
         assert_eq!(s.tilesets.len(), 200);
         assert!(
             s.tilesets
@@ -1827,7 +1832,7 @@ mod tests {
             "{:?}",
             result.map(|(_, r)| r.warnings)
         );
-        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        assert!(start.elapsed() < FAST_ENOUGH, "{:?}", start.elapsed());
         // Un tileset embebido que solo por su cuenta pasa el presupuesto se rechaza antes de
         // descomprimir (los datos ni siquiera son válidos).
         let mut ts = tileset_header(TILESET_EMBEDDED | TILESET_EMPTY_ZERO, 17, 2048, "big");
@@ -1919,7 +1924,7 @@ mod tests {
             "{:?}",
             result.map(|(_, r)| r.warnings)
         );
-        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+        assert!(start.elapsed() < FAST_ENOUGH, "{:?}", start.elapsed());
     }
 
     #[test]
