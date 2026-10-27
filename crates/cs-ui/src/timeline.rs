@@ -585,6 +585,8 @@ fn header_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState,
 
         if response.clicked() {
             let shift = ui.input(|i| i.modifiers.shift);
+            // Elegidos en el encabezado: copiar y pegar es de frames enteros.
+            editor.frames_picked = true;
             if shift {
                 let anchor = state.range_anchor.unwrap_or(editor.frame);
                 editor.frame_range = Some((anchor, f));
@@ -1108,6 +1110,7 @@ fn layer_row(
                 state.range_anchor = Some(f);
                 state.cel_anchor = Some(cel);
                 editor.frame_range = None;
+                editor.frames_picked = false;
             }
             editor.set_frame(f);
         }

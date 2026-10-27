@@ -402,6 +402,7 @@ impl Editor {
     /// Elige el rango de cels de `(capa, frame)` a `(capa, frame)` (de cualquier punta).
     pub fn select_cels(&mut self, from: (LayerId, usize), to: (LayerId, usize)) {
         let frames = (from.1, to.1);
+        self.frames_picked = false;
         self.frame_range = Some(frames);
         self.layer_range = Some((from.0, to.0, frames));
     }

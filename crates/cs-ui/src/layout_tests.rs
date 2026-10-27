@@ -876,6 +876,32 @@ fn the_dock_preview_button_opens_the_preview_window_above_the_timeline_button() 
 }
 
 #[test]
+fn ctrl_c_and_ctrl_v_without_a_selection_copy_and_paste_frames() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let editor = &mut h.app.doc.editor;
+    let layer = editor.layer;
+    let red = cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0));
+    editor.execute(cs_commands::Command::DrawPixels {
+        layer,
+        frame: 0,
+        pixels: vec![(0, 0, red)],
+    });
+    // El frame elegido en el encabezado, sin nada seleccionado en el lienzo.
+    editor.frames_picked = true;
+    assert!(editor.selection.is_none());
+    let frames = editor.frame_count();
+    h.frame_with(vec![Event::Copy]);
+    h.frame_with(vec![Event::Paste(crate::CLIPBOARD_MARKER.into())]);
+    let editor = &h.app.doc.editor;
+    assert_eq!(
+        editor.frame_count(),
+        frames + 1,
+        "pasted after the current frame"
+    );
+    assert_eq!(editor.sprite().pixel(layer, 1, 0, 0), red);
+}
+
+#[test]
 fn clicking_the_marker_closes_a_clean_tab() {
     let mut h = two_tabs(Some(0));
     let mark = h.button("Close Otro.chimp");

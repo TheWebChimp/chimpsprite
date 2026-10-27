@@ -61,6 +61,7 @@ mod theme;
 mod tile_ops;
 mod tilemap_dialog;
 mod timeline;
+mod timeline_clip;
 mod tool_group;
 #[cfg(test)]
 mod tool_tests;
@@ -133,6 +134,10 @@ pub struct ChimpApp {
     title: String,
     /// Lo último copiado o cortado (compartido entre pestañas).
     clipboard: Option<clipboard::Clip>,
+    /// Lo copiado del timeline (frames o cels). Ctrl+V pega lo último que se copió: esto si
+    /// `paste_timeline`, si no los píxeles.
+    timeline_clipboard: Option<timeline_clip::TimelineClip>,
+    paste_timeline: bool,
     palettes: palette_library::PaletteLibrary,
     presets_window: Option<palette_ui::PresetsWindow>,
     /// El panel Lospec del dock (mientras está abierto).
@@ -316,6 +321,8 @@ impl ChimpApp {
             allow_close: false,
             title: String::new(),
             clipboard: None,
+            timeline_clipboard: None,
+            paste_timeline: false,
             palettes,
             presets_window: None,
             lospec_dock: None,
@@ -912,16 +919,31 @@ impl ChimpApp {
         }
     }
 
+    /// Copia lo seleccionado en el lienzo; sin selección, del timeline (frames o cels).
     fn copy(&mut self, ctx: &egui::Context) {
-        if let Some(clip) = self.doc.editor.copy() {
+        if self.doc.editor.selection.is_none() {
+            if let Some(clip) = self.doc.editor.copy_timeline() {
+                self.timeline_clipboard = Some(clip);
+                self.paste_timeline = true;
+                ctx.copy_text(CLIPBOARD_MARKER.into());
+            }
+        } else if let Some(clip) = self.doc.editor.copy() {
             self.clipboard = Some(clip);
+            self.paste_timeline = false;
             ctx.copy_text(CLIPBOARD_MARKER.into());
         }
     }
 
     fn cut(&mut self, ctx: &egui::Context) {
-        if let Some(clip) = self.doc.editor.cut() {
+        if self.doc.editor.selection.is_none() {
+            if let Some(clip) = self.doc.editor.cut_timeline() {
+                self.timeline_clipboard = Some(clip);
+                self.paste_timeline = true;
+                ctx.copy_text(CLIPBOARD_MARKER.into());
+            }
+        } else if let Some(clip) = self.doc.editor.cut() {
             self.clipboard = Some(clip);
+            self.paste_timeline = false;
             ctx.copy_text(CLIPBOARD_MARKER.into());
         }
     }
@@ -934,6 +956,15 @@ impl ChimpApp {
             PasteRequest::System { new_artboard } => (clipboard::system_image(), new_artboard),
         };
         let editor = &mut self.doc.editor;
+        // Lo último copiado fue del timeline (y no hay una imagen de otra app): eso.
+        if system.is_none()
+            && !new_artboard
+            && self.paste_timeline
+            && let Some(clip) = &self.timeline_clipboard
+        {
+            editor.paste_timeline(clip);
+            return;
+        }
         let clip = match system {
             Some(image) => {
                 let sprite = editor.sprite();
@@ -1045,16 +1076,17 @@ impl ChimpApp {
                     }
                     menus::separator(ui);
                     let has_selection = self.doc.editor.selection.is_some();
-                    let cut = menus::item("Cut", "Ctrl+X");
-                    if ui.add_enabled(has_selection, cut).clicked() {
+                    // Sin selección, cortan y copian del timeline (frames o cels).
+                    if ui.add(menus::item("Cut", "Ctrl+X")).clicked() {
                         self.cut(ui.ctx());
                     }
-                    let copy = menus::item("Copy", "Ctrl+C");
-                    if ui.add_enabled(has_selection, copy).clicked() {
+                    if ui.add(menus::item("Copy", "Ctrl+C")).clicked() {
                         self.copy(ui.ctx());
                     }
                     // En escritorio puede haber una imagen de otra app aunque no se haya copiado nada.
-                    let can_paste = self.clipboard.is_some() || cfg!(not(target_arch = "wasm32"));
+                    let can_paste = self.clipboard.is_some()
+                        || self.timeline_clipboard.is_some()
+                        || cfg!(not(target_arch = "wasm32"));
                     let paste = menus::item("Paste", "Ctrl+V");
                     if ui.add_enabled(can_paste, paste).clicked() {
                         self.paste(clipboard::PasteRequest::System {
