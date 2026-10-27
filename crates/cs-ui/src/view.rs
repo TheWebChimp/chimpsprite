@@ -23,6 +23,8 @@ pub struct ViewSettings {
     pub slices: bool,
     pub grid_color: [u8; 4],
     pub timeline: bool,
+    /// La ventanita de preview (el botón del dock).
+    pub preview: bool,
     /// Las reglas son parte de la interfaz: no dependen de Extras.
     pub rulers: bool,
     pub guides: bool,
@@ -57,6 +59,7 @@ impl Default for ViewSettings {
             slices: true,
             grid_color: [80, 140, 255, 110],
             timeline: true,
+            preview: false,
             rulers: true,
             guides: true,
             snap_to_guides: true,

@@ -1,7 +1,7 @@
 //! La columna de "otros paneles" entre el lienzo y el panel derecho (como el dock de Illustrator):
 //! un botón por panel (Artboards, Slices) que lo abre flotando a su izquierda. Así esas secciones
-//! no le quitan lugar a la paleta y al editor de color. Al final, el que prende y apaga el
-//! timeline.
+//! no le quitan lugar a la paleta y al editor de color. Hasta abajo, el que prende y apaga el
+//! timeline y arriba de él, el de la ventanita de preview.
 
 use eframe::egui::{self, Rect, Sense, Shape, Ui, Vec2, vec2};
 
@@ -117,6 +117,23 @@ fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str, icon: &str, on: bool) -> 
 /// El botón del timeline: lo muestra o lo esconde.
 const TIMELINE: &str = "Timeline";
 const TIMELINE_ICON: &str = "icon.timeline";
+/// El botón de la ventanita de preview: la abre o la cierra.
+const PREVIEW: &str = "Preview";
+const PREVIEW_ICON: &str = "icon.preview";
+
+/// Un botón del dock que prende o apaga `on`: con Pixel UI, el del skin; sin él, el de egui con
+/// `plain`.
+fn toggle(ui: &mut Ui, skin: Option<&Skin>, label: &str, icon: &str, plain: &str, on: &mut bool) {
+    let response = match skin {
+        Some(skin) => pixel_button(ui, skin, label, icon, *on),
+        None => ui
+            .add(egui::Button::new(plain).selected(*on).min_size(BUTTON_SIZE))
+            .tip(label),
+    };
+    if response.clicked() {
+        *on = !*on;
+    }
+}
 
 /// El panel abierto (en la memoria de egui, por pestaña de la app: no se guarda).
 fn open_id() -> egui::Id {
@@ -139,6 +156,7 @@ pub fn show(
     name_buffer: &mut (ArtboardId, String),
     skin: Option<&Skin>,
     timeline: &mut bool,
+    preview: &mut bool,
 ) -> DockOutput {
     let mut out = DockOutput::default();
     let open = open_panel(ui.ctx());
@@ -164,28 +182,15 @@ pub fn show(
         }
         anchors.push((panel, response.rect));
     }
-    // El del timeline, hasta abajo del dock.
+    // Hasta abajo del dock, el del timeline y arriba de él, el del preview.
     let bottom = egui::Layout::bottom_up(egui::Align::Min);
-    let response = ui
-        .with_layout(bottom, |ui| {
-            if skin.is_some() {
-                ui.add_space(BOTTOM_AIR);
-            }
-            match skin {
-                Some(skin) => pixel_button(ui, skin, TIMELINE, TIMELINE_ICON, *timeline),
-                None => ui
-                    .add(
-                        egui::Button::new("🎞")
-                            .selected(*timeline)
-                            .min_size(BUTTON_SIZE),
-                    )
-                    .tip(TIMELINE),
-            }
-        })
-        .inner;
-    if response.clicked() {
-        *timeline = !*timeline;
-    }
+    ui.with_layout(bottom, |ui| {
+        if skin.is_some() {
+            ui.add_space(BOTTOM_AIR);
+        }
+        toggle(ui, skin, TIMELINE, TIMELINE_ICON, "🎞", timeline);
+        toggle(ui, skin, PREVIEW, PREVIEW_ICON, "▣", preview);
+    });
     let Some(panel) = open_panel(ui.ctx()) else {
         return out;
     };

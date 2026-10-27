@@ -53,6 +53,7 @@ mod pixel_selection;
 mod pixel_status;
 mod pixel_ui;
 mod platform;
+mod preview;
 mod recent;
 pub mod skin;
 mod tabs;
@@ -116,6 +117,8 @@ pub struct ChimpApp {
     #[cfg(not(target_arch = "wasm32"))]
     news_fetcher: Box<dyn news::Fetcher>,
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
+    /// La ventanita de preview (abierta con `view.preview`).
+    preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
     /// Desarrollo (`CHIMPSPRITE_DEMO_TILES`): al abrir el documento, activar su capa tilemap.
     demo_tiles: bool,
@@ -286,6 +289,7 @@ impl ChimpApp {
             #[cfg(not(target_arch = "wasm32"))]
             news_fetcher: news::default_fetcher(),
             new_tilemap: None,
+            preview: preview::Preview::default(),
             convert_tilemap: None,
             demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
             fullscreen: false,
@@ -1452,6 +1456,7 @@ impl ChimpApp {
                         &mut self.doc.artboard_name,
                         skin,
                         &mut self.view.timeline,
+                        &mut self.view.preview,
                     )
                 })
                 .inner
@@ -1482,6 +1487,13 @@ impl ChimpApp {
         }
         if dock_out.canvas_size {
             self.open_canvas_size();
+        }
+        if self.view.preview
+            && self
+                .preview
+                .show(ui.ctx(), &self.doc.editor, self.pixel.skin())
+        {
+            self.view.preview = false;
         }
         // Los paneles del dock que son de la app.
         match dock_out.app_panel {

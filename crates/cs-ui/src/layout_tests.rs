@@ -850,6 +850,32 @@ fn the_dock_timeline_button_hides_and_shows_the_timeline() {
 }
 
 #[test]
+fn the_dock_preview_button_opens_the_preview_window_above_the_timeline_button() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert!(!h.app.view.preview, "closed by default");
+    let (button, timeline) = (h.button("Preview"), h.button("Timeline"));
+    assert_eq!(
+        timeline.top() - button.bottom(),
+        3.0,
+        "right above the timeline"
+    );
+    let icon = Rect::from_min_size(button.min + Vec2::new(3.0, 5.0), Vec2::new(17.0, 13.0));
+    assert!(h.drawn("icon.preview").contains(&icon), "{icon:?}");
+    h.click(button.center(), PointerButton::Primary);
+    assert!(h.app.view.preview);
+    // La ventana, con el dibujo del artboard al zoom que entra, sobre el lienzo.
+    let size = crate::preview::VIEW;
+    let shown = h
+        .textures
+        .iter()
+        .filter(|(_, r)| r.width() <= size.x && r.height() <= size.y && r.width() > 16.0)
+        .count();
+    assert!(shown > 0, "the drawing in the preview");
+    h.click(h.button("Preview").center(), PointerButton::Primary);
+    assert!(!h.app.view.preview, "closed again");
+}
+
+#[test]
 fn clicking_the_marker_closes_a_clean_tab() {
     let mut h = two_tabs(Some(0));
     let mark = h.button("Close Otro.chimp");
