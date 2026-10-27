@@ -67,9 +67,9 @@ pub struct ButtonInfo<'a> {
     pub id: egui::Id,
     pub label: &'a str,
     pub enabled: bool,
+    /// De prender y apagar: si está prendido (como la herramienta elegida: sin hundirse, con su
+    /// marco rosa).
     pub selected: Option<bool>,
-    /// Prendido como la herramienta elegida (sin hundirse, con su marco rosa); si no, hundido.
-    pub framed: bool,
 }
 
 impl<'a> ButtonInfo<'a> {
@@ -80,13 +80,13 @@ impl<'a> ButtonInfo<'a> {
             label,
             enabled: true,
             selected: None,
-            framed: false,
         }
     }
 }
 
 /// Un botón en `rect` con la pieza `button` del skin según su estado: apretado, prendido
-/// (`selected`), con el puntero encima o normal (sin la pieza, un borde de 1 px). `content`
+/// (`selected`: el marco rosa de la herramienta elegida), con el puntero encima o normal (sin la
+/// pieza, un borde de 1 px). `content`
 /// dibuja lo de adentro en el rect que recibe (baja una fila mientras se aprieta). Desactivado
 /// no se aprieta. El tooltip lo pone quien llama.
 pub fn skin_button(
@@ -101,7 +101,6 @@ pub fn skin_button(
         label,
         enabled,
         selected,
-        framed,
     } = info;
     let sense = if enabled {
         Sense::click()
@@ -118,15 +117,13 @@ pub fn skin_button(
         WidgetState::Normal
     } else if response.is_pointer_button_down_on() {
         WidgetState::Down
-    } else if selected == Some(true) && !framed {
-        WidgetState::Active
     } else if response.hovered() {
         WidgetState::Hover
     } else {
         WidgetState::Normal
     };
     let ppp = ui.ctx().pixels_per_point();
-    let lit = framed && enabled && selected == Some(true) && state != WidgetState::Down;
+    let lit = enabled && selected == Some(true) && state != WidgetState::Down;
     let mut shapes = match skin.piece("button", state) {
         Some(piece) if lit => pixel_ui::selected_shapes(piece, rect, true, skin.colors(), ppp),
         Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
@@ -137,12 +134,8 @@ pub fn skin_button(
             egui::StrokeKind::Middle,
         )],
     };
-    // Hundido (apretado o prendido): lo de adentro baja 1 px con el botón.
-    let down = if matches!(state, WidgetState::Down | WidgetState::Active) {
-        1.0
-    } else {
-        0.0
-    };
+    // Apretado: lo de adentro baja 1 px con el botón.
+    let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
     shapes.extend(content(rect.translate(vec2(0.0, down))));
     ui.painter().extend(shapes);
     response

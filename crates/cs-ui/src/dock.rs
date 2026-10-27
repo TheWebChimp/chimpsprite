@@ -104,7 +104,6 @@ fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str, icon: &str, on: bool) -> 
     let rect = Rect::from_min_size(rect.min.round(), BUTTON_SIZE);
     let info = pixel_draw::ButtonInfo {
         selected: Some(on),
-        framed: true,
         ..pixel_draw::ButtonInfo::new(ui.id().with(("dock", label)), label)
     };
     let ppp = ui.ctx().pixels_per_point();

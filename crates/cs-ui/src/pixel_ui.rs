@@ -947,8 +947,6 @@ pub fn icon_button(
     let ppp = ui.ctx().pixels_per_point();
     let info = crate::pixel_draw::ButtonInfo {
         selected: on,
-        // Prendido, como la herramienta elegida: el marco rosa (no el botón hundido).
-        framed: true,
         ..crate::pixel_draw::ButtonInfo::new(ui.id().with(("icon_button", label)), label)
     };
     crate::pixel_draw::skin_button(ui, skin, rect, info, |inner| {
