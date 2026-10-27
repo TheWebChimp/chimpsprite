@@ -835,6 +835,21 @@ fn the_marker_is_a_circle_with_unsaved_changes_and_a_cross_without() {
 }
 
 #[test]
+fn the_dock_timeline_button_hides_and_shows_the_timeline() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert!(h.app.view.timeline);
+    let button = h.button("Timeline");
+    assert_eq!(button.size(), crate::dock::BUTTON_SIZE);
+    // El ícono, de 9×15, centrado en el botón de 23×24.
+    let icon = Rect::from_min_size(button.min + Vec2::new(7.0, 4.0), Vec2::new(9.0, 15.0));
+    assert!(h.drawn("icon.timeline").contains(&icon), "{icon:?}");
+    h.click(button.center(), PointerButton::Primary);
+    assert!(!h.app.view.timeline, "hidden");
+    h.click(button.center(), PointerButton::Primary);
+    assert!(h.app.view.timeline, "shown again");
+}
+
+#[test]
 fn clicking_the_marker_closes_a_clean_tab() {
     let mut h = two_tabs(Some(0));
     let mark = h.button("Close Otro.chimp");

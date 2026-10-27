@@ -1,6 +1,7 @@
 //! La columna de "otros paneles" entre el lienzo y el panel derecho (como el dock de Illustrator):
 //! un botón por panel (Artboards, Slices) que lo abre flotando a su izquierda. Así esas secciones
-//! no le quitan lugar a la paleta y al editor de color.
+//! no le quitan lugar a la paleta y al editor de color. Al final, el que prende y apaga el
+//! timeline.
 
 use eframe::egui::{self, Rect, Sense, Shape, Ui, Vec2, vec2};
 
@@ -94,22 +95,26 @@ pub struct DockOutput {
     pub app_panel: Option<(DockPanel, Rect)>,
 }
 
-/// Un botón del dock con Pixel UI: la pieza `button` según el estado (con su panel abierto, el
-/// marco rosa de la herramienta elegida) y el ícono centrado.
-fn pixel_button(ui: &mut Ui, skin: &Skin, panel: DockPanel, open: bool) -> egui::Response {
+/// Un botón del dock con Pixel UI: la pieza `button` según el estado (prendido, `on`, con el
+/// marco rosa de la herramienta elegida) y el ícono `icon` centrado.
+fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str, icon: &str, on: bool) -> egui::Response {
     let (rect, _) = ui.allocate_exact_size(BUTTON_SIZE, Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), BUTTON_SIZE);
     let info = pixel_draw::ButtonInfo {
-        selected: Some(open),
+        selected: Some(on),
         framed: true,
-        ..pixel_draw::ButtonInfo::new(ui.id().with(("dock", panel.label())), panel.label())
+        ..pixel_draw::ButtonInfo::new(ui.id().with(("dock", label)), label)
     };
     let ppp = ui.ctx().pixels_per_point();
     pixel_draw::skin_button(ui, skin, rect, info, |r| {
-        pixel_draw::piece_centered(skin, panel.icon(), r, ppp)
+        pixel_draw::piece_centered(skin, icon, r, ppp)
     })
-    .tip(panel.label())
+    .tip(label)
 }
+
+/// El botón del timeline: lo muestra o lo esconde.
+const TIMELINE: &str = "Timeline";
+const TIMELINE_ICON: &str = "icon.timeline";
 
 /// El panel abierto (en la memoria de egui, por pestaña de la app: no se guarda).
 fn open_id() -> egui::Id {
@@ -131,6 +136,7 @@ pub fn show(
     editor: &mut Editor,
     name_buffer: &mut (ArtboardId, String),
     skin: Option<&Skin>,
+    timeline: &mut bool,
 ) -> DockOutput {
     let mut out = DockOutput::default();
     let open = open_panel(ui.ctx());
@@ -142,7 +148,7 @@ pub fn show(
     for panel in DockPanel::ALL {
         let is_open = open == Some(panel);
         let response = match skin {
-            Some(skin) => pixel_button(ui, skin, panel, is_open),
+            Some(skin) => pixel_button(ui, skin, panel.label(), panel.icon(), is_open),
             None => ui
                 .add(
                     egui::Button::new(panel.plain())
@@ -155,6 +161,19 @@ pub fn show(
             set_open(ui.ctx(), (!is_open).then_some(panel));
         }
         anchors.push((panel, response.rect));
+    }
+    let response = match skin {
+        Some(skin) => pixel_button(ui, skin, TIMELINE, TIMELINE_ICON, *timeline),
+        None => ui
+            .add(
+                egui::Button::new("🎞")
+                    .selected(*timeline)
+                    .min_size(BUTTON_SIZE),
+            )
+            .tip(TIMELINE),
+    };
+    if response.clicked() {
+        *timeline = !*timeline;
     }
     let Some(panel) = open_panel(ui.ctx()) else {
         return out;

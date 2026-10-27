@@ -1446,7 +1446,13 @@ impl ChimpApp {
             .show_separator_line(skin.is_none())
             .show(ui, |ui| {
                 ui.add_enabled_ui(!modal, |ui| {
-                    dock::show(ui, &mut self.doc.editor, &mut self.doc.artboard_name, skin)
+                    dock::show(
+                        ui,
+                        &mut self.doc.editor,
+                        &mut self.doc.artboard_name,
+                        skin,
+                        &mut self.view.timeline,
+                    )
                 })
                 .inner
             })
