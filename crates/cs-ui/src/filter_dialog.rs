@@ -164,7 +164,14 @@ impl FilterDialog {
                 // Siempre impar: el píxel en el centro.
                 *size |= 1;
             }
-            Filter::ColorCurve(curve) => {
+            Filter::ColorCurve { curve, channels } => {
+                ui.horizontal(|ui| {
+                    ui.label("Channels");
+                    widgets::checkbox(ui, &mut channels.r, "R");
+                    widgets::checkbox(ui, &mut channels.g, "G");
+                    widgets::checkbox(ui, &mut channels.b, "B");
+                    widgets::checkbox(ui, &mut channels.a, "A");
+                });
                 curve_editor(ui, skin, curve, &mut self.curve_drag);
                 ui.label("Click to add a point, drag to move it, right-click to remove it.");
             }

@@ -183,8 +183,32 @@ pub enum Filter {
         size: u32,
     },
     Convolution(Kernel),
-    /// Los canales de color (no el alfa) pasan por la curva.
-    ColorCurve(Curve),
+    /// Los canales elegidos pasan por la curva.
+    ColorCurve {
+        curve: Curve,
+        channels: Channels,
+    },
+}
+
+/// Los canales que cambia Color Curve (como los botones R, G, B y A de Aseprite).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Channels {
+    pub r: bool,
+    pub g: bool,
+    pub b: bool,
+    pub a: bool,
+}
+
+impl Default for Channels {
+    /// Los de color, como en Aseprite.
+    fn default() -> Self {
+        Self {
+            r: true,
+            g: true,
+            b: true,
+            a: false,
+        }
+    }
 }
 
 impl Filter {
@@ -197,7 +221,7 @@ impl Filter {
             Filter::Outline { .. } => "Outline",
             Filter::Despeckle { .. } => "Despeckle",
             Filter::Convolution(_) => "Convolution Matrix",
-            Filter::ColorCurve(_) => "Color Curve",
+            Filter::ColorCurve { .. } => "Color Curve",
         }
     }
 
@@ -287,9 +311,15 @@ impl Filter {
                     median(|c| c.a),
                 )
             }
-            Filter::ColorCurve(curve) => {
+            Filter::ColorCurve { curve, channels } => {
                 let lut = curve.lut();
-                Rgba::new(lut[c.r as usize], lut[c.g as usize], lut[c.b as usize], c.a)
+                let f = |v: u8, on: bool| if on { lut[v as usize] } else { v };
+                Rgba::new(
+                    f(c.r, channels.r),
+                    f(c.g, channels.g),
+                    f(c.b, channels.b),
+                    f(c.a, channels.a),
+                )
             }
             Filter::Convolution(kernel) => {
                 if c.a == 0 {
@@ -534,8 +564,34 @@ mod tests {
         let mut e = editor();
         let mut dark = Curve::identity();
         dark.move_point(1, 255, 0);
-        e.apply_filter(&Filter::ColorCurve(dark));
+        e.apply_filter(&Filter::ColorCurve {
+            curve: dark,
+            channels: Channels::default(),
+        });
         assert_eq!(at(&e, 2, 2), Rgba::rgb(0, 0, 0));
+    }
+
+    #[test]
+    fn the_curve_changes_only_the_chosen_channels() {
+        let mut e = editor();
+        let before = at(&e, 2, 2);
+        // Al revés: 0 → 255 y 255 → 0.
+        let mut reversed = Curve::identity();
+        reversed.move_point(0, 0, 255);
+        reversed.move_point(1, 255, 0);
+        let channels = Channels {
+            r: false,
+            g: true,
+            b: false,
+            a: false,
+        };
+        e.apply_filter(&Filter::ColorCurve {
+            curve: reversed,
+            channels,
+        });
+        let after = at(&e, 2, 2);
+        assert_eq!((after.r, after.b, after.a), (before.r, before.b, before.a));
+        assert_eq!(after.g, 255 - before.g);
     }
 
     #[test]

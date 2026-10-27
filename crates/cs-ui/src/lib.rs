@@ -252,7 +252,10 @@ impl ChimpApp {
                 "curve" => {
                     let mut curve = filters::Curve::identity();
                     curve.insert(96, 160);
-                    filters::Filter::ColorCurve(curve)
+                    filters::Filter::ColorCurve {
+                        curve,
+                        channels: Default::default(),
+                    }
                 }
                 "hue" => filters::Filter::HueSaturation {
                     hue: 90,
@@ -1386,7 +1389,10 @@ A pixel art editor."
                 ui.close();
             }
             if ui.add(menus::plain("Color Curve…")).clicked() {
-                open = Some(Filter::ColorCurve(filters::Curve::identity()));
+                open = Some(Filter::ColorCurve {
+                    curve: filters::Curve::identity(),
+                    channels: Default::default(),
+                });
                 ui.close();
             }
             if ui.add(menus::plain("Hue/Saturation…")).clicked() {
