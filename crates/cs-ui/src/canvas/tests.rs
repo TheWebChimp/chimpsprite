@@ -1099,6 +1099,39 @@ fn a_guide_is_cut_where_an_artboard_in_front_covers_it() {
 }
 
 #[test]
+fn the_symmetry_is_cut_where_an_artboard_in_front_covers_it() {
+    let front = Rect::from_min_max(Pos2::new(40.0, 0.0), Pos2::new(60.0, 100.0));
+    // Un eje horizontal (de 1 px de alto) que cruza el de delante: dos pedazos.
+    let axis = Rect::from_min_max(Pos2::new(0.0, 50.0), Pos2::new(100.0, 51.0));
+    assert_eq!(
+        rect_uncovered(axis, &[front]),
+        vec![
+            Rect::from_min_max(Pos2::new(0.0, 50.0), Pos2::new(40.0, 51.0)),
+            Rect::from_min_max(Pos2::new(60.0, 50.0), Pos2::new(100.0, 51.0)),
+        ]
+    );
+    assert!(
+        rect_uncovered(
+            Rect::from_min_size(Pos2::new(45.0, 10.0), Vec2::splat(5.0)),
+            &[front]
+        )
+        .is_empty()
+    );
+    // Una diagonal: sin el tramo que pasa por debajo.
+    let pieces = segment_uncovered([Pos2::new(0.0, 0.0), Pos2::new(100.0, 100.0)], &[front])
+        .into_iter()
+        .map(|[a, b]| [a.round(), b.round()])
+        .collect::<Vec<_>>();
+    assert_eq!(
+        pieces,
+        vec![
+            [Pos2::new(0.0, 0.0), Pos2::new(40.0, 40.0)],
+            [Pos2::new(60.0, 60.0), Pos2::new(100.0, 100.0)],
+        ]
+    );
+}
+
+#[test]
 fn entering_or_leaving_the_mask_shows_at_once() {
     use crate::mask_ops::NewMask;
     let mut h = Harness::new();

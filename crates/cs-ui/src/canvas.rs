@@ -403,14 +403,33 @@ impl CanvasView {
         )
     }
 
+    /// Lo que ocupa en pantalla cada artboard de `document`, en su orden (con su ventana, con
+    /// Pixel UI).
+    fn covers(&self, rect: Rect, document: &cs_core::Document, ppp: f32) -> Vec<Rect> {
+        document
+            .artboards
+            .iter()
+            .map(|a| {
+                let pixels = WindowLayout::pixels_on_screen(self.pixel_rect(rect, a), ppp);
+                if self.artboard_window.is_some() {
+                    WindowLayout::frame_around(pixels, ppp)
+                } else {
+                    pixels
+                }
+            })
+            .collect()
+    }
+
     /// Ejes de simetría punteados sobre el artboard activo y su centro, como se ve en `document`
-    /// (mientras se arrastra el artboard, se mueven con él).
+    /// (mientras se arrastra el artboard, se mueven con él), sin lo que tapan los artboards de
+    /// delante (`covers`).
     fn draw_symmetry(
         &self,
         painter: &egui::Painter,
         rect: Rect,
         editor: &Editor,
         document: &cs_core::Document,
+        covers: &[Rect],
     ) {
         let a = document
             .artboard(editor.active)
@@ -435,6 +454,7 @@ impl CanvasView {
                 c,
                 screen.intersect(self.visible(rect)),
                 color,
+                covers,
             );
             return;
         }
@@ -459,15 +479,20 @@ impl CanvasView {
         if axes.diagonal_up {
             segments.push([c + Vec2::new(-k, k), c + Vec2::new(k, -k)]);
         }
-        for seg in segments {
+        for seg in segments
+            .into_iter()
+            .flat_map(|s| segment_uncovered(s, covers))
+        {
             painter.extend(egui::Shape::dashed_line(&seg, stroke, 6.0, 4.0));
         }
-        painter.circle(
-            c,
-            4.0,
-            theme::ACCENT,
-            Stroke::new(1.0, theme::CANVAS_BORDER),
-        );
+        if !covers.iter().any(|r| r.contains(c)) {
+            painter.circle(
+                c,
+                4.0,
+                theme::ACCENT,
+                Stroke::new(1.0, theme::CANVAS_BORDER),
+            );
+        }
     }
 
     /// `dialog`: diálogo Canvas Size abierto; sus guías se dibujan y se pueden arrastrar.
@@ -664,23 +689,11 @@ impl CanvasView {
             }
         }
 
+        // Lo que ocupa cada artboard en pantalla: las guías y la simetría de uno no se ven encima
+        // de los que van delante.
+        let covers = self.covers(rect, document, ui.ctx().pixels_per_point());
         if view_settings.shows(view_settings.guides) {
             let dragged = self.ruler_drag.and_then(|d| d.index);
-            // Lo que ocupa cada artboard en pantalla (con su ventana, con Pixel UI): las guías de
-            // uno no se ven encima de los que van delante.
-            let ppp = ui.ctx().pixels_per_point();
-            let covers: Vec<Rect> = document
-                .artboards
-                .iter()
-                .map(|a| {
-                    let pixels = WindowLayout::pixels_on_screen(self.pixel_rect(rect, a), ppp);
-                    if self.artboard_window.is_some() {
-                        WindowLayout::frame_around(pixels, ppp)
-                    } else {
-                        pixels
-                    }
-                })
-                .collect();
             for (k, artboard) in document.artboards.iter().enumerate() {
                 let ((x0, y0), (x1, y1)) = artboard.rect();
                 let screen = Rect::from_min_max(
@@ -726,7 +739,13 @@ impl CanvasView {
         }
 
         if !modal {
-            self.draw_symmetry(&painter, rect, editor, document);
+            // Los artboards de delante del activo tapan sus ejes.
+            let front = document
+                .artboards
+                .iter()
+                .position(|a| a.id == editor.active)
+                .map_or(&[][..], |k| &covers[k + 1..]);
+            self.draw_symmetry(&painter, rect, editor, document, front);
         }
 
         if let Some((min, max)) = guide {
@@ -1428,27 +1447,34 @@ fn draw_transform_box(
 /// Con Pixel UI, los ejes de simetría como en Aseprite: líneas de 1 punto en `color`, enteras
 /// de borde a borde del artboard (`screen`). Las rectas llevan un handle de 5×5 (los de la
 /// selección) en cada punta, adentro del artboard; las diagonales son una escalera de píxeles
-/// que pasa por el centro `c`.
+/// que pasa por el centro `c`. Lo que tapan los artboards de delante (`covers`) no se ve.
 fn draw_pixel_symmetry(
     painter: &egui::Painter,
     axes: cs_core::SymmetryAxes,
     c: Pos2,
     screen: Rect,
     color: Color32,
+    covers: &[Rect],
 ) {
     let handle = crate::pixel_selection::HANDLE;
     let half = (handle / 2.0).floor();
     let screen = Rect::from_min_max(screen.min.round(), screen.max.round());
     let (x, y) = (c.x.floor(), c.y.floor());
-    let px = |r: Rect| egui::Shape::rect_filled(r, 0.0, color);
     let mut shapes = Vec::new();
+    let mut px = |r: Rect| {
+        shapes.extend(
+            rect_uncovered(r, covers)
+                .into_iter()
+                .map(|r| egui::Shape::rect_filled(r, 0.0, color)),
+        );
+    };
     let mut handles = Vec::new();
     if axes.vertical {
         let line = Rect::from_x_y_ranges(
             x..=x + 1.0,
             screen.top() + handle..=screen.bottom() - handle,
         );
-        shapes.push(px(line));
+        px(line);
         for top in [screen.top(), screen.bottom() - handle] {
             handles.push(Rect::from_min_size(
                 Pos2::new(x - half, top),
@@ -1461,7 +1487,7 @@ fn draw_pixel_symmetry(
             screen.left() + handle..=screen.right() - handle,
             y..=y + 1.0,
         );
-        shapes.push(px(line));
+        px(line);
         for left in [screen.left(), screen.right() - handle] {
             handles.push(Rect::from_min_size(
                 Pos2::new(left, y - half),
@@ -1478,14 +1504,83 @@ fn draw_pixel_symmetry(
         for i in -rows..=rows {
             let at = Pos2::new(x + dir * i as f32, y + i as f32);
             if screen.contains(at) {
-                shapes.push(px(Rect::from_min_size(at, Vec2::splat(1.0))));
+                px(Rect::from_min_size(at, Vec2::splat(1.0)));
             }
         }
     }
     painter.extend(shapes);
+    // Un handle que asoma debajo de otro artboard no se dibuja.
     for r in handles {
-        crate::pixel_selection::draw_handle(painter, r);
+        if !covers.iter().any(|c| c.intersects(r)) {
+            crate::pixel_selection::draw_handle(painter, r);
+        }
     }
+}
+
+/// Los pedazos de `r` que no tapa ninguno de `covers`.
+fn rect_uncovered(r: Rect, covers: &[Rect]) -> Vec<Rect> {
+    let mut pieces = vec![r];
+    for c in covers {
+        pieces = pieces
+            .into_iter()
+            .flat_map(|p| {
+                let i = p.intersect(*c);
+                if i.width() <= 0.0 || i.height() <= 0.0 {
+                    return vec![p];
+                }
+                // Arriba y abajo a todo lo ancho; a los lados, del alto de lo tapado.
+                let sides = [
+                    Rect::from_min_max(p.min, Pos2::new(p.right(), i.top())),
+                    Rect::from_min_max(Pos2::new(p.left(), i.bottom()), p.max),
+                    Rect::from_min_max(
+                        Pos2::new(p.left(), i.top()),
+                        Pos2::new(i.left(), i.bottom()),
+                    ),
+                    Rect::from_min_max(
+                        Pos2::new(i.right(), i.top()),
+                        Pos2::new(p.right(), i.bottom()),
+                    ),
+                ];
+                sides
+                    .into_iter()
+                    .filter(|s| s.width() > 0.0 && s.height() > 0.0)
+                    .collect()
+            })
+            .collect();
+    }
+    pieces
+}
+
+/// Los tramos del segmento `seg` que no tapa ninguno de `covers`.
+fn segment_uncovered(seg: [Pos2; 2], covers: &[Rect]) -> Vec<[Pos2; 2]> {
+    let [a, b] = seg;
+    let d = b - a;
+    // Lo tapado por cada uno, en fracciones del segmento (0 en `a`, 1 en `b`).
+    let cut: Vec<egui::Rangef> = covers
+        .iter()
+        .filter_map(|c| {
+            let (mut t0, mut t1) = (0.0f32, 1.0f32);
+            for (p, dp, lo, hi) in [
+                (a.x, d.x, c.left(), c.right()),
+                (a.y, d.y, c.top(), c.bottom()),
+            ] {
+                if dp == 0.0 {
+                    if p < lo || p > hi {
+                        return None;
+                    }
+                } else {
+                    let (u, v) = ((lo - p) / dp, (hi - p) / dp);
+                    t0 = t0.max(u.min(v));
+                    t1 = t1.min(u.max(v));
+                }
+            }
+            (t1 > t0).then(|| egui::Rangef::new(t0, t1))
+        })
+        .collect();
+    uncovered(egui::Rangef::new(0.0, 1.0), &cut)
+        .into_iter()
+        .map(|r| [a + d * r.min, a + d * r.max])
+        .collect()
 }
 
 /// Flecha curva (sentido horario) en el puntero, para rotar: egui no trae ese cursor.
