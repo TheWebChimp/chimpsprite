@@ -133,36 +133,6 @@ impl ToolKind {
         }
     }
 
-    /// Herramienta de un atajo de teclado (sin Ctrl/Alt).
-    pub fn from_key(key: char, shift: bool) -> Option<ToolKind> {
-        Some(match (key, shift) {
-            ('M', false) => ToolKind::RectSelect,
-            ('M', true) => ToolKind::EllipseSelect,
-            ('Q', false) => ToolKind::Lasso,
-            ('Q', true) => ToolKind::PolygonLasso,
-            ('W', false) => ToolKind::MagicWand,
-            ('V', false) => ToolKind::Move,
-            ('B', false) => ToolKind::Pencil,
-            ('S', true) => ToolKind::Spray,
-            ('E', false) => ToolKind::Eraser,
-            ('I', false) => ToolKind::Eyedropper,
-            ('G', false) => ToolKind::Bucket,
-            ('G', true) => ToolKind::Gradient,
-            ('L', false) => ToolKind::Line,
-            ('U', false) => ToolKind::Rectangle,
-            ('U', true) => ToolKind::Ellipse,
-            ('R', false) => ToolKind::Blur,
-            ('R', true) => ToolKind::Jumble,
-            ('H', false) => ToolKind::Hand,
-            ('D', false) => ToolKind::Contour,
-            ('D', true) => ToolKind::Polygon,
-            ('T', false) => ToolKind::Text,
-            ('C', true) => ToolKind::Slice,
-            ('O', true) => ToolKind::Artboard,
-            _ => return None,
-        })
-    }
-
     pub fn is_selection(self) -> bool {
         matches!(
             self,

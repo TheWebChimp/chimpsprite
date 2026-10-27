@@ -69,18 +69,28 @@ fn thirteen_groups_in_the_toolbar_order() {
 
 #[test]
 fn new_shortcuts_and_every_shortcut_round_trips() {
-    assert_eq!(ToolKind::from_key('H', false), Some(ToolKind::Hand));
-    assert_eq!(ToolKind::from_key('D', false), Some(ToolKind::Contour));
-    assert_eq!(ToolKind::from_key('R', false), Some(ToolKind::Blur));
-    assert_eq!(ToolKind::from_key('R', true), Some(ToolKind::Jumble));
-    for &kind in ToolKind::GROUPS.iter().flat_map(|g| g.iter()) {
-        let s = kind.shortcut();
-        let (key, shift) = match s.strip_prefix("Shift+") {
-            Some(k) => (k, true),
-            None => (s, false),
+    // Las teclas de las herramientas salen del registro de atajos (las de fábrica).
+    use crate::keymap::{Action, Keymap};
+    use eframe::egui::{Key, Modifiers};
+    let keymap = Keymap::default();
+    let tool = |key, shift| {
+        let modifiers = if shift {
+            Modifiers::SHIFT
+        } else {
+            Modifiers::NONE
         };
-        let key = key.chars().next().unwrap();
-        assert_eq!(ToolKind::from_key(key, shift), Some(kind), "{s}");
+        keymap.action_for(key, modifiers)
+    };
+    assert_eq!(tool(Key::H, false), Some(Action::Tool(ToolKind::Hand)));
+    assert_eq!(tool(Key::D, false), Some(Action::Tool(ToolKind::Contour)));
+    assert_eq!(tool(Key::R, false), Some(Action::Tool(ToolKind::Blur)));
+    assert_eq!(tool(Key::R, true), Some(Action::Tool(ToolKind::Jumble)));
+    for &kind in ToolKind::GROUPS.iter().flat_map(|g| g.iter()) {
+        let combos = keymap.combos(Action::Tool(kind));
+        assert_eq!(combos.len(), 1, "{kind:?} has its key");
+        let c = combos[0];
+        assert_eq!(c.label(), kind.shortcut(), "{kind:?}");
+        assert_eq!(tool(c.key, c.shift), Some(Action::Tool(kind)), "{kind:?}");
     }
     assert_eq!(ToolKind::Hand.label(), "Hand");
     assert_eq!(ToolKind::Contour.label(), "Contour");
@@ -497,7 +507,7 @@ mod on_a_mask {
 #[test]
 fn the_polygon_tool_paints_the_outline_closed_with_a_click_on_the_first_vertex() {
     let mut e = editor(ToolKind::Polygon);
-    assert_eq!(ToolKind::from_key('D', true), Some(ToolKind::Polygon));
+    assert_eq!(ToolKind::Polygon.shortcut(), "Shift+D");
     for p in [(1, 1), (6, 1), (1, 6), (1, 1)] {
         e.pointer_press(at(p), false, false, 0.1);
         e.pointer_release();
