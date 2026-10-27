@@ -746,3 +746,133 @@ mod tests {
         assert!(e.sprite().cel(e.layer, 1).is_none());
     }
 }
+
+#[cfg(test)]
+/// Los cels enlazados siguen enlazados con cualquier cosa que se haga en uno: lo que se pinta o
+/// se cambia en uno se ve en todos.
+mod linked_cels {
+    use cs_commands::Command;
+    use cs_core::{ColorMode, Mask, PixelValue, Rgba, Sprite};
+
+    use crate::editor::{Editor, ToolKind};
+
+    fn linked() -> (Editor, cs_core::LayerId) {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        e.insert_empty_frame();
+        e.insert_empty_frame();
+        let l = e.layer;
+        e.execute(Command::DrawPixels {
+            layer: l,
+            frame: 0,
+            pixels: (0..8)
+                .flat_map(|y| (0..8).map(move |x| (x, y, PixelValue::Rgba(Rgba::rgb(200, 10, 10)))))
+                .collect(),
+        });
+        e.link_range(l, 0, 2);
+        e.set_frame(1);
+        (e, l)
+    }
+
+    fn assert_linked(name: &str, e: &Editor, l: cs_core::LayerId) {
+        let ids: Vec<_> = (0..3)
+            .map(|f| e.sprite().cel(l, f).map(|c| c.image))
+            .collect();
+        assert!(ids[0] == ids[1] && ids[1] == ids[2], "{name}: {ids:?}");
+        let px: Vec<_> = (0..3).map(|f| e.sprite().pixel(l, f, 3, 3)).collect();
+        assert!(px[0] == px[1] && px[1] == px[2], "{name}: {px:?}");
+    }
+
+    #[test]
+    fn every_edit_keeps_linked_cels_linked() {
+        let at = |x: i32, y: i32| (x as f32 + 0.5, y as f32 + 0.5);
+        for tool in [
+            ToolKind::Pencil,
+            ToolKind::Eraser,
+            ToolKind::Bucket,
+            ToolKind::Gradient,
+            ToolKind::Line,
+            ToolKind::Rectangle,
+            ToolKind::Ellipse,
+            ToolKind::Spray,
+            ToolKind::Blur,
+            ToolKind::Jumble,
+            ToolKind::Contour,
+        ] {
+            let (mut e, l) = linked();
+            e.set_tool(tool);
+            e.pointer_press(at(1, 1), false, false, 0.1);
+            e.pointer_drag(at(5, 5));
+            e.tool_tick(50.0);
+            e.pointer_release();
+            assert_linked(&format!("{tool:?}"), &e, l);
+        }
+        type Edit = fn(&mut Editor);
+        let ops: Vec<(&str, Edit)> = vec![
+            ("move", |e| {
+                e.set_tool(ToolKind::Move);
+                e.select_all();
+                e.lift();
+                e.nudge(2, 0);
+                e.commit_floating();
+            }),
+            ("move_drag", |e| {
+                e.set_tool(ToolKind::RectSelect);
+                e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (4, 4))));
+                e.pointer_press((2.5, 2.5), false, false, 0.1);
+                e.pointer_drag((5.5, 5.5));
+                e.pointer_release();
+                e.commit_floating();
+            }),
+            ("paste", |e| {
+                e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (2, 2))));
+                let c = e.copy().unwrap();
+                e.paste(&c);
+                e.nudge(3, 3);
+                e.commit_floating();
+            }),
+            ("flip", |e| {
+                e.deselect();
+                e.flip(true);
+            }),
+            ("flip_sel", |e| {
+                e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (4, 4))));
+                e.flip(true);
+                e.commit_floating();
+            }),
+            ("rotate", |e| {
+                e.rotate_content(crate::edit_ops::Turn::Clockwise);
+                e.commit_floating();
+            }),
+            ("shift", |e| {
+                e.shift_content(1, 0);
+            }),
+            ("invert", |e| {
+                e.invert_colors();
+            }),
+            ("fill", |e| {
+                e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (4, 4))));
+                e.fill_selection();
+            }),
+            ("clear", |e| {
+                e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (7, 7))));
+                e.clear_selection_content();
+            }),
+            ("cut", |e| {
+                e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (4, 4))));
+                e.cut();
+            }),
+            ("filter", |e| {
+                e.apply_filter(&crate::filters::Filter::HueSaturation {
+                    hue: 90,
+                    saturation: 0,
+                    lightness: 0,
+                });
+            }),
+        ];
+        for (name, op) in ops {
+            let (mut e, l) = linked();
+            op(&mut e);
+            assert_linked(name, &e, l);
+        }
+    }
+}
