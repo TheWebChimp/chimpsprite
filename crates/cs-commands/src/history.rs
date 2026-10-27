@@ -5,13 +5,19 @@ pub trait Undoable: Sized {
     type Target;
 
     fn apply(&self, target: &mut Self::Target) -> Result<Self, CmdError>;
+
+    /// El nombre del paso (para el historial): el de lo que hace este comando.
+    fn label(&self) -> &'static str {
+        "Change"
+    }
 }
 
-/// Pilas de undo/redo. Cada entrada es el comando que deshace (o rehace) un paso.
+/// Pilas de undo/redo. Cada entrada es el comando que deshace (o rehace) un paso, con el nombre
+/// del paso.
 #[derive(Debug)]
 pub struct History<C> {
-    undo: Vec<C>,
-    redo: Vec<C>,
+    undo: Vec<(C, &'static str)>,
+    redo: Vec<(C, &'static str)>,
 }
 
 impl<C> Default for History<C> {
@@ -30,7 +36,7 @@ impl<C: Undoable> History<C> {
 
     pub fn execute(&mut self, target: &mut C::Target, cmd: C) -> Result<(), CmdError> {
         let inverse = cmd.apply(target)?;
-        self.undo.push(inverse);
+        self.undo.push((inverse, cmd.label()));
         self.redo.clear();
         Ok(())
     }
@@ -42,7 +48,7 @@ impl<C: Undoable> History<C> {
     pub fn execute_merged(&mut self, target: &mut C::Target, cmd: C) -> Result<(), CmdError> {
         let inverse = cmd.apply(target)?;
         if self.undo.is_empty() {
-            self.undo.push(inverse);
+            self.undo.push((inverse, cmd.label()));
         }
         self.redo.clear();
         Ok(())
@@ -66,17 +72,32 @@ impl<C: Undoable> History<C> {
         !self.redo.is_empty()
     }
 
-    fn step(from: &mut Vec<C>, to: &mut Vec<C>, target: &mut C::Target) -> Result<bool, CmdError> {
-        let Some(cmd) = from.pop() else {
+    /// Los nombres de los pasos hechos, del primero al último.
+    pub fn done(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.undo.iter().map(|(_, label)| *label)
+    }
+
+    /// Los nombres de los pasos deshechos, del próximo a rehacer al último.
+    pub fn undone(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.redo.iter().rev().map(|(_, label)| *label)
+    }
+
+    #[allow(clippy::type_complexity)]
+    fn step(
+        from: &mut Vec<(C, &'static str)>,
+        to: &mut Vec<(C, &'static str)>,
+        target: &mut C::Target,
+    ) -> Result<bool, CmdError> {
+        let Some((cmd, label)) = from.pop() else {
             return Ok(false);
         };
         match cmd.apply(target) {
             Ok(opposite) => {
-                to.push(opposite);
+                to.push((opposite, label));
                 Ok(true)
             }
             Err(e) => {
-                from.push(cmd);
+                from.push((cmd, label));
                 Err(e)
             }
         }
@@ -96,6 +117,30 @@ mod tests {
         fn apply(&self, target: &mut i32) -> Result<Self, CmdError> {
             Ok(Set(std::mem::replace(target, self.0)))
         }
+
+        fn label(&self) -> &'static str {
+            if self.0 % 2 == 0 { "Even" } else { "Odd" }
+        }
+    }
+
+    #[test]
+    fn steps_keep_the_name_of_what_they_did() {
+        let mut v = 0;
+        let mut h = History::new();
+        h.execute(&mut v, Set(1)).unwrap();
+        h.execute(&mut v, Set(2)).unwrap();
+        h.execute(&mut v, Set(3)).unwrap();
+        h.undo(&mut v).unwrap();
+        assert_eq!(h.done().collect::<Vec<_>>(), ["Odd", "Even"]);
+        assert_eq!(h.undone().collect::<Vec<_>>(), ["Odd"]);
+        h.undo(&mut v).unwrap();
+        assert_eq!(
+            h.undone().collect::<Vec<_>>(),
+            ["Even", "Odd"],
+            "next to redo first"
+        );
+        h.redo(&mut v).unwrap();
+        assert_eq!(h.done().collect::<Vec<_>>(), ["Odd", "Even"]);
     }
 
     #[test]

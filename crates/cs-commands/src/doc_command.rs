@@ -178,6 +178,20 @@ impl crate::Undoable for DocCommand {
     fn apply(&self, target: &mut Document) -> Result<Self, CmdError> {
         DocCommand::apply(self, target)
     }
+
+    fn label(&self) -> &'static str {
+        match self {
+            DocCommand::OnArtboard { cmd, .. } => cmd.label(),
+            DocCommand::AddArtboard { .. } => "New Artboard",
+            DocCommand::RemoveArtboard { .. } => "Delete Artboard",
+            DocCommand::SetArtboardProps { .. } => "Artboard",
+            DocCommand::SetGuides { .. } => "Guides",
+            DocCommand::SetSymmetry { .. } => "Symmetry",
+            DocCommand::SetSprite { .. } => "Sprite",
+            DocCommand::SetNotes(_) => "Notes",
+            DocCommand::Batch(cmds) => cmds.first().map_or("Change", crate::Undoable::label),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -68,6 +68,7 @@ mod tool_group;
 mod tool_tests;
 mod transform;
 mod transform_box;
+mod undo_history;
 mod view;
 mod widgets;
 
@@ -119,6 +120,8 @@ pub struct ChimpApp {
     #[cfg(not(target_arch = "wasm32"))]
     news_fetcher: Box<dyn news::Fetcher>,
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
+    /// La ventana Edit → Undo History abierta.
+    undo_history: bool,
     /// La ventanita de preview (abierta con `view.preview`).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
@@ -219,6 +222,14 @@ impl ChimpApp {
             let a = ends.next().unwrap_or(2);
             app.doc.editor.palette_selection = Some((a, ends.next().unwrap_or(a + 3)));
         }
+        // Desarrollo: la ventana Undo History con unos pasos, para capturas.
+        if std::env::var_os("CHIMPSPRITE_DEMO_UNDO_HISTORY").is_some() && app.has_doc() {
+            let editor = &mut app.doc.editor;
+            editor.add_layer(cs_core::LayerKind::Image);
+            editor.insert_empty_frame();
+            editor.undo();
+            app.undo_history = true;
+        }
         // Desarrollo: un rango de cels del timeline ("fila,frame,fila,frame"), para capturas.
         if let Ok(range) = std::env::var("CHIMPSPRITE_DEMO_CELS")
             && app.has_doc()
@@ -311,6 +322,7 @@ impl ChimpApp {
             #[cfg(not(target_arch = "wasm32"))]
             news_fetcher: news::default_fetcher(),
             new_tilemap: None,
+            undo_history: false,
             preview: preview::Preview::default(),
             convert_tilemap: None,
             demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
@@ -1017,6 +1029,12 @@ impl ChimpApp {
         {
             self.doc.editor.redo();
         }
+        if ui
+            .add(menus::check(&mut self.undo_history, "Undo History"))
+            .clicked()
+        {
+            ui.close();
+        }
         menus::separator(ui);
         let has_selection = self.doc.editor.selection.is_some();
         // Sin selección, cortan y copian del timeline (frames o cels).
@@ -1662,6 +1680,11 @@ impl ChimpApp {
                 .show(ui.ctx(), &self.doc.editor, self.pixel.skin())
         {
             self.view.preview = false;
+        }
+        if self.undo_history
+            && undo_history::show(ui.ctx(), &mut self.doc.editor, self.pixel.skin())
+        {
+            self.undo_history = false;
         }
         // Los paneles del dock que son de la app.
         match dock_out.app_panel {

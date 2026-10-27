@@ -258,6 +258,47 @@ impl crate::Undoable for Command {
     fn apply(&self, target: &mut Sprite) -> Result<Self, CmdError> {
         Command::apply(self, target)
     }
+
+    fn label(&self) -> &'static str {
+        Command::label(self)
+    }
+}
+
+impl Command {
+    /// El nombre del paso, para el historial.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Command::DrawPixels { .. } => "Draw",
+            Command::SetCel { cel: None, .. } => "Clear Cel",
+            Command::SetCel { .. } => "Cel",
+            Command::SetImage { .. } => "Image",
+            Command::AddLayer { .. } => "New Layer",
+            Command::RemoveLayer { .. } => "Delete Layer",
+            Command::SetLayerProps { .. } => "Layer Properties",
+            Command::SetLayerMask { .. } => "Layer Mask",
+            Command::DrawMask { .. } => "Draw Mask",
+            Command::AddFrame { .. } => "New Frame",
+            Command::RemoveFrame { .. } => "Delete Frame",
+            Command::ResizeCanvas { .. } => "Canvas Size",
+            Command::TrimToCanvas => "Trim",
+            Command::SetTags(_) => "Tags",
+            Command::SetSlices(_) => "Slices",
+            Command::SetInstanceTrack { .. } => "Instance",
+            Command::SetTileset { .. } => "Tileset",
+            Command::SetTilemap { .. } => "Tilemap",
+            Command::SetGrid(_) => "Grid",
+            Command::SetPalette(_) => "Palette",
+            Command::MoveLayer { .. } => "Move Layer",
+            Command::MoveFrame { .. } => "Move Frame",
+            Command::SetFrameDuration { .. } => "Frame Duration",
+            // Un lote: el de su primer paso (las imágenes y tilemaps nuevos acompañan a otro).
+            Command::Batch(cmds) => cmds
+                .iter()
+                .find(|c| !matches!(c, Command::SetImage { .. } | Command::SetTilemap { .. }))
+                .or(cmds.first())
+                .map_or("Change", Command::label),
+        }
+    }
 }
 
 fn resize_canvas(
