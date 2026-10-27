@@ -38,7 +38,7 @@ impl Editor {
 
     /// El valor de `c` en el modo de color del sprite (en indexado, el color más parecido de la
     /// paleta).
-    fn value_of(&self, c: Rgba) -> PixelValue {
+    pub(crate) fn value_of(&self, c: Rgba) -> PixelValue {
         let sprite = self.sprite();
         match sprite.color_mode {
             _ if c.a == 0 => sprite.color_mode.transparent(),

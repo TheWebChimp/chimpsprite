@@ -21,6 +21,8 @@ mod editor;
 mod export_dialog;
 mod fg_bg;
 mod file_actions;
+mod filter_dialog;
+mod filters;
 mod mask_ops;
 mod menus;
 mod palette_ops;
@@ -122,6 +124,8 @@ pub struct ChimpApp {
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
     /// La ventana Edit → Undo History abierta.
     undo_history: bool,
+    /// El diálogo de un filtro de Edit (Replace Color, Adjustments, FX), con su vista previa.
+    filter_dialog: Option<filter_dialog::FilterDialog>,
     /// La ventanita de preview (abierta con `view.preview`).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
@@ -221,6 +225,25 @@ impl ChimpApp {
             let mut ends = range.split(',').filter_map(|n| n.trim().parse().ok());
             let a = ends.next().unwrap_or(2);
             app.doc.editor.palette_selection = Some((a, ends.next().unwrap_or(a + 3)));
+        }
+        // Desarrollo: el diálogo de Replace Color (o, con "hue", el de Hue/Saturation).
+        if let Ok(which) = std::env::var("CHIMPSPRITE_DEMO_FILTER")
+            && app.has_doc()
+        {
+            let editor = &app.doc.editor;
+            let filter = match which.as_str() {
+                "hue" => filters::Filter::HueSaturation {
+                    hue: 90,
+                    saturation: 0,
+                    lightness: 0,
+                },
+                _ => filters::Filter::ReplaceColor {
+                    from: editor.resolve(editor.primary),
+                    to: editor.resolve(editor.secondary),
+                    tolerance: 0,
+                },
+            };
+            app.open_filter(filter);
         }
         // Desarrollo: la ventana Undo History con unos pasos, para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_UNDO_HISTORY").is_some() && app.has_doc() {
@@ -323,6 +346,7 @@ impl ChimpApp {
             news_fetcher: news::default_fetcher(),
             new_tilemap: None,
             undo_history: false,
+            filter_dialog: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
             demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
@@ -1130,8 +1154,59 @@ impl ChimpApp {
             self.new_artboard_from_selection();
         }
         menus::separator(ui);
+        use filters::{Filter, Kernel};
+        let editor = &self.doc.editor;
+        let (primary, secondary) = (
+            editor.resolve(editor.primary),
+            editor.resolve(editor.secondary),
+        );
+        if ui.add(menus::plain("Replace Color…")).clicked() {
+            self.open_filter(Filter::ReplaceColor {
+                from: primary,
+                to: secondary,
+                tolerance: 0,
+            });
+        }
         if ui.add(menus::item("Invert", "Ctrl+I")).clicked() {
             self.doc.editor.invert_colors();
+        }
+        let mut open = None;
+        menus::submenu(ui, "Adjustments", |ui| {
+            if ui.add(menus::plain("Brightness/Contrast…")).clicked() {
+                open = Some(Filter::BrightnessContrast {
+                    brightness: 0,
+                    contrast: 0,
+                });
+                ui.close();
+            }
+            if ui.add(menus::plain("Hue/Saturation…")).clicked() {
+                open = Some(Filter::HueSaturation {
+                    hue: 0,
+                    saturation: 0,
+                    lightness: 0,
+                });
+                ui.close();
+            }
+        });
+        menus::submenu(ui, "FX", |ui| {
+            if ui.add(menus::plain("Outline…")).clicked() {
+                open = Some(Filter::Outline {
+                    color: primary,
+                    square: false,
+                });
+                ui.close();
+            }
+            if ui.add(menus::plain("Convolution Matrix…")).clicked() {
+                open = Some(Filter::Convolution(Kernel::Blur));
+                ui.close();
+            }
+            if ui.add(menus::plain("Despeckle…")).clicked() {
+                open = Some(Filter::Despeckle { size: 3 });
+                ui.close();
+            }
+        });
+        if let Some(filter) = open {
+            self.open_filter(filter);
         }
         if ui.add(menus::plain("Insert Text")).clicked() {
             self.doc.editor.set_tool(editor::ToolKind::Text);
@@ -1139,6 +1214,29 @@ impl ChimpApp {
         if ui.add(menus::plain("New Note")).clicked() {
             self.new_note();
         }
+    }
+
+    /// El diálogo de un filtro: OK deja la vista previa; cancelar la quita (lo hace el diálogo).
+    fn update_filter_dialog(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() {
+            self.filter_dialog = None;
+            return;
+        }
+        let Some(dialog) = &mut self.filter_dialog else {
+            return;
+        };
+        let skin = self.pixel.skin();
+        if !matches!(
+            dialog.show(ctx, &mut self.doc.editor, skin),
+            tilemap_dialog::DialogResult::Open
+        ) {
+            self.filter_dialog = None;
+        }
+    }
+
+    /// Abre el diálogo de `filter` (con sus valores de entrada).
+    fn open_filter(&mut self, filter: filters::Filter) {
+        self.filter_dialog = Some(filter_dialog::FilterDialog::new(filter));
     }
 
     /// Edit → Copy Merged: lo seleccionado con todas las capas visibles.
@@ -1766,6 +1864,7 @@ impl eframe::App for ChimpApp {
         self.layout(ui, modal);
         self.update_canvas_size(&ctx);
         self.update_sprite_dialog(&ctx);
+        self.update_filter_dialog(&ctx);
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);
         self.show_slice_properties(&ctx);
