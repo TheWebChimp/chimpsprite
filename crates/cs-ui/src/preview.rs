@@ -306,15 +306,19 @@ const GRIP_PIECE: &str = "preview.grip";
 const BAR_LEFT: f32 = 6.0;
 const BAR_GAP: f32 = 5.0;
 
-/// La esquina de abajo a la derecha de la agarradera: la de la ventana (pasando el margen de
-/// adentro) con la del diseño; si no, la de la vista.
+/// Del contenido de la ventana a su borde de afuera, a la derecha y abajo (la línea oscura incluida). La agarradera del
+/// diseño los trae (y la esquina de la ventana, sin redondear como la del marco).
+const WINDOW_EDGE: f32 = 3.0;
+
+/// La esquina de abajo a la derecha de la agarradera: con la del diseño, la de afuera de la
+/// ventana (pasando el margen de adentro y el borde); si no, la de la vista.
 fn grip_corner(view: Rect, skin: Option<&Skin>) -> Pos2 {
     let designed = skin.is_some_and(|s| {
         s.piece(GRIP_PIECE, crate::skin::WidgetState::Normal)
             .is_some()
     });
     if designed {
-        view.max + Vec2::splat(crate::pixel_ui::PADDING)
+        view.max + Vec2::splat(crate::pixel_ui::PADDING + WINDOW_EDGE)
     } else {
         view.max
     }
