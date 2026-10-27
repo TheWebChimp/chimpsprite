@@ -39,6 +39,120 @@ impl Kernel {
     }
 }
 
+/// La curva de Color Curve: de 2 a [`Curve::MAX`] puntos (entrada, salida), ordenados por la
+/// entrada; los de las puntas siempre en 0 y 255 de entrada.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Curve {
+    points: [(u8, u8); Curve::MAX],
+    len: u8,
+}
+
+impl Curve {
+    pub const MAX: usize = 8;
+
+    /// La diagonal: no cambia nada.
+    pub fn identity() -> Self {
+        let mut points = [(0, 0); Curve::MAX];
+        points[1] = (255, 255);
+        Self { points, len: 2 }
+    }
+
+    pub fn points(&self) -> &[(u8, u8)] {
+        &self.points[..self.len as usize]
+    }
+
+    /// Agrega un punto donde corresponde por su entrada; devuelve su índice (`None` si ya hay
+    /// [`Curve::MAX`] o uno con esa entrada).
+    pub fn insert(&mut self, x: u8, y: u8) -> Option<usize> {
+        let len = self.len as usize;
+        if len >= Curve::MAX || self.points().iter().any(|p| p.0 == x) {
+            return None;
+        }
+        let at = self.points().iter().position(|p| p.0 > x)?;
+        self.points.copy_within(at..len, at + 1);
+        self.points[at] = (x, y);
+        self.len += 1;
+        Some(at)
+    }
+
+    /// Mueve el punto `i`: la salida libre; la entrada entre la de sus vecinos (las puntas no se
+    /// corren de lado).
+    pub fn move_point(&mut self, i: usize, x: u8, y: u8) {
+        let last = self.len as usize - 1;
+        let x = if i == 0 {
+            0
+        } else if i == last {
+            255
+        } else {
+            x.clamp(self.points[i - 1].0 + 1, self.points[i + 1].0 - 1)
+        };
+        self.points[i] = (x, y);
+    }
+
+    /// Quita el punto `i` (no las puntas).
+    pub fn remove(&mut self, i: usize) {
+        let len = self.len as usize;
+        if i == 0 || i + 1 >= len {
+            return;
+        }
+        self.points.copy_within(i + 1..len, i);
+        self.len -= 1;
+    }
+
+    /// La salida de cada entrada: una curva suave que pasa por los puntos sin pasarse de ellos
+    /// (cúbica monótona, Fritsch–Carlson).
+    pub fn lut(&self) -> [u8; 256] {
+        let p: Vec<(f32, f32)> = self
+            .points()
+            .iter()
+            .map(|&(x, y)| (x as f32, y as f32))
+            .collect();
+        let n = p.len();
+        let slopes: Vec<f32> = p
+            .windows(2)
+            .map(|w| (w[1].1 - w[0].1) / (w[1].0 - w[0].0))
+            .collect();
+        let mut tangents = vec![0.0; n];
+        tangents[0] = slopes[0];
+        tangents[n - 1] = slopes[n - 2];
+        for i in 1..n - 1 {
+            tangents[i] = if slopes[i - 1] * slopes[i] <= 0.0 {
+                0.0
+            } else {
+                (slopes[i - 1] + slopes[i]) / 2.0
+            };
+        }
+        for i in 0..n - 1 {
+            if slopes[i] == 0.0 {
+                tangents[i] = 0.0;
+                tangents[i + 1] = 0.0;
+                continue;
+            }
+            let (a, b) = (tangents[i] / slopes[i], tangents[i + 1] / slopes[i]);
+            let h = a.hypot(b);
+            if h > 3.0 {
+                tangents[i] = 3.0 * a / h * slopes[i];
+                tangents[i + 1] = 3.0 * b / h * slopes[i];
+            }
+        }
+        let mut lut = [0u8; 256];
+        for (x, out) in lut.iter_mut().enumerate() {
+            let x = x as f32;
+            let i = p.windows(2).position(|w| x <= w[1].0).unwrap_or(n - 2);
+            let ((x0, y0), (x1, y1)) = (p[i], p[i + 1]);
+            let h = x1 - x0;
+            let t = (x - x0) / h;
+            let (t2, t3) = (t * t, t * t * t);
+            let y = (2.0 * t3 - 3.0 * t2 + 1.0) * y0
+                + (t3 - 2.0 * t2 + t) * h * tangents[i]
+                + (-2.0 * t3 + 3.0 * t2) * y1
+                + (t3 - t2) * h * tangents[i + 1];
+            *out = y.round().clamp(0.0, 255.0) as u8;
+        }
+        lut
+    }
+}
+
 /// Un filtro con sus valores.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Filter {
@@ -69,6 +183,8 @@ pub enum Filter {
         size: u32,
     },
     Convolution(Kernel),
+    /// Los canales de color (no el alfa) pasan por la curva.
+    ColorCurve(Curve),
 }
 
 impl Filter {
@@ -157,6 +273,10 @@ impl Filter {
                     median(|c| c.b),
                     median(|c| c.a),
                 )
+            }
+            Filter::ColorCurve(curve) => {
+                let lut = curve.lut();
+                Rgba::new(lut[c.r as usize], lut[c.g as usize], lut[c.b as usize], c.a)
             }
             Filter::Convolution(kernel) => {
                 if c.a == 0 {
@@ -366,6 +486,40 @@ mod tests {
         e.apply_filter(&Filter::Convolution(Kernel::Blur));
         assert_eq!(at(&e, 2, 2), Rgba::rgb(10, 10, 10));
         assert_eq!(at(&e, 1, 1), Rgba::rgb(10, 10, 10));
+    }
+
+    #[test]
+    fn the_curve_passes_through_its_points_and_edits_them() {
+        let identity = Curve::identity();
+        assert!(
+            identity
+                .lut()
+                .iter()
+                .enumerate()
+                .all(|(i, &v)| v as usize == i)
+        );
+        let mut c = Curve::identity();
+        let i = c.insert(128, 200).expect("room");
+        assert_eq!(i, 1);
+        let lut = c.lut();
+        assert_eq!(lut[128], 200);
+        assert!(
+            lut.windows(2).all(|w| w[0] <= w[1]),
+            "no overshoot: monotone"
+        );
+        c.move_point(1, 255, 10);
+        assert_eq!(c.points()[1], (254, 10), "between its neighbors");
+        c.move_point(0, 90, 40);
+        assert_eq!(c.points()[0], (0, 40), "the ends stay at the sides");
+        c.remove(0);
+        assert_eq!(c.points().len(), 3, "the ends stay");
+        c.remove(1);
+        assert_eq!(c.points().len(), 2);
+        let mut e = editor();
+        let mut dark = Curve::identity();
+        dark.move_point(1, 255, 0);
+        e.apply_filter(&Filter::ColorCurve(dark));
+        assert_eq!(at(&e, 2, 2), Rgba::rgb(0, 0, 0));
     }
 
     #[test]

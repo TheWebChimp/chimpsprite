@@ -6,7 +6,7 @@ use cs_core::Rgba;
 use eframe::egui::{self, Color32, Sense, Stroke, StrokeKind, Ui, vec2};
 
 use crate::editor::Editor;
-use crate::filters::{Filter, Kernel};
+use crate::filters::{Curve, Filter, Kernel};
 use crate::skin::Skin;
 use crate::tilemap_dialog::DialogResult;
 use crate::{pixel_ui, widgets};
@@ -22,6 +22,8 @@ pub struct FilterDialog {
     applied: bool,
     /// En Replace Color, el selector edita `to` (si no, `from`).
     editing_to: bool,
+    /// En Color Curve, el punto que se arrastra.
+    curve_drag: Option<usize>,
 }
 
 impl FilterDialog {
@@ -31,6 +33,7 @@ impl FilterDialog {
             tried: None,
             applied: false,
             editing_to: false,
+            curve_drag: None,
         }
     }
 
@@ -42,6 +45,7 @@ impl FilterDialog {
             Filter::Outline { .. } => "Outline",
             Filter::Despeckle { .. } => "Despeckle",
             Filter::Convolution(_) => "Convolution Matrix",
+            Filter::ColorCurve(_) => "Color Curve",
         }
     }
 
@@ -172,6 +176,10 @@ impl FilterDialog {
                 // Siempre impar: el píxel en el centro.
                 *size |= 1;
             }
+            Filter::ColorCurve(curve) => {
+                curve_editor(ui, skin, curve, &mut self.curve_drag);
+                ui.label("Click to add a point, drag to move it, right-click to remove it.");
+            }
             Filter::Convolution(kernel) => {
                 ui.horizontal(|ui| {
                     ui.label("Matrix");
@@ -184,6 +192,111 @@ impl FilterDialog {
             }
         }
     }
+}
+
+/// El editor de la curva: la entrada a lo ancho y la salida hacia arriba, de 0 a 255.
+fn curve_editor(ui: &mut Ui, skin: Option<&Skin>, curve: &mut Curve, drag: &mut Option<usize>) {
+    let side = ui.available_width().min(WIDTH);
+    let (rect, response) = ui.allocate_exact_size(vec2(side, side), Sense::click_and_drag());
+    let to_screen = |(x, y): (u8, u8)| {
+        egui::pos2(
+            rect.left() + x as f32 / 255.0 * (rect.width() - 1.0),
+            rect.bottom() - 1.0 - y as f32 / 255.0 * (rect.height() - 1.0),
+        )
+    };
+    let to_curve = |p: egui::Pos2| {
+        let f = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
+        (
+            f((p.x - rect.left()) / (rect.width() - 1.0)),
+            f((rect.bottom() - 1.0 - p.y) / (rect.height() - 1.0)),
+        )
+    };
+    let near = |curve: &Curve, p: egui::Pos2| {
+        curve
+            .points()
+            .iter()
+            .position(|&q| to_screen(q).distance(p) <= 5.0)
+    };
+    if response.drag_started()
+        && let Some(p) = response.interact_pointer_pos()
+    {
+        *drag = near(curve, p).or_else(|| {
+            let (x, y) = to_curve(p);
+            curve.insert(x, y)
+        });
+    }
+    if response.dragged()
+        && let (Some(i), Some(p)) = (*drag, response.interact_pointer_pos())
+    {
+        let (x, y) = to_curve(p);
+        curve.move_point(i, x, y);
+    }
+    if response.drag_stopped() {
+        *drag = None;
+    }
+    if response.clicked()
+        && let Some(p) = response.interact_pointer_pos()
+        && near(curve, p).is_none()
+    {
+        let (x, y) = to_curve(p);
+        curve.insert(x, y);
+    }
+    if response.secondary_clicked()
+        && let Some(i) = response.interact_pointer_pos().and_then(|p| near(curve, p))
+    {
+        curve.remove(i);
+    }
+    let (back, line, ink) = match skin {
+        Some(s) => (Color32::WHITE, s.colors().ruler_tick, s.colors().outline),
+        None => (
+            ui.visuals().extreme_bg_color,
+            ui.visuals().weak_text_color(),
+            ui.visuals().text_color(),
+        ),
+    };
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 0.0, back);
+    // Las cuartas partes y la diagonal.
+    for i in 1..4 {
+        let t = i as f32 / 4.0;
+        let x = (rect.left() + t * rect.width()).round() + 0.5;
+        let y = (rect.top() + t * rect.height()).round() + 0.5;
+        painter.vline(x, rect.y_range(), Stroke::new(1.0, line));
+        painter.hline(rect.x_range(), y, Stroke::new(1.0, line));
+    }
+    // La curva en pixel crudo: un pixel por columna y, si salta, la columna llena hasta el de
+    // la anterior (sin suavizado).
+    let lut = curve.lut();
+    let (w, h) = (rect.width() as i32, rect.height() as i32);
+    let row_of = |y: u8| (h - 1) - (y as f32 / 255.0 * (h - 1) as f32).round() as i32;
+    let col_of = |x: u8| (x as f32 / 255.0 * (w - 1) as f32).round() as i32;
+    let row_at = |col: i32| row_of(lut[(col as f32 / (w - 1) as f32 * 255.0).round() as usize]);
+    let mut mesh = egui::Mesh::default();
+    let mut pixel = |col: i32, row: i32, size: f32| {
+        let min = rect.min + vec2(col as f32, row as f32);
+        mesh.add_colored_rect(egui::Rect::from_min_size(min, vec2(size, size)), ink);
+    };
+    let mut prev = row_at(0);
+    for col in 0..w {
+        let row = row_at(col);
+        let (from, to) = if col == 0 || row == prev {
+            (row, row)
+        } else if row < prev {
+            (row, prev - 1)
+        } else {
+            (prev + 1, row)
+        };
+        for r in from..=to {
+            pixel(col, r, 1.0);
+        }
+        prev = row;
+    }
+    // Los puntos: cuadros de 5×5 sobre la curva.
+    for &(x, y) in curve.points() {
+        pixel(col_of(x) - 2, row_of(y) - 2, 5.0);
+    }
+    painter.add(egui::Shape::mesh(mesh));
+    painter.rect_stroke(rect, 0.0, Stroke::new(1.0, ink), StrokeKind::Inside);
 }
 
 /// Valores con su nombre a la izquierda, los campos en columna.

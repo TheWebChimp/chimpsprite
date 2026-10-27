@@ -232,6 +232,11 @@ impl ChimpApp {
         {
             let editor = &app.doc.editor;
             let filter = match which.as_str() {
+                "curve" => {
+                    let mut curve = filters::Curve::identity();
+                    curve.insert(96, 160);
+                    filters::Filter::ColorCurve(curve)
+                }
                 "hue" => filters::Filter::HueSaturation {
                     hue: 90,
                     saturation: 0,
@@ -1177,6 +1182,10 @@ impl ChimpApp {
                     brightness: 0,
                     contrast: 0,
                 });
+                ui.close();
+            }
+            if ui.add(menus::plain("Color Curve…")).clicked() {
+                open = Some(Filter::ColorCurve(filters::Curve::identity()));
                 ui.close();
             }
             if ui.add(menus::plain("Hue/Saturation…")).clicked() {
