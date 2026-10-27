@@ -366,6 +366,9 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     match std::env::var("CHIMPSPRITE_DEMO_WINDOW").as_deref() {
         Ok("shortcuts") => app.shortcuts = Some(Default::default()),
         Ok("preferences") => app.preferences = true,
+        Ok("color_range") if app.has_doc() => {
+            app.select_dialog = Some(select_dialogs::SelectDialog::color_range(&app.doc.editor));
+        }
         _ => {}
     }
     // Desarrollo: la ventana Undo History con unos pasos, para capturas.

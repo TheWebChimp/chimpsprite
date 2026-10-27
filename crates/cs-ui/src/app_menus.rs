@@ -745,6 +745,23 @@ A pixel art editor."
                     if ui.add(inverse).clicked() {
                         editor.invert_selection();
                     }
+                    menus::separator(ui);
+                    if ui.add(menus::plain("Color Range…")).clicked() {
+                        self.select_dialog =
+                            Some(select_dialogs::SelectDialog::color_range(&self.doc.editor));
+                        ui.close();
+                    }
+                    ui.add_enabled_ui(has_selection, |ui| {
+                        menus::submenu(ui, "Modify", |ui| {
+                            for how in select_dialogs::Modify::ALL {
+                                if ui.add(menus::plain(&format!("{}…", how.label()))).clicked() {
+                                    self.select_dialog =
+                                        select_dialogs::SelectDialog::modify(&self.doc.editor, how);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    });
                 });
                 menus::bar_menu(ui, look, "View", |ui| self.view_menu(ui));
             });

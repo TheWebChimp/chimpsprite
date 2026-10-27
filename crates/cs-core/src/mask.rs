@@ -68,6 +68,39 @@ impl Mask {
         !self.bits.iter().any(|&b| b)
     }
 
+    /// Select → Modify → Expand: también lo que está a `n` píxeles o menos (en círculo).
+    pub fn expanded(&self, n: u32) -> Self {
+        let n = n as i32;
+        let disc: Vec<(i32, i32)> = (-n..=n)
+            .flat_map(|dy| (-n..=n).map(move |dx| (dx, dy)))
+            .filter(|&(dx, dy)| dx * dx + dy * dy <= n * n)
+            .collect();
+        let mut out = self.clone();
+        for (x, y) in self.points() {
+            // Solo los del borde agregan algo.
+            let edge = [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                .iter()
+                .any(|(dx, dy)| !self.contains(x + dx, y + dy));
+            if edge {
+                for &(dx, dy) in &disc {
+                    out.set(x + dx, y + dy, true);
+                }
+            }
+        }
+        out
+    }
+
+    /// Select → Modify → Contract: sin lo que está a `n` píxeles o menos de afuera (el borde
+    /// del lienzo no cuenta como afuera).
+    pub fn contracted(&self, n: u32) -> Self {
+        self.inverted().expanded(n).inverted()
+    }
+
+    /// Select → Modify → Border: solo una franja de `n` píxeles por dentro del borde.
+    pub fn border(&self, n: u32) -> Self {
+        self.subtract(&self.contracted(n))
+    }
+
     pub fn points(&self) -> impl Iterator<Item = (i32, i32)> + '_ {
         let w = self.width as usize;
         self.bits

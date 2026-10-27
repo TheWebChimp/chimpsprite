@@ -326,7 +326,7 @@ fn swatch(ui: &mut Ui, color: Rgba, editing: bool) -> egui::Response {
 }
 
 /// El selector de color de la app (con Pixel UI) o el de egui.
-fn color_picker(ui: &mut Ui, skin: Option<&Skin>, color: &mut Rgba) {
+pub(crate) fn color_picker(ui: &mut Ui, skin: Option<&Skin>, color: &mut Rgba) {
     match skin {
         Some(skin) => {
             let id = ui.id().with("filter_picker");
