@@ -39,6 +39,7 @@ mod home;
 mod instance_ops;
 mod keyboard_shortcuts;
 mod keymap;
+mod layer_ops;
 #[cfg(test)]
 mod layout_tests;
 mod logo;

@@ -648,6 +648,36 @@ A pixel art editor."
                 menus::bar_menu(ui, look, "Edit", |ui| self.edit_menu(ui));
                 menus::bar_menu(ui, look, "Sprite", |ui| self.sprite_menu(ui));
                 menus::bar_menu(ui, look, "Layer", |ui| {
+                    let editor = &mut self.doc.editor;
+                    let ctx = ui.ctx().clone();
+                    let action = |a| keymap::label(&ctx, a);
+                    if ui
+                        .add(menus::item(
+                            "Duplicate",
+                            action(keymap::Action::DuplicateLayer),
+                        ))
+                        .clicked()
+                    {
+                        editor.duplicate_layer();
+                    }
+                    let merge = editor.merge_target().is_some();
+                    if ui
+                        .add_enabled(
+                            merge,
+                            menus::item("Merge Down", action(keymap::Action::MergeDown)),
+                        )
+                        .on_disabled_hover_text("Needs an image layer below, in the same group")
+                        .clicked()
+                    {
+                        editor.merge_down();
+                    }
+                    if ui
+                        .add(menus::item("Flatten", action(keymap::Action::Flatten)))
+                        .clicked()
+                    {
+                        editor.flatten();
+                    }
+                    menus::separator(ui);
                     if ui.add(menus::plain("New Tilemap Layer")).clicked() {
                         self.new_tilemap =
                             Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));

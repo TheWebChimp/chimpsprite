@@ -156,6 +156,9 @@ pub enum Action {
     ClippingMask,
     LayerAbove,
     LayerBelow,
+    DuplicateLayer,
+    MergeDown,
+    Flatten,
     PlayPause,
     NextFrame,
     PreviousFrame,
@@ -185,7 +188,7 @@ pub enum Gate {
 
 impl Action {
     /// Las acciones que no son herramientas, en el orden de la lista.
-    const COMMANDS: [Action; 44] = [
+    const COMMANDS: [Action; 47] = [
         Action::NewFile,
         Action::Open,
         Action::Save,
@@ -217,6 +220,9 @@ impl Action {
         Action::ClippingMask,
         Action::LayerAbove,
         Action::LayerBelow,
+        Action::DuplicateLayer,
+        Action::MergeDown,
+        Action::Flatten,
         Action::PlayPause,
         Action::NextFrame,
         Action::PreviousFrame,
@@ -277,6 +283,9 @@ impl Action {
             ClippingMask => ("Layer", "Clipping Mask"),
             LayerAbove => ("Layer", "Layer Above"),
             LayerBelow => ("Layer", "Layer Below"),
+            DuplicateLayer => ("Layer", "Duplicate"),
+            MergeDown => ("Layer", "Merge Down"),
+            Flatten => ("Layer", "Flatten"),
             PlayPause => ("Frame", "Play / Pause"),
             NextFrame => ("Frame", "Next Frame"),
             PreviousFrame => ("Frame", "Previous Frame"),
@@ -375,6 +384,9 @@ impl Action {
             ClippingMask => vec![k(Key::G).ctrl().alt()],
             LayerAbove => vec![k(Key::ArrowUp)],
             LayerBelow => vec![k(Key::ArrowDown)],
+            // Sin atajo de fábrica (el Ctrl+E de Aseprite es Export aquí); se asignan en
+            // Keyboard Shortcuts.
+            DuplicateLayer | MergeDown | Flatten => vec![],
             PlayPause => vec![k(Key::Enter)],
             NextFrame => vec![k(Key::Period), k(Key::ArrowRight)],
             PreviousFrame => vec![k(Key::Comma), k(Key::ArrowLeft)],

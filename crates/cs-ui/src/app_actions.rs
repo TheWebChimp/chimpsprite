@@ -127,6 +127,15 @@ impl ChimpApp {
             }
             LayerAbove => editor.step_layer(true),
             LayerBelow => editor.step_layer(false),
+            DuplicateLayer => {
+                editor.duplicate_layer();
+            }
+            MergeDown => {
+                editor.merge_down();
+            }
+            Flatten => {
+                editor.flatten();
+            }
             PlayPause => editor.toggle_play(),
             NextFrame => editor.next_frame(),
             PreviousFrame => editor.prev_frame(),
