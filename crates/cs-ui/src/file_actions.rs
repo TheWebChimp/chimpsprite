@@ -433,7 +433,20 @@ impl ChimpApp {
             );
             return;
         };
-        match self.doc.editor.run_script(language, source) {
+        // `export_folder()`: la carpeta del documento o, si no está guardado, la de la app.
+        #[cfg(not(target_arch = "wasm32"))]
+        let folder = self
+            .doc
+            .location
+            .target
+            .as_ref()
+            .and_then(|t| t.path())
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .or_else(|| eframe::storage_dir("ChimpSprite").map(|d| d.join("exports")))
+            .map(|d| d.display().to_string());
+        #[cfg(target_arch = "wasm32")]
+        let folder = None;
+        match self.doc.editor.run_script(language, source, folder) {
             Ok(output) if output.is_empty() => {}
             Ok(output) => self.show_message(name, output),
             Err(e) => {

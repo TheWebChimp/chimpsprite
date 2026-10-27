@@ -159,6 +159,11 @@ impl Session {
         })
     }
 
+    /// El documento `id`, para leerlo.
+    pub fn document(&self, id: &str) -> Option<&Document> {
+        self.docs.get(id).map(|d| &d.document)
+    }
+
     /// El documento `id` como quedó (y lo saca de la sesión).
     pub fn take_document(&mut self, id: &str) -> Option<Document> {
         self.docs.remove(id).map(|d| d.document)

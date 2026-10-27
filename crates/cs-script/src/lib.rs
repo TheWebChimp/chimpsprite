@@ -20,6 +20,21 @@ pub use host::Context;
 /// Los scripts de ejemplo, en los dos lenguajes: (nombre de archivo, código). La app los copia a
 /// la carpeta de scripts la primera vez.
 pub const EXAMPLES: &[(&str, &str)] = &[
+    ("outline.rhai", include_str!("../scripts/outline.rhai")),
+    ("outline.lua", include_str!("../scripts/outline.lua")),
+    (
+        "color_ramp.rhai",
+        include_str!("../scripts/color_ramp.rhai"),
+    ),
+    ("color_ramp.lua", include_str!("../scripts/color_ramp.lua")),
+    (
+        "export_tags.rhai",
+        include_str!("../scripts/export_tags.rhai"),
+    ),
+    (
+        "export_tags.lua",
+        include_str!("../scripts/export_tags.lua"),
+    ),
     (
         "checkerboard.rhai",
         include_str!("../scripts/checkerboard.rhai"),

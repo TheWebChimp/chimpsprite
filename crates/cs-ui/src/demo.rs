@@ -385,6 +385,14 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         }
         app.sheet_dialog = Some(sheet_dialog::SheetDialog::new("walk".into(), strip));
     }
+    // Desarrollo: un script de ejemplo (por su archivo, p. ej. `outline.rhai`), para capturas.
+    if let Ok(name) = std::env::var("CHIMPSPRITE_DEMO_SCRIPT")
+        && app.has_doc()
+        && let Some((name, source)) = cs_script::EXAMPLES.iter().find(|(n, _)| *n == name)
+    {
+        app.doc.editor.primary = cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(34, 32, 52));
+        app.run_script(name, source);
+    }
     // Desarrollo: Tiled Mode en los dos ejes, para capturas.
     if std::env::var_os("CHIMPSPRITE_DEMO_TILED").is_some() && app.has_doc() {
         app.doc.editor.tiled = editor::TiledMode::Both;

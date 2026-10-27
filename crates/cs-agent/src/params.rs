@@ -683,6 +683,8 @@ pub struct Export {
     /// Frame for kind=png.
     #[serde(default)]
     pub frame: usize,
+    /// For kind=gif or sequence: only the frames of this tag.
+    pub tag: Option<String>,
     /// Sheet layout.
     #[serde(default)]
     pub layout: LayoutArg,

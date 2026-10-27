@@ -16,7 +16,7 @@ pub(crate) fn run(source: &str, host: Host) -> Result<Outcome, ScriptError> {
     let result = (|| -> mlua::Result<()> {
         let lua = Lua::new();
         let globals = lua.globals();
-        for &name in cs_agent::OPERATIONS {
+        for &name in cs_agent::OPERATIONS.iter().chain(crate::host::HELPERS) {
             let host = host.clone();
             let f = lua.create_function(move |lua, params: Value| {
                 let params: serde_json::Value = match params {
@@ -27,7 +27,7 @@ pub(crate) fn run(source: &str, host: Host) -> Result<Outcome, ScriptError> {
                     .borrow_mut()
                     .call(name, params)
                     .map_err(mlua::Error::runtime)?;
-                lua.to_value(&result)
+                lua.to_value_with(&result, nil_for_null())
             })?;
             globals.set(name, f)?;
         }
@@ -42,11 +42,22 @@ pub(crate) fn run(source: &str, host: Host) -> Result<Outcome, ScriptError> {
                     .borrow_mut()
                     .call(&name, params)
                     .map_err(mlua::Error::runtime)?;
-                lua.to_value(&result)
+                lua.to_value_with(&result, nil_for_null())
             })?;
             globals.set("op", op)?;
         }
-        let context = host.borrow().context;
+        let context = host.borrow().context.clone();
+        {
+            let host = host.clone();
+            let random = lua.create_function(move |_, (a, b): (Option<i64>, Option<i64>)| {
+                let mut host = host.borrow_mut();
+                Ok(match (a, b) {
+                    (Some(a), Some(b)) => mlua::Value::Integer(host.random_between(a, b)),
+                    _ => mlua::Value::Number(host.random()),
+                })
+            })?;
+            globals.set("random", random)?;
+        }
         globals.set(
             "current_layer",
             lua.create_function(move |_, ()| Ok(context.layer))?,
@@ -95,4 +106,11 @@ pub(crate) fn run(source: &str, host: Host) -> Result<Outcome, ScriptError> {
         Ok(()) => host.finish(),
         Err(e) => Err(host.fail(e.to_string())),
     }
+}
+
+/// El `null` de JSON es `nil` en Lua (si no, sería un valor "verdadero" y `if x then` fallaría).
+fn nil_for_null() -> mlua::SerializeOptions {
+    mlua::SerializeOptions::new()
+        .serialize_none_to_null(false)
+        .serialize_unit_to_null(false)
 }
