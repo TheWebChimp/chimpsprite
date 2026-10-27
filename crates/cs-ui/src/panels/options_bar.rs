@@ -526,6 +526,9 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
             }
             hints.push("Drag from the primary to the secondary color. Right-drag swaps them.");
         }
+        ToolKind::Curve => {
+            hints.push("Drag the line, then click twice to bend it. Enter paints it as it is.");
+        }
         ToolKind::Jumble => {
             hints.push("Scrambles pixels within the brush radius.");
         }

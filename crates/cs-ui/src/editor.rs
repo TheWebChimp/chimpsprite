@@ -9,9 +9,10 @@ use cs_core::{
 use cs_render::OnionSkin;
 use cs_tools::text::TextStyle;
 use cs_tools::{
-    ArtboardTool, Blur, BrushShape, Bucket, Contour, Dither, Eraser, Eyedropper, GradientShape,
-    GradientTool, Jumble, Lasso, MagicWand, Marquee, MarqueeShape, MoveTool, Pencil, Point,
-    Polygon, PolygonLasso, ShapeKind, ShapeTool, SliceTool, Spray, Tool, ToolContext, ToolOutput,
+    ArtboardTool, Blur, BrushShape, Bucket, Contour, Curve, Dither, Eraser, Eyedropper,
+    GradientShape, GradientTool, Jumble, Lasso, MagicWand, Marquee, MarqueeShape, MoveTool, Pencil,
+    Point, Polygon, PolygonLasso, ShapeKind, ShapeTool, SliceTool, Spray, Tool, ToolContext,
+    ToolOutput,
 };
 
 use crate::tile_ops::{self, TileProxy};
@@ -37,6 +38,7 @@ struct SpriteTools {
     bucket: Bucket,
     gradient: GradientTool,
     line: ShapeTool,
+    curve: Curve,
     rectangle: ShapeTool,
     ellipse: ShapeTool,
     polygon: Polygon,
@@ -62,6 +64,7 @@ impl SpriteTools {
             bucket: Bucket::new(),
             gradient: GradientTool::new(),
             line: ShapeTool::new(ShapeKind::Line),
+            curve: Curve::new(),
             rectangle: ShapeTool::new(ShapeKind::Rectangle),
             ellipse: ShapeTool::new(ShapeKind::Ellipse),
             polygon: Polygon::new(),
@@ -87,6 +90,7 @@ impl SpriteTools {
             ToolKind::Bucket => &self.bucket,
             ToolKind::Gradient => &self.gradient,
             ToolKind::Line => &self.line,
+            ToolKind::Curve => &self.curve,
             ToolKind::Rectangle => &self.rectangle,
             ToolKind::Ellipse => &self.ellipse,
             ToolKind::Polygon => &self.polygon,
@@ -116,6 +120,7 @@ impl SpriteTools {
             ToolKind::Bucket => self.bucket = Bucket::new(),
             ToolKind::Gradient => self.gradient = GradientTool::new(),
             ToolKind::Line => self.line = ShapeTool::new(ShapeKind::Line),
+            ToolKind::Curve => self.curve = Curve::new(),
             ToolKind::Rectangle => self.rectangle = ShapeTool::new(ShapeKind::Rectangle),
             ToolKind::Ellipse => self.ellipse = ShapeTool::new(ShapeKind::Ellipse),
             ToolKind::Polygon => self.polygon = Polygon::new(),
@@ -142,6 +147,7 @@ impl SpriteTools {
             ToolKind::Bucket => &mut self.bucket,
             ToolKind::Gradient => &mut self.gradient,
             ToolKind::Line => &mut self.line,
+            ToolKind::Curve => &mut self.curve,
             ToolKind::Rectangle => &mut self.rectangle,
             ToolKind::Ellipse => &mut self.ellipse,
             ToolKind::Polygon => &mut self.polygon,

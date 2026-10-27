@@ -51,6 +51,7 @@ fn thirteen_groups_in_the_toolbar_order() {
     assert_eq!(group_of(Jumble), &[Bucket, Gradient, Jumble]);
     assert_eq!(group_of(Slice), &[Move, Slice]);
     assert_eq!(group_of(Zoom), &[Hand, Zoom], "Zoom goes with Hand");
+    assert_eq!(group_of(Curve), &[Line, Curve], "Curve goes with Line");
     assert_eq!(group_of(Polygon), &[Rectangle, Ellipse, Polygon]);
     assert_eq!(
         group_of(Artboard),
@@ -62,7 +63,7 @@ fn thirteen_groups_in_the_toolbar_order() {
         .iter()
         .flat_map(|g| g.iter().copied())
         .collect();
-    assert_eq!(all.len(), 24);
+    assert_eq!(all.len(), 25);
     for (i, kind) in all.iter().enumerate() {
         assert!(!all[..i].contains(kind), "{kind:?} twice");
     }

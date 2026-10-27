@@ -20,6 +20,8 @@ pub enum ToolKind {
     Bucket,
     Gradient,
     Line,
+    /// Recta que se curva con dos puntos de control.
+    Curve,
     Rectangle,
     Ellipse,
     Polygon,
@@ -46,7 +48,7 @@ impl ToolKind {
         &[ToolKind::Eraser],
         &[ToolKind::Eyedropper],
         &[ToolKind::Bucket, ToolKind::Gradient, ToolKind::Jumble],
-        &[ToolKind::Line],
+        &[ToolKind::Line, ToolKind::Curve],
         &[ToolKind::Rectangle, ToolKind::Ellipse, ToolKind::Polygon],
         &[ToolKind::Text],
         &[ToolKind::Contour],
@@ -78,6 +80,7 @@ impl ToolKind {
             ToolKind::Bucket => "Paint Bucket",
             ToolKind::Gradient => "Gradient",
             ToolKind::Line => "Line",
+            ToolKind::Curve => "Curve",
             ToolKind::Rectangle => "Rectangle",
             ToolKind::Ellipse => "Ellipse",
             ToolKind::Polygon => "Polygon",
@@ -107,6 +110,7 @@ impl ToolKind {
             ToolKind::Bucket => "G",
             ToolKind::Gradient => "Shift+G",
             ToolKind::Line => "L",
+            ToolKind::Curve => "Shift+L",
             ToolKind::Rectangle => "U",
             ToolKind::Ellipse => "Shift+U",
             ToolKind::Polygon => "Shift+D",
@@ -141,6 +145,7 @@ impl ToolKind {
                 | ToolKind::Spray
                 | ToolKind::Bucket
                 | ToolKind::Line
+                | ToolKind::Curve
                 | ToolKind::Rectangle
                 | ToolKind::Ellipse
                 | ToolKind::Polygon
@@ -158,6 +163,7 @@ impl ToolKind {
                 | ToolKind::Bucket
                 | ToolKind::Gradient
                 | ToolKind::Line
+                | ToolKind::Curve
                 | ToolKind::Rectangle
                 | ToolKind::Ellipse
                 | ToolKind::Polygon
@@ -182,6 +188,7 @@ impl ToolKind {
                 | ToolKind::Spray
                 | ToolKind::Eraser
                 | ToolKind::Line
+                | ToolKind::Curve
                 | ToolKind::Rectangle
                 | ToolKind::Ellipse
                 | ToolKind::Polygon
@@ -220,6 +227,7 @@ impl ToolKind {
             ToolKind::Pencil
                 | ToolKind::Eraser
                 | ToolKind::Line
+                | ToolKind::Curve
                 | ToolKind::Rectangle
                 | ToolKind::Ellipse
                 | ToolKind::Bucket
