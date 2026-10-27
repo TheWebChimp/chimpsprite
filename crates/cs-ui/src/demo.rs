@@ -362,6 +362,10 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         }
         editor.frame_range = None;
     }
+    // Desarrollo: Tiled Mode en los dos ejes, para capturas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_TILED").is_some() && app.has_doc() {
+        app.doc.editor.tiled = editor::TiledMode::Both;
+    }
     // Desarrollo: Keyboard Shortcuts o Preferences abiertas, para capturas.
     match std::env::var("CHIMPSPRITE_DEMO_WINDOW").as_deref() {
         Ok("shortcuts") => app.shortcuts = Some(Default::default()),

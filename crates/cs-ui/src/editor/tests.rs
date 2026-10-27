@@ -1118,3 +1118,26 @@ fn shading_moves_each_pixel_along_the_palette_range() {
     let s = e.sprite();
     assert_eq!(s.pixel(e.layer, 0, 5, 5), s.color_mode.transparent());
 }
+
+#[test]
+fn in_tiled_mode_painting_on_a_copy_paints_the_sprite() {
+    let mut e = editor();
+    e.set_tool(ToolKind::Pencil);
+    e.options.pixel_perfect = false;
+    let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    e.primary = red;
+    let t = e.sprite().color_mode.transparent();
+    // Sin Tiled Mode, fuera del sprite no pasa nada.
+    click(&mut e, (9, 1), false, false);
+    assert_eq!(e.sprite().pixel(e.layer, 0, 1, 1), t);
+    // A lo ancho: x = 9 en un sprite de 8 es la x = 1.
+    e.tiled = TiledMode::X;
+    click(&mut e, (9, 1), false, false);
+    assert_eq!(e.sprite().pixel(e.layer, 0, 1, 1), red);
+    // Solo a lo ancho: lo de abajo no se envuelve.
+    click(&mut e, (2, 10), false, false);
+    assert_eq!(e.sprite().pixel(e.layer, 0, 2, 2), t);
+    e.tiled = TiledMode::Both;
+    click(&mut e, (-1, -1), false, false);
+    assert_eq!(e.sprite().pixel(e.layer, 0, 7, 7), red);
+}

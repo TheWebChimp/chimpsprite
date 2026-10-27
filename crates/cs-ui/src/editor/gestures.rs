@@ -518,6 +518,7 @@ impl Editor {
         } else {
             cmd
         };
+        let cmd = self.wrap_tiled(cmd);
         let cmd = match &self.selection {
             Some(mask) => clip(cmd, mask),
             None => cmd,
@@ -528,6 +529,42 @@ impl Editor {
             self.apply_ink(cmd)
         } else {
             cmd
+        }
+    }
+
+    /// Con Tiled Mode, lo pintado fuera del sprite cae dentro, del otro lado (en los ejes que se
+    /// repiten).
+    fn wrap_tiled(&self, cmd: Command) -> Command {
+        let tiled = self.tiled;
+        let Command::DrawPixels {
+            layer,
+            frame,
+            pixels,
+        } = cmd
+        else {
+            return cmd;
+        };
+        if tiled == TiledMode::None {
+            return Command::DrawPixels {
+                layer,
+                frame,
+                pixels,
+            };
+        }
+        let sprite = self.sprite();
+        let (w, h) = (sprite.width as i32, sprite.height as i32);
+        let pixels = pixels
+            .into_iter()
+            .map(|(x, y, v)| {
+                let x = if tiled.x() { x.rem_euclid(w) } else { x };
+                let y = if tiled.y() { y.rem_euclid(h) } else { y };
+                (x, y, v)
+            })
+            .collect();
+        Command::DrawPixels {
+            layer,
+            frame,
+            pixels,
         }
     }
 

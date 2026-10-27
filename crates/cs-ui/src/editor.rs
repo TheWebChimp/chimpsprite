@@ -216,6 +216,39 @@ type MergeTarget = (ArtboardId, LayerId, usize, Option<usize>);
 type BrushImage = std::rc::Rc<[((i32, i32), PixelValue)]>;
 type BrushImageKey = (u64, ArtboardId, u64);
 
+/// View → Tiled Mode, como en Aseprite: en qué ejes se repite el artboard activo.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum TiledMode {
+    #[default]
+    None,
+    Both,
+    X,
+    Y,
+}
+
+impl TiledMode {
+    pub const ALL: [TiledMode; 4] = [TiledMode::None, TiledMode::Both, TiledMode::X, TiledMode::Y];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            TiledMode::None => "None",
+            TiledMode::Both => "Tiled in Both Axes",
+            TiledMode::X => "Tiled in X Axis",
+            TiledMode::Y => "Tiled in Y Axis",
+        }
+    }
+
+    /// Se repite a lo ancho.
+    pub fn x(self) -> bool {
+        matches!(self, TiledMode::Both | TiledMode::X)
+    }
+
+    /// Se repite a lo alto.
+    pub fn y(self) -> bool {
+        matches!(self, TiledMode::Both | TiledMode::Y)
+    }
+}
+
 /// Estado del documento abierto y de la edición. No sabe nada de egui.
 pub struct Editor {
     pub document: Document,
@@ -255,6 +288,9 @@ pub struct Editor {
     /// Grupos colapsados en el timeline (estado de UI, por artboard).
     pub collapsed: HashSet<(ArtboardId, LayerId)>,
     pub onion_enabled: bool,
+    /// View → Tiled Mode: el artboard activo se ve repetido y lo que se pinta en una copia cae en
+    /// el sprite (para texturas que se repiten sin costura).
+    pub tiled: TiledMode,
     pub onion: OnionSkin,
     /// Cambia con cada modificación del documento (ejecutar, deshacer, rehacer); sirve para
     /// saber si hay cambios sin guardar.
@@ -341,6 +377,7 @@ impl Editor {
             frames_picked: false,
             collapsed: HashSet::new(),
             onion_enabled: false,
+            tiled: TiledMode::None,
             onion: OnionSkin::default(),
             doc_version: 0,
             snap: None,

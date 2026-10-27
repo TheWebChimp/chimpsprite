@@ -153,6 +153,18 @@ impl ChimpApp {
                 self.toggle_fullscreen(ui.ctx());
             }
         }
+        menus::submenu(ui, "Tiled Mode", |ui| {
+            let editor = &mut self.doc.editor;
+            for mode in editor::TiledMode::ALL {
+                if ui
+                    .add(menus::choice(editor.tiled == mode, mode.label()))
+                    .clicked()
+                {
+                    editor.tiled = mode;
+                    editor.revision += 1;
+                }
+            }
+        });
         menus::separator(ui);
         ui.add(menus::check(&mut self.view.pixel_ui, "Pixel UI"));
         ui.add_enabled_ui(self.view.pixel_ui, |ui| {

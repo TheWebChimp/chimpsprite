@@ -412,6 +412,66 @@ impl CanvasView {
         )
     }
 
+    /// Con Tiled Mode, las copias del artboard activo alrededor de él hasta los bordes de la vista
+    /// (detrás de los artboards; el original se dibuja con los demás).
+    fn draw_tiled(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        editor: &Editor,
+        document: &cs_core::Document,
+        checker: egui::TextureId,
+        ppp: f32,
+    ) {
+        let tiled = editor.tiled;
+        if tiled == crate::editor::TiledMode::None {
+            return;
+        }
+        let (Some(artboard), Some(texture)) = (
+            document.artboard(editor.active),
+            self.textures.get(&editor.active),
+        ) else {
+            return;
+        };
+        let screen = WindowLayout::pixels_on_screen(self.pixel_rect(rect, artboard), ppp);
+        let size = screen.size();
+        if size.x < 1.0 || size.y < 1.0 {
+            return;
+        }
+        // Cuántas copias entran a cada lado (con un tope por si el zoom es muy chico).
+        let span = |lo: f32, hi: f32, from: f32, step: f32| {
+            let first = ((lo - from) / step).floor().max(-64.0) as i32;
+            let last = ((hi - from) / step).ceil().min(64.0) as i32;
+            first..=last
+        };
+        let xs = if tiled.x() {
+            span(rect.left(), rect.right(), screen.left(), size.x)
+        } else {
+            0..=0
+        };
+        let ys = if tiled.y() {
+            span(rect.top(), rect.bottom(), screen.top(), size.y)
+        } else {
+            0..=0
+        };
+        let ((x0, y0), (x1, y1)) = artboard.rect();
+        let uv = checker_uv((x1 - x0) as u32, (y1 - y0) as u32);
+        let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+        for j in ys {
+            for i in xs.clone() {
+                if (i, j) == (0, 0) {
+                    continue;
+                }
+                let copy = screen.translate(Vec2::new(i as f32 * size.x, j as f32 * size.y));
+                if !copy.intersects(rect) {
+                    continue;
+                }
+                painter.image(checker, copy, uv, Color32::WHITE);
+                painter.image(texture.id(), copy, full_uv, Color32::WHITE);
+            }
+        }
+    }
+
     /// Lo que ocupa en pantalla cada artboard de `document`, en su orden (con su ventana, con
     /// Pixel UI).
     fn covers(&self, rect: Rect, document: &cs_core::Document, ppp: f32) -> Vec<Rect> {
@@ -615,6 +675,7 @@ impl CanvasView {
         painter.rect_filled(rect, 0.0, self.background);
 
         let ppp = ctx.pixels_per_point();
+        self.draw_tiled(&painter, rect, editor, document, checker, ppp);
         for artboard in &document.artboards {
             // Alineada a píxeles de pantalla: el damero y la textura caen justo en píxeles y la
             // ventana de Pixel UI se arma alrededor de este mismo rect (blanco de 1 px exacto).
