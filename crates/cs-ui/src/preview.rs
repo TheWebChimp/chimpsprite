@@ -1,8 +1,8 @@
 //! La ventanita de preview (como la de Aseprite): el artboard activo en el frame que se ve,
 //! centrado sobre el damero, en la ventana de la app. De fábrica, al zoom entero más grande que
 //! entra; la rueda lo cambia de a uno, arrastrando se mueve el dibujo y con doble clic vuelve a
-//! como estaba. Su play anima el dibujo por su cuenta (sin mover el timeline) y la agarradera de
-//! la esquina la agranda o la achica.
+//! como estaba. Su play anima el dibujo por su cuenta (sin mover el timeline) hasta su stop, y la
+//! agarradera de la esquina la agranda o la achica.
 
 use eframe::egui::{
     self, Align2, Color32, ColorImage, CursorIcon, Pos2, Rect, Sense, TextureHandle,
@@ -73,11 +73,10 @@ impl Preview {
     pub fn show(&mut self, ctx: &egui::Context, editor: &Editor, skin: Option<&Skin>) -> bool {
         let anchor = (Align2::RIGHT_BOTTOM, OFFSET);
         let closed = match skin {
-            // Con Pixel UI, el play y "volver a como estaba" van en la barra de título, sin botón
-            // (como en el diseño).
+            // Con Pixel UI, el play y el stop van en la barra de título, sin botón (como en el
+            // diseño).
             Some(skin) => {
-                let playing = self.playing();
-                let (mut play, mut fit) = (false, false);
+                let (mut play, mut stop) = (false, false);
                 let out = crate::pixel_ui::pixel_dialog_with_bar(
                     ctx,
                     skin,
@@ -86,14 +85,13 @@ impl Preview {
                     true,
                     anchor,
                     |ui| self.contents(ui, editor, Some(skin), false),
-                    |ui, bar| (play, fit) = bar_icons(ui, skin, bar, playing),
+                    |ui, bar| (play, stop) = bar_icons(ui, skin, bar),
                 );
-                if play {
+                if play && !self.playing() {
                     self.toggle_play(editor);
                 }
-                if fit {
-                    self.zoom = None;
-                    self.pan = Vec2::ZERO;
+                if stop {
+                    self.play = None;
                 }
                 out.closed
             }
@@ -300,10 +298,9 @@ impl Preview {
     }
 }
 
-/// Las piezas del diseño: el play y "volver a como estaba" de la barra de título, y la
-/// agarradera de la esquina.
+/// Las piezas del diseño: el play y el stop de la barra de título, y la agarradera de la esquina.
 const PLAY_PIECE: &str = "preview.play";
-const FIT_PIECE: &str = "preview.fit";
+const STOP_PIECE: &str = "preview.stop";
 const GRIP_PIECE: &str = "preview.grip";
 /// Del borde izquierdo de la barra al primer ícono, y entre uno y otro.
 const BAR_LEFT: f32 = 6.0;
@@ -331,9 +328,9 @@ fn grip_size(skin: Option<&Skin>) -> Vec2 {
         })
 }
 
-/// El play (o, reproduciendo, la pausa: dos barritas del mismo color) y "volver a como estaba",
-/// a la izquierda de la barra de título, centrados en su alto. Devuelve cuál se tocó.
-fn bar_icons(ui: &mut Ui, skin: &Skin, bar: Rect, playing: bool) -> (bool, bool) {
+/// El play y el stop a la izquierda de la barra de título, centrados en su alto. Devuelve cuál
+/// se tocó.
+fn bar_icons(ui: &mut Ui, skin: &Skin, bar: Rect) -> (bool, bool) {
     let ppp = ui.ctx().pixels_per_point();
     let size = |name: &str| {
         skin.piece(name, crate::skin::WidgetState::Normal)
@@ -350,23 +347,13 @@ fn bar_icons(ui: &mut Ui, skin: &Skin, bar: Rect, playing: bool) -> (bool, bool)
         response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
         (at, response.on_hover_text(label))
     };
-    let label = if playing { "Pause" } else { "Play" };
-    let (at, play) = icon(ui, PLAY_PIECE, label);
-    if playing {
-        // La pausa: dos barritas de 2×5 con la tinta del play.
-        let ink = Color32::from_rgb(100, 54, 75);
-        for dx in [1.0, 5.0] {
-            let r = Rect::from_min_size(at + vec2(dx, 0.0), vec2(2.0, 5.0));
-            ui.painter().rect_filled(r.round_to_pixels(ppp), 0.0, ink);
-        }
-    } else {
-        ui.painter()
-            .extend(crate::pixel_draw::piece_at(skin, PLAY_PIECE, at, ppp));
-    }
-    let (at, fit) = icon(ui, FIT_PIECE, "Reset View");
+    let (at, play) = icon(ui, PLAY_PIECE, "Play");
     ui.painter()
-        .extend(crate::pixel_draw::piece_at(skin, FIT_PIECE, at, ppp));
-    (play.clicked(), fit.clicked())
+        .extend(crate::pixel_draw::piece_at(skin, PLAY_PIECE, at, ppp));
+    let (at, stop) = icon(ui, STOP_PIECE, "Stop");
+    ui.painter()
+        .extend(crate::pixel_draw::piece_at(skin, STOP_PIECE, at, ppp));
+    (play.clicked(), stop.clicked())
 }
 
 /// La agarradera: tres rayitas en diagonal, con la tinta de los íconos y su luz.
