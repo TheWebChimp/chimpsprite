@@ -147,7 +147,7 @@ impl Harness {
     /// Centro en pantalla del píxel local `p` del artboard activo.
     fn screen(&self, p: (i32, i32)) -> Pos2 {
         let (x, y) = self.editor.artboard().position;
-        self.canvas.to_screen(self.rect, (x + p.0, y + p.1)) + Vec2::splat(self.canvas.zoom / 2.0)
+        self.canvas.to_screen(self.rect, (x + p.0, y + p.1)) + self.canvas.scale() / 2.0
     }
 
     /// Esquina en pantalla del píxel local `p` del artboard activo (no su centro).
@@ -2016,4 +2016,23 @@ fn the_zoom_tool_zooms_in_on_click_and_out_on_right_click() {
     h.frame(vec![]);
     assert!(h.canvas.zoom < zoomed, "out");
     assert!(h.editor.sprite().cels.is_empty(), "nothing painted");
+}
+
+#[test]
+fn with_double_wide_pixels_the_artboard_is_twice_as_wide_and_clicks_hit_the_right_pixel() {
+    let mut h = Harness::new();
+    assert!(h.editor.set_pixel_ratio((2, 1)));
+    h.frame(vec![]);
+    let pixels = h.pixels_of(0);
+    assert_eq!(pixels.width(), 2.0 * pixels.height(), "{pixels:?}");
+    h.editor.set_tool(ToolKind::Pencil);
+    h.editor.primary = PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0));
+    let at = h.screen((5, 3));
+    h.click(at, PointerButton::Primary);
+    h.frame(vec![]);
+    let s = h.editor.sprite();
+    let t = s.color_mode.transparent();
+    assert_ne!(s.pixel(LayerId(1), 0, 5, 3), t, "the pixel under the click");
+    assert_eq!(s.pixel(LayerId(1), 0, 4, 3), t);
+    assert_eq!(s.pixel(LayerId(1), 0, 6, 3), t);
 }

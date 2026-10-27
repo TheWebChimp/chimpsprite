@@ -362,6 +362,13 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         }
         editor.frame_range = None;
     }
+    // Desarrollo: píxeles al doble de ancho (`2:1`) o de alto (`1:2`), para capturas.
+    if let Ok(ratio) = std::env::var("CHIMPSPRITE_DEMO_RATIO")
+        && app.has_doc()
+    {
+        let ratio = if ratio == "1:2" { (1, 2) } else { (2, 1) };
+        app.doc.editor.set_pixel_ratio(ratio);
+    }
     // Desarrollo: Tiled Mode en los dos ejes, para capturas.
     if std::env::var_os("CHIMPSPRITE_DEMO_TILED").is_some() && app.has_doc() {
         app.doc.editor.tiled = editor::TiledMode::Both;

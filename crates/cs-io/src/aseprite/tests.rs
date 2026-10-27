@@ -301,6 +301,13 @@ fn reads_old_palette_chunk_and_grayscale() {
 }
 
 #[test]
+fn the_pixel_ratio_roundtrips() {
+    let mut s = Sprite::new(4, 4, ColorMode::Rgba);
+    s.pixel_ratio = (2, 1);
+    assert_eq!(roundtrip(&s).pixel_ratio, (2, 1));
+}
+
+#[test]
 fn a_grayscale_sprite_roundtrips_as_grayscale() {
     let mut s = Sprite::new(4, 4, ColorMode::Grayscale);
     Command::DrawPixels {

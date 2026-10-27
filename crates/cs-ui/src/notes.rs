@@ -262,7 +262,7 @@ impl NotesView {
         &mut self,
         editor: &mut Editor,
         to_screen: &dyn Fn((i32, i32)) -> Pos2,
-        zoom: f32,
+        zoom: Vec2,
         pointer: Option<Pos2>,
         pressed: bool,
         down: bool,
@@ -282,8 +282,8 @@ impl NotesView {
                     match drag.gesture {
                         Gesture::Move => {
                             note.position = (
-                                drag.before.position.0 + (delta.x / zoom).round() as i32,
-                                drag.before.position.1 + (delta.y / zoom).round() as i32,
+                                drag.before.position.0 + (delta.x / zoom.x).round() as i32,
+                                drag.before.position.1 + (delta.y / zoom.y).round() as i32,
                             );
                             self.cursor = Some(egui::CursorIcon::Grabbing);
                         }

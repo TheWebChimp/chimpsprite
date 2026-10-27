@@ -188,7 +188,8 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
     let transparent_index = r.u8()?;
     r.skip(3)?;
     r.u16()?; // cantidad de colores (la paleta trae el dato real)
-    r.skip(2)?; // proporción de píxel
+    // Proporción de píxel (0 en archivos viejos: 1:1).
+    let pixel_ratio = (r.u8()?.max(1), r.u8()?.max(1));
     let grid_offset = (r.i16()? as i32, r.i16()? as i32);
     let grid_size = (r.u16()? as u32, r.u16()? as u32);
     r.skip(84)?;
@@ -205,6 +206,7 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
     };
 
     let mut sprite = Sprite::new(width, height, mode);
+    sprite.pixel_ratio = pixel_ratio;
     if grid_size.0 > 0 && grid_size.1 > 0 {
         sprite.grid = cs_core::GridSettings {
             size: grid_size,
@@ -975,8 +977,8 @@ fn write_header(out: &mut Vec<u8>, sprite: &Sprite) {
     out.w_u8(transparent);
     out.w_zeros(3);
     out.w_u16(sprite.palette.len().min(u16::MAX as usize) as u16);
-    out.w_u8(1); // proporción de píxel 1:1
-    out.w_u8(1);
+    out.w_u8(sprite.pixel_ratio.0.max(1)); // proporción de píxel
+    out.w_u8(sprite.pixel_ratio.1.max(1));
     let grid = sprite.grid;
     out.w_i16(grid.offset.0.clamp(i16::MIN as i32, i16::MAX as i32) as i16);
     out.w_i16(grid.offset.1.clamp(i16::MIN as i32, i16::MAX as i32) as i16);

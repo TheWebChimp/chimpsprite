@@ -75,6 +75,16 @@ impl Editor {
         self.replace_sprite(converted)
     }
 
+    /// Sprite → Properties → Pixel Aspect Ratio: cómo se ve cada píxel (los píxeles no cambian).
+    pub fn set_pixel_ratio(&mut self, ratio: (u8, u8)) -> bool {
+        if self.sprite().pixel_ratio == ratio {
+            return false;
+        }
+        let mut sprite = self.sprite().clone();
+        sprite.pixel_ratio = ratio;
+        self.named("Pixel Aspect Ratio", |e| e.replace_sprite(Some(sprite)))
+    }
+
     /// Cambia el índice transparente de un sprite indexado (los píxeles no cambian).
     pub fn set_transparent_index(&mut self, index: u8) -> bool {
         let ColorMode::Indexed { transparent_index } = self.sprite().color_mode else {

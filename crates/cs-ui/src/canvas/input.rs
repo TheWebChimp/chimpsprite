@@ -40,7 +40,7 @@ impl CanvasView {
             SymHandle::Y => egui::CursorIcon::ResizeVertical,
         };
         let origin = self.to_screen(rect, editor.artboard().position);
-        let half = self.zoom / 2.0;
+        let half = self.scale() / 2.0;
         let to_c2 = |p: Pos2| {
             let v = (p - origin) / half;
             (v.x.round() as i32, v.y.round() as i32)
@@ -79,7 +79,7 @@ impl CanvasView {
             origin,
             origin
                 + Vec2::new(editor.sprite().width as f32, editor.sprite().height as f32)
-                    * self.zoom,
+                    * self.scale(),
         )
         .intersect(self.visible(rect));
         let handle = if p.distance(center) <= 7.0 {
@@ -142,9 +142,9 @@ impl CanvasView {
     ) -> Option<egui::CursorIcon> {
         let origin = editor.artboard().position;
         // Copias para no tomar prestado `self` dentro de los closures.
-        let (screen_origin, zoom) = (self.origin(rect), self.zoom);
+        let (screen_origin, scale) = (self.origin(rect), self.scale());
         let local = move |p: Pos2| {
-            let w = (p - screen_origin) / zoom;
+            let w = (p - screen_origin) / scale;
             (w.x - origin.0 as f32, w.y - origin.1 as f32)
         };
         let ruler_px = self.ruler_px();
@@ -417,8 +417,8 @@ impl CanvasView {
         guide_cursor = guide_cursor.or(ruler_cursor);
         // Las notas van encima de todo: sobre una (o arrastrándola), las herramientas no reciben
         // el clic.
-        let (origin, zoom) = (self.origin(rect), self.zoom);
-        let to_screen = move |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * zoom;
+        let (origin, scale) = (self.origin(rect), self.scale());
+        let to_screen = move |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * scale;
         if !modal && !space_key && !hand && !ruler_busy && !editor.is_painting() {
             // Solo si lo de arriba en el puntero es el lienzo: con un menú o una ventana encima,
             // las notas de abajo no lo ven.
@@ -427,7 +427,7 @@ impl CanvasView {
             self.notes.input(
                 editor,
                 &to_screen,
-                zoom,
+                scale,
                 in_area,
                 pressed_primary && response.hovered(),
                 any_down,

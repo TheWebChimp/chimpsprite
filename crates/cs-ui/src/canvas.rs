@@ -73,6 +73,9 @@ pub struct CanvasView {
     names_visible: bool,
     /// Zoom pedido desde el menú; se aplica al conocer el tamaño del lienzo.
     pending_zoom: Option<ZoomRequest>,
+    /// La proporción de píxel del artboard activo (Sprite → Properties): con 2:1 cada píxel se
+    /// ve el doble de ancho. Se toma al empezar cada frame.
+    ratio: Vec2,
     /// Guía que se está creando (desde una regla) o moviendo.
     ruler_drag: Option<GuideDrag>,
     /// Eje de simetría que se está arrastrando y centro provisional (medios píxeles).
@@ -206,6 +209,7 @@ impl Default for CanvasView {
             over_label: false,
             names_visible: true,
             pending_zoom: None,
+            ratio: Vec2::splat(1.0),
             ruler_drag: None,
             sym_drag: None,
             over_ruler: false,
@@ -260,16 +264,22 @@ impl CanvasView {
             crate::notes::NEW_SIZE.0 as f32,
             crate::notes::NEW_SIZE.1 as f32,
         );
-        let w = (-self.pan - size / 2.0) / self.zoom;
+        let w = (-self.pan - size / 2.0) / self.scale();
         (w.x.round() as i32, w.y.round() as i32)
     }
 
+    /// Cuánto mide un píxel en pantalla, a lo ancho y a lo alto: el zoom por la proporción de
+    /// píxel (con 1:1, el zoom en los dos).
+    pub(crate) fn scale(&self) -> Vec2 {
+        self.ratio * self.zoom
+    }
+
     fn to_screen(&self, rect: Rect, world: (i32, i32)) -> Pos2 {
-        self.origin(rect) + Vec2::new(world.0 as f32, world.1 as f32) * self.zoom
+        self.origin(rect) + Vec2::new(world.0 as f32, world.1 as f32) * self.scale()
     }
 
     fn to_world(&self, rect: Rect, p: Pos2) -> (f32, f32) {
-        let w = (p - self.origin(rect)) / self.zoom;
+        let w = (p - self.origin(rect)) / self.scale();
         (w.x, w.y)
     }
 
@@ -316,7 +326,7 @@ impl CanvasView {
         let Some(((x0, y0), (x1, y1))) = editor.document.bounds() else {
             return;
         };
-        let size = Vec2::new((x1 - x0) as f32, (y1 - y0) as f32);
+        let size = Vec2::new((x1 - x0) as f32, (y1 - y0) as f32) * self.ratio;
         let max = (rect.size() * 0.85 / size).min_elem();
         self.zoom = ZOOM_LEVELS
             .iter()
@@ -324,7 +334,7 @@ impl CanvasView {
             .rfind(|&z| z <= max)
             .unwrap_or(ZOOM_LEVELS[0]);
         let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
-        self.pan = -center * self.zoom;
+        self.pan = -center * self.scale();
         self.fitted = true;
     }
 
@@ -338,9 +348,9 @@ impl CanvasView {
         } else {
             ZOOM_LEVELS[i.saturating_sub(1)]
         };
-        let world = (anchor - self.origin(rect)) / self.zoom;
+        let world = (anchor - self.origin(rect)) / self.scale();
         self.zoom = next;
-        self.pan = anchor - world * next - rect.center();
+        self.pan = anchor - world * self.scale() - rect.center();
     }
 
     pub fn request_zoom(&mut self, request: ZoomRequest) {
@@ -353,9 +363,9 @@ impl CanvasView {
             ZoomRequest::Out => self.zoom_at(rect, rect.center(), false),
             ZoomRequest::Actual => {
                 // Mantiene en el centro lo que está en el centro.
-                let center = (rect.center() - self.origin(rect)) / self.zoom;
+                let center = (rect.center() - self.origin(rect)) / self.scale();
                 self.zoom = 1.0;
-                self.pan = -center;
+                self.pan = -center * self.scale();
             }
             ZoomRequest::Fit => self.fit(rect, editor),
             ZoomRequest::CenterActive => self.center_active(editor),
@@ -372,7 +382,7 @@ impl CanvasView {
     fn center_active(&mut self, editor: &Editor) {
         let ((x0, y0), (x1, y1)) = editor.artboard().rect();
         let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
-        self.pan = -center * self.zoom;
+        self.pan = -center * self.scale();
     }
 
     fn checker(&mut self, ctx: &egui::Context) -> egui::TextureId {
@@ -407,7 +417,7 @@ impl CanvasView {
             .map_or_else(|| a.symmetry_center2(), |(_, c)| c);
         let origin = self.to_screen(rect, a.position);
         (
-            origin + Vec2::new(c2.0 as f32, c2.1 as f32) * (self.zoom / 2.0),
+            origin + Vec2::new(c2.0 as f32, c2.1 as f32) * (self.scale() / 2.0),
             c2,
         )
     }
@@ -576,6 +586,8 @@ impl CanvasView {
         let ctx = ui.ctx().clone();
         // Antes de cualquier uso de `origin` en este frame (zoom, entrada, dibujo).
         self.ppp = ctx.pixels_per_point();
+        let (rx, ry) = editor.sprite().pixel_ratio;
+        self.ratio = Vec2::new(rx.max(1) as f32, ry.max(1) as f32);
         self.rulers_shown = view_settings.rulers;
         if !self.fitted && rect.width() > 0.0 {
             self.fit(rect, editor);
@@ -710,7 +722,7 @@ impl CanvasView {
                     &painter,
                     screen,
                     artboard.sprite.grid,
-                    self.zoom,
+                    self.scale(),
                     view_settings.grid_color(),
                 );
             }
@@ -718,7 +730,7 @@ impl CanvasView {
                 let stroke = Stroke::new(1.0, theme::GRID);
                 for x in 1..artboard.sprite.width {
                     painter.vline(
-                        screen.left() + x as f32 * self.zoom,
+                        screen.left() + x as f32 * self.scale().x,
                         screen.y_range(),
                         stroke,
                     );
@@ -726,7 +738,7 @@ impl CanvasView {
                 for y in 1..artboard.sprite.height {
                     painter.hline(
                         screen.x_range(),
-                        screen.top() + y as f32 * self.zoom,
+                        screen.top() + y as f32 * self.scale().y,
                         stroke,
                     );
                 }
@@ -743,7 +755,7 @@ impl CanvasView {
                         size: space.tile_size,
                         offset: space.offset,
                     },
-                    self.zoom,
+                    self.scale(),
                     theme::TILE_GRID,
                 );
             }
@@ -796,7 +808,7 @@ impl CanvasView {
                         &painter,
                         screen,
                         *g,
-                        self.zoom,
+                        self.scale(),
                         theme::GUIDE_LINE,
                         &covers[k + 1..],
                     );
@@ -854,13 +866,13 @@ impl CanvasView {
                 || editor.active_tool() == ToolKind::Slice)
             && let Some(artboard) = document.artboard(editor.active)
         {
-            draw_slices(&painter, &artboard.sprite, editor, origin, self.zoom);
+            draw_slices(&painter, &artboard.sprite, editor, origin, self.scale());
         }
         if let (Some(mask), Some(origin)) = (&view.selection, active_origin)
             && view_settings.shows(view_settings.selection_edges)
         {
             let phase = (ctx.input(|i| i.time) * ANTS_SPEED) as i32;
-            draw_marching_ants(&painter, mask, origin, self.zoom, phase, self.pixel_ui);
+            draw_marching_ants(&painter, mask, origin, self.scale(), phase, self.pixel_ui);
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
         }
         if let Some(origin) = active_origin
@@ -868,20 +880,20 @@ impl CanvasView {
             && let Some(b) = editor.transform_box()
         {
             let phase = (ctx.input(|i| i.time) * ANTS_SPEED) as i32;
-            draw_transform_box(&painter, &b, origin, self.zoom, phase, self.pixel_ui);
+            draw_transform_box(&painter, &b, origin, self.scale(), phase, self.pixel_ui);
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
         }
         if let Some(origin) = active_origin
             && view_settings.shows(view_settings.tile_numbers)
             && let Some(space) = editor.tile_space()
-            && space.tile_size.0 as f32 * self.zoom >= TILE_NUMBER_MIN_PX
-            && space.tile_size.1 as f32 * self.zoom >= TILE_NUMBER_MIN_PX
+            && space.tile_size.0 as f32 * self.scale().x >= TILE_NUMBER_MIN_PX
+            && space.tile_size.1 as f32 * self.scale().y >= TILE_NUMBER_MIN_PX
             && let Some(artboard) = document.artboard(editor.active)
         {
             let font = FontId::monospace(10.0);
             // Solo las celdas dentro del área visible del lienzo.
-            let min = ((rect.min - origin) / self.zoom).floor();
-            let max = ((rect.max - origin) / self.zoom).ceil();
+            let min = ((rect.min - origin) / self.scale()).floor();
+            let max = ((rect.max - origin) / self.scale()).ceil();
             let view = (min.x as i32, min.y as i32, max.x as i32, max.y as i32);
             let cells = crate::tile_ops::numbered_cells_in(
                 &artboard.sprite,
@@ -892,7 +904,7 @@ impl CanvasView {
             for ((x, y), number) in cells {
                 // La celda parcial del borde empieza fuera del lienzo: el número se pega al borde.
                 let (x, y) = (x.max(0), y.max(0));
-                let at = origin + Vec2::new(x as f32, y as f32) * self.zoom + Vec2::splat(2.0);
+                let at = origin + Vec2::new(x as f32, y as f32) * self.scale() + Vec2::splat(2.0);
                 if !rect.contains(at) {
                     continue;
                 }
@@ -947,7 +959,7 @@ impl CanvasView {
             if cells.is_none() && tool.uses_brush() && shape == BrushShape::Round && size > 2 {
                 // Redondo: filas rellenas y el borde píxel a píxel (en 1 y 2 es un cuadrado).
                 let points = cs_raster::brush_points((hx, hy), size, shape);
-                let at = |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * self.zoom;
+                let at = |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * self.scale();
                 if let Some(fill) = fill {
                     for (y, x0, x1) in brush_rows(&points) {
                         let row = Rect::from_min_max(at((x0, y)), at((x1 + 1, y + 1)));
@@ -964,13 +976,14 @@ impl CanvasView {
                         let (x0, y0) = space.cell_origin((cx + offset, cy + offset));
                         let (tw, th) = space.tile_size;
                         Rect::from_min_size(
-                            origin + Vec2::new(x0 as f32, y0 as f32) * self.zoom,
-                            Vec2::new((size * tw) as f32, (size * th) as f32) * self.zoom,
+                            origin + Vec2::new(x0 as f32, y0 as f32) * self.scale(),
+                            Vec2::new((size * tw) as f32, (size * th) as f32) * self.scale(),
                         )
                     }
                     None => Rect::from_min_size(
-                        origin + Vec2::new((hx + offset) as f32, (hy + offset) as f32) * self.zoom,
-                        Vec2::splat(size as f32 * self.zoom),
+                        origin
+                            + Vec2::new((hx + offset) as f32, (hy + offset) as f32) * self.scale(),
+                        Vec2::splat(size as f32) * self.scale(),
                     ),
                 };
                 if let Some(fill) = fill {
@@ -982,8 +995,9 @@ impl CanvasView {
 
         // Las notas (post-its): encima de los artboards y debajo de las reglas.
         {
-            let (origin, zoom) = (self.origin(rect), self.zoom);
-            let to_screen = move |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * zoom;
+            let (origin, scale) = (self.origin(rect), self.scale());
+            let to_screen =
+                move |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * scale;
             let skin = crate::pixel_ui::frame_skin(ui.ctx());
             let note_painter = painter.with_clip_rect(self.canvas_area(rect, view_settings));
             let menus = self
@@ -1151,14 +1165,14 @@ fn draw_guide(
     painter: &egui::Painter,
     screen: Rect,
     guide: Guide,
-    zoom: f32,
+    zoom: Vec2,
     color: Color32,
     covers: &[Rect],
 ) {
     let stroke = Stroke::new(1.0, color);
     match guide.axis {
         Axis::Horizontal => {
-            let y = screen.top() + guide.position as f32 * zoom;
+            let y = screen.top() + guide.position as f32 * zoom.y;
             if (screen.top()..=screen.bottom()).contains(&y) {
                 let cut: Vec<_> = covers
                     .iter()
@@ -1171,7 +1185,7 @@ fn draw_guide(
             }
         }
         Axis::Vertical => {
-            let x = screen.left() + guide.position as f32 * zoom;
+            let x = screen.left() + guide.position as f32 * zoom.x;
             if (screen.left()..=screen.right()).contains(&x) {
                 let cut: Vec<_> = covers
                     .iter()
@@ -1203,24 +1217,30 @@ fn uncovered(range: egui::Rangef, cut: &[egui::Rangef]) -> Vec<egui::Rangef> {
 }
 
 /// Líneas del grid de trabajo dentro del artboard (se omiten si quedan a menos de 4 px).
-fn draw_grid(painter: &egui::Painter, screen: Rect, grid: GridSettings, zoom: f32, color: Color32) {
+fn draw_grid(
+    painter: &egui::Painter,
+    screen: Rect,
+    grid: GridSettings,
+    zoom: Vec2,
+    color: Color32,
+) {
     let (sx, sy) = (
-        grid.size.0.max(1) as f32 * zoom,
-        grid.size.1.max(1) as f32 * zoom,
+        grid.size.0.max(1) as f32 * zoom.x,
+        grid.size.1.max(1) as f32 * zoom.y,
     );
     if sx < 4.0 || sy < 4.0 {
         return;
     }
     let stroke = Stroke::new(1.0, color);
-    let first = |offset: i32, step: f32| (offset as f32 * zoom).rem_euclid(step);
-    let mut x = screen.left() + first(grid.offset.0, sx);
+    let first = |offset: i32, scale: f32, step: f32| (offset as f32 * scale).rem_euclid(step);
+    let mut x = screen.left() + first(grid.offset.0, zoom.x, sx);
     while x < screen.right() {
         if x > screen.left() {
             painter.vline(x, screen.y_range(), stroke);
         }
         x += sx;
     }
-    let mut y = screen.top() + first(grid.offset.1, sy);
+    let mut y = screen.top() + first(grid.offset.1, zoom.y, sy);
     while y < screen.bottom() {
         if y > screen.top() {
             painter.hline(screen.x_range(), y, stroke);
@@ -1502,7 +1522,7 @@ fn draw_transform_box(
     painter: &egui::Painter,
     b: &TransformBox,
     origin: Pos2,
-    zoom: f32,
+    zoom: Vec2,
     phase: i32,
     pixel: bool,
 ) {
@@ -1524,7 +1544,7 @@ fn draw_transform_box(
         Stroke::new(1.0, theme::ACCENT),
     ));
     for handle in Handle::ALL {
-        let center = b.handle_center(handle, HANDLE_PX / 2.0 / zoom);
+        let center = b.handle_center(handle, HANDLE_PX / 2.0 / zoom.min_elem());
         let r = Rect::from_center_size(at(center), Vec2::splat(HANDLE_PX));
         painter.rect_filled(r, 0.0, Color32::WHITE);
         painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
@@ -1693,7 +1713,7 @@ fn draw_slices(
     sprite: &cs_core::Sprite,
     editor: &Editor,
     origin: Pos2,
-    zoom: f32,
+    zoom: Vec2,
 ) {
     let at = |x: i32, y: i32| origin + Vec2::new(x as f32, y as f32) * zoom;
     for (i, slice) in sprite.slices.iter().enumerate() {
@@ -1750,7 +1770,7 @@ fn draw_marching_ants(
     painter: &egui::Painter,
     mask: &Mask,
     origin: Pos2,
-    zoom: f32,
+    zoom: Vec2,
     phase: i32,
     pixel: bool,
 ) {

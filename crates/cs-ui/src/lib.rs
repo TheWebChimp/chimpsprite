@@ -350,6 +350,7 @@ impl ChimpApp {
                         if let Some(index) = d.transparent_index {
                             editor.set_transparent_index(index);
                         }
+                        editor.set_pixel_ratio(d.pixel_ratio);
                     }
                     Some(SpriteDialog::Duplicate(d)) => {
                         editor.duplicate_artboard(d.name);

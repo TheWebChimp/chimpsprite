@@ -68,14 +68,24 @@ pub struct PropertiesDialog {
     pub name: String,
     /// Solo en indexado.
     pub transparent_index: Option<u8>,
+    /// Proporción de píxel (ancho, alto).
+    pub pixel_ratio: (u8, u8),
     info: Vec<(&'static str, String)>,
 }
+
+/// Las proporciones de píxel de Aseprite.
+const PIXEL_RATIOS: [((u8, u8), &str); 3] = [
+    ((1, 1), "Square Pixels (1:1)"),
+    ((2, 1), "Double-wide Pixels (2:1)"),
+    ((1, 2), "Double-high Pixels (1:2)"),
+];
 
 impl PropertiesDialog {
     pub fn new(artboard: &Artboard) -> Self {
         let s = &artboard.sprite;
         let mode = match s.color_mode {
-            ColorMode::Rgba | ColorMode::Grayscale => "RGB Color".to_owned(),
+            ColorMode::Rgba => "RGB Color".to_owned(),
+            ColorMode::Grayscale => "Grayscale".to_owned(),
             ColorMode::Indexed { .. } => format!("Indexed ({} colors)", s.palette.len()),
         };
         Self {
@@ -84,6 +94,7 @@ impl PropertiesDialog {
                 ColorMode::Indexed { transparent_index } => Some(transparent_index),
                 ColorMode::Rgba | ColorMode::Grayscale => None,
             },
+            pixel_ratio: s.pixel_ratio,
             info: vec![
                 ("Color Mode:", mode),
                 ("Size:", format!("{} × {} px", s.width, s.height)),
@@ -111,6 +122,17 @@ impl PropertiesDialog {
                     widgets::number(ui, index, 0..=255, "");
                     ui.end_row();
                 }
+                ui.label("Pixel Aspect Ratio:");
+                let current = PIXEL_RATIOS
+                    .iter()
+                    .find(|(r, _)| *r == self.pixel_ratio)
+                    .map_or("Custom", |(_, label)| *label);
+                widgets::combo(ui, "pixel_ratio", current, |ui| {
+                    for (ratio, label) in PIXEL_RATIOS {
+                        widgets::choice(ui, &mut self.pixel_ratio, ratio, label);
+                    }
+                });
+                ui.end_row();
             });
     }
 }
