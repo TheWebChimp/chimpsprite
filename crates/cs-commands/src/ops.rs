@@ -328,6 +328,52 @@ pub fn duplicate_frame(sprite: &Sprite, index: usize, linked: bool) -> Option<Co
     Some(Command::Batch(cmds))
 }
 
+/// Un cel: su capa y su frame.
+pub type CelAt = (LayerId, usize);
+
+/// Mueve (o copia, con `copy`) cels: cada par va de `(capa, frame)` a `(capa, frame)`. Lo que
+/// había en el destino se reemplaza (un cel vacío deja el destino vacío) y, al mover, los
+/// orígenes que no son destino de otro quedan vacíos. Las copias llevan su propia imagen. `None`
+/// si no cambia nada.
+pub fn move_cels(sprite: &Sprite, moves: &[(CelAt, CelAt)], copy: bool) -> Option<Command> {
+    let mut cmds = Vec::new();
+    if !copy {
+        let dests: std::collections::HashSet<_> = moves.iter().map(|m| m.1).collect();
+        for &(from, _) in moves {
+            if !dests.contains(&from) && sprite.cel(from.0, from.1).is_some() {
+                cmds.push(Command::SetCel {
+                    layer: from.0,
+                    frame: from.1,
+                    cel: None,
+                });
+            }
+        }
+    }
+    let mut next_id = sprite.next_image_id().0;
+    for &(from, to) in moves {
+        let cel = match sprite.cel(from.0, from.1).copied() {
+            Some(cel) if copy => {
+                let id = ImageId(next_id);
+                next_id += 1;
+                cmds.push(copy_content(sprite, cel.image, id));
+                Some(Cel { image: id, ..cel })
+            }
+            cel => cel,
+        };
+        if from == to && !copy {
+            continue;
+        }
+        if cel.is_some() || sprite.cel(to.0, to.1).is_some() {
+            cmds.push(Command::SetCel {
+                layer: to.0,
+                frame: to.1,
+                cel,
+            });
+        }
+    }
+    (!cmds.is_empty()).then_some(Command::Batch(cmds))
+}
+
 /// Máscara nueva del tamaño del lienzo: todo visible, todo oculto, o visible solo en `selection`.
 pub fn new_mask(sprite: &Sprite, hide_all: bool, selection: Option<&Mask>) -> LayerMask {
     let (w, h) = (sprite.width, sprite.height);

@@ -399,6 +399,116 @@ impl Editor {
         true
     }
 
+    /// Elige el rango de cels de `(capa, frame)` a `(capa, frame)` (de cualquier punta).
+    pub fn select_cels(&mut self, from: (LayerId, usize), to: (LayerId, usize)) {
+        let frames = (from.1, to.1);
+        self.frame_range = Some(frames);
+        self.layer_range = Some((from.0, to.0, frames));
+    }
+
+    /// Las capas del rango de cels, en el orden del timeline; sin rango, la activa.
+    pub fn range_layers(&self) -> Vec<LayerId> {
+        let order = self.timeline_layers();
+        let at = |id: LayerId| order.iter().position(|l| *l == id);
+        match self.layer_range {
+            Some((a, b, frames)) if self.frame_range == Some(frames) => match (at(a), at(b)) {
+                (Some(a), Some(b)) => order[a.min(b)..=a.max(b)].to_vec(),
+                _ => vec![self.layer],
+            },
+            _ => vec![self.layer],
+        }
+    }
+
+    /// Los cels del rango (capas × frames), aunque estén vacíos.
+    pub fn selected_cels(&self) -> Vec<(LayerId, usize)> {
+        let (a, b) = self.selected_frames();
+        self.range_layers()
+            .into_iter()
+            .flat_map(|l| (a..=b).map(move |f| (l, f)))
+            .collect()
+    }
+
+    /// Si hay un rango de más de un cel.
+    pub fn has_cel_range(&self) -> bool {
+        self.selected_cels().len() > 1
+    }
+
+    /// Borra los cels del rango (un paso de undo).
+    pub fn clear_selected_cels(&mut self) {
+        self.commit_floating();
+        let cmds: Vec<Command> = self
+            .selected_cels()
+            .into_iter()
+            .filter(|&(l, f)| self.sprite().cel(l, f).is_some())
+            .map(|(layer, frame)| Command::SetCel {
+                layer,
+                frame,
+                cel: None,
+            })
+            .collect();
+        if !cmds.is_empty() {
+            self.execute(Command::Batch(cmds));
+        }
+    }
+
+    /// Mueve (o copia, con `copy`) los cels del rango `layers` capas (en el orden del timeline,
+    /// hacia abajo) y `frames` frames, y el rango con ellos (un paso de undo). Solo entre capas
+    /// de imagen (las tilemap, en su misma capa); lo que caería fuera, no se mueve.
+    pub fn move_selected_cels(&mut self, layers: isize, frames: isize, copy: bool) {
+        if layers == 0 && frames == 0 && !copy {
+            return;
+        }
+        self.commit_floating();
+        let order = self.timeline_layers();
+        let count = self.frame_count() as isize;
+        let sprite = self.sprite();
+        let kind = |id: LayerId| sprite.layer(id).map(|l| l.kind);
+        let moves: Vec<_> = self
+            .selected_cels()
+            .into_iter()
+            .filter_map(|(layer, f)| {
+                let at = order.iter().position(|l| *l == layer)? as isize + layers;
+                let to = *order.get(usize::try_from(at).ok()?)?;
+                let frame = f as isize + frames;
+                let fits = match kind(layer)? {
+                    LayerKind::Image => kind(to) == Some(LayerKind::Image),
+                    LayerKind::Tilemap => to == layer,
+                    _ => false,
+                };
+                (fits && (0..count).contains(&frame)).then_some(((layer, f), (to, frame as usize)))
+            })
+            .collect();
+        if moves.is_empty() {
+            return;
+        }
+        let Some(cmd) = ops::move_cels(sprite, &moves, copy) else {
+            return;
+        };
+        if !self.execute(cmd) {
+            return;
+        }
+        // El rango va con los cels.
+        let shift = |id: LayerId| {
+            order
+                .iter()
+                .position(|l| *l == id)
+                .and_then(|i| {
+                    order.get((i as isize + layers).clamp(0, order.len() as isize - 1) as usize)
+                })
+                .copied()
+                .unwrap_or(id)
+        };
+        let frame = |f: usize| (f as isize + frames).clamp(0, count - 1) as usize;
+        let (a, b) = self.selected_frames();
+        let range_layers = self.range_layers();
+        let (first, last) = (range_layers[0], *range_layers.last().unwrap_or(&self.layer));
+        self.select_cels((shift(first), frame(a)), (shift(last), frame(b)));
+        let active = shift(self.layer);
+        self.select_layer(active);
+        self.set_frame(frame(self.frame));
+        self.frame_range = Some((frame(a), frame(b)));
+    }
+
     pub fn clear_cel(&mut self, layer: LayerId, frame: usize) {
         if self.sprite().cel(layer, frame).is_some() {
             self.execute(Command::SetCel {
@@ -423,6 +533,80 @@ mod tests {
         }
         e.set_frame(0);
         e
+    }
+
+    /// Tres capas de imagen (de arriba a abajo en el timeline: 3, 2, 1) y 4 frames, con un
+    /// punto en el cel de la capa 1, frame 0, y otro en la capa 2, frame 1.
+    fn cels_editor() -> (Editor, [LayerId; 3]) {
+        let mut e = editor_with_frames(4);
+        e.add_layer(LayerKind::Image);
+        e.add_layer(LayerKind::Image);
+        let order = e.timeline_layers();
+        let (top, mid, bottom) = (order[0], order[1], order[2]);
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        for (layer, frame) in [(bottom, 0), (mid, 1)] {
+            e.execute(Command::DrawPixels {
+                layer,
+                frame,
+                pixels: vec![(0, 0, red)],
+            });
+        }
+        (e, [top, mid, bottom])
+    }
+
+    #[test]
+    fn a_cel_range_spans_layers_and_frames() {
+        let (mut e, [top, mid, bottom]) = cels_editor();
+        e.select_layer(bottom);
+        e.select_cels((bottom, 0), (mid, 1));
+        assert_eq!(
+            e.range_layers(),
+            vec![mid, bottom],
+            "in the order of the timeline"
+        );
+        assert_eq!(e.selected_cels().len(), 4);
+        assert!(e.has_cel_range());
+        // Otro rango de frames (el encabezado): solo la capa activa.
+        e.frame_range = Some((2, 3));
+        assert_eq!(e.range_layers(), vec![bottom]);
+        assert!(!e.selected_cels().contains(&(top, 2)));
+    }
+
+    #[test]
+    fn deleting_a_cel_range_clears_its_cels_in_one_step() {
+        let (mut e, [_, mid, bottom]) = cels_editor();
+        e.select_cels((bottom, 0), (mid, 1));
+        e.clear_selected_cels();
+        assert!(e.sprite().cel(bottom, 0).is_none() && e.sprite().cel(mid, 1).is_none());
+        e.undo();
+        assert!(e.sprite().cel(bottom, 0).is_some() && e.sprite().cel(mid, 1).is_some());
+    }
+
+    #[test]
+    fn dragging_a_cel_range_moves_or_copies_its_cels() {
+        let (mut e, [top, mid, bottom]) = cels_editor();
+        e.select_layer(bottom);
+        e.select_cels((mid, 0), (bottom, 1));
+        // Una capa arriba y dos frames después.
+        e.move_selected_cels(-1, 2, false);
+        assert!(e.sprite().cel(bottom, 0).is_none() && e.sprite().cel(mid, 1).is_none());
+        assert!(e.sprite().cel(mid, 2).is_some(), "the bottom cel");
+        assert!(e.sprite().cel(top, 3).is_some(), "the middle cel");
+        assert_eq!(e.range_layers(), vec![top, mid], "the range goes with them");
+        assert_eq!(e.selected_frames(), (2, 3));
+        e.undo();
+        assert!(e.sprite().cel(bottom, 0).is_some() && e.sprite().cel(mid, 2).is_none());
+        // Copiando: los de antes se quedan y las copias llevan su propia imagen.
+        e.select_layer(bottom);
+        e.select_cels((mid, 0), (bottom, 1));
+        e.move_selected_cels(0, 2, true);
+        let (original, copy) = (e.sprite().cel(bottom, 0), e.sprite().cel(bottom, 2));
+        assert!(original.is_some() && copy.is_some());
+        assert_ne!(original.unwrap().image, copy.unwrap().image);
+        // Lo que caería fuera de los frames no se mueve.
+        e.select_cels((bottom, 0), (bottom, 0));
+        e.move_selected_cels(0, 9, false);
+        assert!(e.sprite().cel(bottom, 0).is_some());
     }
 
     #[test]

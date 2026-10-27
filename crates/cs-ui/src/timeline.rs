@@ -126,10 +126,26 @@ pub struct TimelineState {
     duration_edit: Option<u16>,
     /// Frame donde empezó una selección con Shift.
     range_anchor: Option<usize>,
-    /// Capa en la que se está arrastrando una selección de cels.
-    cel_drag: Option<LayerId>,
+    /// El cel donde empezó el rango de cels (Shift+clic lo extiende desde ahí).
+    cel_anchor: Option<(LayerId, usize)>,
+    /// Un arrastre sobre los cels: eligiendo un rango o moviéndolo.
+    cel_drag: Option<CelDrag>,
+    /// Las filas de las capas dibujadas en este frame, en orden (para el contorno del rango).
+    rows: Vec<(LayerId, Rect)>,
     /// Se pidió el diálogo "New Tilemap Layer" (lo abre la app).
     pub new_tilemap: bool,
+}
+
+/// Un arrastre sobre los cels, como en Aseprite.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum CelDrag {
+    /// Eligiendo un rango desde este cel hasta el que tenga el puntero.
+    Select((LayerId, usize)),
+    /// Moviendo el rango (con Ctrl, copiándolo): de donde se agarró al cel con el puntero.
+    Move {
+        from: (LayerId, usize),
+        to: (LayerId, usize),
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -174,11 +190,103 @@ fn grid(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, grid:
                 tags_row(ui, editor, grid);
             }
             header_row(ui, editor, state, grid);
+            state.rows.clear();
             for id in editor.timeline_layers() {
                 layer_row(ui, editor, state, id, grid);
             }
+            range_outline(ui, editor, state, grid);
+            end_cel_drag(ui, editor, state);
         },
     );
+}
+
+/// Al soltar un rango que se arrastraba, se mueve ahí (con Ctrl, se copia).
+fn end_cel_drag(ui: &egui::Ui, editor: &mut Editor, state: &mut TimelineState) {
+    let (down, copy) = ui.input(|i| (i.pointer.primary_down(), i.modifiers.command));
+    if down {
+        return;
+    }
+    if let Some(CelDrag::Move { from, to }) = state.cel_drag.take() {
+        let (layers, frames) = cel_offset(editor, from, to);
+        editor.move_selected_cels(layers, frames, copy);
+    }
+}
+
+/// Cuántas capas (hacia abajo en el timeline) y frames hay de `from` a `to`.
+fn cel_offset(editor: &Editor, from: (LayerId, usize), to: (LayerId, usize)) -> (isize, isize) {
+    let order = editor.timeline_layers();
+    let at = |id: LayerId| order.iter().position(|l| *l == id).unwrap_or(0) as isize;
+    (at(to.0) - at(from.0), to.1 as isize - from.1 as isize)
+}
+
+/// El contorno del rango de cels (si tiene más de uno); mientras se arrastra, donde caería.
+/// Con Pixel UI, como en el diseño: una línea blanca sobre las líneas de las celdas del borde,
+/// con una oscura a cada lado.
+fn range_outline(ui: &egui::Ui, editor: &Editor, state: &TimelineState, grid: Grid) {
+    if !editor.has_cel_range() {
+        return;
+    }
+    let (layers, frames) = match state.cel_drag {
+        Some(CelDrag::Move { from, to }) => cel_offset(editor, from, to),
+        _ => (0, 0),
+    };
+    let range = editor.range_layers();
+    let at = |id: LayerId| state.rows.iter().position(|(l, _)| *l == id);
+    let (Some(top), Some(bottom)) = (at(range[0]), range.last().copied().and_then(at)) else {
+        return;
+    };
+    let last_row = state.rows.len() as isize - 1;
+    let row = |i: usize| state.rows[(i as isize + layers).clamp(0, last_row) as usize].1;
+    let last_frame = editor.frame_count() as isize - 1;
+    let frame = |f: usize| (f as isize + frames).clamp(0, last_frame) as usize;
+    let (a, b) = editor.selected_frames();
+    let first = grid.cell_rect(row(top), frame(a));
+    let last = grid.cell_rect(row(bottom), frame(b));
+    let painter = ui.painter();
+    if grid.skin.is_none() {
+        let outline = Rect::from_min_max(first.min, last.max);
+        painter.rect_stroke(
+            outline,
+            2.0,
+            Stroke::new(2.0, theme::ACCENT),
+            StrokeKind::Inside,
+        );
+        return;
+    };
+    // Las líneas de las celdas: la oscura de la de antes (2 antes del contenido) y la de cada
+    // celda (al final de su contenido).
+    let (first, last) = (pixel::content(first), pixel::content(last));
+    let line = Rect::from_min_max(first.min - vec2(2.0, 2.0), last.max + vec2(1.0, 1.0));
+    let dark = RANGE_DARK;
+    let ppp = ui.ctx().pixels_per_point();
+    let mut mesh = egui::Mesh::default();
+    for (rect, color) in [
+        (line.expand(1.0), dark),
+        (line, Color32::WHITE),
+        (line.shrink(1.0), dark),
+    ] {
+        for side in frame_sides(rect) {
+            mesh.add_colored_rect(
+                eframe::emath::GuiRounding::round_to_pixels(side, ppp),
+                color,
+            );
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
+}
+
+/// La línea oscura a cada lado del contorno del rango, la del diseño.
+const RANGE_DARK: Color32 = Color32::from_rgb(96, 49, 57);
+
+/// Los cuatro lados de 1 px de `rect` (por dentro).
+fn frame_sides(rect: Rect) -> [Rect; 4] {
+    let (l, t, r, b) = (rect.left(), rect.top(), rect.right(), rect.bottom());
+    [
+        Rect::from_min_max(pos2(l, t), pos2(r, t + 1.0)),
+        Rect::from_min_max(pos2(l, b - 1.0), pos2(r, b)),
+        Rect::from_min_max(pos2(l, t + 1.0), pos2(l + 1.0, b - 1.0)),
+        Rect::from_min_max(pos2(r - 1.0, t + 1.0), pos2(r, b - 1.0)),
+    ]
 }
 
 /// La fila de controles: una sola línea que, si no cabe, hace scroll horizontal con la rueda o la
@@ -546,6 +654,7 @@ fn layer_row(
     grid: Grid,
 ) {
     let (row, _) = ui.allocate_exact_size(vec2(grid.row_width(editor), grid.row_h), Sense::hover());
+    state.rows.push((id, row));
     let Some(layer) = editor.sprite().layer(id).cloned() else {
         return;
     };
@@ -870,11 +979,13 @@ fn layer_row(
     if layer.kind == LayerKind::Group {
         return;
     }
+    let in_layers = editor.frame_range.is_some() && editor.range_layers().contains(&id);
+    let cel_range = editor.has_cel_range();
     for f in 0..editor.frame_count() {
         let r = grid.cell_rect(row, f);
         let response = ui.interact(r, ui.id().with(("cel", id, f)), Sense::click_and_drag());
         let (sel_a, sel_b) = editor.selected_frames();
-        let in_range = active && editor.frame_range.is_some() && (sel_a..=sel_b).contains(&f);
+        let in_range = in_layers && (sel_a..=sel_b).contains(&f);
         let selected = in_range || (active && f == editor.frame);
         if let Some(skin) = grid.skin {
             // Con Pixel UI, el cel elegido y el rango, como en el diseño.
@@ -959,31 +1070,43 @@ fn layer_row(
                 }
             }
         }
-        // Arrastrar sobre los cels de una capa selecciona un rango de frames.
+        // Como en Aseprite: arrastrar sobre los cels elige un rango de capas × frames; arrastrar
+        // el rango lo mueve (con Ctrl, lo copia) al soltar.
+        let cel = (id, f);
         if response.drag_started() {
             editor.stop();
-            editor.select_layer(id);
-            state.range_anchor = Some(f);
-            state.cel_drag = Some(id);
-            editor.frame_range = Some((f, f));
-            editor.set_frame(f);
-        }
-        if state.cel_drag == Some(id) && response.contains_pointer() {
-            if ui.input(|i| i.pointer.primary_down()) {
-                let anchor = state.range_anchor.unwrap_or(f);
-                editor.frame_range = Some((anchor, f));
+            if cel_range && in_range {
+                state.cel_drag = Some(CelDrag::Move { from: cel, to: cel });
             } else {
-                state.cel_drag = None;
+                editor.select_layer(id);
+                state.range_anchor = Some(f);
+                state.cel_anchor = Some(cel);
+                state.cel_drag = Some(CelDrag::Select(cel));
+                editor.select_cels(cel, cel);
+                editor.set_frame(f);
+            }
+        }
+        if response.contains_pointer() && ui.input(|i| i.pointer.primary_down()) {
+            match &mut state.cel_drag {
+                Some(CelDrag::Select(anchor)) => {
+                    let anchor = *anchor;
+                    editor.select_cels(anchor, cel);
+                    editor.set_frame(f);
+                }
+                Some(CelDrag::Move { to, .. }) => *to = cel,
+                None => {}
             }
         }
         if response.clicked() {
             editor.stop();
-            editor.select_layer(id);
             if ui.input(|i| i.modifiers.shift) {
-                let anchor = state.range_anchor.unwrap_or(editor.frame);
-                editor.frame_range = Some((anchor, f));
+                let anchor = state.cel_anchor.unwrap_or((editor.layer, editor.frame));
+                editor.select_cels(anchor, cel);
+                state.range_anchor = Some(anchor.1);
             } else {
+                editor.select_layer(id);
                 state.range_anchor = Some(f);
+                state.cel_anchor = Some(cel);
                 editor.frame_range = None;
             }
             editor.set_frame(f);
@@ -1024,6 +1147,10 @@ fn layer_row(
                 }
                 if ui.add(menus::plain("Unlink cels")).clicked() {
                     editor.unlink_range(id, a, b);
+                    ui.close();
+                }
+                if ui.add(menus::plain("Clear cels")).clicked() {
+                    editor.clear_selected_cels();
                     ui.close();
                 }
                 menus::separator(ui);
@@ -1395,6 +1522,28 @@ mod tests {
             let header = self.header_cell(0).y + Grid::CLASSIC.header_h / 2.0;
             let y = header + Grid::CLASSIC.row_h * (row as f32 + 0.5);
             pos2(self.grid.x - 6.0 + 100.0, y)
+        }
+
+        /// Un arrastre con el botón izquierdo de `from` a `to`, de a poco, con `modifiers`.
+        fn drag_with(&mut self, from: Pos2, to: Pos2, modifiers: egui::Modifiers) {
+            let button = |pos, pressed| Event::PointerButton {
+                pos,
+                button: egui::PointerButton::Primary,
+                pressed,
+                modifiers,
+            };
+            self.frame(vec![Event::PointerMoved(from)]);
+            self.frame(vec![button(from, true)]);
+            for i in 1..=8 {
+                self.frame(vec![Event::PointerMoved(from.lerp(to, i as f32 / 8.0))]);
+            }
+            self.frame(vec![Event::ModifiersChanged(modifiers), button(to, false)]);
+            self.frame(vec![Event::ModifiersChanged(Default::default())]);
+        }
+
+        /// El centro del cel de la fila `row` y el frame `f` de la grilla clásica.
+        fn cel(&self, row: usize, f: usize) -> Pos2 {
+            pos2(self.header_cell(f).x, self.layer_name(row).y)
         }
 
         fn click_at(&mut self, at: Pos2) {
@@ -1844,6 +1993,48 @@ mod tests {
         h.frame(vec![]);
         assert_eq!(h.editor.frame_count(), 2);
         assert_eq!(h.editor.frame, 1);
+    }
+
+    #[test]
+    fn dragging_over_cels_selects_layers_by_frames_and_dragging_the_range_moves_it() {
+        let mut h = Harness::new(1200.0);
+        h.editor.add_layer(LayerKind::Image);
+        for _ in 0..3 {
+            h.editor.insert_empty_frame();
+        }
+        let order = h.editor.timeline_layers();
+        let (top, bottom) = (order[0], order[1]);
+        let red = cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0));
+        for (layer, frame) in [(top, 0), (bottom, 1)] {
+            h.editor.execute(cs_commands::Command::DrawPixels {
+                layer,
+                frame,
+                pixels: vec![(0, 0, red)],
+            });
+        }
+        h.frame(vec![]);
+        // De la capa de arriba, frame 1, a la de abajo, frame 2: 2 capas × 2 frames.
+        h.drag_with(h.cel(0, 0), h.cel(1, 1), Default::default());
+        assert_eq!(h.editor.range_layers(), vec![top, bottom]);
+        assert_eq!(h.editor.selected_frames(), (0, 1));
+        assert_eq!(h.editor.selected_cels().len(), 4);
+        // Arrastrándolo dos frames a la derecha, los cels se mueven y el rango con ellos.
+        h.drag_with(h.cel(0, 0), h.cel(0, 2), Default::default());
+        let sprite = h.editor.sprite();
+        assert!(sprite.cel(top, 0).is_none() && sprite.cel(bottom, 1).is_none());
+        assert!(sprite.cel(top, 2).is_some() && sprite.cel(bottom, 3).is_some());
+        assert_eq!(h.editor.selected_frames(), (2, 3));
+        // Con Ctrl, se copia.
+        let ctrl = egui::Modifiers::COMMAND;
+        h.drag_with(h.cel(0, 2), h.cel(0, 0), ctrl);
+        let sprite = h.editor.sprite();
+        assert!(
+            sprite.cel(top, 0).is_some() && sprite.cel(top, 2).is_some(),
+            "copied"
+        );
+        // Un clic suelto deja un solo cel.
+        h.click_at(h.cel(1, 3));
+        assert!(!h.editor.has_cel_range());
     }
 
     #[test]

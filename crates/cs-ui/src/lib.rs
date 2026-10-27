@@ -213,6 +213,22 @@ impl ChimpApp {
             let a = ends.next().unwrap_or(2);
             app.doc.editor.palette_selection = Some((a, ends.next().unwrap_or(a + 3)));
         }
+        // Desarrollo: un rango de cels del timeline ("fila,frame,fila,frame"), para capturas.
+        if let Ok(range) = std::env::var("CHIMPSPRITE_DEMO_CELS")
+            && app.has_doc()
+        {
+            let n: Vec<usize> = range
+                .split(',')
+                .filter_map(|n| n.trim().parse().ok())
+                .collect();
+            let order = app.doc.editor.timeline_layers();
+            if let [ra, fa, rb, fb] = n[..]
+                && let (Some(&a), Some(&b)) = (order.get(ra), order.get(rb))
+            {
+                app.doc.editor.select_layer(a);
+                app.doc.editor.select_cels((a, fa), (b, fb));
+            }
+        }
         // Desarrollo: una nota con texto, para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_NOTE").is_some() && app.has_doc() {
             // A la derecha del primer artboard (la vista todavía no se acomodó).
@@ -1640,6 +1656,10 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
         Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
         Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
         Key::X => editor.swap_colors(),
+        // Con un rango de cels en el timeline y nada seleccionado en el lienzo, Delete los borra.
+        Key::Delete | Key::Backspace if editor.has_cel_range() && editor.selection.is_none() => {
+            editor.clear_selected_cels()
+        }
         // Con colores de la paleta seleccionados, Delete es para ellos (lo hace la paleta).
         Key::Delete | Key::Backspace
             if !editor.palette_range().is_some_and(|r| r.end() > r.start()) =>

@@ -638,6 +638,9 @@ pub struct Editor {
     pub(crate) play_clock: f64,
     /// Rango de frames seleccionado en el timeline (para tags, duraciones…).
     pub frame_range: Option<(usize, usize)>,
+    /// Las capas del rango de cels (de la capa donde empezó a la otra punta, en el orden del
+    /// timeline) y los frames para los que se eligió: vale mientras `frame_range` sea esos.
+    pub layer_range: Option<(LayerId, LayerId, (usize, usize))>,
     /// Grupos colapsados en el timeline (estado de UI, por artboard).
     pub collapsed: HashSet<(ArtboardId, LayerId)>,
     pub onion_enabled: bool,
@@ -720,6 +723,7 @@ impl Editor {
             playback: None,
             play_clock: 0.0,
             frame_range: None,
+            layer_range: None,
             collapsed: HashSet::new(),
             onion_enabled: false,
             onion: OnionSkin::default(),
