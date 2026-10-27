@@ -335,13 +335,12 @@ fn tags_row(ui: &mut egui::Ui, editor: &mut Editor, grid: Grid) {
             editor.set_frame(tag.from);
             editor.frame_range = Some((tag.from, tag.to));
         }
-        response
-            .tip(format!("{} ({}–{})", tag.name, tag.from + 1, tag.to + 1))
-            .context_menu(|ui| {
-                if let Some(a) = tag_menu(ui, editor, i, tag) {
-                    action = Some(a);
-                }
-            });
+        let response = response.tip(format!("{} ({}–{})", tag.name, tag.from + 1, tag.to + 1));
+        menus::context_menu(&response, |ui| {
+            if let Some(a) = tag_menu(ui, editor, i, tag) {
+                action = Some(a);
+            }
+        });
     }
     // Después del bucle: borrar un tag corre los índices de los que siguen.
     match action {
@@ -389,14 +388,18 @@ fn tag_menu(ui: &mut egui::Ui, editor: &Editor, index: usize, tag: &Tag) -> Opti
     });
     let (a, b) = editor.selected_frames();
     if ui
-        .button(format!("Set range to selection ({}–{})", a + 1, b + 1))
+        .add(menus::plain(&format!(
+            "Set range to selection ({}–{})",
+            a + 1,
+            b + 1
+        )))
         .clicked()
     {
         (edited.from, edited.to) = (a, b);
     }
     let mut action = (edited != *tag).then_some(TagAction::Set(index, edited));
-    ui.separator();
-    if ui.button("Delete tag").clicked() {
+    menus::separator(ui);
+    if ui.add(menus::plain("Delete tag")).clicked() {
         action = Some(TagAction::Remove(index));
         ui.close();
     }
@@ -485,29 +488,28 @@ fn header_row(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState,
             editor.set_frame(f);
         }
         let duration = editor.sprite().frames[f].duration_ms;
-        response
-            .tip(format!("Frame {} · {duration} ms", f + 1))
-            .context_menu(|ui| {
-                if ui.button("New tag from selection").clicked() {
-                    editor.add_tag();
-                    ui.close();
-                }
-                if ui.button("Duplicate frame").clicked() {
-                    action = Some(FrameAction::Duplicate(f));
-                    ui.close();
-                }
-                if ui.button("Insert empty frame").clicked() {
-                    action = Some(FrameAction::InsertEmpty(f));
-                    ui.close();
-                }
-                if ui
-                    .add_enabled(editor.frame_count() > 1, egui::Button::new("Delete frame"))
-                    .clicked()
-                {
-                    action = Some(FrameAction::Remove(f));
-                    ui.close();
-                }
-            });
+        let response = response.tip(format!("Frame {} · {duration} ms", f + 1));
+        menus::context_menu(&response, |ui| {
+            if ui.add(menus::plain("New tag from selection")).clicked() {
+                editor.add_tag();
+                ui.close();
+            }
+            if ui.add(menus::plain("Duplicate frame")).clicked() {
+                action = Some(FrameAction::Duplicate(f));
+                ui.close();
+            }
+            if ui.add(menus::plain("Insert empty frame")).clicked() {
+                action = Some(FrameAction::InsertEmpty(f));
+                ui.close();
+            }
+            if ui
+                .add_enabled(editor.frame_count() > 1, menus::plain("Delete frame"))
+                .clicked()
+            {
+                action = Some(FrameAction::Remove(f));
+                ui.close();
+            }
+        });
     }
     match action {
         Some(FrameAction::Move(from, to)) => editor.move_frame(from, to),
@@ -745,7 +747,7 @@ fn layer_row(
             editor.select_layer(id);
             editor.set_edit_mask(!editing_now);
         }
-        response.context_menu(|ui| mask_menu(ui, editor, id));
+        menus::context_menu(&response, |ui| mask_menu(ui, editor, id));
     }
     let name_rect = Rect::from_min_max(pos2(x, content.top()), pos2(right, content.bottom()));
     let name_response = ui.interact(
@@ -838,29 +840,29 @@ fn layer_row(
         let drop = drop_kind(row, pointer, &layer);
         editor.move_layer(payload.0, drop);
     }
-    name_response.context_menu(|ui| {
-        if ui.button("Rename").clicked() {
+    menus::context_menu(&name_response, |ui| {
+        if ui.add(menus::plain("Rename")).clicked() {
             state.renaming = Some((id, layer.name.clone()));
             ui.close();
         }
-        if ui.button("New layer above").clicked() {
+        if ui.add(menus::plain("New layer above")).clicked() {
             editor.select_layer(id);
             editor.add_layer(LayerKind::Image);
             ui.close();
         }
-        if ui.button("New group above").clicked() {
+        if ui.add(menus::plain("New group above")).clicked() {
             editor.select_layer(id);
             editor.add_layer(LayerKind::Group);
             ui.close();
         }
-        if ui.button("Delete").clicked() {
+        if ui.add(menus::plain("Delete")).clicked() {
             editor.select_layer(id);
             editor.remove_layer();
             ui.close();
         }
-        ui.separator();
+        menus::separator(ui);
         instance_menu(ui, editor);
-        ui.separator();
+        menus::separator(ui);
         mask_menu(ui, editor, id);
     });
 
@@ -986,7 +988,7 @@ fn layer_row(
             }
             editor.set_frame(f);
         }
-        response.context_menu(|ui| {
+        menus::context_menu(&response, |ui| {
             if layer.kind == LayerKind::Instance {
                 let is_key = editor.is_instance_keyframe(id, f);
                 // Antes de la primera key no hay nada que copiar.
@@ -996,14 +998,14 @@ fn layer_row(
                     .and_then(|l| l.instance.as_ref())
                     .is_some_and(|t| t.key_at(f).is_some());
                 if ui
-                    .add_enabled(has_key && !is_key, egui::Button::new("Insert Keyframe"))
+                    .add_enabled(has_key && !is_key, menus::plain("Insert Keyframe"))
                     .clicked()
                 {
                     editor.insert_instance_key(id, f);
                     ui.close();
                 }
                 if ui
-                    .add_enabled(is_key, egui::Button::new("Delete Keyframe"))
+                    .add_enabled(is_key, menus::plain("Delete Keyframe"))
                     .clicked()
                 {
                     editor.remove_instance_key(id, f);
@@ -1013,38 +1015,35 @@ fn layer_row(
             }
             let (a, b) = editor.selected_frames();
             if editor.frame_range.is_some() && a != b && (a..=b).contains(&f) {
-                if ui.button(format!("Link {} cels", b - a + 1)).clicked() {
+                if ui
+                    .add(menus::plain(&format!("Link {} cels", b - a + 1)))
+                    .clicked()
+                {
                     editor.link_range(id, a, b);
                     ui.close();
                 }
-                if ui.button("Unlink cels").clicked() {
+                if ui.add(menus::plain("Unlink cels")).clicked() {
                     editor.unlink_range(id, a, b);
                     ui.close();
                 }
-                ui.separator();
+                menus::separator(ui);
             }
             let sprite = editor.sprite();
             let has_cel = sprite.cel(id, f).is_some();
             let can_link = f > 0 && sprite.cel(id, f - 1).is_some();
             let linked = ops::is_linked(sprite, id, f);
             if ui
-                .add_enabled(can_link, egui::Button::new("Link to previous cel"))
+                .add_enabled(can_link, menus::plain("Link to previous cel"))
                 .clicked()
             {
                 editor.link_to_previous(id, f);
                 ui.close();
             }
-            if ui
-                .add_enabled(linked, egui::Button::new("Unlink"))
-                .clicked()
-            {
+            if ui.add_enabled(linked, menus::plain("Unlink")).clicked() {
                 editor.unlink(id, f);
                 ui.close();
             }
-            if ui
-                .add_enabled(has_cel, egui::Button::new("Clear cel"))
-                .clicked()
-            {
+            if ui.add_enabled(has_cel, menus::plain("Clear cel")).clicked() {
                 editor.clear_cel(id, f);
                 ui.close();
             }
@@ -1139,7 +1138,7 @@ pub(crate) fn mask_menu(ui: &mut egui::Ui, editor: &mut Editor, id: LayerId) {
         }
     }
     let mut clip = layer.clip;
-    let toggle = egui::Checkbox::new(&mut clip, "Clipping Mask");
+    let toggle = menus::check(&mut clip, "Clipping Mask");
     if ui
         .add(toggle)
         .tip("Show this layer only where the layer below has pixels (Ctrl+Alt+G)")
@@ -1845,6 +1844,29 @@ mod tests {
         h.frame(vec![]);
         assert_eq!(h.editor.frame_count(), 2);
         assert_eq!(h.editor.frame, 1);
+    }
+
+    #[test]
+    fn with_pixel_ui_the_layer_menu_is_the_menus_panel() {
+        let mut h = Harness::new(1200.0);
+        let skin = std::sync::Arc::new(Skin::embedded(&h.ctx));
+        let panel = skin
+            .piece("menu.panel", crate::skin::WidgetState::Normal)
+            .expect("menu.panel")
+            .texture
+            .id();
+        crate::pixel_ui::set_bubble(&h.ctx, Some(skin));
+        h.editor.add_layer(LayerKind::Image);
+        h.frame(vec![]);
+        let layers = h.editor.sprite().layers.len();
+        h.right_click_at(h.layer_name(0));
+        assert!(
+            h.images.iter().any(|(t, _)| *t == panel),
+            "the panel of the skin"
+        );
+        h.click("Delete");
+        h.frame(vec![]);
+        assert_eq!(h.editor.sprite().layers.len(), layers - 1);
     }
 
     #[test]

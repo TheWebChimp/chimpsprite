@@ -479,13 +479,18 @@ impl ChimpApp {
                                         if response.clicked() {
                                             apply = Some(preset.palette.clone());
                                         }
-                                        response.context_menu(|ui| {
-                                            if ui.button("Set as Default").clicked() {
+                                        crate::menus::context_menu(&response, |ui| {
+                                            if ui
+                                                .add(crate::menus::plain("Set as Default"))
+                                                .clicked()
+                                            {
                                                 set_default =
                                                     Some((preset.source, preset.name.clone()));
                                                 ui.close();
                                             }
-                                            if preset.deletable && ui.button("Delete").clicked() {
+                                            if preset.deletable
+                                                && ui.add(crate::menus::plain("Delete")).clicked()
+                                            {
                                                 delete = Some(preset.name.clone());
                                                 ui.close();
                                             }

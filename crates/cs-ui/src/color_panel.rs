@@ -361,7 +361,7 @@ fn grid_cells(
             editor.palette_selection = Some((index, index_at(pos)));
             focus_palette(ui, true);
         }
-        response.context_menu(|ui| {
+        crate::menus::context_menu(&response, |ui| {
             let range = editor
                 .palette_range()
                 .filter(|r| r.contains(&index))
@@ -373,7 +373,7 @@ fn grid_cells(
                 format!("Delete {n} colors")
             };
             if ui
-                .add_enabled(n < count, egui::Button::new(label))
+                .add_enabled(n < count, crate::menus::plain(&label))
                 .clicked()
             {
                 delete = Some(range);

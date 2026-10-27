@@ -935,7 +935,7 @@ impl CanvasView {
         }
         self.artboard_menus(ui, rect, editor);
         if self.selection_menu {
-            response.context_menu(|ui| {
+            menus::context_menu(response, |ui| {
                 if ui.add(menus::item("Flip Horizontal", "Shift+H")).clicked() {
                     editor.flip(true);
                     ui.close();
@@ -947,16 +947,16 @@ impl CanvasView {
             });
         }
         if self.slice_menu {
-            response.context_menu(|ui| {
-                if ui.button("Slice Properties").clicked() {
+            menus::context_menu(response, |ui| {
+                if ui.add(menus::plain("Slice Properties")).clicked() {
                     self.slice_properties = true;
                     ui.close();
                 }
-                if ui.button("Duplicate Slice").clicked() {
+                if ui.add(menus::plain("Duplicate Slice")).clicked() {
                     editor.duplicate_slice();
                     ui.close();
                 }
-                if ui.button("Delete Slice").clicked() {
+                if ui.add(menus::plain("Delete Slice")).clicked() {
                     editor.delete_slice();
                     ui.close();
                 }
