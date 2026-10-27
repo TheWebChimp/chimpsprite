@@ -2466,6 +2466,19 @@ fn pointing_at_colors_shows_them_in_a_tab_by_the_picker() {
 }
 
 #[test]
+fn named_keys_are_badges_in_chimpfont() {
+    let mut h = two_tabs(Some(0));
+    open_menu(&mut h, "Edit");
+    // Delete (Del): la tecla estirada, del alto de Ctrl y Shift, con DEL en mayúsculas.
+    assert!(h.texts.iter().any(|(t, _)| t == "DEL"), "{:?}", h.texts);
+    let keys = h.drawn("key");
+    let badge = keys.iter().fold(Rect::NOTHING, |a, b| a.union(*b));
+    assert_eq!(badge.height(), 7.0, "{keys:?}");
+    let ctrl = h.drawn("key.ctrl")[0];
+    assert_eq!(ctrl.height(), badge.height(), "as tall as the drawn keys");
+}
+
+#[test]
 fn the_edit_menu_is_aseprites() {
     let mut h = two_tabs(Some(0));
     open_menu(&mut h, "Edit");

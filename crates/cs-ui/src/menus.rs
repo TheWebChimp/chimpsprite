@@ -90,10 +90,22 @@ const CAP_HEIGHT: f32 = 7.0;
 const PLUS_SIZE: f32 = 5.0;
 const PLUS_TOP: f32 = 1.0;
 const KEY_GAP: f32 = 1.0;
-/// Las teclas con nombre en la fuente pixel: 1 fila arriba y 1 abajo de las mayúsculas, y 2 px
-/// de cada lado de la tinta.
-const KEY_PAD_X: f32 = 2.0;
+/// Las teclas con nombre (Del, Tab, F11…) en chimpfont, en mayúsculas como la badge DEL del
+/// diseño: del alto de las piezas de Ctrl y Shift (7, las mayúsculas de 5 con 1 fila arriba y
+/// abajo) y 3 px de cada lado de la tinta.
+const KEY_PAD_X: f32 = 3.0;
 const KEY_PAD_Y: f32 = 1.0;
+const KEY_HEIGHT: f32 = 7.0;
+
+/// El nombre de una tecla en chimpfont (mayúsculas).
+fn key_galley(ui: &Ui, name: &str, color: Color32) -> Arc<Galley> {
+    let font = egui::FontId::new(
+        crate::appearance::SMALL_FONT_SIZE,
+        crate::appearance::small_family(),
+    );
+    ui.painter()
+        .layout_no_wrap(name.to_uppercase(), font, color)
+}
 /// La casilla: 2 filas arriba de las mayúsculas, del tamaño de la pieza (la de respaldo, la del
 /// diseño) y con 3 px de aire hasta el texto.
 const CHECK_TOP: f32 = 2.0;
@@ -246,7 +258,7 @@ pub(crate) fn bar_menu<R>(
         pos2(title_box.right(), panel_top),
     )
     .translate(PANEL_SHIFT);
-    let inner = Popup::menu(&response)
+    let mut popup = Popup::menu(&response)
         .anchor(anchor)
         .align(RectAlign::BOTTOM_START)
         .align_alternatives(&[])
@@ -256,8 +268,12 @@ pub(crate) fn bar_menu<R>(
         .info(
             UiStackInfo::new(UiKind::Menu)
                 .with_tag_value(menu::MenuConfig::MENU_CONFIG_TAG, config),
-        )
-        .show(|ui| panel(ui, look, Some(title_box), content));
+        );
+    // Desarrollo: el menú `CHIMPSPRITE_DEMO_MENU` abierto, para capturas.
+    if std::env::var("CHIMPSPRITE_DEMO_MENU").is_ok_and(|m| m == title) {
+        popup = popup.open_memory(Some(egui::SetOpenCommand::Bool(true)));
+    }
+    let inner = popup.show(|ui| panel(ui, look, Some(title_box), content));
     let back_shapes = if inner.is_some() {
         box_shapes(look, title_box, ppp)
     } else {
@@ -637,7 +653,7 @@ fn cap_width(ui: &Ui, look: &MenuLook, name: &str) -> f32 {
     if let Some(piece) = drawn_key(look, name) {
         return piece.size[0] as f32;
     }
-    ink_width(&galley(ui, name, Color32::PLACEHOLDER)) + 2.0 * KEY_PAD_X
+    ink_width(&key_galley(ui, name, Color32::PLACEHOLDER)) + 2.0 * KEY_PAD_X
 }
 
 /// La tinta de un texto de la fuente pixel: su ancho menos el píxel vacío del final.
@@ -722,17 +738,15 @@ fn cap_shapes(
         let rect = Rect::from_min_size(pos2(left, caps), size);
         return tinted(pixel_ui::piece_shapes(piece, rect, ppp), tint);
     }
-    let text = galley(ui, name, look.colors.panel);
+    let text = key_galley(ui, name, look.colors.panel);
     let width = ink_width(&text) + 2.0 * KEY_PAD_X;
-    let rect = Rect::from_min_size(
-        pos2(left, caps - KEY_PAD_Y),
-        vec2(width, CAP_HEIGHT + 2.0 * KEY_PAD_Y),
-    );
+    // A la altura de las piezas de Ctrl y Shift: desde las mayúsculas de la fila.
+    let rect = Rect::from_min_size(pos2(left, caps), vec2(width, KEY_HEIGHT));
     let mut shapes = match &look.key {
         Some(piece) => tinted(pixel_ui::piece_shapes(piece, rect, ppp), tint),
         None => vec![solid(rect, look.colors.ruler_tick, ppp)],
     };
-    let at = tab_bar::text_pos(&text, left + KEY_PAD_X, caps, ppp);
+    let at = tab_bar::text_pos(&text, left + KEY_PAD_X, caps + KEY_PAD_Y, ppp);
     shapes.push(Shape::galley(at, text, look.colors.panel));
     shapes
 }
