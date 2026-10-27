@@ -2042,7 +2042,12 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         }
     });
     let mut opacity = key.opacity;
-    let r = ui.add(egui::Slider::new(&mut opacity, 0..=255).text("Opacity"));
+    let r = ui
+        .horizontal(|ui| {
+            ui.label("Opacity");
+            widgets::number(ui, &mut opacity, 0..=255, "")
+        })
+        .inner;
     if let Some(group) = gesture_group(editor, &[&r]) {
         editor.update_instance_key_grouped(Some(group), |k| k.opacity = opacity);
     }
@@ -2053,15 +2058,27 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         Timing::MovieClip { first_frame } => (first_frame, None),
     };
     let before = (first, mode);
+    // El combo del diseño con los cuatro modos.
+    let modes = [
+        (Some(GraphicPlay::Loop), "Loop"),
+        (Some(GraphicPlay::Once), "Once"),
+        (Some(GraphicPlay::Single), "Single"),
+        (None, "Movie clip"),
+    ];
+    let shown = modes
+        .iter()
+        .find(|(m, _)| *m == mode)
+        .map_or("Loop", |(_, name)| *name);
     ui.horizontal(|ui| {
-        ui.selectable_value(&mut mode, Some(GraphicPlay::Loop), "Loop")
-            .tip("Graphic: follows this artboard's frames, looping");
-        ui.selectable_value(&mut mode, Some(GraphicPlay::Once), "Once")
-            .tip("Graphic: plays once and holds the last frame");
-        ui.selectable_value(&mut mode, Some(GraphicPlay::Single), "Single")
-            .tip("Graphic: always the same frame");
-        ui.selectable_value(&mut mode, None, "Movie clip")
-            .tip("Plays on its own clock with its own frame durations");
+        ui.label("Play");
+        widgets::combo(ui, "instance_play", shown, |ui| {
+            for (value, name) in modes {
+                widgets::choice(ui, &mut mode, value, name);
+            }
+        })
+        .tip(
+            "Loop, Once and Single follow this artboard's frames; Movie clip plays on its own              clock with its own frame durations",
+        );
     });
     let frames = key
         .source
