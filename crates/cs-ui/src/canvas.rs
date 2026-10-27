@@ -861,7 +861,10 @@ impl CanvasView {
         let (origin, zoom) = (self.origin(rect), self.zoom);
         let to_screen = move |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * zoom;
         if !modal && !space_key && !hand && !ruler_busy && !editor.is_painting() {
-            let in_area = pointer.filter(|p| area.contains(*p));
+            // Solo si lo de arriba en el puntero es el lienzo: con un menú o una ventana encima,
+            // las notas de abajo no lo ven.
+            let on_top = |p: Pos2| ui.ctx().layer_id_at(p) == Some(response.layer_id);
+            let in_area = pointer.filter(|p| area.contains(*p) && on_top(*p));
             self.notes.input(
                 editor,
                 &to_screen,
