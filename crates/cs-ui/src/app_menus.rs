@@ -698,6 +698,9 @@ A pixel art editor."
                 {
                     self.import_layer(&ctx);
                 }
+                if ui.add(menus::plain("Import Sprite Sheet…")).clicked() {
+                    self.import_sheet(&ctx);
+                }
                 if ui
                     .add_enabled(
                         has_doc,

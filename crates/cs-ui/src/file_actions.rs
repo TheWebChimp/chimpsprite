@@ -109,6 +109,7 @@ impl ChimpApp {
             || self.filter_dialog.is_some()
             || self.select_dialog.is_some()
             || self.frame_dialog.is_some()
+            || self.sheet_dialog.is_some()
             || self.shortcuts.is_some()
             || self.preferences
     }
@@ -222,6 +223,7 @@ impl ChimpApp {
                             self.import_layer_bytes(&loaded, true)
                         }
                         OpenPurpose::ImportLayer | OpenPurpose::ImportReference => {}
+                        OpenPurpose::ImportSheet => self.open_sheet(&loaded),
                         OpenPurpose::LoadPalette if self.has_doc() => {
                             self.load_palette_bytes(&loaded.name, &loaded.bytes)
                         }
@@ -414,6 +416,35 @@ impl ChimpApp {
     pub(crate) fn import_layer(&mut self, ctx: &egui::Context) {
         self.platform
             .open_file(PNG_FILTER, OpenPurpose::ImportLayer, ctx);
+    }
+
+    /// File → Import Sprite Sheet…: se elige el PNG y después cómo se parte.
+    pub(crate) fn import_sheet(&mut self, ctx: &egui::Context) {
+        self.platform
+            .open_file(PNG_FILTER, OpenPurpose::ImportSheet, ctx);
+    }
+
+    /// El PNG leído: el diálogo para partirlo.
+    fn open_sheet(&mut self, loaded: &Loaded) {
+        match cs_io::import::decode_png(&loaded.bytes) {
+            Ok(sheet) => {
+                let name = files::stem(&loaded.name).to_string();
+                self.sheet_dialog = Some(crate::sheet_dialog::SheetDialog::new(name, sheet));
+            }
+            Err(e) => self.show_message("Could not import", e.to_string()),
+        }
+    }
+
+    /// Abre `sprite` (de una hoja partida) en una pestaña nueva, como un documento sin guardar.
+    pub(crate) fn open_sheet_sprite(&mut self, name: &str, sprite: cs_core::Sprite) {
+        let doc = cs_core::Document::with_sprite(name, sprite);
+        self.open_doc(DocState::new(
+            Editor::new(doc),
+            DocLocation {
+                name: format!("{name}.chimp"),
+                target: None,
+            },
+        ));
     }
 
     /// Layer → New Reference Layer from File…: una imagen para calcar, que no se exporta.
@@ -979,6 +1010,42 @@ mod tests {
         let pasted = s.cel(LayerId(1), 0).unwrap().image;
         let imported = s.cel(top, 0).unwrap().image;
         assert_ne!(pasted, imported, "each cel has its own image");
+    }
+
+    #[test]
+    fn importing_a_sprite_sheet_opens_a_tab_with_one_frame_per_cell() {
+        let palettes = PaletteLibrary::new(Box::new(NoPresets));
+        let mut app = ChimpApp::with_parts(Default::default(), ViewSettings::default(), palettes);
+        // Una tira de 3 cuadrados de 4×4, cada uno de un color.
+        let mut strip = cs_io::export::Bitmap::new(12, 4);
+        for (i, c) in [(255, 0, 0), (0, 255, 0), (0, 0, 255)]
+            .into_iter()
+            .enumerate()
+        {
+            for y in 0..4 {
+                for x in 0..4 {
+                    strip.pixels[y * 12 + i * 4 + x] = Rgba::rgb(c.0, c.1, c.2);
+                }
+            }
+        }
+        let png = strip.to_png().unwrap();
+        app.open_sheet(&Loaded {
+            name: "walk.png".into(),
+            target: None,
+            bytes: png,
+        });
+        let dialog = app.sheet_dialog.as_ref().expect("the dialog");
+        assert_eq!(dialog.grid.cell, (4, 4), "square cells guessed for a strip");
+        let sprite = dialog.sprite().expect("sprite");
+        app.sheet_dialog = None;
+        app.open_sheet_sprite("walk", sprite);
+        let s = app.doc.editor.sprite();
+        assert_eq!((s.width, s.height, s.frames.len()), (4, 4, 3));
+        assert_eq!(
+            s.pixel(s.layers[0].id, 2, 1, 1),
+            PixelValue::Rgba(Rgba::rgb(0, 0, 255))
+        );
+        assert_eq!(app.doc.location.name, "walk.chimp");
     }
 
     #[test]

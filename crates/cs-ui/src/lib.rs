@@ -31,6 +31,7 @@ mod menus;
 mod palette_ops;
 mod palette_ui;
 mod select_dialogs;
+mod sheet_dialog;
 mod slice_ops;
 mod sprite_dialogs;
 mod tab_bar;
@@ -148,6 +149,8 @@ pub struct ChimpApp {
     select_dialog: Option<select_dialogs::SelectDialog>,
     /// Frame → Frame Properties… abierto.
     frame_dialog: Option<frame_dialog::FramePropertiesDialog>,
+    /// File → Import Sprite Sheet… abierto.
+    sheet_dialog: Option<sheet_dialog::SheetDialog>,
     /// La ventanita de preview (abierta con `view.preview`).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
@@ -277,6 +280,7 @@ impl ChimpApp {
             filter_dialog: None,
             select_dialog: None,
             frame_dialog: None,
+            sheet_dialog: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
             demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
@@ -578,6 +582,29 @@ impl ChimpApp {
             tilemap_dialog::DialogResult::Open
         ) {
             self.filter_dialog = None;
+        }
+    }
+
+    fn update_sheet_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.sheet_dialog else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Accept => {
+                let name = dialog.name.clone();
+                match dialog.sprite() {
+                    Some(sprite) => {
+                        self.sheet_dialog = None;
+                        self.open_sheet_sprite(&name, sprite);
+                    }
+                    None => self.show_message(
+                        "Nothing to import",
+                        "The frame size does not fit in the image.",
+                    ),
+                }
+            }
+            tilemap_dialog::DialogResult::Cancel => self.sheet_dialog = None,
         }
     }
 
@@ -1085,6 +1112,7 @@ impl eframe::App for ChimpApp {
         self.update_filter_dialog(&ctx);
         self.update_select_dialog(&ctx);
         self.update_frame_dialog(&ctx);
+        self.update_sheet_dialog(&ctx);
         self.update_settings_windows(&ctx);
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);

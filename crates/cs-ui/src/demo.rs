@@ -369,6 +369,22 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         let ratio = if ratio == "1:2" { (1, 2) } else { (2, 1) };
         app.doc.editor.set_pixel_ratio(ratio);
     }
+    // Desarrollo: Import Sprite Sheet con una tira de los frames del chango, para capturas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_SHEET").is_some() && app.has_doc() {
+        let sprite = app.doc.editor.sprite();
+        let (w, h, n) = (sprite.width, sprite.height, sprite.frames.len() as u32);
+        let mut strip = cs_io::export::Bitmap::new(w * n, h);
+        for f in 0..n {
+            let frame = cs_io::export::Bitmap::from_frame(sprite, f as usize, 1);
+            for y in 0..h {
+                for x in 0..w {
+                    strip.pixels[(y * w * n + f * w + x) as usize] =
+                        frame.pixels[(y * w + x) as usize];
+                }
+            }
+        }
+        app.sheet_dialog = Some(sheet_dialog::SheetDialog::new("walk".into(), strip));
+    }
     // Desarrollo: Tiled Mode en los dos ejes, para capturas.
     if std::env::var_os("CHIMPSPRITE_DEMO_TILED").is_some() && app.has_doc() {
         app.doc.editor.tiled = editor::TiledMode::Both;

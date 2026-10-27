@@ -63,6 +63,8 @@ pub enum OpenPurpose {
     ImportLayer,
     /// Agregar como capa de referencia (no sale al exportar).
     ImportReference,
+    /// Partir en frames de un sprite nuevo (File → Import Sprite Sheet).
+    ImportSheet,
     /// Cargar una paleta (`.gpl`, `.hex`, `.pal`, `.png`, `.aseprite`).
     LoadPalette,
 }

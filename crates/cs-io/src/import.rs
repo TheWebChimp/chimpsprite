@@ -97,6 +97,86 @@ pub fn import_png(bytes: &[u8]) -> Result<Sprite> {
     Ok(sprite)
 }
 
+/// Cómo se parte una hoja de sprites: el tamaño de cada frame, el aire entre celdas y el margen
+/// de la esquina de arriba a la izquierda.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SheetGrid {
+    pub cell: (u32, u32),
+    pub padding: (u32, u32),
+    pub offset: (u32, u32),
+}
+
+impl SheetGrid {
+    /// Columnas y filas enteras que entran en una hoja de `size`.
+    pub fn count(&self, size: (u32, u32)) -> (u32, u32) {
+        let fit = |total: u32, offset: u32, cell: u32, pad: u32| {
+            let cell = cell.max(1);
+            let room = total.saturating_sub(offset);
+            if room < cell {
+                0
+            } else {
+                (room - cell) / (cell + pad) + 1
+            }
+        };
+        (
+            fit(size.0, self.offset.0, self.cell.0, self.padding.0),
+            fit(size.1, self.offset.1, self.cell.1, self.padding.1),
+        )
+    }
+}
+
+/// File → Import Sprite Sheet: un sprite RGBA del tamaño de una celda con un frame por celda,
+/// por filas (de izquierda a derecha y de arriba a abajo). Las celdas vacías del final no se
+/// agregan. `None` si no entra ninguna celda.
+pub fn sprite_from_sheet(sheet: &Bitmap, grid: SheetGrid) -> Option<Sprite> {
+    let (cols, rows) = grid.count((sheet.width, sheet.height));
+    let (w, h) = (grid.cell.0.max(1), grid.cell.1.max(1));
+    if cols == 0 || rows == 0 {
+        return None;
+    }
+    let cell = |col: u32, row: u32| -> Vec<Rgba> {
+        let x0 = grid.offset.0 + col * (w + grid.padding.0);
+        let y0 = grid.offset.1 + row * (h + grid.padding.1);
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x0 + x, y0 + y)))
+            .map(|(x, y)| sheet.pixels[(y * sheet.width + x) as usize])
+            .collect()
+    };
+    let mut cells: Vec<Vec<Rgba>> = (0..rows)
+        .flat_map(|row| (0..cols).map(move |col| (col, row)))
+        .map(|(col, row)| cell(col, row))
+        .collect();
+    while cells.len() > 1 && cells.last().is_some_and(|c| c.iter().all(|p| p.a == 0)) {
+        cells.pop();
+    }
+    let mut sprite = Sprite::new(w, h, ColorMode::Rgba);
+    let duration = sprite.frames[0].duration_ms;
+    sprite.frames = vec![
+        cs_core::Frame {
+            duration_ms: duration
+        };
+        cells.len()
+    ];
+    let layer = sprite.layers[0].id;
+    for (frame, pixels) in cells.into_iter().enumerate() {
+        if pixels.iter().all(|p| p.a == 0) {
+            continue;
+        }
+        let id = ImageId(frame as u32 + 1);
+        let image = Image::from_buffer(w, h, PixelBuffer::Rgba(pixels)).expect("cell size");
+        sprite.images.insert(id, Arc::new(image));
+        sprite.cels.insert(
+            (layer, frame),
+            Cel {
+                position: (0, 0),
+                opacity: 255,
+                image: id,
+            },
+        );
+    }
+    Some(sprite)
+}
+
 /// Comando que agrega el PNG como capa nueva (arriba de todo) en `frame`. En sprites indexados
 /// cada color se aproxima al más cercano de la paleta.
 pub fn import_png_layer(
@@ -141,6 +221,33 @@ pub fn pixel_rgba(sprite: &Sprite, x: i32, y: i32) -> Rgba {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn a_sheet_splits_into_one_frame_per_cell_by_rows() {
+        // 3 celdas de 2×1 en una fila con 1 de aire, la del medio vacía, y una de más vacía.
+        let red = Rgba::rgb(255, 0, 0);
+        let blue = Rgba::rgb(0, 0, 255);
+        let t = Rgba::TRANSPARENT;
+        let sheet = Bitmap {
+            width: 11,
+            height: 1,
+            pixels: vec![red, red, t, t, t, t, blue, blue, t, t, t],
+        };
+        let grid = SheetGrid {
+            cell: (2, 1),
+            padding: (1, 0),
+            offset: (0, 0),
+        };
+        assert_eq!(grid.count((11, 1)), (4, 1));
+        let s = sprite_from_sheet(&sheet, grid).expect("sprite");
+        assert_eq!((s.width, s.height), (2, 1));
+        assert_eq!(s.frames.len(), 3, "the empty one at the end is dropped");
+        let at = |f: usize| s.pixel(s.layers[0].id, f, 1, 0);
+        assert_eq!(at(0), PixelValue::Rgba(red));
+        assert_eq!(at(1), PixelValue::Rgba(t), "an empty cell in between stays");
+        assert_eq!(at(2), PixelValue::Rgba(blue));
+    }
+
     use cs_core::*;
 
     use super::*;
