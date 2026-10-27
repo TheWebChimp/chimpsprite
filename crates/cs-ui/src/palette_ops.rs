@@ -86,6 +86,30 @@ impl Editor {
                     });
                 }
             }
+            // Los tiles de los tilesets también apuntan a la paleta: igual que las imágenes.
+            for (index, tileset) in self.sprite().tilesets.iter().enumerate() {
+                let mut changed = tileset.clone();
+                let mut any = false;
+                for tile in changed.tiles.iter_mut() {
+                    if let PixelBuffer::Indexed(pixels) = tile.pixels() {
+                        let remapped = pixels.iter().map(|&p| table[p as usize]).collect();
+                        if let Some(img) = Image::from_buffer(
+                            tile.width(),
+                            tile.height(),
+                            PixelBuffer::Indexed(remapped),
+                        ) {
+                            *tile = std::sync::Arc::new(img);
+                            any = true;
+                        }
+                    }
+                }
+                if any {
+                    commands.push(Command::SetTileset {
+                        index,
+                        tileset: Some(changed),
+                    });
+                }
+            }
             map = Some(table);
         }
         commands.push(Command::SetPalette(new));
@@ -294,7 +318,11 @@ mod tests {
         sprite.palette = colors(6);
         let image = Image::from_buffer(3, 1, PixelBuffer::Indexed(vec![1, 3, 5])).unwrap();
         let id = ImageId(77);
-        sprite.images.insert(id, Arc::new(image));
+        sprite.images.insert(id, Arc::new(image.clone()));
+        // Un tileset con un tile igual: sus índices también se corren.
+        let mut tileset = cs_core::Tileset::new("t", (3, 1), sprite.color_mode);
+        tileset.tiles.push(Arc::new(image));
+        sprite.tilesets.push(tileset);
         let mut e = Editor::with_sprite(sprite);
         e.primary = PixelValue::Index(5);
         // Se borran la 2 y la 3: la 5 pasa a ser la 3 y la 3 al color más parecido que queda
@@ -306,9 +334,17 @@ mod tests {
             panic!("indexed")
         };
         assert_eq!(p, &vec![1, 2, 3]);
+        let PixelBuffer::Indexed(t) = e.sprite().tilesets[0].tiles[1].pixels() else {
+            panic!("indexed tile")
+        };
+        assert_eq!(t, &vec![1, 2, 3], "the tile too");
         assert_eq!(e.primary, PixelValue::Index(3));
         e.undo();
         assert_eq!(e.sprite().palette.len(), 6);
+        let PixelBuffer::Indexed(t) = e.sprite().tilesets[0].tiles[1].pixels() else {
+            panic!("indexed tile")
+        };
+        assert_eq!(t, &vec![1, 3, 5], "undone in the same step");
         assert!(!e.delete_palette_entries(0..=1), "not the transparent one");
         assert!(!e.delete_palette_entries(0..=5), "not all of them");
     }
