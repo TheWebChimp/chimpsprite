@@ -35,6 +35,7 @@ use cs_io::files;
 mod guides;
 mod home;
 mod instance_ops;
+mod keyboard_shortcuts;
 #[cfg(test)]
 mod layout_tests;
 mod logo;
@@ -56,6 +57,7 @@ mod pixel_selection;
 mod pixel_status;
 mod pixel_ui;
 mod platform;
+mod preferences;
 mod preview;
 mod recent;
 pub mod skin;
@@ -124,6 +126,10 @@ pub struct ChimpApp {
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
     /// La ventana Edit → Undo History abierta.
     undo_history: bool,
+    /// La ventana Edit → Keyboard Shortcuts abierta, con lo escrito en su buscador.
+    shortcuts: Option<String>,
+    /// La ventana Edit → Preferences abierta.
+    preferences: bool,
     /// El diálogo de un filtro de Edit (Replace Color, Adjustments, FX), con su vista previa.
     filter_dialog: Option<filter_dialog::FilterDialog>,
     /// La ventanita de preview (abierta con `view.preview`).
@@ -250,6 +256,12 @@ impl ChimpApp {
             };
             app.open_filter(filter);
         }
+        // Desarrollo: Keyboard Shortcuts o Preferences abiertas, para capturas.
+        match std::env::var("CHIMPSPRITE_DEMO_WINDOW").as_deref() {
+            Ok("shortcuts") => app.shortcuts = Some(String::new()),
+            Ok("preferences") => app.preferences = true,
+            _ => {}
+        }
         // Desarrollo: la ventana Undo History con unos pasos, para capturas.
         if std::env::var_os("CHIMPSPRITE_DEMO_UNDO_HISTORY").is_some() && app.has_doc() {
             let editor = &mut app.doc.editor;
@@ -351,6 +363,8 @@ impl ChimpApp {
             news_fetcher: news::default_fetcher(),
             new_tilemap: None,
             undo_history: false,
+            shortcuts: None,
+            preferences: false,
             filter_dialog: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
@@ -824,6 +838,13 @@ impl ChimpApp {
             return;
         }
         let shortcut = |m, k| KeyboardShortcut::new(m, k);
+        // Ctrl+Alt+Shift+K antes que Ctrl+K: egui deja pasar Alt y Shift de más.
+        let all = Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT;
+        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(all, Key::K))) {
+            self.shortcuts = Some(String::new());
+        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::K))) {
+            self.preferences = true;
+        }
         // Ctrl+Alt+N antes que Ctrl+N: egui deja pasar Alt de más.
         let from_selection = shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::N);
         if ctx.input_mut(|i| i.consume_shortcut(&from_selection)) {
@@ -1232,6 +1253,34 @@ impl ChimpApp {
         }
         if ui.add(menus::plain("New Note")).clicked() {
             self.new_note();
+        }
+        menus::separator(ui);
+        let shortcuts = menus::item("Keyboard Shortcuts…", "Ctrl+Alt+Shift+K");
+        if ui.add(shortcuts).clicked() {
+            self.shortcuts = Some(String::new());
+        }
+        if ui.add(menus::item("Preferences…", "Ctrl+K")).clicked() {
+            self.preferences = true;
+        }
+    }
+
+    /// Las ventanas Keyboard Shortcuts y Preferences.
+    fn update_settings_windows(&mut self, ctx: &egui::Context) {
+        let skin = self.pixel.skin();
+        if let Some(filter) = &mut self.shortcuts
+            && keyboard_shortcuts::show(ctx, filter, skin)
+        {
+            self.shortcuts = None;
+        }
+        if self.preferences {
+            let out = preferences::show(ctx, &mut self.view, skin);
+            if out.closed {
+                self.preferences = false;
+            }
+            if out.grid_settings && self.has_doc() {
+                self.preferences = false;
+                self.grid_dialog = Some(view::GridDialog::new(&self.doc.editor, &self.view));
+            }
         }
     }
 
@@ -1884,6 +1933,7 @@ impl eframe::App for ChimpApp {
         self.update_canvas_size(&ctx);
         self.update_sprite_dialog(&ctx);
         self.update_filter_dialog(&ctx);
+        self.update_settings_windows(&ctx);
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);
         self.show_slice_properties(&ctx);

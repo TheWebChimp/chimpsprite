@@ -107,6 +107,8 @@ impl ChimpApp {
             || self.preset_name.is_some()
             || self.palette_confirm.is_some()
             || self.filter_dialog.is_some()
+            || self.shortcuts.is_some()
+            || self.preferences
     }
 
     pub(crate) fn show_message(&mut self, title: &str, body: impl Into<String>) {
