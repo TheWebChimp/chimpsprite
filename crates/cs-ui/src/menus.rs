@@ -5,10 +5,10 @@
 //!   una caja redondeada arriba (`menu.title.open`) que se une al panel sin línea entre los dos.
 //! - **Panel:** `menu.panel` en 9-slice, colgado de la caja: mismo borde izquierdo, y su borde de
 //!   arriba empieza donde termina la caja.
-//! - **Ítems:** filas de 13 px con el texto a la izquierda y el atajo a la derecha. Ctrl y Shift
-//!   son las teclas dibujadas (`key.ctrl`, `key.shift`, `key.alt`); las demás con nombre (Del…) van en `key`
-//!   estirada con el nombre en la fuente pixel. Entre tecla y tecla, un + de 5×5 hecho con rects,
-//!   y al final la tecla en el color tenue (`ruler_tick`, el del diseño).
+//! - **Ítems:** filas de 13 px con el texto a la izquierda y el atajo a la derecha. Las teclas con
+//!   nombre (Ctrl, Shift, Alt, Del…) son badges: `key` estirada con el nombre calado en
+//!   chimpfont, en mayúsculas. Entre tecla y tecla, un + de 5×5 hecho con rects, y al final la
+//!   tecla en el color tenue (`ruler_tick`, el del diseño).
 //! - **Separadores:** la línea grabada del diseño, `menu_highlight` y debajo `background`.
 //! - **Casillas:** las casillas del diseño, `menu.check.on` (marcada) y `menu.check` (sin
 //!   marcar), de 11×12, al borde del texto de los ítems, 2 filas arriba de las mayúsculas, y el
@@ -39,9 +39,6 @@ const LOOK_TAG: &str = "chimpsprite_pixel_menu";
 
 const TITLE_OPEN: &str = "menu.title.open";
 const PANEL: &str = "menu.panel";
-const KEY_CTRL: &str = "key.ctrl";
-const KEY_SHIFT: &str = "key.shift";
-const KEY_ALT: &str = "key.alt";
 const KEY: &str = "key";
 const CHECK: &str = "menu.check";
 const CHECK_ON: &str = "menu.check.on";
@@ -90,19 +87,22 @@ const CAP_HEIGHT: f32 = 7.0;
 const PLUS_SIZE: f32 = 5.0;
 const PLUS_TOP: f32 = 1.0;
 const KEY_GAP: f32 = 1.0;
-/// Las teclas con nombre (Del, Tab, F11…) en chimpfont, en mayúsculas como la badge DEL del
-/// diseño: del alto de las piezas de Ctrl y Shift (7, las mayúsculas de 5 con 1 fila arriba y
-/// abajo) y 3 px de cada lado de la tinta.
+/// Las teclas con nombre (Ctrl, Shift, Alt, Del, F11…) en chimpfont, en mayúsculas como la badge
+/// DEL del diseño: de 7 de alto (las mayúsculas de 5 con 1 fila arriba y abajo) y 3 px de cada
+/// lado de la tinta.
 const KEY_PAD_X: f32 = 3.0;
 const KEY_PAD_Y: f32 = 1.0;
 const KEY_HEIGHT: f32 = 7.0;
 
 /// El nombre de una tecla en chimpfont (mayúsculas).
 fn key_galley(ui: &Ui, name: &str, color: Color32) -> Arc<Galley> {
-    let font = egui::FontId::new(
-        crate::appearance::SMALL_FONT_SIZE,
-        crate::appearance::small_family(),
-    );
+    // Sin la familia de los textos chicos (fuentes sin cargar todavía), la de siempre.
+    let small = crate::appearance::small_family();
+    let font = if ui.ctx().fonts(|f| f.families().contains(&small)) {
+        egui::FontId::new(crate::appearance::SMALL_FONT_SIZE, small)
+    } else {
+        font(ui)
+    };
     ui.painter()
         .layout_no_wrap(name.to_uppercase(), font, color)
 }
@@ -123,9 +123,6 @@ const ARROW_TOP: f32 = 1.0;
 pub(crate) struct MenuLook {
     title_open: Option<Piece>,
     panel: Option<Piece>,
-    key_ctrl: Option<Piece>,
-    key_shift: Option<Piece>,
-    key_alt: Option<Piece>,
     key: Option<Piece>,
     check: Option<Piece>,
     check_on: Option<Piece>,
@@ -150,9 +147,6 @@ impl MenuLook {
         Self {
             title_open: piece(TITLE_OPEN),
             panel: piece(PANEL),
-            key_ctrl: piece(KEY_CTRL),
-            key_shift: piece(KEY_SHIFT),
-            key_alt: piece(KEY_ALT),
             key: piece(KEY),
             check: piece(CHECK),
             check_on: piece(CHECK_ON),
@@ -421,7 +415,7 @@ impl Widget for Item<'_> {
             colors.text_dim
         };
         let label = galley(ui, &shown(self.label), text_color);
-        let keys_width = parts_width(ui, &look, &parts);
+        let keys_width = parts_width(ui, &parts);
         let gap = if parts.is_empty() { 0.0 } else { SHORTCUT_GAP };
         let (rect, response) = row(ui, &label, gap + keys_width, &a11y);
         if ui.is_rect_visible(rect) {
@@ -653,23 +647,24 @@ fn shortcut_parts(keys: &str) -> Vec<KeyPart<'_>> {
     parts
 }
 
-/// La pieza dibujada de la tecla `name`, si el skin la trae: Ctrl, Shift y Alt.
-fn drawn_key<'a>(look: &'a MenuLook, name: &str) -> Option<&'a Piece> {
-    match name {
-        "Ctrl" => look.key_ctrl.as_ref(),
-        "Shift" => look.key_shift.as_ref(),
-        "Alt" => look.key_alt.as_ref(),
-        _ => None,
-    }
+/// El ancho de una badge: la tinta del nombre en chimpfont con `KEY_PAD_X` de cada lado.
+fn cap_width(ui: &Ui, name: &str) -> f32 {
+    key_ink(&key_galley(ui, name, Color32::PLACEHOLDER)) + 2.0 * KEY_PAD_X
 }
 
-/// El ancho de una tecla dibujada: la pieza de Ctrl, Shift o Alt tal cual; las demás, el nombre con
-/// 2 px de cada lado de la tinta.
-fn cap_width(ui: &Ui, look: &MenuLook, name: &str) -> f32 {
-    if let Some(piece) = drawn_key(look, name) {
-        return piece.size[0] as f32;
+/// La tinta del nombre de una badge: chimpfont deja 2 px vacíos después de la última letra (la
+/// fuente pixel, 1).
+fn key_ink(text: &Galley) -> f32 {
+    let small = text
+        .job
+        .sections
+        .first()
+        .is_some_and(|s| s.format.font_id.family == crate::appearance::small_family());
+    if small {
+        (text.size().x - 2.0).max(0.0).round()
+    } else {
+        ink_width(text)
     }
-    ink_width(&key_galley(ui, name, Color32::PLACEHOLDER)) + 2.0 * KEY_PAD_X
 }
 
 /// La tinta de un texto de la fuente pixel: su ancho menos el píxel vacío del final.
@@ -677,16 +672,16 @@ pub(crate) fn ink_width(text: &Galley) -> f32 {
     (text.size().x - 1.0).max(0.0).round()
 }
 
-fn part_width(ui: &Ui, look: &MenuLook, part: &KeyPart<'_>) -> f32 {
+fn part_width(ui: &Ui, part: &KeyPart<'_>) -> f32 {
     match part {
-        KeyPart::Cap(name) => cap_width(ui, look, name),
+        KeyPart::Cap(name) => cap_width(ui, name),
         KeyPart::Plus => KEY_GAP + PLUS_SIZE + KEY_GAP,
         KeyPart::Key(key) => ink_width(&galley(ui, key, Color32::PLACEHOLDER)),
     }
 }
 
-fn parts_width(ui: &Ui, look: &MenuLook, parts: &[KeyPart<'_>]) -> f32 {
-    parts.iter().map(|p| part_width(ui, look, p)).sum()
+fn parts_width(ui: &Ui, parts: &[KeyPart<'_>]) -> f32 {
+    parts.iter().map(|p| part_width(ui, p)).sum()
 }
 
 /// Las formas de un atajo cuya tinta termina en `right`, con las mayúsculas en la fila `caps`.
@@ -711,10 +706,10 @@ fn parts_shapes(
     } else {
         Color32::from_white_alpha(128)
     };
-    let mut x = right - parts_width(ui, look, parts);
+    let mut x = right - parts_width(ui, parts);
     let mut shapes = Vec::new();
     for part in parts {
-        let width = part_width(ui, look, part);
+        let width = part_width(ui, part);
         match part {
             KeyPart::Cap(name) => shapes.extend(cap_shapes(ui, look, name, x, caps, tint, ppp)),
             KeyPart::Plus => {
@@ -737,9 +732,8 @@ fn parts_shapes(
     shapes
 }
 
-/// Una tecla dibujada en `left`: Ctrl, Shift o Alt, la pieza tal cual a la altura de las mayúsculas; las
-/// demás, `key` estirada 1 fila más arriba y abajo con el nombre en el color del panel (como las
-/// letras caladas de Ctrl).
+/// Una badge en `left`, a la altura de las mayúsculas de la fila: `key` estirada con el nombre
+/// en chimpfont, en el color del panel (las letras caladas).
 fn cap_shapes(
     ui: &Ui,
     look: &MenuLook,
@@ -749,14 +743,9 @@ fn cap_shapes(
     tint: Color32,
     ppp: f32,
 ) -> Vec<Shape> {
-    if let Some(piece) = drawn_key(look, name) {
-        let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
-        let rect = Rect::from_min_size(pos2(left, caps), size);
-        return tinted(pixel_ui::piece_shapes(piece, rect, ppp), tint);
-    }
     let text = key_galley(ui, name, look.colors.panel);
-    let width = ink_width(&text) + 2.0 * KEY_PAD_X;
-    // A la altura de las piezas de Ctrl y Shift: desde las mayúsculas de la fila.
+    let width = key_ink(&text) + 2.0 * KEY_PAD_X;
+    // Desde las mayúsculas de la fila.
     let rect = Rect::from_min_size(pos2(left, caps), vec2(width, KEY_HEIGHT));
     let mut shapes = match &look.key {
         Some(piece) => tinted(pixel_ui::piece_shapes(piece, rect, ppp), tint),
@@ -965,7 +954,7 @@ pub(crate) fn tool_row(
     let text = galley(ui, label, color);
     let parts = shortcut_parts(shortcut);
     let icon_w = icon.map_or(0.0, |p| p.size[0] as f32 + TOOL_ICON_GAP);
-    let width = (icon_w + text.size().x + SHORTCUT_GAP + parts_width(ui, &look, &parts)).ceil();
+    let width = (icon_w + text.size().x + SHORTCUT_GAP + parts_width(ui, &parts)).ceil();
     let (rect, response) = ui.allocate_at_least(vec2(width, TOOL_ROW_HEIGHT), Sense::click());
     let enabled = ui.is_enabled();
     // El nombre accesible, como el de los ítems: el nombre y el atajo.

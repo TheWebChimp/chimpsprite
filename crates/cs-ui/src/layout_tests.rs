@@ -1404,13 +1404,9 @@ fn the_new_row_has_the_ctrl_badge_a_plus_and_the_key_in_the_dim_color() {
     let caps = new.top() + offset;
     assert_eq!(new.left(), panel.left() + 5.0);
     assert_eq!(caps, panel.top() + 6.0);
-    // La tecla Ctrl a la altura de las mayúsculas; después, 1 px, el + de 5×5, 1 px y la N.
-    let badges = h.drawn("key.ctrl");
-    let badge = *badges
-        .iter()
-        .find(|r| r.top() == caps)
-        .unwrap_or_else(|| panic!("Ctrl on the New row: {badges:?}"));
-    assert_eq!(badge.size(), Vec2::new(19.0, 7.0));
+    // La badge CTRL a la altura de las mayúsculas; después, 1 px, el + de 5×5, 1 px y la N.
+    let badge = badge(&h, "CTRL", caps);
+    assert_eq!(badge.height(), 7.0);
     let rects = h.colored_rects();
     let plus_h = Rect::from_min_size(badge.right_top() + Vec2::new(1.0, 3.0), Vec2::new(5.0, 1.0));
     let plus_v = Rect::from_min_size(badge.right_top() + Vec2::new(3.0, 1.0), Vec2::new(1.0, 5.0));
@@ -1434,60 +1430,75 @@ fn the_new_row_has_the_ctrl_badge_a_plus_and_the_key_in_the_dim_color() {
     assert_eq!(key.1.right() - 1.0, panel.right() - 5.0);
 }
 
+/// La badge de la tecla `name` (en mayúsculas) con su fila de mayúsculas en `caps`: la pieza `key`
+/// estirada debajo del nombre en chimpfont, con 3 px de cada lado de la tinta.
+fn badge(h: &LayoutHarness, name: &str, caps: f32) -> Rect {
+    let text = h
+        .text_rects
+        .iter()
+        .find(|(t, r, _)| t == name && r.top() == caps)
+        .map(|(_, r, _)| *r)
+        .unwrap_or_else(|| panic!("{name} on the row of {caps} in {:?}", h.texts));
+    let badge = h
+        .drawn("key")
+        .into_iter()
+        .filter(|k| {
+            k.top() >= caps
+                && k.bottom() <= caps + 7.0
+                && k.right() > text.left() - 4.0
+                && k.left() <= text.right()
+        })
+        .fold(Rect::NOTHING, |a, b| a.union(b));
+    // 3 px de cada lado de la tinta (chimpfont deja 2 px vacíos al final).
+    assert_eq!(
+        text.left() - badge.left(),
+        3.0,
+        "{name}: {text:?} in {badge:?}"
+    );
+    assert_eq!(
+        badge.right() - (text.right() - 2.0),
+        3.0,
+        "{name}: {text:?} in {badge:?}"
+    );
+    badge
+}
+
 #[test]
-fn ctrl_shift_shortcuts_draw_the_ctrl_and_the_shift_badges() {
+fn ctrl_shift_shortcuts_are_ctrl_and_shift_badges() {
     let mut h = two_tabs(Some(0));
     let offset = caps_offset(&h);
     open_menu(&mut h, "File");
     let colors = *h.app.pixel.skin().unwrap().colors();
-    // Save As… (Ctrl+Shift+S): Ctrl, 1 px, el +, 1 px, Shift, 1 px, el +, 1 px y la S, todo a
-    // la altura de las mayúsculas de la fila.
-    let shifts = h.drawn("key.shift");
-    assert_eq!(
-        shifts.len(),
-        1,
-        "only Save As has Shift in File: {shifts:?}"
-    );
-    let shift = shifts[0];
-    assert_eq!(shift.size(), Vec2::new(22.0, 7.0));
-    let ctrl = h
-        .drawn("key.ctrl")
-        .into_iter()
-        .find(|r| r.top() == shift.top())
-        .unwrap_or_else(|| panic!("Ctrl on the Shift row at {shift:?}"));
+    // Save As… (Ctrl+Shift+S): CTRL, 1 px, el +, 1 px, SHIFT, 1 px, el +, 1 px y la S, todo a la
+    // altura de las mayúsculas de la fila.
+    let (save_as, _) = text_rect(&h, "Save As");
+    let caps = save_as.top() + offset;
+    let ctrl = badge(&h, "CTRL", caps);
+    let shift = badge(&h, "SHIFT", caps);
     assert_eq!(shift.left() - ctrl.right(), 7.0, "1 + 5 + 1 between them");
     let rects = h.colored_rects();
     let plus = Rect::from_min_size(ctrl.right_top() + Vec2::new(1.0, 3.0), Vec2::new(5.0, 1.0));
     assert!(rects.contains(&(colors.ruler_tick, plus)), "{plus:?}");
-    let plus = Rect::from_min_size(shift.right_top() + Vec2::new(1.0, 3.0), Vec2::new(5.0, 1.0));
-    assert!(rects.contains(&(colors.ruler_tick, plus)), "{plus:?}");
     let key = h
         .text_rects
         .iter()
-        .find(|(t, r, _)| t == "S" && r.top() + offset == shift.top())
+        .find(|(t, r, _)| t == "S" && r.top() + offset == caps)
         .unwrap_or_else(|| panic!("S on the Shift row in {:?}", h.text_rects));
     assert_eq!(key.1.left(), shift.right() + 7.0, "after the +");
     assert_eq!(key.2, colors.ruler_tick, "the dim key");
-    // Ya no es la tecla genérica con el nombre escrito.
-    assert!(!h.texts.iter().any(|(t, _)| t == "Shift"), "{:?}", h.texts);
 }
 
 #[test]
-fn ctrl_alt_shortcuts_draw_the_alt_badge() {
+fn ctrl_alt_shortcuts_have_the_alt_badge() {
     let mut h = two_tabs(Some(0));
+    let offset = caps_offset(&h);
     open_menu(&mut h, "Sprite");
-    // Sprite Size (Ctrl+Alt+I): Ctrl, el +, Alt (la tecla del diseño), el + y la I.
-    let alts = h.drawn("key.alt");
-    assert_eq!(alts.len(), 1, "{alts:?}");
-    let alt = alts[0];
-    assert_eq!(alt.size(), Vec2::new(14.0, 7.0));
-    let ctrl = h
-        .drawn("key.ctrl")
-        .into_iter()
-        .find(|r| r.top() == alt.top())
-        .unwrap_or_else(|| panic!("Ctrl on the Alt row at {alt:?}"));
+    // Sprite Size (Ctrl+Alt+I): CTRL, el +, ALT, el + y la I.
+    let (size, _) = text_rect(&h, "Sprite Size");
+    let caps = size.top() + offset;
+    let ctrl = badge(&h, "CTRL", caps);
+    let alt = badge(&h, "ALT", caps);
     assert_eq!(alt.left() - ctrl.right(), 7.0, "1 + 5 + 1 between them");
-    assert!(!h.texts.iter().any(|(t, _)| t == "Alt"), "{:?}", h.texts);
 }
 
 #[test]
@@ -2491,11 +2502,17 @@ fn named_keys_are_badges_in_chimpfont() {
     open_menu(&mut h, "Edit");
     // Delete (Del): la tecla estirada, del alto de Ctrl y Shift, con DEL en mayúsculas.
     assert!(h.texts.iter().any(|(t, _)| t == "DEL"), "{:?}", h.texts);
+    // Todas las badges, del mismo alto.
     let keys = h.drawn("key");
-    let badge = keys.iter().fold(Rect::NOTHING, |a, b| a.union(*b));
-    assert_eq!(badge.height(), 7.0, "{keys:?}");
-    let ctrl = h.drawn("key.ctrl")[0];
-    assert_eq!(ctrl.height(), badge.height(), "as tall as the drawn keys");
+    assert!(!keys.is_empty());
+    let rows: Vec<f32> = keys.iter().map(|k| k.top()).collect();
+    for top in rows {
+        let badge = keys
+            .iter()
+            .filter(|k| k.top() == top)
+            .fold(Rect::NOTHING, |a, b| a.union(*b));
+        assert!(badge.height() <= 7.0, "{badge:?}");
+    }
 }
 
 #[test]

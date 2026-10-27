@@ -933,30 +933,17 @@ mod tests {
         for (x, y) in [(0, 0), (4, 0), (0, 4), (4, 4)] {
             assert_eq!(alpha(panel, x, y), 0, "rounded ({x},{y})");
         }
-        // La tecla Ctrl como está dibujada (sin centro) y la tecla sin texto, que se estira.
-        let ctrl = &data.pieces["key.ctrl"];
-        assert_eq!((ctrl.size, ctrl.center), ([19, 7], None));
+        // La tecla sin texto, que se estira (las badges: el nombre va encima en chimpfont).
         let key = &data.pieces["key"];
         assert_eq!((key.size, key.center), ([19, 7], rect9(1, 1, 17, 5)));
-        assert_ne!(ctrl.rgba, key.rgba, "Ctrl has its letters");
         assert_eq!(alpha(key, 0, 0), 0, "rounded corner");
         assert_eq!(alpha(key, 9, 3), 255, "no text");
-        // La tecla Shift del diseño (Layer 4, frame 4), como Ctrl: sin centro, con las letras
-        // y las esquinas caladas.
-        let shift = &data.pieces["key.shift"];
-        assert_eq!((shift.size, shift.center), ([22, 7], None));
-        assert_eq!(alpha(shift, 0, 0), 0, "rounded corner");
-        assert_eq!(alpha(shift, 21, 6), 0, "rounded corner");
-        assert_eq!(alpha(shift, 1, 0), 255, "the top");
-        assert_eq!(alpha(shift, 0, 3), 255, "the left side");
-        assert_eq!(alpha(shift, 4, 1), 0, "the S, cut out");
-        // La tecla Alt, igual: 14×7 con las letras y las esquinas caladas.
-        let alt = &data.pieces["key.alt"];
-        assert_eq!((alt.size, alt.center), ([14, 7], None));
-        assert_eq!(alpha(alt, 0, 0), 0, "rounded corner");
-        assert_eq!(alpha(alt, 13, 6), 0, "rounded corner");
-        assert_eq!(alpha(alt, 1, 0), 255, "the top");
-        assert_eq!(alpha(alt, 4, 1), 0, "the A, cut out");
+        for gone in ["key.ctrl", "key.shift", "key.alt"] {
+            assert!(
+                !data.pieces.contains_key(gone),
+                "{gone}: now a badge in chimpfont"
+            );
+        }
         // Las casillas del diseño (Layer 4, frame 4), marcada y sin marcar: 11×12, sin centro,
         // con las 4 esquinas de afuera caladas, el interior blanco y una fila de sombra
         // (230,231,240) abajo del interior. La marcada lleva la marca verde.
