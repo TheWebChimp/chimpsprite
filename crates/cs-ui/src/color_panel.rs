@@ -957,10 +957,12 @@ fn hover_badge(sv_box: Rect, color: Rgba, ppp: f32) -> Vec<Shape> {
     };
     let mut mesh = egui::Mesh::default();
     for (rect, c) in [
-        // El fondo y, a la derecha, la caja abierta (su línea, del color del panel).
+        // El fondo y, a la derecha, la caja abierta (su línea y el pixel de su esquina
+        // redondeada, del color del panel).
         (px(1.0, 1.0, 15.0, 15.0), BADGE_PANEL),
-        // El contorno claro, redondeado.
-        (px(2.0, 0.0, 14.0, 1.0), BADGE_ETCH),
+        (px(16.0, 1.0, 1.0, 1.0), BADGE_PANEL),
+        // El contorno claro, redondeado; arriba sigue recto hasta la línea de la caja.
+        (px(2.0, 0.0, 15.0, 1.0), BADGE_ETCH),
         (px(1.0, 1.0, 1.0, 1.0), BADGE_ETCH),
         (px(0.0, 2.0, 1.0, 13.0), BADGE_ETCH),
         (px(1.0, 15.0, 1.0, 1.0), BADGE_ETCH),
