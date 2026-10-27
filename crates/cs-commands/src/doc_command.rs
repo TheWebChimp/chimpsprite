@@ -39,6 +39,8 @@ pub enum DocCommand {
     },
     /// Reemplaza las notas del documento (agregar, mover, editar o borrar una).
     SetNotes(Vec<Note>),
+    /// Reemplaza el documento entero (lo que dejó un script): el inverso es el de antes.
+    SetDocument(Box<Document>),
     /// Transacción: se aplica completa o nada.
     Batch(Vec<DocCommand>),
 }
@@ -133,6 +135,13 @@ impl DocCommand {
                 let old = std::mem::replace(&mut doc.notes, notes.clone());
                 Ok(DocCommand::SetNotes(old))
             }
+            DocCommand::SetDocument(document) => {
+                if document.artboards.is_empty() {
+                    return Err(CmdError::LastArtboard);
+                }
+                let old = std::mem::replace(doc, (**document).clone());
+                Ok(DocCommand::SetDocument(Box::new(old)))
+            }
             DocCommand::SetSprite { id, sprite } => {
                 if sprite.width == 0 || sprite.height == 0 {
                     return Err(CmdError::InvalidSize(sprite.width, sprite.height));
@@ -189,6 +198,7 @@ impl crate::Undoable for DocCommand {
             DocCommand::SetSymmetry { .. } => "Symmetry",
             DocCommand::SetSprite { .. } => "Sprite",
             DocCommand::SetNotes(_) => "Notes",
+            DocCommand::SetDocument(_) => "Script",
             DocCommand::Batch(cmds) => cmds.first().map_or("Change", crate::Undoable::label),
         }
     }
