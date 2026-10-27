@@ -903,16 +903,15 @@ pub fn lit_button(ui: &mut Ui, label: &str) -> Response {
     text_button(ui, label)
 }
 
-/// La luz de 1 fila debajo de `rect` (la de abajo de los campos), con Pixel UI, y en las dos
-/// esquinas de abajo de `rect`: las de la pieza redondeada quedan vacías y ahí brilla también
-/// (como en los campos y las casillas). Va antes de dibujar el control, que la tapa donde tiene
-/// pixeles.
+/// La luz de abajo de `rect` como en las casillas, con Pixel UI: en las dos esquinas de abajo
+/// de `rect` (las de la pieza redondeada quedan vacías) y 1 fila debajo, entre las esquinas. Va
+/// antes de dibujar el control, que la tapa donde tiene pixeles.
 pub fn under_light(ui: &Ui, rect: Rect) {
     if let Some(skin) = frame_skin(ui.ctx()) {
         let ppp = ui.ctx().pixels_per_point();
         let (bottom, left, right) = (rect.bottom(), rect.left(), rect.right());
         let rows = [
-            Rect::from_min_max(pos2(left, bottom), pos2(right, bottom + 1.0)),
+            Rect::from_min_max(pos2(left + 1.0, bottom), pos2(right - 1.0, bottom + 1.0)),
             Rect::from_min_max(pos2(left, bottom - 1.0), pos2(left + 1.0, bottom)),
             Rect::from_min_max(pos2(right - 1.0, bottom - 1.0), pos2(right, bottom)),
         ];
