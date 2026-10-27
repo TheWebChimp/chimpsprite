@@ -219,6 +219,38 @@ fn the_other_button_cancels_a_stroke_without_starting_another() {
 }
 
 #[test]
+fn while_painting_only_the_active_artboard_is_composed() {
+    let mut h = Harness::new();
+    let first = h.editor.active;
+    h.editor.add_artboard(8, 8);
+    h.editor.activate(first);
+    h.frame(vec![]);
+    let event = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let (a, b) = (h.screen((2, 2)), h.screen((6, 2)));
+    h.frame(vec![Event::PointerMoved(a)]);
+    h.frame(vec![event(a, true)]);
+    assert!(h.editor.is_painting());
+    let before = h.canvas.composed;
+    h.frame(vec![Event::PointerMoved(b)]);
+    h.frame(vec![]);
+    assert_eq!(
+        h.canvas.composed - before,
+        2,
+        "one per frame: the active one"
+    );
+    // Al soltar cambia el documento: se componen todos.
+    let before = h.canvas.composed;
+    h.frame(vec![event(b, false)]);
+    h.frame(vec![]);
+    assert!(h.canvas.composed - before >= 2, "both again");
+}
+
+#[test]
 fn dragging_a_corner_handle_scales_and_enter_applies() {
     let mut h = Harness::new();
     let red = h.selected_dot((2, 2), (2, 2), (3, 3));

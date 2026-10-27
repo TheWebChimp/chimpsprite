@@ -51,6 +51,12 @@ pub struct CanvasView {
     textures: HashMap<ArtboardId, TextureHandle>,
     checker: Option<TextureHandle>,
     rendered_revision: Option<u64>,
+    /// La revisión con la que se compusieron todos los artboards: mientras se pinta, los que no
+    /// son el activo (ni muestran instancias) no cambian y no se recomponen.
+    all_rendered: Option<u64>,
+    /// Cuántas veces se compuso un artboard (para los tests).
+    #[cfg(test)]
+    composed: u32,
     /// La capa cuya máscara se veía en rojo (editándola) al componer: si cambia, se recompone
     /// aunque el documento no haya cambiado.
     rendered_mask: Option<LayerId>,
@@ -189,6 +195,9 @@ impl Default for CanvasView {
             textures: HashMap::new(),
             checker: None,
             rendered_revision: None,
+            all_rendered: None,
+            #[cfg(test)]
+            composed: 0,
             rendered_mask: None,
             fitted: false,
             hover: None,
@@ -548,8 +557,22 @@ impl CanvasView {
             self.rendered_mask = mask;
             self.textures
                 .retain(|id, _| document.artboard(*id).is_some());
+            let mut skipped = false;
             for artboard in &document.artboards {
                 let sprite = &artboard.sprite;
+                let unchanged = painting
+                    && self.all_rendered == Some(editor.revision)
+                    && artboard.id != editor.active
+                    && self.textures.contains_key(&artboard.id)
+                    && !sprite.layers.iter().any(|l| l.instance.is_some());
+                if unchanged {
+                    skipped = true;
+                    continue;
+                }
+                #[cfg(test)]
+                {
+                    self.composed += 1;
+                }
                 let frame = editor.frame_of(artboard.id);
                 let onion = artboard.id == editor.active && editor.onion_enabled && !editor.playing;
                 // Las instancias se resuelven a capas normales antes de componer.
@@ -579,6 +602,9 @@ impl CanvasView {
                         self.textures.insert(artboard.id, tex);
                     }
                 }
+            }
+            if !skipped {
+                self.all_rendered = Some(editor.revision);
             }
             // Durante un gesto no marcamos como al día, para recomponer al terminar.
             self.rendered_revision = (!painting).then_some(editor.revision);
