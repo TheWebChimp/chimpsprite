@@ -13,7 +13,7 @@ use cs_tools::text::FontChoice;
 use cs_tools::{BrushShape, Dither, GradientShape};
 
 use crate::bar_fields::{self, BarLook};
-use crate::editor::{Editor, MAX_BRUSH_SIZE, SelectionMode, ToolKind};
+use crate::editor::{Editor, Ink, MAX_BRUSH_SIZE, SelectionMode, ToolKind};
 use crate::skin::Skin;
 use crate::{color_panel, fg_bg, menus, pixel_ui, theme, tile_ops, tool_group, widgets};
 

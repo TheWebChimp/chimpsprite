@@ -1059,3 +1059,62 @@ fn the_custom_brush_colors_are_converted_once_per_brush_and_document() {
     e.options.brush_colors = false;
     assert!(e.context().brush_image.is_none());
 }
+
+#[test]
+fn lock_alpha_paints_only_over_what_is_painted_keeping_its_alpha() {
+    let mut e = editor();
+    let half = PixelValue::Rgba(Rgba::new(255, 0, 0, 128));
+    e.execute(Command::DrawPixels {
+        layer: e.layer,
+        frame: 0,
+        pixels: vec![(1, 1, half)],
+    });
+    e.set_tool(ToolKind::Pencil);
+    e.options.ink = Ink::LockAlpha;
+    e.primary = PixelValue::Rgba(Rgba::rgb(0, 0, 255));
+    click(&mut e, (1, 1), false, false);
+    click(&mut e, (2, 2), false, false);
+    let s = e.sprite();
+    assert_eq!(
+        s.pixel(e.layer, 0, 1, 1),
+        PixelValue::Rgba(Rgba::new(0, 0, 255, 128))
+    );
+    assert_eq!(
+        s.pixel(e.layer, 0, 2, 2),
+        s.color_mode.transparent(),
+        "nothing there"
+    );
+}
+
+#[test]
+fn shading_moves_each_pixel_along_the_palette_range() {
+    let mut e = editor();
+    let value = |e: &Editor, i: u8| e.palette_value(i);
+    let start = value(&e, 3);
+    e.execute(Command::DrawPixels {
+        layer: e.layer,
+        frame: 0,
+        pixels: vec![(1, 1, start), (2, 2, start)],
+    });
+    e.palette_selection = Some((2, 5));
+    e.set_tool(ToolKind::Pencil);
+    e.options.ink = Ink::Shading;
+    click(&mut e, (1, 1), false, false);
+    assert_eq!(
+        e.sprite().pixel(e.layer, 0, 1, 1),
+        value(&e, 4),
+        "one step right"
+    );
+    click(&mut e, (2, 2), true, false);
+    assert_eq!(
+        e.sprite().pixel(e.layer, 0, 2, 2),
+        value(&e, 2),
+        "right-click: one back"
+    );
+    // En la punta de la rampa se queda; fuera de ella, nada.
+    click(&mut e, (2, 2), true, false);
+    assert_eq!(e.sprite().pixel(e.layer, 0, 2, 2), value(&e, 2));
+    click(&mut e, (5, 5), false, false);
+    let s = e.sprite();
+    assert_eq!(s.pixel(e.layer, 0, 5, 5), s.color_mode.transparent());
+}

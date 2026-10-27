@@ -304,6 +304,32 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
             }
         }
     }
+    // El ink, como en Aseprite: cómo pinta encima de lo que hay.
+    if tool.uses_ink() {
+        groups.next(ui);
+        let ink = &mut options.ink;
+        match look {
+            Some(look) => {
+                bar_fields::label(ui, look, "Ink");
+                gap(ui, LABEL_FIELD_GAP);
+                bar_fields::combo(ui, look, "ink", ink.label(), |ui| {
+                    bar_fields::choices(ui, ink, Ink::ALL, Ink::label)
+                });
+            }
+            None => {
+                egui::ComboBox::from_label("Ink")
+                    .selected_text(ink.label())
+                    .show_ui(ui, |ui| {
+                        for i in Ink::ALL {
+                            ui.selectable_value(ink, i, i.label());
+                        }
+                    });
+            }
+        }
+        if *ink == Ink::Shading {
+            hints.push("Shading: each pixel moves along the selected palette range. Right-click goes back.");
+        }
+    }
     if matches!(
         tool,
         ToolKind::Rectangle | ToolKind::Ellipse | ToolKind::Polygon

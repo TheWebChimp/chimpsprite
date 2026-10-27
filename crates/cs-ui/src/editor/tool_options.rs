@@ -129,6 +129,22 @@ impl ToolKind {
     }
 
     /// Herramientas que pintan y por lo tanto se recortan a la selección.
+    /// Herramientas que pintan con el ink elegido (las que ponen el color del pincel).
+    pub fn uses_ink(self) -> bool {
+        matches!(
+            self,
+            ToolKind::Pencil
+                | ToolKind::Spray
+                | ToolKind::Bucket
+                | ToolKind::Line
+                | ToolKind::Rectangle
+                | ToolKind::Ellipse
+                | ToolKind::Polygon
+                | ToolKind::Text
+                | ToolKind::Contour
+        )
+    }
+
     pub fn paints(self) -> bool {
         matches!(
             self,
@@ -347,6 +363,34 @@ pub struct ToolOptions {
     /// Selección espejo: con simetría, lo seleccionado se refleja en los ejes, y al moverlo la
     /// parte reflejada se mueve como en un espejo.
     pub mirror_selection: bool,
+    /// Cómo pintan las herramientas de color (ver `ToolKind::uses_ink`).
+    pub ink: Ink,
+}
+
+/// Cómo se pinta encima de lo que hay, como los inks de Aseprite.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum Ink {
+    /// El color reemplaza lo que había.
+    #[default]
+    Simple,
+    /// Solo donde ya hay algo pintado, conservando su transparencia.
+    LockAlpha,
+    /// Cada píxel pasa al color siguiente de la rampa (el rango elegido de la paleta o, si no
+    /// hay, la paleta entera); con el botón derecho, al anterior. Lo que no está en la rampa
+    /// no cambia.
+    Shading,
+}
+
+impl Ink {
+    pub const ALL: [Ink; 3] = [Ink::Simple, Ink::LockAlpha, Ink::Shading];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Ink::Simple => "Simple",
+            Ink::LockAlpha => "Lock Alpha",
+            Ink::Shading => "Shading",
+        }
+    }
 }
 
 fn clamped_brush_size<'de, D: serde::Deserializer<'de>>(d: D) -> Result<u32, D::Error> {
@@ -375,6 +419,7 @@ impl Default for ToolOptions {
             rotation: cs_raster::RotationAlgorithm::RotSprite,
             group_choice: GroupChoice::default(),
             mirror_selection: false,
+            ink: Ink::Simple,
         }
     }
 }

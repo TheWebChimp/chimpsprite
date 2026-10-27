@@ -524,9 +524,75 @@ impl Editor {
         };
         if self.editing_mask() {
             self.to_mask_command(cmd)
+        } else if kind.uses_ink() {
+            self.apply_ink(cmd)
         } else {
             cmd
         }
+    }
+
+    /// El ink elegido sobre un trazo: Lock Alpha deja solo lo que cae sobre algo pintado (con su
+    /// transparencia) y Shading cambia cada píxel por el siguiente de la rampa.
+    fn apply_ink(&self, cmd: Command) -> Command {
+        let Command::DrawPixels {
+            layer,
+            frame,
+            pixels,
+        } = cmd
+        else {
+            return cmd;
+        };
+        let sprite = self.sprite();
+        let under = |x, y| sprite.pixel(layer, frame, x, y);
+        let pixels = match self.options.ink {
+            Ink::Simple => pixels,
+            Ink::LockAlpha => pixels
+                .into_iter()
+                .filter_map(|(x, y, v)| {
+                    let old = self.resolve(under(x, y));
+                    (old.a > 0).then_some((
+                        x,
+                        y,
+                        match v {
+                            PixelValue::Rgba(c) => PixelValue::Rgba(Rgba { a: old.a, ..c }),
+                            index => index,
+                        },
+                    ))
+                })
+                .collect(),
+            Ink::Shading => {
+                let ramp = self.shading_ramp();
+                pixels
+                    .into_iter()
+                    .filter_map(|(x, y, _)| {
+                        let i = ramp.iter().position(|&v| v == under(x, y))?;
+                        let j = if self.painting_secondary {
+                            i.checked_sub(1)?
+                        } else {
+                            i + 1
+                        };
+                        ramp.get(j).map(|&v| (x, y, v))
+                    })
+                    .collect()
+            }
+        };
+        Command::DrawPixels {
+            layer,
+            frame,
+            pixels,
+        }
+    }
+
+    /// Los colores por los que avanza Shading: el rango elegido de la paleta o la paleta entera.
+    fn shading_ramp(&self) -> Vec<PixelValue> {
+        let len = self.sprite().palette.len();
+        let (a, b) = match self.palette_selection {
+            Some((a, b)) => (a.min(b), a.max(b)),
+            None => (0, len.saturating_sub(1)),
+        };
+        (a..=b.min(len.saturating_sub(1)))
+            .map(|i| self.palette_value(i as u8))
+            .collect()
     }
 
     /// Editando la máscara, un trazo pinta niveles: blanco muestra, negro o transparente oculta.
