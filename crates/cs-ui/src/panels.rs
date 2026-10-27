@@ -366,13 +366,37 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
             // Como en el diseño: un botón con la forma al tamaño del pincel; un clic la cambia.
             Some(look) => {
                 gap(ui, CONTROL_GAP);
-                bar_fields::brush_shape(ui, look, &mut options.brush_shape, options.brush_size)
-                    .tip("Brush shape (click to switch Round / Square)");
+                bar_fields::brush_shape(
+                    ui,
+                    look,
+                    &mut options.brush_shape,
+                    options.brush_size,
+                    options.brush_colors,
+                )
+                .tip("Brush shape (click to switch Round / Square / Custom)");
             }
             None => {
                 brush_shape_buttons(ui, &mut options.brush_shape, 20.0);
             }
         }
+    }
+    // El pincel de Edit → New Brush: con sus colores o con el primario.
+    if options.brush_shape == cs_raster::BrushShape::Custom
+        && matches!(
+            tool,
+            ToolKind::Pencil
+                | ToolKind::Line
+                | ToolKind::Rectangle
+                | ToolKind::Ellipse
+                | ToolKind::Polygon
+        )
+    {
+        if look.is_some() {
+            gap(ui, CONTROL_GAP);
+        } else {
+            groups.next(ui);
+        }
+        check_option(ui, look, &mut options.brush_colors, "Brush Colors");
     }
     if matches!(tool, ToolKind::Pencil | ToolKind::Eraser) {
         match look {

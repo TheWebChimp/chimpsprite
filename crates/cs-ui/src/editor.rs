@@ -334,6 +334,9 @@ pub struct ToolOptions {
     #[serde(deserialize_with = "clamped_brush_size")]
     pub brush_size: u32,
     pub brush_shape: BrushShape,
+    /// El pincel personalizado pinta con los colores del dibujo del que salió (si no, con el
+    /// color primario), como el de Aseprite.
+    pub brush_colors: bool,
     pub pixel_perfect: bool,
     pub filled: bool,
     /// Radio de las esquinas del rectángulo (0 = rectas).
@@ -372,6 +375,7 @@ impl Default for ToolOptions {
         Self {
             brush_size: 1,
             brush_shape: BrushShape::Round,
+            brush_colors: true,
             pixel_perfect: true,
             filled: false,
             corner_radius: 0,
@@ -1471,6 +1475,20 @@ impl Editor {
         self.options.constrain && !(self.active_tool().is_selection() && self.shift_at_press)
     }
 
+    /// Los puntos del pincel personalizado con sus colores en este sprite, si pinta con ellos.
+    fn brush_image(&self) -> Option<Vec<((i32, i32), PixelValue)>> {
+        if self.options.brush_shape != BrushShape::Custom || !self.options.brush_colors {
+            return None;
+        }
+        let brush = cs_raster::custom_brush();
+        (!brush.is_empty()).then(|| {
+            brush
+                .into_iter()
+                .map(|(p, c)| (p, self.value_of(c)))
+                .collect()
+        })
+    }
+
     fn context(&self) -> ToolContext<'_> {
         let secondary = if self.painting_secondary {
             self.primary
@@ -1485,6 +1503,7 @@ impl Editor {
             secondary,
             brush_size: self.options.brush_size,
             brush_shape: self.options.brush_shape,
+            brush_image: self.brush_image(),
             pixel_perfect: self.options.pixel_perfect,
             filled: self.options.filled,
             corner_radius: self.options.corner_radius,
@@ -1515,6 +1534,7 @@ impl Editor {
             brush_size: self.options.brush_size,
             // En celdas el pincel sigue cuadrado: el contorno del lienzo dibuja celdas enteras.
             brush_shape: BrushShape::Square,
+            brush_image: None,
             pixel_perfect: false,
             filled: self.options.filled,
             corner_radius: self.options.corner_radius,

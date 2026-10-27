@@ -36,6 +36,7 @@ pub use spray::Spray;
 
 use cs_commands::Command;
 use cs_core::{LayerId, Mask, PixelValue, Sprite};
+use cs_raster::stamp;
 
 pub struct ToolContext<'a> {
     pub sprite: &'a Sprite,
@@ -48,6 +49,9 @@ pub struct ToolContext<'a> {
     /// Forma del pincel: Pencil, Eraser, Spray, Jumble, Blur y el contorno de Line, Rectangle y
     /// Ellipse.
     pub brush_shape: BrushShape,
+    /// Con el pincel personalizado y sus colores: cada punto (relativo al centro) con su color.
+    /// Pencil, Line, Rectangle, Ellipse y Polygon lo pintan así en vez de con `color`.
+    pub brush_image: Option<Vec<(Point, PixelValue)>>,
     pub pixel_perfect: bool,
     /// Formas rellenas (rectángulo/elipse).
     pub filled: bool,
@@ -84,6 +88,31 @@ impl ToolContext<'_> {
             layer: self.layer,
             frame: self.frame,
             pixels: points.into_iter().map(|(x, y)| (x, y, color)).collect(),
+        }
+    }
+
+    /// El pincel en cada punto de `path`, con `color` o, si el pincel personalizado lleva sus
+    /// colores, con los del dibujo (donde se enciman, el de la última pincelada).
+    fn stamp_draw(&self, path: &[Point], color: PixelValue) -> Command {
+        let Some(image) = self
+            .brush_image
+            .as_ref()
+            .filter(|_| self.brush_shape == BrushShape::Custom)
+        else {
+            return self.draw(stamp(path, self.brush_size, self.brush_shape), color);
+        };
+        let pixels = path
+            .iter()
+            .flat_map(|&(px, py)| {
+                image
+                    .iter()
+                    .map(move |&((dx, dy), v)| (px + dx, py + dy, v))
+            })
+            .collect();
+        Command::DrawPixels {
+            layer: self.layer,
+            frame: self.frame,
+            pixels,
         }
     }
 }
@@ -186,6 +215,7 @@ pub(crate) mod test_util {
             brush_size: 1,
             // Los tests de antes se escribieron con el pincel cuadrado.
             brush_shape: BrushShape::Square,
+            brush_image: None,
             pixel_perfect: false,
             filled: false,
             corner_radius: 0,

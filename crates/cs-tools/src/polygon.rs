@@ -1,4 +1,5 @@
-use cs_raster::{Point, line, polygon_filled, stamp};
+use cs_commands::Command;
+use cs_raster::{Point, line, polygon_filled};
 
 use crate::{Tool, ToolContext, ToolOutput};
 
@@ -18,21 +19,23 @@ impl Polygon {
         Self::default()
     }
 
-    /// Los píxeles del polígono de `vertices` (cerrado o, mientras se arma, abierto).
-    fn points(ctx: &ToolContext, vertices: &[Point], closed: bool) -> Vec<Point> {
-        match vertices {
-            [] => Vec::new(),
-            [p] => stamp(&[*p], ctx.brush_size, ctx.brush_shape),
-            _ if closed && ctx.filled && vertices.len() >= 3 => polygon_filled(vertices),
+    /// El polígono de `vertices` (cerrado o, mientras se arma, abierto); `None` sin vértices.
+    fn command(ctx: &ToolContext, vertices: &[Point], closed: bool) -> Option<Command> {
+        Some(match vertices {
+            [] => return None,
+            [p] => ctx.stamp_draw(&[*p], ctx.color),
+            _ if closed && ctx.filled && vertices.len() >= 3 => {
+                ctx.draw(polygon_filled(vertices), ctx.color)
+            }
             _ => {
                 let mut edges: Vec<Point> =
                     vertices.windows(2).flat_map(|w| line(w[0], w[1])).collect();
                 if closed {
                     edges.extend(line(*vertices.last().unwrap(), vertices[0]));
                 }
-                stamp(&edges, ctx.brush_size, ctx.brush_shape)
+                ctx.stamp_draw(&edges, ctx.color)
             }
-        }
+        })
     }
 
     fn output(&self, ctx: &ToolContext, closed: bool, with_cursor: bool) -> ToolOutput {
@@ -40,11 +43,10 @@ impl Polygon {
         if with_cursor && let Some(c) = self.cursor {
             vertices.push(c);
         }
-        let points = Self::points(ctx, &vertices, closed);
-        if points.is_empty() {
-            return ToolOutput::default();
+        match Self::command(ctx, &vertices, closed) {
+            Some(cmd) => ToolOutput::command(cmd),
+            None => ToolOutput::default(),
         }
-        ToolOutput::command(ctx.draw(points, ctx.color))
     }
 
     fn reset(&mut self) {
@@ -133,6 +135,7 @@ mod tests {
             secondary: PixelValue::Rgba(Rgba::rgb(0, 0, 0)),
             brush_size: 1,
             brush_shape: Default::default(),
+            brush_image: None,
             pixel_perfect: false,
             filled,
             corner_radius: 0,

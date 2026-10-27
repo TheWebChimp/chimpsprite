@@ -114,8 +114,7 @@ impl Editor {
 
     /// Edit → New Brush (Ctrl+B): lo pintado dentro de la selección (o, si no hay nada pintado,
     /// la forma de la selección) pasa a ser la forma del pincel personalizado, centrada en la
-    /// caja de la selección; se elige ese pincel y se quita la selección. Pinta con el color
-    /// primario.
+    /// caja de la selección, con sus colores; se elige ese pincel y se quita la selección.
     pub fn new_brush(&mut self) -> bool {
         self.commit_floating();
         let Some(mask) = &self.selection else {
@@ -126,13 +125,21 @@ impl Editor {
         };
         let (cx, cy) = ((x0 + x1) / 2, (y0 + y1) / 2);
         let sprite = self.sprite();
-        let painted =
-            |&(x, y): &(i32, i32)| self.resolve(sprite.pixel(self.layer, self.frame, x, y)).a > 0;
-        let mut points: Vec<(i32, i32)> = mask.points().filter(painted).collect();
-        if points.is_empty() {
-            points = mask.points().collect();
+        let color = |x: i32, y: i32| self.resolve(sprite.pixel(self.layer, self.frame, x, y));
+        let mut brush: Vec<_> = mask
+            .points()
+            .map(|(x, y)| ((x - cx, y - cy), color(x, y)))
+            .filter(|(_, c)| c.a > 0)
+            .collect();
+        // Sin nada pintado, la forma de la selección con el color primario.
+        if brush.is_empty() {
+            let primary = self.resolve(self.primary);
+            brush = mask
+                .points()
+                .map(|(x, y)| ((x - cx, y - cy), primary))
+                .collect();
         }
-        cs_raster::set_custom_brush(points.into_iter().map(|(x, y)| (x - cx, y - cy)).collect());
+        cs_raster::set_custom_brush(brush);
         self.options.brush_shape = cs_raster::BrushShape::Custom;
         self.deselect();
         true
@@ -255,6 +262,15 @@ mod tests {
         let mut brush = cs_raster::brush_points((10, 10), 1, cs_raster::BrushShape::Custom);
         brush.sort();
         assert_eq!(brush, vec![(10, 10), (11, 10)]);
+        // Con sus colores: el pincel pinta el rojo del dibujo aunque el primario sea otro.
+        let mut colors = cs_raster::custom_brush();
+        colors.sort_by_key(|(p, _)| *p);
+        assert_eq!(colors[1], ((1, 0), Rgba::rgb(255, 0, 0)));
+        e.primary = PixelValue::Rgba(Rgba::rgb(0, 0, 255));
+        e.set_tool(ToolKind::Pencil);
+        crate::tool_tests::stroke(&mut e, &[(4, 2)], false);
+        assert_eq!(at(&e, 4, 2), red);
+        assert_eq!(at(&e, 5, 2), red);
     }
 
     #[test]

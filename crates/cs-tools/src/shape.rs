@@ -1,6 +1,7 @@
+use cs_commands::Command;
 use cs_raster::{
     Point, constrain_line, constrain_square, ellipse_filled, ellipse_outline, line,
-    rounded_rect_filled, rounded_rect_outline, stamp,
+    rounded_rect_filled, rounded_rect_outline,
 };
 
 use crate::{Drag, Tool, ToolContext, ToolOutput};
@@ -31,21 +32,23 @@ impl ShapeTool {
         self.kind
     }
 
-    fn points(&self, ctx: &ToolContext, a: Point, b: Point) -> Vec<Point> {
+    fn command(&self, ctx: &ToolContext, a: Point, b: Point) -> Command {
         let b = match (ctx.constrain, self.kind) {
             (false, _) => b,
             (true, ShapeKind::Line) => constrain_line(a, b),
             (true, _) => constrain_square(a, b),
         };
-        let (size, shape) = (ctx.brush_size, ctx.brush_shape);
+        let color = ctx.color;
         match (self.kind, ctx.filled) {
-            (ShapeKind::Line, _) => stamp(&line(a, b), size, shape),
-            (ShapeKind::Rectangle, true) => rounded_rect_filled(a, b, ctx.corner_radius),
-            (ShapeKind::Rectangle, false) => {
-                stamp(&rounded_rect_outline(a, b, ctx.corner_radius), size, shape)
+            (ShapeKind::Line, _) => ctx.stamp_draw(&line(a, b), color),
+            (ShapeKind::Rectangle, true) => {
+                ctx.draw(rounded_rect_filled(a, b, ctx.corner_radius), color)
             }
-            (ShapeKind::Ellipse, true) => ellipse_filled(a, b),
-            (ShapeKind::Ellipse, false) => stamp(&ellipse_outline(a, b), size, shape),
+            (ShapeKind::Rectangle, false) => {
+                ctx.stamp_draw(&rounded_rect_outline(a, b, ctx.corner_radius), color)
+            }
+            (ShapeKind::Ellipse, true) => ctx.draw(ellipse_filled(a, b), color),
+            (ShapeKind::Ellipse, false) => ctx.stamp_draw(&ellipse_outline(a, b), color),
         }
     }
 }
@@ -67,7 +70,7 @@ impl Tool for ShapeTool {
 
     fn preview(&self, ctx: &ToolContext) -> ToolOutput {
         match self.drag.get() {
-            Some((a, b)) => ToolOutput::command(ctx.draw(self.points(ctx, a, b), ctx.color)),
+            Some((a, b)) => ToolOutput::command(self.command(ctx, a, b)),
             None => ToolOutput::default(),
         }
     }

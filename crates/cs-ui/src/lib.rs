@@ -93,6 +93,8 @@ const RECENT_KEY: &str = "chimpsprite.recent";
 const VIEW_KEY: &str = "chimpsprite.view";
 const DEFAULT_PALETTE_KEY: &str = "chimpsprite.default_palette";
 const TOOL_OPTIONS_KEY: &str = "chimpsprite.tool_options";
+/// El pincel personalizado (Edit → New Brush): sus puntos y colores.
+const CUSTOM_BRUSH_KEY: &str = "chimpsprite.custom_brush";
 /// Los atajos elegidos en Edit → Keyboard Shortcuts.
 const KEYMAP_KEY: &str = "chimpsprite.keymap";
 
@@ -195,6 +197,11 @@ impl ChimpApp {
             .storage
             .and_then(|s| eframe::get_value(s, TOOL_OPTIONS_KEY))
             .unwrap_or_default();
+        if let Some(brush) = cc.storage.and_then(|s| {
+            eframe::get_value::<Vec<((i32, i32), cs_core::Rgba)>>(s, CUSTOM_BRUSH_KEY)
+        }) {
+            cs_raster::set_custom_brush(brush);
+        }
         if let Some(settings) = cc
             .storage
             .and_then(|s| eframe::get_value::<keymap::KeymapSettings>(s, KEYMAP_KEY))
@@ -2175,6 +2182,7 @@ impl eframe::App for ChimpApp {
         eframe::set_value(storage, RECENT_KEY, &self.recent);
         eframe::set_value(storage, VIEW_KEY, &self.view);
         eframe::set_value(storage, TOOL_OPTIONS_KEY, &self.current_tool_options());
+        eframe::set_value(storage, CUSTOM_BRUSH_KEY, &cs_raster::custom_brush());
         eframe::set_value(storage, KEYMAP_KEY, &self.keymap.settings());
         eframe::set_value(
             storage,

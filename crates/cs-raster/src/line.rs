@@ -4,6 +4,8 @@ use std::collections::HashSet;
 
 use serde::{Deserialize, Serialize};
 
+use cs_core::Rgba;
+
 use crate::{Point, ellipse_filled};
 
 /// Forma del pincel.
@@ -18,14 +20,21 @@ pub enum BrushShape {
     Custom,
 }
 
-/// La forma del pincel personalizado: sus puntos, relativos a su centro.
-static CUSTOM_BRUSH: std::sync::RwLock<Vec<Point>> = std::sync::RwLock::new(Vec::new());
+thread_local! {
+    /// El pincel personalizado: sus puntos, relativos a su centro, con el color de cada uno (el
+    /// del dibujo del que salió). Es del hilo de la interfaz (cada test tiene el suyo).
+    static CUSTOM_BRUSH: std::cell::RefCell<Vec<(Point, Rgba)>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
 
-/// Deja `points` (relativos al centro) como la forma de [`BrushShape::Custom`].
-pub fn set_custom_brush(points: Vec<Point>) {
-    if let Ok(mut brush) = CUSTOM_BRUSH.write() {
-        *brush = points;
-    }
+/// Deja `brush` (puntos relativos al centro y sus colores) como [`BrushShape::Custom`].
+pub fn set_custom_brush(brush: Vec<(Point, Rgba)>) {
+    CUSTOM_BRUSH.with(|custom| *custom.borrow_mut() = brush);
+}
+
+/// El pincel personalizado: sus puntos relativos al centro y sus colores (vacío si no hay).
+pub fn custom_brush() -> Vec<(Point, Rgba)> {
+    CUSTOM_BRUSH.with(|custom| custom.borrow().clone())
 }
 
 /// Puntos del pincel de lado `size` centrado en `center`. Las dos formas ocupan la misma caja
@@ -33,13 +42,13 @@ pub fn set_custom_brush(points: Vec<Point>) {
 pub fn brush_points(center: Point, size: u32, shape: BrushShape) -> Vec<Point> {
     match shape {
         BrushShape::Custom => {
-            let brush = CUSTOM_BRUSH.read().map(|b| b.clone()).unwrap_or_default();
+            let brush = custom_brush();
             if brush.is_empty() {
                 return vec![center];
             }
             brush
                 .into_iter()
-                .map(|(x, y)| (center.0 + x, center.1 + y))
+                .map(|((x, y), _)| (center.0 + x, center.1 + y))
                 .collect()
         }
         BrushShape::Square => brush_square(center, size),

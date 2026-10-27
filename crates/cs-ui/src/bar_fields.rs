@@ -379,13 +379,14 @@ pub fn options<T: PartialEq + Copy>(
 
 /// El botón de la forma del pincel, como en el diseño: un `button` de 25×16 con la huella del
 /// pincel (la de `brush_points`, la misma que pinta) en el café oscuro de los íconos, a su tamaño
-/// hasta `BRUSH_ICON_MAX` (más grande se ve como el de 9). Un clic cambia entre redondo y
-/// cuadrado.
+/// hasta `BRUSH_ICON_MAX` (más grande se ve como el de 9); el personalizado, con sus colores si
+/// pinta con ellos (`colors`). Un clic pasa al redondo, al cuadrado y, si hay, al personalizado.
 pub fn brush_shape(
     ui: &mut Ui,
     look: BarLook,
     shape: &mut cs_raster::BrushShape,
     size: u32,
+    colors: bool,
 ) -> Response {
     use cs_raster::BrushShape;
     let (rect, _) = ui.allocate_exact_size(vec2(BRUSH_BUTTON_W, FIELD_HEIGHT), Sense::hover());
@@ -400,8 +401,17 @@ pub fn brush_shape(
         BrushShape::Custom => "Custom brush",
     };
     let id = ui.id().with("brush_shape");
-    let color = look.skin.colors().tab_text_dim;
-    let points = cs_raster::brush_points((0, 0), size.clamp(1, BRUSH_ICON_MAX), *shape);
+    let ink = look.skin.colors().tab_text_dim;
+    let points: Vec<((i32, i32), Color32)> = match shape {
+        BrushShape::Custom if colors => cs_raster::custom_brush()
+            .into_iter()
+            .map(|(p, c)| (p, crate::panels::to_color32(c)))
+            .collect(),
+        _ => cs_raster::brush_points((0, 0), size.clamp(1, BRUSH_ICON_MAX), *shape)
+            .into_iter()
+            .map(|p| (p, ink))
+            .collect(),
+    };
     let ppp = ui.ctx().pixels_per_point();
     let response = crate::pixel_draw::skin_button(
         ui,
@@ -417,8 +427,8 @@ pub fn brush_shape(
             // El personalizado puede ser más grande que el botón: lo que entra.
             points
                 .iter()
-                .filter(|&&(x, y)| x.abs() <= 10 && y.abs() <= 5)
-                .map(|&(x, y)| {
+                .filter(|&&((x, y), _)| x.abs() <= 10 && y.abs() <= 5)
+                .map(|&((x, y), color)| {
                     let at = center + vec2(x as f32, y as f32);
                     solid(Rect::from_min_size(at, Vec2::splat(1.0)), color, ppp)
                 })
@@ -426,13 +436,20 @@ pub fn brush_shape(
         },
     );
     if response.clicked() {
-        // Redondo y cuadrado; del personalizado (Edit → New Brush) vuelve al redondo.
-        *shape = match shape {
-            BrushShape::Round => BrushShape::Square,
-            BrushShape::Square | BrushShape::Custom => BrushShape::Round,
-        };
+        *shape = next_shape(*shape);
     }
     response
+}
+
+/// La forma que sigue al tocar el botón: redonda, cuadrada y, si hay uno (Edit → New Brush), el
+/// pincel personalizado.
+pub fn next_shape(shape: cs_raster::BrushShape) -> cs_raster::BrushShape {
+    use cs_raster::BrushShape;
+    match shape {
+        BrushShape::Round => BrushShape::Square,
+        BrushShape::Square if !cs_raster::custom_brush().is_empty() => BrushShape::Custom,
+        BrushShape::Square | BrushShape::Custom => BrushShape::Round,
+    }
 }
 
 /// El botón de la forma del pincel: su ancho, el píxel del centro de la huella (desde su esquina)

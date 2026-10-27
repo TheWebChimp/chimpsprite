@@ -13,7 +13,8 @@ impl Pencil {
         Self::default()
     }
 
-    fn output(&self, ctx: &ToolContext, color: PixelValue) -> ToolOutput {
+    /// El trazo con `color`; `image`: con los colores del pincel personalizado, si los lleva.
+    fn output(&self, ctx: &ToolContext, color: PixelValue, image: bool) -> ToolOutput {
         if self.path.is_empty() {
             return ToolOutput::default();
         }
@@ -22,6 +23,9 @@ impl Pencil {
         } else {
             self.path.clone()
         };
+        if image {
+            return ToolOutput::command(ctx.stamp_draw(&path, color));
+        }
         ToolOutput::command(ctx.draw(stamp(&path, ctx.brush_size, ctx.brush_shape), color))
     }
 }
@@ -41,13 +45,13 @@ impl Tool for Pencil {
     }
 
     fn release(&mut self, ctx: &ToolContext) -> ToolOutput {
-        let out = self.output(ctx, ctx.color);
+        let out = self.output(ctx, ctx.color, true);
         self.path.clear();
         out
     }
 
     fn preview(&self, ctx: &ToolContext) -> ToolOutput {
-        self.output(ctx, ctx.color)
+        self.output(ctx, ctx.color, true)
     }
 
     fn is_active(&self) -> bool {
@@ -83,7 +87,8 @@ impl Tool for Eraser {
     }
 
     fn preview(&self, ctx: &ToolContext) -> ToolOutput {
-        self.pencil.output(ctx, ctx.sprite.color_mode.transparent())
+        self.pencil
+            .output(ctx, ctx.sprite.color_mode.transparent(), false)
     }
 
     fn is_active(&self) -> bool {
