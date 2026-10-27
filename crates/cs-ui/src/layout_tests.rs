@@ -2442,6 +2442,53 @@ fn press_ctrl(h: &mut LayoutHarness, key: egui::Key) {
     }]);
 }
 
+#[test]
+fn the_edit_menu_is_aseprites() {
+    let mut h = two_tabs(Some(0));
+    open_menu(&mut h, "Edit");
+    let order = [
+        "Undo",
+        "Redo",
+        "Cut",
+        "Copy",
+        "Copy Merged",
+        "Paste",
+        "Paste Special",
+        "Delete",
+        "Fill",
+        "Stroke",
+        "Rotate",
+        "Flip Horizontal",
+        "Flip Vertical",
+        "Transform",
+        "Shift",
+        "New Artboard From Selection",
+        "Invert",
+        "Insert Text",
+    ];
+    let y = |label: &str| text_rect(&h, label).0.top();
+    for pair in order.windows(2) {
+        assert!(y(pair[0]) < y(pair[1]), "{} before {}", pair[0], pair[1]);
+    }
+}
+
+#[test]
+fn ctrl_alt_n_makes_an_artboard_from_the_selection_and_not_a_new_document() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let tabs = h.app.tabs.len();
+    let artboards = h.app.doc.editor.document.artboards.len();
+    h.app.doc.editor.select_all();
+    h.frame_with(vec![Event::Key {
+        key: egui::Key::N,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND | egui::Modifiers::ALT,
+    }]);
+    assert_eq!(h.app.tabs.len(), tabs, "no new document");
+    assert_eq!(h.app.doc.editor.document.artboards.len(), artboards + 1);
+}
+
 /// Un documento con el campo hex del editor de color con el foco (se necesita Pixel UI).
 fn typing_in_hex() -> LayoutHarness {
     let mut h = LayoutHarness::new(pixel_ui(), true);

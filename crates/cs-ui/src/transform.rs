@@ -477,6 +477,31 @@ impl Editor {
         true
     }
 
+    /// Edit → Rotate: gira lo seleccionado (sin selección, la capa entera) y lo deja flotando
+    /// como Flip.
+    pub fn rotate_content(&mut self, turn: crate::edit_ops::Turn) -> bool {
+        if !self.clip_layer_ok(true) {
+            return false;
+        }
+        if self.floating.is_none() && self.selection.is_none() {
+            self.select_all();
+        }
+        if !self.lift() {
+            return false;
+        }
+        self.stop();
+        self.transform_drag = None;
+        let Some(f) = self.floating.as_mut() else {
+            return false;
+        };
+        f.bbox.angle += turn.angle();
+        self.refresh_floating(false);
+        if !self.can_transform() {
+            self.commit_floating();
+        }
+        true
+    }
+
     /// Voltea la capa actual entera (todo el lienzo) en el frame actual.
     fn flip_layer(&mut self, horizontal: bool) -> bool {
         let sprite = self.sprite();

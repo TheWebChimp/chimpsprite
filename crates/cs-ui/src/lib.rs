@@ -16,6 +16,7 @@ mod demo;
 #[cfg(test)]
 mod dialog_tests;
 mod dock;
+mod edit_ops;
 mod editor;
 mod export_dialog;
 mod fg_bg;
@@ -782,7 +783,13 @@ impl ChimpApp {
             return;
         }
         let shortcut = |m, k| KeyboardShortcut::new(m, k);
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::N))) {
+        // Ctrl+Alt+N antes que Ctrl+N: egui deja pasar Alt de más.
+        let from_selection = shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::N);
+        if ctx.input_mut(|i| i.consume_shortcut(&from_selection)) {
+            if self.has_doc() {
+                self.new_artboard_from_selection();
+            }
+        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::N))) {
             self.new_document();
         }
         if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::O))) {
@@ -860,6 +867,15 @@ impl ChimpApp {
         if ctx.input_mut(|i| i.consume_shortcut(&inverse)) {
             self.doc.editor.invert_selection();
         }
+        // Después de Ctrl+Shift+I y Ctrl+Alt+I: egui deja pasar Shift y Alt de más.
+        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::I)))
+        {
+            self.doc.editor.invert_colors();
+        }
+        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::T)))
+        {
+            self.doc.editor.transform_selection();
+        }
         if self.doc.editor.is_painting() {
             return;
         }
@@ -874,7 +890,10 @@ impl ChimpApp {
         });
         let paste =
             ctx.input(|i| clipboard::paste_request(&i.events, i.modifiers, &mut self.pasted));
-        if copy {
+        // Ctrl+Shift+C también llega como Copy: es Copy Merged.
+        if copy && ctx.input(|i| i.modifiers.shift) {
+            self.copy_merged(ctx);
+        } else if copy {
             self.copy(ctx);
         } else if cut {
             self.cut(ctx);
@@ -982,6 +1001,160 @@ impl ChimpApp {
         }
     }
 
+    /// El menú Edit, como el de Aseprite.
+    fn edit_menu(&mut self, ui: &mut egui::Ui) {
+        let undo = menus::item("Undo", "Ctrl+Z");
+        if ui
+            .add_enabled(self.doc.editor.history.can_undo(), undo)
+            .clicked()
+        {
+            self.doc.editor.undo();
+        }
+        let redo = menus::item("Redo", "Ctrl+Y");
+        if ui
+            .add_enabled(self.doc.editor.history.can_redo(), redo)
+            .clicked()
+        {
+            self.doc.editor.redo();
+        }
+        menus::separator(ui);
+        let has_selection = self.doc.editor.selection.is_some();
+        // Sin selección, cortan y copian del timeline (frames o cels).
+        if ui.add(menus::item("Cut", "Ctrl+X")).clicked() {
+            self.cut(ui.ctx());
+        }
+        if ui.add(menus::item("Copy", "Ctrl+C")).clicked() {
+            self.copy(ui.ctx());
+        }
+        let merged = menus::item("Copy Merged", "Ctrl+Shift+C");
+        if ui.add_enabled(has_selection, merged).clicked() {
+            self.copy_merged(ui.ctx());
+        }
+        // En escritorio puede haber una imagen de otra app aunque no se haya copiado nada.
+        let can_paste = self.clipboard.is_some()
+            || self.timeline_clipboard.is_some()
+            || cfg!(not(target_arch = "wasm32"));
+        let paste = menus::item("Paste", "Ctrl+V");
+        if ui.add_enabled(can_paste, paste).clicked() {
+            self.paste(clipboard::PasteRequest::System {
+                new_artboard: false,
+            });
+        }
+        ui.add_enabled_ui(can_paste, |ui| {
+            menus::submenu(ui, "Paste Special", |ui| {
+                let as_artboard = menus::item("Paste as New Artboard", "Ctrl+Shift+V");
+                if ui.add(as_artboard).clicked() {
+                    self.paste(clipboard::PasteRequest::System { new_artboard: true });
+                    ui.close();
+                }
+                if ui.add(menus::plain("Paste as New Layer")).clicked() {
+                    self.paste_as_new_layer();
+                    ui.close();
+                }
+            });
+        });
+        let delete = menus::item("Delete", "Del");
+        if ui.add_enabled(has_selection, delete).clicked() {
+            self.doc.editor.clear_selection_content();
+        }
+        menus::separator(ui);
+        if ui
+            .add_enabled(has_selection, menus::item("Fill", "F"))
+            .clicked()
+        {
+            self.doc.editor.fill_selection();
+        }
+        if ui
+            .add_enabled(has_selection, menus::item("Stroke", "S"))
+            .clicked()
+        {
+            self.doc.editor.stroke_selection();
+        }
+        menus::separator(ui);
+        menus::submenu(ui, "Rotate", |ui| {
+            use edit_ops::Turn;
+            for (label, turn) in [
+                ("180°", Turn::Half),
+                ("90° CW", Turn::Clockwise),
+                ("90° CCW", Turn::CounterClockwise),
+            ] {
+                if ui.add(menus::plain(label)).clicked() {
+                    self.doc.editor.rotate_content(turn);
+                    ui.close();
+                }
+            }
+        });
+        if ui.add(menus::item("Flip Horizontal", "Shift+H")).clicked() {
+            self.doc.editor.flip(true);
+        }
+        if ui.add(menus::item("Flip Vertical", "Shift+V")).clicked() {
+            self.doc.editor.flip(false);
+        }
+        if ui.add(menus::item("Transform", "Ctrl+T")).clicked() {
+            self.doc.editor.transform_selection();
+        }
+        menus::submenu(ui, "Shift", |ui| {
+            for (label, dx, dy) in [
+                ("Left", -1, 0),
+                ("Right", 1, 0),
+                ("Up", 0, -1),
+                ("Down", 0, 1),
+            ] {
+                if ui.add(menus::plain(label)).clicked() {
+                    self.doc.editor.shift_content(dx, dy);
+                    ui.close();
+                }
+            }
+        });
+        menus::separator(ui);
+        let from_selection = menus::item("New Artboard From Selection", "Ctrl+Alt+N");
+        if ui.add_enabled(has_selection, from_selection).clicked() {
+            self.new_artboard_from_selection();
+        }
+        menus::separator(ui);
+        if ui.add(menus::item("Invert", "Ctrl+I")).clicked() {
+            self.doc.editor.invert_colors();
+        }
+        if ui.add(menus::plain("Insert Text")).clicked() {
+            self.doc.editor.set_tool(editor::ToolKind::Text);
+        }
+        if ui.add(menus::plain("New Note")).clicked() {
+            self.new_note();
+        }
+    }
+
+    /// Edit → Copy Merged: lo seleccionado con todas las capas visibles.
+    fn copy_merged(&mut self, ctx: &egui::Context) {
+        if let Some(clip) = self.doc.editor.copy_merged() {
+            self.clipboard = Some(clip);
+            self.paste_timeline = false;
+            ctx.copy_text(CLIPBOARD_MARKER.into());
+        }
+    }
+
+    /// Lo que pegaría Ctrl+V en el lienzo: una imagen de otra app o lo copiado aquí.
+    fn paste_source(&self) -> Option<clipboard::Clip> {
+        let sprite = self.doc.editor.sprite();
+        clipboard::system_image()
+            .map(|image| image.centered_in(sprite.width, sprite.height))
+            .or_else(|| self.clipboard.clone())
+    }
+
+    /// Edit → Paste Special → Paste as New Layer: en una capa nueva, arriba de la actual.
+    fn paste_as_new_layer(&mut self) {
+        if let Some(clip) = self.paste_source() {
+            self.doc.editor.add_layer(cs_core::LayerKind::Image);
+            self.doc.editor.paste(&clip);
+        }
+    }
+
+    /// Edit → New Artboard From Selection: un artboard nuevo con lo seleccionado de la capa.
+    fn new_artboard_from_selection(&mut self) {
+        if let Some(clip) = self.doc.editor.copy() {
+            self.doc.editor.paste_in_new_artboard(&clip);
+        }
+    }
+
     fn menu_bar(&mut self, ui: &mut egui::Ui) {
         let has_doc = self.has_doc();
         // Con Pixel UI, los menús del diseño: el menú empieza `MENU_TEXT_TOP` arriba del
@@ -1059,64 +1232,7 @@ impl ChimpApp {
             ui.add_enabled_ui(has_doc, |ui| {
                 menus::bar_menu(ui, look, "Sprite", |ui| self.sprite_menu(ui));
                 menus::bar_menu(ui, look, "View", |ui| self.view_menu(ui));
-                menus::bar_menu(ui, look, "Edit", |ui| {
-                    let undo = menus::item("Undo", "Ctrl+Z");
-                    if ui
-                        .add_enabled(self.doc.editor.history.can_undo(), undo)
-                        .clicked()
-                    {
-                        self.doc.editor.undo();
-                    }
-                    let redo = menus::item("Redo", "Ctrl+Y");
-                    if ui
-                        .add_enabled(self.doc.editor.history.can_redo(), redo)
-                        .clicked()
-                    {
-                        self.doc.editor.redo();
-                    }
-                    menus::separator(ui);
-                    let has_selection = self.doc.editor.selection.is_some();
-                    // Sin selección, cortan y copian del timeline (frames o cels).
-                    if ui.add(menus::item("Cut", "Ctrl+X")).clicked() {
-                        self.cut(ui.ctx());
-                    }
-                    if ui.add(menus::item("Copy", "Ctrl+C")).clicked() {
-                        self.copy(ui.ctx());
-                    }
-                    // En escritorio puede haber una imagen de otra app aunque no se haya copiado nada.
-                    let can_paste = self.clipboard.is_some()
-                        || self.timeline_clipboard.is_some()
-                        || cfg!(not(target_arch = "wasm32"));
-                    let paste = menus::item("Paste", "Ctrl+V");
-                    if ui.add_enabled(can_paste, paste).clicked() {
-                        self.paste(clipboard::PasteRequest::System {
-                            new_artboard: false,
-                        });
-                    }
-                    let as_artboard = menus::item("Paste as New Artboard", "Ctrl+Shift+V");
-                    if ui.add_enabled(can_paste, as_artboard).clicked() {
-                        self.paste(clipboard::PasteRequest::System { new_artboard: true });
-                    }
-                    let clear = menus::item("Clear", "Del");
-                    if ui.add_enabled(has_selection, clear).clicked() {
-                        self.doc.editor.clear_selection_content();
-                    }
-                    let stroke = menus::item("Stroke", "S");
-                    if ui.add_enabled(has_selection, stroke).clicked() {
-                        self.doc.editor.stroke_selection();
-                    }
-                    menus::separator(ui);
-                    if ui.add(menus::item("Flip Horizontal", "Shift+H")).clicked() {
-                        self.doc.editor.flip(true);
-                    }
-                    if ui.add(menus::item("Flip Vertical", "Shift+V")).clicked() {
-                        self.doc.editor.flip(false);
-                    }
-                    menus::separator(ui);
-                    if ui.add(menus::plain("New Note")).clicked() {
-                        self.new_note();
-                    }
-                });
+                menus::bar_menu(ui, look, "Edit", |ui| self.edit_menu(ui));
                 menus::bar_menu(ui, look, "Layer", |ui| {
                     if ui.add(menus::plain("New Tilemap Layer")).clicked() {
                         self.new_tilemap =
@@ -1688,8 +1804,11 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
         Key::ArrowUp => editor.step_layer(true),
         Key::ArrowDown => editor.step_layer(false),
         Key::F3 => editor.onion_enabled = !editor.onion_enabled,
-        // S (sin Shift, que es el spray): Edit → Stroke.
+        // S (sin Shift, que es el spray): Edit → Stroke; F, Edit → Fill.
         Key::S if !shift => editor.stroke_selection(),
+        Key::F if !shift => {
+            editor.fill_selection();
+        }
         // En modo Tiles no hay color secundario: X e Y voltean el tile del pincel.
         Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
         Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
