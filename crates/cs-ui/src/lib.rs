@@ -1067,6 +1067,71 @@ impl ChimpApp {
         }
     }
 
+    /// El menú Frame, como el de Aseprite.
+    fn frame_menu(&mut self, ui: &mut egui::Ui) {
+        let editor = &mut self.doc.editor;
+        let last = editor.frame_count() - 1;
+        if ui.add(menus::item("New Frame", "Alt+N")).clicked() {
+            editor.duplicate_frame();
+        }
+        if ui.add(menus::plain("New Empty Frame")).clicked() {
+            editor.insert_empty_frame();
+        }
+        if ui
+            .add_enabled(last > 0, menus::plain("Delete Frame"))
+            .clicked()
+        {
+            editor.remove_frame();
+        }
+        menus::separator(ui);
+        if ui.add(menus::plain("New Tag")).clicked() {
+            editor.add_tag();
+        }
+        menus::separator(ui);
+        if ui.add(menus::plain("First Frame")).clicked() {
+            editor.set_frame(0);
+        }
+        if ui.add(menus::item("Previous Frame", ",")).clicked() {
+            editor.prev_frame();
+        }
+        if ui.add(menus::item("Next Frame", ".")).clicked() {
+            editor.next_frame();
+        }
+        if ui.add(menus::plain("Last Frame")).clicked() {
+            editor.set_frame(last);
+        }
+        let play = if editor.playing {
+            "Stop Animation"
+        } else {
+            "Play Animation"
+        };
+        if ui.add(menus::item(play, "Enter")).clicked() {
+            editor.toggle_play();
+        }
+        menus::separator(ui);
+        ui.add(menus::check(&mut editor.onion_enabled, "Onion Skin"))
+            .tip("F3");
+    }
+
+    /// El menú Help.
+    fn help_menu(&mut self, ui: &mut egui::Ui) {
+        let shortcuts = menus::item("Keyboard Shortcuts…", "Ctrl+Alt+Shift+K");
+        if ui.add(shortcuts).clicked() {
+            self.shortcuts = Some(String::new());
+        }
+        menus::separator(ui);
+        if ui.add(menus::plain("About ChimpSprite")).clicked() {
+            let version = format!("ChimpSprite {}", env!("CARGO_PKG_VERSION"));
+            self.show_message(
+                "About ChimpSprite",
+                format!(
+                    "{version}
+A pixel art editor."
+                ),
+            );
+        }
+    }
+
     /// El menú Edit, como el de Aseprite.
     fn edit_menu(&mut self, ui: &mut egui::Ui) {
         let undo = menus::item("Undo", "Ctrl+Z");
@@ -1414,9 +1479,8 @@ impl ChimpApp {
                 }
             });
             ui.add_enabled_ui(has_doc, |ui| {
-                menus::bar_menu(ui, look, "Sprite", |ui| self.sprite_menu(ui));
-                menus::bar_menu(ui, look, "View", |ui| self.view_menu(ui));
                 menus::bar_menu(ui, look, "Edit", |ui| self.edit_menu(ui));
+                menus::bar_menu(ui, look, "Sprite", |ui| self.sprite_menu(ui));
                 menus::bar_menu(ui, look, "Layer", |ui| {
                     if ui.add(menus::plain("New Tilemap Layer")).clicked() {
                         self.new_tilemap =
@@ -1450,6 +1514,7 @@ impl ChimpApp {
                     menus::separator(ui);
                     timeline::mask_menu(ui, &mut self.doc.editor, layer);
                 });
+                menus::bar_menu(ui, look, "Frame", |ui| self.frame_menu(ui));
                 menus::bar_menu(ui, look, "Select", |ui| {
                     let editor = &mut self.doc.editor;
                     let has_selection = editor.selection.is_some();
@@ -1472,7 +1537,9 @@ impl ChimpApp {
                         editor.invert_selection();
                     }
                 });
+                menus::bar_menu(ui, look, "View", |ui| self.view_menu(ui));
             });
+            menus::bar_menu(ui, look, "Help", |ui| self.help_menu(ui));
         });
     }
 

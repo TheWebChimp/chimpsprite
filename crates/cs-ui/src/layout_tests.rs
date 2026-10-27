@@ -1165,7 +1165,9 @@ fn with_pixel_ui_the_menu_has_the_mockup_color_and_spacing() {
         "the mockup's menu text"
     );
     let menu = h.panel("menu");
-    let titles = ["File", "Sprite", "View", "Edit", "Layer", "Select"];
+    let titles = [
+        "File", "Edit", "Sprite", "Layer", "Frame", "Select", "View", "Help",
+    ];
     let rects: Vec<Rect> = titles
         .iter()
         .map(|t| {
@@ -2463,6 +2465,24 @@ fn pointing_at_colors_shows_them_in_a_tab_by_the_picker() {
     h.frame_with(vec![Event::PointerMoved(h.node("#3").center())]);
     h.frame();
     assert!(badge(&h), "over a color of the palette");
+}
+
+#[test]
+fn with_a_menu_open_hovering_another_title_switches_to_it() {
+    let mut h = two_tabs(Some(0));
+    let has = |h: &LayoutHarness, t: &str| h.texts.iter().any(|(s, _)| s == t);
+    // Sin menú abierto, pasar por un título no abre nada.
+    h.frame_with(vec![Event::PointerMoved(h.button("Edit").center())]);
+    h.frame();
+    assert!(!has(&h, "Copy Merged"), "nothing open");
+    open_menu(&mut h, "File");
+    assert!(has(&h, "Export"), "File open");
+    h.frame_with(vec![Event::PointerMoved(h.button("Edit").center())]);
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(has(&h, "Copy Merged"), "Edit opened by hovering");
+    assert!(!has(&h, "Export"), "File closed");
 }
 
 #[test]

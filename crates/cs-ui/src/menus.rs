@@ -269,11 +269,26 @@ pub(crate) fn bar_menu<R>(
             UiStackInfo::new(UiKind::Menu)
                 .with_tag_value(menu::MenuConfig::MENU_CONFIG_TAG, config),
         );
+    // Con otro menú de la barra abierto, pasar por este lo abre (y el otro se cierra), como en
+    // las barras de menú de siempre.
+    let open_id = egui::Id::new("bar_menu_open");
+    let other_open = ui
+        .ctx()
+        .data(|d| d.get_temp::<egui::Id>(open_id))
+        .is_some_and(|id| id != response.id);
     // Desarrollo: el menú `CHIMPSPRITE_DEMO_MENU` abierto, para capturas.
-    if std::env::var("CHIMPSPRITE_DEMO_MENU").is_ok_and(|m| m == title) {
+    let demo = std::env::var("CHIMPSPRITE_DEMO_MENU").is_ok_and(|m| m == title);
+    if (other_open && response.hovered()) || demo {
         popup = popup.open_memory(Some(egui::SetOpenCommand::Bool(true)));
     }
     let inner = popup.show(|ui| panel(ui, look, Some(title_box), content));
+    ui.ctx().data_mut(|d| {
+        if inner.is_some() {
+            d.insert_temp(open_id, response.id);
+        } else if d.get_temp::<egui::Id>(open_id) == Some(response.id) {
+            d.remove::<egui::Id>(open_id);
+        }
+    });
     let back_shapes = if inner.is_some() {
         box_shapes(look, title_box, ppp)
     } else {
