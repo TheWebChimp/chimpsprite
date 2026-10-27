@@ -6,6 +6,21 @@ use cs_raster::{ellipse_filled, ellipse_outline};
 
 use crate::editor::Editor;
 
+/// Una variable de entorno de desarrollo (`CHIMPSPRITE_DEMO_*`), leída una sola vez: las que se
+/// consultan en cada frame no van al sistema cada vez.
+pub(crate) fn dev_var(name: &'static str) -> Option<&'static str> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static VARS: OnceLock<Mutex<HashMap<&'static str, Option<&'static str>>>> = OnceLock::new();
+    let vars = VARS.get_or_init(Default::default);
+    let mut vars = vars.lock().unwrap_or_else(|e| e.into_inner());
+    *vars.entry(name).or_insert_with(|| {
+        std::env::var(name)
+            .ok()
+            .map(|v| &*Box::leak(v.into_boxed_str()))
+    })
+}
+
 /// Documento de demo: un chimpancé y un plátano en artboards separados.
 pub fn editor() -> Editor {
     let mut editor = Editor::with_sprite(Sprite::new(64, 64, ColorMode::Rgba));

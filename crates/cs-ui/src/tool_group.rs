@@ -147,7 +147,7 @@ fn variants_popup(response: &Response, hold: Hold, add_contents: impl FnOnce(&mu
 /// Desarrollo: `CHIMPSPRITE_DEMO_TOOL_MENU=<grupo>` abre el menú de ese grupo al arrancar (una
 /// vez), para capturas.
 fn demo_open(ui: &Ui, group: usize) -> Option<egui::SetOpenCommand> {
-    let wanted = std::env::var("CHIMPSPRITE_DEMO_TOOL_MENU").ok()?;
+    let wanted = crate::demo::dev_var("CHIMPSPRITE_DEMO_TOOL_MENU")?;
     if wanted.trim().parse::<usize>().ok()? != group {
         return None;
     }

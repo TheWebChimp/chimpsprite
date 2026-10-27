@@ -272,7 +272,7 @@ pub(crate) fn bar_menu<R>(
         .data(|d| d.get_temp::<egui::Id>(open_id))
         .is_some_and(|id| id != response.id);
     // Desarrollo: el menú `CHIMPSPRITE_DEMO_MENU` abierto, para capturas.
-    let demo = std::env::var("CHIMPSPRITE_DEMO_MENU").is_ok_and(|m| m == title);
+    let demo = crate::demo::dev_var("CHIMPSPRITE_DEMO_MENU") == Some(title);
     if (other_open && response.hovered()) || demo {
         popup = popup.open_memory(Some(egui::SetOpenCommand::Bool(true)));
     }

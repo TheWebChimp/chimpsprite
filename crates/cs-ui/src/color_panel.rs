@@ -925,7 +925,7 @@ pub fn picker(ui: &mut Ui, skin: &Skin, id: egui::Id, current: Rgba) -> Rgba {
         .map(rgba_of)
         .or_else(|| ui.data_mut(|d| d.remove_temp::<Rgba>(hover_id())))
         // Desarrollo: la pestañita con el color actual, para capturas.
-        .or_else(|| std::env::var_os("CHIMPSPRITE_DEMO_HOVER_COLOR").map(|_| color));
+        .or_else(|| crate::demo::dev_var("CHIMPSPRITE_DEMO_HOVER_COLOR").map(|_| color));
     if let Some(pointed) = pointed {
         ui.ctx()
             .layer_painter(egui::LayerId::new(
