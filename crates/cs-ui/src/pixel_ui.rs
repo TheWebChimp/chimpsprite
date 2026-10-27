@@ -348,11 +348,17 @@ fn close_cross(rect: Rect, color: Color32, pixels_per_point: f32) -> Vec<Shape> 
 
 /// Tamaño del botón `label` ajustado al texto: 4 px de margen a cada lado del área del centro,
 /// sin bajar del tamaño de la pieza.
+/// El texto de un botón como se muestra: "…" con los puntos de la fuente pixel (si no lo tiene,
+/// el de la fuente de respaldo no es pixel art), como en los menús.
+fn shown_label(label: &str) -> String {
+    label.replace('…', tab_bar::ellipsis())
+}
+
 fn button_size(ui: &Ui, skin: &Skin, label: &str) -> Vec2 {
     let font = TextStyle::Button.resolve(ui.style());
     let text = ui
         .painter()
-        .layout_no_wrap(label.to_owned(), font, skin.colors().text)
+        .layout_no_wrap(shown_label(label), font, skin.colors().text)
         .size();
     let base = skin.piece(BUTTON_PIECE, WidgetState::Normal);
     let [left, _, right, _] = base.map_or(FALLBACK_BUTTON, borders);
@@ -437,7 +443,7 @@ fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response
     let font = TextStyle::Button.resolve(ui.style());
     let galley = ui
         .painter()
-        .layout_no_wrap(label.to_owned(), font, colors.text);
+        .layout_no_wrap(shown_label(label), font, colors.text);
     let base = skin.piece(BUTTON_PIECE, WidgetState::Normal);
     let [left, top, right, bottom] = base.map_or(FALLBACK_BUTTON, borders);
     let (slot, response) = ui.allocate_exact_size(

@@ -54,7 +54,31 @@ pub fn show(
     out
 }
 
+/// El título de una sección, con el separador grabado arriba (de punta a punta de la ventana),
+/// salvo en la primera.
 fn section(ui: &mut Ui, skin: Option<&Skin>, title: &str) {
+    if title != "General" {
+        ui.add_space(4.0);
+        match skin {
+            Some(skin) => {
+                let ppp = ui.ctx().pixels_per_point();
+                let (rect, _) = ui.allocate_exact_size(
+                    egui::vec2(ui.available_width(), crate::pixel_ui::ETCHED_SIZE),
+                    egui::Sense::hover(),
+                );
+                ui.painter().add(crate::pixel_ui::etched_hline(
+                    rect.expand2(egui::vec2(crate::pixel_ui::PADDING, 0.0))
+                        .x_range(),
+                    rect.top().round(),
+                    skin.colors(),
+                    ppp,
+                ));
+            }
+            None => {
+                ui.separator();
+            }
+        }
+    }
     ui.add_space(4.0);
     let dim = skin.map_or(ui.visuals().weak_text_color(), |s| s.colors().text_dim);
     ui.label(RichText::new(title).color(dim));
