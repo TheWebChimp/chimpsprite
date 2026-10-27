@@ -277,6 +277,44 @@ impl ChimpApp {
     }
 
     pub(crate) fn save_as(&mut self) -> bool {
+        match self.choose_save_target() {
+            Some(target) => self.save_to(target),
+            None => false,
+        }
+    }
+
+    /// File → Save Copy As: escribe el documento en otro archivo sin que el abierto pase a ser
+    /// ese (sigue con su nombre y sus cambios sin guardar).
+    pub(crate) fn save_copy_as(&mut self) -> bool {
+        match self.choose_save_target() {
+            Some(target) => self.write_copy(target),
+            None => false,
+        }
+    }
+
+    /// Escribe una copia del documento en `target` (ver `save_copy_as`).
+    fn write_copy(&mut self, target: SaveTarget) -> bool {
+        let result = save_bytes(&mut self.doc.editor, &target.file_name).and_then(|bytes| {
+            self.platform
+                .write(&target, &bytes)
+                .map_err(FileError::Platform)
+        });
+        match result {
+            Ok(()) => {
+                if let Some(path) = target.path() {
+                    self.recent.add(&path);
+                }
+                true
+            }
+            Err(e) => {
+                self.show_message("Could not save the copy", e.to_string());
+                false
+            }
+        }
+    }
+
+    /// Pregunta dónde guardar (`.chimp`, o `.aseprite` si se abrió de uno con un solo artboard).
+    fn choose_save_target(&mut self) -> Option<SaveTarget> {
         let multiple = self.doc.editor.document.artboards.len() > 1;
         let aseprite =
             files::kind_of(&self.doc.location.name) == Some(FileKind::Aseprite) && !multiple;
@@ -297,13 +335,8 @@ impl ChimpApp {
             extensions: &["aseprite", "ase"],
         };
         let filters = if aseprite { [ase, chimp] } else { [chimp, ase] };
-        match self
-            .platform
+        self.platform
             .choose_save(&format!("{stem}.{ext}"), &filters)
-        {
-            Some(target) => self.save_to(target),
-            None => false,
-        }
     }
 
     fn save_to(&mut self, target: SaveTarget) -> bool {
@@ -921,6 +954,31 @@ mod tests {
         let pasted = s.cel(LayerId(1), 0).unwrap().image;
         let imported = s.cel(top, 0).unwrap().image;
         assert_ne!(pasted, imported, "each cel has its own image");
+    }
+
+    #[test]
+    #[cfg(not(target_arch = "wasm32"))]
+    fn save_copy_as_writes_the_file_and_keeps_the_open_document_as_it_was() {
+        let palettes = PaletteLibrary::new(Box::new(NoPresets));
+        let mut app = ChimpApp::with_parts(Default::default(), ViewSettings::default(), palettes);
+        app.new_document();
+        app.doc.editor.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, PixelValue::Rgba(Rgba::rgb(255, 0, 0)))],
+        });
+        let name = app.doc.location.name.clone();
+        let saved = app.doc.saved_version;
+        let dir = std::env::temp_dir().join(format!("chimpsprite-copy-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("copy.chimp");
+        let target = SaveTarget::from_path(&path).unwrap();
+        assert!(app.write_copy(target));
+        assert!(path.exists());
+        assert_eq!(app.doc.location.name, name, "still the same document");
+        assert_eq!(app.doc.saved_version, saved, "still unsaved");
+        assert_eq!(app.recent.files().first(), Some(&path), "in Open Recent");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

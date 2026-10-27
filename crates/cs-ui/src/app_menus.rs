@@ -3,6 +3,36 @@
 use crate::*;
 
 impl ChimpApp {
+    /// File → Open Recent: los archivos recientes (el que ya no existe se quita de la lista).
+    #[cfg(not(target_arch = "wasm32"))]
+    fn open_recent_menu(&mut self, ui: &mut egui::Ui) {
+        let files = self.recent.files().to_vec();
+        ui.add_enabled_ui(!files.is_empty(), |ui| {
+            menus::submenu(ui, "Open Recent", |ui| {
+                for path in files {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    if ui
+                        .add(menus::plain(&name))
+                        .on_hover_text(path.display().to_string())
+                        .clicked()
+                    {
+                        if path.exists() {
+                            self.platform.open_path(&path, platform::OpenPurpose::Open);
+                        } else {
+                            self.recent.remove(&path);
+                            self.show_message("File not found", path.display().to_string());
+                        }
+                        ui.close();
+                    }
+                }
+            });
+        });
+    }
+
     /// El menú Sprite, como el de Aseprite.
     fn sprite_menu(&mut self, ui: &mut egui::Ui) {
         use cs_commands::sprite_ops::{self, Rotation};
@@ -611,6 +641,8 @@ A pixel art editor."
                 {
                     self.open_dialog(&ctx);
                 }
+                #[cfg(not(target_arch = "wasm32"))]
+                self.open_recent_menu(ui);
                 menus::separator(ui);
                 let (save, save_as) = if self.platform.saves_by_download() {
                     ("Save (download)", "Save As (download)")
@@ -634,6 +666,13 @@ A pixel art editor."
                     .clicked()
                 {
                     self.save_as();
+                }
+                if !self.platform.saves_by_download()
+                    && ui
+                        .add_enabled(has_doc, menus::plain("Save Copy As…"))
+                        .clicked()
+                {
+                    self.save_copy_as();
                 }
                 let close = item(
                     "Close",
