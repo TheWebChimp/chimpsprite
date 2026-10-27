@@ -932,7 +932,7 @@ pub fn picker(ui: &mut Ui, skin: &Skin, id: egui::Id, current: Rgba) -> Rgba {
                 egui::Order::Foreground,
                 id.with("hover"),
             ))
-            .extend(hover_badge(sv_box, pointed, ppp));
+            .extend(hover_badge(sv_box, pointed, &colors, ppp));
     }
     color
 }
@@ -942,16 +942,12 @@ fn hover_id() -> egui::Id {
     egui::Id::new("picker_hover_color")
 }
 
-/// Los colores de la pestañita, los del diseño: el contorno claro de la caja, el panel y el
-/// borde oscuro.
-const BADGE_ETCH: Color32 = Color32::from_rgb(189, 164, 153);
-const BADGE_PANEL: Color32 = Color32::from_rgb(221, 206, 191);
-const BADGE_BORDER: Color32 = Color32::from_rgb(89, 77, 77);
-
 /// La pestañita con el color que tiene el puntero (como en el diseño): pegada a la izquierda de
 /// la caja del cuadro S/V, arriba, con su mismo contorno; ahí la caja se abre hacia ella. Adentro,
 /// el color en un cuadro de 11×11 con borde redondeado (sobre el damero si es transparente).
-fn hover_badge(sv_box: Rect, color: Rgba, ppp: f32) -> Vec<Shape> {
+fn hover_badge(sv_box: Rect, color: Rgba, colors: &SkinColors, ppp: f32) -> Vec<Shape> {
+    // El contorno claro de la caja, el panel y el borde oscuro de los controles.
+    let (etch, panel, border) = (colors.canvas, colors.background, colors.control_border);
     let o = sv_box.min - vec2(15.0, 0.0);
     let px = |x: f32, y: f32, w: f32, h: f32| {
         Rect::from_min_size(o + vec2(x, y), vec2(w, h)).round_to_pixels(ppp)
@@ -960,19 +956,19 @@ fn hover_badge(sv_box: Rect, color: Rgba, ppp: f32) -> Vec<Shape> {
     for (rect, c) in [
         // El fondo y, a la derecha, la caja abierta (su línea y el pixel de su esquina
         // redondeada, del color del panel).
-        (px(1.0, 1.0, 15.0, 15.0), BADGE_PANEL),
-        (px(16.0, 1.0, 1.0, 1.0), BADGE_PANEL),
+        (px(1.0, 1.0, 15.0, 15.0), panel),
+        (px(16.0, 1.0, 1.0, 1.0), panel),
         // El contorno claro, redondeado; arriba sigue recto hasta la línea de la caja.
-        (px(2.0, 0.0, 15.0, 1.0), BADGE_ETCH),
-        (px(1.0, 1.0, 1.0, 1.0), BADGE_ETCH),
-        (px(0.0, 2.0, 1.0, 13.0), BADGE_ETCH),
-        (px(1.0, 15.0, 1.0, 1.0), BADGE_ETCH),
-        (px(2.0, 16.0, 14.0, 1.0), BADGE_ETCH),
+        (px(2.0, 0.0, 15.0, 1.0), etch),
+        (px(1.0, 1.0, 1.0, 1.0), etch),
+        (px(0.0, 2.0, 1.0, 13.0), etch),
+        (px(1.0, 15.0, 1.0, 1.0), etch),
+        (px(2.0, 16.0, 14.0, 1.0), etch),
         // El borde oscuro, redondeado.
-        (px(3.0, 2.0, 11.0, 1.0), BADGE_BORDER),
-        (px(2.0, 3.0, 1.0, 11.0), BADGE_BORDER),
-        (px(14.0, 3.0, 1.0, 11.0), BADGE_BORDER),
-        (px(3.0, 14.0, 11.0, 1.0), BADGE_BORDER),
+        (px(3.0, 2.0, 11.0, 1.0), border),
+        (px(2.0, 3.0, 1.0, 11.0), border),
+        (px(14.0, 3.0, 1.0, 11.0), border),
+        (px(3.0, 14.0, 11.0, 1.0), border),
     ] {
         mesh.add_colored_rect(rect, c);
     }

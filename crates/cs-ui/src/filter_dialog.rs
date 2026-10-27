@@ -324,7 +324,7 @@ fn swatch(ui: &mut Ui, color: Rgba, editing: bool) -> egui::Response {
     let border = if editing {
         crate::theme::ACCENT
     } else {
-        Color32::from_rgb(89, 77, 77)
+        crate::pixel_ui::control_border(ui.ctx())
     };
     painter.rect_stroke(rect, 0.0, Stroke::new(1.0, border), StrokeKind::Inside);
     response

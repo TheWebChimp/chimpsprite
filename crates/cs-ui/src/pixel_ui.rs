@@ -907,6 +907,11 @@ pub fn frame_skin(ctx: &egui::Context) -> Option<std::sync::Arc<Skin>> {
     ctx.data(|d| d.get_temp::<std::sync::Arc<Skin>>(frame_skin_id()))
 }
 
+/// El borde oscuro de los controles de este frame: el del skin o, sin Pixel UI, el del tema.
+pub fn control_border(ctx: &egui::Context) -> Color32 {
+    frame_skin(ctx).map_or(crate::theme::CANVAS_BORDER, |s| s.colors().control_border)
+}
+
 /// Con Pixel UI (`skin`), los widgets de este frame usan el skin (el globo, los botones, el
 /// scroll y los campos del diseño); sin él, los de egui.
 pub fn set_bubble(ctx: &egui::Context, skin: Option<std::sync::Arc<Skin>>) {

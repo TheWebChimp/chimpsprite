@@ -1114,16 +1114,12 @@ fn search_form(
 #[cfg(not(target_arch = "wasm32"))]
 const COUNT_BORDER: egui::Color32 = egui::Color32::from_rgb(136, 110, 106);
 #[cfg(not(target_arch = "wasm32"))]
-const COUNT_SHADE_OFF: egui::Color32 = egui::Color32::from_rgb(221, 206, 191);
-#[cfg(not(target_arch = "wasm32"))]
 const COUNT_LIGHT: egui::Color32 = egui::Color32::from_rgb(241, 235, 219);
 #[cfg(not(target_arch = "wasm32"))]
 const COUNT_TEXT_OFF: egui::Color32 = egui::Color32::from_rgb(101, 73, 86);
 /// Prendido: la sombra de abajo, la división con el combo y el brillo de la esquina.
 #[cfg(not(target_arch = "wasm32"))]
 const COUNT_SHADE_ON: egui::Color32 = egui::Color32::from_rgb(230, 231, 240);
-#[cfg(not(target_arch = "wasm32"))]
-const COUNT_DIVIDER: egui::Color32 = egui::Color32::from_rgb(189, 164, 153);
 #[cfg(not(target_arch = "wasm32"))]
 const COUNT_SHINE_ON: egui::Color32 = egui::Color32::from_rgb(236, 235, 231);
 /// El brillo de arriba a la derecha de los campos: desde el borde derecho, fila y ancho.
@@ -1181,7 +1177,7 @@ fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool, combo: egui::R
                 t + 1.0,
                 combo.right(),
                 b - 2.0,
-                COUNT_DIVIDER,
+                skin.colors().canvas,
             ),
         ];
         for (dx, dy, w) in COUNT_SHINE {
@@ -1230,7 +1226,7 @@ fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool, combo: egui::R
         px(l, t + 1.0, r - 1.0, b - 3.0, skin.colors().panel),
         px(l, t, r - 1.0, t + 1.0, COUNT_BORDER),
         px(r - 1.0, t + 1.0, r, b - 2.0, COUNT_BORDER),
-        px(l, b - 3.0, r - 1.0, b - 2.0, COUNT_SHADE_OFF),
+        px(l, b - 3.0, r - 1.0, b - 2.0, skin.colors().background),
         px(l, b - 2.0, r - 1.0, b - 1.0, COUNT_BORDER),
         px(r - 1.0, b - 2.0, r, b - 1.0, COUNT_LIGHT),
         px(l, b - 1.0, r - 1.0, b, COUNT_LIGHT),
@@ -1272,8 +1268,7 @@ fn start_search(ctx: &egui::Context, tab: &mut LospecTab, requests: &mut LospecR
     });
 }
 
-/// Los colores del diseño (frame 8): el borde de la tira de colores y lo chico del autor.
-const SWATCH_BORDER: egui::Color32 = egui::Color32::from_rgb(189, 164, 153);
+/// El alto de la tira de colores.
 const SWATCH: f32 = 16.0;
 /// El paginador de ejemplos (◀ 1/5 ▶): sus tres piezas.
 #[cfg(not(target_arch = "wasm32"))]
@@ -1447,10 +1442,12 @@ fn swatches(ui: &mut egui::Ui, palette: &Palette, room: f32) {
         shapes.push(egui::Shape::rect_filled(r.round_to_pixels(ppp), 0.0, color));
     };
     // El borde de cada bloque sin sus esquinas; donde se juntan, uno tapa las del otro.
+    let border =
+        pixel_ui::frame_skin(ui.ctx()).map_or(crate::theme::CANVAS_BORDER, |s| s.colors().canvas);
     for b in &blocks {
         let outer = b.expand(2.0);
-        fill(outer.shrink2(egui::vec2(1.0, 0.0)), SWATCH_BORDER);
-        fill(outer.shrink2(egui::vec2(0.0, 1.0)), SWATCH_BORDER);
+        fill(outer.shrink2(egui::vec2(1.0, 0.0)), border);
+        fill(outer.shrink2(egui::vec2(0.0, 1.0)), border);
     }
     for b in &blocks {
         fill(b.expand(1.0), egui::Color32::WHITE);

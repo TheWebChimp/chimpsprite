@@ -243,7 +243,7 @@ fn range_outline(ui: &egui::Ui, editor: &Editor, state: &TimelineState, grid: Gr
     let first = grid.cell_rect(row(top), frame(a));
     let last = grid.cell_rect(row(bottom), frame(b));
     let painter = ui.painter();
-    if grid.skin.is_none() {
+    let Some(skin) = grid.skin else {
         let outline = Rect::from_min_max(first.min, last.max);
         painter.rect_stroke(
             outline,
@@ -257,7 +257,7 @@ fn range_outline(ui: &egui::Ui, editor: &Editor, state: &TimelineState, grid: Gr
     // celda (al final de su contenido).
     let (first, last) = (pixel::content(first), pixel::content(last));
     let line = Rect::from_min_max(first.min - vec2(2.0, 2.0), last.max + vec2(1.0, 1.0));
-    let dark = RANGE_DARK;
+    let dark = skin.colors().cel_range;
     let ppp = ui.ctx().pixels_per_point();
     let mut mesh = egui::Mesh::default();
     for (rect, color) in [
@@ -274,9 +274,6 @@ fn range_outline(ui: &egui::Ui, editor: &Editor, state: &TimelineState, grid: Gr
     }
     painter.add(egui::Shape::mesh(mesh));
 }
-
-/// La línea oscura a cada lado del contorno del rango, la del diseño.
-const RANGE_DARK: Color32 = Color32::from_rgb(96, 49, 57);
 
 /// Los cuatro lados de 1 px de `rect` (por dentro).
 fn frame_sides(rect: Rect) -> [Rect; 4] {
@@ -538,22 +535,19 @@ fn tag_menu(ui: &mut egui::Ui, editor: &Editor, index: usize, tag: &Tag) -> Opti
     ui.horizontal(|ui| {
         ui.label("Color");
         // Los colores de los tags, en cuadritos como los de la paleta.
+        let dark = crate::pixel_ui::control_border(ui.ctx());
         for color in TAG_COLORS {
             let (rect, response) = ui.allocate_exact_size(vec2(11.0, 11.0), Sense::click());
             let painter = ui.painter();
             painter.rect_filled(rect, 0.0, to_color32(color));
             let chosen = edited.color == color;
-            let border = if chosen {
-                Color32::WHITE
-            } else {
-                Color32::from_rgb(89, 77, 77)
-            };
+            let border = if chosen { Color32::WHITE } else { dark };
             painter.rect_stroke(rect, 0.0, Stroke::new(1.0, border), StrokeKind::Inside);
             if chosen {
                 painter.rect_stroke(
                     rect.expand(1.0),
                     0.0,
-                    Stroke::new(1.0, Color32::from_rgb(89, 77, 77)),
+                    Stroke::new(1.0, dark),
                     StrokeKind::Inside,
                 );
             }

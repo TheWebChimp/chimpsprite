@@ -142,11 +142,10 @@ impl ExampleCache {
 /// El marco de los ejemplos: 1 px blanco alrededor y la sombra debajo (como en el diseño).
 const FRAME: egui::Color32 = egui::Color32::WHITE;
 const FRAME_SHADOW: egui::Color32 = egui::Color32::from_rgb(136, 110, 106);
-/// Las piezas del paginador (◀ 1/5 ▶) y el color de su texto.
+/// Las piezas del paginador (◀ 1/5 ▶).
 const PAGER_PREV: &str = "lospec.pager.prev";
 const PAGER_FIELD: &str = "lospec.pager.field";
 const PAGER_NEXT: &str = "lospec.pager.next";
-const PAGER_TEXT: egui::Color32 = egui::Color32::from_rgb(89, 77, 77);
 
 /// El ejemplo actual a todo el ancho, en su marco (o un hueco mientras carga). Si falla, nada.
 pub fn image(ui: &mut egui::Ui, p: &LospecPalette, cache: &mut ExampleCache, now: f64) {
@@ -220,12 +219,13 @@ pub fn pager(ui: &mut egui::Ui, p: &LospecPalette, cache: &mut ExampleCache) {
             for (piece, at) in [(&prev, prev_at), (&field, field_at), (&next_piece, next_at)] {
                 shapes.extend(crate::pixel_ui::piece_shapes(piece, at, ppp));
             }
-            let galley = crate::menus::galley(ui, &text, PAGER_TEXT);
+            let ink = crate::pixel_ui::control_border(ui.ctx());
+            let galley = crate::menus::galley(ui, &text, ink);
             // Centrado en lo blanco del campo (sin sus filas de abajo).
             let left = (field_at.center().x - galley.size().x / 2.0).round();
             let caps = (field_at.top() + 4.0).round();
             let pos = crate::tab_bar::text_pos(&galley, left, caps, ppp);
-            shapes.push(egui::Shape::galley(pos, galley, PAGER_TEXT));
+            shapes.push(egui::Shape::galley(pos, galley, ink));
             ui.painter().extend(shapes);
             let button = |at: egui::Rect, label: &str| {
                 ui.interact(

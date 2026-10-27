@@ -195,6 +195,10 @@ pub struct SkinColors {
     pub button_text_disabled: Color32,
     /// El texto de las opciones no elegidas de un grupo de botones.
     pub option_text_off: Color32,
+    /// El borde oscuro de los controles (campos, botones, cuadritos de color).
+    pub control_border: Color32,
+    /// La línea oscura a cada lado del contorno blanco de un rango de cels del timeline.
+    pub cel_range: Color32,
 }
 
 impl SkinColors {
@@ -224,6 +228,8 @@ impl SkinColors {
             timeline_selection_light: theme::WIDGET_HOVER,
             button_text_disabled: theme::LABEL,
             option_text_off: theme::LABEL,
+            control_border: theme::CANVAS_BORDER,
+            cel_range: theme::CANVAS_BORDER,
         }
     }
 
@@ -254,6 +260,8 @@ impl SkinColors {
             ("timeline_selection_light", &mut c.timeline_selection_light),
             ("button_text_disabled", &mut c.button_text_disabled),
             ("option_text_off", &mut c.option_text_off),
+            ("control_border", &mut c.control_border),
+            ("cel_range", &mut c.cel_range),
         ];
         for (name, slot) in slots {
             if let Some(v) = colors.get(name) {
@@ -612,6 +620,8 @@ mod tests {
             Rgba::rgb(226, 114, 133),
             "the pink title bar"
         );
+        assert_eq!(data.colors["control_border"], Rgba::rgb(89, 77, 77));
+        assert_eq!(data.colors["cel_range"], Rgba::rgb(96, 49, 57));
         let window = &data.pieces["window.active"];
         let center = Rect9 {
             x: 3,

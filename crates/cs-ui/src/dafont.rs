@@ -231,7 +231,6 @@ const TIMEOUT_SECS: f64 = 20.0;
 const RED: Color32 = Color32::from_rgb(204, 0, 0);
 const BADGE: Color32 = Color32::from_rgb(70, 71, 98);
 const CARD: Color32 = Color32::WHITE;
-const CARD_SHADOW: Color32 = Color32::from_rgb(189, 164, 153);
 const GRID: Color32 = Color32::from_rgb(105, 102, 130);
 const LABEL_DIM: Color32 = Color32::from_rgb(197, 199, 221);
 /// La barra roja: 13 de alto, las mayúsculas del nombre 3 filas abajo y las de lo chico 4; 4 px
@@ -1144,7 +1143,9 @@ fn card(ui: &mut egui::Ui, width: f32, height: f32) -> egui::Rect {
         egui::pos2(inner.left() + 1.0, inner.bottom()),
         egui::pos2(inner.right() - 1.0, inner.bottom() + 1.0),
     );
-    painter.rect_filled(snap(shadow), 0.0, CARD_SHADOW);
+    let shadow_color = crate::pixel_ui::frame_skin(ui.ctx())
+        .map_or(crate::theme::CANVAS_BORDER, |s| s.colors().canvas);
+    painter.rect_filled(snap(shadow), 0.0, shadow_color);
     inner
 }
 
