@@ -38,7 +38,7 @@ impl Image {
     pub fn try_new(width: u32, height: u32, mode: ColorMode) -> Option<Self> {
         let n = (width as usize).checked_mul(height as usize)?;
         let pixel_bytes = match mode {
-            ColorMode::Rgba => std::mem::size_of::<Rgba>(),
+            ColorMode::Rgba | ColorMode::Grayscale => std::mem::size_of::<Rgba>(),
             ColorMode::Indexed { .. } => 1,
         };
         if n.checked_mul(pixel_bytes)? > isize::MAX as usize {

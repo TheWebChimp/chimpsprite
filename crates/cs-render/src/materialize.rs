@@ -89,7 +89,7 @@ fn materialize_at<'a>(
     }
     let mut out = sprite.clone();
     let mut next = sprite.next_image_id().0;
-    let can_draw = sprite.color_mode == ColorMode::Rgba && (stack.len() as u32) < MAX_DEPTH;
+    let can_draw = sprite.color_mode.stores_rgba() && (stack.len() as u32) < MAX_DEPTH;
     for layer in &mut out.layers {
         if layer.kind != LayerKind::Instance {
             continue;

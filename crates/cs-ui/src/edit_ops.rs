@@ -42,7 +42,7 @@ impl Editor {
         let sprite = self.sprite();
         match sprite.color_mode {
             _ if c.a == 0 => sprite.color_mode.transparent(),
-            ColorMode::Rgba => PixelValue::Rgba(c),
+            ColorMode::Rgba | ColorMode::Grayscale => PixelValue::Rgba(c),
             ColorMode::Indexed { transparent_index } => {
                 PixelValue::Index(cs_io::import::nearest_index(sprite, c, transparent_index))
             }

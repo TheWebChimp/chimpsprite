@@ -86,7 +86,7 @@ impl Blur {
 /// el transparente).
 fn to_value(ctx: &ToolContext, c: Rgba) -> PixelValue {
     match ctx.sprite.color_mode {
-        ColorMode::Rgba => PixelValue::Rgba(c),
+        ColorMode::Rgba | ColorMode::Grayscale => PixelValue::Rgba(c),
         ColorMode::Indexed { transparent_index } => {
             PixelValue::Index(ctx.sprite.palette.nearest(c, transparent_index))
         }

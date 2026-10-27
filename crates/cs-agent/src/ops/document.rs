@@ -136,7 +136,7 @@ fn describe_sprite(s: &Sprite) -> Value {
         "width": s.width,
         "height": s.height,
         "color_mode": match s.color_mode {
-            ColorMode::Rgba => "rgba",
+            ColorMode::Rgba | ColorMode::Grayscale => "rgba",
             ColorMode::Indexed { .. } => "indexed",
         },
         "palette": s.palette.colors().iter().map(|c| c.to_hex()).collect::<Vec<_>>(),

@@ -481,7 +481,9 @@ impl Editor {
         let sprite = self.sprite();
         match sprite.color_mode {
             ColorMode::Indexed { .. } => PixelValue::Index(index),
-            ColorMode::Rgba => PixelValue::Rgba(sprite.palette.get(index).unwrap_or_default()),
+            ColorMode::Rgba | ColorMode::Grayscale => {
+                PixelValue::Rgba(sprite.palette.get(index).unwrap_or_default())
+            }
         }
     }
 

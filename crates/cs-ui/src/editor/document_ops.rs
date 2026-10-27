@@ -69,13 +69,9 @@ impl Editor {
     }
 
     /// `Sprite → Color Mode`: pasa a RGBA o a indexado con la paleta del sprite.
-    pub fn set_color_mode(&mut self, indexed: bool) -> bool {
+    pub fn set_color_mode(&mut self, target: sprite_ops::ColorTarget) -> bool {
         self.commit_floating();
-        let converted = if indexed {
-            sprite_ops::to_indexed(self.sprite())
-        } else {
-            sprite_ops::to_rgba(self.sprite())
-        };
+        let converted = sprite_ops::convert(self.sprite(), target);
         self.replace_sprite(converted)
     }
 

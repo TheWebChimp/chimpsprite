@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, OnceLock};
 
-use cs_core::{ColorMode, LayerId, PixelValue, Sprite};
+use cs_core::{LayerId, PixelValue, Sprite};
 
 /// Fuente del texto.
 #[derive(Clone)]
@@ -269,7 +269,7 @@ pub fn text_pixels(
     text: &str,
     style: &TextStyle,
 ) -> Vec<(i32, i32, PixelValue)> {
-    let smooth = style.antialias && sprite.color_mode == ColorMode::Rgba;
+    let smooth = style.antialias && sprite.color_mode.stores_rgba();
     let src = cs_render::resolve(sprite, color);
     rasterize(text, style)
         .into_iter()
@@ -292,7 +292,7 @@ pub fn text_pixels(
 
 #[cfg(test)]
 mod tests {
-    use cs_core::Rgba;
+    use cs_core::{ColorMode, Rgba};
 
     use super::*;
 

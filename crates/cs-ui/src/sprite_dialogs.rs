@@ -75,14 +75,14 @@ impl PropertiesDialog {
     pub fn new(artboard: &Artboard) -> Self {
         let s = &artboard.sprite;
         let mode = match s.color_mode {
-            ColorMode::Rgba => "RGB Color".to_owned(),
+            ColorMode::Rgba | ColorMode::Grayscale => "RGB Color".to_owned(),
             ColorMode::Indexed { .. } => format!("Indexed ({} colors)", s.palette.len()),
         };
         Self {
             name: artboard.name.clone(),
             transparent_index: match s.color_mode {
                 ColorMode::Indexed { transparent_index } => Some(transparent_index),
-                ColorMode::Rgba => None,
+                ColorMode::Rgba | ColorMode::Grayscale => None,
             },
             info: vec![
                 ("Color Mode:", mode),

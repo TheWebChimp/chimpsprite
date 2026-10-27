@@ -9,6 +9,13 @@ pub struct Rgba {
 }
 
 impl Rgba {
+    /// Su gris (por luminancia), con el mismo alfa: lo que se pinta en un sprite en grises.
+    pub fn to_gray(self) -> Rgba {
+        let v =
+            (0.299 * self.r as f32 + 0.587 * self.g as f32 + 0.114 * self.b as f32).round() as u8;
+        Rgba::new(v, v, v, self.a)
+    }
+
     pub const TRANSPARENT: Rgba = Rgba::new(0, 0, 0, 0);
 
     pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
@@ -55,22 +62,40 @@ impl Rgba {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ColorMode {
     Rgba,
-    Indexed { transparent_index: u8 },
+    Indexed {
+        transparent_index: u8,
+    },
+    /// Escala de grises, como en Aseprite: los píxeles se guardan como RGBA con r = g = b (lo
+    /// que se pinta pasa a su gris).
+    Grayscale,
 }
 
 impl ColorMode {
     /// Valor de píxel transparente en este modo.
     pub fn transparent(self) -> PixelValue {
         match self {
-            ColorMode::Rgba => PixelValue::Rgba(Rgba::TRANSPARENT),
+            ColorMode::Rgba | ColorMode::Grayscale => PixelValue::Rgba(Rgba::TRANSPARENT),
             ColorMode::Indexed { transparent_index } => PixelValue::Index(transparent_index),
+        }
+    }
+
+    /// Sus píxeles se guardan como RGBA (RGB y escala de grises; indexado no).
+    pub fn stores_rgba(self) -> bool {
+        !matches!(self, ColorMode::Indexed { .. })
+    }
+
+    /// El valor que queda al pintar `value` en este modo: en escala de grises, su gris.
+    pub fn adapt(self, value: PixelValue) -> PixelValue {
+        match (self, value) {
+            (ColorMode::Grayscale, PixelValue::Rgba(c)) => PixelValue::Rgba(c.to_gray()),
+            (_, v) => v,
         }
     }
 
     pub fn accepts(self, value: PixelValue) -> bool {
         matches!(
             (self, value),
-            (ColorMode::Rgba, PixelValue::Rgba(_))
+            (ColorMode::Rgba | ColorMode::Grayscale, PixelValue::Rgba(_))
                 | (ColorMode::Indexed { .. }, PixelValue::Index(_))
         )
     }

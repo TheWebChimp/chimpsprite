@@ -140,7 +140,7 @@ impl Session {
 
     pub fn quantize(&mut self, p: Quantize) -> Result<Reply> {
         let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
-        if sprite.color_mode != ColorMode::Rgba {
+        if !sprite.color_mode.stores_rgba() {
             return Err(invalid(
                 "the sprite is already indexed; edit its palette with set_palette or recolor",
             ));

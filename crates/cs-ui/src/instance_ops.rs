@@ -1,14 +1,14 @@
 //! Instancias de artboards (símbolos) desde el editor y el panel.
 
 use cs_commands::{Command, ops};
-use cs_core::{ArtboardId, ColorMode, InstanceKey, LayerId};
+use cs_core::{ArtboardId, InstanceKey, LayerId};
 
 use crate::editor::Editor;
 
 impl Editor {
     /// Artboards que se pueden instanciar en el activo: no crean ciclos y el activo es RGBA.
     pub fn instance_candidates(&self) -> Vec<(ArtboardId, String)> {
-        if self.sprite().color_mode != ColorMode::Rgba {
+        if !self.sprite().color_mode.stores_rgba() {
             return Vec::new();
         }
         self.document

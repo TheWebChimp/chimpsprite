@@ -201,10 +201,7 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
     let mode = match depth {
         Depth::Indexed => ColorMode::Indexed { transparent_index },
         Depth::Rgba => ColorMode::Rgba,
-        Depth::Grayscale => {
-            report.warn("grayscale sprite converted to RGBA");
-            ColorMode::Rgba
-        }
+        Depth::Grayscale => ColorMode::Grayscale,
     };
 
     let mut sprite = Sprite::new(width, height, mode);
@@ -911,7 +908,10 @@ pub fn write(sprite: &Sprite) -> Vec<u8> {
             }
             // Como Aseprite: los tilesets van antes de las capas, cada uno seguido de su user data.
             for (index, tileset) in sprite.tilesets.iter().enumerate() {
-                chunks.push((CHUNK_TILESET, tileset_chunk(index, tileset)));
+                chunks.push((
+                    CHUNK_TILESET,
+                    tileset_chunk(index, tileset, sprite.color_mode),
+                ));
                 let has_data = tileset.user_data.is_some()
                     || tileset.tile_user_data.iter().any(Option::is_some);
                 if has_data {
@@ -960,6 +960,7 @@ pub fn write(sprite: &Sprite) -> Vec<u8> {
 fn write_header(out: &mut Vec<u8>, sprite: &Sprite) {
     let (depth, transparent) = match sprite.color_mode {
         ColorMode::Rgba => (32, 0),
+        ColorMode::Grayscale => (16, 0),
         ColorMode::Indexed { transparent_index } => (8, transparent_index),
     };
     out.w_u32(0); // tamaño: se completa al final
@@ -1127,7 +1128,7 @@ fn color_user_data(color: Rgba) -> Vec<u8> {
     d
 }
 
-fn tileset_chunk(index: usize, tileset: &Tileset) -> Vec<u8> {
+fn tileset_chunk(index: usize, tileset: &Tileset, mode: ColorMode) -> Vec<u8> {
     let (tw, th) = tileset.tile_size;
     let f = tileset.allowed_flips;
     let flag = |on: bool, bit: u32| if on { bit } else { 0 };
@@ -1146,7 +1147,11 @@ fn tileset_chunk(index: usize, tileset: &Tileset) -> Vec<u8> {
     d.w_zeros(14);
     d.w_string(&tileset.name);
     // Tira vertical de todos los tiles, incluido el 0.
-    let raw: Vec<u8> = tileset.tiles.iter().flat_map(|t| raw_pixels(t)).collect();
+    let raw: Vec<u8> = tileset
+        .tiles
+        .iter()
+        .flat_map(|t| raw_pixels(t, mode))
+        .collect();
     let compressed = deflate(&raw);
     d.w_u32(compressed.len() as u32);
     d.extend_from_slice(&compressed);
@@ -1205,7 +1210,7 @@ fn cel_chunk(sprite: &Sprite, layer_index: usize, layer: LayerId, frame: usize) 
             d.w_zeros(5);
             d.w_u16(image.width() as u16);
             d.w_u16(image.height() as u16);
-            d.extend_from_slice(&deflate(&raw_pixels(image)));
+            d.extend_from_slice(&deflate(&raw_pixels(image, sprite.color_mode)));
         }
         (None, CelBody::Tiles(grid)) => {
             d.w_u16(CEL_TILEMAP);
@@ -1226,8 +1231,12 @@ fn cel_chunk(sprite: &Sprite, layer_index: usize, layer: LayerId, frame: usize) 
     Some(d)
 }
 
-fn raw_pixels(image: &Image) -> Vec<u8> {
+/// Los bytes de `image` en la profundidad de `mode` (en escala de grises, valor y alfa).
+fn raw_pixels(image: &Image, mode: ColorMode) -> Vec<u8> {
     match image.pixels() {
+        PixelBuffer::Rgba(p) if mode == ColorMode::Grayscale => {
+            p.iter().flat_map(|c| [c.r, c.a]).collect()
+        }
         PixelBuffer::Rgba(p) => p.iter().flat_map(|c| [c.r, c.g, c.b, c.a]).collect(),
         PixelBuffer::Indexed(p) => p.clone(),
     }

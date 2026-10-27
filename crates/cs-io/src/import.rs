@@ -67,7 +67,7 @@ pub fn nearest_index(sprite: &Sprite, c: Rgba, transparent_index: u8) -> u8 {
 
 fn to_image(sprite: &Sprite, bitmap: &Bitmap) -> Image {
     let pixels = match sprite.color_mode {
-        ColorMode::Rgba => PixelBuffer::Rgba(bitmap.pixels.clone()),
+        ColorMode::Rgba | ColorMode::Grayscale => PixelBuffer::Rgba(bitmap.pixels.clone()),
         ColorMode::Indexed { transparent_index } => PixelBuffer::Indexed(
             bitmap
                 .pixels

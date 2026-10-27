@@ -47,18 +47,15 @@ impl ChimpApp {
         {
             self.open_sprite_dialog(|a| SpriteDialog::Properties(PropertiesDialog::new(a)));
         }
-        let indexed = matches!(
-            self.doc.editor.sprite().color_mode,
-            cs_core::ColorMode::Indexed { .. }
-        );
+        let current = sprite_ops::ColorTarget::of(self.doc.editor.sprite().color_mode);
         menus::submenu(ui, "Color Mode", |ui| {
-            for (label, to_indexed) in [("RGB Color", false), ("Indexed", true)] {
+            for target in sprite_ops::ColorTarget::ALL {
                 if ui
-                    .add(menus::choice(indexed == to_indexed, label))
+                    .add(menus::choice(current == target, target.label()))
                     .clicked()
                 {
-                    if indexed != to_indexed {
-                        self.doc.editor.set_color_mode(to_indexed);
+                    if current != target {
+                        self.doc.editor.set_color_mode(target);
                     }
                     ui.close();
                 }

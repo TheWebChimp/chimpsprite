@@ -81,7 +81,9 @@ fn roundtrip(s: &Sprite) -> Sprite {
 pub(crate) fn rich_sprite(mode: ColorMode) -> Sprite {
     let mut s = Sprite::new(12, 8, mode);
     let value = |i: u8| match mode {
-        ColorMode::Rgba => PixelValue::Rgba(Rgba::new(i * 20, 255 - i * 10, i, 200 + i)),
+        ColorMode::Rgba | ColorMode::Grayscale => {
+            PixelValue::Rgba(Rgba::new(i * 20, 255 - i * 10, i, 200 + i))
+        }
         ColorMode::Indexed { .. } => PixelValue::Index(i + 1),
     };
     let draw = |s: &mut Sprite, layer: u32, frame: usize, pts: &[(i32, i32)], v: PixelValue| {
@@ -294,10 +296,29 @@ fn reads_old_palette_chunk_and_grayscale() {
         s.pixel(LayerId(1), 0, 1, 0),
         PixelValue::Rgba(Rgba::new(200, 200, 200, 128))
     );
+    assert_eq!(s.color_mode, ColorMode::Grayscale, "stays in grayscale");
+    assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+}
+
+#[test]
+fn a_grayscale_sprite_roundtrips_as_grayscale() {
+    let mut s = Sprite::new(4, 4, ColorMode::Grayscale);
+    Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: vec![(1, 1, PixelValue::Rgba(Rgba::new(255, 0, 0, 200)))],
+    }
+    .apply(&mut s)
+    .unwrap();
+    let painted = s.pixel(LayerId(1), 0, 1, 1);
     assert_eq!(
-        report.warnings,
-        vec!["grayscale sprite converted to RGBA".to_string()]
+        painted,
+        PixelValue::Rgba(Rgba::new(76, 76, 76, 200)),
+        "its gray"
     );
+    let back = roundtrip(&s);
+    assert_eq!(back.color_mode, ColorMode::Grayscale);
+    assert_eq!(back.pixel(LayerId(1), 0, 1, 1), painted);
 }
 
 /// Sprite con una capa de imagen y una tilemap (id 2) con un tileset de 4×4 con user data;
@@ -305,7 +326,9 @@ fn reads_old_palette_chunk_and_grayscale() {
 fn tilemap_sprite(mode: ColorMode) -> Sprite {
     let mut s = Sprite::new(16, 12, mode);
     let value = |i: u8| match mode {
-        ColorMode::Rgba => PixelValue::Rgba(Rgba::new(i * 30, 200 - i * 20, i * 7, 255)),
+        ColorMode::Rgba | ColorMode::Grayscale => {
+            PixelValue::Rgba(Rgba::new(i * 30, 200 - i * 20, i * 7, 255))
+        }
         ColorMode::Indexed { .. } => PixelValue::Index(i + 1),
     };
     let mut ts = Tileset::new("terrain ✓", (4, 4), mode);
@@ -778,7 +801,7 @@ mod random {
                         x,
                         y,
                         match mode {
-                            ColorMode::Rgba => {
+                            ColorMode::Rgba | ColorMode::Grayscale => {
                                 PixelValue::Rgba(Rgba::new(c, c * 3, 255 - c, c * 8))
                             }
                             ColorMode::Indexed { .. } => PixelValue::Index(c),

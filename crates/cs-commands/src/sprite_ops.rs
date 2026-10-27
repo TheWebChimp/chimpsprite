@@ -248,11 +248,81 @@ pub fn scale(sprite: &Sprite, width: u32, height: u32) -> Option<Sprite> {
     ))
 }
 
-/// El sprite en RGBA: cada índice, su color de la paleta (el transparente, transparente).
-/// `None` si ya es RGBA.
+/// Sprite → Color Mode: a qué modo pasar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ColorTarget {
+    Rgb,
+    Grayscale,
+    Indexed,
+}
+
+impl ColorTarget {
+    pub const ALL: [ColorTarget; 3] = [
+        ColorTarget::Rgb,
+        ColorTarget::Grayscale,
+        ColorTarget::Indexed,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ColorTarget::Rgb => "RGB Color",
+            ColorTarget::Grayscale => "Grayscale",
+            ColorTarget::Indexed => "Indexed",
+        }
+    }
+
+    /// El de `mode`.
+    pub fn of(mode: ColorMode) -> Self {
+        match mode {
+            ColorMode::Rgba => ColorTarget::Rgb,
+            ColorMode::Grayscale => ColorTarget::Grayscale,
+            ColorMode::Indexed { .. } => ColorTarget::Indexed,
+        }
+    }
+}
+
+/// El sprite en el modo `target`; `None` si ya está en él (o no se puede).
+pub fn convert(sprite: &Sprite, target: ColorTarget) -> Option<Sprite> {
+    match target {
+        ColorTarget::Rgb => to_rgba(sprite),
+        ColorTarget::Grayscale => to_grayscale(sprite),
+        ColorTarget::Indexed => to_indexed(sprite),
+    }
+}
+
+/// El sprite en escala de grises: cada color, su gris (también los de la paleta). Desde
+/// indexado, primero sus colores. `None` si ya está en grises.
+pub fn to_grayscale(sprite: &Sprite) -> Option<Sprite> {
+    let rgba = match sprite.color_mode {
+        ColorMode::Grayscale => return None,
+        ColorMode::Indexed { .. } => to_rgba(sprite)?,
+        ColorMode::Rgba => sprite.clone(),
+    };
+    let convert = |image: &Image| -> Image {
+        let PixelBuffer::Rgba(px) = image.pixels() else {
+            return image.clone();
+        };
+        let grays = px.iter().map(|c| c.to_gray()).collect();
+        Image::from_buffer(image.width(), image.height(), PixelBuffer::Rgba(grays))
+            .expect("same size")
+    };
+    let mut out = convert_images(&rgba, ColorMode::Grayscale, &convert);
+    out.palette =
+        cs_core::Palette::new(rgba.palette.colors().iter().map(|c| c.to_gray()).collect());
+    Some(out)
+}
+
+/// El sprite en RGBA: cada índice, su color de la paleta (el transparente, transparente). Desde
+/// escala de grises, los mismos píxeles. `None` si ya es RGBA.
 pub fn to_rgba(sprite: &Sprite) -> Option<Sprite> {
-    let ColorMode::Indexed { transparent_index } = sprite.color_mode else {
-        return None;
+    let transparent_index = match sprite.color_mode {
+        ColorMode::Rgba => return None,
+        ColorMode::Grayscale => {
+            let mut out = sprite.clone();
+            out.color_mode = ColorMode::Rgba;
+            return Some(out);
+        }
+        ColorMode::Indexed { transparent_index } => transparent_index,
     };
     let convert = |image: &Image| -> Image {
         let PixelBuffer::Indexed(px) = image.pixels() else {
@@ -279,7 +349,7 @@ pub fn to_rgba(sprite: &Sprite) -> Option<Sprite> {
 /// transparente de la paleta o, si no tiene, uno nuevo al principio (si hay lugar; si no, el 0).
 /// `None` si ya es indexado o la paleta está vacía.
 pub fn to_indexed(sprite: &Sprite) -> Option<Sprite> {
-    if sprite.color_mode != ColorMode::Rgba || sprite.palette.is_empty() {
+    if !sprite.color_mode.stores_rgba() || sprite.palette.is_empty() {
         return None;
     }
     let mut palette = sprite.palette.clone();
@@ -360,6 +430,40 @@ pub fn content_bounds(sprite: &Sprite) -> Option<(i32, i32, u32, u32)> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn grayscale_turns_every_color_into_its_gray_and_back_to_rgb_keeps_them() {
+        let mut s = Sprite::new(2, 1, ColorMode::Rgba);
+        crate::Command::DrawPixels {
+            layer: cs_core::LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, PixelValue::Rgba(Rgba::rgb(0, 0, 255)))],
+        }
+        .apply(&mut s)
+        .unwrap();
+        let gray = to_grayscale(&s).expect("converted");
+        assert_eq!(gray.color_mode, ColorMode::Grayscale);
+        assert_eq!(
+            gray.pixel(cs_core::LayerId(1), 0, 0, 0),
+            PixelValue::Rgba(Rgba::rgb(29, 29, 29))
+        );
+        assert!(
+            gray.palette
+                .colors()
+                .iter()
+                .all(|c| c.r == c.g && c.g == c.b)
+        );
+        assert!(to_grayscale(&gray).is_none(), "already");
+        let rgb = to_rgba(&gray).expect("back");
+        assert_eq!(rgb.color_mode, ColorMode::Rgba);
+        assert_eq!(
+            rgb.pixel(cs_core::LayerId(1), 0, 0, 0),
+            gray.pixel(cs_core::LayerId(1), 0, 0, 0)
+        );
+        // Y a indexado, como desde RGB.
+        assert!(to_indexed(&gray).is_some());
+    }
+
     use super::*;
     use cs_core::{LayerId, Palette};
 

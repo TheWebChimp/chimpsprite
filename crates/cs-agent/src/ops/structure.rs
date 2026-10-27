@@ -46,7 +46,7 @@ impl Session {
         let mode = p
             .color_mode
             .unwrap_or(match doc.artboards[0].sprite.color_mode {
-                cs_core::ColorMode::Rgba => ColorModeArg::Rgba,
+                cs_core::ColorMode::Rgba | cs_core::ColorMode::Grayscale => ColorModeArg::Rgba,
                 cs_core::ColorMode::Indexed { .. } => ColorModeArg::Indexed,
             });
         let position = match p.position {
