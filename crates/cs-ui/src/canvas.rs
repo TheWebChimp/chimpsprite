@@ -1340,7 +1340,22 @@ impl CanvasView {
 
         if view_settings.shows(view_settings.guides) {
             let dragged = self.ruler_drag.and_then(|d| d.index);
-            for artboard in &document.artboards {
+            // Lo que ocupa cada artboard en pantalla (con su ventana, con Pixel UI): las guías de
+            // uno no se ven encima de los que van delante.
+            let ppp = ui.ctx().pixels_per_point();
+            let covers: Vec<Rect> = document
+                .artboards
+                .iter()
+                .map(|a| {
+                    let pixels = WindowLayout::pixels_on_screen(self.pixel_rect(rect, a), ppp);
+                    if self.artboard_window.is_some() {
+                        WindowLayout::frame_around(pixels, ppp)
+                    } else {
+                        pixels
+                    }
+                })
+                .collect();
+            for (k, artboard) in document.artboards.iter().enumerate() {
                 let ((x0, y0), (x1, y1)) = artboard.rect();
                 let screen = Rect::from_min_max(
                     self.to_screen(rect, (x0, y0)),
@@ -1351,7 +1366,14 @@ impl CanvasView {
                     if active && Some(i) == dragged {
                         continue;
                     }
-                    draw_guide(&painter, screen, *g, self.zoom, theme::GUIDE_LINE);
+                    draw_guide(
+                        &painter,
+                        screen,
+                        *g,
+                        self.zoom,
+                        theme::GUIDE_LINE,
+                        &covers[k + 1..],
+                    );
                 }
             }
         }
@@ -1817,22 +1839,61 @@ fn draw_pipette(painter: &egui::Painter, tip: Pos2, color: Option<cs_core::Rgba>
 }
 
 /// Línea de una guía dentro del artboard (si cae dentro de él).
-fn draw_guide(painter: &egui::Painter, screen: Rect, guide: Guide, zoom: f32, color: Color32) {
+/// Una guía de un artboard (en `screen`), sin los tramos que tapan los artboards de adelante
+/// (`covers`).
+fn draw_guide(
+    painter: &egui::Painter,
+    screen: Rect,
+    guide: Guide,
+    zoom: f32,
+    color: Color32,
+    covers: &[Rect],
+) {
     let stroke = Stroke::new(1.0, color);
     match guide.axis {
         Axis::Horizontal => {
             let y = screen.top() + guide.position as f32 * zoom;
             if (screen.top()..=screen.bottom()).contains(&y) {
-                painter.hline(screen.x_range(), painter.round_to_pixel_center(y), stroke);
+                let cut: Vec<_> = covers
+                    .iter()
+                    .filter(|c| c.y_range().contains(y))
+                    .map(|c| c.x_range())
+                    .collect();
+                for span in uncovered(screen.x_range(), &cut) {
+                    painter.hline(span, painter.round_to_pixel_center(y), stroke);
+                }
             }
         }
         Axis::Vertical => {
             let x = screen.left() + guide.position as f32 * zoom;
             if (screen.left()..=screen.right()).contains(&x) {
-                painter.vline(painter.round_to_pixel_center(x), screen.y_range(), stroke);
+                let cut: Vec<_> = covers
+                    .iter()
+                    .filter(|c| c.x_range().contains(x))
+                    .map(|c| c.y_range())
+                    .collect();
+                for span in uncovered(screen.y_range(), &cut) {
+                    painter.vline(painter.round_to_pixel_center(x), span, stroke);
+                }
             }
         }
     }
+}
+
+/// Los tramos de `range` que no tapa ninguno de `cut`.
+fn uncovered(range: egui::Rangef, cut: &[egui::Rangef]) -> Vec<egui::Rangef> {
+    let mut spans = vec![range];
+    for c in cut {
+        spans = spans
+            .into_iter()
+            .flat_map(|s| {
+                let before = egui::Rangef::new(s.min, s.max.min(c.min));
+                let after = egui::Rangef::new(s.min.max(c.max), s.max);
+                [before, after].into_iter().filter(|r| r.max > r.min)
+            })
+            .collect();
+    }
+    spans
 }
 
 /// Líneas del grid de trabajo dentro del artboard (se omiten si quedan a menos de 4 px).
@@ -3525,6 +3586,21 @@ mod tests {
         // Sin nada en el medio sí se suman.
         h.wheel(Point, 30.0, ctrl);
         assert_eq!(h.editor.options.brush_size, 2);
+    }
+
+    #[test]
+    fn a_guide_is_cut_where_an_artboard_in_front_covers_it() {
+        let r = |a: f32, b: f32| egui::Rangef::new(a, b);
+        assert_eq!(uncovered(r(0.0, 100.0), &[]), vec![r(0.0, 100.0)]);
+        assert_eq!(
+            uncovered(r(0.0, 100.0), &[r(30.0, 60.0)]),
+            vec![r(0.0, 30.0), r(60.0, 100.0)]
+        );
+        assert_eq!(
+            uncovered(r(0.0, 100.0), &[r(-10.0, 50.0)]),
+            vec![r(50.0, 100.0)]
+        );
+        assert!(uncovered(r(0.0, 100.0), &[r(-10.0, 200.0)]).is_empty());
     }
 
     #[test]
