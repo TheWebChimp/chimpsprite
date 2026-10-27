@@ -72,10 +72,38 @@ impl Preview {
     /// La ventana. Devuelve si se cerró con la ×.
     pub fn show(&mut self, ctx: &egui::Context, editor: &Editor, skin: Option<&Skin>) -> bool {
         let anchor = (Align2::RIGHT_BOTTOM, OFFSET);
-        let (_, closed) =
-            crate::pixel_ui::app_window(ctx, skin, "preview", "Preview", true, anchor, |ui| {
-                self.contents(ui, editor, skin)
-            });
+        let closed = match skin {
+            // Con Pixel UI, el play y "volver a como estaba" van en la barra de título, sin botón
+            // (como en el diseño).
+            Some(skin) => {
+                let playing = self.playing();
+                let (mut play, mut fit) = (false, false);
+                let out = crate::pixel_ui::pixel_dialog_with_bar(
+                    ctx,
+                    skin,
+                    egui::Id::new("preview"),
+                    "Preview",
+                    true,
+                    anchor,
+                    |ui| self.contents(ui, editor, Some(skin), false),
+                    |ui, bar| (play, fit) = bar_icons(ui, skin, bar, playing),
+                );
+                if play {
+                    self.toggle_play(editor);
+                }
+                if fit {
+                    self.zoom = None;
+                    self.pan = Vec2::ZERO;
+                }
+                out.closed
+            }
+            None => {
+                crate::pixel_ui::app_window(ctx, None, "preview", "Preview", true, anchor, |ui| {
+                    self.contents(ui, editor, None, true)
+                })
+                .1
+            }
+        };
         if closed {
             self.play = None;
         }
@@ -166,18 +194,15 @@ impl Preview {
         self.rendered = Some(key);
     }
 
-    fn contents(&mut self, ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) {
+    /// Lo de adentro; con `play_button`, arriba el botón de play (sin Pixel UI, que no tiene la
+    /// barra del diseño).
+    fn contents(&mut self, ui: &mut Ui, editor: &Editor, skin: Option<&Skin>, play_button: bool) {
         ui.spacing_mut().item_spacing.y = ROW_GAP;
-        let label = if self.playing() { "Pause" } else { "Play" };
-        let play = crate::pixel_ui::icon_button(
-            ui,
-            skin,
-            "timeline.icon.play",
-            label,
-            Some(self.playing()),
-        );
-        if play.clicked() {
-            self.toggle_play(editor);
+        if play_button {
+            let label = if self.playing() { "Pause" } else { "Play" };
+            if ui.selectable_label(self.playing(), label).clicked() {
+                self.toggle_play(editor);
+            }
         }
         if self.playing() {
             let dt_ms = ui.input(|i| i.stable_dt).min(0.1) as f64 * 1000.0;
@@ -190,7 +215,7 @@ impl Preview {
         let painter = ui.painter_at(rect);
         let background = skin.map_or(theme::CANVAS_BG, |s| s.colors().canvas);
         painter.rect_filled(rect, 0.0, background);
-        self.grip(ui, rect);
+        self.grip(ui, rect, skin);
         let Some((texture, size)) = self.texture.as_ref().map(|t| (t.id(), t.size_vec2())) else {
             return;
         };
@@ -233,13 +258,26 @@ impl Preview {
         painter.image(checker, image, uv, Color32::WHITE);
         let full = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
         painter.image(texture, image, full, Color32::WHITE);
-        // La agarradera va encima del dibujo.
-        painter.extend(grip_shapes(rect, skin, ppp));
+        // La agarradera va encima del dibujo: la del diseño o, sin ella, rayitas.
+        match skin.filter(|s| {
+            s.piece(GRIP_PIECE, crate::skin::WidgetState::Normal)
+                .is_some()
+        }) {
+            // En la esquina de la ventana, contra su borde (como en el diseño): pasando el
+            // margen de adentro.
+            Some(skin) => {
+                let at = grip_corner(rect, Some(skin)) - grip_size(Some(skin));
+                ui.painter()
+                    .extend(crate::pixel_draw::piece_at(skin, GRIP_PIECE, at, ppp));
+            }
+            None => painter.extend(grip_shapes(rect, skin, ppp)),
+        }
     }
 
     /// La agarradera de la esquina: arrastrándola cambia el tamaño de la vista.
-    fn grip(&mut self, ui: &mut Ui, view: Rect) {
-        let rect = Rect::from_min_max(view.max - Vec2::splat(GRIP), view.max);
+    fn grip(&mut self, ui: &mut Ui, view: Rect, skin: Option<&Skin>) {
+        let corner = grip_corner(view, skin);
+        let rect = Rect::from_min_max(corner - grip_size(skin), corner);
         let response = ui.interact(rect, ui.id().with("preview_grip"), Sense::drag());
         if response.hovered() || response.dragged() {
             ui.ctx().set_cursor_icon(CursorIcon::ResizeNwSe);
@@ -260,6 +298,75 @@ impl Preview {
             })
             .id()
     }
+}
+
+/// Las piezas del diseño: el play y "volver a como estaba" de la barra de título, y la
+/// agarradera de la esquina.
+const PLAY_PIECE: &str = "preview.play";
+const FIT_PIECE: &str = "preview.fit";
+const GRIP_PIECE: &str = "preview.grip";
+/// Del borde izquierdo de la barra al primer ícono, y entre uno y otro.
+const BAR_LEFT: f32 = 6.0;
+const BAR_GAP: f32 = 5.0;
+
+/// La esquina de abajo a la derecha de la agarradera: la de la ventana (pasando el margen de
+/// adentro) con la del diseño; si no, la de la vista.
+fn grip_corner(view: Rect, skin: Option<&Skin>) -> Pos2 {
+    let designed = skin.is_some_and(|s| {
+        s.piece(GRIP_PIECE, crate::skin::WidgetState::Normal)
+            .is_some()
+    });
+    if designed {
+        view.max + Vec2::splat(crate::pixel_ui::PADDING)
+    } else {
+        view.max
+    }
+}
+
+/// El lado de la agarradera: el de su pieza o el de las rayitas.
+fn grip_size(skin: Option<&Skin>) -> Vec2 {
+    skin.and_then(|s| s.piece(GRIP_PIECE, crate::skin::WidgetState::Normal))
+        .map_or(Vec2::splat(GRIP), |p| {
+            vec2(p.size[0] as f32, p.size[1] as f32)
+        })
+}
+
+/// El play (o, reproduciendo, la pausa: dos barritas del mismo color) y "volver a como estaba",
+/// a la izquierda de la barra de título, centrados en su alto. Devuelve cuál se tocó.
+fn bar_icons(ui: &mut Ui, skin: &Skin, bar: Rect, playing: bool) -> (bool, bool) {
+    let ppp = ui.ctx().pixels_per_point();
+    let size = |name: &str| {
+        skin.piece(name, crate::skin::WidgetState::Normal)
+            .map_or(vec2(5.0, 5.0), |p| vec2(p.size[0] as f32, p.size[1] as f32))
+    };
+    let mut x = bar.left() + BAR_LEFT;
+    let mut icon = |ui: &mut Ui, name: &str, label: &str| {
+        let s = size(name);
+        let at = egui::pos2(x, (bar.center().y - s.y / 2.0).floor());
+        x += s.x + BAR_GAP;
+        // Un poco más grande que el dibujo, para atinarle.
+        let hit = Rect::from_min_size(at, s).expand(2.0);
+        let response = ui.interact(hit, ui.id().with(("preview_bar", name)), Sense::click());
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, label));
+        (at, response.on_hover_text(label))
+    };
+    let label = if playing { "Pause" } else { "Play" };
+    let (at, play) = icon(ui, PLAY_PIECE, label);
+    if playing {
+        // La pausa: dos barritas de 2×5 con la tinta del play.
+        let ink = Color32::from_rgb(100, 54, 75);
+        for dx in [1.0, 5.0] {
+            let r = Rect::from_min_size(at + vec2(dx, 0.0), vec2(2.0, 5.0));
+            ui.painter().rect_filled(r.round_to_pixels(ppp), 0.0, ink);
+        }
+    } else {
+        ui.painter()
+            .extend(crate::pixel_draw::piece_at(skin, PLAY_PIECE, at, ppp));
+    }
+    let (at, fit) = icon(ui, FIT_PIECE, "Reset View");
+    ui.painter()
+        .extend(crate::pixel_draw::piece_at(skin, FIT_PIECE, at, ppp));
+    (play.clicked(), fit.clicked())
 }
 
 /// La agarradera: tres rayitas en diagonal, con la tinta de los íconos y su luz.

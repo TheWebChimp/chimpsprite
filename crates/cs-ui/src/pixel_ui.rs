@@ -18,7 +18,7 @@ const BUTTON_PIECE: &str = "button";
 /// Botón de cerrar de la barra de título.
 const CLOSE_PIECE: &str = "window.close";
 /// Margen entre el área del centro del 9-slice y lo de adentro (contenido o texto).
-const PADDING: f32 = 4.0;
+pub(crate) const PADDING: f32 = 4.0;
 /// Espacio entre botones de una fila.
 const BUTTON_GAP: f32 = 4.0;
 /// Bordes del diálogo de respaldo (izquierda, arriba, derecha, abajo); arriba va la barra de
@@ -161,6 +161,31 @@ pub fn pixel_dialog_at<R>(
     anchor: (Align2, Vec2),
     add_contents: impl FnOnce(&mut Ui) -> R,
 ) -> DialogOutput<R> {
+    pixel_dialog_with_bar(
+        ctx,
+        skin,
+        id,
+        title,
+        closable,
+        anchor,
+        add_contents,
+        |_, _| {},
+    )
+}
+
+/// Como [`pixel_dialog_at`], y `bar_contents` dibuja en la barra de título (la recibe), encima
+/// de ella: los controles de la ventana sin botón, como el play del preview.
+#[allow(clippy::too_many_arguments)]
+pub fn pixel_dialog_with_bar<R>(
+    ctx: &egui::Context,
+    skin: &Skin,
+    id: Id,
+    title: &str,
+    closable: bool,
+    anchor: (Align2, Vec2),
+    add_contents: impl FnOnce(&mut Ui) -> R,
+    bar_contents: impl FnOnce(&mut Ui, Rect),
+) -> DialogOutput<R> {
     let piece = skin.piece(DIALOG_PIECE, WidgetState::Normal);
     let [left, top, right, bottom] = piece.map_or(FALLBACK_DIALOG, borders);
     let side = |v: f32| (v + PADDING).min(i8::MAX as f32) as i8;
@@ -210,6 +235,7 @@ pub fn pixel_dialog_at<R>(
         let close = closable.then(|| close_rect(skin, bar, ppp));
         drag_title_bar(ui, id, rect, bar, close);
         let closed = close.is_some_and(|r| close_button(ui, skin, id.with("close"), r));
+        bar_contents(ui, bar);
         DialogOutput {
             inner: inner.inner,
             closed,
