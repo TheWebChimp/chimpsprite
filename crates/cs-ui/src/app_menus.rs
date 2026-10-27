@@ -243,6 +243,19 @@ impl ChimpApp {
         {
             editor.remove_frame();
         }
+        let (a, b) = editor.selected_frames();
+        if ui.add(menus::plain("Frame Properties…")).clicked() {
+            self.frame_dialog = Some(frame_dialog::FramePropertiesDialog::new(&self.doc.editor));
+            ui.close();
+            return;
+        }
+        if ui
+            .add_enabled(a != b, menus::plain("Reverse Frames"))
+            .on_disabled_hover_text("Select two or more frames")
+            .clicked()
+        {
+            editor.reverse_frames();
+        }
         menus::separator(ui);
         if ui.add(menus::plain("New Tag")).clicked() {
             editor.add_tag();

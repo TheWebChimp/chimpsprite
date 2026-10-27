@@ -127,24 +127,33 @@ impl Preview {
         closed
     }
 
+    /// Reproduciendo (un tag con repeat que ya terminó sus vueltas se queda quieto en su último
+    /// frame, pero ya no cuenta).
     pub fn playing(&self) -> bool {
-        self.play.is_some()
+        self.play
+            .as_ref()
+            .is_some_and(|p| p.playback.remaining != Some(0))
     }
 
     /// Prende o apaga la reproducción del artboard activo.
     fn toggle_play(&mut self, editor: &Editor) {
-        if self.play.take().is_some() {
+        // Si ya había terminado sus vueltas, vuelve a empezar.
+        if self
+            .play
+            .take()
+            .is_some_and(|p| p.playback.remaining != Some(0))
+        {
             return;
         }
         let sprite = editor.sprite();
         let frame = editor.frame;
-        let (range, direction) = match sprite.tag_at(frame) {
-            Some(tag) => ((tag.from, tag.to), tag.direction),
-            None => ((0, sprite.frames.len() - 1), AnimDirection::Forward),
+        let (range, direction, repeat) = match sprite.tag_at(frame) {
+            Some(tag) => ((tag.from, tag.to), tag.direction, tag.repeat),
+            None => ((0, sprite.frames.len() - 1), AnimDirection::Forward, 0),
         };
         self.play = Some(Play {
             artboard: editor.active,
-            playback: Playback::new(frame, direction),
+            playback: Playback::new(frame, direction).repeating(repeat),
             range,
             direction,
             clock: 0.0,
@@ -171,7 +180,11 @@ impl Preview {
                 break;
             }
             play.clock -= duration;
-            play.playback.step(play.range, play.direction);
+            // Un tag con repeat se queda quieto en su último frame al terminar sus vueltas.
+            if !play.playback.step(play.range, play.direction) {
+                play.clock = 0.0;
+                break;
+            }
         }
         play.clock = play.clock.min(1000.0);
     }

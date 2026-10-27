@@ -53,11 +53,12 @@ impl Editor {
             self.stop();
             return;
         }
-        let (range, direction) = match self.sprite().tag_at(self.frame) {
-            Some(tag) => ((tag.from, tag.to), tag.direction),
-            None => ((0, self.frame_count() - 1), AnimDirection::Forward),
+        let (range, direction, repeat) = match self.sprite().tag_at(self.frame) {
+            Some(tag) => ((tag.from, tag.to), tag.direction, tag.repeat),
+            None => ((0, self.frame_count() - 1), AnimDirection::Forward, 0),
         };
-        self.playback = Some((Playback::new(self.frame, direction), range, direction));
+        let playback = Playback::new(self.frame, direction).repeating(repeat);
+        self.playback = Some((playback, range, direction));
         self.play_clock = 0.0;
         self.playing = true;
     }
@@ -78,7 +79,11 @@ impl Editor {
                 break;
             }
             self.play_clock -= duration;
-            playback.step(range, direction);
+            // Un tag con repeat se para al terminar sus vueltas.
+            if !playback.step(range, direction) {
+                self.stop();
+                return;
+            }
             self.set_frame(playback.frame);
         }
         self.play_clock = self.play_clock.min(1000.0);
@@ -134,6 +139,21 @@ impl Editor {
             .map(|index| Command::SetFrameDuration { index, duration_ms })
             .collect();
         self.execute(Command::Batch(cmds));
+    }
+
+    /// Frame → Reverse Frames: los frames elegidos quedan al revés (con sus cels y duraciones),
+    /// en un paso de undo.
+    pub fn reverse_frames(&mut self) -> bool {
+        self.commit_floating();
+        let (a, b) = self.selected_frames();
+        if a == b {
+            return false;
+        }
+        // El último pasa al principio, el nuevo último al segundo lugar, y así.
+        let cmds = (0..b - a)
+            .map(|k| Command::MoveFrame { from: b, to: a + k })
+            .collect();
+        self.execute_named(Command::Batch(cmds), "Reverse Frames")
     }
 
     /// Cambia la duración de un frame concreto.
@@ -885,5 +905,66 @@ mod linked_cels {
             op(&mut e);
             assert_linked(name, &e, l);
         }
+    }
+}
+
+#[cfg(test)]
+mod frame_order {
+    use cs_core::{ColorMode, Sprite, Tag};
+
+    use super::*;
+
+    /// 4 frames con duraciones 100, 200, 300 y 400.
+    fn editor() -> Editor {
+        let mut e = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
+        for _ in 1..4 {
+            e.insert_empty_frame();
+        }
+        for i in 0..4 {
+            e.set_duration_of(i, (i as u16 + 1) * 100);
+        }
+        e
+    }
+
+    fn durations(e: &Editor) -> Vec<u16> {
+        e.sprite().frames.iter().map(|f| f.duration_ms).collect()
+    }
+
+    #[test]
+    fn reverse_frames_flips_the_selected_range_in_one_step() {
+        let mut e = editor();
+        e.frame_range = Some((1, 3));
+        let steps = e.steps_done();
+        assert!(e.reverse_frames());
+        assert_eq!(durations(&e), vec![100, 400, 300, 200]);
+        assert_eq!(e.steps_done(), steps + 1);
+        assert_eq!(e.history.done().last(), Some("Reverse Frames"));
+        e.undo();
+        assert_eq!(durations(&e), vec![100, 200, 300, 400]);
+        e.frame_range = None;
+        assert!(!e.reverse_frames(), "one frame: nothing to reverse");
+    }
+
+    #[test]
+    fn playing_a_tag_with_repeat_stops_after_its_laps() {
+        let mut e = editor();
+        let mut tags = e.sprite().tags.clone();
+        tags.push(Tag {
+            name: "Once".into(),
+            from: 0,
+            to: 1,
+            direction: cs_core::AnimDirection::Forward,
+            color: cs_core::Rgba::rgb(0, 0, 0),
+            repeat: 1,
+        });
+        e.execute(Command::SetTags(tags));
+        e.set_frame(0);
+        e.toggle_play();
+        e.tick(100.0);
+        assert_eq!(e.frame, 1);
+        assert!(e.playing);
+        e.tick(200.0);
+        assert!(!e.playing, "one lap and done");
+        assert_eq!(e.frame, 1, "on its last frame");
     }
 }

@@ -108,6 +108,7 @@ impl ChimpApp {
             || self.palette_confirm.is_some()
             || self.filter_dialog.is_some()
             || self.select_dialog.is_some()
+            || self.frame_dialog.is_some()
             || self.shortcuts.is_some()
             || self.preferences
     }

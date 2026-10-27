@@ -533,6 +533,11 @@ fn tag_menu(ui: &mut egui::Ui, editor: &Editor, index: usize, tag: &Tag) -> Opti
         }
     });
     ui.horizontal(|ui| {
+        ui.label("Repeat");
+        crate::widgets::number(ui, &mut edited.repeat, 0..=65535, "")
+            .tip("Times the tag plays before stopping (0: forever)");
+    });
+    ui.horizontal(|ui| {
         ui.label("Color");
         // Los colores de los tags, en cuadritos como los de la paleta.
         let dark = crate::pixel_ui::control_border(ui.ctx());

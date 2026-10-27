@@ -811,6 +811,8 @@ fn deleting_a_tag_from_its_menu_does_not_crash() {
     // Los dos tags van sobre el frame actual (el 2).
     let tag = pos2(h.header_cell(1).x, h.grid.y - Grid::CLASSIC.tag_h / 2.0);
     h.right_click_at(tag);
+    // El menú (alto, cerca del borde de abajo) se acomoda en el frame siguiente.
+    h.frame(vec![]);
     h.click("Delete tag");
     h.frame(vec![]);
     assert_eq!(h.editor.sprite().tags.len(), 1);

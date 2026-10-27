@@ -25,6 +25,7 @@ mod fg_bg;
 mod file_actions;
 mod filter_dialog;
 mod filters;
+mod frame_dialog;
 mod mask_ops;
 mod menus;
 mod palette_ops;
@@ -145,6 +146,8 @@ pub struct ChimpApp {
     filter_dialog: Option<filter_dialog::FilterDialog>,
     /// Select → Color Range… o Modify abierto.
     select_dialog: Option<select_dialogs::SelectDialog>,
+    /// Frame → Frame Properties… abierto.
+    frame_dialog: Option<frame_dialog::FramePropertiesDialog>,
     /// La ventanita de preview (abierta con `view.preview`).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
@@ -273,6 +276,7 @@ impl ChimpApp {
             preferences: false,
             filter_dialog: None,
             select_dialog: None,
+            frame_dialog: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
             demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
@@ -573,6 +577,23 @@ impl ChimpApp {
             tilemap_dialog::DialogResult::Open
         ) {
             self.filter_dialog = None;
+        }
+    }
+
+    fn update_frame_dialog(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() {
+            self.frame_dialog = None;
+            return;
+        }
+        let Some(dialog) = &mut self.frame_dialog else {
+            return;
+        };
+        let skin = self.pixel.skin();
+        if !matches!(
+            dialog.show(ctx, &mut self.doc.editor, skin),
+            tilemap_dialog::DialogResult::Open
+        ) {
+            self.frame_dialog = None;
         }
     }
 
@@ -1062,6 +1083,7 @@ impl eframe::App for ChimpApp {
         self.update_sprite_dialog(&ctx);
         self.update_filter_dialog(&ctx);
         self.update_select_dialog(&ctx);
+        self.update_frame_dialog(&ctx);
         self.update_settings_windows(&ctx);
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);
