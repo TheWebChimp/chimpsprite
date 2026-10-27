@@ -10,6 +10,8 @@ pub enum ToolKind {
     PolygonLasso,
     MagicWand,
     Hand,
+    /// Acerca con un clic y aleja con el derecho (o Alt); la maneja el lienzo.
+    Zoom,
     Move,
     Pencil,
     Spray,
@@ -39,7 +41,7 @@ impl ToolKind {
             ToolKind::PolygonLasso,
             ToolKind::MagicWand,
         ],
-        &[ToolKind::Hand],
+        &[ToolKind::Hand, ToolKind::Zoom],
         &[ToolKind::Pencil, ToolKind::Spray],
         &[ToolKind::Eraser],
         &[ToolKind::Eyedropper],
@@ -84,6 +86,7 @@ impl ToolKind {
             ToolKind::Slice => "Slice",
             ToolKind::Artboard => "Artboard",
             ToolKind::Hand => "Hand",
+            ToolKind::Zoom => "Zoom",
             ToolKind::Contour => "Contour",
             ToolKind::Blur => "Blur",
         }
@@ -112,6 +115,7 @@ impl ToolKind {
             ToolKind::Slice => "Shift+C",
             ToolKind::Artboard => "Shift+O",
             ToolKind::Hand => "H",
+            ToolKind::Zoom => "Z",
             ToolKind::Contour => "D",
             ToolKind::Blur => "R",
         }

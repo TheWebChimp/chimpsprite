@@ -1999,3 +1999,21 @@ fn panning_keeps_the_stored_pan_and_zoom_keeps_the_point_under_the_cursor() {
         }
     }
 }
+
+#[test]
+fn the_zoom_tool_zooms_in_on_click_and_out_on_right_click() {
+    let mut h = Harness::new();
+    h.editor.set_tool(ToolKind::Zoom);
+    h.frame(vec![]);
+    let at = h.screen((4, 4));
+    let before = h.canvas.zoom;
+    h.click(at, PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(h.canvas.zoom > before, "in: {} > {before}", h.canvas.zoom);
+    let zoomed = h.canvas.zoom;
+    let at = h.screen((4, 4));
+    h.click(at, PointerButton::Secondary);
+    h.frame(vec![]);
+    assert!(h.canvas.zoom < zoomed, "out");
+    assert!(h.editor.sprite().cels.is_empty(), "nothing painted");
+}

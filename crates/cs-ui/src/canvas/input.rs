@@ -317,6 +317,23 @@ impl CanvasView {
             .hover_pos()
             .map(|p| editor.to_local(self.to_world(rect, p)));
 
+        // La herramienta Zoom: un clic acerca en el puntero; el derecho (o Alt) aleja.
+        if editor.active_tool() == ToolKind::Zoom
+            && self.ruler_drag.is_none()
+            && let Some(p) = response.hover_pos()
+        {
+            let (primary, secondary, alt) = ui.input(|i| {
+                (
+                    i.pointer.button_clicked(egui::PointerButton::Primary),
+                    i.pointer.button_clicked(egui::PointerButton::Secondary),
+                    i.modifiers.alt,
+                )
+            });
+            if primary || secondary {
+                self.zoom_at(rect, p, primary && !alt);
+            }
+        }
+
         // Pintura: estado crudo del puntero, para que un clic sin arrastre también cuente.
         let (pressed_primary, pressed_secondary, any_down, pointer, modifiers) = ui.input(|i| {
             (
@@ -582,6 +599,12 @@ impl CanvasView {
         } else if hand {
             // En reposo; sobre las reglas o una guía manda su cursor (arriba).
             response.hovered().then_some(egui::CursorIcon::Grab)
+        } else if editor.active_tool() == ToolKind::Zoom && !ruler_busy {
+            response.hovered().then_some(if modifiers.alt {
+                egui::CursorIcon::ZoomOut
+            } else {
+                egui::CursorIcon::ZoomIn
+            })
         } else if modal {
             response.hovered().then_some(egui::CursorIcon::Default)
         } else if !response.hovered() {

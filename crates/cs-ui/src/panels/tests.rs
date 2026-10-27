@@ -479,7 +479,7 @@ fn with_pixel_ui_the_tooltip_is_the_bubble_pointing_at_the_button() {
     let mut h = ColumnHarness::new(600.0).pixel_style();
     let bubble = h.texture("tooltip.bubble");
     assert_eq!(drawn_union(&h, bubble), None, "no bubble before hovering");
-    let button = h.hover("Hand");
+    let button = h.hover("Eraser");
     let drawn = drawn_union(&h, bubble).expect("the bubble is drawn");
     // La punta de la cola, 6 px a la derecha del botón (el aire del mockup), y su fila de
     // arriba en el centro del botón: el cuerpo empieza 8 filas antes.
@@ -491,7 +491,7 @@ fn with_pixel_ui_the_tooltip_is_the_bubble_pointing_at_the_button() {
     let (text, rect, color) = h
         .texts
         .iter()
-        .find(|(t, ..)| t == "Hand (H)")
+        .find(|(t, ..)| t == "Eraser (E)")
         .cloned()
         .unwrap_or_else(|| panic!("the tooltip text in {:?}", h.texts));
     assert_eq!(color, h.skin.colors().text, "{text}");
@@ -501,7 +501,7 @@ fn with_pixel_ui_the_tooltip_is_the_bubble_pointing_at_the_button() {
     assert_eq!(rect.left(), body.left() + 6.0, "{rect:?} {body:?}");
     // El tooltip sigue teniendo su texto en el árbol de accesibilidad.
     assert!(
-        h.label_nodes.iter().any(|l| l == "Hand (H)"),
+        h.label_nodes.iter().any(|l| l == "Eraser (E)"),
         "{:?}",
         h.label_nodes
     );
@@ -530,15 +530,15 @@ fn with_pixel_ui_the_bubble_grows_with_the_second_line_of_the_groups() {
 #[test]
 fn without_pixel_ui_the_tooltip_is_the_egui_one_and_there_is_no_bubble() {
     let mut h = ColumnHarness::new(600.0).named();
-    let hand = h
+    let eraser = h
         .labels()
         .into_iter()
-        .find(|l| l.contains("Hand"))
-        .expect("the Hand button")
+        .find(|l| l.contains("Eraser"))
+        .expect("the Eraser button")
         .to_owned();
-    h.hover(&hand);
+    h.hover(&eraser);
     assert!(
-        h.texts.iter().any(|(t, ..)| t == "Hand (H)"),
+        h.texts.iter().any(|(t, ..)| t == "Eraser (E)"),
         "the egui tooltip: {:?}",
         h.texts
     );
