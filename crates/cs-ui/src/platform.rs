@@ -61,6 +61,8 @@ pub enum OpenPurpose {
     Dropped,
     /// Agregar como capa.
     ImportLayer,
+    /// Agregar como capa de referencia (no sale al exportar).
+    ImportReference,
     /// Cargar una paleta (`.gpl`, `.hex`, `.pal`, `.png`, `.aseprite`).
     LoadPalette,
 }

@@ -28,10 +28,11 @@ impl Bitmap {
         }
     }
 
-    /// Frame compuesto, escalado por un factor entero (vecino más cercano).
+    /// Frame compuesto, escalado por un factor entero (vecino más cercano). Sin las capas de
+    /// referencia.
     pub fn from_frame(sprite: &Sprite, frame: usize, scale: u32) -> Self {
         let scale = scale.max(1);
-        let src = render_frame(sprite, frame);
+        let src = render_frame(&without_references(sprite), frame);
         let (w, h) = (sprite.width * scale, sprite.height * scale);
         let pixels = (0..h)
             .flat_map(|y| {
@@ -52,7 +53,7 @@ impl Bitmap {
             width: sprite.width,
             height: sprite.height,
             pixels: cs_render::normal_map(
-                &render_frame(sprite, frame),
+                &render_frame(&without_references(sprite), frame),
                 sprite.width,
                 sprite.height,
                 1.0,
@@ -102,6 +103,18 @@ impl Bitmap {
             .map_err(|e| IoError::Png(e.to_string()))?;
         Ok(out)
     }
+}
+
+/// El sprite sin las capas de referencia (ocultas), que no salen al exportar.
+fn without_references(sprite: &Sprite) -> std::borrow::Cow<'_, Sprite> {
+    if !sprite.layers.iter().any(|l| l.reference) {
+        return std::borrow::Cow::Borrowed(sprite);
+    }
+    let mut out = sprite.clone();
+    for layer in out.layers.iter_mut().filter(|l| l.reference) {
+        layer.visible = false;
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 pub fn export_png(sprite: &Sprite, frame: usize, scale: u32) -> Result<Vec<u8>> {

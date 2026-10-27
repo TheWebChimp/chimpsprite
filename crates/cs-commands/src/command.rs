@@ -57,6 +57,8 @@ pub struct LayerProps {
     pub blend: Option<BlendMode>,
     #[serde(default)]
     pub clip: Option<bool>,
+    #[serde(default)]
+    pub reference: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -529,6 +531,9 @@ fn set_layer_props(doc: &mut Sprite, id: LayerId, props: &LayerProps) -> Result<
     }
     if let Some(v) = props.blend {
         old.blend = Some(std::mem::replace(&mut layer.blend, v));
+    }
+    if let Some(v) = props.reference {
+        old.reference = Some(std::mem::replace(&mut layer.reference, v));
     }
     if let Some(v) = props.clip {
         old.clip = Some(std::mem::replace(&mut layer.clip, v));

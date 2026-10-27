@@ -746,6 +746,34 @@ A pixel art editor."
                         editor.flatten();
                     }
                     menus::separator(ui);
+                    if ui
+                        .add(menus::plain("New Reference Layer from File…"))
+                        .clicked()
+                    {
+                        self.import_reference(&ctx);
+                        ui.close();
+                    }
+                    let editor = &mut self.doc.editor;
+                    let layer = editor.layer;
+                    if let Some(mut reference) = editor
+                        .sprite()
+                        .layer(layer)
+                        .filter(|l| l.kind == cs_core::LayerKind::Image)
+                        .map(|l| l.reference)
+                        && ui
+                            .add(menus::check(&mut reference, "Reference Layer"))
+                            .on_hover_text("Shown to trace over, left out when exporting")
+                            .changed()
+                    {
+                        editor.set_layer_props(
+                            layer,
+                            cs_commands::LayerProps {
+                                reference: Some(reference),
+                                ..Default::default()
+                            },
+                        );
+                    }
+                    menus::separator(ui);
                     if ui.add(menus::plain("New Tilemap Layer")).clicked() {
                         self.new_tilemap =
                             Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));

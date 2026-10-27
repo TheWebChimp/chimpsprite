@@ -61,6 +61,10 @@ pub struct Layer {
     /// Índice en `Sprite::tilesets`; solo en capas `LayerKind::Tilemap`.
     #[serde(default)]
     pub tileset: Option<u32>,
+    /// Capa de referencia, como en Aseprite: se ve en el lienzo (para calcar) pero no sale al
+    /// exportar.
+    #[serde(default)]
+    pub reference: bool,
 }
 
 impl Layer {
@@ -78,6 +82,7 @@ impl Layer {
             clip: false,
             instance: None,
             tileset: None,
+            reference: false,
         }
     }
 }

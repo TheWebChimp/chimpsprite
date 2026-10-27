@@ -72,6 +72,8 @@ impl TilesetBudget {
 
 const LAYER_VISIBLE: u16 = 1;
 const LAYER_EDITABLE: u16 = 2;
+/// Capa de referencia (no sale al exportar).
+const LAYER_REFERENCE: u16 = 64;
 
 const CEL_RAW: u16 = 0;
 const CEL_LINKED: u16 = 1;
@@ -640,6 +642,7 @@ fn read_layer(
         parent,
         visible: flags & LAYER_VISIBLE != 0,
         locked: flags & LAYER_EDITABLE == 0,
+        reference: flags & LAYER_REFERENCE != 0,
         // Aseprite guarda los grupos con opacidad 0 (y la ignora al componer): eso es "opaco".
         opacity: match (header_flags & HEADER_FLAG_LAYER_OPACITY != 0, kind, opacity) {
             (false, _, _) | (true, LayerKind::Group, 0) => 255,
@@ -1040,6 +1043,9 @@ fn layer_chunk(sprite: &Sprite, layer: &Layer) -> Vec<u8> {
     }
     if !layer.locked {
         flags |= LAYER_EDITABLE;
+    }
+    if layer.reference {
+        flags |= LAYER_REFERENCE;
     }
     let mut d = Vec::new();
     d.w_u16(flags);

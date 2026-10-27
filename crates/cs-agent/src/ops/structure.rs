@@ -164,6 +164,7 @@ impl Session {
             opacity: p.opacity,
             blend: p.blend.map(blend),
             clip: p.clip,
+            reference: None,
         };
         let mut cmds = vec![Command::SetLayerProps { id, props }];
         if let Some(enabled) = p.mask_enabled {

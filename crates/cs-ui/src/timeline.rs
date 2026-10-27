@@ -1000,6 +1000,8 @@ fn layer_row(
             LayerKind::Instance => format!("🖼 {}", layer.name),
             // Grilla de tiles.
             LayerKind::Tilemap => format!("⊞ {}", layer.name),
+            // La de referencia (no se exporta) lo dice.
+            LayerKind::Image if layer.reference => format!("{} (Ref)", layer.name),
             LayerKind::Image => layer.name.clone(),
         };
         match grid.skin {

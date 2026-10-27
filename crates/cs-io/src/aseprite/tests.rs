@@ -301,6 +301,26 @@ fn reads_old_palette_chunk_and_grayscale() {
 }
 
 #[test]
+fn a_reference_layer_roundtrips_and_is_left_out_of_the_export() {
+    let mut s = Sprite::new(2, 1, ColorMode::Rgba);
+    Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: vec![(0, 0, PixelValue::Rgba(Rgba::rgb(255, 0, 0)))],
+    }
+    .apply(&mut s)
+    .unwrap();
+    s.layers[0].reference = true;
+    assert!(roundtrip(&s).layers[0].reference);
+    let png = crate::export::export_png(&s, 0, 1).unwrap();
+    let image = crate::import::decode_png(&png).expect("png");
+    assert!(
+        image.pixels.iter().all(|c| c.a == 0),
+        "the reference is not exported"
+    );
+}
+
+#[test]
 fn the_pixel_ratio_roundtrips() {
     let mut s = Sprite::new(4, 4, ColorMode::Rgba);
     s.pixel_ratio = (2, 1);

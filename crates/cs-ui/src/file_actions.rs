@@ -216,9 +216,12 @@ impl ChimpApp {
                     match purpose {
                         OpenPurpose::Open | OpenPurpose::Dropped => self.load(loaded),
                         OpenPurpose::ImportLayer if self.has_doc() => {
-                            self.import_layer_bytes(&loaded)
+                            self.import_layer_bytes(&loaded, false)
                         }
-                        OpenPurpose::ImportLayer => {}
+                        OpenPurpose::ImportReference if self.has_doc() => {
+                            self.import_layer_bytes(&loaded, true)
+                        }
+                        OpenPurpose::ImportLayer | OpenPurpose::ImportReference => {}
                         OpenPurpose::LoadPalette if self.has_doc() => {
                             self.load_palette_bytes(&loaded.name, &loaded.bytes)
                         }
@@ -413,9 +416,18 @@ impl ChimpApp {
             .open_file(PNG_FILTER, OpenPurpose::ImportLayer, ctx);
     }
 
-    fn import_layer_bytes(&mut self, loaded: &Loaded) {
+    /// Layer → New Reference Layer from File…: una imagen para calcar, que no se exporta.
+    pub(crate) fn import_reference(&mut self, ctx: &egui::Context) {
+        self.platform
+            .open_file(PNG_FILTER, OpenPurpose::ImportReference, ctx);
+    }
+
+    /// Agrega la imagen de `loaded` como capa nueva (con `reference`, de referencia), en un
+    /// paso de undo, y la elige.
+    pub(crate) fn import_layer_bytes(&mut self, loaded: &Loaded, reference: bool) {
         let name = files::stem(&loaded.name).to_string();
-        let result = import_layer_command(&mut self.doc.editor, &loaded.bytes, &name);
+        let result = import_layer_command(&mut self.doc.editor, &loaded.bytes, &name)
+            .map(|cmd| if reference { as_reference(cmd) } else { cmd });
         match result {
             Ok(cmd) => {
                 if self.doc.editor.execute(cmd)
@@ -724,6 +736,19 @@ pub(crate) fn save_bytes(editor: &mut Editor, file_name: &str) -> Result<Vec<u8>
 
 /// Comando que agrega el PNG como capa nueva en el frame actual. Lo flotante se confirma antes
 /// de armarlo: el comando reserva el próximo id de imagen, que la confirmación podría usar.
+/// El mismo comando, con la capa que agrega marcada como de referencia.
+fn as_reference(cmd: cs_commands::Command) -> cs_commands::Command {
+    use cs_commands::Command;
+    match cmd {
+        Command::AddLayer { index, mut layer } => {
+            layer.reference = true;
+            Command::AddLayer { index, layer }
+        }
+        Command::Batch(cmds) => Command::Batch(cmds.into_iter().map(as_reference).collect()),
+        other => other,
+    }
+}
+
 pub(crate) fn import_layer_command(
     editor: &mut Editor,
     bytes: &[u8],
@@ -954,6 +979,27 @@ mod tests {
         let pasted = s.cel(LayerId(1), 0).unwrap().image;
         let imported = s.cel(top, 0).unwrap().image;
         assert_ne!(pasted, imported, "each cel has its own image");
+    }
+
+    #[test]
+    fn a_reference_layer_from_a_file_is_marked_in_one_step() {
+        let palettes = PaletteLibrary::new(Box::new(NoPresets));
+        let mut app = ChimpApp::with_parts(Default::default(), ViewSettings::default(), palettes);
+        app.new_document();
+        let png = cs_io::export::export_png(&Sprite::new(4, 4, ColorMode::Rgba), 0, 1).unwrap();
+        let steps = app.doc.editor.steps_done();
+        app.import_layer_bytes(
+            &Loaded {
+                name: "sketch.png".into(),
+                target: None,
+                bytes: png,
+            },
+            true,
+        );
+        let top = app.doc.editor.sprite().layers.last().unwrap();
+        assert!(top.reference, "{top:?}");
+        assert_eq!(app.doc.editor.layer, top.id, "chosen");
+        assert_eq!(app.doc.editor.steps_done(), steps + 1);
     }
 
     #[test]
