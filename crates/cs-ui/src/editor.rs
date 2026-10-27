@@ -18,7 +18,7 @@ use crate::tile_ops::{self, TileProxy};
 use crate::transform::{Floating, TransformDrag};
 use crate::transform_box::TransformHit;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum ToolKind {
     RectSelect,
     EllipseSelect,

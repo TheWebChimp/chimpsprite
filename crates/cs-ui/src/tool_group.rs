@@ -82,8 +82,9 @@ pub fn icon_piece(kind: ToolKind) -> &'static str {
 }
 
 /// "Nombre (Atajo)" y, si el grupo tiene variantes, una segunda línea que dice cómo verlas.
-pub fn tooltip(kind: ToolKind, more: bool) -> String {
-    let first = format!("{} ({})", kind.label(), kind.shortcut());
+pub fn tooltip(ctx: &egui::Context, kind: ToolKind, more: bool) -> String {
+    let keys = crate::keymap::label(ctx, crate::keymap::Action::Tool(kind));
+    let first = format!("{} ({keys})", kind.label());
     if more {
         format!("{first}\n{MORE_HINT}")
     } else {
@@ -198,7 +199,8 @@ fn pixel_variants(
             crate::menus::separator(ui);
         }
         let icon = skin.piece(icon_piece(kind), WidgetState::Normal);
-        let row = crate::menus::tool_row(ui, icon, kind.label(), kind.shortcut(), current == kind);
+        let keys = crate::keymap::label(ui.ctx(), crate::keymap::Action::Tool(kind));
+        let row = crate::menus::tool_row(ui, icon, kind.label(), &keys, current == kind);
         if row.clicked() {
             pick = Some(kind);
             ui.close();
@@ -230,7 +232,8 @@ pub fn variants_list(
             }
             None => egui::Button::selectable(selected, format!("{} {}", emoji(kind), kind.label())),
         };
-        if ui.add(item.shortcut_text(kind.shortcut())).clicked() {
+        let keys = crate::keymap::label(ui.ctx(), crate::keymap::Action::Tool(kind));
+        if ui.add(item.shortcut_text(keys)).clicked() {
             pick = Some(kind);
             ui.close();
         }
@@ -298,7 +301,7 @@ pub fn group_button(
     if let Some(kind) = pick {
         editor.set_tool(kind);
     }
-    let text = tooltip(shown, state.more);
+    let text = tooltip(ui.ctx(), shown, state.more);
     match skin {
         // Pixel UI: el globo del diseño, a la derecha del botón.
         Some(skin) => crate::pixel_ui::bubble_tooltip(response, skin, &text),
@@ -312,9 +315,12 @@ mod tests {
 
     #[test]
     fn the_tooltip_has_the_name_the_shortcut_and_how_to_see_the_variants() {
-        assert_eq!(tooltip(ToolKind::Hand, false), "Hand (H)");
         assert_eq!(
-            tooltip(ToolKind::Lasso, true),
+            tooltip(&egui::Context::default(), ToolKind::Hand, false),
+            "Hand (H)"
+        );
+        assert_eq!(
+            tooltip(&egui::Context::default(), ToolKind::Lasso, true),
             "Lasso (Q)\nRight-click or hold for more"
         );
     }

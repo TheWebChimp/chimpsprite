@@ -1,99 +1,126 @@
-//! Edit → Keyboard Shortcuts…: la lista de los atajos de la app, por sección y con un buscador.
-//! Las herramientas salen de [`ToolKind`] (su nombre y su atajo), así no se desfasan.
+//! Edit → Keyboard Shortcuts…: los atajos del registro ([`crate::keymap`]) por sección, con un
+//! buscador, y para cambiarlos como en Aseprite: un clic en las teclas de una acción y se
+//! aprietan las nuevas (Esc no cambia nada; Delete la deja sin atajo). Las que tenían esas teclas
+//! las pierden. Reset vuelve una acción (o todas) a las de fábrica. Lo que no se reasigna se ve
+//! más tenue.
 
-use eframe::egui::{self, Align2, RichText, Ui, vec2};
+use eframe::egui::{self, Align2, Key, RichText, Sense, Ui, vec2};
 
-use crate::editor::ToolKind;
+use crate::keymap::{Action, Combo, FIXED, Keymap};
 use crate::skin::Skin;
 
-/// Los atajos que no son de herramientas: sección, acción y teclas.
-const SHORTCUTS: &[(&str, &str, &str)] = &[
-    ("File", "New", "Ctrl+N"),
-    ("File", "Open", "Ctrl+O"),
-    ("File", "Save", "Ctrl+S"),
-    ("File", "Save As", "Ctrl+Shift+S"),
-    ("File", "Export", "Ctrl+E"),
-    ("File", "Close Tab", "Ctrl+W"),
-    ("File", "Next Tab", "Ctrl+Tab"),
-    ("File", "Previous Tab", "Ctrl+Shift+Tab"),
-    ("Edit", "Undo", "Ctrl+Z"),
-    ("Edit", "Redo", "Ctrl+Y"),
-    ("Edit", "Redo", "Ctrl+Shift+Z"),
-    ("Edit", "Cut", "Ctrl+X"),
-    ("Edit", "Copy", "Ctrl+C"),
-    ("Edit", "Copy Merged", "Ctrl+Shift+C"),
-    ("Edit", "Paste", "Ctrl+V"),
-    ("Edit", "Paste as New Artboard", "Ctrl+Shift+V"),
-    ("Edit", "Delete", "Del"),
-    ("Edit", "Fill", "F"),
-    ("Edit", "Stroke", "S"),
-    ("Edit", "Flip Horizontal", "Shift+H"),
-    ("Edit", "Flip Vertical", "Shift+V"),
-    ("Edit", "Transform", "Ctrl+T"),
-    ("Edit", "New Brush", "Ctrl+B"),
-    ("Edit", "New Artboard From Selection", "Ctrl+Alt+N"),
-    ("Edit", "Invert", "Ctrl+I"),
-    ("Select", "All", "Ctrl+A"),
-    ("Select", "Deselect", "Ctrl+D"),
-    ("Select", "Reselect", "Ctrl+Shift+D"),
-    ("Select", "Inverse", "Ctrl+Shift+I"),
-    ("Select", "Move the selection 1 px", "Arrows"),
-    ("Sprite", "Properties", "Ctrl+P"),
-    ("Sprite", "Sprite Size", "Ctrl+Alt+I"),
-    ("Sprite", "Canvas Size", "C"),
-    ("Layer", "New Layer", "Shift+N"),
-    ("Layer", "Clipping Mask", "Ctrl+Alt+G"),
-    ("Layer", "Layer Above", "Up"),
-    ("Layer", "Layer Below", "Down"),
-    ("Frame", "Play / Pause", "Enter"),
-    ("Frame", "Next Frame", "."),
-    ("Frame", "Previous Frame", ","),
-    ("Frame", "Duplicate Frame", "Alt+N"),
-    ("Frame", "Onion Skin", "F3"),
-    ("View", "Extras", "Ctrl+H"),
-    ("View", "Timeline", "Tab"),
-    ("View", "Full Screen", "F11"),
-    ("View", "Zoom In", "+"),
-    ("View", "Zoom Out", "-"),
-    ("View", "Actual Size", "Ctrl+0"),
-    ("View", "Fit to Screen", "Ctrl+Shift+0"),
-    ("Canvas", "Swap Colors", "X"),
-    ("Canvas", "Cancel", "Esc"),
-    ("Canvas", "Brush Size", "Ctrl+Wheel"),
-    ("Canvas", "Pick Color", "Alt+Click"),
-    ("Canvas", "Pan", "Space+Drag"),
-];
-
-const WIDTH: f32 = 280.0;
+const WIDTH: f32 = 380.0;
 const LIST_HEIGHT: f32 = 320.0;
+const KEYS_WIDTH: f32 = 120.0;
 
-/// Todas las filas: (sección, acción, teclas), las herramientas primero.
-fn rows() -> Vec<(&'static str, &'static str, &'static str)> {
-    let tools = ToolKind::GROUPS
-        .iter()
-        .flat_map(|g| g.iter())
-        .filter(|t| !t.shortcut().is_empty())
-        .map(|t| ("Tools", t.label(), t.shortcut()));
-    tools.chain(SHORTCUTS.iter().copied()).collect()
+/// El estado de la ventana: lo escrito en el buscador y la acción que espera sus teclas.
+#[derive(Default)]
+pub struct ShortcutsWindow {
+    filter: String,
+    capturing: Option<Action>,
 }
 
-/// Las filas que coinciden con `filter` (en la acción, las teclas o la sección).
-fn matching(filter: &str) -> Vec<(&'static str, &'static str, &'static str)> {
+/// Una fila de la lista.
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Row {
+    Action(Action),
+    Fixed(&'static str, &'static str, &'static str),
+}
+
+impl Row {
+    fn section(&self) -> &'static str {
+        match self {
+            Row::Action(a) => a.names().0,
+            Row::Fixed(s, _, _) => s,
+        }
+    }
+}
+
+/// Las filas que coinciden con `filter` (en la acción, las teclas o la sección), por sección.
+fn matching(keymap: &Keymap, filter: &str) -> Vec<Row> {
     let filter = filter.trim().to_lowercase();
-    rows()
+    let mut rows: Vec<Row> = Action::all()
         .into_iter()
-        .filter(|(section, action, keys)| {
+        .map(Row::Action)
+        .chain(FIXED.iter().map(|&(s, a, k)| Row::Fixed(s, a, k)))
+        .filter(|row| {
+            let (section, name, keys) = match *row {
+                Row::Action(a) => (a.names().0, a.names().1, keys_text(keymap, a)),
+                Row::Fixed(s, a, k) => (s, a, k.to_owned()),
+            };
             filter.is_empty()
-                || [section, action, keys]
+                || [section, name, &keys]
                     .iter()
                     .any(|s| s.to_lowercase().contains(&filter))
         })
-        .collect()
+        .collect();
+    // Por sección, en el orden en que aparece cada una (estable: dentro, el de la lista).
+    let order: Vec<&str> = {
+        let mut seen = Vec::new();
+        for row in &rows {
+            if !seen.contains(&row.section()) {
+                seen.push(row.section());
+            }
+        }
+        seen
+    };
+    rows.sort_by_key(|r| order.iter().position(|s| *s == r.section()));
+    rows
 }
 
-/// La ventana; `filter` es lo escrito en el buscador. Devuelve si se cerró.
-pub fn show(ctx: &egui::Context, filter: &mut String, skin: Option<&Skin>) -> bool {
+/// Todas las teclas de una acción, separadas por coma.
+fn keys_text(keymap: &Keymap, action: Action) -> String {
+    keymap
+        .combos(action)
+        .iter()
+        .map(Combo::label)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+/// La ventana. Devuelve si se cerró.
+pub fn show(
+    ctx: &egui::Context,
+    window: &mut ShortcutsWindow,
+    keymap: &mut Keymap,
+    skin: Option<&Skin>,
+) -> bool {
+    // Esperando teclas: la primera que se apriete (con sus modificadores) es la nueva.
+    if let Some(action) = window.capturing {
+        let pressed = ctx.input_mut(|i| {
+            let found = i.events.iter().find_map(|e| match e {
+                egui::Event::Key {
+                    key,
+                    pressed: true,
+                    modifiers,
+                    ..
+                } => Some((*key, *modifiers)),
+                _ => None,
+            });
+            if found.is_some() {
+                i.events.retain(|e| !matches!(e, egui::Event::Key { .. }));
+            }
+            found
+        });
+        if let Some((key, modifiers)) = pressed {
+            match key {
+                Key::Escape => {}
+                Key::Delete | Key::Backspace => keymap.clear(action),
+                _ => keymap.assign(
+                    action,
+                    Combo {
+                        key,
+                        ctrl: modifiers.command,
+                        shift: modifiers.shift,
+                        alt: modifiers.alt,
+                    },
+                ),
+            }
+            window.capturing = None;
+        }
+    }
     let anchor = (Align2::CENTER_CENTER, egui::Vec2::ZERO);
+    let mut done = false;
     let (_, closed) = crate::pixel_ui::app_window(
         ctx,
         skin,
@@ -101,20 +128,29 @@ pub fn show(ctx: &egui::Context, filter: &mut String, skin: Option<&Skin>) -> bo
         "Keyboard Shortcuts",
         true,
         anchor,
-        |ui| contents(ui, filter, skin),
+        |ui| {
+            contents(ui, window, keymap, skin);
+            ui.add_space(6.0);
+            match crate::pixel_ui::dialog_buttons(ui, skin, &["OK", "Reset All"]) {
+                Some(0) => done = true,
+                Some(_) => keymap.reset_all(),
+                None => {}
+            }
+        },
     );
-    closed || ctx.input(|i| i.key_pressed(egui::Key::Escape))
+    let escape = window.capturing.is_none() && ctx.input(|i| i.key_pressed(Key::Escape));
+    closed || done || escape
 }
 
-fn contents(ui: &mut Ui, filter: &mut String, skin: Option<&Skin>) {
+fn contents(ui: &mut Ui, window: &mut ShortcutsWindow, keymap: &mut Keymap, skin: Option<&Skin>) {
     ui.set_width(WIDTH);
     ui.horizontal(|ui| {
         ui.label("Search");
-        crate::widgets::text_line(ui, filter);
+        crate::widgets::text_line(ui, &mut window.filter);
     });
     ui.add_space(4.0);
     let dim = skin.map_or(ui.visuals().weak_text_color(), |s| s.colors().text_dim);
-    let rows = matching(filter);
+    let rows = matching(keymap, &window.filter);
     crate::pixel_ui::scroll(
         ui,
         egui::ScrollArea::vertical()
@@ -123,17 +159,24 @@ fn contents(ui: &mut Ui, filter: &mut String, skin: Option<&Skin>) {
         |ui| {
             let mut section = "";
             egui::Grid::new("shortcuts")
-                .num_columns(2)
-                .spacing(vec2(12.0, 2.0))
+                .num_columns(3)
+                .spacing(vec2(8.0, 2.0))
                 .show(ui, |ui| {
-                    for (s, action, keys) in rows {
-                        if s != section {
-                            section = s;
-                            ui.label(RichText::new(s).color(dim));
+                    for row in rows {
+                        if row.section() != section {
+                            section = row.section();
+                            ui.label(RichText::new(section).color(dim));
                             ui.end_row();
                         }
-                        ui.label(action);
-                        ui.label(keys);
+                        match row {
+                            Row::Action(action) => {
+                                action_row(ui, window, keymap, action);
+                            }
+                            Row::Fixed(_, name, keys) => {
+                                ui.label(RichText::new(name).color(dim));
+                                ui.label(RichText::new(keys).color(dim));
+                            }
+                        }
                         ui.end_row();
                     }
                 });
@@ -141,24 +184,89 @@ fn contents(ui: &mut Ui, filter: &mut String, skin: Option<&Skin>) {
     );
 }
 
+/// Una acción: su nombre, sus teclas (un clic para cambiarlas) y, si no son las de fábrica,
+/// Reset.
+fn action_row(ui: &mut Ui, window: &mut ShortcutsWindow, keymap: &mut Keymap, action: Action) {
+    ui.label(action.names().1);
+    let capturing = window.capturing == Some(action);
+    let text = if capturing {
+        "Press keys…".to_owned()
+    } else {
+        let keys = keys_text(keymap, action);
+        if keys.is_empty() {
+            "—".to_owned()
+        } else {
+            keys
+        }
+    };
+    let (rect, response) = ui.allocate_exact_size(vec2(KEYS_WIDTH, 15.0), Sense::click());
+    let label = format!("{} keys", action.names().1);
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+    // Una casilla como la de los campos: blanca con su borde; esperando las teclas, en el
+    // rosa de lo elegido.
+    let skin = crate::pixel_ui::frame_skin(ui.ctx());
+    let (fill, border, ink) = match &skin {
+        Some(s) => {
+            let c = s.colors();
+            let fill = if capturing {
+                c.timeline_selection
+            } else if response.hovered() {
+                c.menu_highlight
+            } else {
+                egui::Color32::WHITE
+            };
+            (fill, c.outline, c.text)
+        }
+        None => {
+            let v = ui.style().interact_selectable(&response, capturing);
+            (v.weak_bg_fill, v.bg_stroke.color, v.text_color())
+        }
+    };
+    ui.painter().rect_filled(rect, 0.0, fill);
+    ui.painter().rect_stroke(
+        rect,
+        0.0,
+        egui::Stroke::new(1.0, border),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.left_center() + vec2(4.0, 0.0),
+        Align2::LEFT_CENTER,
+        text,
+        egui::TextStyle::Body.resolve(ui.style()),
+        ink,
+    );
+    if response.clicked() {
+        window.capturing = if capturing { None } else { Some(action) };
+    }
+    if keymap.is_custom(action) {
+        if ui.small_button("Reset").clicked() {
+            keymap.reset(action);
+        }
+    } else {
+        ui.label("");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::editor::ToolKind;
 
     #[test]
-    fn every_tool_with_a_shortcut_is_listed_and_search_filters() {
-        let all = rows();
-        assert!(all.contains(&("Tools", "Pencil", "B")));
-        assert!(all.contains(&("Tools", "Polygon", "Shift+D")));
-        assert!(all.contains(&("Edit", "Stroke", "S")));
-        let found = matching("stroke");
-        assert_eq!(found, vec![("Edit", "Stroke", "S")]);
+    fn the_list_has_every_action_and_the_fixed_ones_and_search_filters() {
+        let keymap = Keymap::default();
+        let all = matching(&keymap, "");
+        assert!(all.contains(&Row::Action(Action::Tool(ToolKind::Pencil))));
+        assert!(all.contains(&Row::Fixed("Edit", "Copy", "Ctrl+C")));
+        assert_eq!(
+            matching(&keymap, "stroke"),
+            vec![Row::Action(Action::Stroke)]
+        );
         // También por las teclas.
         assert!(
-            matching("ctrl+alt+n")
-                .iter()
-                .any(|r| r.1 == "New Artboard From Selection")
+            matching(&keymap, "ctrl+alt+n")
+                .contains(&Row::Action(Action::NewArtboardFromSelection))
         );
-        assert_eq!(matching("").len(), all.len());
     }
 }

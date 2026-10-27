@@ -377,14 +377,15 @@ fn row_painter(ui: &Ui, look: &MenuLook) -> egui::Painter {
 /// Un ítem de menú: el texto y su atajo (`""`: sin atajo, como los de egui).
 pub(crate) struct Item<'a> {
     label: &'a str,
-    shortcut: Option<&'a str>,
+    shortcut: Option<std::borrow::Cow<'a, str>>,
 }
 
-/// Un ítem con atajo, como `Button::new(label).shortcut_text(shortcut)`.
-pub(crate) fn item<'a>(label: &'a str, shortcut: &'a str) -> Item<'a> {
+/// Un ítem con atajo, como `Button::new(label).shortcut_text(shortcut)`. El atajo puede ser un
+/// texto propio (el del registro de atajos).
+pub(crate) fn item<'a>(label: &'a str, shortcut: impl Into<std::borrow::Cow<'a, str>>) -> Item<'a> {
     Item {
         label,
-        shortcut: Some(shortcut),
+        shortcut: Some(shortcut.into()),
     }
 }
 
@@ -401,11 +402,11 @@ impl Widget for Item<'_> {
         let Some(look) = look(ui) else {
             let button = egui::Button::new(self.label);
             return match self.shortcut {
-                Some(keys) => button.shortcut_text(keys).ui(ui),
+                Some(keys) => button.shortcut_text(keys.as_ref()).ui(ui),
                 None => button.ui(ui),
             };
         };
-        let keys = self.shortcut.unwrap_or_default();
+        let keys = self.shortcut.as_deref().unwrap_or_default();
         let parts = shortcut_parts(keys);
         let a11y = if keys.is_empty() {
             self.label.to_owned()

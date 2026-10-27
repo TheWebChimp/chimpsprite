@@ -36,6 +36,7 @@ mod guides;
 mod home;
 mod instance_ops;
 mod keyboard_shortcuts;
+mod keymap;
 #[cfg(test)]
 mod layout_tests;
 mod logo;
@@ -77,7 +78,7 @@ mod view;
 mod widgets;
 
 use cs_core::{ColorMode, Sprite};
-use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
+use eframe::egui::{self, Key, Modifiers};
 
 pub use editor::{Editor, ToolKind};
 
@@ -92,6 +93,8 @@ const RECENT_KEY: &str = "chimpsprite.recent";
 const VIEW_KEY: &str = "chimpsprite.view";
 const DEFAULT_PALETTE_KEY: &str = "chimpsprite.default_palette";
 const TOOL_OPTIONS_KEY: &str = "chimpsprite.tool_options";
+/// Los atajos elegidos en Edit → Keyboard Shortcuts.
+const KEYMAP_KEY: &str = "chimpsprite.keymap";
 
 /// Texto que queda en el portapapeles del sistema al copiar píxeles (ver `shortcuts`).
 const CLIPBOARD_MARKER: &str = "ChimpSprite pixels";
@@ -126,8 +129,10 @@ pub struct ChimpApp {
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
     /// La ventana Edit → Undo History abierta.
     undo_history: bool,
-    /// La ventana Edit → Keyboard Shortcuts abierta, con lo escrito en su buscador.
-    shortcuts: Option<String>,
+    /// La ventana Edit → Keyboard Shortcuts abierta.
+    shortcuts: Option<keyboard_shortcuts::ShortcutsWindow>,
+    /// Los atajos de teclado (los de fábrica con los elegidos encima).
+    keymap: keymap::Keymap,
     /// La ventana Edit → Preferences abierta.
     preferences: bool,
     /// El diálogo de un filtro de Edit (Replace Color, Adjustments, FX), con su vista previa.
@@ -190,6 +195,12 @@ impl ChimpApp {
             .storage
             .and_then(|s| eframe::get_value(s, TOOL_OPTIONS_KEY))
             .unwrap_or_default();
+        if let Some(settings) = cc
+            .storage
+            .and_then(|s| eframe::get_value::<keymap::KeymapSettings>(s, KEYMAP_KEY))
+        {
+            app.keymap = keymap::Keymap::from_settings(&settings);
+        }
         if launch.demo {
             app.open_demo();
         }
@@ -258,7 +269,7 @@ impl ChimpApp {
         }
         // Desarrollo: Keyboard Shortcuts o Preferences abiertas, para capturas.
         match std::env::var("CHIMPSPRITE_DEMO_WINDOW").as_deref() {
-            Ok("shortcuts") => app.shortcuts = Some(String::new()),
+            Ok("shortcuts") => app.shortcuts = Some(Default::default()),
             Ok("preferences") => app.preferences = true,
             _ => {}
         }
@@ -364,6 +375,7 @@ impl ChimpApp {
             new_tilemap: None,
             undo_history: false,
             shortcuts: None,
+            keymap: keymap::Keymap::default(),
             preferences: false,
             filter_dialog: None,
             preview: preview::Preview::default(),
@@ -417,7 +429,13 @@ impl ChimpApp {
         use cs_commands::sprite_ops::{self, Rotation};
         use sprite_dialogs::{DuplicateDialog, PropertiesDialog, SpriteDialog, SpriteSizeDialog};
         const NO_TRANSFORM: &str = "Not available with instance or tilemap layers";
-        if ui.add(menus::item("Properties", "Ctrl+P")).clicked() {
+        if ui
+            .add(menus::item(
+                "Properties",
+                keymap::label(ui.ctx(), keymap::Action::Properties),
+            ))
+            .clicked()
+        {
             self.open_sprite_dialog(|a| SpriteDialog::Properties(PropertiesDialog::new(a)));
         }
         let indexed = matches!(
@@ -443,7 +461,10 @@ impl ChimpApp {
         }
         menus::separator(ui);
         let transformable = sprite_ops::can_transform(self.doc.editor.sprite());
-        let size = menus::item("Sprite Size", "Ctrl+Alt+I");
+        let size = menus::item(
+            "Sprite Size",
+            keymap::label(ui.ctx(), keymap::Action::SpriteSize),
+        );
         if ui
             .add_enabled(transformable, size)
             .on_disabled_hover_text(NO_TRANSFORM)
@@ -451,7 +472,13 @@ impl ChimpApp {
         {
             self.open_sprite_dialog(|a| SpriteDialog::Size(SpriteSizeDialog::new(a)));
         }
-        if ui.add(menus::item("Canvas Size", "C")).clicked() {
+        if ui
+            .add(menus::item(
+                "Canvas Size",
+                keymap::label(ui.ctx(), keymap::Action::CanvasSize),
+            ))
+            .clicked()
+        {
             self.open_canvas_size();
         }
         ui.add_enabled_ui(transformable, |ui| {
@@ -703,50 +730,12 @@ impl ChimpApp {
     }
 
     /// Atajos del menú View (funcionan aunque no haya foco en el lienzo).
-    fn view_shortcuts(&mut self, ctx: &egui::Context) {
-        let shortcut = |m, k| KeyboardShortcut::new(m, k);
-        // Ctrl+H es borrar hacia atrás en algunos campos de texto: con uno enfocado, le toca a él.
-        if !ctx.egui_wants_keyboard_input()
-            && ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::H)))
-        {
-            self.view.extras = !self.view.extras;
-        }
-        let fit = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Num0);
-        if ctx.input_mut(|i| i.consume_shortcut(&fit)) {
-            self.doc.canvas.request_zoom(view::ZoomRequest::Fit);
-        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::Num0))) {
-            self.doc.canvas.request_zoom(view::ZoomRequest::Actual);
-        }
-        if ctx.egui_wants_keyboard_input() {
-            return;
-        }
-        let (zoom_in, zoom_out, tab, f11) = ctx.input(|i| {
-            let plain = !i.modifiers.command && !i.modifiers.alt;
-            (
-                plain && (i.key_pressed(Key::Plus) || i.key_pressed(Key::Equals)),
-                plain && i.key_pressed(Key::Minus),
-                plain && !i.modifiers.shift && i.key_pressed(Key::Tab),
-                i.key_pressed(Key::F11),
-            )
-        });
-        if zoom_in {
-            self.doc.canvas.request_zoom(view::ZoomRequest::In);
-        }
-        if zoom_out {
-            self.doc.canvas.request_zoom(view::ZoomRequest::Out);
-        }
-        if tab {
-            self.view.timeline = !self.view.timeline;
-        }
-        if f11 && !cfg!(target_arch = "wasm32") {
-            self.toggle_fullscreen(ctx);
-        }
-    }
-
     fn view_menu(&mut self, ui: &mut egui::Ui) {
         let v = &mut self.view;
-        ui.add(menus::check(&mut v.extras, "Extras"))
-            .tip("Ctrl+H: show or hide all extras");
+        ui.add(menus::check(&mut v.extras, "Extras")).tip(format!(
+            "{}: show or hide all extras",
+            keymap::label(ui.ctx(), keymap::Action::Extras)
+        ));
         menus::submenu(ui, "Show", |ui| {
             ui.add(menus::check(&mut v.rulers, "Rulers"));
             ui.add_enabled_ui(v.extras, |ui| {
@@ -815,17 +804,38 @@ impl ChimpApp {
         });
         menus::separator(ui);
         let canvas = &mut self.doc.canvas;
-        if ui.add(menus::item("Zoom In", "+")).clicked() {
+        if ui
+            .add(menus::item(
+                "Zoom In",
+                keymap::label(ui.ctx(), keymap::Action::ZoomIn),
+            ))
+            .clicked()
+        {
             canvas.request_zoom(view::ZoomRequest::In);
         }
-        if ui.add(menus::item("Zoom Out", "-")).clicked() {
+        if ui
+            .add(menus::item(
+                "Zoom Out",
+                keymap::label(ui.ctx(), keymap::Action::ZoomOut),
+            ))
+            .clicked()
+        {
             canvas.request_zoom(view::ZoomRequest::Out);
         }
-        if ui.add(menus::item("Actual Size", "Ctrl+0")).clicked() {
+        if ui
+            .add(menus::item(
+                "Actual Size",
+                keymap::label(ui.ctx(), keymap::Action::ActualSize),
+            ))
+            .clicked()
+        {
             canvas.request_zoom(view::ZoomRequest::Actual);
         }
         if ui
-            .add(menus::item("Fit to Screen", "Ctrl+Shift+0"))
+            .add(menus::item(
+                "Fit to Screen",
+                keymap::label(ui.ctx(), keymap::Action::FitToScreen),
+            ))
             .clicked()
         {
             canvas.request_zoom(view::ZoomRequest::Fit);
@@ -837,116 +847,149 @@ impl ChimpApp {
         if self.is_modal() {
             return;
         }
-        let shortcut = |m, k| KeyboardShortcut::new(m, k);
-        // Ctrl+Alt+Shift+K antes que Ctrl+K: egui deja pasar Alt y Shift de más.
-        let all = Modifiers::COMMAND | Modifiers::ALT | Modifiers::SHIFT;
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(all, Key::K))) {
-            self.shortcuts = Some(String::new());
-        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::K))) {
-            self.preferences = true;
+        let typing = ctx.egui_wants_keyboard_input();
+        let painting = self.has_doc() && self.doc.editor.is_painting();
+        if self.has_doc() && !typing && !painting {
+            self.clipboard_events(ctx);
         }
-        // Ctrl+Alt+N antes que Ctrl+N: egui deja pasar Alt de más.
-        let from_selection = shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::N);
-        if ctx.input_mut(|i| i.consume_shortcut(&from_selection)) {
-            if self.has_doc() {
-                self.new_artboard_from_selection();
+        let presses: Vec<(Key, Modifiers)> = ctx.input(|i| {
+            i.events
+                .iter()
+                .filter_map(|e| match e {
+                    egui::Event::Key {
+                        key,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                        ..
+                    } => Some((*key, *modifiers)),
+                    _ => None,
+                })
+                .collect()
+        });
+        for (key, modifiers) in presses {
+            // Primero las fijas, que dependen de lo que pasa (confirmar, cancelar, mover lo
+            // seleccionado, borrar).
+            if self.has_doc()
+                && !typing
+                && !painting
+                && !modifiers.command
+                && !modifiers.alt
+                && editor_key(&mut self.doc.editor, key, modifiers.shift)
+            {
+                continue;
             }
-        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::N))) {
-            self.new_document();
+            let Some(action) = self.keymap.action_for(key, modifiers) else {
+                continue;
+            };
+            let allowed = match action.gate() {
+                keymap::Gate::Always => true,
+                keymap::Gate::NotTyping => !typing,
+                keymap::Gate::NotPainting => !typing && !painting,
+            };
+            if !allowed || (action.needs_document() && !self.has_doc()) {
+                continue;
+            }
+            // Que no le llegue también a egui (Tab mueve el foco, por ejemplo).
+            ctx.input_mut(|i| i.consume_key(modifiers, key));
+            self.run_action(ctx, action);
+            if self.is_modal() {
+                return;
+            }
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::O))) {
-            self.open_dialog(ctx);
-        }
-        let prev_tab = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Tab);
-        if ctx.input_mut(|i| i.consume_shortcut(&prev_tab)) {
-            self.tabs.cycle(&mut self.doc, false);
-        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::Tab))) {
-            self.tabs.cycle(&mut self.doc, true);
-        }
-        if !self.has_doc() {
-            return;
-        }
-        self.view_shortcuts(ctx);
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::W)))
-            && let Some(i) = self.tabs.active()
-        {
-            self.request_close_tab(i);
-        }
-        let save_as = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
-        if ctx.input_mut(|i| i.consume_shortcut(&save_as)) {
-            self.save_as();
-        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::S))) {
-            self.save();
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::E))) {
-            self.open_export();
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::P))) {
-            self.open_sprite_dialog(|a| {
+    }
+
+    /// Hace lo de un atajo.
+    fn run_action(&mut self, ctx: &egui::Context, action: keymap::Action) {
+        use keymap::Action::*;
+        let editor = &mut self.doc.editor;
+        match action {
+            NewFile => self.new_document(),
+            Open => self.open_dialog(ctx),
+            Save => {
+                self.save();
+            }
+            SaveAs => {
+                self.save_as();
+            }
+            Export => self.open_export(),
+            CloseTab => {
+                if let Some(i) = self.tabs.active() {
+                    self.request_close_tab(i);
+                }
+            }
+            NextTab => self.tabs.cycle(&mut self.doc, true),
+            PreviousTab => self.tabs.cycle(&mut self.doc, false),
+            Undo => editor.undo(),
+            Redo => editor.redo(),
+            Fill => {
+                editor.fill_selection();
+            }
+            Stroke => editor.stroke_selection(),
+            FlipHorizontal => {
+                editor.flip(true);
+            }
+            FlipVertical => {
+                editor.flip(false);
+            }
+            Transform => {
+                editor.transform_selection();
+            }
+            NewBrush => {
+                editor.new_brush();
+            }
+            NewArtboardFromSelection => self.new_artboard_from_selection(),
+            Invert => {
+                editor.invert_colors();
+            }
+            KeyboardShortcuts => self.shortcuts = Some(Default::default()),
+            Preferences => self.preferences = true,
+            SelectAll => editor.select_all(),
+            Deselect => editor.deselect(),
+            Reselect => editor.reselect(),
+            Inverse => editor.invert_selection(),
+            Properties => self.open_sprite_dialog(|a| {
                 sprite_dialogs::SpriteDialog::Properties(sprite_dialogs::PropertiesDialog::new(a))
-            });
+            }),
+            SpriteSize => {
+                if cs_commands::sprite_ops::can_transform(editor.sprite()) {
+                    self.open_sprite_dialog(|a| {
+                        sprite_dialogs::SpriteDialog::Size(sprite_dialogs::SpriteSizeDialog::new(a))
+                    });
+                }
+            }
+            CanvasSize => self.open_canvas_size(),
+            NewLayer => editor.add_layer(cs_core::LayerKind::Image),
+            ClippingMask => {
+                let layer = editor.layer;
+                editor.toggle_clip(layer);
+            }
+            LayerAbove => editor.step_layer(true),
+            LayerBelow => editor.step_layer(false),
+            PlayPause => editor.toggle_play(),
+            NextFrame => editor.next_frame(),
+            PreviousFrame => editor.prev_frame(),
+            NewFrame => editor.duplicate_frame(),
+            OnionSkin => editor.onion_enabled = !editor.onion_enabled,
+            Extras => self.view.extras = !self.view.extras,
+            Timeline => self.view.timeline = !self.view.timeline,
+            FullScreen => {
+                if !cfg!(target_arch = "wasm32") {
+                    self.toggle_fullscreen(ctx);
+                }
+            }
+            ZoomIn => self.doc.canvas.request_zoom(view::ZoomRequest::In),
+            ZoomOut => self.doc.canvas.request_zoom(view::ZoomRequest::Out),
+            ActualSize => self.doc.canvas.request_zoom(view::ZoomRequest::Actual),
+            FitToScreen => self.doc.canvas.request_zoom(view::ZoomRequest::Fit),
+            SwapColors => editor.swap_colors(),
+            Tool(kind) => editor.set_tool(kind),
         }
-        let sprite_size = shortcut(Modifiers::COMMAND | Modifiers::ALT, Key::I);
-        if ctx.input_mut(|i| i.consume_shortcut(&sprite_size))
-            && cs_commands::sprite_ops::can_transform(self.doc.editor.sprite())
-        {
-            self.open_sprite_dialog(|a| {
-                sprite_dialogs::SpriteDialog::Size(sprite_dialogs::SpriteSizeDialog::new(a))
-            });
-        }
-        // Nuevo, abrir, pestañas, cerrar, guardar y exportar (arriba y aquí) no chocan con la
-        // edición de texto y valen aun escribiendo. Lo que sigue sí choca: deshacer/rehacer y
-        // seleccionar todo son del campo de texto enfocado (si no, tocarían el arte), y el resto
-        // (deseleccionar, invertir, recorte) se deja quieto para no actuar a espaldas del campo.
-        if ctx.egui_wants_keyboard_input() {
-            return;
-        }
-        let redo_shift = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
-        let redo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
-        let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
-        if ctx.input_mut(|i| i.consume_shortcut(&redo_shift) || i.consume_shortcut(&redo)) {
-            self.doc.editor.redo();
-        } else if ctx.input_mut(|i| i.consume_shortcut(&undo)) {
-            self.doc.editor.undo();
-        }
-        let select_all = KeyboardShortcut::new(Modifiers::COMMAND, Key::A);
-        let reselect = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::D);
-        let deselect = KeyboardShortcut::new(Modifiers::COMMAND, Key::D);
-        let inverse = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::I);
-        let clipping = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::G);
-        if ctx.input_mut(|i| i.consume_shortcut(&clipping)) {
-            let layer = self.doc.editor.layer;
-            self.doc.editor.toggle_clip(layer);
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&select_all)) {
-            self.doc.editor.select_all();
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&reselect)) {
-            self.doc.editor.reselect();
-        } else if ctx.input_mut(|i| i.consume_shortcut(&deselect)) {
-            self.doc.editor.deselect();
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&inverse)) {
-            self.doc.editor.invert_selection();
-        }
-        // Después de Ctrl+Shift+I y Ctrl+Alt+I: egui deja pasar Shift y Alt de más.
-        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::I)))
-        {
-            self.doc.editor.invert_colors();
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::T)))
-        {
-            self.doc.editor.transform_selection();
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::B)))
-        {
-            self.doc.editor.new_brush();
-        }
-        if self.doc.editor.is_painting() {
-            return;
-        }
-        // egui convierte Ctrl+C/X/V en eventos (no teclas); Paste solo llega si el portapapeles
-        // del sistema tiene texto, por eso `copy` deja ahí un marcador.
+    }
+
+    /// Cortar, copiar y pegar: egui los manda como eventos (no teclas); Paste solo llega si el
+    /// portapapeles del sistema tiene texto, por eso `copy` deja ahí un marcador.
+    fn clipboard_events(&mut self, ctx: &egui::Context) {
         let (copy, cut) = ctx.input(|i| {
             let has = |f: fn(&egui::Event) -> bool| i.events.iter().any(f);
             (
@@ -965,42 +1008,6 @@ impl ChimpApp {
             self.cut(ctx);
         } else if let Some(request) = paste {
             self.paste(request);
-        }
-        let new_frame = KeyboardShortcut::new(Modifiers::ALT, Key::N);
-        if ctx.input_mut(|i| i.consume_shortcut(&new_frame)) {
-            self.doc.editor.duplicate_frame();
-        }
-        let pressed: Vec<(Key, bool)> = ctx.input(|i| {
-            if i.modifiers.command || i.modifiers.alt {
-                return Vec::new();
-            }
-            i.events
-                .iter()
-                .filter_map(|e| match e {
-                    egui::Event::Key {
-                        key,
-                        pressed: true,
-                        repeat: false,
-                        modifiers,
-                        ..
-                    } => Some((*key, modifiers.shift)),
-                    _ => None,
-                })
-                .collect()
-        });
-        for (key, shift) in pressed {
-            // C (sin Shift, que es el slice) abre Canvas Size, como en Aseprite.
-            if key == Key::C && !shift {
-                self.open_canvas_size();
-                return;
-            }
-            let editor = &mut self.doc.editor;
-            let letter = key.name().chars().next().filter(|_| key.name().len() == 1);
-            if let Some(tool) = letter.and_then(|c| ToolKind::from_key(c, shift)) {
-                editor.set_tool(tool);
-                continue;
-            }
-            editor_key(editor, key, shift);
         }
     }
 
@@ -1071,7 +1078,13 @@ impl ChimpApp {
     fn frame_menu(&mut self, ui: &mut egui::Ui) {
         let editor = &mut self.doc.editor;
         let last = editor.frame_count() - 1;
-        if ui.add(menus::item("New Frame", "Alt+N")).clicked() {
+        if ui
+            .add(menus::item(
+                "New Frame",
+                keymap::label(ui.ctx(), keymap::Action::NewFrame),
+            ))
+            .clicked()
+        {
             editor.duplicate_frame();
         }
         if ui.add(menus::plain("New Empty Frame")).clicked() {
@@ -1091,10 +1104,22 @@ impl ChimpApp {
         if ui.add(menus::plain("First Frame")).clicked() {
             editor.set_frame(0);
         }
-        if ui.add(menus::item("Previous Frame", ",")).clicked() {
+        if ui
+            .add(menus::item(
+                "Previous Frame",
+                keymap::label(ui.ctx(), keymap::Action::PreviousFrame),
+            ))
+            .clicked()
+        {
             editor.prev_frame();
         }
-        if ui.add(menus::item("Next Frame", ".")).clicked() {
+        if ui
+            .add(menus::item(
+                "Next Frame",
+                keymap::label(ui.ctx(), keymap::Action::NextFrame),
+            ))
+            .clicked()
+        {
             editor.next_frame();
         }
         if ui.add(menus::plain("Last Frame")).clicked() {
@@ -1105,7 +1130,13 @@ impl ChimpApp {
         } else {
             "Play Animation"
         };
-        if ui.add(menus::item(play, "Enter")).clicked() {
+        if ui
+            .add(menus::item(
+                play,
+                keymap::label(ui.ctx(), keymap::Action::PlayPause),
+            ))
+            .clicked()
+        {
             editor.toggle_play();
         }
         menus::separator(ui);
@@ -1115,9 +1146,12 @@ impl ChimpApp {
 
     /// El menú Help.
     fn help_menu(&mut self, ui: &mut egui::Ui) {
-        let shortcuts = menus::item("Keyboard Shortcuts…", "Ctrl+Alt+Shift+K");
+        let shortcuts = menus::item(
+            "Keyboard Shortcuts…",
+            keymap::label(ui.ctx(), keymap::Action::KeyboardShortcuts),
+        );
         if ui.add(shortcuts).clicked() {
-            self.shortcuts = Some(String::new());
+            self.shortcuts = Some(Default::default());
         }
         menus::separator(ui);
         if ui.add(menus::plain("About ChimpSprite")).clicked() {
@@ -1134,14 +1168,14 @@ A pixel art editor."
 
     /// El menú Edit, como el de Aseprite.
     fn edit_menu(&mut self, ui: &mut egui::Ui) {
-        let undo = menus::item("Undo", "Ctrl+Z");
+        let undo = menus::item("Undo", keymap::label(ui.ctx(), keymap::Action::Undo));
         if ui
             .add_enabled(self.doc.editor.history.can_undo(), undo)
             .clicked()
         {
             self.doc.editor.undo();
         }
-        let redo = menus::item("Redo", "Ctrl+Y");
+        let redo = menus::item("Redo", keymap::label(ui.ctx(), keymap::Action::Redo));
         if ui
             .add_enabled(self.doc.editor.history.can_redo(), redo)
             .clicked()
@@ -1196,13 +1230,19 @@ A pixel art editor."
         }
         menus::separator(ui);
         if ui
-            .add_enabled(has_selection, menus::item("Fill", "F"))
+            .add_enabled(
+                has_selection,
+                menus::item("Fill", keymap::label(ui.ctx(), keymap::Action::Fill)),
+            )
             .clicked()
         {
             self.doc.editor.fill_selection();
         }
         if ui
-            .add_enabled(has_selection, menus::item("Stroke", "S"))
+            .add_enabled(
+                has_selection,
+                menus::item("Stroke", keymap::label(ui.ctx(), keymap::Action::Stroke)),
+            )
             .clicked()
         {
             self.doc.editor.stroke_selection();
@@ -1221,13 +1261,31 @@ A pixel art editor."
                 }
             }
         });
-        if ui.add(menus::item("Flip Horizontal", "Shift+H")).clicked() {
+        if ui
+            .add(menus::item(
+                "Flip Horizontal",
+                keymap::label(ui.ctx(), keymap::Action::FlipHorizontal),
+            ))
+            .clicked()
+        {
             self.doc.editor.flip(true);
         }
-        if ui.add(menus::item("Flip Vertical", "Shift+V")).clicked() {
+        if ui
+            .add(menus::item(
+                "Flip Vertical",
+                keymap::label(ui.ctx(), keymap::Action::FlipVertical),
+            ))
+            .clicked()
+        {
             self.doc.editor.flip(false);
         }
-        if ui.add(menus::item("Transform", "Ctrl+T")).clicked() {
+        if ui
+            .add(menus::item(
+                "Transform",
+                keymap::label(ui.ctx(), keymap::Action::Transform),
+            ))
+            .clicked()
+        {
             self.doc.editor.transform_selection();
         }
         menus::submenu(ui, "Shift", |ui| {
@@ -1245,12 +1303,21 @@ A pixel art editor."
         });
         menus::separator(ui);
         if ui
-            .add_enabled(has_selection, menus::item("New Brush", "Ctrl+B"))
+            .add_enabled(
+                has_selection,
+                menus::item(
+                    "New Brush",
+                    keymap::label(ui.ctx(), keymap::Action::NewBrush),
+                ),
+            )
             .clicked()
         {
             self.doc.editor.new_brush();
         }
-        let from_selection = menus::item("New Artboard From Selection", "Ctrl+Alt+N");
+        let from_selection = menus::item(
+            "New Artboard From Selection",
+            keymap::label(ui.ctx(), keymap::Action::NewArtboardFromSelection),
+        );
         if ui.add_enabled(has_selection, from_selection).clicked() {
             self.new_artboard_from_selection();
         }
@@ -1268,7 +1335,13 @@ A pixel art editor."
                 tolerance: 0,
             });
         }
-        if ui.add(menus::item("Invert", "Ctrl+I")).clicked() {
+        if ui
+            .add(menus::item(
+                "Invert",
+                keymap::label(ui.ctx(), keymap::Action::Invert),
+            ))
+            .clicked()
+        {
             self.doc.editor.invert_colors();
         }
         let mut open = None;
@@ -1320,11 +1393,20 @@ A pixel art editor."
             self.new_note();
         }
         menus::separator(ui);
-        let shortcuts = menus::item("Keyboard Shortcuts…", "Ctrl+Alt+Shift+K");
+        let shortcuts = menus::item(
+            "Keyboard Shortcuts…",
+            keymap::label(ui.ctx(), keymap::Action::KeyboardShortcuts),
+        );
         if ui.add(shortcuts).clicked() {
-            self.shortcuts = Some(String::new());
+            self.shortcuts = Some(Default::default());
         }
-        if ui.add(menus::item("Preferences…", "Ctrl+K")).clicked() {
+        if ui
+            .add(menus::item(
+                "Preferences…",
+                keymap::label(ui.ctx(), keymap::Action::Preferences),
+            ))
+            .clicked()
+        {
             self.preferences = true;
         }
     }
@@ -1332,8 +1414,8 @@ A pixel art editor."
     /// Las ventanas Keyboard Shortcuts y Preferences.
     fn update_settings_windows(&mut self, ctx: &egui::Context) {
         let skin = self.pixel.skin();
-        if let Some(filter) = &mut self.shortcuts
-            && keyboard_shortcuts::show(ctx, filter, skin)
+        if let Some(window) = &mut self.shortcuts
+            && keyboard_shortcuts::show(ctx, window, &mut self.keymap, skin)
         {
             self.shortcuts = None;
         }
@@ -1429,10 +1511,16 @@ A pixel art editor."
             menus::bar_menu(ui, look, "File", |ui| {
                 let ctx = ui.ctx().clone();
                 let item = menus::item;
-                if ui.add(item("New", "Ctrl+N")).clicked() {
+                if ui
+                    .add(item("New", keymap::label(&ctx, keymap::Action::NewFile)))
+                    .clicked()
+                {
                     self.new_document();
                 }
-                if ui.add(item("Open", "Ctrl+O")).clicked() {
+                if ui
+                    .add(item("Open", keymap::label(&ctx, keymap::Action::Open)))
+                    .clicked()
+                {
                     self.open_dialog(&ctx);
                 }
                 menus::separator(ui);
@@ -1441,11 +1529,20 @@ A pixel art editor."
                 } else {
                     ("Save", "Save As")
                 };
-                if ui.add_enabled(has_doc, item(save, "Ctrl+S")).clicked() {
+                if ui
+                    .add_enabled(
+                        has_doc,
+                        item(save, keymap::label(&ctx, keymap::Action::Save)),
+                    )
+                    .clicked()
+                {
                     self.save();
                 }
                 if ui
-                    .add_enabled(has_doc, item(save_as, "Ctrl+Shift+S"))
+                    .add_enabled(
+                        has_doc,
+                        item(save_as, keymap::label(&ctx, keymap::Action::SaveAs)),
+                    )
                     .clicked()
                 {
                     self.save_as();
@@ -1453,9 +1550,9 @@ A pixel art editor."
                 let close = item(
                     "Close",
                     if cfg!(target_arch = "wasm32") {
-                        ""
+                        String::new()
                     } else {
-                        "Ctrl+W"
+                        keymap::label(&ctx, keymap::Action::CloseTab)
                     },
                 );
                 if ui.add_enabled(has_doc, close).clicked()
@@ -1470,7 +1567,13 @@ A pixel art editor."
                 {
                     self.import_layer(&ctx);
                 }
-                if ui.add_enabled(has_doc, item("Export", "Ctrl+E")).clicked() {
+                if ui
+                    .add_enabled(
+                        has_doc,
+                        item("Export", keymap::label(&ctx, keymap::Action::Export)),
+                    )
+                    .clicked()
+                {
                     self.open_export();
                 }
                 menus::separator(ui);
@@ -1518,21 +1621,34 @@ A pixel art editor."
                 menus::bar_menu(ui, look, "Select", |ui| {
                     let editor = &mut self.doc.editor;
                     let has_selection = editor.selection.is_some();
-                    if ui.add(menus::item("All", "Ctrl+A")).clicked() {
+                    if ui
+                        .add(menus::item(
+                            "All",
+                            keymap::label(ui.ctx(), keymap::Action::SelectAll),
+                        ))
+                        .clicked()
+                    {
                         editor.select_all();
                     }
-                    let deselect = menus::item("Deselect", "Ctrl+D");
+                    let deselect = menus::item(
+                        "Deselect",
+                        keymap::label(ui.ctx(), keymap::Action::Deselect),
+                    );
                     if ui.add_enabled(has_selection, deselect).clicked() {
                         editor.deselect();
                     }
-                    let reselect = menus::item("Reselect", "Ctrl+Shift+D");
+                    let reselect = menus::item(
+                        "Reselect",
+                        keymap::label(ui.ctx(), keymap::Action::Reselect),
+                    );
                     if ui
                         .add_enabled(!has_selection && editor.can_reselect(), reselect)
                         .clicked()
                     {
                         editor.reselect();
                     }
-                    let inverse = menus::item("Inverse", "Ctrl+Shift+I");
+                    let inverse =
+                        menus::item("Inverse", keymap::label(ui.ctx(), keymap::Action::Inverse));
                     if ui.add(inverse).clicked() {
                         editor.invert_selection();
                     }
@@ -1980,6 +2096,8 @@ impl eframe::App for ChimpApp {
         let ctx = ui.ctx().clone();
         // Pixel UI: fuente, escala entera, estilo y skin (con su recarga en vivo).
         self.pixel.update(&ctx, &self.view);
+        // Los atajos de este frame, para los menús y los tooltips.
+        keymap::publish(&ctx, &self.keymap);
         self.handle_close_request(&ctx);
         self.handle_dropped_files(&ctx);
         self.handle_platform_events(&ctx);
@@ -2019,6 +2137,7 @@ impl eframe::App for ChimpApp {
         eframe::set_value(storage, RECENT_KEY, &self.recent);
         eframe::set_value(storage, VIEW_KEY, &self.view);
         eframe::set_value(storage, TOOL_OPTIONS_KEY, &self.current_tool_options());
+        eframe::set_value(storage, KEYMAP_KEY, &self.keymap.settings());
         eframe::set_value(
             storage,
             DEFAULT_PALETTE_KEY,
@@ -2027,23 +2146,17 @@ impl eframe::App for ChimpApp {
     }
 }
 
-/// Teclas sin Ctrl/Alt que actúan sobre el editor (las letras de herramienta van aparte).
-pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
+/// Las teclas sin Ctrl ni Alt que no se reasignan porque dependen de lo que pasa: Enter confirma
+/// lo que está a medias o flotando, Esc cancela, las flechas mueven lo seleccionado, Delete
+/// borra y, en modo Tiles, X e Y voltean el tile del pincel. Devuelve si la usó (si no, va al
+/// registro de atajos).
+pub(crate) fn editor_key(editor: &mut Editor, key: Key, _shift: bool) -> bool {
     match key {
-        Key::N if shift => editor.add_layer(cs_core::LayerKind::Image),
-        // Como en Aseprite: Shift+H y Shift+V voltean lo seleccionado (o la capa).
-        Key::H if shift => {
-            editor.flip(true);
-        }
-        Key::V if shift => {
-            editor.flip(false);
-        }
         Key::Enter if editor.is_pending() => editor.finish_gesture(),
         Key::Enter if editor.is_floating() => {
             editor.commit_floating();
         }
         Key::Escape => editor.escape(),
-        // Con algo seleccionado (y una herramienta que transforma), las flechas lo mueven 1 px.
         Key::ArrowLeft if editor.can_transform() => {
             editor.nudge(-1, 0);
         }
@@ -2056,21 +2169,8 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
         Key::ArrowDown if editor.can_transform() => {
             editor.nudge(0, 1);
         }
-        Key::Enter => editor.toggle_play(),
-        Key::Comma | Key::ArrowLeft => editor.prev_frame(),
-        Key::Period | Key::ArrowRight => editor.next_frame(),
-        Key::ArrowUp => editor.step_layer(true),
-        Key::ArrowDown => editor.step_layer(false),
-        Key::F3 => editor.onion_enabled = !editor.onion_enabled,
-        // S (sin Shift, que es el spray): Edit → Stroke; F, Edit → Fill.
-        Key::S if !shift => editor.stroke_selection(),
-        Key::F if !shift => {
-            editor.fill_selection();
-        }
-        // En modo Tiles no hay color secundario: X e Y voltean el tile del pincel.
         Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
         Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
-        Key::X => editor.swap_colors(),
         // Con un rango de cels en el timeline y nada seleccionado en el lienzo, Delete los borra.
         Key::Delete | Key::Backspace if editor.has_cel_range() && editor.selection.is_none() => {
             editor.clear_selected_cels()
@@ -2081,8 +2181,9 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
         {
             editor.clear_selection_content()
         }
-        _ => {}
+        _ => return false,
     }
+    true
 }
 
 #[cfg(test)]

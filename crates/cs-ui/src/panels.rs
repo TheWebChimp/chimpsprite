@@ -2810,7 +2810,7 @@ mod tests {
         assert_eq!(drawn.left(), button.right() + 6.0, "{drawn:?} {button:?}");
         assert_eq!(drawn.top() + 8.0, button.center().y, "{drawn:?} {button:?}");
         assert!(drawn.height() > 20.0, "two lines: {drawn:?}");
-        let text = tool_group::tooltip(ToolKind::RectSelect, true);
+        let text = tool_group::tooltip(&egui::Context::default(), ToolKind::RectSelect, true);
         let (_, rect, _) = h
             .texts
             .iter()

@@ -2528,6 +2528,43 @@ fn the_edit_menu_is_aseprites() {
     }
 }
 
+/// Aprieta `key` con `modifiers` un frame (y la suelta en el siguiente).
+fn press(h: &mut LayoutHarness, key: egui::Key, modifiers: egui::Modifiers) {
+    let event = |pressed| Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers,
+    };
+    h.frame_with(vec![event(true)]);
+    h.frame_with(vec![event(false)]);
+}
+
+#[test]
+fn a_reassigned_shortcut_does_its_action_and_the_old_keys_no_longer_do() {
+    use crate::ToolKind;
+    use crate::keymap::{Action, Combo};
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert!(!h.app.doc.editor.playing);
+    h.app
+        .keymap
+        .assign(Action::PlayPause, Combo::new(egui::Key::P));
+    press(&mut h, egui::Key::Enter, egui::Modifiers::NONE);
+    assert!(!h.app.doc.editor.playing, "Enter is not Play anymore");
+    press(&mut h, egui::Key::P, egui::Modifiers::NONE);
+    assert!(h.app.doc.editor.playing, "P is");
+    // Una herramienta: su letra nueva.
+    h.app
+        .keymap
+        .assign(Action::Tool(ToolKind::Eraser), Combo::new(egui::Key::J));
+    press(&mut h, egui::Key::J, egui::Modifiers::NONE);
+    assert_eq!(h.app.doc.editor.tool, ToolKind::Eraser);
+    // Se guarda y vuelve igual.
+    let saved = h.app.keymap.settings();
+    assert_eq!(crate::keymap::Keymap::from_settings(&saved), h.app.keymap);
+}
+
 #[test]
 fn ctrl_alt_n_makes_an_artboard_from_the_selection_and_not_a_new_document() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
