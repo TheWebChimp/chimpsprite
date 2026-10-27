@@ -329,10 +329,9 @@ impl ExportDialog {
                             let grid = SheetLayout::Grid {
                                 columns: self.columns,
                             };
-                            if ui
-                                .radio(matches!(self.layout, SheetLayout::Grid { .. }), "Grid")
-                                .clicked()
-                            {
+                            // El radio del diseño, como las otras opciones.
+                            let mut grid_on = matches!(self.layout, SheetLayout::Grid { .. });
+                            if widgets::radio_value(ui, &mut grid_on, true, "Grid").clicked() {
                                 self.layout = grid;
                             }
                             if matches!(self.layout, SheetLayout::Grid { .. }) {

@@ -798,7 +798,14 @@ impl ChimpApp {
         ui.add_enabled_ui(self.view.pixel_ui, |ui| {
             menus::submenu(ui, "UI Scale", |ui| {
                 for scale in 1..=3u8 {
-                    ui.radio_value(&mut self.view.ui_scale, scale, format!("{scale}×"));
+                    // El radio de los menús del diseño.
+                    let label = format!("{scale}×");
+                    if ui
+                        .add(menus::choice(self.view.ui_scale == scale, &label))
+                        .clicked()
+                    {
+                        self.view.ui_scale = scale;
+                    }
                 }
             });
         });
