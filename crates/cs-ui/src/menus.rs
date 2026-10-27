@@ -6,7 +6,7 @@
 //! - **Panel:** `menu.panel` en 9-slice, colgado de la caja: mismo borde izquierdo, y su borde de
 //!   arriba empieza donde termina la caja.
 //! - **Ítems:** filas de 13 px con el texto a la izquierda y el atajo a la derecha. Ctrl y Shift
-//!   son las teclas dibujadas (`key.ctrl`, `key.shift`); las demás con nombre (Alt, Del…) van en `key`
+//!   son las teclas dibujadas (`key.ctrl`, `key.shift`, `key.alt`); las demás con nombre (Del…) van en `key`
 //!   estirada con el nombre en la fuente pixel. Entre tecla y tecla, un + de 5×5 hecho con rects,
 //!   y al final la tecla en el color tenue (`ruler_tick`, el del diseño).
 //! - **Separadores:** la línea grabada del diseño, `menu_highlight` y debajo `background`.
@@ -41,6 +41,7 @@ const TITLE_OPEN: &str = "menu.title.open";
 const PANEL: &str = "menu.panel";
 const KEY_CTRL: &str = "key.ctrl";
 const KEY_SHIFT: &str = "key.shift";
+const KEY_ALT: &str = "key.alt";
 const KEY: &str = "key";
 const CHECK: &str = "menu.check";
 const CHECK_ON: &str = "menu.check.on";
@@ -112,6 +113,7 @@ pub(crate) struct MenuLook {
     panel: Option<Piece>,
     key_ctrl: Option<Piece>,
     key_shift: Option<Piece>,
+    key_alt: Option<Piece>,
     key: Option<Piece>,
     check: Option<Piece>,
     check_on: Option<Piece>,
@@ -138,6 +140,7 @@ impl MenuLook {
             panel: piece(PANEL),
             key_ctrl: piece(KEY_CTRL),
             key_shift: piece(KEY_SHIFT),
+            key_alt: piece(KEY_ALT),
             key: piece(KEY),
             check: piece(CHECK),
             check_on: piece(CHECK_ON),
@@ -618,16 +621,17 @@ fn shortcut_parts(keys: &str) -> Vec<KeyPart<'_>> {
     parts
 }
 
-/// La pieza dibujada de la tecla `name`, si el skin la trae: Ctrl y Shift.
+/// La pieza dibujada de la tecla `name`, si el skin la trae: Ctrl, Shift y Alt.
 fn drawn_key<'a>(look: &'a MenuLook, name: &str) -> Option<&'a Piece> {
     match name {
         "Ctrl" => look.key_ctrl.as_ref(),
         "Shift" => look.key_shift.as_ref(),
+        "Alt" => look.key_alt.as_ref(),
         _ => None,
     }
 }
 
-/// El ancho de una tecla dibujada: la pieza de Ctrl o Shift tal cual; las demás, el nombre con
+/// El ancho de una tecla dibujada: la pieza de Ctrl, Shift o Alt tal cual; las demás, el nombre con
 /// 2 px de cada lado de la tinta.
 fn cap_width(ui: &Ui, look: &MenuLook, name: &str) -> f32 {
     if let Some(piece) = drawn_key(look, name) {
@@ -701,7 +705,7 @@ fn parts_shapes(
     shapes
 }
 
-/// Una tecla dibujada en `left`: Ctrl o Shift, la pieza tal cual a la altura de las mayúsculas; las
+/// Una tecla dibujada en `left`: Ctrl, Shift o Alt, la pieza tal cual a la altura de las mayúsculas; las
 /// demás, `key` estirada 1 fila más arriba y abajo con el nombre en el color del panel (como las
 /// letras caladas de Ctrl).
 fn cap_shapes(

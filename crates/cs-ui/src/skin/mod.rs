@@ -950,6 +950,13 @@ mod tests {
         assert_eq!(alpha(shift, 1, 0), 255, "the top");
         assert_eq!(alpha(shift, 0, 3), 255, "the left side");
         assert_eq!(alpha(shift, 4, 1), 0, "the S, cut out");
+        // La tecla Alt, igual: 14×7 con las letras y las esquinas caladas.
+        let alt = &data.pieces["key.alt"];
+        assert_eq!((alt.size, alt.center), ([14, 7], None));
+        assert_eq!(alpha(alt, 0, 0), 0, "rounded corner");
+        assert_eq!(alpha(alt, 13, 6), 0, "rounded corner");
+        assert_eq!(alpha(alt, 1, 0), 255, "the top");
+        assert_eq!(alpha(alt, 4, 1), 0, "the A, cut out");
         // Las casillas del diseño (Layer 4, frame 4), marcada y sin marcar: 11×12, sin centro,
         // con las 4 esquinas de afuera caladas, el interior blanco y una fila de sombra
         // (230,231,240) abajo del interior. La marcada lleva la marca verde.

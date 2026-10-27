@@ -1445,6 +1445,24 @@ fn ctrl_shift_shortcuts_draw_the_ctrl_and_the_shift_badges() {
 }
 
 #[test]
+fn ctrl_alt_shortcuts_draw_the_alt_badge() {
+    let mut h = two_tabs(Some(0));
+    open_menu(&mut h, "Sprite");
+    // Sprite Size (Ctrl+Alt+I): Ctrl, el +, Alt (la tecla del diseño), el + y la I.
+    let alts = h.drawn("key.alt");
+    assert_eq!(alts.len(), 1, "{alts:?}");
+    let alt = alts[0];
+    assert_eq!(alt.size(), Vec2::new(14.0, 7.0));
+    let ctrl = h
+        .drawn("key.ctrl")
+        .into_iter()
+        .find(|r| r.top() == alt.top())
+        .unwrap_or_else(|| panic!("Ctrl on the Alt row at {alt:?}"));
+    assert_eq!(alt.left() - ctrl.right(), 7.0, "1 + 5 + 1 between them");
+    assert!(!h.texts.iter().any(|(t, _)| t == "Alt"), "{:?}", h.texts);
+}
+
+#[test]
 fn separators_are_the_etched_line_of_the_design() {
     let mut h = two_tabs(Some(0));
     open_menu(&mut h, "File");
