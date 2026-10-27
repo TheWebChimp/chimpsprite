@@ -810,14 +810,46 @@ fn layer_row(
     // Miniatura de la máscara: clic para pintarla (o volver a la capa).
     let left_content = inner(left);
     let mut right = left_content.right();
-    if let Some(mask) = &layer.mask {
-        let chip = Rect::from_center_size(
+    // Con Pixel UI: la cara del diseño (y, en la capa activa de imagen sin máscara, el botón
+    // para agregarle una) contra la derecha, centrada en la fila.
+    let pixel_chip = |size: Vec2| {
+        Rect::from_min_size(
             pos2(
-                left_content.right() - 4.0 - grid.chip.x / 2.0,
-                content.center().y,
+                left_content.right() - 4.0 - size.x,
+                (content.center().y - size.y / 2.0).floor(),
             ),
-            grid.chip,
-        );
+            size,
+        )
+    };
+    if layer.mask.is_none()
+        && active
+        && layer.kind == LayerKind::Image
+        && let Some(skin) = grid.skin
+    {
+        let add = pixel_chip(pixel::MASK_ADD_SIZE);
+        right = add.left() - 2.0;
+        pixel::mask_add(ui, skin, add.min);
+        let response = ui
+            .interact(add, ui.id().with(("mask_add", id)), Sense::click())
+            .tip("Add Layer Mask");
+        response.widget_info(|| {
+            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Add Layer Mask")
+        });
+        if response.clicked() {
+            editor.add_mask(id, NewMask::RevealAll);
+        }
+    }
+    if let Some(mask) = &layer.mask {
+        let chip = match grid.skin {
+            Some(_) => pixel_chip(pixel::MASK_SIZE),
+            None => Rect::from_center_size(
+                pos2(
+                    left_content.right() - 4.0 - grid.chip.x / 2.0,
+                    content.center().y,
+                ),
+                grid.chip,
+            ),
+        };
         right = chip.left() - 2.0;
         let editing = active && editor.edit_mask;
         let response = ui
@@ -827,32 +859,36 @@ fn layer_row(
             } else {
                 "Layer mask (click to paint it)"
             });
-        painter.rect_filled(chip, 2.0, Color32::from_gray(40));
-        painter.rect_filled(
-            Rect::from_min_max(chip.min, pos2(chip.center().x, chip.max.y)).shrink(2.0),
-            0.0,
-            Color32::WHITE,
-        );
-        painter.rect_filled(
-            Rect::from_min_max(pos2(chip.center().x, chip.min.y), chip.max).shrink(2.0),
-            0.0,
-            Color32::BLACK,
-        );
-        if !mask.enabled {
-            painter.line_segment(
-                [chip.left_bottom(), chip.right_top()],
-                Stroke::new(1.5, Color32::from_rgb(230, 40, 60)),
+        if let Some(skin) = grid.skin {
+            pixel::mask_chip(ui, skin, chip.min, editing, mask.enabled);
+        } else {
+            painter.rect_filled(chip, 2.0, Color32::from_gray(40));
+            painter.rect_filled(
+                Rect::from_min_max(chip.min, pos2(chip.center().x, chip.max.y)).shrink(2.0),
+                0.0,
+                Color32::WHITE,
+            );
+            painter.rect_filled(
+                Rect::from_min_max(pos2(chip.center().x, chip.min.y), chip.max).shrink(2.0),
+                0.0,
+                Color32::BLACK,
+            );
+            if !mask.enabled {
+                painter.line_segment(
+                    [chip.left_bottom(), chip.right_top()],
+                    Stroke::new(1.5, Color32::from_rgb(230, 40, 60)),
+                );
+            }
+            painter.rect_stroke(
+                chip,
+                2.0,
+                Stroke::new(
+                    if editing { 2.0 } else { 1.0 },
+                    if editing { grid.accent() } else { grid.dim() },
+                ),
+                StrokeKind::Outside,
             );
         }
-        painter.rect_stroke(
-            chip,
-            2.0,
-            Stroke::new(
-                if editing { 2.0 } else { 1.0 },
-                if editing { grid.accent() } else { grid.dim() },
-            ),
-            StrokeKind::Outside,
-        );
         if response.clicked() {
             let editing_now = editor.layer == id && editor.edit_mask;
             editor.select_layer(id);
@@ -2038,6 +2074,33 @@ mod tests {
         // Un clic suelto deja un solo cel.
         h.click_at(h.cel(1, 3));
         assert!(!h.editor.has_cel_range());
+    }
+
+    #[test]
+    fn with_pixel_ui_the_layer_mask_is_the_face_of_the_design() {
+        let mut h = Harness::pixel(1200.0);
+        h.frame(vec![]);
+        // La capa activa, de imagen y sin máscara: el botón para agregarle una.
+        assert!(h.drawn("timeline.mask").is_empty());
+        assert_eq!(h.drawn("timeline.mask.add").len(), 1);
+        h.click("Add Layer Mask");
+        h.frame(vec![]);
+        let layer = h.editor.layer;
+        assert!(
+            h.editor.sprite().layer(layer).unwrap().mask.is_some(),
+            "added"
+        );
+        assert!(h.drawn("timeline.mask.add").is_empty());
+        // La cara; editándola, la del borde rosa.
+        h.editor.set_edit_mask(false);
+        h.frame(vec![]);
+        let face = h.drawn("timeline.mask");
+        assert_eq!(face.len(), 1);
+        assert_eq!(face[0].size(), Vec2::new(9.0, 9.0));
+        h.editor.set_edit_mask(true);
+        h.frame(vec![]);
+        assert_eq!(h.drawn("timeline.mask.editing").len(), 1);
+        assert!(h.drawn("timeline.mask").is_empty());
     }
 
     #[test]

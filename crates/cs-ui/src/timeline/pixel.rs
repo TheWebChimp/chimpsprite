@@ -1014,6 +1014,33 @@ pub(super) fn clip_arrow(ui: &Ui, skin: &Skin, at: Pos2, selected: bool) {
     icon_at(ui, skin, CLIP, at + vec2(0.0, CLIP_TOP), selected);
 }
 
+/// Las máscaras de capa del diseño (frame 4): la cara; editándola, la del borde rosa; y el botón
+/// para agregar una.
+const MASK: &str = "timeline.mask";
+const MASK_EDITING: &str = "timeline.mask.editing";
+const MASK_ADD: &str = "timeline.mask.add";
+/// La cara y el botón: su tamaño.
+pub(super) const MASK_SIZE: Vec2 = vec2(9.0, 9.0);
+pub(super) const MASK_ADD_SIZE: Vec2 = vec2(11.0, 9.0);
+
+/// La máscara de una capa con su esquina en `at`; desactivada, a media luz.
+pub(super) fn mask_chip(ui: &Ui, skin: &Skin, at: Pos2, editing: bool, enabled: bool) {
+    let name = if editing { MASK_EDITING } else { MASK };
+    let ppp = ui.ctx().pixels_per_point();
+    let mut painter = ui.painter().clone();
+    if !enabled {
+        painter.set_opacity(0.4);
+    }
+    painter.extend(crate::pixel_draw::piece_at(skin, name, at, ppp));
+}
+
+/// El botón para agregar una máscara, con su esquina en `at`.
+pub(super) fn mask_add(ui: &Ui, skin: &Skin, at: Pos2) {
+    let ppp = ui.ctx().pixels_per_point();
+    ui.painter()
+        .extend(crate::pixel_draw::piece_at(skin, MASK_ADD, at, ppp));
+}
+
 /// El ícono de una capa tilemap al principio de `rect` (donde va la carpetita de los grupos); en
 /// la capa activa (`selected`), en su versión para lo elegido.
 pub(super) fn tilemap_icon(ui: &Ui, skin: &Skin, rect: Rect, selected: bool) {
