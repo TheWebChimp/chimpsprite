@@ -541,6 +541,40 @@ impl Editor {
         self.frame_range = Some((frame(a), frame(b)));
     }
 
+    /// Cel Properties → Opacity: la de los cels `cels` que existen. Con `group`, los cambios
+    /// seguidos del mismo gesto (arrastrar el número) son un solo paso de undo.
+    pub fn set_cels_opacity(
+        &mut self,
+        cels: &[(LayerId, usize)],
+        opacity: u8,
+        group: Option<u64>,
+    ) -> bool {
+        let sprite = self.sprite();
+        let cmds: Vec<Command> = cels
+            .iter()
+            .filter_map(|&(layer, frame)| {
+                let cel = *sprite.cel(layer, frame)?;
+                (cel.opacity != opacity).then_some(Command::SetCel {
+                    layer,
+                    frame,
+                    cel: Some(cs_core::Cel { opacity, ..cel }),
+                })
+            })
+            .collect();
+        if cmds.is_empty() {
+            return false;
+        }
+        let cmd = Command::Batch(cmds);
+        let done = match group {
+            Some(g) => self.execute_grouped(cmd, g),
+            None => self.execute(cmd),
+        };
+        if done {
+            self.history.rename_last("Cel Opacity");
+        }
+        done
+    }
+
     pub fn clear_cel(&mut self, layer: LayerId, frame: usize) {
         if self.sprite().cel(layer, frame).is_some() {
             self.execute(Command::SetCel {
@@ -966,5 +1000,36 @@ mod frame_order {
         e.tick(200.0);
         assert!(!e.playing, "one lap and done");
         assert_eq!(e.frame, 1, "on its last frame");
+    }
+}
+
+#[cfg(test)]
+mod cel_opacity {
+    use cs_core::{ColorMode, PixelValue, Rgba, Sprite};
+
+    use super::*;
+
+    #[test]
+    fn cel_opacity_shows_in_the_render_and_a_drag_is_one_step() {
+        let mut e = Editor::with_sprite(Sprite::new(2, 2, ColorMode::Rgba));
+        let layer = e.layer;
+        e.execute(Command::DrawPixels {
+            layer,
+            frame: 0,
+            pixels: vec![(0, 0, PixelValue::Rgba(Rgba::rgb(255, 0, 0)))],
+        });
+        let steps = e.steps_done();
+        assert!(e.set_cels_opacity(&[(layer, 0)], 200, Some(7)));
+        assert!(e.set_cels_opacity(&[(layer, 0)], 128, Some(7)));
+        e.end_group();
+        assert_eq!(e.steps_done(), steps + 1, "one step for the whole drag");
+        assert_eq!(e.history.done().last(), Some("Cel Opacity"));
+        assert_eq!(e.sprite().cel(layer, 0).unwrap().opacity, 128);
+        let shown = cs_render::render_frame(e.sprite(), 0)[0];
+        assert_eq!(shown.a, 128);
+        // Sin cel, nada.
+        assert!(!e.set_cels_opacity(&[(layer, 1)], 10, None));
+        e.undo();
+        assert_eq!(e.sprite().cel(layer, 0).unwrap().opacity, 255);
     }
 }

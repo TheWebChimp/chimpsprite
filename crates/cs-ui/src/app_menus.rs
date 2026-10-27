@@ -286,6 +286,13 @@ impl ChimpApp {
         {
             editor.reverse_frames();
         }
+        // Cel Properties: la opacidad del cel actual (o de los elegidos).
+        let cels = if editor.frame_range.is_some() || editor.has_cel_range() {
+            editor.selected_cels()
+        } else {
+            vec![(editor.layer, editor.frame)]
+        };
+        timeline::cel_opacity_row(ui, editor, &cels);
         menus::separator(ui);
         if ui.add(menus::plain("New Tag")).clicked() {
             editor.add_tag();

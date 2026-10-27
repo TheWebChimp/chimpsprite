@@ -1280,8 +1280,38 @@ fn layer_row(
                 editor.clear_cel(id, f);
                 ui.close();
             }
+            menus::separator(ui);
+            // Dentro del rango elegido, la de todos sus cels.
+            let cels = if editor.frame_range.is_some() && (a..=b).contains(&f) {
+                editor.selected_cels()
+            } else {
+                vec![(id, f)]
+            };
+            cel_opacity_row(ui, editor, &cels);
         });
     }
+}
+
+/// Cel Properties, en línea: la opacidad de `cels` (la del primero que existe); arrastrar el
+/// número es un solo paso de undo.
+pub(crate) fn cel_opacity_row(ui: &mut egui::Ui, editor: &mut Editor, cels: &[(LayerId, usize)]) {
+    let sprite = editor.sprite();
+    let Some(mut opacity) = cels
+        .iter()
+        .find_map(|&(l, f)| sprite.cel(l, f))
+        .map(|c| c.opacity)
+    else {
+        return;
+    };
+    ui.horizontal(|ui| {
+        ui.label("Cel Opacity");
+        let response = crate::widgets::number(ui, &mut opacity, 0..=255, "");
+        let group = crate::panels::gesture_group(editor, &[&response]);
+        if response.changed() {
+            editor.set_cels_opacity(cels, opacity, group);
+        }
+        crate::panels::gesture_end(editor, &[&response]);
+    });
 }
 
 /// Submenú para colocar otro artboard como instancia (menú Layer y menú de capa).

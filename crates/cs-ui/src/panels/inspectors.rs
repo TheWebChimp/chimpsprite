@@ -277,7 +277,7 @@ const SLICE_PICKER_W: f32 = 180.0;
 /// El gesto anterior del mismo widget ya terminó en `gesture_end` (al soltar o perder el foco),
 /// así que acá solo se corta al tomar foco; cortar en `drag_started` partiría en dos el
 /// "clic (el slider salta) + arrastre".
-pub(super) fn gesture_group(editor: &mut Editor, responses: &[&egui::Response]) -> Option<u64> {
+pub(crate) fn gesture_group(editor: &mut Editor, responses: &[&egui::Response]) -> Option<u64> {
     if responses.iter().any(|r| r.gained_focus()) {
         editor.end_group();
     }
@@ -286,7 +286,7 @@ pub(super) fn gesture_group(editor: &mut Editor, responses: &[&egui::Response]) 
 
 /// Llamar después de aplicar: cierra el gesto si terminó (al soltar el botón, al perder el foco,
 /// o si el cambio no vino de un botón apretado ni de un campo con foco).
-pub(super) fn gesture_end(editor: &mut Editor, responses: &[&egui::Response]) {
+pub(crate) fn gesture_end(editor: &mut Editor, responses: &[&egui::Response]) {
     let ended = responses.iter().any(|r| {
         r.drag_stopped()
             || r.clicked()
