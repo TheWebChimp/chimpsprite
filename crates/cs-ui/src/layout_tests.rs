@@ -1445,11 +1445,11 @@ fn badge(h: &LayoutHarness, name: &str, caps: f32) -> Rect {
         .filter(|k| {
             k.top() >= caps
                 && k.bottom() <= caps + 7.0
-                && k.right() > text.left() - 4.0
-                && k.left() <= text.right()
+                && k.left() >= text.left() - 4.0
+                && k.right() <= text.right() + 4.0
         })
         .fold(Rect::NOTHING, |a, b| a.union(b));
-    // 3 px de cada lado de la tinta (chimpfont deja 2 px vacíos al final).
+    // 3 px antes de la tinta y 4 después (chimpfont deja 2 px vacíos al final).
     assert_eq!(
         text.left() - badge.left(),
         3.0,
@@ -1457,7 +1457,7 @@ fn badge(h: &LayoutHarness, name: &str, caps: f32) -> Rect {
     );
     assert_eq!(
         badge.right() - (text.right() - 2.0),
-        3.0,
+        4.0,
         "{name}: {text:?} in {badge:?}"
     );
     badge

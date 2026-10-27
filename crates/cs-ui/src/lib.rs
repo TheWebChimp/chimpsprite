@@ -267,6 +267,17 @@ impl ChimpApp {
             };
             app.open_filter(filter);
         }
+        // Desarrollo: una herramienta elegida (por su nombre), para capturas; Rectangle con radio.
+        if let Ok(name) = std::env::var("CHIMPSPRITE_DEMO_TOOL")
+            && app.has_doc()
+            && let Some(&tool) = ToolKind::GROUPS
+                .iter()
+                .flat_map(|g| g.iter())
+                .find(|t| t.label() == name)
+        {
+            app.doc.editor.set_tool(tool);
+            app.doc.editor.options.corner_radius = 3;
+        }
         // Desarrollo: Keyboard Shortcuts o Preferences abiertas, para capturas.
         match std::env::var("CHIMPSPRITE_DEMO_WINDOW").as_deref() {
             Ok("shortcuts") => app.shortcuts = Some(Default::default()),

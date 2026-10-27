@@ -88,9 +88,10 @@ const PLUS_SIZE: f32 = 5.0;
 const PLUS_TOP: f32 = 1.0;
 const KEY_GAP: f32 = 1.0;
 /// Las teclas con nombre (Ctrl, Shift, Alt, Del, F11…) en chimpfont, en mayúsculas como la badge
-/// DEL del diseño: de 7 de alto (las mayúsculas de 5 con 1 fila arriba y abajo) y 3 px de cada
-/// lado de la tinta.
+/// DEL del diseño: de 7 de alto (las mayúsculas de 5 con 1 fila arriba y abajo), 3 px antes de
+/// la tinta y 4 después.
 const KEY_PAD_X: f32 = 3.0;
+const KEY_PAD_RIGHT: f32 = 4.0;
 const KEY_PAD_Y: f32 = 1.0;
 const KEY_HEIGHT: f32 = 7.0;
 
@@ -647,9 +648,9 @@ fn shortcut_parts(keys: &str) -> Vec<KeyPart<'_>> {
     parts
 }
 
-/// El ancho de una badge: la tinta del nombre en chimpfont con `KEY_PAD_X` de cada lado.
+/// El ancho de una badge: la tinta del nombre en chimpfont con su aire a cada lado.
 fn cap_width(ui: &Ui, name: &str) -> f32 {
-    key_ink(&key_galley(ui, name, Color32::PLACEHOLDER)) + 2.0 * KEY_PAD_X
+    key_ink(&key_galley(ui, name, Color32::PLACEHOLDER)) + KEY_PAD_X + KEY_PAD_RIGHT
 }
 
 /// La tinta del nombre de una badge: chimpfont deja 2 px vacíos después de la última letra (la
@@ -744,7 +745,7 @@ fn cap_shapes(
     ppp: f32,
 ) -> Vec<Shape> {
     let text = key_galley(ui, name, look.colors.panel);
-    let width = key_ink(&text) + 2.0 * KEY_PAD_X;
+    let width = key_ink(&text) + KEY_PAD_X + KEY_PAD_RIGHT;
     // Desde las mayúsculas de la fila.
     let rect = Rect::from_min_size(pos2(left, caps), vec2(width, KEY_HEIGHT));
     let mut shapes = match &look.key {

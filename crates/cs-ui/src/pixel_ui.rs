@@ -610,21 +610,18 @@ pub(crate) fn selected_shapes(
         rect.min + vec2(left.min(1.0), top.min(1.0)),
         rect.max - vec2(right.min(1.0), below),
     );
-    shapes.push(Shape::rect_filled(
-        inner.round_to_pixels(ppp),
-        0.0,
-        colors.panel,
-    ));
-    shapes.extend(
-        [
-            Rect::from_min_max(inner.min, pos2(inner.right(), inner.top() + 1.0)),
-            Rect::from_min_max(pos2(inner.left(), inner.bottom() - 1.0), inner.max),
-            Rect::from_min_max(inner.min, pos2(inner.left() + 1.0, inner.bottom())),
-            Rect::from_min_max(pos2(inner.right() - 1.0, inner.top()), inner.max),
-        ]
-        .into_iter()
-        .map(|r| Shape::rect_filled(r.round_to_pixels(ppp), 0.0, colors.timeline_selection)),
-    );
+    // En una malla, como el resto del pixel art (sin el difuminado de los rects de egui).
+    let mut mesh = egui::Mesh::default();
+    mesh.add_colored_rect(inner.round_to_pixels(ppp), colors.panel);
+    for r in [
+        Rect::from_min_max(inner.min, pos2(inner.right(), inner.top() + 1.0)),
+        Rect::from_min_max(pos2(inner.left(), inner.bottom() - 1.0), inner.max),
+        Rect::from_min_max(inner.min, pos2(inner.left() + 1.0, inner.bottom())),
+        Rect::from_min_max(pos2(inner.right() - 1.0, inner.top()), inner.max),
+    ] {
+        mesh.add_colored_rect(r.round_to_pixels(ppp), colors.timeline_selection);
+    }
+    shapes.push(Shape::mesh(mesh));
     shapes
 }
 
@@ -950,6 +947,8 @@ pub fn icon_button(
     let ppp = ui.ctx().pixels_per_point();
     let info = crate::pixel_draw::ButtonInfo {
         selected: on,
+        // Prendido, como la herramienta elegida: el marco rosa (no el botón hundido).
+        framed: true,
         ..crate::pixel_draw::ButtonInfo::new(ui.id().with(("icon_button", label)), label)
     };
     crate::pixel_draw::skin_button(ui, skin, rect, info, |inner| {
