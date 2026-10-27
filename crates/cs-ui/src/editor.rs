@@ -1274,6 +1274,36 @@ impl Editor {
         });
     }
 
+    /// Edit → Stroke (S), como en Aseprite: pinta con el color primario el borde de la selección
+    /// (sus píxeles que tocan algo de afuera, de lado), en la capa actual (un paso de undo).
+    pub fn stroke_selection(&mut self) {
+        self.commit_floating();
+        if !self.clip_layer_ok(true) {
+            return;
+        }
+        let Some(mask) = &self.selection else {
+            return;
+        };
+        let color = self.primary;
+        let pixels: Vec<_> = mask
+            .points()
+            .filter(|&(x, y)| {
+                [(1, 0), (-1, 0), (0, 1), (0, -1)]
+                    .iter()
+                    .any(|(dx, dy)| !mask.contains(x + dx, y + dy))
+            })
+            .map(|(x, y)| (x, y, color))
+            .collect();
+        if pixels.is_empty() {
+            return;
+        }
+        self.execute(Command::DrawPixels {
+            layer: self.layer,
+            frame: self.frame,
+            pixels,
+        });
+    }
+
     /// Herramienta efectiva (considera el cuentagotas temporal).
     pub fn active_tool(&self) -> ToolKind {
         if self.temp_eyedropper {
@@ -2311,6 +2341,36 @@ mod tests {
         }
         // Sin trazo, el otro botón no corta nada.
         assert!(!e.cancel_with_other_button(true));
+    }
+
+    #[test]
+    fn stroke_paints_the_edge_of_the_selection_with_the_primary_color() {
+        let mut e = editor();
+        e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (5, 4))));
+        e.stroke_selection();
+        let t = e.sprite().color_mode.transparent();
+        let at = |e: &Editor, x, y| e.sprite().pixel(LayerId(1), 0, x, y);
+        for (x, y) in [
+            (1, 1),
+            (5, 1),
+            (1, 4),
+            (5, 4),
+            (3, 1),
+            (1, 2),
+            (5, 3),
+            (3, 4),
+        ] {
+            assert_eq!(at(&e, x, y), e.primary, "edge ({x}, {y})");
+        }
+        for (x, y) in [(2, 2), (4, 3), (0, 0), (6, 4)] {
+            assert_eq!(at(&e, x, y), t, "not the edge ({x}, {y})");
+        }
+        e.undo();
+        assert_eq!(at(&e, 1, 1), t, "one undo step");
+        // Sin selección no hace nada.
+        e.deselect();
+        e.stroke_selection();
+        assert!(!e.history.can_undo() || at(&e, 1, 1) == t);
     }
 
     #[test]

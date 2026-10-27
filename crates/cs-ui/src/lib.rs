@@ -1101,6 +1101,10 @@ impl ChimpApp {
                     if ui.add_enabled(has_selection, clear).clicked() {
                         self.doc.editor.clear_selection_content();
                     }
+                    let stroke = menus::item("Stroke", "S");
+                    if ui.add_enabled(has_selection, stroke).clicked() {
+                        self.doc.editor.stroke_selection();
+                    }
                     menus::separator(ui);
                     if ui.add(menus::item("Flip Horizontal", "Shift+H")).clicked() {
                         self.doc.editor.flip(true);
@@ -1684,6 +1688,8 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
         Key::ArrowUp => editor.step_layer(true),
         Key::ArrowDown => editor.step_layer(false),
         Key::F3 => editor.onion_enabled = !editor.onion_enabled,
+        // S (sin Shift, que es el spray): Edit → Stroke.
+        Key::S if !shift => editor.stroke_selection(),
         // En modo Tiles no hay color secundario: X e Y voltean el tile del pincel.
         Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
         Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
