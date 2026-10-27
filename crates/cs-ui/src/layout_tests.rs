@@ -2443,6 +2443,29 @@ fn press_ctrl(h: &mut LayoutHarness, key: egui::Key) {
 }
 
 #[test]
+fn pointing_at_colors_shows_them_in_a_tab_by_the_picker() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    // La caja entera: la unión de las partes del 9-slice.
+    let sv_box = h
+        .drawn("picker.sv")
+        .into_iter()
+        .fold(Rect::NOTHING, |a, b| a.union(b));
+    // El borde oscuro de arriba de la pestañita: 13 a la izquierda de la caja, 2 abajo.
+    let border = Rect::from_min_size(sv_box.min + Vec2::new(-12.0, 2.0), Vec2::new(11.0, 1.0));
+    let badge = |h: &LayoutHarness| {
+        h.colored_rects()
+            .iter()
+            .any(|(c, r)| *r == border && *c == egui::Color32::from_rgb(89, 77, 77))
+    };
+    assert!(!badge(&h), "not without the pointer");
+    h.frame_with(vec![Event::PointerMoved(sv_box.center())]);
+    assert!(badge(&h), "over the S/V square");
+    h.frame_with(vec![Event::PointerMoved(h.node("#3").center())]);
+    h.frame();
+    assert!(badge(&h), "over a color of the palette");
+}
+
+#[test]
 fn the_edit_menu_is_aseprites() {
     let mut h = two_tabs(Some(0));
     open_menu(&mut h, "Edit");

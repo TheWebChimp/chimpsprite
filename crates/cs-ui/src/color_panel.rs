@@ -355,6 +355,11 @@ fn grid_cells(
             };
             focus_palette(ui, true);
         }
+        // Con el puntero encima, su color en la pestañita del selector.
+        if response.hovered() {
+            let color = editor.sprite().palette.colors()[index];
+            ui.data_mut(|d| d.insert_temp(hover_id(), color));
+        }
         if response.dragged()
             && let Some(pos) = response.interact_pointer_pos()
         {
@@ -898,7 +903,100 @@ pub fn picker(ui: &mut Ui, skin: &Skin, id: egui::Id, current: Rgba) -> Rgba {
         color = rgba_of(hsv);
     }
     ui.data_mut(|d| d.insert_temp(id, Remembered { color, hsv }));
+    // El color que tiene el puntero (aquí o en la paleta), en la pestañita de la caja.
+    let pointed = ui
+        .ctx()
+        .pointer_hover_pos()
+        .and_then(|p| {
+            let x = |r: Rect| remap_clamp(p.x, bar_travel(r), 0.0..=1.0);
+            if ui.rect_contains_pointer(sv) {
+                let s = remap_clamp(p.x, sv.left()..=sv.right(), 0.0..=1.0);
+                let v = remap_clamp(p.y, sv.bottom()..=sv.top(), 0.0..=1.0);
+                Some(HsvaGamma { s, v, ..hsv })
+            } else if ui.rect_contains_pointer(hue) {
+                Some(HsvaGamma { h: x(hue), ..hsv })
+            } else if ui.rect_contains_pointer(alpha) {
+                Some(HsvaGamma { a: x(alpha), ..hsv })
+            } else {
+                None
+            }
+        })
+        .map(rgba_of)
+        .or_else(|| ui.data_mut(|d| d.remove_temp::<Rgba>(hover_id())))
+        // Desarrollo: la pestañita con el color actual, para capturas.
+        .or_else(|| std::env::var_os("CHIMPSPRITE_DEMO_HOVER_COLOR").map(|_| color));
+    if let Some(pointed) = pointed {
+        ui.ctx()
+            .layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                id.with("hover"),
+            ))
+            .extend(hover_badge(sv_box, pointed, ppp));
+    }
     color
+}
+
+/// Donde la paleta deja el color que tiene el puntero (para la pestañita del selector).
+fn hover_id() -> egui::Id {
+    egui::Id::new("picker_hover_color")
+}
+
+/// Los colores de la pestañita, los del diseño: el contorno claro de la caja, el panel y el
+/// borde oscuro.
+const BADGE_ETCH: Color32 = Color32::from_rgb(189, 164, 153);
+const BADGE_PANEL: Color32 = Color32::from_rgb(221, 206, 191);
+const BADGE_BORDER: Color32 = Color32::from_rgb(89, 77, 77);
+
+/// La pestañita con el color que tiene el puntero (como en el diseño): pegada a la izquierda de
+/// la caja del cuadro S/V, arriba, con su mismo contorno; ahí la caja se abre hacia ella. Adentro,
+/// el color en un cuadro de 11×11 con borde redondeado (sobre el damero si es transparente).
+fn hover_badge(sv_box: Rect, color: Rgba, ppp: f32) -> Vec<Shape> {
+    let o = sv_box.min - vec2(15.0, 0.0);
+    let px = |x: f32, y: f32, w: f32, h: f32| {
+        Rect::from_min_size(o + vec2(x, y), vec2(w, h)).round_to_pixels(ppp)
+    };
+    let mut mesh = egui::Mesh::default();
+    for (rect, c) in [
+        // El fondo y, a la derecha, la caja abierta (su línea, del color del panel).
+        (px(1.0, 1.0, 15.0, 15.0), BADGE_PANEL),
+        // El contorno claro, redondeado.
+        (px(2.0, 0.0, 14.0, 1.0), BADGE_ETCH),
+        (px(1.0, 1.0, 1.0, 1.0), BADGE_ETCH),
+        (px(0.0, 2.0, 1.0, 13.0), BADGE_ETCH),
+        (px(1.0, 15.0, 1.0, 1.0), BADGE_ETCH),
+        (px(2.0, 16.0, 14.0, 1.0), BADGE_ETCH),
+        // El borde oscuro, redondeado.
+        (px(3.0, 2.0, 11.0, 1.0), BADGE_BORDER),
+        (px(2.0, 3.0, 1.0, 11.0), BADGE_BORDER),
+        (px(14.0, 3.0, 1.0, 11.0), BADGE_BORDER),
+        (px(3.0, 14.0, 11.0, 1.0), BADGE_BORDER),
+    ] {
+        mesh.add_colored_rect(rect, c);
+    }
+    let swatch = px(3.0, 3.0, 11.0, 11.0);
+    let mut shapes = vec![Shape::mesh(mesh)];
+    let fill = panels::to_color32(color);
+    if fill.a() < 255 {
+        let mut checker = Vec::new();
+        for y in 0..11 {
+            for x in 0..11 {
+                if (x / 3 + y / 3) % 2 == 0 {
+                    checker.push(Shape::rect_filled(
+                        Rect::from_min_size(
+                            swatch.min + vec2(x as f32, y as f32),
+                            Vec2::splat(1.0),
+                        ),
+                        0.0,
+                        Color32::from_gray(204),
+                    ));
+                }
+            }
+        }
+        shapes.push(Shape::rect_filled(swatch, 0.0, Color32::WHITE));
+        shapes.extend(checker);
+    }
+    shapes.push(Shape::rect_filled(swatch, 0.0, fill));
+    shapes
 }
 
 /// El ancho del editor: el del panel, con el máximo de siempre del selector.
