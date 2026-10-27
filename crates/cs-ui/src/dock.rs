@@ -19,6 +19,8 @@ pub const BUTTON_SIZE: Vec2 = vec2(23.0, 24.0);
 const BUTTON_GAP: f32 = 3.0;
 /// Arriba de los botones: el primero empieza a la altura de la caja del lienzo (sus reglas).
 const TOP_AIR: f32 = 5.0;
+/// Debajo del botón del timeline, hasta el borde de abajo del dock.
+const BOTTOM_AIR: f32 = 5.0;
 /// Ancho del dock: los botones y 3 de aire hasta el panel derecho.
 pub const WIDTH: f32 = 26.0;
 pub const RIGHT_MARGIN: i8 = 3;
@@ -162,16 +164,25 @@ pub fn show(
         }
         anchors.push((panel, response.rect));
     }
-    let response = match skin {
-        Some(skin) => pixel_button(ui, skin, TIMELINE, TIMELINE_ICON, *timeline),
-        None => ui
-            .add(
-                egui::Button::new("🎞")
-                    .selected(*timeline)
-                    .min_size(BUTTON_SIZE),
-            )
-            .tip(TIMELINE),
-    };
+    // El del timeline, hasta abajo del dock.
+    let bottom = egui::Layout::bottom_up(egui::Align::Min);
+    let response = ui
+        .with_layout(bottom, |ui| {
+            if skin.is_some() {
+                ui.add_space(BOTTOM_AIR);
+            }
+            match skin {
+                Some(skin) => pixel_button(ui, skin, TIMELINE, TIMELINE_ICON, *timeline),
+                None => ui
+                    .add(
+                        egui::Button::new("🎞")
+                            .selected(*timeline)
+                            .min_size(BUTTON_SIZE),
+                    )
+                    .tip(TIMELINE),
+            }
+        })
+        .inner;
     if response.clicked() {
         *timeline = !*timeline;
     }
