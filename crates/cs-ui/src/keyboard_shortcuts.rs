@@ -4,7 +4,8 @@
 //! las pierden. Reset vuelve una acción (o todas) a las de fábrica. Lo que no se reasigna se ve
 //! más tenue.
 
-use eframe::egui::{self, Align2, Key, RichText, Sense, Ui, vec2};
+use eframe::egui::{self, Align2, Key, Rect, RichText, Sense, Ui, vec2};
+use eframe::emath::GuiRounding as _;
 
 use crate::keymap::{Action, Combo, FIXED, Keymap};
 use crate::skin::Skin;
@@ -144,11 +145,46 @@ pub fn show(
 
 fn contents(ui: &mut Ui, window: &mut ShortcutsWindow, keymap: &mut Keymap, skin: Option<&Skin>) {
     ui.set_width(WIDTH);
+    // El buscador a todo el ancho y, debajo, el divisor grabado.
     ui.horizontal(|ui| {
         ui.label("Search");
-        crate::widgets::text_line(ui, &mut window.filter);
+        match skin {
+            Some(skin) => {
+                let width = ui.available_width();
+                crate::pixel_sections::text_field(
+                    ui,
+                    skin,
+                    &mut window.filter,
+                    width,
+                    "Search",
+                    "",
+                );
+            }
+            None => {
+                ui.add(egui::TextEdit::singleline(&mut window.filter).desired_width(f32::INFINITY));
+            }
+        }
     });
-    ui.add_space(4.0);
+    ui.add_space(DIVIDER_AIR);
+    match skin {
+        Some(skin) => {
+            let ppp = ui.ctx().pixels_per_point();
+            let (rect, _) = ui.allocate_exact_size(
+                vec2(ui.available_width(), crate::pixel_ui::ETCHED_SIZE),
+                Sense::hover(),
+            );
+            ui.painter().add(crate::pixel_ui::etched_hline(
+                rect.x_range(),
+                rect.top().round(),
+                skin.colors(),
+                ppp,
+            ));
+        }
+        None => {
+            ui.separator();
+        }
+    }
+    ui.add_space(DIVIDER_AIR);
     let dim = skin.map_or(ui.visuals().weak_text_color(), |s| s.colors().text_dim);
     let rows = matching(keymap, &window.filter);
     crate::pixel_ui::scroll(
@@ -157,36 +193,46 @@ fn contents(ui: &mut Ui, window: &mut ShortcutsWindow, keymap: &mut Keymap, skin
             .max_height(LIST_HEIGHT)
             .auto_shrink([false, true]),
         |ui| {
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
             let mut section = "";
-            egui::Grid::new("shortcuts")
-                .num_columns(3)
-                .spacing(vec2(8.0, 2.0))
-                .show(ui, |ui| {
-                    for row in rows {
-                        if row.section() != section {
-                            section = row.section();
-                            ui.label(RichText::new(section).color(dim));
-                            ui.end_row();
-                        }
-                        match row {
-                            Row::Action(action) => {
-                                action_row(ui, window, keymap, action);
-                            }
-                            Row::Fixed(_, name, keys) => {
-                                ui.label(RichText::new(name).color(dim));
+            for row in rows {
+                if row.section() != section {
+                    section = row.section();
+                    ui.label(RichText::new(section).color(dim));
+                }
+                ui.horizontal(|ui| match row {
+                    Row::Action(action) => action_row(ui, window, keymap, action, skin),
+                    Row::Fixed(_, name, keys) => {
+                        ui.label(RichText::new(name).color(dim));
+                        // Las teclas a la derecha, donde van los campos de las demás.
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.allocate_ui(vec2(KEYS_WIDTH, FIELD_HEIGHT), |ui| {
                                 ui.label(RichText::new(keys).color(dim));
-                            }
-                        }
-                        ui.end_row();
+                            });
+                        });
                     }
                 });
+            }
         },
     );
 }
 
-/// Una acción: su nombre, sus teclas (un clic para cambiarlas) y, si no son las de fábrica,
-/// Reset.
-fn action_row(ui: &mut Ui, window: &mut ShortcutsWindow, keymap: &mut Keymap, action: Action) {
+/// Entre el buscador y el divisor, y entre el divisor y la lista.
+const DIVIDER_AIR: f32 = 4.0;
+const ROW_GAP: f32 = 3.0;
+/// El campo de las teclas: el alto de los campos de la app.
+const FIELD_HEIGHT: f32 = 17.0;
+
+/// Una acción: su nombre y, contra la derecha, sus teclas en el campo de la app (un clic para
+/// cambiarlas; esperando, en el rosa de lo elegido) con Reset a su izquierda si no son las de
+/// fábrica.
+fn action_row(
+    ui: &mut Ui,
+    window: &mut ShortcutsWindow,
+    keymap: &mut Keymap,
+    action: Action,
+    skin: Option<&Skin>,
+) {
     ui.label(action.names().1);
     let capturing = window.capturing == Some(action);
     let text = if capturing {
@@ -199,53 +245,58 @@ fn action_row(ui: &mut Ui, window: &mut ShortcutsWindow, keymap: &mut Keymap, ac
             keys
         }
     };
-    let (rect, response) = ui.allocate_exact_size(vec2(KEYS_WIDTH, 15.0), Sense::click());
-    let label = format!("{} keys", action.names().1);
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
-    // Una casilla como la de los campos: blanca con su borde; esperando las teclas, en el
-    // rosa de lo elegido.
-    let skin = crate::pixel_ui::frame_skin(ui.ctx());
-    let (fill, border, ink) = match &skin {
-        Some(s) => {
-            let c = s.colors();
-            let fill = if capturing {
-                c.timeline_selection
-            } else if response.hovered() {
-                c.menu_highlight
-            } else {
-                egui::Color32::WHITE
-            };
-            (fill, c.outline, c.text)
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+        let (rect, response) =
+            ui.allocate_exact_size(vec2(KEYS_WIDTH, FIELD_HEIGHT), Sense::click());
+        let rect = Rect::from_min_size(rect.min.round(), rect.size());
+        let label = format!("{} keys", action.names().1);
+        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label));
+        let ppp = ui.ctx().pixels_per_point();
+        let ink = match skin {
+            Some(skin) => {
+                let field = skin.piece("field.text", crate::skin::WidgetState::Normal);
+                match field {
+                    Some(piece) => ui
+                        .painter()
+                        .extend(crate::pixel_ui::piece_shapes(piece, rect, ppp)),
+                    None => {
+                        ui.painter().rect_filled(rect, 0.0, egui::Color32::WHITE);
+                    }
+                }
+                if capturing || response.hovered() {
+                    let c = skin.colors();
+                    let fill = if capturing {
+                        c.timeline_selection
+                    } else {
+                        c.menu_highlight
+                    };
+                    // Adentro del borde del campo.
+                    let inner =
+                        Rect::from_min_max(rect.min + vec2(1.0, 1.0), rect.max - vec2(1.0, 2.0));
+                    ui.painter()
+                        .rect_filled(inner.round_to_pixels(ppp), 0.0, fill);
+                }
+                skin.colors().field_text
+            }
+            None => {
+                let v = ui.style().interact_selectable(&response, capturing);
+                ui.painter().rect_filled(rect, 0.0, v.weak_bg_fill);
+                v.text_color()
+            }
+        };
+        let galley =
+            ui.painter()
+                .layout_no_wrap(text, egui::TextStyle::Body.resolve(ui.style()), ink);
+        let caps = rect.top() + crate::pixel_ui::CONTROL_CAPS;
+        let at = crate::tab_bar::text_pos(&galley, rect.left() + 4.0, caps, ppp);
+        ui.painter().galley(at, galley, ink);
+        if response.clicked() {
+            window.capturing = if capturing { None } else { Some(action) };
         }
-        None => {
-            let v = ui.style().interact_selectable(&response, capturing);
-            (v.weak_bg_fill, v.bg_stroke.color, v.text_color())
-        }
-    };
-    ui.painter().rect_filled(rect, 0.0, fill);
-    ui.painter().rect_stroke(
-        rect,
-        0.0,
-        egui::Stroke::new(1.0, border),
-        egui::StrokeKind::Inside,
-    );
-    ui.painter().text(
-        rect.left_center() + vec2(4.0, 0.0),
-        Align2::LEFT_CENTER,
-        text,
-        egui::TextStyle::Body.resolve(ui.style()),
-        ink,
-    );
-    if response.clicked() {
-        window.capturing = if capturing { None } else { Some(action) };
-    }
-    if keymap.is_custom(action) {
-        if ui.small_button("Reset").clicked() {
+        if keymap.is_custom(action) && crate::pixel_ui::text_button(ui, "Reset").clicked() {
             keymap.reset(action);
         }
-    } else {
-        ui.label("");
-    }
+    });
 }
 
 #[cfg(test)]
