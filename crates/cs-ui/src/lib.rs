@@ -30,6 +30,7 @@ mod mask_ops;
 mod menus;
 mod palette_ops;
 mod palette_ui;
+mod scripts;
 mod select_dialogs;
 mod sheet_dialog;
 mod slice_ops;

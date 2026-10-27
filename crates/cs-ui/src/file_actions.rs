@@ -224,6 +224,11 @@ impl ChimpApp {
                         }
                         OpenPurpose::ImportLayer | OpenPurpose::ImportReference => {}
                         OpenPurpose::ImportSheet => self.open_sheet(&loaded),
+                        OpenPurpose::RunScript if self.has_doc() => {
+                            let source = String::from_utf8_lossy(&loaded.bytes).into_owned();
+                            self.run_script(&loaded.name, &source);
+                        }
+                        OpenPurpose::RunScript => {}
                         OpenPurpose::LoadPalette if self.has_doc() => {
                             self.load_palette_bytes(&loaded.name, &loaded.bytes)
                         }
@@ -416,6 +421,40 @@ impl ChimpApp {
     pub(crate) fn import_layer(&mut self, ctx: &egui::Context) {
         self.platform
             .open_file(PNG_FILTER, OpenPurpose::ImportLayer, ctx);
+    }
+
+    /// Corre el script `name` (el lenguaje sale de su extensión) sobre el documento abierto; lo
+    /// que imprime, o el error, se muestra en un mensaje.
+    pub(crate) fn run_script(&mut self, name: &str, source: &str) {
+        let Some(language) = cs_script::Language::of(name).filter(|l| l.available()) else {
+            self.show_message(
+                "Can't run this script",
+                format!("{name}: use .rhai or .lua"),
+            );
+            return;
+        };
+        match self.doc.editor.run_script(language, source) {
+            Ok(output) if output.is_empty() => {}
+            Ok(output) => self.show_message(name, output),
+            Err(e) => {
+                let mut body = e.message;
+                if !e.output.is_empty() {
+                    body = format!(
+                        "{}
+
+{body}",
+                        e.output
+                    );
+                }
+                self.show_message(&format!("{name} failed"), body);
+            }
+        }
+    }
+
+    /// File → Scripts → Run Script File…
+    pub(crate) fn choose_script(&mut self, ctx: &egui::Context) {
+        self.platform
+            .open_file(crate::scripts::SCRIPT_FILTER, OpenPurpose::RunScript, ctx);
     }
 
     /// File → Import Sprite Sheet…: se elige el PNG y después cómo se parte.

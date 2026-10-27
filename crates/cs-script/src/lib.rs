@@ -17,6 +17,35 @@ use cs_core::Document;
 
 pub use host::Context;
 
+/// Los scripts de ejemplo, en los dos lenguajes: (nombre de archivo, código). La app los copia a
+/// la carpeta de scripts la primera vez.
+pub const EXAMPLES: &[(&str, &str)] = &[
+    (
+        "checkerboard.rhai",
+        include_str!("../scripts/checkerboard.rhai"),
+    ),
+    (
+        "checkerboard.lua",
+        include_str!("../scripts/checkerboard.lua"),
+    ),
+    (
+        "mirror_all_frames.rhai",
+        include_str!("../scripts/mirror_all_frames.rhai"),
+    ),
+    (
+        "mirror_all_frames.lua",
+        include_str!("../scripts/mirror_all_frames.lua"),
+    ),
+    (
+        "walk_cycle_tag.rhai",
+        include_str!("../scripts/walk_cycle_tag.rhai"),
+    ),
+    (
+        "walk_cycle_tag.lua",
+        include_str!("../scripts/walk_cycle_tag.lua"),
+    ),
+];
+
 /// Tope de instrucciones de un script: un ciclo sin fin no traba la app.
 pub const MAX_OPERATIONS: u64 = 50_000_000;
 

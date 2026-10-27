@@ -33,6 +33,51 @@ impl ChimpApp {
         });
     }
 
+    /// File → Scripts: los de la carpeta, Run Script File… y la carpeta.
+    fn scripts_menu(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        menus::submenu(ui, "Scripts", |ui| {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let files = scripts::list();
+                for path in &files {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("?")
+                        .to_string();
+                    if ui
+                        .add(menus::plain(&scripts::menu_label(&name)))
+                        .on_hover_text(path.display().to_string())
+                        .clicked()
+                    {
+                        ui.close();
+                        match std::fs::read_to_string(path) {
+                            Ok(source) => self.run_script(&name, &source),
+                            Err(e) => self.show_message("Could not read the script", e.to_string()),
+                        }
+                    }
+                }
+                if !files.is_empty() {
+                    menus::separator(ui);
+                }
+            }
+            if ui.add(menus::plain("Run Script File…")).clicked() {
+                ui.close();
+                self.choose_script(ctx);
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            if ui.add(menus::plain("Open Scripts Folder")).clicked() {
+                ui.close();
+                if let Some(dir) = scripts::folder() {
+                    scripts::list();
+                    if let Err(e) = platform::open_folder(&dir) {
+                        self.show_message("Could not open the folder", e);
+                    }
+                }
+            }
+        });
+    }
+
     /// El menú Sprite, como el de Aseprite.
     fn sprite_menu(&mut self, ui: &mut egui::Ui) {
         use cs_commands::sprite_ops::{self, Rotation};
@@ -701,6 +746,7 @@ A pixel art editor."
                 if ui.add(menus::plain("Import Sprite Sheet…")).clicked() {
                     self.import_sheet(&ctx);
                 }
+                ui.add_enabled_ui(has_doc, |ui| self.scripts_menu(ui, &ctx));
                 if ui
                     .add_enabled(
                         has_doc,

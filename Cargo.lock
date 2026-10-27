@@ -1051,6 +1051,7 @@ dependencies = [
  "cs-io",
  "cs-raster",
  "cs-render",
+ "cs-script",
  "cs-tools",
  "eframe",
  "ehttp",

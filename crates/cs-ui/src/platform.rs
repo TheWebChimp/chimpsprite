@@ -65,6 +65,8 @@ pub enum OpenPurpose {
     ImportReference,
     /// Partir en frames de un sprite nuevo (File → Import Sprite Sheet).
     ImportSheet,
+    /// Correr un script (`.rhai` o `.lua`).
+    RunScript,
     /// Cargar una paleta (`.gpl`, `.hex`, `.pal`, `.png`, `.aseprite`).
     LoadPalette,
 }

@@ -98,3 +98,35 @@ fn the_language_comes_from_the_extension() {
     assert_eq!(Language::of("Outline.LUA"), Some(Language::Lua));
     assert_eq!(Language::of("notes.txt"), None);
 }
+
+#[test]
+fn every_example_runs_and_both_languages_agree() {
+    let mut results = std::collections::HashMap::new();
+    for (name, source) in cs_script::EXAMPLES {
+        let lang = Language::of(name).expect("rhai or lua");
+        let doc = document();
+        let ctx = context(&doc);
+        let out = run(lang, source, doc, ctx).unwrap_or_else(|e| panic!("{name}: {}", e.message));
+        let stem = name.rsplit_once('.').unwrap().0;
+        let sprite = out.document.artboards[0].sprite.clone();
+        if let Some(other) = results.insert(stem.to_string(), (sprite.clone(), out.output.clone()))
+        {
+            assert_eq!(other.1, out.output, "{stem}: same output");
+            assert_eq!(other.0.frames, sprite.frames, "{stem}: same frames");
+            assert_eq!(other.0.tags, sprite.tags, "{stem}: same tags");
+            let render = |s: &Sprite| cs_render_frames(s);
+            assert_eq!(render(&other.0), render(&sprite), "{stem}: same pixels");
+        }
+    }
+}
+
+fn cs_render_frames(s: &Sprite) -> Vec<Vec<PixelValue>> {
+    (0..s.frames.len())
+        .map(|f| {
+            (0..s.height as i32)
+                .flat_map(|y| (0..s.width as i32).map(move |x| (x, y)))
+                .map(|(x, y)| s.pixel(s.layers[0].id, f, x, y))
+                .collect()
+        })
+        .collect()
+}
