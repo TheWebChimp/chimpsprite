@@ -110,6 +110,9 @@ pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 }
 
+/// El radio que vuelve al prender el redondeo si no se había usado otro.
+const DEFAULT_CORNER_RADIUS: u32 = 4;
+
 /// Alto de la barra de opciones, con su margen: el mismo con todas las herramientas, así el lienzo
 /// no se mueve al cambiar de herramienta.
 pub const OPTIONS_BAR_HEIGHT: f32 = 32.0;
@@ -395,7 +398,28 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
         groups.next(ui);
         let radius = match look {
             Some(look) => {
-                bar_fields::label(ui, look, "Corner radius");
+                // El botón del redondeo (en vez del nombre): lo prende y lo apaga; al prenderlo
+                // vuelve el último radio.
+                let on = options.corner_radius > 0;
+                let toggle = crate::pixel_ui::icon_button(
+                    ui,
+                    Some(look.skin),
+                    "icon.corner_radius",
+                    "Corner radius",
+                    Some(on),
+                );
+                let last_id = egui::Id::new("last_corner_radius");
+                if on {
+                    ui.data_mut(|d| d.insert_temp(last_id, options.corner_radius));
+                }
+                if toggle.clicked() {
+                    options.corner_radius = if on {
+                        0
+                    } else {
+                        ui.data(|d| d.get_temp(last_id))
+                            .unwrap_or(DEFAULT_CORNER_RADIUS)
+                    };
+                }
                 gap(ui, LABEL_FIELD_GAP);
                 bar_fields::number(
                     ui,
@@ -3974,6 +3998,29 @@ Alt+click: pick color";
         assert!(h.has("Linear") && h.has("Radial"), "both radios");
         // Ninguna pieza del skin: no hay skin.
         assert!(h.skin.is_none());
+    }
+
+    #[test]
+    fn with_pixel_ui_the_corner_radius_button_turns_rounding_off_and_back_on() {
+        let mut h = BarHarness::with_skin(1200.0, true);
+        h.editor.set_tool(ToolKind::Rectangle);
+        h.frame(vec![]);
+        h.frame(vec![]);
+        assert_eq!(h.rect("Corner radius").size(), Vec2::new(25.0, 16.0));
+        h.click("Corner radius");
+        h.frame(vec![]);
+        assert_eq!(
+            h.editor.options.corner_radius, DEFAULT_CORNER_RADIUS,
+            "on, with the default"
+        );
+        h.editor.options.corner_radius = 7;
+        h.frame(vec![]);
+        h.click("Corner radius");
+        h.frame(vec![]);
+        assert_eq!(h.editor.options.corner_radius, 0, "off");
+        h.click("Corner radius");
+        h.frame(vec![]);
+        assert_eq!(h.editor.options.corner_radius, 7, "back to the last one");
     }
 
     #[test]
