@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
-use cs_core::{Artboard, ArtboardId, Axis, GridSettings, Guide, Mask};
+use cs_core::{Artboard, ArtboardId, Axis, GridSettings, Guide, LayerId, Mask};
 use cs_tools::{ArtboardHit, BrushShape, Edges, hit_test};
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Pos2, Rect, Sense, Stroke, StrokeKind,
@@ -48,6 +48,9 @@ pub struct CanvasView {
     textures: HashMap<ArtboardId, TextureHandle>,
     checker: Option<TextureHandle>,
     rendered_revision: Option<u64>,
+    /// La capa cuya máscara se veía en rojo (editándola) al componer: si cambia, se recompone
+    /// aunque el documento no haya cambiado.
+    rendered_mask: Option<LayerId>,
     fitted: bool,
     /// Píxel local del artboard activo bajo el cursor, para la barra de estado.
     pub hover: Option<(i32, i32)>,
@@ -183,6 +186,7 @@ impl Default for CanvasView {
             textures: HashMap::new(),
             checker: None,
             rendered_revision: None,
+            rendered_mask: None,
             fitted: false,
             hover: None,
             guide_hint: None,
@@ -1184,7 +1188,10 @@ impl CanvasView {
 
         // Recompone las texturas si el documento cambió o hay un gesto en curso.
         let painting = editor.is_painting();
-        if painting || self.rendered_revision != Some(editor.revision) {
+        let mask = editor.editing_mask().then_some(editor.layer);
+        if painting || self.rendered_revision != Some(editor.revision) || self.rendered_mask != mask
+        {
+            self.rendered_mask = mask;
             self.textures
                 .retain(|id, _| document.artboard(*id).is_some());
             for artboard in &document.artboards {
@@ -3515,6 +3522,29 @@ mod tests {
         // Sin nada en el medio sí se suman.
         h.wheel(Point, 30.0, ctrl);
         assert_eq!(h.editor.options.brush_size, 2);
+    }
+
+    #[test]
+    fn entering_or_leaving_the_mask_shows_at_once() {
+        use crate::mask_ops::NewMask;
+        let mut h = Harness::new();
+        h.editor.add_mask(LayerId(1), NewMask::HideAll);
+        h.editor.set_edit_mask(false);
+        h.frame(vec![]);
+        let revision = h.editor.revision;
+        assert_eq!(h.canvas.rendered_mask, None);
+        // Sin otro cambio en el documento, el rojo de la máscara aparece en el mismo frame.
+        h.editor.set_edit_mask(true);
+        h.frame(vec![]);
+        assert_eq!(h.editor.revision, revision, "the document did not change");
+        assert_eq!(
+            h.canvas.rendered_mask,
+            Some(LayerId(1)),
+            "recomposed with the mask"
+        );
+        h.editor.set_edit_mask(false);
+        h.frame(vec![]);
+        assert_eq!(h.canvas.rendered_mask, None, "and without it");
     }
 
     #[test]
