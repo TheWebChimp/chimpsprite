@@ -49,6 +49,14 @@ pub(crate) fn assert_equivalent(a: &Sprite, b: &Sprite) {
             }
         }
     }
+    // Al leer, un grupo con opacidad 0 vale 255 (ver arriba): se compara lo que se ve así.
+    let mut a = a.clone();
+    for l in a.layers.iter_mut() {
+        if l.kind == LayerKind::Group && l.opacity == 0 {
+            l.opacity = 255;
+        }
+    }
+    let a = &a;
     let (ma, mb) = (
         cs_render::materialize_tilemaps(a, 0..a.frames.len()),
         cs_render::materialize_tilemaps(b, 0..b.frames.len()),
