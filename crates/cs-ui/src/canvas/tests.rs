@@ -641,6 +641,40 @@ fn the_symmetry_control_moves_with_any_tool() {
 }
 
 #[test]
+fn a_symmetry_handle_under_an_artboard_in_front_cannot_be_grabbed() {
+    let mut h = Harness::new();
+    h.canvas.symmetry_color = Some(Color32::from_rgb(0, 73, 255));
+    let back = h.editor.active;
+    h.editor.set_symmetry(cs_core::Symmetry {
+        axes: cs_core::SymmetryAxes {
+            vertical: true,
+            ..Default::default()
+        },
+        center2: None,
+    });
+    // Otro artboard delante, sobre la parte de arriba del eje (16×16, centro en x = 8).
+    let position = h.editor.artboard().position;
+    h.editor.add_artboard(8, 8);
+    let front = h.editor.active;
+    h.editor
+        .execute_doc(cs_commands::DocCommand::SetArtboardProps {
+            id: front,
+            name: None,
+            position: Some((position.0 + 4, position.1)),
+        });
+    h.editor.activate(back);
+    h.frame(vec![]);
+    let pixels = h.pixels_of(0);
+    let top = Pos2::new(pixels.center().x, pixels.top() + 2.0);
+    h.frame(vec![Event::PointerMoved(top)]);
+    assert_ne!(h.cursor, egui::CursorIcon::ResizeHorizontal, "covered");
+    // El de abajo sí se ve y se agarra.
+    let bottom = Pos2::new(pixels.center().x, pixels.bottom() - 2.0);
+    h.frame(vec![Event::PointerMoved(bottom)]);
+    assert_eq!(h.cursor, egui::CursorIcon::ResizeHorizontal);
+}
+
+#[test]
 fn hovering_the_handles_shows_resize_and_rotate_cursors() {
     let mut h = Harness::new();
     h.selected_dot((2, 2), (2, 2), (5, 5));

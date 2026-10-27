@@ -4,6 +4,18 @@
 use super::*;
 
 impl CanvasView {
+    /// Si `p` cae sobre un artboard que va delante del activo.
+    fn under_front_artboard(&self, rect: Rect, editor: &Editor, p: Pos2, ppp: f32) -> bool {
+        let view = editor.view();
+        let document = view.document.as_ref();
+        let covers = self.covers(rect, document, ppp);
+        document
+            .artboards
+            .iter()
+            .position(|a| a.id == editor.active)
+            .is_some_and(|k| covers[k + 1..].iter().any(|c| c.contains(p)))
+    }
+
     /// Mover el eje de simetría (centro o líneas). Igual que las guías: con Ctrl o con
     /// Select/Move/Artboard.
     #[allow(clippy::too_many_arguments)]
@@ -57,6 +69,10 @@ impl CanvasView {
             return None;
         }
         let p = pointer?;
+        // Debajo de un artboard de delante no se ve: tampoco se agarra.
+        if self.under_front_artboard(rect, editor, p, response.ctx.pixels_per_point()) {
+            return None;
+        }
         let (center, c2) = self.symmetry_center(rect, editor);
         // Lo visible del artboard: los handles se pegan al borde de la vista (como se dibujan).
         let artboard = Rect::from_min_max(
