@@ -817,6 +817,53 @@ const BUBBLE_GAP: f32 = 6.0;
 const BUBBLE_PADDING: f32 = 6.0;
 /// La fila de sombra debajo del relleno del cuerpo.
 const BUBBLE_SHADOW: f32 = 1.0;
+/// Lo más ancho que se hace el texto del globo (después parte en líneas) y cuántas líneas
+/// muestra como mucho (si no entra, termina en puntos suspensivos).
+const BUBBLE_MAX_WIDTH: f32 = 200.0;
+const BUBBLE_MAX_ROWS: usize = 3;
+
+/// El texto del globo: en líneas de hasta `BUBBLE_MAX_WIDTH` y, si pasa de `BUBBLE_MAX_ROWS`,
+/// recortado con los puntos suspensivos de la fuente pixel.
+fn bubble_galley(
+    ui: &Ui,
+    text: &str,
+    font: egui::FontId,
+    color: Color32,
+) -> std::sync::Arc<egui::Galley> {
+    let layout = |text: String| {
+        let mut job = egui::text::LayoutJob::single_section(
+            text,
+            egui::TextFormat::simple(font.clone(), color),
+        );
+        job.wrap.max_width = BUBBLE_MAX_WIDTH;
+        ui.painter().layout_job(job)
+    };
+    let galley = layout(text.to_owned());
+    if galley.rows.len() <= BUBBLE_MAX_ROWS {
+        return galley;
+    }
+    // Lo que entra en las primeras líneas, y de ahí se quita de a palabra hasta que entre con
+    // los puntos.
+    let shown: usize = galley.rows[..BUBBLE_MAX_ROWS]
+        .iter()
+        .map(|r| r.char_count_including_newline().0)
+        .sum();
+    let mut words: Vec<&str> = text
+        .char_indices()
+        .nth(shown)
+        .map_or(text, |(i, _)| &text[..i])
+        .split_whitespace()
+        .collect();
+    while !words.is_empty() {
+        let cut = format!("{}{}", words.join(" "), tab_bar::ellipsis());
+        let galley = layout(cut);
+        if galley.rows.len() <= BUBBLE_MAX_ROWS {
+            return galley;
+        }
+        words.pop();
+    }
+    layout(tab_bar::ellipsis().to_owned())
+}
 
 /// Alto del texto de `galley` en la fuente pixel: de la fila de arriba de las mayúsculas de la
 /// primera línea a la de abajo de las de la última.
@@ -1125,7 +1172,7 @@ fn show_bubble(response: Response, piece: &Piece, color: Color32, text: &str) ->
         let ppp = ui.ctx().pixels_per_point();
         // Los textos chicos (chimpfont con Pixel UI).
         let font = TextStyle::Small.resolve(ui.style());
-        let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+        let galley = bubble_galley(ui, text, font, color);
         let body = vec2(
             (2.0 * BUBBLE_PADDING + galley.size().x).ceil(),
             2.0 * BUBBLE_PADDING + caps_block_height(&galley) + BUBBLE_SHADOW,
@@ -1348,6 +1395,33 @@ pub(crate) fn colored_rects(shape: &Shape) -> Vec<(Color32, Rect)> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn long_bubble_texts_wrap_and_end_in_an_ellipsis() {
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let long = "It's not too often I get to write about a new old-school tool for making \
+                        pixel art, and this one has a lot of nice ideas worth a look. "
+                .repeat(3);
+            let galley = super::bubble_galley(ui, &long, font.clone(), Color32::WHITE);
+            assert!(
+                galley.rows.len() <= super::BUBBLE_MAX_ROWS,
+                "{}",
+                galley.rows.len()
+            );
+            assert!(galley.size().x <= super::BUBBLE_MAX_WIDTH + 1.0);
+            assert!(
+                galley.text().ends_with(crate::tab_bar::ellipsis()),
+                "{}",
+                galley.text()
+            );
+            // Lo corto queda igual, en una línea.
+            let short = super::bubble_galley(ui, "Hand (H)", font, Color32::WHITE);
+            assert_eq!((short.rows.len(), short.text()), (1, "Hand (H)"));
+        });
+        output.textures_delta.clear();
+    }
+
     #[test]
     fn the_scroll_thumb_has_1_px_of_padding_on_every_side() {
         let track = Rect::from_min_size(pos2(100.0, 20.0), vec2(SCROLL_BAR, 200.0));

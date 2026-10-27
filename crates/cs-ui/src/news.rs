@@ -202,6 +202,10 @@ fn unescape(text: &str) -> String {
             "quot" => Some('"'),
             "apos" => Some('\''),
             "nbsp" => Some(' '),
+            // Las tipográficas, como las tiene la fuente pixel.
+            "rsquo" | "lsquo" | "#8217" | "#8216" => Some('\''),
+            "rdquo" | "ldquo" | "#8220" | "#8221" => Some('"'),
+            "ndash" | "mdash" | "#8211" | "#8212" => Some('-'),
             _ => entity
                 .strip_prefix("#x")
                 .and_then(|h| u32::from_str_radix(h, 16).ok())
@@ -273,6 +277,13 @@ fn headline(text: &str) -> String {
     let text: String = text
         .chars()
         .filter(|c| !matches!(c, '\u{FE0E}' | '\u{FE0F}' | '\u{200D}'))
+        // Las comillas y guiones tipográficos, como los tiene la fuente pixel.
+        .map(|c| match c {
+            '\u{2018}' | '\u{2019}' => '\'',
+            '\u{201C}' | '\u{201D}' => '"',
+            '\u{2013}' | '\u{2014}' => '-',
+            c => c,
+        })
         .collect();
     let text = text.as_str();
     if text.chars().count() <= MAX {
@@ -825,6 +836,16 @@ fn fit(size: Vec2, room: Vec2) -> Vec2 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn typographic_quotes_become_the_pixel_fonts() {
+        assert_eq!(
+            unescape("It&rsquo;s &ldquo;new&rdquo; &mdash; ok"),
+            "It's \"new\" - ok"
+        );
+        assert_eq!(unescape("It&#8217;s"), "It's");
+        assert_eq!(headline("It\u{2019}s \u{201C}x\u{201D}"), "It's \"x\"");
+    }
 
     #[test]
     fn reddit_keeps_posts_with_a_thumbnail() {
