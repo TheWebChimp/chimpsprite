@@ -170,6 +170,30 @@ impl Editor {
         added
     }
 
+    /// Un artboard nuevo con `sprite` y `name`, a la derecha de todo, y lo activa (un paso de
+    /// undo).
+    pub fn add_artboard_with_sprite(&mut self, name: String, sprite: cs_core::Sprite) -> bool {
+        self.commit_floating();
+        let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
+        let id = self.document.next_artboard_id();
+        let artboard = Artboard {
+            id,
+            name,
+            position: (x1 + 16, y0),
+            sprite,
+            guides: Vec::new(),
+            symmetry: Default::default(),
+        };
+        let added = self.execute_doc(DocCommand::AddArtboard {
+            index: self.document.artboards.len(),
+            artboard: Box::new(artboard),
+        });
+        if added {
+            self.activate(id);
+        }
+        added
+    }
+
     /// Reemplaza las notas del documento (un paso de undo).
     pub fn set_notes(&mut self, notes: Vec<cs_core::Note>) -> bool {
         if notes == self.document.notes {

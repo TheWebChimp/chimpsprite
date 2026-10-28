@@ -54,13 +54,22 @@ impl Settings {
     }
 }
 
-/// El resultado: los píxeles (recortados a lo pintado) y cuántos colores tiene.
+/// El resultado: los píxeles (recortados a lo pintado) y sus colores, del más usado al menos.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Groomed {
     pub name: String,
     pub image: Bitmap,
-    pub colors: usize,
+    pub colors: Vec<(Rgba, usize)>,
 }
+
+/// Colores juntados a mano: los de cada grupo pasan a ser el primero (el más usado).
+pub type Merges = Vec<Vec<Rgba>>;
+
+/// Cuántos colores se muestran para elegir (los más usados).
+const MAX_SWATCHES: usize = 96;
+/// Un cuadrito de color y su separación.
+const SWATCH: f32 = 11.0;
+const SWATCH_GAP: f32 = 2.0;
 
 /// Lo que se pidió desde el panel (la app lo resuelve).
 pub enum GroomAction {
@@ -68,6 +77,7 @@ pub enum GroomAction {
     UseLayer,
     NewSprite(Groomed),
     AddLayer(Groomed),
+    AddArtboard(Groomed),
 }
 
 #[derive(Default)]
@@ -75,8 +85,12 @@ pub struct GroomPanel {
     /// La imagen de partida y su nombre.
     source: Option<(String, Bitmap)>,
     settings: Option<Settings>,
-    /// El resultado de `settings` (con el primario de entonces, para el contorno).
-    result: Option<(Settings, Rgba, Groomed)>,
+    /// Los colores juntados a mano (se aplican al final, cada vez).
+    merges: Merges,
+    /// Los colores elegidos para juntar.
+    picked: Vec<Rgba>,
+    /// El resultado de `settings` (con el primario y los grupos de entonces).
+    result: Option<(Settings, Rgba, Merges, Groomed)>,
     texture: Option<TextureHandle>,
 }
 
@@ -87,19 +101,22 @@ impl GroomPanel {
         self.settings = Some(Settings::new(grid));
         self.source = Some((name, image));
         self.result = None;
+        self.merges.clear();
+        self.picked.clear();
     }
 
     /// El resultado con los ajustes de ahora (se recalcula solo si cambiaron).
     fn groomed(&mut self, primary: Rgba) -> Option<&Groomed> {
         let (name, source) = self.source.as_ref()?;
         let settings = self.settings?;
-        let stale = !matches!(&self.result, Some((s, p, _)) if *s == settings && *p == primary);
+        let stale = !matches!(&self.result,
+            Some((s, p, m, _)) if *s == settings && *p == primary && *m == self.merges);
         if stale {
-            let groomed = process(name, source, settings, primary);
-            self.result = Some((settings, primary, groomed));
+            let groomed = process(name, source, settings, primary, &self.merges);
+            self.result = Some((settings, primary, self.merges.clone(), groomed));
             self.texture = None;
         }
-        self.result.as_ref().map(|(_, _, g)| g)
+        self.result.as_ref().map(|(_, _, _, g)| g)
     }
 
     pub fn ui(&mut self, ui: &mut Ui, primary: Rgba) -> Option<GroomAction> {
@@ -164,8 +181,12 @@ impl GroomPanel {
         self.preview(ui, &groomed);
         ui.label(format!(
             "{}×{} · {} colors",
-            groomed.image.width, groomed.image.height, groomed.colors
+            groomed.image.width,
+            groomed.image.height,
+            groomed.colors.len()
         ));
+        self.swatches(ui, &groomed);
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             if pixel_ui::text_button(ui, "New Sprite").clicked() {
                 action = Some(GroomAction::NewSprite(groomed.clone()));
@@ -174,7 +195,83 @@ impl GroomPanel {
                 action = Some(GroomAction::AddLayer(groomed.clone()));
             }
         });
+        if pixel_ui::text_button(ui, "Add as Artboard").clicked() {
+            action = Some(GroomAction::AddArtboard(groomed.clone()));
+        }
         action
+    }
+
+    /// Los colores del resultado (los más usados primero): un clic elige o suelta uno, y
+    /// "Merge" junta los elegidos en el más usado de ellos.
+    fn swatches(&mut self, ui: &mut Ui, groomed: &Groomed) {
+        let shown = groomed.colors.len().min(MAX_SWATCHES);
+        let per_row = ((WIDTH + SWATCH_GAP) / (SWATCH + SWATCH_GAP))
+            .floor()
+            .max(1.0) as usize;
+        let rows = shown.div_ceil(per_row);
+        let height = rows as f32 * (SWATCH + SWATCH_GAP);
+        let (area, _) = ui.allocate_exact_size(vec2(WIDTH, height), Sense::hover());
+        let border = pixel_ui::control_border(ui.ctx());
+        let accent = crate::theme::ACCENT;
+        for (i, &(color, count)) in groomed.colors.iter().take(shown).enumerate() {
+            let (col, row) = ((i % per_row) as f32, (i / per_row) as f32);
+            let rect = Rect::from_min_size(
+                area.min + vec2(col, row) * (SWATCH + SWATCH_GAP),
+                vec2(SWATCH, SWATCH),
+            );
+            let response = ui
+                .interact(rect, ui.id().with(("groom_swatch", i)), Sense::click())
+                .on_hover_text(format!("{} · {count} px", color.to_hex()));
+            if response.clicked() {
+                match self.picked.iter().position(|&c| c == color) {
+                    Some(at) => {
+                        self.picked.remove(at);
+                    }
+                    None => self.picked.push(color),
+                }
+            }
+            let painter = ui.painter();
+            painter.rect_filled(rect, 0.0, crate::panels::to_color32(color));
+            let picked = self.picked.contains(&color);
+            let (stroke, width) = if picked { (accent, 2.0) } else { (border, 1.0) };
+            painter.rect_stroke(
+                rect,
+                0.0,
+                egui::Stroke::new(width, stroke),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if groomed.colors.len() > shown {
+            ui.label(format!(
+                "+{} more (Reduce Colors first)",
+                groomed.colors.len() - shown
+            ));
+        }
+        ui.horizontal(|ui| {
+            let can_merge = self.picked.len() >= 2;
+            if ui
+                .add_enabled_ui(can_merge, |ui| pixel_ui::text_button(ui, "Merge"))
+                .inner
+                .clicked()
+                && can_merge
+            {
+                // El más usado de los elegidos queda; los demás pasan a ser él.
+                let mut group = std::mem::take(&mut self.picked);
+                let count = |c: &Rgba| {
+                    groomed
+                        .colors
+                        .iter()
+                        .find(|(k, _)| k == c)
+                        .map_or(0, |(_, n)| *n)
+                };
+                group.sort_by_key(|c| std::cmp::Reverse(count(c)));
+                self.merges.push(group);
+            }
+            if !self.merges.is_empty() && pixel_ui::text_button(ui, "Reset Merges").clicked() {
+                self.merges.clear();
+                self.picked.clear();
+            }
+        });
     }
 
     /// El resultado al tamaño más grande que entra (en múltiplos enteros si se agranda), sobre
@@ -211,7 +308,13 @@ impl GroomPanel {
 
 /// Los pasos sobre `source`: un color por celda, el fondo, el contorno, los colores y el recorte
 /// a lo pintado.
-pub fn process(name: &str, source: &Bitmap, settings: Settings, primary: Rgba) -> Groomed {
+pub fn process(
+    name: &str,
+    source: &Bitmap,
+    settings: Settings,
+    primary: Rgba,
+    merges: &Merges,
+) -> Groomed {
     let (mut pixels, w, h) =
         cs_raster::sample_grid(&source.pixels, source.width, source.height, settings.grid);
     if settings.background {
@@ -234,13 +337,25 @@ pub fn process(name: &str, source: &Bitmap, settings: Settings, primary: Rgba) -
     if settings.reduce {
         pixels = cs_raster::reduce_colors(&pixels, settings.colors as usize).0;
     }
+    // Los grupos juntados a mano: cada color del grupo pasa a ser el primero.
+    if !merges.is_empty() {
+        let target: std::collections::HashMap<Rgba, Rgba> = merges
+            .iter()
+            .flat_map(|group| group.iter().skip(1).map(move |&c| (c, group[0])))
+            .collect();
+        for p in pixels.iter_mut() {
+            if let Some(&to) = target.get(p) {
+                *p = to;
+            }
+        }
+    }
     let image = trimmed(&pixels, w, h);
-    let colors = image
-        .pixels
-        .iter()
-        .filter(|c| c.a > 0)
-        .collect::<std::collections::HashSet<_>>()
-        .len();
+    let mut counts: std::collections::HashMap<Rgba, usize> = std::collections::HashMap::new();
+    for &c in image.pixels.iter().filter(|c| c.a > 0) {
+        *counts.entry(c).or_default() += 1;
+    }
+    let mut colors: Vec<(Rgba, usize)> = counts.into_iter().collect();
+    colors.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.to_hex().cmp(&b.0.to_hex())));
     Groomed {
         name: name.to_string(),
         image,
@@ -332,19 +447,35 @@ mod tests {
             cell: (5.0, 5.0),
             offset: (0.0, 0.0),
         };
-        let groomed = process("x", &source, Settings::new(grid), Rgba::rgb(0, 0, 0));
+        let groomed = process(
+            "x",
+            &source,
+            Settings::new(grid),
+            Rgba::rgb(0, 0, 0),
+            &Vec::new(),
+        );
         assert_eq!(
             (groomed.image.width, groomed.image.height),
             (2, 1),
             "only the red"
         );
-        assert_eq!(groomed.colors, 1);
+        assert_eq!(groomed.colors.len(), 1);
         // Con contorno: 4×3.
         let mut settings = Settings::new(grid);
         settings.ring = true;
-        let ringed = process("x", &source, settings, Rgba::rgb(0, 0, 0));
+        let ringed = process("x", &source, settings, Rgba::rgb(0, 0, 0), &Vec::new());
         assert_eq!((ringed.image.width, ringed.image.height), (4, 3));
-        assert_eq!(ringed.colors, 2);
+        assert_eq!(ringed.colors.len(), 2);
+        // Juntar el contorno negro con el rojo: queda un color, el primero del grupo.
+        let red = Rgba::rgb(200, 30, 30);
+        let merged = process(
+            "x",
+            &source,
+            settings,
+            Rgba::rgb(0, 0, 0),
+            &vec![vec![red, Rgba::rgb(0, 0, 0)]],
+        );
+        assert_eq!(merged.colors, vec![(red, 8)], "2 red + 6 of outline");
     }
 
     #[test]

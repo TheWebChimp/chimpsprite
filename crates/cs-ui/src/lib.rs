@@ -453,26 +453,12 @@ impl ChimpApp {
                 self.groom.load(name, image);
             }
             Some(groom::GroomAction::NewSprite(g)) => {
-                let mut sprite =
-                    cs_core::Sprite::new(g.image.width, g.image.height, cs_core::ColorMode::Rgba);
-                let image = cs_core::Image::from_buffer(
-                    g.image.width,
-                    g.image.height,
-                    cs_core::PixelBuffer::Rgba(g.image.pixels),
-                )
-                .expect("same size");
-                let id = cs_core::ImageId(1);
-                sprite.images.insert(id, std::sync::Arc::new(image));
-                let layer = sprite.layers[0].id;
-                sprite.cels.insert(
-                    (layer, 0),
-                    cs_core::Cel {
-                        position: (0, 0),
-                        opacity: 255,
-                        image: id,
-                    },
-                );
+                let sprite = groomed_sprite(&g);
                 self.open_sheet_sprite(&g.name, sprite);
+            }
+            Some(groom::GroomAction::AddArtboard(g)) => {
+                let sprite = groomed_sprite(&g);
+                self.doc.editor.add_artboard_with_sprite(g.name, sprite);
             }
             Some(groom::GroomAction::AddLayer(g)) => match g.image.to_png() {
                 Ok(bytes) => self.import_layer_bytes(
@@ -1155,6 +1141,27 @@ impl ChimpApp {
             })
             .inner
     }
+}
+
+/// Un sprite RGBA con el resultado de Groom en su única capa.
+fn groomed_sprite(g: &groom::Groomed) -> cs_core::Sprite {
+    let (w, h) = (g.image.width, g.image.height);
+    let mut sprite = cs_core::Sprite::new(w, h, cs_core::ColorMode::Rgba);
+    let image =
+        cs_core::Image::from_buffer(w, h, cs_core::PixelBuffer::Rgba(g.image.pixels.clone()))
+            .expect("same size");
+    let id = cs_core::ImageId(1);
+    sprite.images.insert(id, std::sync::Arc::new(image));
+    let layer = sprite.layers[0].id;
+    sprite.cels.insert(
+        (layer, 0),
+        cs_core::Cel {
+            position: (0, 0),
+            opacity: 255,
+            image: id,
+        },
+    );
+    sprite
 }
 
 fn new_editor(palette: cs_core::Palette) -> Editor {
