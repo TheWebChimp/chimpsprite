@@ -355,6 +355,7 @@ impl ChimpApp {
             anchor,
             skin,
             LOSPEC_PANEL_W,
+            true,
             |ui| {
                 lospec_band(ui, skin);
                 ui.add_enabled_ui(!modal, |ui| {

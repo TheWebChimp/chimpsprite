@@ -427,6 +427,7 @@ impl ChimpApp {
             anchor,
             self.pixel.skin(),
             width,
+            true,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| action = groom.ui(ui, primary));
             },
@@ -488,6 +489,7 @@ impl ChimpApp {
             anchor,
             self.pixel.skin(),
             dafont::WIDTH,
+            true,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| picked = dafont.ui(ui));
             },

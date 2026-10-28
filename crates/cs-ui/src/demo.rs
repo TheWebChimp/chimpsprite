@@ -479,8 +479,13 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             "Walk",
             "Run",
         ];
+        // Con un número, solo esos (si no, todos).
+        let count = std::env::var("CHIMPSPRITE_DEMO_ARTBOARDS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(usize::MAX);
         let names = names.iter().chain(&["Jump", "Idle", "Hurt", "Win"]);
-        for name in names {
+        for name in names.take(count) {
             editor.add_artboard(64, 64);
             editor.rename_active_artboard((*name).into());
         }

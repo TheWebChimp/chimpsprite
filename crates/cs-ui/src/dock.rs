@@ -224,7 +224,7 @@ pub fn show(
     let enabled = ui.is_enabled();
     match panel {
         DockPanel::Artboards | DockPanel::Slices => {
-            flyout(ui.ctx(), panel, anchor, skin, FLYOUT_WIDTH, |ui| {
+            flyout(ui.ctx(), panel, anchor, skin, FLYOUT_WIDTH, false, |ui| {
                 ui.add_enabled_ui(enabled, |ui| match (panel, skin) {
                     (DockPanel::Artboards, Some(skin)) => {
                         out.canvas_size = panels::pixel_artboards(ui, editor, name_buffer, skin);
@@ -246,7 +246,8 @@ pub fn show(
 
 /// El panel flotante de `panel` a la izquierda de su botón, de `width` de contenido. Arriba va
 /// alineado con el botón; si no cabe hacia abajo, sube hasta donde haga falta (no más arriba de
-/// la columna del dock) y lo que no quepa en la columna se ve con scroll. Con Pixel UI, en la caja
+/// la columna del dock) y lo que no quepa en la columna se ve con scroll. Los altos (`tall`:
+/// Lospec, Dafont, Groom) ocupan la columna entera, de arriba a abajo. Con Pixel UI, en la caja
 /// del skin, con el botón hecho pestaña de la caja.
 pub fn flyout(
     ctx: &egui::Context,
@@ -254,13 +255,18 @@ pub fn flyout(
     anchor: Anchor,
     skin: Option<&Skin>,
     width: f32,
+    tall: bool,
     add_contents: impl FnOnce(&mut Ui),
 ) {
     let id = egui::Id::new(("dock_flyout", panel.label()));
     let Anchor { button, column } = anchor;
     // El alto de la vez pasada, para saber si cabe.
     let height = ctx.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
-    let top = flyout_top(button.top(), height, column);
+    let top = if tall {
+        column.top().round()
+    } else {
+        flyout_top(button.top(), height, column)
+    };
     let pos = egui::pos2(button.left() - FLYOUT_GAP, top);
     // Lo que cabe en la columna, sin el marco (el de egui mide más o menos lo mismo).
     let max_height = (column.height() - 2.0 * FLYOUT_MARGIN as f32).max(BUTTON_SIZE.y);
@@ -276,9 +282,17 @@ pub fn flyout(
             // Lugar para la caja, detrás del contenido (se llena al final, cuando se sabe su tamaño).
             let background = ui.painter().add(Shape::Noop);
             let response = frame.show(ui, |ui| {
-                let area = egui::ScrollArea::vertical()
+                // El Area da de alto lo que midió la vez pasada: sin esto, el panel no crecería
+                // cuando su contenido crece.
+                ui.set_max_height(max_height);
+                let mut area = egui::ScrollArea::vertical()
                     .id_salt(id.with("scroll"))
                     .max_height(max_height);
+                if tall {
+                    area = area
+                        .min_scrolled_height(max_height)
+                        .auto_shrink([true, false]);
+                }
                 pixel_ui::scroll(ui, area, |ui| {
                     ui.set_width(width);
                     add_contents(ui);
@@ -369,6 +383,52 @@ fn tab_shapes(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// El alto del panel después de un cuadro con contenido de `content` de alto.
+    fn panel_height(ctx: &egui::Context, content: f32) -> f32 {
+        let column = Rect::from_min_max(egui::pos2(400.0, 20.0), egui::pos2(430.0, 580.0));
+        let anchor = Anchor {
+            button: Rect::from_min_size(egui::pos2(403.0, 20.0), BUTTON_SIZE),
+            column,
+        };
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(800.0, 600.0))),
+            ..Default::default()
+        };
+        let mut output = ctx.run_ui(input, |ui| {
+            flyout(
+                ui.ctx(),
+                DockPanel::Slices,
+                anchor,
+                None,
+                100.0,
+                false,
+                |ui| {
+                    ui.allocate_exact_size(vec2(100.0, content), Sense::hover());
+                },
+            );
+        });
+        output.textures_delta.clear();
+        let id = egui::Id::new(("dock_flyout", DockPanel::Slices.label()));
+        ctx.data(|d| d.get_temp::<f32>(id)).unwrap()
+    }
+
+    #[test]
+    fn the_panel_grows_with_its_contents_up_to_the_column() {
+        let ctx = egui::Context::default();
+        for _ in 0..3 {
+            panel_height(&ctx, 50.0);
+        }
+        let small = panel_height(&ctx, 50.0);
+        // Más contenido (un artboard nuevo): crece, aunque el Area recuerde el alto de antes.
+        panel_height(&ctx, 200.0);
+        let grown = panel_height(&ctx, 200.0);
+        assert!(grown >= small + 150.0, "{small} → {grown}");
+        // Más de lo que cabe en la columna: llega a ella y lo demás va con scroll.
+        panel_height(&ctx, 2000.0);
+        let full = panel_height(&ctx, 2000.0);
+        assert!(full <= 560.0 + 1.0, "{full}");
+    }
 
     #[test]
     fn a_tall_panel_moves_up_but_not_above_the_column() {
