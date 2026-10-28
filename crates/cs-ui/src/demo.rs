@@ -457,14 +457,22 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     if std::env::var_os("CHIMPSPRITE_DEMO_LOSPEC").is_some() && app.has_doc() {
         dock::set_open(ctx, Some(dock::DockPanel::Lospec));
     }
-    // Desarrollo: el panel Artboards con tres artboards más (uno de nombre largo), para
+    // Desarrollo: el panel Artboards con muchos artboards más (uno de nombre largo), para
     // capturas de sus pestañas.
     if std::env::var_os("CHIMPSPRITE_DEMO_ARTBOARDS").is_some() && app.has_doc() {
         dock::set_open(ctx, Some(dock::DockPanel::Artboards));
         let editor = &mut app.doc.editor;
-        for name in ["Artboard 3", "Artboard 4", "A very long artboard name"] {
+        let names = [
+            "Artboard 3",
+            "Artboard 4",
+            "A very long artboard name",
+            "Walk",
+            "Run",
+        ];
+        let names = names.iter().chain(&["Jump", "Idle", "Hurt", "Win"]);
+        for name in names {
             editor.add_artboard(64, 64);
-            editor.rename_active_artboard(name.into());
+            editor.rename_active_artboard((*name).into());
         }
     }
     // Desarrollo: dos grupos (uno colapsado), para capturas de sus carpetitas.
