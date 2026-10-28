@@ -115,6 +115,56 @@ const MAX_SWATCHES: usize = 96;
 const SWATCH: f32 = 11.0;
 const SWATCH_GAP: f32 = 2.0;
 
+/// En qué orden se ven los colores (siempre los más usados; solo cambia el orden).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ColorSort {
+    #[default]
+    MostUsed,
+    Hue,
+    Brightness,
+    Saturation,
+}
+
+impl ColorSort {
+    const ALL: [ColorSort; 4] = [
+        ColorSort::MostUsed,
+        ColorSort::Hue,
+        ColorSort::Brightness,
+        ColorSort::Saturation,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            ColorSort::MostUsed => "Most Used",
+            ColorSort::Hue => "Hue",
+            ColorSort::Brightness => "Brightness",
+            ColorSort::Saturation => "Saturation",
+        }
+    }
+}
+
+/// `colors` (del más usado al menos) en el orden `sort`: por tono (los grises al final, de
+/// oscuro a claro), de oscuro a claro, o de más a menos saturado. Con empate, el más usado.
+fn sorted_colors(colors: &[(Rgba, usize)], sort: ColorSort) -> Vec<(Rgba, usize)> {
+    let mut out = colors.to_vec();
+    let hsv = |c: Rgba| egui::ecolor::Hsva::from_srgba_unmultiplied([c.r, c.g, c.b, 255]);
+    // Lo que ve el ojo: el verde pesa más que el rojo y el azul.
+    let luma = |c: Rgba| 299 * c.r as u32 + 587 * c.g as u32 + 114 * c.b as u32;
+    // En pasos enteros (los `f32` no se comparan de una).
+    let step = |v: f32| (v * 1000.0).round() as i32;
+    match sort {
+        ColorSort::MostUsed => {}
+        ColorSort::Hue => out.sort_by_key(|&(c, _)| {
+            let h = hsv(c);
+            let gray = h.s < 0.12;
+            (gray, if gray { 0 } else { step(h.h) }, luma(c))
+        }),
+        ColorSort::Brightness => out.sort_by_key(|&(c, _)| luma(c)),
+        ColorSort::Saturation => out.sort_by_key(|&(c, _)| std::cmp::Reverse(step(hsv(c).s))),
+    }
+    out
+}
+
 /// Una paleta para ajustar el resultado: la del documento o una de la biblioteca.
 pub struct PaletteChoice {
     pub name: String,
@@ -123,6 +173,8 @@ pub struct PaletteChoice {
 
 /// La paleta del documento, la primera de la lista.
 pub const CURRENT_PALETTE: &str = "Current Palette";
+/// Sin ajustar a una paleta: los colores que salen de los pasos (antes de la lista).
+const ORIGINAL_COLORS: &str = "Original Colors";
 
 /// Lo que se pidió desde el panel (la app lo resuelve).
 pub enum GroomAction {
@@ -145,9 +197,10 @@ pub struct GroomPanel {
     picked: Vec<Rgba>,
     /// Qué tan parecidos tienen que ser los colores para sugerir juntarlos.
     similar: u16,
-    /// Ajustar el resultado a una paleta: si está prendido, cuál y sus colores (los de ahora:
-    /// la del documento cambia).
-    fit_on: bool,
+    /// El orden de los colores.
+    sort: ColorSort,
+    /// La paleta a la que se ajusta el resultado (`ORIGINAL_COLORS`: a ninguna) y sus colores
+    /// (los de ahora: la del documento cambia).
     fit_name: String,
     fit_colors: Option<Vec<Rgba>>,
     /// Los pasos con `settings`, el primario y la paleta de entonces, sin juntar colores (lo
@@ -169,8 +222,8 @@ impl Default for GroomPanel {
             merges: Merges::new(),
             picked: Vec::new(),
             similar: 40,
-            fit_on: false,
-            fit_name: CURRENT_PALETTE.into(),
+            sort: ColorSort::default(),
+            fit_name: ORIGINAL_COLORS.into(),
             fit_colors: None,
             base: None,
             result: None,
@@ -349,7 +402,6 @@ impl GroomPanel {
     /// Desarrollo (capturas): ajusta a la paleta `name`.
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn fit_to(&mut self, name: &str) {
-        self.fit_on = true;
         self.fit_name = name.into();
     }
 
@@ -380,8 +432,7 @@ impl GroomPanel {
         palettes: &[PaletteChoice],
     ) -> Option<GroomAction> {
         let mut action = None;
-        self.fit_colors = self
-            .fit_on
+        self.fit_colors = (self.fit_name != ORIGINAL_COLORS)
             .then(|| palettes.iter().find(|p| p.name == self.fit_name))
             .flatten()
             .map(|p| p.colors.clone());
@@ -579,15 +630,18 @@ impl GroomPanel {
         // Ajustar a una paleta: cada color, el más parecido de ella.
         let mut lospec = false;
         ui.horizontal(|ui| {
-            widgets::checkbox(ui, &mut self.fit_on, "Fit to Palette")
+            ui.label("Palette")
                 .on_hover_text("Change each color to the most similar one in the palette");
-            ui.add_enabled_ui(self.fit_on, |ui| {
+            {
                 let room = ui.available_width().floor();
                 // Lo que el combo pone alrededor del nombre (el aire y la flecha).
                 let font = egui::TextStyle::Body.resolve(ui.style());
                 let shown = crate::tab_bar::fit_text(ui, &self.fit_name, &font, room - 24.0);
                 let height = crate::bar_fields::FIELD_HEIGHT;
                 widgets::combo_sized(ui, "groom_fit", &shown, Some(room), height, |ui| {
+                    let original = ORIGINAL_COLORS.to_string();
+                    widgets::choice(ui, &mut self.fit_name, original, ORIGINAL_COLORS);
+                    ui.separator();
                     for palette in palettes {
                         let name = palette.name.clone();
                         widgets::choice(ui, &mut self.fit_name, name, &palette.name);
@@ -601,7 +655,7 @@ impl GroomPanel {
                         ui.close();
                     }
                 });
-            });
+            }
         });
         lospec
     }
@@ -720,8 +774,20 @@ impl GroomPanel {
         ui.horizontal(|ui| {
             ui.add_space(5.0);
             label_with_hint(ui, "Colors", "(click to pick)");
+            // A la derecha, el orden.
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                let height = crate::bar_fields::FIELD_HEIGHT;
+                let sort = &mut self.sort;
+                widgets::combo_sized(ui, "groom_sort", sort.label(), None, height, |ui| {
+                    for option in ColorSort::ALL {
+                        widgets::choice(ui, sort, option, option.label());
+                    }
+                })
+                .on_hover_text("Sort the colors");
+            });
         });
         let shown = groomed.colors.len().min(MAX_SWATCHES);
+        let ordered = sorted_colors(&groomed.colors[..shown], self.sort);
         let pitch = SWATCH + SWATCH_GAP;
         let per_row = ((RIGHT.span() - 2.0 * BOX_PAD + SWATCH_GAP) / pitch)
             .floor()
@@ -735,7 +801,7 @@ impl GroomPanel {
         let inner = frame.shrink(BOX_PAD);
         let border = pixel_ui::control_border(ui.ctx());
         let accent = crate::theme::ACCENT;
-        for (i, &(color, count)) in groomed.colors.iter().take(shown).enumerate() {
+        for (i, &(color, count)) in ordered.iter().enumerate() {
             let (col, row) = ((i % per_row) as f32, (i / per_row) as f32);
             let rect =
                 Rect::from_min_size(inner.min + vec2(col, row) * pitch, vec2(SWATCH, SWATCH));
@@ -1274,6 +1340,39 @@ mod tests {
             groomed,
             "the steps are kept"
         );
+    }
+
+    #[test]
+    fn the_colors_sort_by_hue_brightness_or_saturation() {
+        let (red, dark_red) = (Rgba::rgb(220, 30, 30), Rgba::rgb(90, 10, 10));
+        let (blue, gray) = (Rgba::rgb(40, 60, 220), Rgba::rgb(128, 128, 128));
+        let (white, black) = (Rgba::rgb(255, 255, 255), Rgba::rgb(0, 0, 0));
+        let colors = [
+            (gray, 9),
+            (blue, 8),
+            (white, 7),
+            (red, 6),
+            (black, 5),
+            (dark_red, 4),
+        ];
+        let order = |sort| -> Vec<Rgba> {
+            sorted_colors(&colors, sort)
+                .into_iter()
+                .map(|(c, _)| c)
+                .collect()
+        };
+        assert_eq!(order(ColorSort::MostUsed), colors.map(|(c, _)| c).to_vec());
+        // Los rojos (de oscuro a claro), el azul y al final los grises, de oscuro a claro.
+        assert_eq!(
+            order(ColorSort::Hue),
+            vec![dark_red, red, blue, black, gray, white]
+        );
+        assert_eq!(
+            order(ColorSort::Brightness),
+            vec![black, dark_red, blue, red, gray, white]
+        );
+        // Los más saturados primero; los grises (sin saturación) al final, por uso.
+        assert_eq!(order(ColorSort::Saturation)[3..], [gray, white, black]);
     }
 
     #[test]
