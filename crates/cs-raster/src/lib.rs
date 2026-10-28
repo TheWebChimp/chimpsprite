@@ -6,8 +6,10 @@ mod curve;
 mod ellipse;
 mod fill;
 mod gradient;
+mod groom;
 mod line;
 mod polygon;
+mod quantize;
 mod rect;
 mod symmetry;
 mod transform;
@@ -18,11 +20,15 @@ pub use curve::cubic_bezier;
 pub use ellipse::{ellipse_filled, ellipse_outline};
 pub use fill::flood_fill;
 pub use gradient::{Dither, GradientShape, gradient_t};
+pub use groom::{
+    GridGuess, clean_outline, detect_grid, reduce_colors, remove_background, sample_grid,
+};
 pub use line::{
     BrushShape, brush_points, brush_square, custom_brush, custom_brush_version, line,
     pixel_perfect, set_custom_brush, stamp,
 };
 pub use polygon::{polygon_filled, polygon_filled_nonzero, polygon_filled_nonzero_in};
+pub use quantize::{median_cut, nearest};
 pub use rect::{rect_filled, rect_outline, rounded_rect_filled, rounded_rect_outline};
 pub use symmetry::{SymmetryAxes, symmetric_points, symmetrize};
 pub use transform::{

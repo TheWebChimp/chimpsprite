@@ -6,7 +6,6 @@ mod dispatch;
 mod error;
 mod ops;
 pub mod params;
-mod quantize;
 mod session;
 mod target;
 mod text;
