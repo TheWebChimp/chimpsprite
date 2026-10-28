@@ -67,6 +67,8 @@ pub enum OpenPurpose {
     ImportSheet,
     /// Correr un script (`.rhai` o `.lua`).
     RunScript,
+    /// La imagen de partida de Groom.
+    GroomImage,
     /// Cargar una paleta (`.gpl`, `.hex`, `.pal`, `.png`, `.aseprite`).
     LoadPalette,
 }

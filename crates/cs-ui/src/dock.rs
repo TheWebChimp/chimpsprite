@@ -44,19 +44,27 @@ pub enum DockPanel {
     Lospec,
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     Dafont,
+    /// Groom: de pixel art falso a pixel art de verdad (su contenido lo pone la app).
+    Groom,
 }
 
 impl DockPanel {
     #[cfg(not(target_arch = "wasm32"))]
-    pub const ALL: [DockPanel; 4] = [
+    pub const ALL: [DockPanel; 5] = [
         DockPanel::Artboards,
         DockPanel::Slices,
         DockPanel::Lospec,
         DockPanel::Dafont,
+        DockPanel::Groom,
     ];
     /// En la web no hay dafont (el sitio no acepta peticiones desde otras páginas).
     #[cfg(target_arch = "wasm32")]
-    pub const ALL: [DockPanel; 3] = [DockPanel::Artboards, DockPanel::Slices, DockPanel::Lospec];
+    pub const ALL: [DockPanel; 4] = [
+        DockPanel::Artboards,
+        DockPanel::Slices,
+        DockPanel::Lospec,
+        DockPanel::Groom,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -64,6 +72,7 @@ impl DockPanel {
             DockPanel::Slices => "Slices",
             DockPanel::Lospec => "Lospec",
             DockPanel::Dafont => "Dafont",
+            DockPanel::Groom => "Groom",
         }
     }
 
@@ -74,6 +83,7 @@ impl DockPanel {
             DockPanel::Slices => "icon.dock.slices",
             DockPanel::Lospec => "icon.dock.lospec",
             DockPanel::Dafont => "icon.dock.dafont",
+            DockPanel::Groom => "icon.dock.groom",
         }
     }
 
@@ -84,6 +94,7 @@ impl DockPanel {
             DockPanel::Slices => "#",
             DockPanel::Lospec => "L",
             DockPanel::Dafont => "Aa",
+            DockPanel::Groom => "▦",
         }
     }
 }
@@ -214,7 +225,9 @@ pub fn show(
                 });
             });
         }
-        DockPanel::Lospec | DockPanel::Dafont => out.app_panel = Some((panel, anchor)),
+        DockPanel::Lospec | DockPanel::Dafont | DockPanel::Groom => {
+            out.app_panel = Some((panel, anchor))
+        }
     }
     out
 }

@@ -393,6 +393,16 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         app.doc.editor.primary = cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(34, 32, 52));
         app.run_script(name, source);
     }
+    // Desarrollo: el panel Groom abierto con una imagen (su ruta), para capturas.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(path) = std::env::var("CHIMPSPRITE_DEMO_GROOM")
+        && app.has_doc()
+        && let Ok(bytes) = std::fs::read(&path)
+        && let Ok(image) = groom::decode_image(&bytes)
+    {
+        dock::set_open(ctx, Some(dock::DockPanel::Groom));
+        app.groom.load("groomed".into(), image);
+    }
     // Desarrollo: Tiled Mode en los dos ejes, para capturas.
     if std::env::var_os("CHIMPSPRITE_DEMO_TILED").is_some() && app.has_doc() {
         app.doc.editor.tiled = editor::TiledMode::Both;

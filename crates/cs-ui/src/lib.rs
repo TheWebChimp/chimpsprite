@@ -38,6 +38,7 @@ mod sprite_dialogs;
 mod tab_bar;
 use crate::pixel_ui::Tip as _;
 use cs_io::files;
+mod groom;
 mod guides;
 mod home;
 mod instance_ops;
@@ -119,6 +120,8 @@ pub struct ChimpApp {
     /// Las fuentes pixel de dafont.com para la herramienta de texto (solo escritorio).
     #[cfg(not(target_arch = "wasm32"))]
     dafont: dafont::DafontPanel,
+    /// El panel Groom del dock.
+    groom: groom::GroomPanel,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
@@ -261,6 +264,7 @@ impl ChimpApp {
             sprite_dialog: None,
             #[cfg(not(target_arch = "wasm32"))]
             dafont: Default::default(),
+            groom: Default::default(),
             platform: platform::Platform::default(),
             autosaver: autosave::Autosaver::default(),
             restore: None,
@@ -408,6 +412,80 @@ impl ChimpApp {
             .map(|l| l.id);
         if let Some(id) = top {
             editor.select_layer(id);
+        }
+    }
+
+    /// El panel Groom del dock y lo que pide.
+    fn groom_panel(&mut self, ctx: &egui::Context, anchor: egui::Rect, modal: bool) {
+        let primary = self.doc.editor.resolve(self.doc.editor.primary);
+        let mut action = None;
+        let groom = &mut self.groom;
+        dock::flyout(
+            ctx,
+            dock::DockPanel::Groom,
+            anchor,
+            self.pixel.skin(),
+            groom::WIDTH,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| action = groom.ui(ui, primary));
+            },
+        );
+        match action {
+            Some(groom::GroomAction::Import) => {
+                self.platform
+                    .open_file(groom::FILTER, platform::OpenPurpose::GroomImage, ctx);
+            }
+            Some(groom::GroomAction::UseLayer) => {
+                let editor = &self.doc.editor;
+                let sprite = editor.sprite();
+                let pixels = (0..sprite.height as i32)
+                    .flat_map(|y| (0..sprite.width as i32).map(move |x| (x, y)))
+                    .map(|(x, y)| editor.resolve(sprite.pixel(editor.layer, editor.frame, x, y)))
+                    .collect();
+                let name = sprite
+                    .layer(editor.layer)
+                    .map_or("Layer".to_string(), |l| l.name.clone());
+                let image = cs_io::export::Bitmap {
+                    width: sprite.width,
+                    height: sprite.height,
+                    pixels,
+                };
+                self.groom.load(name, image);
+            }
+            Some(groom::GroomAction::NewSprite(g)) => {
+                let mut sprite =
+                    cs_core::Sprite::new(g.image.width, g.image.height, cs_core::ColorMode::Rgba);
+                let image = cs_core::Image::from_buffer(
+                    g.image.width,
+                    g.image.height,
+                    cs_core::PixelBuffer::Rgba(g.image.pixels),
+                )
+                .expect("same size");
+                let id = cs_core::ImageId(1);
+                sprite.images.insert(id, std::sync::Arc::new(image));
+                let layer = sprite.layers[0].id;
+                sprite.cels.insert(
+                    (layer, 0),
+                    cs_core::Cel {
+                        position: (0, 0),
+                        opacity: 255,
+                        image: id,
+                    },
+                );
+                self.open_sheet_sprite(&g.name, sprite);
+            }
+            Some(groom::GroomAction::AddLayer(g)) => match g.image.to_png() {
+                Ok(bytes) => self.import_layer_bytes(
+                    &file_actions::Loaded {
+                        name: format!("{}.png", g.name),
+                        target: None,
+                        bytes,
+                    },
+                    false,
+                ),
+                Err(e) => self.show_message("Could not add the layer", e.to_string()),
+            },
+            None => {}
         }
     }
 
@@ -1033,6 +1111,7 @@ impl ChimpApp {
             Some((dock::DockPanel::Lospec, anchor)) => self.lospec_panel(ui.ctx(), anchor, modal),
             #[cfg(not(target_arch = "wasm32"))]
             Some((dock::DockPanel::Dafont, anchor)) => self.dafont_panel(ui.ctx(), anchor, modal),
+            Some((dock::DockPanel::Groom, anchor)) => self.groom_panel(ui.ctx(), anchor, modal),
             _ => {}
         }
         if !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {

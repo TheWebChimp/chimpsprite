@@ -27,8 +27,9 @@ fontdue = "0.9"
 # Imágenes copiadas en otras apps (mismas features que usa egui-winit: no compila nada extra).
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 arboard = { version = "3.6", default-features = false, features = ["image-data"] }
-# Las miniaturas de Pixnews (JPEG, PNG y GIF); ya entra con arboard.
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif"] }
+# Las miniaturas de Pixnews (JPEG, PNG y GIF; ya entra con arboard) y las imágenes de Groom
+# (también WebP).
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 # Los zips de las fuentes de dafont (la misma versión que usa cs-io).
 zip = { version = "9", default-features = false, features = ["deflate"] }
 

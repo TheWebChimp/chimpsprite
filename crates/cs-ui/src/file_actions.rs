@@ -229,6 +229,15 @@ impl ChimpApp {
                             self.run_script(&loaded.name, &source);
                         }
                         OpenPurpose::RunScript => {}
+                        OpenPurpose::GroomImage => {
+                            match crate::groom::decode_image(&loaded.bytes) {
+                                Ok(image) => {
+                                    let name = files::stem(&loaded.name).to_string();
+                                    self.groom.load(name, image);
+                                }
+                                Err(e) => self.show_message("Could not read the image", e),
+                            }
+                        }
                         OpenPurpose::LoadPalette if self.has_doc() => {
                             self.load_palette_bytes(&loaded.name, &loaded.bytes)
                         }
