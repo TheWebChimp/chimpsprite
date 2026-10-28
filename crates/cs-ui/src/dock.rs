@@ -338,6 +338,30 @@ fn tab_shapes(
         egui::pos2(tab.left() + left, tab.bottom() - bottom),
     );
     shapes.push(Shape::rect_filled(seam, 0.0, fill));
+    // Los bordes de arriba y de abajo siguen derecho de la caja a la pestaña: desde la línea
+    // oscura de la caja o, si los dos empiezan (o terminan) a la misma altura, tapando también
+    // la esquina de la caja.
+    let line = |x0: f32, y: f32, color: egui::Color32| {
+        let r = Rect::from_min_max(egui::pos2(x0, y), egui::pos2(tab.left() + left, y + 1.0));
+        Shape::rect_filled(r, 0.0, color)
+    };
+    let from = |aligned: bool| {
+        if aligned {
+            panel_rect.right() - right
+        } else {
+            tab.left()
+        }
+    };
+    let x0 = from((tab.top() - panel_rect.top()).abs() < 0.5);
+    for k in 0..center.y {
+        shapes.push(line(x0, tab.top() + k as f32, piece.pixel(center.x, k)));
+    }
+    let x0 = from((tab.bottom() - panel_rect.bottom()).abs() < 0.5);
+    let below = center.y + center.h;
+    for k in below..piece.size[1] {
+        let y = tab.bottom() - (piece.size[1] - k) as f32;
+        shapes.push(line(x0, y, piece.pixel(center.x, k)));
+    }
     shapes.extend(pixel_draw::piece_centered(skin, panel.icon(), button, ppp));
     shapes
 }
