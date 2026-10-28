@@ -47,9 +47,10 @@ const OFFSET_LEFT: f32 = 90.0;
 const BOX_HEIGHT: f32 = 141.0;
 /// Del borde de una caja a lo de adentro.
 const BOX_PAD: f32 = 4.0;
-/// La línea de abajo y los botones, desde el fondo del panel.
+/// La línea de abajo y los botones, desde el fondo del panel (los botones, enteros dentro del
+/// contenido: lo de afuera lo recorta el scroll).
 const FOOTER_LINE: f32 = 22.0;
-const FOOTER_BUTTONS: f32 = 15.0;
+const FOOTER_BUTTONS: f32 = pixel_ui::CONTROL_HEIGHT;
 /// Una sugerencia por fila.
 const SUGGESTION_ROW: f32 = 15.0;
 /// La lupa sobre la vista previa: su lado y cuántos píxeles del resultado se ven en ella.
@@ -309,7 +310,8 @@ impl GroomPanel {
                 );
             }
         }
-        let header = Rect::from_min_max(at(0.0, -1.0), at(WIDTH, HEADER_LINE - 2.0));
+        // Desde el borde del contenido (más arriba, el scroll recortaría su línea de arriba).
+        let header = Rect::from_min_max(at(0.0, 0.0), at(WIDTH, HEADER_LINE - 2.0));
         let right_to_left = egui::Layout::right_to_left(egui::Align::Min);
         import_buttons(&mut child(ui, header, right_to_left), &mut action);
         // Las líneas grabadas: debajo del encabezado y, con imagen, entre las columnas y arriba
