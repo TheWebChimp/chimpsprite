@@ -506,18 +506,30 @@ impl LumenPanel {
         self.maps(&mut body, &mut action);
         body.add_space(5.0);
         let controls_line = body.cursor().top();
-        body.add_space(5.0);
-        self.view_controls(&mut body);
-        body.add_space(4.0);
-        // Con Modify, los ajustes del generador en lugar de los de la luz.
+        // Debajo: a la izquierda (bajo Albedo) la vista y la luz, o con Modify los ajustes del
+        // generador; a la derecha, la vista previa con el zoom abajo.
+        let below = controls_line + 6.0;
+        let left = Rect::from_min_max(
+            pos2(origin.x, below),
+            pos2(origin.x + COLUMN, origin.y + footer_line),
+        );
+        let mut left = child(ui, left, top_down);
+        left.spacing_mut().item_spacing.y = 3.0;
         match self.modify {
-            Some(kind) => self.generator_settings(&mut body, kind),
-            None => self.sliders(&mut body),
+            Some(kind) => self.generator_settings(&mut left, kind),
+            None => {
+                self.view_controls(&mut left);
+                left.add_space(2.0);
+                self.sliders(&mut left);
+            }
         }
-        body.add_space(4.0);
-        let preview_height =
-            (origin.y + footer_line - body.cursor().top() - BELOW_PREVIEW).max(MIN_PREVIEW);
-        self.preview(&mut body, preview_height);
+        let right = Rect::from_min_max(
+            pos2(origin.x + COLUMN + COLUMN_GAP, below),
+            pos2(origin.x + WIDTH, origin.y + footer_line - 3.0),
+        );
+        let mut right = child(ui, right, top_down);
+        let preview_height = (right.max_rect().height() - BELOW_PREVIEW).max(MIN_PREVIEW);
+        self.preview(&mut right, preview_height);
         if let Some(skin) = &skin {
             let colors = skin.colors();
             lines.push(pixel_ui::etched_hline(
@@ -726,23 +738,9 @@ impl LumenPanel {
         }
     }
 
-    /// Los ajustes del generador de `kind` (Modify), en una caja. Al moverlos, el mapa pasa a
-    /// ser el generado.
+    /// Los ajustes del generador de `kind` (Modify), uno debajo del otro en la columna de la
+    /// izquierda. Al moverlos, el mapa pasa a ser el generado.
     fn generator_settings(&mut self, ui: &mut Ui, kind: MapKind) {
-        let top = ui.cursor().top();
-        let left = ui.cursor().left();
-        let rows: f32 = if kind == MapKind::Normal { 3.0 } else { 1.0 };
-        let box_height = 2.0 * BOX_PAD + rows * SLIDER_HEIGHT + (rows - 1.0) * ROW_GAP;
-        let frame = Rect::from_min_size(pos2(left, top), vec2(WIDTH, box_height));
-        double_box(ui, frame);
-        let inner = frame.shrink(BOX_PAD);
-        let width = (inner.width() - 2.0 * COLUMN_GAP) / 3.0;
-        let cell = |row: f32, col: f32| {
-            Rect::from_min_size(
-                inner.min + vec2(col * (width + COLUMN_GAP), row * (SLIDER_HEIGHT + ROW_GAP)),
-                vec2(width, SLIDER_HEIGHT),
-            )
-        };
         let d = NormalSettings::default();
         match kind {
             MapKind::Normal => {
@@ -750,84 +748,75 @@ impl LumenPanel {
                 let s = &mut self.normals;
                 let fmt = |v: f32| format!("{v:.2}");
                 let strength = cs_render::normal::STRENGTH;
-                slider(
+                let radius = cs_render::normal::SHAPE_RADIUS;
+                let scale = cs_render::normal::DETAIL_SCALE;
+                let px = |v: f32| format!("{v:.1} px");
+                stacked_slider(
                     ui,
-                    cell(0.0, 0.0),
                     "Shape",
                     &mut s.shape_strength,
                     strength,
                     d.shape_strength,
                     fmt,
                 );
-                slider(
+                stacked_slider(
                     ui,
-                    cell(0.0, 1.0),
                     "Shape Radius",
                     &mut s.shape_radius,
-                    cs_render::normal::SHAPE_RADIUS,
+                    radius,
                     d.shape_radius,
-                    |v| format!("{v:.1} px"),
+                    px,
                 );
-                slider(
+                stacked_slider(
                     ui,
-                    cell(0.0, 2.0),
                     "Softness",
                     &mut s.shape_softness,
                     strength,
                     d.shape_softness,
                     fmt,
                 );
-                slider(
+                stacked_slider(
                     ui,
-                    cell(1.0, 0.0),
                     "Detail",
                     &mut s.detail_strength,
                     strength,
                     d.detail_strength,
                     fmt,
                 );
-                slider(
+                stacked_slider(
                     ui,
-                    cell(1.0, 1.0),
                     "Detail Scale",
                     &mut s.detail_scale,
-                    cs_render::normal::DETAIL_SCALE,
+                    scale,
                     d.detail_scale,
                     fmt,
                 );
-                slider(
+                stacked_slider(
                     ui,
-                    cell(1.0, 2.0),
                     "Strength",
                     &mut s.normal_strength,
                     strength,
                     d.normal_strength,
                     fmt,
                 );
-                let row = cell(2.0, 0.0).union(cell(2.0, 2.0));
-                let mut row = child(ui, row, egui::Layout::left_to_right(egui::Align::Center));
-                row.label("Format");
-                let label = |f: NormalFormat| match f {
-                    NormalFormat::OpenGl => "OpenGL",
-                    NormalFormat::DirectX => "DirectX",
-                };
-                let height = crate::bar_fields::FIELD_HEIGHT;
-                widgets::combo_sized(
-                    &mut row,
-                    "lumen_format",
-                    label(s.format),
-                    None,
-                    height,
-                    |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Format");
+                    let label = |f: NormalFormat| match f {
+                        NormalFormat::OpenGl => "OpenGL",
+                        NormalFormat::DirectX => "DirectX",
+                    };
+                    let height = crate::bar_fields::FIELD_HEIGHT;
+                    widgets::combo_sized(ui, "lumen_format", label(s.format), None, height, |ui| {
                         for f in [NormalFormat::OpenGl, NormalFormat::DirectX] {
                             widgets::choice(ui, &mut s.format, f, label(f));
                         }
-                    },
-                )
-                .on_hover_text("OpenGL: Godot, Unity, Bevy. DirectX: Unreal");
-                row.add_space(8.0);
-                widgets::checkbox(&mut row, &mut s.invert_x, "Invert X");
-                widgets::checkbox(&mut row, &mut s.invert_y, "Invert Y");
+                    })
+                    .on_hover_text("OpenGL: Godot, Unity, Bevy. DirectX: Unreal");
+                });
+                ui.horizontal(|ui| {
+                    widgets::checkbox(ui, &mut s.invert_x, "Invert X");
+                    widgets::checkbox(ui, &mut s.invert_y, "Invert Y");
+                });
                 if self.normals != before {
                     self.normal = Source::Generated;
                 }
@@ -835,46 +824,51 @@ impl LumenPanel {
             _ => {
                 let before = self.threshold;
                 let mut percent = self.threshold * 100.0;
-                slider(
-                    ui,
-                    cell(0.0, 0.0),
-                    "Threshold",
-                    &mut percent,
-                    (0.0, 100.0),
-                    85.0,
-                    |v| format!("{v:.0}%"),
-                );
+                let fmt = |v: f32| format!("{v:.0}%");
+                stacked_slider(ui, "Threshold", &mut percent, (0.0, 100.0), 85.0, fmt);
                 self.threshold = percent / 100.0;
-                let note = child(
-                    ui,
-                    cell(0.0, 1.0).union(cell(0.0, 2.0)),
-                    egui::Layout::top_down(egui::Align::Min),
-                );
-                let mut note = note;
-                hint(&mut note, "colors this bright glow on their own");
+                hint(ui, "colors this bright glow");
+                hint(ui, "on their own");
                 if self.threshold != before {
                     self.luminance = Source::Generated;
                 }
             }
         }
-        ui.allocate_rect(frame, Sense::hover());
     }
 
-    /// View, la luz (color, cómo se dibuja, si sigue al mouse) y el fondo.
+    /// View y el color de la luz; si sigue al mouse; el fondo; cómo se dibuja la luz.
     fn view_controls(&mut self, ui: &mut Ui) {
         let height = crate::bar_fields::FIELD_HEIGHT;
         ui.horizontal(|ui| {
             ui.label("View");
             let view = &mut self.view;
-            widgets::combo_sized(ui, "lumen_view", view.label(), Some(80.0), height, |ui| {
+            widgets::combo_sized(ui, "lumen_view", view.label(), Some(66.0), height, |ui| {
                 for v in View::ALL {
                     widgets::choice(ui, view, v, v.label());
                 }
             });
-            ui.add_space(6.0);
             ui.label("Light");
             color_button(ui, &mut self.light_color);
-            ui.add_space(6.0);
+        });
+        widgets::checkbox(ui, &mut self.follow_mouse, "Follow Mouse")
+            .on_hover_text("The light follows the mouse over the preview; otherwise, drag it");
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            ui.label("BG");
+            let mut bg = self.background.unwrap_or(Rgba::rgb(0, 0, 0));
+            if color_button(ui, &mut bg) {
+                self.background = Some(bg);
+            }
+            if pixel_ui::text_button_sized(ui, "Detect BG", 50.0).clicked()
+                && let Some((_, image)) = &self.albedo
+            {
+                self.background =
+                    cs_render::detect_background(&image.pixels, image.width, image.height);
+            }
+            widgets::checkbox(ui, &mut self.hide_background, "Hide BG")
+                .on_hover_text("The background color counts as transparent");
+        });
+        ui.horizontal(|ui| {
             ui.label("Cursor");
             let cursor = &mut self.cursor;
             widgets::combo_sized(
@@ -890,96 +884,48 @@ impl LumenPanel {
                 },
             );
         });
-        ui.horizontal(|ui| {
-            widgets::checkbox(ui, &mut self.follow_mouse, "Follow Mouse")
-                .on_hover_text("The light follows the mouse over the preview; otherwise, drag it");
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                widgets::checkbox(ui, &mut self.hide_background, "Hide BG")
-                    .on_hover_text("The background color counts as transparent");
-                if pixel_ui::text_button(ui, "Detect BG").clicked()
-                    && let Some((_, image)) = &self.albedo
-                {
-                    self.background =
-                        cs_render::detect_background(&image.pixels, image.width, image.height);
-                }
-                let mut bg = self.background.unwrap_or(Rgba::rgb(0, 0, 0));
-                if color_button(ui, &mut bg) {
-                    self.background = Some(bg);
-                }
-                ui.label("BG");
-            });
-        });
     }
 
-    /// Los sliders de la luz, en las columnas de los mapas.
+    /// Los sliders de la luz, uno debajo del otro.
     fn sliders(&mut self, ui: &mut Ui) {
-        let top = ui.cursor().top();
-        let left = ui.cursor().left();
-        let cell = |row: f32, col: f32| {
-            Rect::from_min_size(
-                pos2(
-                    left + col * (COLUMN + COLUMN_GAP),
-                    top + row * (SLIDER_HEIGHT + ROW_GAP),
-                ),
-                vec2(COLUMN, SLIDER_HEIGHT),
-            )
-        };
         let d = Params::default();
         let p = &mut self.params;
         let px = |v: f32| format!("{v:.0} px");
         let percent = |v: f32| format!("{v:.0}%");
-        slider(
+        let one = |v: f32| format!("{v:.1}");
+        stacked_slider(ui, "Height", &mut p.height, (1.0, 200.0), d.height, px);
+        stacked_slider(ui, "Falloff", &mut p.falloff, (1.0, 400.0), d.falloff, px);
+        stacked_slider(
             ui,
-            cell(0.0, 0.0),
-            "Height",
-            &mut p.height,
-            (1.0, 200.0),
-            d.height,
-            px,
-        );
-        slider(
-            ui,
-            cell(0.0, 1.0),
-            "Falloff",
-            &mut p.falloff,
-            (1.0, 400.0),
-            d.falloff,
-            px,
-        );
-        slider(
-            ui,
-            cell(0.0, 2.0),
             "Brightness",
             &mut p.brightness,
             (0.0, 10.0),
             d.brightness,
-            |v| format!("{v:.1}"),
+            one,
         );
-        slider(
+        stacked_slider(
             ui,
-            cell(1.0, 0.0),
             "Ambient",
             &mut p.ambient,
             (0.0, 100.0),
             d.ambient,
             percent,
         );
-        slider(
+        stacked_slider(
             ui,
-            cell(1.0, 1.0),
             "Luminance",
             &mut p.luminance,
             (0.0, 100.0),
             d.luminance,
             percent,
         );
-        ui.allocate_rect(cell(0.0, 0.0).union(cell(1.0, 2.0)), Sense::hover());
     }
 
     /// La vista previa: el damero y lo que muestra View, con la luz encima. Se arrastra la luz
     /// (o sigue al mouse), la rueda hace zoom y el botón derecho mueve la imagen.
     fn preview(&mut self, ui: &mut Ui, box_height: f32) {
-        let (frame, _) = ui.allocate_exact_size(vec2(WIDTH, box_height), Sense::hover());
+        let width = ui.max_rect().width();
+        let (frame, _) = ui.allocate_exact_size(vec2(width, box_height), Sense::hover());
         ui.painter()
             .extend(notched_outline(frame, box_color(ui), 1.0));
         let well = frame.shrink(2.0);
@@ -1102,9 +1048,20 @@ impl LumenPanel {
 }
 
 /// El alto de un slider: el título con su valor y la barra.
-const SLIDER_HEIGHT: f32 = 28.0;
-/// Entre filas de sliders.
-const ROW_GAP: f32 = 5.0;
+const SLIDER_HEIGHT: f32 = 26.0;
+
+/// Un slider del ancho de la columna, debajo de lo anterior.
+fn stacked_slider(
+    ui: &mut Ui,
+    title: &str,
+    value: &mut f32,
+    range: (f32, f32),
+    default: f32,
+    format: impl Fn(f32) -> String,
+) {
+    let (rect, _) = ui.allocate_exact_size(vec2(COLUMN, SLIDER_HEIGHT), Sense::hover());
+    slider(ui, rect, title, value, range, default, format);
+}
 
 /// Un slider en `rect`: el título, ↺ (al default) y el valor a la derecha; debajo, la barra.
 fn slider(
@@ -1118,6 +1075,8 @@ fn slider(
 ) {
     let mut cell = child(ui, rect, egui::Layout::top_down(egui::Align::Min));
     cell.spacing_mut().item_spacing.y = 1.0;
+    // La barra, pegada a su título.
+    cell.spacing_mut().interact_size.y = 12.0;
     cell.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 3.0;
         ui.label(title);
@@ -1141,6 +1100,8 @@ fn slider(
 /// Un botón con la muestra de `color` que abre el selector. Devuelve si cambió.
 fn color_button(ui: &mut Ui, color: &mut Rgba) -> bool {
     let mut c = Color32::from_rgb(color.r, color.g, color.b);
+    // Una muestra chica, cuadrada.
+    ui.spacing_mut().interact_size.x = 16.0;
     let changed =
         egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque)
             .changed();
