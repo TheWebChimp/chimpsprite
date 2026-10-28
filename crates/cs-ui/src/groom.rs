@@ -43,8 +43,10 @@ const RIGHT: egui::Rangef = egui::Rangef {
 };
 /// La columna de "Offset" en la fila de la cuadrícula.
 const OFFSET_LEFT: f32 = 90.0;
-/// Las cajas de la vista previa y de las sugerencias, a la misma altura.
-const BOX_HEIGHT: f32 = 141.0;
+/// Las cajas de la vista previa y de las sugerencias, a la misma altura: llegan hasta lo que va
+/// debajo de ellas (el tamaño y la nota; "Merge All Suggested"), sin bajar de un mínimo.
+const BELOW_BOXES: f32 = 38.0;
+const MIN_BOX_HEIGHT: f32 = 60.0;
 /// Del borde de una caja a lo de adentro: las dos líneas y 2 de aire.
 const BOX_PAD: f32 = 5.0;
 /// La línea de abajo y los botones, desde el fondo del panel (los botones, enteros dentro del
@@ -113,10 +115,21 @@ const MAX_SWATCHES: usize = 96;
 const SWATCH: f32 = 11.0;
 const SWATCH_GAP: f32 = 2.0;
 
+/// Una paleta para ajustar el resultado: la del documento o una de la biblioteca.
+pub struct PaletteChoice {
+    pub name: String,
+    pub colors: Vec<Rgba>,
+}
+
+/// La paleta del documento, la primera de la lista.
+pub const CURRENT_PALETTE: &str = "Current Palette";
+
 /// Lo que se pidió desde el panel (la app lo resuelve).
 pub enum GroomAction {
     Import,
     UseLayer,
+    /// Abrir Lospec (para guardar una paleta y ajustarse a ella).
+    BrowseLospec,
     NewSprite(Groomed),
     AddLayer(Groomed),
     AddArtboard(Groomed),
@@ -132,8 +145,14 @@ pub struct GroomPanel {
     picked: Vec<Rgba>,
     /// Qué tan parecidos tienen que ser los colores para sugerir juntarlos.
     similar: u16,
-    /// Los pasos con `settings` y el primario de entonces, sin juntar colores (lo pesado).
-    base: Option<(Settings, Rgba, Groomed)>,
+    /// Ajustar el resultado a una paleta: si está prendido, cuál y sus colores (los de ahora:
+    /// la del documento cambia).
+    fit_on: bool,
+    fit_name: String,
+    fit_colors: Option<Vec<Rgba>>,
+    /// Los pasos con `settings`, el primario y la paleta de entonces, sin juntar colores (lo
+    /// pesado).
+    base: Option<(Settings, Rgba, Option<Vec<Rgba>>, Groomed)>,
     /// `base` con los colores juntados de entonces.
     result: Option<(Merges, Groomed)>,
     /// La sugerencia bajo el mouse la vez pasada (la vista previa la prueba).
@@ -150,6 +169,9 @@ impl Default for GroomPanel {
             merges: Merges::new(),
             picked: Vec::new(),
             similar: 40,
+            fit_on: false,
+            fit_name: CURRENT_PALETTE.into(),
+            fit_colors: None,
             base: None,
             result: None,
             hovered_group: None,
@@ -307,17 +329,28 @@ impl GroomPanel {
     fn groomed(&mut self, primary: Rgba) -> Option<&Groomed> {
         let (name, source) = self.source.as_ref()?;
         let settings = self.settings?;
-        if !matches!(&self.base, Some((s, p, _)) if *s == settings && *p == primary) {
-            let base = process(name, source, settings, primary, &Merges::new());
-            self.base = Some((settings, primary, base));
+        let fit = &self.fit_colors;
+        if !matches!(&self.base,
+            Some((s, p, f, _)) if *s == settings && *p == primary && f == fit)
+        {
+            let palette = fit.as_deref();
+            let base = process(name, source, settings, primary, palette, &Merges::new());
+            self.base = Some((settings, primary, fit.clone(), base));
             self.result = None;
         }
         if !matches!(&self.result, Some((m, _)) if *m == self.merges) {
-            let (_, _, base) = self.base.as_ref()?;
+            let (_, _, _, base) = self.base.as_ref()?;
             self.result = Some((self.merges.clone(), merged(base, &self.merges)));
             self.texture = None;
         }
         self.result.as_ref().map(|(_, g)| g)
+    }
+
+    /// Desarrollo (capturas): ajusta a la paleta `name`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) fn fit_to(&mut self, name: &str) {
+        self.fit_on = true;
+        self.fit_name = name.into();
     }
 
     /// Desarrollo (capturas): elige los `n` colores más usados.
@@ -340,8 +373,18 @@ impl GroomPanel {
     /// El panel, como en el diseño: arriba el logo y los botones para traer la imagen; a la
     /// izquierda los pasos y la vista previa, a la derecha los colores y las sugerencias (las dos
     /// cajas de abajo a la misma altura), y abajo, lo que se hace con el resultado.
-    pub fn ui(&mut self, ui: &mut Ui, primary: Rgba) -> Option<GroomAction> {
+    pub fn ui(
+        &mut self,
+        ui: &mut Ui,
+        primary: Rgba,
+        palettes: &[PaletteChoice],
+    ) -> Option<GroomAction> {
         let mut action = None;
+        self.fit_colors = self
+            .fit_on
+            .then(|| palettes.iter().find(|p| p.name == self.fit_name))
+            .flatten()
+            .map(|p| p.colors.clone());
         let origin = ui.cursor().min;
         let at = |x: f32, y: f32| origin + vec2(x, y);
         let available = ui.available_height();
@@ -425,7 +468,9 @@ impl GroomPanel {
             Rect::from_min_max(at(range.min, top), at(range.max, footer_line))
         };
         let mut left = child(ui, column(LEFT, COLUMNS_TOP), top_down);
-        self.settings_ui(&mut left);
+        if self.settings_ui(&mut left, palettes) {
+            action = Some(GroomAction::BrowseLospec);
+        }
         let groomed = self.groomed(primary).cloned();
         let Some(groomed) = groomed else {
             ui.allocate_rect(
@@ -447,10 +492,11 @@ impl GroomPanel {
         // Las dos cajas, a la altura de la que llegue más abajo.
         let boxes = left.cursor().top().max(right.cursor().top()) + 4.0;
         let boxes = boxes - origin.y;
+        let box_height = (footer_line - boxes - BELOW_BOXES).max(MIN_BOX_HEIGHT);
         let mut left = child(ui, column(LEFT, boxes), top_down);
-        self.preview(&mut left, &groomed);
+        self.preview(&mut left, &groomed, box_height);
         let mut right = child(ui, column(RIGHT, boxes), top_down);
-        self.hovered_group = self.suggestions(&mut right, &groomed);
+        self.hovered_group = self.suggestions(&mut right, &groomed, box_height);
         // Abajo, a la derecha: lo que se hace con el resultado.
         let footer = Rect::from_min_max(at(0.0, height - FOOTER_BUTTONS), at(WIDTH, height));
         let mut footer = child(ui, footer, right_to_left);
@@ -471,14 +517,14 @@ impl GroomPanel {
     }
 
     /// Los pasos: la cuadrícula (el tamaño de cada píxel de verdad y dónde empieza), el fondo,
-    /// el contorno y los colores.
-    fn settings_ui(&mut self, ui: &mut Ui) {
+    /// el contorno, los colores y la paleta. Devuelve si se pidió abrir Lospec.
+    fn settings_ui(&mut self, ui: &mut Ui, palettes: &[PaletteChoice]) -> bool {
         let Some((_, source)) = &self.source else {
-            return;
+            return false;
         };
         let (width, height) = (source.width, source.height);
         let Some(settings) = self.settings.as_mut() else {
-            return;
+            return false;
         };
         let left = ui.cursor().left();
         let to_offset = |ui: &mut Ui| {
@@ -530,6 +576,34 @@ impl GroomPanel {
                 widgets::number(ui, &mut settings.colors, 2..=256, "");
             });
         });
+        // Ajustar a una paleta: cada color, el más parecido de ella.
+        let mut lospec = false;
+        ui.horizontal(|ui| {
+            widgets::checkbox(ui, &mut self.fit_on, "Fit to Palette")
+                .on_hover_text("Change each color to the most similar one in the palette");
+            ui.add_enabled_ui(self.fit_on, |ui| {
+                let room = ui.available_width().floor();
+                // Lo que el combo pone alrededor del nombre (el aire y la flecha).
+                let font = egui::TextStyle::Body.resolve(ui.style());
+                let shown = crate::tab_bar::fit_text(ui, &self.fit_name, &font, room - 24.0);
+                let height = crate::bar_fields::FIELD_HEIGHT;
+                widgets::combo_sized(ui, "groom_fit", &shown, Some(room), height, |ui| {
+                    for palette in palettes {
+                        let name = palette.name.clone();
+                        widgets::choice(ui, &mut self.fit_name, name, &palette.name);
+                    }
+                    ui.separator();
+                    if ui
+                        .add(crate::menus::choice(false, "Browse Lospec…"))
+                        .clicked()
+                    {
+                        lospec = true;
+                        ui.close();
+                    }
+                });
+            });
+        });
+        lospec
     }
 
     /// Junta `group` (el primero queda; los demás pasan a ser él) y suelta los elegidos.
@@ -543,9 +617,14 @@ impl GroomPanel {
     /// Grupos de colores parecidos para juntar, en su caja: un clic elige los de uno (para
     /// revisarlos y juntarlos con Merge) y "Merge All" los junta todos. Devuelve el que está bajo
     /// el mouse.
-    fn suggestions(&mut self, ui: &mut Ui, groomed: &Groomed) -> Option<Vec<Rgba>> {
+    fn suggestions(
+        &mut self,
+        ui: &mut Ui,
+        groomed: &Groomed,
+        box_height: f32,
+    ) -> Option<Vec<Rgba>> {
         let groups = cs_raster::suggest_merges(&groomed.colors, self.similar as u32);
-        let (frame, _) = ui.allocate_exact_size(vec2(RIGHT.span(), BOX_HEIGHT), Sense::hover());
+        let (frame, _) = ui.allocate_exact_size(vec2(RIGHT.span(), box_height), Sense::hover());
         double_box(ui, frame);
         let inner = frame.shrink(BOX_PAD);
         if groups.is_empty() {
@@ -717,7 +796,7 @@ impl GroomPanel {
     /// el damero. Con un grupo por juntar (una sugerencia bajo el mouse o colores elegidos) se ve
     /// cómo quedaría, y con "Before" presionado, cómo era sin juntar ninguno. Encima, la lupa;
     /// un clic elige (o suelta) el color del píxel.
-    fn preview(&mut self, ui: &mut Ui, groomed: &Groomed) {
+    fn preview(&mut self, ui: &mut Ui, groomed: &Groomed, box_height: f32) {
         if groomed.image.width == 0 || groomed.image.height == 0 {
             return;
         }
@@ -736,7 +815,7 @@ impl GroomPanel {
             // Lo de antes: sin lo que se prueba o, si no se prueba nada, sin juntar ninguno.
             Shown::Before if self.trying(groomed).is_some() => groomed.image.clone(),
             Shown::Before => match &self.base {
-                Some((_, _, base)) => base.image.clone(),
+                Some((_, _, _, base)) => base.image.clone(),
                 None => groomed.image.clone(),
             },
             Shown::Trying(group) => merged(groomed, &vec![group.clone()]).image,
@@ -760,7 +839,7 @@ impl GroomPanel {
             return;
         };
         // La caja: una línea y, adentro, el damero con la imagen al centro.
-        let (frame, _) = ui.allocate_exact_size(vec2(LEFT.span(), BOX_HEIGHT), Sense::hover());
+        let (frame, _) = ui.allocate_exact_size(vec2(LEFT.span(), box_height), Sense::hover());
         ui.painter()
             .extend(notched_outline(frame, box_color(ui), 1.0));
         let well = frame.shrink(2.0);
@@ -978,6 +1057,7 @@ pub fn process(
     source: &Bitmap,
     settings: Settings,
     primary: Rgba,
+    palette: Option<&[Rgba]>,
     merges: &Merges,
 ) -> Groomed {
     let (mut pixels, w, h) =
@@ -1002,6 +1082,9 @@ pub fn process(
     if settings.reduce {
         pixels = cs_raster::reduce_colors(&pixels, settings.colors as usize).0;
     }
+    if let Some(palette) = palette {
+        fit_to_palette(&mut pixels, palette);
+    }
     let image = trimmed(&pixels, w, h);
     let groomed = Groomed {
         name: name.to_string(),
@@ -1010,6 +1093,38 @@ pub fn process(
     };
     // Al final, los grupos juntados a mano (el recorte no cambia: solo cambian colores).
     merged(&groomed, merges)
+}
+
+/// Cada píxel pintado, el color más parecido de `palette` (sin sus transparentes), con su alfa.
+fn fit_to_palette(pixels: &mut [Rgba], palette: &[Rgba]) {
+    let palette: Vec<Rgba> = palette.iter().copied().filter(|c| c.a > 0).collect();
+    if palette.is_empty() {
+        return;
+    }
+    let mut memo: std::collections::HashMap<Rgba, Rgba> = std::collections::HashMap::new();
+    for p in pixels.iter_mut().filter(|p| p.a > 0) {
+        let to = *memo.entry(*p).or_insert_with(|| {
+            *palette
+                .iter()
+                .min_by_key(|c| perceived_distance(**c, *p))
+                .expect("not empty")
+        });
+        *p = Rgba { a: p.a, ..to };
+    }
+}
+
+/// Qué tan distintos se ven dos colores ("redmean": el rojo y el azul pesan según qué tan rojo
+/// es el par, más cerca de lo que ve el ojo que la distancia RGB).
+fn perceived_distance(a: Rgba, b: Rgba) -> u32 {
+    let mean = (a.r as i32 + b.r as i32) / 2;
+    let (dr, dg, db) = (
+        a.r as i32 - b.r as i32,
+        a.g as i32 - b.g as i32,
+        a.b as i32 - b.b as i32,
+    );
+    (((512 + mean) * dr * dr) >> 8) as u32
+        + (4 * dg * dg) as u32
+        + (((767 - mean) * db * db) >> 8) as u32
 }
 
 /// `pixels` recortado a lo pintado (entero si no hay nada).
@@ -1101,6 +1216,7 @@ mod tests {
             &source,
             Settings::new(grid),
             Rgba::rgb(0, 0, 0),
+            None,
             &Vec::new(),
         );
         assert_eq!(
@@ -1112,7 +1228,14 @@ mod tests {
         // Con contorno: 4×3.
         let mut settings = Settings::new(grid);
         settings.ring = true;
-        let ringed = process("x", &source, settings, Rgba::rgb(0, 0, 0), &Vec::new());
+        let ringed = process(
+            "x",
+            &source,
+            settings,
+            Rgba::rgb(0, 0, 0),
+            None,
+            &Vec::new(),
+        );
         assert_eq!((ringed.image.width, ringed.image.height), (4, 3));
         assert_eq!(ringed.colors.len(), 2);
         // Juntar el contorno negro con el rojo: queda un color, el primero del grupo.
@@ -1122,6 +1245,7 @@ mod tests {
             &source,
             settings,
             Rgba::rgb(0, 0, 0),
+            None,
             &vec![vec![red, Rgba::rgb(0, 0, 0)]],
         );
         assert_eq!(merged.colors, vec![(red, 8)], "2 red + 6 of outline");
@@ -1146,10 +1270,45 @@ mod tests {
         let merged = panel.groomed(Rgba::rgb(0, 0, 0)).unwrap();
         assert_eq!(merged.colors, vec![(black, 8)]);
         assert_eq!(
-            panel.base.as_ref().unwrap().2,
+            panel.base.as_ref().unwrap().3,
             groomed,
             "the steps are kept"
         );
+    }
+
+    #[test]
+    fn fitting_to_a_palette_takes_the_most_similar_color() {
+        let source = big();
+        let grid = GridGuess {
+            cell: (5.0, 5.0),
+            offset: (0.0, 0.0),
+        };
+        let (wine, sky, clear) = (
+            Rgba::rgb(150, 20, 40),
+            Rgba::rgb(100, 180, 250),
+            Rgba::TRANSPARENT,
+        );
+        let palette = [sky, clear, wine];
+        let settings = Settings::new(grid);
+        let fitted = process(
+            "x",
+            &source,
+            settings,
+            Rgba::rgb(0, 0, 0),
+            Some(&palette),
+            &Vec::new(),
+        );
+        assert_eq!(fitted.colors, vec![(wine, 2)], "the red goes to the wine");
+        // Sin colores (solo transparentes), no cambia nada.
+        let none = process(
+            "x",
+            &source,
+            settings,
+            Rgba::rgb(0, 0, 0),
+            Some(&[clear]),
+            &Vec::new(),
+        );
+        assert_eq!(none.colors, vec![(Rgba::rgb(200, 30, 30), 2)]);
     }
 
     #[test]

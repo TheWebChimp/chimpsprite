@@ -404,6 +404,10 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         app.groom.load("groomed".into(), image);
         // Con CHIMPSPRITE_DEMO_GROOM_PICK=n, los n colores más usados elegidos (la vista previa
         // prueba juntarlos).
+        // Con CHIMPSPRITE_DEMO_GROOM_FIT=<paleta>, ajustado a ella.
+        if let Some(name) = dev_var("CHIMPSPRITE_DEMO_GROOM_FIT") {
+            app.groom.fit_to(name);
+        }
         if let Some(n) = dev_var("CHIMPSPRITE_DEMO_GROOM_PICK").and_then(|n| n.parse().ok()) {
             let primary = app.doc.editor.resolve(app.doc.editor.primary);
             app.groom.pick_most_used(primary, n);

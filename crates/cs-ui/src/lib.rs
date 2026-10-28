@@ -419,6 +419,18 @@ impl ChimpApp {
     fn groom_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
         let primary = self.doc.editor.resolve(self.doc.editor.primary);
         let mut action = None;
+        // Las paletas para ajustar el resultado: la del documento y las de la biblioteca.
+        let current = groom::PaletteChoice {
+            name: groom::CURRENT_PALETTE.into(),
+            colors: self.doc.editor.sprite().palette.colors().to_vec(),
+        };
+        let library = self.palettes.user().iter().chain(self.palettes.builtin());
+        let palettes: Vec<groom::PaletteChoice> = std::iter::once(current)
+            .chain(library.map(|p| groom::PaletteChoice {
+                name: p.name.clone(),
+                colors: p.palette.colors().to_vec(),
+            }))
+            .collect();
         let groom = &mut self.groom;
         let width = groom::WIDTH;
         dock::flyout(
@@ -429,13 +441,16 @@ impl ChimpApp {
             width,
             true,
             |ui| {
-                ui.add_enabled_ui(!modal, |ui| action = groom.ui(ui, primary));
+                ui.add_enabled_ui(!modal, |ui| action = groom.ui(ui, primary, &palettes));
             },
         );
         match action {
             Some(groom::GroomAction::Import) => {
                 self.platform
                     .open_file(groom::FILTER, platform::OpenPurpose::GroomImage, ctx);
+            }
+            Some(groom::GroomAction::BrowseLospec) => {
+                dock::set_open(ctx, Some(dock::DockPanel::Lospec));
             }
             Some(groom::GroomAction::UseLayer) => {
                 let editor = &self.doc.editor;
