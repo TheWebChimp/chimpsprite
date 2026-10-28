@@ -22,14 +22,36 @@ pub const FILTER: &[crate::platform::FileFilter] = &[crate::platform::FileFilter
     },
 }];
 
-/// El ancho de cada columna: a la izquierda los ajustes y la vista previa, a la derecha los
-/// colores.
-const COLUMN: f32 = 210.0;
-const COLUMN_GAP: f32 = 14.0;
-/// La vista previa: el lado más largo.
-const PREVIEW: f32 = COLUMN;
-/// Cuántas sugerencias se muestran.
-const MAX_SUGGESTIONS: usize = 10;
+/// El panel (del diseño, desde la esquina de su contenido): su ancho y el alto más chico.
+pub const WIDTH: f32 = 434.0;
+const MIN_HEIGHT: f32 = 391.0;
+/// El logo, sobre el margen del panel, y la línea grabada debajo del encabezado.
+const LOGO_AT: egui::Vec2 = vec2(-3.0, -1.0);
+const HEADER_LINE: f32 = 21.0;
+/// Donde empiezan las columnas.
+const COLUMNS_TOP: f32 = 24.0;
+/// La columna de la izquierda (los pasos y la vista previa), la línea entre las dos y la de la
+/// derecha (los colores).
+const LEFT: egui::Rangef = egui::Rangef {
+    min: 0.0,
+    max: 181.0,
+};
+const DIVIDER: f32 = 185.0;
+const RIGHT: egui::Rangef = egui::Rangef {
+    min: 209.0,
+    max: 430.0,
+};
+/// La columna de "Offset" en la fila de la cuadrícula.
+const OFFSET_LEFT: f32 = 90.0;
+/// Las cajas de la vista previa y de las sugerencias, a la misma altura.
+const BOX_HEIGHT: f32 = 141.0;
+/// Del borde de una caja a lo de adentro.
+const BOX_PAD: f32 = 4.0;
+/// La línea de abajo y los botones, desde el fondo del panel.
+const FOOTER_LINE: f32 = 22.0;
+const FOOTER_BUTTONS: f32 = 15.0;
+/// Una sugerencia por fila.
+const SUGGESTION_ROW: f32 = 15.0;
 /// La lupa sobre la vista previa: su lado y cuántos píxeles del resultado se ven en ella.
 const LOUPE: f32 = 120.0;
 const LOUPE_PIXELS: f32 = 15.0;
@@ -135,28 +157,75 @@ impl Default for GroomPanel {
     }
 }
 
-/// Importar una imagen o tomar la capa actual.
+/// Importar una imagen o tomar la capa actual, de derecha a izquierda.
 fn import_buttons(ui: &mut Ui, action: &mut Option<GroomAction>) {
-    ui.horizontal(|ui| {
-        if pixel_ui::text_button(ui, "Import Image…").clicked() {
-            *action = Some(GroomAction::Import);
+    if pixel_ui::text_button(ui, "Use Layer").clicked() {
+        *action = Some(GroomAction::UseLayer);
+    }
+    if pixel_ui::text_button(ui, "Import Image…").clicked() {
+        *action = Some(GroomAction::Import);
+    }
+}
+
+/// Un texto chico en mayúsculas, apagado: lo que aclara al lado de un título o una casilla.
+fn hint(ui: &mut Ui, text: &str) {
+    let color = pixel_ui::frame_skin(ui.ctx())
+        .map_or(ui.visuals().weak_text_color(), |s| s.colors().ruler_tick);
+    let mut text = egui::RichText::new(text.to_uppercase()).color(color);
+    // Sin la familia de los textos chicos (fuentes sin cargar todavía), la de siempre.
+    let small = crate::appearance::small_family();
+    if ui.ctx().fonts(|f| f.families().contains(&small)) {
+        text = text.small();
+    }
+    ui.label(text);
+}
+
+/// Un hijo de `ui` en `rect`, de arriba a abajo (o con `layout`).
+fn child(ui: &mut Ui, rect: Rect, layout: egui::Layout) -> Ui {
+    ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout))
+}
+
+/// El color de las cajas: el del lienzo del skin.
+fn box_color(ui: &Ui) -> Color32 {
+    pixel_ui::frame_skin(ui.ctx()).map_or(crate::theme::CANVAS_BORDER, |s| s.colors().canvas)
+}
+
+/// La línea de 1 px de `rect` sin las esquinas: sin `notch` píxeles en diagonal en cada una.
+fn notched_outline(rect: Rect, color: Color32, notch: f32) -> Vec<egui::Shape> {
+    let line = |min: egui::Pos2, max: egui::Pos2| {
+        egui::Shape::rect_filled(Rect::from_min_max(min, max), 0.0, color)
+    };
+    let (l, t, r, b) = (rect.left(), rect.top(), rect.right(), rect.bottom());
+    let mut shapes = vec![
+        line(pos2(l + notch, t), pos2(r - notch, t + 1.0)),
+        line(pos2(l + notch, b - 1.0), pos2(r - notch, b)),
+        line(pos2(l, t + notch), pos2(l + 1.0, b - notch)),
+        line(pos2(r - 1.0, t + notch), pos2(r, b - notch)),
+    ];
+    // Con 2, el escalón de la esquina.
+    if notch >= 2.0 {
+        for (x, y) in [
+            (l + 1.0, t + 1.0),
+            (r - 2.0, t + 1.0),
+            (l + 1.0, b - 2.0),
+            (r - 2.0, b - 2.0),
+        ] {
+            shapes.push(line(pos2(x, y), pos2(x + 1.0, y + 1.0)));
         }
-        if pixel_ui::text_button(ui, "Use Layer").clicked() {
-            *action = Some(GroomAction::UseLayer);
-        }
-    });
+    }
+    shapes
+}
+
+/// La caja de los colores y de las sugerencias: dos líneas, la de afuera con la esquina en
+/// escalón.
+fn double_box(ui: &Ui, rect: Rect) {
+    let color = box_color(ui);
+    let mut shapes = notched_outline(rect, color, 2.0);
+    shapes.extend(notched_outline(rect.shrink(2.0), color, 1.0));
+    ui.painter().extend(shapes);
 }
 
 impl GroomPanel {
-    /// El ancho del panel: una columna hasta que hay imagen, dos con ella.
-    pub fn width(&self) -> f32 {
-        if self.source.is_some() {
-            2.0 * COLUMN + COLUMN_GAP
-        } else {
-            COLUMN
-        }
-    }
-
     /// Empieza con `image`: detecta su cuadrícula.
     pub fn load(&mut self, name: String, image: Bitmap) {
         let grid = cs_raster::detect_grid(&image.pixels, image.width, image.height);
@@ -203,55 +272,140 @@ impl GroomPanel {
         (self.picked.len() >= 2).then(|| merge_order(self.picked.clone(), groomed))
     }
 
+    /// El panel, como en el diseño: arriba el logo y los botones para traer la imagen; a la
+    /// izquierda los pasos y la vista previa, a la derecha los colores y las sugerencias (las dos
+    /// cajas de abajo a la misma altura), y abajo, lo que se hace con el resultado.
     pub fn ui(&mut self, ui: &mut Ui, primary: Rgba) -> Option<GroomAction> {
         let mut action = None;
-        ui.set_width(self.width());
+        let origin = ui.cursor().min;
+        let at = |x: f32, y: f32| origin + vec2(x, y);
+        let available = ui.available_height();
+        let height = if available.is_finite() {
+            available.max(MIN_HEIGHT)
+        } else {
+            MIN_HEIGHT
+        };
+        let skin = pixel_ui::frame_skin(ui.ctx());
+        let ppp = ui.ctx().pixels_per_point();
+        // El encabezado: el logo y, a la derecha, los botones.
+        let logo = skin.as_ref().and_then(|s| {
+            s.piece("groom.logo", crate::skin::WidgetState::Normal)
+                .cloned()
+        });
+        match logo {
+            Some(piece) => {
+                let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+                let rect = Rect::from_min_size(origin + LOGO_AT, size);
+                ui.painter()
+                    .extend(pixel_ui::piece_shapes(&piece, rect, ppp));
+            }
+            None => {
+                ui.painter().text(
+                    at(0.0, 0.0),
+                    egui::Align2::LEFT_TOP,
+                    "Pixel Groom",
+                    egui::TextStyle::Heading.resolve(ui.style()),
+                    ui.visuals().strong_text_color(),
+                );
+            }
+        }
+        let header = Rect::from_min_max(at(0.0, -1.0), at(WIDTH, HEADER_LINE - 2.0));
+        let right_to_left = egui::Layout::right_to_left(egui::Align::Min);
+        import_buttons(&mut child(ui, header, right_to_left), &mut action);
+        // Las líneas grabadas: debajo del encabezado y, con imagen, entre las columnas y arriba
+        // de los botones de abajo. De borde a borde del panel.
+        let margin = f32::from(crate::dock::FLYOUT_MARGIN) - 1.0;
+        let across = egui::Rangef::new(origin.x - margin, origin.x + WIDTH + margin);
+        let footer_line = height - FOOTER_LINE;
+        if let Some(skin) = &skin {
+            let colors = skin.colors();
+            let mut lines = vec![pixel_ui::etched_hline(
+                across,
+                origin.y + HEADER_LINE,
+                colors,
+                ppp,
+            )];
+            if self.source.is_some() {
+                lines.push(pixel_ui::etched_vline(
+                    origin.x + DIVIDER,
+                    egui::Rangef::new(origin.y + HEADER_LINE, origin.y + footer_line),
+                    colors,
+                    ppp,
+                ));
+                lines.push(pixel_ui::etched_hline(
+                    across,
+                    origin.y + footer_line,
+                    colors,
+                    ppp,
+                ));
+            }
+            ui.painter().extend(lines);
+        }
+        let top_down = egui::Layout::top_down(egui::Align::Min);
         if self.source.is_none() {
-            import_buttons(ui, &mut action);
-            ui.label("Bring an image that looks like pixel art (blurry, scaled up) to make it real pixel art.");
+            let rect = Rect::from_min_max(at(0.0, COLUMNS_TOP), at(WIDTH, height));
+            child(ui, rect, top_down).label(
+                "Bring an image that looks like pixel art (blurry, scaled up) to make it real \
+                 pixel art.",
+            );
+            ui.allocate_rect(
+                Rect::from_min_size(origin, vec2(WIDTH, height)),
+                Sense::hover(),
+            );
             return action;
         }
-        let mut groomed = None;
-        ui.horizontal_top(|ui| {
-            ui.vertical(|ui| {
-                ui.set_width(COLUMN);
-                import_buttons(ui, &mut action);
-                self.settings_ui(ui);
-                ui.add_space(4.0);
-                groomed = self.groomed(primary).cloned();
-                if let Some(groomed) = &groomed {
-                    self.preview(ui, groomed);
-                }
-            });
-            if let Some(groomed) = &groomed {
-                ui.add_space(COLUMN_GAP - ui.spacing().item_spacing.x);
-                ui.vertical(|ui| {
-                    ui.set_width(COLUMN);
-                    self.swatches(ui, groomed);
-                    ui.add_space(6.0);
-                    self.hovered_group = self.suggestions(ui, groomed);
-                });
-            }
-        });
+        // Lo de arriba de cada columna: los pasos; los colores y "Suggested".
+        let column = |range: egui::Rangef, top: f32| {
+            Rect::from_min_max(at(range.min, top), at(range.max, footer_line))
+        };
+        let mut left = child(ui, column(LEFT, COLUMNS_TOP), top_down);
+        self.settings_ui(&mut left);
+        let groomed = self.groomed(primary).cloned();
         let Some(groomed) = groomed else {
+            ui.allocate_rect(
+                Rect::from_min_size(origin, vec2(WIDTH, height)),
+                Sense::hover(),
+            );
             return action;
         };
-        ui.add_space(4.0);
-        ui.horizontal(|ui| {
-            if pixel_ui::text_button(ui, "New Sprite").clicked() {
-                action = Some(GroomAction::NewSprite(groomed.clone()));
-            }
-            if pixel_ui::text_button(ui, "Add as Layer").clicked() {
-                action = Some(GroomAction::AddLayer(groomed.clone()));
-            }
-            if pixel_ui::text_button(ui, "Add as Artboard").clicked() {
-                action = Some(GroomAction::AddArtboard(groomed.clone()));
-            }
+        let mut right = child(ui, column(RIGHT, COLUMNS_TOP), top_down);
+        right.spacing_mut().item_spacing.y = 2.0;
+        self.swatches(&mut right, &groomed);
+        right.add_space(2.0);
+        right.horizontal(|ui| {
+            ui.add_space(5.0);
+            ui.label("Suggested");
+            widgets::number(ui, &mut self.similar, 1..=255, "");
+            ui.label("tolerance");
         });
+        // Las dos cajas, a la altura de la que llegue más abajo.
+        let boxes = left.cursor().top().max(right.cursor().top()) + 4.0;
+        let boxes = boxes - origin.y;
+        let mut left = child(ui, column(LEFT, boxes), top_down);
+        self.preview(&mut left, &groomed);
+        let mut right = child(ui, column(RIGHT, boxes), top_down);
+        self.hovered_group = self.suggestions(&mut right, &groomed);
+        // Abajo, a la derecha: lo que se hace con el resultado.
+        let footer = Rect::from_min_max(at(0.0, height - FOOTER_BUTTONS), at(WIDTH, height));
+        let mut footer = child(ui, footer, right_to_left);
+        if pixel_ui::text_button(&mut footer, "Add as Artboard").clicked() {
+            action = Some(GroomAction::AddArtboard(groomed.clone()));
+        }
+        if pixel_ui::text_button(&mut footer, "Add as Layer").clicked() {
+            action = Some(GroomAction::AddLayer(groomed.clone()));
+        }
+        if pixel_ui::text_button(&mut footer, "New Sprite").clicked() {
+            action = Some(GroomAction::NewSprite(groomed.clone()));
+        }
+        ui.allocate_rect(
+            Rect::from_min_size(origin, vec2(WIDTH, height)),
+            Sense::hover(),
+        );
         action
     }
 
-    /// Los pasos: la cuadrícula, el fondo, el contorno y los colores.
+    /// Los pasos: la cuadrícula (el tamaño de cada píxel de verdad y dónde empieza), el fondo,
+    /// el contorno y los colores.
     fn settings_ui(&mut self, ui: &mut Ui) {
         let Some((_, source)) = &self.source else {
             return;
@@ -260,26 +414,31 @@ impl GroomPanel {
         let Some(settings) = self.settings.as_mut() else {
             return;
         };
-        ui.add_space(4.0);
-        // La cuadrícula: cuánto mide cada píxel de verdad y dónde empieza.
-        egui::Grid::new("groom_grid")
-            .num_columns(3)
-            .spacing(vec2(6.0, 4.0))
-            .show(ui, |ui| {
-                ui.label("Cell");
-                widgets::number(ui, &mut settings.grid.cell.0, 1.0..=width as f32, "");
-                widgets::number(ui, &mut settings.grid.cell.1, 1.0..=height as f32, "");
-                ui.end_row();
-                ui.label("Offset");
-                let (cx, cy) = settings.grid.cell;
-                widgets::number(ui, &mut settings.grid.offset.0, -cx..=cx, "");
-                widgets::number(ui, &mut settings.grid.offset.1, -cy..=cy, "");
-                ui.end_row();
-            });
+        let left = ui.cursor().left();
+        let to_offset = |ui: &mut Ui| {
+            let x = left + OFFSET_LEFT - ui.cursor().left();
+            ui.add_space(x.max(0.0));
+        };
+        ui.horizontal(|ui| {
+            ui.label("Cell")
+                .on_hover_text("How big each real pixel is in the image");
+            to_offset(ui);
+            ui.label("Offset").on_hover_text("Where the grid starts");
+        });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
+            widgets::prefixed_number(ui, &mut settings.grid.cell.0, 1.0..=width as f32, "W");
+            widgets::prefixed_number(ui, &mut settings.grid.cell.1, 1.0..=height as f32, "H");
+            to_offset(ui);
+            let (cx, cy) = settings.grid.cell;
+            widgets::prefixed_number(ui, &mut settings.grid.offset.0, -cx..=cx, "X");
+            widgets::prefixed_number(ui, &mut settings.grid.offset.1, -cy..=cy, "Y");
+        });
+        ui.add_space(2.0);
         if pixel_ui::text_button(ui, "Detect Grid").clicked() {
             settings.grid = cs_raster::detect_grid(&source.pixels, width, height);
         }
-        ui.add_space(4.0);
+        ui.add_space(6.0);
         ui.horizontal(|ui| {
             widgets::checkbox(ui, &mut settings.background, "Remove Background");
             ui.add_enabled_ui(settings.background, |ui| {
@@ -287,7 +446,10 @@ impl GroomPanel {
             });
         });
         widgets::checkbox(ui, &mut settings.clean, "Clean Outline");
-        widgets::checkbox(ui, &mut settings.ring, "Add Outline (primary color)");
+        ui.horizontal(|ui| {
+            widgets::checkbox(ui, &mut settings.ring, "Add Outline");
+            hint(ui, "(primary color)");
+        });
         ui.horizontal(|ui| {
             widgets::checkbox(ui, &mut settings.reduce, "Reduce Colors");
             ui.add_enabled_ui(settings.reduce, |ui| {
@@ -304,32 +466,38 @@ impl GroomPanel {
         self.picked.clear();
     }
 
-    /// Grupos de colores parecidos para juntar: un clic elige los de uno (para revisarlos y
-    /// juntarlos con Merge) y "Merge All" los junta todos. Devuelve el que está bajo el mouse.
+    /// Grupos de colores parecidos para juntar, en su caja: un clic elige los de uno (para
+    /// revisarlos y juntarlos con Merge) y "Merge All" los junta todos. Devuelve el que está bajo
+    /// el mouse.
     fn suggestions(&mut self, ui: &mut Ui, groomed: &Groomed) -> Option<Vec<Rgba>> {
         let groups = cs_raster::suggest_merges(&groomed.colors, self.similar as u32);
-        ui.horizontal(|ui| {
-            ui.label("Suggested");
-            widgets::number(ui, &mut self.similar, 1..=255, "");
-            ui.label("tolerance");
-        });
+        let (frame, _) = ui.allocate_exact_size(vec2(RIGHT.span(), BOX_HEIGHT), Sense::hover());
+        double_box(ui, frame);
+        let inner = frame.shrink(BOX_PAD);
         if groups.is_empty() {
-            ui.label("No similar colors.");
+            ui.painter().text(
+                inner.left_top(),
+                egui::Align2::LEFT_TOP,
+                "No similar colors.",
+                egui::TextStyle::Body.resolve(ui.style()),
+                ui.visuals().text_color(),
+            );
             return None;
         }
-        let row = SWATCH + SWATCH_GAP;
-        let per_row = ((COLUMN + SWATCH_GAP) / row).floor() as usize;
-        let shown = groups.len().min(MAX_SUGGESTIONS);
-        let (area, _) =
-            ui.allocate_exact_size(vec2(COLUMN, shown as f32 * (row + 2.0)), Sense::hover());
+        let pitch = SWATCH + SWATCH_GAP;
+        let per_row = ((inner.width() + SWATCH_GAP) / pitch).floor() as usize;
+        let fits = ((inner.height() + SUGGESTION_ROW - SWATCH) / SUGGESTION_ROW).floor() as usize;
+        let shown = groups.len().min(fits);
         let border = pixel_ui::control_border(ui.ctx());
         let accent = crate::theme::ACCENT;
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let ink = ui.visuals().text_color();
         let mut chosen = None;
         let mut hovered = None;
         for (i, group) in groups.iter().take(shown).enumerate() {
             let line = Rect::from_min_size(
-                area.min + vec2(0.0, i as f32 * (row + 2.0)),
-                vec2(COLUMN, SWATCH + 2.0),
+                inner.min + vec2(0.0, i as f32 * SUGGESTION_ROW),
+                vec2(inner.width(), SWATCH),
             );
             let response = ui
                 .interact(line, ui.id().with(("groom_suggestion", i)), Sense::click())
@@ -344,14 +512,13 @@ impl GroomPanel {
             let picked = self.picked == *group;
             if picked || response.hovered() {
                 let fill = if picked { accent } else { border };
-                painter.rect_filled(line, 0.0, fill.gamma_multiply(0.35));
+                painter.rect_filled(line.expand(1.0), 0.0, fill.gamma_multiply(0.35));
             }
-            // El que queda, una flecha y los que pasan a ser él.
-            let mut x = line.left() + 1.0;
-            let y = line.top() + 1.0;
-            let cells = per_row.saturating_sub(2);
-            for (k, &color) in group.iter().take(cells).enumerate() {
-                let rect = Rect::from_min_size(pos2(x, y), vec2(SWATCH, SWATCH));
+            // El que queda, una flecha y los que pasan a ser él; al final, cuántos más.
+            let cells = per_row.saturating_sub(3);
+            let mut x = line.left();
+            for (k, &color) in group.iter().take(cells + 1).enumerate() {
+                let rect = Rect::from_min_size(pos2(x, line.top()), vec2(SWATCH, SWATCH));
                 painter.rect_filled(rect, 0.0, crate::panels::to_color32(color));
                 painter.rect_stroke(
                     rect,
@@ -359,26 +526,17 @@ impl GroomPanel {
                     egui::Stroke::new(1.0, border),
                     egui::StrokeKind::Inside,
                 );
-                x += row;
+                x += pitch;
                 if k == 0 {
-                    painter.text(
-                        pos2(x + SWATCH / 2.0, y + SWATCH / 2.0),
-                        egui::Align2::CENTER_CENTER,
-                        "←",
-                        egui::TextStyle::Body.resolve(ui.style()),
-                        ui.visuals().text_color(),
-                    );
-                    x += row;
+                    let arrow = pos2(x + SWATCH / 2.0, line.center().y);
+                    painter.text(arrow, egui::Align2::CENTER_CENTER, "←", font.clone(), ink);
+                    x += pitch;
                 }
             }
-            if group.len() > cells {
-                painter.text(
-                    pos2(x, y + SWATCH / 2.0),
-                    egui::Align2::LEFT_CENTER,
-                    format!("+{}", group.len() - cells),
-                    egui::TextStyle::Body.resolve(ui.style()),
-                    ui.visuals().text_color(),
-                );
+            if group.len() > cells + 1 {
+                let more = format!("+{}", group.len() - cells - 1);
+                let at = pos2(line.right(), line.center().y);
+                painter.text(at, egui::Align2::RIGHT_CENTER, more, font.clone(), ink);
             }
         }
         if let Some(group) = chosen {
@@ -388,35 +546,47 @@ impl GroomPanel {
                 group
             };
         }
-        if groups.len() > shown {
-            ui.label(format!("+{} more groups", groups.len() - shown));
-        }
-        if pixel_ui::text_button(ui, "Merge All Suggested").clicked() {
-            self.picked.clear();
-            self.merges.extend(groups);
-        }
+        ui.add_space(5.0);
+        ui.horizontal(|ui| {
+            if groups.len() > shown {
+                hint(ui, &format!("+{} more groups", groups.len() - shown));
+            }
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                if pixel_ui::text_button(ui, "Merge All Suggested").clicked() {
+                    self.picked.clear();
+                    self.merges.extend(groups);
+                }
+            });
+        });
         hovered
     }
 
     /// Los colores del resultado (los más usados primero): un clic elige o suelta uno, y
     /// "Merge" junta los elegidos en el más usado de ellos.
     fn swatches(&mut self, ui: &mut Ui, groomed: &Groomed) {
-        ui.label("Colors (click to pick)");
+        ui.horizontal(|ui| {
+            ui.add_space(5.0);
+            ui.label("Colors");
+            hint(ui, "(click to pick)");
+        });
         let shown = groomed.colors.len().min(MAX_SWATCHES);
-        let per_row = ((COLUMN + SWATCH_GAP) / (SWATCH + SWATCH_GAP))
+        let pitch = SWATCH + SWATCH_GAP;
+        let per_row = ((RIGHT.span() - 2.0 * BOX_PAD + SWATCH_GAP) / pitch)
             .floor()
             .max(1.0) as usize;
-        let rows = shown.div_ceil(per_row);
-        let height = rows as f32 * (SWATCH + SWATCH_GAP);
-        let (area, _) = ui.allocate_exact_size(vec2(COLUMN, height), Sense::hover());
+        let rows = shown.div_ceil(per_row).max(1);
+        let more = groomed.colors.len() > shown;
+        let text_row = if more { 12.0 } else { 0.0 };
+        let height = 2.0 * BOX_PAD + rows as f32 * pitch - SWATCH_GAP + text_row;
+        let (frame, _) = ui.allocate_exact_size(vec2(RIGHT.span(), height), Sense::hover());
+        double_box(ui, frame);
+        let inner = frame.shrink(BOX_PAD);
         let border = pixel_ui::control_border(ui.ctx());
         let accent = crate::theme::ACCENT;
         for (i, &(color, count)) in groomed.colors.iter().take(shown).enumerate() {
             let (col, row) = ((i % per_row) as f32, (i / per_row) as f32);
-            let rect = Rect::from_min_size(
-                area.min + vec2(col, row) * (SWATCH + SWATCH_GAP),
-                vec2(SWATCH, SWATCH),
-            );
+            let rect =
+                Rect::from_min_size(inner.min + vec2(col, row) * pitch, vec2(SWATCH, SWATCH));
             let response = ui
                 .interact(rect, ui.id().with(("groom_swatch", i)), Sense::click())
                 .on_hover_text(format!("{} · {count} px", color.to_hex()));
@@ -439,29 +609,36 @@ impl GroomPanel {
                 egui::StrokeKind::Inside,
             );
         }
-        if groomed.colors.len() > shown {
-            ui.label(format!(
-                "+{} more (Reduce Colors first)",
-                groomed.colors.len() - shown
-            ));
+        // Los que no se muestran, dentro de la caja, abajo.
+        if more {
+            let rect = Rect::from_min_max(pos2(inner.left(), inner.bottom() - text_row), inner.max);
+            let mut text = child(ui, rect, egui::Layout::left_to_right(egui::Align::Center));
+            text.spacing_mut().item_spacing.x = 3.0;
+            text.label(format!("+{} more", groomed.colors.len() - shown));
+            hint(&mut text, "(Reduce Colors first)");
         }
-        ui.horizontal(|ui| {
-            let can_merge = self.picked.len() >= 2;
-            if ui
-                .add_enabled_ui(can_merge, |ui| pixel_ui::text_button(ui, "Merge"))
-                .inner
-                .clicked()
-                && can_merge
-            {
-                // El más usado de los elegidos queda; los demás pasan a ser él.
-                let group = merge_order(self.picked.clone(), groomed);
-                self.merge(group);
-            }
-            if !self.merges.is_empty() && pixel_ui::text_button(ui, "Reset Merges").clicked() {
-                self.merges.clear();
-                self.picked.clear();
-            }
-        });
+        ui.add_space(3.0);
+        ui.allocate_ui_with_layout(
+            vec2(RIGHT.span(), 16.0),
+            egui::Layout::right_to_left(egui::Align::Min),
+            |ui| {
+                let can_merge = self.picked.len() >= 2;
+                if ui
+                    .add_enabled_ui(can_merge, |ui| pixel_ui::text_button(ui, "Merge"))
+                    .inner
+                    .clicked()
+                    && can_merge
+                {
+                    // El más usado de los elegidos queda; los demás pasan a ser él.
+                    let group = merge_order(self.picked.clone(), groomed);
+                    self.merge(group);
+                }
+                if !self.merges.is_empty() && pixel_ui::text_button(ui, "Reset Merges").clicked() {
+                    self.merges.clear();
+                    self.picked.clear();
+                }
+            },
+        );
     }
 
     /// El resultado al tamaño más grande que entra (en múltiplos enteros si se agranda), sobre
@@ -510,14 +687,19 @@ impl GroomPanel {
         let Some((_, texture)) = &self.texture else {
             return;
         };
-        let fit = PREVIEW / image.width.max(image.height) as f32;
+        // La caja: una línea y, adentro, el damero con la imagen al centro.
+        let (frame, _) = ui.allocate_exact_size(vec2(LEFT.span(), BOX_HEIGHT), Sense::hover());
+        ui.painter()
+            .extend(notched_outline(frame, box_color(ui), 1.0));
+        let well = frame.shrink(2.0);
+        crate::panels::checker(&ui.painter_at(well), well);
+        let fit = (well.width() / image.width as f32).min(well.height() / image.height as f32);
         let k = if fit >= 1.0 { fit.floor() } else { fit };
         let size = vec2(image.width as f32, image.height as f32) * k;
-        let (row, _) = ui.allocate_exact_size(vec2(PREVIEW, size.y), Sense::hover());
-        let rect = Rect::from_center_size(row.center(), size);
+        let min = (well.center() - size / 2.0).round();
+        let rect = Rect::from_min_size(min, size);
         let response = ui.interact(rect, ui.id().with("groom_preview"), Sense::click());
         let painter = ui.painter_at(rect);
-        crate::panels::checker(&painter, rect);
         let full = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
         painter.image(texture.id(), rect, full, Color32::WHITE);
         // El píxel bajo el mouse: la lupa y, con un clic, elegir su color. (Para capturas, con
@@ -539,6 +721,7 @@ impl GroomPanel {
                 }
             }
         }
+        ui.add_space(4.0);
         ui.horizontal(|ui| {
             ui.label(format!(
                 "{}×{} · {} colors",
@@ -548,10 +731,12 @@ impl GroomPanel {
             ));
             // "Before": mientras está presionado, lo de antes de juntar.
             if can_compare {
-                let held = pixel_ui::text_button(ui, "Before")
-                    .on_hover_text("Hold to see it before merging")
-                    .is_pointer_button_down_on();
-                ui.data_mut(|d| d.insert_temp(before_id(), held));
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                    let held = pixel_ui::text_button(ui, "Before")
+                        .on_hover_text("Hold to see it before merging")
+                        .is_pointer_button_down_on();
+                    ui.data_mut(|d| d.insert_temp(before_id(), held));
+                });
             }
         });
         let note = match shown {
@@ -559,7 +744,7 @@ impl GroomPanel {
             Shown::Before => "Before merging.",
             Shown::Result => "Hover to zoom; click a pixel to pick its color.",
         };
-        ui.label(note);
+        hint(ui, note);
     }
 }
 

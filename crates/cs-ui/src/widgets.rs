@@ -67,6 +67,30 @@ pub fn number<T: Numeric>(
     response
 }
 
+/// Campo numérico con una letra adelante (`W`, `H`, `X`, `Y`): con Pixel UI, el de la barra con
+/// la letra en su cuadrito; sin él, el de egui con la letra de prefijo.
+pub fn prefixed_number<T: Numeric>(
+    ui: &mut egui::Ui,
+    value: &mut T,
+    range: RangeInclusive<T>,
+    prefix: &str,
+) -> egui::Response {
+    if let Some(skin) = pixel_ui::frame_skin(ui.ctx()) {
+        let look = BarLook {
+            skin: &skin,
+            top: here(ui),
+        };
+        let id = salt(ui);
+        return bar_fields::number_with_prefix(ui, look, &id, value, range, prefix);
+    }
+    ui.add(
+        egui::DragValue::new(value)
+            .range(range)
+            .speed(0.05)
+            .prefix(format!("{prefix} ")),
+    )
+}
+
 /// Texto claro con contorno oscuro: se lee sobre cualquier fondo.
 pub fn outlined_text(
     painter: &egui::Painter,

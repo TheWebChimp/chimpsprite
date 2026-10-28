@@ -572,6 +572,67 @@ pub fn number_with_suffix<Num: emath::Numeric>(
     drag_number(ui, field, inner, id_salt, value, range, speed, look).0
 }
 
+/// Un campo numérico con una letra adelante (la `W` de "W 11.47"): el mismo `field.number`, de
+/// `PREFIX_FIELD_WIDTH`, con la letra sobre el color del lienzo a la izquierda y el número en
+/// el blanco que queda.
+pub fn number_with_prefix<Num: emath::Numeric>(
+    ui: &mut Ui,
+    look: BarLook,
+    id_salt: &str,
+    value: &mut Num,
+    range: RangeInclusive<Num>,
+    prefix: &str,
+) -> Response {
+    let colors = *look.skin.colors();
+    let width = PREFIX_FIELD_WIDTH;
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
+    let field = Rect::from_min_size(
+        pos2(rect.left().round(), look.top + FIELD_TOP),
+        vec2(width, FIELD_HEIGHT),
+    );
+    let ppp = ui.ctx().pixels_per_point();
+    let mut shapes = match look.piece(NUMBER) {
+        Some(piece) => pixel_ui::piece_shapes(piece, field, ppp),
+        None => flat_box(look, field, ppp),
+    };
+    // La letra, dentro del borde: el color del lienzo y, en la fila de abajo del blanco (su
+    // sombra), el fondo.
+    let cell = Rect::from_min_size(
+        field.min + vec2(1.0, 1.0),
+        vec2(PREFIX_WIDTH, FIELD_HEIGHT - 4.0),
+    );
+    shapes.push(Shape::rect_filled(cell, 0.0, colors.canvas));
+    let shade = Rect::from_min_size(cell.left_bottom(), vec2(PREFIX_WIDTH, 1.0));
+    shapes.push(Shape::rect_filled(shade, 0.0, colors.background));
+    let letter = galley(ui, prefix, colors.field_text);
+    let left = (cell.center().x - letter.size().x / 2.0).round();
+    let at = tab_bar::text_pos(&letter, left, look.top + CAPS_TOP, ppp);
+    shapes.push(Shape::galley(at, letter, colors.field_text));
+    painter(ui, look).extend(shapes);
+    let probe = galley(ui, "0", colors.text);
+    let caps = -tab_bar::text_pos(&probe, 0.0, 0.0, ppp).y;
+    let inner = Rect::from_min_max(
+        pos2(cell.right() + PREFIX_PAD, look.top + CAPS_TOP - caps),
+        pos2(
+            field.right() - 2.0,
+            look.top + CAPS_TOP - caps + probe.size().y,
+        ),
+    );
+    let (start, end) = (range.start().to_f64(), range.end().to_f64());
+    let speed = ((end - start) / 128.0).clamp(0.01, 1.0);
+    let look = NumberLook {
+        text: colors.text,
+        outline: colors.outline,
+        align: egui::Align::Min,
+    };
+    drag_number(ui, field, inner, id_salt, value, range, speed, look).0
+}
+
+/// [`number_with_prefix`]: de borde a borde, lo de la letra y del blanco a su número.
+const PREFIX_FIELD_WIDTH: f32 = 37.0;
+const PREFIX_WIDTH: f32 = 11.0;
+const PREFIX_PAD: f32 = 2.0;
+
 /// El ancho de [`number_with_suffix`], como el campo del `%` del diseño.
 const SUFFIX_FIELD_WIDTH: f32 = 59.0;
 /// Del borde del blanco al número y a la unidad de [`number_with_suffix`].

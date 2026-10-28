@@ -420,7 +420,7 @@ impl ChimpApp {
         let primary = self.doc.editor.resolve(self.doc.editor.primary);
         let mut action = None;
         let groom = &mut self.groom;
-        let width = groom.width();
+        let width = groom::WIDTH;
         dock::flyout(
             ctx,
             dock::DockPanel::Groom,
