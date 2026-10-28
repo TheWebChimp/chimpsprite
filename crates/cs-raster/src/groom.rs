@@ -479,7 +479,7 @@ mod tests {
             Rgba::rgb(10, 10, 10),
             "the eye stays"
         );
-        assert_eq!(out[(1 * w + 1) as usize], Rgba::rgb(200, 40, 40));
+        assert_eq!(out[(w + 1) as usize], Rgba::rgb(200, 40, 40));
     }
 
     #[test]
