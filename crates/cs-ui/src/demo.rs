@@ -402,6 +402,12 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     {
         dock::set_open(ctx, Some(dock::DockPanel::Groom));
         app.groom.load("groomed".into(), image);
+        // Con CHIMPSPRITE_DEMO_GROOM_PICK=n, los n colores más usados elegidos (la vista previa
+        // prueba juntarlos).
+        if let Some(n) = dev_var("CHIMPSPRITE_DEMO_GROOM_PICK").and_then(|n| n.parse().ok()) {
+            let primary = app.doc.editor.resolve(app.doc.editor.primary);
+            app.groom.pick_most_used(primary, n);
+        }
     }
     // Desarrollo: Tiled Mode en los dos ejes, para capturas.
     if std::env::var_os("CHIMPSPRITE_DEMO_TILED").is_some() && app.has_doc() {

@@ -30,6 +30,21 @@ const COLUMN_GAP: f32 = 14.0;
 const PREVIEW: f32 = COLUMN;
 /// Cuántas sugerencias se muestran.
 const MAX_SUGGESTIONS: usize = 10;
+/// La lupa sobre la vista previa: su lado y cuántos píxeles del resultado se ven en ella.
+const LOUPE: f32 = 120.0;
+const LOUPE_PIXELS: f32 = 15.0;
+
+/// Lo que se ve en la vista previa.
+#[derive(Clone, Debug, PartialEq)]
+enum Shown {
+    /// Con los colores juntados.
+    Result,
+    /// Con "Before" presionado: sin el grupo que se está probando o, si no hay, sin juntar
+    /// ninguno.
+    Before,
+    /// Con los juntados y además este grupo (el que se está por juntar).
+    Trying(Vec<Rgba>),
+}
 
 /// Los ajustes de los pasos.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -94,9 +109,14 @@ pub struct GroomPanel {
     picked: Vec<Rgba>,
     /// Qué tan parecidos tienen que ser los colores para sugerir juntarlos.
     similar: u16,
-    /// El resultado de `settings` (con el primario y los grupos de entonces).
-    result: Option<(Settings, Rgba, Merges, Groomed)>,
-    texture: Option<TextureHandle>,
+    /// Los pasos con `settings` y el primario de entonces, sin juntar colores (lo pesado).
+    base: Option<(Settings, Rgba, Groomed)>,
+    /// `base` con los colores juntados de entonces.
+    result: Option<(Merges, Groomed)>,
+    /// La sugerencia bajo el mouse la vez pasada (la vista previa la prueba).
+    hovered_group: Option<Vec<Rgba>>,
+    /// Lo que muestra la vista previa y su textura.
+    texture: Option<(Shown, TextureHandle)>,
 }
 
 impl Default for GroomPanel {
@@ -107,7 +127,9 @@ impl Default for GroomPanel {
             merges: Merges::new(),
             picked: Vec::new(),
             similar: 40,
+            base: None,
             result: None,
+            hovered_group: None,
             texture: None,
         }
     }
@@ -140,23 +162,44 @@ impl GroomPanel {
         let grid = cs_raster::detect_grid(&image.pixels, image.width, image.height);
         self.settings = Some(Settings::new(grid));
         self.source = Some((name, image));
+        self.base = None;
         self.result = None;
         self.merges.clear();
         self.picked.clear();
     }
 
-    /// El resultado con los ajustes de ahora (se recalcula solo si cambiaron).
+    /// El resultado con los ajustes de ahora: los pasos se rehacen solo si cambiaron los
+    /// ajustes (o el primario) y los colores juntados, solo si cambiaron ellos.
     fn groomed(&mut self, primary: Rgba) -> Option<&Groomed> {
         let (name, source) = self.source.as_ref()?;
         let settings = self.settings?;
-        let stale = !matches!(&self.result,
-            Some((s, p, m, _)) if *s == settings && *p == primary && *m == self.merges);
-        if stale {
-            let groomed = process(name, source, settings, primary, &self.merges);
-            self.result = Some((settings, primary, self.merges.clone(), groomed));
+        if !matches!(&self.base, Some((s, p, _)) if *s == settings && *p == primary) {
+            let base = process(name, source, settings, primary, &Merges::new());
+            self.base = Some((settings, primary, base));
+            self.result = None;
+        }
+        if !matches!(&self.result, Some((m, _)) if *m == self.merges) {
+            let (_, _, base) = self.base.as_ref()?;
+            self.result = Some((self.merges.clone(), merged(base, &self.merges)));
             self.texture = None;
         }
-        self.result.as_ref().map(|(_, _, _, g)| g)
+        self.result.as_ref().map(|(_, g)| g)
+    }
+
+    /// Desarrollo (capturas): elige los `n` colores más usados.
+    pub(crate) fn pick_most_used(&mut self, primary: Rgba, n: usize) {
+        if let Some(groomed) = self.groomed(primary) {
+            self.picked = groomed.colors.iter().take(n).map(|(c, _)| *c).collect();
+        }
+    }
+
+    /// El grupo que se está por juntar: el de la sugerencia bajo el mouse o, si no, los colores
+    /// elegidos (el más usado primero, como lo deja Merge).
+    fn trying(&self, groomed: &Groomed) -> Option<Vec<Rgba>> {
+        if let Some(group) = &self.hovered_group {
+            return Some(group.clone());
+        }
+        (self.picked.len() >= 2).then(|| merge_order(self.picked.clone(), groomed))
     }
 
     pub fn ui(&mut self, ui: &mut Ui, primary: Rgba) -> Option<GroomAction> {
@@ -177,12 +220,6 @@ impl GroomPanel {
                 groomed = self.groomed(primary).cloned();
                 if let Some(groomed) = &groomed {
                     self.preview(ui, groomed);
-                    ui.label(format!(
-                        "{}×{} · {} colors",
-                        groomed.image.width,
-                        groomed.image.height,
-                        groomed.colors.len()
-                    ));
                 }
             });
             if let Some(groomed) = &groomed {
@@ -191,7 +228,7 @@ impl GroomPanel {
                     ui.set_width(COLUMN);
                     self.swatches(ui, groomed);
                     ui.add_space(6.0);
-                    self.suggestions(ui, groomed);
+                    self.hovered_group = self.suggestions(ui, groomed);
                 });
             }
         });
@@ -267,8 +304,8 @@ impl GroomPanel {
     }
 
     /// Grupos de colores parecidos para juntar: un clic elige los de uno (para revisarlos y
-    /// juntarlos con Merge) y "Merge All" los junta todos.
-    fn suggestions(&mut self, ui: &mut Ui, groomed: &Groomed) {
+    /// juntarlos con Merge) y "Merge All" los junta todos. Devuelve el que está bajo el mouse.
+    fn suggestions(&mut self, ui: &mut Ui, groomed: &Groomed) -> Option<Vec<Rgba>> {
         let groups = cs_raster::suggest_merges(&groomed.colors, self.similar as u32);
         ui.horizontal(|ui| {
             ui.label("Suggested");
@@ -277,7 +314,7 @@ impl GroomPanel {
         });
         if groups.is_empty() {
             ui.label("No similar colors.");
-            return;
+            return None;
         }
         let row = SWATCH + SWATCH_GAP;
         let per_row = ((COLUMN + SWATCH_GAP) / row).floor() as usize;
@@ -287,6 +324,7 @@ impl GroomPanel {
         let border = pixel_ui::control_border(ui.ctx());
         let accent = crate::theme::ACCENT;
         let mut chosen = None;
+        let mut hovered = None;
         for (i, group) in groups.iter().take(shown).enumerate() {
             let line = Rect::from_min_size(
                 area.min + vec2(0.0, i as f32 * (row + 2.0)),
@@ -297,6 +335,9 @@ impl GroomPanel {
                 .on_hover_text("Pick these colors (the first one stays)");
             if response.clicked() {
                 chosen = Some(group.clone());
+            }
+            if response.hovered() {
+                hovered = Some(group.clone());
             }
             let painter = ui.painter();
             let picked = self.picked == *group;
@@ -353,6 +394,7 @@ impl GroomPanel {
             self.picked.clear();
             self.merges.extend(groups);
         }
+        hovered
     }
 
     /// Los colores del resultado (los más usados primero): un clic elige o suelta uno, y
@@ -411,15 +453,7 @@ impl GroomPanel {
                 && can_merge
             {
                 // El más usado de los elegidos queda; los demás pasan a ser él.
-                let mut group = self.picked.clone();
-                let count = |c: &Rgba| {
-                    groomed
-                        .colors
-                        .iter()
-                        .find(|(k, _)| k == c)
-                        .map_or(0, |(_, n)| *n)
-                };
-                group.sort_by_key(|c| std::cmp::Reverse(count(c)));
+                let group = merge_order(self.picked.clone(), groomed);
                 self.merge(group);
             }
             if !self.merges.is_empty() && pixel_ui::text_button(ui, "Reset Merges").clicked() {
@@ -430,13 +464,34 @@ impl GroomPanel {
     }
 
     /// El resultado al tamaño más grande que entra (en múltiplos enteros si se agranda), sobre
-    /// el damero.
+    /// el damero. Con un grupo por juntar (una sugerencia bajo el mouse o colores elegidos) se ve
+    /// cómo quedaría, y con "Before" presionado, cómo era sin juntar ninguno. Encima, la lupa;
+    /// un clic elige (o suelta) el color del píxel.
     fn preview(&mut self, ui: &mut Ui, groomed: &Groomed) {
-        let image = &groomed.image;
-        if image.width == 0 || image.height == 0 {
+        if groomed.image.width == 0 || groomed.image.height == 0 {
             return;
         }
-        let texture = self.texture.get_or_insert_with(|| {
+        let before = ui
+            .data(|d| d.get_temp::<bool>(before_id()))
+            .unwrap_or(false);
+        let trying = self.trying(groomed);
+        let can_compare = trying.is_some() || !self.merges.is_empty();
+        let shown = match trying {
+            _ if before && can_compare => Shown::Before,
+            Some(group) => Shown::Trying(group),
+            None => Shown::Result,
+        };
+        let image = match &shown {
+            Shown::Result => groomed.image.clone(),
+            // Lo de antes: sin lo que se prueba o, si no se prueba nada, sin juntar ninguno.
+            Shown::Before if self.trying(groomed).is_some() => groomed.image.clone(),
+            Shown::Before => match &self.base {
+                Some((_, _, base)) => base.image.clone(),
+                None => groomed.image.clone(),
+            },
+            Shown::Trying(group) => merged(groomed, &vec![group.clone()]).image,
+        };
+        if !matches!(&self.texture, Some((s, _)) if *s == shown) {
             let bytes: Vec<u8> = image
                 .pixels
                 .iter()
@@ -446,19 +501,201 @@ impl GroomPanel {
                 [image.width as usize, image.height as usize],
                 &bytes,
             );
-            ui.ctx()
-                .load_texture("groom_preview", color, TextureOptions::NEAREST)
-        });
+            let texture = ui
+                .ctx()
+                .load_texture("groom_preview", color, TextureOptions::NEAREST);
+            self.texture = Some((shown.clone(), texture));
+        }
+        let Some((_, texture)) = &self.texture else {
+            return;
+        };
         let fit = PREVIEW / image.width.max(image.height) as f32;
         let k = if fit >= 1.0 { fit.floor() } else { fit };
         let size = vec2(image.width as f32, image.height as f32) * k;
-        let (rect, _) = ui.allocate_exact_size(vec2(PREVIEW, size.y), Sense::hover());
-        let rect = Rect::from_center_size(rect.center(), size);
+        let (row, _) = ui.allocate_exact_size(vec2(PREVIEW, size.y), Sense::hover());
+        let rect = Rect::from_center_size(row.center(), size);
+        let response = ui.interact(rect, ui.id().with("groom_preview"), Sense::click());
         let painter = ui.painter_at(rect);
         crate::panels::checker(&painter, rect);
         let full = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
         painter.image(texture.id(), rect, full, Color32::WHITE);
+        // El píxel bajo el mouse: la lupa y, con un clic, elegir su color. (Para capturas, con
+        // CHIMPSPRITE_DEMO_GROOM_LOUPE, en el centro.)
+        let demo = crate::demo::dev_var("CHIMPSPRITE_DEMO_GROOM_LOUPE").map(|_| rect.center());
+        if let Some(pointer) = response.hover_pos().or(demo) {
+            let at = ((pointer - rect.min) / k).floor();
+            let (x, y) = (at.x as u32, at.y as u32);
+            if x < image.width && y < image.height {
+                let color = image.pixels[(y * image.width + x) as usize];
+                loupe(ui, texture, &image, (x, y), color, pointer);
+                if response.clicked() && color.a > 0 {
+                    match self.picked.iter().position(|&c| c == color) {
+                        Some(at) => {
+                            self.picked.remove(at);
+                        }
+                        None => self.picked.push(color),
+                    }
+                }
+            }
+        }
+        ui.horizontal(|ui| {
+            ui.label(format!(
+                "{}×{} · {} colors",
+                groomed.image.width,
+                groomed.image.height,
+                groomed.colors.len()
+            ));
+            // "Before": mientras está presionado, lo de antes de juntar.
+            if can_compare {
+                let held = pixel_ui::text_button(ui, "Before")
+                    .on_hover_text("Hold to see it before merging")
+                    .is_pointer_button_down_on();
+                ui.data_mut(|d| d.insert_temp(before_id(), held));
+            }
+        });
+        let note = match shown {
+            Shown::Trying(_) => "Previewing the merge (Merge keeps it).",
+            Shown::Before => "Before merging.",
+            Shown::Result => "Hover to zoom; click a pixel to pick its color.",
+        };
+        ui.label(note);
     }
+}
+
+/// Dónde se guarda si "Before" está presionado (se lee al pintar la vista previa, arriba del
+/// botón: vale lo de la vez pasada).
+fn before_id() -> egui::Id {
+    egui::Id::new("groom_before")
+}
+
+/// La lupa junto al mouse: los píxeles alrededor de `(x, y)` en grande, el del centro marcado y
+/// su color.
+fn loupe(
+    ui: &Ui,
+    texture: &TextureHandle,
+    image: &Bitmap,
+    (x, y): (u32, u32),
+    color: Rgba,
+    pointer: egui::Pos2,
+) {
+    let layer = egui::LayerId::new(egui::Order::Tooltip, ui.id().with("groom_loupe"));
+    let painter = ui.ctx().layer_painter(layer);
+    let screen = ui.ctx().content_rect();
+    // A la derecha y abajo del mouse; si no cabe, del otro lado.
+    let mut min = pointer + vec2(18.0, 18.0);
+    if min.x + LOUPE > screen.right() {
+        min.x = pointer.x - 18.0 - LOUPE;
+    }
+    if min.y + LOUPE + 16.0 > screen.bottom() {
+        min.y = pointer.y - 18.0 - LOUPE - 16.0;
+    }
+    let rect = Rect::from_min_size(min.round(), vec2(LOUPE, LOUPE));
+    let cell = LOUPE / LOUPE_PIXELS;
+    let half = (LOUPE_PIXELS / 2.0).floor();
+    let (w, h) = (image.width as f32, image.height as f32);
+    // Los píxeles de `(x - half, y - half)` a `(x + half, y + half)` (lo de afuera, vacío).
+    let from = vec2(x as f32 - half, y as f32 - half);
+    let uv = Rect::from_min_size(
+        pos2(from.x / w, from.y / h),
+        vec2(LOUPE_PIXELS / w, LOUPE_PIXELS / h),
+    );
+    let clipped = painter.with_clip_rect(rect);
+    clipped.rect_filled(rect, 0.0, crate::theme::CANVAS_BG);
+    crate::panels::checker(&clipped, rect);
+    // La textura no se repite: fuera de ella queda el damero.
+    let inside = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+    let visible = uv.intersect(inside);
+    if visible.is_positive() {
+        let to_screen = |p: egui::Pos2| {
+            rect.min
+                + vec2(
+                    (p.x - uv.min.x) / uv.width(),
+                    (p.y - uv.min.y) / uv.height(),
+                ) * LOUPE
+        };
+        let target = Rect::from_min_max(to_screen(visible.min), to_screen(visible.max));
+        clipped.image(texture.id(), target, visible, Color32::WHITE);
+    }
+    // El píxel del centro.
+    let center = Rect::from_min_size(rect.min + vec2(half, half) * cell, vec2(cell, cell));
+    let stroke = |c| egui::Stroke::new(1.0, c);
+    clipped.rect_stroke(
+        center,
+        0.0,
+        stroke(Color32::BLACK),
+        egui::StrokeKind::Outside,
+    );
+    clipped.rect_stroke(
+        center,
+        0.0,
+        stroke(Color32::WHITE),
+        egui::StrokeKind::Inside,
+    );
+    painter.rect_stroke(
+        rect,
+        0.0,
+        stroke(pixel_ui::control_border(ui.ctx())),
+        egui::StrokeKind::Outside,
+    );
+    let text = if color.a == 0 {
+        format!("{x}, {y} · empty")
+    } else {
+        format!("{x}, {y} · {}", color.to_hex())
+    };
+    let label = Rect::from_min_size(rect.left_bottom(), vec2(LOUPE, 16.0));
+    painter.rect_filled(label, 0.0, crate::theme::CANVAS_BG);
+    painter.text(
+        label.center(),
+        egui::Align2::CENTER_CENTER,
+        text,
+        egui::TextStyle::Body.resolve(ui.style()),
+        Color32::WHITE,
+    );
+}
+
+/// `group` ordenado para juntarlo: el más usado (en `groomed`) primero, que es el que queda.
+fn merge_order(mut group: Vec<Rgba>, groomed: &Groomed) -> Vec<Rgba> {
+    let count = |c: &Rgba| {
+        groomed
+            .colors
+            .iter()
+            .find(|(k, _)| k == c)
+            .map_or(0, |(_, n)| *n)
+    };
+    group.sort_by_key(|c| std::cmp::Reverse(count(c)));
+    group
+}
+
+/// `groomed` con los colores de cada grupo de `merges` cambiados por el primero del grupo.
+fn merged(groomed: &Groomed, merges: &Merges) -> Groomed {
+    let mut image = groomed.image.clone();
+    if !merges.is_empty() {
+        let target: std::collections::HashMap<Rgba, Rgba> = merges
+            .iter()
+            .flat_map(|group| group.iter().skip(1).map(move |&c| (c, group[0])))
+            .collect();
+        for p in image.pixels.iter_mut() {
+            if let Some(&to) = target.get(p) {
+                *p = to;
+            }
+        }
+    }
+    Groomed {
+        name: groomed.name.clone(),
+        colors: color_counts(&image),
+        image,
+    }
+}
+
+/// Los colores de `image` y cuántos píxeles tiene cada uno, del más usado al menos.
+fn color_counts(image: &Bitmap) -> Vec<(Rgba, usize)> {
+    let mut counts: std::collections::HashMap<Rgba, usize> = std::collections::HashMap::new();
+    for &c in image.pixels.iter().filter(|c| c.a > 0) {
+        *counts.entry(c).or_default() += 1;
+    }
+    let mut colors: Vec<(Rgba, usize)> = counts.into_iter().collect();
+    colors.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.to_hex().cmp(&b.0.to_hex())));
+    colors
 }
 
 /// Los pasos sobre `source`: un color por celda, el fondo, el contorno, los colores y el recorte
@@ -492,30 +729,14 @@ pub fn process(
     if settings.reduce {
         pixels = cs_raster::reduce_colors(&pixels, settings.colors as usize).0;
     }
-    // Los grupos juntados a mano: cada color del grupo pasa a ser el primero.
-    if !merges.is_empty() {
-        let target: std::collections::HashMap<Rgba, Rgba> = merges
-            .iter()
-            .flat_map(|group| group.iter().skip(1).map(move |&c| (c, group[0])))
-            .collect();
-        for p in pixels.iter_mut() {
-            if let Some(&to) = target.get(p) {
-                *p = to;
-            }
-        }
-    }
     let image = trimmed(&pixels, w, h);
-    let mut counts: std::collections::HashMap<Rgba, usize> = std::collections::HashMap::new();
-    for &c in image.pixels.iter().filter(|c| c.a > 0) {
-        *counts.entry(c).or_default() += 1;
-    }
-    let mut colors: Vec<(Rgba, usize)> = counts.into_iter().collect();
-    colors.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.to_hex().cmp(&b.0.to_hex())));
-    Groomed {
+    let groomed = Groomed {
         name: name.to_string(),
+        colors: color_counts(&image),
         image,
-        colors,
-    }
+    };
+    // Al final, los grupos juntados a mano (el recorte no cambia: solo cambian colores).
+    merged(&groomed, merges)
 }
 
 /// `pixels` recortado a lo pintado (entero si no hay nada).
@@ -631,6 +852,31 @@ mod tests {
             &vec![vec![red, Rgba::rgb(0, 0, 0)]],
         );
         assert_eq!(merged.colors, vec![(red, 8)], "2 red + 6 of outline");
+    }
+
+    #[test]
+    fn the_merge_being_tried_is_the_hovered_suggestion_or_the_picked_colors() {
+        let mut panel = GroomPanel::default();
+        panel.load("x".into(), big());
+        panel.settings.as_mut().unwrap().ring = true;
+        let groomed = panel.groomed(Rgba::rgb(0, 0, 0)).unwrap().clone();
+        let (red, black) = (Rgba::rgb(200, 30, 30), Rgba::rgb(0, 0, 0));
+        assert_eq!(panel.trying(&groomed), None);
+        // Elegidos: el más usado (el contorno negro, 6 contra 2) queda primero.
+        panel.picked = vec![red, black];
+        assert_eq!(panel.trying(&groomed), Some(vec![black, red]));
+        // La sugerencia bajo el mouse manda.
+        panel.hovered_group = Some(vec![red, black]);
+        assert_eq!(panel.trying(&groomed), Some(vec![red, black]));
+        // Juntar no rehace los pasos: solo cambia colores sobre lo de antes.
+        panel.merges.push(vec![black, red]);
+        let merged = panel.groomed(Rgba::rgb(0, 0, 0)).unwrap();
+        assert_eq!(merged.colors, vec![(black, 8)]);
+        assert_eq!(
+            panel.base.as_ref().unwrap().2,
+            groomed,
+            "the steps are kept"
+        );
     }
 
     #[test]
