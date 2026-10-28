@@ -2036,3 +2036,41 @@ fn with_double_wide_pixels_the_artboard_is_twice_as_wide_and_clicks_hit_the_righ
     assert_eq!(s.pixel(LayerId(1), 0, 4, 3), t);
     assert_eq!(s.pixel(LayerId(1), 0, 6, 3), t);
 }
+
+#[test]
+fn a_guide_is_only_grabbed_inside_its_artboard() {
+    let mut h = Harness::new();
+    let first = h.editor.active;
+    let position = h.editor.artboard().position;
+    // Una guía vertical en la columna 8 del activo (16×16).
+    h.editor.set_guides(vec![cs_core::Guide {
+        axis: Axis::Vertical,
+        position: 8,
+    }]);
+    // Otro artboard justo debajo, en la misma columna.
+    h.editor.add_artboard(16, 16);
+    let other = h.editor.active;
+    h.editor
+        .execute_doc(cs_commands::DocCommand::SetArtboardProps {
+            id: other,
+            name: None,
+            position: Some((position.0, position.1 + 24)),
+        });
+    h.editor.activate(first);
+    // Que se vean los dos.
+    h.canvas.zoom = 4.0;
+    h.frame(vec![]);
+    let on_guide = h.canvas.to_screen(h.rect, (position.0 + 8, position.1 + 4));
+    h.frame(vec![Event::PointerMoved(on_guide)]);
+    assert_eq!(h.cursor, egui::CursorIcon::ResizeHorizontal, "on the guide");
+    let below = h
+        .canvas
+        .to_screen(h.rect, (position.0 + 8, position.1 + 30));
+    assert!(h.rect.contains(below), "{below:?} in {:?}", h.rect);
+    h.frame(vec![Event::PointerMoved(below)]);
+    assert_ne!(
+        h.cursor,
+        egui::CursorIcon::ResizeHorizontal,
+        "the same column, on the other artboard"
+    );
+}

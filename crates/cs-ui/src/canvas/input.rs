@@ -213,7 +213,16 @@ impl CanvasView {
         if !view.shows(view.guides) {
             return None;
         }
-        let index = hit_guide(editor.guides(), local(p), SNAP_PX / self.zoom)?;
+        // Las guías son del artboard activo y se dibujan solo dentro de él: fuera (o debajo
+        // de otro artboard de delante) no se agarran.
+        let (lx, ly) = local(p);
+        let sprite = editor.sprite();
+        let inside =
+            lx >= 0.0 && ly >= 0.0 && lx <= sprite.width as f32 && ly <= sprite.height as f32;
+        if !inside || self.under_front_artboard(rect, editor, p, response.ctx.pixels_per_point()) {
+            return None;
+        }
+        let index = hit_guide(editor.guides(), (lx, ly), SNAP_PX / self.zoom)?;
         // Con cualquier herramienta: la guía bajo el puntero se agarra, salvo que estén
         // bloqueadas.
         if view.lock_guides {
