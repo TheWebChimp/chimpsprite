@@ -25,9 +25,8 @@ const HEADER_CAPS_TOP: f32 = 4.0;
 const HEADER_TABS_GAP: f32 = 1.0;
 const TAB_PIECE: &str = "tab";
 const TAB_HEIGHT: f32 = 15.0;
-/// Entre pestañas y entre filas de pestañas.
+/// Entre pestañas.
 const TAB_GAP: f32 = 5.0;
-const ROW_GAP: f32 = 2.0;
 /// Del borde de la pestaña al texto (y al cuadrito de color, si hay).
 const TAB_PADDING: f32 = 5.0;
 const TAB_CAPS_TOP: f32 = 5.0;
@@ -169,31 +168,41 @@ pub struct Tab {
     pub color: Option<Color32>,
 }
 
-/// Las pestañas en filas (pasan a la siguiente si no entran) sobre la línea grabada, que se
-/// corta debajo de la activa si está en la última fila. Devuelve la que se tocó.
+/// Las pestañas en una sola fila sobre la línea grabada, que se corta debajo de la activa. Si no
+/// entran, se achican parejo y los nombres terminan en "..." (como las de documentos). Devuelve
+/// la que se tocó.
 pub fn tabs(ui: &mut Ui, skin: &Skin, tabs: &[Tab], active: Option<usize>) -> Option<usize> {
     let ppp = ui.ctx().pixels_per_point();
     let colors = *skin.colors();
     let left = ui.cursor().left().round();
     let right = ui.max_rect().right();
     let top = ui.cursor().top().round();
-    // Dónde va cada una.
-    let mut rects = Vec::with_capacity(tabs.len());
-    let (mut x, mut y) = (left, top);
-    for tab in tabs {
+    // En una sola fila: si no caben, se achican parejo y los nombres terminan en "..." (como
+    // las pestañas de documentos).
+    let chrome = |tab: &Tab| {
         let swatch = if tab.color.is_some() {
             SWATCH + SWATCH_GAP
         } else {
             0.0
         };
-        let width = (TAB_PADDING + swatch + text_width(ui, &tab.name) + TAB_PADDING)
-            .min(right - left)
-            .ceil();
-        if x > left && x + width > right {
-            x = left;
-            y += TAB_HEIGHT + ROW_GAP;
-        }
-        rects.push(Rect::from_min_size(pos2(x, y), vec2(width, TAB_HEIGHT)));
+        TAB_PADDING + swatch + TAB_PADDING
+    };
+    let natural: Vec<f32> = tabs
+        .iter()
+        .map(|t| (chrome(t) + text_width(ui, &t.name)).ceil())
+        .collect();
+    let gaps = TAB_GAP * tabs.len().saturating_sub(1) as f32;
+    let room = (right - left - gaps).floor().max(0.0);
+    let min = TAB_PADDING * 2.0 + text_width(ui, crate::tab_bar::ellipsis());
+    let widths = crate::tab_bar::fit_widths(&natural, room, min);
+    let font = TextStyle::Body.resolve(ui.style());
+    let mut rects = Vec::with_capacity(tabs.len());
+    let mut names = Vec::with_capacity(tabs.len());
+    let mut x = left;
+    for (tab, width) in tabs.iter().zip(widths) {
+        rects.push(Rect::from_min_size(pos2(x, top), vec2(width, TAB_HEIGHT)));
+        let text_room = width - chrome(tab);
+        names.push(crate::tab_bar::fit_text(ui, &tab.name, &font, text_room));
         x += width + TAB_GAP;
     }
     let bottom = rects.last().map_or(top, |r| r.bottom());
@@ -218,7 +227,7 @@ pub fn tabs(ui: &mut Ui, skin: &Skin, tabs: &[Tab], active: Option<usize>) -> Op
     let mut clicked = None;
     // Los nombres van encima de las pestañas (se pintan después).
     let mut texts = Vec::with_capacity(tabs.len());
-    for (i, (tab, rect)) in tabs.iter().zip(&rects).enumerate() {
+    for (i, ((tab, rect), name)) in tabs.iter().zip(&rects).zip(&names).enumerate() {
         let is_active = active == Some(i);
         let response = ui.interact(*rect, ui.id().with(("pixel_tab", i)), Sense::click());
         let enabled = ui.is_enabled();
@@ -254,7 +263,7 @@ pub fn tabs(ui: &mut Ui, skin: &Skin, tabs: &[Tab], active: Option<usize>) -> Op
             colors.tab_text_dim
         };
         // Recortado a la pestaña: un nombre muy largo no se sale.
-        let text = text_shape(ui, &tab.name, text_left, rect.top() + TAB_CAPS_TOP, color);
+        let text = text_shape(ui, name, text_left, rect.top() + TAB_CAPS_TOP, color);
         texts.push((rect.shrink2(vec2(1.0, 0.0)), text));
     }
     ui.painter().extend(shapes);
@@ -460,4 +469,71 @@ pub fn field_alone<A>(ui: &mut Ui, field: impl FnOnce(&mut Ui, f32) -> A) -> A {
 pub fn note(ui: &mut Ui, skin: &Skin, text: &str) {
     let color = skin.colors().text_dim;
     ui.add(egui::Label::new(egui::RichText::new(text).color(color)).wrap());
+}
+
+#[cfg(test)]
+mod tests {
+    use eframe::egui::{RawInput, Shape};
+
+    use super::*;
+
+    /// Las pestañas en un panel de `width`: dónde quedó cada caja (las piezas de `tab`) y los
+    /// textos dibujados.
+    fn draw(names: &[&str], width: f32) -> (Vec<Rect>, Vec<String>) {
+        let ctx = egui::Context::default();
+        ctx.set_fonts(crate::appearance::font_definitions(true));
+        let skin = Skin::embedded(&ctx);
+        let list: Vec<Tab> = names
+            .iter()
+            .map(|n| Tab {
+                name: n.to_string(),
+                color: None,
+            })
+            .collect();
+        let mut out = ctx.run_ui(RawInput::default(), |ui| {
+            ui.allocate_ui(vec2(width, 100.0), |ui| {
+                ui.set_max_width(width);
+                tabs(ui, &skin, &list, Some(0));
+            });
+        });
+        out.textures_delta.clear();
+        let mut texts = Vec::new();
+        let mut meshes = Vec::new();
+        for c in out.shapes {
+            match c.shape {
+                Shape::Text(t) => texts.push(t.galley.text().to_string()),
+                Shape::Mesh(m) => meshes.push(m.calc_bounds()),
+                _ => {}
+            }
+        }
+        (meshes, texts)
+    }
+
+    #[test]
+    fn tabs_that_do_not_fit_stay_in_one_row_and_end_in_dots() {
+        let names = ["Randy", "Banana", "Artboard 3", "Artboard 4", "Artboard 5"];
+        let (boxes, texts) = draw(&names, 200.0);
+        let tops: std::collections::BTreeSet<i32> = boxes
+            .iter()
+            .filter(|r| r.height() >= TAB_HEIGHT - 1.0)
+            .map(|r| r.top() as i32)
+            .collect();
+        assert_eq!(tops.len(), 1, "one row: {boxes:?}");
+        assert!(
+            boxes.iter().all(|r| r.right() <= 201.0),
+            "inside the panel: {boxes:?}"
+        );
+        assert!(
+            texts
+                .iter()
+                .any(|t| t.ends_with(crate::tab_bar::ellipsis())),
+            "{texts:?}"
+        );
+        // Si entran, los nombres van enteros.
+        let (_, texts) = draw(&["A", "B"], 200.0);
+        assert!(
+            texts.iter().any(|t| t == "A") && texts.iter().any(|t| t == "B"),
+            "{texts:?}"
+        );
+    }
 }

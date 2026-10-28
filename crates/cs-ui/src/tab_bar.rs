@@ -325,7 +325,7 @@ fn layout_tabs(ui: &Ui, bar: Rect, tabs: &[TabInfo]) -> Vec<PlacedTab> {
 /// Los anchos de las pestañas para que sumen a lo sumo `room`: los `natural` si entran; si no, un
 /// tope parejo (las que miden menos se quedan como están), sin bajar de `min`. Si ni con `min`
 /// entran, todas miden lo mismo. Siempre enteros.
-fn fit_widths(natural: &[f32], room: f32, min: f32) -> Vec<f32> {
+pub(crate) fn fit_widths(natural: &[f32], room: f32, min: f32) -> Vec<f32> {
     let n = natural.len();
     if n == 0 || natural.iter().sum::<f32>() <= room {
         return natural.to_vec();
