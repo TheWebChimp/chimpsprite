@@ -92,6 +92,8 @@ pub struct ExportDialog {
     pub json: JsonFormat,
     /// También exportar `<nombre>_n.png` con el normal map.
     pub normal_map: bool,
+    /// Con qué ajustes se hace el normal map (los de Lumen).
+    pub normals: cs_render::NormalSettings,
     /// Carpeta `res://` donde quedará la hoja en el proyecto de Godot.
     pub godot_folder: String,
 }
@@ -106,6 +108,7 @@ impl Default for ExportDialog {
             columns: 4,
             json: JsonFormat::Hash,
             normal_map: false,
+            normals: Default::default(),
             godot_folder: "res://".into(),
         }
     }
@@ -158,9 +161,9 @@ impl ExportDialog {
         let mut files = self.build_main(editor, file_name, &name, &stem, &json_name, layout)?;
         if self.normal_map && self.format.supports_normals() {
             let png = if self.format == ExportFormat::Png {
-                export::export_normal_png(sprite, editor.frame, self.scale)?
+                export::export_normal_png(sprite, editor.frame, self.scale, &self.normals)?
             } else {
-                export::export_normal_sheet(sprite, layout, self.scale)?
+                export::export_normal_sheet(sprite, layout, self.scale, &self.normals)?
             };
             files.push((format!("{stem}_n.png"), png));
         }

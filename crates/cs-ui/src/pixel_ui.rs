@@ -1013,6 +1013,14 @@ pub fn text_button(ui: &mut Ui, label: &str) -> Response {
     }
 }
 
+/// Un botón de texto de `width` de ancho (los de una fila, parejos).
+pub fn text_button_sized(ui: &mut Ui, label: &str, width: f32) -> Response {
+    match frame_skin(ui.ctx()) {
+        Some(skin) => pixel_button_sized(ui, &skin, label, vec2(width, CONTROL_HEIGHT)),
+        None => ui.add_sized(vec2(width, CONTROL_HEIGHT), egui::Button::new(label)),
+    }
+}
+
 /// Las barras de scroll del diseño (frame 4): el track violeta de 10 con su borde claro y el
 /// pulgar con las estrías, en 9-slice (las estrías van en el borde fijo).
 const SCROLL_TRACK_V: &str = "scroll.track.v";

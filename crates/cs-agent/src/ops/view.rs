@@ -263,11 +263,14 @@ impl Session {
         }
         if p.normal_map {
             let normals = match p.kind {
-                ExportKind::Png => {
-                    export::export_normal_png(sprite, target::frame(sprite, p.frame)?, scale)?
-                }
+                ExportKind::Png => export::export_normal_png(
+                    sprite,
+                    target::frame(sprite, p.frame)?,
+                    scale,
+                    &Default::default(),
+                )?,
                 ExportKind::Sheet | ExportKind::Godot | ExportKind::Unity | ExportKind::Bevy => {
-                    export::export_normal_sheet(sprite, layout, scale)?
+                    export::export_normal_sheet(sprite, layout, scale, &Default::default())?
                 }
                 _ => {
                     return Err(invalid(

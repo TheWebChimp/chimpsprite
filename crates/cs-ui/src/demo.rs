@@ -413,6 +413,22 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             app.groom.pick_most_used(primary, n);
         }
     }
+    // Desarrollo: el panel Lumen abierto con una imagen de albedo (su ruta), para capturas. Con
+    // CHIMPSPRITE_DEMO_LUMEN_MODIFY=normal|luminance, con los ajustes de ese mapa abiertos.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(path) = std::env::var("CHIMPSPRITE_DEMO_LUMEN")
+        && app.has_doc()
+        && let Ok(bytes) = std::fs::read(&path)
+        && let Ok(image) = groom::decode_image(&bytes)
+    {
+        dock::set_open(ctx, Some(dock::DockPanel::Lumen));
+        app.lumen.load("lumen".into(), image);
+        match dev_var("CHIMPSPRITE_DEMO_LUMEN_MODIFY") {
+            Some("normal") => app.lumen.open_settings(crate::lumen::MapKind::Normal),
+            Some("luminance") => app.lumen.open_settings(crate::lumen::MapKind::Luminance),
+            _ => {}
+        }
+    }
     // Desarrollo: Tiled Mode en los dos ejes, para capturas.
     if std::env::var_os("CHIMPSPRITE_DEMO_TILED").is_some() && app.has_doc() {
         app.doc.editor.tiled = editor::TiledMode::Both;

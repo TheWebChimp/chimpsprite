@@ -238,6 +238,17 @@ impl ChimpApp {
                                 Err(e) => self.show_message("Could not read the image", e),
                             }
                         }
+                        OpenPurpose::LumenMap(kind) => {
+                            match crate::groom::decode_image(&loaded.bytes) {
+                                Ok(image) => {
+                                    let name = files::stem(&loaded.name).to_string();
+                                    if let Err(e) = self.lumen.load_map(kind, name, image) {
+                                        self.lumen.notify(e);
+                                    }
+                                }
+                                Err(e) => self.show_message("Could not read the image", e),
+                            }
+                        }
                         OpenPurpose::LoadPalette if self.has_doc() => {
                             self.load_palette_bytes(&loaded.name, &loaded.bytes)
                         }
@@ -535,7 +546,11 @@ impl ChimpApp {
 
     pub(crate) fn open_export(&mut self) {
         self.doc.editor.commit_floating();
-        self.export = Some(self.last_export.clone());
+        // El normal map, con los ajustes de Lumen.
+        self.export = Some(crate::export_dialog::ExportDialog {
+            normals: self.lumen.normals,
+            ..self.last_export.clone()
+        });
     }
 
     /// Archivos soltados sobre la ventana: abre el primero en una pestaña nueva.

@@ -54,24 +54,28 @@ pub enum DockPanel {
     Dafont,
     /// Groom: de pixel art falso a pixel art de verdad (su contenido lo pone la app).
     Groom,
+    /// Lumen: normales y luz para el sprite (su contenido lo pone la app).
+    Lumen,
 }
 
 impl DockPanel {
     #[cfg(not(target_arch = "wasm32"))]
-    pub const ALL: [DockPanel; 5] = [
+    pub const ALL: [DockPanel; 6] = [
         DockPanel::Artboards,
         DockPanel::Slices,
         DockPanel::Lospec,
         DockPanel::Dafont,
         DockPanel::Groom,
+        DockPanel::Lumen,
     ];
     /// En la web no hay dafont (el sitio no acepta peticiones desde otras páginas).
     #[cfg(target_arch = "wasm32")]
-    pub const ALL: [DockPanel; 4] = [
+    pub const ALL: [DockPanel; 5] = [
         DockPanel::Artboards,
         DockPanel::Slices,
         DockPanel::Lospec,
         DockPanel::Groom,
+        DockPanel::Lumen,
     ];
 
     pub fn label(self) -> &'static str {
@@ -81,6 +85,7 @@ impl DockPanel {
             DockPanel::Lospec => "Lospec",
             DockPanel::Dafont => "Dafont",
             DockPanel::Groom => "Groom",
+            DockPanel::Lumen => "Lumen",
         }
     }
 
@@ -92,6 +97,7 @@ impl DockPanel {
             DockPanel::Lospec => "icon.dock.lospec",
             DockPanel::Dafont => "icon.dock.dafont",
             DockPanel::Groom => "icon.dock.groom",
+            DockPanel::Lumen => "icon.dock.lumen",
         }
     }
 
@@ -103,6 +109,7 @@ impl DockPanel {
             DockPanel::Lospec => "L",
             DockPanel::Dafont => "Aa",
             DockPanel::Groom => "▦",
+            DockPanel::Lumen => "☀",
         }
     }
 }
@@ -237,7 +244,7 @@ pub fn show(
                 });
             });
         }
-        DockPanel::Lospec | DockPanel::Dafont | DockPanel::Groom => {
+        DockPanel::Lospec | DockPanel::Dafont | DockPanel::Groom | DockPanel::Lumen => {
             out.app_panel = Some((panel, anchor))
         }
     }
@@ -247,7 +254,7 @@ pub fn show(
 /// El panel flotante de `panel` a la izquierda de su botón, de `width` de contenido. Arriba va
 /// alineado con el botón; si no cabe hacia abajo, sube hasta donde haga falta (no más arriba de
 /// la columna del dock) y lo que no quepa en la columna se ve con scroll. Los altos (`tall`:
-/// Lospec, Dafont, Groom) ocupan la columna entera, de arriba a abajo. Con Pixel UI, en la caja
+/// Lospec, Dafont, Groom, Lumen) ocupan la columna entera, de arriba a abajo. Con Pixel UI, en la caja
 /// del skin, con el botón hecho pestaña de la caja.
 pub fn flyout(
     ctx: &egui::Context,

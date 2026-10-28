@@ -52,10 +52,12 @@ mod lospec_client;
 #[cfg(not(target_arch = "wasm32"))]
 mod lospec_examples;
 mod lospec_tab;
+mod lumen;
 #[cfg(not(target_arch = "wasm32"))]
 mod news;
 mod notes;
 mod palette_library;
+mod panel_kit;
 mod panels;
 mod pixel_cursors;
 mod pixel_draw;
@@ -122,6 +124,8 @@ pub struct ChimpApp {
     dafont: dafont::DafontPanel,
     /// El panel Groom del dock.
     groom: groom::GroomPanel,
+    /// El panel Lumen del dock.
+    lumen: lumen::LumenPanel,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
@@ -265,6 +269,7 @@ impl ChimpApp {
             #[cfg(not(target_arch = "wasm32"))]
             dafont: Default::default(),
             groom: Default::default(),
+            lumen: Default::default(),
             platform: platform::Platform::default(),
             autosaver: autosave::Autosaver::default(),
             restore: None,
@@ -453,41 +458,108 @@ impl ChimpApp {
                 dock::set_open(ctx, Some(dock::DockPanel::Lospec));
             }
             Some(groom::GroomAction::UseLayer) => {
-                let editor = &self.doc.editor;
-                let sprite = editor.sprite();
-                let pixels = (0..sprite.height as i32)
-                    .flat_map(|y| (0..sprite.width as i32).map(move |x| (x, y)))
-                    .map(|(x, y)| editor.resolve(sprite.pixel(editor.layer, editor.frame, x, y)))
-                    .collect();
-                let name = sprite
-                    .layer(editor.layer)
-                    .map_or("Layer".to_string(), |l| l.name.clone());
-                let image = cs_io::export::Bitmap {
-                    width: sprite.width,
-                    height: sprite.height,
-                    pixels,
-                };
+                let (name, image) = self.current_layer_image();
                 self.groom.load(name, image);
             }
-            Some(groom::GroomAction::NewSprite(g)) => {
-                let sprite = groomed_sprite(&g);
-                self.open_sheet_sprite(&g.name, sprite);
-            }
-            Some(groom::GroomAction::AddArtboard(g)) => {
-                let sprite = groomed_sprite(&g);
-                self.doc.editor.add_artboard_with_sprite(g.name, sprite);
-            }
-            Some(groom::GroomAction::AddLayer(g)) => match g.image.to_png() {
-                Ok(bytes) => self.import_layer_bytes(
-                    &file_actions::Loaded {
-                        name: format!("{}.png", g.name),
-                        target: None,
-                        bytes,
-                    },
-                    false,
-                ),
-                Err(e) => self.show_message("Could not add the layer", e.to_string()),
+            Some(groom::GroomAction::NewSprite(g)) => self.bitmap_to_sprite(&g.name, &g.image),
+            Some(groom::GroomAction::AddArtboard(g)) => self.bitmap_to_artboard(g.name, &g.image),
+            Some(groom::GroomAction::AddLayer(g)) => self.bitmap_to_layer(&g.name, &g.image),
+            None => {}
+        }
+    }
+
+    /// La capa actual en el frame actual, como imagen, y su nombre.
+    fn current_layer_image(&self) -> (String, cs_io::export::Bitmap) {
+        let editor = &self.doc.editor;
+        let sprite = editor.sprite();
+        let pixels = (0..sprite.height as i32)
+            .flat_map(|y| (0..sprite.width as i32).map(move |x| (x, y)))
+            .map(|(x, y)| editor.resolve(sprite.pixel(editor.layer, editor.frame, x, y)))
+            .collect();
+        let name = sprite
+            .layer(editor.layer)
+            .map_or("Layer".to_string(), |l| l.name.clone());
+        let image = cs_io::export::Bitmap {
+            width: sprite.width,
+            height: sprite.height,
+            pixels,
+        };
+        (name, image)
+    }
+
+    /// Un sprite nuevo, en su pestaña, con `image` en su única capa.
+    fn bitmap_to_sprite(&mut self, name: &str, image: &cs_io::export::Bitmap) {
+        self.open_sheet_sprite(name, bitmap_sprite(image));
+    }
+
+    /// Un artboard nuevo con `image` en su única capa.
+    fn bitmap_to_artboard(&mut self, name: String, image: &cs_io::export::Bitmap) {
+        self.doc
+            .editor
+            .add_artboard_with_sprite(name, bitmap_sprite(image));
+    }
+
+    /// `image` como capa nueva del sprite actual.
+    fn bitmap_to_layer(&mut self, name: &str, image: &cs_io::export::Bitmap) {
+        match image.to_png() {
+            Ok(bytes) => self.import_layer_bytes(
+                &file_actions::Loaded {
+                    name: format!("{name}.png"),
+                    target: None,
+                    bytes,
+                },
+                false,
+            ),
+            Err(e) => self.show_message("Could not add the layer", e.to_string()),
+        }
+    }
+
+    /// El panel Lumen del dock y lo que pide.
+    fn lumen_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
+        let mut action = None;
+        let lumen = &mut self.lumen;
+        dock::flyout(
+            ctx,
+            dock::DockPanel::Lumen,
+            anchor,
+            self.pixel.skin(),
+            lumen::WIDTH,
+            true,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| action = lumen.ui(ui));
             },
+        );
+        match action {
+            Some(lumen::LumenAction::Browse(kind)) => {
+                let purpose = platform::OpenPurpose::LumenMap(kind);
+                self.platform.open_file(groom::FILTER, purpose, ctx);
+            }
+            Some(lumen::LumenAction::UseLayer) => {
+                let (name, image) = self.current_layer_image();
+                self.lumen.load(name, image);
+            }
+            Some(lumen::LumenAction::Export(file_name, image)) => {
+                let png = match image.to_png() {
+                    Ok(png) => png,
+                    Err(e) => return self.show_message("Could not export", e.to_string()),
+                };
+                let filters = [platform::FileFilter {
+                    name: "PNG",
+                    extensions: &["png"],
+                }];
+                if let Some(target) = self.platform.choose_save(&file_name, &filters)
+                    && let Err(e) = self.platform.write(&target, &png)
+                {
+                    self.show_message("Could not export", e);
+                }
+            }
+            Some(lumen::LumenAction::NewSprite(name, image)) => {
+                self.bitmap_to_sprite(&name, &image)
+            }
+            Some(lumen::LumenAction::AddArtboard(name, image)) => {
+                self.bitmap_to_artboard(name, &image)
+            }
+            Some(lumen::LumenAction::AddLayer(name, image)) => self.bitmap_to_layer(&name, &image),
             None => {}
         }
     }
@@ -1116,6 +1188,7 @@ impl ChimpApp {
             #[cfg(not(target_arch = "wasm32"))]
             Some((dock::DockPanel::Dafont, anchor)) => self.dafont_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Groom, anchor)) => self.groom_panel(ui.ctx(), anchor, modal),
+            Some((dock::DockPanel::Lumen, anchor)) => self.lumen_panel(ui.ctx(), anchor, modal),
             _ => {}
         }
         if !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {
@@ -1161,12 +1234,12 @@ impl ChimpApp {
     }
 }
 
-/// Un sprite RGBA con el resultado de Groom en su única capa.
-fn groomed_sprite(g: &groom::Groomed) -> cs_core::Sprite {
-    let (w, h) = (g.image.width, g.image.height);
+/// Un sprite RGBA con `bitmap` en su única capa (lo que sale de Groom o de Lumen).
+fn bitmap_sprite(bitmap: &cs_io::export::Bitmap) -> cs_core::Sprite {
+    let (w, h) = (bitmap.width, bitmap.height);
     let mut sprite = cs_core::Sprite::new(w, h, cs_core::ColorMode::Rgba);
     let image =
-        cs_core::Image::from_buffer(w, h, cs_core::PixelBuffer::Rgba(g.image.pixels.clone()))
+        cs_core::Image::from_buffer(w, h, cs_core::PixelBuffer::Rgba(bitmap.pixels.clone()))
             .expect("same size");
     let id = cs_core::ImageId(1);
     sprite.images.insert(id, std::sync::Arc::new(image));
