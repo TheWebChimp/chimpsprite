@@ -45,8 +45,8 @@ const RIGHT: egui::Rangef = egui::Rangef {
 const OFFSET_LEFT: f32 = 90.0;
 /// Las cajas de la vista previa y de las sugerencias, a la misma altura.
 const BOX_HEIGHT: f32 = 141.0;
-/// Del borde de una caja a lo de adentro.
-const BOX_PAD: f32 = 4.0;
+/// Del borde de una caja a lo de adentro: las dos líneas y 2 de aire.
+const BOX_PAD: f32 = 5.0;
 /// La línea de abajo y los botones, desde el fondo del panel (los botones, enteros dentro del
 /// contenido: lo de afuera lo recorta el scroll).
 const FOOTER_LINE: f32 = 22.0;
@@ -168,17 +168,81 @@ fn import_buttons(ui: &mut Ui, action: &mut Option<GroomAction>) {
     }
 }
 
-/// Un texto chico en mayúsculas, apagado: lo que aclara al lado de un título o una casilla.
+/// Un texto chico en mayúsculas, apagado: lo que aclara al lado de un título o una casilla, o
+/// una nota suelta.
 fn hint(ui: &mut Ui, text: &str) {
-    let color = pixel_ui::frame_skin(ui.ctx())
-        .map_or(ui.visuals().weak_text_color(), |s| s.colors().ruler_tick);
-    let mut text = egui::RichText::new(text.to_uppercase()).color(color);
-    // Sin la familia de los textos chicos (fuentes sin cargar todavía), la de siempre.
+    let galley = hint_galley(ui, text);
+    let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+    let color = hint_color(ui);
+    ui.painter().galley(rect.min, galley, color);
+}
+
+/// Entre la tinta de un texto y su nota.
+const HINT_GAP: f32 = 4.0;
+
+fn hint_color(ui: &Ui) -> Color32 {
+    pixel_ui::frame_skin(ui.ctx()).map_or(ui.visuals().weak_text_color(), |s| s.colors().ruler_tick)
+}
+
+/// La nota en chimpfont (o, si sus fuentes no se cargaron todavía, en la de siempre).
+fn hint_galley(ui: &Ui, text: &str) -> std::sync::Arc<egui::Galley> {
     let small = crate::appearance::small_family();
-    if ui.ctx().fonts(|f| f.families().contains(&small)) {
-        text = text.small();
-    }
-    ui.label(text);
+    let font = if ui.ctx().fonts(|f| f.families().contains(&small)) {
+        egui::FontId::new(crate::appearance::SMALL_FONT_SIZE, small)
+    } else {
+        egui::TextStyle::Body.resolve(ui.style())
+    };
+    ui.painter()
+        .layout_no_wrap(text.to_uppercase(), font, hint_color(ui))
+}
+
+/// La nota desde `left`, con su línea base en `baseline` (sin el espacio entre elementos de la
+/// fila: es más ancho que el que lleva una nota).
+fn hint_on_baseline(ui: &mut Ui, text: &str, left: f32, baseline: f32) {
+    let galley = hint_galley(ui, text);
+    let caps = crate::tab_bar::cap_height(&galley);
+    let ppp = ui.ctx().pixels_per_point();
+    let at = crate::tab_bar::text_pos(&galley, left, baseline - caps, ppp);
+    let rect = Rect::from_min_size(at, galley.size());
+    let color = hint_color(ui);
+    ui.painter().galley(at, galley, color);
+    ui.allocate_rect(rect, Sense::hover());
+}
+
+/// Dónde termina la tinta de `galley` (sin el avance de la última letra), desde su izquierda.
+fn ink_right(galley: &egui::Galley) -> f32 {
+    galley
+        .rows
+        .iter()
+        .flat_map(|row| {
+            row.glyphs
+                .iter()
+                .map(move |g| row.pos.x + g.pos.x + g.uv_rect.offset.x + g.uv_rect.size.x)
+        })
+        .fold(0.0, f32::max)
+}
+
+/// Un texto y su nota, los dos en la misma línea base.
+fn label_with_hint(ui: &mut Ui, text: &str, note: &str) {
+    ui.horizontal(|ui| {
+        let color = ui.visuals().text_color();
+        let galley = ui.painter().layout_no_wrap(
+            text.to_string(),
+            egui::TextStyle::Body.resolve(ui.style()),
+            color,
+        );
+        let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
+        let rect = Rect::from_min_size(rect.min.round(), rect.size());
+        // La línea base: la de la primera letra.
+        let baseline = galley
+            .rows
+            .first()
+            .and_then(|row| row.glyphs.first().map(|g| row.pos.y + g.pos.y))
+            .unwrap_or(galley.size().y);
+        let right = rect.left() + ink_right(&galley);
+        ui.painter().galley(rect.min, galley, color);
+        hint_on_baseline(ui, note, (right + HINT_GAP).round(), rect.top() + baseline);
+    });
 }
 
 /// Un hijo de `ui` en `rect`, de arriba a abajo (o con `layout`).
@@ -449,8 +513,16 @@ impl GroomPanel {
         });
         widgets::checkbox(ui, &mut settings.clean, "Clean Outline");
         ui.horizontal(|ui| {
-            widgets::checkbox(ui, &mut settings.ring, "Add Outline");
-            hint(ui, "(primary color)");
+            // La casilla pone sus mayúsculas `CONTROL_CAPS` debajo de la fila.
+            let caps = ui.cursor().top().round() + pixel_ui::CONTROL_CAPS;
+            let check = widgets::checkbox(ui, &mut settings.ring, "Add Outline");
+            let left = (check.rect.right() + HINT_GAP).round();
+            hint_on_baseline(
+                ui,
+                "(primary color)",
+                left,
+                caps + crate::tab_bar::CAP_HEIGHT,
+            );
         });
         ui.horizontal(|ui| {
             widgets::checkbox(ui, &mut settings.reduce, "Reduce Colors");
@@ -568,8 +640,7 @@ impl GroomPanel {
     fn swatches(&mut self, ui: &mut Ui, groomed: &Groomed) {
         ui.horizontal(|ui| {
             ui.add_space(5.0);
-            ui.label("Colors");
-            hint(ui, "(click to pick)");
+            label_with_hint(ui, "Colors", "(click to pick)");
         });
         let shown = groomed.colors.len().min(MAX_SWATCHES);
         let pitch = SWATCH + SWATCH_GAP;
@@ -614,10 +685,9 @@ impl GroomPanel {
         // Los que no se muestran, dentro de la caja, abajo.
         if more {
             let rect = Rect::from_min_max(pos2(inner.left(), inner.bottom() - text_row), inner.max);
-            let mut text = child(ui, rect, egui::Layout::left_to_right(egui::Align::Center));
-            text.spacing_mut().item_spacing.x = 3.0;
-            text.label(format!("+{} more", groomed.colors.len() - shown));
-            hint(&mut text, "(Reduce Colors first)");
+            let mut text = child(ui, rect, egui::Layout::left_to_right(egui::Align::Min));
+            let more = format!("+{} more", groomed.colors.len() - shown);
+            label_with_hint(&mut text, &more, "(Reduce Colors first)");
         }
         ui.add_space(3.0);
         ui.allocate_ui_with_layout(
@@ -854,14 +924,29 @@ fn merge_order(mut group: Vec<Rgba>, groomed: &Groomed) -> Vec<Rgba> {
     group
 }
 
-/// `groomed` con los colores de cada grupo de `merges` cambiados por el primero del grupo.
+/// `groomed` con los colores de cada grupo de `merges` cambiados por el primero del grupo, en
+/// orden: un grupo puede juntar un color en el que ya se juntaron otros (A en B y luego B en
+/// C deja A en C).
 fn merged(groomed: &Groomed, merges: &Merges) -> Groomed {
     let mut image = groomed.image.clone();
-    if !merges.is_empty() {
-        let target: std::collections::HashMap<Rgba, Rgba> = merges
-            .iter()
-            .flat_map(|group| group.iter().skip(1).map(move |&c| (c, group[0])))
-            .collect();
+    let mut target: std::collections::HashMap<Rgba, Rgba> = std::collections::HashMap::new();
+    for group in merges {
+        let Some((&to, rest)) = group.split_first() else {
+            continue;
+        };
+        // Lo que ya iba a un color de este grupo, ahora va al primero.
+        for value in target.values_mut() {
+            if rest.contains(value) {
+                *value = to;
+            }
+        }
+        for &c in rest {
+            if c != to {
+                target.entry(c).or_insert(to);
+            }
+        }
+    }
+    if !target.is_empty() {
         for p in image.pixels.iter_mut() {
             if let Some(&to) = target.get(p) {
                 *p = to;
@@ -1065,6 +1150,28 @@ mod tests {
             groomed,
             "the steps are kept"
         );
+    }
+
+    #[test]
+    fn a_merge_can_take_a_color_that_others_were_merged_into() {
+        let (a, b, c) = (
+            Rgba::rgb(10, 0, 0),
+            Rgba::rgb(20, 0, 0),
+            Rgba::rgb(30, 0, 0),
+        );
+        let image = Bitmap {
+            width: 6,
+            height: 1,
+            pixels: vec![a, b, b, c, c, c],
+        };
+        let groomed = Groomed {
+            name: "x".into(),
+            colors: color_counts(&image),
+            image,
+        };
+        // A en B y luego (con los colores de ahora) B en C: todo queda en C.
+        let merges = vec![vec![b, a], vec![c, b]];
+        assert_eq!(merged(&groomed, &merges).colors, vec![(c, 6)]);
     }
 
     #[test]
