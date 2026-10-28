@@ -81,7 +81,21 @@ fn best_period(profile: &[f32]) -> Option<(f32, f32)> {
     if mean <= 0.0 {
         return None;
     }
-    let centered: Vec<f32> = profile.iter().map(|v| v - mean).collect();
+    // Sin la tendencia (el promedio de alrededor, no el de todo): con el personaje al centro y
+    // fondo liso a los lados, los bordes se juntan en medio y esa "panza" se correlaciona consigo
+    // misma hasta muy lejos, tapando la repetición de las celdas.
+    let reach = (len / 12).max(16);
+    let mut sums = vec![0.0f64; len + 1];
+    for (i, &v) in profile.iter().enumerate() {
+        sums[i + 1] = sums[i] + v as f64;
+    }
+    let centered: Vec<f32> = (0..len)
+        .map(|i| {
+            let (from, to) = (i.saturating_sub(reach), (i + reach + 1).min(len));
+            let local = (sums[to] - sums[from]) / (to - from) as f64;
+            profile[i] - local as f32
+        })
+        .collect();
     let energy: f32 = centered.iter().map(|v| v * v).sum();
     let ac = |lag: usize| -> f32 {
         centered[..len - lag]
@@ -524,6 +538,56 @@ mod tests {
         for (i, (a, b)) in small.iter().zip(&original).enumerate() {
             assert!(distance(*a, *b) <= 24, "pixel {i}: {a:?} vs {b:?}");
         }
+    }
+
+    #[test]
+    fn the_edges_bunched_in_the_middle_do_not_hide_the_period() {
+        // El perfil de una imagen de IA ancha: un borde cada 6 px, pero solo donde está el
+        // personaje (el 40 % del centro); en el fondo, ruido chiquito.
+        let len = 1536usize;
+        let mut seed = 3u32;
+        let profile: Vec<f32> = (0..len)
+            .map(|i| {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                let noise = ((seed >> 16) % 100) as f32;
+                let inside = (len * 3 / 10..len * 7 / 10).contains(&i);
+                let edge = match i % 6 {
+                    0 => 1.0,
+                    1 | 5 => 0.5,
+                    _ => 0.15,
+                };
+                if inside {
+                    15000.0 * edge + noise * 30.0
+                } else {
+                    600.0 + noise
+                }
+            })
+            .collect();
+        let (period, _) = best_period(&profile).expect("a grid");
+        assert!((period - 6.0).abs() <= 0.26, "{period}");
+    }
+
+    #[test]
+    fn a_sprite_in_the_middle_of_a_wide_plain_background_keeps_square_cells() {
+        // Como una imagen de IA: el personaje al centro y mucho fondo liso a los lados. Los
+        // bordes se juntan en medio y el perfil tiene una "panza" que no es la cuadrícula.
+        let (original, w, h) = detailed();
+        let (big, bw, bh) = upscale(&original, w, h, 6.0);
+        let (cw, ch) = (bw * 5, bh + 12);
+        let (left, top) = (bw * 2, 6);
+        let canvas: Vec<Rgba> = (0..ch)
+            .flat_map(|y| (0..cw).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                if (left..left + bw).contains(&x) && (top..top + bh).contains(&y) {
+                    big[((y - top) * bw + x - left) as usize]
+                } else {
+                    Rgba::rgb(250, 250, 250)
+                }
+            })
+            .collect();
+        let grid = detect_grid(&canvas, cw, ch);
+        assert!((grid.cell.0 - 6.0).abs() <= 0.26, "{grid:?}");
+        assert!((grid.cell.1 - 6.0).abs() <= 0.26, "{grid:?}");
     }
 
     #[test]
