@@ -987,6 +987,7 @@ version = "0.1.0"
 dependencies = [
  "cs-commands",
  "cs-core",
+ "cs-raster",
  "cs-render",
  "flate2",
  "gif",
