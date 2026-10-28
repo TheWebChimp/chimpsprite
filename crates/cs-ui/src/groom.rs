@@ -187,6 +187,7 @@ impl GroomPanel {
     }
 
     /// Desarrollo (capturas): elige los `n` colores más usados.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn pick_most_used(&mut self, primary: Rgba, n: usize) {
         if let Some(groomed) = self.groomed(primary) {
             self.picked = groomed.colors.iter().take(n).map(|(c, _)| *c).collect();
