@@ -420,12 +420,13 @@ impl ChimpApp {
         let primary = self.doc.editor.resolve(self.doc.editor.primary);
         let mut action = None;
         let groom = &mut self.groom;
+        let width = groom.width();
         dock::flyout(
             ctx,
             dock::DockPanel::Groom,
             anchor,
             self.pixel.skin(),
-            groom::WIDTH,
+            width,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| action = groom.ui(ui, primary));
             },

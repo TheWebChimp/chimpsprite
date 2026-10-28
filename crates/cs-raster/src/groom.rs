@@ -254,7 +254,8 @@ fn dominant(colors: impl Iterator<Item = Rgba>) -> Rgba {
             *sum += v as u32;
         }
     }
-    let Some((n, sums)) = groups.into_values().max_by_key(|(n, _)| *n) else {
+    // Con empate, el de la llave mayor (el orden del HashMap cambia en cada corrida).
+    let Some((_, (n, sums))) = groups.into_iter().max_by_key(|(key, (n, _))| (*n, *key)) else {
         return Rgba::TRANSPARENT;
     };
     let avg = |i: usize| (sums[i] / n) as u8;
@@ -383,11 +384,75 @@ pub fn reduce_colors(pixels: &[Rgba], n: usize) -> (Vec<Rgba>, Vec<Rgba>) {
     (out, palette)
 }
 
+/// Cuántos colores (los más usados) se miran para sugerir grupos.
+const SUGGEST_LIMIT: usize = 256;
+
+/// Grupos de colores parecidos para juntar. `colors` va del más usado al menos: cada color que
+/// todavía no está en un grupo junta a los que quedan a menos de `tolerance` (la suma de las
+/// diferencias de los canales) y queda primero. Solo los grupos de dos o más, en ese orden.
+pub fn suggest_merges(colors: &[(Rgba, usize)], tolerance: u32) -> Vec<Vec<Rgba>> {
+    let colors = &colors[..colors.len().min(SUGGEST_LIMIT)];
+    let mut taken = vec![false; colors.len()];
+    let mut groups = Vec::new();
+    for i in 0..colors.len() {
+        if taken[i] {
+            continue;
+        }
+        taken[i] = true;
+        let anchor = colors[i].0;
+        let mut group = vec![anchor];
+        for j in i + 1..colors.len() {
+            if !taken[j] && distance(anchor, colors[j].0) <= tolerance {
+                taken[j] = true;
+                group.push(colors[j].0);
+            }
+        }
+        if group.len() > 1 {
+            groups.push(group);
+        }
+    }
+    groups
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const T: Rgba = Rgba::TRANSPARENT;
+
+    #[test]
+    fn a_tie_always_gives_the_same_color() {
+        let colors = [
+            Rgba::rgb(200, 0, 0),
+            Rgba::rgb(0, 0, 200),
+            Rgba::rgb(0, 200, 0),
+        ];
+        let first = dominant(colors.into_iter());
+        for _ in 0..50 {
+            assert_eq!(dominant(colors.into_iter()), first);
+        }
+    }
+
+    #[test]
+    fn similar_colors_are_grouped_around_the_most_used() {
+        let red = Rgba::rgb(200, 30, 30);
+        let near_red = Rgba::rgb(205, 35, 30);
+        let blue = Rgba::rgb(30, 30, 200);
+        let near_blue = Rgba::rgb(30, 40, 190);
+        let green = Rgba::rgb(30, 200, 30);
+        let colors = [
+            (blue, 50),
+            (red, 40),
+            (near_blue, 9),
+            (green, 5),
+            (near_red, 3),
+        ];
+        assert_eq!(
+            suggest_merges(&colors, 24),
+            vec![vec![blue, near_blue], vec![red, near_red]]
+        );
+        assert!(suggest_merges(&colors, 5).is_empty(), "too strict");
+    }
 
     /// Un sprite de 6×5 con fondo blanco, un cuerpo rojo y un ojo negro.
     fn sprite() -> (Vec<Rgba>, u32, u32) {
