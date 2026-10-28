@@ -235,6 +235,8 @@ fn execute_undo_redo_bump_revision() {
 #[test]
 fn the_other_button_cancels_the_stroke() {
     let mut e = editor();
+    // Una herramienta que pinta con los dos botones (con el lápiz, el derecho es cuentagotas).
+    e.set_tool(ToolKind::Line);
     let at = |p: Point| (p.0 as f32 + 0.5, p.1 as f32 + 0.5);
     for secondary in [false, true] {
         e.pointer_press(at((1, 1)), secondary, false, 0.1);
@@ -286,6 +288,8 @@ fn stroke_paints_the_edge_of_the_selection_with_the_primary_color() {
 #[test]
 fn secondary_button_paints_secondary_color() {
     let mut e = editor();
+    // Con el lápiz el derecho es el cuentagotas; con las demás, pinta el secundario.
+    e.set_tool(ToolKind::Line);
     click(&mut e, (1, 1), true, false);
     assert_eq!(e.sprite().pixel(LayerId(1), 0, 1, 1), e.secondary);
 }
@@ -786,6 +790,7 @@ fn painting_with_the_mask_color_erases() {
     assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 2), red);
     e.secondary = e.mask_value();
     assert!(e.is_mask(e.secondary) && !e.is_mask(e.primary));
+    e.set_tool(ToolKind::Line);
     click(&mut e, (2, 2), true, false);
     assert_eq!(e.sprite().pixel(LayerId(1), 0, 2, 2), e.mask_value());
 
@@ -1140,4 +1145,24 @@ fn in_tiled_mode_painting_on_a_copy_paints_the_sprite() {
     e.tiled = TiledMode::Both;
     click(&mut e, (-1, -1), false, false);
     assert_eq!(e.sprite().pixel(e.layer, 0, 7, 7), red);
+}
+
+#[test]
+fn the_right_button_of_the_pencil_picks_the_color_under_it() {
+    let mut e = editor();
+    let green = PixelValue::Rgba(Rgba::rgb(0, 255, 0));
+    e.execute(Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: vec![(3, 3, green)],
+    });
+    e.set_tool(ToolKind::Pencil);
+    let secondary = e.secondary;
+    click(&mut e, (3, 3), true, false);
+    assert_eq!(e.primary, green, "the primary is the color under it");
+    assert_eq!(e.secondary, secondary, "the secondary stays");
+    assert_eq!(e.tool, ToolKind::Pencil, "still the pencil");
+    // Y se sigue pintando con él.
+    click(&mut e, (5, 5), false, false);
+    assert_eq!(e.sprite().pixel(LayerId(1), 0, 5, 5), green);
 }

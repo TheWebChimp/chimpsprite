@@ -24,6 +24,30 @@ fn main() {
     let grid = cs_raster::detect_grid(&bitmap.pixels, bitmap.width, bitmap.height);
     let (small, w, h) = cs_raster::sample_grid(&bitmap.pixels, bitmap.width, bitmap.height, grid);
     println!("grid {grid:?} → {w}×{h}");
+    // El proceso completo, a tamaño real y recortado a lo pintado: `<salida>_1x.png`.
+    let clean = cs_raster::remove_background(&small, w, h, 32);
+    let clean = cs_raster::clean_outline(&clean, w, h, None);
+    let painted = |i: usize| clean[i].a > 0;
+    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
+    for i in (0..clean.len()).filter(|&i| painted(i)) {
+        let (x, y) = (i as u32 % w, i as u32 / w);
+        (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x), y1.max(y));
+    }
+    if x0 <= x1 {
+        let (tw, th) = (x1 - x0 + 1, y1 - y0 + 1);
+        let pixels = (y0..=y1)
+            .flat_map(|y| (x0..=x1).map(move |x| (x, y)))
+            .map(|(x, y)| clean[(y * w + x) as usize])
+            .collect();
+        let trimmed = Bitmap {
+            width: tw,
+            height: th,
+            pixels,
+        };
+        let one = args[2].replace(".png", "_1x.png");
+        std::fs::write(&one, trimmed.to_png().expect("png")).expect("write");
+        println!("clean {tw}×{th} → {one}");
+    }
     let scale = 8;
     let mut big = Bitmap::new(w * scale, h * scale);
     for y in 0..h * scale {

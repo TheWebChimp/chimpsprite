@@ -417,6 +417,7 @@ pub const FIXED: &[(&str, &str, &str)] = &[
     ("Canvas", "Cancel", "Esc"),
     ("Canvas", "Brush Size", "Ctrl+Wheel"),
     ("Canvas", "Pick Color", "Alt+Click"),
+    ("Canvas", "Pick Color (Pencil)", "Right Click"),
     ("Canvas", "Pan", "Space+Drag"),
 ];
 

@@ -590,7 +590,9 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
     {
         hints.push("Shift: constrain");
     }
-    if tool.paints() {
+    if tool == ToolKind::Pencil && editor.options.ink != Ink::Shading {
+        hints.push("Right-click: pick color");
+    } else if tool.paints() {
         hints.push("Alt+click: pick color");
     }
     show_hints(ui, look, &mut groups, &hints);

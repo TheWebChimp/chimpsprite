@@ -304,9 +304,14 @@ impl Editor {
     pub fn pointer_press(&mut self, world: (f32, f32), secondary: bool, alt: bool, slop: f32) {
         self.stop();
         self.tile_limit = false;
-        self.painting_secondary = secondary;
+        // Con el lápiz, el clic derecho es el cuentagotas: el color de debajo pasa a ser el
+        // primario (para seguir pintando con él). Con Shading no: ahí el derecho retrocede en la
+        // rampa.
+        let pencil_pick =
+            secondary && self.tool == ToolKind::Pencil && self.options.ink != Ink::Shading;
+        self.painting_secondary = secondary && !pencil_pick;
         // Alt es cuentagotas temporal solo en las herramientas que pintan.
-        self.temp_eyedropper = alt && self.tool.paints();
+        self.temp_eyedropper = (alt && self.tool.paints()) || pencil_pick;
         let shift = self.options.constrain;
         // Arrastrar lo seleccionado (o cualquier punto con Move) lo levanta y lo deja flotando.
         // Solo con el botón principal: con el derecho, Move no hace nada y las herramientas de
