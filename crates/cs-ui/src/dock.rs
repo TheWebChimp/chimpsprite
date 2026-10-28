@@ -31,8 +31,16 @@ const FLYOUT_WIDTH: f32 = 210.0;
 /// Marco de los paneles flotantes: la pieza `panel` del skin y su aire adentro.
 const FLYOUT_PIECE: &str = "menu.panel";
 pub const FLYOUT_MARGIN: i8 = 8;
-/// Entre el botón y su panel flotante.
-const FLYOUT_GAP: f32 = 3.0;
+/// Entre el botón y su panel flotante (la pestaña los une).
+const FLYOUT_GAP: f32 = 4.0;
+
+/// Dónde va un panel flotante: junto a su botón y dentro de la columna del dock (de la altura de
+/// las reglas del lienzo al botón del timeline).
+#[derive(Clone, Copy, Debug)]
+pub struct Anchor {
+    pub button: Rect,
+    pub column: Rect,
+}
 
 /// Los paneles del dock.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -104,8 +112,8 @@ impl DockPanel {
 pub struct DockOutput {
     /// Abrir el diálogo Canvas Size (desde Artboards).
     pub canvas_size: bool,
-    /// El panel abierto es de la app (Lospec, Dafont): cuál y su botón, para [`flyout`].
-    pub app_panel: Option<(DockPanel, Rect)>,
+    /// El panel abierto es de la app (Lospec, Dafont): cuál y dónde, para [`flyout`].
+    pub app_panel: Option<(DockPanel, Anchor)>,
 }
 
 /// Un botón del dock con Pixel UI: la pieza `button` según el estado (prendido, `on`, con el
@@ -172,8 +180,11 @@ pub fn show(
     let open = open_panel(ui.ctx());
     let mut anchors = Vec::new();
     ui.spacing_mut().item_spacing.y = BUTTON_GAP;
+    let mut column = ui.max_rect();
     if skin.is_some() {
         ui.add_space(TOP_AIR);
+        column.min.y += TOP_AIR;
+        column.max.y -= BOTTOM_AIR;
     }
     for panel in DockPanel::ALL {
         let is_open = open == Some(panel);
@@ -204,11 +215,12 @@ pub fn show(
     let Some(panel) = open_panel(ui.ctx()) else {
         return out;
     };
-    let anchor = anchors
+    let button = anchors
         .iter()
         .find(|(p, _)| *p == panel)
         .map(|(_, r)| *r)
         .unwrap_or(Rect::NOTHING);
+    let anchor = Anchor { button, column };
     let enabled = ui.is_enabled();
     match panel {
         DockPanel::Artboards | DockPanel::Slices => {
@@ -232,18 +244,27 @@ pub fn show(
     out
 }
 
-/// El panel flotante de `panel` a la izquierda de `anchor` (su botón), arriba alineado con él, de
-/// `width` de contenido; con Pixel UI, en la caja del skin.
+/// El panel flotante de `panel` a la izquierda de su botón, de `width` de contenido. Arriba va
+/// alineado con el botón; si no cabe hacia abajo, sube hasta donde haga falta (no más arriba de
+/// la columna del dock) y lo que no quepa en la columna se ve con scroll. Con Pixel UI, en la caja
+/// del skin, con el botón hecho pestaña de la caja.
 pub fn flyout(
     ctx: &egui::Context,
     panel: DockPanel,
-    anchor: Rect,
+    anchor: Anchor,
     skin: Option<&Skin>,
     width: f32,
     add_contents: impl FnOnce(&mut Ui),
 ) {
-    let pos = anchor.left_top() - vec2(FLYOUT_GAP, 0.0);
-    egui::Area::new(egui::Id::new(("dock_flyout", panel.label())))
+    let id = egui::Id::new(("dock_flyout", panel.label()));
+    let Anchor { button, column } = anchor;
+    // El alto de la vez pasada, para saber si cabe.
+    let height = ctx.data(|d| d.get_temp::<f32>(id)).unwrap_or(0.0);
+    let top = flyout_top(button.top(), height, column);
+    let pos = egui::pos2(button.left() - FLYOUT_GAP, top);
+    // Lo que cabe en la columna, sin el marco (el de egui mide más o menos lo mismo).
+    let max_height = (column.height() - 2.0 * FLYOUT_MARGIN as f32).max(BUTTON_SIZE.y);
+    egui::Area::new(id)
         .order(egui::Order::Foreground)
         .fixed_pos(pos)
         .pivot(egui::Align2::RIGHT_TOP)
@@ -255,18 +276,89 @@ pub fn flyout(
             // Lugar para la caja, detrás del contenido (se llena al final, cuando se sabe su tamaño).
             let background = ui.painter().add(Shape::Noop);
             let response = frame.show(ui, |ui| {
-                ui.set_width(width);
-                add_contents(ui);
+                let area = egui::ScrollArea::vertical()
+                    .id_salt(id.with("scroll"))
+                    .max_height(max_height);
+                pixel_ui::scroll(ui, area, |ui| {
+                    ui.set_width(width);
+                    add_contents(ui);
+                });
             });
-            // Con Pixel UI, la caja del panel detrás del contenido.
-            if let Some(piece) = skin.and_then(|s| s.piece(FLYOUT_PIECE, WidgetState::Normal)) {
+            let rect = response.response.rect;
+            ui.ctx().data_mut(|d| d.insert_temp(id, rect.height()));
+            // Con Pixel UI, la caja del panel detrás del contenido y el botón hecho pestaña.
+            if let (Some(skin), Some(piece)) = (
+                skin,
+                skin.and_then(|s| s.piece(FLYOUT_PIECE, WidgetState::Normal)),
+            ) {
                 let ppp = ui.ctx().pixels_per_point();
-                let rect = Rect::from_min_size(
-                    response.response.rect.min.round(),
-                    response.response.rect.size().round(),
-                );
-                let shapes = pixel_ui::piece_shapes(piece, rect, ppp);
+                let rect = Rect::from_min_size(rect.min.round(), rect.size().round());
+                let mut shapes = pixel_ui::piece_shapes(piece, rect, ppp);
+                shapes.extend(tab_shapes(skin, piece, panel, rect, button, ppp));
                 ui.painter().set(background, Shape::Vec(shapes));
             }
         });
+}
+
+/// Dónde empieza un panel de `height` cuyo botón está en `button_top`: a su altura si cabe en
+/// `column`; si no, más arriba, hasta el borde de arriba de la columna.
+fn flyout_top(button_top: f32, height: f32, column: Rect) -> f32 {
+    let room = column.bottom() - height;
+    button_top.min(room).max(column.top()).round()
+}
+
+/// El botón del panel abierto como pestaña de su caja (`panel_rect`): la caja del skin desde el
+/// borde del panel hasta el del botón, sin la línea que los separa, y el ícono encima. Solo se
+/// pinta: el clic sigue llegando al botón de abajo (que cierra el panel).
+fn tab_shapes(
+    skin: &Skin,
+    piece: &crate::skin::Piece,
+    panel: DockPanel,
+    panel_rect: Rect,
+    button: Rect,
+    ppp: f32,
+) -> Vec<Shape> {
+    let Some(center) = piece.center else {
+        return Vec::new();
+    };
+    let tab = Rect::from_min_max(
+        egui::pos2(panel_rect.right() - 1.0, button.top()).round(),
+        egui::pos2(button.right(), button.bottom()).round(),
+    );
+    let mut shapes = pixel_ui::piece_shapes(piece, tab, ppp);
+    // Los bordes de la caja (lo que queda fuera del centro del 9-slice).
+    let left = center.x as f32;
+    let right = (piece.size[0] - center.x - center.w) as f32;
+    let top = center.y as f32;
+    let bottom = (piece.size[1] - center.y - center.h) as f32;
+    let fill = piece.pixel(center.x, center.y);
+    // Sin la línea entre la caja y la pestaña: el relleno de una a la otra.
+    let seam = Rect::from_min_max(
+        egui::pos2(panel_rect.right() - right, tab.top() + top),
+        egui::pos2(tab.left() + left, tab.bottom() - bottom),
+    );
+    shapes.push(Shape::rect_filled(seam, 0.0, fill));
+    shapes.extend(pixel_draw::piece_centered(skin, panel.icon(), button, ppp));
+    shapes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tall_panel_moves_up_but_not_above_the_column() {
+        let column = Rect::from_min_max(egui::pos2(0.0, 100.0), egui::pos2(30.0, 700.0));
+        assert_eq!(
+            flyout_top(300.0, 200.0, column),
+            300.0,
+            "fits below its button"
+        );
+        assert_eq!(flyout_top(300.0, 500.0, column), 200.0, "moves up to fit");
+        assert_eq!(
+            flyout_top(300.0, 900.0, column),
+            100.0,
+            "the column's top at most"
+        );
+    }
 }

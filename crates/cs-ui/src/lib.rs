@@ -416,7 +416,7 @@ impl ChimpApp {
     }
 
     /// El panel Groom del dock y lo que pide.
-    fn groom_panel(&mut self, ctx: &egui::Context, anchor: egui::Rect, modal: bool) {
+    fn groom_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
         let primary = self.doc.editor.resolve(self.doc.editor.primary);
         let mut action = None;
         let groom = &mut self.groom;
@@ -479,7 +479,7 @@ impl ChimpApp {
     /// El panel Dafont del dock, junto a su botón (`anchor`). La fuente elegida queda en la
     /// herramienta de texto, a su tamaño y nítida.
     #[cfg(not(target_arch = "wasm32"))]
-    fn dafont_panel(&mut self, ctx: &egui::Context, anchor: egui::Rect, modal: bool) {
+    fn dafont_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
         let mut picked = None;
         let dafont = &mut self.dafont;
         dock::flyout(

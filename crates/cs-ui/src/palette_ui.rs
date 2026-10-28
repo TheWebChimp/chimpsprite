@@ -317,7 +317,12 @@ impl ChimpApp {
 
     /// El panel Lospec del dock, flotando junto a su botón (`anchor`): lo mismo que la pestaña
     /// Lospec de Palette Presets. Su estado vive mientras está abierto (ver `close_lospec_panel`).
-    pub(crate) fn lospec_panel(&mut self, ctx: &egui::Context, anchor: egui::Rect, modal: bool) {
+    pub(crate) fn lospec_panel(
+        &mut self,
+        ctx: &egui::Context,
+        anchor: crate::dock::Anchor,
+        modal: bool,
+    ) {
         let mut window = match self.lospec_dock.take() {
             Some(window) => window,
             None => {
@@ -353,8 +358,8 @@ impl ChimpApp {
             |ui| {
                 lospec_band(ui, skin);
                 ui.add_enabled_ui(!modal, |ui| {
-                    // La lista hasta abajo de la pantalla.
-                    let bottom = ctx.content_rect().bottom() - LOSPEC_BELOW;
+                    // La lista hasta abajo de la columna del dock.
+                    let bottom = anchor.column.bottom() - crate::dock::FLYOUT_MARGIN as f32;
                     action =
                         lospec_ui(ui, &mut window, |name| library.has_user(name), Some(bottom));
                 });
@@ -653,10 +658,8 @@ fn confirm_window(
 /// El tamaño del contenido de la ventana de presets.
 const PRESETS_SIZE: egui::Vec2 = egui::vec2(420.0, 440.0);
 
-/// El panel Lospec del dock: el ancho de su contenido y lo que queda debajo de la lista (el borde
-/// del panel y la barra de estado).
+/// El panel Lospec del dock: el ancho de su contenido.
 const LOSPEC_PANEL_W: f32 = 364.0;
-const LOSPEC_BELOW: f32 = 40.0;
 /// La franja de arriba del panel (frame 8): el logo de Lospec y las franjas de colores (de 25 px,
 /// contra la luz de la derecha), de 29 de alto, debajo de la luz de arriba.
 const BAND_H: f32 = 29.0;
