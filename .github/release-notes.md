@@ -6,7 +6,7 @@ Try it in the browser without installing: https://thewebchimp.github.io/chimpspr
 
 | System | File |
 | --- | --- |
-| Windows 10/11 (64-bit) | `ChimpSprite_*_x64-setup.exe` |
+| Windows 10/11 (64-bit) | `chimpsprite_*_x64-setup.exe` |
 | macOS, Apple Silicon (M1 and newer) | `ChimpSprite_*_aarch64.dmg` |
 | macOS, Intel | `ChimpSprite_*_x64.dmg` |
 | Linux (Debian/Ubuntu) | `chimpsprite_*_amd64.deb` |
