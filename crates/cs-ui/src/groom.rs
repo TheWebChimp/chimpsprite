@@ -488,9 +488,8 @@ impl GroomPanel {
                 settings.grid = cs_raster::detect_grid(&source.pixels, width, height);
             }
             to_offset(ui);
-            widgets::checkbox(ui, &mut settings.follow_edges, "Follow Edges").on_hover_text(
-                "Let each cell snap to the real edges (for pixels of uneven sizes)",
-            );
+            widgets::checkbox(ui, &mut settings.follow_edges, "Follow Edges")
+                .on_hover_text("Let each cell snap to the real edges (for pixels of uneven sizes)");
         });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
