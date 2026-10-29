@@ -13,7 +13,8 @@ impl Pencil {
         Self::default()
     }
 
-    fn output(&self, ctx: &ToolContext, color: PixelValue) -> ToolOutput {
+    /// El trazo con `color`; `image`: con los colores del pincel personalizado, si los lleva.
+    fn output(&self, ctx: &ToolContext, color: PixelValue, image: bool) -> ToolOutput {
         if self.path.is_empty() {
             return ToolOutput::default();
         }
@@ -22,7 +23,10 @@ impl Pencil {
         } else {
             self.path.clone()
         };
-        ToolOutput::command(ctx.draw(stamp(&path, ctx.brush_size), color))
+        if image {
+            return ToolOutput::command(ctx.stamp_draw(&path, color));
+        }
+        ToolOutput::command(ctx.draw(stamp(&path, ctx.brush_size, ctx.brush_shape), color))
     }
 }
 
@@ -41,13 +45,13 @@ impl Tool for Pencil {
     }
 
     fn release(&mut self, ctx: &ToolContext) -> ToolOutput {
-        let out = self.output(ctx, ctx.color);
+        let out = self.output(ctx, ctx.color, true);
         self.path.clear();
         out
     }
 
     fn preview(&self, ctx: &ToolContext) -> ToolOutput {
-        self.output(ctx, ctx.color)
+        self.output(ctx, ctx.color, true)
     }
 
     fn is_active(&self) -> bool {
@@ -83,7 +87,8 @@ impl Tool for Eraser {
     }
 
     fn preview(&self, ctx: &ToolContext) -> ToolOutput {
-        self.pencil.output(ctx, ctx.sprite.color_mode.transparent())
+        self.pencil
+            .output(ctx, ctx.sprite.color_mode.transparent(), false)
     }
 
     fn is_active(&self) -> bool {
@@ -138,5 +143,27 @@ mod tests {
     fn release_without_press_is_empty() {
         let s = sprite();
         assert_eq!(Pencil::new().release(&ctx(&s)), ToolOutput::default());
+    }
+
+    #[test]
+    fn a_round_brush_of_5_skips_the_square_corners() {
+        use crate::BrushShape;
+        let s = sprite();
+        let mut c = ctx(&s);
+        c.brush_size = 5;
+        c.brush_shape = BrushShape::Round;
+        let mut p = Pencil::new();
+        p.press(&c, (3, 3));
+        let round = coords(&p.release(&c));
+        assert_eq!(round.len(), 21);
+        assert!(
+            !round.contains(&(1, 1)) && !round.contains(&(5, 5)),
+            "{round:?}"
+        );
+        c.brush_shape = BrushShape::Square;
+        p.press(&c, (3, 3));
+        let square = coords(&p.release(&c));
+        assert_eq!(square.len(), 25);
+        assert!(square.contains(&(1, 1)) && square.contains(&(5, 5)));
     }
 }

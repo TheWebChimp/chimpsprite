@@ -4,8 +4,9 @@ use cs_commands::ops::MAX_TILE_SIDE;
 use eframe::egui;
 
 use crate::editor::Editor;
+use crate::skin::Skin;
 use crate::tile_ops::TilesetChoice;
-use crate::widgets;
+use crate::{pixel_ui, widgets};
 
 /// Lo que el usuario decidió en este frame.
 pub enum DialogResult {
@@ -37,16 +38,35 @@ fn finish(ctx: &egui::Context, open: bool, result: DialogResult) -> DialogResult
     }
 }
 
-fn buttons(ui: &mut egui::Ui, result: &mut DialogResult) {
-    ui.separator();
-    ui.horizontal(|ui| {
-        if ui.button("OK").clicked() {
-            *result = DialogResult::Accept;
-        }
-        if ui.button("Cancel").clicked() {
-            *result = DialogResult::Cancel;
-        }
-    });
+/// La ventana de un diálogo de tilemaps (la de la app: con `skin`, la de Pixel UI) con lo que
+/// agregue `add_contents` y, abajo, OK y Cancel. Cerrar con la × es Cancel. Devuelve lo elegido
+/// con los botones y si sigue abierta.
+fn dialog_window(
+    ctx: &egui::Context,
+    skin: Option<&Skin>,
+    id: &str,
+    title: &str,
+    add_contents: impl FnOnce(&mut egui::Ui),
+) -> (DialogResult, bool) {
+    let mut result = DialogResult::Open;
+    let (_, closed) = pixel_ui::app_window(
+        ctx,
+        skin,
+        id,
+        title,
+        true,
+        (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+        |ui| {
+            add_contents(ui);
+            ui.add_space(6.0);
+            match pixel_ui::dialog_buttons(ui, skin, &["OK", "Cancel"]) {
+                Some(0) => result = DialogResult::Accept,
+                Some(_) => result = DialogResult::Cancel,
+                None => {}
+            }
+        },
+    );
+    (result, !closed)
 }
 
 fn tileset_label(t: &(u32, String, (u32, u32))) -> String {
@@ -92,34 +112,35 @@ impl NewTilemapDialog {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> DialogResult {
-        let mut result = DialogResult::Open;
-        let mut open = true;
-        egui::Window::new("New Tilemap Layer")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
+    /// Con `skin` (Pixel UI), en el diálogo pixel del skin.
+    pub fn show(&mut self, ctx: &egui::Context, skin: Option<&Skin>) -> DialogResult {
+        let (result, open) =
+            dialog_window(ctx, skin, "new_tilemap_layer", "New Tilemap Layer", |ui| {
                 let selected = self
                     .existing
                     .and_then(|i| self.tilesets.iter().find(|t| t.0 == i))
                     .map_or_else(|| "New tileset".to_string(), tileset_label);
-                egui::ComboBox::from_label("Tileset")
-                    .selected_text(selected)
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut self.existing, None, "New tileset");
+                ui.horizontal(|ui| {
+                    crate::widgets::combo(ui, "tileset", &selected, |ui| {
+                        crate::widgets::choice(ui, &mut self.existing, None, "New tileset");
                         for t in &self.tilesets {
-                            ui.selectable_value(&mut self.existing, Some(t.0), tileset_label(t));
+                            crate::widgets::choice(
+                                ui,
+                                &mut self.existing,
+                                Some(t.0),
+                                &tileset_label(t),
+                            );
                         }
                     });
+                    ui.label("Tileset");
+                });
                 if self.existing.is_none() {
                     egui::Grid::new("new_tileset")
                         .num_columns(2)
                         .spacing([8.0, 6.0])
                         .show(ui, |ui| {
                             ui.label("Name:");
-                            ui.text_edit_singleline(&mut self.name);
+                            crate::widgets::text_line(ui, &mut self.name);
                             ui.end_row();
                             ui.label("Tile width:");
                             widgets::number(ui, &mut self.tile_size.0, 1..=MAX_TILE_SIDE, " px");
@@ -132,7 +153,6 @@ impl NewTilemapDialog {
                             ui.end_row();
                         });
                 }
-                buttons(ui, &mut result);
             });
         finish(ctx, open, result)
     }
@@ -150,15 +170,14 @@ impl TileSizeDialog {
         }
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> DialogResult {
-        let mut result = DialogResult::Open;
-        let mut open = true;
-        egui::Window::new("Convert to Tilemap")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
+    /// Con `skin` (Pixel UI), en el diálogo pixel del skin.
+    pub fn show(&mut self, ctx: &egui::Context, skin: Option<&Skin>) -> DialogResult {
+        let (result, open) = dialog_window(
+            ctx,
+            skin,
+            "convert_to_tilemap",
+            "Convert to Tilemap",
+            |ui| {
                 egui::Grid::new("convert_tile_size")
                     .num_columns(2)
                     .spacing([8.0, 6.0])
@@ -173,8 +192,8 @@ impl TileSizeDialog {
                 ui.weak(
                     "Cuts the layer into cells of the canvas grid; identical cells share a tile.",
                 );
-                buttons(ui, &mut result);
-            });
+            },
+        );
         finish(ctx, open, result)
     }
 }

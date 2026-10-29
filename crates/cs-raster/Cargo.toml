@@ -6,3 +6,4 @@ license.workspace = true
 
 [dependencies]
 cs-core.workspace = true
+serde.workspace = true

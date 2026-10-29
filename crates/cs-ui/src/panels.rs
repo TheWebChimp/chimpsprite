@@ -3,400 +3,121 @@ use eframe::egui::{
 };
 use std::sync::Arc;
 
-use cs_core::{ArtboardId, Palette, PixelValue, SymmetryMode, Tile};
+use cs_core::{ArtboardId, Palette, PixelValue, SymmetryAxes, Tile};
 
 use crate::canvas::CanvasView;
+use crate::pixel_sections::{self, HeaderAction};
+use crate::pixel_ui::Tip as _;
 use cs_raster::RotationAlgorithm;
 use cs_tools::text::FontChoice;
-use cs_tools::{Dither, GradientShape};
+use cs_tools::{BrushShape, Dither, GradientShape};
 
-use crate::editor::{Editor, SelectionMode, ToolKind};
-use crate::{theme, tile_ops, widgets};
+use crate::bar_fields::{self, BarLook};
+use crate::editor::{Editor, Ink, MAX_BRUSH_SIZE, SelectionMode, ToolKind};
+use crate::skin::Skin;
+use crate::{color_panel, fg_bg, menus, pixel_ui, theme, tile_ops, tool_group, widgets};
 
-fn icon(kind: ToolKind) -> &'static str {
-    match kind {
-        ToolKind::RectSelect => "🔲",
-        ToolKind::EllipseSelect => "🔘",
-        ToolKind::Lasso => "➰",
-        ToolKind::PolygonLasso => "🔷",
-        ToolKind::MagicWand => "✨",
-        ToolKind::Move => "✋",
-        ToolKind::Pencil => "✏",
-        ToolKind::Spray => "💨",
-        ToolKind::Eraser => "🗑",
-        ToolKind::Eyedropper => "💧",
-        ToolKind::Bucket => "🍶",
-        ToolKind::Gradient => "🌈",
-        ToolKind::Line => "📏",
-        ToolKind::Rectangle => "⬜",
-        ToolKind::Ellipse => "⭕",
-        ToolKind::Jumble => "🎲",
-        ToolKind::Text => "🔤",
-        ToolKind::Slice => "✂",
-        ToolKind::Artboard => "🖼",
-    }
-}
+mod options_bar;
+pub use options_bar::*;
 
-/// Fila de un grupo: la herramienta actual del grupo y, si hay más, un desplegable (también con
-/// clic derecho) con las demás, como en Aseprite.
-fn tool_group(ui: &mut egui::Ui, editor: &mut Editor, index: usize, group: &[ToolKind]) {
-    let memory = ui.id().with(("tool_group", index));
-    if group.contains(&editor.tool) {
-        ui.data_mut(|d| d.insert_temp(memory, editor.tool));
-    }
-    let shown = ui
-        .data(|d| d.get_temp::<ToolKind>(memory))
-        .unwrap_or(group[0]);
-    let mut pick = None;
+mod inspectors;
+pub use inspectors::*;
+
+/// Fila de un grupo en la barra con nombres: el botón con la herramienta que muestra el grupo y,
+/// si hay más, un desplegable con las demás (también con clic derecho o manteniendo presionado),
+/// como en Aseprite. Devuelve la respuesta del botón.
+fn tool_group(ui: &mut egui::Ui, editor: &mut Editor, index: usize) -> egui::Response {
+    let group = ToolKind::GROUPS[index];
+    let more = group.len() > 1;
     ui.horizontal(|ui| {
-        let more = group.len() > 1;
         ui.spacing_mut().item_spacing.x = 2.0;
         let width = ui.available_width() - if more { 22.0 } else { 0.0 };
-        let label = format!("{} {}", icon(shown), shown.label());
-        let button = egui::Button::selectable(editor.tool == shown, label)
-            .shortcut_text("")
-            .truncate();
-        let response = ui.add_sized([width, 24.0], button).on_hover_text(format!(
-            "{} ({})",
-            shown.label(),
-            shown.shortcut()
-        ));
-        if response.clicked() {
-            pick = Some(shown);
-        }
+        let response = tool_group::group_button(ui, editor, None, index, |ui, shown, state| {
+            let label = format!("{} {}", tool_group::emoji(shown), shown.label());
+            let button = egui::Button::selectable(state.selected, label)
+                .shortcut_text("")
+                .truncate();
+            ui.add_sized([width, 24.0], button)
+        });
         if more {
             let current = editor.tool;
-            response.context_menu(|ui| group_menu(ui, current, group, &mut pick));
-            ui.menu_button("⏷", |ui| group_menu(ui, current, group, &mut pick))
-                .response
-                .on_hover_text("More tools (or right-click)");
+            let mut pick = None;
+            ui.menu_button("⏷", |ui| {
+                pick = tool_group::variants_list(ui, None, current, group);
+            })
+            .response
+            .tip("More tools (or right-click, or hold)");
+            if let Some(kind) = pick {
+                editor.set_tool(kind);
+            }
         }
-    });
-    if let Some(kind) = pick {
-        editor.set_tool(kind);
-    }
+        response
+    })
+    .inner
 }
 
-fn group_menu(
-    ui: &mut egui::Ui,
-    current: ToolKind,
-    group: &[ToolKind],
-    pick: &mut Option<ToolKind>,
-) {
-    for &kind in group {
-        let label = format!("{} {}", icon(kind), kind.label());
-        let item = egui::Button::selectable(current == kind, label).shortcut_text(kind.shortcut());
-        if ui.add(item).clicked() {
-            *pick = Some(kind);
-            ui.close();
-        }
-    }
+/// Scroll del panel de herramientas: solo con la rueda y la barra. Arrastrar (también con el
+/// dedo) no lo mueve, así mantener presionado un botón de grupo abre sus variantes.
+pub fn tools_scroll_area() -> egui::ScrollArea {
+    use egui::containers::scroll_area::ScrollSource;
+    egui::ScrollArea::vertical()
+        .id_salt("tools_scroll")
+        .auto_shrink([false, false])
+        .scroll_source(ScrollSource::SCROLL_BAR | ScrollSource::MOUSE_WHEEL)
 }
 
-pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor) {
-    ui.add_space(6.0);
-    ui.heading("Tools");
-    ui.separator();
-    ui.spacing_mut().item_spacing.y = 3.0;
-    for (index, group) in ToolKind::GROUPS.iter().enumerate() {
-        tool_group(ui, editor, index, group);
-    }
-
-    ui.add_space(10.0);
-    ui.heading("Options");
-    ui.separator();
-    tool_options(ui, editor);
-
-    ui.add_space(10.0);
-    ui.heading("Symmetry");
-    ui.separator();
-    symmetry_buttons(ui, editor);
-    text_window(ui.ctx(), editor);
-}
-
-fn tool_options(ui: &mut egui::Ui, editor: &mut Editor) {
-    let tool = editor.tool;
-    let options = &mut editor.options;
-    if tool.uses_brush() {
-        ui.label("Brush size");
-        ui.add(egui::Slider::new(&mut options.brush_size, 1..=32));
-    }
-    if matches!(tool, ToolKind::Pencil | ToolKind::Eraser) {
-        ui.checkbox(&mut options.pixel_perfect, "Pixel-perfect");
-    }
-    if matches!(tool, ToolKind::Rectangle | ToolKind::Ellipse) {
-        ui.checkbox(&mut options.filled, "Filled");
-    }
-    if tool == ToolKind::Rectangle {
-        ui.label("Corner radius");
-        ui.add(egui::Slider::new(&mut options.corner_radius, 0..=32))
-            .on_hover_text("0 = square corners; large values make a pill or a circle");
-    }
-    if tool.is_selection() {
-        ui.label("Mode");
-        for mode in SelectionMode::ALL {
-            ui.radio_value(&mut options.selection_mode, mode, mode.label());
-        }
-    }
-    match tool {
-        ToolKind::MagicWand => {
-            ui.label("Tolerance");
-            ui.add(egui::Slider::new(&mut options.tolerance, 0..=255));
-            ui.checkbox(&mut options.contiguous, "Contiguous");
-            ui.horizontal(|ui| {
-                ui.label("Sample:");
-                ui.radio_value(&mut options.sample_all, false, "Layer");
-                ui.radio_value(&mut options.sample_all, true, "All layers");
-            });
-        }
-        ToolKind::Lasso => {
-            ui.weak("Drag around the area; it closes when you release.");
-        }
-        ToolKind::PolygonLasso => {
-            ui.weak("Click to add points. Click the first point, double-click or press Enter to close; Esc cancels.");
-        }
-        ToolKind::Bucket => {
-            ui.checkbox(&mut options.contiguous, "Contiguous");
-        }
-        ToolKind::Spray => {
-            ui.label("Spray width");
-            ui.add(egui::Slider::new(&mut options.spray_width, 1..=64));
-            ui.label("Spray speed");
-            ui.add(egui::Slider::new(&mut options.spray_speed, 1..=100));
-        }
-        ToolKind::Gradient => {
-            ui.horizontal(|ui| {
-                ui.radio_value(&mut options.gradient_shape, GradientShape::Linear, "Linear");
-                ui.radio_value(&mut options.gradient_shape, GradientShape::Radial, "Radial");
-            });
-            egui::ComboBox::from_id_salt("dither")
-                .selected_text(options.dither.label())
-                .show_ui(ui, |ui| {
-                    for d in Dither::ALL {
-                        ui.selectable_value(&mut options.dither, d, d.label());
-                    }
-                });
-            ui.weak("Drag from the primary to the secondary color. Right-drag swaps them.");
-        }
-        ToolKind::Jumble => {
-            ui.weak("Scrambles pixels within the brush radius.");
-        }
-        ToolKind::Text => {
-            text_style_options(ui, editor);
-            ui.weak("Click on the canvas to place text.");
-        }
-        ToolKind::Slice => {
-            ui.weak("Drag to create a slice (hitbox, pivot…). Drag the selected one to move it or its edges to resize it: changes apply from the current frame on.");
-        }
-        _ => {}
-    }
-    if tool.is_selection() || tool == ToolKind::Move {
-        let before = editor.options.rotation;
-        ui.horizontal(|ui| {
-            ui.label("Rotation:");
-            for algorithm in RotationAlgorithm::ALL {
-                ui.radio_value(&mut editor.options.rotation, algorithm, algorithm.label());
-            }
-        });
-        if editor.options.rotation != before {
-            editor.refresh_floating(false);
-        }
-        ui.weak("Drag the handles to scale, or just outside a corner to rotate. Shift keeps the proportions or snaps to 15°.");
-    }
-    if matches!(
-        tool,
-        ToolKind::Line | ToolKind::Rectangle | ToolKind::Ellipse | ToolKind::Gradient
-    ) || matches!(tool, ToolKind::RectSelect | ToolKind::EllipseSelect)
-    {
-        ui.weak("Shift: constrain");
-    }
-    if tool.paints() {
-        ui.weak("Alt+click: pick color");
-    }
-}
-
-fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor) {
-    let style = &mut editor.text_style;
-    let mut fonts = vec![FontChoice::Pixel, FontChoice::Hack, FontChoice::Ubuntu];
-    if let FontChoice::Custom { .. } = style.font {
-        fonts.push(style.font.clone());
-    }
-    egui::ComboBox::from_label("Font")
-        .selected_text(style.font.name())
-        .show_ui(ui, |ui| {
-            for font in fonts {
-                let name = font.name();
-                let selected = style.font == font;
-                if ui.selectable_label(selected, name).clicked() && !selected {
-                    style.size = if font == FontChoice::Pixel { 1 } else { 16 };
-                    style.font = font;
-                }
-            }
-        });
-    #[cfg(not(target_arch = "wasm32"))]
-    if ui.button("Load font…").clicked()
-        && let Some(path) = rfd::FileDialog::new()
-            .add_filter("Fonts", &["ttf", "otf"])
-            .pick_file()
-    {
-        let name = path
-            .file_stem()
-            .and_then(|n| n.to_str())
-            .unwrap_or("Font")
-            .to_string();
-        match std::fs::read(&path)
-            .map_err(|e| e.to_string())
-            .and_then(|bytes| FontChoice::load(name, &bytes))
-        {
-            Ok(font) => {
-                style.font = font;
-                style.size = 16;
-            }
-            Err(e) => log::warn!("could not load font {}: {e}", path.display()),
-        }
-    }
-    if style.font == FontChoice::Pixel {
-        ui.add(egui::Slider::new(&mut style.size, 1..=8).text("Scale"));
-    } else {
-        ui.add(egui::Slider::new(&mut style.size, 6..=96).text("Size"));
-        ui.checkbox(&mut style.antialias, "Antialias");
-    }
-}
-
-/// Ventana flotante para escribir el texto que se está colocando.
-fn text_window(ctx: &egui::Context, editor: &mut Editor) {
-    if editor.text.is_none() {
-        return;
-    }
-    let mut commit = false;
-    let mut cancel = false;
-    egui::Window::new("Text")
-        .collapsible(false)
-        .resizable(false)
-        .default_width(260.0)
-        .anchor(egui::Align2::CENTER_TOP, Vec2::new(0.0, 90.0))
-        .show(ctx, |ui| {
-            text_style_options(ui, editor);
-            let Some(draft) = editor.text.as_mut() else {
-                return;
-            };
-            let edit = egui::TextEdit::multiline(&mut draft.text)
-                .desired_rows(3)
-                .desired_width(f32::INFINITY)
-                .hint_text("Type here…");
-            let response = ui.add(edit);
-            if draft.text.is_empty() && !response.has_focus() {
-                response.request_focus();
-            }
-            if response.changed() {
-                editor.revision += 1;
-            }
-            let (enter, esc) = ui.input(|i| {
-                (
-                    i.modifiers.command && i.key_pressed(egui::Key::Enter),
-                    i.key_pressed(egui::Key::Escape),
+/// La barra de íconos de Pixel UI: una columna con un botón por grupo dentro de la caja
+/// redondeada (`toolbar.box`), alineada a la izquierda. Los marcos van pegados, uno debajo del
+/// otro: el primero redondeado arriba, el último abajo y los del medio cuadrados. Cada botón
+/// lleva un id propio de su grupo, así su lista de variantes (y la presión larga) no depende de
+/// lo que haya antes en la barra.
+///
+/// Debajo, la caja de los colores primario y secundario (`fg_bg`).
+fn tool_column(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
+    let base = ui.id();
+    let len = ToolKind::GROUPS.len();
+    pixel_ui::toolbar_box(ui, skin, |ui| {
+        ui.spacing_mut().item_spacing.y = 0.0;
+        for index in 0..len {
+            let id = base.with(("tool_group", index));
+            tool_group::group_button(ui, editor, Some(skin), index, |ui, shown, state| {
+                pixel_ui::tool_button(
+                    ui,
+                    id,
+                    skin,
+                    pixel_ui::SlotPos::of(index, len),
+                    tool_group::icon_piece(shown),
+                    shown.label(),
+                    state.selected,
+                    state.more,
                 )
             });
-            ui.weak("Click the canvas to move it. Ctrl+Enter applies.");
-            ui.horizontal(|ui| {
-                commit = ui.button("OK").clicked() || enter;
-                cancel = ui.button("Cancel").clicked() || esc;
-            });
-        });
-    if commit {
-        editor.commit_text();
-    } else if cancel {
-        editor.cancel_gesture();
-    }
-}
-
-const SYMMETRY_MODES: [(SymmetryMode, &str); 7] = [
-    (SymmetryMode::None, "Off"),
-    (SymmetryMode::Horizontal, "Horizontal (left ↔ right)"),
-    (SymmetryMode::Vertical, "Vertical (top ↔ bottom)"),
-    (SymmetryMode::Both, "Horizontal + vertical"),
-    (SymmetryMode::DiagonalDown, "Diagonal ╲"),
-    (SymmetryMode::DiagonalUp, "Diagonal ╱"),
-    (SymmetryMode::All, "All 8 directions"),
-];
-
-fn symmetry_buttons(ui: &mut egui::Ui, editor: &mut Editor) {
-    let current = editor.symmetry();
-    ui.horizontal_wrapped(|ui| {
-        ui.spacing_mut().item_spacing = Vec2::splat(2.0);
-        for (mode, tip) in SYMMETRY_MODES {
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(22.0), Sense::click());
-            let selected = current.mode == mode;
-            let visuals = ui.style().interact_selectable(&response, selected);
-            let painter = ui.painter();
-            painter.rect_filled(rect, 3.0, visuals.weak_bg_fill);
-            let color = if selected {
-                theme::ACCENT
-            } else {
-                visuals.fg_stroke.color
-            };
-            draw_symmetry_icon(painter, rect.shrink(5.0), mode, color);
-            if response.on_hover_text(tip).clicked() {
-                editor.set_symmetry(cs_core::Symmetry { mode, ..current });
-            }
         }
     });
-    if current.mode != SymmetryMode::None {
-        ui.weak("Ctrl+drag the dashed axes to move them");
-        if current.center2.is_some() && ui.small_button("Center axes").clicked() {
-            editor.set_symmetry(cs_core::Symmetry {
-                center2: None,
-                ..current
-            });
-        }
-    }
+    ui.add_space(fg_bg::GAP - ui.spacing().item_spacing.y);
+    fg_bg::fg_bg(ui, editor, skin);
 }
 
-fn draw_symmetry_icon(painter: &egui::Painter, r: Rect, mode: SymmetryMode, color: Color32) {
-    let stroke = Stroke::new(1.5, color);
-    painter.rect_stroke(
-        r,
-        1.0,
-        Stroke::new(1.0, color.gamma_multiply(0.5)),
-        StrokeKind::Inside,
-    );
-    let (c, tl, br) = (r.center(), r.left_top(), r.right_bottom());
-    let (tr, bl) = (r.right_top(), r.left_bottom());
-    let vertical = || painter.vline(c.x, r.y_range(), stroke);
-    let horizontal = || painter.hline(r.x_range(), c.y, stroke);
-    let down = || painter.line_segment([tl, br], stroke);
-    let up = || painter.line_segment([bl, tr], stroke);
-    match mode {
-        SymmetryMode::None => {
-            painter.circle_filled(c, 1.5, color);
-        }
-        SymmetryMode::Horizontal => {
-            vertical();
-        }
-        SymmetryMode::Vertical => {
-            horizontal();
-        }
-        SymmetryMode::Both => {
-            vertical();
-            horizontal();
-        }
-        SymmetryMode::DiagonalDown => {
-            down();
-        }
-        SymmetryMode::DiagonalUp => {
-            up();
-        }
-        SymmetryMode::All => {
-            vertical();
-            horizontal();
-            down();
-            up();
+/// La barra de herramientas: solo los botones de grupo. Con `skin` (Pixel UI) es una columna de
+/// íconos; sin él, filas con nombre bajo el título "Tools". Las opciones de la herramienta y
+/// Symmetry van en la barra de opciones (`tool_options_bar`).
+pub fn toolbar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
+    match skin {
+        Some(skin) => tool_column(ui, editor, skin),
+        None => {
+            ui.add_space(6.0);
+            ui.heading("Tools");
+            ui.separator();
+            ui.spacing_mut().item_spacing.y = 3.0;
+            for index in 0..ToolKind::GROUPS.len() {
+                tool_group(ui, editor, index);
+            }
         }
     }
 }
 
 /// Damero mínimo para que se note la transparencia.
-fn checker(painter: &egui::Painter, rect: Rect) {
+pub(crate) fn checker(painter: &egui::Painter, rect: Rect) {
     let half = rect.size() / 2.0;
     painter.rect_filled(rect, 0.0, theme::CHECKER_LIGHT);
     painter.rect_filled(
@@ -421,8 +142,9 @@ fn swatch(ui: &mut egui::Ui, color: Color32, size: f32) -> egui::Response {
     response
 }
 
-/// Marco blanco si `value` es el color primario; del color de acento si es el secundario.
-fn mark_selected(ui: &egui::Ui, editor: &Editor, value: PixelValue, rect: Rect) {
+/// Marco blanco si `value` es el color primario; del color de acento si es el secundario. Con
+/// Pixel UI (`frame_skin`), de 1 px, como en el diseño; si no, de 2.
+pub(crate) fn mark_selected(ui: &egui::Ui, editor: &Editor, value: PixelValue, rect: Rect) {
     let color = if value == editor.primary {
         Color32::WHITE
     } else if value == editor.secondary {
@@ -430,9 +152,33 @@ fn mark_selected(ui: &egui::Ui, editor: &Editor, value: PixelValue, rect: Rect) 
     } else {
         return;
     };
+    let width = if crate::pixel_ui::frame_skin(ui.ctx()).is_some() {
+        1.0
+    } else {
+        2.0
+    };
     ui.painter()
-        .rect_stroke(rect, 0.0, Stroke::new(2.0, color), StrokeKind::Inside);
+        .rect_stroke(rect, 0.0, Stroke::new(width, color), StrokeKind::Inside);
 }
+
+/// Clic elige `value` como color primario; clic derecho, como secundario (`Editor::pick_color`).
+/// `entry`: el cuadrito de la paleta, si `value` sale de uno.
+pub(crate) fn pick_on_click(
+    editor: &mut Editor,
+    response: &egui::Response,
+    value: PixelValue,
+    entry: Option<u8>,
+) {
+    if response.clicked() {
+        editor.pick_color(value, false, entry);
+    }
+    if response.secondary_clicked() {
+        editor.pick_color(value, true, entry);
+    }
+}
+
+/// Ayuda del swatch del color Mask.
+pub(crate) const MASK_HINT: &str = "Mask (transparent): painting with it erases";
 
 /// Swatch del color Mask (transparente): tablero con una diagonal roja.
 fn mask_swatch(ui: &mut egui::Ui, size: f32) -> egui::Response {
@@ -441,7 +187,7 @@ fn mask_swatch(ui: &mut egui::Ui, size: f32) -> egui::Response {
     response
 }
 
-fn paint_mask(painter: &egui::Painter, rect: Rect) {
+pub(crate) fn paint_mask(painter: &egui::Painter, rect: Rect) {
     checker(painter, rect);
     painter.line_segment(
         [rect.left_bottom(), rect.right_top()],
@@ -463,7 +209,7 @@ fn color_swatch(
     }
 }
 
-fn to_color32(c: cs_core::Rgba) -> Color32 {
+pub(crate) fn to_color32(c: cs_core::Rgba) -> Color32 {
     Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
 }
 
@@ -476,6 +222,8 @@ pub enum PaletteAction {
     SaveAsPreset,
     SetAsDefault,
     LoadDefault,
+    /// Una paleta nueva con el color primario (Pixel UI). En indexado se pide confirmación.
+    NewPalette,
     /// Solo escritorio: en web no hay carpeta que abrir.
     #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
     OpenFolder,
@@ -490,13 +238,32 @@ pub fn palette_strip(ui: &mut egui::Ui, palette: &Palette, max: usize, size: f32
             ui.painter().rect_filled(rect, 0.0, to_color32(c));
         }
         if palette.len() > max {
-            ui.weak("…");
+            ui.weak("≡");
         }
     });
 }
 
-/// `menus`: con un diálogo abierto, Presets ⏷ y … quedan desactivados.
-pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<PaletteAction> {
+/// `menus`: con un diálogo abierto, Presets ⏷ y … quedan desactivados. Con Pixel UI (`skin`), la
+/// grilla de la paleta y el editor de color son los del diseño (`color_panel`), con la caja de
+/// `palette_height` de alto (lo que se elige con la división). Van fuera del scroll del panel: el
+/// editor se ve siempre entero.
+pub fn palette(
+    ui: &mut egui::Ui,
+    editor: &mut Editor,
+    menus: bool,
+    skin: Option<&Skin>,
+    palette_height: &mut f32,
+) -> Option<PaletteAction> {
+    if let Some(skin) = skin {
+        // Con Pixel UI, los colores primario y secundario (y el intercambio) van en la caja de
+        // debajo de la barra de íconos (`fg_bg`); los botones del diseño reemplazan al combo
+        // Presets y al menú "…": todo lo de los dos queda en el menú del botón ≡.
+        ui.add_space(6.0);
+        let action = color_panel::palette_buttons(ui, editor, skin, menus);
+        ui.add_space(color_panel::BUTTONS_GAP - ui.spacing().item_spacing.y);
+        color_panel::palette_and_editor(ui, editor, skin, palette_height);
+        return action;
+    }
     ui.add_space(6.0);
     ui.heading("Color");
     ui.separator();
@@ -509,10 +276,10 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<Pa
             }
         };
         color_swatch(ui, editor, editor.primary, 36.0)
-            .on_hover_text(format!("Primary (left click){}", name(editor.primary)));
+            .tip(format!("Primary (left click){}", name(editor.primary)));
         color_swatch(ui, editor, editor.secondary, 24.0)
-            .on_hover_text(format!("Secondary (right click){}", name(editor.secondary)));
-        if ui.small_button("🔄").on_hover_text("Swap (X)").clicked() {
+            .tip(format!("Secondary (right click){}", name(editor.secondary)));
+        if ui.small_button("🔄").tip("Swap (X)").clicked() {
             editor.swap_colors();
         }
     });
@@ -524,16 +291,16 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<Pa
             if ui.small_button("Presets ⏷").clicked() {
                 action = Some(PaletteAction::OpenPresets);
             }
-            ui.menu_button("…", |ui| {
+            ui.menu_button("≡", |ui| {
                 let mut item = |ui: &mut egui::Ui, label: &str, a: PaletteAction| {
                     if ui.button(label).clicked() {
                         action = Some(a);
                         ui.close();
                     }
                 };
-                item(ui, "Load Palette…", PaletteAction::Load);
-                item(ui, "Save Palette…", PaletteAction::Save);
-                item(ui, "Save as Preset…", PaletteAction::SaveAsPreset);
+                item(ui, "Load Palette", PaletteAction::Load);
+                item(ui, "Save Palette", PaletteAction::Save);
+                item(ui, "Save as Preset", PaletteAction::SaveAsPreset);
                 ui.separator();
                 item(ui, "Set as Default", PaletteAction::SetAsDefault);
                 item(ui, "Load Default", PaletteAction::LoadDefault);
@@ -549,42 +316,40 @@ pub fn palette(ui: &mut egui::Ui, editor: &mut Editor, menus: bool) -> Option<Pa
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::splat(2.0);
         let mask = editor.mask_value();
-        let response =
-            mask_swatch(ui, size).on_hover_text("Mask (transparent): painting with it erases");
+        let response = mask_swatch(ui, size).tip(MASK_HINT);
         mark_selected(ui, editor, mask, response.rect);
-        if response.clicked() {
-            editor.primary = mask;
-        }
-        if response.secondary_clicked() {
-            editor.secondary = mask;
-        }
+        pick_on_click(editor, &response, mask, None);
         let count = editor.sprite().palette.len().min(256);
         for i in 0..count {
             let index = i as u8;
             let value = editor.palette_value(index);
             let color = to_color32(editor.sprite().palette.colors()[i]);
-            let response = swatch(ui, color, size).on_hover_text(format!("#{i}"));
+            let response = swatch(ui, color, size).tip(format!("#{i}"));
             mark_selected(ui, editor, value, response.rect);
-            if response.clicked() {
-                editor.primary = value;
-            }
-            if response.secondary_clicked() {
-                editor.secondary = value;
-            }
+            pick_on_click(editor, &response, value, Some(index));
         }
     });
     ui.add_space(10.0);
-    color_picker(ui, editor);
+    color_picker(ui, editor, None);
     action
 }
 
-/// Lado máximo del cuadro del selector de color, en puntos.
-const COLOR_PICKER_MAX: f32 = 240.0;
+/// El selector de color con un sprite indexado (y la paleta bloqueada, con Pixel UI).
+pub(crate) const INDEXED_HINT: &str = "Indexed sprite: colors come from the palette.";
 
-/// Selector de color libre (RGBA): edita el color primario.
-pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
+/// Lado máximo del cuadro del selector de color, en puntos. Con Pixel UI, el ancho máximo del
+/// editor (su cuadro S/V mide 64 de alto).
+pub(crate) const COLOR_PICKER_MAX: f32 = 240.0;
+
+/// Selector de color libre (RGBA): edita el color primario. Con Pixel UI (`skin`), el editor del
+/// diseño (`color_panel`).
+pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Skin>) {
+    if let Some(skin) = skin {
+        color_panel::color_editor(ui, editor, skin);
+        return;
+    }
     let cs_core::PixelValue::Rgba(current) = editor.primary else {
-        ui.weak("Indexed sprite: colors come from the palette.");
+        ui.weak(INDEXED_HINT);
         return;
     };
     let mut c32 = to_color32(current);
@@ -626,7 +391,7 @@ pub fn color_picker(ui: &mut egui::Ui, editor: &mut Editor) {
         let in_palette = editor.sprite().palette.colors().contains(&current);
         if ui
             .add_enabled(!in_palette, egui::Button::new("+").small())
-            .on_hover_text("Add to palette")
+            .tip("Add to palette")
             .clicked()
         {
             editor.add_to_palette(current);
@@ -757,7 +522,7 @@ pub fn tileset(ui: &mut egui::Ui, editor: &mut Editor, thumbs: &mut TileThumbs) 
                     StrokeKind::Inside,
                 );
             }
-            if response.on_hover_text(format!("Tile {number}")).clicked() {
+            if response.tip(format!("Tile {number}")).clicked() {
                 editor.set_brush_tile(Tile::new(
                     i as u32,
                     brush.flip_x(),
@@ -773,21 +538,21 @@ pub fn tileset(ui: &mut egui::Ui, editor: &mut Editor, thumbs: &mut TileThumbs) 
         let brush = editor.brush_tile();
         if ui
             .selectable_label(brush.flip_x(), "X")
-            .on_hover_text("Flip horizontally (X)")
+            .tip("Flip horizontally (X)")
             .clicked()
         {
             editor.toggle_brush_flip(Tile::FLIP_X);
         }
         if ui
             .selectable_label(brush.flip_y(), "Y")
-            .on_hover_text("Flip vertically (Y)")
+            .tip("Flip vertically (Y)")
             .clicked()
         {
             editor.toggle_brush_flip(Tile::FLIP_Y);
         }
         if ui
             .add_enabled(tw == th, egui::Button::selectable(brush.flip_d(), "D"))
-            .on_hover_text("Flip diagonally (swap X and Y)")
+            .tip("Flip diagonally (swap X and Y)")
             .on_disabled_hover_text("Needs square tiles")
             .clicked()
         {
@@ -819,544 +584,118 @@ pub fn status_bar(ui: &mut egui::Ui, editor: &Editor, canvas: &CanvasView, notic
         ui.label(format!("{}%", (canvas.zoom * 100.0) as u32));
         ui.separator();
         ui.label(format!("Frame {}/{}", editor.frame + 1, s.frames.len()));
-        if editor.editing_mask() {
+        for (text, guide) in status_notices(editor, canvas, notice) {
             ui.separator();
-            ui.colored_label(
-                theme::ACCENT,
-                "Editing layer mask: white reveals, black hides",
-            );
-        }
-        let on_instance = s
-            .layer(editor.layer)
-            .is_some_and(|l| l.kind == cs_core::LayerKind::Instance);
-        if on_instance && editor.active_tool().paints() {
-            ui.separator();
-            ui.colored_label(theme::ACCENT, "Instance layer: edit the source artboard");
-        }
-        if let Some(text) = editor.tiles_status() {
-            ui.separator();
-            ui.colored_label(theme::ACCENT, text);
-        }
-        if let Some(text) = editor.floating_status() {
-            ui.separator();
-            ui.colored_label(theme::ACCENT, text);
-        }
-        if let Some(hint) = canvas.guide_hint {
-            ui.separator();
-            ui.colored_label(theme::GUIDE_LINE, hint);
-        }
-        if let Some(notice) = notice {
-            ui.separator();
-            ui.colored_label(theme::ACCENT, notice);
+            let color = if guide {
+                theme::GUIDE_LINE
+            } else {
+                theme::ACCENT
+            };
+            ui.colored_label(color, text);
         }
     });
 }
 
-/// Lista de artboards: activar, crear, renombrar y eliminar.
-/// Devuelve `true` si se pidió abrir el diálogo de tamaño.
-pub fn artboards(
-    ui: &mut egui::Ui,
-    editor: &mut Editor,
-    name_buffer: &mut (ArtboardId, String),
-) -> bool {
-    let mut resize = false;
-    ui.add_space(6.0);
-    ui.horizontal(|ui| {
-        ui.heading("Artboards");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let can_remove = editor.document.artboards.len() > 1;
-            if ui
-                .add_enabled(can_remove, egui::Button::new("🗑").small())
-                .on_hover_text("Delete artboard")
-                .clicked()
-            {
-                editor.remove_active_artboard();
-            }
-            if ui
-                .small_button("➕")
-                .on_hover_text("New 64×64 artboard")
-                .clicked()
-            {
-                editor.add_artboard(64, 64);
-            }
-        });
-    });
-    ui.separator();
-
-    let ids: Vec<(ArtboardId, String)> = editor
-        .document
-        .artboards
-        .iter()
-        .rev()
-        .map(|a| (a.id, a.name.clone()))
-        .collect();
-    for (id, name) in ids {
-        if ui.selectable_label(id == editor.active, name).clicked() {
-            editor.activate(id);
-        }
+/// Los avisos de la barra de estado en este momento (las dos barras muestran los mismos):
+/// máscara, instancia, tiles, lo flotante, la guía bajo el puntero (`true`: se pinta en el color
+/// de las guías) y `notice` (autosave).
+fn status_notices(
+    editor: &Editor,
+    canvas: &CanvasView,
+    notice: Option<&str>,
+) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    if editor.editing_mask() {
+        out.push((
+            "Editing layer mask: white reveals, black hides".to_owned(),
+            false,
+        ));
     }
-
-    ui.add_space(4.0);
-    if name_buffer.0 != editor.active {
-        *name_buffer = (editor.active, editor.artboard().name.clone());
+    if let Some(text) = editor.mask_status() {
+        out.push((text.to_string(), false));
     }
-    let response = ui.add(egui::TextEdit::singleline(&mut name_buffer.1).hint_text("Name"));
-    if response.lost_focus() {
-        let name = name_buffer.1.trim().to_string();
-        if name.is_empty() {
-            name_buffer.1 = editor.artboard().name.clone();
-        } else {
-            editor.rename_active_artboard(name);
-        }
-    } else if !response.has_focus() {
-        name_buffer.1 = editor.artboard().name.clone();
-    }
-    if ui.button("Canvas Size…").clicked() {
-        resize = true;
-    }
-    resize
-}
-
-/// Gesto sobre campos numéricos o sliders: un solo paso de undo por arrastre o edición.
-/// Llamar antes de aplicar el cambio; devuelve el grupo (id del widget que cambió) si cambió.
-/// El gesto anterior del mismo widget ya terminó en `gesture_end` (al soltar o perder el foco),
-/// así que acá solo se corta al tomar foco; cortar en `drag_started` partiría en dos el
-/// "clic (el slider salta) + arrastre".
-fn gesture_group(editor: &mut Editor, responses: &[&egui::Response]) -> Option<u64> {
-    if responses.iter().any(|r| r.gained_focus()) {
-        editor.end_group();
-    }
-    responses.iter().find(|r| r.changed()).map(|r| r.id.value())
-}
-
-/// Llamar después de aplicar: cierra el gesto si terminó (al soltar el botón, al perder el foco,
-/// o si el cambio no vino de un botón apretado ni de un campo con foco).
-fn gesture_end(editor: &mut Editor, responses: &[&egui::Response]) {
-    let ended = responses.iter().any(|r| {
-        r.drag_stopped()
-            || r.clicked()
-            || r.lost_focus()
-            || (r.changed() && !r.is_pointer_button_down_on() && !r.has_focus())
-    });
-    if ended {
-        editor.end_group();
-    }
-}
-
-/// Rango de los campos de posición de la instancia.
-const POSITION_RANGE: std::ops::RangeInclusive<i32> = -16384..=16384;
-
-/// Propiedades de la instancia de la capa actual en el frame actual. Devuelve `true` si se
-/// entró al símbolo (el lienzo debe centrarlo).
-pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
-    let Some(key) = editor.instance_key() else {
-        return false;
-    };
-    ui.heading("Instance");
-    let is_key = editor.is_instance_keyframe(editor.layer, editor.frame);
-    if !is_key {
-        ui.weak("Changes create a keyframe on this frame.");
-    }
-    let names: Vec<(cs_core::ArtboardId, String)> = editor.instance_candidates();
-    let current = key
-        .source
-        .and_then(|s| editor.document.artboard(s))
-        .map_or("(missing)".to_string(), |a| a.name.clone());
-    egui::ComboBox::from_label("Source")
-        .selected_text(current)
-        .show_ui(ui, |ui| {
-            for (id, name) in names {
-                if ui.selectable_label(key.source == Some(id), name).clicked() {
-                    editor.update_instance_key(|k| k.source = Some(id));
-                }
-            }
-        });
-    let (mut x, mut y) = key.position;
-    let (rx, ry) = ui
-        .horizontal(|ui| {
-            ui.label("Position");
-            let rx = widgets::number(ui, &mut x, POSITION_RANGE, "");
-            let ry = widgets::number(ui, &mut y, POSITION_RANGE, "");
-            (rx, ry)
-        })
-        .inner;
-    if let Some(group) = gesture_group(editor, &[&rx, &ry]) {
-        editor.update_instance_key_grouped(Some(group), |k| k.position = (x, y));
-    }
-    gesture_end(editor, &[&rx, &ry]);
-    let (mut fh, mut fv) = (key.flip_h, key.flip_v);
-    ui.horizontal(|ui| {
-        if ui.checkbox(&mut fh, "Flip H").changed() {
-            editor.update_instance_key(|k| k.flip_h = fh);
-        }
-        if ui.checkbox(&mut fv, "Flip V").changed() {
-            editor.update_instance_key(|k| k.flip_v = fv);
-        }
-    });
-    let mut opacity = key.opacity;
-    let r = ui.add(egui::Slider::new(&mut opacity, 0..=255).text("Opacity"));
-    if let Some(group) = gesture_group(editor, &[&r]) {
-        editor.update_instance_key_grouped(Some(group), |k| k.opacity = opacity);
-    }
-    gesture_end(editor, &[&r]);
-    use cs_core::{GraphicPlay, Timing};
-    let (mut first, mut mode) = match key.timing {
-        Timing::Graphic { first_frame, play } => (first_frame, Some(play)),
-        Timing::MovieClip { first_frame } => (first_frame, None),
-    };
-    let before = (first, mode);
-    ui.horizontal(|ui| {
-        ui.selectable_value(&mut mode, Some(GraphicPlay::Loop), "Loop")
-            .on_hover_text("Graphic: follows this artboard's frames, looping");
-        ui.selectable_value(&mut mode, Some(GraphicPlay::Once), "Once")
-            .on_hover_text("Graphic: plays once and holds the last frame");
-        ui.selectable_value(&mut mode, Some(GraphicPlay::Single), "Single")
-            .on_hover_text("Graphic: always the same frame");
-        ui.selectable_value(&mut mode, None, "Movie clip")
-            .on_hover_text("Plays on its own clock with its own frame durations");
-    });
-    let frames = key
-        .source
-        .and_then(|s| editor.document.artboard(s))
-        .map_or(1, |a| a.sprite.frames.len());
-    let first_response = ui
-        .horizontal(|ui| {
-            ui.label("First frame");
-            let mut shown = first + 1;
-            let r = widgets::number(ui, &mut shown, 1..=frames, "");
-            if r.changed() {
-                first = shown - 1;
-            }
-            r
-        })
-        .inner;
-    // El modo es un clic (paso propio); el primer frame se arrastra (un paso por gesto).
-    let group = gesture_group(editor, &[&first_response]).filter(|_| mode == before.1);
-    if (first, mode) != before {
-        editor.update_instance_key_grouped(group, |k| {
-            k.timing = match mode {
-                Some(play) => Timing::Graphic {
-                    first_frame: first,
-                    play,
-                },
-                None => Timing::MovieClip { first_frame: first },
-            }
-        });
-    }
-    gesture_end(editor, &[&first_response]);
-    let entered = ui
-        .button("Edit Symbol")
-        .on_hover_text("Go to the source artboard (double-click with Move)")
-        .clicked()
-        && editor.enter_instance();
-    ui.separator();
-    entered
-}
-
-/// Panel de slices: lista, nombre, color, datos y la clave del frame actual (rect y pivote).
-pub fn slices(ui: &mut egui::Ui, editor: &mut Editor) {
-    ui.horizontal(|ui| {
-        ui.heading("Slices");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .add_enabled(editor.slice.is_some(), egui::Button::new("🗑").small())
-                .on_hover_text("Delete slice")
-                .clicked()
-            {
-                editor.delete_slice();
-            }
-        });
-    });
-    ui.separator();
-    let names: Vec<(String, cs_core::Rgba)> = editor
+    let on_instance = editor
         .sprite()
-        .slices
-        .iter()
-        .map(|s| (s.name.clone(), s.color))
-        .collect();
-    if names.is_empty() {
-        ui.weak("No slices. Use the Slice tool (Shift+C) to mark hitboxes and pivots.");
-        return;
+        .layer(editor.layer)
+        .is_some_and(|l| l.kind == cs_core::LayerKind::Instance);
+    if on_instance && editor.active_tool().paints() {
+        out.push(("Instance layer: edit the source artboard".to_owned(), false));
     }
-    for (i, (name, color)) in names.iter().enumerate() {
-        ui.horizontal(|ui| {
-            let (r, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::hover());
-            ui.painter()
-                .rect_filled(r, 2.0, Color32::from_rgb(color.r, color.g, color.b));
-            if ui.selectable_label(editor.slice == Some(i), name).clicked() {
-                editor.end_group();
-                editor.slice = Some(i);
-                editor.set_tool(ToolKind::Slice);
-            }
-        });
+    if let Some(text) = editor.tiles_status() {
+        out.push((text.to_string(), false));
     }
-    if editor.slice.is_some() {
-        ui.separator();
-        slice_properties(ui, editor);
+    if let Some(text) = editor.floating_status() {
+        out.push((text, false));
     }
+    if let Some(hint) = canvas.guide_hint {
+        out.push((hint.to_string(), true));
+    }
+    if let Some(notice) = notice {
+        out.push((notice.to_owned(), false));
+    }
+    out
 }
 
-/// Nombre, color, datos y clave del frame actual del slice seleccionado (panel y diálogo).
-pub fn slice_properties(ui: &mut egui::Ui, editor: &mut Editor) {
-    let Some(slice) = editor.selected_slice().cloned() else {
-        return;
+/// Con Pixel UI, la barra de estado del diseño: el artboard con su tamaño, el píxel bajo el
+/// puntero y el frame, cada uno con su ícono; después, sin ícono, el zoom y los avisos de ese
+/// momento (máscara, instancia, tiles, lo flotante, guías, autosave).
+pub fn pixel_status_bar(
+    ui: &mut egui::Ui,
+    editor: &Editor,
+    canvas: &CanvasView,
+    notice: Option<&str>,
+    skin: &Skin,
+) {
+    use crate::pixel_status::{self, ICON_ARTBOARD, ICON_FRAME, ICON_POINTER, Section};
+    let s = editor.sprite();
+    let pointer = match canvas.hover {
+        Some((x, y)) if x >= 0 && y >= 0 && x < s.width as i32 && y < s.height as i32 => {
+            format!("{x} {y}")
+        }
+        // Fuera del lienzo, el guion de la fuente chica (el "—" no está en ella y sale de otra).
+        _ => "-".to_owned(),
     };
-    let mut name = slice.name.clone();
-    ui.horizontal(|ui| {
-        ui.label("Name");
-        if ui.text_edit_singleline(&mut name).lost_focus() && name != slice.name {
-            editor.update_slice(|s| s.name = name.clone());
-        }
-    });
-    let mut c32 = Color32::from_rgb(slice.color.r, slice.color.g, slice.color.b);
-    ui.horizontal(|ui| {
-        ui.label("Color");
-        if ui.color_edit_button_srgba(&mut c32).changed() {
-            let [r, g, b, _] = c32.to_array();
-            editor.update_slice(|s| s.color = cs_core::Rgba::rgb(r, g, b));
-        }
-    });
-    let mut text = slice.text.clone();
-    ui.horizontal(|ui| {
-        ui.label("Data");
-        if ui
-            .text_edit_singleline(&mut text)
-            .on_hover_text("Free text exported with the slice (e.g. damage=3)")
-            .lost_focus()
-            && text != slice.text
-        {
-            editor.update_slice(|s| s.text = text.clone());
-        }
-    });
-    let frame = editor.frame;
-    let Some(key) = slice.key_at(frame).copied() else {
-        ui.weak(format!("Hidden on frame {}", frame + 1));
-        return;
-    };
-    let own_key = key.frame == frame;
-    ui.label(if own_key {
-        format!("Frame {} (own key)", frame + 1)
-    } else {
-        format!("Frame {} (from frame {})", frame + 1, key.frame + 1)
-    });
-    let (mut x, mut y, mut w, mut h) = key.bounds;
-    let (rx, ry) = ui
-        .horizontal(|ui| {
-            ui.label("X");
-            let rx = widgets::number(ui, &mut x, -4096..=4096, "");
-            ui.label("Y");
-            let ry = widgets::number(ui, &mut y, -4096..=4096, "");
-            (rx, ry)
-        })
-        .inner;
-    let (rw, rh) = ui
-        .horizontal(|ui| {
-            ui.label("W");
-            let rw = widgets::number(ui, &mut w, 1..=4096, "");
-            ui.label("H");
-            let rh = widgets::number(ui, &mut h, 1..=4096, "");
-            (rw, rh)
-        })
-        .inner;
-    let rect_fields = [&rx, &ry, &rw, &rh];
-    if let Some(group) = gesture_group(editor, &rect_fields) {
-        editor.update_slice_key_grouped(Some(group), |k| k.bounds = (x, y, w, h));
-    }
-    gesture_end(editor, &rect_fields);
-    let mut has_pivot = key.pivot.is_some();
-    if ui.checkbox(&mut has_pivot, "Pivot").changed() {
-        let default = (w as i32 / 2, h as i32);
-        editor.update_slice_key(|k| k.pivot = has_pivot.then_some(default));
-    }
-    if let Some((mut px, mut py)) = key.pivot {
-        let (rx, ry) = ui
-            .horizontal(|ui| {
-                ui.label("X");
-                let rx = widgets::number(ui, &mut px, -4096..=4096, "");
-                ui.label("Y");
-                let ry = widgets::number(ui, &mut py, -4096..=4096, "");
-                (rx, ry)
-            })
-            .inner;
-        if let Some(group) = gesture_group(editor, &[&rx, &ry]) {
-            editor.update_slice_key_grouped(Some(group), |k| k.pivot = Some((px, py)));
-        }
-        gesture_end(editor, &[&rx, &ry]);
-    }
-    // 9-slice: el rect central (relativo al slice) se estira; las esquinas quedan fijas.
-    let mut nine = key.center.is_some();
-    if ui
-        .checkbox(&mut nine, "9-Slice")
-        .on_hover_text("Center area that stretches; corners keep their size")
-        .changed()
-    {
-        editor
-            .update_slice_key(|k| k.center = nine.then(|| crate::slice_ops::default_center(w, h)));
-    }
-    if let Some((mut cx, mut cy, mut cw, mut ch)) = key.center {
-        let fields = ui
-            .horizontal(|ui| {
-                ui.label("X");
-                let rx = widgets::number(ui, &mut cx, 0..=(w as i32 - 1).max(0), "");
-                ui.label("Y");
-                let ry = widgets::number(ui, &mut cy, 0..=(h as i32 - 1).max(0), "");
-                [rx, ry]
-            })
-            .inner;
-        let sizes = ui
-            .horizontal(|ui| {
-                ui.label("W");
-                let rw = widgets::number(ui, &mut cw, 1..=w.max(1), "");
-                ui.label("H");
-                let rh = widgets::number(ui, &mut ch, 1..=h.max(1), "");
-                [rw, rh]
-            })
-            .inner;
-        let all = [&fields[0], &fields[1], &sizes[0], &sizes[1]];
-        if let Some(group) = gesture_group(editor, &all) {
-            // El centro no puede salirse del slice.
-            let cw = cw.min(w.saturating_sub(cx as u32)).max(1);
-            let ch = ch.min(h.saturating_sub(cy as u32)).max(1);
-            editor.update_slice_key_grouped(Some(group), |k| k.center = Some((cx, cy, cw, ch)));
-        }
-        gesture_end(editor, &all);
-    }
-    if own_key
-        && slice.keys.first().is_some_and(|k| k.frame != frame)
-        && ui.button("Remove key on this frame").clicked()
-    {
-        editor.remove_slice_key();
-    }
-    let mut hide = false;
-    if ui
-        .small_button("Hide from this frame")
-        .on_hover_text("Adds an empty key: the slice disappears from here on")
-        .clicked()
-    {
-        hide = true;
-    }
-    if hide {
-        editor.update_slice(|s| {
-            s.set_key(cs_core::SliceKey {
-                frame,
-                bounds: (x, y, 0, 0),
-                center: None,
-                pivot: None,
-            })
-        });
-    }
+    let mut sections = vec![
+        Section {
+            icon: Some(ICON_ARTBOARD),
+            text: format!("{} {}\u{d7}{}", editor.artboard().name, s.width, s.height),
+            color: None,
+            min_text: None,
+        },
+        Section {
+            icon: Some(ICON_POINTER),
+            text: pointer,
+            color: None,
+            // De ancho fijo: las coordenadas cambian con cada movimiento.
+            min_text: Some("9999 9999"),
+        },
+        Section {
+            icon: Some(ICON_FRAME),
+            text: format!("{}/{}", editor.frame + 1, s.frames.len()),
+            color: None,
+            min_text: None,
+        },
+        Section {
+            icon: None,
+            text: format!("{}%", (canvas.zoom * 100.0) as u32),
+            color: None,
+            min_text: None,
+        },
+    ];
+    // Los avisos, sin ícono y en el acento del skin.
+    let accent = skin.colors().accent;
+    sections.extend(
+        status_notices(editor, canvas, notice)
+            .into_iter()
+            .map(|(text, _)| Section {
+                icon: None,
+                text,
+                color: Some(accent),
+                min_text: None,
+            }),
+    );
+    pixel_status::show(ui, skin, &sections);
 }
 
 #[cfg(test)]
-mod tests {
-    use cs_core::{ColorMode, Sprite};
-    use eframe::egui::{Event, PointerButton, Pos2, RawInput, pos2};
-
-    use super::*;
-
-    #[test]
-    fn tile_thumbnails_are_cached_until_a_tile_image_changes() {
-        let ctx = egui::Context::default();
-        let mut e = crate::tile_ops::test_util::tile_editor();
-        let mut thumbs = TileThumbs::default();
-        thumbs.refresh(&ctx, &e);
-        assert_eq!(thumbs.textures.len(), 3, "the empty tile and tiles 1 and 2");
-        let first = thumbs.textures[1].id();
-        thumbs.refresh(&ctx, &e);
-        assert_eq!(thumbs.textures[1].id(), first, "cached");
-        let cmd = cs_commands::ops::set_tiles(
-            e.sprite(),
-            e.layer,
-            0,
-            &[(0, 0, cs_core::Tile::new(1, false, false, false))],
-        )
-        .unwrap();
-        e.execute(cmd);
-        thumbs.refresh(&ctx, &e);
-        assert_eq!(
-            thumbs.textures[1].id(),
-            first,
-            "a set_tiles stroke keeps the thumbnails"
-        );
-        let mut img = cs_core::Image::new(4, 4, ColorMode::Rgba);
-        img.set(1, 1, cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(9, 9, 9)))
-            .unwrap();
-        let cmd = cs_commands::ops::set_tile_image(e.sprite(), 0, 1, img).unwrap();
-        e.execute(cmd);
-        thumbs.refresh(&ctx, &e);
-        assert_ne!(
-            thumbs.textures[1].id(),
-            first,
-            "rebuilt after replacing a tile image"
-        );
-        e.select_layer(cs_core::LayerId(1));
-        thumbs.refresh(&ctx, &e);
-        assert!(thumbs.textures.is_empty(), "no tileset on an image layer");
-    }
-
-    /// Corre un frame con un slider de opacidad conectado como en el panel de instancia;
-    /// devuelve el rect del slider.
-    fn frame(ctx: &egui::Context, editor: &mut Editor, events: Vec<Event>) -> Rect {
-        let input = RawInput {
-            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(400.0, 200.0))),
-            events,
-            ..Default::default()
-        };
-        let mut rect = Rect::NOTHING;
-        let mut output = ctx.run_ui(input, |ui| {
-            egui::CentralPanel::default().show(ui, |ui| {
-                let mut opacity = editor.instance_key().unwrap().opacity;
-                let r = ui.add(egui::Slider::new(&mut opacity, 0..=255));
-                if let Some(group) = gesture_group(editor, &[&r]) {
-                    editor.update_instance_key_grouped(Some(group), |k| k.opacity = opacity);
-                }
-                gesture_end(editor, &[&r]);
-                rect = r.rect;
-            });
-        });
-        output.textures_delta.clear();
-        rect
-    }
-
-    fn button(pos: Pos2, pressed: bool) -> Event {
-        Event::PointerButton {
-            pos,
-            button: PointerButton::Primary,
-            pressed,
-            modifiers: Default::default(),
-        }
-    }
-
-    #[test]
-    fn slider_click_then_drag_is_one_undo_step() {
-        let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
-        e.add_artboard(4, 4);
-        e.activate(cs_core::ArtboardId(1));
-        e.add_instance_layer(cs_core::ArtboardId(2));
-        let original = e.instance_key().unwrap();
-        let ctx = egui::Context::default();
-        let r = frame(&ctx, &mut e, vec![]);
-        let y = r.center().y;
-        let at = |t: f32| pos2(r.left() + r.width() * t, y);
-        // Clic en el 20 % (el valor salta), arrastre hasta el 30 % y suelta.
-        frame(&ctx, &mut e, vec![Event::PointerMoved(at(0.2))]);
-        frame(&ctx, &mut e, vec![button(at(0.2), true)]);
-        for t in [0.22, 0.25, 0.3] {
-            frame(&ctx, &mut e, vec![Event::PointerMoved(at(t))]);
-        }
-        frame(&ctx, &mut e, vec![button(at(0.3), false)]);
-        frame(&ctx, &mut e, vec![]);
-        let dragged = e.instance_key().unwrap().opacity;
-        assert_ne!(dragged, original.opacity, "the slider moved");
-        // Un segundo clic es otro paso.
-        frame(&ctx, &mut e, vec![Event::PointerMoved(at(0.6))]);
-        frame(&ctx, &mut e, vec![button(at(0.6), true)]);
-        frame(&ctx, &mut e, vec![button(at(0.6), false)]);
-        frame(&ctx, &mut e, vec![]);
-        assert_ne!(e.instance_key().unwrap().opacity, dragged);
-        e.undo();
-        assert_eq!(e.instance_key().unwrap().opacity, dragged);
-        e.undo();
-        assert_eq!(e.instance_key().unwrap(), original);
-    }
-}
+mod tests;

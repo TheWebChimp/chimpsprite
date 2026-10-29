@@ -61,6 +61,10 @@ pub struct Layer {
     /// Índice en `Sprite::tilesets`; solo en capas `LayerKind::Tilemap`.
     #[serde(default)]
     pub tileset: Option<u32>,
+    /// Capa de referencia, como en Aseprite: se ve en el lienzo (para calcar) pero no sale al
+    /// exportar.
+    #[serde(default)]
+    pub reference: bool,
 }
 
 impl Layer {
@@ -78,6 +82,7 @@ impl Layer {
             clip: false,
             instance: None,
             tileset: None,
+            reference: false,
         }
     }
 }
@@ -206,6 +211,14 @@ pub struct Sprite {
     /// Grillas de los cels tilemap. Comparten el espacio de ids con `images`.
     #[serde(default, with = "as_entries")]
     pub tilemaps: BTreeMap<ImageId, Arc<TileGrid>>,
+    /// Proporción de cada píxel (ancho, alto), como en Aseprite: 1:1, 2:1 (anchos) o 1:2
+    /// (altos). Solo cambia cómo se ve en el lienzo.
+    #[serde(default = "square_pixels")]
+    pub pixel_ratio: (u8, u8),
+}
+
+fn square_pixels() -> (u8, u8) {
+    (1, 1)
 }
 
 /// Rectángulo con nombre que puede cambiar por frame: hitboxes, puntos de anclaje, 9-slice.
@@ -301,6 +314,7 @@ impl Sprite {
             slices: Vec::new(),
             tilesets: Vec::new(),
             tilemaps: BTreeMap::new(),
+            pixel_ratio: (1, 1),
         }
     }
 

@@ -53,6 +53,11 @@ pub const BUILTIN_PALETTES: &[BuiltinPalette] = &[
         colors: &ENDESGA32,
     },
     BuiltinPalette {
+        name: "AAP-Splendor128",
+        author: "Adigun A. Polack",
+        colors: &AAP_SPLENDOR128,
+    },
+    BuiltinPalette {
         name: "AAP-64",
         author: "Adigun A. Polack",
         colors: &AAP64,
@@ -103,6 +108,25 @@ const ENDESGA32: [u32; 32] = [
     0x68386c, 0xb55088, 0xf6757a, 0xe8b796, 0xc28569,
 ];
 
+/// AAP-Splendor128 (Adigun A. Polack): la paleta de fábrica de los documentos nuevos.
+pub(crate) const AAP_SPLENDOR128: [u32; 128] = [
+    0x050403, 0x0e0c0c, 0x2d1b1e, 0x612721, 0xb9451d, 0xf1641f, 0xfca570, 0xffe0b7, 0xffffff,
+    0xfff089, 0xf8c53a, 0xe88a36, 0xb05b2c, 0x673931, 0x271f1b, 0x4c3d2e, 0x855f39, 0xd39741,
+    0xf8f644, 0xd5dc1d, 0xadb834, 0x7f8e44, 0x586335, 0x333c24, 0x181c19, 0x293f21, 0x477238,
+    0x61a53f, 0x8fd032, 0xc4f129, 0xd0ffea, 0x97edca, 0x59cf93, 0x42a459, 0x3d6f43, 0x27412d,
+    0x14121d, 0x1b2447, 0x2b4e95, 0x2789cd, 0x42bfe8, 0x73efe8, 0xf1f2ff, 0xc9d4fd, 0x8aa1f6,
+    0x4572e3, 0x494182, 0x7864c6, 0x9c8bdb, 0xceaaed, 0xfad6ff, 0xeeb59c, 0xd480bb, 0x9052bc,
+    0x171516, 0x373334, 0x695b59, 0xb28b78, 0xe2b27e, 0xf6d896, 0xfcf7be, 0xecebe7, 0xcbc6c1,
+    0xa69e9a, 0x807b7a, 0x595757, 0x323232, 0x4f342f, 0x8c5b3e, 0xc68556, 0xd6a851, 0xb47538,
+    0x724b2c, 0x452a1b, 0x61683a, 0x939446, 0xc6b858, 0xefdd91, 0xb5e7cb, 0x86c69a, 0x5d9b79,
+    0x486859, 0x2c3b39, 0x171819, 0x2c3438, 0x465456, 0x64878c, 0x8ac4c3, 0xafe9df, 0xdceaee,
+    0xb8ccd8, 0x88a3bc, 0x5e718e, 0x485262, 0x282c3c, 0x464762, 0x696682, 0x9a97b9, 0xc5c7dd,
+    0xe6e7f0, 0xeee6ea, 0xe3cddf, 0xbfa5c9, 0x87738f, 0x564f5b, 0x322f35, 0x36282b, 0x654956,
+    0x966888, 0xc090a9, 0xd4b8b8, 0xeae0dd, 0xf1ebdb, 0xddcebf, 0xbda499, 0x886e6a, 0x594d4d,
+    0x33272a, 0xb29476, 0xe1bf89, 0xf8e398, 0xffe9e3, 0xfdc9c9, 0xf6a2a8, 0xe27285, 0xb25266,
+    0x64364b, 0x2a1e23,
+];
+
 const AAP64: [u32; 64] = [
     0x060608, 0x141013, 0x3b1725, 0x73172d, 0xb4202a, 0xdf3e23, 0xfa6a0a, 0xf9a31b, 0xffd541,
     0xfffc40, 0xd6f264, 0x9cdb43, 0x59c135, 0x14a02e, 0x1a7a3e, 0x24523b, 0x122020, 0x143464,
@@ -126,10 +150,10 @@ mod tests {
     #[test]
     fn builtin_presets_are_valid_and_unique() {
         let mut names: Vec<&str> = BUILTIN_PALETTES.iter().map(|p| p.name).collect();
-        assert_eq!(names.len(), 10);
+        assert_eq!(names.len(), 11);
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 10, "nombres repetidos");
+        assert_eq!(names.len(), 11, "nombres repetidos");
         for p in BUILTIN_PALETTES {
             let palette = p.palette();
             assert!((2..=256).contains(&palette.len()), "{}", p.name);
@@ -141,6 +165,18 @@ mod tests {
     fn db32_preset_matches_the_factory_default() {
         let db32 = BUILTIN_PALETTES.iter().find(|p| p.name == "DB32").unwrap();
         assert_eq!(db32.palette(), crate::Palette::db32());
+    }
+
+    #[test]
+    fn splendor128_is_the_factory_default_of_new_documents() {
+        let p = BUILTIN_PALETTES
+            .iter()
+            .find(|p| p.name == "AAP-Splendor128")
+            .unwrap();
+        assert_eq!(p.palette(), crate::Palette::splendor128());
+        assert_eq!(p.palette().len(), 128);
+        let first = crate::Palette::splendor128().colors()[0];
+        assert_eq!(first, crate::Rgba::from_hex(0x050403));
     }
 
     #[test]

@@ -26,10 +26,12 @@ pub(crate) fn draw_pixels(
         return Err(CmdError::ColorModeMismatch);
     }
     let (w, h) = (doc.width as i32, doc.height as i32);
+    // En escala de grises, cada color pasa a su gris.
     let pixels: Vec<_> = pixels
         .iter()
         .copied()
         .filter(|&(x, y, _)| x >= 0 && y >= 0 && x < w && y < h)
+        .map(|(x, y, v)| (x, y, doc.color_mode.adapt(v)))
         .collect();
     if pixels.is_empty() {
         return Ok(Command::Batch(Vec::new()));

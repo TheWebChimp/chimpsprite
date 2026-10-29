@@ -92,7 +92,10 @@ impl Tool for Spray {
         if !self.active || self.dots.is_empty() {
             return ToolOutput::default();
         }
-        ToolOutput::command(ctx.draw(stamp(&self.dots, ctx.brush_size), ctx.color))
+        ToolOutput::command(ctx.draw(
+            stamp(&self.dots, ctx.brush_size, ctx.brush_shape),
+            ctx.color,
+        ))
     }
 
     fn is_active(&self) -> bool {

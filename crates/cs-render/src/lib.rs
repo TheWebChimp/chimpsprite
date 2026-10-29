@@ -2,10 +2,13 @@
 
 use std::sync::Arc;
 
+mod field;
+mod lighting;
 mod materialize;
-mod normal;
+pub mod normal;
+pub use lighting::{Light, detect_background, lit, luminance_mask};
 pub use materialize::{Bake, bake_layers, materialize, materialize_tilemaps, tilemap_pixel};
-pub use normal::normal_map;
+pub use normal::{NormalFormat, NormalSettings, normal_map};
 
 use cs_core::{BlendMode, ColorMode, Image, ImageId, Layer, LayerKind, PixelValue, Rgba, Sprite};
 

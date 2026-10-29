@@ -17,7 +17,11 @@ cargo run -p chimpsprite
 - **Export** › Godot 4 (`SpriteFrames` `.tres`), Unity (`.png.meta` con un sprite por frame) y Bevy
   (`.ron` con la grilla, animaciones y slices). Para Bevy:
   `TextureAtlasLayout::from_grid(tile_size, columns, rows, None, None)`.
-- **Normal maps** opcionales (`_n.png`) para luces 2D.
+- **Normal maps** opcionales (`_n.png`) para luces 2D, con el algoritmo de
+  [Sprite Fusion Sprite Normals](https://github.com/Hugo-Dz/spritefusion-sprite-normals).
+- **Lumen** (en el dock): genera o carga el normal map y la máscara de luminance de un sprite y los
+  prueba con una luz que se arrastra (altura, falloff, brillo, ambiente); exporta los mapas o
+  hornea la luz en una capa.
 
 ## Servidor MCP (agentes)
 
@@ -43,3 +47,7 @@ Workspace por capas: `cs-core` (modelo) → `cs-raster` → `cs-commands` (undo/
 ## Licencia
 
 Dual: [MIT](LICENSE-MIT) o [Apache-2.0](LICENSE-APACHE), a tu elección.
+
+El generador de normal maps (`crates/cs-render/src/normal.rs` y `field.rs`) está portado de
+[Sprite Fusion Sprite Normals](https://github.com/Hugo-Dz/spritefusion-sprite-normals),
+© 2026 Hugo Duprez, licencia MIT (el aviso va en el encabezado de `normal.rs`).

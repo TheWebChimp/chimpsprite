@@ -6,6 +6,7 @@ use eframe::egui;
 
 use crate::editor::Editor;
 use crate::files::{self, FileError};
+use crate::pixel_ui::Tip as _;
 use crate::platform::{FileFilter, Platform, SaveTarget};
 use crate::widgets;
 
@@ -91,6 +92,8 @@ pub struct ExportDialog {
     pub json: JsonFormat,
     /// También exportar `<nombre>_n.png` con el normal map.
     pub normal_map: bool,
+    /// Con qué ajustes se hace el normal map (los de Lumen).
+    pub normals: cs_render::NormalSettings,
     /// Carpeta `res://` donde quedará la hoja en el proyecto de Godot.
     pub godot_folder: String,
 }
@@ -105,6 +108,7 @@ impl Default for ExportDialog {
             columns: 4,
             json: JsonFormat::Hash,
             normal_map: false,
+            normals: Default::default(),
             godot_folder: "res://".into(),
         }
     }
@@ -157,9 +161,9 @@ impl ExportDialog {
         let mut files = self.build_main(editor, file_name, &name, &stem, &json_name, layout)?;
         if self.normal_map && self.format.supports_normals() {
             let png = if self.format == ExportFormat::Png {
-                export::export_normal_png(sprite, editor.frame, self.scale)?
+                export::export_normal_png(sprite, editor.frame, self.scale, &self.normals)?
             } else {
-                export::export_normal_sheet(sprite, layout, self.scale)?
+                export::export_normal_sheet(sprite, layout, self.scale, &self.normals)?
             };
             files.push((format!("{stem}_n.png"), png));
         }
@@ -267,17 +271,19 @@ impl ExportDialog {
         ctx: &egui::Context,
         editor: &mut Editor,
         platform: &Platform,
+        skin: Option<&crate::skin::Skin>,
     ) -> ExportResult {
         let mut result = ExportResult::Open;
-        let mut open = true;
-        egui::Window::new("Export")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
+        let (_, closed) = crate::pixel_ui::app_window(
+            ctx,
+            skin,
+            "export_window",
+            "Export",
+            true,
+            (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+            |ui| {
                 for format in ExportFormat::ALL {
-                    ui.radio_value(&mut self.format, format, format.label());
+                    crate::widgets::radio_value(ui, &mut self.format, format, format.label());
                 }
                 ui.separator();
                 ui.horizontal(|ui| {
@@ -288,27 +294,47 @@ impl ExportDialog {
                     ExportFormat::Gif => {
                         ui.horizontal(|ui| {
                             ui.label("Frames");
-                            ui.radio_value(&mut self.gif_range, GifRange::All, "All");
-                            ui.radio_value(
+                            crate::widgets::radio_value(
+                                ui,
+                                &mut self.gif_range,
+                                GifRange::All,
+                                "All",
+                            );
+                            crate::widgets::radio_value(
+                                ui,
                                 &mut self.gif_range,
                                 GifRange::CurrentTag,
                                 "Current tag",
                             );
-                            ui.radio_value(&mut self.gif_range, GifRange::Selection, "Selection");
+                            crate::widgets::radio_value(
+                                ui,
+                                &mut self.gif_range,
+                                GifRange::Selection,
+                                "Selection",
+                            );
                         });
                     }
                     format if format.uses_sheet() => {
                         ui.horizontal(|ui| {
                             ui.label("Layout");
-                            ui.radio_value(&mut self.layout, SheetLayout::Horizontal, "Horizontal");
-                            ui.radio_value(&mut self.layout, SheetLayout::Vertical, "Vertical");
+                            crate::widgets::radio_value(
+                                ui,
+                                &mut self.layout,
+                                SheetLayout::Horizontal,
+                                "Horizontal",
+                            );
+                            crate::widgets::radio_value(
+                                ui,
+                                &mut self.layout,
+                                SheetLayout::Vertical,
+                                "Vertical",
+                            );
                             let grid = SheetLayout::Grid {
                                 columns: self.columns,
                             };
-                            if ui
-                                .radio(matches!(self.layout, SheetLayout::Grid { .. }), "Grid")
-                                .clicked()
-                            {
+                            // El radio del diseño, como las otras opciones.
+                            let mut grid_on = matches!(self.layout, SheetLayout::Grid { .. });
+                            if widgets::radio_value(ui, &mut grid_on, true, "Grid").clicked() {
                                 self.layout = grid;
                             }
                             if matches!(self.layout, SheetLayout::Grid { .. }) {
@@ -321,7 +347,7 @@ impl ExportDialog {
                         if format == ExportFormat::Godot {
                             ui.horizontal(|ui| {
                                 ui.label("Godot folder");
-                                ui.text_edit_singleline(&mut self.godot_folder);
+                                crate::widgets::text_line(ui, &mut self.godot_folder);
                             });
                         }
                     }
@@ -329,12 +355,14 @@ impl ExportDialog {
                     _ => {}
                 }
                 if self.format.supports_normals() {
-                    ui.checkbox(&mut self.normal_map, "Also export normal map (_n.png)")
-                        .on_hover_text("Lighting normals from the sprite's shape, for 2D lights in Godot/Unity/Bevy");
+                    crate::widgets::checkbox(ui, &mut self.normal_map, "Also export normal map (_n.png)")
+                        .tip("Lighting normals from the sprite's shape, for 2D lights in Godot/Unity/Bevy");
                 }
                 match self.format {
                     ExportFormat::Godot => {
-                        ui.weak("Animations come from tags; durations become per-frame multipliers.");
+                        ui.weak(
+                            "Animations come from tags; durations become per-frame multipliers.",
+                        );
                     }
                     ExportFormat::Unity => {
                         ui.weak("One sprite per frame; pivots come from slices with a pivot.");
@@ -354,17 +382,15 @@ impl ExportDialog {
                         sprite.frames.len()
                     ),
                 });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("Export…").clicked() {
-                        result = self.pick_and_export(editor, platform);
-                    }
-                    if ui.button("Cancel").clicked() {
-                        result = ExportResult::Cancel;
-                    }
-                });
-            });
-        if !open || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
+                ui.add_space(6.0);
+                match crate::pixel_ui::dialog_buttons(ui, skin, &["Export", "Cancel"]) {
+                    Some(0) => result = self.pick_and_export(editor, platform),
+                    Some(_) => result = ExportResult::Cancel,
+                    None => {}
+                }
+            },
+        );
+        if closed || ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
             return ExportResult::Cancel;
         }
         result
@@ -393,8 +419,8 @@ impl ExportDialog {
 fn json_options(ui: &mut egui::Ui, json: &mut JsonFormat) {
     ui.horizontal(|ui| {
         ui.label("JSON");
-        ui.radio_value(json, JsonFormat::Hash, "Hash");
-        ui.radio_value(json, JsonFormat::Array, "Array");
+        crate::widgets::radio_value(ui, json, JsonFormat::Hash, "Hash");
+        crate::widgets::radio_value(ui, json, JsonFormat::Array, "Array");
     });
 }
 

@@ -21,30 +21,107 @@ pub struct Guide {
     pub position: i32,
 }
 
-/// Modos de simetría para dibujar. Los ejes pasan por un centro en **medios píxeles**.
+/// Ejes de simetría para dibujar; se prenden y apagan por separado. Se aplica el grupo de
+/// simetrías que generan los ejes prendidos. Los ejes pasan por un centro en **medios píxeles**.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum SymmetryMode {
-    #[default]
+#[serde(default)]
+pub struct SymmetryAxes {
+    /// Eje vertical │: espejo izquierda ↔ derecha.
+    pub vertical: bool,
+    /// Eje horizontal ─: espejo arriba ↔ abajo.
+    pub horizontal: bool,
+    /// Diagonal ╲.
+    pub diagonal_down: bool,
+    /// Diagonal ╱.
+    pub diagonal_up: bool,
+}
+
+impl SymmetryAxes {
+    /// Todos apagados: solo el trazo original.
+    pub const NONE: Self = Self {
+        vertical: false,
+        horizontal: false,
+        diagonal_down: false,
+        diagonal_up: false,
+    };
+
+    /// `true` si hay al menos un eje prendido.
+    pub fn any(self) -> bool {
+        self.vertical || self.horizontal || self.diagonal_down || self.diagonal_up
+    }
+}
+
+/// El modo único de antes (`mode`). Solo se lee, para abrir documentos y autosaves viejos.
+#[derive(Deserialize)]
+enum LegacyMode {
     None,
-    /// Espejo izquierda ↔ derecha (eje vertical).
+    /// Espejo izquierda ↔ derecha: el eje vertical.
     Horizontal,
-    /// Espejo arriba ↔ abajo (eje horizontal).
+    /// Espejo arriba ↔ abajo: el eje horizontal.
     Vertical,
     Both,
-    /// Diagonal ╲.
     DiagonalDown,
-    /// Diagonal ╱.
     DiagonalUp,
-    /// Las 8 simetrías del cuadrado.
     All,
 }
 
-/// Simetría de un artboard.
+impl From<LegacyMode> for SymmetryAxes {
+    fn from(mode: LegacyMode) -> Self {
+        let mut axes = SymmetryAxes::NONE;
+        match mode {
+            LegacyMode::None => {}
+            LegacyMode::Horizontal => axes.vertical = true,
+            LegacyMode::Vertical => axes.horizontal = true,
+            LegacyMode::Both => {
+                axes.vertical = true;
+                axes.horizontal = true;
+            }
+            LegacyMode::DiagonalDown => axes.diagonal_down = true,
+            LegacyMode::DiagonalUp => axes.diagonal_up = true,
+            LegacyMode::All => {
+                axes = SymmetryAxes {
+                    vertical: true,
+                    horizontal: true,
+                    diagonal_down: true,
+                    diagonal_up: true,
+                }
+            }
+        }
+        axes
+    }
+}
+
+/// Simetría de un artboard. Se escribe con `axes`; al leer también acepta el `mode` de antes.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "SymmetryRepr")]
 pub struct Symmetry {
-    pub mode: SymmetryMode,
+    pub axes: SymmetryAxes,
     /// Centro × 2 (medios píxeles); `None` = centro del artboard.
     pub center2: Option<(i32, i32)>,
+}
+
+/// Lo que se lee de una simetría: el formato nuevo (`axes`) o el viejo (`mode`). Si vienen los
+/// dos, manda `axes`.
+#[derive(Deserialize)]
+struct SymmetryRepr {
+    #[serde(default)]
+    axes: Option<SymmetryAxes>,
+    #[serde(default)]
+    mode: Option<LegacyMode>,
+    #[serde(default)]
+    center2: Option<(i32, i32)>,
+}
+
+impl From<SymmetryRepr> for Symmetry {
+    fn from(repr: SymmetryRepr) -> Self {
+        Symmetry {
+            axes: repr
+                .axes
+                .or(repr.mode.map(SymmetryAxes::from))
+                .unwrap_or_default(),
+            center2: repr.center2,
+        }
+    }
 }
 
 /// Un sprite independiente colocado en el lienzo infinito del documento.
@@ -86,15 +163,51 @@ impl Artboard {
     }
 }
 
-/// Documento: varios artboards; el orden es el z-order (el último queda arriba).
+/// Una nota (post-it) sobre el lienzo, entre los artboards. Su esquina está en coordenadas de
+/// mundo (se mueve con la vista); su tamaño es de interfaz (no cambia con el zoom, para que el
+/// texto siempre se lea).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Note {
+    pub id: u32,
+    pub position: (i32, i32),
+    pub size: (u32, u32),
+    pub text: String,
+    #[serde(default)]
+    pub color: NoteColor,
+}
+
+/// El color del papel de una nota.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum NoteColor {
+    #[default]
+    Yellow,
+    Pink,
+    Blue,
+    Green,
+}
+
+impl NoteColor {
+    pub const ALL: [NoteColor; 4] = [
+        NoteColor::Yellow,
+        NoteColor::Pink,
+        NoteColor::Blue,
+        NoteColor::Green,
+    ];
+}
+
+/// Documento: varios artboards; el orden es el z-order (el último queda arriba). Las notas van
+/// encima de todo.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Document {
     pub artboards: Vec<Artboard>,
+    #[serde(default)]
+    pub notes: Vec<Note>,
 }
 
 impl Document {
     pub fn with_sprite(name: impl Into<String>, sprite: Sprite) -> Self {
         Self {
+            notes: Vec::new(),
             artboards: vec![Artboard {
                 guides: Vec::new(),
                 symmetry: Default::default(),
@@ -231,7 +344,7 @@ mod tests {
     #[test]
     fn bounds_union() {
         assert_eq!(doc().bounds(), Some(((0, 0), (15, 10))));
-        assert_eq!(Document { artboards: vec![] }.bounds(), None);
+        assert_eq!(Document::default().bounds(), None);
     }
 
     fn instancing(ids: &[(u32, &[u32])]) -> Document {
@@ -257,7 +370,10 @@ mod tests {
                 }
             })
             .collect();
-        Document { artboards }
+        Document {
+            artboards,
+            notes: Vec::new(),
+        }
     }
 
     #[test]
@@ -282,5 +398,74 @@ mod tests {
         assert_eq!(d.next_artboard_id(), ArtboardId(6));
         let d = instancing(&[(1, &[]), (3, &[1])]);
         assert_eq!(d.next_artboard_id(), ArtboardId(4));
+    }
+
+    #[test]
+    fn the_old_symmetry_mode_reads_as_axes() {
+        let axes = |v, h, d, u| SymmetryAxes {
+            vertical: v,
+            horizontal: h,
+            diagonal_down: d,
+            diagonal_up: u,
+        };
+        let cases = [
+            ("None", axes(false, false, false, false)),
+            ("Horizontal", axes(true, false, false, false)),
+            ("Vertical", axes(false, true, false, false)),
+            ("Both", axes(true, true, false, false)),
+            ("DiagonalDown", axes(false, false, true, false)),
+            ("DiagonalUp", axes(false, false, false, true)),
+            ("All", axes(true, true, true, true)),
+        ];
+        for (mode, expected) in cases {
+            // Así escribía la simetría la versión anterior.
+            let json = format!(r#"{{"mode":"{mode}","center2":[5,3]}}"#);
+            let s: Symmetry = serde_json::from_str(&json).unwrap();
+            assert_eq!(s.axes, expected, "{mode}");
+            assert_eq!(s.center2, Some((5, 3)), "{mode}");
+        }
+        let old: Symmetry = serde_json::from_str(r#"{"mode":"Both","center2":null}"#).unwrap();
+        assert_eq!(old.center2, None);
+    }
+
+    #[test]
+    fn the_symmetry_is_written_with_axes_and_reads_back() {
+        let s = Symmetry {
+            axes: SymmetryAxes {
+                vertical: true,
+                diagonal_up: true,
+                ..SymmetryAxes::NONE
+            },
+            center2: Some((4, 6)),
+        };
+        let json = serde_json::to_string(&s).unwrap();
+        assert_eq!(
+            json,
+            r#"{"axes":{"vertical":true,"horizontal":false,"diagonal_down":false,"diagonal_up":true},"center2":[4,6]}"#
+        );
+        assert_eq!(serde_json::from_str::<Symmetry>(&json).unwrap(), s);
+        // Si vienen los dos, manda `axes`; sin nada, todo apagado.
+        let both: Symmetry =
+            serde_json::from_str(r#"{"axes":{"horizontal":true},"mode":"All"}"#).unwrap();
+        assert_eq!(
+            both.axes,
+            SymmetryAxes {
+                horizontal: true,
+                ..SymmetryAxes::NONE
+            }
+        );
+        assert_eq!(
+            serde_json::from_str::<Symmetry>("{}").unwrap(),
+            Symmetry::default()
+        );
+    }
+
+    #[test]
+    fn an_old_artboard_with_mode_still_loads() {
+        let mut json = serde_json::to_value(&doc().artboards[1]).unwrap();
+        json["symmetry"] = serde_json::json!({"mode": "DiagonalUp", "center2": null});
+        let artboard: Artboard = serde_json::from_value(json).unwrap();
+        assert!(artboard.symmetry.axes.diagonal_up);
+        assert!(!artboard.symmetry.axes.vertical);
     }
 }

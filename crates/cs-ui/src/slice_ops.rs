@@ -117,6 +117,36 @@ impl Editor {
         }
     }
 
+    /// Slice nuevo ("Slice N", el primer N libre) del tamaño de la selección o, sin selección,
+    /// de todo el lienzo; queda seleccionado.
+    pub fn add_slice(&mut self) {
+        let sprite = self.sprite();
+        let bounds = match self.selection.as_ref().and_then(|m| m.bounds()) {
+            Some(((x0, y0), (x1, y1))) => (x0, y0, (x1 - x0 + 1) as u32, (y1 - y0 + 1) as u32),
+            None => (0, 0, sprite.width, sprite.height),
+        };
+        let mut slices = sprite.slices.clone();
+        let n = (1..)
+            .find(|n| !slices.iter().any(|s| s.name == format!("Slice {n}")))
+            .expect("free name");
+        slices.push(Slice {
+            name: format!("Slice {n}"),
+            color: cs_tools::SLICE_COLOR,
+            text: String::new(),
+            keys: vec![SliceKey {
+                frame: 0,
+                bounds,
+                center: None,
+                pivot: None,
+            }],
+        });
+        let index = slices.len() - 1;
+        if self.execute(Command::SetSlices(slices)) {
+            self.end_group();
+            self.slice = Some(index);
+        }
+    }
+
     pub fn delete_slice(&mut self) {
         let Some(index) = self.slice else {
             return;

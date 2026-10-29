@@ -138,6 +138,26 @@ mod tests {
         assert!(decode("{nope").is_err());
     }
 
+    /// Autosave real de la versión anterior: "hero.chimp", un sprite de 4×4 con la simetría
+    /// `{"mode": "Both", "center2": [3, 5]}` en su manifiesto.
+    const OLD_AUTOSAVE: &str = r#"[{"name":"hero.chimp","chimp":"UEsDBBQAAAAIAAAAIQAnyrMt8wAAAJ8BAAAUAAAAYXJ0Ym9hcmRzLzEuYXNlcHJpdGW1jzFIQmEYRc+PD1ydgqZ+IqKt50MKSRCClmwQByMaVCzBNxhFBCI0RBC4tARRDrW05Sw0uDRGc5RDBbUGNVZw4xcice+MF77v3nNm4OnC4OFhMcAag1iMC4kR4z8YM/D5Hum3RoARIGr7lfzxAIxa+3sz/EQwbhOChamUoJKMCw7zc4LHzUnB/XlF8HZ9Kvj6mBGcvGYFYdcXzB7VBJnqtCCXmRAEqaQgnd4W+MU9wWrtWVBuSVC4fRHc9L4Fkkta7Y5gf/dAUA1DwUo+J9iZbwoug8BtWC4L7hpXbtvxoqC54cu5eNaZD8gQZalUX9+y8R9QSwMEFAAAAAgAAAAhACE8PA+jAAAAMgEAAA0AAABtYW5pZmVzdC5qc29uVY7BCoMwEETvfsWw59JqSy8e+xvFQ6orBhojm1AQ8d9LVk1pDpvZzczLLgVAvRdnItWgdrBuolMafliC9SPVqLQ3El/eSBeoxrMAgEUrQLY7XNqOxnGCDSxeWTqdfLBxA27xdMrjGSh31eREb9/KyT9fqrMJPImN/OOG2TmOMlOdFwLI+U6zDx+H7AWo5TGyXP+WAG4/B3DPutnVqneqTbF+AVBLAQIUABQAAAAIAAAAIQAnyrMt8wAAAJ8BAAAUAAAAAAAAAAAAAACkgQAAAABhcnRib2FyZHMvMS5hc2Vwcml0ZVBLAQIUABQAAAAIAAAAIQAhPDwPowAAADIBAAANAAAAAAAAAAAAAACkgSUBAABtYW5pZmVzdC5qc29uUEsFBgAAAAACAAIAfQAAAPMBAAAAAA=="}]"#;
+
+    #[test]
+    fn an_old_autosave_restores_the_symmetry_as_axes() {
+        let back = decode(OLD_AUTOSAVE).unwrap();
+        assert_eq!(back[0].name, "hero.chimp");
+        let symmetry = back[0].doc.artboards[0].symmetry;
+        assert_eq!(
+            symmetry.axes,
+            cs_core::SymmetryAxes {
+                vertical: true,
+                horizontal: true,
+                ..cs_core::SymmetryAxes::NONE
+            }
+        );
+        assert_eq!(symmetry.center2, Some((3, 5)));
+    }
+
     #[test]
     fn too_large_documents_are_rejected() {
         // Una imagen con ruido no se comprime: 1200×1200 RGBA ≈ 5.7 MB.

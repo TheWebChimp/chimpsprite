@@ -2,13 +2,14 @@
 //! herramientas semánticas que se traducen a `DocCommand` (con undo), más lectura de píxeles como
 //! texto y render a PNG. No sabe nada del protocolo.
 
+mod dispatch;
 mod error;
 mod ops;
 pub mod params;
-mod quantize;
 mod session;
 mod target;
 mod text;
 
+pub use dispatch::OPERATIONS;
 pub use error::{AgentError, Result};
 pub use session::{Reply, Session};

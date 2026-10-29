@@ -58,7 +58,7 @@ pub fn visible_value(sprite: &cs_core::Sprite, frame: usize, p: Point) -> cs_cor
     // `composite_pixel` ya ve los tilemaps (un tile por capa, sin materializar).
     let c = cs_render::composite_pixel(sprite, frame, p.0, p.1);
     match sprite.color_mode {
-        ColorMode::Rgba => PixelValue::Rgba(c),
+        ColorMode::Rgba | ColorMode::Grayscale => PixelValue::Rgba(c),
         ColorMode::Indexed { transparent_index } => {
             if c.a < 128 {
                 return PixelValue::Index(transparent_index);

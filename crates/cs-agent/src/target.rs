@@ -115,6 +115,7 @@ pub fn color(sprite: &Sprite, c: &ColorArg) -> Result<PixelValue> {
             Ok(mode.transparent())
         }
         (ColorArg::Text(t), ColorMode::Rgba) => Ok(PixelValue::Rgba(hex(t)?)),
+        (ColorArg::Text(t), ColorMode::Grayscale) => Ok(PixelValue::Rgba(hex(t)?.to_gray())),
         (ColorArg::Text(t), ColorMode::Indexed { .. }) => {
             let rgba = hex(t)?;
             let index = sprite
@@ -140,7 +141,7 @@ pub fn color(sprite: &Sprite, c: &ColorArg) -> Result<PixelValue> {
                 )))
             }
         }
-        (ColorArg::Index(_), ColorMode::Rgba) => Err(invalid(
+        (ColorArg::Index(_), ColorMode::Rgba | ColorMode::Grayscale) => Err(invalid(
             "palette indices only work on indexed sprites; use a hex color like \"#ff0000\"",
         )),
     }

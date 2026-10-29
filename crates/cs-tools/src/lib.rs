@@ -1,12 +1,16 @@
 //! Herramientas como máquinas de estado: eventos de puntero → comandos.
 
 mod artboard;
+mod blur;
 mod bucket;
+mod contour;
+mod curve;
 mod eyedropper;
 mod gradient;
 mod jumble;
 mod move_tool;
 mod pencil;
+mod polygon;
 mod rng;
 mod select;
 mod shape;
@@ -15,14 +19,18 @@ mod spray;
 pub mod text;
 
 pub use artboard::{ArtboardHit, ArtboardTool, Edges, hit_test};
+pub use blur::Blur;
 pub use bucket::Bucket;
+pub use contour::Contour;
 pub use cs_raster::Point;
-pub use cs_raster::{Dither, GradientShape};
+pub use cs_raster::{BrushShape, Dither, GradientShape};
+pub use curve::Curve;
 pub use eyedropper::Eyedropper;
 pub use gradient::{GradientTool, gradient_pixels, gradient_value};
 pub use jumble::Jumble;
 pub use move_tool::MoveTool;
 pub use pencil::{Eraser, Pencil};
+pub use polygon::Polygon;
 pub use select::{Lasso, MagicWand, Marquee, MarqueeShape, PolygonLasso};
 pub use shape::{ShapeKind, ShapeTool};
 pub use slice::{SLICE_COLOR, SliceTool};
@@ -30,6 +38,7 @@ pub use spray::Spray;
 
 use cs_commands::Command;
 use cs_core::{LayerId, Mask, PixelValue, Sprite};
+use cs_raster::stamp;
 
 pub struct ToolContext<'a> {
     pub sprite: &'a Sprite,
@@ -39,6 +48,12 @@ pub struct ToolContext<'a> {
     /// El otro color (destino del degradado).
     pub secondary: PixelValue,
     pub brush_size: u32,
+    /// Forma del pincel: Pencil, Eraser, Spray, Jumble, Blur y el contorno de Line, Rectangle y
+    /// Ellipse.
+    pub brush_shape: BrushShape,
+    /// Con el pincel personalizado y sus colores: cada punto (relativo al centro) con su color.
+    /// Pencil, Line, Rectangle, Ellipse y Polygon lo pintan así en vez de con `color`.
+    pub brush_image: Option<std::rc::Rc<[(Point, PixelValue)]>>,
     pub pixel_perfect: bool,
     /// Formas rellenas (rectángulo/elipse).
     pub filled: bool,
@@ -75,6 +90,31 @@ impl ToolContext<'_> {
             layer: self.layer,
             frame: self.frame,
             pixels: points.into_iter().map(|(x, y)| (x, y, color)).collect(),
+        }
+    }
+
+    /// El pincel en cada punto de `path`, con `color` o, si el pincel personalizado lleva sus
+    /// colores, con los del dibujo (donde se enciman, el de la última pincelada).
+    fn stamp_draw(&self, path: &[Point], color: PixelValue) -> Command {
+        let Some(image) = self
+            .brush_image
+            .as_ref()
+            .filter(|_| self.brush_shape == BrushShape::Custom)
+        else {
+            return self.draw(stamp(path, self.brush_size, self.brush_shape), color);
+        };
+        let pixels = path
+            .iter()
+            .flat_map(|&(px, py)| {
+                image
+                    .iter()
+                    .map(move |&((dx, dy), v)| (px + dx, py + dy, v))
+            })
+            .collect();
+        Command::DrawPixels {
+            layer: self.layer,
+            frame: self.frame,
+            pixels,
         }
     }
 }
@@ -157,7 +197,7 @@ impl Drag {
 pub(crate) mod test_util {
     use cs_core::{ColorMode, LayerId, PixelValue, Rgba, Sprite};
 
-    use crate::ToolContext;
+    use crate::{BrushShape, ToolContext};
 
     pub fn red() -> PixelValue {
         PixelValue::Rgba(Rgba::rgb(255, 0, 0))
@@ -175,6 +215,9 @@ pub(crate) mod test_util {
             color: red(),
             secondary: PixelValue::Rgba(Rgba::rgb(0, 0, 255)),
             brush_size: 1,
+            // Los tests de antes se escribieron con el pincel cuadrado.
+            brush_shape: BrushShape::Square,
+            brush_image: None,
             pixel_perfect: false,
             filled: false,
             corner_radius: 0,

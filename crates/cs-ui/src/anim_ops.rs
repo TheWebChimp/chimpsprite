@@ -53,11 +53,12 @@ impl Editor {
             self.stop();
             return;
         }
-        let (range, direction) = match self.sprite().tag_at(self.frame) {
-            Some(tag) => ((tag.from, tag.to), tag.direction),
-            None => ((0, self.frame_count() - 1), AnimDirection::Forward),
+        let (range, direction, repeat) = match self.sprite().tag_at(self.frame) {
+            Some(tag) => ((tag.from, tag.to), tag.direction, tag.repeat),
+            None => ((0, self.frame_count() - 1), AnimDirection::Forward, 0),
         };
-        self.playback = Some((Playback::new(self.frame, direction), range, direction));
+        let playback = Playback::new(self.frame, direction).repeating(repeat);
+        self.playback = Some((playback, range, direction));
         self.play_clock = 0.0;
         self.playing = true;
     }
@@ -78,7 +79,11 @@ impl Editor {
                 break;
             }
             self.play_clock -= duration;
-            playback.step(range, direction);
+            // Un tag con repeat se para al terminar sus vueltas.
+            if !playback.step(range, direction) {
+                self.stop();
+                return;
+            }
             self.set_frame(playback.frame);
         }
         self.play_clock = self.play_clock.min(1000.0);
@@ -97,7 +102,7 @@ impl Editor {
         // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
         self.commit_floating();
         if let Some(cmd) = ops::duplicate_frame(self.sprite(), self.frame, false)
-            && self.execute(cmd)
+            && self.execute_named(cmd, "Duplicate Frame")
         {
             self.set_frame(self.frame + 1);
         }
@@ -134,6 +139,21 @@ impl Editor {
             .map(|index| Command::SetFrameDuration { index, duration_ms })
             .collect();
         self.execute(Command::Batch(cmds));
+    }
+
+    /// Frame → Reverse Frames: los frames elegidos quedan al revés (con sus cels y duraciones),
+    /// en un paso de undo.
+    pub fn reverse_frames(&mut self) -> bool {
+        self.commit_floating();
+        let (a, b) = self.selected_frames();
+        if a == b {
+            return false;
+        }
+        // El último pasa al principio, el nuevo último al segundo lugar, y así.
+        let cmds = (0..b - a)
+            .map(|k| Command::MoveFrame { from: b, to: a + k })
+            .collect();
+        self.execute_named(Command::Batch(cmds), "Reverse Frames")
     }
 
     /// Cambia la duración de un frame concreto.
@@ -180,6 +200,7 @@ impl Editor {
     /// Selecciona la capa para pintar sus píxeles (no su máscara).
     pub fn select_layer(&mut self, id: LayerId) {
         if self.sprite().layer(id).is_some() {
+            let before = self.paint_target();
             if id != self.layer {
                 self.commit_floating();
                 self.end_group();
@@ -188,6 +209,8 @@ impl Editor {
             }
             self.layer = id;
             self.edit_mask = false;
+            // Pasar a una capa tilemap (o salir de la máscara) a mitad de un trazo lo corta.
+            self.cancel_if_target_changed(before);
         }
     }
 
@@ -266,15 +289,21 @@ impl Editor {
         self.execute(Command::SetLayerProps { id, props });
     }
 
+    /// `set_layer_props` con `label` como nombre del paso.
+    fn named_props(&mut self, id: LayerId, props: LayerProps, label: &'static str) {
+        self.execute_named(Command::SetLayerProps { id, props }, label);
+    }
+
     pub fn toggle_visible(&mut self, id: LayerId) {
         if let Some(l) = self.sprite().layer(id) {
             let visible = Some(!l.visible);
-            self.set_layer_props(
+            self.named_props(
                 id,
                 LayerProps {
                     visible,
                     ..Default::default()
                 },
+                "Layer Visibility",
             );
         }
     }
@@ -282,12 +311,13 @@ impl Editor {
     pub fn toggle_locked(&mut self, id: LayerId) {
         if let Some(l) = self.sprite().layer(id) {
             let locked = Some(!l.locked);
-            self.set_layer_props(
+            self.named_props(
                 id,
                 LayerProps {
                     locked,
                     ..Default::default()
                 },
+                "Layer Lock",
             );
         }
     }
@@ -298,36 +328,39 @@ impl Editor {
             .layer(id)
             .is_some_and(|l| l.opacity != opacity)
         {
-            self.set_layer_props(
+            self.named_props(
                 id,
                 LayerProps {
                     opacity: Some(opacity),
                     ..Default::default()
                 },
+                "Layer Opacity",
             );
         }
     }
 
     pub fn set_blend(&mut self, id: LayerId, blend: BlendMode) {
         if self.sprite().layer(id).is_some_and(|l| l.blend != blend) {
-            self.set_layer_props(
+            self.named_props(
                 id,
                 LayerProps {
                     blend: Some(blend),
                     ..Default::default()
                 },
+                "Blend Mode",
             );
         }
     }
 
     pub fn rename_layer(&mut self, id: LayerId, name: String) {
         if self.sprite().layer(id).is_some_and(|l| l.name != name) && !name.is_empty() {
-            self.set_layer_props(
+            self.named_props(
                 id,
                 LayerProps {
                     name: Some(name),
                     ..Default::default()
                 },
+                "Rename Layer",
             );
         }
     }
@@ -341,7 +374,7 @@ impl Editor {
         if let Some(prev) = frame.checked_sub(1)
             && let Some(cmd) = ops::link_cel(self.sprite(), layer, frame, prev)
         {
-            self.execute(cmd);
+            self.execute_named(cmd, "Link Cels");
         }
     }
 
@@ -349,7 +382,7 @@ impl Editor {
         // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
         self.commit_floating();
         if let Some(cmd) = ops::unlink_cel(self.sprite(), layer, frame) {
-            self.execute(cmd);
+            self.execute_named(cmd, "Unlink Cels");
         }
     }
 
@@ -358,7 +391,7 @@ impl Editor {
         // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
         self.commit_floating();
         if let Some(cmd) = ops::link_range(self.sprite(), layer, from, to) {
-            self.execute(cmd);
+            self.execute_named(cmd, "Link Cels");
         }
     }
 
@@ -366,19 +399,180 @@ impl Editor {
         // Confirma lo flotante antes de armar el comando: lo arma con el contenido de ahora.
         self.commit_floating();
         if let Some(cmd) = ops::unlink_range(self.sprite(), layer, from, to) {
-            self.execute(cmd);
+            self.execute_named(cmd, "Unlink Cels");
         }
     }
 
     /// Agrega un color al final de la paleta (si no está ya).
-    pub fn add_to_palette(&mut self, color: Rgba) {
+    /// Agrega `color` como una entrada nueva al final de la paleta (aunque ya esté: así se puede
+    /// partir de un color y editarlo) y la elige como primario. `false` si ya hay 256.
+    pub fn add_to_palette(&mut self, color: Rgba) -> bool {
+        self.grow_palette(color, 1)
+    }
+
+    /// Agrega `n` entradas con `color` al final de la paleta (hasta 256), en un paso de undo, y
+    /// elige la primera de ellas. Devuelve si cambió.
+    pub fn grow_palette(&mut self, color: Rgba, n: usize) -> bool {
         let palette = &self.sprite().palette;
-        if palette.colors().contains(&color) || palette.len() >= 256 {
+        let n = n.min(256 - palette.len().min(256));
+        if n == 0 {
+            return false;
+        }
+        let index = palette.len() as u8;
+        let mut colors = palette.colors().to_vec();
+        colors.extend(std::iter::repeat_n(color, n));
+        if !self.execute(Command::SetPalette(cs_core::Palette::new(colors))) {
+            return false;
+        }
+        let value = self.palette_value(index);
+        self.pick_color(value, false, Some(index));
+        true
+    }
+
+    /// Elige el rango de cels de `(capa, frame)` a `(capa, frame)` (de cualquier punta).
+    pub fn select_cels(&mut self, from: (LayerId, usize), to: (LayerId, usize)) {
+        let frames = (from.1, to.1);
+        self.frames_picked = false;
+        self.frame_range = Some(frames);
+        self.layer_range = Some((from.0, to.0, frames));
+    }
+
+    /// Las capas del rango de cels, en el orden del timeline; sin rango, la activa.
+    pub fn range_layers(&self) -> Vec<LayerId> {
+        let order = self.timeline_layers();
+        let at = |id: LayerId| order.iter().position(|l| *l == id);
+        match self.layer_range {
+            Some((a, b, frames)) if self.frame_range == Some(frames) => match (at(a), at(b)) {
+                (Some(a), Some(b)) => order[a.min(b)..=a.max(b)].to_vec(),
+                _ => vec![self.layer],
+            },
+            _ => vec![self.layer],
+        }
+    }
+
+    /// Los cels del rango (capas × frames), aunque estén vacíos.
+    pub fn selected_cels(&self) -> Vec<(LayerId, usize)> {
+        let (a, b) = self.selected_frames();
+        self.range_layers()
+            .into_iter()
+            .flat_map(|l| (a..=b).map(move |f| (l, f)))
+            .collect()
+    }
+
+    /// Si hay un rango de más de un cel.
+    pub fn has_cel_range(&self) -> bool {
+        self.selected_cels().len() > 1
+    }
+
+    /// Borra los cels del rango (un paso de undo).
+    pub fn clear_selected_cels(&mut self) {
+        self.commit_floating();
+        let cmds: Vec<Command> = self
+            .selected_cels()
+            .into_iter()
+            .filter(|&(l, f)| self.sprite().cel(l, f).is_some())
+            .map(|(layer, frame)| Command::SetCel {
+                layer,
+                frame,
+                cel: None,
+            })
+            .collect();
+        if !cmds.is_empty() {
+            self.execute_named(Command::Batch(cmds), "Clear Cels");
+        }
+    }
+
+    /// Mueve (o copia, con `copy`) los cels del rango `layers` capas (en el orden del timeline,
+    /// hacia abajo) y `frames` frames, y el rango con ellos (un paso de undo). Solo entre capas
+    /// de imagen (las tilemap, en su misma capa); lo que caería fuera, no se mueve.
+    pub fn move_selected_cels(&mut self, layers: isize, frames: isize, copy: bool) {
+        if layers == 0 && frames == 0 && !copy {
             return;
         }
-        let mut colors = palette.colors().to_vec();
-        colors.push(color);
-        self.execute(Command::SetPalette(cs_core::Palette::new(colors)));
+        self.commit_floating();
+        let order = self.timeline_layers();
+        let count = self.frame_count() as isize;
+        let sprite = self.sprite();
+        let kind = |id: LayerId| sprite.layer(id).map(|l| l.kind);
+        let moves: Vec<_> = self
+            .selected_cels()
+            .into_iter()
+            .filter_map(|(layer, f)| {
+                let at = order.iter().position(|l| *l == layer)? as isize + layers;
+                let to = *order.get(usize::try_from(at).ok()?)?;
+                let frame = f as isize + frames;
+                let fits = match kind(layer)? {
+                    LayerKind::Image => kind(to) == Some(LayerKind::Image),
+                    LayerKind::Tilemap => to == layer,
+                    _ => false,
+                };
+                (fits && (0..count).contains(&frame)).then_some(((layer, f), (to, frame as usize)))
+            })
+            .collect();
+        if moves.is_empty() {
+            return;
+        }
+        let Some(cmd) = ops::move_cels(sprite, &moves, copy) else {
+            return;
+        };
+        let label = if copy { "Copy Cels" } else { "Move Cels" };
+        if !self.execute_named(cmd, label) {
+            return;
+        }
+        // El rango va con los cels.
+        let shift = |id: LayerId| {
+            order
+                .iter()
+                .position(|l| *l == id)
+                .and_then(|i| {
+                    order.get((i as isize + layers).clamp(0, order.len() as isize - 1) as usize)
+                })
+                .copied()
+                .unwrap_or(id)
+        };
+        let frame = |f: usize| (f as isize + frames).clamp(0, count - 1) as usize;
+        let (a, b) = self.selected_frames();
+        let range_layers = self.range_layers();
+        let (first, last) = (range_layers[0], *range_layers.last().unwrap_or(&self.layer));
+        self.select_cels((shift(first), frame(a)), (shift(last), frame(b)));
+        let active = shift(self.layer);
+        self.select_layer(active);
+        self.set_frame(frame(self.frame));
+        self.frame_range = Some((frame(a), frame(b)));
+    }
+
+    /// Cel Properties → Opacity: la de los cels `cels` que existen. Con `group`, los cambios
+    /// seguidos del mismo gesto (arrastrar el número) son un solo paso de undo.
+    pub fn set_cels_opacity(
+        &mut self,
+        cels: &[(LayerId, usize)],
+        opacity: u8,
+        group: Option<u64>,
+    ) -> bool {
+        let sprite = self.sprite();
+        let cmds: Vec<Command> = cels
+            .iter()
+            .filter_map(|&(layer, frame)| {
+                let cel = *sprite.cel(layer, frame)?;
+                (cel.opacity != opacity).then_some(Command::SetCel {
+                    layer,
+                    frame,
+                    cel: Some(cs_core::Cel { opacity, ..cel }),
+                })
+            })
+            .collect();
+        if cmds.is_empty() {
+            return false;
+        }
+        let cmd = Command::Batch(cmds);
+        let done = match group {
+            Some(g) => self.execute_grouped(cmd, g),
+            None => self.execute(cmd),
+        };
+        if done {
+            self.history.rename_last("Cel Opacity");
+        }
+        done
     }
 
     pub fn clear_cel(&mut self, layer: LayerId, frame: usize) {
@@ -405,6 +599,80 @@ mod tests {
         }
         e.set_frame(0);
         e
+    }
+
+    /// Tres capas de imagen (de arriba a abajo en el timeline: 3, 2, 1) y 4 frames, con un
+    /// punto en el cel de la capa 1, frame 0, y otro en la capa 2, frame 1.
+    fn cels_editor() -> (Editor, [LayerId; 3]) {
+        let mut e = editor_with_frames(4);
+        e.add_layer(LayerKind::Image);
+        e.add_layer(LayerKind::Image);
+        let order = e.timeline_layers();
+        let (top, mid, bottom) = (order[0], order[1], order[2]);
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        for (layer, frame) in [(bottom, 0), (mid, 1)] {
+            e.execute(Command::DrawPixels {
+                layer,
+                frame,
+                pixels: vec![(0, 0, red)],
+            });
+        }
+        (e, [top, mid, bottom])
+    }
+
+    #[test]
+    fn a_cel_range_spans_layers_and_frames() {
+        let (mut e, [top, mid, bottom]) = cels_editor();
+        e.select_layer(bottom);
+        e.select_cels((bottom, 0), (mid, 1));
+        assert_eq!(
+            e.range_layers(),
+            vec![mid, bottom],
+            "in the order of the timeline"
+        );
+        assert_eq!(e.selected_cels().len(), 4);
+        assert!(e.has_cel_range());
+        // Otro rango de frames (el encabezado): solo la capa activa.
+        e.frame_range = Some((2, 3));
+        assert_eq!(e.range_layers(), vec![bottom]);
+        assert!(!e.selected_cels().contains(&(top, 2)));
+    }
+
+    #[test]
+    fn deleting_a_cel_range_clears_its_cels_in_one_step() {
+        let (mut e, [_, mid, bottom]) = cels_editor();
+        e.select_cels((bottom, 0), (mid, 1));
+        e.clear_selected_cels();
+        assert!(e.sprite().cel(bottom, 0).is_none() && e.sprite().cel(mid, 1).is_none());
+        e.undo();
+        assert!(e.sprite().cel(bottom, 0).is_some() && e.sprite().cel(mid, 1).is_some());
+    }
+
+    #[test]
+    fn dragging_a_cel_range_moves_or_copies_its_cels() {
+        let (mut e, [top, mid, bottom]) = cels_editor();
+        e.select_layer(bottom);
+        e.select_cels((mid, 0), (bottom, 1));
+        // Una capa arriba y dos frames después.
+        e.move_selected_cels(-1, 2, false);
+        assert!(e.sprite().cel(bottom, 0).is_none() && e.sprite().cel(mid, 1).is_none());
+        assert!(e.sprite().cel(mid, 2).is_some(), "the bottom cel");
+        assert!(e.sprite().cel(top, 3).is_some(), "the middle cel");
+        assert_eq!(e.range_layers(), vec![top, mid], "the range goes with them");
+        assert_eq!(e.selected_frames(), (2, 3));
+        e.undo();
+        assert!(e.sprite().cel(bottom, 0).is_some() && e.sprite().cel(mid, 2).is_none());
+        // Copiando: los de antes se quedan y las copias llevan su propia imagen.
+        e.select_layer(bottom);
+        e.select_cels((mid, 0), (bottom, 1));
+        e.move_selected_cels(0, 2, true);
+        let (original, copy) = (e.sprite().cel(bottom, 0), e.sprite().cel(bottom, 2));
+        assert!(original.is_some() && copy.is_some());
+        assert_ne!(original.unwrap().image, copy.unwrap().image);
+        // Lo que caería fuera de los frames no se mueve.
+        e.select_cels((bottom, 0), (bottom, 0));
+        e.move_selected_cels(0, 9, false);
+        assert!(e.sprite().cel(bottom, 0).is_some());
     }
 
     #[test]
@@ -509,14 +777,22 @@ mod tests {
     }
 
     #[test]
-    fn palette_add_is_undoable_and_skips_duplicates() {
+    fn palette_add_appends_even_repeated_colors_and_is_undoable() {
         let mut e = editor_with_frames(1);
         let n = e.sprite().palette.len();
-        e.add_to_palette(Rgba::rgb(1, 2, 3));
-        e.add_to_palette(Rgba::rgb(1, 2, 3));
-        assert_eq!(e.sprite().palette.len(), n + 1);
+        assert!(e.add_to_palette(Rgba::rgb(1, 2, 3)));
+        assert!(
+            e.add_to_palette(Rgba::rgb(1, 2, 3)),
+            "a repeated color is a new entry"
+        );
+        assert_eq!(e.sprite().palette.len(), n + 2);
+        assert_eq!(
+            e.primary,
+            e.palette_value((n + 1) as u8),
+            "the new entry is picked"
+        );
         e.undo();
-        assert_eq!(e.sprite().palette.len(), n);
+        assert_eq!(e.sprite().palette.len(), n + 1);
     }
 
     #[test]
@@ -533,5 +809,227 @@ mod tests {
         assert!(!ops::is_linked(e.sprite(), e.layer, 1));
         e.clear_cel(e.layer, 1);
         assert!(e.sprite().cel(e.layer, 1).is_none());
+    }
+}
+
+#[cfg(test)]
+/// Los cels enlazados siguen enlazados con cualquier cosa que se haga en uno: lo que se pinta o
+/// se cambia en uno se ve en todos.
+mod linked_cels {
+    use cs_commands::Command;
+    use cs_core::{ColorMode, Mask, PixelValue, Rgba, Sprite};
+
+    use crate::editor::{Editor, ToolKind};
+
+    fn linked() -> (Editor, cs_core::LayerId) {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        e.insert_empty_frame();
+        e.insert_empty_frame();
+        let l = e.layer;
+        e.execute(Command::DrawPixels {
+            layer: l,
+            frame: 0,
+            pixels: (0..8)
+                .flat_map(|y| (0..8).map(move |x| (x, y, PixelValue::Rgba(Rgba::rgb(200, 10, 10)))))
+                .collect(),
+        });
+        e.link_range(l, 0, 2);
+        e.set_frame(1);
+        (e, l)
+    }
+
+    fn assert_linked(name: &str, e: &Editor, l: cs_core::LayerId) {
+        let ids: Vec<_> = (0..3)
+            .map(|f| e.sprite().cel(l, f).map(|c| c.image))
+            .collect();
+        assert!(ids[0] == ids[1] && ids[1] == ids[2], "{name}: {ids:?}");
+        let px: Vec<_> = (0..3).map(|f| e.sprite().pixel(l, f, 3, 3)).collect();
+        assert!(px[0] == px[1] && px[1] == px[2], "{name}: {px:?}");
+    }
+
+    #[test]
+    fn every_edit_keeps_linked_cels_linked() {
+        let at = |x: i32, y: i32| (x as f32 + 0.5, y as f32 + 0.5);
+        for tool in [
+            ToolKind::Pencil,
+            ToolKind::Eraser,
+            ToolKind::Bucket,
+            ToolKind::Gradient,
+            ToolKind::Line,
+            ToolKind::Rectangle,
+            ToolKind::Ellipse,
+            ToolKind::Spray,
+            ToolKind::Blur,
+            ToolKind::Jumble,
+            ToolKind::Contour,
+        ] {
+            let (mut e, l) = linked();
+            e.set_tool(tool);
+            e.pointer_press(at(1, 1), false, false, 0.1);
+            e.pointer_drag(at(5, 5));
+            e.tool_tick(50.0);
+            e.pointer_release();
+            assert_linked(&format!("{tool:?}"), &e, l);
+        }
+        type Edit = fn(&mut Editor);
+        let ops: Vec<(&str, Edit)> = vec![
+            ("move", |e| {
+                e.set_tool(ToolKind::Move);
+                e.select_all();
+                e.lift();
+                e.nudge(2, 0);
+                e.commit_floating();
+            }),
+            ("move_drag", |e| {
+                e.set_tool(ToolKind::RectSelect);
+                e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (4, 4))));
+                e.pointer_press((2.5, 2.5), false, false, 0.1);
+                e.pointer_drag((5.5, 5.5));
+                e.pointer_release();
+                e.commit_floating();
+            }),
+            ("paste", |e| {
+                e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (2, 2))));
+                let c = e.copy().unwrap();
+                e.paste(&c);
+                e.nudge(3, 3);
+                e.commit_floating();
+            }),
+            ("flip", |e| {
+                e.deselect();
+                e.flip(true);
+            }),
+            ("flip_sel", |e| {
+                e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (4, 4))));
+                e.flip(true);
+                e.commit_floating();
+            }),
+            ("rotate", |e| {
+                e.rotate_content(crate::edit_ops::Turn::Clockwise);
+                e.commit_floating();
+            }),
+            ("shift", |e| {
+                e.shift_content(1, 0);
+            }),
+            ("invert", |e| {
+                e.invert_colors();
+            }),
+            ("fill", |e| {
+                e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (4, 4))));
+                e.fill_selection();
+            }),
+            ("clear", |e| {
+                e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (7, 7))));
+                e.clear_selection_content();
+            }),
+            ("cut", |e| {
+                e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (4, 4))));
+                e.cut();
+            }),
+            ("filter", |e| {
+                e.apply_filter(&crate::filters::Filter::HueSaturation {
+                    hue: 90,
+                    saturation: 0,
+                    lightness: 0,
+                });
+            }),
+        ];
+        for (name, op) in ops {
+            let (mut e, l) = linked();
+            op(&mut e);
+            assert_linked(name, &e, l);
+        }
+    }
+}
+
+#[cfg(test)]
+mod frame_order {
+    use cs_core::{ColorMode, Sprite, Tag};
+
+    use super::*;
+
+    /// 4 frames con duraciones 100, 200, 300 y 400.
+    fn editor() -> Editor {
+        let mut e = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
+        for _ in 1..4 {
+            e.insert_empty_frame();
+        }
+        for i in 0..4 {
+            e.set_duration_of(i, (i as u16 + 1) * 100);
+        }
+        e
+    }
+
+    fn durations(e: &Editor) -> Vec<u16> {
+        e.sprite().frames.iter().map(|f| f.duration_ms).collect()
+    }
+
+    #[test]
+    fn reverse_frames_flips_the_selected_range_in_one_step() {
+        let mut e = editor();
+        e.frame_range = Some((1, 3));
+        let steps = e.steps_done();
+        assert!(e.reverse_frames());
+        assert_eq!(durations(&e), vec![100, 400, 300, 200]);
+        assert_eq!(e.steps_done(), steps + 1);
+        assert_eq!(e.history.done().last(), Some("Reverse Frames"));
+        e.undo();
+        assert_eq!(durations(&e), vec![100, 200, 300, 400]);
+        e.frame_range = None;
+        assert!(!e.reverse_frames(), "one frame: nothing to reverse");
+    }
+
+    #[test]
+    fn playing_a_tag_with_repeat_stops_after_its_laps() {
+        let mut e = editor();
+        let mut tags = e.sprite().tags.clone();
+        tags.push(Tag {
+            name: "Once".into(),
+            from: 0,
+            to: 1,
+            direction: cs_core::AnimDirection::Forward,
+            color: cs_core::Rgba::rgb(0, 0, 0),
+            repeat: 1,
+        });
+        e.execute(Command::SetTags(tags));
+        e.set_frame(0);
+        e.toggle_play();
+        e.tick(100.0);
+        assert_eq!(e.frame, 1);
+        assert!(e.playing);
+        e.tick(200.0);
+        assert!(!e.playing, "one lap and done");
+        assert_eq!(e.frame, 1, "on its last frame");
+    }
+}
+
+#[cfg(test)]
+mod cel_opacity {
+    use cs_core::{ColorMode, PixelValue, Rgba, Sprite};
+
+    use super::*;
+
+    #[test]
+    fn cel_opacity_shows_in_the_render_and_a_drag_is_one_step() {
+        let mut e = Editor::with_sprite(Sprite::new(2, 2, ColorMode::Rgba));
+        let layer = e.layer;
+        e.execute(Command::DrawPixels {
+            layer,
+            frame: 0,
+            pixels: vec![(0, 0, PixelValue::Rgba(Rgba::rgb(255, 0, 0)))],
+        });
+        let steps = e.steps_done();
+        assert!(e.set_cels_opacity(&[(layer, 0)], 200, Some(7)));
+        assert!(e.set_cels_opacity(&[(layer, 0)], 128, Some(7)));
+        e.end_group();
+        assert_eq!(e.steps_done(), steps + 1, "one step for the whole drag");
+        assert_eq!(e.history.done().last(), Some("Cel Opacity"));
+        assert_eq!(e.sprite().cel(layer, 0).unwrap().opacity, 128);
+        let shown = cs_render::render_frame(e.sprite(), 0)[0];
+        assert_eq!(shown.a, 128);
+        // Sin cel, nada.
+        assert!(!e.set_cels_opacity(&[(layer, 1)], 10, None));
+        e.undo();
+        assert_eq!(e.sprite().cel(layer, 0).unwrap().opacity, 255);
     }
 }

@@ -157,6 +157,34 @@ impl Editor {
         })
     }
 
+    /// Edit → Copy Merged (Ctrl+Shift+C): copia lo seleccionado como se ve, con todas las capas
+    /// visibles juntas.
+    pub fn copy_merged(&mut self) -> Option<Clip> {
+        self.commit_floating();
+        let mask = self.selection.as_ref()?;
+        let ((x0, y0), (x1, y1)) = mask.bounds()?;
+        let view = self.view();
+        let document = view.document.as_ref();
+        let artboard = document.artboard(self.active)?;
+        let frame = self.frame;
+        let sprite = cs_render::materialize(document, &artboard.sprite, frame..frame + 1);
+        let pixels = mask
+            .points()
+            .map(|(x, y)| {
+                (
+                    x - x0,
+                    y - y0,
+                    cs_render::composite_pixel(&sprite, frame, x, y),
+                )
+            })
+            .collect();
+        Some(Clip {
+            origin: (x0, y0),
+            size: ((x1 - x0 + 1) as u32, (y1 - y0 + 1) as u32),
+            pixels,
+        })
+    }
+
     /// Copia y deja transparente lo seleccionado (un paso de undo).
     pub fn cut(&mut self) -> Option<Clip> {
         if !self.clip_layer_ok(true) {
@@ -164,7 +192,7 @@ impl Editor {
         }
         self.commit_floating();
         let clip = self.copy()?;
-        self.clear_selection_content();
+        self.named("Cut", Self::clear_selection_content);
         Some(clip)
     }
 
@@ -211,7 +239,7 @@ impl Editor {
         let clear = sprite.color_mode.transparent();
         let value = |c: Rgba| match sprite.color_mode {
             _ if c.a == 0 => clear,
-            ColorMode::Rgba => PixelValue::Rgba(c),
+            ColorMode::Rgba | ColorMode::Grayscale => PixelValue::Rgba(c),
             ColorMode::Indexed { transparent_index } => {
                 PixelValue::Index(cs_io::import::nearest_index(sprite, c, transparent_index))
             }
@@ -258,6 +286,26 @@ mod tests {
             pixels: vec![(2, 2, red)],
         });
         (e, red)
+    }
+
+    #[test]
+    fn copy_merged_takes_every_visible_layer() {
+        let (mut e, red) = editor_with_dot();
+        e.add_layer(LayerKind::Image);
+        let top = e.layer;
+        let blue = e.palette_value(9);
+        e.execute(Command::DrawPixels {
+            layer: top,
+            frame: 0,
+            pixels: vec![(3, 2, blue)],
+        });
+        e.set_selection(Some(Mask::from_rect(8, 8, (2, 2), (3, 2))));
+        let merged = e.copy_merged().expect("selection");
+        let colors: Vec<_> = merged.pixels.iter().map(|p| p.2).collect();
+        assert_eq!(colors, vec![e.resolve(red), e.resolve(blue)]);
+        // Copy solo copia la capa actual.
+        let plain = e.copy().expect("selection");
+        assert_eq!(plain.pixels[0].2.a, 0);
     }
 
     #[test]

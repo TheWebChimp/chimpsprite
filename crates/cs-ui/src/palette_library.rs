@@ -191,7 +191,7 @@ impl PaletteLibrary {
     /// La paleta de los sprites nuevos: el preset por defecto, o DB32 si ya no existe.
     pub fn default_palette(&self) -> Palette {
         self.default_preset()
-            .map_or_else(Palette::db32, |p| p.palette.clone())
+            .map_or_else(Palette::splendor128, |p| p.palette.clone())
     }
 
     pub fn folder(&self) -> Option<PathBuf> {
@@ -601,14 +601,14 @@ mod tests {
     }
 
     #[test]
-    fn default_falls_back_to_db32() {
+    fn default_falls_back_to_splendor128() {
         let dir = temp_dir("default");
         let mut lib = PaletteLibrary::new(Box::new(DirStore::new(dir.clone())));
-        assert_eq!(lib.default_palette(), Palette::db32());
+        assert_eq!(lib.default_palette(), Palette::splendor128());
         lib.set_default(PresetSource::Builtin, "PICO-8");
         assert_eq!(lib.default_palette().len(), 16);
         lib.set_default(PresetSource::User, "Gone");
-        assert_eq!(lib.default_palette(), Palette::db32());
+        assert_eq!(lib.default_palette(), Palette::splendor128());
         std::fs::remove_dir_all(dir).unwrap();
     }
 
@@ -730,5 +730,35 @@ mod tests {
         assert!(text.contains("\"010203\""));
         assert_eq!(decode_web(&text), list);
         assert!(decode_web("{nope").is_empty());
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test_util {
+    use std::path::PathBuf;
+
+    use cs_io::palette_files::NamedPalette;
+
+    use super::{PresetStore, StoredPreset};
+
+    /// Sin presets de usuario: los tests no tocan la carpeta del usuario.
+    pub(crate) struct NoPresets;
+
+    impl PresetStore for NoPresets {
+        fn load(&self) -> Vec<StoredPreset> {
+            Vec::new()
+        }
+
+        fn save(&mut self, _: &NamedPalette, _: &[String]) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn delete(&mut self, _: &str) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn folder(&self) -> Option<PathBuf> {
+            None
+        }
     }
 }

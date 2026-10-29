@@ -6,6 +6,21 @@ use cs_raster::{ellipse_filled, ellipse_outline};
 
 use crate::editor::Editor;
 
+/// Una variable de entorno de desarrollo (`CHIMPSPRITE_DEMO_*`), leída una sola vez: las que se
+/// consultan en cada frame no van al sistema cada vez.
+pub(crate) fn dev_var(name: &'static str) -> Option<&'static str> {
+    use std::collections::HashMap;
+    use std::sync::{Mutex, OnceLock};
+    static VARS: OnceLock<Mutex<HashMap<&'static str, Option<&'static str>>>> = OnceLock::new();
+    let vars = VARS.get_or_init(Default::default);
+    let mut vars = vars.lock().unwrap_or_else(|e| e.into_inner());
+    *vars.entry(name).or_insert_with(|| {
+        std::env::var(name)
+            .ok()
+            .map(|v| &*Box::leak(v.into_boxed_str()))
+    })
+}
+
 /// Documento de demo: un chimpancé y un plátano en artboards separados.
 pub fn editor() -> Editor {
     let mut editor = Editor::with_sprite(Sprite::new(64, 64, ColorMode::Rgba));
@@ -43,7 +58,10 @@ pub fn editor() -> Editor {
     ]);
     // Simetría horizontal para probar dibujando sobre la cara.
     editor.set_symmetry(cs_core::Symmetry {
-        mode: cs_core::SymmetryMode::Horizontal,
+        axes: cs_core::SymmetryAxes {
+            vertical: true,
+            ..cs_core::SymmetryAxes::NONE
+        },
         center2: None,
     });
     editor
@@ -265,4 +283,265 @@ fn draw_chimp(editor: &mut Editor) {
         frame: editor.frame,
         pixels,
     });
+}
+
+/// Lo que piden las variables de desarrollo (`CHIMPSPRITE_DEMO_*`) al abrir la app: diálogos,
+/// herramientas, rangos y paneles listos para las capturas.
+pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
+    use crate::*;
+    // Desarrollo: abre el diálogo con un ancho de ejemplo para capturas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_CANVAS_SIZE").is_some() && app.has_doc() {
+        app.open_canvas_size();
+        if let Some(d) = &mut app.canvas_size {
+            d.set_anchor(0, 1);
+            d.set_width(d.width() + 24);
+        }
+    }
+    // Desarrollo: la herramienta de selección (sus opciones en la barra) para capturas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_SELECT").is_some() && app.has_doc() {
+        app.doc.editor.set_tool(ToolKind::RectSelect);
+    }
+    // Desarrollo: cuatro colores de la paleta seleccionados, para capturas.
+    // (`a,b` elige de la a a la b.)
+    if let Ok(range) = std::env::var("CHIMPSPRITE_DEMO_PALETTE_SELECTION")
+        && app.has_doc()
+    {
+        let mut ends = range.split(',').filter_map(|n| n.trim().parse().ok());
+        let a = ends.next().unwrap_or(2);
+        app.doc.editor.palette_selection = Some((a, ends.next().unwrap_or(a + 3)));
+    }
+    // Desarrollo: el diálogo de Replace Color (o, con "hue", el de Hue/Saturation).
+    if let Ok(which) = std::env::var("CHIMPSPRITE_DEMO_FILTER")
+        && app.has_doc()
+    {
+        let editor = &app.doc.editor;
+        let filter = match which.as_str() {
+            "curve" => {
+                let mut curve = filters::Curve::identity();
+                curve.insert(96, 160);
+                filters::Filter::ColorCurve {
+                    curve,
+                    channels: Default::default(),
+                }
+            }
+            "hue" => filters::Filter::HueSaturation {
+                hue: 90,
+                saturation: 0,
+                lightness: 0,
+            },
+            _ => filters::Filter::ReplaceColor {
+                from: editor.resolve(editor.primary),
+                to: editor.resolve(editor.secondary),
+                tolerance: 0,
+            },
+        };
+        app.open_filter(filter);
+    }
+    // Desarrollo: una herramienta elegida (por su nombre), para capturas; Rectangle con radio.
+    if let Ok(name) = std::env::var("CHIMPSPRITE_DEMO_TOOL")
+        && app.has_doc()
+        && let Some(&tool) = ToolKind::GROUPS
+            .iter()
+            .flat_map(|g| g.iter())
+            .find(|t| t.label() == name)
+    {
+        app.doc.editor.set_tool(tool);
+        app.doc.editor.options.corner_radius = 3;
+    }
+    // Desarrollo: dos tags más (encimados), para capturas de la fila de tags.
+    if std::env::var_os("CHIMPSPRITE_DEMO_TAGS").is_some() && app.has_doc() {
+        let editor = &mut app.doc.editor;
+        for (range, name) in [((1, 2), "Blink"), ((3, 3), "Hold")] {
+            editor.frame_range = Some(range);
+            editor.add_tag();
+            let i = editor.sprite().tags.len() - 1;
+            if let Some(mut tag) = editor.sprite().tags.get(i).cloned() {
+                tag.name = name.into();
+                editor.set_tag(i, tag);
+            }
+        }
+        editor.frame_range = None;
+    }
+    // Desarrollo: píxeles al doble de ancho (`2:1`) o de alto (`1:2`), para capturas.
+    if let Ok(ratio) = std::env::var("CHIMPSPRITE_DEMO_RATIO")
+        && app.has_doc()
+    {
+        let ratio = if ratio == "1:2" { (1, 2) } else { (2, 1) };
+        app.doc.editor.set_pixel_ratio(ratio);
+    }
+    // Desarrollo: Import Sprite Sheet con una tira de los frames del chango, para capturas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_SHEET").is_some() && app.has_doc() {
+        let sprite = app.doc.editor.sprite();
+        let (w, h, n) = (sprite.width, sprite.height, sprite.frames.len() as u32);
+        let mut strip = cs_io::export::Bitmap::new(w * n, h);
+        for f in 0..n {
+            let frame = cs_io::export::Bitmap::from_frame(sprite, f as usize, 1);
+            for y in 0..h {
+                for x in 0..w {
+                    strip.pixels[(y * w * n + f * w + x) as usize] =
+                        frame.pixels[(y * w + x) as usize];
+                }
+            }
+        }
+        app.sheet_dialog = Some(sheet_dialog::SheetDialog::new("walk".into(), strip));
+    }
+    // Desarrollo: un script de ejemplo (por su archivo, p. ej. `outline.rhai`), para capturas.
+    if let Ok(name) = std::env::var("CHIMPSPRITE_DEMO_SCRIPT")
+        && app.has_doc()
+        && let Some((name, source)) = cs_script::EXAMPLES.iter().find(|(n, _)| *n == name)
+    {
+        app.doc.editor.primary = cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(34, 32, 52));
+        app.run_script(name, source);
+    }
+    // Desarrollo: el panel Groom abierto con una imagen (su ruta), para capturas.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(path) = std::env::var("CHIMPSPRITE_DEMO_GROOM")
+        && app.has_doc()
+        && let Ok(bytes) = std::fs::read(&path)
+        && let Ok(image) = groom::decode_image(&bytes)
+    {
+        dock::set_open(ctx, Some(dock::DockPanel::Groom));
+        app.groom.load("groomed".into(), image);
+        // Con CHIMPSPRITE_DEMO_GROOM_PICK=n, los n colores más usados elegidos (la vista previa
+        // prueba juntarlos).
+        // Con CHIMPSPRITE_DEMO_GROOM_FIT=<paleta>, ajustado a ella.
+        if let Some(name) = dev_var("CHIMPSPRITE_DEMO_GROOM_FIT") {
+            app.groom.fit_to(name);
+        }
+        if let Some(n) = dev_var("CHIMPSPRITE_DEMO_GROOM_PICK").and_then(|n| n.parse().ok()) {
+            let primary = app.doc.editor.resolve(app.doc.editor.primary);
+            app.groom.pick_most_used(primary, n);
+        }
+    }
+    // Desarrollo: el panel Lumen abierto con una imagen de albedo (su ruta), para capturas. Con
+    // CHIMPSPRITE_DEMO_LUMEN_MODIFY=normal|luminance, con los ajustes de ese mapa abiertos.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Ok(path) = std::env::var("CHIMPSPRITE_DEMO_LUMEN")
+        && app.has_doc()
+        && let Ok(bytes) = std::fs::read(&path)
+        && let Ok(image) = groom::decode_image(&bytes)
+    {
+        dock::set_open(ctx, Some(dock::DockPanel::Lumen));
+        app.lumen.load("lumen".into(), image);
+        match dev_var("CHIMPSPRITE_DEMO_LUMEN_MODIFY") {
+            Some("normal") => app.lumen.open_settings(crate::lumen::MapKind::Normal),
+            Some("luminance") => app.lumen.open_settings(crate::lumen::MapKind::Luminance),
+            _ => {}
+        }
+        // CHIMPSPRITE_DEMO_LUMEN_PICKER=1: el selector del color de la luz abierto.
+        if dev_var("CHIMPSPRITE_DEMO_LUMEN_PICKER").is_some() {
+            ctx.data_mut(|d| {
+                d.insert_temp(
+                    eframe::egui::Id::new(crate::lumen::DEMO_PICKER),
+                    eframe::egui::Id::NULL,
+                )
+            });
+        }
+    }
+    // Desarrollo: Tiled Mode en los dos ejes, para capturas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_TILED").is_some() && app.has_doc() {
+        app.doc.editor.tiled = editor::TiledMode::Both;
+    }
+    // Desarrollo: Keyboard Shortcuts o Preferences abiertas, para capturas.
+    match std::env::var("CHIMPSPRITE_DEMO_WINDOW").as_deref() {
+        Ok("shortcuts") => app.shortcuts = Some(Default::default()),
+        Ok("preferences") => app.preferences = true,
+        Ok("color_range") if app.has_doc() => {
+            app.select_dialog = Some(select_dialogs::SelectDialog::color_range(&app.doc.editor));
+        }
+        _ => {}
+    }
+    // Desarrollo: la ventana Undo History con unos pasos, para capturas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_UNDO_HISTORY").is_some() && app.has_doc() {
+        let editor = &mut app.doc.editor;
+        editor.add_layer(cs_core::LayerKind::Image);
+        editor.insert_empty_frame();
+        editor.undo();
+        app.undo_history = true;
+    }
+    // Desarrollo: un rango de cels del timeline ("fila,frame,fila,frame"), para capturas.
+    if let Ok(range) = std::env::var("CHIMPSPRITE_DEMO_CELS")
+        && app.has_doc()
+    {
+        let n: Vec<usize> = range
+            .split(',')
+            .filter_map(|n| n.trim().parse().ok())
+            .collect();
+        let order = app.doc.editor.timeline_layers();
+        if let [ra, fa, rb, fb] = n[..]
+            && let (Some(&a), Some(&b)) = (order.get(ra), order.get(rb))
+        {
+            app.doc.editor.select_layer(a);
+            app.doc.editor.select_cels((a, fa), (b, fb));
+        }
+    }
+    // Desarrollo: una nota con texto, para capturas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_NOTE").is_some() && app.has_doc() {
+        // A la derecha del primer artboard (la vista todavía no se acomodó).
+        let at = app.doc.editor.document.artboards[0].rect().1;
+        if let Some(id) = app.doc.editor.add_note((at.0 + 4, 0)) {
+            app.doc
+                .editor
+                .set_note_text(id, "Revisar la animación del mono 🐒".into());
+            app.doc.editor.set_note_color(id, cs_core::NoteColor::Blue);
+        }
+    }
+    // Desarrollo: el panel Dafont del dock abierto, para capturas.
+    #[cfg(not(target_arch = "wasm32"))]
+    if std::env::var_os("CHIMPSPRITE_DEMO_DAFONT").is_some() && app.has_doc() {
+        dock::set_open(ctx, Some(dock::DockPanel::Dafont));
+        // Con `detail`, el detalle de la fuente de la app.
+        if std::env::var("CHIMPSPRITE_DEMO_DAFONT").as_deref() == Ok("detail")
+            && let Ok(font) =
+                cs_tools::text::FontChoice::load("ChimpSprite", appearance::PIXEL_FONT)
+        {
+            app.dafont.demo_detail(font);
+        }
+    }
+    // Desarrollo: el panel Lospec del dock abierto, para capturas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_LOSPEC").is_some() && app.has_doc() {
+        dock::set_open(ctx, Some(dock::DockPanel::Lospec));
+    }
+    // Desarrollo: el panel Artboards con muchos artboards más (uno de nombre largo), para
+    // capturas de sus pestañas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_ARTBOARDS").is_some() && app.has_doc() {
+        dock::set_open(ctx, Some(dock::DockPanel::Artboards));
+        let editor = &mut app.doc.editor;
+        let names = [
+            "Artboard 3",
+            "Artboard 4",
+            "A very long artboard name",
+            "Walk",
+            "Run",
+        ];
+        // Con un número, solo esos (si no, todos).
+        let count = std::env::var("CHIMPSPRITE_DEMO_ARTBOARDS")
+            .ok()
+            .and_then(|n| n.parse().ok())
+            .unwrap_or(usize::MAX);
+        let names = names.iter().chain(&["Jump", "Idle", "Hurt", "Win"]);
+        for name in names.take(count) {
+            editor.add_artboard(64, 64);
+            editor.rename_active_artboard((*name).into());
+        }
+    }
+    // Desarrollo: dos grupos (uno colapsado), para capturas de sus carpetitas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_GROUP").is_some() && app.has_doc() {
+        let editor = &mut app.doc.editor;
+        editor.add_layer(cs_core::LayerKind::Group);
+        if let Some(id) = editor.sprite().layers.last().map(|l| l.id) {
+            editor.toggle_collapsed(id);
+        }
+        editor.add_layer(cs_core::LayerKind::Group);
+    }
+    // Desarrollo: abre Sprite Size para capturas.
+    if std::env::var_os("CHIMPSPRITE_DEMO_SPRITE_SIZE").is_some() && app.has_doc() {
+        app.open_sprite_dialog(|a| {
+            sprite_dialogs::SpriteDialog::Size(sprite_dialogs::SpriteSizeDialog::new(a))
+        });
+    }
+    // Desarrollo: abre el diálogo de nueva capa tilemap para capturas (con --demo).
+    if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
+        app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
+    }
 }

@@ -1,23 +1,37 @@
 //! Algoritmos de rasterizado puros sobre coordenadas enteras.
 
+mod blur;
 mod constrain;
+mod curve;
 mod ellipse;
 mod fill;
 mod gradient;
+mod groom;
 mod line;
 mod polygon;
+mod quantize;
 mod rect;
 mod symmetry;
 mod transform;
 
+pub use blur::blur_average;
 pub use constrain::{constrain_line, constrain_square};
+pub use curve::cubic_bezier;
 pub use ellipse::{ellipse_filled, ellipse_outline};
 pub use fill::flood_fill;
 pub use gradient::{Dither, GradientShape, gradient_t};
-pub use line::{brush_square, line, pixel_perfect, stamp};
-pub use polygon::polygon_filled;
+pub use groom::{
+    GridGuess, clean_outline, detect_grid, reduce_colors, remove_background,
+    sample_following_edges, sample_grid, suggest_merges,
+};
+pub use line::{
+    BrushShape, brush_points, brush_square, custom_brush, custom_brush_version, line,
+    pixel_perfect, set_custom_brush, stamp,
+};
+pub use polygon::{polygon_filled, polygon_filled_nonzero, polygon_filled_nonzero_in};
+pub use quantize::{median_cut, nearest};
 pub use rect::{rect_filled, rect_outline, rounded_rect_filled, rounded_rect_outline};
-pub use symmetry::{SymmetryMode, symmetric_points, symmetrize};
+pub use symmetry::{SymmetryAxes, symmetric_points, symmetrize};
 pub use transform::{
     Block, MAX_BLOCK_SIDE, ROTSPRITE_MAX_AREA, RotationAlgorithm, rotate_fast, rotated_size,
     rotsprite, scale_nearest,
@@ -36,7 +50,12 @@ mod tests {
 
     #[test]
     fn stamp_dedupes_overlaps() {
-        assert_eq!(stamp(&[(0, 0), (1, 0)], 1), vec![(0, 0), (1, 0)]);
-        assert_eq!(stamp(&[(0, 0), (1, 0)], 2).len(), 6);
+        assert_eq!(
+            stamp(&[(0, 0), (1, 0)], 1, BrushShape::Square),
+            vec![(0, 0), (1, 0)]
+        );
+        assert_eq!(stamp(&[(0, 0), (1, 0)], 2, BrushShape::Square).len(), 6);
+        // Dos cruces (redondo de 3) vecinas: 5 + 5 menos los 2 píxeles compartidos.
+        assert_eq!(stamp(&[(0, 0), (1, 0)], 3, BrushShape::Round).len(), 8);
     }
 }

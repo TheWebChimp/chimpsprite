@@ -136,7 +136,7 @@ fn describe_sprite(s: &Sprite) -> Value {
         "width": s.width,
         "height": s.height,
         "color_mode": match s.color_mode {
-            ColorMode::Rgba => "rgba",
+            ColorMode::Rgba | ColorMode::Grayscale => "rgba",
             ColorMode::Indexed { .. } => "indexed",
         },
         "palette": s.palette.colors().iter().map(|c| c.to_hex()).collect::<Vec<_>>(),
@@ -477,5 +477,23 @@ mod tests {
             "Nothing to undo."
         );
         assert_eq!(s.redo(p(json!({"doc": "d1"}))).unwrap().text, "Redone.");
+    }
+
+    #[test]
+    fn apply_commands_still_takes_the_old_symmetry_mode() {
+        let mut s = session(4, 4);
+        // Así se pedía la simetría antes, con un solo modo.
+        let old = json!({"SetSymmetry": {"id": 1, "symmetry": {"mode": "Both", "center2": null}}});
+        s.apply_commands(p(json!({"doc": "d1", "commands": [old]})))
+            .unwrap();
+        let axes = s.doc("d1").unwrap().document.artboards[0].symmetry.axes;
+        assert!(axes.vertical && axes.horizontal, "{axes:?}");
+        assert!(!axes.diagonal_down && !axes.diagonal_up, "{axes:?}");
+        // Y con el formato nuevo.
+        let new = json!({"SetSymmetry": {"id": 1, "symmetry": {"axes": {"diagonal_up": true}}}});
+        s.apply_commands(p(json!({"doc": "d1", "commands": [new]})))
+            .unwrap();
+        let axes = s.doc("d1").unwrap().document.artboards[0].symmetry.axes;
+        assert!(axes.diagonal_up && !axes.vertical, "{axes:?}");
     }
 }

@@ -89,7 +89,7 @@ pub fn scale_nearest<P: Copy>(src: &Block<P>, width: i32, height: i32) -> Block<
 pub const ROTSPRITE_MAX_AREA: u32 = 256 * 256;
 
 /// Cómo se rota la selección (opción de las herramientas de selección y Move).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum RotationAlgorithm {
     /// Vecino más cercano: rápido, con bordes dentados.
     Fast,

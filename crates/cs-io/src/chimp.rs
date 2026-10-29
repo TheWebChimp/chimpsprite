@@ -6,7 +6,8 @@ use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 use cs_core::{
-    Artboard, ArtboardId, Document, Guide, InstanceTrack, LayerKind, LayerMask, Sprite, Symmetry,
+    Artboard, ArtboardId, Document, Guide, InstanceTrack, LayerKind, LayerMask, Note, Sprite,
+    Symmetry,
 };
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
@@ -25,6 +26,9 @@ struct Manifest {
     format: String,
     version: u32,
     artboards: Vec<Entry>,
+    /// Las notas (post-its) del lienzo.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    notes: Vec<Note>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -180,6 +184,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
         format: FORMAT.into(),
         version: VERSION,
         artboards: entries,
+        notes: doc.notes.clone(),
     };
     zip.start_file(MANIFEST, options).map_err(zip_error)?;
     zip.write_all(&serde_json::to_vec_pretty(&manifest)?)?;
@@ -237,7 +242,10 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
             sprite,
         });
     }
-    let mut doc = Document { artboards };
+    let mut doc = Document {
+        artboards,
+        notes: manifest.notes,
+    };
     // Un archivo editado a mano podría tener instancias en ciclo: se quitan esas keys.
     for id in doc.artboards.iter().map(|a| a.id).collect::<Vec<_>>() {
         if doc.cycle_free(id) {
@@ -269,6 +277,24 @@ mod tests {
     use cs_core::*;
 
     use super::*;
+
+    #[test]
+    fn notes_roundtrip() {
+        let mut d = doc();
+        d.notes.push(cs_core::Note {
+            id: 1,
+            position: (-20, 40),
+            size: (120, 90),
+            text: "Revisar la\nanimación ✨".into(),
+            color: cs_core::NoteColor::Blue,
+        });
+        let (back, _) = read(&write(&d).unwrap()).unwrap();
+        assert_eq!(back.notes, d.notes);
+        // Sin notas, el manifest no las menciona.
+        let bytes = write(&doc()).unwrap();
+        let (back, _) = read(&bytes).unwrap();
+        assert!(back.notes.is_empty());
+    }
 
     #[test]
     fn masks_and_clipping_roundtrip() {
@@ -398,7 +424,11 @@ mod tests {
                 position: 2,
             }],
             symmetry: cs_core::Symmetry {
-                mode: cs_core::SymmetryMode::Both,
+                axes: cs_core::SymmetryAxes {
+                    vertical: true,
+                    horizontal: true,
+                    ..cs_core::SymmetryAxes::NONE
+                },
                 center2: Some((5, 3)),
             },
             id: ArtboardId(7),
@@ -458,5 +488,50 @@ mod tests {
             read(&zip_with(&[(MANIFEST, future)])),
             Err(IoError::Unsupported(_))
         ));
+    }
+
+    #[test]
+    fn an_old_chimp_with_the_symmetry_mode_opens_with_its_axes() {
+        // Manifiesto como lo escribía la versión anterior: `mode` en vez de `axes`.
+        let sprite = Sprite::new(4, 4, ColorMode::Rgba);
+        let file = aseprite::write(&sprite);
+        let modes = [
+            ("None", [false, false, false, false]),
+            ("Horizontal", [true, false, false, false]),
+            ("Vertical", [false, true, false, false]),
+            ("Both", [true, true, false, false]),
+            ("DiagonalDown", [false, false, true, false]),
+            ("DiagonalUp", [false, false, false, true]),
+            ("All", [true, true, true, true]),
+        ];
+        for (mode, [v, h, down, up]) in modes {
+            let manifest = format!(
+                r#"{{"format":"chimp","version":1,"artboards":[{{"id":1,"name":"a","position":[0,0],"file":"artboards/1.aseprite","symmetry":{{"mode":"{mode}","center2":[3,5]}}}}]}}"#
+            );
+            let zip = zip_with(&[
+                (MANIFEST, manifest.as_bytes()),
+                ("artboards/1.aseprite", &file),
+            ]);
+            let (doc, _) = read(&zip).unwrap();
+            let s = doc.artboards[0].symmetry;
+            let axes = s.axes;
+            assert_eq!(
+                [
+                    axes.vertical,
+                    axes.horizontal,
+                    axes.diagonal_down,
+                    axes.diagonal_up
+                ],
+                [v, h, down, up],
+                "{mode}"
+            );
+            assert_eq!(s.center2, Some((3, 5)), "{mode}");
+            // Al guardar se escribe el formato nuevo.
+            let again = write(&doc).unwrap();
+            let mut archive = ZipArchive::new(Cursor::new(again.as_slice())).unwrap();
+            let text = String::from_utf8(read_entry(&mut archive, MANIFEST).unwrap()).unwrap();
+            assert!(text.contains("\"axes\""), "{text}");
+            assert!(!text.contains("\"mode\""), "{text}");
+        }
     }
 }

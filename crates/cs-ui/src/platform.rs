@@ -61,6 +61,16 @@ pub enum OpenPurpose {
     Dropped,
     /// Agregar como capa.
     ImportLayer,
+    /// Agregar como capa de referencia (no sale al exportar).
+    ImportReference,
+    /// Partir en frames de un sprite nuevo (File → Import Sprite Sheet).
+    ImportSheet,
+    /// Correr un script (`.rhai` o `.lua`).
+    RunScript,
+    /// La imagen de partida de Groom.
+    GroomImage,
+    /// Un mapa de Lumen (el albedo, el normal map o la máscara de luminance).
+    LumenMap(crate::lumen::MapKind),
     /// Cargar una paleta (`.gpl`, `.hex`, `.pal`, `.png`, `.aseprite`).
     LoadPalette,
 }

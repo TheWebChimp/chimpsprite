@@ -1,25 +1,35 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
-use cs_core::{Artboard, ArtboardId, Axis, GridSettings, Guide, Mask, SymmetryMode};
-use cs_tools::{ArtboardHit, Edges, hit_test};
+use cs_core::{Artboard, ArtboardId, Axis, GridSettings, Guide, LayerId, Mask};
+use cs_tools::{ArtboardHit, BrushShape, Edges, hit_test};
 use eframe::egui::{
     self, Align2, Color32, ColorImage, FontId, Pos2, Rect, Sense, Stroke, StrokeKind,
     TextureHandle, TextureOptions, Vec2,
 };
 
+use crate::artboard_window::{ArtboardWindow, TitleHit, WindowLayout};
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
-use crate::editor::{Editor, ToolKind};
+use crate::editor::{Editor, MAX_BRUSH_SIZE, ToolKind};
 use crate::guides::{RULER_PX, SNAP_PX, SnapContext, after_drag, hit_guide, nice_step};
+use crate::menus;
+use crate::pixel_cursors::{self, PixelCursor};
+use crate::pixel_rulers::{self, PixelRulers};
+use crate::pixel_selection;
+use crate::skin::Skin;
 use crate::transform_box::{self, Handle, TransformBox, TransformHit};
 use crate::view::{ViewSettings, ZoomRequest};
 use crate::{theme, widgets};
 
+mod input;
+mod rulers;
+
 const ZOOM_LEVELS: [f32; 13] = [
     0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
 ];
-/// Tamaño en pantalla de cada cuadro del damero de transparencia.
-const CHECKER_PX: f32 = 8.0;
+/// Lado de cada cuadro del damero de transparencia, en píxeles del sprite (como Aseprite): siempre
+/// 16×16 del dibujo, así que crece y se achica con el zoom. Empieza en la esquina del artboard.
+const CHECKER_CELL: f32 = 16.0;
 /// Velocidad de las "marching ants" (pasos por segundo).
 const ANTS_SPEED: f64 = 6.0;
 /// Tolerancia en pantalla para tomar bordes de artboards.
@@ -41,6 +51,15 @@ pub struct CanvasView {
     textures: HashMap<ArtboardId, TextureHandle>,
     checker: Option<TextureHandle>,
     rendered_revision: Option<u64>,
+    /// La revisión con la que se compusieron todos los artboards: mientras se pinta, los que no
+    /// son el activo (ni muestran instancias) no cambian y no se recomponen.
+    all_rendered: Option<u64>,
+    /// Cuántas veces se compuso un artboard (para los tests).
+    #[cfg(test)]
+    composed: u32,
+    /// La capa cuya máscara se veía en rojo (editándola) al componer: si cambia, se recompone
+    /// aunque el documento no haya cambiado.
+    rendered_mask: Option<LayerId>,
     fitted: bool,
     /// Píxel local del artboard activo bajo el cursor, para la barra de estado.
     pub hover: Option<(i32, i32)>,
@@ -54,6 +73,9 @@ pub struct CanvasView {
     names_visible: bool,
     /// Zoom pedido desde el menú; se aplica al conocer el tamaño del lienzo.
     pending_zoom: Option<ZoomRequest>,
+    /// La proporción de píxel del artboard activo (Sprite → Properties): con 2:1 cada píxel se
+    /// ve el doble de ancho. Se toma al empezar cada frame.
+    ratio: Vec2,
     /// Guía que se está creando (desde una regla) o moviendo.
     ruler_drag: Option<GuideDrag>,
     /// Eje de simetría que se está arrastrando y centro provisional (medios píxeles).
@@ -64,18 +86,73 @@ pub struct CanvasView {
     draw_pipette: bool,
     /// Dibujar el cursor de rotación (egui no trae uno; el del sistema se oculta).
     draw_rotate: bool,
+    /// Con Pixel UI, el cursor del diseño a dibujar (el del sistema se oculta).
+    pixel_cursor: Option<PixelCursor>,
     /// Nombre de artboard en edición (doble clic en su etiqueta) y si ya se le dio el foco.
     renaming: Option<(ArtboardId, String, bool)>,
     /// Clic derecho sobre un slice con la herramienta Slice: al soltar se abre su menú.
     slice_menu: bool,
+    /// Clic derecho dentro de la selección con una herramienta de selección o Move: al soltar se
+    /// abre su menú (voltear…).
+    selection_menu: bool,
     /// Diálogo Slice Properties abierto (para el slice seleccionado).
-    slice_properties: bool,
+    pub slice_properties: bool,
+    /// Las notas (post-its) del lienzo: su arrastre, su edición y su cursor.
+    pub notes: crate::notes::NotesView,
+    /// Lo pedido desde el menú "≡" de un artboard que abre un diálogo de la app (la app lo toma
+    /// y lo deja en `None`).
+    pub artboard_request: Option<ArtboardRequest>,
+    /// Ctrl+rueda de touchpad: píxeles acumulados que todavía no suman un paso de grosor.
+    wheel_rest: f32,
+    /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
+    pub background: Color32,
+    /// Las reglas del skin con Pixel UI (`None`: las de siempre); lo pone la app en cada frame.
+    pub pixel_rulers: Option<PixelRulers>,
+    /// Si las reglas se ven en este frame (tapan el borde de la vista).
+    rulers_shown: bool,
+    /// Con Pixel UI, la ventana del skin alrededor de cada artboard (`None`: el borde y la
+    /// etiqueta de siempre); lo pone la app en cada frame.
+    pub artboard_window: Option<ArtboardWindow>,
+    /// Con Pixel UI: los cursores y la selección del diseño; lo pone la app en cada frame.
+    pub pixel_ui: bool,
+    /// Con Pixel UI, el color de los ejes de simetría del skin (y se dibujan como en Aseprite);
+    /// lo pone la app en cada frame.
+    pub symmetry_color: Option<Color32>,
+    /// Con Pixel UI, los cursores del skin; lo pone la app en cada frame.
+    pub cursors: Option<pixel_cursors::CursorSet>,
+    /// Píxeles físicos por punto del último frame: [`Self::origin`] se alinea a ellos.
+    ppp: f32,
+}
+
+/// Color alrededor de los artboards: `canvas` del skin con Pixel UI; si no, el del tema.
+pub fn background_for(skin: Option<&Skin>) -> Color32 {
+    skin.map_or(theme::CANVAS_BG, |skin| skin.colors().canvas)
 }
 
 /// Margen (en pantalla) desde el borde del lienzo en el que empieza el auto-scroll.
 const AUTOSCROLL_MARGIN: f32 = 24.0;
 /// Velocidad máxima del auto-scroll en píxeles de pantalla por segundo.
 const AUTOSCROLL_SPEED: f32 = 700.0;
+
+/// Píxeles de rueda (touchpad) que suman un paso de grosor con Ctrl+rueda.
+const BRUSH_WHEEL_PX: f32 = 50.0;
+
+/// Pasos enteros de grosor de un evento de rueda (positivo hacia arriba). Las ruedas de líneas o
+/// páginas dan un paso por evento; las de píxeles se acumulan en `rest` hasta `BRUSH_WHEEL_PX`.
+fn brush_wheel_steps(rest: &mut f32, unit: egui::MouseWheelUnit, dy: f32) -> i32 {
+    if dy == 0.0 {
+        return 0;
+    }
+    match unit {
+        egui::MouseWheelUnit::Point => {
+            *rest += dy;
+            let steps = (*rest / BRUSH_WHEEL_PX).trunc();
+            *rest -= steps * BRUSH_WHEEL_PX;
+            steps as i32
+        }
+        egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => dy.signum() as i32,
+    }
+}
 
 /// Velocidad de auto-scroll (px/s) cuando el puntero arrastra cerca o fuera de `area`.
 /// Negativa hacia la izquierda/arriba; crece con la distancia y se satura.
@@ -104,20 +181,6 @@ enum SymHandle {
     Y,
 }
 
-fn has_vertical_axis(mode: SymmetryMode) -> bool {
-    matches!(
-        mode,
-        SymmetryMode::Horizontal | SymmetryMode::Both | SymmetryMode::All
-    )
-}
-
-fn has_horizontal_axis(mode: SymmetryMode) -> bool {
-    matches!(
-        mode,
-        SymmetryMode::Vertical | SymmetryMode::Both | SymmetryMode::All
-    )
-}
-
 /// Arrastre de una guía: `index` es la guía original si se está moviendo una existente.
 #[derive(Clone, Copy, Debug)]
 struct GuideDrag {
@@ -135,6 +198,10 @@ impl Default for CanvasView {
             textures: HashMap::new(),
             checker: None,
             rendered_revision: None,
+            all_rendered: None,
+            #[cfg(test)]
+            composed: 0,
+            rendered_mask: None,
             fitted: false,
             hover: None,
             guide_hint: None,
@@ -142,38 +209,124 @@ impl Default for CanvasView {
             over_label: false,
             names_visible: true,
             pending_zoom: None,
+            ratio: Vec2::splat(1.0),
             ruler_drag: None,
             sym_drag: None,
             over_ruler: false,
             draw_pipette: false,
             draw_rotate: false,
+            pixel_cursor: None,
             renaming: None,
             slice_menu: false,
+            selection_menu: false,
             slice_properties: false,
+            notes: Default::default(),
+            artboard_request: None,
+            wheel_rest: 0.0,
+            background: theme::CANVAS_BG,
+            pixel_rulers: None,
+            rulers_shown: false,
+            artboard_window: None,
+            pixel_ui: false,
+            cursors: None,
+            symmetry_color: None,
+            ppp: 1.0,
         }
     }
 }
 
 impl CanvasView {
-    /// Posición en pantalla del origen del mundo.
+    /// La textura del artboard activo y su tamaño si muestra el frame del editor tal cual (sin
+    /// papel cebolla ni la máscara en rojo): la vista previa la reusa en vez de componer otra.
+    pub fn plain_texture(&self, editor: &Editor) -> Option<(egui::TextureId, Vec2)> {
+        let onion = editor.onion_enabled && !editor.playing;
+        if onion || editor.editing_mask() {
+            return None;
+        }
+        let texture = self.textures.get(&editor.active)?;
+        Some((texture.id(), texture.size_vec2()))
+    }
+
+    /// Posición en pantalla del origen del mundo, alineada a píxeles físicos (`self.ppp`).
+    ///
+    /// Es el único lugar donde se redondea la vista: con zoom entero (en píxeles físicos), las
+    /// coordenadas enteras del mundo caen justo en píxeles de pantalla, así que la textura, las
+    /// guías, los overlays y la entrada (`to_screen` / `to_world`) coinciden. Se redondea al
+    /// usarlo, no en `pan`: el pan guardado sigue fraccionario y los arrastres no derivan.
     fn origin(&self, rect: Rect) -> Pos2 {
-        rect.center() + self.pan
+        let ppp = self.ppp;
+        (((rect.center() + self.pan).to_vec2() * ppp).round() / ppp).to_pos2()
+    }
+
+    /// Dónde va una nota nueva: centrada en lo que se ve (su tamaño es de interfaz).
+    pub fn new_note_position(&self) -> (i32, i32) {
+        let size = Vec2::new(
+            crate::notes::NEW_SIZE.0 as f32,
+            crate::notes::NEW_SIZE.1 as f32,
+        );
+        let w = (-self.pan - size / 2.0) / self.scale();
+        (w.x.round() as i32, w.y.round() as i32)
+    }
+
+    /// Cuánto mide un píxel en pantalla, a lo ancho y a lo alto: el zoom por la proporción de
+    /// píxel (con 1:1, el zoom en los dos).
+    pub(crate) fn scale(&self) -> Vec2 {
+        self.ratio * self.zoom
     }
 
     fn to_screen(&self, rect: Rect, world: (i32, i32)) -> Pos2 {
-        self.origin(rect) + Vec2::new(world.0 as f32, world.1 as f32) * self.zoom
+        self.origin(rect) + Vec2::new(world.0 as f32, world.1 as f32) * self.scale()
     }
 
     fn to_world(&self, rect: Rect, p: Pos2) -> (f32, f32) {
-        let w = (p - self.origin(rect)) / self.zoom;
+        let w = (p - self.origin(rect)) / self.scale();
         (w.x, w.y)
+    }
+
+    /// Si se dibuja el cursor del diseño `kind` (Pixel UI y el skin lo trae).
+    fn can_draw(&self, kind: PixelCursor) -> bool {
+        self.pixel_ui && self.cursors.as_ref().is_some_and(|c| c.has(kind))
+    }
+
+    /// Color que se ve en el punto de pantalla `p` del lienzo: el píxel del artboard de más arriba
+    /// sobre el damero, o el fondo fuera de los artboards (para invertir los cursores).
+    fn color_under(&self, rect: Rect, editor: &Editor, p: Pos2) -> Color32 {
+        let world = self.to_world(rect, p);
+        let Some(artboard) = editor
+            .document
+            .artboard_at(world)
+            .and_then(|id| editor.document.artboard(id))
+        else {
+            return self.background;
+        };
+        let (ax, ay) = artboard.position;
+        let (x, y) = (world.0.floor() as i32 - ax, world.1.floor() as i32 - ay);
+        let sprite = if artboard.id == editor.active {
+            editor.sprite()
+        } else {
+            &artboard.sprite
+        };
+        let c = cs_render::composite_pixel(sprite, editor.frame_of(artboard.id), x, y);
+        let cell = CHECKER_CELL as i32;
+        let checker = if (x.div_euclid(cell) + y.div_euclid(cell)) % 2 == 0 {
+            theme::CHECKER_LIGHT
+        } else {
+            theme::CHECKER_DARK
+        };
+        let a = c.a as f32 / 255.0;
+        let mix = |v: u8, b: u8| (v as f32 * a + b as f32 * (1.0 - a)).round() as u8;
+        Color32::from_rgb(
+            mix(c.r, checker.r()),
+            mix(c.g, checker.g()),
+            mix(c.b, checker.b()),
+        )
     }
 
     fn fit(&mut self, rect: Rect, editor: &Editor) {
         let Some(((x0, y0), (x1, y1))) = editor.document.bounds() else {
             return;
         };
-        let size = Vec2::new((x1 - x0) as f32, (y1 - y0) as f32);
+        let size = Vec2::new((x1 - x0) as f32, (y1 - y0) as f32) * self.ratio;
         let max = (rect.size() * 0.85 / size).min_elem();
         self.zoom = ZOOM_LEVELS
             .iter()
@@ -181,7 +334,7 @@ impl CanvasView {
             .rfind(|&z| z <= max)
             .unwrap_or(ZOOM_LEVELS[0]);
         let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
-        self.pan = -center * self.zoom;
+        self.pan = -center * self.scale();
         self.fitted = true;
     }
 
@@ -195,9 +348,9 @@ impl CanvasView {
         } else {
             ZOOM_LEVELS[i.saturating_sub(1)]
         };
-        let world = (anchor - self.origin(rect)) / self.zoom;
+        let world = (anchor - self.origin(rect)) / self.scale();
         self.zoom = next;
-        self.pan = anchor - world * next - rect.center();
+        self.pan = anchor - world * self.scale() - rect.center();
     }
 
     pub fn request_zoom(&mut self, request: ZoomRequest) {
@@ -210,20 +363,26 @@ impl CanvasView {
             ZoomRequest::Out => self.zoom_at(rect, rect.center(), false),
             ZoomRequest::Actual => {
                 // Mantiene en el centro lo que está en el centro.
-                let center = (rect.center() - self.origin(rect)) / self.zoom;
+                let center = (rect.center() - self.origin(rect)) / self.scale();
                 self.zoom = 1.0;
-                self.pan = -center;
+                self.pan = -center * self.scale();
             }
             ZoomRequest::Fit => self.fit(rect, editor),
             ZoomRequest::CenterActive => self.center_active(editor),
         }
     }
 
+    /// La textura del artboard `id`, para los tests de la app.
+    #[cfg(test)]
+    pub(crate) fn artboard_texture(&self, id: ArtboardId) -> Option<egui::TextureId> {
+        self.textures.get(&id).map(|t| t.id())
+    }
+
     /// Centra el artboard activo sin cambiar el zoom (p. ej. al entrar a un símbolo).
     fn center_active(&mut self, editor: &Editor) {
         let ((x0, y0), (x1, y1)) = editor.artboard().rect();
         let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
-        self.pan = -center * self.zoom;
+        self.pan = -center * self.scale();
     }
 
     fn checker(&mut self, ctx: &egui::Context) -> egui::TextureId {
@@ -236,596 +395,183 @@ impl CanvasView {
             .id()
     }
 
-    /// Reglas superior e izquierda (sin la esquina).
-    fn ruler_rects(rect: Rect) -> (Rect, Rect) {
-        let top = Rect::from_min_max(
-            rect.min + Vec2::new(RULER_PX, 0.0),
-            Pos2::new(rect.right(), rect.top() + RULER_PX),
-        );
-        let left = Rect::from_min_max(
-            rect.min + Vec2::new(0.0, RULER_PX),
-            Pos2::new(rect.left() + RULER_PX, rect.bottom()),
-        );
-        (top, left)
+    /// Lo que se ve del lienzo: `rect` sin las reglas (si se ven).
+    fn visible(&self, rect: Rect) -> Rect {
+        if !self.rulers_shown {
+            return rect;
+        }
+        let px = self.ruler_px();
+        Rect::from_min_max(rect.min + Vec2::splat(px), rect.max)
     }
 
     /// Centro de simetría efectivo en pantalla (con el arrastre en curso, si lo hay).
     fn symmetry_center(&self, rect: Rect, editor: &Editor) -> (Pos2, (i32, i32)) {
-        let a = editor.artboard();
+        self.symmetry_center_of(rect, editor.artboard())
+    }
+
+    /// Como `symmetry_center`, del artboard `a` (el que se ve: mientras se mueve, en su lugar
+    /// nuevo).
+    fn symmetry_center_of(&self, rect: Rect, a: &cs_core::Artboard) -> (Pos2, (i32, i32)) {
         let c2 = self
             .sym_drag
             .map_or_else(|| a.symmetry_center2(), |(_, c)| c);
         let origin = self.to_screen(rect, a.position);
         (
-            origin + Vec2::new(c2.0 as f32, c2.1 as f32) * (self.zoom / 2.0),
+            origin + Vec2::new(c2.0 as f32, c2.1 as f32) * (self.scale() / 2.0),
             c2,
         )
     }
 
-    /// Mover el eje de simetría (centro o líneas). Igual que las guías: con Ctrl o con
-    /// Select/Move/Artboard.
-    #[allow(clippy::too_many_arguments)]
-    fn symmetry_input(
-        &mut self,
-        response: &egui::Response,
+    /// Con Tiled Mode, las copias del artboard activo alrededor de él hasta los bordes de la vista
+    /// (detrás de los artboards; el original se dibuja con los demás).
+    fn draw_tiled(
+        &self,
+        painter: &egui::Painter,
         rect: Rect,
-        editor: &mut Editor,
-        pointer: Option<Pos2>,
-        pressed: bool,
-        down: bool,
-        ctrl: bool,
-    ) -> Option<egui::CursorIcon> {
-        let symmetry = editor.symmetry();
-        if symmetry.mode == SymmetryMode::None {
-            self.sym_drag = None;
-            return None;
-        }
-        let cursor = |h: SymHandle| match h {
-            SymHandle::Center => egui::CursorIcon::Move,
-            SymHandle::X => egui::CursorIcon::ResizeHorizontal,
-            SymHandle::Y => egui::CursorIcon::ResizeVertical,
-        };
-        let origin = self.to_screen(rect, editor.artboard().position);
-        let half = self.zoom / 2.0;
-        let to_c2 = |p: Pos2| {
-            let v = (p - origin) / half;
-            (v.x.round() as i32, v.y.round() as i32)
-        };
-        if let Some((handle, c2)) = self.sym_drag {
-            if down {
-                if let Some(p) = pointer {
-                    let (x, y) = to_c2(p);
-                    let c2 = match handle {
-                        SymHandle::Center => (x, y),
-                        SymHandle::X => (x, c2.1),
-                        SymHandle::Y => (c2.0, y),
-                    };
-                    self.sym_drag = Some((handle, c2));
-                }
-                return Some(cursor(handle));
-            }
-            editor.set_symmetry(cs_core::Symmetry {
-                center2: Some(c2),
-                ..symmetry
-            });
-            self.sym_drag = None;
-            return None;
-        }
-        if editor.is_painting() || !response.hovered() {
-            return None;
-        }
-        let p = pointer?;
-        let (center, c2) = self.symmetry_center(rect, editor);
-        let artboard = Rect::from_min_max(
-            origin,
-            origin
-                + Vec2::new(editor.sprite().width as f32, editor.sprite().height as f32)
-                    * self.zoom,
-        );
-        let handle = if p.distance(center) <= 7.0 {
-            Some(SymHandle::Center)
-        } else if has_vertical_axis(symmetry.mode)
-            && (p.x - center.x).abs() <= 4.0
-            && artboard.y_range().contains(p.y)
-        {
-            Some(SymHandle::X)
-        } else if has_horizontal_axis(symmetry.mode)
-            && (p.y - center.y).abs() <= 4.0
-            && artboard.x_range().contains(p.x)
-        {
-            Some(SymHandle::Y)
-        } else {
-            None
-        }?;
-        let grabbable = matches!(
-            editor.active_tool(),
-            ToolKind::RectSelect | ToolKind::EllipseSelect | ToolKind::Move | ToolKind::Artboard
-        ) || ctrl;
-        if !grabbable {
-            self.guide_hint = Some("Symmetry axis: hold Ctrl and drag to move it");
-            return None;
-        }
-        self.guide_hint = Some("Drag to move the symmetry axis");
-        if pressed {
-            self.sym_drag = Some((handle, c2));
-        }
-        Some(cursor(handle))
-    }
-
-    /// Ejes de simetría punteados sobre el artboard activo y su centro.
-    fn draw_symmetry(&self, painter: &egui::Painter, rect: Rect, editor: &Editor) {
-        let mode = editor.symmetry().mode;
-        if mode == SymmetryMode::None {
+        editor: &Editor,
+        document: &cs_core::Document,
+        checker: egui::TextureId,
+        ppp: f32,
+    ) {
+        let tiled = editor.tiled;
+        if tiled == crate::editor::TiledMode::None {
             return;
         }
-        let a = editor.artboard();
+        let (Some(artboard), Some(texture)) = (
+            document.artboard(editor.active),
+            self.textures.get(&editor.active),
+        ) else {
+            return;
+        };
+        let screen = WindowLayout::pixels_on_screen(self.pixel_rect(rect, artboard), ppp);
+        let size = screen.size();
+        if size.x < 1.0 || size.y < 1.0 {
+            return;
+        }
+        // Cuántas copias entran a cada lado (con un tope por si el zoom es muy chico).
+        let span = |lo: f32, hi: f32, from: f32, step: f32| {
+            let first = ((lo - from) / step).floor().max(-64.0) as i32;
+            let last = ((hi - from) / step).ceil().min(64.0) as i32;
+            first..=last
+        };
+        let xs = if tiled.x() {
+            span(rect.left(), rect.right(), screen.left(), size.x)
+        } else {
+            0..=0
+        };
+        let ys = if tiled.y() {
+            span(rect.top(), rect.bottom(), screen.top(), size.y)
+        } else {
+            0..=0
+        };
+        let ((x0, y0), (x1, y1)) = artboard.rect();
+        let uv = checker_uv((x1 - x0) as u32, (y1 - y0) as u32);
+        let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+        for j in ys {
+            for i in xs.clone() {
+                if (i, j) == (0, 0) {
+                    continue;
+                }
+                let copy = screen.translate(Vec2::new(i as f32 * size.x, j as f32 * size.y));
+                if !copy.intersects(rect) {
+                    continue;
+                }
+                painter.image(checker, copy, uv, Color32::WHITE);
+                painter.image(texture.id(), copy, full_uv, Color32::WHITE);
+            }
+        }
+    }
+
+    /// Lo que ocupa en pantalla cada artboard de `document`, en su orden (con su ventana, con
+    /// Pixel UI).
+    fn covers(&self, rect: Rect, document: &cs_core::Document, ppp: f32) -> Vec<Rect> {
+        document
+            .artboards
+            .iter()
+            .map(|a| {
+                let pixels = WindowLayout::pixels_on_screen(self.pixel_rect(rect, a), ppp);
+                if self.artboard_window.is_some() {
+                    WindowLayout::frame_around(pixels, ppp)
+                } else {
+                    pixels
+                }
+            })
+            .collect()
+    }
+
+    /// Ejes de simetría punteados sobre el artboard activo y su centro, como se ve en `document`
+    /// (mientras se arrastra el artboard, se mueven con él), sin lo que tapan los artboards de
+    /// delante (`covers`).
+    fn draw_symmetry(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        editor: &Editor,
+        document: &cs_core::Document,
+        covers: &[Rect],
+    ) {
+        let a = document
+            .artboard(editor.active)
+            .unwrap_or_else(|| editor.artboard());
+        let axes = a.symmetry.axes;
+        if !axes.any() {
+            return;
+        }
         let ((x0, y0), (x1, y1)) = a.rect();
         let screen = Rect::from_min_max(
             self.to_screen(rect, (x0, y0)),
             self.to_screen(rect, (x1, y1)),
         );
         let painter = painter.with_clip_rect(screen.intersect(rect));
-        let (c, _) = self.symmetry_center(rect, editor);
+        let (c, _) = self.symmetry_center_of(rect, a);
+        if let Some(color) = self.symmetry_color {
+            // Pegados a lo visible: con zoom, los handles quedan en el borde de la vista aunque
+            // el artboard siga más allá.
+            draw_pixel_symmetry(
+                &painter,
+                axes,
+                c,
+                screen.intersect(self.visible(rect)),
+                color,
+                covers,
+            );
+            return;
+        }
         let stroke = Stroke::new(1.5, theme::ACCENT);
         let mut segments = Vec::new();
-        if has_vertical_axis(mode) {
+        if axes.vertical {
             segments.push([
                 Pos2::new(c.x, screen.top()),
                 Pos2::new(c.x, screen.bottom()),
             ]);
         }
-        if has_horizontal_axis(mode) {
+        if axes.horizontal {
             segments.push([
                 Pos2::new(screen.left(), c.y),
                 Pos2::new(screen.right(), c.y),
             ]);
         }
         let k = screen.width().max(screen.height());
-        if matches!(mode, SymmetryMode::DiagonalDown | SymmetryMode::All) {
+        if axes.diagonal_down {
             segments.push([c - Vec2::splat(k), c + Vec2::splat(k)]);
         }
-        if matches!(mode, SymmetryMode::DiagonalUp | SymmetryMode::All) {
+        if axes.diagonal_up {
             segments.push([c + Vec2::new(-k, k), c + Vec2::new(k, -k)]);
         }
-        for seg in segments {
+        for seg in segments
+            .into_iter()
+            .flat_map(|s| segment_uncovered(s, covers))
+        {
             painter.extend(egui::Shape::dashed_line(&seg, stroke, 6.0, 4.0));
         }
-        painter.circle(
-            c,
-            4.0,
-            theme::ACCENT,
-            Stroke::new(1.0, theme::CANVAS_BORDER),
-        );
-    }
-
-    /// Crear (desde las reglas), mover y borrar guías. Devuelve el cursor a mostrar si el
-    /// puntero está ocupado por las reglas/guías (y en ese caso las herramientas no reciben el clic).
-    #[allow(clippy::too_many_arguments)]
-    fn guide_input(
-        &mut self,
-        response: &egui::Response,
-        rect: Rect,
-        editor: &mut Editor,
-        view: &ViewSettings,
-        pointer: Option<Pos2>,
-        pressed: bool,
-        down: bool,
-        ctrl: bool,
-    ) -> Option<egui::CursorIcon> {
-        let origin = editor.artboard().position;
-        // Copias para no tomar prestado `self` dentro de los closures.
-        let (screen_origin, zoom) = (self.origin(rect), self.zoom);
-        let local = move |p: Pos2| {
-            let w = (p - screen_origin) / zoom;
-            (w.x - origin.0 as f32, w.y - origin.1 as f32)
-        };
-        let on_ruler = |p: Pos2| {
-            view.rulers && {
-                let (top, left) = Self::ruler_rects(rect);
-                top.contains(p)
-                    || left.contains(p)
-                    || p.x < rect.left() + RULER_PX && p.y < rect.top() + RULER_PX
-            }
-        };
-        let axis_cursor = |axis: Axis| match axis {
-            Axis::Horizontal => egui::CursorIcon::ResizeVertical,
-            Axis::Vertical => egui::CursorIcon::ResizeHorizontal,
-        };
-        self.over_ruler = pointer.is_some_and(|p| response.hovered() && on_ruler(p));
-
-        if let Some(mut drag) = self.ruler_drag {
-            if down {
-                if let Some(p) = pointer {
-                    let (lx, ly) = local(p);
-                    drag.position = match drag.axis {
-                        Axis::Horizontal => ly.round() as i32,
-                        Axis::Vertical => lx.round() as i32,
-                    };
-                    drag.over_ruler = on_ruler(p);
-                    self.ruler_drag = Some(drag);
-                }
-                return Some(axis_cursor(drag.axis));
-            }
-            let new = (!drag.over_ruler).then_some(Guide {
-                axis: drag.axis,
-                position: drag.position,
-            });
-            let guides = after_drag(editor.guides(), drag.index, new);
-            editor.set_guides(guides);
-            self.ruler_drag = None;
-            return None;
+        if !covers.iter().any(|r| r.contains(c)) {
+            painter.circle(
+                c,
+                4.0,
+                theme::ACCENT,
+                Stroke::new(1.0, theme::CANVAS_BORDER),
+            );
         }
-        if editor.is_painting() || !response.hovered() {
-            return None;
-        }
-        let p = pointer?;
-        if on_ruler(p) {
-            let (top, left) = Self::ruler_rects(rect);
-            let axis = if top.contains(p) {
-                Some(Axis::Horizontal)
-            } else if left.contains(p) {
-                Some(Axis::Vertical)
-            } else {
-                None
-            };
-            if pressed && let Some(axis) = axis {
-                self.ruler_drag = Some(GuideDrag {
-                    index: None,
-                    axis,
-                    position: 0,
-                    over_ruler: true,
-                });
-            }
-            if axis.is_some() {
-                self.guide_hint = Some("Drag from the ruler to create a guide");
-            }
-            return Some(axis.map_or(egui::CursorIcon::Default, axis_cursor));
-        }
-        if !view.shows(view.guides) {
-            return None;
-        }
-        let index = hit_guide(editor.guides(), local(p), SNAP_PX / self.zoom)?;
-        let grabbable = matches!(
-            editor.active_tool(),
-            ToolKind::RectSelect | ToolKind::EllipseSelect | ToolKind::Move | ToolKind::Artboard
-        ) || ctrl;
-        if view.lock_guides {
-            self.guide_hint = Some("Guides are locked (View › Guides › Lock Guides)");
-            return None;
-        }
-        if !grabbable {
-            self.guide_hint =
-                Some("Guide: hold Ctrl and drag to move it · drop it on a ruler to remove it");
-            return None;
-        }
-        self.guide_hint = Some("Drag to move the guide · drop it on a ruler to remove it");
-        let guide = editor.guides()[index];
-        if pressed {
-            self.ruler_drag = Some(GuideDrag {
-                index: Some(index),
-                axis: guide.axis,
-                position: guide.position,
-                over_ruler: false,
-            });
-        }
-        Some(axis_cursor(guide.axis))
-    }
-
-    fn handle_input(
-        &mut self,
-        ui: &egui::Ui,
-        response: &egui::Response,
-        rect: Rect,
-        editor: &mut Editor,
-        dialog: Option<&mut CanvasSizeDialog>,
-        view: &ViewSettings,
-    ) {
-        // Zoom con la rueda, anclado al cursor.
-        if let Some(pointer) = response.hover_pos() {
-            let scroll: f32 = ui.input(|i| {
-                i.raw
-                    .events
-                    .iter()
-                    .filter_map(|e| match e {
-                        egui::Event::MouseWheel { delta, .. } => Some(delta.y),
-                        _ => None,
-                    })
-                    .sum()
-            });
-            if scroll != 0.0 {
-                self.zoom_at(rect, pointer, scroll > 0.0);
-            }
-        }
-
-        self.draw_pipette = false;
-        self.draw_rotate = false;
-        // Paneo con botón medio o espacio + arrastre.
-        let space = ui.input(|i| i.key_down(egui::Key::Space));
-        if response.dragged_by(egui::PointerButton::Middle)
-            || (space && response.dragged_by(egui::PointerButton::Primary))
-        {
-            self.pan += response.drag_delta();
-        }
-
-        self.hover = response
-            .hover_pos()
-            .map(|p| editor.to_local(self.to_world(rect, p)));
-
-        // Pintura: estado crudo del puntero, para que un clic sin arrastre también cuente.
-        let (pressed_primary, pressed_secondary, any_down, pointer, modifiers) = ui.input(|i| {
-            (
-                i.pointer.button_pressed(egui::PointerButton::Primary),
-                i.pointer.button_pressed(egui::PointerButton::Secondary),
-                i.pointer.primary_down() || i.pointer.secondary_down(),
-                i.pointer.interact_pos(),
-                i.modifiers,
-            )
-        });
-        editor.options.constrain = modifiers.shift;
-        let slop = EDGE_SLOP_PX / self.zoom;
-        let over_label = pointer
-            .filter(|_| self.names_visible)
-            .and_then(|p| self.label_at(ui, rect, editor, p));
-        self.over_label = over_label.is_some();
-
-        // Con el diálogo Canvas Size abierto el lienzo es modal: solo guías, paneo y zoom.
-        let modal = dialog.is_some();
-        let over_guide = match (&dialog, pointer) {
-            (Some(d), Some(p)) if self.dragging_guide.is_none() && !editor.is_painting() => {
-                self.guide_at(rect, d, editor, p)
-            }
-            _ => None,
-        };
-        if let Some(d) = dialog {
-            if pressed_primary && response.hovered() && over_guide.is_some() && !space {
-                self.dragging_guide = over_guide;
-            }
-            if let Some(edge) = self.dragging_guide {
-                match pointer {
-                    Some(p) if any_down => {
-                        let (wx, wy) = self.to_world(rect, p);
-                        let coord = if edge.is_vertical() { wx } else { wy };
-                        d.set_edge(edge, coord.round() as i32, &editor.document);
-                    }
-                    _ if !any_down => self.dragging_guide = None,
-                    _ => {}
-                }
-            }
-        } else {
-            self.dragging_guide = None;
-        }
-        let mut guide_cursor = self.dragging_guide.or(over_guide).map(|edge| {
-            if edge.is_vertical() {
-                egui::CursorIcon::ResizeHorizontal
-            } else {
-                egui::CursorIcon::ResizeVertical
-            }
-        });
-        // Eje de simetría, reglas y guías (no con el diálogo Canvas Size abierto).
-        self.guide_hint = None;
-        let sym_cursor = if modal || space {
-            None
-        } else {
-            self.symmetry_input(
-                response,
-                rect,
-                editor,
-                pointer,
-                pressed_primary,
-                any_down,
-                modifiers.command,
-            )
-        };
-        let ruler_cursor = if modal || space || sym_cursor.is_some() || self.sym_drag.is_some() {
-            sym_cursor
-        } else {
-            self.guide_input(
-                response,
-                rect,
-                editor,
-                view,
-                pointer,
-                pressed_primary,
-                any_down,
-                modifiers.command,
-            )
-        };
-        let ruler_busy =
-            ruler_cursor.is_some() || self.ruler_drag.is_some() || self.sym_drag.is_some();
-        guide_cursor = guide_cursor.or(ruler_cursor);
-
-        if !modal
-            && !ruler_busy
-            && self.dragging_guide.is_none()
-            && !space
-            && response.hovered()
-            && !editor.is_painting()
-            && (pressed_primary || pressed_secondary)
-            && let Some(p) = pointer
-        {
-            let world = self.to_world(rect, p);
-            let slice = (pressed_secondary && editor.active_tool() == ToolKind::Slice)
-                .then(|| editor.slice_at(editor.to_local(world)))
-                .flatten();
-            self.slice_menu = slice.is_some();
-            // Un handle o la franja de rotación ganan sobre el gesto de la herramienta.
-            let transform = if pressed_primary {
-                self.transform_hit(rect, editor, p)
-            } else {
-                None
-            };
-            match over_label {
-                Some(id) if pressed_primary => editor.press_artboard_label(id, world),
-                _ if slice.is_some() => {
-                    editor.end_group();
-                    editor.slice = slice;
-                }
-                _ => match transform {
-                    Some(hit) => editor.press_transform(hit, world),
-                    None => editor.pointer_press(world, pressed_secondary, modifiers.alt, slop),
-                },
-            }
-        }
-        if self.slice_menu {
-            response.context_menu(|ui| {
-                if ui.button("Slice Properties…").clicked() {
-                    self.slice_properties = true;
-                    ui.close();
-                }
-                if ui.button("Duplicate Slice").clicked() {
-                    editor.duplicate_slice();
-                    ui.close();
-                }
-                if ui.button("Delete Slice").clicked() {
-                    editor.delete_slice();
-                    ui.close();
-                }
-            });
-        }
-        // Auto-scroll: arrastrando cerca o fuera del borde, la vista se desplaza.
-        let dragging = editor.is_painting() || self.ruler_drag.is_some() || self.sym_drag.is_some();
-        if dragging
-            && any_down
-            && !space
-            && !modal
-            && let Some(p) = pointer
-        {
-            let area = if view.rulers {
-                Rect::from_min_max(rect.min + Vec2::splat(RULER_PX), rect.max)
-            } else {
-                rect
-            };
-            let velocity = autoscroll_velocity(area, p);
-            if velocity != Vec2::ZERO {
-                let dt = ui.input(|i| i.stable_dt).min(0.05);
-                self.pan -= velocity * dt;
-                ui.ctx().request_repaint();
-            }
-        }
-        if editor.is_painting() {
-            if any_down {
-                if let Some(p) = pointer {
-                    editor.pointer_drag(self.to_world(rect, p));
-                }
-                let dt_ms = ui.input(|i| i.stable_dt).min(0.1) * 1000.0;
-                editor.tool_tick(dt_ms);
-                if editor.active_tool() == ToolKind::Spray {
-                    ui.ctx().request_repaint();
-                }
-            } else {
-                editor.pointer_release();
-            }
-        } else if response.hovered()
-            && let Some(p) = pointer
-        {
-            editor.pointer_hover(self.to_world(rect, p));
-        }
-        if response.double_clicked()
-            && let Some(id) = over_label
-            && let Some(artboard) = editor.document.artboard(id)
-        {
-            self.renaming = Some((id, artboard.name.clone(), false));
-        }
-        if response.double_clicked() && editor.active_tool() == ToolKind::PolygonLasso {
-            editor.finish_gesture();
-        }
-        if response.double_clicked()
-            && editor.active_tool() == ToolKind::Move
-            && editor.enter_instance()
-        {
-            self.center_active(editor);
-        }
-
-        let transform_cursor = editor
-            .transform_drag_hit()
-            .or_else(|| pointer.and_then(|p| self.transform_hit(rect, editor, p)));
-        let cursor = if space {
-            Some(egui::CursorIcon::Grab)
-        } else if guide_cursor.is_some() {
-            guide_cursor
-        } else if modal {
-            response.hovered().then_some(egui::CursorIcon::Default)
-        } else if !response.hovered() {
-            None
-        } else if ruler_busy {
-            Some(egui::CursorIcon::Default)
-        } else if editor.artboard_gesture().moving() {
-            Some(egui::CursorIcon::Grabbing)
-        } else if let Some(edges) = editor.artboard_gesture().resizing() {
-            Some(artboard_cursor(Some(ArtboardHit::Edge(
-                editor.active,
-                edges,
-            ))))
-        } else if over_label.is_some() && !editor.is_painting() {
-            Some(egui::CursorIcon::Grab)
-        } else if let Some(hit) = transform_cursor {
-            match hit {
-                TransformHit::Rotate => {
-                    self.draw_rotate = true;
-                    Some(egui::CursorIcon::None)
-                }
-                TransformHit::Handle(handle) => Some(handle_cursor(handle)),
-                TransformHit::Move => Some(egui::CursorIcon::Move),
-            }
-        } else if editor.active_tool() == ToolKind::Artboard {
-            let world = pointer.map(|p| self.to_world(rect, p));
-            Some(artboard_cursor(
-                world.and_then(|w| hit_test(&editor.document, w, slop)),
-            ))
-        } else if editor.active_tool() == ToolKind::Move
-            // Durante el arrastre sigue Move aunque el puntero salga de lo seleccionado o del
-            // artboard, o cambien los modificadores.
-            || editor.is_transforming()
-            || pointer.is_some_and(|p| {
-                let world = self.to_world(rect, p);
-                editor.moves_selection_at(world, modifiers.shift, modifiers.alt)
-            })
-        {
-            Some(egui::CursorIcon::Move)
-        } else if editor.active_tool() == ToolKind::Eyedropper {
-            self.draw_pipette = true;
-            Some(egui::CursorIcon::None)
-        } else {
-            Some(egui::CursorIcon::Crosshair)
-        };
-        if let Some(c) = cursor {
-            ui.ctx().set_cursor_icon(c);
-        }
-    }
-
-    /// Guía bajo `p` (en pantalla), si hay una a menos de `EDGE_SLOP_PX`.
-    fn guide_at(
-        &self,
-        rect: Rect,
-        dialog: &CanvasSizeDialog,
-        editor: &Editor,
-        p: Pos2,
-    ) -> Option<GuideEdge> {
-        let (min, max) = dialog.preview_rect(&editor.document)?;
-        let (a, b) = (self.to_screen(rect, min), self.to_screen(rect, max));
-        [
-            (GuideEdge::Left, (p.x - a.x).abs()),
-            (GuideEdge::Right, (p.x - b.x).abs()),
-            (GuideEdge::Top, (p.y - a.y).abs()),
-            (GuideEdge::Bottom, (p.y - b.y).abs()),
-        ]
-        .into_iter()
-        .filter(|(_, d)| *d <= EDGE_SLOP_PX)
-        .min_by(|x, y| x.1.total_cmp(&y.1))
-        .map(|(edge, _)| edge)
-    }
-
-    /// Handle o franja de rotación bajo `p` (en pantalla), si se muestran los handles.
-    fn transform_hit(&self, rect: Rect, editor: &Editor, p: Pos2) -> Option<TransformHit> {
-        if !handles_active(editor) {
-            return None;
-        }
-        let b = editor.transform_box()?;
-        let (wx, wy) = self.to_world(rect, p);
-        let (ax, ay) = editor.artboard().position;
-        let local = (wx - ax as f32, wy - ay as f32);
-        let handle = (HANDLE_PX / 2.0 + 1.0) / self.zoom;
-        transform_box::hit(&b, local, handle, ROTATE_PX / self.zoom)
     }
 
     /// `dialog`: diálogo Canvas Size abierto; sus guías se dibujan y se pueden arrastrar.
@@ -838,6 +584,11 @@ impl CanvasView {
     ) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let ctx = ui.ctx().clone();
+        // Antes de cualquier uso de `origin` en este frame (zoom, entrada, dibujo).
+        self.ppp = ctx.pixels_per_point();
+        let (rx, ry) = editor.sprite().pixel_ratio;
+        self.ratio = Vec2::new(rx.max(1) as f32, ry.max(1) as f32);
+        self.rulers_shown = view_settings.rulers;
         if !self.fitted && rect.width() > 0.0 {
             self.fit(rect, editor);
         }
@@ -872,11 +623,28 @@ impl CanvasView {
 
         // Recompone las texturas si el documento cambió o hay un gesto en curso.
         let painting = editor.is_painting();
-        if painting || self.rendered_revision != Some(editor.revision) {
+        let mask = editor.editing_mask().then_some(editor.layer);
+        if painting || self.rendered_revision != Some(editor.revision) || self.rendered_mask != mask
+        {
+            self.rendered_mask = mask;
             self.textures
                 .retain(|id, _| document.artboard(*id).is_some());
+            let mut skipped = false;
             for artboard in &document.artboards {
                 let sprite = &artboard.sprite;
+                let unchanged = painting
+                    && self.all_rendered == Some(editor.revision)
+                    && artboard.id != editor.active
+                    && self.textures.contains_key(&artboard.id)
+                    && !sprite.layers.iter().any(|l| l.instance.is_some());
+                if unchanged {
+                    skipped = true;
+                    continue;
+                }
+                #[cfg(test)]
+                {
+                    self.composed += 1;
+                }
                 let frame = editor.frame_of(artboard.id);
                 let onion = artboard.id == editor.active && editor.onion_enabled && !editor.playing;
                 // Las instancias se resuelven a capas normales antes de componer.
@@ -907,21 +675,43 @@ impl CanvasView {
                     }
                 }
             }
+            if !skipped {
+                self.all_rendered = Some(editor.revision);
+            }
             // Durante un gesto no marcamos como al día, para recomponer al terminar.
             self.rendered_revision = (!painting).then_some(editor.revision);
         }
 
         let checker = self.checker(&ctx);
         let painter = ui.painter_at(rect);
-        painter.rect_filled(rect, 0.0, theme::CANVAS_BG);
+        painter.rect_filled(rect, 0.0, self.background);
 
+        let ppp = ctx.pixels_per_point();
+        self.draw_tiled(&painter, rect, editor, document, checker, ppp);
         for artboard in &document.artboards {
+            // Alineada a píxeles de pantalla: el damero y la textura caen justo en píxeles y la
+            // ventana de Pixel UI se arma alrededor de este mismo rect (blanco de 1 px exacto).
+            // Con zoom entero en píxeles físicos `origin` ya lo deja alineado y el redondeo no
+            // cambia nada; solo actúa con zoom fraccionario (p. ej. 50 %), donde los bordes del
+            // artboard caen entre píxeles y se apartan de `to_screen` en menos de medio píxel.
+            let screen = WindowLayout::pixels_on_screen(self.pixel_rect(rect, artboard), ppp);
+            let active = artboard.id == editor.active;
+            // Con Pixel UI, la ventana del skin: el marco va detrás de los píxeles. Si la ventana
+            // queda fuera del lienzo, no se arma ni se dibuja nada del artboard.
+            let window = match &self.artboard_window {
+                Some(w) => {
+                    if !WindowLayout::frame_around(screen, ppp).intersects(rect) {
+                        continue;
+                    }
+                    Some((w, WindowLayout::around(screen, ppp)))
+                }
+                None => None,
+            };
+            if let Some((w, layout)) = &window {
+                painter.extend(w.frame_shapes(layout, active, ppp));
+            }
             let ((x0, y0), (x1, y1)) = artboard.rect();
-            let screen = Rect::from_min_max(
-                self.to_screen(rect, (x0, y0)),
-                self.to_screen(rect, (x1, y1)),
-            );
-            let uv = Rect::from_min_max(Pos2::ZERO, (screen.size() / (CHECKER_PX * 2.0)).to_pos2());
+            let uv = checker_uv((x1 - x0) as u32, (y1 - y0) as u32);
             painter.image(checker, screen, uv, Color32::WHITE);
             if let Some(tex) = self.textures.get(&artboard.id) {
                 let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
@@ -932,7 +722,7 @@ impl CanvasView {
                     &painter,
                     screen,
                     artboard.sprite.grid,
-                    self.zoom,
+                    self.scale(),
                     view_settings.grid_color(),
                 );
             }
@@ -940,7 +730,7 @@ impl CanvasView {
                 let stroke = Stroke::new(1.0, theme::GRID);
                 for x in 1..artboard.sprite.width {
                     painter.vline(
-                        screen.left() + x as f32 * self.zoom,
+                        screen.left() + x as f32 * self.scale().x,
                         screen.y_range(),
                         stroke,
                     );
@@ -948,7 +738,7 @@ impl CanvasView {
                 for y in 1..artboard.sprite.height {
                     painter.hline(
                         screen.x_range(),
-                        screen.top() + y as f32 * self.zoom,
+                        screen.top() + y as f32 * self.scale().y,
                         stroke,
                     );
                 }
@@ -965,18 +755,28 @@ impl CanvasView {
                         size: space.tile_size,
                         offset: space.offset,
                     },
-                    self.zoom,
+                    self.scale(),
                     theme::TILE_GRID,
                 );
             }
-            let active = artboard.id == editor.active;
+            let renaming = self.renaming.as_ref().is_some_and(|r| r.0 == artboard.id);
+            if let Some((w, layout)) = &window {
+                // La barra de título reemplaza a la etiqueta. Sin el borde naranja del activo:
+                // taparía el borde y la barra de la ventana; los inactivos se ven apagados.
+                let title = if self.names_visible && !renaming {
+                    label_text(artboard)
+                } else {
+                    String::new()
+                };
+                painter.extend(w.bar_shapes(&painter, layout, &title, active, ppp));
+                continue;
+            }
             let (border, label_color) = if active {
                 (Stroke::new(2.0, theme::ACCENT), theme::ACCENT)
             } else {
                 (Stroke::new(1.0, theme::CANVAS_BORDER), theme::LABEL)
             };
             painter.rect_stroke(screen, 0.0, border, StrokeKind::Outside);
-            let renaming = self.renaming.as_ref().is_some_and(|r| r.0 == artboard.id);
             if self.names_visible && !renaming {
                 painter.text(
                     screen.left_top() - Vec2::new(0.0, LABEL_GAP),
@@ -988,9 +788,12 @@ impl CanvasView {
             }
         }
 
+        // Lo que ocupa cada artboard en pantalla: las guías y la simetría de uno no se ven encima
+        // de los que van delante.
+        let covers = self.covers(rect, document, ui.ctx().pixels_per_point());
         if view_settings.shows(view_settings.guides) {
             let dragged = self.ruler_drag.and_then(|d| d.index);
-            for artboard in &document.artboards {
+            for (k, artboard) in document.artboards.iter().enumerate() {
                 let ((x0, y0), (x1, y1)) = artboard.rect();
                 let screen = Rect::from_min_max(
                     self.to_screen(rect, (x0, y0)),
@@ -1001,7 +804,14 @@ impl CanvasView {
                     if active && Some(i) == dragged {
                         continue;
                     }
-                    draw_guide(&painter, screen, *g, self.zoom, theme::GUIDE_LINE);
+                    draw_guide(
+                        &painter,
+                        screen,
+                        *g,
+                        self.scale(),
+                        theme::GUIDE_LINE,
+                        &covers[k + 1..],
+                    );
                 }
             }
         }
@@ -1028,7 +838,13 @@ impl CanvasView {
         }
 
         if !modal {
-            self.draw_symmetry(&painter, rect, editor);
+            // Los artboards de delante del activo tapan sus ejes.
+            let front = document
+                .artboards
+                .iter()
+                .position(|a| a.id == editor.active)
+                .map_or(&[][..], |k| &covers[k + 1..]);
+            self.draw_symmetry(&painter, rect, editor, document, front);
         }
 
         if let Some((min, max)) = guide {
@@ -1050,32 +866,34 @@ impl CanvasView {
                 || editor.active_tool() == ToolKind::Slice)
             && let Some(artboard) = document.artboard(editor.active)
         {
-            draw_slices(&painter, &artboard.sprite, editor, origin, self.zoom);
+            draw_slices(&painter, &artboard.sprite, editor, origin, self.scale());
         }
         if let (Some(mask), Some(origin)) = (&view.selection, active_origin)
             && view_settings.shows(view_settings.selection_edges)
         {
             let phase = (ctx.input(|i| i.time) * ANTS_SPEED) as i32;
-            draw_marching_ants(&painter, mask, origin, self.zoom, phase);
+            draw_marching_ants(&painter, mask, origin, self.scale(), phase, self.pixel_ui);
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
         }
         if let Some(origin) = active_origin
             && handles_active(editor)
             && let Some(b) = editor.transform_box()
         {
-            draw_transform_box(&painter, &b, origin, self.zoom);
+            let phase = (ctx.input(|i| i.time) * ANTS_SPEED) as i32;
+            draw_transform_box(&painter, &b, origin, self.scale(), phase, self.pixel_ui);
+            ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
         }
         if let Some(origin) = active_origin
             && view_settings.shows(view_settings.tile_numbers)
             && let Some(space) = editor.tile_space()
-            && space.tile_size.0 as f32 * self.zoom >= TILE_NUMBER_MIN_PX
-            && space.tile_size.1 as f32 * self.zoom >= TILE_NUMBER_MIN_PX
+            && space.tile_size.0 as f32 * self.scale().x >= TILE_NUMBER_MIN_PX
+            && space.tile_size.1 as f32 * self.scale().y >= TILE_NUMBER_MIN_PX
             && let Some(artboard) = document.artboard(editor.active)
         {
             let font = FontId::monospace(10.0);
             // Solo las celdas dentro del área visible del lienzo.
-            let min = ((rect.min - origin) / self.zoom).floor();
-            let max = ((rect.max - origin) / self.zoom).ceil();
+            let min = ((rect.min - origin) / self.scale()).floor();
+            let max = ((rect.max - origin) / self.scale()).ceil();
             let view = (min.x as i32, min.y as i32, max.x as i32, max.y as i32);
             let cells = crate::tile_ops::numbered_cells_in(
                 &artboard.sprite,
@@ -1086,7 +904,7 @@ impl CanvasView {
             for ((x, y), number) in cells {
                 // La celda parcial del borde empieza fuera del lienzo: el número se pega al borde.
                 let (x, y) = (x.max(0), y.max(0));
-                let at = origin + Vec2::new(x as f32, y as f32) * self.zoom + Vec2::splat(2.0);
+                let at = origin + Vec2::new(x as f32, y as f32) * self.scale() + Vec2::splat(2.0);
                 if !rect.contains(at) {
                     continue;
                 }
@@ -1101,8 +919,9 @@ impl CanvasView {
         }
 
         // Contorno del pincel bajo el cursor.
-        let space = ui.input(|i| i.key_down(egui::Key::Space));
         let tool = editor.active_tool();
+        // Con Espacio o Hand se está por mover la vista: sin contorno.
+        let space = ui.input(|i| i.key_down(egui::Key::Space)) || tool == ToolKind::Hand;
         if let (Some((hx, hy)), Some(origin)) = (self.hover, active_origin)
             && !modal
             && !self.over_label
@@ -1113,6 +932,8 @@ impl CanvasView {
             && !space
             && response.hovered()
             && tool != ToolKind::Artboard
+            // Bloqueada (modo Tiles o editando una máscara): no actúa, así que sin contorno.
+            && !editor.tool_blocked()
             && view_settings.shows(view_settings.brush_preview)
         {
             let size = if tool.uses_brush() {
@@ -1120,58 +941,138 @@ impl CanvasView {
             } else {
                 1
             };
+            let shape = editor.options.brush_shape;
             let offset = -((size as i32 - 1) / 2);
             // En modo Tiles el pincel cubre celdas enteras.
             let cells = editor.tile_space().filter(|_| tool.uses_cells());
-            let r = match cells {
-                Some(space) => {
-                    let (cx, cy) = space.cell_at((hx, hy));
-                    let (x0, y0) = space.cell_origin((cx + offset, cy + offset));
-                    let (tw, th) = space.tile_size;
-                    Rect::from_min_size(
-                        origin + Vec2::new(x0 as f32, y0 as f32) * self.zoom,
-                        Vec2::new((size * tw) as f32, (size * th) as f32) * self.zoom,
-                    )
-                }
-                None => Rect::from_min_size(
-                    origin + Vec2::new((hx + offset) as f32, (hy + offset) as f32) * self.zoom,
-                    Vec2::splat(size as f32 * self.zoom),
-                ),
-            };
             // Las herramientas que pintan píxeles muestran el color primario bajo el cursor.
-            if cells.is_none()
+            let fill = (cells.is_none()
                 && tool.paints()
                 && tool != ToolKind::Eraser
                 && tool != ToolKind::Bucket
-            {
-                let c = editor.resolve(editor.primary);
-                painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a));
+                && tool != ToolKind::Blur)
+                .then(|| {
+                    let c = editor.resolve(editor.primary);
+                    Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
+                });
+            let stroke = Stroke::new(1.0, theme::BRUSH_OUTLINE);
+            if cells.is_none() && tool.uses_brush() && shape == BrushShape::Round && size > 2 {
+                // Redondo: filas rellenas y el borde píxel a píxel (en 1 y 2 es un cuadrado).
+                let points = cs_raster::brush_points((hx, hy), size, shape);
+                let at = |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * self.scale();
+                if let Some(fill) = fill {
+                    for (y, x0, x1) in brush_rows(&points) {
+                        let row = Rect::from_min_max(at((x0, y)), at((x1 + 1, y + 1)));
+                        painter.rect_filled(row, 0.0, fill);
+                    }
+                }
+                for segment in outline_segments(&points, at, stroke.width) {
+                    painter.line_segment(segment, stroke);
+                }
+            } else {
+                let r = match cells {
+                    Some(space) => {
+                        let (cx, cy) = space.cell_at((hx, hy));
+                        let (x0, y0) = space.cell_origin((cx + offset, cy + offset));
+                        let (tw, th) = space.tile_size;
+                        Rect::from_min_size(
+                            origin + Vec2::new(x0 as f32, y0 as f32) * self.scale(),
+                            Vec2::new((size * tw) as f32, (size * th) as f32) * self.scale(),
+                        )
+                    }
+                    None => Rect::from_min_size(
+                        origin
+                            + Vec2::new((hx + offset) as f32, (hy + offset) as f32) * self.scale(),
+                        Vec2::splat(size as f32) * self.scale(),
+                    ),
+                };
+                if let Some(fill) = fill {
+                    painter.rect_filled(r, 0.0, fill);
+                }
+                painter.rect_stroke(r, 0.0, stroke, StrokeKind::Inside);
             }
-            painter.rect_stroke(
-                r,
-                0.0,
-                Stroke::new(1.0, theme::BRUSH_OUTLINE),
-                StrokeKind::Inside,
-            );
         }
 
+        // Las notas (post-its): encima de los artboards y debajo de las reglas.
+        {
+            let (origin, scale) = (self.origin(rect), self.scale());
+            let to_screen =
+                move |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * scale;
+            let skin = crate::pixel_ui::frame_skin(ui.ctx());
+            let note_painter = painter.with_clip_rect(self.canvas_area(rect, view_settings));
+            let menus = self
+                .notes
+                .show(ui, &note_painter, editor, skin.as_deref(), &to_screen);
+            self.notes.menus(ui, editor, menus);
+        }
         if view_settings.rulers {
             let pointer = response.hover_pos().or(ui.ctx().pointer_interact_pos());
-            self.draw_rulers(&painter, rect, editor, pointer);
+            match self.pixel_rulers {
+                Some(look) => {
+                    // La carita: sorprendida si se arrastra una guía, callada si están
+                    // bloqueadas; si no, parpadea cada tanto.
+                    use pixel_rulers::{BLINK_EVERY, BLINK_FOR, Mood};
+                    let time = ui.input(|i| i.time);
+                    let phase = time % BLINK_EVERY;
+                    let mood = if self.ruler_drag.is_some() {
+                        Mood::Surprised
+                    } else if view_settings.lock_guides {
+                        Mood::Quiet
+                    } else if phase < BLINK_FOR {
+                        Mood::Blink
+                    } else {
+                        Mood::Normal
+                    };
+                    if matches!(mood, Mood::Normal | Mood::Blink) {
+                        let wait = if phase < BLINK_FOR {
+                            BLINK_FOR - phase
+                        } else {
+                            BLINK_EVERY - phase
+                        };
+                        ui.ctx()
+                            .request_repaint_after(Duration::from_secs_f64(wait.max(0.01)));
+                    }
+                    let look = look.with_mood(mood);
+                    self.draw_pixel_rulers(&painter, rect, editor, pointer, &look)
+                }
+                None => self.draw_rulers(&painter, rect, editor, pointer),
+            }
         }
 
-        if self.draw_pipette
-            && let Some(p) = response.hover_pos()
-        {
-            // Color que se tomaría: lo que se ve (todas las capas visibles).
-            let color = self.hover.and_then(|(x, y)| {
+        // Color que tomaría el cuentagotas: lo que se ve (todas las capas visibles).
+        let picked = || {
+            self.hover.and_then(|(x, y)| {
                 let s = editor.sprite();
                 let inside = x >= 0 && y >= 0 && x < s.width as i32 && y < s.height as i32;
                 // `composite_pixel` lee los tilemaps tile a tile: no hace falta materializar en
                 // cada frame de hover.
                 inside.then(|| cs_render::composite_pixel(s, editor.frame, x, y))
-            });
-            draw_pipette(&painter, p, color);
+            })
+        };
+        if self.draw_pipette
+            && let Some(p) = response.hover_pos()
+        {
+            draw_pipette(&painter, p, picked());
+        }
+        if let Some(cursor) = self.pixel_cursor
+            && let Some(p) = response.hover_pos()
+        {
+            // El píxel del sprite bajo el puntero, en pantalla y alineado a píxeles físicos.
+            let (wx, wy) = self.to_world(rect, p);
+            let (x, y) = (wx.floor() as i32, wy.floor() as i32);
+            let cell = Rect::from_min_max(
+                self.to_screen(rect, (x, y)),
+                self.to_screen(rect, (x + 1, y + 1)),
+            );
+            let ppp = self.ppp;
+            let cell = Rect::from_min_max(
+                (cell.min.to_vec2() * ppp).round().to_pos2() / ppp,
+                (cell.max.to_vec2() * ppp).round().to_pos2() / ppp,
+            );
+            let color = (cursor == PixelCursor::Eyedropper).then(picked).flatten();
+            let under = |q: Pos2| self.color_under(rect, editor, q);
+            let cursors = self.cursors.as_ref().expect("checked by can_draw");
+            pixel_cursors::draw(&painter, cursors, cursor, p, cell, color, under);
         }
         if self.draw_rotate
             && let Some(p) = response.hover_pos()
@@ -1179,101 +1080,37 @@ impl CanvasView {
             draw_rotate_cursor(&painter, p);
         }
         self.rename_field(ui, rect, editor);
+        // La ventana Slice Properties la muestra la app (con el skin): `slice_properties`.
         self.slice_properties &= editor.slice.is_some();
-        if self.slice_properties {
-            egui::Window::new("Slice Properties")
-                .open(&mut self.slice_properties)
-                .collapsible(false)
-                .resizable(false)
-                .show(ui.ctx(), |ui| crate::panels::slice_properties(ui, editor));
-        }
     }
+}
 
-    /// Reglas en píxeles del artboard activo (origen en su esquina superior izquierda).
-    fn draw_rulers(
-        &self,
-        painter: &egui::Painter,
-        rect: Rect,
-        editor: &Editor,
-        pointer: Option<Pos2>,
-    ) {
-        let (top, left) = Self::ruler_rects(rect);
-        let corner = Rect::from_min_size(rect.min, Vec2::splat(RULER_PX));
-        for r in [top, left, corner] {
-            painter.rect_filled(r, 0.0, theme::RULER_BG);
-        }
-        painter.hline(
-            rect.x_range(),
-            top.bottom(),
-            Stroke::new(1.0, theme::CANVAS_BORDER),
-        );
-        painter.vline(
-            left.right(),
-            rect.y_range(),
-            Stroke::new(1.0, theme::CANVAS_BORDER),
-        );
+/// Las marcas visibles de una regla: `(valor local, posición en pantalla, es grande)` para el
+/// rango de mundo `w0..w1`, con el artboard en `origin` del eje. `screen` pasa de mundo a
+/// pantalla.
+fn ruler_ticks(
+    w0: f32,
+    w1: f32,
+    origin: i32,
+    major: i32,
+    minor: i32,
+    screen: impl Fn(i32) -> f32,
+) -> impl Iterator<Item = (i32, f32, bool)> {
+    let a = ((w0 - origin as f32) / minor as f32).floor() as i32 - 1;
+    let b = ((w1 - origin as f32) / minor as f32).ceil() as i32 + 1;
+    (a..=b).map(move |k| {
+        let u = k * minor;
+        (u, screen(origin + u), u.rem_euclid(major) == 0)
+    })
+}
 
-        let origin = editor.artboard().position;
-        let major = nice_step(self.zoom, 50.0);
-        let minor = [major / 10, major / 5, major / 2]
-            .into_iter()
-            .find(|&m| m >= 1 && m as f32 * self.zoom >= 6.0)
-            .unwrap_or(major);
-        let font = FontId::monospace(9.0);
-        let tick = Stroke::new(1.0, theme::RULER_TICK);
-        // Rango local visible en cada eje.
-        let (wx0, wy0) = self.to_world(rect, rect.min);
-        let (wx1, wy1) = self.to_world(rect, rect.max);
-        let span = |w0: f32, w1: f32, o: i32| {
-            let a = ((w0 - o as f32) / minor as f32).floor() as i32 - 1;
-            let b = ((w1 - o as f32) / minor as f32).ceil() as i32 + 1;
-            a..=b
-        };
-        for k in span(wx0, wx1, origin.0) {
-            let u = k * minor;
-            let x = self.to_screen(rect, (origin.0 + u, 0)).x;
-            if x < top.left() || x > top.right() {
-                continue;
-            }
-            let is_major = u.rem_euclid(major) == 0;
-            let h = if is_major { RULER_PX } else { RULER_PX * 0.35 };
-            painter.vline(x, (top.bottom() - h)..=top.bottom(), tick);
-            if is_major {
-                painter.text(
-                    Pos2::new(x + 2.0, top.top() + 1.0),
-                    Align2::LEFT_TOP,
-                    u.to_string(),
-                    font.clone(),
-                    theme::LABEL,
-                );
-            }
-        }
-        for k in span(wy0, wy1, origin.1) {
-            let u = k * minor;
-            let y = self.to_screen(rect, (0, origin.1 + u)).y;
-            if y < left.top() || y > left.bottom() {
-                continue;
-            }
-            let is_major = u.rem_euclid(major) == 0;
-            let w = if is_major { RULER_PX } else { RULER_PX * 0.35 };
-            painter.hline((left.right() - w)..=left.right(), y, tick);
-            if is_major {
-                painter.text(
-                    Pos2::new(left.left() + 1.0, y + 2.0),
-                    Align2::LEFT_TOP,
-                    u.to_string(),
-                    font.clone(),
-                    theme::LABEL,
-                );
-            }
-        }
-        // Posición del cursor.
-        if let Some(p) = pointer.filter(|p| rect.contains(*p)) {
-            let mark = Stroke::new(1.0, theme::ACCENT);
-            painter.vline(p.x, top.y_range(), mark);
-            painter.hline(left.x_range(), p.y, mark);
-        }
-    }
+/// La marca chica: un décimo, un quinto o la mitad de la grande, la primera que mida al menos
+/// 6 puntos en pantalla.
+fn minor_step(major: i32, zoom: f32) -> i32 {
+    [major / 10, major / 5, major / 2]
+        .into_iter()
+        .find(|&m| m >= 1 && m as f32 * zoom >= 6.0)
+        .unwrap_or(major)
 }
 
 /// Cursor de cuentagotas: la punta está exactamente en `tip`; al lado, el color de debajo.
@@ -1322,43 +1159,88 @@ fn draw_pipette(painter: &egui::Painter, tip: Pos2, color: Option<cs_core::Rgba>
 }
 
 /// Línea de una guía dentro del artboard (si cae dentro de él).
-fn draw_guide(painter: &egui::Painter, screen: Rect, guide: Guide, zoom: f32, color: Color32) {
+/// Una guía de un artboard (en `screen`), sin los tramos que tapan los artboards de adelante
+/// (`covers`).
+fn draw_guide(
+    painter: &egui::Painter,
+    screen: Rect,
+    guide: Guide,
+    zoom: Vec2,
+    color: Color32,
+    covers: &[Rect],
+) {
     let stroke = Stroke::new(1.0, color);
     match guide.axis {
         Axis::Horizontal => {
-            let y = screen.top() + guide.position as f32 * zoom;
+            let y = screen.top() + guide.position as f32 * zoom.y;
             if (screen.top()..=screen.bottom()).contains(&y) {
-                painter.hline(screen.x_range(), painter.round_to_pixel_center(y), stroke);
+                let cut: Vec<_> = covers
+                    .iter()
+                    .filter(|c| c.y_range().contains(y))
+                    .map(|c| c.x_range())
+                    .collect();
+                for span in uncovered(screen.x_range(), &cut) {
+                    painter.hline(span, painter.round_to_pixel_center(y), stroke);
+                }
             }
         }
         Axis::Vertical => {
-            let x = screen.left() + guide.position as f32 * zoom;
+            let x = screen.left() + guide.position as f32 * zoom.x;
             if (screen.left()..=screen.right()).contains(&x) {
-                painter.vline(painter.round_to_pixel_center(x), screen.y_range(), stroke);
+                let cut: Vec<_> = covers
+                    .iter()
+                    .filter(|c| c.x_range().contains(x))
+                    .map(|c| c.y_range())
+                    .collect();
+                for span in uncovered(screen.y_range(), &cut) {
+                    painter.vline(painter.round_to_pixel_center(x), span, stroke);
+                }
             }
         }
     }
 }
 
+/// Los tramos de `range` que no tapa ninguno de `cut`.
+fn uncovered(range: egui::Rangef, cut: &[egui::Rangef]) -> Vec<egui::Rangef> {
+    let mut spans = vec![range];
+    for c in cut {
+        spans = spans
+            .into_iter()
+            .flat_map(|s| {
+                let before = egui::Rangef::new(s.min, s.max.min(c.min));
+                let after = egui::Rangef::new(s.min.max(c.max), s.max);
+                [before, after].into_iter().filter(|r| r.max > r.min)
+            })
+            .collect();
+    }
+    spans
+}
+
 /// Líneas del grid de trabajo dentro del artboard (se omiten si quedan a menos de 4 px).
-fn draw_grid(painter: &egui::Painter, screen: Rect, grid: GridSettings, zoom: f32, color: Color32) {
+fn draw_grid(
+    painter: &egui::Painter,
+    screen: Rect,
+    grid: GridSettings,
+    zoom: Vec2,
+    color: Color32,
+) {
     let (sx, sy) = (
-        grid.size.0.max(1) as f32 * zoom,
-        grid.size.1.max(1) as f32 * zoom,
+        grid.size.0.max(1) as f32 * zoom.x,
+        grid.size.1.max(1) as f32 * zoom.y,
     );
     if sx < 4.0 || sy < 4.0 {
         return;
     }
     let stroke = Stroke::new(1.0, color);
-    let first = |offset: i32, step: f32| (offset as f32 * zoom).rem_euclid(step);
-    let mut x = screen.left() + first(grid.offset.0, sx);
+    let first = |offset: i32, scale: f32, step: f32| (offset as f32 * scale).rem_euclid(step);
+    let mut x = screen.left() + first(grid.offset.0, zoom.x, sx);
     while x < screen.right() {
         if x > screen.left() {
             painter.vline(x, screen.y_range(), stroke);
         }
         x += sx;
     }
-    let mut y = screen.top() + first(grid.offset.1, sy);
+    let mut y = screen.top() + first(grid.offset.1, zoom.y, sy);
     while y < screen.bottom() {
         if y > screen.top() {
             painter.hline(screen.x_range(), y, stroke);
@@ -1383,13 +1265,32 @@ impl CanvasView {
         let Some(artboard) = editor.document.artboard(id) else {
             return;
         };
-        let bottom_left = self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
-        let size = Vec2::new(160.0, LABEL_SIZE + 6.0);
-        let field = Rect::from_min_size(bottom_left - Vec2::new(0.0, size.y), size);
+        let (field, font) = match self.artboard_window {
+            // Con Pixel UI, sobre el título de la barra.
+            Some(_) => {
+                let ppp = ui.ctx().pixels_per_point();
+                let layout = WindowLayout::around(self.pixel_rect(rect, artboard), ppp);
+                let area = layout.text.unwrap_or(layout.bar);
+                let font = ArtboardWindow::font();
+                let height = font.size + 2.0;
+                let field = Rect::from_min_size(
+                    Pos2::new(area.left(), layout.bar.center().y - height / 2.0),
+                    Vec2::new(area.width().max(80.0), height),
+                );
+                (field, font)
+            }
+            None => {
+                let bottom_left =
+                    self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
+                let size = Vec2::new(160.0, LABEL_SIZE + 6.0);
+                let field = Rect::from_min_size(bottom_left - Vec2::new(0.0, size.y), size);
+                (field, FontId::proportional(LABEL_SIZE))
+            }
+        };
         let response = ui.put(
             field,
             egui::TextEdit::singleline(&mut name)
-                .font(FontId::proportional(LABEL_SIZE))
+                .font(font)
                 .margin(Vec2::new(2.0, 1.0)),
         );
         if !focused {
@@ -1409,9 +1310,142 @@ impl CanvasView {
         self.renaming = Some((id, name, true));
     }
 
-    /// Artboard cuya etiqueta (nombre sobre el borde superior) está bajo `p`, el de más arriba primero.
-    fn label_at(&self, ui: &egui::Ui, rect: Rect, editor: &Editor, p: Pos2) -> Option<ArtboardId> {
+    /// Área de píxeles del artboard en pantalla.
+    fn pixel_rect(&self, rect: Rect, artboard: &Artboard) -> Rect {
+        let ((x0, y0), (x1, y1)) = artboard.rect();
+        Rect::from_min_max(
+            self.to_screen(rect, (x0, y0)),
+            self.to_screen(rect, (x1, y1)),
+        )
+    }
+
+    /// Lo visible del lienzo: `rect` sin las reglas, si se muestran.
+    fn canvas_area(&self, rect: Rect, view: &ViewSettings) -> Rect {
+        if view.rulers {
+            Rect::from_min_max(rect.min + Vec2::splat(self.ruler_px()), rect.max)
+        } else {
+            rect
+        }
+    }
+
+    /// El menú del "≡" de cada ventana de artboard (con Pixel UI): se abre al hacer clic, como un
+    /// desplegable de la barra de menús.
+    fn artboard_menus(&mut self, ui: &egui::Ui, rect: Rect, editor: &mut Editor) {
+        if self.artboard_window.is_none() {
+            return;
+        }
+        let ppp = ui.ctx().pixels_per_point();
+        let menus: Vec<(ArtboardId, Rect)> = editor
+            .document
+            .artboards
+            .iter()
+            .filter_map(|a| {
+                let layout = WindowLayout::around(self.pixel_rect(rect, a), ppp);
+                Some((a.id, layout.menu?))
+            })
+            .filter(|(_, r)| rect.intersects(*r))
+            .collect();
+        for (id, menu_rect) in menus {
+            let response = ui.interact(
+                menu_rect,
+                ui.id().with(("artboard_menu", id)),
+                Sense::click(),
+            );
+            let content = |ui: &mut egui::Ui| self.artboard_menu(ui, editor, id);
+            match crate::pixel_ui::frame_skin(ui.ctx()) {
+                Some(skin) => {
+                    let look = menus::MenuLook::new(&skin, menu_rect.top());
+                    menus::dropdown(&look, &response, menu_rect, content);
+                }
+                None => {
+                    egui::Popup::menu(&response).show(content);
+                }
+            }
+        }
+    }
+
+    /// Lo que hay en el menú "≡" del artboard `id`.
+    fn artboard_menu(&mut self, ui: &mut egui::Ui, editor: &mut Editor, id: ArtboardId) {
+        editor.activate(id);
+        if ui.add(menus::plain("Rename")).clicked()
+            && let Some(artboard) = editor.document.artboard(id)
+        {
+            self.renaming = Some((id, artboard.name.clone(), false));
+            ui.close();
+        }
+        if ui.add(menus::item("Properties", "Ctrl+P")).clicked() {
+            self.artboard_request = Some(ArtboardRequest::Properties);
+            ui.close();
+        }
+        if ui.add(menus::plain("Duplicate")).clicked() {
+            let name = format!("{} Copy", editor.artboard().name);
+            editor.duplicate_artboard(name);
+            ui.close();
+        }
+        menus::separator(ui);
+        let transformable = cs_commands::sprite_ops::can_transform(editor.sprite());
+        if ui
+            .add_enabled(transformable, menus::item("Sprite Size", "Ctrl+Alt+I"))
+            .clicked()
+        {
+            self.artboard_request = Some(ArtboardRequest::SpriteSize);
+            ui.close();
+        }
+        if ui.add(menus::item("Canvas Size", "C")).clicked() {
+            self.artboard_request = Some(ArtboardRequest::CanvasSize);
+            ui.close();
+        }
+        menus::separator(ui);
+        let can_delete = editor.document.artboards.len() > 1;
+        if ui.add_enabled(can_delete, menus::plain("Delete")).clicked() {
+            editor.remove_active_artboard();
+            ui.close();
+        }
+    }
+
+    /// Artboard cuya etiqueta (nombre sobre el borde superior) o, con Pixel UI, cuya barra de
+    /// título está bajo `p`, y qué parte; el de más arriba primero. La barra de Pixel UI responde
+    /// aunque los nombres estén ocultos (la ventana se ve igual). Solo dentro de `area` (lo
+    /// visible del lienzo): bajo las reglas o fuera del lienzo no hay barra.
+    fn title_at(
+        &self,
+        ui: &egui::Ui,
+        rect: Rect,
+        area: Rect,
+        editor: &Editor,
+        p: Pos2,
+    ) -> Option<(ArtboardId, TitleHit)> {
+        if !area.contains(p) {
+            return None;
+        }
+        let ppp = ui.ctx().pixels_per_point();
+        if self.artboard_window.is_some() {
+            // Decide la ventana de más arriba que tiene a `p` (marco, barra o píxeles): las barras
+            // de los de abajo quedan tapadas.
+            let (artboard, pixels) = editor.document.artboards.iter().rev().find_map(|a| {
+                let pixels = self.pixel_rect(rect, a);
+                WindowLayout::frame_around(pixels, ppp)
+                    .contains(p)
+                    .then_some((a, pixels))
+            })?;
+            let hit = WindowLayout::around(pixels, ppp).hit(p)?;
+            // Con la herramienta Artboard, cerca del borde de arriba o de sus esquinas (con la
+            // tolerancia de la herramienta) redimensionar gana a la barra.
+            if editor.active_tool() == ToolKind::Artboard {
+                let slop = EDGE_SLOP_PX / self.zoom;
+                let world = self.to_world(rect, p);
+                if let Some(ArtboardHit::Edge(id, _)) = hit_test(&editor.document, world, slop)
+                    && id == artboard.id
+                {
+                    return None;
+                }
+            }
+            return Some((artboard.id, hit));
+        }
         editor.document.artboards.iter().rev().find_map(|artboard| {
+            if !self.names_visible {
+                return None;
+            }
             let galley = ui.painter().layout_no_wrap(
                 label_text(artboard),
                 FontId::proportional(LABEL_SIZE),
@@ -1421,9 +1455,17 @@ impl CanvasView {
             let label =
                 Rect::from_min_size(bottom_left - Vec2::new(0.0, galley.size().y), galley.size())
                     .expand(2.0);
-            label.contains(p).then_some(artboard.id)
+            label.contains(p).then_some((artboard.id, TitleHit::Bar))
         })
     }
+}
+
+/// Lo que el menú "≡" de un artboard le pide a la app (abrir uno de sus diálogos).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArtboardRequest {
+    Properties,
+    SpriteSize,
+    CanvasSize,
 }
 
 fn artboard_cursor(hit: Option<ArtboardHit>) -> egui::CursorIcon {
@@ -1475,20 +1517,177 @@ fn handles_active(editor: &Editor) -> bool {
 }
 
 /// Contorno (rotado) de la caja de transformación y sus 8 handles de tamaño fijo en pantalla,
-/// por fuera de la caja (donde se toman).
-fn draw_transform_box(painter: &egui::Painter, b: &TransformBox, origin: Pos2, zoom: f32) {
+/// por fuera de la caja (donde se toman). Con `pixel` (Pixel UI) y sin rotar, los del diseño.
+fn draw_transform_box(
+    painter: &egui::Painter,
+    b: &TransformBox,
+    origin: Pos2,
+    zoom: Vec2,
+    phase: i32,
+    pixel: bool,
+) {
     let at = |(x, y): (f32, f32)| origin + Vec2::new(x, y) * zoom;
+    if pixel && b.angle == 0.0 {
+        let r = Rect::from_min_max(
+            at((b.x0 as f32, b.y0 as f32)),
+            at((b.x1 as f32, b.y1 as f32)),
+        );
+        pixel_selection::paint(painter, pixel_selection::rect_outline(r, phase));
+        for handle in Handle::ALL {
+            pixel_selection::draw_handle(painter, pixel_selection::handle_rect(r, handle.dirs()));
+        }
+        return;
+    }
     let outline: Vec<Pos2> = b.corners().into_iter().map(at).collect();
     painter.add(egui::Shape::closed_line(
         outline,
         Stroke::new(1.0, theme::ACCENT),
     ));
     for handle in Handle::ALL {
-        let center = b.handle_center(handle, HANDLE_PX / 2.0 / zoom);
+        let center = b.handle_center(handle, HANDLE_PX / 2.0 / zoom.min_elem());
         let r = Rect::from_center_size(at(center), Vec2::splat(HANDLE_PX));
         painter.rect_filled(r, 0.0, Color32::WHITE);
         painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
     }
+}
+
+/// Con Pixel UI, los ejes de simetría como en Aseprite: líneas de 1 punto en `color`, enteras
+/// de borde a borde del artboard (`screen`). Las rectas llevan un handle de 5×5 (los de la
+/// selección) en cada punta, adentro del artboard; las diagonales son una escalera de píxeles
+/// que pasa por el centro `c`. Lo que tapan los artboards de delante (`covers`) no se ve.
+fn draw_pixel_symmetry(
+    painter: &egui::Painter,
+    axes: cs_core::SymmetryAxes,
+    c: Pos2,
+    screen: Rect,
+    color: Color32,
+    covers: &[Rect],
+) {
+    let handle = crate::pixel_selection::HANDLE;
+    let half = (handle / 2.0).floor();
+    let screen = Rect::from_min_max(screen.min.round(), screen.max.round());
+    let (x, y) = (c.x.floor(), c.y.floor());
+    let mut shapes = Vec::new();
+    let mut px = |r: Rect| {
+        shapes.extend(
+            rect_uncovered(r, covers)
+                .into_iter()
+                .map(|r| egui::Shape::rect_filled(r, 0.0, color)),
+        );
+    };
+    let mut handles = Vec::new();
+    if axes.vertical {
+        let line = Rect::from_x_y_ranges(
+            x..=x + 1.0,
+            screen.top() + handle..=screen.bottom() - handle,
+        );
+        px(line);
+        for top in [screen.top(), screen.bottom() - handle] {
+            handles.push(Rect::from_min_size(
+                Pos2::new(x - half, top),
+                Vec2::splat(handle),
+            ));
+        }
+    }
+    if axes.horizontal {
+        let line = Rect::from_x_y_ranges(
+            screen.left() + handle..=screen.right() - handle,
+            y..=y + 1.0,
+        );
+        px(line);
+        for left in [screen.left(), screen.right() - handle] {
+            handles.push(Rect::from_min_size(
+                Pos2::new(left, y - half),
+                Vec2::splat(handle),
+            ));
+        }
+    }
+    // Las diagonales: un punto por fila, desde el centro hacia los dos lados.
+    let rows = (screen.height().max(screen.width())) as i32;
+    for (on, dir) in [(axes.diagonal_down, 1.0), (axes.diagonal_up, -1.0)] {
+        if !on {
+            continue;
+        }
+        for i in -rows..=rows {
+            let at = Pos2::new(x + dir * i as f32, y + i as f32);
+            if screen.contains(at) {
+                px(Rect::from_min_size(at, Vec2::splat(1.0)));
+            }
+        }
+    }
+    painter.extend(shapes);
+    // Un handle que asoma debajo de otro artboard no se dibuja.
+    for r in handles {
+        if !covers.iter().any(|c| c.intersects(r)) {
+            crate::pixel_selection::draw_handle(painter, r);
+        }
+    }
+}
+
+/// Los pedazos de `r` que no tapa ninguno de `covers`.
+fn rect_uncovered(r: Rect, covers: &[Rect]) -> Vec<Rect> {
+    let mut pieces = vec![r];
+    for c in covers {
+        pieces = pieces
+            .into_iter()
+            .flat_map(|p| {
+                let i = p.intersect(*c);
+                if i.width() <= 0.0 || i.height() <= 0.0 {
+                    return vec![p];
+                }
+                // Arriba y abajo a todo lo ancho; a los lados, del alto de lo tapado.
+                let sides = [
+                    Rect::from_min_max(p.min, Pos2::new(p.right(), i.top())),
+                    Rect::from_min_max(Pos2::new(p.left(), i.bottom()), p.max),
+                    Rect::from_min_max(
+                        Pos2::new(p.left(), i.top()),
+                        Pos2::new(i.left(), i.bottom()),
+                    ),
+                    Rect::from_min_max(
+                        Pos2::new(i.right(), i.top()),
+                        Pos2::new(p.right(), i.bottom()),
+                    ),
+                ];
+                sides
+                    .into_iter()
+                    .filter(|s| s.width() > 0.0 && s.height() > 0.0)
+                    .collect()
+            })
+            .collect();
+    }
+    pieces
+}
+
+/// Los tramos del segmento `seg` que no tapa ninguno de `covers`.
+fn segment_uncovered(seg: [Pos2; 2], covers: &[Rect]) -> Vec<[Pos2; 2]> {
+    let [a, b] = seg;
+    let d = b - a;
+    // Lo tapado por cada uno, en fracciones del segmento (0 en `a`, 1 en `b`).
+    let cut: Vec<egui::Rangef> = covers
+        .iter()
+        .filter_map(|c| {
+            let (mut t0, mut t1) = (0.0f32, 1.0f32);
+            for (p, dp, lo, hi) in [
+                (a.x, d.x, c.left(), c.right()),
+                (a.y, d.y, c.top(), c.bottom()),
+            ] {
+                if dp == 0.0 {
+                    if p < lo || p > hi {
+                        return None;
+                    }
+                } else {
+                    let (u, v) = ((lo - p) / dp, (hi - p) / dp);
+                    t0 = t0.max(u.min(v));
+                    t1 = t1.min(u.max(v));
+                }
+            }
+            (t1 > t0).then(|| egui::Rangef::new(t0, t1))
+        })
+        .collect();
+    uncovered(egui::Rangef::new(0.0, 1.0), &cut)
+        .into_iter()
+        .map(|r| [a + d * r.min, a + d * r.max])
+        .collect()
 }
 
 /// Flecha curva (sentido horario) en el puntero, para rotar: egui no trae ese cursor.
@@ -1514,7 +1713,7 @@ fn draw_slices(
     sprite: &cs_core::Sprite,
     editor: &Editor,
     origin: Pos2,
-    zoom: f32,
+    zoom: Vec2,
 ) {
     let at = |x: i32, y: i32| origin + Vec2::new(x as f32, y as f32) * zoom;
     for (i, slice) in sprite.slices.iter().enumerate() {
@@ -1565,9 +1764,51 @@ fn draw_slices(
     }
 }
 
-/// Dibuja el borde de la máscara con segmentos blanco/negro que se desplazan con `phase`.
-fn draw_marching_ants(painter: &egui::Painter, mask: &Mask, origin: Pos2, zoom: f32, phase: i32) {
+/// Dibuja el borde de la máscara con segmentos blanco/negro que se desplazan con `phase`. Con
+/// `pixel` (Pixel UI), el del diseño: 1 punto con tramos de 4.
+fn draw_marching_ants(
+    painter: &egui::Painter,
+    mask: &Mask,
+    origin: Pos2,
+    zoom: Vec2,
+    phase: i32,
+    pixel: bool,
+) {
     let at = |x: i32, y: i32| origin + Vec2::new(x as f32, y as f32) * zoom;
+    if pixel {
+        let clip = painter.clip_rect();
+        let p = |x: i32, y: i32| {
+            let s = at(x, y);
+            (s.x.round() as i32, s.y.round() as i32)
+        };
+        for (x, y) in mask.points() {
+            let (l, t) = p(x, y);
+            let (r, b) = p(x + 1, y + 1);
+            let px = Rect::from_min_max(
+                Pos2::new(l as f32, t as f32),
+                Pos2::new(r as f32 + 1.0, b as f32 + 1.0),
+            );
+            if !clip.intersects(px) {
+                continue;
+            }
+            // Cada lado del píxel sin vecino seleccionado es borde.
+            let mut dashes = Vec::new();
+            if !mask.contains(x, y - 1) {
+                dashes.extend(pixel_selection::hline(l, r, t, phase));
+            }
+            if !mask.contains(x, y + 1) {
+                dashes.extend(pixel_selection::hline(l, r, b, phase));
+            }
+            if !mask.contains(x - 1, y) {
+                dashes.extend(pixel_selection::vline(l, t, b, phase));
+            }
+            if !mask.contains(x + 1, y) {
+                dashes.extend(pixel_selection::vline(r, t, b, phase));
+            }
+            pixel_selection::paint(painter, dashes);
+        }
+        return;
+    }
     let color = |n: i32| {
         if (n + phase).rem_euclid(2) == 0 {
             Color32::WHITE
@@ -1591,406 +1832,75 @@ fn draw_marching_ants(painter: &egui::Painter, mask: &Mask, origin: Pos2, zoom: 
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use cs_commands::Command;
-    use cs_core::{ColorMode, LayerId, PixelValue, Rgba, Sprite};
-    use egui::{Event, Key, PointerButton, RawInput};
-
-    use super::*;
-
-    /// Lienzo de 800×600 manejado con eventos crudos, con el reloj avanzando 50 ms por frame.
-    struct Harness {
-        ctx: egui::Context,
-        canvas: CanvasView,
-        editor: Editor,
-        view: ViewSettings,
-        time: f64,
-        rect: Rect,
-        /// Cursor pedido en el último frame.
-        cursor: egui::CursorIcon,
+/// Filas `(y, x0, x1)` de un pincel, de punta a punta: las formas del pincel no tienen huecos
+/// dentro de una fila.
+fn brush_rows(points: &[(i32, i32)]) -> Vec<(i32, i32, i32)> {
+    let mut rows: BTreeMap<i32, (i32, i32)> = BTreeMap::new();
+    for &(x, y) in points {
+        let r = rows.entry(y).or_insert((x, x));
+        r.0 = r.0.min(x);
+        r.1 = r.1.max(x);
     }
-
-    impl Harness {
-        fn new() -> Self {
-            let mut h = Self {
-                ctx: egui::Context::default(),
-                canvas: CanvasView::default(),
-                editor: Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba)),
-                view: ViewSettings::default(),
-                time: 0.0,
-                rect: Rect::NOTHING,
-                cursor: egui::CursorIcon::Default,
-            };
-            h.frame(vec![]);
-            h
-        }
-
-        fn frame(&mut self, events: Vec<Event>) {
-            self.time += 0.05;
-            let input = RawInput {
-                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 600.0))),
-                time: Some(self.time),
-                events,
-                ..Default::default()
-            };
-            let mut rect = Rect::NOTHING;
-            let mut output = self.ctx.run_ui(input, |ui| {
-                egui::CentralPanel::no_frame().show(ui, |ui| {
-                    rect = ui.max_rect();
-                    self.canvas.show(ui, &mut self.editor, None, &self.view);
-                });
-            });
-            output.textures_delta.clear();
-            self.rect = rect;
-            self.cursor = output.platform_output.cursor_icon;
-        }
-
-        fn click(&mut self, pos: Pos2, button: PointerButton) {
-            let ev = |pressed| Event::PointerButton {
-                pos,
-                button,
-                pressed,
-                modifiers: Default::default(),
-            };
-            self.frame(vec![Event::PointerMoved(pos)]);
-            self.frame(vec![ev(true)]);
-            self.frame(vec![ev(false)]);
-        }
-
-        fn key(&mut self, key: Key) {
-            let ev = |pressed| Event::Key {
-                key,
-                physical_key: None,
-                pressed,
-                repeat: false,
-                modifiers: Default::default(),
-            };
-            self.frame(vec![ev(true), ev(false)]);
-        }
-
-        /// Centro en pantalla del píxel local `p` del artboard activo.
-        fn screen(&self, p: (i32, i32)) -> Pos2 {
-            let (x, y) = self.editor.artboard().position;
-            self.canvas.to_screen(self.rect, (x + p.0, y + p.1))
-                + Vec2::splat(self.canvas.zoom / 2.0)
-        }
-
-        /// Esquina en pantalla del píxel local `p` del artboard activo (no su centro).
-        fn corner(&self, p: (i32, i32)) -> Pos2 {
-            let (x, y) = self.editor.artboard().position;
-            self.canvas.to_screen(self.rect, (x + p.0, y + p.1))
-        }
-
-        /// Arrastre con el botón principal de `from` a `to` (en pantalla), en varios frames.
-        fn drag(&mut self, from: Pos2, to: Pos2) {
-            self.drag_with(from, to, PointerButton::Primary);
-        }
-
-        /// Arrastre con `button` de `from` a `to` (en pantalla), en varios frames.
-        fn drag_with(&mut self, from: Pos2, to: Pos2, button: PointerButton) {
-            let button = |pos, pressed| Event::PointerButton {
-                pos,
-                button,
-                pressed,
-                modifiers: Default::default(),
-            };
-            self.frame(vec![Event::PointerMoved(from)]);
-            self.frame(vec![button(from, true)]);
-            self.frame(vec![Event::PointerMoved(from.lerp(to, 0.5))]);
-            self.frame(vec![Event::PointerMoved(to)]);
-            self.frame(vec![button(to, false)]);
-        }
-
-        /// Un punto rojo en `at` y la selección `a`–`b` con el marco rectangular.
-        fn selected_dot(&mut self, at: (i32, i32), a: (i32, i32), b: (i32, i32)) -> PixelValue {
-            let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
-            self.editor.execute(Command::DrawPixels {
-                layer: LayerId(1),
-                frame: 0,
-                pixels: vec![(at.0, at.1, red)],
-            });
-            self.editor.set_tool(ToolKind::RectSelect);
-            self.editor
-                .set_selection(Some(Mask::from_rect(16, 16, a, b)));
-            self.frame(vec![]);
-            red
-        }
-    }
-
-    #[test]
-    fn dragging_a_corner_handle_scales_and_enter_applies() {
-        let mut h = Harness::new();
-        let red = h.selected_dot((2, 2), (2, 2), (3, 3));
-        let t = h.editor.sprite().color_mode.transparent();
-        // Los handles quedan por fuera de la caja: se toma la esquina un poco hacia afuera.
-        let out = Vec2::splat(3.0);
-        h.drag(h.corner((4, 4)) + out, h.corner((6, 6)) + out);
-        assert_eq!(
-            h.editor.transform_box(),
-            Some(TransformBox::new(2, 2, 4, 4))
-        );
-        assert_eq!(
-            h.editor.sprite().pixel(LayerId(1), 0, 3, 3),
-            t,
-            "still floating"
-        );
-        crate::editor_key(&mut h.editor, Key::Enter, false);
-        assert!(!h.editor.is_floating());
-        for (x, y) in [(2, 2), (3, 2), (2, 3), (3, 3)] {
-            assert_eq!(
-                h.editor.sprite().pixel(LayerId(1), 0, x, y),
-                red,
-                "({x}, {y})"
-            );
-        }
-        assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 4, 4), t);
-    }
-
-    #[test]
-    fn dragging_just_outside_a_corner_rotates() {
-        let mut h = Harness::new();
-        let red = h.selected_dot((2, 2), (2, 2), (5, 5));
-        let t = h.editor.sprite().color_mode.transparent();
-        let center = h.corner((4, 4));
-        // 16 px por fuera de la esquina NE: más allá del handle (10 px), dentro de la franja.
-        let start = h.corner((6, 2)) + Vec2::new(16.0, -16.0);
-        let v = start - center;
-        h.drag(start, center + Vec2::new(-v.y, v.x)); // un cuarto de vuelta horario
-        let angle = h.editor.transform_box().unwrap().angle;
-        assert!(
-            (angle - std::f32::consts::FRAC_PI_2).abs() < 1e-3,
-            "{angle}"
-        );
-        crate::editor_key(&mut h.editor, Key::Enter, false);
-        assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 5, 2), red);
-        assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 2, 2), t);
-    }
-
-    #[test]
-    fn dragging_inside_the_selection_still_moves_it() {
-        let mut h = Harness::new();
-        let red = h.selected_dot((2, 2), (2, 2), (3, 3));
-        h.drag(h.screen((2, 2)), h.screen((5, 2)));
-        assert_eq!(
-            h.editor.transform_box(),
-            Some(TransformBox::new(5, 2, 2, 2))
-        );
-        crate::editor_key(&mut h.editor, Key::Enter, false);
-        assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 5, 2), red);
-    }
-
-    /// Zoom 4 (los handles de 10 px cubren más de un píxel del sprite).
-    fn zoomed_out() -> Harness {
-        let mut h = Harness::new();
-        h.canvas.zoom = 4.0;
-        h.canvas.pan = -Vec2::splat(8.0) * 4.0;
-        h.frame(vec![]);
-        h
-    }
-
-    #[test]
-    fn a_small_selection_moves_from_inside_at_low_zoom() {
-        let mut h = zoomed_out();
-        let red = h.selected_dot((2, 2), (2, 2), (3, 3));
-        h.drag(h.screen((2, 2)), h.screen((5, 2)));
-        assert_eq!(
-            h.editor.transform_box(),
-            Some(TransformBox::new(5, 2, 2, 2))
-        );
-        crate::editor_key(&mut h.editor, Key::Enter, false);
-        assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 5, 2), red);
-    }
-
-    #[test]
-    fn pressing_just_inside_an_edge_moves_instead_of_scaling() {
-        let mut h = zoomed_out();
-        h.selected_dot((2, 2), (2, 2), (5, 5));
-        // 2 px de pantalla adentro del lado E, a media altura.
-        let from = h.corner((6, 4)) - Vec2::new(2.0, 0.0);
-        h.drag(from, from + Vec2::new(12.0, 0.0));
-        assert_eq!(
-            h.editor.transform_box(),
-            Some(TransformBox::new(5, 2, 4, 4))
-        );
-    }
-
-    #[test]
-    fn no_handles_during_another_selection_gesture() {
-        let mut h = Harness::new();
-        h.selected_dot((2, 2), (2, 2), (5, 5));
-        let press = |pos| Event::PointerButton {
-            pos,
-            button: PointerButton::Primary,
-            pressed: true,
-            modifiers: Default::default(),
-        };
-        // Un marco nuevo desde fuera de la selección pasa por encima del handle SE.
-        let from = h.screen((12, 12));
-        let se = h.corner((6, 6)) + Vec2::new(3.0, 3.0);
-        h.frame(vec![Event::PointerMoved(from)]);
-        h.frame(vec![press(from)]);
-        h.frame(vec![Event::PointerMoved(from.lerp(se, 0.5))]);
-        h.frame(vec![Event::PointerMoved(se)]);
-        h.frame(vec![]);
-        assert!(h.editor.is_painting() && !h.editor.is_transforming());
-        assert_eq!(h.cursor, egui::CursorIcon::Crosshair);
-    }
-
-    #[test]
-    fn hovering_the_handles_shows_resize_and_rotate_cursors() {
-        let mut h = Harness::new();
-        h.selected_dot((2, 2), (2, 2), (5, 5));
-        let hover = |h: &mut Harness, p: Pos2| {
-            h.frame(vec![Event::PointerMoved(p)]);
-            h.frame(vec![]);
-            h.cursor
-        };
-        // Los handles quedan por fuera de la caja.
-        let (se, ne, n, w) = (
-            h.corner((6, 6)) + Vec2::new(3.0, 3.0),
-            h.corner((6, 2)) + Vec2::new(3.0, -3.0),
-            h.corner((4, 2)) + Vec2::new(0.0, -3.0),
-            h.corner((2, 4)) + Vec2::new(-3.0, 0.0),
-        );
-        let inside = h.screen((3, 3));
-        let outside = h.corner((6, 2)) + Vec2::new(16.0, -16.0);
-        assert_eq!(hover(&mut h, se), egui::CursorIcon::ResizeNwSe);
-        assert_eq!(hover(&mut h, ne), egui::CursorIcon::ResizeNeSw);
-        assert_eq!(hover(&mut h, n), egui::CursorIcon::ResizeVertical);
-        assert_eq!(hover(&mut h, w), egui::CursorIcon::ResizeHorizontal);
-        assert_eq!(hover(&mut h, inside), egui::CursorIcon::Move);
-        assert_eq!(
-            hover(&mut h, outside),
-            egui::CursorIcon::None,
-            "rotate: drawn by hand"
-        );
-        // Con una herramienta de dibujo no hay handles.
-        h.editor.set_tool(ToolKind::Pencil);
-        assert_eq!(hover(&mut h, se), egui::CursorIcon::Crosshair);
-    }
-
-    #[test]
-    fn dragging_the_selection_keeps_the_move_cursor_off_the_artboard() {
-        let mut h = Harness::new();
-        h.editor.set_tool(ToolKind::RectSelect);
-        h.editor
-            .set_selection(Some(cs_core::Mask::from_rect(16, 16, (2, 2), (6, 6))));
-        let ev = |pos, pressed| Event::PointerButton {
-            pos,
-            button: PointerButton::Primary,
-            pressed,
-            modifiers: Default::default(),
-        };
-        let from = h.screen((4, 4));
-        // Fuera del artboard pero dentro del lienzo.
-        let off = Pos2::new(h.rect.right() - 2.0, from.y);
-        let world = h.canvas.to_world(h.rect, off);
-        assert!(h.editor.document.artboard_at(world).is_none(), "{world:?}");
-        h.frame(vec![Event::PointerMoved(from)]);
-        assert_eq!(h.cursor, egui::CursorIcon::Move);
-        h.frame(vec![ev(from, true)]);
-        h.frame(vec![Event::PointerMoved(from + Vec2::new(5.0, 0.0))]);
-        h.frame(vec![Event::PointerMoved(off)]);
-        h.frame(vec![]);
-        assert!(h.editor.is_transforming());
-        assert_eq!(h.cursor, egui::CursorIcon::Move, "still moving");
-        h.frame(vec![ev(off, false)]);
-        h.frame(vec![]);
-        assert!(!h.editor.is_transforming());
-    }
-
-    #[test]
-    fn double_clicking_an_artboard_label_renames_it() {
-        let mut h = Harness::new();
-        let label = h.canvas.to_screen(h.rect, h.editor.artboard().position)
-            - Vec2::new(-10.0, LABEL_GAP + LABEL_SIZE / 2.0);
-        h.click(label, PointerButton::Primary);
-        h.click(label, PointerButton::Primary);
-        h.frame(vec![]);
-        assert!(h.canvas.renaming.is_some(), "double click opens the field");
-        let mut erase = vec![];
-        for _ in 0..20 {
-            for pressed in [true, false] {
-                erase.push(Event::Key {
-                    key: Key::Backspace,
-                    physical_key: None,
-                    pressed,
-                    repeat: false,
-                    modifiers: Default::default(),
-                });
-            }
-        }
-        h.frame(erase);
-        h.frame(vec![Event::Text("Hero".into())]);
-        h.key(Key::Enter);
-        h.frame(vec![]);
-        assert_eq!(h.editor.artboard().name, "Hero");
-        assert!(h.canvas.renaming.is_none());
-        assert_eq!(
-            h.editor.artboard().position,
-            (0, 0),
-            "the clicks did not move it"
-        );
-    }
-
-    #[test]
-    fn right_clicking_a_slice_selects_it_and_opens_its_menu() {
-        let mut h = Harness::new();
-        h.editor.set_tool(ToolKind::Slice);
-        let drag = |e: &mut Editor, a: (f32, f32), b: (f32, f32)| {
-            e.pointer_press(a, false, false, 0.1);
-            e.pointer_drag(b);
-            e.pointer_release();
-        };
-        drag(&mut h.editor, (2.5, 2.5), (6.5, 6.5));
-        drag(&mut h.editor, (10.5, 10.5), (12.5, 12.5));
-        assert_eq!(h.editor.slice, Some(1));
-        let before = h.editor.sprite().slices.clone();
-        h.frame(vec![]);
-        h.click(h.screen((4, 4)), PointerButton::Secondary);
-        h.frame(vec![]);
-        assert_eq!(h.editor.slice, Some(0));
-        assert!(egui::Popup::is_any_open(&h.ctx), "context menu");
-        assert_eq!(h.editor.sprite().slices, before, "nothing created or moved");
-        // Fuera de un slice no hay menú.
-        h.key(Key::Escape);
-        h.click(h.screen((14, 1)), PointerButton::Secondary);
-        h.frame(vec![]);
-        assert!(!egui::Popup::is_any_open(&h.ctx));
-    }
-
-    #[test]
-    fn autoscroll_only_near_edges_and_grows_with_distance() {
-        let area = Rect::from_min_max(Pos2::new(0.0, 0.0), Pos2::new(400.0, 300.0));
-        assert_eq!(
-            autoscroll_velocity(area, Pos2::new(200.0, 150.0)),
-            Vec2::ZERO
-        );
-        let near = autoscroll_velocity(area, Pos2::new(390.0, 150.0));
-        let far = autoscroll_velocity(area, Pos2::new(460.0, 150.0));
-        assert!(near.x > 0.0 && far.x > near.x && near.y == 0.0);
-        let up_left = autoscroll_velocity(area, Pos2::new(-500.0, -500.0));
-        assert_eq!(
-            up_left,
-            Vec2::new(-AUTOSCROLL_SPEED, -AUTOSCROLL_SPEED),
-            "saturates"
-        );
-    }
-    #[test]
-    fn a_right_drag_does_not_lift_or_move_the_selection() {
-        for tool in [ToolKind::Move, ToolKind::RectSelect] {
-            let mut h = Harness::new();
-            let red = h.selected_dot((2, 2), (2, 2), (3, 3));
-            let t = h.editor.sprite().color_mode.transparent();
-            h.editor.set_tool(tool);
-            h.frame(vec![]);
-            let version = h.editor.doc_version;
-            h.drag_with(h.screen((2, 2)), h.screen((6, 6)), PointerButton::Secondary);
-            assert!(!h.editor.is_floating(), "{tool:?}");
-            assert_eq!(h.editor.doc_version, version, "{tool:?}");
-            assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 2, 2), red);
-            assert_eq!(h.editor.sprite().pixel(LayerId(1), 0, 6, 6), t);
-        }
-    }
+    rows.into_iter().map(|(y, (x0, x1))| (y, x0, x1)).collect()
 }
+
+/// Borde de un pincel: cada lado de píxel sin vecino en `points`, como segmento entre dos
+/// esquinas de píxel. Van en sentido horario en pantalla: el pincel queda a la derecha de cada
+/// segmento, o sea hacia `(-dy, dx)`.
+fn brush_edges(points: &[(i32, i32)]) -> Vec<((i32, i32), (i32, i32))> {
+    let set: HashSet<(i32, i32)> = points.iter().copied().collect();
+    let mut out = Vec::new();
+    for &(x, y) in points {
+        if !set.contains(&(x, y - 1)) {
+            out.push(((x, y), (x + 1, y)));
+        }
+        if !set.contains(&(x, y + 1)) {
+            out.push(((x + 1, y + 1), (x, y + 1)));
+        }
+        if !set.contains(&(x - 1, y)) {
+            out.push(((x, y + 1), (x, y)));
+        }
+        if !set.contains(&(x + 1, y)) {
+            out.push(((x + 1, y), (x + 1, y + 1)));
+        }
+    }
+    out
+}
+
+/// Segmentos en pantalla del borde de un pincel (`at` lleva una esquina de píxel a pantalla), a
+/// medio trazo hacia adentro como `StrokeKind::Inside` del cuadrado. En las esquinas interiores
+/// el segmento que llega se alarga un ancho de trazo: si no, entre los dos lados queda un hueco
+/// de `width`×`width`. Las exteriores ya se tocan y no se alargan (sobresaldrían del pincel).
+fn outline_segments(
+    points: &[(i32, i32)],
+    at: impl Fn((i32, i32)) -> Pos2,
+    width: f32,
+) -> Vec<[Pos2; 2]> {
+    let edges = brush_edges(points);
+    let next: HashMap<(i32, i32), (i32, i32)> = edges.iter().copied().collect();
+    edges
+        .iter()
+        .map(|&(a, b)| {
+            let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+            let dir = Vec2::new(dx as f32, dy as f32);
+            let inward = Vec2::new(-dir.y, dir.x) * (width / 2.0);
+            // Sentido horario: el lado siguiente dobla a la izquierda en una esquina interior.
+            let inner = next.get(&b).is_some_and(|&c| {
+                let (ex, ey) = (c.0 - b.0, c.1 - b.1);
+                dx * ey - dy * ex < 0
+            });
+            let reach = if inner { dir * width } else { Vec2::ZERO };
+            [at(a) + inward, at(b) + inward + reach]
+        })
+        .collect()
+}
+
+/// Coordenadas de la textura del damero (un par claro/oscuro por repetición) para un artboard de
+/// `width`×`height` píxeles del sprite: no dependen del zoom.
+fn checker_uv(width: u32, height: u32) -> Rect {
+    let size = Vec2::new(width as f32, height as f32);
+    Rect::from_min_max(Pos2::ZERO, (size / (CHECKER_CELL * 2.0)).to_pos2())
+}
+
+#[cfg(test)]
+mod tests;

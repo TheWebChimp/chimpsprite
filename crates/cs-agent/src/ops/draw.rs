@@ -2,7 +2,7 @@
 
 use cs_commands::Command;
 use cs_core::{ArtboardId, LayerId, PixelValue};
-use cs_raster::Point;
+use cs_raster::{BrushShape, Point};
 
 use crate::error::{Result, invalid};
 use crate::params::{
@@ -158,7 +158,7 @@ impl Session {
         for pair in vertices.windows(2) {
             path.extend(cs_raster::line(pair[0], pair[1]));
         }
-        let points = cs_raster::stamp(&path, brush(p.brush_size)?);
+        let points = cs_raster::stamp(&path, brush(p.brush_size)?, BrushShape::Square);
         self.paint(&p.doc, &s, points, p.clip)
     }
 
@@ -175,7 +175,11 @@ impl Session {
         let points = if p.filled {
             cs_raster::rect_filled(a, b)
         } else {
-            cs_raster::stamp(&cs_raster::rect_outline(a, b), brush(p.brush_size)?)
+            cs_raster::stamp(
+                &cs_raster::rect_outline(a, b),
+                brush(p.brush_size)?,
+                BrushShape::Square,
+            )
         };
         self.paint(&p.doc, &s, points, p.clip)
     }
@@ -193,7 +197,11 @@ impl Session {
         let points = if p.filled {
             cs_raster::ellipse_filled(a, b)
         } else {
-            cs_raster::stamp(&cs_raster::ellipse_outline(a, b), brush(p.brush_size)?)
+            cs_raster::stamp(
+                &cs_raster::ellipse_outline(a, b),
+                brush(p.brush_size)?,
+                BrushShape::Square,
+            )
         };
         self.paint(&p.doc, &s, points, p.clip)
     }

@@ -38,7 +38,7 @@ impl DocState {
     }
 
     pub fn untitled(name: impl Into<String>) -> Self {
-        Self::untitled_with_palette(name, cs_core::Palette::db32())
+        Self::untitled_with_palette(name, cs_core::Palette::splendor128())
     }
 
     /// Documento nuevo con la paleta por defecto del usuario.
@@ -110,6 +110,14 @@ impl Tabs {
     /// Todos los documentos en orden de pestaña.
     pub fn docs<'a>(&'a self, current: &'a DocState) -> Vec<&'a DocState> {
         (0..self.len()).map(|i| self.get(current, i)).collect()
+    }
+
+    /// Todos los documentos, el activo (`current`) y los guardados en sus pestañas.
+    pub fn docs_mut<'a>(
+        &'a mut self,
+        current: &'a mut DocState,
+    ) -> impl Iterator<Item = &'a mut DocState> {
+        std::iter::once(current).chain(self.slots.iter_mut().flatten())
     }
 
     pub fn infos(&self, current: &DocState) -> Vec<TabInfo> {

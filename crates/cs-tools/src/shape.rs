@@ -1,6 +1,7 @@
+use cs_commands::Command;
 use cs_raster::{
     Point, constrain_line, constrain_square, ellipse_filled, ellipse_outline, line,
-    rounded_rect_filled, rounded_rect_outline, stamp,
+    rounded_rect_filled, rounded_rect_outline,
 };
 
 use crate::{Drag, Tool, ToolContext, ToolOutput};
@@ -31,21 +32,23 @@ impl ShapeTool {
         self.kind
     }
 
-    fn points(&self, ctx: &ToolContext, a: Point, b: Point) -> Vec<Point> {
+    fn command(&self, ctx: &ToolContext, a: Point, b: Point) -> Command {
         let b = match (ctx.constrain, self.kind) {
             (false, _) => b,
             (true, ShapeKind::Line) => constrain_line(a, b),
             (true, _) => constrain_square(a, b),
         };
+        let color = ctx.color;
         match (self.kind, ctx.filled) {
-            (ShapeKind::Line, _) => stamp(&line(a, b), ctx.brush_size),
-            (ShapeKind::Rectangle, true) => rounded_rect_filled(a, b, ctx.corner_radius),
-            (ShapeKind::Rectangle, false) => stamp(
-                &rounded_rect_outline(a, b, ctx.corner_radius),
-                ctx.brush_size,
-            ),
-            (ShapeKind::Ellipse, true) => ellipse_filled(a, b),
-            (ShapeKind::Ellipse, false) => stamp(&ellipse_outline(a, b), ctx.brush_size),
+            (ShapeKind::Line, _) => ctx.stamp_draw(&line(a, b), color),
+            (ShapeKind::Rectangle, true) => {
+                ctx.draw(rounded_rect_filled(a, b, ctx.corner_radius), color)
+            }
+            (ShapeKind::Rectangle, false) => {
+                ctx.stamp_draw(&rounded_rect_outline(a, b, ctx.corner_radius), color)
+            }
+            (ShapeKind::Ellipse, true) => ctx.draw(ellipse_filled(a, b), color),
+            (ShapeKind::Ellipse, false) => ctx.stamp_draw(&ellipse_outline(a, b), color),
         }
     }
 }
@@ -67,7 +70,7 @@ impl Tool for ShapeTool {
 
     fn preview(&self, ctx: &ToolContext) -> ToolOutput {
         match self.drag.get() {
-            Some((a, b)) => ToolOutput::command(ctx.draw(self.points(ctx, a, b), ctx.color)),
+            Some((a, b)) => ToolOutput::command(self.command(ctx, a, b)),
             None => ToolOutput::default(),
         }
     }
@@ -95,8 +98,13 @@ mod tests {
         let mut c = ctx(&s);
         c.constrain = true;
         assert_eq!(
-            run(ShapeKind::Line, &c, (0, 0), (3, 1)),
-            vec![(0, 0), (1, 0), (2, 0), (3, 0)]
+            run(ShapeKind::Line, &c, (0, 0), (5, 1)),
+            vec![(0, 0), (1, 0), (2, 0), (3, 0), (4, 0), (5, 0)]
+        );
+        // Cerca de 2×1: tramos de 2.
+        assert_eq!(
+            run(ShapeKind::Line, &c, (0, 0), (4, 2)),
+            vec![(0, 0), (1, 0), (2, 1), (3, 1)]
         );
     }
 
@@ -128,5 +136,18 @@ mod tests {
         c.constrain = true;
         let pts = run(ShapeKind::Ellipse, &c, (0, 0), (4, 2));
         assert!(pts.contains(&(2, 4)), "{pts:?}");
+    }
+
+    #[test]
+    fn the_outline_uses_the_brush_shape() {
+        let s = sprite();
+        let mut c = ctx(&s);
+        c.brush_size = 3;
+        c.brush_shape = crate::BrushShape::Round;
+        let mut t = ShapeTool::new(ShapeKind::Line);
+        t.press(&c, (2, 2));
+        let pts = coords(&t.release(&c));
+        assert_eq!(pts.len(), 5, "a one-point line is a cross: {pts:?}");
+        assert!(!pts.contains(&(1, 1)));
     }
 }

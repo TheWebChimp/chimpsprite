@@ -25,3 +25,4 @@ cs-tools = { path = "crates/cs-tools" }
 cs-io = { path = "crates/cs-io" }
 cs-ui = { path = "crates/cs-ui" }
 cs-agent = { path = "crates/cs-agent" }
+cs-script = { path = "crates/cs-script" }

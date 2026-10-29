@@ -8,9 +8,9 @@ use cs_core::{ColorMode, Image, ImageId, LayerId, Palette, PixelBuffer, PixelVal
 
 use crate::error::{Result, invalid};
 use crate::params::{Quantize, Recolor, Scope, SetPalette};
-use crate::quantize::{median_cut, nearest};
 use crate::target;
 use crate::{Reply, Session};
+use cs_raster::{median_cut, nearest};
 
 /// Imágenes (sin repetir) de los cels del alcance, saltando capas bloqueadas.
 fn images_in_scope(
@@ -140,7 +140,7 @@ impl Session {
 
     pub fn quantize(&mut self, p: Quantize) -> Result<Reply> {
         let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
-        if sprite.color_mode != ColorMode::Rgba {
+        if !sprite.color_mode.stores_rgba() {
             return Err(invalid(
                 "the sprite is already indexed; edit its palette with set_palette or recolor",
             ));

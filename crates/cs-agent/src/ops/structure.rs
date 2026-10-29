@@ -46,7 +46,7 @@ impl Session {
         let mode = p
             .color_mode
             .unwrap_or(match doc.artboards[0].sprite.color_mode {
-                cs_core::ColorMode::Rgba => ColorModeArg::Rgba,
+                cs_core::ColorMode::Rgba | cs_core::ColorMode::Grayscale => ColorModeArg::Rgba,
                 cs_core::ColorMode::Indexed { .. } => ColorModeArg::Indexed,
             });
         let position = match p.position {
@@ -164,6 +164,7 @@ impl Session {
             opacity: p.opacity,
             blend: p.blend.map(blend),
             clip: p.clip,
+            reference: None,
         };
         let mut cmds = vec![Command::SetLayerProps { id, props }];
         if let Some(enabled) = p.mask_enabled {

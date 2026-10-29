@@ -1,4 +1,4 @@
-use cs_core::{Artboard, ArtboardId, Document, Guide, Sprite, Symmetry};
+use cs_core::{Artboard, ArtboardId, Document, Guide, Note, Sprite, Symmetry};
 use serde::{Deserialize, Serialize};
 
 use crate::{CmdError, Command};
@@ -37,6 +37,10 @@ pub enum DocCommand {
         id: ArtboardId,
         sprite: Box<Sprite>,
     },
+    /// Reemplaza las notas del documento (agregar, mover, editar o borrar una).
+    SetNotes(Vec<Note>),
+    /// Reemplaza el documento entero (lo que dejó un script): el inverso es el de antes.
+    SetDocument(Box<Document>),
     /// Transacción: se aplica completa o nada.
     Batch(Vec<DocCommand>),
 }
@@ -127,6 +131,17 @@ impl DocCommand {
                     symmetry: old,
                 })
             }
+            DocCommand::SetNotes(notes) => {
+                let old = std::mem::replace(&mut doc.notes, notes.clone());
+                Ok(DocCommand::SetNotes(old))
+            }
+            DocCommand::SetDocument(document) => {
+                if document.artboards.is_empty() {
+                    return Err(CmdError::LastArtboard);
+                }
+                let old = std::mem::replace(doc, (**document).clone());
+                Ok(DocCommand::SetDocument(Box::new(old)))
+            }
             DocCommand::SetSprite { id, sprite } => {
                 if sprite.width == 0 || sprite.height == 0 {
                     return Err(CmdError::InvalidSize(sprite.width, sprite.height));
@@ -172,6 +187,21 @@ impl crate::Undoable for DocCommand {
     fn apply(&self, target: &mut Document) -> Result<Self, CmdError> {
         DocCommand::apply(self, target)
     }
+
+    fn label(&self) -> &'static str {
+        match self {
+            DocCommand::OnArtboard { cmd, .. } => cmd.label(),
+            DocCommand::AddArtboard { .. } => "New Artboard",
+            DocCommand::RemoveArtboard { .. } => "Delete Artboard",
+            DocCommand::SetArtboardProps { .. } => "Artboard",
+            DocCommand::SetGuides { .. } => "Guides",
+            DocCommand::SetSymmetry { .. } => "Symmetry",
+            DocCommand::SetSprite { .. } => "Sprite",
+            DocCommand::SetNotes(_) => "Notes",
+            DocCommand::SetDocument(_) => "Script",
+            DocCommand::Batch(cmds) => cmds.first().map_or("Change", crate::Undoable::label),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -193,6 +223,24 @@ mod tests {
             position: (10, 0),
             sprite: Sprite::new(2, 2, ColorMode::Rgba),
         }
+    }
+
+    #[test]
+    fn set_notes_undoes() {
+        let mut doc = Document::with_sprite("a", Sprite::new(4, 4, ColorMode::Rgba));
+        let note = cs_core::Note {
+            id: 1,
+            position: (5, 5),
+            size: (100, 80),
+            text: "hola".into(),
+            color: Default::default(),
+        };
+        let inverse = DocCommand::SetNotes(vec![note.clone()])
+            .apply(&mut doc)
+            .unwrap();
+        assert_eq!(doc.notes, vec![note]);
+        inverse.apply(&mut doc).unwrap();
+        assert!(doc.notes.is_empty());
     }
 
     #[test]

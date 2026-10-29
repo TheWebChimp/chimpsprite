@@ -15,9 +15,9 @@ pub const BRUSH_OUTLINE: Color32 = Color32::from_rgba_premultiplied(230, 230, 23
 /// Grilla de tiles de la capa tilemap activa (naranja translúcido, distinto del grid de trabajo).
 pub const TILE_GRID: Color32 = Color32::from_rgba_premultiplied(140, 77, 22, 140);
 
-const PANEL: Color32 = Color32::from_rgb(0x26, 0x27, 0x2f);
+pub const PANEL: Color32 = Color32::from_rgb(0x26, 0x27, 0x2f);
 const WIDGET: Color32 = Color32::from_rgb(0x33, 0x34, 0x3e);
-const WIDGET_HOVER: Color32 = Color32::from_rgb(0x40, 0x42, 0x4e);
+pub const WIDGET_HOVER: Color32 = Color32::from_rgb(0x40, 0x42, 0x4e);
 
 /// Tema oscuro de ChimpSprite.
 pub fn apply(ctx: &egui::Context) {

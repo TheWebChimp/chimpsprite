@@ -18,4 +18,5 @@ thiserror.workspace = true
 log.workspace = true
 
 [dev-dependencies]
+cs-raster.workspace = true
 proptest.workspace = true

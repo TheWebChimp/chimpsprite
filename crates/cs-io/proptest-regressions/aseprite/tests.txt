@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 09401b572820d14daed06d7c678376f7911b09f51bef2bac3bb049b6b22d26a2 # shrinks to ops_list = [Layer(true, 0), Opacity(5, 0), Layer(false, 1), Move(3, 4, 2), Draw(0, 0, 1, 4, 0)], indexed = false

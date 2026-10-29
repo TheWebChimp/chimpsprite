@@ -23,6 +23,8 @@ pub struct ViewSettings {
     pub slices: bool,
     pub grid_color: [u8; 4],
     pub timeline: bool,
+    /// La ventanita de preview (el botón del dock).
+    pub preview: bool,
     /// Las reglas son parte de la interfaz: no dependen de Extras.
     pub rulers: bool,
     pub guides: bool,
@@ -31,6 +33,18 @@ pub struct ViewSettings {
     pub lock_guides: bool,
     /// Número de cada celda no vacía de la capa tilemap activa.
     pub tile_numbers: bool,
+    /// Interfaz en pixel art (View → Pixel UI): fuente pixel, escala entera y skin. Encendida
+    /// de fábrica, también si lo guardado no la trae (`serde(default)`); apagada solo si se
+    /// guardó apagada.
+    pub pixel_ui: bool,
+    /// Escala de la UI con Pixel UI (1, 2 o 3): píxeles de pantalla por píxel del skin.
+    pub ui_scale: u8,
+    /// El candado de la paleta (Pixel UI): bloqueada, sus colores no se editan uno por uno
+    /// (`Editor::palette_locked`). Bloqueada de fábrica.
+    pub palette_locked: bool,
+    /// El alto de la caja de la paleta (Pixel UI), elegido con la división que la separa del
+    /// editor de color. De fábrica, el del diseño; el panel lo achica si no entra.
+    pub palette_height: f32,
 }
 
 impl Default for ViewSettings {
@@ -45,12 +59,17 @@ impl Default for ViewSettings {
             slices: true,
             grid_color: [80, 140, 255, 110],
             timeline: true,
+            preview: false,
             rulers: true,
             guides: true,
             snap_to_guides: true,
             snap_to_grid: false,
             lock_guides: false,
             tile_numbers: false,
+            pixel_ui: true,
+            ui_scale: 2,
+            palette_locked: true,
+            palette_height: crate::color_panel::PALETTE_DEFAULT_HEIGHT,
         }
     }
 }
@@ -64,6 +83,11 @@ impl ViewSettings {
     pub fn grid_color(&self) -> Color32 {
         let [r, g, b, a] = self.grid_color;
         Color32::from_rgba_unmultiplied(r, g, b, a)
+    }
+
+    /// `ui_scale` entre 1 y 3 (un valor guardado a mano puede salirse).
+    pub fn pixel_scale(&self) -> u8 {
+        self.ui_scale.clamp(1, 3)
     }
 }
 
@@ -110,15 +134,21 @@ impl GridDialog {
         })
     }
 
-    pub fn show(&mut self, ctx: &egui::Context) -> GridDialogResult {
+    /// La ventana (la de la app: con `skin`, la de Pixel UI).
+    pub fn show(
+        &mut self,
+        ctx: &egui::Context,
+        skin: Option<&crate::skin::Skin>,
+    ) -> GridDialogResult {
         let mut result = GridDialogResult::Open;
-        let mut open = true;
-        egui::Window::new("Grid Settings")
-            .open(&mut open)
-            .collapsible(false)
-            .resizable(false)
-            .anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO)
-            .show(ctx, |ui| {
+        let (_, closed) = crate::pixel_ui::app_window(
+            ctx,
+            skin,
+            "grid_settings_window",
+            "Grid Settings",
+            true,
+            (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+            |ui| {
                 egui::Grid::new("grid_settings")
                     .num_columns(4)
                     .spacing([8.0, 6.0])
@@ -143,23 +173,21 @@ impl GridDialog {
                     );
                     ui.weak("(shared by all documents)");
                 });
-                ui.separator();
-                ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() {
-                        result = GridDialogResult::Accept;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        result = GridDialogResult::Cancel;
-                    }
-                });
-            });
+                ui.add_space(6.0);
+                match crate::pixel_ui::dialog_buttons(ui, skin, &["OK", "Cancel"]) {
+                    Some(0) => result = GridDialogResult::Accept,
+                    Some(_) => result = GridDialogResult::Cancel,
+                    None => {}
+                }
+            },
+        );
         let (enter, escape) = ctx.input(|i| {
             (
                 i.key_pressed(egui::Key::Enter),
                 i.key_pressed(egui::Key::Escape),
             )
         });
-        if !open || escape {
+        if closed || escape {
             GridDialogResult::Cancel
         } else if enter {
             GridDialogResult::Accept
@@ -174,6 +202,65 @@ mod tests {
     use cs_core::{ColorMode, Sprite};
 
     use super::*;
+
+    #[test]
+    fn pixel_ui_settings_roundtrip_and_start_on() {
+        // La app abre con Pixel UI, también con lo guardado antes de que existiera.
+        assert!(ViewSettings::default().pixel_ui);
+        let v: ViewSettings = serde_json::from_str(r#"{"grid":true}"#).unwrap();
+        assert!(v.pixel_ui);
+        assert_eq!(v.ui_scale, 2);
+        // Quien lo apagó y guardó, lo sigue teniendo apagado.
+        let off = ViewSettings {
+            pixel_ui: false,
+            ..Default::default()
+        };
+        let back: ViewSettings =
+            serde_json::from_str(&serde_json::to_string(&off).unwrap()).unwrap();
+        assert_eq!(back, off);
+        let v: ViewSettings = serde_json::from_str(r#"{"grid":true,"pixel_ui":false}"#).unwrap();
+        assert!(!v.pixel_ui && v.grid);
+        let on = ViewSettings {
+            pixel_ui: true,
+            ui_scale: 3,
+            ..Default::default()
+        };
+        let back: ViewSettings =
+            serde_json::from_str(&serde_json::to_string(&on).unwrap()).unwrap();
+        assert_eq!(back, on);
+        assert_eq!(ViewSettings { ui_scale: 9, ..on }.pixel_scale(), 3);
+        assert_eq!(ViewSettings { ui_scale: 0, ..on }.pixel_scale(), 1);
+    }
+
+    #[test]
+    fn the_palette_lock_is_saved_and_starts_locked() {
+        // Bloqueada de fábrica, también con lo guardado antes de que existiera.
+        assert!(ViewSettings::default().palette_locked);
+        let v: ViewSettings = serde_json::from_str(r#"{"grid":true}"#).unwrap();
+        assert!(v.palette_locked);
+        let open = ViewSettings {
+            palette_locked: false,
+            ..Default::default()
+        };
+        let back: ViewSettings =
+            serde_json::from_str(&serde_json::to_string(&open).unwrap()).unwrap();
+        assert_eq!(back, open);
+    }
+
+    #[test]
+    fn the_palette_height_is_saved_and_starts_at_the_design_one() {
+        assert_eq!(ViewSettings::default().palette_height, 207.0);
+        // Lo guardado antes de que existiera la división: el de fábrica.
+        let v: ViewSettings = serde_json::from_str(r#"{"grid":true}"#).unwrap();
+        assert_eq!(v.palette_height, 207.0);
+        let tall = ViewSettings {
+            palette_height: 260.0,
+            ..Default::default()
+        };
+        let back: ViewSettings =
+            serde_json::from_str(&serde_json::to_string(&tall).unwrap()).unwrap();
+        assert_eq!(back.palette_height, 260.0);
+    }
 
     #[test]
     fn extras_switch_hides_everything() {

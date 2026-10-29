@@ -3,6 +3,8 @@
 use eframe::egui::{self, RichText};
 
 use crate::ChimpApp;
+#[cfg(not(target_arch = "wasm32"))]
+use crate::pixel_ui::Tip as _;
 use crate::theme;
 
 impl ChimpApp {
@@ -12,13 +14,24 @@ impl ChimpApp {
         ui.horizontal(|ui| {
             ui.add_space(16.0);
             ui.vertical(|ui| {
-                ui.label(RichText::new("ChimpSprite").size(28.0).color(theme::ACCENT));
+                // El logo animado; si no se pudo leer, el nombre en texto.
+                let logo = self
+                    .logo
+                    .get_or_insert_with(|| crate::logo::Logo::embedded(&ctx));
+                match logo {
+                    Some(logo) => {
+                        logo.show(ui);
+                    }
+                    None => {
+                        ui.label(RichText::new("ChimpSprite").size(28.0).color(theme::ACCENT));
+                    }
+                }
                 ui.label(RichText::new("Sprite & pixel-art editor").color(theme::LABEL));
                 ui.add_space(16.0);
                 if ui.button("📄  New file").clicked() {
                     self.new_document();
                 }
-                if ui.button("📂  Open file…").clicked() {
+                if ui.button("📂  Open file").clicked() {
                     self.open_dialog(&ctx);
                 }
                 if ui.button("🐵  Open demo").clicked() {
@@ -33,6 +46,33 @@ impl ChimpApp {
                 ui.label(RichText::new("In the browser").strong());
                 ui.label("Files open from your computer and save as downloads.");
                 ui.label("Unsaved documents are kept in this browser and offered back next time.");
+            });
+            // A la derecha, lo que queda: Pixnews, con una fila para elegir la fuente (en web,
+            // solo el enlace: no todas mandan CORS).
+            ui.add_space(48.0);
+            ui.vertical(|ui| {
+                ui.set_width((ui.available_width() - 16.0).max(0.0));
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    ui.horizontal_wrapped(|ui| {
+                        for source in crate::news::Source::ALL {
+                            let on = self.news.source == source;
+                            if ui.selectable_label(on, source.label()).clicked() {
+                                self.news.select(source);
+                            }
+                        }
+                    });
+                    ui.add_space(6.0);
+                    let action = self.news.ui(ui, self.news_fetcher.as_ref());
+                    if let Some(crate::news::FeedAction::Open(url)) = action {
+                        ctx.open_url(egui::OpenUrl::new_tab(url));
+                    }
+                }
+                #[cfg(target_arch = "wasm32")]
+                ui.hyperlink_to(
+                    "r/PixelArt · Top this week",
+                    "https://www.reddit.com/r/PixelArt/top/?t=week",
+                );
             });
         });
     }
@@ -58,11 +98,7 @@ impl ChimpApp {
                     .map(|d| d.display().to_string())
                     .unwrap_or_default();
                 ui.horizontal(|ui| {
-                    if ui
-                        .link(&name)
-                        .on_hover_text(path.display().to_string())
-                        .clicked()
-                    {
+                    if ui.link(&name).tip(path.display().to_string()).clicked() {
                         if path.exists() {
                             self.platform
                                 .open_path(&path, crate::platform::OpenPurpose::Open);
@@ -84,11 +120,7 @@ impl ChimpApp {
                     .unwrap_or("?")
                     .to_string();
                 ui.horizontal(|ui| {
-                    if ui
-                        .link(&name)
-                        .on_hover_text(dir.display().to_string())
-                        .clicked()
-                    {
+                    if ui.link(&name).tip(dir.display().to_string()).clicked() {
                         self.platform.open_file_in(
                             crate::file_actions::SPRITE_FILTERS,
                             &dir,

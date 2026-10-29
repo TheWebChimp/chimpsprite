@@ -28,10 +28,11 @@ impl Bitmap {
         }
     }
 
-    /// Frame compuesto, escalado por un factor entero (vecino más cercano).
+    /// Frame compuesto, escalado por un factor entero (vecino más cercano). Sin las capas de
+    /// referencia.
     pub fn from_frame(sprite: &Sprite, frame: usize, scale: u32) -> Self {
         let scale = scale.max(1);
-        let src = render_frame(sprite, frame);
+        let src = render_frame(&without_references(sprite), frame);
         let (w, h) = (sprite.width * scale, sprite.height * scale);
         let pixels = (0..h)
             .flat_map(|y| {
@@ -47,15 +48,20 @@ impl Bitmap {
     }
 
     /// Normal map del frame compuesto, escalado (vecino más cercano).
-    pub fn normal_from_frame(sprite: &Sprite, frame: usize, scale: u32) -> Self {
+    pub fn normal_from_frame(
+        sprite: &Sprite,
+        frame: usize,
+        scale: u32,
+        settings: &cs_render::NormalSettings,
+    ) -> Self {
         let base = Self {
             width: sprite.width,
             height: sprite.height,
             pixels: cs_render::normal_map(
-                &render_frame(sprite, frame),
+                &render_frame(&without_references(sprite), frame),
                 sprite.width,
                 sprite.height,
-                1.0,
+                settings,
             ),
         };
         base.scaled(scale)
@@ -102,6 +108,18 @@ impl Bitmap {
             .map_err(|e| IoError::Png(e.to_string()))?;
         Ok(out)
     }
+}
+
+/// El sprite sin las capas de referencia (ocultas), que no salen al exportar.
+fn without_references(sprite: &Sprite) -> std::borrow::Cow<'_, Sprite> {
+    if !sprite.layers.iter().any(|l| l.reference) {
+        return std::borrow::Cow::Borrowed(sprite);
+    }
+    let mut out = sprite.clone();
+    for layer in out.layers.iter_mut().filter(|l| l.reference) {
+        layer.visible = false;
+    }
+    std::borrow::Cow::Owned(out)
 }
 
 pub fn export_png(sprite: &Sprite, frame: usize, scale: u32) -> Result<Vec<u8>> {
@@ -359,20 +377,30 @@ fn meta(
 }
 
 /// Normal map de un frame como PNG.
-pub fn export_normal_png(sprite: &Sprite, frame: usize, scale: u32) -> Result<Vec<u8>> {
-    Bitmap::normal_from_frame(sprite, frame, scale).to_png()
+pub fn export_normal_png(
+    sprite: &Sprite,
+    frame: usize,
+    scale: u32,
+    settings: &cs_render::NormalSettings,
+) -> Result<Vec<u8>> {
+    Bitmap::normal_from_frame(sprite, frame, scale, settings).to_png()
 }
 
 /// Hoja de normal maps con la misma distribución que `export_sheet` (cada frame por separado,
 /// para que no se mezclen los bordes).
-pub fn export_normal_sheet(sprite: &Sprite, layout: SheetLayout, scale: u32) -> Result<Vec<u8>> {
+pub fn export_normal_sheet(
+    sprite: &Sprite,
+    layout: SheetLayout,
+    scale: u32,
+    settings: &cs_render::NormalSettings,
+) -> Result<Vec<u8>> {
     let rects = crate::engines::frame_rects(sprite, layout, scale);
     let (w, h) = rects
         .iter()
         .fold((1, 1), |(w, h), r| (w.max(r.0 + r.2), h.max(r.1 + r.3)));
     let mut sheet = Bitmap::new(w, h);
     for (f, &(x, y, _, _)) in rects.iter().enumerate() {
-        sheet.blit(&Bitmap::normal_from_frame(sprite, f, scale), x, y);
+        sheet.blit(&Bitmap::normal_from_frame(sprite, f, scale, settings), x, y);
     }
     sheet.to_png()
 }

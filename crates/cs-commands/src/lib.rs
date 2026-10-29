@@ -5,6 +5,7 @@ mod doc_command;
 mod draw;
 mod history;
 pub mod ops;
+pub mod sprite_ops;
 
 pub use command::{CmdError, Command, LayerProps};
 pub use doc_command::DocCommand;

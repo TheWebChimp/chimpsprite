@@ -9,6 +9,13 @@ pub struct Rgba {
 }
 
 impl Rgba {
+    /// Su gris (por luminancia), con el mismo alfa: lo que se pinta en un sprite en grises.
+    pub fn to_gray(self) -> Rgba {
+        let v =
+            (0.299 * self.r as f32 + 0.587 * self.g as f32 + 0.114 * self.b as f32).round() as u8;
+        Rgba::new(v, v, v, self.a)
+    }
+
     pub const TRANSPARENT: Rgba = Rgba::new(0, 0, 0, 0);
 
     pub const fn new(r: u8, g: u8, b: u8, a: u8) -> Self {
@@ -55,22 +62,40 @@ impl Rgba {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ColorMode {
     Rgba,
-    Indexed { transparent_index: u8 },
+    Indexed {
+        transparent_index: u8,
+    },
+    /// Escala de grises, como en Aseprite: los píxeles se guardan como RGBA con r = g = b (lo
+    /// que se pinta pasa a su gris).
+    Grayscale,
 }
 
 impl ColorMode {
     /// Valor de píxel transparente en este modo.
     pub fn transparent(self) -> PixelValue {
         match self {
-            ColorMode::Rgba => PixelValue::Rgba(Rgba::TRANSPARENT),
+            ColorMode::Rgba | ColorMode::Grayscale => PixelValue::Rgba(Rgba::TRANSPARENT),
             ColorMode::Indexed { transparent_index } => PixelValue::Index(transparent_index),
+        }
+    }
+
+    /// Sus píxeles se guardan como RGBA (RGB y escala de grises; indexado no).
+    pub fn stores_rgba(self) -> bool {
+        !matches!(self, ColorMode::Indexed { .. })
+    }
+
+    /// El valor que queda al pintar `value` en este modo: en escala de grises, su gris.
+    pub fn adapt(self, value: PixelValue) -> PixelValue {
+        match (self, value) {
+            (ColorMode::Grayscale, PixelValue::Rgba(c)) => PixelValue::Rgba(c.to_gray()),
+            (_, v) => v,
         }
     }
 
     pub fn accepts(self, value: PixelValue) -> bool {
         matches!(
             (self, value),
-            (ColorMode::Rgba, PixelValue::Rgba(_))
+            (ColorMode::Rgba | ColorMode::Grayscale, PixelValue::Rgba(_))
                 | (ColorMode::Indexed { .. }, PixelValue::Index(_))
         )
     }
@@ -100,6 +125,16 @@ impl Palette {
         Self { colors }
     }
 
+    /// La paleta de fábrica de los documentos nuevos: AAP-Splendor128.
+    pub fn splendor128() -> Self {
+        Self::new(
+            crate::palettes::AAP_SPLENDOR128
+                .iter()
+                .map(|&h| Rgba::from_hex(h))
+                .collect(),
+        )
+    }
+
     pub fn db32() -> Self {
         Self::new(DB32.iter().map(|&h| Rgba::from_hex(h)).collect())
     }
@@ -118,6 +153,24 @@ impl Palette {
 
     pub fn is_empty(&self) -> bool {
         self.colors.is_empty()
+    }
+
+    /// Índice del color más cercano (distancia euclidiana RGB), sin contar `transparent_index`.
+    /// Con alfa < 128, o si no hay otro color, devuelve `transparent_index`.
+    pub fn nearest(&self, c: Rgba, transparent_index: u8) -> u8 {
+        if c.a < 128 {
+            return transparent_index;
+        }
+        let dist = |p: &Rgba| {
+            let d = |a: u8, b: u8| (a as i32 - b as i32).pow(2);
+            d(p.r, c.r) + d(p.g, c.g) + d(p.b, c.b)
+        };
+        self.colors
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i as u8 != transparent_index)
+            .min_by_key(|(_, p)| dist(p))
+            .map_or(transparent_index, |(i, _)| i as u8)
     }
 }
 
@@ -139,5 +192,32 @@ mod tests {
         assert_eq!(Rgba::new(1, 2, 3, 4).to_hex(), "#01020304");
         assert_eq!(Rgba::parse_hex("#12"), None);
         assert_eq!(Rgba::parse_hex("#zzzzzz"), None);
+    }
+
+    #[test]
+    fn nearest_skips_the_transparent_index_and_low_alpha() {
+        let p = Palette::new(vec![
+            Rgba::rgb(0, 0, 0),
+            Rgba::rgb(10, 10, 10),
+            Rgba::rgb(250, 250, 250),
+        ]);
+        assert_eq!(
+            p.nearest(Rgba::rgb(5, 5, 5), 0),
+            1,
+            "index 0 is transparent"
+        );
+        assert_eq!(p.nearest(Rgba::rgb(200, 200, 200), 0), 2);
+        assert_eq!(p.nearest(Rgba::rgb(5, 5, 5), 1), 0);
+        assert_eq!(
+            p.nearest(Rgba::new(250, 250, 250, 127), 0),
+            0,
+            "alpha < 128"
+        );
+        let lone = Palette::new(vec![Rgba::rgb(1, 2, 3)]);
+        assert_eq!(
+            lone.nearest(Rgba::rgb(1, 2, 3), 0),
+            0,
+            "nothing else to pick"
+        );
     }
 }

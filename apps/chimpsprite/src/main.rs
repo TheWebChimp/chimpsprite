@@ -1,22 +1,40 @@
 //! Punto de entrada: ventana nativa en escritorio, `<canvas>` en el navegador.
 
+#[cfg(windows)]
+mod win_icon;
+
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
     use eframe::egui;
 
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title("ChimpSprite")
+        .with_inner_size([1280.0, 800.0])
+        .with_min_inner_size([640.0, 400.0]);
+    // El ícono de la ventana (en Windows, el del `.exe` ya viene de `build.rs`).
+    match eframe::icon_data::from_png_bytes(include_bytes!("../../../assets/icon/icon-48.png")) {
+        Ok(icon) => viewport = viewport.with_icon(icon),
+        Err(e) => log::warn!("app icon: {e}"),
+    }
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_title("ChimpSprite")
-            .with_inner_size([1280.0, 800.0])
-            .with_min_inner_size([640.0, 400.0]),
+        viewport,
         renderer: eframe::Renderer::Wgpu,
         ..Default::default()
     };
     eframe::run_native(
         "ChimpSprite",
         options,
-        Box::new(|cc| Ok(Box::new(cs_ui::ChimpApp::new(cc)))),
+        Box::new(|cc| {
+            let app = cs_ui::ChimpApp::new(cc);
+            // En Windows, los íconos dibujados a mano en su tamaño (no el de 48 reducido).
+            #[cfg(windows)]
+            let app = win_icon::WithIcons {
+                icons: win_icon::WindowIcons::load(cc),
+                app,
+            };
+            Ok(Box::new(app))
+        }),
     )
 }
 

@@ -39,7 +39,7 @@ pub fn gradient_value(
         lerp(a.a, b.a),
     );
     match sprite.color_mode {
-        ColorMode::Rgba => PixelValue::Rgba(mixed),
+        ColorMode::Rgba | ColorMode::Grayscale => PixelValue::Rgba(mixed),
         ColorMode::Indexed { .. } => {
             // Sin dithering en indexado: el color más cercano de la paleta.
             let d = |c: &Rgba| {

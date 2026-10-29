@@ -1,43 +1,94 @@
 //! Interfaz egui de ChimpSprite: capa delgada sobre el motor.
 
 mod anim_ops;
+mod app_actions;
+mod app_menus;
+mod appearance;
+mod artboard_window;
 mod autosave;
+mod bar_fields;
 mod canvas;
 mod canvas_size;
 mod capture;
 mod clipboard;
+mod color_panel;
+#[cfg(not(target_arch = "wasm32"))]
+mod dafont;
 mod demo;
+#[cfg(test)]
+mod dialog_tests;
+mod dock;
+mod edit_ops;
 mod editor;
 mod export_dialog;
+mod fg_bg;
 mod file_actions;
+mod filter_dialog;
+mod filters;
+mod frame_dialog;
 mod mask_ops;
+mod menus;
 mod palette_ops;
 mod palette_ui;
+mod scripts;
+mod select_dialogs;
+mod sheet_dialog;
 mod slice_ops;
+mod sprite_dialogs;
+mod tab_bar;
+use crate::pixel_ui::Tip as _;
 use cs_io::files;
+mod groom;
 mod guides;
 mod home;
 mod instance_ops;
+mod keyboard_shortcuts;
+mod keymap;
+mod layer_ops;
+#[cfg(test)]
+mod layout_tests;
+mod logo;
 mod lospec_client;
 #[cfg(not(target_arch = "wasm32"))]
 mod lospec_examples;
 mod lospec_tab;
+mod lumen;
+#[cfg(not(target_arch = "wasm32"))]
+mod news;
+mod notes;
 mod palette_library;
+mod panel_kit;
 mod panels;
+mod pixel_cursors;
+mod pixel_draw;
+mod pixel_home;
+mod pixel_rulers;
+mod pixel_sections;
+mod pixel_selection;
+mod pixel_status;
+mod pixel_ui;
 mod platform;
+mod preferences;
+mod preview;
 mod recent;
+pub mod skin;
 mod tabs;
 mod theme;
 mod tile_ops;
 mod tilemap_dialog;
 mod timeline;
+mod timeline_clip;
+mod tool_group;
+#[cfg(test)]
+mod tool_tests;
 mod transform;
 mod transform_box;
+mod undo_history;
 mod view;
 mod widgets;
 
 use cs_core::{ColorMode, Sprite};
-use eframe::egui::{self, Key, KeyboardShortcut, Modifiers};
+use eframe::egui::{self, Key, Modifiers};
 
 pub use editor::{Editor, ToolKind};
 
@@ -46,9 +97,16 @@ const CONVERT_TO_IMAGE_FAILED: &str =
     "Could not convert the layer: a tilemap would exceed the image size limit.";
 
 const NEW_SPRITE_SIZE: u32 = 64;
+/// Con Pixel UI, del mono que corre (arriba a la derecha) al borde derecho de la ventana.
+const RUNNER_RIGHT: f32 = 5.0;
 const RECENT_KEY: &str = "chimpsprite.recent";
 const VIEW_KEY: &str = "chimpsprite.view";
 const DEFAULT_PALETTE_KEY: &str = "chimpsprite.default_palette";
+const TOOL_OPTIONS_KEY: &str = "chimpsprite.tool_options";
+/// El pincel personalizado (Edit → New Brush): sus puntos y colores.
+const CUSTOM_BRUSH_KEY: &str = "chimpsprite.custom_brush";
+/// Los atajos elegidos en Edit → Keyboard Shortcuts.
+const KEYMAP_KEY: &str = "chimpsprite.keymap";
 
 /// Texto que queda en el portapapeles del sistema al copiar píxeles (ver `shortcuts`).
 const CLIPBOARD_MARKER: &str = "ChimpSprite pixels";
@@ -59,13 +117,50 @@ pub struct ChimpApp {
     tabs: tabs::Tabs,
     capture: capture::Capture,
     canvas_size: Option<canvas_size::CanvasSizeDialog>,
+    /// El diálogo del menú Sprite abierto (propiedades, duplicar, tamaño).
+    sprite_dialog: Option<sprite_dialogs::SpriteDialog>,
+    /// Las fuentes pixel de dafont.com para la herramienta de texto (solo escritorio).
+    #[cfg(not(target_arch = "wasm32"))]
+    dafont: dafont::DafontPanel,
+    /// El panel Groom del dock.
+    groom: groom::GroomPanel,
+    /// El panel Lumen del dock.
+    lumen: lumen::LumenPanel,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
     recent: recent::RecentFiles,
     view: view::ViewSettings,
     grid_dialog: Option<view::GridDialog>,
+    /// El logo animado de Home: se carga la primera vez que se muestra Home (`None` hasta
+    /// entonces; `Some(None)` si no se pudo leer).
+    logo: Option<Option<logo::Logo>>,
+    /// El mono que corre arriba a la derecha con Pixel UI (como `logo`).
+    runner: Option<Option<logo::Logo>>,
+    /// Pixnews, las novedades de Home, y cómo se piden (en los tests, sin red). Solo escritorio.
+    #[cfg(not(target_arch = "wasm32"))]
+    news: news::News,
+    #[cfg(not(target_arch = "wasm32"))]
+    news_fetcher: Box<dyn news::Fetcher>,
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
+    /// La ventana Edit → Undo History abierta.
+    undo_history: bool,
+    /// La ventana Edit → Keyboard Shortcuts abierta.
+    shortcuts: Option<keyboard_shortcuts::ShortcutsWindow>,
+    /// Los atajos de teclado (los de fábrica con los elegidos encima).
+    keymap: keymap::Keymap,
+    /// La ventana Edit → Preferences abierta.
+    preferences: bool,
+    /// El diálogo de un filtro de Edit (Replace Color, Adjustments, FX), con su vista previa.
+    filter_dialog: Option<filter_dialog::FilterDialog>,
+    /// Select → Color Range… o Modify abierto.
+    select_dialog: Option<select_dialogs::SelectDialog>,
+    /// Frame → Frame Properties… abierto.
+    frame_dialog: Option<frame_dialog::FramePropertiesDialog>,
+    /// File → Import Sprite Sheet… abierto.
+    sheet_dialog: Option<sheet_dialog::SheetDialog>,
+    /// La ventanita de preview (abierta con `view.preview`).
+    preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
     /// Desarrollo (`CHIMPSPRITE_DEMO_TILES`): al abrir el documento, activar su capa tilemap.
     demo_tiles: bool,
@@ -80,12 +175,23 @@ pub struct ChimpApp {
     title: String,
     /// Lo último copiado o cortado (compartido entre pestañas).
     clipboard: Option<clipboard::Clip>,
+    /// Lo copiado del timeline (frames o cels). Ctrl+V pega lo último que se copió: esto si
+    /// `paste_timeline`, si no los píxeles.
+    timeline_clipboard: Option<timeline_clip::TimelineClip>,
+    paste_timeline: bool,
     palettes: palette_library::PaletteLibrary,
     presets_window: Option<palette_ui::PresetsWindow>,
+    /// El panel Lospec del dock (mientras está abierto).
+    lospec_dock: Option<palette_ui::PresetsWindow>,
     preset_name: Option<palette_ui::NameDialog>,
     palette_confirm: Option<palette_ui::Confirm>,
     /// Ya llegó el `Paste` de este Ctrl+V (ver `clipboard::paste_request`).
     pasted: bool,
+    /// View → Pixel UI: skin, fuente y escala aplicadas.
+    pixel: appearance::PixelUi,
+    /// Opciones de herramienta de la última pestaña abierta (o las guardadas al arrancar). Cada
+    /// pestaña nueva empieza con las de la pestaña activa.
+    tool_options: editor::ToolOptions,
 }
 
 impl ChimpApp {
@@ -106,34 +212,22 @@ impl ChimpApp {
                 .and_then(|s| eframe::get_value::<Option<String>>(s, DEFAULT_PALETTE_KEY))
                 .flatten(),
         );
-        let mut app = Self {
-            doc: tabs::DocState::untitled(""),
-            tabs: tabs::Tabs::default(),
-            capture: capture::Capture::from_env(),
-            canvas_size: None,
-            platform: platform::Platform::default(),
-            autosaver: autosave::Autosaver::default(),
-            restore: None,
-            recent,
-            view,
-            grid_dialog: None,
-            new_tilemap: None,
-            convert_tilemap: None,
-            demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
-            fullscreen: false,
-            pending: None,
-            message: None,
-            export: None,
-            last_export: export_dialog::ExportDialog::default(),
-            allow_close: false,
-            title: String::new(),
-            clipboard: None,
-            palettes,
-            presets_window: None,
-            preset_name: None,
-            palette_confirm: None,
-            pasted: false,
-        };
+        let mut app = Self::with_parts(recent, view, palettes);
+        app.tool_options = cc
+            .storage
+            .and_then(|s| eframe::get_value(s, TOOL_OPTIONS_KEY))
+            .unwrap_or_default();
+        if let Some(brush) = cc.storage.and_then(|s| {
+            eframe::get_value::<Vec<((i32, i32), cs_core::Rgba)>>(s, CUSTOM_BRUSH_KEY)
+        }) {
+            cs_raster::set_custom_brush(brush);
+        }
+        if let Some(settings) = cc
+            .storage
+            .and_then(|s| eframe::get_value::<keymap::KeymapSettings>(s, KEYMAP_KEY))
+        {
+            app.keymap = keymap::Keymap::from_settings(&settings);
+        }
         if launch.demo {
             app.open_demo();
         }
@@ -155,19 +249,70 @@ impl ChimpApp {
             }
         }
         platform::install_unload_guard();
-        // Desarrollo: abre el diálogo con un ancho de ejemplo para capturas.
-        if std::env::var_os("CHIMPSPRITE_DEMO_CANVAS_SIZE").is_some() && app.has_doc() {
-            app.open_canvas_size();
-            if let Some(d) = &mut app.canvas_size {
-                d.set_anchor(0, 1);
-                d.set_width(d.width() + 24);
-            }
-        }
-        // Desarrollo: abre el diálogo de nueva capa tilemap para capturas (con --demo).
-        if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
-            app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
-        }
+        // Desarrollo: lo que piden las variables `CHIMPSPRITE_DEMO_*`, para capturas.
+        demo::startup(&mut app, &cc.egui_ctx);
         app
+    }
+
+    /// La app sin ventana, con lo guardado ya leído. `new` la usa y los tests la arman directo.
+    fn with_parts(
+        recent: recent::RecentFiles,
+        view: view::ViewSettings,
+        palettes: palette_library::PaletteLibrary,
+    ) -> Self {
+        Self {
+            doc: tabs::DocState::untitled(""),
+            tabs: tabs::Tabs::default(),
+            capture: capture::Capture::from_env(),
+            canvas_size: None,
+            sprite_dialog: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            dafont: Default::default(),
+            groom: Default::default(),
+            lumen: Default::default(),
+            platform: platform::Platform::default(),
+            autosaver: autosave::Autosaver::default(),
+            restore: None,
+            recent,
+            view,
+            grid_dialog: None,
+            logo: None,
+            runner: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            news: news::News::default(),
+            #[cfg(not(target_arch = "wasm32"))]
+            news_fetcher: news::default_fetcher(),
+            new_tilemap: None,
+            undo_history: false,
+            shortcuts: None,
+            keymap: keymap::Keymap::default(),
+            preferences: false,
+            filter_dialog: None,
+            select_dialog: None,
+            frame_dialog: None,
+            sheet_dialog: None,
+            preview: preview::Preview::default(),
+            convert_tilemap: None,
+            demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
+            fullscreen: false,
+            pending: None,
+            message: None,
+            export: None,
+            last_export: export_dialog::ExportDialog::default(),
+            allow_close: false,
+            title: String::new(),
+            clipboard: None,
+            timeline_clipboard: None,
+            paste_timeline: false,
+            palettes,
+            presets_window: None,
+            lospec_dock: None,
+            preset_name: None,
+            palette_confirm: None,
+            pasted: false,
+            pixel: appearance::PixelUi::from_env(),
+            tool_options: editor::ToolOptions::default(),
+        }
     }
 
     /// `false` en Home.
@@ -181,6 +326,58 @@ impl ChimpApp {
         ));
     }
 
+    /// Una nota (post-it) nueva al centro de lo que se ve, lista para escribir.
+    fn new_note(&mut self) {
+        let at = self.doc.canvas.new_note_position();
+        if let Some(id) = self.doc.editor.add_note(at) {
+            self.doc
+                .canvas
+                .notes
+                .start_editing(&mut self.doc.editor, id);
+        }
+    }
+
+    fn open_sprite_dialog(
+        &mut self,
+        dialog: impl FnOnce(&cs_core::Artboard) -> sprite_dialogs::SpriteDialog,
+    ) {
+        self.sprite_dialog = Some(dialog(self.doc.editor.artboard()));
+    }
+
+    fn update_sprite_dialog(&mut self, ctx: &egui::Context) {
+        use sprite_dialogs::SpriteDialog;
+        if !self.has_doc() {
+            self.sprite_dialog = None;
+            return;
+        }
+        let Some(dialog) = &mut self.sprite_dialog else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Cancel => self.sprite_dialog = None,
+            tilemap_dialog::DialogResult::Accept => {
+                let editor = &mut self.doc.editor;
+                match self.sprite_dialog.take() {
+                    Some(SpriteDialog::Properties(d)) => {
+                        editor.rename_active_artboard(d.name);
+                        if let Some(index) = d.transparent_index {
+                            editor.set_transparent_index(index);
+                        }
+                        editor.set_pixel_ratio(d.pixel_ratio);
+                    }
+                    Some(SpriteDialog::Duplicate(d)) => {
+                        editor.duplicate_artboard(d.name);
+                    }
+                    Some(SpriteDialog::Size(d)) => {
+                        editor.scale_sprite(d.width, d.height);
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
     fn update_canvas_size(&mut self, ctx: &egui::Context) {
         let Some(dialog) = &mut self.canvas_size else {
             return;
@@ -191,7 +388,7 @@ impl ChimpApp {
             self.canvas_size = None;
             return;
         }
-        match canvas_size::show(ctx, dialog) {
+        match canvas_size::show(ctx, dialog, self.pixel.skin()) {
             canvas_size::DialogResult::Open => {}
             canvas_size::DialogResult::Accept => {
                 if let Some(cmd) = dialog.command(&self.doc.editor.document) {
@@ -223,6 +420,175 @@ impl ChimpApp {
         }
     }
 
+    /// El panel Groom del dock y lo que pide.
+    fn groom_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
+        let primary = self.doc.editor.resolve(self.doc.editor.primary);
+        let mut action = None;
+        // Las paletas para ajustar el resultado: la del documento y las de la biblioteca.
+        let current = groom::PaletteChoice {
+            name: groom::CURRENT_PALETTE.into(),
+            colors: self.doc.editor.sprite().palette.colors().to_vec(),
+        };
+        let library = self.palettes.user().iter().chain(self.palettes.builtin());
+        let palettes: Vec<groom::PaletteChoice> = std::iter::once(current)
+            .chain(library.map(|p| groom::PaletteChoice {
+                name: p.name.clone(),
+                colors: p.palette.colors().to_vec(),
+            }))
+            .collect();
+        let groom = &mut self.groom;
+        let width = groom::WIDTH;
+        dock::flyout(
+            ctx,
+            dock::DockPanel::Groom,
+            anchor,
+            self.pixel.skin(),
+            width,
+            true,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| action = groom.ui(ui, primary, &palettes));
+            },
+        );
+        match action {
+            Some(groom::GroomAction::Import) => {
+                self.platform
+                    .open_file(groom::FILTER, platform::OpenPurpose::GroomImage, ctx);
+            }
+            Some(groom::GroomAction::BrowseLospec) => {
+                dock::set_open(ctx, Some(dock::DockPanel::Lospec));
+            }
+            Some(groom::GroomAction::UseLayer) => {
+                let (name, image) = self.current_layer_image();
+                self.groom.load(name, image);
+            }
+            Some(groom::GroomAction::NewSprite(g)) => self.bitmap_to_sprite(&g.name, &g.image),
+            Some(groom::GroomAction::AddArtboard(g)) => self.bitmap_to_artboard(g.name, &g.image),
+            Some(groom::GroomAction::AddLayer(g)) => self.bitmap_to_layer(&g.name, &g.image),
+            None => {}
+        }
+    }
+
+    /// La capa actual en el frame actual, como imagen, y su nombre.
+    fn current_layer_image(&self) -> (String, cs_io::export::Bitmap) {
+        let editor = &self.doc.editor;
+        let sprite = editor.sprite();
+        let pixels = (0..sprite.height as i32)
+            .flat_map(|y| (0..sprite.width as i32).map(move |x| (x, y)))
+            .map(|(x, y)| editor.resolve(sprite.pixel(editor.layer, editor.frame, x, y)))
+            .collect();
+        let name = sprite
+            .layer(editor.layer)
+            .map_or("Layer".to_string(), |l| l.name.clone());
+        let image = cs_io::export::Bitmap {
+            width: sprite.width,
+            height: sprite.height,
+            pixels,
+        };
+        (name, image)
+    }
+
+    /// Un sprite nuevo, en su pestaña, con `image` en su única capa.
+    fn bitmap_to_sprite(&mut self, name: &str, image: &cs_io::export::Bitmap) {
+        self.open_sheet_sprite(name, bitmap_sprite(image));
+    }
+
+    /// Un artboard nuevo con `image` en su única capa.
+    fn bitmap_to_artboard(&mut self, name: String, image: &cs_io::export::Bitmap) {
+        self.doc
+            .editor
+            .add_artboard_with_sprite(name, bitmap_sprite(image));
+    }
+
+    /// `image` como capa nueva del sprite actual.
+    fn bitmap_to_layer(&mut self, name: &str, image: &cs_io::export::Bitmap) {
+        match image.to_png() {
+            Ok(bytes) => self.import_layer_bytes(
+                &file_actions::Loaded {
+                    name: format!("{name}.png"),
+                    target: None,
+                    bytes,
+                },
+                false,
+            ),
+            Err(e) => self.show_message("Could not add the layer", e.to_string()),
+        }
+    }
+
+    /// El panel Lumen del dock y lo que pide.
+    fn lumen_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
+        let mut action = None;
+        let lumen = &mut self.lumen;
+        dock::flyout(
+            ctx,
+            dock::DockPanel::Lumen,
+            anchor,
+            self.pixel.skin(),
+            lumen::WIDTH,
+            true,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| action = lumen.ui(ui));
+            },
+        );
+        match action {
+            Some(lumen::LumenAction::Browse(kind)) => {
+                let purpose = platform::OpenPurpose::LumenMap(kind);
+                self.platform.open_file(groom::FILTER, purpose, ctx);
+            }
+            Some(lumen::LumenAction::UseLayer) => {
+                let (name, image) = self.current_layer_image();
+                self.lumen.load(name, image);
+            }
+            Some(lumen::LumenAction::Export(file_name, image)) => {
+                let png = match image.to_png() {
+                    Ok(png) => png,
+                    Err(e) => return self.show_message("Could not export", e.to_string()),
+                };
+                let filters = [platform::FileFilter {
+                    name: "PNG",
+                    extensions: &["png"],
+                }];
+                if let Some(target) = self.platform.choose_save(&file_name, &filters)
+                    && let Err(e) = self.platform.write(&target, &png)
+                {
+                    self.show_message("Could not export", e);
+                }
+            }
+            Some(lumen::LumenAction::NewSprite(name, image)) => {
+                self.bitmap_to_sprite(&name, &image)
+            }
+            Some(lumen::LumenAction::AddArtboard(name, image)) => {
+                self.bitmap_to_artboard(name, &image)
+            }
+            Some(lumen::LumenAction::AddLayer(name, image)) => self.bitmap_to_layer(&name, &image),
+            None => {}
+        }
+    }
+
+    /// El panel Dafont del dock, junto a su botón (`anchor`). La fuente elegida queda en la
+    /// herramienta de texto, a su tamaño y nítida.
+    #[cfg(not(target_arch = "wasm32"))]
+    fn dafont_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
+        let mut picked = None;
+        let dafont = &mut self.dafont;
+        dock::flyout(
+            ctx,
+            dock::DockPanel::Dafont,
+            anchor,
+            self.pixel.skin(),
+            dafont::WIDTH,
+            true,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| picked = dafont.ui(ui));
+            },
+        );
+        if let Some(picked) = picked {
+            let style = &mut self.doc.editor.text_style;
+            style.font = picked.font;
+            style.size = picked.size_px.unwrap_or(16);
+            style.antialias = false;
+        }
+    }
+
     fn update_tilemap_dialogs(&mut self, ctx: &egui::Context) {
         if !self.has_doc() {
             self.new_tilemap = None;
@@ -230,7 +596,7 @@ impl ChimpApp {
             return;
         }
         if let Some(dialog) = &mut self.new_tilemap {
-            match dialog.show(ctx) {
+            match dialog.show(ctx, self.pixel.skin()) {
                 tilemap_dialog::DialogResult::Open => {}
                 tilemap_dialog::DialogResult::Accept => {
                     let choice = dialog.choice();
@@ -247,7 +613,7 @@ impl ChimpApp {
             }
         }
         if let Some(dialog) = &mut self.convert_tilemap {
-            match dialog.show(ctx) {
+            match dialog.show(ctx, self.pixel.skin()) {
                 tilemap_dialog::DialogResult::Open => {}
                 tilemap_dialog::DialogResult::Accept => {
                     let size = dialog.tile_size;
@@ -269,11 +635,52 @@ impl ChimpApp {
         }
     }
 
+    /// Lo pedido desde el menú "≡" de un artboard en el lienzo: los diálogos del menú Sprite.
+    fn artboard_request(&mut self) {
+        use canvas::ArtboardRequest;
+        use sprite_dialogs::{PropertiesDialog, SpriteDialog, SpriteSizeDialog};
+        let Some(request) = self.doc.canvas.artboard_request.take() else {
+            return;
+        };
+        if !self.has_doc() {
+            return;
+        }
+        match request {
+            ArtboardRequest::Properties => {
+                self.open_sprite_dialog(|a| SpriteDialog::Properties(PropertiesDialog::new(a)));
+            }
+            ArtboardRequest::SpriteSize => {
+                self.open_sprite_dialog(|a| SpriteDialog::Size(SpriteSizeDialog::new(a)));
+            }
+            ArtboardRequest::CanvasSize => self.open_canvas_size(),
+        }
+    }
+
+    /// La ventana Slice Properties (pedida desde el menú del slice en el lienzo).
+    fn show_slice_properties(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() || !self.doc.canvas.slice_properties {
+            return;
+        }
+        let editor = &mut self.doc.editor;
+        let (_, closed) = pixel_ui::app_window(
+            ctx,
+            self.pixel.skin(),
+            "slice_properties_window",
+            "Slice Properties",
+            true,
+            (egui::Align2::CENTER_CENTER, egui::Vec2::ZERO),
+            |ui| panels::slice_properties(ui, editor),
+        );
+        if closed {
+            self.doc.canvas.slice_properties = false;
+        }
+    }
+
     fn update_grid_dialog(&mut self, ctx: &egui::Context) {
         let Some(dialog) = &mut self.grid_dialog else {
             return;
         };
-        match dialog.show(ctx) {
+        match dialog.show(ctx, self.pixel.skin()) {
             view::GridDialogResult::Open => {}
             view::GridDialogResult::Accept => {
                 let [r, g, b, a] = dialog.color.to_srgba_unmultiplied();
@@ -295,441 +702,104 @@ impl ChimpApp {
         ctx.send_viewport_cmd(egui::ViewportCommand::Fullscreen(self.fullscreen));
     }
 
-    /// Atajos del menú View (funcionan aunque no haya foco en el lienzo).
-    fn view_shortcuts(&mut self, ctx: &egui::Context) {
-        let shortcut = |m, k| KeyboardShortcut::new(m, k);
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::H))) {
-            self.view.extras = !self.view.extras;
-        }
-        let fit = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Num0);
-        if ctx.input_mut(|i| i.consume_shortcut(&fit)) {
-            self.doc.canvas.request_zoom(view::ZoomRequest::Fit);
-        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::Num0))) {
-            self.doc.canvas.request_zoom(view::ZoomRequest::Actual);
-        }
-        if ctx.egui_wants_keyboard_input() {
-            return;
-        }
-        let (zoom_in, zoom_out, tab, f11) = ctx.input(|i| {
-            let plain = !i.modifiers.command && !i.modifiers.alt;
-            (
-                plain && (i.key_pressed(Key::Plus) || i.key_pressed(Key::Equals)),
-                plain && i.key_pressed(Key::Minus),
-                plain && !i.modifiers.shift && i.key_pressed(Key::Tab),
-                i.key_pressed(Key::F11),
-            )
-        });
-        if zoom_in {
-            self.doc.canvas.request_zoom(view::ZoomRequest::In);
-        }
-        if zoom_out {
-            self.doc.canvas.request_zoom(view::ZoomRequest::Out);
-        }
-        if tab {
-            self.view.timeline = !self.view.timeline;
-        }
-        if f11 && !cfg!(target_arch = "wasm32") {
-            self.toggle_fullscreen(ctx);
-        }
-    }
-
-    fn view_menu(&mut self, ui: &mut egui::Ui) {
-        let item = |text: &str, keys: &str| egui::Button::new(text).shortcut_text(keys);
-        let v = &mut self.view;
-        ui.add(egui::Checkbox::new(&mut v.extras, "Extras"))
-            .on_hover_text("Ctrl+H: show or hide all extras");
-        ui.menu_button("Show", |ui| {
-            ui.checkbox(&mut v.rulers, "Rulers");
-            ui.add_enabled_ui(v.extras, |ui| {
-                ui.checkbox(&mut v.guides, "Guides");
-                ui.checkbox(&mut v.pixel_grid, "Pixel Grid");
-                ui.checkbox(&mut v.grid, "Grid");
-                ui.checkbox(&mut v.selection_edges, "Selection Edges");
-                ui.checkbox(&mut v.slices, "Slices");
-                ui.checkbox(&mut v.brush_preview, "Brush Preview");
-                ui.checkbox(&mut v.artboard_names, "Artboard Names");
-                ui.checkbox(&mut v.tile_numbers, "Tile Numbers");
-            });
-        });
-        ui.menu_button("Guides", |ui| {
-            ui.checkbox(&mut self.view.guides, "Show Guides");
-            ui.checkbox(&mut self.view.snap_to_guides, "Snap to Guides");
-            ui.checkbox(&mut self.view.lock_guides, "Lock Guides");
-            ui.separator();
-            let has_guides = !self.doc.editor.guides().is_empty();
-            if ui
-                .add_enabled(has_guides, egui::Button::new("Clear Guides"))
-                .clicked()
-            {
-                self.doc.editor.set_guides(Vec::new());
-                ui.close();
-            }
-            ui.weak("Drag from a ruler to add a guide;\ndrag it back to remove it.");
-        });
-        ui.menu_button("Grid", |ui| {
-            ui.checkbox(&mut self.view.grid, "Show Grid");
-            ui.checkbox(&mut self.view.snap_to_grid, "Snap to Grid");
-            if ui.button("Grid Settings…").clicked() {
-                self.grid_dialog = Some(view::GridDialog::new(&self.doc.editor, &self.view));
-                ui.close();
-            }
-        });
-        ui.separator();
-        ui.add(egui::Checkbox::new(
-            &mut self.doc.editor.onion_enabled,
-            "Onion Skin",
-        ))
-        .on_hover_text("F3");
-        ui.add(egui::Checkbox::new(&mut self.view.timeline, "Timeline"))
-            .on_hover_text("Tab");
-        if !cfg!(target_arch = "wasm32") {
-            let mut fullscreen = self.fullscreen;
-            if ui
-                .add(egui::Checkbox::new(&mut fullscreen, "Full Screen"))
-                .on_hover_text("F11")
-                .changed()
-            {
-                self.toggle_fullscreen(ui.ctx());
-            }
-        }
-        ui.separator();
-        let canvas = &mut self.doc.canvas;
-        if ui.add(item("Zoom In", "+")).clicked() {
-            canvas.request_zoom(view::ZoomRequest::In);
-        }
-        if ui.add(item("Zoom Out", "-")).clicked() {
-            canvas.request_zoom(view::ZoomRequest::Out);
-        }
-        if ui.add(item("Actual Size", "Ctrl+0")).clicked() {
-            canvas.request_zoom(view::ZoomRequest::Actual);
-        }
-        if ui.add(item("Fit to Screen", "Ctrl+Shift+0")).clicked() {
-            canvas.request_zoom(view::ZoomRequest::Fit);
-        }
-    }
-
-    fn handle_shortcuts(&mut self, ctx: &egui::Context) {
-        // Los diálogos son modales: manejan sus propias teclas.
-        if self.is_modal() {
-            return;
-        }
-        let shortcut = |m, k| KeyboardShortcut::new(m, k);
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::N))) {
-            self.new_document();
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::O))) {
-            self.open_dialog(ctx);
-        }
-        let prev_tab = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::Tab);
-        if ctx.input_mut(|i| i.consume_shortcut(&prev_tab)) {
-            self.tabs.cycle(&mut self.doc, false);
-        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::Tab))) {
-            self.tabs.cycle(&mut self.doc, true);
-        }
-        if !self.has_doc() {
-            return;
-        }
-        self.view_shortcuts(ctx);
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::W)))
-            && let Some(i) = self.tabs.active()
+    /// Las ventanas Keyboard Shortcuts y Preferences.
+    fn update_settings_windows(&mut self, ctx: &egui::Context) {
+        let skin = self.pixel.skin();
+        if let Some(window) = &mut self.shortcuts
+            && keyboard_shortcuts::show(ctx, window, &mut self.keymap, skin)
         {
-            self.request_close_tab(i);
+            self.shortcuts = None;
         }
-        let save_as = shortcut(Modifiers::COMMAND | Modifiers::SHIFT, Key::S);
-        if ctx.input_mut(|i| i.consume_shortcut(&save_as)) {
-            self.save_as();
-        } else if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::S))) {
-            self.save();
+        if self.preferences {
+            let out = preferences::show(ctx, &mut self.view, skin);
+            if out.closed {
+                self.preferences = false;
+            }
+            if out.grid_settings && self.has_doc() {
+                self.preferences = false;
+                self.grid_dialog = Some(view::GridDialog::new(&self.doc.editor, &self.view));
+            }
         }
-        if ctx.input_mut(|i| i.consume_shortcut(&shortcut(Modifiers::COMMAND, Key::E))) {
-            self.open_export();
-        }
-        let redo_shift = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::Z);
-        let redo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Y);
-        let undo = KeyboardShortcut::new(Modifiers::COMMAND, Key::Z);
-        if ctx.input_mut(|i| i.consume_shortcut(&redo_shift) || i.consume_shortcut(&redo)) {
-            self.doc.editor.redo();
-        } else if ctx.input_mut(|i| i.consume_shortcut(&undo)) {
-            self.doc.editor.undo();
-        }
-        let select_all = KeyboardShortcut::new(Modifiers::COMMAND, Key::A);
-        let reselect = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::D);
-        let deselect = KeyboardShortcut::new(Modifiers::COMMAND, Key::D);
-        let inverse = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::SHIFT, Key::I);
-        let clipping = KeyboardShortcut::new(Modifiers::COMMAND | Modifiers::ALT, Key::G);
-        if ctx.input_mut(|i| i.consume_shortcut(&clipping)) {
-            let layer = self.doc.editor.layer;
-            self.doc.editor.toggle_clip(layer);
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&select_all)) {
-            self.doc.editor.select_all();
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&reselect)) {
-            self.doc.editor.reselect();
-        } else if ctx.input_mut(|i| i.consume_shortcut(&deselect)) {
-            self.doc.editor.deselect();
-        }
-        if ctx.input_mut(|i| i.consume_shortcut(&inverse)) {
-            self.doc.editor.invert_selection();
-        }
-        if ctx.egui_wants_keyboard_input() || self.doc.editor.is_painting() {
+    }
+
+    /// El diálogo de un filtro: OK deja la vista previa; cancelar la quita (lo hace el diálogo).
+    fn update_filter_dialog(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() {
+            self.filter_dialog = None;
             return;
         }
-        // egui convierte Ctrl+C/X/V en eventos (no teclas); Paste solo llega si el portapapeles
-        // del sistema tiene texto, por eso `copy` deja ahí un marcador.
-        let (copy, cut) = ctx.input(|i| {
-            let has = |f: fn(&egui::Event) -> bool| i.events.iter().any(f);
-            (
-                has(|e| matches!(e, egui::Event::Copy)),
-                has(|e| matches!(e, egui::Event::Cut)),
-            )
-        });
-        let paste =
-            ctx.input(|i| clipboard::paste_request(&i.events, i.modifiers, &mut self.pasted));
-        if copy {
-            self.copy(ctx);
-        } else if cut {
-            self.cut(ctx);
-        } else if let Some(request) = paste {
-            self.paste(request);
-        }
-        let new_frame = KeyboardShortcut::new(Modifiers::ALT, Key::N);
-        if ctx.input_mut(|i| i.consume_shortcut(&new_frame)) {
-            self.doc.editor.duplicate_frame();
-        }
-        let pressed: Vec<(Key, bool)> = ctx.input(|i| {
-            if i.modifiers.command || i.modifiers.alt {
-                return Vec::new();
-            }
-            i.events
-                .iter()
-                .filter_map(|e| match e {
-                    egui::Event::Key {
-                        key,
-                        pressed: true,
-                        repeat: false,
-                        modifiers,
-                        ..
-                    } => Some((*key, modifiers.shift)),
-                    _ => None,
-                })
-                .collect()
-        });
-        for (key, shift) in pressed {
-            let editor = &mut self.doc.editor;
-            let letter = key.name().chars().next().filter(|_| key.name().len() == 1);
-            if let Some(tool) = letter.and_then(|c| ToolKind::from_key(c, shift)) {
-                editor.set_tool(tool);
-                continue;
-            }
-            editor_key(editor, key, shift);
-        }
-    }
-
-    fn copy(&mut self, ctx: &egui::Context) {
-        if let Some(clip) = self.doc.editor.copy() {
-            self.clipboard = Some(clip);
-            ctx.copy_text(CLIPBOARD_MARKER.into());
-        }
-    }
-
-    fn cut(&mut self, ctx: &egui::Context) {
-        if let Some(clip) = self.doc.editor.cut() {
-            self.clipboard = Some(clip);
-            ctx.copy_text(CLIPBOARD_MARKER.into());
-        }
-    }
-
-    /// Pega lo copiado en ChimpSprite o una imagen de otra app (centrada, como en Aseprite).
-    fn paste(&mut self, request: clipboard::PasteRequest) {
-        use clipboard::PasteRequest;
-        let (system, new_artboard) = match request {
-            PasteRequest::Internal { new_artboard } => (None, new_artboard),
-            PasteRequest::System { new_artboard } => (clipboard::system_image(), new_artboard),
+        let Some(dialog) = &mut self.filter_dialog else {
+            return;
         };
-        let editor = &mut self.doc.editor;
-        let clip = match system {
-            Some(image) => {
-                let sprite = editor.sprite();
-                image.centered_in(sprite.width, sprite.height)
-            }
-            None => match &self.clipboard {
-                Some(clip) => clip.clone(),
-                None => return,
-            },
-        };
-        if new_artboard {
-            editor.paste_in_new_artboard(&clip);
-        } else {
-            editor.paste(&clip);
+        let skin = self.pixel.skin();
+        if !matches!(
+            dialog.show(ctx, &mut self.doc.editor, skin),
+            tilemap_dialog::DialogResult::Open
+        ) {
+            self.filter_dialog = None;
         }
     }
 
-    fn menu_bar(&mut self, ui: &mut egui::Ui) {
-        let has_doc = self.has_doc();
-        egui::MenuBar::new().ui(ui, |ui| {
-            ui.menu_button("File", |ui| {
-                let ctx = ui.ctx().clone();
-                let item = |text: &str, keys: &str| egui::Button::new(text).shortcut_text(keys);
-                if ui.add(item("New", "Ctrl+N")).clicked() {
-                    self.new_document();
+    fn update_sheet_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.sheet_dialog else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Accept => {
+                let name = dialog.name.clone();
+                match dialog.sprite() {
+                    Some(sprite) => {
+                        self.sheet_dialog = None;
+                        self.open_sheet_sprite(&name, sprite);
+                    }
+                    None => self.show_message(
+                        "Nothing to import",
+                        "The frame size does not fit in the image.",
+                    ),
                 }
-                if ui.add(item("Open…", "Ctrl+O")).clicked() {
-                    self.open_dialog(&ctx);
-                }
-                ui.separator();
-                let (save, save_as) = if self.platform.saves_by_download() {
-                    ("Save (download)", "Save As… (download)")
-                } else {
-                    ("Save", "Save As…")
-                };
-                if ui.add_enabled(has_doc, item(save, "Ctrl+S")).clicked() {
-                    self.save();
-                }
-                if ui
-                    .add_enabled(has_doc, item(save_as, "Ctrl+Shift+S"))
-                    .clicked()
-                {
-                    self.save_as();
-                }
-                let close = item(
-                    "Close",
-                    if cfg!(target_arch = "wasm32") {
-                        ""
-                    } else {
-                        "Ctrl+W"
-                    },
-                );
-                if ui.add_enabled(has_doc, close).clicked()
-                    && let Some(i) = self.tabs.active()
-                {
-                    self.request_close_tab(i);
-                }
-                ui.separator();
-                if ui
-                    .add_enabled(has_doc, egui::Button::new("Import PNG as Layer…"))
-                    .clicked()
-                {
-                    self.import_layer(&ctx);
-                }
-                if ui.add_enabled(has_doc, item("Export…", "Ctrl+E")).clicked() {
-                    self.open_export();
-                }
-                ui.separator();
-                if ui.button("Quit").clicked() {
-                    self.request_quit(&ctx);
-                }
-            });
-            ui.add_enabled_ui(has_doc, |ui| {
-                ui.menu_button("Sprite", |ui| {
-                    if ui.button("Canvas Size…").clicked() {
-                        self.open_canvas_size();
-                    }
-                });
-                ui.menu_button("View", |ui| self.view_menu(ui));
-                ui.menu_button("Edit", |ui| {
-                    let undo = egui::Button::new("Undo").shortcut_text("Ctrl+Z");
-                    if ui
-                        .add_enabled(self.doc.editor.history.can_undo(), undo)
-                        .clicked()
-                    {
-                        self.doc.editor.undo();
-                    }
-                    let redo = egui::Button::new("Redo").shortcut_text("Ctrl+Y");
-                    if ui
-                        .add_enabled(self.doc.editor.history.can_redo(), redo)
-                        .clicked()
-                    {
-                        self.doc.editor.redo();
-                    }
-                    ui.separator();
-                    let has_selection = self.doc.editor.selection.is_some();
-                    let cut = egui::Button::new("Cut").shortcut_text("Ctrl+X");
-                    if ui.add_enabled(has_selection, cut).clicked() {
-                        self.cut(ui.ctx());
-                    }
-                    let copy = egui::Button::new("Copy").shortcut_text("Ctrl+C");
-                    if ui.add_enabled(has_selection, copy).clicked() {
-                        self.copy(ui.ctx());
-                    }
-                    // En escritorio puede haber una imagen de otra app aunque no se haya copiado nada.
-                    let can_paste = self.clipboard.is_some() || cfg!(not(target_arch = "wasm32"));
-                    let paste = egui::Button::new("Paste").shortcut_text("Ctrl+V");
-                    if ui.add_enabled(can_paste, paste).clicked() {
-                        self.paste(clipboard::PasteRequest::System {
-                            new_artboard: false,
-                        });
-                    }
-                    let as_artboard =
-                        egui::Button::new("Paste as New Artboard").shortcut_text("Ctrl+Shift+V");
-                    if ui.add_enabled(can_paste, as_artboard).clicked() {
-                        self.paste(clipboard::PasteRequest::System { new_artboard: true });
-                    }
-                    let clear = egui::Button::new("Clear").shortcut_text("Del");
-                    if ui.add_enabled(has_selection, clear).clicked() {
-                        self.doc.editor.clear_selection_content();
-                    }
-                });
-                ui.menu_button("Layer", |ui| {
-                    if ui.button("New Tilemap Layer…").clicked() {
-                        self.new_tilemap =
-                            Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
-                        ui.close();
-                    }
-                    let to_tilemap = self.doc.editor.can_convert_to_tilemap();
-                    if ui
-                        .add_enabled(to_tilemap, egui::Button::new("Convert to Tilemap…"))
-                        .on_disabled_hover_text("Select an image layer")
-                        .clicked()
-                    {
-                        self.convert_tilemap =
-                            Some(tilemap_dialog::TileSizeDialog::new(&self.doc.editor));
-                        ui.close();
-                    }
-                    let to_image = self.doc.editor.can_convert_to_image();
-                    if ui
-                        .add_enabled(to_image, egui::Button::new("Convert to Image Layer"))
-                        .on_disabled_hover_text("Select a tilemap layer")
-                        .clicked()
-                    {
-                        if !self.doc.editor.convert_to_image() {
-                            self.show_message("Convert to Image Layer", CONVERT_TO_IMAGE_FAILED);
-                        }
-                        ui.close();
-                    }
-                    ui.separator();
-                    let layer = self.doc.editor.layer;
-                    timeline::instance_menu(ui, &mut self.doc.editor);
-                    ui.separator();
-                    timeline::mask_menu(ui, &mut self.doc.editor, layer);
-                });
-                ui.menu_button("Select", |ui| {
-                    let editor = &mut self.doc.editor;
-                    let has_selection = editor.selection.is_some();
-                    if ui
-                        .add(egui::Button::new("All").shortcut_text("Ctrl+A"))
-                        .clicked()
-                    {
-                        editor.select_all();
-                    }
-                    let deselect = egui::Button::new("Deselect").shortcut_text("Ctrl+D");
-                    if ui.add_enabled(has_selection, deselect).clicked() {
-                        editor.deselect();
-                    }
-                    let reselect = egui::Button::new("Reselect").shortcut_text("Ctrl+Shift+D");
-                    if ui
-                        .add_enabled(!has_selection && editor.can_reselect(), reselect)
-                        .clicked()
-                    {
-                        editor.reselect();
-                    }
-                    let inverse = egui::Button::new("Inverse").shortcut_text("Ctrl+Shift+I");
-                    if ui.add(inverse).clicked() {
-                        editor.invert_selection();
-                    }
-                });
-            });
-        });
+            }
+            tilemap_dialog::DialogResult::Cancel => self.sheet_dialog = None,
+        }
+    }
+
+    fn update_frame_dialog(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() {
+            self.frame_dialog = None;
+            return;
+        }
+        let Some(dialog) = &mut self.frame_dialog else {
+            return;
+        };
+        let skin = self.pixel.skin();
+        if !matches!(
+            dialog.show(ctx, &mut self.doc.editor, skin),
+            tilemap_dialog::DialogResult::Open
+        ) {
+            self.frame_dialog = None;
+        }
+    }
+
+    fn update_select_dialog(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() {
+            self.select_dialog = None;
+            return;
+        }
+        let Some(dialog) = &mut self.select_dialog else {
+            return;
+        };
+        let skin = self.pixel.skin();
+        if !matches!(
+            dialog.show(ctx, &mut self.doc.editor, skin),
+            tilemap_dialog::DialogResult::Open
+        ) {
+            self.select_dialog = None;
+        }
+    }
+
+    /// Abre el diálogo de `filter` (con sus valores de entrada).
+    fn open_filter(&mut self, filter: filters::Filter) {
+        self.filter_dialog = Some(filter_dialog::FilterDialog::new(filter));
     }
 
     /// Barra de pestañas: Home + documentos.
@@ -753,13 +823,13 @@ impl ChimpApp {
                 if response.middle_clicked() {
                     close = Some(i);
                 }
-                if ui.small_button("×").on_hover_text("Close").clicked() {
+                if ui.small_button("×").tip("Close").clicked() {
                     close = Some(i);
                 }
             }
         });
         if home {
-            self.tabs.go_home(&mut self.doc);
+            self.go_home();
         }
         if let Some(i) = switch_to {
             self.tabs.switch(&mut self.doc, i);
@@ -769,81 +839,420 @@ impl ChimpApp {
         }
     }
 
-    /// Paneles del editor (cuando hay un documento activo).
-    fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) {
-        if self.view.timeline {
-            egui::Panel::bottom("timeline")
-                .resizable(true)
-                .default_size(190.0)
+    /// Los paneles de la ventana, en el orden en que egui les reparte el espacio: el primero que
+    /// se declara se queda con el borde. Devuelve el rect del lienzo (`None` en Home).
+    fn layout(&mut self, ui: &mut egui::Ui, modal: bool) -> Option<egui::Rect> {
+        // Con Pixel UI, como en el mockup: el menú de 16 de alto y las pestañas de 23, sin línea
+        // entre los dos; la barra de pestañas termina en un separador grabado (en vez de la línea
+        // de egui). Detrás, contra el borde derecho, el degradé del final de la barra.
+        let window = ui.max_rect();
+        let fade = self.pixel.skin().and_then(|skin| {
+            let screen = ui.max_rect();
+            let bottom = screen.top() + tab_bar::FADE_BOTTOM;
+            tab_bar::fade_shapes(skin, screen, bottom, ui.ctx().pixels_per_point())
+        });
+        let paint_fade = |ui: &egui::Ui| {
+            if let Some(fade) = &fade {
+                ui.painter().extend(fade.iter().cloned());
+            }
+        };
+        let pixel = self.pixel.skin().is_some();
+        if !pixel {
+            // Sin Pixel UI no hay caja de los colores: ninguna pestaña queda editando el
+            // secundario para cuando se vuelva a prender.
+            for doc in self.tabs.docs_mut(&mut self.doc) {
+                doc.editor.editing_secondary = false;
+            }
+        }
+        let mut menu = egui::Panel::top("menu").show_separator_line(!pixel);
+        if pixel {
+            // Sin margen abajo y con `MENU_TEXT_TOP` arriba: las mayúsculas quedan en la fila
+            // `MENU_CAPS_TOP`, con lugar arriba para la caja del título abierto.
+            let frame = egui::Frame::side_top_panel(ui.style()).inner_margin(egui::Margin {
+                left: tab_bar::MENU_LEFT,
+                right: 8,
+                top: tab_bar::MENU_TEXT_TOP,
+                bottom: 0,
+            });
+            menu = menu.exact_size(tab_bar::MENU_HEIGHT).frame(frame);
+        }
+        menu.show(ui, |ui| {
+            paint_fade(ui);
+            ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
+        });
+        if let Some(skin) = self.pixel.skin() {
+            let infos = self.tabs.infos(&self.doc);
+            let active = self.tabs.active();
+            let action = egui::Panel::top("tabs")
+                .exact_size(tab_bar::TABS_HEIGHT)
+                .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0))
+                .show_separator_line(false)
                 .show(ui, |ui| {
+                    paint_fade(ui);
                     ui.add_enabled_ui(!modal, |ui| {
-                        timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline)
-                    });
+                        tab_bar::pixel_tab_bar(ui, skin, &infos, active)
+                    })
+                    .inner
+                })
+                .inner;
+            // El mono que corre, sobre el degradé: arriba de todo y a 5 del borde derecho, como en
+            // el diseño (frame 4).
+            let ctx = ui.ctx().clone();
+            if let Some(runner) = self.runner.get_or_insert_with(|| logo::Logo::running(&ctx)) {
+                let at = egui::pos2(
+                    window.right() - RUNNER_RIGHT - runner.size().x,
+                    window.top(),
+                );
+                runner.paint_at(ui, at.round());
+            }
+            match action {
+                Some(tab_bar::TabAction::Home) => self.go_home(),
+                Some(tab_bar::TabAction::Switch(i)) => self.tabs.switch(&mut self.doc, i),
+                Some(tab_bar::TabAction::Close(i)) => self.request_close_tab(i),
+                None => {}
+            }
+        } else {
+            egui::Panel::top("tabs").show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| self.tab_bar(ui));
+            });
+        }
+        // Antes que los laterales: la barra de estado va a todo el ancho.
+        // Con Pixel UI, la del diseño: 20 de alto, sin el margen ni la línea de egui.
+        let skin = self.pixel.skin();
+        let mut status = egui::Panel::bottom("status");
+        if let Some(skin) = skin {
+            status = status
+                .exact_size(pixel_status::HEIGHT)
+                .frame(egui::Frame::NONE.fill(skin.colors().background))
+                .show_separator_line(false);
+        }
+        {
+            status.show(ui, |ui| {
+                let notice = self
+                    .autosaver
+                    .disabled_reason
+                    .as_ref()
+                    .map(|r| format!("Autosave off: {r}"));
+                if self.has_doc() {
+                    match skin {
+                        Some(skin) => panels::pixel_status_bar(
+                            ui,
+                            &self.doc.editor,
+                            &self.doc.canvas,
+                            notice.as_deref(),
+                            skin,
+                        ),
+                        None => panels::status_bar(
+                            ui,
+                            &self.doc.editor,
+                            &self.doc.canvas,
+                            notice.as_deref(),
+                        ),
+                    }
+                } else {
+                    // En Home, la versión (con Pixel UI, en la barra del diseño).
+                    let version = format!("ChimpSprite {}", env!("CARGO_PKG_VERSION"));
+                    match skin {
+                        Some(skin) => pixel_status::show(
+                            ui,
+                            skin,
+                            &[pixel_status::Section {
+                                icon: None,
+                                text: version,
+                                color: None,
+                                min_text: None,
+                            }],
+                        ),
+                        None => {
+                            ui.label(version);
+                        }
+                    }
+                }
+            });
+        }
+        if self.has_doc() {
+            Some(self.editor_panels(ui, modal))
+        } else {
+            // Con Pixel UI, el Home del diseño (frame 5) sobre el fondo del skin.
+            let frame = self
+                .pixel
+                .skin()
+                .map(|skin| egui::Frame::NONE.fill(skin.colors().background));
+            let mut panel = egui::CentralPanel::default();
+            if let Some(frame) = frame {
+                panel = panel.frame(frame);
+            }
+            panel.show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    if self.pixel.skin().is_some() {
+                        self.pixel_home(ui);
+                    } else {
+                        self.home(ui);
+                    }
                 });
+            });
+            None
+        }
+    }
+
+    /// Paneles del editor (cuando hay un documento activo). Devuelve el rect del lienzo.
+    fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
+        let skin = self.pixel.skin();
+        // La barra de opciones, a todo el ancho debajo de las pestañas: 21 de alto con Pixel UI,
+        // con el separador grabado abajo.
+        panels::options_bar_panel(ui.style(), skin).show(ui, |ui| {
+            ui.add_enabled_ui(!modal, |ui| {
+                panels::tool_options_bar(ui, &mut self.doc.editor, skin)
+            });
+        });
+        // La toolbar antes que la línea de tiempo: va a todo el alto, hasta la barra de estado, y
+        // la línea de tiempo empieza a su derecha.
+        // Alrededor de los artboards: el color `canvas` del skin con Pixel UI.
+        self.doc.canvas.background = canvas::background_for(skin);
+        // Con Pixel UI, las reglas del mockup.
+        self.doc.canvas.pixel_rulers = skin.map(pixel_rulers::PixelRulers::from_skin);
+        // Con Pixel UI, cada artboard es una ventana del skin.
+        self.doc.canvas.artboard_window = skin.map(artboard_window::ArtboardWindow::from_skin);
+        // Con Pixel UI, los cursores y la selección del diseño.
+        self.doc.canvas.pixel_ui = skin.is_some();
+        self.doc.canvas.cursors = skin.map(pixel_cursors::CursorSet::from_skin);
+        self.doc.canvas.symmetry_color = skin.map(|s| s.colors().symmetry);
+        let (width, frame) = match skin {
+            // Con Pixel UI, la columna de íconos: la caja más el margen a cada lado, sin línea
+            // contra el lienzo (el mockup no la tiene). Arriba, el margen del mockup hasta la
+            // barra de opciones.
+            Some(skin) => {
+                let margin = egui::Margin {
+                    left: pixel_ui::TOOLBAR_MARGIN,
+                    right: pixel_ui::TOOLBAR_MARGIN,
+                    top: pixel_ui::TOOLBAR_TOP_MARGIN,
+                    bottom: 2,
+                };
+                (
+                    pixel_ui::toolbar_width(skin),
+                    egui::Frame::side_top_panel(ui.style()).inner_margin(margin),
+                )
+            }
+            // Sin Pixel UI, la barra con nombres.
+            None => (184.0, egui::Frame::side_top_panel(ui.style())),
+        };
+        egui::Panel::left("tools")
+            .resizable(false)
+            .exact_size(width)
+            .frame(frame)
+            .show_separator_line(skin.is_none())
+            .show(ui, |ui| {
+                // Con la UI a 2× o 3× y la ventana baja, la barra no cabe: scroll vertical.
+                panels::tools_scroll_area().show(ui, |ui| {
+                    ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.doc.editor, skin));
+                });
+            });
+        // El panel derecho antes que la línea de tiempo: va a todo el alto, hasta la barra de
+        // estado, y la línea de tiempo termina a su izquierda.
+        // Lo pedido desde el panel se resuelve después: el panel tiene prestado el skin.
+        let mut palette_action = None;
+        // El candado de la paleta es de la app (se guarda con la vista), no de cada pestaña.
+        self.doc.editor.palette_locked = self.view.palette_locked;
+        let tiles = self.doc.editor.tiles_mode();
+        let mut panel = egui::Panel::right("palette").default_size(220.0);
+        if let Some(skin) = skin {
+            // Con Pixel UI no se achica más que la fila más ancha que no se parte, con los
+            // márgenes del panel.
+            panel = panel
+                .min_size(color_panel::panel_min_size(ui, skin))
+                .show_separator_line(false);
+        }
+        let palette_panel = panel.show(ui, |ui| {
+            // Con un diálogo abierto, el menú de paleta no abre otro encima.
+            let palette = |ui: &mut egui::Ui, editor: &mut editor::Editor, height: &mut f32| {
+                panels::palette(ui, editor, !modal, skin, height).filter(|_| !modal)
+            };
+            // Con Pixel UI, la paleta y el editor de color van arriba, fuera del scroll: el
+            // editor se ve siempre entero (si falta lugar, se achica la caja de la paleta).
+            let fixed = skin.is_some() && !tiles;
+            if fixed {
+                palette_action = palette(ui, &mut self.doc.editor, &mut self.view.palette_height);
+            }
+            crate::pixel_ui::scroll(ui, egui::ScrollArea::vertical(), |ui| {
+                if tiles {
+                    panels::tileset(ui, &mut self.doc.editor, &mut self.doc.tile_thumbs);
+                    // El selector de color sigue a mano (lo usa 2B).
+                    ui.add_space(10.0);
+                    panels::color_picker(ui, &mut self.doc.editor, skin);
+                } else if !fixed {
+                    palette_action =
+                        palette(ui, &mut self.doc.editor, &mut self.view.palette_height);
+                }
+                // Artboards y Slices van en el dock (a la izquierda de este panel).
+                ui.add_space(12.0);
+                let entered = ui
+                    .add_enabled_ui(!modal, |ui| panels::instance(ui, &mut self.doc.editor))
+                    .inner;
+                if entered {
+                    self.doc
+                        .canvas
+                        .request_zoom(view::ZoomRequest::CenterActive);
+                }
+            })
+        });
+        // Con Pixel UI, la línea del borde grabada (la oscura y su brillo), como las demás. Arriba,
+        // la oscura cruza el brillo de la línea de la barra de opciones (como los separadores de
+        // la barra).
+        if let Some(skin) = skin {
+            let rect = palette_panel.response.rect;
+            let ppp = ui.ctx().pixels_per_point();
+            let left = rect.left().round();
+            ui.painter().add(pixel_ui::etched_vline(
+                left,
+                rect.y_range(),
+                skin.colors(),
+                ppp,
+            ));
+            let cross =
+                egui::Rect::from_min_size(egui::pos2(left, rect.top() - 1.0), egui::vec2(1.0, 1.0));
+            ui.painter().add(egui::Shape::rect_filled(
+                eframe::emath::GuiRounding::round_to_pixels(cross, ppp),
+                0.0,
+                skin.colors().canvas,
+            ));
+        }
+        self.view.palette_locked = self.doc.editor.palette_locked;
+        // El dock de "otros paneles", a la izquierda del derecho y también a todo el alto.
+        let mut dock_frame = egui::Frame::side_top_panel(ui.style());
+        dock_frame.inner_margin.left = 0;
+        dock_frame.inner_margin.right = dock::RIGHT_MARGIN;
+        let dock_out = egui::Panel::right("dock")
+            .resizable(false)
+            .exact_size(dock::WIDTH)
+            .frame(dock_frame)
+            .show_separator_line(skin.is_none())
+            .show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    dock::show(
+                        ui,
+                        &mut self.doc.editor,
+                        &mut self.doc.artboard_name,
+                        skin,
+                        &mut self.view.timeline,
+                        &mut self.view.preview,
+                    )
+                })
+                .inner
+            })
+            .inner;
+        if self.view.timeline {
+            let mut panel = egui::Panel::bottom("timeline")
+                .resizable(true)
+                .default_size(190.0);
+            // Con Pixel UI, la caja del diseño sobre el fondo del skin, sin la línea de egui.
+            if let Some(skin) = skin {
+                panel = panel
+                    .frame(timeline::pixel_panel_frame(skin))
+                    .show_separator_line(false);
+            }
+            panel.show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    timeline::show(ui, &mut self.doc.editor, &mut self.doc.timeline, skin)
+                });
+            });
         }
         if std::mem::take(&mut self.doc.timeline.new_tilemap) {
             self.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&self.doc.editor));
         }
-        egui::Panel::left("tools")
-            .resizable(false)
-            .exact_size(184.0)
-            .show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| panels::toolbar(ui, &mut self.doc.editor));
-            });
-        egui::Panel::right("palette")
-            .default_size(220.0)
-            .show(ui, |ui| {
-                let open = egui::ScrollArea::vertical()
-                    .show(ui, |ui| {
-                        if self.doc.editor.tiles_mode() {
-                            panels::tileset(ui, &mut self.doc.editor, &mut self.doc.tile_thumbs);
-                            // El selector de color sigue a mano (lo usa 2B).
-                            ui.add_space(10.0);
-                            panels::color_picker(ui, &mut self.doc.editor);
-                        } else {
-                            // Con un diálogo abierto, el menú de paleta no abre otro encima.
-                            if let Some(action) = panels::palette(ui, &mut self.doc.editor, !modal)
-                                && !modal
-                            {
-                                self.palette_action(ui.ctx(), action);
-                            }
-                        }
-                        ui.add_space(12.0);
-                        let open = ui
-                            .add_enabled_ui(!modal, |ui| {
-                                panels::artboards(
-                                    ui,
-                                    &mut self.doc.editor,
-                                    &mut self.doc.artboard_name,
-                                )
-                            })
-                            .inner;
-                        ui.add_space(12.0);
-                        let entered = ui
-                            .add_enabled_ui(!modal, |ui| panels::instance(ui, &mut self.doc.editor))
-                            .inner;
-                        if entered {
-                            self.doc
-                                .canvas
-                                .request_zoom(view::ZoomRequest::CenterActive);
-                        }
-                        ui.add_enabled_ui(!modal, |ui| panels::slices(ui, &mut self.doc.editor));
-                        open
-                    })
-                    .inner;
-                if open {
-                    self.open_canvas_size();
-                }
-            });
-        egui::CentralPanel::no_frame().show(ui, |ui| {
-            self.doc.canvas.show(
-                ui,
-                &mut self.doc.editor,
-                self.canvas_size.as_mut(),
-                &self.view,
+        // Después de los paneles: lo pedido desde el derecho necesita `self` entero.
+        if let Some(action) = palette_action {
+            self.palette_action(ui.ctx(), action);
+        }
+        if dock_out.canvas_size {
+            self.open_canvas_size();
+        }
+        let canvas_texture = self.doc.canvas.plain_texture(&self.doc.editor);
+        if self.view.preview
+            && self.preview.show(
+                ui.ctx(),
+                &self.doc.editor,
+                self.pixel.skin(),
+                canvas_texture,
             )
-        });
+        {
+            self.view.preview = false;
+        }
+        if self.undo_history
+            && undo_history::show(ui.ctx(), &mut self.doc.editor, self.pixel.skin())
+        {
+            self.undo_history = false;
+        }
+        // Los paneles del dock que son de la app.
+        match dock_out.app_panel {
+            Some((dock::DockPanel::Lospec, anchor)) => self.lospec_panel(ui.ctx(), anchor, modal),
+            #[cfg(not(target_arch = "wasm32"))]
+            Some((dock::DockPanel::Dafont, anchor)) => self.dafont_panel(ui.ctx(), anchor, modal),
+            Some((dock::DockPanel::Groom, anchor)) => self.groom_panel(ui.ctx(), anchor, modal),
+            Some((dock::DockPanel::Lumen, anchor)) => self.lumen_panel(ui.ctx(), anchor, modal),
+            _ => {}
+        }
+        if !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {
+            self.close_lospec_panel();
+        }
+        // Otra vez: el panel derecho necesita `self` entero.
+        let Some(skin) = self.pixel.skin() else {
+            return egui::CentralPanel::no_frame()
+                .show(ui, |ui| {
+                    self.doc.canvas.show(
+                        ui,
+                        &mut self.doc.editor,
+                        self.canvas_size.as_mut(),
+                        &self.view,
+                    )
+                })
+                .response
+                .rect;
+        };
+        // Con Pixel UI, como en el mockup: el lienzo y sus reglas en una caja, con 5 px de fondo
+        // alrededor (a la izquierda, los de la barra de íconos; a la derecha, 3 hasta el dock).
+        let margin = pixel_ui::WORKSPACE_MARGIN;
+        let frame = egui::Frame::new()
+            .fill(skin.colors().background)
+            .inner_margin(egui::Margin {
+                left: 0,
+                right: dock::LEFT_AIR,
+                top: margin,
+                bottom: margin,
+            });
+        let doc = &mut self.doc;
+        let (dialog, view) = (self.canvas_size.as_mut(), &self.view);
+        egui::CentralPanel::default()
+            .frame(frame)
+            .show(ui, |ui| {
+                let inner = pixel_ui::workspace_box(ui, skin, ui.max_rect());
+                ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+                    doc.canvas.show(ui, &mut doc.editor, dialog, view)
+                });
+                inner
+            })
+            .inner
     }
+}
+
+/// Un sprite RGBA con `bitmap` en su única capa (lo que sale de Groom o de Lumen).
+fn bitmap_sprite(bitmap: &cs_io::export::Bitmap) -> cs_core::Sprite {
+    let (w, h) = (bitmap.width, bitmap.height);
+    let mut sprite = cs_core::Sprite::new(w, h, cs_core::ColorMode::Rgba);
+    let image =
+        cs_core::Image::from_buffer(w, h, cs_core::PixelBuffer::Rgba(bitmap.pixels.clone()))
+            .expect("same size");
+    let id = cs_core::ImageId(1);
+    sprite.images.insert(id, std::sync::Arc::new(image));
+    let layer = sprite.layers[0].id;
+    sprite.cels.insert(
+        (layer, 0),
+        cs_core::Cel {
+            position: (0, 0),
+            opacity: 255,
+            image: id,
+        },
+    );
+    sprite
 }
 
 fn new_editor(palette: cs_core::Palette) -> Editor {
@@ -855,6 +1264,10 @@ fn new_editor(palette: cs_core::Palette) -> Editor {
 impl eframe::App for ChimpApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // Pixel UI: fuente, escala entera, estilo y skin (con su recarga en vivo).
+        self.pixel.update(&ctx, &self.view);
+        // Los atajos de este frame, para los menús y los tooltips.
+        keymap::publish(&ctx, &self.keymap);
         self.handle_close_request(&ctx);
         self.handle_dropped_files(&ctx);
         self.handle_platform_events(&ctx);
@@ -871,34 +1284,18 @@ impl eframe::App for ChimpApp {
         }
 
         let modal = self.is_modal();
-        egui::Panel::top("menu").show(ui, |ui| {
-            ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
-        });
-        egui::Panel::top("tabs").show(ui, |ui| {
-            ui.add_enabled_ui(!modal, |ui| self.tab_bar(ui));
-        });
-        egui::Panel::bottom("status").show(ui, |ui| {
-            let notice = self
-                .autosaver
-                .disabled_reason
-                .as_ref()
-                .map(|r| format!("Autosave off: {r}"));
-            if self.has_doc() {
-                panels::status_bar(ui, &self.doc.editor, &self.doc.canvas, notice.as_deref());
-            } else {
-                ui.label(format!("ChimpSprite {}", env!("CARGO_PKG_VERSION")));
-            }
-        });
-        if self.has_doc() {
-            self.editor_panels(ui, modal);
-        } else {
-            egui::CentralPanel::default().show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| self.home(ui));
-            });
-        }
+        self.layout(ui, modal);
         self.update_canvas_size(&ctx);
+        self.update_sprite_dialog(&ctx);
+        self.update_filter_dialog(&ctx);
+        self.update_select_dialog(&ctx);
+        self.update_frame_dialog(&ctx);
+        self.update_sheet_dialog(&ctx);
+        self.update_settings_windows(&ctx);
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);
+        self.show_slice_properties(&ctx);
+        self.artboard_request();
         self.update_tilemap_dialogs(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
@@ -912,6 +1309,9 @@ impl eframe::App for ChimpApp {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, RECENT_KEY, &self.recent);
         eframe::set_value(storage, VIEW_KEY, &self.view);
+        eframe::set_value(storage, TOOL_OPTIONS_KEY, &self.current_tool_options());
+        eframe::set_value(storage, CUSTOM_BRUSH_KEY, &cs_raster::custom_brush());
+        eframe::set_value(storage, KEYMAP_KEY, &self.keymap.settings());
         eframe::set_value(
             storage,
             DEFAULT_PALETTE_KEY,
@@ -920,28 +1320,44 @@ impl eframe::App for ChimpApp {
     }
 }
 
-/// Teclas sin Ctrl/Alt que actúan sobre el editor (las letras de herramienta van aparte).
-pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) {
+/// Las teclas sin Ctrl ni Alt que no se reasignan porque dependen de lo que pasa: Enter confirma
+/// lo que está a medias o flotando, Esc cancela, las flechas mueven lo seleccionado, Delete
+/// borra y, en modo Tiles, X e Y voltean el tile del pincel. Devuelve si la usó (si no, va al
+/// registro de atajos).
+pub(crate) fn editor_key(editor: &mut Editor, key: Key, _shift: bool) -> bool {
     match key {
-        Key::N if shift => editor.add_layer(cs_core::LayerKind::Image),
         Key::Enter if editor.is_pending() => editor.finish_gesture(),
         Key::Enter if editor.is_floating() => {
             editor.commit_floating();
         }
         Key::Escape => editor.escape(),
-        Key::Enter => editor.toggle_play(),
-        Key::Comma | Key::ArrowLeft => editor.prev_frame(),
-        Key::Period | Key::ArrowRight => editor.next_frame(),
-        Key::ArrowUp => editor.step_layer(true),
-        Key::ArrowDown => editor.step_layer(false),
-        Key::F3 => editor.onion_enabled = !editor.onion_enabled,
-        // En modo Tiles no hay color secundario: X e Y voltean el tile del pincel.
+        Key::ArrowLeft if editor.can_transform() => {
+            editor.nudge(-1, 0);
+        }
+        Key::ArrowRight if editor.can_transform() => {
+            editor.nudge(1, 0);
+        }
+        Key::ArrowUp if editor.can_transform() => {
+            editor.nudge(0, -1);
+        }
+        Key::ArrowDown if editor.can_transform() => {
+            editor.nudge(0, 1);
+        }
         Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
         Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
-        Key::X => editor.swap_colors(),
-        Key::Delete | Key::Backspace => editor.clear_selection_content(),
-        _ => {}
+        // Con un rango de cels en el timeline y nada seleccionado en el lienzo, Delete los borra.
+        Key::Delete | Key::Backspace if editor.has_cel_range() && editor.selection.is_none() => {
+            editor.clear_selected_cels()
+        }
+        // Con colores de la paleta seleccionados, Delete es para ellos (lo hace la paleta).
+        Key::Delete | Key::Backspace
+            if !editor.palette_range().is_some_and(|r| r.end() > r.start()) =>
+        {
+            editor.clear_selection_content()
+        }
+        _ => return false,
     }
+    true
 }
 
 #[cfg(test)]
@@ -956,23 +1372,28 @@ mod tests {
     }
 
     #[test]
-    fn enter_applies_floating_content_and_escape_cancels_it() {
+    fn enter_and_escape_apply_floating_content_where_it_was_moved() {
         let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
         e.set_tool(ToolKind::RectSelect);
         e.set_selection(Some(Mask::from_rect(8, 8, (0, 0), (1, 1))));
-        let drag = |e: &mut Editor| {
-            e.pointer_press((0.5, 0.5), false, false, 0.1);
-            e.pointer_drag((2.5, 0.5));
+        // Arrastra lo seleccionado 2 px a la derecha desde la columna `x`.
+        let drag = |e: &mut Editor, x: f32| {
+            e.pointer_press((x, 0.5), false, false, 0.1);
+            e.pointer_drag((x + 2.0, 0.5));
             e.pointer_release();
         };
-        drag(&mut e);
+        drag(&mut e, 0.5);
         assert!(e.is_floating());
         editor_key(&mut e, Key::Escape, false);
-        assert!(
-            !e.is_floating() && e.selection.is_some(),
-            "Esc cancels, keeps the selection"
+        assert!(!e.is_floating(), "Esc applies");
+        let bounds = e.selection.as_ref().and_then(|m| m.bounds());
+        assert_eq!(
+            bounds,
+            Some(((2, 0), (3, 1))),
+            "the selection stays where it was moved"
         );
-        drag(&mut e);
+        assert!(e.history.can_undo());
+        drag(&mut e, 2.5);
         editor_key(&mut e, Key::Enter, false);
         assert!(!e.is_floating(), "Enter applies");
         assert!(!e.playing, "instead of playing the animation");
@@ -980,6 +1401,32 @@ mod tests {
         editor_key(&mut e, Key::Escape, false);
         assert!(e.selection.is_none(), "with nothing else, Esc deselects");
     }
+    #[test]
+    fn arrows_move_the_selection_one_pixel() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let red = cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0));
+        let layer = e.layer;
+        e.execute(cs_commands::Command::DrawPixels {
+            layer,
+            frame: 0,
+            pixels: vec![(1, 1, red)],
+        });
+        e.set_tool(ToolKind::RectSelect);
+        e.set_selection(Some(Mask::from_rect(8, 8, (1, 1), (1, 1))));
+        editor_key(&mut e, Key::ArrowRight, false);
+        editor_key(&mut e, Key::ArrowDown, false);
+        editor_key(&mut e, Key::ArrowDown, false);
+        let bounds = e.selection.as_ref().and_then(|m| m.bounds());
+        assert_eq!(bounds, Some(((2, 3), (2, 3))));
+        assert_eq!(e.frame, 0, "not the next frame");
+        editor_key(&mut e, Key::Enter, false);
+        assert_eq!(e.sprite().pixel(layer, 0, 2, 3), red, "the pixels moved");
+        assert_ne!(e.sprite().pixel(layer, 0, 1, 1), red);
+        // Sin selección, las flechas siguen siendo frames y capas.
+        e.deselect();
+        assert!(!e.can_transform());
+    }
+
     #[test]
     fn enter_with_a_pending_gesture_finishes_the_gesture_first() {
         let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));

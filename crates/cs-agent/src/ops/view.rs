@@ -174,6 +174,21 @@ impl Session {
                 columns: p.columns.unwrap_or(4),
             },
         };
+        // Con `tag`, los frames de ese tag (GIF y secuencia).
+        let (first, last) = match &p.tag {
+            Some(name) => {
+                let tag = sprite
+                    .tags
+                    .iter()
+                    .find(|t| &t.name == name)
+                    .ok_or_else(|| {
+                        let names: Vec<_> = sprite.tags.iter().map(|t| t.name.as_str()).collect();
+                        invalid(format!("no tag '{name}'; tags: [{}]", names.join(", ")))
+                    })?;
+                (tag.from, tag.to)
+            }
+            None => (0, sprite.frames.len() - 1),
+        };
         let mut written = Vec::new();
         let mut write = |path: std::path::PathBuf, bytes: &[u8]| -> Result<()> {
             std::fs::write(&path, bytes)?;
@@ -186,17 +201,16 @@ impl Session {
                 write(path.clone(), &export::export_png(sprite, frame, scale)?)?;
             }
             ExportKind::Gif => {
-                let last = sprite.frames.len() - 1;
-                write(path.clone(), &export::export_gif(sprite, 0, last, scale)?)?;
+                write(
+                    path.clone(),
+                    &export::export_gif(sprite, first, last, scale)?,
+                )?;
             }
             ExportKind::Sequence => {
-                for (i, png) in export::export_png_sequence(sprite, scale)?
-                    .into_iter()
-                    .enumerate()
-                {
+                for (i, frame) in (first..=last).enumerate() {
                     write(
                         path.with_file_name(format!("{stem}_{:03}.png", i + 1)),
-                        &png,
+                        &export::export_png(sprite, frame, scale)?,
                     )?;
                 }
             }
@@ -249,11 +263,14 @@ impl Session {
         }
         if p.normal_map {
             let normals = match p.kind {
-                ExportKind::Png => {
-                    export::export_normal_png(sprite, target::frame(sprite, p.frame)?, scale)?
-                }
+                ExportKind::Png => export::export_normal_png(
+                    sprite,
+                    target::frame(sprite, p.frame)?,
+                    scale,
+                    &Default::default(),
+                )?,
                 ExportKind::Sheet | ExportKind::Godot | ExportKind::Unity | ExportKind::Bevy => {
-                    export::export_normal_sheet(sprite, layout, scale)?
+                    export::export_normal_sheet(sprite, layout, scale, &Default::default())?
                 }
                 _ => {
                     return Err(invalid(
