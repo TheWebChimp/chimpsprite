@@ -1358,12 +1358,12 @@ fn with_pixel_ui_the_mode_buttons_have_the_mode_name_as_tooltip() {
 fn with_pixel_ui_brush_size_is_the_number_field_with_its_px_unit() {
     let mut h = pixel_bar(ToolKind::Pencil);
     let bar = h.bar;
-    // "Brush Size" en x 227..274 del diseño (7 desde el borde) y, 3 px después de la tinta,
-    // el campo de x 278 a 304 y la unidad "px" hasta la 319: 42 de ancho en total, de la y
-    // 73 a la 88.
+    // "Brush Size" en x 227..273 del diseño (7 desde el borde; 3 px entre palabras) y, 3 px
+    // después de la tinta, el campo de x 277 a 303 y la unidad "px" hasta la 318: 42 de ancho
+    // en total, de la y 73 a la 88.
     let (_, ink) = h.text("Brush Size");
     assert_eq!(ink.min, bar.min + Vec2::new(7.0, 6.0), "{ink:?}");
-    assert_eq!(ink.width(), 46.0);
+    assert_eq!(ink.width(), 45.0);
     let field = h.drawn_boxes("field.number");
     let left = ink.right() + 3.0;
     assert_eq!(
