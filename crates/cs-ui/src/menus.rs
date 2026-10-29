@@ -917,7 +917,12 @@ fn dropdown_with<R>(
             ui.set_min_width(min_width);
             panel(ui, look, None, content)
         })
-        .map(|i| i.inner)
+        .map(|i| {
+            // Arriba de todo: abierto desde un panel del dock (también en primer plano), quedaba
+            // debajo de él.
+            response.ctx.move_to_top(i.response.layer_id);
+            i.inner
+        })
 }
 
 /// El menú de las variantes de una herramienta (frame del diseño): el panel sale a la derecha del

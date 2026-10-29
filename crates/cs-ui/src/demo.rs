@@ -428,6 +428,15 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             Some("luminance") => app.lumen.open_settings(crate::lumen::MapKind::Luminance),
             _ => {}
         }
+        // CHIMPSPRITE_DEMO_LUMEN_PICKER=1: el selector del color de la luz abierto.
+        if dev_var("CHIMPSPRITE_DEMO_LUMEN_PICKER").is_some() {
+            ctx.data_mut(|d| {
+                d.insert_temp(
+                    eframe::egui::Id::new(crate::lumen::DEMO_PICKER),
+                    eframe::egui::Id::NULL,
+                )
+            });
+        }
     }
     // Desarrollo: Tiled Mode en los dos ejes, para capturas.
     if std::env::var_os("CHIMPSPRITE_DEMO_TILED").is_some() && app.has_doc() {

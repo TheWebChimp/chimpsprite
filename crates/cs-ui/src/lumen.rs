@@ -1207,6 +1207,9 @@ fn slider(
     painter.extend(pixel_ui::piece_shapes(thumb, knob_rect, ppp));
 }
 
+/// Desarrollo: con este dato en el contexto, el próximo [`color_button`] se abre.
+pub(crate) const DEMO_PICKER: &str = "lumen_demo_picker";
+
 /// El ancho del selector de color que abre [`color_button`].
 const PICKER_WIDTH: f32 = 160.0;
 
@@ -1247,6 +1250,15 @@ fn pixel_color_button(
     );
     let ppp = ui.ctx().pixels_per_point();
     painter.extend(pixel_ui::piece_shapes(frame, rect, ppp));
+    // Desarrollo: el de la luz (el primero) abierto, para capturas.
+    let demo = egui::Id::new(DEMO_PICKER);
+    let first = ui.ctx().data(|d| d.get_temp::<egui::Id>(demo));
+    if first == Some(egui::Id::NULL) {
+        ui.ctx().data_mut(|d| d.insert_temp(demo, response.id));
+    }
+    if first.is_some_and(|id| id == egui::Id::NULL || id == response.id) {
+        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
+    }
     let look = crate::menus::MenuLook::new(skin, rect.top());
     let mut changed = false;
     crate::menus::dropdown_panel(&look, &response, rect, |ui| {
