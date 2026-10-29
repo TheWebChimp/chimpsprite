@@ -863,10 +863,46 @@ pub(crate) fn dropdown<R>(
     anchor: Rect,
     content: impl FnOnce(&mut Ui) -> R,
 ) -> Option<R> {
-    let config = menu::MenuConfig::new().style(pixel_menu_style);
+    dropdown_with(
+        look,
+        response,
+        anchor,
+        egui::PopupCloseBehavior::CloseOnClick,
+        content,
+    )
+}
+
+/// Como [`dropdown`], pero se cierra solo con un clic afuera: para lo que se usa adentro (un
+/// selector de color).
+pub(crate) fn dropdown_panel<R>(
+    look: &MenuLook,
+    response: &Response,
+    anchor: Rect,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    dropdown_with(
+        look,
+        response,
+        anchor,
+        egui::PopupCloseBehavior::CloseOnClickOutside,
+        content,
+    )
+}
+
+fn dropdown_with<R>(
+    look: &MenuLook,
+    response: &Response,
+    anchor: Rect,
+    close: egui::PopupCloseBehavior,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    let config = menu::MenuConfig::new()
+        .style(pixel_menu_style)
+        .close_behavior(close);
     // Un ancla angosta (el "≡" de un artboard) no deja un ancho negativo: egui lo rechaza.
     let min_width = (anchor.width() - PANEL_MARGIN.sum().x).max(0.0);
     Popup::menu(response)
+        .close_behavior(close)
         .anchor(anchor)
         .align(RectAlign::BOTTOM_START)
         .align_alternatives(&[RectAlign::TOP_START])

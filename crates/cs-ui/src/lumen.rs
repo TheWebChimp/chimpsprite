@@ -11,6 +11,8 @@ use eframe::egui::{
 };
 
 use crate::panel_kit::{box_color, child, double_box, hint, label_with_hint, notched_outline};
+use crate::pixel_ui::Tip as _;
+use crate::skin::WidgetState;
 use crate::{pixel_ui, widgets};
 
 /// El panel, desde la esquina de su contenido: su ancho (el de Groom) y el alto más chico.
@@ -840,9 +842,11 @@ impl LumenPanel {
     fn view_controls(&mut self, ui: &mut Ui) {
         let height = crate::bar_fields::FIELD_HEIGHT;
         ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 3.0;
             ui.label("View");
             let view = &mut self.view;
-            widgets::combo_sized(ui, "lumen_view", view.label(), Some(66.0), height, |ui| {
+            // Angosto: el color de la luz no llega a la vista previa.
+            widgets::combo_sized(ui, "lumen_view", view.label(), Some(56.0), height, |ui| {
                 for v in View::ALL {
                     widgets::choice(ui, view, v, v.label());
                 }
@@ -851,7 +855,7 @@ impl LumenPanel {
             color_button(ui, &mut self.light_color);
         });
         widgets::checkbox(ui, &mut self.follow_mouse, "Follow Mouse")
-            .on_hover_text("The light follows the mouse over the preview; otherwise, drag it");
+            .tip("The light follows the mouse over the preview; otherwise, drag it");
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 3.0;
             ui.label("BG");
@@ -866,7 +870,7 @@ impl LumenPanel {
                     cs_render::detect_background(&image.pixels, image.width, image.height);
             }
             widgets::checkbox(ui, &mut self.hide_background, "Hide BG")
-                .on_hover_text("The background color counts as transparent");
+                .tip("The background color counts as transparent");
         });
         ui.horizontal(|ui| {
             ui.label("Cursor");
@@ -1003,10 +1007,11 @@ impl LumenPanel {
                     self.zoom = None;
                     self.pan = egui::Vec2::ZERO;
                 }
-                if pixel_ui::text_button_sized(ui, "+", 18.0).clicked() {
+                let (minus, plus) = zoom_buttons(ui);
+                if plus {
                     self.zoom = Some((k.floor() + 1.0).min(MAX_ZOOM));
                 }
-                if pixel_ui::text_button_sized(ui, "−", 18.0).clicked() {
+                if minus {
                     self.zoom = Some((k.floor() - 1.0).max(1.0));
                 }
                 ui.label(format!("{:.0}%", k * 100.0));
@@ -1043,8 +1048,69 @@ impl LumenPanel {
             let tip = at + vec2(0.0, (light.height * k).min(radius.max(8.0)));
             painter.line_segment([at, tip], egui::Stroke::new(1.0, color));
         }
-        painter.circle(at, 4.0, color, egui::Stroke::new(1.0, dark));
+        // El foquito del skin, centrado en la luz; sin skin, un punto del color.
+        let skin = pixel_ui::frame_skin(painter.ctx());
+        match skin
+            .as_ref()
+            .and_then(|s| s.piece(LIGHT_ICON, WidgetState::Normal))
+        {
+            Some(bulb) => {
+                let size = vec2(bulb.size[0] as f32, bulb.size[1] as f32);
+                let rect = Rect::from_min_size((at - size / 2.0).round(), size);
+                let ppp = painter.ctx().pixels_per_point();
+                painter.extend(pixel_ui::piece_shapes(bulb, rect, ppp));
+            }
+            None => {
+                painter.circle(at, 4.0, color, egui::Stroke::new(1.0, dark));
+            }
+        }
     }
+}
+
+/// El foquito que marca la luz en la vista previa (el ícono de Lumen en el dock).
+const LIGHT_ICON: &str = "icon.dock.lumen";
+
+/// − y + del zoom, juntos (la pieza `lumen.zoom` del skin; sin ella, dos botones). Devuelve si
+/// se tocó cada uno. Va en un layout de derecha a izquierda.
+fn zoom_buttons(ui: &mut Ui) -> (bool, bool) {
+    let skin = pixel_ui::frame_skin(ui.ctx());
+    let Some(piece) = skin
+        .as_ref()
+        .and_then(|s| s.piece("lumen.zoom", WidgetState::Normal))
+    else {
+        let plus = pixel_ui::text_button_sized(ui, "+", 18.0).clicked();
+        let minus = pixel_ui::text_button_sized(ui, "-", 18.0).clicked();
+        return (minus, plus);
+    };
+    let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+    let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+    let rect = Rect::from_min_size(rect.min.round(), size);
+    let ppp = ui.ctx().pixels_per_point();
+    ui.painter()
+        .extend(pixel_ui::piece_shapes(piece, rect, ppp));
+    // Cada mitad, hasta la línea del medio (sin la sombra de abajo).
+    let half = (size.x / 2.0).floor();
+    let hit = |from: f32, to: f32| {
+        Rect::from_min_max(
+            pos2(rect.left() + from, rect.top()),
+            pos2(rect.left() + to, rect.bottom() - 2.0),
+        )
+    };
+    let minus = ui
+        .interact(
+            hit(0.0, half),
+            ui.id().with("lumen_zoom_out"),
+            Sense::click(),
+        )
+        .tip("Zoom out");
+    let plus = ui
+        .interact(
+            hit(half, size.x),
+            ui.id().with("lumen_zoom_in"),
+            Sense::click(),
+        )
+        .tip("Zoom in");
+    (minus.clicked(), plus.clicked())
 }
 
 /// El alto de un slider: el título con su valor y la barra.
@@ -1085,7 +1151,7 @@ fn slider(
                 *value != default,
                 egui::Button::new("↺").frame(false).small(),
             )
-            .on_hover_text("Back to the default");
+            .tip("Back to the default");
         if reset.clicked() {
             *value = default;
         }
@@ -1093,12 +1159,111 @@ fn slider(
             ui.label(format(*value));
         });
     });
-    cell.spacing_mut().slider_width = rect.width() - 2.0;
-    cell.add(egui::Slider::new(value, lo..=hi).show_value(false));
+    let skin = pixel_ui::frame_skin(ui.ctx());
+    let pieces = skin.as_ref().and_then(|s| {
+        Some((
+            s.piece("slider.track", WidgetState::Normal)?,
+            s.piece("slider.thumb", WidgetState::Normal)?,
+        ))
+    });
+    let Some((track, thumb)) = pieces else {
+        cell.spacing_mut().slider_width = rect.width() - 2.0;
+        cell.add(egui::Slider::new(value, lo..=hi).show_value(false));
+        return;
+    };
+    // La barra abajo de `rect`: el riel (centrado en el alto de la perilla) y la perilla, que
+    // va de punta a punta del riel.
+    let knob = vec2(thumb.size[0] as f32, thumb.size[1] as f32);
+    let bar = Rect::from_min_max(
+        pos2(rect.left(), rect.bottom() - knob.y).round(),
+        rect.right_bottom().round(),
+    );
+    let rail_h = track.size[1] as f32;
+    let rail = Rect::from_min_size(
+        pos2(bar.left(), bar.top() + ((knob.y - rail_h) / 2.0).floor()),
+        vec2(bar.width(), rail_h),
+    );
+    let response = ui.interact(
+        bar,
+        ui.id().with(("lumen_slider", title)),
+        Sense::click_and_drag(),
+    );
+    let travel = (bar.width() - knob.x).max(1.0);
+    if let Some(p) = response.interact_pointer_pos()
+        && (response.dragged() || response.clicked() || response.is_pointer_button_down_on())
+    {
+        let t = ((p.x - bar.left() - knob.x / 2.0) / travel).clamp(0.0, 1.0);
+        *value = lo + t * (hi - lo);
+    }
+    let t = if hi > lo {
+        ((*value - lo) / (hi - lo)).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    let ppp = ui.ctx().pixels_per_point();
+    let painter = ui.painter();
+    painter.extend(pixel_ui::piece_shapes(track, rail, ppp));
+    let knob_rect = Rect::from_min_size(pos2((bar.left() + t * travel).round(), bar.top()), knob);
+    painter.extend(pixel_ui::piece_shapes(thumb, knob_rect, ppp));
 }
+
+/// El ancho del selector de color que abre [`color_button`].
+const PICKER_WIDTH: f32 = 160.0;
 
 /// Un botón con la muestra de `color` que abre el selector. Devuelve si cambió.
 fn color_button(ui: &mut Ui, color: &mut Rgba) -> bool {
+    let skin = pixel_ui::frame_skin(ui.ctx());
+    let frame = skin
+        .as_ref()
+        .and_then(|s| Some((s, s.piece("swatch.frame", WidgetState::Normal)?)));
+    match frame {
+        Some((skin, frame)) => pixel_color_button(ui, skin, frame, color),
+        None => egui_color_button(ui, color),
+    }
+}
+
+/// La muestra en su marco del skin (el color, con la fila de abajo más oscura); un clic abre
+/// el selector de color de la app debajo.
+fn pixel_color_button(
+    ui: &mut Ui,
+    skin: &crate::skin::Skin,
+    frame: &crate::skin::Piece,
+    color: &mut Rgba,
+) -> bool {
+    let size = vec2(frame.size[0] as f32, frame.size[1] as f32);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    let rect = Rect::from_min_size(rect.min.round(), size);
+    let fill = Color32::from_rgb(color.r, color.g, color.b);
+    let shade = |v: u8| (v as f32 * 0.62).round() as u8;
+    let dark = Color32::from_rgb(shade(color.r), shade(color.g), shade(color.b));
+    // Adentro del marco: 1 px de cada lado; abajo, la fila oscura, la línea y el brillo.
+    let inner = Rect::from_min_size(rect.min + vec2(1.0, 1.0), vec2(size.x - 2.0, size.y - 4.0));
+    let painter = ui.painter();
+    painter.rect_filled(inner, 0.0, fill);
+    painter.rect_filled(
+        Rect::from_min_size(inner.left_bottom(), vec2(inner.width(), 1.0)),
+        0.0,
+        dark,
+    );
+    let ppp = ui.ctx().pixels_per_point();
+    painter.extend(pixel_ui::piece_shapes(frame, rect, ppp));
+    let look = crate::menus::MenuLook::new(skin, rect.top());
+    let mut changed = false;
+    crate::menus::dropdown_panel(&look, &response, rect, |ui| {
+        ui.set_width(PICKER_WIDTH);
+        let id = response.id.with("picker");
+        let next = crate::color_panel::picker(ui, skin, id, *color);
+        let next = Rgba { a: 255, ..next };
+        if next != *color {
+            *color = next;
+            changed = true;
+        }
+    });
+    changed
+}
+
+/// Sin Pixel UI: el botón de color de egui.
+fn egui_color_button(ui: &mut Ui, color: &mut Rgba) -> bool {
     let mut c = Color32::from_rgb(color.r, color.g, color.b);
     // Una muestra chica, cuadrada.
     ui.spacing_mut().interact_size.x = 16.0;
