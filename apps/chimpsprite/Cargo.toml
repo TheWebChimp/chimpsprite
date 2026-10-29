@@ -26,3 +26,20 @@ env_logger.workspace = true
 wasm-bindgen-futures = "0.4"
 # Respaldo WebGL2 para navegadores sin WebGPU (se unifica con el wgpu de eframe).
 wgpu = { version = "30", default-features = false, features = ["webgl"] }
+
+# Instaladores (`cargo packager --release`, ver .github/workflows/release.yml).
+[package.metadata.packager]
+productName = "ChimpSprite"
+identifier = "com.thewebchimp.chimpsprite"
+description = "Pixel art and sprite editor"
+publisher = "TheWebChimp"
+homepage = "https://github.com/TheWebChimp/chimpsprite"
+category = "GraphicsAndDesign"
+icons = ["../../assets/icon/icon-32.png", "../../assets/icon/icon-128.png", "../../assets/icon/icon-256.png", "../../assets/icon/icon-512.png"]
+
+[package.metadata.packager.nsis]
+installerIcon = "../../assets/icon/chimpsprite.ico"
+
+# Firma ad-hoc (sin certificado): macOS la pide para abrir la app en Apple Silicon.
+[package.metadata.packager.macos]
+signingIdentity = "-"
