@@ -79,6 +79,8 @@ enum Shown {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Settings {
     pub grid: GridGuess,
+    /// Las celdas siguen los bordes reales (para píxeles de tamaños irregulares).
+    pub follow_edges: bool,
     pub background: bool,
     pub tolerance: u8,
     pub clean: bool,
@@ -92,6 +94,7 @@ impl Settings {
     fn new(grid: GridGuess) -> Self {
         Self {
             grid,
+            follow_edges: true,
             background: true,
             tolerance: 32,
             clean: true,
@@ -480,9 +483,15 @@ impl GroomPanel {
             widgets::prefixed_number(ui, &mut settings.grid.offset.1, -cy..=cy, "Y");
         });
         ui.add_space(2.0);
-        if pixel_ui::text_button(ui, "Detect Grid").clicked() {
-            settings.grid = cs_raster::detect_grid(&source.pixels, width, height);
-        }
+        ui.horizontal(|ui| {
+            if pixel_ui::text_button(ui, "Detect Grid").clicked() {
+                settings.grid = cs_raster::detect_grid(&source.pixels, width, height);
+            }
+            to_offset(ui);
+            widgets::checkbox(ui, &mut settings.follow_edges, "Follow Edges").on_hover_text(
+                "Let each cell snap to the real edges (for pixels of uneven sizes)",
+            );
+        });
         ui.add_space(6.0);
         ui.horizontal(|ui| {
             widgets::checkbox(ui, &mut settings.background, "Remove Background");
@@ -1008,8 +1017,12 @@ pub fn process(
     palette: Option<&[Rgba]>,
     merges: &Merges,
 ) -> Groomed {
-    let (mut pixels, w, h) =
-        cs_raster::sample_grid(&source.pixels, source.width, source.height, settings.grid);
+    let sample = if settings.follow_edges {
+        cs_raster::sample_following_edges
+    } else {
+        cs_raster::sample_grid
+    };
+    let (mut pixels, w, h) = sample(&source.pixels, source.width, source.height, settings.grid);
     if settings.background {
         pixels = cs_raster::remove_background(&pixels, w, h, settings.tolerance);
     }

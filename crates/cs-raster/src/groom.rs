@@ -257,6 +257,113 @@ pub fn sample_grid(
     (out, cols, rows)
 }
 
+/// Como [`sample_grid`], pero las celdas siguen los bordes reales de la imagen: en las de IA el
+/// tamaño de los píxeles cambia un poco de un lado a otro (6.1 aquí, 6.4 allá) y una cuadrícula
+/// fija se desfasa y cae entre dos píxeles. `grid.cell` da el tamaño esperado; el desfase no se
+/// usa (lo ponen los bordes). Con celdas de menos de 2 px, la cuadrícula fija.
+pub fn sample_following_edges(
+    pixels: &[Rgba],
+    width: u32,
+    height: u32,
+    grid: GridGuess,
+) -> (Vec<Rgba>, u32, u32) {
+    if grid.cell.0 < 2.0 || grid.cell.1 < 2.0 {
+        return sample_grid(pixels, width, height, grid);
+    }
+    let xs = follow_edges(&edge_profile(pixels, width, height, false), grid.cell.0);
+    let ys = follow_edges(&edge_profile(pixels, width, height, true), grid.cell.1);
+    let (cols, rows) = (xs.len() as u32 - 1, ys.len() as u32 - 1);
+    let mut out = Vec::with_capacity((cols * rows) as usize);
+    // El centro: sin un 20 % de cada lado (al menos un píxel, si la celda es de más de 3).
+    let inner = |from: u32, to: u32| {
+        let inset = if to - from > 3 {
+            ((to - from) as f32 * 0.2).floor().max(1.0) as u32
+        } else {
+            0
+        };
+        from + inset..to - inset
+    };
+    for y in ys.windows(2) {
+        for x in xs.windows(2) {
+            let (cx, cy) = (inner(x[0], x[1]), inner(y[0], y[1]));
+            let colors = cy
+                .flat_map(|y| cx.clone().map(move |x| (x, y)))
+                .map(|(x, y)| pixels[(y * width + x) as usize]);
+            out.push(dominant(colors));
+        }
+    }
+    (out, cols, rows)
+}
+
+/// Dónde empieza cada celda a lo largo de un eje (y al final, el largo): los bordes del perfil
+/// que mejor se alinean, con celdas de entre 0.8 y 1.2 veces `period`, castigando lo que se
+/// alejen de él (programación dinámica). La celda partida de cada orilla cuenta si mide al menos
+/// la mitad.
+fn follow_edges(profile: &[f32], period: f32) -> Vec<u32> {
+    let len = profile.len();
+    let lo = ((period * 0.8).floor() as usize).max(2);
+    let hi = ((period * 1.2).ceil() as usize).max(lo);
+    if len <= hi {
+        return vec![0, len as u32];
+    }
+    // Lo que sobresale cada borde de los de alrededor, en promedios de borde: así pesan igual
+    // las zonas con mucho contraste y las de poco.
+    let reach = (period * 10.0) as usize;
+    let mut sums = vec![0.0f64; len + 1];
+    for (i, &v) in profile.iter().enumerate() {
+        sums[i + 1] = sums[i] + v as f64;
+    }
+    let mut edges: Vec<f32> = (0..len)
+        .map(|i| {
+            let (from, to) = (i.saturating_sub(reach), (i + reach + 1).min(len));
+            let local = (sums[to] - sums[from]) / (to - from) as f64;
+            (profile[i] - local as f32).max(0.0)
+        })
+        .collect();
+    let mean = edges.iter().sum::<f32>() / len as f32;
+    if mean > 0.0 {
+        edges.iter_mut().for_each(|v| *v /= mean);
+    }
+    // Lo que cuesta una celda de `d` px.
+    const STRICTNESS: f32 = 2.0;
+    let cost = |d: usize| STRICTNESS * (d as f32 - period).powi(2);
+    // score[i]: lo mejor con un corte en i; from[i]: el corte de antes (None: el primero).
+    let mut score = vec![f32::NEG_INFINITY; len + 1];
+    let mut from: Vec<Option<usize>> = vec![None; len + 1];
+    for i in 0..=len {
+        let edge = edges.get(i).copied().unwrap_or(0.0);
+        if i <= hi {
+            score[i] = edge;
+        }
+        for d in lo..=hi.min(i) {
+            let value = score[i - d] - cost(d) + edge;
+            if value > score[i] {
+                (score[i], from[i]) = (value, Some(i - d));
+            }
+        }
+    }
+    let mut cut = (len - hi..=len)
+        .max_by(|&a, &b| score[a].total_cmp(&score[b]))
+        .unwrap_or(len);
+    let mut cuts = vec![cut];
+    while let Some(before) = from[cut] {
+        cuts.push(before);
+        cut = before;
+    }
+    cuts.reverse();
+    // Las orillas: hasta el borde de la imagen si lo que queda es al menos media celda.
+    let half = (period / 2.0).ceil() as usize;
+    if cuts[0] >= half {
+        cuts.insert(0, 0);
+    }
+    let last = *cuts.last().unwrap();
+    if len - last >= half {
+        cuts.push(len);
+    }
+    cuts.dedup();
+    cuts.into_iter().map(|c| c as u32).collect()
+}
+
 /// El color que más se repite (agrupando los parecidos), promediado dentro de su grupo.
 fn dominant(colors: impl Iterator<Item = Rgba>) -> Rgba {
     let mut groups: HashMap<[u8; 4], (u32, [u32; 4])> = HashMap::new();
@@ -534,6 +641,79 @@ mod tests {
         assert!((grid.cell.0 - 7.5).abs() <= 0.26, "{grid:?}");
         assert!((grid.cell.1 - 7.5).abs() <= 0.26, "{grid:?}");
         let (small, sw, sh) = sample_grid(&big, bw, bh, grid);
+        assert_eq!((sw, sh), (w, h), "{grid:?}");
+        for (i, (a, b)) in small.iter().zip(&original).enumerate() {
+            assert!(distance(*a, *b) <= 24, "pixel {i}: {a:?} vs {b:?}");
+        }
+    }
+
+    #[test]
+    fn cells_of_uneven_sizes_are_followed() {
+        // Como una imagen de IA: píxeles de 5 a 7 px, más chicos de un lado que del otro
+        // (6.3 en promedio), con orillas mezcladas y ruido.
+        let (original, w, h) = detailed();
+        let sizes = |n: u32, seed: u32| -> Vec<u32> {
+            (0..n)
+                .map(|i| match (i * 7 + seed) % 10 {
+                    0 => 5,
+                    1..=3 if i >= n / 2 => 7,
+                    1..=3 => 6,
+                    7 | 8 => 7,
+                    _ => 6,
+                })
+                .collect()
+        };
+        let (cw, ch) = (sizes(w, 1), sizes(h, 4));
+        let starts = |sizes: &[u32]| -> Vec<u32> {
+            sizes
+                .iter()
+                .scan(0, |at, s| {
+                    *at += s;
+                    Some(*at - s)
+                })
+                .collect()
+        };
+        let (sx, sy) = (starts(&cw), starts(&ch));
+        let (bw, bh) = (cw.iter().sum::<u32>(), ch.iter().sum::<u32>());
+        let cell_of = |starts: &[u32], v: u32| starts.iter().rposition(|&s| s <= v).unwrap();
+        let mut seed = 99u32;
+        let big: Vec<Rgba> = (0..bh)
+            .flat_map(|y| (0..bw).map(move |x| (x, y)))
+            .map(|(x, y)| {
+                let (cx, cy) = (cell_of(&sx, x), cell_of(&sy, y));
+                let mut c = original[cy * w as usize + cx];
+                // La última columna de cada celda, mezclada con la siguiente.
+                if cx + 1 < w as usize && x + 1 == sx[cx] + cw[cx] {
+                    let n = original[cy * w as usize + cx + 1];
+                    c = Rgba::rgb(
+                        ((c.r as u16 + n.r as u16) / 2) as u8,
+                        ((c.g as u16 + n.g as u16) / 2) as u8,
+                        ((c.b as u16 + n.b as u16) / 2) as u8,
+                    );
+                }
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                let noise = ((seed >> 16) % 7) as i16 - 3;
+                let f = |v: u8| (v as i16 + noise).clamp(0, 255) as u8;
+                Rgba::rgb(f(c.r), f(c.g), f(c.b))
+            })
+            .collect();
+        let grid = GridGuess {
+            cell: (bw as f32 / w as f32, bh as f32 / h as f32),
+            offset: (0.0, 0.0),
+        };
+        let (small, sw, sh) = sample_following_edges(&big, bw, bh, grid);
+        assert_eq!((sw, sh), (w, h), "{grid:?}");
+        for (i, (a, b)) in small.iter().zip(&original).enumerate() {
+            assert!(distance(*a, *b) <= 24, "pixel {i}: {a:?} vs {b:?}");
+        }
+    }
+
+    #[test]
+    fn following_edges_keeps_a_clean_upscale_as_is() {
+        let (original, w, h) = detailed();
+        let (big, bw, bh) = upscale(&original, w, h, 7.5);
+        let grid = detect_grid(&big, bw, bh);
+        let (small, sw, sh) = sample_following_edges(&big, bw, bh, grid);
         assert_eq!((sw, sh), (w, h), "{grid:?}");
         for (i, (a, b)) in small.iter().zip(&original).enumerate() {
             assert!(distance(*a, *b) <= 24, "pixel {i}: {a:?} vs {b:?}");

@@ -21,7 +21,8 @@ pub use ellipse::{ellipse_filled, ellipse_outline};
 pub use fill::flood_fill;
 pub use gradient::{Dither, GradientShape, gradient_t};
 pub use groom::{
-    GridGuess, clean_outline, detect_grid, reduce_colors, remove_background, sample_grid,
+    GridGuess, clean_outline, detect_grid, reduce_colors, remove_background, sample_following_edges,
+    sample_grid,
     suggest_merges,
 };
 pub use line::{
