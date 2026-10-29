@@ -1,0 +1,88 @@
+name: Release
+
+# Un tag `v*` arma los instaladores de Windows, macOS y Linux y publica el release.
+# En PRs que tocan el empaquetado solo los arma (sin publicar), para probarlo.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - apps/chimpsprite/Cargo.toml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            formats: nsis
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            formats: dmg
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            formats: dmg
+          # La más vieja disponible: el binario corre en distros con glibc de ahí en adelante.
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            formats: deb,appimage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Install cargo-packager
+        run: cargo install cargo-packager --locked --version 0.11.8
+      - name: Build
+        run: cargo build --release -p chimpsprite --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        env:
+          # linuxdeploy viene como AppImage y los runners no tienen FUSE.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: cargo packager --release -p chimpsprite --target ${{ matrix.target }} --formats ${{ matrix.formats }}
+      - name: Collect
+        shell: bash
+        run: |
+          mkdir dist
+          find target/${{ matrix.target }}/release -maxdepth 3 -type f \
+            \( -name '*-setup.exe' -o -name '*.dmg' -o -name '*.deb' -o -name '*.AppImage' \) \
+            -exec cp {} dist/ \;
+          ls -l dist
+          test -n "$(ls dist)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installers-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: package
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installers-*
+          path: dist
+          merge-multiple: true
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          prerelease=""
+          case "$TAG" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$TAG" dist/* $prerelease --title "ChimpSprite $TAG" --notes-file .github/release-notes.md

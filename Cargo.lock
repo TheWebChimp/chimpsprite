@@ -727,7 +727,7 @@ dependencies = [
 
 [[package]]
 name = "chimpsprite"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "cs-ui",
  "eframe",
@@ -742,7 +742,7 @@ dependencies = [
 
 [[package]]
 name = "chimpsprite-mcp"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "base64 0.22.1",
  "cs-agent",
@@ -944,7 +944,7 @@ checksum = "460fbee9c2c2f33933d720630a6a0bac33ba7053db5344fac858d4b8952d77d5"
 
 [[package]]
 name = "cs-agent"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "cs-commands",
  "cs-core",
@@ -960,7 +960,7 @@ dependencies = [
 
 [[package]]
 name = "cs-commands"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "cs-core",
  "cs-render",
@@ -973,7 +973,7 @@ dependencies = [
 
 [[package]]
 name = "cs-core"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "log",
  "serde",
@@ -983,7 +983,7 @@ dependencies = [
 
 [[package]]
 name = "cs-io"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "cs-commands",
  "cs-core",
@@ -1002,7 +1002,7 @@ dependencies = [
 
 [[package]]
 name = "cs-raster"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "cs-core",
  "serde",
@@ -1010,7 +1010,7 @@ dependencies = [
 
 [[package]]
 name = "cs-render"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "cs-commands",
  "cs-core",
@@ -1019,7 +1019,7 @@ dependencies = [
 
 [[package]]
 name = "cs-script"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "cs-agent",
  "cs-core",
@@ -1031,7 +1031,7 @@ dependencies = [
 
 [[package]]
 name = "cs-tools"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "cs-commands",
  "cs-core",
@@ -1043,7 +1043,7 @@ dependencies = [
 
 [[package]]
 name = "cs-ui"
-version = "0.1.0"
+version = "0.1.0-alpha.1"
 dependencies = [
  "arboard",
  "base64 0.22.1",
