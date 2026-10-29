@@ -532,7 +532,8 @@ mod tests {
     fn new_editor_uses_the_given_palette() {
         let e = crate::new_editor(colors(4));
         assert_eq!(e.sprite().palette, colors(4));
-        // Con menos de 22 colores, el secundario no cae fuera de la paleta.
-        assert_eq!(e.secondary, e.palette_value(3));
+        // Negro de primario y la máscara de secundario, con cualquier paleta.
+        assert_eq!(e.primary, PixelValue::Rgba(Rgba::rgb(0, 0, 0)));
+        assert!(e.is_mask(e.secondary));
     }
 }

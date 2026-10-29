@@ -1871,17 +1871,14 @@ fn with_pixel_ui_the_colors_box_goes_under_the_toolbar_box() {
         h.button("Secondary color"),
         Rect::from_min_size(colors.min + Vec2::new(3.0, 25.0), Vec2::splat(21.0))
     );
-    // El primario arriba y el secundario abajo, en sus 19×19.
+    // El primario arriba en sus 19×19 (el secundario empieza en la máscara: su cuadriculado
+    // lo revisa `with_pixel_ui_a_transparent_secondary_shows_the_checker_behind`).
     let editor = &h.app.doc.editor;
     let fill = |v| crate::panels::to_color32(editor.resolve(v));
     let rects = h.colored_rects();
     let top = Rect::from_min_size(colors.min + Vec2::new(4.0, 4.0), Vec2::splat(19.0));
-    let bottom = Rect::from_min_size(colors.min + Vec2::new(4.0, 26.0), Vec2::splat(19.0));
     assert!(rects.contains(&(fill(editor.primary), top)), "{top:?}");
-    assert!(
-        rects.contains(&(fill(editor.secondary), bottom)),
-        "{bottom:?}"
-    );
+    assert!(editor.is_mask(editor.secondary));
 }
 
 #[test]

@@ -408,10 +408,17 @@ impl Editor {
             editing_secondary: false,
         };
         editor.ensure_valid();
-        editor.primary = editor.palette_value(0);
-        // El 21 es el blanco de DB32; con paletas más cortas, el último color.
-        let last = editor.sprite().palette.len().saturating_sub(1).min(21) as u8;
-        editor.secondary = editor.palette_value(last);
+        // Negro para pintar (el más cercano de la paleta, si es indexado) y la máscara de
+        // secundario, para borrar con el clic derecho.
+        let black = Rgba::rgb(0, 0, 0);
+        let sprite = editor.sprite();
+        editor.primary = match sprite.color_mode {
+            ColorMode::Indexed { transparent_index } => {
+                PixelValue::Index(sprite.palette.nearest(black, transparent_index))
+            }
+            ColorMode::Rgba | ColorMode::Grayscale => PixelValue::Rgba(black),
+        };
+        editor.secondary = editor.mask_value();
         editor
     }
 

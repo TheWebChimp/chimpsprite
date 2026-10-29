@@ -813,8 +813,10 @@ fn indexed_sprite_uses_palette_indices() {
             transparent_index: 0,
         },
     ));
-    assert_eq!(e.primary, PixelValue::Index(0));
-    assert_eq!(e.secondary, PixelValue::Index(21));
+    // El negro de DB32 es el 0, que aquí es el transparente: el negro siguiente (el 1, casi
+    // negro) y la máscara de secundario.
+    assert_eq!(e.primary, PixelValue::Index(1));
+    assert_eq!(e.secondary, PixelValue::Index(0));
 }
 
 #[test]
