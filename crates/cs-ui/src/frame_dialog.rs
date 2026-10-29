@@ -31,7 +31,7 @@ impl FramePropertiesDialog {
         let title = if a == b {
             format!("Frame {} Properties", a + 1)
         } else {
-            format!("Frames {}–{} Properties", a + 1, b + 1)
+            format!("Frames {}-{} Properties", a + 1, b + 1)
         };
         let mut result = DialogResult::Open;
         let (_, closed) = pixel_ui::app_window(

@@ -459,7 +459,7 @@ fn tags_row(ui: &mut egui::Ui, editor: &mut Editor, grid: Grid) {
             editor.set_frame(tag.from);
             editor.frame_range = Some((tag.from, tag.to));
         }
-        let response = response.tip(format!("{} ({}–{})", tag.name, tag.from + 1, tag.to + 1));
+        let response = response.tip(format!("{} ({}-{})", tag.name, tag.from + 1, tag.to + 1));
         menus::context_menu(&response, |ui| {
             if let Some(a) = tag_menu(ui, editor, i, tag) {
                 action = Some(a);
@@ -564,7 +564,7 @@ fn tag_menu(ui: &mut egui::Ui, editor: &Editor, index: usize, tag: &Tag) -> Opti
     let (a, b) = editor.selected_frames();
     if ui
         .add(menus::plain(&format!(
-            "Set range to selection ({}–{})",
+            "Set range to selection ({}-{})",
             a + 1,
             b + 1
         )))
