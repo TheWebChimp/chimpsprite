@@ -635,8 +635,11 @@ impl ChimpApp {
                     editor.library_selected = None;
                 }
             }
-            // Entrar al modo símbolo llega con la Task 10; mientras, no hace nada.
-            library_panel::LibraryAction::Edit(_) => {}
+            library_panel::LibraryAction::Edit(id) => {
+                if editor.enter_symbol(id) {
+                    self.doc.canvas.request_zoom(view::ZoomRequest::Fit);
+                }
+            }
         }
     }
 
@@ -1196,9 +1199,14 @@ impl ChimpApp {
                     .add_enabled_ui(!modal, |ui| panels::instance(ui, &mut self.doc.editor))
                     .inner;
                 if entered {
-                    self.doc
-                        .canvas
-                        .request_zoom(view::ZoomRequest::CenterActive);
+                    // A un símbolo de la biblioteca: se ve solo él, ajustado; a uno del lienzo,
+                    // se centra.
+                    let zoom = if self.doc.editor.in_symbol_mode() {
+                        view::ZoomRequest::Fit
+                    } else {
+                        view::ZoomRequest::CenterActive
+                    };
+                    self.doc.canvas.request_zoom(zoom);
                 }
             })
         });

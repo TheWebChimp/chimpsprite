@@ -2836,3 +2836,39 @@ fn the_library_state_belongs_to_its_tab() {
     h.frame();
     assert!(h.app.doc.library.renaming.is_some());
 }
+
+#[test]
+fn symbol_mode_shows_only_the_symbol_under_a_breadcrumb_that_leaves_it() {
+    for pixel in [true, false] {
+        let mut h = with_a_symbol(pixel);
+        let host = h.app.doc.editor.active;
+        let coin = h.app.doc.editor.library_selected.unwrap();
+        let zoom = h.app.doc.canvas.zoom;
+        assert!(!h.texts.iter().any(|(t, _)| t == "Document"));
+        let host_texture = h.app.doc.canvas.artboard_texture(host).expect("rendered");
+        assert!(h.app.doc.editor.enter_symbol(coin));
+        h.app.doc.canvas.request_zoom(crate::view::ZoomRequest::Fit);
+        h.frame();
+        h.frame();
+        // Se dibuja solo el símbolo (el host está en el mismo lugar, pero no se ve).
+        let coin_texture = h.app.doc.canvas.artboard_texture(coin).expect("rendered");
+        let drawn = |t: TextureId| h.textures.iter().any(|(x, _)| *x == t);
+        assert!(drawn(coin_texture), "pixel {pixel}");
+        assert!(!drawn(host_texture), "pixel {pixel}: only the symbol");
+        let crumb = |h: &LayoutHarness, name: &str| {
+            h.text_rects
+                .iter()
+                .find(|(t, ..)| t == name)
+                .map(|(_, r, _)| *r)
+        };
+        assert!(crumb(&h, "Coin").is_some(), "{:?}", h.texts);
+        let document = crumb(&h, "Document").expect("the breadcrumb");
+        // Un clic en "Document" vuelve al documento, con su vista de antes.
+        h.click(document.center(), PointerButton::Primary);
+        assert!(!h.app.doc.editor.in_symbol_mode(), "pixel {pixel}");
+        assert_eq!(h.app.doc.editor.active, host);
+        h.frame();
+        assert!(crumb(&h, "Document").is_none());
+        assert_eq!(h.app.doc.canvas.zoom, zoom, "the document view is back");
+    }
+}

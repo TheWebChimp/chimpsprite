@@ -77,6 +77,66 @@ impl Editor {
         }
         true
     }
+
+    /// Entra a editar `id` (un símbolo de la biblioteca): lo apila y lo activa. Guarda el artboard
+    /// activo de antes para volver.
+    pub fn enter_symbol(&mut self, id: ArtboardId) -> bool {
+        if !self.document.artboard(id).is_some_and(|a| a.in_library) {
+            return false;
+        }
+        // Si ya está en la pila, se vuelve a ese nivel.
+        if let Some(i) = self.symbol_stack.iter().position(|&s| s == id) {
+            self.exit_symbol_to(i + 1);
+            return true;
+        }
+        if self.symbol_stack.is_empty() {
+            self.symbol_return = Some(self.active);
+        }
+        self.symbol_stack.push(id);
+        self.activate(id);
+        true
+    }
+
+    /// Vuelve al nivel `depth` de la pila (0 = el documento). Activa lo que había ahí.
+    pub fn exit_symbol_to(&mut self, depth: usize) {
+        if depth >= self.symbol_stack.len() {
+            return;
+        }
+        self.symbol_stack.truncate(depth);
+        let target = match self.symbol_stack.last() {
+            Some(&id) => Some(id),
+            None => {
+                let shown =
+                    |id: ArtboardId| self.document.artboard(id).is_some_and(|a| !a.in_library);
+                self.symbol_return
+                    .take()
+                    .filter(|&id| shown(id))
+                    .or_else(|| self.document.canvas_artboards().next().map(|a| a.id))
+            }
+        };
+        if let Some(id) = target {
+            self.activate(id);
+        }
+        // Por si no hubo a dónde ir: deja el activo en un lugar válido.
+        self.ensure_valid();
+    }
+
+    /// La migaja de pan: "Document" y los nombres de la pila.
+    pub fn symbol_breadcrumb(&self) -> Vec<String> {
+        let names = self
+            .symbol_stack
+            .iter()
+            .filter_map(|&id| self.document.artboard(id))
+            .map(|a| a.name.clone());
+        std::iter::once("Document".to_string())
+            .chain(names)
+            .collect()
+    }
+
+    /// ¿Se está editando un símbolo?
+    pub fn in_symbol_mode(&self) -> bool {
+        !self.symbol_stack.is_empty()
+    }
 }
 
 #[cfg(test)]
@@ -126,5 +186,63 @@ mod tests {
         assert!(e.move_active_to_library());
         assert!(e.document.artboard(moved).unwrap().in_library);
         assert_ne!(e.active, moved);
+    }
+
+    #[test]
+    fn entering_and_leaving_symbols() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        e.execute(Command::DrawPixels {
+            layer: e.layer,
+            frame: 0,
+            pixels: vec![(1, 1, red)],
+        });
+        let inner = e.convert_to_symbol("Inner", SymbolTiming::Graphic).unwrap();
+        let host = ArtboardId(1);
+        assert!(e.enter_symbol(inner));
+        assert_eq!(
+            (e.active, e.symbol_breadcrumb()),
+            (inner, vec!["Document".to_string(), "Inner".into()])
+        );
+        assert!(!e.enter_symbol(host), "only library artboards");
+        e.exit_symbol_to(0);
+        assert!(!e.in_symbol_mode());
+        assert_eq!(e.active, host);
+    }
+
+    #[test]
+    fn undoing_the_symbol_away_trims_the_stack() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        e.execute(Command::DrawPixels {
+            layer: e.layer,
+            frame: 0,
+            pixels: vec![(1, 1, red)],
+        });
+        let s = e.convert_to_symbol("S", SymbolTiming::Graphic).unwrap();
+        e.enter_symbol(s);
+        e.undo(); // deshace la conversión: el símbolo ya no existe
+        assert!(!e.in_symbol_mode());
+        assert_eq!(e.active, ArtboardId(1));
+    }
+
+    #[test]
+    fn activating_a_canvas_artboard_leaves_symbol_mode() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        e.execute(Command::DrawPixels {
+            layer: e.layer,
+            frame: 0,
+            pixels: vec![(1, 1, red)],
+        });
+        let s = e.convert_to_symbol("S", SymbolTiming::Graphic).unwrap();
+        assert!(e.enter_symbol(s));
+        // Un clic en el lienzo no activa el host (no se ve).
+        e.pointer_press((1.5, 1.5), false, false, 0.0);
+        e.pointer_release();
+        assert_eq!(e.active, s);
+        // Activarlo desde otro lado (el panel de Artboards) sí sale del modo símbolo.
+        e.activate(ArtboardId(1));
+        assert!(!e.in_symbol_mode());
     }
 }

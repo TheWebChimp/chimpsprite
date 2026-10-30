@@ -112,16 +112,20 @@ impl Editor {
         }
     }
 
-    /// "Entrar al símbolo": activa el artboard fuente de la instancia actual.
+    /// "Entrar al símbolo": con la fuente de la instancia actual en la biblioteca, entra al modo
+    /// símbolo; si está en el lienzo, la activa.
     pub fn enter_instance(&mut self) -> bool {
         let Some(source) = self.instance_key().and_then(|k| k.source) else {
             return false;
         };
-        if self.document.artboard(source).is_none() {
-            return false;
+        match self.document.artboard(source) {
+            None => false,
+            Some(a) if a.in_library => self.enter_symbol(source),
+            Some(_) => {
+                self.activate(source);
+                true
+            }
         }
-        self.activate(source);
-        true
     }
 }
 

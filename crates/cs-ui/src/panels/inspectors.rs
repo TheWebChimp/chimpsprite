@@ -418,7 +418,7 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     }
     gesture_end(editor, &[&first_response]);
     let entered = crate::pixel_ui::text_button(ui, "Edit Symbol")
-        .tip("Go to the source artboard (double-click with Move)")
+        .tip("Edit the source symbol (double-click with Move)")
         .clicked()
         && editor.enter_instance();
     ui.separator();
