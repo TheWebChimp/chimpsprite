@@ -23,6 +23,11 @@ pub enum DocCommand {
         name: Option<String>,
         position: Option<(i32, i32)>,
     },
+    /// Manda un artboard a la biblioteca (`true`) o lo saca al lienzo (`false`).
+    SetArtboardInLibrary {
+        id: ArtboardId,
+        in_library: bool,
+    },
     /// Reemplaza las guías de un artboard.
     SetGuides {
         id: ArtboardId,
@@ -91,7 +96,8 @@ impl DocCommand {
             }
             DocCommand::RemoveArtboard { id } => {
                 let index = doc.index(*id).ok_or(CmdError::ArtboardNotFound(*id))?;
-                if doc.artboards.len() == 1 {
+                let on_canvas = !doc.artboards[index].in_library;
+                if doc.artboards.len() == 1 || (on_canvas && doc.canvas_count() == 1) {
                     return Err(CmdError::LastArtboard);
                 }
                 let artboard = Box::new(doc.artboards.remove(index));
@@ -109,6 +115,18 @@ impl DocCommand {
                     id: *id,
                     name: old_name,
                     position: old_position,
+                })
+            }
+            DocCommand::SetArtboardInLibrary { id, in_library } => {
+                let artboard = doc.artboard(*id).ok_or(CmdError::ArtboardNotFound(*id))?;
+                let old = artboard.in_library;
+                if *in_library && !old && doc.canvas_count() == 1 {
+                    return Err(CmdError::LastArtboard);
+                }
+                doc.artboard_mut(*id).expect("checked").in_library = *in_library;
+                Ok(DocCommand::SetArtboardInLibrary {
+                    id: *id,
+                    in_library: old,
                 })
             }
             DocCommand::SetGuides { id, guides } => {
@@ -194,6 +212,7 @@ impl crate::Undoable for DocCommand {
             DocCommand::AddArtboard { .. } => "New Artboard",
             DocCommand::RemoveArtboard { .. } => "Delete Artboard",
             DocCommand::SetArtboardProps { .. } => "Artboard",
+            DocCommand::SetArtboardInLibrary { .. } => "Library",
             DocCommand::SetGuides { .. } => "Guides",
             DocCommand::SetSymmetry { .. } => "Symmetry",
             DocCommand::SetSprite { .. } => "Sprite",
