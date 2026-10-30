@@ -2916,7 +2916,7 @@ fn deleting_a_symbol_in_use_asks_first() {
         };
         h.click(library.center(), PointerButton::Primary);
         h.frame();
-        let question = "Used by 1 instance. Delete anyway?";
+        let question = "Used by 1 object. Delete anyway?";
         // Pide borrar desde el menú de la fila y contesta `answer` en la confirmación.
         let ask = |h: &mut LayoutHarness, answer: &str| {
             let row = h
@@ -2973,6 +2973,8 @@ fn with_two_objects() -> (LayoutHarness, LayerId, [cs_core::ObjectId; 2]) {
             .unwrap();
     e.execute(cmd);
     let a = e.sprite().layer(layer).unwrap().objects[0].id;
+    // El objeto nuevo queda seleccionado: se arranca sin selección.
+    e.clear_object_selection();
     e.set_tool(ToolKind::Move);
     h.frame();
     (h, layer, [a, b])
@@ -3040,4 +3042,45 @@ fn the_arrange_submenu_is_disabled_without_selected_objects() {
         colors.text,
         "an object is selected"
     );
+}
+
+// El panel Object.
+
+#[test]
+fn the_object_panel_flips_every_selected_object_in_one_undo() {
+    let (mut h, layer, [a, b]) = with_two_objects();
+    h.app.doc.editor.set_selected_objects(vec![a, b]);
+    h.frame();
+    assert!(h.texts.iter().any(|t| t.0 == "Object"), "{:?}", h.texts);
+    assert!(h.texts.iter().any(|t| t.0 == "2 objects selected"));
+    let (_, check, _) = h.checks.iter().find(|c| c.0 == "Flip H").unwrap().clone();
+    h.click(check.center(), PointerButton::Primary);
+    let flips = |h: &LayoutHarness| -> Vec<bool> {
+        let e = &h.app.doc.editor;
+        let objects = &e.sprite().layer(layer).unwrap().objects;
+        objects
+            .iter()
+            .map(|o| o.track.key_at(e.frame).unwrap().flip_h)
+            .collect()
+    };
+    assert_eq!(flips(&h), [true, true]);
+    h.app.doc.editor.undo();
+    assert_eq!(flips(&h), [false, false]);
+}
+
+#[test]
+fn an_empty_object_layer_asks_for_an_object_and_image_layers_show_no_panel() {
+    let (mut h, layer, [a, b]) = with_two_objects();
+    let e = &mut h.app.doc.editor;
+    let cmd = cs_commands::ops::remove_objects(e.sprite(), layer, &[a, b]).unwrap();
+    e.execute(cmd);
+    h.frame();
+    assert!(
+        h.texts
+            .iter()
+            .any(|t| t.0 == "Select an object on the canvas")
+    );
+    h.app.doc.editor.select_layer(LayerId(1));
+    h.frame();
+    assert!(!h.texts.iter().any(|t| t.0 == "Object"));
 }

@@ -461,7 +461,7 @@ impl Session {
         }
         let sprite = &d.artboard(host).expect("resolved").sprite;
         if sprite.color_mode != cs_core::ColorMode::Rgba {
-            return Err(invalid("instances can only be placed in RGBA artboards"));
+            return Err(invalid("objects can only be placed in RGBA artboards"));
         }
         target::frame(sprite, p.frame)?;
         let src = d.artboard(source).expect("resolved");
@@ -523,7 +523,7 @@ impl Session {
             .map_err(|e| invalid(e.to_string()))?;
         self.run(&p.doc, vec![converted.command])?;
         Ok(Reply::text(format!(
-            "symbol {} with instance layer {}",
+            "symbol {} with object layer {}",
             converted.symbol.0, converted.layer.0
         )))
     }
@@ -577,16 +577,13 @@ impl Session {
             .and_then(|object| {
                 ops::update_object_key(sprite, layer, object, p.frame, |k| change.apply(k))
             })
-        .ok_or_else(|| {
-            invalid(
-                "not an instance layer, no keyframe at or before that frame, or nothing changed",
-            )
-        })?;
+            .ok_or_else(|| {
+                invalid(
+                    "not an object layer, no keyframe at or before that frame, or nothing changed",
+                )
+            })?;
         self.run_on(&p.doc, host, vec![cmd])?;
-        Ok(Reply::text(format!(
-            "Instance key set at frame {}.",
-            p.frame
-        )))
+        Ok(Reply::text(format!("Object key set at frame {}.", p.frame)))
     }
 
     pub fn remove_instance_key(&mut self, p: RemoveInstanceKey) -> Result<Reply> {
@@ -594,7 +591,7 @@ impl Session {
         let layer = target::layer(sprite, &p.layer)?;
         let cmd = first_object(sprite, layer)
             .and_then(|object| ops::remove_object_key(sprite, layer, object, p.frame))
-            .ok_or_else(|| invalid(format!("no instance keyframe at frame {}", p.frame)))?;
+            .ok_or_else(|| invalid(format!("no object keyframe at frame {}", p.frame)))?;
         self.run_on(&p.doc, host, vec![cmd])?;
         Ok(Reply::text(format!(
             "Removed the keyframe at frame {}.",

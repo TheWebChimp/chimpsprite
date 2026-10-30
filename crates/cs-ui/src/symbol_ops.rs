@@ -37,7 +37,7 @@ impl Editor {
         symbol::check_convert(&self.document, self.active, &self.symbol_source())
     }
 
-    /// Convierte, selecciona la instancia nueva, borra la marquesina y recuerda el símbolo como
+    /// Convierte, selecciona la capa de objetos nueva y su objeto, borra la marquesina y recuerda el símbolo como
     /// `library_selected`.
     pub fn convert_to_symbol(
         &mut self,
@@ -50,6 +50,15 @@ impl Editor {
             return Err(ConvertError::Empty);
         }
         self.select_layer(c.layer);
+        // El objeto de la capa nueva queda seleccionado (como al soltar un símbolo).
+        let object = self
+            .sprite()
+            .layer(c.layer)
+            .and_then(|l| l.objects.first())
+            .map(|o| o.id);
+        if let Some(object) = object {
+            self.select_object(c.layer, object, false);
+        }
         self.deselect();
         self.library_selected = Some(c.symbol);
         Ok(c.symbol)

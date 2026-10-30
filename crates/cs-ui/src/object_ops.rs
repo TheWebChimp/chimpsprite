@@ -299,9 +299,17 @@ mod tests {
         e.activate(ArtboardId(1));
         e.add_instance_layer(ArtboardId(2));
         let a = e.layer;
-        e.add_instance_layer(ArtboardId(2));
-        let b = e.layer;
-        e.update_instance_key(|k| k.position = (8, 8));
+        // `b` es otra capa, arriba de `a` (`add_instance_layer` agregaría el objeto a `a`).
+        let name = e.document.artboard(ArtboardId(2)).unwrap().name.clone();
+        let cmd = ops::new_object_layer(e.sprite(), Some(a), 0, ArtboardId(2), &name, (8, 8));
+        let Command::AddLayer { layer, .. } = &cmd else {
+            unreachable!()
+        };
+        let b = layer.id;
+        e.execute(cmd);
+        e.select_layer(b);
+        // Los objetos nuevos quedan seleccionados: se arranca sin selección.
+        e.clear_object_selection();
         e.history = Default::default();
         e.set_tool(ToolKind::Move);
         (e, a, b)

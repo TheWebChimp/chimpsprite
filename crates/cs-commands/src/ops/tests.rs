@@ -1051,3 +1051,44 @@ fn duplicate_and_move_objects_moves_only_the_copies() {
     assert!(duplicate_and_move_objects(&s, id, &ids(&[2]), 1, 0, 0).is_none());
     assert!(duplicate_and_move_objects(&s, id, &ids(&[9]), 1, 1, 0).is_none());
 }
+
+#[test]
+fn update_objects_key_changes_several_objects_in_one_command() {
+    let (mut s, id) = four_objects();
+    let before = s.clone();
+    let undo = update_objects_key(&s, id, &ids(&[1, 3]), 0, |k| k.flip_h = true)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    let flipped: Vec<bool> = s
+        .layer(id)
+        .unwrap()
+        .objects
+        .iter()
+        .map(|o| o.track.keys[0].flip_h)
+        .collect();
+    assert_eq!(flipped, vec![true, false, true, false]);
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    // Nada cambia, o ninguno existe.
+    assert!(update_objects_key(&s, id, &ids(&[1]), 0, |_| {}).is_none());
+    assert!(update_objects_key(&s, id, &ids(&[9]), 0, |k| k.flip_h = true).is_none());
+}
+
+#[test]
+fn rename_object_and_undo() {
+    let (mut s, id) = four_objects();
+    let before = s.clone();
+    let undo = rename_object(&s, id, ObjectId(2), "Coin")
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    assert_eq!(s.layer(id).unwrap().objects[1].name, "Coin");
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    assert!(
+        rename_object(&s, id, ObjectId(2), "B").is_none(),
+        "same name"
+    );
+    assert!(rename_object(&s, id, ObjectId(9), "X").is_none());
+}

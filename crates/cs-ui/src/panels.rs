@@ -614,12 +614,11 @@ fn status_notices(
     if let Some(text) = editor.mask_status() {
         out.push((text.to_string(), false));
     }
-    let on_instance = editor
-        .sprite()
-        .layer(editor.layer)
-        .is_some_and(|l| l.kind == cs_core::LayerKind::Objects);
-    if on_instance && editor.active_tool().paints() {
-        out.push(("Instance layer: edit the source artboard".to_owned(), false));
+    if editor.on_object_layer() && editor.active_tool().paints() {
+        out.push((
+            "Object layer: edit the symbol (double-click)".to_owned(),
+            false,
+        ));
     }
     if let Some(text) = editor.tiles_status() {
         out.push((text.to_string(), false));

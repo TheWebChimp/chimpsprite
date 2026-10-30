@@ -82,7 +82,7 @@ impl ChimpApp {
     fn sprite_menu(&mut self, ui: &mut egui::Ui) {
         use cs_commands::sprite_ops::{self, Rotation};
         use sprite_dialogs::{DuplicateDialog, PropertiesDialog, SpriteDialog, SpriteSizeDialog};
-        const NO_TRANSFORM: &str = "Not available with instance or tilemap layers";
+        const NO_TRANSFORM: &str = "Not available with object or tilemap layers";
         if ui
             .add(menus::item(
                 "Properties",

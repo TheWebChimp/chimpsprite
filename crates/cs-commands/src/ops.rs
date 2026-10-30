@@ -73,15 +73,55 @@ pub fn update_object_key(
     frame: usize,
     f: impl FnOnce(&mut InstanceKey),
 ) -> Option<Command> {
-    let objects = &sprite.layer(layer)?.objects;
-    let i = objects.iter().position(|o| o.id == object)?;
-    let track = &objects[i].track;
-    let mut key = *track.key_at(frame)?;
-    key.frame = frame;
-    f(&mut key);
-    let mut new = objects.clone();
-    new[i].track.set_key(key);
-    (new[i].track != *track).then_some(Command::SetObjects {
+    let mut f = Some(f);
+    update_objects_key(sprite, layer, &[object], frame, |k| {
+        if let Some(f) = f.take() {
+            f(k);
+        }
+    })
+}
+
+/// Como `update_object_key`, sobre cada uno de `objects` en un solo comando (un paso de undo).
+/// Los que no existen o no tienen key vigente en `frame` se saltean; `None` si nada cambia.
+pub fn update_objects_key(
+    sprite: &Sprite,
+    layer: LayerId,
+    objects: &[ObjectId],
+    frame: usize,
+    mut f: impl FnMut(&mut InstanceKey),
+) -> Option<Command> {
+    let old = &sprite.layer(layer)?.objects;
+    let mut new = old.clone();
+    for o in new.iter_mut().filter(|o| objects.contains(&o.id)) {
+        let Some(&key) = o.track.key_at(frame) else {
+            continue;
+        };
+        let mut key = key;
+        key.frame = frame;
+        f(&mut key);
+        o.track.set_key(key);
+    }
+    (new != *old).then_some(Command::SetObjects {
+        layer,
+        objects: new,
+    })
+}
+
+/// Le pone `name` a `object` de `layer`. `None` si no existe o ya se llama así.
+pub fn rename_object(
+    sprite: &Sprite,
+    layer: LayerId,
+    object: ObjectId,
+    name: &str,
+) -> Option<Command> {
+    let old = &sprite.layer(layer)?.objects;
+    let i = old.iter().position(|o| o.id == object)?;
+    if old[i].name == name {
+        return None;
+    }
+    let mut new = old.clone();
+    new[i].name = name.to_string();
+    Some(Command::SetObjects {
         layer,
         objects: new,
     })
