@@ -207,7 +207,7 @@ impl Editor {
                 // El aviso de límite de tamaño era de la capa anterior.
                 self.tile_limit = false;
                 // Los objetos seleccionados eran de la otra capa.
-                self.selected_objects.clear();
+                self.set_selected_objects(Vec::new());
             }
             self.layer = id;
             self.edit_mask = false;

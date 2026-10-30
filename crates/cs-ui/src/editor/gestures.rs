@@ -217,7 +217,7 @@ impl Editor {
             dither: self.options.dither,
             selected_slice: self.slice,
             tiles: false,
-            objects: &self.selected_objects,
+            objects: self.selected_objects(),
             copy_objects: self.object_copy,
         }
     }
@@ -393,7 +393,7 @@ impl Editor {
                 Some((layer, object)) => {
                     // Un clic sobre uno ya seleccionado conserva la selección (para arrastrarla
                     // entera).
-                    let selected = layer == self.layer && self.selected_objects.contains(&object);
+                    let selected = layer == self.layer && self.selected_objects().contains(&object);
                     if shift || !selected {
                         self.select_object(layer, object, shift);
                     }
@@ -558,10 +558,11 @@ impl Editor {
         };
         let before = ids(self);
         if self.named("Duplicate Objects", |e| e.execute(cmd)) {
-            self.selected_objects = ids(self)
+            let copies = ids(self)
                 .into_iter()
                 .filter(|o| !before.contains(o))
                 .collect();
+            self.set_selected_objects(copies);
             self.revision += 1;
         }
     }

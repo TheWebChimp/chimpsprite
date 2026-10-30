@@ -932,17 +932,14 @@ impl CanvasView {
             draw_marching_ants(&painter, mask, origin, self.scale(), phase, self.pixel_ui);
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
         }
-        // Los objetos seleccionados: un recuadro punteado alrededor de lo que se ve de cada uno
-        // (con el arrastre en curso).
-        if let Some(origin) = active_origin
-            && !editor.selected_objects.is_empty()
-        {
-            let color = crate::pixel_ui::frame_skin(&ctx)
-                .map_or(theme::ACCENT, |skin| skin.colors().selection);
-            for &object in &editor.selected_objects {
-                if let Some(b) =
-                    crate::object_ops::object_bounds_in(document, editor, editor.layer, object)
-                {
+        // Los objetos seleccionados (con Move): un recuadro punteado alrededor de lo que se ve
+        // de cada uno, con el arrastre en curso.
+        if let Some(origin) = active_origin {
+            let outlines = editor.object_outlines(document);
+            if !outlines.is_empty() {
+                let color = crate::pixel_ui::frame_skin(&ctx)
+                    .map_or(theme::ACCENT, |skin| skin.colors().selection);
+                for b in outlines {
                     draw_object_outline(&painter, b, origin, self.scale(), color);
                 }
             }

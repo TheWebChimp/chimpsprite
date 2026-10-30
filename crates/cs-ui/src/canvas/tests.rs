@@ -2270,7 +2270,9 @@ fn a_selected_object_gets_a_dotted_outline() {
     };
     h.frame(vec![]);
     assert!(outline(&h).is_empty(), "nothing selected");
-    h.editor.selected_objects = vec![h.editor.current_object().unwrap()];
+    let (layer, object) = (h.editor.layer, h.editor.current_object().unwrap());
+    h.editor.set_tool(ToolKind::Move);
+    h.editor.select_object(layer, object, false);
     h.frame(vec![]);
     let dashes = outline(&h);
     assert!(dashes.len() > 4, "dotted: {dashes:?}");
@@ -2279,5 +2281,55 @@ fn a_selected_object_gets_a_dotted_outline() {
     assert!(
         (bounds.min - expected.min).length() < 0.01 && (bounds.max - expected.max).length() < 0.01,
         "{bounds:?} vs {expected:?}"
+    );
+}
+
+#[test]
+fn with_another_tool_a_selected_object_has_no_outline() {
+    let mut h = Harness::new();
+    h.editor.add_artboard(2, 2);
+    let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    h.editor.execute(Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: vec![(0, 0, red)],
+    });
+    let symbol = h.editor.active;
+    assert!(h.editor.move_active_to_library());
+    h.editor.add_instance_layer(symbol);
+    let (layer, object) = (h.editor.layer, h.editor.current_object().unwrap());
+    h.editor.set_tool(ToolKind::Move);
+    h.editor.select_object(layer, object, false);
+    let accent = |h: &Harness| {
+        h.shapes.iter().any(
+            |s| matches!(s, egui::Shape::LineSegment { stroke, .. } if stroke.color == theme::ACCENT),
+        )
+    };
+    h.frame(vec![]);
+    assert!(accent(&h));
+    h.editor.set_tool(ToolKind::Pencil);
+    h.frame(vec![]);
+    assert!(!accent(&h));
+}
+
+#[test]
+fn in_symbol_mode_a_double_click_on_drawn_pixels_does_not_leave() {
+    let (mut h, symbol) = in_a_symbol();
+    let at = h.screen((0, 0));
+    h.click(at, PointerButton::Primary);
+    h.click(at, PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(h.editor.in_symbol_mode(), "inside the symbol");
+    assert_eq!(h.editor.active, symbol);
+    let empty = h.screen((8, 8));
+    for _ in 0..10 {
+        h.frame(vec![]);
+    }
+    h.click(empty, PointerButton::Primary);
+    h.click(empty, PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(
+        h.editor.in_symbol_mode(),
+        "an empty pixel inside is still inside"
     );
 }

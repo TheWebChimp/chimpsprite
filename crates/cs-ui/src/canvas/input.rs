@@ -609,15 +609,17 @@ impl CanvasView {
             editor.finish_gesture();
         }
         // Doble clic con Move: sobre un objeto, lo selecciona y entra a su fuente (a un símbolo
-        // de la biblioteca, en el modo símbolo); donde no hay objetos, en el modo símbolo sale
-        // un nivel. No sobre la barra o la etiqueta (renombra), las reglas ni la migaja de pan.
+        // de la biblioteca, en el modo símbolo); fuera del símbolo que se edita sale un nivel. No
+        // sobre la barra o la etiqueta (renombra), las reglas ni la migaja de pan.
         if response.double_clicked()
             && editor.active_tool() == ToolKind::Move
             && over_label.is_none()
             && let Some(p) = pointer.filter(|&p| area.contains(p))
         {
-            match editor.open_object_at(self.to_world(rect, p)) {
-                None if editor.in_symbol_mode() => {
+            let world = self.to_world(rect, p);
+            let outside = !editor.artboard().contains(world);
+            match editor.open_object_at(world) {
+                None if editor.in_symbol_mode() && outside => {
                     editor.exit_symbol_to(editor.symbol_stack.len() - 1);
                     ui.ctx().request_repaint();
                 }

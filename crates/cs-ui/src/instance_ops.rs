@@ -122,7 +122,7 @@ impl Editor {
         let l = self.sprite().layer(layer)?;
         let selected = (layer == self.layer)
             .then(|| {
-                self.selected_objects
+                self.selected_objects()
                     .iter()
                     .find(|&&o| l.object(o).is_some())
             })

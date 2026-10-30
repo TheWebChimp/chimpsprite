@@ -1453,9 +1453,12 @@ impl eframe::App for ChimpApp {
 /// borra y, en modo Tiles, X e Y voltean el tile del pincel. Devuelve si la usó (si no, va al
 /// registro de atajos).
 pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
-    // Con objetos seleccionados (y sin marquesina), las flechas los corren 1 px (10 con Shift).
+    // Con Move y objetos seleccionados, Delete los borra y (sin marquesina) las flechas los
+    // corren 1 px (10 con Shift).
     let step = if shift { 10 } else { 1 };
-    let objects = !editor.selected_objects.is_empty() && !editor.can_transform();
+    let palette = editor.palette_range().is_some_and(|r| r.end() > r.start());
+    let objects = editor.tool == ToolKind::Move && !editor.selected_objects().is_empty();
+    let nudge_objects = objects && editor.selection.is_none() && !editor.can_transform();
     match key {
         Key::Enter if editor.is_pending() => editor.finish_gesture(),
         Key::Enter if editor.is_floating() => {
@@ -1474,22 +1477,23 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
         Key::ArrowDown if editor.can_transform() => {
             editor.nudge(0, 1);
         }
-        Key::ArrowLeft if objects => {
+        Key::ArrowLeft if nudge_objects => {
             editor.nudge_selected_objects(-step, 0);
         }
-        Key::ArrowRight if objects => {
+        Key::ArrowRight if nudge_objects => {
             editor.nudge_selected_objects(step, 0);
         }
-        Key::ArrowUp if objects => {
+        Key::ArrowUp if nudge_objects => {
             editor.nudge_selected_objects(0, -step);
         }
-        Key::ArrowDown if objects => {
+        Key::ArrowDown if nudge_objects => {
             editor.nudge_selected_objects(0, step);
         }
         Key::X if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_X),
         Key::Y if editor.tiles_mode() => editor.toggle_brush_flip(cs_core::Tile::FLIP_Y),
-        // Los objetos seleccionados se borran antes que el rango de cels o la selección.
-        Key::Delete | Key::Backspace if !editor.selected_objects.is_empty() => {
+        // Los objetos seleccionados se borran antes que el rango de cels o la selección (pero
+        // con colores de la paleta seleccionados, Delete es para ellos).
+        Key::Delete | Key::Backspace if objects && !palette => {
             editor.delete_selected_objects();
         }
         // Con un rango de cels en el timeline y nada seleccionado en el lienzo, Delete los borra.
@@ -1497,11 +1501,7 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
             editor.clear_selected_cels()
         }
         // Con colores de la paleta seleccionados, Delete es para ellos (lo hace la paleta).
-        Key::Delete | Key::Backspace
-            if !editor.palette_range().is_some_and(|r| r.end() > r.start()) =>
-        {
-            editor.clear_selection_content()
-        }
+        Key::Delete | Key::Backspace if !palette => editor.clear_selection_content(),
         _ => return false,
     }
     true
