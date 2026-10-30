@@ -66,3 +66,237 @@ fn place_on_canvas_keeps_its_spot_or_goes_to_the_right() {
     assert_eq!(d.artboard(ArtboardId(2)).unwrap().position, (8 + 16, 0));
     assert!(!d.artboard(ArtboardId(2)).unwrap().in_library);
 }
+
+const RED: PixelValue = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+const BLUE: PixelValue = PixelValue::Rgba(Rgba::rgb(0, 0, 255));
+
+/// Host de 8×8 con 3 frames de duraciones desiguales. Capa 1 (abajo): un píxel rojo que se
+/// mueve (2,3) → (3,3) → (4,4). Capa 2 (arriba): un píxel azul fijo en (6,6).
+fn animated() -> Document {
+    let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+    s.frames[0].duration_ms = 100;
+    for (index, ms) in [(1, 50), (2, 200)] {
+        crate::Command::AddFrame {
+            index,
+            frame: Frame { duration_ms: ms },
+        }
+        .apply(&mut s)
+        .unwrap();
+    }
+    crate::ops::new_layer(&s.clone(), Some(LayerId(1)), LayerKind::Image)
+        .apply(&mut s)
+        .unwrap();
+    for (frame, (x, y)) in [(0, (2, 3)), (1, (3, 3)), (2, (4, 4))] {
+        crate::Command::DrawPixels {
+            layer: LayerId(1),
+            frame,
+            pixels: vec![(x, y, RED)],
+        }
+        .apply(&mut s)
+        .unwrap();
+    }
+    for frame in 0..3 {
+        crate::Command::DrawPixels {
+            layer: LayerId(2),
+            frame,
+            pixels: vec![(6, 6, BLUE)],
+        }
+        .apply(&mut s)
+        .unwrap();
+    }
+    Document::with_sprite("host", s)
+}
+
+/// Cada frame del host, materializado y renderizado.
+fn rendered(doc: &Document, id: ArtboardId) -> Vec<Vec<Rgba>> {
+    let s = &doc.artboard(id).unwrap().sprite;
+    (0..s.frames.len())
+        .map(|f| cs_render::render_frame(&cs_render::materialize(doc, s, f..f + 1), f))
+        .collect()
+}
+
+/// Mete `ids` (en ese orden) en un grupo nuevo, el 3, arriba de todo.
+fn group(d: &mut Document, ids: &[LayerId]) {
+    let s = &mut d.artboards[0].sprite;
+    crate::ops::new_layer(&s.clone(), Some(LayerId(2)), LayerKind::Group)
+        .apply(s)
+        .unwrap();
+    for &id in ids {
+        crate::ops::move_layer(&s.clone(), id, crate::ops::LayerDrop::Into(LayerId(3)))
+            .unwrap()
+            .apply(s)
+            .unwrap();
+    }
+}
+
+#[test]
+fn converting_layers_looks_the_same_in_both_timings() {
+    for timing in [SymbolTiming::Graphic, SymbolTiming::MovieClip] {
+        let mut d = animated();
+        let before = rendered(&d, ArtboardId(1));
+        let source = SymbolSource::Layers(vec![LayerId(1)]);
+        let c = convert_to_symbol(&d, ArtboardId(1), &source, "Dot", timing).unwrap();
+        let undo = c.command.apply(&mut d).unwrap();
+        assert_eq!(rendered(&d, ArtboardId(1)), before, "{timing:?}");
+
+        let symbol = d.artboard(c.symbol).unwrap();
+        assert!(symbol.in_library);
+        assert_eq!(symbol.name, "Dot");
+        // La unión de (2,3), (3,3) y (4,4): 3×2 desde (2,3).
+        assert_eq!((symbol.sprite.width, symbol.sprite.height), (3, 2));
+        assert_eq!(
+            symbol.sprite.frames,
+            d.artboard(ArtboardId(1)).unwrap().sprite.frames
+        );
+
+        let host = &d.artboard(ArtboardId(1)).unwrap().sprite;
+        assert!(
+            host.layer(LayerId(1)).is_none(),
+            "the layer moved into the symbol"
+        );
+        let layer = host.layer(c.instance).unwrap();
+        assert_eq!(
+            (layer.kind, layer.name.as_str()),
+            (LayerKind::Instance, "Dot")
+        );
+        let key = layer.instance.as_ref().unwrap().keys[0];
+        assert_eq!(
+            (key.frame, key.source, key.position),
+            (0, Some(c.symbol), (2, 3))
+        );
+        assert_eq!(key.timing, timing.timing());
+        // La instancia queda donde estaba la capa: debajo de la capa 2.
+        assert!(host.layer_index(c.instance) < host.layer_index(LayerId(2)));
+
+        undo.apply(&mut d).unwrap();
+        assert_eq!(d, animated(), "one undo restores everything");
+    }
+}
+
+#[test]
+fn groups_keep_their_structure_and_empty_ones_go_away() {
+    let mut d = animated();
+    // Grupo 3 con la capa 1 adentro.
+    group(&mut d, &[LayerId(1)]);
+    let before = rendered(&d, ArtboardId(1));
+    // Convertir solo la capa 1: el grupo 3 queda vacío en el host y se borra.
+    let c = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![LayerId(1)]),
+        "Dot",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    c.command.apply(&mut d).unwrap();
+    assert_eq!(rendered(&d, ArtboardId(1)), before);
+    let symbol = &d.artboard(c.symbol).unwrap().sprite;
+    assert_eq!(symbol.layer(LayerId(1)).unwrap().parent, Some(LayerId(3)));
+    assert_eq!(symbol.layer(LayerId(3)).unwrap().kind, LayerKind::Group);
+    // En el host, la instancia ocupa el lugar del grupo, que ya no existe.
+    let host = &d.artboard(ArtboardId(1)).unwrap().sprite;
+    assert!(host.layer(LayerId(3)).is_none());
+    assert_eq!(host.layer(c.instance).unwrap().parent, None);
+    assert!(host.is_valid_tree() && symbol.is_valid_tree());
+}
+
+#[test]
+fn a_group_that_stays_applies_only_once() {
+    let mut d = animated();
+    // Grupo 3 a media opacidad con las capas 2 y 1 adentro.
+    group(&mut d, &[LayerId(2), LayerId(1)]);
+    d.artboards[0].sprite.layer_mut(LayerId(3)).unwrap().opacity = 128;
+    let before = rendered(&d, ArtboardId(1));
+    let c = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![LayerId(1)]),
+        "Dot",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    c.command.apply(&mut d).unwrap();
+    assert_eq!(rendered(&d, ArtboardId(1)), before);
+    // El grupo sigue en el host (le queda la capa 2) y la instancia va adentro; el símbolo no
+    // lo copia (si no, su opacidad se aplicaría dos veces).
+    let host = &d.artboard(ArtboardId(1)).unwrap().sprite;
+    assert_eq!(host.layer(c.instance).unwrap().parent, Some(LayerId(3)));
+    assert!(host.is_valid_tree());
+    let symbol = &d.artboard(c.symbol).unwrap().sprite;
+    assert!(symbol.layer(LayerId(3)).is_none());
+    assert_eq!(symbol.layer(LayerId(1)).unwrap().parent, None);
+}
+
+#[test]
+fn layer_masks_move_with_the_crop() {
+    let mut d = animated();
+    // Máscara que tapa la columna x = 3: el rojo del frame 1 no se ve.
+    let mut mask = LayerMask::filled(8, 8, 255);
+    std::sync::Arc::make_mut(&mut mask.data)[3 * 8 + 3] = 0;
+    d.artboards[0].sprite.layer_mut(LayerId(1)).unwrap().mask = Some(mask);
+    let before = rendered(&d, ArtboardId(1));
+    let c = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![LayerId(1)]),
+        "Dot",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    c.command.apply(&mut d).unwrap();
+    assert_eq!(rendered(&d, ArtboardId(1)), before);
+}
+
+#[test]
+fn converting_an_instance_layer_nests_and_looks_the_same() {
+    let mut d = animated();
+    let first = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![LayerId(1)]),
+        "Dot",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    first.command.apply(&mut d).unwrap();
+    let before = rendered(&d, ArtboardId(1));
+    let outer = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![first.instance]),
+        "Outer",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    outer.command.apply(&mut d).unwrap();
+    assert_eq!(rendered(&d, ArtboardId(1)), before);
+    assert_eq!(d.instance_sources(outer.symbol), vec![first.symbol]);
+}
+
+#[test]
+fn convert_errors() {
+    let d = animated();
+    let layers = |ids: &[u32]| SymbolSource::Layers(ids.iter().map(|&i| LayerId(i)).collect());
+    let run = |d: &Document, src: &SymbolSource| {
+        convert_to_symbol(d, ArtboardId(1), src, "S", SymbolTiming::Graphic).err()
+    };
+    assert_eq!(run(&d, &layers(&[])), Some(ConvertError::NoLayers));
+    assert_eq!(run(&d, &layers(&[99])), Some(ConvertError::NoLayers));
+
+    let mut empty = d.clone();
+    let s = &mut empty.artboards[0].sprite;
+    crate::ops::new_layer(&s.clone(), None, LayerKind::Image)
+        .apply(s)
+        .unwrap();
+    assert_eq!(run(&empty, &layers(&[3])), Some(ConvertError::Empty));
+
+    let mut indexed = d.clone();
+    indexed.artboards[0].sprite.color_mode = ColorMode::Indexed {
+        transparent_index: 0,
+    };
+    assert_eq!(run(&indexed, &layers(&[1])), Some(ConvertError::NotRgba));
+
+    let mut tiles = d.clone();
+    tiles.artboards[0].sprite.layers[0].kind = LayerKind::Tilemap;
+    assert_eq!(run(&tiles, &layers(&[1])), Some(ConvertError::Tilemap));
+}
