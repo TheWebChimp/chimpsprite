@@ -7,9 +7,10 @@
 //! - **Combo:** `field.combo` en 9-slice, de las filas 2 a 17. El texto empieza 6 px adentro
 //!   (borde y 5 de relleno), y entre su tinta y la parte de la flecha (las 10 columnas del borde
 //!   derecho de la pieza) quedan 5. La lista es el panel de los menús (`menus::dropdown`).
-//! - **Número:** `field.number`, de 27 de ancho, con un `DragValue` de egui sin marco encima: se
-//!   arrastra o se escribe como siempre. Con unidad, `field.unit` ("px") tapa sus 2 últimas
-//!   columnas.
+//! - **Número:** el campo numérico del UI kit (`kit::input`), de 27 de ancho, con un `DragValue`
+//!   de egui sin marco adentro: se arrastra o se escribe como siempre. Con unidad, la caja
+//!   `field.unit` ("px") a la derecha; con letra, la caja `field.prefix` a la izquierda. Sus
+//!   mayúsculas, en la fila 5 del campo (una más abajo que los textos de la barra).
 //! - **Casilla:** `field.check.on`, 13×14 desde la fila 3, y el texto 3 px después. Sin marcar va
 //!   `field.check`; mientras el skin no la traiga (el diseño no la muestra), un cuadro plano de
 //!   respaldo. Las de los menús (`menu.check`, `menu.check.on`) no sirven: son otro dibujo, de
@@ -21,12 +22,14 @@
 use std::ops::RangeInclusive;
 
 use eframe::egui::{
-    self, Color32, Layout, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
-    WidgetInfo, WidgetType, emath, pos2, vec2,
+    self, Color32, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, WidgetInfo,
+    WidgetType, emath, pos2, vec2,
 };
 use eframe::emath::GuiRounding as _;
 
 use crate::kit::button::Led;
+use crate::kit::input::{self, Affixes, NumberOptions};
+pub(crate) use crate::kit::input::{NumberLook, drag_number};
 use crate::kit::{self, GroupItem};
 use crate::menus::{self, MenuLook, galley, ink_width, solid};
 use crate::pixel_ui;
@@ -35,8 +38,6 @@ use crate::skin::{Piece, Skin, WidgetState};
 use crate::tab_bar;
 
 const COMBO: &str = "field.combo";
-const NUMBER: &str = "field.number";
-const UNIT: &str = "field.unit";
 const CHECK: &str = "field.check";
 const CHECK_ON: &str = "field.check.on";
 
@@ -65,9 +66,6 @@ const FALLBACK_COMBO_RIGHT: f32 = 10.0;
 /// El campo numérico de borde a borde: 1 de borde, 25 de blanco y 1 de borde (en el diseño, x
 /// 278..304, donde la unidad pone su línea divisoria).
 const NUMBER_WIDTH: f32 = 27.0;
-/// La unidad empieza en la última columna blanca del campo y tapa su esquina.
-const UNIT_OVERLAP: f32 = 2.0;
-const FALLBACK_UNIT_WIDTH: f32 = 17.0;
 /// La casilla, una fila más abajo que los campos (en el diseño, y 74..87).
 const CHECK_TOP: f32 = 3.0;
 const FALLBACK_CHECK_SIZE: Vec2 = vec2(13.0, 14.0);
@@ -366,9 +364,10 @@ const BRUSH_BUTTON_W: f32 = 25.0;
 const BRUSH_ICON_CENTER: Vec2 = vec2(12.0, 7.0);
 const BRUSH_ICON_MAX: u32 = 9;
 
-/// Un campo numérico: `field.number` y, con `px`, la unidad `field.unit` a la derecha. Adentro va
-/// un `DragValue` de egui sin marco (se arrastra o, con un clic, se escribe), con la velocidad
-/// según el rango. Devuelve su respuesta.
+/// Un campo numérico del UI kit ([`kit::input`](crate::kit::input)) en las filas de los campos:
+/// de `NUMBER_WIDTH` y, con `px`, la caja de la unidad a la derecha (el campo crece lo que mide la
+/// caja menos su columna de borde). El número va centrado en el blanco; se arrastra o, con un
+/// clic, se escribe. Devuelve su respuesta.
 pub fn number<Num: emath::Numeric>(
     ui: &mut Ui,
     look: BarLook,
@@ -377,67 +376,32 @@ pub fn number<Num: emath::Numeric>(
     range: RangeInclusive<Num>,
     px: bool,
 ) -> Response {
-    let colors = *look.skin.colors();
-    let unit = px.then(|| look.piece(UNIT));
-    let unit_width = match unit {
-        Some(piece) => piece.map_or(FALLBACK_UNIT_WIDTH, |p| size_of(p).x) - UNIT_OVERLAP,
-        None => 0.0,
+    let affixes = if px {
+        Affixes::suffix("px")
+    } else {
+        Affixes::NONE
     };
-    let (rect, _) = ui.allocate_exact_size(
-        vec2(NUMBER_WIDTH + unit_width, FIELD_HEIGHT),
-        Sense::hover(),
-    );
-    let field = Rect::from_min_size(
-        pos2(rect.left().round(), look.top + FIELD_TOP),
-        vec2(NUMBER_WIDTH, FIELD_HEIGHT),
-    );
-    let ppp = ui.ctx().pixels_per_point();
-    let back = painter(ui, look);
-    let mut shapes = match look.piece(NUMBER) {
-        Some(piece) => pixel_ui::piece_shapes(piece, field, ppp),
-        None => flat_box(look, field, ppp),
-    };
-    if let Some(unit) = unit {
-        let at = pos2(field.right() - UNIT_OVERLAP, field.top());
-        shapes.extend(match unit {
-            Some(piece) => {
-                // A lo alto, el del campo (la pieza estira sus filas de abajo).
-                let size = vec2(size_of(piece).x, FIELD_HEIGHT);
-                pixel_ui::piece_shapes(piece, Rect::from_min_size(at, size), ppp)
-            }
-            None => flat_box(
-                look,
-                Rect::from_min_size(at, vec2(FALLBACK_UNIT_WIDTH, FIELD_HEIGHT)),
-                ppp,
-            ),
-        });
-    }
-    back.extend(shapes);
-    // El número, en el blanco del campo y con las mayúsculas en la fila de los textos: el
-    // `DragValue` centra su texto en un rect del alto del texto.
-    let probe = galley(ui, "0", colors.text);
-    let caps = -tab_bar::text_pos(&probe, 0.0, 0.0, ppp).y;
-    let inner = Rect::from_min_size(
-        pos2(field.left() + 1.0, look.top + CAPS_TOP - caps),
-        vec2(NUMBER_WIDTH - 2.0, probe.size().y),
-    );
-    // Todo lo dibujado (el campo y la unidad) responde al clic y al arrastre, no solo el texto.
-    let (start, end) = (range.start().to_f64(), range.end().to_f64());
-    let speed = ((end - start) / 128.0).clamp(0.1, 1.0);
-    let whole = Rect::from_min_max(
-        field.min,
-        pos2(rect.right().max(field.right()), field.bottom()),
-    );
-    let look = NumberLook {
-        text: colors.text,
-        outline: colors.outline,
+    let unit = affixes
+        .suffix
+        .map_or(0.0, |u| input::box_width(ui, u) - input::OUTLINE);
+    let options = NumberOptions {
+        affixes,
         align: egui::Align::Center,
+        speed: None,
     };
-    drag_number(ui, whole, inner, id_salt, value, range, speed, look).0
+    bar_number(
+        ui,
+        look,
+        NUMBER_WIDTH + unit,
+        id_salt,
+        value,
+        range,
+        options,
+    )
 }
 
-/// Un campo numérico con su unidad escrita adentro, a la derecha (el `%` de Sprite Size): el
-/// mismo `field.number`, de `SUFFIX_FIELD_WIDTH`, y el número a la izquierda.
+/// Un campo numérico con su unidad (el `%` de Sprite Size) en la caja de la derecha, de
+/// `SUFFIX_FIELD_WIDTH`, con el número a la izquierda.
 pub fn number_with_suffix<Num: emath::Numeric>(
     ui: &mut Ui,
     look: BarLook,
@@ -446,43 +410,15 @@ pub fn number_with_suffix<Num: emath::Numeric>(
     range: RangeInclusive<Num>,
     suffix: &str,
 ) -> Response {
-    let colors = *look.skin.colors();
-    let width = SUFFIX_FIELD_WIDTH;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
-    let field = Rect::from_min_size(
-        pos2(rect.left().round(), look.top + FIELD_TOP),
-        vec2(width, FIELD_HEIGHT),
-    );
-    let ppp = ui.ctx().pixels_per_point();
-    let mut shapes = match look.piece(NUMBER) {
-        Some(piece) => pixel_ui::piece_shapes(piece, field, ppp),
-        None => flat_box(look, field, ppp),
+    let options = NumberOptions {
+        affixes: Affixes::suffix(suffix),
+        ..Default::default()
     };
-    // La unidad, contra el borde derecho del blanco.
-    let unit = galley(ui, suffix, colors.text);
-    let unit_left = (field.right() - SUFFIX_PAD - unit.size().x).round();
-    let at = tab_bar::text_pos(&unit, unit_left, look.top + CAPS_TOP, ppp);
-    shapes.push(Shape::galley(at, unit, colors.text));
-    painter(ui, look).extend(shapes);
-    let probe = galley(ui, "0", colors.text);
-    let caps = -tab_bar::text_pos(&probe, 0.0, 0.0, ppp).y;
-    let inner = Rect::from_min_max(
-        pos2(field.left() + SUFFIX_PAD, look.top + CAPS_TOP - caps),
-        pos2(unit_left - 1.0, look.top + CAPS_TOP - caps + probe.size().y),
-    );
-    let (start, end) = (range.start().to_f64(), range.end().to_f64());
-    let speed = ((end - start) / 128.0).clamp(0.1, 1.0);
-    let look = NumberLook {
-        text: colors.text,
-        outline: colors.outline,
-        align: egui::Align::Min,
-    };
-    drag_number(ui, field, inner, id_salt, value, range, speed, look).0
+    bar_number(ui, look, SUFFIX_FIELD_WIDTH, id_salt, value, range, options)
 }
 
-/// Un campo numérico con una letra adelante (la `W` de "W 11.47"): el mismo `field.number`, de
-/// `PREFIX_FIELD_WIDTH`, con la letra sobre el color del lienzo a la izquierda y el número en
-/// el blanco que queda.
+/// Un campo numérico con una letra adelante (la `W` de "W 11.47"), en la caja del prefijo, de
+/// `PREFIX_FIELD_WIDTH`, con el número en el blanco que queda.
 pub fn number_with_prefix<Num: emath::Numeric>(
     ui: &mut Ui,
     look: BarLook,
@@ -491,157 +427,39 @@ pub fn number_with_prefix<Num: emath::Numeric>(
     range: RangeInclusive<Num>,
     prefix: &str,
 ) -> Response {
-    let colors = *look.skin.colors();
-    let width = PREFIX_FIELD_WIDTH;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
-    let field = Rect::from_min_size(
-        pos2(rect.left().round(), look.top + FIELD_TOP),
-        vec2(width, FIELD_HEIGHT),
-    );
-    let ppp = ui.ctx().pixels_per_point();
-    let mut shapes = match look.piece(NUMBER) {
-        Some(piece) => pixel_ui::piece_shapes(piece, field, ppp),
-        None => flat_box(look, field, ppp),
-    };
-    // La letra, dentro del borde: el color del lienzo y, en la fila de abajo del blanco (su
-    // sombra), el fondo.
-    let cell = Rect::from_min_size(
-        field.min + vec2(1.0, 1.0),
-        vec2(PREFIX_WIDTH, FIELD_HEIGHT - 4.0),
-    );
-    shapes.push(Shape::rect_filled(cell, 0.0, colors.canvas));
-    let shade = Rect::from_min_size(cell.left_bottom(), vec2(PREFIX_WIDTH, 1.0));
-    shapes.push(Shape::rect_filled(shade, 0.0, colors.background));
-    let letter = galley(ui, prefix, colors.field_text);
-    let left = (cell.center().x - letter.size().x / 2.0).round();
-    let at = tab_bar::text_pos(&letter, left, look.top + CAPS_TOP, ppp);
-    shapes.push(Shape::galley(at, letter, colors.field_text));
-    painter(ui, look).extend(shapes);
-    let probe = galley(ui, "0", colors.text);
-    let caps = -tab_bar::text_pos(&probe, 0.0, 0.0, ppp).y;
-    let inner = Rect::from_min_max(
-        pos2(cell.right() + PREFIX_PAD, look.top + CAPS_TOP - caps),
-        pos2(
-            field.right() - 2.0,
-            look.top + CAPS_TOP - caps + probe.size().y,
-        ),
-    );
     let (start, end) = (range.start().to_f64(), range.end().to_f64());
-    let speed = ((end - start) / 128.0).clamp(0.01, 1.0);
-    let look = NumberLook {
-        text: colors.text,
-        outline: colors.outline,
-        align: egui::Align::Min,
+    let options = NumberOptions {
+        affixes: Affixes::prefix(prefix),
+        speed: Some(((end - start) / 128.0).clamp(0.01, 1.0)),
+        ..Default::default()
     };
-    drag_number(ui, field, inner, id_salt, value, range, speed, look).0
+    bar_number(ui, look, PREFIX_FIELD_WIDTH, id_salt, value, range, options)
 }
 
-/// [`number_with_prefix`]: de borde a borde, lo de la letra y del blanco a su número.
-const PREFIX_FIELD_WIDTH: f32 = 37.0;
-const PREFIX_WIDTH: f32 = 11.0;
-const PREFIX_PAD: f32 = 2.0;
-
-/// El ancho de [`number_with_suffix`], como el campo del `%` del diseño.
-const SUFFIX_FIELD_WIDTH: f32 = 59.0;
-/// Del borde del blanco al número y a la unidad de [`number_with_suffix`].
-const SUFFIX_PAD: f32 = 4.0;
-
-/// Cómo se ve el texto de [`drag_number`]: su color, el del cursor de escribir y hacia dónde se
-/// alinea en su rect.
-#[derive(Clone, Copy)]
-pub(crate) struct NumberLook {
-    pub text: Color32,
-    pub outline: Color32,
-    pub align: egui::Align,
-}
-
-/// Un número que se arrastra en toda la zona `whole` y se escribe con el `DragValue` de egui sin
-/// marco que va en `inner` (el texto, alineado según el layout de `ui`). Un clic en la zona entra
-/// a escribir. Lo usan el campo numérico de la barra y la tira de canales del editor de color.
-/// Devuelve la respuesta del `DragValue` y la de la zona.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn drag_number<Num: emath::Numeric>(
+/// El campo numérico del kit de `width` en las filas de los campos de la barra.
+fn bar_number<Num: emath::Numeric>(
     ui: &mut Ui,
-    whole: Rect,
-    inner: Rect,
-    id_salt: impl std::hash::Hash + std::fmt::Debug + Copy,
+    look: BarLook,
+    width: f32,
+    id_salt: &str,
     value: &mut Num,
     range: RangeInclusive<Num>,
-    speed: f64,
-    look: NumberLook,
-) -> (Response, Response) {
-    let (start, end) = (range.start().to_f64(), range.end().to_f64());
-    // La zona va debajo del `DragValue`, que gana donde se solapan.
-    let zone = ui.interact(
-        whole,
-        ui.id().with(("bar_number_zone", id_salt)),
-        Sense::click_and_drag(),
+    options: NumberOptions,
+) -> Response {
+    let (slot, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
+    let rect = Rect::from_min_size(
+        pos2(slot.left().round(), look.top + FIELD_TOP),
+        vec2(width, input::HEIGHT),
     );
-    if zone.hovered() || zone.dragged() {
-        ui.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-    }
-    if zone.drag_started() {
-        ui.data_mut(|d| d.insert_temp(zone.id, value.to_f64()));
-    }
-    if zone.dragged() {
-        // Se acumula en `f64`: con enteros y velocidad baja, cada paso solo no llegaría a 1.
-        let mut acc = ui
-            .data(|d| d.get_temp::<f64>(zone.id))
-            .unwrap_or_else(|| value.to_f64());
-        acc = (acc + f64::from(zone.drag_delta().x) * speed).clamp(start, end);
-        ui.data_mut(|d| d.insert_temp(zone.id, acc));
-        *value = Num::from_f64(acc);
-    }
-    let mut child = ui.new_child(
-        UiBuilder::new()
-            .id_salt(("bar_number", id_salt))
-            .max_rect(inner)
-            .layout(Layout::top_down(look.align)),
-    );
-    plain_field_style(child.style_mut(), inner.size(), look.text, look.outline);
-    // Al escribir, la selección y el cursor de egui en las filas de los demás campos.
-    child.set_clip_rect(crate::pixel_sections::text_clip(ui, whole, inner));
-    let response = child.add(egui::DragValue::new(value).range(range).speed(speed));
-    // Un clic en la zona de afuera del texto también entra a escribir.
-    if zone.clicked() {
-        ui.memory_mut(|m| m.request_focus(response.id));
-    }
-    (response, zone)
+    let painter = painter(ui, look);
+    input::number_input_at(
+        ui, look.skin, &painter, rect, id_salt, value, range, options,
+    )
 }
 
-/// El estilo del `DragValue` del campo: del tamaño del blanco, sin marco ni fondo (los pone la
-/// pieza), con el texto en `text`, el cursor en `outline` y sin el borde de foco de egui.
-pub(crate) fn plain_field_style(
-    style: &mut egui::Style,
-    size: Vec2,
-    text: Color32,
-    outline: Color32,
-) {
-    style.spacing.interact_size = size;
-    style.spacing.button_padding = Vec2::ZERO;
-    let v = &mut style.visuals;
-    v.button_frame = false;
-    v.text_edit_bg_color = Some(Color32::TRANSPARENT);
-    // Lo seleccionado: blanco sobre el rosa del diseño.
-    v.selection.bg_fill = Color32::from_rgb(0xe2, 0x72, 0x85);
-    v.selection.stroke = Stroke::new(1.0, Color32::WHITE);
-    // El cursor de escribir, fino y en el contorno del skin: el de egui es azul claro de 2 px y
-    // sobre el blanco del campo casi no se ve.
-    v.text_cursor.stroke = Stroke::new(1.0, outline);
-    v.override_text_color = Some(text);
-    for w in [
-        &mut v.widgets.noninteractive,
-        &mut v.widgets.inactive,
-        &mut v.widgets.hovered,
-        &mut v.widgets.active,
-        &mut v.widgets.open,
-    ] {
-        w.bg_fill = Color32::TRANSPARENT;
-        w.weak_bg_fill = Color32::TRANSPARENT;
-        w.bg_stroke = Stroke::NONE;
-        w.expansion = 0.0;
-    }
-}
+/// [`number_with_prefix`] y [`number_with_suffix`], de borde a borde.
+const PREFIX_FIELD_WIDTH: f32 = 37.0;
+const SUFFIX_FIELD_WIDTH: f32 = 59.0;
 
 /// Una casilla con su texto, como `ui.checkbox(checked, label)`: `field.check.on` marcada y
 /// `field.check` sin marcar (sin la pieza, un cuadro plano y, marcada, un cuadrito `text`).

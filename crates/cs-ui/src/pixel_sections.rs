@@ -3,11 +3,10 @@
 //! `tab.active`) sobre la línea grabada y, debajo, los campos de lo elegido.
 
 use eframe::egui::{
-    self, Align, Color32, Layout, Rect, Response, Sense, Shape, TextStyle, Ui, UiBuilder, Vec2,
-    WidgetInfo, WidgetType, pos2, vec2,
+    self, Color32, Rect, Response, Sense, Shape, TextStyle, Ui, Vec2, WidgetInfo, WidgetType, pos2,
+    vec2,
 };
 
-use crate::bar_fields;
 use crate::pixel_draw;
 use crate::pixel_ui;
 use crate::pixel_ui::Tip as _;
@@ -35,13 +34,8 @@ const SWATCH: f32 = 7.0;
 const SWATCH_GAP: f32 = 3.0;
 /// De la línea grabada de las pestañas a los campos.
 const TABS_FIELDS_GAP: f32 = 9.0;
-/// Los campos de texto del diseño: 16 de alto con la fila del brillo de abajo (como los combos,
-/// los campos numéricos y los botones).
-pub const FIELD_HEIGHT: f32 = pixel_ui::CONTROL_HEIGHT;
 /// Entre un campo y su botón (x 945 → 949).
 const FIELD_BUTTON_GAP: f32 = 3.0;
-/// Del borde del campo al texto.
-const FIELD_TEXT_LEFT: f32 = 5.0;
 /// Entre filas de campos.
 const FIELD_ROW_GAP: f32 = 3.0;
 
@@ -49,7 +43,6 @@ const FIELD_ROW_GAP: f32 = 3.0;
 pub const ICON_ADD: &str = "icon.section.add";
 pub const ICON_TRASH: &str = "icon.section.trash";
 pub const ICON_CANVAS_SIZE: &str = "icon.section.canvas_size";
-const FIELD_PIECE: &str = "field.text";
 
 /// Un botón chico en `rect` (de `BUTTON_SIZE`) con `content` adentro. Su nombre accesible es
 /// `label`, que es también su tooltip.
@@ -409,148 +402,13 @@ pub fn tabs(ui: &mut Ui, skin: &Skin, tabs: &[Tab], active: Option<usize>) -> Op
     clicked
 }
 
-/// Un campo de texto del diseño de `width`, con `hint` cuando está vacío. Su nombre accesible
-/// es `label`.
-pub fn text_field(
-    ui: &mut Ui,
-    skin: &Skin,
-    text: &mut String,
-    width: f32,
-    label: &str,
-    hint: &str,
-) -> Response {
-    text_field_sized(ui, skin, text, vec2(width, FIELD_HEIGHT), label, hint)
-}
-
-/// Como [`text_field`], de `size` (los paneles del dock los usan de 17, como sus botones).
-pub fn text_field_sized(
-    ui: &mut Ui,
-    skin: &Skin,
-    text: &mut String,
-    size: Vec2,
-    label: &str,
-    hint: &str,
-) -> Response {
-    text_field_framed(ui, skin, text, size, label, hint, true)
-}
-
-/// Como [`text_field_sized`] pero sin la caja (la dibuja quien lo usa): solo el texto, su
-/// selección y su cursor.
-#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-pub fn text_field_bare(
-    ui: &mut Ui,
-    skin: &Skin,
-    text: &mut String,
-    size: Vec2,
-    label: &str,
-) -> Response {
-    text_field_framed(ui, skin, text, size, label, "", false)
-}
-
-fn text_field_framed(
-    ui: &mut Ui,
-    skin: &Skin,
-    text: &mut String,
-    size: Vec2,
-    label: &str,
-    hint: &str,
-    framed: bool,
-) -> Response {
-    let (rect, _) = ui.allocate_exact_size(vec2(size.x.floor(), size.y), Sense::hover());
-    let rect = Rect::from_min_size(rect.min.round(), rect.size());
-    // La pieza `field.text` en 9-slice (sin ella, un borde de 1 px sobre blanco).
-    let ppp = ui.ctx().pixels_per_point();
-    if framed {
-        let shapes = match skin.piece(FIELD_PIECE, WidgetState::Normal) {
-            Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
-            None => vec![
-                Shape::rect_filled(rect, 0.0, Color32::WHITE),
-                Shape::rect_stroke(
-                    rect.shrink(0.5),
-                    0.0,
-                    (1.0, skin.colors().outline),
-                    egui::StrokeKind::Middle,
-                ),
-            ],
-        };
-        ui.painter().extend(shapes);
-    }
-    // La selección va entre el campo y el texto: se pinta después, cuando se sabe qué hay.
-    let selection = ui.painter().add(Shape::Noop);
-    let colors = *skin.colors();
-    let inner = Rect::from_min_max(
-        pos2(rect.left() + FIELD_TEXT_LEFT, rect.top() + 1.0),
-        pos2(rect.right() - FIELD_TEXT_LEFT, rect.bottom() - 4.0),
-    );
-    let mut child = ui.new_child(
-        UiBuilder::new()
-            .id_salt(("pixel_field", label))
-            .max_rect(inner)
-            .layout(Layout::top_down(Align::Min)),
-    );
-    bar_fields::plain_field_style(child.style_mut(), inner.size(), colors.text, colors.outline);
-    // egui pinta el fondo de la selección y el cursor del alto de la fila: los pintamos nosotros
-    // (abajo), en las filas del diseño.
-    child.style_mut().visuals.selection.bg_fill = Color32::TRANSPARENT;
-    child.style_mut().visuals.text_cursor.stroke = egui::Stroke::NONE;
-    let output = egui::TextEdit::singleline(text)
-        .frame(egui::Frame::NONE)
-        .margin(egui::Margin::ZERO)
-        .vertical_align(Align::Center)
-        .min_size(inner.size())
-        .hint_text(hint)
-        .desired_width(inner.width())
-        .show(&mut child);
-    // Lo seleccionado, como en el diseño: rosa, con 1 px de aire contra el borde de arriba y
-    // contra la sombra de abajo (el texto, blanco: `plain_field_style`).
-    let x = |c| output.galley_pos.x + output.galley.pos_from_cursor(c).min.x;
-    let rows = text_rows(rect);
-    let clip = output.text_clip_rect.expand2(vec2(1.0, 0.0));
-    match output.cursor_range {
-        Some(range) if !range.is_empty() => {
-            let [a, b] = range.sorted_cursors();
-            let span = Rect::from_x_y_ranges(x(a).round()..=x(b).round(), rows).intersect(clip);
-            if span.width() > 0.0 {
-                ui.painter()
-                    .set(selection, Shape::rect_filled(span, 0.0, SELECTION));
-            }
-        }
-        // El cursor de escribir: 1 px de ancho, en las mismas filas que la selección, y
-        // parpadeando (medio segundo prendido y medio apagado).
-        Some(range) if output.response.response.has_focus() => {
-            let time = ui.input(|i| i.time);
-            if time.fract() < CARET_ON {
-                let left = x(range.primary).round();
-                let caret = Rect::from_x_y_ranges(left..=left + 1.0, rows).intersect(clip);
-                ui.painter()
-                    .set(selection, Shape::rect_filled(caret, 0.0, colors.outline));
-            }
-            let wait = if time.fract() < CARET_ON {
-                CARET_ON - time.fract()
-            } else {
-                1.0 - time.fract()
-            };
-            ui.ctx()
-                .request_repaint_after(std::time::Duration::from_secs_f64(wait.max(0.01)));
-        }
-        _ => {}
-    }
-    let response = output.response.response;
-    let enabled = ui.is_enabled();
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::TextEdit, enabled, label));
-    response
-}
-
-/// Lo seleccionado en un campo de texto: el rosa del diseño, de la fila 2 del campo hasta 1 arriba
+/// Las filas de la selección y del cursor de escribir de los campos que todavía no son del UI kit
+/// (el hex y los números del editor de color, el timeline): de la fila 2 del campo hasta 1 arriba
 /// de la sombra de abajo.
-const SELECTION: Color32 = Color32::from_rgb(0xe2, 0x72, 0x85);
 const SELECTION_TOP: f32 = 2.0;
 const SELECTION_BOTTOM: f32 = 4.0;
-/// Del segundo, la parte en que se ve el cursor de escribir.
-const CARET_ON: f64 = 0.5;
 
-/// Las filas de un campo (`field`, con su borde) donde van la selección y el cursor de escribir:
-/// las mismas en todos los campos (texto, números, hex).
+/// Las filas de un campo (`field`, con su borde) donde van la selección y el cursor de escribir.
 pub(crate) fn text_rows(field: Rect) -> egui::Rangef {
     egui::Rangef::new(
         field.top() + SELECTION_TOP,
@@ -560,7 +418,7 @@ pub(crate) fn text_rows(field: Rect) -> egui::Rangef {
 
 /// El recorte de lo que egui pinta al escribir en un campo (`DragValue`, `TextEdit` sin la
 /// selección propia): su selección y su cursor quedan en [`text_rows`], dentro del texto
-/// (`inner`), como en [`text_field`].
+/// (`inner`).
 pub(crate) fn text_clip(ui: &Ui, field: Rect, inner: Rect) -> Rect {
     Rect::from_x_y_ranges(inner.x_range().expand(1.0), text_rows(field)).intersect(ui.clip_rect())
 }

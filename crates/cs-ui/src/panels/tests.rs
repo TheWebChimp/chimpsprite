@@ -1229,7 +1229,8 @@ fn with_pixel_ui_the_bar_is_23_and_every_node_fits_inside_it() {
         // Las piezas de los controles, en las 19 filas de arriba del grabado.
         for piece in [
             "field.combo",
-            "field.number",
+            "field.text",
+            "field.prefix",
             "field.unit",
             "field.check.on",
             "sym.slot",
@@ -1360,17 +1361,18 @@ fn with_pixel_ui_brush_size_is_the_number_field_with_its_px_unit() {
     let mut h = pixel_bar(ToolKind::Pencil);
     let bar = h.bar;
     // "Brush Size" a 7 del borde (43 de tinta, con 3 px entre palabras) y, 3 px después de la
-    // tinta, el campo y la unidad "px": 42 de ancho en total, de la y 73 a la 88 del diseño.
+    // tinta, el campo numérico del UI kit con la caja de la unidad "px": 42 de ancho en total
+    // (como en el mockup de componentes), de la y 73 a la 89 del diseño.
     let (_, ink) = h.text("Brush Size");
     assert_eq!(ink.min, bar.min + Vec2::new(7.0, 6.0), "{ink:?}");
     assert_eq!(ink.width(), 43.0);
-    let field = h.drawn_boxes("field.number");
+    let field = h.drawn_boxes("field.text");
     let left = ink.right() + 3.0;
     assert_eq!(
         field,
         vec![Rect::from_min_size(
             pos2(left, bar.top() + 2.0),
-            Vec2::new(27.0, 17.0)
+            Vec2::new(42.0, 17.0)
         )]
     );
     let unit = h.drawn_boxes("field.unit");
@@ -1381,12 +1383,13 @@ fn with_pixel_ui_brush_size_is_the_number_field_with_its_px_unit() {
             Vec2::new(17.0, 17.0)
         )]
     );
-    // El número, en la fila de los textos (los dígitos miden 6, como las mayúsculas: terminan en
-    // la fila 11) y adentro del blanco.
+    // El número, con las mayúsculas en la fila 5 del campo (una más abajo que los textos de la
+    // barra; los dígitos miden 6, como las mayúsculas) y adentro del blanco; sin el foco, en
+    // `field_text`.
     let size = h.editor.options.brush_size;
     let (color, digits) = h.text(&size.to_string());
-    assert_eq!(color, h.skin.as_ref().unwrap().colors().text);
-    assert_eq!(digits.bottom(), bar.top() + 12.0, "{digits:?}");
+    assert_eq!(color, h.skin.as_ref().unwrap().colors().field_text);
+    assert_eq!(digits.bottom(), bar.top() + 13.0, "{digits:?}");
     assert!(digits.left() > left + 1.0 && digits.right() < left + 26.0);
     // Arrastrar a la derecha lo agranda.
     h.drag(field[0].center(), 40.0);
@@ -1407,7 +1410,7 @@ fn with_pixel_ui_fields_without_a_unit_have_no_px() {
     let h = pixel_bar(ToolKind::MagicWand);
     // Tolerance no tiene unidad: el campo solo.
     let (_, ink) = h.text("Tolerance");
-    let field = h.drawn_boxes("field.number");
+    let field = h.drawn_boxes("field.text");
     assert_eq!(field.len(), 1, "{field:?}");
     assert_eq!(field[0].left(), ink.right() + 3.0);
     assert_eq!(field[0].size(), Vec2::new(27.0, 17.0));
@@ -1415,7 +1418,7 @@ fn with_pixel_ui_fields_without_a_unit_have_no_px() {
     // Spray: el ancho en px y la velocidad sin unidad.
     let h = pixel_bar(ToolKind::Spray);
     assert_eq!(
-        h.drawn_boxes("field.number").len(),
+        h.drawn_boxes("field.text").len(),
         3,
         "brush, width and speed"
     );

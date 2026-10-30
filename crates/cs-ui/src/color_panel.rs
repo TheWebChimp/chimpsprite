@@ -1263,9 +1263,8 @@ fn channel_strip(
     let segment = header.segment;
     let mut values = [current.r, current.g, current.b, current.a];
     let look = NumberLook {
-        text: colors.field_text,
         outline: colors.field_text,
-        align: Align::Min,
+        ..NumberLook::new(colors, colors.field_text, Align::Min)
     };
     // Dónde empiezan las mayúsculas de un texto en la tira (para el `DragValue` y el hex).
     let probe = galley(ui, "0", colors.field_text);
@@ -1374,11 +1373,12 @@ fn channel_strip(
             .max_rect(inner)
             .layout(Layout::top_down(Align::Min)),
     );
-    bar_fields::plain_field_style(
+    crate::kit::input::plain_field_style(
         child.style_mut(),
         inner.size(),
         colors.field_text,
         colors.field_text,
+        colors,
     );
     // La selección y el cursor en las filas de los demás campos.
     child.set_clip_rect(crate::pixel_sections::text_clip(ui, hex, inner));

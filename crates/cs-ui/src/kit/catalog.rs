@@ -6,6 +6,7 @@ use eframe::egui::{self, Pos2, Rect, Sense, Shape, TextStyle, Ui, Vec2, pos2, ve
 
 use super::button::{self, ButtonState, Led};
 use super::group::{self, GroupItem, SegmentLook};
+use super::input::{self, Affixes, InputState, NumberOptions};
 use crate::pixel_draw;
 use crate::skin::Skin;
 
@@ -43,8 +44,9 @@ const LED_ON_LABEL: &str = "LED on";
 const LED_OFF_LABEL: &str = "LED off";
 const LED_LIVE_LABEL: &str = "Toggle LED";
 
-/// De una sección a la siguiente.
+/// De una sección a la siguiente y de una columna de secciones a la otra.
 const SECTION_GAP: f32 = 24.0;
+const COLUMN_GAP: f32 = 24.0;
 
 /// Sección Button group, como en el mockup: el grupo de dos "Button" y, en la fila siguiente, el
 /// mismo y 22 px a la derecha el de los LEDs (el primero elegido); de un grupo al siguiente,
@@ -53,6 +55,25 @@ const GROUP_PITCH: f32 = 21.0;
 const GROUP_GAP: f32 = 22.0;
 /// El grupo de verdad, con una opción elegida a la vez.
 const LIVE_OPTIONS: [&str; 3] = ["Fast", "RotSprite", "Smooth"];
+
+/// Sección Inputs, como en el mockup: los campos de "Input Placeholder" (109 de ancho) normal,
+/// con el foco, con todo elegido y deshabilitado, uno cada 21 filas; el numérico con "px" y el de
+/// la letra X (42 de ancho); y, debajo, unos de verdad.
+const INPUT_SAMPLE: &str = "Input Placeholder";
+const INPUT_WIDTH: f32 = 109.0;
+const NUMBER_WIDTH: f32 = 42.0;
+const INPUT_PITCH: f32 = 21.0;
+/// Del campo a su nombre y de la columna de los textos a la de los números.
+const INPUT_NUMBERS_LEFT: f32 = 220.0;
+
+/// En la memoria de egui: lo escrito en los campos de verdad.
+fn live_text_id() -> egui::Id {
+    egui::Id::new("ui_catalog_input_text")
+}
+
+fn live_numbers_id() -> egui::Id {
+    egui::Id::new("ui_catalog_input_numbers")
+}
 
 /// En la memoria de egui: la opción elegida del grupo de verdad.
 fn picked_id() -> egui::Id {
@@ -77,10 +98,13 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
             let origin = ui.cursor().min.round() + MARGIN;
             let bottom = buttons_section(ui, skin, origin);
             let bottom = group_section(ui, skin, pos2(origin.x, bottom + SECTION_GAP));
+            // La segunda columna, a la derecha de la primera.
+            let second = origin.x + PAGE_WIDTH + COLUMN_GAP;
+            let right = inputs_section(ui, skin, pos2(second, origin.y));
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
-                PAGE_WIDTH + 2.0 * MARGIN.x,
-                bottom - ui.cursor().top() + MARGIN.y,
+                2.0 * PAGE_WIDTH + COLUMN_GAP + 2.0 * MARGIN.x,
+                bottom.max(right) - ui.cursor().top() + MARGIN.y,
             );
             ui.allocate_exact_size(size, Sense::hover());
         });
@@ -318,4 +342,108 @@ fn group_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     );
     ui.painter().add(text);
     y + button::HEIGHT
+}
+
+/// La sección Inputs desde `origin`. Devuelve dónde termina.
+fn inputs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    let colors = *skin.colors();
+    let top = section_title(ui, skin, origin.x, origin.y, "Inputs");
+    let left = origin.x;
+    let mut shapes: Vec<Shape> = Vec::new();
+    let name = |shapes: &mut Vec<Shape>, text: &str, x: f32, y: f32| {
+        let (shape, _) = pixel_draw::caps_text(
+            ui,
+            text,
+            x + STATE_LABEL_GAP,
+            y + input::CAPS_TOP,
+            colors.text,
+        );
+        shapes.push(shape);
+    };
+    // Los campos de texto, forzados.
+    let all = INPUT_SAMPLE.chars().count();
+    let rows: [(&str, InputState, Option<std::ops::Range<usize>>); 4] = [
+        (InputState::Normal.name(), InputState::Normal, None),
+        (InputState::Focused.name(), InputState::Focused, None),
+        ("Selected text", InputState::Focused, Some(0..all)),
+        (InputState::Disabled.name(), InputState::Disabled, None),
+    ];
+    let mut y = top;
+    for (label, state, selected) in rows {
+        let rect = Rect::from_min_size(pos2(left, y), vec2(INPUT_WIDTH, input::HEIGHT));
+        shapes.extend(input::input_shapes(
+            ui,
+            skin,
+            rect,
+            INPUT_SAMPLE,
+            "",
+            state,
+            selected,
+            Affixes::NONE,
+        ));
+        name(&mut shapes, label, rect.right(), y);
+        y += INPUT_PITCH;
+    }
+    // Los numéricos: con la unidad y con la letra adelante.
+    let numbers: [(&str, &str, Affixes); 2] = [
+        ("Unit (px)", "16", Affixes::suffix("px")),
+        ("Prefix label (X)", "11", Affixes::prefix("X")),
+    ];
+    let x = left + INPUT_NUMBERS_LEFT;
+    for (i, (label, value, affixes)) in numbers.into_iter().enumerate() {
+        let at = pos2(x, top + i as f32 * INPUT_PITCH);
+        let rect = Rect::from_min_size(at, vec2(NUMBER_WIDTH, input::HEIGHT));
+        shapes.extend(input::input_shapes(
+            ui,
+            skin,
+            rect,
+            value,
+            "",
+            InputState::Normal,
+            None,
+            affixes,
+        ));
+        name(&mut shapes, label, rect.right(), at.y);
+    }
+    ui.painter().extend(shapes);
+    // Los de verdad: un texto, un número con "px" y uno con la X.
+    let mut text: String = ui.data(|d| {
+        d.get_temp(live_text_id())
+            .unwrap_or_else(|| "Edit me".to_owned())
+    });
+    let mut values: (i32, i32) = ui.data(|d| d.get_temp(live_numbers_id()).unwrap_or((16, 11)));
+    let rect = Rect::from_min_size(pos2(left, y), vec2(INPUT_WIDTH, input::HEIGHT));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        input::text_input(ui, skin, &mut text, INPUT_WIDTH, "Live text", "Type here")
+    });
+    for (i, (affixes, value)) in [
+        (Affixes::suffix("px"), &mut values.0),
+        (Affixes::prefix("X"), &mut values.1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = pos2(x + i as f32 * (NUMBER_WIDTH + STATE_LABEL_GAP), y);
+        let rect = Rect::from_min_size(at, vec2(NUMBER_WIDTH, input::HEIGHT));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            let options = NumberOptions {
+                affixes,
+                ..Default::default()
+            };
+            input::number_input(
+                ui,
+                skin,
+                NUMBER_WIDTH,
+                &format!("live{i}"),
+                value,
+                0..=999,
+                options,
+            )
+        });
+    }
+    ui.data_mut(|d| {
+        d.insert_temp(live_text_id(), text);
+        d.insert_temp(live_numbers_id(), values);
+    });
+    y + input::HEIGHT
 }

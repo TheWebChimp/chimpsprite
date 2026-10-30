@@ -104,7 +104,14 @@ pub fn pixel_artboards(
     let (response, resize) = pixel_sections::field_row(
         ui,
         |ui, width| {
-            pixel_sections::text_field(ui, skin, &mut name_buffer.1, width, "Artboard name", "Name")
+            crate::kit::input::text_input(
+                ui,
+                skin,
+                &mut name_buffer.1,
+                width,
+                "Artboard name",
+                "Name",
+            )
         },
         |ui| {
             pixel_sections::icon_button(
@@ -136,17 +143,9 @@ pub fn pixel_artboards(
 /// guarda mientras tiene el foco y se devuelve al terminar (Enter o al salir) si cambió; Escape
 /// lo descarta.
 fn buffered_line(ui: &mut egui::Ui, id: egui::Id, current: &str, label: &str) -> Option<String> {
-    let mut text = ui
-        .data_mut(|d| d.get_temp::<String>(id))
-        .unwrap_or_else(|| current.to_owned());
-    let response = crate::widgets::text_line_named(ui, &mut text, label);
-    if response.has_focus() {
-        ui.data_mut(|d| d.insert_temp(id, text));
-        return None;
-    }
-    ui.data_mut(|d| d.remove::<String>(id));
-    let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
-    (response.lost_focus() && !cancelled && text != current).then_some(text)
+    crate::kit::input::buffered(ui, id, current, |ui, text| {
+        crate::widgets::text_line_named(ui, text, label)
+    })
 }
 
 fn pixel_buffered_field(
@@ -158,17 +157,9 @@ fn pixel_buffered_field(
     label: &str,
     hint: &str,
 ) -> Option<String> {
-    let mut text = ui
-        .data_mut(|d| d.get_temp::<String>(id))
-        .unwrap_or_else(|| current.to_owned());
-    let response = pixel_sections::text_field(ui, skin, &mut text, width, label, hint);
-    if response.has_focus() {
-        ui.data_mut(|d| d.insert_temp(id, text));
-        return None;
-    }
-    ui.data_mut(|d| d.remove::<String>(id));
-    let cancelled = ui.input(|i| i.key_pressed(egui::Key::Escape));
-    (response.lost_focus() && !cancelled && text != current).then_some(text)
+    crate::kit::input::buffered(ui, id, current, |ui, text| {
+        crate::kit::input::text_input(ui, skin, text, width, label, hint)
+    })
 }
 
 /// Con Pixel UI, la sección Slices como la de Artboards: el título con + (un slice del tamaño de

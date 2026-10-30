@@ -583,11 +583,7 @@ fn pause_icon(ui: &Ui, skin: &Skin, icon_at: Pos2) {
 /// El estilo de los números de los campos.
 fn number_look(skin: &Skin) -> NumberLook {
     let colors = skin.colors();
-    NumberLook {
-        text: colors.text,
-        outline: colors.outline,
-        align: egui::Align::Center,
-    }
+    NumberLook::new(colors, colors.text, egui::Align::Center)
 }
 
 /// Dónde va el `DragValue` de un campo de `left..right` para que sus cifras empiecen en la fila

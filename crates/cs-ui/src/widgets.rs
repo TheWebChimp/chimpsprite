@@ -110,7 +110,7 @@ pub fn outlined_text(
     painter.text(pos, align, text, font, egui::Color32::WHITE);
 }
 
-/// Un campo de texto de una línea: con Pixel UI, el del diseño (`field.text`); sin él, el de egui.
+/// Un campo de texto de una línea: con Pixel UI, el del UI kit (`kit::input`); sin él, el de egui.
 pub fn text_line(ui: &mut egui::Ui, text: &mut String) -> egui::Response {
     text_line_named(ui, text, "")
 }
@@ -120,7 +120,7 @@ pub fn text_line_named(ui: &mut egui::Ui, text: &mut String, label: &str) -> egu
     match pixel_ui::frame_skin(ui.ctx()) {
         Some(skin) => {
             let width = ui.spacing().text_edit_width.min(ui.available_width());
-            crate::pixel_sections::text_field(ui, &skin, text, width, label, "")
+            crate::kit::input::text_input(ui, &skin, text, width, label, "")
         }
         None => ui.text_edit_singleline(text),
     }

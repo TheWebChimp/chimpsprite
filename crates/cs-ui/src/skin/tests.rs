@@ -655,41 +655,62 @@ fn the_embedded_skin_has_the_options_bar_fields_of_the_design() {
         Rgba::rgb(241, 235, 219),
         "the light below"
     );
-    // El campo numérico: el mismo borde, con el brillo de arriba a la derecha; la unidad "px",
-    // que tapa las 2 últimas columnas del campo.
+    // El campo numérico de antes (el editor de color y el timeline todavía lo usan): el mismo
+    // borde, con el brillo de arriba a la derecha.
     let number = &data.pieces["field.number"];
     assert_eq!((number.size, number.center), ([10, 16], rect9(2, 10, 1, 3)));
     assert_eq!(at(number, 0, 2), border);
     assert_eq!(at(number, 9, 2), border);
     assert_eq!(at(number, 9, 0).a, 0, "rounded corner");
     assert_eq!(at(number, 3, 2), Rgba::rgb(236, 235, 231), "the shine");
+    // Los campos del UI kit (mockup de componentes, frame 9), de 17 filas: el borde (136,110,106)
+    // que pasa a (89,77,77) desde la fila 7 (con un píxel claro en la 8), la fila 14 (230,231,240),
+    // el borde de abajo con la luz en las esquinas y la luz debajo.
+    let dark = Rgba::rgb(89, 77, 77);
+    let light = Rgba::rgb(241, 235, 219);
+    let text = &data.pieces["field.text"];
+    assert_eq!((text.size, text.center), ([6, 17], rect9(2, 1, 2, 13)));
+    let disabled = &data.pieces["field.text.disabled"];
+    assert_eq!((disabled.size, disabled.center), (text.size, text.center));
+    for (p, fill, shade) in [
+        (text, white, Rgba::rgb(230, 231, 240)),
+        (disabled, Rgba::rgb(221, 206, 191), Rgba::rgb(189, 164, 153)),
+    ] {
+        assert_eq!(at(p, 0, 0).a, 0, "rounded corner");
+        assert_eq!(at(p, 1, 0), border);
+        for (y, side) in [
+            (1, border),
+            (6, border),
+            (7, dark),
+            (8, border),
+            (9, dark),
+            (14, dark),
+        ] {
+            assert_eq!(at(p, 0, y), side, "left side, row {y}");
+            assert_eq!(at(p, 5, y), side, "right side, row {y}");
+        }
+        assert_eq!(at(p, 2, 1), fill);
+        assert_eq!(at(p, 2, 13), fill);
+        assert_eq!(at(p, 2, 14), shade);
+        assert_eq!((at(p, 0, 15), at(p, 2, 15)), (light, dark));
+        assert_eq!((at(p, 0, 16).a, at(p, 2, 16)), (0, light));
+    }
+    // Las cajas de la unidad (a la derecha, con el borde de ese lado) y del prefijo (a la
+    // izquierda): (189,164,153) sin texto (el texto lo escribe el campo), la fila 14 (221,206,191).
+    let grey = Rgba::rgb(189, 164, 153);
     let unit = &data.pieces["field.unit"];
-    // La unidad estira sus filas de abajo (debajo del "px") para medir los 17 de la norma.
-    let center = Rect9 {
-        x: 2,
-        y: 10,
-        w: 13,
-        h: 3,
-    };
-    assert_eq!((unit.size, unit.center), ([17, 16], Some(center)));
-    assert_eq!(at(unit, 0, 5), white, "the last column of the field");
-    assert_eq!(at(unit, 1, 5), border, "the divider");
-    assert_eq!(at(unit, 3, 5), Rgba::rgb(189, 164, 153), "the grey box");
-    assert_eq!(at(unit, 4, 5), Rgba::rgb(89, 77, 77), "the p");
-    // La esquina redondeada de la derecha (los 8 px que cambió el diseño en x 318..319).
-    assert_eq!(at(unit, 16, 0).a, 0, "rounded corner");
-    assert_eq!(at(unit, 15, 0), border, "the top, up to the corner");
-    assert_eq!(at(unit, 15, 1), Rgba::rgb(189, 164, 153), "the grey box");
-    assert_eq!(at(unit, 16, 1), border, "the right side");
-    assert_eq!(at(unit, 16, 13), border, "the right side, below");
-    // Abajo, la esquina redondeada de 1 px: el borde y el brillo en la esquina.
-    assert_eq!(at(unit, 15, 14), border, "the bottom");
-    assert_eq!(
-        at(unit, 16, 14),
-        Rgba::rgb(241, 235, 219),
-        "the light at the corner"
-    );
-    assert_eq!(at(unit, 16, 15).a, 0, "rounded corner");
+    assert_eq!((unit.size, unit.center), ([17, 17], rect9(1, 1, 14, 13)));
+    let prefix = &data.pieces["field.prefix"];
+    assert_eq!((prefix.size, prefix.center), ([12, 17], rect9(2, 1, 8, 13)));
+    for (p, inside, side) in [(unit, 0, 16), (prefix, 11, 0)] {
+        for y in 1..14 {
+            assert_eq!(at(p, inside, y), grey, "box, row {y}");
+        }
+        assert_eq!(at(p, inside, 14), Rgba::rgb(221, 206, 191), "box shade");
+        assert_eq!(at(p, side, 0).a, 0, "rounded corner");
+        assert_eq!(at(p, side, 7), dark, "the side");
+        assert_eq!(at(p, side, 15), light, "the light corner");
+    }
     // Las esquinas de 1 px del diseño: abajo, la fila de sombra (230,231,240) de lado a
     // lado, el borde con el brillo en las esquinas y la fila de brillo debajo.
     let shade = Rgba::rgb(230, 231, 240);

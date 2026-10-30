@@ -78,15 +78,15 @@ oculta.
   - `field.combo` (13×16, centro (2,10,1,3)): el combo. 2 columnas de borde a la izquierda, 1 de
     relleno que se estira y, a la derecha, 10 con el brillo y la flecha ▾. El texto va 6 px
     adentro y 5 px antes de la flecha.
-  - `field.number` (10×16, centro (2,10,1,3)): el campo numérico, con el brillo de arriba a la
-    derecha y la esquina redondeada. En la barra mide 27.
-  - `field.unit` (17×16, sin centro): la unidad "px". Empieza en la última columna blanca del
-    campo y tapa sus 2 últimas columnas.
+  - `field.number` (10×16, centro (2,10,1,3)): el campo numérico de antes, con el brillo de
+    arriba a la derecha y la esquina redondeada. Ya no lo usa la barra (sus números son los
+    campos del UI kit, abajo); lo siguen usando la tira de canales del editor de color y el
+    timeline.
   - `field.check.on` (13×14, sin centro): la casilla marcada de la barra (no es la del menú, que
     es más chica: 11×12). El texto va 3 px después. `field.check` (sin marcar) todavía no está
     dibujada (el diseño no la muestra): hasta entonces va un cuadro plano de respaldo.
-  - El combo, el campo, la unidad y la casilla llevan una fila de sombra (230,231,240) abajo del
-    relleno blanco; la unidad termina en una esquina redondeada (x 318..319 del diseño).
+  - El combo, el campo y la casilla llevan una fila de sombra (230,231,240) abajo del relleno
+    blanco.
 - **Pestañas:** `tab` (inactiva, café) mide 7×15 y `tab.active` (clara) 7×17, las dos con
   centro (3,0,1,alto): se estiran solo a lo ancho. Las esquinas de arriba son redondeadas y
   abajo quedan abiertas. La activa baja sobre las dos filas de la línea grabada de abajo y la
@@ -157,6 +157,24 @@ oculta.
       de la x 248 del mockup. Si los dos vecinos bajaron, se dibuja sin la fila de arriba.
     - `button.group.sep.disabled` (258,650, 1×17): no está en el diseño; (136,110,106) arriba
       como el borde de `button.disabled`, (189,164,153) en las filas 1 a 14, (89,77,77) y la luz.
+  - **Campos de texto** (`crates/cs-ui/src/kit/input.rs`, mockup de componentes, frame 9, copiados
+    píxel por píxel; todos de 17 filas, con centro de 13 filas que no se estira a lo alto):
+    - `field.text` (255,675, 6×17, centro (2,1,2,13)): el borde (136,110,106) que desde la fila 7
+      pasa a (89,77,77) (con un píxel (136,110,106) en la 8), el blanco, la fila 14 (230,231,240),
+      el borde de abajo con la luz (241,235,219) en las esquinas y la luz debajo. Copiado de x
+      202..204 y 356..358 del mockup.
+    - `field.text.disabled` (263,675): el mismo con el relleno (221,206,191) y la fila 14
+      (189,164,153) (x 325..327 y 431..433, y 195).
+    - `field.unit` (271,675, 17×17, centro (1,1,14,13)): la caja (189,164,153) de la unidad, con
+      su fila 14 (221,206,191) y el borde derecho del campo (x 388..404, y 52, sin el "px").
+    - `field.prefix` (290,675, 12×17, centro (2,1,8,13)): la caja del prefijo (la "X" de
+      Position X), con el borde izquierdo del campo (x 363..374, y 73, sin la letra).
+    - El texto de las cajas lo escribe el campo, centrado, en `color.field_text`; la caja mide
+      3 + tinta + 3, por lo menos 11.
+    - Colores: `color.field_text_disabled` (189,164,153), el texto de un campo deshabilitado;
+      `color.text_selection` (226,114,133) y `color.text_selected` (255,255,255), el bloque de lo
+      seleccionado y su texto. El texto sin foco va en `color.field_text` (89,77,77) y con el
+      foco en `color.text`.
   - **LEDs** (cualquier botón puede llevar uno: `kit::button::Led`, y los segmentos del grupo):
     `button.led.on` (261,650) y `button.led.off` (269,650), 6×7: el LED verde (prendido) y el
     morado (apagado), 6×6 con su sombra (221,206,191) abajo, copiados del mockup (x 315 y 362).
@@ -241,8 +259,6 @@ oculta.
     cuentagotas lo oscuro es tinta y lo claro su contrario: cada píxel se pinta negro o blanco
     según lo que tenga debajo, como en Aseprite. El de rotar se dibuja tal cual. Si falta una
     pieza, se usa el cursor de siempre.
-  - `field.text` (12×17, centro (2,2,8,11)): el campo de texto de Artboards y Slices, con las
-    esquinas redondeadas, la fila fría y el brillo de abajo.
   - Colores: `color.link` (178,82,102), el nombre de cada reciente de Home, y `color.path`
     (105,102,130), su ruta.
 

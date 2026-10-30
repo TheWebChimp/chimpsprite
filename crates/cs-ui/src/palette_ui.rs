@@ -951,6 +951,7 @@ fn etched_rule(ui: &mut egui::Ui, edge: bool) {
 const LOSPEC_SCROLL_GAP: f32 = 5.0;
 /// Los campos de arriba miden 17, como sus botones (el diseño); el orden, 83 de ancho, y el
 /// número de colores 19 pegado a su combo.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const PANEL_FIELD_H: f32 = crate::pixel_ui::CONTROL_HEIGHT;
 #[cfg(not(target_arch = "wasm32"))]
 const SORT_W: f32 = 83.0;
@@ -968,14 +969,7 @@ fn panel_field(
     hint: &str,
 ) -> egui::Response {
     match pixel_ui::frame_skin(ui.ctx()) {
-        Some(skin) => crate::pixel_sections::text_field_sized(
-            ui,
-            &skin,
-            text,
-            egui::vec2(width, PANEL_FIELD_H),
-            label,
-            hint,
-        ),
+        Some(skin) => crate::kit::input::text_input(ui, &skin, text, width, label, hint),
         None => ui.add(
             egui::TextEdit::singleline(text)
                 .hint_text(hint)
@@ -1196,7 +1190,7 @@ fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool, combo: egui::R
             .unwrap_or_else(|| count.to_string());
         let field = egui::Rect::from_min_max(egui::pos2(l + 1.0, t), egui::pos2(r, b));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(field));
-        let response = crate::pixel_sections::text_field_bare(
+        let response = crate::kit::input::bare_text_input(
             &mut child,
             &skin,
             &mut text,
@@ -1234,7 +1228,7 @@ fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool, combo: egui::R
         px(r - 1.0, b - 2.0, r, b - 1.0, COUNT_LIGHT),
         px(l, b - 1.0, r - 1.0, b, COUNT_LIGHT),
     ];
-    // El brillo de la esquina de arriba a la derecha, como el de `field.text`.
+    // El brillo de la esquina de arriba a la derecha (el de los campos de antes).
     for (dx, dy, w) in COUNT_SHINE {
         let x = r - dx;
         shapes.push(px(x, t + dy, x + w, t + dy + 1.0, COUNT_LIGHT));

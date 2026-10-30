@@ -709,11 +709,11 @@ impl DafontPanel {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 ui.label("Preview");
                 let response = match &skin {
-                    Some(skin) => crate::pixel_sections::text_field_sized(
+                    Some(skin) => crate::kit::input::text_input(
                         ui,
                         skin,
                         &mut self.sample,
-                        vec2(field_w, FIELD_H),
+                        field_w,
                         "Custom preview",
                         "Custom preview",
                     ),
