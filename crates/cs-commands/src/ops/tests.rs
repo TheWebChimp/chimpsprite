@@ -891,3 +891,138 @@ fn convert_to_image_renders_the_same_keeps_off_canvas_tiles_and_undoes() {
         "image layers stay"
     );
 }
+
+/// Capa de objetos con A, B, C, D (ids 1 a 4) en el frame 0.
+fn four_objects() -> (Sprite, LayerId) {
+    let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+    new_object_layer(&s, None, 0, ArtboardId(2), "A", (0, 0))
+        .apply(&mut s)
+        .unwrap();
+    let id = s.layers.last().unwrap().id;
+    for name in ["B", "C", "D"] {
+        let (cmd, _) = add_object(&s, id, 0, ArtboardId(2), name, (0, 0)).unwrap();
+        cmd.apply(&mut s).unwrap();
+    }
+    (s, id)
+}
+
+fn order_of(s: &Sprite, id: LayerId) -> Vec<u32> {
+    s.layer(id)
+        .unwrap()
+        .objects
+        .iter()
+        .map(|o| o.id.0)
+        .collect()
+}
+
+fn ids(v: &[u32]) -> Vec<ObjectId> {
+    v.iter().map(|&i| ObjectId(i)).collect()
+}
+
+#[test]
+fn add_object_goes_on_top_and_undoes() {
+    let (mut s, id) = four_objects();
+    assert_eq!(order_of(&s, id), vec![1, 2, 3, 4]);
+    let before = s.clone();
+    let (cmd, new) = add_object(&s, id, 0, ArtboardId(3), "E", (1, 2)).unwrap();
+    assert_eq!(new, ObjectId(5));
+    let undo = cmd.apply(&mut s).unwrap();
+    assert_eq!(s.layer(id).unwrap().objects[4].name, "E");
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    // No es capa de objetos.
+    assert!(add_object(&s, LayerId(1), 0, ArtboardId(3), "E", (0, 0)).is_none());
+}
+
+#[test]
+fn remove_objects_can_empty_the_layer() {
+    let (mut s, id) = four_objects();
+    let before = s.clone();
+    let undo = remove_objects(&s, id, &ids(&[2, 3]))
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    assert_eq!(order_of(&s, id), vec![1, 4]);
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    remove_objects(&s, id, &ids(&[1, 2, 3, 4]))
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    assert!(s.layer(id).unwrap().objects.is_empty());
+    assert!(remove_objects(&s, id, &ids(&[1])).is_none());
+}
+
+#[test]
+fn move_objects_creates_key_and_keeps_the_old_one() {
+    let (mut s, id) = four_objects();
+    for i in 1..3 {
+        crate::Command::AddFrame {
+            index: i,
+            frame: Frame { duration_ms: 100 },
+        }
+        .apply(&mut s)
+        .unwrap();
+    }
+    let before = s.clone();
+    let undo = move_objects(&s, id, &ids(&[1, 3]), 2, 5, -1)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    let l = s.layer(id).unwrap();
+    for o in [&l.objects[0], &l.objects[2]] {
+        assert_eq!(o.track.keys.len(), 2);
+        assert_eq!(o.track.keys[0].position, (0, 0));
+        assert_eq!(o.track.keys[1].frame, 2);
+        assert_eq!(o.track.keys[1].position, (5, -1));
+    }
+    assert_eq!(l.objects[1].track.keys.len(), 1);
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    assert!(move_objects(&s, id, &ids(&[1]), 2, 0, 0).is_none());
+    assert!(move_objects(&s, id, &ids(&[9]), 2, 1, 1).is_none());
+}
+
+#[test]
+fn reorder_objects_modes_with_non_contiguous_selection() {
+    let (s, id) = four_objects();
+    let run = |sel: &[u32], to| {
+        let mut t = s.clone();
+        let cmd = reorder_objects(&t, id, &ids(sel), to)?;
+        let undo = cmd.apply(&mut t).unwrap();
+        let res = order_of(&t, id);
+        undo.apply(&mut t).unwrap();
+        assert_eq!(t, s);
+        Some(res)
+    };
+    assert_eq!(run(&[1, 3], Reorder::Forward), Some(vec![2, 1, 4, 3]));
+    assert_eq!(run(&[2, 4], Reorder::Forward), Some(vec![1, 3, 2, 4]));
+    assert_eq!(run(&[1, 2], Reorder::Forward), Some(vec![3, 1, 2, 4]));
+    assert_eq!(run(&[2, 4], Reorder::Backward), Some(vec![2, 1, 4, 3]));
+    assert_eq!(run(&[3, 4], Reorder::Backward), Some(vec![1, 3, 4, 2]));
+    assert_eq!(run(&[1, 3], Reorder::Front), Some(vec![2, 4, 1, 3]));
+    assert_eq!(run(&[2, 4], Reorder::Back), Some(vec![2, 4, 1, 3]));
+    // Sin cambios o sin ids válidos.
+    assert_eq!(run(&[3, 4], Reorder::Front), None);
+    assert_eq!(run(&[1, 2], Reorder::Back), None);
+    assert_eq!(run(&[4], Reorder::Forward), None);
+    assert_eq!(run(&[9], Reorder::Front), None);
+}
+
+#[test]
+fn duplicate_objects_get_new_ids_and_offset() {
+    let (mut s, id) = four_objects();
+    let before = s.clone();
+    let (cmd, new) = duplicate_objects(&s, id, &ids(&[3, 1]), (4, 6)).unwrap();
+    assert_eq!(new, ids(&[5, 6]));
+    let undo = cmd.apply(&mut s).unwrap();
+    let l = s.layer(id).unwrap();
+    assert_eq!(l.objects.len(), 6);
+    assert_eq!(l.objects[4].name, "A copy");
+    assert_eq!(l.objects[5].name, "C copy");
+    assert_eq!(l.objects[4].track.keys[0].position, (4, 6));
+    assert_eq!(l.objects[0].track.keys[0].position, (0, 0));
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    assert!(duplicate_objects(&s, id, &ids(&[9]), (1, 1)).is_none());
+}

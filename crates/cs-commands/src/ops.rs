@@ -116,6 +116,135 @@ pub fn remove_object_key(
     })
 }
 
+/// Hacia dónde se manda un grupo de objetos en la pila de su capa.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reorder {
+    Forward,
+    Backward,
+    Front,
+    Back,
+}
+
+/// La capa de objetos `layer`, o `None` si no existe o es de otro tipo.
+fn object_layer(sprite: &Sprite, layer: LayerId) -> Option<&Layer> {
+    sprite.layer(layer).filter(|l| l.kind == LayerKind::Objects)
+}
+
+/// Objeto nuevo arriba de todos en `layer`, con una key en `frame` que muestra `source`.
+pub fn add_object(
+    sprite: &Sprite,
+    layer: LayerId,
+    frame: usize,
+    source: ArtboardId,
+    name: &str,
+    position: (i32, i32),
+) -> Option<(Command, ObjectId)> {
+    let l = object_layer(sprite, layer)?;
+    let id = l.next_object_id();
+    let mut objects = l.objects.clone();
+    objects.push(SceneObject {
+        id,
+        name: name.to_string(),
+        track: InstanceTrack {
+            keys: vec![InstanceKey::new(frame, source, position)],
+        },
+    });
+    Some((Command::SetObjects { layer, objects }, id))
+}
+
+/// Quita los objetos `ids`. Si no queda ninguno, la capa queda vacía (no se borra).
+pub fn remove_objects(sprite: &Sprite, layer: LayerId, ids: &[ObjectId]) -> Option<Command> {
+    let l = object_layer(sprite, layer)?;
+    let mut objects = l.objects.clone();
+    objects.retain(|o| !ids.contains(&o.id));
+    (objects.len() != l.objects.len()).then_some(Command::SetObjects { layer, objects })
+}
+
+/// Desplaza los objetos `ids` en `frame` (crea la key ahí si no existe, copiando la vigente).
+/// Los objetos sin key vigente en `frame` se saltan.
+pub fn move_objects(
+    sprite: &Sprite,
+    layer: LayerId,
+    ids: &[ObjectId],
+    frame: usize,
+    dx: i32,
+    dy: i32,
+) -> Option<Command> {
+    let l = object_layer(sprite, layer)?;
+    if dx == 0 && dy == 0 {
+        return None;
+    }
+    let mut objects = l.objects.clone();
+    let mut changed = false;
+    for o in objects.iter_mut().filter(|o| ids.contains(&o.id)) {
+        let Some(mut key) = o.track.key_at(frame).copied() else {
+            continue;
+        };
+        key.frame = frame;
+        key.position = (key.position.0 + dx, key.position.1 + dy);
+        o.track.set_key(key);
+        changed = true;
+    }
+    changed.then_some(Command::SetObjects { layer, objects })
+}
+
+/// Reordena los objetos `ids` conservando su orden relativo.
+pub fn reorder_objects(
+    sprite: &Sprite,
+    layer: LayerId,
+    ids: &[ObjectId],
+    to: Reorder,
+) -> Option<Command> {
+    let l = object_layer(sprite, layer)?;
+    let mut objects = l.objects.clone();
+    let n = objects.len();
+    let sel = |o: &SceneObject| ids.contains(&o.id);
+    match to {
+        Reorder::Forward => {
+            for i in (0..n.saturating_sub(1)).rev() {
+                if sel(&objects[i]) && !sel(&objects[i + 1]) {
+                    objects.swap(i, i + 1);
+                }
+            }
+        }
+        Reorder::Backward => {
+            for i in 1..n {
+                if sel(&objects[i]) && !sel(&objects[i - 1]) {
+                    objects.swap(i, i - 1);
+                }
+            }
+        }
+        Reorder::Front => objects.sort_by_key(sel),
+        Reorder::Back => objects.sort_by_key(|o| !sel(o)),
+    }
+    (objects != l.objects).then_some(Command::SetObjects { layer, objects })
+}
+
+/// Copias de los objetos `ids` (arriba de todos, con ids nuevos y nombre "<nombre> copy"),
+/// desplazadas `offset` en todas sus keys.
+pub fn duplicate_objects(
+    sprite: &Sprite,
+    layer: LayerId,
+    ids: &[ObjectId],
+    offset: (i32, i32),
+) -> Option<(Command, Vec<ObjectId>)> {
+    let l = object_layer(sprite, layer)?;
+    let mut objects = l.objects.clone();
+    let picked = l.objects.iter().filter(|o| ids.contains(&o.id));
+    let mut new_ids = Vec::new();
+    for (next, o) in (l.next_object_id().0..).zip(picked) {
+        let mut copy = o.clone();
+        copy.id = ObjectId(next);
+        copy.name = format!("{} copy", o.name);
+        for k in &mut copy.track.keys {
+            k.position = (k.position.0 + offset.0, k.position.1 + offset.1);
+        }
+        new_ids.push(copy.id);
+        objects.push(copy);
+    }
+    (!new_ids.is_empty()).then_some((Command::SetObjects { layer, objects }, new_ids))
+}
+
 /// Capa tilemap nueva sobre `above` que dibuja con el tileset `tileset`.
 pub fn new_tilemap_layer(sprite: &Sprite, above: Option<LayerId>, tileset: u32) -> Command {
     let Command::AddLayer { index, mut layer } = new_layer(sprite, above, LayerKind::Tilemap)
