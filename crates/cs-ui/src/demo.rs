@@ -393,6 +393,27 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         app.doc.editor.primary = cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(34, 32, 52));
         app.run_script(name, source);
     }
+    // Desarrollo: la capa actual convertida en símbolo y el panel Library abierto, para capturas.
+    // Con CHIMPSPRITE_DEMO_SYMBOL=edit, además dentro del modo símbolo.
+    if let Some(mode) = dev_var("CHIMPSPRITE_DEMO_SYMBOL")
+        && app.has_doc()
+    {
+        let editor = &mut app.doc.editor;
+        // El sombrero: el cuerpo tiene una capa recortada encima y no se puede partir.
+        if let Some(hat) = editor.sprite().layers.iter().find(|l| l.name == "Hat") {
+            let hat = hat.id;
+            editor.select_layer(hat);
+        }
+        let name = editor.suggested_symbol_name();
+        if let Ok(symbol) =
+            editor.convert_to_symbol(&name, cs_commands::symbol::SymbolTiming::Graphic)
+        {
+            dock::set_open(ctx, Some(dock::DockPanel::Library));
+            if mode == "edit" && editor.enter_symbol(symbol) {
+                app.doc.canvas.request_zoom(crate::view::ZoomRequest::Fit);
+            }
+        }
+    }
     // Desarrollo: el panel Groom abierto con una imagen (su ruta), para capturas.
     #[cfg(not(target_arch = "wasm32"))]
     if let Ok(path) = std::env::var("CHIMPSPRITE_DEMO_GROOM")
