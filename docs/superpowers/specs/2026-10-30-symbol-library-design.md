@@ -1,6 +1,6 @@
 # Movie clips, parte 1: Convertir en símbolo (F8) y biblioteca
 
-Fecha: 2026-10-30 · Estado: en revisión (pendiente del usuario)
+Fecha: 2026-10-30 · Estado: aprobado e implementado
 
 ## Objetivo
 
@@ -271,3 +271,30 @@ piezas del skin; el usuario lo afinará después con un mockup.
 
 **`cs-agent`**
 - `convert_to_symbol` + `render` da lo mismo que antes de convertir.
+
+## Ajustes al spec (descubiertos al planear e implementar)
+
+1. **"Capas seleccionadas" = `Editor::range_layers()`.** Son las capas del rango del timeline o,
+   si no hay rango, la capa actual. El panel de capas no tiene multi-selección.
+2. **Recorte de las capas de instancia.** Para una capa de instancia se usa el rectángulo completo
+   del sprite fuente en cada key, porque `cs-commands` no puede depender de `cs-render`. El render
+   sigue siendo idéntico.
+3. **Con marquesina solo se cortan capas de imagen.**
+4. **"Move to Library"** está en el menú "≡" del artboard (Pixel UI) y en `Sprite → Move to
+   Library`.
+5. **Mensajes de F8:** los errores se muestran con un mensaje modal ("Convert to Symbol").
+6. **La biblioteca es un `app_panel` del dock** y su estado es por pestaña.
+7. **Conversiones rechazadas.** Para garantizar el render idéntico, `ConvertError` también
+   rechaza:
+   - `Scattered`: capas de grupos distintos o con otras capas en medio;
+   - `Locked`: capas bloqueadas, en el modo píxeles;
+   - `Clipping`: un par de clipping que quedaría partido;
+   - `BlendMode`: capas que dibujan con un modo de fusión distinto de Normal.
+
+   El blend de los grupos se permite porque el render lo ignora.
+8. **Modo símbolo:**
+   - Activar cualquier artboard que no esté en la pila sale del modo.
+   - El tacho del panel Artboards, la herramienta Artboard y el menú "≡" no borran, duplican ni
+     mueven el símbolo que se está editando.
+   - Salir con doble clic en vacío es solo con la herramienta Move.
+
