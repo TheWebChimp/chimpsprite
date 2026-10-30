@@ -20,6 +20,9 @@ fn main() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport,
         renderer: eframe::Renderer::Wgpu,
+        // Sin dithering: egui le suma ruido de ±1 a los colores para evitar bandas, pero en un
+        // editor de pixel art el lienzo tiene que mostrar los colores exactos.
+        dithering: false,
         ..Default::default()
     };
     eframe::run_native(
@@ -45,6 +48,9 @@ fn main() {
     eframe::WebLogger::init(log::LevelFilter::Info).ok();
     let web_options = eframe::WebOptions {
         renderer: eframe::Renderer::Wgpu,
+        // Sin dithering: egui le suma ruido de ±1 a los colores para evitar bandas, pero en un
+        // editor de pixel art el lienzo tiene que mostrar los colores exactos.
+        dithering: false,
         ..Default::default()
     };
     wasm_bindgen_futures::spawn_local(async move {
