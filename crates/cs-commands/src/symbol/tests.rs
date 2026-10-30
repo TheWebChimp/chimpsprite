@@ -300,3 +300,114 @@ fn convert_errors() {
     tiles.artboards[0].sprite.layers[0].kind = LayerKind::Tilemap;
     assert_eq!(run(&tiles, &layers(&[1])), Some(ConvertError::Tilemap));
 }
+
+#[test]
+fn converting_pixels_cuts_the_selection_in_every_frame() {
+    let mut d = animated();
+    let before = rendered(&d, ArtboardId(1));
+    // La marquesina toma (2,3) y (3,3) pero no (4,4) ni el azul.
+    let selection = Mask::from_rect(8, 8, (2, 3), (3, 3));
+    let source = SymbolSource::Pixels {
+        layers: vec![LayerId(1), LayerId(2)],
+        selection,
+    };
+    let c = convert_to_symbol(&d, ArtboardId(1), &source, "Cut", SymbolTiming::Graphic).unwrap();
+    let undo = c.command.apply(&mut d).unwrap();
+    assert_eq!(rendered(&d, ArtboardId(1)), before);
+
+    let host = &d.artboard(ArtboardId(1)).unwrap().sprite;
+    assert_eq!(
+        host.pixel(LayerId(1), 0, 2, 3),
+        PixelValue::Rgba(Rgba::TRANSPARENT)
+    );
+    assert_eq!(
+        host.pixel(LayerId(1), 2, 4, 4),
+        RED,
+        "outside the marquee stays"
+    );
+    assert_eq!(host.pixel(LayerId(2), 0, 6, 6), BLUE);
+
+    let symbol = &d.artboard(c.symbol).unwrap().sprite;
+    assert_eq!((symbol.width, symbol.height), (2, 1));
+    assert_eq!(symbol.pixel(LayerId(1), 0, 0, 0), RED);
+    assert_eq!(symbol.pixel(LayerId(1), 1, 1, 0), RED);
+    // La capa 2 viaja al símbolo, pero el azul quedó fuera de la marquesina.
+    assert_eq!(
+        symbol.pixel(LayerId(2), 0, 0, 0),
+        PixelValue::Rgba(Rgba::TRANSPARENT)
+    );
+
+    undo.apply(&mut d).unwrap();
+    assert_eq!(d, animated(), "one undo restores everything");
+}
+
+#[test]
+fn an_empty_marquee_is_nothing_to_convert() {
+    let d = animated();
+    let selection = Mask::from_rect(8, 8, (0, 0), (1, 1));
+    let source = SymbolSource::Pixels {
+        layers: vec![LayerId(1)],
+        selection,
+    };
+    assert_eq!(
+        convert_to_symbol(&d, ArtboardId(1), &source, "S", SymbolTiming::Graphic).err(),
+        Some(ConvertError::Empty)
+    );
+}
+
+#[test]
+fn cutting_linked_cels_keeps_them_linked() {
+    let mut d = animated();
+    // Frame 1 de la capa 1 vinculado al frame 0: el rojo en (2,3) en los dos.
+    let s = &mut d.artboards[0].sprite;
+    let cel = *s.cel(LayerId(1), 0).unwrap();
+    crate::Command::SetCel {
+        layer: LayerId(1),
+        frame: 1,
+        cel: Some(cel),
+    }
+    .apply(s)
+    .unwrap();
+    let original = d.clone();
+    let before = rendered(&d, ArtboardId(1));
+    let source = SymbolSource::Pixels {
+        layers: vec![LayerId(1)],
+        selection: Mask::from_rect(8, 8, (0, 0), (3, 3)),
+    };
+    let c = convert_to_symbol(&d, ArtboardId(1), &source, "Cut", SymbolTiming::MovieClip).unwrap();
+    let undo = c.command.apply(&mut d).unwrap();
+    assert_eq!(rendered(&d, ArtboardId(1)), before);
+
+    let host = &d.artboard(ArtboardId(1)).unwrap().sprite;
+    let image = |s: &Sprite, f| s.cel(LayerId(1), f).unwrap().image;
+    assert_eq!(image(host, 0), image(host, 1));
+    let symbol = &d.artboard(c.symbol).unwrap().sprite;
+    assert_eq!(image(symbol, 0), image(symbol, 1));
+    assert_eq!(symbol.pixel(LayerId(1), 1, 0, 0), RED);
+
+    undo.apply(&mut d).unwrap();
+    assert_eq!(d, original);
+}
+
+#[test]
+fn a_locked_layer_keeps_its_pixels() {
+    let mut d = animated();
+    d.artboards[0].sprite.layer_mut(LayerId(2)).unwrap().locked = true;
+    let before = rendered(&d, ArtboardId(1));
+    let source = SymbolSource::Pixels {
+        layers: vec![LayerId(1), LayerId(2)],
+        selection: Mask::all(8, 8),
+    };
+    let c = convert_to_symbol(&d, ArtboardId(1), &source, "Cut", SymbolTiming::Graphic).unwrap();
+    c.command.apply(&mut d).unwrap();
+    assert_eq!(rendered(&d, ArtboardId(1)), before);
+    let host = &d.artboard(ArtboardId(1)).unwrap().sprite;
+    assert_eq!(host.pixel(LayerId(2), 0, 6, 6), BLUE);
+    assert!(
+        d.artboard(c.symbol)
+            .unwrap()
+            .sprite
+            .layer(LayerId(2))
+            .is_none()
+    );
+}
