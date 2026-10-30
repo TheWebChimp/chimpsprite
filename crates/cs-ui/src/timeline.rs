@@ -141,7 +141,7 @@ pub struct TimelineState {
     /// Se pidió "Convert to Symbol…" desde el menú de una capa (lo abre la app).
     pub convert_symbol: bool,
     /// Las capas de objetos desplegadas: debajo llevan una sub-fila por objeto.
-    expanded_objects: HashSet<LayerId>,
+    pub(crate) expanded_objects: HashSet<LayerId>,
 }
 
 /// Un arrastre sobre los cels, como en Aseprite.
