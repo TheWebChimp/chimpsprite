@@ -18,8 +18,8 @@
 //!     `channel.a` (27, el damero repetido cada 4) y `channel.hex` (el resto, con la punta
 //!     derecha), con `channel.sep` (1) entre tramo y tramo. Cada canal lleva su punto
 //!     (`channel.dot.*`, 6×6) 2 px después del comienzo del tramo y 4 filas abajo, y su número 9
-//!     px después; el hex, 3 px después. Las mayúsculas en la fila 3 (los dígitos, una más
-//!     abajo), en `field_text`.
+//!     px después; el hex, 3 px después. Las mayúsculas y los dígitos en la fila 4, en
+//!     `field_text`.
 //!   - Si no entra todo en una fila, el encabezado se parte entre grupos, nunca adentro de uno
 //!     (`pixel_ui::wrap_rows`): [copiar][RGBA] y [hex] abajo; si tampoco, [copiar], [RGBA] y
 //!     [hex], una fila cada uno, a 3 filas de distancia. El grupo RGBA solo cierra con
@@ -140,8 +140,8 @@ const DOT_TOP: f32 = 4.0;
 const DOT_SIZE: Vec2 = Vec2::new(6.0, 6.0);
 const VALUE_LEFT: f32 = 9.0;
 const HEX_TEXT_LEFT: f32 = 3.0;
-/// La fila de las mayúsculas en la tira (los dígitos empiezan una más abajo, en la 4).
-const STRIP_CAPS: f32 = 3.0;
+/// La fila de las mayúsculas (y de los dígitos, que miden lo mismo) en la tira.
+const STRIP_CAPS: f32 = 4.0;
 /// Las 2 filas de abajo de cada tramo, del color de su canal (sin la pieza).
 const UNDERLINE: f32 = 2.0;
 /// El tramo del alfa repite un período del damero de su línea.

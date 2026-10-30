@@ -1358,12 +1358,11 @@ fn with_pixel_ui_the_mode_buttons_have_the_mode_name_as_tooltip() {
 fn with_pixel_ui_brush_size_is_the_number_field_with_its_px_unit() {
     let mut h = pixel_bar(ToolKind::Pencil);
     let bar = h.bar;
-    // "Brush Size" en x 227..274 del diseño (7 desde el borde) y, 3 px después de la tinta,
-    // el campo de x 278 a 304 y la unidad "px" hasta la 319: 42 de ancho en total, de la y
-    // 73 a la 88.
+    // "Brush Size" a 7 del borde (43 de tinta, con 3 px entre palabras) y, 3 px después de la
+    // tinta, el campo y la unidad "px": 42 de ancho en total, de la y 73 a la 88 del diseño.
     let (_, ink) = h.text("Brush Size");
     assert_eq!(ink.min, bar.min + Vec2::new(7.0, 6.0), "{ink:?}");
-    assert_eq!(ink.width(), 46.0);
+    assert_eq!(ink.width(), 43.0);
     let field = h.drawn_boxes("field.number");
     let left = ink.right() + 3.0;
     assert_eq!(
@@ -1381,12 +1380,12 @@ fn with_pixel_ui_brush_size_is_the_number_field_with_its_px_unit() {
             Vec2::new(17.0, 17.0)
         )]
     );
-    // El número, en la fila de los textos (los dígitos miden 6, una fila menos que las
-    // mayúsculas, y apoyan en la misma línea: terminan en la fila 11) y adentro del blanco.
+    // El número, en la fila de los textos (los dígitos miden 6, como las mayúsculas: terminan en
+    // la fila 11) y adentro del blanco.
     let size = h.editor.options.brush_size;
     let (color, digits) = h.text(&size.to_string());
     assert_eq!(color, h.skin.as_ref().unwrap().colors().text);
-    assert_eq!(digits.bottom(), bar.top() + 13.0, "{digits:?}");
+    assert_eq!(digits.bottom(), bar.top() + 12.0, "{digits:?}");
     assert!(digits.left() > left + 1.0 && digits.right() < left + 26.0);
     // Arrastrar a la derecha lo agranda.
     h.drag(field[0].center(), 40.0);

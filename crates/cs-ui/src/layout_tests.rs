@@ -1533,8 +1533,9 @@ fn closed_titles_underline_their_first_letter_and_the_open_one_does_not() {
     let underline = |h: &LayoutHarness, title: &str| {
         let text = text_rect(h, title).0;
         let line = Rect::from_min_size(
-            Pos2::new(text.left(), text.top() + offset + 8.0),
-            Vec2::new(5.0, 1.0),
+            Pos2::new(text.left(), text.top() + offset + 7.0),
+            // La tinta de la primera letra: la V mide 5 y las otras mayúsculas 4.
+            Vec2::new(if title.starts_with('V') { 5.0 } else { 4.0 }, 1.0),
         );
         h.colored_rects().contains(&(color, line))
     };
