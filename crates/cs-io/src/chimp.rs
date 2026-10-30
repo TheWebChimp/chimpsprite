@@ -41,6 +41,9 @@ struct Entry {
     guides: Vec<Guide>,
     #[serde(default)]
     symmetry: Symmetry,
+    /// Símbolo de la biblioteca (no se ve en el lienzo).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    library: bool,
     /// Datos de capa que `.aseprite` no guarda (máscaras y recortes), por índice de capa.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     layers: Vec<LayerExtra>,
@@ -177,6 +180,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
             file,
             guides: artboard.guides.clone(),
             symmetry: artboard.symmetry,
+            library: artboard.in_library,
             layers,
         });
     }
@@ -234,7 +238,7 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
             report.warn(format!("{}: {w}", entry.name));
         }
         artboards.push(Artboard {
-            in_library: false,
+            in_library: entry.library,
             guides: entry.guides,
             symmetry: entry.symmetry,
             id: ArtboardId(entry.id),
@@ -407,6 +411,15 @@ mod tests {
         let (back, report) = read(&write(&d).unwrap()).unwrap();
         assert!(!report.warnings.is_empty());
         assert!(back.artboards.iter().all(|a| back.cycle_free(a.id)));
+    }
+
+    #[test]
+    fn library_roundtrip() {
+        let mut d = doc();
+        d.artboards[1].in_library = true;
+        let (back, _) = read(&write(&d).unwrap()).unwrap();
+        assert!(back.artboards[1].in_library);
+        assert!(!back.artboards[0].in_library);
     }
 
     fn doc() -> Document {

@@ -477,18 +477,20 @@ pub fn export_atlas(
 ) -> Result<Sheet> {
     let scale = scale.max(1);
     let width = doc
-        .artboards
-        .iter()
+        .canvas_artboards()
         .map(|a| a.sprite.width * scale * a.sprite.frames.len() as u32)
         .max()
         .unwrap_or(1);
-    let height: u32 = doc.artboards.iter().map(|a| a.sprite.height * scale).sum();
+    let height: u32 = doc
+        .canvas_artboards()
+        .map(|a| a.sprite.height * scale)
+        .sum();
     let mut atlas = Bitmap::new(width.max(1), height.max(1));
     let mut placed = Vec::new();
     let mut tags = Vec::new();
     let mut slices = Vec::new();
     let mut y = 0;
-    for artboard in &doc.artboards {
+    for artboard in doc.canvas_artboards() {
         let baked = cs_render::bake_layers(doc, &artboard.sprite, cs_render::Bake::Everything);
         let s = baked.as_ref().unwrap_or(&artboard.sprite);
         let offset = placed.len();
@@ -518,8 +520,7 @@ pub fn export_atlas(
         y += s.height * scale;
     }
     let artboards = Value::Array(
-        doc.artboards
-            .iter()
+        doc.canvas_artboards()
             .map(|a| json!({ "name": a.name, "position": [a.position.0, a.position.1], "frames": a.sprite.frames.len() }))
             .collect(),
     );
