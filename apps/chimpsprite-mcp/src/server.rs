@@ -219,6 +219,34 @@ impl ChimpServer {
         self.with(|s| s.remove_instance_key(p))
     }
 
+    #[tool(
+        description = "Add an object on top of an object layer: it shows another artboard (a symbol) from a frame on. Several objects can share one layer. Fails if it would make an artboard contain itself. Returns the object id."
+    )]
+    fn add_object(&self, Parameters(p): Parameters<AddObject>) -> CallToolResult {
+        self.with(|s| s.add_object(p))
+    }
+
+    #[tool(
+        description = "Change one object of an object layer from a frame on (creates a keyframe there): position, flip, opacity, source artboard and timing. Object by id or name."
+    )]
+    fn set_object_key(&self, Parameters(p): Parameters<SetObjectKey>) -> CallToolResult {
+        self.with(|s| s.set_object_key(p))
+    }
+
+    #[tool(
+        description = "Remove one object (all its keyframes) from an object layer. The layer stays, even if empty."
+    )]
+    fn remove_object(&self, Parameters(p): Parameters<RemoveObject>) -> CallToolResult {
+        self.with(|s| s.remove_object(p))
+    }
+
+    #[tool(
+        description = "Change an object's stacking order inside its layer: forward / backward (one step) or front / back (to the extremes)."
+    )]
+    fn reorder_object(&self, Parameters(p): Parameters<ReorderObject>) -> CallToolResult {
+        self.with(|s| s.reorder_object(p))
+    }
+
     // --- Tilemaps ---
 
     #[tool(
