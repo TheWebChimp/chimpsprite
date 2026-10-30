@@ -138,6 +138,9 @@ impl Editor {
         if self.tool != crate::editor::ToolKind::Move || self.selected_objects().is_empty() {
             return Vec::new();
         }
+        // `view()` devuelve el documento del editor (prestado) o, con un gesto en curso, un clon
+        // con la vista previa aplicada: si no es el mismo objeto, es una vista previa (y la caché,
+        // que es del documento real, no sirve).
         let preview = !std::ptr::eq(document, &self.document);
         let shown = document
             .artboard(self.active)
@@ -460,5 +463,26 @@ mod tests {
         drop(view);
         e.pointer_release();
         assert_eq!(e.object_outlines(&e.document), vec![(11, 8, 4, 4)]);
+    }
+
+    #[test]
+    fn with_another_tool_esc_clears_the_marquee_and_keeps_the_objects() {
+        let (mut e, _, b) = scene();
+        let o = first(&e, b);
+        click(&mut e, (9.5, 9.5), false);
+        e.set_tool(ToolKind::Pencil);
+        e.set_selection(Some(cs_core::Mask::from_rect(16, 16, (0, 0), (1, 1))));
+        crate::editor_key(&mut e, Key::Escape, false);
+        assert!(e.selection.is_none(), "the marquee goes first");
+        assert_eq!(e.selected_objects(), vec![o]);
+        crate::editor_key(&mut e, Key::Escape, false);
+        assert_eq!(
+            e.selected_objects(),
+            vec![o],
+            "only Move lets go of objects"
+        );
+        e.set_tool(ToolKind::Move);
+        crate::editor_key(&mut e, Key::Escape, false);
+        assert!(e.selected_objects().is_empty());
     }
 }
