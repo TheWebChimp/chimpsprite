@@ -178,6 +178,7 @@ fn groups_keep_their_structure_and_empty_ones_go_away() {
     let mut d = animated();
     // Grupo 3 con la capa 1 adentro.
     group(&mut d, &[LayerId(1)]);
+    let original = d.clone();
     let before = rendered(&d, ArtboardId(1));
     // Convertir solo la capa 1: el grupo 3 queda vacío en el host y se borra.
     let c = convert_to_symbol(
@@ -188,7 +189,7 @@ fn groups_keep_their_structure_and_empty_ones_go_away() {
         SymbolTiming::Graphic,
     )
     .unwrap();
-    c.command.apply(&mut d).unwrap();
+    let undo = c.command.apply(&mut d).unwrap();
     assert_eq!(rendered(&d, ArtboardId(1)), before);
     let symbol = &d.artboard(c.symbol).unwrap().sprite;
     assert_eq!(symbol.layer(LayerId(1)).unwrap().parent, Some(LayerId(3)));
@@ -198,6 +199,9 @@ fn groups_keep_their_structure_and_empty_ones_go_away() {
     assert!(host.layer(LayerId(3)).is_none());
     assert_eq!(host.layer(c.instance).unwrap().parent, None);
     assert!(host.is_valid_tree() && symbol.is_valid_tree());
+
+    undo.apply(&mut d).unwrap();
+    assert_eq!(d, original, "one undo restores everything");
 }
 
 #[test]
@@ -206,6 +210,7 @@ fn a_group_that_stays_applies_only_once() {
     // Grupo 3 a media opacidad con las capas 2 y 1 adentro.
     group(&mut d, &[LayerId(2), LayerId(1)]);
     d.artboards[0].sprite.layer_mut(LayerId(3)).unwrap().opacity = 128;
+    let original = d.clone();
     let before = rendered(&d, ArtboardId(1));
     let c = convert_to_symbol(
         &d,
@@ -215,7 +220,7 @@ fn a_group_that_stays_applies_only_once() {
         SymbolTiming::Graphic,
     )
     .unwrap();
-    c.command.apply(&mut d).unwrap();
+    let undo = c.command.apply(&mut d).unwrap();
     assert_eq!(rendered(&d, ArtboardId(1)), before);
     // El grupo sigue en el host (le queda la capa 2) y la instancia va adentro; el símbolo no
     // lo copia (si no, su opacidad se aplicaría dos veces).
@@ -225,6 +230,9 @@ fn a_group_that_stays_applies_only_once() {
     let symbol = &d.artboard(c.symbol).unwrap().sprite;
     assert!(symbol.layer(LayerId(3)).is_none());
     assert_eq!(symbol.layer(LayerId(1)).unwrap().parent, None);
+
+    undo.apply(&mut d).unwrap();
+    assert_eq!(d, original, "one undo restores everything");
 }
 
 #[test]
@@ -389,25 +397,135 @@ fn cutting_linked_cels_keeps_them_linked() {
     assert_eq!(d, original);
 }
 
+/// Convierte `ids` (capas enteras o, con `pixels`, todo el lienzo) y devuelve el error.
+fn convert_err(d: &Document, ids: &[u32], pixels: bool) -> Option<ConvertError> {
+    let layers = ids.iter().map(|&i| LayerId(i)).collect();
+    let source = if pixels {
+        SymbolSource::Pixels {
+            layers,
+            selection: Mask::all(8, 8),
+        }
+    } else {
+        SymbolSource::Layers(layers)
+    };
+    convert_to_symbol(d, ArtboardId(1), &source, "S", SymbolTiming::Graphic).err()
+}
+
 #[test]
-fn a_locked_layer_keeps_its_pixels() {
+fn locked_layers_are_rejected_in_pixel_mode() {
     let mut d = animated();
     d.artboards[0].sprite.layer_mut(LayerId(2)).unwrap().locked = true;
+    assert_eq!(convert_err(&d, &[1, 2], true), Some(ConvertError::Locked));
+    assert_eq!(convert_err(&d, &[2], true), Some(ConvertError::Locked));
+    // Las capas enteras sí se pueden llevar.
+    assert_eq!(convert_err(&d, &[1, 2], false), None);
+}
+
+#[test]
+fn layers_from_different_groups_are_rejected() {
+    let mut d = animated();
+    // Grupo 3 con la capa 1 adentro; la 2 queda afuera.
+    group(&mut d, &[LayerId(1)]);
+    for pixels in [false, true] {
+        assert_eq!(
+            convert_err(&d, &[1, 2], pixels),
+            Some(ConvertError::Scattered),
+            "pixels: {pixels}"
+        );
+    }
+    // El grupo entero y la capa 2 sí comparten padre.
+    assert_eq!(convert_err(&d, &[3, 2], false), None);
+}
+
+#[test]
+fn layers_with_others_in_between_are_rejected() {
+    let mut d = animated();
+    // Capa 3 arriba de todo, con algo en (5,5): la 2 queda entre la 1 y la 3.
+    let s = &mut d.artboards[0].sprite;
+    crate::ops::new_layer(&s.clone(), Some(LayerId(2)), LayerKind::Image)
+        .apply(s)
+        .unwrap();
+    crate::Command::DrawPixels {
+        layer: LayerId(3),
+        frame: 0,
+        pixels: vec![(5, 5, RED)],
+    }
+    .apply(s)
+    .unwrap();
+    for pixels in [false, true] {
+        assert_eq!(
+            convert_err(&d, &[1, 3], pixels),
+            Some(ConvertError::Scattered),
+            "pixels: {pixels}"
+        );
+        assert_eq!(convert_err(&d, &[2, 3], pixels), None, "pixels: {pixels}");
+    }
+}
+
+#[test]
+fn an_instance_between_cut_layers_is_rejected() {
+    let mut d = animated();
+    // Una capa de instancia (de un símbolo del 1) entre la 1 y la 2.
+    let first = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![LayerId(1)]),
+        "Dot",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    first.command.apply(&mut d).unwrap();
+    let s = &mut d.artboards[0].sprite;
+    crate::ops::new_layer(&s.clone(), None, LayerKind::Image)
+        .apply(s)
+        .unwrap();
+    crate::ops::move_layer(
+        &s.clone(),
+        LayerId(4),
+        crate::ops::LayerDrop::Below(first.instance),
+    )
+    .unwrap()
+    .apply(s)
+    .unwrap();
+    crate::Command::DrawPixels {
+        layer: LayerId(4),
+        frame: 0,
+        pixels: vec![(5, 5, RED)],
+    }
+    .apply(s)
+    .unwrap();
+    // Abajo a arriba: 4, instancia, 2. Con marquesina la instancia no se corta y quedaría tapada.
+    assert_eq!(
+        convert_err(&d, &[4, first.instance.0, 2], true),
+        Some(ConvertError::Scattered)
+    );
+    assert_eq!(convert_err(&d, &[4, first.instance.0, 2], false), None);
+}
+
+#[test]
+fn splitting_a_clipping_pair_is_rejected() {
+    let mut d = animated();
+    // La capa 2 recorta sobre la 1.
+    d.artboards[0].sprite.layer_mut(LayerId(2)).unwrap().clip = true;
+    for pixels in [false, true] {
+        for ids in [&[1][..], &[2][..]] {
+            assert_eq!(
+                convert_err(&d, ids, pixels),
+                Some(ConvertError::Clipping),
+                "{ids:?}, pixels: {pixels}"
+            );
+        }
+    }
+    // Las dos juntas se ven igual.
     let before = rendered(&d, ArtboardId(1));
-    let source = SymbolSource::Pixels {
-        layers: vec![LayerId(1), LayerId(2)],
-        selection: Mask::all(8, 8),
-    };
-    let c = convert_to_symbol(&d, ArtboardId(1), &source, "Cut", SymbolTiming::Graphic).unwrap();
+    let c = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![LayerId(1), LayerId(2)]),
+        "Pair",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
     c.command.apply(&mut d).unwrap();
     assert_eq!(rendered(&d, ArtboardId(1)), before);
-    let host = &d.artboard(ArtboardId(1)).unwrap().sprite;
-    assert_eq!(host.pixel(LayerId(2), 0, 6, 6), BLUE);
-    assert!(
-        d.artboard(c.symbol)
-            .unwrap()
-            .sprite
-            .layer(LayerId(2))
-            .is_none()
-    );
 }

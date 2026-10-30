@@ -109,6 +109,15 @@ pub enum ConvertError {
     Empty,
     #[error("Select the layers to convert")]
     NoLayers,
+    /// Capas de grupos distintos o con otras capas en el medio.
+    #[error("Select layers from the same group")]
+    Scattered,
+    /// Con marquesina, alguna capa de imagen está bloqueada.
+    #[error("Unlock the layers first")]
+    Locked,
+    /// Separaría una capa que recorta de su base.
+    #[error("Clipping layers can't be split into a symbol")]
+    Clipping,
 }
 
 /// Lo que arma `convert_to_symbol`: un solo comando (un Ctrl+Z) y los ids nuevos.
@@ -156,14 +165,29 @@ pub fn convert_to_symbol(
     {
         return Err(ConvertError::Tilemap);
     }
-    // Con marquesina solo se cortan las capas de imagen que se pueden editar.
-    let cut: BTreeSet<LayerId> = match selection {
-        None => converted.clone(),
-        Some(_) => converted
-            .iter()
-            .copied()
-            .filter(|&id| layer(id).kind == LayerKind::Image && !layer(id).locked)
-            .collect(),
+    // Lo que no se podría convertir sin cambiar el render se rechaza.
+    let (cut, removal) = match selection {
+        None => {
+            together(sprite, &roots, &converted)?;
+            let removal = remove_layers(sprite, &roots);
+            unclipped(sprite, &(&converted | &removal.groups))?;
+            (converted.clone(), Some(removal))
+        }
+        Some(_) => {
+            // Con marquesina solo se cortan las capas de imagen.
+            let cut: BTreeSet<LayerId> = converted
+                .iter()
+                .copied()
+                .filter(|&id| layer(id).kind == LayerKind::Image)
+                .collect();
+            if cut.iter().any(|&id| layer(id).locked) {
+                return Err(ConvertError::Locked);
+            }
+            let units: Vec<LayerId> = cut.iter().copied().collect();
+            together(sprite, &units, &cut)?;
+            unclipped(sprite, &cut)?;
+            (cut, None)
+        }
     };
     let rect = content_rect(doc, sprite, &cut, selection).ok_or(ConvertError::Empty)?;
 
@@ -179,9 +203,8 @@ pub fn convert_to_symbol(
     }
     let instance = layer.id;
 
-    let (mut host_cmds, keep, index, parent) = match selection {
-        None => {
-            let removal = remove_layers(sprite, &roots);
+    let (mut host_cmds, keep, index, parent) = match removal {
+        Some(removal) => {
             // La instancia ocupa el lugar del bloque borrado de más arriba.
             let top = roots
                 .iter()
@@ -198,7 +221,8 @@ pub fn convert_to_symbol(
             let keep = &converted | &removal.groups;
             (removal.cmds, keep, index, layer_parent(sprite, top))
         }
-        Some(mask) => {
+        None => {
+            let mask = selection.expect("only pixel mode removes nothing");
             // Encima de la capa cortada de más arriba, en su mismo grupo.
             let top = *cut
                 .iter()
@@ -240,6 +264,45 @@ pub fn convert_to_symbol(
 
 fn layer_parent(sprite: &Sprite, id: LayerId) -> Option<LayerId> {
     sprite.layer(id).and_then(|l| l.parent)
+}
+
+/// `units` (con sus descendientes, todos en `members`) son hermanas seguidas: mismo padre y sin
+/// otras capas en el medio. Si no, la instancia (que va en un solo lugar) cambiaría el render.
+fn together(
+    sprite: &Sprite,
+    units: &[LayerId],
+    members: &BTreeSet<LayerId>,
+) -> Result<(), ConvertError> {
+    let Some(&first) = units.first() else {
+        return Ok(());
+    };
+    let parent = layer_parent(sprite, first);
+    if units.iter().any(|&id| layer_parent(sprite, id) != parent) {
+        return Err(ConvertError::Scattered);
+    }
+    let ranges = units.iter().filter_map(|&id| sprite.subtree_range(id));
+    let start = ranges.clone().map(|r| r.start).min().expect("units exist");
+    let end = ranges.map(|r| r.end).max().expect("units exist");
+    if sprite.layers[start..end]
+        .iter()
+        .any(|l| !members.contains(&l.id))
+    {
+        return Err(ConvertError::Scattered);
+    }
+    Ok(())
+}
+
+/// Ninguna capa que recorta queda de un lado (`moved` o no) y su base del otro.
+fn unclipped(sprite: &Sprite, moved: &BTreeSet<LayerId>) -> Result<(), ConvertError> {
+    let split = sprite.layers.iter().any(|l| {
+        sprite
+            .clip_base(l.id)
+            .is_some_and(|base| moved.contains(&l.id) != moved.contains(&base))
+    });
+    if split {
+        return Err(ConvertError::Clipping);
+    }
+    Ok(())
 }
 
 /// Las capas pedidas que existen, sin repetir y sin las que ya están dentro de otra pedida, de
@@ -345,13 +408,17 @@ fn symbol_sprite(
     s.tilemaps.clear();
     s.extra_chunks.clear();
     if let Some(mask) = selection {
-        // Cada imagen una sola vez: los cels vinculados la comparten (y comparten posición).
+        // Cada imagen una sola vez: los cels vinculados la comparten y también comparten
+        // posición (`draw_pixels` los mueve juntos), así que la máscara cae igual en todos.
         // Por imagen: ¿quedó sin nada visible?
         let mut blank = BTreeMap::new();
+        let mut at = BTreeMap::new();
         for cel in s.cels.values() {
-            if blank.contains_key(&cel.image) {
+            if let Some(&position) = at.get(&cel.image) {
+                debug_assert_eq!(position, cel.position, "linked cels share position");
                 continue;
             }
+            at.insert(cel.image, cel.position);
             let Some(image) = s.images.get(&cel.image) else {
                 continue;
             };
