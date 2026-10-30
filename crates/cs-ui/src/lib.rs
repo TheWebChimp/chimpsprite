@@ -47,6 +47,7 @@ mod keymap;
 mod layer_ops;
 #[cfg(test)]
 mod layout_tests;
+mod library_panel;
 mod logo;
 mod lospec_client;
 #[cfg(not(target_arch = "wasm32"))]
@@ -128,6 +129,8 @@ pub struct ChimpApp {
     groom: groom::GroomPanel,
     /// El panel Lumen del dock.
     lumen: lumen::LumenPanel,
+    /// El panel Library del dock.
+    library: library_panel::LibraryState,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
@@ -274,6 +277,7 @@ impl ChimpApp {
             dafont: Default::default(),
             groom: Default::default(),
             lumen: Default::default(),
+            library: Default::default(),
             platform: platform::Platform::default(),
             autosaver: autosave::Autosaver::default(),
             restore: None,
@@ -566,6 +570,76 @@ impl ChimpApp {
             }
             Some(lumen::LumenAction::AddLayer(name, image)) => self.bitmap_to_layer(&name, &image),
             None => {}
+        }
+    }
+
+    /// El panel Library del dock y lo que pide.
+    fn library_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
+        let mut action = None;
+        let skin = self.pixel.skin();
+        let editor = &mut self.doc.editor;
+        let state = &mut self.library;
+        dock::flyout(
+            ctx,
+            dock::DockPanel::Library,
+            anchor,
+            skin,
+            library_panel::WIDTH,
+            true,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    action = library_panel::show(ui, editor, skin, state);
+                });
+            },
+        );
+        let Some(action) = action else {
+            return;
+        };
+        let editor = &mut self.doc.editor;
+        match action {
+            library_panel::LibraryAction::Rename(id, name) => {
+                editor.execute_doc(cs_commands::DocCommand::SetArtboardProps {
+                    id,
+                    name: Some(name),
+                    position: None,
+                });
+            }
+            library_panel::LibraryAction::Duplicate(id) => {
+                let Some(source) = editor.document.artboard(id) else {
+                    return;
+                };
+                let mut copy = source.clone();
+                copy.id = editor.document.next_artboard_id();
+                copy.name = format!("{} copy", source.name);
+                copy.in_library = true;
+                let new = copy.id;
+                let index = editor.document.artboards.len();
+                if editor.execute_doc(cs_commands::DocCommand::AddArtboard {
+                    index,
+                    artboard: Box::new(copy),
+                }) {
+                    editor.library_selected = Some(new);
+                }
+            }
+            library_panel::LibraryAction::PlaceOnCanvas(id) => {
+                if let Some(cmd) = cs_commands::symbol::place_on_canvas(&editor.document, id)
+                    && editor.execute_doc(cmd)
+                {
+                    editor.activate(id);
+                    self.doc
+                        .canvas
+                        .request_zoom(view::ZoomRequest::CenterActive);
+                }
+            }
+            library_panel::LibraryAction::Delete(id) => {
+                if editor.execute_doc(cs_commands::DocCommand::RemoveArtboard { id })
+                    && editor.library_selected == Some(id)
+                {
+                    editor.library_selected = None;
+                }
+            }
+            // Entrar al modo símbolo llega con la Task 10; mientras, no hace nada.
+            library_panel::LibraryAction::Edit(_) => {}
         }
     }
 
@@ -1225,6 +1299,7 @@ impl ChimpApp {
             Some((dock::DockPanel::Dafont, anchor)) => self.dafont_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Groom, anchor)) => self.groom_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Lumen, anchor)) => self.lumen_panel(ui.ctx(), anchor, modal),
+            Some((dock::DockPanel::Library, anchor)) => self.library_panel(ui.ctx(), anchor, modal),
             _ => {}
         }
         if !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {

@@ -56,12 +56,15 @@ pub enum DockPanel {
     Groom,
     /// Lumen: normales y luz para el sprite (su contenido lo pone la app).
     Lumen,
+    /// Los símbolos de la biblioteca (su contenido lo pone la app).
+    Library,
 }
 
 impl DockPanel {
     #[cfg(not(target_arch = "wasm32"))]
-    pub const ALL: [DockPanel; 6] = [
+    pub const ALL: [DockPanel; 7] = [
         DockPanel::Artboards,
+        DockPanel::Library,
         DockPanel::Slices,
         DockPanel::Lospec,
         DockPanel::Dafont,
@@ -70,8 +73,9 @@ impl DockPanel {
     ];
     /// En la web no hay dafont (el sitio no acepta peticiones desde otras páginas).
     #[cfg(target_arch = "wasm32")]
-    pub const ALL: [DockPanel; 5] = [
+    pub const ALL: [DockPanel; 6] = [
         DockPanel::Artboards,
+        DockPanel::Library,
         DockPanel::Slices,
         DockPanel::Lospec,
         DockPanel::Groom,
@@ -86,6 +90,7 @@ impl DockPanel {
             DockPanel::Dafont => "Dafont",
             DockPanel::Groom => "Groom",
             DockPanel::Lumen => "Lumen",
+            DockPanel::Library => "Library",
         }
     }
 
@@ -98,6 +103,7 @@ impl DockPanel {
             DockPanel::Dafont => "icon.dock.dafont",
             DockPanel::Groom => "icon.dock.groom",
             DockPanel::Lumen => "icon.dock.lumen",
+            DockPanel::Library => "icon.dock.library",
         }
     }
 
@@ -110,6 +116,7 @@ impl DockPanel {
             DockPanel::Dafont => "Aa",
             DockPanel::Groom => "▦",
             DockPanel::Lumen => "☀",
+            DockPanel::Library => "▣",
         }
     }
 }
@@ -124,8 +131,15 @@ pub struct DockOutput {
 }
 
 /// Un botón del dock con Pixel UI: la pieza `button` según el estado (prendido, `on`, con el
-/// marco rosa de la herramienta elegida) y el ícono `icon` centrado.
-fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str, icon: &str, on: bool) -> egui::Response {
+/// marco rosa de la herramienta elegida) y el ícono `icon` centrado (o `plain`, si el skin no lo
+/// trae).
+fn pixel_button(
+    ui: &mut Ui,
+    skin: &Skin,
+    label: &str,
+    (icon, plain): (&str, &str),
+    on: bool,
+) -> egui::Response {
     let (rect, _) = ui.allocate_exact_size(BUTTON_SIZE, Sense::hover());
     let rect = Rect::from_min_size(rect.min.round(), BUTTON_SIZE);
     let info = pixel_draw::ButtonInfo {
@@ -133,10 +147,27 @@ fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str, icon: &str, on: bool) -> 
         ..pixel_draw::ButtonInfo::new(ui.id().with(("dock", label)), label)
     };
     let ppp = ui.ctx().pixels_per_point();
-    pixel_draw::skin_button(ui, skin, rect, info, |r| {
+    let response = pixel_draw::skin_button(ui, skin, rect, info, |r| {
         pixel_draw::piece_centered(skin, icon, r, ppp)
-    })
-    .tip(label)
+    });
+    plain_icon(ui, skin, icon, plain, rect);
+    response.tip(label)
+}
+
+/// Si el skin no trae la pieza `icon`, el texto `plain` centrado en `rect`: así el botón no queda
+/// vacío mientras falta el ícono.
+fn plain_icon(ui: &Ui, skin: &Skin, icon: &str, plain: &str, rect: Rect) {
+    if skin.piece(icon, WidgetState::Normal).is_none() {
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        let color = skin.colors().text;
+        ui.painter().text(
+            rect.center(),
+            egui::Align2::CENTER_CENTER,
+            plain,
+            font,
+            color,
+        );
+    }
 }
 
 /// El botón del timeline: lo muestra o lo esconde.
@@ -150,7 +181,7 @@ const PREVIEW_ICON: &str = "icon.preview";
 /// `plain`.
 fn toggle(ui: &mut Ui, skin: Option<&Skin>, label: &str, icon: &str, plain: &str, on: &mut bool) {
     let response = match skin {
-        Some(skin) => pixel_button(ui, skin, label, icon, *on),
+        Some(skin) => pixel_button(ui, skin, label, (icon, plain), *on),
         None => ui
             .add(egui::Button::new(plain).selected(*on).min_size(BUTTON_SIZE))
             .tip(label),
@@ -196,7 +227,13 @@ pub fn show(
     for panel in DockPanel::ALL {
         let is_open = open == Some(panel);
         let response = match skin {
-            Some(skin) => pixel_button(ui, skin, panel.label(), panel.icon(), is_open),
+            Some(skin) => pixel_button(
+                ui,
+                skin,
+                panel.label(),
+                (panel.icon(), panel.plain()),
+                is_open,
+            ),
             None => ui
                 .add(
                     egui::Button::new(panel.plain())
@@ -244,9 +281,11 @@ pub fn show(
                 });
             });
         }
-        DockPanel::Lospec | DockPanel::Dafont | DockPanel::Groom | DockPanel::Lumen => {
-            out.app_panel = Some((panel, anchor))
-        }
+        DockPanel::Lospec
+        | DockPanel::Dafont
+        | DockPanel::Groom
+        | DockPanel::Lumen
+        | DockPanel::Library => out.app_panel = Some((panel, anchor)),
     }
     out
 }
@@ -254,7 +293,7 @@ pub fn show(
 /// El panel flotante de `panel` a la izquierda de su botón, de `width` de contenido. Arriba va
 /// alineado con el botón; si no cabe hacia abajo, sube hasta donde haga falta (no más arriba de
 /// la columna del dock) y lo que no quepa en la columna se ve con scroll. Los altos (`tall`:
-/// Lospec, Dafont, Groom, Lumen) ocupan la columna entera, de arriba a abajo. Con Pixel UI, en la caja
+/// Lospec, Dafont, Groom, Lumen, Library) ocupan la columna entera, de arriba a abajo. Con Pixel UI, en la caja
 /// del skin, con el botón hecho pestaña de la caja.
 pub fn flyout(
     ctx: &egui::Context,
@@ -317,6 +356,7 @@ pub fn flyout(
                 let mut shapes = pixel_ui::piece_shapes(piece, rect, ppp);
                 shapes.extend(tab_shapes(skin, piece, panel, rect, button, ppp));
                 ui.painter().set(background, Shape::Vec(shapes));
+                plain_icon(ui, skin, panel.icon(), panel.plain(), button);
             }
         });
 }

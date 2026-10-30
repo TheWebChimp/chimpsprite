@@ -1289,7 +1289,7 @@ fn egui_color_button(ui: &mut Ui, color: &mut Rgba) -> bool {
 }
 
 /// La textura de `image`, con vecino más cercano.
-fn texture_of(ui: &Ui, name: &str, image: &Bitmap) -> TextureHandle {
+pub(crate) fn texture_of(ui: &Ui, name: &str, image: &Bitmap) -> TextureHandle {
     let bytes: Vec<u8> = image
         .pixels
         .iter()
