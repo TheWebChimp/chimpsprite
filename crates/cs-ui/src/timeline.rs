@@ -1133,12 +1133,8 @@ fn layer_row(
         } else {
             (2.0, 4.5)
         };
-        // El objeto que se edita (por ahora, el primero de la capa).
-        if let Some(track) = sprite
-            .layer(id)
-            .and_then(|l| l.objects.first())
-            .map(|o| &o.track)
-        {
+        // El objeto que se edita (el seleccionado o el primero de la capa).
+        if let Some(track) = editor.object_track(id) {
             // Objeto: ◆ en cada keyframe y una barra mientras dura.
             let color = grid.text(ui);
             if let Some(key) = track.key_at(f) {
@@ -1239,10 +1235,8 @@ fn layer_row(
                 let is_key = editor.is_instance_keyframe(id, f);
                 // Antes de la primera key no hay nada que copiar.
                 let has_key = editor
-                    .sprite()
-                    .layer(id)
-                    .and_then(|l| l.objects.first())
-                    .is_some_and(|o| o.track.key_at(f).is_some());
+                    .object_track(id)
+                    .is_some_and(|t| t.key_at(f).is_some());
                 if ui
                     .add_enabled(has_key && !is_key, menus::plain("Insert Keyframe"))
                     .clicked()

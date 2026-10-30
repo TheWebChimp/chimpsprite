@@ -179,6 +179,31 @@ fn compose_objects(drawn: &[(u8, (i32, i32), Image)]) -> ((i32, i32), Image) {
     ((x0, y0), out)
 }
 
+/// Lo que muestra el objeto `object` de la capa `layer` de `sprite` en `frame`: posición (en
+/// píxeles de `sprite`) e imagen recortada a lo opaco, sin la opacidad de su key. `None` si no
+/// existe, no tiene key vigente o no se ve nada. Sirve para tocar objetos y dibujar su recuadro.
+pub fn object_image(
+    doc: &Document,
+    sprite: &Sprite,
+    layer: cs_core::LayerId,
+    object: cs_core::ObjectId,
+    frame: usize,
+) -> Option<((i32, i32), Image)> {
+    if !sprite.color_mode.stores_rgba() {
+        return None;
+    }
+    let track = &sprite.layer(layer)?.object(object)?.track;
+    // Como en `materialize_root`: el artboard de `sprite` ya está "en curso".
+    let mut stack: Vec<ArtboardId> = doc
+        .artboards
+        .iter()
+        .find(|a| std::ptr::eq(&a.sprite, sprite))
+        .map(|a| a.id)
+        .into_iter()
+        .collect();
+    instance_image(doc, sprite, track, frame, &mut stack)
+}
+
 /// Lo que muestra un objeto en `frame`: posición del cel e imagen recortada a lo opaco.
 fn instance_image(
     doc: &Document,
@@ -477,6 +502,27 @@ mod tests {
 
     fn px(pixels: &[Rgba], x: usize, y: usize) -> Rgba {
         pixels[y * 8 + x]
+    }
+
+    #[test]
+    fn object_image_is_one_object_trimmed_at_its_key() {
+        let keys = vec![
+            InstanceKey::new(0, ArtboardId(2), (4, 5)),
+            InstanceKey::new(2, ArtboardId(2), (1, 1)),
+        ];
+        let d = doc(host_objects(vec![
+            keys,
+            vec![InstanceKey::new(0, ArtboardId(2), (0, 0))],
+        ]));
+        let sprite = &d.artboards[0].sprite;
+        let ((x, y), image) = object_image(&d, sprite, LayerId(2), ObjectId(1), 0).unwrap();
+        assert_eq!((x, y, image.width(), image.height()), (4, 5, 3, 2));
+        assert_eq!(image.get(0, 0), Some(PixelValue::Rgba(RED)));
+        assert_eq!(image.get(1, 0), Some(PixelValue::Rgba(Rgba::TRANSPARENT)));
+        let (at, _) = object_image(&d, sprite, LayerId(2), ObjectId(1), 2).unwrap();
+        assert_eq!(at, (1, 1), "the key of that frame");
+        assert!(object_image(&d, sprite, LayerId(2), ObjectId(9), 0).is_none());
+        assert!(object_image(&d, sprite, LayerId(1), ObjectId(1), 0).is_none());
     }
 
     #[test]

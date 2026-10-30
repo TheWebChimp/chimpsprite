@@ -171,21 +171,55 @@ pub fn move_objects(
     dy: i32,
 ) -> Option<Command> {
     let l = object_layer(sprite, layer)?;
-    if dx == 0 && dy == 0 {
-        return None;
-    }
     let mut objects = l.objects.clone();
+    shift_objects(&mut objects, ids, frame, (dx, dy))
+        .then_some(Command::SetObjects { layer, objects })
+}
+
+/// Corre `offset` la key en `frame` de los objetos `ids` (la crea copiando la vigente). Devuelve
+/// si alguno cambió.
+fn shift_objects(
+    objects: &mut [SceneObject],
+    ids: &[ObjectId],
+    frame: usize,
+    offset: (i32, i32),
+) -> bool {
+    if offset == (0, 0) {
+        return false;
+    }
     let mut changed = false;
     for o in objects.iter_mut().filter(|o| ids.contains(&o.id)) {
         let Some(mut key) = o.track.key_at(frame).copied() else {
             continue;
         };
         key.frame = frame;
-        key.position = (key.position.0 + dx, key.position.1 + dy);
+        key.position = (key.position.0 + offset.0, key.position.1 + offset.1);
         o.track.set_key(key);
         changed = true;
     }
-    changed.then_some(Command::SetObjects { layer, objects })
+    changed
+}
+
+/// Copias de los objetos `ids` (como `duplicate_objects` sin desplazar) corridas `(dx, dy)` en
+/// `frame`, en un solo comando: Alt+arrastrar con Move. Los originales no cambian.
+pub fn duplicate_and_move_objects(
+    sprite: &Sprite,
+    layer: LayerId,
+    ids: &[ObjectId],
+    frame: usize,
+    dx: i32,
+    dy: i32,
+) -> Option<(Command, Vec<ObjectId>)> {
+    if (dx, dy) == (0, 0) {
+        return None;
+    }
+    let (Command::SetObjects { layer, mut objects }, new_ids) =
+        duplicate_objects(sprite, layer, ids, (0, 0))?
+    else {
+        unreachable!("duplicate_objects devuelve SetObjects");
+    };
+    shift_objects(&mut objects, &new_ids, frame, (dx, dy));
+    Some((Command::SetObjects { layer, objects }, new_ids))
 }
 
 /// Reordena los objetos `ids` conservando su orden relativo.

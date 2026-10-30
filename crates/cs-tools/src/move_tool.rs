@@ -1,4 +1,4 @@
-use cs_commands::Command;
+use cs_commands::{Command, ops};
 use cs_core::Cel;
 use cs_raster::Point;
 
@@ -49,18 +49,20 @@ fn move_output(ctx: &ToolContext, dx: i32, dy: i32) -> ToolOutput {
             _ => ToolOutput::default(),
         };
     }
-    if let Some(layer) = sprite
+    if sprite
         .layer(ctx.layer)
-        .filter(|l| l.kind == cs_core::LayerKind::Objects)
+        .is_some_and(|l| l.kind == cs_core::LayerKind::Objects)
     {
-        // Por ahora se mueve el primer objeto de la capa.
-        let moved = layer.objects.first().and_then(|o| {
-            cs_commands::ops::update_object_key(sprite, ctx.layer, o.id, ctx.frame, |k| {
-                k.position = (k.position.0 + dx, k.position.1 + dy);
-            })
-        });
+        // Se mueven los objetos seleccionados (con Alt, copias de ellos) en el frame actual.
+        let (layer, frame) = (ctx.layer, ctx.frame);
+        let command = if ctx.copy_objects {
+            ops::duplicate_and_move_objects(sprite, layer, ctx.objects, frame, dx, dy)
+                .map(|(cmd, _)| cmd)
+        } else {
+            ops::move_objects(sprite, layer, ctx.objects, frame, dx, dy)
+        };
         return ToolOutput {
-            command: moved,
+            command,
             ..Default::default()
         };
     }
@@ -160,7 +162,7 @@ mod tests {
     }
 
     #[test]
-    fn moves_the_first_object_key_creating_one_on_the_current_frame() {
+    fn moves_the_selected_objects_creating_a_key_on_the_current_frame() {
         let mut s = sprite();
         Command::AddFrame {
             index: 1,
@@ -179,18 +181,33 @@ mod tests {
         };
         layer.objects = vec![object(1), object(2)];
         s.layers.push(layer);
-        let out = {
-            let mut c = ctx(&s);
+        let run = |s: &Sprite, objects: &[ObjectId], copy: bool| {
+            let mut c = ctx(s);
             c.layer = LayerId(2);
             c.frame = 1;
+            c.objects = objects;
+            c.copy_objects = copy;
             gesture(&c, (0, 0), (2, 3))
         };
-        out.command.unwrap().apply(&mut s).unwrap();
+        assert!(run(&s, &[], false).command.is_none(), "nothing selected");
+        let copied = run(&s, &[ObjectId(2)], true);
+        run(&s, &[ObjectId(2)], false)
+            .command
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
         let layer = s.layer(LayerId(2)).unwrap();
-        let track = &layer.objects[0].track;
+        let track = &layer.objects[1].track;
         assert_eq!(track.key_at(0).unwrap().position, (1, 1));
         assert_eq!(track.key_at(1).unwrap().position, (3, 4));
-        assert_eq!(layer.objects[1].track.keys.len(), 1, "the second one stays");
+        assert_eq!(layer.objects[0].track.keys.len(), 1, "the first one stays");
+        // Con Alt: una copia (arriba de todo) se mueve y el original queda.
+        let Some(Command::SetObjects { objects, .. }) = copied.command else {
+            panic!("expected SetObjects");
+        };
+        assert_eq!(objects.len(), 3);
+        assert_eq!(objects[1].track.keys.len(), 1);
+        assert_eq!(objects[2].track.key_at(1).unwrap().position, (3, 4));
     }
 
     #[test]

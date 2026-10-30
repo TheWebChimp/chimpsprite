@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 
 use cs_commands::{Command, DocCommand, History, sprite_ops};
 use cs_core::{
-    AnimDirection, Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, PixelValue, Playback,
-    Rgba, Sprite, Tile,
+    AnimDirection, Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, ObjectId, PixelValue,
+    Playback, Rgba, Sprite, Tile,
 };
 use cs_render::OnionSkin;
 use cs_tools::text::TextStyle;
@@ -214,8 +214,8 @@ enum TilesEdit {
     TooLarge,
 }
 
-/// Lo que edita un gesto agrupado: artboard, capa, frame y slice seleccionados.
-type MergeTarget = (ArtboardId, LayerId, usize, Option<usize>);
+/// Lo que edita un gesto agrupado: artboard, capa, frame, slice seleccionado y objeto actual.
+type MergeTarget = (ArtboardId, LayerId, usize, Option<usize>, Option<ObjectId>);
 
 /// El pincel personalizado con los valores del sprite, compartido con cada contexto de las
 /// herramientas; y para qué versión del pincel, artboard y documento se armó.
@@ -356,6 +356,11 @@ pub struct Editor {
     pub symbol_stack: Vec<ArtboardId>,
     /// El artboard activo al entrar al modo símbolo desde el documento (para volver).
     pub symbol_return: Option<ArtboardId>,
+    /// Los objetos seleccionados de la capa actual (si es de objetos), de abajo hacia arriba en
+    /// el orden en que se eligieron. Ver `object_ops.rs`.
+    pub selected_objects: Vec<ObjectId>,
+    /// El gesto de Move en curso empezó con Alt sobre un objeto: mueve copias.
+    pub(crate) object_copy: bool,
 }
 
 impl Editor {
@@ -421,6 +426,8 @@ impl Editor {
             library_selected: None,
             symbol_stack: Vec::new(),
             symbol_return: None,
+            selected_objects: Vec::new(),
+            object_copy: false,
         };
         editor.ensure_valid();
         // Negro para pintar (el más cercano de la paleta, si es indexado) y la máscara de
@@ -490,6 +497,7 @@ impl Editor {
             }
             self.selection = None;
             self.slice = None;
+            self.selected_objects.clear();
         }
         let sprite = &self
             .document
@@ -502,6 +510,11 @@ impl Editor {
         self.frame = self.frame.min(sprite.frames.len().saturating_sub(1));
         let slices = sprite.slices.len();
         self.slice = self.slice.filter(|&i| i < slices);
+        // Los objetos seleccionados que ya no están en la capa actual (un undo, otra capa).
+        match sprite.layer(self.layer) {
+            Some(layer) => self.selected_objects.retain(|&o| layer.object(o).is_some()),
+            None => self.selected_objects.clear(),
+        }
         let last = sprite.frames.len().saturating_sub(1);
         self.frame_range = self.frame_range.map(|(a, b)| (a.min(last), b.min(last)));
         let (w, h) = (sprite.width, sprite.height);
@@ -539,6 +552,7 @@ impl Editor {
         (self.layer, self.frame) = self.views.get(&id).copied().unwrap_or((LayerId(0), 0));
         self.selection = None;
         self.slice = None;
+        self.selected_objects.clear();
         self.ensure_valid();
         self.revision += 1;
     }
@@ -622,7 +636,13 @@ impl Editor {
             id: self.active,
             cmd,
         };
-        let target = (self.active, self.layer, self.frame, self.slice);
+        let target = (
+            self.active,
+            self.layer,
+            self.frame,
+            self.slice,
+            self.current_object(),
+        );
         let result = if self.merge == Some((group, target)) {
             self.history.execute_merged(&mut self.document, cmd)
         } else {

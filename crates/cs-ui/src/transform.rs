@@ -703,6 +703,8 @@ impl Editor {
             self.cancel_floating();
         } else if self.is_floating() {
             self.commit_floating();
+        } else if !self.selected_objects.is_empty() {
+            self.clear_object_selection();
         } else {
             self.deselect();
         }

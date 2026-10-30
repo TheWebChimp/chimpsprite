@@ -1,7 +1,7 @@
 //! Instancias de artboards (símbolos) desde el editor y el panel.
 
 use cs_commands::{Command, DocCommand, ops};
-use cs_core::{ArtboardId, InstanceKey, LayerId, ObjectId};
+use cs_core::{ArtboardId, InstanceKey, InstanceTrack, LayerId, ObjectId};
 
 use crate::editor::Editor;
 
@@ -109,14 +109,33 @@ impl Editor {
         Ok(())
     }
 
-    /// El objeto que se edita en la capa actual. Por ahora, el primero de la capa.
+    /// El objeto que se edita en la capa actual: el primero de los seleccionados o, sin
+    /// selección, el primero de la capa.
     pub fn current_object(&self) -> Option<ObjectId> {
         self.object_of(self.layer)
     }
 
-    /// El objeto que se edita en `layer` (el primero, por ahora).
-    fn object_of(&self, layer: LayerId) -> Option<ObjectId> {
-        self.sprite().layer(layer)?.objects.first().map(|o| o.id)
+    /// El objeto que se edita en `layer` (el panel, el timeline y sus keys): en la capa actual,
+    /// el primero de los seleccionados; si no, el primero de la capa. Es el único lugar que
+    /// decide ese "primero".
+    pub(crate) fn object_of(&self, layer: LayerId) -> Option<ObjectId> {
+        let l = self.sprite().layer(layer)?;
+        let selected = (layer == self.layer)
+            .then(|| {
+                self.selected_objects
+                    .iter()
+                    .find(|&&o| l.object(o).is_some())
+            })
+            .flatten();
+        selected
+            .copied()
+            .or_else(|| l.objects.first().map(|o| o.id))
+    }
+
+    /// El track del objeto que se edita en `layer` (ver `object_of`).
+    pub(crate) fn object_track(&self, layer: LayerId) -> Option<&InstanceTrack> {
+        let object = self.object_of(layer)?;
+        Some(&self.sprite().layer(layer)?.object(object)?.track)
     }
 
     /// Key vigente del objeto actual en el frame actual (si la capa es de objetos).
@@ -127,13 +146,8 @@ impl Editor {
     }
 
     pub fn is_instance_keyframe(&self, layer: LayerId, frame: usize) -> bool {
-        let Some(object) = self.object_of(layer) else {
-            return false;
-        };
-        self.sprite()
-            .layer(layer)
-            .and_then(|l| l.object(object))
-            .is_some_and(|o| o.track.keys.iter().any(|k| k.frame == frame))
+        self.object_track(layer)
+            .is_some_and(|t| t.keys.iter().any(|k| k.frame == frame))
     }
 
     /// Cambia la key vigente del objeto actual; si el frame actual no es keyframe, crea uno.

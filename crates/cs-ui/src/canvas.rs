@@ -932,6 +932,21 @@ impl CanvasView {
             draw_marching_ants(&painter, mask, origin, self.scale(), phase, self.pixel_ui);
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
         }
+        // Los objetos seleccionados: un recuadro punteado alrededor de lo que se ve de cada uno
+        // (con el arrastre en curso).
+        if let Some(origin) = active_origin
+            && !editor.selected_objects.is_empty()
+        {
+            let color = crate::pixel_ui::frame_skin(&ctx)
+                .map_or(theme::ACCENT, |skin| skin.colors().selection);
+            for &object in &editor.selected_objects {
+                if let Some(b) =
+                    crate::object_ops::object_bounds_in(document, editor, editor.layer, object)
+                {
+                    draw_object_outline(&painter, b, origin, self.scale(), color);
+                }
+            }
+        }
         if let Some(origin) = active_origin
             && handles_active(editor)
             && let Some(b) = editor.transform_box()
@@ -1721,6 +1736,32 @@ fn draw_transform_box(
         painter.rect_filled(r, 0.0, Color32::WHITE);
         painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
     }
+}
+
+/// El recuadro de un objeto seleccionado: un rectángulo punteado de 1 punto en `color` justo
+/// por fuera de la caja `(x, y, ancho, alto)` (en píxeles del sprite).
+fn draw_object_outline(
+    painter: &egui::Painter,
+    (x, y, w, h): (i32, i32, u32, u32),
+    origin: Pos2,
+    zoom: Vec2,
+    color: Color32,
+) {
+    let at = |x: i32, y: i32| origin + Vec2::new(x as f32, y as f32) * zoom;
+    let r = Rect::from_min_max(at(x, y), at(x + w as i32, y + h as i32)).expand(0.5);
+    let corners = [
+        r.left_top(),
+        r.right_top(),
+        r.right_bottom(),
+        r.left_bottom(),
+        r.left_top(),
+    ];
+    painter.extend(egui::Shape::dashed_line(
+        &corners,
+        Stroke::new(1.0, color),
+        2.0,
+        2.0,
+    ));
 }
 
 /// Con Pixel UI, los ejes de simetría como en Aseprite: líneas de 1 punto en `color`, enteras

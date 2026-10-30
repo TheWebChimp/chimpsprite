@@ -608,25 +608,25 @@ impl CanvasView {
         {
             editor.finish_gesture();
         }
-        // Doble clic con Move: fuera del símbolo que se edita sale un nivel; si no, entra a la
-        // instancia de la capa actual (a un símbolo de la biblioteca, en el modo símbolo). No
-        // sobre la barra o la etiqueta (renombra), las reglas ni la migaja de pan.
+        // Doble clic con Move: sobre un objeto, lo selecciona y entra a su fuente (a un símbolo
+        // de la biblioteca, en el modo símbolo); donde no hay objetos, en el modo símbolo sale
+        // un nivel. No sobre la barra o la etiqueta (renombra), las reglas ni la migaja de pan.
         if response.double_clicked()
             && editor.active_tool() == ToolKind::Move
             && over_label.is_none()
             && let Some(p) = pointer.filter(|&p| area.contains(p))
         {
-            let outside = !editor.artboard().contains(self.to_world(rect, p));
-            if editor.in_symbol_mode() && outside {
-                editor.exit_symbol_to(editor.symbol_stack.len() - 1);
-                ui.ctx().request_repaint();
-            } else if editor.enter_instance() {
-                if editor.in_symbol_mode() {
+            match editor.open_object_at(self.to_world(rect, p)) {
+                None if editor.in_symbol_mode() => {
+                    editor.exit_symbol_to(editor.symbol_stack.len() - 1);
+                    ui.ctx().request_repaint();
+                }
+                Some(true) if editor.in_symbol_mode() => {
                     self.request_zoom(ZoomRequest::Fit);
                     ui.ctx().request_repaint();
-                } else {
-                    self.center_active(editor);
                 }
+                Some(true) => self.center_active(editor),
+                _ => {}
             }
         }
 

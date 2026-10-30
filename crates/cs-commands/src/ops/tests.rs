@@ -1026,3 +1026,28 @@ fn duplicate_objects_get_new_ids_and_offset() {
     assert_eq!(s, before);
     assert!(duplicate_objects(&s, id, &ids(&[9]), (1, 1)).is_none());
 }
+
+#[test]
+fn duplicate_and_move_objects_moves_only_the_copies() {
+    let (mut s, id) = four_objects();
+    crate::Command::AddFrame {
+        index: 1,
+        frame: Frame { duration_ms: 100 },
+    }
+    .apply(&mut s)
+    .unwrap();
+    let before = s.clone();
+    let (cmd, new) = duplicate_and_move_objects(&s, id, &ids(&[2]), 1, 3, 4).unwrap();
+    assert_eq!(new, ids(&[5]));
+    let undo = cmd.apply(&mut s).unwrap();
+    let l = s.layer(id).unwrap();
+    assert_eq!(order_of(&s, id), vec![1, 2, 3, 4, 5]);
+    assert_eq!(l.objects[1].track.keys.len(), 1, "the original stays");
+    let copy = &l.objects[4].track;
+    assert_eq!(copy.key_at(0).unwrap().position, (0, 0));
+    assert_eq!(copy.key_at(1).unwrap().position, (3, 4));
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    assert!(duplicate_and_move_objects(&s, id, &ids(&[2]), 1, 0, 0).is_none());
+    assert!(duplicate_and_move_objects(&s, id, &ids(&[9]), 1, 1, 0).is_none());
+}
