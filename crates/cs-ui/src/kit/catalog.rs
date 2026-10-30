@@ -1,9 +1,11 @@
-//! La pestaña UI Catalog: una página con scroll, sobre el fondo del área de trabajo, con una
-//! sección por componente del kit. Cada componente nuevo agrega la suya.
+//! La pestaña UI Catalog: una página con scroll, sobre el fondo `background` del skin (#ddcebf,
+//! el que pidió el diseñador), con una sección por componente del kit. Cada componente nuevo
+//! agrega la suya.
 
 use eframe::egui::{self, Pos2, Rect, Sense, Shape, TextStyle, Ui, Vec2, pos2, vec2};
 
 use super::button::{self, ButtonState};
+use super::group::{self, GroupItem, SegmentLook};
 use crate::pixel_draw;
 use crate::skin::Skin;
 
@@ -34,18 +36,35 @@ const NOTE_PITCH: f32 = 9.0;
 /// El botón de verdad, debajo de la columna.
 const LIVE_LABEL: &str = "Click me";
 
+/// De una sección a la siguiente.
+const SECTION_GAP: f32 = 24.0;
+
+/// Sección Button group, como en el mockup: el grupo de dos "Button" y, en la fila siguiente, el
+/// mismo y 22 px a la derecha el de los puntos (el primero elegido); de un grupo al siguiente,
+/// 21 filas.
+const GROUP_PITCH: f32 = 21.0;
+const GROUP_GAP: f32 = 22.0;
+/// El grupo de verdad, con una opción elegida a la vez.
+const LIVE_OPTIONS: [&str; 3] = ["Fast", "RotSprite", "Smooth"];
+
+/// En la memoria de egui: la opción elegida del grupo de verdad.
+fn picked_id() -> egui::Id {
+    egui::Id::new("ui_catalog_group_pick")
+}
+
 /// En la memoria de egui: cuántas veces se hizo clic en el botón de verdad.
 fn clicks_id() -> egui::Id {
     egui::Id::new("ui_catalog_clicks")
 }
 
-/// La página entera, en el panel central (`ui`), con el fondo `canvas` del skin.
+/// La página entera, en el panel central (`ui`), con el fondo `background` del skin.
 pub fn show(ui: &mut Ui, skin: &Skin) {
     egui::ScrollArea::both()
         .auto_shrink([false, false])
         .show(ui, |ui| {
             let origin = ui.cursor().min.round() + MARGIN;
             let bottom = buttons_section(ui, skin, origin);
+            let bottom = group_section(ui, skin, pos2(origin.x, bottom + SECTION_GAP));
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
                 PAGE_WIDTH + 2.0 * MARGIN.x,
@@ -147,4 +166,111 @@ fn buttons_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     );
     ui.painter().add(count);
     live_top + button::HEIGHT
+}
+
+/// La sección Button group desde `origin`. Devuelve dónde termina.
+fn group_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    let colors = *skin.colors();
+    let top = section_title(ui, skin, origin.x, origin.y, "Button group");
+    let left = origin.x;
+    let plain = [GroupItem::text(SAMPLE), GroupItem::text(SAMPLE)];
+    let dots = [GroupItem::with_dot(SAMPLE), GroupItem::with_dot(SAMPLE)];
+    let look = |state, on| SegmentLook { state, on };
+    let normal = [look(ButtonState::Normal, false); 2];
+    let first_on = [
+        look(ButtonState::Normal, true),
+        look(ButtonState::Normal, false),
+    ];
+    let mut shapes: Vec<Shape> = Vec::new();
+    let name = |shapes: &mut Vec<Shape>, text: &str, x: f32, y: f32| {
+        let (shape, _) = pixel_draw::caps_text(
+            ui,
+            text,
+            x + STATE_LABEL_GAP,
+            y + button::CAPS_TOP,
+            colors.text,
+        );
+        shapes.push(shape);
+    };
+    // Como en el mockup: el grupo solo y, debajo, el mismo y el de los puntos.
+    let plain_w = group::width(ui, &plain);
+    shapes.extend(group::group_shapes(
+        ui,
+        skin,
+        pos2(left, top),
+        &plain,
+        &normal,
+    ));
+    let row = top + GROUP_PITCH;
+    shapes.extend(group::group_shapes(
+        ui,
+        skin,
+        pos2(left, row),
+        &plain,
+        &normal,
+    ));
+    let dots_left = left + plain_w + GROUP_GAP;
+    shapes.extend(group::group_shapes(
+        ui,
+        skin,
+        pos2(dots_left, row),
+        &dots,
+        &first_on,
+    ));
+    name(
+        &mut shapes,
+        "Dots",
+        dots_left + group::width(ui, &dots),
+        row,
+    );
+    // Los estados, forzados: el primero elegido, con el puntero encima del segundo y deshabilitado.
+    let states = [
+        ("Active", first_on),
+        (
+            "Hover",
+            [
+                look(ButtonState::Normal, true),
+                look(ButtonState::Hover, false),
+            ],
+        ),
+        (
+            "Disabled",
+            [
+                look(ButtonState::Disabled, true),
+                look(ButtonState::Disabled, false),
+            ],
+        ),
+    ];
+    let mut y = row + GROUP_PITCH;
+    for (label, looks) in states {
+        shapes.extend(group::group_shapes(ui, skin, pos2(left, y), &dots, &looks));
+        name(&mut shapes, label, left + group::width(ui, &dots), y);
+        y += GROUP_PITCH;
+    }
+    ui.painter().extend(shapes);
+    // El de verdad: una opción elegida a la vez.
+    let items = LIVE_OPTIONS.map(GroupItem::with_dot);
+    let mut picked: usize = ui.data(|d| d.get_temp(picked_id()).unwrap_or_default());
+    let rect = Rect::from_min_size(
+        pos2(left, y),
+        vec2(group::width(ui, &items), button::HEIGHT),
+    );
+    let clicked = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            super::button_group(ui, skin, &items, &|i| i == picked)
+        })
+        .inner;
+    if let Some(i) = clicked {
+        picked = i;
+        ui.data_mut(|d| d.insert_temp(picked_id(), picked));
+    }
+    let (text, _) = pixel_draw::caps_text(
+        ui,
+        &format!("Picked {}", LIVE_OPTIONS[picked]),
+        rect.right() + STATE_LABEL_GAP,
+        y + button::CAPS_TOP,
+        colors.text,
+    );
+    ui.painter().add(text);
+    y + button::HEIGHT
 }

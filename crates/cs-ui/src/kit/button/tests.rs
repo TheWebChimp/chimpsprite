@@ -4,7 +4,7 @@ use super::*;
 
 /// Un contexto con la fuente pixel y el estilo de Pixel UI, y el skin embebido. Las fuentes rigen
 /// desde el segundo frame.
-fn pixel_ctx() -> (egui::Context, Skin) {
+pub(crate) fn pixel_ctx() -> (egui::Context, Skin) {
     let ctx = egui::Context::default();
     ctx.set_fonts(crate::appearance::font_definitions(true));
     let skin = Skin::embedded(&ctx);
@@ -14,7 +14,11 @@ fn pixel_ctx() -> (egui::Context, Skin) {
 }
 
 /// Un frame; devuelve lo dibujado. Las texturas no se suben a ninguna GPU.
-fn frame(ctx: &egui::Context, events: Vec<Event>, mut run: impl FnMut(&mut Ui)) -> Vec<Shape> {
+pub(crate) fn frame(
+    ctx: &egui::Context,
+    events: Vec<Event>,
+    mut run: impl FnMut(&mut Ui),
+) -> Vec<Shape> {
     let input = RawInput {
         screen_rect: Some(Rect::from_min_size(Pos2::ZERO, vec2(400.0, 300.0))),
         events,

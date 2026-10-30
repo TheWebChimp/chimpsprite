@@ -2,8 +2,8 @@
 //! las piezas `button`, `button.hover`, `button.down` y `button.disabled` del skin (49×17, con la
 //! línea clara de abajo adentro) y el texto con las medidas del mockup (frame 9).
 //!
-//! Todos los botones de texto de Pixel UI pasan por acá; los de ícono y los grupos de opciones,
-//! todavía no.
+//! Todos los botones de texto de Pixel UI pasan por acá (los grupos de opciones, por
+//! [`super::group`], que los arma con estas piezas); los de ícono, todavía no.
 
 use std::sync::Arc;
 
@@ -276,4 +276,4 @@ pub fn label_shapes(
 }
 
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;

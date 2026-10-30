@@ -1100,13 +1100,9 @@ impl ChimpApp {
             if let Some(frame) = frame {
                 panel = panel.frame(frame);
             }
-            // Las páginas (el UI Catalog) sobre el fondo del área de trabajo.
+            // Las páginas (el UI Catalog) van sobre el mismo fondo (`background`, #ddcebf), como
+            // pidió el diseñador.
             let page = self.tabs.page();
-            if let (Some(frame), Some(_)) = (frame, page)
-                && let Some(skin) = self.pixel.skin()
-            {
-                panel = panel.frame(frame.fill(skin.colors().canvas));
-            }
             panel.show(ui, |ui| {
                 ui.add_enabled_ui(!modal, |ui| match (page, self.pixel.skin()) {
                     (Some(tabs::Page::Catalog), Some(skin)) => kit::catalog::show(ui, skin),

@@ -14,12 +14,9 @@
 //!   `field.check`; mientras el skin no la traiga (el diseño no la muestra), un cuadro plano de
 //!   respaldo. Las de los menús (`menu.check`, `menu.check.on`) no sirven: son otro dibujo, de
 //!   11×12.
-//! - **Opciones** (los grupos de radios: Sample, Linear/Radial, Rotation): botones de un clic,
-//!   uno por opción. El diseño no los muestra; van con la pieza `button` de los diálogos (49×17
-//!   con centro) a 16 de alto en las filas de los campos, `button.active` el elegido (o
-//!   `button.down` si el skin no lo trae), y el texto
-//!   centrado con las mayúsculas en la fila de los textos. `sym.slot` no sirve: no tiene centro y
-//!   no se estira.
+//! - **Opciones** (los grupos de radios: Sample, Linear/Radial, Rotation): el grupo de botones
+//!   del UI kit (`kit::group`, mockup de componentes, frame 9) con puntos, desde la fila de los
+//!   campos: sus mayúsculas caen en la fila de los textos.
 
 use std::ops::RangeInclusive;
 
@@ -29,6 +26,7 @@ use eframe::egui::{
 };
 use eframe::emath::GuiRounding as _;
 
+use crate::kit::{self, GroupItem};
 use crate::menus::{self, MenuLook, galley, ink_width, solid};
 use crate::pixel_ui;
 use crate::pixel_ui::Tip as _;
@@ -74,18 +72,6 @@ const CHECK_TOP: f32 = 3.0;
 const FALLBACK_CHECK_SIZE: Vec2 = vec2(13.0, 14.0);
 /// De la casilla a la tinta de su texto.
 const CHECK_GAP: f32 = 3.0;
-/// Los botones de opción (los grupos de radios): la pieza de los botones de los diálogos, que
-/// tiene centro y se estira a lo ancho; acá, con el alto de los campos.
-const BUTTON: &str = "button";
-/// Un botón de un grupo de opciones, como en el diseño: el punto 3 px adentro del borde y 4 abajo,
-/// la tinta del texto 12 px adentro (el punto de 7 y 2 de aire) y 4 px antes del borde derecho.
-const OPTION_DOT_LEFT: f32 = 3.0;
-const OPTION_DOT_TOP: f32 = 4.0;
-const OPTION_TEXT_LEFT: f32 = 12.0;
-const OPTION_TEXT_RIGHT: f32 = 4.0;
-const OPTION_DOT_ON: &str = "button.dot.on";
-const OPTION_DOT_OFF: &str = "button.dot.off";
-const OPTION_SEP: &str = "button.sep";
 
 /// Lo que necesitan los controles pixel de la barra: el skin y la fila de arriba de la barra.
 #[derive(Clone, Copy)]
@@ -264,11 +250,10 @@ pub fn choices<T: PartialEq + Copy>(
     }
 }
 
-/// Los grupos chicos de opciones exclusivas (los que sin Pixel UI son radios), como en el diseño:
-/// los botones pegados (`button`, `button.hover`, `button.down`), separados por `button.sep`, cada
-/// uno con su punto (`button.dot.on` el elegido, `button.dot.off` los demás) y su `name` (los no
-/// elegidos en `option_text_off`). Un clic elige esa opción; otro clic en la elegida no la apaga,
-/// como con radios. Devuelve si cambió `current`.
+/// Los grupos chicos de opciones exclusivas (los que sin Pixel UI son radios): el grupo de botones
+/// del UI kit ([`kit::group`](crate::kit::group)), cada opción con su punto y su `name`, en las
+/// filas de los campos. Un clic elige esa opción; otro clic en la elegida no la apaga, como con
+/// radios. Devuelve si cambió `current`.
 pub fn options<T: PartialEq + Copy>(
     ui: &mut Ui,
     look: BarLook,
@@ -276,109 +261,27 @@ pub fn options<T: PartialEq + Copy>(
     values: impl IntoIterator<Item = T>,
     name: impl Fn(T) -> &'static str,
 ) -> bool {
-    let before = *current;
     let values: Vec<T> = values.into_iter().collect();
-    let colors = *look.skin.colors();
-    // Cada botón: el punto, el texto y el borde; los de al lado comparten la columna del medio.
-    let widths: Vec<f32> = values
+    let items: Vec<GroupItem> = values
         .iter()
-        .map(|&v| {
-            let ink = ink_width(&galley(ui, name(v), colors.text));
-            OPTION_TEXT_LEFT + ink + OPTION_TEXT_RIGHT + 1.0
-        })
+        .map(|&v| GroupItem::with_dot(name(v)))
         .collect();
-    let total = widths.iter().sum::<f32>() - (widths.len().saturating_sub(1)) as f32;
-    // Un id por grupo (puede haber varios en la barra) y uno por botón.
-    let group = ui.next_auto_id();
-    let (rect, _) = ui.allocate_exact_size(vec2(total, FIELD_HEIGHT), Sense::hover());
-    let ppp = ui.ctx().pixels_per_point();
-    let enabled = ui.is_enabled();
-    let top = look.top + FIELD_TOP;
-    let mut left = rect.left().round();
-    let mut shapes = Vec::new();
-    let mut seps = Vec::new();
-    for (i, &value) in values.iter().enumerate() {
-        // El cuerpo del botón; debajo, su luz.
-        let drawn = Rect::from_min_size(pos2(left, top), vec2(widths[i], pixel_ui::CONTROL_BODY));
-        let light = Rect::from_min_size(drawn.left_bottom(), vec2(widths[i], 1.0));
-        shapes.push(solid(light, colors.highlight, ppp));
-        let id = group.with(("bar_option", i));
-        let response = ui.interact(drawn, id, Sense::click());
-        let on = *current == value;
-        let label = name(value);
-        response.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, enabled, on, label));
-        if response.clicked() {
-            *current = value;
+    // Un id por grupo (puede haber varios en la barra).
+    let id = ui.next_auto_id();
+    let width = kit::group::width(ui, &items);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
+    let at = pos2(rect.left().round(), look.top + FIELD_TOP);
+    let painter = painter(ui, look);
+    let picked = kit::group::button_group_at(ui, look.skin, &painter, id, at, &items, &|i| {
+        values[i] == *current
+    });
+    match picked {
+        Some(i) if values[i] != *current => {
+            *current = values[i];
+            true
         }
-        let state = if !enabled {
-            WidgetState::Normal
-        } else if response.is_pointer_button_down_on() {
-            WidgetState::Down
-        } else if response.hovered() {
-            WidgetState::Hover
-        } else {
-            WidgetState::Normal
-        };
-        match look.skin.piece(BUTTON, state) {
-            // La pieza trae su luz en la última fila: llega hasta la de `light`.
-            Some(piece) => {
-                let with_light = drawn.with_max_y(light.bottom());
-                shapes.extend(pixel_ui::piece_shapes(piece, with_light, ppp));
-            }
-            None => {
-                shapes.extend(flat_box(look, drawn, ppp));
-                if on {
-                    shapes.push(Shape::rect_stroke(
-                        drawn.shrink(1.0).round_to_pixels(ppp),
-                        0.0,
-                        Stroke::new(1.0, colors.accent),
-                        StrokeKind::Inside,
-                    ));
-                }
-            }
-        }
-        let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
-        let dot = if on { OPTION_DOT_ON } else { OPTION_DOT_OFF };
-        if let Some(piece) = look.piece(dot) {
-            let at = Rect::from_min_size(
-                pos2(drawn.left() + OPTION_DOT_LEFT, top + OPTION_DOT_TOP + down),
-                size_of(piece),
-            );
-            shapes.extend(pixel_ui::piece_shapes(piece, at, ppp));
-        }
-        // El texto, armado con su color (el de la galería manda sobre el de la forma).
-        let color = if !enabled {
-            colors.button_text_disabled
-        } else if on {
-            colors.text
-        } else {
-            colors.option_text_off
-        };
-        let shown = galley(ui, label, color);
-        let at = tab_bar::text_pos(
-            &shown,
-            drawn.left() + OPTION_TEXT_LEFT,
-            look.top + CAPS_TOP + down,
-            ppp,
-        );
-        shapes.push(Shape::galley(at, shown, color));
-        if i > 0 {
-            seps.push(drawn.left());
-        }
-        left += widths[i] - 1.0;
+        _ => false,
     }
-    // Las uniones: el brillo del de la izquierda, la línea y la sombra del de la derecha.
-    if let Some(piece) = look.piece(OPTION_SEP) {
-        for x in seps {
-            let at = Rect::from_min_size(pos2(x - 1.0, top), size_of(piece));
-            shapes.extend(pixel_ui::piece_shapes(piece, at, ppp));
-        }
-    }
-    // Deshabilitado, el grupo se ve igual (sin la transparencia de egui); solo el texto cambia.
-    let mut painter = painter(ui, look);
-    painter.set_opacity(1.0);
-    painter.extend(shapes);
-    *current != before
 }
 
 /// El botón de la forma del pincel, como en el diseño: un `button` de 25×16 con la huella del

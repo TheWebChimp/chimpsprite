@@ -4,3 +4,6 @@
 
 pub mod button;
 pub mod catalog;
+pub mod group;
+
+pub use group::{GroupItem, button_group};

@@ -149,6 +149,19 @@ oculta.
     | transparente | transparente |
 
     Si falta, la opción elegida usa `button.down`.
+  - **Grupo de botones** (`crates/cs-ui/src/kit/group.rs`, mockup de componentes, frame 9): los
+    segmentos son `button`, `button.hover`, `button.down` (el elegido o presionado: baja 1 px) y
+    `button.disabled` estirados sobre cada uno; entre dos, una sola columna:
+    - `button.group.sep` (256,650, 1×17): (89,77,77) arriba, (189,164,153) en las filas 1 a 13
+      y (89,77,77) en la del bisel (14) y la de abajo (15); la luz (241,235,219) en la 16. Copiada
+      de la x 248 del mockup. Si los dos vecinos bajaron, se dibuja sin la fila de arriba.
+    - `button.group.sep.disabled` (258,650, 1×17): no está en el diseño; (136,110,106) arriba
+      como el borde de `button.disabled`, (189,164,153) en las filas 1 a 14, (89,77,77) y la luz.
+    - `button.group.dot.on` y `button.group.dot.off` (261,650 y 269,650, 6×7): el punto verde de
+      la opción elegida y el morado de las demás, con su sombra (221,206,191) abajo; copiados del
+      mockup (x 315 y 362). Van donde empezaría el texto, en la fila de sus mayúsculas, y el
+      texto 3 px después. Reemplazan a `button.dot.on`, `button.dot.off` y `button.sep`, que ya
+      no dibuja nadie.
 
 - **Paleta y editor de color** (frame 4 del diseño, capa Mockup, columna x 784..972; el skin
   creció a 320×272 y estas piezas van en y 236..267):
