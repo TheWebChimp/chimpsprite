@@ -159,6 +159,7 @@ pub enum Action {
     DuplicateLayer,
     MergeDown,
     Flatten,
+    ConvertToSymbol,
     PlayPause,
     NextFrame,
     PreviousFrame,
@@ -188,7 +189,7 @@ pub enum Gate {
 
 impl Action {
     /// Las acciones que no son herramientas, en el orden de la lista.
-    const COMMANDS: [Action; 47] = [
+    const COMMANDS: [Action; 48] = [
         Action::NewFile,
         Action::Open,
         Action::Save,
@@ -223,6 +224,7 @@ impl Action {
         Action::DuplicateLayer,
         Action::MergeDown,
         Action::Flatten,
+        Action::ConvertToSymbol,
         Action::PlayPause,
         Action::NextFrame,
         Action::PreviousFrame,
@@ -286,6 +288,7 @@ impl Action {
             DuplicateLayer => ("Layer", "Duplicate"),
             MergeDown => ("Layer", "Merge Down"),
             Flatten => ("Layer", "Flatten"),
+            ConvertToSymbol => ("Layer", "Convert to Symbol"),
             PlayPause => ("Frame", "Play / Pause"),
             NextFrame => ("Frame", "Next Frame"),
             PreviousFrame => ("Frame", "Previous Frame"),
@@ -387,6 +390,7 @@ impl Action {
             // Sin atajo de fábrica (el Ctrl+E de Aseprite es Export aquí); se asignan en
             // Keyboard Shortcuts.
             DuplicateLayer | MergeDown | Flatten => vec![],
+            ConvertToSymbol => vec![k(Key::F8)],
             PlayPause => vec![k(Key::Enter)],
             NextFrame => vec![k(Key::Period), k(Key::ArrowRight)],
             PreviousFrame => vec![k(Key::Comma), k(Key::ArrowLeft)],

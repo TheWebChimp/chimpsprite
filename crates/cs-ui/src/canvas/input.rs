@@ -518,6 +518,18 @@ impl CanvasView {
                     editor.flip(false);
                     ui.close();
                 }
+                menus::separator(ui);
+                let convert = editor.can_convert_to_symbol();
+                if ui
+                    .add_enabled(convert.is_ok(), menus::plain("Convert to Symbol…"))
+                    .on_disabled_hover_text(
+                        convert.err().map(|e| e.to_string()).unwrap_or_default(),
+                    )
+                    .clicked()
+                {
+                    self.symbol_request = true;
+                    ui.close();
+                }
             });
         }
         if self.slice_menu {

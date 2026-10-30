@@ -349,6 +349,8 @@ pub struct Editor {
     /// de abajo de la caja de los colores, o al elegir un color con clic derecho (`pick_color`).
     /// Sin Pixel UI vuelve a `false` (`ChimpApp::layout`). Ver `edited_color`.
     pub editing_secondary: bool,
+    /// El símbolo elegido en el panel de la biblioteca (o el último creado con F8).
+    pub library_selected: Option<ArtboardId>,
 }
 
 impl Editor {
@@ -411,6 +413,7 @@ impl Editor {
             palette_selection: None,
             before_mask: None,
             editing_secondary: false,
+            library_selected: None,
         };
         editor.ensure_valid();
         // Negro para pintar (el más cercano de la paleta, si es indexado) y la máscara de

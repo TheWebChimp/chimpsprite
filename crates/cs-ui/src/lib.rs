@@ -72,6 +72,8 @@ mod preferences;
 mod preview;
 mod recent;
 pub mod skin;
+mod symbol_dialog;
+mod symbol_ops;
 mod tabs;
 mod theme;
 mod tile_ops;
@@ -162,6 +164,8 @@ pub struct ChimpApp {
     /// La ventanita de preview (abierta con `view.preview`).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
+    /// Layer → Convert to Symbol… (F8) abierto.
+    symbol_dialog: Option<symbol_dialog::SymbolDialog>,
     /// Desarrollo (`CHIMPSPRITE_DEMO_TILES`): al abrir el documento, activar su capa tilemap.
     demo_tiles: bool,
     fullscreen: bool,
@@ -293,6 +297,7 @@ impl ChimpApp {
             sheet_dialog: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
+            symbol_dialog: None,
             demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
             fullscreen: false,
             pending: None,
@@ -632,6 +637,37 @@ impl ChimpApp {
                 }
                 tilemap_dialog::DialogResult::Cancel => self.convert_tilemap = None,
             }
+        }
+    }
+
+    /// F8: abre el diálogo de Convert to Symbol o, si no se puede convertir, dice por qué.
+    pub(crate) fn open_convert_to_symbol(&mut self) {
+        match self.doc.editor.can_convert_to_symbol() {
+            Err(e) => self.show_message("Convert to Symbol", e.to_string()),
+            Ok(()) => {
+                self.symbol_dialog = Some(symbol_dialog::SymbolDialog::new(&self.doc.editor));
+            }
+        }
+    }
+
+    fn update_symbol_dialog(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() {
+            self.symbol_dialog = None;
+            return;
+        }
+        let Some(dialog) = &mut self.symbol_dialog else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Accept => {
+                let (name, timing) = (dialog.name.clone(), dialog.timing);
+                self.symbol_dialog = None;
+                if let Err(e) = self.doc.editor.convert_to_symbol(&name, timing) {
+                    self.show_message("Convert to Symbol", e.to_string());
+                }
+            }
+            tilemap_dialog::DialogResult::Cancel => self.symbol_dialog = None,
         }
     }
 
@@ -1296,7 +1332,14 @@ impl eframe::App for ChimpApp {
         self.update_grid_dialog(&ctx);
         self.show_slice_properties(&ctx);
         self.artboard_request();
+        // F8 pedido desde el menú de una capa o de la selección del lienzo.
+        if std::mem::take(&mut self.doc.timeline.convert_symbol)
+            | std::mem::take(&mut self.doc.canvas.symbol_request)
+        {
+            self.open_convert_to_symbol();
+        }
         self.update_tilemap_dialogs(&ctx);
+        self.update_symbol_dialog(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
         self.autosave(&ctx);

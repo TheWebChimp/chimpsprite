@@ -102,6 +102,8 @@ pub struct CanvasView {
     /// Lo pedido desde el menú "≡" de un artboard que abre un diálogo de la app (la app lo toma
     /// y lo deja en `None`).
     pub artboard_request: Option<ArtboardRequest>,
+    /// Se pidió "Convert to Symbol…" desde el menú de la selección (la app lo toma).
+    pub symbol_request: bool,
     /// Ctrl+rueda de touchpad: píxeles acumulados que todavía no suman un paso de grosor.
     wheel_rest: f32,
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
@@ -222,6 +224,7 @@ impl Default for CanvasView {
             slice_properties: false,
             notes: Default::default(),
             artboard_request: None,
+            symbol_request: false,
             wheel_rest: 0.0,
             background: theme::CANVAS_BG,
             pixel_rulers: None,
@@ -1377,6 +1380,16 @@ impl CanvasView {
         if ui.add(menus::plain("Duplicate")).clicked() {
             let name = format!("{} Copy", editor.artboard().name);
             editor.duplicate_artboard(name);
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                editor.document.canvas_count() > 1,
+                menus::plain("Move to Library"),
+            )
+            .clicked()
+        {
+            editor.move_active_to_library();
             ui.close();
         }
         menus::separator(ui);

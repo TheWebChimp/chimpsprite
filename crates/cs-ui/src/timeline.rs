@@ -134,6 +134,8 @@ pub struct TimelineState {
     rows: Vec<(LayerId, Rect)>,
     /// Se pidió el diálogo "New Tilemap Layer" (lo abre la app).
     pub new_tilemap: bool,
+    /// Se pidió "Convert to Symbol…" desde el menú de una capa (lo abre la app).
+    pub convert_symbol: bool,
 }
 
 /// Un arrastre sobre los cels, como en Aseprite.
@@ -1078,6 +1080,14 @@ fn layer_row(
         }
         menus::separator(ui);
         instance_menu(ui, editor);
+        if ui.add(menus::plain("Convert to Symbol…")).clicked() {
+            // Si la capa no está en el rango, se convierte ella sola.
+            if !editor.range_layers().contains(&id) {
+                editor.select_layer(id);
+            }
+            state.convert_symbol = true;
+            ui.close();
+        }
         menus::separator(ui);
         mask_menu(ui, editor, id);
     });
