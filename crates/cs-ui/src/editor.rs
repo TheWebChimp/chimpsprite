@@ -357,7 +357,12 @@ impl Editor {
             !document.artboards.is_empty(),
             "a document needs at least one artboard"
         );
-        let active = document.artboards[0].id;
+        // Empieza en el primer artboard del lienzo (la biblioteca no se ve).
+        let active = document
+            .canvas_artboards()
+            .next()
+            .unwrap_or(&document.artboards[0])
+            .id;
         let mut editor = Self {
             document,
             history: History::new(),
@@ -439,7 +444,12 @@ impl Editor {
     /// Mantiene invariantes tras cambios en el documento (p. ej. undo de un artboard).
     fn ensure_valid(&mut self) {
         if self.document.artboard(self.active).is_none() {
-            self.active = self.document.artboards[0].id;
+            self.active = self
+                .document
+                .canvas_artboards()
+                .next()
+                .unwrap_or(&self.document.artboards[0])
+                .id;
             self.selection = None;
         }
         let sprite = &self

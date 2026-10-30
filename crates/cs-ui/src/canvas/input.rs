@@ -10,8 +10,7 @@ impl CanvasView {
         let document = view.document.as_ref();
         let covers = self.covers(rect, document, ppp);
         document
-            .artboards
-            .iter()
+            .canvas_artboards()
             .position(|a| a.id == editor.active)
             .is_some_and(|k| covers[k + 1..].iter().any(|c| c.contains(p)))
     }
@@ -491,7 +490,7 @@ impl CanvasView {
                 Some((id, TitleHit::Menu)) if pressed_primary => editor.activate(id),
                 // "○": borra el artboard (se deshace con Ctrl+Z; el último no se borra).
                 Some((id, TitleHit::Close)) if pressed_primary => {
-                    if editor.document.artboards.len() > 1 {
+                    if editor.document.canvas_count() > 1 {
                         editor.activate(id);
                         editor.remove_active_artboard();
                     }

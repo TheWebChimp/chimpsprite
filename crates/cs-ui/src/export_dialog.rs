@@ -375,7 +375,7 @@ impl ExportDialog {
                 let sprite = editor.sprite();
                 let (w, h) = (sprite.width * self.scale, sprite.height * self.scale);
                 ui.weak(match self.format {
-                    ExportFormat::Atlas => format!("{} artboards", editor.document.artboards.len()),
+                    ExportFormat::Atlas => format!("{} artboards", editor.document.canvas_count()),
                     _ => format!(
                         "{} · {w}×{h} px · {} frames",
                         editor.artboard().name,

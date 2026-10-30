@@ -2074,3 +2074,21 @@ fn a_guide_is_only_grabbed_inside_its_artboard() {
         "the same column, on the other artboard"
     );
 }
+
+#[test]
+fn library_artboards_are_not_drawn_on_the_canvas() {
+    let mut h = Harness::new();
+    h.editor.add_artboard(4, 4);
+    let id = h.editor.active;
+    h.editor.document.artboard_mut(id).unwrap().name = "Symbol".into();
+    h.editor.activate(cs_core::ArtboardId(1));
+    h.frame(vec![]);
+    let tex = h.canvas.textures[&id].id();
+    assert!(!h.meshes(tex).is_empty(), "drawn while on the canvas");
+    assert!(h.texts().iter().any(|(t, _)| t.starts_with("Symbol")));
+    h.editor.document.artboard_mut(id).unwrap().in_library = true;
+    h.editor.revision += 1;
+    h.frame(vec![]);
+    assert!(h.meshes(tex).is_empty(), "the library is not drawn");
+    assert!(!h.texts().iter().any(|(t, _)| t.starts_with("Symbol")));
+}

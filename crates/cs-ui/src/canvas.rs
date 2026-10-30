@@ -486,8 +486,7 @@ impl CanvasView {
     /// Pixel UI).
     fn covers(&self, rect: Rect, document: &cs_core::Document, ppp: f32) -> Vec<Rect> {
         document
-            .artboards
-            .iter()
+            .canvas_artboards()
             .map(|a| {
                 let pixels = WindowLayout::pixels_on_screen(self.pixel_rect(rect, a), ppp);
                 if self.artboard_window.is_some() {
@@ -630,7 +629,7 @@ impl CanvasView {
             self.textures
                 .retain(|id, _| document.artboard(*id).is_some());
             let mut skipped = false;
-            for artboard in &document.artboards {
+            for artboard in document.canvas_artboards() {
                 let sprite = &artboard.sprite;
                 let unchanged = painting
                     && self.all_rendered == Some(editor.revision)
@@ -688,7 +687,7 @@ impl CanvasView {
 
         let ppp = ctx.pixels_per_point();
         self.draw_tiled(&painter, rect, editor, document, checker, ppp);
-        for artboard in &document.artboards {
+        for artboard in document.canvas_artboards() {
             // Alineada a píxeles de pantalla: el damero y la textura caen justo en píxeles y la
             // ventana de Pixel UI se arma alrededor de este mismo rect (blanco de 1 px exacto).
             // Con zoom entero en píxeles físicos `origin` ya lo deja alineado y el redondeo no
@@ -793,7 +792,7 @@ impl CanvasView {
         let covers = self.covers(rect, document, ui.ctx().pixels_per_point());
         if view_settings.shows(view_settings.guides) {
             let dragged = self.ruler_drag.and_then(|d| d.index);
-            for (k, artboard) in document.artboards.iter().enumerate() {
+            for (k, artboard) in document.canvas_artboards().enumerate() {
                 let ((x0, y0), (x1, y1)) = artboard.rect();
                 let screen = Rect::from_min_max(
                     self.to_screen(rect, (x0, y0)),
@@ -840,8 +839,7 @@ impl CanvasView {
         if !modal {
             // Los artboards de delante del activo tapan sus ejes.
             let front = document
-                .artboards
-                .iter()
+                .canvas_artboards()
                 .position(|a| a.id == editor.active)
                 .map_or(&[][..], |k| &covers[k + 1..]);
             self.draw_symmetry(&painter, rect, editor, document, front);
@@ -1337,8 +1335,7 @@ impl CanvasView {
         let ppp = ui.ctx().pixels_per_point();
         let menus: Vec<(ArtboardId, Rect)> = editor
             .document
-            .artboards
-            .iter()
+            .canvas_artboards()
             .filter_map(|a| {
                 let layout = WindowLayout::around(self.pixel_rect(rect, a), ppp);
                 Some((a.id, layout.menu?))
@@ -1396,7 +1393,7 @@ impl CanvasView {
             ui.close();
         }
         menus::separator(ui);
-        let can_delete = editor.document.artboards.len() > 1;
+        let can_delete = editor.document.canvas_count() > 1;
         if ui.add_enabled(can_delete, menus::plain("Delete")).clicked() {
             editor.remove_active_artboard();
             ui.close();
@@ -1422,7 +1419,7 @@ impl CanvasView {
         if self.artboard_window.is_some() {
             // Decide la ventana de más arriba que tiene a `p` (marco, barra o píxeles): las barras
             // de los de abajo quedan tapadas.
-            let (artboard, pixels) = editor.document.artboards.iter().rev().find_map(|a| {
+            let (artboard, pixels) = editor.document.canvas_artboards().rev().find_map(|a| {
                 let pixels = self.pixel_rect(rect, a);
                 WindowLayout::frame_around(pixels, ppp)
                     .contains(p)
@@ -1442,21 +1439,28 @@ impl CanvasView {
             }
             return Some((artboard.id, hit));
         }
-        editor.document.artboards.iter().rev().find_map(|artboard| {
-            if !self.names_visible {
-                return None;
-            }
-            let galley = ui.painter().layout_no_wrap(
-                label_text(artboard),
-                FontId::proportional(LABEL_SIZE),
-                Color32::WHITE,
-            );
-            let bottom_left = self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
-            let label =
-                Rect::from_min_size(bottom_left - Vec2::new(0.0, galley.size().y), galley.size())
-                    .expand(2.0);
-            label.contains(p).then_some((artboard.id, TitleHit::Bar))
-        })
+        editor
+            .document
+            .canvas_artboards()
+            .rev()
+            .find_map(|artboard| {
+                if !self.names_visible {
+                    return None;
+                }
+                let galley = ui.painter().layout_no_wrap(
+                    label_text(artboard),
+                    FontId::proportional(LABEL_SIZE),
+                    Color32::WHITE,
+                );
+                let bottom_left =
+                    self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
+                let label = Rect::from_min_size(
+                    bottom_left - Vec2::new(0.0, galley.size().y),
+                    galley.size(),
+                )
+                .expand(2.0);
+                label.contains(p).then_some((artboard.id, TitleHit::Bar))
+            })
     }
 }
 

@@ -1318,10 +1318,16 @@ pub(crate) fn cel_opacity_row(ui: &mut egui::Ui, editor: &mut Editor, cels: &[(L
 
 /// Submenú para colocar otro artboard como instancia (menú Layer y menú de capa).
 pub(crate) fn instance_menu(ui: &mut egui::Ui, editor: &mut Editor) {
-    let candidates = editor.instance_candidates();
-    ui.add_enabled_ui(!candidates.is_empty(), |ui| {
+    // Primero los símbolos de la biblioteca; después, separados, los artboards del lienzo.
+    let (library, canvas) = editor.instance_candidate_groups();
+    let library_len = library.len();
+    let separate = library_len > 0 && !canvas.is_empty();
+    ui.add_enabled_ui(!library.is_empty() || !canvas.is_empty(), |ui| {
         menus::submenu(ui, "New Instance", |ui| {
-            for (id, name) in candidates {
+            for (k, (id, name)) in library.into_iter().chain(canvas).enumerate() {
+                if separate && k == library_len {
+                    menus::separator(ui);
+                }
                 if ui.add(menus::plain(&name)).clicked() {
                     editor.add_instance_layer(id);
                     ui.close();

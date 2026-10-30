@@ -5,18 +5,39 @@ use cs_core::{ArtboardId, InstanceKey, LayerId};
 
 use crate::editor::Editor;
 
+/// Artboards que se pueden instanciar, con su nombre.
+pub type Candidates = Vec<(ArtboardId, String)>;
+
 impl Editor {
     /// Artboards que se pueden instanciar en el activo: no crean ciclos y el activo es RGBA.
-    pub fn instance_candidates(&self) -> Vec<(ArtboardId, String)> {
+    /// Primero los símbolos de la biblioteca y después los del lienzo.
+    pub fn instance_candidates(&self) -> Candidates {
+        let (mut library, canvas) = self.instance_candidate_groups();
+        library.extend(canvas);
+        library
+    }
+
+    /// Los candidatos de `instance_candidates` separados en `(biblioteca, lienzo)`, cada grupo
+    /// ordenado por nombre.
+    pub fn instance_candidate_groups(&self) -> (Candidates, Candidates) {
+        let (mut library, mut canvas) = (Vec::new(), Vec::new());
         if !self.sprite().color_mode.stores_rgba() {
-            return Vec::new();
+            return (library, canvas);
         }
-        self.document
-            .artboards
-            .iter()
-            .filter(|a| !self.document.would_cycle(self.active, a.id))
-            .map(|a| (a.id, a.name.clone()))
-            .collect()
+        for a in &self.document.artboards {
+            if self.document.would_cycle(self.active, a.id) {
+                continue;
+            }
+            let group = if a.in_library {
+                &mut library
+            } else {
+                &mut canvas
+            };
+            group.push((a.id, a.name.clone()));
+        }
+        library.sort_by(|a, b| a.1.cmp(&b.1));
+        canvas.sort_by(|a, b| a.1.cmp(&b.1));
+        (library, canvas)
     }
 
     /// Nueva capa de instancia de `source` sobre la capa actual, centrada, con key en el frame actual.

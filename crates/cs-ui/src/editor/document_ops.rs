@@ -29,8 +29,12 @@ impl Editor {
     }
 
     pub fn remove_active_artboard(&mut self) {
-        if self.document.artboards.len() > 1 {
-            self.execute_doc(DocCommand::RemoveArtboard { id: self.active });
+        // El último del lienzo no se borra (la biblioteca no cuenta).
+        if self.document.canvas_count() > 1
+            && self.execute_doc(DocCommand::RemoveArtboard { id: self.active })
+            && let Some(last) = self.document.canvas_artboards().last()
+        {
+            self.activate(last.id);
         }
     }
 
