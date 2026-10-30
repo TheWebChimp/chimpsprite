@@ -2872,3 +2872,87 @@ fn symbol_mode_shows_only_the_symbol_under_a_breadcrumb_that_leaves_it() {
         assert_eq!(h.app.doc.canvas.zoom, zoom, "the document view is back");
     }
 }
+
+#[test]
+fn move_to_library_is_in_the_sprite_menu_without_pixel_ui() {
+    let mut h = LayoutHarness::editor();
+    open_menu(&mut h, "Sprite");
+    // Con un solo artboard en el lienzo, no se puede.
+    h.click(h.button("Move to Library").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.document.canvas_count(), 1);
+    h.app.doc.editor.add_artboard(4, 4);
+    let moved = h.app.doc.editor.active;
+    h.frame();
+    if !h.buttons.iter().any(|(l, _)| l == "Move to Library") {
+        open_menu(&mut h, "Sprite");
+    }
+    h.click(h.button("Move to Library").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    assert!(editor.document.artboard(moved).unwrap().in_library);
+    assert_ne!(editor.active, moved);
+}
+
+#[test]
+fn deleting_a_symbol_in_use_asks_first() {
+    for pixel in [true, false] {
+        let mut h = with_a_symbol(pixel);
+        let coin = h.app.doc.editor.library_selected.unwrap();
+        // Una instancia de Coin en el host.
+        let editor = &mut h.app.doc.editor;
+        let add =
+            cs_commands::ops::new_instance_layer(editor.sprite(), None, 0, coin, "Coin 1", (0, 0));
+        assert!(editor.execute(add));
+        h.frame();
+        let library = if pixel {
+            h.button("Library")
+        } else {
+            h.buttons
+                .iter()
+                .filter(|(l, _)| l == "▣")
+                .map(|(_, r)| *r)
+                .min_by(|a, b| a.top().total_cmp(&b.top()))
+                .expect("the Library dock button")
+        };
+        h.click(library.center(), PointerButton::Primary);
+        h.frame();
+        let question = "Used by 1 instance. Delete anyway?";
+        // Pide borrar desde el menú de la fila y contesta `answer` en la confirmación.
+        let ask = |h: &mut LayoutHarness, answer: &str| {
+            let row = h
+                .nodes
+                .iter()
+                .filter(|(l, _)| l == "Coin")
+                .map(|(_, r)| *r)
+                .max_by(|a, b| a.top().total_cmp(&b.top()))
+                .expect("the Coin row");
+            h.click(row.center(), PointerButton::Secondary);
+            h.frame();
+            h.click(h.button("Delete").center(), PointerButton::Primary);
+            h.frame();
+            let (_, text, _) = h
+                .text_rects
+                .iter()
+                .find(|(t, _, _)| t == question)
+                .cloned()
+                .unwrap_or_else(|| panic!("pixel {pixel}: no confirmation in {:?}", h.texts));
+            let button = h
+                .buttons
+                .iter()
+                .filter(|(l, r)| l == answer && r.top() > text.top())
+                .map(|(_, r)| *r)
+                .next()
+                .unwrap_or_else(|| panic!("no {answer:?} under the question"));
+            h.click(button.center(), PointerButton::Primary);
+            h.frame();
+        };
+        ask(&mut h, "Cancel");
+        assert!(h.app.doc.editor.document.artboard(coin).is_some(), "kept");
+        assert_eq!(h.app.doc.library.confirm_delete, None);
+        assert!(!h.texts.iter().any(|(t, _)| t == question));
+        ask(&mut h, "Delete");
+        assert!(
+            h.app.doc.editor.document.artboard(coin).is_none(),
+            "pixel {pixel}: deleted"
+        );
+    }
+}

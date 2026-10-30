@@ -35,8 +35,9 @@ impl Editor {
             };
             group.push((a.id, a.name.clone()));
         }
-        library.sort_by(|a, b| a.1.cmp(&b.1));
-        canvas.sort_by(|a, b| a.1.cmp(&b.1));
+        // Sin distinguir mayúsculas, como las filas de la Library.
+        library.sort_by_cached_key(|c| c.1.to_lowercase());
+        canvas.sort_by_cached_key(|c| c.1.to_lowercase());
         (library, canvas)
     }
 
@@ -93,8 +94,10 @@ impl Editor {
         }
         let local = (world.0 - board.position.0, world.1 - board.position.1);
         let above = (target == self.active).then_some(self.layer);
-        let cmd =
-            ops::new_instance_layer(&board.sprite, above, self.frame, source, &src.name, local);
+        // El frame que se ve en ese artboard (puede no ser el activo y tener menos frames).
+        let last = board.sprite.frames.len().saturating_sub(1);
+        let frame = self.frame_of(target).min(last);
+        let cmd = ops::new_instance_layer(&board.sprite, above, frame, source, &src.name, local);
         let id = match &cmd {
             Command::AddLayer { layer, .. } => layer.id,
             _ => unreachable!("new_instance_layer devuelve AddLayer"),
@@ -205,6 +208,43 @@ mod tests {
             e.drop_symbol(symbol, (500, 500)).is_err(),
             "outside every artboard"
         );
+    }
+
+    #[test]
+    fn dropping_on_another_artboard_uses_its_frame() {
+        // El activo (1) tiene 2 frames y está en el 1; el 2 (en x = 32) tiene uno solo.
+        let mut e = editor();
+        e.set_frame(1);
+        let symbol = {
+            e.add_artboard(2, 2);
+            let id = e.active;
+            e.move_active_to_library();
+            e.activate(ArtboardId(1));
+            e.set_frame(1);
+            id
+        };
+        let at = e.document.artboard(ArtboardId(2)).unwrap().position;
+        e.drop_symbol(symbol, (at.0 + 1, at.1 + 1)).unwrap();
+        assert_eq!(e.active, ArtboardId(2));
+        let layer = e.sprite().layer(e.layer).unwrap();
+        let keys = &layer.instance.as_ref().unwrap().keys;
+        assert_eq!((keys[0].frame, keys[0].position), (0, (1, 1)));
+    }
+
+    #[test]
+    fn candidates_are_sorted_ignoring_case() {
+        let mut e = editor();
+        e.document.artboard_mut(ArtboardId(2)).unwrap().name = "banana".into();
+        e.add_artboard(4, 4);
+        e.rename_active_artboard("Apple".into());
+        e.activate(ArtboardId(1));
+        let names: Vec<String> = e
+            .instance_candidates()
+            .into_iter()
+            .filter(|(c, _)| *c != ArtboardId(1))
+            .map(|(_, n)| n)
+            .collect();
+        assert_eq!(names, ["Apple", "banana"]);
     }
 
     #[test]

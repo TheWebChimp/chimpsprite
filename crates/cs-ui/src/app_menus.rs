@@ -110,6 +110,18 @@ impl ChimpApp {
         if ui.add(menus::plain("Duplicate")).clicked() {
             self.open_sprite_dialog(|a| SpriteDialog::Duplicate(DuplicateDialog::new(a)));
         }
+        // Sin Pixel UI no hay menú "≡" en el artboard: desde acá también se llega.
+        if ui
+            .add_enabled(
+                self.doc.editor.can_move_active_to_library(),
+                menus::plain("Move to Library"),
+            )
+            .on_disabled_hover_text("Needs another artboard on the canvas")
+            .clicked()
+        {
+            self.doc.editor.move_active_to_library();
+            ui.close();
+        }
         menus::separator(ui);
         let transformable = sprite_ops::can_transform(self.doc.editor.sprite());
         let size = menus::item(

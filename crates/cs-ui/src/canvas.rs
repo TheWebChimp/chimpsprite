@@ -620,8 +620,23 @@ impl CanvasView {
     ) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let ctx = ui.ctx().clone();
+        // Antes de cualquier uso de `origin` en este frame (zoom, entrada, dibujo).
+        self.ppp = ctx.pixels_per_point();
+        let (rx, ry) = editor.sprite().pixel_ratio;
+        self.ratio = Vec2::new(rx.max(1) as f32, ry.max(1) as f32);
+        self.rulers_shown = view_settings.rulers;
+        self.crumbs_shown = editor.in_symbol_mode();
+        self.sync_symbol_view(editor);
+        // Un símbolo soltado desde la Library. Con un diálogo abierto o sobre las reglas o la
+        // migaja de pan no cuenta (el payload se descarta igual).
         if let Some(payload) = response.dnd_release_payload::<crate::library_panel::SymbolPayload>()
-            && let Some(pos) = response.hover_pos()
+            && let Some(pos) = ui.input(|i| i.pointer.latest_pos())
+            && dialog.is_none()
+            && ui.is_enabled()
+            && self.under_rulers(rect, view_settings).contains(pos)
+            && !self
+                .crumbs_strip(rect, view_settings)
+                .is_some_and(|c| c.contains(pos))
         {
             let w = self.to_world(rect, pos);
             if let Err(why) =
@@ -630,13 +645,6 @@ impl CanvasView {
                 self.drop_error = Some(why);
             }
         }
-        // Antes de cualquier uso de `origin` en este frame (zoom, entrada, dibujo).
-        self.ppp = ctx.pixels_per_point();
-        let (rx, ry) = editor.sprite().pixel_ratio;
-        self.ratio = Vec2::new(rx.max(1) as f32, ry.max(1) as f32);
-        self.rulers_shown = view_settings.rulers;
-        self.crumbs_shown = editor.in_symbol_mode();
-        self.sync_symbol_view(editor);
         if !self.fitted && rect.width() > 0.0 {
             self.fit(rect, editor);
         }
@@ -1529,7 +1537,7 @@ impl CanvasView {
         if !symbol
             && ui
                 .add_enabled(
-                    editor.document.canvas_count() > 1,
+                    editor.can_move_active_to_library(),
                     menus::plain("Move to Library"),
                 )
                 .clicked()

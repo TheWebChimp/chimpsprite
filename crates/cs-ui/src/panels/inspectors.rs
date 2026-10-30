@@ -15,7 +15,7 @@ pub fn artboards(
     ui.horizontal(|ui| {
         ui.heading("Artboards");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let can_remove = editor.document.canvas_count() > 1;
+            let can_remove = editor.can_remove_active_artboard();
             if ui
                 .add_enabled(can_remove, egui::Button::new("🗑").small())
                 .tip("Delete artboard")
@@ -72,7 +72,7 @@ pub fn pixel_artboards(
     name_buffer: &mut (ArtboardId, String),
     skin: &Skin,
 ) -> bool {
-    let can_remove = editor.document.canvas_count() > 1;
+    let can_remove = editor.can_remove_active_artboard();
     match pixel_sections::header(
         ui,
         skin,

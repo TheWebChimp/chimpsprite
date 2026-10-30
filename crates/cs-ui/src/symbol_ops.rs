@@ -32,16 +32,9 @@ impl Editor {
             .expect("siempre hay un nombre libre")
     }
 
-    /// Revisa sin aplicar (para deshabilitar menús).
+    /// Revisa sin armar el símbolo (para deshabilitar menús).
     pub fn can_convert_to_symbol(&self) -> Result<(), ConvertError> {
-        symbol::convert_to_symbol(
-            &self.document,
-            self.active,
-            &self.symbol_source(),
-            "",
-            SymbolTiming::Graphic,
-        )
-        .map(|_| ())
+        symbol::check_convert(&self.document, self.active, &self.symbol_source())
     }
 
     /// Convierte, selecciona la instancia nueva, borra la marquesina y recuerda el símbolo como
@@ -72,8 +65,17 @@ impl Editor {
         }
     }
 
+    /// ¿Se puede mandar el activo a la biblioteca? No en el modo símbolo (el activo ya es un
+    /// símbolo) ni si es el último del lienzo.
+    pub fn can_move_active_to_library(&self) -> bool {
+        !self.in_symbol_mode() && symbol::move_to_library(&self.document, self.active).is_some()
+    }
+
     /// Manda el artboard activo a la biblioteca y activa otro del lienzo. `false` si no se puede.
     pub fn move_active_to_library(&mut self) -> bool {
+        if !self.can_move_active_to_library() {
+            return false;
+        }
         let Some(cmd) = symbol::move_to_library(&self.document, self.active) else {
             return false;
         };
@@ -183,6 +185,27 @@ mod tests {
         assert!(e.move_active_to_library());
         assert!(e.document.artboard(moved).unwrap().in_library);
         assert_ne!(e.active, moved);
+    }
+
+    #[test]
+    fn the_symbol_being_edited_cannot_be_deleted_as_an_artboard() {
+        let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        e.execute(Command::DrawPixels {
+            layer: e.layer,
+            frame: 0,
+            pixels: vec![(1, 1, red)],
+        });
+        let symbol = e.convert_to_symbol("S", SymbolTiming::Graphic).unwrap();
+        e.add_artboard(4, 4);
+        assert!(e.can_remove_active_artboard());
+        assert!(e.enter_symbol(symbol));
+        assert!(!e.can_remove_active_artboard());
+        assert!(!e.can_move_active_to_library());
+        e.remove_active_artboard();
+        assert!(e.document.artboard(symbol).is_some(), "still there");
+        assert_eq!(e.active, symbol);
+        assert!(!e.move_active_to_library());
     }
 
     #[test]

@@ -103,21 +103,22 @@ pub fn library_rows(doc: &Document) -> Vec<Row> {
     rows
 }
 
-/// El frame de la vista previa en `t_ms` milisegundos, en loop con las duraciones del símbolo.
-pub fn preview_frame(sprite: &Sprite, t_ms: u64) -> usize {
+/// El frame de la vista previa en `t_ms` milisegundos, en loop con las duraciones del símbolo, y
+/// los milisegundos que le quedan (`None` si no anima).
+fn preview_frame(sprite: &Sprite, t_ms: u64) -> (usize, Option<u64>) {
     let total: u64 = sprite.frames.iter().map(|f| f.duration_ms as u64).sum();
-    if total == 0 {
-        return 0;
+    if total == 0 || sprite.frames.len() < 2 {
+        return (0, None);
     }
     let mut t = t_ms % total;
     for (i, frame) in sprite.frames.iter().enumerate() {
         let d = frame.duration_ms as u64;
         if t < d {
-            return i;
+            return (i, Some(d - t));
         }
         t -= d;
     }
-    0
+    (0, None)
 }
 
 /// La escala para mostrar `size` en `room`: el mayor zoom entero que cabe o, si no cabe ni al
@@ -221,7 +222,7 @@ fn preview(ui: &mut Ui, editor: &Editor, state: &mut LibraryState) {
     };
     let sprite = &symbol.sprite;
     let t_ms = (ui.input(|i| i.time) * 1000.0) as u64;
-    let f = preview_frame(sprite, t_ms);
+    let (f, rest) = preview_frame(sprite, t_ms);
     let key = (symbol.id, f, editor.doc_version);
     if !matches!(&state.preview, Some((k, _)) if *k == key) {
         let image = render(doc, sprite, f);
@@ -231,8 +232,10 @@ fn preview(ui: &mut Ui, editor: &Editor, state: &mut LibraryState) {
     if let Some((_, texture)) = &state.preview {
         paint_fitted(ui, texture, (sprite.width, sprite.height), well);
     }
-    if sprite.frames.len() > 1 {
-        ui.ctx().request_repaint();
+    // Se vuelve a pintar cuando cambia el frame, no en cada frame de la pantalla.
+    if let Some(rest) = rest {
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(rest));
     }
 }
 
@@ -451,17 +454,28 @@ mod tests {
     fn preview_loops_with_the_symbol_durations() {
         let mut s = Sprite::new(2, 2, ColorMode::Rgba);
         s.frames = vec![Frame { duration_ms: 100 }, Frame { duration_ms: 50 }];
-        assert_eq!(preview_frame(&s, 0), 0);
-        assert_eq!(preview_frame(&s, 99), 0);
-        assert_eq!(preview_frame(&s, 100), 1);
-        assert_eq!(preview_frame(&s, 150), 0);
+        assert_eq!(preview_frame(&s, 0).0, 0);
+        assert_eq!(preview_frame(&s, 99).0, 0);
+        assert_eq!(preview_frame(&s, 100).0, 1);
+        assert_eq!(preview_frame(&s, 150).0, 0);
+    }
+
+    #[test]
+    fn the_preview_repaints_when_its_frame_ends() {
+        let mut s = Sprite::new(2, 2, ColorMode::Rgba);
+        s.frames = vec![Frame { duration_ms: 100 }, Frame { duration_ms: 50 }];
+        assert_eq!(preview_frame(&s, 30), (0, Some(70)));
+        assert_eq!(preview_frame(&s, 120), (1, Some(30)));
+        assert_eq!(preview_frame(&s, 150), (0, Some(100)));
+        s.frames.truncate(1);
+        assert_eq!(preview_frame(&s, 30), (0, None), "one frame");
     }
 
     #[test]
     fn a_symbol_without_durations_previews_its_first_frame() {
         let mut s = Sprite::new(2, 2, ColorMode::Rgba);
         s.frames = vec![Frame { duration_ms: 0 }, Frame { duration_ms: 0 }];
-        assert_eq!(preview_frame(&s, 1234), 0);
+        assert_eq!(preview_frame(&s, 1234).0, 0);
     }
 
     #[test]

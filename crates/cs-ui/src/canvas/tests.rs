@@ -2195,3 +2195,49 @@ fn in_symbol_mode_the_artboard_menu_has_no_duplicate_move_or_delete() {
     }
     assert!(h.editor.in_symbol_mode());
 }
+
+#[test]
+fn a_symbol_dropped_on_a_ruler_or_the_breadcrumb_does_nothing() {
+    let (mut h, coin) = in_a_symbol();
+    // Gem: otro símbolo para soltar dentro de Coin.
+    h.editor.exit_symbol_to(0);
+    h.editor.add_artboard(2, 2);
+    let gem = h.editor.active;
+    assert!(h.editor.move_active_to_library());
+    assert!(h.editor.enter_symbol(coin));
+    h.frame(vec![]);
+    h.frame(vec![]);
+    let layers = |h: &Harness| {
+        h.editor
+            .document
+            .artboard(coin)
+            .unwrap()
+            .sprite
+            .layers
+            .len()
+    };
+    let before = layers(&h);
+    let drop = |h: &mut Harness, pos: Pos2| {
+        egui::DragAndDrop::set_payload(&h.ctx, crate::library_panel::SymbolPayload(gem));
+        h.frame(vec![Event::PointerMoved(pos)]);
+        h.frame(vec![Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        h.frame(vec![]);
+    };
+    // La regla de la izquierda y la migaja de pan (arriba, debajo de la regla de arriba).
+    let rect = h.rect;
+    drop(&mut h, Pos2::new(rect.left() + 4.0, rect.center().y));
+    let crumbs = rect.top() + h.canvas.ruler_px() + 4.0;
+    drop(&mut h, Pos2::new(rect.center().x, crumbs));
+    assert_eq!(layers(&h), before);
+    assert_eq!(h.canvas.drop_error, None);
+    // Sobre el símbolo sí.
+    let at = h.screen((2, 2));
+    drop(&mut h, at);
+    assert_eq!(layers(&h), before + 1);
+    assert_eq!(h.editor.active, coin);
+}
