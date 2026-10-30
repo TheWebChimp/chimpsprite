@@ -4,7 +4,7 @@
 
 use eframe::egui::{self, Pos2, Rect, Sense, Shape, TextStyle, Ui, Vec2, pos2, vec2};
 
-use super::button::{self, ButtonState};
+use super::button::{self, ButtonState, Led};
 use super::group::{self, GroupItem, SegmentLook};
 use crate::pixel_draw;
 use crate::skin::Skin;
@@ -35,12 +35,19 @@ const NOTES_LEFT: f32 = 160.0;
 const NOTE_PITCH: f32 = 9.0;
 /// El botón de verdad, debajo de la columna.
 const LIVE_LABEL: &str = "Click me";
+/// Los botones con LED: una columna prendida y otra apagada, en los cuatro estados, a la derecha
+/// de las medidas; debajo, uno de verdad que prende y apaga su LED.
+const LED_COLUMN: f32 = 230.0;
+const LED_COLUMN_GAP: f32 = 12.0;
+const LED_ON_LABEL: &str = "LED on";
+const LED_OFF_LABEL: &str = "LED off";
+const LED_LIVE_LABEL: &str = "Toggle LED";
 
 /// De una sección a la siguiente.
 const SECTION_GAP: f32 = 24.0;
 
 /// Sección Button group, como en el mockup: el grupo de dos "Button" y, en la fila siguiente, el
-/// mismo y 22 px a la derecha el de los puntos (el primero elegido); de un grupo al siguiente,
+/// mismo y 22 px a la derecha el de los LEDs (el primero elegido); de un grupo al siguiente,
 /// 21 filas.
 const GROUP_PITCH: f32 = 21.0;
 const GROUP_GAP: f32 = 22.0;
@@ -50,6 +57,11 @@ const LIVE_OPTIONS: [&str; 3] = ["Fast", "RotSprite", "Smooth"];
 /// En la memoria de egui: la opción elegida del grupo de verdad.
 fn picked_id() -> egui::Id {
     egui::Id::new("ui_catalog_group_pick")
+}
+
+/// En la memoria de egui: si está prendido el LED del botón de verdad.
+fn led_id() -> egui::Id {
+    egui::Id::new("ui_catalog_led")
 }
 
 /// En la memoria de egui: cuántas veces se hizo clic en el botón de verdad.
@@ -126,6 +138,21 @@ fn buttons_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
             colors.text,
         );
         shapes.push(name);
+        // Con LED, prendido y apagado, en el mismo estado.
+        let mut x = column + LED_COLUMN;
+        for (label, led) in [(LED_ON_LABEL, Led::On), (LED_OFF_LABEL, Led::Off)] {
+            let w = button::width_with_led(ui, label, Some(led));
+            let rect = Rect::from_min_size(pos2(x, at.y), vec2(w, button::HEIGHT));
+            shapes.extend(button::button_shapes_with_led(
+                skin,
+                rect,
+                label,
+                Some(led),
+                state,
+                ui,
+            ));
+            x += w + LED_COLUMN_GAP;
+        }
     }
     // Las medidas, en los textos chicos.
     let notes = [
@@ -165,6 +192,25 @@ fn buttons_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         colors.text,
     );
     ui.painter().add(count);
+    // El de verdad con LED: cada clic lo prende o lo apaga.
+    let mut lit: bool = ui.data(|d| d.get_temp(led_id()).unwrap_or_default());
+    let led = Led::lit(lit);
+    let rect = Rect::from_min_size(
+        pos2(column + LED_COLUMN, live_top),
+        vec2(
+            button::width_with_led(ui, LED_LIVE_LABEL, Some(led)),
+            button::HEIGHT,
+        ),
+    );
+    let clicked = ui
+        .scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            button::led_button(ui, skin, LED_LIVE_LABEL, led).clicked()
+        })
+        .inner;
+    if clicked {
+        lit = !lit;
+        ui.data_mut(|d| d.insert_temp(led_id(), lit));
+    }
     live_top + button::HEIGHT
 }
 
@@ -174,7 +220,8 @@ fn group_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     let top = section_title(ui, skin, origin.x, origin.y, "Button group");
     let left = origin.x;
     let plain = [GroupItem::text(SAMPLE), GroupItem::text(SAMPLE)];
-    let dots = [GroupItem::with_dot(SAMPLE), GroupItem::with_dot(SAMPLE)];
+    // Con LED: prendido el de la opción elegida.
+    let with_leds = |on: [bool; 2]| on.map(|on| GroupItem::with_led(SAMPLE, Led::lit(on)));
     let look = |state, on| SegmentLook { state, on };
     let normal = [look(ButtonState::Normal, false); 2];
     let first_on = [
@@ -192,7 +239,7 @@ fn group_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         );
         shapes.push(shape);
     };
-    // Como en el mockup: el grupo solo y, debajo, el mismo y el de los puntos.
+    // Como en el mockup: el grupo solo y, debajo, el mismo y el de los LEDs.
     let plain_w = group::width(ui, &plain);
     shapes.extend(group::group_shapes(
         ui,
@@ -209,20 +256,16 @@ fn group_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         &plain,
         &normal,
     ));
-    let dots_left = left + plain_w + GROUP_GAP;
+    let leds_left = left + plain_w + GROUP_GAP;
+    let leds = with_leds([true, false]);
     shapes.extend(group::group_shapes(
         ui,
         skin,
-        pos2(dots_left, row),
-        &dots,
+        pos2(leds_left, row),
+        &leds,
         &first_on,
     ));
-    name(
-        &mut shapes,
-        "Dots",
-        dots_left + group::width(ui, &dots),
-        row,
-    );
+    name(&mut shapes, "LED", leds_left + group::width(ui, &leds), row);
     // Los estados, forzados: el primero elegido, con el puntero encima del segundo y deshabilitado.
     let states = [
         ("Active", first_on),
@@ -243,14 +286,16 @@ fn group_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     ];
     let mut y = row + GROUP_PITCH;
     for (label, looks) in states {
-        shapes.extend(group::group_shapes(ui, skin, pos2(left, y), &dots, &looks));
-        name(&mut shapes, label, left + group::width(ui, &dots), y);
+        let items = with_leds(looks.map(|l| l.on));
+        shapes.extend(group::group_shapes(ui, skin, pos2(left, y), &items, &looks));
+        name(&mut shapes, label, left + group::width(ui, &items), y);
         y += GROUP_PITCH;
     }
     ui.painter().extend(shapes);
     // El de verdad: una opción elegida a la vez.
-    let items = LIVE_OPTIONS.map(GroupItem::with_dot);
     let mut picked: usize = ui.data(|d| d.get_temp(picked_id()).unwrap_or_default());
+    let items: [GroupItem; 3] =
+        std::array::from_fn(|i| GroupItem::with_led(LIVE_OPTIONS[i], Led::lit(i == picked)));
     let rect = Rect::from_min_size(
         pos2(left, y),
         vec2(group::width(ui, &items), button::HEIGHT),

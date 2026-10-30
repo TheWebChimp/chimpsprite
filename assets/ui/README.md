@@ -157,11 +157,14 @@ oculta.
       de la x 248 del mockup. Si los dos vecinos bajaron, se dibuja sin la fila de arriba.
     - `button.group.sep.disabled` (258,650, 1×17): no está en el diseño; (136,110,106) arriba
       como el borde de `button.disabled`, (189,164,153) en las filas 1 a 14, (89,77,77) y la luz.
-    - `button.group.dot.on` y `button.group.dot.off` (261,650 y 269,650, 6×7): el punto verde de
-      la opción elegida y el morado de las demás, con su sombra (221,206,191) abajo; copiados del
-      mockup (x 315 y 362). Van donde empezaría el texto, en la fila de sus mayúsculas, y el
-      texto 3 px después. Reemplazan a `button.dot.on`, `button.dot.off` y `button.sep`, que ya
-      no dibuja nadie.
+  - **LEDs** (cualquier botón puede llevar uno: `kit::button::Led`, y los segmentos del grupo):
+    `button.led.on` (261,650) y `button.led.off` (269,650), 6×7: el LED verde (prendido) y el
+    morado (apagado), 6×6 con su sombra (221,206,191) abajo, copiados del mockup (x 315 y 362).
+    Van donde empezaría el texto (borde, bisel y 4 px adentro), con su borde de arriba en la fila
+    de las mayúsculas; el texto, 3 px después. Bajan 1 px con la cara del botón presionado;
+    deshabilitado, el LED queda como está. Reemplazan a los puntos viejos de la barra
+    (`button.dot.on`, `button.dot.off`, `button.sep` y el color `option_text_off`), que se
+    borraron del skin.
 
 - **Paleta y editor de color** (frame 4 del diseño, capa Mockup, columna x 784..972; el skin
   creció a 320×272 y estas piezas van en y 236..267):

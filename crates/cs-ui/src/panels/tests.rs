@@ -1238,8 +1238,8 @@ fn with_pixel_ui_the_bar_is_23_and_every_node_fits_inside_it() {
             "button.hover",
             "button.down",
             "button.group.sep",
-            "button.group.dot.on",
-            "button.group.dot.off",
+            "button.led.on",
+            "button.led.off",
         ] {
             for rect in h.drawn(piece) {
                 assert!(
@@ -1252,10 +1252,7 @@ fn with_pixel_ui_the_bar_is_23_and_every_node_fits_inside_it() {
         // Las herramientas con grupos de radios (Sample, Linear/Radial, Rotation) los
         // dibujan como botones: la prueba de arriba no es vacía para ellos.
         if kind != ToolKind::Pencil && kind != ToolKind::Text {
-            assert!(
-                !h.drawn("button.group.dot.on").is_empty(),
-                "{kind:?}: no buttons"
-            );
+            assert!(!h.drawn("button.led.on").is_empty(), "{kind:?}: no buttons");
         }
     }
 }
@@ -1510,7 +1507,7 @@ fn radio_groups() -> Vec<RadioGroup> {
 }
 
 /// La caja del botón `label` (su nodo, con la pieza dibujada debajo) y si es el elegido (con
-/// el punto verde, `button.group.dot.on`, adentro).
+/// el LED verde, `button.led.on`, adentro).
 fn button_box(h: &BarHarness, label: &str) -> (Rect, bool) {
     // El nodo del botón es el botón dibujado (los del grupo se tocan: sus piezas se juntan
     // en una caja).
@@ -1520,19 +1517,19 @@ fn button_box(h: &BarHarness, label: &str) -> (Rect, bool) {
         "no button under {label:?}"
     );
     let on = h
-        .drawn_boxes("button.group.dot.on")
+        .drawn_boxes("button.led.on")
         .iter()
         .any(|d| b.contains_rect(*d));
     let off = h
-        .drawn_boxes("button.group.dot.off")
+        .drawn_boxes("button.led.off")
         .iter()
         .any(|d| b.contains_rect(*d));
-    assert!(on != off, "{label}: one dot");
+    assert!(on != off, "{label}: one LED");
     (b, on)
 }
 
 #[test]
-fn with_pixel_ui_each_radio_option_is_a_button_of_the_group_with_its_dot() {
+fn with_pixel_ui_each_radio_option_is_a_button_of_the_group_with_its_led() {
     for group in radio_groups() {
         let h = pixel_bar(group.tool);
         let bar = h.bar;
@@ -1540,7 +1537,7 @@ fn with_pixel_ui_each_radio_option_is_a_button_of_the_group_with_its_dot() {
         let current = (group.current)(&h.editor);
         let colors = *h.skin.as_ref().unwrap().colors();
         // Un botón por opción, como en el mockup de componentes (el grupo del UI kit): el elegido
-        // con el punto verde, presionado (baja 1 px); los demás con el punto morado. Todos los
+        // con el LED verde, presionado (baja 1 px); los demás con el LED morado. Todos los
         // textos en el color del texto.
         let options: Vec<Rect> = group
             .options
@@ -1559,7 +1556,7 @@ fn with_pixel_ui_each_radio_option_is_a_button_of_the_group_with_its_dot() {
                     bar.top() + 6.0 + drop,
                     "{tool:?}: {label} {ink:?}"
                 );
-                // La tinta 15 px adentro (contorno, bisel, 4 de aire, el punto de 6 y 3 de aire)
+                // La tinta 15 px adentro (contorno, bisel, 4 de aire, el LED de 6 y 3 de aire)
                 // y 6 antes del borde (4 de aire, bisel y contorno).
                 assert_eq!(ink.left(), b.left() + 15.0, "{tool:?}: {label}");
                 assert_eq!(ink.right() + 6.0, b.right(), "{tool:?}: {label}");
@@ -1597,7 +1594,7 @@ fn with_pixel_ui_one_click_on_a_radio_button_picks_that_option() {
             h.click(label);
             assert_eq!((group.current)(&h.editor), *label, "{tool:?}");
             h.frame(vec![]);
-            // El punto verde pasa al elegido; los otros, con el anillo.
+            // El LED verde pasa al elegido; los otros, con el morado.
             for other in &group.options {
                 assert_eq!(button_box(&h, other).1, other == label, "{tool:?}: {other}");
             }
@@ -1673,15 +1670,15 @@ fn with_pixel_ui_every_text_of_the_bar_is_in_the_design_row() {
         // los tiene.
         let buttons = ["Load font", "Dafont"];
         // Las sombras de los grupos de opciones (1 px abajo) no cuentan; la opción elegida baja
-        // 1 px con su botón, como el presionado (su punto verde a 3 px de la tinta).
+        // 1 px con su botón, como el presionado (su LED verde a 3 px de la tinta).
         let shadow = h.skin.as_ref().unwrap().colors().background;
-        let on_dots = h.drawn_boxes("button.group.dot.on");
+        let on_leds = h.drawn_boxes("button.led.on");
         for (text, ink, color) in h
             .texts()
             .into_iter()
             .filter(|(t, _, c)| !buttons.contains(&t.as_str()) && *c != shadow)
         {
-            let on = on_dots.iter().any(|d| d.right() + 3.0 == ink.left());
+            let on = on_leds.iter().any(|d| d.right() + 3.0 == ink.left());
             let row = h.bar.top() + 6.0 + if on { 1.0 } else { 0.0 };
             // Las mayúsculas en la fila 5 (los textos sin mayúsculas, como los números o
             // "px", no bajan de ahí).

@@ -242,3 +242,96 @@ fn a_real_button_shows_hover_and_pressed_and_disabled_from_the_ui() {
     let (textures, _, _) = real(&ctx, &skin, vec![], false);
     assert_eq!(textures, vec![texture(&skin, WidgetState::Disabled)]);
 }
+
+/// Los rects (en pantalla) de las imágenes de la pieza `name`.
+fn piece_rects(shapes: &[Shape], skin: &Skin, name: &str) -> Vec<Rect> {
+    fn walk(shape: &Shape, id: TextureId, out: &mut Vec<Rect>) {
+        match shape {
+            Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, id, out)),
+            Shape::Mesh(mesh) if mesh.texture_id == id => {
+                out.push(mesh.vertices.iter().fold(Rect::NOTHING, |r, v| {
+                    r.union(Rect::from_min_max(v.pos, v.pos))
+                }))
+            }
+            _ => {}
+        }
+    }
+    let id = skin.piece(name, WidgetState::Normal).unwrap().texture.id();
+    let mut out = Vec::new();
+    shapes.iter().for_each(|s| walk(s, id, &mut out));
+    out
+}
+
+#[test]
+fn any_button_can_have_a_led_before_its_text_and_it_drops_when_pressed() {
+    let (ctx, skin) = pixel_ctx();
+    let mut out = (0.0, 0.0, Rect::NOTHING);
+    let shapes = frame(&ctx, vec![], |ui| {
+        out = (
+            ink_width(ui, "Button"),
+            width_with_led(ui, "Button", Some(Led::On)),
+            led_button(ui, &skin, "Button", Led::On).rect,
+        );
+    });
+    let (ink, w, rect) = out;
+    // 1 + 5 de borde y aire, el LED de 6 y 3 de aire, la tinta y 5 + 1 (como en el grupo).
+    assert_eq!(w, 1.0 + 5.0 + 6.0 + 3.0 + ink + 5.0 + 1.0);
+    assert_eq!(rect.size(), vec2(w, HEIGHT));
+    assert_eq!(led_width(None), 0.0);
+    assert_eq!(led_width(Some(Led::Off)), LED_W + LED_GAP);
+    // El LED (6×7 con su sombra) 6 adentro, con su borde de arriba en la fila de las mayúsculas;
+    // la tinta 3 px después.
+    let led = piece_rects(&shapes, &skin, LED_ON);
+    let at = rect.min + vec2(6.0, CAPS_TOP);
+    assert_eq!(led, vec![Rect::from_min_size(at, vec2(6.0, 7.0))]);
+    let d = drawn(&shapes);
+    let (text_at, color, galley) = d.texts.last().unwrap();
+    assert_eq!(*color, skin.colors().text);
+    let (left, baseline) = ink_left_and_baseline(*text_at, galley);
+    assert_eq!(left, rect.left() + 15.0);
+    assert_eq!(baseline - tab_bar::CAP_HEIGHT, rect.top() + CAPS_TOP);
+    // En cada estado: presionado, el LED y el texto bajan 1 px; deshabilitado, el LED sigue
+    // como está (prendido o apagado).
+    let rect = Rect::from_min_size(pos2(20.0, 30.0), vec2(w, HEIGHT));
+    for led in [Led::On, Led::Off] {
+        for state in ButtonState::ALL {
+            let shapes = frame(&ctx, vec![], |ui| {
+                ui.painter().extend(button_shapes_with_led(
+                    &skin,
+                    rect,
+                    "Button",
+                    Some(led),
+                    state,
+                    ui,
+                ));
+            });
+            let drop = if state == ButtonState::Pressed {
+                1.0
+            } else {
+                0.0
+            };
+            let at = rect.min + vec2(6.0, CAPS_TOP + drop);
+            assert_eq!(
+                piece_rects(&shapes, &skin, led.piece()),
+                vec![Rect::from_min_size(at, vec2(6.0, 7.0))],
+                "{led:?} {state:?}"
+            );
+            let other = if led == Led::On { LED_OFF } else { LED_ON };
+            assert!(piece_rects(&shapes, &skin, other).is_empty());
+            let d = drawn(&shapes);
+            let (text_at, _, galley) = d.texts.last().unwrap();
+            let (left, baseline) = ink_left_and_baseline(*text_at, galley);
+            assert_eq!(left, rect.left() + 15.0, "{led:?} {state:?}");
+            assert_eq!(
+                baseline - tab_bar::CAP_HEIGHT,
+                rect.top() + CAPS_TOP + drop,
+                "{led:?} {state:?}"
+            );
+        }
+    }
+    assert_eq!(Led::lit(true), Led::On);
+    assert_eq!(
+        (Led::On.piece(), Led::Off.piece()),
+        ("button.led.on", "button.led.off")
+    );
+}

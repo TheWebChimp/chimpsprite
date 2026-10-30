@@ -308,10 +308,19 @@ fn the_buttons_have_one_pixel_corners_and_the_active_one_is_sunk_with_the_brown_
         }
     }
     assert_eq!(at(active, 24, 0).a, 0, "sunk one row");
-    // Los puntos de los grupos y su separador.
-    assert_eq!(data.pieces["button.dot.on"].size, [7, 7]);
-    assert_eq!(data.pieces["button.dot.off"].size, [7, 7]);
-    assert_eq!(data.pieces["button.sep"].size, [3, 16]);
+    // Los LEDs (de cualquier botón) y el separador de los grupos; los puntos viejos ya no están.
+    assert_eq!(data.pieces["button.led.on"].size, [6, 7]);
+    assert_eq!(data.pieces["button.led.off"].size, [6, 7]);
+    assert_eq!(data.pieces["button.group.sep"].size, [1, 17]);
+    for gone in [
+        "button.dot.on",
+        "button.dot.off",
+        "button.sep",
+        "button.group.dot.on",
+    ] {
+        assert!(!data.pieces.contains_key(gone), "{gone}");
+    }
+    assert!(!data.colors.contains_key("option_text_off"));
 }
 
 #[test]

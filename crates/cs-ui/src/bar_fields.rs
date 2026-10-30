@@ -15,7 +15,7 @@
 //!   respaldo. Las de los menús (`menu.check`, `menu.check.on`) no sirven: son otro dibujo, de
 //!   11×12.
 //! - **Opciones** (los grupos de radios: Sample, Linear/Radial, Rotation): el grupo de botones
-//!   del UI kit (`kit::group`, mockup de componentes, frame 9) con puntos, desde la fila de los
+//!   del UI kit (`kit::group`, mockup de componentes, frame 9) con LEDs, desde la fila de los
 //!   campos: sus mayúsculas caen en la fila de los textos.
 
 use std::ops::RangeInclusive;
@@ -26,6 +26,7 @@ use eframe::egui::{
 };
 use eframe::emath::GuiRounding as _;
 
+use crate::kit::button::Led;
 use crate::kit::{self, GroupItem};
 use crate::menus::{self, MenuLook, galley, ink_width, solid};
 use crate::pixel_ui;
@@ -251,7 +252,8 @@ pub fn choices<T: PartialEq + Copy>(
 }
 
 /// Los grupos chicos de opciones exclusivas (los que sin Pixel UI son radios): el grupo de botones
-/// del UI kit ([`kit::group`](crate::kit::group)), cada opción con su punto y su `name`, en las
+/// del UI kit ([`kit::group`](crate::kit::group)), cada opción con su LED (prendido el de la
+/// elegida) y su `name`, en las
 /// filas de los campos. Un clic elige esa opción; otro clic en la elegida no la apaga, como con
 /// radios. Devuelve si cambió `current`.
 pub fn options<T: PartialEq + Copy>(
@@ -264,7 +266,7 @@ pub fn options<T: PartialEq + Copy>(
     let values: Vec<T> = values.into_iter().collect();
     let items: Vec<GroupItem> = values
         .iter()
-        .map(|&v| GroupItem::with_dot(name(v)))
+        .map(|&v| GroupItem::with_led(name(v), Led::lit(v == *current)))
         .collect();
     // Un id por grupo (puede haber varios en la barra).
     let id = ui.next_auto_id();

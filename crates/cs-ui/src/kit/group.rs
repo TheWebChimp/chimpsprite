@@ -2,49 +2,46 @@
 //! contorno solo alrededor del grupo, como en el mockup de componentes (frame 9).
 //!
 //! - Cada segmento es el botón de [`super::button`] sin el contorno del lado de su vecino: la
-//!   columna `#ddcebf` a la izquierda, 4 px de relleno, [el punto y 3 px], la tinta, 4 px y la
-//!   columna blanca a la derecha. Alto, texto y sombra, los del botón.
+//!   columna `#ddcebf` a la izquierda, 4 px de relleno, [el LED y 3 px], la tinta, 4 px y la
+//!   columna blanca a la derecha. Alto, LED, texto y sombra, los del botón.
 //! - Entre dos segmentos, una sola columna: la pieza `button.group.sep` (1×17: el contorno arriba,
 //!   `#bda499` en las filas 1 a 13 y el contorno en la del bisel, la 14).
 //! - El elegido (y el presionado) se ve como el botón presionado: su cara baja 1 px (pieza
-//!   `button.down`, sin el bisel oscuro) y su punto y su texto bajan con ella.
-//! - Con puntos: `button.group.dot.on` (verde, el elegido) o `button.group.dot.off` (morado),
-//!   6×7 con su sombra, donde empezaría el texto y en la fila de sus mayúsculas.
+//!   `button.down`, sin el bisel oscuro) y su LED y su texto bajan con ella.
+//! - Con LED: el de [`button::Led`] (`button.led.on` verde, `button.led.off` morado), en el mismo
+//!   lugar que en el botón suelto. Quien arma el grupo dice cuál lleva cada opción (en la barra,
+//!   prendido el de la elegida).
 
 use eframe::egui::{
     self, Id, Painter, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, pos2, vec2,
 };
 use eframe::emath::GuiRounding as _;
 
-use super::button::{self, ButtonState};
-use crate::pixel_ui;
-use crate::skin::{Piece, Skin, WidgetState};
+use super::button::{self, ButtonState, Led};
+use crate::skin::{Skin, WidgetState};
 
 /// La columna entre dos segmentos (y su variante `.disabled`).
 pub const SEP: &str = "button.group.sep";
-/// Los puntos de las opciones: el de la elegida y el de las demás.
-pub const DOT_ON: &str = "button.group.dot.on";
-pub const DOT_OFF: &str = "button.group.dot.off";
 /// La columna del separador.
 pub const SEP_W: f32 = 1.0;
-/// El punto: 6 de ancho (y 7 de alto con su sombra); después, 3 px hasta la tinta.
-pub const DOT_W: f32 = 6.0;
-pub const DOT_GAP: f32 = 3.0;
 
-/// Una opción del grupo: su texto y si lleva punto.
+/// Una opción del grupo: su texto y su LED, si lleva.
 #[derive(Clone, Copy, Debug)]
 pub struct GroupItem<'a> {
     pub label: &'a str,
-    pub dot: bool,
+    pub led: Option<Led>,
 }
 
 impl<'a> GroupItem<'a> {
     pub fn text(label: &'a str) -> Self {
-        GroupItem { label, dot: false }
+        GroupItem { label, led: None }
     }
 
-    pub fn with_dot(label: &'a str) -> Self {
-        GroupItem { label, dot: true }
+    pub fn with_led(label: &'a str, led: Led) -> Self {
+        GroupItem {
+            label,
+            led: Some(led),
+        }
     }
 }
 
@@ -69,8 +66,7 @@ impl SegmentLook {
 /// El ancho de un segmento sin las columnas de los costados (contorno o separador):
 /// `1 + 4 + [6 + 3] + tinta + 4 + 1`.
 pub fn segment_width(ui: &Ui, item: &GroupItem) -> f32 {
-    let dot = if item.dot { DOT_W + DOT_GAP } else { 0.0 };
-    2.0 * button::PAD_X + dot + button::ink_width(ui, item.label)
+    2.0 * button::PAD_X + button::content_width(ui, item.label, item.led)
 }
 
 /// El ancho del grupo: los segmentos, un separador entre cada dos y el contorno a los costados.
@@ -185,32 +181,14 @@ pub fn group_shapes(
         let disabled = shown[i] == ButtonState::Disabled;
         shapes.extend(sep_shapes(skin, pos2(x, at.y), sunk, disabled, ppp));
     }
-    // Lo de adentro: el punto y el texto, que bajan con la cara.
-    for ((item, rect), (look, state)) in items.iter().zip(&rects).zip(looks.iter().zip(&shown)) {
-        let mut left = rect.left() + button::OUTLINE + button::PAD_X;
-        if item.dot {
-            let drop = if *state == ButtonState::Pressed {
-                button::PRESS_DROP
-            } else {
-                0.0
-            };
-            let name = if look.on { DOT_ON } else { DOT_OFF };
-            if let Some(piece) = skin.piece(name, WidgetState::Normal) {
-                let dot =
-                    Rect::from_min_size(pos2(left, at.y + button::CAPS_TOP + drop), size_of(piece));
-                shapes.extend(pixel_ui::piece_shapes(piece, dot, ppp));
-            }
-            left += DOT_W + DOT_GAP;
-        }
-        shapes.extend(button::label_shapes(
-            ui, skin, item.label, left, at.y, *state,
+    // Lo de adentro: el LED y el texto, que bajan con la cara.
+    for ((item, rect), state) in items.iter().zip(&rects).zip(&shown) {
+        let left = rect.left() + button::OUTLINE + button::PAD_X;
+        shapes.extend(button::content_shapes(
+            ui, skin, item.label, item.led, left, at.y, *state,
         ));
     }
     shapes
-}
-
-fn size_of(piece: &Piece) -> egui::Vec2 {
-    vec2(piece.size[0] as f32, piece.size[1] as f32)
 }
 
 /// El separador en la columna `at.x` desde la fila `at.y`; `sunk`: sin la fila de arriba (los dos

@@ -4,6 +4,11 @@
 //!
 //! Todos los botones de texto de Pixel UI pasan por acá (los grupos de opciones, por
 //! [`super::group`], que los arma con estas piezas); los de ícono, todavía no.
+//!
+//! Cualquier botón puede llevar un LED ([`Led`]): `button.led.on` (verde) o `button.led.off`
+//! (morado), 6×6 con su sombra (6×7), donde empezaría el texto y en la fila de sus mayúsculas;
+//! el texto va 3 px después. Baja con la cara del botón al presionarlo. Deshabilitado, el LED
+//! queda como está (prendido o apagado): dice el estado aunque no se pueda cambiar.
 
 use std::sync::Arc;
 
@@ -56,6 +61,40 @@ const _: () =
 /// La sombra del texto: 1 px abajo, como en el mockup (la spec decía 1 a la derecha y 1 abajo,
 /// pero los píxeles del frame 9 la tienen justo debajo de la tinta). Con el puntero encima no hay.
 pub const SHADOW: Vec2 = vec2(0.0, 1.0);
+
+/// El LED de un botón: prendido (verde) o apagado (morado).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Led {
+    On,
+    Off,
+}
+
+impl Led {
+    /// El LED de una opción: prendido si es la elegida.
+    pub fn lit(on: bool) -> Self {
+        if on { Led::On } else { Led::Off }
+    }
+
+    /// Su pieza del skin.
+    pub fn piece(self) -> &'static str {
+        match self {
+            Led::On => LED_ON,
+            Led::Off => LED_OFF,
+        }
+    }
+}
+
+/// Las piezas del LED, compartidas por todos los botones.
+pub const LED_ON: &str = "button.led.on";
+pub const LED_OFF: &str = "button.led.off";
+/// El LED mide 6 de ancho (y 7 de alto con su sombra); después, 3 px hasta la tinta.
+pub const LED_W: f32 = 6.0;
+pub const LED_GAP: f32 = 3.0;
+
+/// Lo que ocupa el LED a lo ancho, con su aire hasta el texto (nada sin LED).
+pub fn led_width(led: Option<Led>) -> f32 {
+    if led.is_some() { LED_W + LED_GAP } else { 0.0 }
+}
 
 /// Los estados del botón, cada uno con su pieza.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,9 +185,19 @@ pub fn ink_width(ui: &Ui, label: &str) -> f32 {
     crate::menus::ink_width(&galley(ui, label))
 }
 
+/// El ancho de lo de adentro: [el LED y su aire] y la tinta.
+pub fn content_width(ui: &Ui, label: &str, led: Option<Led>) -> f32 {
+    led_width(led) + ink_width(ui, label)
+}
+
 /// El ancho justo de un botón con `label`: `1 + 5 + tinta + 5 + 1`.
 pub fn width(ui: &Ui, label: &str) -> f32 {
-    2.0 * (OUTLINE + PAD_X) + ink_width(ui, label)
+    width_with_led(ui, label, None)
+}
+
+/// El ancho justo de un botón con `label` y `led`: `1 + 5 + [6 + 3] + tinta + 5 + 1`.
+pub fn width_with_led(ui: &Ui, label: &str, led: Option<Led>) -> f32 {
+    2.0 * (OUTLINE + PAD_X) + content_width(ui, label, led)
 }
 
 /// Un botón de texto con su ancho justo. El estado sale de la interacción y de `ui.is_enabled()`;
@@ -157,13 +206,25 @@ pub fn button(ui: &mut Ui, skin: &Skin, label: &str) -> Response {
     button_sized(ui, skin, label, 0.0)
 }
 
+/// [`button`] con un LED antes del texto.
+pub fn led_button(ui: &mut Ui, skin: &Skin, label: &str, led: Led) -> Response {
+    sized(ui, skin, label, Some(led), 0.0)
+}
+
 /// [`button`] de por lo menos `min_width` de ancho; si sobra, el texto va centrado.
 pub fn button_sized(ui: &mut Ui, skin: &Skin, label: &str, min_width: f32) -> Response {
-    let size = vec2(width(ui, label).max(min_width.round()), HEIGHT);
+    sized(ui, skin, label, None, min_width)
+}
+
+fn sized(ui: &mut Ui, skin: &Skin, label: &str, led: Option<Led>, min_width: f32) -> Response {
+    let size = vec2(
+        width_with_led(ui, label, led).max(min_width.round()),
+        HEIGHT,
+    );
     let (slot, response) = ui.allocate_exact_size(size, Sense::click());
     let rect = Rect::from_min_size(slot.min.round(), size);
     paint(ui, skin, rect, &response, label, |state| {
-        centered_label(ui, skin, rect, label, state)
+        centered_content(ui, skin, rect, label, led, state)
     });
     response
 }
@@ -172,7 +233,7 @@ pub fn button_sized(ui: &mut Ui, skin: &Skin, label: &str, min_width: f32) -> Re
 pub fn button_at(ui: &mut Ui, skin: &Skin, rect: Rect, id: Id, label: &str) -> Response {
     let response = ui.interact(rect, id, Sense::click());
     paint(ui, skin, rect, &response, label, |state| {
-        centered_label(ui, skin, rect, label, state)
+        centered_content(ui, skin, rect, label, None, state)
     });
     response
 }
@@ -219,9 +280,21 @@ pub fn button_shapes(
     state: ButtonState,
     ui: &Ui,
 ) -> Vec<Shape> {
+    button_shapes_with_led(skin, rect, label, None, state, ui)
+}
+
+/// [`button_shapes`] con un LED (o sin él).
+pub fn button_shapes_with_led(
+    skin: &Skin,
+    rect: Rect,
+    label: &str,
+    led: Option<Led>,
+    state: ButtonState,
+    ui: &Ui,
+) -> Vec<Shape> {
     let ppp = ui.ctx().pixels_per_point();
     let mut shapes = frame_shapes(skin, rect, state, ppp);
-    shapes.extend(centered_label(ui, skin, rect, label, state));
+    shapes.extend(centered_content(ui, skin, rect, label, led, state));
     shapes
 }
 
@@ -236,11 +309,64 @@ pub fn frame_shapes(skin: &Skin, rect: Rect, state: ButtonState, ppp: f32) -> Ve
     }
 }
 
-/// El texto centrado a lo ancho en `rect`: con el ancho justo, la tinta empieza en `left + 6`.
-/// Si no cabe justo a la mitad, el píxel de sobra queda a la derecha.
-fn centered_label(ui: &Ui, skin: &Skin, rect: Rect, label: &str, state: ButtonState) -> Vec<Shape> {
-    let left = rect.left() + ((rect.width() - ink_width(ui, label)) / 2.0).floor();
-    label_shapes(ui, skin, label, left, rect.top(), state)
+/// Lo de adentro centrado a lo ancho en `rect`: con el ancho justo, el LED o la tinta empiezan
+/// en `left + 6`. Si no cabe justo a la mitad, el píxel de sobra queda a la derecha.
+fn centered_content(
+    ui: &Ui,
+    skin: &Skin,
+    rect: Rect,
+    label: &str,
+    led: Option<Led>,
+    state: ButtonState,
+) -> Vec<Shape> {
+    let left = rect.left() + ((rect.width() - content_width(ui, label, led)) / 2.0).floor();
+    content_shapes(ui, skin, label, led, left, rect.top(), state)
+}
+
+/// Lo de adentro de un botón cuya pieza empieza en la fila `top`, desde `left`: el LED (si hay)
+/// con su borde de arriba en la fila de las mayúsculas y, 3 px después, el texto
+/// ([`label_shapes`]). Presionado, los dos bajan `PRESS_DROP`.
+pub fn content_shapes(
+    ui: &Ui,
+    skin: &Skin,
+    label: &str,
+    led: Option<Led>,
+    left: f32,
+    top: f32,
+    state: ButtonState,
+) -> Vec<Shape> {
+    let mut shapes = Vec::new();
+    if let Some(led) = led
+        && let Some(piece) = skin.piece(led.piece(), WidgetState::Normal)
+    {
+        let at = Rect::from_min_size(
+            egui::pos2(left, top + CAPS_TOP + drop(state)),
+            vec2(piece.size[0] as f32, piece.size[1] as f32),
+        );
+        shapes.extend(pixel_ui::piece_shapes(
+            piece,
+            at,
+            ui.ctx().pixels_per_point(),
+        ));
+    }
+    shapes.extend(label_shapes(
+        ui,
+        skin,
+        label,
+        left + led_width(led),
+        top,
+        state,
+    ));
+    shapes
+}
+
+/// Lo que baja lo de adentro en `state`: `PRESS_DROP` presionado, nada en los demás.
+fn drop(state: ButtonState) -> f32 {
+    if state == ButtonState::Pressed {
+        PRESS_DROP
+    } else {
+        0.0
+    }
 }
 
 /// El texto de un botón cuya pieza empieza en la fila `top`: la tinta desde `left`, las
@@ -257,12 +383,7 @@ pub fn label_shapes(
     let colors = skin.colors();
     let galley = galley(ui, label);
     let ppp = ui.ctx().pixels_per_point();
-    let drop = if state == ButtonState::Pressed {
-        PRESS_DROP
-    } else {
-        0.0
-    };
-    let at = tab_bar::text_pos(&galley, left, top + CAPS_TOP + drop, ppp);
+    let at = tab_bar::text_pos(&galley, left, top + CAPS_TOP + drop(state), ppp);
     let mut shapes = Vec::with_capacity(2);
     if state.has_shadow() {
         shapes.push(Shape::galley(

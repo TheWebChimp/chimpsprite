@@ -86,25 +86,28 @@ fn looks(on: &[bool]) -> Vec<SegmentLook> {
 fn the_group_is_17_high_with_one_separator_column_between_segments_like_the_mockup() {
     let (ctx, skin) = pixel_ctx();
     let items = [GroupItem::text("Button"), GroupItem::text("Button")];
-    let dots = [GroupItem::with_dot("Button"), GroupItem::with_dot("Button")];
+    let leds = [
+        GroupItem::with_led("Button", Led::On),
+        GroupItem::with_led("Button", Led::Off),
+    ];
     let mut out = (0.0, 0.0, 0.0, vec![], vec![]);
     let shapes = frame(&ctx, vec![], |ui| {
         out = (
             segment_width(ui, &items[0]),
             width(ui, &items),
-            width(ui, &dots),
+            width(ui, &leds),
             segment_rects(ui, &items, AT),
-            segment_rects(ui, &dots, AT),
+            segment_rects(ui, &leds, AT),
         );
         ui.painter()
             .extend(group_shapes(ui, &skin, AT, &items, &looks(&[false, false])));
     });
-    let (segment, plain, with_dots, rects, dot_rects) = out;
+    let (segment, plain, with_leds, rects, led_rects) = out;
     // El mockup: "Button" (27 de tinta) en segmentos de 1 + 4 + 27 + 4 + 1; el grupo, x 210..286
-    // (77) sin puntos y x 309..403 (95) con puntos de 6 y 3 de aire.
+    // (77) sin LEDs y x 309..403 (95) con LEDs de 6 y 3 de aire.
     assert_eq!(segment, 37.0);
     assert_eq!(plain, 77.0);
-    assert_eq!(with_dots, 95.0);
+    assert_eq!(with_leds, 95.0);
     assert_eq!(
         rects[0],
         Rect::from_min_size(AT, vec2(39.0, button::HEIGHT))
@@ -114,7 +117,7 @@ fn the_group_is_17_high_with_one_separator_column_between_segments_like_the_mock
     assert_eq!(rects[1].left(), rects[0].right() - 1.0);
     assert_eq!(rects[1].left(), AT.x + 38.0);
     assert_eq!(rects[1].right(), AT.x + plain);
-    assert_eq!(dot_rects[1].left(), AT.x + 47.0, "x 356");
+    assert_eq!(led_rects[1].left(), AT.x + 47.0, "x 356");
     let d = drawn(&shapes);
     // Las caras: la pieza `button` en cada segmento; el separador, una columna de 17.
     assert_eq!(
@@ -158,16 +161,19 @@ fn the_separator_piece_has_the_mockup_column() {
     assert_eq!(px(14), outline);
     assert_eq!(px(15), outline);
     assert_eq!(px(16), [0xf1, 0xeb, 0xdb, 255]);
-    for name in [DOT_ON, DOT_OFF] {
+    for name in [button::LED_ON, button::LED_OFF] {
         assert_eq!(skin.piece(name, WidgetState::Normal).unwrap().size, [6, 7]);
     }
     assert!(skin.piece(SEP, WidgetState::Disabled).unwrap().texture.id() != piece.texture.id());
 }
 
 #[test]
-fn the_active_segment_drops_one_pixel_like_the_pressed_button_with_its_dot_and_text() {
+fn the_active_segment_drops_one_pixel_like_the_pressed_button_with_its_led_and_text() {
     let (ctx, skin) = pixel_ctx();
-    let items = [GroupItem::with_dot("Button"), GroupItem::with_dot("Button")];
+    let items = [
+        GroupItem::with_led("Button", Led::On),
+        GroupItem::with_led("Button", Led::Off),
+    ];
     let mut rects = vec![];
     let shapes = frame(&ctx, vec![], |ui| {
         rects = segment_rects(ui, &items, AT);
@@ -186,9 +192,9 @@ fn the_active_segment_drops_one_pixel_like_the_pressed_button_with_its_dot_and_t
     let sep_id = skin.piece(SEP, WidgetState::Normal).unwrap().texture.id();
     let sep = d.images.iter().find(|i| i.0 == sep_id).unwrap();
     assert_eq!((sep.1.top(), sep.2.y), (AT.y, 0.0));
-    // El punto verde 1 px más abajo que el morado, los dos 5 px adentro de su segmento.
-    let on = d.boxes(&skin, DOT_ON, WidgetState::Normal);
-    let off = d.boxes(&skin, DOT_OFF, WidgetState::Normal);
+    // El LED verde 1 px más abajo que el morado, los dos 5 px adentro de su segmento.
+    let on = d.boxes(&skin, button::LED_ON, WidgetState::Normal);
+    let off = d.boxes(&skin, button::LED_OFF, WidgetState::Normal);
     assert_eq!(
         on,
         vec![Rect::from_min_size(
@@ -203,7 +209,7 @@ fn the_active_segment_drops_one_pixel_like_the_pressed_button_with_its_dot_and_t
             vec2(6.0, 7.0)
         )]
     );
-    // El texto 3 px después del punto, con la sombra; el del elegido, 1 px más abajo.
+    // El texto 3 px después del LED, con la sombra; el del elegido, 1 px más abajo.
     let texts: Vec<_> = d
         .texts
         .iter()

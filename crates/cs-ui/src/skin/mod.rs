@@ -196,8 +196,6 @@ pub struct SkinColors {
     pub timeline_selection_light: Color32,
     /// El texto de un botón deshabilitado (el botón se ve igual, sin apagarse).
     pub button_text_disabled: Color32,
-    /// El texto de las opciones no elegidas de un grupo de botones.
-    pub option_text_off: Color32,
     /// El borde oscuro de los controles (campos, botones, cuadritos de color).
     pub control_border: Color32,
     /// La línea oscura a cada lado del contorno blanco de un rango de cels del timeline.
@@ -230,7 +228,6 @@ impl SkinColors {
             timeline_selection_dark: theme::CANVAS_BORDER,
             timeline_selection_light: theme::WIDGET_HOVER,
             button_text_disabled: theme::LABEL,
-            option_text_off: theme::LABEL,
             control_border: theme::CANVAS_BORDER,
             cel_range: theme::CANVAS_BORDER,
         }
@@ -262,7 +259,6 @@ impl SkinColors {
             ("timeline_selection_dark", &mut c.timeline_selection_dark),
             ("timeline_selection_light", &mut c.timeline_selection_light),
             ("button_text_disabled", &mut c.button_text_disabled),
-            ("option_text_off", &mut c.option_text_off),
             ("control_border", &mut c.control_border),
             ("cel_range", &mut c.cel_range),
         ];
