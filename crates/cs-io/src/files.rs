@@ -174,6 +174,7 @@ mod tests {
         assert_eq!(back.artboards[0].sprite.width, 5);
 
         doc.artboards.push(Artboard {
+            in_library: false,
             guides: Vec::new(),
             symmetry: Default::default(),
             id: ArtboardId(2),
@@ -205,6 +206,7 @@ mod tests {
         .apply(&mut symbol)
         .unwrap();
         d.artboards.push(Artboard {
+            in_library: false,
             id: ArtboardId(2),
             name: "s".into(),
             position: (9, 0),

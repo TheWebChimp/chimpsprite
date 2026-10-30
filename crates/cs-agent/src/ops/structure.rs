@@ -57,6 +57,7 @@ impl Session {
         };
         let id = doc.next_artboard_id();
         let artboard = Artboard {
+            in_library: false,
             id,
             name: p.name.clone(),
             position,

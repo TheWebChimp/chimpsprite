@@ -190,6 +190,7 @@ mod tests {
     fn doc() -> Document {
         let mut d = Document::with_sprite("hero", Sprite::new(4, 4, ColorMode::Rgba));
         d.artboards.push(Artboard {
+            in_library: false,
             id: ArtboardId(2),
             name: "coin".into(),
             position: (10, 0),

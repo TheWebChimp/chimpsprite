@@ -234,6 +234,7 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
             report.warn(format!("{}: {w}", entry.name));
         }
         artboards.push(Artboard {
+            in_library: false,
             guides: entry.guides,
             symmetry: entry.symmetry,
             id: ArtboardId(entry.id),
@@ -419,6 +420,7 @@ mod tests {
         .unwrap();
         let mut d = Document::with_sprite("chimp", chimp);
         d.artboards.push(Artboard {
+            in_library: false,
             guides: vec![Guide {
                 axis: cs_core::Axis::Vertical,
                 position: 2,
