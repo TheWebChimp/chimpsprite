@@ -316,12 +316,10 @@ impl CanvasView {
     /// sobre el damero, o el fondo fuera de los artboards (para invertir los cursores).
     fn color_under(&self, rect: Rect, editor: &Editor, p: Pos2) -> Color32 {
         let world = self.to_world(rect, p);
-        let under = if editor.in_symbol_mode() {
-            editor.artboard().contains(world).then_some(editor.active)
-        } else {
-            editor.document.artboard_at(world)
-        };
-        let Some(artboard) = under.and_then(|id| editor.document.artboard(id)) else {
+        let Some(artboard) = editor
+            .shown_artboard_at(world)
+            .and_then(|id| editor.document.artboard(id))
+        else {
             return self.background;
         };
         let (ax, ay) = artboard.position;
@@ -1507,17 +1505,21 @@ impl CanvasView {
             self.artboard_request = Some(ArtboardRequest::Properties);
             ui.close();
         }
-        if ui.add(menus::plain("Duplicate")).clicked() {
+        // En el modo símbolo la ventana es la del símbolo: duplicarlo, mandarlo a la biblioteca o
+        // borrarlo (sin la confirmación de la biblioteca) no van desde acá.
+        let symbol = editor.in_symbol_mode();
+        if !symbol && ui.add(menus::plain("Duplicate")).clicked() {
             let name = format!("{} Copy", editor.artboard().name);
             editor.duplicate_artboard(name);
             ui.close();
         }
-        if ui
-            .add_enabled(
-                editor.document.canvas_count() > 1,
-                menus::plain("Move to Library"),
-            )
-            .clicked()
+        if !symbol
+            && ui
+                .add_enabled(
+                    editor.document.canvas_count() > 1,
+                    menus::plain("Move to Library"),
+                )
+                .clicked()
         {
             editor.move_active_to_library();
             ui.close();
@@ -1534,6 +1536,9 @@ impl CanvasView {
         if ui.add(menus::item("Canvas Size", "C")).clicked() {
             self.artboard_request = Some(ArtboardRequest::CanvasSize);
             ui.close();
+        }
+        if symbol {
+            return;
         }
         menus::separator(ui);
         let can_delete = editor.document.canvas_count() > 1;

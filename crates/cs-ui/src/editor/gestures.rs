@@ -394,7 +394,7 @@ impl Editor {
     /// punto que no sea otro artboard; con una herramienta de selección, dentro de lo
     /// seleccionado y sin modificadores que cambien el modo de selección.
     pub fn moves_selection_at(&self, world: (f32, f32), shift: bool, alt: bool) -> bool {
-        let artboard = self.document.artboard_at(world);
+        let artboard = self.shown_artboard_at(world);
         if !self.can_transform() || artboard.is_some_and(|id| id != self.active) {
             return false;
         }

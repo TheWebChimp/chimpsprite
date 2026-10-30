@@ -609,10 +609,12 @@ impl CanvasView {
             editor.finish_gesture();
         }
         // Doble clic con Move: fuera del símbolo que se edita sale un nivel; si no, entra a la
-        // instancia de la capa actual (a un símbolo de la biblioteca, en el modo símbolo).
+        // instancia de la capa actual (a un símbolo de la biblioteca, en el modo símbolo). No
+        // sobre la barra o la etiqueta (renombra), las reglas ni la migaja de pan.
         if response.double_clicked()
             && editor.active_tool() == ToolKind::Move
-            && let Some(p) = pointer.filter(|&p| !over_crumbs(p))
+            && over_label.is_none()
+            && let Some(p) = pointer.filter(|&p| area.contains(p))
         {
             let outside = !editor.artboard().contains(self.to_world(rect, p));
             if editor.in_symbol_mode() && outside {
@@ -685,9 +687,11 @@ impl CanvasView {
             }
         } else if editor.active_tool() == ToolKind::Artboard {
             let world = pointer.map(|p| self.to_world(rect, p));
-            Some(artboard_cursor(
-                world.and_then(|w| hit_test(&editor.document, w, slop)),
-            ))
+            // En el modo símbolo la herramienta no toca los artboards del lienzo (no se ven).
+            let hit = world
+                .filter(|_| !editor.in_symbol_mode())
+                .and_then(|w| hit_test(&editor.document, w, slop));
+            Some(artboard_cursor(hit))
         } else if editor.active_tool() == ToolKind::Move
             // Durante el arrastre sigue Move aunque el puntero salga de lo seleccionado o del
             // artboard, o cambien los modificadores.

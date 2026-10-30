@@ -62,6 +62,16 @@ impl Editor {
         Ok(c.symbol)
     }
 
+    /// El artboard que se ve bajo `world` (mundo): en el modo símbolo solo el símbolo; si no, el
+    /// de más arriba del lienzo.
+    pub fn shown_artboard_at(&self, world: (f32, f32)) -> Option<ArtboardId> {
+        if self.in_symbol_mode() {
+            self.artboard().contains(world).then_some(self.active)
+        } else {
+            self.document.artboard_at(world)
+        }
+    }
+
     /// Manda el artboard activo a la biblioteca y activa otro del lienzo. `false` si no se puede.
     pub fn move_active_to_library(&mut self) -> bool {
         let Some(cmd) = symbol::move_to_library(&self.document, self.active) else {
@@ -103,21 +113,8 @@ impl Editor {
             return;
         }
         self.symbol_stack.truncate(depth);
-        let target = match self.symbol_stack.last() {
-            Some(&id) => Some(id),
-            None => {
-                let shown =
-                    |id: ArtboardId| self.document.artboard(id).is_some_and(|a| !a.in_library);
-                self.symbol_return
-                    .take()
-                    .filter(|&id| shown(id))
-                    .or_else(|| self.document.canvas_artboards().next().map(|a| a.id))
-            }
-        };
-        if let Some(id) = target {
-            self.activate(id);
-        }
-        // Por si no hubo a dónde ir: deja el activo en un lugar válido.
+        // `ensure_valid` activa el último de la pila o, sin pila, `symbol_return` (o el primero
+        // del lienzo).
         self.ensure_valid();
     }
 

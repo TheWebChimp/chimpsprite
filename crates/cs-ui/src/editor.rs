@@ -466,10 +466,8 @@ impl Editor {
             // Fuera de él, el activo es uno del lienzo: el de antes de entrar o el primero.
             None => {
                 let back = self.symbol_return.take();
-                let shown =
-                    |id: ArtboardId| self.document.artboard(id).is_some_and(|a| !a.in_library);
-                (!shown(self.active)).then(|| {
-                    back.filter(|&id| shown(id)).unwrap_or_else(|| {
+                (!self.on_canvas(self.active)).then(|| {
+                    back.filter(|&id| self.on_canvas(id)).unwrap_or_else(|| {
                         self.document
                             .canvas_artboards()
                             .next()
@@ -480,6 +478,12 @@ impl Editor {
             }
         };
         if let Some(id) = target.filter(|&id| id != self.active) {
+            if self.document.artboard(self.active).is_some() {
+                // El de antes sigue ahí: el cambio completo (confirma lo flotante, cierra el
+                // grupo y recuerda su capa y su frame). `activate` vuelve a validar.
+                self.activate(id);
+                return;
+            }
             self.active = id;
             if let Some(&(layer, frame)) = self.views.get(&id) {
                 (self.layer, self.frame) = (layer, frame);
@@ -508,6 +512,11 @@ impl Editor {
         {
             self.selection = None;
         }
+    }
+
+    /// Si `id` es un artboard del lienzo (no de la biblioteca).
+    fn on_canvas(&self, id: ArtboardId) -> bool {
+        self.document.artboard(id).is_some_and(|a| !a.in_library)
     }
 
     /// Activa otro artboard: recuerda capa/frame del actual y descarta la selección.
