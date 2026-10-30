@@ -111,10 +111,8 @@ fn the_text_box_fits_the_tallest_accent_and_the_lowest_descender_with_its_air() 
     };
     let bottom = |c: char| font.metrics(c, crate::appearance::PIXEL_FONT_SIZE).ymin as f32;
     assert_eq!(top('H'), tab_bar::CAP_HEIGHT);
-    // Lo que se arregla en la fuente: 'Ŏ' sube 10 y 'Ļ' baja 3.
-    let outliers = ['Ŏ', 'Ļ'];
     let chars: Vec<char> = (' '..='ž')
-        .filter(|c| !c.is_control() && !outliers.contains(c) && font.has_glyph(*c))
+        .filter(|c| !c.is_control() && font.has_glyph(*c))
         .collect();
     let tallest = chars
         .iter()
