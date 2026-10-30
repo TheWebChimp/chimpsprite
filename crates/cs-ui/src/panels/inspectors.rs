@@ -1,5 +1,5 @@
 //! Los paneles de la derecha que editan el documento: artboards, slices (y sus propiedades)
-//! e instancias.
+//! y objetos.
 
 use super::*;
 
@@ -296,16 +296,48 @@ pub(crate) fn gesture_end(editor: &mut Editor, responses: &[&egui::Response]) {
     }
 }
 
-/// Rango de los campos de posición de la instancia.
+/// Rango de los campos de posición del objeto.
 const POSITION_RANGE: std::ops::RangeInclusive<i32> = -16384..=16384;
 
-/// Propiedades de la instancia de la capa actual en el frame actual. Devuelve `true` si se
+/// Propiedades del objeto actual (ver `Editor::current_object`) en el frame actual. Con varios
+/// seleccionados, el campo que cambia se aplica a todos (un paso de undo). Devuelve `true` si se
 /// entró al símbolo (el lienzo debe centrarlo).
+/// En otras capas no muestra nada (el lugar es de la paleta, ver `palette_and_editor`).
 pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
+    if !editor.on_object_layer() {
+        return false;
+    }
+    ui.heading("Object");
     let Some(key) = editor.instance_key() else {
+        // Sin objeto (con varios en la capa y ninguno seleccionado), o uno que todavía no empieza.
+        let hint = if editor.current_object().is_none() {
+            "Select an object on the canvas"
+        } else {
+            "No keyframe at or before this frame"
+        };
+        // Con wrap: no ensancha el panel.
+        let hint = egui::RichText::new(hint).weak();
+        ui.add(egui::Label::new(hint).wrap());
+        ui.separator();
         return false;
     };
-    ui.heading("Instance");
+    let count = editor.edited_objects().len();
+    if count > 1 {
+        ui.weak(format!("{count} objects selected"));
+    }
+    // El nombre es solo del objeto actual (renombrar varios a la vez los dejaría iguales).
+    let mut name = editor.current_object_name().unwrap_or_default().to_string();
+    // La etiqueta primero: el campo toma lo que queda (después de él, ensancharía el panel).
+    let r = ui
+        .horizontal(|ui| {
+            ui.label("Name");
+            widgets::text_line_named(ui, &mut name, "Object name")
+        })
+        .inner;
+    if let Some(group) = gesture_group(editor, &[&r]) {
+        editor.rename_current_object(&name, Some(group));
+    }
+    gesture_end(editor, &[&r]);
     let is_key = editor.is_instance_keyframe(editor.layer, editor.frame);
     if !is_key {
         ui.weak("Changes create a keyframe on this frame.");
@@ -336,8 +368,17 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
             (rx, ry)
         })
         .inner;
+    // Solo la coordenada que cambió (con varios objetos, la otra queda la de cada uno).
     if let Some(group) = gesture_group(editor, &[&rx, &ry]) {
-        editor.update_instance_key_grouped(Some(group), |k| k.position = (x, y));
+        let (cx, cy) = (x != key.position.0, y != key.position.1);
+        editor.update_instance_key_grouped(Some(group), |k| {
+            if cx {
+                k.position.0 = x;
+            }
+            if cy {
+                k.position.1 = y;
+            }
+        });
     }
     gesture_end(editor, &[&rx, &ry]);
     let (mut fh, mut fv) = (key.flip_h, key.flip_v);
@@ -406,13 +447,18 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     // El modo es un clic (paso propio); el primer frame se arrastra (un paso por gesto).
     let group = gesture_group(editor, &[&first_response]).filter(|_| mode == before.1);
     if (first, mode) != before {
+        // Solo lo que cambió: el modo o el primer frame (con varios objetos, el resto queda el
+        // de cada uno).
+        let (new_first, new_mode) = (first != before.0, mode != before.1);
         editor.update_instance_key_grouped(group, |k| {
-            k.timing = match mode {
-                Some(play) => Timing::Graphic {
-                    first_frame: first,
-                    play,
-                },
-                None => Timing::MovieClip { first_frame: first },
+            let (old_first, old_mode) = match k.timing {
+                Timing::Graphic { first_frame, play } => (first_frame, Some(play)),
+                Timing::MovieClip { first_frame } => (first_frame, None),
+            };
+            let first_frame = if new_first { first } else { old_first };
+            k.timing = match if new_mode { mode } else { old_mode } {
+                Some(play) => Timing::Graphic { first_frame, play },
+                None => Timing::MovieClip { first_frame },
             }
         });
     }

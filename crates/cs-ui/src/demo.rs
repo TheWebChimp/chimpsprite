@@ -408,7 +408,19 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         if let Ok(symbol) =
             editor.convert_to_symbol(&name, cs_commands::symbol::SymbolTiming::Graphic)
         {
-            dock::set_open(ctx, Some(dock::DockPanel::Library));
+            if mode != "objects" {
+                dock::set_open(ctx, Some(dock::DockPanel::Library));
+            }
+            // Con =objects, dos sombreros más en la misma capa, la capa desplegada en el
+            // timeline y el último seleccionado.
+            if mode == "objects" {
+                let layer = (editor.active, editor.layer);
+                let (x, y) = editor.artboard().position;
+                for at in [(4, 30), (38, 40)] {
+                    let _ = editor.drop_symbol(symbol, (x + at.0, y + at.1));
+                }
+                app.doc.timeline.expanded_objects.insert(layer);
+            }
             if mode == "edit" && editor.enter_symbol(symbol) {
                 app.doc.canvas.request_zoom(crate::view::ZoomRequest::Fit);
             }

@@ -57,7 +57,7 @@ impl InstanceKey {
     }
 }
 
-/// Keys de una capa de instancia, ordenadas por frame; cada una vale hasta la siguiente.
+/// Keys de un objeto, ordenadas por frame; cada una vale hasta la siguiente.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InstanceTrack {
     pub keys: Vec<InstanceKey>,
@@ -96,6 +96,18 @@ impl InstanceTrack {
         self.keys.retain(|k| k.frame != frame);
         self.keys.len() != before
     }
+}
+
+/// Identifica un objeto dentro de su capa de objetos.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct ObjectId(pub u32);
+
+/// Un objeto de una capa de objetos: muestra símbolos con sus propias keys.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SceneObject {
+    pub id: ObjectId,
+    pub name: String,
+    pub track: InstanceTrack,
 }
 
 /// Frame del símbolo `source` que se ve en el frame `frame` del padre, según `key`.
@@ -248,19 +260,75 @@ mod tests {
     }
 
     #[test]
-    fn instance_layers_serialize_and_old_layers_still_load() {
+    fn object_layers_serialize_and_old_layers_still_load() {
         let mut layer = crate::Layer::new_image(crate::LayerId(1), "a");
-        layer.kind = crate::LayerKind::Instance;
-        layer.instance = Some(InstanceTrack {
-            keys: vec![InstanceKey::new(0, ArtboardId(2), (3, 4))],
-        });
+        layer.kind = crate::LayerKind::Objects;
+        layer.objects = vec![SceneObject {
+            id: ObjectId(1),
+            name: "a".into(),
+            track: InstanceTrack {
+                keys: vec![InstanceKey::new(0, ArtboardId(2), (3, 4))],
+            },
+        }];
         let json = serde_json::to_string(&layer).unwrap();
+        assert!(
+            !json.contains("\"instance\""),
+            "only objects are written: {json}"
+        );
         assert_eq!(serde_json::from_str::<crate::Layer>(&json).unwrap(), layer);
         let old = r#"{"id":1,"name":"x","kind":"Image","parent":null,"visible":true,
             "locked":false,"opacity":255,"blend":"Normal"}"#;
-        assert_eq!(
-            serde_json::from_str::<crate::Layer>(old).unwrap().instance,
-            None
+        assert!(
+            serde_json::from_str::<crate::Layer>(old)
+                .unwrap()
+                .objects
+                .is_empty()
         );
+    }
+
+    #[test]
+    fn old_instance_layer_json_loads_as_one_object() {
+        let old = r#"{"id":3,"name":"walk","kind":"Instance","parent":null,"visible":true,
+            "locked":false,"opacity":255,"blend":"Normal",
+            "instance":{"keys":[{"frame":0,"source":2,"position":[3,4],"flip_h":false,
+            "flip_v":true,"opacity":200,
+            "timing":{"Graphic":{"first_frame":1,"play":"Loop"}}}]}}"#;
+        let layer: crate::Layer = serde_json::from_str(old).unwrap();
+        assert_eq!(layer.kind, crate::LayerKind::Objects);
+        assert_eq!(layer.objects.len(), 1);
+        let object = &layer.objects[0];
+        assert_eq!(object.id, ObjectId(1));
+        assert_eq!(object.name, "walk");
+        let key = &object.track.keys[0];
+        assert_eq!(key.source, Some(ArtboardId(2)));
+        assert_eq!((key.position, key.flip_v, key.opacity), ((3, 4), true, 200));
+        assert_eq!(
+            key.timing,
+            Timing::Graphic {
+                first_frame: 1,
+                play: GraphicPlay::Loop
+            }
+        );
+    }
+
+    #[test]
+    fn layer_objects_helpers() {
+        let mut layer = crate::Layer::new_image(crate::LayerId(1), "a");
+        assert_eq!(layer.next_object_id(), ObjectId(1));
+        let object = |id, source| SceneObject {
+            id: ObjectId(id),
+            name: format!("o{id}"),
+            track: InstanceTrack {
+                keys: vec![InstanceKey::new(0, ArtboardId(source), (0, 0))],
+            },
+        };
+        layer.objects = vec![object(4, 2), object(2, 3)];
+        assert_eq!(layer.next_object_id(), ObjectId(5));
+        assert_eq!(layer.object(ObjectId(2)).unwrap().name, "o2");
+        assert!(layer.object(ObjectId(3)).is_none());
+        layer.object_mut(ObjectId(4)).unwrap().name = "x".into();
+        assert_eq!(layer.objects[0].name, "x");
+        let sources: Vec<_> = layer.object_sources().collect();
+        assert_eq!(sources, vec![ArtboardId(2), ArtboardId(3)]);
     }
 }

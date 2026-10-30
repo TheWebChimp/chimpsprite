@@ -76,7 +76,7 @@ fn describe_sprite(s: &Sprite) -> Value {
                 "name": l.name,
                 "kind": match l.kind {
                     LayerKind::Group => "group",
-                    LayerKind::Instance => "instance",
+                    LayerKind::Objects => "objects",
                     LayerKind::Tilemap => "tilemap",
                     LayerKind::Image => "image",
                 },
@@ -86,8 +86,17 @@ fn describe_sprite(s: &Sprite) -> Value {
                 "opacity": l.opacity,
                 "blend": blend_name(l.blend),
             });
-            if let Some(track) = &l.instance {
-                v["instance"] = json!(track);
+            if l.kind == LayerKind::Objects {
+                let objects: Vec<Value> = l
+                    .objects
+                    .iter()
+                    .map(|o| json!({"id": o.id.0, "name": o.name, "keys": o.track.keys}))
+                    .collect();
+                v["objects"] = json!(objects);
+                // Compatibilidad con los clientes de una instancia por capa: el primer objeto.
+                if let Some(first) = l.objects.first() {
+                    v["instance"] = json!(first.track);
+                }
             }
             if let Some(t) = l.tileset {
                 v["tileset"] = json!(t);

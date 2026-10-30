@@ -107,6 +107,8 @@ pub struct CanvasView {
     renaming: Option<(ArtboardId, String, bool)>,
     /// Clic derecho sobre un slice con la herramienta Slice: al soltar se abre su menú.
     slice_menu: bool,
+    /// Si el menú contextual abierto es el de los objetos (clic derecho sobre uno con Move).
+    object_menu: bool,
     /// Por qué falló el último soltar de un símbolo de la biblioteca; el app lo muestra.
     pub drop_error: Option<&'static str>,
     /// Clic derecho dentro de la selección con una herramienta de selección o Move: al soltar se
@@ -241,6 +243,7 @@ impl Default for CanvasView {
             pixel_cursor: None,
             renaming: None,
             slice_menu: false,
+            object_menu: false,
             drop_error: None,
             selection_menu: false,
             slice_properties: false,
@@ -695,7 +698,7 @@ impl CanvasView {
                     && self.all_rendered == Some(editor.revision)
                     && artboard.id != editor.active
                     && self.textures.contains_key(&artboard.id)
-                    && !sprite.layers.iter().any(|l| l.instance.is_some());
+                    && !sprite.layers.iter().any(|l| !l.objects.is_empty());
                 if unchanged {
                     skipped = true;
                     continue;
@@ -931,6 +934,18 @@ impl CanvasView {
             let phase = (ctx.input(|i| i.time) * ANTS_SPEED) as i32;
             draw_marching_ants(&painter, mask, origin, self.scale(), phase, self.pixel_ui);
             ctx.request_repaint_after(Duration::from_millis((1000.0 / ANTS_SPEED) as u64));
+        }
+        // Los objetos seleccionados (con Move): un recuadro punteado alrededor de lo que se ve
+        // de cada uno, con el arrastre en curso.
+        if let Some(origin) = active_origin {
+            let outlines = editor.object_outlines(document);
+            if !outlines.is_empty() {
+                let color = crate::pixel_ui::frame_skin(&ctx)
+                    .map_or(theme::ACCENT, |skin| skin.colors().selection);
+                for b in outlines {
+                    draw_object_outline(&painter, b, origin, self.scale(), color);
+                }
+            }
         }
         if let Some(origin) = active_origin
             && handles_active(editor)
@@ -1721,6 +1736,32 @@ fn draw_transform_box(
         painter.rect_filled(r, 0.0, Color32::WHITE);
         painter.rect_stroke(r, 0.0, Stroke::new(1.0, Color32::BLACK), StrokeKind::Inside);
     }
+}
+
+/// El recuadro de un objeto seleccionado: un rectángulo punteado de 1 punto en `color` justo
+/// por fuera de la caja `(x, y, ancho, alto)` (en píxeles del sprite).
+fn draw_object_outline(
+    painter: &egui::Painter,
+    (x, y, w, h): (i32, i32, u32, u32),
+    origin: Pos2,
+    zoom: Vec2,
+    color: Color32,
+) {
+    let at = |x: i32, y: i32| origin + Vec2::new(x as f32, y as f32) * zoom;
+    let r = Rect::from_min_max(at(x, y), at(x + w as i32, y + h as i32)).expand(0.5);
+    let corners = [
+        r.left_top(),
+        r.right_top(),
+        r.right_bottom(),
+        r.left_bottom(),
+        r.left_top(),
+    ];
+    painter.extend(egui::Shape::dashed_line(
+        &corners,
+        Stroke::new(1.0, color),
+        2.0,
+        2.0,
+    ));
 }
 
 /// Con Pixel UI, los ejes de simetría como en Aseprite: líneas de 1 punto en `color`, enteras

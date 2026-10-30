@@ -282,7 +282,8 @@ pub fn palette_and_editor(ui: &mut Ui, editor: &mut Editor, skin: &Skin, palette
     let room = (ui.available_height() - SPLITTER_HEIGHT - editor_height(ui, skin)).floor();
     // Primero la reserva (solo si hay algo abajo); si ni así entra el mínimo de la caja, el
     // mínimo gana (3).
-    let reserve = if editor.instance_key().is_some() {
+    // El panel Object va abajo en las capas de objetos (con objeto o con su aviso).
+    let reserve = if editor.on_object_layer() {
         BELOW_RESERVE
     } else {
         0.0

@@ -16,14 +16,14 @@ pub enum Rotation {
     CounterClockwise,
 }
 
-/// Rotar o escalar mueven píxeles que no tienen: las instancias (muestran otro artboard) y los
+/// Rotar o escalar mueven píxeles que no tienen: los objetos (muestran otro artboard) y los
 /// tilemaps (sus tiles tienen un tamaño fijo) no se pueden transformar así.
 pub fn can_transform(sprite: &Sprite) -> bool {
     sprite.tilesets.is_empty()
         && sprite
             .layers
             .iter()
-            .all(|l| !matches!(l.kind, LayerKind::Instance | LayerKind::Tilemap))
+            .all(|l| !matches!(l.kind, LayerKind::Objects | LayerKind::Tilemap))
 }
 
 /// Una transformación del lienzo: a dónde va un rectángulo y, para cada píxel de destino, de qué

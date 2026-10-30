@@ -82,7 +82,7 @@ impl ChimpApp {
     fn sprite_menu(&mut self, ui: &mut egui::Ui) {
         use cs_commands::sprite_ops::{self, Rotation};
         use sprite_dialogs::{DuplicateDialog, PropertiesDialog, SpriteDialog, SpriteSizeDialog};
-        const NO_TRANSFORM: &str = "Not available with instance or tilemap layers";
+        const NO_TRANSFORM: &str = "Not available with object or tilemap layers";
         if ui
             .add(menus::item(
                 "Properties",
@@ -806,6 +806,13 @@ A pixel art editor."
                     {
                         editor.flatten();
                     }
+                    // La misma regla que los atajos: objetos seleccionados y Move.
+                    let objects = editor.can_arrange_objects();
+                    ui.add_enabled_ui(objects, |ui| {
+                        menus::submenu(ui, "Arrange", |ui| object_ops::arrange_items(ui, editor));
+                    })
+                    .response
+                    .on_disabled_hover_text("Select objects with the Move tool");
                     menus::separator(ui);
                     if ui
                         .add(menus::plain("New Reference Layer from File…"))

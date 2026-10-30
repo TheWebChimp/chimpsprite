@@ -2241,3 +2241,95 @@ fn a_symbol_dropped_on_a_ruler_or_the_breadcrumb_does_nothing() {
     assert_eq!(layers(&h), before + 1);
     assert_eq!(h.editor.active, coin);
 }
+
+#[test]
+fn a_selected_object_gets_a_dotted_outline() {
+    let mut h = Harness::new();
+    // Un símbolo de 2×2 rojo en la biblioteca, puesto en (3, 4).
+    h.editor.add_artboard(2, 2);
+    let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    h.editor.execute(Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: vec![(0, 0, red), (1, 1, red)],
+    });
+    let symbol = h.editor.active;
+    assert!(h.editor.move_active_to_library());
+    h.editor.add_instance_layer(symbol);
+    h.editor.update_instance_key(|k| k.position = (3, 4));
+    let outline = |h: &Harness| -> Vec<Rect> {
+        h.shapes
+            .iter()
+            .filter_map(|s| match s {
+                egui::Shape::LineSegment { points, stroke } if stroke.color == theme::ACCENT => {
+                    Some(Rect::from_two_pos(points[0], points[1]))
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    h.frame(vec![]);
+    assert!(outline(&h).is_empty(), "nothing selected");
+    let (layer, object) = (h.editor.layer, h.editor.current_object().unwrap());
+    h.editor.set_tool(ToolKind::Move);
+    h.editor.select_object(layer, object, false);
+    h.frame(vec![]);
+    let dashes = outline(&h);
+    assert!(dashes.len() > 4, "dotted: {dashes:?}");
+    let bounds = dashes.iter().fold(Rect::NOTHING, |a, r| a.union(*r));
+    let expected = Rect::from_min_max(h.corner((3, 4)), h.corner((5, 6))).expand(0.5);
+    assert!(
+        (bounds.min - expected.min).length() < 0.01 && (bounds.max - expected.max).length() < 0.01,
+        "{bounds:?} vs {expected:?}"
+    );
+}
+
+#[test]
+fn with_another_tool_a_selected_object_has_no_outline() {
+    let mut h = Harness::new();
+    h.editor.add_artboard(2, 2);
+    let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    h.editor.execute(Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: vec![(0, 0, red)],
+    });
+    let symbol = h.editor.active;
+    assert!(h.editor.move_active_to_library());
+    h.editor.add_instance_layer(symbol);
+    let (layer, object) = (h.editor.layer, h.editor.current_object().unwrap());
+    h.editor.set_tool(ToolKind::Move);
+    h.editor.select_object(layer, object, false);
+    let accent = |h: &Harness| {
+        h.shapes.iter().any(
+            |s| matches!(s, egui::Shape::LineSegment { stroke, .. } if stroke.color == theme::ACCENT),
+        )
+    };
+    h.frame(vec![]);
+    assert!(accent(&h));
+    h.editor.set_tool(ToolKind::Pencil);
+    h.frame(vec![]);
+    assert!(!accent(&h));
+}
+
+#[test]
+fn in_symbol_mode_a_double_click_on_drawn_pixels_does_not_leave() {
+    let (mut h, symbol) = in_a_symbol();
+    let at = h.screen((0, 0));
+    h.click(at, PointerButton::Primary);
+    h.click(at, PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(h.editor.in_symbol_mode(), "inside the symbol");
+    assert_eq!(h.editor.active, symbol);
+    let empty = h.screen((8, 8));
+    for _ in 0..10 {
+        h.frame(vec![]);
+    }
+    h.click(empty, PointerButton::Primary);
+    h.click(empty, PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(
+        h.editor.in_symbol_mode(),
+        "an empty pixel inside is still inside"
+    );
+}

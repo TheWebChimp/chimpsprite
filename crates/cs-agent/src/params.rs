@@ -808,6 +808,78 @@ pub struct RemoveInstanceKey {
     pub frame: usize,
 }
 
+/// Add an object (an instance of an artboard) on top of an object layer.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddObject {
+    pub doc: String,
+    /// Artboard that contains the object layer (default: the first one).
+    pub artboard: Option<Ref>,
+    /// Object layer, by name or id.
+    pub layer: Ref,
+    /// Artboard to show (the symbol).
+    pub source: Ref,
+    /// Object name (default: the source artboard's name).
+    pub name: Option<String>,
+    /// First frame where the object appears (default 0).
+    #[serde(default)]
+    pub frame: usize,
+    /// Top-left corner of the symbol in the container's pixels (default: centered).
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+}
+
+/// Like `set_instance_key`, but for one object of an object layer.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetObjectKey {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Ref,
+    /// Object, by name or id (as listed by describe).
+    pub object: Ref,
+    /// The change applies from this frame on (creates a keyframe there if needed).
+    #[serde(default)]
+    pub frame: usize,
+    pub source: Option<Ref>,
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub flip_h: Option<bool>,
+    pub flip_v: Option<bool>,
+    pub opacity: Option<u8>,
+    pub timing: Option<TimingArg>,
+    /// Symbol frame to start from.
+    pub first_frame: Option<usize>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RemoveObject {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Ref,
+    /// Object, by name or id.
+    pub object: Ref,
+}
+
+/// Where to send an object in its layer's stack.
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ReorderArg {
+    Forward,
+    Backward,
+    Front,
+    Back,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ReorderObject {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Ref,
+    /// Object, by name or id.
+    pub object: Ref,
+    /// "forward" / "backward" move it one step up / down; "front" / "back" to the extremes.
+    pub to: ReorderArg,
+}
+
 // --- Tilemaps ---
 
 #[derive(Debug, Deserialize, JsonSchema)]

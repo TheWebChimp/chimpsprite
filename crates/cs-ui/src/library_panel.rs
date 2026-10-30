@@ -401,7 +401,7 @@ fn confirm_delete(
     }
     let uses = editor.document.instance_uses(id);
     ui.add_space(6.0);
-    let noun = if uses == 1 { "instance" } else { "instances" };
+    let noun = if uses == 1 { "object" } else { "objects" };
     ui.add(egui::Label::new(format!("Used by {uses} {noun}. Delete anyway?")).wrap());
     let mut action = None;
     ui.horizontal(|ui| {
@@ -432,7 +432,7 @@ mod tests {
             a.in_library = true;
             doc.artboards.push(a);
         }
-        let cmd = cs_commands::ops::new_instance_layer(
+        let cmd = cs_commands::ops::new_object_layer(
             &doc.artboards[0].sprite,
             None,
             0,

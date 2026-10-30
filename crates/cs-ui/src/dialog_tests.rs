@@ -906,14 +906,7 @@ fn convert_to_symbol_dialog_creates_with_the_chosen_type() {
         assert!(h.app.symbol_dialog.is_none());
         assert!(h.app.message.is_none(), "pixel ui {pixel}: no error");
         let e = &h.app.doc.editor;
-        let key = e
-            .sprite()
-            .layer(e.layer)
-            .unwrap()
-            .instance
-            .as_ref()
-            .unwrap()
-            .keys[0];
+        let key = e.sprite().layer(e.layer).unwrap().objects[0].track.keys[0];
         assert_eq!(
             key.timing,
             SymbolTiming::MovieClip.timing(),

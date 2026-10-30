@@ -1,7 +1,7 @@
 //! Instancias de artboards (símbolos) desde el editor y el panel.
 
 use cs_commands::{Command, DocCommand, ops};
-use cs_core::{ArtboardId, InstanceKey, LayerId};
+use cs_core::{ArtboardId, InstanceKey, InstanceTrack, LayerId, LayerKind, ObjectId};
 
 use crate::editor::Editor;
 
@@ -41,7 +41,9 @@ impl Editor {
         (library, canvas)
     }
 
-    /// Nueva capa de instancia de `source` sobre la capa actual, centrada, con key en el frame actual.
+    /// Objeto nuevo de `source` en el artboard activo, centrado, con key en el frame actual: en
+    /// la capa actual si es de objetos (y no está bloqueada); si no, en una capa de objetos nueva
+    /// sobre ella. El objeto queda seleccionado.
     pub fn add_instance_layer(&mut self, source: ArtboardId) {
         let Some(src) = self.document.artboard(source) else {
             return;
@@ -51,25 +53,12 @@ impl Editor {
             (sprite.width as i32 - src.sprite.width as i32) / 2,
             (sprite.height as i32 - src.sprite.height as i32) / 2,
         );
-        let cmd = ops::new_instance_layer(
-            sprite,
-            Some(self.layer),
-            self.frame,
-            source,
-            &src.name,
-            position,
-        );
-        let id = match &cmd {
-            Command::AddLayer { layer, .. } => layer.id,
-            _ => unreachable!("new_instance_layer devuelve AddLayer"),
-        };
-        if self.execute(cmd) {
-            self.layer = id;
-        }
+        let name = src.name.clone();
+        self.place_object(self.active, self.frame, source, &name, position);
     }
 
-    /// Suelta el símbolo `source` en el punto `world` del lienzo: crea una capa de instancia en el
-    /// artboard de ese punto (en modo símbolo, solo el que se edita cuenta).
+    /// Suelta el símbolo `source` en el punto `world` del lienzo: en el artboard de ese punto (en
+    /// modo símbolo, solo el que se edita cuenta) agrega un objeto, como `add_instance_layer`.
     pub fn drop_symbol(
         &mut self,
         source: ArtboardId,
@@ -93,37 +82,155 @@ impl Editor {
             return Err("That would put the artboard inside itself");
         }
         let local = (world.0 - board.position.0, world.1 - board.position.1);
-        let above = (target == self.active).then_some(self.layer);
         // El frame que se ve en ese artboard (puede no ser el activo y tener menos frames).
         let last = board.sprite.frames.len().saturating_sub(1);
         let frame = self.frame_of(target).min(last);
-        let cmd = ops::new_instance_layer(&board.sprite, above, frame, source, &src.name, local);
-        let id = match &cmd {
-            Command::AddLayer { layer, .. } => layer.id,
-            _ => unreachable!("new_instance_layer devuelve AddLayer"),
-        };
-        if self.execute_doc(DocCommand::OnArtboard { id: target, cmd }) {
-            self.activate(target);
-            self.select_layer(id);
-        }
+        let name = src.name.clone();
+        self.place_object(target, frame, source, &name, local);
         Ok(())
     }
 
-    /// Key vigente de la capa actual en el frame actual (si es una capa de instancia).
+    /// Agrega un objeto de `source` en `target`: a la capa actual si `target` es el activo y esa
+    /// capa es de objetos sin candado; si no, en una capa de objetos nueva (sobre la actual, si
+    /// `target` es el activo). Activa `target`, la capa y deja seleccionado el objeto.
+    fn place_object(
+        &mut self,
+        target: ArtboardId,
+        frame: usize,
+        source: ArtboardId,
+        name: &str,
+        position: (i32, i32),
+    ) {
+        let Some(board) = self.document.artboard(target) else {
+            return;
+        };
+        let sprite = &board.sprite;
+        let on_active = target == self.active;
+        let into = on_active
+            .then_some(self.layer)
+            .filter(|&l| {
+                sprite
+                    .layer(l)
+                    .is_some_and(|l| l.kind == LayerKind::Objects && !l.locked)
+            })
+            .and_then(|l| {
+                ops::add_object(sprite, l, frame, source, name, position).map(|a| (l, a))
+            });
+        let (cmd, layer, object) = match into {
+            Some((layer, (cmd, object))) => (cmd, layer, object),
+            None => {
+                let above = on_active.then_some(self.layer);
+                let cmd = ops::new_object_layer(sprite, above, frame, source, name, position);
+                let (layer, object) = match &cmd {
+                    Command::AddLayer { layer, .. } => (layer.id, layer.objects[0].id),
+                    _ => unreachable!("new_object_layer devuelve AddLayer"),
+                };
+                (cmd, layer, object)
+            }
+        };
+        if self.execute_doc(DocCommand::OnArtboard { id: target, cmd }) {
+            self.activate(target);
+            self.select_object(layer, object, false);
+        }
+    }
+
+    /// ¿La capa actual es de objetos? (El panel Object se muestra solo ahí.)
+    pub fn on_object_layer(&self) -> bool {
+        self.sprite()
+            .layer(self.layer)
+            .is_some_and(|l| l.kind == LayerKind::Objects)
+    }
+
+    /// El objeto que se edita en la capa actual: el primero de los seleccionados o, sin
+    /// selección, el único de la capa (con varios, ninguno).
+    pub fn current_object(&self) -> Option<ObjectId> {
+        self.object_of(self.layer)
+    }
+
+    /// El objeto que se edita en `layer` (el panel y sus keys): en la capa actual, el primero de
+    /// los seleccionados; si no, el único de la capa. Con varios y ninguno seleccionado, `None`:
+    /// no se edita uno cualquiera. Es el único lugar que decide ese "primero".
+    pub(crate) fn object_of(&self, layer: LayerId) -> Option<ObjectId> {
+        let l = self.sprite().layer(layer)?;
+        let selected = (layer == self.layer)
+            .then(|| {
+                self.selected_objects()
+                    .iter()
+                    .find(|&&o| l.object(o).is_some())
+            })
+            .flatten();
+        match (selected, l.objects.as_slice()) {
+            (Some(&o), _) => Some(o),
+            (None, [only]) => Some(only.id),
+            _ => None,
+        }
+    }
+
+    /// Los objetos sobre los que actúan las keys de la fila (plegada) de `layer`: los
+    /// seleccionados si es la capa actual o, sin selección, el único de la capa. Vacío si tiene
+    /// varios y ninguno está seleccionado.
+    pub fn key_objects(&self, layer: LayerId) -> Vec<ObjectId> {
+        let Some(l) = self.sprite().layer(layer) else {
+            return Vec::new();
+        };
+        let selected: Vec<ObjectId> = if layer == self.layer {
+            self.selected_objects()
+                .iter()
+                .copied()
+                .filter(|&o| l.object(o).is_some())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if selected.is_empty() {
+            self.object_of(layer).into_iter().collect()
+        } else {
+            selected
+        }
+    }
+
+    /// ¿Alguno de los objetos de la fila de `layer` (ver `key_objects`) tiene key en `frame`?
+    pub fn row_has_key_at(&self, layer: LayerId, frame: usize) -> bool {
+        self.key_tracks(layer)
+            .any(|t| t.keys.iter().any(|k| k.frame == frame))
+    }
+
+    /// ¿Se puede insertar una key en `frame` en la fila de `layer`? Hace falta un objeto con key
+    /// vigente ahí que no empiece en `frame` (antes de la primera key no hay nada que copiar).
+    pub fn row_can_insert_key(&self, layer: LayerId, frame: usize) -> bool {
+        self.key_tracks(layer)
+            .any(|t| t.key_at(frame).is_some() && !t.keys.iter().any(|k| k.frame == frame))
+    }
+
+    /// Los tracks de `key_objects(layer)`.
+    fn key_tracks(&self, layer: LayerId) -> impl Iterator<Item = &InstanceTrack> {
+        let l = self.sprite().layer(layer);
+        self.key_objects(layer)
+            .into_iter()
+            .filter_map(move |o| Some(&l?.object(o)?.track))
+    }
+
+    /// El track del objeto que se edita en `layer` (ver `object_of`).
+    pub(crate) fn object_track(&self, layer: LayerId) -> Option<&InstanceTrack> {
+        let object = self.object_of(layer)?;
+        Some(&self.sprite().layer(layer)?.object(object)?.track)
+    }
+
+    /// Key vigente del objeto actual en el frame actual (si la capa es de objetos).
     pub fn instance_key(&self) -> Option<InstanceKey> {
-        let track = self.sprite().layer(self.layer)?.instance.as_ref()?;
-        track.key_at(self.frame).copied()
+        let object = self.current_object()?;
+        let layer = self.sprite().layer(self.layer)?;
+        layer.object(object)?.track.key_at(self.frame).copied()
     }
 
     pub fn is_instance_keyframe(&self, layer: LayerId, frame: usize) -> bool {
-        self.sprite()
-            .layer(layer)
-            .and_then(|l| l.instance.as_ref())
+        self.object_track(layer)
             .is_some_and(|t| t.keys.iter().any(|k| k.frame == frame))
     }
 
-    /// Cambia la key vigente de la capa actual; si el frame actual no es keyframe, crea uno.
-    pub fn update_instance_key(&mut self, f: impl FnOnce(&mut InstanceKey)) {
+    /// Cambia la key vigente de los objetos que se editan (ver `edited_objects`); donde el frame
+    /// actual no es keyframe, crea uno. Un solo paso de undo.
+    pub fn update_instance_key(&mut self, f: impl FnMut(&mut InstanceKey)) {
         self.update_instance_key_grouped(None, f);
     }
 
@@ -131,9 +238,12 @@ impl Editor {
     pub fn update_instance_key_grouped(
         &mut self,
         group: Option<u64>,
-        f: impl FnOnce(&mut InstanceKey),
+        f: impl FnMut(&mut InstanceKey),
     ) {
-        if let Some(cmd) = ops::update_instance_key(self.sprite(), self.layer, self.frame, f) {
+        let objects = self.edited_objects();
+        if let Some(cmd) =
+            ops::update_objects_key(self.sprite(), self.layer, &objects, self.frame, f)
+        {
             match group {
                 Some(g) => self.execute_grouped(cmd, g),
                 None => self.execute(cmd),
@@ -141,15 +251,72 @@ impl Editor {
         }
     }
 
-    /// Keyframe en `frame` copiando el vigente.
+    /// Los objetos que edita el panel Object: los seleccionados de la capa actual o, sin
+    /// selección, el objeto actual.
+    pub fn edited_objects(&self) -> Vec<ObjectId> {
+        let Some(layer) = self.sprite().layer(self.layer) else {
+            return Vec::new();
+        };
+        let selected: Vec<ObjectId> = self
+            .selected_objects()
+            .iter()
+            .copied()
+            .filter(|&o| layer.object(o).is_some())
+            .collect();
+        if selected.is_empty() {
+            self.current_object().into_iter().collect()
+        } else {
+            selected
+        }
+    }
+
+    /// El nombre del objeto actual.
+    pub fn current_object_name(&self) -> Option<&str> {
+        let object = self.current_object()?;
+        Some(&self.sprite().layer(self.layer)?.object(object)?.name)
+    }
+
+    /// Renombra el objeto actual, como parte del gesto `group` (un paso por edición del campo).
+    pub fn rename_current_object(&mut self, name: &str, group: Option<u64>) {
+        let Some(object) = self.current_object() else {
+            return;
+        };
+        if let Some(cmd) = ops::rename_object(self.sprite(), self.layer, object, name) {
+            match group {
+                Some(g) => self.execute_grouped(cmd, g),
+                None => self.execute(cmd),
+            };
+        }
+    }
+
+    /// Keyframe en `frame` copiando el vigente, en los objetos de la fila de `layer` (ver
+    /// `key_objects`). Un solo paso de undo.
     pub fn insert_instance_key(&mut self, layer: LayerId, frame: usize) {
-        if let Some(cmd) = ops::update_instance_key(self.sprite(), layer, frame, |_| {}) {
+        let objects = self.key_objects(layer);
+        if let Some(cmd) = ops::update_objects_key(self.sprite(), layer, &objects, frame, |_| {}) {
             self.execute(cmd);
         }
     }
 
+    /// Quita la key en `frame` de los objetos de la fila de `layer` (ver `key_objects`). Un solo
+    /// paso de undo.
     pub fn remove_instance_key(&mut self, layer: LayerId, frame: usize) {
-        if let Some(cmd) = ops::remove_instance_key(self.sprite(), layer, frame) {
+        let objects = self.key_objects(layer);
+        if let Some(cmd) = ops::remove_objects_key(self.sprite(), layer, &objects, frame) {
+            self.execute(cmd);
+        }
+    }
+
+    /// Keyframe de `object` en `frame` copiando su key vigente (la sub-fila del timeline).
+    pub fn insert_object_key(&mut self, layer: LayerId, object: ObjectId, frame: usize) {
+        if let Some(cmd) = ops::update_object_key(self.sprite(), layer, object, frame, |_| {}) {
+            self.execute(cmd);
+        }
+    }
+
+    /// Quita la key de `object` que empieza en `frame` (la sub-fila del timeline).
+    pub fn remove_object_key(&mut self, layer: LayerId, object: ObjectId, frame: usize) {
+        if let Some(cmd) = ops::remove_object_key(self.sprite(), layer, object, frame) {
             self.execute(cmd);
         }
     }
@@ -199,11 +366,12 @@ mod tests {
         let symbol = e
             .convert_to_symbol("S", cs_commands::symbol::SymbolTiming::Graphic)
             .unwrap();
+        // F8 deja activa la capa de objetos: el objeto soltado va ahí, arriba del convertido.
         let layers = e.sprite().layers.len();
         e.drop_symbol(symbol, (5, 6)).unwrap();
-        assert_eq!(e.sprite().layers.len(), layers + 1);
+        assert_eq!(e.sprite().layers.len(), layers);
         let layer = e.sprite().layer(e.layer).unwrap();
-        assert_eq!(layer.instance.as_ref().unwrap().keys[0].position, (5, 6));
+        assert_eq!(layer.objects[1].track.keys[0].position, (5, 6));
         assert!(
             e.drop_symbol(symbol, (500, 500)).is_err(),
             "outside every artboard"
@@ -227,7 +395,7 @@ mod tests {
         e.drop_symbol(symbol, (at.0 + 1, at.1 + 1)).unwrap();
         assert_eq!(e.active, ArtboardId(2));
         let layer = e.sprite().layer(e.layer).unwrap();
-        let keys = &layer.instance.as_ref().unwrap().keys;
+        let keys = &layer.objects[0].track.keys;
         assert_eq!((keys[0].frame, keys[0].position), (0, (1, 1)));
     }
 
@@ -259,7 +427,8 @@ mod tests {
         );
         e.add_instance_layer(ArtboardId(2));
         let layer = e.sprite().layer(e.layer).unwrap().clone();
-        assert_eq!(layer.kind, LayerKind::Instance);
+        assert_eq!(layer.kind, LayerKind::Objects);
+        assert_eq!(e.current_object(), Some(layer.objects[0].id));
         assert_eq!(e.instance_key().unwrap().position, (6, 6), "centered");
         // El artboard 2 ya no puede instanciar al 1.
         e.activate(ArtboardId(2));
@@ -284,9 +453,12 @@ mod tests {
         let mut e = editor();
         e.add_instance_layer(ArtboardId(2));
         let a = e.layer;
+        // Desde una capa de imagen, otra capa de objetos (no un objeto más en la de A).
+        e.select_layer(LayerId(1));
         e.add_instance_layer(ArtboardId(2));
         let b = e.layer;
-        let track = |e: &Editor, l| e.sprite().layer(l).unwrap().instance.clone();
+        assert_ne!(a, b);
+        let track = |e: &Editor, l| e.sprite().layer(l).unwrap().objects.clone();
         let (a0, b0) = (track(&e, a), track(&e, b));
         e.select_layer(a);
         e.update_instance_key_grouped(Some(7), |k| k.position = (1, 1));
@@ -315,13 +487,13 @@ mod tests {
         let mut e = editor();
         e.add_instance_layer(ArtboardId(2));
         e.set_frame(1);
-        let original = e.sprite().layer(e.layer).unwrap().instance.clone();
+        let original = e.sprite().layer(e.layer).unwrap().objects.clone();
         for x in 1..4 {
             e.update_instance_key_grouped(Some(7), |k| k.position = (x, 0));
         }
         assert_eq!(e.instance_key().unwrap().position, (3, 0));
         e.undo();
-        assert_eq!(e.sprite().layer(e.layer).unwrap().instance, original);
+        assert_eq!(e.sprite().layer(e.layer).unwrap().objects, original);
         // Un grupo nuevo (o el mismo tras end_group) es otro paso.
         e.update_instance_key_grouped(Some(7), |k| k.position = (5, 0));
         e.end_group();
@@ -332,6 +504,190 @@ mod tests {
         e.undo();
         assert_eq!(e.instance_key().unwrap().position, (5, 0));
         e.undo();
-        assert_eq!(e.sprite().layer(e.layer).unwrap().instance, original);
+        assert_eq!(e.sprite().layer(e.layer).unwrap().objects, original);
+    }
+
+    /// Un símbolo de 2×2 en la biblioteca (el artboard 2) y el activo es el 1, de 16×16.
+    fn with_symbol() -> (Editor, ArtboardId) {
+        let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+        e.add_artboard(2, 2);
+        let symbol = e.active;
+        e.move_active_to_library();
+        e.activate(ArtboardId(1));
+        (e, symbol)
+    }
+
+    #[test]
+    fn dropping_twice_on_an_object_layer_adds_two_objects_to_it() {
+        let (mut e, symbol) = with_symbol();
+        let layers = e.sprite().layers.len();
+        e.drop_symbol(symbol, (1, 1)).unwrap();
+        let layer = e.layer;
+        e.drop_symbol(symbol, (5, 6)).unwrap();
+        assert_eq!(e.sprite().layers.len(), layers + 1, "one object layer");
+        assert_eq!(e.layer, layer);
+        let objects = &e.sprite().layer(layer).unwrap().objects;
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[1].track.keys[0].position, (5, 6));
+        assert_eq!(
+            e.selected_objects(),
+            [objects[1].id],
+            "the new one is selected"
+        );
+        // Un paso de undo por objeto.
+        e.undo();
+        assert_eq!(e.sprite().layer(layer).unwrap().objects.len(), 1);
+        // Con la capa bloqueada, otra capa.
+        e.document
+            .artboard_mut(ArtboardId(1))
+            .unwrap()
+            .sprite
+            .layer_mut(layer)
+            .unwrap()
+            .locked = true;
+        e.drop_symbol(symbol, (2, 2)).unwrap();
+        assert_ne!(e.layer, layer);
+        assert_eq!(e.sprite().layers.len(), layers + 2);
+    }
+
+    #[test]
+    fn new_object_goes_into_the_active_object_layer_and_is_selected() {
+        let (mut e, symbol) = with_symbol();
+        e.add_instance_layer(symbol);
+        let layer = e.layer;
+        let first = e.sprite().layer(layer).unwrap().objects[0].id;
+        assert_eq!(e.selected_objects(), [first]);
+        e.add_instance_layer(symbol);
+        assert_eq!(e.layer, layer);
+        let objects = &e.sprite().layer(layer).unwrap().objects;
+        assert_eq!(objects.len(), 2);
+        assert_eq!(objects[1].track.keys[0].position, (7, 7), "centered");
+        assert_eq!(e.selected_objects(), [objects[1].id]);
+    }
+
+    #[test]
+    fn a_change_applies_to_every_selected_object_in_one_undo() {
+        let (mut e, symbol) = with_symbol();
+        e.add_instance_layer(symbol);
+        e.add_instance_layer(symbol);
+        e.add_instance_layer(symbol);
+        let layer = e.layer;
+        let ids: Vec<ObjectId> = e
+            .sprite()
+            .layer(layer)
+            .unwrap()
+            .objects
+            .iter()
+            .map(|o| o.id)
+            .collect();
+        e.set_selected_objects(vec![ids[0], ids[2]]);
+        assert_eq!(e.edited_objects(), [ids[0], ids[2]]);
+        e.update_instance_key(|k| k.flip_h = true);
+        let flips = |e: &Editor| -> Vec<bool> {
+            e.sprite()
+                .layer(layer)
+                .unwrap()
+                .objects
+                .iter()
+                .map(|o| o.track.keys[0].flip_h)
+                .collect()
+        };
+        assert_eq!(flips(&e), [true, false, true]);
+        e.undo();
+        assert_eq!(flips(&e), [false, false, false]);
+    }
+
+    #[test]
+    fn with_several_objects_and_none_selected_nothing_is_edited() {
+        let (mut e, symbol) = with_symbol();
+        e.add_instance_layer(symbol);
+        let layer = e.layer;
+        let a = e.sprite().layer(layer).unwrap().objects[0].id;
+        // Con uno solo, ese es el actual aunque no esté seleccionado.
+        e.clear_object_selection();
+        assert_eq!(e.current_object(), Some(a));
+        assert_eq!(e.edited_objects(), [a]);
+        assert_eq!(e.key_objects(layer), [a]);
+        e.add_instance_layer(symbol);
+        let b = e.sprite().layer(layer).unwrap().objects[1].id;
+        e.clear_object_selection();
+        assert_eq!(e.current_object(), None);
+        assert!(e.edited_objects().is_empty());
+        assert!(e.key_objects(layer).is_empty());
+        assert_eq!(e.instance_key(), None);
+        assert_eq!(e.current_object_name(), None);
+        let before = e.sprite().layer(layer).unwrap().objects.clone();
+        e.update_instance_key(|k| k.flip_h = true);
+        e.rename_current_object("Nope", None);
+        e.insert_instance_key(layer, 1);
+        e.remove_instance_key(layer, 0);
+        assert_eq!(e.sprite().layer(layer).unwrap().objects, before);
+        assert!(!e.row_has_key_at(layer, 0) && !e.row_can_insert_key(layer, 1));
+        // Con uno seleccionado, la fila actúa sobre ese.
+        e.select_object(layer, b, false);
+        assert_eq!(e.current_object(), Some(b));
+        assert!(e.row_can_insert_key(layer, 1));
+        e.insert_instance_key(layer, 1);
+        let frames = |e: &Editor, o: ObjectId| -> Vec<usize> {
+            let l = e.sprite().layer(layer).unwrap();
+            l.object(o)
+                .unwrap()
+                .track
+                .keys
+                .iter()
+                .map(|k| k.frame)
+                .collect()
+        };
+        assert_eq!((frames(&e, a), frames(&e, b)), (vec![0], vec![0, 1]));
+        // Con los dos, un solo paso de undo.
+        e.set_selected_objects(vec![a, b]);
+        e.remove_instance_key(layer, 0);
+        let objects = &e.sprite().layer(layer).unwrap().objects;
+        assert_eq!(objects.len(), 1, "A had only that key");
+        assert_eq!(frames(&e, b), [1]);
+        e.undo();
+        assert_eq!((frames(&e, a), frames(&e, b)), (vec![0], vec![0, 1]));
+    }
+
+    #[test]
+    fn removing_the_last_key_of_the_last_object_keeps_the_layer() {
+        let (mut e, symbol) = with_symbol();
+        e.add_instance_layer(symbol);
+        let layer = e.layer;
+        e.remove_instance_key(layer, 0);
+        assert!(e.sprite().layer(layer).unwrap().objects.is_empty());
+        e.undo();
+        assert_eq!(e.sprite().layer(layer).unwrap().objects.len(), 1);
+    }
+
+    #[test]
+    fn renaming_the_current_object_sticks() {
+        let (mut e, symbol) = with_symbol();
+        e.add_instance_layer(symbol);
+        let original = e.current_object_name().unwrap().to_string();
+        e.rename_current_object("Hero", Some(3));
+        e.rename_current_object("Hero2", Some(3));
+        e.end_group();
+        assert_eq!(e.current_object_name(), Some("Hero2"));
+        // Sigue después de mover la selección y volver.
+        e.clear_object_selection();
+        assert_eq!(e.current_object_name(), Some("Hero2"));
+        e.undo();
+        assert_eq!(e.current_object_name(), Some(original.as_str()));
+    }
+
+    #[test]
+    fn convert_to_symbol_selects_the_new_object() {
+        use cs_core::{PixelValue, Rgba};
+        let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+        e.execute(Command::DrawPixels {
+            layer: e.layer,
+            frame: 0,
+            pixels: vec![(1, 1, PixelValue::Rgba(Rgba::rgb(255, 0, 0)))],
+        });
+        e.convert_to_symbol("S", cs_commands::symbol::SymbolTiming::Graphic)
+            .unwrap();
+        let object = e.sprite().layer(e.layer).unwrap().objects[0].id;
+        assert_eq!(e.selected_objects(), [object]);
     }
 }

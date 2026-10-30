@@ -479,8 +479,21 @@ impl CanvasView {
                 .flatten();
             self.slice_menu = slice.is_some();
             let tool = editor.active_tool();
+            // Clic derecho sobre un objeto con Move: se selecciona (si no lo estaba) y abre su menú.
+            self.object_menu = false;
+            if pressed_secondary
+                && slice.is_none()
+                && tool == ToolKind::Move
+                && let Some((layer, object)) = editor.object_at(world)
+            {
+                if !(layer == editor.layer && editor.selected_objects().contains(&object)) {
+                    editor.select_object(layer, object, false);
+                }
+                self.object_menu = !editor.selected_objects().is_empty();
+            }
             self.selection_menu = pressed_secondary
                 && slice.is_none()
+                && !self.object_menu
                 && (tool.is_selection() || tool == ToolKind::Move)
                 && editor.selection.as_ref().is_some_and(|m| {
                     let (x, y) = editor.to_local(world);
@@ -511,7 +524,7 @@ impl CanvasView {
                     editor.slice = slice;
                 }
                 // El clic derecho abre el menú de la selección en vez de llegar a la herramienta.
-                _ if self.selection_menu => {}
+                _ if self.selection_menu || self.object_menu => {}
                 _ => match transform {
                     Some(hit) => editor.press_transform(hit, world),
                     None => editor.pointer_press(world, pressed_secondary, modifiers.alt, slop),
@@ -542,6 +555,9 @@ impl CanvasView {
                     ui.close();
                 }
             });
+        }
+        if self.object_menu {
+            menus::context_menu(response, |ui| crate::object_ops::arrange_items(ui, editor));
         }
         if self.slice_menu {
             menus::context_menu(response, |ui| {
@@ -608,25 +624,27 @@ impl CanvasView {
         {
             editor.finish_gesture();
         }
-        // Doble clic con Move: fuera del símbolo que se edita sale un nivel; si no, entra a la
-        // instancia de la capa actual (a un símbolo de la biblioteca, en el modo símbolo). No
+        // Doble clic con Move: sobre un objeto, lo selecciona y entra a su fuente (a un símbolo
+        // de la biblioteca, en el modo símbolo); fuera del símbolo que se edita sale un nivel. No
         // sobre la barra o la etiqueta (renombra), las reglas ni la migaja de pan.
         if response.double_clicked()
             && editor.active_tool() == ToolKind::Move
             && over_label.is_none()
             && let Some(p) = pointer.filter(|&p| area.contains(p))
         {
-            let outside = !editor.artboard().contains(self.to_world(rect, p));
-            if editor.in_symbol_mode() && outside {
-                editor.exit_symbol_to(editor.symbol_stack.len() - 1);
-                ui.ctx().request_repaint();
-            } else if editor.enter_instance() {
-                if editor.in_symbol_mode() {
+            let world = self.to_world(rect, p);
+            let outside = !editor.artboard().contains(world);
+            match editor.open_object_at(world) {
+                None if editor.in_symbol_mode() && outside => {
+                    editor.exit_symbol_to(editor.symbol_stack.len() - 1);
+                    ui.ctx().request_repaint();
+                }
+                Some(true) if editor.in_symbol_mode() => {
                     self.request_zoom(ZoomRequest::Fit);
                     ui.ctx().request_repaint();
-                } else {
-                    self.center_active(editor);
                 }
+                Some(true) => self.center_active(editor),
+                _ => {}
             }
         }
 

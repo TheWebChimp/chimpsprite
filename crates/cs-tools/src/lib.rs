@@ -78,6 +78,11 @@ pub struct ToolContext<'a> {
     /// Modo Tiles: `sprite` es el proxy de celdas del editor (cada píxel codifica un tile). El
     /// cuentagotas y la varita leen el valor exacto de la capa en vez del color visible.
     pub tiles: bool,
+    /// Move en una capa de objetos: los objetos seleccionados de `layer`, que son los que se
+    /// mueven.
+    pub objects: &'a [cs_core::ObjectId],
+    /// Move en una capa de objetos con Alt: se mueven copias y los originales quedan.
+    pub copy_objects: bool,
 }
 
 impl ToolContext<'_> {
@@ -232,6 +237,8 @@ pub(crate) mod test_util {
             dither: Default::default(),
             selected_slice: None,
             tiles: false,
+            objects: &[],
+            copy_objects: false,
         }
     }
 

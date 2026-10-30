@@ -9,6 +9,7 @@ use eframe::egui::{
 };
 
 use crate::ChimpApp;
+use crate::ToolKind;
 use crate::file_actions::Pending;
 use crate::palette_library::PaletteLibrary;
 use crate::palette_library::test_util::NoPresets;
@@ -2900,7 +2901,7 @@ fn deleting_a_symbol_in_use_asks_first() {
         // Una instancia de Coin en el host.
         let editor = &mut h.app.doc.editor;
         let add =
-            cs_commands::ops::new_instance_layer(editor.sprite(), None, 0, coin, "Coin 1", (0, 0));
+            cs_commands::ops::new_object_layer(editor.sprite(), None, 0, coin, "Coin 1", (0, 0));
         assert!(editor.execute(add));
         h.frame();
         let library = if pixel {
@@ -2915,7 +2916,7 @@ fn deleting_a_symbol_in_use_asks_first() {
         };
         h.click(library.center(), PointerButton::Primary);
         h.frame();
-        let question = "Used by 1 instance. Delete anyway?";
+        let question = "Used by 1 object. Delete anyway?";
         // Pide borrar desde el menú de la fila y contesta `answer` en la confirmación.
         let ask = |h: &mut LayoutHarness, answer: &str| {
             let row = h
@@ -2955,4 +2956,131 @@ fn deleting_a_symbol_in_use_asks_first() {
             "pixel {pixel}: deleted"
         );
     }
+}
+
+/// Un documento con una capa de objetos con dos objetos (`a`, `b`: `b` arriba) y la capa
+/// activa, con Move.
+fn with_two_objects() -> (LayoutHarness, LayerId, [cs_core::ObjectId; 2]) {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let e = &mut h.app.doc.editor;
+    e.add_artboard(4, 4);
+    assert!(e.move_active_to_library());
+    e.activate(cs_core::ArtboardId(1));
+    e.add_instance_layer(cs_core::ArtboardId(2));
+    let layer = e.layer;
+    let (cmd, b) =
+        cs_commands::ops::add_object(e.sprite(), layer, 0, cs_core::ArtboardId(2), "o", (0, 0))
+            .unwrap();
+    e.execute(cmd);
+    let a = e.sprite().layer(layer).unwrap().objects[0].id;
+    // El objeto nuevo queda seleccionado: se arranca sin selección.
+    e.clear_object_selection();
+    e.set_tool(ToolKind::Move);
+    h.frame();
+    (h, layer, [a, b])
+}
+
+fn object_order(h: &LayoutHarness, layer: LayerId) -> Vec<cs_core::ObjectId> {
+    let sprite = h.app.doc.editor.sprite();
+    sprite
+        .layer(layer)
+        .unwrap()
+        .objects
+        .iter()
+        .map(|o| o.id)
+        .collect()
+}
+
+#[test]
+fn object_shortcuts_arrange_duplicate_and_need_the_move_tool() {
+    use egui::{Key, Modifiers};
+    let (mut h, layer, [a, b]) = with_two_objects();
+    let ctrl_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+    // Sin selección no hacen nada.
+    press(&mut h, Key::ArrowDown, Modifiers::COMMAND);
+    assert_eq!(object_order(&h, layer), vec![a, b]);
+    h.app.doc.editor.select_object(layer, b, false);
+    press(&mut h, Key::ArrowDown, Modifiers::COMMAND);
+    assert_eq!(object_order(&h, layer), vec![b, a], "Send Backward");
+    press(&mut h, Key::ArrowUp, Modifiers::COMMAND);
+    assert_eq!(object_order(&h, layer), vec![a, b], "Bring Forward");
+    press(&mut h, Key::ArrowDown, ctrl_shift);
+    assert_eq!(object_order(&h, layer), vec![b, a], "Send to Back");
+    press(&mut h, Key::ArrowUp, ctrl_shift);
+    assert_eq!(object_order(&h, layer), vec![a, b], "Bring to Front");
+    // Con otra herramienta, nada.
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    press(&mut h, Key::ArrowDown, ctrl_shift);
+    press(&mut h, Key::J, Modifiers::COMMAND);
+    assert_eq!(object_order(&h, layer), vec![a, b]);
+    h.app.doc.editor.set_tool(ToolKind::Move);
+    press(&mut h, Key::J, Modifiers::COMMAND);
+    assert_eq!(object_order(&h, layer).len(), 3, "Duplicate Object");
+    assert_eq!(h.app.doc.editor.selected_objects().len(), 1);
+    assert_ne!(
+        h.app.doc.editor.selected_objects()[0],
+        b,
+        "the copy is selected"
+    );
+}
+
+#[test]
+fn the_arrange_submenu_is_disabled_without_selected_objects() {
+    let (mut h, _, _) = with_two_objects();
+    open_menu(&mut h, "Layer");
+    let colors = *h.app.pixel.skin().unwrap().colors();
+    assert_eq!(
+        text_rect(&h, "Arrange").1,
+        colors.text_dim,
+        "nothing selected"
+    );
+    let (mut h, layer, [_, b]) = with_two_objects();
+    h.app.doc.editor.select_object(layer, b, false);
+    open_menu(&mut h, "Layer");
+    assert_eq!(
+        text_rect(&h, "Arrange").1,
+        colors.text,
+        "an object is selected"
+    );
+}
+
+// El panel Object.
+
+#[test]
+fn the_object_panel_flips_every_selected_object_in_one_undo() {
+    let (mut h, layer, [a, b]) = with_two_objects();
+    h.app.doc.editor.set_selected_objects(vec![a, b]);
+    h.frame();
+    assert!(h.texts.iter().any(|t| t.0 == "Object"), "{:?}", h.texts);
+    assert!(h.texts.iter().any(|t| t.0 == "2 objects selected"));
+    let (_, check, _) = h.checks.iter().find(|c| c.0 == "Flip H").unwrap().clone();
+    h.click(check.center(), PointerButton::Primary);
+    let flips = |h: &LayoutHarness| -> Vec<bool> {
+        let e = &h.app.doc.editor;
+        let objects = &e.sprite().layer(layer).unwrap().objects;
+        objects
+            .iter()
+            .map(|o| o.track.key_at(e.frame).unwrap().flip_h)
+            .collect()
+    };
+    assert_eq!(flips(&h), [true, true]);
+    h.app.doc.editor.undo();
+    assert_eq!(flips(&h), [false, false]);
+}
+
+#[test]
+fn an_empty_object_layer_asks_for_an_object_and_image_layers_show_no_panel() {
+    let (mut h, layer, [a, b]) = with_two_objects();
+    let e = &mut h.app.doc.editor;
+    let cmd = cs_commands::ops::remove_objects(e.sprite(), layer, &[a, b]).unwrap();
+    e.execute(cmd);
+    h.frame();
+    assert!(
+        h.texts
+            .iter()
+            .any(|t| t.0 == "Select an object on the canvas")
+    );
+    h.app.doc.editor.select_layer(LayerId(1));
+    h.frame();
+    assert!(!h.texts.iter().any(|t| t.0 == "Object"));
 }

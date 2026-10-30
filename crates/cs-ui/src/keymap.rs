@@ -160,6 +160,12 @@ pub enum Action {
     MergeDown,
     Flatten,
     ConvertToSymbol,
+    BringForward,
+    SendBackward,
+    BringToFront,
+    SendToBack,
+    DuplicateObject,
+    DeleteObject,
     PlayPause,
     NextFrame,
     PreviousFrame,
@@ -189,7 +195,7 @@ pub enum Gate {
 
 impl Action {
     /// Las acciones que no son herramientas, en el orden de la lista.
-    const COMMANDS: [Action; 48] = [
+    const COMMANDS: [Action; 54] = [
         Action::NewFile,
         Action::Open,
         Action::Save,
@@ -225,6 +231,12 @@ impl Action {
         Action::MergeDown,
         Action::Flatten,
         Action::ConvertToSymbol,
+        Action::BringForward,
+        Action::SendBackward,
+        Action::BringToFront,
+        Action::SendToBack,
+        Action::DuplicateObject,
+        Action::DeleteObject,
         Action::PlayPause,
         Action::NextFrame,
         Action::PreviousFrame,
@@ -289,6 +301,12 @@ impl Action {
             MergeDown => ("Layer", "Merge Down"),
             Flatten => ("Layer", "Flatten"),
             ConvertToSymbol => ("Layer", "Convert to Symbol"),
+            BringForward => ("Object", "Bring Forward"),
+            SendBackward => ("Object", "Send Backward"),
+            BringToFront => ("Object", "Bring to Front"),
+            SendToBack => ("Object", "Send to Back"),
+            DuplicateObject => ("Object", "Duplicate Object"),
+            DeleteObject => ("Object", "Delete Object"),
             PlayPause => ("Frame", "Play / Pause"),
             NextFrame => ("Frame", "Next Frame"),
             PreviousFrame => ("Frame", "Previous Frame"),
@@ -391,6 +409,13 @@ impl Action {
             // Keyboard Shortcuts.
             DuplicateLayer | MergeDown | Flatten => vec![],
             ConvertToSymbol => vec![k(Key::F8)],
+            BringForward => vec![k(Key::ArrowUp).ctrl()],
+            SendBackward => vec![k(Key::ArrowDown).ctrl()],
+            BringToFront => vec![k(Key::ArrowUp).ctrl().shift()],
+            SendToBack => vec![k(Key::ArrowDown).ctrl().shift()],
+            DuplicateObject => vec![k(Key::J).ctrl()],
+            // Delete ya borra los objetos seleccionados; se le puede asignar otra tecla.
+            DeleteObject => vec![],
             PlayPause => vec![k(Key::Enter)],
             NextFrame => vec![k(Key::Period), k(Key::ArrowRight)],
             PreviousFrame => vec![k(Key::Comma), k(Key::ArrowLeft)],

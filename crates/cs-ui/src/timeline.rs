@@ -4,7 +4,12 @@
 mod pixel;
 
 use cs_commands::ops::{self, LayerDrop};
-use cs_core::{AnimDirection, BlendMode, LayerId, LayerKind, Tag};
+use std::collections::HashSet;
+
+use cs_core::{
+    AnimDirection, ArtboardId, BlendMode, InstanceTrack, Layer, LayerId, LayerKind, SceneObject,
+    Tag,
+};
 use eframe::egui::{
     self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2,
 };
@@ -136,6 +141,9 @@ pub struct TimelineState {
     pub new_tilemap: bool,
     /// Se pidió "Convert to Symbol…" desde el menú de una capa (lo abre la app).
     pub convert_symbol: bool,
+    /// Las capas de objetos desplegadas (con su artboard: los ids de capa se repiten entre
+    /// artboards): debajo llevan una sub-fila por objeto.
+    pub(crate) expanded_objects: HashSet<(ArtboardId, LayerId)>,
 }
 
 /// Un arrastre sobre los cels, como en Aseprite.
@@ -195,6 +203,18 @@ fn grid(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, grid:
             state.rows.clear();
             for id in editor.timeline_layers() {
                 layer_row(ui, editor, state, id, grid);
+                // Desplegada: una sub-fila por objeto, el de más arriba primero.
+                if state.expanded_objects.contains(&(editor.active, id))
+                    && let Some(layer) = editor
+                        .sprite()
+                        .layer(id)
+                        .filter(|l| l.kind == LayerKind::Objects)
+                        .cloned()
+                {
+                    for object in layer.objects.iter().rev() {
+                        object_row(ui, editor, &layer, object, grid);
+                    }
+                }
             }
             range_outline(ui, editor, state, grid);
             end_cel_drag(ui, editor, state);
@@ -848,6 +868,47 @@ fn layer_row(
         }
         x += fold_w;
     }
+    // Las capas de objetos: el triángulo que las despliega y, con Pixel UI, su ícono (si el skin
+    // lo tiene).
+    if layer.kind == LayerKind::Objects {
+        let key = (editor.active, id);
+        let expanded = state.expanded_objects.contains(&key);
+        let w = toggle_w(grid);
+        let at = Rect::from_min_max(pos2(x, content.top()), pos2(x + w, content.bottom()));
+        let response = ui
+            .interact(at, ui.id().with(("objects", id)), Sense::click())
+            .tip(if expanded {
+                "Hide the objects"
+            } else {
+                "Show the objects"
+            });
+        let enabled = ui.is_enabled();
+        response.widget_info(|| {
+            egui::WidgetInfo::selected(
+                egui::WidgetType::Checkbox,
+                enabled,
+                expanded,
+                format!("Objects: {}", layer.name),
+            )
+        });
+        if response.clicked() && !state.expanded_objects.remove(&key) {
+            state.expanded_objects.insert(key);
+        }
+        match grid.skin {
+            Some(skin) => pixel::tree_toggle(ui, skin, at, expanded, active),
+            None => draw_fold_arrow(&painter, at.center(), !expanded, grid.text(ui), 4.0),
+        }
+        x += w;
+        if let Some(skin) = grid.skin {
+            let icon = Rect::from_min_max(
+                pos2(x, content.top()),
+                pos2(x + grid.fold_w, content.bottom()),
+            );
+            if pixel::objects_icon(ui, skin, icon, active) {
+                x += grid.fold_w;
+            }
+        }
+    }
     // Con Pixel UI, las capas tilemap llevan su ícono donde los grupos su carpetita.
     if layer.kind == LayerKind::Tilemap
         && let Some(skin) = grid.skin
@@ -995,11 +1056,14 @@ fn layer_row(
         }
     } else {
         let label = match layer.kind {
-            // Con Pixel UI, los grupos y los tilemaps ya tienen su ícono.
-            LayerKind::Group | LayerKind::Tilemap if grid.skin.is_some() => layer.name.clone(),
+            // Con Pixel UI, los grupos y los tilemaps ya tienen su ícono; las capas de objetos, el
+            // del skin (o ninguno).
+            LayerKind::Group | LayerKind::Tilemap | LayerKind::Objects if grid.skin.is_some() => {
+                layer.name.clone()
+            }
             LayerKind::Group => format!("📁 {}", layer.name),
             // El mismo ícono que la herramienta Artboard: la capa muestra otro artboard.
-            LayerKind::Instance => format!("🖼 {}", layer.name),
+            LayerKind::Objects => format!("🖼 {}", layer.name),
             // Grilla de tiles.
             LayerKind::Tilemap => format!("⊞ {}", layer.name),
             // La de referencia (no se exporta) lo dice.
@@ -1127,39 +1191,10 @@ fn layer_row(
         let sprite = editor.sprite();
         let r = inner(r);
         let center = r.center();
-        // Con Pixel UI, todo más chico: la fila mide 11 de alto.
-        let (thick, d) = if grid.skin.is_some() {
-            (1.0, 3.0)
-        } else {
-            (2.0, 4.5)
-        };
-        if let Some(track) = sprite.layer(id).and_then(|l| l.instance.as_ref()) {
-            // Instancia: ◆ en cada keyframe y una barra mientras dura.
-            let color = grid.text(ui);
-            if let Some(key) = track.key_at(f) {
-                let stroke = Stroke::new(thick, color);
-                // Barra de "hold": viene del frame anterior y sigue al próximo.
-                if f > key.frame {
-                    painter.hline(r.left()..=center.x, center.y, stroke);
-                }
-                if f + 1 < editor.frame_count() {
-                    painter.hline(center.x..=r.right(), center.y, stroke);
-                }
-                if key.frame == f {
-                    let points = vec![
-                        pos2(center.x, center.y - d),
-                        pos2(center.x + d, center.y),
-                        pos2(center.x, center.y + d),
-                        pos2(center.x - d, center.y),
-                    ];
-                    let fill = if key.source.is_some() {
-                        color
-                    } else {
-                        grid.dim()
-                    };
-                    painter.add(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
-                }
-            }
+        if !layer.objects.is_empty() {
+            // Objetos: los ◆ de las keys de todos; las barras de hold, si hay uno solo.
+            let tracks: Vec<&InstanceTrack> = layer.objects.iter().map(|o| &o.track).collect();
+            object_keys(ui, &painter, grid, r, f, editor.frame_count(), &tracks);
         } else if let Some(cel) = sprite.cel(id, f).copied() {
             let linked_prev = f > 0 && sprite.cel(id, f - 1).is_some_and(|p| p.image == cel.image);
             match grid.skin {
@@ -1230,25 +1265,24 @@ fn layer_row(
             editor.set_frame(f);
         }
         menus::context_menu(&response, |ui| {
-            if layer.kind == LayerKind::Instance {
-                let is_key = editor.is_instance_keyframe(id, f);
-                // Antes de la primera key no hay nada que copiar.
-                let has_key = editor
-                    .sprite()
-                    .layer(id)
-                    .and_then(|l| l.instance.as_ref())
-                    .is_some_and(|t| t.key_at(f).is_some());
-                if ui
-                    .add_enabled(has_key && !is_key, menus::plain("Insert Keyframe"))
-                    .clicked()
-                {
+            if layer.kind == LayerKind::Objects {
+                // La fila muestra las keys de todos: actúa sobre los seleccionados (o el único
+                // objeto). Con varios y ninguno seleccionado, cada objeto en su sub-fila.
+                let pick = editor.key_objects(id).is_empty();
+                let hint = |r: egui::Response| {
+                    if pick {
+                        r.on_disabled_hover_text("Expand the layer to edit an object's keys")
+                    } else {
+                        r
+                    }
+                };
+                let insert = editor.row_can_insert_key(id, f);
+                if hint(ui.add_enabled(insert, menus::plain("Insert Keyframe"))).clicked() {
                     editor.insert_instance_key(id, f);
                     ui.close();
                 }
-                if ui
-                    .add_enabled(is_key, menus::plain("Delete Keyframe"))
-                    .clicked()
-                {
+                let delete = editor.row_has_key_at(id, f);
+                if hint(ui.add_enabled(delete, menus::plain("Delete Keyframe"))).clicked() {
                     editor.remove_instance_key(id, f);
                     ui.close();
                 }
@@ -1304,6 +1338,188 @@ fn layer_row(
     }
 }
 
+/// Lo que ocupa el triángulo de una capa de objetos en la columna del nombre.
+fn toggle_w(grid: Grid) -> f32 {
+    match grid.skin {
+        Some(_) => pixel::TREE_W,
+        None => grid.fold_w,
+    }
+}
+
+/// Las keys de `tracks` en el contenido `r` de la celda del frame `f` (de `frames`): un ◆ si
+/// alguno tiene una key que empieza ahí (lleno si alguna muestra algo) y, si hay un solo track,
+/// la barra de "hold" mientras dura su key.
+fn object_keys(
+    ui: &egui::Ui,
+    painter: &egui::Painter,
+    grid: Grid,
+    r: Rect,
+    f: usize,
+    frames: usize,
+    tracks: &[&InstanceTrack],
+) {
+    let center = r.center();
+    // Con Pixel UI, todo más chico: la fila mide 11 de alto.
+    let (thick, d) = if grid.skin.is_some() {
+        (1.0, 3.0)
+    } else {
+        (2.0, 4.5)
+    };
+    let color = grid.text(ui);
+    if let [track] = tracks
+        && let Some(key) = track.key_at(f)
+    {
+        let stroke = Stroke::new(thick, color);
+        // Barra de "hold": viene del frame anterior y sigue al próximo.
+        if f > key.frame {
+            painter.hline(r.left()..=center.x, center.y, stroke);
+        }
+        if f + 1 < frames {
+            painter.hline(center.x..=r.right(), center.y, stroke);
+        }
+    }
+    let mut starts = tracks
+        .iter()
+        .filter_map(|t| t.keys.iter().find(|k| k.frame == f))
+        .peekable();
+    if starts.peek().is_none() {
+        return;
+    }
+    let fill = if starts.any(|k| k.source.is_some()) {
+        color
+    } else {
+        grid.dim()
+    };
+    let points = vec![
+        pos2(center.x, center.y - d),
+        pos2(center.x + d, center.y),
+        pos2(center.x, center.y + d),
+        pos2(center.x - d, center.y),
+    ];
+    painter.add(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
+}
+
+/// La sub-fila de `object` debajo de su capa desplegada: con sangría, su nombre (un clic lo
+/// selecciona) y sus keys; el menú de una celda inserta o borra keys de ese objeto. La del objeto
+/// seleccionado va resaltada.
+fn object_row(
+    ui: &mut egui::Ui,
+    editor: &mut Editor,
+    layer: &Layer,
+    object: &SceneObject,
+    grid: Grid,
+) {
+    let (row, _) = ui.allocate_exact_size(vec2(grid.row_width(editor), grid.row_h), Sense::hover());
+    let (lid, oid) = (layer.id, object.id);
+    let selected = editor.layer == lid && editor.selected_objects().contains(&oid);
+    let depth = editor.sprite().depth(lid) as f32;
+    let painter = ui.painter().clone();
+    let left = Rect::from_min_size(row.min, vec2(grid.left_w, grid.row_h));
+    let inner = |r: Rect| match grid.skin {
+        Some(_) => pixel::content(r),
+        None => r,
+    };
+    match grid.skin {
+        Some(skin) => pixel::layer_left(ui, skin, row, editor.frame_count(), selected),
+        None => {
+            if selected {
+                painter.rect_filled(left, 0.0, theme::ACCENT.gamma_multiply(0.35));
+            }
+            painter.hline(
+                row.x_range(),
+                row.bottom() - 0.5,
+                Stroke::new(1.0, theme::CANVAS_BG),
+            );
+        }
+    }
+    // El nombre, una sangría más adentro que el de la capa (y que su triángulo).
+    let pad = if grid.skin.is_some() {
+        pixel::NAME_PAD
+    } else {
+        4.0
+    };
+    let x =
+        row.left() + grid.eye_w + grid.lock_w + pad + (depth + 1.0) * grid.indent + toggle_w(grid);
+    let content = inner(row);
+    let name_rect = Rect::from_min_max(
+        pos2(x, content.top()),
+        pos2(inner(left).right(), content.bottom()),
+    );
+    let response = ui
+        .interact(
+            name_rect,
+            ui.id().with(("object", lid, oid)),
+            Sense::click(),
+        )
+        .tip("Select the object");
+    let enabled = ui.is_enabled();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, selected, &object.name)
+    });
+    match grid.skin {
+        Some(skin) => pixel::name(ui, name_rect, &object.name, skin.colors().text),
+        None => {
+            painter.text(
+                name_rect.left_center(),
+                Align2::LEFT_CENTER,
+                &object.name,
+                FontId::proportional(12.0),
+                ui.visuals().text_color(),
+            );
+        }
+    }
+    if response.clicked() {
+        let additive = ui.input(|i| i.modifiers.shift);
+        editor.select_object(lid, oid, additive);
+    }
+
+    for f in 0..editor.frame_count() {
+        let r = grid.cell_rect(row, f);
+        let response = ui.interact(r, ui.id().with(("object_cel", lid, oid, f)), Sense::click());
+        if grid.skin.is_none() && f == editor.frame {
+            painter.rect_filled(r, 0.0, theme::ACCENT.gamma_multiply(0.15));
+        }
+        object_keys(
+            ui,
+            &painter,
+            grid,
+            inner(r),
+            f,
+            editor.frame_count(),
+            &[&object.track],
+        );
+        if response.clicked() {
+            editor.stop();
+            editor.select_object(lid, oid, false);
+            editor.set_frame(f);
+        }
+        menus::context_menu(&response, |ui| {
+            let track = editor
+                .sprite()
+                .layer(lid)
+                .and_then(|l| l.object(oid))
+                .map(|o| &o.track);
+            let is_key = track.is_some_and(|t| t.keys.iter().any(|k| k.frame == f));
+            // Antes de la primera key no hay nada que copiar.
+            let has_key = track.is_some_and(|t| t.key_at(f).is_some());
+            if ui
+                .add_enabled(has_key && !is_key, menus::plain("Insert Keyframe"))
+                .clicked()
+            {
+                editor.insert_object_key(lid, oid, f);
+                ui.close();
+            }
+            if ui
+                .add_enabled(is_key, menus::plain("Delete Keyframe"))
+                .clicked()
+            {
+                editor.remove_object_key(lid, oid, f);
+                ui.close();
+            }
+        });
+    }
+}
+
 /// Cel Properties, en línea: la opacidad de `cels` (la del primero que existe); arrastrar el
 /// número es un solo paso de undo.
 pub(crate) fn cel_opacity_row(ui: &mut egui::Ui, editor: &mut Editor, cels: &[(LayerId, usize)]) {
@@ -1326,14 +1542,15 @@ pub(crate) fn cel_opacity_row(ui: &mut egui::Ui, editor: &mut Editor, cels: &[(L
     });
 }
 
-/// Submenú para colocar otro artboard como instancia (menú Layer y menú de capa).
+/// Submenú para colocar otro artboard como objeto (menú Layer y menú de capa): en la capa de
+/// objetos actual o en una nueva.
 pub(crate) fn instance_menu(ui: &mut egui::Ui, editor: &mut Editor) {
     // Primero los símbolos de la biblioteca; después, separados, los artboards del lienzo.
     let (library, canvas) = editor.instance_candidate_groups();
     let library_len = library.len();
     let separate = library_len > 0 && !canvas.is_empty();
     ui.add_enabled_ui(!library.is_empty() || !canvas.is_empty(), |ui| {
-        menus::submenu(ui, "New Instance", |ui| {
+        menus::submenu(ui, "New Object", |ui| {
             for (k, (id, name)) in library.into_iter().chain(canvas).enumerate() {
                 if separate && k == library_len {
                     menus::separator(ui);

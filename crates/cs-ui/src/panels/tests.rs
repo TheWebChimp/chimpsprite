@@ -1831,3 +1831,48 @@ fn the_toolbar_has_only_the_tool_buttons() {
         assert!(texts.iter().any(|t| t.contains("Pencil")), "{texts:?}");
     }
 }
+
+/// Los textos que dibuja el panel Object en un frame.
+fn object_panel_texts(editor: &mut Editor) -> Vec<String> {
+    let ctx = egui::Context::default();
+    let mut output = ctx.run_ui(RawInput::default(), |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
+            instance(ui, editor);
+        });
+    });
+    output.textures_delta.clear();
+    output
+        .shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            egui::Shape::Text(t) => Some(t.galley.text().to_string()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_object_panel_says_why_there_is_nothing_to_edit() {
+    let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+    e.insert_empty_frame();
+    e.add_artboard(4, 4);
+    e.activate(cs_core::ArtboardId(1));
+    // Un objeto que empieza en el frame 1.
+    e.set_frame(1);
+    e.add_instance_layer(cs_core::ArtboardId(2));
+    let has = |texts: &[String], t: &str| texts.iter().any(|s| s == t);
+    e.set_frame(0);
+    let texts = object_panel_texts(&mut e);
+    assert!(
+        has(&texts, "No keyframe at or before this frame"),
+        "{texts:?}"
+    );
+    e.set_frame(1);
+    assert!(has(&object_panel_texts(&mut e), "Name"));
+    // Con dos objetos y ninguno seleccionado, no hay objeto que mostrar.
+    e.add_instance_layer(cs_core::ArtboardId(2));
+    e.clear_object_selection();
+    let texts = object_panel_texts(&mut e);
+    assert!(has(&texts, "Select an object on the canvas"), "{texts:?}");
+    assert!(!has(&texts, "Name"), "{texts:?}");
+}

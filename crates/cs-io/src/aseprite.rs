@@ -651,7 +651,7 @@ fn read_layer(
         blend,
         mask: None,
         clip: false,
-        instance: None,
+        objects: Vec::new(),
         tileset,
     });
     Ok(())
@@ -1053,7 +1053,7 @@ fn layer_chunk(sprite: &Sprite, layer: &Layer) -> Vec<u8> {
     d.w_u16(match (layer.kind, tileset) {
         (LayerKind::Group, _) => 1,
         (LayerKind::Tilemap, Some(_)) => 2,
-        (LayerKind::Tilemap, None) | (LayerKind::Image | LayerKind::Instance, _) => 0,
+        (LayerKind::Tilemap, None) | (LayerKind::Image | LayerKind::Objects, _) => 0,
     });
     d.w_u16(sprite.depth(layer.id) as u16);
     d.w_u16(0);

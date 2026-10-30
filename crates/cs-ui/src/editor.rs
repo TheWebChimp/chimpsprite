@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 
 use cs_commands::{Command, DocCommand, History, sprite_ops};
 use cs_core::{
-    AnimDirection, Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, PixelValue, Playback,
-    Rgba, Sprite, Tile,
+    AnimDirection, Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, ObjectId, PixelValue,
+    Playback, Rgba, Sprite, Tile,
 };
 use cs_render::OnionSkin;
 use cs_tools::text::TextStyle;
@@ -214,8 +214,8 @@ enum TilesEdit {
     TooLarge,
 }
 
-/// Lo que edita un gesto agrupado: artboard, capa, frame y slice seleccionados.
-type MergeTarget = (ArtboardId, LayerId, usize, Option<usize>);
+/// Lo que edita un gesto agrupado: artboard, capa, frame, slice seleccionado y objeto actual.
+type MergeTarget = (ArtboardId, LayerId, usize, Option<usize>, Option<ObjectId>);
 
 /// El pincel personalizado con los valores del sprite, compartido con cada contexto de las
 /// herramientas; y para qué versión del pincel, artboard y documento se armó.
@@ -356,7 +356,20 @@ pub struct Editor {
     pub symbol_stack: Vec<ArtboardId>,
     /// El artboard activo al entrar al modo símbolo desde el documento (para volver).
     pub symbol_return: Option<ArtboardId>,
+    /// Los objetos seleccionados, en el orden en que se eligieron, y de qué artboard y capa son
+    /// (los ids de objeto son por capa). Se leen con `selected_objects()`, que no devuelve nada
+    /// si la capa actual es otra. Ver `object_ops.rs`.
+    object_selection: Vec<ObjectId>,
+    object_selection_at: Option<(ArtboardId, LayerId)>,
+    /// El gesto de Move en curso empezó con Alt sobre un objeto: mueve copias.
+    pub(crate) object_copy: bool,
+    /// Las cajas de los objetos ya calculadas (ver `object_bounds`), para qué `revision`.
+    pub(crate) object_bounds_cache: std::cell::RefCell<(u64, ObjectBoundsCache)>,
 }
+
+/// Caja `(x, y, ancho, alto)` de un objeto por artboard, frame, capa y objeto.
+pub(crate) type ObjectBoundsCache =
+    HashMap<(ArtboardId, usize, LayerId, ObjectId), Option<(i32, i32, u32, u32)>>;
 
 impl Editor {
     pub fn new(document: Document) -> Self {
@@ -421,6 +434,10 @@ impl Editor {
             library_selected: None,
             symbol_stack: Vec::new(),
             symbol_return: None,
+            object_selection: Vec::new(),
+            object_selection_at: None,
+            object_bounds_cache: Default::default(),
+            object_copy: false,
         };
         editor.ensure_valid();
         // Negro para pintar (el más cercano de la paleta, si es indexado) y la máscara de
@@ -502,6 +519,17 @@ impl Editor {
         self.frame = self.frame.min(sprite.frames.len().saturating_sub(1));
         let slices = sprite.slices.len();
         self.slice = self.slice.filter(|&i| i < slices);
+        // La selección de objetos es de una capa: si la actual es otra se descarta, y si no, se
+        // quitan los objetos que ya no están (un undo).
+        match sprite.layer(self.layer) {
+            Some(layer) if self.object_selection_at == Some((self.active, self.layer)) => {
+                self.object_selection.retain(|&o| layer.object(o).is_some())
+            }
+            _ => {
+                self.object_selection.clear();
+                self.object_selection_at = None;
+            }
+        }
         let last = sprite.frames.len().saturating_sub(1);
         self.frame_range = self.frame_range.map(|(a, b)| (a.min(last), b.min(last)));
         let (w, h) = (sprite.width, sprite.height);
@@ -559,6 +587,21 @@ impl Editor {
     }
 
     /// Ejecuta un comando sobre el artboard activo; devuelve si se aplicó.
+    /// Los objetos seleccionados de la capa actual (vacío si la selección era de otra capa).
+    pub fn selected_objects(&self) -> &[ObjectId] {
+        if self.object_selection_at == Some((self.active, self.layer)) {
+            &self.object_selection
+        } else {
+            &[]
+        }
+    }
+
+    /// Reemplaza la selección de objetos por `ids`, de la capa actual.
+    pub(crate) fn set_selected_objects(&mut self, ids: Vec<ObjectId>) {
+        self.object_selection = ids;
+        self.object_selection_at = Some((self.active, self.layer));
+    }
+
     pub fn execute(&mut self, cmd: Command) -> bool {
         self.execute_doc(DocCommand::OnArtboard {
             id: self.active,
@@ -613,7 +656,7 @@ impl Editor {
     }
 
     /// Como `execute`, pero los comandos seguidos del mismo `group` forman un solo paso de undo.
-    /// El comando debe reemplazar un estado completo (como `SetInstanceTrack` o `SetSlices`) para
+    /// El comando debe reemplazar un estado completo (como `SetObjects` o `SetSlices`) para
     /// que el inverso del primero deshaga todo el gesto.
     pub fn execute_grouped(&mut self, cmd: Command, group: u64) -> bool {
         // Como `execute_doc`: lo flotante se confirma antes (y corta el grupo).
@@ -622,7 +665,13 @@ impl Editor {
             id: self.active,
             cmd,
         };
-        let target = (self.active, self.layer, self.frame, self.slice);
+        let target = (
+            self.active,
+            self.layer,
+            self.frame,
+            self.slice,
+            self.current_object(),
+        );
         let result = if self.merge == Some((group, target)) {
             self.history.execute_merged(&mut self.document, cmd)
         } else {

@@ -229,7 +229,7 @@ fn order(s: &Sprite) -> Vec<(u32, Option<u32>)> {
 }
 
 #[test]
-fn instance_layer_keys_update_and_remove() {
+fn object_layer_keys_update_and_remove() {
     let mut s = Sprite::new(8, 8, ColorMode::Rgba);
     for i in 1..4 {
         crate::Command::AddFrame {
@@ -239,21 +239,30 @@ fn instance_layer_keys_update_and_remove() {
         .apply(&mut s)
         .unwrap();
     }
-    let cmd = new_instance_layer(&s, Some(LayerId(1)), 1, ArtboardId(2), "Hero", (3, 4));
+    let cmd = new_object_layer(&s, Some(LayerId(1)), 1, ArtboardId(2), "Hero", (3, 4));
     cmd.apply(&mut s).unwrap();
     let layer = s.layers.last().unwrap().clone();
     assert_eq!(
         (layer.kind, layer.name.as_str()),
-        (LayerKind::Instance, "Hero")
+        (LayerKind::Objects, "Hero")
+    );
+    assert_eq!(
+        (
+            layer.objects.len(),
+            layer.objects[0].id,
+            layer.objects[0].name.as_str()
+        ),
+        (1, ObjectId(1), "Hero")
     );
     let id = layer.id;
-    let track = |s: &Sprite| s.layer(id).unwrap().instance.clone().unwrap();
+    let o = ObjectId(1);
+    let track = |s: &Sprite| s.layer(id).unwrap().objects[0].track.clone();
     assert_eq!(
         track(&s).keys,
         vec![InstanceKey::new(1, ArtboardId(2), (3, 4))]
     );
     // Editar en un frame sin key crea una copia de la vigente ahí.
-    update_instance_key(&s, id, 3, |k| k.flip_h = true)
+    update_object_key(&s, id, o, 3, |k| k.flip_h = true)
         .unwrap()
         .apply(&mut s)
         .unwrap();
@@ -262,20 +271,89 @@ fn instance_layer_keys_update_and_remove() {
     assert!(!t.key_at(2).unwrap().flip_h && t.key_at(3).unwrap().flip_h);
     assert_eq!(t.key_at(3).unwrap().position, (3, 4));
     // Sin cambios, no hay comando; antes de la primera key, tampoco.
-    assert!(update_instance_key(&s, id, 3, |_| {}).is_none());
-    assert!(update_instance_key(&s, id, 0, |k| k.opacity = 1).is_none());
-    // Borrar una key; borrar la única quita la capa.
-    remove_instance_key(&s, id, 3)
+    assert!(update_object_key(&s, id, o, 3, |_| {}).is_none());
+    assert!(update_object_key(&s, id, o, 0, |k| k.opacity = 1).is_none());
+    // Borrar una key; borrar la única quita el objeto, y la capa se queda vacía.
+    remove_object_key(&s, id, o, 3)
         .unwrap()
         .apply(&mut s)
         .unwrap();
     assert_eq!(track(&s).keys.len(), 1);
-    assert!(remove_instance_key(&s, id, 2).is_none(), "no key there");
-    remove_instance_key(&s, id, 1)
+    assert!(remove_object_key(&s, id, o, 2).is_none(), "no key there");
+    remove_object_key(&s, id, o, 1)
         .unwrap()
         .apply(&mut s)
         .unwrap();
-    assert!(s.layer(id).is_none());
+    assert!(s.layer(id).unwrap().objects.is_empty());
+}
+
+#[test]
+fn removing_the_only_key_of_one_of_several_objects_removes_just_that_object() {
+    let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+    new_object_layer(&s, None, 0, ArtboardId(2), "Hero", (0, 0))
+        .apply(&mut s)
+        .unwrap();
+    let id = s.layers.last().unwrap().id;
+    let mut second = s.layer(id).unwrap().objects[0].clone();
+    second.id = ObjectId(2);
+    s.layer_mut(id).unwrap().objects.push(second);
+    remove_object_key(&s, id, ObjectId(1), 0)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    let ids: Vec<_> = s.layer(id).unwrap().objects.iter().map(|o| o.id).collect();
+    assert_eq!(ids, vec![ObjectId(2)]);
+    assert!(update_object_key(&s, id, ObjectId(1), 0, |k| k.flip_h = true).is_none());
+    // Se edita la key del objeto pedido.
+    update_object_key(&s, id, ObjectId(2), 0, |k| k.flip_h = true)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    assert!(s.layer(id).unwrap().objects[0].track.keys[0].flip_h);
+}
+
+#[test]
+fn removing_a_key_of_several_objects_is_one_command() {
+    let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+    new_object_layer(&s, None, 0, ArtboardId(2), "Hero", (0, 0))
+        .apply(&mut s)
+        .unwrap();
+    let id = s.layers.last().unwrap().id;
+    // El 1 con keys en 0 y 2; el 2 con una sola, en 0; el 3 con una sola, en 1.
+    update_object_key(&s, id, ObjectId(1), 2, |k| k.flip_h = true)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    for (n, frame) in [(2, 0), (3, 1)] {
+        let mut o = s.layer(id).unwrap().objects[0].clone();
+        o.id = ObjectId(n);
+        o.track.keys = vec![InstanceKey::new(frame, ArtboardId(2), (0, 0))];
+        s.layer_mut(id).unwrap().objects.push(o);
+    }
+    let all = [ObjectId(1), ObjectId(2), ObjectId(3)];
+    assert!(
+        remove_objects_key(&s, id, &all, 5).is_none(),
+        "no key there"
+    );
+    remove_objects_key(&s, id, &all, 0)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    let objects = &s.layer(id).unwrap().objects;
+    let keys: Vec<(ObjectId, Vec<usize>)> = objects
+        .iter()
+        .map(|o| (o.id, o.track.keys.iter().map(|k| k.frame).collect()))
+        .collect();
+    // El 2 se quedó sin keys y se fue; el 3 no tenía key en 0.
+    assert_eq!(keys, [(ObjectId(1), vec![2]), (ObjectId(3), vec![1])]);
+    // Borrar la última key del último objeto deja la capa vacía.
+    for (o, f) in [(ObjectId(1), 2), (ObjectId(3), 1)] {
+        remove_object_key(&s, id, o, f)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+    }
+    assert!(s.layer(id).unwrap().objects.is_empty());
 }
 
 #[test]
@@ -856,4 +934,205 @@ fn convert_to_image_renders_the_same_keeps_off_canvas_tiles_and_undoes() {
         convert_to_image(&s, LayerId(1)).is_none(),
         "image layers stay"
     );
+}
+
+/// Capa de objetos con A, B, C, D (ids 1 a 4) en el frame 0.
+fn four_objects() -> (Sprite, LayerId) {
+    let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+    new_object_layer(&s, None, 0, ArtboardId(2), "A", (0, 0))
+        .apply(&mut s)
+        .unwrap();
+    let id = s.layers.last().unwrap().id;
+    for name in ["B", "C", "D"] {
+        let (cmd, _) = add_object(&s, id, 0, ArtboardId(2), name, (0, 0)).unwrap();
+        cmd.apply(&mut s).unwrap();
+    }
+    (s, id)
+}
+
+fn order_of(s: &Sprite, id: LayerId) -> Vec<u32> {
+    s.layer(id)
+        .unwrap()
+        .objects
+        .iter()
+        .map(|o| o.id.0)
+        .collect()
+}
+
+fn ids(v: &[u32]) -> Vec<ObjectId> {
+    v.iter().map(|&i| ObjectId(i)).collect()
+}
+
+#[test]
+fn add_object_goes_on_top_and_undoes() {
+    let (mut s, id) = four_objects();
+    assert_eq!(order_of(&s, id), vec![1, 2, 3, 4]);
+    let before = s.clone();
+    let (cmd, new) = add_object(&s, id, 0, ArtboardId(3), "E", (1, 2)).unwrap();
+    assert_eq!(new, ObjectId(5));
+    let undo = cmd.apply(&mut s).unwrap();
+    assert_eq!(s.layer(id).unwrap().objects[4].name, "E");
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    // No es capa de objetos.
+    assert!(add_object(&s, LayerId(1), 0, ArtboardId(3), "E", (0, 0)).is_none());
+}
+
+#[test]
+fn remove_objects_can_empty_the_layer() {
+    let (mut s, id) = four_objects();
+    let before = s.clone();
+    let undo = remove_objects(&s, id, &ids(&[2, 3]))
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    assert_eq!(order_of(&s, id), vec![1, 4]);
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    remove_objects(&s, id, &ids(&[1, 2, 3, 4]))
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    assert!(s.layer(id).unwrap().objects.is_empty());
+    assert!(remove_objects(&s, id, &ids(&[1])).is_none());
+}
+
+#[test]
+fn move_objects_creates_key_and_keeps_the_old_one() {
+    let (mut s, id) = four_objects();
+    for i in 1..3 {
+        crate::Command::AddFrame {
+            index: i,
+            frame: Frame { duration_ms: 100 },
+        }
+        .apply(&mut s)
+        .unwrap();
+    }
+    let before = s.clone();
+    let undo = move_objects(&s, id, &ids(&[1, 3]), 2, 5, -1)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    let l = s.layer(id).unwrap();
+    for o in [&l.objects[0], &l.objects[2]] {
+        assert_eq!(o.track.keys.len(), 2);
+        assert_eq!(o.track.keys[0].position, (0, 0));
+        assert_eq!(o.track.keys[1].frame, 2);
+        assert_eq!(o.track.keys[1].position, (5, -1));
+    }
+    assert_eq!(l.objects[1].track.keys.len(), 1);
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    assert!(move_objects(&s, id, &ids(&[1]), 2, 0, 0).is_none());
+    assert!(move_objects(&s, id, &ids(&[9]), 2, 1, 1).is_none());
+}
+
+#[test]
+fn reorder_objects_modes_with_non_contiguous_selection() {
+    let (s, id) = four_objects();
+    let run = |sel: &[u32], to| {
+        let mut t = s.clone();
+        let cmd = reorder_objects(&t, id, &ids(sel), to)?;
+        let undo = cmd.apply(&mut t).unwrap();
+        let res = order_of(&t, id);
+        undo.apply(&mut t).unwrap();
+        assert_eq!(t, s);
+        Some(res)
+    };
+    assert_eq!(run(&[1, 3], Reorder::Forward), Some(vec![2, 1, 4, 3]));
+    assert_eq!(run(&[2, 4], Reorder::Forward), Some(vec![1, 3, 2, 4]));
+    assert_eq!(run(&[1, 2], Reorder::Forward), Some(vec![3, 1, 2, 4]));
+    assert_eq!(run(&[2, 4], Reorder::Backward), Some(vec![2, 1, 4, 3]));
+    assert_eq!(run(&[3, 4], Reorder::Backward), Some(vec![1, 3, 4, 2]));
+    assert_eq!(run(&[1, 3], Reorder::Front), Some(vec![2, 4, 1, 3]));
+    assert_eq!(run(&[2, 4], Reorder::Back), Some(vec![2, 4, 1, 3]));
+    // Sin cambios o sin ids válidos.
+    assert_eq!(run(&[3, 4], Reorder::Front), None);
+    assert_eq!(run(&[1, 2], Reorder::Back), None);
+    assert_eq!(run(&[4], Reorder::Forward), None);
+    assert_eq!(run(&[9], Reorder::Front), None);
+}
+
+#[test]
+fn duplicate_objects_get_new_ids_and_offset() {
+    let (mut s, id) = four_objects();
+    let before = s.clone();
+    let (cmd, new) = duplicate_objects(&s, id, &ids(&[3, 1]), (4, 6)).unwrap();
+    assert_eq!(new, ids(&[5, 6]));
+    let undo = cmd.apply(&mut s).unwrap();
+    let l = s.layer(id).unwrap();
+    assert_eq!(l.objects.len(), 6);
+    assert_eq!(l.objects[4].name, "A copy");
+    assert_eq!(l.objects[5].name, "C copy");
+    assert_eq!(l.objects[4].track.keys[0].position, (4, 6));
+    assert_eq!(l.objects[0].track.keys[0].position, (0, 0));
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    assert!(duplicate_objects(&s, id, &ids(&[9]), (1, 1)).is_none());
+}
+
+#[test]
+fn duplicate_and_move_objects_moves_only_the_copies() {
+    let (mut s, id) = four_objects();
+    crate::Command::AddFrame {
+        index: 1,
+        frame: Frame { duration_ms: 100 },
+    }
+    .apply(&mut s)
+    .unwrap();
+    let before = s.clone();
+    let (cmd, new) = duplicate_and_move_objects(&s, id, &ids(&[2]), 1, 3, 4).unwrap();
+    assert_eq!(new, ids(&[5]));
+    let undo = cmd.apply(&mut s).unwrap();
+    let l = s.layer(id).unwrap();
+    assert_eq!(order_of(&s, id), vec![1, 2, 3, 4, 5]);
+    assert_eq!(l.objects[1].track.keys.len(), 1, "the original stays");
+    let copy = &l.objects[4].track;
+    assert_eq!(copy.key_at(0).unwrap().position, (0, 0));
+    assert_eq!(copy.key_at(1).unwrap().position, (3, 4));
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    assert!(duplicate_and_move_objects(&s, id, &ids(&[2]), 1, 0, 0).is_none());
+    assert!(duplicate_and_move_objects(&s, id, &ids(&[9]), 1, 1, 0).is_none());
+}
+
+#[test]
+fn update_objects_key_changes_several_objects_in_one_command() {
+    let (mut s, id) = four_objects();
+    let before = s.clone();
+    let undo = update_objects_key(&s, id, &ids(&[1, 3]), 0, |k| k.flip_h = true)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    let flipped: Vec<bool> = s
+        .layer(id)
+        .unwrap()
+        .objects
+        .iter()
+        .map(|o| o.track.keys[0].flip_h)
+        .collect();
+    assert_eq!(flipped, vec![true, false, true, false]);
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    // Nada cambia, o ninguno existe.
+    assert!(update_objects_key(&s, id, &ids(&[1]), 0, |_| {}).is_none());
+    assert!(update_objects_key(&s, id, &ids(&[9]), 0, |k| k.flip_h = true).is_none());
+}
+
+#[test]
+fn rename_object_and_undo() {
+    let (mut s, id) = four_objects();
+    let before = s.clone();
+    let undo = rename_object(&s, id, ObjectId(2), "Coin")
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    assert_eq!(s.layer(id).unwrap().objects[1].name, "Coin");
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    assert!(
+        rename_object(&s, id, ObjectId(2), "B").is_none(),
+        "same name"
+    );
+    assert!(rename_object(&s, id, ObjectId(9), "X").is_none());
 }

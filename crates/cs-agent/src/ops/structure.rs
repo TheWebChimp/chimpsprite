@@ -461,7 +461,7 @@ impl Session {
         }
         let sprite = &d.artboard(host).expect("resolved").sprite;
         if sprite.color_mode != cs_core::ColorMode::Rgba {
-            return Err(invalid("instances can only be placed in RGBA artboards"));
+            return Err(invalid("objects can only be placed in RGBA artboards"));
         }
         target::frame(sprite, p.frame)?;
         let src = d.artboard(source).expect("resolved");
@@ -471,7 +471,7 @@ impl Session {
             p.y.unwrap_or((sprite.height as i32 - src.sprite.height as i32) / 2);
         let name = p.name.clone().unwrap_or_else(|| src.name.clone());
         // Arriba de todo, en el nivel raíz (no dentro del grupo de la última capa).
-        let cmd = ops::new_instance_layer(sprite, None, p.frame, source, &name, (x, y));
+        let cmd = ops::new_object_layer(sprite, None, p.frame, source, &name, (x, y));
         let reply = format!("Placed '{}' as layer '{name}'.", src.name);
         self.run_on(&p.doc, host, vec![cmd])?;
         Ok(Reply::text(reply))
@@ -523,8 +523,8 @@ impl Session {
             .map_err(|e| invalid(e.to_string()))?;
         self.run(&p.doc, vec![converted.command])?;
         Ok(Reply::text(format!(
-            "symbol {} with instance layer {}",
-            converted.symbol.0, converted.instance.0
+            "symbol {} with object layer {}",
+            converted.symbol.0, converted.layer.0
         )))
     }
 
@@ -561,58 +561,127 @@ impl Session {
         let sprite = &d.artboard(host).expect("resolved").sprite;
         let layer = target::layer(sprite, &p.layer)?;
         target::frame(sprite, p.frame)?;
-        let cmd = ops::update_instance_key(sprite, layer, p.frame, |k| {
-            if let Some(s) = source {
-                k.source = Some(s);
-            }
-            k.position = (p.x.unwrap_or(k.position.0), p.y.unwrap_or(k.position.1));
-            k.flip_h = p.flip_h.unwrap_or(k.flip_h);
-            k.flip_v = p.flip_v.unwrap_or(k.flip_v);
-            k.opacity = p.opacity.unwrap_or(k.opacity);
-            let first = p.first_frame.unwrap_or(match k.timing {
-                Timing::Graphic { first_frame, .. } | Timing::MovieClip { first_frame } => {
-                    first_frame
-                }
-            });
-            k.timing = match (&p.timing, k.timing) {
-                (Some(TimingArg::MovieClip), _) => Timing::MovieClip { first_frame: first },
-                (Some(t), _) => Timing::Graphic {
-                    first_frame: first,
-                    play: match t {
-                        TimingArg::Once => GraphicPlay::Once,
-                        TimingArg::Single => GraphicPlay::Single,
-                        _ => GraphicPlay::Loop,
-                    },
-                },
-                (None, Timing::Graphic { play, .. }) => Timing::Graphic {
-                    first_frame: first,
-                    play,
-                },
-                (None, Timing::MovieClip { .. }) => Timing::MovieClip { first_frame: first },
-            };
-        })
-        .ok_or_else(|| {
-            invalid(
-                "not an instance layer, no keyframe at or before that frame, or nothing changed",
-            )
-        })?;
+        // Por ahora actúa sobre el primer objeto de la capa.
+        let change = KeyChange {
+            source,
+            x: p.x,
+            y: p.y,
+            flip_h: p.flip_h,
+            flip_v: p.flip_v,
+            opacity: p.opacity,
+            timing: p.timing.as_ref(),
+            first_frame: p.first_frame,
+        };
+        let object = first_object(sprite, layer);
+        let cmd = object
+            .and_then(|object| {
+                ops::update_object_key(sprite, layer, object, p.frame, |k| change.apply(k))
+            })
+            .ok_or_else(|| {
+                invalid(
+                    "not an object layer, no keyframe at or before that frame, or nothing changed",
+                )
+            })?;
         self.run_on(&p.doc, host, vec![cmd])?;
-        Ok(Reply::text(format!(
-            "Instance key set at frame {}.",
-            p.frame
-        )))
+        Ok(Reply::text(format!("Object key set at frame {}.", p.frame)))
     }
 
     pub fn remove_instance_key(&mut self, p: RemoveInstanceKey) -> Result<Reply> {
         let (host, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         let layer = target::layer(sprite, &p.layer)?;
-        let cmd = ops::remove_instance_key(sprite, layer, p.frame)
-            .ok_or_else(|| invalid(format!("no instance keyframe at frame {}", p.frame)))?;
+        let cmd = first_object(sprite, layer)
+            .and_then(|object| ops::remove_object_key(sprite, layer, object, p.frame))
+            .ok_or_else(|| invalid(format!("no object keyframe at frame {}", p.frame)))?;
         self.run_on(&p.doc, host, vec![cmd])?;
         Ok(Reply::text(format!(
             "Removed the keyframe at frame {}.",
             p.frame
         )))
+    }
+
+    // --- Objetos ---
+
+    pub fn add_object(&mut self, p: AddObject) -> Result<Reply> {
+        let d = &self.doc(&p.doc)?.document;
+        let host = target::artboard(d, p.artboard.as_ref())?;
+        let source = target::artboard(d, Some(&p.source))?;
+        if d.would_cycle(host, source) {
+            return Err(invalid(
+                "the source artboard contains this one; that would be a cycle",
+            ));
+        }
+        let sprite = &d.artboard(host).expect("resolved").sprite;
+        if sprite.color_mode != cs_core::ColorMode::Rgba {
+            return Err(invalid("objects can only be placed in RGBA artboards"));
+        }
+        let layer = target::layer(sprite, &p.layer)?;
+        target::frame(sprite, p.frame)?;
+        let src = d.artboard(source).expect("resolved");
+        let x =
+            p.x.unwrap_or((sprite.width as i32 - src.sprite.width as i32) / 2);
+        let y =
+            p.y.unwrap_or((sprite.height as i32 - src.sprite.height as i32) / 2);
+        let name = p.name.clone().unwrap_or_else(|| src.name.clone());
+        let (cmd, id) = ops::add_object(sprite, layer, p.frame, source, &name, (x, y))
+            .ok_or_else(|| invalid("not an object layer"))?;
+        let reply = format!("Added object {} '{name}' showing '{}'.", id.0, src.name);
+        self.run_on(&p.doc, host, vec![cmd])?;
+        Ok(Reply::text(reply))
+    }
+
+    pub fn set_object_key(&mut self, p: SetObjectKey) -> Result<Reply> {
+        let d = &self.doc(&p.doc)?.document;
+        let host = target::artboard(d, p.artboard.as_ref())?;
+        let source = p
+            .source
+            .as_ref()
+            .map(|r| target::artboard(d, Some(r)))
+            .transpose()?;
+        let sprite = &d.artboard(host).expect("resolved").sprite;
+        let layer = target::layer(sprite, &p.layer)?;
+        let object = object_ref(sprite, layer, &p.object)?;
+        target::frame(sprite, p.frame)?;
+        let change = KeyChange {
+            source,
+            x: p.x,
+            y: p.y,
+            flip_h: p.flip_h,
+            flip_v: p.flip_v,
+            opacity: p.opacity,
+            timing: p.timing.as_ref(),
+            first_frame: p.first_frame,
+        };
+        let cmd = ops::update_object_key(sprite, layer, object, p.frame, |k| change.apply(k))
+            .ok_or_else(|| invalid("no keyframe at or before that frame, or nothing changed"))?;
+        self.run_on(&p.doc, host, vec![cmd])?;
+        Ok(Reply::text(format!("Object key set at frame {}.", p.frame)))
+    }
+
+    pub fn remove_object(&mut self, p: RemoveObject) -> Result<Reply> {
+        let (host, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let layer = target::layer(sprite, &p.layer)?;
+        let object = object_ref(sprite, layer, &p.object)?;
+        let cmd = ops::remove_objects(sprite, layer, &[object])
+            .ok_or_else(|| invalid("not an object layer"))?;
+        self.run_on(&p.doc, host, vec![cmd])?;
+        Ok(Reply::text(format!("Removed object {}.", object.0)))
+    }
+
+    pub fn reorder_object(&mut self, p: ReorderObject) -> Result<Reply> {
+        let (host, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let layer = target::layer(sprite, &p.layer)?;
+        let object = object_ref(sprite, layer, &p.object)?;
+        let to = match p.to {
+            ReorderArg::Forward => ops::Reorder::Forward,
+            ReorderArg::Backward => ops::Reorder::Backward,
+            ReorderArg::Front => ops::Reorder::Front,
+            ReorderArg::Back => ops::Reorder::Back,
+        };
+        let Some(cmd) = ops::reorder_objects(sprite, layer, &[object], to) else {
+            return Ok(Reply::text("Nothing to reorder (already there)."));
+        };
+        self.run_on(&p.doc, host, vec![cmd])?;
+        Ok(Reply::text(format!("Reordered object {}.", object.0)))
     }
 
     // --- Cels ---
@@ -753,6 +822,91 @@ impl Session {
             p.to + p.count
         )))
     }
+}
+
+/// El primer objeto de una capa de objetos (las herramientas de instancia actúan sobre él).
+fn first_object(sprite: &cs_core::Sprite, layer: cs_core::LayerId) -> Option<cs_core::ObjectId> {
+    sprite.layer(layer)?.objects.first().map(|o| o.id)
+}
+
+/// Cambios pedidos sobre una key de objeto; lo que es `None` se deja como está.
+struct KeyChange<'a> {
+    source: Option<cs_core::ArtboardId>,
+    x: Option<i32>,
+    y: Option<i32>,
+    flip_h: Option<bool>,
+    flip_v: Option<bool>,
+    opacity: Option<u8>,
+    timing: Option<&'a TimingArg>,
+    first_frame: Option<usize>,
+}
+
+impl KeyChange<'_> {
+    fn apply(&self, k: &mut cs_core::InstanceKey) {
+        if let Some(s) = self.source {
+            k.source = Some(s);
+        }
+        k.position = (
+            self.x.unwrap_or(k.position.0),
+            self.y.unwrap_or(k.position.1),
+        );
+        k.flip_h = self.flip_h.unwrap_or(k.flip_h);
+        k.flip_v = self.flip_v.unwrap_or(k.flip_v);
+        k.opacity = self.opacity.unwrap_or(k.opacity);
+        let first = self.first_frame.unwrap_or(match k.timing {
+            Timing::Graphic { first_frame, .. } | Timing::MovieClip { first_frame } => first_frame,
+        });
+        k.timing = match (self.timing, k.timing) {
+            (Some(TimingArg::MovieClip), _) => Timing::MovieClip { first_frame: first },
+            (Some(t), _) => Timing::Graphic {
+                first_frame: first,
+                play: match t {
+                    TimingArg::Once => GraphicPlay::Once,
+                    TimingArg::Single => GraphicPlay::Single,
+                    _ => GraphicPlay::Loop,
+                },
+            },
+            (None, Timing::Graphic { play, .. }) => Timing::Graphic {
+                first_frame: first,
+                play,
+            },
+            (None, Timing::MovieClip { .. }) => Timing::MovieClip { first_frame: first },
+        };
+    }
+}
+
+/// Objeto de una capa de objetos, por id o nombre.
+fn object_ref(
+    sprite: &cs_core::Sprite,
+    layer: cs_core::LayerId,
+    r: &Ref,
+) -> Result<cs_core::ObjectId> {
+    let l = sprite.layer(layer).expect("resolved");
+    if l.kind != LayerKind::Objects {
+        return Err(invalid(format!(
+            "layer '{}' is not an object layer",
+            l.name
+        )));
+    }
+    let found = match r {
+        Ref::Id(id) => l.objects.iter().find(|o| o.id.0 == *id),
+        Ref::Name(name) => l.objects.iter().find(|o| o.name == *name).or_else(|| {
+            name.parse()
+                .ok()
+                .and_then(|id: u32| l.objects.iter().find(|o| o.id.0 == id))
+        }),
+    };
+    found.map(|o| o.id).ok_or_else(|| {
+        let names: Vec<_> = l
+            .objects
+            .iter()
+            .map(|o| format!("{} '{}'", o.id.0, o.name))
+            .collect();
+        invalid(format!(
+            "object {r:?} not found; objects: {}",
+            names.join(", ")
+        ))
+    })
 }
 
 #[cfg(test)]
@@ -966,12 +1120,15 @@ mod tests {
         assert_eq!(red(&s, 6, 4), 255, "x=5 and flipped: the dot lands on 6");
         let described = crate::ops::test_util::json(&s.describe(p(json!({"doc": "d1"}))).unwrap());
         let layer = &described["artboards"][0]["layers_bottom_to_top"][1];
-        assert_eq!(layer["kind"], "instance");
+        assert_eq!(layer["kind"], "objects");
+        assert_eq!(layer["objects"][0]["id"], 1);
+        assert_eq!(layer["objects"][0]["name"], "Coin");
+        assert_eq!(layer["objects"][0]["keys"].as_array().unwrap().len(), 2);
         assert_eq!(layer["instance"]["keys"].as_array().unwrap().len(), 2);
         let image = &described["artboards"][0]["layers_bottom_to_top"][0];
         assert!(
-            image.get("instance").is_none(),
-            "only instance layers say so"
+            image.get("instance").is_none() && image.get("objects").is_none(),
+            "only object layers say so"
         );
         s.remove_instance_key(p(json!({"doc": "d1", "layer": "Coin", "frame": 1})))
             .unwrap();
@@ -1011,7 +1168,7 @@ mod tests {
         // Verify the layer's source is unchanged
         let (_, coin_sprite_after) = s.sprite("d1", Some(&Ref::Name("coin".into()))).unwrap();
         let layer = coin_sprite_after.layer(gem_layer).expect("layer exists");
-        let instance = layer.instance.as_ref().expect("is instance layer");
+        let instance = &layer.objects.first().expect("is an object layer").track;
         let key = instance.key_at(0).expect("key at frame 0");
         let gem_id = s
             .doc("d1")
@@ -1228,5 +1385,77 @@ mod tests {
         );
         s.undo(p(json!({"doc": "d1"}))).unwrap();
         assert_eq!(s.sprite("d1", None).unwrap().1.frames.len(), 2);
+    }
+
+    #[test]
+    fn object_layers_hold_several_objects() {
+        let mut s = session(8, 8);
+        s.add_artboard(p(
+            json!({"doc": "d1", "name": "coin", "width": 2, "height": 2}),
+        ))
+        .unwrap();
+        s.draw_pixels(p(json!({"doc": "d1", "artboard": "coin",
+            "pixels": [{"x": 0, "y": 0, "color": "#ff0000"}]})))
+            .unwrap();
+        s.add_instance_layer(p(json!({"doc": "d1", "source": "coin", "x": 0, "y": 0,
+            "name": "Props"})))
+            .unwrap();
+        s.add_object(p(json!({"doc": "d1", "layer": "Props", "source": "coin",
+            "name": "second", "x": 4, "y": 4})))
+            .unwrap();
+        let reply = s
+            .add_object(p(json!({"doc": "d1", "layer": "Props", "source": "coin",
+                "name": "third", "x": 6, "y": 0})))
+            .unwrap();
+        assert!(format!("{reply:?}").contains("object 3"), "{reply:?}");
+        let objects = |s: &Session| {
+            let described =
+                crate::ops::test_util::json(&s.describe(p(json!({"doc": "d1"}))).unwrap());
+            described["artboards"][0]["layers_bottom_to_top"][1]["objects"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|o| o["name"].as_str().unwrap().to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(objects(&s), ["Props", "second", "third"]);
+        let render = |s: &Session| {
+            cs_render::render_frame(
+                &cs_render::materialize(
+                    &s.doc("d1").unwrap().document,
+                    s.sprite("d1", None).unwrap().1,
+                    0..1,
+                ),
+                0,
+            )
+        };
+        let before = render(&s);
+        assert_eq!(before[4 * 8 + 4].r, 255, "the second object is drawn");
+        s.set_object_key(p(json!({"doc": "d1", "layer": "Props", "object": "second",
+            "x": 2, "y": 2})))
+            .unwrap();
+        assert_ne!(render(&s), before);
+        s.reorder_object(p(json!({"doc": "d1", "layer": "Props", "object": 1,
+            "to": "front"})))
+            .unwrap();
+        assert_eq!(objects(&s), ["second", "third", "Props"]);
+        assert!(
+            s.set_object_key(p(json!({"doc": "d1", "layer": "Props", "object": "nope"})))
+                .is_err()
+        );
+        s.remove_object(p(json!({"doc": "d1", "layer": "Props", "object": "third"})))
+            .unwrap();
+        assert_eq!(objects(&s), ["second", "Props"]);
+        // No se puede poner un objeto en una capa de imagen ni formar un ciclo.
+        let image = s.sprite("d1", None).unwrap().1.layers[0].name.clone();
+        assert!(
+            s.add_object(p(json!({"doc": "d1", "layer": image, "source": "coin"})))
+                .is_err()
+        );
+        let err = s
+            .add_object(p(json!({"doc": "d1", "artboard": "coin", "layer": "Props",
+                "source": 1})))
+            .unwrap_err();
+        assert!(err.to_string().contains("cycle"), "{err}");
     }
 }

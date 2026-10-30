@@ -150,6 +150,8 @@ mod tests {
             dither: Default::default(),
             selected_slice: None,
             tiles: false,
+            objects: &[],
+            copy_objects: false,
         }
     }
 

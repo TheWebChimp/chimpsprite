@@ -107,6 +107,7 @@ impl Editor {
     /// creada). Si no, el trazo quedaría colgado: al soltar, una herramienta bloqueada no se
     /// suelta.
     fn abort_stroke(&mut self) {
+        self.object_copy = false;
         self.cancel_gesture();
         self.tools.reset(self.active_tool());
         self.temp_eyedropper = false;
@@ -216,6 +217,8 @@ impl Editor {
             dither: self.options.dither,
             selected_slice: self.slice,
             tiles: false,
+            objects: self.selected_objects(),
+            copy_objects: self.object_copy,
         }
     }
 
@@ -247,6 +250,8 @@ impl Editor {
             dither: self.options.dither,
             selected_slice: None,
             tiles: true,
+            objects: &[],
+            copy_objects: false,
         }
     }
 
@@ -304,6 +309,7 @@ impl Editor {
     pub fn pointer_press(&mut self, world: (f32, f32), secondary: bool, alt: bool, slop: f32) {
         self.stop();
         self.tile_limit = false;
+        self.object_copy = false;
         // Con el lápiz, el clic derecho es el cuentagotas: el color de debajo pasa a ser el
         // primario (para seguir pintando con él). Con Shading no: ahí el derecho retrocede en la
         // rampa.
@@ -378,14 +384,28 @@ impl Editor {
             self.revision += 1;
             return;
         }
-        // Mover sin selección: cambia a la capa que tiene algo dibujado bajo el puntero.
-        // En modo Tiles Move se queda en la capa tilemap.
-        if self.active_tool() == ToolKind::Move
-            && self.selection.is_none()
-            && !self.tiles_mode()
-            && let Some(layer) = self.layer_at(p)
-        {
-            self.layer = layer;
+        // Mover sin selección: un objeto bajo el puntero queda seleccionado (con Shift se suma o
+        // se quita) y activa su capa; con Alt, el arrastre mueve copias. Sin objeto, cambia a la
+        // capa que tiene algo dibujado bajo el puntero. En modo Tiles Move se queda en la capa
+        // tilemap.
+        if self.active_tool() == ToolKind::Move && self.selection.is_none() && !self.tiles_mode() {
+            match self.object_at(world) {
+                Some((layer, object)) => {
+                    // Un clic sobre uno ya seleccionado conserva la selección (para arrastrarla
+                    // entera).
+                    let selected = layer == self.layer && self.selected_objects().contains(&object);
+                    if shift || !selected {
+                        self.select_object(layer, object, shift);
+                    }
+                    self.object_copy = alt;
+                }
+                None => {
+                    self.clear_object_selection();
+                    if let Some(layer) = self.layer_at(p) {
+                        self.layer = layer;
+                    }
+                }
+            }
         }
         self.with_tool(|tool, ctx| tool.press(ctx, p));
     }
@@ -516,7 +536,35 @@ impl Editor {
         }
         let out = self.with_tool(|tool, ctx| tool.release(ctx));
         self.temp_eyedropper = false;
+        if kind == ToolKind::Move && self.object_copy {
+            self.object_copy = false;
+            self.apply_object_copy(out);
+            return;
+        }
         self.apply_output(kind, out);
+    }
+
+    /// Suelta Alt+arrastrar con Move sobre objetos: las copias movidas quedan seleccionadas (un
+    /// paso de undo).
+    fn apply_object_copy(&mut self, out: ToolOutput) {
+        let Some(cmd) = out.command else {
+            return;
+        };
+        let ids = |e: &Self| -> Vec<cs_core::ObjectId> {
+            e.sprite()
+                .layer(e.layer)
+                .map(|l| l.objects.iter().map(|o| o.id).collect())
+                .unwrap_or_default()
+        };
+        let before = ids(self);
+        if self.named("Duplicate Objects", |e| e.execute(cmd)) {
+            let copies = ids(self)
+                .into_iter()
+                .filter(|o| !before.contains(o))
+                .collect();
+            self.set_selected_objects(copies);
+            self.revision += 1;
+        }
     }
 
     /// Simetría y recorte a la selección para las herramientas que pintan.
