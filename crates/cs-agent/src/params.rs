@@ -757,6 +757,30 @@ pub struct AddInstanceLayer {
     pub y: Option<i32>,
 }
 
+/// Turn layers (or the pixels inside a rectangle) into a library symbol, leaving an instance.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct ConvertToSymbol {
+    pub doc: String,
+    /// Host artboard (default: the first one).
+    pub artboard: Option<Ref>,
+    /// Layers to convert, by name or id.
+    pub layers: Vec<Ref>,
+    /// Optional rectangle [x, y, width, height]: only these pixels are cut (image layers only).
+    pub rect: Option<[i32; 4]>,
+    /// Symbol name.
+    pub name: String,
+    /// "graphic" (default) or "movie_clip".
+    #[serde(default)]
+    pub timing: Option<String>,
+}
+
+/// Move an artboard to the library or back onto the canvas.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct LibraryArtboard {
+    pub doc: String,
+    pub artboard: Ref,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct SetInstanceKey {
     pub doc: String,

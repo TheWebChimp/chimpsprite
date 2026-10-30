@@ -189,6 +189,25 @@ impl ChimpServer {
     }
 
     #[tool(
+        description = "Turn layers (or only the pixels inside a rectangle) into a library symbol (an artboard hidden from the canvas), leaving an instance layer that renders the same. The symbol takes the whole animation. timing: graphic (default) or movie_clip."
+    )]
+    fn convert_to_symbol(&self, Parameters(p): Parameters<ConvertToSymbol>) -> CallToolResult {
+        self.with(|s| s.convert_to_symbol(p))
+    }
+
+    #[tool(
+        description = "Move an artboard to the library (hidden from the canvas, still usable as a symbol). Fails if it is already there or is the last canvas artboard."
+    )]
+    fn move_to_library(&self, Parameters(p): Parameters<LibraryArtboard>) -> CallToolResult {
+        self.with(|s| s.move_to_library(p))
+    }
+
+    #[tool(description = "Move a library artboard back onto the canvas.")]
+    fn place_on_canvas(&self, Parameters(p): Parameters<LibraryArtboard>) -> CallToolResult {
+        self.with(|s| s.place_on_canvas(p))
+    }
+
+    #[tool(
         description = "Change an instance layer from a frame on (creates a keyframe there): position, flip, opacity, source artboard and timing (loop / once / single follow the parent's frames; movie_clip plays on its own clock)."
     )]
     fn set_instance_key(&self, Parameters(p): Parameters<SetInstanceKey>) -> CallToolResult {

@@ -174,6 +174,7 @@ fn describe_document(id: &str, d: &OpenDoc) -> Value {
             let obj = v.as_object_mut().expect("object");
             obj.insert("id".into(), json!(a.id.0));
             obj.insert("name".into(), json!(a.name));
+            obj.insert("in_library".into(), json!(a.in_library));
             obj.insert("position".into(), json!([a.position.0, a.position.1]));
             v
         })

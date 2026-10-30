@@ -1,5 +1,6 @@
 //! Artboards, capas, frames, tags, cels e inbetween.
 
+use cs_commands::symbol::{self, SymbolSource, SymbolTiming, convert_to_symbol};
 use cs_commands::{Command, DocCommand, LayerProps, ops};
 use cs_core::{
     AnimDirection, Artboard, BlendMode, Cel, Frame, GraphicPlay, LayerKind, Rgba, Tag, Timing,
@@ -26,6 +27,10 @@ fn blend(b: BlendArg) -> BlendMode {
         BlendArg::Subtract => BlendMode::Subtract,
         BlendArg::Difference => BlendMode::Difference,
     }
+}
+
+fn already_there() -> crate::error::AgentError {
+    invalid("already there, or the last canvas artboard")
 }
 
 fn direction(d: DirectionArg) -> AnimDirection {
@@ -468,6 +473,74 @@ impl Session {
         Ok(Reply::text(reply))
     }
 
+    // --- Símbolos ---
+
+    pub fn convert_to_symbol(&mut self, p: ConvertToSymbol) -> Result<Reply> {
+        let d = &self.doc(&p.doc)?.document;
+        let host = target::artboard(d, p.artboard.as_ref())?;
+        let sprite = &d.artboard(host).expect("resolved").sprite;
+        let layers = p
+            .layers
+            .iter()
+            .map(|r| target::layer(sprite, r))
+            .collect::<Result<Vec<_>>>()?;
+        let source = match p.rect {
+            Some([x, y, w, h]) => {
+                if w <= 0 || h <= 0 {
+                    return Err(invalid("rect needs a positive width and height"));
+                }
+                SymbolSource::Pixels {
+                    layers,
+                    selection: cs_core::Mask::from_rect(
+                        sprite.width,
+                        sprite.height,
+                        (x, y),
+                        (x + w - 1, y + h - 1),
+                    ),
+                }
+            }
+            None => SymbolSource::Layers(layers),
+        };
+        let timing = match p.timing.as_deref() {
+            None | Some("graphic") => SymbolTiming::Graphic,
+            Some("movie_clip") => SymbolTiming::MovieClip,
+            Some(other) => {
+                return Err(invalid(format!(
+                    "unknown timing '{other}': use graphic or movie_clip"
+                )));
+            }
+        };
+        let converted = convert_to_symbol(d, host, &source, &p.name, timing)
+            .map_err(|e| invalid(e.to_string()))?;
+        self.run(&p.doc, vec![converted.command])?;
+        Ok(Reply::text(format!(
+            "symbol {} with instance layer {}",
+            converted.symbol.0, converted.instance.0
+        )))
+    }
+
+    pub fn move_to_library(&mut self, p: LibraryArtboard) -> Result<Reply> {
+        let d = &self.doc(&p.doc)?.document;
+        let id = target::artboard(d, Some(&p.artboard))?;
+        let cmd = symbol::move_to_library(d, id).ok_or_else(already_there)?;
+        self.run(&p.doc, vec![cmd])?;
+        Ok(Reply::text(format!(
+            "Moved artboard {} to the library.",
+            id.0
+        )))
+    }
+
+    pub fn place_on_canvas(&mut self, p: LibraryArtboard) -> Result<Reply> {
+        let d = &self.doc(&p.doc)?.document;
+        let id = target::artboard(d, Some(&p.artboard))?;
+        let cmd = symbol::place_on_canvas(d, id).ok_or_else(already_there)?;
+        self.run(&p.doc, vec![cmd])?;
+        Ok(Reply::text(format!(
+            "Placed artboard {} on the canvas.",
+            id.0
+        )))
+    }
+
     pub fn set_instance_key(&mut self, p: SetInstanceKey) -> Result<Reply> {
         let d = &self.doc(&p.doc)?.document;
         let host = target::artboard(d, p.artboard.as_ref())?;
@@ -775,6 +848,46 @@ mod tests {
             .unwrap();
         assert!(
             s.remove_slice(p(json!({"doc": "d1", "name": "hit"})))
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn convert_to_symbol_moves_layers_into_the_library() {
+        let mut s = session(8, 8);
+        s.draw_pixels(p(json!({"doc": "d1",
+            "pixels": [{"x": 2, "y": 3, "color": "#ff0000"}]})))
+            .unwrap();
+        let render = |s: &Session| {
+            cs_render::render_frame(
+                &cs_render::materialize(
+                    &s.doc("d1").unwrap().document,
+                    s.sprite("d1", None).unwrap().1,
+                    0..1,
+                ),
+                0,
+            )
+        };
+        let before = render(&s);
+        let layer = s.sprite("d1", None).unwrap().1.layers[0].name.clone();
+        s.convert_to_symbol(p(json!({"doc": "d1", "layers": [layer], "name": "Dot"})))
+            .unwrap();
+        assert_eq!(render(&s), before);
+        let described = crate::ops::test_util::json(&s.describe(p(json!({"doc": "d1"}))).unwrap());
+        assert_eq!(described["artboards"][1]["name"], "Dot");
+        assert_eq!(described["artboards"][1]["in_library"], true);
+        assert_eq!(described["artboards"][0]["in_library"], false);
+        s.place_on_canvas(p(json!({"doc": "d1", "artboard": "Dot"})))
+            .unwrap();
+        let described = crate::ops::test_util::json(&s.describe(p(json!({"doc": "d1"}))).unwrap());
+        assert_eq!(described["artboards"][1]["in_library"], false);
+        assert!(
+            s.place_on_canvas(p(json!({"doc": "d1", "artboard": "Dot"})))
+                .is_err()
+        );
+        assert!(
+            s.convert_to_symbol(p(json!({"doc": "d1", "layers": [], "name": "X",
+                "timing": "bogus"})))
                 .is_err()
         );
     }
