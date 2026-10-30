@@ -49,7 +49,7 @@ impl Editor {
         if !self.execute_doc(c.command) {
             return Err(ConvertError::Empty);
         }
-        self.select_layer(c.instance);
+        self.select_layer(c.layer);
         self.deselect();
         self.library_selected = Some(c.symbol);
         Ok(c.symbol)
@@ -163,7 +163,7 @@ mod tests {
             .unwrap();
         assert!(e.selection.is_none());
         assert_eq!(e.library_selected, Some(symbol));
-        assert_eq!(e.sprite().layer(e.layer).unwrap().kind, LayerKind::Instance);
+        assert_eq!(e.sprite().layer(e.layer).unwrap().kind, LayerKind::Objects);
         // Solo (2,2) estaba en la marquesina: el símbolo mide 1×1.
         assert_eq!(e.document.artboard(symbol).unwrap().sprite.width, 1);
         // De vuelta en la capa 1, con marquesina: el siguiente nombre libre.

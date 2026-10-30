@@ -128,7 +128,8 @@ pub enum ConvertError {
 pub struct Converted {
     pub command: DocCommand,
     pub symbol: ArtboardId,
-    pub instance: LayerId,
+    /// La capa de objetos nueva, con un objeto que muestra el símbolo.
+    pub layer: LayerId,
 }
 
 /// Lo que `check_convert` revisó: qué se convierte y dónde.
@@ -252,14 +253,12 @@ pub fn convert_to_symbol(
     let symbol_id = doc.next_artboard_id();
     // Id libre en el host original, para no reusar el de una capa que se borra.
     let Command::AddLayer { mut layer, .. } =
-        ops::new_instance_layer(sprite, None, 0, symbol_id, name, (rect.0, rect.1))
+        ops::new_object_layer(sprite, None, 0, symbol_id, name, (rect.0, rect.1))
     else {
-        unreachable!("new_instance_layer devuelve AddLayer");
+        unreachable!("new_object_layer devuelve AddLayer");
     };
-    if let Some(track) = &mut layer.instance {
-        track.keys[0].timing = timing.timing();
-    }
-    let instance = layer.id;
+    layer.objects[0].track.keys[0].timing = timing.timing();
+    let layer_id = layer.id;
 
     let (mut host_cmds, keep, index, parent) = match removal {
         Some(removal) => {
@@ -316,7 +315,7 @@ pub fn convert_to_symbol(
     Ok(Converted {
         command,
         symbol: symbol_id,
-        instance,
+        layer: layer_id,
     })
 }
 
@@ -420,8 +419,8 @@ fn content_rect(
                     }
                 }
             }
-            LayerKind::Instance => {
-                for key in layer.instance.iter().flat_map(|t| t.keys.iter()) {
+            LayerKind::Objects => {
+                for key in layer.objects.iter().flat_map(|o| o.track.keys.iter()) {
                     let Some(src) = key.source.and_then(|s| doc.artboard(s)) else {
                         continue;
                     };
@@ -504,10 +503,12 @@ fn symbol_sprite(
         if let Some(mask) = &mut layer.mask {
             mask.position = (mask.position.0 + dx, mask.position.1 + dy);
         }
-        if let Some(track) = &mut layer.instance {
-            for key in &mut track.keys {
-                key.position = (key.position.0 + dx, key.position.1 + dy);
-            }
+        for key in layer
+            .objects
+            .iter_mut()
+            .flat_map(|o| o.track.keys.iter_mut())
+        {
+            key.position = (key.position.0 + dx, key.position.1 + dy);
         }
     }
     for cel in s.cels.values_mut() {

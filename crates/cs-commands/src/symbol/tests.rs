@@ -154,19 +154,19 @@ fn converting_layers_looks_the_same_in_both_timings() {
             host.layer(LayerId(1)).is_none(),
             "the layer moved into the symbol"
         );
-        let layer = host.layer(c.instance).unwrap();
+        let layer = host.layer(c.layer).unwrap();
         assert_eq!(
             (layer.kind, layer.name.as_str()),
-            (LayerKind::Instance, "Dot")
+            (LayerKind::Objects, "Dot")
         );
-        let key = layer.instance.as_ref().unwrap().keys[0];
+        let key = layer.objects[0].track.keys[0];
         assert_eq!(
             (key.frame, key.source, key.position),
             (0, Some(c.symbol), (2, 3))
         );
         assert_eq!(key.timing, timing.timing());
         // La instancia queda donde estaba la capa: debajo de la capa 2.
-        assert!(host.layer_index(c.instance) < host.layer_index(LayerId(2)));
+        assert!(host.layer_index(c.layer) < host.layer_index(LayerId(2)));
 
         undo.apply(&mut d).unwrap();
         assert_eq!(d, animated(), "one undo restores everything");
@@ -197,7 +197,7 @@ fn groups_keep_their_structure_and_empty_ones_go_away() {
     // En el host, la instancia ocupa el lugar del grupo, que ya no existe.
     let host = &d.artboard(ArtboardId(1)).unwrap().sprite;
     assert!(host.layer(LayerId(3)).is_none());
-    assert_eq!(host.layer(c.instance).unwrap().parent, None);
+    assert_eq!(host.layer(c.layer).unwrap().parent, None);
     assert!(host.is_valid_tree() && symbol.is_valid_tree());
 
     undo.apply(&mut d).unwrap();
@@ -225,7 +225,7 @@ fn a_group_that_stays_applies_only_once() {
     // El grupo sigue en el host (le queda la capa 2) y la instancia va adentro; el símbolo no
     // lo copia (si no, su opacidad se aplicaría dos veces).
     let host = &d.artboard(ArtboardId(1)).unwrap().sprite;
-    assert_eq!(host.layer(c.instance).unwrap().parent, Some(LayerId(3)));
+    assert_eq!(host.layer(c.layer).unwrap().parent, Some(LayerId(3)));
     assert!(host.is_valid_tree());
     let symbol = &d.artboard(c.symbol).unwrap().sprite;
     assert!(symbol.layer(LayerId(3)).is_none());
@@ -271,7 +271,7 @@ fn converting_an_instance_layer_nests_and_looks_the_same() {
     let outer = convert_to_symbol(
         &d,
         ArtboardId(1),
-        &SymbolSource::Layers(vec![first.instance]),
+        &SymbolSource::Layers(vec![first.layer]),
         "Outer",
         SymbolTiming::Graphic,
     )
@@ -482,7 +482,7 @@ fn an_instance_between_cut_layers_is_rejected() {
     crate::ops::move_layer(
         &s.clone(),
         LayerId(4),
-        crate::ops::LayerDrop::Below(first.instance),
+        crate::ops::LayerDrop::Below(first.layer),
     )
     .unwrap()
     .apply(s)
@@ -496,10 +496,10 @@ fn an_instance_between_cut_layers_is_rejected() {
     .unwrap();
     // Abajo a arriba: 4, instancia, 2. Con marquesina la instancia no se corta y quedaría tapada.
     assert_eq!(
-        convert_err(&d, &[4, first.instance.0, 2], true),
+        convert_err(&d, &[4, first.layer.0, 2], true),
         Some(ConvertError::Scattered)
     );
-    assert_eq!(convert_err(&d, &[4, first.instance.0, 2], false), None);
+    assert_eq!(convert_err(&d, &[4, first.layer.0, 2], false), None);
 }
 
 #[test]

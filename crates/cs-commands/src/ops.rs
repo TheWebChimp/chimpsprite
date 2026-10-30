@@ -4,8 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use cs_core::{
-    ArtboardId, Cel, ColorMode, Image, ImageId, InstanceKey, Layer, LayerId, LayerKind, LayerMask,
-    MAX_TILESET_TILES, Mask, PixelBuffer, PixelValue, Sprite, Tile, TileGrid, Tileset,
+    ArtboardId, Cel, ColorMode, Image, ImageId, InstanceKey, InstanceTrack, Layer, LayerId,
+    LayerKind, LayerMask, MAX_TILESET_TILES, Mask, ObjectId, PixelBuffer, PixelValue, SceneObject,
+    Sprite, Tile, TileGrid, Tileset,
 };
 
 use crate::Command;
@@ -24,7 +25,7 @@ pub fn new_layer(sprite: &Sprite, above: Option<LayerId>, kind: LayerKind) -> Co
     let id = sprite.next_layer_id();
     let prefix = match kind {
         LayerKind::Group => "Group",
-        LayerKind::Instance => "Instance",
+        LayerKind::Objects => "Objects",
         LayerKind::Tilemap => "Tilemap",
         LayerKind::Image => "Layer",
     };
@@ -38,8 +39,9 @@ pub fn new_layer(sprite: &Sprite, above: Option<LayerId>, kind: LayerKind) -> Co
     Command::AddLayer { index, layer }
 }
 
-/// Capa de instancia de `source` sobre `above`, con una key en `frame`.
-pub fn new_instance_layer(
+/// Capa de objetos sobre `above` con un objeto que muestra `source`, con una key en `frame`.
+/// La capa y su objeto se llaman `name`.
+pub fn new_object_layer(
     sprite: &Sprite,
     above: Option<LayerId>,
     frame: usize,
@@ -47,46 +49,71 @@ pub fn new_instance_layer(
     name: &str,
     position: (i32, i32),
 ) -> Command {
-    let Command::AddLayer { index, mut layer } = new_layer(sprite, above, LayerKind::Instance)
+    let Command::AddLayer { index, mut layer } = new_layer(sprite, above, LayerKind::Objects)
     else {
         unreachable!("new_layer devuelve AddLayer");
     };
     layer.name = name.to_string();
-    layer.instance = Some(cs_core::InstanceTrack {
-        keys: vec![InstanceKey::new(frame, source, position)],
-    });
+    layer.objects = vec![SceneObject {
+        id: ObjectId(1),
+        name: name.to_string(),
+        track: InstanceTrack {
+            keys: vec![InstanceKey::new(frame, source, position)],
+        },
+    }];
     Command::AddLayer { index, layer }
 }
 
-/// Cambia con `f` la key vigente de `layer` en `frame`; si `frame` no es keyframe, la copia ahí
-/// primero. `None` si no hay key vigente o nada cambia.
-pub fn update_instance_key(
+/// Cambia con `f` la key vigente de `object` (de `layer`) en `frame`; si `frame` no es keyframe,
+/// la copia ahí primero. `None` si no hay key vigente o nada cambia.
+pub fn update_object_key(
     sprite: &Sprite,
     layer: LayerId,
+    object: ObjectId,
     frame: usize,
     f: impl FnOnce(&mut InstanceKey),
 ) -> Option<Command> {
-    let track = sprite.layer(layer)?.instance.as_ref()?;
+    let objects = &sprite.layer(layer)?.objects;
+    let i = objects.iter().position(|o| o.id == object)?;
+    let track = &objects[i].track;
     let mut key = *track.key_at(frame)?;
     key.frame = frame;
     f(&mut key);
-    let mut new = track.clone();
-    new.set_key(key);
-    (new != *track).then_some(Command::SetInstanceTrack { layer, track: new })
+    let mut new = objects.clone();
+    new[i].track.set_key(key);
+    (new[i].track != *track).then_some(Command::SetObjects {
+        layer,
+        objects: new,
+    })
 }
 
-/// Quita la key que empieza en `frame`. Si es la única, quita la capa.
-pub fn remove_instance_key(sprite: &Sprite, layer: LayerId, frame: usize) -> Option<Command> {
-    let track = sprite.layer(layer)?.instance.as_ref()?;
+/// Quita la key de `object` que empieza en `frame`. Si es la única, quita el objeto; y si era el
+/// único objeto, quita la capa.
+pub fn remove_object_key(
+    sprite: &Sprite,
+    layer: LayerId,
+    object: ObjectId,
+    frame: usize,
+) -> Option<Command> {
+    let objects = &sprite.layer(layer)?.objects;
+    let i = objects.iter().position(|o| o.id == object)?;
+    let track = &objects[i].track;
     if !track.keys.iter().any(|k| k.frame == frame) {
         return None;
     }
+    let mut new = objects.clone();
     if track.keys.len() == 1 {
-        return remove_layer_tree(sprite, layer);
+        if objects.len() == 1 {
+            return remove_layer_tree(sprite, layer);
+        }
+        new.remove(i);
+    } else {
+        new[i].track.remove_key(frame);
     }
-    let mut new = track.clone();
-    new.remove_key(frame);
-    Some(Command::SetInstanceTrack { layer, track: new })
+    Some(Command::SetObjects {
+        layer,
+        objects: new,
+    })
 }
 
 /// Capa tilemap nueva sobre `above` que dibuja con el tileset `tileset`.

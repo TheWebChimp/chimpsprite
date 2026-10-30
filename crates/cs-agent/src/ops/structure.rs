@@ -471,7 +471,7 @@ impl Session {
             p.y.unwrap_or((sprite.height as i32 - src.sprite.height as i32) / 2);
         let name = p.name.clone().unwrap_or_else(|| src.name.clone());
         // Arriba de todo, en el nivel raíz (no dentro del grupo de la última capa).
-        let cmd = ops::new_instance_layer(sprite, None, p.frame, source, &name, (x, y));
+        let cmd = ops::new_object_layer(sprite, None, p.frame, source, &name, (x, y));
         let reply = format!("Placed '{}' as layer '{name}'.", src.name);
         self.run_on(&p.doc, host, vec![cmd])?;
         Ok(Reply::text(reply))
@@ -524,7 +524,7 @@ impl Session {
         self.run(&p.doc, vec![converted.command])?;
         Ok(Reply::text(format!(
             "symbol {} with instance layer {}",
-            converted.symbol.0, converted.instance.0
+            converted.symbol.0, converted.layer.0
         )))
     }
 
@@ -561,7 +561,9 @@ impl Session {
         let sprite = &d.artboard(host).expect("resolved").sprite;
         let layer = target::layer(sprite, &p.layer)?;
         target::frame(sprite, p.frame)?;
-        let cmd = ops::update_instance_key(sprite, layer, p.frame, |k| {
+        // Por ahora actúa sobre el primer objeto de la capa.
+        let object = first_object(sprite, layer);
+        let cmd = object.and_then(|object| ops::update_object_key(sprite, layer, object, p.frame, |k| {
             if let Some(s) = source {
                 k.source = Some(s);
             }
@@ -590,7 +592,7 @@ impl Session {
                 },
                 (None, Timing::MovieClip { .. }) => Timing::MovieClip { first_frame: first },
             };
-        })
+        }))
         .ok_or_else(|| {
             invalid(
                 "not an instance layer, no keyframe at or before that frame, or nothing changed",
@@ -606,7 +608,8 @@ impl Session {
     pub fn remove_instance_key(&mut self, p: RemoveInstanceKey) -> Result<Reply> {
         let (host, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         let layer = target::layer(sprite, &p.layer)?;
-        let cmd = ops::remove_instance_key(sprite, layer, p.frame)
+        let cmd = first_object(sprite, layer)
+            .and_then(|object| ops::remove_object_key(sprite, layer, object, p.frame))
             .ok_or_else(|| invalid(format!("no instance keyframe at frame {}", p.frame)))?;
         self.run_on(&p.doc, host, vec![cmd])?;
         Ok(Reply::text(format!(
@@ -753,6 +756,11 @@ impl Session {
             p.to + p.count
         )))
     }
+}
+
+/// El primer objeto de una capa de objetos (las herramientas de instancia actúan sobre él).
+fn first_object(sprite: &cs_core::Sprite, layer: cs_core::LayerId) -> Option<cs_core::ObjectId> {
+    sprite.layer(layer)?.objects.first().map(|o| o.id)
 }
 
 #[cfg(test)]
@@ -966,12 +974,15 @@ mod tests {
         assert_eq!(red(&s, 6, 4), 255, "x=5 and flipped: the dot lands on 6");
         let described = crate::ops::test_util::json(&s.describe(p(json!({"doc": "d1"}))).unwrap());
         let layer = &described["artboards"][0]["layers_bottom_to_top"][1];
-        assert_eq!(layer["kind"], "instance");
+        assert_eq!(layer["kind"], "objects");
+        assert_eq!(layer["objects"][0]["id"], 1);
+        assert_eq!(layer["objects"][0]["name"], "Coin");
+        assert_eq!(layer["objects"][0]["keys"].as_array().unwrap().len(), 2);
         assert_eq!(layer["instance"]["keys"].as_array().unwrap().len(), 2);
         let image = &described["artboards"][0]["layers_bottom_to_top"][0];
         assert!(
-            image.get("instance").is_none(),
-            "only instance layers say so"
+            image.get("instance").is_none() && image.get("objects").is_none(),
+            "only object layers say so"
         );
         s.remove_instance_key(p(json!({"doc": "d1", "layer": "Coin", "frame": 1})))
             .unwrap();
@@ -1011,7 +1022,7 @@ mod tests {
         // Verify the layer's source is unchanged
         let (_, coin_sprite_after) = s.sprite("d1", Some(&Ref::Name("coin".into()))).unwrap();
         let layer = coin_sprite_after.layer(gem_layer).expect("layer exists");
-        let instance = layer.instance.as_ref().expect("is instance layer");
+        let instance = &layer.objects.first().expect("is an object layer").track;
         let key = instance.key_at(0).expect("key at frame 0");
         let gem_id = s
             .doc("d1")

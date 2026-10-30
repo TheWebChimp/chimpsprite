@@ -617,7 +617,7 @@ fn status_notices(
     let on_instance = editor
         .sprite()
         .layer(editor.layer)
-        .is_some_and(|l| l.kind == cs_core::LayerKind::Instance);
+        .is_some_and(|l| l.kind == cs_core::LayerKind::Objects);
     if on_instance && editor.active_tool().paints() {
         out.push(("Instance layer: edit the source artboard".to_owned(), false));
     }

@@ -68,7 +68,7 @@ pub fn image_layer(sprite: &Sprite, r: Option<&Ref>) -> Result<LayerId> {
     if l.kind != LayerKind::Image {
         let what = match l.kind {
             LayerKind::Group => "a group",
-            LayerKind::Instance => "an instance layer",
+            LayerKind::Objects => "an object layer",
             LayerKind::Tilemap => "a tilemap layer (use set_tiles or set_tile_pixels)",
             LayerKind::Image => unreachable!("checked above"),
         };

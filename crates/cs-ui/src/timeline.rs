@@ -999,7 +999,7 @@ fn layer_row(
             LayerKind::Group | LayerKind::Tilemap if grid.skin.is_some() => layer.name.clone(),
             LayerKind::Group => format!("📁 {}", layer.name),
             // El mismo ícono que la herramienta Artboard: la capa muestra otro artboard.
-            LayerKind::Instance => format!("🖼 {}", layer.name),
+            LayerKind::Objects => format!("🖼 {}", layer.name),
             // Grilla de tiles.
             LayerKind::Tilemap => format!("⊞ {}", layer.name),
             // La de referencia (no se exporta) lo dice.
@@ -1133,8 +1133,13 @@ fn layer_row(
         } else {
             (2.0, 4.5)
         };
-        if let Some(track) = sprite.layer(id).and_then(|l| l.instance.as_ref()) {
-            // Instancia: ◆ en cada keyframe y una barra mientras dura.
+        // El objeto que se edita (por ahora, el primero de la capa).
+        if let Some(track) = sprite
+            .layer(id)
+            .and_then(|l| l.objects.first())
+            .map(|o| &o.track)
+        {
+            // Objeto: ◆ en cada keyframe y una barra mientras dura.
             let color = grid.text(ui);
             if let Some(key) = track.key_at(f) {
                 let stroke = Stroke::new(thick, color);
@@ -1230,14 +1235,14 @@ fn layer_row(
             editor.set_frame(f);
         }
         menus::context_menu(&response, |ui| {
-            if layer.kind == LayerKind::Instance {
+            if layer.kind == LayerKind::Objects {
                 let is_key = editor.is_instance_keyframe(id, f);
                 // Antes de la primera key no hay nada que copiar.
                 let has_key = editor
                     .sprite()
                     .layer(id)
-                    .and_then(|l| l.instance.as_ref())
-                    .is_some_and(|t| t.key_at(f).is_some());
+                    .and_then(|l| l.objects.first())
+                    .is_some_and(|o| o.track.key_at(f).is_some());
                 if ui
                     .add_enabled(has_key && !is_key, menus::plain("Insert Keyframe"))
                     .clicked()

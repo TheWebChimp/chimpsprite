@@ -695,7 +695,7 @@ impl CanvasView {
                     && self.all_rendered == Some(editor.revision)
                     && artboard.id != editor.active
                     && self.textures.contains_key(&artboard.id)
-                    && !sprite.layers.iter().any(|l| l.instance.is_some());
+                    && !sprite.layers.iter().any(|l| !l.objects.is_empty());
                 if unchanged {
                     skipped = true;
                     continue;

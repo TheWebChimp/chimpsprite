@@ -1,7 +1,7 @@
 //! Instancias de artboards (símbolos) desde el editor y el panel.
 
 use cs_commands::{Command, DocCommand, ops};
-use cs_core::{ArtboardId, InstanceKey, LayerId};
+use cs_core::{ArtboardId, InstanceKey, LayerId, ObjectId};
 
 use crate::editor::Editor;
 
@@ -41,7 +41,7 @@ impl Editor {
         (library, canvas)
     }
 
-    /// Nueva capa de instancia de `source` sobre la capa actual, centrada, con key en el frame actual.
+    /// Nueva capa de objetos con un objeto de `source` sobre la capa actual, centrada, con key en el frame actual.
     pub fn add_instance_layer(&mut self, source: ArtboardId) {
         let Some(src) = self.document.artboard(source) else {
             return;
@@ -51,7 +51,7 @@ impl Editor {
             (sprite.width as i32 - src.sprite.width as i32) / 2,
             (sprite.height as i32 - src.sprite.height as i32) / 2,
         );
-        let cmd = ops::new_instance_layer(
+        let cmd = ops::new_object_layer(
             sprite,
             Some(self.layer),
             self.frame,
@@ -61,14 +61,14 @@ impl Editor {
         );
         let id = match &cmd {
             Command::AddLayer { layer, .. } => layer.id,
-            _ => unreachable!("new_instance_layer devuelve AddLayer"),
+            _ => unreachable!("new_object_layer devuelve AddLayer"),
         };
         if self.execute(cmd) {
             self.layer = id;
         }
     }
 
-    /// Suelta el símbolo `source` en el punto `world` del lienzo: crea una capa de instancia en el
+    /// Suelta el símbolo `source` en el punto `world` del lienzo: crea una capa de objetos en el
     /// artboard de ese punto (en modo símbolo, solo el que se edita cuenta).
     pub fn drop_symbol(
         &mut self,
@@ -97,10 +97,10 @@ impl Editor {
         // El frame que se ve en ese artboard (puede no ser el activo y tener menos frames).
         let last = board.sprite.frames.len().saturating_sub(1);
         let frame = self.frame_of(target).min(last);
-        let cmd = ops::new_instance_layer(&board.sprite, above, frame, source, &src.name, local);
+        let cmd = ops::new_object_layer(&board.sprite, above, frame, source, &src.name, local);
         let id = match &cmd {
             Command::AddLayer { layer, .. } => layer.id,
-            _ => unreachable!("new_instance_layer devuelve AddLayer"),
+            _ => unreachable!("new_object_layer devuelve AddLayer"),
         };
         if self.execute_doc(DocCommand::OnArtboard { id: target, cmd }) {
             self.activate(target);
@@ -109,20 +109,34 @@ impl Editor {
         Ok(())
     }
 
-    /// Key vigente de la capa actual en el frame actual (si es una capa de instancia).
+    /// El objeto que se edita en la capa actual. Por ahora, el primero de la capa.
+    pub fn current_object(&self) -> Option<ObjectId> {
+        self.object_of(self.layer)
+    }
+
+    /// El objeto que se edita en `layer` (el primero, por ahora).
+    fn object_of(&self, layer: LayerId) -> Option<ObjectId> {
+        self.sprite().layer(layer)?.objects.first().map(|o| o.id)
+    }
+
+    /// Key vigente del objeto actual en el frame actual (si la capa es de objetos).
     pub fn instance_key(&self) -> Option<InstanceKey> {
-        let track = self.sprite().layer(self.layer)?.instance.as_ref()?;
-        track.key_at(self.frame).copied()
+        let object = self.current_object()?;
+        let layer = self.sprite().layer(self.layer)?;
+        layer.object(object)?.track.key_at(self.frame).copied()
     }
 
     pub fn is_instance_keyframe(&self, layer: LayerId, frame: usize) -> bool {
+        let Some(object) = self.object_of(layer) else {
+            return false;
+        };
         self.sprite()
             .layer(layer)
-            .and_then(|l| l.instance.as_ref())
-            .is_some_and(|t| t.keys.iter().any(|k| k.frame == frame))
+            .and_then(|l| l.object(object))
+            .is_some_and(|o| o.track.keys.iter().any(|k| k.frame == frame))
     }
 
-    /// Cambia la key vigente de la capa actual; si el frame actual no es keyframe, crea uno.
+    /// Cambia la key vigente del objeto actual; si el frame actual no es keyframe, crea uno.
     pub fn update_instance_key(&mut self, f: impl FnOnce(&mut InstanceKey)) {
         self.update_instance_key_grouped(None, f);
     }
@@ -133,7 +147,11 @@ impl Editor {
         group: Option<u64>,
         f: impl FnOnce(&mut InstanceKey),
     ) {
-        if let Some(cmd) = ops::update_instance_key(self.sprite(), self.layer, self.frame, f) {
+        let Some(object) = self.current_object() else {
+            return;
+        };
+        if let Some(cmd) = ops::update_object_key(self.sprite(), self.layer, object, self.frame, f)
+        {
             match group {
                 Some(g) => self.execute_grouped(cmd, g),
                 None => self.execute(cmd),
@@ -143,13 +161,19 @@ impl Editor {
 
     /// Keyframe en `frame` copiando el vigente.
     pub fn insert_instance_key(&mut self, layer: LayerId, frame: usize) {
-        if let Some(cmd) = ops::update_instance_key(self.sprite(), layer, frame, |_| {}) {
+        let Some(object) = self.object_of(layer) else {
+            return;
+        };
+        if let Some(cmd) = ops::update_object_key(self.sprite(), layer, object, frame, |_| {}) {
             self.execute(cmd);
         }
     }
 
     pub fn remove_instance_key(&mut self, layer: LayerId, frame: usize) {
-        if let Some(cmd) = ops::remove_instance_key(self.sprite(), layer, frame) {
+        let Some(object) = self.object_of(layer) else {
+            return;
+        };
+        if let Some(cmd) = ops::remove_object_key(self.sprite(), layer, object, frame) {
             self.execute(cmd);
         }
     }
@@ -203,7 +227,7 @@ mod tests {
         e.drop_symbol(symbol, (5, 6)).unwrap();
         assert_eq!(e.sprite().layers.len(), layers + 1);
         let layer = e.sprite().layer(e.layer).unwrap();
-        assert_eq!(layer.instance.as_ref().unwrap().keys[0].position, (5, 6));
+        assert_eq!(layer.objects[0].track.keys[0].position, (5, 6));
         assert!(
             e.drop_symbol(symbol, (500, 500)).is_err(),
             "outside every artboard"
@@ -227,7 +251,7 @@ mod tests {
         e.drop_symbol(symbol, (at.0 + 1, at.1 + 1)).unwrap();
         assert_eq!(e.active, ArtboardId(2));
         let layer = e.sprite().layer(e.layer).unwrap();
-        let keys = &layer.instance.as_ref().unwrap().keys;
+        let keys = &layer.objects[0].track.keys;
         assert_eq!((keys[0].frame, keys[0].position), (0, (1, 1)));
     }
 
@@ -259,7 +283,8 @@ mod tests {
         );
         e.add_instance_layer(ArtboardId(2));
         let layer = e.sprite().layer(e.layer).unwrap().clone();
-        assert_eq!(layer.kind, LayerKind::Instance);
+        assert_eq!(layer.kind, LayerKind::Objects);
+        assert_eq!(e.current_object(), Some(layer.objects[0].id));
         assert_eq!(e.instance_key().unwrap().position, (6, 6), "centered");
         // El artboard 2 ya no puede instanciar al 1.
         e.activate(ArtboardId(2));
@@ -286,7 +311,7 @@ mod tests {
         let a = e.layer;
         e.add_instance_layer(ArtboardId(2));
         let b = e.layer;
-        let track = |e: &Editor, l| e.sprite().layer(l).unwrap().instance.clone();
+        let track = |e: &Editor, l| e.sprite().layer(l).unwrap().objects.clone();
         let (a0, b0) = (track(&e, a), track(&e, b));
         e.select_layer(a);
         e.update_instance_key_grouped(Some(7), |k| k.position = (1, 1));
@@ -315,13 +340,13 @@ mod tests {
         let mut e = editor();
         e.add_instance_layer(ArtboardId(2));
         e.set_frame(1);
-        let original = e.sprite().layer(e.layer).unwrap().instance.clone();
+        let original = e.sprite().layer(e.layer).unwrap().objects.clone();
         for x in 1..4 {
             e.update_instance_key_grouped(Some(7), |k| k.position = (x, 0));
         }
         assert_eq!(e.instance_key().unwrap().position, (3, 0));
         e.undo();
-        assert_eq!(e.sprite().layer(e.layer).unwrap().instance, original);
+        assert_eq!(e.sprite().layer(e.layer).unwrap().objects, original);
         // Un grupo nuevo (o el mismo tras end_group) es otro paso.
         e.update_instance_key_grouped(Some(7), |k| k.position = (5, 0));
         e.end_group();
@@ -332,6 +357,6 @@ mod tests {
         e.undo();
         assert_eq!(e.instance_key().unwrap().position, (5, 0));
         e.undo();
-        assert_eq!(e.sprite().layer(e.layer).unwrap().instance, original);
+        assert_eq!(e.sprite().layer(e.layer).unwrap().objects, original);
     }
 }

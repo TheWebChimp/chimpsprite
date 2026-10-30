@@ -49,12 +49,15 @@ fn move_output(ctx: &ToolContext, dx: i32, dy: i32) -> ToolOutput {
             _ => ToolOutput::default(),
         };
     }
-    if sprite
+    if let Some(layer) = sprite
         .layer(ctx.layer)
-        .is_some_and(|l| l.kind == cs_core::LayerKind::Instance)
+        .filter(|l| l.kind == cs_core::LayerKind::Objects)
     {
-        let moved = cs_commands::ops::update_instance_key(sprite, ctx.layer, ctx.frame, |k| {
-            k.position = (k.position.0 + dx, k.position.1 + dy);
+        // Por ahora se mueve el primer objeto de la capa.
+        let moved = layer.objects.first().and_then(|o| {
+            cs_commands::ops::update_object_key(sprite, ctx.layer, o.id, ctx.frame, |k| {
+                k.position = (k.position.0 + dx, k.position.1 + dy);
+            })
         });
         return ToolOutput {
             command: moved,
@@ -125,7 +128,8 @@ mod tests {
     use super::*;
     use crate::test_util::*;
     use cs_core::{
-        ArtboardId, Frame, InstanceKey, InstanceTrack, LayerId, LayerKind, Mask, Sprite,
+        ArtboardId, Frame, InstanceKey, InstanceTrack, LayerId, LayerKind, Mask, ObjectId,
+        SceneObject, Sprite,
     };
 
     fn with_dot() -> Sprite {
@@ -156,7 +160,7 @@ mod tests {
     }
 
     #[test]
-    fn moves_instance_key_creating_one_on_the_current_frame() {
+    fn moves_the_first_object_key_creating_one_on_the_current_frame() {
         let mut s = sprite();
         Command::AddFrame {
             index: 1,
@@ -165,10 +169,15 @@ mod tests {
         .apply(&mut s)
         .unwrap();
         let mut layer = cs_core::Layer::new_image(LayerId(2), "i");
-        layer.kind = LayerKind::Instance;
-        layer.instance = Some(InstanceTrack {
-            keys: vec![InstanceKey::new(0, ArtboardId(2), (1, 1))],
-        });
+        layer.kind = LayerKind::Objects;
+        let object = |id| SceneObject {
+            id: ObjectId(id),
+            name: "i".into(),
+            track: InstanceTrack {
+                keys: vec![InstanceKey::new(0, ArtboardId(2), (1, 1))],
+            },
+        };
+        layer.objects = vec![object(1), object(2)];
         s.layers.push(layer);
         let out = {
             let mut c = ctx(&s);
@@ -177,9 +186,11 @@ mod tests {
             gesture(&c, (0, 0), (2, 3))
         };
         out.command.unwrap().apply(&mut s).unwrap();
-        let track = s.layer(LayerId(2)).unwrap().instance.clone().unwrap();
+        let layer = s.layer(LayerId(2)).unwrap();
+        let track = &layer.objects[0].track;
         assert_eq!(track.key_at(0).unwrap().position, (1, 1));
         assert_eq!(track.key_at(1).unwrap().position, (3, 4));
+        assert_eq!(layer.objects[1].track.keys.len(), 1, "the second one stays");
     }
 
     #[test]

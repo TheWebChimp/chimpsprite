@@ -32,13 +32,16 @@ pub enum BlendMode {
 pub enum LayerKind {
     Image,
     Group,
-    /// Muestra otro artboard (un símbolo) con su propia línea de tiempo; no tiene cels.
-    Instance,
+    /// Objetos que muestran otros artboards (símbolos), cada uno con su propia línea de tiempo;
+    /// no tiene cels. Los archivos viejos la llaman `Instance`.
+    #[serde(alias = "Instance")]
+    Objects,
     /// Grilla de tiles de un tileset del sprite; sus cels apuntan a `Sprite::tilemaps`.
     Tilemap,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(from = "LayerRepr")]
 pub struct Layer {
     pub id: LayerId,
     pub name: String,
@@ -55,9 +58,9 @@ pub struct Layer {
     /// abajo, del mismo padre, que no recorta).
     #[serde(default)]
     pub clip: bool,
-    /// Keys de la instancia; solo en capas `LayerKind::Instance`.
+    /// Objetos de la capa, de abajo hacia arriba; solo en capas `LayerKind::Objects`.
     #[serde(default)]
-    pub instance: Option<crate::InstanceTrack>,
+    pub objects: Vec<crate::SceneObject>,
     /// Índice en `Sprite::tilesets`; solo en capas `LayerKind::Tilemap`.
     #[serde(default)]
     pub tileset: Option<u32>,
@@ -65,6 +68,62 @@ pub struct Layer {
     /// exportar.
     #[serde(default)]
     pub reference: bool,
+}
+
+/// Cómo se lee una `Layer`: además de `objects` acepta el `instance` de las capas de instancia
+/// viejas (una instancia por capa), que pasa a ser el único objeto.
+#[derive(Deserialize)]
+struct LayerRepr {
+    id: LayerId,
+    name: String,
+    kind: LayerKind,
+    parent: Option<LayerId>,
+    visible: bool,
+    locked: bool,
+    opacity: u8,
+    blend: BlendMode,
+    #[serde(default)]
+    mask: Option<LayerMask>,
+    #[serde(default)]
+    clip: bool,
+    #[serde(default)]
+    objects: Vec<crate::SceneObject>,
+    #[serde(default)]
+    instance: Option<crate::InstanceTrack>,
+    #[serde(default)]
+    tileset: Option<u32>,
+    #[serde(default)]
+    reference: bool,
+}
+
+impl From<LayerRepr> for Layer {
+    fn from(r: LayerRepr) -> Self {
+        let mut objects = r.objects;
+        if objects.is_empty()
+            && let Some(track) = r.instance
+        {
+            objects.push(crate::SceneObject {
+                id: crate::ObjectId(1),
+                name: r.name.clone(),
+                track,
+            });
+        }
+        Self {
+            id: r.id,
+            name: r.name,
+            kind: r.kind,
+            parent: r.parent,
+            visible: r.visible,
+            locked: r.locked,
+            opacity: r.opacity,
+            blend: r.blend,
+            mask: r.mask,
+            clip: r.clip,
+            objects,
+            tileset: r.tileset,
+            reference: r.reference,
+        }
+    }
 }
 
 impl Layer {
@@ -80,10 +139,30 @@ impl Layer {
             blend: BlendMode::Normal,
             mask: None,
             clip: false,
-            instance: None,
+            objects: Vec::new(),
             tileset: None,
             reference: false,
         }
+    }
+
+    pub fn object(&self, id: crate::ObjectId) -> Option<&crate::SceneObject> {
+        self.objects.iter().find(|o| o.id == id)
+    }
+
+    pub fn object_mut(&mut self, id: crate::ObjectId) -> Option<&mut crate::SceneObject> {
+        self.objects.iter_mut().find(|o| o.id == id)
+    }
+
+    /// Id para un objeto nuevo: uno más que el mayor de la capa (desde 1).
+    pub fn next_object_id(&self) -> crate::ObjectId {
+        crate::ObjectId(self.objects.iter().map(|o| o.id.0).max().unwrap_or(0) + 1)
+    }
+
+    /// Todas las fuentes de todas las keys de todos los objetos (con repetidos).
+    pub fn object_sources(&self) -> impl Iterator<Item = crate::ArtboardId> + '_ {
+        self.objects
+            .iter()
+            .flat_map(|o| o.track.keys.iter().filter_map(|k| k.source))
     }
 }
 

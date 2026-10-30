@@ -88,10 +88,12 @@ pub fn missing_tiles_note(names: &[String]) -> String {
 /// ¿Guardar en este formato convierte instancias en píxeles?
 pub fn bakes_instances(doc: &Document, file_name: &str) -> bool {
     kind_of(file_name) == Some(FileKind::Aseprite)
-        && doc
-            .artboards
-            .iter()
-            .any(|a| a.sprite.layers.iter().any(|l| l.instance.is_some()))
+        && doc.artboards.iter().any(|a| {
+            a.sprite
+                .layers
+                .iter()
+                .any(|l| l.kind == cs_core::LayerKind::Objects)
+        })
 }
 
 /// Nombre sin extensión.
@@ -214,7 +216,7 @@ mod tests {
             guides: Vec::new(),
             symmetry: Default::default(),
         });
-        cs_commands::ops::new_instance_layer(
+        cs_commands::ops::new_object_layer(
             &d.artboards[0].sprite.clone(),
             None,
             0,

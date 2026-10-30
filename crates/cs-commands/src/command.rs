@@ -2,9 +2,8 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use cs_core::{
-    ArtboardId, BlendMode, Cel, Frame, GridSettings, Image, ImageId, InstanceKey, InstanceTrack,
-    Layer, LayerId, LayerKind, LayerMask, Palette, PixelValue, Slice, Sprite, Tag, TileGrid,
-    Tileset,
+    ArtboardId, BlendMode, Cel, Frame, GridSettings, Image, ImageId, InstanceKey, Layer, LayerId,
+    LayerKind, LayerMask, Palette, PixelValue, SceneObject, Slice, Sprite, Tag, TileGrid, Tileset,
 };
 use serde::{Deserialize, Serialize};
 
@@ -40,8 +39,10 @@ pub enum CmdError {
     InvalidLayerTree,
     #[error("layer {0:?} has no mask")]
     NoMask(LayerId),
-    #[error("layer {0:?} is not an instance layer")]
-    NotInstanceLayer(LayerId),
+    #[error("layer {0:?} is not an object layer")]
+    NotObjectLayer(LayerId),
+    #[error("object id {0:?} is repeated in the layer")]
+    DuplicateObject(cs_core::ObjectId),
     #[error("an artboard cannot contain itself")]
     InstanceCycle,
     #[error("tileset {0} is used by a layer")]
@@ -120,10 +121,10 @@ pub enum Command {
     SetTags(Vec<Tag>),
     /// Reemplaza todos los slices (hitboxes, pivotes).
     SetSlices(Vec<Slice>),
-    /// Reemplaza las keys de una capa de instancia.
-    SetInstanceTrack {
+    /// Reemplaza los objetos (y sus keys) de una capa de objetos.
+    SetObjects {
         layer: LayerId,
-        track: InstanceTrack,
+        objects: Vec<SceneObject>,
     },
     /// Primitiva: agrega (`index == len`), reemplaza (`index < len`) o quita (`None`) un tileset.
     /// Solo se quita el último (quitar otro correría los índices de las capas) y solo si ninguna
@@ -213,21 +214,7 @@ impl Command {
                 &mut doc.slices,
                 slices.clone(),
             ))),
-            Command::SetInstanceTrack { layer, track } => {
-                let l = doc
-                    .layer_mut(*layer)
-                    .ok_or(CmdError::LayerNotFound(*layer))?;
-                if l.kind != LayerKind::Instance {
-                    return Err(CmdError::NotInstanceLayer(*layer));
-                }
-                let mut track = track.clone();
-                track.normalize();
-                let old = l.instance.replace(track).unwrap_or_default();
-                Ok(Command::SetInstanceTrack {
-                    layer: *layer,
-                    track: old,
-                })
-            }
+            Command::SetObjects { layer, objects } => set_objects(doc, *layer, objects),
             Command::SetTileset { index, tileset } => set_tileset(doc, *index, tileset.as_ref()),
             Command::SetTilemap { id, grid } => {
                 let old = match grid {
@@ -285,7 +272,7 @@ impl Command {
             Command::TrimToCanvas => "Trim",
             Command::SetTags(_) => "Tags",
             Command::SetSlices(_) => "Slices",
-            Command::SetInstanceTrack { .. } => "Instance",
+            Command::SetObjects { .. } => "Objects",
             Command::SetTileset { .. } => "Tileset",
             Command::SetTilemap { .. } => "Tilemap",
             Command::SetGrid(_) => "Grid",
@@ -327,9 +314,9 @@ fn resize_canvas(
         mask.position.0 += offset.0;
         mask.position.1 += offset.1;
     }
-    // Las instancias se mueven con el contenido.
-    for track in doc.layers.iter_mut().filter_map(|l| l.instance.as_mut()) {
-        for key in &mut track.keys {
+    // Los objetos se mueven con el contenido.
+    for object in doc.layers.iter_mut().flat_map(|l| l.objects.iter_mut()) {
+        for key in &mut object.track.keys {
             key.position.0 += offset.0;
             key.position.1 += offset.1;
         }
@@ -679,24 +666,50 @@ fn remap_frames(doc: &mut Sprite, f: impl Fn(usize) -> usize) {
         .collect();
 }
 
-/// Corre las keys de todas las capas de instancia por `f`; devuelve los comandos que las
-/// restauran (si dos caen en el mismo frame gana la última).
+/// Reemplaza los objetos de una capa de objetos (con sus tracks normalizados); los ids no se
+/// pueden repetir.
+fn set_objects(
+    doc: &mut Sprite,
+    layer: LayerId,
+    objects: &[SceneObject],
+) -> Result<Command, CmdError> {
+    let l = doc.layer_mut(layer).ok_or(CmdError::LayerNotFound(layer))?;
+    if l.kind != LayerKind::Objects {
+        return Err(CmdError::NotObjectLayer(layer));
+    }
+    let mut seen = std::collections::HashSet::new();
+    if let Some(o) = objects.iter().find(|o| !seen.insert(o.id)) {
+        return Err(CmdError::DuplicateObject(o.id));
+    }
+    let mut objects = objects.to_vec();
+    for object in &mut objects {
+        object.track.normalize();
+    }
+    let old = std::mem::replace(&mut l.objects, objects);
+    Ok(Command::SetObjects {
+        layer,
+        objects: old,
+    })
+}
+
+/// Corre las keys de todos los objetos por `f`; devuelve los comandos que los restauran (si dos
+/// keys de un objeto caen en el mismo frame gana la última).
 fn remap_instances(doc: &mut Sprite, f: impl Fn(usize) -> usize) -> Vec<Command> {
     let mut inverse = Vec::new();
-    for layer in &mut doc.layers {
-        let Some(track) = layer.instance.as_mut() else {
-            continue;
-        };
-        let old = std::mem::take(track);
-        for key in &old.keys {
-            track.set_key(InstanceKey {
-                frame: f(key.frame),
-                ..*key
-            });
+    for layer in doc.layers.iter_mut().filter(|l| !l.objects.is_empty()) {
+        let old = layer.objects.clone();
+        for object in &mut layer.objects {
+            let keys = std::mem::take(&mut object.track.keys);
+            for key in &keys {
+                object.track.set_key(InstanceKey {
+                    frame: f(key.frame),
+                    ..*key
+                });
+            }
         }
-        inverse.push(Command::SetInstanceTrack {
+        inverse.push(Command::SetObjects {
             layer: layer.id,
-            track: old,
+            objects: old,
         });
     }
     inverse
@@ -762,7 +775,12 @@ fn remove_frame(doc: &mut Sprite, index: usize) -> Result<Command, CmdError> {
     // Una key en el último frame quitado queda fuera de rango: pasa al nuevo último frame si
     // ahí no hay otra (si la hay, esa sigue mandando y la quitada se descarta).
     let last = doc.frames.len() - 1;
-    for track in doc.layers.iter_mut().filter_map(|l| l.instance.as_mut()) {
+    for track in doc
+        .layers
+        .iter_mut()
+        .flat_map(|l| l.objects.iter_mut())
+        .map(|o| &mut o.track)
+    {
         let taken = track.keys.iter().any(|k| k.frame == last);
         if taken {
             track.keys.retain(|k| k.frame <= last);

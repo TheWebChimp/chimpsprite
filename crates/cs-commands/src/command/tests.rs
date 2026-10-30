@@ -448,16 +448,22 @@ fn commands_serialize() {
             id: ImageId(4),
             grid: Some(Arc::new(TileGrid::new(2, 1))),
         },
-        Command::SetInstanceTrack {
+        Command::SetObjects {
             layer: LayerId(2),
-            track: InstanceTrack {
-                keys: vec![InstanceKey::new(0, ArtboardId(2), (1, 2))],
-            },
+            objects: vec![object(1, vec![InstanceKey::new(0, ArtboardId(2), (1, 2))])],
         },
     ];
     for c in cmds {
         let json = serde_json::to_string(&c).unwrap();
         assert_eq!(serde_json::from_str::<Command>(&json).unwrap(), c);
+    }
+}
+
+fn object(id: u32, keys: Vec<InstanceKey>) -> SceneObject {
+    SceneObject {
+        id: ObjectId(id),
+        name: format!("o{id}"),
+        track: InstanceTrack { keys },
     }
 }
 
@@ -472,73 +478,130 @@ fn with_instance() -> Sprite {
         .unwrap();
     }
     let mut layer = Layer::new_image(LayerId(2), "inst");
-    layer.kind = LayerKind::Instance;
-    layer.instance = Some(InstanceTrack {
-        keys: vec![
+    layer.kind = LayerKind::Objects;
+    layer.objects = vec![object(
+        1,
+        vec![
             InstanceKey::new(0, ArtboardId(2), (0, 0)),
             InstanceKey::new(2, ArtboardId(2), (4, 4)),
         ],
-    });
+    )];
     s.layers.push(layer);
     s
 }
 
 fn key_frames(s: &Sprite) -> Vec<usize> {
-    let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+    let track = &s.layer(LayerId(2)).unwrap().objects[0].track;
     track.keys.iter().map(|k| k.frame).collect()
 }
 
 #[test]
-fn set_instance_track_roundtrip_and_rejects_image_layers() {
+fn set_objects_roundtrip_and_rejects_image_layers() {
     let mut s = with_instance();
     let before = s.clone();
-    let track = InstanceTrack {
-        keys: vec![InstanceKey::new(1, ArtboardId(3), (1, 1))],
-    };
-    let inv = Command::SetInstanceTrack {
+    let objects = vec![
+        object(1, vec![InstanceKey::new(1, ArtboardId(3), (1, 1))]),
+        object(5, vec![InstanceKey::new(0, ArtboardId(2), (2, 2))]),
+    ];
+    let inv = Command::SetObjects {
         layer: LayerId(2),
-        track: track.clone(),
+        objects: objects.clone(),
     }
     .apply(&mut s)
     .unwrap();
-    assert_eq!(s.layer(LayerId(2)).unwrap().instance, Some(track));
+    assert_eq!(s.layer(LayerId(2)).unwrap().objects, objects);
     inv.apply(&mut s).unwrap();
     assert_eq!(s, before);
     assert_eq!(
-        Command::SetInstanceTrack {
+        Command::SetObjects {
             layer: LayerId(1),
-            track: InstanceTrack::default(),
+            objects: Vec::new(),
         }
         .apply(&mut s),
-        Err(CmdError::NotInstanceLayer(LayerId(1)))
+        Err(CmdError::NotObjectLayer(LayerId(1)))
     );
 }
 
 #[test]
-fn set_instance_track_normalizes_keys() {
+fn set_objects_rejects_repeated_ids() {
     let mut s = with_instance();
     let before = s.clone();
-    let inv = Command::SetInstanceTrack {
+    let keys = vec![InstanceKey::new(0, ArtboardId(2), (0, 0))];
+    assert_eq!(
+        Command::SetObjects {
+            layer: LayerId(2),
+            objects: vec![object(3, keys.clone()), object(3, keys)],
+        }
+        .apply(&mut s),
+        Err(CmdError::DuplicateObject(ObjectId(3)))
+    );
+    assert_eq!(s, before);
+}
+
+#[test]
+fn frame_changes_and_resize_move_the_keys_of_every_object() {
+    let mut s = with_instance();
+    s.layer_mut(LayerId(2))
+        .unwrap()
+        .objects
+        .push(object(2, vec![InstanceKey::new(1, ArtboardId(3), (1, 1))]));
+    let before = s.clone();
+    let frames = |s: &Sprite| -> Vec<Vec<usize>> {
+        s.layer(LayerId(2))
+            .unwrap()
+            .objects
+            .iter()
+            .map(|o| o.track.keys.iter().map(|k| k.frame).collect())
+            .collect()
+    };
+    let inv = Command::AddFrame {
+        index: 1,
+        frame: Frame { duration_ms: 100 },
+    }
+    .apply(&mut s)
+    .unwrap();
+    assert_eq!(frames(&s), vec![vec![0, 3], vec![2]]);
+    inv.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+    let inv = Command::ResizeCanvas {
+        width: 10,
+        height: 6,
+        offset: (1, 2),
+    }
+    .apply(&mut s)
+    .unwrap();
+    let second = &s.layer(LayerId(2)).unwrap().objects[1].track;
+    assert_eq!(second.keys[0].position, (2, 3));
+    inv.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+}
+
+#[test]
+fn set_objects_normalizes_keys() {
+    let mut s = with_instance();
+    let before = s.clone();
+    let inv = Command::SetObjects {
         layer: LayerId(2),
-        track: InstanceTrack {
-            keys: vec![
+        objects: vec![object(
+            1,
+            vec![
                 InstanceKey::new(2, ArtboardId(2), (0, 0)),
                 InstanceKey::new(0, ArtboardId(2), (1, 1)),
                 InstanceKey::new(2, ArtboardId(2), (5, 5)),
             ],
-        },
+        )],
     }
     .apply(&mut s)
     .unwrap();
     assert_eq!(key_frames(&s), vec![0, 2]);
-    let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+    let track = &s.layer(LayerId(2)).unwrap().objects[0].track;
     assert_eq!(track.keys[1].position, (5, 5), "last wins");
     inv.apply(&mut s).unwrap();
     assert_eq!(s, before);
 }
 
 fn set_keys(s: &mut Sprite, keys: Vec<InstanceKey>) {
-    s.layer_mut(LayerId(2)).unwrap().instance = Some(InstanceTrack { keys });
+    s.layer_mut(LayerId(2)).unwrap().objects = vec![object(1, keys)];
 }
 
 #[test]
@@ -564,7 +627,7 @@ fn removing_the_last_frame_keeps_an_existing_key_on_the_new_last() {
     );
     let before = s.clone();
     let inv = Command::RemoveFrame { index: 2 }.apply(&mut s).unwrap();
-    let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+    let track = &s.layer(LayerId(2)).unwrap().objects[0].track;
     let got: Vec<_> = track.keys.iter().map(|k| (k.frame, k.position)).collect();
     assert_eq!(got, vec![(1, (1, 1))], "frame 1 keeps its own key");
     inv.apply(&mut s).unwrap();
@@ -583,7 +646,7 @@ fn removing_a_frame_between_two_keys_keeps_the_later_one() {
     );
     let before = s.clone();
     let inv = Command::RemoveFrame { index: 1 }.apply(&mut s).unwrap();
-    let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+    let track = &s.layer(LayerId(2)).unwrap().objects[0].track;
     let got: Vec<_> = track.keys.iter().map(|k| (k.frame, k.position)).collect();
     assert_eq!(got, vec![(1, (2, 2))]);
     inv.apply(&mut s).unwrap();
@@ -635,7 +698,7 @@ fn resize_canvas_moves_instance_keys_and_undoes() {
     }
     .apply(&mut s)
     .unwrap();
-    let track = s.layer(LayerId(2)).unwrap().instance.as_ref().unwrap();
+    let track = &s.layer(LayerId(2)).unwrap().objects[0].track;
     let positions: Vec<_> = track.keys.iter().map(|k| k.position).collect();
     assert_eq!(positions, vec![(3, -2), (7, 2)]);
     inv.apply(&mut s).unwrap();

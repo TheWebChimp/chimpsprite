@@ -6,8 +6,8 @@ use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 use cs_core::{
-    Artboard, ArtboardId, Document, Guide, InstanceTrack, LayerKind, LayerMask, Note, Sprite,
-    Symmetry,
+    Artboard, ArtboardId, Document, Guide, InstanceTrack, LayerKind, LayerMask, Note, ObjectId,
+    SceneObject, Sprite, Symmetry,
 };
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
@@ -56,8 +56,13 @@ struct LayerExtra {
     clip: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mask: Option<MaskEntry>,
-    /// Keys de una capa de instancia (en el `.aseprite` interno va horneada).
+    /// Objetos de una capa de objetos (en el `.aseprite` interno va horneada). `Some` (aunque
+    /// esté vacía) marca la capa como de objetos.
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    objects: Option<Vec<SceneObject>>,
+    /// Archivos viejos: las keys de una capa de instancia (una instancia por capa). Solo se lee;
+    /// al cargar pasa a ser el único objeto de la capa.
+    #[serde(default, skip_serializing)]
     instance: Option<InstanceTrack>,
 }
 
@@ -79,7 +84,7 @@ fn layer_extras(artboard: &Artboard) -> Vec<(LayerExtra, Option<Arc<Vec<u8>>>)> 
         .layers
         .iter()
         .enumerate()
-        .filter(|(_, l)| l.clip || l.mask.is_some() || l.instance.is_some())
+        .filter(|(_, l)| l.clip || l.mask.is_some() || l.kind == LayerKind::Objects)
         .map(|(index, l)| {
             let mask = l.mask.as_ref().map(|m| MaskEntry {
                 position: [m.position.0, m.position.1],
@@ -95,7 +100,8 @@ fn layer_extras(artboard: &Artboard) -> Vec<(LayerExtra, Option<Arc<Vec<u8>>>)> 
                     index,
                     clip: l.clip,
                     mask,
-                    instance: l.instance.clone(),
+                    objects: (l.kind == LayerKind::Objects).then(|| l.objects.clone()),
+                    instance: None,
                 },
                 data,
             )
@@ -118,12 +124,27 @@ fn apply_extras(
         })?;
         layer.clip = extra.clip;
         let id = layer.id;
-        let instance_layer = extra.instance.is_some();
-        if let Some(mut track) = extra.instance {
-            // Un archivo editado a mano puede traer keys desordenadas o repetidas.
-            track.normalize();
-            layer.kind = LayerKind::Instance;
-            layer.instance = Some(track);
+        let objects = match (extra.objects, extra.instance) {
+            (Some(objects), _) => Some(objects),
+            // Archivo viejo: la instancia pasa a ser el único objeto de la capa.
+            (None, Some(track)) => Some(vec![SceneObject {
+                id: ObjectId(1),
+                name: layer.name.clone(),
+                track,
+            }]),
+            (None, None) => None,
+        };
+        let object_layer = objects.is_some();
+        if let Some(mut objects) = objects {
+            // Un archivo editado a mano puede traer keys desordenadas o repetidas, o ids
+            // repetidos (se quedan con el primero).
+            let mut seen = HashSet::new();
+            objects.retain(|o| seen.insert(o.id));
+            for object in &mut objects {
+                object.track.normalize();
+            }
+            layer.kind = LayerKind::Objects;
+            layer.objects = objects;
         }
         if let Some(m) = extra.mask {
             let data = read_entry(zip, &m.file)?;
@@ -139,8 +160,8 @@ fn apply_extras(
                 enabled: m.enabled,
             });
         }
-        if instance_layer {
-            // Los cels horneados no se usan: la instancia se recompone desde su fuente.
+        if object_layer {
+            // Los cels horneados no se usan: los objetos se recomponen desde sus fuentes.
             sprite.cels.retain(|(l, _), _| *l != id);
         }
     }
@@ -161,7 +182,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
     for artboard in &doc.artboards {
         let file = format!("artboards/{}.aseprite", artboard.id.0);
         zip.start_file(file.as_str(), options).map_err(zip_error)?;
-        // Las instancias van horneadas para que el `.aseprite` se vea bien fuera de ChimpSprite.
+        // Los objetos van horneados para que el `.aseprite` se vea bien fuera de ChimpSprite.
         let baked = cs_render::bake_layers(doc, &artboard.sprite, cs_render::Bake::KeepTilemaps);
         zip.write_all(&aseprite::write(baked.as_ref().unwrap_or(&artboard.sprite)))?;
         let mut layers = Vec::new();
@@ -263,8 +284,8 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
             .filter(|&s| doc.would_cycle(id, s))
             .collect();
         let sprite = &mut doc.artboard_mut(id).expect("exists").sprite;
-        for track in sprite.layers.iter_mut().filter_map(|l| l.instance.as_mut()) {
-            for key in &mut track.keys {
+        for object in sprite.layers.iter_mut().flat_map(|l| l.objects.iter_mut()) {
+            for key in &mut object.track.keys {
                 if key.source.is_some_and(|s| bad.contains(&s)) {
                     key.source = None;
                 }
@@ -320,15 +341,24 @@ mod tests {
         assert!(back.artboards[1].sprite.layers[0].mask.is_none());
     }
 
-    /// Documento con el artboard 7 (el segundo de `doc()`) instanciado en el 1 (capa de instancia id 2).
+    fn object(track: InstanceTrack) -> SceneObject {
+        SceneObject {
+            id: ObjectId(1),
+            name: "inst".into(),
+            track,
+        }
+    }
+
+    /// Documento con el artboard 7 (el segundo de `doc()`) instanciado en el 1 (capa de objetos
+    /// id 2, con un objeto).
     fn with_instance(timing: Timing) -> Document {
         let mut d = doc();
         let mut key = InstanceKey::new(0, ArtboardId(7), (1, 1));
         key.timing = timing;
         key.flip_h = true;
         let mut layer = Layer::new_image(LayerId(2), "inst");
-        layer.kind = LayerKind::Instance;
-        layer.instance = Some(InstanceTrack { keys: vec![key] });
+        layer.kind = LayerKind::Objects;
+        layer.objects = vec![object(InstanceTrack { keys: vec![key] })];
         d.artboards[0].sprite.layers.push(layer);
         cs_commands::Command::DrawPixels {
             layer: LayerId(1),
@@ -353,8 +383,8 @@ mod tests {
             let (back, report) = read(&write(&d).unwrap()).unwrap();
             assert!(report.warnings.is_empty(), "{:?}", report.warnings);
             let layer = &back.artboards[0].sprite.layers[1];
-            assert_eq!(layer.kind, LayerKind::Instance);
-            assert_eq!(layer.instance, d.artboards[0].sprite.layers[1].instance);
+            assert_eq!(layer.kind, LayerKind::Objects);
+            assert_eq!(layer.objects, d.artboards[0].sprite.layers[1].objects);
             assert!(
                 back.artboards[0].sprite.cel(LayerId(2), 0).is_none(),
                 "baked cels dropped"
@@ -377,7 +407,7 @@ mod tests {
     #[test]
     fn unsorted_instance_keys_load_normalized() {
         let mut d = with_instance(Timing::MovieClip { first_frame: 0 });
-        let track = d.artboards[0].sprite.layers[1].instance.as_mut().unwrap();
+        let track = &mut d.artboards[0].sprite.layers[1].objects[0].track;
         let first = track.keys[0];
         track.keys = vec![
             InstanceKey { frame: 3, ..first },
@@ -389,11 +419,7 @@ mod tests {
             },
         ];
         let (back, _) = read(&write(&d).unwrap()).unwrap();
-        let keys = &back.artboards[0].sprite.layers[1]
-            .instance
-            .as_ref()
-            .unwrap()
-            .keys;
+        let keys = &back.artboards[0].sprite.layers[1].objects[0].track.keys;
         let got: Vec<_> = keys.iter().map(|k| (k.frame, k.position)).collect();
         assert_eq!(got, vec![(0, (1, 1)), (3, (4, 4))]);
     }
@@ -403,14 +429,98 @@ mod tests {
         let mut d = with_instance(Timing::MovieClip { first_frame: 0 });
         // El artboard 7 instancia al 1: ciclo.
         let mut layer = Layer::new_image(LayerId(2), "back");
-        layer.kind = LayerKind::Instance;
-        layer.instance = Some(InstanceTrack {
+        layer.kind = LayerKind::Objects;
+        layer.objects = vec![object(InstanceTrack {
             keys: vec![InstanceKey::new(0, ArtboardId(1), (0, 0))],
-        });
+        })];
         d.artboards[1].sprite.layers.push(layer);
         let (back, report) = read(&write(&d).unwrap()).unwrap();
         assert!(!report.warnings.is_empty());
         assert!(back.artboards.iter().all(|a| back.cycle_free(a.id)));
+    }
+
+    #[test]
+    fn several_objects_and_empty_object_layers_roundtrip() {
+        let mut d = with_instance(Timing::MovieClip { first_frame: 0 });
+        let sprite = &mut d.artboards[0].sprite;
+        let mut second = sprite.layers[1].objects[0].clone();
+        second.id = ObjectId(4);
+        second.name = "other".into();
+        second.track.keys[0].position = (3, 0);
+        sprite.layers[1].objects.push(second);
+        let mut empty = Layer::new_image(LayerId(3), "empty");
+        empty.kind = LayerKind::Objects;
+        sprite.layers.push(empty);
+        let (back, _) = read(&write(&d).unwrap()).unwrap();
+        let layers = &back.artboards[0].sprite.layers;
+        assert_eq!(layers[1].objects, d.artboards[0].sprite.layers[1].objects);
+        assert_eq!(layers[2].kind, LayerKind::Objects);
+        assert!(layers[2].objects.is_empty());
+    }
+
+    /// Reescribe el manifest de un `.chimp` con `edit`, dejando igual las demás entradas.
+    fn with_manifest(bytes: &[u8], edit: impl Fn(&mut serde_json::Value)) -> Vec<u8> {
+        let mut zip = ZipArchive::new(Cursor::new(bytes)).unwrap();
+        let mut out = ZipWriter::new(Cursor::new(Vec::new()));
+        let names: Vec<String> = zip.file_names().map(|n| n.unwrap().to_string()).collect();
+        for name in names {
+            let mut data = read_entry(&mut zip, &name).unwrap();
+            if name == MANIFEST {
+                let mut manifest: serde_json::Value = serde_json::from_slice(&data).unwrap();
+                edit(&mut manifest);
+                data = serde_json::to_vec(&manifest).unwrap();
+            }
+            out.start_file(name.as_str(), SimpleFileOptions::default())
+                .unwrap();
+            out.write_all(&data).unwrap();
+        }
+        out.finish().unwrap().into_inner()
+    }
+
+    #[test]
+    fn old_instance_layers_load_as_object_layers_with_one_object() {
+        let d = with_instance(Timing::MovieClip { first_frame: 0 });
+        // El manifest de antes: la capa 1 del artboard 1 con `instance` en lugar de `objects`.
+        let old = with_manifest(&write(&d).unwrap(), |m| {
+            m["artboards"][0]["layers"] = serde_json::json!([{
+                "index": 1,
+                "clip": false,
+                "instance": {"keys": [
+                    {"frame": 2, "source": 7, "position": [5, 6], "flip_h": false,
+                     "flip_v": false, "opacity": 255,
+                     "timing": {"Graphic": {"first_frame": 0, "play": "Loop"}}},
+                    {"frame": 0, "source": 7, "position": [1, 1], "flip_h": true,
+                     "flip_v": false, "opacity": 90,
+                     "timing": {"MovieClip": {"first_frame": 0}}}
+                ]}
+            }]);
+        });
+        let (back, report) = read(&old).unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        let layer = &back.artboards[0].sprite.layers[1];
+        assert_eq!(layer.kind, LayerKind::Objects);
+        assert_eq!(layer.objects.len(), 1);
+        let object = &layer.objects[0];
+        assert_eq!((object.id, object.name.as_str()), (ObjectId(1), "inst"));
+        let keys: Vec<_> = object
+            .track
+            .keys
+            .iter()
+            .map(|k| (k.frame, k.position, k.opacity))
+            .collect();
+        assert_eq!(keys, vec![(0, (1, 1), 90), (2, (5, 6), 255)], "normalized");
+        assert!(
+            back.artboards[0].sprite.cel(LayerId(2), 0).is_none(),
+            "baked cels dropped"
+        );
+        // Al volver a guardar se escribe `objects`.
+        let bytes = write(&back).unwrap();
+        let mut zip = ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
+        let manifest: serde_json::Value =
+            serde_json::from_slice(&read_entry(&mut zip, MANIFEST).unwrap()).unwrap();
+        let extra = &manifest["artboards"][0]["layers"][0];
+        assert!(extra.get("instance").is_none());
+        assert_eq!(extra["objects"][0]["id"], 1);
     }
 
     #[test]
@@ -420,7 +530,7 @@ mod tests {
         // El host usa el símbolo de la biblioteca en una capa de instancia.
         let symbol = d.artboards[1].id;
         let host = &mut d.artboards[0].sprite;
-        let add = cs_commands::ops::new_instance_layer(host, None, 0, symbol, "Banana", (1, 2));
+        let add = cs_commands::ops::new_object_layer(host, None, 0, symbol, "Banana", (1, 2));
         add.apply(host).unwrap();
         let instance = host.layers.last().unwrap().id;
         let (back, _) = read(&write(&d).unwrap()).unwrap();
@@ -428,8 +538,8 @@ mod tests {
         assert!(!back.artboards[0].in_library);
         assert_eq!(back, d);
         let layer = back.artboards[0].sprite.layer(instance).unwrap();
-        assert_eq!(layer.kind, LayerKind::Instance);
-        let key = &layer.instance.as_ref().unwrap().keys[0];
+        assert_eq!(layer.kind, LayerKind::Objects);
+        let key = &layer.objects[0].track.keys[0];
         assert_eq!((key.source, key.position), (Some(symbol), (1, 2)));
         assert!(back.artboard(symbol).is_some_and(|a| a.in_library));
         assert_eq!(back.instance_sources(back.artboards[0].id), vec![symbol]);

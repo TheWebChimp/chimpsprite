@@ -2900,7 +2900,7 @@ fn deleting_a_symbol_in_use_asks_first() {
         // Una instancia de Coin en el host.
         let editor = &mut h.app.doc.editor;
         let add =
-            cs_commands::ops::new_instance_layer(editor.sprite(), None, 0, coin, "Coin 1", (0, 0));
+            cs_commands::ops::new_object_layer(editor.sprite(), None, 0, coin, "Coin 1", (0, 0));
         assert!(editor.execute(add));
         h.frame();
         let library = if pixel {

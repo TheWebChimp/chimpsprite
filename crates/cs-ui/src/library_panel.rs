@@ -432,7 +432,7 @@ mod tests {
             a.in_library = true;
             doc.artboards.push(a);
         }
-        let cmd = cs_commands::ops::new_instance_layer(
+        let cmd = cs_commands::ops::new_object_layer(
             &doc.artboards[0].sprite,
             None,
             0,

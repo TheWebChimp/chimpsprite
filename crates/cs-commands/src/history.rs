@@ -44,7 +44,7 @@ impl<C: Undoable> History<C> {
     /// Aplica `cmd` como continuación del paso anterior (p. ej. un arrastre): si hay un paso para
     /// deshacer, se conserva su inverso y se descarta el nuevo, así un solo undo vuelve al estado
     /// de antes de todo el gesto. Solo es correcto si el inverso anterior restaura todo lo que
-    /// `cmd` toca (comandos que reemplazan un estado completo, como `SetInstanceTrack`).
+    /// `cmd` toca (comandos que reemplazan un estado completo, como `SetObjects`).
     pub fn execute_merged(&mut self, target: &mut C::Target, cmd: C) -> Result<(), CmdError> {
         let inverse = cmd.apply(target)?;
         if self.undo.is_empty() {

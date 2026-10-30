@@ -1,4 +1,4 @@
-//! Materializar: antes de componer, las capas que no son de imagen (instancias y tilemaps) se
+//! Materializar: antes de componer, las capas que no son de imagen (objetos y tilemaps) se
 //! convierten en capas de imagen con cels temporales; el compositor solo ve píxeles.
 
 use std::borrow::Cow;
@@ -84,32 +84,45 @@ fn materialize_at<'a>(
     // Dejar sin cels las capas de instancia ocultas (no se ven al componer).
     skip_hidden: bool,
 ) -> Cow<'a, Sprite> {
-    if !sprite.layers.iter().any(|l| l.kind == LayerKind::Instance) {
+    if !sprite.layers.iter().any(|l| l.kind == LayerKind::Objects) {
         return Cow::Borrowed(sprite);
     }
     let mut out = sprite.clone();
     let mut next = sprite.next_image_id().0;
     let can_draw = sprite.color_mode.stores_rgba() && (stack.len() as u32) < MAX_DEPTH;
     for layer in &mut out.layers {
-        if layer.kind != LayerKind::Instance {
+        if layer.kind != LayerKind::Objects {
             continue;
         }
         layer.kind = LayerKind::Image;
-        let Some(track) = layer.instance.take() else {
-            continue;
-        };
-        // Una capa oculta no se ve: no hace falta renderizar su fuente.
-        if !can_draw || (skip_hidden && !layer.visible) {
+        let objects = std::mem::take(&mut layer.objects);
+        // Una capa oculta no se ve: no hace falta renderizar sus fuentes.
+        if objects.is_empty() || !can_draw || (skip_hidden && !layer.visible) {
             continue;
         }
         for frame in frames.clone() {
-            let Some((position, image)) = instance_image(doc, sprite, &track, frame, stack) else {
-                continue;
+            // Lo que muestra cada objeto, de abajo hacia arriba, con la opacidad de su key.
+            let mut drawn: Vec<(u8, (i32, i32), Image)> = objects
+                .iter()
+                .filter_map(|o| {
+                    let (position, image) = instance_image(doc, sprite, &o.track, frame, stack)?;
+                    let opacity = o.track.key_at(frame).map_or(255, |k| k.opacity);
+                    Some((opacity, position, image))
+                })
+                .collect();
+            // Con un solo objeto su opacidad va en el cel (como cuando había una instancia por
+            // capa, con el mismo redondeo); con varios se compone todo en una imagen.
+            let (opacity, position, image) = match drawn.len() {
+                0 => continue,
+                1 => drawn.pop().expect("one object"),
+                _ => {
+                    let (position, image) = compose_objects(&drawn);
+                    (255, position, image)
+                }
             };
             let id = ImageId(next);
             next += 1;
             out.images.insert(id, Arc::new(image));
-            let opacity = track.key_at(frame).map_or(255, |k| k.opacity);
             out.cels.insert(
                 (layer.id, frame),
                 Cel {
@@ -123,7 +136,50 @@ fn materialize_at<'a>(
     Cow::Owned(out)
 }
 
-/// Lo que muestra la instancia en `frame`: posición del cel e imagen recortada a lo opaco.
+/// Une las imágenes de los objetos (de abajo hacia arriba, cada una con su opacidad) en una
+/// imagen RGBA del tamaño del rectángulo que las contiene a todas.
+fn compose_objects(drawn: &[(u8, (i32, i32), Image)]) -> ((i32, i32), Image) {
+    let x0 = drawn.iter().map(|(_, p, _)| p.0).min().unwrap_or(0);
+    let y0 = drawn.iter().map(|(_, p, _)| p.1).min().unwrap_or(0);
+    let x1 = drawn
+        .iter()
+        .map(|(_, p, i)| p.0 + i.width() as i32)
+        .max()
+        .unwrap_or(x0);
+    let y1 = drawn
+        .iter()
+        .map(|(_, p, i)| p.1 + i.height() as i32)
+        .max()
+        .unwrap_or(y0);
+    let mut out = Image::new((x1 - x0) as u32, (y1 - y0) as u32, ColorMode::Rgba);
+    for (opacity, position, image) in drawn {
+        let (dx, dy) = ((position.0 - x0) as u32, (position.1 - y0) as u32);
+        for y in 0..image.height() {
+            for x in 0..image.width() {
+                let Some(PixelValue::Rgba(src)) = image.get(x, y) else {
+                    continue;
+                };
+                let alpha = crate::mul(src.a as u32, *opacity as u32) as u8;
+                if alpha == 0 {
+                    continue;
+                }
+                let dst = match out.get(x + dx, y + dy) {
+                    Some(PixelValue::Rgba(c)) => c,
+                    _ => Rgba::TRANSPARENT,
+                };
+                out.set(
+                    x + dx,
+                    y + dy,
+                    PixelValue::Rgba(crate::blend_over(dst, src, alpha)),
+                )
+                .expect("in bounds and RGBA");
+            }
+        }
+    }
+    ((x0, y0), out)
+}
+
+/// Lo que muestra un objeto en `frame`: posición del cel e imagen recortada a lo opaco.
 fn instance_image(
     doc: &Document,
     parent: &Sprite,
@@ -380,8 +436,14 @@ mod tests {
         }
     }
 
-    /// Host de 8×8 con 4 frames y una capa de instancia (id 2) con `keys`.
+    /// Host de 8×8 con 4 frames y una capa de objetos (id 2) con un objeto con `keys`.
     fn host(keys: Vec<InstanceKey>) -> Sprite {
+        host_objects(vec![keys])
+    }
+
+    /// Host de 8×8 con 4 frames y una capa de objetos (id 2) con un objeto por lista de keys
+    /// (el primero abajo).
+    fn host_objects(objects: Vec<Vec<InstanceKey>>) -> Sprite {
         let mut s = Sprite::new(8, 8, ColorMode::Rgba);
         for i in 1..4 {
             Command::AddFrame {
@@ -392,8 +454,16 @@ mod tests {
             .unwrap();
         }
         let mut layer = Layer::new_image(LayerId(2), "inst");
-        layer.kind = LayerKind::Instance;
-        layer.instance = Some(InstanceTrack { keys });
+        layer.kind = LayerKind::Objects;
+        layer.objects = objects
+            .into_iter()
+            .enumerate()
+            .map(|(i, keys)| SceneObject {
+                id: ObjectId(i as u32 + 1),
+                name: format!("o{i}"),
+                track: InstanceTrack { keys },
+            })
+            .collect();
         s.layers.push(layer);
         s
     }
@@ -426,6 +496,48 @@ mod tests {
         // Sin instancias, no copia.
         let plain = Sprite::new(2, 2, ColorMode::Rgba);
         assert!(matches!(materialize(&d, &plain, 0..1), Cow::Borrowed(_)));
+    }
+
+    fn single(frame: usize, position: (i32, i32), first_frame: usize) -> InstanceKey {
+        InstanceKey {
+            timing: Timing::Graphic {
+                first_frame,
+                play: GraphicPlay::Single,
+            },
+            ..InstanceKey::new(frame, ArtboardId(2), position)
+        }
+    }
+
+    #[test]
+    fn objects_of_a_layer_compose_in_order_each_with_its_own_frame() {
+        // Abajo, el frame 0 del símbolo en (0, 0): rojo en (0, 0) y azul en (2, 1).
+        // Arriba, el frame 1 en (2, 1): rojo en (2, 1) (tapa al azul) y azul en (3, 2).
+        let bottom = vec![single(0, (0, 0), 0)];
+        let top = vec![single(0, (2, 1), 1)];
+        let d = doc(host_objects(vec![bottom.clone(), top.clone()]));
+        let m = materialize(&d, &d.artboards[0].sprite, 0..1);
+        let cels: Vec<_> = m.cels.keys().filter(|(l, _)| *l == LayerId(2)).collect();
+        assert_eq!(cels.len(), 1, "one cel for the whole layer");
+        let f0 = render_frame(&m, 0);
+        assert_eq!(px(&f0, 0, 0), RED);
+        assert_eq!(px(&f0, 2, 1), RED, "the top object covers the bottom one");
+        assert_eq!(px(&f0, 3, 2), BLUE, "the top object shows symbol frame 1");
+        assert_eq!(px(&f0, 4, 2).a, 0, "not symbol frame 0");
+        // Al revés, el de abajo pasa a tapar.
+        let d = doc(host_objects(vec![top, bottom]));
+        let f0 = render_frame(&materialize(&d, &d.artboards[0].sprite, 0..1), 0);
+        assert_eq!(px(&f0, 2, 1), BLUE);
+    }
+
+    #[test]
+    fn each_object_keeps_its_key_opacity() {
+        let mut faded = single(0, (4, 4), 0);
+        faded.opacity = 128;
+        let d = doc(host_objects(vec![vec![single(0, (0, 0), 0)], vec![faded]]));
+        let f0 = render_frame(&materialize(&d, &d.artboards[0].sprite, 0..1), 0);
+        assert_eq!(px(&f0, 0, 0), RED);
+        let red = px(&f0, 4, 4);
+        assert_eq!((red.r, red.g, red.b, red.a), (255, 0, 0, 128));
     }
 
     #[test]

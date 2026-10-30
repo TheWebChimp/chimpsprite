@@ -229,7 +229,7 @@ fn order(s: &Sprite) -> Vec<(u32, Option<u32>)> {
 }
 
 #[test]
-fn instance_layer_keys_update_and_remove() {
+fn object_layer_keys_update_and_remove() {
     let mut s = Sprite::new(8, 8, ColorMode::Rgba);
     for i in 1..4 {
         crate::Command::AddFrame {
@@ -239,21 +239,30 @@ fn instance_layer_keys_update_and_remove() {
         .apply(&mut s)
         .unwrap();
     }
-    let cmd = new_instance_layer(&s, Some(LayerId(1)), 1, ArtboardId(2), "Hero", (3, 4));
+    let cmd = new_object_layer(&s, Some(LayerId(1)), 1, ArtboardId(2), "Hero", (3, 4));
     cmd.apply(&mut s).unwrap();
     let layer = s.layers.last().unwrap().clone();
     assert_eq!(
         (layer.kind, layer.name.as_str()),
-        (LayerKind::Instance, "Hero")
+        (LayerKind::Objects, "Hero")
+    );
+    assert_eq!(
+        (
+            layer.objects.len(),
+            layer.objects[0].id,
+            layer.objects[0].name.as_str()
+        ),
+        (1, ObjectId(1), "Hero")
     );
     let id = layer.id;
-    let track = |s: &Sprite| s.layer(id).unwrap().instance.clone().unwrap();
+    let o = ObjectId(1);
+    let track = |s: &Sprite| s.layer(id).unwrap().objects[0].track.clone();
     assert_eq!(
         track(&s).keys,
         vec![InstanceKey::new(1, ArtboardId(2), (3, 4))]
     );
     // Editar en un frame sin key crea una copia de la vigente ahí.
-    update_instance_key(&s, id, 3, |k| k.flip_h = true)
+    update_object_key(&s, id, o, 3, |k| k.flip_h = true)
         .unwrap()
         .apply(&mut s)
         .unwrap();
@@ -262,20 +271,45 @@ fn instance_layer_keys_update_and_remove() {
     assert!(!t.key_at(2).unwrap().flip_h && t.key_at(3).unwrap().flip_h);
     assert_eq!(t.key_at(3).unwrap().position, (3, 4));
     // Sin cambios, no hay comando; antes de la primera key, tampoco.
-    assert!(update_instance_key(&s, id, 3, |_| {}).is_none());
-    assert!(update_instance_key(&s, id, 0, |k| k.opacity = 1).is_none());
+    assert!(update_object_key(&s, id, o, 3, |_| {}).is_none());
+    assert!(update_object_key(&s, id, o, 0, |k| k.opacity = 1).is_none());
     // Borrar una key; borrar la única quita la capa.
-    remove_instance_key(&s, id, 3)
+    remove_object_key(&s, id, o, 3)
         .unwrap()
         .apply(&mut s)
         .unwrap();
     assert_eq!(track(&s).keys.len(), 1);
-    assert!(remove_instance_key(&s, id, 2).is_none(), "no key there");
-    remove_instance_key(&s, id, 1)
+    assert!(remove_object_key(&s, id, o, 2).is_none(), "no key there");
+    remove_object_key(&s, id, o, 1)
         .unwrap()
         .apply(&mut s)
         .unwrap();
     assert!(s.layer(id).is_none());
+}
+
+#[test]
+fn removing_the_only_key_of_one_of_several_objects_removes_just_that_object() {
+    let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+    new_object_layer(&s, None, 0, ArtboardId(2), "Hero", (0, 0))
+        .apply(&mut s)
+        .unwrap();
+    let id = s.layers.last().unwrap().id;
+    let mut second = s.layer(id).unwrap().objects[0].clone();
+    second.id = ObjectId(2);
+    s.layer_mut(id).unwrap().objects.push(second);
+    remove_object_key(&s, id, ObjectId(1), 0)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    let ids: Vec<_> = s.layer(id).unwrap().objects.iter().map(|o| o.id).collect();
+    assert_eq!(ids, vec![ObjectId(2)]);
+    assert!(update_object_key(&s, id, ObjectId(1), 0, |k| k.flip_h = true).is_none());
+    // Se edita la key del objeto pedido.
+    update_object_key(&s, id, ObjectId(2), 0, |k| k.flip_h = true)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    assert!(s.layer(id).unwrap().objects[0].track.keys[0].flip_h);
 }
 
 #[test]

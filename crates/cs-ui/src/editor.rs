@@ -613,7 +613,7 @@ impl Editor {
     }
 
     /// Como `execute`, pero los comandos seguidos del mismo `group` forman un solo paso de undo.
-    /// El comando debe reemplazar un estado completo (como `SetInstanceTrack` o `SetSlices`) para
+    /// El comando debe reemplazar un estado completo (como `SetObjects` o `SetSlices`) para
     /// que el inverso del primero deshaga todo el gesto.
     pub fn execute_grouped(&mut self, cmd: Command, group: u64) -> bool {
         // Como `execute_doc`: lo flotante se confirma antes (y corta el grupo).

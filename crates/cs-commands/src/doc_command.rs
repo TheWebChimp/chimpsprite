@@ -277,7 +277,7 @@ mod tests {
         });
         let place = |doc: &Document, host: u32, source: u32| DocCommand::OnArtboard {
             id: ArtboardId(host),
-            cmd: crate::ops::new_instance_layer(
+            cmd: crate::ops::new_object_layer(
                 &doc.artboard(ArtboardId(host)).unwrap().sprite,
                 None,
                 0,
@@ -303,7 +303,7 @@ mod tests {
     fn instancing(source: u32) -> Sprite {
         let s = Sprite::new(4, 4, ColorMode::Rgba);
         let mut s2 = s.clone();
-        crate::ops::new_instance_layer(&s, None, 0, ArtboardId(source), "i", (0, 0))
+        crate::ops::new_object_layer(&s, None, 0, ArtboardId(source), "i", (0, 0))
             .apply(&mut s2)
             .unwrap();
         s2

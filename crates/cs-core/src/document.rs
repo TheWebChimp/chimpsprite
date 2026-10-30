@@ -239,13 +239,13 @@ impl Document {
         self.canvas_artboards().count()
     }
 
-    /// Cuántas capas de instancia, en todo el documento, muestran `id` en alguna key.
+    /// Cuántos objetos, en todo el documento, muestran `id` en alguna key.
     pub fn instance_uses(&self, id: ArtboardId) -> usize {
         self.artboards
             .iter()
             .flat_map(|a| a.sprite.layers.iter())
-            .filter_map(|l| l.instance.as_ref())
-            .filter(|t| t.keys.iter().any(|k| k.source == Some(id)))
+            .flat_map(|l| l.objects.iter())
+            .filter(|o| o.track.keys.iter().any(|k| k.source == Some(id)))
             .count()
     }
 
@@ -268,8 +268,7 @@ impl Document {
             .artboards
             .iter()
             .flat_map(|a| a.sprite.layers.iter())
-            .filter_map(|l| l.instance.as_ref())
-            .flat_map(|t| t.keys.iter().filter_map(|k| k.source));
+            .flat_map(|l| l.object_sources());
         let max = self
             .artboards
             .iter()
@@ -310,8 +309,7 @@ impl Document {
             .sprite
             .layers
             .iter()
-            .filter_map(|l| l.instance.as_ref())
-            .flat_map(|t| t.keys.iter().filter_map(|k| k.source))
+            .flat_map(|l| l.object_sources())
             .collect();
         out.sort();
         out.dedup();
@@ -344,7 +342,17 @@ impl Document {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{ColorMode, InstanceKey, InstanceTrack, Layer, LayerId, LayerKind};
+    use crate::{
+        ColorMode, InstanceKey, InstanceTrack, Layer, LayerId, LayerKind, ObjectId, SceneObject,
+    };
+
+    fn object(id: u32, track: InstanceTrack) -> SceneObject {
+        SceneObject {
+            id: ObjectId(id),
+            name: format!("o{id}"),
+            track,
+        }
+    }
 
     fn doc() -> Document {
         let mut d = Document::with_sprite("a", Sprite::new(10, 10, ColorMode::Rgba));
@@ -404,21 +412,34 @@ mod tests {
     }
 
     #[test]
-    fn instance_uses_counts_layers_not_keys() {
+    fn instance_uses_counts_objects_not_keys() {
         let mut d = library_doc();
         let sprite = &mut d.artboards[0].sprite;
         for id in [10, 11] {
             let mut layer = Layer::new_image(LayerId(id), "i");
-            layer.kind = LayerKind::Instance;
+            layer.kind = LayerKind::Objects;
             let mut track = InstanceTrack {
                 keys: vec![InstanceKey::new(0, ArtboardId(2), (0, 0))],
             };
             track.set_key(InstanceKey::new(3, ArtboardId(2), (1, 1)));
-            layer.instance = Some(track);
+            layer.objects = vec![object(1, track)];
             sprite.layers.push(layer);
         }
         assert_eq!(d.instance_uses(ArtboardId(2)), 2);
         assert_eq!(d.instance_uses(ArtboardId(1)), 0);
+    }
+
+    #[test]
+    fn instance_uses_counts_each_object_of_a_layer() {
+        let mut d = library_doc();
+        let mut layer = Layer::new_image(LayerId(10), "i");
+        layer.kind = LayerKind::Objects;
+        let track = InstanceTrack {
+            keys: vec![InstanceKey::new(0, ArtboardId(2), (0, 0))],
+        };
+        layer.objects = vec![object(1, track.clone()), object(2, track)];
+        d.artboards[0].sprite.layers.push(layer);
+        assert_eq!(d.instance_uses(ArtboardId(2)), 2);
     }
 
     #[test]
@@ -439,10 +460,13 @@ mod tests {
                 let mut sprite = Sprite::new(4, 4, ColorMode::Rgba);
                 for (i, &s) in sources.iter().enumerate() {
                     let mut layer = Layer::new_image(LayerId(10 + i as u32), "i");
-                    layer.kind = LayerKind::Instance;
-                    layer.instance = Some(InstanceTrack {
-                        keys: vec![InstanceKey::new(0, ArtboardId(s), (0, 0))],
-                    });
+                    layer.kind = LayerKind::Objects;
+                    layer.objects = vec![object(
+                        1,
+                        InstanceTrack {
+                            keys: vec![InstanceKey::new(0, ArtboardId(s), (0, 0))],
+                        },
+                    )];
                     sprite.layers.push(layer);
                 }
                 Artboard {
