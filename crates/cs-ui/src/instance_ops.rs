@@ -1,6 +1,6 @@
 //! Instancias de artboards (símbolos) desde el editor y el panel.
 
-use cs_commands::{Command, ops};
+use cs_commands::{Command, DocCommand, ops};
 use cs_core::{ArtboardId, InstanceKey, LayerId};
 
 use crate::editor::Editor;
@@ -65,6 +65,45 @@ impl Editor {
         if self.execute(cmd) {
             self.layer = id;
         }
+    }
+
+    /// Suelta el símbolo `source` en el punto `world` del lienzo: crea una capa de instancia en el
+    /// artboard de ese punto (en modo símbolo, solo el que se edita cuenta).
+    pub fn drop_symbol(
+        &mut self,
+        source: ArtboardId,
+        world: (i32, i32),
+    ) -> Result<(), &'static str> {
+        let target = self
+            .shown_artboard_at((world.0 as f32, world.1 as f32))
+            .ok_or("Drop it on an artboard")?;
+        let board = self
+            .document
+            .artboard(target)
+            .ok_or("Drop it on an artboard")?;
+        let src = self
+            .document
+            .artboard(source)
+            .ok_or("That symbol is gone")?;
+        if !board.sprite.color_mode.stores_rgba() {
+            return Err("Symbols need an RGBA sprite");
+        }
+        if self.document.would_cycle(target, source) {
+            return Err("That would put the artboard inside itself");
+        }
+        let local = (world.0 - board.position.0, world.1 - board.position.1);
+        let above = (target == self.active).then_some(self.layer);
+        let cmd =
+            ops::new_instance_layer(&board.sprite, above, self.frame, source, &src.name, local);
+        let id = match &cmd {
+            Command::AddLayer { layer, .. } => layer.id,
+            _ => unreachable!("new_instance_layer devuelve AddLayer"),
+        };
+        if self.execute_doc(DocCommand::OnArtboard { id: target, cmd }) {
+            self.activate(target);
+            self.select_layer(id);
+        }
+        Ok(())
     }
 
     /// Key vigente de la capa actual en el frame actual (si es una capa de instancia).
@@ -142,6 +181,30 @@ mod tests {
         e.add_artboard(4, 4);
         e.activate(ArtboardId(1));
         e
+    }
+
+    #[test]
+    fn dropping_a_symbol_places_an_instance_where_it_lands() {
+        use cs_core::{PixelValue, Rgba};
+        let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        e.execute(Command::DrawPixels {
+            layer: e.layer,
+            frame: 0,
+            pixels: vec![(1, 1, red)],
+        });
+        let symbol = e
+            .convert_to_symbol("S", cs_commands::symbol::SymbolTiming::Graphic)
+            .unwrap();
+        let layers = e.sprite().layers.len();
+        e.drop_symbol(symbol, (5, 6)).unwrap();
+        assert_eq!(e.sprite().layers.len(), layers + 1);
+        let layer = e.sprite().layer(e.layer).unwrap();
+        assert_eq!(layer.instance.as_ref().unwrap().keys[0].position, (5, 6));
+        assert!(
+            e.drop_symbol(symbol, (500, 500)).is_err(),
+            "outside every artboard"
+        );
     }
 
     #[test]

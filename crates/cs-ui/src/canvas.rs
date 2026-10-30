@@ -107,6 +107,8 @@ pub struct CanvasView {
     renaming: Option<(ArtboardId, String, bool)>,
     /// Clic derecho sobre un slice con la herramienta Slice: al soltar se abre su menú.
     slice_menu: bool,
+    /// Por qué falló el último soltar de un símbolo de la biblioteca; el app lo muestra.
+    pub drop_error: Option<&'static str>,
     /// Clic derecho dentro de la selección con una herramienta de selección o Move: al soltar se
     /// abre su menú (voltear…).
     selection_menu: bool,
@@ -239,6 +241,7 @@ impl Default for CanvasView {
             pixel_cursor: None,
             renaming: None,
             slice_menu: false,
+            drop_error: None,
             selection_menu: false,
             slice_properties: false,
             notes: Default::default(),
@@ -617,6 +620,16 @@ impl CanvasView {
     ) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
         let ctx = ui.ctx().clone();
+        if let Some(payload) = response.dnd_release_payload::<crate::library_panel::SymbolPayload>()
+            && let Some(pos) = response.hover_pos()
+        {
+            let w = self.to_world(rect, pos);
+            if let Err(why) =
+                editor.drop_symbol(payload.0, (w.0.floor() as i32, w.1.floor() as i32))
+            {
+                self.drop_error = Some(why);
+            }
+        }
         // Antes de cualquier uso de `origin` en este frame (zoom, entrada, dibujo).
         self.ppp = ctx.pixels_per_point();
         let (rx, ry) = editor.sprite().pixel_ratio;

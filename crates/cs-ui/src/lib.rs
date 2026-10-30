@@ -1081,7 +1081,11 @@ impl ChimpApp {
             });
         }
         if self.has_doc() {
-            Some(self.editor_panels(ui, modal))
+            let rect = self.editor_panels(ui, modal);
+            if let Some(why) = self.doc.canvas.drop_error.take() {
+                self.show_message("Library", why);
+            }
+            Some(rect)
         } else {
             // Con Pixel UI, el Home del diseño (frame 5) sobre el fondo del skin.
             let frame = self
