@@ -229,9 +229,15 @@ fn the_embedded_skin_has_the_mockup_colors_window_and_buttons() {
         w: 43,
         h: 9,
     };
-    assert_eq!((button.size, button.center), ([49, 16], Some(center)));
-    assert!(data.pieces.contains_key("button.hover"));
-    assert!(data.pieces.contains_key("button.down"));
+    assert_eq!((button.size, button.center), ([49, 17], Some(center)));
+    for state in ["hover", "down", "disabled"] {
+        let piece = &data.pieces[&format!("button.{state}")];
+        assert_eq!(
+            (piece.size, piece.center),
+            (button.size, button.center),
+            "{state}"
+        );
+    }
     assert!(!data.pieces.contains_key("panel"), "not drawn yet");
 }
 
@@ -249,13 +255,18 @@ fn the_buttons_have_one_pixel_corners_and_the_active_one_is_sunk_with_the_brown_
     };
     let outline = Rgba::rgb(89, 77, 77);
     let white = Rgba::rgb(255, 255, 255);
+    let light = Rgba::rgb(241, 235, 219);
     let button = &data.pieces["button"];
-    assert_eq!(button.size, [49, 16]);
-    // Esquinas de 1 px: arriba, el borde empieza en la columna 1; abajo, igual.
+    assert_eq!(button.size, [49, 17]);
+    // Esquinas de 1 px: arriba, el borde empieza en la columna 1; abajo, las esquinas del borde
+    // son de la línea clara, que va debajo (la última fila, sin las puntas).
     assert_eq!(at(button, 0, 0).a, 0);
     assert_eq!(at(button, 1, 0), outline);
     assert_eq!(at(button, 0, 1), outline);
-    assert_eq!(at(button, 0, 15).a, 0);
+    assert_eq!(at(button, 0, 15), light);
+    assert_eq!(at(button, 24, 15), outline);
+    assert_eq!(at(button, 0, 16).a, 0);
+    assert_eq!(at(button, 24, 16), light, "the light line below");
     assert_eq!(at(button, 1, 1), white, "the light on top");
     assert_eq!(at(button, 47, 5), white, "the light on the right");
     assert_eq!(
@@ -263,22 +274,31 @@ fn the_buttons_have_one_pixel_corners_and_the_active_one_is_sunk_with_the_brown_
         Rgba::rgb(136, 110, 106),
         "the dark row below"
     );
-    // Hover: el relleno blanco adentro de un marco del relleno de siempre.
+    // Hover: el relleno blanco; la fila de arriba y la columna derecha, del relleno de siempre.
     let hover = &data.pieces["button.hover"];
     assert_eq!(at(hover, 24, 6), white);
-    assert_eq!(
-        at(hover, 2, 6),
-        at(button, 24, 6),
-        "the frame of the usual fill"
-    );
-    // Presionado: una fila más abajo, sin la fila oscura.
+    assert_eq!(at(hover, 24, 1), at(button, 24, 6), "the top row");
+    assert_eq!(at(hover, 47, 6), at(button, 24, 6), "the right column");
+    assert_eq!(at(hover, 1, 6), at(button, 1, 6), "the left column");
+    // Presionado: no se desplaza; es el normal sin la fila oscura (el cuerpo mide 15 y la
+    // última fila queda vacía).
     let down = &data.pieces["button.down"];
-    assert_eq!(at(down, 24, 0).a, 0, "sunk one row");
-    assert_eq!(at(down, 24, 1), outline);
-    assert_eq!(at(down, 24, 15), outline);
-    // Activo: la forma del presionado con el café tramado de la herramienta activa.
+    assert_eq!(at(down, 24, 0), outline, "not sunk");
+    assert_eq!(at(down, 24, 14), outline);
+    assert_eq!(at(down, 24, 15), light);
+    assert_eq!(at(down, 24, 16).a, 0);
+    // Deshabilitado: el borde claro (oscuro en las filas de abajo) y abajo los cafés claros.
+    let disabled = &data.pieces["button.disabled"];
+    assert_eq!(at(disabled, 24, 0), Rgba::rgb(136, 110, 106));
+    assert_eq!(at(disabled, 1, 5), light, "the left column");
+    assert_eq!(at(disabled, 24, 13), light);
+    assert_eq!(at(disabled, 24, 14), Rgba::rgb(189, 164, 153));
+    assert_eq!(at(disabled, 24, 15), outline);
+    assert_eq!(at(disabled, 24, 16), light);
+    // Activo (de los grupos, todavía de 16): la forma del presionado de antes con el café
+    // tramado de la herramienta activa.
     let active = &data.pieces["button.active"];
-    assert_eq!((active.size, active.center), (button.size, button.center));
+    assert_eq!((active.size, active.center), ([49, 16], button.center));
     let browns = [Rgba::rgb(189, 164, 153), Rgba::rgb(174, 152, 142)];
     for y in 3..14 {
         for x in 3..46 {

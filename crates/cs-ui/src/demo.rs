@@ -289,6 +289,10 @@ fn draw_chimp(editor: &mut Editor) {
 /// herramientas, rangos y paneles listos para las capturas.
 pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     use crate::*;
+    // Desarrollo: la pestaña UI Catalog a la vista, para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_CATALOG").is_some() {
+        app.show_page(tabs::Page::Catalog);
+    }
     // Desarrollo: abre el diálogo con un ancho de ejemplo para capturas.
     if std::env::var_os("CHIMPSPRITE_DEMO_CANVAS_SIZE").is_some() && app.has_doc() {
         app.open_canvas_size();

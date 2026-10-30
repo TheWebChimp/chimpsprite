@@ -829,7 +829,7 @@ fn lospec_ui(
             if tab.lookup_loading() {
                 ui.spinner();
             } else {
-                fetch = crate::pixel_ui::lit_button(ui, "Fetch").clicked();
+                fetch = crate::pixel_ui::text_button(ui, "Fetch").clicked();
             }
             let response = panel_field(ui, &mut tab.link, ui.available_width(), "Link", "");
             fetch |= response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -1090,7 +1090,7 @@ fn search_form(
                 if first_page_loading {
                     ui.spinner();
                 } else {
-                    search |= crate::pixel_ui::lit_button(ui, "Search").clicked();
+                    search |= crate::pixel_ui::text_button(ui, "Search").clicked();
                 }
                 let link = crate::pixel_ui::icon_button(
                     ui,
@@ -1099,7 +1099,6 @@ fn search_form(
                     "Paste a Lospec link",
                     Some(*link_open),
                 );
-                crate::pixel_ui::under_light(ui, link.rect);
                 if link.clicked() {
                     *link_open = !*link_open;
                 }
@@ -1388,17 +1387,17 @@ fn lospec_row(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
-            if crate::pixel_ui::lit_button(ui, "Save").clicked() {
+            if crate::pixel_ui::text_button(ui, "Save").clicked() {
                 *action = Some(LospecAction::Save(p.clone()));
             }
             // Sus colores al final de la paleta del sprite (los que no tiene).
-            if crate::pixel_ui::lit_button(ui, "Append")
+            if crate::pixel_ui::text_button(ui, "Append")
                 .tip("Add its colors to the sprite's palette")
                 .clicked()
             {
                 *action = Some(LospecAction::Append(p.clone()));
             }
-            if crate::pixel_ui::lit_button(ui, "Apply").clicked() {
+            if crate::pixel_ui::text_button(ui, "Apply").clicked() {
                 *action = Some(LospecAction::Apply(p.clone()));
             }
         });

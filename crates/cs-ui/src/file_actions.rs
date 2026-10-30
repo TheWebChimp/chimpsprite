@@ -178,6 +178,23 @@ impl ChimpApp {
         self.tabs.go_home(&mut self.doc);
     }
 
+    /// Muestra la página `page` (como Home, recuerda las opciones de herramienta).
+    pub(crate) fn show_page(&mut self, page: crate::tabs::Page) {
+        self.tool_options = self.current_tool_options();
+        self.tabs.show_page(&mut self.doc, page);
+    }
+
+    /// Lo que se pidió en la pestaña `tab` de la barra: verla o cerrarla.
+    pub(crate) fn tab_action(&mut self, tab: crate::tabs::TabRef, close: bool) {
+        use crate::tabs::TabRef;
+        match (tab, close) {
+            (TabRef::Doc(i), false) => self.tabs.switch(&mut self.doc, i),
+            (TabRef::Doc(i), true) => self.request_close_tab(i),
+            (TabRef::Page(page), false) => self.show_page(page),
+            (TabRef::Page(page), true) => self.tabs.close_page(page),
+        }
+    }
+
     fn close_tab(&mut self, index: usize) {
         if self.tabs.active() == Some(index) {
             self.canvas_size = None;

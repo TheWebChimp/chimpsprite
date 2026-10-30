@@ -1565,9 +1565,15 @@ fn hovered_rows_are_pink_with_pink_bevels_and_disabled_ones_dim_text() {
     open_menu(&mut h, "File");
     let colors = *h.app.pixel.skin().unwrap().colors();
     assert_eq!(text_rect(&h, "Save").1, colors.text_dim, "disabled");
-    // Sin puntos suspensivos (en ningún lado de la app).
-    assert_eq!(text_rect(&h, "Open").1, colors.text);
     let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    // Sin puntos suspensivos (en ningún lado de la app). El de Open del menú (no el botón Open
+    // de Pixnews, en Home, que va con su sombra).
+    let open = h
+        .text_rects
+        .iter()
+        .find(|(t, r, _)| t == "Open" && panel.contains_rect(*r))
+        .expect("Open in the menu");
+    assert_eq!(open.2, colors.text);
     let inside: Vec<&String> = h
         .texts
         .iter()
@@ -3083,4 +3089,45 @@ fn an_empty_object_layer_asks_for_an_object_and_image_layers_show_no_panel() {
     h.app.doc.editor.select_layer(LayerId(1));
     h.frame();
     assert!(!h.texts.iter().any(|t| t.0 == "Object"));
+}
+
+#[test]
+fn help_ui_catalog_opens_a_closable_tab_with_the_four_button_states() {
+    let mut h = two_tabs(Some(0));
+    open_menu(&mut h, "Help");
+    let item = h.button("UI Catalog");
+    h.click(item.center(), PointerButton::Primary);
+    h.frame();
+    // Una pestaña más, a la vista, sin documento activo.
+    assert_eq!(h.app.tabs.page(), Some(crate::tabs::Page::Catalog));
+    assert_eq!(h.app.tabs.active(), None);
+    assert_eq!(h.app.tabs.bar_active(), Some(2));
+    assert!(h.texts.iter().any(|(t, _)| t == "UI Catalog"), "the tab");
+    for state in ["Normal", "Hover", "Pressed", "Disabled"] {
+        assert!(h.texts.iter().any(|(t, _)| t == state), "{state}");
+    }
+    // Cada estado con su pieza, de 17 de alto.
+    for piece in ["button", "button.hover", "button.down", "button.disabled"] {
+        let boxes = h.drawn_boxes(piece);
+        assert!(!boxes.is_empty(), "{piece}");
+        assert!(
+            boxes.iter().all(|b| b.height() == 17.0),
+            "{piece} {boxes:?}"
+        );
+    }
+    // El botón de verdad cuenta los clics.
+    let live = h.button("Click me");
+    h.click(live.center(), PointerButton::Primary);
+    h.frame();
+    assert!(
+        h.texts.iter().any(|(t, _)| t == "Clicked 1×"),
+        "{:?}",
+        h.texts
+    );
+    // Se cierra como cualquier pestaña: queda Home y los documentos siguen.
+    h.app
+        .tab_action(crate::tabs::TabRef::Page(crate::tabs::Page::Catalog), true);
+    h.frame();
+    assert_eq!(h.app.tabs.page(), None);
+    assert_eq!(h.app.tabs.bar().len(), 2);
 }

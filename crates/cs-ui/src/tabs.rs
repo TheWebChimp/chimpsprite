@@ -85,17 +85,93 @@ pub(crate) struct TabInfo {
     pub dirty: bool,
 }
 
+/// Una pestaña que no es un documento. Va después de las de documentos y, mientras se ve, no hay
+/// documento activo (como en Home).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Page {
+    /// El UI Catalog: los componentes del kit en todos sus estados.
+    Catalog,
+}
+
+impl Page {
+    pub fn title(self) -> &'static str {
+        match self {
+            Page::Catalog => crate::kit::catalog::TITLE,
+        }
+    }
+}
+
+/// Una pestaña de la barra: un documento (su índice) o una página.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TabRef {
+    Doc(usize),
+    Page(Page),
+}
+
 #[derive(Default)]
 pub(crate) struct Tabs {
     /// Una entrada por pestaña; la activa queda en `None` (su `DocState` está en la app).
     slots: Vec<Option<DocState>>,
-    /// `None` = Home.
+    /// `None` = Home (o la página `page`).
     active: Option<usize>,
+    /// Las páginas abiertas, en orden de pestaña (después de los documentos).
+    pages: Vec<Page>,
+    /// La página a la vista (solo sin documento activo).
+    page: Option<Page>,
 }
 
 impl Tabs {
+    /// El documento activo (`None`: Home o una página).
     pub fn active(&self) -> Option<usize> {
         self.active
+    }
+
+    /// La página a la vista (`None`: un documento o Home).
+    pub fn page(&self) -> Option<Page> {
+        self.page
+    }
+
+    /// Muestra la página `page` (y la abre si no estaba): guarda el documento activo.
+    pub fn show_page(&mut self, current: &mut DocState, page: Page) {
+        self.stash(current);
+        self.active = None;
+        if !self.pages.contains(&page) {
+            self.pages.push(page);
+        }
+        self.page = Some(page);
+    }
+
+    /// Cierra la página `page`; si se veía, queda Home.
+    pub fn close_page(&mut self, page: Page) {
+        self.pages.retain(|p| *p != page);
+        if self.page == Some(page) {
+            self.page = None;
+        }
+    }
+
+    /// Las pestañas de la barra en orden: los documentos y después las páginas.
+    pub fn bar(&self) -> Vec<TabRef> {
+        (0..self.len())
+            .map(TabRef::Doc)
+            .chain(self.pages.iter().map(|&p| TabRef::Page(p)))
+            .collect()
+    }
+
+    /// Cuál de [`Tabs::bar`] es la que se ve (`None`: Home).
+    pub fn bar_active(&self) -> Option<usize> {
+        let page = self.page.map(TabRef::Page);
+        let shown = self.active.map(TabRef::Doc).or(page)?;
+        self.bar().iter().position(|t| *t == shown)
+    }
+
+    /// Nombre y estado de cada pestaña de [`Tabs::bar`].
+    pub fn bar_infos(&self, current: &DocState) -> Vec<TabInfo> {
+        let mut infos = self.infos(current);
+        infos.extend(self.pages.iter().map(|p| TabInfo {
+            name: p.title().to_owned(),
+            dirty: false,
+        }));
+        infos
     }
 
     pub fn len(&self) -> usize {
@@ -159,6 +235,7 @@ impl Tabs {
         if index >= self.len() || Some(index) == self.active {
             return;
         }
+        self.page = None;
         self.stash(current);
         *current = self.slots[index].take().expect("inactive tab is stored");
         self.active = Some(index);
@@ -167,6 +244,7 @@ impl Tabs {
     pub fn go_home(&mut self, current: &mut DocState) {
         self.stash(current);
         self.active = None;
+        self.page = None;
     }
 
     /// Abre `doc` en una pestaña nueva (o en lugar de un Untitled intacto) y la activa.
@@ -175,6 +253,7 @@ impl Tabs {
             *current = doc;
             return;
         }
+        self.page = None;
         self.stash(current);
         self.slots.push(None);
         self.active = Some(self.len() - 1);
@@ -275,6 +354,35 @@ mod tests {
         assert_eq!(names(&tabs, &current), vec!["a", "b"]);
         tabs.switch(&mut current, 1);
         assert_eq!(current.location.name, "b");
+    }
+
+    #[test]
+    fn a_page_is_a_tab_after_the_documents_and_hides_the_active_one() {
+        let mut tabs = Tabs::default();
+        let mut current = named("");
+        tabs.open(&mut current, named("a"));
+        touch(&mut current);
+        tabs.show_page(&mut current, Page::Catalog);
+        assert_eq!((tabs.active(), tabs.page()), (None, Some(Page::Catalog)));
+        assert_eq!(
+            tabs.bar(),
+            vec![TabRef::Doc(0), TabRef::Page(Page::Catalog)]
+        );
+        assert_eq!(tabs.bar_active(), Some(1));
+        let infos = tabs.bar_infos(&current);
+        assert_eq!(infos[1].name, "UI Catalog");
+        // Otra vez no la duplica; un documento la tapa y sigue abierta.
+        tabs.show_page(&mut current, Page::Catalog);
+        tabs.switch(&mut current, 0);
+        assert_eq!(current.location.name, "a");
+        assert_eq!((tabs.page(), tabs.bar().len()), (None, 2));
+        tabs.show_page(&mut current, Page::Catalog);
+        tabs.go_home(&mut current);
+        assert_eq!((tabs.page(), tabs.bar_active()), (None, None));
+        // Cerrada a la vista, queda Home.
+        tabs.show_page(&mut current, Page::Catalog);
+        tabs.close_page(Page::Catalog);
+        assert_eq!((tabs.page(), tabs.bar()), (None, vec![TabRef::Doc(0)]));
     }
 
     #[test]

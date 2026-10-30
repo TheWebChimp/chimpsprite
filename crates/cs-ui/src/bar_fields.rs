@@ -320,7 +320,11 @@ pub fn options<T: PartialEq + Copy>(
             WidgetState::Normal
         };
         match look.skin.piece(BUTTON, state) {
-            Some(piece) => shapes.extend(pixel_ui::piece_shapes(piece, drawn, ppp)),
+            // La pieza trae su luz en la última fila: llega hasta la de `light`.
+            Some(piece) => {
+                let with_light = drawn.with_max_y(light.bottom());
+                shapes.extend(pixel_ui::piece_shapes(piece, with_light, ppp));
+            }
             None => {
                 shapes.extend(flat_box(look, drawn, ppp));
                 if on {
@@ -394,7 +398,6 @@ pub fn brush_shape(
         pos2(rect.left().round(), look.top + FIELD_TOP),
         vec2(BRUSH_BUTTON_W, pixel_ui::CONTROL_BODY),
     );
-    pixel_ui::under_light(ui, drawn);
     let label = match shape {
         BrushShape::Round => "Round brush",
         BrushShape::Square => "Square brush",

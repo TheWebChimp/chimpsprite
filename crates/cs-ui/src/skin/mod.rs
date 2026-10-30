@@ -3,7 +3,7 @@
 //! - Cada pieza es un slice con nombre; su centro, si lo tiene, es el 9-slice.
 //! - Los slices `color.*` dan un color: el de su píxel central.
 //! - Una pieza sin dibujar (toda transparente) cuenta como que no existe.
-//! - Si falta una variante (`.hover`, `.down`, `.active`), se usa la base.
+//! - Si falta una variante (`.hover`, `.down`, `.active`, `.disabled`), se usa la base.
 //! - Una animación son las piezas `<nombre>.0`, `<nombre>.1`…; cada frame dura lo que dice el
 //!   texto (user data) de su slice, `duration=<ms>`, como la duración del frame en Aseprite.
 
@@ -56,6 +56,8 @@ pub enum WidgetState {
     Hover,
     Down,
     Active,
+    /// No se puede usar (`.disabled`).
+    Disabled,
 }
 
 impl WidgetState {
@@ -65,6 +67,7 @@ impl WidgetState {
             WidgetState::Hover => ".hover",
             WidgetState::Down => ".down",
             WidgetState::Active => ".active",
+            WidgetState::Disabled => ".disabled",
         }
     }
 }
@@ -372,7 +375,8 @@ impl Skin {
         &self.colors
     }
 
-    /// El mismo skin con solo las piezas `names` (y sus variantes `.hover`, `.down`, `.active`):
+    /// El mismo skin con solo las piezas `names` (y sus variantes `.hover`, `.down`, `.active`,
+    /// `.disabled`):
     /// una copia chica para guardar en la memoria de egui.
     pub fn subset(&self, names: &[&str]) -> Skin {
         let pieces = self
@@ -381,9 +385,9 @@ impl Skin {
             .filter(|(name, _)| {
                 names.iter().any(|n| {
                     name.as_str() == *n
-                        || name
-                            .strip_prefix(*n)
-                            .is_some_and(|rest| [".hover", ".down", ".active"].contains(&rest))
+                        || name.strip_prefix(*n).is_some_and(|rest| {
+                            [".hover", ".down", ".active", ".disabled"].contains(&rest)
+                        })
                 })
             })
             .map(|(name, piece)| (name.clone(), piece.clone()))

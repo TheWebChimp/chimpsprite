@@ -315,7 +315,7 @@ fn pixel_contents(
     ];
     for (i, (label, rect)) in buttons.into_iter().enumerate() {
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
-        if pixel_ui::pixel_button_sized(&mut child, skin, label, rect.size()).clicked() {
+        if crate::kit::button::button_sized(&mut child, skin, label, rect.width()).clicked() {
             clicked = Some(i);
         }
     }

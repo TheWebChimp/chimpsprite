@@ -47,8 +47,8 @@ oculta.
   opciones y paneles) y `canvas`, el del área alrededor de los artboards.
   - Los separadores grabados del mockup son una línea `canvas` de 1 px con una `highlight` de
     1 px debajo (horizontales) o a la derecha (verticales).
-- **Variantes:** `.hover`, `.down` y `.active` son opcionales; si falta una, se usa la pieza
-  base.
+- **Variantes:** `.hover`, `.down`, `.active` y `.disabled` son opcionales; si falta una, se usa la
+  pieza base.
 - **Piezas sin dibujar:** una pieza totalmente transparente cuenta como que no existe; la app
   dibuja un respaldo plano con los colores del skin.
 - **Íconos de herramientas:** `icon.<herramienta>` miden 17×17 sobre fondo transparente (los
@@ -129,9 +129,13 @@ oculta.
   se repiten debajo, hasta una fila antes del grabado de las pestañas.
 - **Origen:** los íconos, los marcos y los botones se copiaron del mockup del autor
   (`.design/Design.aseprite`, que no se versiona).
-- **Botones:** `button`, `button.hover` y `button.down` vienen del mockup del diálogo "Unsaved
-  changes".
-  - `button.active` (220,100, 49×17, mismo centro (3,3,43,10) que `button`) es la opción
+- **Botones:** `button`, `button.hover`, `button.down` y `button.disabled` (49×17, centro
+  (3,3,43,9)) vienen del mockup de componentes (frame 9). La línea clara de abajo es la última
+  fila de la pieza; `button.down` no se desplaza (es `button` sin la fila oscura). Los dibuja el
+  botón del kit (`crates/cs-ui/src/kit/button.rs`): texto `color.text` con sombra
+  `color.background` 1 px abajo (sin sombra con el puntero encima) y, deshabilitado,
+  `color.button_text_disabled`.
+  - `button.active` (220,100, 49×16, mismo centro que `button`) es la opción
     elegida de los grupos de la barra (Sample, Linear/Radial, Rotation). El diseño no tiene un
     botón de texto activo, así que se derivó de `button` con el mismo mapeo normal → activo que
     llevó `tool.slot` a `tool.slot.active`, leyendo los píxeles con Lua:

@@ -44,6 +44,7 @@ mod home;
 mod instance_ops;
 mod keyboard_shortcuts;
 mod keymap;
+mod kit;
 mod layer_ops;
 #[cfg(test)]
 mod layout_tests;
@@ -918,13 +919,15 @@ impl ChimpApp {
         let mut switch_to = None;
         let mut close = None;
         let mut home = false;
+        let bar = self.tabs.bar();
+        let shown = self.tabs.bar_active();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            if ui.selectable_label(!self.has_doc(), "🏠 Home").clicked() {
+            if ui.selectable_label(shown.is_none(), "🏠 Home").clicked() {
                 home = true;
             }
-            for (i, tab) in self.tabs.infos(&self.doc).into_iter().enumerate() {
-                let active = self.tabs.active() == Some(i);
+            for (i, tab) in self.tabs.bar_infos(&self.doc).into_iter().enumerate() {
+                let active = shown == Some(i);
                 let label = format!("{}{}", tab.name, if tab.dirty { " •" } else { "" });
                 ui.add_space(4.0);
                 let response = ui.selectable_label(active, label);
@@ -943,10 +946,10 @@ impl ChimpApp {
             self.go_home();
         }
         if let Some(i) = switch_to {
-            self.tabs.switch(&mut self.doc, i);
+            self.tab_action(bar[i], false);
         }
         if let Some(i) = close {
-            self.request_close_tab(i);
+            self.tab_action(bar[i], true);
         }
     }
 
@@ -992,8 +995,8 @@ impl ChimpApp {
             ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
         });
         if let Some(skin) = self.pixel.skin() {
-            let infos = self.tabs.infos(&self.doc);
-            let active = self.tabs.active();
+            let infos = self.tabs.bar_infos(&self.doc);
+            let active = self.tabs.bar_active();
             let action = egui::Panel::top("tabs")
                 .exact_size(tab_bar::TABS_HEIGHT)
                 .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0))
@@ -1018,8 +1021,8 @@ impl ChimpApp {
             }
             match action {
                 Some(tab_bar::TabAction::Home) => self.go_home(),
-                Some(tab_bar::TabAction::Switch(i)) => self.tabs.switch(&mut self.doc, i),
-                Some(tab_bar::TabAction::Close(i)) => self.request_close_tab(i),
+                Some(tab_bar::TabAction::Switch(i)) => self.tab_action(self.tabs.bar()[i], false),
+                Some(tab_bar::TabAction::Close(i)) => self.tab_action(self.tabs.bar()[i], true),
                 None => {}
             }
         } else {
@@ -1097,13 +1100,21 @@ impl ChimpApp {
             if let Some(frame) = frame {
                 panel = panel.frame(frame);
             }
+            // Las páginas (el UI Catalog) sobre el fondo del área de trabajo.
+            let page = self.tabs.page();
+            if let (Some(frame), Some(_)) = (frame, page)
+                && let Some(skin) = self.pixel.skin()
+            {
+                panel = panel.frame(frame.fill(skin.colors().canvas));
+            }
             panel.show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| {
-                    if self.pixel.skin().is_some() {
-                        self.pixel_home(ui);
-                    } else {
-                        self.home(ui);
+                ui.add_enabled_ui(!modal, |ui| match (page, self.pixel.skin()) {
+                    (Some(tabs::Page::Catalog), Some(skin)) => kit::catalog::show(ui, skin),
+                    (Some(tabs::Page::Catalog), None) => {
+                        ui.label("The UI Catalog shows the Pixel UI components: turn on View → Pixel UI.");
                     }
+                    (None, Some(_)) => self.pixel_home(ui),
+                    (None, None) => self.home(ui),
                 });
             });
             None

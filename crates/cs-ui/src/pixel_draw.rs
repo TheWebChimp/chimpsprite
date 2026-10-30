@@ -1,5 +1,6 @@
 //! Lo que comparten los dibujos de Pixel UI: las piezas sueltas del skin (íconos) a su tamaño o
-//! centradas, los textos con las mayúsculas en una fila y el botón chico con la pieza `button`.
+//! centradas, los textos con las mayúsculas en una fila y el botón chico con ícono, con la pieza
+//! `button`.
 
 use eframe::egui::{self, Color32, Pos2, Rect, Response, Sense, Shape, TextStyle, Ui, Vec2, vec2};
 
@@ -84,11 +85,13 @@ impl<'a> ButtonInfo<'a> {
     }
 }
 
-/// Un botón en `rect` con la pieza `button` del skin según su estado: apretado, prendido
-/// (`selected`: el marco rosa de la herramienta elegida), con el puntero encima o normal (sin la
-/// pieza, un borde de 1 px). `content`
-/// dibuja lo de adentro en el rect que recibe (baja una fila mientras se aprieta). Desactivado
-/// no se aprieta. El tooltip lo pone quien llama.
+/// Un botón con ícono en `rect` (el cuerpo) con la pieza `button` del skin según su estado:
+/// apretado, prendido (`selected`: el marco rosa de la herramienta elegida), con el puntero encima
+/// o normal (sin la pieza, un borde de 1 px). La línea clara de la pieza queda debajo de `rect`,
+/// en la fila siguiente. `content` dibuja lo de adentro en el rect que recibe (baja una fila
+/// mientras se aprieta). Desactivado no se aprieta. El tooltip lo pone quien llama.
+///
+/// Los botones de texto son los del kit ([`crate::kit::button`]).
 pub fn skin_button(
     ui: &mut Ui,
     skin: &Skin,
@@ -124,9 +127,21 @@ pub fn skin_button(
     };
     let ppp = ui.ctx().pixels_per_point();
     let lit = enabled && selected == Some(true) && state != WidgetState::Down;
+    // La pieza trae la línea clara en su última fila: va debajo del cuerpo.
+    let drawn = rect.with_max_y(rect.bottom() + 1.0);
     let mut shapes = match skin.piece("button", state) {
-        Some(piece) if lit => pixel_ui::selected_shapes(piece, rect, true, skin.colors(), ppp),
-        Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
+        Some(piece) if lit => {
+            let mut shapes = pixel_ui::piece_shapes(piece, drawn, ppp);
+            shapes.push(pixel_ui::selected_overlay(
+                piece,
+                rect,
+                true,
+                skin.colors(),
+                ppp,
+            ));
+            shapes
+        }
+        Some(piece) => pixel_ui::piece_shapes(piece, drawn, ppp),
         None => vec![Shape::rect_stroke(
             rect.shrink(0.5),
             0.0,

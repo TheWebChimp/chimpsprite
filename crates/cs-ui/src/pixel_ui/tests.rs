@@ -71,7 +71,7 @@ fn button(ctx: &egui::Context, skin: &Skin, label: &str, events: Vec<Event>) -> 
     let input = RawInput { events, ..screen() };
     frame(ctx, input, |ui| {
         egui::CentralPanel::default().show(ui, |ui| {
-            let r = pixel_button(ui, skin, label);
+            let r = crate::kit::button::button(ui, skin, label);
             out = (r.rect, r.clicked());
         });
     });
@@ -79,13 +79,13 @@ fn button(ctx: &egui::Context, skin: &Skin, label: &str, events: Vec<Event>) -> 
 }
 
 #[test]
-fn a_button_takes_the_piece_size_and_grows_with_the_text() {
+fn a_button_fits_its_text_and_is_17_high() {
     let ctx = egui::Context::default();
     let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
     let (short, _) = button(&ctx, &skin, "OK", vec![]);
-    assert_eq!(short.size(), vec2(49.0, 17.0), "the piece and its light");
+    assert_eq!(short.height(), 17.0, "the piece and its light");
     let (long, _) = button(&ctx, &skin, "A much longer button label", vec![]);
-    assert!(long.width() > 49.0, "{long:?}");
+    assert!(long.width() > short.width() + 50.0, "{long:?}");
     assert_eq!(long.height(), 17.0);
 }
 
@@ -252,10 +252,7 @@ fn a_row_of_buttons_fills_the_content_width_evenly() {
         Skin::fallback(),
     ];
     for skin in &skins {
-        let id = Id::new((
-            "row",
-            skin.piece(BUTTON_PIECE, WidgetState::Normal).is_some(),
-        ));
+        let id = Id::new(("row", skin.piece("button", WidgetState::Normal).is_some()));
         let mut content = Rect::NOTHING;
         let mut rects = Vec::new();
         for _ in 0..3 {

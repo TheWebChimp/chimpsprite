@@ -14,7 +14,6 @@ use crate::tab_bar;
 
 /// Marco de los diálogos: la ventana de barra rosa del mockup de "Unsaved changes".
 const DIALOG_PIECE: &str = "window";
-const BUTTON_PIECE: &str = "button";
 /// Botón de cerrar de la barra de título.
 const CLOSE_PIECE: &str = "window.close";
 /// Margen entre el área del centro del 9-slice y lo de adentro (contenido o texto).
@@ -24,9 +23,8 @@ const BUTTON_GAP: f32 = 4.0;
 /// Bordes del diálogo de respaldo (izquierda, arriba, derecha, abajo); arriba va la barra de
 /// título.
 const FALLBACK_DIALOG: [f32; 4] = [1.0, 13.0, 1.0, 1.0];
-/// Bordes y tamaño mínimo del botón de respaldo (el alto del botón del mockup).
+/// Bordes del marco de respaldo de los botones con ícono.
 const FALLBACK_BUTTON: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-const FALLBACK_BUTTON_SIZE: Vec2 = Vec2::new(32.0, 18.0);
 /// Tamaño del botón de cerrar de respaldo (el de la pieza del skin).
 const FALLBACK_CLOSE_SIZE: Vec2 = Vec2::new(9.0, 9.0);
 /// En la memoria de egui, con el id del diálogo: la posición a la que se lo arrastró y la pasada
@@ -346,44 +344,6 @@ fn close_cross(rect: Rect, color: Color32, pixels_per_point: f32) -> Vec<Shape> 
     ]
 }
 
-/// Tamaño del botón `label` ajustado al texto: 4 px de margen a cada lado del área del centro,
-/// sin bajar del tamaño de la pieza.
-/// El texto de un botón como se muestra: "…" con los puntos de la fuente pixel (si no lo tiene,
-/// el de la fuente de respaldo no es pixel art), como en los menús.
-fn shown_label(label: &str) -> String {
-    label.replace('…', tab_bar::ellipsis())
-}
-
-fn button_size(ui: &Ui, skin: &Skin, label: &str) -> Vec2 {
-    let font = TextStyle::Button.resolve(ui.style());
-    let text = ui
-        .painter()
-        .layout_no_wrap(shown_label(label), font, skin.colors().text)
-        .size();
-    let base = skin.piece(BUTTON_PIECE, WidgetState::Normal);
-    let [left, _, right, _] = base.map_or(FALLBACK_BUTTON, borders);
-    let min = base.map_or(FALLBACK_BUTTON_SIZE, |p| {
-        vec2(p.size[0] as f32, p.size[1] as f32)
-    });
-    vec2(
-        (left + PADDING + text.x + PADDING + right)
-            .ceil()
-            .max(min.x),
-        min.y,
-    )
-}
-
-/// Botón con `button` en reposo, `button.hover` con el puntero encima y `button.down` mientras
-/// se presiona. Presionado, el texto baja 1 px.
-///
-/// El ancho se ajusta al texto, con 4 px de margen a cada lado del área del centro, sin bajar
-/// del tamaño de la pieza. Devuelve un `Response` normal: clic, foco y teclado (Enter o Espacio
-/// con foco).
-pub fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str) -> Response {
-    let size = button_size(ui, skin, label);
-    button_of_size(ui, skin, label, size)
-}
-
 /// Una fila de botones que ocupa todo el ancho disponible: el ancho se reparte en partes
 /// iguales, con 4 px entre botón y botón, y los píxeles que sobran van a los últimos (uno a cada
 /// uno, así los anchos son enteros y no difieren en más de 1 px). Ningún botón
@@ -396,8 +356,11 @@ pub fn pixel_buttons(ui: &mut Ui, skin: &Skin, labels: &[&str]) -> Vec<Response>
     if n == 0 {
         return Vec::new();
     }
-    let sizes: Vec<Vec2> = labels.iter().map(|l| button_size(ui, skin, l)).collect();
-    let widest = sizes.iter().map(|s| s.x).fold(0.0, f32::max);
+    let widths: Vec<f32> = labels
+        .iter()
+        .map(|l| crate::kit::button::width(ui, l))
+        .collect();
+    let widest = widths.iter().copied().fold(0.0, f32::max);
     let gaps = BUTTON_GAP * (n - 1) as f32;
     let needed = widest * n as f32 + gaps;
     let total = if ui.is_sizing_pass() {
@@ -412,86 +375,21 @@ pub fn pixel_buttons(ui: &mut Ui, skin: &Skin, labels: &[&str]) -> Vec<Response>
         ui.spacing_mut().item_spacing.x = BUTTON_GAP;
         labels
             .iter()
-            .zip(&sizes)
             .enumerate()
-            .map(|(i, (label, size))| {
+            .map(|(i, label)| {
                 let width = if i + extra >= n { each + 1.0 } else { each };
-                button_of_size(ui, skin, label, vec2(width, size.y))
+                crate::kit::button::button_sized(ui, skin, label, width)
             })
             .collect()
     })
     .inner
 }
 
-/// Dónde va el texto de un botón: centrado en `inner` y, presionado, 1 px más abajo. Alineado a
-/// píxeles de pantalla.
+/// Dónde va el ícono (o la inicial) de un botón de herramienta: centrado en `inner` y, presionado,
+/// 1 px más abajo. Alineado a píxeles de pantalla.
 fn label_pos(inner: Rect, size: Vec2, state: WidgetState, pixels_per_point: f32) -> Pos2 {
     let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
     (inner.center() - size / 2.0 + vec2(0.0, down)).round_to_pixels(pixels_per_point)
-}
-
-/// Un botón con `button` del skin de `size` exacto (en los diálogos con su lugar del diseño).
-pub fn pixel_button_sized(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response {
-    button_of_size(ui, skin, label, size)
-}
-
-/// Un botón de `size` exacto, dibujado con la pieza del estado en que está.
-/// Un botón de `size` (el cuerpo; debajo va la luz: ocupa 1 fila más), con la pieza del estado
-/// en que está y el texto con las mayúsculas en [`CONTROL_CAPS`].
-fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response {
-    let colors = *skin.colors();
-    let font = TextStyle::Button.resolve(ui.style());
-    let galley = ui
-        .painter()
-        .layout_no_wrap(shown_label(label), font, colors.text);
-    let base = skin.piece(BUTTON_PIECE, WidgetState::Normal);
-    let [left, top, right, bottom] = base.map_or(FALLBACK_BUTTON, borders);
-    let (slot, response) = ui.allocate_exact_size(
-        vec2(size.x, size.y + CONTROL_HEIGHT - CONTROL_BODY),
-        Sense::click(),
-    );
-    let rect = Rect::from_min_size(slot.min, size);
-    under_light(ui, rect);
-    let enabled = ui.is_enabled();
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
-    if ui.is_rect_visible(rect) {
-        let state = if response.is_pointer_button_down_on() {
-            WidgetState::Down
-        } else if response.hovered() {
-            WidgetState::Hover
-        } else {
-            WidgetState::Normal
-        };
-        // Deshabilitado, como en el diseño: el mismo botón (sin la transparencia de egui) con el
-        // texto en `button_text_disabled`.
-        let mut painter = ui.painter().clone();
-        let text_color = if enabled {
-            colors.text
-        } else {
-            painter.set_opacity(1.0);
-            colors.button_text_disabled
-        };
-        let ppp = ui.ctx().pixels_per_point();
-        match skin.piece(BUTTON_PIECE, state) {
-            Some(piece) => painter.extend(piece_shapes(piece, rect, ppp)),
-            None => painter.extend(flat_shapes(skin, rect, 0.0, ppp)),
-        }
-        let inner = Rect::from_min_max(rect.min + vec2(left, top), rect.max - vec2(right, bottom));
-        let at = label_pos(inner, galley.size(), state, ppp);
-        // A lo alto, las mayúsculas en su fila (como en los campos).
-        let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
-        let at = crate::tab_bar::text_pos(&galley, at.x, rect.top() + CONTROL_CAPS + down, ppp);
-        painter.galley(at, galley, text_color);
-        if response.has_focus() {
-            painter.rect_stroke(
-                rect.expand(1.0).round_to_pixels(ppp),
-                0.0,
-                Stroke::new(1.0, colors.accent),
-                StrokeKind::Outside,
-            );
-        }
-    }
-    response
 }
 
 /// Qué tramo de la columna es un botón: los botones van pegados y solo las puntas son
@@ -604,6 +502,19 @@ pub(crate) fn selected_shapes(
     ppp: f32,
 ) -> Vec<Shape> {
     let mut shapes = piece_shapes(piece, rect, ppp);
+    shapes.push(selected_overlay(piece, rect, bottom_line, colors, ppp));
+    shapes
+}
+
+/// Lo de [`selected_shapes`] que va encima de la pieza: el relleno liso y el marco rosa, en
+/// `rect`.
+pub(crate) fn selected_overlay(
+    piece: &Piece,
+    rect: Rect,
+    bottom_line: bool,
+    colors: &SkinColors,
+    ppp: f32,
+) -> Shape {
     let [left, top, right, bottom] = borders(piece);
     let below = if bottom_line { bottom.min(1.0) } else { 0.0 };
     let inner = Rect::from_min_max(
@@ -621,8 +532,7 @@ pub(crate) fn selected_shapes(
     ] {
         mesh.add_colored_rect(r.round_to_pixels(ppp), colors.timeline_selection);
     }
-    shapes.push(Shape::mesh(mesh));
-    shapes
+    Shape::mesh(mesh)
 }
 
 /// Botón de herramienta de la barra de íconos: el marco del tramo `slot` de la columna
@@ -923,8 +833,6 @@ pub fn set_bubble(ctx: &egui::Context, skin: Option<std::sync::Arc<Skin>>) {
     });
 }
 
-/// Un botón suelto con texto: con Pixel UI, el `button` del skin ([`pixel_button`]); sin él, el
-/// de egui.
 /// Un botón de 25×16 con el ícono `icon` del skin al centro (como el de la forma del pincel):
 /// `label` es su nombre accesible y su tooltip. Con `on`, prendido (`button.active`). Sin Pixel UI
 /// (o sin el ícono), un botón de texto con `label`.
@@ -948,7 +856,6 @@ pub fn icon_button(
     let size = vec2(ICON_BUTTON.x.max(icon_w + 10.0), ICON_BUTTON.y);
     let (slot, _) = ui.allocate_exact_size(vec2(size.x, CONTROL_HEIGHT), Sense::hover());
     let rect = Rect::from_min_size(slot.min.round(), size);
-    under_light(ui, rect);
     let ppp = ui.ctx().pixels_per_point();
     let info = crate::pixel_draw::ButtonInfo {
         selected: on,
@@ -972,51 +879,25 @@ pub fn icon_button(
 const ICON_BUTTON: Vec2 = vec2(25.0, 16.0);
 
 /// La norma de los controles con Pixel UI (botones, campos, combos, grupos de opciones): 17 de
-/// alto, el cuerpo de 16 y debajo 1 fila de luz (`highlight`). En los campos la luz viene en su
-/// pieza; a los botones se la pone [`under_light`]. Las mayúsculas de los textos van 4 filas
-/// debajo del borde de arriba.
+/// alto, el cuerpo de 16 y debajo 1 fila de luz (`highlight`). En los campos y los botones la luz
+/// viene en su pieza. Las mayúsculas de los textos van 4 filas debajo del borde de arriba.
 pub const CONTROL_HEIGHT: f32 = 17.0;
 pub const CONTROL_BODY: f32 = 16.0;
 pub const CONTROL_CAPS: f32 = 4.0;
 
-/// Antes era el botón "con luz" de los paneles; ahora todos los botones la llevan.
-pub fn lit_button(ui: &mut Ui, label: &str) -> Response {
-    text_button(ui, label)
-}
-
-/// La luz de abajo de `rect` como en las casillas, con Pixel UI: en las dos esquinas de abajo
-/// de `rect` (las de la pieza redondeada quedan vacías) y 1 fila debajo, entre las esquinas. Va
-/// antes de dibujar el control, que la tapa donde tiene pixeles.
-pub fn under_light(ui: &Ui, rect: Rect) {
-    if let Some(skin) = frame_skin(ui.ctx()) {
-        let ppp = ui.ctx().pixels_per_point();
-        let (bottom, left, right) = (rect.bottom(), rect.left(), rect.right());
-        let rows = [
-            Rect::from_min_max(pos2(left + 1.0, bottom), pos2(right - 1.0, bottom + 1.0)),
-            Rect::from_min_max(pos2(left, bottom - 1.0), pos2(left + 1.0, bottom)),
-            Rect::from_min_max(pos2(right - 1.0, bottom - 1.0), pos2(right, bottom)),
-        ];
-        ui.painter().extend(rows.map(|r| {
-            Shape::rect_filled(
-                eframe::emath::GuiRounding::round_to_pixels(r, ppp),
-                0.0,
-                skin.colors().highlight,
-            )
-        }));
-    }
-}
-
+/// Un botón suelto con texto: con Pixel UI, el del kit ([`crate::kit::button::button`]); sin él,
+/// el de egui.
 pub fn text_button(ui: &mut Ui, label: &str) -> Response {
     match frame_skin(ui.ctx()) {
-        Some(skin) => pixel_button(ui, &skin, label),
+        Some(skin) => crate::kit::button::button(ui, &skin, label),
         None => ui.button(label),
     }
 }
 
-/// Un botón de texto de `width` de ancho (los de una fila, parejos).
+/// Un botón de texto de por lo menos `width` de ancho (los de una fila, parejos).
 pub fn text_button_sized(ui: &mut Ui, label: &str, width: f32) -> Response {
     match frame_skin(ui.ctx()) {
-        Some(skin) => pixel_button_sized(ui, &skin, label, vec2(width, CONTROL_HEIGHT)),
+        Some(skin) => crate::kit::button::button_sized(ui, &skin, label, width),
         None => ui.add_sized(vec2(width, CONTROL_HEIGHT), egui::Button::new(label)),
     }
 }
@@ -1371,7 +1252,7 @@ pub fn app_window<R>(
 }
 
 /// La fila de botones de una ventana ([`app_window`]): con Pixel UI, [`pixel_buttons`] (los del
-/// skin, del mismo ancho); sin él, los de egui en fila. Devuelve cuál se tocó.
+/// kit, del mismo ancho); sin él, los de egui en fila. Devuelve cuál se tocó.
 pub fn dialog_buttons(ui: &mut Ui, skin: Option<&Skin>, labels: &[&str]) -> Option<usize> {
     match skin {
         Some(skin) => pixel_buttons(ui, skin, labels)

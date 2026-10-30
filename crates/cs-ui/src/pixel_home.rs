@@ -9,6 +9,7 @@
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Shape, Ui, Vec2, pos2, vec2};
 
 use crate::ChimpApp;
+use crate::kit;
 use crate::pixel_draw;
 use crate::pixel_ui::Tip as _;
 use crate::skin::Skin;
@@ -21,10 +22,9 @@ const BUTTON_SIZE: Vec2 = vec2(71.0, 17.0);
 const BUTTON_STEP_X: f32 = 74.0;
 /// De un botón al siguiente.
 const BUTTON_PITCH: f32 = 20.0;
-/// Dentro del botón: el texto empieza en la x 15 con las mayúsculas en la fila 4; el ícono, en
-/// la fila 4.
+/// Dentro del botón: el texto empieza en la x 15 (las mayúsculas, en la fila del kit); el ícono,
+/// en la fila 4.
 const BUTTON_TEXT_LEFT: f32 = 15.0;
-const BUTTON_CAPS_TOP: f32 = 4.0;
 const BUTTON_ICON_TOP: f32 = 4.0;
 /// La línea grabada vertical (oscura y clara) que separa la columna de la izquierda.
 const DIVIDER_X: f32 = 168.0;
@@ -84,28 +84,27 @@ enum HomeAction {
     OpenIn(std::path::PathBuf),
 }
 
-/// Un botón de la columna: la pieza `button` del skin, el ícono y el texto.
+/// Un botón de la columna: el botón del kit con el ícono y el texto (con su color y su sombra
+/// según el estado) desde `BUTTON_TEXT_LEFT`. Presionado, nada se mueve.
 fn button(ui: &mut Ui, skin: &Skin, rect: Rect, icon: (&str, f32), label: &str) -> bool {
-    let info = pixel_draw::ButtonInfo::new(ui.id().with(("home_button", label)), label);
     let (icon, icon_left) = icon;
     let ppp = ui.ctx().pixels_per_point();
-    // El texto se arma antes (necesita `ui`) y baja con el botón apretado.
-    let left = rect.left() + BUTTON_TEXT_LEFT;
-    let (mut text, _) = text_shape(
-        ui,
-        label,
-        left,
-        rect.top() + BUTTON_CAPS_TOP,
-        skin.colors().text,
-    );
-    pixel_draw::skin_button(ui, skin, rect, info, |r| {
-        let at = r.min + vec2(icon_left, BUTTON_ICON_TOP);
+    let response = ui.interact(rect, ui.id().with(("home_button", label)), Sense::click());
+    kit::button::paint(ui, skin, rect, &response, label, |state| {
+        let at = rect.min + vec2(icon_left, BUTTON_ICON_TOP);
         let mut shapes = pixel_draw::piece_at(skin, icon, at, ppp);
-        text.translate(r.min - rect.min);
-        shapes.push(text);
+        let left = rect.left() + BUTTON_TEXT_LEFT;
+        shapes.extend(kit::button::label_shapes(
+            ui,
+            skin,
+            label,
+            left,
+            rect.top(),
+            state,
+        ));
         shapes
-    })
-    .clicked()
+    });
+    response.clicked()
 }
 
 /// Un elemento de una lista: el nombre (clic) y la ruta debajo, en `top` (mayúsculas del

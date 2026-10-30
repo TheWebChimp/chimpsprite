@@ -404,6 +404,10 @@ impl ChimpApp {
         if ui.add(shortcuts).clicked() {
             self.shortcuts = Some(Default::default());
         }
+        // Los componentes de Pixel UI en todos sus estados, en una pestaña.
+        if ui.add(menus::plain(crate::kit::catalog::TITLE)).clicked() {
+            self.show_page(crate::tabs::Page::Catalog);
+        }
         menus::separator(ui);
         if ui.add(menus::plain("About ChimpSprite")).clicked() {
             let version = format!("ChimpSprite {}", env!("CARGO_PKG_VERSION"));
