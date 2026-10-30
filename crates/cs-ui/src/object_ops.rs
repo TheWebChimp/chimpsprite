@@ -5,6 +5,8 @@ use cs_commands::ops;
 use cs_core::{LayerId, LayerKind, ObjectId, PixelValue};
 
 use crate::editor::Editor;
+use crate::menus;
+use eframe::egui;
 
 impl Editor {
     /// El objeto visible de más arriba bajo el punto de mundo (en el artboard mostrado), de
@@ -99,6 +101,34 @@ impl Editor {
         true
     }
 
+    /// Cambia el orden de los objetos seleccionados en la pila de su capa (un paso de undo).
+    /// `false` si no había selección, la capa está bloqueada o ya estaban donde se pedía.
+    pub fn reorder_selected(&mut self, to: ops::Reorder) -> bool {
+        if self.sprite().layer(self.layer).is_none_or(|l| l.locked) {
+            return false;
+        }
+        let cmd = ops::reorder_objects(self.sprite(), self.layer, self.selected_objects(), to);
+        cmd.is_some_and(|cmd| self.execute_named(cmd, "Arrange"))
+    }
+
+    /// Duplica los objetos seleccionados, corridos (2, 2), y deja seleccionadas las copias (un
+    /// paso de undo). `false` si no había selección o la capa está bloqueada.
+    pub fn duplicate_selected(&mut self) -> bool {
+        if self.sprite().layer(self.layer).is_none_or(|l| l.locked) {
+            return false;
+        }
+        let Some((cmd, copies)) =
+            ops::duplicate_objects(self.sprite(), self.layer, self.selected_objects(), (2, 2))
+        else {
+            return false;
+        };
+        if !self.execute_named(cmd, "Duplicate Objects") {
+            return false;
+        }
+        self.set_selected_objects(copies);
+        true
+    }
+
     /// Corre los objetos seleccionados `(dx, dy)` en el frame actual (un paso de undo). `false`
     /// si no había ninguno que mover.
     pub fn nudge_selected_objects(&mut self, dx: i32, dy: i32) -> bool {
@@ -182,6 +212,54 @@ impl Editor {
     }
 }
 
+/// Los ítems de orden, duplicar y borrar de los objetos seleccionados (menú Layer > Arrange y
+/// menú contextual del lienzo). Sin objetos seleccionados, quedan deshabilitados.
+pub(crate) fn arrange_items(ui: &mut egui::Ui, editor: &mut Editor) {
+    use crate::keymap::{Action, label};
+    let ctx = ui.ctx().clone();
+    let enabled = !editor.selected_objects().is_empty();
+    let items = [
+        (
+            "Bring to Front",
+            Action::BringToFront,
+            Some(ops::Reorder::Front),
+        ),
+        (
+            "Bring Forward",
+            Action::BringForward,
+            Some(ops::Reorder::Forward),
+        ),
+        (
+            "Send Backward",
+            Action::SendBackward,
+            Some(ops::Reorder::Backward),
+        ),
+        ("Send to Back", Action::SendToBack, Some(ops::Reorder::Back)),
+        ("Duplicate Object", Action::DuplicateObject, None),
+        ("Delete Object", Action::DeleteObject, None),
+    ];
+    for (i, (text, action, reorder)) in items.into_iter().enumerate() {
+        if i == 4 {
+            menus::separator(ui);
+        }
+        let item = menus::item(text, label(&ctx, action));
+        if ui.add_enabled(enabled, item).clicked() {
+            match (reorder, action) {
+                (Some(to), _) => {
+                    editor.reorder_selected(to);
+                }
+                (None, Action::DuplicateObject) => {
+                    editor.duplicate_selected();
+                }
+                _ => {
+                    editor.delete_selected_objects();
+                }
+            }
+            ui.close();
+        }
+    }
+}
+
 /// `object_bounds` sobre `document` (el que se muestra, con el gesto en curso aplicado).
 pub(crate) fn object_bounds_in(
     document: &cs_core::Document,
@@ -196,7 +274,7 @@ pub(crate) fn object_bounds_in(
 
 #[cfg(test)]
 mod tests {
-    use cs_commands::Command;
+    use cs_commands::{Command, ops::Reorder};
     use cs_core::{ArtboardId, ColorMode, Rgba, Sprite};
     use eframe::egui::Key;
 
@@ -360,6 +438,38 @@ mod tests {
         assert!(e.selected_objects().is_empty());
         e.undo();
         assert_eq!(position(&e, b, o, 0), (9, -2));
+    }
+
+    #[test]
+    fn reorder_and_duplicate_act_on_the_selection_and_respect_the_lock() {
+        let (mut e, _, b) = scene();
+        let (cmd, other) = ops::add_object(e.sprite(), b, 0, ArtboardId(2), "o", (0, 0)).unwrap();
+        e.execute(cmd);
+        let o = first(&e, b);
+        let order = |e: &Editor| -> Vec<ObjectId> {
+            e.sprite()
+                .layer(b)
+                .unwrap()
+                .objects
+                .iter()
+                .map(|x| x.id)
+                .collect()
+        };
+        assert!(!e.reorder_selected(Reorder::Front), "nothing selected");
+        assert!(!e.duplicate_selected());
+        e.select_object(b, o, false);
+        assert!(e.reorder_selected(Reorder::Front));
+        assert_eq!(order(&e), vec![other, o]);
+        assert!(e.reorder_selected(Reorder::Back));
+        assert_eq!(order(&e), vec![o, other]);
+        assert!(e.duplicate_selected());
+        let copy = e.selected_objects()[0];
+        assert_ne!(copy, o);
+        assert_eq!(position(&e, b, copy, 0), (10, 10), "offset (2, 2)");
+        assert_eq!(position(&e, b, o, 0), (8, 8));
+        e.document.artboards[0].sprite.layer_mut(b).unwrap().locked = true;
+        assert!(!e.reorder_selected(Reorder::Front));
+        assert!(!e.duplicate_selected());
     }
 
     #[test]

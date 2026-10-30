@@ -1,6 +1,7 @@
 //! Los atajos de teclado y las acciones que disparan (las del keymap y las del portapapeles).
 
 use crate::*;
+use cs_commands::ops::Reorder;
 
 impl ChimpApp {
     pub(crate) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
@@ -137,6 +138,28 @@ impl ChimpApp {
                 editor.flatten();
             }
             ConvertToSymbol => self.open_convert_to_symbol(),
+            // Como las flechas y Delete sobre objetos: solo con Move.
+            BringForward | SendBackward | BringToFront | SendToBack | DuplicateObject
+            | DeleteObject
+                if editor.active_tool() != ToolKind::Move => {}
+            BringForward => {
+                editor.reorder_selected(Reorder::Forward);
+            }
+            SendBackward => {
+                editor.reorder_selected(Reorder::Backward);
+            }
+            BringToFront => {
+                editor.reorder_selected(Reorder::Front);
+            }
+            SendToBack => {
+                editor.reorder_selected(Reorder::Back);
+            }
+            DuplicateObject => {
+                editor.duplicate_selected();
+            }
+            DeleteObject => {
+                editor.delete_selected_objects();
+            }
             PlayPause => editor.toggle_play(),
             NextFrame => editor.next_frame(),
             PreviousFrame => editor.prev_frame(),

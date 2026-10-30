@@ -107,6 +107,8 @@ pub struct CanvasView {
     renaming: Option<(ArtboardId, String, bool)>,
     /// Clic derecho sobre un slice con la herramienta Slice: al soltar se abre su menú.
     slice_menu: bool,
+    /// Si el menú contextual abierto es el de los objetos (clic derecho sobre uno con Move).
+    object_menu: bool,
     /// Por qué falló el último soltar de un símbolo de la biblioteca; el app lo muestra.
     pub drop_error: Option<&'static str>,
     /// Clic derecho dentro de la selección con una herramienta de selección o Move: al soltar se
@@ -241,6 +243,7 @@ impl Default for CanvasView {
             pixel_cursor: None,
             renaming: None,
             slice_menu: false,
+            object_menu: false,
             drop_error: None,
             selection_menu: false,
             slice_properties: false,

@@ -806,6 +806,10 @@ A pixel art editor."
                     {
                         editor.flatten();
                     }
+                    let objects = !editor.selected_objects().is_empty();
+                    ui.add_enabled_ui(objects, |ui| {
+                        menus::submenu(ui, "Arrange", |ui| object_ops::arrange_items(ui, editor));
+                    });
                     menus::separator(ui);
                     if ui
                         .add(menus::plain("New Reference Layer from File…"))

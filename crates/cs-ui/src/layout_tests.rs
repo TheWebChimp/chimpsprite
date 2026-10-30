@@ -9,6 +9,7 @@ use eframe::egui::{
 };
 
 use crate::ChimpApp;
+use crate::ToolKind;
 use crate::file_actions::Pending;
 use crate::palette_library::PaletteLibrary;
 use crate::palette_library::test_util::NoPresets;
@@ -2955,4 +2956,88 @@ fn deleting_a_symbol_in_use_asks_first() {
             "pixel {pixel}: deleted"
         );
     }
+}
+
+/// Un documento con una capa de objetos con dos objetos (`a`, `b`: `b` arriba) y la capa
+/// activa, con Move.
+fn with_two_objects() -> (LayoutHarness, LayerId, [cs_core::ObjectId; 2]) {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let e = &mut h.app.doc.editor;
+    e.add_artboard(4, 4);
+    assert!(e.move_active_to_library());
+    e.activate(cs_core::ArtboardId(1));
+    e.add_instance_layer(cs_core::ArtboardId(2));
+    let layer = e.layer;
+    let (cmd, b) =
+        cs_commands::ops::add_object(e.sprite(), layer, 0, cs_core::ArtboardId(2), "o", (0, 0))
+            .unwrap();
+    e.execute(cmd);
+    let a = e.sprite().layer(layer).unwrap().objects[0].id;
+    e.set_tool(ToolKind::Move);
+    h.frame();
+    (h, layer, [a, b])
+}
+
+fn object_order(h: &LayoutHarness, layer: LayerId) -> Vec<cs_core::ObjectId> {
+    let sprite = h.app.doc.editor.sprite();
+    sprite
+        .layer(layer)
+        .unwrap()
+        .objects
+        .iter()
+        .map(|o| o.id)
+        .collect()
+}
+
+#[test]
+fn object_shortcuts_arrange_duplicate_and_need_the_move_tool() {
+    use egui::{Key, Modifiers};
+    let (mut h, layer, [a, b]) = with_two_objects();
+    let ctrl_shift = Modifiers::COMMAND | Modifiers::SHIFT;
+    // Sin selección no hacen nada.
+    press(&mut h, Key::ArrowDown, Modifiers::COMMAND);
+    assert_eq!(object_order(&h, layer), vec![a, b]);
+    h.app.doc.editor.select_object(layer, b, false);
+    press(&mut h, Key::ArrowDown, Modifiers::COMMAND);
+    assert_eq!(object_order(&h, layer), vec![b, a], "Send Backward");
+    press(&mut h, Key::ArrowUp, Modifiers::COMMAND);
+    assert_eq!(object_order(&h, layer), vec![a, b], "Bring Forward");
+    press(&mut h, Key::ArrowDown, ctrl_shift);
+    assert_eq!(object_order(&h, layer), vec![b, a], "Send to Back");
+    press(&mut h, Key::ArrowUp, ctrl_shift);
+    assert_eq!(object_order(&h, layer), vec![a, b], "Bring to Front");
+    // Con otra herramienta, nada.
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    press(&mut h, Key::ArrowDown, ctrl_shift);
+    press(&mut h, Key::J, Modifiers::COMMAND);
+    assert_eq!(object_order(&h, layer), vec![a, b]);
+    h.app.doc.editor.set_tool(ToolKind::Move);
+    press(&mut h, Key::J, Modifiers::COMMAND);
+    assert_eq!(object_order(&h, layer).len(), 3, "Duplicate Object");
+    assert_eq!(h.app.doc.editor.selected_objects().len(), 1);
+    assert_ne!(
+        h.app.doc.editor.selected_objects()[0],
+        b,
+        "the copy is selected"
+    );
+}
+
+#[test]
+fn the_arrange_submenu_is_disabled_without_selected_objects() {
+    let (mut h, _, _) = with_two_objects();
+    open_menu(&mut h, "Layer");
+    let colors = *h.app.pixel.skin().unwrap().colors();
+    assert_eq!(
+        text_rect(&h, "Arrange").1,
+        colors.text_dim,
+        "nothing selected"
+    );
+    let (mut h, layer, [_, b]) = with_two_objects();
+    h.app.doc.editor.select_object(layer, b, false);
+    open_menu(&mut h, "Layer");
+    assert_eq!(
+        text_rect(&h, "Arrange").1,
+        colors.text,
+        "an object is selected"
+    );
 }
