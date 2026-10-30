@@ -1049,6 +1049,47 @@ pub(super) fn tilemap_icon(ui: &Ui, skin: &Skin, rect: Rect, selected: bool) {
     icon_at(ui, skin, TILEMAP, at, selected);
 }
 
+/// El triángulo de una capa de objetos (cerrada o desplegada) y el ícono de la capa, si el skin
+/// los tiene.
+const TREE_COLLAPSED: &str = "icon.tree.collapsed";
+const TREE_EXPANDED: &str = "icon.tree.expanded";
+const OBJECTS: &str = "icon.layer.objects";
+/// Lo que ocupa el triángulo en la columna del nombre.
+pub(super) const TREE_W: f32 = 8.0;
+
+/// El triángulo de una capa de objetos al principio de `rect`: ▾ si está desplegada (`expanded`),
+/// ▸ si no. Si el skin no tiene la pieza, los caracteres `v` y `>`.
+pub(super) fn tree_toggle(ui: &Ui, skin: &Skin, rect: Rect, expanded: bool, selected: bool) {
+    let piece_name = if expanded {
+        TREE_EXPANDED
+    } else {
+        TREE_COLLAPSED
+    };
+    match piece_size(skin, piece_name) {
+        Some(size) => {
+            let at = pos2(rect.left(), (rect.center().y - size.y / 2.0).floor());
+            icon_at(ui, skin, piece_name, at, selected);
+        }
+        None => name(
+            ui,
+            rect,
+            if expanded { "v" } else { ">" },
+            skin.colors().text,
+        ),
+    }
+}
+
+/// El ícono de una capa de objetos al principio de `rect`, como el de los tilemaps. `false` si
+/// el skin no lo tiene (no se dibuja nada).
+pub(super) fn objects_icon(ui: &Ui, skin: &Skin, rect: Rect, selected: bool) -> bool {
+    let Some(size) = piece_size(skin, OBJECTS) else {
+        return false;
+    };
+    let at = pos2(rect.left(), rect.top() + FOLDER_BOTTOM - size.y);
+    icon_at(ui, skin, OBJECTS, at, selected);
+    true
+}
+
 /// Lo elegido, como en el diseño: la celda `cell` (contenido y su línea de la derecha y de
 /// abajo) en `timeline_selection`, enmarcada con las líneas grabadas en rosa: la oscura de arriba
 /// y su brillo, la de la izquierda y su brillo (si la celda no es la primera, en `table_left`), la

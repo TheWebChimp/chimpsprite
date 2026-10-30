@@ -173,20 +173,28 @@ impl Editor {
         }
     }
 
-    /// Keyframe en `frame` copiando el vigente.
+    /// Keyframe en `frame` copiando el vigente, en el objeto que se edita en `layer`.
     pub fn insert_instance_key(&mut self, layer: LayerId, frame: usize) {
-        let Some(object) = self.object_of(layer) else {
-            return;
-        };
+        if let Some(object) = self.object_of(layer) {
+            self.insert_object_key(layer, object, frame);
+        }
+    }
+
+    pub fn remove_instance_key(&mut self, layer: LayerId, frame: usize) {
+        if let Some(object) = self.object_of(layer) {
+            self.remove_object_key(layer, object, frame);
+        }
+    }
+
+    /// Keyframe de `object` en `frame` copiando su key vigente (la sub-fila del timeline).
+    pub fn insert_object_key(&mut self, layer: LayerId, object: ObjectId, frame: usize) {
         if let Some(cmd) = ops::update_object_key(self.sprite(), layer, object, frame, |_| {}) {
             self.execute(cmd);
         }
     }
 
-    pub fn remove_instance_key(&mut self, layer: LayerId, frame: usize) {
-        let Some(object) = self.object_of(layer) else {
-            return;
-        };
+    /// Quita la key de `object` que empieza en `frame` (la sub-fila del timeline).
+    pub fn remove_object_key(&mut self, layer: LayerId, object: ObjectId, frame: usize) {
         if let Some(cmd) = ops::remove_object_key(self.sprite(), layer, object, frame) {
             self.execute(cmd);
         }

@@ -35,6 +35,8 @@ struct Harness {
     images: Vec<(egui::TextureId, Rect)>,
     /// Los colores de las mallas lisas (sin textura) del último frame.
     flat_colors: Vec<Color32>,
+    /// Los textos dibujados en el último frame.
+    texts: Vec<String>,
 }
 
 impl Harness {
@@ -62,6 +64,7 @@ impl Harness {
             skin,
             images: Vec::new(),
             flat_colors: Vec::new(),
+            texts: Vec::new(),
         };
         for _ in 0..3 {
             h.frame(vec![]);
@@ -90,9 +93,11 @@ impl Harness {
         output.textures_delta.clear();
         self.images.clear();
         self.flat_colors.clear();
+        self.texts.clear();
         for clipped in &output.shapes {
             collect_images(&clipped.shape, &mut self.images);
             collect_flat_colors(&clipped.shape, &mut self.flat_colors);
+            collect_texts(&clipped.shape, &mut self.texts);
         }
         self.nodes = output
             .platform_output
@@ -271,6 +276,19 @@ fn collect_flat_colors(shape: &egui::Shape, out: &mut Vec<Color32>) {
             out.extend(mesh.vertices.iter().map(|v| v.color));
         }
         egui::Shape::Rect(r) => out.push(r.fill),
+        _ => {}
+    }
+}
+
+/// Los textos de una forma.
+fn collect_texts(shape: &egui::Shape, out: &mut Vec<String>) {
+    match shape {
+        egui::Shape::Vec(shapes) => {
+            for s in shapes {
+                collect_texts(s, out);
+            }
+        }
+        egui::Shape::Text(t) => out.push(t.galley.text().to_string()),
         _ => {}
     }
 }
@@ -816,4 +834,125 @@ fn deleting_a_tag_from_its_menu_does_not_crash() {
     h.click("Delete tag");
     h.frame(vec![]);
     assert_eq!(h.editor.sprite().tags.len(), 1);
+}
+
+/// Una capa de objetos ("Scene") con dos objetos: "Alpha" (el primero) y "Beta" (arriba), en un
+/// sprite de dos frames. Devuelve la capa y los dos objetos.
+fn with_two_objects(h: &mut Harness) -> (LayerId, [cs_core::ObjectId; 2]) {
+    use cs_core::ArtboardId;
+    let e = &mut h.editor;
+    e.duplicate_frame();
+    e.set_frame(0);
+    e.add_artboard(4, 4);
+    e.activate(ArtboardId(1));
+    e.add_instance_layer(ArtboardId(2));
+    let layer = e.layer;
+    let (cmd, b) =
+        cs_commands::ops::add_object(e.sprite(), layer, 0, ArtboardId(2), "Beta", (0, 0)).unwrap();
+    e.execute(cmd);
+    let board = e.document.artboard_mut(ArtboardId(1)).unwrap();
+    let l = board.sprite.layer_mut(layer).unwrap();
+    l.name = "Scene".into();
+    l.objects[0].name = "Alpha".into();
+    let a = l.objects[0].id;
+    h.frame(vec![]);
+    (layer, [a, b])
+}
+
+fn has_node(h: &Harness, text: &str) -> bool {
+    h.nodes.iter().any(|(t, _)| t == text)
+}
+
+#[test]
+fn an_object_layer_expands_into_one_row_per_object() {
+    let mut h = Harness::new(1200.0);
+    let (layer, _) = with_two_objects(&mut h);
+    assert!(!has_node(&h, "Alpha"), "collapsed at first");
+    h.click("Objects: Scene");
+    h.frame(vec![]);
+    assert!(h.state.expanded_objects.contains(&layer));
+    let (alpha, beta) = (h.rect("Alpha"), h.rect("Beta"));
+    // De arriba hacia abajo: el último de la lista primero, cada uno de una fila.
+    assert!(beta.top() < alpha.top(), "{beta:?} above {alpha:?}");
+    // Con la altura de fila de siempre: Beta en la fila 1, Alpha en la 2 y la capa de abajo en
+    // la 3.
+    let h_row = Grid::CLASSIC.row_h;
+    let top = |h: &Harness, l: LayerId| h.state.rows.iter().find(|(r, _)| *r == l).unwrap().1;
+    let scene = top(&h, layer);
+    assert_eq!(
+        beta,
+        Rect::from_min_max(
+            pos2(beta.left(), scene.bottom()),
+            pos2(beta.right(), scene.bottom() + h_row)
+        )
+    );
+    assert_eq!(alpha.top(), beta.bottom());
+    assert_eq!(alpha.height(), h_row);
+    let below = h.editor.timeline_layers()[1];
+    assert_eq!(top(&h, below).top(), alpha.bottom());
+    // Con sangría: más adentro que el nombre de la capa.
+    let name_left = h.grid.x - 6.0 + Grid::CLASSIC.eye_w + Grid::CLASSIC.lock_w + 4.0;
+    assert!(alpha.left() > name_left, "{alpha:?}");
+    h.click("Objects: Scene");
+    h.frame(vec![]);
+    assert!(!has_node(&h, "Alpha"), "collapsed again");
+}
+
+#[test]
+fn clicking_an_object_row_selects_the_object() {
+    let mut h = Harness::new(1200.0);
+    let (layer, [a, b]) = with_two_objects(&mut h);
+    h.state.expanded_objects.insert(layer);
+    h.editor.select_layer(h.editor.timeline_layers()[1]);
+    h.frame(vec![]);
+    h.click("Beta");
+    assert_eq!(h.editor.layer, layer);
+    assert_eq!(h.editor.selected_objects(), [b]);
+    h.click("Alpha");
+    assert_eq!(h.editor.selected_objects(), [a]);
+}
+
+#[test]
+fn the_keyframe_menu_of_an_object_row_works_on_that_object() {
+    let mut h = Harness::new(1200.0);
+    let (layer, [a, b]) = with_two_objects(&mut h);
+    h.state.expanded_objects.insert(layer);
+    h.frame(vec![]);
+    let keys = |h: &Harness, o: cs_core::ObjectId| -> Vec<usize> {
+        let l = h.editor.sprite().layer(layer).unwrap();
+        l.object(o)
+            .unwrap()
+            .track
+            .keys
+            .iter()
+            .map(|k| k.frame)
+            .collect()
+    };
+    // Sin selección, el objeto "actual" de la capa es Alpha: el menú de Beta va a Beta.
+    let at = pos2(h.header_cell(1).x, h.rect("Beta").center().y);
+    h.right_click_at(at);
+    h.click("Insert Keyframe");
+    h.frame(vec![]);
+    assert_eq!(keys(&h, b), [0, 1]);
+    assert_eq!(keys(&h, a), [0]);
+    h.right_click_at(at);
+    h.click("Delete Keyframe");
+    h.frame(vec![]);
+    assert_eq!(keys(&h, b), [0]);
+    assert_eq!(keys(&h, a), [0]);
+}
+
+#[test]
+fn with_pixel_ui_an_object_layer_has_no_picture_label() {
+    let mut h = Harness::pixel(1200.0);
+    let (layer, _) = with_two_objects(&mut h);
+    h.state.expanded_objects.insert(layer);
+    h.frame(vec![]);
+    assert!(h.texts.iter().any(|t| t == "Scene"), "{:?}", h.texts);
+    assert!(h.texts.iter().all(|t| !t.contains('🖼')), "{:?}", h.texts);
+    assert!(has_node(&h, "Alpha") && has_node(&h, "Beta"));
+    // Sin Pixel UI, el texto sigue.
+    let mut h = Harness::new(1200.0);
+    with_two_objects(&mut h);
+    assert!(h.texts.iter().any(|t| t == "🖼 Scene"), "{:?}", h.texts);
 }
