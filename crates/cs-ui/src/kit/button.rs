@@ -17,6 +17,10 @@ use crate::pixel_ui;
 use crate::skin::{Skin, SkinColors, WidgetState};
 use crate::tab_bar;
 
+/// Presionado, la cara del botón baja 1 px: la pieza `button.down` empieza con una fila
+/// transparente y no tiene el bisel oscuro de abajo, y el texto baja con ella.
+pub const PRESS_DROP: f32 = 1.0;
+
 /// La pieza del skin; la de cada estado es su variante (`.hover`, `.down`, `.disabled`).
 const PIECE: &str = "button";
 
@@ -241,7 +245,7 @@ fn centered_label(ui: &Ui, skin: &Skin, rect: Rect, label: &str, state: ButtonSt
 
 /// El texto de un botón cuya pieza empieza en la fila `top`: la tinta desde `left`, las
 /// mayúsculas en `top + CAPS_TOP` y, salvo con el puntero encima, la sombra (primero la sombra y
-/// encima el texto). Presionado no se mueve.
+/// encima el texto). Presionado, baja `PRESS_DROP` con la cara del botón.
 pub fn label_shapes(
     ui: &Ui,
     skin: &Skin,
@@ -253,7 +257,12 @@ pub fn label_shapes(
     let colors = skin.colors();
     let galley = galley(ui, label);
     let ppp = ui.ctx().pixels_per_point();
-    let at = tab_bar::text_pos(&galley, left, top + CAPS_TOP, ppp);
+    let drop = if state == ButtonState::Pressed {
+        PRESS_DROP
+    } else {
+        0.0
+    };
+    let at = tab_bar::text_pos(&galley, left, top + CAPS_TOP + drop, ppp);
     let mut shapes = Vec::with_capacity(2);
     if state.has_shadow() {
         shapes.push(Shape::galley(

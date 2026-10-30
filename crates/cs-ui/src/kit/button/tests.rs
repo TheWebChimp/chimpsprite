@@ -134,7 +134,7 @@ fn the_text_box_fits_the_tallest_accent_and_the_lowest_descender_with_its_air() 
 }
 
 #[test]
-fn each_state_has_its_piece_color_and_shadow_and_the_text_never_moves() {
+fn each_state_has_its_piece_color_and_shadow_and_only_pressed_moves_the_text_down() {
     let (ctx, skin) = pixel_ctx();
     let colors = *skin.colors();
     let rect = Rect::from_min_size(pos2(20.0, 30.0), vec2(39.0, HEIGHT));
@@ -176,7 +176,17 @@ fn each_state_has_its_piece_color_and_shadow_and_the_text_never_moves() {
         }
         texts.push(text.0);
     }
-    assert!(texts.iter().all(|t| *t == texts[0]), "{texts:?}");
+    // Presionado, el texto baja con la cara del botón; en los demás, en el mismo lugar.
+    let normal = texts[0];
+    for (state, at) in ButtonState::ALL.iter().zip(&texts) {
+        let drop = if *state == ButtonState::Pressed {
+            PRESS_DROP
+        } else {
+            0.0
+        };
+        assert_eq!(*at, normal + vec2(0.0, drop), "{state:?}");
+    }
+    assert_eq!(PRESS_DROP, 1.0);
     // Las piezas son distintas.
     let mut ids: Vec<_> = [
         WidgetState::Normal,

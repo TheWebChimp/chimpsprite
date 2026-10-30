@@ -280,13 +280,15 @@ fn the_buttons_have_one_pixel_corners_and_the_active_one_is_sunk_with_the_brown_
     assert_eq!(at(hover, 24, 1), at(button, 24, 6), "the top row");
     assert_eq!(at(hover, 47, 6), at(button, 24, 6), "the right column");
     assert_eq!(at(hover, 1, 6), at(button, 1, 6), "the left column");
-    // Presionado: no se desplaza; es el normal sin la fila oscura (el cuerpo mide 15 y la
-    // última fila queda vacía).
+    // Presionado: la cara baja 1 px (la primera fila queda vacía) y no tiene la fila oscura;
+    // abajo termina donde el normal (el contorno en la 15 y la línea clara en la 16).
     let down = &data.pieces["button.down"];
-    assert_eq!(at(down, 24, 0), outline, "not sunk");
-    assert_eq!(at(down, 24, 14), outline);
-    assert_eq!(at(down, 24, 15), light);
-    assert_eq!(at(down, 24, 16).a, 0);
+    assert_eq!(at(down, 24, 0).a, 0, "sunk");
+    assert_eq!(at(down, 24, 1), outline);
+    assert_eq!(at(down, 24, 2), white);
+    assert_eq!(at(down, 24, 14), at(button, 24, 13), "no dark row");
+    assert_eq!(at(down, 24, 15), outline);
+    assert_eq!(at(down, 24, 16), light);
     // Deshabilitado: el borde claro (oscuro en las filas de abajo) y abajo los cafés claros.
     let disabled = &data.pieces["button.disabled"];
     assert_eq!(at(disabled, 24, 0), Rgba::rgb(136, 110, 106));
