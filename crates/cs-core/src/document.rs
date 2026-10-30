@@ -136,6 +136,10 @@ pub struct Artboard {
     pub guides: Vec<Guide>,
     #[serde(default)]
     pub symmetry: Symmetry,
+    /// En la biblioteca: no se dibuja en el lienzo ni sale en el panel de Artboards; es la fuente
+    /// de instancias y se edita en modo símbolo.
+    #[serde(default)]
+    pub in_library: bool,
 }
 
 impl Artboard {
@@ -215,8 +219,34 @@ impl Document {
                 name: name.into(),
                 position: (0, 0),
                 sprite,
+                in_library: false,
             }],
         }
+    }
+
+    /// Los artboards del lienzo (todos menos los de la biblioteca), en z-order.
+    pub fn canvas_artboards(&self) -> impl DoubleEndedIterator<Item = &Artboard> {
+        self.artboards.iter().filter(|a| !a.in_library)
+    }
+
+    /// Los símbolos de la biblioteca, en el orden del documento.
+    pub fn library(&self) -> impl Iterator<Item = &Artboard> {
+        self.artboards.iter().filter(|a| a.in_library)
+    }
+
+    /// Cuántos artboards hay en el lienzo.
+    pub fn canvas_count(&self) -> usize {
+        self.canvas_artboards().count()
+    }
+
+    /// Cuántas capas de instancia, en todo el documento, muestran `id` en alguna key.
+    pub fn instance_uses(&self, id: ArtboardId) -> usize {
+        self.artboards
+            .iter()
+            .flat_map(|a| a.sprite.layers.iter())
+            .filter_map(|l| l.instance.as_ref())
+            .filter(|t| t.keys.iter().any(|k| k.source == Some(id)))
+            .count()
     }
 
     pub fn index(&self, id: ArtboardId) -> Option<usize> {
@@ -253,8 +283,7 @@ impl Document {
 
     /// El artboard de más arriba bajo el punto de mundo `p`.
     pub fn artboard_at(&self, p: (f32, f32)) -> Option<ArtboardId> {
-        self.artboards
-            .iter()
+        self.canvas_artboards()
             .rev()
             .find(|a| a.contains(p))
             .map(|a| a.id)
@@ -262,8 +291,7 @@ impl Document {
 
     /// Rectángulo que contiene a todos los artboards (máximo exclusivo).
     pub fn bounds(&self) -> Option<((i32, i32), (i32, i32))> {
-        self.artboards
-            .iter()
+        self.canvas_artboards()
             .map(Artboard::rect)
             .reduce(|(a0, a1), (b0, b1)| {
                 (
@@ -327,6 +355,7 @@ mod tests {
             name: "b".into(),
             position: (5, 5),
             sprite: Sprite::new(10, 4, ColorMode::Rgba),
+            in_library: false,
         });
         d
     }
@@ -345,6 +374,62 @@ mod tests {
     fn bounds_union() {
         assert_eq!(doc().bounds(), Some(((0, 0), (15, 10))));
         assert_eq!(Document::default().bounds(), None);
+    }
+
+    fn library_doc() -> Document {
+        let mut d = Document::with_sprite("a", Sprite::new(4, 4, ColorMode::Rgba));
+        d.artboards.push(Artboard {
+            id: ArtboardId(2),
+            name: "sym".into(),
+            position: (100, 100),
+            sprite: Sprite::new(8, 8, ColorMode::Rgba),
+            guides: Vec::new(),
+            symmetry: Default::default(),
+            in_library: true,
+        });
+        d
+    }
+
+    #[test]
+    fn the_library_is_not_on_the_canvas() {
+        let d = library_doc();
+        let canvas: Vec<_> = d.canvas_artboards().map(|a| a.id).collect();
+        let library: Vec<_> = d.library().map(|a| a.id).collect();
+        assert_eq!(canvas, vec![ArtboardId(1)]);
+        assert_eq!(library, vec![ArtboardId(2)]);
+        assert_eq!(d.canvas_count(), 1);
+        assert_eq!(d.bounds(), Some(((0, 0), (4, 4))));
+        assert_eq!(d.artboard_at((101.0, 101.0)), None);
+        assert_eq!(d.artboard_at((1.0, 1.0)), Some(ArtboardId(1)));
+    }
+
+    #[test]
+    fn instance_uses_counts_layers_not_keys() {
+        let mut d = library_doc();
+        let sprite = &mut d.artboards[0].sprite;
+        for id in [10, 11] {
+            let mut layer = Layer::new_image(LayerId(id), "i");
+            layer.kind = LayerKind::Instance;
+            let mut track = InstanceTrack {
+                keys: vec![InstanceKey::new(0, ArtboardId(2), (0, 0))],
+            };
+            track.set_key(InstanceKey::new(3, ArtboardId(2), (1, 1)));
+            layer.instance = Some(track);
+            sprite.layers.push(layer);
+        }
+        assert_eq!(d.instance_uses(ArtboardId(2)), 2);
+        assert_eq!(d.instance_uses(ArtboardId(1)), 0);
+    }
+
+    #[test]
+    fn old_documents_load_everything_on_the_canvas() {
+        let mut json = serde_json::to_value(library_doc()).unwrap();
+        json["artboards"][1]
+            .as_object_mut()
+            .unwrap()
+            .remove("in_library");
+        let d: Document = serde_json::from_value(json).unwrap();
+        assert!(!d.artboards[1].in_library);
     }
 
     fn instancing(ids: &[(u32, &[u32])]) -> Document {
@@ -367,6 +452,7 @@ mod tests {
                     sprite,
                     guides: Vec::new(),
                     symmetry: Default::default(),
+                    in_library: false,
                 }
             })
             .collect();

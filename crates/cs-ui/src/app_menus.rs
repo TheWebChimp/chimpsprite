@@ -110,6 +110,18 @@ impl ChimpApp {
         if ui.add(menus::plain("Duplicate")).clicked() {
             self.open_sprite_dialog(|a| SpriteDialog::Duplicate(DuplicateDialog::new(a)));
         }
+        // Sin Pixel UI no hay menú "≡" en el artboard: desde acá también se llega.
+        if ui
+            .add_enabled(
+                self.doc.editor.can_move_active_to_library(),
+                menus::plain("Move to Library"),
+            )
+            .on_disabled_hover_text("Needs another artboard on the canvas")
+            .clicked()
+        {
+            self.doc.editor.move_active_to_library();
+            ui.close();
+        }
         menus::separator(ui);
         let transformable = sprite_ops::can_transform(self.doc.editor.sprite());
         let size = menus::item(
@@ -852,6 +864,23 @@ A pixel art editor."
                     menus::separator(ui);
                     let layer = self.doc.editor.layer;
                     timeline::instance_menu(ui, &mut self.doc.editor);
+                    let convert = self.doc.editor.can_convert_to_symbol();
+                    if ui
+                        .add_enabled(
+                            convert.is_ok(),
+                            menus::item(
+                                "Convert to Symbol…",
+                                action(keymap::Action::ConvertToSymbol),
+                            ),
+                        )
+                        .on_disabled_hover_text(
+                            convert.err().map(|e| e.to_string()).unwrap_or_default(),
+                        )
+                        .clicked()
+                    {
+                        self.open_convert_to_symbol();
+                        ui.close();
+                    }
                     menus::separator(ui);
                     timeline::mask_menu(ui, &mut self.doc.editor, layer);
                 });

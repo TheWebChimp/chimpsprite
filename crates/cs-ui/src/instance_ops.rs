@@ -1,22 +1,44 @@
 //! Instancias de artboards (símbolos) desde el editor y el panel.
 
-use cs_commands::{Command, ops};
+use cs_commands::{Command, DocCommand, ops};
 use cs_core::{ArtboardId, InstanceKey, LayerId};
 
 use crate::editor::Editor;
 
+/// Artboards que se pueden instanciar, con su nombre.
+pub type Candidates = Vec<(ArtboardId, String)>;
+
 impl Editor {
     /// Artboards que se pueden instanciar en el activo: no crean ciclos y el activo es RGBA.
-    pub fn instance_candidates(&self) -> Vec<(ArtboardId, String)> {
+    /// Primero los símbolos de la biblioteca y después los del lienzo.
+    pub fn instance_candidates(&self) -> Candidates {
+        let (mut library, canvas) = self.instance_candidate_groups();
+        library.extend(canvas);
+        library
+    }
+
+    /// Los candidatos de `instance_candidates` separados en `(biblioteca, lienzo)`, cada grupo
+    /// ordenado por nombre.
+    pub fn instance_candidate_groups(&self) -> (Candidates, Candidates) {
+        let (mut library, mut canvas) = (Vec::new(), Vec::new());
         if !self.sprite().color_mode.stores_rgba() {
-            return Vec::new();
+            return (library, canvas);
         }
-        self.document
-            .artboards
-            .iter()
-            .filter(|a| !self.document.would_cycle(self.active, a.id))
-            .map(|a| (a.id, a.name.clone()))
-            .collect()
+        for a in &self.document.artboards {
+            if self.document.would_cycle(self.active, a.id) {
+                continue;
+            }
+            let group = if a.in_library {
+                &mut library
+            } else {
+                &mut canvas
+            };
+            group.push((a.id, a.name.clone()));
+        }
+        // Sin distinguir mayúsculas, como las filas de la Library.
+        library.sort_by_cached_key(|c| c.1.to_lowercase());
+        canvas.sort_by_cached_key(|c| c.1.to_lowercase());
+        (library, canvas)
     }
 
     /// Nueva capa de instancia de `source` sobre la capa actual, centrada, con key en el frame actual.
@@ -44,6 +66,47 @@ impl Editor {
         if self.execute(cmd) {
             self.layer = id;
         }
+    }
+
+    /// Suelta el símbolo `source` en el punto `world` del lienzo: crea una capa de instancia en el
+    /// artboard de ese punto (en modo símbolo, solo el que se edita cuenta).
+    pub fn drop_symbol(
+        &mut self,
+        source: ArtboardId,
+        world: (i32, i32),
+    ) -> Result<(), &'static str> {
+        let target = self
+            .shown_artboard_at((world.0 as f32, world.1 as f32))
+            .ok_or("Drop it on an artboard")?;
+        let board = self
+            .document
+            .artboard(target)
+            .ok_or("Drop it on an artboard")?;
+        let src = self
+            .document
+            .artboard(source)
+            .ok_or("That symbol is gone")?;
+        if !board.sprite.color_mode.stores_rgba() {
+            return Err("Symbols need an RGBA sprite");
+        }
+        if self.document.would_cycle(target, source) {
+            return Err("That would put the artboard inside itself");
+        }
+        let local = (world.0 - board.position.0, world.1 - board.position.1);
+        let above = (target == self.active).then_some(self.layer);
+        // El frame que se ve en ese artboard (puede no ser el activo y tener menos frames).
+        let last = board.sprite.frames.len().saturating_sub(1);
+        let frame = self.frame_of(target).min(last);
+        let cmd = ops::new_instance_layer(&board.sprite, above, frame, source, &src.name, local);
+        let id = match &cmd {
+            Command::AddLayer { layer, .. } => layer.id,
+            _ => unreachable!("new_instance_layer devuelve AddLayer"),
+        };
+        if self.execute_doc(DocCommand::OnArtboard { id: target, cmd }) {
+            self.activate(target);
+            self.select_layer(id);
+        }
+        Ok(())
     }
 
     /// Key vigente de la capa actual en el frame actual (si es una capa de instancia).
@@ -91,16 +154,20 @@ impl Editor {
         }
     }
 
-    /// "Entrar al símbolo": activa el artboard fuente de la instancia actual.
+    /// "Entrar al símbolo": con la fuente de la instancia actual en la biblioteca, entra al modo
+    /// símbolo; si está en el lienzo, la activa.
     pub fn enter_instance(&mut self) -> bool {
         let Some(source) = self.instance_key().and_then(|k| k.source) else {
             return false;
         };
-        if self.document.artboard(source).is_none() {
-            return false;
+        match self.document.artboard(source) {
+            None => false,
+            Some(a) if a.in_library => self.enter_symbol(source),
+            Some(_) => {
+                self.activate(source);
+                true
+            }
         }
-        self.activate(source);
-        true
     }
 }
 
@@ -117,6 +184,67 @@ mod tests {
         e.add_artboard(4, 4);
         e.activate(ArtboardId(1));
         e
+    }
+
+    #[test]
+    fn dropping_a_symbol_places_an_instance_where_it_lands() {
+        use cs_core::{PixelValue, Rgba};
+        let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        e.execute(Command::DrawPixels {
+            layer: e.layer,
+            frame: 0,
+            pixels: vec![(1, 1, red)],
+        });
+        let symbol = e
+            .convert_to_symbol("S", cs_commands::symbol::SymbolTiming::Graphic)
+            .unwrap();
+        let layers = e.sprite().layers.len();
+        e.drop_symbol(symbol, (5, 6)).unwrap();
+        assert_eq!(e.sprite().layers.len(), layers + 1);
+        let layer = e.sprite().layer(e.layer).unwrap();
+        assert_eq!(layer.instance.as_ref().unwrap().keys[0].position, (5, 6));
+        assert!(
+            e.drop_symbol(symbol, (500, 500)).is_err(),
+            "outside every artboard"
+        );
+    }
+
+    #[test]
+    fn dropping_on_another_artboard_uses_its_frame() {
+        // El activo (1) tiene 2 frames y está en el 1; el 2 (en x = 32) tiene uno solo.
+        let mut e = editor();
+        e.set_frame(1);
+        let symbol = {
+            e.add_artboard(2, 2);
+            let id = e.active;
+            e.move_active_to_library();
+            e.activate(ArtboardId(1));
+            e.set_frame(1);
+            id
+        };
+        let at = e.document.artboard(ArtboardId(2)).unwrap().position;
+        e.drop_symbol(symbol, (at.0 + 1, at.1 + 1)).unwrap();
+        assert_eq!(e.active, ArtboardId(2));
+        let layer = e.sprite().layer(e.layer).unwrap();
+        let keys = &layer.instance.as_ref().unwrap().keys;
+        assert_eq!((keys[0].frame, keys[0].position), (0, (1, 1)));
+    }
+
+    #[test]
+    fn candidates_are_sorted_ignoring_case() {
+        let mut e = editor();
+        e.document.artboard_mut(ArtboardId(2)).unwrap().name = "banana".into();
+        e.add_artboard(4, 4);
+        e.rename_active_artboard("Apple".into());
+        e.activate(ArtboardId(1));
+        let names: Vec<String> = e
+            .instance_candidates()
+            .into_iter()
+            .filter(|(c, _)| *c != ArtboardId(1))
+            .map(|(_, n)| n)
+            .collect();
+        assert_eq!(names, ["Apple", "banana"]);
     }
 
     #[test]

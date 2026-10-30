@@ -349,6 +349,13 @@ pub struct Editor {
     /// de abajo de la caja de los colores, o al elegir un color con clic derecho (`pick_color`).
     /// Sin Pixel UI vuelve a `false` (`ChimpApp::layout`). Ver `edited_color`.
     pub editing_secondary: bool,
+    /// El símbolo elegido en el panel de la biblioteca (o el último creado con F8).
+    pub library_selected: Option<ArtboardId>,
+    /// El modo símbolo: los símbolos de la biblioteca en edición, del de afuera al de adentro.
+    /// Vacía: se edita el documento. Si no, el activo es el último.
+    pub symbol_stack: Vec<ArtboardId>,
+    /// El artboard activo al entrar al modo símbolo desde el documento (para volver).
+    pub symbol_return: Option<ArtboardId>,
 }
 
 impl Editor {
@@ -357,7 +364,12 @@ impl Editor {
             !document.artboards.is_empty(),
             "a document needs at least one artboard"
         );
-        let active = document.artboards[0].id;
+        // Empieza en el primer artboard del lienzo (la biblioteca no se ve).
+        let active = document
+            .canvas_artboards()
+            .next()
+            .unwrap_or(&document.artboards[0])
+            .id;
         let mut editor = Self {
             document,
             history: History::new(),
@@ -406,6 +418,9 @@ impl Editor {
             palette_selection: None,
             before_mask: None,
             editing_secondary: false,
+            library_selected: None,
+            symbol_stack: Vec::new(),
+            symbol_return: None,
         };
         editor.ensure_valid();
         // Negro para pintar (el más cercano de la paleta, si es indexado) y la máscara de
@@ -437,10 +452,44 @@ impl Editor {
     }
 
     /// Mantiene invariantes tras cambios en el documento (p. ej. undo de un artboard).
-    fn ensure_valid(&mut self) {
-        if self.document.artboard(self.active).is_none() {
-            self.active = self.document.artboards[0].id;
+    pub(crate) fn ensure_valid(&mut self) {
+        // La pila del modo símbolo se corta en el primero que ya no es un símbolo de la
+        // biblioteca (p. ej. un undo lo borró o lo sacó al lienzo).
+        let document = &self.document;
+        let symbol = |id: &ArtboardId| document.artboard(*id).is_some_and(|a| a.in_library);
+        if let Some(cut) = self.symbol_stack.iter().position(|id| !symbol(id)) {
+            self.symbol_stack.truncate(cut);
+        }
+        let target = match self.symbol_stack.last() {
+            // En el modo símbolo, el activo es el último de la pila.
+            Some(&last) => Some(last),
+            // Fuera de él, el activo es uno del lienzo: el de antes de entrar o el primero.
+            None => {
+                let back = self.symbol_return.take();
+                (!self.on_canvas(self.active)).then(|| {
+                    back.filter(|&id| self.on_canvas(id)).unwrap_or_else(|| {
+                        self.document
+                            .canvas_artboards()
+                            .next()
+                            .unwrap_or(&self.document.artboards[0])
+                            .id
+                    })
+                })
+            }
+        };
+        if let Some(id) = target.filter(|&id| id != self.active) {
+            if self.document.artboard(self.active).is_some() {
+                // El de antes sigue ahí: el cambio completo (confirma lo flotante, cierra el
+                // grupo y recuerda su capa y su frame). `activate` vuelve a validar.
+                self.activate(id);
+                return;
+            }
+            self.active = id;
+            if let Some(&(layer, frame)) = self.views.get(&id) {
+                (self.layer, self.frame) = (layer, frame);
+            }
             self.selection = None;
+            self.slice = None;
         }
         let sprite = &self
             .document
@@ -465,10 +514,21 @@ impl Editor {
         }
     }
 
+    /// Si `id` es un artboard del lienzo (no de la biblioteca).
+    fn on_canvas(&self, id: ArtboardId) -> bool {
+        self.document.artboard(id).is_some_and(|a| !a.in_library)
+    }
+
     /// Activa otro artboard: recuerda capa/frame del actual y descarta la selección.
     pub fn activate(&mut self, id: ArtboardId) {
         if id == self.active || self.document.artboard(id).is_none() {
             return;
+        }
+        // Activar algo fuera de la pila (el panel de Artboards, un artboard nuevo) sale del modo
+        // símbolo.
+        if !self.symbol_stack.contains(&id) {
+            self.symbol_stack.clear();
+            self.symbol_return = None;
         }
         self.commit_floating();
         self.stop();

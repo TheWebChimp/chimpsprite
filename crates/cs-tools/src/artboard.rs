@@ -27,7 +27,7 @@ pub enum ArtboardHit {
 
 /// Busca de arriba hacia abajo; los bordes (con tolerancia `slop`) ganan al interior.
 pub fn hit_test(doc: &Document, p: (f32, f32), slop: f32) -> Option<ArtboardHit> {
-    for artboard in doc.artboards.iter().rev() {
+    for artboard in doc.canvas_artboards().rev() {
         let ((x0, y0), (x1, y1)) = artboard.rect();
         let (x0, y0, x1, y1) = (x0 as f32, y0 as f32, x1 as f32, y1 as f32);
         let in_x = p.0 >= x0 - slop && p.0 <= x1 + slop;
@@ -168,6 +168,7 @@ impl ArtboardTool {
         Some(DocCommand::AddArtboard {
             index: doc.artboards.len(),
             artboard: Box::new(Artboard {
+                in_library: false,
                 guides: Vec::new(),
                 symmetry: Default::default(),
                 id,
@@ -231,6 +232,14 @@ mod tests {
         let mut d = Document::with_sprite("hero", Sprite::new(10, 10, ColorMode::Rgba));
         d.artboards[0].position = (100, 100);
         d
+    }
+
+    #[test]
+    fn hit_test_ignores_library() {
+        let mut d = doc();
+        assert!(hit_test(&d, (105.0, 105.0), 1.0).is_some());
+        d.artboards[0].in_library = true;
+        assert_eq!(hit_test(&d, (105.0, 105.0), 1.0), None);
     }
 
     fn gesture(d: &Document, from: (f32, f32), to: (f32, f32)) -> Option<DocCommand> {

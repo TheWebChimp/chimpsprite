@@ -8,10 +8,8 @@ impl CanvasView {
     fn under_front_artboard(&self, rect: Rect, editor: &Editor, p: Pos2, ppp: f32) -> bool {
         let view = editor.view();
         let document = view.document.as_ref();
-        let covers = self.covers(rect, document, ppp);
-        document
-            .artboards
-            .iter()
+        let covers = self.covers(rect, document, editor, ppp);
+        shown_artboards(document, editor)
             .position(|a| a.id == editor.active)
             .is_some_and(|k| covers[k + 1..].iter().any(|c| c.contains(p)))
     }
@@ -356,6 +354,9 @@ impl CanvasView {
         editor.options.constrain = modifiers.shift;
         let slop = EDGE_SLOP_PX / self.zoom;
         let area = self.canvas_area(rect, view);
+        // La migaja de pan tapa el lienzo: ahí no empiezan gestos.
+        let crumbs = self.crumbs_strip(rect, view);
+        let over_crumbs = |p: Pos2| crumbs.is_some_and(|c| c.contains(p));
         let over_label = pointer.and_then(|p| self.title_at(ui, rect, area, editor, p));
         self.over_label = over_label.is_some();
 
@@ -428,7 +429,14 @@ impl CanvasView {
         // el clic.
         let (origin, scale) = (self.origin(rect), self.scale());
         let to_screen = move |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * scale;
-        if !modal && !space_key && !hand && !ruler_busy && !editor.is_painting() {
+        // En el modo símbolo las notas (del documento) no se ven ni se tocan.
+        if !modal
+            && !space_key
+            && !hand
+            && !ruler_busy
+            && !editor.is_painting()
+            && !editor.in_symbol_mode()
+        {
             // Solo si lo de arriba en el puntero es el lienzo: con un menú o una ventana encima,
             // las notas de abajo no lo ven.
             let on_top = |p: Pos2| ui.ctx().layer_id_at(p) == Some(response.layer_id);
@@ -463,6 +471,7 @@ impl CanvasView {
             && !editor.is_painting()
             && (pressed_primary || pressed_secondary)
             && let Some(p) = pointer
+            && !over_crumbs(p)
         {
             let world = self.to_world(rect, p);
             let slice = (pressed_secondary && editor.active_tool() == ToolKind::Slice)
@@ -491,7 +500,8 @@ impl CanvasView {
                 Some((id, TitleHit::Menu)) if pressed_primary => editor.activate(id),
                 // "○": borra el artboard (se deshace con Ctrl+Z; el último no se borra).
                 Some((id, TitleHit::Close)) if pressed_primary => {
-                    if editor.document.artboards.len() > 1 {
+                    // En el modo símbolo la ventana es la del símbolo: no se borra desde ahí.
+                    if editor.document.canvas_count() > 1 && !editor.in_symbol_mode() {
                         editor.activate(id);
                         editor.remove_active_artboard();
                     }
@@ -517,6 +527,18 @@ impl CanvasView {
                 }
                 if ui.add(menus::item("Flip Vertical", "Shift+V")).clicked() {
                     editor.flip(false);
+                    ui.close();
+                }
+                menus::separator(ui);
+                let convert = editor.can_convert_to_symbol();
+                if ui
+                    .add_enabled(convert.is_ok(), menus::plain("Convert to Symbol…"))
+                    .on_disabled_hover_text(
+                        convert.err().map(|e| e.to_string()).unwrap_or_default(),
+                    )
+                    .clicked()
+                {
+                    self.symbol_request = true;
                     ui.close();
                 }
             });
@@ -586,11 +608,26 @@ impl CanvasView {
         {
             editor.finish_gesture();
         }
+        // Doble clic con Move: fuera del símbolo que se edita sale un nivel; si no, entra a la
+        // instancia de la capa actual (a un símbolo de la biblioteca, en el modo símbolo). No
+        // sobre la barra o la etiqueta (renombra), las reglas ni la migaja de pan.
         if response.double_clicked()
             && editor.active_tool() == ToolKind::Move
-            && editor.enter_instance()
+            && over_label.is_none()
+            && let Some(p) = pointer.filter(|&p| area.contains(p))
         {
-            self.center_active(editor);
+            let outside = !editor.artboard().contains(self.to_world(rect, p));
+            if editor.in_symbol_mode() && outside {
+                editor.exit_symbol_to(editor.symbol_stack.len() - 1);
+                ui.ctx().request_repaint();
+            } else if editor.enter_instance() {
+                if editor.in_symbol_mode() {
+                    self.request_zoom(ZoomRequest::Fit);
+                    ui.ctx().request_repaint();
+                } else {
+                    self.center_active(editor);
+                }
+            }
         }
 
         let transform_cursor = editor
@@ -650,9 +687,11 @@ impl CanvasView {
             }
         } else if editor.active_tool() == ToolKind::Artboard {
             let world = pointer.map(|p| self.to_world(rect, p));
-            Some(artboard_cursor(
-                world.and_then(|w| hit_test(&editor.document, w, slop)),
-            ))
+            // En el modo símbolo la herramienta no toca los artboards del lienzo (no se ven).
+            let hit = world
+                .filter(|_| !editor.in_symbol_mode())
+                .and_then(|w| hit_test(&editor.document, w, slop));
+            Some(artboard_cursor(hit))
         } else if editor.active_tool() == ToolKind::Move
             // Durante el arrastre sigue Move aunque el puntero salga de lo seleccionado o del
             // artboard, o cambien los modificadores.

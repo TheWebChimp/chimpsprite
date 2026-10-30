@@ -136,6 +136,7 @@ impl ChimpApp {
             Flatten => {
                 editor.flatten();
             }
+            ConvertToSymbol => self.open_convert_to_symbol(),
             PlayPause => editor.toggle_play(),
             NextFrame => editor.next_frame(),
             PreviousFrame => editor.prev_frame(),

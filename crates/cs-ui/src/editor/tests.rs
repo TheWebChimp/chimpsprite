@@ -1168,3 +1168,73 @@ fn the_right_button_of_the_pencil_picks_the_color_under_it() {
     click(&mut e, (5, 5), false, false);
     assert_eq!(e.sprite().pixel(LayerId(1), 0, 5, 5), green);
 }
+
+#[test]
+fn library_artboards_are_not_activated_by_clicks_or_listed() {
+    let mut e = editor();
+    e.add_artboard(4, 4); // id 2, a la derecha
+    let id = ArtboardId(2);
+    e.document.artboard_mut(id).unwrap().in_library = true;
+    e.activate(ArtboardId(1));
+    let rect = e.document.artboard(id).unwrap().rect();
+    let inside = ((rect.0.0 + 1) as f32, (rect.0.1 + 1) as f32);
+    assert_eq!(e.document.artboard_at(inside), None);
+    e.pointer_press(inside, false, false, 0.1);
+    e.pointer_release();
+    assert_eq!(e.active, ArtboardId(1), "a click doesn't reach the library");
+    let (library, canvas) = e.instance_candidate_groups();
+    assert_eq!(library.iter().map(|c| c.0).collect::<Vec<_>>(), vec![id]);
+    assert!(canvas.is_empty(), "the active artboard can't hold itself");
+}
+
+#[test]
+fn a_new_editor_starts_on_a_canvas_artboard() {
+    let mut doc = Document::with_sprite("a", Sprite::new(4, 4, ColorMode::Rgba));
+    let mut symbol = doc.artboards[0].clone();
+    symbol.id = ArtboardId(2);
+    symbol.in_library = true;
+    doc.artboards.insert(0, symbol);
+    let e = Editor::new(doc);
+    assert_eq!(e.active, ArtboardId(1));
+}
+
+#[test]
+fn the_library_does_not_count_for_deleting_artboards() {
+    let mut e = editor();
+    e.add_artboard(4, 4); // id 2
+    e.add_artboard(4, 4); // id 3
+    e.document.artboard_mut(ArtboardId(2)).unwrap().in_library = true;
+    e.activate(ArtboardId(3));
+    e.remove_active_artboard();
+    assert!(e.document.artboard(ArtboardId(3)).is_none());
+    assert_eq!(e.active, ArtboardId(1), "the last canvas artboard");
+    e.remove_active_artboard();
+    assert!(
+        e.document.artboard(ArtboardId(1)).is_some(),
+        "the last one stays"
+    );
+}
+
+#[test]
+fn instance_candidates_list_the_library_first_by_name() {
+    let mut e = editor();
+    for _ in 0..4 {
+        e.add_artboard(4, 4); // ids 2..=5
+    }
+    for (id, name, library) in [
+        (2, "b", false),
+        (3, "z", true),
+        (4, "a", false),
+        (5, "m", true),
+    ] {
+        let a = e.document.artboard_mut(ArtboardId(id)).unwrap();
+        a.name = name.into();
+        a.in_library = library;
+    }
+    e.activate(ArtboardId(1));
+    let ids = |v: Vec<(ArtboardId, String)>| v.iter().map(|c| c.0.0).collect::<Vec<_>>();
+    let (library, canvas) = e.instance_candidate_groups();
+    assert_eq!(ids(library), vec![5, 3]);
+    assert_eq!(ids(canvas), vec![4, 2]);
+    assert_eq!(ids(e.instance_candidates()), vec![5, 3, 4, 2]);
+}

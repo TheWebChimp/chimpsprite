@@ -41,6 +41,9 @@ struct Entry {
     guides: Vec<Guide>,
     #[serde(default)]
     symmetry: Symmetry,
+    /// Símbolo de la biblioteca (no se ve en el lienzo).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    library: bool,
     /// Datos de capa que `.aseprite` no guarda (máscaras y recortes), por índice de capa.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     layers: Vec<LayerExtra>,
@@ -177,6 +180,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
             file,
             guides: artboard.guides.clone(),
             symmetry: artboard.symmetry,
+            library: artboard.in_library,
             layers,
         });
     }
@@ -234,6 +238,7 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
             report.warn(format!("{}: {w}", entry.name));
         }
         artboards.push(Artboard {
+            in_library: entry.library,
             guides: entry.guides,
             symmetry: entry.symmetry,
             id: ArtboardId(entry.id),
@@ -408,6 +413,28 @@ mod tests {
         assert!(back.artboards.iter().all(|a| back.cycle_free(a.id)));
     }
 
+    #[test]
+    fn library_roundtrip() {
+        let mut d = doc();
+        d.artboards[1].in_library = true;
+        // El host usa el símbolo de la biblioteca en una capa de instancia.
+        let symbol = d.artboards[1].id;
+        let host = &mut d.artboards[0].sprite;
+        let add = cs_commands::ops::new_instance_layer(host, None, 0, symbol, "Banana", (1, 2));
+        add.apply(host).unwrap();
+        let instance = host.layers.last().unwrap().id;
+        let (back, _) = read(&write(&d).unwrap()).unwrap();
+        assert!(back.artboards[1].in_library);
+        assert!(!back.artboards[0].in_library);
+        assert_eq!(back, d);
+        let layer = back.artboards[0].sprite.layer(instance).unwrap();
+        assert_eq!(layer.kind, LayerKind::Instance);
+        let key = &layer.instance.as_ref().unwrap().keys[0];
+        assert_eq!((key.source, key.position), (Some(symbol), (1, 2)));
+        assert!(back.artboard(symbol).is_some_and(|a| a.in_library));
+        assert_eq!(back.instance_sources(back.artboards[0].id), vec![symbol]);
+    }
+
     fn doc() -> Document {
         let mut chimp = Sprite::new(8, 8, ColorMode::Rgba);
         cs_commands::Command::DrawPixels {
@@ -419,6 +446,7 @@ mod tests {
         .unwrap();
         let mut d = Document::with_sprite("chimp", chimp);
         d.artboards.push(Artboard {
+            in_library: false,
             guides: vec![Guide {
                 axis: cs_core::Axis::Vertical,
                 position: 2,

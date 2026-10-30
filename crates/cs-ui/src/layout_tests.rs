@@ -2672,3 +2672,287 @@ fn a_new_note_from_the_edit_menu_takes_what_is_typed() {
     assert_eq!(notes.len(), 1);
     assert_eq!(notes[0].text, "hola");
 }
+
+/// La app con Pixel UI y un símbolo "Coin" en la biblioteca, elegido.
+fn with_a_symbol(pixel: bool) -> LayoutHarness {
+    let view = if pixel { pixel_ui() } else { plain() };
+    let mut h = LayoutHarness::new(view, true);
+    let editor = &mut h.app.doc.editor;
+    let mut coin = editor.document.artboards[0].clone();
+    coin.id = editor.document.next_artboard_id();
+    coin.name = "Coin".into();
+    coin.in_library = true;
+    let id = coin.id;
+    let index = editor.document.artboards.len();
+    assert!(editor.execute_doc(cs_commands::DocCommand::AddArtboard {
+        index,
+        artboard: Box::new(coin),
+    }));
+    editor.library_selected = Some(id);
+    h.frame();
+    h
+}
+
+#[test]
+fn the_library_dock_button_shows_the_symbols() {
+    for pixel in [true, false] {
+        let mut h = with_a_symbol(pixel);
+        assert!(!h.texts.iter().any(|(t, _)| t == "Coin"));
+        // Sin Pixel UI, el botón se llama como su glifo (el de más arriba: el otro "▣" es el del
+        // preview, abajo).
+        let button = if pixel {
+            h.button("Library")
+        } else {
+            h.buttons
+                .iter()
+                .filter(|(l, _)| l == "▣")
+                .map(|(_, r)| *r)
+                .min_by(|a, b| a.top().total_cmp(&b.top()))
+                .expect("the Library dock button")
+        };
+        h.click(button.center(), PointerButton::Primary);
+        h.frame();
+        assert!(
+            h.texts.iter().any(|(t, _)| t == "Coin"),
+            "pixel {pixel}: {:?}",
+            h.texts
+        );
+    }
+}
+
+#[test]
+fn the_library_button_shows_its_plain_glyph_while_the_skin_lacks_the_icon() {
+    let h = with_a_symbol(true);
+    let has_icon = h
+        .app
+        .pixel
+        .skin()
+        .is_some_and(|s| s.piece("icon.dock.library", WidgetState::Normal).is_some());
+    let button = h.button("Library");
+    let glyph = h
+        .texts
+        .iter()
+        .any(|(t, p)| t == "▣" && button.expand(1.0).contains(*p));
+    assert_eq!(glyph, !has_icon, "{:?}", h.texts);
+}
+
+#[test]
+fn f2_renames_the_selected_symbol_in_the_library() {
+    let mut h = with_a_symbol(true);
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    let key = |key, pressed| Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![key(egui::Key::F2, true), key(egui::Key::F2, false)]);
+    h.frame();
+    h.frame_with(vec![Event::Text("s".into())]);
+    h.frame_with(vec![
+        key(egui::Key::Enter, true),
+        key(egui::Key::Enter, false),
+    ]);
+    h.frame();
+    let id = h.app.doc.editor.library_selected.unwrap();
+    let name = &h.app.doc.editor.document.artboard(id).unwrap().name;
+    assert_eq!(name, "Coins");
+}
+
+/// Agrega a la biblioteca un símbolo `name` (copia del primer artboard) y lo elige.
+fn add_symbol(h: &mut LayoutHarness, name: &str) -> cs_core::ArtboardId {
+    let editor = &mut h.app.doc.editor;
+    let mut symbol = editor.document.artboards[0].clone();
+    symbol.id = editor.document.next_artboard_id();
+    symbol.name = name.into();
+    symbol.in_library = true;
+    let id = symbol.id;
+    let index = editor.document.artboards.len();
+    assert!(editor.execute_doc(cs_commands::DocCommand::AddArtboard {
+        index,
+        artboard: Box::new(symbol),
+    }));
+    editor.library_selected = Some(id);
+    id
+}
+
+fn key_tap(key: egui::Key) -> Vec<Event> {
+    let event = |pressed| Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: Default::default(),
+    };
+    vec![event(true), event(false)]
+}
+
+#[test]
+fn a_rename_of_a_symbol_that_was_undone_away_does_not_block_f2() {
+    let mut h = with_a_symbol(true);
+    let gem = add_symbol(&mut h, "Gem");
+    h.frame();
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    h.frame_with(key_tap(egui::Key::F2));
+    h.frame();
+    assert_eq!(h.app.doc.library.renaming.as_ref().map(|r| r.0), Some(gem));
+    // El undo saca a Gem de la biblioteca mientras se renombraba.
+    h.app.doc.editor.undo();
+    h.frame();
+    h.frame();
+    assert_eq!(h.app.doc.library.renaming, None);
+    // F2 sigue andando con Coin.
+    let coin = h.app.doc.editor.document.library().next().unwrap().id;
+    h.app.doc.editor.library_selected = Some(coin);
+    h.frame();
+    h.frame_with(key_tap(egui::Key::F2));
+    h.frame();
+    h.frame_with(vec![Event::Text("s".into())]);
+    h.frame_with(key_tap(egui::Key::Enter));
+    h.frame();
+    let name = &h.app.doc.editor.document.artboard(coin).unwrap().name;
+    assert_eq!(name, "Coins");
+}
+
+#[test]
+fn the_library_state_belongs_to_its_tab() {
+    let mut h = with_a_symbol(true);
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    h.frame_with(key_tap(egui::Key::F2));
+    h.frame();
+    assert!(h.app.doc.library.renaming.is_some());
+    // Otra pestaña con su propio símbolo: empieza sin nada a medias.
+    h.app.new_document();
+    h.frame();
+    assert_eq!(h.app.tabs.len(), 2);
+    assert_eq!(h.app.doc.library.renaming, None);
+    add_symbol(&mut h, "Other");
+    h.frame();
+    assert!(h.texts.iter().any(|(t, _)| t == "Other"), "{:?}", h.texts);
+    assert!(!h.texts.iter().any(|(t, _)| t == "Coin"));
+    // De vuelta en la primera, su panel sigue como estaba.
+    h.app.tabs.switch(&mut h.app.doc, 0);
+    h.frame();
+    assert!(h.app.doc.library.renaming.is_some());
+}
+
+#[test]
+fn symbol_mode_shows_only_the_symbol_under_a_breadcrumb_that_leaves_it() {
+    for pixel in [true, false] {
+        let mut h = with_a_symbol(pixel);
+        let host = h.app.doc.editor.active;
+        let coin = h.app.doc.editor.library_selected.unwrap();
+        let zoom = h.app.doc.canvas.zoom;
+        assert!(!h.texts.iter().any(|(t, _)| t == "Document"));
+        let host_texture = h.app.doc.canvas.artboard_texture(host).expect("rendered");
+        assert!(h.app.doc.editor.enter_symbol(coin));
+        h.app.doc.canvas.request_zoom(crate::view::ZoomRequest::Fit);
+        h.frame();
+        h.frame();
+        // Se dibuja solo el símbolo (el host está en el mismo lugar, pero no se ve).
+        let coin_texture = h.app.doc.canvas.artboard_texture(coin).expect("rendered");
+        let drawn = |t: TextureId| h.textures.iter().any(|(x, _)| *x == t);
+        assert!(drawn(coin_texture), "pixel {pixel}");
+        assert!(!drawn(host_texture), "pixel {pixel}: only the symbol");
+        let crumb = |h: &LayoutHarness, name: &str| {
+            h.text_rects
+                .iter()
+                .find(|(t, ..)| t == name)
+                .map(|(_, r, _)| *r)
+        };
+        assert!(crumb(&h, "Coin").is_some(), "{:?}", h.texts);
+        let document = crumb(&h, "Document").expect("the breadcrumb");
+        // Un clic en "Document" vuelve al documento, con su vista de antes.
+        h.click(document.center(), PointerButton::Primary);
+        assert!(!h.app.doc.editor.in_symbol_mode(), "pixel {pixel}");
+        assert_eq!(h.app.doc.editor.active, host);
+        h.frame();
+        assert!(crumb(&h, "Document").is_none());
+        assert_eq!(h.app.doc.canvas.zoom, zoom, "the document view is back");
+    }
+}
+
+#[test]
+fn move_to_library_is_in_the_sprite_menu_without_pixel_ui() {
+    let mut h = LayoutHarness::editor();
+    open_menu(&mut h, "Sprite");
+    // Con un solo artboard en el lienzo, no se puede.
+    h.click(h.button("Move to Library").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.document.canvas_count(), 1);
+    h.app.doc.editor.add_artboard(4, 4);
+    let moved = h.app.doc.editor.active;
+    h.frame();
+    if !h.buttons.iter().any(|(l, _)| l == "Move to Library") {
+        open_menu(&mut h, "Sprite");
+    }
+    h.click(h.button("Move to Library").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    assert!(editor.document.artboard(moved).unwrap().in_library);
+    assert_ne!(editor.active, moved);
+}
+
+#[test]
+fn deleting_a_symbol_in_use_asks_first() {
+    for pixel in [true, false] {
+        let mut h = with_a_symbol(pixel);
+        let coin = h.app.doc.editor.library_selected.unwrap();
+        // Una instancia de Coin en el host.
+        let editor = &mut h.app.doc.editor;
+        let add =
+            cs_commands::ops::new_instance_layer(editor.sprite(), None, 0, coin, "Coin 1", (0, 0));
+        assert!(editor.execute(add));
+        h.frame();
+        let library = if pixel {
+            h.button("Library")
+        } else {
+            h.buttons
+                .iter()
+                .filter(|(l, _)| l == "▣")
+                .map(|(_, r)| *r)
+                .min_by(|a, b| a.top().total_cmp(&b.top()))
+                .expect("the Library dock button")
+        };
+        h.click(library.center(), PointerButton::Primary);
+        h.frame();
+        let question = "Used by 1 instance. Delete anyway?";
+        // Pide borrar desde el menú de la fila y contesta `answer` en la confirmación.
+        let ask = |h: &mut LayoutHarness, answer: &str| {
+            let row = h
+                .nodes
+                .iter()
+                .filter(|(l, _)| l == "Coin")
+                .map(|(_, r)| *r)
+                .max_by(|a, b| a.top().total_cmp(&b.top()))
+                .expect("the Coin row");
+            h.click(row.center(), PointerButton::Secondary);
+            h.frame();
+            h.click(h.button("Delete").center(), PointerButton::Primary);
+            h.frame();
+            let (_, text, _) = h
+                .text_rects
+                .iter()
+                .find(|(t, _, _)| t == question)
+                .cloned()
+                .unwrap_or_else(|| panic!("pixel {pixel}: no confirmation in {:?}", h.texts));
+            let button = h
+                .buttons
+                .iter()
+                .filter(|(l, r)| l == answer && r.top() > text.top())
+                .map(|(_, r)| *r)
+                .next()
+                .unwrap_or_else(|| panic!("no {answer:?} under the question"));
+            h.click(button.center(), PointerButton::Primary);
+            h.frame();
+        };
+        ask(&mut h, "Cancel");
+        assert!(h.app.doc.editor.document.artboard(coin).is_some(), "kept");
+        assert_eq!(h.app.doc.library.confirm_delete, None);
+        assert!(!h.texts.iter().any(|(t, _)| t == question));
+        ask(&mut h, "Delete");
+        assert!(
+            h.app.doc.editor.document.artboard(coin).is_none(),
+            "pixel {pixel}: deleted"
+        );
+    }
+}

@@ -15,7 +15,7 @@ pub fn artboards(
     ui.horizontal(|ui| {
         ui.heading("Artboards");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let can_remove = editor.document.artboards.len() > 1;
+            let can_remove = editor.can_remove_active_artboard();
             if ui
                 .add_enabled(can_remove, egui::Button::new("🗑").small())
                 .tip("Delete artboard")
@@ -32,8 +32,7 @@ pub fn artboards(
 
     let ids: Vec<(ArtboardId, String)> = editor
         .document
-        .artboards
-        .iter()
+        .canvas_artboards()
         .rev()
         .map(|a| (a.id, a.name.clone()))
         .collect();
@@ -73,7 +72,7 @@ pub fn pixel_artboards(
     name_buffer: &mut (ArtboardId, String),
     skin: &Skin,
 ) -> bool {
-    let can_remove = editor.document.artboards.len() > 1;
+    let can_remove = editor.can_remove_active_artboard();
     match pixel_sections::header(
         ui,
         skin,
@@ -86,11 +85,10 @@ pub fn pixel_artboards(
         Some(HeaderAction::Delete) => editor.remove_active_artboard(),
         None => {}
     }
-    let ids: Vec<ArtboardId> = editor.document.artboards.iter().map(|a| a.id).collect();
+    let ids: Vec<ArtboardId> = editor.document.canvas_artboards().map(|a| a.id).collect();
     let tabs: Vec<pixel_sections::Tab> = editor
         .document
-        .artboards
-        .iter()
+        .canvas_artboards()
         .map(|a| pixel_sections::Tab {
             name: a.name.clone(),
             color: None,
@@ -420,7 +418,7 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     }
     gesture_end(editor, &[&first_response]);
     let entered = crate::pixel_ui::text_button(ui, "Edit Symbol")
-        .tip("Go to the source artboard (double-click with Move)")
+        .tip("Edit the source symbol (double-click with Move)")
         .clicked()
         && editor.enter_instance();
     ui.separator();

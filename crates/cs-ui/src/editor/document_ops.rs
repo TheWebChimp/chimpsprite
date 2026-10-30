@@ -12,6 +12,7 @@ impl Editor {
         sprite.palette = template.palette.clone();
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
+            in_library: false,
             guides: Vec::new(),
             symmetry: Default::default(),
             id,
@@ -27,9 +28,18 @@ impl Editor {
         }
     }
 
+    /// ¿Se puede borrar el artboard activo? El último del lienzo no (la biblioteca no cuenta),
+    /// y un símbolo (en modo símbolo o en la biblioteca) se borra desde la Library, que avisa.
+    pub fn can_remove_active_artboard(&self) -> bool {
+        self.document.canvas_count() > 1 && !self.in_symbol_mode() && !self.artboard().in_library
+    }
+
     pub fn remove_active_artboard(&mut self) {
-        if self.document.artboards.len() > 1 {
-            self.execute_doc(DocCommand::RemoveArtboard { id: self.active });
+        if self.can_remove_active_artboard()
+            && self.execute_doc(DocCommand::RemoveArtboard { id: self.active })
+            && let Some(last) = self.document.canvas_artboards().last()
+        {
+            self.activate(last.id);
         }
     }
 
@@ -155,6 +165,7 @@ impl Editor {
         let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
+            in_library: false,
             id,
             name,
             position: (x1 + 16, y0),
@@ -177,6 +188,7 @@ impl Editor {
         let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
+            in_library: false,
             id,
             name,
             position: (x1 + 16, y0),

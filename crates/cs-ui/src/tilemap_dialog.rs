@@ -22,7 +22,7 @@ pub fn default_tile_size(editor: &Editor) -> (u32, u32) {
 }
 
 /// Enter acepta y Escape (o cerrar la ventana) cancela, como en los demás diálogos.
-fn finish(ctx: &egui::Context, open: bool, result: DialogResult) -> DialogResult {
+pub(crate) fn finish(ctx: &egui::Context, open: bool, result: DialogResult) -> DialogResult {
     let (enter, escape) = ctx.input(|i| {
         (
             i.key_pressed(egui::Key::Enter),
@@ -41,7 +41,7 @@ fn finish(ctx: &egui::Context, open: bool, result: DialogResult) -> DialogResult
 /// La ventana de un diálogo de tilemaps (la de la app: con `skin`, la de Pixel UI) con lo que
 /// agregue `add_contents` y, abajo, OK y Cancel. Cerrar con la × es Cancel. Devuelve lo elegido
 /// con los botones y si sigue abierta.
-fn dialog_window(
+pub(crate) fn dialog_window(
     ctx: &egui::Context,
     skin: Option<&Skin>,
     id: &str,

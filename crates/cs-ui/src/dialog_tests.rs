@@ -78,6 +78,7 @@ impl DialogHarness {
             app.pixel.update(&ctx, &app.view);
             app.update_canvas_size(&ctx);
             app.update_tilemap_dialogs(&ctx);
+            app.update_symbol_dialog(&ctx);
             app.show_dialogs(&ctx);
             app.update_palette_windows(&ctx, false);
             app.update_grid_dialog(&ctx);
@@ -105,7 +106,12 @@ impl DialogHarness {
         };
         self.buttons = nodes
             .iter()
-            .filter(|(_, n)| n.role() == egui::accesskit::Role::Button)
+            .filter(|(_, n)| {
+                matches!(
+                    n.role(),
+                    egui::accesskit::Role::Button | egui::accesskit::Role::RadioButton
+                )
+            })
             .filter_map(|(_, n)| Some((n.label()?.to_string(), bounds(n)?)))
             .collect();
         self.numbers = nodes
@@ -876,5 +882,42 @@ fn every_window_is_the_app_window() {
                 assert!(h.drew_piece("window"), "{id}");
             }
         }
+    }
+}
+
+#[test]
+fn convert_to_symbol_dialog_creates_with_the_chosen_type() {
+    use cs_commands::symbol::SymbolTiming;
+    use cs_core::{PixelValue, Rgba};
+    for pixel in [false, true] {
+        let mut h = DialogHarness::new(pixel);
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        let editor = &mut h.app.doc.editor;
+        editor.execute(cs_commands::Command::DrawPixels {
+            layer: editor.layer,
+            frame: 0,
+            pixels: vec![(1, 1, red)],
+        });
+        h.app.open_convert_to_symbol();
+        h.settle();
+        assert!(h.drew_text("Convert to Symbol"), "{:?}", h.texts);
+        h.click("Movie Clip");
+        h.key(egui::Key::Enter);
+        assert!(h.app.symbol_dialog.is_none());
+        assert!(h.app.message.is_none(), "pixel ui {pixel}: no error");
+        let e = &h.app.doc.editor;
+        let key = e
+            .sprite()
+            .layer(e.layer)
+            .unwrap()
+            .instance
+            .as_ref()
+            .unwrap()
+            .keys[0];
+        assert_eq!(
+            key.timing,
+            SymbolTiming::MovieClip.timing(),
+            "pixel ui {pixel}"
+        );
     }
 }

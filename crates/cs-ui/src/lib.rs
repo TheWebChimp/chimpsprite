@@ -47,6 +47,7 @@ mod keymap;
 mod layer_ops;
 #[cfg(test)]
 mod layout_tests;
+mod library_panel;
 mod logo;
 mod lospec_client;
 #[cfg(not(target_arch = "wasm32"))]
@@ -72,6 +73,8 @@ mod preferences;
 mod preview;
 mod recent;
 pub mod skin;
+mod symbol_dialog;
+mod symbol_ops;
 mod tabs;
 mod theme;
 mod tile_ops;
@@ -162,6 +165,8 @@ pub struct ChimpApp {
     /// La ventanita de preview (abierta con `view.preview`).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
+    /// Layer → Convert to Symbol… (F8) abierto.
+    symbol_dialog: Option<symbol_dialog::SymbolDialog>,
     /// Desarrollo (`CHIMPSPRITE_DEMO_TILES`): al abrir el documento, activar su capa tilemap.
     demo_tiles: bool,
     fullscreen: bool,
@@ -293,6 +298,7 @@ impl ChimpApp {
             sheet_dialog: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
+            symbol_dialog: None,
             demo_tiles: std::env::var_os("CHIMPSPRITE_DEMO_TILES").is_some(),
             fullscreen: false,
             pending: None,
@@ -564,6 +570,79 @@ impl ChimpApp {
         }
     }
 
+    /// El panel Library del dock y lo que pide.
+    fn library_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
+        let mut action = None;
+        let skin = self.pixel.skin();
+        let editor = &mut self.doc.editor;
+        let state = &mut self.doc.library;
+        dock::flyout(
+            ctx,
+            dock::DockPanel::Library,
+            anchor,
+            skin,
+            library_panel::WIDTH,
+            true,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    action = library_panel::show(ui, editor, skin, state);
+                });
+            },
+        );
+        let Some(action) = action else {
+            return;
+        };
+        let editor = &mut self.doc.editor;
+        match action {
+            library_panel::LibraryAction::Rename(id, name) => {
+                editor.execute_doc(cs_commands::DocCommand::SetArtboardProps {
+                    id,
+                    name: Some(name),
+                    position: None,
+                });
+            }
+            library_panel::LibraryAction::Duplicate(id) => {
+                let Some(source) = editor.document.artboard(id) else {
+                    return;
+                };
+                let mut copy = source.clone();
+                copy.id = editor.document.next_artboard_id();
+                copy.name = format!("{} copy", source.name);
+                copy.in_library = true;
+                let new = copy.id;
+                let index = editor.document.artboards.len();
+                if editor.execute_doc(cs_commands::DocCommand::AddArtboard {
+                    index,
+                    artboard: Box::new(copy),
+                }) {
+                    editor.library_selected = Some(new);
+                }
+            }
+            library_panel::LibraryAction::PlaceOnCanvas(id) => {
+                if let Some(cmd) = cs_commands::symbol::place_on_canvas(&editor.document, id)
+                    && editor.execute_doc(cmd)
+                {
+                    editor.activate(id);
+                    self.doc
+                        .canvas
+                        .request_zoom(view::ZoomRequest::CenterActive);
+                }
+            }
+            library_panel::LibraryAction::Delete(id) => {
+                if editor.execute_doc(cs_commands::DocCommand::RemoveArtboard { id })
+                    && editor.library_selected == Some(id)
+                {
+                    editor.library_selected = None;
+                }
+            }
+            library_panel::LibraryAction::Edit(id) => {
+                if editor.enter_symbol(id) {
+                    self.doc.canvas.request_zoom(view::ZoomRequest::Fit);
+                }
+            }
+        }
+    }
+
     /// El panel Dafont del dock, junto a su botón (`anchor`). La fuente elegida queda en la
     /// herramienta de texto, a su tamaño y nítida.
     #[cfg(not(target_arch = "wasm32"))]
@@ -632,6 +711,37 @@ impl ChimpApp {
                 }
                 tilemap_dialog::DialogResult::Cancel => self.convert_tilemap = None,
             }
+        }
+    }
+
+    /// F8: abre el diálogo de Convert to Symbol o, si no se puede convertir, dice por qué.
+    pub(crate) fn open_convert_to_symbol(&mut self) {
+        match self.doc.editor.can_convert_to_symbol() {
+            Err(e) => self.show_message("Convert to Symbol", e.to_string()),
+            Ok(()) => {
+                self.symbol_dialog = Some(symbol_dialog::SymbolDialog::new(&self.doc.editor));
+            }
+        }
+    }
+
+    fn update_symbol_dialog(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() {
+            self.symbol_dialog = None;
+            return;
+        }
+        let Some(dialog) = &mut self.symbol_dialog else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Accept => {
+                let (name, timing) = (dialog.name.clone(), dialog.timing);
+                self.symbol_dialog = None;
+                if let Err(e) = self.doc.editor.convert_to_symbol(&name, timing) {
+                    self.show_message("Convert to Symbol", e.to_string());
+                }
+            }
+            tilemap_dialog::DialogResult::Cancel => self.symbol_dialog = None,
         }
     }
 
@@ -971,7 +1081,11 @@ impl ChimpApp {
             });
         }
         if self.has_doc() {
-            Some(self.editor_panels(ui, modal))
+            let rect = self.editor_panels(ui, modal);
+            if let Some(why) = self.doc.canvas.drop_error.take() {
+                self.show_message("Library", why);
+            }
+            Some(rect)
         } else {
             // Con Pixel UI, el Home del diseño (frame 5) sobre el fondo del skin.
             let frame = self
@@ -1089,9 +1203,14 @@ impl ChimpApp {
                     .add_enabled_ui(!modal, |ui| panels::instance(ui, &mut self.doc.editor))
                     .inner;
                 if entered {
-                    self.doc
-                        .canvas
-                        .request_zoom(view::ZoomRequest::CenterActive);
+                    // A un símbolo de la biblioteca: se ve solo él, ajustado; a uno del lienzo,
+                    // se centra.
+                    let zoom = if self.doc.editor.in_symbol_mode() {
+                        view::ZoomRequest::Fit
+                    } else {
+                        view::ZoomRequest::CenterActive
+                    };
+                    self.doc.canvas.request_zoom(zoom);
                 }
             })
         });
@@ -1189,6 +1308,7 @@ impl ChimpApp {
             Some((dock::DockPanel::Dafont, anchor)) => self.dafont_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Groom, anchor)) => self.groom_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Lumen, anchor)) => self.lumen_panel(ui.ctx(), anchor, modal),
+            Some((dock::DockPanel::Library, anchor)) => self.library_panel(ui.ctx(), anchor, modal),
             _ => {}
         }
         if !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {
@@ -1296,7 +1416,14 @@ impl eframe::App for ChimpApp {
         self.update_grid_dialog(&ctx);
         self.show_slice_properties(&ctx);
         self.artboard_request();
+        // F8 pedido desde el menú de una capa o de la selección del lienzo.
+        if std::mem::take(&mut self.doc.timeline.convert_symbol)
+            | std::mem::take(&mut self.doc.canvas.symbol_request)
+        {
+            self.open_convert_to_symbol();
+        }
         self.update_tilemap_dialogs(&ctx);
+        self.update_symbol_dialog(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
         self.autosave(&ctx);

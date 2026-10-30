@@ -37,6 +37,21 @@ const EDGE_SLOP_PX: f32 = 6.0;
 /// Etiqueta con el nombre sobre cada artboard (arrastrable para moverlo).
 const LABEL_SIZE: f32 = 12.0;
 const LABEL_GAP: f32 = 4.0;
+/// Alto de la franja de la migaja de pan del modo símbolo (arriba del lienzo).
+const CRUMBS_PX: f32 = 14.0;
+
+/// Los artboards que muestra el lienzo, en su orden: los del lienzo o, en el modo símbolo, solo
+/// el que se edita.
+fn shown_artboards<'a>(
+    document: &'a cs_core::Document,
+    editor: &Editor,
+) -> impl DoubleEndedIterator<Item = &'a Artboard> + use<'a> {
+    let only = editor.in_symbol_mode().then_some(editor.active);
+    document.artboards.iter().filter(move |a| match only {
+        Some(id) => a.id == id,
+        None => !a.in_library,
+    })
+}
 /// Los números de tile se dibujan solo si cada tile ocupa al menos esto en pantalla.
 const TILE_NUMBER_MIN_PX: f32 = 16.0;
 /// Lado en pantalla de cada handle de la selección, sea cual sea el zoom.
@@ -92,6 +107,8 @@ pub struct CanvasView {
     renaming: Option<(ArtboardId, String, bool)>,
     /// Clic derecho sobre un slice con la herramienta Slice: al soltar se abre su menú.
     slice_menu: bool,
+    /// Por qué falló el último soltar de un símbolo de la biblioteca; el app lo muestra.
+    pub drop_error: Option<&'static str>,
     /// Clic derecho dentro de la selección con una herramienta de selección o Move: al soltar se
     /// abre su menú (voltear…).
     selection_menu: bool,
@@ -102,6 +119,8 @@ pub struct CanvasView {
     /// Lo pedido desde el menú "≡" de un artboard que abre un diálogo de la app (la app lo toma
     /// y lo deja en `None`).
     pub artboard_request: Option<ArtboardRequest>,
+    /// Se pidió "Convert to Symbol…" desde el menú de la selección (la app lo toma).
+    pub symbol_request: bool,
     /// Ctrl+rueda de touchpad: píxeles acumulados que todavía no suman un paso de grosor.
     wheel_rest: f32,
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
@@ -122,6 +141,10 @@ pub struct CanvasView {
     pub cursors: Option<pixel_cursors::CursorSet>,
     /// Píxeles físicos por punto del último frame: [`Self::origin`] se alinea a ellos.
     ppp: f32,
+    /// El zoom y el paneo del documento al entrar al modo símbolo: se restauran al salir.
+    symbol_return_view: Option<(f32, Vec2)>,
+    /// Si se ve la migaja de pan (modo símbolo) en este frame.
+    crumbs_shown: bool,
 }
 
 /// Color alrededor de los artboards: `canvas` del skin con Pixel UI; si no, el del tema.
@@ -218,10 +241,12 @@ impl Default for CanvasView {
             pixel_cursor: None,
             renaming: None,
             slice_menu: false,
+            drop_error: None,
             selection_menu: false,
             slice_properties: false,
             notes: Default::default(),
             artboard_request: None,
+            symbol_request: false,
             wheel_rest: 0.0,
             background: theme::CANVAS_BG,
             pixel_rulers: None,
@@ -231,6 +256,8 @@ impl Default for CanvasView {
             cursors: None,
             symmetry_color: None,
             ppp: 1.0,
+            symbol_return_view: None,
+            crumbs_shown: false,
         }
     }
 }
@@ -293,8 +320,7 @@ impl CanvasView {
     fn color_under(&self, rect: Rect, editor: &Editor, p: Pos2) -> Color32 {
         let world = self.to_world(rect, p);
         let Some(artboard) = editor
-            .document
-            .artboard_at(world)
+            .shown_artboard_at(world)
             .and_then(|id| editor.document.artboard(id))
         else {
             return self.background;
@@ -322,8 +348,14 @@ impl CanvasView {
         )
     }
 
+    /// Ajusta el zoom a todo el lienzo (en el modo símbolo, al símbolo).
     fn fit(&mut self, rect: Rect, editor: &Editor) {
-        let Some(((x0, y0), (x1, y1))) = editor.document.bounds() else {
+        let bounds = if editor.in_symbol_mode() {
+            Some(editor.artboard().rect())
+        } else {
+            editor.document.bounds()
+        };
+        let Some(((x0, y0), (x1, y1))) = bounds else {
             return;
         };
         let size = Vec2::new((x1 - x0) as f32, (y1 - y0) as f32) * self.ratio;
@@ -484,10 +516,14 @@ impl CanvasView {
 
     /// Lo que ocupa en pantalla cada artboard de `document`, en su orden (con su ventana, con
     /// Pixel UI).
-    fn covers(&self, rect: Rect, document: &cs_core::Document, ppp: f32) -> Vec<Rect> {
-        document
-            .artboards
-            .iter()
+    fn covers(
+        &self,
+        rect: Rect,
+        document: &cs_core::Document,
+        editor: &Editor,
+        ppp: f32,
+    ) -> Vec<Rect> {
+        shown_artboards(document, editor)
             .map(|a| {
                 let pixels = WindowLayout::pixels_on_screen(self.pixel_rect(rect, a), ppp);
                 if self.artboard_window.is_some() {
@@ -589,6 +625,26 @@ impl CanvasView {
         let (rx, ry) = editor.sprite().pixel_ratio;
         self.ratio = Vec2::new(rx.max(1) as f32, ry.max(1) as f32);
         self.rulers_shown = view_settings.rulers;
+        self.crumbs_shown = editor.in_symbol_mode();
+        self.sync_symbol_view(editor);
+        // Un símbolo soltado desde la Library. Con un diálogo abierto o sobre las reglas o la
+        // migaja de pan no cuenta (el payload se descarta igual).
+        if let Some(payload) = response.dnd_release_payload::<crate::library_panel::SymbolPayload>()
+            && let Some(pos) = ui.input(|i| i.pointer.latest_pos())
+            && dialog.is_none()
+            && ui.is_enabled()
+            && self.under_rulers(rect, view_settings).contains(pos)
+            && !self
+                .crumbs_strip(rect, view_settings)
+                .is_some_and(|c| c.contains(pos))
+        {
+            let w = self.to_world(rect, pos);
+            if let Err(why) =
+                editor.drop_symbol(payload.0, (w.0.floor() as i32, w.1.floor() as i32))
+            {
+                self.drop_error = Some(why);
+            }
+        }
         if !self.fitted && rect.width() > 0.0 {
             self.fit(rect, editor);
         }
@@ -615,6 +671,9 @@ impl CanvasView {
             dialog.as_deref_mut(),
             view_settings,
         );
+        // Si la entrada salió del modo símbolo, la vista del documento vuelve ya.
+        self.crumbs_shown = editor.in_symbol_mode();
+        self.sync_symbol_view(editor);
         let modal = dialog.is_some();
         let guide = dialog.and_then(|d| d.preview_rect(&editor.document));
 
@@ -630,7 +689,7 @@ impl CanvasView {
             self.textures
                 .retain(|id, _| document.artboard(*id).is_some());
             let mut skipped = false;
-            for artboard in &document.artboards {
+            for artboard in shown_artboards(document, editor) {
                 let sprite = &artboard.sprite;
                 let unchanged = painting
                     && self.all_rendered == Some(editor.revision)
@@ -688,7 +747,7 @@ impl CanvasView {
 
         let ppp = ctx.pixels_per_point();
         self.draw_tiled(&painter, rect, editor, document, checker, ppp);
-        for artboard in &document.artboards {
+        for artboard in shown_artboards(document, editor) {
             // Alineada a píxeles de pantalla: el damero y la textura caen justo en píxeles y la
             // ventana de Pixel UI se arma alrededor de este mismo rect (blanco de 1 px exacto).
             // Con zoom entero en píxeles físicos `origin` ya lo deja alineado y el redondeo no
@@ -790,10 +849,10 @@ impl CanvasView {
 
         // Lo que ocupa cada artboard en pantalla: las guías y la simetría de uno no se ven encima
         // de los que van delante.
-        let covers = self.covers(rect, document, ui.ctx().pixels_per_point());
+        let covers = self.covers(rect, document, editor, ui.ctx().pixels_per_point());
         if view_settings.shows(view_settings.guides) {
             let dragged = self.ruler_drag.and_then(|d| d.index);
-            for (k, artboard) in document.artboards.iter().enumerate() {
+            for (k, artboard) in shown_artboards(document, editor).enumerate() {
                 let ((x0, y0), (x1, y1)) = artboard.rect();
                 let screen = Rect::from_min_max(
                     self.to_screen(rect, (x0, y0)),
@@ -839,9 +898,7 @@ impl CanvasView {
 
         if !modal {
             // Los artboards de delante del activo tapan sus ejes.
-            let front = document
-                .artboards
-                .iter()
+            let front = shown_artboards(document, editor)
                 .position(|a| a.id == editor.active)
                 .map_or(&[][..], |k| &covers[k + 1..]);
             self.draw_symmetry(&painter, rect, editor, document, front);
@@ -993,8 +1050,9 @@ impl CanvasView {
             }
         }
 
-        // Las notas (post-its): encima de los artboards y debajo de las reglas.
-        {
+        // Las notas (post-its): encima de los artboards y debajo de las reglas. En el modo
+        // símbolo no se ven (son del documento).
+        if !editor.in_symbol_mode() {
             let (origin, scale) = (self.origin(rect), self.scale());
             let to_screen =
                 move |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * scale;
@@ -1038,6 +1096,8 @@ impl CanvasView {
                 None => self.draw_rulers(&painter, rect, editor, pointer),
             }
         }
+        // La migaja de pan del modo símbolo, debajo de la regla de arriba.
+        self.breadcrumb(ui, &painter, rect, view_settings, editor);
 
         // Color que tomaría el cuentagotas: lo que se ve (todas las capas visibles).
         let picked = || {
@@ -1320,11 +1380,103 @@ impl CanvasView {
     }
 
     /// Lo visible del lienzo: `rect` sin las reglas, si se muestran.
+    /// Sin la migaja de pan, si se ve.
     fn canvas_area(&self, rect: Rect, view: &ViewSettings) -> Rect {
+        let mut area = self.under_rulers(rect, view);
+        if self.crumbs_shown {
+            area.min.y += CRUMBS_PX;
+        }
+        area
+    }
+
+    /// `rect` sin las reglas, si se muestran.
+    fn under_rulers(&self, rect: Rect, view: &ViewSettings) -> Rect {
         if view.rulers {
             Rect::from_min_max(rect.min + Vec2::splat(self.ruler_px()), rect.max)
         } else {
             rect
+        }
+    }
+
+    /// La franja de la migaja de pan: arriba del lienzo, debajo de la regla.
+    fn crumbs_strip(&self, rect: Rect, view: &ViewSettings) -> Option<Rect> {
+        let area = self.under_rulers(rect, view);
+        self.crumbs_shown.then(|| {
+            Rect::from_min_size(area.min, Vec2::new(area.width(), CRUMBS_PX)).intersect(rect)
+        })
+    }
+
+    /// Guarda la vista del documento al entrar al modo símbolo y la restaura al salir.
+    fn sync_symbol_view(&mut self, editor: &Editor) {
+        if editor.in_symbol_mode() {
+            self.symbol_return_view.get_or_insert((self.zoom, self.pan));
+        } else if let Some((zoom, pan)) = self.symbol_return_view.take() {
+            (self.zoom, self.pan) = (zoom, pan);
+        }
+    }
+
+    /// La migaja de pan del modo símbolo: "Document > Inner > …" en una franja con el fondo de
+    /// los paneles. Un clic en una parte vuelve a ese nivel.
+    fn breadcrumb(
+        &mut self,
+        ui: &mut egui::Ui,
+        painter: &egui::Painter,
+        rect: Rect,
+        view: &ViewSettings,
+        editor: &mut Editor,
+    ) {
+        let Some(strip) = self.crumbs_strip(rect, view) else {
+            return;
+        };
+        let (background, text) = match crate::pixel_ui::frame_skin(ui.ctx()) {
+            Some(skin) => {
+                let c = skin.colors();
+                (c.panel, c.text)
+            }
+            None => (ui.visuals().panel_fill, ui.visuals().text_color()),
+        };
+        painter.rect_filled(strip, 0.0, background);
+        // Tapa el lienzo: los clics en la franja no llegan a las herramientas.
+        ui.interact(strip, ui.id().with("symbol_crumbs"), Sense::click());
+        let font = egui::TextStyle::Body.resolve(ui.style());
+        // La fuente pixel no tiene `›`: si no está, `>`.
+        let separator = if crate::appearance::pixel_font_has('›') {
+            " › "
+        } else {
+            " > "
+        };
+        let parts = editor.symbol_breadcrumb();
+        let last = parts.len() - 1;
+        let mut x = strip.left() + 4.0;
+        let mut target = None;
+        for (i, name) in parts.into_iter().enumerate() {
+            if i > 0 {
+                let galley = painter.layout_no_wrap(separator.into(), font.clone(), text);
+                let at = Pos2::new(x, strip.center().y - galley.size().y / 2.0).round();
+                x += galley.size().x;
+                painter.galley(at, galley, text);
+            }
+            let galley = painter.layout_no_wrap(name.clone(), font.clone(), text);
+            let at = Pos2::new(x, strip.center().y - galley.size().y / 2.0).round();
+            let part = Rect::from_min_size(at, galley.size());
+            x += galley.size().x;
+            let response = ui.interact(part, ui.id().with(("symbol_crumb", i)), Sense::click());
+            response
+                .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Link, i < last, &name));
+            // Las de antes del nivel actual se pueden tocar: se subrayan al pasar.
+            if i < last && response.hovered() {
+                ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+                let y = part.bottom() - 1.0;
+                painter.hline(part.x_range(), y, Stroke::new(1.0, text));
+            }
+            painter.galley(at, galley, text);
+            if i < last && response.clicked() {
+                target = Some(i);
+            }
+        }
+        if let Some(depth) = target {
+            editor.exit_symbol_to(depth);
+            ui.ctx().request_repaint();
         }
     }
 
@@ -1335,10 +1487,7 @@ impl CanvasView {
             return;
         }
         let ppp = ui.ctx().pixels_per_point();
-        let menus: Vec<(ArtboardId, Rect)> = editor
-            .document
-            .artboards
-            .iter()
+        let menus: Vec<(ArtboardId, Rect)> = shown_artboards(&editor.document, editor)
             .filter_map(|a| {
                 let layout = WindowLayout::around(self.pixel_rect(rect, a), ppp);
                 Some((a.id, layout.menu?))
@@ -1377,9 +1526,23 @@ impl CanvasView {
             self.artboard_request = Some(ArtboardRequest::Properties);
             ui.close();
         }
-        if ui.add(menus::plain("Duplicate")).clicked() {
+        // En el modo símbolo la ventana es la del símbolo: duplicarlo, mandarlo a la biblioteca o
+        // borrarlo (sin la confirmación de la biblioteca) no van desde acá.
+        let symbol = editor.in_symbol_mode();
+        if !symbol && ui.add(menus::plain("Duplicate")).clicked() {
             let name = format!("{} Copy", editor.artboard().name);
             editor.duplicate_artboard(name);
+            ui.close();
+        }
+        if !symbol
+            && ui
+                .add_enabled(
+                    editor.can_move_active_to_library(),
+                    menus::plain("Move to Library"),
+                )
+                .clicked()
+        {
+            editor.move_active_to_library();
             ui.close();
         }
         menus::separator(ui);
@@ -1395,8 +1558,11 @@ impl CanvasView {
             self.artboard_request = Some(ArtboardRequest::CanvasSize);
             ui.close();
         }
+        if symbol {
+            return;
+        }
         menus::separator(ui);
-        let can_delete = editor.document.artboards.len() > 1;
+        let can_delete = editor.document.canvas_count() > 1;
         if ui.add_enabled(can_delete, menus::plain("Delete")).clicked() {
             editor.remove_active_artboard();
             ui.close();
@@ -1422,7 +1588,8 @@ impl CanvasView {
         if self.artboard_window.is_some() {
             // Decide la ventana de más arriba que tiene a `p` (marco, barra o píxeles): las barras
             // de los de abajo quedan tapadas.
-            let (artboard, pixels) = editor.document.artboards.iter().rev().find_map(|a| {
+            let shown = shown_artboards(&editor.document, editor);
+            let (artboard, pixels) = shown.rev().find_map(|a| {
                 let pixels = self.pixel_rect(rect, a);
                 WindowLayout::frame_around(pixels, ppp)
                     .contains(p)
@@ -1442,21 +1609,26 @@ impl CanvasView {
             }
             return Some((artboard.id, hit));
         }
-        editor.document.artboards.iter().rev().find_map(|artboard| {
-            if !self.names_visible {
-                return None;
-            }
-            let galley = ui.painter().layout_no_wrap(
-                label_text(artboard),
-                FontId::proportional(LABEL_SIZE),
-                Color32::WHITE,
-            );
-            let bottom_left = self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
-            let label =
-                Rect::from_min_size(bottom_left - Vec2::new(0.0, galley.size().y), galley.size())
-                    .expand(2.0);
-            label.contains(p).then_some((artboard.id, TitleHit::Bar))
-        })
+        shown_artboards(&editor.document, editor)
+            .rev()
+            .find_map(|artboard| {
+                if !self.names_visible {
+                    return None;
+                }
+                let galley = ui.painter().layout_no_wrap(
+                    label_text(artboard),
+                    FontId::proportional(LABEL_SIZE),
+                    Color32::WHITE,
+                );
+                let bottom_left =
+                    self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
+                let label = Rect::from_min_size(
+                    bottom_left - Vec2::new(0.0, galley.size().y),
+                    galley.size(),
+                )
+                .expand(2.0);
+                label.contains(p).then_some((artboard.id, TitleHit::Bar))
+            })
     }
 }
 

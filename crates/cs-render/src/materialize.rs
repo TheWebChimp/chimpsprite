@@ -370,6 +370,7 @@ mod tests {
 
     fn artboard(id: u32, sprite: Sprite) -> Artboard {
         Artboard {
+            in_library: false,
             id: ArtboardId(id),
             name: format!("a{id}"),
             position: (0, 0),

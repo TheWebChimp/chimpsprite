@@ -2074,3 +2074,170 @@ fn a_guide_is_only_grabbed_inside_its_artboard() {
         "the same column, on the other artboard"
     );
 }
+
+#[test]
+fn library_artboards_are_not_drawn_on_the_canvas() {
+    let mut h = Harness::new();
+    h.editor.add_artboard(4, 4);
+    let id = h.editor.active;
+    h.editor.document.artboard_mut(id).unwrap().name = "Symbol".into();
+    h.editor.activate(cs_core::ArtboardId(1));
+    h.frame(vec![]);
+    let tex = h.canvas.textures[&id].id();
+    assert!(!h.meshes(tex).is_empty(), "drawn while on the canvas");
+    assert!(h.texts().iter().any(|(t, _)| t.starts_with("Symbol")));
+    h.editor.document.artboard_mut(id).unwrap().in_library = true;
+    h.editor.revision += 1;
+    h.frame(vec![]);
+    assert!(h.meshes(tex).is_empty(), "the library is not drawn");
+    assert!(!h.texts().iter().any(|(t, _)| t.starts_with("Symbol")));
+}
+
+// --- Modo símbolo ---
+
+/// Con Pixel UI: el artboard 16×16 pasa a un símbolo de la biblioteca encima del host (en el
+/// mismo lugar) y se entra a editarlo con Move.
+fn in_a_symbol() -> (Harness, cs_core::ArtboardId) {
+    let mut h = Harness::new();
+    let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    h.editor.execute(Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: vec![(0, 0, red), (15, 15, red)],
+    });
+    let symbol = h
+        .editor
+        .convert_to_symbol("Coin", cs_commands::symbol::SymbolTiming::Graphic)
+        .unwrap();
+    h.editor
+        .execute_doc(cs_commands::DocCommand::SetArtboardProps {
+            id: symbol,
+            name: None,
+            position: Some((0, 0)),
+        });
+    assert!(h.editor.enter_symbol(symbol));
+    h.editor.set_tool(ToolKind::Move);
+    h.canvas.zoom = 8.0;
+    with_window(&mut h);
+    h.canvas.center_active(&h.editor);
+    h.frame(vec![]);
+    (h, symbol)
+}
+
+#[test]
+fn in_symbol_mode_move_lifts_the_symbol_over_the_hidden_host() {
+    let (mut h, symbol) = in_a_symbol();
+    h.editor.selection = Some(Mask::from_rect(16, 16, (0, 0), (15, 15)));
+    let world = (8.5, 8.5);
+    assert_eq!(
+        h.editor.document.artboard_at(world),
+        Some(cs_core::ArtboardId(1))
+    );
+    assert!(h.editor.moves_selection_at(world, false, false));
+    let at = h.screen((8, 8));
+    h.frame(vec![Event::PointerMoved(at)]);
+    h.frame(vec![]);
+    assert_eq!(h.cursor, egui::CursorIcon::Move);
+    assert_eq!(h.editor.active, symbol);
+}
+
+#[test]
+fn in_symbol_mode_a_double_click_on_the_title_bar_or_a_ruler_does_not_leave() {
+    let (mut h, symbol) = in_a_symbol();
+    let index = h
+        .editor
+        .document
+        .artboards
+        .iter()
+        .position(|a| a.id == symbol)
+        .unwrap();
+    let bar = h.pixels_of(index).left_top() + Vec2::new(40.0, -6.0);
+    h.click(bar, PointerButton::Primary);
+    h.click(bar, PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(h.canvas.renaming.is_some(), "double click renames");
+    assert!(h.editor.in_symbol_mode(), "and stays in the symbol");
+    h.key(Key::Escape);
+    let ruler = Pos2::new(h.rect.left() + 4.0, h.rect.center().y + 120.0);
+    h.click(ruler, PointerButton::Primary);
+    h.click(ruler, PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(h.editor.in_symbol_mode(), "a ruler is not the empty canvas");
+    // Tiempo de por medio: si no, el próximo clic contaría como el tercero.
+    for _ in 0..10 {
+        h.frame(vec![]);
+    }
+    // Un doble clic en el lienzo vacío sí sale.
+    let empty = Pos2::new(h.rect.right() - 20.0, h.rect.bottom() - 20.0);
+    h.click(empty, PointerButton::Primary);
+    h.click(empty, PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(!h.editor.in_symbol_mode());
+}
+
+#[test]
+fn in_symbol_mode_the_artboard_menu_has_no_duplicate_move_or_delete() {
+    let (mut h, symbol) = in_a_symbol();
+    let index = h
+        .editor
+        .document
+        .artboards
+        .iter()
+        .position(|a| a.id == symbol)
+        .unwrap();
+    let menu = h.pixels_of(index).left_top() + Vec2::new(-2.0 + 2.0 + 4.5, -14.0 + 7.5);
+    h.click(menu, PointerButton::Primary);
+    h.frame(vec![]);
+    let texts: Vec<String> = h.texts().into_iter().map(|(t, _)| t).collect();
+    assert!(texts.iter().any(|t| t == "Rename"), "{texts:?}");
+    for item in ["Duplicate", "Move to Library", "Delete"] {
+        assert!(!texts.iter().any(|t| t == item), "{item} in {texts:?}");
+    }
+    assert!(h.editor.in_symbol_mode());
+}
+
+#[test]
+fn a_symbol_dropped_on_a_ruler_or_the_breadcrumb_does_nothing() {
+    let (mut h, coin) = in_a_symbol();
+    // Gem: otro símbolo para soltar dentro de Coin.
+    h.editor.exit_symbol_to(0);
+    h.editor.add_artboard(2, 2);
+    let gem = h.editor.active;
+    assert!(h.editor.move_active_to_library());
+    assert!(h.editor.enter_symbol(coin));
+    h.frame(vec![]);
+    h.frame(vec![]);
+    let layers = |h: &Harness| {
+        h.editor
+            .document
+            .artboard(coin)
+            .unwrap()
+            .sprite
+            .layers
+            .len()
+    };
+    let before = layers(&h);
+    let drop = |h: &mut Harness, pos: Pos2| {
+        egui::DragAndDrop::set_payload(&h.ctx, crate::library_panel::SymbolPayload(gem));
+        h.frame(vec![Event::PointerMoved(pos)]);
+        h.frame(vec![Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed: false,
+            modifiers: Default::default(),
+        }]);
+        h.frame(vec![]);
+    };
+    // La regla de la izquierda y la migaja de pan (arriba, debajo de la regla de arriba).
+    let rect = h.rect;
+    drop(&mut h, Pos2::new(rect.left() + 4.0, rect.center().y));
+    let crumbs = rect.top() + h.canvas.ruler_px() + 4.0;
+    drop(&mut h, Pos2::new(rect.center().x, crumbs));
+    assert_eq!(layers(&h), before);
+    assert_eq!(h.canvas.drop_error, None);
+    // Sobre el símbolo sí.
+    let at = h.screen((2, 2));
+    drop(&mut h, at);
+    assert_eq!(layers(&h), before + 1);
+    assert_eq!(h.editor.active, coin);
+}
