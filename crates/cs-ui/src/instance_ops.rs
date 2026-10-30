@@ -142,14 +142,14 @@ impl Editor {
     }
 
     /// El objeto que se edita en la capa actual: el primero de los seleccionados o, sin
-    /// selección, el primero de la capa.
+    /// selección, el único de la capa (con varios, ninguno).
     pub fn current_object(&self) -> Option<ObjectId> {
         self.object_of(self.layer)
     }
 
-    /// El objeto que se edita en `layer` (el panel, el timeline y sus keys): en la capa actual,
-    /// el primero de los seleccionados; si no, el primero de la capa. Es el único lugar que
-    /// decide ese "primero".
+    /// El objeto que se edita en `layer` (el panel y sus keys): en la capa actual, el primero de
+    /// los seleccionados; si no, el único de la capa. Con varios y ninguno seleccionado, `None`:
+    /// no se edita uno cualquiera. Es el único lugar que decide ese "primero".
     pub(crate) fn object_of(&self, layer: LayerId) -> Option<ObjectId> {
         let l = self.sprite().layer(layer)?;
         let selected = (layer == self.layer)
@@ -159,9 +159,55 @@ impl Editor {
                     .find(|&&o| l.object(o).is_some())
             })
             .flatten();
-        selected
-            .copied()
-            .or_else(|| l.objects.first().map(|o| o.id))
+        match (selected, l.objects.as_slice()) {
+            (Some(&o), _) => Some(o),
+            (None, [only]) => Some(only.id),
+            _ => None,
+        }
+    }
+
+    /// Los objetos sobre los que actúan las keys de la fila (plegada) de `layer`: los
+    /// seleccionados si es la capa actual o, sin selección, el único de la capa. Vacío si tiene
+    /// varios y ninguno está seleccionado.
+    pub fn key_objects(&self, layer: LayerId) -> Vec<ObjectId> {
+        let Some(l) = self.sprite().layer(layer) else {
+            return Vec::new();
+        };
+        let selected: Vec<ObjectId> = if layer == self.layer {
+            self.selected_objects()
+                .iter()
+                .copied()
+                .filter(|&o| l.object(o).is_some())
+                .collect()
+        } else {
+            Vec::new()
+        };
+        if selected.is_empty() {
+            self.object_of(layer).into_iter().collect()
+        } else {
+            selected
+        }
+    }
+
+    /// ¿Alguno de los objetos de la fila de `layer` (ver `key_objects`) tiene key en `frame`?
+    pub fn row_has_key_at(&self, layer: LayerId, frame: usize) -> bool {
+        self.key_tracks(layer)
+            .any(|t| t.keys.iter().any(|k| k.frame == frame))
+    }
+
+    /// ¿Se puede insertar una key en `frame` en la fila de `layer`? Hace falta un objeto con key
+    /// vigente ahí que no empiece en `frame` (antes de la primera key no hay nada que copiar).
+    pub fn row_can_insert_key(&self, layer: LayerId, frame: usize) -> bool {
+        self.key_tracks(layer)
+            .any(|t| t.key_at(frame).is_some() && !t.keys.iter().any(|k| k.frame == frame))
+    }
+
+    /// Los tracks de `key_objects(layer)`.
+    fn key_tracks(&self, layer: LayerId) -> impl Iterator<Item = &InstanceTrack> {
+        let l = self.sprite().layer(layer);
+        self.key_objects(layer)
+            .into_iter()
+            .filter_map(move |o| Some(&l?.object(o)?.track))
     }
 
     /// El track del objeto que se edita en `layer` (ver `object_of`).
@@ -243,16 +289,21 @@ impl Editor {
         }
     }
 
-    /// Keyframe en `frame` copiando el vigente, en el objeto que se edita en `layer`.
+    /// Keyframe en `frame` copiando el vigente, en los objetos de la fila de `layer` (ver
+    /// `key_objects`). Un solo paso de undo.
     pub fn insert_instance_key(&mut self, layer: LayerId, frame: usize) {
-        if let Some(object) = self.object_of(layer) {
-            self.insert_object_key(layer, object, frame);
+        let objects = self.key_objects(layer);
+        if let Some(cmd) = ops::update_objects_key(self.sprite(), layer, &objects, frame, |_| {}) {
+            self.execute(cmd);
         }
     }
 
+    /// Quita la key en `frame` de los objetos de la fila de `layer` (ver `key_objects`). Un solo
+    /// paso de undo.
     pub fn remove_instance_key(&mut self, layer: LayerId, frame: usize) {
-        if let Some(object) = self.object_of(layer) {
-            self.remove_object_key(layer, object, frame);
+        let objects = self.key_objects(layer);
+        if let Some(cmd) = ops::remove_objects_key(self.sprite(), layer, &objects, frame) {
+            self.execute(cmd);
         }
     }
 
@@ -544,6 +595,69 @@ mod tests {
         assert_eq!(flips(&e), [true, false, true]);
         e.undo();
         assert_eq!(flips(&e), [false, false, false]);
+    }
+
+    #[test]
+    fn with_several_objects_and_none_selected_nothing_is_edited() {
+        let (mut e, symbol) = with_symbol();
+        e.add_instance_layer(symbol);
+        let layer = e.layer;
+        let a = e.sprite().layer(layer).unwrap().objects[0].id;
+        // Con uno solo, ese es el actual aunque no esté seleccionado.
+        e.clear_object_selection();
+        assert_eq!(e.current_object(), Some(a));
+        assert_eq!(e.edited_objects(), [a]);
+        assert_eq!(e.key_objects(layer), [a]);
+        e.add_instance_layer(symbol);
+        let b = e.sprite().layer(layer).unwrap().objects[1].id;
+        e.clear_object_selection();
+        assert_eq!(e.current_object(), None);
+        assert!(e.edited_objects().is_empty());
+        assert!(e.key_objects(layer).is_empty());
+        assert_eq!(e.instance_key(), None);
+        assert_eq!(e.current_object_name(), None);
+        let before = e.sprite().layer(layer).unwrap().objects.clone();
+        e.update_instance_key(|k| k.flip_h = true);
+        e.rename_current_object("Nope", None);
+        e.insert_instance_key(layer, 1);
+        e.remove_instance_key(layer, 0);
+        assert_eq!(e.sprite().layer(layer).unwrap().objects, before);
+        assert!(!e.row_has_key_at(layer, 0) && !e.row_can_insert_key(layer, 1));
+        // Con uno seleccionado, la fila actúa sobre ese.
+        e.select_object(layer, b, false);
+        assert_eq!(e.current_object(), Some(b));
+        assert!(e.row_can_insert_key(layer, 1));
+        e.insert_instance_key(layer, 1);
+        let frames = |e: &Editor, o: ObjectId| -> Vec<usize> {
+            let l = e.sprite().layer(layer).unwrap();
+            l.object(o)
+                .unwrap()
+                .track
+                .keys
+                .iter()
+                .map(|k| k.frame)
+                .collect()
+        };
+        assert_eq!((frames(&e, a), frames(&e, b)), (vec![0], vec![0, 1]));
+        // Con los dos, un solo paso de undo.
+        e.set_selected_objects(vec![a, b]);
+        e.remove_instance_key(layer, 0);
+        let objects = &e.sprite().layer(layer).unwrap().objects;
+        assert_eq!(objects.len(), 1, "A had only that key");
+        assert_eq!(frames(&e, b), [1]);
+        e.undo();
+        assert_eq!((frames(&e, a), frames(&e, b)), (vec![0], vec![0, 1]));
+    }
+
+    #[test]
+    fn removing_the_last_key_of_the_last_object_keeps_the_layer() {
+        let (mut e, symbol) = with_symbol();
+        e.add_instance_layer(symbol);
+        let layer = e.layer;
+        e.remove_instance_key(layer, 0);
+        assert!(e.sprite().layer(layer).unwrap().objects.is_empty());
+        e.undo();
+        assert_eq!(e.sprite().layer(layer).unwrap().objects.len(), 1);
     }
 
     #[test]

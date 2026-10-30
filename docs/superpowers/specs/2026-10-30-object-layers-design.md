@@ -87,7 +87,10 @@ de profundidad sigue en 16.
     no se borra sola.
   - `move_objects(sprite, layer, &[ObjectId], frame, dx, dy)`: crea la key en `frame` si no existe.
   - `update_object_key(sprite, layer, object, frame, f)` y `remove_object_key(...)`, con la misma
-    semántica que las de instancia de hoy. Borrar la única key borra el objeto.
+    semántica que las de instancia de hoy. Borrar la única key borra el objeto; si era el último,
+    la capa se queda vacía (como con `remove_objects`: la capa nunca se borra sola, tampoco desde
+    `remove_instance_key` del MCP). `remove_objects_key(sprite, layer, &[ObjectId], frame)` hace
+    lo mismo sobre varios objetos en un solo comando (la fila plegada del timeline).
   - `reorder_objects(sprite, layer, &[ObjectId], Reorder::{Forward, Backward, Front, Back})`.
   - `duplicate_objects(sprite, layer, &[ObjectId], offset) -> (Command, Vec<ObjectId>)`.
 - **Insertar o borrar frames** desplaza las keys de todos los objetos.
@@ -122,7 +125,10 @@ de profundidad sigue en 16.
 - Delete Object y Duplicate Object (Ctrl+J, si está libre en el keymap; si no, sin atajo).
 
 **Timeline**
-- La fila de una capa de objetos muestra los ◆ de todos sus objetos juntos.
+- La fila de una capa de objetos muestra los ◆ de todos sus objetos juntos. Su menú (Insert y
+  Delete Keyframe) actúa sobre los objetos seleccionados o, si la capa tiene uno solo, sobre ese.
+  Con varios y ninguno seleccionado, queda deshabilitado ("Expand the layer to edit an object's
+  keys").
 - Un triangulito ▸/▾ a la izquierda del nombre despliega una sub-fila por objeto (sangrada, con el
   nombre del objeto) que muestra sus ◆ y sus barras de hold.
 - En la sub-fila, el clic derecho sobre un frame ofrece Insert Keyframe y Delete Keyframe de ese
@@ -133,7 +139,10 @@ de profundidad sigue en 16.
 - El panel "Instance" pasa a llamarse "Object" y edita el objeto seleccionado: nombre, fuente, modo,
   frame inicial, Loop/Once/Single, flips y opacidad.
 - Con varios objetos seleccionados, aplica a todos solo el campo que se cambia.
-- Sin objeto seleccionado, muestra "Select an object on the canvas".
+- Sin objeto seleccionado, muestra "Select an object on the canvas". Si la capa tiene un solo
+  objeto, ese cuenta como seleccionado; con varios, no se edita ninguno.
+- Con un objeto que todavía no tiene key en el frame actual (ni antes), muestra "No keyframe at
+  or before this frame".
 
 **Objetos nuevos**
 - **Soltar desde la Library y `New Instance`:** si la capa activa es de objetos, agregan un objeto

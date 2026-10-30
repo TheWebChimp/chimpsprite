@@ -870,7 +870,7 @@ fn an_object_layer_expands_into_one_row_per_object() {
     assert!(!has_node(&h, "Alpha"), "collapsed at first");
     h.click("Objects: Scene");
     h.frame(vec![]);
-    assert!(h.state.expanded_objects.contains(&layer));
+    assert!(h.state.expanded_objects.contains(&(h.editor.active, layer)));
     let (alpha, beta) = (h.rect("Alpha"), h.rect("Beta"));
     // De arriba hacia abajo: el último de la lista primero, cada uno de una fila.
     assert!(beta.top() < alpha.top(), "{beta:?} above {alpha:?}");
@@ -902,7 +902,7 @@ fn an_object_layer_expands_into_one_row_per_object() {
 fn clicking_an_object_row_selects_the_object() {
     let mut h = Harness::new(1200.0);
     let (layer, [a, b]) = with_two_objects(&mut h);
-    h.state.expanded_objects.insert(layer);
+    h.state.expanded_objects.insert((h.editor.active, layer));
     h.editor.select_layer(h.editor.timeline_layers()[1]);
     h.frame(vec![]);
     h.click("Beta");
@@ -916,7 +916,7 @@ fn clicking_an_object_row_selects_the_object() {
 fn the_keyframe_menu_of_an_object_row_works_on_that_object() {
     let mut h = Harness::new(1200.0);
     let (layer, [a, b]) = with_two_objects(&mut h);
-    h.state.expanded_objects.insert(layer);
+    h.state.expanded_objects.insert((h.editor.active, layer));
     h.frame(vec![]);
     let keys = |h: &Harness, o: cs_core::ObjectId| -> Vec<usize> {
         let l = h.editor.sprite().layer(layer).unwrap();
@@ -928,7 +928,7 @@ fn the_keyframe_menu_of_an_object_row_works_on_that_object() {
             .map(|k| k.frame)
             .collect()
     };
-    // Sin selección, el objeto "actual" de la capa es Alpha: el menú de Beta va a Beta.
+    // Aunque Alpha esté seleccionado, el menú de la sub-fila de Beta va a Beta.
     let at = pos2(h.header_cell(1).x, h.rect("Beta").center().y);
     h.right_click_at(at);
     h.click("Insert Keyframe");
@@ -943,10 +943,43 @@ fn the_keyframe_menu_of_an_object_row_works_on_that_object() {
 }
 
 #[test]
+fn the_collapsed_row_menu_acts_on_the_selected_objects_only() {
+    let mut h = Harness::new(1200.0);
+    let (layer, [a, b]) = with_two_objects(&mut h);
+    let keys = |h: &Harness, o: cs_core::ObjectId| -> Vec<usize> {
+        let l = h.editor.sprite().layer(layer).unwrap();
+        l.object(o)
+            .unwrap()
+            .track
+            .keys
+            .iter()
+            .map(|k| k.frame)
+            .collect()
+    };
+    let row = h.state.rows.iter().find(|(l, _)| *l == layer).unwrap().1;
+    // Los dos tienen key en 0 y ninguno está seleccionado: la fila no elige uno cualquiera.
+    h.editor.clear_object_selection();
+    h.frame(vec![]);
+    let at = |h: &Harness, f| pos2(h.header_cell(f).x, row.center().y);
+    h.right_click_at(at(&h, 0));
+    assert!(has_node(&h, "Delete Keyframe"), "the menu is open");
+    h.click("Delete Keyframe");
+    h.frame(vec![]);
+    assert_eq!((keys(&h, a), keys(&h, b)), (vec![0], vec![0]), "disabled");
+    // Con Beta seleccionado, Insert va a Beta.
+    h.editor.select_object(layer, b, false);
+    h.frame(vec![]);
+    h.right_click_at(at(&h, 1));
+    h.click("Insert Keyframe");
+    h.frame(vec![]);
+    assert_eq!((keys(&h, a), keys(&h, b)), (vec![0], vec![0, 1]));
+}
+
+#[test]
 fn with_pixel_ui_an_object_layer_has_no_picture_label() {
     let mut h = Harness::pixel(1200.0);
     let (layer, _) = with_two_objects(&mut h);
-    h.state.expanded_objects.insert(layer);
+    h.state.expanded_objects.insert((h.editor.active, layer));
     h.frame(vec![]);
     assert!(h.texts.iter().any(|t| t == "Scene"), "{:?}", h.texts);
     assert!(h.texts.iter().all(|t| !t.contains('🖼')), "{:?}", h.texts);

@@ -806,10 +806,13 @@ A pixel art editor."
                     {
                         editor.flatten();
                     }
-                    let objects = !editor.selected_objects().is_empty();
+                    // La misma regla que los atajos: objetos seleccionados y Move.
+                    let objects = editor.can_arrange_objects();
                     ui.add_enabled_ui(objects, |ui| {
                         menus::submenu(ui, "Arrange", |ui| object_ops::arrange_items(ui, editor));
-                    });
+                    })
+                    .response
+                    .on_disabled_hover_text("Select objects with the Move tool");
                     menus::separator(ui);
                     if ui
                         .add(menus::plain("New Reference Layer from File…"))

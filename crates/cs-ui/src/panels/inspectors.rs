@@ -309,8 +309,14 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
     }
     ui.heading("Object");
     let Some(key) = editor.instance_key() else {
+        // Sin objeto (con varios en la capa y ninguno seleccionado), o uno que todavía no empieza.
+        let hint = if editor.current_object().is_none() {
+            "Select an object on the canvas"
+        } else {
+            "No keyframe at or before this frame"
+        };
         // Con wrap: no ensancha el panel.
-        let hint = egui::RichText::new("Select an object on the canvas").weak();
+        let hint = egui::RichText::new(hint).weak();
         ui.add(egui::Label::new(hint).wrap());
         ui.separator();
         return false;

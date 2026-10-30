@@ -7,7 +7,8 @@ use cs_commands::ops::{self, LayerDrop};
 use std::collections::HashSet;
 
 use cs_core::{
-    AnimDirection, BlendMode, InstanceTrack, Layer, LayerId, LayerKind, SceneObject, Tag,
+    AnimDirection, ArtboardId, BlendMode, InstanceTrack, Layer, LayerId, LayerKind, SceneObject,
+    Tag,
 };
 use eframe::egui::{
     self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2,
@@ -140,8 +141,9 @@ pub struct TimelineState {
     pub new_tilemap: bool,
     /// Se pidió "Convert to Symbol…" desde el menú de una capa (lo abre la app).
     pub convert_symbol: bool,
-    /// Las capas de objetos desplegadas: debajo llevan una sub-fila por objeto.
-    pub(crate) expanded_objects: HashSet<LayerId>,
+    /// Las capas de objetos desplegadas (con su artboard: los ids de capa se repiten entre
+    /// artboards): debajo llevan una sub-fila por objeto.
+    pub(crate) expanded_objects: HashSet<(ArtboardId, LayerId)>,
 }
 
 /// Un arrastre sobre los cels, como en Aseprite.
@@ -202,7 +204,7 @@ fn grid(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, grid:
             for id in editor.timeline_layers() {
                 layer_row(ui, editor, state, id, grid);
                 // Desplegada: una sub-fila por objeto, el de más arriba primero.
-                if state.expanded_objects.contains(&id)
+                if state.expanded_objects.contains(&(editor.active, id))
                     && let Some(layer) = editor
                         .sprite()
                         .layer(id)
@@ -869,7 +871,8 @@ fn layer_row(
     // Las capas de objetos: el triángulo que las despliega y, con Pixel UI, su ícono (si el skin
     // lo tiene).
     if layer.kind == LayerKind::Objects {
-        let expanded = state.expanded_objects.contains(&id);
+        let key = (editor.active, id);
+        let expanded = state.expanded_objects.contains(&key);
         let w = toggle_w(grid);
         let at = Rect::from_min_max(pos2(x, content.top()), pos2(x + w, content.bottom()));
         let response = ui
@@ -888,8 +891,8 @@ fn layer_row(
                 format!("Objects: {}", layer.name),
             )
         });
-        if response.clicked() && !state.expanded_objects.remove(&id) {
-            state.expanded_objects.insert(id);
+        if response.clicked() && !state.expanded_objects.remove(&key) {
+            state.expanded_objects.insert(key);
         }
         match grid.skin {
             Some(skin) => pixel::tree_toggle(ui, skin, at, expanded, active),
@@ -1263,22 +1266,23 @@ fn layer_row(
         }
         menus::context_menu(&response, |ui| {
             if layer.kind == LayerKind::Objects {
-                let is_key = editor.is_instance_keyframe(id, f);
-                // Antes de la primera key no hay nada que copiar.
-                let has_key = editor
-                    .object_track(id)
-                    .is_some_and(|t| t.key_at(f).is_some());
-                if ui
-                    .add_enabled(has_key && !is_key, menus::plain("Insert Keyframe"))
-                    .clicked()
-                {
+                // La fila muestra las keys de todos: actúa sobre los seleccionados (o el único
+                // objeto). Con varios y ninguno seleccionado, cada objeto en su sub-fila.
+                let pick = editor.key_objects(id).is_empty();
+                let hint = |r: egui::Response| {
+                    if pick {
+                        r.on_disabled_hover_text("Expand the layer to edit an object's keys")
+                    } else {
+                        r
+                    }
+                };
+                let insert = editor.row_can_insert_key(id, f);
+                if hint(ui.add_enabled(insert, menus::plain("Insert Keyframe"))).clicked() {
                     editor.insert_instance_key(id, f);
                     ui.close();
                 }
-                if ui
-                    .add_enabled(is_key, menus::plain("Delete Keyframe"))
-                    .clicked()
-                {
+                let delete = editor.row_has_key_at(id, f);
+                if hint(ui.add_enabled(delete, menus::plain("Delete Keyframe"))).clicked() {
                     editor.remove_instance_key(id, f);
                     ui.close();
                 }

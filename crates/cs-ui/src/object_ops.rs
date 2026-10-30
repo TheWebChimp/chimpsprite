@@ -202,6 +202,12 @@ impl Editor {
             .collect()
     }
 
+    /// ¿Se pueden ordenar, duplicar o borrar los objetos seleccionados? Solo con Move, como las
+    /// flechas y Delete sobre objetos: el menú Layer > Arrange y los atajos siguen esta regla.
+    pub fn can_arrange_objects(&self) -> bool {
+        self.active_tool() == crate::editor::ToolKind::Move && !self.selected_objects().is_empty()
+    }
+
     /// Doble clic con Move en `world`: si hay un objeto, lo selecciona y entra a su fuente (al
     /// modo símbolo si es de la biblioteca; si es del lienzo, la activa). `None` si no hay
     /// objeto; si no, si entró.
@@ -213,11 +219,12 @@ impl Editor {
 }
 
 /// Los ítems de orden, duplicar y borrar de los objetos seleccionados (menú Layer > Arrange y
-/// menú contextual del lienzo). Sin objetos seleccionados, quedan deshabilitados.
+/// menú contextual del lienzo). Sin objetos seleccionados o sin Move, quedan deshabilitados
+/// (ver `Editor::can_arrange_objects`).
 pub(crate) fn arrange_items(ui: &mut egui::Ui, editor: &mut Editor) {
     use crate::keymap::{Action, label};
     let ctx = ui.ctx().clone();
-    let enabled = !editor.selected_objects().is_empty();
+    let enabled = editor.can_arrange_objects();
     let items = [
         (
             "Bring to Front",
@@ -569,6 +576,18 @@ mod tests {
         assert!(e.object_outlines(&e.document).is_empty(), "no outline");
         e.set_tool(ToolKind::Move);
         assert_eq!(e.object_outlines(&e.document), vec![(8, 8, 4, 4)]);
+    }
+
+    #[test]
+    fn arrange_needs_selected_objects_and_the_move_tool() {
+        let (mut e, _, b) = scene();
+        assert!(!e.can_arrange_objects(), "nothing selected");
+        click(&mut e, (9.5, 9.5), false);
+        assert_eq!(e.selected_objects(), [first(&e, b)]);
+        assert!(e.can_arrange_objects());
+        // Como los atajos: con otra herramienta, el menú Layer > Arrange queda deshabilitado.
+        e.set_tool(ToolKind::Pencil);
+        assert!(!e.can_arrange_objects());
     }
 
     #[test]

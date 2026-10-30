@@ -414,7 +414,7 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             // Con =objects, dos sombreros más en la misma capa, la capa desplegada en el
             // timeline y el último seleccionado.
             if mode == "objects" {
-                let layer = editor.layer;
+                let layer = (editor.active, editor.layer);
                 let (x, y) = editor.artboard().position;
                 for at in [(4, 30), (38, 40)] {
                     let _ = editor.drop_symbol(symbol, (x + at.0, y + at.1));

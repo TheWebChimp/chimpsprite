@@ -138,10 +138,11 @@ impl ChimpApp {
                 editor.flatten();
             }
             ConvertToSymbol => self.open_convert_to_symbol(),
-            // Como las flechas y Delete sobre objetos: solo con Move.
+            // Como las flechas y Delete sobre objetos: solo con Move (ver `can_arrange_objects`,
+            // que también habilita el menú Layer > Arrange).
             BringForward | SendBackward | BringToFront | SendToBack | DuplicateObject
             | DeleteObject
-                if editor.active_tool() != ToolKind::Move => {}
+                if !editor.can_arrange_objects() => {}
             BringForward => {
                 editor.reorder_selected(Reorder::Forward);
             }
