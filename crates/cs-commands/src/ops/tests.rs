@@ -273,7 +273,7 @@ fn object_layer_keys_update_and_remove() {
     // Sin cambios, no hay comando; antes de la primera key, tampoco.
     assert!(update_object_key(&s, id, o, 3, |_| {}).is_none());
     assert!(update_object_key(&s, id, o, 0, |k| k.opacity = 1).is_none());
-    // Borrar una key; borrar la única quita la capa.
+    // Borrar una key; borrar la única quita el objeto, y la capa se queda vacía.
     remove_object_key(&s, id, o, 3)
         .unwrap()
         .apply(&mut s)
@@ -284,7 +284,7 @@ fn object_layer_keys_update_and_remove() {
         .unwrap()
         .apply(&mut s)
         .unwrap();
-    assert!(s.layer(id).is_none());
+    assert!(s.layer(id).unwrap().objects.is_empty());
 }
 
 #[test]
@@ -310,6 +310,50 @@ fn removing_the_only_key_of_one_of_several_objects_removes_just_that_object() {
         .apply(&mut s)
         .unwrap();
     assert!(s.layer(id).unwrap().objects[0].track.keys[0].flip_h);
+}
+
+#[test]
+fn removing_a_key_of_several_objects_is_one_command() {
+    let mut s = Sprite::new(8, 8, ColorMode::Rgba);
+    new_object_layer(&s, None, 0, ArtboardId(2), "Hero", (0, 0))
+        .apply(&mut s)
+        .unwrap();
+    let id = s.layers.last().unwrap().id;
+    // El 1 con keys en 0 y 2; el 2 con una sola, en 0; el 3 con una sola, en 1.
+    update_object_key(&s, id, ObjectId(1), 2, |k| k.flip_h = true)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    for (n, frame) in [(2, 0), (3, 1)] {
+        let mut o = s.layer(id).unwrap().objects[0].clone();
+        o.id = ObjectId(n);
+        o.track.keys = vec![InstanceKey::new(frame, ArtboardId(2), (0, 0))];
+        s.layer_mut(id).unwrap().objects.push(o);
+    }
+    let all = [ObjectId(1), ObjectId(2), ObjectId(3)];
+    assert!(
+        remove_objects_key(&s, id, &all, 5).is_none(),
+        "no key there"
+    );
+    remove_objects_key(&s, id, &all, 0)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    let objects = &s.layer(id).unwrap().objects;
+    let keys: Vec<(ObjectId, Vec<usize>)> = objects
+        .iter()
+        .map(|o| (o.id, o.track.keys.iter().map(|k| k.frame).collect()))
+        .collect();
+    // El 2 se quedó sin keys y se fue; el 3 no tenía key en 0.
+    assert_eq!(keys, [(ObjectId(1), vec![2]), (ObjectId(3), vec![1])]);
+    // Borrar la última key del último objeto deja la capa vacía.
+    for (o, f) in [(ObjectId(1), 2), (ObjectId(3), 1)] {
+        remove_object_key(&s, id, o, f)
+            .unwrap()
+            .apply(&mut s)
+            .unwrap();
+    }
+    assert!(s.layer(id).unwrap().objects.is_empty());
 }
 
 #[test]

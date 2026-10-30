@@ -282,6 +282,58 @@ fn converting_an_instance_layer_nests_and_looks_the_same() {
 }
 
 #[test]
+fn converting_a_layer_with_several_objects_looks_the_same_and_undoes_exactly() {
+    let mut d = animated();
+    let first = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![LayerId(1)]),
+        "Dot",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    first.command.apply(&mut d).unwrap();
+    // Dos objetos más en la misma capa: uno desde el frame 0 y otro desde el 1, que en el 2 se
+    // mueve y se da vuelta.
+    let s = &mut d.artboards[0].sprite;
+    let (cmd, _) = crate::ops::add_object(s, first.layer, 0, first.symbol, "B", (0, 5)).unwrap();
+    cmd.apply(s).unwrap();
+    let (cmd, c) = crate::ops::add_object(s, first.layer, 1, first.symbol, "C", (4, 0)).unwrap();
+    cmd.apply(s).unwrap();
+    crate::ops::update_object_key(s, first.layer, c, 2, |k| {
+        k.position = (5, 1);
+        k.flip_h = true;
+    })
+    .unwrap()
+    .apply(s)
+    .unwrap();
+    assert_eq!(s.layer(first.layer).unwrap().objects.len(), 3);
+    let snapshot = d.clone();
+    let before = rendered(&d, ArtboardId(1));
+    let outer = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![first.layer]),
+        "Outer",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    let undo = outer.command.apply(&mut d).unwrap();
+    assert_eq!(rendered(&d, ArtboardId(1)), before);
+    assert_eq!(d.instance_sources(outer.symbol), vec![first.symbol]);
+    // La capa con sus tres objetos entra entera al símbolo.
+    let inner = &d.artboard(outer.symbol).unwrap().sprite;
+    let moved = inner
+        .layers
+        .iter()
+        .find(|l| l.kind == LayerKind::Objects)
+        .unwrap();
+    assert_eq!(moved.objects.len(), 3);
+    undo.apply(&mut d).unwrap();
+    assert_eq!(d, snapshot, "one undo restores everything");
+}
+
+#[test]
 fn convert_errors() {
     let d = animated();
     let layers = |ids: &[u32]| SymbolSource::Layers(ids.iter().map(|&i| LayerId(i)).collect());

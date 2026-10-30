@@ -182,7 +182,7 @@ impl ChimpServer {
     }
 
     #[tool(
-        description = "Place another artboard inside this one as an instance layer (like an Adobe Animate symbol): it shows the source artboard with its own timeline, and editing the source updates every instance. Fails if it would make an artboard contain itself."
+        description = "Place another artboard inside this one (like an Adobe Animate symbol): creates an object layer with one object that shows the source artboard with its own timeline; editing the source updates every instance. Use add_object to put more objects on that layer. Fails if it would make an artboard contain itself."
     )]
     fn add_instance_layer(&self, Parameters(p): Parameters<AddInstanceLayer>) -> CallToolResult {
         self.with(|s| s.add_instance_layer(p))
@@ -208,13 +208,15 @@ impl ChimpServer {
     }
 
     #[tool(
-        description = "Change an instance layer from a frame on (creates a keyframe there): position, flip, opacity, source artboard and timing (loop / once / single follow the parent's frames; movie_clip plays on its own clock)."
+        description = "Change an object layer from a frame on (creates a keyframe there); acts on the layer's first object (use set_object_key for another one): position, flip, opacity, source artboard and timing (loop / once / single follow the parent's frames; movie_clip plays on its own clock)."
     )]
     fn set_instance_key(&self, Parameters(p): Parameters<SetInstanceKey>) -> CallToolResult {
         self.with(|s| s.set_instance_key(p))
     }
 
-    #[tool(description = "Remove an instance keyframe; removing the only one removes the layer.")]
+    #[tool(
+        description = "Remove a keyframe of an object layer's first object; removing its only keyframe removes that object (the layer stays, even if empty)."
+    )]
     fn remove_instance_key(&self, Parameters(p): Parameters<RemoveInstanceKey>) -> CallToolResult {
         self.with(|s| s.remove_instance_key(p))
     }

@@ -127,30 +127,32 @@ pub fn rename_object(
     })
 }
 
-/// Quita la key de `object` que empieza en `frame`. Si es la única, quita el objeto; y si era el
-/// único objeto, quita la capa.
+/// Quita la key de `object` que empieza en `frame`. Si es la única, quita el objeto; la capa se
+/// queda aunque quede vacía (como con `remove_objects`).
 pub fn remove_object_key(
     sprite: &Sprite,
     layer: LayerId,
     object: ObjectId,
     frame: usize,
 ) -> Option<Command> {
-    let objects = &sprite.layer(layer)?.objects;
-    let i = objects.iter().position(|o| o.id == object)?;
-    let track = &objects[i].track;
-    if !track.keys.iter().any(|k| k.frame == frame) {
-        return None;
-    }
-    let mut new = objects.clone();
-    if track.keys.len() == 1 {
-        if objects.len() == 1 {
-            return remove_layer_tree(sprite, layer);
-        }
-        new.remove(i);
-    } else {
-        new[i].track.remove_key(frame);
-    }
-    Some(Command::SetObjects {
+    remove_objects_key(sprite, layer, &[object], frame)
+}
+
+/// Como `remove_object_key`, sobre cada uno de `objects` en un solo comando (un paso de undo).
+/// Los que no tienen key en `frame` se saltean; `None` si ninguno la tiene.
+pub fn remove_objects_key(
+    sprite: &Sprite,
+    layer: LayerId,
+    objects: &[ObjectId],
+    frame: usize,
+) -> Option<Command> {
+    let old = &sprite.layer(layer)?.objects;
+    let mut new = old.clone();
+    // Sin keys, el objeto se va.
+    new.retain_mut(|o| {
+        !(objects.contains(&o.id) && o.track.remove_key(frame)) || !o.track.keys.is_empty()
+    });
+    (new != *old).then_some(Command::SetObjects {
         layer,
         objects: new,
     })
