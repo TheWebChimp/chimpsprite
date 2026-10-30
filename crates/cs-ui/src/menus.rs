@@ -79,10 +79,11 @@ const SHORTCUT_GAP: f32 = 12.0;
 /// El separador: 2 filas de aire, la línea clara, la oscura y 2 de aire.
 const SEPARATOR_HEIGHT: f32 = 6.0;
 const SEPARATOR_AIR: f32 = 2.0;
-/// El subrayado de la primera letra de los títulos, 8 filas debajo de las mayúsculas.
-const UNDERLINE_TOP: f32 = 8.0;
+/// El subrayado de la primera letra de los títulos, 7 filas debajo de las mayúsculas (1 debajo de
+/// la línea base).
+const UNDERLINE_TOP: f32 = 7.0;
 /// Alto de las mayúsculas de la fuente pixel.
-const CAP_HEIGHT: f32 = 7.0;
+const CAP_HEIGHT: f32 = 6.0;
 /// El + entre teclas: 5×5, a 1 fila de las mayúsculas, con 1 px de aire a cada lado.
 const PLUS_SIZE: f32 = 5.0;
 const PLUS_TOP: f32 = 1.0;
