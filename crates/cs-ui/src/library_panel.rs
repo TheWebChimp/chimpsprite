@@ -53,13 +53,48 @@ pub struct LibraryState {
     preview: Option<(PreviewKey, TextureHandle)>,
     /// Las miniaturas, con la versión del documento de la que salieron.
     thumbs: HashMap<ArtboardId, (u64, TextureHandle)>,
+    /// Las filas de la lista y la versión del documento de la que salieron (no se recalculan
+    /// mientras solo se anima la vista previa).
+    rows: Option<(u64, Vec<Row>)>,
+}
+
+/// Una fila de la lista: id, nombre y usos.
+type Row = (ArtboardId, String, usize);
+
+impl LibraryState {
+    /// Las filas de `editor`, de la memoria si el documento no cambió.
+    fn rows(&mut self, editor: &Editor) -> Vec<Row> {
+        let version = editor.doc_version;
+        if let Some((v, rows)) = &self.rows
+            && *v == version
+        {
+            return rows.clone();
+        }
+        let rows = library_rows(&editor.document);
+        self.rows = Some((version, rows.clone()));
+        rows
+    }
+
+    /// Olvida lo que apunta a símbolos que ya no están en `rows` (un undo o un borrado): el
+    /// renombrado, la confirmación y las miniaturas.
+    fn prune(&mut self, rows: &[Row]) {
+        let present = |id: ArtboardId| rows.iter().any(|(r, _, _)| *r == id);
+        if self.renaming.as_ref().is_some_and(|(id, _)| !present(*id)) {
+            self.renaming = None;
+            self.focus_rename = false;
+        }
+        if self.confirm_delete.is_some_and(|id| !present(id)) {
+            self.confirm_delete = None;
+        }
+        self.thumbs.retain(|id, _| present(*id));
+    }
 }
 
 /// De qué es la textura de la vista previa: símbolo, frame y versión del documento.
 type PreviewKey = (ArtboardId, usize, u64);
 
 /// Las filas de la lista: (id, nombre, usos), ordenadas por nombre (sin distinguir mayúsculas).
-pub fn library_rows(doc: &Document) -> Vec<(ArtboardId, String, usize)> {
+pub fn library_rows(doc: &Document) -> Vec<Row> {
     let mut rows: Vec<_> = doc
         .library()
         .map(|a| (a.id, a.name.clone(), doc.instance_uses(a.id)))
@@ -121,7 +156,8 @@ pub fn show(
     state: &mut LibraryState,
 ) -> Option<LibraryAction> {
     let mut action = None;
-    let rows = library_rows(&editor.document);
+    let rows = state.rows(editor);
+    state.prune(&rows);
     // Lo elegido tiene que seguir en la biblioteca (lo pudo sacar un undo).
     if editor
         .library_selected
@@ -163,7 +199,7 @@ pub fn show(
 }
 
 /// Empieza a renombrar `id` con su nombre actual.
-fn start_rename(state: &mut LibraryState, rows: &[(ArtboardId, String, usize)], id: ArtboardId) {
+fn start_rename(state: &mut LibraryState, rows: &[Row], id: ArtboardId) {
     if let Some((_, name, _)) = rows.iter().find(|(r, _, _)| *r == id) {
         state.renaming = Some((id, name.clone()));
         state.focus_rename = true;
@@ -305,12 +341,10 @@ fn row(
             }
         }
     } else {
-        let galley = ui.painter().layout(
-            name.to_string(),
-            font,
-            text,
-            (text_right - text_left).max(0.0),
-        );
+        // En una línea: lo que no cabe termina en "…".
+        let mut job = egui::text::LayoutJob::simple_singleline(name.to_string(), font, text);
+        job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - text_left).max(0.0));
+        let galley = ui.painter().layout_job(job);
         let at = pos2(text_left, rect.center().y - galley.size().y / 2.0);
         ui.painter_at(rect).galley(at.round(), galley, text);
     }
@@ -428,6 +462,20 @@ mod tests {
         let mut s = Sprite::new(2, 2, ColorMode::Rgba);
         s.frames = vec![Frame { duration_ms: 0 }, Frame { duration_ms: 0 }];
         assert_eq!(preview_frame(&s, 1234), 0);
+    }
+
+    #[test]
+    fn what_points_to_a_symbol_that_is_gone_is_forgotten() {
+        let mut state = LibraryState {
+            renaming: Some((ArtboardId(2), "walk".into())),
+            confirm_delete: Some(ArtboardId(2)),
+            ..Default::default()
+        };
+        state.prune(&[(ArtboardId(2), "walk".into(), 1)]);
+        assert!(state.renaming.is_some() && state.confirm_delete.is_some());
+        state.prune(&[(ArtboardId(3), "Coin".into(), 0)]);
+        assert_eq!(state.renaming, None);
+        assert_eq!(state.confirm_delete, None);
     }
 
     #[test]

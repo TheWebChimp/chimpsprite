@@ -22,6 +22,8 @@ pub(crate) struct DocState {
     pub artboard_name: (ArtboardId, String),
     /// Miniaturas del panel Tileset.
     pub tile_thumbs: crate::panels::TileThumbs,
+    /// El panel Library de este documento: lo que se renombra, lo que se borra y las texturas.
+    pub library: crate::library_panel::LibraryState,
 }
 
 impl DocState {
@@ -34,6 +36,7 @@ impl DocState {
             location,
             artboard_name: (ArtboardId(0), String::new()),
             tile_thumbs: Default::default(),
+            library: Default::default(),
         }
     }
 

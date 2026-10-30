@@ -2759,3 +2759,80 @@ fn f2_renames_the_selected_symbol_in_the_library() {
     let name = &h.app.doc.editor.document.artboard(id).unwrap().name;
     assert_eq!(name, "Coins");
 }
+
+/// Agrega a la biblioteca un símbolo `name` (copia del primer artboard) y lo elige.
+fn add_symbol(h: &mut LayoutHarness, name: &str) -> cs_core::ArtboardId {
+    let editor = &mut h.app.doc.editor;
+    let mut symbol = editor.document.artboards[0].clone();
+    symbol.id = editor.document.next_artboard_id();
+    symbol.name = name.into();
+    symbol.in_library = true;
+    let id = symbol.id;
+    let index = editor.document.artboards.len();
+    assert!(editor.execute_doc(cs_commands::DocCommand::AddArtboard {
+        index,
+        artboard: Box::new(symbol),
+    }));
+    editor.library_selected = Some(id);
+    id
+}
+
+fn key_tap(key: egui::Key) -> Vec<Event> {
+    let event = |pressed| Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: Default::default(),
+    };
+    vec![event(true), event(false)]
+}
+
+#[test]
+fn a_rename_of_a_symbol_that_was_undone_away_does_not_block_f2() {
+    let mut h = with_a_symbol(true);
+    let gem = add_symbol(&mut h, "Gem");
+    h.frame();
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    h.frame_with(key_tap(egui::Key::F2));
+    h.frame();
+    assert_eq!(h.app.doc.library.renaming.as_ref().map(|r| r.0), Some(gem));
+    // El undo saca a Gem de la biblioteca mientras se renombraba.
+    h.app.doc.editor.undo();
+    h.frame();
+    h.frame();
+    assert_eq!(h.app.doc.library.renaming, None);
+    // F2 sigue andando con Coin.
+    let coin = h.app.doc.editor.document.library().next().unwrap().id;
+    h.app.doc.editor.library_selected = Some(coin);
+    h.frame();
+    h.frame_with(key_tap(egui::Key::F2));
+    h.frame();
+    h.frame_with(vec![Event::Text("s".into())]);
+    h.frame_with(key_tap(egui::Key::Enter));
+    h.frame();
+    let name = &h.app.doc.editor.document.artboard(coin).unwrap().name;
+    assert_eq!(name, "Coins");
+}
+
+#[test]
+fn the_library_state_belongs_to_its_tab() {
+    let mut h = with_a_symbol(true);
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    h.frame_with(key_tap(egui::Key::F2));
+    h.frame();
+    assert!(h.app.doc.library.renaming.is_some());
+    // Otra pestaña con su propio símbolo: empieza sin nada a medias.
+    h.app.new_document();
+    h.frame();
+    assert_eq!(h.app.tabs.len(), 2);
+    assert_eq!(h.app.doc.library.renaming, None);
+    add_symbol(&mut h, "Other");
+    h.frame();
+    assert!(h.texts.iter().any(|(t, _)| t == "Other"), "{:?}", h.texts);
+    assert!(!h.texts.iter().any(|(t, _)| t == "Coin"));
+    // De vuelta en la primera, su panel sigue como estaba.
+    h.app.tabs.switch(&mut h.app.doc, 0);
+    h.frame();
+    assert!(h.app.doc.library.renaming.is_some());
+}

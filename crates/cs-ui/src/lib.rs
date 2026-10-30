@@ -129,8 +129,6 @@ pub struct ChimpApp {
     groom: groom::GroomPanel,
     /// El panel Lumen del dock.
     lumen: lumen::LumenPanel,
-    /// El panel Library del dock.
-    library: library_panel::LibraryState,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
@@ -277,7 +275,6 @@ impl ChimpApp {
             dafont: Default::default(),
             groom: Default::default(),
             lumen: Default::default(),
-            library: Default::default(),
             platform: platform::Platform::default(),
             autosaver: autosave::Autosaver::default(),
             restore: None,
@@ -578,7 +575,7 @@ impl ChimpApp {
         let mut action = None;
         let skin = self.pixel.skin();
         let editor = &mut self.doc.editor;
-        let state = &mut self.library;
+        let state = &mut self.doc.library;
         dock::flyout(
             ctx,
             dock::DockPanel::Library,
