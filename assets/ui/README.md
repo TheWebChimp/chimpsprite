@@ -210,7 +210,7 @@ oculta.
   - Secciones del dock (Artboards, Slices): `icon.section.add` (7×7), `icon.section.trash`
     (11×11) e `icon.section.canvas_size` (11×9); desactivados, la app los apaga.
   - Botones del dock (centrados en `button` de 23×24): `icon.dock.artboards` (13×13),
-    `icon.dock.slices` (19×17) e `icon.dock.lospec` (9×13).
+    `icon.dock.library` (13×13), `icon.dock.slices` (19×17) e `icon.dock.lospec` (9×13).
   - Barra de estado (apoyados en la fila 17 de la barra): `icon.status.artboard` (13×13),
     `icon.status.pointer` (11×11) e `icon.status.frame` (11×12).
   - Home: `home.icon.new` (6×7) y `home.icon.open` (10×8) en los botones; `home.icon.files`
