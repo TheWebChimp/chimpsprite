@@ -5,10 +5,10 @@ use cs_core::{ArtboardId, ColorMode, Document, LayerId, LayerKind, PixelValue, R
 use crate::error::{Result, invalid};
 use crate::params::{ColorArg, Rect, Ref};
 
-/// Artboard por id o nombre; sin referencia, el primero.
+/// Artboard por id o nombre; sin referencia, el primero del lienzo (no uno de la biblioteca).
 pub fn artboard(doc: &Document, r: Option<&Ref>) -> Result<ArtboardId> {
     let found = match r {
-        None => doc.artboards.first(),
+        None => doc.canvas_artboards().next(),
         Some(Ref::Id(id)) => doc.artboards.iter().find(|a| a.id.0 == *id),
         Some(Ref::Name(name)) => doc.artboards.iter().find(|a| a.name == *name).or_else(|| {
             name.parse()
@@ -227,6 +227,13 @@ mod tests {
             err.contains("1 'hero'") && err.contains("2 'coin'"),
             "{err}"
         );
+    }
+
+    #[test]
+    fn the_default_artboard_is_the_first_on_the_canvas() {
+        let mut d = doc();
+        d.artboards[0].in_library = true;
+        assert_eq!(artboard(&d, None).unwrap(), ArtboardId(2));
     }
 
     #[test]

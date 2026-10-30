@@ -301,6 +301,7 @@ impl Session {
                             "name": a.name,
                             "width": a.sprite.width,
                             "height": a.sprite.height,
+                            "in_library": a.in_library,
                         })
                     })
                     .collect();
@@ -405,6 +406,7 @@ mod tests {
         s.open(p(json!({"path": "hero.aseprite"}))).unwrap();
         let list = parse(&s.list_documents().unwrap());
         assert_eq!(list.as_array().unwrap().len(), 3);
+        assert_eq!(list[0]["artboards"][0]["in_library"], false);
         s.close(p(json!({"doc": "d1"}))).unwrap();
         assert!(s.describe(p(json!({"doc": "d1"}))).is_err());
         assert!(s.open(p(json!({"path": "../x.chimp"}))).is_err());

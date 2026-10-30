@@ -529,3 +529,57 @@ fn splitting_a_clipping_pair_is_rejected() {
     c.command.apply(&mut d).unwrap();
     assert_eq!(rendered(&d, ArtboardId(1)), before);
 }
+
+#[test]
+fn layers_with_blend_modes_are_rejected() {
+    let mut d = animated();
+    d.artboards[0].sprite.layer_mut(LayerId(2)).unwrap().blend = BlendMode::Multiply;
+    for pixels in [false, true] {
+        for ids in [&[2][..], &[1, 2][..]] {
+            assert_eq!(
+                convert_err(&d, ids, pixels),
+                Some(ConvertError::BlendMode),
+                "{ids:?}, pixels: {pixels}"
+            );
+            let source = SymbolSource::Layers(ids.iter().map(|&i| LayerId(i)).collect());
+            if !pixels {
+                assert_eq!(
+                    check_convert(&d, ArtboardId(1), &source),
+                    Err(ConvertError::BlendMode)
+                );
+            }
+        }
+        // La capa 1 (Normal) sola sí.
+        assert_eq!(convert_err(&d, &[1], pixels), None, "pixels: {pixels}");
+    }
+    // Dentro de un grupo convertido también cuenta; el modo del grupo no (no mezcla).
+    group(&mut d, &[LayerId(1), LayerId(2)]);
+    assert_eq!(convert_err(&d, &[3], false), Some(ConvertError::BlendMode));
+    d.artboards[0].sprite.layer_mut(LayerId(2)).unwrap().blend = BlendMode::Normal;
+    d.artboards[0].sprite.layer_mut(LayerId(3)).unwrap().blend = BlendMode::Screen;
+    assert_eq!(convert_err(&d, &[3], false), None);
+}
+
+#[test]
+fn check_convert_agrees_with_convert() {
+    let d = animated();
+    for ids in [&[][..], &[1], &[1, 2], &[99]] {
+        for pixels in [false, true] {
+            let layers: Vec<LayerId> = ids.iter().map(|&i| LayerId(i)).collect();
+            let source = if pixels {
+                SymbolSource::Pixels {
+                    layers,
+                    selection: Mask::from_rect(8, 8, (0, 0), (1, 1)),
+                }
+            } else {
+                SymbolSource::Layers(layers)
+            };
+            let full = convert_to_symbol(&d, ArtboardId(1), &source, "S", SymbolTiming::Graphic);
+            assert_eq!(
+                check_convert(&d, ArtboardId(1), &source),
+                full.map(|_| ()),
+                "{ids:?}, pixels: {pixels}"
+            );
+        }
+    }
+}

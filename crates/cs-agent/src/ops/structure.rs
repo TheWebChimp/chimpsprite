@@ -29,8 +29,12 @@ fn blend(b: BlendArg) -> BlendMode {
     }
 }
 
-fn already_there() -> crate::error::AgentError {
-    invalid("already there, or the last canvas artboard")
+fn not_movable() -> crate::error::AgentError {
+    invalid("the artboard is already in the library, or it is the last canvas artboard")
+}
+
+fn not_in_library() -> crate::error::AgentError {
+    invalid("the artboard is not in the library")
 }
 
 fn direction(d: DirectionArg) -> AnimDirection {
@@ -489,13 +493,18 @@ impl Session {
                 if w <= 0 || h <= 0 {
                     return Err(invalid("rect needs a positive width and height"));
                 }
+                let end = |start: i32, len: i32| {
+                    start
+                        .checked_add(len - 1)
+                        .ok_or_else(|| invalid("rect is out of range"))
+                };
                 SymbolSource::Pixels {
                     layers,
                     selection: cs_core::Mask::from_rect(
                         sprite.width,
                         sprite.height,
                         (x, y),
-                        (x + w - 1, y + h - 1),
+                        (end(x, w)?, end(y, h)?),
                     ),
                 }
             }
@@ -522,7 +531,7 @@ impl Session {
     pub fn move_to_library(&mut self, p: LibraryArtboard) -> Result<Reply> {
         let d = &self.doc(&p.doc)?.document;
         let id = target::artboard(d, Some(&p.artboard))?;
-        let cmd = symbol::move_to_library(d, id).ok_or_else(already_there)?;
+        let cmd = symbol::move_to_library(d, id).ok_or_else(not_movable)?;
         self.run(&p.doc, vec![cmd])?;
         Ok(Reply::text(format!(
             "Moved artboard {} to the library.",
@@ -533,7 +542,7 @@ impl Session {
     pub fn place_on_canvas(&mut self, p: LibraryArtboard) -> Result<Reply> {
         let d = &self.doc(&p.doc)?.document;
         let id = target::artboard(d, Some(&p.artboard))?;
-        let cmd = symbol::place_on_canvas(d, id).ok_or_else(already_there)?;
+        let cmd = symbol::place_on_canvas(d, id).ok_or_else(not_in_library)?;
         self.run(&p.doc, vec![cmd])?;
         Ok(Reply::text(format!(
             "Placed artboard {} on the canvas.",
@@ -881,15 +890,29 @@ mod tests {
             .unwrap();
         let described = crate::ops::test_util::json(&s.describe(p(json!({"doc": "d1"}))).unwrap());
         assert_eq!(described["artboards"][1]["in_library"], false);
-        assert!(
-            s.place_on_canvas(p(json!({"doc": "d1", "artboard": "Dot"})))
-                .is_err()
-        );
+        let err = s
+            .place_on_canvas(p(json!({"doc": "d1", "artboard": "Dot"})))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("not in the library"), "{err}");
         assert!(
             s.convert_to_symbol(p(json!({"doc": "d1", "layers": [], "name": "X",
                 "timing": "bogus"})))
                 .is_err()
         );
+        let err = s
+            .convert_to_symbol(p(json!({"doc": "d1", "layers": ["Dot"], "name": "X",
+                "rect": [i32::MAX, 0, 2, 2]})))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("out of range"), "{err}");
+        s.move_to_library(p(json!({"doc": "d1", "artboard": "Dot"})))
+            .unwrap();
+        let err = s
+            .move_to_library(p(json!({"doc": "d1", "artboard": "Dot"})))
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("already in the library"), "{err}");
     }
 
     #[test]

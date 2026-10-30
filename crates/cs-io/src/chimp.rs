@@ -417,9 +417,22 @@ mod tests {
     fn library_roundtrip() {
         let mut d = doc();
         d.artboards[1].in_library = true;
+        // El host usa el símbolo de la biblioteca en una capa de instancia.
+        let symbol = d.artboards[1].id;
+        let host = &mut d.artboards[0].sprite;
+        let add = cs_commands::ops::new_instance_layer(host, None, 0, symbol, "Banana", (1, 2));
+        add.apply(host).unwrap();
+        let instance = host.layers.last().unwrap().id;
         let (back, _) = read(&write(&d).unwrap()).unwrap();
         assert!(back.artboards[1].in_library);
         assert!(!back.artboards[0].in_library);
+        assert_eq!(back, d);
+        let layer = back.artboards[0].sprite.layer(instance).unwrap();
+        assert_eq!(layer.kind, LayerKind::Instance);
+        let key = &layer.instance.as_ref().unwrap().keys[0];
+        assert_eq!((key.source, key.position), (Some(symbol), (1, 2)));
+        assert!(back.artboard(symbol).is_some_and(|a| a.in_library));
+        assert_eq!(back.instance_sources(back.artboards[0].id), vec![symbol]);
     }
 
     fn doc() -> Document {

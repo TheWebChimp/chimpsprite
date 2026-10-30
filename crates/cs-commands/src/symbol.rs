@@ -5,8 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use cs_core::{
-    Artboard, ArtboardId, ColorMode, Document, GraphicPlay, Image, LayerId, LayerKind, Mask,
-    PixelValue, Rgba, Sprite, Timing,
+    Artboard, ArtboardId, BlendMode, ColorMode, Document, GraphicPlay, Image, LayerId, LayerKind,
+    Mask, PixelValue, Rgba, Sprite, Timing,
 };
 
 use crate::{Command, DocCommand, ops};
@@ -118,6 +118,9 @@ pub enum ConvertError {
     /// Separaría una capa que recorta de su base.
     #[error("Clipping layers can't be split into a symbol")]
     Clipping,
+    /// Una capa con modo de mezcla: en el símbolo mezclaría contra lo transparente.
+    #[error("Layers with blend modes can't go into a symbol")]
+    BlendMode,
 }
 
 /// Lo que arma `convert_to_symbol`: un solo comando (un Ctrl+Z) y los ids nuevos.
@@ -128,19 +131,29 @@ pub struct Converted {
     pub instance: LayerId,
 }
 
-/// Convierte capas o píxeles del artboard `host` en un símbolo nuevo de la biblioteca y deja en
-/// su lugar una capa de instancia que se ve igual en todos los frames.
-///
-/// Los grupos del host que siguen ahí (con otras capas) no se copian al símbolo: la instancia
-/// queda adentro de ellos y le aplican una sola vez. Los que quedan vacíos se borran del host,
-/// viajan al símbolo y la instancia ocupa su lugar.
-pub fn convert_to_symbol(
+/// Lo que `check_convert` revisó: qué se convierte y dónde.
+struct Plan {
+    roots: Vec<LayerId>,
+    /// Las capas pedidas con sus descendientes.
+    converted: BTreeSet<LayerId>,
+    /// Las capas cuyos píxeles viajan al símbolo.
+    cut: BTreeSet<LayerId>,
+    /// Sin marquesina, los grupos ancestros que quedan vacíos y también se van.
+    groups: BTreeSet<LayerId>,
+    rect: (i32, i32, u32, u32),
+}
+
+/// Revisa si `source` se puede convertir en un símbolo, sin armarlo (para deshabilitar menús).
+/// `convert_to_symbol` hace las mismas revisiones.
+pub fn check_convert(
     doc: &Document,
     host: ArtboardId,
     source: &SymbolSource,
-    name: &str,
-    timing: SymbolTiming,
-) -> Result<Converted, ConvertError> {
+) -> Result<(), ConvertError> {
+    plan(doc, host, source).map(|_| ())
+}
+
+fn plan(doc: &Document, host: ArtboardId, source: &SymbolSource) -> Result<Plan, ConvertError> {
     let sprite = &doc.artboard(host).ok_or(ConvertError::NoLayers)?.sprite;
     let (listed, selection) = match source {
         SymbolSource::Layers(layers) => (layers, None),
@@ -166,12 +179,12 @@ pub fn convert_to_symbol(
         return Err(ConvertError::Tilemap);
     }
     // Lo que no se podría convertir sin cambiar el render se rechaza.
-    let (cut, removal) = match selection {
+    let (cut, groups) = match selection {
         None => {
             together(sprite, &roots, &converted)?;
-            let removal = remove_layers(sprite, &roots);
-            unclipped(sprite, &(&converted | &removal.groups))?;
-            (converted.clone(), Some(removal))
+            let groups = emptied_groups(sprite, &roots, &converted);
+            unclipped(sprite, &(&converted | &groups))?;
+            (converted.clone(), groups)
         }
         Some(_) => {
             // Con marquesina solo se cortan las capas de imagen.
@@ -186,10 +199,55 @@ pub fn convert_to_symbol(
             let units: Vec<LayerId> = cut.iter().copied().collect();
             together(sprite, &units, &cut)?;
             unclipped(sprite, &cut)?;
-            (cut, None)
+            (cut, BTreeSet::new())
         }
     };
+    // Los grupos no mezclan (el render es plano): solo cuentan las capas que dibujan. Una capa
+    // con otro modo mezclaría en el símbolo contra lo transparente en vez de contra el host.
+    if cut
+        .iter()
+        .any(|&id| layer(id).kind != LayerKind::Group && layer(id).blend != BlendMode::Normal)
+    {
+        return Err(ConvertError::BlendMode);
+    }
     let rect = content_rect(doc, sprite, &cut, selection).ok_or(ConvertError::Empty)?;
+    Ok(Plan {
+        roots,
+        converted,
+        cut,
+        groups,
+        rect,
+    })
+}
+
+/// Convierte capas o píxeles del artboard `host` en un símbolo nuevo de la biblioteca y deja en
+/// su lugar una capa de instancia que se ve igual en todos los frames.
+///
+/// Los grupos del host que siguen ahí (con otras capas) no se copian al símbolo: la instancia
+/// queda adentro de ellos y le aplican una sola vez. Los que quedan vacíos se borran del host,
+/// viajan al símbolo y la instancia ocupa su lugar.
+pub fn convert_to_symbol(
+    doc: &Document,
+    host: ArtboardId,
+    source: &SymbolSource,
+    name: &str,
+    timing: SymbolTiming,
+) -> Result<Converted, ConvertError> {
+    let Plan {
+        roots,
+        converted,
+        cut,
+        groups,
+        rect,
+    } = plan(doc, host, source)?;
+    let sprite = &doc.artboard(host).ok_or(ConvertError::NoLayers)?.sprite;
+    let selection = match source {
+        SymbolSource::Layers(_) => None,
+        SymbolSource::Pixels { selection, .. } => Some(selection),
+    };
+    let removal = selection
+        .is_none()
+        .then(|| remove_layers(sprite, &roots, &groups));
 
     let symbol_id = doc.next_artboard_id();
     // Id libre en el host original, para no reusar el de una capa que se borra.
@@ -369,7 +427,7 @@ fn content_rect(
                     };
                     let (w, h) = (src.sprite.width as i32, src.sprite.height as i32);
                     let (x, y) = key.position;
-                    add(x, y, x + w - 1, y + h - 1);
+                    add(x, y, x.saturating_add(w - 1), y.saturating_add(h - 1));
                 }
             }
             LayerKind::Group | LayerKind::Tilemap => {}
@@ -480,11 +538,47 @@ impl Removal {
     }
 }
 
-/// Borra del host las capas convertidas y, después, los grupos que queden vacíos.
-fn remove_layers(sprite: &Sprite, roots: &[LayerId]) -> Removal {
+/// Los grupos ancestros de `roots` que quedan vacíos al sacar `converted` (todos sus hijos se
+/// van, contando los grupos que también quedan vacíos).
+fn emptied_groups(
+    sprite: &Sprite,
+    roots: &[LayerId],
+    converted: &BTreeSet<LayerId>,
+) -> BTreeSet<LayerId> {
+    let mut gone = converted.clone();
+    let mut groups = BTreeSet::new();
+    let mut parents: Vec<LayerId> = roots
+        .iter()
+        .filter_map(|&r| layer_parent(sprite, r))
+        .collect();
+    while let Some(group) = parents.pop() {
+        if gone.contains(&group) {
+            continue;
+        }
+        let empty = sprite
+            .layers
+            .iter()
+            .filter(|l| l.parent == Some(group))
+            .all(|l| gone.contains(&l.id));
+        if empty {
+            gone.insert(group);
+            groups.insert(group);
+            parents.extend(layer_parent(sprite, group));
+        }
+    }
+    groups
+}
+
+/// Cuántos grupos tiene encima `id`.
+fn depth(sprite: &Sprite, id: LayerId) -> usize {
+    std::iter::successors(layer_parent(sprite, id), |&p| layer_parent(sprite, p)).count()
+}
+
+/// Borra del host las capas convertidas y, después, los grupos `groups` (que quedan vacíos), de
+/// adentro hacia afuera.
+fn remove_layers(sprite: &Sprite, roots: &[LayerId], groups: &BTreeSet<LayerId>) -> Removal {
     let mut after = sprite.clone();
     let mut cmds = Vec::new();
-    let mut groups = BTreeSet::new();
     let run = |cmd: Command, after: &mut Sprite, cmds: &mut Vec<Command>| {
         cmd.apply(after).expect("removal is valid");
         cmds.push(cmd);
@@ -494,23 +588,14 @@ fn remove_layers(sprite: &Sprite, roots: &[LayerId]) -> Removal {
             run(cmd, &mut after, &mut cmds);
         }
     }
-    let mut parents: Vec<LayerId> = roots
-        .iter()
-        .filter_map(|&r| layer_parent(sprite, r))
-        .collect();
-    while let Some(group) = parents.pop() {
-        let empty =
-            after.layer(group).is_some() && !after.layers.iter().any(|l| l.parent == Some(group));
-        if empty {
-            let up = layer_parent(&after, group);
-            run(Command::RemoveLayer { id: group }, &mut after, &mut cmds);
-            groups.insert(group);
-            parents.extend(up);
-        }
+    let mut inner_first: Vec<LayerId> = groups.iter().copied().collect();
+    inner_first.sort_by_key(|&g| std::cmp::Reverse(depth(sprite, g)));
+    for group in inner_first {
+        run(Command::RemoveLayer { id: group }, &mut after, &mut cmds);
     }
     Removal {
         cmds,
-        groups,
+        groups: groups.clone(),
         after,
     }
 }
