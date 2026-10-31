@@ -17,7 +17,8 @@ use crate::{kit, pixel_ui, widgets};
 
 /// El panel, desde la esquina de su contenido: su ancho (el de Groom) y el alto más chico.
 pub const WIDTH: f32 = 434.0;
-const MIN_HEIGHT: f32 = 391.0;
+/// Con Pixel UI, los sliders llevan el encabezado del UI kit (30 de alto cada uno).
+const MIN_HEIGHT: f32 = 411.0;
 /// La línea grabada debajo del encabezado y donde empieza lo de abajo.
 const HEADER_LINE: f32 = 21.0;
 const TOP: f32 = 25.0;
@@ -1125,7 +1126,13 @@ fn stacked_slider(
     default: f32,
     format: impl Fn(f32) -> String,
 ) {
-    let (rect, _) = ui.allocate_exact_size(vec2(COLUMN, SLIDER_HEIGHT), Sense::hover());
+    let height = if pixel_ui::frame_skin(ui.ctx()).is_some() {
+        // Sin las 2 filas vacías de debajo de la perilla: el aire entre controles ya las da.
+        kit::slider::LABELED_HEIGHT - 2.0
+    } else {
+        SLIDER_HEIGHT
+    };
+    let (rect, _) = ui.allocate_exact_size(vec2(COLUMN, height), Sense::hover());
     slider(ui, rect, title, value, range, default, format);
 }
 
@@ -1139,6 +1146,16 @@ fn slider(
     default: f32,
     format: impl Fn(f32) -> String,
 ) {
+    // Con Pixel UI, el slider con encabezado del UI kit (botón de restaurar, nombre y valor).
+    if let Some(skin) = pixel_ui::frame_skin(ui.ctx()) {
+        let at = Rect::from_min_size(
+            rect.min.round(),
+            vec2(rect.width().round(), kit::slider::LABELED_HEIGHT),
+        );
+        let id = ui.id().with(("lumen_slider", title));
+        kit::slider::labeled_slider_at(ui, &skin, at, id, title, value, lo..=hi, default, format);
+        return;
+    }
     let mut cell = child(ui, rect, egui::Layout::top_down(egui::Align::Min));
     cell.spacing_mut().item_spacing.y = 1.0;
     // La barra, pegada a su título.
@@ -1159,19 +1176,8 @@ fn slider(
             ui.label(format(*value));
         });
     });
-    let Some(skin) = pixel_ui::frame_skin(ui.ctx()) else {
-        cell.spacing_mut().slider_width = rect.width() - 2.0;
-        cell.add(egui::Slider::new(value, lo..=hi).show_value(false));
-        return;
-    };
-    // El slider del UI kit abajo de `rect`: la perilla (desde la fila 1 del slider) llega al
-    // borde de abajo.
-    let bar = Rect::from_min_size(
-        pos2(rect.left(), rect.bottom() - kit::slider::THUMB_TOP - 14.0).round(),
-        vec2(rect.width().round(), kit::slider::HEIGHT),
-    );
-    let id = ui.id().with(("lumen_slider", title));
-    kit::slider::slider_at(ui, &skin, bar, id, value, lo..=hi);
+    cell.spacing_mut().slider_width = rect.width() - 2.0;
+    cell.add(egui::Slider::new(value, lo..=hi).show_value(false));
 }
 
 /// Un botón con la muestra de `color` que abre el selector (opaco). Devuelve si cambió.

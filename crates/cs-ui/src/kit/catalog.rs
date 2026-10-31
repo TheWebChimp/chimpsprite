@@ -872,7 +872,49 @@ fn slider_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         colors.text_dim,
     );
     ui.painter().add(note);
-    y + slider::HEIGHT + 14.0
+    // El botón de restaurar en sus cuatro estados (el ↺ se porta como el texto) y, debajo, el
+    // slider con encabezado de verdad, como en el mockup ("Height", 24px).
+    let mut y = y + slider::HEIGHT + 14.0 + STATE_PITCH;
+    let mut shapes = Vec::new();
+    let mut x = left;
+    for state in ButtonState::ALL {
+        let rect = Rect::from_min_size(pos2(x, y), slider::RESET_SIZE);
+        shapes.extend(button::frame_shapes(skin, rect, state, ppp));
+        shapes.extend(button::icon_shapes(
+            ui,
+            skin,
+            rect,
+            slider::RESET_ICON,
+            state,
+        ));
+        x += slider::RESET_SIZE.x + STATE_LABEL_GAP;
+    }
+    ui.painter().extend(shapes);
+    let (name, _) = pixel_draw::caps_text(ui, "Reset button", x, y + button::CAPS_TOP, colors.text);
+    ui.painter().add(name);
+    y += STATE_PITCH + 4.0;
+    let mut height: i32 = ui.data(|d| d.get_temp(live_labeled_id()).unwrap_or(24));
+    let rect = Rect::from_min_size(pos2(left, y), vec2(SLIDER_WIDTH, slider::LABELED_HEIGHT));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        slider::labeled_slider(
+            ui,
+            skin,
+            SLIDER_WIDTH,
+            "live_labeled",
+            "Height",
+            &mut height,
+            1..=200,
+            24,
+            |v| format!("{v}px"),
+        );
+    });
+    ui.data_mut(|d| d.insert_temp(live_labeled_id(), height));
+    y + slider::LABELED_HEIGHT
+}
+
+/// En la memoria de egui: el valor del slider con encabezado de verdad.
+fn live_labeled_id() -> egui::Id {
+    egui::Id::new("ui_catalog_labeled_slider")
 }
 
 /// Sección Color button: el amarillo del mockup en los cuatro estados (uno por fila, con su nombre

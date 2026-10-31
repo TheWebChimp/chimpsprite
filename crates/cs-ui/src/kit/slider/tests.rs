@@ -135,3 +135,67 @@ fn disabled_it_uses_its_pieces_and_does_not_move() {
         ]
     );
 }
+
+#[test]
+fn the_labeled_slider_has_the_reset_button_the_name_and_the_value_like_the_mockup() {
+    let (ctx, skin) = pixel_ctx();
+    let reset_piece = skin.piece(RESET_ICON, WidgetState::Normal).unwrap();
+    assert_eq!(reset_piece.size, [7, 7]);
+    let run = |events: Vec<Event>, value: &mut i32| {
+        let mut response = None;
+        let shapes = frame(&ctx, events, |ui| {
+            response = Some(labeled_slider(
+                ui,
+                &skin,
+                140.0,
+                "h",
+                "Height",
+                value,
+                1..=200,
+                24,
+                |v| format!("{v}px"),
+            ));
+        });
+        (shapes, response.unwrap())
+    };
+    let mut value = 24;
+    let (shapes, response) = run(vec![], &mut value);
+    let top = response.rect.top() - HEADER_HEIGHT;
+    let left = response.rect.left();
+    // El slider, debajo del encabezado de 15.
+    assert_eq!(response.rect.size(), vec2(140.0, HEIGHT));
+    // En el default, el botón de restaurar está deshabilitado.
+    let frames: Vec<(TextureId, Rect)> = pieces(&shapes);
+    let disabled = skin
+        .piece("button", WidgetState::Disabled)
+        .unwrap()
+        .texture
+        .id();
+    assert_eq!(
+        frames[0],
+        (disabled, Rect::from_min_size(pos2(left, top), RESET_SIZE))
+    );
+    // Los textos: el nombre 3 px después del botón y el valor pegado a la derecha.
+    let texts: Vec<String> = shapes
+        .iter()
+        .filter_map(|s| match s {
+            Shape::Text(t) => Some(t.galley.text().to_owned()),
+            _ => None,
+        })
+        .collect();
+    assert!(texts.contains(&"Height".to_owned()) && texts.contains(&"24px".to_owned()));
+    // Movido, el botón se habilita y lo vuelve al default.
+    value = 100;
+    run(vec![], &mut value);
+    let at = pos2(left + 6.0, top + 7.0);
+    let press = |pressed| Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    run(vec![Event::PointerMoved(at), press(true)], &mut value);
+    let (_, response) = run(vec![press(false)], &mut value);
+    assert_eq!(value, 24);
+    assert!(response.changed());
+}

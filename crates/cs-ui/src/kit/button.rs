@@ -257,14 +257,33 @@ pub fn icon_button_at(
     response
 }
 
-/// Las filas de la cara de un botón, donde va centrado un ícono: debajo del contorno y hasta el
-/// bisel de abajo incluido.
+/// La cara de un botón, donde va centrado un ícono: debajo del contorno y hasta el bisel de abajo
+/// incluido (en uno de [`HEIGHT`], las filas 1 a 13).
 pub const FACE_TOP: f32 = OUTLINE;
-pub const FACE_ROWS: f32 = HEIGHT - OUTLINE - BOTTOM_ROWS;
 
-/// El ícono `icon` centrado en la cara del botón en `rect`, en `state` (presionado, 1 px más
-/// abajo; deshabilitado, a media opacidad). Si no cabe justo a la mitad, el píxel de sobra queda a
-/// la derecha y abajo.
+/// Cuántas filas tiene la cara de un botón de `height` de alto.
+pub fn face_rows(height: f32) -> f32 {
+    height - OUTLINE - BOTTOM_ROWS
+}
+
+/// Si `piece` es un ícono de una sola tinta (todos sus píxeles visibles del mismo color): esos
+/// se dibujan como el texto.
+fn is_mono(piece: &crate::skin::Piece) -> bool {
+    let mut inks = piece.rgba.as_chunks::<4>().0.iter().filter(|p| p[3] > 0);
+    match inks.next() {
+        Some(first) => inks.all(|p| p == first),
+        None => false,
+    }
+}
+
+/// El ícono `icon` centrado en la cara del botón en `rect` (de cualquier alto), en `state`:
+/// presionado, 1 px más abajo. Si no cabe justo a la mitad, el píxel de sobra queda a la derecha
+/// y abajo.
+///
+/// - Un ícono de una sola tinta (el ↺ de restaurar) se porta como el texto: su color, con la
+///   sombra 1 px abajo salvo con el puntero encima, y deshabilitado en
+///   `color.button_text_disabled`.
+/// - Uno de varios colores (las hojas de copiar) va tal cual; deshabilitado, a media opacidad.
 pub fn icon_shapes(ui: &Ui, skin: &Skin, rect: Rect, icon: &str, state: ButtonState) -> Vec<Shape> {
     let Some(piece) = skin.piece(icon, WidgetState::Normal) else {
         return Vec::new();
@@ -272,20 +291,58 @@ pub fn icon_shapes(ui: &Ui, skin: &Skin, rect: Rect, icon: &str, state: ButtonSt
     let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
     let at = egui::pos2(
         rect.left() + ((rect.width() - size.x) / 2.0).floor(),
-        rect.top() + FACE_TOP + ((FACE_ROWS - size.y) / 2.0).floor() + drop(state),
+        rect.top() + FACE_TOP + ((face_rows(rect.height()) - size.y) / 2.0).floor() + drop(state),
     );
+    if is_mono(piece) {
+        return mono_shapes(skin, piece, at, state);
+    }
     let mut shapes = pixel_ui::piece_shapes(
         piece,
         Rect::from_min_size(at, size),
         ui.ctx().pixels_per_point(),
     );
     if state == ButtonState::Disabled {
-        // Deshabilitado, el ícono a media opacidad (como el texto, que pasa a un color tenue).
         let half = Color32::from_white_alpha(128);
         for shape in &mut shapes {
             dim(shape, half);
         }
     }
+    shapes
+}
+
+/// Un ícono de una tinta desde `at`, píxel por píxel: primero la sombra y encima la tinta.
+fn mono_shapes(
+    skin: &Skin,
+    piece: &crate::skin::Piece,
+    at: egui::Pos2,
+    state: ButtonState,
+) -> Vec<Shape> {
+    let colors = skin.colors();
+    let [w, h] = piece.size;
+    let ink_at: Vec<egui::Pos2> = (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .filter(|&(x, y)| piece.rgba[((y * w + x) * 4 + 3) as usize] > 0)
+        .map(|(x, y)| at + vec2(x as f32, y as f32))
+        .collect();
+    let ink = match state {
+        ButtonState::Disabled => colors.button_text_disabled,
+        _ => piece.pixel(
+            ink_at.first().map_or(0, |p| (p.x - at.x) as u32),
+            ink_at.first().map_or(0, |p| (p.y - at.y) as u32),
+        ),
+    };
+    let dot = |p: egui::Pos2, color| {
+        Shape::rect_filled(Rect::from_min_size(p, Vec2::splat(1.0)), 0.0, color)
+    };
+    let mut shapes = Vec::with_capacity(ink_at.len() * 2);
+    if state.has_shadow() {
+        shapes.extend(
+            ink_at
+                .iter()
+                .map(|p| dot(*p + SHADOW, shadow_color(colors))),
+        );
+    }
+    shapes.extend(ink_at.iter().map(|p| dot(*p, ink)));
     shapes
 }
 

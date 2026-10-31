@@ -200,7 +200,11 @@ oculta.
   - **Botones con ícono** (`kit::button::icon_button_at`): el marco `button` con todos sus
     estados y una pieza `icon.*` centrada en la cara (las filas 1 a 13, entre el brillo y el
     bisel; el píxel de sobra, a la derecha y abajo). Presionado, el ícono baja 1 px con la cara;
-    deshabilitado, va a media opacidad. Los íconos llevan el relleno transparente.
+    deshabilitado, va a media opacidad. Los íconos llevan el relleno transparente. El botón
+    puede tener cualquier alto (la cara son las filas debajo del contorno hasta el bisel).
+    - Un ícono de **una sola tinta** (todos sus píxeles del mismo color, como `icon.reset`) se
+      porta como el texto: su color con la sombra `background` 1 px abajo (salvo con el puntero
+      encima) y, deshabilitado, `color.button_text_disabled`. Copiado del mockup.
   - **LEDs** (cualquier botón puede llevar uno: `kit::button::Led`, y los segmentos del grupo):
     `button.led.on` (261,650) y `button.led.off` (269,650), 6×7: el LED verde (prendido) y el
     morado (apagado), 6×6 con su sombra (221,206,191) abajo, copiados del mockup (x 315 y 362).
@@ -229,6 +233,11 @@ oculta.
     - `slider.thumb` (130,296, 13×14): la perilla de 11 con una columna de sombra (136,110,106) a
       cada lado sobre la pista. `.hover` (66,518: el relleno blanco, también arrastrándola) y
       `.disabled` (81,518: el borde (136,110,106) y el bisel claro) no están en el diseño.
+    - **Con encabezado** (`labeled_slider`, mockup x 660..821, y 411..441): arriba, el botón de
+      restaurar (el botón con ícono del kit a 13×15, con `icon.reset`), el nombre 3 px después y
+      el valor pegado a la derecha, en `color.text` y con las mayúsculas en la fila 4 del botón;
+      debajo, el slider. En el default, el botón queda deshabilitado.
+    - `icon.reset` (160,520, 7×7): el ↺, de una sola tinta (89,77,77).
     - Ocupa el alto de un botón: la perilla desde la fila 1, la pista desde la 4. La perilla va de
       punta a punta: en el mínimo, su sombra izquierda en la primera columna de la pista.
   - **Botón de color** (`crates/cs-ui/src/kit/color_button.rs`, mockup de componentes, frame 9,
