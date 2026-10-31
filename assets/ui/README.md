@@ -214,6 +214,16 @@ oculta.
       casillas.
     - Ocupan el alto de un botón (17): la casilla desde la fila 1 y el radio desde la 2, así su
       marca cae en las filas de las mayúsculas (4 a 9), y el texto 3 px después.
+  - **Slider** (`crates/cs-ui/src/kit/slider.rs`, mockup de componentes, frame 9, x 681..820,
+    y 379):
+    - `slider.track` (30,520, 16×9, centro (1,0,14,9)): la pista, 7 filas (189,164,153), la
+      oscura (136,110,106) y la línea clara, con las puntas recortadas. Se estira a lo ancho.
+      `slider.track.disabled` (48,520): sin la fila oscura (no está en el diseño).
+    - `slider.thumb` (130,296, 13×14): la perilla de 11 con una columna de sombra (136,110,106) a
+      cada lado sobre la pista. `.hover` (66,518: el relleno blanco, también arrastrándola) y
+      `.disabled` (81,518: el borde (136,110,106) y el bisel claro) no están en el diseño.
+    - Ocupa el alto de un botón: la perilla desde la fila 1, la pista desde la 4. La perilla va de
+      punta a punta: en el mínimo, su sombra izquierda en la primera columna de la pista.
 
 - **Paleta y editor de color** (frame 4 del diseño, capa Mockup, columna x 784..972; el skin
   creció a 320×272 y estas piezas van en y 236..267):

@@ -87,7 +87,14 @@ fn clicks_id() -> egui::Id {
 }
 
 /// Las secciones, una por pestaña.
-const SECTIONS: [&str; 5] = ["Buttons", "Button group", "Inputs", "Tabs", "Checks"];
+const SECTIONS: [&str; 6] = [
+    "Buttons",
+    "Button group",
+    "Inputs",
+    "Tabs",
+    "Checks",
+    "Slider",
+];
 
 /// En la memoria de egui: la sección a la vista.
 fn section_id() -> egui::Id {
@@ -132,7 +139,8 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
                 1 => group_section(ui, skin, origin),
                 2 => inputs_section(ui, skin, origin),
                 3 => tabs_section(ui, skin, origin),
-                _ => checks_section(ui, skin, origin),
+                4 => checks_section(ui, skin, origin),
+                _ => slider_section(ui, skin, origin),
             };
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
@@ -759,4 +767,76 @@ fn checks_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     });
     ui.data_mut(|d| d.insert_temp(live_checks_id(), (a, b, pick)));
     y + 3.0 * STATE_PITCH
+}
+
+/// Sección Slider, como en el mockup: la pista de 140 con la perilla 15 px adentro, en una fila
+/// por estado con su nombre a la derecha; debajo, uno de verdad con su número al lado.
+const SLIDER_WIDTH: f32 = 140.0;
+const SLIDER_MOCKUP_LEFT: f32 = 15.0;
+
+/// En la memoria de egui: el valor del slider de verdad.
+fn live_slider_id() -> egui::Id {
+    egui::Id::new("ui_catalog_slider")
+}
+
+fn slider_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    use super::slider;
+    let colors = *skin.colors();
+    let left = origin.x;
+    let mut y = origin.y;
+    let ppp = ui.ctx().pixels_per_point();
+    let mut shapes: Vec<Shape> = Vec::new();
+    let t = SLIDER_MOCKUP_LEFT / (SLIDER_WIDTH - 13.0);
+    for state in [
+        ButtonState::Normal,
+        ButtonState::Hover,
+        ButtonState::Disabled,
+    ] {
+        let rect = Rect::from_min_size(pos2(left, y), vec2(SLIDER_WIDTH, slider::HEIGHT));
+        shapes.extend(slider::slider_shapes(skin, rect, t, state, ppp));
+        let (name, _) = pixel_draw::caps_text(
+            ui,
+            state.name(),
+            rect.right() + STATE_LABEL_GAP,
+            y + button::CAPS_TOP,
+            colors.text,
+        );
+        shapes.push(name);
+        y += STATE_PITCH;
+    }
+    ui.painter().extend(shapes);
+    // El de verdad, con el número al lado (los dos cambian el mismo valor).
+    y += STATE_PITCH;
+    let mut value: i32 = ui.data(|d| d.get_temp(live_slider_id()).unwrap_or(32));
+    let rect = Rect::from_min_size(pos2(left, y), vec2(PAGE_WIDTH, slider::HEIGHT));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = STATE_LABEL_GAP;
+            slider::slider(ui, skin, SLIDER_WIDTH, "live", &mut value, 0..=255);
+            let options = NumberOptions {
+                affixes: Affixes::NONE,
+                ..Default::default()
+            };
+            input::number_input(
+                ui,
+                skin,
+                NUMBER_WIDTH,
+                "live_slider",
+                &mut value,
+                0..=255,
+                options,
+            );
+        });
+    });
+    ui.data_mut(|d| d.insert_temp(live_slider_id(), value));
+    let (note, _) = pixel_draw::caps_text_in(
+        ui,
+        TextStyle::Small,
+        "drag it, click the track, or tab to it and use the arrows",
+        left,
+        y + slider::HEIGHT + 4.0,
+        colors.text_dim,
+    );
+    ui.painter().add(note);
+    y + slider::HEIGHT + 14.0
 }

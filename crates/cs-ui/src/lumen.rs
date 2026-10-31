@@ -13,7 +13,7 @@ use eframe::egui::{
 use crate::panel_kit::{box_color, child, double_box, hint, label_with_hint, notched_outline};
 use crate::pixel_ui::Tip as _;
 use crate::skin::WidgetState;
-use crate::{pixel_ui, widgets};
+use crate::{kit, pixel_ui, widgets};
 
 /// El panel, desde la esquina de su contenido: su ancho (el de Groom) y el alto más chico.
 pub const WIDTH: f32 = 434.0;
@@ -1159,52 +1159,19 @@ fn slider(
             ui.label(format(*value));
         });
     });
-    let skin = pixel_ui::frame_skin(ui.ctx());
-    let pieces = skin.as_ref().and_then(|s| {
-        Some((
-            s.piece("slider.track", WidgetState::Normal)?,
-            s.piece("slider.thumb", WidgetState::Normal)?,
-        ))
-    });
-    let Some((track, thumb)) = pieces else {
+    let Some(skin) = pixel_ui::frame_skin(ui.ctx()) else {
         cell.spacing_mut().slider_width = rect.width() - 2.0;
         cell.add(egui::Slider::new(value, lo..=hi).show_value(false));
         return;
     };
-    // La barra abajo de `rect`: el riel (centrado en el alto de la perilla) y la perilla, que
-    // va de punta a punta del riel.
-    let knob = vec2(thumb.size[0] as f32, thumb.size[1] as f32);
-    let bar = Rect::from_min_max(
-        pos2(rect.left(), rect.bottom() - knob.y).round(),
-        rect.right_bottom().round(),
+    // El slider del UI kit abajo de `rect`: la perilla (desde la fila 1 del slider) llega al
+    // borde de abajo.
+    let bar = Rect::from_min_size(
+        pos2(rect.left(), rect.bottom() - kit::slider::THUMB_TOP - 14.0).round(),
+        vec2(rect.width().round(), kit::slider::HEIGHT),
     );
-    let rail_h = track.size[1] as f32;
-    let rail = Rect::from_min_size(
-        pos2(bar.left(), bar.top() + ((knob.y - rail_h) / 2.0).floor()),
-        vec2(bar.width(), rail_h),
-    );
-    let response = ui.interact(
-        bar,
-        ui.id().with(("lumen_slider", title)),
-        Sense::click_and_drag(),
-    );
-    let travel = (bar.width() - knob.x).max(1.0);
-    if let Some(p) = response.interact_pointer_pos()
-        && (response.dragged() || response.clicked() || response.is_pointer_button_down_on())
-    {
-        let t = ((p.x - bar.left() - knob.x / 2.0) / travel).clamp(0.0, 1.0);
-        *value = lo + t * (hi - lo);
-    }
-    let t = if hi > lo {
-        ((*value - lo) / (hi - lo)).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    let ppp = ui.ctx().pixels_per_point();
-    let painter = ui.painter();
-    painter.extend(pixel_ui::piece_shapes(track, rail, ppp));
-    let knob_rect = Rect::from_min_size(pos2((bar.left() + t * travel).round(), bar.top()), knob);
-    painter.extend(pixel_ui::piece_shapes(thumb, knob_rect, ppp));
+    let id = ui.id().with(("lumen_slider", title));
+    kit::slider::slider_at(ui, &skin, bar, id, value, lo..=hi);
 }
 
 /// Desarrollo: con este dato en el contexto, el próximo [`color_button`] se abre.

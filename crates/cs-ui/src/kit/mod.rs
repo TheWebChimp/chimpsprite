@@ -7,6 +7,7 @@ pub mod catalog;
 pub mod check;
 pub mod group;
 pub mod input;
+pub mod slider;
 pub mod tabs;
 
 pub use group::{GroupItem, button_group};
