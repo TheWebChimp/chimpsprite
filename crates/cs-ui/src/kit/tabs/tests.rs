@@ -375,3 +375,32 @@ fn the_panel_tab_is_the_mockup_layer_tab_on_its_panel_box() {
         assert_eq!(piece.size, size, "{name}");
     }
 }
+
+#[test]
+fn panel_tabs_start_after_the_rounded_corner_and_the_active_first_one_covers_it() {
+    let (ctx, skin) = pixel_ctx();
+    let items = [TabItem::new("Layer"), TabItem::new("Frame")];
+    let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(120.0, 60.0));
+    let run = |active: usize| {
+        let shapes = frame(&ctx, vec![], |ui| {
+            tabbed_panel(ui, &skin, Id::new("p"), rect, &items, Some(active));
+        });
+        drawn(&shapes)
+    };
+    // "Frame" elegida: "Layer", inactiva, empieza después de la esquina (2 px).
+    let d = run(1);
+    let layer = d.boxes(&skin, PANEL_TAB, WidgetState::Normal);
+    assert_eq!(layer[0].left(), rect.left() + PANEL_CORNER);
+    let layer_text = d.texts.first().map(|(at, _, g)| ink_at(*at, g)).unwrap();
+    // "Layer" elegida: pegada al borde de la caja, con el texto donde estaba.
+    let d = run(0);
+    let active = d.boxes(&skin, PANEL_TAB, WidgetState::Active);
+    assert_eq!(active[0].left(), rect.left());
+    let active_text = d
+        .texts
+        .iter()
+        .map(|(at, _, g)| ink_at(*at, g))
+        .find(|(x, _)| *x < rect.left() + 30.0)
+        .unwrap();
+    assert_eq!(active_text, layer_text, "the name does not move");
+}

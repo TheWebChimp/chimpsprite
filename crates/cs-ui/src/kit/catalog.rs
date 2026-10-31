@@ -613,41 +613,19 @@ fn tabs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     top += TABS_PITCH;
     shapes.extend(forced_strip(ui, skin, left, top, true));
     top += TABS_PITCH;
+    ui.painter().extend(shapes);
     // La pestaña de panel, pegada a su caja, con el divisor adentro.
     let panel = Rect::from_min_size(pos2(origin.x, top), PANEL_SIZE);
-    let strip = tabs::Strip::new(
-        panel.left(),
-        panel.right(),
-        panel.top(),
-        tabs::TabStyle::Panel,
-    );
-    let body = Rect::from_min_max(pos2(panel.left(), strip.bottom()), panel.max);
-    shapes.extend(tabs::panel_shapes(ui, skin, body));
-    let item = tabs::TabItem::new("Layer");
-    let lay = tabs::layout(ui, &strip, std::slice::from_ref(&item), 0);
-    if let Some(p) = lay.placed.first() {
-        let look = tabs::TabLook {
-            active: true,
-            hovered: false,
-            mark_hovered: false,
-        };
-        shapes.extend(tabs::tab_shapes(
-            ui,
-            skin,
-            tabs::TabStyle::Panel,
-            p.rect,
-            &item,
-            &p.name,
-            look,
-        ));
-    }
-    shapes.extend(tabs::divider_shapes(
+    let layer = [tabs::TabItem::new("Layer")];
+    let id = ui.id().with("ui_catalog_mockup_panel");
+    let (_, inner) = tabs::tabbed_panel(ui, skin, id, panel, &layer, Some(0));
+    let divider = tabs::divider_shapes(
         ui,
         skin,
-        egui::Rangef::new(body.left() + 1.0, body.right() - 1.0),
-        body.top() + PANEL_DIVIDER_TOP,
-    ));
-    ui.painter().extend(shapes);
+        egui::Rangef::new(panel.left() + 1.0, panel.right() - 1.0),
+        inner.top() - 2.0 + PANEL_DIVIDER_TOP,
+    );
+    ui.painter().extend(divider);
     // Un panel de verdad con dos pestañas, a la derecha.
     let live_panel = panel.translate(vec2(PANEL_SIZE.x + LIVE_PANEL_GAP, 0.0));
     let mut panel_tab: usize = ui.data(|d| d.get_temp(panel_tab_id()).unwrap_or(0));
@@ -666,6 +644,11 @@ fn tabs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         colors.text,
     );
     ui.painter().add(text);
+    // El mismo panel con la segunda pestaña elegida: la primera, inactiva, empieza después de la
+    // esquina redondeada de la caja.
+    let second = live_panel.translate(vec2(PANEL_SIZE.x + LIVE_PANEL_GAP, 0.0));
+    let id = ui.id().with("ui_catalog_second_panel");
+    tabs::tabbed_panel(ui, skin, id, second, &items, Some(1));
     // Una tira de verdad: se eligen y se cierran (con la × o el botón del medio).
     let mut top = panel.bottom() + TABS_PITCH - tabs::HEIGHT;
     let (mut open, mut active): (Vec<usize>, Option<usize>) = ui.data(|d| {

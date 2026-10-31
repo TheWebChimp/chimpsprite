@@ -73,6 +73,10 @@ pub const PANEL_PAD: f32 = 3.0;
 pub const PANEL_CAPS_TOP: f32 = 5.0;
 /// Entre pestañas de panel (no está en el mockup).
 pub const PANEL_GAP: f32 = 2.0;
+/// La esquina redondeada de arriba a la izquierda de la caja del panel: las pestañas empiezan
+/// después. La activa, si es la primera, se estira esos 2 px para quedar pegada al borde de la
+/// caja (como la "Layer" del mockup), con el texto en su lugar.
+pub const PANEL_CORNER: f32 = 2.0;
 
 /// Los dos estilos de la tira.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -594,7 +598,10 @@ pub fn tab_strip(
     for p in order {
         let item = &items[p.index];
         let is_active = active == Some(p.index);
-        let rect = p.rect;
+        // La activa al comienzo de una tira de panel tapa la esquina de la caja.
+        let flush = strip.style == TabStyle::Panel && is_active && p.rect.left() <= strip.left;
+        let extra = if flush { PANEL_CORNER } else { 0.0 };
+        let rect = p.rect.with_min_x(p.rect.left() - extra);
         let hit = rect.with_max_y(rect.top() + strip.style.height(is_active));
         let response = ui.interact(hit, id.with(("tab", p.index)), Sense::click());
         response.widget_info(|| {
@@ -629,15 +636,16 @@ pub fn tab_strip(
             hovered: !is_active && response.hovered(),
             mark_hovered: close.as_ref().is_some_and(|c| c.hovered()),
         };
-        shapes.extend(tab_shapes(
-            ui,
-            skin,
-            strip.style,
-            rect,
-            &shown_item,
-            &p.name,
-            look,
-        ));
+        let mut drawn = tab_shapes(ui, skin, strip.style, rect, &shown_item, &p.name, look);
+        if extra > 0.0 {
+            // El texto, donde estaba antes de estirar la pestaña.
+            for shape in &mut drawn {
+                if let Shape::Text(text) = shape {
+                    text.pos.x += extra;
+                }
+            }
+        }
+        shapes.extend(drawn);
         let closed = close.is_some_and(|c| c.clicked())
             || (item.mark != TabMark::None && response.middle_clicked());
         if closed {
@@ -729,7 +737,12 @@ pub fn tabbed_panel(
     items: &[TabItem],
     active: Option<usize>,
 ) -> (Option<TabEvent>, Rect) {
-    let strip = Strip::new(rect.left(), rect.right(), rect.top(), TabStyle::Panel);
+    let strip = Strip::new(
+        rect.left() + PANEL_CORNER,
+        rect.right(),
+        rect.top(),
+        TabStyle::Panel,
+    );
     let body = Rect::from_min_max(pos2(rect.left(), strip.bottom()), rect.max);
     let mut painter = ui.painter().clone();
     painter.set_opacity(1.0);

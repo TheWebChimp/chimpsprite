@@ -106,6 +106,9 @@ oculta.
     son el borde y el blanco de arriba del panel), sin el texto. `tab.panel` (37,952, 34×16) y
     `tab.panel.hover` (73,952) no están en el diseño: la misma forma, cerrada abajo, con el
     relleno (221,206,191) o (234,224,221).
+    Las pestañas de panel empiezan 2 px adentro de la caja, después de su esquina redondeada; la
+    activa, si es la primera, se estira esos 2 px para quedar pegada al borde (con el texto en su
+    lugar).
   - `panel.box` (94,935, 8×4, centro (3,2,2,1)): la caja del panel: borde negro con las esquinas
     de arriba de 2 px, la fila blanca de arriba, (221,206,191) a la izquierda, (234,224,221)
     adentro y blanco a la derecha (x 262..264 del mockup); la esquina de arriba a la izquierda (la
