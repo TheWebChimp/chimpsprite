@@ -78,16 +78,13 @@ oculta.
   - Modos de selección: `icon.sel_replace`, `icon.sel_add`, `icon.sel_subtract` e
     `icon.sel_intersect` (11×11, fondo transparente), en los marcos de simetría (`sym.slot`, y
     `sym.slot.active` el modo elegido): los cuadritos de Mode del diseño son iguales a esos.
-  - `field.combo` (13×16, centro (2,10,1,3)): el combo. 2 columnas de borde a la izquierda, 1 de
-    relleno que se estira y, a la derecha, 10 con el brillo y la flecha ▾. El texto va 6 px
-    adentro y 5 px antes de la flecha.
+  - Los combos de la barra son el select del UI kit (`select.*`, abajo); `field.combo` se borró.
   - `field.number` (10×16, centro (2,10,1,3)): el campo numérico de antes, con el brillo de
     arriba a la derecha y la esquina redondeada. Ya no lo usa la barra (sus números son los
     campos del UI kit, abajo); lo siguen usando la tira de canales del editor de color y el
     timeline.
   - La casilla de la barra es la del UI kit (`check`, abajo).
-  - El combo y el campo llevan una fila de sombra (230,231,240) abajo del relleno
-    blanco.
+  - El campo lleva una fila de sombra (230,231,240) abajo del relleno blanco.
 - **Pestañas:** `tab` (inactiva, café) mide 7×15 y `tab.active` (clara) 7×17, las dos con
   centro (3,0,1,alto): se estiran solo a lo ancho. Las esquinas de arriba son redondeadas y
   abajo quedan abiertas. La activa baja sobre las dos filas de la línea grabada de abajo y la
@@ -225,6 +222,25 @@ oculta.
       casillas.
     - Ocupan el alto de un botón (17): la casilla desde la fila 1 y el radio desde la 2, así su
       marca cae en las filas de las mayúsculas (4 a 9), y el texto 3 px después.
+  - **Select** (`crates/cs-ui/src/kit/select.rs`, mockup de componentes, frame 9: cerrado en
+    x 469, y 321 y 378; abierto en x 454, y 480; en el skin, y 488 desde x 172). Todos los
+    combos de la app (los de la barra y `widgets::combo`) son este.
+    - Cerrado: el campo del kit (`field.text`, `.disabled`) con lo elegido 5 px adentro (las
+      mayúsculas en la fila 5, `color.text`; deshabilitado, `color.field_text_disabled`) y
+      `select.arrow` (195,488, 5×3, de una tinta), del color del texto, en las filas 7 a 9 y 4 px
+      antes del borde derecho. Ancho justo: 5 + tinta + 5 + 5 + 4 + 1.
+    - `select.open` (172,488, 6×16, centro (2,1,2,13)): el campo abierto: 14 filas de blanco y la
+      fila de sombra, que queda sobre el borde del panel; sin el borde de abajo.
+    - `select.list` (180,488, 8×13, centro (2,7,1,1)): el panel, desde la fila 15 del campo y 11
+      px más ancho: borde (5,4,3), la fila blanca de arriba, bisel (221,206,191) a la izquierda y
+      abajo y blanco a la derecha, relleno (234,224,221), la esquina de arriba a la derecha en
+      escalera y la sombra de 2 px abajo a la derecha, negra al 47% (sobre (221,206,191) da el
+      (117,109,101) del mockup).
+    - Las opciones: filas de 15 desde la fila 4 del panel (debajo, 1 de aire, el bisel y el
+      borde), el texto 6 px adentro del borde y las mayúsculas en su fila 4.
+      `select.item.hover` (190,488, 3×15, centro (1,0,1,15)): la franja rosa (178,82,102) /
+      (226,114,133) / (246,162,168) con el puntero encima; sin el puntero en el panel, va en la
+      elegida.
   - **Slider** (`crates/cs-ui/src/kit/slider.rs`, mockup de componentes, frame 9, x 681..820,
     y 379):
     - `slider.track` (30,520, 16×9, centro (1,0,14,9)): la pista, 7 filas (189,164,153), la

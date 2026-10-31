@@ -1054,6 +1054,10 @@ pub(crate) fn choice(selected: bool, label: &str) -> Choice<'_> {
 
 impl Widget for Choice<'_> {
     fn ui(self, ui: &mut Ui) -> Response {
+        // En el panel de un select del UI kit, una opción del select.
+        if let Some(response) = crate::kit::select::item(ui, self.selected, self.label) {
+            return response;
+        }
         let Some(look) = look(ui) else {
             return egui::Button::selectable(self.selected, self.label).ui(ui);
         };

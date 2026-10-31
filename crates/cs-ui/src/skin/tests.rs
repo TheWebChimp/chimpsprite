@@ -638,23 +638,6 @@ fn the_embedded_skin_has_the_options_bar_fields_of_the_design() {
         let drawn = (0..11 * 11).filter(|i| icon.rgba[i * 4 + 3] == 255).count();
         assert!((10..121).contains(&drawn), "{name}: {drawn}");
     }
-    // El combo: borde izquierdo de 2, relleno de 1 que se estira y a la derecha la flecha
-    // (10 columnas). 16 filas con el brillo de abajo.
-    let combo = &data.pieces["field.combo"];
-    assert_eq!((combo.size, combo.center), ([13, 16], rect9(2, 10, 1, 3)));
-    assert_eq!(at(combo, 0, 0).a, 0, "rounded corner");
-    assert_eq!(at(combo, 0, 2), border, "the left side");
-    assert_eq!(at(combo, 2, 5), white, "the fill");
-    assert_eq!(at(combo, 12, 5), border, "the right side");
-    let arrow = Rgba::rgb(5, 4, 3);
-    for (x, y) in [(3, 7), (7, 7), (4, 8), (6, 8), (5, 9)] {
-        assert_eq!(at(combo, x, y), arrow, "the arrow ({x},{y})");
-    }
-    assert_eq!(
-        at(combo, 2, 15),
-        Rgba::rgb(241, 235, 219),
-        "the light below"
-    );
     // El campo numérico de antes (el editor de color y el timeline todavía lo usan): el mismo
     // borde, con el brillo de arriba a la derecha.
     let number = &data.pieces["field.number"];
@@ -715,7 +698,8 @@ fn the_embedded_skin_has_the_options_bar_fields_of_the_design() {
     // lado, el borde con el brillo en las esquinas y la fila de brillo debajo.
     let shade = Rgba::rgb(230, 231, 240);
     let light = Rgba::rgb(241, 235, 219);
-    for (name, p) in [("combo", combo), ("number", number)] {
+    {
+        let (name, p) = ("number", number);
         let w = p.size[0];
         assert_eq!(at(p, 1, 12), white, "{name}: white down to the shade");
         assert_eq!(at(p, 1, 13), shade, "{name}: the shade, left");

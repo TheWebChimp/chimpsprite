@@ -1228,7 +1228,6 @@ fn with_pixel_ui_the_bar_is_23_and_every_node_fits_inside_it() {
         }
         // Las piezas de los controles, en las 19 filas de arriba del grabado.
         for piece in [
-            "field.combo",
             "field.text",
             "field.prefix",
             "field.unit",
@@ -1366,8 +1365,13 @@ fn with_pixel_ui_brush_size_is_the_number_field_with_its_px_unit() {
     let (_, ink) = h.text("Brush Size");
     assert_eq!(ink.min, bar.min + Vec2::new(7.0, 6.0), "{ink:?}");
     assert_eq!(ink.width(), 43.0);
-    let field = h.drawn_boxes("field.text");
     let left = ink.right() + 3.0;
+    // (El de Ink, más a la derecha, es el select: también es un `field.text`.)
+    let field: Vec<Rect> = h
+        .drawn_boxes("field.text")
+        .into_iter()
+        .filter(|f| f.left() == left)
+        .collect();
     assert_eq!(
         field,
         vec![Rect::from_min_size(
@@ -1419,45 +1423,48 @@ fn with_pixel_ui_fields_without_a_unit_have_no_px() {
     let h = pixel_bar(ToolKind::Spray);
     assert_eq!(
         h.drawn_boxes("field.text").len(),
-        3,
-        "brush, width and speed"
+        4,
+        "brush, width, speed and the ink select"
     );
     assert_eq!(h.drawn_boxes("field.unit").len(), 2, "brush and width");
 }
 
 #[test]
-fn with_pixel_ui_a_combo_is_the_field_combo_and_picking_an_option_works() {
+fn with_pixel_ui_a_combo_is_the_kit_select_and_picking_an_option_works() {
     let mut h = pixel_bar(ToolKind::Gradient);
     let bar = h.bar;
-    // El tramado es una lista de verdad: el único combo del diseño, de la y 73 a la 88 (la
-    // forma, Linear/Radial, son botones).
-    let combos = h.drawn_boxes("field.combo");
-    assert_eq!(combos.len(), 1, "{combos:?}");
-    // El texto, 6 px adentro y en la fila de los textos; 5 px de su tinta a la parte de la
-    // flecha, las últimas 10 columnas (en el diseño, x 128..212, tinta en 134..197).
+    // El tramado es una lista de verdad: el select del UI kit (el campo `field.text` con el ▾),
+    // desde la fila de los campos (la forma, Linear/Radial, son botones).
     let current = h.editor.options.dither;
     let (_, ink) = h.text(current.label());
-    let combo = combos[0];
-    assert_eq!(combo.top(), bar.top() + 2.0);
-    assert_eq!(combo.height(), 17.0);
-    assert_eq!(ink.left() - combo.left(), 6.0);
-    assert_eq!(ink.top(), bar.top() + 6.0);
-    assert_eq!(combo.right() - ink.right(), 5.0 + 10.0);
-    // Un clic abre la lista en el panel de los menús, colgada del combo.
+    let selects: Vec<Rect> = h
+        .drawn_boxes("field.text")
+        .into_iter()
+        .filter(|f| f.contains_rect(ink))
+        .collect();
+    assert_eq!(selects.len(), 1, "{selects:?}");
+    let select = selects[0];
+    assert_eq!(select.top(), bar.top() + 2.0);
+    assert_eq!(select.height(), 17.0);
+    // El texto, 5 px adentro y en la fila 5 del campo.
+    assert_eq!(ink.left() - select.left(), 5.0);
+    assert_eq!(ink.top(), select.top() + 5.0);
+    // Un clic abre su lista debajo: desde la fila 15 del campo y 11 px más ancha (más la
+    // sombra).
     let other = Dither::ALL.into_iter().find(|d| *d != current).unwrap();
     assert!(!h.has(other.label()), "closed: only the chosen one");
     h.open(current.label());
     assert!(h.has(other.label()), "{:?}", h.nodes);
-    let panel = h.drawn_boxes("menu.panel");
-    assert_eq!(panel.len(), 1, "{panel:?}");
-    assert_eq!(panel[0].left_top(), combo.left_bottom());
-    assert!(panel[0].width() >= combo.width());
+    let list = h.drawn_boxes("select.list");
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert_eq!(list[0].left_top(), select.left_top() + Vec2::new(0.0, 15.0));
+    assert!(list[0].width() >= select.width() + 11.0 + 2.0);
     h.click(other.label());
     assert_eq!(h.editor.options.dither, other);
     for _ in 0..10 {
         h.frame(vec![]);
     }
-    assert_eq!(h.drawn_boxes("menu.panel"), vec![], "closed after picking");
+    assert_eq!(h.drawn_boxes("select.list"), vec![], "closed after picking");
     assert!(h.has(other.label()) && !h.has(current.label()));
 }
 
@@ -1577,10 +1584,10 @@ fn with_pixel_ui_each_radio_option_is_a_button_of_the_group_with_its_led() {
             .filter(|r| span.intersects(*r))
             .count();
         assert_eq!(seps, options.len() - 1, "{tool:?}");
-        // Ya no hay combo para el grupo.
+        // Ya no hay combo (select) para el grupo.
         for label in &group.options {
             let combo = h
-                .drawn_boxes("field.combo")
+                .drawn_boxes("field.text")
                 .into_iter()
                 .any(|c| c.contains(h.rect(label).center()));
             assert!(!combo, "{tool:?}: {label} in a combo");
@@ -1676,13 +1683,16 @@ fn with_pixel_ui_every_text_of_the_bar_is_in_the_design_row() {
         // 1 px con su botón, como el presionado (su LED verde a 3 px de la tinta).
         let shadow = h.skin.as_ref().unwrap().colors().background;
         let on_leds = h.drawn_boxes("button.led.on");
+        // Los textos de los campos (los selects) van en la fila 5 del campo, una más abajo.
+        let fields = h.drawn_boxes("field.text");
         for (text, ink, color) in h
             .texts()
             .into_iter()
             .filter(|(t, _, c)| !buttons.contains(&t.as_str()) && *c != shadow)
         {
             let on = on_leds.iter().any(|d| d.right() + 3.0 == ink.left());
-            let row = h.bar.top() + 6.0 + if on { 1.0 } else { 0.0 };
+            let in_field = fields.iter().any(|f| f.contains_rect(ink));
+            let row = h.bar.top() + 6.0 + if on || in_field { 1.0 } else { 0.0 };
             // Las mayúsculas en la fila 5 (los textos sin mayúsculas, como los números o
             // "px", no bajan de ahí).
             assert!(ink.top() >= row, "{tool:?}: {text:?} {ink:?} {color:?}");

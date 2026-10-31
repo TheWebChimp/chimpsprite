@@ -4,9 +4,8 @@
 //!
 //! - **Textos:** las mayúsculas en la fila 5 (y 76), en el color `text`. Se dibujan a mano porque
 //!   egui centra el texto en la fila y lo deja una más abajo.
-//! - **Combo:** `field.combo` en 9-slice, de las filas 2 a 17. El texto empieza 6 px adentro
-//!   (borde y 5 de relleno), y entre su tinta y la parte de la flecha (las 10 columnas del borde
-//!   derecho de la pieza) quedan 5. La lista es el panel de los menús (`menus::dropdown`).
+//! - **Combo:** el select del UI kit (`kit::select`, mockup de componentes, frame 9), desde la
+//!   fila de los campos: el texto 5 px adentro, el ▾ a la derecha y su lista propia debajo.
 //! - **Número:** el campo numérico del UI kit (`kit::input`), de 27 de ancho, con un `DragValue`
 //!   de egui sin marco adentro: se arrastra o se escribe como siempre. Con unidad, la caja
 //!   `field.unit` ("px") a la derecha; con letra, la caja `field.prefix` a la izquierda. Sus
@@ -21,22 +20,18 @@
 use std::ops::RangeInclusive;
 
 use eframe::egui::{
-    self, Color32, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, WidgetInfo,
-    WidgetType, emath, pos2, vec2,
+    self, Color32, Rect, Response, Sense, Ui, Vec2, WidgetInfo, WidgetType, emath, pos2, vec2,
 };
-use eframe::emath::GuiRounding as _;
 
 use crate::kit::button::Led;
 use crate::kit::input::{self, Affixes, NumberOptions};
 pub(crate) use crate::kit::input::{NumberLook, drag_number};
 use crate::kit::{self, GroupItem};
-use crate::menus::{self, MenuLook, galley, ink_width, solid};
+use crate::menus::{self, galley, solid};
 use crate::pixel_ui;
 use crate::pixel_ui::Tip as _;
-use crate::skin::{Piece, Skin, WidgetState};
+use crate::skin::Skin;
 use crate::tab_bar;
-
-const COMBO: &str = "field.combo";
 
 /// La fila de las mayúsculas de los textos, desde el borde de arriba de la barra.
 pub const CAPS_TOP: f32 = FIELD_TOP + pixel_ui::CONTROL_CAPS;
@@ -55,11 +50,6 @@ pub(crate) fn at_field_top<R>(ui: &mut Ui, look: BarLook, add: impl FnOnce(&mut 
     })
     .inner
 }
-/// Combo: de su borde izquierdo a la tinta del texto, y de la tinta a la parte de la flecha.
-const COMBO_TEXT_LEFT: f32 = 6.0;
-const COMBO_TEXT_GAP: f32 = 5.0;
-/// Sin la pieza: el ancho de la parte de la flecha.
-const FALLBACK_COMBO_RIGHT: f32 = 10.0;
 /// El campo numérico de borde a borde: 1 de borde, 25 de blanco y 1 de borde (en el diseño, x
 /// 278..304, donde la unidad pone su línea divisoria).
 const NUMBER_WIDTH: f32 = 27.0;
@@ -69,26 +59,6 @@ const NUMBER_WIDTH: f32 = 27.0;
 pub struct BarLook<'a> {
     pub skin: &'a Skin,
     pub top: f32,
-}
-
-impl BarLook<'_> {
-    fn piece(&self, name: &str) -> Option<&Piece> {
-        self.skin.piece(name, WidgetState::Normal)
-    }
-}
-
-/// Un cuadro plano de respaldo (sin la pieza): `panel` con borde `outline`.
-fn flat_box(look: BarLook, rect: Rect, ppp: f32) -> Vec<Shape> {
-    let colors = look.skin.colors();
-    vec![
-        solid(rect, colors.panel, ppp),
-        Shape::rect_stroke(
-            rect.round_to_pixels(ppp),
-            0.0,
-            Stroke::new(1.0, colors.outline),
-            StrokeKind::Inside,
-        ),
-    ]
 }
 
 /// El pintor de los controles: el de `ui`, recortado a lo ancho como el scroll de la barra pero
@@ -139,8 +109,8 @@ pub fn info(ui: &mut Ui, look: BarLook, text: &str) -> Response {
     response.tip(text)
 }
 
-/// Un combo: `field.combo` con `selected` adentro y su lista en el panel de los menús. `content`
-/// arma las opciones (con [`menus::choice`]). Su nombre accesible es `selected`.
+/// Un combo: el select del UI kit (`kit::select`) con `selected` adentro, desde la fila de los
+/// campos. `content` arma las opciones (`choices` o `widgets::choice`).
 pub fn combo<R>(
     ui: &mut Ui,
     look: BarLook,
@@ -154,16 +124,12 @@ pub fn combo<R>(
 /// El ancho de un [`combo`] con `selected` (para que uno con varias opciones mida lo de la más
 /// larga y no brinque al cambiar).
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-pub fn combo_width(ui: &Ui, skin: &Skin, selected: &str) -> f32 {
-    let shown = galley(ui, selected, skin.colors().text);
-    let right = skin
-        .piece(COMBO, WidgetState::Normal)
-        .and_then(|p| p.center.map(|c| (p.size[0] - c.x - c.w) as f32))
-        .unwrap_or(FALLBACK_COMBO_RIGHT);
-    COMBO_TEXT_LEFT + ink_width(&shown) + COMBO_TEXT_GAP + right
+pub fn combo_width(ui: &Ui, _skin: &Skin, selected: &str) -> f32 {
+    kit::select::width(ui, selected)
 }
 
-/// Como [`combo`], de `height` y, con `width`, de ese ancho (si no, el de su texto).
+/// Como [`combo`], con `width`, por lo menos de ese ancho (si no, el de su texto). El select mide
+/// siempre lo de un campo (`height` solo reserva el lugar).
 pub fn combo_sized<R>(
     ui: &mut Ui,
     look: BarLook,
@@ -173,51 +139,16 @@ pub fn combo_sized<R>(
     height: f32,
     content: impl FnOnce(&mut Ui) -> R,
 ) -> Response {
-    let colors = look.skin.colors();
-    let shown = galley(ui, selected, colors.text);
-    let piece = look.piece(COMBO);
-    let right = piece
-        .and_then(|p| p.center.map(|c| (p.size[0] - c.x - c.w) as f32))
-        .unwrap_or(FALLBACK_COMBO_RIGHT);
-    let natural = COMBO_TEXT_LEFT + ink_width(&shown) + COMBO_TEXT_GAP + right;
-    let width = width.map_or(natural, |w| w.max(natural));
+    let natural = kit::select::width(ui, selected);
+    let width = width.map_or(natural, |w| w.max(natural)).round();
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    let response = ui.interact(rect, ui.id().with(("bar_combo", id_salt)), Sense::click());
-    let enabled = ui.is_enabled();
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, enabled, selected));
     // En la fila del diseño, en puntos enteros (con la escala entera, píxeles del skin enteros).
-    let drawn = Rect::from_min_size(pos2(rect.left().round(), look.top + FIELD_TOP), rect.size());
-    if ui.is_rect_visible(rect) {
-        let ppp = ui.ctx().pixels_per_point();
-        let mut shapes = match piece {
-            Some(piece) => pixel_ui::piece_shapes(piece, drawn, ppp),
-            None => {
-                let mut flat = flat_box(look, drawn, ppp);
-                // La flecha de respaldo: ▾ de 5×3 con rects.
-                let tip = pos2(drawn.right() - right + 2.0, look.top + CAPS_TOP + 4.0);
-                for (i, w) in [5.0, 3.0, 1.0].into_iter().enumerate() {
-                    let row = Rect::from_min_size(
-                        pos2(tip.x + (5.0 - w) / 2.0, tip.y + i as f32),
-                        vec2(w, 1.0),
-                    );
-                    flat.push(solid(row, colors.text, ppp));
-                }
-                flat
-            }
-        };
-        // Más alto que el de la barra: el texto baja lo que crece (como en los paneles del dock).
-        let at = tab_bar::text_pos(
-            &shown,
-            drawn.left() + COMBO_TEXT_LEFT,
-            look.top + CAPS_TOP,
-            ppp,
-        );
-        shapes.push(Shape::galley(at, shown, colors.text));
-        painter(ui, look).extend(shapes);
-    }
-    let menu_look = MenuLook::new(look.skin, look.top);
-    menus::dropdown(&menu_look, &response, drawn, content);
-    response
+    let drawn = Rect::from_min_size(
+        pos2(rect.left().round(), look.top + FIELD_TOP),
+        vec2(width, kit::select::HEIGHT),
+    );
+    let id = ui.id().with(("bar_combo", id_salt));
+    kit::select::select_at(ui, look.skin, drawn, id, selected, content)
 }
 
 /// Las opciones de un combo de `values`, cada una con su `name`: elegir una cambia `current`.
@@ -460,7 +391,7 @@ pub fn checkbox(ui: &mut Ui, look: BarLook, checked: &mut bool, label: &str) -> 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput};
+    use eframe::egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Shape};
 
     /// Un campo numérico (con unidad) en una barra de prueba, manejado con eventos crudos.
     struct Bar {

@@ -8,6 +8,7 @@ pub mod check;
 pub mod color_button;
 pub mod group;
 pub mod input;
+pub mod select;
 pub mod slider;
 pub mod tabs;
 

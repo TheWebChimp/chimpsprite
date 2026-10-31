@@ -175,8 +175,8 @@ pub fn color_edit(
 }
 
 /// Un desplegable con `selected` a la vista; `content` arma las opciones (con
-/// [`choice`]). Con Pixel UI, el combo de la barra (`field.combo`) y su lista en el panel de los
-/// menús; sin él, el `ComboBox` de egui (con `id_salt`).
+/// [`choice`]). Con Pixel UI, el select del UI kit (`kit::select`) con su lista; sin él, el
+/// `ComboBox` de egui (con `id_salt`).
 pub fn combo(
     ui: &mut egui::Ui,
     id_salt: &str,

@@ -87,7 +87,7 @@ fn clicks_id() -> egui::Id {
 }
 
 /// Las secciones, una por pestaña.
-const SECTIONS: [&str; 7] = [
+const SECTIONS: [&str; 8] = [
     "Buttons",
     "Button group",
     "Inputs",
@@ -95,6 +95,7 @@ const SECTIONS: [&str; 7] = [
     "Checks",
     "Slider",
     "Color",
+    "Select",
 ];
 
 /// En la memoria de egui: la sección a la vista.
@@ -142,7 +143,8 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
                 3 => tabs_section(ui, skin, origin),
                 4 => checks_section(ui, skin, origin),
                 5 => slider_section(ui, skin, origin),
-                _ => color_section(ui, skin, origin),
+                6 => color_section(ui, skin, origin),
+                _ => select_section(ui, skin, origin),
             };
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
@@ -985,4 +987,86 @@ fn color_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     });
     ui.data_mut(|d| d.insert_temp(live_colors_id(), (opaque, tint)));
     y + button::HEIGHT
+}
+
+/// Sección Select, como en el mockup: el cerrado (109 de ancho) normal y deshabilitado, uno cada
+/// 21 filas con su nombre a la derecha; a la derecha, el abierto con tres opciones (la primera
+/// con el puntero encima); debajo, uno de verdad.
+const SELECT_SAMPLE: &str = "Select an option…";
+const SELECT_WIDTH: f32 = 109.0;
+const SELECT_OPEN_LEFT: f32 = 200.0;
+const SELECT_OPTIONS: [&str; 3] = ["Option 1", "Option 2", "Option 3"];
+const LIVE_SELECT: [&str; 4] = ["Nearest", "Bilinear", "RotSprite", "Smooth edges"];
+
+/// En la memoria de egui: la opción elegida del select de verdad.
+fn live_select_id() -> egui::Id {
+    egui::Id::new("ui_catalog_select")
+}
+
+fn select_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    use super::select;
+    let colors = *skin.colors();
+    let left = origin.x;
+    let mut y = origin.y;
+    let mut shapes: Vec<Shape> = Vec::new();
+    for state in [InputState::Normal, InputState::Disabled] {
+        let rect = Rect::from_min_size(pos2(left, y), vec2(SELECT_WIDTH, select::HEIGHT));
+        shapes.extend(select::forced_shapes(
+            ui,
+            skin,
+            rect,
+            SELECT_SAMPLE,
+            state,
+            &[],
+            None,
+        ));
+        let (name, _) = pixel_draw::caps_text(
+            ui,
+            state.name(),
+            rect.right() + STATE_LABEL_GAP,
+            y + select::CAPS_TOP,
+            colors.text,
+        );
+        shapes.push(name);
+        y += INPUT_PITCH;
+    }
+    let open = Rect::from_min_size(
+        pos2(left + SELECT_OPEN_LEFT, origin.y),
+        vec2(SELECT_WIDTH, select::HEIGHT),
+    );
+    shapes.extend(select::forced_shapes(
+        ui,
+        skin,
+        open,
+        SELECT_SAMPLE,
+        InputState::Normal,
+        &SELECT_OPTIONS,
+        Some(0),
+    ));
+    ui.painter().extend(shapes);
+    // El de verdad.
+    let list_bottom = open.top()
+        + select::LIST_TOP
+        + select::LIST_PAD_TOP
+        + SELECT_OPTIONS.len() as f32 * select::ITEM_HEIGHT
+        + select::LIST_PAD_BOTTOM;
+    let y = y.max(list_bottom) + INPUT_PITCH;
+    let mut pick: usize = ui.data(|d| d.get_temp(live_select_id()).unwrap_or(0));
+    let rect = Rect::from_min_size(pos2(left, y), vec2(PAGE_WIDTH, select::HEIGHT));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        select::select(
+            ui,
+            skin,
+            "live",
+            LIVE_SELECT[pick],
+            Some(SELECT_WIDTH),
+            |ui| {
+                for (i, label) in LIVE_SELECT.iter().enumerate() {
+                    crate::widgets::choice(ui, &mut pick, i, label);
+                }
+            },
+        );
+    });
+    ui.data_mut(|d| d.insert_temp(live_select_id(), pick));
+    y + select::HEIGHT
 }
