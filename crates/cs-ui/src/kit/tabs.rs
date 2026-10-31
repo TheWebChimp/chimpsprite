@@ -1,16 +1,13 @@
-//! Las pestañas (paso 4 del UI kit), con las medidas del mockup de componentes (frame 9). Una sola
-//! tira para los dos estilos:
+//! Las pestañas (paso 4 del UI kit), con las medidas del mockup de componentes (frame 9), para la
+//! barra de pestañas de documentos y las secciones del panel derecho:
 //!
-//! - **Documento** (la barra de pestañas y las secciones del panel derecho): `tab` (café) y
+//! - `tab` (café) y
 //!   `tab.active` (clara y abierta abajo), sobre la línea grabada, que se corta debajo de la
 //!   activa; a cada lado de la activa, el tramado `tab.shade.left` / `tab.shade.right` en la fila
 //!   oscura de la línea. Con el puntero encima, `tab.hover` (el relleno más claro). Los textos
 //!   van 6 px adentro (el borde de 2 y 4 de aire) con las mayúsculas en la fila 6; la marca del
 //!   final (○ con cambios, × para cerrar), 4 px después de la tinta y 4 antes del borde de 2.
 //!   Entre pestañas, 8 px (las marcas azules del mockup).
-//! - **Panel** (la pestaña "Layer" del mockup): `tab.panel.active` de borde negro, pegada a la
-//!   caja del panel (`panel.box`), y `tab.panel` / `tab.panel.hover` las demás (no están en el
-//!   mockup). El texto, 5 px adentro (borde de 2 y 3 de aire) con las mayúsculas en la fila 5.
 //!
 //! Si no entran, se achican parejo (las más anchas primero) hasta tres letras y "..."; si ni así
 //! entran, se recorren con las flechas `tab.arrow.prev` / `tab.arrow.next` (12×12, juntas 23 de
@@ -31,15 +28,12 @@ use crate::tab_bar::{ellipsis, fit_widths, text_pos};
 
 /// Las piezas.
 pub const TAB: &str = "tab";
-pub const PANEL_TAB: &str = "tab.panel";
 pub const SHADE_LEFT: &str = "tab.shade.left";
 pub const SHADE_RIGHT: &str = "tab.shade.right";
 pub const ARROW_PREV: &str = "tab.arrow.prev";
 pub const ARROW_NEXT: &str = "tab.arrow.next";
 pub const DIRTY_MARK: &str = "icon.tab_dirty";
 pub const CLOSE_MARK: &str = "icon.tab_close";
-pub const PANEL_BOX: &str = "panel.box";
-pub const PANEL_DIVIDER: &str = "panel.divider";
 
 /// Entre una pestaña y la siguiente (y entre la última y las flechas).
 pub const GAP: f32 = 8.0;
@@ -65,63 +59,9 @@ pub const SWATCH_GAP: f32 = 3.0;
 pub const ARROW_SIZE: f32 = 12.0;
 pub const ARROWS_WIDTH: f32 = 2.0 * ARROW_SIZE - 1.0;
 pub const ARROWS_TOP: f32 = 1.0;
-/// Las pestañas de panel: 16 filas (la de abajo es el borde de arriba del panel); la activa, 17
-/// (sigue en el blanco del panel). El texto, 5 adentro y en la fila 5.
-pub const PANEL_HEIGHT: f32 = 16.0;
-pub const PANEL_ACTIVE_HEIGHT: f32 = 17.0;
-pub const PANEL_PAD: f32 = 3.0;
-pub const PANEL_CAPS_TOP: f32 = 5.0;
-/// Entre pestañas de panel (no está en el mockup).
-pub const PANEL_GAP: f32 = 2.0;
-/// La esquina redondeada de arriba a la izquierda de la caja del panel: las pestañas empiezan
-/// después. La activa, si es la primera, se estira esos 2 px para quedar pegada al borde de la
-/// caja (como la "Layer" del mockup), con el texto en su lugar.
-pub const PANEL_CORNER: f32 = 2.0;
-
-/// Los dos estilos de la tira.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum TabStyle {
-    Document,
-    Panel,
-}
-
-impl TabStyle {
-    fn height(self, active: bool) -> f32 {
-        match (self, active) {
-            (TabStyle::Document, false) => HEIGHT,
-            (TabStyle::Document, true) => ACTIVE_HEIGHT,
-            (TabStyle::Panel, false) => PANEL_HEIGHT,
-            (TabStyle::Panel, true) => PANEL_ACTIVE_HEIGHT,
-        }
-    }
-
-    fn pad(self) -> f32 {
-        match self {
-            TabStyle::Document => PAD,
-            TabStyle::Panel => PANEL_PAD,
-        }
-    }
-
-    fn caps_top(self) -> f32 {
-        match self {
-            TabStyle::Document => CAPS_TOP,
-            TabStyle::Panel => PANEL_CAPS_TOP,
-        }
-    }
-
-    pub fn gap(self) -> f32 {
-        match self {
-            TabStyle::Document => GAP,
-            TabStyle::Panel => PANEL_GAP,
-        }
-    }
-
-    fn piece(self) -> &'static str {
-        match self {
-            TabStyle::Document => TAB,
-            TabStyle::Panel => PANEL_TAB,
-        }
-    }
+/// El alto de una pestaña: la activa tapa la línea grabada.
+fn height(active: bool) -> f32 {
+    if active { ACTIVE_HEIGHT } else { HEIGHT }
 }
 
 /// La marca del final de una pestaña de documento.
@@ -187,7 +127,6 @@ pub struct Strip {
     pub right: f32,
     pub top: f32,
     pub line: Rangef,
-    pub style: TabStyle,
     /// Si no entran ni achicadas hasta tres letras: con `true`, flechas para recorrerlas; con
     /// `false` (la barra de documentos), se achican todas por igual hasta caber (sin marca si no
     /// le entra).
@@ -195,20 +134,19 @@ pub struct Strip {
 }
 
 impl Strip {
-    pub fn new(left: f32, right: f32, top: f32, style: TabStyle) -> Self {
+    pub fn new(left: f32, right: f32, top: f32) -> Self {
         Strip {
             left,
             right,
             top,
             line: Rangef::new(left, right),
-            style,
             scroll: true,
         }
     }
 
     /// La fila de arriba de la línea grabada (o del borde del panel).
     pub fn bottom(&self) -> f32 {
-        self.top + self.style.height(false) - matches!(self.style, TabStyle::Panel) as u8 as f32
+        self.top + HEIGHT
     }
 }
 
@@ -253,7 +191,7 @@ fn fit_name(ui: &Ui, name: &str, room: f32) -> String {
 
 /// Lo que ocupa una pestaña además de la tinta de su nombre: los bordes, el aire, el cuadrito y
 /// la marca.
-pub fn chrome(style: TabStyle, item: &TabItem) -> f32 {
+pub fn chrome(item: &TabItem) -> f32 {
     let swatch = if item.color.is_some() {
         SWATCH + SWATCH_GAP
     } else {
@@ -264,12 +202,12 @@ pub fn chrome(style: TabStyle, item: &TabItem) -> f32 {
     } else {
         MARK_GAP + MARK_SIZE
     };
-    2.0 * (EDGE + style.pad()) + swatch + mark
+    2.0 * (EDGE + PAD) + swatch + mark
 }
 
 /// El ancho justo de una pestaña.
-pub fn natural_width(ui: &Ui, style: TabStyle, item: &TabItem) -> f32 {
-    chrome(style, item) + ink(ui, &item.label)
+pub fn natural_width(ui: &Ui, item: &TabItem) -> f32 {
+    chrome(item) + ink(ui, &item.label)
 }
 
 /// Una pestaña acomodada: su rect (sin lo que la activa baja) y el nombre como entra.
@@ -292,10 +230,9 @@ pub struct Layout {
 /// Acomoda `items` en la tira desde `offset`: achica parejo las más anchas hasta tres letras y
 /// "..." y, si ni así entran, deja lugar a la derecha para las flechas.
 pub fn layout(ui: &Ui, strip: &Strip, items: &[TabItem], offset: usize) -> Layout {
-    let style = strip.style;
-    let gap = style.gap();
+    let gap = GAP;
     let n = items.len();
-    let natural: Vec<f32> = items.iter().map(|t| natural_width(ui, style, t)).collect();
+    let natural: Vec<f32> = items.iter().map(|t| natural_width(ui, t)).collect();
     let room_all = (strip.right - strip.left - gap * n.saturating_sub(1) as f32)
         .floor()
         .max(0.0);
@@ -309,7 +246,7 @@ pub fn layout(ui: &Ui, strip: &Strip, items: &[TabItem], offset: usize) -> Layou
     let mins: Vec<f32> = items
         .iter()
         .zip(&natural)
-        .map(|(t, &w)| w.min(chrome(style, t) + short))
+        .map(|(t, &w)| w.min(chrome(t) + short))
         .collect();
     let min = mins.iter().copied().fold(0.0, f32::max);
     let fitted = fit_widths(&natural, room_all, min);
@@ -347,8 +284,8 @@ pub fn layout(ui: &Ui, strip: &Strip, items: &[TabItem], offset: usize) -> Layou
         if i > offset && x + widths[i] > right {
             break;
         }
-        let rect = Rect::from_min_size(pos2(x, strip.top), vec2(widths[i], style.height(false)));
-        let room = (widths[i] - chrome(style, &items[i])).max(0.0);
+        let rect = Rect::from_min_size(pos2(x, strip.top), vec2(widths[i], HEIGHT));
+        let room = (widths[i] - chrome(&items[i])).max(0.0);
         let name = fit_name(ui, &items[i].label, room);
         placed.push(Placed {
             index: i,
@@ -378,7 +315,6 @@ pub struct TabLook {
 pub fn tab_shapes(
     ui: &Ui,
     skin: &Skin,
-    style: TabStyle,
     rect: Rect,
     item: &TabItem,
     name: &str,
@@ -386,7 +322,7 @@ pub fn tab_shapes(
 ) -> Vec<Shape> {
     let ppp = ui.ctx().pixels_per_point();
     let colors = *skin.colors();
-    let drawn = rect.with_max_y(rect.top() + style.height(look.active));
+    let drawn = rect.with_max_y(rect.top() + height(look.active));
     let state = if look.active {
         WidgetState::Active
     } else if look.hovered {
@@ -394,12 +330,12 @@ pub fn tab_shapes(
     } else {
         WidgetState::Normal
     };
-    let mut shapes = match skin.piece(style.piece(), state) {
+    let mut shapes = match skin.piece(TAB, state) {
         Some(piece) => pixel_ui::piece_shapes(piece, drawn, ppp),
         None => flat_tab(drawn, look.active, &colors, ppp),
     };
-    let mut left = rect.left() + EDGE + style.pad();
-    let caps = rect.top() + style.caps_top();
+    let mut left = rect.left() + EDGE + PAD;
+    let caps = rect.top() + CAPS_TOP;
     if let Some(color) = item.color {
         let swatch = Rect::from_min_size(pos2(left, caps), Vec2::splat(SWATCH));
         shapes.push(Shape::rect_filled(swatch, 0.0, colors.field_text));
@@ -560,10 +496,7 @@ pub fn tab_strip(
     }
     // La rueda sobre la fila las recorre.
     if lay.arrows.is_some() {
-        let row = Rect::from_x_y_ranges(
-            strip.left..=strip.right,
-            strip.top..=strip.top + strip.style.height(false),
-        );
+        let row = Rect::from_x_y_ranges(strip.left..=strip.right, strip.top..=strip.top + HEIGHT);
         if ui.rect_contains_pointer(row) {
             let scroll: f32 = ui.input(|i| {
                 i.raw
@@ -586,11 +519,9 @@ pub fn tab_strip(
     let enabled = ui.is_enabled();
     let active_rect = active
         .and_then(|a| lay.placed.iter().find(|p| p.index == a))
-        .map(|p| p.rect.with_max_y(p.rect.top() + strip.style.height(true)));
+        .map(|p| p.rect.with_max_y(p.rect.top() + ACTIVE_HEIGHT));
     let mut shapes = Vec::new();
-    if strip.style == TabStyle::Document {
-        shapes.extend(line_shapes(ui, skin, &strip, active_rect));
-    }
+    shapes.extend(line_shapes(ui, skin, &strip, active_rect));
     let mut event = None;
     // La activa, al final: tapa a sus vecinas si se pisan.
     let mut order: Vec<&Placed> = lay.placed.iter().collect();
@@ -598,31 +529,27 @@ pub fn tab_strip(
     for p in order {
         let item = &items[p.index];
         let is_active = active == Some(p.index);
-        // La activa al comienzo de una tira de panel tapa la esquina de la caja.
-        let flush = strip.style == TabStyle::Panel && is_active && p.rect.left() <= strip.left;
-        let extra = if flush { PANEL_CORNER } else { 0.0 };
-        let rect = p.rect.with_min_x(p.rect.left() - extra);
-        let hit = rect.with_max_y(rect.top() + strip.style.height(is_active));
+        let rect = p.rect;
+        let hit = rect.with_max_y(rect.top() + height(is_active));
         let response = ui.interact(hit, id.with(("tab", p.index)), Sense::click());
         response.widget_info(|| {
             WidgetInfo::selected(WidgetType::Button, enabled, is_active, &item.label)
         });
         // La marca va después de la pestaña: gana el clic. Si la pestaña es más angosta que
         // su marco, no hay marca ni zona de clic (le robarían el clic a la vecina).
-        let close =
-            (item.mark != TabMark::None && rect.width() >= chrome(strip.style, item)).then(|| {
-                let label = format!("Close {}", item.label);
-                let close = ui
-                    .interact(
-                        mark_rect(rect).expand(MARK_HIT),
-                        id.with(("tab_close", p.index)),
-                        Sense::click(),
-                    )
-                    .on_hover_cursor(CursorIcon::PointingHand)
-                    .tip("Close");
-                close.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &label));
-                close
-            });
+        let close = (item.mark != TabMark::None && rect.width() >= chrome(item)).then(|| {
+            let label = format!("Close {}", item.label);
+            let close = ui
+                .interact(
+                    mark_rect(rect).expand(MARK_HIT),
+                    id.with(("tab_close", p.index)),
+                    Sense::click(),
+                )
+                .on_hover_cursor(CursorIcon::PointingHand)
+                .tip("Close");
+            close.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &label));
+            close
+        });
         let shown_item = if close.is_some() {
             item.clone()
         } else {
@@ -636,16 +563,7 @@ pub fn tab_strip(
             hovered: !is_active && response.hovered(),
             mark_hovered: close.as_ref().is_some_and(|c| c.hovered()),
         };
-        let mut drawn = tab_shapes(ui, skin, strip.style, rect, &shown_item, &p.name, look);
-        if extra > 0.0 {
-            // El texto, donde estaba antes de estirar la pestaña.
-            for shape in &mut drawn {
-                if let Shape::Text(text) = shape {
-                    text.pos.x += extra;
-                }
-            }
-        }
-        shapes.extend(drawn);
+        shapes.extend(tab_shapes(ui, skin, rect, &shown_item, &p.name, look));
         let closed = close.is_some_and(|c| c.clicked())
             || (item.mark != TabMark::None && response.middle_clicked());
         if closed {
@@ -692,64 +610,6 @@ pub fn tab_strip(
     painter.set_opacity(1.0);
     painter.extend(shapes);
     event
-}
-
-/// La caja de un panel (`panel.box` en 9-slice) en `rect`: el borde negro, la fila blanca de
-/// arriba, `#ddcebf` a la izquierda y blanco a la derecha.
-pub fn panel_shapes(ui: &Ui, skin: &Skin, rect: Rect) -> Vec<Shape> {
-    let ppp = ui.ctx().pixels_per_point();
-    match skin.piece(PANEL_BOX, WidgetState::Normal) {
-        Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
-        None => {
-            let colors = skin.colors();
-            vec![
-                Shape::rect_filled(rect, 0.0, colors.panel),
-                Shape::rect_stroke(
-                    rect.round_to_pixels(ppp),
-                    0.0,
-                    Stroke::new(1.0, colors.outline),
-                    StrokeKind::Inside,
-                ),
-            ]
-        }
-    }
-}
-
-/// El divisor grabado de adentro de un panel: la fila blanca y la `#bda499` debajo, de `x.min` a
-/// `x.max` (adentro del borde), desde la fila `top`.
-pub fn divider_shapes(ui: &Ui, skin: &Skin, x: Rangef, top: f32) -> Vec<Shape> {
-    let ppp = ui.ctx().pixels_per_point();
-    let rect = Rect::from_x_y_ranges(x, top..=top + 2.0);
-    match skin.piece(PANEL_DIVIDER, WidgetState::Normal) {
-        Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
-        None => vec![pixel_ui::etched_hline(x, top, skin.colors(), ppp)],
-    }
-}
-
-/// Un panel con pestañas en `rect`: las pestañas arriba (estilo panel) y la caja debajo, que
-/// empieza en la fila de abajo de las pestañas. Devuelve lo que se pidió y el lugar de adentro
-/// del panel (sin el borde ni la fila blanca de arriba).
-pub fn tabbed_panel(
-    ui: &mut Ui,
-    skin: &Skin,
-    id: Id,
-    rect: Rect,
-    items: &[TabItem],
-    active: Option<usize>,
-) -> (Option<TabEvent>, Rect) {
-    let strip = Strip::new(
-        rect.left() + PANEL_CORNER,
-        rect.right(),
-        rect.top(),
-        TabStyle::Panel,
-    );
-    let body = Rect::from_min_max(pos2(rect.left(), strip.bottom()), rect.max);
-    let mut painter = ui.painter().clone();
-    painter.set_opacity(1.0);
-    painter.extend(panel_shapes(ui, skin, body));
-    let event = tab_strip(ui, skin, id, strip, items, active);
-    let inner = Rect::from_min_max(body.min + vec2(2.0, 2.0), body.max - vec2(2.0, 1.0));
-    (event, inner)
 }
 
 /// Respaldo de la caja de una pestaña: el fondo (la activa) o `canvas` (las demás) con un borde

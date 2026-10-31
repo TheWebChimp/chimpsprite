@@ -151,12 +151,8 @@ pub(crate) fn pixel_tab_bar(
     ui.allocate_rect(bar, Sense::hover());
     // Las pestañas del UI kit (estilo documento) desde `FIRST_TAB_X`; la línea grabada, a todo
     // el ancho (Home pone su suelo encima).
-    let mut strip = kit_tabs::Strip::new(
-        bar.left() + FIRST_TAB_X,
-        bar.right(),
-        bar.top() + TAB_TOP,
-        kit_tabs::TabStyle::Document,
-    );
+    let mut strip =
+        kit_tabs::Strip::new(bar.left() + FIRST_TAB_X, bar.right(), bar.top() + TAB_TOP);
     strip.line = bar.x_range();
     strip.scroll = false;
     let items: Vec<kit_tabs::TabItem> = tabs

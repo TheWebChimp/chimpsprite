@@ -101,20 +101,6 @@ oculta.
     del medio (23 de ancho). `.hover` (27,935 y 40,935): el relleno blanco; `.disabled` (53,935 y
     66,935): la flecha en (189,164,153). Las dos variantes no están en el diseño.
   - `icon.tab_dirty` (○, cambios sin guardar) e `icon.tab_close` (×, sin cambios) miden 5×5.
-  - **Pestaña de panel** (la "Layer" del mockup, x 186..219, y 302): `tab.panel.active` (1,952,
-    34×17, centro (3,2,28,12)), de borde negro, pegada a la caja del panel (sus 2 filas de abajo
-    son el borde y el blanco de arriba del panel), sin el texto. `tab.panel` (37,952, 34×16) y
-    `tab.panel.hover` (73,952) no están en el diseño: la misma forma, cerrada abajo, con el
-    relleno (221,206,191) o (234,224,221).
-    Las pestañas de panel empiezan 2 px adentro de la caja, después de su esquina redondeada; la
-    activa, si es la primera, se estira esos 2 px para quedar pegada al borde (con el texto en su
-    lugar).
-  - `panel.box` (94,935, 8×4, centro (3,2,2,1)): la caja del panel: borde negro con las esquinas
-    de arriba de 2 px, la fila blanca de arriba, (221,206,191) a la izquierda, (234,224,221)
-    adentro y blanco a la derecha (x 262..264 del mockup); la esquina de arriba a la izquierda (la
-    tapa la pestaña) y el borde de abajo no están en el diseño. `panel.divider` (103,935, 3×2): el
-    divisor de adentro, la fila blanca sobre la (189,164,153) (y 345). El skin creció a 320×1000
-    para estas piezas.
   - Home: la casita animada son `icon.home.0`, `icon.home.1` e `icon.home.2` (21×21, casita y
     humo juntos), copiados de los 3 frames de `home animation.aseprite`, de 300 ms cada uno
     (`duration=300`). Van a 3 px del borde
@@ -390,14 +376,19 @@ oculta.
 
 Con Pixel UI encendido, la app vuelve a leer ese archivo al guardarlo (lo revisa una vez por
 segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en el log.
-- **Menús desplegables** (del diseño de `Design.aseprite`, frame 3, capa "Layer 4"):
-  - `menu.title.open` (25×18, centro (2,2,21,14)): la caja del título abierto, redondeada
-    arriba y sin el texto. Las dos filas de abajo se dibujan sobre el borde de arriba del panel
-    para unir los dos.
-  - `menu.panel` (5×5, centro (2,2,1,1)): el panel en 9-slice; línea (89,77,77), bisel claro
-    arriba y a la derecha y (221,206,191) a la izquierda y abajo, esquinas cortadas. En el
-    diseño, la esquina de arriba a la izquierda queda tapada por la caja: en la pieza es la de
-    la derecha en espejo (la usan los submenús).
+- **Menús desplegables** (del diseño de `Design.aseprite`, frame 3, capa "Layer 4"; el título
+  abierto, el panel y el separador, del mockup de componentes, frame 9: la "Layer" con su caja,
+  x 207, y 480):
+  - `menu.title.open` (1,952, 34×17, centro (3,2,28,12)): la caja del título abierto, de borde
+    negro, redondeada arriba y sin el texto. Sus 2 filas de abajo son el borde y el blanco de
+    arriba del panel: se dibujan encima para unir los dos.
+  - `menu.panel` (94,935, 8×4, centro (3,2,2,1)): el panel: borde negro con las esquinas de
+    arriba de 2 px, la fila blanca de arriba, (221,206,191) a la izquierda, (234,224,221)
+    adentro y blanco a la derecha. La esquina de arriba a la izquierda (la tapa el título) y el
+    borde de abajo no están en el diseño. También lo usan los submenús, las listas y el menú
+    flotante del dock.
+  - `menu.separator` (103,935, 3×2): el separador, la fila blanca sobre la (189,164,153), de
+    borde a borde del panel (encima de los biseles).
   - `key.ctrl` (19×7): la tecla Ctrl como está dibujada; sus letras y esquinas son
     transparentes (en el diseño, el relleno del panel). `key` (19×7, centro (1,1,17,5)): la
     misma tecla sin letras, para las otras teclas con nombre. `key.shift` (22×7): la tecla
@@ -407,8 +398,8 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     las 4 esquinas de afuera transparentes (el relleno (234,224,221) del panel) y una fila de
     sombra (230,231,240) abajo del interior blanco. Van al borde del texto de los ítems, 2
     filas arriba de las mayúsculas, y el texto 3 px después. No son las de la barra (13×14).
-  - `color.menu_highlight` (blanco): el brillo del panel y la línea clara de los separadores;
-    la otra línea es `background`. El atajo tenue (el "+N") es `ruler_tick`.
+  - `color.menu_highlight` (blanco): el brillo del panel y, sin `menu.separator`, la línea clara
+    de los separadores (la otra, `canvas`). El atajo tenue (el "+N") es `ruler_tick`.
 - **Tooltip de la barra de íconos** (del mockup, frame 2, junto a la barra):
   - `tooltip.bubble` (49×20, centro (11,13,34,4)): el globo naranja con la cola a la izquierda.
     La cola mide 8 de ancho y su punta está en la fila 8; el cuerpo (41×20) tiene las esquinas

@@ -1,5 +1,6 @@
 //! Los menús de la barra con Pixel UI, como en el diseño (`Design.aseprite`, frame 3, capa
-//! "Layer 4"):
+//! "Layer 4"; el título abierto, el panel y el separador, del mockup de componentes, frame 9: la
+//! "Layer" con su caja):
 //!
 //! - **Títulos:** subrayan su primera letra (la app no tiene mnemónicos). El título abierto va en
 //!   una caja redondeada arriba (`menu.title.open`) que se une al panel sin línea entre los dos.
@@ -9,7 +10,7 @@
 //!   nombre (Ctrl, Shift, Alt, Del…) son badges: `key` estirada con el nombre calado en
 //!   chimpfont, en mayúsculas. Entre tecla y tecla, un + de 5×5 hecho con rects, y al final la
 //!   tecla en el color tenue (`ruler_tick`, el del diseño).
-//! - **Separadores:** la línea grabada del diseño, `menu_highlight` y debajo `background`.
+//! - **Separadores:** `menu.separator`, la fila blanca sobre la (189,164,153), de borde a borde.
 //! - **Casillas:** las casillas del diseño, `menu.check.on` (marcada) y `menu.check` (sin
 //!   marcar), de 11×12, al borde del texto de los ítems, 2 filas arriba de las mayúsculas, y el
 //!   texto 3 px después. Si el skin no trae la pieza, un cuadro plano de respaldo.
@@ -39,6 +40,8 @@ const LOOK_TAG: &str = "chimpsprite_pixel_menu";
 
 const TITLE_OPEN: &str = "menu.title.open";
 const PANEL: &str = "menu.panel";
+/// El separador: la fila blanca sobre la (189,164,153), de borde a borde (encima del bisel).
+const SEPARATOR: &str = "menu.separator";
 const KEY: &str = "key";
 const CHECK: &str = "menu.check";
 const CHECK_ON: &str = "menu.check.on";
@@ -125,6 +128,7 @@ const ARROW_TOP: f32 = 1.0;
 pub(crate) struct MenuLook {
     title_open: Option<Piece>,
     panel: Option<Piece>,
+    separator: Option<Piece>,
     key: Option<Piece>,
     check: Option<Piece>,
     check_on: Option<Piece>,
@@ -149,6 +153,7 @@ impl MenuLook {
         Self {
             title_open: piece(TITLE_OPEN),
             panel: piece(PANEL),
+            separator: piece(SEPARATOR),
             key: piece(KEY),
             check: piece(CHECK),
             check_on: piece(CHECK_ON),
@@ -774,14 +779,23 @@ pub(crate) fn separator(ui: &mut Ui) {
         ui.available_width()
     };
     let (rect, _) = ui.allocate_exact_size(vec2(width, SEPARATOR_HEIGHT), Sense::hover());
-    let light = Rect::from_min_size(
-        pos2(rect.left() - ROW_BLEED, rect.top() + SEPARATOR_AIR),
-        vec2(rect.width() + 2.0 * ROW_BLEED, 1.0),
+    // De borde a borde del panel: el bisel y el relleno (`PANEL_MARGIN` menos la línea).
+    let side = PANEL_MARGIN.left as f32 - 1.0;
+    let line = Rect::from_min_size(
+        pos2(rect.left() - side, rect.top() + SEPARATOR_AIR),
+        vec2(rect.width() + 2.0 * side, 2.0),
     );
-    ui.painter().extend([
-        solid(light, look.colors.menu_highlight, ppp),
-        solid(light.translate(vec2(0.0, 1.0)), look.colors.background, ppp),
-    ]);
+    let shapes = match &look.separator {
+        Some(piece) => pixel_ui::piece_shapes(piece, line, ppp),
+        None => {
+            let light = line.with_max_y(line.top() + 1.0);
+            vec![
+                solid(light, look.colors.menu_highlight, ppp),
+                solid(light.translate(vec2(0.0, 1.0)), look.colors.canvas, ppp),
+            ]
+        }
+    };
+    ui.painter().extend(shapes);
 }
 
 /// Un submenú: en un panel pixel, una fila con ▸ y el mismo panel al costado; si no, el

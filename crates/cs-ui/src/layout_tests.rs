@@ -1505,27 +1505,28 @@ fn ctrl_alt_shortcuts_have_the_alt_badge() {
 }
 
 #[test]
-fn separators_are_the_etched_line_of_the_design() {
+fn separators_are_the_divider_of_the_design_from_border_to_border() {
     let mut h = two_tabs(Some(0));
     open_menu(&mut h, "File");
-    let colors = *h.app.pixel.skin().unwrap().colors();
     let panel = union(&h.drawn("menu.panel")).expect("the panel");
-    let rects = h.colored_rects();
-    // Entre los biseles: de la x 2 del panel a 2 antes del borde derecho.
-    let x = egui::Rangef::new(panel.left() + 2.0, panel.right() - 2.0);
-    let lights: Vec<Rect> = rects
-        .iter()
-        .filter(|(c, r)| *c == colors.menu_highlight && r.height() == 1.0 && r.x_range() == x)
-        .map(|(_, r)| *r)
-        .collect();
-    // El menú File tiene tres separadores.
-    assert_eq!(lights.len(), 3, "{lights:?}");
-    for light in lights {
-        let dark = light.translate(Vec2::new(0.0, 1.0));
-        assert!(rects.contains(&(colors.background, dark)), "{dark:?}");
+    // `menu.separator` (la fila blanca sobre la (189,164,153)), de borde a borde: encima de los
+    // biseles, adentro de la línea.
+    let mut lines: Vec<Rect> = Vec::new();
+    for r in h.drawn("menu.separator") {
+        match lines.iter_mut().find(|l| l.top() == r.top()) {
+            Some(l) => *l = l.union(r),
+            None => lines.push(r),
+        }
     }
-    assert_eq!(colors.menu_highlight, egui::Color32::WHITE);
-    assert_eq!(colors.background, egui::Color32::from_rgb(221, 206, 191));
+    // El menú File tiene tres separadores.
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    for line in lines {
+        assert_eq!(
+            line.x_range(),
+            egui::Rangef::new(panel.left() + 1.0, panel.right() - 1.0)
+        );
+        assert_eq!(line.height(), 2.0);
+    }
 }
 
 #[test]

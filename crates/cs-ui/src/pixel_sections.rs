@@ -148,7 +148,7 @@ pub fn tabs(ui: &mut Ui, skin: &Skin, tabs: &[Tab], active: Option<usize>) -> Op
     let left = ui.cursor().left().round();
     let right = ui.max_rect().right();
     let top = ui.cursor().top().round();
-    let strip = kit_tabs::Strip::new(left, right, top, kit_tabs::TabStyle::Document);
+    let strip = kit_tabs::Strip::new(left, right, top);
     let items: Vec<kit_tabs::TabItem> = tabs
         .iter()
         .map(|t| match t.color {

@@ -70,7 +70,7 @@ fn document_tabs_measure_like_the_mockup_with_8_px_between_them() {
     let mut lay = None;
     let mut inks = vec![];
     frame(&ctx, vec![], |ui| {
-        let strip = Strip::new(AT.x, AT.x + 400.0, AT.y, TabStyle::Document);
+        let strip = Strip::new(AT.x, AT.x + 400.0, AT.y);
         lay = Some(layout(ui, &strip, &doc_items(), 0));
         inks = doc_items().iter().map(|t| ink(ui, &t.label)).collect();
     });
@@ -131,15 +131,7 @@ fn a_tab_has_its_text_6_px_in_on_row_6_and_its_mark_6_px_before_the_edge() {
                 hovered,
                 mark_hovered: false,
             };
-            let shapes = tab_shapes(
-                ui,
-                &skin,
-                TabStyle::Document,
-                rect,
-                &items[0],
-                "Design.chimp",
-                look,
-            );
+            let shapes = tab_shapes(ui, &skin, rect, &items[0], "Design.chimp", look);
             ui.painter().extend(shapes);
         });
         let d = drawn(&shapes);
@@ -171,7 +163,7 @@ fn a_tab_has_its_text_6_px_in_on_row_6_and_its_mark_6_px_before_the_edge() {
 #[test]
 fn the_etched_line_is_cut_under_the_active_tab_with_the_shade_on_both_sides() {
     let (ctx, skin) = pixel_ctx();
-    let strip = Strip::new(AT.x, AT.x + 200.0, AT.y, TabStyle::Document);
+    let strip = Strip::new(AT.x, AT.x + 200.0, AT.y);
     let active = Rect::from_min_size(pos2(AT.x + 20.0, AT.y), vec2(73.0, ACTIVE_HEIGHT));
     let shapes = frame(&ctx, vec![], |ui| {
         ui.painter()
@@ -229,7 +221,7 @@ fn tabs_that_do_not_fit_scroll_with_the_arrows_and_the_arrows_change_with_hover_
         .map(|i| TabItem::new(format!("Artboard {i}")))
         .collect();
     let id = egui::Id::new("strip");
-    let strip = Strip::new(0.0, 200.0, 10.0, TabStyle::Document);
+    let strip = Strip::new(0.0, 200.0, 10.0);
     let run = |events: Vec<Event>| {
         let mut lay = None;
         let shapes = frame(&ctx, events, |ui| {
@@ -281,7 +273,7 @@ fn clicking_selects_and_the_mark_or_the_middle_button_closes() {
     let (ctx, skin) = pixel_ctx();
     let items = doc_items();
     let id = egui::Id::new("strip");
-    let strip = Strip::new(AT.x, AT.x + 400.0, AT.y, TabStyle::Document);
+    let strip = Strip::new(AT.x, AT.x + 400.0, AT.y);
     let run = |events: Vec<Event>| {
         let mut event = None;
         frame(&ctx, events, |ui| {
@@ -329,78 +321,16 @@ fn clicking_selects_and_the_mark_or_the_middle_button_closes() {
 }
 
 #[test]
-fn the_panel_tab_is_the_mockup_layer_tab_on_its_panel_box() {
-    let (ctx, skin) = pixel_ctx();
-    let colors = *skin.colors();
-    let item = TabItem::new("Layer");
-    let mut width = 0.0;
-    let rect = Rect::from_min_size(AT, vec2(34.0, PANEL_HEIGHT));
-    let shapes = frame(&ctx, vec![], |ui| {
-        width = natural_width(ui, TabStyle::Panel, &item);
-        let look = TabLook {
-            active: true,
-            hovered: false,
-            mark_hovered: false,
-        };
-        let shapes = tab_shapes(ui, &skin, TabStyle::Panel, rect, &item, "Layer", look);
-        ui.painter().extend(shapes);
-    });
-    // En el mockup: x 186..219 (34), con el texto 5 adentro y las mayúsculas en la fila 5.
-    assert_eq!(width, 34.0);
-    let d = drawn(&shapes);
-    assert_eq!(
-        d.boxes(&skin, PANEL_TAB, WidgetState::Active),
-        vec![rect.with_max_y(rect.top() + PANEL_ACTIVE_HEIGHT)]
-    );
-    let (at, c, galley) = d.texts.last().unwrap();
-    assert_eq!(*c, colors.text);
-    assert_eq!(ink_at(*at, galley), (AT.x + 5.0, AT.y + 5.0));
-    // La caja del panel empieza en la última fila de las pestañas.
-    let strip = Strip::new(0.0, 100.0, 10.0, TabStyle::Panel);
-    assert_eq!(strip.bottom(), 10.0 + 15.0);
-    // Las piezas.
+fn the_tab_pieces_have_the_mockup_sizes() {
+    let (_, skin) = pixel_ctx();
     for (name, size) in [
-        ("tab.panel.active", [34, 17]),
-        ("tab.panel", [34, 16]),
-        ("tab.panel.hover", [34, 16]),
         ("tab.arrow.prev", [12, 12]),
         ("tab.arrow.next", [12, 12]),
         ("tab.shade.left", [5, 1]),
         ("tab.shade.right", [5, 1]),
-        ("panel.box", [8, 4]),
-        ("panel.divider", [3, 2]),
         ("tab.hover", [7, 15]),
     ] {
         let piece = skin.piece(name, WidgetState::Normal).unwrap();
         assert_eq!(piece.size, size, "{name}");
     }
-}
-
-#[test]
-fn panel_tabs_start_after_the_rounded_corner_and_the_active_first_one_covers_it() {
-    let (ctx, skin) = pixel_ctx();
-    let items = [TabItem::new("Layer"), TabItem::new("Frame")];
-    let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(120.0, 60.0));
-    let run = |active: usize| {
-        let shapes = frame(&ctx, vec![], |ui| {
-            tabbed_panel(ui, &skin, Id::new("p"), rect, &items, Some(active));
-        });
-        drawn(&shapes)
-    };
-    // "Frame" elegida: "Layer", inactiva, empieza después de la esquina (2 px).
-    let d = run(1);
-    let layer = d.boxes(&skin, PANEL_TAB, WidgetState::Normal);
-    assert_eq!(layer[0].left(), rect.left() + PANEL_CORNER);
-    let layer_text = d.texts.first().map(|(at, _, g)| ink_at(*at, g)).unwrap();
-    // "Layer" elegida: pegada al borde de la caja, con el texto donde estaba.
-    let d = run(0);
-    let active = d.boxes(&skin, PANEL_TAB, WidgetState::Active);
-    assert_eq!(active[0].left(), rect.left());
-    let active_text = d
-        .texts
-        .iter()
-        .map(|(at, _, g)| ink_at(*at, g))
-        .find(|(x, _)| *x < rect.left() + 30.0)
-        .unwrap();
-    assert_eq!(active_text, layer_text, "the name does not move");
 }

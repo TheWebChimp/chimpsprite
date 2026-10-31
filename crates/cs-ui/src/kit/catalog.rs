@@ -87,7 +87,7 @@ fn clicks_id() -> egui::Id {
 }
 
 /// Las secciones, una por pestaña.
-const SECTIONS: [&str; 10] = [
+const SECTIONS: [&str; 11] = [
     "Buttons",
     "Button group",
     "Inputs",
@@ -98,6 +98,7 @@ const SECTIONS: [&str; 10] = [
     "Select",
     "Stepper",
     "Title bar",
+    "Menu",
 ];
 
 /// En la memoria de egui: la sección a la vista.
@@ -118,12 +119,7 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
         .unwrap_or(0);
     let mut section: usize = ui.data(|d| d.get_temp(section_id()).unwrap_or(start));
     let origin = ui.max_rect().min.round() + MARGIN;
-    let strip = tabs::Strip::new(
-        origin.x,
-        origin.x + PAGE_WIDTH,
-        origin.y,
-        tabs::TabStyle::Document,
-    );
+    let strip = tabs::Strip::new(origin.x, origin.x + PAGE_WIDTH, origin.y);
     let items: Vec<tabs::TabItem> = SECTIONS.iter().map(|s| tabs::TabItem::new(*s)).collect();
     let id = ui.id().with("ui_catalog_tabs");
     if let Some(tabs::TabEvent::Select(i)) =
@@ -148,7 +144,8 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
                 6 => color_section(ui, skin, origin),
                 7 => select_section(ui, skin, origin),
                 8 => stepper_section(ui, skin, origin),
-                _ => title_section(ui, skin, origin),
+                9 => title_section(ui, skin, origin),
+                _ => menu_section(ui, skin, origin),
             };
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
@@ -514,14 +511,11 @@ fn inputs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
 
 /// Sección Tabs, como en el mockup: las pestañas de documento (la activa "Design.chimp" y la otra
 /// "Otro.chimp", con cambios) sobre su línea grabada, que sigue 5 px antes y después; la misma
-/// tira con las flechas; la pestaña de panel "Layer" pegada a su caja, con el divisor 28 filas
-/// debajo del borde; y una tira de verdad.
+/// tira con las flechas; y una tira de verdad.
 const DOC_TABS: [&str; 2] = ["Design.chimp", "Otro.chimp"];
 const LINE_OVERHANG: f32 = 5.0;
 const ARROWS_LINE_OVERHANG: f32 = 6.0;
 const TABS_PITCH: f32 = 30.0;
-const PANEL_SIZE: Vec2 = vec2(79.0, 63.0);
-const PANEL_DIVIDER_TOP: f32 = 28.0;
 const LIVE_TABS: [&str; 9] = [
     "Sprite.chimp",
     "Tiles.chimp",
@@ -534,15 +528,6 @@ const LIVE_TABS: [&str; 9] = [
     "Credits.chimp",
 ];
 
-/// El panel de verdad: sus pestañas y su distancia al del mockup.
-const LIVE_PANEL_TABS: [&str; 2] = ["Layer", "Frame"];
-const LIVE_PANEL_GAP: f32 = 24.0;
-
-/// En la memoria de egui: la pestaña elegida del panel de verdad.
-fn panel_tab_id() -> egui::Id {
-    egui::Id::new("ui_catalog_panel_tab")
-}
-
 /// En la memoria de egui: las pestañas de verdad que quedan y la activa.
 fn live_tabs_id() -> egui::Id {
     egui::Id::new("ui_catalog_live_tabs")
@@ -551,7 +536,7 @@ fn live_tabs_id() -> egui::Id {
 /// Una tira de documento dibujada desde `left` (sin interacción): la primera activa y, si
 /// `arrows`, las flechas después de la última. Devuelve dónde termina a lo ancho.
 fn forced_strip(ui: &Ui, skin: &Skin, left: f32, top: f32, arrows: bool) -> Vec<Shape> {
-    let strip = tabs::Strip::new(left, left + PAGE_WIDTH, top, tabs::TabStyle::Document);
+    let strip = tabs::Strip::new(left, left + PAGE_WIDTH, top);
     let items: Vec<tabs::TabItem> = DOC_TABS
         .iter()
         .map(|t| tabs::TabItem::closable(*t, true))
@@ -584,7 +569,6 @@ fn forced_strip(ui: &Ui, skin: &Skin, left: f32, top: f32, arrows: bool) -> Vec<
         shapes.extend(tabs::tab_shapes(
             ui,
             skin,
-            tabs::TabStyle::Document,
             p.rect,
             &items[p.index],
             &p.name,
@@ -614,43 +598,8 @@ fn tabs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     shapes.extend(forced_strip(ui, skin, left, top, true));
     top += TABS_PITCH;
     ui.painter().extend(shapes);
-    // La pestaña de panel, pegada a su caja, con el divisor adentro.
-    let panel = Rect::from_min_size(pos2(origin.x, top), PANEL_SIZE);
-    let layer = [tabs::TabItem::new("Layer")];
-    let id = ui.id().with("ui_catalog_mockup_panel");
-    let (_, inner) = tabs::tabbed_panel(ui, skin, id, panel, &layer, Some(0));
-    let divider = tabs::divider_shapes(
-        ui,
-        skin,
-        egui::Rangef::new(panel.left() + 1.0, panel.right() - 1.0),
-        inner.top() - 2.0 + PANEL_DIVIDER_TOP,
-    );
-    ui.painter().extend(divider);
-    // Un panel de verdad con dos pestañas, a la derecha.
-    let live_panel = panel.translate(vec2(PANEL_SIZE.x + LIVE_PANEL_GAP, 0.0));
-    let mut panel_tab: usize = ui.data(|d| d.get_temp(panel_tab_id()).unwrap_or(0));
-    let items = LIVE_PANEL_TABS.map(tabs::TabItem::new);
-    let id = ui.id().with("ui_catalog_live_panel");
-    let (event, inner) = tabs::tabbed_panel(ui, skin, id, live_panel, &items, Some(panel_tab));
-    if let Some(tabs::TabEvent::Select(i)) = event {
-        panel_tab = i;
-        ui.data_mut(|d| d.insert_temp(panel_tab_id(), panel_tab));
-    }
-    let (text, _) = pixel_draw::caps_text(
-        ui,
-        LIVE_PANEL_TABS[panel_tab],
-        inner.left() + 4.0,
-        inner.top() + 6.0,
-        colors.text,
-    );
-    ui.painter().add(text);
-    // El mismo panel con la segunda pestaña elegida: la primera, inactiva, empieza después de la
-    // esquina redondeada de la caja.
-    let second = live_panel.translate(vec2(PANEL_SIZE.x + LIVE_PANEL_GAP, 0.0));
-    let id = ui.id().with("ui_catalog_second_panel");
-    tabs::tabbed_panel(ui, skin, id, second, &items, Some(1));
     // Una tira de verdad: se eligen y se cierran (con la × o el botón del medio).
-    let mut top = panel.bottom() + TABS_PITCH - tabs::HEIGHT;
+    top += TABS_PITCH - tabs::HEIGHT;
     let (mut open, mut active): (Vec<usize>, Option<usize>) = ui.data(|d| {
         d.get_temp(live_tabs_id())
             .unwrap_or(((0..LIVE_TABS.len()).collect(), Some(0)))
@@ -659,7 +608,7 @@ fn tabs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         .iter()
         .map(|&i| tabs::TabItem::closable(LIVE_TABS[i], i == 1))
         .collect();
-    let strip = tabs::Strip::new(left, left + PAGE_WIDTH, top, tabs::TabStyle::Document);
+    let strip = tabs::Strip::new(left, left + PAGE_WIDTH, top);
     match tabs::tab_strip(
         ui,
         skin,
@@ -1190,4 +1139,52 @@ fn title_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     ));
     ui.painter().extend(shapes);
     y + title_bar::HEIGHT
+}
+
+/// Sección Menu, como en el mockup (la "Layer" con su caja): el título abierto del menú de la
+/// barra (`menu.title.open`), su panel (`menu.panel`) desde la fila 15 del título y un
+/// separador (`menu.separator`) de borde a borde, 28 filas debajo del borde del panel.
+const MENU_TITLE: &str = "Layer";
+const MENU_PANEL_SIZE: Vec2 = vec2(79.0, 48.0);
+const MENU_TITLE_JOIN: f32 = 15.0;
+const MENU_SEPARATOR_TOP: f32 = 28.0;
+
+fn menu_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    use crate::skin::WidgetState;
+    let colors = *skin.colors();
+    let ppp = ui.ctx().pixels_per_point();
+    let piece = |name: &str| skin.piece(name, WidgetState::Normal);
+    let mut shapes: Vec<Shape> = Vec::new();
+    let (text, ink) =
+        pixel_draw::caps_text(ui, MENU_TITLE, origin.x + 4.0, origin.y + 5.0, colors.text);
+    let title = Rect::from_min_size(
+        origin,
+        vec2((4.0 + ink + 4.0).round(), MENU_TITLE_JOIN + 2.0),
+    );
+    let panel = Rect::from_min_size(origin + vec2(0.0, MENU_TITLE_JOIN), MENU_PANEL_SIZE);
+    if let Some(p) = piece("menu.panel") {
+        shapes.extend(crate::pixel_ui::piece_shapes(p, panel, ppp));
+    }
+    if let Some(p) = piece("menu.separator") {
+        let line = Rect::from_min_size(
+            pos2(panel.left() + 1.0, panel.top() + MENU_SEPARATOR_TOP),
+            vec2(panel.width() - 2.0, 2.0),
+        );
+        shapes.extend(crate::pixel_ui::piece_shapes(p, line, ppp));
+    }
+    if let Some(p) = piece("menu.title.open") {
+        shapes.extend(crate::pixel_ui::piece_shapes(p, title, ppp));
+    }
+    shapes.push(text);
+    let (note, _) = pixel_draw::caps_text_in(
+        ui,
+        TextStyle::Small,
+        "open a menu of the menu bar to try it",
+        origin.x,
+        panel.bottom() + 6.0,
+        colors.text_dim,
+    );
+    shapes.push(note);
+    ui.painter().extend(shapes);
+    panel.bottom() + 16.0
 }

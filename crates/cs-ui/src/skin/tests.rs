@@ -529,18 +529,27 @@ fn the_embedded_skin_has_the_menu_pieces_of_the_design() {
     let alpha =
         |piece: &PieceImage, x: u32, y: u32| piece.rgba[((y * piece.size[0] + x) * 4 + 3) as usize];
     let rect9 = |x, y, w, h| Some(Rect9 { x, y, w, h });
-    // La caja del título abierto: redondeada arriba, abierta abajo (se une al panel).
+    // La caja del título abierto (la "Layer" del mockup de componentes): borde negro,
+    // redondeada arriba, abierta abajo (sus 2 filas de abajo son el borde y el blanco del panel).
     let title = &data.pieces["menu.title.open"];
-    assert_eq!((title.size, title.center), ([25, 18], rect9(2, 2, 21, 14)));
+    assert_eq!((title.size, title.center), ([34, 17], rect9(3, 2, 28, 12)));
     assert_eq!(alpha(title, 0, 0), 0, "rounded corner");
     assert_eq!(alpha(title, 0, 2), 255, "the left side");
-    assert_eq!(alpha(title, 12, 17), 255, "open below: filled");
-    // El panel: bordes de 2 (línea y bisel) y un centro liso.
+    assert_eq!(alpha(title, 12, 16), 255, "open below: filled");
+    let i = ((2 * title.size[0]) * 4) as usize;
+    assert_eq!(title.rgba[i..i + 3], [5, 4, 3], "the black border");
+    // El panel: borde negro con las esquinas de arriba de 2 px, y un centro liso.
     let panel = &data.pieces["menu.panel"];
-    assert_eq!((panel.size, panel.center), ([5, 5], rect9(2, 2, 1, 1)));
-    for (x, y) in [(0, 0), (4, 0), (0, 4), (4, 4)] {
+    assert_eq!((panel.size, panel.center), ([8, 4], rect9(3, 2, 2, 1)));
+    for (x, y) in [(0, 0), (1, 0), (0, 1), (7, 0), (0, 3), (7, 3)] {
         assert_eq!(alpha(panel, x, y), 0, "rounded ({x},{y})");
     }
+    // El separador: la fila blanca sobre la (189,164,153).
+    let separator = &data.pieces["menu.separator"];
+    assert_eq!(separator.size, [3, 2]);
+    assert_eq!(separator.rgba[0..4], [255, 255, 255, 255]);
+    let i = (separator.size[0] * 4) as usize;
+    assert_eq!(separator.rgba[i..i + 4], [189, 164, 153, 255]);
     // La tecla sin texto, que se estira (las badges: el nombre va encima en chimpfont).
     let key = &data.pieces["key"];
     assert_eq!((key.size, key.center), ([19, 7], rect9(1, 1, 17, 5)));
