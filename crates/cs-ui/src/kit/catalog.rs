@@ -87,7 +87,7 @@ fn clicks_id() -> egui::Id {
 }
 
 /// Las secciones, una por pestaña.
-const SECTIONS: [&str; 9] = [
+const SECTIONS: [&str; 10] = [
     "Buttons",
     "Button group",
     "Inputs",
@@ -97,6 +97,7 @@ const SECTIONS: [&str; 9] = [
     "Color",
     "Select",
     "Stepper",
+    "Title bar",
 ];
 
 /// En la memoria de egui: la sección a la vista.
@@ -146,7 +147,8 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
                 5 => slider_section(ui, skin, origin),
                 6 => color_section(ui, skin, origin),
                 7 => select_section(ui, skin, origin),
-                _ => stepper_section(ui, skin, origin),
+                8 => stepper_section(ui, skin, origin),
+                _ => title_section(ui, skin, origin),
             };
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
@@ -1143,4 +1145,66 @@ fn stepper_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     }
     ui.data_mut(|d| d.insert_temp(live_steppers_id(), (a, b)));
     y + stepper::HEIGHT
+}
+
+/// Sección Title bar, como en el mockup: la barra de 173 con el ≡, el título con acentos y
+/// descendentes y el ○, con el foco y sin él (una cada 32 filas); a la derecha de cada una, la ×
+/// con el puntero encima.
+const TITLE_SAMPLE: &str = "Un título con áéíóú ygp";
+const TITLE_WIDTH: f32 = 173.0;
+const TITLE_PITCH: f32 = 32.0;
+
+fn title_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    use super::title_bar::{self, TitleLook, TitleState};
+    let colors = *skin.colors();
+    let look = TitleLook::new(skin);
+    let ppp = ui.ctx().pixels_per_point();
+    let left = origin.x;
+    let mut y = origin.y;
+    let mut shapes: Vec<Shape> = Vec::new();
+    for (name, focused) in [("Focused", true), ("Unfocused", false)] {
+        for (i, hovered) in [false, true].into_iter().enumerate() {
+            let x = left + i as f32 * (TITLE_WIDTH + STATE_LABEL_GAP);
+            let rect = Rect::from_min_size(pos2(x, y), vec2(TITLE_WIDTH, title_bar::HEIGHT));
+            let state = TitleState {
+                focused,
+                menu: true,
+                close: Some(hovered),
+            };
+            shapes.extend(title_bar::bar_shapes(
+                ui.painter(),
+                &look,
+                rect,
+                TITLE_SAMPLE,
+                state,
+                ppp,
+            ));
+        }
+        let (label, _) = pixel_draw::caps_text_in(
+            ui,
+            TextStyle::Small,
+            &format!("{name} (right: the x with the pointer over it)"),
+            left,
+            y + title_bar::HEIGHT + 4.0,
+            colors.text_dim,
+        );
+        shapes.push(label);
+        y += TITLE_PITCH;
+    }
+    // Sin ≡ ni ○ (un diálogo que no se cierra).
+    let rect = Rect::from_min_size(pos2(left, y), vec2(TITLE_WIDTH, title_bar::HEIGHT));
+    shapes.extend(title_bar::bar_shapes(
+        ui.painter(),
+        &look,
+        rect,
+        "Just a title",
+        TitleState {
+            focused: true,
+            menu: false,
+            close: None,
+        },
+        ppp,
+    ));
+    ui.painter().extend(shapes);
+    y + title_bar::HEIGHT
 }

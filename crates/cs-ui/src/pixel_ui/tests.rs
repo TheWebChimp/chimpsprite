@@ -132,8 +132,9 @@ fn the_dialog_is_centered_with_its_content_inside_the_frame() {
     let frame = ctx
         .memory(|m| m.area_rect(id))
         .expect("the dialog is shown");
-    // `window`: bordes de 3 px y barra de título de 14, más 4 px de margen.
-    assert_eq!(content.min - frame.min, vec2(7.0, 18.0));
+    // `window`: bordes de 3 px y barra de título de 15 (la del kit, 14, y la primera fila del
+    // cuerpo), más 4 px de margen.
+    assert_eq!(content.min - frame.min, vec2(7.0, 19.0));
     assert!(
         frame.center().distance(Pos2::new(400.0, 300.0)) <= 1.0,
         "{frame:?}"

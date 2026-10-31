@@ -1785,11 +1785,11 @@ fn with_pixel_ui_the_artboard_is_a_pink_window_whose_bar_does_not_zoom() {
         assert_eq!(frame.right(), pixels.right() + 2.0, "zoom {zoom}");
         assert_eq!(frame.bottom(), pixels.bottom() + 2.0, "zoom {zoom}");
         bars.push(pixels.top() - frame.top());
-        assert_eq!(h.drawn("artboard.menu").len(), 1, "≡");
-        assert_eq!(h.drawn("window.close").len(), 1, "○");
+        // La barra del UI kit (con el ≡ y el ○).
+        assert!(!h.drawn("title.bar").is_empty(), "the bar");
     }
-    // La barra de 13 y la fila blanca no cambian con el zoom.
-    assert_eq!(bars, vec![14.0, 14.0]);
+    // La barra de 14 y la fila blanca no cambian con el zoom.
+    assert_eq!(bars, vec![15.0, 15.0]);
 
     // Arrastrar la barra mueve el artboard (zoom 1: un punto, un píxel).
     h.app.doc.canvas.zoom = 1.0;

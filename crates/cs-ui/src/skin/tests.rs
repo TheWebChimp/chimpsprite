@@ -127,24 +127,24 @@ fn the_embedded_skin_has_the_artboard_frame_with_a_white_ring() {
     let data = decode(EMBEDDED).unwrap();
     let frame = &data.pieces["artboard.frame"];
     let window = &data.pieces["window"];
-    let (w, h) = (24, 24);
+    let (w, h) = (24, 25);
     assert_eq!(frame.size, [w, h]);
     assert_eq!(
         frame.center,
         Some(Rect9 {
             x: 2,
-            y: 14,
+            y: 15,
             w: 20,
             h: 8
         }),
-        "border + white on the sides, 13 of bar + white on top, white + border below"
+        "border + white on the sides, 14 of bar + white on top, white + border below"
     );
     let px = |p: &PieceImage, x: u32, y: u32| {
         let i = ((y * p.size[0] + x) * 4) as usize;
         [p.rgba[i], p.rgba[i + 1], p.rgba[i + 2], p.rgba[i + 3]]
     };
-    // De dónde sale cada píxel en `window` (64×48): las dos columnas de cada lado, la del
-    // medio estirada; la barra con una fila rosa más (10) y las dos filas de abajo.
+    // De dónde sale cada píxel en `window` (64×50): las dos columnas de cada lado, la del
+    // medio estirada; la barra (14 filas, como la del UI kit) y las dos filas de abajo.
     let src_x = |x: u32| match x {
         0 | 1 => x,
         _ if x >= w - 2 => 64 - (w - x),
@@ -152,11 +152,11 @@ fn the_embedded_skin_has_the_artboard_frame_with_a_white_ring() {
     };
     let src_y = |y: u32| match y {
         0 | 1 => y,
-        2..=11 => 2,
-        // La línea de abajo de la barra (la de `window` tiene una fila más de rosa).
-        12 => 12,
-        _ if y == h - 2 => 47,
-        _ if y == h - 1 => 48,
+        2..=12 => 2,
+        // La línea de abajo de la barra.
+        13 => 13,
+        _ if y == h - 2 => 48,
+        _ if y == h - 1 => 49,
         _ => 20,
     };
     const BORDER: [u8; 4] = [5, 4, 3, 255];
@@ -164,10 +164,10 @@ fn the_embedded_skin_has_the_artboard_frame_with_a_white_ring() {
         for x in 0..w {
             let got = px(frame, x, y);
             let from = px(window, src_x(x), src_y(y));
-            let expected = if y < 13 || from == BORDER || from[3] == 0 {
+            let expected = if y < 14 || from == BORDER || from[3] == 0 {
                 // La barra entera, el borde oscuro y las esquinas: iguales a `window`.
                 from
-            } else if y == 13 || y == h - 2 || x == 1 || x == w - 2 {
+            } else if y == 14 || y == h - 2 || x == 1 || x == w - 2 {
                 [255, 255, 255, 255]
             } else {
                 [0, 0, 0, 0]
@@ -175,30 +175,9 @@ fn the_embedded_skin_has_the_artboard_frame_with_a_white_ring() {
             assert_eq!(got, expected, "({x},{y})");
         }
     }
-    // La fila rosa agregada arriba del contenido es igual a las otras.
+    // Las filas rosas de la barra, iguales.
     assert_eq!(px(frame, 5, 2), [226, 114, 133, 255]);
-    assert_eq!(px(frame, 5, 11), [226, 114, 133, 255]);
-}
-
-#[test]
-fn the_embedded_skin_has_the_artboard_menu_icon_of_the_mockup() {
-    let data = decode(EMBEDDED).unwrap();
-    let menu = &data.pieces["artboard.menu"];
-    assert_eq!(menu.size, [9, 9]);
-    assert_eq!(menu.center, None);
-    // Tres rayas de 6 px en las filas 2, 4 y 6, desde la columna 2; el resto transparente.
-    for y in 0..9 {
-        for x in 0..9 {
-            let i = ((y * 9 + x) * 4) as usize;
-            let ink = [2, 4, 6].contains(&y) && (2..8).contains(&x);
-            let expected: &[u8] = if ink {
-                &[100, 54, 75, 255]
-            } else {
-                &[0, 0, 0, 0]
-            };
-            assert_eq!(&menu.rgba[i..i + 4], expected, "({x},{y})");
-        }
-    }
+    assert_eq!(px(frame, 5, 12), [226, 114, 133, 255]);
 }
 
 #[test]
@@ -217,7 +196,7 @@ fn the_embedded_skin_has_the_mockup_colors_window_and_buttons() {
     let window = &data.pieces["window.active"];
     let center = Rect9 {
         x: 3,
-        y: 14,
+        y: 15,
         w: 58,
         h: 32,
     };

@@ -14,8 +14,6 @@ use crate::tab_bar;
 
 /// Marco de los diálogos: la ventana de barra rosa del mockup de "Unsaved changes".
 const DIALOG_PIECE: &str = "window";
-/// Botón de cerrar de la barra de título.
-const CLOSE_PIECE: &str = "window.close";
 /// Margen entre el área del centro del 9-slice y lo de adentro (contenido o texto).
 pub(crate) const PADDING: f32 = 4.0;
 /// Espacio entre botones de una fila.
@@ -25,8 +23,6 @@ const BUTTON_GAP: f32 = 4.0;
 const FALLBACK_DIALOG: [f32; 4] = [1.0, 13.0, 1.0, 1.0];
 /// Bordes del marco de respaldo de los botones con ícono.
 const FALLBACK_BUTTON: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-/// Tamaño del botón de cerrar de respaldo (el de la pieza del skin).
-const FALLBACK_CLOSE_SIZE: Vec2 = Vec2::new(9.0, 9.0);
 /// En la memoria de egui, con el id del diálogo: la posición a la que se lo arrastró y la pasada
 /// en que se mostró por última vez.
 const MOVED_KEY: &str = "pixel_dialog_moved";
@@ -147,8 +143,8 @@ pub(crate) fn flat_frame(
 /// Se mueve arrastrando la barra de título (no el cuerpo ni el botón de cerrar) y no sale de la
 /// pantalla. Queda donde se lo dejó mientras siga abierto; al abrirlo de nuevo, vuelve al centro.
 ///
-/// Con `closable`, a la derecha de la barra va el botón de cerrar (`window.close`, o
-/// `window.close.hover` con el puntero encima; si el skin no lo trae, una × de líneas). Si se
+/// La barra es la del UI kit (`kit::title_bar`). Con `closable`, a la derecha va su ○ (la × con
+/// el puntero encima). Si se
 /// hace clic en él, [`DialogOutput::closed`] es `true`; qué hacer con eso lo decide quien llama.
 pub fn pixel_dialog_at<R>(
     ctx: &egui::Context,
@@ -211,7 +207,8 @@ pub fn pixel_dialog_with_bar<R>(
         let galley = ui.painter().layout_no_wrap(title.to_owned(), font, text);
         let inner = egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
             ui.visuals_mut().override_text_color = Some(text);
-            ui.set_min_width(galley.size().x);
+            // El título, el ○ y su aire.
+            ui.set_min_width(galley.size().x + TITLE_ROOM);
             add_contents(ui)
         });
         let rect = inner.response.rect;
@@ -220,19 +217,36 @@ pub fn pixel_dialog_with_bar<R>(
             Some(p) => piece_shapes(p, rect, ppp),
             None => flat_shapes(skin, rect, top, ppp),
         };
-        let bar = Rect::from_min_size(rect.min, vec2(rect.width(), top));
-        // Las mayúsculas y lo que baja de la línea (p, y, g) centrados entre el borde de arriba y
-        // la línea de abajo de la barra: nada se encima en la línea.
-        let room = top - 2.0;
-        let ink = crate::tab_bar::CAP_HEIGHT + TITLE_DESCENT;
-        let caps = bar.top() + 1.0 + ((room - ink) / 2.0).round();
-        let left = (bar.center().x - galley.size().x / 2.0).round();
-        let at = crate::tab_bar::text_pos(&galley, left, caps, ppp);
-        shapes.push(Shape::galley(at, galley, text));
-        ui.painter().set(background, Shape::Vec(shapes));
-        let close = closable.then(|| close_rect(skin, bar, ppp));
+        // La barra de título del UI kit (`kit::title_bar`): el título a la izquierda y, si se
+        // puede cerrar, el ○ (la × con el puntero encima).
+        let bar_height = crate::kit::title_bar::HEIGHT.min(top);
+        let bar = Rect::from_min_size(rect.min, vec2(rect.width(), bar_height));
+        let parts = crate::kit::title_bar::layout(bar, false, closable);
+        let close = parts.close;
         drag_title_bar(ui, id, rect, bar, close);
-        let closed = close.is_some_and(|r| close_button(ui, skin, id.with("close"), r));
+        let close_response = close.map(|r| {
+            let response = ui.interact(r, id.with("close"), Sense::click());
+            let enabled = ui.is_enabled();
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Close")
+            });
+            response
+        });
+        let closed = close_response.as_ref().is_some_and(|r| r.clicked());
+        let state = crate::kit::title_bar::TitleState {
+            focused: true,
+            menu: false,
+            close: close_response.as_ref().map(|r| r.hovered()),
+        };
+        shapes.extend(crate::kit::title_bar::bar_shapes(
+            ui.painter(),
+            &crate::kit::title_bar::TitleLook::new(skin),
+            bar,
+            title,
+            state,
+            ppp,
+        ));
+        ui.painter().set(background, Shape::Vec(shapes));
         bar_contents(ui, bar);
         DialogOutput {
             inner: inner.inner,
@@ -242,8 +256,8 @@ pub fn pixel_dialog_with_bar<R>(
     .inner
 }
 
-/// Lo que bajan de la línea las letras con descendente en el título (p, y, g).
-const TITLE_DESCENT: f32 = 2.0;
+/// Lo que ocupa la barra además del título: el aire de la izquierda, el ○ y su aire.
+const TITLE_ROOM: f32 = 20.0;
 
 /// Lo que devuelve [`pixel_dialog_at`]: lo que devolvió el contenido y si se hizo clic en el botón
 /// de cerrar de la barra de título.
@@ -300,48 +314,6 @@ fn drag_title_bar(ui: &Ui, id: Id, rect: Rect, bar: Rect, close: Option<Rect>) {
     if start.is_some() && !response.dragged() {
         ctx.data_mut(|d| d.remove::<Pos2>(start_key));
     }
-}
-
-/// El botón de cerrar de la barra de título `bar`: a la derecha, centrado en vertical y con el
-/// mismo margen a la derecha que arriba.
-fn close_rect(skin: &Skin, bar: Rect, pixels_per_point: f32) -> Rect {
-    let size = skin
-        .piece(CLOSE_PIECE, WidgetState::Normal)
-        .map_or(FALLBACK_CLOSE_SIZE, |p| {
-            vec2(p.size[0] as f32, p.size[1] as f32)
-        });
-    let inset = ((bar.height() - size.y) / 2.0).floor().max(0.0);
-    Rect::from_min_size(pos2(bar.max.x - inset - size.x, bar.min.y + inset), size)
-        .round_to_pixels(pixels_per_point)
-}
-
-/// Botón de cerrar en `rect` (ver [`close_rect`]). Devuelve si se hizo clic.
-fn close_button(ui: &mut Ui, skin: &Skin, id: Id, rect: Rect) -> bool {
-    let ppp = ui.ctx().pixels_per_point();
-    let response = ui.interact(rect, id, Sense::click());
-    let enabled = ui.is_enabled();
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Close"));
-    let state = if response.hovered() {
-        WidgetState::Hover
-    } else {
-        WidgetState::Normal
-    };
-    let shapes = match skin.piece(CLOSE_PIECE, state) {
-        Some(piece) => piece_shapes(piece, rect, ppp),
-        None => close_cross(rect, skin.colors().text, ppp),
-    };
-    ui.painter().extend(shapes);
-    response.clicked()
-}
-
-/// Respaldo del botón de cerrar: una × de dos líneas de 1 px, sin glifo.
-fn close_cross(rect: Rect, color: Color32, pixels_per_point: f32) -> Vec<Shape> {
-    let r = rect.shrink(2.0).round_to_pixels(pixels_per_point);
-    let stroke = Stroke::new(1.0, color);
-    vec![
-        Shape::line_segment([r.left_top(), r.right_bottom()], stroke),
-        Shape::line_segment([r.right_top(), r.left_bottom()], stroke),
-    ]
 }
 
 /// Una fila de botones que ocupa todo el ancho disponible: el ancho se reparte en partes

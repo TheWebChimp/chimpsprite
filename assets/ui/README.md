@@ -118,15 +118,14 @@ oculta.
     izquierdo, arriba de todo. `home.ground` (58×1) es el suelo sobre la línea grabada, desde el
     borde izquierdo.
 - **Artboards con Pixel UI** (la ventana del frame 4 del diseño, en (209,235), 173×123): el
-  marco es `artboard.frame`, el "○" de la derecha es `window.close` y el "≡" de la izquierda
-  es `artboard.menu` (9×9, fondo transparente, rayas de 6 px en las filas 2, 4 y 6 desde la
-  columna 2). `window.menu` no sirve: sus rayas miden 7.
-  - `artboard.frame` (24×24, centro (2,14,20,8)) sale de `window` con Lua: el mismo borde
-    oscuro y las mismas esquinas redondeadas; la barra con una fila rosa más (13 filas: borde,
-    brillo, 10 rosas y la línea oscura) y, debajo, un anillo blanco de 1 px pegado al borde y
-    a la barra. El resto de adentro es transparente: ahí van el damero y los píxeles.
+  marco es `artboard.frame` y la barra (≡, el nombre y ○) es la del UI kit (`title.bar`, abajo).
+  Se borraron `window.close`, `window.menu` y `artboard.menu`.
+  - `artboard.frame` (24×25, centro (2,15,20,8)) sale de `window` con Lua: el mismo borde
+    oscuro y las mismas esquinas redondeadas; la barra de 14 filas (borde, brillo, 11 rosas y
+    la línea oscura, como la del kit) y, debajo, un anillo blanco de 1 px pegado al borde y a
+    la barra. El resto de adentro es transparente: ahí van el damero y los píxeles.
   - El área de píxeles del artboard es el hueco: 2 px adentro a los lados y abajo (borde y
-    blanco) y 14 abajo del borde de arriba (barra y blanco).
+    blanco) y 15 abajo del borde de arriba (barra y blanco).
 - **Animaciones:** las piezas `<nombre>.0`, `<nombre>.1`… son los frames, en orden. Lo que dura
   cada uno va en el user data del slice (Slice Properties → User Data), en una línea
   `duration=<ms>`, igual que la duración del frame en Aseprite. Sin esa línea, dura 100 ms.
@@ -235,6 +234,19 @@ oculta.
       número centrado en `color.text`, las mayúsculas en la fila 5; se arrastra o se escribe.
     - `stepper.unit` (162,538, 1×17, se estira): la caja de la unidad ("ms") pegada al botón
       derecho, 3 + tinta + 3 (por lo menos 11), con el texto centrado en `color.field_text`.
+  - **Barra de título** (`crates/cs-ui/src/kit/title_bar.rs`, mockup de componentes, frame 9,
+    x 480, y 236 y 268; en el skin, y 0 desde x 230): la de los diálogos, Preview y los
+    artboards.
+    - `title.bar` (7×14, centro (3,0,1,14)): borde (5,4,3) con las esquinas de arriba
+      redondeadas, brillo (246,162,168) arriba y a la derecha, bisel (202,97,115), relleno
+      (226,114,133) y la fila oscura (178,82,102) abajo.
+    - `icon.title_menu` (6×5, el ≡ desde la columna 4), `icon.title_close` (5×5, el ○ 4 px antes
+      del borde) e `icon.title_close.hover` (la × con el puntero encima), de una tinta
+      (100,54,75), en las filas 5 a 9. El título, 2 px después del ≡ (sin ≡, desde la columna
+      4), con las mayúsculas en la fila 4; si no entra, se corta con "...".
+    - Sin el foco, los íconos y el título van en el color de la fila oscura (178,82,102).
+    - Los marcos `window` y `window.active` (64×50, centro (3,15,58,32)) y `artboard.frame`
+      traen la barra de 14 filas; la del kit se dibuja encima.
   - **Select** (`crates/cs-ui/src/kit/select.rs`, mockup de componentes, frame 9: cerrado en
     x 469, y 321 y 378; abierto en x 454, y 480; en el skin, y 488 desde x 172). Todos los
     combos de la app (los de la barra y `widgets::combo`) son este.

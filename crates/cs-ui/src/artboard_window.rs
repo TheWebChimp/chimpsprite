@@ -3,16 +3,16 @@
 //! la izquierda y "○" a la derecha, borde oscuro de 1 px con las esquinas redondeadas y cuerpo
 //! claro.
 //!
-//! - **Piezas:** el marco es `artboard.frame` en 9-slice, el "○" es `window.close` y el "≡" es
-//!   `artboard.menu` (el `window.menu` del skin tiene las rayas de 7 px; las del mockup miden 6).
+//! - **Piezas:** el marco es `artboard.frame` en 9-slice y la barra es la del UI kit
+//!   (`kit::title_bar`: ≡, el nombre y ○; sin el foco, en el color tenue de la barra).
 //! - **`artboard.frame`** sale de `window` (el marco de los diálogos pixel), con el mismo borde
 //!   oscuro y las mismas esquinas redondeadas, pero sin el bisel ni el cuerpo: adentro del borde
-//!   hay un anillo blanco de 1 px y el resto es transparente. La barra tiene una fila rosa más
-//!   arriba del contenido (13 en vez de 12), así el título y los íconos quedan 1 px más abajo.
+//!   hay un anillo blanco de 1 px y el resto es transparente. Su barra mide 14 filas, como la del
+//!   kit, que se dibuja encima.
 //! - **Cuerpo = área de píxeles:** el damero y los píxeles del artboard quedan donde siempre, al
 //!   mismo zoom; el marco se dibuja alrededor, a escala de la UI (no cambia con el zoom). Del
 //!   borde de la ventana al área de píxeles hay borde (1) + blanco (1) a los lados y abajo, y
-//!   barra (13) + blanco (1) arriba.
+//!   barra (14) + blanco (1) arriba.
 //! - **Pixel perfect:** los píxeles se dibujan en su rect redondeado a píxeles de pantalla
 //!   ([`WindowLayout::pixels_on_screen`]) y el marco se arma alrededor de ese mismo rect. Con un
 //!   pan o un zoom fraccionarios, el blanco mide siempre 1 px de la UI de cada lado.
@@ -20,9 +20,10 @@
 
 use std::sync::Arc;
 
-use eframe::egui::{Color32, FontId, Painter, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2};
+use eframe::egui::{Color32, FontId, Painter, Pos2, Rect, Shape, Vec2, pos2, vec2};
 use eframe::emath::GuiRounding as _;
 
+use crate::kit::title_bar::{self, TitleLook, TitleState};
 use crate::pixel_ui;
 use crate::skin::{Piece, Skin, SkinColors, WidgetState};
 
@@ -38,24 +39,14 @@ pub const INSETS: [f32; 4] = [
 const BORDER: f32 = 1.0;
 /// Blanco entre el borde (o la barra) y los píxeles.
 const PADDING: f32 = 1.0;
-/// Alto de la barra de título: borde, brillo, 10 filas rosas y la línea oscura de abajo.
-pub const TITLE_BAR: f32 = 13.0;
-/// Fila rosa agregada arriba del contenido de la barra: baja el título y los íconos 1 px.
-const BAR_EXTRA: f32 = 1.0;
-/// Franja donde se centra el título (debajo de la fila agregada): 13, como en `pixel_dialog_at`.
-const TITLE_BAND: f32 = 13.0;
-/// Lado de los íconos de la barra (`artboard.menu`, `window.close`) y su margen al borde de los
-/// lados; arriba, uno más (la fila agregada).
-const ICON: f32 = 9.0;
-const ICON_INSET: f32 = 2.0;
-/// Aire entre un ícono y el título.
-const TEXT_GAP: f32 = 2.0;
+/// Alto de la barra de título: la del UI kit (borde, brillo, 11 filas rosas y la línea oscura).
+pub const TITLE_BAR: f32 = title_bar::HEIGHT;
+/// La barra lleva los íconos si entran los dos con su aire.
+const ICONS_MIN_WIDTH: f32 = 2.0 * (title_bar::HIT + 2.0);
 /// Lo que se agrega al final de un título que no entra.
 const ELLIPSIS: &str = "...";
 
 const FRAME_PIECE: &str = "artboard.frame";
-const MENU_PIECE: &str = "artboard.menu";
-const CLOSE_PIECE: &str = "window.close";
 
 /// Dónde va cada parte de la ventana de un artboard, en pantalla.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -88,23 +79,12 @@ impl WindowLayout {
     pub fn around(pixels: Rect, pixels_per_point: f32) -> WindowLayout {
         let frame = Self::frame_around(pixels, pixels_per_point);
         let bar = Rect::from_min_size(frame.min, vec2(frame.width(), TITLE_BAR));
-        // Los dos íconos con su margen a cada lado.
-        let icons = frame.width() >= 2.0 * (ICON_INSET + ICON);
-        let top = frame.min.y + BAR_EXTRA + ICON_INSET;
-        let menu = icons
-            .then(|| Rect::from_min_size(pos2(frame.min.x + ICON_INSET, top), Vec2::splat(ICON)));
-        let close = icons.then(|| {
-            Rect::from_min_size(
-                pos2(frame.max.x - ICON_INSET - ICON, top),
-                Vec2::splat(ICON),
-            )
-        });
-        let text = match (menu, close) {
-            (Some(m), Some(c)) if c.left() - TEXT_GAP > m.right() + TEXT_GAP => Some(
-                Rect::from_x_y_ranges(m.right() + TEXT_GAP..=c.left() - TEXT_GAP, bar.y_range()),
-            ),
-            _ => None,
-        };
+        // Los dos íconos (con su aire) si entran; el nombre, entre ellos si queda lugar.
+        let icons = frame.width() >= ICONS_MIN_WIDTH;
+        let parts = title_bar::layout(bar, icons, icons);
+        let (menu, close) = (parts.menu, parts.close);
+        let text = (icons && parts.text.span() > 0.0)
+            .then(|| Rect::from_x_y_ranges(parts.text, bar.y_range()));
         WindowLayout {
             frame,
             bar,
@@ -156,8 +136,7 @@ impl WindowLayout {
 #[derive(Clone)]
 pub struct ArtboardWindow {
     frame: Option<Piece>,
-    menu: Option<Piece>,
-    close: Option<Piece>,
+    title: TitleLook,
     colors: SkinColors,
 }
 
@@ -166,8 +145,7 @@ impl ArtboardWindow {
         let piece = |name| skin.piece(name, WidgetState::Normal).cloned();
         Self {
             frame: piece(FRAME_PIECE),
-            menu: piece(MENU_PIECE),
-            close: piece(CLOSE_PIECE),
+            title: TitleLook::new(skin),
             colors: *skin.colors(),
         }
     }
@@ -206,7 +184,8 @@ impl ArtboardWindow {
         tinted(shapes, self.tint(active))
     }
 
-    /// Los íconos y el título `title`, que van encima de la barra.
+    /// La barra del UI kit con el ≡, el nombre `title` y el ○, encima del marco; sin el foco
+    /// (`active`), en el color tenue de la barra.
     pub fn bar_shapes(
         &self,
         painter: &Painter,
@@ -215,49 +194,15 @@ impl ArtboardWindow {
         active: bool,
         ppp: f32,
     ) -> Vec<Shape> {
-        let mut shapes = Vec::new();
-        let ink = self.colors.text;
-        if let Some(r) = layout.menu {
-            shapes.extend(match &self.menu {
-                Some(piece) => pixel_ui::piece_shapes(piece, r, ppp),
-                // Respaldo: tres rayas de 6 px, como las del mockup.
-                None => (0..3)
-                    .map(|i| {
-                        let row = Rect::from_min_size(
-                            r.min + vec2(2.0, 2.0 + 2.0 * i as f32),
-                            vec2(6.0, 1.0),
-                        );
-                        Shape::rect_filled(row.round_to_pixels(ppp), 0.0, ink)
-                    })
-                    .collect(),
-            });
-        }
-        if let Some(r) = layout.close {
-            // "○" decorativo por ahora: qué hace lo va a definir el usuario.
-            shapes.extend(match &self.close {
-                Some(piece) => pixel_ui::piece_shapes(piece, r, ppp),
-                None => vec![Shape::circle_stroke(r.center(), 2.5, Stroke::new(1.0, ink))],
-            });
-        }
-        let mut shapes = tinted(shapes, self.tint(active));
-        let color = if active {
-            self.colors.text
-        } else {
-            self.colors.text_dim
+        let icons = layout.menu.is_some();
+        let state = TitleState {
+            focused: active,
+            menu: icons,
+            // El "○" es decorativo por ahora: qué hace lo va a definir el usuario.
+            close: icons.then_some(false),
         };
-        if let Some(area) = layout.text
-            && !title.is_empty()
-            && let Some(galley) = fit_title(painter, title, area.width(), color)
-        {
-            let band = Rect::from_min_size(
-                layout.bar.min + vec2(0.0, BAR_EXTRA),
-                vec2(layout.bar.width(), TITLE_BAND),
-            );
-            let y = band.center().y - galley.size().y / 2.0;
-            let at = pos2(area.left(), y).round_to_pixels(ppp);
-            shapes.push(Shape::galley(at, galley, color));
-        }
-        shapes
+        let title = if layout.text.is_some() { title } else { "" };
+        title_bar::bar_shapes(painter, &self.title, layout.bar, title, state, ppp)
     }
 }
 
@@ -320,28 +265,29 @@ mod tests {
     }
 
     #[test]
-    fn the_window_wraps_the_pixels_with_a_13_point_title_bar_and_a_white_point() {
+    fn the_window_wraps_the_pixels_with_a_14_point_title_bar_and_a_white_point() {
         let l = WindowLayout::around(pixels(128.0, 64.0), 1.0);
-        // Borde (1) + blanco (1) a los lados y abajo; barra (13) + blanco (1) arriba.
+        // Borde (1) + blanco (1) a los lados y abajo; barra (14) + blanco (1) arriba.
         assert_eq!(
             l.frame,
-            Rect::from_min_max(pos2(98.0, 186.0), pos2(230.0, 266.0))
+            Rect::from_min_max(pos2(98.0, 185.0), pos2(230.0, 266.0))
         );
         assert_eq!(
             l.bar,
-            Rect::from_min_max(pos2(98.0, 186.0), pos2(230.0, 199.0))
+            Rect::from_min_max(pos2(98.0, 185.0), pos2(230.0, 199.0))
         );
-        // Los íconos a 2 px del borde de la izquierda/derecha y a 3 del de arriba (la fila de
-        // más arriba del contenido de la barra).
+        // Lo que se toca de los íconos de la barra del kit: 9×9 desde la fila 3, alrededor del
+        // ≡ (columna 4) y del ○ (4 antes del borde).
         assert_eq!(
             l.menu,
-            Some(Rect::from_min_size(pos2(100.0, 189.0), Vec2::splat(9.0)))
+            Some(Rect::from_min_size(pos2(101.0, 188.0), Vec2::splat(9.0)))
         );
         assert_eq!(
             l.close,
-            Some(Rect::from_min_size(pos2(219.0, 189.0), Vec2::splat(9.0)))
+            Some(Rect::from_min_size(pos2(219.0, 188.0), Vec2::splat(9.0)))
         );
-        assert_eq!(l.text.unwrap().x_range(), 111.0..=217.0);
+        // El nombre, 2 px después del ≡ y hasta 3 antes del ○.
+        assert_eq!(l.text.unwrap().x_range(), 110.0..=218.0);
         assert_eq!(l.hit(pos2(104.0, 193.0)), Some(TitleHit::Menu));
         assert_eq!(l.hit(pos2(223.0, 193.0)), Some(TitleHit::Close));
         assert_eq!(l.hit(pos2(150.0, 193.0)), Some(TitleHit::Bar));
