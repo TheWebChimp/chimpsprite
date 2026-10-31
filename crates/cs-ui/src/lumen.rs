@@ -1174,85 +1174,9 @@ fn slider(
     kit::slider::slider_at(ui, &skin, bar, id, value, lo..=hi);
 }
 
-/// Desarrollo: con este dato en el contexto, el próximo [`color_button`] se abre.
-pub(crate) const DEMO_PICKER: &str = "lumen_demo_picker";
-
-/// El ancho del selector de color que abre [`color_button`].
-const PICKER_WIDTH: f32 = 160.0;
-
-/// Un botón con la muestra de `color` que abre el selector. Devuelve si cambió.
+/// Un botón con la muestra de `color` que abre el selector (opaco). Devuelve si cambió.
 fn color_button(ui: &mut Ui, color: &mut Rgba) -> bool {
-    let skin = pixel_ui::frame_skin(ui.ctx());
-    let frame = skin
-        .as_ref()
-        .and_then(|s| Some((s, s.piece("swatch.frame", WidgetState::Normal)?)));
-    match frame {
-        Some((skin, frame)) => pixel_color_button(ui, skin, frame, color),
-        None => egui_color_button(ui, color),
-    }
-}
-
-/// La muestra en su marco del skin (el color, con la fila de abajo más oscura); un clic abre
-/// el selector de color de la app debajo.
-fn pixel_color_button(
-    ui: &mut Ui,
-    skin: &crate::skin::Skin,
-    frame: &crate::skin::Piece,
-    color: &mut Rgba,
-) -> bool {
-    let size = vec2(frame.size[0] as f32, frame.size[1] as f32);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let rect = Rect::from_min_size(rect.min.round(), size);
-    let fill = Color32::from_rgb(color.r, color.g, color.b);
-    let shade = |v: u8| (v as f32 * 0.62).round() as u8;
-    let dark = Color32::from_rgb(shade(color.r), shade(color.g), shade(color.b));
-    // Adentro del marco: 1 px de cada lado; abajo, la fila oscura, la línea y el brillo.
-    let inner = Rect::from_min_size(rect.min + vec2(1.0, 1.0), vec2(size.x - 2.0, size.y - 4.0));
-    let painter = ui.painter();
-    painter.rect_filled(inner, 0.0, fill);
-    painter.rect_filled(
-        Rect::from_min_size(inner.left_bottom(), vec2(inner.width(), 1.0)),
-        0.0,
-        dark,
-    );
-    let ppp = ui.ctx().pixels_per_point();
-    painter.extend(pixel_ui::piece_shapes(frame, rect, ppp));
-    // Desarrollo: el de la luz (el primero) abierto, para capturas.
-    let demo = egui::Id::new(DEMO_PICKER);
-    let first = ui.ctx().data(|d| d.get_temp::<egui::Id>(demo));
-    if first == Some(egui::Id::NULL) {
-        ui.ctx().data_mut(|d| d.insert_temp(demo, response.id));
-    }
-    if first.is_some_and(|id| id == egui::Id::NULL || id == response.id) {
-        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
-    }
-    let look = crate::menus::MenuLook::new(skin, rect.top());
-    let mut changed = false;
-    crate::menus::dropdown_panel(&look, &response, rect, |ui| {
-        ui.set_width(PICKER_WIDTH);
-        let id = response.id.with("picker");
-        let next = crate::color_panel::picker(ui, skin, id, *color);
-        let next = Rgba { a: 255, ..next };
-        if next != *color {
-            *color = next;
-            changed = true;
-        }
-    });
-    changed
-}
-
-/// Sin Pixel UI: el botón de color de egui.
-fn egui_color_button(ui: &mut Ui, color: &mut Rgba) -> bool {
-    let mut c = Color32::from_rgb(color.r, color.g, color.b);
-    // Una muestra chica, cuadrada.
-    ui.spacing_mut().interact_size.x = 16.0;
-    let changed =
-        egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque)
-            .changed();
-    if changed {
-        *color = Rgba::rgb(c.r(), c.g(), c.b());
-    }
-    changed
+    widgets::color_edit(ui, color, false, "Color").changed()
 }
 
 /// La textura de `image`, con vecino más cercano.

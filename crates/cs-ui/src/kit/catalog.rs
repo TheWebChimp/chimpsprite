@@ -87,13 +87,14 @@ fn clicks_id() -> egui::Id {
 }
 
 /// Las secciones, una por pestaña.
-const SECTIONS: [&str; 6] = [
+const SECTIONS: [&str; 7] = [
     "Buttons",
     "Button group",
     "Inputs",
     "Tabs",
     "Checks",
     "Slider",
+    "Color",
 ];
 
 /// En la memoria de egui: la sección a la vista.
@@ -140,7 +141,8 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
                 2 => inputs_section(ui, skin, origin),
                 3 => tabs_section(ui, skin, origin),
                 4 => checks_section(ui, skin, origin),
-                _ => slider_section(ui, skin, origin),
+                5 => slider_section(ui, skin, origin),
+                _ => color_section(ui, skin, origin),
             };
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
@@ -839,4 +841,74 @@ fn slider_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     );
     ui.painter().add(note);
     y + slider::HEIGHT + 14.0
+}
+
+/// Sección Color button: el amarillo del mockup en los cuatro estados (uno por fila, con su nombre
+/// a la derecha) y, al lado, uno con alfa; debajo, dos de verdad (uno opaco y otro con alfa) que
+/// abren el selector de la app.
+const COLOR_SAMPLE: cs_core::Rgba = cs_core::Rgba::rgb(255, 214, 120);
+const COLOR_ALPHA_SAMPLE: cs_core::Rgba = cs_core::Rgba::new(226, 114, 133, 128);
+const COLOR_PITCH: f32 = 22.0;
+
+/// En la memoria de egui: los colores de los de verdad.
+fn live_colors_id() -> egui::Id {
+    egui::Id::new("ui_catalog_colors")
+}
+
+fn color_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    use super::color_button;
+    let colors = *skin.colors();
+    let left = origin.x;
+    let mut y = origin.y;
+    let ppp = ui.ctx().pixels_per_point();
+    let size = color_button::size(skin);
+    let mut shapes: Vec<Shape> = Vec::new();
+    for state in ButtonState::ALL {
+        for (i, color) in [COLOR_SAMPLE, COLOR_ALPHA_SAMPLE].into_iter().enumerate() {
+            let rect = Rect::from_min_size(pos2(left + i as f32 * COLOR_PITCH, y), size);
+            shapes.extend(color_button::swatch_shapes(skin, rect, color, state, ppp));
+        }
+        let (name, _) = pixel_draw::caps_text(
+            ui,
+            state.name(),
+            left + COLOR_PITCH + size.x + STATE_LABEL_GAP,
+            y + button::CAPS_TOP,
+            colors.text,
+        );
+        shapes.push(name);
+        y += STATE_PITCH;
+    }
+    ui.painter().extend(shapes);
+    // Los de verdad, cada uno con su hex.
+    y += STATE_PITCH;
+    let (mut opaque, mut tint): (cs_core::Rgba, cs_core::Rgba) = ui.data(|d| {
+        d.get_temp(live_colors_id())
+            .unwrap_or((COLOR_SAMPLE, COLOR_ALPHA_SAMPLE))
+    });
+    let rect = Rect::from_min_size(pos2(left, y), vec2(PAGE_WIDTH, button::HEIGHT));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = STATE_LABEL_GAP;
+            for (color, alpha, label) in
+                [(&mut opaque, false, "Opaque"), (&mut tint, true, "Alpha")]
+            {
+                color_button::color_edit(ui, skin, color, alpha, label);
+                let hex = format!(
+                    "{label} #{:02X}{:02X}{:02X}{:02X}",
+                    color.r, color.g, color.b, color.a
+                );
+                let (text, w) = pixel_draw::caps_text(
+                    ui,
+                    &hex,
+                    ui.cursor().left(),
+                    y + button::CAPS_TOP,
+                    colors.text,
+                );
+                ui.painter().add(text);
+                ui.add_space(w + 2.0 * STATE_LABEL_GAP);
+            }
+        });
+    });
+    ui.data_mut(|d| d.insert_temp(live_colors_id(), (opaque, tint)));
+    y + button::HEIGHT
 }

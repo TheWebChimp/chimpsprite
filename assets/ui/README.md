@@ -224,6 +224,17 @@ oculta.
       `.disabled` (81,518: el borde (136,110,106) y el bisel claro) no están en el diseño.
     - Ocupa el alto de un botón: la perilla desde la fila 1, la pista desde la 4. La perilla va de
       punta a punta: en el mínimo, su sombra izquierda en la primera columna de la pista.
+  - **Botón de color** (`crates/cs-ui/src/kit/color_button.rs`, mockup de componentes, frame 9,
+    x 472, y 423):
+    - `swatch.frame` (145,296, 16×17, centro (1,8,9,5)): el borde (89,77,77) con el interior
+      transparente; encima del color, el brillo de arriba a la derecha (blanco y blanco al 34%) y
+      la fila de sombra (negro al 38%), que en el mockup son píxeles del amarillo (sobre ese
+      amarillo dan los mismos colores). Debajo, la línea clara.
+    - `.hover` (100,518: velo blanco al 19%), `.down` (118,518: velo negro al 12%) y `.disabled`
+      (136,518: el borde (136,110,106), el color lavado con (221,206,191) y sin brillo) no están
+      en el diseño.
+    - Con alfa, detrás del color va el damero de `fgbg.checker`. Un clic abre el selector de la
+      app en el panel de los menús.
 
 - **Paleta y editor de color** (frame 4 del diseño, capa Mockup, columna x 784..972; el skin
   creció a 320×272 y estas piezas van en y 236..267):

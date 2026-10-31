@@ -521,12 +521,14 @@ pub fn slice_properties(ui: &mut egui::Ui, editor: &mut Editor) {
             editor.update_slice(|s| s.name = name.trim().to_owned());
         }
     });
-    let mut c32 = Color32::from_rgb(slice.color.r, slice.color.g, slice.color.b);
+    let mut color = cs_core::Rgba {
+        a: 255,
+        ..slice.color
+    };
     ui.horizontal(|ui| {
         ui.label("Color");
-        if ui.color_edit_button_srgba(&mut c32).changed() {
-            let [r, g, b, _] = c32.to_array();
-            editor.update_slice(|s| s.color = cs_core::Rgba::rgb(r, g, b));
+        if crate::widgets::color_edit(ui, &mut color, false, "Slice color").changed() {
+            editor.update_slice(|s| s.color = color);
         }
     });
     ui.horizontal(|ui| {

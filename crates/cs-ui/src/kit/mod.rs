@@ -5,6 +5,7 @@
 pub mod button;
 pub mod catalog;
 pub mod check;
+pub mod color_button;
 pub mod group;
 pub mod input;
 pub mod slider;

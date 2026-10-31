@@ -166,11 +166,13 @@ impl GridDialog {
                     });
                 ui.horizontal(|ui| {
                     ui.label("Color:");
-                    egui::color_picker::color_edit_button_srgba(
-                        ui,
-                        &mut self.color,
-                        egui::color_picker::Alpha::OnlyBlend,
-                    );
+                    let [r, g, b, a] = self.color.to_srgba_unmultiplied();
+                    let mut color = cs_core::Rgba::new(r, g, b, a);
+                    if widgets::color_edit(ui, &mut color, true, "Grid color").changed() {
+                        self.color = egui::Color32::from_rgba_unmultiplied(
+                            color.r, color.g, color.b, color.a,
+                        );
+                    }
                     ui.weak("(shared by all documents)");
                 });
                 ui.add_space(6.0);

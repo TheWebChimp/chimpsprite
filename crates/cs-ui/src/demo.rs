@@ -469,7 +469,7 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         if dev_var("CHIMPSPRITE_DEMO_LUMEN_PICKER").is_some() {
             ctx.data_mut(|d| {
                 d.insert_temp(
-                    eframe::egui::Id::new(crate::lumen::DEMO_PICKER),
+                    eframe::egui::Id::new(crate::kit::color_button::DEMO_PICKER),
                     eframe::egui::Id::NULL,
                 )
             });

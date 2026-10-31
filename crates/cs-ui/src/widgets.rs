@@ -148,6 +148,32 @@ pub fn radio_value<T: PartialEq>(
     }
 }
 
+/// Un botón de color que abre un selector: con Pixel UI, el del UI kit (`kit::color_button`, el
+/// selector de la app); sin él, el de egui. Sin `alpha`, el color queda opaco. `changed()` si
+/// cambió.
+pub fn color_edit(
+    ui: &mut egui::Ui,
+    color: &mut cs_core::Rgba,
+    alpha: bool,
+    label: &str,
+) -> egui::Response {
+    if let Some(skin) = pixel_ui::frame_skin(ui.ctx()) {
+        return crate::kit::color_button::color_edit(ui, &skin, color, alpha, label);
+    }
+    let mut c = egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a);
+    let mode = if alpha {
+        egui::color_picker::Alpha::OnlyBlend
+    } else {
+        egui::color_picker::Alpha::Opaque
+    };
+    let response = egui::color_picker::color_edit_button_srgba(ui, &mut c, mode);
+    if response.changed() {
+        let [r, g, b, a] = c.to_srgba_unmultiplied();
+        *color = cs_core::Rgba::new(r, g, b, if alpha { a } else { 255 });
+    }
+    response
+}
+
 /// Un desplegable con `selected` a la vista; `content` arma las opciones (con
 /// [`choice`]). Con Pixel UI, el combo de la barra (`field.combo`) y su lista en el panel de los
 /// menús; sin él, el `ComboBox` de egui (con `id_salt`).
