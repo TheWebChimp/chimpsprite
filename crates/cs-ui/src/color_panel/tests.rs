@@ -525,7 +525,9 @@ fn with_pixel_ui_the_channel_strip_shows_the_four_values_and_the_hex() {
     // Como en el diseño: el punto rojo en x 818 (5 después del borde) y el "2" en la 825, el
     // "#" 3 después del comienzo del hex, y los dígitos de la fila 4 a la 9 de la tira.
     assert_eq!(h.drawn("channel.dot.r")[0].min, r.min + vec2(5.0, 4.0));
-    assert_eq!(h.text("10").1.min, r.min + vec2(12.0, 4.0));
+    // El "1" es monoespaciado (su celda mide como las demás cifras y el trazo va 1 px adentro):
+    // la celda empieza en la 12, la tinta en la 13.
+    assert_eq!(h.text("10").1.min, r.min + vec2(13.0, 4.0));
     assert_eq!(h.text("10").1.height(), 6.0);
     assert_eq!(ink.min, hex.min + vec2(3.0, 4.0));
 }

@@ -101,3 +101,55 @@ fn with_alpha_the_checker_shows_behind_and_disabled_uses_its_frame() {
         Color32::from_rgba_unmultiplied(255, 0, 0, 128)
     );
 }
+
+#[test]
+fn the_copy_button_of_the_picker_copies_the_hex() {
+    let (ctx, skin) = pixel_ctx();
+    let mut color = Rgba::new(226, 114, 133, 128);
+    let copied = std::cell::RefCell::new(Vec::new());
+    let button_id = std::cell::Cell::new(Id::NULL);
+    let run = |events: Vec<Event>, color: &mut Rgba| {
+        let input = egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(400.0, 300.0))),
+            events,
+            ..Default::default()
+        };
+        let mut out = ctx.run_ui(input, |ui| {
+            button_id.set(color_edit(ui, &skin, color, true, "Tint").id);
+        });
+        out.textures_delta.clear();
+        for c in out.platform_output.commands {
+            if let egui::OutputCommand::CopyText(t) = c {
+                copied.borrow_mut().push(t);
+            }
+        }
+    };
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    run(vec![], &mut color);
+    let at = pos2(8.0, 8.0);
+    run(vec![Event::PointerMoved(at), press(at, true)], &mut color);
+    run(vec![press(at, false)], &mut color);
+    run(vec![], &mut color);
+    run(vec![], &mut color);
+    let copy = ctx
+        .read_response(button_id.get().with("picker").with("copy"))
+        .expect("the copy button")
+        .rect
+        .center();
+    run(vec![Event::PointerMoved(copy)], &mut color);
+    run(vec![press(copy, true)], &mut color);
+    run(vec![press(copy, false)], &mut color);
+    run(vec![], &mut color);
+    assert_eq!(copied.into_inner(), vec!["#e2728580".to_owned()]);
+    // Y lo avisa: el globo dice qué se copió.
+    let said = ctx.memory(|m| {
+        m.data
+            .get_temp::<(f64, String)>(button_id.get().with("picker").with("copy").with("copied"))
+    });
+    assert_eq!(said.map(|(_, hex)| hex), Some("#e2728580".to_owned()));
+}

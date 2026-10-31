@@ -1186,10 +1186,30 @@ fn copy_button(ui: &mut Ui, skin: &Skin, id: egui::Id, rect: Rect, current: Rgba
         }
     };
     ui.painter().extend(shapes);
-    if response.tip(format!("Copy {}", current.to_hex())).clicked() {
+    // Al copiar, un rato el globo dice qué se copió (aunque el puntero no se quede encima).
+    let copied_id = id.with("copied");
+    let now = ui.input(|i| i.time);
+    if response.clicked() {
         ui.ctx().copy_text(current.to_hex());
+        ui.data_mut(|d| d.insert_temp(copied_id, (now, current.to_hex())));
+    }
+    match ui
+        .data(|d| d.get_temp::<(f64, String)>(copied_id))
+        .filter(|(at, _)| now - at < COPIED_SECONDS)
+    {
+        Some((at, hex)) => {
+            response.flash_tip(format!("Copied {hex}"));
+            ui.ctx()
+                .request_repaint_after_secs((COPIED_SECONDS - (now - at)) as f32);
+        }
+        None => {
+            response.tip(format!("Copy {}", current.to_hex()));
+        }
     }
 }
+
+/// Cuánto dura el aviso de copiado.
+const COPIED_SECONDS: f64 = 1.5;
 
 /// Un canal de la tira: su pieza, su punto y el color de su línea (sin la pieza).
 struct Channel {

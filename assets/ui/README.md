@@ -10,6 +10,9 @@ misma licencia que el repositorio (MIT o Apache-2.0, a elección; ver `LICENSE-M
 
 - Grilla de 16 píxeles por em: se usa a 16 puntos, un píxel de la grilla por punto.
 - Mayúsculas de 7 px; las colas bajan 2 px.
+- Cifras monoespaciadas: todas avanzan 5 px. El "1" (3 de tinta) va centrado en su celda, 1 px
+  adentro; en `.design/chimpsprite.ttf` avanza 4, así que al copiarla se le corre el trazo
+  64 unidades a la derecha y se le pone un avance de 320 (como al espacio, que va de 128).
 - Incluye acentos, ñ, ¿, ¡, € y °. Los glifos que no tiene (•, …, ▸) salen de las fuentes de egui.
 
 ## chimpfont.ttf

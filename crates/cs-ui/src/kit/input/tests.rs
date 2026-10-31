@@ -293,10 +293,11 @@ fn a_number_field_drags_and_draws_its_unit_box() {
     assert!(d.piece(&skin, UNIT, WidgetState::Normal).is_some());
     let whole = d.piece(&skin, FIELD, WidgetState::Normal).unwrap();
     assert_eq!(whole.size(), vec2(42.0, HEIGHT));
-    // El número, en la fila 5 y 5 px adentro.
+    // El número, en la fila 5 y 5 px adentro (la celda del "1", que es monoespaciado: su trazo
+    // va 1 px más adentro).
     let (at, color, galley) = d.texts.iter().find(|t| t.2.text() == "10").unwrap();
     assert_eq!(*color, skin.colors().field_text);
-    assert_eq!(ink_at(*at, galley), (whole.left() + 5.0, whole.top() + 5.0));
+    assert_eq!(ink_at(*at, galley), (whole.left() + 6.0, whole.top() + 5.0));
     // Arrastrar a la derecha lo agranda.
     let from = whole.center();
     let press = |pos, pressed| Event::PointerButton {
@@ -318,4 +319,18 @@ fn a_number_field_drags_and_draws_its_unit_box() {
     run(vec![press(from + vec2(30.0, 0.0), false)], &mut value);
     assert!(value > 10, "{value}");
     let _ = field;
+}
+
+#[test]
+fn every_digit_of_the_pixel_font_is_as_wide_as_the_others() {
+    let font =
+        fontdue::Font::from_bytes(crate::appearance::PIXEL_FONT, Default::default()).unwrap();
+    let size = crate::appearance::PIXEL_FONT_SIZE;
+    let advance = |c: char| font.metrics(c, size).advance_width;
+    for c in '1'..='9' {
+        assert_eq!(advance(c), advance('0'), "{c}");
+    }
+    // El "1" (3 de tinta) va centrado en su celda de 5: 1 px de aire a cada lado.
+    let one = font.metrics('1', size);
+    assert_eq!((one.xmin, one.width), (1, 3));
 }

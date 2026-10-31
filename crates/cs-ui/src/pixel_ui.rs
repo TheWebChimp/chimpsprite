@@ -801,7 +801,7 @@ fn caps_block_height(galley: &egui::Galley) -> f32 {
 /// queda en el árbol de accesibilidad como etiqueta. Sin la pieza, el tooltip de egui.
 pub fn bubble_tooltip(response: Response, skin: &Skin, text: &str) -> Response {
     match skin.piece(BUBBLE_PIECE, WidgetState::Normal) {
-        Some(piece) => show_bubble(response, piece, skin.colors().text, text),
+        Some(piece) => show_bubble(response, piece, skin.colors().text, text, false),
         None => response.on_hover_text(text),
     }
 }
@@ -1018,19 +1018,34 @@ pub fn scroll<R>(
 /// sin él, el tooltip de egui.
 pub trait Tip {
     fn tip(self, text: impl AsRef<str>) -> Response;
+    /// Como [`Tip::tip`], pero abierto mientras se llame, sin esperar al puntero (un aviso: "Copied").
+    fn flash_tip(self, text: impl AsRef<str>) -> Response;
 }
 
 impl Tip for Response {
     fn tip(self, text: impl AsRef<str>) -> Response {
-        let text = text.as_ref();
-        let skin = frame_skin(&self.ctx);
-        match skin.as_ref().and_then(|s| {
-            s.piece(BUBBLE_PIECE, WidgetState::Normal)
-                .map(|p| (p.clone(), s.colors().text))
-        }) {
-            Some((piece, color)) => show_bubble(self, &piece, color, text),
-            None => self.on_hover_text(text),
+        bubble_tip(self, text.as_ref(), false)
+    }
+
+    fn flash_tip(self, text: impl AsRef<str>) -> Response {
+        bubble_tip(self, text.as_ref(), true)
+    }
+}
+
+/// El globo del skin con `text` (sin el skin, el tooltip de egui); con `always`, abierto aunque el
+/// puntero no esté encima.
+fn bubble_tip(response: Response, text: &str, always: bool) -> Response {
+    let skin = frame_skin(&response.ctx);
+    match skin.as_ref().and_then(|s| {
+        s.piece(BUBBLE_PIECE, WidgetState::Normal)
+            .map(|p| (p.clone(), s.colors().text))
+    }) {
+        Some((piece, color)) => show_bubble(response, &piece, color, text, always),
+        None if always => {
+            egui::Tooltip::for_widget(&response).show(|ui| ui.label(text));
+            response
         }
+        None => response.on_hover_text(text),
     }
 }
 
@@ -1055,9 +1070,19 @@ fn mirrored(shapes: Vec<Shape>, rect: Rect) -> Vec<Shape> {
 
 /// El globo de `piece` con `text` junto a `response`: a la derecha, con la cola hacia el
 /// elemento; si ahí no entra, a la izquierda y espejado (la cola del otro lado).
-fn show_bubble(response: Response, piece: &Piece, color: Color32, text: &str) -> Response {
+fn show_bubble(
+    response: Response,
+    piece: &Piece,
+    color: Color32,
+    text: &str,
+    always: bool,
+) -> Response {
     let button = response.rect;
-    let mut tooltip = egui::Tooltip::for_enabled(&response);
+    let mut tooltip = if always {
+        egui::Tooltip::for_widget(&response)
+    } else {
+        egui::Tooltip::for_enabled(&response)
+    };
     // Sin marco, arriba alineado con el elemento: el área empieza en la punta de la cola.
     tooltip.popup = tooltip
         .popup
