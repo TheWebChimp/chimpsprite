@@ -261,8 +261,40 @@ fn buttons_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         lit = !lit;
         ui.data_mut(|d| d.insert_temp(led_id(), lit));
     }
-    live_top + button::HEIGHT
+    // Los botones con ícono (el de copiar del selector de color): el mismo marco y sus estados,
+    // forzados, y uno de verdad al final.
+    let icons_top = live_top + 2.0 * STATE_PITCH;
+    let mut shapes = Vec::new();
+    let mut x = column;
+    for state in ButtonState::ALL {
+        let rect = Rect::from_min_size(pos2(x, icons_top), ICON_BUTTON_SIZE);
+        shapes.extend(button::frame_shapes(
+            skin,
+            rect,
+            state,
+            ui.ctx().pixels_per_point(),
+        ));
+        shapes.extend(button::icon_shapes(ui, skin, rect, ICON_SAMPLE, state));
+        x += ICON_BUTTON_SIZE.x + LED_COLUMN_GAP;
+    }
+    ui.painter().extend(shapes);
+    let rect = Rect::from_min_size(pos2(x + LED_COLUMN_GAP, icons_top), ICON_BUTTON_SIZE);
+    let id = ui.id().with("ui_catalog_icon_live");
+    button::icon_button_at(ui, skin, rect, id, ICON_SAMPLE, "Icon button");
+    let (note, _) = pixel_draw::caps_text(
+        ui,
+        "Icon button",
+        rect.right() + STATE_LABEL_GAP,
+        icons_top + button::CAPS_TOP,
+        colors.text,
+    );
+    ui.painter().add(note);
+    icons_top + button::HEIGHT
 }
+
+/// Los botones con ícono de la sección Buttons: el de copiar del selector, de 25 de ancho.
+const ICON_SAMPLE: &str = "icon.copy";
+const ICON_BUTTON_SIZE: Vec2 = vec2(25.0, button::HEIGHT);
 
 /// La sección Button group desde `origin`. Devuelve dónde termina.
 fn group_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {

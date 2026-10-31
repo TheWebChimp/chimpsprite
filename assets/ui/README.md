@@ -197,6 +197,10 @@ oculta.
       `color.text_selection` (226,114,133) y `color.text_selected` (255,255,255), el bloque de lo
       seleccionado y su texto. El texto sin foco va en `color.field_text` (89,77,77) y con el
       foco en `color.text`.
+  - **Botones con ícono** (`kit::button::icon_button_at`): el marco `button` con todos sus
+    estados y una pieza `icon.*` centrada en la cara (las filas 1 a 13, entre el brillo y el
+    bisel; el píxel de sobra, a la derecha y abajo). Presionado, el ícono baja 1 px con la cara;
+    deshabilitado, va a media opacidad. Los íconos llevan el relleno transparente.
   - **LEDs** (cualquier botón puede llevar uno: `kit::button::Led`, y los segmentos del grupo):
     `button.led.on` (261,650) y `button.led.off` (269,650), 6×7: el LED verde (prendido) y el
     morado (apagado), 6×6 con su sombra (221,206,191) abajo, copiados del mockup (x 315 y 362).
@@ -248,7 +252,9 @@ oculta.
     Van uno cada 12 (comparten el borde), 4 px adentro de la caja.
   - `palette.add` (6×7): la marca Ⅲ que va a (3,3) de la celda siguiente al último color;
     agrega el color primario a la paleta.
-  - `picker.copy` (25×16): el botón de copiar (dos hojas), entero; copia el color en hex.
+  - `icon.copy` (4,252, 9×9, relleno transparente): las dos hojas del botón de copiar (copia el
+    color en hex). El botón es el botón con ícono del UI kit (abajo), de 25 de ancho; antes era
+    una pieza entera (`picker.copy`) sin estados.
   - La tira de canales (16 de alto): `channel.r` (4×16, centro (3,0,1,16): la punta izquierda y
     el tramo rojo), `channel.g` y `channel.b` (1×16, se estiran), `channel.a` (4×16, sin
     centro: un período del damero de su línea, que se repite), `channel.hex` (5×16, centro

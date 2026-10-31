@@ -238,6 +238,70 @@ pub fn button_at(ui: &mut Ui, skin: &Skin, rect: Rect, id: Id, label: &str) -> R
     response
 }
 
+/// Un botón con ícono en `rect` (ya ubicado, de [`HEIGHT`] de alto) con el id `id`: el mismo
+/// marco que el de texto, con sus estados, y la pieza `icon` centrada en la cara (las filas 1 a
+/// 13, entre el brillo de arriba y el bisel). Presionado, el ícono baja con la cara. `label` es el
+/// nombre accesible.
+pub fn icon_button_at(
+    ui: &mut Ui,
+    skin: &Skin,
+    rect: Rect,
+    id: Id,
+    icon: &str,
+    label: &str,
+) -> Response {
+    let response = ui.interact(rect, id, Sense::click());
+    paint(ui, skin, rect, &response, label, |state| {
+        icon_shapes(ui, skin, rect, icon, state)
+    });
+    response
+}
+
+/// Las filas de la cara de un botón, donde va centrado un ícono: debajo del contorno y hasta el
+/// bisel de abajo incluido.
+pub const FACE_TOP: f32 = OUTLINE;
+pub const FACE_ROWS: f32 = HEIGHT - OUTLINE - BOTTOM_ROWS;
+
+/// El ícono `icon` centrado en la cara del botón en `rect`, en `state` (presionado, 1 px más
+/// abajo; deshabilitado, a media opacidad). Si no cabe justo a la mitad, el píxel de sobra queda a
+/// la derecha y abajo.
+pub fn icon_shapes(ui: &Ui, skin: &Skin, rect: Rect, icon: &str, state: ButtonState) -> Vec<Shape> {
+    let Some(piece) = skin.piece(icon, WidgetState::Normal) else {
+        return Vec::new();
+    };
+    let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+    let at = egui::pos2(
+        rect.left() + ((rect.width() - size.x) / 2.0).floor(),
+        rect.top() + FACE_TOP + ((FACE_ROWS - size.y) / 2.0).floor() + drop(state),
+    );
+    let mut shapes = pixel_ui::piece_shapes(
+        piece,
+        Rect::from_min_size(at, size),
+        ui.ctx().pixels_per_point(),
+    );
+    if state == ButtonState::Disabled {
+        // Deshabilitado, el ícono a media opacidad (como el texto, que pasa a un color tenue).
+        let half = Color32::from_white_alpha(128);
+        for shape in &mut shapes {
+            dim(shape, half);
+        }
+    }
+    shapes
+}
+
+/// Multiplica los colores de las mallas de `shape` por `tint`.
+fn dim(shape: &mut Shape, tint: Color32) {
+    match shape {
+        Shape::Vec(shapes) => shapes.iter_mut().for_each(|s| dim(s, tint)),
+        Shape::Mesh(mesh) => {
+            for v in &mut std::sync::Arc::make_mut(mesh).vertices {
+                v.color = v.color * tint;
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Dibuja un botón en `rect` que responde con `response`: la pieza de su estado, lo de adentro
 /// que arma `content` (por lo común, [`label_shapes`]) y, con el foco, el anillo `accent`.
 /// Deshabilitado se ve entero (sin la transparencia de egui): cambian la pieza y el texto.

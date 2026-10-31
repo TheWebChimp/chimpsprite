@@ -329,7 +329,7 @@ fn the_pieces_of_the_palette_and_the_color_editor_are_in_the_embedded_skin() {
         ("palette.box", [9, 9]),
         ("palette.swatch", [13, 13]),
         ("palette.add", [6, 7]),
-        ("picker.copy", [25, 16]),
+        ("icon.copy", [9, 9]),
         ("picker.sv", [7, 7]),
         ("picker.bars", [7, 6]),
         ("picker.cursor", [9, 9]),
@@ -358,7 +358,7 @@ fn with_pixel_ui_the_swatches_are_the_design_cells_inside_the_palette_box() {
     // De fábrica, la caja del diseño: 207 de alto (x 784..972, y 120..326).
     assert_eq!(pbox.height(), 207.0, "{pbox:?}");
     // El editor, debajo de la división de 6 filas, con el botón de copiar 2 px adentro.
-    let copy = h.drawn("picker.copy")[0];
+    let copy = h.node("Copy color");
     assert_eq!(copy.min, pos2(pbox.left() + 2.0, pbox.bottom() + 6.0));
     // Los 21 colores: cuadritos de 13×13 (borde de 1 compartido), uno cada 12, desde 4 px
     // adentro de la caja (el Mask es el botón del damero, arriba).
@@ -480,10 +480,10 @@ fn with_pixel_ui_the_channel_strip_shows_the_four_values_and_the_hex() {
     h.set_primary(Rgba::new(10, 20, 30, 200));
     let text_color = h.skin.as_ref().unwrap().colors().field_text;
     assert_eq!(text_color, Color32::from_rgb(89, 77, 77));
-    // La tira: 16 de alto, 2 px después del botón de copiar (25×16), en el orden del diseño.
-    let copy = h.drawn("picker.copy");
-    assert_eq!(copy.len(), 1);
-    assert_eq!(copy[0].size(), vec2(25.0, 16.0));
+    // La tira: 16 de alto, 2 px después del botón de copiar (el botón del kit, de 25: 16 de
+    // cuerpo y la línea clara), en el orden del diseño.
+    let copy = [h.node("Copy color")];
+    assert_eq!(copy[0].size(), vec2(25.0, 17.0));
     let r = h.drawn_boxes("channel.r")[0];
     let g = h.drawn_boxes("channel.g")[0];
     let b = h.drawn_boxes("channel.b")[0];
@@ -561,7 +561,16 @@ fn with_pixel_ui_dragging_or_typing_red_changes_the_color() {
 fn with_pixel_ui_the_copy_button_copies_the_hex_of_the_color() {
     let mut h = Harness::new(true);
     let copy = h.node("Copy color");
-    assert_eq!(h.drawn("picker.copy"), vec![copy]);
+    // El botón con ícono del kit: el marco `button` y el ícono centrado en la cara.
+    assert!(h.drawn_boxes("button").contains(&copy), "{copy:?}");
+    let icon = h.drawn("icon.copy");
+    assert_eq!(
+        icon,
+        vec![Rect::from_min_size(
+            copy.min + vec2(8.0, 3.0),
+            vec2(9.0, 9.0)
+        )]
+    );
     h.frame(vec![Event::PointerMoved(copy.center())]);
     h.press(copy.center(), PointerButton::Primary, true);
     h.press(copy.center(), PointerButton::Primary, false);
@@ -1171,7 +1180,7 @@ fn assert_header_fits(h: &Harness) {
         );
     }
     for piece in [
-        "picker.copy",
+        "icon.copy",
         "channel.r",
         "channel.g",
         "channel.b",
@@ -1338,10 +1347,7 @@ fn with_pixel_ui_the_splitter_changes_the_height_of_the_palette() {
     h.drag_by(split.center(), vec2(0.0, 30.0));
     assert_eq!(h.palette_box().height(), 237.0);
     assert_eq!(h.palette_height, 237.0);
-    assert_eq!(
-        h.drawn("picker.copy")[0].top(),
-        h.palette_box().bottom() + 6.0
-    );
+    assert_eq!(h.node("Copy color").top(), h.palette_box().bottom() + 6.0);
     // Arriba de más: 2 filas de cuadritos (4 + 2 × 12 + 1 + 4).
     let split = h.node("Palette height");
     h.drag_by(split.center(), vec2(0.0, -400.0));

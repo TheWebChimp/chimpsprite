@@ -765,7 +765,7 @@ fn the_embedded_skin_has_the_palette_and_color_editor_pieces_of_the_design() {
         ("picker.cursor.bar", [7, 7], None),
         ("picker.sv", [7, 7], rect9(3, 3, 1, 1)),
         ("picker.bars", [7, 6], rect9(3, 2, 1, 1)),
-        ("picker.copy", [25, 16], None),
+        ("icon.copy", [9, 9], None),
         ("channel.r", [4, 16], rect9(3, 0, 1, 16)),
         ("channel.sep", [1, 16], None),
         ("channel.g", [1, 16], rect9(0, 0, 1, 16)),

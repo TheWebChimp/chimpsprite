@@ -12,7 +12,8 @@
 //!   grabado en el medio. Se arrastra para cambiar el alto de la caja (que se guarda con la
 //!   vista), de 2 filas de cuadritos hasta lo que deja el editor entero en el panel.
 //! - **Editor** (debajo de la división; en el diseño, y 332..473):
-//!   - Arriba, `picker.copy` (25×16, 2 px desde la izquierda) copia el color en hex. 2 px
+//!   - Arriba, el botón con ícono del UI kit (`icon.copy`, 25 de ancho, 2 px desde la izquierda)
+//!     copia el color en hex. 2 px
 //!     después, la tira de canales (16 de alto, hasta 2 px antes del borde derecho):
 //!     `channel.r` (la punta y el tramo rojo, 30), `channel.g` y `channel.b` (27),
 //!     `channel.a` (27, el damero repetido cada 4) y `channel.hex` (el resto, con la punta
@@ -81,7 +82,8 @@ const CHECKER_WIDTH: f32 = 24.0;
 const PALETTE_BOX: &str = "palette.box";
 const SWATCH: &str = "palette.swatch";
 const ADD: &str = "palette.add";
-const COPY: &str = "picker.copy";
+/// El ícono del botón de copiar (en el marco `button` del UI kit).
+const COPY_ICON: &str = "icon.copy";
 const SV_BOX: &str = "picker.sv";
 const BARS_BOX: &str = "picker.bars";
 const CURSOR: &str = "picker.cursor";
@@ -118,7 +120,8 @@ const FALLBACK_ADD_SIZE: Vec2 = Vec2::new(6.0, 7.0);
 
 /// El botón de copiar y la tira de canales.
 const COPY_LEFT: f32 = 2.0;
-const FALLBACK_COPY_SIZE: Vec2 = Vec2::new(25.0, 16.0);
+/// El ancho del botón de copiar, como en el diseño.
+const COPY_WIDTH: f32 = 25.0;
 const STRIP_GAP: f32 = 2.0;
 const STRIP_RIGHT: f32 = 2.0;
 const STRIP_HEIGHT: f32 = 16.0;
@@ -1037,7 +1040,7 @@ struct Groups {
 impl Groups {
     fn new(ui: &Ui, skin: &Skin) -> Self {
         let (segment, hex_min) = strip_metrics(ui, skin.colors());
-        let copy = piece(skin, COPY).map_or(FALLBACK_COPY_SIZE, size_of).x;
+        let copy = COPY_WIDTH;
         Self {
             widths: [
                 copy,
@@ -1162,30 +1165,12 @@ impl Header {
     }
 }
 
-/// El botón de copiar: copia el color en hex (`#rrggbb`, o `#rrggbbaa` con alfa).
+/// El botón de copiar: copia el color en hex (`#rrggbb`, o `#rrggbbaa` con alfa). Es el botón con
+/// ícono del UI kit (`icon.copy` en el marco `button`, con sus estados); su línea clara cae en el
+/// aire debajo de la fila.
 fn copy_button(ui: &mut Ui, skin: &Skin, id: egui::Id, rect: Rect, current: Rgba) {
-    let ppp = ui.ctx().pixels_per_point();
-    let response = ui.interact(rect, id, Sense::click());
-    let enabled = ui.is_enabled();
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, "Copy color"));
-    let state = if response.is_pointer_button_down_on() {
-        WidgetState::Down
-    } else if response.hovered() {
-        WidgetState::Hover
-    } else {
-        WidgetState::Normal
-    };
-    let shapes = match skin.piece(COPY, state) {
-        Some(p) => pixel_ui::piece_shapes(p, rect, ppp),
-        None => {
-            let colors = skin.colors();
-            vec![
-                solid(rect, colors.panel, ppp),
-                outline(rect, colors.outline, ppp),
-            ]
-        }
-    };
-    ui.painter().extend(shapes);
+    let rect = Rect::from_min_size(rect.min, vec2(rect.width(), crate::kit::button::HEIGHT));
+    let response = crate::kit::button::icon_button_at(ui, skin, rect, id, COPY_ICON, "Copy color");
     // Al copiar, un rato el globo dice qué se copió (aunque el puntero no se quede encima).
     let copied_id = id.with("copied");
     let now = ui.input(|i| i.time);

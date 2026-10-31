@@ -335,3 +335,41 @@ fn any_button_can_have_a_led_before_its_text_and_it_drops_when_pressed() {
         ("button.led.on", "button.led.off")
     );
 }
+
+#[test]
+fn an_icon_button_uses_the_button_frame_states_and_centers_its_icon_on_the_face() {
+    let (ctx, skin) = pixel_ctx();
+    let rect = Rect::from_min_size(pos2(10.0, 10.0), vec2(25.0, HEIGHT));
+    let icon = skin.piece("icon.copy", WidgetState::Normal).unwrap();
+    let icon_id = icon.texture.id();
+    let mut shapes = vec![];
+    frame(&ctx, vec![], |ui| {
+        shapes = icon_shapes(ui, &skin, rect, "icon.copy", ButtonState::Normal);
+    });
+    let at = |shapes: &[Shape]| match &shapes[0] {
+        Shape::Mesh(m) => (m.texture_id, m.calc_bounds().min),
+        Shape::Vec(v) => match &v[0] {
+            Shape::Mesh(m) => (m.texture_id, m.calc_bounds().min),
+            _ => unreachable!(),
+        },
+        _ => unreachable!(),
+    };
+    // Como el de copiar del diseño: 8 px adentro y en la fila 3 (centrado en las filas 1 a 13).
+    assert_eq!(at(&shapes), (icon_id, pos2(18.0, 13.0)));
+    frame(&ctx, vec![], |ui| {
+        shapes = icon_shapes(ui, &skin, rect, "icon.copy", ButtonState::Pressed);
+    });
+    assert_eq!(at(&shapes).1, pos2(18.0, 14.0), "pressed, 1 px down");
+    // El marco, con el puntero encima, es `button.hover`.
+    let pos = rect.center();
+    for events in [vec![Event::PointerMoved(pos)], vec![]] {
+        shapes = frame(&ctx, events, |ui| {
+            icon_button_at(ui, &skin, rect, Id::new("i"), "icon.copy", "Copy");
+        });
+    }
+    let d = drawn(&shapes);
+    assert_eq!(
+        d.textures,
+        vec![texture(&skin, WidgetState::Hover), icon_id]
+    );
+}
