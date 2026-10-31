@@ -82,10 +82,8 @@ oculta.
     arriba a la derecha y la esquina redondeada. Ya no lo usa la barra (sus números son los
     campos del UI kit, abajo); lo siguen usando la tira de canales del editor de color y el
     timeline.
-  - `field.check.on` (13×14, sin centro): la casilla marcada de la barra (no es la del menú, que
-    es más chica: 11×12). El texto va 3 px después. `field.check` (sin marcar) todavía no está
-    dibujada (el diseño no la muestra): hasta entonces va un cuadro plano de respaldo.
-  - El combo, el campo y la casilla llevan una fila de sombra (230,231,240) abajo del relleno
+  - La casilla de la barra es la del UI kit (`check`, abajo).
+  - El combo y el campo llevan una fila de sombra (230,231,240) abajo del relleno
     blanco.
 - **Pestañas:** `tab` (inactiva, café) mide 7×15 y `tab.active` (clara) 7×17, las dos con
   centro (3,0,1,alto): se estiran solo a lo ancho. Las esquinas de arriba son redondeadas y
@@ -204,6 +202,18 @@ oculta.
     deshabilitado, el LED queda como está. Reemplazan a los puntos viejos de la barra
     (`button.dot.on`, `button.dot.off`, `button.sep` y el color `option_text_off`), que se
     borraron del skin.
+  - **Casillas y radios** (`crates/cs-ui/src/kit/check.rs`, mockup de componentes, frame 9; en
+    el skin, y 488..514 desde x 30):
+    - `check`, `check.on` y `check.mixed` (12×13, sin centro): vacía, marcada (la ✓ verde) e
+      intermedia (la raya verde), con la fila de sombra (230,231,240) y la línea clara debajo.
+      `.disabled`, copiadas del mockup; `.hover` no está en el diseño: el borde (136,110,106)
+      pasa a (89,77,77). Presionadas se ven como `.hover`.
+    - `radio` y `radio.on` (10×11): `menu.radio` y `menu.radio.on` con la luz (241,235,219) de
+      abajo que tiene el radio deshabilitado del mockup (el normal no la trae; se agregó para que
+      los dos queden iguales, como las casillas). `.disabled` del mockup y `.hover` como en las
+      casillas.
+    - Ocupan el alto de un botón (17): la casilla desde la fila 1 y el radio desde la 2, así su
+      marca cae en las filas de las mayúsculas (4 a 9), y el texto 3 px después.
 
 - **Paleta y editor de color** (frame 4 del diseño, capa Mockup, columna x 784..972; el skin
   creció a 320×272 y estas piezas van en y 236..267):

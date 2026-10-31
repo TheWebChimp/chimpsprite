@@ -727,19 +727,19 @@ fn the_embedded_skin_has_the_options_bar_fields_of_the_design() {
         assert_eq!(at(p, 0, 1), border, "{name}: 1 px corner, the side");
         assert_eq!(at(p, 1, 0), border, "{name}: 1 px corner, the top");
     }
-    // La casilla marcada de la barra: 13×14, como el cuadro de `sym.slot` con el interior
-    // blanco y la marca verde. No es la del menú (11×12). La sin marcar, la misma sin marca.
-    let check = &data.pieces["field.check.on"];
-    assert_eq!((check.size, check.center), ([13, 14], None));
+    // Las casillas del UI kit (las de la barra también): 12×13, el interior blanco y la marca
+    // verde. No son las del menú (11×12). La sin marcar, la misma sin marca.
+    let check = &data.pieces["check.on"];
+    assert_eq!((check.size, check.center), ([12, 13], None));
     assert_eq!(at(check, 0, 0).a, 0, "rounded corner");
     assert_eq!(at(check, 1, 0), border, "the top");
     assert_eq!(at(check, 1, 1), white, "white inside");
-    assert_eq!(at(check, 2, 6), Rgba::rgb(71, 114, 56), "the green check");
-    assert_eq!(at(check, 1, 11), shade, "the shade");
+    assert_eq!(at(check, 2, 5), Rgba::rgb(71, 114, 56), "the green check");
+    assert_eq!(at(check, 1, 10), shade, "the shade");
     assert_ne!(check.size, data.pieces["menu.check.on"].size);
-    let empty = &data.pieces["field.check"];
+    let empty = &data.pieces["check"];
     assert_eq!(empty.size, check.size);
-    assert_eq!(at(empty, 2, 6), white, "no check");
+    assert_eq!(at(empty, 2, 5), white, "no check");
     assert_eq!(at(empty, 1, 0), border, "the same box");
 }
 

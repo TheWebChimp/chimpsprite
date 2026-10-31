@@ -87,7 +87,7 @@ fn clicks_id() -> egui::Id {
 }
 
 /// Las secciones, una por pestaña.
-const SECTIONS: [&str; 4] = ["Buttons", "Button group", "Inputs", "Tabs"];
+const SECTIONS: [&str; 5] = ["Buttons", "Button group", "Inputs", "Tabs", "Checks"];
 
 /// En la memoria de egui: la sección a la vista.
 fn section_id() -> egui::Id {
@@ -131,7 +131,8 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
                 0 => buttons_section(ui, skin, origin),
                 1 => group_section(ui, skin, origin),
                 2 => inputs_section(ui, skin, origin),
-                _ => tabs_section(ui, skin, origin),
+                3 => tabs_section(ui, skin, origin),
+                _ => checks_section(ui, skin, origin),
             };
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
@@ -663,4 +664,99 @@ fn tabs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     );
     ui.painter().add(note);
     top + 10.0
+}
+
+/// Sección Checks, como en el mockup: las casillas marcada, intermedia y vacía (una cada 16) y,
+/// 21 px después, los radios apagado y prendido (uno cada 14), en una fila por estado con su
+/// nombre a la derecha; debajo, unas de verdad: dos casillas con la de "All" intermedia cuando
+/// una sí y otra no, y un grupo de radios.
+const CHECK_PITCH: f32 = 16.0;
+const CHECK_RADIO_GAP: f32 = 21.0;
+const RADIO_PITCH: f32 = 14.0;
+const LIVE_RADIOS: [&str; 3] = ["Layer", "Frame", "Sprite"];
+
+/// En la memoria de egui: las casillas y el radio de verdad.
+fn live_checks_id() -> egui::Id {
+    egui::Id::new("ui_catalog_checks")
+}
+
+fn checks_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    use super::check::{self, Check, Mark};
+    let colors = *skin.colors();
+    let left = origin.x;
+    let mut y = origin.y;
+    let mut shapes: Vec<Shape> = Vec::new();
+    let states = [
+        ButtonState::Normal,
+        ButtonState::Hover,
+        ButtonState::Disabled,
+    ];
+    for state in states {
+        let mut x = left;
+        for value in Check::ALL {
+            shapes.extend(check::shapes(
+                ui,
+                skin,
+                pos2(x, y),
+                Mark::Check(value),
+                "",
+                state,
+            ));
+            x += CHECK_PITCH;
+        }
+        // Del último a los radios, 21 (de la x de uno a la del otro).
+        x += CHECK_RADIO_GAP - CHECK_PITCH;
+        for on in [false, true] {
+            shapes.extend(check::shapes(
+                ui,
+                skin,
+                pos2(x, y),
+                Mark::Radio(on),
+                "",
+                state,
+            ));
+            x += RADIO_PITCH;
+        }
+        let (name, _) = pixel_draw::caps_text(
+            ui,
+            state.name(),
+            x + STATE_LABEL_GAP,
+            y + check::CAPS_TOP,
+            colors.text,
+        );
+        shapes.push(name);
+        y += STATE_PITCH;
+    }
+    ui.painter().extend(shapes);
+    // Las de verdad.
+    y += STATE_PITCH;
+    let (mut a, mut b, mut pick): (bool, bool, usize) =
+        ui.data(|d| d.get_temp(live_checks_id()).unwrap_or((true, false, 0)));
+    let rect = Rect::from_min_size(pos2(left, y), vec2(PAGE_WIDTH, 3.0 * STATE_PITCH));
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        ui.spacing_mut().item_spacing = vec2(12.0, STATE_PITCH - check::HEIGHT);
+        let all = match (a, b) {
+            (true, true) => Check::On,
+            (false, false) => Check::Off,
+            _ => Check::Mixed,
+        };
+        if check::tri_checkbox(ui, skin, all, "All layers").clicked() {
+            let next = all != Check::On;
+            (a, b) = (next, next);
+        }
+        ui.horizontal(|ui| {
+            check::checkbox(ui, skin, &mut a, "Background");
+            check::checkbox(ui, skin, &mut b, "Sketch");
+            ui.add_enabled_ui(false, |ui| {
+                check::checkbox(ui, skin, &mut true, "Locked");
+            });
+        });
+        ui.horizontal(|ui| {
+            for (i, label) in LIVE_RADIOS.iter().enumerate() {
+                check::radio_value(ui, skin, &mut pick, i, label);
+            }
+        });
+    });
+    ui.data_mut(|d| d.insert_temp(live_checks_id(), (a, b, pick)));
+    y + 3.0 * STATE_PITCH
 }

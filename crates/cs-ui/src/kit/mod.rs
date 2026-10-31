@@ -4,6 +4,7 @@
 
 pub mod button;
 pub mod catalog;
+pub mod check;
 pub mod group;
 pub mod input;
 pub mod tabs;

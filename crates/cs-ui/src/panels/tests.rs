@@ -1232,7 +1232,7 @@ fn with_pixel_ui_the_bar_is_23_and_every_node_fits_inside_it() {
             "field.text",
             "field.prefix",
             "field.unit",
-            "field.check.on",
+            "check",
             "sym.slot",
             "sym.slot.active",
             "button",
@@ -1634,19 +1634,19 @@ fn with_pixel_ui_the_brush_shape_button_shows_the_brush_at_its_size_up_to_nine()
 fn with_pixel_ui_pixel_perfect_is_the_bar_checkbox_and_a_click_toggles_it() {
     let mut h = pixel_bar(ToolKind::Pencil);
     let bar = h.bar;
-    // Sin marcar: la pieza no está dibujada y va el cuadro de respaldo.
+    // Sin marcar: la casilla vacía del UI kit.
     h.editor.options.pixel_perfect = false;
     h.frame(vec![]);
-    assert_eq!(h.drawn("field.check.on"), vec![], "unchecked");
     let before = h.rect("Pixel Perfect");
+    let at = Rect::from_min_size(pos2(before.left(), bar.top() + 3.0), Vec2::new(12.0, 13.0));
+    assert_eq!(h.drawn("check"), vec![at], "unchecked");
     h.click("Pixel Perfect");
     h.frame(vec![]);
     assert!(h.editor.options.pixel_perfect);
-    // Marcada: la casilla del diseño, 13×14 de la y 74 a la 87, 5 px después del control
-    // anterior (en el diseño, del campo; acá, de los botones de forma), y la tinta del texto
-    // 3 px después, en la fila de los textos.
-    let check = h.drawn("field.check.on");
-    let at = Rect::from_min_size(pos2(before.left(), bar.top() + 3.0), Vec2::new(13.0, 14.0));
+    // Marcada (con el puntero encima): la casilla del kit, 12×13 desde la fila 3 de la barra,
+    // 5 px después del control anterior (los botones de forma), y la tinta del texto 3 px
+    // después, en la fila de los textos.
+    let check = h.drawn("check.on.hover");
     assert_eq!(check, vec![at]);
     assert_eq!(check[0].left() - h.rect("Round brush").right(), 5.0);
     let (_, ink) = h.text("Pixel Perfect");
@@ -1655,7 +1655,7 @@ fn with_pixel_ui_pixel_perfect_is_the_bar_checkbox_and_a_click_toggles_it() {
     h.click("Pixel Perfect");
     h.frame(vec![]);
     assert!(!h.editor.options.pixel_perfect);
-    assert_eq!(h.drawn("field.check.on"), vec![]);
+    assert_eq!(h.drawn("check.on.hover"), vec![]);
 }
 
 #[test]

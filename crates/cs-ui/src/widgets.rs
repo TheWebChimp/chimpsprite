@@ -126,75 +126,26 @@ pub fn text_line_named(ui: &mut egui::Ui, text: &mut String, label: &str) -> egu
     }
 }
 
-/// Una casilla con su texto: con Pixel UI, la de la barra (`field.check.on`).
+/// Una casilla con su texto: con Pixel UI, la del UI kit (`kit::check`); sin él, la de egui.
 pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool, label: &str) -> egui::Response {
     match pixel_ui::frame_skin(ui.ctx()) {
-        Some(skin) => {
-            let look = BarLook {
-                skin: &skin,
-                top: here(ui),
-            };
-            bar_fields::checkbox(ui, look, checked, label)
-        }
+        Some(skin) => crate::kit::check::checkbox(ui, &skin, checked, label),
         None => ui.checkbox(checked, label),
     }
 }
 
-/// Una opción de un grupo: con Pixel UI, el radio del diseño (`menu.radio`, `menu.radio.on`)
-/// con su texto; sin él, el de egui. Elegirla cambia `current` a `value`.
+/// Una opción de un grupo: con Pixel UI, el radio del UI kit (`kit::check`); sin él, el de egui.
+/// Elegirla cambia `current` a `value`.
 pub fn radio_value<T: PartialEq>(
     ui: &mut egui::Ui,
     current: &mut T,
     value: T,
     label: &str,
 ) -> egui::Response {
-    let Some(skin) = pixel_ui::frame_skin(ui.ctx()) else {
-        return ui.radio_value(current, value, label);
-    };
-    use crate::skin::WidgetState;
-    let on = *current == value;
-    let piece = skin
-        .piece(
-            if on { "menu.radio.on" } else { "menu.radio" },
-            WidgetState::Normal,
-        )
-        .or_else(|| skin.piece("menu.radio", WidgetState::Normal));
-    let size = piece.map_or(egui::vec2(10.0, 10.0), |p| {
-        egui::vec2(p.size[0] as f32, p.size[1] as f32)
-    });
-    let color = skin.colors().text;
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, color);
-    const GAP: f32 = 3.0;
-    let height = galley.size().y.max(size.y);
-    let (rect, mut response) = ui.allocate_exact_size(
-        egui::vec2(size.x + GAP + galley.size().x, height),
-        egui::Sense::click(),
-    );
-    if response.clicked() && !on {
-        *current = value;
-        response.mark_changed();
+    match pixel_ui::frame_skin(ui.ctx()) {
+        Some(skin) => crate::kit::check::radio_value(ui, &skin, current, value, label),
+        None => ui.radio_value(current, value, label),
     }
-    let enabled = ui.is_enabled();
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, on, label)
-    });
-    if ui.is_rect_visible(rect) {
-        let ppp = ui.ctx().pixels_per_point();
-        let left = rect.left().round();
-        // Las mayúsculas (7) centradas en el alto del texto; el radio, centrado con ellas.
-        let caps = (rect.center().y - crate::tab_bar::CAP_HEIGHT / 2.0).round();
-        let mut shapes = Vec::new();
-        if let Some(piece) = piece {
-            let top = (caps + (crate::tab_bar::CAP_HEIGHT - size.y) / 2.0).floor();
-            let at = egui::Rect::from_min_size(egui::pos2(left, top), size);
-            shapes.extend(pixel_ui::piece_shapes(piece, at, ppp));
-        }
-        let at = crate::tab_bar::text_pos(&galley, left + size.x + GAP, caps, ppp);
-        shapes.push(egui::Shape::galley(at, galley, color));
-        ui.painter().extend(shapes);
-    }
-    response
 }
 
 /// Un desplegable con `selected` a la vista; `content` arma las opciones (con

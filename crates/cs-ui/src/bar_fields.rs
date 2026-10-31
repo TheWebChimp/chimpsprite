@@ -11,10 +11,9 @@
 //!   de egui sin marco adentro: se arrastra o se escribe como siempre. Con unidad, la caja
 //!   `field.unit` ("px") a la derecha; con letra, la caja `field.prefix` a la izquierda. Sus
 //!   mayúsculas, en la fila 5 del campo (una más abajo que los textos de la barra).
-//! - **Casilla:** `field.check.on`, 13×14 desde la fila 3, y el texto 3 px después. Sin marcar va
-//!   `field.check`; mientras el skin no la traiga (el diseño no la muestra), un cuadro plano de
-//!   respaldo. Las de los menús (`menu.check`, `menu.check.on`) no sirven: son otro dibujo, de
-//!   11×12.
+//! - **Casilla:** la del UI kit (`kit::check`, mockup de componentes, frame 9), desde la fila de
+//!   los campos: la casilla de 12×13 en la fila 3 y el texto 3 px después, en la fila de los
+//!   textos.
 //! - **Opciones** (los grupos de radios: Sample, Linear/Radial, Rotation): el grupo de botones
 //!   del UI kit (`kit::group`, mockup de componentes, frame 9) con LEDs, desde la fila de los
 //!   campos: sus mayúsculas caen en la fila de los textos.
@@ -38,8 +37,6 @@ use crate::skin::{Piece, Skin, WidgetState};
 use crate::tab_bar;
 
 const COMBO: &str = "field.combo";
-const CHECK: &str = "field.check";
-const CHECK_ON: &str = "field.check.on";
 
 /// La fila de las mayúsculas de los textos, desde el borde de arriba de la barra.
 pub const CAPS_TOP: f32 = FIELD_TOP + pixel_ui::CONTROL_CAPS;
@@ -66,11 +63,6 @@ const FALLBACK_COMBO_RIGHT: f32 = 10.0;
 /// El campo numérico de borde a borde: 1 de borde, 25 de blanco y 1 de borde (en el diseño, x
 /// 278..304, donde la unidad pone su línea divisoria).
 const NUMBER_WIDTH: f32 = 27.0;
-/// La casilla, una fila más abajo que los campos (en el diseño, y 74..87).
-const CHECK_TOP: f32 = 3.0;
-const FALLBACK_CHECK_SIZE: Vec2 = vec2(13.0, 14.0);
-/// De la casilla a la tinta de su texto.
-const CHECK_GAP: f32 = 3.0;
 
 /// Lo que necesitan los controles pixel de la barra: el skin y la fila de arriba de la barra.
 #[derive(Clone, Copy)]
@@ -83,10 +75,6 @@ impl BarLook<'_> {
     fn piece(&self, name: &str) -> Option<&Piece> {
         self.skin.piece(name, WidgetState::Normal)
     }
-}
-
-fn size_of(piece: &Piece) -> Vec2 {
-    vec2(piece.size[0] as f32, piece.size[1] as f32)
 }
 
 /// Un cuadro plano de respaldo (sin la pieza): `panel` con borde `outline`.
@@ -461,41 +449,12 @@ fn bar_number<Num: emath::Numeric>(
 const PREFIX_FIELD_WIDTH: f32 = 37.0;
 const SUFFIX_FIELD_WIDTH: f32 = 59.0;
 
-/// Una casilla con su texto, como `ui.checkbox(checked, label)`: `field.check.on` marcada y
-/// `field.check` sin marcar (sin la pieza, un cuadro plano y, marcada, un cuadrito `text`).
+/// Una casilla con su texto, como `ui.checkbox(checked, label)`: la del UI kit (`kit::check`),
+/// desde la fila de los campos (sus mayúsculas caen en la fila de los textos).
 pub fn checkbox(ui: &mut Ui, look: BarLook, checked: &mut bool, label: &str) -> Response {
-    let colors = look.skin.colors();
-    let shown = galley(ui, label, colors.text);
-    let on_piece = look.piece(CHECK_ON);
-    let off_piece = look.piece(CHECK);
-    let box_size = on_piece.or(off_piece).map_or(FALLBACK_CHECK_SIZE, size_of);
-    let size = vec2(box_size.x + CHECK_GAP + shown.size().x, shown.size().y);
-    let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
-    if response.clicked() {
-        *checked = !*checked;
-        response.mark_changed();
-    }
-    let on = *checked;
-    let enabled = ui.is_enabled();
-    response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, on, label));
-    if ui.is_rect_visible(rect) {
-        let ppp = ui.ctx().pixels_per_point();
-        let at = Rect::from_min_size(pos2(rect.left().round(), look.top + CHECK_TOP), box_size);
-        let mut shapes = match if on { on_piece } else { off_piece } {
-            Some(piece) => pixel_ui::piece_shapes(piece, at, ppp),
-            None => {
-                let mut flat = flat_box(look, at, ppp);
-                if on {
-                    flat.push(solid(at.shrink(3.0), colors.text, ppp));
-                }
-                flat
-            }
-        };
-        let pos = tab_bar::text_pos(&shown, at.right() + CHECK_GAP, look.top + CAPS_TOP, ppp);
-        shapes.push(Shape::galley(pos, shown, colors.text));
-        painter(ui, look).extend(shapes);
-    }
-    response
+    at_field_top(ui, look, |ui| {
+        kit::check::checkbox(ui, look.skin, checked, label)
+    })
 }
 
 #[cfg(test)]
