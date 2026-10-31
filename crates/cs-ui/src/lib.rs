@@ -201,6 +201,11 @@ pub struct ChimpApp {
     tool_options: editor::ToolOptions,
 }
 
+/// En la memoria de egui: la fila de arriba de la barra de estado de este frame.
+fn status_top_id() -> egui::Id {
+    egui::Id::new("app_status_top")
+}
+
 impl ChimpApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         theme::apply(&cc.egui_ctx);
@@ -1041,7 +1046,7 @@ impl ChimpApp {
                 .show_separator_line(false);
         }
         {
-            status.show(ui, |ui| {
+            let shown = status.show(ui, |ui| {
                 let notice = self
                     .autosaver
                     .disabled_reason
@@ -1083,6 +1088,8 @@ impl ChimpApp {
                     }
                 }
             });
+            // Hasta dónde pintan los paneles de arriba (`editor_panels`).
+            ui.data_mut(|d| d.insert_temp(status_top_id(), shown.response.rect.top()));
         }
         if self.has_doc() {
             let rect = self.editor_panels(ui, modal);
@@ -1120,6 +1127,12 @@ impl ChimpApp {
     /// Paneles del editor (cuando hay un documento activo). Devuelve el rect del lienzo.
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
         let skin = self.pixel.skin();
+        // Nada de lo de arriba pinta sobre la barra de estado: si el contenido de un panel no
+        // entra en una ventana baja, egui lo alarga hacia abajo (y con él su borde y el resalte
+        // de redimensionar).
+        if let Some(top) = ui.data(|d| d.get_temp::<f32>(status_top_id())) {
+            ui.set_clip_rect(ui.clip_rect().with_max_y(top));
+        }
         // La barra de opciones, a todo el ancho debajo de las pestañas: 21 de alto con Pixel UI,
         // con el separador grabado abajo.
         panels::options_bar_panel(ui.style(), skin).show(ui, |ui| {
