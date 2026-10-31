@@ -6,5 +6,6 @@ pub mod button;
 pub mod catalog;
 pub mod group;
 pub mod input;
+pub mod tabs;
 
 pub use group::{GroupItem, button_group};

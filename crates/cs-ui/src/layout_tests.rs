@@ -820,19 +820,20 @@ fn the_marker_is_a_circle_with_unsaved_changes_and_a_cross_without() {
     assert_eq!(crosses.len(), 1);
     assert!(dirty.contains_rect(dots[0]), "{dots:?} in {dirty:?}");
     assert!(clean.contains_rect(crosses[0]), "{crosses:?} in {clean:?}");
-    // 5 px antes del borde derecho y 7 debajo del de arriba, como en el mockup.
+    // 6 px antes del borde derecho (el borde de 2 y 4 de aire) y 7 debajo del de arriba, como
+    // en el mockup de componentes.
     for (tab, mark) in [(dirty, dots[0]), (clean, crosses[0])] {
         assert_eq!(mark.size(), Vec2::new(5.0, 5.0));
-        assert_eq!(tab.right() - mark.right(), 5.0);
+        assert_eq!(tab.right() - mark.right(), 6.0);
         assert_eq!(mark.top() - tab.top(), 7.0);
     }
-    // El nombre empieza 5 px adentro.
+    // El nombre empieza 6 px adentro.
     let text = h
         .texts
         .iter()
         .find(|(t, _)| t == "Design.chimp")
         .expect("the name");
-    assert_eq!(text.1.x - dirty.left(), 5.0);
+    assert_eq!(text.1.x - dirty.left(), 6.0);
 }
 
 #[test]
@@ -942,19 +943,20 @@ fn tabs_switch_on_click_go_home_and_close_with_the_middle_button() {
 }
 
 #[test]
-fn hovering_an_inactive_tab_does_not_change_it() {
+fn hovering_an_inactive_tab_lightens_only_that_tab() {
     let mut h = two_tabs(Some(0));
-    // El tiempo de cada foto, el mismo: la casita de Home está animada.
-    let time = h.time;
-    let before = h.textures.clone();
     let tab = h.button("Otro.chimp");
-    h.time = time - 0.05;
+    assert!(h.drawn("tab.hover").is_empty());
     h.frame_with(vec![Event::PointerMoved(
         tab.left_center() + Vec2::new(8.0, 0.0),
     )]);
-    h.time = time - 0.05;
     h.frame();
-    assert_eq!(h.textures, before);
+    // Con el puntero encima, `tab.hover` (el relleno más claro) en esa pestaña; la activa no
+    // cambia.
+    let hovered = h.drawn("tab.hover");
+    assert!(!hovered.is_empty());
+    assert!(hovered.iter().all(|r| tab.contains_rect(*r)), "{hovered:?}");
+    assert!(!h.drawn("tab.active").is_empty());
 }
 
 #[test]

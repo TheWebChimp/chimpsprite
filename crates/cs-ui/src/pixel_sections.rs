@@ -2,15 +2,13 @@
 //! con sus botones chicos (+ y tacho) a la derecha, los elementos como pestañas del skin (`tab`,
 //! `tab.active`) sobre la línea grabada y, debajo, los campos de lo elegido.
 
-use eframe::egui::{
-    self, Color32, Rect, Response, Sense, Shape, TextStyle, Ui, Vec2, WidgetInfo, WidgetType, pos2,
-    vec2,
-};
+use eframe::egui::{self, Color32, Rect, Response, Sense, Shape, Ui, Vec2, pos2, vec2};
 
+use crate::kit::tabs as kit_tabs;
 use crate::pixel_draw;
 use crate::pixel_ui;
 use crate::pixel_ui::Tip as _;
-use crate::skin::{Skin, WidgetState};
+use crate::skin::Skin;
 
 /// Los botones chicos del diseño: `button` del skin en 9-slice, de 25×16.
 pub const BUTTON_SIZE: Vec2 = vec2(25.0, 16.0);
@@ -22,16 +20,6 @@ const HEADER_RIGHT: f32 = 3.0;
 const HEADER_CAPS_TOP: f32 = 4.0;
 /// De los botones del título a las pestañas.
 const HEADER_TABS_GAP: f32 = 1.0;
-const TAB_PIECE: &str = "tab";
-const TAB_HEIGHT: f32 = 15.0;
-/// Entre pestañas.
-const TAB_GAP: f32 = 5.0;
-/// Del borde de la pestaña al texto (y al cuadrito de color, si hay).
-const TAB_PADDING: f32 = 5.0;
-const TAB_CAPS_TOP: f32 = 5.0;
-/// El cuadrito de color de una pestaña (slices) y su aire hasta el nombre.
-const SWATCH: f32 = 7.0;
-const SWATCH_GAP: f32 = 3.0;
 /// De la línea grabada de las pestañas a los campos.
 const TABS_FIELDS_GAP: f32 = 9.0;
 /// Entre un campo y su botón (x 945 → 949).
@@ -101,15 +89,6 @@ fn text_shape(ui: &Ui, text: &str, left: f32, cap_top: f32, color: Color32) -> S
     pixel_draw::caps_text(ui, text, left, cap_top, color).0
 }
 
-fn text_width(ui: &Ui, text: &str) -> f32 {
-    let font = TextStyle::Body.resolve(ui.style());
-    ui.painter()
-        .layout_no_wrap(text.to_owned(), font, Color32::WHITE)
-        .size()
-        .x
-        .ceil()
-}
-
 /// Lo que se pidió desde el título de una sección.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HeaderAction {
@@ -155,251 +134,38 @@ pub fn header(
     action
 }
 
-/// Las flechas para recorrer las pestañas que no caben: del alto de una pestaña.
-const ARROW_WIDTH: f32 = 11.0;
-const ARROW_GAP: f32 = 2.0;
-
-/// Un triángulo de 3×5 píxeles apuntando a la izquierda (`back`) o a la derecha, centrado en
-/// `rect` (sin la sombra de abajo de la pestaña).
-fn arrow_shapes(rect: Rect, back: bool, color: Color32, ppp: f32) -> Vec<Shape> {
-    let center = pos2(
-        rect.center().x.floor(),
-        (rect.top() + TAB_CAPS_TOP + 2.0).floor(),
-    );
-    (0..3)
-        .map(|col: i32| {
-            // La punta es la columna de 1 píxel; la base, la de 5.
-            let half = col as f32;
-            let x = if back {
-                center.x - 1.0 + col as f32
-            } else {
-                center.x + 1.0 - col as f32
-            };
-            let r = Rect::from_min_size(pos2(x, center.y - half), vec2(1.0, 2.0 * half + 1.0));
-            Shape::rect_filled(
-                eframe::emath::GuiRounding::round_to_pixels(r, ppp),
-                0.0,
-                color,
-            )
-        })
-        .collect()
-}
-
 /// Una pestaña: su nombre y, si tiene, el color de su cuadrito.
 pub struct Tab {
     pub name: String,
     pub color: Option<Color32>,
 }
 
-/// Las pestañas en una sola fila sobre la línea grabada, que se corta debajo de la activa. Si no
-/// entran, se achican parejo y los nombres terminan en "..." (como las de documentos), hasta un
-/// mínimo: más allá, se ven las que caben y las flechas ◀ ▶ del final (o la rueda) recorren
-/// las demás. La activa siempre queda a la vista. Devuelve la que se tocó.
+/// Las pestañas de la sección: las del UI kit (`kit::tabs`, estilo documento) en una sola fila
+/// sobre la línea grabada, que se corta debajo de la activa. Si no entran, se achican parejo y
+/// los nombres terminan en "..." hasta un mínimo; más allá, las flechas del final (o la rueda)
+/// recorren las demás. La activa siempre queda a la vista. Devuelve la que se tocó.
 pub fn tabs(ui: &mut Ui, skin: &Skin, tabs: &[Tab], active: Option<usize>) -> Option<usize> {
-    let ppp = ui.ctx().pixels_per_point();
-    let colors = *skin.colors();
     let left = ui.cursor().left().round();
     let right = ui.max_rect().right();
     let top = ui.cursor().top().round();
-    // En una sola fila: si no caben, se achican parejo y los nombres terminan en "..." (como
-    // las pestañas de documentos).
-    let chrome = |tab: &Tab| {
-        let swatch = if tab.color.is_some() {
-            SWATCH + SWATCH_GAP
-        } else {
-            0.0
-        };
-        TAB_PADDING + swatch + TAB_PADDING
-    };
-    let natural: Vec<f32> = tabs
+    let strip = kit_tabs::Strip::new(left, right, top, kit_tabs::TabStyle::Document);
+    let items: Vec<kit_tabs::TabItem> = tabs
         .iter()
-        .map(|t| (chrome(t) + text_width(ui, &t.name)).ceil())
+        .map(|t| match t.color {
+            Some(color) => kit_tabs::TabItem::colored(t.name.clone(), color),
+            None => kit_tabs::TabItem::new(t.name.clone()),
+        })
         .collect();
-    let n = tabs.len();
-    let gaps = TAB_GAP * n.saturating_sub(1) as f32;
-    let room = (right - left - gaps).floor().max(0.0);
-    // Ninguna baja de tres letras y los puntos (la que es más corta entera, queda entera).
-    let min =
-        (TAB_PADDING * 2.0 + text_width(ui, &format!("Abc{}", crate::tab_bar::ellipsis()))).ceil();
-    let widths: Vec<f32> = crate::tab_bar::fit_widths(&natural, room, min)
-        .into_iter()
-        .zip(&natural)
-        .map(|(w, &full)| w.max(min.min(full)))
-        .collect();
-    let overflow = widths.iter().sum::<f32>() + gaps > right - left;
-    // Con flechas, las pestañas llegan hasta ellas.
-    let arrows = Rect::from_min_max(
-        pos2(right - 2.0 * ARROW_WIDTH - ARROW_GAP, top),
-        pos2(right, top + TAB_HEIGHT),
-    );
-    let tabs_right = if overflow {
-        arrows.left() - TAB_GAP
-    } else {
-        right
-    };
-    // Desde cuál se ven (y la activa de la vez pasada, para mostrarla cuando cambia).
-    let memory = ui.id().with("pixel_tabs_offset");
-    let (mut offset, seen): (usize, Option<usize>) =
-        ui.data(|d| d.get_temp(memory)).unwrap_or((0, None));
-    // Si las de `from` a `to` entran.
-    let fits = |from: usize, to: usize| {
-        let used: f32 = widths[from..=to].iter().sum::<f32>() + TAB_GAP * (to - from) as f32;
-        left + used <= tabs_right
-    };
-    // La última desde la que se ve hasta el final.
-    let last_offset = (0..n)
-        .find(|&o| fits(o, n - 1))
-        .unwrap_or(n.saturating_sub(1));
-    if !overflow {
-        offset = 0;
-    } else {
-        if let Some(a) = active.filter(|&a| seen != Some(a) && a < n) {
-            if a < offset {
-                offset = a;
-            }
-            while offset < a && !fits(offset, a) {
-                offset += 1;
-            }
-        }
-        // La rueda sobre la fila las recorre.
-        let row = Rect::from_x_y_ranges(left..=right, top..=top + TAB_HEIGHT);
-        let hovered = ui.rect_contains_pointer(row);
-        let scroll: f32 = ui.input(|i| {
-            i.raw
-                .events
-                .iter()
-                .map(|e| match e {
-                    egui::Event::MouseWheel { delta, .. } => delta.y + delta.x,
-                    _ => 0.0,
-                })
-                .sum()
-        });
-        if hovered && scroll > 0.0 {
-            offset = offset.saturating_sub(1);
-        } else if hovered && scroll < 0.0 {
-            offset += 1;
-        }
-        offset = offset.min(last_offset);
-    }
-    let font = TextStyle::Body.resolve(ui.style());
-    let mut rects: Vec<Option<Rect>> = vec![None; n];
-    let mut names = vec![String::new(); n];
-    let mut x = left;
-    for i in offset..n {
-        if i > offset && x + widths[i] > tabs_right {
-            break;
-        }
-        rects[i] = Some(Rect::from_min_size(
-            pos2(x, top),
-            vec2(widths[i], TAB_HEIGHT),
-        ));
-        let text_room = widths[i] - chrome(&tabs[i]);
-        names[i] = crate::tab_bar::fit_text(ui, &tabs[i].name, &font, text_room);
-        x += widths[i] + TAB_GAP;
-    }
-    let last_shown = rects.iter().rposition(Option::is_some).unwrap_or(0);
-    let bottom = if n == 0 { top } else { top + TAB_HEIGHT };
-    let etched = pixel_ui::ETCHED_SIZE;
-    // La línea grabada a todo el ancho, cortada debajo de la activa (si se ve).
-    let active_rect = active.and_then(|i| rects.get(i).copied().flatten());
-    let line = egui::Rangef::new(left, right);
-    let spans = match active_rect.as_ref() {
-        Some(r) => vec![
-            egui::Rangef::new(line.min, r.left()),
-            egui::Rangef::new(r.right(), line.max),
-        ],
-        None => vec![line],
-    };
-    let mut shapes: Vec<Shape> = spans
-        .into_iter()
-        .filter(|s| s.span() > 0.0)
-        .map(|s| pixel_ui::etched_hline(s, bottom, &colors, ppp))
-        .collect();
-    let mut clicked = None;
-    // Los nombres van encima de las pestañas (se pintan después).
-    let mut texts = Vec::with_capacity(tabs.len());
-    for (i, ((tab, rect), name)) in tabs.iter().zip(&rects).zip(&names).enumerate() {
-        let Some(rect) = rect else {
-            continue;
-        };
-        let is_active = active == Some(i);
-        let response = ui.interact(*rect, ui.id().with(("pixel_tab", i)), Sense::click());
-        let enabled = ui.is_enabled();
-        response.widget_info(|| {
-            WidgetInfo::selected(WidgetType::SelectableLabel, enabled, is_active, &tab.name)
-        });
-        if response.clicked() {
-            clicked = Some(i);
-        }
-        let (state, drawn) = if is_active {
-            (WidgetState::Active, rect.with_max_y(rect.bottom() + etched))
-        } else if response.hovered() {
-            (WidgetState::Hover, *rect)
-        } else {
-            (WidgetState::Normal, *rect)
-        };
-        if let Some(piece) = skin.piece(TAB_PIECE, state) {
-            shapes.extend(pixel_ui::piece_shapes(piece, drawn, ppp));
-        }
-        let mut text_left = rect.left() + TAB_PADDING;
-        if let Some(color) = tab.color {
-            let swatch = Rect::from_min_size(
-                pos2(text_left, rect.top() + TAB_CAPS_TOP),
-                Vec2::splat(SWATCH),
-            );
-            shapes.push(Shape::rect_filled(swatch, 0.0, colors.field_text));
-            shapes.push(Shape::rect_filled(swatch.shrink(1.0), 0.0, color));
-            text_left += SWATCH + SWATCH_GAP;
-        }
-        let color = if is_active {
-            colors.text
-        } else {
-            colors.tab_text_dim
-        };
-        // Recortado a la pestaña: un nombre muy largo no se sale.
-        let text = text_shape(ui, name, text_left, rect.top() + TAB_CAPS_TOP, color);
-        texts.push((rect.shrink2(vec2(1.0, 0.0)), text));
-    }
-    // Las flechas para recorrerlas.
-    if overflow {
-        let prev = Rect::from_min_size(arrows.min, vec2(ARROW_WIDTH, TAB_HEIGHT));
-        let next = prev.translate(vec2(ARROW_WIDTH + ARROW_GAP, 0.0));
-        for (rect, back, enabled) in [(prev, true, offset > 0), (next, false, last_shown + 1 < n)] {
-            let label = if back { "Previous tabs" } else { "Next tabs" };
-            let response = ui.interact(rect, ui.id().with(label), Sense::click());
-            response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, label));
-            let state = if enabled && response.hovered() {
-                WidgetState::Hover
-            } else {
-                WidgetState::Normal
-            };
-            if let Some(piece) = skin.piece(TAB_PIECE, state) {
-                shapes.extend(pixel_ui::piece_shapes(piece, rect, ppp));
-            }
-            let ink = if enabled {
-                colors.text
-            } else {
-                colors.tab_text_dim.gamma_multiply(0.5)
-            };
-            shapes.extend(arrow_shapes(rect, back, ink, ppp));
-            if enabled && response.clicked() {
-                offset = if back {
-                    offset.saturating_sub(1)
-                } else {
-                    (offset + 1).min(last_offset)
-                };
-            }
-        }
-    }
-    ui.data_mut(|d| d.insert_temp(memory, (offset, active)));
-    ui.painter().extend(shapes);
-    for (clip, text) in texts {
-        ui.painter().with_clip_rect(clip).add(text);
-    }
-    let used = Rect::from_x_y_ranges(left..=right, top..=bottom + etched);
+    let id = ui.id().with("pixel_tabs");
+    let event = kit_tabs::tab_strip(ui, skin, id, strip, &items, active);
+    let bottom = if tabs.is_empty() { top } else { strip.bottom() };
+    let used = Rect::from_x_y_ranges(left..=right, top..=bottom + pixel_ui::ETCHED_SIZE);
     ui.allocate_rect(used, Sense::hover());
     ui.add_space(TABS_FIELDS_GAP - ui.spacing().item_spacing.y);
-    clicked
+    match event {
+        Some(kit_tabs::TabEvent::Select(i)) => Some(i),
+        _ => None,
+    }
 }
 
 /// Las filas de la selección y del cursor de escribir de los campos que todavía no son del UI kit
@@ -515,7 +281,7 @@ mod tests {
         let (boxes, texts) = draw(&names, 200.0);
         let tops: std::collections::BTreeSet<i32> = boxes
             .iter()
-            .filter(|r| r.height() >= TAB_HEIGHT - 1.0)
+            .filter(|r| r.height() >= crate::kit::tabs::HEIGHT - 1.0)
             .map(|r| r.top() as i32)
             .collect();
         assert_eq!(tops.len(), 1, "one row: {boxes:?}");

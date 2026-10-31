@@ -7,6 +7,7 @@ use eframe::egui::{self, Pos2, Rect, Sense, Shape, TextStyle, Ui, Vec2, pos2, ve
 use super::button::{self, ButtonState, Led};
 use super::group::{self, GroupItem, SegmentLook};
 use super::input::{self, Affixes, InputState, NumberOptions};
+use super::tabs;
 use crate::pixel_draw;
 use crate::skin::Skin;
 
@@ -15,10 +16,9 @@ pub const TITLE: &str = "UI Catalog";
 
 /// Medidas de la página, desde la esquina de arriba a la izquierda del contenido.
 const MARGIN: Vec2 = vec2(12.0, 12.0);
-/// El título de una sección (sus mayúsculas) y, debajo, la línea grabada.
-const TITLE_TO_LINE: f32 = 10.0;
-const LINE_TO_CONTENT: f32 = 10.0;
-/// El ancho de la página (la línea grabada de las secciones).
+/// De la línea grabada de las pestañas al contenido de la sección.
+const CONTENT_TOP: f32 = 12.0;
+/// El ancho de la página (la tira de pestañas).
 const PAGE_WIDTH: f32 = 400.0;
 
 /// Sección Buttons, con el layout del mockup (frame 9): el texto suelto antes de un botón (para
@@ -43,10 +43,6 @@ const LED_COLUMN_GAP: f32 = 12.0;
 const LED_ON_LABEL: &str = "LED on";
 const LED_OFF_LABEL: &str = "LED off";
 const LED_LIVE_LABEL: &str = "Toggle LED";
-
-/// De una sección a la siguiente y de una columna de secciones a la otra.
-const SECTION_GAP: f32 = 24.0;
-const COLUMN_GAP: f32 = 24.0;
 
 /// Sección Button group, como en el mockup: el grupo de dos "Button" y, en la fila siguiente, el
 /// mismo y 22 px a la derecha el de los LEDs (el primero elegido); de un grupo al siguiente,
@@ -90,47 +86,66 @@ fn clicks_id() -> egui::Id {
     egui::Id::new("ui_catalog_clicks")
 }
 
-/// La página entera, en el panel central (`ui`), con el fondo `background` del skin.
+/// Las secciones, una por pestaña.
+const SECTIONS: [&str; 4] = ["Buttons", "Button group", "Inputs", "Tabs"];
+
+/// En la memoria de egui: la sección a la vista.
+fn section_id() -> egui::Id {
+    egui::Id::new("ui_catalog_section")
+}
+
+/// La página entera, en el panel central (`ui`), con el fondo `background` del skin: arriba, las
+/// pestañas del kit (estilo documento), una por sección, y debajo solo la elegida. Para las
+/// capturas, `CHIMPSPRITE_DEMO_CATALOG=<sección>` abre esa.
 pub fn show(ui: &mut Ui, skin: &Skin) {
+    let start = crate::demo::dev_var("CHIMPSPRITE_DEMO_CATALOG")
+        .and_then(|name| {
+            SECTIONS
+                .iter()
+                .position(|s| s.eq_ignore_ascii_case(name.trim()))
+        })
+        .unwrap_or(0);
+    let mut section: usize = ui.data(|d| d.get_temp(section_id()).unwrap_or(start));
+    let origin = ui.max_rect().min.round() + MARGIN;
+    let strip = tabs::Strip::new(
+        origin.x,
+        origin.x + PAGE_WIDTH,
+        origin.y,
+        tabs::TabStyle::Document,
+    );
+    let items: Vec<tabs::TabItem> = SECTIONS.iter().map(|s| tabs::TabItem::new(*s)).collect();
+    let id = ui.id().with("ui_catalog_tabs");
+    if let Some(tabs::TabEvent::Select(i)) =
+        tabs::tab_strip(ui, skin, id, strip, &items, Some(section))
+    {
+        section = i;
+    }
+    ui.data_mut(|d| d.insert_temp(section_id(), section));
+    let header = strip.bottom() + crate::pixel_ui::ETCHED_SIZE - ui.max_rect().top();
+    ui.add_space(header);
     egui::ScrollArea::both()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let origin = ui.cursor().min.round() + MARGIN;
-            let bottom = buttons_section(ui, skin, origin);
-            let bottom = group_section(ui, skin, pos2(origin.x, bottom + SECTION_GAP));
-            // La segunda columna, a la derecha de la primera.
-            let second = origin.x + PAGE_WIDTH + COLUMN_GAP;
-            let right = inputs_section(ui, skin, pos2(second, origin.y));
+            let origin = pos2(origin.x, ui.cursor().min.round().y + CONTENT_TOP);
+            let bottom = match section {
+                0 => buttons_section(ui, skin, origin),
+                1 => group_section(ui, skin, origin),
+                2 => inputs_section(ui, skin, origin),
+                _ => tabs_section(ui, skin, origin),
+            };
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
-                2.0 * PAGE_WIDTH + COLUMN_GAP + 2.0 * MARGIN.x,
-                bottom.max(right) - ui.cursor().top() + MARGIN.y,
+                PAGE_WIDTH + 2.0 * MARGIN.x,
+                bottom - ui.cursor().top() + MARGIN.y,
             );
             ui.allocate_exact_size(size, Sense::hover());
         });
 }
 
-/// El título de una sección con su línea grabada debajo, desde `top`. Devuelve dónde empieza el
-/// contenido.
-fn section_title(ui: &Ui, skin: &Skin, left: f32, top: f32, title: &str) -> f32 {
-    let colors = skin.colors();
-    let ppp = ui.ctx().pixels_per_point();
-    let (text, _) = pixel_draw::caps_text(ui, title, left, top, colors.home_text);
-    let line = top + TITLE_TO_LINE;
-    ui.painter().add(text);
-    ui.painter().add(crate::pixel_ui::etched_hline(
-        egui::Rangef::new(left, left + PAGE_WIDTH),
-        line,
-        colors,
-        ppp,
-    ));
-    line + crate::pixel_ui::ETCHED_SIZE + LINE_TO_CONTENT
-}
-
 /// La sección Buttons desde `origin`. Devuelve dónde termina.
 fn buttons_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     let colors = *skin.colors();
-    let top = section_title(ui, skin, origin.x, origin.y, "Buttons");
+    let top = origin.y;
     let left = origin.x;
     let mut shapes: Vec<Shape> = Vec::new();
     // La línea base: el texto suelto con sus mayúsculas en la fila de las del botón.
@@ -241,7 +256,7 @@ fn buttons_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
 /// La sección Button group desde `origin`. Devuelve dónde termina.
 fn group_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     let colors = *skin.colors();
-    let top = section_title(ui, skin, origin.x, origin.y, "Button group");
+    let top = origin.y;
     let left = origin.x;
     let plain = [GroupItem::text(SAMPLE), GroupItem::text(SAMPLE)];
     // Con LED: prendido el de la opción elegida.
@@ -347,7 +362,7 @@ fn group_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
 /// La sección Inputs desde `origin`. Devuelve dónde termina.
 fn inputs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     let colors = *skin.colors();
-    let top = section_title(ui, skin, origin.x, origin.y, "Inputs");
+    let top = origin.y;
     let left = origin.x;
     let mut shapes: Vec<Shape> = Vec::new();
     let name = |shapes: &mut Vec<Shape>, text: &str, x: f32, y: f32| {
@@ -446,4 +461,206 @@ fn inputs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         d.insert_temp(live_numbers_id(), values);
     });
     y + input::HEIGHT
+}
+
+/// Sección Tabs, como en el mockup: las pestañas de documento (la activa "Design.chimp" y la otra
+/// "Otro.chimp", con cambios) sobre su línea grabada, que sigue 5 px antes y después; la misma
+/// tira con las flechas; la pestaña de panel "Layer" pegada a su caja, con el divisor 28 filas
+/// debajo del borde; y una tira de verdad.
+const DOC_TABS: [&str; 2] = ["Design.chimp", "Otro.chimp"];
+const LINE_OVERHANG: f32 = 5.0;
+const ARROWS_LINE_OVERHANG: f32 = 6.0;
+const TABS_PITCH: f32 = 30.0;
+const PANEL_SIZE: Vec2 = vec2(79.0, 63.0);
+const PANEL_DIVIDER_TOP: f32 = 28.0;
+const LIVE_TABS: [&str; 9] = [
+    "Sprite.chimp",
+    "Tiles.chimp",
+    "Hero.chimp",
+    "Map.chimp",
+    "UI.chimp",
+    "Enemies.chimp",
+    "Items.chimp",
+    "Title.chimp",
+    "Credits.chimp",
+];
+
+/// El panel de verdad: sus pestañas y su distancia al del mockup.
+const LIVE_PANEL_TABS: [&str; 2] = ["Layer", "Frame"];
+const LIVE_PANEL_GAP: f32 = 24.0;
+
+/// En la memoria de egui: la pestaña elegida del panel de verdad.
+fn panel_tab_id() -> egui::Id {
+    egui::Id::new("ui_catalog_panel_tab")
+}
+
+/// En la memoria de egui: las pestañas de verdad que quedan y la activa.
+fn live_tabs_id() -> egui::Id {
+    egui::Id::new("ui_catalog_live_tabs")
+}
+
+/// Una tira de documento dibujada desde `left` (sin interacción): la primera activa y, si
+/// `arrows`, las flechas después de la última. Devuelve dónde termina a lo ancho.
+fn forced_strip(ui: &Ui, skin: &Skin, left: f32, top: f32, arrows: bool) -> Vec<Shape> {
+    let strip = tabs::Strip::new(left, left + PAGE_WIDTH, top, tabs::TabStyle::Document);
+    let items: Vec<tabs::TabItem> = DOC_TABS
+        .iter()
+        .map(|t| tabs::TabItem::closable(*t, true))
+        .collect();
+    let lay = tabs::layout(ui, &strip, &items, 0);
+    let last = lay.placed.last().map_or(left, |p| p.rect.right());
+    let arrows_rect = arrows.then(|| {
+        Rect::from_min_size(
+            pos2(last + tabs::GAP, top + tabs::ARROWS_TOP),
+            vec2(tabs::ARROWS_WIDTH, tabs::ARROW_SIZE),
+        )
+    });
+    let right = match arrows_rect {
+        Some(a) => a.right() + ARROWS_LINE_OVERHANG,
+        None => last + LINE_OVERHANG,
+    };
+    let mut line = strip;
+    line.line = egui::Rangef::new(left - LINE_OVERHANG, right);
+    let active = lay
+        .placed
+        .first()
+        .map(|p| p.rect.with_max_y(p.rect.top() + tabs::ACTIVE_HEIGHT));
+    let mut shapes = tabs::line_shapes(ui, skin, &line, active);
+    for (i, p) in lay.placed.iter().enumerate().rev() {
+        let look = tabs::TabLook {
+            active: i == 0,
+            hovered: false,
+            mark_hovered: false,
+        };
+        shapes.extend(tabs::tab_shapes(
+            ui,
+            skin,
+            tabs::TabStyle::Document,
+            p.rect,
+            &items[p.index],
+            &p.name,
+            look,
+        ));
+    }
+    if let Some(a) = arrows_rect {
+        shapes.extend(tabs::arrows_shapes(
+            ui,
+            skin,
+            a,
+            (false, true),
+            (false, true),
+        ));
+    }
+    shapes
+}
+
+/// La sección Tabs desde `origin`. Devuelve dónde termina.
+fn tabs_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    let colors = *skin.colors();
+    // El mockup deja 5 px de línea antes de la primera pestaña.
+    let left = origin.x + LINE_OVERHANG;
+    let mut top = origin.y;
+    let mut shapes = forced_strip(ui, skin, left, top, false);
+    top += TABS_PITCH;
+    shapes.extend(forced_strip(ui, skin, left, top, true));
+    top += TABS_PITCH;
+    // La pestaña de panel, pegada a su caja, con el divisor adentro.
+    let panel = Rect::from_min_size(pos2(origin.x, top), PANEL_SIZE);
+    let strip = tabs::Strip::new(
+        panel.left(),
+        panel.right(),
+        panel.top(),
+        tabs::TabStyle::Panel,
+    );
+    let body = Rect::from_min_max(pos2(panel.left(), strip.bottom()), panel.max);
+    shapes.extend(tabs::panel_shapes(ui, skin, body));
+    let item = tabs::TabItem::new("Layer");
+    let lay = tabs::layout(ui, &strip, std::slice::from_ref(&item), 0);
+    if let Some(p) = lay.placed.first() {
+        let look = tabs::TabLook {
+            active: true,
+            hovered: false,
+            mark_hovered: false,
+        };
+        shapes.extend(tabs::tab_shapes(
+            ui,
+            skin,
+            tabs::TabStyle::Panel,
+            p.rect,
+            &item,
+            &p.name,
+            look,
+        ));
+    }
+    shapes.extend(tabs::divider_shapes(
+        ui,
+        skin,
+        egui::Rangef::new(body.left() + 1.0, body.right() - 1.0),
+        body.top() + PANEL_DIVIDER_TOP,
+    ));
+    ui.painter().extend(shapes);
+    // Un panel de verdad con dos pestañas, a la derecha.
+    let live_panel = panel.translate(vec2(PANEL_SIZE.x + LIVE_PANEL_GAP, 0.0));
+    let mut panel_tab: usize = ui.data(|d| d.get_temp(panel_tab_id()).unwrap_or(0));
+    let items = LIVE_PANEL_TABS.map(tabs::TabItem::new);
+    let id = ui.id().with("ui_catalog_live_panel");
+    let (event, inner) = tabs::tabbed_panel(ui, skin, id, live_panel, &items, Some(panel_tab));
+    if let Some(tabs::TabEvent::Select(i)) = event {
+        panel_tab = i;
+        ui.data_mut(|d| d.insert_temp(panel_tab_id(), panel_tab));
+    }
+    let (text, _) = pixel_draw::caps_text(
+        ui,
+        LIVE_PANEL_TABS[panel_tab],
+        inner.left() + 4.0,
+        inner.top() + 6.0,
+        colors.text,
+    );
+    ui.painter().add(text);
+    // Una tira de verdad: se eligen y se cierran (con la × o el botón del medio).
+    let mut top = panel.bottom() + TABS_PITCH - tabs::HEIGHT;
+    let (mut open, mut active): (Vec<usize>, Option<usize>) = ui.data(|d| {
+        d.get_temp(live_tabs_id())
+            .unwrap_or(((0..LIVE_TABS.len()).collect(), Some(0)))
+    });
+    let items: Vec<tabs::TabItem> = open
+        .iter()
+        .map(|&i| tabs::TabItem::closable(LIVE_TABS[i], i == 1))
+        .collect();
+    let strip = tabs::Strip::new(left, left + PAGE_WIDTH, top, tabs::TabStyle::Document);
+    match tabs::tab_strip(
+        ui,
+        skin,
+        ui.id().with("ui_catalog_live_strip"),
+        strip,
+        &items,
+        active,
+    ) {
+        Some(tabs::TabEvent::Select(i)) => active = Some(i),
+        Some(tabs::TabEvent::Close(i)) => {
+            open.remove(i);
+            active = match active {
+                _ if open.is_empty() => None,
+                Some(a) if a >= i => Some(a.saturating_sub(1).min(open.len() - 1)),
+                other => other,
+            };
+        }
+        None => {}
+    }
+    if open.is_empty() {
+        open = (0..LIVE_TABS.len()).collect();
+        active = Some(0);
+    }
+    ui.data_mut(|d| d.insert_temp(live_tabs_id(), (open, active)));
+    top = strip.bottom() + crate::pixel_ui::ETCHED_SIZE + 4.0;
+    let (note, _) = pixel_draw::caps_text_in(
+        ui,
+        TextStyle::Small,
+        "click a tab to pick it, the x to close it",
+        left,
+        top,
+        colors.text_dim,
+    );
+    ui.painter().add(note);
+    top + 10.0
 }

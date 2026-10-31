@@ -90,9 +90,30 @@ oculta.
 - **Pestañas:** `tab` (inactiva, café) mide 7×15 y `tab.active` (clara) 7×17, las dos con
   centro (3,0,1,alto): se estiran solo a lo ancho. Las esquinas de arriba son redondeadas y
   abajo quedan abiertas. La activa baja sobre las dos filas de la línea grabada de abajo y la
-  interrumpe. Se copiaron sin el texto de las pestañas del mockup.
-  - `icon.tab_dirty` (○, cambios sin guardar) e `icon.tab_close` (×, sin cambios) miden 5×5. El
-    mockup no muestra otro aspecto al pasar el puntero: no hay `.hover`.
+  interrumpe. Se copiaron sin el texto de las pestañas del mockup. Las dibuja el UI kit
+  (`crates/cs-ui/src/kit/tabs.rs`, mockup de componentes, frame 9).
+  - `tab`: en las filas 11, 13 y 14 el borde es (136,110,106), como en el mockup.
+  - `tab.hover` (108,935, 7×15, mismo centro): no está en el diseño; es `tab` con el relleno
+    (221,206,191), con el puntero encima.
+  - `tab.shade.left` y `tab.shade.right` (80,935 y 87,935, 5×1): el tramado (136,110,106) de la
+    fila oscura de la línea grabada, contra cada lado de la pestaña activa (x 22..26 y 100..104
+    del mockup, y 125).
+  - `tab.arrow.prev` y `tab.arrow.next` (1,935 y 14,935, 12×12): las flechas para recorrer las
+    pestañas que no entran, copiadas del mockup (x 159..181, y 165); juntas comparten la columna
+    del medio (23 de ancho). `.hover` (27,935 y 40,935): el relleno blanco; `.disabled` (53,935 y
+    66,935): la flecha en (189,164,153). Las dos variantes no están en el diseño.
+  - `icon.tab_dirty` (○, cambios sin guardar) e `icon.tab_close` (×, sin cambios) miden 5×5.
+  - **Pestaña de panel** (la "Layer" del mockup, x 186..219, y 302): `tab.panel.active` (1,952,
+    34×17, centro (3,2,28,12)), de borde negro, pegada a la caja del panel (sus 2 filas de abajo
+    son el borde y el blanco de arriba del panel), sin el texto. `tab.panel` (37,952, 34×16) y
+    `tab.panel.hover` (73,952) no están en el diseño: la misma forma, cerrada abajo, con el
+    relleno (221,206,191) o (234,224,221).
+  - `panel.box` (94,935, 8×4, centro (3,2,2,1)): la caja del panel: borde negro con las esquinas
+    de arriba de 2 px, la fila blanca de arriba, (221,206,191) a la izquierda, (234,224,221)
+    adentro y blanco a la derecha (x 262..264 del mockup); la esquina de arriba a la izquierda (la
+    tapa la pestaña) y el borde de abajo no están en el diseño. `panel.divider` (103,935, 3×2): el
+    divisor de adentro, la fila blanca sobre la (189,164,153) (y 345). El skin creció a 320×1000
+    para estas piezas.
   - Home: la casita animada son `icon.home.0`, `icon.home.1` e `icon.home.2` (21×21, casita y
     humo juntos), copiados de los 3 frames de `home animation.aseprite`, de 300 ms cada uno
     (`duration=300`). Van a 3 px del borde
