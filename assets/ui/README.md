@@ -259,8 +259,8 @@ oculta.
     - `select.list` (180,488, 8×13, centro (2,7,1,1)): el panel, desde la fila 15 del campo y 11
       px más ancho: borde (5,4,3), la fila blanca de arriba, bisel (221,206,191) a la izquierda y
       abajo y blanco a la derecha, relleno (234,224,221), la esquina de arriba a la derecha en
-      escalera y la sombra de 2 px abajo a la derecha, negra al 47% (sobre (221,206,191) da el
-      (117,109,101) del mockup).
+      escalera y la sombra de 2 px abajo a la derecha, (5,4,3) con alfa 123 (el color que marca
+      el mockup con "←●").
     - Las opciones: filas de 15 desde la fila 4 del panel (debajo, 1 de aire, el bisel y el
       borde), el texto 6 px adentro del borde y las mayúsculas en su fila 4.
       `select.item.hover` (190,488, 3×15, centro (1,0,1,15)): la franja rosa (178,82,102) /

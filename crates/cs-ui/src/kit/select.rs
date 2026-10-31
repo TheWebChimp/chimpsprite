@@ -6,8 +6,8 @@
 //!   texto) en las filas 7 a 9, 4 px antes del borde derecho. Del texto a la flecha, por lo menos 5.
 //! - **Abierto:** el campo pierde su borde de abajo (`select.open`, 16 filas: la fila 15 es la de
 //!   sombra, que queda sobre el borde del panel) y debajo, desde su fila 15, el panel
-//!   (`select.list`): borde negro, bisel, 11 px más ancho que el campo y una sombra negra
-//!   translúcida de 2 px abajo a la derecha. Las opciones son filas de 15 desde la fila 4 del panel
+//!   (`select.list`): borde negro, bisel, 11 px más ancho que el campo y una sombra (5,4,3) con alfa 123
+//!   de 2 px abajo a la derecha. Las opciones son filas de 15 desde la fila 4 del panel
 //!   (debajo, 1 fila de aire, el bisel y el borde), con el texto 6 px adentro y las mayúsculas en
 //!   su fila 4. Con el puntero encima, la franja rosa `select.item.hover`; sin el puntero en el
 //!   panel, la franja va en la elegida.

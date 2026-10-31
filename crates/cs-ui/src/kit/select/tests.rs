@@ -44,9 +44,12 @@ fn the_pieces_are_the_mockup_ones() {
         Color32::from_rgb(5, 4, 3),
         "the black border"
     );
-    // La sombra, negra translúcida (sobre #ddcebf da el (117,109,101) del mockup).
-    let shadow = list.pixel(7, 8);
-    assert_eq!(shadow.a(), 120);
+    // La sombra: el negro (5,4,3) con alfa 123, como lo marca el mockup.
+    let data = crate::skin::decode(crate::skin::EMBEDDED).unwrap();
+    let raw = &data.pieces[LIST];
+    let i = ((8 * raw.size[0] + 7) * 4) as usize;
+    assert_eq!(raw.rgba[i..i + 4], [5, 4, 3, 123]);
+    assert_eq!(list.size, raw.size);
 }
 
 #[test]
