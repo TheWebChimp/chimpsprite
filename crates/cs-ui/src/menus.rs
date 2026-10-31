@@ -873,23 +873,6 @@ pub(crate) fn dropdown<R>(
     )
 }
 
-/// Como [`dropdown`], pero se cierra solo con un clic afuera: para lo que se usa adentro (un
-/// selector de color).
-pub(crate) fn dropdown_panel<R>(
-    look: &MenuLook,
-    response: &Response,
-    anchor: Rect,
-    content: impl FnOnce(&mut Ui) -> R,
-) -> Option<R> {
-    dropdown_with(
-        look,
-        response,
-        anchor,
-        egui::PopupCloseBehavior::CloseOnClickOutside,
-        content,
-    )
-}
-
 fn dropdown_with<R>(
     look: &MenuLook,
     response: &Response,

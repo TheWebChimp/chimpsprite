@@ -1412,3 +1412,16 @@ fn without_pixel_ui_there_is_no_splitter() {
     let h = Harness::new(false);
     assert!(!h.has("Palette height"));
 }
+
+#[test]
+fn alone_in_its_row_the_rgba_strip_spreads_the_room_left_over_its_four_segments() {
+    let segment = 27.0;
+    let right = 10.0 + super::rgba_width(segment) + super::CAP_RIGHT_WIDTH + 7.0;
+    // 7 px de sobra: 1 a cada tramo y los 3 que quedan, a los últimos.
+    assert_eq!(super::stretch(10.0, segment, right), [1.0, 2.0, 2.0, 2.0]);
+    assert_eq!(
+        super::stretch(10.0, segment, 10.0),
+        [0.0; 4],
+        "no room, no growth"
+    );
+}

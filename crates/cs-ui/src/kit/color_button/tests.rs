@@ -153,3 +153,54 @@ fn the_copy_button_of_the_picker_copies_the_hex() {
     });
     assert_eq!(said.map(|(_, hex)| hex), Some("#e2728580".to_owned()));
 }
+
+#[test]
+fn open_the_button_sits_in_a_tab_joined_to_the_panel_like_the_mockup() {
+    let (ctx, skin) = pixel_ctx();
+    let mut color = Rgba::rgb(255, 214, 120);
+    let run = |events: Vec<Event>, color: &mut Rgba| {
+        let mut rect = Rect::NOTHING;
+        let shapes = frame(&ctx, events, |ui| {
+            ui.add_space(20.0);
+            ui.horizontal(|ui| {
+                ui.add_space(20.0);
+                rect = color_edit(ui, &skin, color, false, "Light").rect;
+            });
+        });
+        (shapes, rect)
+    };
+    let (_, rect) = run(vec![], &mut color);
+    let at = rect.center();
+    let press = |pressed| Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    run(vec![Event::PointerMoved(at), press(true)], &mut color);
+    run(vec![press(false)], &mut color);
+    run(vec![], &mut color);
+    let (shapes, _) = run(vec![], &mut color);
+    let bounds = |name: &str| {
+        let id = skin.piece(name, WidgetState::Normal).unwrap().texture.id();
+        let mut out = Rect::NOTHING;
+        fn walk(s: &Shape, id: TextureId, out: &mut Rect) {
+            match s {
+                Shape::Vec(v) => v.iter().for_each(|s| walk(s, id, out)),
+                Shape::Mesh(m) if m.texture_id == id => *out = out.union(m.calc_bounds()),
+                _ => {}
+            }
+        }
+        shapes.iter().for_each(|s| walk(s, id, &mut out));
+        out
+    };
+    let rect = Rect::from_min_size(rect.min.round(), rect.size());
+    let tab = bounds(TAB);
+    assert_eq!(
+        tab,
+        Rect::from_min_size(rect.min - vec2(2.0, 2.0), vec2(20.0, 20.0))
+    );
+    let panel = bounds(PANEL);
+    assert_eq!(panel.min, rect.min + vec2(-2.0, 16.0));
+    assert_eq!(panel.width(), PICKER_WIDTH + 14.0);
+}

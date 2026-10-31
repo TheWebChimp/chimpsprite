@@ -278,8 +278,16 @@ oculta.
     - `.hover` (100,518: velo blanco al 19%), `.down` (118,518: velo negro al 12%) y `.disabled`
       (136,518: el borde (136,110,106), el color lavado con (221,206,191) y sin brillo) no están
       en el diseño.
-    - Con alfa, detrás del color va el damero de `fgbg.checker`. Un clic abre el selector de la
-      app en el panel de los menús.
+    - Con alfa, detrás del color va el damero de `fgbg.checker`.
+    - **Abierto** (mockup x 342..511, y 614..777): un clic abre el selector de la app. El botón
+      queda en `picker.tab` (185,537, 20×20: el fondito alrededor de la muestra, que va 2 px
+      adentro sin su línea clara), unida a `picker.panel` (206,537, 7×8, centro (3,3,1,1): borde
+      (89,77,77) de una línea, fila blanca arriba, bisel (221,206,191) a la izquierda y abajo,
+      blanco a la derecha), que empieza en la fila 18 de la pestaña. El selector va 7 px adentro
+      a los lados, 3 debajo del borde y 4 arriba del de abajo; mide 156 de ancho. Un clic en la
+      muestra o afuera lo cierra.
+    - En el selector, el grupo RGBA, cuando va solo en su fila (el hex abajo), reparte lo que
+      sobra entre sus cuatro tramos y llega al borde derecho.
 
 - **Paleta y editor de color** (frame 4 del diseño, capa Mockup, columna x 784..972; el skin
   creció a 320×272 y estas piezas van en y 236..267):

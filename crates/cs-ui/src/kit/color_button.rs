@@ -22,8 +22,22 @@ const SIZE: Vec2 = vec2(16.0, 17.0);
 /// El color va adentro del borde (1 px) y hasta la fila de sombra incluida: abajo quedan el
 /// borde y la línea clara.
 const BOTTOM_ROWS: f32 = 2.0;
-/// El ancho del selector que se abre.
-pub const PICKER_WIDTH: f32 = 160.0;
+/// Abierto (mockup de componentes, frame 9, x 342, y 614): el botón queda en una pestaña
+/// (`picker.tab`, 20×20: la muestra va 2 px adentro, sin su línea clara) unida al panel
+/// (`picker.panel`, borde de una línea, desde la fila 18 de la pestaña). El selector, 7 px adentro
+/// a los lados y 3 debajo del borde de arriba; abajo, 4 filas (2 de relleno, el bisel y el borde).
+pub const TAB: &str = "picker.tab";
+pub const PANEL: &str = "picker.panel";
+const TAB_SIZE: Vec2 = vec2(20.0, 20.0);
+/// De la esquina de la pestaña a la del botón.
+const TAB_INSET: f32 = 2.0;
+/// El panel empieza en la fila 18 de la pestaña.
+const PANEL_TOP: f32 = 18.0;
+const PANEL_PAD_X: f32 = 7.0;
+const PANEL_PAD_TOP: f32 = 3.0;
+const PANEL_PAD_BOTTOM: f32 = 4.0;
+/// El ancho del selector que se abre (el del mockup).
+pub const PICKER_WIDTH: f32 = 156.0;
 
 /// Desarrollo: con este dato en el contexto, el próximo botón de color se abre (para capturas).
 pub(crate) const DEMO_PICKER: &str = "kit_demo_picker";
@@ -126,7 +140,6 @@ pub fn color_edit(
     label: &str,
 ) -> Response {
     let mut response = swatch_button(ui, skin, *color, label);
-    let rect = response.rect;
     // Desarrollo: el primero que se dibuja, abierto (para capturas).
     let demo = Id::new(DEMO_PICKER);
     let first = ui.ctx().data(|d| d.get_temp::<Id>(demo));
@@ -136,9 +149,7 @@ pub fn color_edit(
     if first.is_some_and(|id| id == Id::NULL || id == response.id) {
         egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
     }
-    let look = crate::menus::MenuLook::new(skin, rect.top());
-    let picked = crate::menus::dropdown_panel(&look, &response, rect, |ui| {
-        ui.set_width(PICKER_WIDTH);
+    let picked = open_picker(skin, &response, *color, |ui| {
         let next = crate::color_panel::picker(ui, skin, response.id.with("picker"), *color);
         if alpha { next } else { Rgba { a: 255, ..next } }
     });
@@ -149,6 +160,95 @@ pub fn color_edit(
         response.mark_changed();
     }
     response
+}
+
+/// El selector abierto: la pestaña sobre el botón (con la muestra adentro) y el panel debajo con
+/// lo que arma `content`. Se abre y se cierra con un clic en el botón (o en la pestaña); un clic
+/// afuera lo cierra.
+fn open_picker<R>(
+    skin: &Skin,
+    response: &Response,
+    color: Rgba,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> Option<R> {
+    // Donde se dibujó el botón (en píxeles enteros).
+    let rect = Rect::from_min_size(response.rect.min.round(), response.rect.size());
+    let corner = rect.min - Vec2::splat(TAB_INSET);
+    let anchor = Rect::from_min_size(corner, TAB_SIZE);
+    let popup_id = egui::Popup::default_response_id(response);
+    let inner = egui::Popup::menu(response)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .anchor(anchor)
+        .align(egui::RectAlign {
+            parent: egui::Align2::LEFT_TOP,
+            child: egui::Align2::LEFT_TOP,
+        })
+        .align_alternatives(&[])
+        .gap(0.0)
+        .frame(egui::Frame::NONE)
+        .show(|ui| {
+            let ppp = ui.ctx().pixels_per_point();
+            let origin = ui.max_rect().min.round();
+            let back = ui.painter().add(Shape::Noop);
+            let inside = Rect::from_min_size(
+                origin + vec2(PANEL_PAD_X, PANEL_TOP + PANEL_PAD_TOP),
+                vec2(PICKER_WIDTH, f32::INFINITY),
+            );
+            let mut child = ui.new_child(
+                egui::UiBuilder::new()
+                    .max_rect(inside)
+                    .layout(egui::Layout::top_down(egui::Align::Min)),
+            );
+            child.set_width(PICKER_WIDTH);
+            let out = content(&mut child);
+            let used = child.min_rect();
+            let panel = Rect::from_min_size(
+                origin + vec2(0.0, PANEL_TOP),
+                vec2(
+                    used.width().max(PICKER_WIDTH) + 2.0 * PANEL_PAD_X,
+                    PANEL_PAD_TOP + used.height() + PANEL_PAD_BOTTOM,
+                ),
+            );
+            ui.allocate_rect(
+                panel.union(Rect::from_min_size(origin, TAB_SIZE)),
+                Sense::hover(),
+            );
+            let mut shapes = match skin.piece(PANEL, WidgetState::Normal) {
+                Some(p) => pixel_ui::piece_shapes(p, panel, ppp),
+                None => {
+                    let colors = skin.colors();
+                    vec![
+                        Shape::rect_filled(panel, 0.0, colors.panel),
+                        Shape::rect_stroke(
+                            panel,
+                            0.0,
+                            egui::Stroke::new(1.0, colors.outline),
+                            egui::StrokeKind::Inside,
+                        ),
+                    ]
+                }
+            };
+            // La pestaña con la muestra adentro (sin su línea clara: ahí sigue el relleno).
+            let tab = Rect::from_min_size(origin, TAB_SIZE);
+            if let Some(p) = skin.piece(TAB, WidgetState::Normal) {
+                shapes.extend(pixel_ui::piece_shapes(p, tab, ppp));
+            }
+            let swatch = Rect::from_min_size(origin + Vec2::splat(TAB_INSET), rect.size());
+            ui.painter().set(back, Shape::Vec(shapes));
+            ui.painter()
+                .with_clip_rect(swatch.with_max_y(swatch.bottom() - 1.0))
+                .extend(swatch_shapes(skin, swatch, color, ButtonState::Normal, ppp));
+            // Un clic en la muestra lo cierra.
+            let again = ui.interact(swatch, response.id.with("tab"), Sense::click());
+            if again.clicked() {
+                egui::Popup::close_id(ui.ctx(), popup_id);
+            }
+            out
+        });
+    inner.map(|i| {
+        response.ctx.move_to_top(i.response.layer_id);
+        i.inner
+    })
 }
 
 #[cfg(test)]

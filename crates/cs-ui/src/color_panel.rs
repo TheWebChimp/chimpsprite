@@ -1092,7 +1092,21 @@ struct Header {
     /// El tramo del hex, con su punta izquierda si abre su fila (`rgba_alone`).
     hex: Rect,
     segment: f32,
+    /// Lo que crece cada tramo (R, G, B, A) cuando el grupo RGBA va solo en su fila: el espacio que
+    /// sobra hasta el borde derecho, repartido parejo (el píxel de sobra, a los últimos).
+    extra: [f32; 4],
     height: f32,
+}
+
+/// Lo que crece cada tramo para que el grupo RGBA, desde `left` y con su punta derecha, llegue a
+/// `right`.
+fn stretch(left: f32, segment: f32, right: f32) -> [f32; 4] {
+    let room = (right - left - rgba_width(segment) - CAP_RIGHT_WIDTH)
+        .max(0.0)
+        .floor();
+    let base = (room / 4.0).floor();
+    let rest = (room - 4.0 * base) as usize;
+    std::array::from_fn(|i| base + if i >= 4 - rest { 1.0 } else { 0.0 })
 }
 
 impl Header {
@@ -1123,6 +1137,7 @@ impl Header {
                 rgba_alone: true,
                 hex,
                 segment: groups.segment,
+                extra: stretch(rgba.x, groups.segment, width - STRIP_RIGHT),
                 height: top(1) + STRIP_HEIGHT,
             };
         }
@@ -1145,12 +1160,18 @@ impl Header {
         let hex_top = top(row_of(2));
         let right = (width - STRIP_RIGHT).max(hex_left + hex_min);
         let hex = Rect::from_min_max(pos2(hex_left, hex_top), pos2(right, hex_top + STRIP_HEIGHT));
+        let extra = if rgba_alone {
+            stretch(rgba.x, groups.segment, width - STRIP_RIGHT)
+        } else {
+            [0.0; 4]
+        };
         Self {
             copy,
             rgba,
             rgba_alone,
             hex,
             segment: groups.segment,
+            extra,
             height: top(rows.len().saturating_sub(1)) + STRIP_HEIGHT,
         }
     }
@@ -1285,7 +1306,10 @@ fn channel_strip(
     for (i, channel) in CHANNELS.iter().enumerate() {
         // El tramo rojo trae la punta izquierda de la tira.
         let end = if i == 0 { STRIP_END } else { 0.0 };
-        let rect = Rect::from_min_size(pos2(left, top), vec2(end + segment, STRIP_HEIGHT));
+        let rect = Rect::from_min_size(
+            pos2(left, top),
+            vec2(end + segment + header.extra[i], STRIP_HEIGHT),
+        );
         let fill_left = left + end;
         let mut shapes = match piece(skin, channel.piece) {
             // El alfa repite su pieza (un período del damero), recortada al tramo.
