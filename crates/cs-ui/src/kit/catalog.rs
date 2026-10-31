@@ -87,7 +87,7 @@ fn clicks_id() -> egui::Id {
 }
 
 /// Las secciones, una por pestaña.
-const SECTIONS: [&str; 8] = [
+const SECTIONS: [&str; 9] = [
     "Buttons",
     "Button group",
     "Inputs",
@@ -96,6 +96,7 @@ const SECTIONS: [&str; 8] = [
     "Slider",
     "Color",
     "Select",
+    "Stepper",
 ];
 
 /// En la memoria de egui: la sección a la vista.
@@ -144,7 +145,8 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
                 4 => checks_section(ui, skin, origin),
                 5 => slider_section(ui, skin, origin),
                 6 => color_section(ui, skin, origin),
-                _ => select_section(ui, skin, origin),
+                7 => select_section(ui, skin, origin),
+                _ => stepper_section(ui, skin, origin),
             };
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
@@ -1069,4 +1071,76 @@ fn select_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     });
     ui.data_mut(|d| d.insert_temp(live_select_id(), pick));
     y + select::HEIGHT
+}
+
+/// Sección Stepper, como en el mockup: − 255 + (58 de ancho) y − 155 ms + (70); una fila por
+/// estado de los botones con su nombre a la derecha y uno deshabilitado; debajo, dos de verdad.
+const STEPPER_WIDTH: f32 = 58.0;
+const STEPPER_UNIT_WIDTH: f32 = 70.0;
+const STEPPER_UNIT_LEFT: f32 = 120.0;
+
+/// En la memoria de egui: los valores de los steppers de verdad.
+fn live_steppers_id() -> egui::Id {
+    egui::Id::new("ui_catalog_steppers")
+}
+
+fn stepper_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    use super::stepper;
+    let colors = *skin.colors();
+    let left = origin.x;
+    let mut y = origin.y;
+    let mut shapes: Vec<Shape> = Vec::new();
+    for state in ButtonState::ALL {
+        let enabled = state != ButtonState::Disabled;
+        let rect = Rect::from_min_size(pos2(left, y), vec2(STEPPER_WIDTH, stepper::HEIGHT));
+        shapes.extend(stepper::forced_shapes(
+            ui, skin, rect, "255", None, state, state, enabled,
+        ));
+        let rect = Rect::from_min_size(
+            pos2(left + STEPPER_UNIT_LEFT, y),
+            vec2(STEPPER_UNIT_WIDTH, stepper::HEIGHT),
+        );
+        shapes.extend(stepper::forced_shapes(
+            ui,
+            skin,
+            rect,
+            "155",
+            Some("ms"),
+            state,
+            state,
+            enabled,
+        ));
+        let (name, _) = pixel_draw::caps_text(
+            ui,
+            state.name(),
+            rect.right() + STATE_LABEL_GAP,
+            y + super::input::CAPS_TOP,
+            colors.text,
+        );
+        shapes.push(name);
+        y += INPUT_PITCH;
+    }
+    ui.painter().extend(shapes);
+    y += INPUT_PITCH;
+    let (mut a, mut b): (i32, i32) =
+        ui.data(|d| d.get_temp(live_steppers_id()).unwrap_or((255, 155)));
+    for (x, width, salt, value, range, step, unit) in [
+        (left, STEPPER_WIDTH, "live_a", &mut a, 0..=255, 1, None),
+        (
+            left + STEPPER_UNIT_LEFT,
+            STEPPER_UNIT_WIDTH,
+            "live_b",
+            &mut b,
+            10..=1000,
+            10,
+            Some("ms"),
+        ),
+    ] {
+        let rect = Rect::from_min_size(pos2(x, y), vec2(width, stepper::HEIGHT));
+        ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+            stepper::stepper(ui, skin, width, salt, value, range, step, unit);
+        });
+    }
+    ui.data_mut(|d| d.insert_temp(live_steppers_id(), (a, b)));
+    y + stepper::HEIGHT
 }

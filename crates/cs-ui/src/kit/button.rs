@@ -317,32 +317,43 @@ fn mono_shapes(
     at: egui::Pos2,
     state: ButtonState,
 ) -> Vec<Shape> {
+    mono_icon_shapes(skin, piece, at, state, shadow_color(skin.colors()))
+}
+
+/// Un ícono de una tinta desde `at` en `state`, píxel por píxel: primero la sombra (`shadow`, 1 px
+/// abajo; con el puntero encima no hay) y encima la tinta (su color; deshabilitado,
+/// `color.button_text_disabled`).
+pub fn mono_icon_shapes(
+    skin: &Skin,
+    piece: &crate::skin::Piece,
+    at: egui::Pos2,
+    state: ButtonState,
+    shadow: Color32,
+) -> Vec<Shape> {
     let colors = skin.colors();
     let [w, h] = piece.size;
-    let ink_at: Vec<egui::Pos2> = (0..h)
+    let ink_px: Vec<(u32, u32)> = (0..h)
         .flat_map(|y| (0..w).map(move |x| (x, y)))
         .filter(|&(x, y)| piece.rgba[((y * w + x) * 4 + 3) as usize] > 0)
-        .map(|(x, y)| at + vec2(x as f32, y as f32))
         .collect();
     let ink = match state {
         ButtonState::Disabled => colors.button_text_disabled,
-        _ => piece.pixel(
-            ink_at.first().map_or(0, |p| (p.x - at.x) as u32),
-            ink_at.first().map_or(0, |p| (p.y - at.y) as u32),
-        ),
+        _ => ink_px
+            .first()
+            .map_or(colors.text, |&(x, y)| piece.pixel(x, y)),
     };
-    let dot = |p: egui::Pos2, color| {
-        Shape::rect_filled(Rect::from_min_size(p, Vec2::splat(1.0)), 0.0, color)
+    let dot = |x: u32, y: u32, offset: Vec2, color| {
+        Shape::rect_filled(
+            Rect::from_min_size(at + vec2(x as f32, y as f32) + offset, Vec2::splat(1.0)),
+            0.0,
+            color,
+        )
     };
-    let mut shapes = Vec::with_capacity(ink_at.len() * 2);
+    let mut shapes = Vec::with_capacity(ink_px.len() * 2);
     if state.has_shadow() {
-        shapes.extend(
-            ink_at
-                .iter()
-                .map(|p| dot(*p + SHADOW, shadow_color(colors))),
-        );
+        shapes.extend(ink_px.iter().map(|&(x, y)| dot(x, y, SHADOW, shadow)));
     }
-    shapes.extend(ink_at.iter().map(|p| dot(*p, ink)));
+    shapes.extend(ink_px.iter().map(|&(x, y)| dot(x, y, Vec2::ZERO, ink)));
     shapes
 }
 

@@ -222,6 +222,19 @@ oculta.
       casillas.
     - Ocupan el alto de un botón (17): la casilla desde la fila 1 y el radio desde la 2, así su
       marca cae en las filas de las mayúsculas (4 a 9), y el texto 3 px después.
+  - **Stepper** (`crates/cs-ui/src/kit/stepper.rs`, mockup de componentes, frame 9, x 301, y 256
+    y x 380, y 276; en el skin, y 538 desde x 30): − [número] + en 17 filas.
+    - `stepper.left` y `stepper.right` (15×17): los botones sin ícono, con la columna
+      (136,110,106) que los separa del campo. `.hover` (relleno blanco), `.down` (el bisel
+      invertido) y `.disabled` (borde tenue) no están en el diseño. En el mínimo (o el máximo), su
+      botón se deshabilita.
+    - `icon.minus` e `icon.plus` (165,538 y 173,538, 7×7, de una tinta (89,77,77)): centrados en
+      la cara del botón, con la sombra blanca 1 px abajo como en el mockup (salvo con el puntero
+      encima); presionado bajan 1 px.
+    - `stepper.field` (158,538, 1×17, se estira; `.disabled` en 160,538): el campo, con el
+      número centrado en `color.text`, las mayúsculas en la fila 5; se arrastra o se escribe.
+    - `stepper.unit` (162,538, 1×17, se estira): la caja de la unidad ("ms") pegada al botón
+      derecho, 3 + tinta + 3 (por lo menos 11), con el texto centrado en `color.field_text`.
   - **Select** (`crates/cs-ui/src/kit/select.rs`, mockup de componentes, frame 9: cerrado en
     x 469, y 321 y 378; abierto en x 454, y 480; en el skin, y 488 desde x 172). Todos los
     combos de la app (los de la barra y `widgets::combo`) son este.
@@ -392,9 +405,8 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     `timeline.icon.onion.on` (15×17): la cebolla entera suelta del diseño, para el onion skin
     prendido.
   - `timeline.onion_range` (59×17): ◂ [antes | después] ▸ del onion skin, con su brillo abajo.
-  - `timeline.stepper.minus` y `.plus` (15×17) y `timeline.stepper.field` (7×17, centro
-    (0,0,1,17)): − [campo] + de la opacidad y la duración; el campo se estira por su columna
-    blanca y deja el brillo de la derecha. `timeline.combo` (13×17, centro (2,0,1,17)): el combo
+  - − [campo] + de la opacidad y la duración: el stepper del UI kit (abajo; las piezas
+    `timeline.stepper.*` se borraron). `timeline.combo` (13×17, centro (2,0,1,17)): el combo
     del modo de mezcla (sin las marcas oscuras sueltas del borde del diseño).
   - `timeline.icon.clock` (16×18) y `timeline.divider` (11×3, centro (5,0,1,3)): la línea
     grabada entre la barra y la tabla, con sus uniones a los lados de la caja.

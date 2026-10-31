@@ -11,7 +11,7 @@
 //!   - Onion skin: el botón (`timeline.icon.onion` apagado; prendido, la cebolla entera
 //!     `timeline.icon.onion.on`) y, a 4, `timeline.onion_range`: frames antes ◂ | después ▸.
 //!   - "Opacity" − [0..255] +, el combo del modo de mezcla y el reloj − [ms] + de la duración:
-//!     `timeline.stepper.minus`, `.field` (se estira) y `.plus`; `timeline.combo`;
+//!     el stepper del UI kit (`kit::stepper`); `timeline.combo`;
 //!     `timeline.icon.clock`.
 //! - **Línea de abajo de la barra:** `timeline.divider`, con sus uniones a la caja.
 //! - **Tabla:** filas de 13 (11 de contenido y la línea grabada) y columnas con su línea a la
@@ -140,9 +140,6 @@ const BUTTON_PIECE: &str = "timeline.button";
 const SEP: &str = "timeline.button.sep";
 const ONION_ON: &str = "timeline.icon.onion.on";
 const RANGE: &str = "timeline.onion_range";
-const MINUS: &str = "timeline.stepper.minus";
-const PLUS: &str = "timeline.stepper.plus";
-const FIELD: &str = "timeline.stepper.field";
 const COMBO: &str = "timeline.combo";
 const CLOCK: &str = "timeline.icon.clock";
 const DIVIDER: &str = "timeline.divider";
@@ -636,8 +633,9 @@ fn onion_range(ui: &mut Ui, editor: &mut Editor, skin: &Skin, origin: Pos2) {
     }
 }
 
-/// − [campo] +: las piezas con la esquina en `origin`. Devuelve el − (con su respuesta), el
-/// rect del campo y el +.
+/// − [campo] +: el stepper del UI kit (`kit::stepper`: sus botones con estados y su campo) con
+/// la esquina en `origin`. Devuelve el − (con su respuesta), el rect del campo y el +; el número
+/// lo pone quien llama.
 fn stepper(
     ui: &mut Ui,
     skin: &Skin,
@@ -645,19 +643,12 @@ fn stepper(
     field_w: f32,
     labels: [&'static str; 2],
 ) -> (Response, Rect, Response) {
+    use crate::kit::button::ButtonState;
+    use crate::kit::stepper as kit;
     let step = vec2(STEP_W, GROUP_H + 1.0);
     let minus = Rect::from_min_size(origin, step);
     let field = Rect::from_min_size(pos2(minus.right(), origin.y), vec2(field_w, GROUP_H + 1.0));
     let plus = Rect::from_min_size(field.right_top(), step);
-    for (name, rect) in [(MINUS, minus), (FIELD, field), (PLUS, plus)] {
-        if !piece(ui, skin, name, rect) {
-            flat(
-                ui,
-                skin,
-                Rect::from_min_size(rect.min, vec2(rect.width(), GROUP_H)),
-            );
-        }
-    }
     let enabled = ui.is_enabled();
     let button = |rect: Rect, label: &'static str| {
         let hit = Rect::from_min_size(rect.min, vec2(rect.width(), GROUP_H));
@@ -668,6 +659,15 @@ fn stepper(
     };
     let minus_response = button(minus, labels[0]);
     let plus_response = button(plus, labels[1]);
+    let mut shapes = kit::field_shapes(ui, skin, field, None, enabled);
+    for (rect, piece, icon, response) in [
+        (minus, kit::LEFT, kit::MINUS, &minus_response),
+        (plus, kit::RIGHT, kit::PLUS, &plus_response),
+    ] {
+        let state = ButtonState::of(response, enabled);
+        shapes.extend(kit::button_shapes(ui, skin, rect, piece, icon, state));
+    }
+    ui.painter().extend(shapes);
     let field = Rect::from_min_size(field.min, vec2(field_w, GROUP_H));
     (minus_response, field, plus_response)
 }

@@ -327,9 +327,9 @@ fn with_pixel_ui_the_toolbar_draws_every_group_and_field_of_the_design() {
     ] {
         assert!(h.count(name) >= 1, "{name}");
     }
-    // − y + de la opacidad y de la duración.
-    assert_eq!(h.count("timeline.stepper.minus"), 2);
-    assert_eq!(h.count("timeline.stepper.plus"), 2);
+    // − y + de la opacidad y de la duración: los botones del stepper del UI kit.
+    assert_eq!(h.count("stepper.left"), 2);
+    assert_eq!(h.count("stepper.right"), 2);
     for label in [
         "First frame",
         "Previous frame",

@@ -10,6 +10,7 @@ pub mod group;
 pub mod input;
 pub mod select;
 pub mod slider;
+pub mod stepper;
 pub mod tabs;
 
 pub use group::{GroupItem, button_group};
