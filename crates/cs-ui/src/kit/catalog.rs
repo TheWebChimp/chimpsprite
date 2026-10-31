@@ -18,7 +18,7 @@ pub const TITLE: &str = "UI Catalog";
 const MARGIN: Vec2 = vec2(12.0, 12.0);
 /// De la línea grabada de las pestañas al contenido de la sección.
 const CONTENT_TOP: f32 = 12.0;
-/// El ancho de la página (la tira de pestañas).
+/// El ancho de la página (las secciones; la tira de pestañas va a todo lo ancho).
 const PAGE_WIDTH: f32 = 400.0;
 
 /// Sección Buttons, con el layout del mockup (frame 9): el texto suelto antes de un botón (para
@@ -119,7 +119,9 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
         .unwrap_or(0);
     let mut section: usize = ui.data(|d| d.get_temp(section_id()).unwrap_or(start));
     let origin = ui.max_rect().min.round() + MARGIN;
-    let strip = tabs::Strip::new(origin.x, origin.x + PAGE_WIDTH, origin.y);
+    // Las pestañas de las secciones, a todo lo ancho (con el margen a la derecha).
+    let right = (ui.max_rect().right() - MARGIN.x).max(origin.x + PAGE_WIDTH);
+    let strip = tabs::Strip::new(origin.x, right.round(), origin.y);
     let items: Vec<tabs::TabItem> = SECTIONS.iter().map(|s| tabs::TabItem::new(*s)).collect();
     let id = ui.id().with("ui_catalog_tabs");
     if let Some(tabs::TabEvent::Select(i)) =
