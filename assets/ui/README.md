@@ -17,9 +17,10 @@ misma licencia que el repositorio (MIT o Apache-2.0, a elección; ver `LICENSE-M
 
 ## chimpfont.ttf
 
-La fuente de los textos chicos con Pixel UI (`TextStyle::Small`): solo mayúsculas de 5 px y
-ASCII, a 8 puntos (un píxel de su grilla, un punto). La usan la barra de estado, los globos de
-los tooltips, las rutas de Home y los textos de Pixnews.
+La fuente de los textos chicos con Pixel UI (`TextStyle::Small`): mayúsculas y minúsculas de
+5 px, con acentos, ñ y signos (319 caracteres). Grilla de 64 unidades por píxel (1024 por em): se
+usa a 16 puntos, un píxel de su grilla por punto. La usan la barra de estado, los globos de los
+tooltips, las rutas de Home y los textos de Pixnews. Es copia de `.design/chimpfont.ttf`.
 
 ## unifont_symbols.otf y unifont_emoji.otf
 

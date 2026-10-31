@@ -1439,7 +1439,8 @@ fn badge(h: &LayoutHarness, name: &str, caps: f32) -> Rect {
     let text = h
         .text_rects
         .iter()
-        .find(|(t, r, _)| t == name && r.top() == caps)
+        // El nombre en esa fila (la caja del texto de chimpfont empieza arriba de sus mayúsculas).
+        .find(|(t, r, _)| t == name && r.top() <= caps && r.bottom() > caps + 5.0)
         .map(|(_, r, _)| *r)
         .unwrap_or_else(|| panic!("{name} on the row of {caps} in {:?}", h.texts));
     let badge = h
