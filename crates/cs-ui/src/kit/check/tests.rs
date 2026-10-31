@@ -155,7 +155,9 @@ fn the_radio_picks_its_value_and_its_dot_sits_on_the_caps() {
         run(events, &mut current, &mut rects);
     }
     assert_eq!(current, 1);
-    // El punto del radio (filas 3 a 6 de la pieza) cae en las mayúsculas (filas 4 a 9).
+    // El punto del radio (filas 3 a 6 de la pieza) cae en las mayúsculas (filas 5 a 10, las del
+    // texto de los campos); la casilla (13 filas), centrada en las 17.
+    assert_eq!(CAPS_TOP, crate::kit::input::CAPS_TOP);
     assert_eq!(Mark::Radio(true).top() + 3.0, CAPS_TOP + 1.0);
-    assert_eq!(Mark::Check(Check::On).top(), 1.0);
+    assert_eq!(Mark::Check(Check::On).top(), 2.0);
 }

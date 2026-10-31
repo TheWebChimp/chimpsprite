@@ -209,8 +209,9 @@ oculta.
       abajo que tiene el radio deshabilitado del mockup (el normal no la trae; se agregó para que
       los dos queden iguales, como las casillas). `.disabled` del mockup y `.hover` como en las
       casillas.
-    - Ocupan el alto de un botón (17): la casilla desde la fila 1 y el radio desde la 2, así su
-      marca cae en las filas de las mayúsculas (4 a 9), y el texto 3 px después.
+    - Ocupan el alto de un campo (17): el texto en la fila del texto de los campos (mayúsculas en
+      la 5), la casilla centrada desde la fila 2 y el radio desde la 3 (su marca en las filas de
+      las mayúsculas), y el texto 3 px después.
   - **Stepper** (`crates/cs-ui/src/kit/stepper.rs`, mockup de componentes, frame 9, x 301, y 256
     y x 380, y 276; en el skin, y 538 desde x 30): − [número] + en 17 filas.
     - `stepper.left` y `stepper.right` (15×17): los botones sin ícono, con la columna

@@ -3,9 +3,10 @@
 //! cada una con `.hover` (el borde (89,77,77): no está en el diseño) y `.disabled` (copiada del
 //! mockup).
 //!
-//! Ocupan el alto de un botón ([`HEIGHT`]), para ir en la misma fila que botones y campos: las
-//! mayúsculas del texto en la fila de las de los botones (la 4) y, 3 px antes de la tinta, la
-//! casilla con su marca en esas mismas filas (la casilla desde la fila 1; el radio, desde la 2).
+//! Ocupan el alto de un campo ([`HEIGHT`]), para ir en la misma fila que campos y selects: las
+//! mayúsculas del texto en la fila de las de los campos (la 5) y, 3 px antes de la tinta, la
+//! casilla con su marca en esas mismas filas (la casilla, centrada, desde la fila 2; el radio,
+//! desde la 3).
 
 use eframe::egui::{
     self, Color32, Rect, Response, Sense, Shape, Stroke, StrokeKind, TextStyle, Ui, Vec2, pos2,
@@ -20,8 +21,8 @@ use crate::tab_bar;
 
 /// El alto en el layout: el de un botón.
 pub const HEIGHT: f32 = button::HEIGHT;
-/// Las mayúsculas del texto, en la fila de las de los botones.
-pub const CAPS_TOP: f32 = button::CAPS_TOP;
+/// Las mayúsculas del texto, en la fila de las del texto de los campos (`kit::input`).
+pub const CAPS_TOP: f32 = super::input::CAPS_TOP;
 /// De la casilla (o el radio) a la tinta del texto.
 pub const GAP: f32 = 3.0;
 

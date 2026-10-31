@@ -1645,7 +1645,7 @@ fn with_pixel_ui_pixel_perfect_is_the_bar_checkbox_and_a_click_toggles_it() {
     h.editor.options.pixel_perfect = false;
     h.frame(vec![]);
     let before = h.rect("Pixel Perfect");
-    let at = Rect::from_min_size(pos2(before.left(), bar.top() + 3.0), Vec2::new(12.0, 13.0));
+    let at = Rect::from_min_size(pos2(before.left(), bar.top() + 4.0), Vec2::new(12.0, 13.0));
     assert_eq!(h.drawn("check"), vec![at], "unchecked");
     h.click("Pixel Perfect");
     h.frame(vec![]);
@@ -1658,7 +1658,8 @@ fn with_pixel_ui_pixel_perfect_is_the_bar_checkbox_and_a_click_toggles_it() {
     assert_eq!(check[0].left() - h.rect("Round brush").right(), 5.0);
     let (_, ink) = h.text("Pixel Perfect");
     assert_eq!(ink.left() - check[0].right(), 3.0);
-    assert_eq!(ink.top(), bar.top() + 6.0);
+    // En la fila del texto de los campos (una más abajo que las etiquetas de la barra).
+    assert_eq!(ink.top(), bar.top() + 7.0);
     h.click("Pixel Perfect");
     h.frame(vec![]);
     assert!(!h.editor.options.pixel_perfect);
@@ -1691,7 +1692,18 @@ fn with_pixel_ui_every_text_of_the_bar_is_in_the_design_row() {
             .filter(|(t, _, c)| !buttons.contains(&t.as_str()) && *c != shadow)
         {
             let on = on_leds.iter().any(|d| d.right() + 3.0 == ink.left());
-            let in_field = fields.iter().any(|f| f.contains_rect(ink));
+            // Y el texto de las casillas, en esa misma fila (junto a los campos).
+            let checked = [
+                "check",
+                "check.on",
+                "check.mixed",
+                "check.hover",
+                "check.on.hover",
+            ]
+            .into_iter()
+            .flat_map(|n| h.drawn_boxes(n))
+            .any(|b| b.right() + 3.0 == ink.left());
+            let in_field = checked || fields.iter().any(|f| f.contains_rect(ink));
             let row = h.bar.top() + 6.0 + if on || in_field { 1.0 } else { 0.0 };
             // Las mayúsculas en la fila 5 (los textos sin mayúsculas, como los números o
             // "px", no bajan de ahí).
