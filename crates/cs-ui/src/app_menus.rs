@@ -700,6 +700,10 @@ A pixel art editor."
                 {
                     self.new_document();
                 }
+                if ui.add(menus::plain("New Font…")).clicked() {
+                    self.new_font = Some(Default::default());
+                    ui.close();
+                }
                 if ui
                     .add(item("Open", keymap::label(&ctx, keymap::Action::Open)))
                     .clicked()

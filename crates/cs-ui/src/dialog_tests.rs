@@ -78,6 +78,7 @@ impl DialogHarness {
             app.pixel.update(&ctx, &app.view);
             app.update_canvas_size(&ctx);
             app.update_tilemap_dialogs(&ctx);
+            app.update_font_dialog(&ctx);
             app.update_symbol_dialog(&ctx);
             app.show_dialogs(&ctx);
             app.update_palette_windows(&ctx, false);
@@ -367,6 +368,27 @@ fn without_pixel_ui_canvas_size_is_the_egui_window_as_always() {
     h.key(Key::Escape);
     assert!(h.app.canvas_size.is_none());
     assert_eq!(h.sprite_size(), (64, 64));
+}
+
+// --- New Font ---
+
+#[test]
+fn new_font_creates_a_font_artboard() {
+    let mut h = DialogHarness::new(true);
+    h.app.new_font = Some(Default::default());
+    h.settle();
+    assert!(h.drew_text("New Font"));
+    h.click("OK");
+    h.settle();
+    assert!(h.app.new_font.is_none());
+    let font = h
+        .app
+        .doc
+        .editor
+        .font()
+        .expect("the active artboard is a font");
+    assert_eq!(font.name, "New Font");
+    assert_eq!(h.app.doc.editor.sprite().width, 16);
 }
 
 // --- New Tilemap Layer ---

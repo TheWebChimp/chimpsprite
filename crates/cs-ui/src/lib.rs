@@ -25,6 +25,7 @@ mod fg_bg;
 mod file_actions;
 mod filter_dialog;
 mod filters;
+mod font_dialog;
 mod font_overlay;
 mod frame_dialog;
 mod mask_ops;
@@ -150,6 +151,8 @@ pub struct ChimpApp {
     #[cfg(not(target_arch = "wasm32"))]
     news_fetcher: Box<dyn news::Fetcher>,
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
+    /// `File → New Font…`.
+    new_font: Option<font_dialog::NewFontDialog>,
     /// La ventana Edit → Undo History abierta.
     undo_history: bool,
     /// La ventana Edit → Keyboard Shortcuts abierta.
@@ -297,6 +300,7 @@ impl ChimpApp {
             #[cfg(not(target_arch = "wasm32"))]
             news_fetcher: news::default_fetcher(),
             new_tilemap: None,
+            new_font: None,
             undo_history: false,
             shortcuts: None,
             keymap: keymap::Keymap::default(),
@@ -674,6 +678,28 @@ impl ChimpApp {
             style.font = picked.font;
             style.size = picked.size_px.unwrap_or(16);
             style.antialias = false;
+        }
+    }
+
+    fn update_font_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.new_font else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Accept => {
+                let (name, cell, mode) = (dialog.name.trim().to_owned(), dialog.cell, dialog.mode);
+                let name = if name.is_empty() {
+                    "New Font".to_owned()
+                } else {
+                    name
+                };
+                // La Task 8 agrega aquí `dock::set_open(ctx, Some(dock::DockPanel::Font))`
+                // cuando la fuente se crea.
+                self.doc.editor.new_font(&name, cell, mode);
+                self.new_font = None;
+            }
+            tilemap_dialog::DialogResult::Cancel => self.new_font = None,
         }
     }
 
@@ -1447,6 +1473,7 @@ impl eframe::App for ChimpApp {
             self.open_convert_to_symbol();
         }
         self.update_tilemap_dialogs(&ctx);
+        self.update_font_dialog(&ctx);
         self.update_symbol_dialog(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
