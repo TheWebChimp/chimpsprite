@@ -886,16 +886,20 @@ const SCROLL_THUMB_MIN: f32 = 46.0;
 /// Del borde del track al pulgar, de los cuatro lados (10 = 1 + 8 + 1 a lo ancho; a lo largo,
 /// el pulgar no toca las puntas del track).
 const SCROLL_THUMB_INSET: f32 = 1.0;
+/// Al final de la pista (abajo, o a la derecha), 2 px de aire: el pulgar no toca la sombra.
+const SCROLL_THUMB_END: f32 = 2.0;
 
 /// El pulgar del scroll en `track` (vertical o no) para `content` de largo visto en `view` y
-/// desplazado `offset`: con 1 px de padding de cada lado del track, también en las puntas.
+/// desplazado `offset`: con 1 px de padding a los lados y en la punta de arriba (o de la
+/// izquierda), y 2 en la del final, para no tocar la sombra de la pista.
 fn scroll_thumb(track: Rect, vertical: bool, content: f32, view: f32, offset: f32) -> Rect {
     // Lo que recorre el pulgar: el track sin el padding de las puntas.
     let span = if vertical {
         track.height()
     } else {
         track.width()
-    } - 2.0 * SCROLL_THUMB_INSET;
+    } - SCROLL_THUMB_INSET
+        - SCROLL_THUMB_END;
     let len = (span * view / content)
         .max(SCROLL_THUMB_MIN)
         .min(span)

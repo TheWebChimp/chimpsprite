@@ -26,18 +26,18 @@ fn long_bubble_texts_wrap_and_end_in_an_ellipsis() {
 }
 
 #[test]
-fn the_scroll_thumb_has_1_px_of_padding_on_every_side() {
+fn the_scroll_thumb_keeps_1_px_off_the_sides_and_the_start_and_2_off_the_end() {
     let track = Rect::from_min_size(pos2(100.0, 20.0), vec2(SCROLL_BAR, 200.0));
-    // Arriba de todo y abajo de todo: a 1 px de las puntas y de los lados.
+    // Arriba de todo: a 1 px de la punta y de los lados; abajo de todo, a 2 (no toca la sombra).
     let top = super::scroll_thumb(track, true, 1000.0, 200.0, 0.0);
     assert_eq!(top.min, pos2(101.0, 21.0));
     assert_eq!(top.width(), SCROLL_BAR - 2.0);
     let bottom = super::scroll_thumb(track, true, 1000.0, 200.0, 800.0);
-    assert_eq!(bottom.bottom(), track.bottom() - 1.0);
-    // A lo ancho, igual.
+    assert_eq!(bottom.bottom(), track.bottom() - 2.0);
+    // A lo ancho, igual: a 2 de la punta derecha.
     let track = Rect::from_min_size(pos2(0.0, 50.0), vec2(300.0, SCROLL_BAR));
     let right = super::scroll_thumb(track, false, 900.0, 300.0, 600.0);
-    assert_eq!((right.right(), right.top()), (299.0, 51.0));
+    assert_eq!((right.right(), right.top()), (298.0, 51.0));
 }
 
 use egui::{Event, PointerButton, RawInput};
@@ -789,4 +789,31 @@ fn a_fresh_scroll_has_its_thumb_at_the_top_and_nothing_of_egui_under_the_bar() {
         .collect();
     assert!(under.is_empty(), "{under:?}");
     assert_eq!(thumb.top(), track.top() + 1.0);
+}
+
+#[test]
+fn at_the_end_the_thumb_keeps_2_px_off_the_track_shadow() {
+    let (ctx, skin) = crate::kit::button::tests::pixel_ctx();
+    set_bubble(&ctx, Some(std::sync::Arc::new(skin.clone())));
+    let mut shapes = vec![];
+    for _ in 0..3 {
+        shapes = crate::kit::button::tests::frame(&ctx, vec![], |ui| {
+            let rect = Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(160.0, 120.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                let area = egui::ScrollArea::vertical()
+                    .id_salt("end")
+                    .max_height(120.0)
+                    .auto_shrink([false, false])
+                    .vertical_scroll_offset(10_000.0);
+                scroll(ui, area, |ui| {
+                    for i in 1..=40 {
+                        ui.label(format!("Row {i}"));
+                    }
+                });
+            });
+        });
+    }
+    let track = piece_bounds(&shapes, &skin, "scroll.track.v").expect("the track");
+    let thumb = piece_bounds(&shapes, &skin, "scroll.thumb.v").expect("the thumb");
+    assert_eq!(thumb.bottom(), track.bottom() - 2.0);
 }
