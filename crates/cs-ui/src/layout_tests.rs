@@ -3502,13 +3502,60 @@ fn the_font_settings_change_the_metrics_with_undo() {
     let plus = h
         .buttons
         .iter()
-        .find(|(l, r)| l == "Increase" && r.y_range().contains(label.center().y))
+        .filter(|(l, r)| {
+            l == "Increase" && r.y_range().contains(label.center().y) && r.left() > label.right()
+        })
+        .min_by(|a, b| a.1.left().total_cmp(&b.1.left()))
         .map(|(_, r)| *r)
         .expect("the Baseline + button");
     h.click(plus.center(), PointerButton::Primary);
     assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 13);
     h.app.doc.editor.undo();
     assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 12);
+}
+
+#[test]
+fn the_font_numbers_go_in_two_columns_inside_the_panel() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.frame();
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "Font"))))
+        .expect("the Font panel is open");
+    let label = |name: &str| {
+        h.text_rects
+            .iter()
+            .find(|(t, _, _)| t == name)
+            .map(|(_, r, _)| *r)
+            .unwrap_or_else(|| panic!("the {name} label"))
+    };
+    // Cada par comparte fila: la segunda etiqueta, a la derecha de la primera.
+    for (left, right) in [
+        ("Baseline", "Cap height"),
+        ("x-height", "Descent"),
+        ("Letter spacing", "Space width"),
+    ] {
+        let (a, b) = (label(left), label(right));
+        assert!(b.y_range().contains(a.center().y), "{left} / {right}");
+        assert!(b.left() > a.right(), "{left} / {right}");
+        // Los dos steppers de la fila, dentro del panel.
+        let plus: Vec<Rect> = h
+            .buttons
+            .iter()
+            .filter(|(l, r)| l == "Increase" && r.y_range().contains(a.center().y))
+            .map(|(_, r)| *r)
+            .collect();
+        assert_eq!(plus.len(), 2, "{left} / {right}");
+        for r in plus {
+            assert!(flyout.contains_rect(r), "{r:?} vs {flyout:?}");
+        }
+    }
+    assert!(label("x-height").top() > label("Baseline").bottom());
 }
 
 #[test]
@@ -3529,7 +3576,10 @@ fn dragging_a_font_stepper_is_one_undo_step() {
     let in_row = |name: &str| {
         h.buttons
             .iter()
-            .find(|(l, r)| l == name && r.y_range().contains(label.center().y))
+            .filter(|(l, r)| {
+                l == name && r.y_range().contains(label.center().y) && r.left() > label.right()
+            })
+            .min_by(|a, b| a.1.left().total_cmp(&b.1.left()))
             .map(|(_, r)| *r)
             .expect("a Baseline button")
     };

@@ -35,7 +35,11 @@ const TEST_PAD: f32 = 4.0;
 const TEST_INK: Color32 = Color32::from_rgb(5, 4, 3);
 /// La columna de las etiquetas de los ajustes y los anchos de sus controles.
 const LABEL_W: f32 = 90.0;
-const STEPPER_W: f32 = 80.0;
+/// Los números de las medidas y el espaciado van en dos columnas: cada una, la etiqueta y su
+/// stepper, con aire entre las dos.
+const PAIR_LABEL_W: f32 = 74.0;
+const PAIR_STEPPER_W: f32 = 62.0;
+const PAIR_GAP: f32 = 8.0;
 const NAME_W: f32 = 160.0;
 const GHOST_W: f32 = 80.0;
 
@@ -234,16 +238,34 @@ fn row<R>(ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
 }
 
 /// Un número de los ajustes: el stepper del kit (sin Pixel UI, el `DragValue` de egui).
-fn number(
-    ui: &mut Ui,
-    skin: Option<&Skin>,
-    label: &str,
-    value: &mut u32,
-    range: std::ops::RangeInclusive<u32>,
-) {
-    row(ui, label, |ui| match skin {
-        Some(skin) => kit::stepper::stepper(ui, skin, STEPPER_W, label, value, range, 1, None),
-        None => ui.add(egui::DragValue::new(value).range(range)),
+type Number<'a> = (&'a str, &'a mut u32, std::ops::RangeInclusive<u32>);
+
+/// Un número en su columna: la etiqueta de `PAIR_LABEL_W` y el stepper.
+fn number_cell(ui: &mut Ui, skin: Option<&Skin>, (label, value, range): Number) {
+    ui.allocate_ui_with_layout(
+        vec2(PAIR_LABEL_W, kit::stepper::HEIGHT),
+        egui::Layout::left_to_right(egui::Align::Center),
+        |ui| {
+            ui.set_min_width(PAIR_LABEL_W);
+            ui.label(label);
+        },
+    );
+    match skin {
+        Some(skin) => {
+            kit::stepper::stepper(ui, skin, PAIR_STEPPER_W, label, value, range, 1, None);
+        }
+        None => {
+            ui.add(egui::DragValue::new(value).range(range));
+        }
+    }
+}
+
+/// Dos números en una fila, cada uno en su columna.
+fn number_pair(ui: &mut Ui, skin: Option<&Skin>, left: Number, right: Number) {
+    ui.horizontal(|ui| {
+        number_cell(ui, skin, left);
+        ui.add_space(PAIR_GAP);
+        number_cell(ui, skin, right);
     });
 }
 
@@ -279,35 +301,30 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     row(ui, "Cell", |ui| ui.label(format!("{cell_w}×{cell_h}")));
     // Las mayúsculas y la x-height hasta la baseline; los descendentes, de ella hasta abajo.
     let baseline = font.metrics.baseline;
-    number(ui, skin, "Baseline", &mut info.metrics.baseline, 0..=cell_h);
-    number(
+    let m = &mut info.metrics;
+    number_pair(
         ui,
         skin,
-        "Cap height",
-        &mut info.metrics.cap_height,
-        0..=baseline,
+        ("Baseline", &mut m.baseline, 0..=cell_h),
+        ("Cap height", &mut m.cap_height, 0..=baseline),
     );
-    number(
+    number_pair(
         ui,
         skin,
-        "x-height",
-        &mut info.metrics.x_height,
-        0..=baseline,
-    );
-    number(
-        ui,
-        skin,
-        "Descent",
-        &mut info.metrics.descent,
-        0..=cell_h - baseline.min(cell_h),
+        ("x-height", &mut m.x_height, 0..=baseline),
+        ("Descent", &mut m.descent, 0..=cell_h - baseline.min(cell_h)),
     );
     // Con la baseline movida, lo demás se acomoda (solo si se cambió algo: abrir el panel no
     // deja pasos).
     if info.metrics != font.metrics {
         info.metrics = info.metrics.clamped(cell_h);
     }
-    number(ui, skin, "Letter spacing", &mut info.letter_spacing, 0..=8);
-    number(ui, skin, "Space width", &mut info.space_width, 0..=cell_w);
+    number_pair(
+        ui,
+        skin,
+        ("Letter spacing", &mut info.letter_spacing, 0..=8),
+        ("Space width", &mut info.space_width, 0..=cell_w),
+    );
     ui.add_space(2.0);
     checkbox(ui, skin, &mut info.monospace, "Monospace");
     ui.horizontal(|ui| {
