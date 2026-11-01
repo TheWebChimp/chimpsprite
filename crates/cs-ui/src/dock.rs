@@ -60,11 +60,13 @@ pub enum DockPanel {
     Lumen,
     /// Los símbolos de la biblioteca (su contenido lo pone la app).
     Library,
+    /// La fuente pixel del artboard activo: su mapa de caracteres (su contenido lo pone la app).
+    Font,
 }
 
 impl DockPanel {
     #[cfg(not(target_arch = "wasm32"))]
-    pub const ALL: [DockPanel; 7] = [
+    pub const ALL: [DockPanel; 8] = [
         DockPanel::Artboards,
         DockPanel::Library,
         DockPanel::Slices,
@@ -72,16 +74,18 @@ impl DockPanel {
         DockPanel::Dafont,
         DockPanel::Groom,
         DockPanel::Lumen,
+        DockPanel::Font,
     ];
     /// En la web no hay dafont (el sitio no acepta peticiones desde otras páginas).
     #[cfg(target_arch = "wasm32")]
-    pub const ALL: [DockPanel; 6] = [
+    pub const ALL: [DockPanel; 7] = [
         DockPanel::Artboards,
         DockPanel::Library,
         DockPanel::Slices,
         DockPanel::Lospec,
         DockPanel::Groom,
         DockPanel::Lumen,
+        DockPanel::Font,
     ];
 
     pub fn label(self) -> &'static str {
@@ -93,6 +97,7 @@ impl DockPanel {
             DockPanel::Groom => "Groom",
             DockPanel::Lumen => "Lumen",
             DockPanel::Library => "Library",
+            DockPanel::Font => "Font",
         }
     }
 
@@ -106,6 +111,7 @@ impl DockPanel {
             DockPanel::Groom => "icon.dock.groom",
             DockPanel::Lumen => "icon.dock.lumen",
             DockPanel::Library => "icon.dock.library",
+            DockPanel::Font => "icon.dock.font",
         }
     }
 
@@ -119,6 +125,7 @@ impl DockPanel {
             DockPanel::Groom => "▦",
             DockPanel::Lumen => "☀",
             DockPanel::Library => "▣",
+            DockPanel::Font => "Aa",
         }
     }
 }
@@ -287,7 +294,8 @@ pub fn show(
         | DockPanel::Dafont
         | DockPanel::Groom
         | DockPanel::Lumen
-        | DockPanel::Library => out.app_panel = Some((panel, anchor)),
+        | DockPanel::Library
+        | DockPanel::Font => out.app_panel = Some((panel, anchor)),
     }
     out
 }

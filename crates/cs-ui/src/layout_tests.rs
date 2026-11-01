@@ -211,6 +211,27 @@ impl LayoutHarness {
         self.frame();
     }
 
+    /// Doble clic con el botón principal en `pos`: mover y dos pares de apretar y soltar, un
+    /// frame cada uno. Antes deja pasar medio segundo para que un clic anterior no cuente como
+    /// el primero de este (egui junta los clics seguidos aunque sean en otro lado).
+    fn double_click(&mut self, pos: Pos2) {
+        let press = |pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        for _ in 0..10 {
+            self.frame();
+        }
+        self.frame_with(vec![Event::PointerMoved(pos)]);
+        for _ in 0..2 {
+            self.frame_with(vec![press(true)]);
+            self.frame_with(vec![press(false)]);
+        }
+        self.frame();
+    }
+
     /// Arrastre con el botón principal de `from` a `to`: mover, apretar, mover y soltar, un
     /// frame cada uno.
     fn drag(&mut self, from: Pos2, to: Pos2) {
@@ -3318,4 +3339,57 @@ fn the_timeline_comes_back_when_a_sprite_artboard_is_activated() {
     h.frame();
     let back = h.canvas.expect("a document is open");
     assert_eq!(back.bottom(), with_timeline.bottom(), "{back:?}");
+}
+
+#[test]
+fn the_font_panel_offers_new_font_and_its_map_picks_glyphs() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.frame();
+    assert!(h.button("New Font…").width() > 0.0);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    h.frame();
+    h.click(h.button("Glyph B").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.current_glyph(), Some('B'));
+    // Doble clic en un carácter que falta (página Latin-1) lo agrega.
+    h.click(h.button("Latin-1").center(), PointerButton::Primary);
+    let cell = h.button("Glyph á").center();
+    h.double_click(cell);
+    assert!(h.app.doc.editor.font().unwrap().index_of('á').is_some());
+    assert_eq!(h.app.doc.editor.current_glyph(), Some('á'));
+}
+
+#[test]
+fn new_font_in_the_font_panel_opens_the_dialog() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.click(h.button("New Font…").center(), PointerButton::Primary);
+    assert!(h.app.new_font.is_some());
+}
+
+#[test]
+fn the_font_panel_adds_the_typed_chars() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    h.click(h.button("Font").center(), PointerButton::Primary);
+    let field = h
+        .nodes
+        .iter()
+        .find(|(l, _)| l == "Add char")
+        .map(|(_, r)| *r)
+        .expect("the Add char field");
+    h.click(field.center(), PointerButton::Primary);
+    h.frame_with(vec![Event::Text("ñ €".into())]);
+    h.frame();
+    h.click(h.button("Add").center(), PointerButton::Primary);
+    let font = h.app.doc.editor.font().unwrap();
+    assert!(font.index_of('ñ').is_some());
+    assert!(font.index_of('€').is_some());
+    assert!(h.app.font_panel.add_char.is_empty());
 }

@@ -389,6 +389,11 @@ fn new_font_creates_a_font_artboard() {
         .expect("the active artboard is a font");
     assert_eq!(font.name, "New Font");
     assert_eq!(h.app.doc.editor.sprite().width, 16);
+    // Y se abre el panel Font del dock.
+    assert_eq!(
+        crate::dock::open_panel(&h.ctx),
+        Some(crate::dock::DockPanel::Font)
+    );
 }
 
 #[test]

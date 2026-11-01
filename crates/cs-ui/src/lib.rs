@@ -27,6 +27,7 @@ mod filter_dialog;
 mod filters;
 mod font_dialog;
 mod font_overlay;
+mod font_panel;
 mod frame_dialog;
 mod mask_ops;
 mod menus;
@@ -134,6 +135,8 @@ pub struct ChimpApp {
     groom: groom::GroomPanel,
     /// El panel Lumen del dock.
     lumen: lumen::LumenPanel,
+    /// El panel Font del dock.
+    font_panel: font_panel::FontPanelState,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
@@ -287,6 +290,7 @@ impl ChimpApp {
             dafont: Default::default(),
             groom: Default::default(),
             lumen: Default::default(),
+            font_panel: Default::default(),
             platform: platform::Platform::default(),
             autosaver: autosave::Autosaver::default(),
             restore: None,
@@ -583,6 +587,30 @@ impl ChimpApp {
         }
     }
 
+    /// El panel Font del dock y lo que pide.
+    fn font_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
+        let mut action = None;
+        let skin = self.pixel.skin();
+        let editor = &mut self.doc.editor;
+        let state = &mut self.font_panel;
+        dock::flyout(
+            ctx,
+            dock::DockPanel::Font,
+            anchor,
+            skin,
+            font_panel::WIDTH,
+            true,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    action = font_panel::show(ui, editor, skin, state);
+                });
+            },
+        );
+        if let Some(font_panel::FontAction::NewFont) = action {
+            self.new_font = Some(Default::default());
+        }
+    }
+
     /// El panel Library del dock y lo que pide.
     fn library_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
         let mut action = None;
@@ -694,14 +722,15 @@ impl ChimpApp {
                 } else {
                     name
                 };
-                // La Task 8 agrega aquí `dock::set_open(ctx, Some(dock::DockPanel::Font))`
-                // cuando la fuente se crea.
                 self.new_font = None;
                 // Desde Home no hay pestaña: se abre un documento nuevo como File → New.
                 if !self.has_doc() {
                     self.new_document();
                 }
-                self.doc.editor.new_font(&name, cell, mode);
+                // Con la fuente creada se abre su panel en el dock.
+                if self.doc.editor.new_font(&name, cell, mode) {
+                    dock::set_open(ctx, Some(dock::DockPanel::Font));
+                }
             }
             tilemap_dialog::DialogResult::Cancel => self.new_font = None,
         }
@@ -1363,6 +1392,7 @@ impl ChimpApp {
             Some((dock::DockPanel::Groom, anchor)) => self.groom_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Lumen, anchor)) => self.lumen_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Library, anchor)) => self.library_panel(ui.ctx(), anchor, modal),
+            Some((dock::DockPanel::Font, anchor)) => self.font_panel(ui.ctx(), anchor, modal),
             _ => {}
         }
         if !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {
