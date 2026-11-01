@@ -75,6 +75,7 @@ mod preferences;
 mod preview;
 mod recent;
 pub mod skin;
+mod sound;
 mod symbol_dialog;
 mod symbol_ops;
 mod tabs;
@@ -1452,6 +1453,12 @@ impl eframe::App for ChimpApp {
         platform::set_unsaved(self.any_dirty());
 
         self.capture.update(&ctx);
+        sound::end_frame(
+            &ctx,
+            self.view.ui_sounds,
+            self.view.sound_pack,
+            self.view.sound_volume,
+        );
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

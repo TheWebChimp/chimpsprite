@@ -95,6 +95,14 @@ impl Mark {
     fn selected(self) -> bool {
         matches!(self, Mark::Check(Check::On) | Mark::Radio(true))
     }
+
+    /// Cómo queda después de un clic (la casilla cambia; el radio queda elegido).
+    fn after_click(self) -> bool {
+        match self {
+            Mark::Check(check) => check != Check::On,
+            Mark::Radio(_) => true,
+        }
+    }
 }
 
 /// La variante de la pieza: presionado se ve como con el puntero encima.
@@ -170,9 +178,14 @@ fn control(ui: &mut Ui, skin: &Skin, mark: Mark, label: &str) -> Response {
     let (slot, response) = ui.allocate_exact_size(size, Sense::click());
     let rect = Rect::from_min_size(slot.min.round(), size);
     let enabled = ui.is_enabled();
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(mark.widget_type(), enabled, mark.selected(), label)
-    });
+    // Como las de egui: con el clic, cómo queda (los sonidos lo usan).
+    let selected = if response.clicked() {
+        mark.after_click()
+    } else {
+        mark.selected()
+    };
+    response
+        .widget_info(|| egui::WidgetInfo::selected(mark.widget_type(), enabled, selected, label));
     if ui.is_rect_visible(rect) {
         let state = ButtonState::of(&response, enabled);
         let mut shapes = shapes(ui, skin, rect.min, mark, label, state);

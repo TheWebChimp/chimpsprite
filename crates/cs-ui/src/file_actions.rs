@@ -116,6 +116,7 @@ impl ChimpApp {
     }
 
     pub(crate) fn show_message(&mut self, title: &str, body: impl Into<String>) {
+        crate::sound::notice(title);
         self.message = Some(Message {
             title: title.into(),
             body: body.into(),
@@ -404,6 +405,7 @@ impl ChimpApp {
                     target: Some(target),
                 };
                 self.doc.saved_version = self.doc.editor.doc_version;
+                crate::sound::play(crate::sound::Cue::Success);
                 let lost_guides = files::kind_of(&self.doc.location.name)
                     == Some(FileKind::Aseprite)
                     && self

@@ -32,6 +32,8 @@ arboard = { version = "3.6", default-features = false, features = ["image-data"]
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 # Los zips de las fuentes de dafont (la misma versión que usa cs-io).
 zip = { version = "9", default-features = false, features = ["deflate"] }
+# Los sonidos de la interfaz (los MP3 de UI SFX).
+rodio = { version = "0.23", default-features = false, features = ["playback", "mp3"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "0.2"
@@ -47,4 +49,6 @@ web-sys = { version = "0.3", features = [
     "Storage",
     "Location",
     "BeforeUnloadEvent",
+    "HtmlAudioElement",
+    "HtmlMediaElement",
 ] }

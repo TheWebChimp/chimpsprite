@@ -45,6 +45,11 @@ pub struct ViewSettings {
     /// El alto de la caja de la paleta (Pixel UI), elegido con la división que la separa del
     /// editor de color. De fábrica, el del diseño; el panel lo achica si no entra.
     pub palette_height: f32,
+    /// Los sonidos de la interfaz (clics y avisos): apagados de fábrica.
+    pub ui_sounds: bool,
+    pub sound_pack: crate::sound::SoundPack,
+    /// De 0 a 100.
+    pub sound_volume: u8,
 }
 
 impl Default for ViewSettings {
@@ -70,6 +75,9 @@ impl Default for ViewSettings {
             ui_scale: 2,
             palette_locked: true,
             palette_height: crate::color_panel::PALETTE_DEFAULT_HEIGHT,
+            ui_sounds: false,
+            sound_pack: crate::sound::SoundPack::default(),
+            sound_volume: crate::sound::DEFAULT_VOLUME,
         }
     }
 }

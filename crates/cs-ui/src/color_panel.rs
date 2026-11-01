@@ -1197,6 +1197,7 @@ fn copy_button(ui: &mut Ui, skin: &Skin, id: egui::Id, rect: Rect, current: Rgba
     let now = ui.input(|i| i.time);
     if response.clicked() {
         ui.ctx().copy_text(current.to_hex());
+        crate::sound::play(crate::sound::Cue::Copy);
         ui.data_mut(|d| d.insert_temp(copied_id, (now, current.to_hex())));
     }
     match ui
