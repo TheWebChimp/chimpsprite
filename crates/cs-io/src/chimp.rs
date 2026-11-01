@@ -262,9 +262,19 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
         for w in sub.warnings {
             report.warn(format!("{}: {w}", entry.name));
         }
+        // Una fuente editada a mano: sus glifos se ordenan y se emparejan con los frames.
+        let mut font = entry.font;
+        if let Some(font) = &mut font
+            && cs_core::normalize_font(font, &mut sprite)
+        {
+            report.warn(format!(
+                "{}: the font's glyph list did not match its frames and was fixed",
+                entry.name
+            ));
+        }
         artboards.push(Artboard {
             in_library: entry.library,
-            font: entry.font,
+            font,
             guides: entry.guides,
             symmetry: entry.symmetry,
             id: ArtboardId(entry.id),
@@ -564,6 +574,59 @@ mod tests {
         assert_eq!(a.sprite.frames.len(), font.glyphs.len());
         assert_eq!(a.sprite.pixel(a.sprite.layers[0].id, 5, 2, 3), ONE_BIT_INK);
         assert!(back.artboard(ArtboardId(1)).unwrap().font.is_none());
+    }
+
+    #[test]
+    fn a_font_with_a_bad_glyph_list_loads_fixed_with_a_warning() {
+        let mut doc = Document::with_sprite("one", Sprite::new(4, 4, ColorMode::Rgba));
+        let font = FontInfo::new("Mine", 8, FontMode::OneBit);
+        let mut sprite = font_sprite((8, 8), FontMode::OneBit, 4);
+        let layer = sprite.layers[0].id;
+        let mut image = Image::new(8, 8, sprite.color_mode);
+        image.set(1, 1, ONE_BIT_INK).unwrap();
+        let id = sprite.next_image_id();
+        sprite.images.insert(id, std::sync::Arc::new(image));
+        sprite.cels.insert(
+            (layer, 0),
+            Cel {
+                position: (0, 0),
+                opacity: 255,
+                image: id,
+            },
+        );
+        doc.artboards.push(Artboard {
+            id: ArtboardId(2),
+            name: "Mine".into(),
+            position: (20, 0),
+            sprite,
+            guides: Vec::new(),
+            symmetry: Default::default(),
+            in_library: false,
+            font: Some(font),
+        });
+        // A mano: 'B' (frame 0, pintado), 'A', 'A' repetida; el frame 3 sin glifo.
+        let bad = with_manifest(&write(&doc).unwrap(), |m| {
+            m["artboards"][1]["font"]["glyphs"] = serde_json::json!([
+                {"ch": "B", "advance": 2}, {"ch": "A"}, {"ch": "A"}
+            ]);
+        });
+        let (back, report) = read(&bad).unwrap();
+        assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+        assert!(report.warnings[0].contains("Mine"), "{:?}", report.warnings);
+        let a = back.artboard(ArtboardId(2)).unwrap();
+        let font = a.font.as_ref().unwrap();
+        assert_eq!(font.check(&a.sprite), Ok(()));
+        let chars: Vec<char> = font.glyphs.iter().map(|g| g.ch).collect();
+        assert_eq!(chars, vec!['A', 'B', '\u{E000}', '\u{E001}']);
+        let b = font.index_of('B').unwrap();
+        assert_eq!(a.sprite.pixel(layer, b, 1, 1), ONE_BIT_INK);
+        assert_eq!(font.glyphs[b].advance, Some(2));
+        // Más glifos que frames: se cortan.
+        let long = with_manifest(&write(&doc).unwrap(), |_| {});
+        let (back, report) = read(&long).unwrap();
+        assert_eq!(report.warnings.len(), 1, "94 glyphs for 4 frames");
+        let a = back.artboard(ArtboardId(2)).unwrap();
+        assert_eq!(a.font.as_ref().unwrap().check(&a.sprite), Ok(()));
     }
 
     #[test]
