@@ -303,6 +303,11 @@ oculta.
   - `scroll.thumb.v` (8×46) y `scroll.thumb.h`: el pulgar lila con borde oscuro y el agarre de
     rayitas al final, 1 px adentro de la pista.
 
+- **Lumen:** `icon.lumen.browse` (278,1, 11×9, la carpeta) e `icon.lumen.remove` (290,1, 9×9, la ✕
+  roja) van abajo a la derecha de la caja de cada mapa (3 px entre los dos, su fila 2 px arriba
+  de la línea de adentro de la caja y la ✕ 9 px antes de su línea derecha) en vez de los botones
+  Browse y Remove. Quitar, a media opacidad sin mapa.
+
 - **Paleta y editor de color** (frame 4 del diseño, capa Mockup, columna x 784..972; el skin
   creció a 320×272 y estas piezas van en y 236..267):
   - `palette.box` (9×9, centro (4,4,1,1)): la caja de la paleta, con la línea grabada

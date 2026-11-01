@@ -17,8 +17,9 @@ use crate::{kit, pixel_ui, widgets};
 
 /// El panel, desde la esquina de su contenido: su ancho (el de Groom) y el alto más chico.
 pub const WIDTH: f32 = 434.0;
-/// Con Pixel UI, los sliders llevan el encabezado del UI kit (30 de alto cada uno).
-const MIN_HEIGHT: f32 = 411.0;
+/// Con Pixel UI, los sliders llevan el encabezado del UI kit (30 de alto cada uno) y abrir y
+/// quitar van en la caja de cada mapa (sin su fila de botones).
+const MIN_HEIGHT: f32 = 391.0;
 /// La línea grabada debajo del encabezado y donde empieza lo de abajo.
 const HEADER_LINE: f32 = 21.0;
 const TOP: f32 = 25.0;
@@ -606,19 +607,29 @@ impl LumenPanel {
                 (Some(_), MapKind::Luminance) => self.source_note(&self.luminance).into(),
             };
             label_with_hint(&mut column, kind.label(), &note);
-            self.thumbnail(&mut column, kind, present);
-            column.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = BUTTON_GAP;
-                if pixel_ui::text_button_sized(ui, "Browse", button_width(2)).clicked() {
-                    *action = Some(LumenAction::Browse(kind));
-                }
-                let remove = ui.add_enabled_ui(present, |ui| {
-                    pixel_ui::text_button_sized(ui, "Remove", button_width(2))
+            // Con Pixel UI, abrir y quitar son íconos en la caja de la miniatura (así no hace
+            // falta el scroll); sin él, la fila de botones de siempre.
+            let icons = self.thumbnail(&mut column, kind, present);
+            if icons.browse {
+                *action = Some(LumenAction::Browse(kind));
+            }
+            if icons.remove && present {
+                self.remove(kind);
+            }
+            if !icons.shown {
+                column.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = BUTTON_GAP;
+                    if pixel_ui::text_button_sized(ui, "Browse", button_width(2)).clicked() {
+                        *action = Some(LumenAction::Browse(kind));
+                    }
+                    let remove = ui.add_enabled_ui(present, |ui| {
+                        pixel_ui::text_button_sized(ui, "Remove", button_width(2))
+                    });
+                    if remove.inner.clicked() && present {
+                        self.remove(kind);
+                    }
                 });
-                if remove.inner.clicked() && present {
-                    self.remove(kind);
-                }
-            });
+            }
             column.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = BUTTON_GAP;
                 if kind == MapKind::Albedo {
@@ -683,14 +694,20 @@ impl LumenPanel {
         }
     }
 
-    /// La miniatura de un mapa en su caja doble (vacía si no hay).
-    fn thumbnail(&mut self, ui: &mut Ui, kind: MapKind, present: bool) {
+    /// La miniatura de un mapa en su caja doble (vacía si no hay) y, con Pixel UI, abajo a la
+    /// derecha los íconos de abrir (la carpeta) y quitar (la ✕, apagada si no hay mapa).
+    fn thumbnail(&mut self, ui: &mut Ui, kind: MapKind, present: bool) -> MapIcons {
         let (frame, _) = ui.allocate_exact_size(vec2(COLUMN, THUMB_BOX), Sense::hover());
         double_box(ui, frame);
         let well = frame.shrink(BOX_PAD);
-        if !present {
-            return;
+        if present {
+            self.thumbnail_image(ui, kind, well);
         }
+        map_icons(ui, kind, frame, present)
+    }
+
+    /// La imagen del mapa `kind`, ajustada a `well` sobre el damero.
+    fn thumbnail_image(&mut self, ui: &mut Ui, kind: MapKind, well: Rect) {
         let Some(image) = self.map_image(kind) else {
             return;
         };
@@ -1118,6 +1135,93 @@ fn zoom_buttons(ui: &mut Ui) -> (bool, bool) {
 const SLIDER_HEIGHT: f32 = 26.0;
 
 /// Un slider del ancho de la columna, debajo de lo anterior.
+/// Lo que pasó con los íconos de una caja de mapa.
+#[derive(Default)]
+struct MapIcons {
+    /// Si se dibujaron (con Pixel UI y las piezas en el skin).
+    shown: bool,
+    browse: bool,
+    remove: bool,
+}
+
+/// Los íconos de abrir (`icon.lumen.browse`, la carpeta, 11×9) y quitar (`icon.lumen.remove`, la
+/// ✕, 9×9) abajo a la derecha de la caja `frame`: 3 px entre los dos, su fila 2 px arriba de la
+/// línea de adentro de la caja y la ✕ 9 px antes de su línea derecha. Quitar, apagado sin mapa.
+fn map_icons(ui: &mut Ui, kind: MapKind, frame: Rect, present: bool) -> MapIcons {
+    const BROWSE: &str = "icon.lumen.browse";
+    const REMOVE: &str = "icon.lumen.remove";
+    const RIGHT: f32 = 12.0;
+    const BOTTOM: f32 = 5.0;
+    const GAP: f32 = 3.0;
+    let Some(skin) = pixel_ui::frame_skin(ui.ctx()) else {
+        return MapIcons::default();
+    };
+    let (Some(browse), Some(remove)) = (
+        skin.piece(BROWSE, WidgetState::Normal),
+        skin.piece(REMOVE, WidgetState::Normal),
+    ) else {
+        return MapIcons::default();
+    };
+    let size = |p: &crate::skin::Piece| vec2(p.size[0] as f32, p.size[1] as f32);
+    let remove_rect = Rect::from_min_size(
+        pos2(
+            frame.right() - RIGHT - size(remove).x,
+            frame.bottom() - BOTTOM - size(remove).y,
+        ),
+        size(remove),
+    );
+    let browse_rect = Rect::from_min_size(
+        pos2(
+            remove_rect.left() - GAP - size(browse).x,
+            frame.bottom() - BOTTOM - size(browse).y,
+        ),
+        size(browse),
+    );
+    let ppp = ui.ctx().pixels_per_point();
+    let mut out = MapIcons {
+        shown: true,
+        ..Default::default()
+    };
+    for (piece, rect, label, enabled) in [
+        (browse, browse_rect, "Browse…", true),
+        (remove, remove_rect, "Remove", present),
+    ] {
+        let id = ui.id().with(("lumen_map_icon", kind.label(), label));
+        let sense = if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let response = ui.interact(rect.expand(1.0), id, sense);
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+        let mut shapes = pixel_ui::piece_shapes(piece, rect, ppp);
+        if !enabled {
+            // Apagado, a media opacidad.
+            for shape in &mut shapes {
+                if let egui::Shape::Mesh(mesh) = shape {
+                    for v in &mut std::sync::Arc::make_mut(mesh).vertices {
+                        v.color = Color32::from_white_alpha(110);
+                    }
+                }
+            }
+        }
+        ui.painter().extend(shapes);
+        if enabled {
+            let response = response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .tip(label);
+            if response.clicked() {
+                match label {
+                    "Remove" => out.remove = true,
+                    _ => out.browse = true,
+                }
+            }
+        }
+    }
+    out
+}
+
 fn stacked_slider(
     ui: &mut Ui,
     title: &str,
