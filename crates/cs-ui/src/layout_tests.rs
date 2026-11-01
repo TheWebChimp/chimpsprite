@@ -864,8 +864,8 @@ fn the_dock_preview_button_opens_the_preview_window_above_the_timeline_button() 
     let (button, timeline) = (h.button("Preview"), h.button("Timeline"));
     assert_eq!(
         timeline.top() - button.bottom(),
-        3.0,
-        "right above the timeline"
+        4.0,
+        "right above the timeline (the light row and 3 of air)"
     );
     let icon = Rect::from_min_size(button.min + Vec2::new(3.0, 5.0), Vec2::new(17.0, 13.0));
     assert!(h.drawn("icon.preview").contains(&icon), "{icon:?}");
@@ -2338,7 +2338,8 @@ fn with_pixel_ui_the_artboards_are_tabs_with_the_design_buttons() {
     // Están en el dock: no en el panel derecho hasta abrirlas.
     assert!(!h.buttons.iter().any(|(l, _)| l == "New 64×64 artboard"));
     let dock = h.button("Artboards");
-    assert_eq!(dock.size(), Vec2::new(23.0, 24.0));
+    // El cuerpo de 23×23 (la línea clara va debajo), como en el mockup de componentes.
+    assert_eq!(dock.size(), Vec2::new(23.0, 23.0));
     assert!(h.panel("dock").contains_rect(dock));
     h.click(dock.center(), PointerButton::Primary);
     // El panel flotante, a la izquierda del botón.
@@ -2395,7 +2396,7 @@ fn the_lospec_dock_button_opens_and_closes_the_lospec_panel() {
             .map(|(_, r)| *r)
             .expect("the Lospec dock button")
     };
-    assert_eq!(button(&h).size(), Vec2::new(23.0, 24.0));
+    assert_eq!(button(&h).size(), Vec2::new(23.0, 23.0));
     assert!(!h.app.lospec_open());
     h.click(button(&h).center(), PointerButton::Primary);
     assert!(h.app.lospec_open(), "opens the panel");

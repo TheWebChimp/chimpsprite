@@ -87,7 +87,7 @@ fn clicks_id() -> egui::Id {
 }
 
 /// Las secciones, una por pestaña.
-const SECTIONS: [&str; 12] = [
+const SECTIONS: [&str; 13] = [
     "Buttons",
     "Button group",
     "Inputs",
@@ -100,6 +100,7 @@ const SECTIONS: [&str; 12] = [
     "Title bar",
     "Menu",
     "Scroll",
+    "Dock",
 ];
 
 /// En la memoria de egui: la sección a la vista.
@@ -149,7 +150,8 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
                 8 => stepper_section(ui, skin, origin),
                 9 => title_section(ui, skin, origin),
                 10 => menu_section(ui, skin, origin),
-                _ => scroll_section(ui, skin, origin),
+                11 => scroll_section(ui, skin, origin),
+                _ => dock_section(ui, skin, origin),
             };
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
@@ -1261,4 +1263,91 @@ fn menu_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     );
     ui.data_mut(|d| d.insert_temp(menu_demo_id(), (onion, opacity)));
     frame.bottom().max(layer.bottom()) + 8.0
+}
+
+/// Sección Dock, como en el mockup: un botón del dock en sus tres estados (normal, con el puntero
+/// encima y apretado), uno cada 26; debajo, la columna de botones (uno cada 27) y, a su derecha,
+/// un panel flotante abierto con la pestaña que envuelve al botón apretado.
+const DOCK_ICONS: [&str; 7] = [
+    "icon.dock.artboards",
+    "icon.dock.library",
+    "icon.dock.slices",
+    "icon.dock.lospec",
+    "icon.dock.dafont",
+    "icon.dock.groom",
+    "icon.dock.lumen",
+];
+const DOCK_STATE_PITCH: f32 = 26.0;
+const DOCK_PITCH: f32 = 27.0;
+const DOCK_PANEL: Vec2 = vec2(120.0, 120.0);
+const DOCK_PANEL_GAP: f32 = 4.0;
+const DOCK_OPEN: usize = 2;
+
+/// Un botón del dock dibujado en `state`: la pieza `button` (con su línea clara debajo) y el ícono
+/// centrado, que baja 1 px apretado.
+fn dock_button_shapes(
+    skin: &Skin,
+    rect: Rect,
+    icon: &str,
+    state: ButtonState,
+    ppp: f32,
+) -> Vec<Shape> {
+    let mut shapes = button::frame_shapes(skin, rect.with_max_y(rect.bottom() + 1.0), state, ppp);
+    let down = if state == ButtonState::Pressed {
+        1.0
+    } else {
+        0.0
+    };
+    shapes.extend(crate::pixel_draw::piece_centered(
+        skin,
+        icon,
+        rect.translate(vec2(0.0, down)),
+        ppp,
+    ));
+    shapes
+}
+
+fn dock_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    let ppp = ui.ctx().pixels_per_point();
+    let size = crate::dock::BUTTON_SIZE;
+    let mut shapes: Vec<Shape> = Vec::new();
+    for (i, state) in [
+        ButtonState::Normal,
+        ButtonState::Hover,
+        ButtonState::Pressed,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let rect = Rect::from_min_size(origin + vec2(i as f32 * DOCK_STATE_PITCH, 0.0), size);
+        shapes.extend(dock_button_shapes(skin, rect, DOCK_ICONS[0], state, ppp));
+    }
+    // La columna, con el panel abierto del tercero.
+    let top = origin.y + size.y + 1.0 + DOCK_PITCH - size.y;
+    let column_left = origin.x + DOCK_PANEL.x + DOCK_PANEL_GAP;
+    let mut open_button = Rect::NOTHING;
+    for (i, icon) in DOCK_ICONS.iter().enumerate() {
+        let rect = Rect::from_min_size(pos2(column_left, top + i as f32 * DOCK_PITCH), size);
+        if i == DOCK_OPEN {
+            open_button = rect;
+        } else {
+            shapes.extend(dock_button_shapes(
+                skin,
+                rect,
+                icon,
+                ButtonState::Normal,
+                ppp,
+            ));
+        }
+    }
+    let panel = Rect::from_min_size(pos2(origin.x, top), DOCK_PANEL);
+    shapes.extend(crate::dock::open_preview_shapes(
+        skin,
+        panel,
+        open_button,
+        DOCK_ICONS[DOCK_OPEN],
+        ppp,
+    ));
+    ui.painter().extend(shapes);
+    top + DOCK_ICONS.len() as f32 * DOCK_PITCH
 }

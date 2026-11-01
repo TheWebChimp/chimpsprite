@@ -13,10 +13,10 @@ use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
 use cs_core::ArtboardId;
 
-/// Los botones del dock (frame 4 del diseño): `button` del skin en 9-slice, de 23×24, con 3 de
-/// aire entre uno y otro.
-pub const BUTTON_SIZE: Vec2 = vec2(23.0, 24.0);
-const BUTTON_GAP: f32 = 3.0;
+/// Los botones del dock (mockup de componentes, frame 9): `button` del skin en 9-slice, con el
+/// cuerpo de 23×23 y la línea clara debajo (24 en total, como en el mockup), uno cada 27.
+pub const BUTTON_SIZE: Vec2 = vec2(23.0, 23.0);
+const BUTTON_GAP: f32 = 4.0;
 /// Arriba de los botones: el primero empieza a la altura de la caja del lienzo (sus reglas).
 const TOP_AIR: f32 = 5.0;
 /// Debajo del botón del timeline, hasta el borde de abajo del dock.
@@ -28,8 +28,10 @@ pub const RIGHT_MARGIN: i8 = 3;
 pub const LEFT_AIR: i8 = 3;
 /// Ancho del contenido de los paneles flotantes.
 const FLYOUT_WIDTH: f32 = 210.0;
-/// Marco de los paneles flotantes: la pieza `panel` del skin y su aire adentro.
-const FLYOUT_PIECE: &str = "menu.panel";
+/// Marco de los paneles flotantes (mockup de componentes, frame 9, la "T" junto a la columna):
+/// el del menú de las herramientas (`menu.side`: borde (89,77,77), brillo arriba y a la derecha,
+/// bisel a la izquierda y abajo), con la pestaña que envuelve al botón apretado; y su aire adentro.
+const FLYOUT_PIECE: &str = "menu.side";
 pub const FLYOUT_MARGIN: i8 = 8;
 /// Entre el botón y su panel flotante (la pestaña los une).
 const FLYOUT_GAP: f32 = 4.0;
@@ -354,7 +356,7 @@ pub fn flyout(
                 let ppp = ui.ctx().pixels_per_point();
                 let rect = Rect::from_min_size(rect.min.round(), rect.size().round());
                 let mut shapes = pixel_ui::piece_shapes(piece, rect, ppp);
-                shapes.extend(tab_shapes(skin, piece, panel, rect, button, ppp));
+                shapes.extend(tab_shapes(skin, piece, panel.icon(), rect, button, ppp));
                 ui.painter().set(background, Shape::Vec(shapes));
                 plain_icon(ui, skin, panel.icon(), panel.plain(), button);
             }
@@ -374,7 +376,7 @@ fn flyout_top(button_top: f32, height: f32, column: Rect) -> f32 {
 fn tab_shapes(
     skin: &Skin,
     piece: &crate::skin::Piece,
-    panel: DockPanel,
+    icon: &str,
     panel_rect: Rect,
     button: Rect,
     ppp: f32,
@@ -423,7 +425,24 @@ fn tab_shapes(
         let y = tab.bottom() - (piece.size[1] - k) as f32;
         shapes.push(line(x0, y, piece.pixel(center.x, k)));
     }
-    shapes.extend(pixel_draw::piece_centered(skin, panel.icon(), button, ppp));
+    shapes.extend(pixel_draw::piece_centered(skin, icon, button, ppp));
+    shapes
+}
+
+/// Un panel flotante abierto dibujado en `panel_rect` con la pestaña que envuelve al botón
+/// `button` (con el ícono `icon`): el UI Catalog lo muestra así, sin el contenido.
+pub(crate) fn open_preview_shapes(
+    skin: &Skin,
+    panel_rect: Rect,
+    button: Rect,
+    icon: &str,
+    ppp: f32,
+) -> Vec<Shape> {
+    let Some(piece) = skin.piece(FLYOUT_PIECE, WidgetState::Normal) else {
+        return Vec::new();
+    };
+    let mut shapes = pixel_ui::piece_shapes(piece, panel_rect, ppp);
+    shapes.extend(tab_shapes(skin, piece, icon, panel_rect, button, ppp));
     shapes
 }
 
