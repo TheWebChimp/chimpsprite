@@ -260,6 +260,7 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
         }
         artboards.push(Artboard {
             in_library: entry.library,
+            font: None,
             guides: entry.guides,
             symmetry: entry.symmetry,
             id: ArtboardId(entry.id),
@@ -557,6 +558,7 @@ mod tests {
         let mut d = Document::with_sprite("chimp", chimp);
         d.artboards.push(Artboard {
             in_library: false,
+            font: None,
             guides: vec![Guide {
                 axis: cs_core::Axis::Vertical,
                 position: 2,

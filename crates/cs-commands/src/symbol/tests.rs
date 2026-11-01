@@ -17,6 +17,7 @@ fn add(doc: &mut Document, id: u32, position: (i32, i32), in_library: bool) {
         guides: Vec::new(),
         symmetry: Default::default(),
         in_library,
+        font: None,
     });
 }
 

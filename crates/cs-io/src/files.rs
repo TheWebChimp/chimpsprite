@@ -177,6 +177,7 @@ mod tests {
 
         doc.artboards.push(Artboard {
             in_library: false,
+            font: None,
             guides: Vec::new(),
             symmetry: Default::default(),
             id: ArtboardId(2),
@@ -209,6 +210,7 @@ mod tests {
         .unwrap();
         d.artboards.push(Artboard {
             in_library: false,
+            font: None,
             id: ArtboardId(2),
             name: "s".into(),
             position: (9, 0),

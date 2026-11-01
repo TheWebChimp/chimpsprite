@@ -61,6 +61,7 @@ fn to_command(d: &Document, op: &Op) -> DocCommand {
             index: d.artboards.len(),
             artboard: Box::new(Artboard {
                 in_library: false,
+                font: None,
                 guides: Vec::new(),
                 symmetry: Default::default(),
                 id: d.next_artboard_id(),

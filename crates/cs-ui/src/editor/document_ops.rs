@@ -13,6 +13,7 @@ impl Editor {
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
             in_library: false,
+            font: None,
             guides: Vec::new(),
             symmetry: Default::default(),
             id,
@@ -189,6 +190,7 @@ impl Editor {
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
             in_library: false,
+            font: None,
             id,
             name,
             position: (x1 + 16, y0),

@@ -3,6 +3,7 @@
 mod anim;
 mod color;
 mod document;
+mod font;
 mod image;
 mod instance;
 mod mask;
@@ -13,6 +14,7 @@ mod tilemap;
 pub use anim::*;
 pub use color::*;
 pub use document::*;
+pub use font::*;
 pub use image::*;
 pub use instance::*;
 pub use mask::*;

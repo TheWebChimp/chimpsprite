@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::Sprite;
+use crate::{FontInfo, Sprite};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ArtboardId(pub u32);
@@ -140,6 +140,9 @@ pub struct Artboard {
     /// de instancias y se edita en modo símbolo.
     #[serde(default)]
     pub in_library: bool,
+    /// Si es una fuente pixel: sus medidas y sus glifos (un frame por glifo).
+    #[serde(default)]
+    pub font: Option<FontInfo>,
 }
 
 impl Artboard {
@@ -220,6 +223,7 @@ impl Document {
                 position: (0, 0),
                 sprite,
                 in_library: false,
+                font: None,
             }],
         }
     }
@@ -364,6 +368,7 @@ mod tests {
             position: (5, 5),
             sprite: Sprite::new(10, 4, ColorMode::Rgba),
             in_library: false,
+            font: None,
         });
         d
     }
@@ -394,6 +399,7 @@ mod tests {
             guides: Vec::new(),
             symmetry: Default::default(),
             in_library: true,
+            font: None,
         });
         d
     }
@@ -477,6 +483,7 @@ mod tests {
                     guides: Vec::new(),
                     symmetry: Default::default(),
                     in_library: false,
+                    font: None,
                 }
             })
             .collect();

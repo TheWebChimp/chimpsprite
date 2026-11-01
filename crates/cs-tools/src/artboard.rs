@@ -169,6 +169,7 @@ impl ArtboardTool {
             index: doc.artboards.len(),
             artboard: Box::new(Artboard {
                 in_library: false,
+                font: None,
                 guides: Vec::new(),
                 symmetry: Default::default(),
                 id,

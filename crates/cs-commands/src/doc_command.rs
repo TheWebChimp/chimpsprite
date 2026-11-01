@@ -236,6 +236,7 @@ mod tests {
     fn second(d: &Document) -> Artboard {
         Artboard {
             in_library: false,
+            font: None,
             guides: Vec::new(),
             symmetry: Default::default(),
             id: d.next_artboard_id(),
@@ -268,6 +269,7 @@ mod tests {
         let mut doc = Document::with_sprite("a", Sprite::new(4, 4, ColorMode::Rgba));
         doc.artboards.push(Artboard {
             in_library: false,
+            font: None,
             id: ArtboardId(2),
             name: "b".into(),
             position: (10, 0),
