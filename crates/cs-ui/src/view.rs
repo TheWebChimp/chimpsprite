@@ -100,7 +100,7 @@ impl ViewSettings {
 }
 
 /// Cambio de zoom pedido desde el menú o un atajo; el lienzo lo aplica al dibujarse.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ZoomRequest {
     In,
     Out,
@@ -109,6 +109,11 @@ pub enum ZoomRequest {
     Fit,
     /// Centra el artboard activo sin cambiar el zoom.
     CenterActive,
+    /// Ajusta el zoom al artboard activo y lo centra en lo que se ve del lienzo sin los
+    /// `right_inset` puntos de la derecha (los que tapa un panel flotante del dock).
+    FitActiveBeside {
+        right_inset: f32,
+    },
 }
 
 /// Diálogo "Grid Settings" del artboard activo.

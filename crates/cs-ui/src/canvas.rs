@@ -397,6 +397,24 @@ impl CanvasView {
         self.fitted = true;
     }
 
+    /// Ajusta el zoom al artboard activo y lo centra en lo que se ve de `rect` sin los
+    /// `right_inset` puntos de la derecha (p. ej. los que tapa el panel Font).
+    fn fit_active_beside(&mut self, rect: Rect, editor: &Editor, right_inset: f32) {
+        let mut room = self.visible(rect);
+        room.max.x = (room.max.x - right_inset).max(room.min.x + 1.0);
+        let ((x0, y0), (x1, y1)) = editor.artboard().rect();
+        let size = Vec2::new((x1 - x0) as f32, (y1 - y0) as f32) * self.ratio;
+        let max = (room.size() * 0.85 / size).min_elem();
+        self.zoom = ZOOM_LEVELS
+            .iter()
+            .copied()
+            .rfind(|&z| z <= max)
+            .unwrap_or(ZOOM_LEVELS[0]);
+        let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
+        self.pan = room.center() - rect.center() - center * self.scale();
+        self.fitted = true;
+    }
+
     fn zoom_at(&mut self, rect: Rect, anchor: Pos2, step_in: bool) {
         let i = ZOOM_LEVELS
             .iter()
@@ -428,6 +446,9 @@ impl CanvasView {
             }
             ZoomRequest::Fit => self.fit(rect, editor),
             ZoomRequest::CenterActive => self.center_active(editor),
+            ZoomRequest::FitActiveBeside { right_inset } => {
+                self.fit_active_beside(rect, editor, right_inset)
+            }
         }
     }
 

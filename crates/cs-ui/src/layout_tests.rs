@@ -3371,6 +3371,32 @@ fn new_font_in_the_font_panel_opens_the_dialog() {
 }
 
 #[test]
+fn a_new_font_is_fitted_beside_the_font_panel() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    // Lo que hace el OK de File → New Font… (el diálogo no se dibuja en este arnés).
+    let ctx = h.ctx.clone();
+    assert!(
+        h.app
+            .create_font(&ctx, "Mine", (8, 8), cs_core::FontMode::OneBit)
+    );
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(h.app.doc.editor.font().is_some());
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "Font"))))
+        .expect("the Font panel is open");
+    let canvas = h.canvas.expect("a document is open");
+    let art = artboard_pixels(&h);
+    // Entera a la izquierda del panel y dentro del lienzo: no queda tapada.
+    assert!(art.right() <= flyout.left(), "{art:?} vs {flyout:?}");
+    assert!(canvas.contains_rect(art), "{art:?} vs {canvas:?}");
+    // Ajustada: no se queda chiquita.
+    assert!(art.width() >= 100.0, "{art:?}");
+}
+
+#[test]
 fn the_font_panel_adds_the_typed_chars() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     h.app

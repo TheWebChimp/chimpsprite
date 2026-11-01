@@ -597,8 +597,9 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     }
     // Desarrollo: una fuente de 8×8 con unas letras y el panel Font abierto, para capturas.
     if dev_var("CHIMPSPRITE_DEMO_FONT").is_some() && app.has_doc() {
-        let e = &mut app.doc.editor;
-        if e.new_font("Demo Font", (8, 8), cs_core::FontMode::OneBit) {
+        // Como el OK de File → New Font…: con su panel abierto y encuadrada al lado de él.
+        if app.create_font(ctx, "Demo Font", (8, 8), cs_core::FontMode::OneBit) {
+            let e = &mut app.doc.editor;
             type Points = &'static [(i32, i32)];
             let letters: [(char, Points); 3] = [
                 (
@@ -665,8 +666,6 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             }
             e.go_to_glyph('A');
             app.font_panel.test_text = "ABC CAB".into();
-            crate::dock::set_open(ctx, Some(crate::dock::DockPanel::Font));
-            app.doc.canvas.request_zoom(crate::view::ZoomRequest::Fit);
         }
     }
     if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {

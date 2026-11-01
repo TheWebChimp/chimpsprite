@@ -727,13 +727,32 @@ impl ChimpApp {
                 if !self.has_doc() {
                     self.new_document();
                 }
-                // Con la fuente creada se abre su panel en el dock.
-                if self.doc.editor.new_font(&name, cell, mode) {
-                    dock::set_open(ctx, Some(dock::DockPanel::Font));
-                }
+                self.create_font(ctx, &name, cell, mode);
             }
             tilemap_dialog::DialogResult::Cancel => self.new_font = None,
         }
+    }
+
+    /// Crea la fuente `name` en el documento abierto, abre su panel en el dock y la encuadra al
+    /// lado de él. `false` si no se pudo.
+    pub(crate) fn create_font(
+        &mut self,
+        ctx: &egui::Context,
+        name: &str,
+        cell: (u32, u32),
+        mode: cs_core::FontMode,
+    ) -> bool {
+        if !self.doc.editor.new_font(name, cell, mode) {
+            return false;
+        }
+        dock::set_open(ctx, Some(dock::DockPanel::Font));
+        // La fuente nueva, ajustada a lo que no tapa el panel.
+        self.doc
+            .canvas
+            .request_zoom(view::ZoomRequest::FitActiveBeside {
+                right_inset: dock::flyout_reach(font_panel::WIDTH),
+            });
+        true
     }
 
     fn update_tilemap_dialogs(&mut self, ctx: &egui::Context) {

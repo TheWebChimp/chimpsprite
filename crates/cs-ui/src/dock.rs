@@ -371,6 +371,12 @@ pub fn flyout(
         });
 }
 
+/// Cuánto entra en el lienzo, desde su borde derecho, un panel flotante de `width` de contenido:
+/// el contenido, el marco a los dos lados y el aire hasta su botón.
+pub fn flyout_reach(width: f32) -> f32 {
+    width + 2.0 * FLYOUT_MARGIN as f32 + FLYOUT_GAP
+}
+
 /// Dónde empieza un panel de `height` cuyo botón está en `button_top`: a su altura si cabe en
 /// `column`; si no, más arriba, hasta el borde de arriba de la columna.
 fn flyout_top(button_top: f32, height: f32, column: Rect) -> f32 {
