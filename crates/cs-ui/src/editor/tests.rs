@@ -1238,3 +1238,30 @@ fn instance_candidates_list_the_library_first_by_name() {
     assert_eq!(ids(canvas), vec![4, 2]);
     assert_eq!(ids(e.instance_candidates()), vec![5, 3, 4, 2]);
 }
+
+/// Un clic como lo manda el lienzo: el puntero llega (sin botón), se presiona y, solo si la
+/// herramienta quedó pintando (`is_painting`), se suelta.
+fn canvas_click(e: &mut Editor, p: Point) {
+    let world = (p.0 as f32 + 0.5, p.1 as f32 + 0.5);
+    e.pointer_hover(world);
+    e.pointer_press(world, false, false, 0.1);
+    assert!(
+        e.is_painting(),
+        "the canvas only releases a tool that is painting"
+    );
+    e.pointer_release();
+}
+
+#[test]
+fn curve_drag_a_line_then_two_clicks_paint_it() {
+    let mut e = editor();
+    e.set_tool(ToolKind::Curve);
+    let before = e.sprite().clone();
+    drag_local(&mut e, (0, 7), (7, 7), false, false);
+    assert!(e.is_pending(), "waiting for the controls");
+    canvas_click(&mut e, (0, 0));
+    assert!(e.is_pending(), "waiting for the second control");
+    canvas_click(&mut e, (7, 0));
+    assert!(!e.is_pending());
+    assert_ne!(*e.sprite(), before, "painted");
+}
