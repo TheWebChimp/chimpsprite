@@ -125,6 +125,61 @@ impl CanvasView {
         Some(cursor(handle))
     }
 
+    /// Arrastrar la línea del ancho del glifo actual (artboard de fuente activo): mientras dura,
+    /// la línea va en la columna del puntero y al soltar queda como ancho manual. Devuelve el
+    /// cursor si el puntero está sobre la línea o arrastrándola (las herramientas no reciben el
+    /// clic).
+    #[allow(clippy::too_many_arguments)]
+    fn advance_input(
+        &mut self,
+        response: &egui::Response,
+        rect: Rect,
+        area: Rect,
+        editor: &mut Editor,
+        pointer: Option<Pos2>,
+        pressed: bool,
+        down: bool,
+    ) -> Option<egui::CursorIcon> {
+        let ppp = response.ctx.pixels_per_point();
+        if let Some(n) = self.advance_drag {
+            if down {
+                if let Some(p) = pointer {
+                    let pixels = WindowLayout::pixels_on_screen(
+                        self.pixel_rect(rect, editor.artboard()),
+                        ppp,
+                    );
+                    let column = ((p.x - pixels.left()) / self.scale().x).round().max(0.0);
+                    self.advance_drag = Some(column as i32);
+                }
+                return Some(egui::CursorIcon::ResizeHorizontal);
+            }
+            self.advance_drag = None;
+            let n = n.max(0) as u32;
+            if let Some(ch) = editor.current_glyph()
+                && editor.glyph_advance() != Some(n)
+            {
+                editor.set_glyph_advance(ch, Some(n));
+            }
+            return None;
+        }
+        if editor.is_painting() || !response.hovered() {
+            return None;
+        }
+        let p = pointer.filter(|p| area.contains(*p))?;
+        // Donde se ve la línea (dibujada en el frame anterior), si el activo sigue siendo de
+        // fuente.
+        editor.current_glyph()?;
+        let hit = self.advance_line_rect()?;
+        if !hit.contains(p) || self.under_front_artboard(rect, editor, p, ppp) {
+            return None;
+        }
+        self.guide_hint = Some("Drag to change the glyph's advance");
+        if pressed {
+            self.advance_drag = editor.glyph_advance().map(|a| a as i32);
+        }
+        Some(egui::CursorIcon::ResizeHorizontal)
+    }
+
     /// Crear (desde las reglas), mover y borrar guías. Devuelve el cursor a mostrar si el
     /// puntero está ocupado por las reglas/guías (y en ese caso las herramientas no reciben el clic).
     #[allow(clippy::too_many_arguments)]
@@ -313,6 +368,7 @@ impl CanvasView {
         let hand_pans = hand
             && self.ruler_drag.is_none()
             && self.sym_drag.is_none()
+            && self.advance_drag.is_none()
             && self.dragging_guide.is_none();
         if response.dragged_by(egui::PointerButton::Middle)
             || ((space_key || hand_pans) && response.dragged_by(egui::PointerButton::Primary))
@@ -411,6 +467,16 @@ impl CanvasView {
         let ruler_cursor = if modal || space_key || sym_cursor.is_some() || self.sym_drag.is_some()
         {
             sym_cursor
+        } else if let Some(cursor) = self.advance_input(
+            response,
+            rect,
+            area,
+            editor,
+            pointer,
+            pressed_primary,
+            any_down,
+        ) {
+            Some(cursor)
         } else {
             self.guide_input(
                 response,
@@ -422,8 +488,10 @@ impl CanvasView {
                 any_down,
             )
         };
-        let ruler_busy =
-            ruler_cursor.is_some() || self.ruler_drag.is_some() || self.sym_drag.is_some();
+        let ruler_busy = ruler_cursor.is_some()
+            || self.ruler_drag.is_some()
+            || self.sym_drag.is_some()
+            || self.advance_drag.is_some();
         guide_cursor = guide_cursor.or(ruler_cursor);
         // Las notas van encima de todo: sobre una (o arrastrándola), las herramientas no reciben
         // el clic.

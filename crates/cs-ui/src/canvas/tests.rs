@@ -1325,7 +1325,7 @@ fn with_pixel_ui_the_window_wraps_the_pixels_and_its_bar_does_not_zoom() {
         if zoom < 16.0 {
             continue;
         }
-        let label = label_text(h.editor.artboard());
+        let label = label_text(h.editor.artboard(), h.editor.frame);
         let (_, text) = h
             .texts()
             .into_iter()
@@ -1713,7 +1713,7 @@ fn inactive_windows_are_dimmed_and_the_active_one_is_not() {
 fn a_narrow_artboard_keeps_its_bar_inside_the_window() {
     let mut h = Harness::new();
     let skin = with_window(&mut h);
-    let label = label_text(h.editor.artboard());
+    let label = label_text(h.editor.artboard(), h.editor.frame);
     // 16 px de artboard a 1.5 (ventana de 28): íconos sin nombre; a 1 y 0.5, solo la barra.
     for (zoom, icons) in [(1.5, true), (1.0, false), (0.5, false)] {
         h.canvas.zoom = zoom;
@@ -1855,7 +1855,7 @@ fn an_off_screen_artboard_draws_no_window() {
 fn without_pixel_ui_the_label_and_the_orange_border_stay() {
     let h = Harness::new();
     let pixels = h.pixels_of(0);
-    let label = label_text(h.editor.artboard());
+    let label = label_text(h.editor.artboard(), h.editor.frame);
     let (_, text) = h
         .texts()
         .into_iter()

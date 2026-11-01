@@ -25,6 +25,7 @@ mod fg_bg;
 mod file_actions;
 mod filter_dialog;
 mod filters;
+mod font_overlay;
 mod frame_dialog;
 mod mask_ops;
 mod menus;
@@ -1281,7 +1282,8 @@ impl ChimpApp {
                 .inner
             })
             .inner;
-        if self.view.timeline {
+        // Un artboard de fuente no tiene timeline: sus frames son los glifos. La preferencia queda igual para los sprites.
+        if self.view.timeline && self.doc.editor.font().is_none() {
             let mut panel = egui::Panel::bottom("timeline")
                 .resizable(true)
                 .default_size(190.0);

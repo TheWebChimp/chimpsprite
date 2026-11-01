@@ -211,6 +211,22 @@ impl LayoutHarness {
         self.frame();
     }
 
+    /// Arrastre con el botón principal de `from` a `to`: mover, apretar, mover y soltar, un
+    /// frame cada uno.
+    fn drag(&mut self, from: Pos2, to: Pos2) {
+        let press = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        self.frame_with(vec![Event::PointerMoved(from)]);
+        self.frame_with(vec![press(from, true)]);
+        self.frame_with(vec![Event::PointerMoved(to)]);
+        self.frame_with(vec![press(to, false)]);
+        self.frame();
+    }
+
     /// La textura de la pieza `name` del skin.
     fn piece(&self, name: &str) -> TextureId {
         let skin = self.app.pixel.skin().expect("Pixel UI is on");
@@ -3146,4 +3162,78 @@ fn help_ui_catalog_opens_a_closable_tab_with_the_four_button_states() {
     h.frame();
     assert_eq!(h.app.tabs.page(), None);
     assert_eq!(h.app.tabs.bar().len(), 2);
+}
+
+#[test]
+fn a_font_artboard_shows_its_glyph_in_the_title_and_hides_the_timeline() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let with_timeline = h.canvas.expect("a document is open");
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.app.doc.editor.go_to_glyph('A');
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    assert!(
+        h.texts.iter().any(|(t, _)| t.contains("A · Mine")),
+        "{:?}",
+        h.texts
+    );
+    // Sin la timeline, el lienzo baja hasta donde estaba ella.
+    let canvas = h.canvas.expect("a document is open");
+    assert!(
+        canvas.bottom() > with_timeline.bottom() + 50.0,
+        "{canvas:?} vs {with_timeline:?}"
+    );
+    assert!(
+        h.app.view.timeline,
+        "the setting stays: it comes back for sprites"
+    );
+}
+
+#[test]
+fn dragging_the_advance_line_sets_a_manual_advance() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    e.go_to_glyph('A');
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    assert_eq!(
+        h.app.doc.editor.glyph_advance(),
+        Some(8),
+        "empty: half the cell"
+    );
+    let line = h
+        .app
+        .doc
+        .canvas
+        .advance_line_rect()
+        .expect("the advance line");
+    let scale = h.app.doc.canvas.scale().x;
+    h.drag(line.center(), line.center() + egui::vec2(3.0 * scale, 0.0));
+    let e = &h.app.doc.editor;
+    assert_eq!(e.glyph_advance(), Some(8 + 3));
+    assert_eq!(e.font().unwrap().glyphs[e.frame].advance, Some(11));
+    // La herramienta no recibió el clic: el glifo sigue vacío.
+    assert!(
+        e.sprite().cel(e.layer, e.frame).is_none(),
+        "nothing painted"
+    );
+    let moved = h
+        .app
+        .doc
+        .canvas
+        .advance_line_rect()
+        .expect("the advance line");
+    assert_eq!(moved.center().x, line.center().x + 3.0 * scale);
 }

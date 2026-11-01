@@ -147,6 +147,11 @@ pub struct CanvasView {
     symbol_return_view: Option<(f32, Vec2)>,
     /// Si se ve la migaja de pan (modo símbolo) en este frame.
     crumbs_shown: bool,
+    /// El rect de golpe de la línea del ancho del glifo actual, como se dibujó en el último
+    /// frame (`None` si el artboard activo no es de fuente).
+    advance_line: Option<Rect>,
+    /// El ancho (en columnas) mientras se arrastra la línea del ancho; al soltar se aplica.
+    advance_drag: Option<i32>,
 }
 
 /// Color alrededor de los artboards: `canvas` del skin con Pixel UI; si no, el del tema.
@@ -261,6 +266,8 @@ impl Default for CanvasView {
             ppp: 1.0,
             symbol_return_view: None,
             crumbs_shown: false,
+            advance_line: None,
+            advance_drag: None,
         }
     }
 }
@@ -302,6 +309,23 @@ impl CanvasView {
     /// píxel (con 1:1, el zoom en los dos).
     pub(crate) fn scale(&self) -> Vec2 {
         self.ratio * self.zoom
+    }
+
+    /// El rect de golpe de la línea del ancho del glifo actual (artboard de fuente activo), como
+    /// se dibujó en el último frame.
+    pub(crate) fn advance_line_rect(&self) -> Option<Rect> {
+        self.advance_line
+    }
+
+    /// El glifo actual del artboard de fuente activo y el ancho que se muestra: el que se está
+    /// arrastrando o el efectivo.
+    fn shown_advance(&self, editor: &Editor) -> Option<(char, u32)> {
+        let glyph = editor.current_glyph()?;
+        let advance = match self.advance_drag {
+            Some(n) => n.max(0) as u32,
+            None => editor.glyph_advance()?,
+        };
+        Some((glyph, advance))
     }
 
     fn to_screen(&self, rect: Rect, world: (i32, i32)) -> Pos2 {
@@ -750,6 +774,7 @@ impl CanvasView {
 
         let ppp = ctx.pixels_per_point();
         self.draw_tiled(&painter, rect, editor, document, checker, ppp);
+        self.advance_line = None;
         for artboard in shown_artboards(document, editor) {
             // Alineada a píxeles de pantalla: el damero y la textura caen justo en píxeles y la
             // ventana de Pixel UI se arma alrededor de este mismo rect (blanco de 1 px exacto).
@@ -775,6 +800,19 @@ impl CanvasView {
             let ((x0, y0), (x1, y1)) = artboard.rect();
             let uv = checker_uv((x1 - x0) as u32, (y1 - y0) as u32);
             painter.image(checker, screen, uv, Color32::WHITE);
+            // El artboard de fuente activo: la letra fantasma va sobre el damero y debajo de lo
+            // dibujado; las guías, encima (después de las cuadrículas).
+            let font = artboard
+                .font
+                .as_ref()
+                .filter(|_| active)
+                .zip(self.shown_advance(editor));
+            if let Some((font, (glyph, _))) = font
+                && let Some(ghost) =
+                    crate::font_overlay::ghost(&painter, screen, font, glyph, self.scale().x)
+            {
+                painter.add(ghost);
+            }
             if let Some(tex) = self.textures.get(&artboard.id) {
                 let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
                 painter.image(tex.id(), screen, full_uv, Color32::WHITE);
@@ -821,12 +859,17 @@ impl CanvasView {
                     theme::TILE_GRID,
                 );
             }
+            if let Some((font, (_, advance))) = font {
+                let scale = self.scale().x;
+                painter.extend(crate::font_overlay::guides(screen, font, advance, scale));
+                self.advance_line = Some(crate::font_overlay::advance_hit(screen, advance, scale));
+            }
             let renaming = self.renaming.as_ref().is_some_and(|r| r.0 == artboard.id);
             if let Some((w, layout)) = &window {
                 // La barra de título reemplaza a la etiqueta. Sin el borde naranja del activo:
                 // taparía el borde y la barra de la ventana; los inactivos se ven apagados.
                 let title = if self.names_visible && !renaming {
-                    label_text(artboard)
+                    label_text(artboard, editor.frame_of(artboard.id))
                 } else {
                     String::new()
                 };
@@ -843,7 +886,7 @@ impl CanvasView {
                 painter.text(
                     screen.left_top() - Vec2::new(0.0, LABEL_GAP),
                     Align2::LEFT_BOTTOM,
-                    label_text(artboard),
+                    label_text(artboard, editor.frame_of(artboard.id)),
                     FontId::proportional(LABEL_SIZE),
                     label_color,
                 );
@@ -1324,7 +1367,13 @@ fn draw_grid(
     }
 }
 
-fn label_text(artboard: &Artboard) -> String {
+/// El título de un artboard: su nombre y tamaño o, si es de fuente, el glifo del `frame` que
+/// muestra y el nombre de la fuente ("A · Mine").
+fn label_text(artboard: &Artboard, frame: usize) -> String {
+    if let Some(font) = &artboard.font {
+        let ch = font.glyphs.get(frame).map_or('?', |g| g.ch);
+        return format!("{ch} · {}", font.name);
+    }
     format!(
         "{}  {}×{}",
         artboard.name, artboard.sprite.width, artboard.sprite.height
@@ -1546,6 +1595,34 @@ impl CanvasView {
     /// Lo que hay en el menú "≡" del artboard `id`.
     fn artboard_menu(&mut self, ui: &mut egui::Ui, editor: &mut Editor, id: ArtboardId) {
         editor.activate(id);
+        // Un artboard de fuente: lo del glifo actual primero.
+        if editor.artboard().font.is_some() {
+            for (label, dx, dy) in [
+                ("Shift Left", -1, 0),
+                ("Shift Right", 1, 0),
+                ("Shift Up", 0, -1),
+                ("Shift Down", 0, 1),
+            ] {
+                if ui.add(menus::plain(label)).clicked() {
+                    editor.shift_glyph(dx, dy);
+                    ui.close();
+                }
+            }
+            if ui.add(menus::plain("Copy Glyph")).clicked() {
+                editor.copy_glyph();
+                ui.close();
+            }
+            if ui.add(menus::plain("Paste Glyph")).clicked() {
+                editor.paste_glyph();
+                ui.close();
+            }
+            if ui.add(menus::plain("Clear Glyph")).clicked() {
+                editor.clear_glyph();
+                ui.close();
+            }
+            ui.add_enabled(false, menus::plain("Glyph From…"));
+            menus::separator(ui);
+        }
         if ui.add(menus::plain("Rename")).clicked()
             && let Some(artboard) = editor.document.artboard(id)
         {
@@ -1646,7 +1723,7 @@ impl CanvasView {
                     return None;
                 }
                 let galley = ui.painter().layout_no_wrap(
-                    label_text(artboard),
+                    label_text(artboard, editor.frame_of(artboard.id)),
                     FontId::proportional(LABEL_SIZE),
                     Color32::WHITE,
                 );
