@@ -23,6 +23,7 @@ mod tool_options;
 pub use tool_options::*;
 
 mod document_ops;
+mod font_ops;
 mod gestures;
 
 /// Herramientas que trabajan dentro de un sprite.
@@ -319,6 +320,8 @@ pub struct Editor {
     /// Slice seleccionado del artboard activo (índice en `sprite.slices`).
     pub slice: Option<usize>,
     pub text_style: TextStyle,
+    /// El glifo copiado con Copy glyph.
+    pub(crate) glyph_clipboard: font_ops::GlyphClipboard,
     /// Gesto en curso (p. ej. arrastrar un campo del panel) cuyos cambios se juntan en un solo
     /// paso de undo: id del widget y lo que se estaba editando (artboard, capa, frame, slice).
     /// El mismo widget sirve para todas las capas, así que el objetivo también tiene que coincidir.
@@ -418,6 +421,7 @@ impl Editor {
             shift_at_press: false,
             text: None,
             text_style: TextStyle::default(),
+            glyph_clipboard: None,
             merge: None,
             edit_mask: false,
             slice: None,
@@ -1010,3 +1014,6 @@ impl Editor {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod font_tests;

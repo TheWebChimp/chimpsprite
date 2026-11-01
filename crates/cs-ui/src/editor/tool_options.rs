@@ -282,7 +282,7 @@ impl SelectionMode {
 }
 
 /// Texto que se está escribiendo (todavía no aplicado).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct TextDraft {
     /// Esquina superior izquierda, en píxeles del artboard activo.
     pub origin: Point,
