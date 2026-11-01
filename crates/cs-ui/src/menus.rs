@@ -1053,19 +1053,23 @@ pub(crate) fn side_menu<R>(
         popup = popup.close_behavior(egui::PopupCloseBehavior::IgnoreClicks);
     }
     let inner = popup.show(|ui| panel_with(ui, look, None, true, content))?;
-    // La unión: donde el panel toca al botón, ni la línea del botón ni la del panel; arriba, el
-    // brillo sigue de uno al otro.
+    // La unión (mockup de componentes, frame 9): el botón queda adentro del panel, como una
+    // pestaña. Donde se tocan, ni la línea blanca del botón ni su ◢ ni las líneas del panel (su
+    // bisel izquierdo empieza debajo del botón); arriba, el brillo sigue de uno al otro, y abajo,
+    // el bisel del botón llega hasta el del panel.
     let ppp = response.ctx.pixels_per_point();
     let painter = response.ctx.layer_painter(inner.response.layer_id);
     let (x, top, bottom) = (slot.right() - 1.0, slot.top(), slot.bottom());
-    let fill = Rect::from_min_max(pos2(x, top + 2.0), pos2(x + 2.0, bottom - 2.0));
+    let fill = Rect::from_min_max(pos2(x - 1.0, top + 2.0), pos2(x + 2.0, bottom - 1.0));
+    let more = Rect::from_min_max(pos2(x - 4.0, bottom - 4.0), pos2(x - 1.0, bottom - 1.0));
     // Arriba, la línea sigue del botón al panel (sus esquinas redondeadas dejaban un hueco).
     let line = Rect::from_min_max(pos2(x - 2.0, top), pos2(x + 3.0, top + 1.0));
     let shine = Rect::from_min_max(pos2(x, top + 1.0), pos2(x + 2.0, top + 2.0));
-    let bevel = Rect::from_min_max(pos2(x, bottom - 2.0), pos2(x + 1.0, bottom - 1.0));
+    let bevel = Rect::from_min_max(pos2(x, bottom - 1.0), pos2(x + 1.0, bottom));
     painter.extend([
         solid(line, look.colors.control_border, ppp),
         solid(fill, look.colors.panel, ppp),
+        solid(more, look.colors.panel, ppp),
         solid(shine, look.colors.menu_highlight, ppp),
         solid(bevel, look.colors.background, ppp),
     ]);

@@ -419,8 +419,10 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     herramienta (Hand y Zoom del mockup): borde (89,77,77) con las esquinas de 1 px, brillo
     blanco arriba y a la derecha, bisel (221,206,191) a la izquierda y abajo, sin sombra. La
     herramienta elegida, con el nombre en (178,82,102).
-  - `menu.separator` (103,935, 3×2): el separador, la fila blanca sobre la (189,164,153), de
-    borde a borde del panel (encima de los biseles).
+  - `menu.separator` (103,935, 3×2, centro (1,0,1,2)): el separador, la fila blanca sobre la
+    (189,164,153), de borde a borde del panel (encima de los biseles). Sus puntas son de los
+    biseles: a la izquierda, (234,224,221) sobre (136,110,106); a la derecha, blanco sobre
+    (221,206,191).
   - `key` es blanca: la app la pinta de `ruler_tick` y, en la fila con el puntero, del rosa
     oscuro (178,82,102), con las letras caladas en el color del fondo de la fila (el "+" y la
     tecla de al lado, del mismo rosa).
