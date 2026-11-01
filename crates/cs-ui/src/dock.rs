@@ -97,7 +97,7 @@ impl DockPanel {
             DockPanel::Groom => "Groom",
             DockPanel::Lumen => "Lumen",
             DockPanel::Library => "Library",
-            DockPanel::Font => "Font",
+            DockPanel::Font => "FontForge",
         }
     }
 
@@ -125,7 +125,7 @@ impl DockPanel {
             DockPanel::Groom => "▦",
             DockPanel::Lumen => "☀",
             DockPanel::Library => "▣",
-            DockPanel::Font => "Aa",
+            DockPanel::Font => "FF",
         }
     }
 }

@@ -11,7 +11,7 @@ caracteres y el "Test Drive".
 
 El proyecto completo va en cuatro partes. Cada una tiene su spec, su plan y queda usable:
 
-1. **Núcleo** (este documento): el modelo de la fuente, el artboard de fuente, el panel Font y la
+1. **Núcleo** (este documento): el modelo de la fuente, el artboard de fuente, el panel FontForge y la
    herramienta Texto con fuentes del documento.
 2. **Entrada y salida:** exportar TTF (1 bit, y de color COLR con la silueta de respaldo) y
    BMFont (`.png` + `.fnt`); importar TTF (incluidas las de BitFontMaker2, reconociendo su
@@ -112,13 +112,13 @@ Es la ventana de siempre de los artboards, con estas diferencias:
 - **Cambiar de glifo** es cambiar el frame activo: desde el mapa o con las flechas del teclado
   (izquierda y derecha, como los frames).
 - **El onion skin** que ya existe muestra el glifo anterior o el siguiente.
-- **El timeline no se muestra** con un artboard de fuente activo: el panel Font hace sus veces.
+- **El timeline no se muestra** con un artboard de fuente activo: el panel FontForge hace sus veces.
 - **1 bit:** el lápiz y las demás herramientas pintan con la tinta, sin importar el color
   elegido, y el clic derecho borra. No hay forma de meter otro color en una fuente de 1 bit.
 
-## 4. El panel Font (dock)
+## 4. El panel FontForge (dock)
 
-Un ícono nuevo en el dock, como Lumen o Groom. Con un artboard de fuente activo muestra sus tres
+Un ícono nuevo en el dock (`icon.dock.font`, el yunque), como Lumen o Groom, con el nombre "FontForge". Con un artboard de fuente activo muestra sus tres
 secciones; si no, un botón *New Font…*. Todo con los componentes del UI kit.
 
 - **Map:**
@@ -144,7 +144,7 @@ secciones; si no, un botón *New Font…*. Todo con los componentes del UI kit.
 
 **New Font…** (también en *File → New Font…*) abre un diálogo del kit con el nombre, la celda
 (ancho y alto, 16×16 por defecto) y el modo. Crea el artboard de fuente al lado de los demás,
-lo activa y abre el panel; la vista encuadra el artboard nuevo al lado del panel Font
+lo activa y abre el panel; la vista encuadra el artboard nuevo al lado del panel FontForge
 (`ZoomRequest::FitActiveBeside`). *New Font…* en Home abre un documento nuevo con la fuente.
 
 ## 5. La herramienta Texto con fuentes del documento (`cs-tools::text`)

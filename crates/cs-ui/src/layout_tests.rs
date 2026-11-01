@@ -3394,7 +3394,15 @@ fn the_timeline_comes_back_when_a_sprite_artboard_is_activated() {
 #[test]
 fn the_font_panel_offers_new_font_and_its_map_picks_glyphs() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
-    h.click(h.button("Font").center(), PointerButton::Primary);
+    // El botón FontForge del dock, con su ícono del skin.
+    let button = h.button("FontForge");
+    assert!(
+        h.drawn("icon.dock.font")
+            .iter()
+            .any(|r| button.contains_rect(*r)),
+        "the FontForge icon"
+    );
+    h.click(button.center(), PointerButton::Primary);
     h.frame();
     assert!(h.button("New Font…").width() > 0.0);
     h.app
@@ -3415,7 +3423,7 @@ fn the_font_panel_offers_new_font_and_its_map_picks_glyphs() {
 #[test]
 fn new_font_in_the_font_panel_opens_the_dialog() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
-    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
     h.click(h.button("New Font…").center(), PointerButton::Primary);
     assert!(h.app.new_font.is_some());
 }
@@ -3435,7 +3443,7 @@ fn a_new_font_is_fitted_beside_the_font_panel() {
     assert!(h.app.doc.editor.font().is_some());
     let flyout = h
         .ctx
-        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "Font"))))
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "FontForge"))))
         .expect("the Font panel is open");
     let canvas = h.canvas.expect("a document is open");
     let art = artboard_pixels(&h);
@@ -3453,7 +3461,7 @@ fn the_font_panel_adds_the_typed_chars() {
         .doc
         .editor
         .new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
-    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
     let field = h
         .nodes
         .iter()
@@ -3476,7 +3484,7 @@ fn the_test_drive_draws_the_text_and_clicking_a_letter_goes_to_its_glyph() {
     let e = &mut h.app.doc.editor;
     e.new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
     h.app.font_panel.test_text = "AB".into();
-    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
     h.frame();
     let drive = h.button("Test Drive B");
     h.click(drive.center(), PointerButton::Primary);
@@ -3490,7 +3498,7 @@ fn the_font_settings_change_the_metrics_with_undo() {
         .doc
         .editor
         .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
-    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
     h.frame();
     // Los + de los steppers del kit se llaman todos "Increase": el de la fila de "Baseline".
     let label = h
@@ -3521,11 +3529,11 @@ fn the_font_numbers_go_in_two_columns_inside_the_panel() {
         .doc
         .editor
         .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
-    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
     h.frame();
     let flyout = h
         .ctx
-        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "Font"))))
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "FontForge"))))
         .expect("the Font panel is open");
     let label = |name: &str| {
         h.text_rects
@@ -3565,7 +3573,7 @@ fn dragging_a_font_stepper_is_one_undo_step() {
         .doc
         .editor
         .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
-    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
     h.frame();
     let label = h
         .text_rects
