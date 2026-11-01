@@ -754,9 +754,11 @@ fn overlapping_tags_go_on_different_floors() {
 fn with_pixel_ui_the_layer_mask_is_the_face_of_the_design() {
     let mut h = Harness::pixel(1200.0);
     h.frame(vec![]);
-    // La capa activa, de imagen y sin máscara: el botón para agregarle una.
+    // La capa activa, de imagen y sin máscara: el botón para agregarle una, en los colores de lo
+    // elegido.
     assert!(h.drawn("timeline.mask").is_empty());
-    assert_eq!(h.drawn("timeline.mask.add").len(), 1);
+    assert_eq!(h.drawn("timeline.mask.add.selected").len(), 1);
+    assert!(h.drawn("timeline.mask.add").is_empty());
     h.click("Add Layer Mask");
     h.frame(vec![]);
     let layer = h.editor.layer;
@@ -764,7 +766,7 @@ fn with_pixel_ui_the_layer_mask_is_the_face_of_the_design() {
         h.editor.sprite().layer(layer).unwrap().mask.is_some(),
         "added"
     );
-    assert!(h.drawn("timeline.mask.add").is_empty());
+    assert!(h.drawn("timeline.mask.add.selected").is_empty());
     // La cara; editándola, la del borde rosa.
     h.editor.set_edit_mask(false);
     h.frame(vec![]);

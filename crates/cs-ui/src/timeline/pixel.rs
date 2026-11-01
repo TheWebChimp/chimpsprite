@@ -1001,11 +1001,10 @@ pub(super) fn mask_chip(ui: &Ui, skin: &Skin, at: Pos2, editing: bool, enabled: 
     painter.extend(crate::pixel_draw::piece_at(skin, name, at, ppp));
 }
 
-/// El botón para agregar una máscara, con su esquina en `at`.
-pub(super) fn mask_add(ui: &Ui, skin: &Skin, at: Pos2) {
-    let ppp = ui.ctx().pixels_per_point();
-    ui.painter()
-        .extend(crate::pixel_draw::piece_at(skin, MASK_ADD, at, ppp));
+/// El botón para agregar una máscara, con su esquina en `at`; en la capa activa (`selected`), en
+/// su versión para lo elegido.
+pub(super) fn mask_add(ui: &Ui, skin: &Skin, at: Pos2, selected: bool) {
+    icon_at(ui, skin, MASK_ADD, at, selected);
 }
 
 /// El ícono de una capa tilemap al principio de `rect` (donde va la carpetita de los grupos); en

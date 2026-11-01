@@ -965,7 +965,7 @@ fn layer_row(
     {
         let add = pixel_chip(pixel::MASK_ADD_SIZE);
         right = add.left() - 2.0;
-        pixel::mask_add(ui, skin, add.min);
+        pixel::mask_add(ui, skin, add.min, active);
         let response = ui
             .interact(add, ui.id().with(("mask_add", id)), Sense::click())
             .tip("Add Layer Mask");
