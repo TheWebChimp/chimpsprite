@@ -85,13 +85,12 @@ impl<'a> ButtonInfo<'a> {
     }
 }
 
-/// Un botón con ícono en `rect` (el cuerpo) con la pieza `button` del skin según su estado:
-/// apretado, prendido (`selected`: el marco rosa de la herramienta elegida), con el puntero encima
-/// o normal (sin la pieza, un borde de 1 px). La línea clara de la pieza queda debajo de `rect`,
-/// en la fila siguiente. `content` dibuja lo de adentro en el rect que recibe (baja una fila
-/// mientras se aprieta). Desactivado no se aprieta. El tooltip lo pone quien llama.
-///
-/// Los botones de texto son los del kit ([`crate::kit::button`]).
+/// Un botón con ícono en `rect` (el cuerpo): el botón del UI kit ([`crate::kit::button`]) con
+/// sus estados (normal, con el puntero encima, presionado y deshabilitado). Uno de prender y
+/// apagar (`selected`) prendido se ve presionado, como el elegido de un grupo. La línea clara de
+/// la pieza queda debajo de `rect`, en la fila siguiente. `content` dibuja lo de adentro en el
+/// rect que recibe (baja una fila con la cara presionada). Desactivado no se aprieta. El tooltip
+/// lo pone quien llama.
 pub fn skin_button(
     ui: &mut Ui,
     skin: &Skin,
@@ -99,6 +98,7 @@ pub fn skin_button(
     info: ButtonInfo,
     content: impl FnOnce(Rect) -> Vec<Shape>,
 ) -> Response {
+    use crate::kit::button::{self, ButtonState};
     let ButtonInfo {
         id,
         label,
@@ -116,43 +116,23 @@ pub fn skin_button(
         Some(s) => egui::WidgetInfo::selected(egui::WidgetType::Button, on, s, label),
         None => egui::WidgetInfo::labeled(egui::WidgetType::Button, on, label),
     });
-    let state = if !enabled {
-        WidgetState::Normal
-    } else if response.is_pointer_button_down_on() {
-        WidgetState::Down
-    } else if response.hovered() {
-        WidgetState::Hover
-    } else {
-        WidgetState::Normal
+    let state = match ButtonState::of(&response, on) {
+        ButtonState::Disabled => ButtonState::Disabled,
+        _ if selected == Some(true) => ButtonState::Pressed,
+        state => state,
     };
     let ppp = ui.ctx().pixels_per_point();
-    let lit = enabled && selected == Some(true) && state != WidgetState::Down;
-    // La pieza trae la línea clara en su última fila: va debajo del cuerpo.
     let drawn = rect.with_max_y(rect.bottom() + 1.0);
-    let mut shapes = match skin.piece("button", state) {
-        Some(piece) if lit => {
-            let mut shapes = pixel_ui::piece_shapes(piece, drawn, ppp);
-            shapes.push(pixel_ui::selected_overlay(
-                piece,
-                rect,
-                true,
-                skin.colors(),
-                ppp,
-            ));
-            shapes
-        }
-        Some(piece) => pixel_ui::piece_shapes(piece, drawn, ppp),
-        None => vec![Shape::rect_stroke(
-            rect.shrink(0.5),
-            0.0,
-            (1.0, skin.colors().outline),
-            egui::StrokeKind::Middle,
-        )],
+    let mut shapes = button::frame_shapes(skin, drawn, state, ppp);
+    let down = if state == ButtonState::Pressed {
+        button::PRESS_DROP
+    } else {
+        0.0
     };
-    // Apretado: lo de adentro baja 1 px con el botón.
-    let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
     shapes.extend(content(rect.translate(vec2(0.0, down))));
-    ui.painter().extend(shapes);
+    let mut painter = ui.painter().clone();
+    painter.set_opacity(1.0);
+    painter.extend(shapes);
     response
 }
 

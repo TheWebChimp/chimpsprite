@@ -895,15 +895,11 @@ impl Harness {
 }
 
 #[test]
-fn the_palette_buttons_are_in_the_embedded_skin() {
+fn the_palette_icons_are_in_the_embedded_skin() {
     let ctx = egui::Context::default();
     let skin = Skin::embedded(&ctx);
     let size = |name: &str| skin.piece(name, WidgetState::Normal).map(|p| p.size);
     for (name, piece) in [
-        ("palette.buttons", [5, 6]),
-        ("palette.buttons.sep", [3, 16]),
-        ("palette.button", [5, 6]),
-        ("palette.button.active", [3, 3]),
         ("palette.icon.lock", [7, 9]),
         ("palette.icon.lock.open", [7, 9]),
         ("palette.icon.menu", [7, 7]),
@@ -915,58 +911,57 @@ fn the_palette_buttons_are_in_the_embedded_skin() {
 }
 
 #[test]
-fn with_pixel_ui_the_top_buttons_are_the_design_group_and_the_checker() {
+fn with_pixel_ui_the_top_buttons_are_the_kit_group_and_the_kit_toggle() {
     let h = Harness::new(true);
     let pbox = h.drawn_boxes("palette.box")[0];
-    // El grupo (x 786..858, y 99..114): 2 px adentro de la columna y 5 filas arriba de la caja.
-    let group = h.drawn_boxes("palette.buttons");
-    assert_eq!(group.len(), 1, "{group:?}");
-    let group = group[0];
-    assert_eq!(group.size(), vec2(73.0, 16.0));
-    assert_eq!(
-        group.left_bottom(),
-        pos2(pbox.left() + 2.0, pbox.top() - 5.0)
-    );
-    // Los separadores, en la 809 y la 833.
-    let seps: Vec<f32> = h
-        .drawn("palette.buttons.sep")
-        .iter()
-        .map(|r| r.left())
-        .collect();
-    assert_eq!(seps, vec![group.left() + 23.0, group.left() + 47.0]);
-    // Un botón cada 24, con su ícono donde está en el diseño.
-    for (k, (label, icon, at)) in [
-        ("Lock palette", "palette.icon.lock", vec2(9.0, 3.0)),
-        ("Palette menu", "palette.icon.menu", vec2(33.0, 4.0)),
-        ("New palette", "palette.icon.new", vec2(56.0, 3.0)),
+    // El grupo del kit: 2 px adentro de la columna y 5 filas arriba de la caja (su línea clara
+    // cae en la primera), un segmento de 25 cada 24 (comparten la columna del separador).
+    let top = pbox.top() - 5.0 - 16.0;
+    for (k, (label, icon)) in [
+        ("Lock palette", "palette.icon.lock"),
+        ("Palette menu", "palette.icon.menu"),
+        ("New palette", "palette.icon.new"),
     ]
     .into_iter()
     .enumerate()
     {
         let button = h.node(label);
-        assert_eq!(button.left(), group.left() + 24.0 * k as f32, "{label}");
-        assert_eq!((button.top(), button.height()), (group.top(), 16.0));
-        assert_eq!(h.drawn(icon)[0].min, group.min + at, "{icon}");
+        let left = pbox.left() + 2.0 + 24.0 * k as f32;
+        assert_eq!(
+            button,
+            Rect::from_min_size(pos2(left, top), vec2(25.0, 17.0)),
+            "{label}"
+        );
+        // El ícono, centrado en la cara (filas 1 a 13).
+        let drawn = h.drawn(icon);
+        assert_eq!(drawn.len(), 1, "{icon}");
+        assert!(button.contains_rect(drawn[0]), "{icon}: {drawn:?}");
+        let size = drawn[0].size();
+        assert_eq!(
+            drawn[0].min.x,
+            button.left() + ((25.0 - size.x) / 2.0).floor(),
+            "{icon}"
+        );
     }
-    // El damero (x 947..970): 24 de ancho, 2 px antes del borde derecho, a la altura del grupo.
-    let checker = h.drawn_boxes("palette.button")[0];
-    assert_eq!(checker.size(), vec2(24.0, 16.0));
-    assert_eq!(checker.right_top(), pos2(pbox.right() - 2.0, group.top()));
-    assert_eq!(h.node("Mask"), checker);
-    assert_eq!(
-        h.drawn("palette.icon.mask")[0].min,
-        checker.min + vec2(3.0, 3.0)
-    );
-    // Nada prendido: la paleta empieza bloqueada, con el candado cerrado en un botón normal,
-    // como en el diseño (sin el Mask).
-    assert!(h.drawn_boxes("palette.button.active").is_empty());
+    // El damero: un botón del kit de 24, 2 px antes del borde derecho, a la altura del grupo.
+    let checker = h.node("Mask");
+    assert_eq!(checker.size(), vec2(24.0, 17.0));
+    assert_eq!(checker.right_top(), pos2(pbox.right() - 2.0, top));
+    let icon = h.drawn("palette.icon.mask")[0];
+    assert!(checker.contains_rect(icon));
+    // Las piezas viejas ya no se usan.
+    for old in ["palette.buttons", "palette.button", "palette.button.active"] {
+        assert!(h.drawn(old).is_empty(), "{old}");
+    }
 }
 
 #[test]
 fn with_pixel_ui_the_lock_starts_on_and_blocks_editing_a_palette_color() {
     let mut h = Harness::new(true);
     assert!(h.editor.palette_locked);
-    assert_eq!(h.is_selected("Lock palette"), Some(true));
+    // Bloqueada: el candado cerrado, en un botón sin apretar.
+    assert_eq!(h.drawn("palette.icon.lock").len(), 1);
+    assert!(h.drawn("palette.icon.lock.open").is_empty());
     let before = h.editor.sprite().palette.clone();
     // Bloqueada: elegir #3 y cambiar el rojo cambia el primario, no la paleta.
     h.click_at(h.node("#3").center());
@@ -1117,15 +1112,12 @@ fn with_pixel_ui_the_checker_button_toggles_the_mask() {
     h.click_at(h.node("Mask").center());
     assert!(h.editor.is_mask(h.editor.primary));
     assert_eq!(h.is_selected("Mask"), Some(true));
-    // Prendido (el candado no: su estado lo dice el ícono).
-    let checker = h.node("Mask");
-    assert_eq!(
-        h.drawn_boxes("palette.button.active"),
-        vec![Rect::from_min_size(
-            checker.min + vec2(1.0, 1.0),
-            vec2(22.0, 13.0)
-        )]
-    );
+    // Prendido: el botón del kit apretado (su ícono baja 1 px).
+    let pressed = h.drawn("palette.icon.mask")[0];
+    h.click_at(h.node("Mask").center());
+    assert!(!h.editor.is_mask(h.editor.primary));
+    assert_eq!(h.drawn("palette.icon.mask")[0].min.y, pressed.min.y - 1.0);
+    h.click_at(h.node("Mask").center());
     h.click_at(h.node("Mask").center());
     assert_eq!(h.primary(), Rgba::rgb(10, 20, 30));
     assert_eq!(h.is_selected("Mask"), Some(false));

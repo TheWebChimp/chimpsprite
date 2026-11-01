@@ -257,6 +257,38 @@ pub fn icon_button_at(
     response
 }
 
+/// Un botón con ícono de prender y apagar en `rect`: como [`icon_button_at`], y prendido (`on`)
+/// se ve presionado (como el elegido de un grupo).
+pub fn icon_toggle_at(
+    ui: &mut Ui,
+    skin: &Skin,
+    rect: Rect,
+    id: Id,
+    icon: &str,
+    label: &str,
+    on: bool,
+) -> Response {
+    let response = ui.interact(rect, id, Sense::click());
+    let enabled = ui.is_enabled();
+    response
+        .widget_info(|| egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, label));
+    if !ui.is_rect_visible(rect) {
+        return response;
+    }
+    let state = match ButtonState::of(&response, enabled) {
+        ButtonState::Disabled => ButtonState::Disabled,
+        _ if on => ButtonState::Pressed,
+        state => state,
+    };
+    let ppp = ui.ctx().pixels_per_point();
+    let mut shapes = frame_shapes(skin, rect, state, ppp);
+    shapes.extend(icon_shapes(ui, skin, rect, icon, state));
+    let mut painter = ui.painter().clone();
+    painter.set_opacity(1.0);
+    painter.extend(shapes);
+    response
+}
+
 /// La cara de un botón, donde va centrado un ícono: debajo del contorno y hasta el bisel de abajo
 /// incluido (en uno de [`HEIGHT`], las filas 1 a 13).
 pub const FACE_TOP: f32 = OUTLINE;

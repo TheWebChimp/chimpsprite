@@ -8,6 +8,9 @@
 //!   `#bda499` en las filas 1 a 13 y el contorno en la del bisel, la 14).
 //! - El elegido (y el presionado) se ve como el botón presionado: su cara baja 1 px (pieza
 //!   `button.down`, sin el bisel oscuro) y su LED y su texto bajan con ella.
+//! - Con ícono ([`GroupItem::icon`]): el segmento mide [`ICON_SEGMENT_W`] y lleva la pieza
+//!   centrada en la cara, como el botón con ícono ([`button::icon_shapes`]). Cada opción puede ir
+//!   deshabilitada sola ([`GroupItem::enabled`]).
 //! - Con LED: el de [`button::Led`] (`button.led.on` verde, `button.led.off` morado), en el mismo
 //!   lugar que en el botón suelto. Quien arma el grupo dice cuál lleva cada opción (en la barra,
 //!   prendido el de la elegida).
@@ -25,23 +28,47 @@ pub const SEP: &str = "button.group.sep";
 /// La columna del separador.
 pub const SEP_W: f32 = 1.0;
 
-/// Una opción del grupo: su texto y su LED, si lleva.
+/// El segmento con ícono, sin las columnas de los costados.
+pub const ICON_SEGMENT_W: f32 = 23.0;
+
+/// Una opción del grupo: su texto (con ícono, su nombre accesible), su LED o su ícono, si lleva,
+/// y si se puede apretar.
 #[derive(Clone, Copy, Debug)]
 pub struct GroupItem<'a> {
     pub label: &'a str,
     pub led: Option<Led>,
+    pub icon: Option<&'a str>,
+    pub enabled: bool,
 }
 
 impl<'a> GroupItem<'a> {
     pub fn text(label: &'a str) -> Self {
-        GroupItem { label, led: None }
+        GroupItem {
+            label,
+            led: None,
+            icon: None,
+            enabled: true,
+        }
     }
 
     pub fn with_led(label: &'a str, led: Led) -> Self {
         GroupItem {
-            label,
             led: Some(led),
+            ..Self::text(label)
         }
+    }
+
+    /// Una opción con la pieza `icon` en vez de texto; `label` es su nombre accesible.
+    pub fn icon(icon: &'a str, label: &'a str) -> Self {
+        GroupItem {
+            icon: Some(icon),
+            ..Self::text(label)
+        }
+    }
+
+    /// Esta opción, deshabilitada si no `enabled`.
+    pub fn enabled(self, enabled: bool) -> Self {
+        GroupItem { enabled, ..self }
     }
 }
 
@@ -66,6 +93,9 @@ impl SegmentLook {
 /// El ancho de un segmento sin las columnas de los costados (contorno o separador):
 /// `1 + 4 + [6 + 3] + tinta + 4 + 1`.
 pub fn segment_width(ui: &Ui, item: &GroupItem) -> f32 {
+    if item.icon.is_some() {
+        return ICON_SEGMENT_W;
+    }
     2.0 * button::PAD_X + button::content_width(ui, item.label, item.led)
 }
 
@@ -117,20 +147,41 @@ pub fn button_group_at(
     items: &[GroupItem],
     active: &dyn Fn(usize) -> bool,
 ) -> Option<usize> {
-    let enabled = ui.is_enabled();
+    group_responses_at(ui, skin, painter, id, at, items, active)
+        .iter()
+        .position(|r| r.clicked())
+}
+
+/// [`button_group_at`], pero devuelve la respuesta de cada segmento (para sus tooltips, sus
+/// menús o el clic derecho). Los de ícono son botones; los de texto, opciones de un grupo.
+pub fn group_responses_at(
+    ui: &mut Ui,
+    skin: &Skin,
+    painter: &Painter,
+    id: Id,
+    at: Pos2,
+    items: &[GroupItem],
+    active: &dyn Fn(usize) -> bool,
+) -> Vec<Response> {
     let rects = segment_rects(ui, items, at);
-    let mut clicked = None;
+    let mut responses = Vec::with_capacity(items.len());
     let mut looks = Vec::with_capacity(items.len());
     let mut focus = None;
     for (i, (item, rect)) in items.iter().zip(&rects).enumerate() {
-        let response: Response = ui.interact(*rect, id.with(("segment", i)), Sense::click());
+        let enabled = ui.is_enabled() && item.enabled;
+        let sense = if item.enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let response: Response = ui.interact(*rect, id.with(("segment", i)), sense);
         let on = active(i);
-        response.widget_info(|| {
-            egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, on, item.label)
-        });
-        if response.clicked() {
-            clicked = Some(i);
-        }
+        let typ = if item.icon.is_some() {
+            egui::WidgetType::Button
+        } else {
+            egui::WidgetType::RadioButton
+        };
+        response.widget_info(|| egui::WidgetInfo::selected(typ, enabled, on, item.label));
         if response.has_focus() {
             focus = Some(*rect);
         }
@@ -138,6 +189,7 @@ pub fn button_group_at(
             state: ButtonState::of(&response, enabled),
             on,
         });
+        responses.push(response);
     }
     let ppp = ui.ctx().pixels_per_point();
     let mut shapes = group_shapes(ui, skin, at, items, &looks);
@@ -153,7 +205,7 @@ pub fn button_group_at(
     let mut painter = painter.clone();
     painter.set_opacity(1.0);
     painter.extend(shapes);
-    clicked
+    responses
 }
 
 /// Un grupo que empieza en `at` dibujado con un `looks[i]` por segmento (sin interacción: el
@@ -181,8 +233,12 @@ pub fn group_shapes(
         let disabled = shown[i] == ButtonState::Disabled;
         shapes.extend(sep_shapes(skin, pos2(x, at.y), sunk, disabled, ppp));
     }
-    // Lo de adentro: el LED y el texto, que bajan con la cara.
+    // Lo de adentro: el ícono, o el LED y el texto, que bajan con la cara.
     for ((item, rect), state) in items.iter().zip(&rects).zip(&shown) {
+        if let Some(icon) = item.icon {
+            shapes.extend(button::icon_shapes(ui, skin, *rect, icon, *state));
+            continue;
+        }
         let left = rect.left() + button::OUTLINE + button::PAD_X;
         shapes.extend(button::content_shapes(
             ui, skin, item.label, item.led, left, at.y, *state,

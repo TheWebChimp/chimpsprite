@@ -32,6 +32,7 @@ use cs_core::LayerKind;
 use super::{BLEND_MODES, Grid, TimelineState, blend_name};
 use crate::bar_fields::{self, NumberLook};
 use crate::editor::Editor;
+use crate::kit;
 use crate::menus::{self, MenuLook};
 use crate::pixel_ui;
 use crate::pixel_ui::Tip as _;
@@ -99,8 +100,7 @@ const LABEL_GAP: f32 = 6.0;
 const CLOCK_GAP: f32 = 2.0;
 /// Alto de un grupo de botones o de un campo (sin el brillo de abajo).
 const GROUP_H: f32 = 16.0;
-/// Una celda de botón y el paso de una a la otra (con la línea entre las dos).
-const BUTTON: Vec2 = vec2(23.0, 14.0);
+/// El paso de un botón de un grupo al otro (el segmento de ícono del kit comparte la columna).
 const BUTTON_PITCH: f32 = 24.0;
 /// Las mayúsculas de "Opacity" y del combo, y las cifras de los campos (una fila más arriba),
 /// desde arriba del grupo.
@@ -135,9 +135,6 @@ const CLOCK_W: f32 = 16.0;
 /// del interior de la caja (se une a sus lados).
 const DIVIDER_H: f32 = 3.0;
 
-const GROUP: &str = "timeline.group";
-const BUTTON_PIECE: &str = "timeline.button";
-const SEP: &str = "timeline.button.sep";
 const ONION_ON: &str = "timeline.icon.onion.on";
 const RANGE: &str = "timeline.onion_range";
 const COMBO: &str = "timeline.combo";
@@ -497,68 +494,42 @@ impl Btn {
     }
 }
 
-/// Un grupo de botones pegados con la esquina en `origin`: el marco, las celdas, las líneas entre
-/// celdas y los íconos (presionado, el ícono baja 1). Devuelve una respuesta por botón; los
-/// deshabilitados se ven igual (como en el diseño) pero no responden.
+/// Un grupo de botones pegados con la esquina en `origin`: el grupo del UI kit
+/// ([`kit::group`]) con un segmento de ícono por botón, con sus estados; los que se prenden y
+/// apagan, prendidos, se ven presionados (la cebolla prendida lleva su ícono entero). Devuelve
+/// una respuesta por botón; los deshabilitados no responden.
 fn group(ui: &mut Ui, skin: &Skin, origin: Pos2, buttons: &[Btn]) -> Vec<Response> {
-    let n = buttons.len();
-    let frame = Rect::from_min_size(origin, vec2(group_width(n), GROUP_H));
-    if !piece(ui, skin, GROUP, frame) {
-        flat(ui, skin, frame);
-    }
-    let enabled_ui = ui.is_enabled();
+    let items: Vec<kit::group::GroupItem> = buttons
+        .iter()
+        .map(|b| {
+            let icon = if b.on == Some(true) && piece_size(skin, ONION_ON).is_some() {
+                ONION_ON
+            } else {
+                b.icon
+            };
+            kit::group::GroupItem::icon(icon, b.label).enabled(b.enabled)
+        })
+        .collect();
+    let painter = ui.painter().clone();
+    let id = ui
+        .id()
+        .with(("timeline_buttons", buttons.first().map(|b| b.label)));
+    let responses = kit::group::group_responses_at(ui, skin, &painter, id, origin, &items, &|i| {
+        buttons[i].on == Some(true)
+    });
+    let rects = kit::group::segment_rects(ui, &items, origin);
     buttons
         .iter()
-        .enumerate()
-        .map(|(i, b)| {
-            let left = origin.x + 1.0 + BUTTON_PITCH * i as f32;
-            let cell = Rect::from_min_size(pos2(left, origin.y + 1.0), BUTTON);
-            let hit = Rect::from_min_size(pos2(left, origin.y), vec2(BUTTON.x, GROUP_H));
-            let sense = if b.enabled {
-                Sense::click()
-            } else {
-                Sense::hover()
-            };
-            let response = ui.interact(hit, ui.id().with(("timeline_button", b.label)), sense);
-            let enabled = enabled_ui && b.enabled;
-            response.widget_info(|| match b.on {
-                Some(on) => {
-                    egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, b.label)
-                }
-                None => egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, b.label),
-            });
-            piece(ui, skin, BUTTON_PIECE, cell);
-            if i + 1 < n {
-                let sep = Rect::from_min_size(cell.right_top(), vec2(1.0, BUTTON.y));
-                piece(ui, skin, SEP, sep);
-            }
-            let down = if response.is_pointer_button_down_on() {
-                1.0
-            } else {
-                0.0
-            };
-            let icon_at = cell.min + vec2(1.0, 1.0 + down);
-            if b.on == Some(true) && piece_size(skin, ONION_ON).is_some() {
-                // La cebolla entera: más alta que el botón, centrada en él.
-                let size = piece_size(skin, ONION_ON).unwrap_or(Vec2::ZERO);
-                let at = pos2(
-                    cell.left() + ((BUTTON.x - size.x) / 2.0).floor(),
-                    origin.y + ((GROUP_H - size.y) / 2.0).floor() + down,
-                );
-                piece_at(ui, skin, ONION_ON, at);
-            } else if b.icon == PAUSE {
-                pause_icon(ui, skin, icon_at);
-            } else if !piece_at(ui, skin, b.icon, icon_at) {
-                let initial: String = b.label.chars().take(1).collect();
-                let caps = origin.y + LABEL_CAPS + down;
-                text(
-                    ui,
-                    ui.painter(),
-                    &initial,
-                    cell.left() + 8.0,
-                    caps,
-                    skin.colors().text,
-                );
+        .zip(responses)
+        .zip(rects)
+        .map(|((b, response), rect)| {
+            if b.icon == PAUSE {
+                let down = if response.is_pointer_button_down_on() {
+                    kit::button::PRESS_DROP
+                } else {
+                    0.0
+                };
+                pause_icon(ui, skin, rect.min + vec2(2.0, 2.0 + down));
             }
             response.tip(b.tip)
         })

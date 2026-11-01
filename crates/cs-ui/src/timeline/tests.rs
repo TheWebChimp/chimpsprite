@@ -314,10 +314,12 @@ fn with_pixel_ui_the_toolbar_draws_every_group_and_field_of_the_design() {
     for icon in TOOLBAR_ICONS {
         assert_eq!(h.count(icon), 1, "{icon}");
     }
-    // Los cuatro grupos de botones, sus 12 celdas y las 8 líneas entre celdas.
-    assert!(h.count("timeline.group") >= 4);
-    assert_eq!(h.count("timeline.button"), 12);
-    assert_eq!(h.count("timeline.button.sep"), 8);
+    // Los cuatro grupos de botones son grupos del UI kit: 12 botones con ícono (las piezas
+    // viejas del timeline ya no se usan).
+    assert!(h.count("button") >= 12);
+    for old in ["timeline.group", "timeline.button", "timeline.button.sep"] {
+        assert_eq!(h.count(old), 0, "{old}");
+    }
     for name in [
         "timeline.onion_range",
         "timeline.icon.clock",
@@ -356,12 +358,11 @@ fn with_pixel_ui_the_toolbar_draws_every_group_and_field_of_the_design() {
     let first = h.rect("First frame");
     let longer = h.rect("Longer frame");
     assert_eq!(first.top(), longer.top(), "one row");
-    let group = h.drawn("timeline.button")[0];
     let divider = h.drawn("timeline.divider")[0];
     assert_eq!(
-        divider.top() - group.top(),
-        17.0,
-        "button top 563, divider 580"
+        divider.top() - first.top(),
+        18.0,
+        "group top 562, divider 580"
     );
 }
 

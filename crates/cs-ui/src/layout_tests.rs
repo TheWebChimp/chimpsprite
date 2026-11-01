@@ -848,8 +848,9 @@ fn the_dock_timeline_button_hides_and_shows_the_timeline() {
     assert!(h.app.view.timeline);
     let button = h.button("Timeline");
     assert_eq!(button.size(), crate::dock::BUTTON_SIZE);
-    // El ícono, de 9×15, centrado en el botón de 23×24.
-    let icon = Rect::from_min_size(button.min + Vec2::new(7.0, 4.0), Vec2::new(9.0, 15.0));
+    // El ícono, de 9×15, centrado en el botón de 23×24; con el timeline a la vista, el botón
+    // está prendido (presionado, como el elegido de un grupo del kit) y el ícono baja 1 px.
+    let icon = Rect::from_min_size(button.min + Vec2::new(7.0, 5.0), Vec2::new(9.0, 15.0));
     assert!(h.drawn("icon.timeline").contains(&icon), "{icon:?}");
     h.click(button.center(), PointerButton::Primary);
     assert!(!h.app.view.timeline, "hidden");
