@@ -13,10 +13,12 @@ use eframe::egui::{
 use crate::panel_kit::{box_color, child, double_box, hint, label_with_hint, notched_outline};
 use crate::pixel_ui::Tip as _;
 use crate::skin::WidgetState;
-use crate::{pixel_ui, widgets};
+use crate::{kit, pixel_ui, widgets};
 
 /// El panel, desde la esquina de su contenido: su ancho (el de Groom) y el alto más chico.
 pub const WIDTH: f32 = 434.0;
+/// Con Pixel UI, los sliders llevan el encabezado del UI kit (30 de alto cada uno) y abrir y
+/// quitar van en la caja de cada mapa (sin su fila de botones).
 const MIN_HEIGHT: f32 = 391.0;
 /// La línea grabada debajo del encabezado y donde empieza lo de abajo.
 const HEADER_LINE: f32 = 21.0;
@@ -605,19 +607,29 @@ impl LumenPanel {
                 (Some(_), MapKind::Luminance) => self.source_note(&self.luminance).into(),
             };
             label_with_hint(&mut column, kind.label(), &note);
-            self.thumbnail(&mut column, kind, present);
-            column.horizontal(|ui| {
-                ui.spacing_mut().item_spacing.x = BUTTON_GAP;
-                if pixel_ui::text_button_sized(ui, "Browse", button_width(2)).clicked() {
-                    *action = Some(LumenAction::Browse(kind));
-                }
-                let remove = ui.add_enabled_ui(present, |ui| {
-                    pixel_ui::text_button_sized(ui, "Remove", button_width(2))
+            // Con Pixel UI, abrir y quitar son íconos en la caja de la miniatura (así no hace
+            // falta el scroll); sin él, la fila de botones de siempre.
+            let icons = self.thumbnail(&mut column, kind, present);
+            if icons.browse {
+                *action = Some(LumenAction::Browse(kind));
+            }
+            if icons.remove && present {
+                self.remove(kind);
+            }
+            if !icons.shown {
+                column.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = BUTTON_GAP;
+                    if pixel_ui::text_button_sized(ui, "Browse", button_width(2)).clicked() {
+                        *action = Some(LumenAction::Browse(kind));
+                    }
+                    let remove = ui.add_enabled_ui(present, |ui| {
+                        pixel_ui::text_button_sized(ui, "Remove", button_width(2))
+                    });
+                    if remove.inner.clicked() && present {
+                        self.remove(kind);
+                    }
                 });
-                if remove.inner.clicked() && present {
-                    self.remove(kind);
-                }
-            });
+            }
             column.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = BUTTON_GAP;
                 if kind == MapKind::Albedo {
@@ -667,7 +679,10 @@ impl LumenPanel {
             let notice = notice.clone();
             ui.horizontal(|ui| {
                 hint(ui, &notice);
-                if ui.small_button("×").clicked() {
+                let skin = crate::pixel_ui::frame_skin(ui.ctx());
+                if crate::pixel_ui::icon_button(ui, skin.as_deref(), "icon.tab_close", "×", None)
+                    .clicked()
+                {
                     self.notice = None;
                 }
             });
@@ -682,14 +697,20 @@ impl LumenPanel {
         }
     }
 
-    /// La miniatura de un mapa en su caja doble (vacía si no hay).
-    fn thumbnail(&mut self, ui: &mut Ui, kind: MapKind, present: bool) {
+    /// La miniatura de un mapa en su caja doble (vacía si no hay) y, con Pixel UI, abajo a la
+    /// derecha los íconos de abrir (la carpeta) y quitar (la ✕, apagada si no hay mapa).
+    fn thumbnail(&mut self, ui: &mut Ui, kind: MapKind, present: bool) -> MapIcons {
         let (frame, _) = ui.allocate_exact_size(vec2(COLUMN, THUMB_BOX), Sense::hover());
         double_box(ui, frame);
         let well = frame.shrink(BOX_PAD);
-        if !present {
-            return;
+        if present {
+            self.thumbnail_image(ui, kind, well);
         }
+        map_icons(ui, kind, frame, present)
+    }
+
+    /// La imagen del mapa `kind`, ajustada a `well` sobre el damero.
+    fn thumbnail_image(&mut self, ui: &mut Ui, kind: MapKind, well: Rect) {
         let Some(image) = self.map_image(kind) else {
             return;
         };
@@ -1117,6 +1138,94 @@ fn zoom_buttons(ui: &mut Ui) -> (bool, bool) {
 const SLIDER_HEIGHT: f32 = 26.0;
 
 /// Un slider del ancho de la columna, debajo de lo anterior.
+/// Lo que pasó con los íconos de una caja de mapa.
+#[derive(Default)]
+struct MapIcons {
+    /// Si se dibujaron (con Pixel UI y las piezas en el skin).
+    shown: bool,
+    browse: bool,
+    remove: bool,
+}
+
+/// Los íconos de abrir (`icon.lumen.browse`, la carpeta) y quitar (`icon.lumen.remove`, la ✕),
+/// con su contorno blanco de 1 px, abajo a la derecha de la caja `frame`: los contornos a 1 px uno
+/// del otro, 6 px arriba del borde de abajo de la caja y 7 antes del de la derecha. Quitar,
+/// apagado sin mapa.
+fn map_icons(ui: &mut Ui, kind: MapKind, frame: Rect, present: bool) -> MapIcons {
+    const BROWSE: &str = "icon.lumen.browse";
+    const REMOVE: &str = "icon.lumen.remove";
+    const RIGHT: f32 = 7.0;
+    const BOTTOM: f32 = 6.0;
+    const GAP: f32 = 1.0;
+    let Some(skin) = pixel_ui::frame_skin(ui.ctx()) else {
+        return MapIcons::default();
+    };
+    let (Some(browse), Some(remove)) = (
+        skin.piece(BROWSE, WidgetState::Normal),
+        skin.piece(REMOVE, WidgetState::Normal),
+    ) else {
+        return MapIcons::default();
+    };
+    let size = |p: &crate::skin::Piece| vec2(p.size[0] as f32, p.size[1] as f32);
+    let remove_rect = Rect::from_min_size(
+        pos2(
+            frame.right() - RIGHT - size(remove).x,
+            frame.bottom() - BOTTOM - size(remove).y,
+        ),
+        size(remove),
+    );
+    let browse_rect = Rect::from_min_size(
+        pos2(
+            remove_rect.left() - GAP - size(browse).x,
+            frame.bottom() - BOTTOM - size(browse).y,
+        ),
+        size(browse),
+    );
+    let ppp = ui.ctx().pixels_per_point();
+    let mut out = MapIcons {
+        shown: true,
+        ..Default::default()
+    };
+    for (piece, rect, label, enabled) in [
+        (browse, browse_rect, "Browse…", true),
+        (remove, remove_rect, "Remove", present),
+    ] {
+        let id = ui.id().with(("lumen_map_icon", kind.label(), label));
+        let sense = if enabled {
+            Sense::click()
+        } else {
+            Sense::hover()
+        };
+        let response = ui.interact(rect.expand(1.0), id, sense);
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
+        let mut shapes = pixel_ui::piece_shapes(piece, rect, ppp);
+        if !enabled {
+            // Apagado, a media opacidad.
+            for shape in &mut shapes {
+                if let egui::Shape::Mesh(mesh) = shape {
+                    for v in &mut std::sync::Arc::make_mut(mesh).vertices {
+                        v.color = Color32::from_white_alpha(110);
+                    }
+                }
+            }
+        }
+        ui.painter().extend(shapes);
+        if enabled {
+            let response = response
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .tip(label);
+            if response.clicked() {
+                match label {
+                    "Remove" => out.remove = true,
+                    _ => out.browse = true,
+                }
+            }
+        }
+    }
+    out
+}
+
 fn stacked_slider(
     ui: &mut Ui,
     title: &str,
@@ -1125,7 +1234,13 @@ fn stacked_slider(
     default: f32,
     format: impl Fn(f32) -> String,
 ) {
-    let (rect, _) = ui.allocate_exact_size(vec2(COLUMN, SLIDER_HEIGHT), Sense::hover());
+    let height = if pixel_ui::frame_skin(ui.ctx()).is_some() {
+        // Sin las 2 filas vacías de debajo de la perilla: el aire entre controles ya las da.
+        kit::slider::LABELED_HEIGHT - 2.0
+    } else {
+        SLIDER_HEIGHT
+    };
+    let (rect, _) = ui.allocate_exact_size(vec2(COLUMN, height), Sense::hover());
     slider(ui, rect, title, value, range, default, format);
 }
 
@@ -1139,6 +1254,16 @@ fn slider(
     default: f32,
     format: impl Fn(f32) -> String,
 ) {
+    // Con Pixel UI, el slider con encabezado del UI kit (botón de restaurar, nombre y valor).
+    if let Some(skin) = pixel_ui::frame_skin(ui.ctx()) {
+        let at = Rect::from_min_size(
+            rect.min.round(),
+            vec2(rect.width().round(), kit::slider::LABELED_HEIGHT),
+        );
+        let id = ui.id().with(("lumen_slider", title));
+        kit::slider::labeled_slider_at(ui, &skin, at, id, title, value, lo..=hi, default, format);
+        return;
+    }
     let mut cell = child(ui, rect, egui::Layout::top_down(egui::Align::Min));
     cell.spacing_mut().item_spacing.y = 1.0;
     // La barra, pegada a su título.
@@ -1159,133 +1284,13 @@ fn slider(
             ui.label(format(*value));
         });
     });
-    let skin = pixel_ui::frame_skin(ui.ctx());
-    let pieces = skin.as_ref().and_then(|s| {
-        Some((
-            s.piece("slider.track", WidgetState::Normal)?,
-            s.piece("slider.thumb", WidgetState::Normal)?,
-        ))
-    });
-    let Some((track, thumb)) = pieces else {
-        cell.spacing_mut().slider_width = rect.width() - 2.0;
-        cell.add(egui::Slider::new(value, lo..=hi).show_value(false));
-        return;
-    };
-    // La barra abajo de `rect`: el riel (centrado en el alto de la perilla) y la perilla, que
-    // va de punta a punta del riel.
-    let knob = vec2(thumb.size[0] as f32, thumb.size[1] as f32);
-    let bar = Rect::from_min_max(
-        pos2(rect.left(), rect.bottom() - knob.y).round(),
-        rect.right_bottom().round(),
-    );
-    let rail_h = track.size[1] as f32;
-    let rail = Rect::from_min_size(
-        pos2(bar.left(), bar.top() + ((knob.y - rail_h) / 2.0).floor()),
-        vec2(bar.width(), rail_h),
-    );
-    let response = ui.interact(
-        bar,
-        ui.id().with(("lumen_slider", title)),
-        Sense::click_and_drag(),
-    );
-    let travel = (bar.width() - knob.x).max(1.0);
-    if let Some(p) = response.interact_pointer_pos()
-        && (response.dragged() || response.clicked() || response.is_pointer_button_down_on())
-    {
-        let t = ((p.x - bar.left() - knob.x / 2.0) / travel).clamp(0.0, 1.0);
-        *value = lo + t * (hi - lo);
-    }
-    let t = if hi > lo {
-        ((*value - lo) / (hi - lo)).clamp(0.0, 1.0)
-    } else {
-        0.0
-    };
-    let ppp = ui.ctx().pixels_per_point();
-    let painter = ui.painter();
-    painter.extend(pixel_ui::piece_shapes(track, rail, ppp));
-    let knob_rect = Rect::from_min_size(pos2((bar.left() + t * travel).round(), bar.top()), knob);
-    painter.extend(pixel_ui::piece_shapes(thumb, knob_rect, ppp));
+    cell.spacing_mut().slider_width = rect.width() - 2.0;
+    cell.add(egui::Slider::new(value, lo..=hi).show_value(false));
 }
 
-/// Desarrollo: con este dato en el contexto, el próximo [`color_button`] se abre.
-pub(crate) const DEMO_PICKER: &str = "lumen_demo_picker";
-
-/// El ancho del selector de color que abre [`color_button`].
-const PICKER_WIDTH: f32 = 160.0;
-
-/// Un botón con la muestra de `color` que abre el selector. Devuelve si cambió.
+/// Un botón con la muestra de `color` que abre el selector (opaco). Devuelve si cambió.
 fn color_button(ui: &mut Ui, color: &mut Rgba) -> bool {
-    let skin = pixel_ui::frame_skin(ui.ctx());
-    let frame = skin
-        .as_ref()
-        .and_then(|s| Some((s, s.piece("swatch.frame", WidgetState::Normal)?)));
-    match frame {
-        Some((skin, frame)) => pixel_color_button(ui, skin, frame, color),
-        None => egui_color_button(ui, color),
-    }
-}
-
-/// La muestra en su marco del skin (el color, con la fila de abajo más oscura); un clic abre
-/// el selector de color de la app debajo.
-fn pixel_color_button(
-    ui: &mut Ui,
-    skin: &crate::skin::Skin,
-    frame: &crate::skin::Piece,
-    color: &mut Rgba,
-) -> bool {
-    let size = vec2(frame.size[0] as f32, frame.size[1] as f32);
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let rect = Rect::from_min_size(rect.min.round(), size);
-    let fill = Color32::from_rgb(color.r, color.g, color.b);
-    let shade = |v: u8| (v as f32 * 0.62).round() as u8;
-    let dark = Color32::from_rgb(shade(color.r), shade(color.g), shade(color.b));
-    // Adentro del marco: 1 px de cada lado; abajo, la fila oscura, la línea y el brillo.
-    let inner = Rect::from_min_size(rect.min + vec2(1.0, 1.0), vec2(size.x - 2.0, size.y - 4.0));
-    let painter = ui.painter();
-    painter.rect_filled(inner, 0.0, fill);
-    painter.rect_filled(
-        Rect::from_min_size(inner.left_bottom(), vec2(inner.width(), 1.0)),
-        0.0,
-        dark,
-    );
-    let ppp = ui.ctx().pixels_per_point();
-    painter.extend(pixel_ui::piece_shapes(frame, rect, ppp));
-    // Desarrollo: el de la luz (el primero) abierto, para capturas.
-    let demo = egui::Id::new(DEMO_PICKER);
-    let first = ui.ctx().data(|d| d.get_temp::<egui::Id>(demo));
-    if first == Some(egui::Id::NULL) {
-        ui.ctx().data_mut(|d| d.insert_temp(demo, response.id));
-    }
-    if first.is_some_and(|id| id == egui::Id::NULL || id == response.id) {
-        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
-    }
-    let look = crate::menus::MenuLook::new(skin, rect.top());
-    let mut changed = false;
-    crate::menus::dropdown_panel(&look, &response, rect, |ui| {
-        ui.set_width(PICKER_WIDTH);
-        let id = response.id.with("picker");
-        let next = crate::color_panel::picker(ui, skin, id, *color);
-        let next = Rgba { a: 255, ..next };
-        if next != *color {
-            *color = next;
-            changed = true;
-        }
-    });
-    changed
-}
-
-/// Sin Pixel UI: el botón de color de egui.
-fn egui_color_button(ui: &mut Ui, color: &mut Rgba) -> bool {
-    let mut c = Color32::from_rgb(color.r, color.g, color.b);
-    // Una muestra chica, cuadrada.
-    ui.spacing_mut().interact_size.x = 16.0;
-    let changed =
-        egui::color_picker::color_edit_button_srgba(ui, &mut c, egui::color_picker::Alpha::Opaque)
-            .changed();
-    if changed {
-        *color = Rgba::rgb(c.r(), c.g(), c.b());
-    }
-    changed
+    widgets::color_edit(ui, color, false, "Color").changed()
 }
 
 /// La textura de `image`, con vecino más cercano.

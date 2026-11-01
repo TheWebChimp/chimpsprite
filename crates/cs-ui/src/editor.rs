@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
+use cs_commands::font::FontLock;
 use cs_commands::{Command, DocCommand, History, sprite_ops};
 use cs_core::{
     AnimDirection, Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, ObjectId, PixelValue,
@@ -23,6 +24,7 @@ mod tool_options;
 pub use tool_options::*;
 
 mod document_ops;
+mod font_ops;
 mod gestures;
 
 /// Herramientas que trabajan dentro de un sprite.
@@ -319,6 +321,8 @@ pub struct Editor {
     /// Slice seleccionado del artboard activo (índice en `sprite.slices`).
     pub slice: Option<usize>,
     pub text_style: TextStyle,
+    /// El glifo copiado con Copy glyph.
+    pub(crate) glyph_clipboard: font_ops::GlyphClipboard,
     /// Gesto en curso (p. ej. arrastrar un campo del panel) cuyos cambios se juntan en un solo
     /// paso de undo: id del widget y lo que se estaba editando (artboard, capa, frame, slice).
     /// El mismo widget sirve para todas las capas, así que el objetivo también tiene que coincidir.
@@ -418,6 +422,7 @@ impl Editor {
             shift_at_press: false,
             text: None,
             text_style: TextStyle::default(),
+            glyph_clipboard: None,
             merge: None,
             edit_mask: false,
             slice: None,
@@ -641,7 +646,9 @@ impl Editor {
     /// Ejecuta sin confirmar lo flotante (lo usa la confirmación misma).
     pub(crate) fn apply_doc(&mut self, cmd: DocCommand) -> bool {
         self.merge = None;
-        match self.history.execute(&mut self.document, cmd) {
+        // Las fuentes no cambian de frames, capas, modo de color ni celda (salvo con las
+        // operaciones de glifos).
+        match FontLock::execute(&mut self.history, &mut self.document, cmd, false) {
             Ok(()) => {
                 self.revision += 1;
                 self.doc_version += 1;
@@ -659,12 +666,20 @@ impl Editor {
     /// El comando debe reemplazar un estado completo (como `SetObjects` o `SetSlices`) para
     /// que el inverso del primero deshaga todo el gesto.
     pub fn execute_grouped(&mut self, cmd: Command, group: u64) -> bool {
+        self.execute_doc_grouped(
+            DocCommand::OnArtboard {
+                id: self.active,
+                cmd,
+            },
+            group,
+        )
+    }
+
+    /// Como `execute_grouped`, con un comando de documento (p. ej. `SetFont` al arrastrar un
+    /// stepper del panel Font).
+    pub fn execute_doc_grouped(&mut self, cmd: DocCommand, group: u64) -> bool {
         // Como `execute_doc`: lo flotante se confirma antes (y corta el grupo).
         self.commit_floating();
-        let cmd = DocCommand::OnArtboard {
-            id: self.active,
-            cmd,
-        };
         let target = (
             self.active,
             self.layer,
@@ -672,11 +687,8 @@ impl Editor {
             self.slice,
             self.current_object(),
         );
-        let result = if self.merge == Some((group, target)) {
-            self.history.execute_merged(&mut self.document, cmd)
-        } else {
-            self.history.execute(&mut self.document, cmd)
-        };
+        let merged = self.merge == Some((group, target));
+        let result = FontLock::execute(&mut self.history, &mut self.document, cmd, merged);
         match result {
             Ok(()) => {
                 self.merge = Some((group, target));
@@ -1010,3 +1022,6 @@ impl Editor {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod font_tests;

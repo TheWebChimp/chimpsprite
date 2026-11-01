@@ -6,8 +6,8 @@ use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 use cs_core::{
-    Artboard, ArtboardId, Document, Guide, InstanceTrack, LayerKind, LayerMask, Note, ObjectId,
-    SceneObject, Sprite, Symmetry,
+    Artboard, ArtboardId, Document, FontInfo, Guide, InstanceTrack, LayerKind, LayerMask, Note,
+    ObjectId, SceneObject, Sprite, Symmetry,
 };
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
@@ -47,6 +47,9 @@ struct Entry {
     /// Datos de capa que `.aseprite` no guarda (máscaras y recortes), por índice de capa.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     layers: Vec<LayerExtra>,
+    /// La fuente del artboard (si es una fuente pixel).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    font: Option<FontInfo>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -203,6 +206,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
             symmetry: artboard.symmetry,
             library: artboard.in_library,
             layers,
+            font: artboard.font.clone(),
         });
     }
     let manifest = Manifest {
@@ -258,8 +262,19 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
         for w in sub.warnings {
             report.warn(format!("{}: {w}", entry.name));
         }
+        // Una fuente editada a mano: sus glifos se ordenan y se emparejan con los frames.
+        let mut font = entry.font;
+        if let Some(font) = &mut font
+            && cs_core::normalize_font(font, &mut sprite)
+        {
+            report.warn(format!(
+                "{}: the font's glyph list did not match its frames and was fixed",
+                entry.name
+            ));
+        }
         artboards.push(Artboard {
             in_library: entry.library,
+            font,
             guides: entry.guides,
             symmetry: entry.symmetry,
             id: ArtboardId(entry.id),
@@ -524,6 +539,97 @@ mod tests {
     }
 
     #[test]
+    fn a_font_artboard_roundtrips_with_its_glyphs() {
+        let mut doc = Document::with_sprite("one", Sprite::new(4, 4, ColorMode::Rgba));
+        let mut font = FontInfo::new("Mine", 8, FontMode::OneBit);
+        font.glyphs[0].advance = Some(3);
+        let mut sprite = font_sprite((8, 8), FontMode::OneBit, font.glyphs.len());
+        let layer = sprite.layers[0].id;
+        let mut image = Image::new(8, 8, sprite.color_mode);
+        image.set(2, 3, ONE_BIT_INK).unwrap();
+        let id = sprite.next_image_id();
+        sprite.images.insert(id, std::sync::Arc::new(image));
+        sprite.cels.insert(
+            (layer, 5),
+            Cel {
+                position: (0, 0),
+                opacity: 255,
+                image: id,
+            },
+        );
+        doc.artboards.push(Artboard {
+            id: ArtboardId(2),
+            name: "Mine".into(),
+            position: (20, 0),
+            sprite,
+            guides: Vec::new(),
+            symmetry: Default::default(),
+            in_library: false,
+            font: Some(font.clone()),
+        });
+        let bytes = write(&doc).unwrap();
+        let (back, _) = read(&bytes).unwrap();
+        let a = back.artboard(ArtboardId(2)).unwrap();
+        assert_eq!(a.font.as_ref(), Some(&font));
+        assert_eq!(a.sprite.frames.len(), font.glyphs.len());
+        assert_eq!(a.sprite.pixel(a.sprite.layers[0].id, 5, 2, 3), ONE_BIT_INK);
+        assert!(back.artboard(ArtboardId(1)).unwrap().font.is_none());
+    }
+
+    #[test]
+    fn a_font_with_a_bad_glyph_list_loads_fixed_with_a_warning() {
+        let mut doc = Document::with_sprite("one", Sprite::new(4, 4, ColorMode::Rgba));
+        let font = FontInfo::new("Mine", 8, FontMode::OneBit);
+        let mut sprite = font_sprite((8, 8), FontMode::OneBit, 4);
+        let layer = sprite.layers[0].id;
+        let mut image = Image::new(8, 8, sprite.color_mode);
+        image.set(1, 1, ONE_BIT_INK).unwrap();
+        let id = sprite.next_image_id();
+        sprite.images.insert(id, std::sync::Arc::new(image));
+        sprite.cels.insert(
+            (layer, 0),
+            Cel {
+                position: (0, 0),
+                opacity: 255,
+                image: id,
+            },
+        );
+        doc.artboards.push(Artboard {
+            id: ArtboardId(2),
+            name: "Mine".into(),
+            position: (20, 0),
+            sprite,
+            guides: Vec::new(),
+            symmetry: Default::default(),
+            in_library: false,
+            font: Some(font),
+        });
+        // A mano: 'B' (frame 0, pintado), 'A', 'A' repetida; el frame 3 sin glifo.
+        let bad = with_manifest(&write(&doc).unwrap(), |m| {
+            m["artboards"][1]["font"]["glyphs"] = serde_json::json!([
+                {"ch": "B", "advance": 2}, {"ch": "A"}, {"ch": "A"}
+            ]);
+        });
+        let (back, report) = read(&bad).unwrap();
+        assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
+        assert!(report.warnings[0].contains("Mine"), "{:?}", report.warnings);
+        let a = back.artboard(ArtboardId(2)).unwrap();
+        let font = a.font.as_ref().unwrap();
+        assert_eq!(font.check(&a.sprite), Ok(()));
+        let chars: Vec<char> = font.glyphs.iter().map(|g| g.ch).collect();
+        assert_eq!(chars, vec!['A', 'B', '\u{E000}', '\u{E001}']);
+        let b = font.index_of('B').unwrap();
+        assert_eq!(a.sprite.pixel(layer, b, 1, 1), ONE_BIT_INK);
+        assert_eq!(font.glyphs[b].advance, Some(2));
+        // Más glifos que frames: se cortan.
+        let long = with_manifest(&write(&doc).unwrap(), |_| {});
+        let (back, report) = read(&long).unwrap();
+        assert_eq!(report.warnings.len(), 1, "94 glyphs for 4 frames");
+        let a = back.artboard(ArtboardId(2)).unwrap();
+        assert_eq!(a.font.as_ref().unwrap().check(&a.sprite), Ok(()));
+    }
+
+    #[test]
     fn library_roundtrip() {
         let mut d = doc();
         d.artboards[1].in_library = true;
@@ -557,6 +663,7 @@ mod tests {
         let mut d = Document::with_sprite("chimp", chimp);
         d.artboards.push(Artboard {
             in_library: false,
+            font: None,
             guides: vec![Guide {
                 axis: cs_core::Axis::Vertical,
                 position: 2,

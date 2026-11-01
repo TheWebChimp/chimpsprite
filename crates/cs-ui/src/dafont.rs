@@ -480,7 +480,7 @@ impl DafontPanel {
             ui.horizontal(|ui| {
                 ui.colored_label(Color32::from_rgb(0xc0, 0x40, 0x40), error);
                 if self.listing_failed && self.detail.is_none() {
-                    asked.retry = pixel_ui::lit_button(ui, "Retry").clicked();
+                    asked.retry = pixel_ui::text_button(ui, "Retry").clicked();
                 }
             });
         }
@@ -521,7 +521,7 @@ impl DafontPanel {
                     } else if self.end && self.fonts.is_empty() {
                         ui.weak("No fonts found");
                     } else if !self.end && !self.fonts.is_empty() {
-                        asked.more = pixel_ui::lit_button(ui, "More fonts").clicked();
+                        asked.more = pixel_ui::text_button(ui, "More fonts").clicked();
                     }
                 },
             );
@@ -709,11 +709,11 @@ impl DafontPanel {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 ui.label("Preview");
                 let response = match &skin {
-                    Some(skin) => crate::pixel_sections::text_field_sized(
+                    Some(skin) => crate::kit::input::text_input(
                         ui,
                         skin,
                         &mut self.sample,
-                        vec2(field_w, FIELD_H),
+                        field_w,
                         "Custom preview",
                         "Custom preview",
                     ),
@@ -751,7 +751,7 @@ impl DafontPanel {
                 ui.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
                     ui.label(" ");
-                    if pixel_ui::lit_button(ui, "Submit").clicked() {
+                    if pixel_ui::text_button(ui, "Submit").clicked() {
                         asked.submit = true;
                     }
                 });
@@ -857,14 +857,14 @@ impl DafontPanel {
             ui.label(&font.downloads);
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.spacing_mut().item_spacing.x = 5.0;
-                if pixel_ui::lit_button(ui, "View more").clicked() {
+                if pixel_ui::text_button(ui, "View more").clicked() {
                     asked.view = Some(font.clone());
                 }
                 if self.downloading(&font.slug) {
                     ui.weak("Downloading");
                 } else if ui
                     .add_enabled_ui(self.download.is_none(), |ui| {
-                        pixel_ui::lit_button(ui, "Use font")
+                        pixel_ui::text_button(ui, "Use font")
                     })
                     .inner
                     .clicked()
@@ -901,7 +901,7 @@ fn detail_ui(
             "Couldn't load this font"
         });
         ui.horizontal(|ui| {
-            asked.back = pixel_ui::lit_button(ui, "Back").clicked();
+            asked.back = pixel_ui::text_button(ui, "Back").clicked();
         });
         return;
     };
@@ -962,9 +962,9 @@ fn detail_ui(
         y += h + CARD_PAD;
     }
     ui.horizontal(|ui| {
-        asked.back = pixel_ui::lit_button(ui, "Back").clicked();
+        asked.back = pixel_ui::text_button(ui, "Back").clicked();
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if pixel_ui::lit_button(ui, "Use font").clicked() {
+            if pixel_ui::text_button(ui, "Use font").clicked() {
                 asked.use_font = Some(detail.font.clone());
             }
         });

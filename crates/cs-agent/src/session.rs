@@ -98,8 +98,22 @@ impl Session {
         } else {
             DocCommand::Batch(cmds)
         };
-        d.history.execute(&mut d.document, cmd)?;
+        // Las fuentes no cambian de frames, capas, modo de color ni celda.
+        cs_commands::font::FontLock::execute(&mut d.history, &mut d.document, cmd, false)?;
         Ok(())
+    }
+
+    /// Error si el artboard `id` es una fuente (sus frames son sus glifos).
+    pub(crate) fn not_a_font(&self, doc: &str, id: ArtboardId) -> Result<()> {
+        let font = self
+            .doc(doc)?
+            .document
+            .artboard(id)
+            .and_then(|a| a.font.as_ref());
+        match font {
+            Some(_) => Err(invalid("artboard is a font; use glyph operations")),
+            None => Ok(()),
+        }
     }
 
     /// Ejecuta comandos de sprite sobre un artboard como un solo paso de undo.

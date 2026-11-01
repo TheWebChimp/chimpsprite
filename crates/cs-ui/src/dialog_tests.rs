@@ -78,6 +78,7 @@ impl DialogHarness {
             app.pixel.update(&ctx, &app.view);
             app.update_canvas_size(&ctx);
             app.update_tilemap_dialogs(&ctx);
+            app.update_font_dialog(&ctx);
             app.update_symbol_dialog(&ctx);
             app.show_dialogs(&ctx);
             app.update_palette_windows(&ctx, false);
@@ -369,6 +370,52 @@ fn without_pixel_ui_canvas_size_is_the_egui_window_as_always() {
     assert_eq!(h.sprite_size(), (64, 64));
 }
 
+// --- New Font ---
+
+#[test]
+fn new_font_creates_a_font_artboard() {
+    let mut h = DialogHarness::new(true);
+    h.app.new_font = Some(Default::default());
+    h.settle();
+    assert!(h.drew_text("New Font"));
+    h.click("OK");
+    h.settle();
+    assert!(h.app.new_font.is_none());
+    let font = h
+        .app
+        .doc
+        .editor
+        .font()
+        .expect("the active artboard is a font");
+    assert_eq!(font.name, "New Font");
+    assert_eq!(h.app.doc.editor.sprite().width, 16);
+    // Y se abre el panel Font del dock.
+    assert_eq!(
+        crate::dock::open_panel(&h.ctx),
+        Some(crate::dock::DockPanel::Font)
+    );
+}
+
+#[test]
+fn new_font_from_home_opens_a_new_document() {
+    let mut h = DialogHarness::new(true);
+    h.app.request_close_tab(0);
+    h.settle();
+    assert!(!h.app.has_doc());
+    h.app.new_font = Some(Default::default());
+    h.settle();
+    h.click("OK");
+    h.settle();
+    assert!(h.app.has_doc());
+    let font = h
+        .app
+        .doc
+        .editor
+        .font()
+        .expect("the new document's artboard is a font");
+    assert_eq!(font.name, "New Font");
+}
+
 // --- New Tilemap Layer ---
 
 fn new_tilemap(pixel_ui: bool) -> DialogHarness {
@@ -415,8 +462,9 @@ fn with_pixel_ui_new_tilemap_layer_is_a_pixel_dialog() {
     }
     assert!(h.drew_text("Tileset 1"), "the name field: {:?}", h.texts);
     assert_eq!(h.numbers.len(), 3, "tile width, tile height and base index");
-    // Los campos son los del skin: el combo, el de texto y los numéricos (con `px`).
-    for piece in ["field.combo", "field.text", "field.number", "field.unit"] {
+    // Los campos son los del UI kit: el select y el de texto (`field.text`) y los numéricos (con
+    // `px`).
+    for piece in ["field.text", "field.unit"] {
         assert!(h.drew_piece(piece), "{piece}");
     }
 }

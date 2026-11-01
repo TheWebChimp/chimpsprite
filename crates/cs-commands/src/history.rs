@@ -46,8 +46,24 @@ impl<C: Undoable> History<C> {
     /// de antes de todo el gesto. Solo es correcto si el inverso anterior restaura todo lo que
     /// `cmd` toca (comandos que reemplazan un estado completo, como `SetObjects`).
     pub fn execute_merged(&mut self, target: &mut C::Target, cmd: C) -> Result<(), CmdError> {
+        self.execute_checked(target, cmd, true, |_| Ok(()))
+    }
+
+    /// Como `execute` (o `execute_merged` con `merged`), pero si después `check` falla se
+    /// deshace lo aplicado y no queda ningún paso (las pilas no cambian).
+    pub fn execute_checked(
+        &mut self,
+        target: &mut C::Target,
+        cmd: C,
+        merged: bool,
+        check: impl FnOnce(&C::Target) -> Result<(), CmdError>,
+    ) -> Result<(), CmdError> {
         let inverse = cmd.apply(target)?;
-        if self.undo.is_empty() {
+        if let Err(e) = check(target) {
+            inverse.apply(target)?;
+            return Err(e);
+        }
+        if !merged || self.undo.is_empty() {
             self.undo.push((inverse, cmd.label()));
         }
         self.redo.clear();

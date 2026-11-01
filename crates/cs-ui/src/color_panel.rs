@@ -12,7 +12,8 @@
 //!   grabado en el medio. Se arrastra para cambiar el alto de la caja (que se guarda con la
 //!   vista), de 2 filas de cuadritos hasta lo que deja el editor entero en el panel.
 //! - **Editor** (debajo de la división; en el diseño, y 332..473):
-//!   - Arriba, `picker.copy` (25×16, 2 px desde la izquierda) copia el color en hex. 2 px
+//!   - Arriba, el botón con ícono del UI kit (`icon.copy`, 25 de ancho, 2 px desde la izquierda)
+//!     copia el color en hex. 2 px
 //!     después, la tira de canales (16 de alto, hasta 2 px antes del borde derecho):
 //!     `channel.r` (la punta y el tramo rojo, 30), `channel.g` y `channel.b` (27),
 //!     `channel.a` (27, el damero repetido cada 4) y `channel.hex` (el resto, con la punta
@@ -45,7 +46,6 @@ use eframe::emath::GuiRounding as _;
 
 use cs_core::{PixelValue, Rgba};
 
-use crate::artboard_window;
 use crate::bar_fields::{self, NumberLook};
 use crate::editor::Editor;
 use crate::menus::{self, MenuLook, galley, ink_width, solid};
@@ -61,27 +61,24 @@ pub const SPLITTER_HEIGHT: f32 = 6.0;
 /// Filas entre los botones de arriba y la caja de la paleta (y 115..119 del diseño).
 pub const BUTTONS_GAP: f32 = 5.0;
 
-/// Los botones de arriba de la paleta (x 786..858 y 947..970, y 99..114 del diseño).
-const GROUP: &str = "palette.buttons";
-const GROUP_SEP: &str = "palette.buttons.sep";
-const CHECKER: &str = "palette.button";
-const ACTIVE: &str = "palette.button.active";
 /// El candado cerrado (paleta bloqueada) y el abierto (desbloqueada).
 const LOCK: &str = "palette.icon.lock";
 const LOCK_OPEN: &str = "palette.icon.lock.open";
-/// Los botones de la columna: el cuerpo de la norma de los controles.
+/// Los botones de la columna: el cuerpo de la norma de los controles (la línea clara del botón
+/// del kit cae en la primera fila de aire de debajo).
 const BUTTON_HEIGHT: f32 = crate::pixel_ui::CONTROL_BODY;
 /// De cada lado de la columna a los botones.
 const BUTTONS_SIDE: f32 = 2.0;
-/// Un botón del grupo cada 24 (comparten la línea del borde): el grupo de 3 mide 73.
-const BUTTON_PITCH: f32 = 24.0;
-const GROUP_WIDTH: f32 = 3.0 * BUTTON_PITCH + 1.0;
+/// El grupo del kit con 3 segmentos de ícono (comparten la columna del separador): 73.
+const GROUP_WIDTH: f32 =
+    3.0 * crate::kit::group::ICON_SEGMENT_W + 2.0 * crate::kit::button::OUTLINE + 2.0;
 const CHECKER_WIDTH: f32 = 24.0;
 
 const PALETTE_BOX: &str = "palette.box";
 const SWATCH: &str = "palette.swatch";
 const ADD: &str = "palette.add";
-const COPY: &str = "picker.copy";
+/// El ícono del botón de copiar (en el marco `button` del UI kit).
+const COPY_ICON: &str = "icon.copy";
 const SV_BOX: &str = "picker.sv";
 const BARS_BOX: &str = "picker.bars";
 const CURSOR: &str = "picker.cursor";
@@ -118,7 +115,8 @@ const FALLBACK_ADD_SIZE: Vec2 = Vec2::new(6.0, 7.0);
 
 /// El botón de copiar y la tira de canales.
 const COPY_LEFT: f32 = 2.0;
-const FALLBACK_COPY_SIZE: Vec2 = Vec2::new(25.0, 16.0);
+/// El ancho del botón de copiar, como en el diseño.
+const COPY_WIDTH: f32 = 25.0;
 const STRIP_GAP: f32 = 2.0;
 const STRIP_RIGHT: f32 = 2.0;
 const STRIP_HEIGHT: f32 = 16.0;
@@ -567,181 +565,70 @@ fn focus_palette(ui: &Ui, on: bool) {
         .data_mut(|d| d.insert_temp(egui::Id::new("palette_focus"), on));
 }
 
-/// Un botón de arriba de la paleta: su rect (con las dos líneas de borde, compartidas en el
-/// grupo), su nombre accesible, su ícono y si está prendido.
-struct TopButton {
-    rect: Rect,
-    label: &'static str,
-    icon: &'static str,
-    /// Prendido: se anuncia elegido (el candado y el damero).
-    on: bool,
-    /// Se ve apretado (`palette.button.active`) aunque no se lo esté apretando.
-    lit: bool,
-}
-
-/// Los botones de arriba de la paleta (y 99..114 del diseño), 2 px adentro de cada lado de la
-/// columna:
-/// - A la izquierda, el grupo `palette.buttons` (73×16, un botón cada 24 con
-///   `palette.buttons.sep` entre dos):
+/// Los botones de arriba de la paleta, 2 px adentro de cada lado de la columna, con los botones
+/// del UI kit:
+/// - A la izquierda, un grupo de tres botones con ícono ([`crate::kit::group`]):
 ///   - el candado es el interruptor "Lock palette": bloqueada (lo normal), sus colores no se
 ///     editan uno por uno ni se reemplaza la paleta con la hoja. Bloqueada lleva el candado
-///     cerrado (`palette.icon.lock`) y desbloqueada el abierto (`palette.icon.lock.open`), los
-///     dos en un botón normal: el ícono ya dice el estado, y así el botón bloqueado queda como
-///     en el diseño (cerrado y sin apretar). Se anuncia elegido mientras está bloqueada;
+///     cerrado (`palette.icon.lock`) y desbloqueada el abierto (`palette.icon.lock.open`): el
+///     ícono ya dice el estado, y el botón no se ve apretado. Se anuncia elegido mientras está
+///     bloqueada;
 ///   - ≡ abre el menú de la paleta: Presets… (la ventana) y lo que tenía el menú "…";
 ///   - la hoja pide una paleta nueva con el color primario (`PaletteAction::NewPalette`: la app
-///     la hace, o pregunta antes en indexado). Con la paleta bloqueada queda desactivada, con el
-///     ícono apagado.
-/// - A la derecha, el damero (`palette.button`, 24×16): elige el color Mask como primario, o
-///   vuelve al de antes si ya lo es (prendido mientras el primario es el Mask). Clic derecho: el
+///     la hace, o pregunta antes en indexado). Con la paleta bloqueada queda deshabilitada.
+/// - A la derecha, el damero: un botón con ícono de prender y apagar
+///   ([`crate::kit::button::icon_toggle_at`]). Elige el color Mask como primario, o vuelve al de
+///   antes si ya lo es (prendido, apretado, mientras el primario es el Mask). Clic derecho: el
 ///   Mask como secundario. Como en los cuadritos, el editor de color pasa al color elegido.
 ///
-/// El damero prendido, o cualquier botón apretado, lleva `palette.button.active` sobre su bisel y
-/// su relleno. Los
-/// íconos van centrados en el relleno. `menus`: con un diálogo abierto, ≡ queda desactivado.
-/// Devuelve lo que se eligió en el menú ≡ o `NewPalette`.
+/// `menus`: con un diálogo abierto, ≡ queda deshabilitado. Devuelve lo que se eligió en el menú ≡
+/// o `NewPalette`.
 pub fn palette_buttons(
     ui: &mut Ui,
     editor: &mut Editor,
     skin: &Skin,
     menus: bool,
 ) -> Option<PaletteAction> {
-    let ppp = ui.ctx().pixels_per_point();
-    let colors = *skin.colors();
+    use crate::kit::group::{self, GroupItem};
     let width = ui.available_width().floor();
     let (row, _) = ui.allocate_exact_size(vec2(width, BUTTON_HEIGHT), Sense::hover());
     let row = Rect::from_min_size(row.min.round(), row.size());
     let id = ui.id().with("palette_buttons");
-    let enabled = ui.is_enabled();
-
-    // El grupo: el marco, los separadores y después cada botón.
-    let group = Rect::from_min_size(
+    let lock_icon = if editor.palette_locked {
+        LOCK
+    } else {
+        LOCK_OPEN
+    };
+    let items = [
+        GroupItem::icon(lock_icon, "Lock palette"),
+        GroupItem::icon("palette.icon.menu", "Palette menu").enabled(menus),
+        GroupItem::icon("palette.icon.new", "New palette").enabled(!editor.palette_locked),
+    ];
+    let painter = ui.painter().clone();
+    let responses = group::group_responses_at(
+        ui,
+        skin,
+        &painter,
+        id.with("group"),
         row.min + vec2(BUTTONS_SIDE, 0.0),
-        vec2(GROUP_WIDTH, BUTTON_HEIGHT),
+        &items,
+        &|_| false,
     );
-    let mut shapes = piece_or(skin, GROUP, group, ppp, || {
-        vec![
-            solid(group, colors.panel, ppp),
-            outline(group, colors.outline, ppp),
-        ]
-    });
-    for k in 1..3 {
-        let x = group.left() + BUTTON_PITCH * k as f32 - 1.0;
-        let sep = Rect::from_min_size(pos2(x, group.top()), vec2(3.0, BUTTON_HEIGHT));
-        shapes.extend(piece_or(skin, GROUP_SEP, sep, ppp, || {
-            vec![solid(sep.shrink2(vec2(1.0, 0.0)), colors.outline, ppp)]
-        }));
-    }
     let checker = Rect::from_min_size(
         pos2(row.right() - BUTTONS_SIDE - CHECKER_WIDTH, row.top()),
-        vec2(CHECKER_WIDTH, BUTTON_HEIGHT),
+        vec2(CHECKER_WIDTH, crate::kit::button::HEIGHT),
     );
-    shapes.extend(piece_or(skin, CHECKER, checker, ppp, || {
-        vec![
-            solid(checker, colors.panel, ppp),
-            outline(checker, colors.outline, ppp),
-        ]
-    }));
-    ui.painter().extend(shapes);
-
-    let at = |k: usize| {
-        Rect::from_min_size(
-            group.min + vec2(BUTTON_PITCH * k as f32, 0.0),
-            vec2(BUTTON_PITCH + 1.0, BUTTON_HEIGHT),
-        )
-    };
-    let buttons = [
-        TopButton {
-            rect: at(0),
-            label: "Lock palette",
-            icon: if editor.palette_locked {
-                LOCK
-            } else {
-                LOCK_OPEN
-            },
-            on: editor.palette_locked,
-            lit: false,
-        },
-        TopButton {
-            rect: at(1),
-            label: "Palette menu",
-            icon: "palette.icon.menu",
-            on: false,
-            lit: false,
-        },
-        TopButton {
-            rect: at(2),
-            label: "New palette",
-            icon: "palette.icon.new",
-            on: false,
-            lit: false,
-        },
-        TopButton {
-            rect: checker,
-            label: "Mask",
-            icon: "palette.icon.mask",
-            on: editor.is_mask(editor.primary),
-            lit: editor.is_mask(editor.primary),
-        },
-    ];
-    let mut responses = Vec::with_capacity(buttons.len());
-    for (k, button) in buttons.iter().enumerate() {
-        // ≡ sin menús (un diálogo abierto) y la hoja con la paleta bloqueada no se aprietan.
-        let usable = match k {
-            1 => menus,
-            2 => !editor.palette_locked,
-            _ => true,
-        };
-        let sense = if usable {
-            Sense::click()
-        } else {
-            Sense::hover()
-        };
-        let response = ui.interact(button.rect, id.with(k), sense);
-        // El candado y el damero se anuncian prendidos: bloqueada, Mask elegido.
-        let selected = matches!(k, 0 | 3).then_some(button.on);
-        let on_now = enabled && usable;
-        response.widget_info(|| match selected {
-            Some(s) => WidgetInfo::selected(WidgetType::Button, on_now, s, button.label),
-            None => WidgetInfo::labeled(WidgetType::Button, on_now, button.label),
-        });
-        // El bisel y el relleno: 1 px adentro del borde.
-        let fill = Rect::from_min_max(
-            button.rect.min + vec2(1.0, 1.0),
-            pos2(button.rect.right() - 1.0, button.rect.bottom() - 2.0),
-        );
-        let mut shapes = Vec::new();
-        if button.lit || response.is_pointer_button_down_on() {
-            shapes.extend(piece_or(skin, ACTIVE, fill, ppp, || {
-                vec![solid(fill, colors.outline.gamma_multiply(0.3), ppp)]
-            }));
-        }
-        let inside = fill.shrink(1.0);
-        // La hoja desactivada (paleta bloqueada): el ícono medio transparente.
-        let dim = k == 2 && !usable;
-        match piece(skin, button.icon) {
-            Some(p) => {
-                let size = size_of(p);
-                let min = inside.min + ((inside.size() - size) / 2.0).floor();
-                let icon = pixel_ui::piece_shapes(p, Rect::from_min_size(min, size), ppp);
-                shapes.extend(if dim {
-                    artboard_window::tinted(icon, dim_tint())
-                } else {
-                    icon
-                });
-            }
-            // Sin el ícono, la inicial.
-            None => {
-                let color = if dim { colors.text_dim } else { colors.text };
-                let text = galley(ui, &button.label[..1], color);
-                let min = inside.center() - text.size() / 2.0;
-                shapes.push(Shape::galley(min.round(), text, color));
-            }
-        }
-        ui.painter().extend(shapes);
-        responses.push(response);
-    }
-    let [lock, menu, new, mask] = <[egui::Response; 4]>::try_from(responses).ok()?;
+    let is_mask = editor.is_mask(editor.primary);
+    let mask = crate::kit::button::icon_toggle_at(
+        ui,
+        skin,
+        checker,
+        id.with("mask"),
+        "palette.icon.mask",
+        "Mask",
+        is_mask,
+    );
+    let [lock, menu, new] = <[egui::Response; 3]>::try_from(responses).ok()?;
     let lock_tip = if editor.palette_locked {
         "Palette locked: colors can't be edited one by one"
     } else {
@@ -793,15 +680,6 @@ pub fn palette_buttons(
     .flatten()
     .or(new_palette)
 }
-
-/// El tinte de un ícono desactivado: el mismo dibujo, medio transparente (se apaga hacia el
-/// relleno del botón, sin oscurecerse).
-fn dim_tint() -> Color32 {
-    Color32::WHITE.gamma_multiply(DIM_ALPHA)
-}
-
-/// Cuánto se ve un ícono desactivado.
-const DIM_ALPHA: f32 = 0.4;
 
 /// El estado del editor entre frames: el último color y su HSV, para no perder el tono de los
 /// grises (como el caché del selector de egui).
@@ -1037,7 +915,7 @@ struct Groups {
 impl Groups {
     fn new(ui: &Ui, skin: &Skin) -> Self {
         let (segment, hex_min) = strip_metrics(ui, skin.colors());
-        let copy = piece(skin, COPY).map_or(FALLBACK_COPY_SIZE, size_of).x;
+        let copy = COPY_WIDTH;
         Self {
             widths: [
                 copy,
@@ -1089,7 +967,21 @@ struct Header {
     /// El tramo del hex, con su punta izquierda si abre su fila (`rgba_alone`).
     hex: Rect,
     segment: f32,
+    /// Lo que crece cada tramo (R, G, B, A) cuando el grupo RGBA va solo en su fila: el espacio que
+    /// sobra hasta el borde derecho, repartido parejo (el píxel de sobra, a los últimos).
+    extra: [f32; 4],
     height: f32,
+}
+
+/// Lo que crece cada tramo para que el grupo RGBA, desde `left` y con su punta derecha, llegue a
+/// `right`.
+fn stretch(left: f32, segment: f32, right: f32) -> [f32; 4] {
+    let room = (right - left - rgba_width(segment) - CAP_RIGHT_WIDTH)
+        .max(0.0)
+        .floor();
+    let base = (room / 4.0).floor();
+    let rest = (room - 4.0 * base) as usize;
+    std::array::from_fn(|i| base + if i >= 4 - rest { 1.0 } else { 0.0 })
 }
 
 impl Header {
@@ -1120,6 +1012,7 @@ impl Header {
                 rgba_alone: true,
                 hex,
                 segment: groups.segment,
+                extra: stretch(rgba.x, groups.segment, width - STRIP_RIGHT),
                 height: top(1) + STRIP_HEIGHT,
             };
         }
@@ -1142,12 +1035,18 @@ impl Header {
         let hex_top = top(row_of(2));
         let right = (width - STRIP_RIGHT).max(hex_left + hex_min);
         let hex = Rect::from_min_max(pos2(hex_left, hex_top), pos2(right, hex_top + STRIP_HEIGHT));
+        let extra = if rgba_alone {
+            stretch(rgba.x, groups.segment, width - STRIP_RIGHT)
+        } else {
+            [0.0; 4]
+        };
         Self {
             copy,
             rgba,
             rgba_alone,
             hex,
             segment: groups.segment,
+            extra,
             height: top(rows.len().saturating_sub(1)) + STRIP_HEIGHT,
         }
     }
@@ -1162,34 +1061,37 @@ impl Header {
     }
 }
 
-/// El botón de copiar: copia el color en hex (`#rrggbb`, o `#rrggbbaa` con alfa).
+/// El botón de copiar: copia el color en hex (`#rrggbb`, o `#rrggbbaa` con alfa). Es el botón con
+/// ícono del UI kit (`icon.copy` en el marco `button`, con sus estados); su línea clara cae en el
+/// aire debajo de la fila.
 fn copy_button(ui: &mut Ui, skin: &Skin, id: egui::Id, rect: Rect, current: Rgba) {
-    let ppp = ui.ctx().pixels_per_point();
-    let response = ui.interact(rect, id, Sense::click());
-    let enabled = ui.is_enabled();
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, "Copy color"));
-    let state = if response.is_pointer_button_down_on() {
-        WidgetState::Down
-    } else if response.hovered() {
-        WidgetState::Hover
-    } else {
-        WidgetState::Normal
-    };
-    let shapes = match skin.piece(COPY, state) {
-        Some(p) => pixel_ui::piece_shapes(p, rect, ppp),
-        None => {
-            let colors = skin.colors();
-            vec![
-                solid(rect, colors.panel, ppp),
-                outline(rect, colors.outline, ppp),
-            ]
-        }
-    };
-    ui.painter().extend(shapes);
-    if response.tip(format!("Copy {}", current.to_hex())).clicked() {
+    let rect = Rect::from_min_size(rect.min, vec2(rect.width(), crate::kit::button::HEIGHT));
+    let response = crate::kit::button::icon_button_at(ui, skin, rect, id, COPY_ICON, "Copy color");
+    // Al copiar, un rato el globo dice qué se copió (aunque el puntero no se quede encima).
+    let copied_id = id.with("copied");
+    let now = ui.input(|i| i.time);
+    if response.clicked() {
         ui.ctx().copy_text(current.to_hex());
+        crate::sound::play(crate::sound::Cue::Copy);
+        ui.data_mut(|d| d.insert_temp(copied_id, (now, current.to_hex())));
+    }
+    match ui
+        .data(|d| d.get_temp::<(f64, String)>(copied_id))
+        .filter(|(at, _)| now - at < COPIED_SECONDS)
+    {
+        Some((at, hex)) => {
+            response.flash_tip(format!("Copied {hex}"));
+            ui.ctx()
+                .request_repaint_after_secs((COPIED_SECONDS - (now - at)) as f32);
+        }
+        None => {
+            response.tip(format!("Copy {}", current.to_hex()));
+        }
     }
 }
+
+/// Cuánto dura el aviso de copiado.
+const COPIED_SECONDS: f64 = 1.5;
 
 /// Un canal de la tira: su pieza, su punto y el color de su línea (sin la pieza).
 struct Channel {
@@ -1263,9 +1165,8 @@ fn channel_strip(
     let segment = header.segment;
     let mut values = [current.r, current.g, current.b, current.a];
     let look = NumberLook {
-        text: colors.field_text,
         outline: colors.field_text,
-        align: Align::Min,
+        ..NumberLook::new(colors, colors.field_text, Align::Min)
     };
     // Dónde empiezan las mayúsculas de un texto en la tira (para el `DragValue` y el hex).
     let probe = galley(ui, "0", colors.field_text);
@@ -1281,7 +1182,10 @@ fn channel_strip(
     for (i, channel) in CHANNELS.iter().enumerate() {
         // El tramo rojo trae la punta izquierda de la tira.
         let end = if i == 0 { STRIP_END } else { 0.0 };
-        let rect = Rect::from_min_size(pos2(left, top), vec2(end + segment, STRIP_HEIGHT));
+        let rect = Rect::from_min_size(
+            pos2(left, top),
+            vec2(end + segment + header.extra[i], STRIP_HEIGHT),
+        );
         let fill_left = left + end;
         let mut shapes = match piece(skin, channel.piece) {
             // El alfa repite su pieza (un período del damero), recortada al tramo.
@@ -1374,11 +1278,12 @@ fn channel_strip(
             .max_rect(inner)
             .layout(Layout::top_down(Align::Min)),
     );
-    bar_fields::plain_field_style(
+    crate::kit::input::plain_field_style(
         child.style_mut(),
         inner.size(),
         colors.field_text,
         colors.field_text,
+        colors,
     );
     // La selección y el cursor en las filas de los demás campos.
     child.set_clip_rect(crate::pixel_sections::text_clip(ui, hex, inner));

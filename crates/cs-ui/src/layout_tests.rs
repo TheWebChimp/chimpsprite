@@ -211,6 +211,43 @@ impl LayoutHarness {
         self.frame();
     }
 
+    /// Doble clic con el botón principal en `pos`: mover y dos pares de apretar y soltar, un
+    /// frame cada uno. Antes deja pasar medio segundo para que un clic anterior no cuente como
+    /// el primero de este (egui junta los clics seguidos aunque sean en otro lado).
+    fn double_click(&mut self, pos: Pos2) {
+        let press = |pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        for _ in 0..10 {
+            self.frame();
+        }
+        self.frame_with(vec![Event::PointerMoved(pos)]);
+        for _ in 0..2 {
+            self.frame_with(vec![press(true)]);
+            self.frame_with(vec![press(false)]);
+        }
+        self.frame();
+    }
+
+    /// Arrastre con el botón principal de `from` a `to`: mover, apretar, mover y soltar, un
+    /// frame cada uno.
+    fn drag(&mut self, from: Pos2, to: Pos2) {
+        let press = |pos, pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        self.frame_with(vec![Event::PointerMoved(from)]);
+        self.frame_with(vec![press(from, true)]);
+        self.frame_with(vec![Event::PointerMoved(to)]);
+        self.frame_with(vec![press(to, false)]);
+        self.frame();
+    }
+
     /// La textura de la pieza `name` del skin.
     fn piece(&self, name: &str) -> TextureId {
         let skin = self.app.pixel.skin().expect("Pixel UI is on");
@@ -672,6 +709,12 @@ fn two_tabs(active: Option<usize>) -> LayoutHarness {
 }
 
 /// La unión de los rects.
+/// El panel del menú abierto, sin su sombra (2 px abajo y a la derecha, afuera del panel).
+fn menu_panel(h: &LayoutHarness) -> Rect {
+    let drawn = union(&h.drawn("menu.list")).expect("the panel");
+    Rect::from_min_max(drawn.min, drawn.max - Vec2::splat(2.0))
+}
+
 fn union(rects: &[Rect]) -> Option<Rect> {
     rects.iter().copied().reduce(|a, b| a.union(b))
 }
@@ -820,19 +863,20 @@ fn the_marker_is_a_circle_with_unsaved_changes_and_a_cross_without() {
     assert_eq!(crosses.len(), 1);
     assert!(dirty.contains_rect(dots[0]), "{dots:?} in {dirty:?}");
     assert!(clean.contains_rect(crosses[0]), "{crosses:?} in {clean:?}");
-    // 5 px antes del borde derecho y 7 debajo del de arriba, como en el mockup.
+    // 6 px antes del borde derecho (el borde de 2 y 4 de aire) y 7 debajo del de arriba, como
+    // en el mockup de componentes.
     for (tab, mark) in [(dirty, dots[0]), (clean, crosses[0])] {
         assert_eq!(mark.size(), Vec2::new(5.0, 5.0));
-        assert_eq!(tab.right() - mark.right(), 5.0);
+        assert_eq!(tab.right() - mark.right(), 6.0);
         assert_eq!(mark.top() - tab.top(), 7.0);
     }
-    // El nombre empieza 5 px adentro.
+    // El nombre empieza 6 px adentro.
     let text = h
         .texts
         .iter()
         .find(|(t, _)| t == "Design.chimp")
         .expect("the name");
-    assert_eq!(text.1.x - dirty.left(), 5.0);
+    assert_eq!(text.1.x - dirty.left(), 6.0);
 }
 
 #[test]
@@ -841,8 +885,9 @@ fn the_dock_timeline_button_hides_and_shows_the_timeline() {
     assert!(h.app.view.timeline);
     let button = h.button("Timeline");
     assert_eq!(button.size(), crate::dock::BUTTON_SIZE);
-    // El ícono, de 9×15, centrado en el botón de 23×24.
-    let icon = Rect::from_min_size(button.min + Vec2::new(7.0, 4.0), Vec2::new(9.0, 15.0));
+    // El ícono, de 9×15, centrado en el botón de 23×24; con el timeline a la vista, el botón
+    // está prendido (presionado, como el elegido de un grupo del kit) y el ícono baja 1 px.
+    let icon = Rect::from_min_size(button.min + Vec2::new(7.0, 5.0), Vec2::new(9.0, 15.0));
     assert!(h.drawn("icon.timeline").contains(&icon), "{icon:?}");
     h.click(button.center(), PointerButton::Primary);
     assert!(!h.app.view.timeline, "hidden");
@@ -857,8 +902,8 @@ fn the_dock_preview_button_opens_the_preview_window_above_the_timeline_button() 
     let (button, timeline) = (h.button("Preview"), h.button("Timeline"));
     assert_eq!(
         timeline.top() - button.bottom(),
-        3.0,
-        "right above the timeline"
+        4.0,
+        "right above the timeline (the light row and 3 of air)"
     );
     let icon = Rect::from_min_size(button.min + Vec2::new(3.0, 5.0), Vec2::new(17.0, 13.0));
     assert!(h.drawn("icon.preview").contains(&icon), "{icon:?}");
@@ -942,19 +987,20 @@ fn tabs_switch_on_click_go_home_and_close_with_the_middle_button() {
 }
 
 #[test]
-fn hovering_an_inactive_tab_does_not_change_it() {
+fn hovering_an_inactive_tab_lightens_only_that_tab() {
     let mut h = two_tabs(Some(0));
-    // El tiempo de cada foto, el mismo: la casita de Home está animada.
-    let time = h.time;
-    let before = h.textures.clone();
     let tab = h.button("Otro.chimp");
-    h.time = time - 0.05;
+    assert!(h.drawn("tab.hover").is_empty());
     h.frame_with(vec![Event::PointerMoved(
         tab.left_center() + Vec2::new(8.0, 0.0),
     )]);
-    h.time = time - 0.05;
     h.frame();
-    assert_eq!(h.textures, before);
+    // Con el puntero encima, `tab.hover` (el relleno más claro) en esa pestaña; la activa no
+    // cambia.
+    let hovered = h.drawn("tab.hover");
+    assert!(!hovered.is_empty());
+    assert!(hovered.iter().all(|r| tab.contains_rect(*r)), "{hovered:?}");
+    assert!(!h.drawn("tab.active").is_empty());
 }
 
 #[test]
@@ -1316,10 +1362,10 @@ fn caps_offset(h: &LayoutHarness) -> f32 {
 fn opening_file_draws_the_open_title_box_and_the_panel() {
     let mut h = two_tabs(Some(0));
     assert_eq!(h.drawn("menu.title.open"), vec![], "closed");
-    assert_eq!(h.drawn("menu.panel"), vec![]);
+    assert_eq!(h.drawn("menu.list"), vec![]);
     open_menu(&mut h, "File");
     assert!(!h.drawn("menu.title.open").is_empty(), "the open title box");
-    assert!(!h.drawn("menu.panel").is_empty(), "the panel");
+    assert!(!h.drawn("menu.list").is_empty(), "the panel");
     // El texto del título sigue donde estaba, sobre la caja.
     let color = h.app.pixel.skin().unwrap().colors().home_text;
     assert_eq!(text_rect(&h, "File").1, color);
@@ -1335,7 +1381,7 @@ fn the_panel_hangs_from_the_open_title_like_in_the_design() {
         let text = text_rect(&h, title).0;
         let caps = text.top() + offset;
         let boxed = union(&h.drawn("menu.title.open")).expect("the box");
-        let panel = union(&h.drawn("menu.panel")).expect("the panel");
+        let panel = menu_panel(&h);
         // El diseño: la caja empieza 5 px antes del texto, termina 4 después (la tinta, más 5)
         // y empieza 5 filas arriba de las mayúsculas, sin recortes: la de File queda a 1 px del
         // borde de arriba y del izquierdo de la ventana.
@@ -1387,7 +1433,7 @@ fn the_panel_hangs_from_the_open_title_like_in_the_design() {
         assert!(panel.right() > boxed.right(), "{title}");
         // Otro clic en el título lo cierra.
         open_menu(&mut h, title);
-        assert_eq!(h.drawn("menu.panel"), vec![], "{title}: closed");
+        assert_eq!(h.drawn("menu.list"), vec![], "{title}: closed");
     }
 }
 
@@ -1397,7 +1443,7 @@ fn the_new_row_has_the_ctrl_badge_a_plus_and_the_key_in_the_dim_color() {
     let offset = caps_offset(&h);
     open_menu(&mut h, "File");
     let colors = *h.app.pixel.skin().unwrap().colors();
-    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let panel = menu_panel(&h);
     let (new, color) = text_rect(&h, "New");
     assert_eq!(color, colors.text);
     // "New": 5 px adentro del borde y sus mayúsculas, 6 filas debajo del borde de arriba (la
@@ -1437,7 +1483,8 @@ fn badge(h: &LayoutHarness, name: &str, caps: f32) -> Rect {
     let text = h
         .text_rects
         .iter()
-        .find(|(t, r, _)| t == name && r.top() == caps)
+        // El nombre en esa fila (la caja del texto de chimpfont empieza arriba de sus mayúsculas).
+        .find(|(t, r, _)| t == name && r.top() <= caps && r.bottom() > caps + 5.0)
         .map(|(_, r, _)| *r)
         .unwrap_or_else(|| panic!("{name} on the row of {caps} in {:?}", h.texts));
     let badge = h
@@ -1503,27 +1550,28 @@ fn ctrl_alt_shortcuts_have_the_alt_badge() {
 }
 
 #[test]
-fn separators_are_the_etched_line_of_the_design() {
+fn separators_are_the_divider_of_the_design_from_border_to_border() {
     let mut h = two_tabs(Some(0));
     open_menu(&mut h, "File");
-    let colors = *h.app.pixel.skin().unwrap().colors();
-    let panel = union(&h.drawn("menu.panel")).expect("the panel");
-    let rects = h.colored_rects();
-    // Entre los biseles: de la x 2 del panel a 2 antes del borde derecho.
-    let x = egui::Rangef::new(panel.left() + 2.0, panel.right() - 2.0);
-    let lights: Vec<Rect> = rects
-        .iter()
-        .filter(|(c, r)| *c == colors.menu_highlight && r.height() == 1.0 && r.x_range() == x)
-        .map(|(_, r)| *r)
-        .collect();
-    // El menú File tiene tres separadores.
-    assert_eq!(lights.len(), 3, "{lights:?}");
-    for light in lights {
-        let dark = light.translate(Vec2::new(0.0, 1.0));
-        assert!(rects.contains(&(colors.background, dark)), "{dark:?}");
+    let panel = menu_panel(&h);
+    // `menu.separator` (la fila blanca sobre la (189,164,153)), de borde a borde: encima de los
+    // biseles, adentro de la línea.
+    let mut lines: Vec<Rect> = Vec::new();
+    for r in h.drawn("menu.separator") {
+        match lines.iter_mut().find(|l| l.top() == r.top()) {
+            Some(l) => *l = l.union(r),
+            None => lines.push(r),
+        }
     }
-    assert_eq!(colors.menu_highlight, egui::Color32::WHITE);
-    assert_eq!(colors.background, egui::Color32::from_rgb(221, 206, 191));
+    // El menú File tiene tres separadores.
+    assert_eq!(lines.len(), 3, "{lines:?}");
+    for line in lines {
+        assert_eq!(
+            line.x_range(),
+            egui::Rangef::new(panel.left() + 1.0, panel.right() - 1.0)
+        );
+        assert_eq!(line.height(), 2.0);
+    }
 }
 
 #[test]
@@ -1555,7 +1603,7 @@ fn clicking_a_pixel_menu_item_still_runs_its_action() {
     let new = h.button("New Ctrl+N");
     h.click(new.center(), PointerButton::Primary);
     assert_eq!(h.app.tabs.len(), 3, "a new document");
-    assert_eq!(h.drawn("menu.panel"), vec![], "the menu closes");
+    assert_eq!(h.drawn("menu.list"), vec![], "the menu closes");
 }
 
 #[test]
@@ -1565,9 +1613,15 @@ fn hovered_rows_are_pink_with_pink_bevels_and_disabled_ones_dim_text() {
     open_menu(&mut h, "File");
     let colors = *h.app.pixel.skin().unwrap().colors();
     assert_eq!(text_rect(&h, "Save").1, colors.text_dim, "disabled");
-    // Sin puntos suspensivos (en ningún lado de la app).
-    assert_eq!(text_rect(&h, "Open").1, colors.text);
-    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let panel = menu_panel(&h);
+    // Sin puntos suspensivos (en ningún lado de la app). El de Open del menú (no el botón Open
+    // de Pixnews, en Home, que va con su sombra).
+    let open = h
+        .text_rects
+        .iter()
+        .find(|(t, r, _)| t == "Open" && panel.contains_rect(*r))
+        .expect("Open in the menu");
+    assert_eq!(open.2, colors.text);
     let inside: Vec<&String> = h
         .texts
         .iter()
@@ -1595,9 +1649,13 @@ fn hovered_rows_are_pink_with_pink_bevels_and_disabled_ones_dim_text() {
     };
     assert_eq!(pink(colors.timeline_selection), vec![row]);
     let bevel = |x: f32| Rect::from_x_y_ranges(x..=x + 1.0, row.y_range());
-    assert_eq!(
-        pink(colors.timeline_selection_dark),
-        vec![bevel(panel.left() + 1.0)]
+    // En el rosa oscuro, el bisel de la izquierda y, del atajo (Ctrl+O), el +: en la fila con el
+    // puntero, el atajo va en ese rosa.
+    let dark = pink(colors.timeline_selection_dark);
+    assert_eq!(dark[0], bevel(panel.left() + 1.0));
+    assert!(
+        dark[1..].iter().all(|r| r.left() > panel.center().x),
+        "only the shortcut besides the bevel: {dark:?}"
     );
     assert_eq!(
         pink(colors.timeline_selection_light),
@@ -1612,7 +1670,7 @@ fn submenus_have_an_arrow_of_shapes_and_the_same_panel() {
     let colors = *h.app.pixel.skin().unwrap().colors();
     let show = h.button("Show");
     // La flecha: un triángulo de 3×5 hecho con rects del color del texto, contra la derecha.
-    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let panel = menu_panel(&h);
     let arrow: Vec<Rect> = h
         .colored_rects()
         .into_iter()
@@ -1626,7 +1684,7 @@ fn submenus_have_an_arrow_of_shapes_and_the_same_panel() {
     h.frame_with(vec![Event::PointerMoved(show.center())]);
     h.frame();
     h.frame();
-    let panels = h.drawn("menu.panel");
+    let panels = h.drawn("menu.list");
     let sub = panels
         .iter()
         .filter(|r| r.left() >= panel.right())
@@ -1665,7 +1723,7 @@ fn menu_checkboxes_use_the_design_box_and_a_click_toggles_them() {
     let mut h = two_tabs(Some(0));
     let offset = caps_offset(&h);
     open_menu(&mut h, "View");
-    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let panel = menu_panel(&h);
     // Timeline (marcada): la casilla del diseño, de 11×12, en el borde del texto de los ítems
     // (5 px adentro del panel) y 2 filas arriba de las mayúsculas; el texto, 3 px después.
     let (timeline, _) = text_rect(&h, "Timeline");
@@ -1777,11 +1835,11 @@ fn with_pixel_ui_the_artboard_is_a_pink_window_whose_bar_does_not_zoom() {
         assert_eq!(frame.right(), pixels.right() + 2.0, "zoom {zoom}");
         assert_eq!(frame.bottom(), pixels.bottom() + 2.0, "zoom {zoom}");
         bars.push(pixels.top() - frame.top());
-        assert_eq!(h.drawn("artboard.menu").len(), 1, "≡");
-        assert_eq!(h.drawn("window.close").len(), 1, "○");
+        // La barra del UI kit (con el ≡ y el ○).
+        assert!(!h.drawn("title.bar").is_empty(), "the bar");
     }
-    // La barra de 13 y la fila blanca no cambian con el zoom.
-    assert_eq!(bars, vec![14.0, 14.0]);
+    // La barra de 14 y la fila blanca no cambian con el zoom.
+    assert_eq!(bars, vec![15.0, 15.0]);
 
     // Arrastrar la barra mueve el artboard (zoom 1: un punto, un píxel).
     h.app.doc.canvas.zoom = 1.0;
@@ -2318,7 +2376,8 @@ fn with_pixel_ui_the_artboards_are_tabs_with_the_design_buttons() {
     // Están en el dock: no en el panel derecho hasta abrirlas.
     assert!(!h.buttons.iter().any(|(l, _)| l == "New 64×64 artboard"));
     let dock = h.button("Artboards");
-    assert_eq!(dock.size(), Vec2::new(23.0, 24.0));
+    // El cuerpo de 23×23 (la línea clara va debajo), como en el mockup de componentes.
+    assert_eq!(dock.size(), Vec2::new(23.0, 23.0));
     assert!(h.panel("dock").contains_rect(dock));
     h.click(dock.center(), PointerButton::Primary);
     // El panel flotante, a la izquierda del botón.
@@ -2375,7 +2434,7 @@ fn the_lospec_dock_button_opens_and_closes_the_lospec_panel() {
             .map(|(_, r)| *r)
             .expect("the Lospec dock button")
     };
-    assert_eq!(button(&h).size(), Vec2::new(23.0, 24.0));
+    assert_eq!(button(&h).size(), Vec2::new(23.0, 23.0));
     assert!(!h.app.lospec_open());
     h.click(button(&h).center(), PointerButton::Primary);
     assert!(h.app.lospec_open(), "opens the panel");
@@ -3083,4 +3142,464 @@ fn an_empty_object_layer_asks_for_an_object_and_image_layers_show_no_panel() {
     h.app.doc.editor.select_layer(LayerId(1));
     h.frame();
     assert!(!h.texts.iter().any(|t| t.0 == "Object"));
+}
+
+#[test]
+fn help_ui_catalog_opens_a_closable_tab_with_the_four_button_states() {
+    let mut h = two_tabs(Some(0));
+    open_menu(&mut h, "Help");
+    let item = h.button("UI Catalog");
+    h.click(item.center(), PointerButton::Primary);
+    h.frame();
+    // Una pestaña más, a la vista, sin documento activo.
+    assert_eq!(h.app.tabs.page(), Some(crate::tabs::Page::Catalog));
+    assert_eq!(h.app.tabs.active(), None);
+    assert_eq!(h.app.tabs.bar_active(), Some(2));
+    assert!(h.texts.iter().any(|(t, _)| t == "UI Catalog"), "the tab");
+    for state in ["Normal", "Hover", "Pressed", "Disabled"] {
+        assert!(h.texts.iter().any(|(t, _)| t == state), "{state}");
+    }
+    // Cada estado con su pieza, de 17 de alto.
+    for piece in ["button", "button.hover", "button.down", "button.disabled"] {
+        let boxes = h.drawn_boxes(piece);
+        assert!(!boxes.is_empty(), "{piece}");
+        assert!(
+            boxes.iter().all(|b| b.height() == 17.0),
+            "{piece} {boxes:?}"
+        );
+    }
+    // El botón de verdad cuenta los clics.
+    let live = h.button("Click me");
+    h.click(live.center(), PointerButton::Primary);
+    h.frame();
+    assert!(
+        h.texts.iter().any(|(t, _)| t == "Clicked 1×"),
+        "{:?}",
+        h.texts
+    );
+    // Se cierra como cualquier pestaña: queda Home y los documentos siguen.
+    h.app
+        .tab_action(crate::tabs::TabRef::Page(crate::tabs::Page::Catalog), true);
+    h.frame();
+    assert_eq!(h.app.tabs.page(), None);
+    assert_eq!(h.app.tabs.bar().len(), 2);
+}
+
+#[test]
+fn a_font_artboard_shows_its_glyph_in_the_title_and_hides_the_timeline() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let with_timeline = h.canvas.expect("a document is open");
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.app.doc.editor.go_to_glyph('A');
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    assert!(
+        h.texts.iter().any(|(t, _)| t.contains("A · Mine")),
+        "{:?}",
+        h.texts
+    );
+    // Sin la timeline, el lienzo baja hasta donde estaba ella.
+    let canvas = h.canvas.expect("a document is open");
+    assert!(
+        canvas.bottom() > with_timeline.bottom() + 50.0,
+        "{canvas:?} vs {with_timeline:?}"
+    );
+    assert!(
+        h.app.view.timeline,
+        "the setting stays: it comes back for sprites"
+    );
+}
+
+#[test]
+fn dragging_the_advance_line_sets_a_manual_advance() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    e.go_to_glyph('A');
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    assert_eq!(
+        h.app.doc.editor.glyph_advance(),
+        Some(8),
+        "empty: half the cell"
+    );
+    let line = h
+        .app
+        .doc
+        .canvas
+        .advance_line_rect()
+        .expect("the advance line");
+    let scale = h.app.doc.canvas.scale().x;
+    h.drag(line.center(), line.center() + egui::vec2(3.0 * scale, 0.0));
+    let e = &h.app.doc.editor;
+    assert_eq!(e.glyph_advance(), Some(8 + 3));
+    assert_eq!(e.font().unwrap().glyphs[e.frame].advance, Some(11));
+    // La herramienta no recibió el clic: el glifo sigue vacío.
+    assert!(
+        e.sprite().cel(e.layer, e.frame).is_none(),
+        "nothing painted"
+    );
+    let moved = h
+        .app
+        .doc
+        .canvas
+        .advance_line_rect()
+        .expect("the advance line");
+    assert_eq!(moved.center().x, line.center().x + 3.0 * scale);
+}
+
+#[test]
+fn the_advance_drag_sets_the_glyph_where_it_started() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    e.go_to_glyph('A');
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    let line = h.app.doc.canvas.advance_line_rect().expect("the line");
+    let scale = h.app.doc.canvas.scale().x;
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let to = line.center() + egui::vec2(3.0 * scale, 0.0);
+    h.frame_with(vec![Event::PointerMoved(line.center())]);
+    h.frame_with(vec![button(line.center(), true)]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    // A mitad del arrastre cambia el glifo actual (un atajo, el panel…).
+    h.app.doc.editor.go_to_glyph('B');
+    h.frame_with(vec![button(to, false)]);
+    h.frame();
+    let font = h.app.doc.editor.font().unwrap();
+    assert_eq!(font.glyphs[font.index_of('A').unwrap()].advance, Some(11));
+    assert_eq!(font.glyphs[font.index_of('B').unwrap()].advance, None);
+}
+
+#[test]
+fn a_monospace_font_has_no_advance_line_to_drag() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    let mut info = e.font().unwrap().clone();
+    info.monospace = true;
+    e.set_font_info(info);
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    assert!(h.app.doc.canvas.advance_line_rect().is_none());
+}
+
+#[test]
+fn a_guide_dragged_from_the_ruler_can_be_dropped_on_the_advance_line() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.app.doc.editor.go_to_glyph('A');
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    // Con el puntero ya sobre el lienzo (el diseño se acomoda al entrar).
+    let canvas = h.canvas.expect("a document is open");
+    let from = egui::pos2(canvas.left() + 5.0, canvas.center().y);
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame();
+    let line = h
+        .app
+        .doc
+        .canvas
+        .advance_line_rect()
+        .expect("the advance line");
+    assert_eq!(h.app.doc.editor.glyph_advance(), Some(8));
+    // Desde la regla izquierda: al empezar el arrastre el diseño se acomoda, así que se lee la
+    // línea de nuevo antes de soltarla justo encima.
+    let from = egui::pos2(from.x, line.center().y);
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, true)]);
+    let mid = egui::pos2(from.x + 40.0, from.y);
+    h.frame_with(vec![Event::PointerMoved(mid)]);
+    h.frame();
+    let line = h
+        .app
+        .doc
+        .canvas
+        .advance_line_rect()
+        .expect("the advance line");
+    let to = line.center();
+    for k in 1..=4 {
+        h.frame_with(vec![Event::PointerMoved(mid.lerp(to, k as f32 / 4.0))]);
+    }
+    h.frame_with(vec![button(to, false)]);
+    h.frame();
+    let e = &h.app.doc.editor;
+    let guides = e.guides();
+    assert_eq!(guides.len(), 1, "{guides:?}");
+    assert_eq!(guides[0].axis, cs_core::Axis::Vertical);
+    assert_eq!(guides[0].position, 8, "the column under the drop");
+    // La línea del ancho no se quedó con el arrastre ni con la suelta.
+    assert_eq!(e.glyph_advance(), Some(8));
+    assert_eq!(e.font().unwrap().glyphs[e.frame].advance, None);
+}
+
+#[test]
+fn the_timeline_comes_back_when_a_sprite_artboard_is_activated() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let with_timeline = h.canvas.expect("a document is open");
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.app.doc.editor.go_to_glyph('A');
+    h.frame();
+    h.frame();
+    let font_canvas = h.canvas.expect("a document is open");
+    assert!(font_canvas.bottom() > with_timeline.bottom() + 50.0);
+    h.app.doc.editor.activate(cs_core::ArtboardId(1));
+    h.frame();
+    h.frame();
+    let back = h.canvas.expect("a document is open");
+    assert_eq!(back.bottom(), with_timeline.bottom(), "{back:?}");
+}
+
+#[test]
+fn the_font_panel_offers_new_font_and_its_map_picks_glyphs() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    // El botón FontForge del dock, con su ícono del skin.
+    let button = h.button("FontForge");
+    assert!(
+        h.drawn("icon.dock.font")
+            .iter()
+            .any(|r| button.contains_rect(*r)),
+        "the FontForge icon"
+    );
+    h.click(button.center(), PointerButton::Primary);
+    h.frame();
+    assert!(h.button("New Font…").width() > 0.0);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    h.frame();
+    h.click(h.button("Glyph B").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.current_glyph(), Some('B'));
+    // Doble clic en un carácter que falta (página Latin-1) lo agrega.
+    h.click(h.button("Latin-1").center(), PointerButton::Primary);
+    let cell = h.button("Glyph á").center();
+    h.double_click(cell);
+    assert!(h.app.doc.editor.font().unwrap().index_of('á').is_some());
+    assert_eq!(h.app.doc.editor.current_glyph(), Some('á'));
+}
+
+#[test]
+fn new_font_in_the_font_panel_opens_the_dialog() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
+    h.click(h.button("New Font…").center(), PointerButton::Primary);
+    assert!(h.app.new_font.is_some());
+}
+
+#[test]
+fn a_new_font_is_fitted_beside_the_font_panel() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    // Lo que hace el OK de File → New Font… (el diálogo no se dibuja en este arnés).
+    let ctx = h.ctx.clone();
+    assert!(
+        h.app
+            .create_font(&ctx, "Mine", (8, 8), cs_core::FontMode::OneBit)
+    );
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(h.app.doc.editor.font().is_some());
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "FontForge"))))
+        .expect("the Font panel is open");
+    let canvas = h.canvas.expect("a document is open");
+    let art = artboard_pixels(&h);
+    // Entera a la izquierda del panel y dentro del lienzo: no queda tapada.
+    assert!(art.right() <= flyout.left(), "{art:?} vs {flyout:?}");
+    assert!(canvas.contains_rect(art), "{art:?} vs {canvas:?}");
+    // Ajustada: no se queda chiquita.
+    assert!(art.width() >= 100.0, "{art:?}");
+}
+
+#[test]
+fn the_font_panel_adds_the_typed_chars() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
+    let field = h
+        .nodes
+        .iter()
+        .find(|(l, _)| l == "Add char")
+        .map(|(_, r)| *r)
+        .expect("the Add char field");
+    h.click(field.center(), PointerButton::Primary);
+    h.frame_with(vec![Event::Text("ñ €".into())]);
+    h.frame();
+    h.click(h.button("Add").center(), PointerButton::Primary);
+    let font = h.app.doc.editor.font().unwrap();
+    assert!(font.index_of('ñ').is_some());
+    assert!(font.index_of('€').is_some());
+    assert!(h.app.font_panel.add_char.is_empty());
+}
+
+#[test]
+fn the_test_drive_draws_the_text_and_clicking_a_letter_goes_to_its_glyph() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    h.app.font_panel.test_text = "AB".into();
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
+    h.frame();
+    let drive = h.button("Test Drive B");
+    h.click(drive.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.current_glyph(), Some('B'));
+}
+
+#[test]
+fn the_font_settings_change_the_metrics_with_undo() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
+    h.frame();
+    // Los + de los steppers del kit se llaman todos "Increase": el de la fila de "Baseline".
+    let label = h
+        .text_rects
+        .iter()
+        .find(|(t, _, _)| t == "Baseline")
+        .map(|(_, r, _)| *r)
+        .expect("the Baseline label");
+    let plus = h
+        .buttons
+        .iter()
+        .filter(|(l, r)| {
+            l == "Increase" && r.y_range().contains(label.center().y) && r.left() > label.right()
+        })
+        .min_by(|a, b| a.1.left().total_cmp(&b.1.left()))
+        .map(|(_, r)| *r)
+        .expect("the Baseline + button");
+    h.click(plus.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 13);
+    h.app.doc.editor.undo();
+    assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 12);
+}
+
+#[test]
+fn the_font_numbers_go_in_two_columns_inside_the_panel() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
+    h.frame();
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "FontForge"))))
+        .expect("the Font panel is open");
+    let label = |name: &str| {
+        h.text_rects
+            .iter()
+            .find(|(t, _, _)| t == name)
+            .map(|(_, r, _)| *r)
+            .unwrap_or_else(|| panic!("the {name} label"))
+    };
+    // Cada par comparte fila: la segunda etiqueta, a la derecha de la primera.
+    for (left, right) in [
+        ("Baseline", "Cap height"),
+        ("x-height", "Descent"),
+        ("Letter spacing", "Space width"),
+    ] {
+        let (a, b) = (label(left), label(right));
+        assert!(b.y_range().contains(a.center().y), "{left} / {right}");
+        assert!(b.left() > a.right(), "{left} / {right}");
+        // Los dos steppers de la fila, dentro del panel.
+        let plus: Vec<Rect> = h
+            .buttons
+            .iter()
+            .filter(|(l, r)| l == "Increase" && r.y_range().contains(a.center().y))
+            .map(|(_, r)| *r)
+            .collect();
+        assert_eq!(plus.len(), 2, "{left} / {right}");
+        for r in plus {
+            assert!(flyout.contains_rect(r), "{r:?} vs {flyout:?}");
+        }
+    }
+    assert!(label("x-height").top() > label("Baseline").bottom());
+}
+
+#[test]
+fn dragging_a_font_stepper_is_one_undo_step() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
+    h.frame();
+    let label = h
+        .text_rects
+        .iter()
+        .find(|(t, _, _)| t == "Baseline")
+        .map(|(_, r, _)| *r)
+        .expect("the Baseline label");
+    let in_row = |name: &str| {
+        h.buttons
+            .iter()
+            .filter(|(l, r)| {
+                l == name && r.y_range().contains(label.center().y) && r.left() > label.right()
+            })
+            .min_by(|a, b| a.1.left().total_cmp(&b.1.left()))
+            .map(|(_, r)| *r)
+            .expect("a Baseline button")
+    };
+    // El número, entre el − y el +: arrastrarlo a la izquierda baja la baseline.
+    let field = in_row("Decrease")
+        .center()
+        .lerp(in_row("Increase").center(), 0.5);
+    let steps = h.app.doc.editor.history.done_count();
+    drag(&mut h, field, field - egui::vec2(80.0, 0.0));
+    let baseline = h.app.doc.editor.font().unwrap().metrics.baseline;
+    assert!(baseline < 11, "it moved more than one step: {baseline}");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 12);
 }

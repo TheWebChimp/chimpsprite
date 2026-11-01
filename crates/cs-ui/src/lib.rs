@@ -25,6 +25,9 @@ mod fg_bg;
 mod file_actions;
 mod filter_dialog;
 mod filters;
+mod font_dialog;
+mod font_overlay;
+mod font_panel;
 mod frame_dialog;
 mod mask_ops;
 mod menus;
@@ -44,6 +47,7 @@ mod home;
 mod instance_ops;
 mod keyboard_shortcuts;
 mod keymap;
+mod kit;
 mod layer_ops;
 #[cfg(test)]
 mod layout_tests;
@@ -74,6 +78,7 @@ mod preferences;
 mod preview;
 mod recent;
 pub mod skin;
+mod sound;
 mod symbol_dialog;
 mod symbol_ops;
 mod tabs;
@@ -130,6 +135,8 @@ pub struct ChimpApp {
     groom: groom::GroomPanel,
     /// El panel Lumen del dock.
     lumen: lumen::LumenPanel,
+    /// El panel Font del dock.
+    font_panel: font_panel::FontPanelState,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
@@ -147,6 +154,8 @@ pub struct ChimpApp {
     #[cfg(not(target_arch = "wasm32"))]
     news_fetcher: Box<dyn news::Fetcher>,
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
+    /// `File → New Font…`.
+    new_font: Option<font_dialog::NewFontDialog>,
     /// La ventana Edit → Undo History abierta.
     undo_history: bool,
     /// La ventana Edit → Keyboard Shortcuts abierta.
@@ -198,6 +207,11 @@ pub struct ChimpApp {
     /// Opciones de herramienta de la última pestaña abierta (o las guardadas al arrancar). Cada
     /// pestaña nueva empieza con las de la pestaña activa.
     tool_options: editor::ToolOptions,
+}
+
+/// En la memoria de egui: la fila de arriba de la barra de estado de este frame.
+fn status_top_id() -> egui::Id {
+    egui::Id::new("app_status_top")
 }
 
 impl ChimpApp {
@@ -276,6 +290,7 @@ impl ChimpApp {
             dafont: Default::default(),
             groom: Default::default(),
             lumen: Default::default(),
+            font_panel: Default::default(),
             platform: platform::Platform::default(),
             autosaver: autosave::Autosaver::default(),
             restore: None,
@@ -289,6 +304,7 @@ impl ChimpApp {
             #[cfg(not(target_arch = "wasm32"))]
             news_fetcher: news::default_fetcher(),
             new_tilemap: None,
+            new_font: None,
             undo_history: false,
             shortcuts: None,
             keymap: keymap::Keymap::default(),
@@ -328,6 +344,10 @@ impl ChimpApp {
     }
 
     fn open_canvas_size(&mut self) {
+        // Una fuente tiene la celda fija.
+        if !self.doc.editor.can_resize_sprite() {
+            return;
+        }
         self.canvas_size = Some(canvas_size::CanvasSizeDialog::new(
             self.doc.editor.artboard(),
         ));
@@ -571,6 +591,30 @@ impl ChimpApp {
         }
     }
 
+    /// El panel Font del dock y lo que pide.
+    fn font_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
+        let mut action = None;
+        let skin = self.pixel.skin();
+        let editor = &mut self.doc.editor;
+        let state = &mut self.font_panel;
+        dock::flyout(
+            ctx,
+            dock::DockPanel::Font,
+            anchor,
+            skin,
+            font_panel::WIDTH,
+            true,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    action = font_panel::show(ui, editor, skin, state);
+                });
+            },
+        );
+        if let Some(font_panel::FontAction::NewFont) = action {
+            self.new_font = Some(Default::default());
+        }
+    }
+
     /// El panel Library del dock y lo que pide.
     fn library_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
         let mut action = None;
@@ -596,11 +640,7 @@ impl ChimpApp {
         let editor = &mut self.doc.editor;
         match action {
             library_panel::LibraryAction::Rename(id, name) => {
-                editor.execute_doc(cs_commands::DocCommand::SetArtboardProps {
-                    id,
-                    name: Some(name),
-                    position: None,
-                });
+                editor.rename_artboard(id, name);
             }
             library_panel::LibraryAction::Duplicate(id) => {
                 let Some(source) = editor.document.artboard(id) else {
@@ -667,6 +707,52 @@ impl ChimpApp {
             style.size = picked.size_px.unwrap_or(16);
             style.antialias = false;
         }
+    }
+
+    fn update_font_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.new_font else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Accept => {
+                let (name, cell, mode) = (dialog.name.trim().to_owned(), dialog.cell, dialog.mode);
+                let name = if name.is_empty() {
+                    "New Font".to_owned()
+                } else {
+                    name
+                };
+                self.new_font = None;
+                // Desde Home no hay pestaña: se abre un documento nuevo como File → New.
+                if !self.has_doc() {
+                    self.new_document();
+                }
+                self.create_font(ctx, &name, cell, mode);
+            }
+            tilemap_dialog::DialogResult::Cancel => self.new_font = None,
+        }
+    }
+
+    /// Crea la fuente `name` en el documento abierto, abre su panel en el dock y la encuadra al
+    /// lado de él. `false` si no se pudo.
+    pub(crate) fn create_font(
+        &mut self,
+        ctx: &egui::Context,
+        name: &str,
+        cell: (u32, u32),
+        mode: cs_core::FontMode,
+    ) -> bool {
+        if !self.doc.editor.new_font(name, cell, mode) {
+            return false;
+        }
+        dock::set_open(ctx, Some(dock::DockPanel::Font));
+        // La fuente nueva, ajustada a lo que no tapa el panel.
+        self.doc
+            .canvas
+            .request_zoom(view::ZoomRequest::FitActiveBeside {
+                right_inset: dock::flyout_reach(font_panel::WIDTH),
+            });
+        true
     }
 
     fn update_tilemap_dialogs(&mut self, ctx: &egui::Context) {
@@ -918,13 +1004,15 @@ impl ChimpApp {
         let mut switch_to = None;
         let mut close = None;
         let mut home = false;
+        let bar = self.tabs.bar();
+        let shown = self.tabs.bar_active();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
-            if ui.selectable_label(!self.has_doc(), "🏠 Home").clicked() {
+            if ui.selectable_label(shown.is_none(), "🏠 Home").clicked() {
                 home = true;
             }
-            for (i, tab) in self.tabs.infos(&self.doc).into_iter().enumerate() {
-                let active = self.tabs.active() == Some(i);
+            for (i, tab) in self.tabs.bar_infos(&self.doc).into_iter().enumerate() {
+                let active = shown == Some(i);
                 let label = format!("{}{}", tab.name, if tab.dirty { " •" } else { "" });
                 ui.add_space(4.0);
                 let response = ui.selectable_label(active, label);
@@ -943,10 +1031,10 @@ impl ChimpApp {
             self.go_home();
         }
         if let Some(i) = switch_to {
-            self.tabs.switch(&mut self.doc, i);
+            self.tab_action(bar[i], false);
         }
         if let Some(i) = close {
-            self.request_close_tab(i);
+            self.tab_action(bar[i], true);
         }
     }
 
@@ -992,8 +1080,8 @@ impl ChimpApp {
             ui.add_enabled_ui(!modal, |ui| self.menu_bar(ui));
         });
         if let Some(skin) = self.pixel.skin() {
-            let infos = self.tabs.infos(&self.doc);
-            let active = self.tabs.active();
+            let infos = self.tabs.bar_infos(&self.doc);
+            let active = self.tabs.bar_active();
             let action = egui::Panel::top("tabs")
                 .exact_size(tab_bar::TABS_HEIGHT)
                 .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0))
@@ -1018,8 +1106,8 @@ impl ChimpApp {
             }
             match action {
                 Some(tab_bar::TabAction::Home) => self.go_home(),
-                Some(tab_bar::TabAction::Switch(i)) => self.tabs.switch(&mut self.doc, i),
-                Some(tab_bar::TabAction::Close(i)) => self.request_close_tab(i),
+                Some(tab_bar::TabAction::Switch(i)) => self.tab_action(self.tabs.bar()[i], false),
+                Some(tab_bar::TabAction::Close(i)) => self.tab_action(self.tabs.bar()[i], true),
                 None => {}
             }
         } else {
@@ -1038,7 +1126,7 @@ impl ChimpApp {
                 .show_separator_line(false);
         }
         {
-            status.show(ui, |ui| {
+            let shown = status.show(ui, |ui| {
                 let notice = self
                     .autosaver
                     .disabled_reason
@@ -1080,6 +1168,8 @@ impl ChimpApp {
                     }
                 }
             });
+            // Hasta dónde pintan los paneles de arriba (`editor_panels`).
+            ui.data_mut(|d| d.insert_temp(status_top_id(), shown.response.rect.top()));
         }
         if self.has_doc() {
             let rect = self.editor_panels(ui, modal);
@@ -1097,13 +1187,17 @@ impl ChimpApp {
             if let Some(frame) = frame {
                 panel = panel.frame(frame);
             }
+            // Las páginas (el UI Catalog) van sobre el mismo fondo (`background`, #ddcebf), como
+            // pidió el diseñador.
+            let page = self.tabs.page();
             panel.show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| {
-                    if self.pixel.skin().is_some() {
-                        self.pixel_home(ui);
-                    } else {
-                        self.home(ui);
+                ui.add_enabled_ui(!modal, |ui| match (page, self.pixel.skin()) {
+                    (Some(tabs::Page::Catalog), Some(skin)) => kit::catalog::show(ui, skin),
+                    (Some(tabs::Page::Catalog), None) => {
+                        ui.label("The UI Catalog shows the Pixel UI components: turn on View → Pixel UI.");
                     }
+                    (None, Some(_)) => self.pixel_home(ui),
+                    (None, None) => self.home(ui),
                 });
             });
             None
@@ -1113,6 +1207,12 @@ impl ChimpApp {
     /// Paneles del editor (cuando hay un documento activo). Devuelve el rect del lienzo.
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
         let skin = self.pixel.skin();
+        // Nada de lo de arriba pinta sobre la barra de estado: si el contenido de un panel no
+        // entra en una ventana baja, egui lo alarga hacia abajo (y con él su borde y el resalte
+        // de redimensionar).
+        if let Some(top) = ui.data(|d| d.get_temp::<f32>(status_top_id())) {
+            ui.set_clip_rect(ui.clip_rect().with_max_y(top));
+        }
         // La barra de opciones, a todo el ancho debajo de las pestañas: 21 de alto con Pixel UI,
         // con el separador grabado abajo.
         panels::options_bar_panel(ui.style(), skin).show(ui, |ui| {
@@ -1260,7 +1360,8 @@ impl ChimpApp {
                 .inner
             })
             .inner;
-        if self.view.timeline {
+        // Un artboard de fuente no tiene timeline: sus frames son los glifos. La preferencia queda igual para los sprites.
+        if self.view.timeline && self.doc.editor.font().is_none() {
             let mut panel = egui::Panel::bottom("timeline")
                 .resizable(true)
                 .default_size(190.0);
@@ -1310,6 +1411,7 @@ impl ChimpApp {
             Some((dock::DockPanel::Groom, anchor)) => self.groom_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Lumen, anchor)) => self.lumen_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Library, anchor)) => self.library_panel(ui.ctx(), anchor, modal),
+            Some((dock::DockPanel::Font, anchor)) => self.font_panel(ui.ctx(), anchor, modal),
             _ => {}
         }
         if !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {
@@ -1424,6 +1526,7 @@ impl eframe::App for ChimpApp {
             self.open_convert_to_symbol();
         }
         self.update_tilemap_dialogs(&ctx);
+        self.update_font_dialog(&ctx);
         self.update_symbol_dialog(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
@@ -1432,6 +1535,12 @@ impl eframe::App for ChimpApp {
         platform::set_unsaved(self.any_dirty());
 
         self.capture.update(&ctx);
+        sound::end_frame(
+            &ctx,
+            self.view.ui_sounds,
+            self.view.sound_pack,
+            self.view.sound_volume,
+        );
     }
 
     fn save(&mut self, storage: &mut dyn eframe::Storage) {

@@ -4,6 +4,7 @@
 use eframe::egui::{self, Align2, RichText, Ui};
 
 use crate::skin::Skin;
+use crate::sound::SoundPack;
 use crate::view::ViewSettings;
 use crate::widgets;
 
@@ -122,4 +123,26 @@ fn contents(
     section(ui, skin, "Timeline");
     widgets::checkbox(ui, &mut view.timeline, "Show Timeline");
     widgets::checkbox(ui, &mut view.tile_numbers, "Tile Numbers");
+    section(ui, skin, "Sounds");
+    widgets::checkbox(ui, &mut view.ui_sounds, "Interface Sounds")
+        .on_hover_text("Clicks and notices");
+    ui.add_enabled_ui(view.ui_sounds, |ui| {
+        let before = view.sound_pack;
+        ui.horizontal(|ui| {
+            ui.label("Style");
+            widgets::combo(ui, "pref_sound_pack", view.sound_pack.label(), |ui| {
+                for pack in SoundPack::ALL {
+                    widgets::choice(ui, &mut view.sound_pack, pack, pack.label());
+                }
+            });
+        });
+        ui.horizontal(|ui| {
+            ui.label("Volume");
+            widgets::number(ui, &mut view.sound_volume, 0..=100, "%");
+        });
+        // Al cambiar el estilo, una muestra.
+        if view.sound_pack != before {
+            crate::sound::play(crate::sound::Cue::Success);
+        }
+    });
 }

@@ -1267,6 +1267,29 @@ fn piece_id(skin: &Skin, name: &str) -> egui::TextureId {
         .id()
 }
 
+/// Los píxeles de los íconos de la barra del kit (≡ y ○), con o sin el foco.
+fn title_icon_dots(h: &Harness) -> Vec<Rect> {
+    fn walk(s: &egui::Shape, out: &mut Vec<Rect>) {
+        match s {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+            egui::Shape::Rect(r)
+                if r.rect.size() == Vec2::splat(1.0)
+                    && [
+                        egui::Color32::from_rgb(100, 54, 75),
+                        egui::Color32::from_rgb(178, 82, 102),
+                    ]
+                    .contains(&r.fill) =>
+            {
+                out.push(r.rect)
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    h.shapes.iter().for_each(|s| walk(s, &mut out));
+    out
+}
+
 fn union(rects: &[Rect]) -> Rect {
     rects.iter().fold(Rect::NOTHING, |a, r| a.union(*r))
 }
@@ -1281,44 +1304,41 @@ fn with_pixel_ui_the_window_wraps_the_pixels_and_its_bar_does_not_zoom() {
         h.frame(vec![]);
         let pixels = h.pixels_of(0);
         let frame = union(&h.meshes(piece_id(&skin, "artboard.frame")));
-        // Borde + 1 de blanco a los lados y abajo; barra de 13 + 1 de blanco arriba.
+        // Borde + 1 de blanco a los lados y abajo; barra de 14 + 1 de blanco arriba.
         assert_eq!(
             frame,
             Rect::from_min_max(
-                pixels.min - Vec2::new(2.0, 14.0),
+                pixels.min - Vec2::new(2.0, 15.0),
                 pixels.max + Vec2::new(2.0, 2.0)
             ),
             "zoom {zoom}"
         );
         bars.push(pixels.top() - frame.top());
         // Los íconos van en la barra, encima del área de píxeles.
-        for name in ["artboard.menu", "window.close"] {
-            let icon = union(&h.meshes(piece_id(&skin, name)));
-            assert!(
-                icon.bottom() <= pixels.top() && icon.top() >= frame.top(),
-                "{name} {icon:?}"
-            );
-        }
+        let icons = union(&title_icon_dots(&h));
+        assert!(
+            icons.bottom() <= pixels.top() && icons.top() >= frame.top(),
+            "{icons:?}"
+        );
         // El nombre va en la barra, en lugar de la etiqueta de arriba (a zoom 1 el
         // artboard de 16 no tiene lugar para el nombre y a 8 se corta con "...").
         if zoom < 16.0 {
             continue;
         }
-        let label = label_text(h.editor.artboard());
+        let label = label_text(h.editor.artboard(), h.editor.frame);
         let (_, text) = h
             .texts()
             .into_iter()
             .find(|(t, _)| *t == label)
             .unwrap_or_else(|| panic!("the name in the bar: {:?}", h.texts()));
         assert!(text.center().y > frame.top() && text.center().y < pixels.top());
-        // Centrado en la franja de 13 que empieza debajo de la fila rosa agregada arriba.
-        let band_center = frame.top() + 1.0 + 13.0 / 2.0;
-        assert_eq!(text.top(), (band_center - text.height() / 2.0).round());
+        // En la barra del kit (14 filas).
+        assert!(text.center().y < frame.top() + 14.0, "{text:?}");
     }
     assert_eq!(
         bars,
-        vec![14.0; 3],
-        "the bar (13) and the white (1) do not zoom"
+        vec![15.0; 3],
+        "the bar (14) and the white (1) do not zoom"
     );
 }
 
@@ -1693,7 +1713,7 @@ fn inactive_windows_are_dimmed_and_the_active_one_is_not() {
 fn a_narrow_artboard_keeps_its_bar_inside_the_window() {
     let mut h = Harness::new();
     let skin = with_window(&mut h);
-    let label = label_text(h.editor.artboard());
+    let label = label_text(h.editor.artboard(), h.editor.frame);
     // 16 px de artboard a 1.5 (ventana de 28): íconos sin nombre; a 1 y 0.5, solo la barra.
     for (zoom, icons) in [(1.5, true), (1.0, false), (0.5, false)] {
         h.canvas.zoom = zoom;
@@ -1702,12 +1722,10 @@ fn a_narrow_artboard_keeps_its_bar_inside_the_window() {
         let frames = h.meshes(piece_id(&skin, "artboard.frame"));
         let frame = union(&frames);
         assert_eq!(frame.width(), pixels.width() + 4.0, "zoom {zoom}");
-        assert_eq!(pixels.top() - frame.top(), 14.0, "zoom {zoom}");
-        for name in ["artboard.menu", "window.close"] {
-            let drawn = h.meshes(piece_id(&skin, name));
-            assert_eq!(!drawn.is_empty(), icons, "{name} at {zoom}");
-            assert!(drawn.iter().all(|r| frame.contains_rect(*r)), "{name}");
-        }
+        assert_eq!(pixels.top() - frame.top(), 15.0, "zoom {zoom}");
+        let drawn = title_icon_dots(&h);
+        assert_eq!(!drawn.is_empty(), icons, "icons at {zoom}");
+        assert!(drawn.iter().all(|r| frame.contains_rect(*r)));
         assert!(
             h.texts().iter().all(|(t, _)| !t.starts_with(&label[..3])),
             "no name at {zoom}"
@@ -1827,9 +1845,8 @@ fn an_off_screen_artboard_draws_no_window() {
     let skin = with_window(&mut h);
     h.canvas.pan += Vec2::new(5000.0, 0.0);
     h.frame(vec![]);
-    for name in ["artboard.frame", "artboard.menu", "window.close"] {
-        assert!(h.meshes(piece_id(&skin, name)).is_empty(), "{name}");
-    }
+    assert!(h.meshes(piece_id(&skin, "artboard.frame")).is_empty());
+    assert!(title_icon_dots(&h).is_empty(), "the bar icons");
     let checker = h.canvas.checker.as_ref().unwrap().id();
     assert!(h.meshes(checker).is_empty());
 }
@@ -1838,7 +1855,7 @@ fn an_off_screen_artboard_draws_no_window() {
 fn without_pixel_ui_the_label_and_the_orange_border_stay() {
     let h = Harness::new();
     let pixels = h.pixels_of(0);
-    let label = label_text(h.editor.artboard());
+    let label = label_text(h.editor.artboard(), h.editor.frame);
     let (_, text) = h
         .texts()
         .into_iter()
@@ -1876,13 +1893,13 @@ fn with_a_fractional_pan_the_frame_hugs_the_drawn_pixels_with_one_white_point() 
             assert_eq!(h.meshes(tex), vec![pixels], "texture, {at}");
             let checker = h.canvas.checker.as_ref().unwrap().id();
             assert_eq!(h.meshes(checker), vec![pixels], "checker, {at}");
-            // El marco: borde (1) + blanco (1) a los lados y abajo, barra (13) + blanco (1)
+            // El marco: borde (1) + blanco (1) a los lados y abajo, barra (14) + blanco (1)
             // arriba; ni un píxel más ni menos.
             let frame = union(&h.meshes(piece_id(&skin, "artboard.frame")));
             assert_eq!(
                 frame,
                 Rect::from_min_max(
-                    pixels.min - Vec2::new(2.0, 14.0),
+                    pixels.min - Vec2::new(2.0, 15.0),
                     pixels.max + Vec2::new(2.0, 2.0)
                 ),
                 "{at}"

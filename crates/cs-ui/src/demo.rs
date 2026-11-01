@@ -289,6 +289,10 @@ fn draw_chimp(editor: &mut Editor) {
 /// herramientas, rangos y paneles listos para las capturas.
 pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     use crate::*;
+    // Desarrollo: la pestaña UI Catalog a la vista, para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_CATALOG").is_some() {
+        app.show_page(tabs::Page::Catalog);
+    }
     // Desarrollo: abre el diálogo con un ancho de ejemplo para capturas.
     if std::env::var_os("CHIMPSPRITE_DEMO_CANVAS_SIZE").is_some() && app.has_doc() {
         app.open_canvas_size();
@@ -465,7 +469,7 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         if dev_var("CHIMPSPRITE_DEMO_LUMEN_PICKER").is_some() {
             ctx.data_mut(|d| {
                 d.insert_temp(
-                    eframe::egui::Id::new(crate::lumen::DEMO_PICKER),
+                    eframe::egui::Id::new(crate::kit::color_button::DEMO_PICKER),
                     eframe::egui::Id::NULL,
                 )
             });
@@ -491,6 +495,13 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         editor.insert_empty_frame();
         editor.undo();
         app.undo_history = true;
+    }
+    // Desarrollo: el campo de renombrar de la capa activa abierto, para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_LAYER_RENAME").is_some() && app.has_doc() {
+        let layer = app.doc.editor.layer;
+        if let Some(name) = app.doc.editor.sprite().layer(layer).map(|l| l.name.clone()) {
+            app.doc.timeline.start_rename(layer, name);
+        }
     }
     // Desarrollo: un rango de cels del timeline ("fila,frame,fila,frame"), para capturas.
     if let Ok(range) = std::env::var("CHIMPSPRITE_DEMO_CELS")
@@ -557,6 +568,10 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             editor.add_artboard(64, 64);
             editor.rename_active_artboard((*name).into());
         }
+        // Con CHIMPSPRITE_DEMO_ARTBOARD_RENAME, el campo de renombrar del activo abierto.
+        if dev_var("CHIMPSPRITE_DEMO_ARTBOARD_RENAME").is_some() {
+            app.doc.canvas.start_rename(&app.doc.editor);
+        }
     }
     // Desarrollo: dos grupos (uno colapsado), para capturas de sus carpetitas.
     if std::env::var_os("CHIMPSPRITE_DEMO_GROUP").is_some() && app.has_doc() {
@@ -574,6 +589,85 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         });
     }
     // Desarrollo: abre el diálogo de nueva capa tilemap para capturas (con --demo).
+    // Desarrollo: la capa activa pasada a tilemap de 8×8 (con su panel del tileset) y el volteo X
+    // del pincel prendido, para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_TILEMAP").is_some() && app.has_doc() {
+        app.doc.editor.convert_to_tilemap((8, 8));
+        app.doc.editor.toggle_brush_flip(cs_core::Tile::FLIP_X);
+    }
+    // Desarrollo: una fuente de 8×8 con unas letras y el panel Font abierto, para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_FONT").is_some() && app.has_doc() {
+        // Como el OK de File → New Font…: con su panel abierto y encuadrada al lado de él.
+        if app.create_font(ctx, "Demo Font", (8, 8), cs_core::FontMode::OneBit) {
+            let e = &mut app.doc.editor;
+            type Points = &'static [(i32, i32)];
+            let letters: [(char, Points); 3] = [
+                (
+                    'A',
+                    &[
+                        (1, 1),
+                        (2, 1),
+                        (0, 2),
+                        (3, 2),
+                        (0, 3),
+                        (1, 3),
+                        (2, 3),
+                        (3, 3),
+                        (0, 4),
+                        (3, 4),
+                        (0, 5),
+                        (3, 5),
+                    ],
+                ),
+                (
+                    'B',
+                    &[
+                        (0, 1),
+                        (1, 1),
+                        (2, 1),
+                        (0, 2),
+                        (3, 2),
+                        (0, 3),
+                        (1, 3),
+                        (2, 3),
+                        (0, 4),
+                        (3, 4),
+                        (0, 5),
+                        (1, 5),
+                        (2, 5),
+                    ],
+                ),
+                (
+                    'C',
+                    &[
+                        (1, 1),
+                        (2, 1),
+                        (3, 1),
+                        (0, 2),
+                        (0, 3),
+                        (0, 4),
+                        (1, 5),
+                        (2, 5),
+                        (3, 5),
+                    ],
+                ),
+            ];
+            for (ch, points) in letters {
+                e.go_to_glyph(ch);
+                let (layer, frame) = (e.layer, e.frame);
+                e.execute(Command::DrawPixels {
+                    layer,
+                    frame,
+                    pixels: points
+                        .iter()
+                        .map(|&(x, y)| (x, y, cs_core::ONE_BIT_INK))
+                        .collect(),
+                });
+            }
+            e.go_to_glyph('A');
+            app.font_panel.test_text = "ABC CAB".into();
+        }
+    }
     if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
         app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
     }

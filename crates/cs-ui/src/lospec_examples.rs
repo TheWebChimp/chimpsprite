@@ -142,10 +142,12 @@ impl ExampleCache {
 /// El marco de los ejemplos: 1 px blanco alrededor y la sombra debajo (como en el diseño).
 const FRAME: egui::Color32 = egui::Color32::WHITE;
 const FRAME_SHADOW: egui::Color32 = egui::Color32::from_rgb(136, 110, 106);
-/// Las piezas del paginador (◀ 1/5 ▶).
-const PAGER_PREV: &str = "lospec.pager.prev";
+/// El paginador (◀ 1/5 ▶): el campo del diseño entre dos botones con ícono del UI kit, de 15 de
+/// ancho como los del diseño.
+const PAGER_PREV: &str = "icon.arrow_left";
 const PAGER_FIELD: &str = "lospec.pager.field";
-const PAGER_NEXT: &str = "lospec.pager.next";
+const PAGER_NEXT: &str = "icon.arrow_right";
+const PAGER_BUTTON_W: f32 = 15.0;
 
 /// El ejemplo actual a todo el ancho, en su marco (o un hueco mientras carga). Si falla, nada.
 pub fn image(ui: &mut egui::Ui, p: &LospecPalette, cache: &mut ExampleCache, now: f64) {
@@ -205,20 +207,19 @@ pub fn pager(ui: &mut egui::Ui, p: &LospecPalette, cache: &mut ExampleCache) {
         skin.as_ref()
             .and_then(|s| s.piece(name, crate::skin::WidgetState::Normal).cloned())
     };
-    match (piece(PAGER_PREV), piece(PAGER_FIELD), piece(PAGER_NEXT)) {
-        (Some(prev), Some(field), Some(next_piece)) => {
+    match (skin.as_deref(), piece(PAGER_FIELD)) {
+        (Some(skin), Some(field)) => {
             let ppp = ui.ctx().pixels_per_point();
-            let size = |p: &crate::skin::Piece| egui::vec2(p.size[0] as f32, p.size[1] as f32);
-            let total = size(&prev).x + size(&field).x + size(&next_piece).x;
+            let field_size = egui::vec2(field.size[0] as f32, field.size[1] as f32);
+            let button = egui::vec2(PAGER_BUTTON_W, crate::kit::button::HEIGHT);
+            let total = 2.0 * button.x + field_size.x;
             let (rect, _) =
-                ui.allocate_exact_size(egui::vec2(total, size(&prev).y), egui::Sense::hover());
-            let prev_at = egui::Rect::from_min_size(rect.min, size(&prev));
-            let field_at = egui::Rect::from_min_size(prev_at.right_top(), size(&field));
-            let next_at = egui::Rect::from_min_size(field_at.right_top(), size(&next_piece));
-            let mut shapes = Vec::new();
-            for (piece, at) in [(&prev, prev_at), (&field, field_at), (&next_piece, next_at)] {
-                shapes.extend(crate::pixel_ui::piece_shapes(piece, at, ppp));
-            }
+                ui.allocate_exact_size(egui::vec2(total, button.y), egui::Sense::hover());
+            let rect = egui::Rect::from_min_size(rect.min.round(), rect.size());
+            let prev_at = egui::Rect::from_min_size(rect.min, button);
+            let field_at = egui::Rect::from_min_size(prev_at.right_top(), field_size);
+            let next_at = egui::Rect::from_min_size(field_at.right_top(), button);
+            let mut shapes = crate::pixel_ui::piece_shapes(&field, field_at, ppp);
             let ink = crate::pixel_ui::control_border(ui.ctx());
             let galley = crate::menus::galley(ui, &text, ink);
             // Centrado en lo blanco del campo (sin sus filas de abajo).
@@ -227,18 +228,16 @@ pub fn pager(ui: &mut egui::Ui, p: &LospecPalette, cache: &mut ExampleCache) {
             let pos = crate::tab_bar::text_pos(&galley, left, caps, ppp);
             shapes.push(egui::Shape::galley(pos, galley, ink));
             ui.painter().extend(shapes);
-            let button = |at: egui::Rect, label: &str| {
-                ui.interact(
-                    at,
-                    ui.id().with(("lospec_pager", &p.slug, label)),
-                    egui::Sense::click(),
-                )
-                .on_hover_text(label)
+            // Los botones con ícono del kit, con sus estados.
+            let mut button = |at: egui::Rect, icon: &str, label: &str| {
+                let id = ui.id().with(("lospec_pager", &p.slug, label));
+                crate::kit::button::icon_button_at(ui, skin, at, id, icon, label)
+                    .on_hover_text(label)
             };
-            if button(prev_at, "Previous example").clicked() {
+            if button(prev_at, PAGER_PREV, "Previous example").clicked() {
                 next = step(index, len, false);
             }
-            if button(next_at, "Next example").clicked() {
+            if button(next_at, PAGER_NEXT, "Next example").clicked() {
                 next = step(index, len, true);
             }
         }

@@ -9,14 +9,12 @@ use eframe::egui::{
 use eframe::emath::GuiRounding as _;
 use std::ops::Range;
 
+use crate::kit;
 use crate::skin::{IRect, Piece, Skin, SkinColors, WidgetState, nine_slice};
 use crate::tab_bar;
 
 /// Marco de los diálogos: la ventana de barra rosa del mockup de "Unsaved changes".
 const DIALOG_PIECE: &str = "window";
-const BUTTON_PIECE: &str = "button";
-/// Botón de cerrar de la barra de título.
-const CLOSE_PIECE: &str = "window.close";
 /// Margen entre el área del centro del 9-slice y lo de adentro (contenido o texto).
 pub(crate) const PADDING: f32 = 4.0;
 /// Espacio entre botones de una fila.
@@ -24,11 +22,8 @@ const BUTTON_GAP: f32 = 4.0;
 /// Bordes del diálogo de respaldo (izquierda, arriba, derecha, abajo); arriba va la barra de
 /// título.
 const FALLBACK_DIALOG: [f32; 4] = [1.0, 13.0, 1.0, 1.0];
-/// Bordes y tamaño mínimo del botón de respaldo (el alto del botón del mockup).
+/// Bordes del marco de respaldo de los botones con ícono.
 const FALLBACK_BUTTON: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
-const FALLBACK_BUTTON_SIZE: Vec2 = Vec2::new(32.0, 18.0);
-/// Tamaño del botón de cerrar de respaldo (el de la pieza del skin).
-const FALLBACK_CLOSE_SIZE: Vec2 = Vec2::new(9.0, 9.0);
 /// En la memoria de egui, con el id del diálogo: la posición a la que se lo arrastró y la pasada
 /// en que se mostró por última vez.
 const MOVED_KEY: &str = "pixel_dialog_moved";
@@ -149,8 +144,8 @@ pub(crate) fn flat_frame(
 /// Se mueve arrastrando la barra de título (no el cuerpo ni el botón de cerrar) y no sale de la
 /// pantalla. Queda donde se lo dejó mientras siga abierto; al abrirlo de nuevo, vuelve al centro.
 ///
-/// Con `closable`, a la derecha de la barra va el botón de cerrar (`window.close`, o
-/// `window.close.hover` con el puntero encima; si el skin no lo trae, una × de líneas). Si se
+/// La barra es la del UI kit (`kit::title_bar`). Con `closable`, a la derecha va su ○ (la × con
+/// el puntero encima). Si se
 /// hace clic en él, [`DialogOutput::closed`] es `true`; qué hacer con eso lo decide quien llama.
 pub fn pixel_dialog_at<R>(
     ctx: &egui::Context,
@@ -213,7 +208,8 @@ pub fn pixel_dialog_with_bar<R>(
         let galley = ui.painter().layout_no_wrap(title.to_owned(), font, text);
         let inner = egui::Frame::NONE.inner_margin(margin).show(ui, |ui| {
             ui.visuals_mut().override_text_color = Some(text);
-            ui.set_min_width(galley.size().x);
+            // El título, el ○ y su aire.
+            ui.set_min_width(galley.size().x + TITLE_ROOM);
             add_contents(ui)
         });
         let rect = inner.response.rect;
@@ -222,19 +218,36 @@ pub fn pixel_dialog_with_bar<R>(
             Some(p) => piece_shapes(p, rect, ppp),
             None => flat_shapes(skin, rect, top, ppp),
         };
-        let bar = Rect::from_min_size(rect.min, vec2(rect.width(), top));
-        // Las mayúsculas y lo que baja de la línea (p, y, g) centrados entre el borde de arriba y
-        // la línea de abajo de la barra: nada se encima en la línea.
-        let room = top - 2.0;
-        let ink = crate::tab_bar::CAP_HEIGHT + TITLE_DESCENT;
-        let caps = bar.top() + 1.0 + ((room - ink) / 2.0).round();
-        let left = (bar.center().x - galley.size().x / 2.0).round();
-        let at = crate::tab_bar::text_pos(&galley, left, caps, ppp);
-        shapes.push(Shape::galley(at, galley, text));
-        ui.painter().set(background, Shape::Vec(shapes));
-        let close = closable.then(|| close_rect(skin, bar, ppp));
+        // La barra de título del UI kit (`kit::title_bar`): el título a la izquierda y, si se
+        // puede cerrar, el ○ (la × con el puntero encima).
+        let bar_height = crate::kit::title_bar::HEIGHT.min(top);
+        let bar = Rect::from_min_size(rect.min, vec2(rect.width(), bar_height));
+        let parts = crate::kit::title_bar::layout(bar, false, closable);
+        let close = parts.close;
         drag_title_bar(ui, id, rect, bar, close);
-        let closed = close.is_some_and(|r| close_button(ui, skin, id.with("close"), r));
+        let close_response = close.map(|r| {
+            let response = ui.interact(r, id.with("close"), Sense::click());
+            let enabled = ui.is_enabled();
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Close")
+            });
+            response
+        });
+        let closed = close_response.as_ref().is_some_and(|r| r.clicked());
+        let state = crate::kit::title_bar::TitleState {
+            focused: true,
+            menu: false,
+            close: close_response.as_ref().map(|r| r.hovered()),
+        };
+        shapes.extend(crate::kit::title_bar::bar_shapes(
+            ui.painter(),
+            &crate::kit::title_bar::TitleLook::new(skin),
+            bar,
+            title,
+            state,
+            ppp,
+        ));
+        ui.painter().set(background, Shape::Vec(shapes));
         bar_contents(ui, bar);
         DialogOutput {
             inner: inner.inner,
@@ -244,8 +257,8 @@ pub fn pixel_dialog_with_bar<R>(
     .inner
 }
 
-/// Lo que bajan de la línea las letras con descendente en el título (p, y, g).
-const TITLE_DESCENT: f32 = 2.0;
+/// Lo que ocupa la barra además del título: el aire de la izquierda, el ○ y su aire.
+const TITLE_ROOM: f32 = 20.0;
 
 /// Lo que devuelve [`pixel_dialog_at`]: lo que devolvió el contenido y si se hizo clic en el botón
 /// de cerrar de la barra de título.
@@ -304,86 +317,6 @@ fn drag_title_bar(ui: &Ui, id: Id, rect: Rect, bar: Rect, close: Option<Rect>) {
     }
 }
 
-/// El botón de cerrar de la barra de título `bar`: a la derecha, centrado en vertical y con el
-/// mismo margen a la derecha que arriba.
-fn close_rect(skin: &Skin, bar: Rect, pixels_per_point: f32) -> Rect {
-    let size = skin
-        .piece(CLOSE_PIECE, WidgetState::Normal)
-        .map_or(FALLBACK_CLOSE_SIZE, |p| {
-            vec2(p.size[0] as f32, p.size[1] as f32)
-        });
-    let inset = ((bar.height() - size.y) / 2.0).floor().max(0.0);
-    Rect::from_min_size(pos2(bar.max.x - inset - size.x, bar.min.y + inset), size)
-        .round_to_pixels(pixels_per_point)
-}
-
-/// Botón de cerrar en `rect` (ver [`close_rect`]). Devuelve si se hizo clic.
-fn close_button(ui: &mut Ui, skin: &Skin, id: Id, rect: Rect) -> bool {
-    let ppp = ui.ctx().pixels_per_point();
-    let response = ui.interact(rect, id, Sense::click());
-    let enabled = ui.is_enabled();
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, "Close"));
-    let state = if response.hovered() {
-        WidgetState::Hover
-    } else {
-        WidgetState::Normal
-    };
-    let shapes = match skin.piece(CLOSE_PIECE, state) {
-        Some(piece) => piece_shapes(piece, rect, ppp),
-        None => close_cross(rect, skin.colors().text, ppp),
-    };
-    ui.painter().extend(shapes);
-    response.clicked()
-}
-
-/// Respaldo del botón de cerrar: una × de dos líneas de 1 px, sin glifo.
-fn close_cross(rect: Rect, color: Color32, pixels_per_point: f32) -> Vec<Shape> {
-    let r = rect.shrink(2.0).round_to_pixels(pixels_per_point);
-    let stroke = Stroke::new(1.0, color);
-    vec![
-        Shape::line_segment([r.left_top(), r.right_bottom()], stroke),
-        Shape::line_segment([r.right_top(), r.left_bottom()], stroke),
-    ]
-}
-
-/// Tamaño del botón `label` ajustado al texto: 4 px de margen a cada lado del área del centro,
-/// sin bajar del tamaño de la pieza.
-/// El texto de un botón como se muestra: "…" con los puntos de la fuente pixel (si no lo tiene,
-/// el de la fuente de respaldo no es pixel art), como en los menús.
-fn shown_label(label: &str) -> String {
-    label.replace('…', tab_bar::ellipsis())
-}
-
-fn button_size(ui: &Ui, skin: &Skin, label: &str) -> Vec2 {
-    let font = TextStyle::Button.resolve(ui.style());
-    let text = ui
-        .painter()
-        .layout_no_wrap(shown_label(label), font, skin.colors().text)
-        .size();
-    let base = skin.piece(BUTTON_PIECE, WidgetState::Normal);
-    let [left, _, right, _] = base.map_or(FALLBACK_BUTTON, borders);
-    let min = base.map_or(FALLBACK_BUTTON_SIZE, |p| {
-        vec2(p.size[0] as f32, p.size[1] as f32)
-    });
-    vec2(
-        (left + PADDING + text.x + PADDING + right)
-            .ceil()
-            .max(min.x),
-        min.y,
-    )
-}
-
-/// Botón con `button` en reposo, `button.hover` con el puntero encima y `button.down` mientras
-/// se presiona. Presionado, el texto baja 1 px.
-///
-/// El ancho se ajusta al texto, con 4 px de margen a cada lado del área del centro, sin bajar
-/// del tamaño de la pieza. Devuelve un `Response` normal: clic, foco y teclado (Enter o Espacio
-/// con foco).
-pub fn pixel_button(ui: &mut Ui, skin: &Skin, label: &str) -> Response {
-    let size = button_size(ui, skin, label);
-    button_of_size(ui, skin, label, size)
-}
-
 /// Una fila de botones que ocupa todo el ancho disponible: el ancho se reparte en partes
 /// iguales, con 4 px entre botón y botón, y los píxeles que sobran van a los últimos (uno a cada
 /// uno, así los anchos son enteros y no difieren en más de 1 px). Ningún botón
@@ -396,8 +329,11 @@ pub fn pixel_buttons(ui: &mut Ui, skin: &Skin, labels: &[&str]) -> Vec<Response>
     if n == 0 {
         return Vec::new();
     }
-    let sizes: Vec<Vec2> = labels.iter().map(|l| button_size(ui, skin, l)).collect();
-    let widest = sizes.iter().map(|s| s.x).fold(0.0, f32::max);
+    let widths: Vec<f32> = labels
+        .iter()
+        .map(|l| crate::kit::button::width(ui, l))
+        .collect();
+    let widest = widths.iter().copied().fold(0.0, f32::max);
     let gaps = BUTTON_GAP * (n - 1) as f32;
     let needed = widest * n as f32 + gaps;
     let total = if ui.is_sizing_pass() {
@@ -412,86 +348,21 @@ pub fn pixel_buttons(ui: &mut Ui, skin: &Skin, labels: &[&str]) -> Vec<Response>
         ui.spacing_mut().item_spacing.x = BUTTON_GAP;
         labels
             .iter()
-            .zip(&sizes)
             .enumerate()
-            .map(|(i, (label, size))| {
+            .map(|(i, label)| {
                 let width = if i + extra >= n { each + 1.0 } else { each };
-                button_of_size(ui, skin, label, vec2(width, size.y))
+                crate::kit::button::button_sized(ui, skin, label, width)
             })
             .collect()
     })
     .inner
 }
 
-/// Dónde va el texto de un botón: centrado en `inner` y, presionado, 1 px más abajo. Alineado a
-/// píxeles de pantalla.
+/// Dónde va el ícono (o la inicial) de un botón de herramienta: centrado en `inner` y, presionado,
+/// 1 px más abajo. Alineado a píxeles de pantalla.
 fn label_pos(inner: Rect, size: Vec2, state: WidgetState, pixels_per_point: f32) -> Pos2 {
     let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
     (inner.center() - size / 2.0 + vec2(0.0, down)).round_to_pixels(pixels_per_point)
-}
-
-/// Un botón con `button` del skin de `size` exacto (en los diálogos con su lugar del diseño).
-pub fn pixel_button_sized(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response {
-    button_of_size(ui, skin, label, size)
-}
-
-/// Un botón de `size` exacto, dibujado con la pieza del estado en que está.
-/// Un botón de `size` (el cuerpo; debajo va la luz: ocupa 1 fila más), con la pieza del estado
-/// en que está y el texto con las mayúsculas en [`CONTROL_CAPS`].
-fn button_of_size(ui: &mut Ui, skin: &Skin, label: &str, size: Vec2) -> Response {
-    let colors = *skin.colors();
-    let font = TextStyle::Button.resolve(ui.style());
-    let galley = ui
-        .painter()
-        .layout_no_wrap(shown_label(label), font, colors.text);
-    let base = skin.piece(BUTTON_PIECE, WidgetState::Normal);
-    let [left, top, right, bottom] = base.map_or(FALLBACK_BUTTON, borders);
-    let (slot, response) = ui.allocate_exact_size(
-        vec2(size.x, size.y + CONTROL_HEIGHT - CONTROL_BODY),
-        Sense::click(),
-    );
-    let rect = Rect::from_min_size(slot.min, size);
-    under_light(ui, rect);
-    let enabled = ui.is_enabled();
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, label));
-    if ui.is_rect_visible(rect) {
-        let state = if response.is_pointer_button_down_on() {
-            WidgetState::Down
-        } else if response.hovered() {
-            WidgetState::Hover
-        } else {
-            WidgetState::Normal
-        };
-        // Deshabilitado, como en el diseño: el mismo botón (sin la transparencia de egui) con el
-        // texto en `button_text_disabled`.
-        let mut painter = ui.painter().clone();
-        let text_color = if enabled {
-            colors.text
-        } else {
-            painter.set_opacity(1.0);
-            colors.button_text_disabled
-        };
-        let ppp = ui.ctx().pixels_per_point();
-        match skin.piece(BUTTON_PIECE, state) {
-            Some(piece) => painter.extend(piece_shapes(piece, rect, ppp)),
-            None => painter.extend(flat_shapes(skin, rect, 0.0, ppp)),
-        }
-        let inner = Rect::from_min_max(rect.min + vec2(left, top), rect.max - vec2(right, bottom));
-        let at = label_pos(inner, galley.size(), state, ppp);
-        // A lo alto, las mayúsculas en su fila (como en los campos).
-        let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
-        let at = crate::tab_bar::text_pos(&galley, at.x, rect.top() + CONTROL_CAPS + down, ppp);
-        painter.galley(at, galley, text_color);
-        if response.has_focus() {
-            painter.rect_stroke(
-                rect.expand(1.0).round_to_pixels(ppp),
-                0.0,
-                Stroke::new(1.0, colors.accent),
-                StrokeKind::Outside,
-            );
-        }
-    }
-    response
 }
 
 /// Qué tramo de la columna es un botón: los botones van pegados y solo las puntas son
@@ -604,6 +475,19 @@ pub(crate) fn selected_shapes(
     ppp: f32,
 ) -> Vec<Shape> {
     let mut shapes = piece_shapes(piece, rect, ppp);
+    shapes.push(selected_overlay(piece, rect, bottom_line, colors, ppp));
+    shapes
+}
+
+/// Lo de [`selected_shapes`] que va encima de la pieza: el relleno liso y el marco rosa, en
+/// `rect`.
+pub(crate) fn selected_overlay(
+    piece: &Piece,
+    rect: Rect,
+    bottom_line: bool,
+    colors: &SkinColors,
+    ppp: f32,
+) -> Shape {
     let [left, top, right, bottom] = borders(piece);
     let below = if bottom_line { bottom.min(1.0) } else { 0.0 };
     let inner = Rect::from_min_max(
@@ -621,14 +505,14 @@ pub(crate) fn selected_shapes(
     ] {
         mesh.add_colored_rect(r.round_to_pixels(ppp), colors.timeline_selection);
     }
-    shapes.push(Shape::mesh(mesh));
-    shapes
+    Shape::mesh(mesh)
 }
 
 /// Botón de herramienta de la barra de íconos: el marco del tramo `slot` de la columna
-/// (`tool.slot.first`, `tool.slot` o `tool.slot.last`; con `selected`, su `.active`) a tamaño
-/// de pieza y el ícono `icon` centrado en el relleno (el centro del 9-slice). Presionado, el
-/// ícono baja 1 px. Con `more`, un triangulito de 3×3 en la esquina de abajo a la derecha del
+/// (`tool.slot.first`, `tool.slot` o `tool.slot.last`) a tamaño de pieza, con los estados de un
+/// slot del UI kit ([`kit::slot`]), y el ícono `icon` centrado en el relleno (el centro del
+/// 9-slice). Presionado, el ícono baja con la cara. Con `selected`, el relleno liso y el marco
+/// rosa del diseño (si no se está presionando). Con `more`, un triangulito de 3×3 en la esquina de abajo a la derecha del
 /// relleno marca que hay variantes.
 ///
 /// Sin el marco del tramo se usa el del medio. Sin el ícono se dibuja la inicial de `label`; sin
@@ -660,38 +544,31 @@ pub fn tool_button(
     if !ui.is_rect_visible(rect) {
         return response;
     }
-    let pressed = response.is_pointer_button_down_on();
-    // La elegida no se hunde: el botón de siempre con su relleno liso y 1 px rosa por dentro
-    // del borde (abajo).
-    let state = if pressed {
-        WidgetState::Down
-    } else if response.hovered() {
-        WidgetState::Hover
-    } else {
-        WidgetState::Normal
-    };
+    let state = kit::button::ButtonState::of(&response, enabled);
+    let pressed = state == kit::button::ButtonState::Pressed;
     let colors = *skin.colors();
     let ppp = ui.ctx().pixels_per_point();
-    let mut shapes = match slot_piece(skin, slot, state) {
+    let mut shapes = Vec::new();
+    match base {
         // Los tramos de arriba y del medio terminan en la luz (la línea es la de arriba del
-        // siguiente); el último trae su línea de abajo.
+        // siguiente); el último trae su línea de abajo. La elegida no se hunde con el puntero
+        // encima: el botón de siempre con su relleno liso y 1 px rosa por dentro del borde.
         Some(piece) if selected && !pressed => {
-            selected_shapes(piece, rect, slot == SlotPos::Last, &colors, ppp)
+            shapes = selected_shapes(piece, rect, slot == SlotPos::Last, &colors, ppp);
         }
-        Some(piece) => piece_shapes(piece, rect, ppp),
+        Some(piece) => kit::slot::paint(ui.painter(), piece, rect, state, ppp),
         None => {
-            let mut flat = flat_shapes(skin, rect, 0.0, ppp);
+            shapes = flat_shapes(skin, rect, 0.0, ppp);
             if selected {
-                flat.push(Shape::rect_stroke(
+                shapes.push(Shape::rect_stroke(
                     rect.shrink(1.0).round_to_pixels(ppp),
                     0.0,
                     Stroke::new(1.0, colors.accent),
                     StrokeKind::Inside,
                 ));
             }
-            flat
         }
-    };
+    }
     let icon_state = if pressed {
         WidgetState::Down
     } else {
@@ -728,7 +605,8 @@ pub fn tool_button(
 }
 
 /// Botón de prender y apagar de la barra de opciones: el marco `sym.slot` (`sym.slot.active`
-/// con `on`) a tamaño de pieza y el ícono `icon` en su interior.
+/// con `on`) a tamaño de pieza, con los estados de un slot del UI kit ([`kit::slot`]), y el
+/// ícono `icon` en su interior (presionado, baja con el marco).
 ///
 /// - Sin el marco: el respaldo plano, con un borde `accent` si está prendido.
 /// - Sin el ícono: lo que dibuje `fallback` en el interior (rect y color del texto).
@@ -759,13 +637,17 @@ pub fn toggle_button(
     let rect = Rect::from_min_size(rect.min.round(), size);
     let colors = *skin.colors();
     let ppp = ui.ctx().pixels_per_point();
-    let state = if on {
+    let look = if on {
         WidgetState::Active
     } else {
         WidgetState::Normal
     };
-    let mut shapes = match skin.piece(TOGGLE_PIECE, state) {
-        Some(piece) => piece_shapes(piece, rect, ppp),
+    let state = kit::button::ButtonState::of(&response, enabled);
+    let mut shapes = match skin.piece(TOGGLE_PIECE, look) {
+        Some(piece) => {
+            kit::slot::paint(ui.painter(), piece, rect, state, ppp);
+            Vec::new()
+        }
         None => {
             let mut flat = flat_shapes(skin, rect, 0.0, ppp);
             if on {
@@ -779,8 +661,11 @@ pub fn toggle_button(
             flat
         }
     };
-    let inner =
-        Rect::from_min_size(rect.min + TOGGLE_ICON_OFFSET, TOGGLE_ICON_SIZE).round_to_pixels(ppp);
+    let inner = Rect::from_min_size(
+        rect.min + TOGGLE_ICON_OFFSET + kit::slot::content_offset(state),
+        TOGGLE_ICON_SIZE,
+    )
+    .round_to_pixels(ppp);
     match skin.piece(icon, WidgetState::Normal) {
         Some(piece) => {
             let icon_size = vec2(piece.size[0] as f32, piece.size[1] as f32);
@@ -891,7 +776,7 @@ fn caps_block_height(galley: &egui::Galley) -> f32 {
 /// queda en el árbol de accesibilidad como etiqueta. Sin la pieza, el tooltip de egui.
 pub fn bubble_tooltip(response: Response, skin: &Skin, text: &str) -> Response {
     match skin.piece(BUBBLE_PIECE, WidgetState::Normal) {
-        Some(piece) => show_bubble(response, piece, skin.colors().text, text),
+        Some(piece) => show_bubble(response, piece, skin.colors().text, text, false),
         None => response.on_hover_text(text),
     }
 }
@@ -923,8 +808,6 @@ pub fn set_bubble(ctx: &egui::Context, skin: Option<std::sync::Arc<Skin>>) {
     });
 }
 
-/// Un botón suelto con texto: con Pixel UI, el `button` del skin ([`pixel_button`]); sin él, el
-/// de egui.
 /// Un botón de 25×16 con el ícono `icon` del skin al centro (como el de la forma del pincel):
 /// `label` es su nombre accesible y su tooltip. Con `on`, prendido (`button.active`). Sin Pixel UI
 /// (o sin el ícono), un botón de texto con `label`.
@@ -948,7 +831,6 @@ pub fn icon_button(
     let size = vec2(ICON_BUTTON.x.max(icon_w + 10.0), ICON_BUTTON.y);
     let (slot, _) = ui.allocate_exact_size(vec2(size.x, CONTROL_HEIGHT), Sense::hover());
     let rect = Rect::from_min_size(slot.min.round(), size);
-    under_light(ui, rect);
     let ppp = ui.ctx().pixels_per_point();
     let info = crate::pixel_draw::ButtonInfo {
         selected: on,
@@ -972,51 +854,25 @@ pub fn icon_button(
 const ICON_BUTTON: Vec2 = vec2(25.0, 16.0);
 
 /// La norma de los controles con Pixel UI (botones, campos, combos, grupos de opciones): 17 de
-/// alto, el cuerpo de 16 y debajo 1 fila de luz (`highlight`). En los campos la luz viene en su
-/// pieza; a los botones se la pone [`under_light`]. Las mayúsculas de los textos van 4 filas
-/// debajo del borde de arriba.
+/// alto, el cuerpo de 16 y debajo 1 fila de luz (`highlight`). En los campos y los botones la luz
+/// viene en su pieza. Las mayúsculas de los textos van 4 filas debajo del borde de arriba.
 pub const CONTROL_HEIGHT: f32 = 17.0;
 pub const CONTROL_BODY: f32 = 16.0;
 pub const CONTROL_CAPS: f32 = 4.0;
 
-/// Antes era el botón "con luz" de los paneles; ahora todos los botones la llevan.
-pub fn lit_button(ui: &mut Ui, label: &str) -> Response {
-    text_button(ui, label)
-}
-
-/// La luz de abajo de `rect` como en las casillas, con Pixel UI: en las dos esquinas de abajo
-/// de `rect` (las de la pieza redondeada quedan vacías) y 1 fila debajo, entre las esquinas. Va
-/// antes de dibujar el control, que la tapa donde tiene pixeles.
-pub fn under_light(ui: &Ui, rect: Rect) {
-    if let Some(skin) = frame_skin(ui.ctx()) {
-        let ppp = ui.ctx().pixels_per_point();
-        let (bottom, left, right) = (rect.bottom(), rect.left(), rect.right());
-        let rows = [
-            Rect::from_min_max(pos2(left + 1.0, bottom), pos2(right - 1.0, bottom + 1.0)),
-            Rect::from_min_max(pos2(left, bottom - 1.0), pos2(left + 1.0, bottom)),
-            Rect::from_min_max(pos2(right - 1.0, bottom - 1.0), pos2(right, bottom)),
-        ];
-        ui.painter().extend(rows.map(|r| {
-            Shape::rect_filled(
-                eframe::emath::GuiRounding::round_to_pixels(r, ppp),
-                0.0,
-                skin.colors().highlight,
-            )
-        }));
-    }
-}
-
+/// Un botón suelto con texto: con Pixel UI, el del kit ([`crate::kit::button::button`]); sin él,
+/// el de egui.
 pub fn text_button(ui: &mut Ui, label: &str) -> Response {
     match frame_skin(ui.ctx()) {
-        Some(skin) => pixel_button(ui, &skin, label),
+        Some(skin) => crate::kit::button::button(ui, &skin, label),
         None => ui.button(label),
     }
 }
 
-/// Un botón de texto de `width` de ancho (los de una fila, parejos).
+/// Un botón de texto de por lo menos `width` de ancho (los de una fila, parejos).
 pub fn text_button_sized(ui: &mut Ui, label: &str, width: f32) -> Response {
     match frame_skin(ui.ctx()) {
-        Some(skin) => pixel_button_sized(ui, &skin, label, vec2(width, CONTROL_HEIGHT)),
+        Some(skin) => crate::kit::button::button_sized(ui, &skin, label, width),
         None => ui.add_sized(vec2(width, CONTROL_HEIGHT), egui::Button::new(label)),
     }
 }
@@ -1028,21 +884,25 @@ const SCROLL_THUMB_V: &str = "scroll.thumb.v";
 const SCROLL_TRACK_H: &str = "scroll.track.h";
 const SCROLL_THUMB_H: &str = "scroll.thumb.h";
 /// El ancho de la barra y el largo mínimo del pulgar (entra entero, con sus estrías).
-const SCROLL_BAR: f32 = 10.0;
+pub(crate) const SCROLL_BAR: f32 = 10.0;
 const SCROLL_THUMB_MIN: f32 = 46.0;
 /// Del borde del track al pulgar, de los cuatro lados (10 = 1 + 8 + 1 a lo ancho; a lo largo,
 /// el pulgar no toca las puntas del track).
 const SCROLL_THUMB_INSET: f32 = 1.0;
+/// Al final de la pista (abajo, o a la derecha), 2 px de aire: el pulgar no toca la sombra.
+const SCROLL_THUMB_END: f32 = 2.0;
 
 /// El pulgar del scroll en `track` (vertical o no) para `content` de largo visto en `view` y
-/// desplazado `offset`: con 1 px de padding de cada lado del track, también en las puntas.
+/// desplazado `offset`: con 1 px de padding a los lados y en la punta de arriba (o de la
+/// izquierda), y 2 en la del final, para no tocar la sombra de la pista.
 fn scroll_thumb(track: Rect, vertical: bool, content: f32, view: f32, offset: f32) -> Rect {
     // Lo que recorre el pulgar: el track sin el padding de las puntas.
     let span = if vertical {
         track.height()
     } else {
         track.width()
-    } - 2.0 * SCROLL_THUMB_INSET;
+    } - SCROLL_THUMB_INSET
+        - SCROLL_THUMB_END;
     let len = (span * view / content)
         .max(SCROLL_THUMB_MIN)
         .min(span)
@@ -1088,7 +948,27 @@ pub fn scroll<R>(
         s.dormant_handle_opacity = 0.0;
         s.active_handle_opacity = 0.0;
         s.interact_handle_opacity = 0.0;
-        let out = area.show(ui, add_contents);
+        // Las barras fijas de egui ignoran esas opacidades: su fondo (`extreme_bg_color`) y su
+        // pulgar (el relleno de los widgets) se pintarían debajo de las piezas y asomarían por sus
+        // esquinas redondeadas. Transparentes para la barra; el contenido, con los de siempre.
+        let content_visuals = ui.visuals().clone();
+        let v = ui.visuals_mut();
+        v.extreme_bg_color = Color32::TRANSPARENT;
+        for w in [
+            &mut v.widgets.noninteractive,
+            &mut v.widgets.inactive,
+            &mut v.widgets.hovered,
+            &mut v.widgets.active,
+        ] {
+            w.bg_fill = Color32::TRANSPARENT;
+            w.weak_bg_fill = Color32::TRANSPARENT;
+            w.fg_stroke.color = Color32::TRANSPARENT;
+            w.bg_stroke.color = Color32::TRANSPARENT;
+        }
+        let out = area.show(ui, |ui| {
+            *ui.visuals_mut() = content_visuals;
+            add_contents(ui)
+        });
         let ppp = ui.ctx().pixels_per_point();
         let inner = out.inner_rect;
         let mut shapes = Vec::new();
@@ -1137,19 +1017,34 @@ pub fn scroll<R>(
 /// sin él, el tooltip de egui.
 pub trait Tip {
     fn tip(self, text: impl AsRef<str>) -> Response;
+    /// Como [`Tip::tip`], pero abierto mientras se llame, sin esperar al puntero (un aviso: "Copied").
+    fn flash_tip(self, text: impl AsRef<str>) -> Response;
 }
 
 impl Tip for Response {
     fn tip(self, text: impl AsRef<str>) -> Response {
-        let text = text.as_ref();
-        let skin = frame_skin(&self.ctx);
-        match skin.as_ref().and_then(|s| {
-            s.piece(BUBBLE_PIECE, WidgetState::Normal)
-                .map(|p| (p.clone(), s.colors().text))
-        }) {
-            Some((piece, color)) => show_bubble(self, &piece, color, text),
-            None => self.on_hover_text(text),
+        bubble_tip(self, text.as_ref(), false)
+    }
+
+    fn flash_tip(self, text: impl AsRef<str>) -> Response {
+        bubble_tip(self, text.as_ref(), true)
+    }
+}
+
+/// El globo del skin con `text` (sin el skin, el tooltip de egui); con `always`, abierto aunque el
+/// puntero no esté encima.
+fn bubble_tip(response: Response, text: &str, always: bool) -> Response {
+    let skin = frame_skin(&response.ctx);
+    match skin.as_ref().and_then(|s| {
+        s.piece(BUBBLE_PIECE, WidgetState::Normal)
+            .map(|p| (p.clone(), s.colors().text))
+    }) {
+        Some((piece, color)) => show_bubble(response, &piece, color, text, always),
+        None if always => {
+            egui::Tooltip::for_widget(&response).show(|ui| ui.label(text));
+            response
         }
+        None => response.on_hover_text(text),
     }
 }
 
@@ -1174,9 +1069,19 @@ fn mirrored(shapes: Vec<Shape>, rect: Rect) -> Vec<Shape> {
 
 /// El globo de `piece` con `text` junto a `response`: a la derecha, con la cola hacia el
 /// elemento; si ahí no entra, a la izquierda y espejado (la cola del otro lado).
-fn show_bubble(response: Response, piece: &Piece, color: Color32, text: &str) -> Response {
+fn show_bubble(
+    response: Response,
+    piece: &Piece,
+    color: Color32,
+    text: &str,
+    always: bool,
+) -> Response {
     let button = response.rect;
-    let mut tooltip = egui::Tooltip::for_enabled(&response);
+    let mut tooltip = if always {
+        egui::Tooltip::for_widget(&response)
+    } else {
+        egui::Tooltip::for_enabled(&response)
+    };
     // Sin marco, arriba alineado con el elemento: el área empieza en la punta de la cola.
     tooltip.popup = tooltip
         .popup
@@ -1371,7 +1276,7 @@ pub fn app_window<R>(
 }
 
 /// La fila de botones de una ventana ([`app_window`]): con Pixel UI, [`pixel_buttons`] (los del
-/// skin, del mismo ancho); sin él, los de egui en fila. Devuelve cuál se tocó.
+/// kit, del mismo ancho); sin él, los de egui en fila. Devuelve cuál se tocó.
 pub fn dialog_buttons(ui: &mut Ui, skin: Option<&Skin>, labels: &[&str]) -> Option<usize> {
     match skin {
         Some(skin) => pixel_buttons(ui, skin, labels)

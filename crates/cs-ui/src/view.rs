@@ -45,6 +45,11 @@ pub struct ViewSettings {
     /// El alto de la caja de la paleta (Pixel UI), elegido con la división que la separa del
     /// editor de color. De fábrica, el del diseño; el panel lo achica si no entra.
     pub palette_height: f32,
+    /// Los sonidos de la interfaz (clics y avisos): apagados de fábrica.
+    pub ui_sounds: bool,
+    pub sound_pack: crate::sound::SoundPack,
+    /// De 0 a 100.
+    pub sound_volume: u8,
 }
 
 impl Default for ViewSettings {
@@ -70,6 +75,9 @@ impl Default for ViewSettings {
             ui_scale: 2,
             palette_locked: true,
             palette_height: crate::color_panel::PALETTE_DEFAULT_HEIGHT,
+            ui_sounds: false,
+            sound_pack: crate::sound::SoundPack::default(),
+            sound_volume: crate::sound::DEFAULT_VOLUME,
         }
     }
 }
@@ -92,7 +100,7 @@ impl ViewSettings {
 }
 
 /// Cambio de zoom pedido desde el menú o un atajo; el lienzo lo aplica al dibujarse.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ZoomRequest {
     In,
     Out,
@@ -101,6 +109,11 @@ pub enum ZoomRequest {
     Fit,
     /// Centra el artboard activo sin cambiar el zoom.
     CenterActive,
+    /// Ajusta el zoom al artboard activo y lo centra en lo que se ve del lienzo sin los
+    /// `right_inset` puntos de la derecha (los que tapa un panel flotante del dock).
+    FitActiveBeside {
+        right_inset: f32,
+    },
 }
 
 /// Diálogo "Grid Settings" del artboard activo.
@@ -166,11 +179,13 @@ impl GridDialog {
                     });
                 ui.horizontal(|ui| {
                     ui.label("Color:");
-                    egui::color_picker::color_edit_button_srgba(
-                        ui,
-                        &mut self.color,
-                        egui::color_picker::Alpha::OnlyBlend,
-                    );
+                    let [r, g, b, a] = self.color.to_srgba_unmultiplied();
+                    let mut color = cs_core::Rgba::new(r, g, b, a);
+                    if widgets::color_edit(ui, &mut color, true, "Grid color").changed() {
+                        self.color = egui::Color32::from_rgba_unmultiplied(
+                            color.r, color.g, color.b, color.a,
+                        );
+                    }
                     ui.weak("(shared by all documents)");
                 });
                 ui.add_space(6.0);

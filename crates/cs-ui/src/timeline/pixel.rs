@@ -11,7 +11,7 @@
 //!   - Onion skin: el botón (`timeline.icon.onion` apagado; prendido, la cebolla entera
 //!     `timeline.icon.onion.on`) y, a 4, `timeline.onion_range`: frames antes ◂ | después ▸.
 //!   - "Opacity" − [0..255] +, el combo del modo de mezcla y el reloj − [ms] + de la duración:
-//!     `timeline.stepper.minus`, `.field` (se estira) y `.plus`; `timeline.combo`;
+//!     el stepper del UI kit (`kit::stepper`); el select del UI kit (`kit::select`);
 //!     `timeline.icon.clock`.
 //! - **Línea de abajo de la barra:** `timeline.divider`, con sus uniones a la caja.
 //! - **Tabla:** filas de 13 (11 de contenido y la línea grabada) y columnas con su línea a la
@@ -32,7 +32,8 @@ use cs_core::LayerKind;
 use super::{BLEND_MODES, Grid, TimelineState, blend_name};
 use crate::bar_fields::{self, NumberLook};
 use crate::editor::Editor;
-use crate::menus::{self, MenuLook};
+use crate::kit;
+use crate::menus;
 use crate::pixel_ui;
 use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
@@ -53,7 +54,7 @@ pub(super) const NAME_PAD: f32 = 4.0;
 /// La línea grabada de cada celda: abajo y a la derecha.
 const LINE: f32 = 2.0;
 /// Las mayúsculas del texto de una fila, desde arriba de la fila.
-const TEXT_CAPS: f32 = 1.0;
+pub(super) const TEXT_CAPS: f32 = 2.0;
 /// Dónde van los íconos en su celda.
 const EYE_AT: Vec2 = vec2(3.0, 2.0);
 const LOCK_AT: Vec2 = vec2(4.0, 1.0);
@@ -99,8 +100,7 @@ const LABEL_GAP: f32 = 6.0;
 const CLOCK_GAP: f32 = 2.0;
 /// Alto de un grupo de botones o de un campo (sin el brillo de abajo).
 const GROUP_H: f32 = 16.0;
-/// Una celda de botón y el paso de una a la otra (con la línea entre las dos).
-const BUTTON: Vec2 = vec2(23.0, 14.0);
+/// El paso de un botón de un grupo al otro (el segmento de ícono del kit comparte la columna).
 const BUTTON_PITCH: f32 = 24.0;
 /// Las mayúsculas de "Opacity" y del combo, y las cifras de los campos (una fila más arriba),
 /// desde arriba del grupo.
@@ -118,9 +118,6 @@ const UNIT: &str = "ms";
 /// El combo: su ancho en el diseño, de su borde a la tinta del texto, de la tinta a la flecha y
 /// la parte de la flecha.
 const COMBO_W: f32 = 59.0;
-const COMBO_TEXT_LEFT: f32 = 6.0;
-const COMBO_TEXT_GAP: f32 = 5.0;
-const COMBO_ARROW_W: f32 = 10.0;
 /// El rango del onion skin: 59 de ancho. La mitad de la izquierda (frames antes) tiene la ◂ y la
 /// línea del medio está en la columna 29; la de la derecha (después) tiene la ▸.
 const RANGE_W: f32 = 59.0;
@@ -135,15 +132,8 @@ const CLOCK_W: f32 = 16.0;
 /// del interior de la caja (se une a sus lados).
 const DIVIDER_H: f32 = 3.0;
 
-const GROUP: &str = "timeline.group";
-const BUTTON_PIECE: &str = "timeline.button";
-const SEP: &str = "timeline.button.sep";
 const ONION_ON: &str = "timeline.icon.onion.on";
 const RANGE: &str = "timeline.onion_range";
-const MINUS: &str = "timeline.stepper.minus";
-const PLUS: &str = "timeline.stepper.plus";
-const FIELD: &str = "timeline.stepper.field";
-const COMBO: &str = "timeline.combo";
 const CLOCK: &str = "timeline.icon.clock";
 const DIVIDER: &str = "timeline.divider";
 
@@ -294,7 +284,7 @@ impl Widths {
             .sprite()
             .layer(editor.layer)
             .map_or(String::new(), |l| blend_name(l.blend));
-        let combo = COMBO_TEXT_LEFT + ink(ui, &blend) + COMBO_TEXT_GAP + COMBO_ARROW_W;
+        let combo = kit::select::width(ui, &blend);
         Self {
             opacity_label: ink(ui, "Opacity"),
             duration_field: DURATION_FIELD_W.max(duration_text.ceil()),
@@ -500,68 +490,42 @@ impl Btn {
     }
 }
 
-/// Un grupo de botones pegados con la esquina en `origin`: el marco, las celdas, las líneas entre
-/// celdas y los íconos (presionado, el ícono baja 1). Devuelve una respuesta por botón; los
-/// deshabilitados se ven igual (como en el diseño) pero no responden.
+/// Un grupo de botones pegados con la esquina en `origin`: el grupo del UI kit
+/// ([`kit::group`]) con un segmento de ícono por botón, con sus estados; los que se prenden y
+/// apagan, prendidos, se ven presionados (la cebolla prendida lleva su ícono entero). Devuelve
+/// una respuesta por botón; los deshabilitados no responden.
 fn group(ui: &mut Ui, skin: &Skin, origin: Pos2, buttons: &[Btn]) -> Vec<Response> {
-    let n = buttons.len();
-    let frame = Rect::from_min_size(origin, vec2(group_width(n), GROUP_H));
-    if !piece(ui, skin, GROUP, frame) {
-        flat(ui, skin, frame);
-    }
-    let enabled_ui = ui.is_enabled();
+    let items: Vec<kit::group::GroupItem> = buttons
+        .iter()
+        .map(|b| {
+            let icon = if b.on == Some(true) && piece_size(skin, ONION_ON).is_some() {
+                ONION_ON
+            } else {
+                b.icon
+            };
+            kit::group::GroupItem::icon(icon, b.label).enabled(b.enabled)
+        })
+        .collect();
+    let painter = ui.painter().clone();
+    let id = ui
+        .id()
+        .with(("timeline_buttons", buttons.first().map(|b| b.label)));
+    let responses = kit::group::group_responses_at(ui, skin, &painter, id, origin, &items, &|i| {
+        buttons[i].on == Some(true)
+    });
+    let rects = kit::group::segment_rects(ui, &items, origin);
     buttons
         .iter()
-        .enumerate()
-        .map(|(i, b)| {
-            let left = origin.x + 1.0 + BUTTON_PITCH * i as f32;
-            let cell = Rect::from_min_size(pos2(left, origin.y + 1.0), BUTTON);
-            let hit = Rect::from_min_size(pos2(left, origin.y), vec2(BUTTON.x, GROUP_H));
-            let sense = if b.enabled {
-                Sense::click()
-            } else {
-                Sense::hover()
-            };
-            let response = ui.interact(hit, ui.id().with(("timeline_button", b.label)), sense);
-            let enabled = enabled_ui && b.enabled;
-            response.widget_info(|| match b.on {
-                Some(on) => {
-                    egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, on, b.label)
-                }
-                None => egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, b.label),
-            });
-            piece(ui, skin, BUTTON_PIECE, cell);
-            if i + 1 < n {
-                let sep = Rect::from_min_size(cell.right_top(), vec2(1.0, BUTTON.y));
-                piece(ui, skin, SEP, sep);
-            }
-            let down = if response.is_pointer_button_down_on() {
-                1.0
-            } else {
-                0.0
-            };
-            let icon_at = cell.min + vec2(1.0, 1.0 + down);
-            if b.on == Some(true) && piece_size(skin, ONION_ON).is_some() {
-                // La cebolla entera: más alta que el botón, centrada en él.
-                let size = piece_size(skin, ONION_ON).unwrap_or(Vec2::ZERO);
-                let at = pos2(
-                    cell.left() + ((BUTTON.x - size.x) / 2.0).floor(),
-                    origin.y + ((GROUP_H - size.y) / 2.0).floor() + down,
-                );
-                piece_at(ui, skin, ONION_ON, at);
-            } else if b.icon == PAUSE {
-                pause_icon(ui, skin, icon_at);
-            } else if !piece_at(ui, skin, b.icon, icon_at) {
-                let initial: String = b.label.chars().take(1).collect();
-                let caps = origin.y + LABEL_CAPS + down;
-                text(
-                    ui,
-                    ui.painter(),
-                    &initial,
-                    cell.left() + 8.0,
-                    caps,
-                    skin.colors().text,
-                );
+        .zip(responses)
+        .zip(rects)
+        .map(|((b, response), rect)| {
+            if b.icon == PAUSE {
+                let down = if response.is_pointer_button_down_on() {
+                    kit::button::PRESS_DROP
+                } else {
+                    0.0
+                };
+                pause_icon(ui, skin, rect.min + vec2(2.0, 2.0 + down));
             }
             response.tip(b.tip)
         })
@@ -583,11 +547,7 @@ fn pause_icon(ui: &Ui, skin: &Skin, icon_at: Pos2) {
 /// El estilo de los números de los campos.
 fn number_look(skin: &Skin) -> NumberLook {
     let colors = skin.colors();
-    NumberLook {
-        text: colors.text,
-        outline: colors.outline,
-        align: egui::Align::Center,
-    }
+    NumberLook::new(colors, colors.text, egui::Align::Center)
 }
 
 /// Dónde va el `DragValue` de un campo de `left..right` para que sus cifras empiecen en la fila
@@ -640,8 +600,9 @@ fn onion_range(ui: &mut Ui, editor: &mut Editor, skin: &Skin, origin: Pos2) {
     }
 }
 
-/// − [campo] +: las piezas con la esquina en `origin`. Devuelve el − (con su respuesta), el
-/// rect del campo y el +.
+/// − [campo] +: el stepper del UI kit (`kit::stepper`: sus botones con estados y su campo) con
+/// la esquina en `origin`. Devuelve el − (con su respuesta), el rect del campo y el +; el número
+/// lo pone quien llama.
 fn stepper(
     ui: &mut Ui,
     skin: &Skin,
@@ -649,19 +610,12 @@ fn stepper(
     field_w: f32,
     labels: [&'static str; 2],
 ) -> (Response, Rect, Response) {
+    use crate::kit::button::ButtonState;
+    use crate::kit::stepper as kit;
     let step = vec2(STEP_W, GROUP_H + 1.0);
     let minus = Rect::from_min_size(origin, step);
     let field = Rect::from_min_size(pos2(minus.right(), origin.y), vec2(field_w, GROUP_H + 1.0));
     let plus = Rect::from_min_size(field.right_top(), step);
-    for (name, rect) in [(MINUS, minus), (FIELD, field), (PLUS, plus)] {
-        if !piece(ui, skin, name, rect) {
-            flat(
-                ui,
-                skin,
-                Rect::from_min_size(rect.min, vec2(rect.width(), GROUP_H)),
-            );
-        }
-    }
     let enabled = ui.is_enabled();
     let button = |rect: Rect, label: &'static str| {
         let hit = Rect::from_min_size(rect.min, vec2(rect.width(), GROUP_H));
@@ -672,6 +626,15 @@ fn stepper(
     };
     let minus_response = button(minus, labels[0]);
     let plus_response = button(plus, labels[1]);
+    let mut shapes = kit::field_shapes(ui, skin, field, None, enabled);
+    for (rect, piece, icon, response) in [
+        (minus, kit::LEFT, kit::MINUS, &minus_response),
+        (plus, kit::RIGHT, kit::PLUS, &plus_response),
+    ] {
+        let state = ButtonState::of(response, enabled);
+        shapes.extend(kit::button_shapes(ui, skin, rect, piece, icon, state));
+    }
+    ui.painter().extend(shapes);
     let field = Rect::from_min_size(field.min, vec2(field_w, GROUP_H));
     (minus_response, field, plus_response)
 }
@@ -753,41 +716,24 @@ fn opacity(
     }
 }
 
-/// El combo del modo de mezcla de la capa: `timeline.combo` con el nombre del modo y la lista en el
-/// panel de los menús.
+/// El combo del modo de mezcla de la capa: el select del UI kit con el nombre del modo y la lista
+/// de los modos.
 fn blend(ui: &mut Ui, editor: &mut Editor, skin: &Skin, origin: Pos2, width: f32) {
     let layer = editor.layer;
     let Some(mode) = editor.sprite().layer(layer).map(|l| l.blend) else {
         return;
     };
-    let colors = *skin.colors();
     let name = blend_name(mode);
-    let rect = Rect::from_min_size(origin, vec2(width, GROUP_H));
-    let response = ui.interact(rect, ui.id().with("timeline_blend"), Sense::click());
-    let enabled = ui.is_enabled();
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, enabled, &name));
-    let drawn = Rect::from_min_size(origin, vec2(width, GROUP_H + 1.0));
-    if !piece(ui, skin, COMBO, drawn) {
-        flat(ui, skin, rect);
-    }
-    let painter = ui.painter().clone();
-    text(
-        ui,
-        &painter,
-        &name,
-        origin.x + COMBO_TEXT_LEFT,
-        origin.y + LABEL_CAPS,
-        colors.text,
-    );
-    let response = response.tip("Blend mode");
-    let look = MenuLook::new(skin, origin.y);
-    menus::dropdown(&look, &response, rect, |ui| {
+    let rect = Rect::from_min_size(origin, vec2(width, kit::select::HEIGHT));
+    let id = ui.id().with("timeline_blend");
+    let response = kit::select::select_at(ui, skin, rect, id, &name, |ui| {
         for m in BLEND_MODES {
             if ui.add(menus::choice(m == mode, &blend_name(m))).clicked() {
                 editor.set_blend(layer, m);
             }
         }
     });
+    response.tip("Blend mode");
 }
 
 /// La tinta de la duración en el campo: el número, `UNIT_GAP` y "ms".
@@ -1023,9 +969,23 @@ const MASK_ADD: &str = "timeline.mask.add";
 pub(super) const MASK_SIZE: Vec2 = vec2(9.0, 9.0);
 pub(super) const MASK_ADD_SIZE: Vec2 = vec2(11.0, 9.0);
 
-/// La máscara de una capa con su esquina en `at`; desactivada, a media luz.
-pub(super) fn mask_chip(ui: &Ui, skin: &Skin, at: Pos2, editing: bool, enabled: bool) {
-    let name = if editing { MASK_EDITING } else { MASK };
+/// La máscara de una capa con su esquina en `at`; desactivada, a media luz. En la capa activa
+/// (`selected`), en su versión para lo elegido.
+pub(super) fn mask_chip(
+    ui: &Ui,
+    skin: &Skin,
+    at: Pos2,
+    editing: bool,
+    enabled: bool,
+    selected: bool,
+) {
+    let base = if editing { MASK_EDITING } else { MASK };
+    let chosen = format!("{base}{SELECTED}");
+    let name = if selected && skin.piece(&chosen, WidgetState::Normal).is_some() {
+        chosen.as_str()
+    } else {
+        base
+    };
     let ppp = ui.ctx().pixels_per_point();
     let mut painter = ui.painter().clone();
     if !enabled {
@@ -1034,11 +994,10 @@ pub(super) fn mask_chip(ui: &Ui, skin: &Skin, at: Pos2, editing: bool, enabled: 
     painter.extend(crate::pixel_draw::piece_at(skin, name, at, ppp));
 }
 
-/// El botón para agregar una máscara, con su esquina en `at`.
-pub(super) fn mask_add(ui: &Ui, skin: &Skin, at: Pos2) {
-    let ppp = ui.ctx().pixels_per_point();
-    ui.painter()
-        .extend(crate::pixel_draw::piece_at(skin, MASK_ADD, at, ppp));
+/// El botón para agregar una máscara, con su esquina en `at`; en la capa activa (`selected`), en
+/// su versión para lo elegido.
+pub(super) fn mask_add(ui: &Ui, skin: &Skin, at: Pos2, selected: bool) {
+    icon_at(ui, skin, MASK_ADD, at, selected);
 }
 
 /// El ícono de una capa tilemap al principio de `rect` (donde va la carpetita de los grupos); en

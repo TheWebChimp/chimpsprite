@@ -67,6 +67,7 @@ impl Session {
         let id = doc.next_artboard_id();
         let artboard = Artboard {
             in_library: false,
+            font: None,
             id,
             name: p.name.clone(),
             position,
@@ -274,6 +275,8 @@ impl Session {
     // --- Frames ---
 
     pub fn add_frame(&mut self, p: AddFrame) -> Result<Reply> {
+        let (ab, _) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        self.not_a_font(&p.doc, ab)?;
         let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         let (index, mut cmds) = match p.duplicate {
             Some(src) => {
@@ -308,6 +311,8 @@ impl Session {
     }
 
     pub fn remove_frame(&mut self, p: FrameOnly) -> Result<Reply> {
+        let (ab, _) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        self.not_a_font(&p.doc, ab)?;
         let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         let index = target::frame(sprite, p.frame)?;
         self.run_on(&p.doc, ab, vec![Command::RemoveFrame { index }])?;
@@ -315,6 +320,8 @@ impl Session {
     }
 
     pub fn move_frame(&mut self, p: MoveFrame) -> Result<Reply> {
+        let (ab, _) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        self.not_a_font(&p.doc, ab)?;
         let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         target::frame(sprite, p.from)?;
         target::frame(sprite, p.to)?;
@@ -1233,6 +1240,43 @@ mod tests {
             |s: &Session, x| cs_render::composite_pixel(s.sprite("d1", None).unwrap().1, 0, x, 0);
         assert_eq!(px(&s, 0), cs_core::Rgba::rgb(0, 0, 255));
         assert_eq!(px(&s, 1).a, 0, "clipped where the base is empty");
+    }
+
+    #[test]
+    fn frame_and_layer_ops_refuse_a_font_artboard() {
+        let mut s = session(4, 4);
+        let doc = &s.doc("d1").unwrap().document;
+        let (id, cmd) = cs_commands::font::new_font_artboard(
+            doc,
+            "Mine",
+            (8, 8),
+            cs_core::FontMode::OneBit,
+            (20, 0),
+        );
+        s.run("d1", vec![cmd]).unwrap();
+        let font = id.0;
+        for err in [
+            s.add_frame(p(json!({"doc": "d1", "artboard": font}))),
+            s.add_frame(p(json!({"doc": "d1", "artboard": font, "duplicate": 0}))),
+            s.remove_frame(p(json!({"doc": "d1", "artboard": font, "frame": 0}))),
+            s.move_frame(p(
+                json!({"doc": "d1", "artboard": font, "from": 0, "to": 3}),
+            )),
+        ] {
+            let e = err.unwrap_err().to_string();
+            assert!(
+                e.contains("artboard is a font; use glyph operations"),
+                "{e}"
+            );
+        }
+        assert!(
+            s.add_layer(p(json!({"doc": "d1", "artboard": font})))
+                .is_err()
+        );
+        let a = s.doc("d1").unwrap().document.artboard(id).unwrap().clone();
+        assert_eq!(a.font.unwrap().check(&a.sprite), Ok(()));
+        // Los demás artboards siguen como siempre.
+        s.add_frame(p(json!({"doc": "d1"}))).unwrap();
     }
 
     #[test]

@@ -126,11 +126,43 @@ impl Editor {
 
     pub(super) fn text_command(&self) -> Option<Command> {
         let draft = self.text.as_ref().filter(|d| !d.text.trim().is_empty())?;
+        // En una fuente de 1 bit todo lo escrito es tinta (como al pintar: `color`).
+        let one_bit = self
+            .font()
+            .is_some_and(|f| f.mode == cs_core::FontMode::OneBit);
+        let ink = if one_bit {
+            cs_core::ONE_BIT_INK
+        } else {
+            self.primary
+        };
+        if let cs_tools::text::FontChoice::Document { artboard, .. } = &self.text_style.font {
+            let view = self
+                .document
+                .artboard(cs_core::ArtboardId(*artboard))?
+                .font_view()?;
+            let scale = self.text_style.size.clamp(1, 8);
+            let (ox, oy) = draft.origin;
+            let pixels = cs_tools::text::font_text(&view, &draft.text, scale)
+                .into_iter()
+                .map(|(x, y, c)| {
+                    let value = match c {
+                        Some(c) if !one_bit => self.value_of(c),
+                        _ => ink,
+                    };
+                    (ox + x, oy + y, value)
+                })
+                .collect();
+            return Some(Command::DrawPixels {
+                layer: self.layer,
+                frame: self.frame,
+                pixels,
+            });
+        }
         let pixels = cs_tools::text::text_pixels(
             self.sprite(),
             (self.layer, self.frame),
             draft.origin,
-            self.primary,
+            ink,
             &draft.text,
             &self.text_style,
         );
@@ -150,6 +182,17 @@ impl Editor {
     }
 
     pub(super) fn color(&self) -> PixelValue {
+        // Una fuente de 1 bit solo prende o apaga pixeles.
+        if self
+            .font()
+            .is_some_and(|f| f.mode == cs_core::FontMode::OneBit)
+        {
+            return if self.painting_secondary {
+                cs_core::ONE_BIT_PAPER
+            } else {
+                cs_core::ONE_BIT_INK
+            };
+        }
         if self.painting_secondary {
             self.secondary
         } else {
@@ -189,7 +232,16 @@ impl Editor {
     }
 
     pub(super) fn context(&self) -> ToolContext<'_> {
-        let secondary = if self.painting_secondary {
+        let one_bit = self
+            .font()
+            .is_some_and(|f| f.mode == cs_core::FontMode::OneBit);
+        let secondary = if one_bit {
+            if self.painting_secondary {
+                cs_core::ONE_BIT_INK
+            } else {
+                cs_core::ONE_BIT_PAPER
+            }
+        } else if self.painting_secondary {
             self.primary
         } else {
             self.secondary

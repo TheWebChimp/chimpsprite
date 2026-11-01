@@ -3,7 +3,7 @@
 //! - Cada pieza es un slice con nombre; su centro, si lo tiene, es el 9-slice.
 //! - Los slices `color.*` dan un color: el de su píxel central.
 //! - Una pieza sin dibujar (toda transparente) cuenta como que no existe.
-//! - Si falta una variante (`.hover`, `.down`, `.active`), se usa la base.
+//! - Si falta una variante (`.hover`, `.down`, `.active`, `.disabled`), se usa la base.
 //! - Una animación son las piezas `<nombre>.0`, `<nombre>.1`…; cada frame dura lo que dice el
 //!   texto (user data) de su slice, `duration=<ms>`, como la duración del frame en Aseprite.
 
@@ -24,7 +24,7 @@ use crate::theme;
 pub const EMBEDDED: &[u8] = include_bytes!("../../../../assets/ui/skin.aseprite");
 
 /// Colores del skin (`color.<nombre>`).
-pub const COLOR_NAMES: [&str; 16] = [
+pub const COLOR_NAMES: [&str; 19] = [
     "desktop",
     "text",
     "text_dim",
@@ -41,6 +41,9 @@ pub const COLOR_NAMES: [&str; 16] = [
     "ruler_tick",
     "menu_highlight",
     "field_text",
+    "field_text_disabled",
+    "text_selection",
+    "text_selected",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -56,6 +59,8 @@ pub enum WidgetState {
     Hover,
     Down,
     Active,
+    /// No se puede usar (`.disabled`).
+    Disabled,
 }
 
 impl WidgetState {
@@ -65,6 +70,7 @@ impl WidgetState {
             WidgetState::Hover => ".hover",
             WidgetState::Down => ".down",
             WidgetState::Active => ".active",
+            WidgetState::Disabled => ".disabled",
         }
     }
 }
@@ -193,8 +199,11 @@ pub struct SkinColors {
     pub timeline_selection_light: Color32,
     /// El texto de un botón deshabilitado (el botón se ve igual, sin apagarse).
     pub button_text_disabled: Color32,
-    /// El texto de las opciones no elegidas de un grupo de botones.
-    pub option_text_off: Color32,
+    /// El texto de un campo de texto deshabilitado (el del mockup, sobre su relleno apagado).
+    pub field_text_disabled: Color32,
+    /// Lo seleccionado en un campo de texto: el fondo (rosa) y el texto encima (blanco).
+    pub text_selection: Color32,
+    pub text_selected: Color32,
     /// El borde oscuro de los controles (campos, botones, cuadritos de color).
     pub control_border: Color32,
     /// La línea oscura a cada lado del contorno blanco de un rango de cels del timeline.
@@ -227,7 +236,9 @@ impl SkinColors {
             timeline_selection_dark: theme::CANVAS_BORDER,
             timeline_selection_light: theme::WIDGET_HOVER,
             button_text_disabled: theme::LABEL,
-            option_text_off: theme::LABEL,
+            field_text_disabled: theme::LABEL,
+            text_selection: theme::ACCENT,
+            text_selected: Color32::WHITE,
             control_border: theme::CANVAS_BORDER,
             cel_range: theme::CANVAS_BORDER,
         }
@@ -259,7 +270,9 @@ impl SkinColors {
             ("timeline_selection_dark", &mut c.timeline_selection_dark),
             ("timeline_selection_light", &mut c.timeline_selection_light),
             ("button_text_disabled", &mut c.button_text_disabled),
-            ("option_text_off", &mut c.option_text_off),
+            ("field_text_disabled", &mut c.field_text_disabled),
+            ("text_selection", &mut c.text_selection),
+            ("text_selected", &mut c.text_selected),
             ("control_border", &mut c.control_border),
             ("cel_range", &mut c.cel_range),
         ];
@@ -372,7 +385,8 @@ impl Skin {
         &self.colors
     }
 
-    /// El mismo skin con solo las piezas `names` (y sus variantes `.hover`, `.down`, `.active`):
+    /// El mismo skin con solo las piezas `names` (y sus variantes `.hover`, `.down`, `.active`,
+    /// `.disabled`):
     /// una copia chica para guardar en la memoria de egui.
     pub fn subset(&self, names: &[&str]) -> Skin {
         let pieces = self
@@ -381,9 +395,9 @@ impl Skin {
             .filter(|(name, _)| {
                 names.iter().any(|n| {
                     name.as_str() == *n
-                        || name
-                            .strip_prefix(*n)
-                            .is_some_and(|rest| [".hover", ".down", ".active"].contains(&rest))
+                        || name.strip_prefix(*n).is_some_and(|rest| {
+                            [".hover", ".down", ".active", ".disabled"].contains(&rest)
+                        })
                 })
             })
             .map(|(name, piece)| (name.clone(), piece.clone()))

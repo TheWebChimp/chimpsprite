@@ -80,6 +80,8 @@ fn tool_column(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
         ui.spacing_mut().item_spacing.y = 0.0;
         for index in 0..len {
             let id = base.with(("tool_group", index));
+            // Con su menú abierto, el botón es la pestaña del panel: sin el rosa de la elegida.
+            let open = tool_group::menu_open(ui.ctx(), id);
             tool_group::group_button(ui, editor, Some(skin), index, |ui, shown, state| {
                 pixel_ui::tool_button(
                     ui,
@@ -88,7 +90,7 @@ fn tool_column(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
                     pixel_ui::SlotPos::of(index, len),
                     tool_group::icon_piece(shown),
                     shown.label(),
-                    state.selected,
+                    state.selected && !open,
                     state.more,
                 )
             });
@@ -536,6 +538,11 @@ pub fn tileset(ui: &mut egui::Ui, editor: &mut Editor, thumbs: &mut TileThumbs) 
     ui.horizontal(|ui| {
         ui.label("Flip:");
         let brush = editor.brush_tile();
+        // Con Pixel UI, un grupo de botones del kit: cada uno prende y apaga su volteo.
+        if let Some(skin) = crate::pixel_ui::frame_skin(ui.ctx()) {
+            flip_group(ui, &skin, editor, brush, tw == th);
+            return;
+        }
         if ui
             .selectable_label(brush.flip_x(), "X")
             .tip("Flip horizontally (X)")
@@ -559,6 +566,37 @@ pub fn tileset(ui: &mut egui::Ui, editor: &mut Editor, thumbs: &mut TileThumbs) 
             editor.toggle_brush_flip(Tile::FLIP_D);
         }
     });
+}
+
+/// Los volteos del tile del pincel con Pixel UI: X, Y y D (este, solo con tiles cuadrados).
+fn flip_group(ui: &mut egui::Ui, skin: &Skin, editor: &mut Editor, brush: Tile, square: bool) {
+    use crate::kit::{button, group};
+    let items = [
+        group::GroupItem::text("X"),
+        group::GroupItem::text("Y"),
+        group::GroupItem::text("D").enabled(square),
+    ];
+    let on = [brush.flip_x(), brush.flip_y(), brush.flip_d()];
+    let flags = [Tile::FLIP_X, Tile::FLIP_Y, Tile::FLIP_D];
+    let tips = [
+        "Flip horizontally (X)",
+        "Flip vertically (Y)",
+        "Flip diagonally (swap X and Y)",
+    ];
+    let id = ui.next_auto_id();
+    let size = egui::vec2(group::width(ui, &items), button::HEIGHT);
+    let (slot, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let painter = ui.painter().clone();
+    let responses =
+        group::group_responses_at(ui, skin, &painter, id, slot.min.round(), &items, &|i| on[i]);
+    for (i, response) in responses.into_iter().enumerate() {
+        let response = response
+            .tip(tips[i])
+            .on_disabled_hover_text("Needs square tiles");
+        if response.clicked() {
+            editor.toggle_brush_flip(flags[i]);
+        }
+    }
 }
 
 /// `notice`: aviso breve al final de la barra (p. ej. autosave desactivado).

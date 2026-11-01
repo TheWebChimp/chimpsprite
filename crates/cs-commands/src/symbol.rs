@@ -301,6 +301,7 @@ pub fn convert_to_symbol(
         guides: Vec::new(),
         symmetry: Default::default(),
         in_library: true,
+        font: None,
     };
     let command = DocCommand::Batch(vec![
         DocCommand::AddArtboard {

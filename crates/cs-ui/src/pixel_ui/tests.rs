@@ -26,18 +26,18 @@ fn long_bubble_texts_wrap_and_end_in_an_ellipsis() {
 }
 
 #[test]
-fn the_scroll_thumb_has_1_px_of_padding_on_every_side() {
+fn the_scroll_thumb_keeps_1_px_off_the_sides_and_the_start_and_2_off_the_end() {
     let track = Rect::from_min_size(pos2(100.0, 20.0), vec2(SCROLL_BAR, 200.0));
-    // Arriba de todo y abajo de todo: a 1 px de las puntas y de los lados.
+    // Arriba de todo: a 1 px de la punta y de los lados; abajo de todo, a 2 (no toca la sombra).
     let top = super::scroll_thumb(track, true, 1000.0, 200.0, 0.0);
     assert_eq!(top.min, pos2(101.0, 21.0));
     assert_eq!(top.width(), SCROLL_BAR - 2.0);
     let bottom = super::scroll_thumb(track, true, 1000.0, 200.0, 800.0);
-    assert_eq!(bottom.bottom(), track.bottom() - 1.0);
-    // A lo ancho, igual.
+    assert_eq!(bottom.bottom(), track.bottom() - 2.0);
+    // A lo ancho, igual: a 2 de la punta derecha.
     let track = Rect::from_min_size(pos2(0.0, 50.0), vec2(300.0, SCROLL_BAR));
     let right = super::scroll_thumb(track, false, 900.0, 300.0, 600.0);
-    assert_eq!((right.right(), right.top()), (299.0, 51.0));
+    assert_eq!((right.right(), right.top()), (298.0, 51.0));
 }
 
 use egui::{Event, PointerButton, RawInput};
@@ -71,7 +71,7 @@ fn button(ctx: &egui::Context, skin: &Skin, label: &str, events: Vec<Event>) -> 
     let input = RawInput { events, ..screen() };
     frame(ctx, input, |ui| {
         egui::CentralPanel::default().show(ui, |ui| {
-            let r = pixel_button(ui, skin, label);
+            let r = crate::kit::button::button(ui, skin, label);
             out = (r.rect, r.clicked());
         });
     });
@@ -79,13 +79,13 @@ fn button(ctx: &egui::Context, skin: &Skin, label: &str, events: Vec<Event>) -> 
 }
 
 #[test]
-fn a_button_takes_the_piece_size_and_grows_with_the_text() {
+fn a_button_fits_its_text_and_is_17_high() {
     let ctx = egui::Context::default();
     let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
     let (short, _) = button(&ctx, &skin, "OK", vec![]);
-    assert_eq!(short.size(), vec2(49.0, 17.0), "the piece and its light");
+    assert_eq!(short.height(), 17.0, "the piece and its light");
     let (long, _) = button(&ctx, &skin, "A much longer button label", vec![]);
-    assert!(long.width() > 49.0, "{long:?}");
+    assert!(long.width() > short.width() + 50.0, "{long:?}");
     assert_eq!(long.height(), 17.0);
 }
 
@@ -132,8 +132,9 @@ fn the_dialog_is_centered_with_its_content_inside_the_frame() {
     let frame = ctx
         .memory(|m| m.area_rect(id))
         .expect("the dialog is shown");
-    // `window`: bordes de 3 px y barra de título de 14, más 4 px de margen.
-    assert_eq!(content.min - frame.min, vec2(7.0, 18.0));
+    // `window`: bordes de 3 px y barra de título de 15 (la del kit, 14, y la primera fila del
+    // cuerpo), más 4 px de margen.
+    assert_eq!(content.min - frame.min, vec2(7.0, 19.0));
     assert!(
         frame.center().distance(Pos2::new(400.0, 300.0)) <= 1.0,
         "{frame:?}"
@@ -252,10 +253,7 @@ fn a_row_of_buttons_fills_the_content_width_evenly() {
         Skin::fallback(),
     ];
     for skin in &skins {
-        let id = Id::new((
-            "row",
-            skin.piece(BUTTON_PIECE, WidgetState::Normal).is_some(),
-        ));
+        let id = Id::new(("row", skin.piece("button", WidgetState::Normal).is_some()));
         let mut content = Rect::NOTHING;
         let mut rects = Vec::new();
         for _ in 0..3 {
@@ -363,43 +361,26 @@ fn drawn(textures: &[(egui::TextureId, Rect)], texture: egui::TextureId) -> Opti
         .reduce(|a, b| a.union(b))
 }
 
-/// Cuáles de los seis marcos de la columna se dibujaron.
+/// Cuáles de los tres marcos de la columna se dibujaron.
 fn drawn_slots(skin: &Skin, textures: &[(egui::TextureId, Rect)]) -> Vec<&'static str> {
-    [
-        "tool.slot.first",
-        "tool.slot",
-        "tool.slot.last",
-        "tool.slot.first.active",
-        "tool.slot.active",
-        "tool.slot.last.active",
-    ]
-    .into_iter()
-    .filter(|name| {
-        let id = skin.piece(name, WidgetState::Normal).unwrap().texture.id();
-        textures.iter().any(|(t, _)| *t == id)
-    })
-    .collect()
+    ["tool.slot.first", "tool.slot", "tool.slot.last"]
+        .into_iter()
+        .filter(|name| {
+            let id = skin.piece(name, WidgetState::Normal).unwrap().texture.id();
+            textures.iter().any(|(t, _)| *t == id)
+        })
+        .collect()
 }
 
 #[test]
-fn a_tool_button_is_its_column_slot_with_the_icon_and_the_active_slot_when_selected() {
+fn a_tool_button_is_its_column_slot_with_the_icon() {
     let ctx = egui::Context::default();
     let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
     let id = |name: &str| skin.piece(name, WidgetState::Normal).unwrap().texture.id();
-    for (slot, name, active, height) in [
-        (
-            SlotPos::First,
-            "tool.slot.first",
-            "tool.slot.first.active",
-            22.0,
-        ),
-        (SlotPos::Middle, "tool.slot", "tool.slot.active", 22.0),
-        (
-            SlotPos::Last,
-            "tool.slot.last",
-            "tool.slot.last.active",
-            23.0,
-        ),
+    for (slot, name, height) in [
+        (SlotPos::First, "tool.slot.first", 22.0),
+        (SlotPos::Middle, "tool.slot", 22.0),
+        (SlotPos::Last, "tool.slot.last", 23.0),
     ] {
         let (rect, _, textures) = tool(&ctx, &skin, slot, false, vec![]);
         assert_eq!(rect.size(), vec2(23.0, height), "{name}: the piece size");
@@ -410,7 +391,6 @@ fn a_tool_button_is_its_column_slot_with_the_icon_and_the_active_slot_when_selec
         assert_eq!(icon.min - rect.min, vec2(3.0, 3.0), "{name}");
         let (_, _, textures) = tool(&ctx, &skin, slot, true, vec![]);
         // Elegido: el mismo tramo (no se hunde), con su marco rosa por dentro.
-        let _ = active;
         assert_eq!(drawn_slots(&skin, &textures), [name], "{slot:?} selected");
     }
 }
@@ -418,12 +398,9 @@ fn a_tool_button_is_its_column_slot_with_the_icon_and_the_active_slot_when_selec
 #[test]
 fn without_first_and_last_pieces_the_ends_use_the_middle_slot() {
     let ctx = egui::Context::default();
-    let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap().without(&[
-        "tool.slot.first",
-        "tool.slot.first.active",
-        "tool.slot.last",
-        "tool.slot.last.active",
-    ]);
+    let skin = Skin::load(&ctx, crate::skin::EMBEDDED)
+        .unwrap()
+        .without(&["tool.slot.first", "tool.slot.last"]);
     let middle = skin.piece("tool.slot", WidgetState::Normal).unwrap();
     for slot in [SlotPos::First, SlotPos::Last] {
         let (rect, _, textures) = tool(&ctx, &skin, slot, false, vec![]);
@@ -732,4 +709,90 @@ fn wrap_rows_keeps_each_group_whole_and_moves_what_does_not_fit_to_the_next_row(
     assert_eq!(wrap_rows(50.0, &widths, &joins), vec![0..1, 1..2, 2..3]);
     assert_eq!(wrap_rows(10.0, &[25.0], &[]), vec![0..1]);
     assert!(wrap_rows(10.0, &[], &[]).is_empty());
+}
+
+/// Los rects de la pieza `name` dibujados (las partes del 9-slice, juntas).
+fn piece_bounds(shapes: &[egui::Shape], skin: &Skin, name: &str) -> Option<Rect> {
+    let id = skin.piece(name, WidgetState::Normal)?.texture.id();
+    fn walk(s: &egui::Shape, id: egui::TextureId, out: &mut Option<Rect>) {
+        match s {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, id, out)),
+            egui::Shape::Mesh(m) if m.texture_id == id => {
+                let r = m.calc_bounds();
+                *out = Some(out.map_or(r, |o| o.union(r)));
+            }
+            _ => {}
+        }
+    }
+    let mut out = None;
+    shapes.iter().for_each(|s| walk(s, id, &mut out));
+    out
+}
+
+#[test]
+fn a_fresh_scroll_has_its_thumb_at_the_top_and_nothing_of_egui_under_the_bar() {
+    let (ctx, skin) = crate::kit::button::tests::pixel_ctx();
+    set_bubble(&ctx, Some(std::sync::Arc::new(skin.clone())));
+    let mut shapes = vec![];
+    for _ in 0..3 {
+        shapes = crate::kit::button::tests::frame(&ctx, vec![], |ui| {
+            let rect = Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(160.0, 120.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                let area = egui::ScrollArea::vertical()
+                    .id_salt("t")
+                    .max_height(120.0)
+                    .auto_shrink([false, false]);
+                scroll(ui, area, |ui| {
+                    for i in 1..=40 {
+                        ui.label(format!("Row {i}"));
+                    }
+                });
+            });
+        });
+    }
+    let track = piece_bounds(&shapes, &skin, "scroll.track.v").expect("the track");
+    let thumb = piece_bounds(&shapes, &skin, "scroll.thumb.v").expect("the thumb");
+    // Nada de egui se pinta con color debajo de la barra (asomaría por las esquinas).
+    fn rects(s: &egui::Shape, out: &mut Vec<(Rect, egui::Color32)>) {
+        match s {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| rects(s, out)),
+            egui::Shape::Rect(r) => out.push((r.rect, r.fill)),
+            _ => {}
+        }
+    }
+    let mut all = vec![];
+    shapes.iter().for_each(|s| rects(s, &mut all));
+    let under: Vec<_> = all
+        .iter()
+        .filter(|(r, c)| r.intersects(track) && c.a() > 0)
+        .collect();
+    assert!(under.is_empty(), "{under:?}");
+    assert_eq!(thumb.top(), track.top() + 1.0);
+}
+
+#[test]
+fn at_the_end_the_thumb_keeps_2_px_off_the_track_shadow() {
+    let (ctx, skin) = crate::kit::button::tests::pixel_ctx();
+    set_bubble(&ctx, Some(std::sync::Arc::new(skin.clone())));
+    let mut shapes = vec![];
+    for _ in 0..3 {
+        shapes = crate::kit::button::tests::frame(&ctx, vec![], |ui| {
+            let rect = Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(160.0, 120.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                let area = egui::ScrollArea::vertical()
+                    .id_salt("end")
+                    .max_height(120.0)
+                    .auto_shrink([false, false])
+                    .vertical_scroll_offset(10_000.0);
+                scroll(ui, area, |ui| {
+                    for i in 1..=40 {
+                        ui.label(format!("Row {i}"));
+                    }
+                });
+            });
+        });
+    }
+    let track = piece_bounds(&shapes, &skin, "scroll.track.v").expect("the track");
+    let thumb = piece_bounds(&shapes, &skin, "scroll.thumb.v").expect("the thumb");
+    assert_eq!(thumb.bottom(), track.bottom() - 2.0);
 }

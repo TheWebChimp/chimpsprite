@@ -110,7 +110,7 @@ pub fn outlined_text(
     painter.text(pos, align, text, font, egui::Color32::WHITE);
 }
 
-/// Un campo de texto de una línea: con Pixel UI, el del diseño (`field.text`); sin él, el de egui.
+/// Un campo de texto de una línea: con Pixel UI, el del UI kit (`kit::input`); sin él, el de egui.
 pub fn text_line(ui: &mut egui::Ui, text: &mut String) -> egui::Response {
     text_line_named(ui, text, "")
 }
@@ -120,86 +120,63 @@ pub fn text_line_named(ui: &mut egui::Ui, text: &mut String, label: &str) -> egu
     match pixel_ui::frame_skin(ui.ctx()) {
         Some(skin) => {
             let width = ui.spacing().text_edit_width.min(ui.available_width());
-            crate::pixel_sections::text_field(ui, &skin, text, width, label, "")
+            crate::kit::input::text_input(ui, &skin, text, width, label, "")
         }
         None => ui.text_edit_singleline(text),
     }
 }
 
-/// Una casilla con su texto: con Pixel UI, la de la barra (`field.check.on`).
+/// Una casilla con su texto: con Pixel UI, la del UI kit (`kit::check`); sin él, la de egui.
 pub fn checkbox(ui: &mut egui::Ui, checked: &mut bool, label: &str) -> egui::Response {
     match pixel_ui::frame_skin(ui.ctx()) {
-        Some(skin) => {
-            let look = BarLook {
-                skin: &skin,
-                top: here(ui),
-            };
-            bar_fields::checkbox(ui, look, checked, label)
-        }
+        Some(skin) => crate::kit::check::checkbox(ui, &skin, checked, label),
         None => ui.checkbox(checked, label),
     }
 }
 
-/// Una opción de un grupo: con Pixel UI, el radio del diseño (`menu.radio`, `menu.radio.on`)
-/// con su texto; sin él, el de egui. Elegirla cambia `current` a `value`.
+/// Una opción de un grupo: con Pixel UI, el radio del UI kit (`kit::check`); sin él, el de egui.
+/// Elegirla cambia `current` a `value`.
 pub fn radio_value<T: PartialEq>(
     ui: &mut egui::Ui,
     current: &mut T,
     value: T,
     label: &str,
 ) -> egui::Response {
-    let Some(skin) = pixel_ui::frame_skin(ui.ctx()) else {
-        return ui.radio_value(current, value, label);
-    };
-    use crate::skin::WidgetState;
-    let on = *current == value;
-    let piece = skin
-        .piece(
-            if on { "menu.radio.on" } else { "menu.radio" },
-            WidgetState::Normal,
-        )
-        .or_else(|| skin.piece("menu.radio", WidgetState::Normal));
-    let size = piece.map_or(egui::vec2(10.0, 10.0), |p| {
-        egui::vec2(p.size[0] as f32, p.size[1] as f32)
-    });
-    let color = skin.colors().text;
-    let font = egui::TextStyle::Body.resolve(ui.style());
-    let galley = ui.painter().layout_no_wrap(label.to_owned(), font, color);
-    const GAP: f32 = 3.0;
-    let height = galley.size().y.max(size.y);
-    let (rect, mut response) = ui.allocate_exact_size(
-        egui::vec2(size.x + GAP + galley.size().x, height),
-        egui::Sense::click(),
-    );
-    if response.clicked() && !on {
-        *current = value;
-        response.mark_changed();
+    match pixel_ui::frame_skin(ui.ctx()) {
+        Some(skin) => crate::kit::check::radio_value(ui, &skin, current, value, label),
+        None => ui.radio_value(current, value, label),
     }
-    let enabled = ui.is_enabled();
-    response.widget_info(|| {
-        egui::WidgetInfo::selected(egui::WidgetType::RadioButton, enabled, on, label)
-    });
-    if ui.is_rect_visible(rect) {
-        let ppp = ui.ctx().pixels_per_point();
-        let left = rect.left().round();
-        // Las mayúsculas (7) centradas en el alto del texto; el radio, centrado con ellas.
-        let caps = (rect.center().y - crate::tab_bar::CAP_HEIGHT / 2.0).round();
-        let mut shapes = Vec::new();
-        if let Some(piece) = piece {
-            let top = (caps + (crate::tab_bar::CAP_HEIGHT - size.y) / 2.0).floor();
-            let at = egui::Rect::from_min_size(egui::pos2(left, top), size);
-            shapes.extend(pixel_ui::piece_shapes(piece, at, ppp));
-        }
-        let at = crate::tab_bar::text_pos(&galley, left + size.x + GAP, caps, ppp);
-        shapes.push(egui::Shape::galley(at, galley, color));
-        ui.painter().extend(shapes);
+}
+
+/// Un botón de color que abre un selector: con Pixel UI, el del UI kit (`kit::color_button`, el
+/// selector de la app); sin él, el de egui. Sin `alpha`, el color queda opaco. `changed()` si
+/// cambió.
+pub fn color_edit(
+    ui: &mut egui::Ui,
+    color: &mut cs_core::Rgba,
+    alpha: bool,
+    label: &str,
+) -> egui::Response {
+    if let Some(skin) = pixel_ui::frame_skin(ui.ctx()) {
+        return crate::kit::color_button::color_edit(ui, &skin, color, alpha, label);
+    }
+    let mut c = egui::Color32::from_rgba_unmultiplied(color.r, color.g, color.b, color.a);
+    let mode = if alpha {
+        egui::color_picker::Alpha::OnlyBlend
+    } else {
+        egui::color_picker::Alpha::Opaque
+    };
+    let response = egui::color_picker::color_edit_button_srgba(ui, &mut c, mode);
+    if response.changed() {
+        let [r, g, b, a] = c.to_srgba_unmultiplied();
+        *color = cs_core::Rgba::new(r, g, b, if alpha { a } else { 255 });
     }
     response
 }
 
 /// Un desplegable con `selected` a la vista; `content` arma las opciones (con
-/// [`choice`]). Con Pixel UI, el combo de la barra (`field.combo`) y su lista en el panel de los
-/// menús; sin él, el `ComboBox` de egui (con `id_salt`).
+/// [`choice`]). Con Pixel UI, el select del UI kit (`kit::select`) con su lista; sin él, el
+/// `ComboBox` de egui (con `id_salt`).
 pub fn combo(
     ui: &mut egui::Ui,
     id_salt: &str,

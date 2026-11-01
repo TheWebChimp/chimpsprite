@@ -245,6 +245,12 @@ pub fn variants_list(
     pick
 }
 
+/// Si está abierto el menú de variantes del botón de grupo con id `button_id` (el popup de egui
+/// del botón: `Popup::default_response_id`).
+pub fn menu_open(ctx: &egui::Context, button_id: egui::Id) -> bool {
+    egui::Popup::is_id_open(ctx, button_id.with("popup"))
+}
+
 /// El botón del grupo `group` de `ToolKind::GROUPS`. `draw` lo dibuja con la herramienta que
 /// muestra el grupo y su estado, y devuelve su `Response`.
 ///

@@ -127,24 +127,24 @@ fn the_embedded_skin_has_the_artboard_frame_with_a_white_ring() {
     let data = decode(EMBEDDED).unwrap();
     let frame = &data.pieces["artboard.frame"];
     let window = &data.pieces["window"];
-    let (w, h) = (24, 24);
+    let (w, h) = (24, 25);
     assert_eq!(frame.size, [w, h]);
     assert_eq!(
         frame.center,
         Some(Rect9 {
             x: 2,
-            y: 14,
+            y: 15,
             w: 20,
             h: 8
         }),
-        "border + white on the sides, 13 of bar + white on top, white + border below"
+        "border + white on the sides, 14 of bar + white on top, white + border below"
     );
     let px = |p: &PieceImage, x: u32, y: u32| {
         let i = ((y * p.size[0] + x) * 4) as usize;
         [p.rgba[i], p.rgba[i + 1], p.rgba[i + 2], p.rgba[i + 3]]
     };
-    // De dónde sale cada píxel en `window` (64×48): las dos columnas de cada lado, la del
-    // medio estirada; la barra con una fila rosa más (10) y las dos filas de abajo.
+    // De dónde sale cada píxel en `window` (64×50): las dos columnas de cada lado, la del
+    // medio estirada; la barra (14 filas, como la del UI kit) y las dos filas de abajo.
     let src_x = |x: u32| match x {
         0 | 1 => x,
         _ if x >= w - 2 => 64 - (w - x),
@@ -152,11 +152,11 @@ fn the_embedded_skin_has_the_artboard_frame_with_a_white_ring() {
     };
     let src_y = |y: u32| match y {
         0 | 1 => y,
-        2..=11 => 2,
-        // La línea de abajo de la barra (la de `window` tiene una fila más de rosa).
-        12 => 12,
-        _ if y == h - 2 => 47,
-        _ if y == h - 1 => 48,
+        2..=12 => 2,
+        // La línea de abajo de la barra.
+        13 => 13,
+        _ if y == h - 2 => 48,
+        _ if y == h - 1 => 49,
         _ => 20,
     };
     const BORDER: [u8; 4] = [5, 4, 3, 255];
@@ -164,10 +164,10 @@ fn the_embedded_skin_has_the_artboard_frame_with_a_white_ring() {
         for x in 0..w {
             let got = px(frame, x, y);
             let from = px(window, src_x(x), src_y(y));
-            let expected = if y < 13 || from == BORDER || from[3] == 0 {
+            let expected = if y < 14 || from == BORDER || from[3] == 0 {
                 // La barra entera, el borde oscuro y las esquinas: iguales a `window`.
                 from
-            } else if y == 13 || y == h - 2 || x == 1 || x == w - 2 {
+            } else if y == 14 || y == h - 2 || x == 1 || x == w - 2 {
                 [255, 255, 255, 255]
             } else {
                 [0, 0, 0, 0]
@@ -175,30 +175,9 @@ fn the_embedded_skin_has_the_artboard_frame_with_a_white_ring() {
             assert_eq!(got, expected, "({x},{y})");
         }
     }
-    // La fila rosa agregada arriba del contenido es igual a las otras.
+    // Las filas rosas de la barra, iguales.
     assert_eq!(px(frame, 5, 2), [226, 114, 133, 255]);
-    assert_eq!(px(frame, 5, 11), [226, 114, 133, 255]);
-}
-
-#[test]
-fn the_embedded_skin_has_the_artboard_menu_icon_of_the_mockup() {
-    let data = decode(EMBEDDED).unwrap();
-    let menu = &data.pieces["artboard.menu"];
-    assert_eq!(menu.size, [9, 9]);
-    assert_eq!(menu.center, None);
-    // Tres rayas de 6 px en las filas 2, 4 y 6, desde la columna 2; el resto transparente.
-    for y in 0..9 {
-        for x in 0..9 {
-            let i = ((y * 9 + x) * 4) as usize;
-            let ink = [2, 4, 6].contains(&y) && (2..8).contains(&x);
-            let expected: &[u8] = if ink {
-                &[100, 54, 75, 255]
-            } else {
-                &[0, 0, 0, 0]
-            };
-            assert_eq!(&menu.rgba[i..i + 4], expected, "({x},{y})");
-        }
-    }
+    assert_eq!(px(frame, 5, 12), [226, 114, 133, 255]);
 }
 
 #[test]
@@ -217,7 +196,7 @@ fn the_embedded_skin_has_the_mockup_colors_window_and_buttons() {
     let window = &data.pieces["window.active"];
     let center = Rect9 {
         x: 3,
-        y: 14,
+        y: 15,
         w: 58,
         h: 32,
     };
@@ -229,9 +208,15 @@ fn the_embedded_skin_has_the_mockup_colors_window_and_buttons() {
         w: 43,
         h: 9,
     };
-    assert_eq!((button.size, button.center), ([49, 16], Some(center)));
-    assert!(data.pieces.contains_key("button.hover"));
-    assert!(data.pieces.contains_key("button.down"));
+    assert_eq!((button.size, button.center), ([49, 17], Some(center)));
+    for state in ["hover", "down", "disabled"] {
+        let piece = &data.pieces[&format!("button.{state}")];
+        assert_eq!(
+            (piece.size, piece.center),
+            (button.size, button.center),
+            "{state}"
+        );
+    }
     assert!(!data.pieces.contains_key("panel"), "not drawn yet");
 }
 
@@ -249,13 +234,18 @@ fn the_buttons_have_one_pixel_corners_and_the_active_one_is_sunk_with_the_brown_
     };
     let outline = Rgba::rgb(89, 77, 77);
     let white = Rgba::rgb(255, 255, 255);
+    let light = Rgba::rgb(241, 235, 219);
     let button = &data.pieces["button"];
-    assert_eq!(button.size, [49, 16]);
-    // Esquinas de 1 px: arriba, el borde empieza en la columna 1; abajo, igual.
+    assert_eq!(button.size, [49, 17]);
+    // Esquinas de 1 px: arriba, el borde empieza en la columna 1; abajo, las esquinas del borde
+    // son de la línea clara, que va debajo (la última fila, sin las puntas).
     assert_eq!(at(button, 0, 0).a, 0);
     assert_eq!(at(button, 1, 0), outline);
     assert_eq!(at(button, 0, 1), outline);
-    assert_eq!(at(button, 0, 15).a, 0);
+    assert_eq!(at(button, 0, 15), light);
+    assert_eq!(at(button, 24, 15), outline);
+    assert_eq!(at(button, 0, 16).a, 0);
+    assert_eq!(at(button, 24, 16), light, "the light line below");
     assert_eq!(at(button, 1, 1), white, "the light on top");
     assert_eq!(at(button, 47, 5), white, "the light on the right");
     assert_eq!(
@@ -263,22 +253,33 @@ fn the_buttons_have_one_pixel_corners_and_the_active_one_is_sunk_with_the_brown_
         Rgba::rgb(136, 110, 106),
         "the dark row below"
     );
-    // Hover: el relleno blanco adentro de un marco del relleno de siempre.
+    // Hover: el relleno blanco; la fila de arriba y la columna derecha, del relleno de siempre.
     let hover = &data.pieces["button.hover"];
     assert_eq!(at(hover, 24, 6), white);
-    assert_eq!(
-        at(hover, 2, 6),
-        at(button, 24, 6),
-        "the frame of the usual fill"
-    );
-    // Presionado: una fila más abajo, sin la fila oscura.
+    assert_eq!(at(hover, 24, 1), at(button, 24, 6), "the top row");
+    assert_eq!(at(hover, 47, 6), at(button, 24, 6), "the right column");
+    assert_eq!(at(hover, 1, 6), at(button, 1, 6), "the left column");
+    // Presionado: la cara baja 1 px (la primera fila queda vacía) y no tiene la fila oscura;
+    // abajo termina donde el normal (el contorno en la 15 y la línea clara en la 16).
     let down = &data.pieces["button.down"];
-    assert_eq!(at(down, 24, 0).a, 0, "sunk one row");
+    assert_eq!(at(down, 24, 0).a, 0, "sunk");
     assert_eq!(at(down, 24, 1), outline);
+    assert_eq!(at(down, 24, 2), white);
+    assert_eq!(at(down, 24, 14), at(button, 24, 13), "no dark row");
     assert_eq!(at(down, 24, 15), outline);
-    // Activo: la forma del presionado con el café tramado de la herramienta activa.
+    assert_eq!(at(down, 24, 16), light);
+    // Deshabilitado: el borde claro (oscuro en las filas de abajo) y abajo los cafés claros.
+    let disabled = &data.pieces["button.disabled"];
+    assert_eq!(at(disabled, 24, 0), Rgba::rgb(136, 110, 106));
+    assert_eq!(at(disabled, 1, 5), light, "the left column");
+    assert_eq!(at(disabled, 24, 13), light);
+    assert_eq!(at(disabled, 24, 14), Rgba::rgb(189, 164, 153));
+    assert_eq!(at(disabled, 24, 15), outline);
+    assert_eq!(at(disabled, 24, 16), light);
+    // Activo (de los grupos, todavía de 16): la forma del presionado de antes con el café
+    // tramado de la herramienta activa.
     let active = &data.pieces["button.active"];
-    assert_eq!((active.size, active.center), (button.size, button.center));
+    assert_eq!((active.size, active.center), ([49, 16], button.center));
     let browns = [Rgba::rgb(189, 164, 153), Rgba::rgb(174, 152, 142)];
     for y in 3..14 {
         for x in 3..46 {
@@ -286,10 +287,19 @@ fn the_buttons_have_one_pixel_corners_and_the_active_one_is_sunk_with_the_brown_
         }
     }
     assert_eq!(at(active, 24, 0).a, 0, "sunk one row");
-    // Los puntos de los grupos y su separador.
-    assert_eq!(data.pieces["button.dot.on"].size, [7, 7]);
-    assert_eq!(data.pieces["button.dot.off"].size, [7, 7]);
-    assert_eq!(data.pieces["button.sep"].size, [3, 16]);
+    // Los LEDs (de cualquier botón) y el separador de los grupos; los puntos viejos ya no están.
+    assert_eq!(data.pieces["button.led.on"].size, [6, 7]);
+    assert_eq!(data.pieces["button.led.off"].size, [6, 7]);
+    assert_eq!(data.pieces["button.group.sep"].size, [1, 17]);
+    for gone in [
+        "button.dot.on",
+        "button.dot.off",
+        "button.sep",
+        "button.group.dot.on",
+    ] {
+        assert!(!data.pieces.contains_key(gone), "{gone}");
+    }
+    assert!(!data.colors.contains_key("option_text_off"));
 }
 
 #[test]
@@ -319,8 +329,8 @@ fn the_embedded_skin_has_the_tool_icons_and_slots_of_the_mockup() {
         ("tool.slot", 22, false, false),
         ("tool.slot.last", 23, false, true),
     ] {
-        for name in [name.to_owned(), format!("{name}.active")] {
-            let slot = data.pieces.get(&name).unwrap_or_else(|| panic!("{name}"));
+        {
+            let slot = data.pieces.get(name).unwrap_or_else(|| panic!("{name}"));
             assert_eq!(
                 (slot.size, slot.center),
                 ([23, height], Some(center)),
@@ -339,15 +349,10 @@ fn the_embedded_skin_has_the_tool_icons_and_slots_of_the_mockup() {
             }
         }
     }
-    // El activo es otro dibujo: el relleno del mockup es café y tramado.
-    assert_ne!(
-        data.pieces["tool.slot"].rgba,
-        data.pieces["tool.slot.active"].rgba
-    );
-    assert!(
-        !data.pieces.contains_key("tool.slot.hover"),
-        "not drawn yet: falls back to tool.slot"
-    );
+    // Sin piezas por estado: hover y presionado salen del slot del kit (`kit::slot`).
+    for name in ["tool.slot.hover", "tool.slot.active", "tool.slot.down"] {
+        assert!(!data.pieces.contains_key(name), "{name}");
+    }
     // La caja de la barra: 27 de ancho (el botón de 23 más 1 px de aire y 1 de línea a cada
     // lado) y un centro que se estira en vertical.
     let frame = &data.pieces["toolbar.box"];
@@ -519,18 +524,43 @@ fn the_embedded_skin_has_the_menu_pieces_of_the_design() {
     let alpha =
         |piece: &PieceImage, x: u32, y: u32| piece.rgba[((y * piece.size[0] + x) * 4 + 3) as usize];
     let rect9 = |x, y, w, h| Some(Rect9 { x, y, w, h });
-    // La caja del título abierto: redondeada arriba, abierta abajo (se une al panel).
+    // La caja del título abierto (la "Layer" del mockup de componentes): borde negro,
+    // redondeada arriba, abierta abajo (sus 2 filas de abajo son el borde y el blanco del panel).
     let title = &data.pieces["menu.title.open"];
-    assert_eq!((title.size, title.center), ([25, 18], rect9(2, 2, 21, 14)));
+    assert_eq!((title.size, title.center), ([34, 17], rect9(3, 2, 28, 12)));
     assert_eq!(alpha(title, 0, 0), 0, "rounded corner");
     assert_eq!(alpha(title, 0, 2), 255, "the left side");
-    assert_eq!(alpha(title, 12, 17), 255, "open below: filled");
-    // El panel: bordes de 2 (línea y bisel) y un centro liso.
+    assert_eq!(alpha(title, 12, 16), 255, "open below: filled");
+    let i = ((2 * title.size[0]) * 4) as usize;
+    assert_eq!(title.rgba[i..i + 3], [5, 4, 3], "the black border");
+    // El panel: borde negro con las esquinas de arriba de 2 px, y un centro liso.
     let panel = &data.pieces["menu.panel"];
-    assert_eq!((panel.size, panel.center), ([5, 5], rect9(2, 2, 1, 1)));
-    for (x, y) in [(0, 0), (4, 0), (0, 4), (4, 4)] {
+    assert_eq!((panel.size, panel.center), ([8, 4], rect9(3, 2, 2, 1)));
+    for (x, y) in [(0, 0), (1, 0), (0, 1), (7, 0), (0, 3), (7, 3)] {
         assert_eq!(alpha(panel, x, y), 0, "rounded ({x},{y})");
     }
+    // El separador: la fila blanca sobre la (189,164,153), con las puntas de los biseles.
+    let separator = &data.pieces["menu.separator"];
+    assert_eq!(separator.size, [3, 2]);
+    let px = |x: u32, y: u32| {
+        let i = ((y * separator.size[0] + x) * 4) as usize;
+        [
+            separator.rgba[i],
+            separator.rgba[i + 1],
+            separator.rgba[i + 2],
+        ]
+    };
+    assert_eq!([px(1, 0), px(1, 1)], [[255, 255, 255], [189, 164, 153]]);
+    assert_eq!(
+        [px(0, 0), px(0, 1)],
+        [[234, 224, 221], [136, 110, 106]],
+        "left"
+    );
+    assert_eq!(
+        [px(2, 0), px(2, 1)],
+        [[255, 255, 255], [221, 206, 191]],
+        "right"
+    );
     // La tecla sin texto, que se estira (las badges: el nombre va encima en chimpfont).
     let key = &data.pieces["key"];
     assert_eq!((key.size, key.center), ([19, 7], rect9(1, 1, 17, 5)));
@@ -607,63 +637,68 @@ fn the_embedded_skin_has_the_options_bar_fields_of_the_design() {
         let drawn = (0..11 * 11).filter(|i| icon.rgba[i * 4 + 3] == 255).count();
         assert!((10..121).contains(&drawn), "{name}: {drawn}");
     }
-    // El combo: borde izquierdo de 2, relleno de 1 que se estira y a la derecha la flecha
-    // (10 columnas). 16 filas con el brillo de abajo.
-    let combo = &data.pieces["field.combo"];
-    assert_eq!((combo.size, combo.center), ([13, 16], rect9(2, 10, 1, 3)));
-    assert_eq!(at(combo, 0, 0).a, 0, "rounded corner");
-    assert_eq!(at(combo, 0, 2), border, "the left side");
-    assert_eq!(at(combo, 2, 5), white, "the fill");
-    assert_eq!(at(combo, 12, 5), border, "the right side");
-    let arrow = Rgba::rgb(5, 4, 3);
-    for (x, y) in [(3, 7), (7, 7), (4, 8), (6, 8), (5, 9)] {
-        assert_eq!(at(combo, x, y), arrow, "the arrow ({x},{y})");
-    }
-    assert_eq!(
-        at(combo, 2, 15),
-        Rgba::rgb(241, 235, 219),
-        "the light below"
-    );
-    // El campo numérico: el mismo borde, con el brillo de arriba a la derecha; la unidad "px",
-    // que tapa las 2 últimas columnas del campo.
+    // El campo numérico de antes (el editor de color y el timeline todavía lo usan): el mismo
+    // borde, con el brillo de arriba a la derecha.
     let number = &data.pieces["field.number"];
     assert_eq!((number.size, number.center), ([10, 16], rect9(2, 10, 1, 3)));
     assert_eq!(at(number, 0, 2), border);
     assert_eq!(at(number, 9, 2), border);
     assert_eq!(at(number, 9, 0).a, 0, "rounded corner");
     assert_eq!(at(number, 3, 2), Rgba::rgb(236, 235, 231), "the shine");
+    // Los campos del UI kit (mockup de componentes, frame 9), de 17 filas: el borde (136,110,106)
+    // que pasa a (89,77,77) desde la fila 7 (con un píxel claro en la 8), la fila 14 (230,231,240),
+    // el borde de abajo con la luz en las esquinas y la luz debajo.
+    let dark = Rgba::rgb(89, 77, 77);
+    let light = Rgba::rgb(241, 235, 219);
+    let text = &data.pieces["field.text"];
+    assert_eq!((text.size, text.center), ([6, 17], rect9(2, 1, 2, 13)));
+    let disabled = &data.pieces["field.text.disabled"];
+    assert_eq!((disabled.size, disabled.center), (text.size, text.center));
+    for (p, fill, shade) in [
+        (text, white, Rgba::rgb(230, 231, 240)),
+        (disabled, Rgba::rgb(221, 206, 191), Rgba::rgb(189, 164, 153)),
+    ] {
+        assert_eq!(at(p, 0, 0).a, 0, "rounded corner");
+        assert_eq!(at(p, 1, 0), border);
+        for (y, side) in [
+            (1, border),
+            (6, border),
+            (7, dark),
+            (8, border),
+            (9, dark),
+            (14, dark),
+        ] {
+            assert_eq!(at(p, 0, y), side, "left side, row {y}");
+            assert_eq!(at(p, 5, y), side, "right side, row {y}");
+        }
+        assert_eq!(at(p, 2, 1), fill);
+        assert_eq!(at(p, 2, 13), fill);
+        assert_eq!(at(p, 2, 14), shade);
+        assert_eq!((at(p, 0, 15), at(p, 2, 15)), (light, dark));
+        assert_eq!((at(p, 0, 16).a, at(p, 2, 16)), (0, light));
+    }
+    // Las cajas de la unidad (a la derecha, con el borde de ese lado) y del prefijo (a la
+    // izquierda): (189,164,153) sin texto (el texto lo escribe el campo), la fila 14 (221,206,191).
+    let grey = Rgba::rgb(189, 164, 153);
     let unit = &data.pieces["field.unit"];
-    // La unidad estira sus filas de abajo (debajo del "px") para medir los 17 de la norma.
-    let center = Rect9 {
-        x: 2,
-        y: 10,
-        w: 13,
-        h: 3,
-    };
-    assert_eq!((unit.size, unit.center), ([17, 16], Some(center)));
-    assert_eq!(at(unit, 0, 5), white, "the last column of the field");
-    assert_eq!(at(unit, 1, 5), border, "the divider");
-    assert_eq!(at(unit, 3, 5), Rgba::rgb(189, 164, 153), "the grey box");
-    assert_eq!(at(unit, 4, 5), Rgba::rgb(89, 77, 77), "the p");
-    // La esquina redondeada de la derecha (los 8 px que cambió el diseño en x 318..319).
-    assert_eq!(at(unit, 16, 0).a, 0, "rounded corner");
-    assert_eq!(at(unit, 15, 0), border, "the top, up to the corner");
-    assert_eq!(at(unit, 15, 1), Rgba::rgb(189, 164, 153), "the grey box");
-    assert_eq!(at(unit, 16, 1), border, "the right side");
-    assert_eq!(at(unit, 16, 13), border, "the right side, below");
-    // Abajo, la esquina redondeada de 1 px: el borde y el brillo en la esquina.
-    assert_eq!(at(unit, 15, 14), border, "the bottom");
-    assert_eq!(
-        at(unit, 16, 14),
-        Rgba::rgb(241, 235, 219),
-        "the light at the corner"
-    );
-    assert_eq!(at(unit, 16, 15).a, 0, "rounded corner");
+    assert_eq!((unit.size, unit.center), ([17, 17], rect9(1, 1, 14, 13)));
+    let prefix = &data.pieces["field.prefix"];
+    assert_eq!((prefix.size, prefix.center), ([12, 17], rect9(2, 1, 8, 13)));
+    for (p, inside, side) in [(unit, 0, 16), (prefix, 11, 0)] {
+        for y in 1..14 {
+            assert_eq!(at(p, inside, y), grey, "box, row {y}");
+        }
+        assert_eq!(at(p, inside, 14), Rgba::rgb(221, 206, 191), "box shade");
+        assert_eq!(at(p, side, 0).a, 0, "rounded corner");
+        assert_eq!(at(p, side, 7), dark, "the side");
+        assert_eq!(at(p, side, 15), light, "the light corner");
+    }
     // Las esquinas de 1 px del diseño: abajo, la fila de sombra (230,231,240) de lado a
     // lado, el borde con el brillo en las esquinas y la fila de brillo debajo.
     let shade = Rgba::rgb(230, 231, 240);
     let light = Rgba::rgb(241, 235, 219);
-    for (name, p) in [("combo", combo), ("number", number)] {
+    {
+        let (name, p) = ("number", number);
         let w = p.size[0];
         assert_eq!(at(p, 1, 12), white, "{name}: white down to the shade");
         assert_eq!(at(p, 1, 13), shade, "{name}: the shade, left");
@@ -675,19 +710,19 @@ fn the_embedded_skin_has_the_options_bar_fields_of_the_design() {
         assert_eq!(at(p, 0, 1), border, "{name}: 1 px corner, the side");
         assert_eq!(at(p, 1, 0), border, "{name}: 1 px corner, the top");
     }
-    // La casilla marcada de la barra: 13×14, como el cuadro de `sym.slot` con el interior
-    // blanco y la marca verde. No es la del menú (11×12). La sin marcar, la misma sin marca.
-    let check = &data.pieces["field.check.on"];
-    assert_eq!((check.size, check.center), ([13, 14], None));
+    // Las casillas del UI kit (las de la barra también): 12×13, el interior blanco y la marca
+    // verde. No son las del menú (11×12). La sin marcar, la misma sin marca.
+    let check = &data.pieces["check.on"];
+    assert_eq!((check.size, check.center), ([12, 13], None));
     assert_eq!(at(check, 0, 0).a, 0, "rounded corner");
     assert_eq!(at(check, 1, 0), border, "the top");
     assert_eq!(at(check, 1, 1), white, "white inside");
-    assert_eq!(at(check, 2, 6), Rgba::rgb(71, 114, 56), "the green check");
-    assert_eq!(at(check, 1, 11), shade, "the shade");
+    assert_eq!(at(check, 2, 5), Rgba::rgb(71, 114, 56), "the green check");
+    assert_eq!(at(check, 1, 10), shade, "the shade");
     assert_ne!(check.size, data.pieces["menu.check.on"].size);
-    let empty = &data.pieces["field.check"];
+    let empty = &data.pieces["check"];
     assert_eq!(empty.size, check.size);
-    assert_eq!(at(empty, 2, 6), white, "no check");
+    assert_eq!(at(empty, 2, 5), white, "no check");
     assert_eq!(at(empty, 1, 0), border, "the same box");
 }
 
@@ -713,7 +748,7 @@ fn the_embedded_skin_has_the_palette_and_color_editor_pieces_of_the_design() {
         ("picker.cursor.bar", [7, 7], None),
         ("picker.sv", [7, 7], rect9(3, 3, 1, 1)),
         ("picker.bars", [7, 6], rect9(3, 2, 1, 1)),
-        ("picker.copy", [25, 16], None),
+        ("icon.copy", [9, 9], None),
         ("channel.r", [4, 16], rect9(3, 0, 1, 16)),
         ("channel.sep", [1, 16], None),
         ("channel.g", [1, 16], rect9(0, 0, 1, 16)),
@@ -906,10 +941,6 @@ fn the_embedded_skin_has_the_timeline_pieces_of_the_design() {
         ("timeline.button.sep".into(), [1, 14], None),
         ("timeline.icon.onion.on".into(), [15, 17], None),
         ("timeline.onion_range".into(), [59, 17], None),
-        ("timeline.stepper.minus".into(), [15, 17], None),
-        ("timeline.stepper.plus".into(), [15, 17], None),
-        ("timeline.stepper.field".into(), [7, 17], rect9(0, 0, 1, 17)),
-        ("timeline.combo".into(), [13, 17], rect9(2, 0, 1, 17)),
         ("timeline.icon.clock".into(), [16, 18], None),
         ("timeline.divider".into(), [11, 3], rect9(5, 0, 1, 3)),
         ("timeline.eye".into(), [9, 7], None),

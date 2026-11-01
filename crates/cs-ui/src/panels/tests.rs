@@ -637,7 +637,7 @@ fn the_first_button_is_rounded_on_top_the_last_below_and_the_active_one_is_frame
     assert_eq!(drawn(&h, "tool.slot.last"), [rect(last)]);
     let middle: Vec<Rect> = (1..last).map(rect).collect();
     assert_eq!(drawn(&h, "tool.slot"), middle);
-    assert!(drawn(&h, "tool.slot.active").is_empty(), "{pencil}");
+    assert!(middle.contains(&rect(pencil)), "{pencil}");
 }
 
 #[test]
@@ -962,11 +962,12 @@ impl BarHarness {
         texts
     }
 
-    /// El color y la tinta del primer texto `text` dibujado.
+    /// El color y la tinta del último texto `text` dibujado.
     fn text(&self, text: &str) -> (Color32, Rect) {
+        // El último: los botones del kit dibujan primero la sombra y encima el texto.
         self.texts()
             .into_iter()
-            .find(|(t, _, _)| t == text)
+            .rfind(|(t, _, _)| t == text)
             .map(|(_, r, c)| (c, r))
             .unwrap_or_else(|| panic!("no text {text:?} in {:?}", self.texts()))
     }
@@ -1047,6 +1048,20 @@ fn the_options_bar_has_the_brush_with_the_pencil_but_not_with_the_hand() {
         "Symmetry is always there"
     );
     assert!(h.has("Symmetry"));
+}
+
+#[test]
+fn the_text_tool_lists_the_document_fonts() {
+    let mut h = BarHarness::with_skin(1200.0, true);
+    h.editor.new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    h.editor.set_tool(ToolKind::Text);
+    h.frame(vec![]);
+    h.open("Pixel 5×7");
+    h.click("Mine");
+    h.frame(vec![]);
+    assert_eq!(h.editor.text_style.font.name(), "Mine");
+    assert_eq!(h.editor.text_style.size, 1);
+    assert!(h.has("Scale"), "a document font is a scale font");
 }
 
 #[test]
@@ -1132,7 +1147,7 @@ fn with_pixel_ui_the_symmetry_buttons_are_the_skin_pieces_and_toggle_their_axis(
     assert_eq!(slots[0].left() - h.rect("Symmetry").right(), 3.0);
     let (_, ink) = h.text("Symmetry");
     assert_eq!(slots[0].left() + 1.0 - ink.right(), 5.0, "{ink:?}");
-    assert_eq!(ink.top(), h.bar.top() + 6.0, "{ink:?}");
+    assert_eq!(ink.top(), h.bar.top() + 7.0, "{ink:?}");
     // Después de los ejes, a 5, el botón del espejo (25×16 con su ícono, como en el diseño)
     // y del espejo al borde, 3. Un clic lo prende.
     let mirror = h.rect("Mirror Selection");
@@ -1227,18 +1242,18 @@ fn with_pixel_ui_the_bar_is_23_and_every_node_fits_inside_it() {
         }
         // Las piezas de los controles, en las 19 filas de arriba del grabado.
         for piece in [
-            "field.combo",
-            "field.number",
+            "field.text",
+            "field.prefix",
             "field.unit",
-            "field.check.on",
+            "check",
             "sym.slot",
             "sym.slot.active",
             "button",
             "button.hover",
             "button.down",
-            "button.sep",
-            "button.dot.on",
-            "button.dot.off",
+            "button.group.sep",
+            "button.led.on",
+            "button.led.off",
         ] {
             for rect in h.drawn(piece) {
                 assert!(
@@ -1251,7 +1266,7 @@ fn with_pixel_ui_the_bar_is_23_and_every_node_fits_inside_it() {
         // Las herramientas con grupos de radios (Sample, Linear/Radial, Rotation) los
         // dibujan como botones: la prueba de arriba no es vacía para ellos.
         if kind != ToolKind::Pencil && kind != ToolKind::Text {
-            assert!(!h.drawn("button.dot.on").is_empty(), "{kind:?}: no buttons");
+            assert!(!h.drawn("button.led.on").is_empty(), "{kind:?}: no buttons");
         }
     }
 }
@@ -1293,7 +1308,7 @@ fn with_pixel_ui_the_marquee_mode_is_four_icon_buttons_like_in_the_design() {
     let colors = *h.skin.as_ref().unwrap().colors();
     let (color, ink) = h.text("Mode");
     assert_eq!(color, colors.text);
-    assert_eq!(ink.min, bar.min + Vec2::new(7.0, 6.0), "{ink:?}");
+    assert_eq!(ink.min, bar.min + Vec2::new(7.0, 7.0), "{ink:?}");
     assert_eq!(ink.width(), 20.0);
     // Los cuatro cuadritos: las piezas en x 60, 77, 94 y 111 y en la y 73 (la pieza tiene
     // una columna transparente antes del cuadro, que va en 61). Replace es el elegido.
@@ -1359,17 +1374,23 @@ fn with_pixel_ui_brush_size_is_the_number_field_with_its_px_unit() {
     let mut h = pixel_bar(ToolKind::Pencil);
     let bar = h.bar;
     // "Brush Size" a 7 del borde (43 de tinta, con 3 px entre palabras) y, 3 px después de la
-    // tinta, el campo y la unidad "px": 42 de ancho en total, de la y 73 a la 88 del diseño.
+    // tinta, el campo numérico del UI kit con la caja de la unidad "px": 42 de ancho en total
+    // (como en el mockup de componentes), de la y 73 a la 89 del diseño.
     let (_, ink) = h.text("Brush Size");
-    assert_eq!(ink.min, bar.min + Vec2::new(7.0, 6.0), "{ink:?}");
+    assert_eq!(ink.min, bar.min + Vec2::new(7.0, 7.0), "{ink:?}");
     assert_eq!(ink.width(), 43.0);
-    let field = h.drawn_boxes("field.number");
     let left = ink.right() + 3.0;
+    // (El de Ink, más a la derecha, es el select: también es un `field.text`.)
+    let field: Vec<Rect> = h
+        .drawn_boxes("field.text")
+        .into_iter()
+        .filter(|f| f.left() == left)
+        .collect();
     assert_eq!(
         field,
         vec![Rect::from_min_size(
             pos2(left, bar.top() + 2.0),
-            Vec2::new(27.0, 17.0)
+            Vec2::new(42.0, 17.0)
         )]
     );
     let unit = h.drawn_boxes("field.unit");
@@ -1380,12 +1401,13 @@ fn with_pixel_ui_brush_size_is_the_number_field_with_its_px_unit() {
             Vec2::new(17.0, 17.0)
         )]
     );
-    // El número, en la fila de los textos (los dígitos miden 6, como las mayúsculas: terminan en
-    // la fila 11) y adentro del blanco.
+    // El número, con las mayúsculas en la fila 5 del campo (una más abajo que los textos de la
+    // barra; los dígitos miden 6, como las mayúsculas) y adentro del blanco; sin el foco, en
+    // `field_text`.
     let size = h.editor.options.brush_size;
     let (color, digits) = h.text(&size.to_string());
-    assert_eq!(color, h.skin.as_ref().unwrap().colors().text);
-    assert_eq!(digits.bottom(), bar.top() + 12.0, "{digits:?}");
+    assert_eq!(color, h.skin.as_ref().unwrap().colors().field_text);
+    assert_eq!(digits.bottom(), bar.top() + 13.0, "{digits:?}");
     assert!(digits.left() > left + 1.0 && digits.right() < left + 26.0);
     // Arrastrar a la derecha lo agranda.
     h.drag(field[0].center(), 40.0);
@@ -1406,7 +1428,7 @@ fn with_pixel_ui_fields_without_a_unit_have_no_px() {
     let h = pixel_bar(ToolKind::MagicWand);
     // Tolerance no tiene unidad: el campo solo.
     let (_, ink) = h.text("Tolerance");
-    let field = h.drawn_boxes("field.number");
+    let field = h.drawn_boxes("field.text");
     assert_eq!(field.len(), 1, "{field:?}");
     assert_eq!(field[0].left(), ink.right() + 3.0);
     assert_eq!(field[0].size(), Vec2::new(27.0, 17.0));
@@ -1414,54 +1436,59 @@ fn with_pixel_ui_fields_without_a_unit_have_no_px() {
     // Spray: el ancho en px y la velocidad sin unidad.
     let h = pixel_bar(ToolKind::Spray);
     assert_eq!(
-        h.drawn_boxes("field.number").len(),
-        3,
-        "brush, width and speed"
+        h.drawn_boxes("field.text").len(),
+        4,
+        "brush, width, speed and the ink select"
     );
     assert_eq!(h.drawn_boxes("field.unit").len(), 2, "brush and width");
 }
 
 #[test]
-fn with_pixel_ui_a_combo_is_the_field_combo_and_picking_an_option_works() {
+fn with_pixel_ui_a_combo_is_the_kit_select_and_picking_an_option_works() {
     let mut h = pixel_bar(ToolKind::Gradient);
     let bar = h.bar;
-    // El tramado es una lista de verdad: el único combo del diseño, de la y 73 a la 88 (la
-    // forma, Linear/Radial, son botones).
-    let combos = h.drawn_boxes("field.combo");
-    assert_eq!(combos.len(), 1, "{combos:?}");
-    // El texto, 6 px adentro y en la fila de los textos; 5 px de su tinta a la parte de la
-    // flecha, las últimas 10 columnas (en el diseño, x 128..212, tinta en 134..197).
+    // El tramado es una lista de verdad: el select del UI kit (el campo `field.text` con el ▾),
+    // desde la fila de los campos (la forma, Linear/Radial, son botones).
     let current = h.editor.options.dither;
     let (_, ink) = h.text(current.label());
-    let combo = combos[0];
-    assert_eq!(combo.top(), bar.top() + 2.0);
-    assert_eq!(combo.height(), 17.0);
-    assert_eq!(ink.left() - combo.left(), 6.0);
-    assert_eq!(ink.top(), bar.top() + 6.0);
-    assert_eq!(combo.right() - ink.right(), 5.0 + 10.0);
-    // Un clic abre la lista en el panel de los menús, colgada del combo.
+    let selects: Vec<Rect> = h
+        .drawn_boxes("field.text")
+        .into_iter()
+        .filter(|f| f.contains_rect(ink))
+        .collect();
+    assert_eq!(selects.len(), 1, "{selects:?}");
+    let select = selects[0];
+    assert_eq!(select.top(), bar.top() + 2.0);
+    assert_eq!(select.height(), 17.0);
+    // El texto, 5 px adentro y en la fila 5 del campo.
+    assert_eq!(ink.left() - select.left(), 5.0);
+    assert_eq!(ink.top(), select.top() + 5.0);
+    // Un clic abre su lista debajo: desde la fila 15 del campo y 11 px más ancha (más la
+    // sombra).
     let other = Dither::ALL.into_iter().find(|d| *d != current).unwrap();
     assert!(!h.has(other.label()), "closed: only the chosen one");
     h.open(current.label());
     assert!(h.has(other.label()), "{:?}", h.nodes);
-    let panel = h.drawn_boxes("menu.panel");
-    assert_eq!(panel.len(), 1, "{panel:?}");
-    assert_eq!(panel[0].left_top(), combo.left_bottom());
-    assert!(panel[0].width() >= combo.width());
+    let list = h.drawn_boxes("select.list");
+    assert_eq!(list.len(), 1, "{list:?}");
+    assert_eq!(list[0].left_top(), select.left_top() + Vec2::new(0.0, 15.0));
+    assert!(list[0].width() >= select.width() + 11.0 + 2.0);
     h.click(other.label());
     assert_eq!(h.editor.options.dither, other);
     for _ in 0..10 {
         h.frame(vec![]);
     }
-    assert_eq!(h.drawn_boxes("menu.panel"), vec![], "closed after picking");
+    assert_eq!(h.drawn_boxes("select.list"), vec![], "closed after picking");
     assert!(h.has(other.label()) && !h.has(current.label()));
 }
 
-/// Las cajas de los botones de opción dibujados (`button`, o `button.hover` con el puntero
-/// encima), de izquierda a derecha.
+/// Las cajas de los botones de opción dibujados (`button`, `button.hover` con el puntero encima
+/// o `button.down` el elegido), de izquierda a derecha. Los vecinos iguales se tocan (comparten
+/// la columna del separador) y quedan en una caja.
 fn option_buttons(h: &BarHarness) -> Vec<Rect> {
     let mut boxes = h.drawn_boxes("button");
     boxes.extend(h.drawn_boxes("button.hover"));
+    boxes.extend(h.drawn_boxes("button.down"));
     boxes.sort_by(|a, b| a.left().total_cmp(&b.left()));
     boxes
 }
@@ -1504,7 +1531,7 @@ fn radio_groups() -> Vec<RadioGroup> {
 }
 
 /// La caja del botón `label` (su nodo, con la pieza dibujada debajo) y si es el elegido (con
-/// el punto verde, `button.dot.on`, adentro).
+/// el LED verde, `button.led.on`, adentro).
 fn button_box(h: &BarHarness, label: &str) -> (Rect, bool) {
     // El nodo del botón es el botón dibujado (los del grupo se tocan: sus piezas se juntan
     // en una caja).
@@ -1514,47 +1541,49 @@ fn button_box(h: &BarHarness, label: &str) -> (Rect, bool) {
         "no button under {label:?}"
     );
     let on = h
-        .drawn_boxes("button.dot.on")
+        .drawn_boxes("button.led.on")
         .iter()
         .any(|d| b.contains_rect(*d));
     let off = h
-        .drawn_boxes("button.dot.off")
+        .drawn_boxes("button.led.off")
         .iter()
         .any(|d| b.contains_rect(*d));
-    assert!(on != off, "{label}: one dot");
+    assert!(on != off, "{label}: one LED");
     (b, on)
 }
 
 #[test]
-fn with_pixel_ui_each_radio_option_is_a_button_of_the_group_with_its_dot() {
+fn with_pixel_ui_each_radio_option_is_a_button_of_the_group_with_its_led() {
     for group in radio_groups() {
         let h = pixel_bar(group.tool);
         let bar = h.bar;
         let tool = group.tool;
         let current = (group.current)(&h.editor);
         let colors = *h.skin.as_ref().unwrap().colors();
-        // Un botón por opción, como en el diseño: el elegido con el punto verde y su texto en
-        // el color del texto; los demás, con el anillo gris y el texto apagado.
+        // Un botón por opción, como en el mockup de componentes (el grupo del UI kit): el elegido
+        // con el LED verde, presionado (baja 1 px); los demás con el LED morado. Todos los
+        // textos en el color del texto.
         let options: Vec<Rect> = group
             .options
             .iter()
             .map(|label| {
                 let (b, on) = button_box(&h, label);
                 assert_eq!(on, *label == current, "{tool:?}: {label}");
-                // En las filas de los campos (la y 73 a la 88 del diseño).
+                // En las filas de los campos (la y 73 a la 89 del diseño, con la luz de abajo).
                 assert_eq!(b.top(), bar.top() + 2.0, "{tool:?}: {label} {b:?}");
-                assert_eq!(b.height(), 16.0, "{tool:?}: {label}");
+                assert_eq!(b.height(), 17.0, "{tool:?}: {label}");
                 let (color, ink) = h.text(label);
-                let want = if on {
-                    colors.text
-                } else {
-                    colors.option_text_off
-                };
-                assert_eq!(color, want, "{tool:?}: {label}");
-                assert_eq!(ink.top(), bar.top() + 6.0, "{tool:?}: {label} {ink:?}");
-                // La tinta 12 px adentro (el punto de 7 y su aire) y 4 antes del borde.
-                assert_eq!(ink.left(), b.left() + 12.0, "{tool:?}: {label}");
-                assert_eq!(ink.right() + 5.0, b.right(), "{tool:?}: {label}");
+                assert_eq!(color, colors.text, "{tool:?}: {label}");
+                let drop = if on { 1.0 } else { 0.0 };
+                assert_eq!(
+                    ink.top(),
+                    bar.top() + 6.0 + drop,
+                    "{tool:?}: {label} {ink:?}"
+                );
+                // La tinta 15 px adentro (contorno, bisel, 4 de aire, el LED de 6 y 3 de aire)
+                // y 6 antes del borde (4 de aire, bisel y contorno).
+                assert_eq!(ink.left(), b.left() + 15.0, "{tool:?}: {label}");
+                assert_eq!(ink.right() + 6.0, b.right(), "{tool:?}: {label}");
                 b
             })
             .collect();
@@ -1564,15 +1593,15 @@ fn with_pixel_ui_each_radio_option_is_a_button_of_the_group_with_its_dot() {
         }
         let span = options.iter().fold(Rect::NOTHING, |a, b| a.union(*b));
         let seps = h
-            .drawn_boxes("button.sep")
+            .drawn_boxes("button.group.sep")
             .into_iter()
             .filter(|r| span.intersects(*r))
             .count();
         assert_eq!(seps, options.len() - 1, "{tool:?}");
-        // Ya no hay combo para el grupo.
+        // Ya no hay combo (select) para el grupo.
         for label in &group.options {
             let combo = h
-                .drawn_boxes("field.combo")
+                .drawn_boxes("field.text")
                 .into_iter()
                 .any(|c| c.contains(h.rect(label).center()));
             assert!(!combo, "{tool:?}: {label} in a combo");
@@ -1589,7 +1618,7 @@ fn with_pixel_ui_one_click_on_a_radio_button_picks_that_option() {
             h.click(label);
             assert_eq!((group.current)(&h.editor), *label, "{tool:?}");
             h.frame(vec![]);
-            // El punto verde pasa al elegido; los otros, con el anillo.
+            // El LED verde pasa al elegido; los otros, con el morado.
             for other in &group.options {
                 assert_eq!(button_box(&h, other).1, other == label, "{tool:?}: {other}");
             }
@@ -1626,28 +1655,29 @@ fn with_pixel_ui_the_brush_shape_button_shows_the_brush_at_its_size_up_to_nine()
 fn with_pixel_ui_pixel_perfect_is_the_bar_checkbox_and_a_click_toggles_it() {
     let mut h = pixel_bar(ToolKind::Pencil);
     let bar = h.bar;
-    // Sin marcar: la pieza no está dibujada y va el cuadro de respaldo.
+    // Sin marcar: la casilla vacía del UI kit.
     h.editor.options.pixel_perfect = false;
     h.frame(vec![]);
-    assert_eq!(h.drawn("field.check.on"), vec![], "unchecked");
     let before = h.rect("Pixel Perfect");
+    let at = Rect::from_min_size(pos2(before.left(), bar.top() + 5.0), Vec2::new(12.0, 13.0));
+    assert_eq!(h.drawn("check"), vec![at], "unchecked");
     h.click("Pixel Perfect");
     h.frame(vec![]);
     assert!(h.editor.options.pixel_perfect);
-    // Marcada: la casilla del diseño, 13×14 de la y 74 a la 87, 5 px después del control
-    // anterior (en el diseño, del campo; acá, de los botones de forma), y la tinta del texto
-    // 3 px después, en la fila de los textos.
-    let check = h.drawn("field.check.on");
-    let at = Rect::from_min_size(pos2(before.left(), bar.top() + 3.0), Vec2::new(13.0, 14.0));
+    // Marcada (con el puntero encima): la casilla del kit, 12×13 desde la fila 5 de la barra,
+    // 5 px después del control anterior (los botones de forma), y la tinta del texto 3 px
+    // después, en la fila de los textos.
+    let check = h.drawn("check.on.hover");
     assert_eq!(check, vec![at]);
     assert_eq!(check[0].left() - h.rect("Round brush").right(), 5.0);
     let (_, ink) = h.text("Pixel Perfect");
     assert_eq!(ink.left() - check[0].right(), 3.0);
-    assert_eq!(ink.top(), bar.top() + 6.0);
+    // En la fila de los textos de la barra (la del texto de los campos).
+    assert_eq!(ink.top(), bar.top() + 7.0);
     h.click("Pixel Perfect");
     h.frame(vec![]);
     assert!(!h.editor.options.pixel_perfect);
-    assert_eq!(h.drawn("field.check.on"), vec![]);
+    assert_eq!(h.drawn("check.on.hover"), vec![]);
 }
 
 #[test]
@@ -1664,17 +1694,29 @@ fn with_pixel_ui_every_text_of_the_bar_is_in_the_design_row() {
         // "Load font…" y "Dafont…" son botones de texto (centrado en el botón): el diseño no
         // los tiene.
         let buttons = ["Load font", "Dafont"];
-        for (text, ink, _) in h
+        // Las sombras de los grupos de opciones (1 px abajo) no cuentan; la opción elegida baja
+        // 1 px con su botón, como el presionado (su LED verde a 3 px de la tinta).
+        let shadow = h.skin.as_ref().unwrap().colors().background;
+        let on_leds = h.drawn_boxes("button.led.on");
+        // Los textos de los campos (los selects) van en la fila 5 del campo, una más abajo.
+        for (text, ink, color) in h
             .texts()
             .into_iter()
-            .filter(|(t, _, _)| !buttons.contains(&t.as_str()))
+            .filter(|(t, _, c)| !buttons.contains(&t.as_str()) && *c != shadow)
         {
-            // Las mayúsculas en la fila 5 (los textos sin mayúsculas, como los números o
-            // "px", no bajan de ahí).
-            assert!(ink.top() >= h.bar.top() + 6.0, "{tool:?}: {text:?} {ink:?}");
+            let on = on_leds.iter().any(|d| d.right() + 3.0 == ink.left());
+            // Los textos de la barra, los de los campos y los de las casillas, en la fila 7
+            // (la del texto de los campos); los de los botones de opción, en la de los botones
+            // (la 6), y la elegida baja 1 px con su botón.
+            let off_leds = h.drawn_boxes("button.led.off");
+            let button = off_leds.iter().any(|d| d.right() + 3.0 == ink.left());
+            let row = h.bar.top() + if button && !on { 6.0 } else { 7.0 };
+            // Las mayúsculas en su fila (los textos sin mayúsculas, como los números o "px", no
+            // bajan de ahí).
+            assert!(ink.top() >= row, "{tool:?}: {text:?} {ink:?} {color:?}");
             let caps = text.chars().any(|c| c.is_ascii_uppercase());
             if caps {
-                assert_eq!(ink.top(), h.bar.top() + 6.0, "{tool:?}: {text:?} {ink:?}");
+                assert_eq!(ink.top(), row, "{tool:?}: {text:?} {ink:?}");
             }
         }
     }

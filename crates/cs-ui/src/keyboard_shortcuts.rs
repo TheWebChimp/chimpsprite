@@ -151,14 +151,7 @@ fn contents(ui: &mut Ui, window: &mut ShortcutsWindow, keymap: &mut Keymap, skin
         match skin {
             Some(skin) => {
                 let width = ui.available_width();
-                crate::pixel_sections::text_field(
-                    ui,
-                    skin,
-                    &mut window.filter,
-                    width,
-                    "Search",
-                    "",
-                );
+                crate::kit::input::text_input(ui, skin, &mut window.filter, width, "Search", "");
             }
             None => {
                 ui.add(egui::TextEdit::singleline(&mut window.filter).desired_width(f32::INFINITY));

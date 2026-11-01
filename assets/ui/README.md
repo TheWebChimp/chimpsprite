@@ -10,13 +10,17 @@ misma licencia que el repositorio (MIT o Apache-2.0, a elección; ver `LICENSE-M
 
 - Grilla de 16 píxeles por em: se usa a 16 puntos, un píxel de la grilla por punto.
 - Mayúsculas de 7 px; las colas bajan 2 px.
+- Cifras monoespaciadas: todas avanzan 5 px. El "1" (3 de tinta) va centrado en su celda, 1 px
+  adentro; en `.design/chimpsprite.ttf` avanza 4, así que al copiarla se le corre el trazo
+  64 unidades a la derecha y se le pone un avance de 320 (como al espacio, que va de 128).
 - Incluye acentos, ñ, ¿, ¡, € y °. Los glifos que no tiene (•, …, ▸) salen de las fuentes de egui.
 
 ## chimpfont.ttf
 
-La fuente de los textos chicos con Pixel UI (`TextStyle::Small`): solo mayúsculas de 5 px y
-ASCII, a 8 puntos (un píxel de su grilla, un punto). La usan la barra de estado, los globos de
-los tooltips, las rutas de Home y los textos de Pixnews.
+La fuente de los textos chicos con Pixel UI (`TextStyle::Small`): mayúsculas y minúsculas de
+5 px, con acentos, ñ y signos (319 caracteres). Grilla de 64 unidades por píxel (1024 por em): se
+usa a 16 puntos, un píxel de su grilla por punto. La usan la barra de estado, los globos de los
+tooltips, las rutas de Home y los textos de Pixnews. Es copia de `.design/chimpfont.ttf`.
 
 ## unifont_symbols.otf y unifont_emoji.otf
 
@@ -47,8 +51,8 @@ oculta.
   opciones y paneles) y `canvas`, el del área alrededor de los artboards.
   - Los separadores grabados del mockup son una línea `canvas` de 1 px con una `highlight` de
     1 px debajo (horizontales) o a la derecha (verticales).
-- **Variantes:** `.hover`, `.down` y `.active` son opcionales; si falta una, se usa la pieza
-  base.
+- **Variantes:** `.hover`, `.down`, `.active` y `.disabled` son opcionales; si falta una, se usa la
+  pieza base.
 - **Piezas sin dibujar:** una pieza totalmente transparente cuenta como que no existe; la app
   dibuja un respaldo plano con los colores del skin.
 - **Íconos de herramientas:** `icon.<herramienta>` miden 17×17 sobre fondo transparente (los
@@ -59,10 +63,12 @@ oculta.
   - `tool.slot.first` (el de arriba, redondeado arriba) y `tool.slot` (los del medio) miden
     23×22: traen el borde de arriba y no el de abajo, que es el del botón siguiente.
   - `tool.slot.last` (el de abajo, redondeado abajo) mide 23×23: trae los dos bordes.
-  - Cada uno tiene su `.active` (la herramienta elegida): el botón activo suelto del mockup, con
-    el bisel invertido (blanco ↔ (221,206,191)) y el relleno café tramado en la misma posición.
-  - Si falta `.first` o `.last`, se usa `tool.slot`. `tool.slot.hover` está sin dibujar y cae
-    al normal.
+  - Sin piezas por estado: hover y presionado los pone el slot del UI kit
+    (`crates/cs-ui/src/kit/slot.rs`), con las reglas del botón del kit. Con el puntero encima,
+    la cara se vuelve blanca y la luz de arriba y de la derecha toma el color de la cara.
+    Presionado, la cara baja 1 px y el borde de abajo se queda. La herramienta elegida lleva el
+    relleno liso y el marco rosa del diseño.
+  - Si falta `.first` o `.last`, se usa `tool.slot`.
 - **Caja de la barra:** `toolbar.box` mide 27×7, con centro (3,3,21,1): la línea redondeada
   (189,164,153) que rodea la columna, con 1 px de aire hasta los botones. Se estira en vertical.
   El panel mide 5 + el ancho de la caja + 5.
@@ -75,39 +81,43 @@ oculta.
   - Modos de selección: `icon.sel_replace`, `icon.sel_add`, `icon.sel_subtract` e
     `icon.sel_intersect` (11×11, fondo transparente), en los marcos de simetría (`sym.slot`, y
     `sym.slot.active` el modo elegido): los cuadritos de Mode del diseño son iguales a esos.
-  - `field.combo` (13×16, centro (2,10,1,3)): el combo. 2 columnas de borde a la izquierda, 1 de
-    relleno que se estira y, a la derecha, 10 con el brillo y la flecha ▾. El texto va 6 px
-    adentro y 5 px antes de la flecha.
-  - `field.number` (10×16, centro (2,10,1,3)): el campo numérico, con el brillo de arriba a la
-    derecha y la esquina redondeada. En la barra mide 27.
-  - `field.unit` (17×16, sin centro): la unidad "px". Empieza en la última columna blanca del
-    campo y tapa sus 2 últimas columnas.
-  - `field.check.on` (13×14, sin centro): la casilla marcada de la barra (no es la del menú, que
-    es más chica: 11×12). El texto va 3 px después. `field.check` (sin marcar) todavía no está
-    dibujada (el diseño no la muestra): hasta entonces va un cuadro plano de respaldo.
-  - El combo, el campo, la unidad y la casilla llevan una fila de sombra (230,231,240) abajo del
-    relleno blanco; la unidad termina en una esquina redondeada (x 318..319 del diseño).
+  - Los combos de la barra son el select del UI kit (`select.*`, abajo); `field.combo` se borró.
+  - `field.number` (10×16, centro (2,10,1,3)): el campo numérico de antes, con el brillo de
+    arriba a la derecha y la esquina redondeada. Ya no lo usa la barra (sus números son los
+    campos del UI kit, abajo); lo siguen usando la tira de canales del editor de color y el
+    timeline.
+  - La casilla de la barra es la del UI kit (`check`, abajo).
+  - El campo lleva una fila de sombra (230,231,240) abajo del relleno blanco.
 - **Pestañas:** `tab` (inactiva, café) mide 7×15 y `tab.active` (clara) 7×17, las dos con
   centro (3,0,1,alto): se estiran solo a lo ancho. Las esquinas de arriba son redondeadas y
   abajo quedan abiertas. La activa baja sobre las dos filas de la línea grabada de abajo y la
-  interrumpe. Se copiaron sin el texto de las pestañas del mockup.
-  - `icon.tab_dirty` (○, cambios sin guardar) e `icon.tab_close` (×, sin cambios) miden 5×5. El
-    mockup no muestra otro aspecto al pasar el puntero: no hay `.hover`.
+  interrumpe. Se copiaron sin el texto de las pestañas del mockup. Las dibuja el UI kit
+  (`crates/cs-ui/src/kit/tabs.rs`, mockup de componentes, frame 9).
+  - `tab`: en las filas 11, 13 y 14 el borde es (136,110,106), como en el mockup.
+  - `tab.hover` (108,935, 7×15, mismo centro): no está en el diseño; es `tab` con el relleno
+    (221,206,191), con el puntero encima.
+  - `tab.shade.left` y `tab.shade.right` (80,935 y 87,935, 5×1): el tramado (136,110,106) de la
+    fila oscura de la línea grabada, contra cada lado de la pestaña activa (x 22..26 y 100..104
+    del mockup, y 125).
+  - `tab.arrow.prev` y `tab.arrow.next` (1,935 y 14,935, 12×12): las flechas para recorrer las
+    pestañas que no entran, copiadas del mockup (x 159..181, y 165); juntas comparten la columna
+    del medio (23 de ancho). `.hover` (27,935 y 40,935): el relleno blanco; `.disabled` (53,935 y
+    66,935): la flecha en (189,164,153). Las dos variantes no están en el diseño.
+  - `icon.tab_dirty` (○, cambios sin guardar) e `icon.tab_close` (×, sin cambios) miden 5×5.
   - Home: la casita animada son `icon.home.0`, `icon.home.1` e `icon.home.2` (21×21, casita y
     humo juntos), copiados de los 3 frames de `home animation.aseprite`, de 300 ms cada uno
     (`duration=300`). Van a 3 px del borde
     izquierdo, arriba de todo. `home.ground` (58×1) es el suelo sobre la línea grabada, desde el
     borde izquierdo.
 - **Artboards con Pixel UI** (la ventana del frame 4 del diseño, en (209,235), 173×123): el
-  marco es `artboard.frame`, el "○" de la derecha es `window.close` y el "≡" de la izquierda
-  es `artboard.menu` (9×9, fondo transparente, rayas de 6 px en las filas 2, 4 y 6 desde la
-  columna 2). `window.menu` no sirve: sus rayas miden 7.
-  - `artboard.frame` (24×24, centro (2,14,20,8)) sale de `window` con Lua: el mismo borde
-    oscuro y las mismas esquinas redondeadas; la barra con una fila rosa más (13 filas: borde,
-    brillo, 10 rosas y la línea oscura) y, debajo, un anillo blanco de 1 px pegado al borde y
-    a la barra. El resto de adentro es transparente: ahí van el damero y los píxeles.
+  marco es `artboard.frame` y la barra (≡, el nombre y ○) es la del UI kit (`title.bar`, abajo).
+  Se borraron `window.close`, `window.menu` y `artboard.menu`.
+  - `artboard.frame` (24×25, centro (2,15,20,8)) sale de `window` con Lua: el mismo borde
+    oscuro y las mismas esquinas redondeadas; la barra de 14 filas (borde, brillo, 11 rosas y
+    la línea oscura, como la del kit) y, debajo, un anillo blanco de 1 px pegado al borde y a
+    la barra. El resto de adentro es transparente: ahí van el damero y los píxeles.
   - El área de píxeles del artboard es el hueco: 2 px adentro a los lados y abajo (borde y
-    blanco) y 14 abajo del borde de arriba (barra y blanco).
+    blanco) y 15 abajo del borde de arriba (barra y blanco).
 - **Animaciones:** las piezas `<nombre>.0`, `<nombre>.1`… son los frames, en orden. Lo que dura
   cada uno va en el user data del slice (Slice Properties → User Data), en una línea
   `duration=<ms>`, igual que la duración del frame en Aseprite. Sin esa línea, dura 100 ms.
@@ -129,23 +139,190 @@ oculta.
   se repiten debajo, hasta una fila antes del grabado de las pestañas.
 - **Origen:** los íconos, los marcos y los botones se copiaron del mockup del autor
   (`.design/Design.aseprite`, que no se versiona).
-- **Botones:** `button`, `button.hover` y `button.down` vienen del mockup del diálogo "Unsaved
-  changes".
-  - `button.active` (220,100, 49×17, mismo centro (3,3,43,10) que `button`) es la opción
+- **Íconos sueltos que se tocan** (play, pausa y centrar del preview, el swap de los colores):
+  sin piezas por estado. `kit::icon` los aclara con el puntero encima (cada píxel a la mitad
+  hacia el blanco) y los baja 1 px al presionarlos.
+- **Flechas:** `icon.arrow_left` / `icon.arrow_right` (4×7, de una tinta): las de los botones
+  del paginador de Lospec (botones con ícono del kit; `lospec.pager.prev` y `.next` se
+  borraron).
+- **Botones:** `button`, `button.hover`, `button.down` y `button.disabled` (49×17, centro
+  (3,3,43,9)) vienen del mockup de componentes (frame 9). La línea clara de abajo es la última
+  fila de la pieza; `button.down` no se desplaza (es `button` sin la fila oscura). Los dibuja el
+  botón del kit (`crates/cs-ui/src/kit/button.rs`): texto `color.text` con sombra
+  `color.background` 1 px abajo (sin sombra con el puntero encima) y, deshabilitado,
+  `color.button_text_disabled`.
+  - `button.active` (220,100, 49×16, mismo centro que `button`) es la opción
     elegida de los grupos de la barra (Sample, Linear/Radial, Rotation). El diseño no tiene un
-    botón de texto activo, así que se derivó de `button` con el mismo mapeo normal → activo que
-    llevó `tool.slot` a `tool.slot.active`, leyendo los píxeles con Lua:
+    botón de texto activo, así que se derivó de `button` con el mismo mapeo normal → activo del
+    botón activo suelto del mockup (el viejo `tool.slot.active`, ya borrado), leyendo los
+    píxeles con Lua:
 
     | `button` | `button.active` |
     | --- | --- |
     | (89,77,77) borde y (136,110,106) sombra | igual |
     | (255,255,255) | (221,206,191) |
     | (221,206,191) | (255,255,255) |
-    | (234,224,221) relleno, 12 filas | el tramado café (189,164,153)/(174,152,142) del relleno de `tool.slot.active`: la fila `r` (0 a 11) toma la fila `round(r·18/11)` de las 19 de la herramienta, y las columnas repiten su tramado de período 2 |
+    | (234,224,221) relleno, 12 filas | el tramado café (189,164,153)/(174,152,142) del relleno del botón activo suelto: la fila `r` (0 a 11) toma la fila `round(r·18/11)` de las 19 de la herramienta, y las columnas repiten su tramado de período 2 |
     | transparente | transparente |
 
     Si falta, la opción elegida usa `button.down`.
+  - **Grupo de botones** (`crates/cs-ui/src/kit/group.rs`, mockup de componentes, frame 9): los
+    segmentos son `button`, `button.hover`, `button.down` (el elegido o presionado: baja 1 px) y
+    `button.disabled` estirados sobre cada uno; entre dos, una sola columna:
+    - `button.group.sep` (256,650, 1×17): (89,77,77) arriba, (189,164,153) en las filas 1 a 13
+      y (89,77,77) en la del bisel (14) y la de abajo (15); la luz (241,235,219) en la 16. Copiada
+      de la x 248 del mockup. Si los dos vecinos bajaron, se dibuja sin la fila de arriba.
+    - `button.group.sep.disabled` (258,650, 1×17): no está en el diseño; (136,110,106) arriba
+      como el borde de `button.disabled`, (189,164,153) en las filas 1 a 14, (89,77,77) y la luz.
+  - **Campos de texto** (`crates/cs-ui/src/kit/input.rs`, mockup de componentes, frame 9, copiados
+    píxel por píxel; todos de 17 filas, con centro de 13 filas que no se estira a lo alto):
+    - `field.text` (255,675, 6×17, centro (2,1,2,13)): el borde (136,110,106) que desde la fila 7
+      pasa a (89,77,77) (con un píxel (136,110,106) en la 8), el blanco, la fila 14 (230,231,240),
+      el borde de abajo con la luz (241,235,219) en las esquinas y la luz debajo. Copiado de x
+      202..204 y 356..358 del mockup.
+    - `field.text.disabled` (263,675): el mismo con el relleno (221,206,191) y la fila 14
+      (189,164,153) (x 325..327 y 431..433, y 195).
+    - `field.unit` (271,675, 17×17, centro (1,1,14,13)): la caja (189,164,153) de la unidad, con
+      su fila 14 (221,206,191) y el borde derecho del campo (x 388..404, y 52, sin el "px").
+    - `field.prefix` (290,675, 12×17, centro (2,1,8,13)): la caja del prefijo (la "X" de
+      Position X), con el borde izquierdo del campo (x 363..374, y 73, sin la letra).
+    - El texto de las cajas lo escribe el campo, centrado, en `color.field_text`; la caja mide
+      3 + tinta + 3, por lo menos 11.
+    - Colores: `color.field_text_disabled` (189,164,153), el texto de un campo deshabilitado;
+      `color.text_selection` (226,114,133) y `color.text_selected` (255,255,255), el bloque de lo
+      seleccionado y su texto. El texto sin foco va en `color.field_text` (89,77,77) y con el
+      foco en `color.text`.
+  - **Botones con ícono** (`kit::button::icon_button_at`): el marco `button` con todos sus
+    estados y una pieza `icon.*` centrada en la cara (las filas 1 a 13, entre el brillo y el
+    bisel; el píxel de sobra, a la derecha y abajo). Presionado, el ícono baja 1 px con la cara;
+    deshabilitado, va a media opacidad. Los íconos llevan el relleno transparente. El botón
+    puede tener cualquier alto (la cara son las filas debajo del contorno hasta el bisel).
+    - Un ícono de **una sola tinta** (todos sus píxeles del mismo color, como `icon.reset`) se
+      porta como el texto: su color con la sombra `background` 1 px abajo (salvo con el puntero
+      encima) y, deshabilitado, `color.button_text_disabled`. Copiado del mockup.
+  - **LEDs** (cualquier botón puede llevar uno: `kit::button::Led`, y los segmentos del grupo):
+    `button.led.on` (261,650) y `button.led.off` (269,650), 6×7: el LED verde (prendido) y el
+    morado (apagado), 6×6 con su sombra (221,206,191) abajo, copiados del mockup (x 315 y 362).
+    Van donde empezaría el texto (borde, bisel y 4 px adentro), con su borde de arriba en la fila
+    de las mayúsculas; el texto, 3 px después. Bajan 1 px con la cara del botón presionado;
+    deshabilitado, el LED queda como está. Reemplazan a los puntos viejos de la barra
+    (`button.dot.on`, `button.dot.off`, `button.sep` y el color `option_text_off`), que se
+    borraron del skin.
+  - **Casillas y radios** (`crates/cs-ui/src/kit/check.rs`, mockup de componentes, frame 9; en
+    el skin, y 488..514 desde x 30):
+    - `check`, `check.on` y `check.mixed` (12×13, sin centro): vacía, marcada (la ✓ verde) e
+      intermedia (la raya verde), con la fila de sombra (230,231,240) y la línea clara debajo.
+      `.disabled`, copiadas del mockup; `.hover` no está en el diseño: el borde (136,110,106)
+      pasa a (89,77,77). Presionadas se ven como `.hover`.
+    - `radio` y `radio.on` (10×11): `menu.radio` y `menu.radio.on` con la luz (241,235,219) de
+      abajo que tiene el radio deshabilitado del mockup (el normal no la trae; se agregó para que
+      los dos queden iguales, como las casillas). `.disabled` del mockup y `.hover` como en las
+      casillas.
+    - Ocupan el alto de un campo (17): el texto en la fila del texto de los campos (mayúsculas en
+      la 5), la casilla desde la fila 3 (su borde de abajo a la par del de los campos) y el radio
+      desde la 3 (su punto en las filas de las mayúsculas), y el texto 3 px después.
+  - **Stepper** (`crates/cs-ui/src/kit/stepper.rs`, mockup de componentes, frame 9, x 301, y 256
+    y x 380, y 276; en el skin, y 538 desde x 30): − [número] + en 17 filas.
+    - `stepper.left` y `stepper.right` (15×17): los botones sin ícono, con la columna
+      (136,110,106) que los separa del campo. `.hover` (relleno blanco), `.down` (el bisel
+      invertido) y `.disabled` (borde tenue) no están en el diseño. En el mínimo (o el máximo), su
+      botón se deshabilita.
+    - `icon.minus` e `icon.plus` (165,538 y 173,538, 7×7, de una tinta (89,77,77)): centrados en
+      la cara del botón, con la sombra blanca 1 px abajo como en el mockup (salvo con el puntero
+      encima); presionado bajan 1 px.
+    - `stepper.field` (158,538, 1×17, se estira; `.disabled` en 160,538): el campo, con el
+      número centrado en `color.text`, las mayúsculas en la fila 5; se arrastra o se escribe.
+    - `stepper.unit` (162,538, 1×17, se estira): la caja de la unidad ("ms") pegada al botón
+      derecho, 3 + tinta + 3 (por lo menos 11), con el texto centrado en `color.field_text`.
+  - **Barra de título** (`crates/cs-ui/src/kit/title_bar.rs`, mockup de componentes, frame 9,
+    x 480, y 236 y 268; en el skin, y 0 desde x 230): la de los diálogos, Preview y los
+    artboards.
+    - `title.bar` (7×14, centro (3,0,1,14)): borde (5,4,3) con las esquinas de arriba
+      redondeadas, brillo (246,162,168) arriba y a la derecha, bisel (202,97,115), relleno
+      (226,114,133) y la fila oscura (178,82,102) abajo.
+    - `icon.title_menu` (6×5, el ≡ desde la columna 4), `icon.title_close` (5×5, el ○ 4 px antes
+      del borde) e `icon.title_close.hover` (la × con el puntero encima), de una tinta
+      (100,54,75), en las filas 5 a 9. El título, 2 px después del ≡ (sin ≡, desde la columna
+      4), con las mayúsculas en la fila 4; si no entra, se corta con "...".
+    - Sin el foco, los íconos y el título van en el color de la fila oscura (178,82,102).
+    - Los marcos `window` y `window.active` (64×50, centro (3,15,58,32)) y `artboard.frame`
+      traen la barra de 14 filas; la del kit se dibuja encima.
+  - **Select** (`crates/cs-ui/src/kit/select.rs`, mockup de componentes, frame 9: cerrado en
+    x 469, y 321 y 378; abierto en x 454, y 480; en el skin, y 488 desde x 172). Todos los
+    combos de la app (los de la barra y `widgets::combo`) son este.
+    - Cerrado: el campo del kit (`field.text`, `.disabled`) con lo elegido 5 px adentro (las
+      mayúsculas en la fila 5, `color.text`; deshabilitado, `color.field_text_disabled`) y
+      `select.arrow` (195,488, 5×3, de una tinta), del color del texto, en las filas 7 a 9 y 4 px
+      antes del borde derecho. Ancho justo: 5 + tinta + 5 + 5 + 4 + 1.
+    - `select.open` (172,488, 6×16, centro (2,1,2,13)): el campo abierto: 14 filas de blanco y la
+      fila de sombra, que queda sobre el borde del panel; sin el borde de abajo.
+    - `select.list` (180,488, 8×13, centro (2,7,1,1)): el panel, desde la fila 15 del campo y 11
+      px más ancho: borde (5,4,3), la fila blanca de arriba, bisel (221,206,191) a la izquierda y
+      abajo y blanco a la derecha, relleno (234,224,221), la esquina de arriba a la derecha en
+      escalera y la sombra de 2 px abajo a la derecha, (5,4,3) con alfa 123 (el color que marca
+      el mockup con "←●").
+    - La lista va debajo del campo si entra; si no, del lado con más lugar, y lo que no entra se
+      recorre con el scroll. Arriba, `select.list.alone` (202,488) es `select.list` con la
+      esquina de arriba a la izquierda redondeada como la de la derecha, y su borde de abajo va
+      sobre la fila 0 del campo, que se abre hacia arriba: `select.open.up` (304,1, 6×17, centro
+      (2,1,2,13)), sin el borde de arriba (su fila 0 es la de sombra, con el borde del panel, negro,
+      en la columna derecha). Al abrirse, la elegida queda a la vista.
+    - Con scroll, la barra (`scroll.track.v`, `scroll.thumb.v`) va adentro del panel, de su fila 4
+      a 3 antes de abajo y con 1 px de aire antes del bisel derecho: el panel crece 2. Las franjas
+      llegan hasta la barra.
+    - Separador: un bloque de 7 filas con una línea de 1 px en `color.canvas` en la del medio, de
+      lado a lado de las opciones (desde el bisel izquierdo hasta la barra).
+    - Las opciones: filas de 15 desde la fila 4 del panel (debajo, 1 de aire, el bisel y el
+      borde), el texto 6 px adentro del borde y las mayúsculas en su fila 4.
+      `select.item.hover` (190,488, 3×15, centro (1,0,1,15)): la franja rosa (178,82,102) /
+      (226,114,133) / (246,162,168) con el puntero encima; sin el puntero en el panel, va en la
+      elegida.
+  - **Slider** (`crates/cs-ui/src/kit/slider.rs`, mockup de componentes, frame 9, x 681..820,
+    y 379):
+    - `slider.track` (30,520, 16×9, centro (1,0,14,9)): la pista, 7 filas (189,164,153), la
+      oscura (136,110,106) y la línea clara, con las puntas recortadas. Se estira a lo ancho.
+      `slider.track.disabled` (48,520): sin la fila oscura (no está en el diseño).
+    - `slider.thumb` (130,296, 13×14): la perilla de 11 con una columna de sombra (136,110,106) a
+      cada lado sobre la pista. `.hover` (66,518: el relleno blanco, también arrastrándola) y
+      `.disabled` (81,518: el borde (136,110,106) y el bisel claro) no están en el diseño.
+    - **Con encabezado** (`labeled_slider`, mockup x 660..821, y 411..441): arriba, el botón de
+      restaurar (el botón con ícono del kit a 13×15, con `icon.reset`), el nombre 3 px después y
+      el valor pegado a la derecha, en `color.text` y con las mayúsculas en la fila 4 del botón;
+      debajo, el slider. En el default, el botón queda deshabilitado.
+    - `icon.reset` (160,520, 7×7): el ↺, de una sola tinta (89,77,77).
+    - Ocupa el alto de un botón: la perilla desde la fila 1, la pista desde la 4. La perilla va de
+      punta a punta: en el mínimo, su sombra izquierda en la primera columna de la pista.
+  - **Botón de color** (`crates/cs-ui/src/kit/color_button.rs`, mockup de componentes, frame 9,
+    x 472, y 423):
+    - `swatch.frame` (145,296, 16×17, centro (1,8,9,5)): el borde (89,77,77) con el interior
+      transparente; encima del color, el brillo de arriba a la derecha (blanco y blanco al 34%) y
+      la fila de sombra (negro al 38%), que en el mockup son píxeles del amarillo (sobre ese
+      amarillo dan los mismos colores). Debajo, la línea clara.
+    - `.hover` (100,518: velo blanco al 19%), `.down` (118,518: velo negro al 12%) y `.disabled`
+      (136,518: el borde (136,110,106), el color lavado con (221,206,191) y sin brillo) no están
+      en el diseño.
+    - Con alfa, detrás del color va el damero de `fgbg.checker`.
+    - **Abierto** (mockup x 342..511, y 614..777): un clic abre el selector de la app. El botón
+      queda en `picker.tab` (185,537, 20×20: el fondito alrededor de la muestra, que va 2 px
+      adentro sin su línea clara), unida a `picker.panel` (206,537, 7×8, centro (3,3,1,1): borde
+      (89,77,77) de una línea, fila blanca arriba, bisel (221,206,191) a la izquierda y abajo,
+      blanco a la derecha), que empieza en la fila 18 de la pestaña. El selector va 7 px adentro
+      a los lados y 3 debajo y arriba de los bordes; mide 156 de ancho. Un clic en la
+      muestra o afuera lo cierra.
+    - En el selector, el grupo RGBA, cuando va solo en su fila (el hex abajo), reparte lo que
+      sobra entre sus cuatro tramos y llega al borde derecho.
 
+- **Scroll** (`pixel_ui::scroll`, mockup de componentes, frame 9, x 898, y 562..924): 10 de
+  ancho.
+  - `scroll.track.v` (4,474, 10×4, centro (0,1,10,1)): la pista (189,164,153) redondeada arriba y,
+    abajo, la sombra (136,110,106). `scroll.track.h` (30,474, 4×10): la misma girada.
+  - `scroll.thumb.v` (8×46) y `scroll.thumb.h`: el pulgar lila con borde oscuro y el agarre de
+    rayitas al final, 1 px adentro de la pista.
+
+- **Lumen:** `icon.lumen.browse` (277,0, 13×11, la carpeta) e `icon.lumen.remove` (291,0, 11×11,
+  la ✕ roja), con un contorno blanco de 1 px, van abajo a la derecha de la caja de cada mapa (los
+  contornos a 1 px uno del otro, 6 px arriba del borde de abajo de la caja y 7 antes del de la
+  derecha) en vez de los botones Browse y Remove. Quitar, a media opacidad sin mapa.
 - **Paleta y editor de color** (frame 4 del diseño, capa Mockup, columna x 784..972; el skin
   creció a 320×272 y estas piezas van en y 236..267):
   - `palette.box` (9×9, centro (4,4,1,1)): la caja de la paleta, con la línea grabada
@@ -155,7 +332,9 @@ oculta.
     Van uno cada 12 (comparten el borde), 4 px adentro de la caja.
   - `palette.add` (6×7): la marca Ⅲ que va a (3,3) de la celda siguiente al último color;
     agrega el color primario a la paleta.
-  - `picker.copy` (25×16): el botón de copiar (dos hojas), entero; copia el color en hex.
+  - `icon.copy` (4,252, 9×9, relleno transparente): las dos hojas del botón de copiar (copia el
+    color en hex). El botón es el botón con ícono del UI kit (abajo), de 25 de ancho; antes era
+    una pieza entera (`picker.copy`) sin estados.
   - La tira de canales (16 de alto): `channel.r` (4×16, centro (3,0,1,16): la punta izquierda y
     el tramo rojo), `channel.g` y `channel.b` (1×16, se estiran), `channel.a` (4×16, sin
     centro: un período del damero de su línea, que se repite), `channel.hex` (5×16, centro
@@ -185,7 +364,7 @@ oculta.
   - `palette.button` (5×6, centro (2,2,1,1)): el botón suelto del damero (x 947..970), 24×16.
   - `palette.button.active` (3×3, centro (1,1,1,1)): no está en el diseño. Es el bisel y el
     relleno del primer botón con el bisel invertido (blanco <-> (221,206,191)) y el relleno
-    (189,164,153), como `tool.slot.active`. Va sobre el bisel y el relleno del damero prendido (el
+    (189,164,153), como el botón activo suelto del mockup. Va sobre el bisel y el relleno del damero prendido (el
     Mask elegido) o de un botón apretado.
   - El candado no se ve prendido: bloqueada lleva `palette.icon.lock` (el cerrado, como en el
     diseño) y desbloqueada `palette.icon.lock.open` (el abierto), los dos en el botón normal.
@@ -199,7 +378,8 @@ oculta.
   - `fgbg.box` (27×49): la caja con la línea grabada y la línea (89,77,77) que separa las
     mitades. Las dos mitades (19×19 en (4,4) y (4,26)) son transparentes: los colores los pinta
     la app.
-  - `fgbg.swap` (9×9): el botón redondo de intercambiar, en (9,20) de la caja; lo de afuera del
+  - `fgbg.swap` (9×9, un ícono suelto del UI kit: `crates/cs-ui/src/kit/icon.rs` le da el hover
+    y el presionado): el botón redondo de intercambiar, en (9,20) de la caja; lo de afuera del
     círculo (el negro y el damero de las mitades) es transparente.
   - `fgbg.checker` (8×8): un período del damero (197,199,221)/(230,231,240) de celdas de 4×4,
     en fase con la esquina de la mitad. Va en mosaico detrás de un color con alfa.
@@ -221,8 +401,6 @@ oculta.
     cuentagotas lo oscuro es tinta y lo claro su contrario: cada píxel se pinta negro o blanco
     según lo que tenga debajo, como en Aseprite. El de rotar se dibuja tal cual. Si falta una
     pieza, se usa el cursor de siempre.
-  - `field.text` (12×17, centro (2,2,8,11)): el campo de texto de Artboards y Slices, con las
-    esquinas redondeadas, la fila fría y el brillo de abajo.
   - Colores: `color.link` (178,82,102), el nombre de cada reciente de Home, y `color.path`
     (105,102,130), su ruta.
 
@@ -232,14 +410,32 @@ oculta.
 
 Con Pixel UI encendido, la app vuelve a leer ese archivo al guardarlo (lo revisa una vez por
 segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en el log.
-- **Menús desplegables** (del diseño de `Design.aseprite`, frame 3, capa "Layer 4"):
-  - `menu.title.open` (25×18, centro (2,2,21,14)): la caja del título abierto, redondeada
-    arriba y sin el texto. Las dos filas de abajo se dibujan sobre el borde de arriba del panel
-    para unir los dos.
-  - `menu.panel` (5×5, centro (2,2,1,1)): el panel en 9-slice; línea (89,77,77), bisel claro
-    arriba y a la derecha y (221,206,191) a la izquierda y abajo, esquinas cortadas. En el
-    diseño, la esquina de arriba a la izquierda queda tapada por la caja: en la pieza es la de
-    la derecha en espejo (la usan los submenús).
+- **Menús desplegables** (del diseño de `Design.aseprite`, frame 3, capa "Layer 4"; el título
+  abierto, el panel y el separador, del mockup de componentes, frame 9: la "Layer" con su caja,
+  x 207, y 480):
+  - `menu.title.open` (1,952, 34×17, centro (3,2,28,12)): la caja del título abierto, de borde
+    negro, redondeada arriba y sin el texto. Sus 2 filas de abajo son el borde y el blanco de
+    arriba del panel: se dibujan encima para unir los dos.
+  - `menu.panel` (94,935, 8×4, centro (3,2,2,1)): el panel: borde negro con las esquinas de
+    arriba de 2 px, la fila blanca de arriba, (221,206,191) a la izquierda, (234,224,221)
+    adentro y blanco a la derecha. La esquina de arriba a la izquierda (la tapa el título) y el
+    borde de abajo no están en el diseño. También lo usan los submenús, las listas y el menú
+    flotante del dock.
+  - `menu.list` (262,0, 8×13, centro (2,7,1,1)): el panel de los menús (el menú Frame del mockup
+    de componentes): igual a `select.list.alone`, con la sombra (5,4,3) con alfa 123 de 2 px
+    abajo y a la derecha, que va afuera del panel. `menu.panel` (sin sombra) lo sigue usando el
+    panel flotante del dock.
+  - `menu.side` (271,0, 5×5, centro (2,2,1,1)): el panel del menú de las variantes de una
+    herramienta (Hand y Zoom del mockup): borde (89,77,77) con las esquinas de 1 px, brillo
+    blanco arriba y a la derecha, bisel (221,206,191) a la izquierda y abajo, sin sombra. La
+    herramienta elegida, con el nombre en (178,82,102).
+  - `menu.separator` (103,935, 3×2, centro (1,0,1,2)): el separador, la fila blanca sobre la
+    (189,164,153), de borde a borde del panel (encima de los biseles). Sus puntas son de los
+    biseles: a la izquierda, (234,224,221) sobre (136,110,106); a la derecha, blanco sobre
+    (221,206,191).
+  - `key` es blanca: la app la pinta de `ruler_tick` y, en la fila con el puntero, del rosa
+    oscuro (178,82,102), con las letras caladas en el color del fondo de la fila (el "+" y la
+    tecla de al lado, del mismo rosa).
   - `key.ctrl` (19×7): la tecla Ctrl como está dibujada; sus letras y esquinas son
     transparentes (en el diseño, el relleno del panel). `key` (19×7, centro (1,1,17,5)): la
     misma tecla sin letras, para las otras teclas con nombre. `key.shift` (22×7): la tecla
@@ -249,8 +445,8 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     las 4 esquinas de afuera transparentes (el relleno (234,224,221) del panel) y una fila de
     sombra (230,231,240) abajo del interior blanco. Van al borde del texto de los ítems, 2
     filas arriba de las mayúsculas, y el texto 3 px después. No son las de la barra (13×14).
-  - `color.menu_highlight` (blanco): el brillo del panel y la línea clara de los separadores;
-    la otra línea es `background`. El atajo tenue (el "+N") es `ruler_tick`.
+  - `color.menu_highlight` (blanco): el brillo del panel y, sin `menu.separator`, la línea clara
+    de los separadores (la otra, `canvas`). El atajo tenue (el "+N") es `ruler_tick`.
 - **Tooltip de la barra de íconos** (del mockup, frame 2, junto a la barra):
   - `tooltip.bubble` (49×20, centro (11,13,34,4)): el globo naranja con la cola a la izquierda.
     La cola mide 8 de ancho y su punta está en la fila 8; el cuerpo (41×20) tiene las esquinas
@@ -270,10 +466,9 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     `timeline.icon.onion.on` (15×17): la cebolla entera suelta del diseño, para el onion skin
     prendido.
   - `timeline.onion_range` (59×17): ◂ [antes | después] ▸ del onion skin, con su brillo abajo.
-  - `timeline.stepper.minus` y `.plus` (15×17) y `timeline.stepper.field` (7×17, centro
-    (0,0,1,17)): − [campo] + de la opacidad y la duración; el campo se estira por su columna
-    blanca y deja el brillo de la derecha. `timeline.combo` (13×17, centro (2,0,1,17)): el combo
-    del modo de mezcla (sin las marcas oscuras sueltas del borde del diseño).
+  - − [campo] + de la opacidad y la duración: el stepper del UI kit (abajo; las piezas
+    `timeline.stepper.*` se borraron). El combo del modo de mezcla es el select del UI kit
+    (`timeline.combo` se borró).
   - `timeline.icon.clock` (16×18) y `timeline.divider` (11×3, centro (5,0,1,3)): la línea
     grabada entre la barra y la tabla, con sus uniones a los lados de la caja.
   - `timeline.eye` / `timeline.eye.closed` (9×7): capa visible / oculta.

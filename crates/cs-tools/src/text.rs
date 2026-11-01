@@ -16,6 +16,12 @@ pub enum FontChoice {
         name: String,
         font: Arc<fontdue::Font>,
     },
+    /// Una fuente pixel del documento (un artboard de fuente). La UI le pasa su
+    /// [`PixelFontView`](cs_core::PixelFontView) al escribir.
+    Document {
+        artboard: u32,
+        name: String,
+    },
 }
 
 impl std::fmt::Debug for FontChoice {
@@ -24,9 +30,18 @@ impl std::fmt::Debug for FontChoice {
     }
 }
 
+/// Las del documento son la misma si son del mismo artboard (aunque se llamen como otra); las
+/// demás, por su nombre.
 impl PartialEq for FontChoice {
     fn eq(&self, other: &Self) -> bool {
-        self.name() == other.name()
+        match (self, other) {
+            (
+                FontChoice::Document { artboard: a, .. },
+                FontChoice::Document { artboard: b, .. },
+            ) => a == b,
+            (FontChoice::Document { .. }, _) | (_, FontChoice::Document { .. }) => false,
+            _ => self.name() == other.name(),
+        }
     }
 }
 
@@ -36,7 +51,7 @@ impl FontChoice {
             FontChoice::Pixel => "Pixel 5×7".into(),
             FontChoice::Hack => "Hack".into(),
             FontChoice::Ubuntu => "Ubuntu Light".into(),
-            FontChoice::Custom { name, .. } => name.clone(),
+            FontChoice::Custom { name, .. } | FontChoice::Document { name, .. } => name.clone(),
         }
     }
 
@@ -53,6 +68,9 @@ impl FontChoice {
     /// Los caracteres que tiene la fuente, en orden (los visibles: sin los de control ni el
     /// espacio).
     pub fn chars(&self) -> Vec<char> {
+        if matches!(self, FontChoice::Document { .. }) {
+            return Vec::new();
+        }
         let mut chars: Vec<char> = match self.vector() {
             None => (33u8..=126).map(char::from).collect(),
             Some(font) => font.chars().keys().copied().collect(),
@@ -72,7 +90,7 @@ impl FontChoice {
             })
         };
         match self {
-            FontChoice::Pixel => None,
+            FontChoice::Pixel | FontChoice::Document { .. } => None,
             FontChoice::Hack => Some(builtin(&HACK, epaint_default_fonts::HACK_REGULAR)),
             FontChoice::Ubuntu => Some(builtin(&UBUNTU, epaint_default_fonts::UBUNTU_LIGHT)),
             FontChoice::Custom { font, .. } => Some(font),
@@ -200,6 +218,10 @@ const GLYPHS: [[u8; 5]; 95] = [
 
 /// Cobertura (0–255) de cada píxel del texto, con el origen en la esquina superior izquierda.
 pub fn rasterize(text: &str, style: &TextStyle) -> Vec<(i32, i32, u8)> {
+    if matches!(style.font, FontChoice::Document { .. }) {
+        // Con una fuente del documento se escribe con `font_text`.
+        return Vec::new();
+    }
     match style.font.vector() {
         None => pixel_text(text, style.size.clamp(1, 8) as i32),
         Some(font) => vector_text(font, text, style.size.clamp(4, 256) as f32),
@@ -259,6 +281,60 @@ fn vector_text(font: &fontdue::Font, text: &str, px: f32) -> Vec<(i32, i32, u8)>
     out
 }
 
+/// Los pixeles de `text` con la fuente pixel `view` a escala `scale`, desde la esquina de arriba
+/// a la izquierda: `None` es la tinta (1 bit), `Some` el color del glifo. Cada línea mide la celda.
+/// Un carácter que falta es un cuadrito tachado del alto de las mayúsculas, apoyado en la baseline.
+pub fn font_text(
+    view: &cs_core::PixelFontView,
+    text: &str,
+    scale: u32,
+) -> Vec<(i32, i32, Option<cs_core::Rgba>)> {
+    let s = scale.max(1) as i32;
+    let mut out = Vec::new();
+    let mut put = |x: i32, y: i32, c: Option<cs_core::Rgba>| {
+        for dy in 0..s {
+            for dx in 0..s {
+                out.push((x * s + dx, y * s + dy, c));
+            }
+        }
+    };
+    let (cell_h, m) = (view.cell.1 as i32, view.metrics);
+    for (row, line) in text.lines().enumerate() {
+        let top = row as i32 * cell_h;
+        let mut pen = 0i32;
+        for ch in line.chars() {
+            if ch == ' ' {
+                pen += view.space_width as i32;
+                continue;
+            }
+            match view.glyphs.get(&ch) {
+                Some(g) => {
+                    for &(x, y, c) in &g.pixels {
+                        put(pen + x as i32, top + y as i32, c);
+                    }
+                    pen += g.advance as i32;
+                }
+                None => {
+                    // El cuadrito tachado: borde y una diagonal.
+                    let w = view.missing_width.saturating_sub(1).max(2) as i32;
+                    let h = m.cap_height.max(2) as i32;
+                    let y0 = top + m.baseline as i32 - h;
+                    for y in 0..h {
+                        for x in 0..w {
+                            let edge = x == 0 || y == 0 || x == w - 1 || y == h - 1;
+                            if edge || x * (h - 1) == (h - 1 - y) * (w - 1) {
+                                put(pen + x, y0 + y, None);
+                            }
+                        }
+                    }
+                    pen += view.missing_width as i32;
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Píxeles a pintar con `color` en `origin`. Sin antialias (o en indexado) cada píxel es todo o
 /// nada; con antialias en RGBA se mezcla sobre lo que hay en la capa.
 pub fn text_pixels(
@@ -301,6 +377,59 @@ mod tests {
             ((i32::MAX, i32::MAX), (i32::MIN, i32::MIN)),
             |((x0, y0), (x1, y1)), p| ((x0.min(p.0), y0.min(p.1)), (x1.max(p.0), y1.max(p.1))),
         )
+    }
+
+    type GlyphSpec<'a> = (char, &'a [(u32, u32)], u32);
+
+    fn view_with(glyphs: &[GlyphSpec]) -> cs_core::PixelFontView {
+        cs_core::PixelFontView {
+            cell: (8, 8),
+            metrics: cs_core::FontMetrics::for_cell(8),
+            space_width: 3,
+            missing_width: 4,
+            glyphs: glyphs
+                .iter()
+                .map(|(ch, px, advance)| {
+                    let pixels = px.iter().map(|&(x, y)| (x, y, None)).collect();
+                    (
+                        *ch,
+                        cs_core::GlyphPixels {
+                            pixels,
+                            advance: *advance,
+                        },
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn font_text_places_glyphs_by_their_advance() {
+        let view = view_with(&[('a', &[(0, 5)], 3), ('b', &[(1, 4)], 4)]);
+        let out = font_text(&view, "ab a", 1);
+        // a en 0, b en 3, espacio de 3, a en 3 + 4 + 3 = 10.
+        assert_eq!(out, vec![(0, 5, None), (4, 4, None), (10, 5, None)]);
+    }
+
+    #[test]
+    fn font_text_scales_and_breaks_lines_by_the_cell_height() {
+        let view = view_with(&[('a', &[(0, 0)], 2)]);
+        let out = font_text(&view, "a\na", 2);
+        assert_eq!(out.len(), 8, "two 2×2 blocks");
+        assert!(out.contains(&(0, 0, None)) && out.contains(&(1, 1, None)));
+        assert!(
+            out.contains(&(0, 16, None)),
+            "the second line, one cell (8) × 2 down"
+        );
+    }
+
+    #[test]
+    fn a_missing_char_is_a_crossed_box() {
+        let view = view_with(&[]);
+        let out = font_text(&view, "z", 1);
+        assert!(!out.is_empty());
+        let right = out.iter().map(|p| p.0).max().unwrap();
+        assert!(right < view.missing_width as i32);
     }
 
     #[test]

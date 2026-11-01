@@ -4,45 +4,38 @@
 //!
 //! - **Textos:** las mayúsculas en la fila 5 (y 76), en el color `text`. Se dibujan a mano porque
 //!   egui centra el texto en la fila y lo deja una más abajo.
-//! - **Combo:** `field.combo` en 9-slice, de las filas 2 a 17. El texto empieza 6 px adentro
-//!   (borde y 5 de relleno), y entre su tinta y la parte de la flecha (las 10 columnas del borde
-//!   derecho de la pieza) quedan 5. La lista es el panel de los menús (`menus::dropdown`).
-//! - **Número:** `field.number`, de 27 de ancho, con un `DragValue` de egui sin marco encima: se
-//!   arrastra o se escribe como siempre. Con unidad, `field.unit` ("px") tapa sus 2 últimas
-//!   columnas.
-//! - **Casilla:** `field.check.on`, 13×14 desde la fila 3, y el texto 3 px después. Sin marcar va
-//!   `field.check`; mientras el skin no la traiga (el diseño no la muestra), un cuadro plano de
-//!   respaldo. Las de los menús (`menu.check`, `menu.check.on`) no sirven: son otro dibujo, de
-//!   11×12.
-//! - **Opciones** (los grupos de radios: Sample, Linear/Radial, Rotation): botones de un clic,
-//!   uno por opción. El diseño no los muestra; van con la pieza `button` de los diálogos (49×17
-//!   con centro) a 16 de alto en las filas de los campos, `button.active` el elegido (o
-//!   `button.down` si el skin no lo trae), y el texto
-//!   centrado con las mayúsculas en la fila de los textos. `sym.slot` no sirve: no tiene centro y
-//!   no se estira.
+//! - **Combo:** el select del UI kit (`kit::select`, mockup de componentes, frame 9), desde la
+//!   fila de los campos: el texto 5 px adentro, el ▾ a la derecha y su lista propia debajo.
+//! - **Número:** el campo numérico del UI kit (`kit::input`), de 27 de ancho, con un `DragValue`
+//!   de egui sin marco adentro: se arrastra o se escribe como siempre. Con unidad, la caja
+//!   `field.unit` ("px") a la derecha; con letra, la caja `field.prefix` a la izquierda. Sus
+//!   mayúsculas, en la fila 5 del campo (una más abajo que los textos de la barra).
+//! - **Casilla:** la del UI kit (`kit::check`, mockup de componentes, frame 9), desde la fila de
+//!   los campos: la casilla de 12×13 en la fila 3 y el texto 3 px después, en la fila de los
+//!   textos.
+//! - **Opciones** (los grupos de radios: Sample, Linear/Radial, Rotation): el grupo de botones
+//!   del UI kit (`kit::group`, mockup de componentes, frame 9) con LEDs, desde la fila de los
+//!   campos: sus mayúsculas caen en la fila de los textos.
 
 use std::ops::RangeInclusive;
 
 use eframe::egui::{
-    self, Color32, Layout, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
-    WidgetInfo, WidgetType, emath, pos2, vec2,
+    self, Color32, Rect, Response, Sense, Ui, Vec2, WidgetInfo, WidgetType, emath, pos2, vec2,
 };
-use eframe::emath::GuiRounding as _;
 
-use crate::menus::{self, MenuLook, galley, ink_width, solid};
+use crate::kit::button::Led;
+use crate::kit::input::{self, Affixes, NumberOptions};
+pub(crate) use crate::kit::input::{NumberLook, drag_number};
+use crate::kit::{self, GroupItem};
+use crate::menus::{self, galley, solid};
 use crate::pixel_ui;
 use crate::pixel_ui::Tip as _;
-use crate::skin::{Piece, Skin, WidgetState};
+use crate::skin::Skin;
 use crate::tab_bar;
 
-const COMBO: &str = "field.combo";
-const NUMBER: &str = "field.number";
-const UNIT: &str = "field.unit";
-const CHECK: &str = "field.check";
-const CHECK_ON: &str = "field.check.on";
-
-/// La fila de las mayúsculas de los textos, desde el borde de arriba de la barra.
-pub const CAPS_TOP: f32 = FIELD_TOP + pixel_ui::CONTROL_CAPS;
+/// La fila de las mayúsculas de los textos, desde el borde de arriba de la barra: la del texto de
+/// los campos (`kit::input::CAPS_TOP` debajo de su borde), así todo queda en una fila.
+pub const CAPS_TOP: f32 = FIELD_TOP + crate::kit::input::CAPS_TOP;
 /// La fila de arriba del combo y del campo numérico (y 73 en el diseño), que miden 16 con el
 /// brillo de abajo.
 pub(crate) const FIELD_TOP: f32 = 2.0;
@@ -58,64 +51,15 @@ pub(crate) fn at_field_top<R>(ui: &mut Ui, look: BarLook, add: impl FnOnce(&mut 
     })
     .inner
 }
-/// Combo: de su borde izquierdo a la tinta del texto, y de la tinta a la parte de la flecha.
-const COMBO_TEXT_LEFT: f32 = 6.0;
-const COMBO_TEXT_GAP: f32 = 5.0;
-/// Sin la pieza: el ancho de la parte de la flecha.
-const FALLBACK_COMBO_RIGHT: f32 = 10.0;
 /// El campo numérico de borde a borde: 1 de borde, 25 de blanco y 1 de borde (en el diseño, x
 /// 278..304, donde la unidad pone su línea divisoria).
 const NUMBER_WIDTH: f32 = 27.0;
-/// La unidad empieza en la última columna blanca del campo y tapa su esquina.
-const UNIT_OVERLAP: f32 = 2.0;
-const FALLBACK_UNIT_WIDTH: f32 = 17.0;
-/// La casilla, una fila más abajo que los campos (en el diseño, y 74..87).
-const CHECK_TOP: f32 = 3.0;
-const FALLBACK_CHECK_SIZE: Vec2 = vec2(13.0, 14.0);
-/// De la casilla a la tinta de su texto.
-const CHECK_GAP: f32 = 3.0;
-/// Los botones de opción (los grupos de radios): la pieza de los botones de los diálogos, que
-/// tiene centro y se estira a lo ancho; acá, con el alto de los campos.
-const BUTTON: &str = "button";
-/// Un botón de un grupo de opciones, como en el diseño: el punto 3 px adentro del borde y 4 abajo,
-/// la tinta del texto 12 px adentro (el punto de 7 y 2 de aire) y 4 px antes del borde derecho.
-const OPTION_DOT_LEFT: f32 = 3.0;
-const OPTION_DOT_TOP: f32 = 4.0;
-const OPTION_TEXT_LEFT: f32 = 12.0;
-const OPTION_TEXT_RIGHT: f32 = 4.0;
-const OPTION_DOT_ON: &str = "button.dot.on";
-const OPTION_DOT_OFF: &str = "button.dot.off";
-const OPTION_SEP: &str = "button.sep";
 
 /// Lo que necesitan los controles pixel de la barra: el skin y la fila de arriba de la barra.
 #[derive(Clone, Copy)]
 pub struct BarLook<'a> {
     pub skin: &'a Skin,
     pub top: f32,
-}
-
-impl BarLook<'_> {
-    fn piece(&self, name: &str) -> Option<&Piece> {
-        self.skin.piece(name, WidgetState::Normal)
-    }
-}
-
-fn size_of(piece: &Piece) -> Vec2 {
-    vec2(piece.size[0] as f32, piece.size[1] as f32)
-}
-
-/// Un cuadro plano de respaldo (sin la pieza): `panel` con borde `outline`.
-fn flat_box(look: BarLook, rect: Rect, ppp: f32) -> Vec<Shape> {
-    let colors = look.skin.colors();
-    vec![
-        solid(rect, colors.panel, ppp),
-        Shape::rect_stroke(
-            rect.round_to_pixels(ppp),
-            0.0,
-            Stroke::new(1.0, colors.outline),
-            StrokeKind::Inside,
-        ),
-    ]
 }
 
 /// El pintor de los controles: el de `ui`, recortado a lo ancho como el scroll de la barra pero
@@ -166,8 +110,8 @@ pub fn info(ui: &mut Ui, look: BarLook, text: &str) -> Response {
     response.tip(text)
 }
 
-/// Un combo: `field.combo` con `selected` adentro y su lista en el panel de los menús. `content`
-/// arma las opciones (con [`menus::choice`]). Su nombre accesible es `selected`.
+/// Un combo: el select del UI kit (`kit::select`) con `selected` adentro, desde la fila de los
+/// campos. `content` arma las opciones (`choices` o `widgets::choice`).
 pub fn combo<R>(
     ui: &mut Ui,
     look: BarLook,
@@ -181,16 +125,12 @@ pub fn combo<R>(
 /// El ancho de un [`combo`] con `selected` (para que uno con varias opciones mida lo de la más
 /// larga y no brinque al cambiar).
 #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
-pub fn combo_width(ui: &Ui, skin: &Skin, selected: &str) -> f32 {
-    let shown = galley(ui, selected, skin.colors().text);
-    let right = skin
-        .piece(COMBO, WidgetState::Normal)
-        .and_then(|p| p.center.map(|c| (p.size[0] - c.x - c.w) as f32))
-        .unwrap_or(FALLBACK_COMBO_RIGHT);
-    COMBO_TEXT_LEFT + ink_width(&shown) + COMBO_TEXT_GAP + right
+pub fn combo_width(ui: &Ui, _skin: &Skin, selected: &str) -> f32 {
+    kit::select::width(ui, selected)
 }
 
-/// Como [`combo`], de `height` y, con `width`, de ese ancho (si no, el de su texto).
+/// Como [`combo`], con `width`, por lo menos de ese ancho (si no, el de su texto). El select mide
+/// siempre lo de un campo (`height` solo reserva el lugar).
 pub fn combo_sized<R>(
     ui: &mut Ui,
     look: BarLook,
@@ -200,51 +140,16 @@ pub fn combo_sized<R>(
     height: f32,
     content: impl FnOnce(&mut Ui) -> R,
 ) -> Response {
-    let colors = look.skin.colors();
-    let shown = galley(ui, selected, colors.text);
-    let piece = look.piece(COMBO);
-    let right = piece
-        .and_then(|p| p.center.map(|c| (p.size[0] - c.x - c.w) as f32))
-        .unwrap_or(FALLBACK_COMBO_RIGHT);
-    let natural = COMBO_TEXT_LEFT + ink_width(&shown) + COMBO_TEXT_GAP + right;
-    let width = width.map_or(natural, |w| w.max(natural));
+    let natural = kit::select::width(ui, selected);
+    let width = width.map_or(natural, |w| w.max(natural)).round();
     let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    let response = ui.interact(rect, ui.id().with(("bar_combo", id_salt)), Sense::click());
-    let enabled = ui.is_enabled();
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::ComboBox, enabled, selected));
     // En la fila del diseño, en puntos enteros (con la escala entera, píxeles del skin enteros).
-    let drawn = Rect::from_min_size(pos2(rect.left().round(), look.top + FIELD_TOP), rect.size());
-    if ui.is_rect_visible(rect) {
-        let ppp = ui.ctx().pixels_per_point();
-        let mut shapes = match piece {
-            Some(piece) => pixel_ui::piece_shapes(piece, drawn, ppp),
-            None => {
-                let mut flat = flat_box(look, drawn, ppp);
-                // La flecha de respaldo: ▾ de 5×3 con rects.
-                let tip = pos2(drawn.right() - right + 2.0, look.top + CAPS_TOP + 4.0);
-                for (i, w) in [5.0, 3.0, 1.0].into_iter().enumerate() {
-                    let row = Rect::from_min_size(
-                        pos2(tip.x + (5.0 - w) / 2.0, tip.y + i as f32),
-                        vec2(w, 1.0),
-                    );
-                    flat.push(solid(row, colors.text, ppp));
-                }
-                flat
-            }
-        };
-        // Más alto que el de la barra: el texto baja lo que crece (como en los paneles del dock).
-        let at = tab_bar::text_pos(
-            &shown,
-            drawn.left() + COMBO_TEXT_LEFT,
-            look.top + CAPS_TOP,
-            ppp,
-        );
-        shapes.push(Shape::galley(at, shown, colors.text));
-        painter(ui, look).extend(shapes);
-    }
-    let menu_look = MenuLook::new(look.skin, look.top);
-    menus::dropdown(&menu_look, &response, drawn, content);
-    response
+    let drawn = Rect::from_min_size(
+        pos2(rect.left().round(), look.top + FIELD_TOP),
+        vec2(width, kit::select::HEIGHT),
+    );
+    let id = ui.id().with(("bar_combo", id_salt));
+    kit::select::select_at(ui, look.skin, drawn, id, selected, content)
 }
 
 /// Las opciones de un combo de `values`, cada una con su `name`: elegir una cambia `current`.
@@ -264,11 +169,11 @@ pub fn choices<T: PartialEq + Copy>(
     }
 }
 
-/// Los grupos chicos de opciones exclusivas (los que sin Pixel UI son radios), como en el diseño:
-/// los botones pegados (`button`, `button.hover`, `button.down`), separados por `button.sep`, cada
-/// uno con su punto (`button.dot.on` el elegido, `button.dot.off` los demás) y su `name` (los no
-/// elegidos en `option_text_off`). Un clic elige esa opción; otro clic en la elegida no la apaga,
-/// como con radios. Devuelve si cambió `current`.
+/// Los grupos chicos de opciones exclusivas (los que sin Pixel UI son radios): el grupo de botones
+/// del UI kit ([`kit::group`](crate::kit::group)), cada opción con su LED (prendido el de la
+/// elegida) y su `name`, en las
+/// filas de los campos. Un clic elige esa opción; otro clic en la elegida no la apaga, como con
+/// radios. Devuelve si cambió `current`.
 pub fn options<T: PartialEq + Copy>(
     ui: &mut Ui,
     look: BarLook,
@@ -276,105 +181,27 @@ pub fn options<T: PartialEq + Copy>(
     values: impl IntoIterator<Item = T>,
     name: impl Fn(T) -> &'static str,
 ) -> bool {
-    let before = *current;
     let values: Vec<T> = values.into_iter().collect();
-    let colors = *look.skin.colors();
-    // Cada botón: el punto, el texto y el borde; los de al lado comparten la columna del medio.
-    let widths: Vec<f32> = values
+    let items: Vec<GroupItem> = values
         .iter()
-        .map(|&v| {
-            let ink = ink_width(&galley(ui, name(v), colors.text));
-            OPTION_TEXT_LEFT + ink + OPTION_TEXT_RIGHT + 1.0
-        })
+        .map(|&v| GroupItem::with_led(name(v), Led::lit(v == *current)))
         .collect();
-    let total = widths.iter().sum::<f32>() - (widths.len().saturating_sub(1)) as f32;
-    // Un id por grupo (puede haber varios en la barra) y uno por botón.
-    let group = ui.next_auto_id();
-    let (rect, _) = ui.allocate_exact_size(vec2(total, FIELD_HEIGHT), Sense::hover());
-    let ppp = ui.ctx().pixels_per_point();
-    let enabled = ui.is_enabled();
-    let top = look.top + FIELD_TOP;
-    let mut left = rect.left().round();
-    let mut shapes = Vec::new();
-    let mut seps = Vec::new();
-    for (i, &value) in values.iter().enumerate() {
-        // El cuerpo del botón; debajo, su luz.
-        let drawn = Rect::from_min_size(pos2(left, top), vec2(widths[i], pixel_ui::CONTROL_BODY));
-        let light = Rect::from_min_size(drawn.left_bottom(), vec2(widths[i], 1.0));
-        shapes.push(solid(light, colors.highlight, ppp));
-        let id = group.with(("bar_option", i));
-        let response = ui.interact(drawn, id, Sense::click());
-        let on = *current == value;
-        let label = name(value);
-        response.widget_info(|| WidgetInfo::selected(WidgetType::RadioButton, enabled, on, label));
-        if response.clicked() {
-            *current = value;
+    // Un id por grupo (puede haber varios en la barra).
+    let id = ui.next_auto_id();
+    let width = kit::group::width(ui, &items);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
+    let at = pos2(rect.left().round(), look.top + FIELD_TOP);
+    let painter = painter(ui, look);
+    let picked = kit::group::button_group_at(ui, look.skin, &painter, id, at, &items, &|i| {
+        values[i] == *current
+    });
+    match picked {
+        Some(i) if values[i] != *current => {
+            *current = values[i];
+            true
         }
-        let state = if !enabled {
-            WidgetState::Normal
-        } else if response.is_pointer_button_down_on() {
-            WidgetState::Down
-        } else if response.hovered() {
-            WidgetState::Hover
-        } else {
-            WidgetState::Normal
-        };
-        match look.skin.piece(BUTTON, state) {
-            Some(piece) => shapes.extend(pixel_ui::piece_shapes(piece, drawn, ppp)),
-            None => {
-                shapes.extend(flat_box(look, drawn, ppp));
-                if on {
-                    shapes.push(Shape::rect_stroke(
-                        drawn.shrink(1.0).round_to_pixels(ppp),
-                        0.0,
-                        Stroke::new(1.0, colors.accent),
-                        StrokeKind::Inside,
-                    ));
-                }
-            }
-        }
-        let down = if state == WidgetState::Down { 1.0 } else { 0.0 };
-        let dot = if on { OPTION_DOT_ON } else { OPTION_DOT_OFF };
-        if let Some(piece) = look.piece(dot) {
-            let at = Rect::from_min_size(
-                pos2(drawn.left() + OPTION_DOT_LEFT, top + OPTION_DOT_TOP + down),
-                size_of(piece),
-            );
-            shapes.extend(pixel_ui::piece_shapes(piece, at, ppp));
-        }
-        // El texto, armado con su color (el de la galería manda sobre el de la forma).
-        let color = if !enabled {
-            colors.button_text_disabled
-        } else if on {
-            colors.text
-        } else {
-            colors.option_text_off
-        };
-        let shown = galley(ui, label, color);
-        let at = tab_bar::text_pos(
-            &shown,
-            drawn.left() + OPTION_TEXT_LEFT,
-            look.top + CAPS_TOP + down,
-            ppp,
-        );
-        shapes.push(Shape::galley(at, shown, color));
-        if i > 0 {
-            seps.push(drawn.left());
-        }
-        left += widths[i] - 1.0;
+        _ => false,
     }
-    // Las uniones: el brillo del de la izquierda, la línea y la sombra del de la derecha.
-    if let Some(piece) = look.piece(OPTION_SEP) {
-        for x in seps {
-            let at = Rect::from_min_size(pos2(x - 1.0, top), size_of(piece));
-            shapes.extend(pixel_ui::piece_shapes(piece, at, ppp));
-        }
-    }
-    // Deshabilitado, el grupo se ve igual (sin la transparencia de egui); solo el texto cambia.
-    let mut painter = painter(ui, look);
-    painter.set_opacity(1.0);
-    painter.extend(shapes);
-    *current != before
 }
 
 /// El botón de la forma del pincel, como en el diseño: un `button` de 25×16 con la huella del
@@ -394,7 +221,6 @@ pub fn brush_shape(
         pos2(rect.left().round(), look.top + FIELD_TOP),
         vec2(BRUSH_BUTTON_W, pixel_ui::CONTROL_BODY),
     );
-    pixel_ui::under_light(ui, drawn);
     let label = match shape {
         BrushShape::Round => "Round brush",
         BrushShape::Square => "Square brush",
@@ -458,9 +284,10 @@ const BRUSH_BUTTON_W: f32 = 25.0;
 const BRUSH_ICON_CENTER: Vec2 = vec2(12.0, 7.0);
 const BRUSH_ICON_MAX: u32 = 9;
 
-/// Un campo numérico: `field.number` y, con `px`, la unidad `field.unit` a la derecha. Adentro va
-/// un `DragValue` de egui sin marco (se arrastra o, con un clic, se escribe), con la velocidad
-/// según el rango. Devuelve su respuesta.
+/// Un campo numérico del UI kit ([`kit::input`](crate::kit::input)) en las filas de los campos:
+/// de `NUMBER_WIDTH` y, con `px`, la caja de la unidad a la derecha (el campo crece lo que mide la
+/// caja menos su columna de borde). El número va centrado en el blanco; se arrastra o, con un
+/// clic, se escribe. Devuelve su respuesta.
 pub fn number<Num: emath::Numeric>(
     ui: &mut Ui,
     look: BarLook,
@@ -469,67 +296,32 @@ pub fn number<Num: emath::Numeric>(
     range: RangeInclusive<Num>,
     px: bool,
 ) -> Response {
-    let colors = *look.skin.colors();
-    let unit = px.then(|| look.piece(UNIT));
-    let unit_width = match unit {
-        Some(piece) => piece.map_or(FALLBACK_UNIT_WIDTH, |p| size_of(p).x) - UNIT_OVERLAP,
-        None => 0.0,
+    let affixes = if px {
+        Affixes::suffix("px")
+    } else {
+        Affixes::NONE
     };
-    let (rect, _) = ui.allocate_exact_size(
-        vec2(NUMBER_WIDTH + unit_width, FIELD_HEIGHT),
-        Sense::hover(),
-    );
-    let field = Rect::from_min_size(
-        pos2(rect.left().round(), look.top + FIELD_TOP),
-        vec2(NUMBER_WIDTH, FIELD_HEIGHT),
-    );
-    let ppp = ui.ctx().pixels_per_point();
-    let back = painter(ui, look);
-    let mut shapes = match look.piece(NUMBER) {
-        Some(piece) => pixel_ui::piece_shapes(piece, field, ppp),
-        None => flat_box(look, field, ppp),
-    };
-    if let Some(unit) = unit {
-        let at = pos2(field.right() - UNIT_OVERLAP, field.top());
-        shapes.extend(match unit {
-            Some(piece) => {
-                // A lo alto, el del campo (la pieza estira sus filas de abajo).
-                let size = vec2(size_of(piece).x, FIELD_HEIGHT);
-                pixel_ui::piece_shapes(piece, Rect::from_min_size(at, size), ppp)
-            }
-            None => flat_box(
-                look,
-                Rect::from_min_size(at, vec2(FALLBACK_UNIT_WIDTH, FIELD_HEIGHT)),
-                ppp,
-            ),
-        });
-    }
-    back.extend(shapes);
-    // El número, en el blanco del campo y con las mayúsculas en la fila de los textos: el
-    // `DragValue` centra su texto en un rect del alto del texto.
-    let probe = galley(ui, "0", colors.text);
-    let caps = -tab_bar::text_pos(&probe, 0.0, 0.0, ppp).y;
-    let inner = Rect::from_min_size(
-        pos2(field.left() + 1.0, look.top + CAPS_TOP - caps),
-        vec2(NUMBER_WIDTH - 2.0, probe.size().y),
-    );
-    // Todo lo dibujado (el campo y la unidad) responde al clic y al arrastre, no solo el texto.
-    let (start, end) = (range.start().to_f64(), range.end().to_f64());
-    let speed = ((end - start) / 128.0).clamp(0.1, 1.0);
-    let whole = Rect::from_min_max(
-        field.min,
-        pos2(rect.right().max(field.right()), field.bottom()),
-    );
-    let look = NumberLook {
-        text: colors.text,
-        outline: colors.outline,
+    let unit = affixes
+        .suffix
+        .map_or(0.0, |u| input::box_width(ui, u) - input::OUTLINE);
+    let options = NumberOptions {
+        affixes,
         align: egui::Align::Center,
+        speed: None,
     };
-    drag_number(ui, whole, inner, id_salt, value, range, speed, look).0
+    bar_number(
+        ui,
+        look,
+        NUMBER_WIDTH + unit,
+        id_salt,
+        value,
+        range,
+        options,
+    )
 }
 
-/// Un campo numérico con su unidad escrita adentro, a la derecha (el `%` de Sprite Size): el
-/// mismo `field.number`, de `SUFFIX_FIELD_WIDTH`, y el número a la izquierda.
+/// Un campo numérico con su unidad (el `%` de Sprite Size) en la caja de la derecha, de
+/// `SUFFIX_FIELD_WIDTH`, con el número a la izquierda.
 pub fn number_with_suffix<Num: emath::Numeric>(
     ui: &mut Ui,
     look: BarLook,
@@ -538,43 +330,15 @@ pub fn number_with_suffix<Num: emath::Numeric>(
     range: RangeInclusive<Num>,
     suffix: &str,
 ) -> Response {
-    let colors = *look.skin.colors();
-    let width = SUFFIX_FIELD_WIDTH;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
-    let field = Rect::from_min_size(
-        pos2(rect.left().round(), look.top + FIELD_TOP),
-        vec2(width, FIELD_HEIGHT),
-    );
-    let ppp = ui.ctx().pixels_per_point();
-    let mut shapes = match look.piece(NUMBER) {
-        Some(piece) => pixel_ui::piece_shapes(piece, field, ppp),
-        None => flat_box(look, field, ppp),
+    let options = NumberOptions {
+        affixes: Affixes::suffix(suffix),
+        ..Default::default()
     };
-    // La unidad, contra el borde derecho del blanco.
-    let unit = galley(ui, suffix, colors.text);
-    let unit_left = (field.right() - SUFFIX_PAD - unit.size().x).round();
-    let at = tab_bar::text_pos(&unit, unit_left, look.top + CAPS_TOP, ppp);
-    shapes.push(Shape::galley(at, unit, colors.text));
-    painter(ui, look).extend(shapes);
-    let probe = galley(ui, "0", colors.text);
-    let caps = -tab_bar::text_pos(&probe, 0.0, 0.0, ppp).y;
-    let inner = Rect::from_min_max(
-        pos2(field.left() + SUFFIX_PAD, look.top + CAPS_TOP - caps),
-        pos2(unit_left - 1.0, look.top + CAPS_TOP - caps + probe.size().y),
-    );
-    let (start, end) = (range.start().to_f64(), range.end().to_f64());
-    let speed = ((end - start) / 128.0).clamp(0.1, 1.0);
-    let look = NumberLook {
-        text: colors.text,
-        outline: colors.outline,
-        align: egui::Align::Min,
-    };
-    drag_number(ui, field, inner, id_salt, value, range, speed, look).0
+    bar_number(ui, look, SUFFIX_FIELD_WIDTH, id_salt, value, range, options)
 }
 
-/// Un campo numérico con una letra adelante (la `W` de "W 11.47"): el mismo `field.number`, de
-/// `PREFIX_FIELD_WIDTH`, con la letra sobre el color del lienzo a la izquierda y el número en
-/// el blanco que queda.
+/// Un campo numérico con una letra adelante (la `W` de "W 11.47"), en la caja del prefijo, de
+/// `PREFIX_FIELD_WIDTH`, con el número en el blanco que queda.
 pub fn number_with_prefix<Num: emath::Numeric>(
     ui: &mut Ui,
     look: BarLook,
@@ -583,199 +347,52 @@ pub fn number_with_prefix<Num: emath::Numeric>(
     range: RangeInclusive<Num>,
     prefix: &str,
 ) -> Response {
-    let colors = *look.skin.colors();
-    let width = PREFIX_FIELD_WIDTH;
-    let (rect, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
-    let field = Rect::from_min_size(
-        pos2(rect.left().round(), look.top + FIELD_TOP),
-        vec2(width, FIELD_HEIGHT),
-    );
-    let ppp = ui.ctx().pixels_per_point();
-    let mut shapes = match look.piece(NUMBER) {
-        Some(piece) => pixel_ui::piece_shapes(piece, field, ppp),
-        None => flat_box(look, field, ppp),
-    };
-    // La letra, dentro del borde: el color del lienzo y, en la fila de abajo del blanco (su
-    // sombra), el fondo.
-    let cell = Rect::from_min_size(
-        field.min + vec2(1.0, 1.0),
-        vec2(PREFIX_WIDTH, FIELD_HEIGHT - 4.0),
-    );
-    shapes.push(Shape::rect_filled(cell, 0.0, colors.canvas));
-    let shade = Rect::from_min_size(cell.left_bottom(), vec2(PREFIX_WIDTH, 1.0));
-    shapes.push(Shape::rect_filled(shade, 0.0, colors.background));
-    let letter = galley(ui, prefix, colors.field_text);
-    let left = (cell.center().x - letter.size().x / 2.0).round();
-    let at = tab_bar::text_pos(&letter, left, look.top + CAPS_TOP, ppp);
-    shapes.push(Shape::galley(at, letter, colors.field_text));
-    painter(ui, look).extend(shapes);
-    let probe = galley(ui, "0", colors.text);
-    let caps = -tab_bar::text_pos(&probe, 0.0, 0.0, ppp).y;
-    let inner = Rect::from_min_max(
-        pos2(cell.right() + PREFIX_PAD, look.top + CAPS_TOP - caps),
-        pos2(
-            field.right() - 2.0,
-            look.top + CAPS_TOP - caps + probe.size().y,
-        ),
-    );
     let (start, end) = (range.start().to_f64(), range.end().to_f64());
-    let speed = ((end - start) / 128.0).clamp(0.01, 1.0);
-    let look = NumberLook {
-        text: colors.text,
-        outline: colors.outline,
-        align: egui::Align::Min,
+    let options = NumberOptions {
+        affixes: Affixes::prefix(prefix),
+        speed: Some(((end - start) / 128.0).clamp(0.01, 1.0)),
+        ..Default::default()
     };
-    drag_number(ui, field, inner, id_salt, value, range, speed, look).0
+    bar_number(ui, look, PREFIX_FIELD_WIDTH, id_salt, value, range, options)
 }
 
-/// [`number_with_prefix`]: de borde a borde, lo de la letra y del blanco a su número.
-const PREFIX_FIELD_WIDTH: f32 = 37.0;
-const PREFIX_WIDTH: f32 = 11.0;
-const PREFIX_PAD: f32 = 2.0;
-
-/// El ancho de [`number_with_suffix`], como el campo del `%` del diseño.
-const SUFFIX_FIELD_WIDTH: f32 = 59.0;
-/// Del borde del blanco al número y a la unidad de [`number_with_suffix`].
-const SUFFIX_PAD: f32 = 4.0;
-
-/// Cómo se ve el texto de [`drag_number`]: su color, el del cursor de escribir y hacia dónde se
-/// alinea en su rect.
-#[derive(Clone, Copy)]
-pub(crate) struct NumberLook {
-    pub text: Color32,
-    pub outline: Color32,
-    pub align: egui::Align,
-}
-
-/// Un número que se arrastra en toda la zona `whole` y se escribe con el `DragValue` de egui sin
-/// marco que va en `inner` (el texto, alineado según el layout de `ui`). Un clic en la zona entra
-/// a escribir. Lo usan el campo numérico de la barra y la tira de canales del editor de color.
-/// Devuelve la respuesta del `DragValue` y la de la zona.
-#[allow(clippy::too_many_arguments)]
-pub(crate) fn drag_number<Num: emath::Numeric>(
+/// El campo numérico del kit de `width` en las filas de los campos de la barra.
+fn bar_number<Num: emath::Numeric>(
     ui: &mut Ui,
-    whole: Rect,
-    inner: Rect,
-    id_salt: impl std::hash::Hash + std::fmt::Debug + Copy,
+    look: BarLook,
+    width: f32,
+    id_salt: &str,
     value: &mut Num,
     range: RangeInclusive<Num>,
-    speed: f64,
-    look: NumberLook,
-) -> (Response, Response) {
-    let (start, end) = (range.start().to_f64(), range.end().to_f64());
-    // La zona va debajo del `DragValue`, que gana donde se solapan.
-    let zone = ui.interact(
-        whole,
-        ui.id().with(("bar_number_zone", id_salt)),
-        Sense::click_and_drag(),
+    options: NumberOptions,
+) -> Response {
+    let (slot, _) = ui.allocate_exact_size(vec2(width, FIELD_HEIGHT), Sense::hover());
+    let rect = Rect::from_min_size(
+        pos2(slot.left().round(), look.top + FIELD_TOP),
+        vec2(width, input::HEIGHT),
     );
-    if zone.hovered() || zone.dragged() {
-        ui.set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-    }
-    if zone.drag_started() {
-        ui.data_mut(|d| d.insert_temp(zone.id, value.to_f64()));
-    }
-    if zone.dragged() {
-        // Se acumula en `f64`: con enteros y velocidad baja, cada paso solo no llegaría a 1.
-        let mut acc = ui
-            .data(|d| d.get_temp::<f64>(zone.id))
-            .unwrap_or_else(|| value.to_f64());
-        acc = (acc + f64::from(zone.drag_delta().x) * speed).clamp(start, end);
-        ui.data_mut(|d| d.insert_temp(zone.id, acc));
-        *value = Num::from_f64(acc);
-    }
-    let mut child = ui.new_child(
-        UiBuilder::new()
-            .id_salt(("bar_number", id_salt))
-            .max_rect(inner)
-            .layout(Layout::top_down(look.align)),
-    );
-    plain_field_style(child.style_mut(), inner.size(), look.text, look.outline);
-    // Al escribir, la selección y el cursor de egui en las filas de los demás campos.
-    child.set_clip_rect(crate::pixel_sections::text_clip(ui, whole, inner));
-    let response = child.add(egui::DragValue::new(value).range(range).speed(speed));
-    // Un clic en la zona de afuera del texto también entra a escribir.
-    if zone.clicked() {
-        ui.memory_mut(|m| m.request_focus(response.id));
-    }
-    (response, zone)
+    let painter = painter(ui, look);
+    input::number_input_at(
+        ui, look.skin, &painter, rect, id_salt, value, range, options,
+    )
 }
 
-/// El estilo del `DragValue` del campo: del tamaño del blanco, sin marco ni fondo (los pone la
-/// pieza), con el texto en `text`, el cursor en `outline` y sin el borde de foco de egui.
-pub(crate) fn plain_field_style(
-    style: &mut egui::Style,
-    size: Vec2,
-    text: Color32,
-    outline: Color32,
-) {
-    style.spacing.interact_size = size;
-    style.spacing.button_padding = Vec2::ZERO;
-    let v = &mut style.visuals;
-    v.button_frame = false;
-    v.text_edit_bg_color = Some(Color32::TRANSPARENT);
-    // Lo seleccionado: blanco sobre el rosa del diseño.
-    v.selection.bg_fill = Color32::from_rgb(0xe2, 0x72, 0x85);
-    v.selection.stroke = Stroke::new(1.0, Color32::WHITE);
-    // El cursor de escribir, fino y en el contorno del skin: el de egui es azul claro de 2 px y
-    // sobre el blanco del campo casi no se ve.
-    v.text_cursor.stroke = Stroke::new(1.0, outline);
-    v.override_text_color = Some(text);
-    for w in [
-        &mut v.widgets.noninteractive,
-        &mut v.widgets.inactive,
-        &mut v.widgets.hovered,
-        &mut v.widgets.active,
-        &mut v.widgets.open,
-    ] {
-        w.bg_fill = Color32::TRANSPARENT;
-        w.weak_bg_fill = Color32::TRANSPARENT;
-        w.bg_stroke = Stroke::NONE;
-        w.expansion = 0.0;
-    }
-}
+/// [`number_with_prefix`] y [`number_with_suffix`], de borde a borde.
+const PREFIX_FIELD_WIDTH: f32 = 37.0;
+const SUFFIX_FIELD_WIDTH: f32 = 59.0;
 
-/// Una casilla con su texto, como `ui.checkbox(checked, label)`: `field.check.on` marcada y
-/// `field.check` sin marcar (sin la pieza, un cuadro plano y, marcada, un cuadrito `text`).
+/// Una casilla con su texto, como `ui.checkbox(checked, label)`: la del UI kit (`kit::check`),
+/// desde la fila de los campos (sus mayúsculas caen en la fila de los textos).
 pub fn checkbox(ui: &mut Ui, look: BarLook, checked: &mut bool, label: &str) -> Response {
-    let colors = look.skin.colors();
-    let shown = galley(ui, label, colors.text);
-    let on_piece = look.piece(CHECK_ON);
-    let off_piece = look.piece(CHECK);
-    let box_size = on_piece.or(off_piece).map_or(FALLBACK_CHECK_SIZE, size_of);
-    let size = vec2(box_size.x + CHECK_GAP + shown.size().x, shown.size().y);
-    let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
-    if response.clicked() {
-        *checked = !*checked;
-        response.mark_changed();
-    }
-    let on = *checked;
-    let enabled = ui.is_enabled();
-    response.widget_info(|| WidgetInfo::selected(WidgetType::Checkbox, enabled, on, label));
-    if ui.is_rect_visible(rect) {
-        let ppp = ui.ctx().pixels_per_point();
-        let at = Rect::from_min_size(pos2(rect.left().round(), look.top + CHECK_TOP), box_size);
-        let mut shapes = match if on { on_piece } else { off_piece } {
-            Some(piece) => pixel_ui::piece_shapes(piece, at, ppp),
-            None => {
-                let mut flat = flat_box(look, at, ppp);
-                if on {
-                    flat.push(solid(at.shrink(3.0), colors.text, ppp));
-                }
-                flat
-            }
-        };
-        let pos = tab_bar::text_pos(&shown, at.right() + CHECK_GAP, look.top + CAPS_TOP, ppp);
-        shapes.push(Shape::galley(pos, shown, colors.text));
-        painter(ui, look).extend(shapes);
-    }
-    response
+    at_field_top(ui, look, |ui| {
+        kit::check::checkbox(ui, look.skin, checked, label)
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eframe::egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput};
+    use eframe::egui::{Event, Key, Modifiers, PointerButton, Pos2, RawInput, Shape};
 
     /// Un campo numérico (con unidad) en una barra de prueba, manejado con eventos crudos.
     struct Bar {

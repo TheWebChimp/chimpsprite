@@ -17,12 +17,13 @@ pub(crate) const PIXEL_FONT: &[u8] = include_bytes!("../../../assets/ui/chimpspr
 pub const PIXEL_FONT_NAME: &str = "chimpsprite";
 /// A 16 puntos, un píxel de la grilla de la fuente mide un punto (un píxel del skin).
 pub const PIXEL_FONT_SIZE: f32 = 16.0;
-/// La fuente de los textos chicos (chimpfont): solo mayúsculas de 5 px, ASCII. Con Pixel UI es
-/// la de `TextStyle::Small`: la barra de estado, los globos, las rutas de Home y Pixnews.
+/// La fuente de los textos chicos (chimpfont): mayúsculas y minúsculas de 5 px, con acentos y ñ.
+/// Con Pixel UI es la de `TextStyle::Small`: la barra de estado, los globos, las rutas de Home y
+/// Pixnews.
 const SMALL_FONT: &[u8] = include_bytes!("../../../assets/ui/chimpfont.ttf");
 pub const SMALL_FONT_NAME: &str = "chimpfont";
-/// A 8 puntos, un píxel de su grilla mide un punto.
-pub const SMALL_FONT_SIZE: f32 = 8.0;
+/// A 16 puntos, un píxel de su grilla (64 unidades de 1024 por em) mide un punto.
+pub const SMALL_FONT_SIZE: f32 = 16.0;
 /// Los emojis y símbolos en pixel art de GNU Unifont (SIL OFL 1.1), recortados a esos rangos:
 /// lo que las fuentes pixel no tienen (❤ ✨ ☀, 🎨 🎃…), antes que las fuentes de egui.
 const UNIFONT_SYMBOLS: &[u8] = include_bytes!("../../../assets/ui/unifont_symbols.otf");
@@ -70,7 +71,7 @@ pub fn font_definitions(pixel: bool) -> FontDefinitions {
         );
     }
     // Los textos chicos: chimpfont con Pixel UI y, detrás, la proporcional (los glifos que no
-    // tiene: acentos, `…`).
+    // tiene, como `…`).
     let mut small: Vec<String> = Vec::new();
     if pixel {
         small.push(SMALL_FONT_NAME.to_owned());

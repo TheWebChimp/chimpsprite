@@ -105,9 +105,10 @@ impl Tool for Curve {
         self.output(ctx)
     }
 
-    /// Activa mientras se arrastra la recta del principio (como Line).
+    /// Activa mientras el botón está apretado: arrastrando la recta del principio (como Line) o
+    /// poniendo un control. Así el lienzo le pasa el arrastre y el soltar, que fija el punto.
     fn is_active(&self) -> bool {
-        self.down && self.points.len() == 1
+        self.down && !self.points.is_empty()
     }
 
     fn is_pending(&self) -> bool {
@@ -146,10 +147,13 @@ mod tests {
         assert!(t.is_active());
         assert_eq!(t.release(&c), ToolOutput::default(), "not yet");
         assert!(t.is_pending());
-        // El primer control.
+        // El primer control: con el botón apretado la herramienta está activa (el lienzo solo
+        // suelta y arrastra las activas).
         t.hover(&c, (0, 0));
         t.press(&c, (0, 0));
+        assert!(t.is_active() && !t.is_pending());
         assert_eq!(t.release(&c), ToolOutput::default());
+        assert!(t.is_pending() && !t.is_active());
         // El segundo: se pinta.
         t.press(&c, (7, 0));
         let out = coords(&t.release(&c));

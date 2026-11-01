@@ -829,7 +829,7 @@ fn lospec_ui(
             if tab.lookup_loading() {
                 ui.spinner();
             } else {
-                fetch = crate::pixel_ui::lit_button(ui, "Fetch").clicked();
+                fetch = crate::pixel_ui::text_button(ui, "Fetch").clicked();
             }
             let response = panel_field(ui, &mut tab.link, ui.available_width(), "Link", "");
             fetch |= response.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -951,6 +951,7 @@ fn etched_rule(ui: &mut egui::Ui, edge: bool) {
 const LOSPEC_SCROLL_GAP: f32 = 5.0;
 /// Los campos de arriba miden 17, como sus botones (el diseño); el orden, 83 de ancho, y el
 /// número de colores 19 pegado a su combo.
+#[cfg_attr(target_arch = "wasm32", allow(dead_code))]
 const PANEL_FIELD_H: f32 = crate::pixel_ui::CONTROL_HEIGHT;
 #[cfg(not(target_arch = "wasm32"))]
 const SORT_W: f32 = 83.0;
@@ -968,14 +969,7 @@ fn panel_field(
     hint: &str,
 ) -> egui::Response {
     match pixel_ui::frame_skin(ui.ctx()) {
-        Some(skin) => crate::pixel_sections::text_field_sized(
-            ui,
-            &skin,
-            text,
-            egui::vec2(width, PANEL_FIELD_H),
-            label,
-            hint,
-        ),
+        Some(skin) => crate::kit::input::text_input(ui, &skin, text, width, label, hint),
         None => ui.add(
             egui::TextEdit::singleline(text)
                 .hint_text(hint)
@@ -1090,7 +1084,7 @@ fn search_form(
                 if first_page_loading {
                     ui.spinner();
                 } else {
-                    search |= crate::pixel_ui::lit_button(ui, "Search").clicked();
+                    search |= crate::pixel_ui::text_button(ui, "Search").clicked();
                 }
                 let link = crate::pixel_ui::icon_button(
                     ui,
@@ -1099,7 +1093,6 @@ fn search_form(
                     "Paste a Lospec link",
                     Some(*link_open),
                 );
-                crate::pixel_ui::under_light(ui, link.rect);
                 if link.clicked() {
                     *link_open = !*link_open;
                 }
@@ -1197,7 +1190,7 @@ fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool, combo: egui::R
             .unwrap_or_else(|| count.to_string());
         let field = egui::Rect::from_min_max(egui::pos2(l + 1.0, t), egui::pos2(r, b));
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(field));
-        let response = crate::pixel_sections::text_field_bare(
+        let response = crate::kit::input::bare_text_input(
             &mut child,
             &skin,
             &mut text,
@@ -1235,7 +1228,7 @@ fn count_field(ui: &mut egui::Ui, count: &mut u16, enabled: bool, combo: egui::R
         px(r - 1.0, b - 2.0, r, b - 1.0, COUNT_LIGHT),
         px(l, b - 1.0, r - 1.0, b, COUNT_LIGHT),
     ];
-    // El brillo de la esquina de arriba a la derecha, como el de `field.text`.
+    // El brillo de la esquina de arriba a la derecha (el de los campos de antes).
     for (dx, dy, w) in COUNT_SHINE {
         let x = r - dx;
         shapes.push(px(x, t + dy, x + w, t + dy + 1.0, COUNT_LIGHT));
@@ -1388,17 +1381,17 @@ fn lospec_row(
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
-            if crate::pixel_ui::lit_button(ui, "Save").clicked() {
+            if crate::pixel_ui::text_button(ui, "Save").clicked() {
                 *action = Some(LospecAction::Save(p.clone()));
             }
             // Sus colores al final de la paleta del sprite (los que no tiene).
-            if crate::pixel_ui::lit_button(ui, "Append")
+            if crate::pixel_ui::text_button(ui, "Append")
                 .tip("Add its colors to the sprite's palette")
                 .clicked()
             {
                 *action = Some(LospecAction::Append(p.clone()));
             }
-            if crate::pixel_ui::lit_button(ui, "Apply").clicked() {
+            if crate::pixel_ui::text_button(ui, "Apply").clicked() {
                 *action = Some(LospecAction::Apply(p.clone()));
             }
         });

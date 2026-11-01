@@ -129,6 +129,10 @@ impl Editor {
         let clip = self.copy_timeline()?;
         match &clip {
             TimelineClip::Frames(frames) => {
+                // Los frames de una fuente son sus glifos: no se cortan.
+                if self.is_font() {
+                    return None;
+                }
                 if frames.len() >= self.frame_count() {
                     return Some(clip);
                 }

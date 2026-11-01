@@ -329,7 +329,7 @@ fn the_pieces_of_the_palette_and_the_color_editor_are_in_the_embedded_skin() {
         ("palette.box", [9, 9]),
         ("palette.swatch", [13, 13]),
         ("palette.add", [6, 7]),
-        ("picker.copy", [25, 16]),
+        ("icon.copy", [9, 9]),
         ("picker.sv", [7, 7]),
         ("picker.bars", [7, 6]),
         ("picker.cursor", [9, 9]),
@@ -358,7 +358,7 @@ fn with_pixel_ui_the_swatches_are_the_design_cells_inside_the_palette_box() {
     // De fábrica, la caja del diseño: 207 de alto (x 784..972, y 120..326).
     assert_eq!(pbox.height(), 207.0, "{pbox:?}");
     // El editor, debajo de la división de 6 filas, con el botón de copiar 2 px adentro.
-    let copy = h.drawn("picker.copy")[0];
+    let copy = h.node("Copy color");
     assert_eq!(copy.min, pos2(pbox.left() + 2.0, pbox.bottom() + 6.0));
     // Los 21 colores: cuadritos de 13×13 (borde de 1 compartido), uno cada 12, desde 4 px
     // adentro de la caja (el Mask es el botón del damero, arriba).
@@ -480,10 +480,10 @@ fn with_pixel_ui_the_channel_strip_shows_the_four_values_and_the_hex() {
     h.set_primary(Rgba::new(10, 20, 30, 200));
     let text_color = h.skin.as_ref().unwrap().colors().field_text;
     assert_eq!(text_color, Color32::from_rgb(89, 77, 77));
-    // La tira: 16 de alto, 2 px después del botón de copiar (25×16), en el orden del diseño.
-    let copy = h.drawn("picker.copy");
-    assert_eq!(copy.len(), 1);
-    assert_eq!(copy[0].size(), vec2(25.0, 16.0));
+    // La tira: 16 de alto, 2 px después del botón de copiar (el botón del kit, de 25: 16 de
+    // cuerpo y la línea clara), en el orden del diseño.
+    let copy = [h.node("Copy color")];
+    assert_eq!(copy[0].size(), vec2(25.0, 17.0));
     let r = h.drawn_boxes("channel.r")[0];
     let g = h.drawn_boxes("channel.g")[0];
     let b = h.drawn_boxes("channel.b")[0];
@@ -525,7 +525,9 @@ fn with_pixel_ui_the_channel_strip_shows_the_four_values_and_the_hex() {
     // Como en el diseño: el punto rojo en x 818 (5 después del borde) y el "2" en la 825, el
     // "#" 3 después del comienzo del hex, y los dígitos de la fila 4 a la 9 de la tira.
     assert_eq!(h.drawn("channel.dot.r")[0].min, r.min + vec2(5.0, 4.0));
-    assert_eq!(h.text("10").1.min, r.min + vec2(12.0, 4.0));
+    // El "1" es monoespaciado (su celda mide como las demás cifras y el trazo va 1 px adentro):
+    // la celda empieza en la 12, la tinta en la 13.
+    assert_eq!(h.text("10").1.min, r.min + vec2(13.0, 4.0));
     assert_eq!(h.text("10").1.height(), 6.0);
     assert_eq!(ink.min, hex.min + vec2(3.0, 4.0));
 }
@@ -559,7 +561,16 @@ fn with_pixel_ui_dragging_or_typing_red_changes_the_color() {
 fn with_pixel_ui_the_copy_button_copies_the_hex_of_the_color() {
     let mut h = Harness::new(true);
     let copy = h.node("Copy color");
-    assert_eq!(h.drawn("picker.copy"), vec![copy]);
+    // El botón con ícono del kit: el marco `button` y el ícono centrado en la cara.
+    assert!(h.drawn_boxes("button").contains(&copy), "{copy:?}");
+    let icon = h.drawn("icon.copy");
+    assert_eq!(
+        icon,
+        vec![Rect::from_min_size(
+            copy.min + vec2(8.0, 3.0),
+            vec2(9.0, 9.0)
+        )]
+    );
     h.frame(vec![Event::PointerMoved(copy.center())]);
     h.press(copy.center(), PointerButton::Primary, true);
     h.press(copy.center(), PointerButton::Primary, false);
@@ -884,15 +895,11 @@ impl Harness {
 }
 
 #[test]
-fn the_palette_buttons_are_in_the_embedded_skin() {
+fn the_palette_icons_are_in_the_embedded_skin() {
     let ctx = egui::Context::default();
     let skin = Skin::embedded(&ctx);
     let size = |name: &str| skin.piece(name, WidgetState::Normal).map(|p| p.size);
     for (name, piece) in [
-        ("palette.buttons", [5, 6]),
-        ("palette.buttons.sep", [3, 16]),
-        ("palette.button", [5, 6]),
-        ("palette.button.active", [3, 3]),
         ("palette.icon.lock", [7, 9]),
         ("palette.icon.lock.open", [7, 9]),
         ("palette.icon.menu", [7, 7]),
@@ -904,58 +911,57 @@ fn the_palette_buttons_are_in_the_embedded_skin() {
 }
 
 #[test]
-fn with_pixel_ui_the_top_buttons_are_the_design_group_and_the_checker() {
+fn with_pixel_ui_the_top_buttons_are_the_kit_group_and_the_kit_toggle() {
     let h = Harness::new(true);
     let pbox = h.drawn_boxes("palette.box")[0];
-    // El grupo (x 786..858, y 99..114): 2 px adentro de la columna y 5 filas arriba de la caja.
-    let group = h.drawn_boxes("palette.buttons");
-    assert_eq!(group.len(), 1, "{group:?}");
-    let group = group[0];
-    assert_eq!(group.size(), vec2(73.0, 16.0));
-    assert_eq!(
-        group.left_bottom(),
-        pos2(pbox.left() + 2.0, pbox.top() - 5.0)
-    );
-    // Los separadores, en la 809 y la 833.
-    let seps: Vec<f32> = h
-        .drawn("palette.buttons.sep")
-        .iter()
-        .map(|r| r.left())
-        .collect();
-    assert_eq!(seps, vec![group.left() + 23.0, group.left() + 47.0]);
-    // Un botón cada 24, con su ícono donde está en el diseño.
-    for (k, (label, icon, at)) in [
-        ("Lock palette", "palette.icon.lock", vec2(9.0, 3.0)),
-        ("Palette menu", "palette.icon.menu", vec2(33.0, 4.0)),
-        ("New palette", "palette.icon.new", vec2(56.0, 3.0)),
+    // El grupo del kit: 2 px adentro de la columna y 5 filas arriba de la caja (su línea clara
+    // cae en la primera), un segmento de 25 cada 24 (comparten la columna del separador).
+    let top = pbox.top() - 5.0 - 16.0;
+    for (k, (label, icon)) in [
+        ("Lock palette", "palette.icon.lock"),
+        ("Palette menu", "palette.icon.menu"),
+        ("New palette", "palette.icon.new"),
     ]
     .into_iter()
     .enumerate()
     {
         let button = h.node(label);
-        assert_eq!(button.left(), group.left() + 24.0 * k as f32, "{label}");
-        assert_eq!((button.top(), button.height()), (group.top(), 16.0));
-        assert_eq!(h.drawn(icon)[0].min, group.min + at, "{icon}");
+        let left = pbox.left() + 2.0 + 24.0 * k as f32;
+        assert_eq!(
+            button,
+            Rect::from_min_size(pos2(left, top), vec2(25.0, 17.0)),
+            "{label}"
+        );
+        // El ícono, centrado en la cara (filas 1 a 13).
+        let drawn = h.drawn(icon);
+        assert_eq!(drawn.len(), 1, "{icon}");
+        assert!(button.contains_rect(drawn[0]), "{icon}: {drawn:?}");
+        let size = drawn[0].size();
+        assert_eq!(
+            drawn[0].min.x,
+            button.left() + ((25.0 - size.x) / 2.0).floor(),
+            "{icon}"
+        );
     }
-    // El damero (x 947..970): 24 de ancho, 2 px antes del borde derecho, a la altura del grupo.
-    let checker = h.drawn_boxes("palette.button")[0];
-    assert_eq!(checker.size(), vec2(24.0, 16.0));
-    assert_eq!(checker.right_top(), pos2(pbox.right() - 2.0, group.top()));
-    assert_eq!(h.node("Mask"), checker);
-    assert_eq!(
-        h.drawn("palette.icon.mask")[0].min,
-        checker.min + vec2(3.0, 3.0)
-    );
-    // Nada prendido: la paleta empieza bloqueada, con el candado cerrado en un botón normal,
-    // como en el diseño (sin el Mask).
-    assert!(h.drawn_boxes("palette.button.active").is_empty());
+    // El damero: un botón del kit de 24, 2 px antes del borde derecho, a la altura del grupo.
+    let checker = h.node("Mask");
+    assert_eq!(checker.size(), vec2(24.0, 17.0));
+    assert_eq!(checker.right_top(), pos2(pbox.right() - 2.0, top));
+    let icon = h.drawn("palette.icon.mask")[0];
+    assert!(checker.contains_rect(icon));
+    // Las piezas viejas ya no se usan.
+    for old in ["palette.buttons", "palette.button", "palette.button.active"] {
+        assert!(h.drawn(old).is_empty(), "{old}");
+    }
 }
 
 #[test]
 fn with_pixel_ui_the_lock_starts_on_and_blocks_editing_a_palette_color() {
     let mut h = Harness::new(true);
     assert!(h.editor.palette_locked);
-    assert_eq!(h.is_selected("Lock palette"), Some(true));
+    // Bloqueada: el candado cerrado, en un botón sin apretar.
+    assert_eq!(h.drawn("palette.icon.lock").len(), 1);
+    assert!(h.drawn("palette.icon.lock.open").is_empty());
     let before = h.editor.sprite().palette.clone();
     // Bloqueada: elegir #3 y cambiar el rojo cambia el primario, no la paleta.
     h.click_at(h.node("#3").center());
@@ -1106,15 +1112,12 @@ fn with_pixel_ui_the_checker_button_toggles_the_mask() {
     h.click_at(h.node("Mask").center());
     assert!(h.editor.is_mask(h.editor.primary));
     assert_eq!(h.is_selected("Mask"), Some(true));
-    // Prendido (el candado no: su estado lo dice el ícono).
-    let checker = h.node("Mask");
-    assert_eq!(
-        h.drawn_boxes("palette.button.active"),
-        vec![Rect::from_min_size(
-            checker.min + vec2(1.0, 1.0),
-            vec2(22.0, 13.0)
-        )]
-    );
+    // Prendido: el botón del kit apretado (su ícono baja 1 px).
+    let pressed = h.drawn("palette.icon.mask")[0];
+    h.click_at(h.node("Mask").center());
+    assert!(!h.editor.is_mask(h.editor.primary));
+    assert_eq!(h.drawn("palette.icon.mask")[0].min.y, pressed.min.y - 1.0);
+    h.click_at(h.node("Mask").center());
     h.click_at(h.node("Mask").center());
     assert_eq!(h.primary(), Rgba::rgb(10, 20, 30));
     assert_eq!(h.is_selected("Mask"), Some(false));
@@ -1169,7 +1172,7 @@ fn assert_header_fits(h: &Harness) {
         );
     }
     for piece in [
-        "picker.copy",
+        "icon.copy",
         "channel.r",
         "channel.g",
         "channel.b",
@@ -1336,10 +1339,7 @@ fn with_pixel_ui_the_splitter_changes_the_height_of_the_palette() {
     h.drag_by(split.center(), vec2(0.0, 30.0));
     assert_eq!(h.palette_box().height(), 237.0);
     assert_eq!(h.palette_height, 237.0);
-    assert_eq!(
-        h.drawn("picker.copy")[0].top(),
-        h.palette_box().bottom() + 6.0
-    );
+    assert_eq!(h.node("Copy color").top(), h.palette_box().bottom() + 6.0);
     // Arriba de más: 2 filas de cuadritos (4 + 2 × 12 + 1 + 4).
     let split = h.node("Palette height");
     h.drag_by(split.center(), vec2(0.0, -400.0));
@@ -1403,4 +1403,17 @@ fn with_pixel_ui_colors_that_do_not_fit_scroll_inside_the_palette_box() {
 fn without_pixel_ui_there_is_no_splitter() {
     let h = Harness::new(false);
     assert!(!h.has("Palette height"));
+}
+
+#[test]
+fn alone_in_its_row_the_rgba_strip_spreads_the_room_left_over_its_four_segments() {
+    let segment = 27.0;
+    let right = 10.0 + super::rgba_width(segment) + super::CAP_RIGHT_WIDTH + 7.0;
+    // 7 px de sobra: 1 a cada tramo y los 3 que quedan, a los últimos.
+    assert_eq!(super::stretch(10.0, segment, right), [1.0, 2.0, 2.0, 2.0]);
+    assert_eq!(
+        super::stretch(10.0, segment, 10.0),
+        [0.0; 4],
+        "no room, no growth"
+    );
 }

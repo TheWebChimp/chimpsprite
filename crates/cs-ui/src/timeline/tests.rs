@@ -314,22 +314,24 @@ fn with_pixel_ui_the_toolbar_draws_every_group_and_field_of_the_design() {
     for icon in TOOLBAR_ICONS {
         assert_eq!(h.count(icon), 1, "{icon}");
     }
-    // Los cuatro grupos de botones, sus 12 celdas y las 8 líneas entre celdas.
-    assert!(h.count("timeline.group") >= 4);
-    assert_eq!(h.count("timeline.button"), 12);
-    assert_eq!(h.count("timeline.button.sep"), 8);
+    // Los cuatro grupos de botones son grupos del UI kit: 12 botones con ícono (las piezas
+    // viejas del timeline ya no se usan).
+    assert!(h.count("button") >= 12);
+    for old in ["timeline.group", "timeline.button", "timeline.button.sep"] {
+        assert_eq!(h.count(old), 0, "{old}");
+    }
     for name in [
         "timeline.onion_range",
         "timeline.icon.clock",
-        "timeline.combo",
+        "field.text",
         "timeline.divider",
         "workspace.box",
     ] {
         assert!(h.count(name) >= 1, "{name}");
     }
-    // − y + de la opacidad y de la duración.
-    assert_eq!(h.count("timeline.stepper.minus"), 2);
-    assert_eq!(h.count("timeline.stepper.plus"), 2);
+    // − y + de la opacidad y de la duración: los botones del stepper del UI kit.
+    assert_eq!(h.count("stepper.left"), 2);
+    assert_eq!(h.count("stepper.right"), 2);
     for label in [
         "First frame",
         "Previous frame",
@@ -356,12 +358,11 @@ fn with_pixel_ui_the_toolbar_draws_every_group_and_field_of_the_design() {
     let first = h.rect("First frame");
     let longer = h.rect("Longer frame");
     assert_eq!(first.top(), longer.top(), "one row");
-    let group = h.drawn("timeline.button")[0];
     let divider = h.drawn("timeline.divider")[0];
     assert_eq!(
-        divider.top() - group.top(),
-        17.0,
-        "button top 563, divider 580"
+        divider.top() - first.top(),
+        18.0,
+        "group top 562, divider 580"
     );
 }
 
@@ -453,11 +454,7 @@ fn with_pixel_ui_duration_minus_and_plus_change_the_frame_duration() {
 fn with_pixel_ui_the_blend_combo_picks_a_mode() {
     let mut h = Harness::pixel(1200.0);
     let layer = h.editor.layer;
-    assert_eq!(
-        h.count("timeline.combo"),
-        3,
-        "the combo of the design, in 9-slice"
-    );
+    assert!(h.count("field.text") >= 1, "the select of the UI kit");
     h.click("Normal");
     h.click("Multiply");
     assert_eq!(
@@ -753,9 +750,11 @@ fn overlapping_tags_go_on_different_floors() {
 fn with_pixel_ui_the_layer_mask_is_the_face_of_the_design() {
     let mut h = Harness::pixel(1200.0);
     h.frame(vec![]);
-    // La capa activa, de imagen y sin máscara: el botón para agregarle una.
+    // La capa activa, de imagen y sin máscara: el botón para agregarle una, en los colores de lo
+    // elegido.
     assert!(h.drawn("timeline.mask").is_empty());
-    assert_eq!(h.drawn("timeline.mask.add").len(), 1);
+    assert_eq!(h.drawn("timeline.mask.add.selected").len(), 1);
+    assert!(h.drawn("timeline.mask.add").is_empty());
     h.click("Add Layer Mask");
     h.frame(vec![]);
     let layer = h.editor.layer;
@@ -763,17 +762,19 @@ fn with_pixel_ui_the_layer_mask_is_the_face_of_the_design() {
         h.editor.sprite().layer(layer).unwrap().mask.is_some(),
         "added"
     );
-    assert!(h.drawn("timeline.mask.add").is_empty());
-    // La cara; editándola, la del borde rosa.
+    assert!(h.drawn("timeline.mask.add.selected").is_empty());
+    // La cara; editándola, la del borde rosa. En la capa activa, las de los colores de lo
+    // elegido.
     h.editor.set_edit_mask(false);
     h.frame(vec![]);
-    let face = h.drawn("timeline.mask");
+    let face = h.drawn("timeline.mask.selected");
     assert_eq!(face.len(), 1);
     assert_eq!(face[0].size(), Vec2::new(9.0, 9.0));
+    assert!(h.drawn("timeline.mask").is_empty());
     h.editor.set_edit_mask(true);
     h.frame(vec![]);
-    assert_eq!(h.drawn("timeline.mask.editing").len(), 1);
-    assert!(h.drawn("timeline.mask").is_empty());
+    assert_eq!(h.drawn("timeline.mask.editing.selected").len(), 1);
+    assert!(h.drawn("timeline.mask.selected").is_empty());
 }
 
 #[test]
@@ -781,8 +782,8 @@ fn with_pixel_ui_the_layer_menu_is_the_menus_panel() {
     let mut h = Harness::new(1200.0);
     let skin = std::sync::Arc::new(Skin::embedded(&h.ctx));
     let panel = skin
-        .piece("menu.panel", crate::skin::WidgetState::Normal)
-        .expect("menu.panel")
+        .piece("menu.list", crate::skin::WidgetState::Normal)
+        .expect("menu.list")
         .texture
         .id();
     crate::pixel_ui::set_bubble(&h.ctx, Some(skin));

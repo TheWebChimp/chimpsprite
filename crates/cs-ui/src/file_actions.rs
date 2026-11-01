@@ -99,6 +99,7 @@ impl ChimpApp {
             || self.sprite_dialog.is_some()
             || self.grid_dialog.is_some()
             || self.new_tilemap.is_some()
+            || self.new_font.is_some()
             || self.convert_tilemap.is_some()
             || self.symbol_dialog.is_some()
             || self.export.is_some()
@@ -116,6 +117,7 @@ impl ChimpApp {
     }
 
     pub(crate) fn show_message(&mut self, title: &str, body: impl Into<String>) {
+        crate::sound::notice(title);
         self.message = Some(Message {
             title: title.into(),
             body: body.into(),
@@ -176,6 +178,23 @@ impl ChimpApp {
     pub(crate) fn go_home(&mut self) {
         self.tool_options = self.current_tool_options();
         self.tabs.go_home(&mut self.doc);
+    }
+
+    /// Muestra la página `page` (como Home, recuerda las opciones de herramienta).
+    pub(crate) fn show_page(&mut self, page: crate::tabs::Page) {
+        self.tool_options = self.current_tool_options();
+        self.tabs.show_page(&mut self.doc, page);
+    }
+
+    /// Lo que se pidió en la pestaña `tab` de la barra: verla o cerrarla.
+    pub(crate) fn tab_action(&mut self, tab: crate::tabs::TabRef, close: bool) {
+        use crate::tabs::TabRef;
+        match (tab, close) {
+            (TabRef::Doc(i), false) => self.tabs.switch(&mut self.doc, i),
+            (TabRef::Doc(i), true) => self.request_close_tab(i),
+            (TabRef::Page(page), false) => self.show_page(page),
+            (TabRef::Page(page), true) => self.tabs.close_page(page),
+        }
     }
 
     fn close_tab(&mut self, index: usize) {
@@ -387,6 +406,7 @@ impl ChimpApp {
                     target: Some(target),
                 };
                 self.doc.saved_version = self.doc.editor.doc_version;
+                crate::sound::play(crate::sound::Cue::Success);
                 let lost_guides = files::kind_of(&self.doc.location.name)
                     == Some(FileKind::Aseprite)
                     && self

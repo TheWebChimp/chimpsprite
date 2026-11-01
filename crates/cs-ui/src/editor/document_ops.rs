@@ -13,6 +13,7 @@ impl Editor {
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
             in_library: false,
+            font: None,
             guides: Vec::new(),
             symmetry: Default::default(),
             id,
@@ -44,13 +45,26 @@ impl Editor {
     }
 
     pub fn rename_active_artboard(&mut self, name: String) {
-        if name != self.artboard().name {
-            self.execute_doc(DocCommand::SetArtboardProps {
-                id: self.active,
+        self.rename_artboard(self.active, name);
+    }
+
+    /// Le cambia el nombre a un artboard; si es una fuente, también a la fuente (un paso).
+    pub fn rename_artboard(&mut self, id: ArtboardId, name: String) -> bool {
+        let Some(artboard) = self.document.artboard(id) else {
+            return false;
+        };
+        if artboard.name == name && artboard.font.as_ref().is_none_or(|f| f.name == name) {
+            return false;
+        }
+        let cmd = match artboard.font.clone() {
+            Some(font) => super::font_ops::set_font_named(id, cs_core::FontInfo { name, ..font }),
+            None => DocCommand::SetArtboardProps {
+                id,
                 name: Some(name),
                 position: None,
-            });
-        }
+            },
+        };
+        self.named("Artboard", |e| e.execute_doc(cmd))
     }
 
     /// Reemplaza el sprite del artboard activo (un paso de undo); `None` no hace nada.
@@ -66,6 +80,9 @@ impl Editor {
 
     /// `Sprite → Rotate Canvas`: gira todo el sprite (no con instancias ni tilemaps).
     pub fn rotate_canvas(&mut self, rotation: sprite_ops::Rotation) -> bool {
+        if !self.can_resize_sprite() {
+            return false;
+        }
         self.commit_floating();
         let rotated = sprite_ops::rotate(self.sprite(), rotation);
         self.replace_sprite(rotated)
@@ -73,13 +90,20 @@ impl Editor {
 
     /// `Sprite → Sprite Size`: escala todo el sprite (no con instancias ni tilemaps).
     pub fn scale_sprite(&mut self, width: u32, height: u32) -> bool {
+        if !self.can_resize_sprite() {
+            return false;
+        }
         self.commit_floating();
         let scaled = sprite_ops::scale(self.sprite(), width, height);
         self.replace_sprite(scaled)
     }
 
-    /// `Sprite → Color Mode`: pasa a RGBA o a indexado con la paleta del sprite.
+    /// `Sprite → Color Mode`: pasa a RGBA o a indexado con la paleta del sprite. No en una
+    /// fuente: su modo de color es el de la fuente.
     pub fn set_color_mode(&mut self, target: sprite_ops::ColorTarget) -> bool {
+        if self.is_font() {
+            return false;
+        }
         self.commit_floating();
         let converted = sprite_ops::convert(self.sprite(), target);
         self.replace_sprite(converted)
@@ -114,7 +138,11 @@ impl Editor {
     /// contenido queda en su lugar del mundo.
     fn crop_canvas(&mut self, (x, y, w, h): (i32, i32, u32, u32)) -> bool {
         let sprite = self.sprite();
-        if (x, y, w, h) == (0, 0, sprite.width, sprite.height) || w == 0 || h == 0 {
+        if (x, y, w, h) == (0, 0, sprite.width, sprite.height)
+            || w == 0
+            || h == 0
+            || !self.can_resize_sprite()
+        {
             return false;
         }
         let (ax, ay) = self.artboard().position;
@@ -189,6 +217,7 @@ impl Editor {
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
             in_library: false,
+            font: None,
             id,
             name,
             position: (x1 + 16, y0),
