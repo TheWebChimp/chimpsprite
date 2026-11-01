@@ -881,7 +881,7 @@ const SCROLL_THUMB_V: &str = "scroll.thumb.v";
 const SCROLL_TRACK_H: &str = "scroll.track.h";
 const SCROLL_THUMB_H: &str = "scroll.thumb.h";
 /// El ancho de la barra y el largo mínimo del pulgar (entra entero, con sus estrías).
-const SCROLL_BAR: f32 = 10.0;
+pub(crate) const SCROLL_BAR: f32 = 10.0;
 const SCROLL_THUMB_MIN: f32 = 46.0;
 /// Del borde del track al pulgar, de los cuatro lados (10 = 1 + 8 + 1 a lo ancho; a lo largo,
 /// el pulgar no toca las puntas del track).

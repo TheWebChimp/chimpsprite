@@ -253,9 +253,16 @@ oculta.
       escalera y la sombra de 2 px abajo a la derecha, (5,4,3) con alfa 123 (el color que marca
       el mockup con "←●").
     - La lista va debajo del campo si entra; si no, del lado con más lugar, y lo que no entra se
-      recorre con el scroll. Arriba no cuelga del campo (que queda cerrado):
-      `select.list.alone` (202,488) es `select.list` con la esquina de arriba a la izquierda
-      redondeada como la de la derecha. Al abrirse, la elegida queda a la vista.
+      recorre con el scroll. Arriba, `select.list.alone` (202,488) es `select.list` con la
+      esquina de arriba a la izquierda redondeada como la de la derecha, y su borde de abajo va
+      sobre la fila 0 del campo, que se abre hacia arriba: `select.open.up` (304,1, 6×17, centro
+      (2,1,2,13)), sin el borde de arriba (su fila 0 es la de sombra, con el borde del panel, negro,
+      en la columna derecha). Al abrirse, la elegida queda a la vista.
+    - Con scroll, la barra (`scroll.track.v`, `scroll.thumb.v`) va adentro del panel, de su fila 4
+      a 3 antes de abajo y con 1 px de aire antes del bisel derecho: el panel crece 2. Las franjas
+      llegan hasta la barra.
+    - Separador: un bloque de 7 filas con una línea de 1 px en `color.canvas` en la del medio, de
+      lado a lado de las opciones (desde el bisel izquierdo hasta la barra).
     - Las opciones: filas de 15 desde la fila 4 del panel (debajo, 1 de aire, el bisel y el
       borde), el texto 6 px adentro del borde y las mayúsculas en su fila 4.
       `select.item.hover` (190,488, 3×15, centro (1,0,1,15)): la franja rosa (178,82,102) /

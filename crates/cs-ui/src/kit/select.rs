@@ -12,6 +12,15 @@
 //!   su fila 4. Con el puntero encima, la franja rosa `select.item.hover`; sin el puntero en el
 //!   panel, la franja va en la elegida.
 //!
+//! - **Abierto hacia arriba** (sin lugar abajo): el panel (`select.list.alone`, con la esquina
+//!   de arriba a la izquierda redondeada) termina con su borde de abajo sobre la fila 0 del campo,
+//!   y el campo pierde su borde de arriba (`select.open.up`: la fila 0 es la de sombra, con el
+//!   borde negro del panel a la derecha).
+//! - **Con scroll:** la barra va adentro del panel, de la fila 4 a 3 antes de abajo, con 1 px de
+//!   aire antes del bisel derecho (el panel crece 2); las franjas llegan hasta la barra.
+//! - **Separador** ([`separator`]): un bloque de 7 filas con una línea de 1 px (`color.canvas`)
+//!   en la del medio, de lado a lado de las opciones.
+//!
 //! Las opciones de siempre (`widgets::choice`, `bar_fields::choices`, `menus::choice`) se dibujan
 //! así cuando están en el panel de un select: la API de los combos no cambia.
 
@@ -38,6 +47,8 @@ pub const ARROW_RIGHT: f32 = 4.0 + input::OUTLINE;
 pub const ARROW_GAP: f32 = 5.0;
 
 pub const OPEN: &str = "select.open";
+/// El campo abierto hacia arriba: sin el borde de arriba (las 17 filas).
+pub const OPEN_UP: &str = "select.open.up";
 /// El campo abierto: 16 filas (sin el borde de abajo ni la luz).
 pub const OPEN_HEIGHT: f32 = 16.0;
 pub const LIST: &str = "select.list";
@@ -57,6 +68,11 @@ pub const LIST_PAD_BOTTOM: f32 = 3.0;
 pub const LIST_SIDE: f32 = 1.0;
 /// La sombra, abajo y a la derecha.
 pub const SHADOW: f32 = 2.0;
+/// Con scroll, el aire entre la barra y el bisel derecho (lo que crece el panel).
+pub const SCROLL_AIR: f32 = 2.0;
+/// El separador: 3 filas de aire, la línea y 3 de aire.
+pub const SEPARATOR_HEIGHT: f32 = 7.0;
+const SEPARATOR_AIR: f32 = 3.0;
 /// Una opción: 15 filas, el texto 6 px adentro del borde del panel (5 de la franja) y las
 /// mayúsculas en su fila 4.
 pub const ITEM_HEIGHT: f32 = 15.0;
@@ -72,6 +88,8 @@ struct SelectLook {
     pointer_in_list: bool,
     /// El primer frame abierto: la elegida se trae a la vista.
     just_opened: bool,
+    /// En la memoria de egui: el ancho justo de la opción más ancha (cada una lo sube).
+    width_id: Id,
 }
 
 fn select_look(ui: &Ui) -> Option<SelectLook> {
@@ -124,11 +142,26 @@ pub fn select_at<R>(
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, enabled, selected));
     let popup_id = Popup::default_response_id(&response);
+    // Desarrollo: con CHIMPSPRITE_DEMO_OPEN_SELECT=<lo elegido>, ese select abierto (una vez),
+    // para capturas.
+    if crate::demo::dev_var("CHIMPSPRITE_DEMO_OPEN_SELECT") == Some(selected) {
+        let done = id.with("demo_opened");
+        if !ui.data(|d| d.get_temp::<bool>(done).unwrap_or(false)) {
+            ui.data_mut(|d| d.insert_temp(done, true));
+            Popup::open_id(ui.ctx(), popup_id);
+        }
+    }
     // Abierto hacia abajo, el campo se une a la lista; hacia arriba queda como cerrado.
     let above = ui
         .data(|d| d.get_temp::<bool>(above_id(id)))
         .unwrap_or(false);
-    let open = Popup::is_id_open(ui.ctx(), popup_id) && !above;
+    let open = if !Popup::is_id_open(ui.ctx(), popup_id) {
+        Opened::No
+    } else if above {
+        Opened::Above
+    } else {
+        Opened::Below
+    };
     let state = if enabled {
         InputState::Normal
     } else {
@@ -144,25 +177,38 @@ pub fn select_at<R>(
     response
 }
 
-/// El campo en `rect`: cerrado, el campo del kit; abierto, `select.open`. Con lo elegido y la
-/// flecha.
+/// Si el select está abierto y hacia dónde.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Opened {
+    No,
+    Below,
+    Above,
+}
+
+/// El campo en `rect`: cerrado, el campo del kit; abierto, `select.open` (o `select.open.up`).
+/// Con lo elegido y la flecha.
 pub fn field_shapes(
     ui: &Ui,
     skin: &Skin,
     rect: Rect,
     selected: &str,
     state: InputState,
-    open: bool,
+    open: Opened,
 ) -> Vec<Shape> {
     let ppp = ui.ctx().pixels_per_point();
     let colors = skin.colors();
-    let open_piece = skin.piece(OPEN, WidgetState::Normal).filter(|_| open);
+    let open_piece = match open {
+        Opened::No => None,
+        Opened::Below => skin.piece(OPEN, WidgetState::Normal).map(|p| {
+            (
+                p,
+                Rect::from_min_size(rect.min, vec2(rect.width(), OPEN_HEIGHT)),
+            )
+        }),
+        Opened::Above => skin.piece(OPEN_UP, WidgetState::Normal).map(|p| (p, rect)),
+    };
     let mut shapes = match open_piece {
-        Some(piece) => pixel_ui::piece_shapes(
-            piece,
-            Rect::from_min_size(rect.min, vec2(rect.width(), OPEN_HEIGHT)),
-            ppp,
-        ),
+        Some((piece, at)) => pixel_ui::piece_shapes(piece, at, ppp),
         None => input::frame_shapes(ui, skin, rect, state, Affixes::NONE),
     };
     let color = match state {
@@ -212,9 +258,9 @@ fn arrow_shapes(skin: &Skin, at: egui::Pos2, color: Color32) -> Vec<Shape> {
 }
 
 /// El panel con las opciones, abierto con un clic en el campo (y cerrado al elegir una o con un
-/// clic afuera). Va debajo del campo si entra; si no, del lado con más lugar (arriba, sin colgar
-/// del campo: con la esquina redondeada, `select.list.alone`), y lo que no entra se recorre con
-/// el scroll. Al abrirse, la elegida queda a la vista.
+/// clic afuera). Va debajo del campo si entra; si no, del lado con más lugar (arriba: con la
+/// esquina redondeada, `select.list.alone`, y su borde de abajo sobre la fila 0 del campo), y lo
+/// que no entra se recorre con el scroll. Al abrirse, la elegida queda a la vista.
 fn list<R>(
     ui: &Ui,
     skin: &Skin,
@@ -223,11 +269,11 @@ fn list<R>(
     selected: &str,
     content: impl FnOnce(&mut Ui) -> R,
 ) -> Option<R> {
+    // El ancho de la opción más ancha, del frame anterior (este lo vuelven a medir).
     let width_id = response.id.with("list_width");
     let list_rect_id = response.id.with("list_rect");
     let content_id = response.id.with("list_content");
     let remembered: f32 = ui.data(|d| d.get_temp(width_id)).unwrap_or(0.0);
-    let panel_w = (rect.width() + LIST_EXTRA).max(remembered);
     let last_rect: Option<Rect> = ui.data(|d| d.get_temp(list_rect_id));
     let was_open = last_rect.is_some();
     let pointer_in_list = ui
@@ -245,8 +291,28 @@ fn list<R>(
     ui.data_mut(|d| d.insert_temp(above_id(response.id), above));
     let room = if above { above_room } else { below_room };
     let max_h = room.max(3.0 * ITEM_HEIGHT).floor();
+    // Con scroll, la barra va adentro y el panel crece su aire.
+    let scroll_air = if content_h > max_h + 0.5 {
+        SCROLL_AIR
+    } else {
+        0.0
+    };
+    let bar = if scroll_air > 0.0 {
+        pixel_ui::SCROLL_BAR
+    } else {
+        0.0
+    };
+    let panel_w = (rect.width() + LIST_EXTRA)
+        .max(remembered + 2.0 * LIST_SIDE + bar)
+        .ceil()
+        + scroll_air;
+    ui.data_mut(|d| d.insert_temp(width_id, 0.0f32));
     let (anchor, align) = if above {
-        (rect, RectAlign::TOP_START)
+        // El panel (sin la sombra) termina en la fila 0 del campo.
+        (
+            rect.translate(vec2(0.0, 1.0 + SHADOW)),
+            RectAlign::TOP_START,
+        )
     } else {
         (
             Rect::from_min_size(rect.min, vec2(rect.width(), LIST_TOP)),
@@ -268,10 +334,11 @@ fn list<R>(
                 skin: skin.clone(),
                 pointer_in_list,
                 just_opened: !was_open,
+                width_id,
             };
             let items = Rect::from_min_size(
                 top_left + vec2(LIST_SIDE, LIST_PAD_TOP),
-                vec2(panel_w - 2.0 * LIST_SIDE, max_h),
+                vec2(panel_w - 2.0 * LIST_SIDE - scroll_air, max_h),
             );
             let mut child = ui.new_child(
                 UiBuilder::new()
@@ -292,10 +359,7 @@ fn list<R>(
             let used = child.min_rect();
             let panel = Rect::from_min_size(
                 top_left,
-                vec2(
-                    used.width().max(items.width()) + 2.0 * LIST_SIDE,
-                    LIST_PAD_TOP + used.height() + LIST_PAD_BOTTOM,
-                ),
+                vec2(panel_w, LIST_PAD_TOP + used.height() + LIST_PAD_BOTTOM),
             );
             let with_shadow = Rect::from_min_size(panel.min, panel.size() + Vec2::splat(SHADOW));
             ui.allocate_rect(with_shadow, Sense::hover());
@@ -319,19 +383,17 @@ fn list<R>(
                 }
             };
             ui.painter().set(back, Shape::Vec(back_shapes));
-            if !above {
-                // El campo abierto, encima del borde del panel (su fila de sombra queda sobre él).
-                ui.painter().extend(field_shapes(
-                    ui,
-                    skin,
-                    rect,
-                    selected,
-                    InputState::Normal,
-                    true,
-                ));
-            }
+            // El campo abierto, encima del borde del panel (su fila de sombra queda sobre él).
+            let opened = if above { Opened::Above } else { Opened::Below };
+            ui.painter().extend(field_shapes(
+                ui,
+                skin,
+                rect,
+                selected,
+                InputState::Normal,
+                opened,
+            ));
             ui.data_mut(|d| {
-                d.insert_temp(width_id, panel.width());
                 d.insert_temp(list_rect_id, panel);
                 d.insert_temp(content_id, full_h);
             });
@@ -361,6 +423,10 @@ pub fn item(ui: &mut Ui, selected: bool, label: &str) -> Option<Response> {
     let shown_text = label.replace('…', tab_bar::ellipsis());
     let ink = crate::menus::ink_width(&galley(ui, &shown_text));
     let natural = ITEM_TEXT_LEFT + ink + ITEM_TEXT_LEFT;
+    ui.data_mut(|d| {
+        let widest = d.get_temp_mut_or(look.width_id, 0.0f32);
+        *widest = widest.max(natural);
+    });
     let width = ui.available_width().min(1.0e6).max(natural);
     let (slot, response) = ui.allocate_exact_size(vec2(width, ITEM_HEIGHT), Sense::click());
     let rect = Rect::from_min_size(slot.min.round(), slot.size());
@@ -402,6 +468,34 @@ pub fn item(ui: &mut Ui, selected: bool, label: &str) -> Option<Response> {
     Some(response)
 }
 
+/// Un separador en el panel de un select: 7 filas con la línea (`color.canvas`, 1 px) en la del
+/// medio, de lado a lado de las opciones. Fuera de un select, `false` (y no hace nada).
+pub fn separator(ui: &mut Ui) -> bool {
+    let Some(look) = select_look(ui) else {
+        return false;
+    };
+    let width = if ui.is_sizing_pass() {
+        0.0
+    } else {
+        ui.available_width()
+    };
+    let (slot, _) = ui.allocate_exact_size(vec2(width, SEPARATOR_HEIGHT), Sense::hover());
+    let line = Rect::from_min_size(
+        pos2(slot.left(), slot.top() + SEPARATOR_AIR).round(),
+        vec2(slot.width(), 1.0),
+    );
+    ui.painter()
+        .rect_filled(line, 0.0, look.skin.colors().canvas);
+    true
+}
+
+/// Un separador en una lista de opciones: en el panel de un select, el del kit; si no, el de egui.
+pub fn list_separator(ui: &mut Ui) {
+    if !separator(ui) {
+        ui.separator();
+    }
+}
+
 /// Un select dibujado (sin interacción) cerrado en `state` o abierto con `items` (la `hovered`
 /// con la franja): el catálogo lo usa para mostrar el mockup.
 pub fn forced_shapes(
@@ -415,7 +509,7 @@ pub fn forced_shapes(
 ) -> Vec<Shape> {
     let ppp = ui.ctx().pixels_per_point();
     if items.is_empty() {
-        return field_shapes(ui, skin, rect, selected, state, false);
+        return field_shapes(ui, skin, rect, selected, state, Opened::No);
     }
     let colors = skin.colors();
     let top_left = rect.min + vec2(0.0, LIST_TOP);
@@ -450,7 +544,7 @@ pub fn forced_shapes(
         );
         shapes.push(text);
     }
-    shapes.extend(field_shapes(ui, skin, rect, selected, state, true));
+    shapes.extend(field_shapes(ui, skin, rect, selected, state, Opened::Below));
     shapes
 }
 

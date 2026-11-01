@@ -1010,8 +1010,8 @@ fn select_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         );
     });
     ui.data_mut(|d| d.insert_temp(live_select_id(), pick));
-    // Uno con muchas opciones: la lista va debajo si entra (si no, del lado con más lugar) y lo
-    // que no entra se recorre con el scroll.
+    // Uno con muchas opciones (y un separador después de la primera): la lista va debajo si entra
+    // (si no, arriba, unida al campo) y lo que no entra se recorre con el scroll, adentro del panel.
     let long: Vec<String> = (1..=LONG_SELECT).map(|i| format!("Palette {i}")).collect();
     let mut pick: usize = ui.data(|d| d.get_temp(long_select_id()).unwrap_or(19));
     let rect = Rect::from_min_size(
@@ -1022,6 +1022,9 @@ fn select_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         select::select(ui, skin, "long", &long[pick], Some(SELECT_WIDTH), |ui| {
             for (i, label) in long.iter().enumerate() {
                 crate::widgets::choice(ui, &mut pick, i, label);
+                if i == 0 {
+                    select::list_separator(ui);
+                }
             }
         });
     });

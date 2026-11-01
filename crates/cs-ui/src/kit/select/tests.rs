@@ -196,7 +196,8 @@ fn open_long(at: Pos2, n: usize) -> (Skin, Vec<Shape>, Rect) {
     };
     run(vec![Event::PointerMoved(c), press(true)]);
     run(vec![press(false)]);
-    for _ in 0..3 {
+    // Unos frames: la barra de egui aparece animada.
+    for _ in 0..12 {
         run(vec![Event::PointerMoved(pos2(399.0, 299.0))]);
     }
     let (shapes, rect) = run(vec![]);
@@ -231,12 +232,44 @@ fn without_room_below_the_list_opens_above_with_its_round_corner() {
         .find(|(t, _)| *t == id(&skin, LIST_ALONE, WidgetState::Normal))
         .expect("the list above")
         .1;
-    assert_eq!(list.bottom(), rect.top());
+    // Su borde de abajo (antes de la sombra) va sobre la fila 0 del campo.
+    assert_eq!(list.bottom(), rect.top() + 1.0 + SHADOW);
     assert!(list.top() >= 0.0);
-    // El campo queda cerrado (sin `select.open`).
+    // El campo, sin su borde de arriba (`select.open.up`), encima del panel.
+    let up = pieces
+        .iter()
+        .rposition(|(t, _)| *t == id(&skin, OPEN_UP, WidgetState::Normal))
+        .expect("the field opened upward");
+    assert_eq!(pieces[up].1, rect);
+    let panel_at = pieces
+        .iter()
+        .position(|(t, _)| *t == id(&skin, LIST_ALONE, WidgetState::Normal))
+        .unwrap();
+    assert!(up > panel_at);
     assert!(
         !pieces
             .iter()
             .any(|(t, _)| *t == id(&skin, OPEN, WidgetState::Normal))
     );
+}
+
+#[test]
+fn the_scrollbar_goes_inside_the_list_one_pixel_before_its_bevel() {
+    let (skin, shapes, _) = open_long(pos2(10.0, 250.0), 40);
+    let (pieces, _) = drawn(&shapes);
+    let list = pieces
+        .iter()
+        .find(|(t, _)| *t == id(&skin, LIST_ALONE, WidgetState::Normal))
+        .unwrap()
+        .1;
+    let panel = Rect::from_min_max(list.min, list.max - Vec2::splat(SHADOW));
+    let track = pieces
+        .iter()
+        .find(|(t, _)| *t == id(&skin, "scroll.track.v", WidgetState::Normal))
+        .expect("the scrollbar")
+        .1;
+    assert_eq!(track.right(), panel.right() - 3.0);
+    assert_eq!(track.top(), panel.top() + LIST_PAD_TOP);
+    assert_eq!(track.bottom(), panel.bottom() - LIST_PAD_BOTTOM);
+    assert_eq!(panel.width(), 109.0 + LIST_EXTRA + SCROLL_AIR);
 }

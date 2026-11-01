@@ -531,12 +531,12 @@ impl GroomPanel {
                 widgets::combo_sized(ui, "groom_fit", &shown, Some(room), height, |ui| {
                     let original = ORIGINAL_COLORS.to_string();
                     widgets::choice(ui, &mut self.fit_name, original, ORIGINAL_COLORS);
-                    ui.separator();
+                    crate::kit::select::list_separator(ui);
                     for palette in palettes {
                         let name = palette.name.clone();
                         widgets::choice(ui, &mut self.fit_name, name, &palette.name);
                     }
-                    ui.separator();
+                    crate::kit::select::list_separator(ui);
                     if ui
                         .add(crate::menus::choice(false, "Browse Lospec…"))
                         .clicked()

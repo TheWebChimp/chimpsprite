@@ -862,6 +862,9 @@ fn cap_shapes(
 /// Un separador: en un panel pixel, la línea grabada del diseño de bisel a bisel; si no, el de
 /// egui.
 pub(crate) fn separator(ui: &mut Ui) {
+    if crate::kit::select::separator(ui) {
+        return;
+    }
     let Some(look) = look(ui) else {
         ui.separator();
         return;
