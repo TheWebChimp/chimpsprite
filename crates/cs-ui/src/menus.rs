@@ -309,6 +309,66 @@ pub(crate) fn bar_menu<R>(
     InnerResponse::new(inner.map(|i| i.inner), response)
 }
 
+/// Un menú de la barra abierto, dibujado en su lugar (sin popup) con su título en `title_left`
+/// (la columna de la tinta del título) y la fila de la barra en `bar_top`: la caja del título, el
+/// panel con su sombra y lo que arma `content` (ítems, separadores, casillas de verdad). Lo usa el
+/// UI Catalog. `width`: el ancho del panel. Devuelve el rect del panel (sin la sombra).
+pub(crate) fn open_menu_preview(
+    ui: &mut Ui,
+    skin: &Skin,
+    title_left: f32,
+    bar_top: f32,
+    title: &str,
+    width: f32,
+    content: impl FnOnce(&mut Ui),
+) -> Rect {
+    let look = MenuLook::new(skin, bar_top);
+    let ppp = ui.ctx().pixels_per_point();
+    let text = galley(ui, title, look.colors.home_text);
+    let panel_top = look.caps_top + PANEL_TOP;
+    let title_box = Rect::from_min_max(
+        pos2(title_left - BOX_LEFT, look.caps_top - BOX_TOP),
+        pos2(
+            title_left + text.size().x + BOX_RIGHT,
+            panel_top + PANEL_SHIFT.y + BOX_JOIN,
+        ),
+    );
+    // La caja entera (en la app, su parte de arriba la pinta la barra) y el título encima.
+    let mut painter = ui.painter().clone();
+    painter.set_opacity(1.0);
+    painter.extend(box_shapes(&look, title_box, ppp));
+    let inside = Rect::from_min_max(
+        pos2(
+            title_box.left() + PANEL_MARGIN.left as f32,
+            panel_top + PANEL_SHIFT.y + PANEL_MARGIN.top as f32,
+        ),
+        pos2(
+            title_box.left() + width - PANEL_MARGIN.right as f32,
+            f32::INFINITY,
+        ),
+    );
+    let mut child = ui.new_child(
+        UiBuilder::new()
+            .max_rect(inside)
+            .layout(egui::Layout::top_down_justified(egui::Align::Min)),
+    );
+    pixel_menu_style(child.style_mut());
+    child.set_width(inside.width());
+    panel(&mut child, &look, Some(title_box), content);
+    let at = tab_bar::text_pos(&text, title_left, look.caps_top, ppp);
+    painter.galley(at, text, look.colors.home_text);
+    let used = child.min_rect();
+    let rect = Rect::from_min_max(
+        pos2(title_box.left(), panel_top + PANEL_SHIFT.y),
+        used.max + vec2(PANEL_MARGIN.right as f32, PANEL_MARGIN.bottom as f32),
+    );
+    ui.allocate_rect(
+        Rect::from_min_max(title_box.min, rect.max + Vec2::splat(PANEL_SHADOW)),
+        Sense::hover(),
+    );
+    rect
+}
+
 /// El ancho de la tinta de la primera letra de `text`: su avance menos el píxel vacío que deja
 /// la fuente pixel.
 fn first_letter_width(text: &Galley) -> Option<f32> {

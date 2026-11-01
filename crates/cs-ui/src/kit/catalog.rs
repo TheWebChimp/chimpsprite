@@ -1199,50 +1199,66 @@ fn title_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
     y + title_bar::HEIGHT
 }
 
-/// Sección Menu, como en el mockup (la "Layer" con su caja): el título abierto del menú de la
-/// barra (`menu.title.open`), su panel (`menu.panel`) desde la fila 15 del título y un
-/// separador (`menu.separator`) de borde a borde, 28 filas debajo del borde del panel.
-const MENU_TITLE: &str = "Layer";
-const MENU_PANEL_SIZE: Vec2 = vec2(79.0, 48.0);
-const MENU_TITLE_JOIN: f32 = 15.0;
-const MENU_SEPARATOR_TOP: f32 = 28.0;
+/// Sección Menu, como en el mockup: el menú Frame abierto (con los menús de verdad: ítems con y
+/// sin atajo, deshabilitados, un campo, separadores y una casilla) y, a su derecha, el menú chico
+/// "Layer". Responden al puntero como los de la barra (los clics no hacen nada).
+const MENU_FRAME_WIDTH: f32 = 112.0;
+const MENU_LAYER_LEFT: f32 = 150.0;
+const MENU_LAYER_WIDTH: f32 = 79.0;
+
+/// En la memoria de egui: la casilla y el número del menú de muestra.
+fn menu_demo_id() -> egui::Id {
+    egui::Id::new("ui_catalog_menu")
+}
 
 fn menu_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
-    use crate::skin::WidgetState;
-    let colors = *skin.colors();
-    let ppp = ui.ctx().pixels_per_point();
-    let piece = |name: &str| skin.piece(name, WidgetState::Normal);
-    let mut shapes: Vec<Shape> = Vec::new();
-    let (text, ink) =
-        pixel_draw::caps_text(ui, MENU_TITLE, origin.x + 4.0, origin.y + 5.0, colors.text);
-    let title = Rect::from_min_size(
-        origin,
-        vec2((4.0 + ink + 4.0).round(), MENU_TITLE_JOIN + 2.0),
-    );
-    let panel = Rect::from_min_size(origin + vec2(0.0, MENU_TITLE_JOIN), MENU_PANEL_SIZE);
-    if let Some(p) = piece("menu.panel") {
-        shapes.extend(crate::pixel_ui::piece_shapes(p, panel, ppp));
-    }
-    if let Some(p) = piece("menu.separator") {
-        let line = Rect::from_min_size(
-            pos2(panel.left() + 1.0, panel.top() + MENU_SEPARATOR_TOP),
-            vec2(panel.width() - 2.0, 2.0),
-        );
-        shapes.extend(crate::pixel_ui::piece_shapes(p, line, ppp));
-    }
-    if let Some(p) = piece("menu.title.open") {
-        shapes.extend(crate::pixel_ui::piece_shapes(p, title, ppp));
-    }
-    shapes.push(text);
-    let (note, _) = pixel_draw::caps_text_in(
+    use crate::menus;
+    let (mut onion, mut opacity): (bool, u8) =
+        ui.data(|d| d.get_temp(menu_demo_id()).unwrap_or((false, 255)));
+    let title_left = origin.x + 5.0;
+    let frame = menus::open_menu_preview(
         ui,
-        TextStyle::Small,
-        "open a menu of the menu bar to try it",
-        origin.x,
-        panel.bottom() + 6.0,
-        colors.text_dim,
+        skin,
+        title_left,
+        origin.y,
+        "Frame",
+        MENU_FRAME_WIDTH,
+        |ui| {
+            ui.add(menus::item("New Frame", "Alt+N"));
+            ui.add(menus::plain("New Empty Frame"));
+            ui.add_enabled(false, menus::plain("Delete Frame"));
+            ui.add(menus::plain("Frame Properties…"));
+            ui.add_enabled(false, menus::plain("Reverse Frames"));
+            ui.horizontal(|ui| {
+                ui.label("Cel Opacity");
+                crate::widgets::number(ui, &mut opacity, 0..=255, "");
+            });
+            menus::separator(ui);
+            ui.add(menus::plain("New Tag"));
+            menus::separator(ui);
+            ui.add(menus::plain("First Frame"));
+            ui.add(menus::item("Previous Frame", ","));
+            ui.add(menus::item("Next Frame", "."));
+            ui.add(menus::plain("Last Frame"));
+            ui.add(menus::item("Play Animation", "Enter"));
+            menus::separator(ui);
+            ui.add(menus::check(&mut onion, "Onion Skin"));
+        },
     );
-    shapes.push(note);
-    ui.painter().extend(shapes);
-    panel.bottom() + 16.0
+    let layer = menus::open_menu_preview(
+        ui,
+        skin,
+        title_left + MENU_LAYER_LEFT,
+        origin.y,
+        "Layer",
+        MENU_LAYER_WIDTH,
+        |ui| {
+            ui.add(menus::plain("Item 1"));
+            ui.add(menus::plain("Item 2"));
+            menus::separator(ui);
+            ui.add(menus::plain("Item 3"));
+        },
+    );
+    ui.data_mut(|d| d.insert_temp(menu_demo_id(), (onion, opacity)));
+    frame.bottom().max(layer.bottom()) + 8.0
 }
