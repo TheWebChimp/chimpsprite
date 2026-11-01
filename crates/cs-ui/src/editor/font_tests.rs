@@ -70,6 +70,52 @@ fn shift_copy_paste_and_clear_a_glyph() {
     assert_ne!(e.sprite().pixel(layer, e.frame, 2, 1), ONE_BIT_INK);
 }
 
+#[test]
+fn glyph_steps_have_glyph_names_in_the_history() {
+    let mut e = editor_with_font();
+    e.add_glyphs(&['á']);
+    assert_eq!(e.history.done().last(), Some("Add Glyph"));
+    e.remove_glyph('á');
+    assert_eq!(e.history.done().last(), Some("Remove Glyph"));
+    e.set_glyph_advance('A', Some(3));
+    assert_eq!(e.history.done().last(), Some("Font"));
+    let mut info = e.font().unwrap().clone();
+    info.letter_spacing = 2;
+    e.set_font_info(info);
+    assert_eq!(e.history.done().last(), Some("Font"));
+}
+
+#[test]
+fn the_text_font_of_a_deleted_font_artboard_falls_back_to_the_pixel_font() {
+    use cs_tools::text::FontChoice;
+    let mut e = editor_with_font();
+    let id = e.active;
+    // Una fuente del documento que se llama como una integrada no es la integrada.
+    let hack = FontChoice::Document {
+        artboard: id.0,
+        name: "Hack".into(),
+    };
+    assert_ne!(hack, FontChoice::Hack);
+    assert_eq!(
+        hack,
+        FontChoice::Document {
+            artboard: id.0,
+            name: "Renamed".into(),
+        }
+    );
+    e.text_style.font = hack;
+    e.text_style.size = 2;
+    e.sync_text_font();
+    assert_eq!(
+        e.text_style.font.name(),
+        "Mine",
+        "the name follows the font"
+    );
+    e.remove_active_artboard();
+    e.sync_text_font();
+    assert_eq!(e.text_style.font, FontChoice::Pixel);
+}
+
 /// Pinta `value` en (1, 1) del glifo actual.
 fn paint(e: &mut Editor, value: PixelValue) {
     let (layer, frame) = (e.layer, e.frame);

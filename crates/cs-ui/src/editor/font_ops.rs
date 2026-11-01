@@ -53,11 +53,17 @@ impl Editor {
     }
 
     pub fn add_glyphs(&mut self, chars: &[char]) -> bool {
-        cs_commands::font::add_glyphs(self.artboard(), chars).is_some_and(|c| self.execute_doc(c))
+        let Some(cmd) = cs_commands::font::add_glyphs(self.artboard(), chars) else {
+            return false;
+        };
+        self.named("Add Glyph", |e| e.execute_doc(cmd))
     }
 
     pub fn remove_glyph(&mut self, ch: char) -> bool {
-        cs_commands::font::remove_glyph(self.artboard(), ch).is_some_and(|c| self.execute_doc(c))
+        let Some(cmd) = cs_commands::font::remove_glyph(self.artboard(), ch) else {
+            return false;
+        };
+        self.named("Remove Glyph", |e| e.execute_doc(cmd))
     }
 
     pub fn set_glyph_advance(&mut self, ch: char, advance: Option<u32>) -> bool {
@@ -79,6 +85,12 @@ impl Editor {
             return false;
         }
         self.execute_doc_grouped(set_font_named(self.active, info), group)
+    }
+
+    /// El ancho efectivo del glifo de `ch`.
+    pub fn advance_of(&self, ch: char) -> Option<u32> {
+        let font = self.font()?;
+        Some(font.advance(self.sprite(), font.index_of(ch)?))
     }
 
     /// El ancho efectivo del glifo actual.
@@ -159,6 +171,31 @@ impl Editor {
                 frame,
                 cel: None,
             })
+    }
+
+    /// La fuente de la herramienta Texto, al día con el documento: si es una fuente del
+    /// documento, con su nombre de ahora; si su artboard ya no está, la Pixel 5×7.
+    pub fn sync_text_font(&mut self) {
+        let cs_tools::text::FontChoice::Document { artboard, name } = &self.text_style.font else {
+            return;
+        };
+        let font = self
+            .document
+            .artboard(ArtboardId(*artboard))
+            .and_then(|a| a.font.as_ref());
+        match font {
+            Some(font) if font.name != *name => {
+                self.text_style.font = cs_tools::text::FontChoice::Document {
+                    artboard: *artboard,
+                    name: font.name.clone(),
+                };
+            }
+            Some(_) => {}
+            None => {
+                self.text_style.font = cs_tools::text::FontChoice::Pixel;
+                self.text_style.size = 1;
+            }
+        }
     }
 
     /// Las fuentes del documento (para el selector de la herramienta Texto).

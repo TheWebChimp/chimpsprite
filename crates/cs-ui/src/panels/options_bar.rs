@@ -741,6 +741,8 @@ fn is_scale_font(font: &FontChoice) -> bool {
 /// Las opciones del texto: la fuente, cargar una y el tamaño. Con `look` (Pixel UI, en la barra),
 /// los controles del diseño; sin él (o en la ventana del texto), los de egui.
 fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
+    // La fuente del documento elegida puede haberse renombrado o borrado.
+    editor.sync_text_font();
     let mut fonts = vec![FontChoice::Pixel, FontChoice::Hack, FontChoice::Ubuntu];
     // Las fuentes pixel del documento, también de escala entera.
     fonts.extend(

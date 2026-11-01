@@ -81,7 +81,7 @@ Funciones del modelo (puras, con pruebas): el glifo de un carácter, el ancho ef
 
 Cada cambio de la fuente que no es pintar es un comando con su undo, como los de frames:
 
-- `NewFont { name, cell: (w, h), mode }`: crea el artboard de fuente con los 95 caracteres ASCII
+- `NewFont { name, cell: (w, h), mode }`: crea el artboard de fuente con los 94 caracteres ASCII
   imprimibles (`!` a `~`), vacíos, y medidas iniciales proporcionales a la celda (baseline en
   3/4 del alto, mayúsculas en 5/8, x-height en 3/8, descendentes hasta abajo).
 - `AddGlyphs { artboard, chars }` y `RemoveGlyph { artboard, ch }`: agregan o quitan frames en su
@@ -163,7 +163,7 @@ lo activa y abre el panel; la vista encuadra el artboard nuevo al lado del panel
 
 ## 6. Pruebas
 
-- **Modelo:** crear la fuente (95 glifos, medidas iniciales); agregar y quitar glifos en orden;
+- **Modelo:** crear la fuente (94 glifos, medidas iniciales); agregar y quitar glifos en orden;
   anchos automáticos al usarlos (glifo vacío, Monospace, espaciado); el ancho de un texto; el `.chimp` con
   una fuente se guarda y se lee igual, y uno viejo abre sin fuente.
 - **Comandos:** cada uno con su undo y redo.

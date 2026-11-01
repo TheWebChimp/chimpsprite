@@ -150,8 +150,9 @@ pub struct CanvasView {
     /// El rect de golpe de la línea del ancho del glifo actual, como se dibujó en el último
     /// frame (`None` si el artboard activo no es de fuente).
     advance_line: Option<Rect>,
-    /// El ancho (en columnas) mientras se arrastra la línea del ancho; al soltar se aplica.
-    advance_drag: Option<i32>,
+    /// El glifo y su ancho (en columnas) mientras se arrastra la línea del ancho; al soltar se
+    /// aplica a ese glifo (aunque el actual haya cambiado).
+    advance_drag: Option<(char, i32)>,
 }
 
 /// Color alrededor de los artboards: `canvas` del skin con Pixel UI; si no, el del tema.
@@ -322,8 +323,8 @@ impl CanvasView {
     fn shown_advance(&self, editor: &Editor) -> Option<(char, u32)> {
         let glyph = editor.current_glyph()?;
         let advance = match self.advance_drag {
-            Some(n) => n.max(0) as u32,
-            None => editor.glyph_advance()?,
+            Some((ch, n)) if ch == glyph => n.max(0) as u32,
+            _ => editor.glyph_advance()?,
         };
         Some((glyph, advance))
     }
@@ -883,7 +884,9 @@ impl CanvasView {
             if let Some((font, (_, advance))) = font {
                 let scale = self.scale().x;
                 painter.extend(crate::font_overlay::guides(screen, font, advance, scale));
-                self.advance_line = Some(crate::font_overlay::advance_hit(screen, advance, scale));
+                // Con Monospace el ancho es el de la celda: la línea no se arrastra.
+                self.advance_line = (!font.monospace)
+                    .then(|| crate::font_overlay::advance_hit(screen, advance, scale));
             }
             let renaming = self.renaming.as_ref().is_some_and(|r| r.0 == artboard.id);
             if let Some((w, layout)) = &window {

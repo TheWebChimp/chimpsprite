@@ -277,16 +277,35 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
     row(ui, "Mode", |ui| ui.label(font_dialog::mode_name(font.mode)));
     row(ui, "Cell", |ui| ui.label(format!("{cell_w}×{cell_h}")));
+    // Las mayúsculas y la x-height hasta la baseline; los descendentes, de ella hasta abajo.
+    let baseline = font.metrics.baseline;
     number(ui, skin, "Baseline", &mut info.metrics.baseline, 0..=cell_h);
     number(
         ui,
         skin,
         "Cap height",
         &mut info.metrics.cap_height,
-        0..=cell_h,
+        0..=baseline,
     );
-    number(ui, skin, "x-height", &mut info.metrics.x_height, 0..=cell_h);
-    number(ui, skin, "Descent", &mut info.metrics.descent, 0..=cell_h);
+    number(
+        ui,
+        skin,
+        "x-height",
+        &mut info.metrics.x_height,
+        0..=baseline,
+    );
+    number(
+        ui,
+        skin,
+        "Descent",
+        &mut info.metrics.descent,
+        0..=cell_h - baseline.min(cell_h),
+    );
+    // Con la baseline movida, lo demás se acomoda (solo si se cambió algo: abrir el panel no
+    // deja pasos).
+    if info.metrics != font.metrics {
+        info.metrics = info.metrics.clamped(cell_h);
+    }
     number(ui, skin, "Letter spacing", &mut info.letter_spacing, 0..=8);
     number(ui, skin, "Space width", &mut info.space_width, 0..=cell_w);
     ui.add_space(2.0);

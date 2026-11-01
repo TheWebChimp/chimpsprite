@@ -39,6 +39,18 @@ impl FontMetrics {
             descent: height - baseline,
         }
     }
+
+    /// Las medidas dentro de una celda de `height`: la baseline en la celda, los descendentes
+    /// debajo de ella hasta abajo y las mayúsculas y la x-height hasta la baseline.
+    pub fn clamped(self, height: u32) -> Self {
+        let baseline = self.baseline.min(height);
+        FontMetrics {
+            baseline,
+            cap_height: self.cap_height.min(baseline),
+            x_height: self.x_height.min(baseline),
+            descent: self.descent.min(height - baseline),
+        }
+    }
 }
 
 /// La letra fantasma del editor: prendida y con qué fuente de egui (Ubuntu o Hack).
@@ -454,6 +466,28 @@ mod tests {
             ..artboard
         };
         assert!(plain.font_view().is_none());
+    }
+
+    #[test]
+    fn clamped_metrics_fit_the_cell_and_the_baseline() {
+        let m = FontMetrics {
+            baseline: 12,
+            cap_height: 14,
+            x_height: 13,
+            descent: 9,
+        };
+        assert_eq!(
+            m.clamped(16),
+            FontMetrics {
+                baseline: 12,
+                cap_height: 12,
+                x_height: 12,
+                descent: 4
+            }
+        );
+        let ok = FontMetrics::for_cell(16);
+        assert_eq!(ok.clamped(16), ok);
+        assert_eq!(FontMetrics { baseline: 20, ..ok }.clamped(16).baseline, 16);
     }
 
     #[test]

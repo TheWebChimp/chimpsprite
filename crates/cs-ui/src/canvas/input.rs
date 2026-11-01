@@ -141,7 +141,7 @@ impl CanvasView {
         down: bool,
     ) -> Option<egui::CursorIcon> {
         let ppp = response.ctx.pixels_per_point();
-        if let Some(n) = self.advance_drag {
+        if let Some((ch, n)) = self.advance_drag {
             if down {
                 if let Some(p) = pointer {
                     let pixels = WindowLayout::pixels_on_screen(
@@ -149,15 +149,14 @@ impl CanvasView {
                         ppp,
                     );
                     let column = ((p.x - pixels.left()) / self.scale().x).round().max(0.0);
-                    self.advance_drag = Some(column as i32);
+                    self.advance_drag = Some((ch, column as i32));
                 }
                 return Some(egui::CursorIcon::ResizeHorizontal);
             }
             self.advance_drag = None;
+            // Al glifo donde empezó el arrastre.
             let n = n.max(0) as u32;
-            if let Some(ch) = editor.current_glyph()
-                && editor.glyph_advance() != Some(n)
-            {
+            if editor.advance_of(ch).is_some_and(|a| a != n) {
                 editor.set_glyph_advance(ch, Some(n));
             }
             return None;
@@ -174,14 +173,14 @@ impl CanvasView {
         let p = pointer.filter(|p| area.contains(*p))?;
         // Donde se ve la línea (dibujada en el frame anterior), si el activo sigue siendo de
         // fuente.
-        editor.current_glyph()?;
+        let glyph = editor.current_glyph()?;
         let hit = self.advance_line_rect()?;
         if !hit.contains(p) || self.under_front_artboard(rect, editor, p, ppp) {
             return None;
         }
         self.guide_hint = Some("Drag to change the glyph's advance");
         if pressed {
-            self.advance_drag = editor.glyph_advance().map(|a| a as i32);
+            self.advance_drag = editor.glyph_advance().map(|a| (glyph, a as i32));
         }
         Some(egui::CursorIcon::ResizeHorizontal)
     }

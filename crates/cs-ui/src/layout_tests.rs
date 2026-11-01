@@ -3260,6 +3260,56 @@ fn dragging_the_advance_line_sets_a_manual_advance() {
 }
 
 #[test]
+fn the_advance_drag_sets_the_glyph_where_it_started() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    e.go_to_glyph('A');
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    let line = h.app.doc.canvas.advance_line_rect().expect("the line");
+    let scale = h.app.doc.canvas.scale().x;
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let to = line.center() + egui::vec2(3.0 * scale, 0.0);
+    h.frame_with(vec![Event::PointerMoved(line.center())]);
+    h.frame_with(vec![button(line.center(), true)]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    // A mitad del arrastre cambia el glifo actual (un atajo, el panel…).
+    h.app.doc.editor.go_to_glyph('B');
+    h.frame_with(vec![button(to, false)]);
+    h.frame();
+    let font = h.app.doc.editor.font().unwrap();
+    assert_eq!(font.glyphs[font.index_of('A').unwrap()].advance, Some(11));
+    assert_eq!(font.glyphs[font.index_of('B').unwrap()].advance, None);
+}
+
+#[test]
+fn a_monospace_font_has_no_advance_line_to_drag() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    let mut info = e.font().unwrap().clone();
+    info.monospace = true;
+    e.set_font_info(info);
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    assert!(h.app.doc.canvas.advance_line_rect().is_none());
+}
+
+#[test]
 fn a_guide_dragged_from_the_ruler_can_be_dropped_on_the_advance_line() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     h.app

@@ -30,9 +30,18 @@ impl std::fmt::Debug for FontChoice {
     }
 }
 
+/// Las del documento son la misma si son del mismo artboard (aunque se llamen como otra); las
+/// demás, por su nombre.
 impl PartialEq for FontChoice {
     fn eq(&self, other: &Self) -> bool {
-        self.name() == other.name()
+        match (self, other) {
+            (
+                FontChoice::Document { artboard: a, .. },
+                FontChoice::Document { artboard: b, .. },
+            ) => a == b,
+            (FontChoice::Document { .. }, _) | (_, FontChoice::Document { .. }) => false,
+            _ => self.name() == other.name(),
+        }
     }
 }
 
