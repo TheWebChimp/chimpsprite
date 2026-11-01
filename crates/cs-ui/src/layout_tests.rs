@@ -3237,3 +3237,85 @@ fn dragging_the_advance_line_sets_a_manual_advance() {
         .expect("the advance line");
     assert_eq!(moved.center().x, line.center().x + 3.0 * scale);
 }
+
+#[test]
+fn a_guide_dragged_from_the_ruler_can_be_dropped_on_the_advance_line() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.app.doc.editor.go_to_glyph('A');
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    // Con el puntero ya sobre el lienzo (el diseño se acomoda al entrar).
+    let canvas = h.canvas.expect("a document is open");
+    let from = egui::pos2(canvas.left() + 5.0, canvas.center().y);
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame();
+    let line = h
+        .app
+        .doc
+        .canvas
+        .advance_line_rect()
+        .expect("the advance line");
+    assert_eq!(h.app.doc.editor.glyph_advance(), Some(8));
+    // Desde la regla izquierda: al empezar el arrastre el diseño se acomoda, así que se lee la
+    // línea de nuevo antes de soltarla justo encima.
+    let from = egui::pos2(from.x, line.center().y);
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, true)]);
+    let mid = egui::pos2(from.x + 40.0, from.y);
+    h.frame_with(vec![Event::PointerMoved(mid)]);
+    h.frame();
+    let line = h
+        .app
+        .doc
+        .canvas
+        .advance_line_rect()
+        .expect("the advance line");
+    let to = line.center();
+    for k in 1..=4 {
+        h.frame_with(vec![Event::PointerMoved(mid.lerp(to, k as f32 / 4.0))]);
+    }
+    h.frame_with(vec![button(to, false)]);
+    h.frame();
+    let e = &h.app.doc.editor;
+    let guides = e.guides();
+    assert_eq!(guides.len(), 1, "{guides:?}");
+    assert_eq!(guides[0].axis, cs_core::Axis::Vertical);
+    assert_eq!(guides[0].position, 8, "the column under the drop");
+    // La línea del ancho no se quedó con el arrastre ni con la suelta.
+    assert_eq!(e.glyph_advance(), Some(8));
+    assert_eq!(e.font().unwrap().glyphs[e.frame].advance, None);
+}
+
+#[test]
+fn the_timeline_comes_back_when_a_sprite_artboard_is_activated() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let with_timeline = h.canvas.expect("a document is open");
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.app.doc.editor.go_to_glyph('A');
+    h.frame();
+    h.frame();
+    let font_canvas = h.canvas.expect("a document is open");
+    assert!(font_canvas.bottom() > with_timeline.bottom() + 50.0);
+    h.app.doc.editor.activate(cs_core::ArtboardId(1));
+    h.frame();
+    h.frame();
+    let back = h.canvas.expect("a document is open");
+    assert_eq!(back.bottom(), with_timeline.bottom(), "{back:?}");
+}

@@ -94,12 +94,14 @@ pub fn guides(pixels: Rect, font: &FontInfo, advance: u32, scale: f32) -> Vec<Sh
     shapes
 }
 
-/// El rect de golpe de la línea del ancho: 6 puntos de ancho, de arriba abajo del artboard.
+/// El rect de golpe de la línea del ancho: hasta 6 puntos de ancho (con poco zoom, como mucho
+/// una columna de píxeles, mínimo 2), de arriba abajo del artboard.
 pub fn advance_hit(pixels: Rect, advance: u32, scale: f32) -> Rect {
     let x = advance_x(pixels, advance, scale);
+    let width = 6.0_f32.min(scale.max(2.0));
     Rect::from_center_size(
         Pos2::new(x, pixels.center().y),
-        eframe::egui::vec2(6.0, pixels.height()),
+        eframe::egui::vec2(width, pixels.height()),
     )
 }
 
@@ -113,7 +115,9 @@ mod tests {
         assert_eq!(advance_x(pixels, 3, 4.0), 22.0);
         let hit = advance_hit(pixels, 3, 4.0);
         assert_eq!(hit.center().x, 22.0);
-        assert_eq!(hit.width(), 6.0);
+        assert_eq!(hit.width(), 4.0, "never wider than one pixel column");
         assert_eq!(hit.height(), 64.0);
+        assert_eq!(advance_hit(pixels, 3, 16.0).width(), 6.0);
+        assert_eq!(advance_hit(pixels, 3, 1.0).width(), 2.0);
     }
 }

@@ -162,7 +162,13 @@ impl CanvasView {
             }
             return None;
         }
-        if editor.is_painting() || !response.hovered() {
+        // Con una guía o una nota en pleno arrastre, la línea no se mete: ellas se quedan con la
+        // suelta aunque pase por encima.
+        if editor.is_painting()
+            || !response.hovered()
+            || self.ruler_drag.is_some()
+            || self.notes.busy()
+        {
             return None;
         }
         let p = pointer.filter(|p| area.contains(*p))?;
