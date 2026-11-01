@@ -329,8 +329,8 @@ fn the_embedded_skin_has_the_tool_icons_and_slots_of_the_mockup() {
         ("tool.slot", 22, false, false),
         ("tool.slot.last", 23, false, true),
     ] {
-        for name in [name.to_owned(), format!("{name}.active")] {
-            let slot = data.pieces.get(&name).unwrap_or_else(|| panic!("{name}"));
+        {
+            let slot = data.pieces.get(name).unwrap_or_else(|| panic!("{name}"));
             assert_eq!(
                 (slot.size, slot.center),
                 ([23, height], Some(center)),
@@ -349,15 +349,10 @@ fn the_embedded_skin_has_the_tool_icons_and_slots_of_the_mockup() {
             }
         }
     }
-    // El activo es otro dibujo: el relleno del mockup es café y tramado.
-    assert_ne!(
-        data.pieces["tool.slot"].rgba,
-        data.pieces["tool.slot.active"].rgba
-    );
-    assert!(
-        !data.pieces.contains_key("tool.slot.hover"),
-        "not drawn yet: falls back to tool.slot"
-    );
+    // Sin piezas por estado: hover y presionado salen del slot del kit (`kit::slot`).
+    for name in ["tool.slot.hover", "tool.slot.active", "tool.slot.down"] {
+        assert!(!data.pieces.contains_key(name), "{name}");
+    }
     // La caja de la barra: 27 de ancho (el botón de 23 más 1 px de aire y 1 de línea a cada
     // lado) y un centro que se estira en vertical.
     let frame = &data.pieces["toolbar.box"];

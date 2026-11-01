@@ -637,7 +637,7 @@ fn the_first_button_is_rounded_on_top_the_last_below_and_the_active_one_is_frame
     assert_eq!(drawn(&h, "tool.slot.last"), [rect(last)]);
     let middle: Vec<Rect> = (1..last).map(rect).collect();
     assert_eq!(drawn(&h, "tool.slot"), middle);
-    assert!(drawn(&h, "tool.slot.active").is_empty(), "{pencil}");
+    assert!(middle.contains(&rect(pencil)), "{pencil}");
 }
 
 #[test]

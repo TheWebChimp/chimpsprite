@@ -361,43 +361,26 @@ fn drawn(textures: &[(egui::TextureId, Rect)], texture: egui::TextureId) -> Opti
         .reduce(|a, b| a.union(b))
 }
 
-/// Cuáles de los seis marcos de la columna se dibujaron.
+/// Cuáles de los tres marcos de la columna se dibujaron.
 fn drawn_slots(skin: &Skin, textures: &[(egui::TextureId, Rect)]) -> Vec<&'static str> {
-    [
-        "tool.slot.first",
-        "tool.slot",
-        "tool.slot.last",
-        "tool.slot.first.active",
-        "tool.slot.active",
-        "tool.slot.last.active",
-    ]
-    .into_iter()
-    .filter(|name| {
-        let id = skin.piece(name, WidgetState::Normal).unwrap().texture.id();
-        textures.iter().any(|(t, _)| *t == id)
-    })
-    .collect()
+    ["tool.slot.first", "tool.slot", "tool.slot.last"]
+        .into_iter()
+        .filter(|name| {
+            let id = skin.piece(name, WidgetState::Normal).unwrap().texture.id();
+            textures.iter().any(|(t, _)| *t == id)
+        })
+        .collect()
 }
 
 #[test]
-fn a_tool_button_is_its_column_slot_with_the_icon_and_the_active_slot_when_selected() {
+fn a_tool_button_is_its_column_slot_with_the_icon() {
     let ctx = egui::Context::default();
     let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap();
     let id = |name: &str| skin.piece(name, WidgetState::Normal).unwrap().texture.id();
-    for (slot, name, active, height) in [
-        (
-            SlotPos::First,
-            "tool.slot.first",
-            "tool.slot.first.active",
-            22.0,
-        ),
-        (SlotPos::Middle, "tool.slot", "tool.slot.active", 22.0),
-        (
-            SlotPos::Last,
-            "tool.slot.last",
-            "tool.slot.last.active",
-            23.0,
-        ),
+    for (slot, name, height) in [
+        (SlotPos::First, "tool.slot.first", 22.0),
+        (SlotPos::Middle, "tool.slot", 22.0),
+        (SlotPos::Last, "tool.slot.last", 23.0),
     ] {
         let (rect, _, textures) = tool(&ctx, &skin, slot, false, vec![]);
         assert_eq!(rect.size(), vec2(23.0, height), "{name}: the piece size");
@@ -408,7 +391,6 @@ fn a_tool_button_is_its_column_slot_with_the_icon_and_the_active_slot_when_selec
         assert_eq!(icon.min - rect.min, vec2(3.0, 3.0), "{name}");
         let (_, _, textures) = tool(&ctx, &skin, slot, true, vec![]);
         // Elegido: el mismo tramo (no se hunde), con su marco rosa por dentro.
-        let _ = active;
         assert_eq!(drawn_slots(&skin, &textures), [name], "{slot:?} selected");
     }
 }
@@ -416,12 +398,9 @@ fn a_tool_button_is_its_column_slot_with_the_icon_and_the_active_slot_when_selec
 #[test]
 fn without_first_and_last_pieces_the_ends_use_the_middle_slot() {
     let ctx = egui::Context::default();
-    let skin = Skin::load(&ctx, crate::skin::EMBEDDED).unwrap().without(&[
-        "tool.slot.first",
-        "tool.slot.first.active",
-        "tool.slot.last",
-        "tool.slot.last.active",
-    ]);
+    let skin = Skin::load(&ctx, crate::skin::EMBEDDED)
+        .unwrap()
+        .without(&["tool.slot.first", "tool.slot.last"]);
     let middle = skin.piece("tool.slot", WidgetState::Normal).unwrap();
     for slot in [SlotPos::First, SlotPos::Last] {
         let (rect, _, textures) = tool(&ctx, &skin, slot, false, vec![]);

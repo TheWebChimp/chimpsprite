@@ -9,6 +9,7 @@ use eframe::egui::{
 use eframe::emath::GuiRounding as _;
 use std::ops::Range;
 
+use crate::kit;
 use crate::skin::{IRect, Piece, Skin, SkinColors, WidgetState, nine_slice};
 use crate::tab_bar;
 
@@ -508,9 +509,10 @@ pub(crate) fn selected_overlay(
 }
 
 /// Botón de herramienta de la barra de íconos: el marco del tramo `slot` de la columna
-/// (`tool.slot.first`, `tool.slot` o `tool.slot.last`; con `selected`, su `.active`) a tamaño
-/// de pieza y el ícono `icon` centrado en el relleno (el centro del 9-slice). Presionado, el
-/// ícono baja 1 px. Con `more`, un triangulito de 3×3 en la esquina de abajo a la derecha del
+/// (`tool.slot.first`, `tool.slot` o `tool.slot.last`) a tamaño de pieza, con los estados de un
+/// slot del UI kit ([`kit::slot`]), y el ícono `icon` centrado en el relleno (el centro del
+/// 9-slice). Presionado, el ícono baja con la cara. Con `selected`, el relleno liso y el marco
+/// rosa del diseño (si no se está presionando). Con `more`, un triangulito de 3×3 en la esquina de abajo a la derecha del
 /// relleno marca que hay variantes.
 ///
 /// Sin el marco del tramo se usa el del medio. Sin el ícono se dibuja la inicial de `label`; sin
@@ -542,38 +544,31 @@ pub fn tool_button(
     if !ui.is_rect_visible(rect) {
         return response;
     }
-    let pressed = response.is_pointer_button_down_on();
-    // La elegida no se hunde: el botón de siempre con su relleno liso y 1 px rosa por dentro
-    // del borde (abajo).
-    let state = if pressed {
-        WidgetState::Down
-    } else if response.hovered() {
-        WidgetState::Hover
-    } else {
-        WidgetState::Normal
-    };
+    let state = kit::button::ButtonState::of(&response, enabled);
+    let pressed = state == kit::button::ButtonState::Pressed;
     let colors = *skin.colors();
     let ppp = ui.ctx().pixels_per_point();
-    let mut shapes = match slot_piece(skin, slot, state) {
+    let mut shapes = Vec::new();
+    match base {
         // Los tramos de arriba y del medio terminan en la luz (la línea es la de arriba del
-        // siguiente); el último trae su línea de abajo.
+        // siguiente); el último trae su línea de abajo. La elegida no se hunde con el puntero
+        // encima: el botón de siempre con su relleno liso y 1 px rosa por dentro del borde.
         Some(piece) if selected && !pressed => {
-            selected_shapes(piece, rect, slot == SlotPos::Last, &colors, ppp)
+            shapes = selected_shapes(piece, rect, slot == SlotPos::Last, &colors, ppp);
         }
-        Some(piece) => piece_shapes(piece, rect, ppp),
+        Some(piece) => kit::slot::paint(ui.painter(), piece, rect, state, ppp),
         None => {
-            let mut flat = flat_shapes(skin, rect, 0.0, ppp);
+            shapes = flat_shapes(skin, rect, 0.0, ppp);
             if selected {
-                flat.push(Shape::rect_stroke(
+                shapes.push(Shape::rect_stroke(
                     rect.shrink(1.0).round_to_pixels(ppp),
                     0.0,
                     Stroke::new(1.0, colors.accent),
                     StrokeKind::Inside,
                 ));
             }
-            flat
         }
-    };
+    }
     let icon_state = if pressed {
         WidgetState::Down
     } else {
@@ -610,7 +605,8 @@ pub fn tool_button(
 }
 
 /// Botón de prender y apagar de la barra de opciones: el marco `sym.slot` (`sym.slot.active`
-/// con `on`) a tamaño de pieza y el ícono `icon` en su interior.
+/// con `on`) a tamaño de pieza, con los estados de un slot del UI kit ([`kit::slot`]), y el
+/// ícono `icon` en su interior (presionado, baja con el marco).
 ///
 /// - Sin el marco: el respaldo plano, con un borde `accent` si está prendido.
 /// - Sin el ícono: lo que dibuje `fallback` en el interior (rect y color del texto).
@@ -641,13 +637,17 @@ pub fn toggle_button(
     let rect = Rect::from_min_size(rect.min.round(), size);
     let colors = *skin.colors();
     let ppp = ui.ctx().pixels_per_point();
-    let state = if on {
+    let look = if on {
         WidgetState::Active
     } else {
         WidgetState::Normal
     };
-    let mut shapes = match skin.piece(TOGGLE_PIECE, state) {
-        Some(piece) => piece_shapes(piece, rect, ppp),
+    let state = kit::button::ButtonState::of(&response, enabled);
+    let mut shapes = match skin.piece(TOGGLE_PIECE, look) {
+        Some(piece) => {
+            kit::slot::paint(ui.painter(), piece, rect, state, ppp);
+            Vec::new()
+        }
         None => {
             let mut flat = flat_shapes(skin, rect, 0.0, ppp);
             if on {
@@ -661,8 +661,11 @@ pub fn toggle_button(
             flat
         }
     };
-    let inner =
-        Rect::from_min_size(rect.min + TOGGLE_ICON_OFFSET, TOGGLE_ICON_SIZE).round_to_pixels(ppp);
+    let inner = Rect::from_min_size(
+        rect.min + TOGGLE_ICON_OFFSET + kit::slot::content_offset(state),
+        TOGGLE_ICON_SIZE,
+    )
+    .round_to_pixels(ppp);
     match skin.piece(icon, WidgetState::Normal) {
         Some(piece) => {
             let icon_size = vec2(piece.size[0] as f32, piece.size[1] as f32);

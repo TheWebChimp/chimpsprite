@@ -87,7 +87,7 @@ fn clicks_id() -> egui::Id {
 }
 
 /// Las secciones, una por pestaña.
-const SECTIONS: [&str; 13] = [
+const SECTIONS: [&str; 14] = [
     "Buttons",
     "Button group",
     "Inputs",
@@ -101,6 +101,7 @@ const SECTIONS: [&str; 13] = [
     "Menu",
     "Scroll",
     "Dock",
+    "Slots",
 ];
 
 /// En la memoria de egui: la sección a la vista.
@@ -151,7 +152,8 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
                 9 => title_section(ui, skin, origin),
                 10 => menu_section(ui, skin, origin),
                 11 => scroll_section(ui, skin, origin),
-                _ => dock_section(ui, skin, origin),
+                12 => dock_section(ui, skin, origin),
+                _ => slots_section(ui, skin, origin),
             };
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
@@ -1308,6 +1310,77 @@ fn dock_button_shapes(
         ppp,
     ));
     shapes
+}
+
+/// Entre un slot y el siguiente, en la sección Slots.
+const SLOT_PITCH: f32 = 30.0;
+
+/// La sección Slots desde `origin`: un tramo de la columna de herramientas (con el lápiz) y un
+/// botón de simetría (con el eje vertical) en sus estados (normal, hover, presionado) y, al
+/// final, la herramienta elegida y el eje prendido. Devuelve dónde termina.
+fn slots_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    use crate::skin::WidgetState;
+    let ppp = ui.ctx().pixels_per_point();
+    let colors = *skin.colors();
+    let painter = ui.painter().clone();
+    let states = [
+        ButtonState::Normal,
+        ButtonState::Hover,
+        ButtonState::Pressed,
+    ];
+    let mut top = origin.y;
+    for (name, active, icon, icon_at) in [
+        ("tool.slot", None, "icon.pencil", None),
+        (
+            "sym.slot",
+            Some("sym.slot.active"),
+            "icon.sym_vertical",
+            Some(vec2(2.0, 2.0)),
+        ),
+    ] {
+        let Some(piece) = skin.piece(name, WidgetState::Normal) else {
+            continue;
+        };
+        let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+        let icon_size = crate::pixel_draw::piece_size(skin, icon);
+        let icon_pos = |rect: Rect, state: ButtonState| {
+            let at = match icon_at {
+                Some(offset) => rect.min + offset,
+                None => (rect.center() - icon_size / 2.0).round(),
+            };
+            at + super::slot::content_offset(state)
+        };
+        for (i, state) in states.into_iter().enumerate() {
+            let rect =
+                Rect::from_min_size(origin + vec2(i as f32 * SLOT_PITCH, top - origin.y), size);
+            super::slot::paint(&painter, piece, rect, state, ppp);
+            painter.extend(crate::pixel_draw::piece_at(
+                skin,
+                icon,
+                icon_pos(rect, state),
+                ppp,
+            ));
+        }
+        // Lo elegido: la herramienta con el marco rosa; el eje, con su pieza prendida.
+        let rect = Rect::from_min_size(
+            origin + vec2(states.len() as f32 * SLOT_PITCH, top - origin.y),
+            size,
+        );
+        match active.and_then(|a| skin.piece(a, WidgetState::Normal)) {
+            Some(on) => painter.extend(crate::pixel_ui::piece_shapes(on, rect, ppp)),
+            None => painter.extend(crate::pixel_ui::selected_shapes(
+                piece, rect, false, &colors, ppp,
+            )),
+        }
+        painter.extend(crate::pixel_draw::piece_at(
+            skin,
+            icon,
+            icon_pos(rect, ButtonState::Normal),
+            ppp,
+        ));
+        top += size.y + 8.0;
+    }
+    top
 }
 
 fn dock_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {

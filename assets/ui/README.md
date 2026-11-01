@@ -63,10 +63,12 @@ oculta.
   - `tool.slot.first` (el de arriba, redondeado arriba) y `tool.slot` (los del medio) miden
     23×22: traen el borde de arriba y no el de abajo, que es el del botón siguiente.
   - `tool.slot.last` (el de abajo, redondeado abajo) mide 23×23: trae los dos bordes.
-  - Cada uno tiene su `.active` (la herramienta elegida): el botón activo suelto del mockup, con
-    el bisel invertido (blanco ↔ (221,206,191)) y el relleno café tramado en la misma posición.
-  - Si falta `.first` o `.last`, se usa `tool.slot`. `tool.slot.hover` está sin dibujar y cae
-    al normal.
+  - Sin piezas por estado: hover y presionado los pone el slot del UI kit
+    (`crates/cs-ui/src/kit/slot.rs`), con las reglas del botón del kit. Con el puntero encima,
+    la cara se vuelve blanca y la luz de arriba y de la derecha toma el color de la cara.
+    Presionado, la cara baja 1 px y el borde de abajo se queda. La herramienta elegida lleva el
+    relleno liso y el marco rosa del diseño.
+  - Si falta `.first` o `.last`, se usa `tool.slot`.
 - **Caja de la barra:** `toolbar.box` mide 27×7, con centro (3,3,21,1): la línea redondeada
   (189,164,153) que rodea la columna, con 1 px de aire hasta los botones. Se estira en vertical.
   El panel mide 5 + el ancho de la caja + 5.
@@ -145,15 +147,16 @@ oculta.
   `color.button_text_disabled`.
   - `button.active` (220,100, 49×16, mismo centro que `button`) es la opción
     elegida de los grupos de la barra (Sample, Linear/Radial, Rotation). El diseño no tiene un
-    botón de texto activo, así que se derivó de `button` con el mismo mapeo normal → activo que
-    llevó `tool.slot` a `tool.slot.active`, leyendo los píxeles con Lua:
+    botón de texto activo, así que se derivó de `button` con el mismo mapeo normal → activo del
+    botón activo suelto del mockup (el viejo `tool.slot.active`, ya borrado), leyendo los
+    píxeles con Lua:
 
     | `button` | `button.active` |
     | --- | --- |
     | (89,77,77) borde y (136,110,106) sombra | igual |
     | (255,255,255) | (221,206,191) |
     | (221,206,191) | (255,255,255) |
-    | (234,224,221) relleno, 12 filas | el tramado café (189,164,153)/(174,152,142) del relleno de `tool.slot.active`: la fila `r` (0 a 11) toma la fila `round(r·18/11)` de las 19 de la herramienta, y las columnas repiten su tramado de período 2 |
+    | (234,224,221) relleno, 12 filas | el tramado café (189,164,153)/(174,152,142) del relleno del botón activo suelto: la fila `r` (0 a 11) toma la fila `round(r·18/11)` de las 19 de la herramienta, y las columnas repiten su tramado de período 2 |
     | transparente | transparente |
 
     Si falta, la opción elegida usa `button.down`.
@@ -355,7 +358,7 @@ oculta.
   - `palette.button` (5×6, centro (2,2,1,1)): el botón suelto del damero (x 947..970), 24×16.
   - `palette.button.active` (3×3, centro (1,1,1,1)): no está en el diseño. Es el bisel y el
     relleno del primer botón con el bisel invertido (blanco <-> (221,206,191)) y el relleno
-    (189,164,153), como `tool.slot.active`. Va sobre el bisel y el relleno del damero prendido (el
+    (189,164,153), como el botón activo suelto del mockup. Va sobre el bisel y el relleno del damero prendido (el
     Mask elegido) o de un botón apretado.
   - El candado no se ve prendido: bloqueada lleva `palette.icon.lock` (el cerrado, como en el
     diseño) y desbloqueada `palette.icon.lock.open` (el abierto), los dos en el botón normal.
