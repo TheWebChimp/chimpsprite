@@ -103,7 +103,7 @@ pub struct CanvasView {
     draw_rotate: bool,
     /// Con Pixel UI, el cursor del diseño a dibujar (el del sistema se oculta).
     pixel_cursor: Option<PixelCursor>,
-    /// Nombre de artboard en edición (doble clic en su etiqueta) y si ya se le dio el foco.
+    /// Nombre de artboard en edición (doble clic en su etiqueta) y si ya tuvo el foco.
     renaming: Option<(ArtboardId, String, bool)>,
     /// Clic derecho sobre un slice con la herramienta Slice: al soltar se abre su menú.
     slice_menu: bool,
@@ -1331,6 +1331,92 @@ fn label_text(artboard: &Artboard) -> String {
     )
 }
 
+/// Del borde izquierdo de la ventana al campo de renombrar: después del "≡".
+const RENAME_LEFT: f32 = 12.0;
+/// El campo de renombrar sale 2 px arriba de la barra de título.
+const RENAME_ABOVE: f32 = 2.0;
+/// El ancho mínimo del campo de renombrar (crece con el nombre).
+const RENAME_MIN_WIDTH: f32 = 157.0;
+/// El alto del campo de renombrar: el del kit con 2 filas más de blanco y sin la línea clara.
+const RENAME_HEIGHT: f32 = 18.0;
+
+/// El campo de renombrar con Pixel UI: el campo de texto del UI kit sobre la barra de título,
+/// 2 filas más alto y con el borde negro donde sobresale de la barra (como el de la ventana).
+fn rename_field_pixel(
+    ui: &mut egui::Ui,
+    skin: &Skin,
+    layout: &WindowLayout,
+    name: &mut String,
+) -> egui::Response {
+    use crate::kit::input;
+    let width = RENAME_MIN_WIDTH
+        .max(input::ink_width(ui, name) + 2.0 * input::TEXT_LEFT + 1.0)
+        .round();
+    let field = Rect::from_min_size(
+        Pos2::new(
+            layout.frame.left() + RENAME_LEFT,
+            layout.bar.top() - RENAME_ABOVE,
+        ),
+        Vec2::new(width, RENAME_HEIGHT),
+    );
+    let state = input::InputState::Focused;
+    // La pieza con la línea clara de abajo, que queda afuera: el borde de abajo, sin las
+    // esquinas (transparentes, como en el mockup).
+    let piece = Rect::from_min_size(field.min, Vec2::new(width, RENAME_HEIGHT + 1.0));
+    let bottom = field.bottom() - 1.0;
+    let clips = [
+        Rect::from_min_max(field.min, Pos2::new(field.right(), bottom)),
+        Rect::from_min_max(
+            Pos2::new(field.left() + 1.0, bottom),
+            Pos2::new(field.right() - 1.0, field.bottom()),
+        ),
+    ];
+    for clip in clips {
+        ui.painter()
+            .with_clip_rect(clip)
+            .extend(input::frame_shapes(
+                ui,
+                skin,
+                piece,
+                state,
+                input::Affixes::NONE,
+            ));
+    }
+    let painter = ui.painter();
+    // Arriba de la barra (y en su borde), el borde del campo es el negro de la ventana.
+    let black = skin.colors().outline;
+    painter.rect_filled(
+        Rect::from_min_max(
+            Pos2::new(field.left() + 1.0, field.top()),
+            Pos2::new(field.right() - 1.0, field.top() + 1.0),
+        ),
+        0.0,
+        black,
+    );
+    for x in [field.left(), field.right() - 1.0] {
+        painter.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(x, field.top() + 1.0),
+                Vec2::new(1.0, RENAME_ABOVE),
+            ),
+            0.0,
+            black,
+        );
+    }
+    // El texto, una fila más abajo que en el campo del kit (las mayúsculas en la fila 6).
+    let text = Rect::from_min_size(
+        field.min + Vec2::new(0.0, 1.0),
+        Vec2::new(width, input::HEIGHT),
+    );
+    ui.scope_builder(
+        egui::UiBuilder::new()
+            .id_salt("artboard_rename")
+            .max_rect(text),
+        |ui| input::bare_text_input(ui, skin, name, text.size(), "Artboard name"),
+    )
+    .inner
+}
+
 impl CanvasView {
     /// Campo para renombrar el artboard sobre su etiqueta: Enter o clic afuera aplica, Esc cancela.
     fn rename_field(&mut self, ui: &mut egui::Ui, rect: Rect, editor: &mut Editor) {
@@ -1340,34 +1426,28 @@ impl CanvasView {
         let Some(artboard) = editor.document.artboard(id) else {
             return;
         };
-        let (field, font) = match self.artboard_window {
-            // Con Pixel UI, sobre el título de la barra.
-            Some(_) => {
+        let skin = crate::pixel_ui::frame_skin(ui.ctx());
+        let response = match (&self.artboard_window, skin) {
+            // Con Pixel UI, el campo del UI kit sobre la barra de título (mockup de componentes).
+            (Some(_), Some(skin)) => {
                 let ppp = ui.ctx().pixels_per_point();
                 let layout = WindowLayout::around(self.pixel_rect(rect, artboard), ppp);
-                let area = layout.text.unwrap_or(layout.bar);
-                let font = ArtboardWindow::font();
-                let height = font.size + 2.0;
-                let field = Rect::from_min_size(
-                    Pos2::new(area.left(), layout.bar.center().y - height / 2.0),
-                    Vec2::new(area.width().max(80.0), height),
-                );
-                (field, font)
+                rename_field_pixel(ui, &skin, &layout, &mut name)
             }
-            None => {
+            _ => {
                 let bottom_left =
                     self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
                 let size = Vec2::new(160.0, LABEL_SIZE + 6.0);
                 let field = Rect::from_min_size(bottom_left - Vec2::new(0.0, size.y), size);
-                (field, FontId::proportional(LABEL_SIZE))
+                ui.put(
+                    field,
+                    egui::TextEdit::singleline(&mut name)
+                        .font(FontId::proportional(LABEL_SIZE))
+                        .margin(Vec2::new(2.0, 1.0)),
+                )
             }
         };
-        let response = ui.put(
-            field,
-            egui::TextEdit::singleline(&mut name)
-                .font(font)
-                .margin(Vec2::new(2.0, 1.0)),
-        );
+        // Se pide el foco hasta tenerlo: el primer frame el campo puede tener otro id.
         if !focused {
             response.request_focus();
         }
@@ -1382,7 +1462,7 @@ impl CanvasView {
             }
             return;
         }
-        self.renaming = Some((id, name, true));
+        self.renaming = Some((id, name, focused || response.has_focus()));
     }
 
     /// Área de píxeles del artboard en pantalla.
@@ -1525,6 +1605,13 @@ impl CanvasView {
                     egui::Popup::menu(&response).show(content);
                 }
             }
+        }
+    }
+
+    /// Abre el campo de renombrar del artboard activo (desarrollo: capturas).
+    pub(crate) fn start_rename(&mut self, editor: &Editor) {
+        if let Some(artboard) = editor.document.artboard(editor.active) {
+            self.renaming = Some((artboard.id, artboard.name.clone(), false));
         }
     }
 

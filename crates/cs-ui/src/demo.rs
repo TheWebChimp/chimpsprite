@@ -561,6 +561,10 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             editor.add_artboard(64, 64);
             editor.rename_active_artboard((*name).into());
         }
+        // Con CHIMPSPRITE_DEMO_ARTBOARD_RENAME, el campo de renombrar del activo abierto.
+        if dev_var("CHIMPSPRITE_DEMO_ARTBOARD_RENAME").is_some() {
+            app.doc.canvas.start_rename(&app.doc.editor);
+        }
     }
     // Desarrollo: dos grupos (uno colapsado), para capturas de sus carpetitas.
     if std::env::var_os("CHIMPSPRITE_DEMO_GROUP").is_some() && app.has_doc() {
