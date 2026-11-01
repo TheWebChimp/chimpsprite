@@ -385,7 +385,6 @@ fn grip_size(skin: Option<&Skin>) -> Vec2 {
 /// pausa), solo si hay animación, y centrar (volver al zoom y al lugar de
 /// entrada). Devuelve cuál se tocó.
 fn bar_icons(ui: &mut Ui, skin: &Skin, bar: Rect, animated: bool, playing: bool) -> (bool, bool) {
-    let ppp = ui.ctx().pixels_per_point();
     let size = |name: &str| {
         skin.piece(name, crate::skin::WidgetState::Normal)
             .map_or(vec2(5.0, 5.0), |p| vec2(p.size[0] as f32, p.size[1] as f32))
@@ -412,13 +411,11 @@ fn bar_icons(ui: &mut Ui, skin: &Skin, bar: Rect, animated: bool, playing: bool)
         };
         let slot = size(PLAY_PIECE).x.max(size(PAUSE_PIECE).x);
         let (at, response) = icon(ui, piece, label, slot);
-        ui.painter()
-            .extend(crate::pixel_draw::piece_at(skin, piece, at, ppp));
+        crate::kit::icon::paint(ui, skin, piece, at, &response);
         play = response.clicked();
     }
     let (at, center) = icon(ui, CENTER_PIECE, "Center", size(CENTER_PIECE).x);
-    ui.painter()
-        .extend(crate::pixel_draw::piece_at(skin, CENTER_PIECE, at, ppp));
+    crate::kit::icon::paint(ui, skin, CENTER_PIECE, at, &center);
     (play, center.clicked())
 }
 

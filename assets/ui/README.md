@@ -139,6 +139,12 @@ oculta.
   se repiten debajo, hasta una fila antes del grabado de las pestañas.
 - **Origen:** los íconos, los marcos y los botones se copiaron del mockup del autor
   (`.design/Design.aseprite`, que no se versiona).
+- **Íconos sueltos que se tocan** (play, pausa y centrar del preview, el swap de los colores):
+  sin piezas por estado. `kit::icon` los aclara con el puntero encima (cada píxel a la mitad
+  hacia el blanco) y los baja 1 px al presionarlos.
+- **Flechas:** `icon.arrow_left` / `icon.arrow_right` (4×7, de una tinta): las de los botones
+  del paginador de Lospec (botones con ícono del kit; `lospec.pager.prev` y `.next` se
+  borraron).
 - **Botones:** `button`, `button.hover`, `button.down` y `button.disabled` (49×17, centro
   (3,3,43,9)) vienen del mockup de componentes (frame 9). La línea clara de abajo es la última
   fila de la pieza; `button.down` no se desplaza (es `button` sin la fila oscura). Los dibuja el
@@ -372,7 +378,8 @@ oculta.
   - `fgbg.box` (27×49): la caja con la línea grabada y la línea (89,77,77) que separa las
     mitades. Las dos mitades (19×19 en (4,4) y (4,26)) son transparentes: los colores los pinta
     la app.
-  - `fgbg.swap` (9×9): el botón redondo de intercambiar, en (9,20) de la caja; lo de afuera del
+  - `fgbg.swap` (9×9, un ícono suelto del UI kit: `crates/cs-ui/src/kit/icon.rs` le da el hover
+    y el presionado): el botón redondo de intercambiar, en (9,20) de la caja; lo de afuera del
     círculo (el negro y el damero de las mitades) es transparente.
   - `fgbg.checker` (8×8): un período del damero (197,199,221)/(230,231,240) de celdas de 4×4,
     en fase con la esquina de la mitad. Va en mosaico detrás de un color con alfa.
@@ -460,8 +467,8 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     prendido.
   - `timeline.onion_range` (59×17): ◂ [antes | después] ▸ del onion skin, con su brillo abajo.
   - − [campo] + de la opacidad y la duración: el stepper del UI kit (abajo; las piezas
-    `timeline.stepper.*` se borraron). `timeline.combo` (13×17, centro (2,0,1,17)): el combo
-    del modo de mezcla (sin las marcas oscuras sueltas del borde del diseño).
+    `timeline.stepper.*` se borraron). El combo del modo de mezcla es el select del UI kit
+    (`timeline.combo` se borró).
   - `timeline.icon.clock` (16×18) y `timeline.divider` (11×3, centro (5,0,1,3)): la línea
     grabada entre la barra y la tabla, con sus uniones a los lados de la caja.
   - `timeline.eye` / `timeline.eye.closed` (9×7): capa visible / oculta.

@@ -997,7 +997,7 @@ fn layer_row(
                 "Layer mask (click to paint it)"
             });
         if let Some(skin) = grid.skin {
-            pixel::mask_chip(ui, skin, chip.min, editing, mask.enabled);
+            pixel::mask_chip(ui, skin, chip.min, editing, mask.enabled, active);
         } else {
             painter.rect_filled(chip, 2.0, Color32::from_gray(40));
             painter.rect_filled(

@@ -323,7 +323,7 @@ fn with_pixel_ui_the_toolbar_draws_every_group_and_field_of_the_design() {
     for name in [
         "timeline.onion_range",
         "timeline.icon.clock",
-        "timeline.combo",
+        "field.text",
         "timeline.divider",
         "workspace.box",
     ] {
@@ -454,11 +454,7 @@ fn with_pixel_ui_duration_minus_and_plus_change_the_frame_duration() {
 fn with_pixel_ui_the_blend_combo_picks_a_mode() {
     let mut h = Harness::pixel(1200.0);
     let layer = h.editor.layer;
-    assert_eq!(
-        h.count("timeline.combo"),
-        3,
-        "the combo of the design, in 9-slice"
-    );
+    assert!(h.count("field.text") >= 1, "the select of the UI kit");
     h.click("Normal");
     h.click("Multiply");
     assert_eq!(
@@ -767,16 +763,18 @@ fn with_pixel_ui_the_layer_mask_is_the_face_of_the_design() {
         "added"
     );
     assert!(h.drawn("timeline.mask.add.selected").is_empty());
-    // La cara; editándola, la del borde rosa.
+    // La cara; editándola, la del borde rosa. En la capa activa, las de los colores de lo
+    // elegido.
     h.editor.set_edit_mask(false);
     h.frame(vec![]);
-    let face = h.drawn("timeline.mask");
+    let face = h.drawn("timeline.mask.selected");
     assert_eq!(face.len(), 1);
     assert_eq!(face[0].size(), Vec2::new(9.0, 9.0));
+    assert!(h.drawn("timeline.mask").is_empty());
     h.editor.set_edit_mask(true);
     h.frame(vec![]);
-    assert_eq!(h.drawn("timeline.mask.editing").len(), 1);
-    assert!(h.drawn("timeline.mask").is_empty());
+    assert_eq!(h.drawn("timeline.mask.editing.selected").len(), 1);
+    assert!(h.drawn("timeline.mask.selected").is_empty());
 }
 
 #[test]

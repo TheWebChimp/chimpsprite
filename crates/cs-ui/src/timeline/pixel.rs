@@ -11,7 +11,7 @@
 //!   - Onion skin: el botón (`timeline.icon.onion` apagado; prendido, la cebolla entera
 //!     `timeline.icon.onion.on`) y, a 4, `timeline.onion_range`: frames antes ◂ | después ▸.
 //!   - "Opacity" − [0..255] +, el combo del modo de mezcla y el reloj − [ms] + de la duración:
-//!     el stepper del UI kit (`kit::stepper`); `timeline.combo`;
+//!     el stepper del UI kit (`kit::stepper`); el select del UI kit (`kit::select`);
 //!     `timeline.icon.clock`.
 //! - **Línea de abajo de la barra:** `timeline.divider`, con sus uniones a la caja.
 //! - **Tabla:** filas de 13 (11 de contenido y la línea grabada) y columnas con su línea a la
@@ -33,7 +33,7 @@ use super::{BLEND_MODES, Grid, TimelineState, blend_name};
 use crate::bar_fields::{self, NumberLook};
 use crate::editor::Editor;
 use crate::kit;
-use crate::menus::{self, MenuLook};
+use crate::menus;
 use crate::pixel_ui;
 use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
@@ -118,9 +118,6 @@ const UNIT: &str = "ms";
 /// El combo: su ancho en el diseño, de su borde a la tinta del texto, de la tinta a la flecha y
 /// la parte de la flecha.
 const COMBO_W: f32 = 59.0;
-const COMBO_TEXT_LEFT: f32 = 6.0;
-const COMBO_TEXT_GAP: f32 = 5.0;
-const COMBO_ARROW_W: f32 = 10.0;
 /// El rango del onion skin: 59 de ancho. La mitad de la izquierda (frames antes) tiene la ◂ y la
 /// línea del medio está en la columna 29; la de la derecha (después) tiene la ▸.
 const RANGE_W: f32 = 59.0;
@@ -137,7 +134,6 @@ const DIVIDER_H: f32 = 3.0;
 
 const ONION_ON: &str = "timeline.icon.onion.on";
 const RANGE: &str = "timeline.onion_range";
-const COMBO: &str = "timeline.combo";
 const CLOCK: &str = "timeline.icon.clock";
 const DIVIDER: &str = "timeline.divider";
 
@@ -288,7 +284,7 @@ impl Widths {
             .sprite()
             .layer(editor.layer)
             .map_or(String::new(), |l| blend_name(l.blend));
-        let combo = COMBO_TEXT_LEFT + ink(ui, &blend) + COMBO_TEXT_GAP + COMBO_ARROW_W;
+        let combo = kit::select::width(ui, &blend);
         Self {
             opacity_label: ink(ui, "Opacity"),
             duration_field: DURATION_FIELD_W.max(duration_text.ceil()),
@@ -720,41 +716,24 @@ fn opacity(
     }
 }
 
-/// El combo del modo de mezcla de la capa: `timeline.combo` con el nombre del modo y la lista en el
-/// panel de los menús.
+/// El combo del modo de mezcla de la capa: el select del UI kit con el nombre del modo y la lista
+/// de los modos.
 fn blend(ui: &mut Ui, editor: &mut Editor, skin: &Skin, origin: Pos2, width: f32) {
     let layer = editor.layer;
     let Some(mode) = editor.sprite().layer(layer).map(|l| l.blend) else {
         return;
     };
-    let colors = *skin.colors();
     let name = blend_name(mode);
-    let rect = Rect::from_min_size(origin, vec2(width, GROUP_H));
-    let response = ui.interact(rect, ui.id().with("timeline_blend"), Sense::click());
-    let enabled = ui.is_enabled();
-    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, enabled, &name));
-    let drawn = Rect::from_min_size(origin, vec2(width, GROUP_H + 1.0));
-    if !piece(ui, skin, COMBO, drawn) {
-        flat(ui, skin, rect);
-    }
-    let painter = ui.painter().clone();
-    text(
-        ui,
-        &painter,
-        &name,
-        origin.x + COMBO_TEXT_LEFT,
-        origin.y + LABEL_CAPS,
-        colors.text,
-    );
-    let response = response.tip("Blend mode");
-    let look = MenuLook::new(skin, origin.y);
-    menus::dropdown(&look, &response, rect, |ui| {
+    let rect = Rect::from_min_size(origin, vec2(width, kit::select::HEIGHT));
+    let id = ui.id().with("timeline_blend");
+    let response = kit::select::select_at(ui, skin, rect, id, &name, |ui| {
         for m in BLEND_MODES {
             if ui.add(menus::choice(m == mode, &blend_name(m))).clicked() {
                 editor.set_blend(layer, m);
             }
         }
     });
+    response.tip("Blend mode");
 }
 
 /// La tinta de la duración en el campo: el número, `UNIT_GAP` y "ms".
@@ -990,9 +969,23 @@ const MASK_ADD: &str = "timeline.mask.add";
 pub(super) const MASK_SIZE: Vec2 = vec2(9.0, 9.0);
 pub(super) const MASK_ADD_SIZE: Vec2 = vec2(11.0, 9.0);
 
-/// La máscara de una capa con su esquina en `at`; desactivada, a media luz.
-pub(super) fn mask_chip(ui: &Ui, skin: &Skin, at: Pos2, editing: bool, enabled: bool) {
-    let name = if editing { MASK_EDITING } else { MASK };
+/// La máscara de una capa con su esquina en `at`; desactivada, a media luz. En la capa activa
+/// (`selected`), en su versión para lo elegido.
+pub(super) fn mask_chip(
+    ui: &Ui,
+    skin: &Skin,
+    at: Pos2,
+    editing: bool,
+    enabled: bool,
+    selected: bool,
+) {
+    let base = if editing { MASK_EDITING } else { MASK };
+    let chosen = format!("{base}{SELECTED}");
+    let name = if selected && skin.piece(&chosen, WidgetState::Normal).is_some() {
+        chosen.as_str()
+    } else {
+        base
+    };
     let ppp = ui.ctx().pixels_per_point();
     let mut painter = ui.painter().clone();
     if !enabled {

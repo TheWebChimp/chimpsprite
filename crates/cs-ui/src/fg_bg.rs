@@ -111,7 +111,8 @@ pub fn fg_bg(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
     }
     let swap = Rect::from_min_size(rect.min + SWAP_AT, SWAP_SIZE);
     shapes.extend(match skin.piece(SWAP, WidgetState::Normal) {
-        Some(p) => pixel_ui::piece_shapes(p, swap, ppp),
+        // Con la pieza, el ícono suelto del kit: se dibuja con su estado, abajo.
+        Some(_) => Vec::new(),
         None => vec![
             Shape::circle_filled(swap.center(), SWAP_SIZE.x / 2.0, colors.panel),
             Shape::circle_stroke(
@@ -156,6 +157,7 @@ pub fn fg_bg(ui: &mut Ui, editor: &mut Editor, skin: &Skin) {
     }
     let response = ui.interact(swap, id.with("swap"), Sense::click());
     response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, LABELS[2]));
+    crate::kit::icon::paint(ui, skin, SWAP, swap.min, &response);
     if response.tip("Swap (X)").clicked() {
         editor.swap_colors();
     }

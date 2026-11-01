@@ -941,7 +941,6 @@ fn the_embedded_skin_has_the_timeline_pieces_of_the_design() {
         ("timeline.button.sep".into(), [1, 14], None),
         ("timeline.icon.onion.on".into(), [15, 17], None),
         ("timeline.onion_range".into(), [59, 17], None),
-        ("timeline.combo".into(), [13, 17], rect9(2, 0, 1, 17)),
         ("timeline.icon.clock".into(), [16, 18], None),
         ("timeline.divider".into(), [11, 3], rect9(5, 0, 1, 3)),
         ("timeline.eye".into(), [9, 7], None),
