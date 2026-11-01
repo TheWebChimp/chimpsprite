@@ -1144,15 +1144,16 @@ struct MapIcons {
     remove: bool,
 }
 
-/// Los íconos de abrir (`icon.lumen.browse`, la carpeta, 11×9) y quitar (`icon.lumen.remove`, la
-/// ✕, 9×9) abajo a la derecha de la caja `frame`: 3 px entre los dos, su fila 2 px arriba de la
-/// línea de adentro de la caja y la ✕ 9 px antes de su línea derecha. Quitar, apagado sin mapa.
+/// Los íconos de abrir (`icon.lumen.browse`, la carpeta) y quitar (`icon.lumen.remove`, la ✕),
+/// con su contorno blanco de 1 px, abajo a la derecha de la caja `frame`: los contornos a 1 px uno
+/// del otro, 6 px arriba del borde de abajo de la caja y 7 antes del de la derecha. Quitar,
+/// apagado sin mapa.
 fn map_icons(ui: &mut Ui, kind: MapKind, frame: Rect, present: bool) -> MapIcons {
     const BROWSE: &str = "icon.lumen.browse";
     const REMOVE: &str = "icon.lumen.remove";
-    const RIGHT: f32 = 12.0;
-    const BOTTOM: f32 = 5.0;
-    const GAP: f32 = 3.0;
+    const RIGHT: f32 = 7.0;
+    const BOTTOM: f32 = 6.0;
+    const GAP: f32 = 1.0;
     let Some(skin) = pixel_ui::frame_skin(ui.ctx()) else {
         return MapIcons::default();
     };
