@@ -595,6 +595,80 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         app.doc.editor.convert_to_tilemap((8, 8));
         app.doc.editor.toggle_brush_flip(cs_core::Tile::FLIP_X);
     }
+    // Desarrollo: una fuente de 8×8 con unas letras y el panel Font abierto, para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_FONT").is_some() && app.has_doc() {
+        let e = &mut app.doc.editor;
+        if e.new_font("Demo Font", (8, 8), cs_core::FontMode::OneBit) {
+            type Points = &'static [(i32, i32)];
+            let letters: [(char, Points); 3] = [
+                (
+                    'A',
+                    &[
+                        (1, 1),
+                        (2, 1),
+                        (0, 2),
+                        (3, 2),
+                        (0, 3),
+                        (1, 3),
+                        (2, 3),
+                        (3, 3),
+                        (0, 4),
+                        (3, 4),
+                        (0, 5),
+                        (3, 5),
+                    ],
+                ),
+                (
+                    'B',
+                    &[
+                        (0, 1),
+                        (1, 1),
+                        (2, 1),
+                        (0, 2),
+                        (3, 2),
+                        (0, 3),
+                        (1, 3),
+                        (2, 3),
+                        (0, 4),
+                        (3, 4),
+                        (0, 5),
+                        (1, 5),
+                        (2, 5),
+                    ],
+                ),
+                (
+                    'C',
+                    &[
+                        (1, 1),
+                        (2, 1),
+                        (3, 1),
+                        (0, 2),
+                        (0, 3),
+                        (0, 4),
+                        (1, 5),
+                        (2, 5),
+                        (3, 5),
+                    ],
+                ),
+            ];
+            for (ch, points) in letters {
+                e.go_to_glyph(ch);
+                let (layer, frame) = (e.layer, e.frame);
+                e.execute(Command::DrawPixels {
+                    layer,
+                    frame,
+                    pixels: points
+                        .iter()
+                        .map(|&(x, y)| (x, y, cs_core::ONE_BIT_INK))
+                        .collect(),
+                });
+            }
+            e.go_to_glyph('A');
+            app.font_panel.test_text = "ABC CAB".into();
+            crate::dock::set_open(ctx, Some(crate::dock::DockPanel::Font));
+            app.doc.canvas.request_zoom(crate::view::ZoomRequest::Fit);
+        }
+    }
     if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
         app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
     }

@@ -733,11 +733,26 @@ pub(super) fn brush_shape_buttons(
     .inner
 }
 
+/// Las fuentes pixel (la integrada y las del documento) se escalan por enteros, no tienen tamaño.
+fn is_scale_font(font: &FontChoice) -> bool {
+    matches!(font, FontChoice::Pixel | FontChoice::Document { .. })
+}
+
 /// Las opciones del texto: la fuente, cargar una y el tamaño. Con `look` (Pixel UI, en la barra),
 /// los controles del diseño; sin él (o en la ventana del texto), los de egui.
 fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
-    let style = &mut editor.text_style;
     let mut fonts = vec![FontChoice::Pixel, FontChoice::Hack, FontChoice::Ubuntu];
+    // Las fuentes pixel del documento, también de escala entera.
+    fonts.extend(
+        editor
+            .document_fonts()
+            .into_iter()
+            .map(|(id, name)| FontChoice::Document {
+                artboard: id.0,
+                name,
+            }),
+    );
+    let style = &mut editor.text_style;
     if let FontChoice::Custom { .. } = style.font {
         fonts.push(style.font.clone());
     }
@@ -750,7 +765,7 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
                 None => ui.selectable_label(selected, name).clicked(),
             };
             if clicked && !selected {
-                style.size = if font == FontChoice::Pixel { 1 } else { 16 };
+                style.size = if is_scale_font(&font) { 1 } else { 16 };
                 style.font = font;
             }
         }
@@ -809,7 +824,7 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
     match look {
         Some(look) => {
             gap(ui, CONTROL_GAP);
-            if style.font == FontChoice::Pixel {
+            if is_scale_font(&style.font) {
                 bar_fields::label(ui, look, "Scale");
                 gap(ui, LABEL_FIELD_GAP);
                 bar_fields::number(ui, look, "text_scale", &mut style.size, 1..=8, false);
@@ -822,7 +837,7 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
             }
         }
         None => {
-            if style.font == FontChoice::Pixel {
+            if is_scale_font(&style.font) {
                 ui.add(egui::Slider::new(&mut style.size, 1..=8).text("Scale"));
             } else {
                 ui.add(egui::Slider::new(&mut style.size, 6..=96).text("Size"));

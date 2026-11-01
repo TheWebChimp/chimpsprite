@@ -1051,6 +1051,20 @@ fn the_options_bar_has_the_brush_with_the_pencil_but_not_with_the_hand() {
 }
 
 #[test]
+fn the_text_tool_lists_the_document_fonts() {
+    let mut h = BarHarness::with_skin(1200.0, true);
+    h.editor.new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    h.editor.set_tool(ToolKind::Text);
+    h.frame(vec![]);
+    h.open("Pixel 5×7");
+    h.click("Mine");
+    h.frame(vec![]);
+    assert_eq!(h.editor.text_style.font.name(), "Mine");
+    assert_eq!(h.editor.text_style.size, 1);
+    assert!(h.has("Scale"), "a document font is a scale font");
+}
+
+#[test]
 fn symmetry_is_at_the_right_end_of_the_bar_in_the_usual_order() {
     let h = BarHarness::new(1200.0);
     let names: Vec<&str> = SYMMETRY_AXES.iter().map(|(_, tip)| *tip).collect();
