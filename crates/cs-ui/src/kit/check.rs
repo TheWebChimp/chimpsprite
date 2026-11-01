@@ -5,8 +5,7 @@
 //!
 //! Ocupan el alto de un campo ([`HEIGHT`]), para ir en la misma fila que campos y selects: las
 //! mayúsculas del texto en la fila de las de los campos (la 5) y, 3 px antes de la tinta, la
-//! casilla con su marca en esas mismas filas (la casilla, centrada, desde la fila 2; el radio,
-//! desde la 3).
+//! casilla desde la fila 3 y el radio desde la 3, con su punto en las filas de las mayúsculas.
 
 use eframe::egui::{
     self, Color32, Rect, Response, Sense, Shape, Stroke, StrokeKind, TextStyle, Ui, Vec2, pos2,
@@ -77,11 +76,11 @@ impl Mark {
         }
     }
 
-    /// La fila de arriba de la pieza: su marca cae en las filas de las mayúsculas (la de la
-    /// casilla empieza 3 filas adentro; la del radio, 2).
+    /// La fila de arriba de la pieza: la casilla, 2 filas arriba de las mayúsculas (su borde de
+    /// abajo, a la par del de los campos); el radio, con su punto en las filas de las mayúsculas.
     pub fn top(self) -> f32 {
         match self {
-            Mark::Check(_) => CAPS_TOP - 3.0,
+            Mark::Check(_) => CAPS_TOP - 2.0,
             Mark::Radio(_) => CAPS_TOP - 2.0,
         }
     }

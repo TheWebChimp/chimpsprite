@@ -33,8 +33,9 @@ use crate::pixel_ui::Tip as _;
 use crate::skin::Skin;
 use crate::tab_bar;
 
-/// La fila de las mayúsculas de los textos, desde el borde de arriba de la barra.
-pub const CAPS_TOP: f32 = FIELD_TOP + pixel_ui::CONTROL_CAPS;
+/// La fila de las mayúsculas de los textos, desde el borde de arriba de la barra: la del texto de
+/// los campos (`kit::input::CAPS_TOP` debajo de su borde), así todo queda en una fila.
+pub const CAPS_TOP: f32 = FIELD_TOP + crate::kit::input::CAPS_TOP;
 /// La fila de arriba del combo y del campo numérico (y 73 en el diseño), que miden 16 con el
 /// brillo de abajo.
 pub(crate) const FIELD_TOP: f32 = 2.0;

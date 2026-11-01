@@ -500,8 +500,8 @@ impl GroomPanel {
         });
         widgets::checkbox(ui, &mut settings.clean, "Clean Outline");
         ui.horizontal(|ui| {
-            // La casilla pone sus mayúsculas `CONTROL_CAPS` debajo de la fila.
-            let caps = ui.cursor().top().round() + pixel_ui::CONTROL_CAPS;
+            // La casilla pone sus mayúsculas `kit::check::CAPS_TOP` debajo de la fila.
+            let caps = ui.cursor().top().round() + crate::kit::check::CAPS_TOP;
             let check = widgets::checkbox(ui, &mut settings.ring, "Add Outline");
             let left = (check.rect.right() + HINT_GAP).round();
             hint_on_baseline(

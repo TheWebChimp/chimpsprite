@@ -1133,7 +1133,7 @@ fn with_pixel_ui_the_symmetry_buttons_are_the_skin_pieces_and_toggle_their_axis(
     assert_eq!(slots[0].left() - h.rect("Symmetry").right(), 3.0);
     let (_, ink) = h.text("Symmetry");
     assert_eq!(slots[0].left() + 1.0 - ink.right(), 5.0, "{ink:?}");
-    assert_eq!(ink.top(), h.bar.top() + 6.0, "{ink:?}");
+    assert_eq!(ink.top(), h.bar.top() + 7.0, "{ink:?}");
     // Después de los ejes, a 5, el botón del espejo (25×16 con su ícono, como en el diseño)
     // y del espejo al borde, 3. Un clic lo prende.
     let mirror = h.rect("Mirror Selection");
@@ -1294,7 +1294,7 @@ fn with_pixel_ui_the_marquee_mode_is_four_icon_buttons_like_in_the_design() {
     let colors = *h.skin.as_ref().unwrap().colors();
     let (color, ink) = h.text("Mode");
     assert_eq!(color, colors.text);
-    assert_eq!(ink.min, bar.min + Vec2::new(7.0, 6.0), "{ink:?}");
+    assert_eq!(ink.min, bar.min + Vec2::new(7.0, 7.0), "{ink:?}");
     assert_eq!(ink.width(), 20.0);
     // Los cuatro cuadritos: las piezas en x 60, 77, 94 y 111 y en la y 73 (la pieza tiene
     // una columna transparente antes del cuadro, que va en 61). Replace es el elegido.
@@ -1363,7 +1363,7 @@ fn with_pixel_ui_brush_size_is_the_number_field_with_its_px_unit() {
     // tinta, el campo numérico del UI kit con la caja de la unidad "px": 42 de ancho en total
     // (como en el mockup de componentes), de la y 73 a la 89 del diseño.
     let (_, ink) = h.text("Brush Size");
-    assert_eq!(ink.min, bar.min + Vec2::new(7.0, 6.0), "{ink:?}");
+    assert_eq!(ink.min, bar.min + Vec2::new(7.0, 7.0), "{ink:?}");
     assert_eq!(ink.width(), 43.0);
     let left = ink.right() + 3.0;
     // (El de Ink, más a la derecha, es el select: también es un `field.text`.)
@@ -1645,12 +1645,12 @@ fn with_pixel_ui_pixel_perfect_is_the_bar_checkbox_and_a_click_toggles_it() {
     h.editor.options.pixel_perfect = false;
     h.frame(vec![]);
     let before = h.rect("Pixel Perfect");
-    let at = Rect::from_min_size(pos2(before.left(), bar.top() + 4.0), Vec2::new(12.0, 13.0));
+    let at = Rect::from_min_size(pos2(before.left(), bar.top() + 5.0), Vec2::new(12.0, 13.0));
     assert_eq!(h.drawn("check"), vec![at], "unchecked");
     h.click("Pixel Perfect");
     h.frame(vec![]);
     assert!(h.editor.options.pixel_perfect);
-    // Marcada (con el puntero encima): la casilla del kit, 12×13 desde la fila 3 de la barra,
+    // Marcada (con el puntero encima): la casilla del kit, 12×13 desde la fila 5 de la barra,
     // 5 px después del control anterior (los botones de forma), y la tinta del texto 3 px
     // después, en la fila de los textos.
     let check = h.drawn("check.on.hover");
@@ -1658,7 +1658,7 @@ fn with_pixel_ui_pixel_perfect_is_the_bar_checkbox_and_a_click_toggles_it() {
     assert_eq!(check[0].left() - h.rect("Round brush").right(), 5.0);
     let (_, ink) = h.text("Pixel Perfect");
     assert_eq!(ink.left() - check[0].right(), 3.0);
-    // En la fila del texto de los campos (una más abajo que las etiquetas de la barra).
+    // En la fila de los textos de la barra (la del texto de los campos).
     assert_eq!(ink.top(), bar.top() + 7.0);
     h.click("Pixel Perfect");
     h.frame(vec![]);
@@ -1685,28 +1685,20 @@ fn with_pixel_ui_every_text_of_the_bar_is_in_the_design_row() {
         let shadow = h.skin.as_ref().unwrap().colors().background;
         let on_leds = h.drawn_boxes("button.led.on");
         // Los textos de los campos (los selects) van en la fila 5 del campo, una más abajo.
-        let fields = h.drawn_boxes("field.text");
         for (text, ink, color) in h
             .texts()
             .into_iter()
             .filter(|(t, _, c)| !buttons.contains(&t.as_str()) && *c != shadow)
         {
             let on = on_leds.iter().any(|d| d.right() + 3.0 == ink.left());
-            // Y el texto de las casillas, en esa misma fila (junto a los campos).
-            let checked = [
-                "check",
-                "check.on",
-                "check.mixed",
-                "check.hover",
-                "check.on.hover",
-            ]
-            .into_iter()
-            .flat_map(|n| h.drawn_boxes(n))
-            .any(|b| b.right() + 3.0 == ink.left());
-            let in_field = checked || fields.iter().any(|f| f.contains_rect(ink));
-            let row = h.bar.top() + 6.0 + if on || in_field { 1.0 } else { 0.0 };
-            // Las mayúsculas en la fila 5 (los textos sin mayúsculas, como los números o
-            // "px", no bajan de ahí).
+            // Los textos de la barra, los de los campos y los de las casillas, en la fila 7
+            // (la del texto de los campos); los de los botones de opción, en la de los botones
+            // (la 6), y la elegida baja 1 px con su botón.
+            let off_leds = h.drawn_boxes("button.led.off");
+            let button = off_leds.iter().any(|d| d.right() + 3.0 == ink.left());
+            let row = h.bar.top() + if button && !on { 6.0 } else { 7.0 };
+            // Las mayúsculas en su fila (los textos sin mayúsculas, como los números o "px", no
+            // bajan de ahí).
             assert!(ink.top() >= row, "{tool:?}: {text:?} {ink:?} {color:?}");
             let caps = text.chars().any(|c| c.is_ascii_uppercase());
             if caps {
