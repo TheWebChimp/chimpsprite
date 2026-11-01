@@ -3,6 +3,7 @@
 mod command;
 mod doc_command;
 mod draw;
+pub mod font;
 mod history;
 pub mod ops;
 pub mod sprite_ops;

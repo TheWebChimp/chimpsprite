@@ -1,4 +1,4 @@
-use cs_core::{Artboard, ArtboardId, Document, Guide, Note, Sprite, Symmetry};
+use cs_core::{Artboard, ArtboardId, Document, FontInfo, Guide, Note, Sprite, Symmetry};
 use serde::{Deserialize, Serialize};
 
 use crate::{CmdError, Command};
@@ -36,6 +36,11 @@ pub enum DocCommand {
     SetSymmetry {
         id: ArtboardId,
         symmetry: Symmetry,
+    },
+    /// Lo de fuente de un artboard (`None`: deja de ser fuente).
+    SetFont {
+        id: ArtboardId,
+        font: Option<Box<FontInfo>>,
     },
     /// Reemplaza el sprite completo de un artboard (p. ej. al cambiar el modo de color).
     SetSprite {
@@ -149,6 +154,16 @@ impl DocCommand {
                     symmetry: old,
                 })
             }
+            DocCommand::SetFont { id, font } => {
+                let artboard = doc
+                    .artboard_mut(*id)
+                    .ok_or(CmdError::ArtboardNotFound(*id))?;
+                let old = std::mem::replace(&mut artboard.font, font.as_deref().cloned());
+                Ok(DocCommand::SetFont {
+                    id: *id,
+                    font: old.map(Box::new),
+                })
+            }
             DocCommand::SetNotes(notes) => {
                 let old = std::mem::replace(&mut doc.notes, notes.clone());
                 Ok(DocCommand::SetNotes(old))
@@ -215,6 +230,7 @@ impl crate::Undoable for DocCommand {
             DocCommand::SetArtboardInLibrary { .. } => "Library",
             DocCommand::SetGuides { .. } => "Guides",
             DocCommand::SetSymmetry { .. } => "Symmetry",
+            DocCommand::SetFont { .. } => "Font",
             DocCommand::SetSprite { .. } => "Sprite",
             DocCommand::SetNotes(_) => "Notes",
             DocCommand::SetDocument(_) => "Script",
