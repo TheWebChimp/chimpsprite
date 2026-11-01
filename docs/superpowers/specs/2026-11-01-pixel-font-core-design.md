@@ -1,6 +1,6 @@
 # Editor de fuentes pixel, parte 1: el núcleo
 
-Fecha: 2026-11-01 · Estado: diseño aprobado, falta el plan
+Fecha: 2026-11-01 · Estado: implementado
 
 ## Objetivo
 
@@ -47,7 +47,7 @@ pub struct FontInfo {
     pub letter_spacing: u8,      // columnas entre letras, por defecto 1
     pub space_width: u8,         // ancho del espacio (U+0020), por defecto 3
     pub monospace: bool,         // todos los glifos con el ancho de la celda
-    pub ghost: GhostSettings,    // la letra fantasma: prendida y con qué fuente
+    pub ghost: GhostSettings,    // la letra fantasma: { enabled, monospace }
     pub glyphs: Vec<GlyphInfo>,  // alineada con `sprite.frames`
 }
 
@@ -60,8 +60,7 @@ pub struct FontMetrics {         // filas desde arriba de la celda
 
 pub struct GlyphInfo {
     pub ch: char,
-    pub advance: u32,            // en columnas
-    pub auto_advance: bool,
+    pub advance: Option<u32>,    // en columnas; `None` = automático
 }
 ```
 
@@ -71,12 +70,12 @@ pub struct GlyphInfo {
   para verlo). **Color:** sprite RGBA.
 - **Orden:** los frames van en el orden de los códigos Unicode, y no hay dos glifos con el mismo
   carácter.
-- **Ancho automático:** la última columna con pixeles más 1, más `letter_spacing`. Un glifo vacío
+- **Ancho automático (`advance: None`):** se calcula al usarlo, no se guarda: la última columna con pixeles más 1, más `letter_spacing`. Un glifo vacío
   usa la mitad de la celda. Con `monospace`, todos usan el ancho de la celda. El espacio (U+0020)
   no es un glifo: usa `space_width`.
 
-Funciones del modelo (puras, con pruebas): el glifo de un carácter, el ancho efectivo de un glifo,
-recalcular los anchos automáticos y el ancho de un texto.
+Funciones del modelo (puras, con pruebas): el glifo de un carácter, el ancho efectivo de un glifo
+(manual, o el automático calculado en ese momento) y el ancho de un texto.
 
 ## 2. Comandos (`cs-commands`)
 
@@ -91,8 +90,8 @@ Cada cambio de la fuente que no es pintar es un comando con su undo, como los de
 - `SetFontInfo { artboard, info }`: nombre, medidas, espaciado, Monospace y letra fantasma.
 - `ShiftGlyph`, `CopyGlyph`/`PasteGlyph` y `ClearGlyph` usan los comandos de cels que ya hay.
 
-Pintar un glifo es editar un cel, como ya existe. Después de cada comando que toca pixeles de una
-fuente, los anchos automáticos de los glifos tocados se recalculan dentro del mismo paso de undo.
+Pintar un glifo es editar un cel, como ya existe. Los anchos automáticos no se recalculan después
+de cada comando: se calculan al usarlos (lienzo, mapa, Test Drive, herramienta Texto).
 
 ## 3. El artboard de fuente en el lienzo (`cs-ui`)
 
@@ -100,8 +99,9 @@ Es la ventana de siempre de los artboards, con estas diferencias:
 
 - **Título:** el carácter actual y el nombre, "A · MiFuente". El menú ≡ agrega *Shift ← → ↑ ↓*,
   *Copy glyph*, *Paste glyph*, *Clear glyph* y *Glyph from…* (deshabilitado hasta la parte 3).
-- **Letra fantasma:** detrás de los pixeles, el carácter actual en gris claro, rasterizado con la
-  fuente de `ghost` (por defecto, la proporcional de egui) a la altura de las mayúsculas, apoyado
+- **Letra fantasma:** detrás de los pixeles, el carácter actual en gris claro, rasterizado con
+  una fuente de egui según `GhostSettings.monospace`: Ubuntu (proporcional, por defecto) o Hack
+  (monoespaciada), no las de la herramienta Texto, a la altura de las mayúsculas, apoyado
   en la baseline y desde el borde izquierdo. No se guarda ni se exporta. Se apaga desde el panel.
 - **Guías** (dibujadas por el lienzo, no son pixeles):
   - la baseline, en rojo fuerte;
@@ -139,12 +139,13 @@ secciones; si no, un botón *New Font…*. Todo con los componentes del UI kit.
   - Baseline, mayúsculas, x-height y descendentes con steppers; las guías del lienzo se mueven al
     cambiarlos.
   - Espacio entre letras, ancho del espacio y Monospace.
-  - Letra fantasma: on/off y la fuente que usa (las de la herramienta Texto).
+  - Letra fantasma: on/off y Monospace (Ubuntu o Hack, las fuentes de egui).
   - *Build ▾* deshabilitado, con el tooltip "Coming soon" (parte 2).
 
 **New Font…** (también en *File → New Font…*) abre un diálogo del kit con el nombre, la celda
 (ancho y alto, 16×16 por defecto) y el modo. Crea el artboard de fuente al lado de los demás,
-lo activa y abre el panel.
+lo activa y abre el panel; la vista encuadra el artboard nuevo al lado del panel Font
+(`ZoomRequest::FitActiveBeside`). *New Font…* en Home abre un documento nuevo con la fuente.
 
 ## 5. La herramienta Texto con fuentes del documento (`cs-tools::text`)
 
@@ -163,10 +164,9 @@ lo activa y abre el panel.
 ## 6. Pruebas
 
 - **Modelo:** crear la fuente (95 glifos, medidas iniciales); agregar y quitar glifos en orden;
-  anchos automáticos (glifo vacío, Monospace, espaciado); el ancho de un texto; el `.chimp` con
+  anchos automáticos al usarlos (glifo vacío, Monospace, espaciado); el ancho de un texto; el `.chimp` con
   una fuente se guarda y se lee igual, y uno viejo abre sin fuente.
-- **Comandos:** cada uno con su undo y redo; pintar un glifo recalcula su ancho automático en el
-  mismo paso.
+- **Comandos:** cada uno con su undo y redo.
 - **Texto:** trazado con anchos, espaciado, espacio, carácter que falta, 1 bit con el color
   primario y color con sus colores, y escala.
 - **UI:** las guías en sus filas; arrastrar la línea del ancho; el mapa (clic, doble clic para
