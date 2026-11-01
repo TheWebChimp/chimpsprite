@@ -3460,3 +3460,38 @@ fn the_font_settings_change_the_metrics_with_undo() {
     h.app.doc.editor.undo();
     assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 12);
 }
+
+#[test]
+fn dragging_a_font_stepper_is_one_undo_step() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.frame();
+    let label = h
+        .text_rects
+        .iter()
+        .find(|(t, _, _)| t == "Baseline")
+        .map(|(_, r, _)| *r)
+        .expect("the Baseline label");
+    let in_row = |name: &str| {
+        h.buttons
+            .iter()
+            .find(|(l, r)| l == name && r.y_range().contains(label.center().y))
+            .map(|(_, r)| *r)
+            .expect("a Baseline button")
+    };
+    // El número, entre el − y el +: arrastrarlo a la izquierda baja la baseline.
+    let field = in_row("Decrease")
+        .center()
+        .lerp(in_row("Increase").center(), 0.5);
+    let steps = h.app.doc.editor.history.done_count();
+    drag(&mut h, field, field - egui::vec2(80.0, 0.0));
+    let baseline = h.app.doc.editor.font().unwrap().metrics.baseline;
+    assert!(baseline < 11, "it moved more than one step: {baseline}");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 12);
+}

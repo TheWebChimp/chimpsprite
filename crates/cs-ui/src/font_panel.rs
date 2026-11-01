@@ -256,8 +256,8 @@ fn checkbox(ui: &mut Ui, skin: Option<&Skin>, checked: &mut bool, label: &str) -
 }
 
 /// Los ajustes de la fuente: nombre, modo y celda, las medidas, el espaciado, Monospace, la letra
-/// fantasma y el ancho automático del glifo actual. Todo lo cambiado en un frame es un paso de
-/// deshacer (`set_font_info`).
+/// fantasma y el ancho automático del glifo actual. Todo lo cambiado en un frame (o en un
+/// arrastre) es un paso de deshacer (`set_font_info_grouped`).
 fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let Some(font) = editor.font().cloned() else {
         return;
@@ -316,8 +316,14 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
             }
         }
     });
+    // Un arrastre (de un stepper) es un solo paso de undo: se juntan los cambios mientras el
+    // botón siga apretado.
+    let group = ui.id().with("font_settings").value();
     if info != font {
-        editor.set_font_info(info);
+        editor.set_font_info_grouped(info, group);
+    }
+    if !ui.input(|i| i.pointer.any_down()) {
+        editor.end_group_of(group);
     }
     // El ancho automático del glifo actual (después: `set_font_info` lleva los anchos de antes).
     let current = editor.current_glyph().and_then(|ch| {

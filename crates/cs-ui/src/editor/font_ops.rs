@@ -72,6 +72,15 @@ impl Editor {
         self.execute_doc(set_font_named(self.active, info))
     }
 
+    /// Como `set_font_info`, pero los cambios seguidos del mismo `group` (el arrastre de un
+    /// stepper del panel Font) son un solo paso de undo.
+    pub fn set_font_info_grouped(&mut self, info: FontInfo, group: u64) -> bool {
+        if self.font() == Some(&info) {
+            return false;
+        }
+        self.execute_doc_grouped(set_font_named(self.active, info), group)
+    }
+
     /// El ancho efectivo del glifo actual.
     pub fn glyph_advance(&self) -> Option<u32> {
         let font = self.font()?;
