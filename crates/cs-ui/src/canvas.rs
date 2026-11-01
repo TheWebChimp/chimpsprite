@@ -19,7 +19,7 @@ use crate::pixel_selection;
 use crate::skin::Skin;
 use crate::transform_box::{self, Handle, TransformBox, TransformHit};
 use crate::view::{ViewSettings, ZoomRequest};
-use crate::{theme, widgets};
+use crate::{kit, theme, widgets};
 
 mod input;
 mod rulers;
@@ -1333,89 +1333,6 @@ fn label_text(artboard: &Artboard) -> String {
 
 /// Del borde izquierdo de la ventana al campo de renombrar: después del "≡".
 const RENAME_LEFT: f32 = 12.0;
-/// El campo de renombrar sale 2 px arriba de la barra de título.
-const RENAME_ABOVE: f32 = 2.0;
-/// El ancho mínimo del campo de renombrar (crece con el nombre).
-const RENAME_MIN_WIDTH: f32 = 157.0;
-/// El alto del campo de renombrar: el del kit con 2 filas más de blanco y sin la línea clara.
-const RENAME_HEIGHT: f32 = 18.0;
-
-/// El campo de renombrar con Pixel UI: el campo de texto del UI kit sobre la barra de título,
-/// 2 filas más alto y con el borde negro donde sobresale de la barra (como el de la ventana).
-fn rename_field_pixel(
-    ui: &mut egui::Ui,
-    skin: &Skin,
-    layout: &WindowLayout,
-    name: &mut String,
-) -> egui::Response {
-    use crate::kit::input;
-    let width = RENAME_MIN_WIDTH
-        .max(input::ink_width(ui, name) + 2.0 * input::TEXT_LEFT + 1.0)
-        .round();
-    let field = Rect::from_min_size(
-        Pos2::new(
-            layout.frame.left() + RENAME_LEFT,
-            layout.bar.top() - RENAME_ABOVE,
-        ),
-        Vec2::new(width, RENAME_HEIGHT),
-    );
-    let state = input::InputState::Focused;
-    // La pieza con la línea clara de abajo, que queda afuera: el borde de abajo, sin las
-    // esquinas (transparentes, como en el mockup).
-    let piece = Rect::from_min_size(field.min, Vec2::new(width, RENAME_HEIGHT + 1.0));
-    let bottom = field.bottom() - 1.0;
-    let clips = [
-        Rect::from_min_max(field.min, Pos2::new(field.right(), bottom)),
-        Rect::from_min_max(
-            Pos2::new(field.left() + 1.0, bottom),
-            Pos2::new(field.right() - 1.0, field.bottom()),
-        ),
-    ];
-    for clip in clips {
-        ui.painter()
-            .with_clip_rect(clip)
-            .extend(input::frame_shapes(
-                ui,
-                skin,
-                piece,
-                state,
-                input::Affixes::NONE,
-            ));
-    }
-    let painter = ui.painter();
-    // Arriba de la barra (y en su borde), el borde del campo es el negro de la ventana.
-    let black = skin.colors().outline;
-    painter.rect_filled(
-        Rect::from_min_max(
-            Pos2::new(field.left() + 1.0, field.top()),
-            Pos2::new(field.right() - 1.0, field.top() + 1.0),
-        ),
-        0.0,
-        black,
-    );
-    for x in [field.left(), field.right() - 1.0] {
-        painter.rect_filled(
-            Rect::from_min_size(
-                Pos2::new(x, field.top() + 1.0),
-                Vec2::new(1.0, RENAME_ABOVE),
-            ),
-            0.0,
-            black,
-        );
-    }
-    // El texto, una fila más abajo que en el campo del kit (las mayúsculas en la fila 6).
-    let text = Rect::from_min_size(
-        field.min + Vec2::new(0.0, 1.0),
-        Vec2::new(width, input::HEIGHT),
-    );
-    ui.scope_builder(
-        egui::UiBuilder::new()
-            .id_salt("artboard_rename")
-            .max_rect(text),
-        |ui| input::bare_text_input(ui, skin, name, text.size(), "Artboard name"),
-    )
-    .inner
-}
 
 impl CanvasView {
     /// Campo para renombrar el artboard sobre su etiqueta: Enter o clic afuera aplica, Esc cancela.
@@ -1432,7 +1349,18 @@ impl CanvasView {
             (Some(_), Some(skin)) => {
                 let ppp = ui.ctx().pixels_per_point();
                 let layout = WindowLayout::around(self.pixel_rect(rect, artboard), ppp);
-                rename_field_pixel(ui, &skin, &layout, &mut name)
+                let at = Pos2::new(
+                    layout.frame.left() + RENAME_LEFT,
+                    layout.bar.top() - kit::input::FLOATING_ABOVE,
+                );
+                kit::input::floating_input(
+                    ui,
+                    &skin,
+                    at,
+                    kit::input::FLOATING_MIN_WIDTH,
+                    &mut name,
+                    "Artboard name",
+                )
             }
             _ => {
                 let bottom_left =

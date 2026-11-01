@@ -18,7 +18,7 @@ use crate::editor::Editor;
 use crate::mask_ops::NewMask;
 use crate::pixel_ui::Tip as _;
 use crate::skin::Skin;
-use crate::{menus, theme, widgets};
+use crate::{kit, menus, theme, widgets};
 
 pub use pixel::panel_frame as pixel_panel_frame;
 
@@ -144,6 +144,13 @@ pub struct TimelineState {
     /// Las capas de objetos desplegadas (con su artboard: los ids de capa se repiten entre
     /// artboards): debajo llevan una sub-fila por objeto.
     pub(crate) expanded_objects: HashSet<(ArtboardId, LayerId)>,
+}
+
+impl TimelineState {
+    /// Abre el campo de renombrar de la capa `layer` con `name` (desarrollo: capturas).
+    pub(crate) fn start_rename(&mut self, layer: LayerId, name: String) {
+        self.renaming = Some((layer, name));
+    }
 }
 
 /// Un arrastre sobre los cels, como en Aseprite.
@@ -1037,11 +1044,22 @@ fn layer_row(
     if renaming {
         let (_, text) = state.renaming.as_mut().expect("renaming");
         let edit = match grid.skin {
-            // Con Pixel UI, la fila es baja: el campo ocupa todo el nombre, con la fuente pixel.
-            Some(_) => ui.put(
-                name_rect,
-                egui::TextEdit::singleline(text).margin(Vec2::ZERO),
-            ),
+            // Con Pixel UI, el campo flotante del kit, con el texto donde está el nombre. Va
+            // encima de todo: es más alto que la fila.
+            Some(skin) => {
+                let at = pos2(
+                    name_rect.left() - kit::input::TEXT_LEFT,
+                    name_rect.top() + pixel::TEXT_CAPS - kit::input::FLOATING_CAPS,
+                );
+                let min_width = name_rect.width() + 2.0 * kit::input::TEXT_LEFT;
+                egui::Area::new(ui.id().with(("rename_layer", id)))
+                    .order(egui::Order::Foreground)
+                    .fixed_pos(at)
+                    .show(ui.ctx(), |ui| {
+                        kit::input::floating_input(ui, skin, at, min_width, text, "Layer name")
+                    })
+                    .inner
+            }
             None => ui.put(
                 name_rect.shrink2(vec2(0.0, 2.0)),
                 egui::TextEdit::singleline(text).font(FontId::proportional(12.0)),

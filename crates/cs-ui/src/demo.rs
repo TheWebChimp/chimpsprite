@@ -496,6 +496,13 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         editor.undo();
         app.undo_history = true;
     }
+    // Desarrollo: el campo de renombrar de la capa activa abierto, para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_LAYER_RENAME").is_some() && app.has_doc() {
+        let layer = app.doc.editor.layer;
+        if let Some(name) = app.doc.editor.sprite().layer(layer).map(|l| l.name.clone()) {
+            app.doc.timeline.start_rename(layer, name);
+        }
+    }
     // Desarrollo: un rango de cels del timeline ("fila,frame,fila,frame"), para capturas.
     if let Ok(range) = std::env::var("CHIMPSPRITE_DEMO_CELS")
         && app.has_doc()

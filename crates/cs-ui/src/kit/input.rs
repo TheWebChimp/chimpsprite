@@ -347,6 +347,81 @@ pub fn bare_text_input(
     )
 }
 
+/// El campo flotante (renombrar un artboard o una capa): el campo enfocado encima de otra cosa,
+/// 2 filas de blanco más alto, sin la línea clara de abajo y con el borde negro en las filas que
+/// sobresalen arriba (mockup de renombrar artboard: sobre la barra de título).
+pub const FLOATING_HEIGHT: f32 = 18.0;
+/// Las filas de arriba con el borde negro: las que sobresalen de la barra y el borde de ella.
+pub const FLOATING_ABOVE: f32 = 2.0;
+/// El ancho mínimo del mockup (crece con el texto).
+pub const FLOATING_MIN_WIDTH: f32 = 157.0;
+/// Las mayúsculas, una fila más abajo que en el campo normal.
+pub const FLOATING_CAPS: f32 = CAPS_TOP + 1.0;
+
+/// [`FLOATING_HEIGHT`]: el campo flotante con la esquina de arriba a la izquierda en `at`, de
+/// `min_width` por lo menos.
+pub fn floating_input(
+    ui: &mut Ui,
+    skin: &Skin,
+    at: egui::Pos2,
+    min_width: f32,
+    text: &mut String,
+    label: &str,
+) -> Response {
+    let width = min_width
+        .max(ink_width(ui, text) + 2.0 * TEXT_LEFT + 1.0)
+        .round();
+    let field = Rect::from_min_size(at.round(), vec2(width, FLOATING_HEIGHT));
+    // La pieza con la línea clara de abajo, que queda afuera: el borde de abajo, sin las
+    // esquinas (transparentes, como en el mockup).
+    let piece = Rect::from_min_size(field.min, vec2(width, FLOATING_HEIGHT + 1.0));
+    let bottom = field.bottom() - 1.0;
+    let clips = [
+        Rect::from_min_max(field.min, pos2(field.right(), bottom)),
+        Rect::from_min_max(
+            pos2(field.left() + 1.0, bottom),
+            pos2(field.right() - 1.0, field.bottom()),
+        ),
+    ];
+    for clip in clips {
+        ui.painter().with_clip_rect(clip).extend(frame_shapes(
+            ui,
+            skin,
+            piece,
+            InputState::Focused,
+            Affixes::NONE,
+        ));
+    }
+    let black = skin.colors().outline;
+    let painter = ui.painter();
+    painter.rect_filled(
+        Rect::from_min_max(
+            pos2(field.left() + 1.0, field.top()),
+            pos2(field.right() - 1.0, field.top() + 1.0),
+        ),
+        0.0,
+        black,
+    );
+    for x in [field.left(), field.right() - 1.0] {
+        painter.rect_filled(
+            Rect::from_min_size(pos2(x, field.top() + 1.0), vec2(1.0, FLOATING_ABOVE)),
+            0.0,
+            black,
+        );
+    }
+    let inside = Rect::from_min_size(
+        field.min + vec2(0.0, FLOATING_CAPS - CAPS_TOP),
+        vec2(width, HEIGHT),
+    );
+    ui.scope_builder(
+        UiBuilder::new()
+            .id_salt(("kit_floating", label))
+            .max_rect(inside),
+        |ui| bare_text_input(ui, skin, text, inside.size(), label),
+    )
+    .inner
+}
+
 /// El campo en `rect`: la caja (si `framed`), un `TextEdit` de egui sin marco en las filas del
 /// texto, la selección y el cursor pintados en las filas del diseño.
 #[allow(clippy::too_many_arguments)]

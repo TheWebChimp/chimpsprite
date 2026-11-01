@@ -54,7 +54,7 @@ pub(super) const NAME_PAD: f32 = 4.0;
 /// La línea grabada de cada celda: abajo y a la derecha.
 const LINE: f32 = 2.0;
 /// Las mayúsculas del texto de una fila, desde arriba de la fila.
-const TEXT_CAPS: f32 = 1.0;
+pub(super) const TEXT_CAPS: f32 = 2.0;
 /// Dónde van los íconos en su celda.
 const EYE_AT: Vec2 = vec2(3.0, 2.0);
 const LOCK_AT: Vec2 = vec2(4.0, 1.0);
