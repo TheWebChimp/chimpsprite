@@ -672,6 +672,12 @@ fn two_tabs(active: Option<usize>) -> LayoutHarness {
 }
 
 /// La unión de los rects.
+/// El panel del menú abierto, sin su sombra (2 px abajo y a la derecha, afuera del panel).
+fn menu_panel(h: &LayoutHarness) -> Rect {
+    let drawn = union(&h.drawn("menu.list")).expect("the panel");
+    Rect::from_min_max(drawn.min, drawn.max - Vec2::splat(2.0))
+}
+
 fn union(rects: &[Rect]) -> Option<Rect> {
     rects.iter().copied().reduce(|a, b| a.union(b))
 }
@@ -1318,10 +1324,10 @@ fn caps_offset(h: &LayoutHarness) -> f32 {
 fn opening_file_draws_the_open_title_box_and_the_panel() {
     let mut h = two_tabs(Some(0));
     assert_eq!(h.drawn("menu.title.open"), vec![], "closed");
-    assert_eq!(h.drawn("menu.panel"), vec![]);
+    assert_eq!(h.drawn("menu.list"), vec![]);
     open_menu(&mut h, "File");
     assert!(!h.drawn("menu.title.open").is_empty(), "the open title box");
-    assert!(!h.drawn("menu.panel").is_empty(), "the panel");
+    assert!(!h.drawn("menu.list").is_empty(), "the panel");
     // El texto del título sigue donde estaba, sobre la caja.
     let color = h.app.pixel.skin().unwrap().colors().home_text;
     assert_eq!(text_rect(&h, "File").1, color);
@@ -1337,7 +1343,7 @@ fn the_panel_hangs_from_the_open_title_like_in_the_design() {
         let text = text_rect(&h, title).0;
         let caps = text.top() + offset;
         let boxed = union(&h.drawn("menu.title.open")).expect("the box");
-        let panel = union(&h.drawn("menu.panel")).expect("the panel");
+        let panel = menu_panel(&h);
         // El diseño: la caja empieza 5 px antes del texto, termina 4 después (la tinta, más 5)
         // y empieza 5 filas arriba de las mayúsculas, sin recortes: la de File queda a 1 px del
         // borde de arriba y del izquierdo de la ventana.
@@ -1389,7 +1395,7 @@ fn the_panel_hangs_from_the_open_title_like_in_the_design() {
         assert!(panel.right() > boxed.right(), "{title}");
         // Otro clic en el título lo cierra.
         open_menu(&mut h, title);
-        assert_eq!(h.drawn("menu.panel"), vec![], "{title}: closed");
+        assert_eq!(h.drawn("menu.list"), vec![], "{title}: closed");
     }
 }
 
@@ -1399,7 +1405,7 @@ fn the_new_row_has_the_ctrl_badge_a_plus_and_the_key_in_the_dim_color() {
     let offset = caps_offset(&h);
     open_menu(&mut h, "File");
     let colors = *h.app.pixel.skin().unwrap().colors();
-    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let panel = menu_panel(&h);
     let (new, color) = text_rect(&h, "New");
     assert_eq!(color, colors.text);
     // "New": 5 px adentro del borde y sus mayúsculas, 6 filas debajo del borde de arriba (la
@@ -1509,7 +1515,7 @@ fn ctrl_alt_shortcuts_have_the_alt_badge() {
 fn separators_are_the_divider_of_the_design_from_border_to_border() {
     let mut h = two_tabs(Some(0));
     open_menu(&mut h, "File");
-    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let panel = menu_panel(&h);
     // `menu.separator` (la fila blanca sobre la (189,164,153)), de borde a borde: encima de los
     // biseles, adentro de la línea.
     let mut lines: Vec<Rect> = Vec::new();
@@ -1559,7 +1565,7 @@ fn clicking_a_pixel_menu_item_still_runs_its_action() {
     let new = h.button("New Ctrl+N");
     h.click(new.center(), PointerButton::Primary);
     assert_eq!(h.app.tabs.len(), 3, "a new document");
-    assert_eq!(h.drawn("menu.panel"), vec![], "the menu closes");
+    assert_eq!(h.drawn("menu.list"), vec![], "the menu closes");
 }
 
 #[test]
@@ -1569,7 +1575,7 @@ fn hovered_rows_are_pink_with_pink_bevels_and_disabled_ones_dim_text() {
     open_menu(&mut h, "File");
     let colors = *h.app.pixel.skin().unwrap().colors();
     assert_eq!(text_rect(&h, "Save").1, colors.text_dim, "disabled");
-    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let panel = menu_panel(&h);
     // Sin puntos suspensivos (en ningún lado de la app). El de Open del menú (no el botón Open
     // de Pixnews, en Home, que va con su sombra).
     let open = h
@@ -1605,9 +1611,13 @@ fn hovered_rows_are_pink_with_pink_bevels_and_disabled_ones_dim_text() {
     };
     assert_eq!(pink(colors.timeline_selection), vec![row]);
     let bevel = |x: f32| Rect::from_x_y_ranges(x..=x + 1.0, row.y_range());
-    assert_eq!(
-        pink(colors.timeline_selection_dark),
-        vec![bevel(panel.left() + 1.0)]
+    // En el rosa oscuro, el bisel de la izquierda y, del atajo (Ctrl+O), el +: en la fila con el
+    // puntero, el atajo va en ese rosa.
+    let dark = pink(colors.timeline_selection_dark);
+    assert_eq!(dark[0], bevel(panel.left() + 1.0));
+    assert!(
+        dark[1..].iter().all(|r| r.left() > panel.center().x),
+        "only the shortcut besides the bevel: {dark:?}"
     );
     assert_eq!(
         pink(colors.timeline_selection_light),
@@ -1622,7 +1632,7 @@ fn submenus_have_an_arrow_of_shapes_and_the_same_panel() {
     let colors = *h.app.pixel.skin().unwrap().colors();
     let show = h.button("Show");
     // La flecha: un triángulo de 3×5 hecho con rects del color del texto, contra la derecha.
-    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let panel = menu_panel(&h);
     let arrow: Vec<Rect> = h
         .colored_rects()
         .into_iter()
@@ -1636,7 +1646,7 @@ fn submenus_have_an_arrow_of_shapes_and_the_same_panel() {
     h.frame_with(vec![Event::PointerMoved(show.center())]);
     h.frame();
     h.frame();
-    let panels = h.drawn("menu.panel");
+    let panels = h.drawn("menu.list");
     let sub = panels
         .iter()
         .filter(|r| r.left() >= panel.right())
@@ -1675,7 +1685,7 @@ fn menu_checkboxes_use_the_design_box_and_a_click_toggles_them() {
     let mut h = two_tabs(Some(0));
     let offset = caps_offset(&h);
     open_menu(&mut h, "View");
-    let panel = union(&h.drawn("menu.panel")).expect("the panel");
+    let panel = menu_panel(&h);
     // Timeline (marcada): la casilla del diseño, de 11×12, en el borde del texto de los ítems
     // (5 px adentro del panel) y 2 filas arriba de las mayúsculas; el texto, 3 px después.
     let (timeline, _) = text_rect(&h, "Timeline");

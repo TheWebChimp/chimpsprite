@@ -39,7 +39,15 @@ use crate::tab_bar;
 const LOOK_TAG: &str = "chimpsprite_pixel_menu";
 
 const TITLE_OPEN: &str = "menu.title.open";
-const PANEL: &str = "menu.panel";
+/// El panel de los menús (mockup de componentes, frame 9: el menú Frame): el de la lista del
+/// select, con la sombra (5,4,3) con alfa 123 de 2 px abajo y a la derecha, afuera del panel.
+const PANEL: &str = "menu.list";
+/// La sombra del panel, que va afuera de su rect.
+const PANEL_SHADOW: f32 = 2.0;
+/// El panel del menú de las variantes de una herramienta (mockup de componentes, frame 9: Hand
+/// y Zoom), sin sombra: borde (89,77,77) con las esquinas de 1 px, brillo arriba y a la derecha y
+/// bisel a la izquierda y abajo.
+const SIDE_PANEL: &str = "menu.side";
 /// El separador: la fila blanca sobre la (189,164,153), de borde a borde (encima del bisel).
 const SEPARATOR: &str = "menu.separator";
 const KEY: &str = "key";
@@ -128,6 +136,7 @@ const ARROW_TOP: f32 = 1.0;
 pub(crate) struct MenuLook {
     title_open: Option<Piece>,
     panel: Option<Piece>,
+    side: Option<Piece>,
     separator: Option<Piece>,
     key: Option<Piece>,
     check: Option<Piece>,
@@ -153,6 +162,7 @@ impl MenuLook {
         Self {
             title_open: piece(TITLE_OPEN),
             panel: piece(PANEL),
+            side: piece(SIDE_PANEL),
             separator: piece(SEPARATOR),
             key: piece(KEY),
             check: piece(CHECK),
@@ -322,6 +332,17 @@ fn panel<R>(
     title_box: Option<Rect>,
     content: impl FnOnce(&mut Ui) -> R,
 ) -> R {
+    panel_with(ui, look, title_box, false, content)
+}
+
+/// [`panel`]; con `side`, el del menú de las herramientas (`menu.side`, sin sombra).
+fn panel_with<R>(
+    ui: &mut Ui,
+    look: &MenuLook,
+    title_box: Option<Rect>,
+    side: bool,
+    content: impl FnOnce(&mut Ui) -> R,
+) -> R {
     let ppp = ui.ctx().pixels_per_point();
     let back = ui.painter().add(Shape::Noop);
     let join = ui.painter().add(Shape::Noop);
@@ -340,9 +361,15 @@ fn panel<R>(
         content_rect.min - vec2(PANEL_MARGIN.left as f32, PANEL_MARGIN.top as f32),
         content_rect.max + vec2(PANEL_MARGIN.right as f32, PANEL_MARGIN.bottom as f32),
     );
-    let shapes = match &look.panel {
-        Some(piece) => pixel_ui::piece_shapes(piece, rect, ppp),
-        None => vec![
+    let side_piece = look.side.as_ref().filter(|_| side);
+    let shapes = match (side_piece, &look.panel) {
+        (Some(piece), _) => pixel_ui::piece_shapes(piece, rect, ppp),
+        (None, Some(piece)) => pixel_ui::piece_shapes(
+            piece,
+            Rect::from_min_max(rect.min, rect.max + Vec2::splat(PANEL_SHADOW)),
+            ppp,
+        ),
+        (None, None) => vec![
             solid(rect, look.colors.panel, ppp),
             Shape::rect_stroke(
                 rect.round_to_pixels(ppp),
@@ -429,13 +456,14 @@ impl Widget for Item<'_> {
             let ppp = ui.ctx().pixels_per_point();
             let mut shapes = row_shapes(ui, &look, rect, &label, text_color, &response);
             let caps = rect.top() + ROW_CAPS_TOP;
+            let hovered = enabled && response.hovered();
             shapes.extend(parts_shapes(
                 ui,
                 &look,
                 &parts,
                 rect.right(),
                 caps,
-                enabled,
+                (enabled, hovered),
                 ppp,
             ));
             row_painter(ui, &look).extend(shapes);
@@ -692,33 +720,41 @@ fn parts_width(ui: &Ui, parts: &[KeyPart<'_>]) -> f32 {
 }
 
 /// Las formas de un atajo cuya tinta termina en `right`, con las mayúsculas en la fila `caps`.
-/// Deshabilitado, todo más claro.
+/// `(enabled, hovered)`: deshabilitado, todo más claro; en la fila con el puntero, en el rosa
+/// oscuro de la fila (`timeline_selection_dark`), con las letras de las teclas caladas en el rosa.
 fn parts_shapes(
     ui: &Ui,
     look: &MenuLook,
     parts: &[KeyPart<'_>],
     right: f32,
     caps: f32,
-    enabled: bool,
+    (enabled, hovered): (bool, bool),
     ppp: f32,
 ) -> Vec<Shape> {
     let colors = &look.colors;
-    let dim = if enabled {
+    let dim = if hovered {
+        colors.timeline_selection_dark
+    } else if enabled {
         colors.ruler_tick
     } else {
         colors.text_dim
     };
-    let tint = if enabled {
-        Color32::WHITE
+    // La tecla: la pieza blanca pintada de su color; las letras, del fondo de la fila.
+    let (key, letters) = if hovered {
+        (colors.timeline_selection_dark, colors.timeline_selection)
+    } else if enabled {
+        (colors.ruler_tick, colors.panel)
     } else {
-        Color32::from_white_alpha(128)
+        (colors.ruler_tick.gamma_multiply(0.5), colors.panel)
     };
     let mut x = right - parts_width(ui, parts);
     let mut shapes = Vec::new();
     for part in parts {
         let width = part_width(ui, part);
         match part {
-            KeyPart::Cap(name) => shapes.extend(cap_shapes(ui, look, name, x, caps, tint, ppp)),
+            KeyPart::Cap(name) => {
+                shapes.extend(cap_shapes(ui, look, name, x, caps, (key, letters), ppp))
+            }
             KeyPart::Plus => {
                 let left = x + KEY_GAP;
                 let top = caps + PLUS_TOP;
@@ -739,27 +775,27 @@ fn parts_shapes(
     shapes
 }
 
-/// Una badge en `left`, a la altura de las mayúsculas de la fila: `key` estirada con el nombre
-/// en chimpfont, en el color del panel (las letras caladas).
+/// Una badge en `left`, a la altura de las mayúsculas de la fila: `key` (una pieza blanca)
+/// estirada y pintada de `color`, con el nombre en chimpfont en `letters` (las letras caladas).
 fn cap_shapes(
     ui: &Ui,
     look: &MenuLook,
     name: &str,
     left: f32,
     caps: f32,
-    tint: Color32,
+    (color, letters): (Color32, Color32),
     ppp: f32,
 ) -> Vec<Shape> {
-    let text = key_galley(ui, name, look.colors.panel);
+    let text = key_galley(ui, name, letters);
     let width = key_ink(&text) + KEY_PAD_X + KEY_PAD_RIGHT;
     // Desde las mayúsculas de la fila.
     let rect = Rect::from_min_size(pos2(left, caps), vec2(width, KEY_HEIGHT));
     let mut shapes = match &look.key {
-        Some(piece) => tinted(pixel_ui::piece_shapes(piece, rect, ppp), tint),
-        None => vec![solid(rect, look.colors.ruler_tick, ppp)],
+        Some(piece) => tinted(pixel_ui::piece_shapes(piece, rect, ppp), color),
+        None => vec![solid(rect, color, ppp)],
     };
     let at = tab_bar::text_pos(&text, left + KEY_PAD_X, caps + KEY_PAD_Y, ppp);
-    shapes.push(Shape::galley(at, text, look.colors.panel));
+    shapes.push(Shape::galley(at, text, letters));
     shapes
 }
 
@@ -953,7 +989,7 @@ pub(crate) fn side_menu<R>(
     if keep_open {
         popup = popup.close_behavior(egui::PopupCloseBehavior::IgnoreClicks);
     }
-    let inner = popup.show(|ui| panel(ui, look, None, content))?;
+    let inner = popup.show(|ui| panel_with(ui, look, None, true, content))?;
     // La unión: donde el panel toca al botón, ni la línea del botón ni la del panel; arriba, el
     // brillo sigue de uno al otro.
     let ppp = response.ctx.pixels_per_point();
@@ -1024,7 +1060,7 @@ pub(crate) fn tool_row(
             &parts,
             rect.right(),
             caps,
-            enabled,
+            (enabled, enabled && response.hovered()),
             ppp,
         ));
         row_painter(ui, &look).extend(shapes);

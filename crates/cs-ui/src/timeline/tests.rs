@@ -781,8 +781,8 @@ fn with_pixel_ui_the_layer_menu_is_the_menus_panel() {
     let mut h = Harness::new(1200.0);
     let skin = std::sync::Arc::new(Skin::embedded(&h.ctx));
     let panel = skin
-        .piece("menu.panel", crate::skin::WidgetState::Normal)
-        .expect("menu.panel")
+        .piece("menu.list", crate::skin::WidgetState::Normal)
+        .expect("menu.list")
         .texture
         .id();
     crate::pixel_ui::set_bubble(&h.ctx, Some(skin));

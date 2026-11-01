@@ -400,8 +400,19 @@ segundo). Si el archivo tiene un error, se queda el skin anterior y lo avisa en 
     adentro y blanco a la derecha. La esquina de arriba a la izquierda (la tapa el título) y el
     borde de abajo no están en el diseño. También lo usan los submenús, las listas y el menú
     flotante del dock.
+  - `menu.list` (262,0, 8×13, centro (2,7,1,1)): el panel de los menús (el menú Frame del mockup
+    de componentes): igual a `select.list.alone`, con la sombra (5,4,3) con alfa 123 de 2 px
+    abajo y a la derecha, que va afuera del panel. `menu.panel` (sin sombra) lo sigue usando el
+    panel flotante del dock.
+  - `menu.side` (271,0, 5×5, centro (2,2,1,1)): el panel del menú de las variantes de una
+    herramienta (Hand y Zoom del mockup): borde (89,77,77) con las esquinas de 1 px, brillo
+    blanco arriba y a la derecha, bisel (221,206,191) a la izquierda y abajo, sin sombra. La
+    herramienta elegida, con el nombre en (178,82,102).
   - `menu.separator` (103,935, 3×2): el separador, la fila blanca sobre la (189,164,153), de
     borde a borde del panel (encima de los biseles).
+  - `key` es blanca: la app la pinta de `ruler_tick` y, en la fila con el puntero, del rosa
+    oscuro (178,82,102), con las letras caladas en el color del fondo de la fila (el "+" y la
+    tecla de al lado, del mismo rosa).
   - `key.ctrl` (19×7): la tecla Ctrl como está dibujada; sus letras y esquinas son
     transparentes (en el diseño, el relleno del panel). `key` (19×7, centro (1,1,17,5)): la
     misma tecla sin letras, para las otras teclas con nombre. `key.shift` (22×7): la tecla
