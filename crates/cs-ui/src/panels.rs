@@ -80,6 +80,8 @@ fn tool_column(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
         ui.spacing_mut().item_spacing.y = 0.0;
         for index in 0..len {
             let id = base.with(("tool_group", index));
+            // Con su menú abierto, el botón es la pestaña del panel: sin el rosa de la elegida.
+            let open = tool_group::menu_open(ui.ctx(), id);
             tool_group::group_button(ui, editor, Some(skin), index, |ui, shown, state| {
                 pixel_ui::tool_button(
                     ui,
@@ -88,7 +90,7 @@ fn tool_column(ui: &mut egui::Ui, editor: &mut Editor, skin: &Skin) {
                     pixel_ui::SlotPos::of(index, len),
                     tool_group::icon_piece(shown),
                     shown.label(),
-                    state.selected,
+                    state.selected && !open,
                     state.more,
                 )
             });
