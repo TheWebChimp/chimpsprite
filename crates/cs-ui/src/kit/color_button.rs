@@ -25,7 +25,7 @@ const BOTTOM_ROWS: f32 = 2.0;
 /// Abierto (mockup de componentes, frame 9, x 342, y 614): el botón queda en una pestaña
 /// (`picker.tab`, 20×20: la muestra va 2 px adentro, sin su línea clara) unida al panel
 /// (`picker.panel`, borde de una línea, desde la fila 18 de la pestaña). El selector, 7 px adentro
-/// a los lados y 3 debajo del borde de arriba; abajo, 4 filas (2 de relleno, el bisel y el borde).
+/// a los lados y 3 filas arriba y abajo (abajo: 1 de relleno, el bisel y el borde).
 pub const TAB: &str = "picker.tab";
 pub const PANEL: &str = "picker.panel";
 const TAB_SIZE: Vec2 = vec2(20.0, 20.0);
@@ -35,7 +35,7 @@ const TAB_INSET: f32 = 2.0;
 const PANEL_TOP: f32 = 18.0;
 const PANEL_PAD_X: f32 = 7.0;
 const PANEL_PAD_TOP: f32 = 3.0;
-const PANEL_PAD_BOTTOM: f32 = 4.0;
+const PANEL_PAD_BOTTOM: f32 = 3.0;
 /// El ancho del selector que se abre (el del mockup).
 pub const PICKER_WIDTH: f32 = 156.0;
 

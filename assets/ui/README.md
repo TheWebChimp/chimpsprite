@@ -252,6 +252,10 @@ oculta.
       abajo y blanco a la derecha, relleno (234,224,221), la esquina de arriba a la derecha en
       escalera y la sombra de 2 px abajo a la derecha, (5,4,3) con alfa 123 (el color que marca
       el mockup con "←●").
+    - La lista va debajo del campo si entra; si no, del lado con más lugar, y lo que no entra se
+      recorre con el scroll. Arriba no cuelga del campo (que queda cerrado):
+      `select.list.alone` (202,488) es `select.list` con la esquina de arriba a la izquierda
+      redondeada como la de la derecha. Al abrirse, la elegida queda a la vista.
     - Las opciones: filas de 15 desde la fila 4 del panel (debajo, 1 de aire, el bisel y el
       borde), el texto 6 px adentro del borde y las mayúsculas en su fila 4.
       `select.item.hover` (190,488, 3×15, centro (1,0,1,15)): la franja rosa (178,82,102) /
@@ -287,10 +291,17 @@ oculta.
       adentro sin su línea clara), unida a `picker.panel` (206,537, 7×8, centro (3,3,1,1): borde
       (89,77,77) de una línea, fila blanca arriba, bisel (221,206,191) a la izquierda y abajo,
       blanco a la derecha), que empieza en la fila 18 de la pestaña. El selector va 7 px adentro
-      a los lados, 3 debajo del borde y 4 arriba del de abajo; mide 156 de ancho. Un clic en la
+      a los lados y 3 debajo y arriba de los bordes; mide 156 de ancho. Un clic en la
       muestra o afuera lo cierra.
     - En el selector, el grupo RGBA, cuando va solo en su fila (el hex abajo), reparte lo que
       sobra entre sus cuatro tramos y llega al borde derecho.
+
+- **Scroll** (`pixel_ui::scroll`, mockup de componentes, frame 9, x 898, y 562..924): 10 de
+  ancho.
+  - `scroll.track.v` (4,474, 10×4, centro (0,1,10,1)): la pista (189,164,153) redondeada arriba y,
+    abajo, la sombra (136,110,106). `scroll.track.h` (30,474, 4×10): la misma girada.
+  - `scroll.thumb.v` (8×46) y `scroll.thumb.h`: el pulgar lila con borde oscuro y el agarre de
+    rayitas al final, 1 px adentro de la pista.
 
 - **Paleta y editor de color** (frame 4 del diseño, capa Mockup, columna x 784..972; el skin
   creció a 320×272 y estas piezas van en y 236..267):

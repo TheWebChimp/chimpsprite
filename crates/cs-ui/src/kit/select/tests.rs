@@ -162,3 +162,81 @@ fn a_click_opens_the_list_below_and_picking_an_option_closes_it() {
         "closed"
     );
 }
+
+/// Un select con `n` opciones en `at` (en una pantalla de 400×300), abierto. Devuelve lo dibujado
+/// del último frame y el rect del campo.
+fn open_long(at: Pos2, n: usize) -> (Skin, Vec<Shape>, Rect) {
+    let (ctx, skin) = pixel_ctx();
+    // Con Pixel UI, como en la app: el scroll del skin.
+    crate::pixel_ui::set_bubble(&ctx, Some(std::sync::Arc::new(skin.clone())));
+    let labels: Vec<String> = (0..n).map(|i| format!("Option {i}")).collect();
+    let mut pick = 0usize;
+    let mut run = |events: Vec<Event>| {
+        let mut rect = Rect::NOTHING;
+        let shapes = frame(&ctx, events, |ui| {
+            let slot = Rect::from_min_size(at, vec2(109.0, HEIGHT));
+            ui.scope_builder(UiBuilder::new().max_rect(slot), |ui| {
+                rect = select(ui, &skin, "s", &labels[pick], Some(109.0), |ui| {
+                    for (i, label) in labels.iter().enumerate() {
+                        crate::widgets::choice(ui, &mut pick, i, label);
+                    }
+                })
+                .rect;
+            });
+        });
+        (shapes, rect)
+    };
+    let (_, rect) = run(vec![]);
+    let c = rect.center();
+    let press = |pressed| Event::PointerButton {
+        pos: c,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    run(vec![Event::PointerMoved(c), press(true)]);
+    run(vec![press(false)]);
+    for _ in 0..3 {
+        run(vec![Event::PointerMoved(pos2(399.0, 299.0))]);
+    }
+    let (shapes, rect) = run(vec![]);
+    (skin, shapes, rect)
+}
+
+#[test]
+fn a_long_list_below_the_field_scrolls_inside_the_window() {
+    let (skin, shapes, rect) = open_long(pos2(10.0, 10.0), 40);
+    let (pieces, _) = drawn(&shapes);
+    let list = pieces
+        .iter()
+        .find(|(t, _)| *t == id(&skin, LIST, WidgetState::Normal))
+        .expect("the list below")
+        .1;
+    assert_eq!(list.min, rect.min + vec2(0.0, LIST_TOP));
+    assert!(list.bottom() <= 300.0, "{list:?}");
+    // La barra de scroll.
+    assert!(
+        pieces
+            .iter()
+            .any(|(t, _)| *t == id(&skin, "scroll.thumb.v", WidgetState::Normal))
+    );
+}
+
+#[test]
+fn without_room_below_the_list_opens_above_with_its_round_corner() {
+    let (skin, shapes, rect) = open_long(pos2(10.0, 250.0), 12);
+    let (pieces, _) = drawn(&shapes);
+    let list = pieces
+        .iter()
+        .find(|(t, _)| *t == id(&skin, LIST_ALONE, WidgetState::Normal))
+        .expect("the list above")
+        .1;
+    assert_eq!(list.bottom(), rect.top());
+    assert!(list.top() >= 0.0);
+    // El campo queda cerrado (sin `select.open`).
+    assert!(
+        !pieces
+            .iter()
+            .any(|(t, _)| *t == id(&skin, OPEN, WidgetState::Normal))
+    );
+}

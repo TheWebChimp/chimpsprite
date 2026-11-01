@@ -87,7 +87,7 @@ fn clicks_id() -> egui::Id {
 }
 
 /// Las secciones, una por pestaña.
-const SECTIONS: [&str; 11] = [
+const SECTIONS: [&str; 12] = [
     "Buttons",
     "Button group",
     "Inputs",
@@ -99,6 +99,7 @@ const SECTIONS: [&str; 11] = [
     "Stepper",
     "Title bar",
     "Menu",
+    "Scroll",
 ];
 
 /// En la memoria de egui: la sección a la vista.
@@ -147,7 +148,8 @@ pub fn show(ui: &mut Ui, skin: &Skin) {
                 7 => select_section(ui, skin, origin),
                 8 => stepper_section(ui, skin, origin),
                 9 => title_section(ui, skin, origin),
-                _ => menu_section(ui, skin, origin),
+                10 => menu_section(ui, skin, origin),
+                _ => scroll_section(ui, skin, origin),
             };
             // Lo que ocupa la página, para el scroll.
             let size = vec2(
@@ -1006,7 +1008,61 @@ fn select_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         );
     });
     ui.data_mut(|d| d.insert_temp(live_select_id(), pick));
+    // Uno con muchas opciones: la lista va debajo si entra (si no, del lado con más lugar) y lo
+    // que no entra se recorre con el scroll.
+    let long: Vec<String> = (1..=LONG_SELECT).map(|i| format!("Palette {i}")).collect();
+    let mut pick: usize = ui.data(|d| d.get_temp(long_select_id()).unwrap_or(19));
+    let rect = Rect::from_min_size(
+        pos2(left + SELECT_OPEN_LEFT, y),
+        vec2(PAGE_WIDTH, select::HEIGHT),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        select::select(ui, skin, "long", &long[pick], Some(SELECT_WIDTH), |ui| {
+            for (i, label) in long.iter().enumerate() {
+                crate::widgets::choice(ui, &mut pick, i, label);
+            }
+        });
+    });
+    ui.data_mut(|d| d.insert_temp(long_select_id(), pick));
     y + select::HEIGHT
+}
+
+/// Las opciones del select largo.
+const LONG_SELECT: usize = 40;
+
+/// En la memoria de egui: la opción elegida del select largo.
+fn long_select_id() -> egui::Id {
+    egui::Id::new("ui_catalog_long_select")
+}
+
+/// Sección Scroll: una caja con 40 filas que no entran, con la barra de scroll del skin
+/// (`scroll.track.v` y `scroll.thumb.v`).
+const SCROLL_BOX: Vec2 = vec2(160.0, 120.0);
+
+fn scroll_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
+    let colors = *skin.colors();
+    let rect = Rect::from_min_size(origin, SCROLL_BOX);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+        let area = egui::ScrollArea::vertical()
+            .id_salt("ui_catalog_scroll")
+            .max_height(SCROLL_BOX.y)
+            .auto_shrink([false, false]);
+        crate::pixel_ui::scroll(ui, area, |ui| {
+            for i in 1..=40 {
+                ui.label(format!("Row {i}"));
+            }
+        });
+    });
+    let (note, _) = pixel_draw::caps_text_in(
+        ui,
+        TextStyle::Small,
+        "drag the thumb or use the wheel",
+        origin.x,
+        rect.bottom() + 6.0,
+        colors.text_dim,
+    );
+    ui.painter().add(note);
+    rect.bottom() + 16.0
 }
 
 /// Sección Stepper, como en el mockup: − 255 + (58 de ancho) y − 155 ms + (70); una fila por

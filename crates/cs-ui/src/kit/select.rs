@@ -41,6 +41,11 @@ pub const OPEN: &str = "select.open";
 /// El campo abierto: 16 filas (sin el borde de abajo ni la luz).
 pub const OPEN_HEIGHT: f32 = 16.0;
 pub const LIST: &str = "select.list";
+/// El panel que no cuelga del campo (abierto hacia arriba): la esquina de arriba a la izquierda,
+/// redondeada como la de la derecha.
+pub const LIST_ALONE: &str = "select.list.alone";
+/// El aire mínimo entre el panel y el borde de la ventana.
+const SCREEN_AIR: f32 = 4.0;
 pub const ITEM_HOVER: &str = "select.item.hover";
 /// El panel empieza en la fila 15 del campo y es 11 px más ancho.
 pub const LIST_TOP: f32 = 15.0;
@@ -65,6 +70,8 @@ const SELECT_TAG: &str = "chimpsprite_kit_select";
 struct SelectLook {
     skin: Skin,
     pointer_in_list: bool,
+    /// El primer frame abierto: la elegida se trae a la vista.
+    just_opened: bool,
 }
 
 fn select_look(ui: &Ui) -> Option<SelectLook> {
@@ -117,7 +124,11 @@ pub fn select_at<R>(
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::ComboBox, enabled, selected));
     let popup_id = Popup::default_response_id(&response);
-    let open = Popup::is_id_open(ui.ctx(), popup_id);
+    // Abierto hacia abajo, el campo se une a la lista; hacia arriba queda como cerrado.
+    let above = ui
+        .data(|d| d.get_temp::<bool>(above_id(id)))
+        .unwrap_or(false);
+    let open = Popup::is_id_open(ui.ctx(), popup_id) && !above;
     let state = if enabled {
         InputState::Normal
     } else {
@@ -201,7 +212,9 @@ fn arrow_shapes(skin: &Skin, at: egui::Pos2, color: Color32) -> Vec<Shape> {
 }
 
 /// El panel con las opciones, abierto con un clic en el campo (y cerrado al elegir una o con un
-/// clic afuera).
+/// clic afuera). Va debajo del campo si entra; si no, del lado con más lugar (arriba, sin colgar
+/// del campo: con la esquina redondeada, `select.list.alone`), y lo que no entra se recorre con
+/// el scroll. Al abrirse, la elegida queda a la vista.
 fn list<R>(
     ui: &Ui,
     skin: &Skin,
@@ -212,20 +225,39 @@ fn list<R>(
 ) -> Option<R> {
     let width_id = response.id.with("list_width");
     let list_rect_id = response.id.with("list_rect");
+    let content_id = response.id.with("list_content");
     let remembered: f32 = ui.data(|d| d.get_temp(width_id)).unwrap_or(0.0);
     let panel_w = (rect.width() + LIST_EXTRA).max(remembered);
     let last_rect: Option<Rect> = ui.data(|d| d.get_temp(list_rect_id));
+    let was_open = last_rect.is_some();
     let pointer_in_list = ui
         .ctx()
         .pointer_hover_pos()
         .zip(last_rect)
         .is_some_and(|(p, r)| r.contains(p));
-    let anchor = Rect::from_min_size(rect.min, vec2(rect.width(), LIST_TOP));
+    // Dónde va: lo que miden las opciones (del frame anterior) contra el lugar de cada lado.
+    let content_h: f32 = ui.data(|d| d.get_temp(content_id)).unwrap_or(ITEM_HEIGHT);
+    let screen = ui.ctx().content_rect();
+    let pads = LIST_PAD_TOP + LIST_PAD_BOTTOM + SHADOW + SCREEN_AIR;
+    let below_room = screen.bottom() - (rect.top() + LIST_TOP) - pads;
+    let above_room = rect.top() - screen.top() - pads;
+    let above = content_h > below_room && above_room > below_room;
+    ui.data_mut(|d| d.insert_temp(above_id(response.id), above));
+    let room = if above { above_room } else { below_room };
+    let max_h = room.max(3.0 * ITEM_HEIGHT).floor();
+    let (anchor, align) = if above {
+        (rect, RectAlign::TOP_START)
+    } else {
+        (
+            Rect::from_min_size(rect.min, vec2(rect.width(), LIST_TOP)),
+            RectAlign::BOTTOM_START,
+        )
+    };
     let inner = Popup::menu(response)
         .close_behavior(PopupCloseBehavior::CloseOnClick)
         .anchor(anchor)
-        .align(RectAlign::BOTTOM_START)
-        .align_alternatives(&[RectAlign::TOP_START])
+        .align(align)
+        .align_alternatives(&[])
         .gap(0.0)
         .frame(egui::Frame::NONE)
         .show(|ui| {
@@ -235,10 +267,11 @@ fn list<R>(
             let look = SelectLook {
                 skin: skin.clone(),
                 pointer_in_list,
+                just_opened: !was_open,
             };
             let items = Rect::from_min_size(
                 top_left + vec2(LIST_SIDE, LIST_PAD_TOP),
-                vec2(panel_w - 2.0 * LIST_SIDE, f32::INFINITY),
+                vec2(panel_w - 2.0 * LIST_SIDE, max_h),
             );
             let mut child = ui.new_child(
                 UiBuilder::new()
@@ -246,9 +279,16 @@ fn list<R>(
                     .layout(egui::Layout::top_down(egui::Align::Min))
                     .ui_stack_info(UiStackInfo::default().with_tag_value(SELECT_TAG, look)),
             );
-            child.spacing_mut().item_spacing = Vec2::ZERO;
             child.set_min_width(items.width());
-            let out = content(&mut child);
+            let area = egui::ScrollArea::vertical()
+                .max_height(max_h)
+                .auto_shrink([false, true]);
+            let (out, full_h) = pixel_ui::scroll(&mut child, area, |ui| {
+                ui.spacing_mut().item_spacing = Vec2::ZERO;
+                ui.set_min_width(ui.available_width());
+                let out = content(ui);
+                (out, ui.min_rect().height())
+            });
             let used = child.min_rect();
             let panel = Rect::from_min_size(
                 top_left,
@@ -259,7 +299,11 @@ fn list<R>(
             );
             let with_shadow = Rect::from_min_size(panel.min, panel.size() + Vec2::splat(SHADOW));
             ui.allocate_rect(with_shadow, Sense::hover());
-            let back_shapes = match skin.piece(LIST, WidgetState::Normal) {
+            let name = if above { LIST_ALONE } else { LIST };
+            let piece = skin
+                .piece(name, WidgetState::Normal)
+                .or_else(|| skin.piece(LIST, WidgetState::Normal));
+            let back_shapes = match piece {
                 Some(piece) => pixel_ui::piece_shapes(piece, with_shadow, ppp),
                 None => {
                     let colors = skin.colors();
@@ -275,25 +319,36 @@ fn list<R>(
                 }
             };
             ui.painter().set(back, Shape::Vec(back_shapes));
-            // El campo abierto, encima del borde del panel (su fila de sombra queda sobre él).
-            ui.painter().extend(field_shapes(
-                ui,
-                skin,
-                rect,
-                selected,
-                InputState::Normal,
-                true,
-            ));
+            if !above {
+                // El campo abierto, encima del borde del panel (su fila de sombra queda sobre él).
+                ui.painter().extend(field_shapes(
+                    ui,
+                    skin,
+                    rect,
+                    selected,
+                    InputState::Normal,
+                    true,
+                ));
+            }
             ui.data_mut(|d| {
                 d.insert_temp(width_id, panel.width());
                 d.insert_temp(list_rect_id, panel);
+                d.insert_temp(content_id, full_h);
             });
             out
         });
+    if inner.is_none() {
+        ui.data_mut(|d| d.remove::<Rect>(list_rect_id));
+    }
     inner.map(|i| {
         response.ctx.move_to_top(i.response.layer_id);
         i.inner
     })
+}
+
+/// En la memoria de egui: si la lista del select `id` va arriba del campo.
+fn above_id(id: Id) -> Id {
+    id.with("list_above")
 }
 
 /// Una opción del panel de un select: la fila de 15 con su texto, la franja rosa con el puntero
@@ -312,6 +367,9 @@ pub fn item(ui: &mut Ui, selected: bool, label: &str) -> Option<Response> {
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::WidgetType::SelectableLabel, enabled, selected, label)
     });
+    if selected && look.just_opened {
+        response.scroll_to_me(Some(egui::Align::Center));
+    }
     if ui.is_rect_visible(rect) {
         let ppp = ui.ctx().pixels_per_point();
         let lit = enabled && (response.hovered() || (selected && !look.pointer_in_list));
