@@ -549,11 +549,23 @@ fn the_embedded_skin_has_the_menu_pieces_of_the_design() {
     assert_eq!(separator.size, [3, 2]);
     let px = |x: u32, y: u32| {
         let i = ((y * separator.size[0] + x) * 4) as usize;
-        [separator.rgba[i], separator.rgba[i + 1], separator.rgba[i + 2]]
+        [
+            separator.rgba[i],
+            separator.rgba[i + 1],
+            separator.rgba[i + 2],
+        ]
     };
     assert_eq!([px(1, 0), px(1, 1)], [[255, 255, 255], [189, 164, 153]]);
-    assert_eq!([px(0, 0), px(0, 1)], [[234, 224, 221], [136, 110, 106]], "left");
-    assert_eq!([px(2, 0), px(2, 1)], [[255, 255, 255], [221, 206, 191]], "right");
+    assert_eq!(
+        [px(0, 0), px(0, 1)],
+        [[234, 224, 221], [136, 110, 106]],
+        "left"
+    );
+    assert_eq!(
+        [px(2, 0), px(2, 1)],
+        [[255, 255, 255], [221, 206, 191]],
+        "right"
+    );
     // La tecla sin texto, que se estira (las badges: el nombre va encima en chimpfont).
     let key = &data.pieces["key"];
     assert_eq!((key.size, key.center), ([19, 7], rect9(1, 1, 17, 5)));
