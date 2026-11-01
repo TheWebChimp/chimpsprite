@@ -529,4 +529,4 @@ pub fn label_shapes(
 }
 
 #[cfg(test)]
-pub(super) mod tests;
+pub(crate) mod tests;

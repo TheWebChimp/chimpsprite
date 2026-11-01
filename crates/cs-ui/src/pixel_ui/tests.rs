@@ -731,3 +731,62 @@ fn wrap_rows_keeps_each_group_whole_and_moves_what_does_not_fit_to_the_next_row(
     assert_eq!(wrap_rows(10.0, &[25.0], &[]), vec![0..1]);
     assert!(wrap_rows(10.0, &[], &[]).is_empty());
 }
+
+/// Los rects de la pieza `name` dibujados (las partes del 9-slice, juntas).
+fn piece_bounds(shapes: &[egui::Shape], skin: &Skin, name: &str) -> Option<Rect> {
+    let id = skin.piece(name, WidgetState::Normal)?.texture.id();
+    fn walk(s: &egui::Shape, id: egui::TextureId, out: &mut Option<Rect>) {
+        match s {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| walk(s, id, out)),
+            egui::Shape::Mesh(m) if m.texture_id == id => {
+                let r = m.calc_bounds();
+                *out = Some(out.map_or(r, |o| o.union(r)));
+            }
+            _ => {}
+        }
+    }
+    let mut out = None;
+    shapes.iter().for_each(|s| walk(s, id, &mut out));
+    out
+}
+
+#[test]
+fn a_fresh_scroll_has_its_thumb_at_the_top_and_nothing_of_egui_under_the_bar() {
+    let (ctx, skin) = crate::kit::button::tests::pixel_ctx();
+    set_bubble(&ctx, Some(std::sync::Arc::new(skin.clone())));
+    let mut shapes = vec![];
+    for _ in 0..3 {
+        shapes = crate::kit::button::tests::frame(&ctx, vec![], |ui| {
+            let rect = Rect::from_min_size(egui::pos2(10.0, 10.0), egui::vec2(160.0, 120.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                let area = egui::ScrollArea::vertical()
+                    .id_salt("t")
+                    .max_height(120.0)
+                    .auto_shrink([false, false]);
+                scroll(ui, area, |ui| {
+                    for i in 1..=40 {
+                        ui.label(format!("Row {i}"));
+                    }
+                });
+            });
+        });
+    }
+    let track = piece_bounds(&shapes, &skin, "scroll.track.v").expect("the track");
+    let thumb = piece_bounds(&shapes, &skin, "scroll.thumb.v").expect("the thumb");
+    // Nada de egui se pinta con color debajo de la barra (asomaría por las esquinas).
+    fn rects(s: &egui::Shape, out: &mut Vec<(Rect, egui::Color32)>) {
+        match s {
+            egui::Shape::Vec(v) => v.iter().for_each(|s| rects(s, out)),
+            egui::Shape::Rect(r) => out.push((r.rect, r.fill)),
+            _ => {}
+        }
+    }
+    let mut all = vec![];
+    shapes.iter().for_each(|s| rects(s, &mut all));
+    let under: Vec<_> = all
+        .iter()
+        .filter(|(r, c)| r.intersects(track) && c.a() > 0)
+        .collect();
+    assert!(under.is_empty(), "{under:?}");
+    assert_eq!(thumb.top(), track.top() + 1.0);
+}

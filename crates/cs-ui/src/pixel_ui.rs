@@ -941,7 +941,27 @@ pub fn scroll<R>(
         s.dormant_handle_opacity = 0.0;
         s.active_handle_opacity = 0.0;
         s.interact_handle_opacity = 0.0;
-        let out = area.show(ui, add_contents);
+        // Las barras fijas de egui ignoran esas opacidades: su fondo (`extreme_bg_color`) y su
+        // pulgar (el relleno de los widgets) se pintarían debajo de las piezas y asomarían por sus
+        // esquinas redondeadas. Transparentes para la barra; el contenido, con los de siempre.
+        let content_visuals = ui.visuals().clone();
+        let v = ui.visuals_mut();
+        v.extreme_bg_color = Color32::TRANSPARENT;
+        for w in [
+            &mut v.widgets.noninteractive,
+            &mut v.widgets.inactive,
+            &mut v.widgets.hovered,
+            &mut v.widgets.active,
+        ] {
+            w.bg_fill = Color32::TRANSPARENT;
+            w.weak_bg_fill = Color32::TRANSPARENT;
+            w.fg_stroke.color = Color32::TRANSPARENT;
+            w.bg_stroke.color = Color32::TRANSPARENT;
+        }
+        let out = area.show(ui, |ui| {
+            *ui.visuals_mut() = content_visuals;
+            add_contents(ui)
+        });
         let ppp = ui.ctx().pixels_per_point();
         let inner = out.inner_rect;
         let mut shapes = Vec::new();
