@@ -35,7 +35,7 @@ fn the_pieces_are_the_mockup_ones() {
     let (_, skin) = pixel_ctx();
     let size = |n: &str| skin.piece(n, WidgetState::Normal).unwrap().size;
     assert_eq!(size(OPEN), [6, 16]);
-    assert_eq!(size(LIST), [8, 13]);
+    assert_eq!(size(LIST), [10, 13]);
     assert_eq!(size(ITEM_HOVER), [3, 15]);
     assert_eq!(size(ARROW), [5, 3]);
     let list = skin.piece(LIST, WidgetState::Normal).unwrap();
@@ -47,8 +47,14 @@ fn the_pieces_are_the_mockup_ones() {
     // La sombra: el negro (5,4,3) con alfa 123, como lo marca el mockup.
     let data = crate::skin::decode(crate::skin::EMBEDDED).unwrap();
     let raw = &data.pieces[LIST];
-    let i = ((8 * raw.size[0] + 7) * 4) as usize;
+    let at = |x: u32, y: u32| ((y * raw.size[0] + x) * 4) as usize;
+    let i = at(9, 8);
     assert_eq!(raw.rgba[i..i + 4], [5, 4, 3, 123]);
+    // Abajo, en escalón como en el mockup: cada fila empieza una columna más a la derecha.
+    assert_eq!(raw.rgba[at(2, 11) + 3], 0);
+    assert_eq!(raw.rgba[at(3, 11) + 3], 123);
+    assert_eq!(raw.rgba[at(3, 12) + 3], 0);
+    assert_eq!(raw.rgba[at(4, 12) + 3], 123);
     assert_eq!(list.size, raw.size);
 }
 
