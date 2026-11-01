@@ -70,6 +70,73 @@ fn shift_copy_paste_and_clear_a_glyph() {
     assert_ne!(e.sprite().pixel(layer, e.frame, 2, 1), ONE_BIT_INK);
 }
 
+/// Que la fuente siga con un glifo por frame, en orden, una capa y sus 8×8.
+fn assert_intact(e: &Editor) {
+    let font = e.font().unwrap();
+    assert_eq!(font.check(e.sprite()), Ok(()));
+    assert_eq!((e.sprite().width, e.sprite().height), (8, 8));
+}
+
+#[test]
+fn frame_actions_do_nothing_on_a_font() {
+    let mut e = editor_with_font();
+    e.go_to_glyph('A');
+    let before = e.document.clone();
+    // Alt+N (New Frame), New Empty Frame, Delete Frame.
+    e.duplicate_frame();
+    e.insert_empty_frame();
+    e.remove_frame();
+    e.move_frame(e.frame, 0);
+    e.frame_range = Some((0, 3));
+    assert!(!e.reverse_frames());
+    assert_intact(&e);
+    assert_eq!(e.document, before);
+    // Cortar y pegar frames del timeline.
+    e.frame_range = Some((0, 1));
+    e.frames_picked = true;
+    assert!(e.cut_timeline().is_none());
+    let clip = e.copy_timeline().unwrap();
+    e.paste_timeline(&clip);
+    assert_intact(&e);
+    assert_eq!(e.document, before);
+    assert_eq!(e.current_glyph(), Some('A'));
+}
+
+#[test]
+fn play_does_nothing_on_a_font() {
+    let mut e = editor_with_font();
+    e.toggle_play();
+    assert!(!e.playing);
+}
+
+#[test]
+fn the_sprite_of_a_font_keeps_its_color_mode_and_size() {
+    let mut e = editor_with_font();
+    let before = e.document.clone();
+    assert!(!e.set_color_mode(cs_commands::sprite_ops::ColorTarget::ALL[0]));
+    assert!(!e.set_color_mode(cs_commands::sprite_ops::ColorTarget::ALL[1]));
+    assert!(!e.scale_sprite(16, 16));
+    assert!(!e.rotate_canvas(cs_commands::sprite_ops::Rotation::Clockwise));
+    e.selection = Some(cs_core::Mask::from_rect(8, 8, (0, 0), (3, 3)));
+    assert!(!e.crop_to_selection());
+    assert!(!e.can_resize_sprite());
+    assert_intact(&e);
+    assert_eq!(e.document, before);
+}
+
+#[test]
+fn layers_cannot_be_added_or_removed_on_a_font() {
+    let mut e = editor_with_font();
+    let before = e.document.clone();
+    e.add_layer(cs_core::LayerKind::Image);
+    e.add_layer(cs_core::LayerKind::Group);
+    assert!(!e.duplicate_layer());
+    e.remove_layer();
+    assert_intact(&e);
+    assert_eq!(e.document, before);
+    assert_eq!(e.sprite().layers.len(), 1);
+}
+
 #[test]
 fn the_text_tool_writes_with_a_document_font() {
     let mut e = editor_with_font();

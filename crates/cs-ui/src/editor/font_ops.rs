@@ -27,6 +27,18 @@ impl Editor {
         self.artboard().font.as_ref()
     }
 
+    /// Si el artboard activo es una fuente: sus frames, su capa, su modo de color y su celda no
+    /// se tocan con las acciones de siempre (solo con las de glifos).
+    pub fn is_font(&self) -> bool {
+        self.font().is_some()
+    }
+
+    /// Sprite Size, Canvas Size, Rotate Canvas, Crop y Trim: no en una fuente (la celda queda
+    /// fija al crearla).
+    pub fn can_resize_sprite(&self) -> bool {
+        !self.is_font()
+    }
+
     /// El carácter del glifo actual (el frame activo).
     pub fn current_glyph(&self) -> Option<char> {
         self.font()?.glyphs.get(self.frame).map(|g| g.ch)

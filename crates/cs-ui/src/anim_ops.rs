@@ -53,6 +53,10 @@ impl Editor {
             self.stop();
             return;
         }
+        // Los frames de una fuente son sus glifos: no hay animación.
+        if self.is_font() {
+            return;
+        }
         let (range, direction, repeat) = match self.sprite().tag_at(self.frame) {
             Some(tag) => ((tag.from, tag.to), tag.direction, tag.repeat),
             None => ((0, self.frame_count() - 1), AnimDirection::Forward, 0),

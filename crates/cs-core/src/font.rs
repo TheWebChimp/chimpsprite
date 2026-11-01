@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Artboard, ColorMode, Frame, Palette, PixelValue, Rgba, Sprite};
+use crate::{Artboard, ColorMode, Frame, LayerKind, Palette, PixelValue, Rgba, Sprite};
 
 /// 1 bit (prendido o apagado, como BitFontMaker2) o color.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -148,6 +148,88 @@ impl FontInfo {
             })
             .sum()
     }
+
+    /// Si el sprite de la fuente está bien armado: glifos en orden y sin repetir, uno por frame,
+    /// una sola capa de imagen y el modo de color del modo de la fuente.
+    pub fn check(&self, sprite: &Sprite) -> Result<(), FontError> {
+        if self.glyphs.windows(2).any(|w| w[0].ch >= w[1].ch) {
+            return Err(FontError::Unsorted);
+        }
+        if self.glyphs.len() != sprite.frames.len() {
+            return Err(FontError::GlyphCount {
+                glyphs: self.glyphs.len(),
+                frames: sprite.frames.len(),
+            });
+        }
+        if sprite.layers.len() != 1 || sprite.layers[0].kind != LayerKind::Image {
+            return Err(FontError::Layers);
+        }
+        let mode_ok = match self.mode {
+            FontMode::OneBit => matches!(sprite.color_mode, ColorMode::Indexed { .. }),
+            FontMode::Color => sprite.color_mode == ColorMode::Rgba,
+        };
+        if !mode_ok {
+            return Err(FontError::ColorMode);
+        }
+        Ok(())
+    }
+}
+
+/// Lo que está mal armado en una fuente (ver [`FontInfo::check`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum FontError {
+    #[error("the glyphs are not in order or are repeated")]
+    Unsorted,
+    #[error("{glyphs} glyphs for {frames} frames")]
+    GlyphCount { glyphs: usize, frames: usize },
+    #[error("a font has exactly one image layer")]
+    Layers,
+    #[error("the color mode does not match the font mode")]
+    ColorMode,
+}
+
+/// Arregla la lista de glifos de una fuente cargada para que vaya con los frames: los ordena
+/// (con sus frames) y quita los repetidos; los frames sin glifo reciben caracteres de uso
+/// privado libres desde U+E000 y los glifos sin frame se descartan. Devuelve si cambió algo.
+pub fn normalize_font(font: &mut FontInfo, sprite: &mut Sprite) -> bool {
+    let frames = sprite.frames.len();
+    if font.glyphs.len() == frames && font.glyphs.windows(2).all(|w| w[0].ch < w[1].ch) {
+        return false;
+    }
+    // Cada frame con su glifo: el que tenía (si no se repite) o uno de uso privado.
+    let mut used = std::collections::BTreeSet::new();
+    let mut slots: Vec<Option<GlyphInfo>> = (0..frames)
+        .map(|f| font.glyphs.get(f).copied().filter(|g| used.insert(g.ch)))
+        .collect();
+    let mut next = 0xE000u32;
+    for slot in slots.iter_mut().filter(|s| s.is_none()) {
+        let ch = loop {
+            let c = char::from_u32(next).unwrap_or('\u{E000}');
+            next += 1;
+            if used.insert(c) {
+                break c;
+            }
+        };
+        *slot = Some(GlyphInfo { ch, advance: None });
+    }
+    let mut order: Vec<(GlyphInfo, usize)> = slots
+        .into_iter()
+        .enumerate()
+        .map(|(f, g)| (g.expect("filled"), f))
+        .collect();
+    order.sort_by_key(|(g, _)| g.ch);
+    // Los frames (y sus cels) en el orden nuevo.
+    let mut new_index = vec![0; frames];
+    for (new, (_, old)) in order.iter().enumerate() {
+        new_index[*old] = new;
+    }
+    sprite.frames = order.iter().map(|(_, old)| sprite.frames[*old]).collect();
+    sprite.cels = std::mem::take(&mut sprite.cels)
+        .into_iter()
+        .map(|((layer, f), cel)| ((layer, new_index.get(f).copied().unwrap_or(f)), cel))
+        .collect();
+    font.glyphs = order.into_iter().map(|(g, _)| g).collect();
+    true
 }
 
 /// El sprite de una fuente: `frames` glifos vacíos de `cell`. 1 bit: indexado con papel
@@ -372,6 +454,72 @@ mod tests {
             ..artboard
         };
         assert!(plain.font_view().is_none());
+    }
+
+    #[test]
+    fn check_finds_what_is_wrong_with_a_font_sprite() {
+        let mut font = FontInfo::new("Mine", 8, FontMode::OneBit);
+        let mut s = font_sprite((8, 8), FontMode::OneBit, 94);
+        assert_eq!(font.check(&s), Ok(()));
+        s.frames.push(Frame { duration_ms: 100 });
+        assert_eq!(
+            font.check(&s),
+            Err(FontError::GlyphCount {
+                glyphs: 94,
+                frames: 95
+            })
+        );
+        s.frames.pop();
+        font.glyphs.swap(0, 1);
+        assert_eq!(font.check(&s), Err(FontError::Unsorted));
+        font.glyphs.swap(0, 1);
+        s.color_mode = ColorMode::Rgba;
+        assert_eq!(font.check(&s), Err(FontError::ColorMode));
+        s.color_mode = font_sprite((8, 8), FontMode::OneBit, 1).color_mode;
+        let mut extra = s.layers[0].clone();
+        extra.id = crate::LayerId(99);
+        s.layers.push(extra);
+        assert_eq!(font.check(&s), Err(FontError::Layers));
+    }
+
+    #[test]
+    fn normalizing_sorts_dedups_and_pads_the_glyphs_with_their_frames() {
+        let mut font = FontInfo::new("Mine", 8, FontMode::OneBit);
+        font.glyphs = vec![
+            GlyphInfo {
+                ch: 'B',
+                advance: Some(2),
+            },
+            GlyphInfo {
+                ch: 'A',
+                advance: None,
+            },
+            GlyphInfo {
+                ch: 'A',
+                advance: None,
+            },
+        ];
+        // Cuatro frames: el de 'B' (0) pintado; el 2 repite 'A' y el 3 no tiene glifo.
+        let mut s = font_sprite((8, 8), FontMode::OneBit, 4);
+        ink(&mut s, 0, &[(1, 1)]);
+        assert!(normalize_font(&mut font, &mut s));
+        let chars: Vec<char> = font.glyphs.iter().map(|g| g.ch).collect();
+        assert_eq!(chars, vec!['A', 'B', '\u{E000}', '\u{E001}']);
+        assert_eq!(font.glyphs[1].advance, Some(2));
+        assert_eq!(font.check(&s), Ok(()));
+        let layer = s.layers[0].id;
+        assert_eq!(
+            s.pixel(layer, 1, 1, 1),
+            ONE_BIT_INK,
+            "B's frame went with it"
+        );
+        assert!(!normalize_font(&mut font, &mut s), "already fine");
+        // Más glifos que frames: sobran los últimos.
+        let mut font = FontInfo::new("Mine", 8, FontMode::OneBit);
+        let mut s = font_sprite((8, 8), FontMode::OneBit, 2);
+        assert!(normalize_font(&mut font, &mut s));
+        assert_eq!(font.glyphs.len(), 2);
+        assert_eq!(font.check(&s), Ok(()));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
+use cs_commands::font::FontLock;
 use cs_commands::{Command, DocCommand, History, sprite_ops};
 use cs_core::{
     AnimDirection, Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, ObjectId, PixelValue,
@@ -645,7 +646,9 @@ impl Editor {
     /// Ejecuta sin confirmar lo flotante (lo usa la confirmación misma).
     pub(crate) fn apply_doc(&mut self, cmd: DocCommand) -> bool {
         self.merge = None;
-        match self.history.execute(&mut self.document, cmd) {
+        // Las fuentes no cambian de frames, capas, modo de color ni celda (salvo con las
+        // operaciones de glifos).
+        match FontLock::execute(&mut self.history, &mut self.document, cmd, false) {
             Ok(()) => {
                 self.revision += 1;
                 self.doc_version += 1;
@@ -663,12 +666,20 @@ impl Editor {
     /// El comando debe reemplazar un estado completo (como `SetObjects` o `SetSlices`) para
     /// que el inverso del primero deshaga todo el gesto.
     pub fn execute_grouped(&mut self, cmd: Command, group: u64) -> bool {
+        self.execute_doc_grouped(
+            DocCommand::OnArtboard {
+                id: self.active,
+                cmd,
+            },
+            group,
+        )
+    }
+
+    /// Como `execute_grouped`, con un comando de documento (p. ej. `SetFont` al arrastrar un
+    /// stepper del panel Font).
+    pub fn execute_doc_grouped(&mut self, cmd: DocCommand, group: u64) -> bool {
         // Como `execute_doc`: lo flotante se confirma antes (y corta el grupo).
         self.commit_floating();
-        let cmd = DocCommand::OnArtboard {
-            id: self.active,
-            cmd,
-        };
         let target = (
             self.active,
             self.layer,
@@ -676,11 +687,8 @@ impl Editor {
             self.slice,
             self.current_object(),
         );
-        let result = if self.merge == Some((group, target)) {
-            self.history.execute_merged(&mut self.document, cmd)
-        } else {
-            self.history.execute(&mut self.document, cmd)
-        };
+        let merged = self.merge == Some((group, target));
+        let result = FontLock::execute(&mut self.history, &mut self.document, cmd, merged);
         match result {
             Ok(()) => {
                 self.merge = Some((group, target));

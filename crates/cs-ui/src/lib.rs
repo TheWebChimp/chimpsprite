@@ -344,6 +344,10 @@ impl ChimpApp {
     }
 
     fn open_canvas_size(&mut self) {
+        // Una fuente tiene la celda fija.
+        if !self.doc.editor.can_resize_sprite() {
+            return;
+        }
         self.canvas_size = Some(canvas_size::CanvasSizeDialog::new(
             self.doc.editor.artboard(),
         ));

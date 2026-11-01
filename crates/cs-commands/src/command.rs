@@ -47,6 +47,8 @@ pub enum CmdError {
     InstanceCycle,
     #[error("tileset {0} is used by a layer")]
     TilesetInUse(usize),
+    #[error("artboard {0:?} is a font; use glyph operations")]
+    FontStructure(ArtboardId),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -2,6 +2,11 @@
 
 use crate::*;
 
+/// Por qué no se pueden tocar los frames, las capas o el lienzo de una fuente.
+const FONT_FRAMES: &str = "A font's frames are its glyphs: use the Font panel";
+const FONT_LAYERS: &str = "A font has a single layer";
+const FONT_SPRITE: &str = "A font keeps its cell size and color mode";
+
 impl ChimpApp {
     /// File → Open Recent: los archivos recientes (el que ya no existe se quita de la lista).
     #[cfg(not(target_arch = "wasm32"))]
@@ -93,18 +98,24 @@ impl ChimpApp {
             self.open_sprite_dialog(|a| SpriteDialog::Properties(PropertiesDialog::new(a)));
         }
         let current = sprite_ops::ColorTarget::of(self.doc.editor.sprite().color_mode);
-        menus::submenu(ui, "Color Mode", |ui| {
-            for target in sprite_ops::ColorTarget::ALL {
-                if ui
-                    .add(menus::choice(current == target, target.label()))
-                    .clicked()
-                {
-                    if current != target {
-                        self.doc.editor.set_color_mode(target);
+        // Una fuente: su celda y su modo de color quedan como se creó.
+        let resizable = self.doc.editor.can_resize_sprite();
+        ui.add_enabled_ui(resizable, |ui| {
+            menus::submenu(ui, "Color Mode", |ui| {
+                for target in sprite_ops::ColorTarget::ALL {
+                    if ui
+                        .add(menus::choice(current == target, target.label()))
+                        .clicked()
+                    {
+                        if current != target {
+                            self.doc.editor.set_color_mode(target);
+                        }
+                        ui.close();
                     }
-                    ui.close();
                 }
-            }
+            })
+            .response
+            .on_disabled_hover_text(FONT_SPRITE);
         });
         menus::separator(ui);
         if ui.add(menus::plain("Duplicate")).clicked() {
@@ -123,23 +134,28 @@ impl ChimpApp {
             ui.close();
         }
         menus::separator(ui);
-        let transformable = sprite_ops::can_transform(self.doc.editor.sprite());
+        let transformable = sprite_ops::can_transform(self.doc.editor.sprite()) && resizable;
+        let no_transform = if resizable { NO_TRANSFORM } else { FONT_SPRITE };
         let size = menus::item(
             "Sprite Size",
             keymap::label(ui.ctx(), keymap::Action::SpriteSize),
         );
         if ui
             .add_enabled(transformable, size)
-            .on_disabled_hover_text(NO_TRANSFORM)
+            .on_disabled_hover_text(no_transform)
             .clicked()
         {
             self.open_sprite_dialog(|a| SpriteDialog::Size(SpriteSizeDialog::new(a)));
         }
         if ui
-            .add(menus::item(
-                "Canvas Size",
-                keymap::label(ui.ctx(), keymap::Action::CanvasSize),
-            ))
+            .add_enabled(
+                resizable,
+                menus::item(
+                    "Canvas Size",
+                    keymap::label(ui.ctx(), keymap::Action::CanvasSize),
+                ),
+            )
+            .on_disabled_hover_text(FONT_SPRITE)
             .clicked()
         {
             self.open_canvas_size();
@@ -158,17 +174,21 @@ impl ChimpApp {
                 }
             })
             .response
-            .on_disabled_hover_text(NO_TRANSFORM);
+            .on_disabled_hover_text(no_transform);
         });
         menus::separator(ui);
         let has_selection = self.doc.editor.selection.is_some();
         if ui
-            .add_enabled(has_selection, menus::plain("Crop"))
+            .add_enabled(resizable && has_selection, menus::plain("Crop"))
             .clicked()
         {
             self.doc.editor.crop_to_selection();
         }
-        if ui.add(menus::plain("Trim")).clicked() {
+        if ui
+            .add_enabled(resizable, menus::plain("Trim"))
+            .on_disabled_hover_text(FONT_SPRITE)
+            .clicked()
+        {
             self.doc.editor.trim_canvas();
         }
     }
@@ -309,20 +329,30 @@ impl ChimpApp {
     fn frame_menu(&mut self, ui: &mut egui::Ui) {
         let editor = &mut self.doc.editor;
         let last = editor.frame_count() - 1;
+        // En una fuente los frames son sus glifos: se agregan y quitan en el panel Font.
+        let frames = !editor.is_font();
         if ui
-            .add(menus::item(
-                "New Frame",
-                keymap::label(ui.ctx(), keymap::Action::NewFrame),
-            ))
+            .add_enabled(
+                frames,
+                menus::item(
+                    "New Frame",
+                    keymap::label(ui.ctx(), keymap::Action::NewFrame),
+                ),
+            )
+            .on_disabled_hover_text(FONT_FRAMES)
             .clicked()
         {
             editor.duplicate_frame();
         }
-        if ui.add(menus::plain("New Empty Frame")).clicked() {
+        if ui
+            .add_enabled(frames, menus::plain("New Empty Frame"))
+            .on_disabled_hover_text(FONT_FRAMES)
+            .clicked()
+        {
             editor.insert_empty_frame();
         }
         if ui
-            .add_enabled(last > 0, menus::plain("Delete Frame"))
+            .add_enabled(frames && last > 0, menus::plain("Delete Frame"))
             .clicked()
         {
             editor.remove_frame();
@@ -334,7 +364,7 @@ impl ChimpApp {
             return;
         }
         if ui
-            .add_enabled(a != b, menus::plain("Reverse Frames"))
+            .add_enabled(frames && a != b, menus::plain("Reverse Frames"))
             .on_disabled_hover_text("Select two or more frames")
             .clicked()
         {
@@ -382,10 +412,10 @@ impl ChimpApp {
             "Play Animation"
         };
         if ui
-            .add(menus::item(
-                play,
-                keymap::label(ui.ctx(), keymap::Action::PlayPause),
-            ))
+            .add_enabled(
+                frames || editor.playing,
+                menus::item(play, keymap::label(ui.ctx(), keymap::Action::PlayPause)),
+            )
             .clicked()
         {
             editor.toggle_play();
@@ -785,6 +815,11 @@ A pixel art editor."
                 menus::bar_menu(ui, look, "Edit", |ui| self.edit_menu(ui));
                 menus::bar_menu(ui, look, "Sprite", |ui| self.sprite_menu(ui));
                 menus::bar_menu(ui, look, "Layer", |ui| {
+                    // Una fuente tiene una sola capa: nada que agregar, quitar ni convertir.
+                    if self.doc.editor.is_font() {
+                        ui.weak(FONT_LAYERS);
+                        return;
+                    }
                     let editor = &mut self.doc.editor;
                     let ctx = ui.ctx().clone();
                     let action = |a| keymap::label(&ctx, a);

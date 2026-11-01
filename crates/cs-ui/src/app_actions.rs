@@ -114,7 +114,9 @@ impl ChimpApp {
                 sprite_dialogs::SpriteDialog::Properties(sprite_dialogs::PropertiesDialog::new(a))
             }),
             SpriteSize => {
-                if cs_commands::sprite_ops::can_transform(editor.sprite()) {
+                if cs_commands::sprite_ops::can_transform(editor.sprite())
+                    && editor.can_resize_sprite()
+                {
                     self.open_sprite_dialog(|a| {
                         sprite_dialogs::SpriteDialog::Size(sprite_dialogs::SpriteSizeDialog::new(a))
                     });

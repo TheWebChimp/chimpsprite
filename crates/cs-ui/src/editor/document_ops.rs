@@ -67,6 +67,9 @@ impl Editor {
 
     /// `Sprite → Rotate Canvas`: gira todo el sprite (no con instancias ni tilemaps).
     pub fn rotate_canvas(&mut self, rotation: sprite_ops::Rotation) -> bool {
+        if !self.can_resize_sprite() {
+            return false;
+        }
         self.commit_floating();
         let rotated = sprite_ops::rotate(self.sprite(), rotation);
         self.replace_sprite(rotated)
@@ -74,13 +77,20 @@ impl Editor {
 
     /// `Sprite → Sprite Size`: escala todo el sprite (no con instancias ni tilemaps).
     pub fn scale_sprite(&mut self, width: u32, height: u32) -> bool {
+        if !self.can_resize_sprite() {
+            return false;
+        }
         self.commit_floating();
         let scaled = sprite_ops::scale(self.sprite(), width, height);
         self.replace_sprite(scaled)
     }
 
-    /// `Sprite → Color Mode`: pasa a RGBA o a indexado con la paleta del sprite.
+    /// `Sprite → Color Mode`: pasa a RGBA o a indexado con la paleta del sprite. No en una
+    /// fuente: su modo de color es el de la fuente.
     pub fn set_color_mode(&mut self, target: sprite_ops::ColorTarget) -> bool {
+        if self.is_font() {
+            return false;
+        }
         self.commit_floating();
         let converted = sprite_ops::convert(self.sprite(), target);
         self.replace_sprite(converted)
@@ -115,7 +125,11 @@ impl Editor {
     /// contenido queda en su lugar del mundo.
     fn crop_canvas(&mut self, (x, y, w, h): (i32, i32, u32, u32)) -> bool {
         let sprite = self.sprite();
-        if (x, y, w, h) == (0, 0, sprite.width, sprite.height) || w == 0 || h == 0 {
+        if (x, y, w, h) == (0, 0, sprite.width, sprite.height)
+            || w == 0
+            || h == 0
+            || !self.can_resize_sprite()
+        {
             return false;
         }
         let (ax, ay) = self.artboard().position;
