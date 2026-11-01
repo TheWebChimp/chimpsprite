@@ -679,7 +679,10 @@ impl LumenPanel {
             let notice = notice.clone();
             ui.horizontal(|ui| {
                 hint(ui, &notice);
-                if ui.small_button("×").clicked() {
+                let skin = crate::pixel_ui::frame_skin(ui.ctx());
+                if crate::pixel_ui::icon_button(ui, skin.as_deref(), "icon.tab_close", "×", None)
+                    .clicked()
+                {
                     self.notice = None;
                 }
             });

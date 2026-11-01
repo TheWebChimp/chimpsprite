@@ -589,6 +589,12 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         });
     }
     // Desarrollo: abre el diálogo de nueva capa tilemap para capturas (con --demo).
+    // Desarrollo: la capa activa pasada a tilemap de 8×8 (con su panel del tileset) y el volteo X
+    // del pincel prendido, para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_TILEMAP").is_some() && app.has_doc() {
+        app.doc.editor.convert_to_tilemap((8, 8));
+        app.doc.editor.toggle_brush_flip(cs_core::Tile::FLIP_X);
+    }
     if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
         app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
     }
