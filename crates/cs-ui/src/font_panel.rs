@@ -9,12 +9,14 @@ use eframe::egui::{
 };
 
 use crate::editor::Editor;
+use crate::font_dialog;
 use crate::kit;
 use crate::menus;
 use crate::panel_kit::label_with_hint;
 use crate::pixel_sections;
 use crate::pixel_ui;
 use crate::skin::Skin;
+use crate::widgets;
 
 /// Ancho del contenido.
 pub const WIDTH: f32 = 300.0;
@@ -26,14 +28,23 @@ const COLUMNS: usize = 13;
 const CELL_LABEL: f32 = 11.0;
 /// Ancho del campo "Add char".
 const ADD_WIDTH: f32 = 120.0;
+/// La escala del texto del Test Drive y el aire alrededor de él.
+const TEST_SCALE: u32 = 2;
+const TEST_PAD: f32 = 4.0;
+/// La tinta del Test Drive: oscura fija, porque el papel es blanco aunque el tema sea oscuro.
+const TEST_INK: Color32 = Color32::from_rgb(5, 4, 3);
+/// La columna de las etiquetas de los ajustes y los anchos de sus controles.
+const LABEL_W: f32 = 90.0;
+const STEPPER_W: f32 = 80.0;
+const NAME_W: f32 = 160.0;
+const GHOST_W: f32 = 80.0;
 
 /// El estado del panel entre frames.
 pub struct FontPanelState {
     pub page: Page,
     /// Lo escrito en el campo "Add char".
     pub add_char: String,
-    /// El texto de prueba de la fuente (lo escribe el Test Drive, que llega después).
-    #[allow(dead_code)]
+    /// El texto de prueba de la fuente (el del Test Drive).
     pub test_text: String,
 }
 
@@ -112,7 +123,222 @@ pub fn show(
     map(ui, editor, skin, state);
     ui.add_space(6.0);
     add_chars(ui, editor, skin, state);
+    ui.add_space(10.0);
+    test_drive(ui, editor, skin, state);
+    ui.add_space(10.0);
+    settings(ui, editor, skin);
     None
+}
+
+/// El Test Drive: el campo del texto de prueba y, debajo, ese texto escrito con la fuente (a
+/// escala 2, en tinta oscura sobre blanco). Un clic en una letra va a su glifo.
+fn test_drive(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, state: &mut FontPanelState) {
+    let Some(view) = editor.artboard().font_view() else {
+        return;
+    };
+    label_with_hint(ui, "Test Drive", "(click a letter)");
+    ui.add_space(4.0);
+    let width = WIDTH - 16.0;
+    match skin {
+        Some(skin) => {
+            kit::input::text_input(
+                ui,
+                skin,
+                &mut state.test_text,
+                width,
+                "Test text",
+                "Type to test",
+            );
+        }
+        None => {
+            ui.add(
+                egui::TextEdit::singleline(&mut state.test_text)
+                    .desired_width(width)
+                    .hint_text("Type to test"),
+            );
+        }
+    }
+    ui.add_space(4.0);
+    let line_h = (view.cell.1 * TEST_SCALE) as f32;
+    let lines = state.test_text.lines().count().max(1);
+    let (rect, _) = ui.allocate_exact_size(
+        vec2(width, line_h * lines as f32 + 2.0 * TEST_PAD),
+        Sense::hover(),
+    );
+    let paper = Rect::from_min_size(rect.min.round(), rect.size());
+    let painter = ui.painter().with_clip_rect(paper.intersect(ui.clip_rect()));
+    painter.rect_filled(paper, 0.0, Color32::WHITE);
+    let origin = paper.min + Vec2::splat(TEST_PAD);
+    for (x, y, c) in cs_tools::text::font_text(&view, &state.test_text, TEST_SCALE) {
+        let color = c.map_or(TEST_INK, |c| {
+            Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
+        });
+        painter.rect_filled(
+            Rect::from_min_size(origin + vec2(x as f32, y as f32), Vec2::splat(1.0)),
+            0.0,
+            color,
+        );
+    }
+    // Las letras: un rect por carácter, con el avance que usa `font_text`.
+    let enabled = ui.is_enabled();
+    let mut go = None;
+    for (row, line) in state.test_text.lines().enumerate() {
+        let mut pen = 0u32;
+        for (i, ch) in line.chars().enumerate() {
+            let advance = if ch == ' ' {
+                view.space_width
+            } else {
+                view.glyphs
+                    .get(&ch)
+                    .map_or(view.missing_width, |g| g.advance)
+            };
+            let letter = Rect::from_min_size(
+                origin + vec2((pen * TEST_SCALE) as f32, row as f32 * line_h),
+                vec2((advance * TEST_SCALE) as f32, line_h),
+            )
+            .intersect(paper);
+            pen += advance;
+            if ch == ' ' || !letter.is_positive() {
+                continue;
+            }
+            let response =
+                ui.interact(letter, ui.id().with(("test_drive", row, i)), Sense::click());
+            let label = format!("Test Drive {ch}");
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label)
+            });
+            if response.clicked() {
+                go = Some(ch);
+            }
+        }
+    }
+    if let Some(ch) = go {
+        editor.go_to_glyph(ch);
+    }
+}
+
+/// Una fila de los ajustes: la etiqueta en su columna y el control.
+fn row<R>(ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.horizontal(|ui| {
+        ui.allocate_ui_with_layout(
+            vec2(LABEL_W, kit::stepper::HEIGHT),
+            egui::Layout::left_to_right(egui::Align::Center),
+            |ui| {
+                ui.set_min_width(LABEL_W);
+                ui.label(label);
+            },
+        );
+        control(ui)
+    })
+    .inner
+}
+
+/// Un número de los ajustes: el stepper del kit (sin Pixel UI, el `DragValue` de egui).
+fn number(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    label: &str,
+    value: &mut u32,
+    range: std::ops::RangeInclusive<u32>,
+) {
+    row(ui, label, |ui| match skin {
+        Some(skin) => kit::stepper::stepper(ui, skin, STEPPER_W, label, value, range, 1, None),
+        None => ui.add(egui::DragValue::new(value).range(range)),
+    });
+}
+
+/// Una casilla: la del kit (sin Pixel UI, la de egui).
+fn checkbox(ui: &mut Ui, skin: Option<&Skin>, checked: &mut bool, label: &str) -> egui::Response {
+    match skin {
+        Some(skin) => kit::check::checkbox(ui, skin, checked, label),
+        None => ui.checkbox(checked, label),
+    }
+}
+
+/// Los ajustes de la fuente: nombre, modo y celda, las medidas, el espaciado, Monospace, la letra
+/// fantasma y el ancho automático del glifo actual. Todo lo cambiado en un frame es un paso de
+/// deshacer (`set_font_info`).
+fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
+    let Some(font) = editor.font().cloned() else {
+        return;
+    };
+    let (cell_w, cell_h) = (editor.sprite().width, editor.sprite().height);
+    ui.label("Font");
+    ui.add_space(4.0);
+    let mut info = font.clone();
+    let name_id = ui.id().with("font_name");
+    if let Some(name) = row(ui, "Name", |ui| {
+        kit::input::buffered(ui, name_id, &font.name, |ui, text| match skin {
+            Some(skin) => kit::input::text_input(ui, skin, text, NAME_W, "Font name", "Font name"),
+            None => ui.add(egui::TextEdit::singleline(text).desired_width(NAME_W)),
+        })
+    }) {
+        info.name = name;
+    }
+    row(ui, "Mode", |ui| ui.label(font_dialog::mode_name(font.mode)));
+    row(ui, "Cell", |ui| ui.label(format!("{cell_w}×{cell_h}")));
+    number(ui, skin, "Baseline", &mut info.metrics.baseline, 0..=cell_h);
+    number(
+        ui,
+        skin,
+        "Cap height",
+        &mut info.metrics.cap_height,
+        0..=cell_h,
+    );
+    number(ui, skin, "x-height", &mut info.metrics.x_height, 0..=cell_h);
+    number(ui, skin, "Descent", &mut info.metrics.descent, 0..=cell_h);
+    number(ui, skin, "Letter spacing", &mut info.letter_spacing, 0..=8);
+    number(ui, skin, "Space width", &mut info.space_width, 0..=cell_w);
+    ui.add_space(2.0);
+    checkbox(ui, skin, &mut info.monospace, "Monospace");
+    ui.horizontal(|ui| {
+        checkbox(ui, skin, &mut info.ghost.enabled, "Ghost");
+        let face = if info.ghost.monospace {
+            "Hack"
+        } else {
+            "Ubuntu"
+        };
+        let ghost = &mut info.ghost.monospace;
+        match skin {
+            Some(skin) => {
+                kit::select::select(ui, skin, "font_ghost", face, Some(GHOST_W), |ui| {
+                    widgets::choice(ui, ghost, false, "Ubuntu");
+                    widgets::choice(ui, ghost, true, "Hack");
+                });
+            }
+            None => {
+                egui::ComboBox::from_id_salt("font_ghost")
+                    .selected_text(face)
+                    .show_ui(ui, |ui| {
+                        widgets::choice(ui, ghost, false, "Ubuntu");
+                        widgets::choice(ui, ghost, true, "Hack");
+                    });
+            }
+        }
+    });
+    if info != font {
+        editor.set_font_info(info);
+    }
+    // El ancho automático del glifo actual (después: `set_font_info` lleva los anchos de antes).
+    let current = editor.current_glyph().and_then(|ch| {
+        let font = editor.font()?;
+        Some((ch, font.glyphs[font.index_of(ch)?].advance))
+    });
+    if let Some((ch, advance)) = current {
+        let mut auto = advance.is_none();
+        let caption = format!("Auto width ({ch})");
+        if checkbox(ui, skin, &mut auto, &caption).changed() {
+            let advance = if auto { None } else { editor.glyph_advance() };
+            editor.set_glyph_advance(ch, advance);
+        }
+    }
+    ui.add_space(6.0);
+    ui.add_enabled_ui(false, |ui| match skin {
+        Some(skin) => kit::button::button(ui, skin, "Build ▾"),
+        None => pixel_ui::text_button(ui, "Build ▾"),
+    })
+    .inner
+    .on_disabled_hover_text("Coming soon");
 }
 
 /// La tira de las páginas: las pestañas del kit (sin Pixel UI, etiquetas de egui).

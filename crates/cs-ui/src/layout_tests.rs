@@ -3393,3 +3393,44 @@ fn the_font_panel_adds_the_typed_chars() {
     assert!(font.index_of('€').is_some());
     assert!(h.app.font_panel.add_char.is_empty());
 }
+
+#[test]
+fn the_test_drive_draws_the_text_and_clicking_a_letter_goes_to_its_glyph() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    h.app.font_panel.test_text = "AB".into();
+    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.frame();
+    let drive = h.button("Test Drive B");
+    h.click(drive.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.current_glyph(), Some('B'));
+}
+
+#[test]
+fn the_font_settings_change_the_metrics_with_undo() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    h.click(h.button("Font").center(), PointerButton::Primary);
+    h.frame();
+    // Los + de los steppers del kit se llaman todos "Increase": el de la fila de "Baseline".
+    let label = h
+        .text_rects
+        .iter()
+        .find(|(t, _, _)| t == "Baseline")
+        .map(|(_, r, _)| *r)
+        .expect("the Baseline label");
+    let plus = h
+        .buttons
+        .iter()
+        .find(|(l, r)| l == "Increase" && r.y_range().contains(label.center().y))
+        .map(|(_, r)| *r)
+        .expect("the Baseline + button");
+    h.click(plus.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 13);
+    h.app.doc.editor.undo();
+    assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 12);
+}
