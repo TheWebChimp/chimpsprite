@@ -696,8 +696,12 @@ impl ChimpApp {
                 };
                 // La Task 8 agrega aquí `dock::set_open(ctx, Some(dock::DockPanel::Font))`
                 // cuando la fuente se crea.
-                self.doc.editor.new_font(&name, cell, mode);
                 self.new_font = None;
+                // Desde Home no hay pestaña: se abre un documento nuevo como File → New.
+                if !self.has_doc() {
+                    self.new_document();
+                }
+                self.doc.editor.new_font(&name, cell, mode);
             }
             tilemap_dialog::DialogResult::Cancel => self.new_font = None,
         }

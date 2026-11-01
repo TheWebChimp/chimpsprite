@@ -391,6 +391,26 @@ fn new_font_creates_a_font_artboard() {
     assert_eq!(h.app.doc.editor.sprite().width, 16);
 }
 
+#[test]
+fn new_font_from_home_opens_a_new_document() {
+    let mut h = DialogHarness::new(true);
+    h.app.request_close_tab(0);
+    h.settle();
+    assert!(!h.app.has_doc());
+    h.app.new_font = Some(Default::default());
+    h.settle();
+    h.click("OK");
+    h.settle();
+    assert!(h.app.has_doc());
+    let font = h
+        .app
+        .doc
+        .editor
+        .font()
+        .expect("the new document's artboard is a font");
+    assert_eq!(font.name, "New Font");
+}
+
 // --- New Tilemap Layer ---
 
 fn new_tilemap(pixel_ui: bool) -> DialogHarness {
