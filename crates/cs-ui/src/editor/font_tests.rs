@@ -70,6 +70,103 @@ fn shift_copy_paste_and_clear_a_glyph() {
     assert_ne!(e.sprite().pixel(layer, e.frame, 2, 1), ONE_BIT_INK);
 }
 
+/// Pinta `value` en (1, 1) del glifo actual.
+fn paint(e: &mut Editor, value: PixelValue) {
+    let (layer, frame) = (e.layer, e.frame);
+    assert!(e.execute(cs_commands::Command::DrawPixels {
+        layer,
+        frame,
+        pixels: vec![(1, 1, value)],
+    }));
+}
+
+#[test]
+fn a_glyph_pastes_only_into_a_font_of_its_color_mode_and_keeps_its_opacity() {
+    let mut e = editor_with_font();
+    let one_bit = e.active;
+    assert!(e.new_font("Colors", (8, 8), FontMode::Color));
+    e.go_to_glyph('A');
+    paint(&mut e, PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0)));
+    let (layer, frame) = (e.layer, e.frame);
+    let mut cel = *e.sprite().cel(layer, frame).unwrap();
+    cel.opacity = 128;
+    assert!(e.execute(cs_commands::Command::SetCel {
+        layer,
+        frame,
+        cel: Some(cel),
+    }));
+    e.copy_glyph();
+    // En la misma fuente (color): con su opacidad.
+    e.go_to_glyph('B');
+    assert!(e.paste_glyph());
+    assert_eq!(e.sprite().cel(e.layer, e.frame).unwrap().opacity, 128);
+    // En la de 1 bit: no.
+    e.activate(one_bit);
+    e.go_to_glyph('A');
+    let before = e.document.clone();
+    assert!(!e.paste_glyph());
+    assert_eq!(e.document, before);
+}
+
+#[test]
+fn the_text_tool_writes_with_the_ink_on_a_one_bit_font() {
+    let mut e = editor_with_font();
+    let one_bit = e.active;
+    // Una fuente de color con su 'A' en rojo, como fuente del texto.
+    assert!(e.new_font("Colors", (8, 8), FontMode::Color));
+    let colors = e.active;
+    e.go_to_glyph('A');
+    paint(&mut e, PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0)));
+    e.activate(one_bit);
+    e.go_to_glyph('B');
+    e.primary = PixelValue::Index(7);
+    for font in [
+        cs_tools::text::FontChoice::Pixel,
+        cs_tools::text::FontChoice::Document {
+            artboard: colors.0,
+            name: "Colors".into(),
+        },
+    ] {
+        e.text_style.font = font;
+        e.text_style.size = 1;
+        e.text = Some(crate::editor::TextDraft {
+            origin: (0, 0),
+            text: "A".into(),
+        });
+        let Some(cs_commands::Command::DrawPixels { pixels, .. }) = e.text_command() else {
+            panic!("a draw command");
+        };
+        assert!(!pixels.is_empty());
+        assert!(pixels.iter().all(|p| p.2 == ONE_BIT_INK), "{pixels:?}");
+    }
+}
+
+#[test]
+fn renaming_a_font_artboard_renames_the_font_in_one_step() {
+    let mut e = editor_with_font();
+    let id = e.active;
+    let steps = e.history.done_count();
+    e.rename_active_artboard("Other".into());
+    assert_eq!(e.artboard().name, "Other");
+    assert_eq!(e.font().unwrap().name, "Other");
+    assert_eq!(e.history.done_count(), steps + 1);
+    e.undo();
+    assert_eq!(
+        (e.artboard().name.as_str(), e.font().unwrap().name.as_str()),
+        ("Mine", "Mine")
+    );
+    // El campo Name del panel Font.
+    let mut info = e.font().unwrap().clone();
+    info.name = "Third".into();
+    assert!(e.set_font_info(info));
+    assert_eq!(e.artboard().name, "Third");
+    e.undo();
+    assert_eq!(e.artboard().name, "Mine");
+    // Desde la Library (o cualquier artboard por id).
+    e.rename_artboard(id, "Lib".into());
+    assert_eq!(e.font().unwrap().name, "Lib");
+}
+
 /// Que la fuente siga con un glifo por frame, en orden, una capa y sus 8×8.
 fn assert_intact(e: &Editor) {
     let font = e.font().unwrap();

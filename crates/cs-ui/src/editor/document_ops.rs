@@ -45,13 +45,26 @@ impl Editor {
     }
 
     pub fn rename_active_artboard(&mut self, name: String) {
-        if name != self.artboard().name {
-            self.execute_doc(DocCommand::SetArtboardProps {
-                id: self.active,
+        self.rename_artboard(self.active, name);
+    }
+
+    /// Le cambia el nombre a un artboard; si es una fuente, también a la fuente (un paso).
+    pub fn rename_artboard(&mut self, id: ArtboardId, name: String) -> bool {
+        let Some(artboard) = self.document.artboard(id) else {
+            return false;
+        };
+        if artboard.name == name && artboard.font.as_ref().is_none_or(|f| f.name == name) {
+            return false;
+        }
+        let cmd = match artboard.font.clone() {
+            Some(font) => super::font_ops::set_font_named(id, cs_core::FontInfo { name, ..font }),
+            None => DocCommand::SetArtboardProps {
+                id,
                 name: Some(name),
                 position: None,
-            });
-        }
+            },
+        };
+        self.named("Artboard", |e| e.execute_doc(cmd))
     }
 
     /// Reemplaza el sprite del artboard activo (un paso de undo); `None` no hace nada.

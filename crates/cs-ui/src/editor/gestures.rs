@@ -126,6 +126,15 @@ impl Editor {
 
     pub(super) fn text_command(&self) -> Option<Command> {
         let draft = self.text.as_ref().filter(|d| !d.text.trim().is_empty())?;
+        // En una fuente de 1 bit todo lo escrito es tinta (como al pintar: `color`).
+        let one_bit = self
+            .font()
+            .is_some_and(|f| f.mode == cs_core::FontMode::OneBit);
+        let ink = if one_bit {
+            cs_core::ONE_BIT_INK
+        } else {
+            self.primary
+        };
         if let cs_tools::text::FontChoice::Document { artboard, .. } = &self.text_style.font {
             let view = self
                 .document
@@ -135,7 +144,13 @@ impl Editor {
             let (ox, oy) = draft.origin;
             let pixels = cs_tools::text::font_text(&view, &draft.text, scale)
                 .into_iter()
-                .map(|(x, y, c)| (ox + x, oy + y, c.map_or(self.primary, |c| self.value_of(c))))
+                .map(|(x, y, c)| {
+                    let value = match c {
+                        Some(c) if !one_bit => self.value_of(c),
+                        _ => ink,
+                    };
+                    (ox + x, oy + y, value)
+                })
                 .collect();
             return Some(Command::DrawPixels {
                 layer: self.layer,
@@ -147,7 +162,7 @@ impl Editor {
             self.sprite(),
             (self.layer, self.frame),
             draft.origin,
-            self.primary,
+            ink,
             &draft.text,
             &self.text_style,
         );

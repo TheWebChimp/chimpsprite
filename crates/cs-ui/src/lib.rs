@@ -640,11 +640,7 @@ impl ChimpApp {
         let editor = &mut self.doc.editor;
         match action {
             library_panel::LibraryAction::Rename(id, name) => {
-                editor.execute_doc(cs_commands::DocCommand::SetArtboardProps {
-                    id,
-                    name: Some(name),
-                    position: None,
-                });
+                editor.rename_artboard(id, name);
             }
             library_panel::LibraryAction::Duplicate(id) => {
                 let Some(source) = editor.document.artboard(id) else {

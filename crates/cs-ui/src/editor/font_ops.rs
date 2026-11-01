@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use cs_commands::{Command, DocCommand};
-use cs_core::{ArtboardId, Cel, FontInfo, FontMode};
+use cs_core::{ArtboardId, Cel, ColorMode, FontInfo, FontMode};
 
 use super::Editor;
 
@@ -69,10 +69,7 @@ impl Editor {
         if self.font() == Some(&info) {
             return false;
         }
-        self.execute_doc(DocCommand::SetFont {
-            id: self.active,
-            font: Some(Box::new(info)),
-        })
+        self.execute_doc(set_font_named(self.active, info))
     }
 
     /// El ancho efectivo del glifo actual.
@@ -100,16 +97,32 @@ impl Editor {
 
     pub fn copy_glyph(&mut self) {
         let (layer, frame) = (self.layer, self.frame);
-        self.glyph_clipboard = self.sprite().cel(layer, frame).and_then(|cel| {
-            let image = self.sprite().image(cel.image)?.clone();
-            Some((image, cel.position))
+        let sprite = self.sprite();
+        self.glyph_clipboard = sprite.cel(layer, frame).and_then(|cel| {
+            Some(GlyphClip {
+                image: sprite.image(cel.image)?.clone(),
+                position: cel.position,
+                opacity: cel.opacity,
+                color_mode: sprite.color_mode,
+            })
         });
     }
 
+    /// Pega el glifo copiado en el actual; no si es de otro modo de color (una fuente de color
+    /// en una de 1 bit, por ejemplo).
     pub fn paste_glyph(&mut self) -> bool {
-        let Some((image, position)) = self.glyph_clipboard.clone() else {
+        let Some(clip) = self.glyph_clipboard.clone() else {
             return false;
         };
+        if clip.color_mode != self.sprite().color_mode {
+            return false;
+        }
+        let GlyphClip {
+            image,
+            position,
+            opacity,
+            ..
+        } = clip;
         let (layer, frame) = (self.layer, self.frame);
         let id = self.sprite().next_image_id();
         self.execute(Command::Batch(vec![
@@ -122,7 +135,7 @@ impl Editor {
                 frame,
                 cel: Some(Cel {
                     position,
-                    opacity: 255,
+                    opacity,
                     image: id,
                 }),
             },
@@ -149,5 +162,30 @@ impl Editor {
     }
 }
 
-/// Lo que guarda Copy glyph: la imagen del cel y dónde iba.
-pub type GlyphClipboard = Option<(Arc<cs_core::Image>, (i32, i32))>;
+/// La fuente nueva de `id` y, con ella, su nombre como nombre del artboard: los dos van juntos
+/// y el inverso deshace ambos (también al juntar los pasos de un arrastre).
+pub(super) fn set_font_named(id: ArtboardId, info: FontInfo) -> DocCommand {
+    DocCommand::Batch(vec![
+        DocCommand::SetFont {
+            id,
+            font: Some(Box::new(info.clone())),
+        },
+        DocCommand::SetArtboardProps {
+            id,
+            name: Some(info.name),
+            position: None,
+        },
+    ])
+}
+
+/// Lo que guarda Copy glyph: la imagen del cel, dónde iba, su opacidad y el modo de color de
+/// la fuente de donde salió.
+#[derive(Clone, Debug)]
+pub struct GlyphClip {
+    image: Arc<cs_core::Image>,
+    position: (i32, i32),
+    opacity: u8,
+    color_mode: ColorMode,
+}
+
+pub type GlyphClipboard = Option<GlyphClip>;
