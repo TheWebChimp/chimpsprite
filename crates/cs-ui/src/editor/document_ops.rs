@@ -33,7 +33,7 @@ impl Editor {
     /// ¿Se puede borrar el artboard activo? El último del lienzo no (la biblioteca no cuenta),
     /// y un símbolo (en modo símbolo o en la biblioteca) se borra desde la Library, que avisa.
     pub fn can_remove_active_artboard(&self) -> bool {
-        self.document.canvas_count() > 1 && !self.in_symbol_mode() && !self.artboard().in_library
+        self.document.canvas_count() > 1 && !self.in_symbol_mode() && self.artboard().on_canvas()
     }
 
     pub fn remove_active_artboard(&mut self) {

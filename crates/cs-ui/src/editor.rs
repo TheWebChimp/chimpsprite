@@ -563,7 +563,7 @@ impl Editor {
 
     /// Si `id` es un artboard del lienzo (no de la biblioteca).
     fn on_canvas(&self, id: ArtboardId) -> bool {
-        self.document.artboard(id).is_some_and(|a| !a.in_library)
+        self.document.artboard(id).is_some_and(|a| a.on_canvas())
     }
 
     /// Activa otro artboard: recuerda capa/frame del actual y descarta la selección.

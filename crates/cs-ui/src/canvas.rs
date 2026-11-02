@@ -51,7 +51,7 @@ fn shown_artboards<'a>(
     let only = editor.in_symbol_mode().then_some(editor.active);
     document.artboards.iter().filter(move |a| match only {
         Some(id) => a.id == id,
-        None => !a.in_library,
+        None => a.on_canvas(),
     })
 }
 /// Los números de tile se dibujan solo si cada tile ocupa al menos esto en pantalla.

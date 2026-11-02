@@ -530,7 +530,7 @@ fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
         .document
         .artboards
         .iter()
-        .filter(|a| a.model.is_none() && a.font.is_none() && !a.in_library)
+        .filter(|a| a.on_canvas())
         .map(|a| (a.id, a.name.clone()))
         .collect();
     // La textura puede no estar en la lista (en la biblioteca) o ya no existir.

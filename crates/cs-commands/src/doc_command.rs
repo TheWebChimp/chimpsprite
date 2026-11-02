@@ -106,7 +106,7 @@ impl DocCommand {
             }
             DocCommand::RemoveArtboard { id } => {
                 let index = doc.index(*id).ok_or(CmdError::ArtboardNotFound(*id))?;
-                let on_canvas = !doc.artboards[index].in_library;
+                let on_canvas = doc.artboards[index].on_canvas();
                 if doc.artboards.len() == 1 || (on_canvas && doc.canvas_count() == 1) {
                     return Err(CmdError::LastArtboard);
                 }
@@ -130,7 +130,7 @@ impl DocCommand {
             DocCommand::SetArtboardInLibrary { id, in_library } => {
                 let artboard = doc.artboard(*id).ok_or(CmdError::ArtboardNotFound(*id))?;
                 let old = artboard.in_library;
-                if *in_library && !old && doc.canvas_count() == 1 {
+                if *in_library && artboard.on_canvas() && doc.canvas_count() == 1 {
                     return Err(CmdError::LastArtboard);
                 }
                 doc.artboard_mut(*id).expect("checked").in_library = *in_library;
@@ -277,6 +277,31 @@ mod tests {
             position: (10, 0),
             sprite: Sprite::new(2, 2, ColorMode::Rgba),
         }
+    }
+
+    #[test]
+    fn the_last_canvas_artboard_stays_even_with_a_model_around() {
+        let mut d = doc();
+        let mut model = second(&d);
+        model.model = Some(Model3D::default());
+        let model_id = model.id;
+        d.artboards.push(model);
+        assert_eq!(
+            DocCommand::RemoveArtboard { id: ArtboardId(1) }.apply(&mut d),
+            Err(CmdError::LastArtboard)
+        );
+        assert_eq!(
+            DocCommand::SetArtboardInLibrary {
+                id: ArtboardId(1),
+                in_library: true
+            }
+            .apply(&mut d),
+            Err(CmdError::LastArtboard)
+        );
+        DocCommand::RemoveArtboard { id: model_id }
+            .apply(&mut d)
+            .unwrap();
+        assert_eq!(d.artboards.len(), 1);
     }
 
     #[test]

@@ -328,6 +328,8 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
             "{name}: removed instances that contained the artboard itself"
         ));
     }
+    // Un archivo con solo modelos o fuentes se abre con un sprite vacío en el lienzo.
+    doc.ensure_canvas_artboard();
     Ok((doc, report))
 }
 
@@ -631,6 +633,32 @@ mod tests {
         let stored = cs_render::render_frame(&a.sprite, 0);
         assert!(stored.iter().any(|c| c.a > 0), "the stored render is empty");
         assert_eq!(stored, expected);
+    }
+
+    #[test]
+    fn a_model_opens_off_the_canvas_and_its_texture_on_it() {
+        let mut doc = Document::with_sprite("one", Sprite::new(4, 4, ColorMode::Rgba));
+        let (model, texture, cmd) =
+            cs_commands::model::new_model_artboard(&doc, "Cube", (24, 24), (10, 0));
+        cmd.apply(&mut doc).unwrap();
+        let (back, _) = read(&write(&doc).unwrap()).unwrap();
+        assert!(!back.artboard(model).unwrap().on_canvas());
+        assert!(back.artboard(texture).unwrap().on_canvas());
+    }
+
+    #[test]
+    fn a_font_only_chimp_opens_with_an_extra_sprite_on_the_canvas() {
+        let mut doc = Document::with_sprite("one", Sprite::new(4, 4, ColorMode::Rgba));
+        let font = FontInfo::new("Mine", 8, FontMode::OneBit);
+        let a = &mut doc.artboards[0];
+        a.sprite = font_sprite((8, 8), FontMode::OneBit, font.glyphs.len());
+        a.font = Some(font);
+        let (back, _) = read(&write(&doc).unwrap()).unwrap();
+        assert_eq!(back.artboards.len(), 2);
+        assert_eq!(back.canvas_count(), 1);
+        let sprite = back.canvas_artboards().next().unwrap();
+        assert_eq!(sprite.name, "Sprite");
+        assert!(back.artboard(ArtboardId(1)).unwrap().font.is_some());
     }
 
     #[test]
