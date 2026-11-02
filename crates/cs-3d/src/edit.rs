@@ -202,19 +202,6 @@ impl Item {
         }
     }
 
-    fn exists(self, model: &Model3D) -> bool {
-        let Some(obj) = model.objects.get(self.object()) else {
-            return false;
-        };
-        let n = obj.mesh.vertices.len() as u32;
-        match self {
-            Item::Object(_) => true,
-            Item::Vertex(_, v) => v < n,
-            Item::Edge(_, a, b) => mesh_edges(&obj.mesh).contains(&(a, b)),
-            Item::Face(_, f) => f < obj.mesh.faces.len(),
-        }
-    }
-
     /// Los vértices que mueve (un objeto, todos los suyos).
     fn vertices(self, model: &Model3D) -> Vec<u32> {
         let mesh = &model.objects[self.object()].mesh;
@@ -229,6 +216,40 @@ impl Item {
                 .copied()
                 .filter(|&v| v < n)
                 .collect(),
+        }
+    }
+}
+
+/// Qué elegidos existen en un modelo. Las aristas de cada objeto se calculan una sola vez (con
+/// muchas aristas elegidas, recalcularlas por cada una costaría en cada frame).
+struct Existing<'a> {
+    model: &'a Model3D,
+    edges: BTreeMap<usize, BTreeSet<(u32, u32)>>,
+}
+
+impl<'a> Existing<'a> {
+    fn new(model: &'a Model3D) -> Self {
+        Self {
+            model,
+            edges: BTreeMap::new(),
+        }
+    }
+
+    fn check(&mut self, item: Item) -> bool {
+        let o = item.object();
+        let Some(obj) = self.model.objects.get(o) else {
+            return false;
+        };
+        let n = obj.mesh.vertices.len() as u32;
+        match item {
+            Item::Object(_) => true,
+            Item::Vertex(_, v) => v < n,
+            Item::Edge(_, a, b) => self
+                .edges
+                .entry(o)
+                .or_insert_with(|| mesh_edges(&obj.mesh).into_iter().collect())
+                .contains(&(a, b)),
+            Item::Face(_, f) => f < obj.mesh.faces.len(),
         }
     }
 }
@@ -260,7 +281,8 @@ impl Selection {
     /// Los vértices involucrados por objeto (sin repetir; solo de lo que existe).
     pub fn vertices(&self, model: &Model3D) -> BTreeMap<usize, BTreeSet<u32>> {
         let mut out: BTreeMap<usize, BTreeSet<u32>> = BTreeMap::new();
-        for &item in self.items.iter().filter(|i| i.exists(model)) {
+        let mut existing = Existing::new(model);
+        for &item in self.items.iter().filter(|&&i| existing.check(i)) {
             out.entry(item.object())
                 .or_default()
                 .extend(item.vertices(model));
@@ -270,7 +292,8 @@ impl Selection {
 
     /// Quita lo que ya no existe en `model` (después de deshacer, por ejemplo).
     pub fn retain_valid(&mut self, model: &Model3D) {
-        self.items.retain(|i| i.exists(model));
+        let mut existing = Existing::new(model);
+        self.items.retain(|&i| existing.check(i));
     }
 
     /// La misma selección en otro modo: los objetos de lo elegido, o los vértices involucrados y
@@ -278,10 +301,11 @@ impl Selection {
     pub fn converted(&self, model: &Model3D, mode: SelectMode) -> Selection {
         let mut items = BTreeSet::new();
         if mode == SelectMode::Object {
+            let mut existing = Existing::new(model);
             items.extend(
                 self.items
                     .iter()
-                    .filter(|i| i.exists(model))
+                    .filter(|&&i| existing.check(i))
                     .map(|i| Item::Object(i.object())),
             );
             return Selection { mode, items };
@@ -871,6 +895,25 @@ mod tests {
         assert_eq!(s.first_object(), Some(0));
         s.toggle(Item::Vertex(0, 1));
         assert!(s.is_empty());
+    }
+
+    #[test]
+    fn retain_valid_y_vertices_con_muchas_aristas() {
+        let m = one_cube();
+        let edges: Vec<Item> = mesh_edges(&m.objects[0].mesh)
+            .into_iter()
+            .map(|(a, b)| Item::Edge(0, a, b))
+            .collect();
+        assert_eq!(edges.len(), 12);
+        let mut s = Selection {
+            mode: SelectMode::Edge,
+            items: edges.iter().copied().collect(),
+        };
+        // La diagonal de una cara no es arista; un objeto que no existe, tampoco.
+        s.items.extend([Item::Edge(0, 0, 7), Item::Edge(2, 0, 1)]);
+        assert_eq!(s.vertices(&m), [(0, (0..8).collect())].into());
+        s.retain_valid(&m);
+        assert_eq!(s.items, edges.into_iter().collect());
     }
 
     fn front_map() -> ViewMap {
