@@ -5,7 +5,7 @@ use cs_commands::Command;
 use cs_core::{LayerId, PixelValue, Rgba};
 use eframe::egui::{
     self, Event, PointerButton, Pos2, RawInput, Rect, TextureId, Vec2,
-    containers::panel::PanelState,
+    containers::panel::PanelState, vec2,
 };
 
 use crate::ChimpApp;
@@ -29,6 +29,8 @@ struct LayoutHarness {
     checks: Vec<(String, Rect, bool)>,
     /// Botones de prender y apagar del último frame: nombre y si está prendido.
     selected: Vec<(String, bool)>,
+    /// Los botones deshabilitados del último frame (sus nombres).
+    disabled: Vec<String>,
     /// Todo lo que tiene nombre en el último frame (botones, sliders, campos): nombre y rect.
     nodes: Vec<(String, Rect)>,
     /// Lo dibujado en el último frame.
@@ -94,6 +96,7 @@ impl LayoutHarness {
             buttons: Vec::new(),
             checks: Vec::new(),
             selected: Vec::new(),
+            disabled: Vec::new(),
             nodes: Vec::new(),
             shapes: Vec::new(),
             textures: Vec::new(),
@@ -177,6 +180,10 @@ impl LayoutHarness {
                 let on = n.toggled()? == egui::accesskit::Toggled::True;
                 Some((label, on))
             })
+            .collect();
+        self.disabled = named(egui::accesskit::Role::Button)
+            .filter(|(_, _, n)| n.is_disabled())
+            .map(|(label, _, _)| label)
             .collect();
         self.nodes = nodes
             .iter()
@@ -3309,6 +3316,94 @@ fn a_monospace_font_has_no_advance_line_to_drag() {
     assert!(h.app.doc.canvas.advance_line_rect().is_none());
 }
 
+/// Un documento con su artboard normal y una fuente de 16×16 activa, centrada a 800 %.
+fn with_a_font_at_800() -> (LayoutHarness, cs_core::ArtboardId, cs_core::ArtboardId) {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let normal = h.app.doc.editor.artboard().id;
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    e.go_to_glyph('A');
+    let font = e.artboard().id;
+    h.app.doc.canvas.zoom = 8.0;
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    (h, normal, font)
+}
+
+/// A `zoom`, con el artboard activo centrado.
+fn zoom_centered(h: &mut LayoutHarness, zoom: f32) {
+    h.app.doc.canvas.zoom = zoom;
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+}
+
+#[test]
+fn a_font_artboard_has_the_orange_bar_and_a_normal_one_the_pink_one() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.frame();
+    assert!(!h.drawn("title.bar").is_empty(), "the normal artboard");
+    assert!(h.drawn("title.bar.font").is_empty(), "no font yet");
+    let (h, _, _) = with_a_font_at_800();
+    let pixels = artboard_pixels(&h);
+    let bar = union(&h.drawn("title.bar.font")).expect("the orange bar");
+    // La barra de la ventana de la fuente: del borde izquierdo al derecho, sobre la fila blanca.
+    assert_eq!(bar.left(), pixels.left() - 2.0);
+    assert_eq!(bar.right(), pixels.right() + 2.0);
+    assert_eq!(bar.bottom(), pixels.top() - 1.0);
+    assert!(
+        h.drawn("title.bar").iter().all(|r| !r.intersects(bar)),
+        "the pink bar is not under it"
+    );
+}
+
+#[test]
+fn zoomed_far_out_a_font_artboard_is_a_card_with_a_sample() {
+    let (mut h, _, font) = with_a_font_at_800();
+    assert!(h.app.doc.canvas.advance_line_rect().is_some());
+    zoom_centered(&mut h, 0.5);
+    let tex = h.app.doc.canvas.artboard_texture(font).expect("rendered");
+    assert!(
+        h.textures.iter().all(|(t, _)| *t != tex),
+        "the card has no glyph pixels"
+    );
+    assert!(h.app.doc.canvas.advance_line_rect().is_none(), "no overlay");
+    let bar = union(&h.drawn("title.bar.font")).expect("the card's orange bar");
+    // El marco de la tarjeta (el del artboard normal queda aparte, a la izquierda).
+    let frames: Vec<Rect> = h
+        .drawn("artboard.frame")
+        .into_iter()
+        .filter(|r| r.left() >= bar.left() && r.right() <= bar.right())
+        .collect();
+    let card = union(&frames).expect("the card frame");
+    assert_eq!(bar.left_top(), card.left_top());
+    assert_eq!(bar.width(), card.width());
+    // Más grande que la ventana del glifo a ese zoom (16×16 a 50 %: 12×27).
+    assert!(card.width() > 12.0 && card.height() > 27.0, "{card:?}");
+    // De vuelta a 800 %, la ventana del glifo.
+    zoom_centered(&mut h, 8.0);
+    assert!(h.textures.iter().any(|(t, _)| *t == tex));
+    assert!(h.app.doc.canvas.advance_line_rect().is_some());
+}
+
+#[test]
+fn clicking_the_card_activates_the_font_artboard() {
+    let (mut h, normal, font) = with_a_font_at_800();
+    zoom_centered(&mut h, 0.5);
+    h.app.doc.editor.activate(normal);
+    h.frame();
+    let bar = union(&h.drawn("title.bar.font")).expect("the card's orange bar");
+    h.click(bar.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.active, font);
+}
+
 #[test]
 fn a_guide_dragged_from_the_ruler_can_be_dropped_on_the_advance_line() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
@@ -3478,6 +3573,245 @@ fn the_font_panel_adds_the_typed_chars() {
     assert!(h.app.font_panel.add_char.is_empty());
 }
 
+/// El panel FontForge abierto con una fuente de 8×8 en una ventana de `size`.
+fn font_panel_open(size: Vec2) -> LayoutHarness {
+    let palettes = PaletteLibrary::new(Box::new(NoPresets));
+    let mut app = ChimpApp::with_parts(Default::default(), pixel_ui(), palettes);
+    app.new_document();
+    let mut h = LayoutHarness::start_in(app, size);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
+    h.frame();
+    h
+}
+
+/// La caja del panel FontForge, como la pinta el dock (en puntos enteros).
+fn font_flyout(h: &LayoutHarness) -> Rect {
+    let area = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "FontForge"))))
+        .expect("the FontForge panel is open");
+    Rect::from_min_size(area.min.round(), area.size().round())
+}
+
+/// Los rects llenos de un color (los `Shape::Rect` y las mallas sin textura).
+fn filled_rects(h: &LayoutHarness) -> Vec<(egui::Color32, Rect)> {
+    fn walk(shape: &egui::Shape, out: &mut Vec<(egui::Color32, Rect)>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| walk(s, out)),
+            egui::Shape::Rect(r) => out.push((r.fill, r.rect)),
+            _ => out.extend(crate::pixel_ui::colored_rects(shape)),
+        }
+    }
+    let mut out = Vec::new();
+    for clipped in &h.shapes {
+        walk(&clipped.shape, &mut out);
+    }
+    out
+}
+
+#[test]
+fn the_font_panel_keeps_its_logo_and_build_while_the_middle_scrolls() {
+    let mut h = font_panel_open(Vec2::new(1200.0, 420.0));
+    let flyout = font_flyout(&h);
+    let logos = h.drawn("fontforge.logo");
+    assert_eq!(logos.len(), 1, "{logos:?}");
+    let logo = logos[0];
+    assert_eq!(logo.min, flyout.min + vec2(8.0, 8.0), "{flyout:?}");
+    let build = h.button("Build ▾");
+    assert!(flyout.contains_rect(build), "{build:?} in {flyout:?}");
+    assert_eq!(build.right(), flyout.right() - 8.0, "{flyout:?}");
+    assert!(
+        build.bottom() > flyout.bottom() - 20.0,
+        "{build:?} {flyout:?}"
+    );
+    assert!(h.disabled.iter().any(|l| l == "Build ▾"));
+    let map_top = |h: &LayoutHarness| {
+        h.text_rects
+            .iter()
+            .find(|(t, _, _)| t == "Map")
+            .map(|(_, r, _)| r.top())
+    };
+    let before = map_top(&h).expect("the Map label");
+    // La rueda sobre el mapa desplaza el medio.
+    let over = h.button("Glyph A").center();
+    h.frame_with(vec![Event::PointerMoved(over)]);
+    h.frame_with(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, -120.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Default::default(),
+    }]);
+    for _ in 0..10 {
+        h.frame();
+    }
+    assert!(
+        map_top(&h).is_none_or(|top| top < before - 20.0),
+        "the middle scrolled"
+    );
+    assert_eq!(h.drawn("fontforge.logo"), vec![logo]);
+    assert_eq!(h.button("Build ▾"), build);
+}
+
+#[test]
+fn the_header_icons_switch_between_the_map_and_the_font_settings() {
+    let mut h = font_panel_open(Vec2::new(1200.0, 800.0));
+    let flyout = font_flyout(&h);
+    let has_text = |h: &LayoutHarness, t: &str| h.text_rects.iter().any(|(s, _, _)| s == t);
+    let has_button = |h: &LayoutHarness, t: &str| h.buttons.iter().any(|(s, _)| s == t);
+    assert!(has_button(&h, "Glyph A"));
+    assert!(!has_text(&h, "Baseline"));
+    let gear = h.button("Font Settings");
+    let edit = h.button("Edit Glyphs");
+    assert_eq!(gear.min, flyout.min + vec2(292.0, 9.0));
+    assert_eq!(edit.min, flyout.min + vec2(309.0, 9.0));
+    assert_eq!(h.drawn("icon.fontforge.config").len(), 1);
+    assert_eq!(h.drawn("icon.fontforge.edit").len(), 1);
+    h.click(gear.center(), PointerButton::Primary);
+    assert!(has_text(&h, "Baseline"));
+    assert!(!has_button(&h, "Glyph A"));
+    h.click(edit.center(), PointerButton::Primary);
+    assert!(has_button(&h, "Glyph A"));
+    assert!(!has_text(&h, "Baseline"));
+}
+
+#[test]
+fn without_pixel_ui_the_font_panel_falls_back_to_egui() {
+    let mut h = LayoutHarness::editor();
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    crate::dock::set_open(&h.ctx, Some(crate::dock::DockPanel::Font));
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert!(h.texts.iter().any(|(t, _)| t == "FontForge"), "the title");
+    h.click(h.button("Font Settings").center(), PointerButton::Primary);
+    assert!(h.texts.iter().any(|(t, _)| t == "Baseline"));
+    h.click(h.button("Edit Glyphs").center(), PointerButton::Primary);
+    assert!(h.button("Glyph A").width() > 0.0);
+    assert!(h.button("Build ▾").width() > 0.0);
+}
+
+#[test]
+fn the_font_panel_without_a_font_has_no_view_icons() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.click(h.button("FontForge").center(), PointerButton::Primary);
+    h.frame();
+    assert!(h.button("New Font…").width() > 0.0);
+    assert_eq!(h.drawn("fontforge.logo").len(), 1);
+    assert!(!h.buttons.iter().any(|(l, _)| l == "Font Settings"));
+    assert!(h.button("Build ▾").width() > 0.0);
+}
+
+#[test]
+fn the_font_panel_rows_are_the_mockup_rows() {
+    let mut h = font_panel_open(Vec2::new(1200.0, 800.0));
+    // Que termine de aparecer (el Area entra con fundido).
+    for _ in 0..10 {
+        h.frame();
+    }
+    let f = font_flyout(&h);
+    let top = |r: Rect| r.top() - f.top();
+    // Las líneas del título y del pie: blanca arriba y la del lienzo abajo.
+    let colors = *h.app.pixel.skin().unwrap().colors();
+    let rows: Vec<(egui::Color32, f32)> = filled_rects(&h)
+        .into_iter()
+        .filter(|(_, r)| r.height() == 1.0 && r.width() == f.width() - 2.0)
+        .map(|(c, r)| (c, top(r)))
+        .collect();
+    let bottom = f.height();
+    for want in [
+        (egui::Color32::WHITE, 29.0),
+        (colors.canvas, 30.0),
+        (egui::Color32::WHITE, bottom - 33.0),
+        (colors.canvas, bottom - 32.0),
+    ] {
+        assert!(rows.contains(&want), "{want:?} in {rows:?}");
+    }
+    // La cuadrícula desde la fila 85 (su línea), Add desde la 276, el papel del Test Drive
+    // desde la 332 y Build a 25 del borde de abajo.
+    assert_eq!(top(h.button("Glyph !")) - 1.0, 85.0);
+    assert_eq!(top(h.button("Add")), 276.0);
+    assert_eq!(top(h.button("Add")), top(h.button("Add All")));
+    let paper = filled_rects(&h)
+        .into_iter()
+        .find(|(c, r)| *c == egui::Color32::WHITE && r.width() == 284.0)
+        .map(|(_, r)| r)
+        .expect("the Test Drive paper");
+    assert_eq!(top(paper), 332.0);
+    assert_eq!(top(h.button("Build ▾")), bottom - 25.0);
+}
+
+#[test]
+fn the_font_map_is_a_grid_of_21_by_23() {
+    let h = font_panel_open(Vec2::new(1200.0, 800.0));
+    let flyout = font_flyout(&h);
+    let first = h.button("Glyph !");
+    let next = h.button("Glyph \"");
+    let below = h.button("Glyph .");
+    assert_eq!(first.size(), vec2(20.0, 22.0));
+    assert_eq!(next.left() - first.left(), 21.0);
+    assert_eq!(below.top() - first.top(), 23.0);
+    assert_eq!(below.left(), first.left());
+    // La línea izquierda de la cuadrícula en la columna 8 del panel.
+    assert_eq!(first.left() - 1.0, flyout.left() + 8.0);
+}
+
+#[test]
+fn add_all_adds_the_missing_chars_of_the_page_in_one_step() {
+    let mut h = font_panel_open(Vec2::new(1200.0, 800.0));
+    h.click(h.button("Latin-1").center(), PointerButton::Primary);
+    assert!(!h.disabled.iter().any(|l| l == "Add All"));
+    h.click(h.button("Add All").center(), PointerButton::Primary);
+    let has = |h: &LayoutHarness, ch| h.app.doc.editor.font().unwrap().index_of(ch).is_some();
+    assert!(('¡'..='ÿ').all(|ch| has(&h, ch)));
+    assert!(h.disabled.iter().any(|l| l == "Add All"), "nothing left");
+    h.app.doc.editor.undo();
+    assert!(('¡'..='ÿ').all(|ch| !has(&h, ch)), "one undo step");
+    h.frame();
+    h.click(h.button("All").center(), PointerButton::Primary);
+    assert!(h.disabled.iter().any(|l| l == "Add All"), "not on All");
+}
+
+#[test]
+fn a_map_cell_shows_the_drawn_glyph_or_its_char_in_gray() {
+    let mut h = font_panel_open(Vec2::new(1200.0, 800.0));
+    let e = &mut h.app.doc.editor;
+    e.go_to_glyph('A');
+    let (layer, frame) = (e.layer, e.frame);
+    e.execute(Command::DrawPixels {
+        layer,
+        frame,
+        pixels: vec![(1, 1, cs_core::ONE_BIT_INK)],
+    });
+    h.frame();
+    h.frame();
+    let ink = egui::Color32::from_rgb(5, 4, 3);
+    let gray = egui::Color32::from_rgb(197, 199, 221);
+    let a = h.button("Glyph A");
+    assert!(
+        filled_rects(&h)
+            .iter()
+            .any(|(c, r)| *c == ink && a.contains_rect(*r)),
+        "the ink of A in its cell"
+    );
+    let text_in = |cell: Rect| {
+        h.text_rects
+            .iter()
+            .filter(|(_, r, _)| cell.contains(r.center()))
+            .map(|(t, _, c)| (t.clone(), *c))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(text_in(a), vec![], "only the glyph, no letter");
+    let b = h.button("Glyph B");
+    assert_eq!(text_in(b), vec![("B".to_owned(), gray)], "an empty glyph");
+}
+
 #[test]
 fn the_test_drive_draws_the_text_and_clicking_a_letter_goes_to_its_glyph() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
@@ -3500,6 +3834,8 @@ fn the_font_settings_change_the_metrics_with_undo() {
         .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
     h.click(h.button("FontForge").center(), PointerButton::Primary);
     h.frame();
+    // Los ajustes van en la vista del engrane.
+    h.click(h.button("Font Settings").center(), PointerButton::Primary);
     // Los + de los steppers del kit se llaman todos "Increase": el de la fila de "Baseline".
     let label = h
         .text_rects
@@ -3531,6 +3867,8 @@ fn the_font_numbers_go_in_two_columns_inside_the_panel() {
         .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
     h.click(h.button("FontForge").center(), PointerButton::Primary);
     h.frame();
+    // Los ajustes van en la vista del engrane.
+    h.click(h.button("Font Settings").center(), PointerButton::Primary);
     let flyout = h
         .ctx
         .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "FontForge"))))
@@ -3575,6 +3913,8 @@ fn dragging_a_font_stepper_is_one_undo_step() {
         .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
     h.click(h.button("FontForge").center(), PointerButton::Primary);
     h.frame();
+    // Los ajustes van en la vista del engrane.
+    h.click(h.button("Font Settings").center(), PointerButton::Primary);
     let label = h
         .text_rects
         .iter()

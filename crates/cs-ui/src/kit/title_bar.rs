@@ -56,9 +56,15 @@ pub struct TitleLook {
 
 impl TitleLook {
     pub fn new(skin: &Skin) -> Self {
+        Self::with_bar(skin, PIECE)
+    }
+
+    /// Con otra pieza de barra (`title.bar.font`: la naranja de las fuentes); sin ella, la de
+    /// siempre. La tinta sin el foco sale de la fila oscura de la barra que se use.
+    pub fn with_bar(skin: &Skin, bar: &str) -> Self {
         let piece = |name| skin.piece(name, WidgetState::Normal).cloned();
         TitleLook {
-            bar: piece(PIECE),
+            bar: piece(bar).or_else(|| piece(PIECE)),
             menu: piece(MENU),
             close: piece(CLOSE),
             close_hover: piece(CLOSE_HOVER),

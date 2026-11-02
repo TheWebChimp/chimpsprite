@@ -49,6 +49,35 @@ fn the_bar_has_the_menu_the_title_and_the_close_mark_like_the_mockup() {
 }
 
 #[test]
+fn the_orange_font_bar_dims_to_its_own_dark_row() {
+    let (ctx, skin) = pixel_ctx();
+    let look = TitleLook::with_bar(&skin, "title.bar.font");
+    let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(120.0, HEIGHT));
+    let orange = skin.piece("title.bar.font", WidgetState::Normal).unwrap();
+    let mut shapes = vec![];
+    frame(&ctx, vec![], |ui| {
+        let state = TitleState {
+            focused: false,
+            menu: true,
+            close: Some(false),
+        };
+        shapes = bar_shapes(ui.painter(), &look, rect, "Mine", state, 1.0);
+    });
+    assert!(shapes.iter().any(|s| matches!(
+        s,
+        Shape::Mesh(m) if m.texture_id == orange.texture.id()
+    )));
+    let dim = Color32::from_rgb(212, 102, 54);
+    assert!(dots_of(&shapes).iter().all(|(_, c)| *c == dim));
+    assert_eq!(look.text_color(false), dim);
+    // Con el foco, como la rosa.
+    assert_eq!(look.text_color(true), skin.colors().text);
+    // Sin la pieza, la rosa.
+    let pink = TitleLook::with_bar(&skin, "no.such.bar");
+    assert_eq!(pink.text_color(false), Color32::from_rgb(178, 82, 102));
+}
+
+#[test]
 fn without_focus_everything_takes_the_dark_row_color_and_hover_turns_the_mark_into_an_x() {
     let (ctx, skin) = pixel_ctx();
     let look = TitleLook::new(&skin);
