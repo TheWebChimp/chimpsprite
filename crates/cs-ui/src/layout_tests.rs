@@ -4811,3 +4811,52 @@ fn every_shade_cell_is_inside_the_flyout() {
     }
     assert_eq!(count, 2 * palette.len());
 }
+
+/// Un modelo en modo Edit con el objeto elegido, el puntero sobre Front y una G pedida.
+fn grabbing_with_the_keyboard() -> (LayoutHarness, Pos2) {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Object);
+    let c = front_screen(&h, [0.0, 0.0, 0.0]);
+    h.click(c, PointerButton::Primary);
+    assert!(!h.app.doc.editor.model_edit().selection.items.is_empty());
+    h.frame_with(vec![Event::PointerMoved(c)]);
+    h.app
+        .doc
+        .editor
+        .request_model_key_op(crate::editor::KeyOp::Grab);
+    h.frame();
+    assert!(h.app.doc.editor.model_edit().op.is_some(), "grab started");
+    let to = c + vec2(60.0, 0.0);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    (h, to)
+}
+
+fn mesh_x(h: &LayoutHarness) -> Vec<f32> {
+    let m = h.app.doc.editor.model().unwrap();
+    cs_3d::world_points(&m.objects[0])
+        .iter()
+        .map(|p| p[0])
+        .collect()
+}
+
+#[test]
+fn a_left_click_commits_a_keyboard_grab_in_one_undo_step() {
+    let (mut h, to) = grabbing_with_the_keyboard();
+    let before = mesh_x(&h);
+    h.click(to, PointerButton::Primary);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_ne!(mesh_x(&h), before, "moved");
+    h.app.doc.editor.undo();
+    assert_eq!(mesh_x(&h), before, "one undo step");
+}
+
+#[test]
+fn a_right_click_cancels_a_keyboard_grab() {
+    let (mut h, to) = grabbing_with_the_keyboard();
+    let before = mesh_x(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(to, PointerButton::Secondary);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(mesh_x(&h), before);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+}

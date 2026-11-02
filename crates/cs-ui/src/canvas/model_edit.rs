@@ -68,6 +68,15 @@ fn pos(p: (f32, f32)) -> Pos2 {
 }
 
 impl CanvasView {
+    /// El tamaño en pixeles del render de la perspectiva en el cuadrante `q` (el dibujo y los
+    /// gestos usan el mismo).
+    fn persp_size(&self, q: Rect) -> (u32, u32) {
+        (
+            (q.width() / self.scale().x).round().max(1.0) as u32,
+            (q.height() / self.scale().y).round().max(1.0) as u32,
+        )
+    }
+
     fn quadrant_at(&self, p: Pos2) -> Option<usize> {
         self.edit_quads?.iter().position(|q| q.contains(p))
     }
@@ -87,7 +96,10 @@ impl CanvasView {
             return false;
         };
         let Some(view) = quadrant_view(i) else {
-            self.persp_press(editor, i, p, secondary, modifiers);
+            // El botón central no hace nada en la perspectiva.
+            if !middle {
+                self.persp_press(editor, i, p, secondary, modifiers);
+            }
             return true;
         };
         let Some(map) = self.edit_view_map(editor, view) else {
@@ -181,8 +193,8 @@ impl CanvasView {
             return;
         };
         let (w, h) = (editor.sprite().width as f32, editor.sprite().height as f32);
-        let pw = (q.width() / self.scale().x).round().max(1.0);
-        let ph = (q.height() / self.scale().y).round().max(1.0);
+        let (pw, ph) = self.persp_size(q);
+        let (pw, ph) = (pw as f32, ph as f32);
         let local = (
             ((p.x - q.left()) / self.scale().x * w / pw).floor() as i32,
             ((p.y - q.top()) / self.scale().y * h / ph).floor() as i32,
@@ -341,10 +353,7 @@ impl CanvasView {
         model: &cs_core::Model3D,
         ctx: &egui::Context,
     ) {
-        let size = (
-            (q.width() / self.scale().x).round().max(1.0) as u32,
-            (q.height() / self.scale().y).round().max(1.0) as u32,
-        );
+        let size = self.persp_size(q);
         let mut h = DefaultHasher::new();
         (model, editor.doc_version, size, editor.active).hash(&mut h);
         let key = h.finish();

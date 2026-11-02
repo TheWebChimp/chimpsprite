@@ -594,9 +594,18 @@ impl CanvasView {
         // objetos: no llegan a las herramientas (ni al cuentagotas ni a los menús).
         // Con un arrastre del modelo en curso, el otro botón no llega a nada.
         let model_busy = self.model_drag.is_some() || editor.model_edit().op.is_some();
+        // Un gesto de teclado (G o S) espera un clic: confirma con el izquierdo, cancela con el
+        // derecho. Esos clics sí llegan al modo Edit (pero nunca a las herramientas).
+        let keyboard_op = matches!(
+            editor.model_edit().op,
+            Some(
+                crate::editor::EditOp::Move { keyboard: true, .. }
+                    | crate::editor::EditOp::Scale { .. }
+            )
+        );
         let model_press = can_press_model
             && over_label.is_none()
-            && !model_busy
+            && (!model_busy || (keyboard_op && self.model_drag.is_none()))
             && pointer.is_some_and(|p| !over_crumbs(p) && self.over_model(rect, editor, p, ppp));
         if model_press && let Some(p) = pointer {
             // Los menús de una vez anterior no se abren con este clic.
