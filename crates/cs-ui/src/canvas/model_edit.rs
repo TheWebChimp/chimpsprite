@@ -3,6 +3,7 @@
 //! wireframes (todas las aristas) con la cuadrícula, la selección, su caja con asas y las guías
 //! punteadas; la perspectiva es el render pixel a la mitad de resolución.
 
+use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
 use cs_3d::{Handle, Item, OrthoView, SelectMode, ViewMap};
@@ -33,6 +34,10 @@ const VERTEX_PX: f32 = 3.0;
 pub(crate) const HANDLE_PX: f32 = 5.0;
 /// Con líneas más juntas que esto (en puntos) la cuadrícula no se dibuja.
 const GRID_MIN_PX: f32 = 4.0;
+/// Con S apretada a menos de esto (en puntos) del centro, el factor se mide contra
+/// [`SCALE_REF_PX`] (si no, casi cualquier movimiento lo dispararía o lo dejaría en 0).
+const SCALE_NEAR_PX: f32 = 6.0;
+const SCALE_REF_PX: f32 = 24.0;
 
 /// Los cuadrantes del área `screen` de un artboard de `size` pixeles: Front, Persp, Top y Side.
 /// Cortan en pixeles enteros del artboard (con ancho impar, la columna de más es de la derecha).
@@ -135,15 +140,31 @@ impl CanvasView {
             return false;
         };
         let sel = editor.model_edit().selection.clone();
+        // Un vértice ya elegido bajo el puntero gana sobre el asa que cae encima: se mueve (con
+        // varios vértices, las asas de la caja caen justo en los de los extremos).
         if !modifiers.shift
-            && let Some(b) = cs_3d::bounds(&model, &sel)
+            && let Some(grab) = selected_vertex_at(&model, &map, &sel, at)
+        {
+            editor.start_model_op(EditOp::Move {
+                map,
+                from: at,
+                grab,
+                keyboard: false,
+            });
+            return true;
+        }
+        // Con Shift solo las esquinas (escalan igual en los dos ejes); en un lado, Shift + clic
+        // sigue agregando o quitando de la selección.
+        if let Some(b) = cs_3d::bounds(&model, &sel)
             && !(sel.mode == SelectMode::Vertex && sel.items.len() == 1)
-            && let Some(handle) = Handle::ALL
-                .into_iter()
-                .find(|&h| (handle_pos(&map, b, h) - p).length() <= HANDLE_PX)
+            && let Some(handle) = Handle::ALL.into_iter().find(|&h| {
+                (!modifiers.shift || (h.u != 0 && h.v != 0))
+                    && (handle_pos(&map, b, h) - p).length() <= HANDLE_PX
+            })
         {
             editor.start_model_op(EditOp::Handle {
                 map,
+                from: at,
                 handle,
                 bounds: b,
             });
@@ -234,10 +255,11 @@ impl CanvasView {
                 },
                 KeyOp::Scale => {
                     let s = map.to_screen(c);
+                    let d = (pos2(s.0, s.1) - p).length();
                     EditOp::Scale {
                         map,
                         center: c,
-                        from_dist: (pos2(s.0, s.1) - p).length().max(1.0),
+                        from_dist: if d < SCALE_NEAR_PX { SCALE_REF_PX } else { d },
                     }
                 }
             };
@@ -298,13 +320,18 @@ impl CanvasView {
         let sprite = editor.sprite();
         let quads = quadrants(screen, (sprite.width, sprite.height));
         self.edit_quads = Some(quads);
-        let Some(model) = editor.edit_model_shown().cloned() else {
+        let Some(model) = editor.edit_model_shown() else {
             return;
         };
         for (i, q) in quads.iter().enumerate() {
             painter.rect_filled(*q, 0.0, if i == PERSP { PERSP_BG } else { ORTHO_BG });
         }
-        self.draw_persp(painter, quads[PERSP], editor, doc, &model, ctx);
+        self.draw_persp(painter, quads[PERSP], editor, doc, model, ctx);
+        // La caja de la selección y las aristas de las caras elegidas, una vez por frame para
+        // las tres vistas.
+        let sel = &editor.model_edit().selection;
+        let bounds = cs_3d::bounds(model, sel);
+        let face_edges = selected_face_edges(model, sel);
         for view in OrthoView::ALL {
             let q = quads[quadrant_index(view)];
             let Some(map) = self.edit_view_map(editor, view) else {
@@ -312,8 +339,8 @@ impl CanvasView {
             };
             let p = painter.with_clip_rect(q.intersect(painter.clip_rect()));
             draw_grid_lines(&p, q, &map, editor.model_edit().grid);
-            draw_wireframe(&p, &map, &model, &editor.model_edit().selection, SELECTED);
-            draw_selection_frame(&p, q, &map, &model, editor, SELECTED);
+            draw_wireframe(&p, &map, model, sel, &face_edges, SELECTED);
+            draw_selection_frame(&p, q, &map, sel, bounds, SELECTED);
             if let Some(cs_3d_box) = box_rect(editor, view) {
                 p.rect_stroke(
                     cs_3d_box,
@@ -417,14 +444,60 @@ fn draw_grid_lines(p: &egui::Painter, q: Rect, map: &ViewMap, grid: i32) {
     }
 }
 
+/// Un vértice elegido bajo `at`: en modo Vértice, uno de los elegidos; en Arista, el extremo de
+/// una arista elegida. Su punto en el mundo (el que se agarra al moverlo).
+fn selected_vertex_at(
+    model: &cs_core::Model3D,
+    map: &ViewMap,
+    sel: &cs_3d::Selection,
+    at: (f32, f32),
+) -> Option<cs_3d::P3> {
+    if !matches!(sel.mode, SelectMode::Vertex | SelectMode::Edge) {
+        return None;
+    }
+    let Some(Item::Vertex(o, v)) = cs_3d::pick(model, map, SelectMode::Vertex, at) else {
+        return None;
+    };
+    let on = match sel.mode {
+        SelectMode::Vertex => sel.items.contains(&Item::Vertex(o, v)),
+        _ => sel
+            .items
+            .iter()
+            .any(|i| matches!(*i, Item::Edge(eo, a, b) if eo == o && (a == v || b == v))),
+    };
+    on.then(|| cs_3d::world_points(&model.objects[o])[v as usize])
+}
+
+/// Las aristas `(objeto, a, b)` (con `a < b`) de las caras elegidas, para pintarlas sin recorrer
+/// la selección por cada arista.
+fn selected_face_edges(
+    model: &cs_core::Model3D,
+    sel: &cs_3d::Selection,
+) -> HashSet<(usize, u32, u32)> {
+    let mut out = HashSet::new();
+    for item in &sel.items {
+        if let Item::Face(o, f) = *item
+            && let Some(face) = model.objects.get(o).and_then(|obj| obj.mesh.faces.get(f))
+        {
+            let vs = &face.verts;
+            for k in 0..vs.len() {
+                let (x, y) = (vs[k], vs[(k + 1) % vs.len()]);
+                out.insert((o, x.min(y), x.max(y)));
+            }
+        }
+    }
+    out
+}
+
 /// Todas las aristas; lo elegido en el color de acento: en modo Objeto, todas las aristas del
-/// objeto; en Arista, las suyas; en Cara, las de la cara y su punto central; en Vértice, los
-/// cuadritos. Los vértices se ven como cuadritos fuera del modo Objeto.
+/// objeto; en Arista, las suyas; en Cara, las de la cara (`face_edges`) y su punto central; en
+/// Vértice, los cuadritos. Los vértices se ven como cuadritos fuera del modo Objeto.
 fn draw_wireframe(
     p: &egui::Painter,
     map: &ViewMap,
     model: &cs_core::Model3D,
     sel: &cs_3d::Selection,
+    face_edges: &HashSet<(usize, u32, u32)>,
     accent: Color32,
 ) {
     for (o, obj) in model.objects.iter().enumerate() {
@@ -433,20 +506,10 @@ fn draw_wireframe(
             .map(|&w| pos(map.to_screen(w)))
             .collect();
         let whole = sel.items.contains(&Item::Object(o));
-        let face_edge = |a: u32, b: u32| {
-            sel.items.iter().any(|i| match *i {
-                Item::Face(fo, f) if fo == o => {
-                    let vs = &obj.mesh.faces[f].verts;
-                    (0..vs.len()).any(|k| {
-                        let (x, y) = (vs[k], vs[(k + 1) % vs.len()]);
-                        (x.min(y), x.max(y)) == (a, b)
-                    })
-                }
-                _ => false,
-            })
-        };
         for (a, b) in cs_3d::mesh_edges(&obj.mesh) {
-            let on = whole || sel.items.contains(&Item::Edge(o, a, b)) || face_edge(a, b);
+            let on = whole
+                || sel.items.contains(&Item::Edge(o, a, b))
+                || face_edges.contains(&(o, a, b));
             let color = if on { accent } else { EDGE };
             p.line_segment([scr[a as usize], scr[b as usize]], Stroke::new(1.0, color));
         }
@@ -482,17 +545,17 @@ fn draw_wireframe(
     }
 }
 
-/// Las asas de la caja de la selección (no con un solo vértice) y la cruz punteada por su centro.
+/// Las asas de la caja `bounds` de la selección (no con un solo vértice) y la cruz punteada por
+/// su centro.
 fn draw_selection_frame(
     p: &egui::Painter,
     q: Rect,
     map: &ViewMap,
-    model: &cs_core::Model3D,
-    editor: &Editor,
+    sel: &cs_3d::Selection,
+    bounds: Option<(cs_3d::P3, cs_3d::P3)>,
     accent: Color32,
 ) {
-    let sel = &editor.model_edit().selection;
-    let Some(b) = cs_3d::bounds(model, sel) else {
+    let Some(b) = bounds else {
         return;
     };
     let c = pos(map.to_screen(cs_3d::center(b)));

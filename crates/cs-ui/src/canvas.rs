@@ -302,6 +302,12 @@ impl CanvasView {
         Some((texture.id(), texture.size_vec2()))
     }
 
+    /// Cuántas veces se compuso un artboard (para los tests).
+    #[cfg(test)]
+    pub(crate) fn composed_count(&self) -> u32 {
+        self.composed
+    }
+
     /// Posición en pantalla del origen del mundo, alineada a píxeles físicos (`self.ppp`).
     ///
     /// Es el único lugar donde se redondea la vista: con zoom entero (en píxeles físicos), las

@@ -612,8 +612,11 @@ impl CanvasView {
             self.selection_menu = false;
             self.object_menu = false;
             self.slice_menu = false;
+            // El central es solo del modo Edit: si todavía no hay cuadrantes (el primer frame),
+            // no cae en `model_press` (ahí sería un clic izquierdo que elige).
             if !(editor.model_edit_on()
-                && self.model_edit_press(editor, p, pressed_secondary, pressed_middle, modifiers))
+                && (self.model_edit_press(editor, p, pressed_secondary, pressed_middle, modifiers)
+                    || pressed_middle))
             {
                 self.model_press(rect, editor, p, pressed_secondary, modifiers);
             }

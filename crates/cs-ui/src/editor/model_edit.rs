@@ -15,6 +15,9 @@ pub const GRIDS: [i32; 5] = [1, 2, 4, 8, 16];
 const ZOOM_STEP: f32 = 1.25;
 const ZOOM_MIN: f32 = 0.02;
 const ZOOM_MAX: f32 = 64.0;
+/// Cuánto (en puntos) hay que mover el puntero para que un arrastre con el mouse empiece a mover
+/// o escalar: un clic sin arrastre no toca el modelo.
+pub const DRAG_THRESHOLD: f32 = 3.0;
 
 /// Lo que pidió el teclado y empieza el lienzo (que sabe dónde está el puntero).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,16 +30,18 @@ pub enum KeyOp {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EditOp {
     /// Mover lo elegido; `grab` es el punto agarrado (el que cae en la cuadrícula). `keyboard`:
-    /// empezó con G (sigue al puntero sin botón; clic o Enter confirma).
+    /// empezó con G (sigue al puntero sin botón; clic o Enter confirma). Con el mouse no hay
+    /// vista previa hasta que el puntero se aleja [`DRAG_THRESHOLD`] de `from`.
     Move {
         map: ViewMap,
         from: (f32, f32),
         grab: P3,
         keyboard: bool,
     },
-    /// Arrastrar un asa de la caja de la selección.
+    /// Arrastrar un asa de la caja de la selección (desde `from`, con el mismo umbral que Move).
     Handle {
         map: ViewMap,
+        from: (f32, f32),
         handle: Handle,
         bounds: (P3, P3),
     },
@@ -161,12 +166,10 @@ impl Editor {
             self.model_object = Some(o);
         }
         self.model_edit.selection = sel;
-        self.revision += 1;
     }
 
     pub fn set_model_grid(&mut self, grid: i32) {
         self.model_edit.grid = grid.max(1);
-        self.revision += 1;
     }
 
     /// El modelo que se ve en el modo Edit: la vista previa del gesto o el del documento.
@@ -186,14 +189,33 @@ impl Editor {
         }
         self.model_edit.preview = None;
         self.model_edit.op = Some(op);
-        self.revision += 1;
     }
 
     /// El gesto en curso sigue al puntero (`free`: Ctrl, sin cuadrícula; `proportional`: Shift).
+    ///
+    /// El estado del modo Edit (gesto, vista previa, selección, centro y zoom) no cambia
+    /// `revision`: las vistas se dibujan cada frame desde él y `revision` recompondría todos los
+    /// artboards. Los cambios del documento ya la suben al confirmar.
     pub fn update_model_op(&mut self, pointer: (f32, f32), free: bool, proportional: bool) {
         let Some(op) = self.model_edit.op else {
             return;
         };
+        // Un arrastre con el mouse empieza pasado el umbral: antes no hay vista previa (y al
+        // soltar no hay paso de undo).
+        let from = match op {
+            EditOp::Move {
+                from,
+                keyboard: false,
+                ..
+            }
+            | EditOp::Handle { from, .. } => Some(from),
+            _ => None,
+        };
+        if from.is_some_and(|f| dist(pointer, f) < DRAG_THRESHOLD)
+            && self.model_edit.preview.is_none()
+        {
+            return;
+        }
         let grid = (!free).then_some(self.model_edit.grid);
         let sel = &self.model_edit.selection;
         let preview = match (op, self.model()) {
@@ -212,6 +234,7 @@ impl Editor {
                     map,
                     handle,
                     bounds,
+                    ..
                 },
                 Some(m),
             ) => {
@@ -251,7 +274,6 @@ impl Editor {
         if preview.is_some() {
             self.model_edit.preview = preview;
         }
-        self.revision += 1;
     }
 
     /// Termina el gesto: mover o escalar es un paso de undo; la caja cambia la selección.
@@ -283,7 +305,6 @@ impl Editor {
         if let Some(model) = self.model_edit.preview.take() {
             self.named(label, |e| e.set_model(model));
         }
-        self.revision += 1;
     }
 
     /// Cancela el gesto sin tocar el documento. `false` si no había ninguno.
@@ -291,9 +312,6 @@ impl Editor {
         self.model_edit.key_request = None;
         let had = self.model_edit.op.take().is_some();
         self.model_edit.preview = None;
-        if had {
-            self.revision += 1;
-        }
         had
     }
 
@@ -334,11 +352,11 @@ impl Editor {
             c[i] += shift[i];
         }
         self.model_edit.zoom = zoom;
-        self.revision += 1;
     }
 
-    /// Después de cada cambio del documento: fuera del modelo en edición no hay gesto ni vista
-    /// previa, y la selección pierde lo que ya no existe.
+    /// Después de cada cambio del documento (y al cambiar de artboard): no queda gesto ni vista
+    /// previa (un deshacer a media mano no se pisa al soltar) y la selección pierde lo que ya no
+    /// existe.
     pub(crate) fn sync_model_edit(&mut self) {
         let edit = &mut self.model_edit;
         let model = edit
@@ -352,9 +370,7 @@ impl Editor {
                 edit.selection.items.clear();
             }
         }
-        if edit.artboard != Some(self.active) {
-            edit.op = None;
-            edit.preview = None;
-        }
+        edit.op = None;
+        edit.preview = None;
     }
 }

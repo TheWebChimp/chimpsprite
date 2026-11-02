@@ -5059,3 +5059,168 @@ fn g_then_a_click_moves_and_arrows_nudge_by_the_grid() {
     assert_eq!(x(&h), 12);
     assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
 }
+
+#[test]
+fn a_click_on_an_off_grid_vertex_changes_nothing() {
+    let mut h = editing_model();
+    assert!(
+        h.app
+            .doc
+            .editor
+            .add_primitive(cs_3d::Primitive::Cylinder { sides: 8 })
+    );
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    h.frame();
+    // Un vértice del cilindro fuera de la cuadrícula (x = ±11), el más cercano a la vista.
+    let points = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[1]);
+    let w = points
+        .iter()
+        .copied()
+        .filter(|p| p[0].rem_euclid(4.0) != 0.0)
+        .max_by(|a, b| a[2].total_cmp(&b[2]))
+        .expect("an off-grid vertex");
+    let model = h.app.doc.editor.model().cloned();
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(front_screen(&h, w), PointerButton::Primary);
+    let sel = &h.app.doc.editor.model_edit().selection;
+    assert!(
+        !sel.is_empty()
+            && sel
+                .items
+                .iter()
+                .all(|i| matches!(i, cs_3d::Item::Vertex(1, _))),
+        "the cylinder vertex got selected: {sel:?}"
+    );
+    assert_eq!(h.app.doc.editor.model().cloned(), model, "nothing moved");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps, "no undo step");
+}
+
+#[test]
+fn s_with_the_pointer_on_the_center_uses_a_fixed_reference() {
+    let mut h = editing_model();
+    h.app.doc.editor.select_model_object(Some(0));
+    let c = front_screen(&h, [0.0, 0.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(c)]);
+    tap_key(&mut h, egui::Key::S);
+    let scale_x = |h: &LayoutHarness| {
+        h.app.doc.editor.edit_model_shown().unwrap().objects[0]
+            .transform
+            .scale
+            .x
+    };
+    h.frame_with(vec![Event::PointerMoved(c + vec2(24.0, 0.0))]);
+    assert_eq!(scale_x(&h), 1000, "24 points away is the reference");
+    h.frame_with(vec![Event::PointerMoved(c + vec2(48.0, 0.0))]);
+    assert_eq!(scale_x(&h), 2000);
+    tap_key(&mut h, egui::Key::Escape);
+}
+
+#[test]
+fn edit_gestures_do_not_recompose_the_artboards() {
+    let mut h = editing_model();
+    h.frame();
+    let composed = h.app.doc.canvas.composed_count();
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    let at = quads[0].center();
+    let button = |pos, button, pressed| Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    h.frame_with(vec![button(at, PointerButton::Secondary, true)]);
+    for dx in [5.0, 10.0, 20.0] {
+        h.frame_with(vec![Event::PointerMoved(at + vec2(dx, 0.0))]);
+    }
+    h.frame_with(vec![button(
+        at + vec2(20.0, 0.0),
+        PointerButton::Secondary,
+        false,
+    )]);
+    h.frame();
+    // Una caja en un lugar vacío (cambia la selección, no el documento).
+    let corner = quads[0].left_top() + vec2(4.0, 12.0);
+    drag_with(
+        &mut h,
+        corner,
+        corner + vec2(10.0, 10.0),
+        Default::default(),
+    );
+    assert_eq!(
+        h.app.doc.canvas.composed_count(),
+        composed,
+        "panning and a box only redraw the views"
+    );
+}
+
+#[test]
+fn shift_on_a_corner_handle_scales_proportionally() {
+    let mut h = editing_model();
+    h.app.doc.editor.select_model_object(Some(0));
+    h.frame();
+    let from = front_screen(&h, [16.0, 16.0, 0.0]);
+    let to = front_screen(&h, [48.0, 32.0, 0.0]);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)]);
+    drag_with(&mut h, from, to, egui::Modifiers::SHIFT);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    let t = h.app.doc.editor.model().unwrap().objects[0].transform;
+    assert_eq!((t.scale.x, t.scale.y, t.scale.z), (2000, 2000, 1000));
+    assert_eq!(
+        h.app.doc.editor.model_edit().selection.items,
+        [cs_3d::Item::Object(0)].into(),
+        "Shift on the handle did not toggle the selection"
+    );
+}
+
+#[test]
+fn dragging_a_selected_extreme_vertex_moves_instead_of_scaling() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    h.app.doc.editor.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Vertex,
+        items: [
+            cs_3d::Item::Vertex(0, 0),
+            cs_3d::Item::Vertex(0, 3),
+            cs_3d::Item::Vertex(0, 7),
+        ]
+        .into(),
+    });
+    h.frame();
+    let vertex = |h: &LayoutHarness, v: usize| {
+        let m = h.app.doc.editor.model().unwrap();
+        cs_3d::world_points(&m.objects[0])[v]
+    };
+    let v0 = vertex(&h, 0);
+    // El vértice 7 cae justo en el asa de la esquina de arriba a la derecha.
+    let from = front_screen(&h, [16.0, 16.0, 16.0]);
+    let to = front_screen(&h, [24.0, 16.0, 16.0]);
+    drag_with(&mut h, from, to, Default::default());
+    assert_eq!(vertex(&h, 7), [24.0, 16.0, 16.0]);
+    assert_eq!(vertex(&h, 0)[0], v0[0] + 8.0, "everything selected moved");
+    assert_eq!(h.app.doc.editor.model_edit().selection.items.len(), 3);
+}
+
+#[test]
+fn a_middle_press_on_the_first_edit_frame_does_not_pick() {
+    let mut h = with_a_model_at_800();
+    h.app.doc.editor.select_model_object(None);
+    let at = artboard_pixels(&h).center();
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    // El modo Edit se prende sin un frame de por medio: todavía no hay cuadrantes.
+    h.app.doc.editor.toggle_model_edit();
+    let button = |pressed| Event::PointerButton {
+        pos: at,
+        button: PointerButton::Middle,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![button(true)]);
+    h.frame_with(vec![button(false)]);
+    h.frame();
+    assert_eq!(
+        h.app.doc.editor.selected_object(),
+        None,
+        "the cube got picked"
+    );
+}

@@ -158,3 +158,71 @@ fn deshacer_quita_de_la_seleccion_lo_que_ya_no_existe() {
     e.undo();
     assert!(e.model_edit().selection.is_empty());
 }
+
+#[test]
+fn el_estado_de_la_ui_de_edit_no_cambia_la_revision() {
+    let mut e = editing();
+    let revision = e.revision;
+    e.start_model_op(EditOp::Pan {
+        map: front(),
+        from: (100.0, 100.0),
+        center: [0.0; 3],
+    });
+    for x in [105.0, 110.0, 120.0] {
+        e.update_model_op((x, 100.0), false, false);
+    }
+    e.finish_model_op();
+    e.start_model_op(EditOp::Box {
+        map: front(),
+        from: (120.0, 60.0),
+        to: (120.0, 60.0),
+        add: false,
+    });
+    e.update_model_op((140.0, 80.0), false, false);
+    e.finish_model_op();
+    e.zoom_model_views(&front(), (100.0, 100.0), 1);
+    e.set_model_grid(8);
+    e.set_select_mode(SelectMode::Vertex);
+    assert!(!e.cancel_model_op());
+    assert_eq!(e.revision, revision);
+}
+
+#[test]
+fn elegir_un_objeto_de_otro_modelo_no_toca_la_seleccion_de_edit() {
+    let mut e = editing();
+    e.set_select_mode(SelectMode::Vertex);
+    let picked = Selection {
+        mode: SelectMode::Vertex,
+        items: [Item::Vertex(0, 7)].into(),
+    };
+    e.set_model_selection(picked.clone());
+    assert!(e.new_model("Other", (64, 64)));
+    assert!(!e.model_edit_on());
+    e.select_model_object(Some(0));
+    assert_eq!(e.model_edit().selection, picked);
+}
+
+#[test]
+fn deshacer_a_media_mano_cancela_el_gesto() {
+    let mut e = editing();
+    e.set_select_mode(SelectMode::Vertex);
+    e.set_model_selection(Selection {
+        mode: SelectMode::Vertex,
+        items: [Item::Vertex(0, 7)].into(),
+    });
+    let before = vertex(&e, 7);
+    let steps = e.history.done_count();
+    assert!(e.nudge_model_selection(1, 0));
+    e.start_model_op(EditOp::Move {
+        map: front(),
+        from: (140.0, 68.0),
+        grab: [20.0, 16.0, 16.0],
+        keyboard: false,
+    });
+    e.update_model_op((156.0, 68.0), false, false);
+    e.undo();
+    assert!(e.model_edit().op.is_none() && e.model_edit().preview.is_none());
+    e.finish_model_op();
+    assert_eq!(vertex(&e, 7), before, "the undo stays");
+    assert_eq!(e.history.done_count(), steps);
+}

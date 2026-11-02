@@ -49,8 +49,11 @@ impl Editor {
 
     pub fn select_model_object(&mut self, i: Option<usize>) {
         self.model_object = i;
-        // En el modo Edit, elegir un objeto (panel o perspectiva) lo elige en el modo actual.
-        if let Some(m) = self.model() {
+        // En el modo Edit, elegir un objeto (panel o perspectiva) lo elige en el modo actual
+        // (solo si el modelo en edición es el activo: la selección es de ese modelo).
+        if self.model_edit.artboard == Some(self.active)
+            && let Some(m) = self.model()
+        {
             let mode = self.model_edit.selection.mode;
             let picked = cs_3d::Selection {
                 mode: cs_3d::SelectMode::Object,
