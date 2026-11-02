@@ -4386,6 +4386,70 @@ fn the_position_x_stepper_moves_the_object_in_one_step() {
     assert_eq!(x(&h), 0);
 }
 
+/// Lo que se ve de los textos "3D" y "Edit (Tab)" en el panel recién abierto.
+fn panel_top_texts(h: &LayoutHarness) -> (Vec<Rect>, Rect) {
+    let find = |t: &str| -> Vec<Rect> {
+        h.text_rects
+            .iter()
+            .filter(|(s, _, _)| s == t)
+            .map(|(_, r, _)| *r)
+            .collect()
+    };
+    (
+        find("3D"),
+        find("Edit (Tab)").first().copied().unwrap_or(Rect::NOTHING),
+    )
+}
+
+#[test]
+fn the_3d_panel_opens_at_the_top_with_edit_visible() {
+    for h in [model_panel_open(true), model_panel_tall()] {
+        let (titles, edit) = panel_top_texts(&h);
+        // El "3D" del título del panel: el que queda a la izquierda de sus filas (los otros son
+        // el botón del dock y el de la barra).
+        let title = titles
+            .iter()
+            .filter(|t| t.left() < edit.left() && t.top() < edit.top())
+            .max_by(|a, b| a.left().total_cmp(&b.left()))
+            .copied()
+            .expect("the panel title");
+        assert!(edit.top() >= title.bottom(), "{edit:?} bajo {title:?}");
+    }
+}
+
+#[test]
+fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
+    // Una ventana baja: el panel no cabe y se desplaza.
+    let mut h = model_panel_in(Vec2::new(1200.0, 500.0));
+    let (_, top) = panel_top_texts(&h);
+    let over = top.center();
+    h.frame_with(vec![Event::PointerMoved(over)]);
+    h.frame_with(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, -120.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Default::default(),
+    }]);
+    for _ in 0..10 {
+        h.frame();
+    }
+    let (_, scrolled) = panel_top_texts(&h);
+    // Desplazado, "Edit (Tab)" sale de la vista (no se dibuja) o queda más arriba.
+    assert!(
+        scrolled == Rect::NOTHING || scrolled.top() < top.top() - 20.0,
+        "el panel no se desplazó"
+    );
+    // Cerrar y volver a abrir (el botón 3D del dock).
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    for _ in 0..3 {
+        h.frame();
+    }
+    let (_, reopened) = panel_top_texts(&h);
+    assert_eq!(reopened.top(), top.top());
+}
+
 #[test]
 fn the_3d_panel_has_edit_the_modes_and_the_grid() {
     let mut h = model_panel_open(true);

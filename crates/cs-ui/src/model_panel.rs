@@ -110,11 +110,21 @@ pub fn show(
         inner.x_range(),
         outer.top() + HEADER_LINE + pixel_ui::ETCHED_SIZE..=inner.bottom(),
     );
-    let area = egui::ScrollArea::vertical()
+    let mut area = egui::ScrollArea::vertical()
         .id_salt("model_panel_middle")
         .auto_shrink([false, false])
         .max_height(middle.height())
         .min_scrolled_height(middle.height());
+    // Recién abierto: arriba. egui guarda el desplazamiento del scroll (y lo persiste entre
+    // sesiones), así que sin esto el panel reabre donde se dejó, con Edit y los modos ocultos.
+    // Si el frame anterior no se dibujó el panel, es que estaba cerrado.
+    let shown_id = egui::Id::new("model_panel_last_pass");
+    let pass = ui.ctx().cumulative_pass_nr();
+    let last: Option<u64> = ui.data(|d| d.get_temp(shown_id));
+    if last.is_none_or(|last| last + 1 < pass) {
+        area = area.vertical_scroll_offset(0.0);
+    }
+    ui.data_mut(|d| d.insert_temp(shown_id, pass));
     let action = ui
         .scope_builder(UiBuilder::new().max_rect(middle), |ui| {
             pixel_ui::scroll(ui, area, |ui| {
