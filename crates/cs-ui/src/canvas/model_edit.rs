@@ -95,6 +95,20 @@ impl CanvasView {
         let Some(i) = self.quadrant_at(p) else {
             return false;
         };
+        // Con un G o S de teclado en curso, el clic lo cierra sea cual sea el cuadrante: el
+        // izquierdo confirma y el derecho o el central cancelan.
+        let keyboard = matches!(
+            editor.model_edit().op,
+            Some(EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. })
+        );
+        if keyboard {
+            if secondary || middle {
+                editor.cancel_model_op();
+            } else {
+                editor.finish_model_op();
+            }
+            return true;
+        }
         let Some(view) = quadrant_view(i) else {
             // El botón central no hace nada en la perspectiva.
             if !middle {
@@ -106,24 +120,12 @@ impl CanvasView {
             return false;
         };
         let at = (p.x, p.y);
-        let keyboard = matches!(
-            editor.model_edit().op,
-            Some(EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. })
-        );
         if secondary || middle {
-            if keyboard {
-                editor.cancel_model_op();
-            } else {
-                editor.start_model_op(EditOp::Pan {
-                    map,
-                    from: at,
-                    center: editor.model_edit().center,
-                });
-            }
-            return true;
-        }
-        if keyboard {
-            editor.finish_model_op();
+            editor.start_model_op(EditOp::Pan {
+                map,
+                from: at,
+                center: editor.model_edit().center,
+            });
             return true;
         }
         let Some(model) = editor.model().cloned() else {

@@ -4860,3 +4860,95 @@ fn a_right_click_cancels_a_keyboard_grab() {
     assert_eq!(mesh_x(&h), before);
     assert_eq!(h.app.doc.editor.history.done_count(), steps);
 }
+
+#[test]
+fn a_left_click_in_the_perspective_still_commits_a_keyboard_grab() {
+    let (mut h, _) = grabbing_with_the_keyboard();
+    let selection = h.app.doc.editor.model_edit().selection.clone();
+    let steps = h.app.doc.editor.history.done_count();
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    h.click(quads[1].center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert_eq!(h.app.doc.editor.model_edit().selection, selection);
+}
+
+#[test]
+fn number_keys_switch_the_selection_mode() {
+    let mut h = editing_model();
+    for (key, mode) in [
+        (egui::Key::Num2, cs_3d::SelectMode::Vertex),
+        (egui::Key::Num3, cs_3d::SelectMode::Edge),
+        (egui::Key::Num4, cs_3d::SelectMode::Face),
+        (egui::Key::Num1, cs_3d::SelectMode::Object),
+    ] {
+        tap_key(&mut h, key);
+        assert_eq!(h.app.doc.editor.model_edit().selection.mode, mode);
+    }
+}
+
+#[test]
+fn a_corner_handle_scales_both_axes_of_the_view() {
+    let mut h = editing_model();
+    // El cubo elegido en modo Objeto: su caja es ±16.
+    h.app.doc.editor.select_model_object(Some(0));
+    h.frame();
+    let from = front_screen(&h, [16.0, 16.0, 0.0]);
+    let to = front_screen(&h, [48.0, 48.0, 0.0]);
+    drag_with(&mut h, from, to, Default::default());
+    let t = h.app.doc.editor.model().unwrap().objects[0].transform;
+    assert_eq!((t.scale.x, t.scale.y, t.scale.z), (2000, 2000, 1000));
+}
+
+#[test]
+fn s_follows_the_pointer_and_escape_cancels_without_an_undo_step() {
+    let mut h = editing_model();
+    h.app.doc.editor.select_model_object(Some(0));
+    let start = front_screen(&h, [8.0, 0.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(start)]);
+    let steps = h.app.doc.editor.history.done_count();
+    tap_key(&mut h, egui::Key::S);
+    h.frame_with(vec![Event::PointerMoved(start + vec2(20.0, 0.0))]);
+    h.frame();
+    assert!(h.app.doc.editor.edit_model_shown().unwrap() != h.app.doc.editor.model().unwrap());
+    tap_key(&mut h, egui::Key::Escape);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    assert_eq!(
+        h.app.doc.editor.model().unwrap().objects[0]
+            .transform
+            .scale
+            .x,
+        1000
+    );
+}
+
+#[test]
+fn escape_without_a_gesture_clears_the_selection() {
+    let mut h = editing_model();
+    h.app.doc.editor.select_model_object(Some(0));
+    tap_key(&mut h, egui::Key::Escape);
+    assert!(h.app.doc.editor.model_edit().selection.is_empty());
+}
+
+#[test]
+fn g_then_a_click_moves_and_arrows_nudge_by_the_grid() {
+    let mut h = editing_model();
+    h.app.doc.editor.select_model_object(Some(0));
+    let start = front_screen(&h, [0.0, 0.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(start)]);
+    tap_key(&mut h, egui::Key::G);
+    let to = front_screen(&h, [8.0, 0.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.click(to, PointerButton::Primary);
+    let x = |h: &LayoutHarness| {
+        h.app.doc.editor.model().unwrap().objects[0]
+            .transform
+            .position
+            .x
+    };
+    assert_eq!(x(&h), 8);
+    let steps = h.app.doc.editor.history.done_count();
+    tap_key(&mut h, egui::Key::ArrowRight);
+    assert_eq!(x(&h), 12);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}

@@ -1693,6 +1693,57 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
             editor.toggle_model_edit();
             return true;
         }
+        // En el modo Edit: 1–4 cambian qué se elige, G y S arrancan un gesto que sigue al
+        // puntero, Enter lo confirma, Esc lo cancela (o vacía la selección) y las flechas
+        // mueven un paso de cuadrícula.
+        if editor.model_edit_on() {
+            use cs_3d::SelectMode;
+            let mode = match key {
+                _ if shift => None,
+                Key::Num1 => Some(SelectMode::Object),
+                Key::Num2 => Some(SelectMode::Vertex),
+                Key::Num3 => Some(SelectMode::Edge),
+                Key::Num4 => Some(SelectMode::Face),
+                _ => None,
+            };
+            if let Some(mode) = mode {
+                editor.set_select_mode(mode);
+                return true;
+            }
+            let busy = editor.model_edit().op.is_some();
+            let mut handled = true;
+            match key {
+                Key::G if !shift => editor.request_model_key_op(editor::KeyOp::Grab),
+                Key::S if !shift => editor.request_model_key_op(editor::KeyOp::Scale),
+                Key::Enter if busy => editor.finish_model_op(),
+                Key::Escape if busy => {
+                    editor.cancel_model_op();
+                }
+                Key::Escape => {
+                    let mode = editor.model_edit().selection.mode;
+                    editor.set_model_selection(cs_3d::Selection {
+                        mode,
+                        items: Default::default(),
+                    });
+                }
+                Key::ArrowLeft => {
+                    editor.nudge_model_selection(-1, 0);
+                }
+                Key::ArrowRight => {
+                    editor.nudge_model_selection(1, 0);
+                }
+                Key::ArrowUp => {
+                    editor.nudge_model_selection(0, -1);
+                }
+                Key::ArrowDown => {
+                    editor.nudge_model_selection(0, 1);
+                }
+                _ => handled = false,
+            }
+            if handled {
+                return true;
+            }
+        }
         let arrow = match key {
             Key::ArrowLeft => Some((-1, 0)),
             Key::ArrowRight => Some((1, 0)),
