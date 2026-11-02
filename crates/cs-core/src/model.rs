@@ -128,6 +128,66 @@ impl Default for Light3D {
     }
 }
 
+/// Los colores a los que se oscurece `color` en cada paso de luz; `None` = automático.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ShadeEntry {
+    pub color: Rgba,
+    pub steps: [Option<Rgba>; 2],
+}
+
+/// Rampas de luz explícitas por color, ordenadas por (r, g, b, a), sin repetidos ni entradas
+/// vacías.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ShadingTable {
+    pub entries: Vec<ShadeEntry>,
+}
+
+impl ShadingTable {
+    fn key(c: Rgba) -> (u8, u8, u8, u8) {
+        (c.r, c.g, c.b, c.a)
+    }
+
+    /// El color fijado para `color` en el paso `step` (1 o 2), si lo hay.
+    pub fn get(&self, color: Rgba, step: usize) -> Option<Rgba> {
+        if !(1..=2).contains(&step) {
+            return None;
+        }
+        let i = self
+            .entries
+            .binary_search_by_key(&Self::key(color), |e| Self::key(e.color))
+            .ok()?;
+        self.entries[i].steps[step - 1]
+    }
+
+    /// Fija (o con `None` quita) el color del paso `step` (1 o 2); borra la entrada si queda
+    /// vacía.
+    pub fn set(&mut self, color: Rgba, step: usize, value: Option<Rgba>) {
+        if !(1..=2).contains(&step) {
+            return;
+        }
+        let found = self
+            .entries
+            .binary_search_by_key(&Self::key(color), |e| Self::key(e.color));
+        match (found, value) {
+            (Ok(i), _) => {
+                self.entries[i].steps[step - 1] = value;
+                if self.entries[i].steps.iter().all(Option::is_none) {
+                    self.entries.remove(i);
+                }
+            }
+            (Err(i), Some(_)) => {
+                let mut entry = ShadeEntry {
+                    color,
+                    steps: [None; 2],
+                };
+                entry.steps[step - 1] = value;
+                self.entries.insert(i, entry);
+            }
+            (Err(_), None) => {}
+        }
+    }
+}
+
 /// Un modelo 3D: objetos de malla, la textura (otro artboard), la cámara y la luz.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Model3D {
@@ -137,6 +197,8 @@ pub struct Model3D {
     pub light: Light3D,
     #[serde(default)]
     pub outline: Option<Rgba>,
+    #[serde(default)]
+    pub shading: ShadingTable,
 }
 
 impl Default for Model3D {
@@ -153,6 +215,7 @@ impl Default for Model3D {
             },
             light: Light3D::default(),
             outline: None,
+            shading: ShadingTable::default(),
         }
     }
 }
@@ -308,6 +371,39 @@ mod tests {
         let mut m = cube();
         m.faces[0].uvs.pop();
         assert!(model_with(m).check(&sprite()).is_err());
+    }
+
+    #[test]
+    fn shading_set_get_ordena_y_borra_vacias() {
+        let c = |v| Rgba::new(v, v, v, 255);
+        let mut t = ShadingTable::default();
+        t.set(c(200), 1, Some(c(10)));
+        t.set(c(50), 2, Some(c(20)));
+        t.set(c(200), 2, Some(c(30)));
+        t.set(c(50), 2, Some(c(21)));
+        assert_eq!(t.entries.len(), 2);
+        assert_eq!(t.entries[0].color, c(50));
+        assert_eq!(t.get(c(200), 1), Some(c(10)));
+        assert_eq!(t.get(c(200), 2), Some(c(30)));
+        assert_eq!(t.get(c(50), 1), None);
+        assert_eq!(t.get(c(50), 2), Some(c(21)));
+        assert_eq!(t.get(c(9), 1), None);
+        t.set(c(50), 2, None);
+        assert_eq!(t.entries.len(), 1);
+        t.set(c(200), 1, None);
+        t.set(c(200), 2, None);
+        assert!(t.entries.is_empty());
+        // Borrar algo que no existe no crea entradas.
+        t.set(c(7), 1, None);
+        assert!(t.entries.is_empty());
+    }
+
+    #[test]
+    fn modelo_de_la_parte_1_abre_con_tabla_vacia() {
+        let mut v = serde_json::to_value(Model3D::default()).unwrap();
+        v.as_object_mut().unwrap().remove("shading");
+        let m: Model3D = serde_json::from_value(v).unwrap();
+        assert_eq!(m.shading, ShadingTable::default());
     }
 
     #[test]

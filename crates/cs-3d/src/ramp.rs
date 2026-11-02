@@ -1,6 +1,6 @@
 //! La rampa de la luz: oscurecer un color con los de la paleta del documento.
 
-use cs_core::Rgba;
+use cs_core::{Rgba, ShadingTable};
 
 /// Un paso más oscuro de `c`: el color de la paleta con luminancia menor que la de `c` más
 /// cercano a `c` en distancia RGB (sin contar los transparentes). Si no hay ninguno, `c`.
@@ -15,6 +15,18 @@ pub fn darker(palette: &[Rgba], c: Rgba) -> Rgba {
         })
         .copied()
         .unwrap_or(c)
+}
+
+/// `c` oscurecido `steps` pasos (0, 1 o 2): la tabla manda y, donde no fija nada, la regla
+/// automática de `darker`.
+pub fn shade(palette: &[Rgba], table: &ShadingTable, c: Rgba, steps: u32) -> Rgba {
+    match steps {
+        0 => c,
+        1 => table.get(c, 1).unwrap_or_else(|| darker(palette, c)),
+        _ => table
+            .get(c, 2)
+            .unwrap_or_else(|| darker(palette, darker(palette, c))),
+    }
 }
 
 /// La luminancia entera `299·r + 587·g + 114·b`.
@@ -36,6 +48,28 @@ mod tests {
         assert_eq!(darker(&pal, BLANCO), GRIS);
         assert_eq!(darker(&pal, GRIS), NEGRO);
         assert_eq!(darker(&pal, NEGRO), NEGRO);
+    }
+
+    #[test]
+    fn shade_con_tabla_vacia_es_la_regla_automatica() {
+        let pal = [NEGRO, GRIS, BLANCO];
+        let t = ShadingTable::default();
+        assert_eq!(shade(&pal, &t, BLANCO, 0), BLANCO);
+        assert_eq!(shade(&pal, &t, BLANCO, 1), GRIS);
+        assert_eq!(shade(&pal, &t, BLANCO, 2), NEGRO);
+    }
+
+    #[test]
+    fn shade_usa_la_tabla_por_paso() {
+        let pal = [NEGRO, GRIS, BLANCO];
+        let rojo = Rgba::new(255, 0, 0, 255);
+        let mut t = ShadingTable::default();
+        t.set(BLANCO, 1, Some(rojo));
+        assert_eq!(shade(&pal, &t, BLANCO, 1), rojo);
+        assert_eq!(shade(&pal, &t, BLANCO, 2), NEGRO);
+        t.set(BLANCO, 2, Some(rojo));
+        assert_eq!(shade(&pal, &t, BLANCO, 2), rojo);
+        assert_eq!(shade(&pal, &t, BLANCO, 0), BLANCO);
     }
 
     #[test]
