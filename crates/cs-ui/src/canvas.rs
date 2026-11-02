@@ -8,7 +8,7 @@ use eframe::egui::{
     TextureHandle, TextureOptions, Vec2,
 };
 
-use crate::artboard_window::{ArtboardWindow, TitleHit, WindowLayout};
+use crate::artboard_window::{ArtboardWindow, CardSample, TitleHit, WindowLayout};
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
 use crate::editor::{Editor, MAX_BRUSH_SIZE, ToolKind};
 use crate::guides::{RULER_PX, SNAP_PX, SnapContext, after_drag, hit_guide, nice_step};
@@ -153,6 +153,10 @@ pub struct CanvasView {
     /// El glifo y su ancho (en columnas) mientras se arrastra la línea del ancho; al soltar se
     /// aplica a ese glifo (aunque el actual haya cambiado).
     advance_drag: Option<(char, i32)>,
+    /// La muestra de cada artboard de fuente para su tarjeta (de lejos) y la revisión del
+    /// documento con la que se armaron.
+    cards: HashMap<ArtboardId, CardSample>,
+    cards_revision: Option<u64>,
 }
 
 /// Color alrededor de los artboards: `canvas` del skin con Pixel UI; si no, el del tema.
@@ -269,6 +273,8 @@ impl Default for CanvasView {
             crumbs_shown: false,
             advance_line: None,
             advance_drag: None,
+            cards: HashMap::new(),
+            cards_revision: None,
         }
     }
 }
@@ -574,11 +580,10 @@ impl CanvasView {
     ) -> Vec<Rect> {
         shown_artboards(document, editor)
             .map(|a| {
-                let pixels = WindowLayout::pixels_on_screen(self.pixel_rect(rect, a), ppp);
                 if self.artboard_window.is_some() {
-                    WindowLayout::frame_around(pixels, ppp)
+                    self.window_of(rect, a, ppp).frame
                 } else {
-                    pixels
+                    WindowLayout::pixels_on_screen(self.pixel_rect(rect, a), ppp)
                 }
             })
             .collect()
@@ -712,6 +717,7 @@ impl CanvasView {
             grid: view_settings.snap_to_grid.then(|| editor.sprite().grid),
             tolerance: SNAP_PX / self.zoom,
         });
+        self.refresh_cards(editor);
         self.handle_input(
             ui,
             &response,
@@ -723,6 +729,7 @@ impl CanvasView {
         // Si la entrada salió del modo símbolo, la vista del documento vuelve ya.
         self.crumbs_shown = editor.in_symbol_mode();
         self.sync_symbol_view(editor);
+        self.refresh_cards(editor);
         let modal = dialog.is_some();
         let guide = dialog.and_then(|d| d.preview_rect(&editor.document));
 
@@ -809,13 +816,29 @@ impl CanvasView {
             // queda fuera del lienzo, no se arma ni se dibuja nada del artboard.
             let window = match &self.artboard_window {
                 Some(w) => {
-                    if !WindowLayout::frame_around(screen, ppp).intersects(rect) {
+                    let layout = self.window_of(rect, artboard, ppp);
+                    if !layout.frame.intersects(rect) {
                         continue;
                     }
-                    Some((w, WindowLayout::around(screen, ppp)))
+                    Some((w, layout))
                 }
                 None => None,
             };
+            let renaming = self.renaming.as_ref().is_some_and(|r| r.0 == artboard.id);
+            // Una fuente vista de lejos: la tarjeta con la muestra, sin los píxeles del glifo ni
+            // sus guías.
+            if let Some((w, layout)) = &window
+                && layout.card.is_some()
+                && let Some(sample) = self.cards.get(&artboard.id)
+            {
+                painter.extend(w.card_shapes(layout, sample, active, ppp));
+                let title = match &artboard.font {
+                    Some(font) if self.names_visible && !renaming => font.name.clone(),
+                    _ => String::new(),
+                };
+                painter.extend(w.bar_shapes(&painter, layout, &title, active, true, ppp));
+                continue;
+            }
             if let Some((w, layout)) = &window {
                 painter.extend(w.frame_shapes(layout, active, ppp));
             }
@@ -888,7 +911,6 @@ impl CanvasView {
                 self.advance_line = (!font.monospace)
                     .then(|| crate::font_overlay::advance_hit(screen, advance, scale));
             }
-            let renaming = self.renaming.as_ref().is_some_and(|r| r.0 == artboard.id);
             if let Some((w, layout)) = &window {
                 // La barra de título reemplaza a la etiqueta. Sin el borde naranja del activo:
                 // taparía el borde y la barra de la ventana; los inactivos se ven apagados.
@@ -897,7 +919,8 @@ impl CanvasView {
                 } else {
                     String::new()
                 };
-                painter.extend(w.bar_shapes(&painter, layout, &title, active, ppp));
+                let is_font = artboard.font.is_some();
+                painter.extend(w.bar_shapes(&painter, layout, &title, active, is_font, ppp));
                 continue;
             }
             let (border, label_color) = if active {
@@ -1421,7 +1444,7 @@ impl CanvasView {
             // Con Pixel UI, el campo del UI kit sobre la barra de título (mockup de componentes).
             (Some(_), Some(skin)) => {
                 let ppp = ui.ctx().pixels_per_point();
-                let layout = WindowLayout::around(self.pixel_rect(rect, artboard), ppp);
+                let layout = self.window_of(rect, artboard, ppp);
                 let at = Pos2::new(
                     layout.frame.left() + RENAME_LEFT,
                     layout.bar.top() - kit::input::FLOATING_ABOVE,
@@ -1464,6 +1487,34 @@ impl CanvasView {
             return;
         }
         self.renaming = Some((id, name, focused || response.has_focus()));
+    }
+
+    /// Con Pixel UI, la ventana de `artboard` en pantalla: la de siempre alrededor de sus píxeles
+    /// o, si es una fuente y esa ventana quedaría más chica que su tarjeta a lo ancho y a lo alto
+    /// (de lejos, el glifo no se lee), la tarjeta, desde la misma esquina.
+    fn window_of(&self, rect: Rect, artboard: &Artboard, ppp: f32) -> WindowLayout {
+        let window = WindowLayout::around(self.pixel_rect(rect, artboard), ppp);
+        let Some(sample) = self.cards.get(&artboard.id) else {
+            return window;
+        };
+        let card = WindowLayout::card(window.frame.min, sample.size);
+        let smaller = window.frame.width() < card.frame.width()
+            && window.frame.height() < card.frame.height();
+        if smaller { card } else { window }
+    }
+
+    /// Arma de nuevo las muestras de las tarjetas si el documento cambió.
+    fn refresh_cards(&mut self, editor: &Editor) {
+        if self.cards_revision == Some(editor.revision) {
+            return;
+        }
+        self.cards_revision = Some(editor.revision);
+        self.cards = editor
+            .document
+            .artboards
+            .iter()
+            .filter_map(|a| Some((a.id, CardSample::new(&a.font_view()?))))
+            .collect();
     }
 
     /// Área de píxeles del artboard en pantalla.
@@ -1584,10 +1635,7 @@ impl CanvasView {
         }
         let ppp = ui.ctx().pixels_per_point();
         let menus: Vec<(ArtboardId, Rect)> = shown_artboards(&editor.document, editor)
-            .filter_map(|a| {
-                let layout = WindowLayout::around(self.pixel_rect(rect, a), ppp);
-                Some((a.id, layout.menu?))
-            })
+            .filter_map(|a| Some((a.id, self.window_of(rect, a, ppp).menu?)))
             .filter(|(_, r)| rect.intersects(*r))
             .collect();
         for (id, menu_rect) in menus {
@@ -1720,16 +1768,15 @@ impl CanvasView {
             // Decide la ventana de más arriba que tiene a `p` (marco, barra o píxeles): las barras
             // de los de abajo quedan tapadas.
             let shown = shown_artboards(&editor.document, editor);
-            let (artboard, pixels) = shown.rev().find_map(|a| {
-                let pixels = self.pixel_rect(rect, a);
-                WindowLayout::frame_around(pixels, ppp)
-                    .contains(p)
-                    .then_some((a, pixels))
+            let (artboard, layout) = shown.rev().find_map(|a| {
+                let layout = self.window_of(rect, a, ppp);
+                layout.frame.contains(p).then_some((a, layout))
             })?;
-            let hit = WindowLayout::around(pixels, ppp).hit(p)?;
+            let hit = layout.hit(p)?;
             // Con la herramienta Artboard, cerca del borde de arriba o de sus esquinas (con la
-            // tolerancia de la herramienta) redimensionar gana a la barra.
-            if editor.active_tool() == ToolKind::Artboard {
+            // tolerancia de la herramienta) redimensionar gana a la barra. La tarjeta no tiene
+            // bordes que tomar: es toda barra.
+            if editor.active_tool() == ToolKind::Artboard && layout.card.is_none() {
                 let slop = EDGE_SLOP_PX / self.zoom;
                 let world = self.to_world(rect, p);
                 if let Some(ArtboardHit::Edge(id, _)) = hit_test(&editor.document, world, slop)

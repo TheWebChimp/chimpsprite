@@ -3316,6 +3316,94 @@ fn a_monospace_font_has_no_advance_line_to_drag() {
     assert!(h.app.doc.canvas.advance_line_rect().is_none());
 }
 
+/// Un documento con su artboard normal y una fuente de 16×16 activa, centrada a 800 %.
+fn with_a_font_at_800() -> (LayoutHarness, cs_core::ArtboardId, cs_core::ArtboardId) {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let normal = h.app.doc.editor.artboard().id;
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    e.go_to_glyph('A');
+    let font = e.artboard().id;
+    h.app.doc.canvas.zoom = 8.0;
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+    (h, normal, font)
+}
+
+/// A `zoom`, con el artboard activo centrado.
+fn zoom_centered(h: &mut LayoutHarness, zoom: f32) {
+    h.app.doc.canvas.zoom = zoom;
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+}
+
+#[test]
+fn a_font_artboard_has_the_orange_bar_and_a_normal_one_the_pink_one() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.frame();
+    assert!(!h.drawn("title.bar").is_empty(), "the normal artboard");
+    assert!(h.drawn("title.bar.font").is_empty(), "no font yet");
+    let (h, _, _) = with_a_font_at_800();
+    let pixels = artboard_pixels(&h);
+    let bar = union(&h.drawn("title.bar.font")).expect("the orange bar");
+    // La barra de la ventana de la fuente: del borde izquierdo al derecho, sobre la fila blanca.
+    assert_eq!(bar.left(), pixels.left() - 2.0);
+    assert_eq!(bar.right(), pixels.right() + 2.0);
+    assert_eq!(bar.bottom(), pixels.top() - 1.0);
+    assert!(
+        h.drawn("title.bar").iter().all(|r| !r.intersects(bar)),
+        "the pink bar is not under it"
+    );
+}
+
+#[test]
+fn zoomed_far_out_a_font_artboard_is_a_card_with_a_sample() {
+    let (mut h, _, font) = with_a_font_at_800();
+    assert!(h.app.doc.canvas.advance_line_rect().is_some());
+    zoom_centered(&mut h, 0.5);
+    let tex = h.app.doc.canvas.artboard_texture(font).expect("rendered");
+    assert!(
+        h.textures.iter().all(|(t, _)| *t != tex),
+        "the card has no glyph pixels"
+    );
+    assert!(h.app.doc.canvas.advance_line_rect().is_none(), "no overlay");
+    let bar = union(&h.drawn("title.bar.font")).expect("the card's orange bar");
+    // El marco de la tarjeta (el del artboard normal queda aparte, a la izquierda).
+    let frames: Vec<Rect> = h
+        .drawn("artboard.frame")
+        .into_iter()
+        .filter(|r| r.left() >= bar.left() && r.right() <= bar.right())
+        .collect();
+    let card = union(&frames).expect("the card frame");
+    assert_eq!(bar.left_top(), card.left_top());
+    assert_eq!(bar.width(), card.width());
+    // Más grande que la ventana del glifo a ese zoom (16×16 a 50 %: 12×27).
+    assert!(card.width() > 12.0 && card.height() > 27.0, "{card:?}");
+    // De vuelta a 800 %, la ventana del glifo.
+    zoom_centered(&mut h, 8.0);
+    assert!(h.textures.iter().any(|(t, _)| *t == tex));
+    assert!(h.app.doc.canvas.advance_line_rect().is_some());
+}
+
+#[test]
+fn clicking_the_card_activates_the_font_artboard() {
+    let (mut h, normal, font) = with_a_font_at_800();
+    zoom_centered(&mut h, 0.5);
+    h.app.doc.editor.activate(normal);
+    h.frame();
+    let bar = union(&h.drawn("title.bar.font")).expect("the card's orange bar");
+    h.click(bar.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.active, font);
+}
+
 #[test]
 fn a_guide_dragged_from_the_ruler_can_be_dropped_on_the_advance_line() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
