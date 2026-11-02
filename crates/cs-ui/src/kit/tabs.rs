@@ -25,6 +25,7 @@ use crate::pixel_ui;
 use crate::pixel_ui::Tip as _;
 use crate::skin::{Skin, WidgetState};
 use crate::tab_bar::{ellipsis, fit_widths, text_pos};
+use crate::tabs::TabIcon;
 
 /// Las piezas.
 pub const TAB: &str = "tab";
@@ -54,6 +55,11 @@ const MARK_HIT: f32 = 2.0;
 /// El cuadrito de color (de los slices) y su aire hasta el nombre.
 pub const SWATCH: f32 = 7.0;
 pub const SWATCH_GAP: f32 = 3.0;
+/// El ícono de una pestaña de vista (▣ o Aa) y su aire hasta el nombre (`SWATCH_GAP`). Si el skin
+/// trae `tab.icon.model` / `tab.icon.font`, se usan en su lugar.
+pub const ICON_WIDTH: f32 = 10.0;
+pub const ICON_MODEL: &str = "tab.icon.model";
+pub const ICON_FONT: &str = "tab.icon.font";
 /// Las flechas: dos cajas de 12×12 que comparten la columna del medio, 1 fila debajo del borde
 /// de arriba de las pestañas.
 pub const ARROW_SIZE: f32 = 12.0;
@@ -81,6 +87,7 @@ pub struct TabItem {
     pub label: String,
     pub color: Option<Color32>,
     pub mark: TabMark,
+    pub icon: TabIcon,
 }
 
 impl TabItem {
@@ -89,7 +96,13 @@ impl TabItem {
             label: label.into(),
             color: None,
             mark: TabMark::None,
+            icon: TabIcon::None,
         }
+    }
+
+    /// El ícono de vista antes del nombre.
+    pub fn with_icon(self, icon: TabIcon) -> Self {
+        TabItem { icon, ..self }
     }
 
     pub fn closable(label: impl Into<String>, dirty: bool) -> Self {
@@ -197,12 +210,17 @@ pub fn chrome(item: &TabItem) -> f32 {
     } else {
         0.0
     };
+    let icon = if item.icon == TabIcon::None {
+        0.0
+    } else {
+        ICON_WIDTH + SWATCH_GAP
+    };
     let mark = if item.mark == TabMark::None {
         0.0
     } else {
         MARK_GAP + MARK_SIZE
     };
-    2.0 * (EDGE + PAD) + swatch + mark
+    2.0 * (EDGE + PAD) + swatch + icon + mark
 }
 
 /// El ancho justo de una pestaña.
@@ -347,6 +365,10 @@ pub fn tab_shapes(
     } else {
         colors.tab_text_dim
     };
+    if item.icon != TabIcon::None {
+        shapes.extend(icon_shapes(ui, skin, item.icon, pos2(left, caps), color));
+        left += ICON_WIDTH + SWATCH_GAP;
+    }
     // El nombre ya viene cortado para que entre (`layout`).
     let text = galley(ui, name);
     let at = text_pos(&text, left, caps, ppp);
@@ -361,6 +383,37 @@ pub fn tab_shapes(
         }
     }
     shapes
+}
+
+/// El ícono de una pestaña de vista con las mayúsculas en la fila `at.y`: la pieza del skin si la
+/// trae; si no, un cuadrito con otro adentro (modelo) o "Aa" (fuente).
+fn icon_shapes(ui: &Ui, skin: &Skin, icon: TabIcon, at: egui::Pos2, color: Color32) -> Vec<Shape> {
+    let ppp = ui.ctx().pixels_per_point();
+    let name = match icon {
+        TabIcon::Model => ICON_MODEL,
+        TabIcon::Font => ICON_FONT,
+        TabIcon::None => return Vec::new(),
+    };
+    if let Some(piece) = skin.piece(name, WidgetState::Normal) {
+        let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+        return pixel_ui::piece_shapes(piece, Rect::from_min_size(at, size), ppp);
+    }
+    if icon == TabIcon::Font {
+        let text = galley(ui, "Aa");
+        let pos = text_pos(&text, at.x, at.y, ppp);
+        return vec![Shape::galley(pos, text, color)];
+    }
+    // ▣: 7×7 con borde de 1 y un cuadrito de 3×3 al centro.
+    let outer = Rect::from_min_size(at, Vec2::splat(7.0));
+    vec![
+        Shape::rect_stroke(
+            outer.round_to_pixels(ppp),
+            0.0,
+            Stroke::new(1.0, color),
+            StrokeKind::Inside,
+        ),
+        Shape::rect_filled(outer.shrink(2.0).round_to_pixels(ppp), 0.0, color),
+    ]
 }
 
 /// La marca del final de una pestaña de documento en `rect`.

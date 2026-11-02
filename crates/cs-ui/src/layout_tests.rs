@@ -3161,7 +3161,7 @@ fn help_ui_catalog_opens_a_closable_tab_with_the_four_button_states() {
     // Una pestaña más, a la vista, sin documento activo.
     assert_eq!(h.app.tabs.page(), Some(crate::tabs::Page::Catalog));
     assert_eq!(h.app.tabs.active(), None);
-    assert_eq!(h.app.tabs.bar_active(), Some(2));
+    assert_eq!(h.app.tabs.bar_active(&h.app.doc), Some(2));
     assert!(h.texts.iter().any(|(t, _)| t == "UI Catalog"), "the tab");
     for state in ["Normal", "Hover", "Pressed", "Disabled"] {
         assert!(h.texts.iter().any(|(t, _)| t == state), "{state}");
@@ -3189,7 +3189,7 @@ fn help_ui_catalog_opens_a_closable_tab_with_the_four_button_states() {
         .tab_action(crate::tabs::TabRef::Page(crate::tabs::Page::Catalog), true);
     h.frame();
     assert_eq!(h.app.tabs.page(), None);
-    assert_eq!(h.app.tabs.bar().len(), 2);
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2);
 }
 
 #[test]
@@ -5243,4 +5243,65 @@ fn a_straight_selected_edge_drags_from_its_midpoint() {
     assert_eq!(points[6], [-16.0, 24.0, 16.0]);
     assert_eq!(points[7], [16.0, 24.0, 16.0]);
     assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+/// Un modelo "Ship" con su pestaña de vista abierta, en el documento de la prueba.
+fn with_model_tab() -> LayoutHarness {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+    let id = h.app.doc.editor.workspace().expect("the workspace");
+    h.app.tabs.open_view(&mut h.app.doc, id);
+    h.frame();
+    h
+}
+
+#[test]
+fn a_model_view_tab_sits_right_after_its_document_and_switches_and_closes() {
+    let mut h = with_model_tab();
+    let doc = h.button(&h.app.doc.location.name.clone());
+    let view = h.button("Ship");
+    assert!(view.left() > doc.right(), "{doc:?} {view:?}");
+    assert!(view.left() - doc.right() < 40.0, "right after it");
+    assert_eq!(h.app.tabs.bar_active(&h.app.doc), Some(1), "its view shows");
+    // El ícono antes del nombre (el modelo dibuja ▣ con formas, sin texto).
+    assert!(!h.drawn("tab.active").is_empty());
+    // La pestaña del documento regresa al lienzo.
+    h.click(doc.center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(h.app.doc.editor.workspace(), None);
+    assert_eq!(h.app.tabs.bar_active(&h.app.doc), Some(0));
+    // La de la vista vuelve al workspace.
+    let view = h.button("Ship");
+    h.click(view.center(), PointerButton::Primary);
+    h.frame();
+    assert!(h.app.doc.editor.workspace().is_some());
+    assert_eq!(h.app.tabs.bar_active(&h.app.doc), Some(1));
+    // La × la cierra sin preguntar.
+    let close = h.button("Close Ship");
+    h.click(close.center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(h.app.pending, None);
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 1);
+    assert_eq!(h.app.doc.editor.workspace(), None);
+}
+
+#[test]
+fn deleting_the_model_closes_its_view_tab() {
+    let mut h = with_model_tab();
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2);
+    while h
+        .app
+        .doc
+        .editor
+        .document
+        .artboards
+        .iter()
+        .any(|a| a.model.is_some())
+    {
+        h.app.doc.editor.undo();
+    }
+    h.frame();
+    h.frame();
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 1);
+    assert!(!h.texts.iter().any(|t| t.0 == "Ship"));
 }

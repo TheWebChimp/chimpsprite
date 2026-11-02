@@ -783,6 +783,9 @@ impl ChimpApp {
         if !self.doc.editor.new_font(name, cell, mode) {
             return false;
         }
+        if let Some(id) = self.doc.editor.workspace() {
+            self.tabs.open_view(&mut self.doc, id);
+        }
         dock::set_open(ctx, Some(dock::DockPanel::Font));
         // La fuente nueva, ajustada a lo que no tapa el panel.
         self.doc
@@ -856,6 +859,9 @@ impl ChimpApp {
     ) -> bool {
         if !self.doc.editor.new_model(name, size) {
             return false;
+        }
+        if let Some(id) = self.doc.editor.workspace() {
+            self.tabs.open_view(&mut self.doc, id);
         }
         dock::set_open(ctx, Some(dock::DockPanel::Model));
         self.doc
@@ -1115,8 +1121,8 @@ impl ChimpApp {
         let mut switch_to = None;
         let mut close = None;
         let mut home = false;
-        let bar = self.tabs.bar();
-        let shown = self.tabs.bar_active();
+        let bar = self.tabs.bar(&self.doc);
+        let shown = self.tabs.bar_active(&self.doc);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             if ui.selectable_label(shown.is_none(), "🏠 Home").clicked() {
@@ -1124,7 +1130,12 @@ impl ChimpApp {
             }
             for (i, tab) in self.tabs.bar_infos(&self.doc).into_iter().enumerate() {
                 let active = shown == Some(i);
-                let label = format!("{}{}", tab.name, if tab.dirty { " •" } else { "" });
+                let icon = match tab.icon {
+                    tabs::TabIcon::None => "",
+                    tabs::TabIcon::Model => "▣ ",
+                    tabs::TabIcon::Font => "Aa ",
+                };
+                let label = format!("{icon}{}{}", tab.name, if tab.dirty { " •" } else { "" });
                 ui.add_space(4.0);
                 let response = ui.selectable_label(active, label);
                 if response.clicked() {
@@ -1152,6 +1163,8 @@ impl ChimpApp {
     /// Los paneles de la ventana, en el orden en que egui les reparte el espacio: el primero que
     /// se declara se queda con el borde. Devuelve el rect del lienzo (`None` en Home).
     fn layout(&mut self, ui: &mut egui::Ui, modal: bool) -> Option<egui::Rect> {
+        // Las pestañas de vista de lo que ya no existe (o ya no es modelo ni fuente) se van.
+        self.tabs.sync_views(&mut self.doc);
         // Con Pixel UI, como en el mockup: el menú de 16 de alto y las pestañas de 23, sin línea
         // entre los dos; la barra de pestañas termina en un separador grabado (en vez de la línea
         // de egui). Detrás, contra el borde derecho, el degradé del final de la barra.
@@ -1192,7 +1205,7 @@ impl ChimpApp {
         });
         if let Some(skin) = self.pixel.skin() {
             let infos = self.tabs.bar_infos(&self.doc);
-            let active = self.tabs.bar_active();
+            let active = self.tabs.bar_active(&self.doc);
             let action = egui::Panel::top("tabs")
                 .exact_size(tab_bar::TABS_HEIGHT)
                 .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0))
@@ -1217,8 +1230,12 @@ impl ChimpApp {
             }
             match action {
                 Some(tab_bar::TabAction::Home) => self.go_home(),
-                Some(tab_bar::TabAction::Switch(i)) => self.tab_action(self.tabs.bar()[i], false),
-                Some(tab_bar::TabAction::Close(i)) => self.tab_action(self.tabs.bar()[i], true),
+                Some(tab_bar::TabAction::Switch(i)) => {
+                    self.tab_action(self.tabs.bar(&self.doc)[i], false)
+                }
+                Some(tab_bar::TabAction::Close(i)) => {
+                    self.tab_action(self.tabs.bar(&self.doc)[i], true)
+                }
                 None => {}
             }
         } else {
