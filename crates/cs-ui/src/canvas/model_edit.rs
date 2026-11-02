@@ -23,6 +23,9 @@ const ORTHO_BG: Color32 = Color32::from_rgb(0x83, 0x76, 0x9c);
 const PERSP_BG: Color32 = Color32::from_rgb(0x1d, 0x2b, 0x53);
 const EDGE: Color32 = Color32::from_rgb(0xc2, 0xc3, 0xc7);
 const GRID_LINE: Color32 = Color32::from_rgba_premultiplied(0x10, 0x10, 0x20, 0x30);
+// Provisional: el amarillo de PICO-8, que se ve sobre el morado de las vistas (el color de
+// selección del skin es casi del mismo tono).
+const SELECTED: Color32 = Color32::from_rgb(0xff, 0xec, 0x27);
 const GUIDE: Color32 = Color32::from_rgb(0x5f, 0x57, 0x4f);
 const SEPARATOR: Color32 = Color32::from_rgb(0x1d, 0x2b, 0x53);
 /// Lado de los cuadritos de los vértices y de las asas, en puntos.
@@ -298,8 +301,6 @@ impl CanvasView {
         let Some(model) = editor.edit_model_shown().cloned() else {
             return;
         };
-        let accent =
-            crate::pixel_ui::frame_skin(ctx).map_or(theme::ACCENT, |s| s.colors().selection);
         for (i, q) in quads.iter().enumerate() {
             painter.rect_filled(*q, 0.0, if i == PERSP { PERSP_BG } else { ORTHO_BG });
         }
@@ -311,13 +312,13 @@ impl CanvasView {
             };
             let p = painter.with_clip_rect(q.intersect(painter.clip_rect()));
             draw_grid_lines(&p, q, &map, editor.model_edit().grid);
-            draw_wireframe(&p, &map, &model, &editor.model_edit().selection, accent);
-            draw_selection_frame(&p, q, &map, &model, editor, accent);
+            draw_wireframe(&p, &map, &model, &editor.model_edit().selection, SELECTED);
+            draw_selection_frame(&p, q, &map, &model, editor, SELECTED);
             if let Some(cs_3d_box) = box_rect(editor, view) {
                 p.rect_stroke(
                     cs_3d_box,
                     0.0,
-                    Stroke::new(1.0, accent),
+                    Stroke::new(1.0, SELECTED),
                     egui::StrokeKind::Inside,
                 );
             }
