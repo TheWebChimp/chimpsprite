@@ -169,15 +169,15 @@ fn two_bakes_do_not_overlap() {
     assert!(e.is_model(), "the model stays active");
     let n = e.document.artboards.len();
     let rects: Vec<_> = e.document.artboards.iter().map(|a| a.rect()).collect();
-    let overlap = |((a0, a1), (b0, b1)): (((i32, i32), (i32, i32)), ((i32, i32), (i32, i32)))| {
-        a0.0 < b1.0 && b0.0 < a1.0 && a0.1 < b1.1 && b0.1 < a1.1
-    };
+    type Box2 = ((i32, i32), (i32, i32));
+    let overlap =
+        |(a0, a1): Box2, (b0, b1): Box2| a0.0 < b1.0 && b0.0 < a1.0 && a0.1 < b1.1 && b0.1 < a1.1;
     // Los dos bakes (los últimos) no pisan a nada.
     for bake in n - 2..n {
         for other in 0..n {
             if other != bake {
                 assert!(
-                    !overlap((rects[bake], rects[other])),
+                    !overlap(rects[bake], rects[other]),
                     "{bake} overlaps {other}: {rects:?}"
                 );
             }
