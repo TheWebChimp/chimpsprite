@@ -1,0 +1,234 @@
+//! Los artboards 3D en el documento: su sprite se compone con el render del modelo.
+
+use std::collections::HashMap;
+use std::hash::{DefaultHasher, Hash, Hasher};
+use std::sync::{Arc, LazyLock, Mutex};
+
+use cs_3d::{RenderInput, Texture, render_model};
+use cs_core::{Artboard, ArtboardId, Cel, Document, Image, ImageId, PixelBuffer, Rgba, Sprite};
+
+/// Renders guardados como mucho (al llenarse se vacía).
+const CACHE_LIMIT: usize = 64;
+
+/// Lo que define un render: si nada de esto cambió, el render es el mismo.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct Key {
+    artboard: ArtboardId,
+    /// Hash del `Model3D` y de la paleta (la rampa de la luz).
+    model: u64,
+    /// Hash del tamaño y los pixeles del frame de la textura (0 sin textura).
+    texture: u64,
+    size: (u32, u32),
+}
+
+static CACHE: LazyLock<Mutex<HashMap<Key, Arc<Vec<Rgba>>>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn hash_of(value: &impl Hash) -> u64 {
+    let mut h = DefaultHasher::new();
+    value.hash(&mut h);
+    h.finish()
+}
+
+/// Copia del sprite de un artboard con `model` cuya capa tiene en el frame 0 el render del
+/// modelo, con la textura en `texture_frame` (módulo sus frames). `None` si no es un modelo.
+/// Sin textura, o si la textura es otro modelo, las caras son grises.
+pub fn model_sprite(doc: &Document, artboard: &Artboard, texture_frame: usize) -> Option<Sprite> {
+    let mut stack = vec![artboard.id];
+    model_sprite_at(doc, artboard, texture_frame, &mut stack)
+}
+
+/// Como `model_sprite`, con los artboards que ya se están materializando (`stack`): una textura
+/// que está en la pila (un ciclo) cuenta como sin textura.
+pub(crate) fn model_sprite_at(
+    doc: &Document,
+    artboard: &Artboard,
+    texture_frame: usize,
+    stack: &mut Vec<ArtboardId>,
+) -> Option<Sprite> {
+    let model = artboard.model.as_ref()?;
+    let sprite = &artboard.sprite;
+    let layer = sprite.layers.first()?.id;
+    // Un modelo roto (caras con vértices que no existen, varias capas) no se pinta.
+    if !sprite.color_mode.stores_rgba() || model.check(sprite).is_err() {
+        return None;
+    }
+    // La textura se ve como en el lienzo: con sus instancias y tilemaps resueltos.
+    let texture = model
+        .texture
+        .and_then(|id| doc.artboard(id))
+        .filter(|t| t.model.is_none() && !stack.contains(&t.id) && !t.sprite.frames.is_empty())
+        .map(|t| {
+            let frame = texture_frame % t.sprite.frames.len();
+            stack.push(t.id);
+            let pixels = crate::materialize::visible_frame(doc, &t.sprite, frame, stack);
+            stack.pop();
+            (t.sprite.width, t.sprite.height, pixels)
+        });
+    let size = (sprite.width, sprite.height);
+    let palette = sprite.palette.colors();
+    let key = Key {
+        artboard: artboard.id,
+        model: hash_of(&(model, palette)),
+        texture: texture.as_ref().map_or(0, hash_of),
+        size,
+    };
+    let cached = CACHE.lock().ok().and_then(|c| c.get(&key).cloned());
+    let pixels = match cached {
+        Some(pixels) => pixels,
+        None => {
+            let pixels = Arc::new(render_model(&RenderInput {
+                model,
+                size,
+                texture: texture.as_ref().map(|(width, height, pixels)| Texture {
+                    width: *width,
+                    height: *height,
+                    pixels,
+                }),
+                palette,
+                camera: None,
+                extra_yaw: 0,
+            }));
+            if let Ok(mut cache) = CACHE.lock() {
+                if cache.len() >= CACHE_LIMIT {
+                    cache.clear();
+                }
+                cache.insert(key, pixels.clone());
+            }
+            pixels
+        }
+    };
+    let image = Image::from_buffer(size.0, size.1, PixelBuffer::Rgba(pixels.to_vec()))?;
+    // El sprite del modelo no aporta pixeles: su única capa muestra el render.
+    let mut out = sprite.clone();
+    out.cels.clear();
+    out.images.clear();
+    let id = ImageId(1);
+    out.images.insert(id, Arc::new(image));
+    out.cels.insert(
+        (layer, 0),
+        Cel {
+            position: (0, 0),
+            opacity: 255,
+            image: id,
+        },
+    );
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use cs_commands::Command;
+    use cs_commands::model::new_model_artboard;
+    use cs_core::*;
+
+    use super::*;
+    use crate::{Bake, bake_layers, materialize, render_frame};
+
+    const SIZE: u32 = 32;
+
+    /// Documento con un host de 40×40 y un modelo (cubo) de 32×32 con su textura.
+    fn with_model() -> (Document, ArtboardId, ArtboardId) {
+        let mut doc = Document::with_sprite("host", Sprite::new(40, 40, ColorMode::Rgba));
+        let (model, texture, cmd) = new_model_artboard(&doc, "Cube", (SIZE, SIZE), (0, 0));
+        cmd.apply(&mut doc).unwrap();
+        (doc, model, texture)
+    }
+
+    fn center(pixels: &[Rgba], width: u32) -> Rgba {
+        pixels[(width / 2 * width + width / 2) as usize]
+    }
+
+    fn model_pixels(doc: &Document, model: ArtboardId) -> Vec<Rgba> {
+        let sprite = &doc.artboard(model).unwrap().sprite;
+        render_frame(&materialize(doc, sprite, 0..1), 0)
+    }
+
+    #[test]
+    fn a_model_artboard_composes_its_render() {
+        let (doc, model, _) = with_model();
+        let pixels = model_pixels(&doc, model);
+        assert_eq!(center(&pixels, SIZE).a, 255, "the cube covers the center");
+        assert_eq!(pixels[0].a, 0, "the background is transparent");
+        let a = doc.artboard(model).unwrap();
+        let s = model_sprite(&doc, a, 0).unwrap();
+        assert_eq!(render_frame(&s, 0), pixels);
+        assert!(model_sprite(&doc, &doc.artboards[0], 0).is_none());
+    }
+
+    #[test]
+    fn an_instance_of_a_model_shows_the_render() {
+        let (mut doc, model, _) = with_model();
+        let host = &mut doc.artboards[0].sprite;
+        let mut layer = Layer::new_image(LayerId(2), "inst");
+        layer.kind = LayerKind::Objects;
+        layer.objects = vec![SceneObject {
+            id: ObjectId(1),
+            name: "cube".into(),
+            track: InstanceTrack {
+                keys: vec![InstanceKey::new(0, model, (4, 4))],
+            },
+        }];
+        host.layers.push(layer);
+        let host = &doc.artboards[0].sprite;
+        let pixels = render_frame(&materialize(&doc, host, 0..1), 0);
+        let expected = model_pixels(&doc, model);
+        let at = |x: u32, y: u32| pixels[(y * 40 + x) as usize];
+        assert_eq!(at(4 + SIZE / 2, 4 + SIZE / 2), center(&expected, SIZE));
+        assert_eq!(at(4 + SIZE / 2, 4 + SIZE / 2).a, 255);
+    }
+
+    #[test]
+    fn baking_a_model_gives_its_pixels() {
+        let (doc, model, _) = with_model();
+        let sprite = &doc.artboard(model).unwrap().sprite;
+        let baked = bake_layers(&doc, sprite, Bake::Everything).expect("a model is baked");
+        assert_eq!(render_frame(&baked, 0), model_pixels(&doc, model));
+        assert!(bake_layers(&doc, sprite, Bake::KeepTilemaps).is_some());
+    }
+
+    #[test]
+    fn painting_the_texture_changes_the_render() {
+        let (mut doc, model, texture) = with_model();
+        let before = model_pixels(&doc, model);
+        let t = &mut doc.artboard_mut(texture).unwrap().sprite;
+        let layer = t.layers[0].id;
+        let (w, h) = (t.width as i32, t.height as i32);
+        let pixels = (0..w)
+            .flat_map(|x| (0..h).map(move |y| (x, y)))
+            .map(|(x, y)| (x, y, PixelValue::Rgba(Rgba::rgb(200, 30, 30))))
+            .collect();
+        Command::DrawPixels {
+            layer,
+            frame: 0,
+            pixels,
+        }
+        .apply(t)
+        .unwrap();
+        let after = model_pixels(&doc, model);
+        assert_ne!(before, after);
+        assert_eq!(center(&after, SIZE).a, 255);
+    }
+
+    #[test]
+    fn a_model_used_as_texture_counts_as_no_texture() {
+        let (mut doc, model, _) = with_model();
+        let none = {
+            let a = doc.artboard_mut(model).unwrap();
+            a.model.as_mut().unwrap().texture = None;
+            model_pixels(&doc, model)
+        };
+        // Otro modelo como textura (y el propio): gris, como sin textura.
+        let (other, _, cmd) = new_model_artboard(&doc, "Other", (8, 8), (100, 0));
+        cmd.apply(&mut doc).unwrap();
+        for texture in [other, model] {
+            doc.artboard_mut(model)
+                .unwrap()
+                .model
+                .as_mut()
+                .unwrap()
+                .texture = Some(texture);
+            assert_eq!(model_pixels(&doc, model), none);
+        }
+    }
+}

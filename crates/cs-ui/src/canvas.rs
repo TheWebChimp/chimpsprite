@@ -751,7 +751,12 @@ impl CanvasView {
                     && self.all_rendered == Some(editor.revision)
                     && artboard.id != editor.active
                     && self.textures.contains_key(&artboard.id)
-                    && !sprite.layers.iter().any(|l| !l.objects.is_empty());
+                    && !sprite.layers.iter().any(|l| !l.objects.is_empty())
+                    // Un modelo 3D cambia si se pinta su textura.
+                    && artboard
+                        .model
+                        .as_ref()
+                        .is_none_or(|m| m.texture != Some(editor.active));
                 if unchanged {
                     skipped = true;
                     continue;
