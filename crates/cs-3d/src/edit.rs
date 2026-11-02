@@ -83,7 +83,6 @@ pub(crate) fn p3(v: Vec3i) -> P3 {
     [v.x as f32, v.y as f32, v.z as f32]
 }
 
-#[allow(dead_code)] // lo usan las siguientes tareas del modo Edit
 pub(crate) fn round3(p: P3) -> Vec3i {
     Vec3i {
         x: p[0].round() as i32,
@@ -541,6 +540,208 @@ pub fn center((lo, hi): (P3, P3)) -> P3 {
     ]
 }
 
+/// Cambia en `out` los vértices involucrados en `sel` (de `model`): `f` lleva su posición en el
+/// mundo a la nueva. Siempre desde los de `model`, así el redondeo no se acumula en un arrastre.
+fn edit_vertices(out: &mut Model3D, model: &Model3D, sel: &Selection, f: impl Fn(P3) -> P3) {
+    for (o, vs) in sel.vertices(model) {
+        let obj = &mut out.objects[o];
+        let t = obj.transform;
+        for v in vs {
+            let local = p3(model.objects[o].mesh.vertices[v as usize]);
+            let w = f(to_world(&t, local));
+            obj.mesh.vertices[v as usize] = round3(to_local(&t, w, local));
+        }
+    }
+}
+
+fn objects_of(sel: &Selection, model: &Model3D) -> Vec<usize> {
+    let mut out: Vec<usize> = sel
+        .items
+        .iter()
+        .map(|i| i.object())
+        .filter(|&o| o < model.objects.len())
+        .collect();
+    out.dedup();
+    out
+}
+
+fn comp(v: &mut Vec3i, axis: usize) -> &mut i32 {
+    match axis {
+        0 => &mut v.x,
+        1 => &mut v.y,
+        _ => &mut v.z,
+    }
+}
+
+/// `model` con lo elegido corrido `d` (en el mundo): en modo Objeto, la posición de los objetos;
+/// si no, los vértices involucrados.
+pub fn translate(model: &Model3D, sel: &Selection, d: P3) -> Model3D {
+    let mut out = model.clone();
+    if sel.mode == SelectMode::Object {
+        for o in objects_of(sel, model) {
+            let p = &mut out.objects[o].transform.position;
+            for (axis, delta) in d.iter().enumerate() {
+                *comp(p, axis) += delta.round() as i32;
+            }
+        }
+        return out;
+    }
+    edit_vertices(&mut out, model, sel, |w| {
+        [w[0] + d[0], w[1] + d[1], w[2] + d[2]]
+    });
+    out
+}
+
+/// El eje local (0 x, 1 y, 2 z) que, ya girado, apunta más hacia el eje `axis` del mundo.
+fn local_axis(t: &Transform3D, axis: usize) -> usize {
+    let r = Transform3D {
+        rotation: t.rotation,
+        ..Transform3D::default()
+    };
+    let along = |k: usize| {
+        let mut u = [0.0; 3];
+        u[k] = 1.0;
+        to_world(&r, u)[axis].abs()
+    };
+    (0..3)
+        .max_by(|&a, &b| along(a).total_cmp(&along(b)))
+        .unwrap_or(axis)
+}
+
+/// Una escala (en milésimas) por `f`: nunca 0 (queda en ±1 con el signo que toca).
+fn scaled(s: i32, f: f32) -> i32 {
+    match (s as f32 * f).round() as i32 {
+        0 if (s < 0) != (f < 0.0) => -1,
+        0 => 1,
+        v => v,
+    }
+}
+
+/// `model` con lo elegido escalado `f` (por eje del mundo) desde `anchor`. En modo Objeto cambia
+/// la escala del eje local más alineado con cada eje del mundo (exacto sin rotación) y corrige
+/// la posición para que el ancla no se mueva; si no, escala las posiciones de los vértices.
+pub fn scale(model: &Model3D, sel: &Selection, anchor: P3, f: P3) -> Model3D {
+    let mut out = model.clone();
+    if sel.mode == SelectMode::Object {
+        for o in objects_of(sel, model) {
+            let t = &mut out.objects[o].transform;
+            for axis in 0..3 {
+                if f[axis] == 1.0 {
+                    continue;
+                }
+                let k = local_axis(t, axis);
+                let s = comp(&mut t.scale, k);
+                *s = scaled(*s, f[axis]);
+                let p = comp(&mut t.position, axis);
+                *p = (anchor[axis] + (*p as f32 - anchor[axis]) * f[axis]).round() as i32;
+            }
+        }
+        return out;
+    }
+    edit_vertices(&mut out, model, sel, |w| {
+        std::array::from_fn(|i| anchor[i] + (w[i] - anchor[i]) * f[i])
+    });
+    out
+}
+
+/// `v` en el múltiplo de `grid` más cercano.
+pub fn snap(v: f32, grid: i32) -> f32 {
+    let g = grid.max(1) as f32;
+    (v / g).round() * g
+}
+
+/// El desplazamiento `d` corregido para que `grab + d` caiga en la cuadrícula `grid` (en 1/16)
+/// en los dos ejes de `view`; sin cuadrícula (`None`, con Ctrl), en pasos de 1/16. El eje de
+/// profundidad no se mueve.
+pub fn snapped_delta(view: OrthoView, grab: P3, d: P3, grid: Option<i32>) -> P3 {
+    let g = grid.unwrap_or(1);
+    let (a, b) = view.axes();
+    let mut out = [0.0; 3];
+    for i in [a, b] {
+        out[i] = snap(grab[i] + d[i], g) - grab[i];
+    }
+    out
+}
+
+/// Un asa de la caja de la selección en el plano de la vista: en `u` (a la derecha) y en `v`
+/// (arriba), −1 el lado menor, 1 el mayor y 0 ninguno.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Handle {
+    pub u: i8,
+    pub v: i8,
+}
+
+impl Handle {
+    pub const ALL: [Handle; 8] = [
+        Handle { u: -1, v: -1 },
+        Handle { u: 0, v: -1 },
+        Handle { u: 1, v: -1 },
+        Handle { u: -1, v: 0 },
+        Handle { u: 1, v: 0 },
+        Handle { u: -1, v: 1 },
+        Handle { u: 0, v: 1 },
+        Handle { u: 1, v: 1 },
+    ];
+}
+
+/// La caja `b` (del mundo) en el plano de la vista: `((min_u, min_v), (max_u, max_v))`.
+pub fn plane_box(view: OrthoView, (lo, hi): (P3, P3)) -> ((f32, f32), (f32, f32)) {
+    let (a, c) = (view.plane(lo), view.plane(hi));
+    ((a.0.min(c.0), a.1.min(c.1)), (a.0.max(c.0), a.1.max(c.1)))
+}
+
+/// Arrastrar `handle` de la caja `b` hasta `to` (en el plano): el ancla (el lado o la esquina
+/// opuesta, en el mundo) y el factor por eje del mundo. El borde arrastrado cae en la
+/// cuadrícula (`None`: pasos de 1/16). Con `proportional` (Shift, en una esquina) los dos ejes
+/// usan el factor que más cambió.
+pub fn handle_scale(
+    view: OrthoView,
+    b: (P3, P3),
+    handle: Handle,
+    to: (f32, f32),
+    grid: Option<i32>,
+    proportional: bool,
+) -> (P3, P3) {
+    let ((u0, v0), (u1, v1)) = plane_box(view, b);
+    let g = grid.unwrap_or(1);
+    let side = |s: i8, lo: f32, hi: f32, at: f32| {
+        let (edge, anchor) = if s > 0 { (hi, lo) } else { (lo, hi) };
+        let f = if (edge - anchor).abs() < f32::EPSILON {
+            1.0
+        } else {
+            (snap(at, g) - anchor) / (edge - anchor)
+        };
+        (anchor, f)
+    };
+    let mid = center(b);
+    let (mu, mv) = view.plane(mid);
+    let (au, fu) = if handle.u != 0 {
+        side(handle.u, u0, u1, to.0)
+    } else {
+        (mu, 1.0)
+    };
+    let (av, fv) = if handle.v != 0 {
+        side(handle.v, v0, v1, to.1)
+    } else {
+        (mv, 1.0)
+    };
+    let (fu, fv) = if proportional && handle.u != 0 && handle.v != 0 {
+        let f = if (fu - 1.0).abs() >= (fv - 1.0).abs() {
+            fu
+        } else {
+            fv
+        };
+        (f, f)
+    } else {
+        (fu, fv)
+    };
+    let (a, c) = view.axes();
+    let mut f = [1.0; 3];
+    f[a] = fu;
+    f[c] = fv;
+    (view.from_plane((au, av), mid), f)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -757,5 +958,140 @@ mod tests {
         assert_eq!(center(b), [0.0; 3]);
         assert_eq!(bounds(&m, &Selection::default()), None);
         assert_eq!(model_bounds(&m), Some(([-16.0; 3], [16.0; 3])));
+    }
+
+    fn sel(mode: SelectMode, items: &[Item]) -> Selection {
+        Selection {
+            mode,
+            items: items.iter().copied().collect(),
+        }
+    }
+
+    #[test]
+    fn mover_un_objeto_y_un_vertice_de_un_objeto_girado() {
+        let m = one_cube();
+        let moved = translate(
+            &m,
+            &sel(SelectMode::Object, &[Item::Object(0)]),
+            [4.0, 0.0, -2.0],
+        );
+        assert_eq!(
+            moved.objects[0].transform.position,
+            Vec3i { x: 4, y: 0, z: -2 }
+        );
+        let mut turned = one_cube();
+        turned.objects[0].transform.rotation.y = 900;
+        let before = world_points(&turned.objects[0])[1];
+        let after = translate(
+            &turned,
+            &sel(SelectMode::Vertex, &[Item::Vertex(0, 1)]),
+            [4.0, 0.0, 0.0],
+        );
+        let now = world_points(&after.objects[0])[1];
+        assert!(
+            close(now, [before[0] + 4.0, before[1], before[2]]),
+            "{now:?}"
+        );
+        // Los demás no se mueven.
+        assert_eq!(
+            after.objects[0].mesh.vertices[0],
+            turned.objects[0].mesh.vertices[0]
+        );
+    }
+
+    #[test]
+    fn snapping_a_la_cuadricula() {
+        assert_eq!(snap(5.0, 4), 4.0);
+        assert_eq!(snap(6.0, 4), 8.0);
+        assert_eq!(snap(-6.0, 4), -8.0);
+        let d = snapped_delta(OrthoView::Front, [3.0, 5.0, 7.0], [10.0, 0.0, 0.0], Some(4));
+        assert_eq!(d, [9.0, -1.0, 0.0]);
+        // Sin cuadrícula (Ctrl): pasos de 1/16.
+        let d = snapped_delta(OrthoView::Front, [3.0, 5.0, 7.0], [2.4, 0.0, 0.0], None);
+        assert_eq!(d, [2.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn escalar_vertices_con_ancla() {
+        let m = one_cube();
+        let all = sel(SelectMode::Object, &[Item::Object(0)]).converted(&m, SelectMode::Vertex);
+        let out = scale(&m, &all, [-16.0, -16.0, -16.0], [2.0, 1.0, 1.0]);
+        for (v, w) in out.objects[0]
+            .mesh
+            .vertices
+            .iter()
+            .zip(&m.objects[0].mesh.vertices)
+        {
+            assert_eq!(v.x, if w.x > 0 { 48 } else { -16 });
+            assert_eq!((v.y, v.z), (w.y, w.z));
+        }
+        // Factor 0: quedan planos.
+        let flat = scale(&m, &all, [0.0; 3], [1.0, 0.0, 1.0]);
+        assert!(flat.objects[0].mesh.vertices.iter().all(|v| v.y == 0));
+    }
+
+    #[test]
+    fn escalar_objetos_cambia_su_escala_y_su_posicion() {
+        let m = one_cube();
+        let s = sel(SelectMode::Object, &[Item::Object(0)]);
+        let out = scale(&m, &s, [-16.0, 0.0, 0.0], [2.0, 1.0, 1.0]);
+        let t = out.objects[0].transform;
+        assert_eq!(
+            t.scale,
+            Vec3i {
+                x: 2000,
+                y: 1000,
+                z: 1000
+            }
+        );
+        assert_eq!(t.position.x, 16);
+        // Girado 90° en Y, el eje X del mundo es el Z local.
+        let mut turned = m.clone();
+        turned.objects[0].transform.rotation.y = 900;
+        let out = scale(&turned, &s, [0.0; 3], [2.0, 1.0, 1.0]);
+        assert_eq!(out.objects[0].transform.scale.z, 2000);
+        // Nunca 0; negativo voltea.
+        let out = scale(&m, &s, [0.0; 3], [0.0, -1.0, 1.0]);
+        assert_eq!(out.objects[0].transform.scale.x, 1);
+        assert_eq!(out.objects[0].transform.scale.y, -1000);
+    }
+
+    #[test]
+    fn asas_de_lado_y_de_esquina() {
+        let b = ([-16.0; 3], [16.0; 3]);
+        let (anchor, f) = handle_scale(
+            OrthoView::Front,
+            b,
+            Handle { u: 1, v: 0 },
+            (47.0, 0.0),
+            Some(4),
+            false,
+        );
+        assert_eq!(anchor[0], -16.0);
+        assert_eq!(f, [2.0, 1.0, 1.0]);
+        let (_, f) = handle_scale(
+            OrthoView::Front,
+            b,
+            Handle { u: 1, v: 1 },
+            (48.0, 16.0),
+            Some(4),
+            true,
+        );
+        assert_eq!(f, [2.0, 2.0, 1.0]);
+        // En Top, v es -Z: el asa de arriba escala Z con el ancla en z = +16.
+        let (anchor, f) = handle_scale(
+            OrthoView::Top,
+            b,
+            Handle { u: 0, v: 1 },
+            (0.0, 48.0),
+            Some(4),
+            false,
+        );
+        assert_eq!(anchor[2], 16.0);
+        assert_eq!(f, [1.0, 1.0, 2.0]);
+        assert_eq!(
+            plane_box(OrthoView::Side, b),
+            ((-16.0, -16.0), (16.0, 16.0))
+        );
     }
 }
