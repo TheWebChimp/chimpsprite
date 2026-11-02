@@ -66,6 +66,7 @@ impl Session {
         };
         let id = doc.next_artboard_id();
         let artboard = Artboard {
+            model: None,
             in_library: false,
             font: None,
             id,
@@ -276,7 +277,7 @@ impl Session {
 
     pub fn add_frame(&mut self, p: AddFrame) -> Result<Reply> {
         let (ab, _) = self.sprite(&p.doc, p.artboard.as_ref())?;
-        self.not_a_font(&p.doc, ab)?;
+        self.not_locked(&p.doc, ab)?;
         let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         let (index, mut cmds) = match p.duplicate {
             Some(src) => {
@@ -312,7 +313,7 @@ impl Session {
 
     pub fn remove_frame(&mut self, p: FrameOnly) -> Result<Reply> {
         let (ab, _) = self.sprite(&p.doc, p.artboard.as_ref())?;
-        self.not_a_font(&p.doc, ab)?;
+        self.not_locked(&p.doc, ab)?;
         let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         let index = target::frame(sprite, p.frame)?;
         self.run_on(&p.doc, ab, vec![Command::RemoveFrame { index }])?;
@@ -321,7 +322,7 @@ impl Session {
 
     pub fn move_frame(&mut self, p: MoveFrame) -> Result<Reply> {
         let (ab, _) = self.sprite(&p.doc, p.artboard.as_ref())?;
-        self.not_a_font(&p.doc, ab)?;
+        self.not_locked(&p.doc, ab)?;
         let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         target::frame(sprite, p.from)?;
         target::frame(sprite, p.to)?;
@@ -1264,10 +1265,7 @@ mod tests {
             )),
         ] {
             let e = err.unwrap_err().to_string();
-            assert!(
-                e.contains("artboard is a font; use glyph operations"),
-                "{e}"
-            );
+            assert!(e.contains("has a locked structure"), "{e}");
         }
         assert!(
             s.add_layer(p(json!({"doc": "d1", "artboard": font})))
@@ -1277,6 +1275,32 @@ mod tests {
         assert_eq!(a.font.unwrap().check(&a.sprite), Ok(()));
         // Los demás artboards siguen como siempre.
         s.add_frame(p(json!({"doc": "d1"}))).unwrap();
+    }
+
+    #[test]
+    fn frame_and_layer_ops_refuse_a_model_artboard() {
+        let mut s = session(4, 4);
+        let doc = &s.doc("d1").unwrap().document;
+        let (id, texture, cmd) =
+            cs_commands::model::new_model_artboard(doc, "Box", (32, 32), (20, 0));
+        s.run("d1", vec![cmd]).unwrap();
+        let model = id.0;
+        for err in [
+            s.add_frame(p(json!({"doc": "d1", "artboard": model}))),
+            s.remove_frame(p(json!({"doc": "d1", "artboard": model, "frame": 0}))),
+        ] {
+            let e = err.unwrap_err().to_string();
+            assert!(e.contains("has a locked structure"), "{e}");
+        }
+        assert!(
+            s.add_layer(p(json!({"doc": "d1", "artboard": model})))
+                .is_err()
+        );
+        let a = s.doc("d1").unwrap().document.artboard(id).unwrap().clone();
+        assert_eq!(a.model.unwrap().check(&a.sprite), Ok(()));
+        // La textura es un artboard como los demás.
+        s.add_frame(p(json!({"doc": "d1", "artboard": texture.0})))
+            .unwrap();
     }
 
     #[test]

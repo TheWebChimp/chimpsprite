@@ -100,6 +100,8 @@ impl ChimpApp {
             || self.grid_dialog.is_some()
             || self.new_tilemap.is_some()
             || self.new_font.is_some()
+            || self.new_model.is_some()
+            || self.bake.is_some()
             || self.convert_tilemap.is_some()
             || self.symbol_dialog.is_some()
             || self.export.is_some()

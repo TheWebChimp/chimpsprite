@@ -62,11 +62,13 @@ pub enum DockPanel {
     Library,
     /// La fuente pixel del artboard activo: su mapa de caracteres (su contenido lo pone la app).
     Font,
+    /// El modelo 3D del artboard activo: sus objetos (su contenido lo pone la app).
+    Model,
 }
 
 impl DockPanel {
     #[cfg(not(target_arch = "wasm32"))]
-    pub const ALL: [DockPanel; 8] = [
+    pub const ALL: [DockPanel; 9] = [
         DockPanel::Artboards,
         DockPanel::Library,
         DockPanel::Slices,
@@ -75,10 +77,11 @@ impl DockPanel {
         DockPanel::Groom,
         DockPanel::Lumen,
         DockPanel::Font,
+        DockPanel::Model,
     ];
     /// En la web no hay dafont (el sitio no acepta peticiones desde otras páginas).
     #[cfg(target_arch = "wasm32")]
-    pub const ALL: [DockPanel; 7] = [
+    pub const ALL: [DockPanel; 8] = [
         DockPanel::Artboards,
         DockPanel::Library,
         DockPanel::Slices,
@@ -86,6 +89,7 @@ impl DockPanel {
         DockPanel::Groom,
         DockPanel::Lumen,
         DockPanel::Font,
+        DockPanel::Model,
     ];
 
     pub fn label(self) -> &'static str {
@@ -98,6 +102,7 @@ impl DockPanel {
             DockPanel::Lumen => "Lumen",
             DockPanel::Library => "Library",
             DockPanel::Font => "FontForge",
+            DockPanel::Model => "3D",
         }
     }
 
@@ -112,6 +117,7 @@ impl DockPanel {
             DockPanel::Lumen => "icon.dock.lumen",
             DockPanel::Library => "icon.dock.library",
             DockPanel::Font => "icon.dock.font",
+            DockPanel::Model => "icon.dock.model",
         }
     }
 
@@ -126,6 +132,7 @@ impl DockPanel {
             DockPanel::Lumen => "☀",
             DockPanel::Library => "▣",
             DockPanel::Font => "FF",
+            DockPanel::Model => "3D",
         }
     }
 }
@@ -295,7 +302,8 @@ pub fn show(
         | DockPanel::Groom
         | DockPanel::Lumen
         | DockPanel::Library
-        | DockPanel::Font => out.app_panel = Some((panel, anchor)),
+        | DockPanel::Font
+        | DockPanel::Model => out.app_panel = Some((panel, anchor)),
     }
     out
 }

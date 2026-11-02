@@ -139,6 +139,9 @@ impl Session {
     }
 
     pub fn quantize(&mut self, p: Quantize) -> Result<Reply> {
+        let (ab, _) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        // Una fuente o un modelo no se cuantizan: su sprite (y su modo de color) es de ellos.
+        self.not_locked(&p.doc, ab)?;
         let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         if !sprite.color_mode.stores_rgba() {
             return Err(invalid(
@@ -336,6 +339,24 @@ mod tests {
         assert_eq!(sp.pixel(LayerId(1), 0, 0, 0), rgba(Rgba::rgb(255, 0, 0)));
         assert_eq!(sp.palette.len(), 2);
         assert!(s.quantize(p(json!({"doc": "d1"}))).is_err());
+    }
+
+    #[test]
+    fn quantize_refuses_a_model_artboard() {
+        let mut s = session(4, 4);
+        let doc = &s.doc("d1").unwrap().document;
+        let (id, _, cmd) = cs_commands::model::new_model_artboard(doc, "Box", (8, 8), (20, 0));
+        s.run("d1", vec![cmd]).unwrap();
+        let before = s.doc("d1").unwrap().document.clone();
+        for to_indexed in [true, false] {
+            let e = s
+                .quantize(p(json!({"doc": "d1", "artboard": id.0,
+                    "palette": ["#000000", "#ff0000"], "to_indexed": to_indexed})))
+                .unwrap_err()
+                .to_string();
+            assert!(e.contains("artboard has a locked structure"), "{e}");
+        }
+        assert_eq!(s.doc("d1").unwrap().document, before);
     }
 
     #[test]

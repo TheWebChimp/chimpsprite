@@ -2,14 +2,18 @@
 
 use std::sync::Arc;
 
+mod bake3d;
 mod field;
 mod lighting;
 mod materialize;
+mod model3d;
 pub mod normal;
+pub use bake3d::{BakeOptions, BakeOutput, bake_model};
 pub use lighting::{Light, detect_background, lit, luminance_mask};
 pub use materialize::{
     Bake, bake_layers, materialize, materialize_tilemaps, object_image, tilemap_pixel,
 };
+pub use model3d::{model_pick, model_sprite};
 pub use normal::{NormalFormat, NormalSettings, normal_map};
 
 use cs_core::{BlendMode, ColorMode, Image, ImageId, Layer, LayerKind, PixelValue, Rgba, Sprite};

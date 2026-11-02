@@ -79,6 +79,8 @@ impl DialogHarness {
             app.update_canvas_size(&ctx);
             app.update_tilemap_dialogs(&ctx);
             app.update_font_dialog(&ctx);
+            app.update_model_dialog(&ctx);
+            app.update_bake_dialog(&ctx);
             app.update_symbol_dialog(&ctx);
             app.show_dialogs(&ctx);
             app.update_palette_windows(&ctx, false);
@@ -414,6 +416,69 @@ fn new_font_from_home_opens_a_new_document() {
         .font()
         .expect("the new document's artboard is a font");
     assert_eq!(font.name, "New Font");
+}
+
+// --- New 3D Model ---
+
+#[test]
+fn new_model_creates_a_model_artboard() {
+    let mut h = DialogHarness::new(true);
+    h.app.new_model = Some(Default::default());
+    h.settle();
+    assert!(h.drew_text("New 3D Model"));
+    h.click("OK");
+    h.settle();
+    assert!(h.app.new_model.is_none());
+    let editor = &h.app.doc.editor;
+    assert!(editor.is_model(), "the active artboard is a model");
+    assert_eq!(editor.artboard().name, "Model");
+    assert_eq!((editor.sprite().width, editor.sprite().height), (128, 128));
+    // Y se abre el panel 3D del dock.
+    assert_eq!(
+        crate::dock::open_panel(&h.ctx),
+        Some(crate::dock::DockPanel::Model)
+    );
+}
+
+#[test]
+fn new_model_from_home_opens_a_new_document() {
+    let mut h = DialogHarness::new(true);
+    h.app.request_close_tab(0);
+    h.settle();
+    assert!(!h.app.has_doc());
+    h.app.new_model = Some(Default::default());
+    h.settle();
+    h.click("OK");
+    h.settle();
+    assert!(h.app.has_doc());
+    assert!(h.app.doc.editor.is_model());
+}
+
+// --- Bake ---
+
+#[test]
+fn bake_adds_the_baked_artboard_in_one_undo_step() {
+    let mut h = DialogHarness::new(true);
+    assert!(h.app.doc.editor.new_model("Model", (32, 32)));
+    let model = h.app.doc.editor.active;
+    let before = h.app.doc.editor.document.artboards.len();
+    h.app.bake = Some(crate::bake_dialog::BakeDialog::new(&h.app.doc.editor));
+    h.settle();
+    assert!(h.app.is_modal());
+    assert!(h.drew_text("Bake"));
+    h.click("OK");
+    h.settle();
+    assert!(h.app.bake.is_none());
+    let editor = &mut h.app.doc.editor;
+    let doc = &editor.document;
+    assert_eq!(doc.artboards.len(), before + 1);
+    let baked = doc.artboards.last().unwrap();
+    assert_eq!(baked.name, "Model · bake");
+    assert!(baked.model.is_none(), "the bake is a normal artboard");
+    assert_eq!(baked.sprite.frames.len(), 8, "8 angles by default");
+    assert_eq!(editor.active, model, "the model stays active");
+    editor.undo();
+    assert_eq!(editor.document.artboards.len(), before);
 }
 
 // --- New Tilemap Layer ---

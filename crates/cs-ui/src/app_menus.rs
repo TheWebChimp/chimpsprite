@@ -4,7 +4,7 @@ use crate::*;
 
 /// Por qué no se pueden tocar los frames, las capas o el lienzo de una fuente.
 const FONT_FRAMES: &str = "A font's frames are its glyphs: use the Font panel";
-const FONT_LAYERS: &str = "A font has a single layer";
+const FONT_LAYERS: &str = "A font or 3D model has a single layer";
 const FONT_SPRITE: &str = "A font keeps its cell size and color mode";
 
 impl ChimpApp {
@@ -330,7 +330,7 @@ impl ChimpApp {
         let editor = &mut self.doc.editor;
         let last = editor.frame_count() - 1;
         // En una fuente los frames son sus glifos: se agregan y quitan en el panel Font.
-        let frames = !editor.is_font();
+        let frames = !editor.is_structure_locked();
         if ui
             .add_enabled(
                 frames,
@@ -734,6 +734,10 @@ A pixel art editor."
                     self.new_font = Some(Default::default());
                     ui.close();
                 }
+                if ui.add(menus::plain("New 3D Model…")).clicked() {
+                    self.new_model = Some(Default::default());
+                    ui.close();
+                }
                 if ui
                     .add(item("Open", keymap::label(&ctx, keymap::Action::Open)))
                     .clicked()
@@ -816,7 +820,7 @@ A pixel art editor."
                 menus::bar_menu(ui, look, "Sprite", |ui| self.sprite_menu(ui));
                 menus::bar_menu(ui, look, "Layer", |ui| {
                     // Una fuente tiene una sola capa: nada que agregar, quitar ni convertir.
-                    if self.doc.editor.is_font() {
+                    if self.doc.editor.is_structure_locked() {
                         ui.weak(FONT_LAYERS);
                         return;
                     }

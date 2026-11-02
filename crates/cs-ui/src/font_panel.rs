@@ -328,7 +328,7 @@ fn view_icon(ui: &mut Ui, skin: &Skin, icon: &str, at: egui::Pos2, label: &str, 
 /// La línea grabada al revés de [`pixel_ui::etched_hline`]: la clara (el blanco del brillo de los
 /// menús) arriba, en la fila `top`, y la oscura (`canvas`) debajo, de lado a lado del panel
 /// `outer`, por dentro de su borde. Sin Pixel UI, la línea de egui.
-fn lit_line(ui: &Ui, skin: Option<&Skin>, outer: Rect, top: f32) {
+pub(crate) fn lit_line(ui: &Ui, skin: Option<&Skin>, outer: Rect, top: f32) {
     let x = outer.x_range().shrink(1.0);
     match skin {
         Some(skin) => {

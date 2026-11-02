@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use cs_commands::font::FontLock;
+use cs_commands::StructureLock;
 use cs_commands::{Command, DocCommand, History, sprite_ops};
 use cs_core::{
     AnimDirection, Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, ObjectId, PixelValue,
@@ -26,6 +26,8 @@ pub use tool_options::*;
 mod document_ops;
 mod font_ops;
 mod gestures;
+mod model_ops;
+pub use model_ops::{ModelArrows, wrap_angle};
 
 /// Herramientas que trabajan dentro de un sprite.
 struct SpriteTools {
@@ -323,6 +325,10 @@ pub struct Editor {
     pub text_style: TextStyle,
     /// El glifo copiado con Copy glyph.
     pub(crate) glyph_clipboard: font_ops::GlyphClipboard,
+    /// Objeto elegido del modelo 3D activo (índice en `model.objects`).
+    pub(crate) model_object: Option<usize>,
+    /// Qué hacen las flechas sobre el objeto elegido del modelo 3D.
+    pub(crate) model_arrows: ModelArrows,
     /// Gesto en curso (p. ej. arrastrar un campo del panel) cuyos cambios se juntan en un solo
     /// paso de undo: id del widget y lo que se estaba editando (artboard, capa, frame, slice).
     /// El mismo widget sirve para todas las capas, así que el objetivo también tiene que coincidir.
@@ -423,6 +429,8 @@ impl Editor {
             text: None,
             text_style: TextStyle::default(),
             glyph_clipboard: None,
+            model_object: None,
+            model_arrows: Default::default(),
             merge: None,
             edit_mask: false,
             slice: None,
@@ -569,6 +577,7 @@ impl Editor {
         self.frame_range = None;
         self.views.insert(self.active, (self.layer, self.frame));
         self.active = id;
+        self.model_object = None;
         (self.layer, self.frame) = self.views.get(&id).copied().unwrap_or((LayerId(0), 0));
         self.selection = None;
         self.slice = None;
@@ -646,9 +655,9 @@ impl Editor {
     /// Ejecuta sin confirmar lo flotante (lo usa la confirmación misma).
     pub(crate) fn apply_doc(&mut self, cmd: DocCommand) -> bool {
         self.merge = None;
-        // Las fuentes no cambian de frames, capas, modo de color ni celda (salvo con las
-        // operaciones de glifos).
-        match FontLock::execute(&mut self.history, &mut self.document, cmd, false) {
+        // Las fuentes y los modelos 3D no cambian de frames, capas ni tamaño (salvo con sus
+        // propias operaciones, que traen su `SetFont` o `SetModel`).
+        match StructureLock::execute(&mut self.history, &mut self.document, cmd, false) {
             Ok(()) => {
                 self.revision += 1;
                 self.doc_version += 1;
@@ -688,7 +697,7 @@ impl Editor {
             self.current_object(),
         );
         let merged = self.merge == Some((group, target));
-        let result = FontLock::execute(&mut self.history, &mut self.document, cmd, merged);
+        let result = StructureLock::execute(&mut self.history, &mut self.document, cmd, merged);
         match result {
             Ok(()) => {
                 self.merge = Some((group, target));
@@ -1025,3 +1034,6 @@ mod tests;
 
 #[cfg(test)]
 mod font_tests;
+
+#[cfg(test)]
+mod model_tests;

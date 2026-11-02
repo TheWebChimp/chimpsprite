@@ -36,7 +36,7 @@ impl Editor {
     /// Sprite Size, Canvas Size, Rotate Canvas, Crop y Trim: no en una fuente (la celda queda
     /// fija al crearla).
     pub fn can_resize_sprite(&self) -> bool {
-        !self.is_font()
+        !self.is_structure_locked()
     }
 
     /// El carácter del glifo actual (el frame activo).

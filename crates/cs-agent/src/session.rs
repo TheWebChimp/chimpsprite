@@ -98,21 +98,25 @@ impl Session {
         } else {
             DocCommand::Batch(cmds)
         };
-        // Las fuentes no cambian de frames, capas, modo de color ni celda.
-        cs_commands::font::FontLock::execute(&mut d.history, &mut d.document, cmd, false)?;
+        // Las fuentes y los modelos no cambian de frames, capas ni tamaño.
+        cs_commands::StructureLock::execute(&mut d.history, &mut d.document, cmd, false)?;
         Ok(())
     }
 
-    /// Error si el artboard `id` es una fuente (sus frames son sus glifos).
-    pub(crate) fn not_a_font(&self, doc: &str, id: ArtboardId) -> Result<()> {
-        let font = self
+    /// Error si el artboard `id` tiene la estructura trabada: es una fuente (sus frames son sus
+    /// glifos) o un modelo 3D (una capa y un frame).
+    pub(crate) fn not_locked(&self, doc: &str, id: ArtboardId) -> Result<()> {
+        let locked = self
             .doc(doc)?
             .document
             .artboard(id)
-            .and_then(|a| a.font.as_ref());
-        match font {
-            Some(_) => Err(invalid("artboard is a font; use glyph operations")),
-            None => Ok(()),
+            .is_some_and(|a| a.font.is_some() || a.model.is_some());
+        if locked {
+            Err(invalid(
+                "artboard has a locked structure (font or 3D model)",
+            ))
+        } else {
+            Ok(())
         }
     }
 

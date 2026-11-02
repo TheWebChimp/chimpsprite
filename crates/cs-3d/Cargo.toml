@@ -1,0 +1,8 @@
+[package]
+name = "cs-3d"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+cs-core.workspace = true

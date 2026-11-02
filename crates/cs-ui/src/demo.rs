@@ -668,6 +668,50 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             app.font_panel.test_text = "ABC CAB".into();
         }
     }
+    // Desarrollo: una casita 3D (cubo y cono de techo) con su textura pintada, cámara iso, luz y
+    // contorno, y el panel 3D abierto, para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_MODEL").is_some()
+        && app.has_doc()
+        && app.create_model(ctx, "House", (128, 128))
+    {
+        let e = &mut app.doc.editor;
+        if e.add_primitive(cs_3d::Primitive::Cone { sides: 4 })
+            && let Some(i) = e.selected_object()
+            && let Some(mut roof) = e.model().and_then(|m| m.objects.get(i).cloned())
+        {
+            roof.transform.position.y = cs_core::FIXED;
+            roof.transform.rotation.y = 450;
+            roof.transform.scale.y = 600;
+            e.set_object(i, roof);
+        }
+        // Ventana y puerta en la cara de enfrente del cubo (la celda (0,0)-(16,16) de la textura).
+        let model = e.model().cloned();
+        if let Some(texture) = model.as_ref().and_then(|m| m.texture) {
+            let home = e.active;
+            let rect = |x0: i32, y0: i32, x1: i32, y1: i32, c: cs_core::Rgba| {
+                (y0..y1)
+                    .flat_map(|y| (x0..x1).map(move |x| (x, y, PixelValue::Rgba(c))))
+                    .collect::<Vec<_>>()
+            };
+            let mut pixels = rect(2, 3, 7, 8, cs_core::Rgba::rgb(110, 190, 240));
+            pixels.extend(rect(10, 7, 14, 16, cs_core::Rgba::rgb(120, 70, 40)));
+            e.activate(texture);
+            let (layer, frame) = (e.layer, e.frame);
+            e.execute(Command::DrawPixels {
+                layer,
+                frame,
+                pixels,
+            });
+            e.activate(home);
+        }
+        if let Some(m) = e.model() {
+            let camera = cs_core::CameraPreset::Iso
+                .camera(m.camera.distance.max(cs_core::FIXED), m.camera.target);
+            e.set_camera(camera);
+        }
+        e.set_light(cs_core::Light3D::default());
+        e.set_outline(Some(cs_core::Rgba::rgb(0, 0, 0)));
+    }
     if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
         app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
     }

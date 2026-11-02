@@ -6,8 +6,8 @@ use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 use cs_core::{
-    Artboard, ArtboardId, Document, FontInfo, Guide, InstanceTrack, LayerKind, LayerMask, Note,
-    ObjectId, SceneObject, Sprite, Symmetry,
+    Artboard, ArtboardId, Document, FontInfo, Guide, InstanceTrack, LayerKind, LayerMask, Model3D,
+    Note, ObjectId, SceneObject, Sprite, Symmetry,
 };
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
@@ -50,6 +50,9 @@ struct Entry {
     /// La fuente del artboard (si es una fuente pixel).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     font: Option<FontInfo>,
+    /// El modelo 3D del artboard (si es un modelo).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    model: Option<Model3D>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -207,6 +210,7 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
             library: artboard.in_library,
             layers,
             font: artboard.font.clone(),
+            model: artboard.model.clone(),
         });
     }
     let manifest = Manifest {
@@ -272,7 +276,16 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
                 entry.name
             ));
         }
+        // Un modelo editado a mano que no sirve (caras rotas, varias capas o frames) se quita.
+        let model = entry.model.filter(|m| match m.check(&sprite) {
+            Ok(()) => true,
+            Err(e) => {
+                report.warn(format!("{}: the 3D model was dropped: {e}", entry.name));
+                false
+            }
+        });
         artboards.push(Artboard {
+            model,
             in_library: entry.library,
             font,
             guides: entry.guides,
@@ -558,6 +571,7 @@ mod tests {
             },
         );
         doc.artboards.push(Artboard {
+            model: None,
             id: ArtboardId(2),
             name: "Mine".into(),
             position: (20, 0),
@@ -574,6 +588,64 @@ mod tests {
         assert_eq!(a.sprite.frames.len(), font.glyphs.len());
         assert_eq!(a.sprite.pixel(a.sprite.layers[0].id, 5, 2, 3), ONE_BIT_INK);
         assert!(back.artboard(ArtboardId(1)).unwrap().font.is_none());
+    }
+
+    #[test]
+    fn a_model_artboard_roundtrips_with_its_model() {
+        let mut doc = Document::with_sprite("one", Sprite::new(4, 4, ColorMode::Rgba));
+        let (model, texture, cmd) =
+            cs_commands::model::new_model_artboard(&doc, "Cube", (24, 24), (10, 0));
+        cmd.apply(&mut doc).unwrap();
+        doc.artboard_mut(model)
+            .unwrap()
+            .model
+            .as_mut()
+            .unwrap()
+            .outline = Some(Rgba::rgb(1, 2, 3));
+        let (back, report) = read(&write(&doc).unwrap()).unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        let a = back.artboard(model).unwrap();
+        assert_eq!(a.model, doc.artboard(model).unwrap().model);
+        assert_eq!(a.model.as_ref().unwrap().texture, Some(texture));
+        assert!(back.artboard(texture).unwrap().model.is_none());
+        assert!(back.artboard(ArtboardId(1)).unwrap().model.is_none());
+        // El `.aseprite` interno del modelo trae el render.
+        let shown = cs_render::render_frame(&cs_render::materialize(&back, &a.sprite, 0..1), 0);
+        let expected = cs_render::render_frame(
+            &cs_render::materialize(&doc, &doc.artboard(model).unwrap().sprite, 0..1),
+            0,
+        );
+        assert_eq!(shown, expected);
+        // Sin materializar: los pixeles guardados ya son el render (lo que ve otro programa).
+        let stored = cs_render::render_frame(&a.sprite, 0);
+        assert!(stored.iter().any(|c| c.a > 0), "the stored render is empty");
+        assert_eq!(stored, expected);
+    }
+
+    #[test]
+    fn a_chimp_without_model_opens_with_none() {
+        let bytes = write(&doc()).unwrap();
+        let mut zip = ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
+        let manifest = String::from_utf8(read_entry(&mut zip, MANIFEST).unwrap()).unwrap();
+        assert!(
+            !manifest.contains("\"model\""),
+            "no model key when there is none"
+        );
+        let (back, _) = read(&bytes).unwrap();
+        assert!(back.artboards.iter().all(|a| a.model.is_none()));
+    }
+
+    #[test]
+    fn a_bad_model_is_dropped_with_a_warning() {
+        let mut doc = Document::with_sprite("one", Sprite::new(4, 4, ColorMode::Rgba));
+        let (model, _, cmd) =
+            cs_commands::model::new_model_artboard(&doc, "Cube", (24, 24), (10, 0));
+        cmd.apply(&mut doc).unwrap();
+        let m = doc.artboard_mut(model).unwrap().model.as_mut().unwrap();
+        m.objects[0].mesh.faces[0].verts[0] = 999;
+        let (back, report) = read(&write(&doc).unwrap()).unwrap();
+        assert!(back.artboard(model).unwrap().model.is_none());
+        assert_eq!(report.warnings.len(), 1, "{:?}", report.warnings);
     }
 
     #[test]
@@ -595,6 +667,7 @@ mod tests {
             },
         );
         doc.artboards.push(Artboard {
+            model: None,
             id: ArtboardId(2),
             name: "Mine".into(),
             position: (20, 0),
@@ -662,6 +735,7 @@ mod tests {
         .unwrap();
         let mut d = Document::with_sprite("chimp", chimp);
         d.artboards.push(Artboard {
+            model: None,
             in_library: false,
             font: None,
             guides: vec![Guide {

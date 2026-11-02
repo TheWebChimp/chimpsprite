@@ -18,6 +18,7 @@ png = "0.18"
 eframe = { version = "0.36", default-features = false }
 env_logger = "0.11"
 cs-core = { path = "crates/cs-core" }
+cs-3d = { path = "crates/cs-3d" }
 cs-raster = { path = "crates/cs-raster" }
 cs-commands = { path = "crates/cs-commands" }
 cs-render = { path = "crates/cs-render" }

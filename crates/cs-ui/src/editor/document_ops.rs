@@ -12,6 +12,7 @@ impl Editor {
         sprite.palette = template.palette.clone();
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
+            model: None,
             in_library: false,
             font: None,
             guides: Vec::new(),
@@ -101,7 +102,7 @@ impl Editor {
     /// `Sprite → Color Mode`: pasa a RGBA o a indexado con la paleta del sprite. No en una
     /// fuente: su modo de color es el de la fuente.
     pub fn set_color_mode(&mut self, target: sprite_ops::ColorTarget) -> bool {
-        if self.is_font() {
+        if self.is_structure_locked() {
             return false;
         }
         self.commit_floating();
@@ -216,6 +217,7 @@ impl Editor {
         let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
+            model: None,
             in_library: false,
             font: None,
             id,

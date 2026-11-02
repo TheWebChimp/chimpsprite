@@ -1273,7 +1273,7 @@ fn menu_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
 /// Sección Dock, como en el mockup: un botón del dock en sus tres estados (normal, con el puntero
 /// encima y apretado), uno cada 26; debajo, la columna de botones (uno cada 27) y, a su derecha,
 /// un panel flotante abierto con la pestaña que envuelve al botón apretado.
-const DOCK_ICONS: [&str; 8] = [
+const DOCK_ICONS: [&str; 9] = [
     "icon.dock.artboards",
     "icon.dock.library",
     "icon.dock.slices",
@@ -1282,6 +1282,7 @@ const DOCK_ICONS: [&str; 8] = [
     "icon.dock.groom",
     "icon.dock.lumen",
     "icon.dock.font",
+    "icon.dock.model",
 ];
 const DOCK_STATE_PITCH: f32 = 26.0;
 const DOCK_PITCH: f32 = 27.0;

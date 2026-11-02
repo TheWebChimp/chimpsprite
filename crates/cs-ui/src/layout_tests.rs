@@ -3943,3 +3943,521 @@ fn dragging_a_font_stepper_is_one_undo_step() {
     h.app.doc.editor.undo();
     assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 12);
 }
+
+/// Con Pixel UI, un modelo 3D de 32×32 activo, a 800 % y centrado (con el cubo elegido).
+fn with_a_model_at_800() -> LayoutHarness {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+    zoom_centered(&mut h, 8.0);
+    h
+}
+
+fn camera(h: &LayoutHarness) -> cs_core::Camera3D {
+    h.app.doc.editor.model().expect("a model").camera
+}
+
+#[test]
+fn a_model_artboard_has_the_teal_bar() {
+    let h = with_a_model_at_800();
+    let pixels = artboard_pixels(&h);
+    let bar = union(&h.drawn("title.bar.model")).expect("the model bar");
+    assert_eq!(bar.left(), pixels.left() - 2.0);
+    assert_eq!(bar.right(), pixels.right() + 2.0);
+    assert_eq!(bar.bottom(), pixels.top() - 1.0);
+    assert!(h.drawn("title.bar.font").iter().all(|r| !r.intersects(bar)));
+}
+
+#[test]
+fn right_dragging_a_model_orbits_the_camera_in_one_undo_step() {
+    let mut h = with_a_model_at_800();
+    let before = camera(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    let from = artboard_pixels(&h).center();
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Secondary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![press(from, true)]);
+    for dx in [5.0, 10.0, 20.0] {
+        h.frame_with(vec![Event::PointerMoved(from + vec2(dx, 4.0))]);
+    }
+    h.frame_with(vec![press(from + vec2(20.0, 4.0), false)]);
+    h.frame();
+    let after = camera(&h);
+    assert_eq!(after.yaw, before.yaw + 100);
+    assert_eq!(after.pitch, before.pitch + 20);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(camera(&h), before);
+}
+
+#[test]
+fn ctrl_wheel_over_a_model_changes_the_camera_distance_not_the_zoom() {
+    let mut h = with_a_model_at_800();
+    let before = camera(&h).distance;
+    let zoom = h.app.doc.canvas.zoom;
+    let at = artboard_pixels(&h).center();
+    h.frame_with(vec![
+        Event::ModifiersChanged(egui::Modifiers::COMMAND),
+        Event::PointerMoved(at),
+    ]);
+    h.frame_with(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: vec2(0.0, -1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::COMMAND,
+    }]);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    let after = camera(&h).distance;
+    assert_eq!(after, (before as f32 * 1.1).round() as i32, "away");
+    assert_eq!(h.app.doc.canvas.zoom, zoom);
+}
+
+#[test]
+fn clicking_a_model_picks_the_object_under_the_pointer() {
+    let mut h = with_a_model_at_800();
+    let pixels = artboard_pixels(&h);
+    h.click(pixels.left_top() + vec2(4.0, 4.0), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.selected_object(), None, "an empty corner");
+    h.click(pixels.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.selected_object(), Some(0), "the cube");
+}
+
+#[test]
+fn g_and_the_right_arrow_move_the_selected_object_not_the_frame() {
+    let mut h = with_a_model_at_800();
+    let key = |key, pressed| Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: Default::default(),
+    };
+    let x = |h: &LayoutHarness| {
+        h.app.doc.editor.model().unwrap().objects[0]
+            .transform
+            .position
+            .x
+    };
+    let x0 = x(&h);
+    h.frame_with(vec![key(egui::Key::G, true), key(egui::Key::G, false)]);
+    h.frame_with(vec![
+        key(egui::Key::ArrowRight, true),
+        key(egui::Key::ArrowRight, false),
+    ]);
+    h.frame();
+    assert_eq!(x(&h), x0 + 4);
+    assert_eq!(h.app.doc.editor.frame, 0);
+    assert!(h.texts.iter().any(|(t, _)| t.contains("3D: Move")));
+}
+
+#[test]
+fn shift_s_and_shift_r_do_not_switch_the_3d_arrows() {
+    let mut h = with_a_model_at_800();
+    let key = |key, pressed| Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::SHIFT,
+    };
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)]);
+    for k in [egui::Key::S, egui::Key::R] {
+        h.frame_with(vec![key(k, true), key(k, false)]);
+        assert_eq!(
+            h.app.doc.editor.model_arrows(),
+            crate::editor::ModelArrows::Move,
+            "{k:?}"
+        );
+    }
+    // Shift+R sigue siendo la herramienta Jumble.
+    assert_eq!(h.app.doc.editor.tool, ToolKind::Jumble);
+}
+
+#[test]
+fn a_right_click_on_a_model_does_not_reopen_an_old_selection_menu() {
+    let mut h = with_a_model_at_800();
+    let model = h.app.doc.editor.active;
+    let plain = h.app.doc.editor.document.artboards[0].id;
+    h.app.doc.editor.tool = ToolKind::RectSelect;
+    // El menú de la selección en el artboard normal.
+    h.app.doc.editor.activate(plain);
+    h.app.doc.editor.select_all();
+    zoom_centered(&mut h, 8.0);
+    h.click(artboard_pixels(&h).center(), PointerButton::Secondary);
+    let menu = |h: &LayoutHarness| h.texts.iter().any(|(t, _)| t == "Flip Horizontal");
+    assert!(menu(&h), "the selection menu");
+    h.frame_with(vec![Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+    h.frame();
+    // El derecho sobre el modelo orbita: no vuelve a abrir aquel menú.
+    h.app.doc.editor.activate(model);
+    zoom_centered(&mut h, 8.0);
+    h.click(artboard_pixels(&h).center(), PointerButton::Secondary);
+    h.frame();
+    assert!(!menu(&h), "an old menu opened over the model");
+}
+
+#[test]
+fn the_other_button_during_a_model_drag_reaches_no_tool() {
+    // Con una selección y Move, el izquierdo adentro empezaría a transformarla.
+    let mut h = with_a_model_at_800();
+    h.app.doc.editor.tool = ToolKind::Move;
+    h.app.doc.editor.select_all();
+    let from = artboard_pixels(&h).center();
+    let button = |pos, button, pressed| Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let yaw = camera(&h).yaw;
+    // El derecho orbita; a la mitad, el izquierdo.
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, PointerButton::Secondary, true)]);
+    let mid = from + vec2(10.0, 0.0);
+    h.frame_with(vec![Event::PointerMoved(mid)]);
+    h.frame_with(vec![button(mid, PointerButton::Primary, true)]);
+    assert!(
+        h.app.doc.editor.transform_drag.is_none(),
+        "the transform got the press"
+    );
+    h.frame_with(vec![button(mid, PointerButton::Primary, false)]);
+    h.frame_with(vec![button(mid, PointerButton::Secondary, false)]);
+    h.frame();
+    assert_ne!(camera(&h).yaw, yaw, "the drag orbited");
+    assert!(h.app.doc.editor.transform_drag.is_none());
+    assert!(!h.app.doc.editor.is_painting());
+}
+
+// --- El panel 3D ---
+
+/// El panel 3D del dock abierto (con `model`, un modelo nuevo de 32×32 con su cubo).
+fn model_panel_open(model: bool) -> LayoutHarness {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    if model {
+        assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+    }
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    h
+}
+
+fn node(h: &LayoutHarness, label: &str) -> Rect {
+    h.nodes
+        .iter()
+        .find(|(l, _)| l == label)
+        .map(|(_, r)| *r)
+        .unwrap_or_else(|| panic!("no node {label:?}"))
+}
+
+#[test]
+fn the_model_panel_without_a_model_offers_new_3d_model() {
+    let mut h = model_panel_open(false);
+    h.click(h.button("New 3D Model…").center(), PointerButton::Primary);
+    assert!(h.app.new_model.is_some());
+}
+
+#[test]
+fn the_model_panel_lists_the_objects_and_adds_a_cylinder() {
+    let mut h = model_panel_open(true);
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
+        .expect("the 3D panel is open");
+    let cube = node(&h, "Cube");
+    assert!(flyout.contains_rect(cube), "{cube:?} vs {flyout:?}");
+    h.click(node(&h, "Add").center(), PointerButton::Primary);
+    h.click(node(&h, "Cylinder").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    let objects = &editor.model().unwrap().objects;
+    assert_eq!(objects.len(), 2);
+    assert_eq!(objects[1].name, "Cylinder");
+    assert_eq!(
+        objects[1].mesh,
+        cs_3d::primitive_mesh(&cs_3d::Primitive::Cylinder { sides: 8 })
+    );
+    assert_eq!(editor.selected_object(), Some(1));
+    // Un clic en la fila del cubo lo elige.
+    h.click(node(&h, "Cube").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.selected_object(), Some(0));
+}
+
+#[test]
+fn the_position_x_stepper_moves_the_object_in_one_step() {
+    let mut h = model_panel_open(true);
+    let heading = h
+        .text_rects
+        .iter()
+        .find(|(t, _, _)| t == "Position")
+        .map(|(_, r, _)| *r)
+        .expect("the Position heading");
+    // El + de X: el primero de la fila de abajo del título.
+    let plus = h
+        .buttons
+        .iter()
+        .filter(|(l, r)| l == "Increase" && r.top() > heading.bottom())
+        .min_by(|a, b| {
+            (a.1.top(), a.1.left())
+                .partial_cmp(&(b.1.top(), b.1.left()))
+                .unwrap()
+        })
+        .map(|(_, r)| *r)
+        .expect("the Position X + button");
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(plus.center(), PointerButton::Primary);
+    let x = |h: &LayoutHarness| {
+        h.app.doc.editor.model().unwrap().objects[0]
+            .transform
+            .position
+            .x
+    };
+    assert_eq!(x(&h), 1);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(x(&h), 0);
+}
+
+#[test]
+fn delete_in_the_model_panel_removes_the_object() {
+    let mut h = model_panel_open(true);
+    h.click(h.button("Delete").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    assert!(editor.model().unwrap().objects.is_empty());
+    assert_eq!(editor.selected_object(), None);
+}
+
+// --- El panel 3D: textura, cámara, luz y contorno ---
+
+/// Como [`model_panel_open`] con un modelo, en una ventana alta (que quepa todo el panel), y con
+/// un artboard "Skin" de pixel art más para elegir de textura.
+fn model_panel_tall() -> LayoutHarness {
+    model_panel_in(Vec2::new(1200.0, 1800.0))
+}
+
+/// Como [`model_panel_tall`] en una ventana de `size`.
+fn model_panel_in(size: Vec2) -> LayoutHarness {
+    let palettes = PaletteLibrary::new(Box::new(NoPresets));
+    let mut app = ChimpApp::with_parts(Default::default(), pixel_ui(), palettes);
+    app.new_document();
+    let mut h = LayoutHarness::start_in(app, size);
+    let editor = &mut h.app.doc.editor;
+    assert!(editor.add_artboard_with_sprite(
+        "Skin".into(),
+        cs_core::Sprite::new(16, 16, cs_core::ColorMode::Rgba)
+    ));
+    assert!(editor.new_model("Ship", (32, 32)));
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    h
+}
+
+fn model_pixels(h: &LayoutHarness) -> Vec<Rgba> {
+    let editor = &h.app.doc.editor;
+    let s = cs_render::materialize(&editor.document, editor.sprite(), 0..1);
+    cs_render::render_frame(&s, 0)
+}
+
+#[test]
+fn the_texture_select_skips_the_library_and_marks_a_missing_texture() {
+    let mut h = model_panel_tall();
+    let doc = &mut h.app.doc.editor.document;
+    doc.artboards
+        .iter_mut()
+        .find(|a| a.name == "Skin")
+        .unwrap()
+        .in_library = true;
+    h.frame();
+    h.click(node(&h, "Ship Texture").center(), PointerButton::Primary);
+    assert!(
+        !h.nodes.iter().any(|(l, _)| l == "Skin"),
+        "a library artboard is offered"
+    );
+    h.click(node(&h, "None").center(), PointerButton::Primary);
+    // Una textura que ya no existe (borrada por un script): "(missing)", no "None".
+    let editor = &mut h.app.doc.editor;
+    let active = editor.active;
+    editor
+        .document
+        .artboard_mut(active)
+        .unwrap()
+        .model
+        .as_mut()
+        .unwrap()
+        .texture = Some(cs_core::ArtboardId(999));
+    h.frame();
+    h.frame();
+    node(&h, "(missing)");
+}
+
+#[test]
+fn choosing_another_texture_in_the_model_panel_changes_the_model() {
+    let mut h = model_panel_tall();
+    let before = h.app.doc.editor.model().unwrap().texture;
+    h.click(node(&h, "Ship Texture").center(), PointerButton::Primary);
+    h.click(node(&h, "Skin").center(), PointerButton::Primary);
+    let after = h.app.doc.editor.model().unwrap().texture;
+    assert_ne!(before, after);
+    let skin = h
+        .app
+        .doc
+        .editor
+        .document
+        .artboards
+        .iter()
+        .find(|a| a.name == "Skin")
+        .unwrap()
+        .id;
+    assert_eq!(after, Some(skin));
+}
+
+#[test]
+fn new_texture_adds_a_template_artboard_and_assigns_it_in_one_step() {
+    let mut h = model_panel_tall();
+    let steps = h.app.doc.editor.history.done_count();
+    let count = h.app.doc.editor.document.artboards.len();
+    h.click(h.button("New Texture").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    assert_eq!(editor.document.artboards.len(), count + 1);
+    assert_eq!(editor.history.done_count(), steps + 1);
+    let new = editor.document.artboards.last().unwrap();
+    assert_eq!(new.name, "Ship Texture");
+    assert_eq!(editor.model().unwrap().texture, Some(new.id));
+    assert!(editor.is_model(), "the model stays active");
+    h.app.doc.editor.undo();
+    assert_eq!(h.app.doc.editor.document.artboards.len(), count);
+}
+
+#[test]
+fn the_iso_preset_sets_an_orthographic_camera() {
+    let mut h = model_panel_tall();
+    h.click(h.button("Iso").center(), PointerButton::Primary);
+    let cam = h.app.doc.editor.model().unwrap().camera;
+    assert_eq!(cam.projection, cs_core::Projection::Orthographic);
+    assert_eq!((cam.yaw, cam.pitch), (450, 300));
+    h.click(h.button("Reset").center(), PointerButton::Primary);
+    let cam = h.app.doc.editor.model().unwrap().camera;
+    assert_eq!(cam, cs_core::Model3D::default().camera);
+}
+
+#[test]
+fn the_projection_radios_switch_the_camera() {
+    let mut h = model_panel_tall();
+    let ortho = node(&h, "Orthographic");
+    h.click(ortho.center(), PointerButton::Primary);
+    let cam = h.app.doc.editor.model().unwrap().camera;
+    assert_eq!(cam.projection, cs_core::Projection::Orthographic);
+}
+
+#[test]
+fn turning_the_light_off_changes_the_render() {
+    let mut h = model_panel_tall();
+    let lit = model_pixels(&h);
+    assert!(check(&h, "Light").1);
+    h.click(check(&h, "Light").0.center(), PointerButton::Primary);
+    assert!(!h.app.doc.editor.model().unwrap().light.enabled);
+    assert_ne!(model_pixels(&h), lit);
+}
+
+#[test]
+fn turning_the_outline_on_sets_the_primary_color() {
+    let mut h = model_panel_tall();
+    assert_eq!(h.app.doc.editor.model().unwrap().outline, None);
+    h.click(check(&h, "Outline").0.center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    let primary = editor.resolve(editor.primary);
+    assert_eq!(editor.model().unwrap().outline, Some(primary));
+    h.click(check(&h, "Outline").0.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.model().unwrap().outline, None);
+}
+
+#[test]
+fn the_model_panel_has_a_bake_button() {
+    let h = model_panel_tall();
+    h.button("Bake…");
+}
+
+#[test]
+fn every_model_panel_control_fits_beside_the_scroll_bar() {
+    // Una ventana baja y una alta (cabe todo, sin barra).
+    for size in [Vec2::new(1200.0, 480.0), Vec2::new(1200.0, 1800.0)] {
+        let mut h = model_panel_in(size);
+        h.frame();
+        let flyout = h
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
+            .expect("the 3D panel is open");
+        // Lo de adentro del marco y, sin la barra del scroll (a la derecha), lo del contenido.
+        let inner = flyout.shrink(crate::dock::FLYOUT_MARGIN as f32);
+        let content = Rect::from_min_max(
+            inner.min,
+            egui::pos2(inner.right() - crate::pixel_ui::SCROLL_BAR, inner.bottom()),
+        );
+        let inside = |r: Rect, area: Rect| r.left() >= area.left() && r.right() <= area.right();
+        let controls: Vec<_> = h
+            .buttons
+            .iter()
+            .chain(h.nodes.iter())
+            .filter(|(_, r)| r.intersects(flyout))
+            .collect();
+        let steppers = controls
+            .iter()
+            .filter(|(l, _)| l == "Increase" || l == "Decrease");
+        assert!(steppers.clone().count() >= 22, "{controls:?}");
+        // Los steppers (de ancho fijo) caben siempre al lado de la barra.
+        for (label, r) in steppers {
+            assert!(inside(*r, content), "{label} {r:?} outside {content:?}");
+        }
+        // Todo, al lado de la barra si la hay (las filas de la lista llenan el ancho).
+        let scrolls = h
+            .drawn("scroll.track.v")
+            .iter()
+            .any(|r| r.intersects(flyout) && r.left() >= content.right() - 1.0);
+        let area = if scrolls { content } else { inner };
+        for (label, r) in controls {
+            assert!(inside(*r, area), "{label} {r:?} outside {area:?}");
+        }
+    }
+}
+
+#[test]
+fn values_outside_the_panel_ranges_are_not_rewritten_by_drawing_the_panel() {
+    let mut h = model_panel_tall();
+    // Lo que deja orbitar mucho, un script o un archivo: fuera de lo que muestran los steppers.
+    let mut model = h.app.doc.editor.model().unwrap().clone();
+    model.camera.yaw = 7200;
+    model.light.yaw = -5000;
+    let t = &mut model.objects[0].transform;
+    t.rotation = cs_core::Vec3i {
+        x: 4000,
+        y: -9000,
+        z: 3610,
+    };
+    t.scale = cs_core::Vec3i {
+        x: 20000,
+        y: -1000,
+        z: 5,
+    };
+    t.position.x = 9999 * cs_core::FIXED;
+    assert!(
+        h.app
+            .doc
+            .editor
+            .set_model_grouped(model.clone(), egui::Id::new("script"))
+    );
+    h.app.doc.editor.end_group();
+    let steps = h.app.doc.editor.history.done_count();
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_eq!(h.app.doc.editor.model().unwrap(), &model);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+}

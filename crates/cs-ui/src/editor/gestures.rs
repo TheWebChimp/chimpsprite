@@ -413,6 +413,10 @@ impl Editor {
         {
             self.activate(id);
         }
+        // En un artboard 3D no hay herramientas: el lienzo mueve la cámara.
+        if self.is_model() {
+            return;
+        }
         let p = self.tool_point(world);
         // En modo Tiles o editando una máscara algunas herramientas no actúan (la barra de
         // estado lo avisa).

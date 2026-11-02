@@ -168,6 +168,7 @@ impl ArtboardTool {
         Some(DocCommand::AddArtboard {
             index: doc.artboards.len(),
             artboard: Box::new(Artboard {
+                model: None,
                 in_library: false,
                 font: None,
                 guides: Vec::new(),

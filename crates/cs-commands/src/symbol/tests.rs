@@ -10,6 +10,7 @@ fn doc() -> Document {
 
 fn add(doc: &mut Document, id: u32, position: (i32, i32), in_library: bool) {
     doc.artboards.push(Artboard {
+        model: None,
         id: ArtboardId(id),
         name: format!("a{id}"),
         position,

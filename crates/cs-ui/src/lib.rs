@@ -6,6 +6,7 @@ mod app_menus;
 mod appearance;
 mod artboard_window;
 mod autosave;
+mod bake_dialog;
 mod bar_fields;
 mod canvas;
 mod canvas_size;
@@ -31,6 +32,8 @@ mod font_panel;
 mod frame_dialog;
 mod mask_ops;
 mod menus;
+mod model_dialog;
+mod model_panel;
 mod palette_ops;
 mod palette_ui;
 mod scripts;
@@ -137,6 +140,8 @@ pub struct ChimpApp {
     lumen: lumen::LumenPanel,
     /// El panel Font del dock.
     font_panel: font_panel::FontPanelState,
+    /// El panel 3D del dock.
+    model_panel: model_panel::ModelPanelState,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
@@ -156,6 +161,10 @@ pub struct ChimpApp {
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
     /// `File → New Font…`.
     new_font: Option<font_dialog::NewFontDialog>,
+    /// `File → New 3D Model…`.
+    new_model: Option<model_dialog::NewModelDialog>,
+    /// Bake… del panel 3D.
+    bake: Option<bake_dialog::BakeDialog>,
     /// La ventana Edit → Undo History abierta.
     undo_history: bool,
     /// La ventana Edit → Keyboard Shortcuts abierta.
@@ -291,6 +300,7 @@ impl ChimpApp {
             groom: Default::default(),
             lumen: Default::default(),
             font_panel: Default::default(),
+            model_panel: Default::default(),
             platform: platform::Platform::default(),
             autosaver: autosave::Autosaver::default(),
             restore: None,
@@ -305,6 +315,8 @@ impl ChimpApp {
             news_fetcher: news::default_fetcher(),
             new_tilemap: None,
             new_font: None,
+            new_model: None,
+            bake: None,
             undo_history: false,
             shortcuts: None,
             keymap: keymap::Keymap::default(),
@@ -614,6 +626,33 @@ impl ChimpApp {
         }
     }
 
+    /// El panel 3D del dock y lo que pide.
+    fn model_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
+        let mut action = None;
+        let skin = self.pixel.skin();
+        let editor = &mut self.doc.editor;
+        let state = &mut self.model_panel;
+        dock::flyout_fixed(
+            ctx,
+            dock::DockPanel::Model,
+            anchor,
+            skin,
+            model_panel::WIDTH,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    action = model_panel::show(ui, editor, skin, state);
+                });
+            },
+        );
+        match action {
+            Some(model_panel::ModelAction::NewModel) => self.new_model = Some(Default::default()),
+            Some(model_panel::ModelAction::Bake) if self.doc.editor.is_model() => {
+                self.bake = Some(bake_dialog::BakeDialog::new(&self.doc.editor));
+            }
+            _ => {}
+        }
+    }
+
     /// El panel Library del dock y lo que pide.
     fn library_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
         let mut action = None;
@@ -750,6 +789,70 @@ impl ChimpApp {
             .canvas
             .request_zoom(view::ZoomRequest::FitActiveBeside {
                 right_inset: dock::flyout_reach(font_panel::WIDTH),
+            });
+        true
+    }
+
+    fn update_model_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.new_model else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Accept => {
+                let (name, size) = (dialog.name.trim().to_owned(), dialog.size);
+                let name = if name.is_empty() {
+                    "Model".to_owned()
+                } else {
+                    name
+                };
+                self.new_model = None;
+                // Desde Home no hay pestaña: se abre un documento nuevo como File → New.
+                if !self.has_doc() {
+                    self.new_document();
+                }
+                self.create_model(ctx, &name, size);
+            }
+            tilemap_dialog::DialogResult::Cancel => self.new_model = None,
+        }
+    }
+
+    /// Bake…: al aceptar, hornea el modelo activo (si sigue siéndolo) en un artboard nuevo.
+    fn update_bake_dialog(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() || !self.doc.editor.is_model() {
+            self.bake = None;
+            return;
+        }
+        let Some(dialog) = &mut self.bake else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Accept => {
+                let options = dialog.chosen();
+                self.bake = None;
+                self.doc.editor.bake(options);
+            }
+            tilemap_dialog::DialogResult::Cancel => self.bake = None,
+        }
+    }
+
+    /// Crea el modelo 3D `name` en el documento abierto, abre el panel 3D en el dock y lo
+    /// encuadra al lado de él. `false` si no se pudo.
+    pub(crate) fn create_model(
+        &mut self,
+        ctx: &egui::Context,
+        name: &str,
+        size: (u32, u32),
+    ) -> bool {
+        if !self.doc.editor.new_model(name, size) {
+            return false;
+        }
+        dock::set_open(ctx, Some(dock::DockPanel::Model));
+        self.doc
+            .canvas
+            .request_zoom(view::ZoomRequest::FitActiveBeside {
+                right_inset: dock::flyout_reach(model_panel::WIDTH),
             });
         true
     }
@@ -1359,8 +1462,8 @@ impl ChimpApp {
                 .inner
             })
             .inner;
-        // Un artboard de fuente no tiene timeline: sus frames son los glifos. La preferencia queda igual para los sprites.
-        if self.view.timeline && self.doc.editor.font().is_none() {
+        // Un artboard de fuente o modelo no tiene timeline: sus frames son los glifos. La preferencia queda igual para los sprites.
+        if self.view.timeline && !self.doc.editor.is_structure_locked() {
             let mut panel = egui::Panel::bottom("timeline")
                 .resizable(true)
                 .default_size(190.0);
@@ -1411,6 +1514,7 @@ impl ChimpApp {
             Some((dock::DockPanel::Lumen, anchor)) => self.lumen_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Library, anchor)) => self.library_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Font, anchor)) => self.font_panel(ui.ctx(), anchor, modal),
+            Some((dock::DockPanel::Model, anchor)) => self.model_panel(ui.ctx(), anchor, modal),
             _ => {}
         }
         if !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {
@@ -1526,6 +1630,8 @@ impl eframe::App for ChimpApp {
         }
         self.update_tilemap_dialogs(&ctx);
         self.update_font_dialog(&ctx);
+        self.update_model_dialog(&ctx);
+        self.update_bake_dialog(&ctx);
         self.update_symbol_dialog(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
@@ -1567,6 +1673,33 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
     let palette = editor.palette_range().is_some_and(|r| r.end() > r.start());
     let objects = editor.tool == ToolKind::Move && !editor.selected_objects().is_empty();
     let nudge_objects = objects && editor.selection.is_none() && !editor.can_transform();
+    // Con un modelo 3D activo, G, R y S eligen qué hacen las flechas y las flechas actúan sobre
+    // el objeto elegido (no cambian de frame ni de capa).
+    if editor.is_model() {
+        let arrow = match key {
+            Key::ArrowLeft => Some((-1, 0)),
+            Key::ArrowRight => Some((1, 0)),
+            Key::ArrowUp => Some((0, -1)),
+            Key::ArrowDown => Some((0, 1)),
+            _ => None,
+        };
+        if let Some((dx, dy)) = arrow {
+            editor.arrow_on_object(dx, dy);
+            return true;
+        }
+        // Sin Shift: Shift+R es Jumble y Shift+S, otro atajo.
+        let mode = match key {
+            _ if shift => None,
+            Key::G => Some(editor::ModelArrows::Move),
+            Key::R => Some(editor::ModelArrows::Rotate),
+            Key::S => Some(editor::ModelArrows::Scale),
+            _ => None,
+        };
+        if let Some(mode) = mode {
+            editor.set_model_arrows(mode);
+            return true;
+        }
+    }
     match key {
         Key::Enter if editor.is_pending() => editor.finish_gesture(),
         Key::Enter if editor.is_floating() => {

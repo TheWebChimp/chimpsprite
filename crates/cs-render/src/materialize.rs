@@ -7,8 +7,8 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use cs_core::{
-    ArtboardId, Cel, ColorMode, Document, Image, ImageId, InstanceKey, InstanceTrack, Layer,
-    LayerKind, PixelValue, Rgba, Sprite, TileGrid, Tileset, source_frame,
+    Artboard, ArtboardId, Cel, ColorMode, Document, Image, ImageId, InstanceKey, InstanceTrack,
+    Layer, LayerKind, PixelValue, Rgba, Sprite, TileGrid, Tileset, source_frame,
 };
 
 use crate::render_frame;
@@ -65,14 +65,50 @@ fn materialize_root<'a>(
     skip_hidden: bool,
 ) -> Cow<'a, Sprite> {
     // Si el sprite es el de un artboard del documento, ese artboard ya está "en curso".
-    let mut stack: Vec<ArtboardId> = doc
+    let artboard = doc
         .artboards
         .iter()
-        .find(|a| std::ptr::eq(&a.sprite, sprite))
-        .map(|a| a.id)
-        .into_iter()
-        .collect();
+        .find(|a| std::ptr::eq(&a.sprite, sprite));
+    let mut stack: Vec<ArtboardId> = artboard.map(|a| a.id).into_iter().collect();
+    // Un modelo 3D se ve con su render.
+    if let Some(artboard) = artboard.filter(|a| a.model.is_some())
+        && let Some(model) = crate::model3d::model_sprite_at(doc, artboard, 0, &mut stack)
+    {
+        return Cow::Owned(model);
+    }
     materialize_at(doc, sprite, frames, &mut stack, skip_hidden)
+}
+
+/// `materialize_at` del sprite de `artboard`; si es un modelo 3D, su render (con el frame 0 de
+/// la textura).
+fn materialize_artboard<'a>(
+    doc: &Document,
+    artboard: &'a Artboard,
+    frames: Range<usize>,
+    stack: &mut Vec<ArtboardId>,
+    skip_hidden: bool,
+) -> Cow<'a, Sprite> {
+    if artboard.model.is_some()
+        && let Some(sprite) = crate::model3d::model_sprite_at(doc, artboard, 0, stack)
+    {
+        return Cow::Owned(sprite);
+    }
+    materialize_at(doc, &artboard.sprite, frames, stack, skip_hidden)
+}
+
+/// Los pixeles de `frame` de `sprite` tal como se ven (instancias y tilemaps resueltos).
+pub(crate) fn visible_frame(
+    doc: &Document,
+    sprite: &Sprite,
+    frame: usize,
+    stack: &mut Vec<ArtboardId>,
+) -> Vec<Rgba> {
+    let inner = with_tilemaps(
+        materialize_at(doc, sprite, frame..frame + 1, stack, true),
+        frame..frame + 1,
+        true,
+    );
+    render_frame(&inner, frame)
 }
 
 fn materialize_at<'a>(
@@ -218,13 +254,14 @@ fn instance_image(
     if stack.contains(&source_id) {
         return None;
     }
-    let source = &doc.artboard(source_id)?.sprite;
+    let source_artboard = doc.artboard(source_id)?;
+    let source = &source_artboard.sprite;
     let sf = source_frame(key, parent, frame, source);
     stack.push(source_id);
-    // Adentro del símbolo solo importa lo que se ve.
+    // Adentro del símbolo solo importa lo que se ve (un modelo 3D se ve con su render).
     // El símbolo puede tener tilemaps: también se convierten antes de componerlo.
     let inner = with_tilemaps(
-        materialize_at(doc, source, sf..sf + 1, stack, true),
+        materialize_artboard(doc, source_artboard, sf..sf + 1, stack, true),
         sf..sf + 1,
         true,
     );
@@ -451,6 +488,7 @@ mod tests {
 
     fn artboard(id: u32, sprite: Sprite) -> Artboard {
         Artboard {
+            model: None,
             in_library: false,
             font: None,
             id: ArtboardId(id),
