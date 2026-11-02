@@ -28,6 +28,7 @@ mod font_ops;
 mod gestures;
 mod model_edit;
 mod model_ops;
+mod workspace;
 pub use model_edit::{EditOp, GRIDS, KeyOp, ModelEdit};
 pub use model_ops::{ModelArrows, wrap_angle};
 
@@ -370,6 +371,11 @@ pub struct Editor {
     pub symbol_stack: Vec<ArtboardId>,
     /// El artboard activo al entrar al modo símbolo desde el documento (para volver).
     pub symbol_return: Option<ArtboardId>,
+    /// El modelo o la fuente que se edita en su pestaña, fuera del lienzo (ver `workspace.rs`).
+    /// Si hay, es el activo.
+    pub(crate) workspace: Option<ArtboardId>,
+    /// El artboard del lienzo activo al entrar al workspace (para volver).
+    workspace_return: Option<ArtboardId>,
     /// Los objetos seleccionados, en el orden en que se eligieron, y de qué artboard y capa son
     /// (los ids de objeto son por capa). Se leen con `selected_objects()`, que no devuelve nada
     /// si la capa actual es otra. Ver `object_ops.rs`.
@@ -452,6 +458,8 @@ impl Editor {
             library_selected: None,
             symbol_stack: Vec::new(),
             symbol_return: None,
+            workspace: None,
+            workspace_return: None,
             object_selection: Vec::new(),
             object_selection_at: None,
             object_bounds_cache: Default::default(),
@@ -495,12 +503,24 @@ impl Editor {
         if let Some(cut) = self.symbol_stack.iter().position(|id| !symbol(id)) {
             self.symbol_stack.truncate(cut);
         }
+        // El workspace se cierra si su artboard ya no es modelo ni fuente (p. ej. un undo lo
+        // borró): se regresa al artboard del lienzo de antes de entrar.
+        let closed = self
+            .workspace
+            .filter(|&id| !self.has_workspace(id))
+            .is_some();
+        if closed {
+            self.workspace = None;
+        }
         let target = match self.symbol_stack.last() {
             // En el modo símbolo, el activo es el último de la pila.
             Some(&last) => Some(last),
-            // Fuera de él, el activo es uno del lienzo: el de antes de entrar o el primero.
+            // En el workspace, el activo es su modelo o su fuente (aunque no esté en el lienzo).
+            None if self.workspace == Some(self.active) => None,
+            // Fuera de ellos, el activo es uno del lienzo: el de antes de entrar o el primero.
             None => {
-                let back = self.symbol_return.take();
+                let from_workspace = closed.then(|| self.workspace_return.take()).flatten();
+                let back = self.symbol_return.take().or(from_workspace);
                 (!self.on_canvas(self.active)).then(|| {
                     back.filter(|&id| self.on_canvas(id)).unwrap_or_else(|| {
                         self.document
@@ -576,6 +596,11 @@ impl Editor {
         if !self.symbol_stack.contains(&id) {
             self.symbol_stack.clear();
             self.symbol_return = None;
+        }
+        // Activar otro artboard (uno del lienzo, un símbolo) sale del workspace.
+        if self.workspace.is_some_and(|w| w != id) {
+            self.workspace = None;
+            self.workspace_return = None;
         }
         self.commit_floating();
         self.stop();
@@ -1046,3 +1071,6 @@ mod model_tests;
 
 #[cfg(test)]
 mod model_edit_tests;
+
+#[cfg(test)]
+mod workspace_tests;

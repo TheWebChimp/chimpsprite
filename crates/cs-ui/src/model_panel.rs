@@ -195,14 +195,8 @@ fn grid_label(g: i32) -> &'static str {
     }
 }
 
-/// Edit (Tab), los modos de selección y la cuadrícula del modo Edit (se ven aunque Edit esté
-/// apagado).
+/// Los modos de selección y la cuadrícula del modo Edit (el del workspace del modelo).
 fn edit_rows(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
-    let mut on = editor.model_edit_on();
-    check(ui, skin, &mut on, "Edit (Tab)");
-    if on != editor.model_edit_on() {
-        editor.toggle_model_edit();
-    }
     let current = editor.model_edit().selection.mode;
     let mut picked = None;
     ui.horizontal(|ui| {

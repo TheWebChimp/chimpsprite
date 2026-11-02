@@ -17,7 +17,8 @@ impl Editor {
         if !self.execute_doc(cmd) {
             return false;
         }
-        self.activate(id);
+        // Se edita en su workspace (su pestaña), fuera del lienzo.
+        self.enter_workspace(id);
         self.set_frame(0);
         true
     }

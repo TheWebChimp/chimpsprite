@@ -9,13 +9,6 @@ impl ChimpApp {
         if self.is_modal() {
             return;
         }
-        if std::mem::take(&mut self.drop_focus) {
-            ctx.memory_mut(|m| {
-                if let Some(id) = m.focused() {
-                    m.surrender_focus(id);
-                }
-            });
-        }
         let typing = ctx.egui_wants_keyboard_input();
         let painting = self.has_doc() && self.doc.editor.is_painting();
         if self.has_doc() && !typing && !painting {
@@ -46,12 +39,6 @@ impl ChimpApp {
                 && !modifiers.alt
                 && editor_key(&mut self.doc.editor, key, modifiers.shift)
             {
-                // Tab (modo Edit) tampoco debe dejar el foco en un campo de texto: egui ya lo
-                // movió al empezar el frame, así que se suelta al empezar el siguiente.
-                if key == egui::Key::Tab {
-                    ctx.input_mut(|i| i.consume_key(modifiers, key));
-                    self.drop_focus = true;
-                }
                 continue;
             }
             let Some(action) = self.keymap.action_for(key, modifiers) else {

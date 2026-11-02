@@ -12,7 +12,8 @@ use cs_render::BakeOptions;
 use super::Editor;
 
 impl Editor {
-    /// Un modelo 3D nuevo (con su textura) a la derecha de todo, activo y con el cubo elegido.
+    /// Un modelo 3D nuevo (con su textura) a la derecha de todo, en su workspace y con el cubo
+    /// elegido.
     pub fn new_model(&mut self, name: &str, size: (u32, u32)) -> bool {
         let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
         let (id, _texture, cmd) =
@@ -20,7 +21,8 @@ impl Editor {
         if !self.execute_doc(cmd) {
             return false;
         }
-        self.activate(id);
+        // Se edita en su workspace (su pestaña), fuera del lienzo.
+        self.enter_workspace(id);
         self.set_frame(0);
         self.model_object = Some(0);
         true

@@ -702,7 +702,8 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                 frame,
                 pixels,
             });
-            e.activate(home);
+            // Pintar la textura (en el lienzo) sale del workspace: se vuelve a él.
+            e.enter_workspace(home);
         }
         if let Some(m) = e.model() {
             let camera = cs_core::CameraPreset::Iso
@@ -711,9 +712,9 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         }
         e.set_light(cs_core::Light3D::default());
         e.set_outline(Some(cs_core::Rgba::rgb(0, 0, 0)));
-        // Con CHIMPSPRITE_DEMO_MODEL_EDIT: el modo Edit prendido, en vértices y con uno elegido.
+        // Con CHIMPSPRITE_DEMO_MODEL_EDIT: en vértices y con uno elegido (el workspace siempre
+        // está en modo Edit).
         if dev_var("CHIMPSPRITE_DEMO_MODEL_EDIT").is_some() {
-            e.toggle_model_edit();
             e.set_select_mode(cs_3d::SelectMode::Vertex);
             e.set_model_selection(cs_3d::Selection {
                 mode: cs_3d::SelectMode::Vertex,

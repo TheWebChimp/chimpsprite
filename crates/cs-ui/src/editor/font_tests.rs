@@ -9,7 +9,6 @@ fn editor_with_font() -> Editor {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_new_font_is_active_with_its_first_glyph() {
     let e = editor_with_font();
     assert_eq!(e.font().unwrap().name, "Mine");
@@ -18,7 +17,6 @@ fn a_new_font_is_active_with_its_first_glyph() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn going_to_a_glyph_is_changing_the_frame() {
     let mut e = editor_with_font();
     assert!(e.go_to_glyph('A'));
@@ -29,7 +27,6 @@ fn going_to_a_glyph_is_changing_the_frame() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn one_bit_fonts_paint_with_the_ink_whatever_the_color() {
     let mut e = editor_with_font();
     e.go_to_glyph('A');
@@ -38,7 +35,6 @@ fn one_bit_fonts_paint_with_the_ink_whatever_the_color() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn glyphs_are_added_removed_and_their_advance_set_with_undo() {
     let mut e = editor_with_font();
     assert!(e.add_glyphs(&['á']));
@@ -54,7 +50,6 @@ fn glyphs_are_added_removed_and_their_advance_set_with_undo() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn shift_copy_paste_and_clear_a_glyph() {
     let mut e = editor_with_font();
     e.go_to_glyph('A');
@@ -76,7 +71,6 @@ fn shift_copy_paste_and_clear_a_glyph() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn glyph_steps_have_glyph_names_in_the_history() {
     let mut e = editor_with_font();
     e.add_glyphs(&['á']);
@@ -92,7 +86,6 @@ fn glyph_steps_have_glyph_names_in_the_history() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_text_font_of_a_deleted_font_artboard_falls_back_to_the_pixel_font() {
     use cs_tools::text::FontChoice;
     let mut e = editor_with_font();
@@ -118,7 +111,9 @@ fn the_text_font_of_a_deleted_font_artboard_falls_back_to_the_pixel_font() {
         "Mine",
         "the name follows the font"
     );
-    e.remove_active_artboard();
+    // Las fuentes no están en el lienzo: se borran desde la Library.
+    assert!(e.execute_doc(cs_commands::DocCommand::RemoveArtboard { id }));
+    assert_eq!(e.workspace(), None);
     e.sync_text_font();
     assert_eq!(e.text_style.font, FontChoice::Pixel);
 }
@@ -134,7 +129,6 @@ fn paint(e: &mut Editor, value: PixelValue) {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_glyph_pastes_only_into_a_font_of_its_color_mode_and_keeps_its_opacity() {
     let mut e = editor_with_font();
     let one_bit = e.active;
@@ -155,7 +149,7 @@ fn a_glyph_pastes_only_into_a_font_of_its_color_mode_and_keeps_its_opacity() {
     assert!(e.paste_glyph());
     assert_eq!(e.sprite().cel(e.layer, e.frame).unwrap().opacity, 128);
     // En la de 1 bit: no.
-    e.activate(one_bit);
+    assert!(e.enter_workspace(one_bit));
     e.go_to_glyph('A');
     let before = e.document.clone();
     assert!(!e.paste_glyph());
@@ -163,7 +157,6 @@ fn a_glyph_pastes_only_into_a_font_of_its_color_mode_and_keeps_its_opacity() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_text_tool_writes_with_the_ink_on_a_one_bit_font() {
     let mut e = editor_with_font();
     let one_bit = e.active;
@@ -172,7 +165,7 @@ fn the_text_tool_writes_with_the_ink_on_a_one_bit_font() {
     let colors = e.active;
     e.go_to_glyph('A');
     paint(&mut e, PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0)));
-    e.activate(one_bit);
+    assert!(e.enter_workspace(one_bit));
     e.go_to_glyph('B');
     e.primary = PixelValue::Index(7);
     for font in [
@@ -197,7 +190,6 @@ fn the_text_tool_writes_with_the_ink_on_a_one_bit_font() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn renaming_a_font_artboard_renames_the_font_in_one_step() {
     let mut e = editor_with_font();
     let id = e.active;
@@ -231,7 +223,6 @@ fn assert_intact(e: &Editor) {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn frame_actions_do_nothing_on_a_font() {
     let mut e = editor_with_font();
     e.go_to_glyph('A');
@@ -257,7 +248,6 @@ fn frame_actions_do_nothing_on_a_font() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn play_does_nothing_on_a_font() {
     let mut e = editor_with_font();
     e.toggle_play();
@@ -265,7 +255,6 @@ fn play_does_nothing_on_a_font() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_sprite_of_a_font_keeps_its_color_mode_and_size() {
     let mut e = editor_with_font();
     let before = e.document.clone();
@@ -281,7 +270,6 @@ fn the_sprite_of_a_font_keeps_its_color_mode_and_size() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn layers_cannot_be_added_or_removed_on_a_font() {
     let mut e = editor_with_font();
     let before = e.document.clone();
@@ -295,7 +283,6 @@ fn layers_cannot_be_added_or_removed_on_a_font() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_text_tool_writes_with_a_document_font() {
     let mut e = editor_with_font();
     let font_id = e.active;

@@ -322,7 +322,7 @@ impl Editor {
     }
 
     /// "Entrar al símbolo": con la fuente de la instancia actual en la biblioteca, entra al modo
-    /// símbolo; si está en el lienzo, la activa.
+    /// símbolo; si es un modelo, entra a su workspace; si está en el lienzo, la activa.
     pub fn enter_instance(&mut self) -> bool {
         let Some(source) = self.instance_key().and_then(|k| k.source) else {
             return false;
@@ -330,6 +330,7 @@ impl Editor {
         match self.document.artboard(source) {
             None => false,
             Some(a) if a.in_library => self.enter_symbol(source),
+            Some(a) if a.model.is_some() => self.enter_workspace(source),
             Some(_) => {
                 self.activate(source);
                 true

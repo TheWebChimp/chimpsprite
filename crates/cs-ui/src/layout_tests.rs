@@ -3303,7 +3303,6 @@ fn the_advance_drag_sets_the_glyph_where_it_started() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_monospace_font_has_no_advance_line_to_drag() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let e = &mut h.app.doc.editor;
@@ -3475,7 +3474,6 @@ fn a_guide_dragged_from_the_ruler_can_be_dropped_on_the_advance_line() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_timeline_comes_back_when_a_sprite_artboard_is_activated() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let with_timeline = h.canvas.expect("a document is open");
@@ -3496,7 +3494,6 @@ fn the_timeline_comes_back_when_a_sprite_artboard_is_activated() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_font_panel_offers_new_font_and_its_map_picks_glyphs() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     // El botón FontForge del dock, con su ícono del skin.
@@ -3561,7 +3558,6 @@ fn a_new_font_is_fitted_beside_the_font_panel() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_font_panel_adds_the_typed_chars() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     h.app
@@ -3626,7 +3622,6 @@ fn filled_rects(h: &LayoutHarness) -> Vec<(egui::Color32, Rect)> {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_font_panel_keeps_its_logo_and_build_while_the_middle_scrolls() {
     let mut h = font_panel_open(Vec2::new(1200.0, 420.0));
     let flyout = font_flyout(&h);
@@ -3670,7 +3665,6 @@ fn the_font_panel_keeps_its_logo_and_build_while_the_middle_scrolls() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_header_icons_switch_between_the_map_and_the_font_settings() {
     let mut h = font_panel_open(Vec2::new(1200.0, 800.0));
     let flyout = font_flyout(&h);
@@ -3693,7 +3687,6 @@ fn the_header_icons_switch_between_the_map_and_the_font_settings() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn without_pixel_ui_the_font_panel_falls_back_to_egui() {
     let mut h = LayoutHarness::editor();
     h.app
@@ -3724,7 +3717,6 @@ fn the_font_panel_without_a_font_has_no_view_icons() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_font_panel_rows_are_the_mockup_rows() {
     let mut h = font_panel_open(Vec2::new(1200.0, 800.0));
     // Que termine de aparecer (el Area entra con fundido).
@@ -3764,7 +3756,6 @@ fn the_font_panel_rows_are_the_mockup_rows() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_font_map_is_a_grid_of_21_by_23() {
     let h = font_panel_open(Vec2::new(1200.0, 800.0));
     let flyout = font_flyout(&h);
@@ -3780,7 +3771,6 @@ fn the_font_map_is_a_grid_of_21_by_23() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn add_all_adds_the_missing_chars_of_the_page_in_one_step() {
     let mut h = font_panel_open(Vec2::new(1200.0, 800.0));
     h.click(h.button("Latin-1").center(), PointerButton::Primary);
@@ -3797,7 +3787,6 @@ fn add_all_adds_the_missing_chars_of_the_page_in_one_step() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_map_cell_shows_the_drawn_glyph_or_its_char_in_gray() {
     let mut h = font_panel_open(Vec2::new(1200.0, 800.0));
     let e = &mut h.app.doc.editor;
@@ -3832,7 +3821,6 @@ fn a_map_cell_shows_the_drawn_glyph_or_its_char_in_gray() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_test_drive_draws_the_text_and_clicking_a_letter_goes_to_its_glyph() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let e = &mut h.app.doc.editor;
@@ -3846,7 +3834,6 @@ fn the_test_drive_draws_the_text_and_clicking_a_letter_goes_to_its_glyph() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_font_settings_change_the_metrics_with_undo() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     h.app
@@ -3880,7 +3867,6 @@ fn the_font_settings_change_the_metrics_with_undo() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_font_numbers_go_in_two_columns_inside_the_panel() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     h.app
@@ -3927,7 +3913,6 @@ fn the_font_numbers_go_in_two_columns_inside_the_panel() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn dragging_a_font_stepper_is_one_undo_step() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     h.app
@@ -3989,37 +3974,21 @@ fn tap_key(h: &mut LayoutHarness, key: egui::Key) {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
-fn tab_on_a_model_enters_edit_mode_with_four_views() {
+fn tab_in_a_model_workspace_is_the_timeline() {
     let mut h = with_a_model_at_800();
-    let pixels = artboard_pixels(&h);
+    assert!(h.app.doc.editor.model_edit_on());
     let timeline = h.app.view.timeline;
     tap_key(&mut h, egui::Key::Tab);
-    assert!(h.app.doc.editor.model_edit_on());
-    assert_eq!(
-        h.app.view.timeline, timeline,
-        "Tab did not toggle the timeline"
+    assert_ne!(h.app.view.timeline, timeline, "Tab toggles the timeline");
+    assert!(
+        h.app.doc.editor.model_edit_on(),
+        "the workspace stays in Edit"
     );
-    let quads = h
-        .app
-        .doc
-        .canvas
-        .model_edit_quadrants()
-        .expect("the quadrants");
-    assert_eq!(quads[0].min, pixels.min);
-    assert_eq!(quads[3].max, pixels.max);
-    assert_eq!(quads[0].width(), pixels.width() / 2.0);
-    for label in ["Front", "Top", "Side", "Persp"] {
-        assert!(h.texts.iter().any(|(t, _)| t == label), "{label}");
-    }
-    tap_key(&mut h, egui::Key::Tab);
-    assert!(!h.app.doc.editor.model_edit_on());
-    assert!(h.app.doc.canvas.model_edit_quadrants().is_none());
 }
 
 fn editing_model() -> LayoutHarness {
-    let mut h = with_a_model_at_800();
-    tap_key(&mut h, egui::Key::Tab);
+    // El modelo nuevo se abre en su workspace, siempre en modo Edit.
+    let h = with_a_model_at_800();
     assert!(h.app.doc.editor.model_edit_on());
     h
 }
@@ -4144,17 +4113,6 @@ fn a_model_artboard_has_the_teal_bar() {
     assert_eq!(bar.right(), pixels.right() + 2.0);
     assert_eq!(bar.bottom(), pixels.top() - 1.0);
     assert!(h.drawn("title.bar.font").iter().all(|r| !r.intersects(bar)));
-}
-
-#[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
-fn a_model_artboard_keeps_its_teal_bar_in_edit_mode() {
-    let mut h = with_a_model_at_800();
-    let before = union(&h.drawn("title.bar.model")).expect("the model bar");
-    tap_key(&mut h, egui::Key::Tab);
-    assert!(h.app.doc.editor.model_edit_on());
-    let bar = union(&h.drawn("title.bar.model")).expect("the model bar in Edit");
-    assert_eq!(bar, before);
 }
 
 #[test]
@@ -4362,7 +4320,6 @@ fn the_model_panel_without_a_model_offers_new_3d_model() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_model_panel_lists_the_objects_and_adds_a_cylinder() {
     let mut h = model_panel_open(true);
     let flyout = h
@@ -4388,7 +4345,6 @@ fn the_model_panel_lists_the_objects_and_adds_a_cylinder() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_position_x_stepper_moves_the_object_in_one_step() {
     let mut h = model_panel_open(true);
     let heading = h
@@ -4423,7 +4379,8 @@ fn the_position_x_stepper_moves_the_object_in_one_step() {
     assert_eq!(x(&h), 0);
 }
 
-/// Lo que se ve de los textos "3D" y "Edit (Tab)" en el panel recién abierto.
+/// Lo que se ve de los textos "3D" y "Object" (la primera fila del modo Edit) en el panel recién
+/// abierto.
 fn panel_top_texts(h: &LayoutHarness) -> (Vec<Rect>, Rect) {
     let find = |t: &str| -> Vec<Rect> {
         h.text_rects
@@ -4434,7 +4391,7 @@ fn panel_top_texts(h: &LayoutHarness) -> (Vec<Rect>, Rect) {
     };
     (
         find("3D"),
-        find("Edit (Tab)").first().copied().unwrap_or(Rect::NOTHING),
+        find("Object").first().copied().unwrap_or(Rect::NOTHING),
     )
 }
 
@@ -4455,7 +4412,6 @@ fn the_3d_panel_opens_at_the_top_with_edit_visible() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
     // Una ventana baja: el panel no cabe y se desplaza.
     let mut h = model_panel_in(Vec2::new(1200.0, 500.0));
@@ -4472,7 +4428,7 @@ fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
         h.frame();
     }
     let (_, scrolled) = panel_top_texts(&h);
-    // Desplazado, "Edit (Tab)" sale de la vista (no se dibuja) o queda más arriba.
+    // Desplazado, "Object" sale de la vista (no se dibuja) o queda más arriba.
     assert!(
         scrolled == Rect::NOTHING || scrolled.top() < top.top() - 20.0,
         "el panel no se desplazó"
@@ -4489,8 +4445,7 @@ fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
-fn the_3d_panel_has_edit_the_modes_and_the_grid() {
+fn the_3d_panel_has_the_modes_and_the_grid() {
     let mut h = model_panel_open(true);
     let text = |h: &LayoutHarness, t: &str| {
         h.text_rects
@@ -4499,18 +4454,9 @@ fn the_3d_panel_has_edit_the_modes_and_the_grid() {
             .map(|(_, r, _)| *r)
             .unwrap_or_else(|| panic!("no text {t:?}"))
     };
-    for t in [
-        "Edit (Tab)",
-        "Object",
-        "Vertex",
-        "Edge",
-        "Face",
-        "Grid",
-        "1/4",
-    ] {
+    for t in ["Object", "Vertex", "Edge", "Face", "Grid", "1/4"] {
         text(&h, t);
     }
-    h.click(text(&h, "Edit (Tab)").center(), PointerButton::Primary);
     assert!(h.app.doc.editor.model_edit_on());
     h.click(text(&h, "Vertex").center(), PointerButton::Primary);
     assert_eq!(
@@ -4523,7 +4469,6 @@ fn the_3d_panel_has_edit_the_modes_and_the_grid() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn delete_in_the_model_panel_removes_the_object() {
     let mut h = model_panel_open(true);
     h.click(h.button("Delete").center(), PointerButton::Primary);
@@ -4564,7 +4509,6 @@ fn model_pixels(h: &LayoutHarness) -> Vec<Rgba> {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_texture_select_skips_the_library_and_marks_a_missing_texture() {
     let mut h = model_panel_tall();
     let doc = &mut h.app.doc.editor.document;
@@ -4597,7 +4541,6 @@ fn the_texture_select_skips_the_library_and_marks_a_missing_texture() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn choosing_another_texture_in_the_model_panel_changes_the_model() {
     let mut h = model_panel_tall();
     let before = h.app.doc.editor.model().unwrap().texture;
@@ -4619,7 +4562,6 @@ fn choosing_another_texture_in_the_model_panel_changes_the_model() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn new_texture_adds_a_template_artboard_and_assigns_it_in_one_step() {
     let mut h = model_panel_tall();
     let steps = h.app.doc.editor.history.done_count();
@@ -4637,7 +4579,6 @@ fn new_texture_adds_a_template_artboard_and_assigns_it_in_one_step() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_iso_preset_sets_an_orthographic_camera() {
     let mut h = model_panel_tall();
     h.click(h.button("Iso").center(), PointerButton::Primary);
@@ -4650,7 +4591,6 @@ fn the_iso_preset_sets_an_orthographic_camera() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_projection_radios_switch_the_camera() {
     let mut h = model_panel_tall();
     let ortho = node(&h, "Orthographic");
@@ -4660,7 +4600,6 @@ fn the_projection_radios_switch_the_camera() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn turning_the_light_off_changes_the_render() {
     let mut h = model_panel_tall();
     let lit = model_pixels(&h);
@@ -4671,7 +4610,6 @@ fn turning_the_light_off_changes_the_render() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn turning_the_outline_on_sets_the_primary_color() {
     let mut h = model_panel_tall();
     assert_eq!(h.app.doc.editor.model().unwrap().outline, None);
@@ -4684,14 +4622,12 @@ fn turning_the_outline_on_sets_the_primary_color() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_model_panel_has_a_bake_button() {
     let h = model_panel_tall();
     h.button("Bake…");
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn every_model_panel_control_fits_beside_the_scroll_bar() {
     // Una ventana baja y una alta (cabe todo, sin barra).
     for size in [Vec2::new(1200.0, 480.0), Vec2::new(1200.0, 1800.0)] {
@@ -4735,7 +4671,6 @@ fn every_model_panel_control_fits_beside_the_scroll_bar() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn values_outside_the_panel_ranges_are_not_rewritten_by_drawing_the_panel() {
     let mut h = model_panel_tall();
     // Lo que deja orbitar mucho, un script o un archivo: fuera de lo que muestran los steppers.
@@ -4777,7 +4712,6 @@ fn model_palette(h: &LayoutHarness, i: usize) -> Rgba {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn picking_a_shade_pins_the_step_in_one_undo_step_and_changes_the_render() {
     let mut h = model_panel_tall();
     // El 6 es el color del cubo en la plantilla de la textura.
@@ -4797,7 +4731,6 @@ fn picking_a_shade_pins_the_step_in_one_undo_step_and_changes_the_render() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_right_click_on_a_shade_step_returns_it_to_auto() {
     let mut h = model_panel_tall();
     let (cube, red) = (model_palette(&h, 6), model_palette(&h, 27));
@@ -4816,7 +4749,6 @@ fn a_right_click_on_a_shade_step_returns_it_to_auto() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn auto_empties_the_shading_table() {
     let mut h = model_panel_tall();
     assert!(
@@ -4850,7 +4782,6 @@ fn set_model_palette(h: &mut LayoutHarness, colors: Vec<Rgba>) {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn entries_of_colors_outside_the_palette_show_as_orphan_columns() {
     let mut h = model_panel_tall();
     let gone = Rgba::new(1, 2, 3, 255);
@@ -4916,7 +4847,6 @@ fn entries_of_colors_outside_the_palette_show_as_orphan_columns() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_shade_popup_offers_only_opaque_colors() {
     let mut h = model_panel_tall();
     let mut colors = h.app.doc.editor.sprite().palette.colors().to_vec();
@@ -4928,7 +4858,6 @@ fn the_shade_popup_offers_only_opaque_colors() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_shading_grid_is_disabled_with_the_light_off() {
     let mut h = model_panel_tall();
     assert!(!h.disabled.iter().any(|l| l == "Shade 6 step 1"));
@@ -4954,7 +4883,6 @@ fn the_shading_grid_is_disabled_with_the_light_off() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn every_shade_cell_is_inside_the_flyout() {
     let h = model_panel_tall();
     let flyout = h
@@ -5041,7 +4969,6 @@ fn a_left_click_in_the_perspective_still_commits_a_keyboard_grab() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn number_keys_switch_the_selection_mode() {
     let mut h = editing_model();
     for (key, mode) in [
@@ -5093,7 +5020,6 @@ fn s_follows_the_pointer_and_escape_cancels_without_an_undo_step() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn escape_without_a_gesture_clears_the_selection() {
     let mut h = editing_model();
     h.app.doc.editor.select_model_object(Some(0));
@@ -5272,13 +5198,16 @@ fn dragging_a_selected_extreme_vertex_moves_instead_of_scaling() {
 }
 
 #[test]
+#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_middle_press_on_the_first_edit_frame_does_not_pick() {
     let mut h = with_a_model_at_800();
+    let ship = h.app.doc.editor.active;
+    h.app.doc.editor.exit_workspace();
     h.app.doc.editor.select_model_object(None);
     let at = artboard_pixels(&h).center();
     h.frame_with(vec![Event::PointerMoved(at)]);
     // El modo Edit se prende sin un frame de por medio: todavía no hay cuadrantes.
-    h.app.doc.editor.toggle_model_edit();
+    h.app.doc.editor.enter_workspace(ship);
     let button = |pressed| Event::PointerButton {
         pos: at,
         button: PointerButton::Middle,
