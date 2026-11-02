@@ -89,17 +89,28 @@ fn cap_uv(i: u32, n: u32, cell: Rect, up_sign: f32) -> (i32, i32) {
     )
 }
 
-/// Tapa de `n` lados cuyos vértices son `base..base+n`; la de abajo va en orden inverso.
-fn cap_face(n: u32, base: u32, top: bool) -> Face {
+/// Tapa de `n` lados en abanico de triángulos: agrega un vértice al centro (a la altura `y`) y
+/// una cara por lado; los vértices del anillo son `base..base+n`. La de abajo va en orden inverso.
+fn cap_faces(
+    vertices: &mut Vec<Vec3i>,
+    faces: &mut Vec<Face>,
+    n: u32,
+    base: u32,
+    y: i32,
+    top: bool,
+) {
     let cell = if top { CAP_TOP } else { CAP_BOTTOM };
     let sign = if top { 1.0 } else { -1.0 };
-    let mut idx: Vec<u32> = (0..n).collect();
-    if !top {
-        idx.reverse();
-    }
-    Face {
-        verts: idx.iter().map(|i| base + i).collect(),
-        uvs: idx.iter().map(|&i| cap_uv(i, n, cell, sign)).collect(),
+    let center = vertices.len() as u32;
+    vertices.push(v3(0, y, 0));
+    let c_uv = (cell.0 + 8, cell.1 + 8);
+    for i in 0..n {
+        let j = (i + 1) % n;
+        let (a, b) = if top { (i, j) } else { (j, i) };
+        faces.push(face(
+            &[center, base + a, base + b],
+            &[c_uv, cap_uv(a, n, cell, sign), cap_uv(b, n, cell, sign)],
+        ));
     }
 }
 
@@ -174,8 +185,8 @@ fn cylinder(n: u32) -> Mesh {
             &[(u0, 48), (u1, 48), (u1, 32), (u0, 32)],
         ));
     }
-    faces.push(cap_face(n, n, true));
-    faces.push(cap_face(n, 0, false));
+    cap_faces(&mut vertices, &mut faces, n, n, f, true);
+    cap_faces(&mut vertices, &mut faces, n, 0, -f, false);
     Mesh { vertices, faces }
 }
 
@@ -193,7 +204,7 @@ fn cone(n: u32) -> Mesh {
         );
         faces.push(face(&[i, j, n], &[(u0, 48), (u1, 48), ((u0 + u1) / 2, 32)]));
     }
-    faces.push(cap_face(n, 0, false));
+    cap_faces(&mut vertices, &mut faces, n, 0, -f, false);
     Mesh { vertices, faces }
 }
 
@@ -268,10 +279,9 @@ mod tests {
         for p in all() {
             let m = primitive_mesh(&p);
             assert!(!m.faces.is_empty(), "{p:?}");
-            let caps = matches!(p, Primitive::Cylinder { .. } | Primitive::Cone { .. });
             for fc in &m.faces {
                 assert!(fc.verts.len() >= 3, "{p:?}");
-                assert!(fc.verts.len() <= 4 || caps, "{p:?}");
+                assert!(fc.verts.len() <= 4, "{p:?}");
                 assert_eq!(fc.verts.len(), fc.uvs.len(), "{p:?}");
                 assert!(fc.verts.iter().all(|&v| (v as usize) < m.vertices.len()));
             }
@@ -303,11 +313,30 @@ mod tests {
     }
 
     #[test]
+    fn model_with_every_primitive_passes_check() {
+        use cs_core::{ColorMode, Model3D, Object3D, Sprite, Transform3D};
+        let model = Model3D {
+            objects: all()
+                .iter()
+                .map(|p| Object3D {
+                    name: p.name().into(),
+                    mesh: primitive_mesh(p),
+                    transform: Transform3D::default(),
+                    double_sided: false,
+                })
+                .collect(),
+            ..Model3D::default()
+        };
+        let sprite = Sprite::new(64, 64, ColorMode::Rgba);
+        assert_eq!(model.check(&sprite), Ok(()));
+    }
+
+    #[test]
     fn cylinder_counts() {
         let m = primitive_mesh(&Primitive::Cylinder { sides: 8 });
-        assert_eq!(m.faces.len(), 10);
+        assert_eq!(m.faces.len(), 24);
         assert_eq!(m.faces.iter().filter(|f| f.verts.len() == 4).count(), 8);
-        assert_eq!(m.faces.iter().filter(|f| f.verts.len() == 8).count(), 2);
+        assert_eq!(m.faces.iter().filter(|f| f.verts.len() == 3).count(), 16);
     }
 
     #[test]
