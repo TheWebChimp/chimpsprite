@@ -528,6 +528,19 @@ fn four_frames_in_the_sheet_settings_bake_four_frames() {
 }
 
 #[test]
+fn without_pixel_ui_the_zoom_field_moves_in_steps_of_ten() {
+    let mut h = DialogHarness::new(false);
+    assert!(h.app.doc.editor.new_model("Model", (32, 32)));
+    h.app.bake = Some(crate::bake_dialog::BakeDialog::new(&h.app.doc.editor));
+    h.settle();
+    // Frames, Size, Zoom, Tilt, Height: el tercero es Zoom.
+    assert_eq!(h.numbers.len(), 5, "{:?}", h.numbers);
+    h.drag_number(2, 12.0);
+    let zoom = h.app.bake.as_ref().unwrap().options.zoom;
+    assert!(zoom > 100 && zoom % 10 == 0, "zoom {zoom}");
+}
+
+#[test]
 fn export_bakes_the_dialogs_own_model_even_if_another_is_active() {
     let mut h = DialogHarness::new(true);
     assert!(h.app.doc.editor.new_model("First", (32, 32)));

@@ -41,12 +41,14 @@ Decisiones tomadas con el usuario:
 El diálogo (antes "Bake") se llama **Sheet settings** y tiene:
 
 - **Frames:** cuántos ángulos, 1..=64 (por defecto 8).
-- **Size (px):** el lado de cada frame, 8..=512 (por defecto la resolución del modelo); el bake
-  renderiza directo a ese tamaño (cuadrado si el modelo es cuadrado; si no, el ancho es Size y el alto
-  sale de la proporción del modelo).
+- **Size (px):** el lado de cada frame, 8..=512 (por defecto el lado más largo del modelo); el
+  bake renderiza directo a ese tamaño (cuadrado si el modelo es cuadrado; si no, el lado más largo es
+  Size y el otro sale de la proporción del modelo, al menos 1: un modelo de 16×256 con Size 64 da
+  frames de 4×64).
 - **Zoom:** % (por defecto 100 = la cámara del modelo; más es más cerca): la distancia de la cámara
   se divide entre Zoom/100. Rango implementado: 10..=1000, de 10 en 10.
-- **Tilt:** grados enteros (por defecto el pitch del modelo), −89..=89.
+- **Tilt:** grados enteros (por defecto el pitch del modelo), −90..=90 (así los presets Top, a 90°,
+  se hornean igual que el render del modelo).
 - **Height:** desplazamiento vertical del objetivo de la cámara, en 1/16 de unidad (por defecto 0).
   Rango implementado: −1024..=1024.
 - El valor por defecto de Size se limita al rango del stepper (8..=512).

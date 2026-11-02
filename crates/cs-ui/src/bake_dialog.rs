@@ -199,7 +199,17 @@ fn number<N: egui::emath::Numeric>(
             kit::stepper::stepper(ui, skin, STEPPER_W, salt, value, range, step, None);
         }
         None => {
-            ui.add(egui::DragValue::new(value).range(range));
+            // Al arrastrar avanza de `step` en `step` y cae en múltiplos de `step` (dentro del
+            // rango), como el stepper.
+            let s = step.to_f64().max(1.0);
+            let changed = ui
+                .add(egui::DragValue::new(value).range(range.clone()).speed(s))
+                .changed();
+            if changed && s > 1.0 {
+                let (lo, hi) = (range.start().to_f64(), range.end().to_f64());
+                let snapped = ((value.to_f64() / s).round() * s).clamp(lo, hi);
+                *value = N::from_f64(snapped);
+            }
         }
     }
 }

@@ -27,7 +27,7 @@ pub enum BakeOutput {
 /// Los límites de las opciones (el diálogo usa los mismos).
 pub const BAKE_FRAMES: RangeInclusive<u32> = 1..=64;
 pub const BAKE_SIZE: RangeInclusive<u32> = 8..=512;
-pub const BAKE_TILT: RangeInclusive<i32> = -890..=890;
+pub const BAKE_TILT: RangeInclusive<i32> = -900..=900;
 
 /// El fov de la perspectiva si el modelo es ortográfico y se hornea en perspectiva (60°).
 const DEFAULT_FOV: i32 = 600;
@@ -36,8 +36,8 @@ const DEFAULT_FOV: i32 = 600;
 pub struct BakeOptions {
     /// Cuántos ángulos alrededor del eje Y ([`BAKE_FRAMES`]).
     pub frames: u32,
-    /// El ancho de cada frame en pixeles ([`BAKE_SIZE`]); el alto sigue la proporción del
-    /// modelo.
+    /// El lado más largo de cada frame en pixeles ([`BAKE_SIZE`]); el otro sigue la proporción
+    /// del modelo.
     pub size: u32,
     /// En %: 100 es la distancia de la cámara del modelo, 200 la mitad.
     pub zoom: u32,
@@ -54,11 +54,14 @@ pub struct BakeOptions {
 
 impl BakeOptions {
     /// Las de un modelo `m` de `size` con una textura de `texture_frames` frames: 8 frames, el
-    /// ancho del modelo, su cámara, en frames y con la textura animada si tiene varios frames.
+    /// lado más largo del modelo, su cámara, en frames y con la textura animada si tiene varios frames.
     pub fn from_model(m: &Model3D, size: (u32, u32), texture_frames: usize) -> Self {
         BakeOptions {
             frames: 8,
-            size: size.0.clamp(*BAKE_SIZE.start(), *BAKE_SIZE.end()),
+            size: size
+                .0
+                .max(size.1)
+                .clamp(*BAKE_SIZE.start(), *BAKE_SIZE.end()),
             zoom: 100,
             tilt: m.camera.pitch,
             height: 0,
@@ -73,13 +76,17 @@ impl BakeOptions {
         self.frames.clamp(*BAKE_FRAMES.start(), *BAKE_FRAMES.end())
     }
 
-    /// El tamaño de un frame para un modelo de `w`×`h`: `size` de ancho y el alto en proporción
-    /// (redondeado, al menos 1).
+    /// El tamaño de un frame para un modelo de `w`×`h`: `size` en el lado más largo y el otro en
+    /// proporción (redondeado, al menos 1).
     pub fn frame_size(&self, (w, h): (u32, u32)) -> (u32, u32) {
-        let fw = self.size.clamp(*BAKE_SIZE.start(), *BAKE_SIZE.end());
-        let w = u64::from(w.max(1));
-        let fh = ((u64::from(fw) * u64::from(h) + w / 2) / w).max(1);
-        (fw, fh as u32)
+        let long = u64::from(self.size.clamp(*BAKE_SIZE.start(), *BAKE_SIZE.end()));
+        let (w, h) = (u64::from(w.max(1)), u64::from(h.max(1)));
+        let short = |a: u64, b: u64| ((long * a + b / 2) / b).max(1) as u32;
+        if w >= h {
+            (long as u32, short(h, w))
+        } else {
+            (short(w, h), long as u32)
+        }
     }
 
     /// La cámara `model` con la inclinación, el zoom, la altura y la proyección elegidos.
@@ -385,6 +392,41 @@ mod tests {
         let (doc, model, _) = with_model();
         let (sprite, _) = bake_model(&doc, model, &options(8, false, BakeOutput::Frames)).unwrap();
         assert_eq!(render_frame(&sprite, 0), model_pixels(&doc, model));
+    }
+
+    #[test]
+    fn the_top_preset_bakes_like_the_model_render() {
+        // Grande, para que 1° de diferencia se note en los pixeles.
+        let mut doc = Document::with_sprite("host", Sprite::new(40, 40, ColorMode::Rgba));
+        let (model, _, cmd) = new_model_artboard(&doc, "Big", (256, 256), (0, 0));
+        cmd.apply(&mut doc).unwrap();
+        let m = doc.artboard_mut(model).unwrap().model.as_mut().unwrap();
+        m.camera = cs_core::CameraPreset::Top.camera(m.camera.distance, m.camera.target);
+        m.camera.yaw = 300;
+        let o = options_for(&doc, model, 8, false, BakeOutput::Frames);
+        assert_eq!(o.tilt, 900);
+        let (sprite, _) = bake_model(&doc, model, &o).unwrap();
+        assert_eq!(render_frame(&sprite, 0), model_pixels(&doc, model));
+    }
+
+    #[test]
+    fn the_size_limits_the_longer_side() {
+        let o = BakeOptions {
+            size: 64,
+            ..options(1, false, BakeOutput::Frames)
+        };
+        assert_eq!(o.frame_size((16, 256)), (4, 64));
+        assert_eq!(o.frame_size((256, 16)), (64, 4));
+        assert_eq!(o.frame_size((32, 32)), (64, 64));
+        // El lado corto es al menos 1.
+        assert_eq!(o.frame_size((1, 512)), (1, 64));
+    }
+
+    #[test]
+    fn from_model_defaults_to_the_longer_side() {
+        let (doc, model, _) = with_model();
+        let m = doc.artboard(model).unwrap().model.as_ref().unwrap();
+        assert_eq!(BakeOptions::from_model(m, (16, 100), 1).size, 100);
     }
 
     #[test]
