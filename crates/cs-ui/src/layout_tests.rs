@@ -3952,12 +3952,133 @@ fn dragging_a_font_stepper_is_one_undo_step() {
     assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 12);
 }
 
-/// Con Pixel UI, un modelo 3D de 32×32 activo, a 800 % y centrado (con el cubo elegido).
+/// Con Pixel UI, un modelo 3D de 32×32 nuevo abierto en su pestaña (su workspace de ChimpCAD,
+/// con las vistas ya encuadradas).
 fn with_a_model_at_800() -> LayoutHarness {
-    let mut h = LayoutHarness::new(pixel_ui(), true);
-    assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
-    zoom_centered(&mut h, 8.0);
+    let mut h = with_model_tab();
+    h.frame();
     h
+}
+
+/// Dónde se dibuja el render de la perspectiva (en el cuadrante Persp del workspace).
+fn persp_pixels(h: &LayoutHarness) -> Rect {
+    let tex = h
+        .app
+        .doc
+        .canvas
+        .model_persp_texture()
+        .expect("the perspective is rendered");
+    h.textures
+        .iter()
+        .find(|(t, _)| *t == tex)
+        .map(|(_, r)| *r)
+        .expect("the perspective is drawn")
+}
+
+#[test]
+fn the_cad_workspace_fills_the_canvas_with_the_four_views() {
+    let mut h = with_a_model_at_800();
+    assert!(h.app.view.rulers, "the rulers are on in the document");
+    // El artboard del lienzo ya tiene su textura (del primer frame): no se dibuja.
+    let plain = h.app.doc.editor.document.artboards[0].id;
+    assert!(h.app.doc.canvas.artboard_texture(plain).is_some());
+    let canvas = h.canvas.expect("the workspace area");
+    let quads = h.app.doc.canvas.model_edit_quadrants().expect("the views");
+    // Los cuatro cubren todo el área (sin reglas), partida a la mitad en puntos enteros.
+    let all = quads.iter().fold(quads[0], |a, q| a.union(*q));
+    assert_eq!(all, canvas);
+    let mid = canvas.min + ((canvas.size() / 2.0).floor());
+    assert_eq!(quads[0], Rect::from_min_max(canvas.min, mid), "Front");
+    assert_eq!(quads[3], Rect::from_min_max(mid, canvas.max), "Side");
+    // Ni la textura del modelo, ni otros artboards, ni barras de ventana.
+    let ids: Vec<_> = h
+        .app
+        .doc
+        .editor
+        .document
+        .artboards
+        .iter()
+        .map(|a| a.id)
+        .collect();
+    for id in ids {
+        if let Some(tex) = h.app.doc.canvas.artboard_texture(id) {
+            assert!(h.textures.iter().all(|(t, _)| *t != tex), "{id:?} drawn");
+        }
+    }
+    assert!(h.drawn("title.bar").is_empty() && h.drawn("title.bar.model").is_empty());
+    h.frame();
+    assert_eq!(h.app.doc.canvas.model_edit_quadrants(), Some(quads));
+}
+
+#[test]
+fn the_perspective_is_drawn_at_an_integer_scale() {
+    let h = with_a_model_at_800();
+    let q = h.app.doc.canvas.model_edit_quadrants().unwrap()[1];
+    let r = persp_pixels(&h);
+    let s = r.width() / 32.0;
+    assert!(s >= 1.0 && s.fract() == 0.0, "{r:?}");
+    assert_eq!(r.height(), 32.0 * s);
+    // La más grande que cabe, centrada.
+    assert!(
+        32.0 * (s + 1.0) > q.width().min(q.height()),
+        "{r:?} in {q:?}"
+    );
+    assert!(q.contains_rect(r), "{r:?} in {q:?}");
+    assert!((r.center().x - q.center().x).abs() <= 1.0, "{r:?} in {q:?}");
+    assert!((r.center().y - q.center().y).abs() <= 1.0, "{r:?} in {q:?}");
+    // En pixeles físicos enteros.
+    let ppp = h.ctx.pixels_per_point();
+    let px = r.min.to_vec2() * ppp;
+    assert_eq!(px, px.round(), "{r:?} at {ppp}");
+}
+
+#[test]
+fn ctrl_wheel_on_front_zooms_the_views_not_the_canvas() {
+    let mut h = with_a_model_at_800();
+    let canvas_zoom = h.app.doc.canvas.zoom;
+    let pan = h.app.doc.canvas.pan();
+    let zoom = h.app.doc.editor.model_edit().zoom;
+    let at = h.app.doc.canvas.model_edit_quadrants().unwrap()[0].center();
+    let wheel = |modifiers| Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: vec2(0.0, 1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers,
+    };
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    // Sin Ctrl, la rueda no hace nada.
+    h.frame_with(vec![wheel(Default::default())]);
+    h.frame();
+    assert_eq!(h.app.doc.editor.model_edit().zoom, zoom);
+    assert_eq!(h.app.doc.canvas.zoom, canvas_zoom);
+    h.frame_with(vec![
+        Event::ModifiersChanged(egui::Modifiers::COMMAND),
+        wheel(egui::Modifiers::COMMAND),
+    ]);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    assert!(h.app.doc.editor.model_edit().zoom > zoom);
+    assert_eq!(h.app.doc.canvas.zoom, canvas_zoom);
+    assert_eq!(h.app.doc.canvas.pan(), pan);
+}
+
+#[test]
+fn painting_tools_and_the_hand_do_nothing_in_the_cad_workspace() {
+    let mut h = with_a_model_at_800();
+    let pan = h.app.doc.canvas.pan();
+    let revision = h.app.doc.editor.revision;
+    let side = h.app.doc.canvas.model_edit_quadrants().unwrap()[3];
+    for tool in [ToolKind::Pencil, ToolKind::Hand] {
+        h.app.doc.editor.tool = tool;
+        drag_with(
+            &mut h,
+            side.left_top() + vec2(4.0, 12.0),
+            side.left_top() + vec2(40.0, 40.0),
+            Default::default(),
+        );
+        assert!(!h.app.doc.editor.is_painting(), "{tool:?}");
+    }
+    assert_eq!(h.app.doc.canvas.pan(), pan);
+    assert_eq!(h.app.doc.editor.revision, revision, "nothing painted");
 }
 
 fn tap_key(h: &mut LayoutHarness, key: egui::Key) {
@@ -3987,7 +4108,7 @@ fn tab_in_a_model_workspace_is_the_timeline() {
 }
 
 fn editing_model() -> LayoutHarness {
-    // El modelo nuevo se abre en su workspace, siempre en modo Edit.
+    // El modelo abierto en su pestaña: su workspace, siempre en modo Edit.
     let h = with_a_model_at_800();
     assert!(h.app.doc.editor.model_edit_on());
     h
@@ -4020,7 +4141,6 @@ fn drag_with(h: &mut LayoutHarness, from: Pos2, to: Pos2, modifiers: egui::Modif
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn clicking_a_vertex_in_front_selects_it_and_shift_click_toggles() {
     let mut h = editing_model();
     h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
@@ -4037,7 +4157,6 @@ fn clicking_a_vertex_in_front_selects_it_and_shift_click_toggles() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn dragging_a_vertex_in_front_moves_it_in_one_undo_step() {
     let mut h = editing_model();
     h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
@@ -4052,7 +4171,6 @@ fn dragging_a_vertex_in_front_moves_it_in_one_undo_step() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_box_in_an_empty_spot_selects_the_vertices_inside() {
     let mut h = editing_model();
     h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
@@ -4070,7 +4188,6 @@ fn a_box_in_an_empty_spot_selects_the_vertices_inside() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn right_drag_pans_the_ortho_views_and_ctrl_wheel_zooms_them() {
     let mut h = editing_model();
     let center = h.app.doc.editor.model_edit().center;
@@ -4104,24 +4221,11 @@ fn camera(h: &LayoutHarness) -> cs_core::Camera3D {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
-fn a_model_artboard_has_the_teal_bar() {
-    let h = with_a_model_at_800();
-    let pixels = artboard_pixels(&h);
-    let bar = union(&h.drawn("title.bar.model")).expect("the model bar");
-    assert_eq!(bar.left(), pixels.left() - 2.0);
-    assert_eq!(bar.right(), pixels.right() + 2.0);
-    assert_eq!(bar.bottom(), pixels.top() - 1.0);
-    assert!(h.drawn("title.bar.font").iter().all(|r| !r.intersects(bar)));
-}
-
-#[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn right_dragging_a_model_orbits_the_camera_in_one_undo_step() {
     let mut h = with_a_model_at_800();
     let before = camera(&h);
     let steps = h.app.doc.editor.history.done_count();
-    let from = artboard_pixels(&h).center();
+    let from = persp_pixels(&h).center();
     let press = |pos, pressed| Event::PointerButton {
         pos,
         button: PointerButton::Secondary,
@@ -4144,12 +4248,11 @@ fn right_dragging_a_model_orbits_the_camera_in_one_undo_step() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn ctrl_wheel_over_a_model_changes_the_camera_distance_not_the_zoom() {
     let mut h = with_a_model_at_800();
     let before = camera(&h).distance;
     let zoom = h.app.doc.canvas.zoom;
-    let at = artboard_pixels(&h).center();
+    let at = persp_pixels(&h).center();
     h.frame_with(vec![
         Event::ModifiersChanged(egui::Modifiers::COMMAND),
         Event::PointerMoved(at),
@@ -4167,10 +4270,9 @@ fn ctrl_wheel_over_a_model_changes_the_camera_distance_not_the_zoom() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn clicking_a_model_picks_the_object_under_the_pointer() {
     let mut h = with_a_model_at_800();
-    let pixels = artboard_pixels(&h);
+    let pixels = persp_pixels(&h);
     h.click(pixels.left_top() + vec2(4.0, 4.0), PointerButton::Primary);
     assert_eq!(h.app.doc.editor.selected_object(), None, "an empty corner");
     h.click(pixels.center(), PointerButton::Primary);
@@ -4178,37 +4280,9 @@ fn clicking_a_model_picks_the_object_under_the_pointer() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
-fn g_and_the_right_arrow_move_the_selected_object_not_the_frame() {
+fn shift_s_and_shift_r_keep_their_shortcuts_in_the_cad_workspace() {
     let mut h = with_a_model_at_800();
-    let key = |key, pressed| Event::Key {
-        key,
-        physical_key: None,
-        pressed,
-        repeat: false,
-        modifiers: Default::default(),
-    };
-    let x = |h: &LayoutHarness| {
-        h.app.doc.editor.model().unwrap().objects[0]
-            .transform
-            .position
-            .x
-    };
-    let x0 = x(&h);
-    h.frame_with(vec![key(egui::Key::G, true), key(egui::Key::G, false)]);
-    h.frame_with(vec![
-        key(egui::Key::ArrowRight, true),
-        key(egui::Key::ArrowRight, false),
-    ]);
-    h.frame();
-    assert_eq!(x(&h), x0 + 4);
-    assert_eq!(h.app.doc.editor.frame, 0);
-    assert!(h.texts.iter().any(|(t, _)| t.contains("3D: Move")));
-}
-
-#[test]
-fn shift_s_and_shift_r_do_not_switch_the_3d_arrows() {
-    let mut h = with_a_model_at_800();
+    h.app.doc.editor.select_model_object(Some(0));
     let key = |key, pressed| Event::Key {
         key,
         physical_key: None,
@@ -4216,13 +4290,18 @@ fn shift_s_and_shift_r_do_not_switch_the_3d_arrows() {
         repeat: false,
         modifiers: egui::Modifiers::SHIFT,
     };
-    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)]);
+    let at = h.app.doc.canvas.model_edit_quadrants().unwrap()[0].center();
+    h.frame_with(vec![
+        Event::PointerMoved(at),
+        Event::ModifiersChanged(egui::Modifiers::SHIFT),
+    ]);
     for k in [egui::Key::S, egui::Key::R] {
         h.frame_with(vec![key(k, true), key(k, false)]);
-        assert_eq!(
-            h.app.doc.editor.model_arrows(),
-            crate::editor::ModelArrows::Move,
-            "{k:?}"
+        h.frame();
+        let e = h.app.doc.editor.model_edit();
+        assert!(
+            e.op.is_none() && e.key_request.is_none(),
+            "{k:?} started a gesture"
         );
     }
     // Shift+R sigue siendo la herramienta Jumble.
@@ -4233,10 +4312,9 @@ fn shift_s_and_shift_r_do_not_switch_the_3d_arrows() {
 fn a_right_click_on_a_model_does_not_reopen_an_old_selection_menu() {
     let mut h = with_a_model_at_800();
     let model = h.app.doc.editor.active;
-    let plain = h.app.doc.editor.document.artboards[0].id;
     h.app.doc.editor.tool = ToolKind::RectSelect;
-    // El menú de la selección en el artboard normal.
-    h.app.doc.editor.activate(plain);
+    // El menú de la selección en el artboard normal, en el lienzo.
+    h.app.doc.editor.exit_workspace();
     h.app.doc.editor.select_all();
     zoom_centered(&mut h, 8.0);
     h.click(artboard_pixels(&h).center(), PointerButton::Secondary);
@@ -4250,22 +4328,21 @@ fn a_right_click_on_a_model_does_not_reopen_an_old_selection_menu() {
         modifiers: Default::default(),
     }]);
     h.frame();
-    // El derecho sobre el modelo orbita: no vuelve a abrir aquel menú.
-    h.app.doc.editor.activate(model);
-    zoom_centered(&mut h, 8.0);
-    h.click(artboard_pixels(&h).center(), PointerButton::Secondary);
+    // El derecho sobre la perspectiva del modelo orbita: no vuelve a abrir aquel menú.
+    h.app.doc.editor.enter_workspace(model);
+    h.frame();
+    h.click(persp_pixels(&h).center(), PointerButton::Secondary);
     h.frame();
     assert!(!menu(&h), "an old menu opened over the model");
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_other_button_during_a_model_drag_reaches_no_tool() {
     // Con una selección y Move, el izquierdo adentro empezaría a transformarla.
     let mut h = with_a_model_at_800();
     h.app.doc.editor.tool = ToolKind::Move;
     h.app.doc.editor.select_all();
-    let from = artboard_pixels(&h).center();
+    let from = persp_pixels(&h).center();
     let button = |pos, button, pressed| Event::PointerButton {
         pos,
         button,
@@ -4932,7 +5009,6 @@ fn mesh_x(h: &LayoutHarness) -> Vec<f32> {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_left_click_commits_a_keyboard_grab_in_one_undo_step() {
     let (mut h, to) = grabbing_with_the_keyboard();
     let before = mesh_x(&h);
@@ -4944,7 +5020,6 @@ fn a_left_click_commits_a_keyboard_grab_in_one_undo_step() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_right_click_cancels_a_keyboard_grab() {
     let (mut h, to) = grabbing_with_the_keyboard();
     let before = mesh_x(&h);
@@ -4956,7 +5031,6 @@ fn a_right_click_cancels_a_keyboard_grab() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_left_click_in_the_perspective_still_commits_a_keyboard_grab() {
     let (mut h, _) = grabbing_with_the_keyboard();
     let selection = h.app.doc.editor.model_edit().selection.clone();
@@ -4983,7 +5057,6 @@ fn number_keys_switch_the_selection_mode() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_corner_handle_scales_both_axes_of_the_view() {
     let mut h = editing_model();
     // El cubo elegido en modo Objeto: su caja es ±16.
@@ -4997,7 +5070,6 @@ fn a_corner_handle_scales_both_axes_of_the_view() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn s_follows_the_pointer_and_escape_cancels_without_an_undo_step() {
     let mut h = editing_model();
     h.app.doc.editor.select_model_object(Some(0));
@@ -5028,7 +5100,6 @@ fn escape_without_a_gesture_clears_the_selection() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn g_then_a_click_moves_and_arrows_nudge_by_the_grid() {
     let mut h = editing_model();
     h.app.doc.editor.select_model_object(Some(0));
@@ -5052,7 +5123,6 @@ fn g_then_a_click_moves_and_arrows_nudge_by_the_grid() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_click_on_an_off_grid_vertex_changes_nothing() {
     let mut h = editing_model();
     assert!(
@@ -5088,7 +5158,6 @@ fn a_click_on_an_off_grid_vertex_changes_nothing() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn s_with_the_pointer_on_the_center_uses_a_fixed_reference() {
     let mut h = editing_model();
     h.app.doc.editor.select_model_object(Some(0));
@@ -5109,7 +5178,6 @@ fn s_with_the_pointer_on_the_center_uses_a_fixed_reference() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn edit_gestures_do_not_recompose_the_artboards() {
     let mut h = editing_model();
     h.frame();
@@ -5149,7 +5217,6 @@ fn edit_gestures_do_not_recompose_the_artboards() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn shift_on_a_corner_handle_scales_proportionally() {
     let mut h = editing_model();
     h.app.doc.editor.select_model_object(Some(0));
@@ -5169,7 +5236,6 @@ fn shift_on_a_corner_handle_scales_proportionally() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn dragging_a_selected_extreme_vertex_moves_instead_of_scaling() {
     let mut h = editing_model();
     h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
@@ -5198,15 +5264,19 @@ fn dragging_a_selected_extreme_vertex_moves_instead_of_scaling() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_middle_press_on_the_first_edit_frame_does_not_pick() {
     let mut h = with_a_model_at_800();
     let ship = h.app.doc.editor.active;
-    h.app.doc.editor.exit_workspace();
     h.app.doc.editor.select_model_object(None);
-    let at = artboard_pixels(&h).center();
+    h.app.doc.editor.exit_workspace();
+    h.frame();
+    assert_eq!(h.app.doc.canvas.model_edit_quadrants(), None, "the canvas");
+    // Sobre el centro de la perspectiva (donde se ve el cubo) en cuanto se entre.
+    let canvas = h.canvas.expect("the canvas");
+    let at = canvas.lerp_inside(vec2(0.75, 0.25));
     h.frame_with(vec![Event::PointerMoved(at)]);
-    // El modo Edit se prende sin un frame de por medio: todavía no hay cuadrantes.
+    // El workspace se abre sin un frame de por medio: todavía no hay cuadrantes del frame
+    // anterior.
     h.app.doc.editor.enter_workspace(ship);
     let button = |pressed| Event::PointerButton {
         pos: at,
@@ -5225,7 +5295,6 @@ fn a_middle_press_on_the_first_edit_frame_does_not_pick() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_straight_selected_edge_drags_from_its_midpoint() {
     let mut h = editing_model();
     h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Edge);

@@ -1,7 +1,7 @@
-//! El modo Edit del artboard 3D en el lienzo (como picoCAD 2): el área del artboard se parte en
+//! El workspace de un modelo 3D (ChimpCAD, como picoCAD 2): todo el área del lienzo se parte en
 //! cuatro cuadrantes, Front | Persp arriba y Top | Side abajo. Las vistas ortográficas son
 //! wireframes (todas las aristas) con la cuadrícula, la selección, su caja con asas y las guías
-//! punteadas; la perspectiva es el render pixel a la mitad de resolución.
+//! punteadas; la perspectiva es el render pixel a la resolución del artboard, a escala entera.
 
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -39,13 +39,11 @@ const GRID_MIN_PX: f32 = 4.0;
 const SCALE_NEAR_PX: f32 = 6.0;
 const SCALE_REF_PX: f32 = 24.0;
 
-/// Los cuadrantes del área `screen` de un artboard de `size` pixeles: Front, Persp, Top y Side.
-/// Cortan en pixeles enteros del artboard (con ancho impar, la columna de más es de la derecha).
-pub(crate) fn quadrants(screen: Rect, (w, h): (u32, u32)) -> [Rect; 4] {
-    let sx = screen.width() / w.max(1) as f32;
-    let sy = screen.height() / h.max(1) as f32;
-    let x = screen.left() + (w / 2) as f32 * sx;
-    let y = screen.top() + (h / 2) as f32 * sy;
+/// Los cuadrantes del área `screen`: Front, Persp, Top y Side. La parten a la mitad en puntos
+/// enteros (con ancho impar, la columna de más es de la derecha).
+pub(crate) fn quadrants(screen: Rect) -> [Rect; 4] {
+    let x = screen.left() + (screen.width() / 2.0).floor();
+    let y = screen.top() + (screen.height() / 2.0).floor();
     [
         Rect::from_min_max(screen.min, pos2(x, y)),
         Rect::from_min_max(pos2(x, screen.top()), pos2(screen.right(), y)),
@@ -76,22 +74,148 @@ fn pos(p: (f32, f32)) -> Pos2 {
 }
 
 impl CanvasView {
-    /// El tamaño en pixeles del render de la perspectiva en el cuadrante `q` (el dibujo y los
-    /// gestos usan el mismo).
-    fn persp_size(&self, q: Rect) -> (u32, u32) {
-        (
-            (q.width() / self.scale().x).round().max(1.0) as u32,
-            (q.height() / self.scale().y).round().max(1.0) as u32,
-        )
+    /// El workspace del modelo en `rect` (todo el lienzo): encuadra las vistas si hace falta, la
+    /// entrada (solo los gestos del modo Edit) y el dibujo de los cuatro cuadrantes. `modal`: con
+    /// el diálogo Canvas Size abierto no empieza ningún gesto.
+    pub(super) fn show_model_workspace(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        rect: Rect,
+        editor: &mut Editor,
+        modal: bool,
+    ) {
+        // Los cuadrantes salen del área, así que ya valen para la entrada de este frame (también
+        // en el primero del workspace).
+        let quads = quadrants(rect);
+        self.edit_quads = Some(quads);
+        // El zoom del lienzo no aplica aquí.
+        self.pending_zoom = None;
+        if editor.model_edit().fit {
+            let q = quads[FRONT];
+            editor.fit_model_views(q.width().min(q.height()));
+        }
+        self.workspace_input(ui, response, editor, modal);
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 0.0, self.background);
+        let view = editor.view();
+        self.draw_model_edit(&painter, rect, editor, view.document.as_ref(), ui.ctx());
+    }
+
+    /// La entrada del workspace: Ctrl + rueda (zoom de las vistas orto o distancia de la cámara
+    /// en Persp) y los botones del modo Edit. La rueda sin Ctrl, el zoom y el paneo del lienzo,
+    /// la mano y las herramientas no hacen nada.
+    fn workspace_input(
+        &mut self,
+        ui: &egui::Ui,
+        response: &egui::Response,
+        editor: &mut Editor,
+        modal: bool,
+    ) {
+        // Nada del lienzo bajo el puntero: ni pixel, ni cursores dibujados, ni menús.
+        self.hover = None;
+        self.draw_pipette = false;
+        self.draw_rotate = false;
+        self.pixel_cursor = None;
+        self.guide_hint = None;
+        self.over_label = false;
+        self.over_ruler = false;
+        self.advance_line = None;
+        self.selection_menu = false;
+        self.object_menu = false;
+        self.slice_menu = false;
+        // Los restos de rueda de touchpad siguen sumando mientras Ctrl siga apretado.
+        let mut keep_rest = ui.input(|i| i.modifiers.command);
+        if let Some(pointer) = response.hover_pos() {
+            let wheel: Vec<(egui::MouseWheelUnit, f32, bool)> = ui.input(|i| {
+                i.raw
+                    .events
+                    .iter()
+                    .filter_map(|e| match e {
+                        egui::Event::MouseWheel {
+                            unit,
+                            delta,
+                            modifiers,
+                            ..
+                        } => Some((*unit, delta.y, modifiers.command)),
+                        _ => None,
+                    })
+                    .collect()
+            });
+            for (unit, dy, command) in wheel {
+                if !command {
+                    keep_rest = false;
+                    continue;
+                }
+                let steps = brush_wheel_steps(&mut self.wheel_rest, unit, dy);
+                // Sobre una vista orto, zoom de las tres; sobre la perspectiva, la cámara.
+                if steps != 0 && !self.model_edit_wheel(editor, pointer, steps) {
+                    Self::model_wheel(editor, steps);
+                }
+            }
+        }
+        if !keep_rest {
+            self.wheel_rest = 0.0;
+        }
+        let (pressed, secondary, middle, any_down, edit_down, pointer, modifiers) = ui.input(|i| {
+            let pressed = |b| i.pointer.button_pressed(b);
+            (
+                pressed(egui::PointerButton::Primary)
+                    || pressed(egui::PointerButton::Secondary)
+                    || pressed(egui::PointerButton::Middle),
+                pressed(egui::PointerButton::Secondary),
+                pressed(egui::PointerButton::Middle),
+                i.pointer.primary_down() || i.pointer.secondary_down(),
+                i.pointer.primary_down() || i.pointer.secondary_down() || i.pointer.middle_down(),
+                i.pointer.interact_pos(),
+                i.modifiers,
+            )
+        });
+        // Con un arrastre en curso, el otro botón no empieza nada. Un gesto de teclado (G o S)
+        // espera un clic: confirma con el izquierdo, cancela con el derecho.
+        let busy = self.model_drag.is_some() || editor.model_edit().op.is_some();
+        let keyboard_op = matches!(
+            editor.model_edit().op,
+            Some(EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. })
+        );
+        if pressed
+            && !modal
+            && response.hovered()
+            && (!busy || (keyboard_op && self.model_drag.is_none()))
+            && let Some(p) = pointer
+        {
+            self.model_edit_press(editor, p, secondary, middle, modifiers);
+        }
+        self.model_drag_input(editor, pointer, any_down);
+        self.model_edit_input(editor, pointer, edit_down, modifiers);
+    }
+
+    /// Dónde va el render de la perspectiva en el cuadrante `q` (a la resolución del artboard,
+    /// a la escala entera más grande que quepa, mínimo 1, y centrado) y cuántos puntos mide cada
+    /// pixel del render (el dibujo y los gestos usan lo mismo).
+    fn persp_rect(&self, q: Rect, editor: &Editor) -> (Rect, Vec2) {
+        let sprite = editor.sprite();
+        let pixels = vec2(
+            sprite.width.max(1) as f32 * self.ratio.x,
+            sprite.height.max(1) as f32 * self.ratio.y,
+        );
+        let k = (q.width() / pixels.x)
+            .min(q.height() / pixels.y)
+            .floor()
+            .max(1.0);
+        let size = pixels * k;
+        // En pixeles físicos enteros.
+        let ppp = self.ppp.max(1.0);
+        let min = ((q.center() - size / 2.0).to_vec2() * ppp).round() / ppp;
+        (Rect::from_min_size(min.to_pos2(), size), self.ratio * k)
     }
 
     fn quadrant_at(&self, p: Pos2) -> Option<usize> {
         self.edit_quads?.iter().position(|q| q.contains(p))
     }
 
-    /// Una prensa en el área del modelo en el modo Edit. En la perspectiva sigue lo de siempre
-    /// (`model_press` con el punto en pixeles del artboard entero). `true` si la prensa fue del
-    /// modo Edit.
+    /// Una prensa en un cuadrante del workspace. En la perspectiva, la cámara o elegir un objeto
+    /// (`model_press_at` con el punto en pixeles del artboard). `false` si no fue del modo Edit.
     pub(super) fn model_edit_press(
         &mut self,
         editor: &mut Editor,
@@ -206,8 +330,8 @@ impl CanvasView {
         true
     }
 
-    /// La prensa en la perspectiva: como fuera del modo Edit, con el punto escalado del render
-    /// del cuadrante al artboard entero.
+    /// La prensa en la perspectiva: el punto, del render escalado en el cuadrante a pixeles del
+    /// artboard.
     fn persp_press(
         &mut self,
         editor: &mut Editor,
@@ -219,14 +343,12 @@ impl CanvasView {
         let Some(q) = self.edit_quads.map(|qs| qs[i]) else {
             return;
         };
-        let (w, h) = (editor.sprite().width as f32, editor.sprite().height as f32);
-        let (pw, ph) = self.persp_size(q);
-        let (pw, ph) = (pw as f32, ph as f32);
+        let (r, scale) = self.persp_rect(q, editor);
         let local = (
-            ((p.x - q.left()) / self.scale().x * w / pw).floor() as i32,
-            ((p.y - q.top()) / self.scale().y * h / ph).floor() as i32,
+            ((p.x - r.left()) / scale.x).floor() as i32,
+            ((p.y - r.top()) / scale.y).floor() as i32,
         );
-        self.model_press_at(editor, p, local, secondary, modifiers, h / ph);
+        self.model_press_at(editor, p, local, secondary, modifiers, Vec2::ONE / scale);
     }
 
     /// Cada frame: el gesto sigue al puntero; al soltar (si no es de teclado) termina. Un G o S
@@ -298,28 +420,35 @@ impl CanvasView {
         self.edit_quads
     }
 
-    /// Cómo se ve el mundo en el cuadrante de `view` (con el centro y el zoom del modo Edit).
+    /// La textura del render de la perspectiva, para los tests de la app.
+    #[cfg(test)]
+    pub(crate) fn model_persp_texture(&self) -> Option<egui::TextureId> {
+        self.edit_persp.as_ref().map(|(_, t)| t.id())
+    }
+
+    /// Cómo se ve el mundo en el cuadrante de `view` (con el centro y el zoom del modo Edit, en
+    /// puntos por 1/16; el zoom del lienzo no cuenta).
     pub(crate) fn edit_view_map(&self, editor: &Editor, view: OrthoView) -> Option<ViewMap> {
         let q = self.edit_quads?[quadrant_index(view)];
         let e = editor.model_edit();
         Some(ViewMap {
             view,
             center: e.center,
-            scale: e.zoom * self.scale().x,
+            scale: e.zoom,
             origin: (q.center().x, q.center().y),
         })
     }
 
-    pub(super) fn draw_model_edit(
+    /// Los cuatro cuadrantes sobre `area` (todo el lienzo del workspace).
+    fn draw_model_edit(
         &mut self,
         painter: &egui::Painter,
-        screen: Rect,
+        area: Rect,
         editor: &Editor,
         doc: &Document,
         ctx: &egui::Context,
     ) {
-        let sprite = editor.sprite();
-        let quads = quadrants(screen, (sprite.width, sprite.height));
+        let quads = quadrants(area);
         self.edit_quads = Some(quads);
         let Some(model) = editor.edit_model_shown() else {
             return;
@@ -354,8 +483,8 @@ impl CanvasView {
         // Separadores de 1 punto y los nombres.
         let mid_x = quads[FRONT].right();
         let mid_y = quads[FRONT].bottom();
-        painter.vline(mid_x, screen.y_range(), Stroke::new(1.0, SEPARATOR));
-        painter.hline(screen.x_range(), mid_y, Stroke::new(1.0, SEPARATOR));
+        painter.vline(mid_x, area.y_range(), Stroke::new(1.0, SEPARATOR));
+        painter.hline(area.x_range(), mid_y, Stroke::new(1.0, SEPARATOR));
         let font = egui::TextStyle::Body.resolve(&ctx.global_style());
         for (i, label) in [
             (FRONT, "Front"),
@@ -373,8 +502,9 @@ impl CanvasView {
         }
     }
 
-    /// La perspectiva: el render pixel del modelo a la medida del cuadrante en pixeles del
-    /// artboard (la mitad), cacheado mientras no cambien el modelo, el documento ni el tamaño.
+    /// La perspectiva: el render pixel del modelo a la resolución del artboard, a escala entera y
+    /// centrado en el cuadrante; cacheado mientras no cambien el modelo, el documento ni el
+    /// tamaño.
     fn draw_persp(
         &mut self,
         painter: &egui::Painter,
@@ -384,7 +514,7 @@ impl CanvasView {
         model: &cs_core::Model3D,
         ctx: &egui::Context,
     ) {
-        let size = self.persp_size(q);
+        let size = (editor.sprite().width.max(1), editor.sprite().height.max(1));
         let mut h = DefaultHasher::new();
         (model, editor.doc_version, size, editor.active).hash(&mut h);
         let key = h.finish();
@@ -406,7 +536,10 @@ impl CanvasView {
         }
         if let Some((_, t)) = &self.edit_persp {
             let full = Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0));
-            painter.image(t.id(), q, full, Color32::WHITE);
+            let (r, _) = self.persp_rect(q, editor);
+            // A escala 1 puede no caber: no se sale del cuadrante.
+            let p = painter.with_clip_rect(q.intersect(painter.clip_rect()));
+            p.image(t.id(), r, full, Color32::WHITE);
         }
     }
 }
