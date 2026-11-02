@@ -70,21 +70,31 @@ pub fn model_pick(doc: &Document, artboard: &Artboard, x: u32, y: u32) -> Option
 /// El frame `texture_frame` (módulo sus frames) de la textura de `model`, como se ve en el
 /// lienzo: con sus instancias y tilemaps resueltos. `None` sin textura, si la textura es otro
 /// modelo o si está en `stack` (un ciclo).
-fn texture_frame_of(
+pub(crate) fn texture_frame_of(
     doc: &Document,
     model: &cs_core::Model3D,
     texture_frame: usize,
     stack: &mut Vec<ArtboardId>,
 ) -> Option<(u32, u32, Vec<Rgba>)> {
-    let t = model
-        .texture
-        .and_then(|id| doc.artboard(id))
-        .filter(|t| t.model.is_none() && !stack.contains(&t.id) && !t.sprite.frames.is_empty())?;
+    let t = texture_of(doc, model, stack)?;
     let frame = texture_frame % t.sprite.frames.len();
     stack.push(t.id);
     let pixels = crate::materialize::visible_frame(doc, &t.sprite, frame, stack);
     stack.pop();
     Some((t.sprite.width, t.sprite.height, pixels))
+}
+
+/// El artboard de la textura de `model`, si cuenta como textura: existe, no es otro modelo, no
+/// está en `stack` (un ciclo) y tiene frames.
+pub(crate) fn texture_of<'a>(
+    doc: &'a Document,
+    model: &cs_core::Model3D,
+    stack: &[ArtboardId],
+) -> Option<&'a Artboard> {
+    model
+        .texture
+        .and_then(|id| doc.artboard(id))
+        .filter(|t| t.model.is_none() && !stack.contains(&t.id) && !t.sprite.frames.is_empty())
 }
 
 /// Como `model_sprite`, con los artboards que ya se están materializando (`stack`): una textura

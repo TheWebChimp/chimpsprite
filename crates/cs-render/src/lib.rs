@@ -2,11 +2,13 @@
 
 use std::sync::Arc;
 
+mod bake3d;
 mod field;
 mod lighting;
 mod materialize;
 mod model3d;
 pub mod normal;
+pub use bake3d::{BakeOptions, BakeOutput, bake_model};
 pub use lighting::{Light, detect_background, lit, luminance_mask};
 pub use materialize::{
     Bake, bake_layers, materialize, materialize_tilemaps, object_image, tilemap_pixel,

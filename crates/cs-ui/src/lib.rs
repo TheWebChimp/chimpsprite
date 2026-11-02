@@ -6,6 +6,7 @@ mod app_menus;
 mod appearance;
 mod artboard_window;
 mod autosave;
+mod bake_dialog;
 mod bar_fields;
 mod canvas;
 mod canvas_size;
@@ -162,6 +163,8 @@ pub struct ChimpApp {
     new_font: Option<font_dialog::NewFontDialog>,
     /// `File → New 3D Model…`.
     new_model: Option<model_dialog::NewModelDialog>,
+    /// Bake… del panel 3D.
+    bake: Option<bake_dialog::BakeDialog>,
     /// La ventana Edit → Undo History abierta.
     undo_history: bool,
     /// La ventana Edit → Keyboard Shortcuts abierta.
@@ -313,6 +316,7 @@ impl ChimpApp {
             new_tilemap: None,
             new_font: None,
             new_model: None,
+            bake: None,
             undo_history: false,
             shortcuts: None,
             keymap: keymap::Keymap::default(),
@@ -640,8 +644,12 @@ impl ChimpApp {
                 });
             },
         );
-        if let Some(model_panel::ModelAction::NewModel) = action {
-            self.new_model = Some(Default::default());
+        match action {
+            Some(model_panel::ModelAction::NewModel) => self.new_model = Some(Default::default()),
+            Some(model_panel::ModelAction::Bake) if self.doc.editor.is_model() => {
+                self.bake = Some(bake_dialog::BakeDialog::new(&self.doc.editor));
+            }
+            _ => {}
         }
     }
 
@@ -806,6 +814,26 @@ impl ChimpApp {
                 self.create_model(ctx, &name, size);
             }
             tilemap_dialog::DialogResult::Cancel => self.new_model = None,
+        }
+    }
+
+    /// Bake…: al aceptar, hornea el modelo activo (si sigue siéndolo) en un artboard nuevo.
+    fn update_bake_dialog(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() || !self.doc.editor.is_model() {
+            self.bake = None;
+            return;
+        }
+        let Some(dialog) = &mut self.bake else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Accept => {
+                let options = dialog.chosen();
+                self.bake = None;
+                self.doc.editor.bake(options);
+            }
+            tilemap_dialog::DialogResult::Cancel => self.bake = None,
         }
     }
 
@@ -1603,6 +1631,7 @@ impl eframe::App for ChimpApp {
         self.update_tilemap_dialogs(&ctx);
         self.update_font_dialog(&ctx);
         self.update_model_dialog(&ctx);
+        self.update_bake_dialog(&ctx);
         self.update_symbol_dialog(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);

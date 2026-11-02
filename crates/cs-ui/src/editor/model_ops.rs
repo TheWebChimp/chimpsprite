@@ -5,6 +5,7 @@ use cs_3d::{Primitive, primitive_mesh};
 use cs_commands::DocCommand;
 use cs_commands::model::texture_template;
 use cs_core::{Artboard, Camera3D, Light3D, Model3D, Object3D, Rgba, Transform3D};
+use cs_render::BakeOptions;
 
 use super::Editor;
 
@@ -148,6 +149,48 @@ impl Editor {
             set_model_cmd(self.active, model),
         ]);
         self.execute_doc(cmd)
+    }
+
+    /// Cuántos frames tiene la textura del modelo activo (0 sin textura o si no es un modelo).
+    pub fn model_texture_frames(&self) -> usize {
+        self.model()
+            .and_then(|m| m.texture)
+            .filter(|&id| id != self.active)
+            .and_then(|id| self.document.artboard(id))
+            .filter(|t| t.model.is_none())
+            .map_or(0, |t| t.sprite.frames.len())
+    }
+
+    /// Hornea el modelo activo (ver [`cs_render::bake_model`]) en un artboard normal nuevo,
+    /// `"{modelo} · bake"`, a la derecha del modelo: un solo paso de undo. El modelo sigue
+    /// activo.
+    pub fn bake(&mut self, options: BakeOptions) -> bool {
+        let Some((mut sprite, tags)) = cs_render::bake_model(&self.document, self.active, &options)
+        else {
+            return false;
+        };
+        sprite.tags = tags;
+        let model = self.artboard();
+        let position = (
+            model.position.0 + model.sprite.width as i32 + 16,
+            model.position.1,
+        );
+        let artboard = Artboard {
+            id: self.document.next_artboard_id(),
+            name: format!("{} · bake", model.name),
+            position,
+            sprite,
+            guides: Vec::new(),
+            symmetry: Default::default(),
+            in_library: false,
+            font: None,
+            model: None,
+        };
+        let cmd = DocCommand::AddArtboard {
+            index: self.document.artboards.len(),
+            artboard: Box::new(artboard),
+        };
+        self.named("Bake", |e| e.execute_doc(cmd))
     }
 
     fn edit_model(&mut self, f: impl FnOnce(&mut Model3D)) -> bool {
