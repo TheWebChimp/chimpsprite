@@ -4054,6 +4054,90 @@ fn g_and_the_right_arrow_move_the_selected_object_not_the_frame() {
     assert!(h.texts.iter().any(|(t, _)| t.contains("3D: Move")));
 }
 
+#[test]
+fn shift_s_and_shift_r_do_not_switch_the_3d_arrows() {
+    let mut h = with_a_model_at_800();
+    let key = |key, pressed| Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: egui::Modifiers::SHIFT,
+    };
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)]);
+    for k in [egui::Key::S, egui::Key::R] {
+        h.frame_with(vec![key(k, true), key(k, false)]);
+        assert_eq!(
+            h.app.doc.editor.model_arrows(),
+            crate::editor::ModelArrows::Move,
+            "{k:?}"
+        );
+    }
+    // Shift+R sigue siendo la herramienta Jumble.
+    assert_eq!(h.app.doc.editor.tool, ToolKind::Jumble);
+}
+
+#[test]
+fn a_right_click_on_a_model_does_not_reopen_an_old_selection_menu() {
+    let mut h = with_a_model_at_800();
+    let model = h.app.doc.editor.active;
+    let plain = h.app.doc.editor.document.artboards[0].id;
+    h.app.doc.editor.tool = ToolKind::RectSelect;
+    // El menú de la selección en el artboard normal.
+    h.app.doc.editor.activate(plain);
+    h.app.doc.editor.select_all();
+    zoom_centered(&mut h, 8.0);
+    h.click(artboard_pixels(&h).center(), PointerButton::Secondary);
+    let menu = |h: &LayoutHarness| h.texts.iter().any(|(t, _)| t == "Flip Horizontal");
+    assert!(menu(&h), "the selection menu");
+    h.frame_with(vec![Event::Key {
+        key: egui::Key::Escape,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: Default::default(),
+    }]);
+    h.frame();
+    // El derecho sobre el modelo orbita: no vuelve a abrir aquel menú.
+    h.app.doc.editor.activate(model);
+    zoom_centered(&mut h, 8.0);
+    h.click(artboard_pixels(&h).center(), PointerButton::Secondary);
+    h.frame();
+    assert!(!menu(&h), "an old menu opened over the model");
+}
+
+#[test]
+fn the_other_button_during_a_model_drag_reaches_no_tool() {
+    // Con una selección y Move, el izquierdo adentro empezaría a transformarla.
+    let mut h = with_a_model_at_800();
+    h.app.doc.editor.tool = ToolKind::Move;
+    h.app.doc.editor.select_all();
+    let from = artboard_pixels(&h).center();
+    let button = |pos, button, pressed| Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: Default::default(),
+    };
+    let yaw = camera(&h).yaw;
+    // El derecho orbita; a la mitad, el izquierdo.
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, PointerButton::Secondary, true)]);
+    let mid = from + vec2(10.0, 0.0);
+    h.frame_with(vec![Event::PointerMoved(mid)]);
+    h.frame_with(vec![button(mid, PointerButton::Primary, true)]);
+    assert!(
+        h.app.doc.editor.transform_drag.is_none(),
+        "the transform got the press"
+    );
+    h.frame_with(vec![button(mid, PointerButton::Primary, false)]);
+    h.frame_with(vec![button(mid, PointerButton::Secondary, false)]);
+    h.frame();
+    assert_ne!(camera(&h).yaw, yaw, "the drag orbited");
+    assert!(h.app.doc.editor.transform_drag.is_none());
+    assert!(!h.app.doc.editor.is_painting());
+}
+
 // --- El panel 3D ---
 
 /// El panel 3D del dock abierto (con `model`, un modelo nuevo de 32×32 con su cubo).

@@ -563,16 +563,23 @@ impl CanvasView {
             && (pressed_primary || pressed_secondary);
         // Sobre el área de pixeles del artboard 3D activo, los botones mueven la cámara o eligen
         // objetos: no llegan a las herramientas (ni al cuentagotas ni a los menús).
+        // Con un arrastre del modelo en curso, el otro botón no llega a nada.
+        let model_busy = self.model_drag.is_some();
         let model_press = can_press
             && over_label.is_none()
-            && self.model_drag.is_none()
+            && !model_busy
             && pointer.is_some_and(|p| !over_crumbs(p) && self.over_model(rect, editor, p, ppp));
         if model_press && let Some(p) = pointer {
+            // Los menús de una vez anterior no se abren con este clic.
+            self.selection_menu = false;
+            self.object_menu = false;
+            self.slice_menu = false;
             self.model_press(rect, editor, p, pressed_secondary, modifiers);
         }
         self.model_drag_input(editor, pointer, any_down);
         if can_press
             && !model_press
+            && !model_busy
             && let Some(p) = pointer
             && !over_crumbs(p)
         {

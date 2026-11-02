@@ -1687,7 +1687,9 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
             editor.arrow_on_object(dx, dy);
             return true;
         }
+        // Sin Shift: Shift+R es Jumble y Shift+S, otro atajo.
         let mode = match key {
+            _ if shift => None,
             Key::G => Some(editor::ModelArrows::Move),
             Key::R => Some(editor::ModelArrows::Rotate),
             Key::S => Some(editor::ModelArrows::Scale),
