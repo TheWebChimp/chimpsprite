@@ -3193,7 +3193,6 @@ fn help_ui_catalog_opens_a_closable_tab_with_the_four_button_states() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_font_artboard_shows_its_glyph_in_the_title_and_hides_the_timeline() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let with_timeline = h.canvas.expect("a document is open");
@@ -3226,7 +3225,6 @@ fn a_font_artboard_shows_its_glyph_in_the_title_and_hides_the_timeline() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn dragging_the_advance_line_sets_a_manual_advance() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let e = &mut h.app.doc.editor;
@@ -3269,7 +3267,6 @@ fn dragging_the_advance_line_sets_a_manual_advance() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn the_advance_drag_sets_the_glyph_where_it_started() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let e = &mut h.app.doc.editor;
@@ -3349,7 +3346,49 @@ fn zoom_centered(h: &mut LayoutHarness, zoom: f32) {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
+fn the_font_workspace_draws_only_its_artboard_and_painting_is_one_undo_step() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let normal = h.app.doc.editor.artboard().id;
+    let ctx = h.ctx.clone();
+    assert!(
+        h.app
+            .create_font(&ctx, "Mine", (16, 16), cs_core::FontMode::OneBit)
+    );
+    h.app.doc.editor.go_to_glyph('A');
+    h.frame();
+    h.frame();
+    h.frame();
+    // El lienzo dibuja solo la fuente: el artboard normal no se ve.
+    let font = h.app.doc.editor.workspace().expect("the font workspace");
+    assert!(
+        union(&h.drawn("title.bar.font")).is_some(),
+        "the font window"
+    );
+    assert!(h.drawn("title.bar").is_empty(), "no normal artboard");
+    if let Some(tex) = h.app.doc.canvas.artboard_texture(normal) {
+        assert!(h.textures.iter().all(|(t, _)| *t != tex), "hidden");
+    }
+    // Pintar un pixel cambia el glifo y es un solo paso de undo.
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    h.app.doc.editor.primary = cs_core::ONE_BIT_INK;
+    let steps = h.app.doc.editor.history.done_count();
+    // Lejos de la línea del ancho (a media celda), que se lleva el clic.
+    let art = artboard_pixels(&h);
+    let at = art.left_top() + art.size() * 0.25;
+    h.click(at, PointerButton::Primary);
+    let e = &h.app.doc.editor;
+    assert_eq!(e.artboard().id, font);
+    assert!(e.sprite().cel(e.layer, e.frame).is_some(), "painted");
+    assert_eq!(e.history.done_count(), steps + 1);
+    // Desde la pestaña del documento se deshace.
+    h.app.tabs.switch(&mut h.app.doc, 0);
+    h.app.doc.editor.undo();
+    h.app.doc.editor.enter_workspace(font);
+    let e = &h.app.doc.editor;
+    assert!(e.sprite().cel(e.layer, e.frame).is_none(), "undone");
+}
+
+#[test]
 fn a_font_artboard_has_the_orange_bar_and_a_normal_one_the_pink_one() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     h.frame();
@@ -3369,7 +3408,6 @@ fn a_font_artboard_has_the_orange_bar_and_a_normal_one_the_pink_one() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn zoomed_far_out_a_font_artboard_is_a_card_with_a_sample() {
     let (mut h, _, font) = with_a_font_at_800();
     assert!(h.app.doc.canvas.advance_line_rect().is_some());
@@ -3399,19 +3437,6 @@ fn zoomed_far_out_a_font_artboard_is_a_card_with_a_sample() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
-fn clicking_the_card_activates_the_font_artboard() {
-    let (mut h, normal, font) = with_a_font_at_800();
-    zoom_centered(&mut h, 0.5);
-    h.app.doc.editor.activate(normal);
-    h.frame();
-    let bar = union(&h.drawn("title.bar.font")).expect("the card's orange bar");
-    h.click(bar.center(), PointerButton::Primary);
-    assert_eq!(h.app.doc.editor.active, font);
-}
-
-#[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_guide_dragged_from_the_ruler_can_be_dropped_on_the_advance_line() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     h.app
@@ -3531,7 +3556,6 @@ fn new_font_in_the_font_panel_opens_the_dialog() {
 }
 
 #[test]
-#[ignore = "cad-font-tabs: workspace (Task 4/5)"]
 fn a_new_font_is_fitted_beside_the_font_panel() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     // Lo que hace el OK de File → New Font… (el diálogo no se dibuja en este arnés).
@@ -3554,6 +3578,37 @@ fn a_new_font_is_fitted_beside_the_font_panel() {
     assert!(art.right() <= flyout.left(), "{art:?} vs {flyout:?}");
     assert!(canvas.contains_rect(art), "{art:?} vs {canvas:?}");
     // Ajustada: no se queda chiquita.
+    assert!(art.width() >= 100.0, "{art:?}");
+}
+
+#[test]
+fn switching_to_a_font_view_tab_opens_the_font_panel_beside_the_glyph() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let ctx = h.ctx.clone();
+    assert!(
+        h.app
+            .create_font(&ctx, "Mine", (8, 8), cs_core::FontMode::OneBit)
+    );
+    for _ in 0..3 {
+        h.frame();
+    }
+    // De vuelta al documento, con el panel cerrado.
+    let doc = h.button(&h.app.doc.location.name.clone());
+    h.click(doc.center(), PointerButton::Primary);
+    crate::dock::set_open(&ctx, None);
+    h.frame();
+    assert_eq!(h.app.doc.editor.workspace(), None);
+    let view = h.button("Mine");
+    h.click(view.center(), PointerButton::Primary);
+    for _ in 0..3 {
+        h.frame();
+    }
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "FontForge"))))
+        .expect("the Font panel is open");
+    let art = artboard_pixels(&h);
+    assert!(art.right() <= flyout.left(), "{art:?} vs {flyout:?}");
     assert!(art.width() >= 100.0, "{art:?}");
 }
 

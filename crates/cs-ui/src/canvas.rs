@@ -42,13 +42,20 @@ const LABEL_GAP: f32 = 4.0;
 /// Alto de la franja de la migaja de pan del modo símbolo (arriba del lienzo).
 const CRUMBS_PX: f32 = 14.0;
 
-/// Los artboards que muestra el lienzo, en su orden: los del lienzo o, en el modo símbolo, solo
-/// el que se edita.
+/// Los artboards que muestra el lienzo, en su orden: los del lienzo o, en el modo símbolo o en el
+/// workspace de una fuente, solo el que se edita.
 fn shown_artboards<'a>(
     document: &'a cs_core::Document,
     editor: &Editor,
 ) -> impl DoubleEndedIterator<Item = &'a Artboard> + use<'a> {
-    let only = editor.in_symbol_mode().then_some(editor.active);
+    let font_workspace = editor
+        .workspace()
+        .filter(|&id| document.artboard(id).is_some_and(|a| a.font.is_some()));
+    let only = if editor.in_symbol_mode() {
+        Some(editor.active)
+    } else {
+        font_workspace
+    };
     document.artboards.iter().filter(move |a| match only {
         Some(id) => a.id == id,
         None => a.on_canvas(),

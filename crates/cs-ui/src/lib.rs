@@ -786,14 +786,29 @@ impl ChimpApp {
         if let Some(id) = self.doc.editor.workspace() {
             self.tabs.open_view(&mut self.doc, id);
         }
+        self.show_font_beside_panel(ctx);
+        true
+    }
+
+    /// Abre el panel Font (si estaba cerrado) y encuadra el glifo al lado de él: lo que hace
+    /// falta al entrar al workspace de una fuente.
+    fn show_font_beside_panel(&mut self, ctx: &egui::Context) {
         dock::set_open(ctx, Some(dock::DockPanel::Font));
-        // La fuente nueva, ajustada a lo que no tapa el panel.
         self.doc
             .canvas
             .request_zoom(view::ZoomRequest::FitActiveBeside {
                 right_inset: dock::flyout_reach(font_panel::WIDTH),
             });
-        true
+    }
+
+    /// Después de elegir la pestaña `tab` de la barra: la de la vista de una fuente abre su panel.
+    fn after_tab_action(&mut self, ctx: &egui::Context, tab: tabs::TabRef) {
+        if matches!(tab, tabs::TabRef::View(..))
+            && self.doc.editor.workspace().is_some()
+            && self.doc.editor.is_font()
+        {
+            self.show_font_beside_panel(ctx);
+        }
     }
 
     fn update_model_dialog(&mut self, ctx: &egui::Context) {
@@ -1154,6 +1169,7 @@ impl ChimpApp {
         }
         if let Some(i) = switch_to {
             self.tab_action(bar[i], false);
+            self.after_tab_action(ui.ctx(), bar[i]);
         }
         if let Some(i) = close {
             self.tab_action(bar[i], true);
@@ -1231,7 +1247,9 @@ impl ChimpApp {
             match action {
                 Some(tab_bar::TabAction::Home) => self.go_home(),
                 Some(tab_bar::TabAction::Switch(i)) => {
-                    self.tab_action(self.tabs.bar(&self.doc)[i], false)
+                    let tab = self.tabs.bar(&self.doc)[i];
+                    self.tab_action(tab, false);
+                    self.after_tab_action(&ctx, tab);
                 }
                 Some(tab_bar::TabAction::Close(i)) => {
                     self.tab_action(self.tabs.bar(&self.doc)[i], true)
