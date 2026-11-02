@@ -573,6 +573,7 @@ impl Editor {
         self.frame_range = None;
         self.views.insert(self.active, (self.layer, self.frame));
         self.active = id;
+        self.model_object = None;
         (self.layer, self.frame) = self.views.get(&id).copied().unwrap_or((LayerId(0), 0));
         self.selection = None;
         self.slice = None;

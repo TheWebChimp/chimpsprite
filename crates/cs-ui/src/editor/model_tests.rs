@@ -58,8 +58,13 @@ fn camera_light_outline_and_texture_undo() {
     assert_eq!(e.model().unwrap().outline, Some(c));
     e.set_texture(None);
     assert_eq!(e.model().unwrap().texture, None);
-    let l = e.model().unwrap().light;
-    e.set_light(l);
+    let mut l = e.model().unwrap().light;
+    let old = l;
+    l.yaw += 1;
+    assert!(e.set_light(l));
+    assert_eq!(e.model().unwrap().light, l);
+    e.undo();
+    assert_eq!(e.model().unwrap().light, old);
 }
 
 #[test]
@@ -100,4 +105,36 @@ fn fonts_and_models_lock_the_structure() {
     assert!(!f.is_structure_locked());
     f.new_font("F", (8, 8), FontMode::OneBit);
     assert!(f.is_structure_locked());
+}
+
+#[test]
+fn other_writers_cannot_touch_a_model_sprite() {
+    let mut e = editor_with_model();
+    e.select_all();
+    let doc = e.document.clone();
+    e.primary = cs_core::PixelValue::Rgba(Rgba::rgb(9, 9, 9));
+    assert!(!e.fill_selection());
+    let filter = crate::filters::Filter::BrightnessContrast {
+        brightness: 50,
+        contrast: 0,
+    };
+    assert!(!e.apply_filter(&filter));
+    assert_eq!(e.document, doc);
+    e.undo();
+    assert_eq!(
+        e.document.artboards.len(),
+        1,
+        "only the creation was in history"
+    );
+}
+
+#[test]
+fn the_selected_object_resets_when_another_artboard_is_activated() {
+    let mut e = editor_with_model();
+    let model = e.active;
+    let first = e.document.artboards[0].id;
+    e.activate(first);
+    assert_eq!(e.selected_object(), None);
+    e.activate(model);
+    assert_eq!(e.model_object, None);
 }

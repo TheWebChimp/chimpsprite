@@ -10,7 +10,7 @@ use crate::{CmdError, Command, DocCommand, History};
 /// lo que pide su `check` y su tamaño. Se toma antes de un comando y se comprueba después
 /// ([`StructureLock::execute`]).
 #[derive(Clone, Debug, Default)]
-pub struct StructureLock(Vec<(ArtboardId, (u32, u32))>);
+pub struct StructureLock(Vec<(ArtboardId, (u32, u32), bool)>);
 
 /// Si el artboard es una fuente o un modelo bien armado (uno mal armado no se traba).
 fn well_formed(a: &Artboard) -> bool {
@@ -25,13 +25,17 @@ impl StructureLock {
             doc.artboards
                 .iter()
                 .filter(|a| (a.font.is_some() || a.model.is_some()) && well_formed(a))
-                .map(|a| (a.id, (a.sprite.width, a.sprite.height)))
+                .map(|a| (a.id, (a.sprite.width, a.sprite.height), a.model.is_some()))
                 .collect(),
         )
     }
 
     fn locked(&self, id: ArtboardId) -> bool {
-        self.0.iter().any(|(a, _)| *a == id)
+        self.0.iter().any(|(a, ..)| *a == id)
+    }
+
+    fn is_model(&self, id: ArtboardId) -> bool {
+        self.0.iter().any(|&(a, _, model)| a == id && model)
     }
 
     /// Antes de aplicar: `cmd` no agrega, quita ni mueve frames o capas de una fuente o un
@@ -44,6 +48,11 @@ impl StructureLock {
 
     fn allows_in(&self, cmd: &DocCommand, escape: &[ArtboardId]) -> Result<(), CmdError> {
         match cmd {
+            // Un modelo no se pinta ni se edita: su sprite es la salida de otra cosa (cualquier
+            // comando de sprite se rechaza, no solo los de estructura).
+            DocCommand::OnArtboard { id, .. } if self.is_model(*id) && !escape.contains(id) => {
+                Err(CmdError::StructureLocked(*id))
+            }
             DocCommand::OnArtboard { id, cmd }
                 if self.locked(*id) && !escape.contains(id) && moves_structure(cmd) =>
             {
@@ -57,7 +66,7 @@ impl StructureLock {
     /// Después de aplicar: cada fuente o modelo que sigue siéndolo está bien armado y con su
     /// tamaño.
     pub fn holds(&self, doc: &Document) -> Result<(), CmdError> {
-        for &(id, size) in &self.0 {
+        for &(id, size, _) in &self.0 {
             let Some(a) = doc.artboard(id) else {
                 continue;
             };
@@ -170,6 +179,41 @@ mod tests {
             assert!(StructureLock::execute(&mut history, &mut doc, add_frame(id), false).is_ok());
             assert!(StructureLock::execute(&mut history, &mut doc, add_layer(id), false).is_ok());
         }
+    }
+
+    #[test]
+    fn drawing_on_a_model_is_refused_but_on_a_font_it_is_allowed() {
+        let (mut doc, model, _) = doc_with_model();
+        let (font, cmd) =
+            crate::font::new_font_artboard(&doc, "F", (8, 8), cs_core::FontMode::OneBit, (200, 0));
+        cmd.apply(&mut doc).unwrap();
+        let mut history = History::new();
+        let layers = doc.clone();
+        let draw = |id, px| DocCommand::OnArtboard {
+            id,
+            cmd: Command::DrawPixels {
+                layer: layers.artboard(id).unwrap().sprite.layers[0].id,
+                frame: 0,
+                pixels: vec![(1, 1, px)],
+            },
+        };
+        let before = doc.clone();
+        assert_eq!(
+            StructureLock::execute(
+                &mut history,
+                &mut doc,
+                draw(
+                    model,
+                    cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(1, 2, 3))
+                ),
+                false
+            ),
+            Err(CmdError::StructureLocked(model))
+        );
+        assert_eq!(doc, before);
+        assert!(!history.can_undo());
+        let font_draw = draw(font, cs_core::ONE_BIT_INK);
+        assert!(StructureLock::execute(&mut history, &mut doc, font_draw, false).is_ok());
     }
 
     #[test]
