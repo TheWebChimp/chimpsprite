@@ -43,8 +43,9 @@ Decisiones tomadas con el usuario:
   aristas gris claro como picoCAD; la perspectiva sobre azul marino.
 - Las tres vistas comparten **un centro** (`Vec3i`) y **un zoom** (puntos de pantalla por unidad);
   al entrar al modo Edit se encuadra el modelo entero. **Ctrl + rueda** sobre una vista orto cambia
-  el zoom de las tres (alrededor del puntero); **Shift + arrastrar** mueve el centro en el plano de
-  esa vista. Centro y zoom son estado de la UI.
+  el zoom de las tres (alrededor del puntero); **arrastrar con el botón derecho o el central** mueve
+  el centro en el plano de esa vista (Shift queda para agregar a la selección; en las vistas orto
+  no hay nada que orbitar). Centro y zoom son estado de la UI.
 - **Guías punteadas** (como picoCAD): en cada vista orto, una cruz de líneas punteadas por el centro
   de la selección, de borde a borde del cuadrante; la vertical de Front y la de Top quedan en la
   misma columna de pantalla.
