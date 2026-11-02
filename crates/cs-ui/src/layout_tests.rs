@@ -5224,3 +5224,23 @@ fn a_middle_press_on_the_first_edit_frame_does_not_pick() {
         "the cube got picked"
     );
 }
+
+#[test]
+fn a_straight_selected_edge_drags_from_its_midpoint() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Edge);
+    // La arista de arriba al frente (vértices 6 y 7): en Front su caja no tiene alto.
+    h.app.doc.editor.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Edge,
+        items: [cs_3d::Item::Edge(0, 6, 7)].into(),
+    });
+    h.frame();
+    let steps = h.app.doc.editor.history.done_count();
+    let from = front_screen(&h, [0.0, 16.0, 16.0]);
+    let to = front_screen(&h, [0.0, 24.0, 16.0]);
+    drag_with(&mut h, from, to, Default::default());
+    let points = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    assert_eq!(points[6], [-16.0, 24.0, 16.0]);
+    assert_eq!(points[7], [16.0, 24.0, 16.0]);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}

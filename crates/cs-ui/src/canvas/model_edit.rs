@@ -159,6 +159,7 @@ impl CanvasView {
             && !(sel.mode == SelectMode::Vertex && sel.items.len() == 1)
             && let Some(handle) = Handle::ALL.into_iter().find(|&h| {
                 (!modifiers.shift || (h.u != 0 && h.v != 0))
+                    && useful_handle(view, b, h)
                     && (handle_pos(&map, b, h) - p).length() <= HANDLE_PX
             })
         {
@@ -575,10 +576,20 @@ fn draw_selection_frame(
     if sel.mode == SelectMode::Vertex && sel.items.len() == 1 {
         return;
     }
-    for h in Handle::ALL {
+    for h in Handle::ALL
+        .into_iter()
+        .filter(|&h| useful_handle(map.view, b, h))
+    {
         let r = Rect::from_center_size(handle_pos(map, b, h), Vec2::splat(HANDLE_PX));
         p.rect_filled(r, 0.0, accent);
     }
+}
+
+/// Si el asa `h` puede cambiar algo: no si sus ejes no tienen medida en la vista (una arista
+/// recta o una cara de canto juntan esas asas en su mitad, y taparían arrastrarla de ahí).
+fn useful_handle(view: OrthoView, b: (cs_3d::P3, cs_3d::P3), h: Handle) -> bool {
+    let ((u0, v0), (u1, v1)) = cs_3d::plane_box(view, b);
+    !((h.u == 0 || u0 == u1) && (h.v == 0 || v0 == v1))
 }
 
 /// Dónde se ve el asa `h` de la caja `b` (en pantalla).
