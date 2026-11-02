@@ -85,6 +85,9 @@ pub struct ModelEdit {
     pub preview: Option<Model3D>,
     pub op: Option<EditOp>,
     pub key_request: Option<KeyOp>,
+    /// Lo que se presionó estando ya elegido: si el gesto de mover termina sin arrastre, queda
+    /// como la única selección.
+    pub click_item: Option<cs_3d::Item>,
 }
 
 impl Default for ModelEdit {
@@ -100,6 +103,7 @@ impl Default for ModelEdit {
             preview: None,
             op: None,
             key_request: None,
+            click_item: None,
         }
     }
 }
@@ -131,9 +135,14 @@ impl Editor {
     }
 
     pub fn set_select_mode(&mut self, mode: SelectMode) {
+        let from = self.model_edit.selection.mode;
         let next = match self.model() {
-            Some(m) => self.model_edit.selection.converted(m, mode),
-            None => Selection {
+            // De Object a un subelemento se empieza vacío: convertir elegiría todo el objeto y
+            // arrastrar una arista movería el bloque entero.
+            Some(m) if from != SelectMode::Object || mode == SelectMode::Object => {
+                self.model_edit.selection.converted(m, mode)
+            }
+            _ => Selection {
                 mode,
                 items: Default::default(),
             },
@@ -169,6 +178,7 @@ impl Editor {
             self.model_edit.last_view = map.view;
         }
         self.model_edit.preview = None;
+        self.model_edit.click_item = None;
         self.model_edit.op = Some(op);
     }
 
@@ -279,6 +289,16 @@ impl Editor {
             }
             return;
         }
+        // Un clic (sin arrastre) en algo ya elegido lo deja como la única selección.
+        let click = self.model_edit.click_item.take();
+        if let (EditOp::Move { .. }, Some(item), None) = (op, click, &self.model_edit.preview) {
+            let mode = self.model_edit.selection.mode;
+            self.set_model_selection(Selection {
+                mode,
+                items: [item].into(),
+            });
+            return;
+        }
         let label = match op {
             EditOp::Move { .. } => "Move",
             _ => "Scale",
@@ -291,6 +311,7 @@ impl Editor {
     /// Cancela el gesto sin tocar el documento. `false` si no había ninguno.
     pub fn cancel_model_op(&mut self) -> bool {
         self.model_edit.key_request = None;
+        self.model_edit.click_item = None;
         let had = self.model_edit.op.take().is_some();
         self.model_edit.preview = None;
         had

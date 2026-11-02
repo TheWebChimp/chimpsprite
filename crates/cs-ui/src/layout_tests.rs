@@ -5400,6 +5400,30 @@ fn a_straight_selected_edge_drags_from_its_midpoint() {
     assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
 }
 
+#[test]
+fn a_click_on_a_selected_edge_keeps_only_that_edge_and_a_drag_moves_all() {
+    let mut h = editing_model();
+    assert_eq!(
+        h.app.doc.editor.model_edit().selection.mode,
+        cs_3d::SelectMode::Edge,
+        "a model opens in Edge mode"
+    );
+    let all = cs_3d::Selection {
+        mode: cs_3d::SelectMode::Object,
+        items: [cs_3d::Item::Object(0)].into(),
+    }
+    .converted(h.app.doc.editor.model().unwrap(), cs_3d::SelectMode::Edge);
+    assert_eq!(all.items.len(), 12);
+    h.app.doc.editor.set_model_selection(all);
+    h.frame();
+    let steps = h.app.doc.editor.history.done_count();
+    // A un cuarto de la arista de arriba: lejos de las asas de la caja.
+    let at = front_screen(&h, [8.0, 16.0, 16.0]);
+    drag_with(&mut h, at, at, Default::default());
+    assert_eq!(h.app.doc.editor.model_edit().selection.items.len(), 1);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps, "no move");
+}
+
 /// Un modelo "Ship" con su pestaña de vista abierta, en el documento de la prueba.
 fn with_model_tab() -> LayoutHarness {
     let mut h = LayoutHarness::new(pixel_ui(), true);

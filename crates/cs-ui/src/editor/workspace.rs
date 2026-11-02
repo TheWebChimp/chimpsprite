@@ -1,7 +1,7 @@
 //! El workspace: el modelo o la fuente que se edita en su propia pestaña, fuera del lienzo. Es
 //! estado de la UI (no se guarda ni pasa por undo); el historial es el del documento.
 
-use cs_3d::Selection;
+use cs_3d::{SelectMode, Selection};
 use cs_core::ArtboardId;
 
 use super::Editor;
@@ -62,15 +62,14 @@ impl Editor {
         self.revision += 1;
     }
 
-    /// Al entrar al workspace de un modelo: en otro modelo el modo Edit empieza de cero (con el
-    /// mismo modo de selección); siempre se encuadra el modelo cuando el lienzo sepa el área.
+    /// Al entrar al workspace de un modelo: en otro modelo el modo Edit empieza de cero (en modo
+    /// Edge y sin selección); siempre se encuadra el modelo cuando el lienzo sepa el área.
     fn reset_model_edit(&mut self, id: ArtboardId) {
         if self.model_edit.artboard != Some(id) {
-            let mode = self.model_edit.selection.mode;
             self.model_edit = ModelEdit {
                 artboard: Some(id),
                 selection: Selection {
-                    mode,
+                    mode: SelectMode::Edge,
                     items: Default::default(),
                 },
                 ..Default::default()

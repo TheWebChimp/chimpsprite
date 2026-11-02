@@ -283,6 +283,12 @@ impl CanvasView {
                 grab,
                 keyboard: false,
             });
+            // Un clic sin arrastre deja solo lo que se presionó (la arista, en modo Edge).
+            let item = match sel.mode {
+                SelectMode::Vertex => cs_3d::pick(&model, &map, SelectMode::Vertex, at),
+                _ => cs_3d::pick(&model, &map, SelectMode::Edge, at),
+            };
+            editor.model_edit.click_item = item.filter(|i| sel.items.contains(i));
             return true;
         }
         // Con Shift solo las esquinas (escalan igual en los dos ejes); en un lado, Shift + clic
@@ -310,7 +316,8 @@ impl CanvasView {
                 editor.set_model_selection(next);
             }
             Some(item) => {
-                if !sel.items.contains(&item) {
+                let already = sel.items.contains(&item);
+                if !already {
                     editor.set_model_selection(cs_3d::Selection {
                         mode: sel.mode,
                         items: [item].into(),
@@ -327,6 +334,8 @@ impl CanvasView {
                     grab,
                     keyboard: false,
                 });
+                // Ya elegido: sin arrastre, queda como la única selección.
+                editor.model_edit.click_item = already.then_some(item);
             }
             None => editor.start_model_op(EditOp::Box {
                 map,
