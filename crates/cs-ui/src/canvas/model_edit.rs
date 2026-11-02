@@ -85,9 +85,17 @@ impl CanvasView {
         editor: &mut Editor,
         modal: bool,
     ) {
+        // Las vistas no quedan debajo del panel del dock abierto: van en lo que se ve a su
+        // izquierda (con el panel cerrado, todo el área).
+        let mut area = rect;
+        if let Some(panel) = crate::dock::open_flyout_rect(ui.ctx())
+            && panel.intersects(rect)
+        {
+            area.max.x = panel.left().floor().clamp(rect.left() + 1.0, rect.right());
+        }
         // Los cuadrantes salen del área, así que ya valen para la entrada de este frame (también
         // en el primero del workspace).
-        let quads = quadrants(rect);
+        let quads = quadrants(area);
         self.edit_quads = Some(quads);
         // El zoom del lienzo no aplica aquí.
         self.pending_zoom = None;
@@ -99,7 +107,7 @@ impl CanvasView {
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, self.background);
         let view = editor.view();
-        self.draw_model_edit(&painter, rect, editor, view.document.as_ref(), ui.ctx());
+        self.draw_model_edit(&painter, quads, editor, view.document.as_ref(), ui.ctx());
     }
 
     /// La entrada del workspace: Ctrl + rueda (zoom de las vistas orto o distancia de la cámara
@@ -439,17 +447,16 @@ impl CanvasView {
         })
     }
 
-    /// Los cuatro cuadrantes sobre `area` (todo el lienzo del workspace).
+    /// Los cuatro cuadrantes `quads` (los de [`quadrants`] del área del workspace).
     fn draw_model_edit(
         &mut self,
         painter: &egui::Painter,
-        area: Rect,
+        quads: [Rect; 4],
         editor: &Editor,
         doc: &Document,
         ctx: &egui::Context,
     ) {
-        let quads = quadrants(area);
-        self.edit_quads = Some(quads);
+        let area = quads[FRONT].union(quads[SIDE]);
         let Some(model) = editor.edit_model_shown() else {
             return;
         };

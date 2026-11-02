@@ -1,7 +1,7 @@
 use cs_3d::{Item, OrthoView, SelectMode, Selection, ViewMap};
 use cs_core::{ColorMode, FontMode, Sprite};
 
-use super::{EditOp, Editor};
+use super::{EditOp, Editor, KeyOp};
 
 fn editor() -> Editor {
     Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba))
@@ -169,4 +169,35 @@ fn encuadrar_las_vistas_con_el_area() {
     assert_eq!(e.model_edit().center, [0.0; 3]);
     let z = e.model_edit().zoom;
     assert!(z > 1.0 && 32.0 * z <= 100.0, "zoom {z}");
+}
+
+#[test]
+fn salir_del_workspace_cancela_el_gesto_del_modelo() {
+    let mut e = editor();
+    assert!(e.new_model("Ship", (64, 64)));
+    e.set_model_selection(Selection {
+        mode: SelectMode::Object,
+        items: [Item::Object(0)].into(),
+    });
+    // Una G de teclado que sigue al puntero, con su vista previa.
+    e.start_model_op(EditOp::Move {
+        map: front(),
+        from: (100.0, 100.0),
+        grab: [0.0; 3],
+        keyboard: true,
+    });
+    e.update_model_op((140.0, 100.0), false, false);
+    assert!(e.model_edit().preview.is_some());
+    let steps = e.history.done_count();
+    // Y otra G pedida que el lienzo todavía no empezó.
+    e.request_model_key_op(KeyOp::Grab);
+    assert!(e.model_edit().key_request.is_some());
+    e.exit_workspace();
+    assert!(e.model_edit().op.is_none(), "the grab keeps running");
+    assert!(e.model_edit().preview.is_none());
+    assert!(
+        e.model_edit().key_request.is_none(),
+        "the requested G waits"
+    );
+    assert_eq!(e.history.done_count(), steps, "nothing committed");
 }

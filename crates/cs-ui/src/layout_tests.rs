@@ -4011,6 +4011,37 @@ fn the_cad_workspace_fills_the_canvas_with_the_four_views() {
 }
 
 #[test]
+fn the_cad_views_end_left_of_the_open_dock_panel() {
+    let mut h = with_a_model_at_800();
+    let canvas = h.canvas.expect("the workspace area");
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    assert_eq!(quads[1].right(), canvas.right(), "closed: the whole area");
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    let id = egui::Id::new(("dock_flyout", crate::dock::DockPanel::Model.label()));
+    let panel = h
+        .ctx
+        .memory(|m| m.area_rect(id))
+        .expect("the 3D panel is open");
+    assert!(panel.left() < canvas.right(), "{panel:?} over {canvas:?}");
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    for i in [1, 3] {
+        assert!(
+            quads[i].right() <= panel.left(),
+            "{:?} vs {panel:?}",
+            quads[i]
+        );
+    }
+    assert_eq!(quads[0].left(), canvas.left());
+    assert!(quads[1].contains_rect(persp_pixels(&h)), "the render too");
+    // Cerrado otra vez: hasta el borde del lienzo.
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    assert_eq!(quads[3].right(), canvas.right());
+}
+
+#[test]
 fn the_perspective_is_drawn_at_an_integer_scale() {
     let h = with_a_model_at_800();
     let q = h.app.doc.canvas.model_edit_quadrants().unwrap()[1];

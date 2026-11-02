@@ -43,11 +43,13 @@ impl Editor {
         true
     }
 
-    /// Regresa al lienzo, al artboard que estaba activo (o al primero del lienzo).
+    /// Regresa al lienzo, al artboard que estaba activo (o al primero del lienzo). Un gesto del
+    /// modelo a medias (p. ej. una G de teclado) se cancela.
     pub fn exit_workspace(&mut self) {
         if self.workspace.take().is_none() {
             return;
         }
+        self.cancel_model_op();
         let back = self
             .workspace_return
             .take()
