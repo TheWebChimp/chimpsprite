@@ -4,7 +4,7 @@
 //! su rotación y su escala, Double sided y Delete.
 
 use cs_3d::Primitive;
-use cs_core::Object3D;
+use cs_core::{CameraPreset, Model3D, Object3D, Projection};
 use eframe::egui::{self, Align2, Rect, Sense, TextStyle, Ui, UiBuilder, pos2, vec2};
 
 use crate::dock::FLYOUT_MARGIN;
@@ -37,7 +37,15 @@ const MAX_SIDES: u32 = 32;
 const DEFAULT_SIDES: u32 = 8;
 /// Los números van en dos columnas: cada una, el eje y su stepper, con aire entre las dos.
 const AXIS_LABEL_W: f32 = 14.0;
-const AXIS_STEPPER_W: f32 = 116.0;
+/// El ancho de una columna (la etiqueta y su stepper).
+const CELL_W: f32 = 130.0;
+/// La etiqueta de Yaw y Pitch.
+const ANGLE_LABEL_W: f32 = 34.0;
+/// El select de la textura.
+const TEXTURE_W: f32 = 150.0;
+/// Hasta dónde llegan Yaw (en grados) y Pitch (en grados).
+const YAW_MAX: i32 = 360;
+const PITCH_MAX: i32 = 90;
 const PAIR_GAP: f32 = 8.0;
 /// Hasta dónde llegan la posición (en 1/16: ±256 unidades), la rotación (en grados) y la escala
 /// (en %).
@@ -63,6 +71,8 @@ impl Default for ModelPanelState {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModelAction {
     NewModel,
+    /// Bake…: abrir el diálogo de hornear el modelo.
+    Bake,
 }
 
 /// El panel en `ui` (lo de adentro del marco, de la columna entera: ver
@@ -137,7 +147,12 @@ fn body(
     objects(ui, editor, skin);
     add_row(ui, editor, skin, state);
     selected(ui, editor, skin);
-    None
+    texture(ui, editor, skin);
+    settings(ui, editor, skin);
+    ui.add_space(SECTION_GAP);
+    button(ui, skin, "Bake…")
+        .clicked()
+        .then_some(ModelAction::Bake)
 }
 
 /// Un botón: el del kit (sin Pixel UI, el de texto).
@@ -261,21 +276,33 @@ fn axis_cell(
     ui: &mut Ui,
     skin: Option<&Skin>,
     salt: &str,
+    cell: (&str, &mut i32),
+    range: std::ops::RangeInclusive<i32>,
+) {
+    cell_with(ui, skin, salt, AXIS_LABEL_W, cell, range);
+}
+
+/// Una columna: la etiqueta de `label_w` y el stepper, que llena lo que queda de `CELL_W`.
+fn cell_with(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    salt: &str,
+    label_w: f32,
     (label, value): (&str, &mut i32),
     range: std::ops::RangeInclusive<i32>,
 ) {
     ui.allocate_ui_with_layout(
-        vec2(AXIS_LABEL_W, kit::stepper::HEIGHT),
+        vec2(label_w, kit::stepper::HEIGHT),
         egui::Layout::left_to_right(egui::Align::Center),
         |ui| {
-            ui.set_min_width(AXIS_LABEL_W);
+            ui.set_min_width(label_w);
             ui.label(label);
         },
     );
     let id = format!("{salt}_{label}");
     match skin {
         Some(skin) => {
-            kit::stepper::stepper(ui, skin, AXIS_STEPPER_W, &id, value, range, 1, None);
+            kit::stepper::stepper(ui, skin, CELL_W - label_w, &id, value, range, 1, None);
         }
         None => {
             ui.add(egui::DragValue::new(value).range(range));
@@ -374,5 +401,163 @@ fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
     if delete.clicked() {
         editor.remove_object(i);
+    }
+}
+
+/// Un radio: el del kit (sin Pixel UI, el de texto).
+fn radio(ui: &mut Ui, skin: Option<&Skin>, on: bool, label: &str) -> egui::Response {
+    match skin {
+        Some(skin) => kit::check::radio(ui, skin, on, label),
+        None => ui.radio(on, label),
+    }
+}
+
+/// Una casilla: la del kit (sin Pixel UI, la de egui).
+fn check(ui: &mut Ui, skin: Option<&Skin>, on: &mut bool, label: &str) {
+    match skin {
+        Some(skin) => kit::check::checkbox(ui, skin, on, label),
+        None => ui.checkbox(on, label),
+    };
+}
+
+/// La textura: un select con los artboards que no son modelos ni fuentes (y None) y New Texture,
+/// que agrega una plantilla y la asigna.
+fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
+    let Some(current) = editor.model().map(|m| m.texture) else {
+        return;
+    };
+    ui.add_space(SECTION_GAP);
+    label_with_hint(ui, "Texture", "");
+    let options: Vec<(cs_core::ArtboardId, String)> = editor
+        .document
+        .artboards
+        .iter()
+        .filter(|a| a.model.is_none() && a.font.is_none())
+        .map(|a| (a.id, a.name.clone()))
+        .collect();
+    let shown = options
+        .iter()
+        .find(|(id, _)| Some(*id) == current)
+        .map_or("None", |(_, name)| name.as_str())
+        .to_owned();
+    let mut picked = None;
+    let mut list = |ui: &mut Ui| {
+        if ui.add(menus::choice(current.is_none(), "None")).clicked() {
+            picked = Some(None);
+            ui.close();
+        }
+        for (id, name) in &options {
+            if ui.add(menus::choice(current == Some(*id), name)).clicked() {
+                picked = Some(Some(*id));
+                ui.close();
+            }
+        }
+    };
+    let mut new = false;
+    ui.horizontal(|ui| {
+        match skin {
+            Some(skin) => {
+                kit::select::select(ui, skin, "model_texture", &shown, Some(TEXTURE_W), list);
+            }
+            None => {
+                egui::ComboBox::from_id_salt("model_texture")
+                    .selected_text(&shown)
+                    .show_ui(ui, |ui| list(ui));
+            }
+        }
+        new = button(ui, skin, "New Texture").clicked();
+    });
+    if new {
+        editor.new_texture();
+    } else if let Some(texture) = picked {
+        editor.set_texture(texture);
+    }
+}
+
+/// Yaw y Pitch en grados (lo guardado, en décimas): solo se escribe el que cambió.
+fn angles(ui: &mut Ui, skin: Option<&Skin>, salt: &str, (yaw, pitch): (&mut i32, &mut i32)) {
+    let (was_yaw, was_pitch) = (*yaw / 10, *pitch / 10);
+    let (mut y, mut p) = (was_yaw, was_pitch);
+    ui.horizontal(|ui| {
+        let range = -YAW_MAX..=YAW_MAX;
+        cell_with(ui, skin, salt, ANGLE_LABEL_W, ("Yaw", &mut y), range);
+        ui.add_space(PAIR_GAP);
+        let range = -PITCH_MAX..=PITCH_MAX;
+        cell_with(ui, skin, salt, ANGLE_LABEL_W, ("Pitch", &mut p), range);
+    });
+    if y != was_yaw {
+        *yaw = y * 10;
+    }
+    if p != was_pitch {
+        *pitch = p * 10;
+    }
+}
+
+/// La cámara, la luz y el contorno. Todo lo cambiado en un frame (o en un arrastre) es un paso de
+/// deshacer (`set_model_grouped`).
+fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
+    let Some(model) = editor.model().cloned() else {
+        return;
+    };
+    let primary = editor.resolve(editor.primary);
+    let mut next = model.clone();
+    ui.add_space(SECTION_GAP);
+    label_with_hint(ui, "Camera", "");
+    let cam = &mut next.camera;
+    let ortho = cam.projection == Projection::Orthographic;
+    ui.horizontal(|ui| {
+        if radio(ui, skin, !ortho, "Perspective").clicked() && ortho {
+            cam.projection = Projection::Perspective {
+                fov: match Model3D::default().camera.projection {
+                    Projection::Perspective { fov } => fov,
+                    Projection::Orthographic => 600,
+                },
+            };
+        }
+        if radio(ui, skin, ortho, "Orthographic").clicked() {
+            cam.projection = Projection::Orthographic;
+        }
+    });
+    ui.horizontal(|ui| {
+        for (label, preset) in [
+            ("Iso", CameraPreset::Iso),
+            ("Top", CameraPreset::Top),
+            ("Side", CameraPreset::Side),
+            ("Front", CameraPreset::Front),
+        ] {
+            if button(ui, skin, label).clicked() {
+                *cam = preset.camera(cam.distance, cam.target);
+            }
+        }
+        if button(ui, skin, "Reset").clicked() {
+            *cam = Model3D::default().camera;
+        }
+    });
+    angles(ui, skin, "camera", (&mut cam.yaw, &mut cam.pitch));
+
+    ui.add_space(SECTION_GAP);
+    label_with_hint(ui, "Light & Outline", "");
+    let light = &mut next.light;
+    check(ui, skin, &mut light.enabled, "Light");
+    ui.add_enabled_ui(light.enabled, |ui| {
+        angles(ui, skin, "light", (&mut light.yaw, &mut light.pitch));
+    });
+    let mut outline = next.outline.is_some();
+    ui.horizontal(|ui| {
+        check(ui, skin, &mut outline, "Outline");
+        if let Some(color) = &mut next.outline {
+            crate::widgets::color_edit(ui, color, false, "Outline color");
+        }
+    });
+    if outline != next.outline.is_some() {
+        next.outline = outline.then_some(primary);
+    }
+
+    let group = ui.id().with("model_settings");
+    if next != model {
+        editor.set_model_grouped(next, group);
+    }
+    if !ui.input(|input| input.pointer.any_down()) {
+        editor.end_group_of(group.value());
     }
 }

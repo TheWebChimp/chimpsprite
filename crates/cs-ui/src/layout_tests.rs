@@ -4150,3 +4150,116 @@ fn delete_in_the_model_panel_removes_the_object() {
     assert!(editor.model().unwrap().objects.is_empty());
     assert_eq!(editor.selected_object(), None);
 }
+
+// --- El panel 3D: textura, cámara, luz y contorno ---
+
+/// Como [`model_panel_open`] con un modelo, en una ventana alta (que quepa todo el panel), y con
+/// un artboard "Skin" de pixel art más para elegir de textura.
+fn model_panel_tall() -> LayoutHarness {
+    let palettes = PaletteLibrary::new(Box::new(NoPresets));
+    let mut app = ChimpApp::with_parts(Default::default(), pixel_ui(), palettes);
+    app.new_document();
+    let mut h = LayoutHarness::start_in(app, Vec2::new(1200.0, 1800.0));
+    let editor = &mut h.app.doc.editor;
+    assert!(editor.add_artboard_with_sprite(
+        "Skin".into(),
+        cs_core::Sprite::new(16, 16, cs_core::ColorMode::Rgba)
+    ));
+    assert!(editor.new_model("Ship", (32, 32)));
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    h
+}
+
+fn model_pixels(h: &LayoutHarness) -> Vec<Rgba> {
+    let editor = &h.app.doc.editor;
+    let s = cs_render::materialize(&editor.document, editor.sprite(), 0..1);
+    cs_render::render_frame(&s, 0)
+}
+
+#[test]
+fn choosing_another_texture_in_the_model_panel_changes_the_model() {
+    let mut h = model_panel_tall();
+    let before = h.app.doc.editor.model().unwrap().texture;
+    h.click(node(&h, "Ship Texture").center(), PointerButton::Primary);
+    h.click(node(&h, "Skin").center(), PointerButton::Primary);
+    let after = h.app.doc.editor.model().unwrap().texture;
+    assert_ne!(before, after);
+    let skin = h
+        .app
+        .doc
+        .editor
+        .document
+        .artboards
+        .iter()
+        .find(|a| a.name == "Skin")
+        .unwrap()
+        .id;
+    assert_eq!(after, Some(skin));
+}
+
+#[test]
+fn new_texture_adds_a_template_artboard_and_assigns_it_in_one_step() {
+    let mut h = model_panel_tall();
+    let steps = h.app.doc.editor.history.done_count();
+    let count = h.app.doc.editor.document.artboards.len();
+    h.click(h.button("New Texture").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    assert_eq!(editor.document.artboards.len(), count + 1);
+    assert_eq!(editor.history.done_count(), steps + 1);
+    let new = editor.document.artboards.last().unwrap();
+    assert_eq!(new.name, "Ship Texture");
+    assert_eq!(editor.model().unwrap().texture, Some(new.id));
+    assert!(editor.is_model(), "the model stays active");
+    h.app.doc.editor.undo();
+    assert_eq!(h.app.doc.editor.document.artboards.len(), count);
+}
+
+#[test]
+fn the_iso_preset_sets_an_orthographic_camera() {
+    let mut h = model_panel_tall();
+    h.click(h.button("Iso").center(), PointerButton::Primary);
+    let cam = h.app.doc.editor.model().unwrap().camera;
+    assert_eq!(cam.projection, cs_core::Projection::Orthographic);
+    assert_eq!((cam.yaw, cam.pitch), (450, 300));
+    h.click(h.button("Reset").center(), PointerButton::Primary);
+    let cam = h.app.doc.editor.model().unwrap().camera;
+    assert_eq!(cam, cs_core::Model3D::default().camera);
+}
+
+#[test]
+fn the_projection_radios_switch_the_camera() {
+    let mut h = model_panel_tall();
+    let ortho = node(&h, "Orthographic");
+    h.click(ortho.center(), PointerButton::Primary);
+    let cam = h.app.doc.editor.model().unwrap().camera;
+    assert_eq!(cam.projection, cs_core::Projection::Orthographic);
+}
+
+#[test]
+fn turning_the_light_off_changes_the_render() {
+    let mut h = model_panel_tall();
+    let lit = model_pixels(&h);
+    assert!(check(&h, "Light").1);
+    h.click(check(&h, "Light").0.center(), PointerButton::Primary);
+    assert!(!h.app.doc.editor.model().unwrap().light.enabled);
+    assert_ne!(model_pixels(&h), lit);
+}
+
+#[test]
+fn turning_the_outline_on_sets_the_primary_color() {
+    let mut h = model_panel_tall();
+    assert_eq!(h.app.doc.editor.model().unwrap().outline, None);
+    h.click(check(&h, "Outline").0.center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    let primary = editor.resolve(editor.primary);
+    assert_eq!(editor.model().unwrap().outline, Some(primary));
+    h.click(check(&h, "Outline").0.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.model().unwrap().outline, None);
+}
+
+#[test]
+fn the_model_panel_has_a_bake_button() {
+    let h = model_panel_tall();
+    h.button("Bake…");
+}

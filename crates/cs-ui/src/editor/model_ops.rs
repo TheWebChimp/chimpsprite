@@ -3,7 +3,8 @@
 
 use cs_3d::{Primitive, primitive_mesh};
 use cs_commands::DocCommand;
-use cs_core::{Camera3D, Light3D, Model3D, Object3D, Rgba, Transform3D};
+use cs_commands::model::texture_template;
+use cs_core::{Artboard, Camera3D, Light3D, Model3D, Object3D, Rgba, Transform3D};
 
 use super::Editor;
 
@@ -117,6 +118,36 @@ impl Editor {
 
     pub fn set_texture(&mut self, t: Option<cs_core::ArtboardId>) -> bool {
         self.edit_model(|m| m.texture = t)
+    }
+
+    /// Una textura nueva (la plantilla de las primitivas, con la paleta del modelo), a la derecha
+    /// de todo, y asignada al modelo activo: un solo paso de undo. El modelo sigue activo.
+    pub fn new_texture(&mut self) -> bool {
+        let Some(mut model) = self.model().cloned() else {
+            return false;
+        };
+        let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
+        let id = self.document.next_artboard_id();
+        let artboard = Artboard {
+            id,
+            name: format!("{} Texture", self.artboard().name),
+            position: (x1 + 16, y0),
+            sprite: texture_template(&self.sprite().palette),
+            guides: Vec::new(),
+            symmetry: Default::default(),
+            in_library: false,
+            font: None,
+            model: None,
+        };
+        model.texture = Some(id);
+        let cmd = DocCommand::Batch(vec![
+            DocCommand::AddArtboard {
+                index: self.document.artboards.len(),
+                artboard: Box::new(artboard),
+            },
+            set_model_cmd(self.active, model),
+        ]);
+        self.execute_doc(cmd)
     }
 
     fn edit_model(&mut self, f: impl FnOnce(&mut Model3D)) -> bool {
