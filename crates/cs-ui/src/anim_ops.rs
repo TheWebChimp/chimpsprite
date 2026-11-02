@@ -54,7 +54,7 @@ impl Editor {
             return;
         }
         // Los frames de una fuente son sus glifos: no hay animación.
-        if self.is_font() {
+        if self.is_structure_locked() {
             return;
         }
         let (range, direction, repeat) = match self.sprite().tag_at(self.frame) {

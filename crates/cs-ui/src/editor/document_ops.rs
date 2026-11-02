@@ -102,7 +102,7 @@ impl Editor {
     /// `Sprite → Color Mode`: pasa a RGBA o a indexado con la paleta del sprite. No en una
     /// fuente: su modo de color es el de la fuente.
     pub fn set_color_mode(&mut self, target: sprite_ops::ColorTarget) -> bool {
-        if self.is_font() {
+        if self.is_structure_locked() {
             return false;
         }
         self.commit_floating();

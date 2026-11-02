@@ -26,6 +26,7 @@ pub use tool_options::*;
 mod document_ops;
 mod font_ops;
 mod gestures;
+mod model_ops;
 
 /// Herramientas que trabajan dentro de un sprite.
 struct SpriteTools {
@@ -323,6 +324,8 @@ pub struct Editor {
     pub text_style: TextStyle,
     /// El glifo copiado con Copy glyph.
     pub(crate) glyph_clipboard: font_ops::GlyphClipboard,
+    /// Objeto elegido del modelo 3D activo (índice en `model.objects`).
+    pub(crate) model_object: Option<usize>,
     /// Gesto en curso (p. ej. arrastrar un campo del panel) cuyos cambios se juntan en un solo
     /// paso de undo: id del widget y lo que se estaba editando (artboard, capa, frame, slice).
     /// El mismo widget sirve para todas las capas, así que el objetivo también tiene que coincidir.
@@ -423,6 +426,7 @@ impl Editor {
             text: None,
             text_style: TextStyle::default(),
             glyph_clipboard: None,
+            model_object: None,
             merge: None,
             edit_mask: false,
             slice: None,
@@ -1025,3 +1029,6 @@ mod tests;
 
 #[cfg(test)]
 mod font_tests;
+
+#[cfg(test)]
+mod model_tests;

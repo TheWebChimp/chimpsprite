@@ -1122,6 +1122,7 @@ version = "0.1.0-alpha.1"
 dependencies = [
  "arboard",
  "base64 0.22.1",
+ "cs-3d",
  "cs-commands",
  "cs-core",
  "cs-io",

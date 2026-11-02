@@ -130,7 +130,7 @@ impl Editor {
         match &clip {
             TimelineClip::Frames(frames) => {
                 // Los frames de una fuente son sus glifos: no se cortan.
-                if self.is_font() {
+                if self.is_structure_locked() {
                     return None;
                 }
                 if frames.len() >= self.frame_count() {
