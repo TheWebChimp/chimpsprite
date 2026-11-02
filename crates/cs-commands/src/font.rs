@@ -3,7 +3,7 @@
 
 use cs_core::{Artboard, ArtboardId, Document, FontInfo, FontMode, Frame, GlyphInfo, font_sprite};
 
-use crate::{CmdError, Command, DocCommand, History};
+use crate::{Command, DocCommand};
 
 /// El artboard de una fuente nueva en `position` (con los ASCII imprimibles vacíos) y el comando
 /// que lo agrega al final.
@@ -84,101 +84,6 @@ pub fn remove_glyph(artboard: &Artboard, ch: char) -> Option<DocCommand> {
     ]))
 }
 
-/// Lo que no puede cambiar de las fuentes de un documento con los comandos de siempre: sus
-/// frames y capas (solo con los de glifos, que traen su `SetFont`), su modo de color y su celda.
-/// Se toma antes de un comando y se comprueba después ([`FontLock::execute`]).
-#[derive(Clone, Debug, Default)]
-pub struct FontLock(Vec<(ArtboardId, (u32, u32))>);
-
-impl FontLock {
-    /// Las fuentes bien armadas de `doc` con su celda (una mal armada no se traba).
-    pub fn of(doc: &Document) -> FontLock {
-        FontLock(
-            doc.artboards
-                .iter()
-                .filter(|a| a.font.as_ref().is_some_and(|f| f.check(&a.sprite).is_ok()))
-                .map(|a| (a.id, (a.sprite.width, a.sprite.height)))
-                .collect(),
-        )
-    }
-
-    fn locked(&self, id: ArtboardId) -> bool {
-        self.0.iter().any(|(a, _)| *a == id)
-    }
-
-    /// Antes de aplicar: `cmd` no agrega, quita ni mueve frames o capas de una fuente, salvo
-    /// que traiga también la fuente nueva de ese artboard (las operaciones de glifos).
-    pub fn allows(&self, cmd: &DocCommand) -> Result<(), CmdError> {
-        let mut with_font = Vec::new();
-        sets_font(cmd, &mut with_font);
-        self.allows_in(cmd, &with_font)
-    }
-
-    fn allows_in(&self, cmd: &DocCommand, with_font: &[ArtboardId]) -> Result<(), CmdError> {
-        match cmd {
-            DocCommand::OnArtboard { id, cmd }
-                if self.locked(*id) && !with_font.contains(id) && moves_structure(cmd) =>
-            {
-                Err(CmdError::FontStructure(*id))
-            }
-            DocCommand::Batch(cmds) => cmds.iter().try_for_each(|c| self.allows_in(c, with_font)),
-            _ => Ok(()),
-        }
-    }
-
-    /// Después de aplicar: cada fuente que sigue siéndolo está bien armada y con su celda.
-    pub fn holds(&self, doc: &Document) -> Result<(), CmdError> {
-        for &(id, cell) in &self.0 {
-            let Some(a) = doc.artboard(id) else {
-                continue;
-            };
-            let Some(font) = &a.font else {
-                continue;
-            };
-            if font.check(&a.sprite).is_err() || (a.sprite.width, a.sprite.height) != cell {
-                return Err(CmdError::FontStructure(id));
-            }
-        }
-        Ok(())
-    }
-
-    /// Ejecuta `cmd` en `history` (como continuación del paso anterior con `merged`) solo si
-    /// deja las fuentes de `doc` como estaban armadas; si no, nada cambia.
-    pub fn execute(
-        history: &mut History<DocCommand>,
-        doc: &mut Document,
-        cmd: DocCommand,
-        merged: bool,
-    ) -> Result<(), CmdError> {
-        let lock = FontLock::of(doc);
-        lock.allows(&cmd)?;
-        history.execute_checked(doc, cmd, merged, |d| lock.holds(d))
-    }
-}
-
-/// Los artboards a los que `cmd` les pone fuente.
-fn sets_font(cmd: &DocCommand, out: &mut Vec<ArtboardId>) {
-    match cmd {
-        DocCommand::SetFont { id, font: Some(_) } => out.push(*id),
-        DocCommand::Batch(cmds) => cmds.iter().for_each(|c| sets_font(c, out)),
-        _ => {}
-    }
-}
-
-/// Si `cmd` agrega, quita o mueve frames o capas.
-fn moves_structure(cmd: &Command) -> bool {
-    match cmd {
-        Command::AddFrame { .. }
-        | Command::RemoveFrame { .. }
-        | Command::MoveFrame { .. }
-        | Command::AddLayer { .. }
-        | Command::RemoveLayer { .. }
-        | Command::MoveLayer { .. } => true,
-        Command::Batch(cmds) => cmds.iter().any(moves_structure),
-        _ => false,
-    }
-}
-
 /// El ancho del glifo de `ch` (`None`: automático); `None` si no cambia nada.
 pub fn set_advance(artboard: &Artboard, ch: char, advance: Option<u32>) -> Option<DocCommand> {
     let mut font = artboard.font.clone()?;
@@ -193,6 +98,7 @@ pub fn set_advance(artboard: &Artboard, ch: char, advance: Option<u32>) -> Optio
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CmdError, History, StructureLock};
     use cs_core::{ColorMode, Document, Sprite};
 
     fn doc_with_font() -> (Document, ArtboardId) {
@@ -265,14 +171,14 @@ mod tests {
             }),
         ] {
             assert_eq!(
-                FontLock::execute(&mut history, &mut doc, cmd, false),
-                Err(CmdError::FontStructure(id))
+                StructureLock::execute(&mut history, &mut doc, cmd, false),
+                Err(CmdError::StructureLocked(id))
             );
         }
         assert_eq!(doc, before);
         assert!(!history.can_undo());
         let add = add_glyphs(doc.artboard(id).unwrap(), &['á']).unwrap();
-        assert!(FontLock::execute(&mut history, &mut doc, add, false).is_ok());
+        assert!(StructureLock::execute(&mut history, &mut doc, add, false).is_ok());
         // Las de un artboard que no es fuente pasan.
         let plain = DocCommand::OnArtboard {
             id: ArtboardId(1),
@@ -281,7 +187,7 @@ mod tests {
                 frame: Frame { duration_ms: 100 },
             },
         };
-        assert!(FontLock::execute(&mut history, &mut doc, plain, false).is_ok());
+        assert!(StructureLock::execute(&mut history, &mut doc, plain, false).is_ok());
     }
 
     #[test]

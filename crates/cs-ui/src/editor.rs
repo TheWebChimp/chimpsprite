@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 
-use cs_commands::font::FontLock;
+use cs_commands::StructureLock;
 use cs_commands::{Command, DocCommand, History, sprite_ops};
 use cs_core::{
     AnimDirection, Artboard, ArtboardId, ColorMode, Document, LayerId, Mask, ObjectId, PixelValue,
@@ -646,9 +646,9 @@ impl Editor {
     /// Ejecuta sin confirmar lo flotante (lo usa la confirmación misma).
     pub(crate) fn apply_doc(&mut self, cmd: DocCommand) -> bool {
         self.merge = None;
-        // Las fuentes no cambian de frames, capas, modo de color ni celda (salvo con las
-        // operaciones de glifos).
-        match FontLock::execute(&mut self.history, &mut self.document, cmd, false) {
+        // Las fuentes y los modelos 3D no cambian de frames, capas ni tamaño (salvo con sus
+        // propias operaciones, que traen su `SetFont` o `SetModel`).
+        match StructureLock::execute(&mut self.history, &mut self.document, cmd, false) {
             Ok(()) => {
                 self.revision += 1;
                 self.doc_version += 1;
@@ -688,7 +688,7 @@ impl Editor {
             self.current_object(),
         );
         let merged = self.merge == Some((group, target));
-        let result = FontLock::execute(&mut self.history, &mut self.document, cmd, merged);
+        let result = StructureLock::execute(&mut self.history, &mut self.document, cmd, merged);
         match result {
             Ok(()) => {
                 self.merge = Some((group, target));

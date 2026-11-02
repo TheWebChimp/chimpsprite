@@ -1,4 +1,4 @@
-use cs_core::{Artboard, ArtboardId, Document, FontInfo, Guide, Note, Sprite, Symmetry};
+use cs_core::{Artboard, ArtboardId, Document, FontInfo, Guide, Model3D, Note, Sprite, Symmetry};
 use serde::{Deserialize, Serialize};
 
 use crate::{CmdError, Command};
@@ -41,6 +41,11 @@ pub enum DocCommand {
     SetFont {
         id: ArtboardId,
         font: Option<Box<FontInfo>>,
+    },
+    /// Lo de modelo 3D de un artboard (`None`: deja de ser modelo).
+    SetModel {
+        id: ArtboardId,
+        model: Option<Box<Model3D>>,
     },
     /// Reemplaza el sprite completo de un artboard (p. ej. al cambiar el modo de color).
     SetSprite {
@@ -164,6 +169,16 @@ impl DocCommand {
                     font: old.map(Box::new),
                 })
             }
+            DocCommand::SetModel { id, model } => {
+                let artboard = doc
+                    .artboard_mut(*id)
+                    .ok_or(CmdError::ArtboardNotFound(*id))?;
+                let old = std::mem::replace(&mut artboard.model, model.as_deref().cloned());
+                Ok(DocCommand::SetModel {
+                    id: *id,
+                    model: old.map(Box::new),
+                })
+            }
             DocCommand::SetNotes(notes) => {
                 let old = std::mem::replace(&mut doc.notes, notes.clone());
                 Ok(DocCommand::SetNotes(old))
@@ -231,6 +246,7 @@ impl crate::Undoable for DocCommand {
             DocCommand::SetGuides { .. } => "Guides",
             DocCommand::SetSymmetry { .. } => "Symmetry",
             DocCommand::SetFont { .. } => "Font",
+            DocCommand::SetModel { .. } => "Model",
             DocCommand::SetSprite { .. } => "Sprite",
             DocCommand::SetNotes(_) => "Notes",
             DocCommand::SetDocument(_) => "Script",
@@ -517,6 +533,36 @@ mod tests {
         assert_eq!(d.artboards[0].guides, guides);
         inv.apply(&mut d).unwrap();
         assert_eq!(d, before);
+    }
+
+    #[test]
+    fn set_model_roundtrip() {
+        let mut d = doc();
+        let before = d.clone();
+        let model = Model3D {
+            texture: Some(ArtboardId(7)),
+            ..Default::default()
+        };
+        let inv = DocCommand::SetModel {
+            id: ArtboardId(1),
+            model: Some(Box::new(model.clone())),
+        }
+        .apply(&mut d)
+        .unwrap();
+        assert_eq!(d.artboards[0].model, Some(model));
+        assert_eq!(crate::Undoable::label(&inv), "Model");
+        inv.apply(&mut d).unwrap();
+        assert_eq!(d, before);
+        assert_eq!(
+            DocCommand::SetModel {
+                id: ArtboardId(9),
+                model: None,
+            }
+            .apply(&mut d),
+            Err(CmdError::ArtboardNotFound(ArtboardId(9)))
+        );
+        let json = serde_json::to_string(&inv).unwrap();
+        assert_eq!(serde_json::from_str::<DocCommand>(&json).unwrap(), inv);
     }
 
     #[test]
