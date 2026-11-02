@@ -4377,6 +4377,39 @@ fn the_position_x_stepper_moves_the_object_in_one_step() {
 }
 
 #[test]
+fn the_3d_panel_has_edit_the_modes_and_the_grid() {
+    let mut h = model_panel_open(true);
+    let text = |h: &LayoutHarness, t: &str| {
+        h.text_rects
+            .iter()
+            .find(|(s, _, _)| s == t)
+            .map(|(_, r, _)| *r)
+            .unwrap_or_else(|| panic!("no text {t:?}"))
+    };
+    for t in [
+        "Edit (Tab)",
+        "Object",
+        "Vertex",
+        "Edge",
+        "Face",
+        "Grid",
+        "1/4",
+    ] {
+        text(&h, t);
+    }
+    h.click(text(&h, "Edit (Tab)").center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.model_edit_on());
+    h.click(text(&h, "Vertex").center(), PointerButton::Primary);
+    assert_eq!(
+        h.app.doc.editor.model_edit().selection.mode,
+        cs_3d::SelectMode::Vertex
+    );
+    h.click(text(&h, "1/4").center(), PointerButton::Primary);
+    h.click(text(&h, "1/2").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.model_edit().grid, 8);
+}
+
+#[test]
 fn delete_in_the_model_panel_removes_the_object() {
     let mut h = model_panel_open(true);
     h.click(h.button("Delete").center(), PointerButton::Primary);

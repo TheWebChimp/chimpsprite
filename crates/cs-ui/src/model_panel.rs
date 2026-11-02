@@ -35,6 +35,8 @@ const ROW_PAD: f32 = 4.0;
 /// El select Add y el stepper de los lados.
 const ADD_W: f32 = 90.0;
 const SIDES_W: f32 = 62.0;
+/// El select de la cuadrícula del modo Edit.
+const GRID_W: f32 = 56.0;
 /// Los lados de cilindros, conos y esferas.
 const MIN_SIDES: u32 = 3;
 const MAX_SIDES: u32 = 32;
@@ -159,6 +161,7 @@ fn body(
         1 => "1 object".to_owned(),
         n => format!("{n} objects"),
     };
+    edit_rows(ui, editor, skin);
     label_with_hint(ui, "Objects", &note);
     objects(ui, editor, skin);
     add_row(ui, editor, skin, state);
@@ -169,6 +172,65 @@ fn body(
     button(ui, skin, "Bake…")
         .clicked()
         .then_some(ModelAction::Bake)
+}
+
+/// El texto de una cuadrícula (en 1/16 de unidad).
+fn grid_label(g: i32) -> &'static str {
+    match g {
+        1 => "1/16",
+        2 => "1/8",
+        4 => "1/4",
+        8 => "1/2",
+        _ => "1",
+    }
+}
+
+/// Edit (Tab), los modos de selección y la cuadrícula del modo Edit (se ven aunque Edit esté
+/// apagado).
+fn edit_rows(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
+    let mut on = editor.model_edit_on();
+    check(ui, skin, &mut on, "Edit (Tab)");
+    if on != editor.model_edit_on() {
+        editor.toggle_model_edit();
+    }
+    let current = editor.model_edit().selection.mode;
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        for mode in cs_3d::SelectMode::ALL {
+            if radio(ui, skin, current == mode, mode.label()).clicked() {
+                picked = Some(mode);
+            }
+        }
+    });
+    if let Some(mode) = picked {
+        editor.set_select_mode(mode);
+    }
+    let grid = editor.model_edit().grid;
+    let mut chosen = None;
+    let mut list = |ui: &mut Ui| {
+        for g in crate::editor::GRIDS {
+            if ui.add(menus::choice(g == grid, grid_label(g))).clicked() {
+                chosen = Some(g);
+                ui.close();
+            }
+        }
+    };
+    ui.horizontal(|ui| {
+        ui.label("Grid");
+        match skin {
+            Some(skin) => {
+                kit::select::select(ui, skin, "model_grid", grid_label(grid), Some(GRID_W), list);
+            }
+            None => {
+                egui::ComboBox::from_id_salt("model_grid")
+                    .selected_text(grid_label(grid))
+                    .show_ui(ui, |ui| list(ui));
+            }
+        }
+    });
+    if let Some(g) = chosen {
+        editor.set_model_grid(g);
+    }
 }
 
 /// Un botón: el del kit (sin Pixel UI, el de texto).

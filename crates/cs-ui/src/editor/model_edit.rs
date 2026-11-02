@@ -10,7 +10,6 @@ use super::Editor;
 /// La cuadrícula por defecto: 1/4 de unidad.
 pub const DEFAULT_GRID: i32 = 4;
 /// Las cuadrículas del panel, en 1/16 de unidad.
-#[allow(dead_code)] // lo usa el panel (tarea siguiente)
 pub const GRIDS: [i32; 5] = [1, 2, 4, 8, 16];
 /// Cuánto cambia el zoom de las vistas por paso de rueda.
 const ZOOM_STEP: f32 = 1.25;

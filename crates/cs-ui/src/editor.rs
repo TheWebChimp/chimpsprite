@@ -28,8 +28,6 @@ mod font_ops;
 mod gestures;
 mod model_edit;
 mod model_ops;
-// `GRIDS` lo usa el panel (tarea siguiente).
-#[allow(unused_imports)]
 pub use model_edit::{EditOp, GRIDS, KeyOp, ModelEdit};
 pub use model_ops::{ModelArrows, wrap_angle};
 
