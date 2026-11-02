@@ -129,6 +129,17 @@ fn other_writers_cannot_touch_a_model_sprite() {
 }
 
 #[test]
+fn the_palette_panel_edits_the_ramp_palette_of_a_model() {
+    let mut e = editor_with_model();
+    let palette = cs_core::Palette::new(vec![Rgba::rgb(10, 20, 30), Rgba::rgb(40, 50, 60)]);
+    assert!(e.apply_palette(palette.clone()));
+    assert_eq!(e.sprite().palette, palette);
+    assert!(e.is_model());
+    e.undo();
+    assert_ne!(e.sprite().palette, palette);
+}
+
+#[test]
 fn the_selected_object_resets_when_another_artboard_is_activated() {
     let mut e = editor_with_model();
     let model = e.active;

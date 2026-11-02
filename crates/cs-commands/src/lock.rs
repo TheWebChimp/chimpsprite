@@ -12,10 +12,13 @@ use crate::{CmdError, Command, DocCommand, History};
 #[derive(Clone, Debug, Default)]
 pub struct StructureLock(Vec<(ArtboardId, (u32, u32), bool)>);
 
-/// Si el artboard es una fuente o un modelo bien armado (uno mal armado no se traba).
+/// Si el artboard es una fuente o un modelo bien armado (uno mal armado no se traba). Un modelo
+/// además guarda RGBA: su render no sabe escribir índices.
 fn well_formed(a: &Artboard) -> bool {
     a.font.as_ref().is_none_or(|f| f.check(&a.sprite).is_ok())
-        && a.model.as_ref().is_none_or(|m| m.check(&a.sprite).is_ok())
+        && a.model
+            .as_ref()
+            .is_none_or(|m| m.check(&a.sprite).is_ok() && a.sprite.color_mode.stores_rgba())
 }
 
 impl StructureLock {
@@ -48,9 +51,17 @@ impl StructureLock {
 
     fn allows_in(&self, cmd: &DocCommand, escape: &[ArtboardId]) -> Result<(), CmdError> {
         match cmd {
+            // La paleta de un modelo es la de su rampa de luz: no toca ni estructura ni píxeles.
+            DocCommand::OnArtboard {
+                cmd: Command::SetPalette(_),
+                ..
+            } => Ok(()),
             // Un modelo no se pinta ni se edita: su sprite es la salida de otra cosa (cualquier
-            // comando de sprite se rechaza, no solo los de estructura).
-            DocCommand::OnArtboard { id, .. } if self.is_model(*id) && !escape.contains(id) => {
+            // comando de sprite se rechaza, no solo los de estructura, y tampoco se reemplaza el
+            // sprite entero).
+            DocCommand::OnArtboard { id, .. } | DocCommand::SetSprite { id, .. }
+                if self.is_model(*id) && !escape.contains(id) =>
+            {
                 Err(CmdError::StructureLocked(*id))
             }
             DocCommand::OnArtboard { id, cmd }
@@ -233,5 +244,56 @@ mod tests {
         ]);
         assert!(StructureLock::of(&doc).allows(&cmd).is_ok());
         assert!(StructureLock::execute(&mut history, &mut doc, cmd, false).is_ok());
+    }
+
+    #[test]
+    fn a_model_cannot_become_indexed_through_set_sprite() {
+        let (mut doc, model, _) = doc_with_model();
+        let mut history = History::new();
+        let before = doc.clone();
+        let mut sprite = doc.artboard(model).unwrap().sprite.clone();
+        sprite.color_mode = ColorMode::Indexed {
+            transparent_index: 0,
+        };
+        let cmd = DocCommand::SetSprite {
+            id: model,
+            sprite: Box::new(sprite.clone()),
+        };
+        assert_eq!(
+            StructureLock::execute(&mut history, &mut doc, cmd, false),
+            Err(CmdError::StructureLocked(model))
+        );
+        assert_eq!(doc, before);
+        // Ni siquiera trayendo el modelo: un modelo indexado no está bien armado.
+        let m = doc.artboard(model).unwrap().model.clone().unwrap();
+        let with_model = DocCommand::Batch(vec![
+            DocCommand::SetSprite {
+                id: model,
+                sprite: Box::new(sprite),
+            },
+            DocCommand::SetModel {
+                id: model,
+                model: Some(Box::new(m)),
+            },
+        ]);
+        assert_eq!(
+            StructureLock::execute(&mut history, &mut doc, with_model, false),
+            Err(CmdError::StructureLocked(model))
+        );
+        assert_eq!(doc, before);
+        assert!(!history.can_undo());
+    }
+
+    #[test]
+    fn a_model_s_ramp_palette_can_change() {
+        let (mut doc, model, _) = doc_with_model();
+        let mut history = History::new();
+        let palette = cs_core::Palette::new(vec![cs_core::Rgba::rgb(9, 9, 9)]);
+        let cmd = DocCommand::OnArtboard {
+            id: model,
+            cmd: Command::SetPalette(palette.clone()),
+        };
+        assert!(StructureLock::execute(&mut history, &mut doc, cmd, false).is_ok());
+        assert_eq!(doc.artboard(model).unwrap().sprite.palette, palette);
     }
 }

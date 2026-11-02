@@ -277,11 +277,17 @@ impl Document {
             .iter()
             .flat_map(|a| a.sprite.layers.iter())
             .flat_map(|l| l.object_sources());
+        // La textura de un modelo puede apuntar a un artboard ya borrado: tampoco se reusa.
+        let textures = self
+            .artboards
+            .iter()
+            .filter_map(|a| a.model.as_ref().and_then(|m| m.texture));
         let max = self
             .artboards
             .iter()
             .map(|a| a.id)
             .chain(sources)
+            .chain(textures)
             .map(|id| id.0)
             .max()
             .unwrap_or(0);
@@ -522,6 +528,17 @@ mod tests {
         assert_eq!(d.next_artboard_id(), ArtboardId(6));
         let d = instancing(&[(1, &[]), (3, &[1])]);
         assert_eq!(d.next_artboard_id(), ArtboardId(4));
+    }
+
+    #[test]
+    fn next_artboard_id_skips_a_deleted_model_texture() {
+        // El 2 es un modelo cuya textura (el 7) se borró: el próximo id no puede ser 7.
+        let mut d = instancing(&[(1, &[]), (2, &[])]);
+        d.artboards[1].model = Some(crate::model::Model3D {
+            texture: Some(ArtboardId(7)),
+            ..Default::default()
+        });
+        assert_eq!(d.next_artboard_id(), ArtboardId(8));
     }
 
     #[test]
