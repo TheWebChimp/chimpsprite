@@ -12,6 +12,7 @@ impl Editor {
         sprite.palette = template.palette.clone();
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
+            model: None,
             in_library: false,
             font: None,
             guides: Vec::new(),
@@ -216,6 +217,7 @@ impl Editor {
         let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
         let id = self.document.next_artboard_id();
         let artboard = Artboard {
+            model: None,
             in_library: false,
             font: None,
             id,

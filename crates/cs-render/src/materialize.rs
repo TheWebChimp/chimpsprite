@@ -451,6 +451,7 @@ mod tests {
 
     fn artboard(id: u32, sprite: Sprite) -> Artboard {
         Artboard {
+            model: None,
             in_library: false,
             font: None,
             id: ArtboardId(id),

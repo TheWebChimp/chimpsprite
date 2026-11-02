@@ -251,6 +251,7 @@ mod tests {
 
     fn second(d: &Document) -> Artboard {
         Artboard {
+            model: None,
             in_library: false,
             font: None,
             guides: Vec::new(),
@@ -284,6 +285,7 @@ mod tests {
     fn instance_cycles_are_rejected_and_nothing_changes() {
         let mut doc = Document::with_sprite("a", Sprite::new(4, 4, ColorMode::Rgba));
         doc.artboards.push(Artboard {
+            model: None,
             in_library: false,
             font: None,
             id: ArtboardId(2),

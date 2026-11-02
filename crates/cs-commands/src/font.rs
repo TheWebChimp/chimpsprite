@@ -17,6 +17,7 @@ pub fn new_font_artboard(
     let id = doc.next_artboard_id();
     let font = FontInfo::new(name, cell.1, mode);
     let artboard = Artboard {
+        model: None,
         id,
         name: name.to_owned(),
         position,

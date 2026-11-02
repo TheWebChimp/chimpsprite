@@ -294,6 +294,7 @@ pub fn convert_to_symbol(
     host_cmds.push(Command::AddLayer { index, layer });
 
     let symbol = Artboard {
+        model: None,
         id: symbol_id,
         name: name.to_string(),
         position: free_position(doc),

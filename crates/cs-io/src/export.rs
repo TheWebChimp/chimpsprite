@@ -683,6 +683,7 @@ mod tests {
     fn atlas_stacks_artboards_and_offsets_tags() {
         let mut doc = Document::with_sprite("hero", sprite());
         doc.artboards.push(Artboard {
+            model: None,
             in_library: false,
             font: None,
             guides: Vec::new(),

@@ -60,6 +60,7 @@ fn to_command(d: &Document, op: &Op) -> DocCommand {
         Op::AddArtboard { w, h } => DocCommand::AddArtboard {
             index: d.artboards.len(),
             artboard: Box::new(Artboard {
+                model: None,
                 in_library: false,
                 font: None,
                 guides: Vec::new(),

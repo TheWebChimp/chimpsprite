@@ -273,6 +273,7 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
             ));
         }
         artboards.push(Artboard {
+            model: None,
             in_library: entry.library,
             font,
             guides: entry.guides,
@@ -558,6 +559,7 @@ mod tests {
             },
         );
         doc.artboards.push(Artboard {
+            model: None,
             id: ArtboardId(2),
             name: "Mine".into(),
             position: (20, 0),
@@ -595,6 +597,7 @@ mod tests {
             },
         );
         doc.artboards.push(Artboard {
+            model: None,
             id: ArtboardId(2),
             name: "Mine".into(),
             position: (20, 0),
@@ -662,6 +665,7 @@ mod tests {
         .unwrap();
         let mut d = Document::with_sprite("chimp", chimp);
         d.artboards.push(Artboard {
+            model: None,
             in_library: false,
             font: None,
             guides: vec![Guide {

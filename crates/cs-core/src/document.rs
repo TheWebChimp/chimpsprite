@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::{FontInfo, Sprite};
+use crate::{FontInfo, Model3D, Sprite};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ArtboardId(pub u32);
@@ -143,6 +143,9 @@ pub struct Artboard {
     /// Si es una fuente pixel: sus medidas y sus glifos (un frame por glifo).
     #[serde(default)]
     pub font: Option<FontInfo>,
+    /// Si es un modelo 3D: sus objetos, cámara y luz; su sprite (1 capa, 1 frame) es la textura.
+    #[serde(default)]
+    pub model: Option<Model3D>,
 }
 
 impl Artboard {
@@ -216,6 +219,7 @@ impl Document {
         Self {
             notes: Vec::new(),
             artboards: vec![Artboard {
+                model: None,
                 guides: Vec::new(),
                 symmetry: Default::default(),
                 id: ArtboardId(1),
@@ -361,6 +365,7 @@ mod tests {
     fn doc() -> Document {
         let mut d = Document::with_sprite("a", Sprite::new(10, 10, ColorMode::Rgba));
         d.artboards.push(Artboard {
+            model: None,
             guides: Vec::new(),
             symmetry: Default::default(),
             id: d.next_artboard_id(),
@@ -392,6 +397,7 @@ mod tests {
     fn library_doc() -> Document {
         let mut d = Document::with_sprite("a", Sprite::new(4, 4, ColorMode::Rgba));
         d.artboards.push(Artboard {
+            model: None,
             id: ArtboardId(2),
             name: "sym".into(),
             position: (100, 100),
@@ -476,6 +482,7 @@ mod tests {
                     sprite.layers.push(layer);
                 }
                 Artboard {
+                    model: None,
                     id: ArtboardId(id),
                     name: format!("a{id}"),
                     position: (0, 0),

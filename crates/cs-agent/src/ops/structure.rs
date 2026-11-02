@@ -66,6 +66,7 @@ impl Session {
         };
         let id = doc.next_artboard_id();
         let artboard = Artboard {
+            model: None,
             in_library: false,
             font: None,
             id,

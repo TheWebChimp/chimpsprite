@@ -176,6 +176,7 @@ mod tests {
         assert_eq!(back.artboards[0].sprite.width, 5);
 
         doc.artboards.push(Artboard {
+            model: None,
             in_library: false,
             font: None,
             guides: Vec::new(),
@@ -209,6 +210,7 @@ mod tests {
         .apply(&mut symbol)
         .unwrap();
         d.artboards.push(Artboard {
+            model: None,
             in_library: false,
             font: None,
             id: ArtboardId(2),

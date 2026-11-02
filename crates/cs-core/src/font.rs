@@ -447,6 +447,7 @@ mod tests {
         let a = 'A' as usize - '!' as usize;
         ink(&mut s, a, &[(1, 2)]);
         let artboard = crate::Artboard {
+            model: None,
             id: crate::ArtboardId(1),
             name: "Mine".into(),
             position: (0, 0),
