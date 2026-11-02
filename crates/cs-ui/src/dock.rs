@@ -314,6 +314,45 @@ pub fn flyout(
     tall: bool,
     add_contents: impl FnOnce(&mut Ui),
 ) {
+    let body = if tall { Body::Tall } else { Body::Fit };
+    flyout_with(ctx, panel, anchor, skin, width, body, add_contents);
+}
+
+/// Como [`flyout`] alto, pero sin scroll propio: el contenido recibe toda la columna (`width` de
+/// ancho por el alto de la columna, sin el marco) y acomoda él mismo lo fijo y lo que se desplaza
+/// (el panel FontForge, con su título y su pie fijos).
+pub fn flyout_fixed(
+    ctx: &egui::Context,
+    panel: DockPanel,
+    anchor: Anchor,
+    skin: Option<&Skin>,
+    width: f32,
+    add_contents: impl FnOnce(&mut Ui),
+) {
+    flyout_with(ctx, panel, anchor, skin, width, Body::Fixed, add_contents);
+}
+
+/// Cómo va el contenido de un panel flotante.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Body {
+    /// Con scroll, del alto de su contenido.
+    Fit,
+    /// Con scroll, de la columna entera.
+    Tall,
+    /// Sin scroll, de la columna entera.
+    Fixed,
+}
+
+fn flyout_with(
+    ctx: &egui::Context,
+    panel: DockPanel,
+    anchor: Anchor,
+    skin: Option<&Skin>,
+    width: f32,
+    body: Body,
+    add_contents: impl FnOnce(&mut Ui),
+) {
+    let tall = body != Body::Fit;
     let id = egui::Id::new(("dock_flyout", panel.label()));
     let Anchor { button, column } = anchor;
     // El alto de la vez pasada, para saber si cabe.
@@ -341,6 +380,12 @@ pub fn flyout(
                 // El Area da de alto lo que midió la vez pasada: sin esto, el panel no crecería
                 // cuando su contenido crece.
                 ui.set_max_height(max_height);
+                if body == Body::Fixed {
+                    ui.set_width(width);
+                    ui.set_height(max_height);
+                    add_contents(ui);
+                    return;
+                }
                 let mut area = egui::ScrollArea::vertical()
                     .id_salt(id.with("scroll"))
                     .max_height(max_height);

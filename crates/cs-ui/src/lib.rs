@@ -597,13 +597,12 @@ impl ChimpApp {
         let skin = self.pixel.skin();
         let editor = &mut self.doc.editor;
         let state = &mut self.font_panel;
-        dock::flyout(
+        dock::flyout_fixed(
             ctx,
             dock::DockPanel::Font,
             anchor,
             skin,
             font_panel::WIDTH,
-            true,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| {
                     action = font_panel::show(ui, editor, skin, state);
