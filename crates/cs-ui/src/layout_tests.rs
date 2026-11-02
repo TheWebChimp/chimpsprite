@@ -4267,6 +4267,38 @@ fn model_pixels(h: &LayoutHarness) -> Vec<Rgba> {
 }
 
 #[test]
+fn the_texture_select_skips_the_library_and_marks_a_missing_texture() {
+    let mut h = model_panel_tall();
+    let doc = &mut h.app.doc.editor.document;
+    doc.artboards
+        .iter_mut()
+        .find(|a| a.name == "Skin")
+        .unwrap()
+        .in_library = true;
+    h.frame();
+    h.click(node(&h, "Ship Texture").center(), PointerButton::Primary);
+    assert!(
+        !h.nodes.iter().any(|(l, _)| l == "Skin"),
+        "a library artboard is offered"
+    );
+    h.click(node(&h, "None").center(), PointerButton::Primary);
+    // Una textura que ya no existe (borrada por un script): "(missing)", no "None".
+    let editor = &mut h.app.doc.editor;
+    let active = editor.active;
+    editor
+        .document
+        .artboard_mut(active)
+        .unwrap()
+        .model
+        .as_mut()
+        .unwrap()
+        .texture = Some(cs_core::ArtboardId(999));
+    h.frame();
+    h.frame();
+    node(&h, "(missing)");
+}
+
+#[test]
 fn choosing_another_texture_in_the_model_panel_changes_the_model() {
     let mut h = model_panel_tall();
     let before = h.app.doc.editor.model().unwrap().texture;

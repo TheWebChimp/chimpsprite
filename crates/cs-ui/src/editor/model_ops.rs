@@ -162,7 +162,7 @@ impl Editor {
     }
 
     /// Hornea el modelo activo (ver [`cs_render::bake_model`]) en un artboard normal nuevo,
-    /// `"{modelo} · bake"`, a la derecha del modelo: un solo paso de undo. El modelo sigue
+    /// `"{modelo} · bake"`, a la derecha de todo: un solo paso de undo. El modelo sigue
     /// activo.
     pub fn bake(&mut self, options: BakeOptions) -> bool {
         let Some((mut sprite, tags)) = cs_render::bake_model(&self.document, self.active, &options)
@@ -171,10 +171,9 @@ impl Editor {
         };
         sprite.tags = tags;
         let model = self.artboard();
-        let position = (
-            model.position.0 + model.sprite.width as i32 + 16,
-            model.position.1,
-        );
+        // A la derecha de todo (como un modelo nuevo): los bakes seguidos no se pisan.
+        let right = self.document.bounds().map_or(0, |(_, (x1, _))| x1);
+        let position = (right + 16, model.position.1);
         let artboard = Artboard {
             id: self.document.next_artboard_id(),
             name: format!("{} · bake", model.name),

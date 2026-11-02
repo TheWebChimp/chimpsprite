@@ -39,7 +39,7 @@ const TAG_COLOR: Rgba = Rgba::rgb(0x5b, 0x6e, 0xe1);
 /// El sprite horneado del modelo `model` (RGBA, una capa, con la paleta del modelo) y sus tags
 /// (el sprite sale sin ellos). El ángulo `a` gira todos los objetos `a·360/angles` grados en Y.
 /// Con `animate_texture`, un render por frame de la textura (cada uno dura lo que su frame); si
-/// no, solo con el frame 0. `None` si no es un modelo (o está roto).
+/// no, solo con el frame 0 (y lo que dura ese frame). `None` si no es un modelo (o está roto).
 pub fn bake_model(
     doc: &Document,
     model: ArtboardId,
@@ -59,7 +59,11 @@ pub fn bake_model(
         Some(t) if options.animate_texture => {
             t.sprite.frames.iter().map(|f| f.duration_ms).collect()
         }
-        _ => vec![source.frames.first().map_or(100, |f| f.duration_ms)],
+        // Sin animar: lo que dura el frame 0 de la textura (o, sin textura, el del modelo).
+        _ => {
+            let frames = texture.map_or(&source.frames, |t| &t.sprite.frames);
+            vec![frames.first().map_or(100, |f| f.duration_ms)]
+        }
     };
     let camera = options
         .camera
@@ -210,6 +214,8 @@ mod tests {
         assert!(tags.is_empty());
         // Los ángulos se ven distintos: el cubo girado 45° no es el de frente.
         assert_ne!(render_frame(&sprite, 0), render_frame(&sprite, 1));
+        // Sin animar, cada frame dura lo del frame 0 de la textura.
+        assert!(sprite.frames.iter().all(|f| f.duration_ms == 40));
     }
 
     #[test]

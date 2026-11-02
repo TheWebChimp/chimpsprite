@@ -616,6 +616,10 @@ mod tests {
             0,
         );
         assert_eq!(shown, expected);
+        // Sin materializar: los pixeles guardados ya son el render (lo que ve otro programa).
+        let stored = cs_render::render_frame(&a.sprite, 0);
+        assert!(stored.iter().any(|c| c.a > 0), "the stored render is empty");
+        assert_eq!(stored, expected);
     }
 
     #[test]

@@ -434,8 +434,8 @@ fn check(ui: &mut Ui, skin: Option<&Skin>, on: &mut bool, label: &str) {
     };
 }
 
-/// La textura: un select con los artboards que no son modelos ni fuentes (y None) y New Texture,
-/// que agrega una plantilla y la asigna.
+/// La textura: un select con los artboards del lienzo que no son modelos ni fuentes (y None; una
+/// que ya no existe se muestra "(missing)") y New Texture, que agrega una plantilla y la asigna.
 fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let Some(current) = editor.model().map(|m| m.texture) else {
         return;
@@ -446,14 +446,17 @@ fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
         .document
         .artboards
         .iter()
-        .filter(|a| a.model.is_none() && a.font.is_none())
+        .filter(|a| a.model.is_none() && a.font.is_none() && !a.in_library)
         .map(|a| (a.id, a.name.clone()))
         .collect();
-    let shown = options
-        .iter()
-        .find(|(id, _)| Some(*id) == current)
-        .map_or("None", |(_, name)| name.as_str())
-        .to_owned();
+    // La textura puede no estar en la lista (en la biblioteca) o ya no existir.
+    let shown = match current {
+        None => "None".to_owned(),
+        Some(id) => editor
+            .document
+            .artboard(id)
+            .map_or_else(|| "(missing)".to_owned(), |a| a.name.clone()),
+    };
     let mut picked = None;
     let mut list = |ui: &mut Ui| {
         if ui.add(menus::choice(current.is_none(), "None")).clicked() {

@@ -156,6 +156,36 @@ fn arrow_rotation_wraps_and_arrow_scale_keeps_sign_and_range() {
 }
 
 #[test]
+fn two_bakes_do_not_overlap() {
+    let mut e = editor_with_model();
+    let options = cs_render::BakeOptions {
+        angles: 4,
+        camera: None,
+        animate_texture: false,
+        output: cs_render::BakeOutput::Frames,
+    };
+    assert!(e.bake(options));
+    assert!(e.bake(options));
+    assert!(e.is_model(), "the model stays active");
+    let n = e.document.artboards.len();
+    let rects: Vec<_> = e.document.artboards.iter().map(|a| a.rect()).collect();
+    let overlap = |((a0, a1), (b0, b1)): (((i32, i32), (i32, i32)), ((i32, i32), (i32, i32)))| {
+        a0.0 < b1.0 && b0.0 < a1.0 && a0.1 < b1.1 && b0.1 < a1.1
+    };
+    // Los dos bakes (los últimos) no pisan a nada.
+    for bake in n - 2..n {
+        for other in 0..n {
+            if other != bake {
+                assert!(
+                    !overlap((rects[bake], rects[other])),
+                    "{bake} overlaps {other}: {rects:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
 fn the_palette_panel_edits_the_ramp_palette_of_a_model() {
     let mut e = editor_with_model();
     let palette = cs_core::Palette::new(vec![Rgba::rgb(10, 20, 30), Rgba::rgb(40, 50, 60)]);
