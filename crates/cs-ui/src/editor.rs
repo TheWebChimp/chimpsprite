@@ -27,7 +27,7 @@ mod document_ops;
 mod font_ops;
 mod gestures;
 mod model_ops;
-pub use model_ops::ModelArrows;
+pub use model_ops::{ModelArrows, wrap_angle};
 
 /// Herramientas que trabajan dentro de un sprite.
 struct SpriteTools {

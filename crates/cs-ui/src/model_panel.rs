@@ -8,7 +8,7 @@ use cs_core::{CameraPreset, Model3D, Object3D, Projection};
 use eframe::egui::{self, Align2, Rect, Sense, TextStyle, Ui, UiBuilder, pos2, vec2};
 
 use crate::dock::FLYOUT_MARGIN;
-use crate::editor::Editor;
+use crate::editor::{Editor, wrap_angle};
 use crate::font_panel::lit_line;
 use crate::kit;
 use crate::menus;
@@ -37,8 +37,12 @@ const MAX_SIDES: u32 = 32;
 const DEFAULT_SIDES: u32 = 8;
 /// Los números van en dos columnas: cada una, el eje y su stepper, con aire entre las dos.
 const AXIS_LABEL_W: f32 = 14.0;
-/// El ancho de una columna (la etiqueta y su stepper).
-const CELL_W: f32 = 130.0;
+/// El ancho de una columna (la etiqueta y su stepper): las dos columnas, con `PAIR_GAP` y el aire
+/// entre los widgets de la fila (tres veces), llenan lo de adentro sin la barra del scroll.
+fn cell_w(ui: &Ui) -> f32 {
+    let gaps = PAIR_GAP + 3.0 * ui.spacing().item_spacing.x;
+    ((WIDTH - pixel_ui::SCROLL_BAR - gaps) / 2.0).floor()
+}
 /// La etiqueta de Yaw y Pitch.
 const ANGLE_LABEL_W: f32 = 34.0;
 /// El select de la textura.
@@ -282,7 +286,9 @@ fn axis_cell(
     cell_with(ui, skin, salt, AXIS_LABEL_W, cell, range);
 }
 
-/// Una columna: la etiqueta de `label_w` y el stepper, que llena lo que queda de `CELL_W`.
+/// Una columna: la etiqueta de `label_w` y el stepper, que llena lo que queda de [`cell_w`]. Un
+/// valor fuera de `range` se muestra en el borde pero solo se escribe si el usuario lo cambia
+/// (el stepper no lo recorta solo).
 fn cell_with(
     ui: &mut Ui,
     skin: Option<&Skin>,
@@ -300,13 +306,19 @@ fn cell_with(
         },
     );
     let id = format!("{salt}_{label}");
+    let shown = (*value).clamp(*range.start(), *range.end());
+    let mut v = shown;
     match skin {
         Some(skin) => {
-            kit::stepper::stepper(ui, skin, CELL_W - label_w, &id, value, range, 1, None);
+            let width = cell_w(ui) - label_w;
+            kit::stepper::stepper(ui, skin, width, &id, &mut v, range, 1, None);
         }
         None => {
-            ui.add(egui::DragValue::new(value).range(range));
+            ui.add(egui::DragValue::new(&mut v).range(range));
         }
+    }
+    if v != shown {
+        *value = v;
     }
 }
 
@@ -327,17 +339,18 @@ fn axes(
     ui.horizontal(|ui| axis_cell(ui, skin, title, ("Z", z), range));
 }
 
-/// Los tres ejes de `v` mostrados en otra unidad: `per` de lo guardado por cada uno mostrado.
-/// Solo se escribe el eje que cambió (los otros no pierden lo que no se ve).
+/// Los tres ejes de `v` mostrados en otra unidad: `per` de lo guardado (pasado antes por `show`)
+/// por cada uno mostrado. Solo se escribe el eje que cambió (los otros no pierden lo que no se
+/// ve).
 fn scaled_axes(
     ui: &mut Ui,
     skin: Option<&Skin>,
     labels: (&str, &str),
-    v: &mut cs_core::Vec3i,
+    (v, show): (&mut cs_core::Vec3i, fn(i32) -> i32),
     per: i32,
     range: std::ops::RangeInclusive<i32>,
 ) {
-    let before = [v.x / per, v.y / per, v.z / per];
+    let before = [show(v.x) / per, show(v.y) / per, show(v.z) / per];
     let mut shown = before;
     let [a, b, c] = &mut shown;
     axes(ui, skin, labels, [a, b, c], range);
@@ -376,11 +389,12 @@ fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
         ui,
         skin,
         ("Rotation", "(°)"),
-        &mut t.rotation,
+        (&mut t.rotation, wrap_angle),
         10,
         -ROTATION_MAX..=ROTATION_MAX,
     );
-    scaled_axes(ui, skin, ("Scale", "(%)"), &mut t.scale, 10, 1..=SCALE_MAX);
+    let scale = (&mut t.scale, std::convert::identity as fn(i32) -> i32);
+    scaled_axes(ui, skin, ("Scale", "(%)"), scale, 10, 1..=SCALE_MAX);
     ui.add_space(ITEM_GAP);
     match skin {
         Some(skin) => kit::check::checkbox(ui, skin, &mut next.double_sided, "Double sided"),
@@ -474,9 +488,10 @@ fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 }
 
-/// Yaw y Pitch en grados (lo guardado, en décimas): solo se escribe el que cambió.
+/// Yaw (dado la vuelta a ±180°) y Pitch en grados (lo guardado, en décimas): solo se escribe el
+/// que cambió.
 fn angles(ui: &mut Ui, skin: Option<&Skin>, salt: &str, (yaw, pitch): (&mut i32, &mut i32)) {
-    let (was_yaw, was_pitch) = (*yaw / 10, *pitch / 10);
+    let (was_yaw, was_pitch) = (wrap_angle(*yaw) / 10, *pitch / 10);
     let (mut y, mut p) = (was_yaw, was_pitch);
     ui.horizontal(|ui| {
         let range = -YAW_MAX..=YAW_MAX;

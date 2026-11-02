@@ -111,10 +111,10 @@ impl CanvasView {
     }
 }
 
-/// La cámara de `start` girada por un arrastre de `d` puntos.
+/// La cámara de `start` girada por un arrastre de `d` puntos (el `yaw`, siempre en ±180°).
 fn orbit(start: Camera3D, d: Vec2) -> Camera3D {
     Camera3D {
-        yaw: start.yaw + (d.x * ORBIT_SPEED).round() as i32,
+        yaw: crate::editor::wrap_angle(start.yaw + (d.x * ORBIT_SPEED).round() as i32),
         pitch: (start.pitch + (d.y * ORBIT_SPEED).round() as i32).clamp(-PITCH_LIMIT, PITCH_LIMIT),
         ..start
     }
@@ -166,6 +166,18 @@ mod tests {
         let c = orbit(front(), vec2(2.0, 1000.0));
         assert_eq!((c.yaw, c.pitch), (10, PITCH_LIMIT));
         assert_eq!(orbit(front(), vec2(0.0, -1000.0)).pitch, -PITCH_LIMIT);
+    }
+
+    #[test]
+    fn orbiting_wraps_the_yaw_around() {
+        // 720° de vuelta: queda donde estaba.
+        assert_eq!(orbit(front(), vec2(1440.0, 0.0)).yaw, 0);
+        let near = Camera3D {
+            yaw: 1790,
+            ..front()
+        };
+        assert_eq!(orbit(near, vec2(4.0, 0.0)).yaw, -1790);
+        assert_eq!(orbit(front(), vec2(-400.0, 0.0)).yaw, 1600);
     }
 
     #[test]

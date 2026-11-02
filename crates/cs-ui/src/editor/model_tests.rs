@@ -129,6 +129,33 @@ fn other_writers_cannot_touch_a_model_sprite() {
 }
 
 #[test]
+fn arrow_rotation_wraps_and_arrow_scale_keeps_sign_and_range() {
+    use super::ModelArrows;
+    let mut e = editor_with_model();
+    let mut obj = e.model().unwrap().objects[0].clone();
+    obj.transform.rotation.y = 1750;
+    obj.transform.scale = cs_core::Vec3i {
+        x: -1000,
+        y: 10,
+        z: 9_800,
+    };
+    assert!(e.set_object(0, obj));
+    e.set_model_arrows(ModelArrows::Rotate);
+    assert!(e.arrow_on_object(1, 0));
+    assert_eq!(e.model().unwrap().objects[0].transform.rotation.y, -1700);
+    e.set_model_arrows(ModelArrows::Scale);
+    // Achicar: el negativo sigue negativo y nada baja de 10 (1 %).
+    assert!(e.arrow_on_object(-1, 0));
+    let s = e.model().unwrap().objects[0].transform.scale;
+    assert_eq!((s.x, s.y), (-909, 10));
+    // Agrandar: nada pasa de 10 000 (1000 %).
+    assert!(e.arrow_on_object(1, 0));
+    assert!(e.arrow_on_object(1, 0));
+    let s = e.model().unwrap().objects[0].transform.scale;
+    assert_eq!((s.x, s.y, s.z), (-1100, 12, 10_000));
+}
+
+#[test]
 fn the_palette_panel_edits_the_ramp_palette_of_a_model() {
     let mut e = editor_with_model();
     let palette = cs_core::Palette::new(vec![Rgba::rgb(10, 20, 30), Rgba::rgb(40, 50, 60)]);

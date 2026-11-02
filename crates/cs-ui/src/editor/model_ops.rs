@@ -242,6 +242,27 @@ impl ModelArrows {
 const ARROW_MOVE: i32 = 4;
 /// Lo que gira una flecha en el modo Rotate, en décimas de grado.
 const ARROW_ROTATE: i32 = 150;
+/// Las escalas que dejan las flechas, en milésimas (como en el panel: de 1 % a 1000 %).
+const SCALE_MIN: i32 = 10;
+const SCALE_MAX: i32 = 10_000;
+
+/// Un ángulo en décimas de grado llevado a `-1800..1800` (la misma orientación).
+pub fn wrap_angle(tenths: i32) -> i32 {
+    (tenths + 1800).rem_euclid(3600) - 1800
+}
+
+/// Una escala (en milésimas) un paso de flecha más grande (`grow > 0`) o más chica (`grow < 0`):
+/// ±10 %, con su signo y sin salir de [`SCALE_MIN`]..=[`SCALE_MAX`] de magnitud.
+fn scale_step(s: i32, grow: i32) -> i32 {
+    let m = s.abs();
+    let m = match grow.signum() {
+        1 => (m * 11 + 5) / 10,
+        -1 => (m * 10 + 5) / 11,
+        _ => return s,
+    };
+    let sign = if s < 0 { -1 } else { 1 };
+    sign * m.clamp(SCALE_MIN, SCALE_MAX)
+}
 
 impl Editor {
     pub fn model_arrows(&self) -> ModelArrows {
@@ -270,19 +291,14 @@ impl Editor {
                 t.position.y -= dy * ARROW_MOVE;
             }
             ModelArrows::Rotate => {
-                t.rotation.y += dx * ARROW_ROTATE;
-                t.rotation.x += dy * ARROW_ROTATE;
+                t.rotation.y = wrap_angle(t.rotation.y + dx * ARROW_ROTATE);
+                t.rotation.x = wrap_angle(t.rotation.x + dy * ARROW_ROTATE);
             }
             ModelArrows::Scale => {
                 let grow = dx - dy;
-                let step = |s: i32| match grow.signum() {
-                    1 => (s * 11 + 5) / 10,
-                    -1 => ((s * 10 + 5) / 11).max(1),
-                    _ => s,
-                };
-                t.scale.x = step(t.scale.x);
-                t.scale.y = step(t.scale.y);
-                t.scale.z = step(t.scale.z);
+                t.scale.x = scale_step(t.scale.x, grow);
+                t.scale.y = scale_step(t.scale.y, grow);
+                t.scale.z = scale_step(t.scale.z, grow);
             }
         }
         self.set_object(i, obj)

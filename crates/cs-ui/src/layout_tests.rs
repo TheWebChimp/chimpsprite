@@ -4156,10 +4156,15 @@ fn delete_in_the_model_panel_removes_the_object() {
 /// Como [`model_panel_open`] con un modelo, en una ventana alta (que quepa todo el panel), y con
 /// un artboard "Skin" de pixel art más para elegir de textura.
 fn model_panel_tall() -> LayoutHarness {
+    model_panel_in(Vec2::new(1200.0, 1800.0))
+}
+
+/// Como [`model_panel_tall`] en una ventana de `size`.
+fn model_panel_in(size: Vec2) -> LayoutHarness {
     let palettes = PaletteLibrary::new(Box::new(NoPresets));
     let mut app = ChimpApp::with_parts(Default::default(), pixel_ui(), palettes);
     app.new_document();
-    let mut h = LayoutHarness::start_in(app, Vec2::new(1200.0, 1800.0));
+    let mut h = LayoutHarness::start_in(app, size);
     let editor = &mut h.app.doc.editor;
     assert!(editor.add_artboard_with_sprite(
         "Skin".into(),
@@ -4262,4 +4267,81 @@ fn turning_the_outline_on_sets_the_primary_color() {
 fn the_model_panel_has_a_bake_button() {
     let h = model_panel_tall();
     h.button("Bake…");
+}
+
+#[test]
+fn every_model_panel_control_fits_beside_the_scroll_bar() {
+    // Una ventana baja y una alta (cabe todo, sin barra).
+    for size in [Vec2::new(1200.0, 480.0), Vec2::new(1200.0, 1800.0)] {
+        let mut h = model_panel_in(size);
+        h.frame();
+        let flyout = h
+            .ctx
+            .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
+            .expect("the 3D panel is open");
+        // Lo de adentro del marco y, sin la barra del scroll (a la derecha), lo del contenido.
+        let inner = flyout.shrink(crate::dock::FLYOUT_MARGIN as f32);
+        let content = Rect::from_min_max(
+            inner.min,
+            egui::pos2(inner.right() - crate::pixel_ui::SCROLL_BAR, inner.bottom()),
+        );
+        let inside = |r: Rect, area: Rect| r.left() >= area.left() && r.right() <= area.right();
+        let controls: Vec<_> = h
+            .buttons
+            .iter()
+            .chain(h.nodes.iter())
+            .filter(|(_, r)| r.intersects(flyout))
+            .collect();
+        let steppers = controls
+            .iter()
+            .filter(|(l, _)| l == "Increase" || l == "Decrease");
+        assert!(steppers.clone().count() >= 22, "{controls:?}");
+        // Los steppers (de ancho fijo) caben siempre al lado de la barra.
+        for (label, r) in steppers {
+            assert!(inside(*r, content), "{label} {r:?} outside {content:?}");
+        }
+        // Todo, al lado de la barra si la hay (las filas de la lista llenan el ancho).
+        let scrolls = h
+            .drawn("scroll.track.v")
+            .iter()
+            .any(|r| r.intersects(flyout) && r.left() >= content.right() - 1.0);
+        let area = if scrolls { content } else { inner };
+        for (label, r) in controls {
+            assert!(inside(*r, area), "{label} {r:?} outside {area:?}");
+        }
+    }
+}
+
+#[test]
+fn values_outside_the_panel_ranges_are_not_rewritten_by_drawing_the_panel() {
+    let mut h = model_panel_tall();
+    // Lo que deja orbitar mucho, un script o un archivo: fuera de lo que muestran los steppers.
+    let mut model = h.app.doc.editor.model().unwrap().clone();
+    model.camera.yaw = 7200;
+    model.light.yaw = -5000;
+    let t = &mut model.objects[0].transform;
+    t.rotation = cs_core::Vec3i {
+        x: 4000,
+        y: -9000,
+        z: 3610,
+    };
+    t.scale = cs_core::Vec3i {
+        x: 20000,
+        y: -1000,
+        z: 5,
+    };
+    t.position.x = 9999 * cs_core::FIXED;
+    assert!(
+        h.app
+            .doc
+            .editor
+            .set_model_grouped(model.clone(), egui::Id::new("script"))
+    );
+    h.app.doc.editor.end_group();
+    let steps = h.app.doc.editor.history.done_count();
+    for _ in 0..3 {
+        h.frame();
+    }
+    assert_eq!(h.app.doc.editor.model().unwrap(), &model);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
 }
