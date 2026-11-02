@@ -1,6 +1,16 @@
 # Modelos 3D (tipo picoCAD 2), parte 1: núcleo y sprites
 
-Fecha: 2026-11-01 · Estado: diseño aprobado, falta el plan
+Fecha: 2026-11-01 · Estado: implementado
+
+Notas de la implementación (donde difiere del diseño original):
+
+- **Un solo frame en el lienzo:** el artboard 3D tiene 1 frame; la textura animada se aplica al
+  hornear (Bake), no en el lienzo.
+- **Regla de la rampa:** cada paso de luz usa el color vecino más oscuro de la paleta (`darker`);
+  si no hay uno más oscuro, el color se queda igual.
+- **Colores provisionales:** la barra de título de los artboards 3D es verde azulada
+  (`title.bar.model`; sin la pieza, cae a la rosa) y el panel del dock se llama "3D" (sin ícono
+  propio, cae al texto plano).
 
 ## Objetivo
 
