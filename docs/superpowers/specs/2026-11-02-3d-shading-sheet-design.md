@@ -33,6 +33,16 @@ Decisiones tomadas con el usuario:
 - **Clic** en una casilla de sombra: un menú con la paleta del modelo para elegir el color (fija esa
   casilla). **Clic derecho**: la regresa a Auto. Las casillas fijadas llevan una marquita (un punto
   de 1 px en la esquina) para distinguirlas de las automáticas.
+- El menú ofrece solo los colores opacos de la paleta (los mismos de la cuadrícula). Un color
+  fijado que no esté en la paleta se sigue viendo en su casilla (es solo un color).
+- **Entradas huérfanas:** las de la tabla cuyo color ya no está entre los opacos de la paleta (p. ej.
+  después de editarla) siguen contando en el render y el bake, así que se muestran como columnas
+  extra después de las de la paleta, con el color tachado por una diagonal de 1 px (nombres
+  accesibles "Shade orphan {n} color" y "Shade orphan {n} step {k}"). No se editan: el clic derecho
+  en un paso lo quita (y la entrada, si queda vacía); en el color, quita la entrada entera.
+- Sin luz (Light apagada) la cuadrícula se ve pero está deshabilitada.
+- Al abrir un `.chimp`, la tabla se normaliza (ordenada, sin repetidos (gana el último) ni entradas
+  vacías).
 - Botón **Auto**: borra la tabla (todo automático).
 - Cada cambio es un paso de deshacer (`SetModel`); el render se actualiza en vivo.
 

@@ -4530,6 +4530,116 @@ fn auto_empties_the_shading_table() {
     assert_eq!(editor.history.done_count(), steps + 1);
 }
 
+/// Cambia la paleta del modelo (el artboard activo) sin pasar por el historial.
+fn set_model_palette(h: &mut LayoutHarness, colors: Vec<Rgba>) {
+    let editor = &mut h.app.doc.editor;
+    let id = editor.active;
+    editor.document.artboard_mut(id).unwrap().sprite.palette = cs_core::Palette::new(colors);
+    h.frame();
+    h.frame();
+}
+
+#[test]
+fn entries_of_colors_outside_the_palette_show_as_orphan_columns() {
+    let mut h = model_panel_tall();
+    let gone = Rgba::new(1, 2, 3, 255);
+    let mut table = cs_core::ShadingTable::default();
+    table.set(gone, 1, Some(model_palette(&h, 27)));
+    table.set(gone, 2, Some(model_palette(&h, 0)));
+    // Un color de la paleta que deja de ser opaco también queda huérfano.
+    let mut colors = h.app.doc.editor.sprite().palette.colors().to_vec();
+    let faded = colors[9];
+    colors[9].a = 0;
+    table.set(faded, 1, Some(model_palette(&h, 6)));
+    assert!(h.app.doc.editor.set_shading(table));
+    set_model_palette(&mut h, colors);
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
+        .expect("the 3D panel is open");
+    // Ordenadas como la tabla: (1, 2, 3) antes que el 9 de la paleta.
+    let first = node(&h, "Shade orphan 0 color");
+    let second = node(&h, "Shade orphan 1 color");
+    for label in [
+        "Shade orphan 0 step 1",
+        "Shade orphan 0 step 2",
+        "Shade orphan 1 step 1",
+    ] {
+        assert!(flyout.contains_rect(node(&h, label)), "{label}");
+    }
+    assert!(flyout.contains_rect(first) && flyout.contains_rect(second));
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Shade 9 step 1"));
+    // Después de las columnas de la paleta.
+    let n = h.app.doc.editor.sprite().palette.len();
+    let last = node(&h, &format!("Shade {} step 1", n - 1));
+    let orphan = node(&h, "Shade orphan 0 step 1");
+    assert!(
+        orphan.min.y > last.min.y || (orphan.min.y == last.min.y && orphan.min.x > last.min.x),
+        "{orphan:?} after {last:?}"
+    );
+    // Clic derecho en un paso lo quita; en el color, la entrada entera.
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(
+        node(&h, "Shade orphan 0 step 2").center(),
+        PointerButton::Secondary,
+    );
+    let shading = &h.app.doc.editor.model().unwrap().shading;
+    assert_eq!(shading.get(gone, 2), None);
+    assert_eq!(shading.get(gone, 1), Some(model_palette(&h, 27)));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.click(
+        node(&h, "Shade orphan 1 color").center(),
+        PointerButton::Secondary,
+    );
+    let shading = &h.app.doc.editor.model().unwrap().shading;
+    assert_eq!(shading.get(faded, 1), None);
+    assert_eq!(shading.entries.len(), 1);
+    h.click(
+        node(&h, "Shade orphan 0 step 1").center(),
+        PointerButton::Secondary,
+    );
+    let shading = &h.app.doc.editor.model().unwrap().shading;
+    assert_eq!(shading, &cs_core::ShadingTable::default());
+    h.frame();
+    assert!(!h.nodes.iter().any(|(l, _)| l.starts_with("Shade orphan")));
+}
+
+#[test]
+fn the_shade_popup_offers_only_opaque_colors() {
+    let mut h = model_panel_tall();
+    let mut colors = h.app.doc.editor.sprite().palette.colors().to_vec();
+    colors[27].a = 0;
+    set_model_palette(&mut h, colors);
+    h.click(node(&h, "Shade 6 step 1").center(), PointerButton::Primary);
+    assert!(h.nodes.iter().any(|(l, _)| l == "Shade color 26"));
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Shade color 27"));
+}
+
+#[test]
+fn the_shading_grid_is_disabled_with_the_light_off() {
+    let mut h = model_panel_tall();
+    assert!(!h.disabled.iter().any(|l| l == "Shade 6 step 1"));
+    let mut model = h.app.doc.editor.model().unwrap().clone();
+    model.light.enabled = false;
+    assert!(
+        h.app
+            .doc
+            .editor
+            .set_model_grouped(model, egui::Id::new("script"))
+    );
+    h.app.doc.editor.end_group();
+    h.frame();
+    h.frame();
+    assert!(h.disabled.iter().any(|l| l == "Shade 6 step 1"));
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(node(&h, "Shade 6 step 1").center(), PointerButton::Primary);
+    assert!(
+        !h.nodes.iter().any(|(l, _)| l == "Shade color 27"),
+        "no popup"
+    );
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+}
+
 #[test]
 fn every_shade_cell_is_inside_the_flyout() {
     let h = model_panel_tall();

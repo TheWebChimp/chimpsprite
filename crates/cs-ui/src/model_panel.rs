@@ -572,7 +572,10 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     ui.add_enabled_ui(light.enabled, |ui| {
         angles(ui, skin, "light", (&mut light.yaw, &mut light.pitch));
     });
-    let shading = shading(ui, editor, skin);
+    // Sin luz no hay sombras: la cuadrícula se ve pero no se edita.
+    let shading = ui
+        .add_enabled_ui(light.enabled, |ui| shading(ui, editor, skin))
+        .inner;
     let mut outline = next.outline.is_some();
     ui.horizontal(|ui| {
         check(ui, skin, &mut outline, "Outline");
@@ -620,10 +623,21 @@ fn shade_cell(origin: egui::Pos2, col: usize, row: usize) -> (Rect, Rect) {
     (lines, lines.shrink(1.0))
 }
 
+/// Una columna de la cuadrícula Shading: un color opaco de la paleta (con su índice) o una
+/// entrada huérfana de la tabla (con su número entre las huérfanas), la de un color que ya no
+/// está entre los opacos de la paleta.
+#[derive(Clone, Copy)]
+enum ShadeColumn {
+    Palette(usize, Rgba),
+    Orphan(usize, Rgba),
+}
+
 /// "Shading" con Auto (vaciar la tabla) y la cuadrícula: por cada color opaco de la paleta del
 /// modelo una columna (en bloques de [`SHADE_COLUMNS`]) con el color y, debajo, sus pasos 1 y 2
-/// de luz. Un clic en un paso abre las muestras de la paleta (elegir una lo fija); el derecho lo
-/// vuelve automático. Devuelve la tabla nueva si el usuario la cambió.
+/// de luz. Un clic en un paso abre las muestras opacas de la paleta (elegir una lo fija); el
+/// derecho lo vuelve automático. Después, las entradas huérfanas (de colores que ya no están en la
+/// paleta, que igual cuentan en el render), tachadas en diagonal: el clic derecho en un paso lo
+/// quita y en el color quita la entrada. Devuelve la tabla nueva si el usuario la cambió.
 fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingTable> {
     let table = editor.model()?.shading.clone();
     let palette = editor.sprite().palette.colors().to_vec();
@@ -632,6 +646,18 @@ fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingT
         .copied()
         .enumerate()
         .filter(|(_, c)| c.a == 255)
+        .collect();
+    let columns: Vec<ShadeColumn> = opaque
+        .iter()
+        .map(|&(i, c)| ShadeColumn::Palette(i, c))
+        .chain(
+            table
+                .entries
+                .iter()
+                .filter(|e| !opaque.iter().any(|&(_, c)| c == e.color))
+                .enumerate()
+                .map(|(n, e)| ShadeColumn::Orphan(n, e.color)),
+        )
         .collect();
     let mut next = None;
     ui.horizontal(|ui| {
@@ -642,7 +668,7 @@ fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingT
         }
     });
     let enabled = ui.is_enabled();
-    for block in opaque.chunks(SHADE_COLUMNS) {
+    for block in columns.chunks(SHADE_COLUMNS) {
         let size = vec2(
             SHADE_PITCH * block.len() as f32 + 1.0,
             SHADE_PITCH * 3.0 + 1.0,
@@ -650,13 +676,32 @@ fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingT
         let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
         let origin = rect.min.round();
         let painter = ui.painter().clone();
-        for (col, &(i, color)) in block.iter().enumerate() {
+        for (col, &column) in block.iter().enumerate() {
+            let (color, orphan) = match column {
+                ShadeColumn::Palette(_, c) => (c, None),
+                ShadeColumn::Orphan(n, c) => (c, Some(n)),
+            };
             for row in 0..3 {
                 let (lines, cell) = shade_cell(origin, col, row);
                 let shown = cs_3d::shade(&palette, &table, color, row as u32);
                 painter.rect_filled(lines, 0.0, SHADE_GRID);
                 painter.rect_filled(cell, 0.0, color32(shown));
                 if row == 0 {
+                    if let Some(n) = orphan {
+                        orphan_mark(&painter, cell, pin_color(shown));
+                        let id = ui.id().with(("shade_orphan", n));
+                        let response = ui.interact(cell, id, Sense::click());
+                        let label = format!("Shade orphan {n} color");
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label)
+                        });
+                        if response.secondary_clicked() {
+                            let mut t = table.clone();
+                            t.set(color, 1, None);
+                            t.set(color, 2, None);
+                            next = Some(t);
+                        }
+                    }
                     continue;
                 }
                 let step = row;
@@ -668,8 +713,17 @@ fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingT
                     );
                     painter.rect_filled(dot, 0.0, pin_color(shown));
                 }
-                let response = ui.interact(cell, ui.id().with(("shade", i, step)), Sense::click());
-                let label = format!("Shade {i} step {step}");
+                let (id, label) = match column {
+                    ShadeColumn::Palette(i, _) => (
+                        ui.id().with(("shade", i, step)),
+                        format!("Shade {i} step {step}"),
+                    ),
+                    ShadeColumn::Orphan(n, _) => (
+                        ui.id().with(("shade_orphan", n, step)),
+                        format!("Shade orphan {n} step {step}"),
+                    ),
+                };
+                let response = ui.interact(cell, id, Sense::click());
                 response.widget_info(|| {
                     egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label)
                 });
@@ -678,7 +732,11 @@ fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingT
                     t.set(color, step, None);
                     next = Some(t);
                 }
-                if let Some(pick) = swatches(skin, &response, cell, &palette, shown) {
+                // Las huérfanas solo se quitan: su color ya no está en la paleta.
+                if orphan.is_some() {
+                    continue;
+                }
+                if let Some(pick) = swatches(skin, &response, cell, &opaque, shown) {
                     let mut t = table.clone();
                     t.set(color, step, Some(pick));
                     next = Some(t);
@@ -689,18 +747,29 @@ fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingT
     next.filter(|t| *t != table)
 }
 
-/// Las muestras de la paleta en un popup colgado de la casilla `anchor` (lo abre y lo cierra un
-/// clic en `response`), con `current` marcado: el color elegido, si hubo.
+/// La marca de una columna huérfana: una diagonal de 1 px sobre su color, de abajo a la izquierda
+/// a arriba a la derecha.
+fn orphan_mark(painter: &egui::Painter, cell: Rect, color: Color32) {
+    let n = cell.width().round() as i32;
+    for k in 0..n {
+        let at = pos2(cell.left() + k as f32, cell.bottom() - 1.0 - k as f32);
+        painter.rect_filled(Rect::from_min_size(at, Vec2::splat(1.0)), 0.0, color);
+    }
+}
+
+/// Las muestras de `colors` (los opacos de la paleta, con su índice) en un popup colgado de la
+/// casilla `anchor` (lo abre y lo cierra un clic en `response`), con `current` marcado: el color
+/// elegido, si hubo.
 fn swatches(
     skin: Option<&Skin>,
     response: &egui::Response,
     anchor: Rect,
-    palette: &[Rgba],
+    colors: &[(usize, Rgba)],
     current: Rgba,
 ) -> Option<Rgba> {
     let content = |ui: &mut Ui| {
-        let columns = palette.len().clamp(1, SHADE_COLUMNS);
-        let rows = palette.len().div_ceil(SHADE_COLUMNS);
+        let columns = colors.len().clamp(1, SHADE_COLUMNS);
+        let rows = colors.len().div_ceil(SHADE_COLUMNS);
         let size = vec2(
             SHADE_PITCH * columns as f32 + 1.0,
             SHADE_PITCH * rows as f32 + 1.0,
@@ -710,8 +779,8 @@ fn swatches(
         let painter = ui.painter().clone();
         let enabled = ui.is_enabled();
         let mut picked = None;
-        for (j, &c) in palette.iter().enumerate() {
-            let (lines, cell) = shade_cell(origin, j % SHADE_COLUMNS, j / SHADE_COLUMNS);
+        for (slot, &(j, c)) in colors.iter().enumerate() {
+            let (lines, cell) = shade_cell(origin, slot % SHADE_COLUMNS, slot / SHADE_COLUMNS);
             painter.rect_filled(lines, 0.0, SHADE_GRID);
             painter.rect_filled(cell, 0.0, color32(c));
             if c == current {
