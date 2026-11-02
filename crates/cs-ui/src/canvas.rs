@@ -22,6 +22,7 @@ use crate::view::{ViewSettings, ZoomRequest};
 use crate::{kit, theme, widgets};
 
 mod input;
+mod model_edit;
 mod model_input;
 mod rulers;
 
@@ -128,6 +129,10 @@ pub struct CanvasView {
     wheel_rest: f32,
     /// El arrastre en curso sobre el artboard 3D activo (orbitar o mover el objetivo).
     model_drag: Option<model_input::ModelDrag>,
+    /// Los cuadrantes (Front, Persp, Top, Side) del artboard 3D en modo Edit, en pantalla.
+    edit_quads: Option<[Rect; 4]>,
+    /// La perspectiva del modo Edit: la clave de lo que muestra y su textura.
+    edit_persp: Option<(u64, TextureHandle)>,
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
     pub background: Color32,
     /// Las reglas del skin con Pixel UI (`None`: las de siempre); lo pone la app en cada frame.
@@ -279,6 +284,8 @@ impl Default for CanvasView {
             cards: HashMap::new(),
             cards_revision: None,
             model_drag: None,
+            edit_quads: None,
+            edit_persp: None,
         }
     }
 }
@@ -813,6 +820,9 @@ impl CanvasView {
         let ppp = ctx.pixels_per_point();
         self.draw_tiled(&painter, rect, editor, document, checker, ppp);
         self.advance_line = None;
+        if !editor.model_edit_on() {
+            self.edit_quads = None;
+        }
         for artboard in shown_artboards(document, editor) {
             // Alineada a píxeles de pantalla: el damero y la textura caen justo en píxeles y la
             // ventana de Pixel UI se arma alrededor de este mismo rect (blanco de 1 px exacto).
@@ -850,6 +860,11 @@ impl CanvasView {
             }
             if let Some((w, layout)) = &window {
                 painter.extend(w.frame_shapes(layout, active, ppp));
+            }
+            // El modo Edit del modelo activo: cuatro vistas en lugar del damero y la textura.
+            if active && editor.model_edit_on() {
+                self.draw_model_edit(&painter, screen, editor, document, &ctx);
+                continue;
             }
             let ((x0, y0), (x1, y1)) = artboard.rect();
             let uv = checker_uv((x1 - x0) as u32, (y1 - y0) as u32);

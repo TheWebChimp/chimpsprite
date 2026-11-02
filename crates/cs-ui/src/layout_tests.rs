@@ -3952,6 +3952,47 @@ fn with_a_model_at_800() -> LayoutHarness {
     h
 }
 
+fn tap_key(h: &mut LayoutHarness, key: egui::Key) {
+    for pressed in [true, false] {
+        h.frame_with(vec![Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+    }
+    h.frame();
+}
+
+#[test]
+fn tab_on_a_model_enters_edit_mode_with_four_views() {
+    let mut h = with_a_model_at_800();
+    let pixels = artboard_pixels(&h);
+    let timeline = h.app.view.timeline;
+    tap_key(&mut h, egui::Key::Tab);
+    assert!(h.app.doc.editor.model_edit_on());
+    assert_eq!(
+        h.app.view.timeline, timeline,
+        "Tab did not toggle the timeline"
+    );
+    let quads = h
+        .app
+        .doc
+        .canvas
+        .model_edit_quadrants()
+        .expect("the quadrants");
+    assert_eq!(quads[0].min, pixels.min);
+    assert_eq!(quads[3].max, pixels.max);
+    assert_eq!(quads[0].width(), pixels.width() / 2.0);
+    for label in ["Front", "Top", "Side", "Persp"] {
+        assert!(h.texts.iter().any(|(t, _)| t == label), "{label}");
+    }
+    tap_key(&mut h, egui::Key::Tab);
+    assert!(!h.app.doc.editor.model_edit_on());
+    assert!(h.app.doc.canvas.model_edit_quadrants().is_none());
+}
+
 fn camera(h: &LayoutHarness) -> cs_core::Camera3D {
     h.app.doc.editor.model().expect("a model").camera
 }

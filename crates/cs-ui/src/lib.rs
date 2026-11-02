@@ -203,6 +203,8 @@ pub struct ChimpApp {
     /// `paste_timeline`, si no los píxeles.
     timeline_clipboard: Option<timeline_clip::TimelineClip>,
     paste_timeline: bool,
+    /// Soltar el foco de egui al empezar el siguiente frame (tras un Tab del modo Edit).
+    drop_focus: bool,
     palettes: palette_library::PaletteLibrary,
     presets_window: Option<palette_ui::PresetsWindow>,
     /// El panel Lospec del dock (mientras está abierto).
@@ -339,6 +341,7 @@ impl ChimpApp {
             clipboard: None,
             timeline_clipboard: None,
             paste_timeline: false,
+            drop_focus: false,
             palettes,
             presets_window: None,
             lospec_dock: None,
@@ -1685,6 +1688,11 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
     // Con un modelo 3D activo, G, R y S eligen qué hacen las flechas y las flechas actúan sobre
     // el objeto elegido (no cambian de frame ni de capa).
     if editor.is_model() {
+        // Tab entra y sale del modo Edit (en un modelo no muestra la línea de tiempo).
+        if key == Key::Tab && !shift {
+            editor.toggle_model_edit();
+            return true;
+        }
         let arrow = match key {
             Key::ArrowLeft => Some((-1, 0)),
             Key::ArrowRight => Some((1, 0)),
