@@ -312,6 +312,235 @@ impl Selection {
     }
 }
 
+/// Qué tan cerca (en puntos de pantalla) hay que hacer clic de un vértice, una arista o el punto
+/// de una cara.
+pub const PICK_RADIUS: f32 = 4.0;
+
+/// Cómo se ve el mundo en el cuadrante de una vista: `center` cae en `origin` (pantalla, y hacia
+/// abajo) y cada 1/16 de unidad mide `scale` puntos.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ViewMap {
+    pub view: OrthoView,
+    pub center: P3,
+    pub scale: f32,
+    pub origin: (f32, f32),
+}
+
+impl ViewMap {
+    pub fn to_screen(&self, p: P3) -> (f32, f32) {
+        let (u, v) = self.view.plane(p);
+        let (cu, cv) = self.view.plane(self.center);
+        (
+            self.origin.0 + (u - cu) * self.scale,
+            self.origin.1 - (v - cv) * self.scale,
+        )
+    }
+
+    /// El punto del plano que se ve en `s`.
+    pub fn to_plane(&self, s: (f32, f32)) -> (f32, f32) {
+        let (cu, cv) = self.view.plane(self.center);
+        (
+            cu + (s.0 - self.origin.0) / self.scale,
+            cv - (s.1 - self.origin.1) / self.scale,
+        )
+    }
+
+    /// Un arrastre de `d` puntos en pantalla, como desplazamiento del mundo.
+    pub fn drag_delta(&self, d: (f32, f32)) -> P3 {
+        self.view.world_delta((d.0 / self.scale, -d.1 / self.scale))
+    }
+}
+
+fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
+    ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
+}
+
+fn dist_to_segment(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let len2 = dx * dx + dy * dy;
+    let t = if len2 == 0.0 {
+        0.0
+    } else {
+        (((p.0 - a.0) * dx + (p.1 - a.1) * dy) / len2).clamp(0.0, 1.0)
+    };
+    dist(p, (a.0 + t * dx, a.1 + t * dy))
+}
+
+/// Si `p` cae dentro del polígono (par-impar; sirve en los dos sentidos de giro).
+fn inside(poly: &[(f32, f32)], p: (f32, f32)) -> bool {
+    let mut odd = false;
+    for i in 0..poly.len() {
+        let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+        if (a.1 > p.1) != (b.1 > p.1) && p.0 < a.0 + (p.1 - a.1) / (b.1 - a.1) * (b.0 - a.0) {
+            odd = !odd;
+        }
+    }
+    odd
+}
+
+/// El candidato `(item, distancia, profundidad)` más cerca del puntero; a la misma distancia
+/// (redondeada a 1 punto), el más cercano a la vista.
+fn best(cands: Vec<(Item, f32, f32)>) -> Option<Item> {
+    let mut out: Option<(Item, f32, f32)> = None;
+    for (item, d, depth) in cands {
+        let d = d.round();
+        let better = match out {
+            None => true,
+            Some((_, bd, bdepth)) => d < bd || (d == bd && depth > bdepth),
+        };
+        if better {
+            out = Some((item, d, depth));
+        }
+    }
+    out.map(|(item, _, _)| item)
+}
+
+/// Las caras de `obj` con al menos 3 vértices válidos: índice y vértices.
+fn faces_of(obj: &Object3D) -> impl Iterator<Item = (usize, Vec<u32>)> + '_ {
+    let n = obj.mesh.vertices.len() as u32;
+    obj.mesh.faces.iter().enumerate().filter_map(move |(i, f)| {
+        let vs: Vec<u32> = f.verts.iter().copied().filter(|&v| v < n).collect();
+        (vs.len() >= 3).then_some((i, vs))
+    })
+}
+
+/// Lo que hay bajo `at` (pantalla) en la vista de `map`, según el modo: un vértice o una
+/// arista a [`PICK_RADIUS`] o menos; una cara si `at` cae dentro (o cerca de su punto central);
+/// un objeto si `at` cae dentro de alguna de sus caras.
+pub fn pick(model: &Model3D, map: &ViewMap, mode: SelectMode, at: (f32, f32)) -> Option<Item> {
+    let mut cands = Vec::new();
+    for (o, obj) in model.objects.iter().enumerate() {
+        let pts = world_points(obj);
+        let scr: Vec<(f32, f32)> = pts.iter().map(|&p| map.to_screen(p)).collect();
+        let depth = |i: u32| map.view.depth(pts[i as usize]);
+        match mode {
+            SelectMode::Vertex => {
+                for (i, &s) in scr.iter().enumerate() {
+                    let d = dist(s, at);
+                    if d <= PICK_RADIUS {
+                        cands.push((Item::Vertex(o, i as u32), d, depth(i as u32)));
+                    }
+                }
+            }
+            SelectMode::Edge => {
+                for (a, b) in mesh_edges(&obj.mesh) {
+                    let d = dist_to_segment(at, scr[a as usize], scr[b as usize]);
+                    if d <= PICK_RADIUS {
+                        cands.push((Item::Edge(o, a, b), d, (depth(a) + depth(b)) / 2.0));
+                    }
+                }
+            }
+            SelectMode::Face | SelectMode::Object => {
+                for (fi, vs) in faces_of(obj) {
+                    let poly: Vec<(f32, f32)> = vs.iter().map(|&v| scr[v as usize]).collect();
+                    let k = poly.len() as f32;
+                    let c = (
+                        poly.iter().map(|p| p.0).sum::<f32>() / k,
+                        poly.iter().map(|p| p.1).sum::<f32>() / k,
+                    );
+                    let cd = vs.iter().map(|&v| depth(v)).sum::<f32>() / k;
+                    let d = if inside(&poly, at) {
+                        0.0
+                    } else if mode == SelectMode::Face && dist(c, at) <= PICK_RADIUS {
+                        dist(c, at)
+                    } else {
+                        continue;
+                    };
+                    let item = match mode {
+                        SelectMode::Face => Item::Face(o, fi),
+                        _ => Item::Object(o),
+                    };
+                    cands.push((item, d, cd));
+                }
+            }
+        }
+    }
+    best(cands)
+}
+
+/// Lo que cae en la caja de pantalla entre `a` y `b`: vértices dentro; aristas y caras con todos
+/// sus vértices dentro; objetos con algún vértice dentro.
+pub fn box_select(
+    model: &Model3D,
+    map: &ViewMap,
+    mode: SelectMode,
+    a: (f32, f32),
+    b: (f32, f32),
+) -> BTreeSet<Item> {
+    let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
+    let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
+    let mut out = BTreeSet::new();
+    for (o, obj) in model.objects.iter().enumerate() {
+        let inn: Vec<bool> = world_points(obj)
+            .iter()
+            .map(|&p| {
+                let s = map.to_screen(p);
+                s.0 >= x0 && s.0 <= x1 && s.1 >= y0 && s.1 <= y1
+            })
+            .collect();
+        let is_in = |v: u32| inn[v as usize];
+        match mode {
+            SelectMode::Object => {
+                if inn.iter().any(|&i| i) {
+                    out.insert(Item::Object(o));
+                }
+            }
+            SelectMode::Vertex => out.extend(
+                (0..inn.len() as u32)
+                    .filter(|&v| is_in(v))
+                    .map(|v| Item::Vertex(o, v)),
+            ),
+            SelectMode::Edge => out.extend(
+                mesh_edges(&obj.mesh)
+                    .into_iter()
+                    .filter(|&(a, b)| is_in(a) && is_in(b))
+                    .map(|(a, b)| Item::Edge(o, a, b)),
+            ),
+            SelectMode::Face => out.extend(
+                faces_of(obj)
+                    .filter(|(_, vs)| vs.iter().all(|&v| is_in(v)))
+                    .map(|(i, _)| Item::Face(o, i)),
+            ),
+        }
+    }
+    out
+}
+
+fn bounds_of(points: impl Iterator<Item = P3>) -> Option<(P3, P3)> {
+    let mut out: Option<(P3, P3)> = None;
+    for p in points {
+        let (lo, hi) = out.get_or_insert((p, p));
+        for i in 0..3 {
+            lo[i] = lo[i].min(p[i]);
+            hi[i] = hi[i].max(p[i]);
+        }
+    }
+    out
+}
+
+/// La caja (en el mundo) de los vértices involucrados en la selección.
+pub fn bounds(model: &Model3D, sel: &Selection) -> Option<(P3, P3)> {
+    let verts = sel.vertices(model);
+    bounds_of(verts.iter().flat_map(|(&o, vs)| {
+        let obj = &model.objects[o];
+        vs.iter()
+            .map(move |&v| to_world(&obj.transform, p3(obj.mesh.vertices[v as usize])))
+    }))
+}
+
+/// La caja (en el mundo) de todo el modelo.
+pub fn model_bounds(model: &Model3D) -> Option<(P3, P3)> {
+    bounds_of(model.objects.iter().flat_map(world_points))
+}
+
+pub fn center((lo, hi): (P3, P3)) -> P3 {
+    [
+        (lo[0] + hi[0]) / 2.0,
+        (lo[1] + hi[1]) / 2.0,
+        (lo[2] + hi[2]) / 2.0,
+    ]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,5 +670,92 @@ mod tests {
         assert_eq!(s.first_object(), Some(0));
         s.toggle(Item::Vertex(0, 1));
         assert!(s.is_empty());
+    }
+
+    fn front_map() -> ViewMap {
+        ViewMap {
+            view: OrthoView::Front,
+            center: [0.0; 3],
+            scale: 2.0,
+            origin: (100.0, 100.0),
+        }
+    }
+
+    #[test]
+    fn view_map_ida_y_vuelta() {
+        let m = front_map();
+        assert_eq!(m.to_screen([16.0, 16.0, 0.0]), (132.0, 68.0));
+        assert_eq!(m.to_plane((132.0, 68.0)), (16.0, 16.0));
+        assert_eq!(m.drag_delta((4.0, -2.0)), [2.0, 1.0, 0.0]);
+    }
+
+    #[test]
+    fn pick_de_vertice_gana_el_mas_cercano_a_la_vista() {
+        // Los vértices 3 (x+, y+, z−) y 7 (x+, y+, z+) caen en el mismo punto de Front.
+        let m = one_cube();
+        let map = front_map();
+        assert_eq!(
+            pick(&m, &map, SelectMode::Vertex, (131.0, 69.0)),
+            Some(Item::Vertex(0, 7))
+        );
+        assert_eq!(pick(&m, &map, SelectMode::Vertex, (120.0, 69.0)), None);
+    }
+
+    #[test]
+    fn pick_de_arista_cara_y_objeto() {
+        let m = one_cube();
+        let map = front_map();
+        // El lado derecho (x = 16) a media altura: la arista de enfrente, 5 (x+, z+) – 7.
+        assert_eq!(
+            pick(&m, &map, SelectMode::Edge, (132.0, 100.0)),
+            Some(Item::Edge(0, 5, 7))
+        );
+        // El centro: la cara de enfrente (la de z+).
+        let Some(Item::Face(0, f)) = pick(&m, &map, SelectMode::Face, (100.0, 100.0)) else {
+            panic!("no face");
+        };
+        let mesh = &m.objects[0].mesh;
+        assert!(
+            mesh.faces[f]
+                .verts
+                .iter()
+                .all(|&v| mesh.vertices[v as usize].z > 0)
+        );
+        // Dos cubos alineados: gana el de enfrente.
+        let mut two = one_cube();
+        two.objects.insert(0, cube_at(Vec3i { x: 0, y: 0, z: -64 }));
+        assert_eq!(
+            pick(&two, &map, SelectMode::Object, (100.0, 100.0)),
+            Some(Item::Object(1))
+        );
+        assert_eq!(pick(&two, &map, SelectMode::Object, (0.0, 0.0)), None);
+    }
+
+    #[test]
+    fn caja_de_seleccion_por_modo() {
+        let m = one_cube();
+        let map = front_map();
+        let corner = box_select(&m, &map, SelectMode::Vertex, (120.0, 60.0), (140.0, 80.0));
+        assert_eq!(corner, [Item::Vertex(0, 3), Item::Vertex(0, 7)].into());
+        let all = box_select(&m, &map, SelectMode::Face, (0.0, 0.0), (200.0, 200.0));
+        assert_eq!(all.len(), 6);
+        let obj = box_select(&m, &map, SelectMode::Object, (140.0, 80.0), (120.0, 60.0));
+        assert_eq!(obj, [Item::Object(0)].into());
+        let edge = box_select(&m, &map, SelectMode::Edge, (120.0, 60.0), (140.0, 80.0));
+        assert_eq!(edge, [Item::Edge(0, 3, 7)].into(), "the edge seen end-on");
+    }
+
+    #[test]
+    fn limites_de_la_seleccion() {
+        let m = one_cube();
+        let s = Selection {
+            mode: SelectMode::Vertex,
+            items: [Item::Vertex(0, 0), Item::Vertex(0, 7)].into(),
+        };
+        let b = bounds(&m, &s).unwrap();
+        assert_eq!(b, ([-16.0; 3], [16.0; 3]));
+        assert_eq!(center(b), [0.0; 3]);
+        assert_eq!(bounds(&m, &Selection::default()), None);
+        assert_eq!(model_bounds(&m), Some(([-16.0; 3], [16.0; 3])));
     }
 }
