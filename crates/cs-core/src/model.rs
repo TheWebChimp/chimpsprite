@@ -186,6 +186,22 @@ impl ShadingTable {
             (Err(_), None) => {}
         }
     }
+
+    /// Deja la tabla como la esperan [`get`](Self::get) y [`set`](Self::set) (un archivo editado
+    /// a mano podría no estarlo): ordenada por (r, g, b, a), sin repetidos (gana el último) ni
+    /// entradas vacías.
+    pub fn normalize(&mut self) {
+        self.entries.sort_by_key(|e| Self::key(e.color));
+        // `dedup_by` pasa (la de después, la que queda): la que queda toma los pasos de la última.
+        self.entries.dedup_by(|later, kept| {
+            let same = Self::key(later.color) == Self::key(kept.color);
+            if same {
+                kept.steps = later.steps;
+            }
+            same
+        });
+        self.entries.retain(|e| e.steps.iter().any(Option::is_some));
+    }
 }
 
 /// Un modelo 3D: objetos de malla, la textura (otro artboard), la cámara y la luz.
@@ -396,6 +412,30 @@ mod tests {
         // Borrar algo que no existe no crea entradas.
         t.set(c(7), 1, None);
         assert!(t.entries.is_empty());
+    }
+
+    #[test]
+    fn normalize_ordena_quita_repetidos_y_vacias() {
+        let c = |v| Rgba::new(v, v, v, 255);
+        let e = |color, a, b| ShadeEntry {
+            color,
+            steps: [a, b],
+        };
+        let mut t = ShadingTable {
+            entries: vec![
+                e(c(200), Some(c(1)), None),
+                e(c(50), None, None),
+                e(c(100), None, Some(c(2))),
+                e(c(200), None, Some(c(3))),
+            ],
+        };
+        t.normalize();
+        assert_eq!(
+            t.entries,
+            vec![e(c(100), None, Some(c(2))), e(c(200), None, Some(c(3)))]
+        );
+        assert_eq!(t.get(c(200), 2), Some(c(3)));
+        assert_eq!(t.get(c(100), 2), Some(c(2)));
     }
 
     #[test]

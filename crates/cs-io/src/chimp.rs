@@ -277,7 +277,12 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
             ));
         }
         // Un modelo editado a mano que no sirve (caras rotas, varias capas o frames) se quita.
-        let model = entry.model.filter(|m| match m.check(&sprite) {
+        // La tabla de shading se ordena y limpia (sin aviso: no cambia cómo se ve).
+        let mut model = entry.model;
+        if let Some(m) = &mut model {
+            m.shading.normalize();
+        }
+        let model = model.filter(|m| match m.check(&sprite) {
             Ok(()) => true,
             Err(e) => {
                 report.warn(format!("{}: the 3D model was dropped: {e}", entry.name));
@@ -596,16 +601,22 @@ mod tests {
         let (model, texture, cmd) =
             cs_commands::model::new_model_artboard(&doc, "Cube", (24, 24), (10, 0));
         cmd.apply(&mut doc).unwrap();
-        doc.artboard_mut(model)
-            .unwrap()
-            .model
-            .as_mut()
-            .unwrap()
-            .outline = Some(Rgba::rgb(1, 2, 3));
+        let m = doc.artboard_mut(model).unwrap().model.as_mut().unwrap();
+        m.outline = Some(Rgba::rgb(1, 2, 3));
+        m.shading
+            .set(Rgba::rgb(200, 100, 50), 2, Some(Rgba::rgb(9, 8, 7)));
         let (back, report) = read(&write(&doc).unwrap()).unwrap();
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         let a = back.artboard(model).unwrap();
         assert_eq!(a.model, doc.artboard(model).unwrap().model);
+        assert_eq!(
+            a.model
+                .as_ref()
+                .unwrap()
+                .shading
+                .get(Rgba::rgb(200, 100, 50), 2),
+            Some(Rgba::rgb(9, 8, 7))
+        );
         assert_eq!(a.model.as_ref().unwrap().texture, Some(texture));
         assert!(back.artboard(texture).unwrap().model.is_none());
         assert!(back.artboard(ArtboardId(1)).unwrap().model.is_none());
@@ -620,6 +631,45 @@ mod tests {
         let stored = cs_render::render_frame(&a.sprite, 0);
         assert!(stored.iter().any(|c| c.a > 0), "the stored render is empty");
         assert_eq!(stored, expected);
+    }
+
+    #[test]
+    fn a_hand_edited_shading_table_loads_normalized() {
+        let mut doc = Document::with_sprite("one", Sprite::new(4, 4, ColorMode::Rgba));
+        let (model, _, cmd) =
+            cs_commands::model::new_model_artboard(&doc, "Cube", (24, 24), (10, 0));
+        cmd.apply(&mut doc).unwrap();
+        let c = |v| Rgba::rgb(v, v, v);
+        let e = |color, a, b| ShadeEntry {
+            color,
+            steps: [a, b],
+        };
+        // Desordenada, con un repetido y una vacía (lo que dejaría un archivo editado a mano).
+        doc.artboard_mut(model)
+            .unwrap()
+            .model
+            .as_mut()
+            .unwrap()
+            .shading = ShadingTable {
+            entries: vec![
+                e(c(200), Some(c(1)), None),
+                e(c(50), None, None),
+                e(c(100), None, Some(c(2))),
+                e(c(200), None, Some(c(3))),
+            ],
+        };
+        let (back, _) = read(&write(&doc).unwrap()).unwrap();
+        let shading = &back
+            .artboard(model)
+            .unwrap()
+            .model
+            .as_ref()
+            .unwrap()
+            .shading;
+        assert_eq!(
+            shading.entries,
+            vec![e(c(100), None, Some(c(2))), e(c(200), None, Some(c(3)))]
+        );
     }
 
     #[test]
