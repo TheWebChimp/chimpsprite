@@ -3993,6 +3993,115 @@ fn tab_on_a_model_enters_edit_mode_with_four_views() {
     assert!(h.app.doc.canvas.model_edit_quadrants().is_none());
 }
 
+fn editing_model() -> LayoutHarness {
+    let mut h = with_a_model_at_800();
+    tap_key(&mut h, egui::Key::Tab);
+    assert!(h.app.doc.editor.model_edit_on());
+    h
+}
+
+fn front_screen(h: &LayoutHarness, w: cs_3d::P3) -> Pos2 {
+    let map = h
+        .app
+        .doc
+        .canvas
+        .edit_view_map(&h.app.doc.editor, cs_3d::OrthoView::Front)
+        .expect("front view");
+    let (x, y) = map.to_screen(w);
+    Pos2::new(x, y)
+}
+
+fn drag_with(h: &mut LayoutHarness, from: Pos2, to: Pos2, modifiers: egui::Modifiers) {
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers,
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, true)]);
+    h.frame_with(vec![Event::PointerMoved(from.lerp(to, 0.5))]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.frame_with(vec![button(to, false)]);
+    h.frame();
+}
+
+#[test]
+fn clicking_a_vertex_in_front_selects_it_and_shift_click_toggles() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    let corner = front_screen(&h, [16.0, 16.0, 16.0]);
+    h.click(corner, PointerButton::Primary);
+    assert_eq!(
+        h.app.doc.editor.model_edit().selection.items,
+        [cs_3d::Item::Vertex(0, 7)].into()
+    );
+    let other = front_screen(&h, [-16.0, -16.0, 16.0]);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)]);
+    drag_with(&mut h, other, other, egui::Modifiers::SHIFT);
+    assert_eq!(h.app.doc.editor.model_edit().selection.items.len(), 2);
+}
+
+#[test]
+fn dragging_a_vertex_in_front_moves_it_in_one_undo_step() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    let from = front_screen(&h, [16.0, 16.0, 16.0]);
+    let to = front_screen(&h, [24.0, 16.0, 16.0]);
+    drag_with(&mut h, from, to, Default::default());
+    let v = h.app.doc.editor.model().unwrap().objects[0].mesh.vertices[7];
+    assert_eq!((v.x, v.y, v.z), (24, 16, 16));
+    h.app.doc.editor.undo();
+    let v = h.app.doc.editor.model().unwrap().objects[0].mesh.vertices[7];
+    assert_eq!(v.x, 16);
+}
+
+#[test]
+fn a_box_in_an_empty_spot_selects_the_vertices_inside() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    let corner = front_screen(&h, [16.0, 16.0, 16.0]);
+    drag_with(
+        &mut h,
+        corner + vec2(8.0, -8.0),
+        corner + vec2(-8.0, 8.0),
+        Default::default(),
+    );
+    assert_eq!(
+        h.app.doc.editor.model_edit().selection.items,
+        [cs_3d::Item::Vertex(0, 3), cs_3d::Item::Vertex(0, 7)].into()
+    );
+}
+
+#[test]
+fn right_drag_pans_the_ortho_views_and_ctrl_wheel_zooms_them() {
+    let mut h = editing_model();
+    let center = h.app.doc.editor.model_edit().center;
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    let at = quads[0].center();
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Secondary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    h.frame_with(vec![button(at, true)]);
+    h.frame_with(vec![Event::PointerMoved(at + vec2(20.0, 0.0))]);
+    h.frame_with(vec![button(at + vec2(20.0, 0.0), false)]);
+    h.frame();
+    assert!(h.app.doc.editor.model_edit().center[0] < center[0]);
+    let zoom = h.app.doc.editor.model_edit().zoom;
+    h.frame_with(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: vec2(0.0, 1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::COMMAND,
+    }]);
+    h.frame();
+    assert!(h.app.doc.editor.model_edit().zoom > zoom);
+}
+
 fn camera(h: &LayoutHarness) -> cs_core::Camera3D {
     h.app.doc.editor.model().expect("a model").camera
 }

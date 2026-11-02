@@ -10,6 +10,7 @@ use cs_core::Document;
 use eframe::egui::{pos2, vec2};
 
 use super::*;
+use crate::editor::{EditOp, KeyOp};
 
 pub(crate) const FRONT: usize = 0;
 pub(crate) const PERSP: usize = 1;
@@ -45,7 +46,6 @@ pub(crate) fn quadrants(screen: Rect, (w, h): (u32, u32)) -> [Rect; 4] {
     ]
 }
 
-#[allow(dead_code)] // lo usan los gestos del modo Edit
 pub(crate) fn quadrant_view(i: usize) -> Option<OrthoView> {
     match i {
         FRONT => Some(OrthoView::Front),
@@ -68,7 +68,192 @@ fn pos(p: (f32, f32)) -> Pos2 {
 }
 
 impl CanvasView {
-    #[allow(dead_code)] // lo usan los gestos del modo Edit
+    fn quadrant_at(&self, p: Pos2) -> Option<usize> {
+        self.edit_quads?.iter().position(|q| q.contains(p))
+    }
+
+    /// Una prensa en el área del modelo en el modo Edit. En la perspectiva sigue lo de siempre
+    /// (`model_press` con el punto en pixeles del artboard entero). `true` si la prensa fue del
+    /// modo Edit.
+    pub(super) fn model_edit_press(
+        &mut self,
+        editor: &mut Editor,
+        p: Pos2,
+        secondary: bool,
+        middle: bool,
+        modifiers: egui::Modifiers,
+    ) -> bool {
+        let Some(i) = self.quadrant_at(p) else {
+            return false;
+        };
+        let Some(view) = quadrant_view(i) else {
+            self.persp_press(editor, i, p, secondary, modifiers);
+            return true;
+        };
+        let Some(map) = self.edit_view_map(editor, view) else {
+            return false;
+        };
+        let at = (p.x, p.y);
+        let keyboard = matches!(
+            editor.model_edit().op,
+            Some(EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. })
+        );
+        if secondary || middle {
+            if keyboard {
+                editor.cancel_model_op();
+            } else {
+                editor.start_model_op(EditOp::Pan {
+                    map,
+                    from: at,
+                    center: editor.model_edit().center,
+                });
+            }
+            return true;
+        }
+        if keyboard {
+            editor.finish_model_op();
+            return true;
+        }
+        let Some(model) = editor.model().cloned() else {
+            return false;
+        };
+        let sel = editor.model_edit().selection.clone();
+        if !modifiers.shift
+            && let Some(b) = cs_3d::bounds(&model, &sel)
+            && !(sel.mode == SelectMode::Vertex && sel.items.len() == 1)
+            && let Some(handle) = Handle::ALL
+                .into_iter()
+                .find(|&h| (handle_pos(&map, b, h) - p).length() <= HANDLE_PX)
+        {
+            editor.start_model_op(EditOp::Handle {
+                map,
+                handle,
+                bounds: b,
+            });
+            return true;
+        }
+        match cs_3d::pick(&model, &map, sel.mode, at) {
+            Some(item) if modifiers.shift => {
+                let mut next = sel;
+                next.toggle(item);
+                editor.set_model_selection(next);
+            }
+            Some(item) => {
+                if !sel.items.contains(&item) {
+                    editor.set_model_selection(cs_3d::Selection {
+                        mode: sel.mode,
+                        items: [item].into(),
+                    });
+                }
+                let now = editor.model_edit().selection.clone();
+                let grab = match item {
+                    Item::Vertex(o, v) => cs_3d::world_points(&model.objects[o])[v as usize],
+                    _ => cs_3d::bounds(&model, &now).map_or([0.0; 3], cs_3d::center),
+                };
+                editor.start_model_op(EditOp::Move {
+                    map,
+                    from: at,
+                    grab,
+                    keyboard: false,
+                });
+            }
+            None => editor.start_model_op(EditOp::Box {
+                map,
+                from: at,
+                to: at,
+                add: modifiers.shift,
+            }),
+        }
+        true
+    }
+
+    /// La prensa en la perspectiva: como fuera del modo Edit, con el punto escalado del render
+    /// del cuadrante al artboard entero.
+    fn persp_press(
+        &mut self,
+        editor: &mut Editor,
+        i: usize,
+        p: Pos2,
+        secondary: bool,
+        modifiers: egui::Modifiers,
+    ) {
+        let Some(q) = self.edit_quads.map(|qs| qs[i]) else {
+            return;
+        };
+        let (w, h) = (editor.sprite().width as f32, editor.sprite().height as f32);
+        let pw = (q.width() / self.scale().x).round().max(1.0);
+        let ph = (q.height() / self.scale().y).round().max(1.0);
+        let local = (
+            ((p.x - q.left()) / self.scale().x * w / pw).floor() as i32,
+            ((p.y - q.top()) / self.scale().y * h / ph).floor() as i32,
+        );
+        self.model_press_at(editor, p, local, secondary, modifiers, h / ph);
+    }
+
+    /// Cada frame: el gesto sigue al puntero; al soltar (si no es de teclado) termina. Un G o S
+    /// pedido por el teclado empieza aquí, en la vista bajo el puntero.
+    pub(super) fn model_edit_input(
+        &mut self,
+        editor: &mut Editor,
+        pointer: Option<Pos2>,
+        down: bool,
+        modifiers: egui::Modifiers,
+    ) {
+        if let Some(req) = editor.model_edit.key_request.take()
+            && let Some(p) = pointer
+            && let Some(view) = self.quadrant_at(p).and_then(quadrant_view)
+            && let Some(map) = self.edit_view_map(editor, view)
+            && let Some(b) = editor
+                .model()
+                .and_then(|m| cs_3d::bounds(m, &editor.model_edit().selection))
+        {
+            let c = cs_3d::center(b);
+            let op = match req {
+                KeyOp::Grab => EditOp::Move {
+                    map,
+                    from: (p.x, p.y),
+                    grab: c,
+                    keyboard: true,
+                },
+                KeyOp::Scale => {
+                    let s = map.to_screen(c);
+                    EditOp::Scale {
+                        map,
+                        center: c,
+                        from_dist: (pos2(s.0, s.1) - p).length().max(1.0),
+                    }
+                }
+            };
+            editor.start_model_op(op);
+        }
+        let Some(op) = editor.model_edit().op else {
+            return;
+        };
+        if let Some(p) = pointer {
+            editor.update_model_op((p.x, p.y), modifiers.command, modifiers.shift);
+        }
+        let keyboard = matches!(
+            op,
+            EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. }
+        );
+        if !down && !keyboard {
+            editor.finish_model_op();
+        }
+    }
+
+    /// Ctrl + rueda sobre una vista orto: zoom en las tres. `true` si fue de una vista orto.
+    pub(super) fn model_edit_wheel(&mut self, editor: &mut Editor, p: Pos2, steps: i32) -> bool {
+        let Some(view) = self.quadrant_at(p).and_then(quadrant_view) else {
+            return false;
+        };
+        let Some(map) = self.edit_view_map(editor, view) else {
+            return false;
+        };
+        editor.zoom_model_views(&map, (p.x, p.y), steps);
+        true
+    }
+
+    #[cfg(test)]
     pub(crate) fn model_edit_quadrants(&self) -> Option<[Rect; 4]> {
         self.edit_quads
     }
@@ -189,7 +374,7 @@ impl CanvasView {
 /// La caja de selección en curso en la vista `view` (en pantalla).
 fn box_rect(editor: &Editor, view: OrthoView) -> Option<Rect> {
     match editor.model_edit().op {
-        Some(crate::editor::EditOp::Box { map, from, to, .. }) if map.view == view => {
+        Some(EditOp::Box { map, from, to, .. }) if map.view == view => {
             Some(Rect::from_two_pos(pos(from), pos(to)))
         }
         _ => None,

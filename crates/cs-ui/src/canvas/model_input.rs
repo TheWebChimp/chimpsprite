@@ -26,6 +26,9 @@ pub(super) struct ModelDrag {
     orbit: bool,
     from: Pos2,
     camera: Camera3D,
+    /// Pixeles del artboard entero por pixel del render (1 fuera del modo Edit; en la perspectiva
+    /// del modo Edit, el render es más chico que el artboard).
+    factor: f32,
 }
 
 /// El grupo de undo de los arrastres sobre el modelo.
@@ -65,6 +68,22 @@ impl CanvasView {
         secondary: bool,
         modifiers: egui::Modifiers,
     ) {
+        let local = editor.to_local(self.to_world(rect, p));
+        self.model_press_at(editor, p, local, secondary, modifiers, 1.0);
+    }
+
+    /// Lo mismo con el punto ya en pixeles del artboard (`local`) y el `factor` de pantalla a
+    /// pixeles del artboard.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn model_press_at(
+        &mut self,
+        editor: &mut Editor,
+        p: Pos2,
+        local: (i32, i32),
+        secondary: bool,
+        modifiers: egui::Modifiers,
+        factor: f32,
+    ) {
         editor.end_group();
         let Some(camera) = editor.model().map(|m| m.camera) else {
             return;
@@ -74,9 +93,10 @@ impl CanvasView {
                 orbit: secondary || modifiers.alt,
                 from: p,
                 camera,
+                factor,
             });
         } else {
-            editor.pick_model_object(editor.to_local(self.to_world(rect, p)));
+            editor.pick_model_object(local);
         }
     }
 
@@ -104,7 +124,7 @@ impl CanvasView {
             orbit(drag.camera, d)
         } else {
             // Pixeles del artboard: lo que se arrastró en pantalla, sin el zoom.
-            let pixels = d / self.scale();
+            let pixels = d / self.scale() * drag.factor;
             pan(drag.camera, pixels, editor.sprite().height)
         };
         editor.set_model_grouped(model, drag_group());
