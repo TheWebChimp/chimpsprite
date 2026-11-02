@@ -4461,3 +4461,93 @@ fn values_outside_the_panel_ranges_are_not_rewritten_by_drawing_the_panel() {
     assert_eq!(h.app.doc.editor.model().unwrap(), &model);
     assert_eq!(h.app.doc.editor.history.done_count(), steps);
 }
+
+// --- El panel 3D: la cuadrícula Shading ---
+
+/// El color de la paleta del modelo con índice `i`.
+fn model_palette(h: &LayoutHarness, i: usize) -> Rgba {
+    h.app.doc.editor.sprite().palette.colors()[i]
+}
+
+#[test]
+fn picking_a_shade_pins_the_step_in_one_undo_step_and_changes_the_render() {
+    let mut h = model_panel_tall();
+    // El 6 es el color del cubo en la plantilla de la textura.
+    let (cube, red) = (model_palette(&h, 6), model_palette(&h, 27));
+    let before = model_pixels(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(node(&h, "Shade 6 step 1").center(), PointerButton::Primary);
+    h.click(node(&h, "Shade color 27").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    assert_eq!(editor.model().unwrap().shading.get(cube, 1), Some(red));
+    assert_eq!(editor.history.done_count(), steps + 1);
+    assert_ne!(model_pixels(&h), before);
+    // El popup se cerró.
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Shade color 27"));
+    h.app.doc.editor.undo();
+    assert_eq!(h.app.doc.editor.model().unwrap().shading.get(cube, 1), None);
+}
+
+#[test]
+fn a_right_click_on_a_shade_step_returns_it_to_auto() {
+    let mut h = model_panel_tall();
+    let (cube, red) = (model_palette(&h, 6), model_palette(&h, 27));
+    h.click(node(&h, "Shade 6 step 2").center(), PointerButton::Primary);
+    h.click(node(&h, "Shade color 27").center(), PointerButton::Primary);
+    assert_eq!(
+        h.app.doc.editor.model().unwrap().shading.get(cube, 2),
+        Some(red)
+    );
+    h.click(
+        node(&h, "Shade 6 step 2").center(),
+        PointerButton::Secondary,
+    );
+    let shading = &h.app.doc.editor.model().unwrap().shading;
+    assert_eq!(shading, &cs_core::ShadingTable::default());
+}
+
+#[test]
+fn auto_empties_the_shading_table() {
+    let mut h = model_panel_tall();
+    assert!(
+        h.disabled.iter().any(|l| l == "Auto"),
+        "Auto with an empty table"
+    );
+    let mut table = cs_core::ShadingTable::default();
+    table.set(model_palette(&h, 6), 1, Some(model_palette(&h, 27)));
+    table.set(model_palette(&h, 9), 2, Some(model_palette(&h, 0)));
+    assert!(h.app.doc.editor.set_shading(table));
+    h.frame();
+    h.frame();
+    assert!(!h.disabled.iter().any(|l| l == "Auto"));
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(h.button("Auto").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    assert_eq!(
+        editor.model().unwrap().shading,
+        cs_core::ShadingTable::default()
+    );
+    assert_eq!(editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn every_shade_cell_is_inside_the_flyout() {
+    let h = model_panel_tall();
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
+        .expect("the 3D panel is open");
+    let palette = h.app.doc.editor.sprite().palette.colors().to_vec();
+    let mut count = 0;
+    for (i, c) in palette.iter().enumerate().filter(|(_, c)| c.a == 255) {
+        for k in 1..=2 {
+            let r = node(&h, &format!("Shade {i} step {k}"));
+            assert!(
+                flyout.contains_rect(r),
+                "{i} {k} {r:?} vs {flyout:?} ({c:?})"
+            );
+            count += 1;
+        }
+    }
+    assert_eq!(count, 2 * palette.len());
+}

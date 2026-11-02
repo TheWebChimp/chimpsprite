@@ -1,10 +1,10 @@
 //! Lo de los modelos 3D en el editor: crear uno, sus objetos, la cámara, la luz, el contorno y
-//! la textura. Cada cambio es un `SetModel` con el modelo entero (un paso de undo).
+//! la textura y la tabla de shading. Cada cambio es un `SetModel` con el modelo entero (un paso de undo).
 
 use cs_3d::{Primitive, primitive_mesh};
 use cs_commands::DocCommand;
 use cs_commands::model::texture_template;
-use cs_core::{Artboard, Camera3D, Light3D, Model3D, Object3D, Rgba, Transform3D};
+use cs_core::{Artboard, Camera3D, Light3D, Model3D, Object3D, Rgba, ShadingTable, Transform3D};
 use cs_render::BakeOptions;
 
 use super::Editor;
@@ -115,6 +115,11 @@ impl Editor {
 
     pub fn set_outline(&mut self, o: Option<Rgba>) -> bool {
         self.edit_model(|m| m.outline = o)
+    }
+
+    /// La tabla de shading del modelo activo (las rampas de luz fijadas por color).
+    pub fn set_shading(&mut self, table: ShadingTable) -> bool {
+        self.edit_model(|m| m.shading = table)
     }
 
     pub fn set_texture(&mut self, t: Option<cs_core::ArtboardId>) -> bool {

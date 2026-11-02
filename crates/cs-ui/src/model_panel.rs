@@ -1,11 +1,15 @@
 //! El panel 3D del dock: el modelo 3D del artboard activo. Arriba, fijo, el título; abajo, con
 //! scroll, lo demás. Sin modelo, el botón New 3D Model…; con modelo, sus objetos: la lista (un
 //! clic elige), Add con las primitivas (y los lados de las redondas) y, del elegido, su posición,
-//! su rotación y su escala, Double sided y Delete.
+//! su rotación y su escala, Double sided y Delete; luego la textura, la cámara, la luz (con la
+//! cuadrícula Shading) y el contorno.
 
 use cs_3d::Primitive;
-use cs_core::{CameraPreset, Model3D, Object3D, Projection};
-use eframe::egui::{self, Align2, Rect, Sense, TextStyle, Ui, UiBuilder, pos2, vec2};
+use cs_core::{CameraPreset, Model3D, Object3D, Projection, Rgba, ShadingTable};
+use eframe::egui::{
+    self, Align2, Color32, Rect, Sense, Stroke, StrokeKind, TextStyle, Ui, UiBuilder, Vec2, pos2,
+    vec2,
+};
 
 use crate::dock::FLYOUT_MARGIN;
 use crate::editor::{Editor, wrap_angle};
@@ -56,6 +60,14 @@ const PAIR_GAP: f32 = 8.0;
 const POSITION_MAX: i32 = 256 * cs_core::FIXED;
 const ROTATION_MAX: i32 = 360;
 const SCALE_MAX: i32 = 1000;
+/// La cuadrícula Shading (y las muestras de su popup): casillas de 12 con líneas de 1
+/// compartidas, del color de las del mapa de FontForge, y hasta 16 columnas por bloque.
+const SHADE_CELL: f32 = 12.0;
+const SHADE_PITCH: f32 = SHADE_CELL + 1.0;
+const SHADE_COLUMNS: usize = 16;
+const SHADE_GRID: Color32 = Color32::from_rgb(136, 110, 106);
+/// El punto de una casilla fijada sobre un color claro.
+const PIN_DARK: Color32 = Color32::from_rgb(5, 4, 3);
 
 /// El estado del panel entre frames.
 pub struct ModelPanelState {
@@ -560,6 +572,7 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     ui.add_enabled_ui(light.enabled, |ui| {
         angles(ui, skin, "light", (&mut light.yaw, &mut light.pitch));
     });
+    let shading = shading(ui, editor, skin);
     let mut outline = next.outline.is_some();
     ui.horizontal(|ui| {
         check(ui, skin, &mut outline, "Outline");
@@ -577,5 +590,153 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
     if !ui.input(|input| input.pointer.any_down()) {
         editor.end_group_of(group.value());
+    }
+    // La tabla, aparte: cada clic en la cuadrícula es su propio paso de undo.
+    if let Some(table) = shading {
+        editor.set_shading(table);
+    }
+}
+
+/// El color de egui de un `Rgba`.
+fn color32(c: Rgba) -> Color32 {
+    Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
+}
+
+/// El punto de una casilla fijada, de `PIN_DARK` sobre lo claro y blanco sobre lo oscuro.
+fn pin_color(c: Rgba) -> Color32 {
+    let luminance = 299 * c.r as u32 + 587 * c.g as u32 + 114 * c.b as u32;
+    if luminance > 128 * 1000 {
+        PIN_DARK
+    } else {
+        Color32::WHITE
+    }
+}
+
+/// Una casilla de la cuadrícula en la columna `col` y la fila `row` desde `origin`: sus líneas
+/// (compartidas con las vecinas) y lo de adentro.
+fn shade_cell(origin: egui::Pos2, col: usize, row: usize) -> (Rect, Rect) {
+    let at = origin + vec2(col as f32 * SHADE_PITCH, row as f32 * SHADE_PITCH);
+    let lines = Rect::from_min_size(at, Vec2::splat(SHADE_PITCH + 1.0));
+    (lines, lines.shrink(1.0))
+}
+
+/// "Shading" con Auto (vaciar la tabla) y la cuadrícula: por cada color opaco de la paleta del
+/// modelo una columna (en bloques de [`SHADE_COLUMNS`]) con el color y, debajo, sus pasos 1 y 2
+/// de luz. Un clic en un paso abre las muestras de la paleta (elegir una lo fija); el derecho lo
+/// vuelve automático. Devuelve la tabla nueva si el usuario la cambió.
+fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingTable> {
+    let table = editor.model()?.shading.clone();
+    let palette = editor.sprite().palette.colors().to_vec();
+    let opaque: Vec<(usize, Rgba)> = palette
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, c)| c.a == 255)
+        .collect();
+    let mut next = None;
+    ui.horizontal(|ui| {
+        label_with_hint(ui, "Shading", "");
+        let auto = ui.add_enabled_ui(!table.entries.is_empty(), |ui| button(ui, skin, "Auto"));
+        if auto.inner.clicked() {
+            next = Some(ShadingTable::default());
+        }
+    });
+    let enabled = ui.is_enabled();
+    for block in opaque.chunks(SHADE_COLUMNS) {
+        let size = vec2(
+            SHADE_PITCH * block.len() as f32 + 1.0,
+            SHADE_PITCH * 3.0 + 1.0,
+        );
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let origin = rect.min.round();
+        let painter = ui.painter().clone();
+        for (col, &(i, color)) in block.iter().enumerate() {
+            for row in 0..3 {
+                let (lines, cell) = shade_cell(origin, col, row);
+                let shown = cs_3d::shade(&palette, &table, color, row as u32);
+                painter.rect_filled(lines, 0.0, SHADE_GRID);
+                painter.rect_filled(cell, 0.0, color32(shown));
+                if row == 0 {
+                    continue;
+                }
+                let step = row;
+                let pinned = table.get(color, step).is_some();
+                if pinned {
+                    let dot = Rect::from_min_size(
+                        pos2(cell.right() - 2.0, cell.top() + 1.0),
+                        Vec2::splat(1.0),
+                    );
+                    painter.rect_filled(dot, 0.0, pin_color(shown));
+                }
+                let response = ui.interact(cell, ui.id().with(("shade", i, step)), Sense::click());
+                let label = format!("Shade {i} step {step}");
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label)
+                });
+                if response.secondary_clicked() && pinned {
+                    let mut t = table.clone();
+                    t.set(color, step, None);
+                    next = Some(t);
+                }
+                if let Some(pick) = swatches(skin, &response, cell, &palette, shown) {
+                    let mut t = table.clone();
+                    t.set(color, step, Some(pick));
+                    next = Some(t);
+                }
+            }
+        }
+    }
+    next.filter(|t| *t != table)
+}
+
+/// Las muestras de la paleta en un popup colgado de la casilla `anchor` (lo abre y lo cierra un
+/// clic en `response`), con `current` marcado: el color elegido, si hubo.
+fn swatches(
+    skin: Option<&Skin>,
+    response: &egui::Response,
+    anchor: Rect,
+    palette: &[Rgba],
+    current: Rgba,
+) -> Option<Rgba> {
+    let content = |ui: &mut Ui| {
+        let columns = palette.len().clamp(1, SHADE_COLUMNS);
+        let rows = palette.len().div_ceil(SHADE_COLUMNS);
+        let size = vec2(
+            SHADE_PITCH * columns as f32 + 1.0,
+            SHADE_PITCH * rows as f32 + 1.0,
+        );
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let origin = rect.min.round();
+        let painter = ui.painter().clone();
+        let enabled = ui.is_enabled();
+        let mut picked = None;
+        for (j, &c) in palette.iter().enumerate() {
+            let (lines, cell) = shade_cell(origin, j % SHADE_COLUMNS, j / SHADE_COLUMNS);
+            painter.rect_filled(lines, 0.0, SHADE_GRID);
+            painter.rect_filled(cell, 0.0, color32(c));
+            if c == current {
+                let stroke = Stroke::new(1.0, pin_color(c));
+                painter.rect_stroke(cell, 0.0, stroke, StrokeKind::Inside);
+            }
+            let swatch = ui.interact(cell, ui.id().with(("shade_swatch", j)), Sense::click());
+            let label = format!("Shade color {j}");
+            swatch.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, c == current, &label)
+            });
+            if swatch.clicked() {
+                picked = Some(c);
+                ui.close();
+            }
+        }
+        picked
+    };
+    match skin {
+        Some(skin) => {
+            let look = menus::MenuLook::new(skin, anchor.top());
+            menus::dropdown(&look, response, anchor, content).flatten()
+        }
+        None => egui::Popup::menu(response)
+            .show(content)
+            .and_then(|i| i.inner),
     }
 }
