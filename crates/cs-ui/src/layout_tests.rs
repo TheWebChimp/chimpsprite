@@ -4118,6 +4118,16 @@ fn a_model_artboard_has_the_teal_bar() {
 }
 
 #[test]
+fn a_model_artboard_keeps_its_teal_bar_in_edit_mode() {
+    let mut h = with_a_model_at_800();
+    let before = union(&h.drawn("title.bar.model")).expect("the model bar");
+    tap_key(&mut h, egui::Key::Tab);
+    assert!(h.app.doc.editor.model_edit_on());
+    let bar = union(&h.drawn("title.bar.model")).expect("the model bar in Edit");
+    assert_eq!(bar, before);
+}
+
+#[test]
 fn right_dragging_a_model_orbits_the_camera_in_one_undo_step() {
     let mut h = with_a_model_at_800();
     let before = camera(&h);
