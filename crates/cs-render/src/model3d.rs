@@ -67,6 +67,30 @@ pub fn model_pick(doc: &Document, artboard: &Artboard, x: u32, y: u32) -> Option
     )
 }
 
+/// El render de `model` (p. ej. la vista previa del modo Edit, no el guardado en `artboard`)
+/// con la textura (frame 0) y la paleta de `artboard`, a `size`. Sin caché.
+pub fn model_render(
+    doc: &Document,
+    artboard: &Artboard,
+    model: &cs_core::Model3D,
+    size: (u32, u32),
+) -> Vec<Rgba> {
+    let mut stack = vec![artboard.id];
+    let texture = texture_frame_of(doc, model, 0, &mut stack);
+    render_model(&RenderInput {
+        model,
+        size,
+        texture: texture.as_ref().map(|(width, height, pixels)| Texture {
+            width: *width,
+            height: *height,
+            pixels,
+        }),
+        palette: artboard.sprite.palette.colors(),
+        camera: None,
+        extra_yaw: 0,
+    })
+}
+
 /// El frame `texture_frame` (módulo sus frames) de la textura de `model`, como se ve en el
 /// lienzo: con sus instancias y tilemaps resueltos. `None` sin textura, si la textura es otro
 /// modelo o si está en `stack` (un ciclo).
@@ -278,5 +302,19 @@ mod tests {
                 .texture = Some(texture);
             assert_eq!(model_pixels(&doc, model), none);
         }
+    }
+
+    #[test]
+    fn model_render_matches_the_canvas_render_at_the_same_size() {
+        let (doc, model, _) = with_model();
+        let artboard = doc.artboard(model).unwrap();
+        let m = artboard.model.as_ref().unwrap();
+        assert_eq!(
+            model_render(&doc, artboard, m, (SIZE, SIZE)),
+            model_pixels(&doc, model)
+        );
+        let half = model_render(&doc, artboard, m, (SIZE / 2, SIZE / 2));
+        assert_eq!(half.len(), (SIZE * SIZE / 4) as usize);
+        assert_eq!(center(&half, SIZE / 2).a, 255);
     }
 }
