@@ -49,6 +49,19 @@ impl Editor {
 
     pub fn select_model_object(&mut self, i: Option<usize>) {
         self.model_object = i;
+        // En el modo Edit, elegir un objeto (panel o perspectiva) lo elige en el modo actual.
+        if let Some(m) = self.model() {
+            let mode = self.model_edit.selection.mode;
+            let picked = cs_3d::Selection {
+                mode: cs_3d::SelectMode::Object,
+                items: i
+                    .filter(|&i| i < m.objects.len())
+                    .map(cs_3d::Item::Object)
+                    .into_iter()
+                    .collect(),
+            };
+            self.model_edit.selection = picked.converted(m, mode);
+        }
         self.revision += 1;
     }
 
@@ -213,7 +226,7 @@ impl Editor {
         self.set_model(model)
     }
 
-    fn set_model(&mut self, model: Model3D) -> bool {
+    pub(super) fn set_model(&mut self, model: Model3D) -> bool {
         if self.model() == Some(&model) {
             return false;
         }
