@@ -4053,3 +4053,100 @@ fn g_and_the_right_arrow_move_the_selected_object_not_the_frame() {
     assert_eq!(h.app.doc.editor.frame, 0);
     assert!(h.texts.iter().any(|(t, _)| t.contains("3D: Move")));
 }
+
+// --- El panel 3D ---
+
+/// El panel 3D del dock abierto (con `model`, un modelo nuevo de 32×32 con su cubo).
+fn model_panel_open(model: bool) -> LayoutHarness {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    if model {
+        assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+    }
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    h
+}
+
+fn node(h: &LayoutHarness, label: &str) -> Rect {
+    h.nodes
+        .iter()
+        .find(|(l, _)| l == label)
+        .map(|(_, r)| *r)
+        .unwrap_or_else(|| panic!("no node {label:?}"))
+}
+
+#[test]
+fn the_model_panel_without_a_model_offers_new_3d_model() {
+    let mut h = model_panel_open(false);
+    h.click(h.button("New 3D Model…").center(), PointerButton::Primary);
+    assert!(h.app.new_model.is_some());
+}
+
+#[test]
+fn the_model_panel_lists_the_objects_and_adds_a_cylinder() {
+    let mut h = model_panel_open(true);
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
+        .expect("the 3D panel is open");
+    let cube = node(&h, "Cube");
+    assert!(flyout.contains_rect(cube), "{cube:?} vs {flyout:?}");
+    h.click(node(&h, "Add").center(), PointerButton::Primary);
+    h.click(node(&h, "Cylinder").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    let objects = &editor.model().unwrap().objects;
+    assert_eq!(objects.len(), 2);
+    assert_eq!(objects[1].name, "Cylinder");
+    assert_eq!(
+        objects[1].mesh,
+        cs_3d::primitive_mesh(&cs_3d::Primitive::Cylinder { sides: 8 })
+    );
+    assert_eq!(editor.selected_object(), Some(1));
+    // Un clic en la fila del cubo lo elige.
+    h.click(node(&h, "Cube").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.selected_object(), Some(0));
+}
+
+#[test]
+fn the_position_x_stepper_moves_the_object_in_one_step() {
+    let mut h = model_panel_open(true);
+    let heading = h
+        .text_rects
+        .iter()
+        .find(|(t, _, _)| t == "Position")
+        .map(|(_, r, _)| *r)
+        .expect("the Position heading");
+    // El + de X: el primero de la fila de abajo del título.
+    let plus = h
+        .buttons
+        .iter()
+        .filter(|(l, r)| l == "Increase" && r.top() > heading.bottom())
+        .min_by(|a, b| {
+            (a.1.top(), a.1.left())
+                .partial_cmp(&(b.1.top(), b.1.left()))
+                .unwrap()
+        })
+        .map(|(_, r)| *r)
+        .expect("the Position X + button");
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(plus.center(), PointerButton::Primary);
+    let x = |h: &LayoutHarness| {
+        h.app.doc.editor.model().unwrap().objects[0]
+            .transform
+            .position
+            .x
+    };
+    assert_eq!(x(&h), 1);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(x(&h), 0);
+}
+
+#[test]
+fn delete_in_the_model_panel_removes_the_object() {
+    let mut h = model_panel_open(true);
+    h.click(h.button("Delete").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    assert!(editor.model().unwrap().objects.is_empty());
+    assert_eq!(editor.selected_object(), None);
+}

@@ -31,6 +31,8 @@ mod font_panel;
 mod frame_dialog;
 mod mask_ops;
 mod menus;
+mod model_dialog;
+mod model_panel;
 mod palette_ops;
 mod palette_ui;
 mod scripts;
@@ -137,6 +139,8 @@ pub struct ChimpApp {
     lumen: lumen::LumenPanel,
     /// El panel Font del dock.
     font_panel: font_panel::FontPanelState,
+    /// El panel 3D del dock.
+    model_panel: model_panel::ModelPanelState,
     platform: platform::Platform,
     autosaver: autosave::Autosaver,
     restore: Option<Vec<autosave::Restore>>,
@@ -156,6 +160,8 @@ pub struct ChimpApp {
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
     /// `File → New Font…`.
     new_font: Option<font_dialog::NewFontDialog>,
+    /// `File → New 3D Model…`.
+    new_model: Option<model_dialog::NewModelDialog>,
     /// La ventana Edit → Undo History abierta.
     undo_history: bool,
     /// La ventana Edit → Keyboard Shortcuts abierta.
@@ -291,6 +297,7 @@ impl ChimpApp {
             groom: Default::default(),
             lumen: Default::default(),
             font_panel: Default::default(),
+            model_panel: Default::default(),
             platform: platform::Platform::default(),
             autosaver: autosave::Autosaver::default(),
             restore: None,
@@ -305,6 +312,7 @@ impl ChimpApp {
             news_fetcher: news::default_fetcher(),
             new_tilemap: None,
             new_font: None,
+            new_model: None,
             undo_history: false,
             shortcuts: None,
             keymap: keymap::Keymap::default(),
@@ -614,6 +622,29 @@ impl ChimpApp {
         }
     }
 
+    /// El panel 3D del dock y lo que pide.
+    fn model_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
+        let mut action = None;
+        let skin = self.pixel.skin();
+        let editor = &mut self.doc.editor;
+        let state = &mut self.model_panel;
+        dock::flyout_fixed(
+            ctx,
+            dock::DockPanel::Model,
+            anchor,
+            skin,
+            model_panel::WIDTH,
+            |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    action = model_panel::show(ui, editor, skin, state);
+                });
+            },
+        );
+        if let Some(model_panel::ModelAction::NewModel) = action {
+            self.new_model = Some(Default::default());
+        }
+    }
+
     /// El panel Library del dock y lo que pide.
     fn library_panel(&mut self, ctx: &egui::Context, anchor: dock::Anchor, modal: bool) {
         let mut action = None;
@@ -750,6 +781,50 @@ impl ChimpApp {
             .canvas
             .request_zoom(view::ZoomRequest::FitActiveBeside {
                 right_inset: dock::flyout_reach(font_panel::WIDTH),
+            });
+        true
+    }
+
+    fn update_model_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.new_model else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Accept => {
+                let (name, size) = (dialog.name.trim().to_owned(), dialog.size);
+                let name = if name.is_empty() {
+                    "Model".to_owned()
+                } else {
+                    name
+                };
+                self.new_model = None;
+                // Desde Home no hay pestaña: se abre un documento nuevo como File → New.
+                if !self.has_doc() {
+                    self.new_document();
+                }
+                self.create_model(ctx, &name, size);
+            }
+            tilemap_dialog::DialogResult::Cancel => self.new_model = None,
+        }
+    }
+
+    /// Crea el modelo 3D `name` en el documento abierto, abre el panel 3D en el dock y lo
+    /// encuadra al lado de él. `false` si no se pudo.
+    pub(crate) fn create_model(
+        &mut self,
+        ctx: &egui::Context,
+        name: &str,
+        size: (u32, u32),
+    ) -> bool {
+        if !self.doc.editor.new_model(name, size) {
+            return false;
+        }
+        dock::set_open(ctx, Some(dock::DockPanel::Model));
+        self.doc
+            .canvas
+            .request_zoom(view::ZoomRequest::FitActiveBeside {
+                right_inset: dock::flyout_reach(model_panel::WIDTH),
             });
         true
     }
@@ -1411,6 +1486,7 @@ impl ChimpApp {
             Some((dock::DockPanel::Lumen, anchor)) => self.lumen_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Library, anchor)) => self.library_panel(ui.ctx(), anchor, modal),
             Some((dock::DockPanel::Font, anchor)) => self.font_panel(ui.ctx(), anchor, modal),
+            Some((dock::DockPanel::Model, anchor)) => self.model_panel(ui.ctx(), anchor, modal),
             _ => {}
         }
         if !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {
@@ -1526,6 +1602,7 @@ impl eframe::App for ChimpApp {
         }
         self.update_tilemap_dialogs(&ctx);
         self.update_font_dialog(&ctx);
+        self.update_model_dialog(&ctx);
         self.update_symbol_dialog(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);

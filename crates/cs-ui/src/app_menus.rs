@@ -734,6 +734,10 @@ A pixel art editor."
                     self.new_font = Some(Default::default());
                     ui.close();
                 }
+                if ui.add(menus::plain("New 3D Model…")).clicked() {
+                    self.new_model = Some(Default::default());
+                    ui.close();
+                }
                 if ui
                     .add(item("Open", keymap::label(&ctx, keymap::Action::Open)))
                     .clicked()

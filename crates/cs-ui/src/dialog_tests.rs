@@ -79,6 +79,7 @@ impl DialogHarness {
             app.update_canvas_size(&ctx);
             app.update_tilemap_dialogs(&ctx);
             app.update_font_dialog(&ctx);
+            app.update_model_dialog(&ctx);
             app.update_symbol_dialog(&ctx);
             app.show_dialogs(&ctx);
             app.update_palette_windows(&ctx, false);
@@ -414,6 +415,42 @@ fn new_font_from_home_opens_a_new_document() {
         .font()
         .expect("the new document's artboard is a font");
     assert_eq!(font.name, "New Font");
+}
+
+// --- New 3D Model ---
+
+#[test]
+fn new_model_creates_a_model_artboard() {
+    let mut h = DialogHarness::new(true);
+    h.app.new_model = Some(Default::default());
+    h.settle();
+    assert!(h.drew_text("New 3D Model"));
+    h.click("OK");
+    h.settle();
+    assert!(h.app.new_model.is_none());
+    let editor = &h.app.doc.editor;
+    assert!(editor.is_model(), "the active artboard is a model");
+    assert_eq!(editor.artboard().name, "Model");
+    assert_eq!((editor.sprite().width, editor.sprite().height), (128, 128));
+    // Y se abre el panel 3D del dock.
+    assert_eq!(
+        crate::dock::open_panel(&h.ctx),
+        Some(crate::dock::DockPanel::Model)
+    );
+}
+
+#[test]
+fn new_model_from_home_opens_a_new_document() {
+    let mut h = DialogHarness::new(true);
+    h.app.request_close_tab(0);
+    h.settle();
+    assert!(!h.app.has_doc());
+    h.app.new_model = Some(Default::default());
+    h.settle();
+    h.click("OK");
+    h.settle();
+    assert!(h.app.has_doc());
+    assert!(h.app.doc.editor.is_model());
 }
 
 // --- New Tilemap Layer ---
