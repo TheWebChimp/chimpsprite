@@ -4,7 +4,9 @@
 use cs_3d::{Primitive, primitive_mesh};
 use cs_commands::DocCommand;
 use cs_commands::model::texture_template;
-use cs_core::{Artboard, Camera3D, Light3D, Model3D, Object3D, Rgba, ShadingTable, Transform3D};
+use cs_core::{
+    Artboard, ArtboardId, Camera3D, Light3D, Model3D, Object3D, Rgba, ShadingTable, Transform3D,
+};
 use cs_render::BakeOptions;
 
 use super::Editor;
@@ -170,12 +172,18 @@ impl Editor {
     /// `"{modelo} · bake"`, a la derecha de todo: un solo paso de undo. El modelo sigue
     /// activo.
     pub fn bake(&mut self, options: BakeOptions) -> bool {
-        let Some((mut sprite, tags)) = cs_render::bake_model(&self.document, self.active, &options)
-        else {
+        self.bake_artboard(self.active, options)
+    }
+
+    /// Como [`Self::bake`], pero del modelo `id` aunque no sea el activo.
+    pub fn bake_artboard(&mut self, id: ArtboardId, options: BakeOptions) -> bool {
+        let Some((mut sprite, tags)) = cs_render::bake_model(&self.document, id, &options) else {
             return false;
         };
         sprite.tags = tags;
-        let model = self.artboard();
+        let Some(model) = self.document.artboard(id) else {
+            return false;
+        };
         // A la derecha de todo (como un modelo nuevo): los bakes seguidos no se pisan.
         let right = self.document.bounds().map_or(0, |(_, (x1, _))| x1);
         let position = (right + 16, model.position.1);

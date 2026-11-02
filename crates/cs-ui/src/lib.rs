@@ -817,9 +817,18 @@ impl ChimpApp {
         }
     }
 
-    /// Bake…: al aceptar, hornea el modelo activo (si sigue siéndolo) en un artboard nuevo.
+    /// Bake…: al aceptar, hornea el modelo con el que se abrió (aunque ya no sea el activo; si
+    /// ya no existe como modelo, el diálogo se cierra) en un artboard nuevo.
     fn update_bake_dialog(&mut self, ctx: &egui::Context) {
-        if !self.has_doc() || !self.doc.editor.is_model() {
+        let still_model = self.has_doc()
+            && self.bake.as_ref().is_none_or(|d| {
+                self.doc
+                    .editor
+                    .document
+                    .artboard(d.model())
+                    .is_some_and(|a| a.model.is_some())
+            });
+        if !still_model {
             self.bake = None;
             return;
         }
@@ -829,9 +838,9 @@ impl ChimpApp {
         match dialog.show(ctx, self.pixel.skin(), &self.doc.editor.document) {
             tilemap_dialog::DialogResult::Open => {}
             tilemap_dialog::DialogResult::Accept => {
-                let options = dialog.chosen();
+                let (model, options) = (dialog.model(), dialog.chosen());
                 self.bake = None;
-                self.doc.editor.bake(options);
+                self.doc.editor.bake_artboard(model, options);
             }
             tilemap_dialog::DialogResult::Cancel => self.bake = None,
         }

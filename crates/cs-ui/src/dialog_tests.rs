@@ -527,6 +527,21 @@ fn four_frames_in_the_sheet_settings_bake_four_frames() {
     assert_eq!(baked.sprite.frames.len(), 4);
 }
 
+#[test]
+fn export_bakes_the_dialogs_own_model_even_if_another_is_active() {
+    let mut h = DialogHarness::new(true);
+    assert!(h.app.doc.editor.new_model("First", (32, 32)));
+    h.app.bake = Some(crate::bake_dialog::BakeDialog::new(&h.app.doc.editor));
+    assert!(h.app.doc.editor.new_model("Second", (32, 32)));
+    h.settle();
+    assert!(h.app.bake.is_some(), "the dialog stays open");
+    h.click("Export");
+    h.settle();
+    assert!(h.app.bake.is_none());
+    let baked = h.app.doc.editor.document.artboards.last().unwrap();
+    assert_eq!(baked.name, "First · bake");
+}
+
 // --- New Tilemap Layer ---
 
 fn new_tilemap(pixel_ui: bool) -> DialogHarness {

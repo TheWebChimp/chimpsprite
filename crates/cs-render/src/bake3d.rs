@@ -58,7 +58,7 @@ impl BakeOptions {
     pub fn from_model(m: &Model3D, size: (u32, u32), texture_frames: usize) -> Self {
         BakeOptions {
             frames: 8,
-            size: size.0,
+            size: size.0.clamp(*BAKE_SIZE.start(), *BAKE_SIZE.end()),
             zoom: 100,
             tilt: m.camera.pitch,
             height: 0,
@@ -404,6 +404,14 @@ mod tests {
         assert!(o.animate_texture);
         assert_eq!(o.output, BakeOutput::Frames);
         assert!(!BakeOptions::from_model(m, (SIZE, SIZE), 1).animate_texture);
+    }
+
+    #[test]
+    fn from_model_clamps_the_size_to_the_stepper_range() {
+        let (doc, model, _) = with_model();
+        let m = doc.artboard(model).unwrap().model.as_ref().unwrap();
+        assert_eq!(BakeOptions::from_model(m, (1024, 64), 1).size, 512);
+        assert_eq!(BakeOptions::from_model(m, (2, 2), 1).size, 8);
     }
 
     #[test]

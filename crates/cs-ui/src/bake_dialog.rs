@@ -56,6 +56,11 @@ impl BakeDialog {
         }
     }
 
+    /// El modelo que se hornea.
+    pub(crate) fn model(&self) -> ArtboardId {
+        self.model
+    }
+
     /// Las opciones elegidas (sin textura animada, `animate_texture` queda apagado).
     pub fn chosen(&self) -> BakeOptions {
         BakeOptions {
@@ -76,7 +81,9 @@ impl BakeDialog {
         // La vista previa gira: un ángulo nuevo cada 1/8 s.
         let frames = self.options.frames.max(1);
         let angle = (ctx.input(|i| i.time) * PREVIEW_FPS) as u32 % frames;
-        ctx.request_repaint_after(Duration::from_millis(125));
+        if spins(frames) {
+            ctx.request_repaint_after(Duration::from_millis(125));
+        }
         self.update_preview(ctx, doc, angle);
         let (o, preview) = (&mut self.options, &self.preview);
         let buttons = ["Export", "Cancel"];
@@ -116,6 +123,11 @@ impl BakeDialog {
         };
         self.preview = Some(Preview { key, size, texture });
     }
+}
+
+/// La vista previa solo gira (y pide repintar) con más de un frame.
+fn spins(frames: u32) -> bool {
+    frames > 1
 }
 
 /// Los campos, en columna: etiqueta y stepper (o casilla, o radios).
@@ -223,4 +235,15 @@ fn show_preview(ui: &mut Ui, preview: Option<&Preview>) {
     let image = Rect::from_center_size(rect.center(), size);
     let uv = Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
     painter.image(texture.id(), image, uv, Color32::WHITE);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::spins;
+
+    #[test]
+    fn a_single_frame_does_not_spin() {
+        assert!(!spins(1));
+        assert!(spins(2));
+    }
 }

@@ -1,6 +1,6 @@
 # Modelos 3D, parte 1.5: tabla de shading y Sheet settings
 
-Fecha: 2026-11-02 · Estado: diseño aprobado, falta el plan
+Fecha: 2026-11-02 · Estado: implementado
 
 Referencia: las capturas de picoCAD 2 del usuario (`D:/Work/chimpdeas/.refs/picocad2-reference.png`):
 "Palette controls" (la tabla SHADING) y "Sheet settings" (Zoom, Tilt, Height, Ortho, Frames,
@@ -27,7 +27,7 @@ Decisiones tomadas con el usuario:
 
 ## 2. Edición en el panel 3D (sección Light)
 
-- Debajo de la luz, una cuadrícula **Shading** como la de picoCAD: arriba los colores de la paleta
+- Debajo de la luz (y antes de Outline), una cuadrícula **Shading** como la de picoCAD: arriba los colores de la paleta
   del modelo (los opacos), debajo dos filas con su paso 1 y su paso 2; si no caben en el ancho del
   panel, en bloques de 16 columnas.
 - **Clic** en una casilla de sombra: un menú con la paleta del modelo para elegir el color (fija esa
@@ -45,9 +45,12 @@ El diálogo (antes "Bake") se llama **Sheet settings** y tiene:
   renderiza directo a ese tamaño (cuadrado si el modelo es cuadrado; si no, el ancho es Size y el alto
   sale de la proporción del modelo).
 - **Zoom:** % (por defecto 100 = la cámara del modelo; más es más cerca): la distancia de la cámara
-  se divide entre Zoom/100.
-- **Tilt:** grados (por defecto el pitch del modelo), −89..=89.
+  se divide entre Zoom/100. Rango implementado: 10..=1000, de 10 en 10.
+- **Tilt:** grados enteros (por defecto el pitch del modelo), −89..=89.
 - **Height:** desplazamiento vertical del objetivo de la cámara, en 1/16 de unidad (por defecto 0).
+  Rango implementado: −1024..=1024.
+- El valor por defecto de Size se limita al rango del stepper (8..=512).
+- Export hornea el modelo con el que se abrió el diálogo, aunque otro artboard sea el activo.
 - **Ortho:** casilla (por defecto según la proyección del modelo).
 - **Animate texture** (si la textura tiene más de un frame) y **Output** Frames / Spritesheet, como
   en la parte 1.
