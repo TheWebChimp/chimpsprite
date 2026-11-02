@@ -1,6 +1,23 @@
 # Modelos 3D, parte 2A: modo Edit con 4 vistas, seleccionar, mover y escalar
 
-Fecha: 2026-11-02 · Estado: diseño aprobado
+Fecha: 2026-11-02 · Estado: implementado
+
+Notas de la implementación (donde difiere del diseño original):
+
+- **Desplazar las vistas orto:** arrastrar con el botón derecho o el central (Shift queda para
+  agregar a la selección).
+- **Tab:** en un artboard 3D entra y sale del modo Edit (no muestra la línea de tiempo); egui movía
+  el foco con Tab, así que el foco se suelta el frame siguiente. Igual que G, R y S, no exige el
+  puntero sobre el lienzo.
+- **Selección en las vistas:** en amarillo PICO-8 (`#ffec27`), no el color de selección del skin
+  (no se veía sobre el morado).
+- **Con un gesto de teclado (G o S) activo**, un clic en cualquier cuadrante confirma (izquierdo) o
+  cancela (derecho o central).
+- **La perspectiva** usa `cs_render::model_render` al tamaño del cuadrante en pixeles del artboard.
+- **Demo:** `CHIMPSPRITE_DEMO_MODEL_EDIT` (con `CHIMPSPRITE_DEMO_MODEL`) abre el modo Edit en
+  vértices con uno elegido.
+- **Siguiente paso decidido con el usuario:** modelos y fuentes salen del lienzo a la Library y se
+  abren en su propia pestaña (spec aparte, antes de la 2B).
 
 Referencia: picoCAD 2 (captura del usuario con las vistas Front, Top y Side en wireframe y la
 perspectiva texturizada). Sigue a la parte 1 (`2026-11-01-3d-core-design.md`) y la 1.5

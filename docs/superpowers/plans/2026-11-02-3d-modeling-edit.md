@@ -636,8 +636,8 @@ pantalla (y hacia abajo); `center` es el punto del mundo que cae en `origin`.
         assert_eq!(all.len(), 6);
         let obj = box_select(&m, &map, SelectMode::Object, (140.0, 80.0), (120.0, 60.0));
         assert_eq!(obj, [Item::Object(0)].into());
-        let none = box_select(&m, &map, SelectMode::Edge, (120.0, 60.0), (140.0, 80.0));
-        assert!(none.is_empty(), "no edge has both ends in the corner box");
+        let edge = box_select(&m, &map, SelectMode::Edge, (120.0, 60.0), (140.0, 80.0));
+        assert_eq!(edge, [Item::Edge(0, 3, 7)].into(), "the edge seen end-on");
     }
 
     #[test]
