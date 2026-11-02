@@ -246,93 +246,9 @@ fn set_model_cmd(id: cs_core::ArtboardId, model: Model3D) -> DocCommand {
     }
 }
 
-/// Qué hacen las flechas sobre el objeto elegido de un modelo 3D (G, R y S las cambian).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum ModelArrows {
-    /// 1/4 de unidad (4/16) por flecha.
-    #[default]
-    Move,
-    /// 15° por flecha.
-    Rotate,
-    /// ±10 % por flecha.
-    Scale,
-}
-
-impl ModelArrows {
-    pub fn label(self) -> &'static str {
-        match self {
-            ModelArrows::Move => "Move",
-            ModelArrows::Rotate => "Rotate",
-            ModelArrows::Scale => "Scale",
-        }
-    }
-}
-
-/// Lo que mueve una flecha en el modo Move, en 1/16 de unidad.
-const ARROW_MOVE: i32 = 4;
-/// Lo que gira una flecha en el modo Rotate, en décimas de grado.
-const ARROW_ROTATE: i32 = 150;
-/// Las escalas que dejan las flechas, en milésimas (como en el panel: de 1 % a 1000 %).
-const SCALE_MIN: i32 = 10;
-const SCALE_MAX: i32 = 10_000;
-
 /// Un ángulo en décimas de grado llevado a `-1800..1800` (la misma orientación).
 pub fn wrap_angle(tenths: i32) -> i32 {
     (tenths + 1800).rem_euclid(3600) - 1800
-}
-
-/// Una escala (en milésimas) un paso de flecha más grande (`grow > 0`) o más chica (`grow < 0`):
-/// ±10 %, con su signo y sin salir de [`SCALE_MIN`]..=[`SCALE_MAX`] de magnitud.
-fn scale_step(s: i32, grow: i32) -> i32 {
-    let m = s.abs();
-    let m = match grow.signum() {
-        1 => (m * 11 + 5) / 10,
-        -1 => (m * 10 + 5) / 11,
-        _ => return s,
-    };
-    let sign = if s < 0 { -1 } else { 1 };
-    sign * m.clamp(SCALE_MIN, SCALE_MAX)
-}
-
-impl Editor {
-    pub fn model_arrows(&self) -> ModelArrows {
-        self.model_arrows
-    }
-
-    pub fn set_model_arrows(&mut self, mode: ModelArrows) {
-        self.model_arrows = mode;
-        self.revision += 1;
-    }
-
-    /// Una flecha sobre el objeto elegido, según [`ModelArrows`]: `dx` a la derecha, `dy` hacia
-    /// abajo (en pantalla). Move corre el objeto en X e Y; Rotate lo gira en Y (izquierda y
-    /// derecha) y en X (arriba y abajo); Scale lo agranda con → o ↑ y lo achica con ← o ↓.
-    pub fn arrow_on_object(&mut self, dx: i32, dy: i32) -> bool {
-        let Some(i) = self.selected_object() else {
-            return false;
-        };
-        let Some(mut obj) = self.model().map(|m| m.objects[i].clone()) else {
-            return false;
-        };
-        let t = &mut obj.transform;
-        match self.model_arrows {
-            ModelArrows::Move => {
-                t.position.x += dx * ARROW_MOVE;
-                t.position.y -= dy * ARROW_MOVE;
-            }
-            ModelArrows::Rotate => {
-                t.rotation.y = wrap_angle(t.rotation.y + dx * ARROW_ROTATE);
-                t.rotation.x = wrap_angle(t.rotation.x + dy * ARROW_ROTATE);
-            }
-            ModelArrows::Scale => {
-                let grow = dx - dy;
-                t.scale.x = scale_step(t.scale.x, grow);
-                t.scale.y = scale_step(t.scale.y, grow);
-                t.scale.z = scale_step(t.scale.z, grow);
-            }
-        }
-        self.set_object(i, obj)
-    }
 }
 
 impl Editor {

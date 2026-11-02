@@ -1699,81 +1699,55 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
     let palette = editor.palette_range().is_some_and(|r| r.end() > r.start());
     let objects = editor.tool == ToolKind::Move && !editor.selected_objects().is_empty();
     let nudge_objects = objects && editor.selection.is_none() && !editor.can_transform();
-    // Con un modelo 3D activo, G, R y S eligen qué hacen las flechas y las flechas actúan sobre
-    // el objeto elegido (no cambian de frame ni de capa).
-    if editor.is_model() {
-        // En el modo Edit: 1–4 cambian qué se elige, G y S arrancan un gesto que sigue al
-        // puntero, Enter lo confirma, Esc lo cancela (o vacía la selección) y las flechas
-        // mueven un paso de cuadrícula.
-        if editor.model_edit_on() {
-            use cs_3d::SelectMode;
-            let mode = match key {
-                _ if shift => None,
-                Key::Num1 => Some(SelectMode::Object),
-                Key::Num2 => Some(SelectMode::Vertex),
-                Key::Num3 => Some(SelectMode::Edge),
-                Key::Num4 => Some(SelectMode::Face),
-                _ => None,
-            };
-            if let Some(mode) = mode {
-                editor.set_select_mode(mode);
-                return true;
-            }
-            let busy = editor.model_edit().op.is_some();
-            let mut handled = true;
-            match key {
-                Key::G if !shift => editor.request_model_key_op(editor::KeyOp::Grab),
-                Key::S if !shift => editor.request_model_key_op(editor::KeyOp::Scale),
-                Key::Enter if busy => editor.finish_model_op(),
-                Key::Escape if busy => {
-                    editor.cancel_model_op();
-                }
-                Key::Escape => {
-                    let mode = editor.model_edit().selection.mode;
-                    editor.set_model_selection(cs_3d::Selection {
-                        mode,
-                        items: Default::default(),
-                    });
-                }
-                Key::ArrowLeft => {
-                    editor.nudge_model_selection(-1, 0);
-                }
-                Key::ArrowRight => {
-                    editor.nudge_model_selection(1, 0);
-                }
-                Key::ArrowUp => {
-                    editor.nudge_model_selection(0, -1);
-                }
-                Key::ArrowDown => {
-                    editor.nudge_model_selection(0, 1);
-                }
-                _ => handled = false,
-            }
-            if handled {
-                return true;
-            }
-        }
-        let arrow = match key {
-            Key::ArrowLeft => Some((-1, 0)),
-            Key::ArrowRight => Some((1, 0)),
-            Key::ArrowUp => Some((0, -1)),
-            Key::ArrowDown => Some((0, 1)),
-            _ => None,
-        };
-        if let Some((dx, dy)) = arrow {
-            editor.arrow_on_object(dx, dy);
-            return true;
-        }
-        // Sin Shift: Shift+R es Jumble y Shift+S, otro atajo.
+    // En el workspace del modelo (siempre en modo Edit): 1–4 cambian qué se elige, G y S
+    // arrancan un gesto que sigue al puntero, Enter lo confirma, Esc lo cancela (o vacía la
+    // selección) y las flechas mueven un paso de cuadrícula (no cambian de frame ni de capa).
+    // Con Shift, G y S siguen con sus otros atajos.
+    if editor.model_edit_on() {
+        use cs_3d::SelectMode;
         let mode = match key {
             _ if shift => None,
-            Key::G => Some(editor::ModelArrows::Move),
-            Key::R => Some(editor::ModelArrows::Rotate),
-            Key::S => Some(editor::ModelArrows::Scale),
+            Key::Num1 => Some(SelectMode::Object),
+            Key::Num2 => Some(SelectMode::Vertex),
+            Key::Num3 => Some(SelectMode::Edge),
+            Key::Num4 => Some(SelectMode::Face),
             _ => None,
         };
         if let Some(mode) = mode {
-            editor.set_model_arrows(mode);
+            editor.set_select_mode(mode);
+            return true;
+        }
+        let busy = editor.model_edit().op.is_some();
+        let mut handled = true;
+        match key {
+            Key::G if !shift => editor.request_model_key_op(editor::KeyOp::Grab),
+            Key::S if !shift => editor.request_model_key_op(editor::KeyOp::Scale),
+            Key::Enter if busy => editor.finish_model_op(),
+            Key::Escape if busy => {
+                editor.cancel_model_op();
+            }
+            Key::Escape => {
+                let mode = editor.model_edit().selection.mode;
+                editor.set_model_selection(cs_3d::Selection {
+                    mode,
+                    items: Default::default(),
+                });
+            }
+            Key::ArrowLeft => {
+                editor.nudge_model_selection(-1, 0);
+            }
+            Key::ArrowRight => {
+                editor.nudge_model_selection(1, 0);
+            }
+            Key::ArrowUp => {
+                editor.nudge_model_selection(0, -1);
+            }
+            Key::ArrowDown => {
+                editor.nudge_model_selection(0, 1);
+            }
+            _ => handled = false,
+        }
+        if handled {
             return true;
         }
     }

@@ -30,7 +30,7 @@ mod model_edit;
 mod model_ops;
 mod workspace;
 pub use model_edit::{EditOp, GRIDS, KeyOp, ModelEdit};
-pub use model_ops::{ModelArrows, wrap_angle};
+pub use model_ops::wrap_angle;
 
 /// Herramientas que trabajan dentro de un sprite.
 struct SpriteTools {
@@ -330,8 +330,6 @@ pub struct Editor {
     pub(crate) glyph_clipboard: font_ops::GlyphClipboard,
     /// Objeto elegido del modelo 3D activo (índice en `model.objects`).
     pub(crate) model_object: Option<usize>,
-    /// Qué hacen las flechas sobre el objeto elegido del modelo 3D.
-    pub(crate) model_arrows: ModelArrows,
     /// El modo Edit del artboard 3D (estado de la UI: no se guarda).
     pub(crate) model_edit: ModelEdit,
     /// Gesto en curso (p. ej. arrastrar un campo del panel) cuyos cambios se juntan en un solo
@@ -440,7 +438,6 @@ impl Editor {
             text_style: TextStyle::default(),
             glyph_clipboard: None,
             model_object: None,
-            model_arrows: Default::default(),
             model_edit: Default::default(),
             merge: None,
             edit_mask: false,
