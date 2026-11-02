@@ -8,7 +8,9 @@ mod lighting;
 mod materialize;
 mod model3d;
 pub mod normal;
-pub use bake3d::{BakeOptions, BakeOutput, bake_model};
+pub use bake3d::{
+    BAKE_FRAMES, BAKE_SIZE, BAKE_TILT, BakeOptions, BakeOutput, bake_model, bake_preview,
+};
 pub use lighting::{Light, detect_background, lit, luminance_mask};
 pub use materialize::{
     Bake, bake_layers, materialize, materialize_tilemaps, object_image, tilemap_pixel,

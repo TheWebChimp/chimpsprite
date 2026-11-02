@@ -48,6 +48,18 @@ pub(crate) fn dialog_window(
     title: &str,
     add_contents: impl FnOnce(&mut egui::Ui),
 ) -> (DialogResult, bool) {
+    dialog_window_with(ctx, skin, id, title, ["OK", "Cancel"], add_contents)
+}
+
+/// [`dialog_window`] con otros nombres para los botones de aceptar y cancelar.
+pub(crate) fn dialog_window_with(
+    ctx: &egui::Context,
+    skin: Option<&Skin>,
+    id: &str,
+    title: &str,
+    buttons: [&str; 2],
+    add_contents: impl FnOnce(&mut egui::Ui),
+) -> (DialogResult, bool) {
     let mut result = DialogResult::Open;
     let (_, closed) = pixel_ui::app_window(
         ctx,
@@ -59,7 +71,7 @@ pub(crate) fn dialog_window(
         |ui| {
             add_contents(ui);
             ui.add_space(6.0);
-            match pixel_ui::dialog_buttons(ui, skin, &["OK", "Cancel"]) {
+            match pixel_ui::dialog_buttons(ui, skin, &buttons) {
                 Some(0) => result = DialogResult::Accept,
                 Some(_) => result = DialogResult::Cancel,
                 None => {}

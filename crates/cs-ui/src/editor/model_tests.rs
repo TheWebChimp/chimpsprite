@@ -159,10 +159,8 @@ fn arrow_rotation_wraps_and_arrow_scale_keeps_sign_and_range() {
 fn two_bakes_do_not_overlap() {
     let mut e = editor_with_model();
     let options = cs_render::BakeOptions {
-        angles: 4,
-        camera: None,
-        animate_texture: false,
-        output: cs_render::BakeOutput::Frames,
+        frames: 4,
+        ..cs_render::BakeOptions::from_model(e.model().unwrap(), (e.sprite().width, 1), 0)
     };
     assert!(e.bake(options));
     assert!(e.bake(options));

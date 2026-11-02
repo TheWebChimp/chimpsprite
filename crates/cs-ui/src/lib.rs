@@ -826,7 +826,7 @@ impl ChimpApp {
         let Some(dialog) = &mut self.bake else {
             return;
         };
-        match dialog.show(ctx, self.pixel.skin()) {
+        match dialog.show(ctx, self.pixel.skin(), &self.doc.editor.document) {
             tilemap_dialog::DialogResult::Open => {}
             tilemap_dialog::DialogResult::Accept => {
                 let options = dialog.chosen();

@@ -465,8 +465,19 @@ fn bake_adds_the_baked_artboard_in_one_undo_step() {
     h.app.bake = Some(crate::bake_dialog::BakeDialog::new(&h.app.doc.editor));
     h.settle();
     assert!(h.app.is_modal());
-    assert!(h.drew_text("Bake"));
-    h.click("OK");
+    assert!(h.drew_text("Sheet settings"), "{:?}", h.texts);
+    for label in [
+        "Frames",
+        "Size (px)",
+        "Zoom (%)",
+        "Tilt (°)",
+        "Height",
+        "Ortho",
+    ] {
+        assert!(h.drew_text(label), "{label}: {:?}", h.texts);
+    }
+    h.button("Cancel");
+    h.click("Export");
     h.settle();
     assert!(h.app.bake.is_none());
     let editor = &mut h.app.doc.editor;
@@ -479,6 +490,41 @@ fn bake_adds_the_baked_artboard_in_one_undo_step() {
     assert_eq!(editor.active, model, "the model stays active");
     editor.undo();
     assert_eq!(editor.document.artboards.len(), before);
+}
+
+#[test]
+fn four_frames_in_the_sheet_settings_bake_four_frames() {
+    let mut h = DialogHarness::new(true);
+    assert!(h.app.doc.editor.new_model("Model", (32, 32)));
+    h.app.bake = Some(crate::bake_dialog::BakeDialog::new(&h.app.doc.editor));
+    h.settle();
+    // El primer stepper (el de más arriba) es Frames: de 8 a 4.
+    for _ in 0..4 {
+        let minus = h
+            .buttons
+            .iter()
+            .filter(|(l, _)| l == "Decrease")
+            .map(|(_, r)| *r)
+            .min_by(|a, b| a.min.y.partial_cmp(&b.min.y).unwrap())
+            .expect("the Frames stepper");
+        let press = |pressed| Event::PointerButton {
+            pos: minus.center(),
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: Default::default(),
+        };
+        h.frame(vec![Event::PointerMoved(minus.center())]);
+        h.frame(vec![press(true)]);
+        h.frame(vec![press(false)]);
+        h.frame(vec![]);
+    }
+    assert_eq!(h.app.bake.as_ref().unwrap().options.frames, 4);
+    h.click("Export");
+    h.settle();
+    assert!(h.app.bake.is_none());
+    let baked = h.app.doc.editor.document.artboards.last().unwrap();
+    assert_eq!(baked.name, "Model · bake");
+    assert_eq!(baked.sprite.frames.len(), 4);
 }
 
 // --- New Tilemap Layer ---
