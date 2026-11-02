@@ -537,7 +537,7 @@ fn without_pixel_ui_the_zoom_field_moves_in_steps_of_ten() {
     assert_eq!(h.numbers.len(), 5, "{:?}", h.numbers);
     h.drag_number(2, 12.0);
     let zoom = h.app.bake.as_ref().unwrap().options.zoom;
-    assert!(zoom > 100 && zoom % 10 == 0, "zoom {zoom}");
+    assert!(zoom > 100 && zoom.is_multiple_of(10), "zoom {zoom}");
 }
 
 #[test]
