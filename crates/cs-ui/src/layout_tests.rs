@@ -3943,3 +3943,113 @@ fn dragging_a_font_stepper_is_one_undo_step() {
     h.app.doc.editor.undo();
     assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 12);
 }
+
+/// Con Pixel UI, un modelo 3D de 32×32 activo, a 800 % y centrado (con el cubo elegido).
+fn with_a_model_at_800() -> LayoutHarness {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+    zoom_centered(&mut h, 8.0);
+    h
+}
+
+fn camera(h: &LayoutHarness) -> cs_core::Camera3D {
+    h.app.doc.editor.model().expect("a model").camera
+}
+
+#[test]
+fn a_model_artboard_has_the_teal_bar() {
+    let h = with_a_model_at_800();
+    let pixels = artboard_pixels(&h);
+    let bar = union(&h.drawn("title.bar.model")).expect("the model bar");
+    assert_eq!(bar.left(), pixels.left() - 2.0);
+    assert_eq!(bar.right(), pixels.right() + 2.0);
+    assert_eq!(bar.bottom(), pixels.top() - 1.0);
+    assert!(h.drawn("title.bar.font").iter().all(|r| !r.intersects(bar)));
+}
+
+#[test]
+fn right_dragging_a_model_orbits_the_camera_in_one_undo_step() {
+    let mut h = with_a_model_at_800();
+    let before = camera(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    let from = artboard_pixels(&h).center();
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Secondary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![press(from, true)]);
+    for dx in [5.0, 10.0, 20.0] {
+        h.frame_with(vec![Event::PointerMoved(from + vec2(dx, 4.0))]);
+    }
+    h.frame_with(vec![press(from + vec2(20.0, 4.0), false)]);
+    h.frame();
+    let after = camera(&h);
+    assert_eq!(after.yaw, before.yaw + 100);
+    assert_eq!(after.pitch, before.pitch + 20);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(camera(&h), before);
+}
+
+#[test]
+fn ctrl_wheel_over_a_model_changes_the_camera_distance_not_the_zoom() {
+    let mut h = with_a_model_at_800();
+    let before = camera(&h).distance;
+    let zoom = h.app.doc.canvas.zoom;
+    let at = artboard_pixels(&h).center();
+    h.frame_with(vec![
+        Event::ModifiersChanged(egui::Modifiers::COMMAND),
+        Event::PointerMoved(at),
+    ]);
+    h.frame_with(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: vec2(0.0, -1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::COMMAND,
+    }]);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    let after = camera(&h).distance;
+    assert_eq!(after, (before as f32 * 1.1).round() as i32, "away");
+    assert_eq!(h.app.doc.canvas.zoom, zoom);
+}
+
+#[test]
+fn clicking_a_model_picks_the_object_under_the_pointer() {
+    let mut h = with_a_model_at_800();
+    let pixels = artboard_pixels(&h);
+    h.click(pixels.left_top() + vec2(4.0, 4.0), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.selected_object(), None, "an empty corner");
+    h.click(pixels.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.selected_object(), Some(0), "the cube");
+}
+
+#[test]
+fn g_and_the_right_arrow_move_the_selected_object_not_the_frame() {
+    let mut h = with_a_model_at_800();
+    let key = |key, pressed| Event::Key {
+        key,
+        physical_key: None,
+        pressed,
+        repeat: false,
+        modifiers: Default::default(),
+    };
+    let x = |h: &LayoutHarness| {
+        h.app.doc.editor.model().unwrap().objects[0]
+            .transform
+            .position
+            .x
+    };
+    let x0 = x(&h);
+    h.frame_with(vec![key(egui::Key::G, true), key(egui::Key::G, false)]);
+    h.frame_with(vec![
+        key(egui::Key::ArrowRight, true),
+        key(egui::Key::ArrowRight, false),
+    ]);
+    h.frame();
+    assert_eq!(x(&h), x0 + 4);
+    assert_eq!(h.app.doc.editor.frame, 0);
+    assert!(h.texts.iter().any(|(t, _)| t.contains("3D: Move")));
+}

@@ -38,6 +38,55 @@ pub fn model_sprite(doc: &Document, artboard: &Artboard, texture_frame: usize) -
     model_sprite_at(doc, artboard, texture_frame, &mut stack)
 }
 
+/// El objeto del modelo de `artboard` que se ve en su pixel `(x, y)` en el lienzo (con el frame
+/// 0 de la textura: sus pixeles transparentes no tapan lo de atrás). `None` si no hay ninguno o
+/// si no es un modelo.
+pub fn model_pick(doc: &Document, artboard: &Artboard, x: u32, y: u32) -> Option<usize> {
+    let model = artboard.model.as_ref()?;
+    let sprite = &artboard.sprite;
+    if !sprite.color_mode.stores_rgba() || model.check(sprite).is_err() {
+        return None;
+    }
+    let mut stack = vec![artboard.id];
+    let texture = texture_frame_of(doc, model, 0, &mut stack);
+    cs_3d::pick_object(
+        &RenderInput {
+            model,
+            size: (sprite.width, sprite.height),
+            texture: texture.as_ref().map(|(width, height, pixels)| Texture {
+                width: *width,
+                height: *height,
+                pixels,
+            }),
+            palette: sprite.palette.colors(),
+            camera: None,
+            extra_yaw: 0,
+        },
+        x,
+        y,
+    )
+}
+
+/// El frame `texture_frame` (módulo sus frames) de la textura de `model`, como se ve en el
+/// lienzo: con sus instancias y tilemaps resueltos. `None` sin textura, si la textura es otro
+/// modelo o si está en `stack` (un ciclo).
+fn texture_frame_of(
+    doc: &Document,
+    model: &cs_core::Model3D,
+    texture_frame: usize,
+    stack: &mut Vec<ArtboardId>,
+) -> Option<(u32, u32, Vec<Rgba>)> {
+    let t = model
+        .texture
+        .and_then(|id| doc.artboard(id))
+        .filter(|t| t.model.is_none() && !stack.contains(&t.id) && !t.sprite.frames.is_empty())?;
+    let frame = texture_frame % t.sprite.frames.len();
+    stack.push(t.id);
+    let pixels = crate::materialize::visible_frame(doc, &t.sprite, frame, stack);
+    stack.pop();
+    Some((t.sprite.width, t.sprite.height, pixels))
+}
+
 /// Como `model_sprite`, con los artboards que ya se están materializando (`stack`): una textura
 /// que está en la pila (un ciclo) cuenta como sin textura.
 pub(crate) fn model_sprite_at(
@@ -53,18 +102,7 @@ pub(crate) fn model_sprite_at(
     if !sprite.color_mode.stores_rgba() || model.check(sprite).is_err() {
         return None;
     }
-    // La textura se ve como en el lienzo: con sus instancias y tilemaps resueltos.
-    let texture = model
-        .texture
-        .and_then(|id| doc.artboard(id))
-        .filter(|t| t.model.is_none() && !stack.contains(&t.id) && !t.sprite.frames.is_empty())
-        .map(|t| {
-            let frame = texture_frame % t.sprite.frames.len();
-            stack.push(t.id);
-            let pixels = crate::materialize::visible_frame(doc, &t.sprite, frame, stack);
-            stack.pop();
-            (t.sprite.width, t.sprite.height, pixels)
-        });
+    let texture = texture_frame_of(doc, model, texture_frame, stack);
     let size = (sprite.width, sprite.height);
     let palette = sprite.palette.colors();
     let key = Key {

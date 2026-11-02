@@ -1567,6 +1567,31 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
     let palette = editor.palette_range().is_some_and(|r| r.end() > r.start());
     let objects = editor.tool == ToolKind::Move && !editor.selected_objects().is_empty();
     let nudge_objects = objects && editor.selection.is_none() && !editor.can_transform();
+    // Con un modelo 3D activo, G, R y S eligen qué hacen las flechas y las flechas actúan sobre
+    // el objeto elegido (no cambian de frame ni de capa).
+    if editor.is_model() {
+        let arrow = match key {
+            Key::ArrowLeft => Some((-1, 0)),
+            Key::ArrowRight => Some((1, 0)),
+            Key::ArrowUp => Some((0, -1)),
+            Key::ArrowDown => Some((0, 1)),
+            _ => None,
+        };
+        if let Some((dx, dy)) = arrow {
+            editor.arrow_on_object(dx, dy);
+            return true;
+        }
+        let mode = match key {
+            Key::G => Some(editor::ModelArrows::Move),
+            Key::R => Some(editor::ModelArrows::Rotate),
+            Key::S => Some(editor::ModelArrows::Scale),
+            _ => None,
+        };
+        if let Some(mode) = mode {
+            editor.set_model_arrows(mode);
+            return true;
+        }
+    }
     match key {
         Key::Enter if editor.is_pending() => editor.finish_gesture(),
         Key::Enter if editor.is_floating() => {

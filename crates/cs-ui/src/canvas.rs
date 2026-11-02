@@ -8,7 +8,7 @@ use eframe::egui::{
     TextureHandle, TextureOptions, Vec2,
 };
 
-use crate::artboard_window::{ArtboardWindow, CardSample, TitleHit, WindowLayout};
+use crate::artboard_window::{ArtboardWindow, BarKind, CardSample, TitleHit, WindowLayout};
 use crate::canvas_size::{CanvasSizeDialog, GuideEdge};
 use crate::editor::{Editor, MAX_BRUSH_SIZE, ToolKind};
 use crate::guides::{RULER_PX, SNAP_PX, SnapContext, after_drag, hit_guide, nice_step};
@@ -22,6 +22,7 @@ use crate::view::{ViewSettings, ZoomRequest};
 use crate::{kit, theme, widgets};
 
 mod input;
+mod model_input;
 mod rulers;
 
 const ZOOM_LEVELS: [f32; 13] = [
@@ -125,6 +126,8 @@ pub struct CanvasView {
     pub symbol_request: bool,
     /// Ctrl+rueda de touchpad: píxeles acumulados que todavía no suman un paso de grosor.
     wheel_rest: f32,
+    /// El arrastre en curso sobre el artboard 3D activo (orbitar o mover el objetivo).
+    model_drag: Option<model_input::ModelDrag>,
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
     pub background: Color32,
     /// Las reglas del skin con Pixel UI (`None`: las de siempre); lo pone la app en cada frame.
@@ -275,6 +278,7 @@ impl Default for CanvasView {
             advance_drag: None,
             cards: HashMap::new(),
             cards_revision: None,
+            model_drag: None,
         }
     }
 }
@@ -841,7 +845,7 @@ impl CanvasView {
                     Some(font) if self.names_visible && !renaming => font.name.clone(),
                     _ => String::new(),
                 };
-                painter.extend(w.bar_shapes(&painter, layout, &title, active, true, ppp));
+                painter.extend(w.bar_shapes(&painter, layout, &title, active, BarKind::Font, ppp));
                 continue;
             }
             if let Some((w, layout)) = &window {
@@ -924,8 +928,8 @@ impl CanvasView {
                 } else {
                     String::new()
                 };
-                let is_font = artboard.font.is_some();
-                painter.extend(w.bar_shapes(&painter, layout, &title, active, is_font, ppp));
+                let kind = BarKind::of(artboard);
+                painter.extend(w.bar_shapes(&painter, layout, &title, active, kind, ppp));
                 continue;
             }
             let (border, label_color) = if active {

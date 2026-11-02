@@ -5,7 +5,13 @@ use super::*;
 
 impl CanvasView {
     /// Si `p` cae sobre un artboard que va delante del activo.
-    fn under_front_artboard(&self, rect: Rect, editor: &Editor, p: Pos2, ppp: f32) -> bool {
+    pub(super) fn under_front_artboard(
+        &self,
+        rect: Rect,
+        editor: &Editor,
+        p: Pos2,
+        ppp: f32,
+    ) -> bool {
         let view = editor.view();
         let document = view.document.as_ref();
         let covers = self.covers(rect, document, editor, ppp);
@@ -316,9 +322,14 @@ impl CanvasView {
         // Durante un trazo el grosor no cambia: Ctrl+rueda se ignora (ni grosor ni zoom).
         let painting = editor.is_painting();
         let brush = editor.active_tool().uses_brush();
+        // Sobre el artboard 3D activo, Ctrl+rueda acerca o aleja la cámara (ni grosor ni zoom).
+        let ppp = ui.ctx().pixels_per_point();
+        let model_hover = response
+            .hover_pos()
+            .is_some_and(|p| self.over_model(rect, editor, p, ppp));
         // Los restos de rueda de touchpad solo siguen sumando mientras dura el gesto: Ctrl
-        // mantenido, herramienta de pincel y ninguna rueda sin Ctrl en el medio.
-        let mut keep_rest = brush && ui.input(|i| i.modifiers.command);
+        // mantenido, herramienta de pincel (o el modelo) y ninguna rueda sin Ctrl en el medio.
+        let mut keep_rest = (brush || model_hover) && ui.input(|i| i.modifiers.command);
         if let Some(pointer) = response.hover_pos() {
             let wheel: Vec<(egui::MouseWheelUnit, f32, bool)> = ui.input(|i| {
                 i.raw
@@ -337,6 +348,13 @@ impl CanvasView {
             });
             let mut scroll = 0.0;
             for (unit, dy, command) in wheel {
+                if command && model_hover {
+                    let steps = brush_wheel_steps(&mut self.wheel_rest, unit, dy);
+                    if steps != 0 {
+                        Self::model_wheel(editor, steps);
+                    }
+                    continue;
+                }
                 if command && brush && painting {
                     continue;
                 }
@@ -533,7 +551,7 @@ impl CanvasView {
             && ((pressed_primary && editor.cancel_with_other_button(false))
                 || (pressed_secondary && editor.cancel_with_other_button(true)));
 
-        if !modal
+        let can_press = !modal
             && !cancelled
             && !ruler_busy
             && !over_note
@@ -542,7 +560,19 @@ impl CanvasView {
             && !hand
             && response.hovered()
             && !editor.is_painting()
-            && (pressed_primary || pressed_secondary)
+            && (pressed_primary || pressed_secondary);
+        // Sobre el área de pixeles del artboard 3D activo, los botones mueven la cámara o eligen
+        // objetos: no llegan a las herramientas (ni al cuentagotas ni a los menús).
+        let model_press = can_press
+            && over_label.is_none()
+            && self.model_drag.is_none()
+            && pointer.is_some_and(|p| !over_crumbs(p) && self.over_model(rect, editor, p, ppp));
+        if model_press && let Some(p) = pointer {
+            self.model_press(rect, editor, p, pressed_secondary, modifiers);
+        }
+        self.model_drag_input(editor, pointer, any_down);
+        if can_press
+            && !model_press
             && let Some(p) = pointer
             && !over_crumbs(p)
         {

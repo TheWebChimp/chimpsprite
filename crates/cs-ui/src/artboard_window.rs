@@ -22,6 +22,8 @@
 //!   lados, se dibuja la tarjeta ([`WindowLayout::card`], referencia `ff_zoom.png`): la barra con
 //!   el nombre de la fuente y un cuerpo blanco con "Abcde 12345" escrito con la fuente, a 1 punto
 //!   por píxel, a 5 del anillo gris de cada lado.
+//! - **Modelos 3D:** los artboards 3D llevan la barra verde azulada (`title.bar.model`,
+//!   provisional; sin ella, la rosa).
 
 use std::sync::Arc;
 
@@ -54,6 +56,8 @@ const ELLIPSIS: &str = "...";
 const FRAME_PIECE: &str = "artboard.frame";
 /// La barra de los artboards de fuente: la del kit en naranja.
 const FONT_BAR_PIECE: &str = "title.bar.font";
+/// La barra de los artboards 3D: la del kit en verde azulado (provisional).
+const MODEL_BAR_PIECE: &str = "title.bar.model";
 
 /// Lo que se escribe en la tarjeta de una fuente.
 pub const CARD_SAMPLE: &str = "Abcde\n12345";
@@ -173,6 +177,27 @@ impl WindowLayout {
     }
 }
 
+/// Qué barra de título lleva un artboard: la rosa, la naranja de las fuentes o la verde azulada
+/// de los modelos 3D.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BarKind {
+    Normal,
+    Font,
+    Model,
+}
+
+impl BarKind {
+    pub fn of(artboard: &cs_core::Artboard) -> BarKind {
+        if artboard.font.is_some() {
+            BarKind::Font
+        } else if artboard.model.is_some() {
+            BarKind::Model
+        } else {
+            BarKind::Normal
+        }
+    }
+}
+
 /// Las piezas y los colores de la ventana de los artboards. La app lo arma del skin en cada
 /// frame (como las reglas pixel); `None` en el lienzo: sin Pixel UI.
 #[derive(Clone)]
@@ -181,6 +206,8 @@ pub struct ArtboardWindow {
     title: TitleLook,
     /// La barra naranja de los artboards de fuente.
     font_title: TitleLook,
+    /// La barra verde azulada de los artboards 3D.
+    model_title: TitleLook,
     colors: SkinColors,
 }
 
@@ -244,6 +271,7 @@ impl ArtboardWindow {
             frame: piece(FRAME_PIECE),
             title: TitleLook::new(skin),
             font_title: TitleLook::with_bar(skin, FONT_BAR_PIECE),
+            model_title: TitleLook::with_bar(skin, MODEL_BAR_PIECE),
             colors: *skin.colors(),
         }
     }
@@ -324,18 +352,22 @@ impl ArtboardWindow {
     }
 
     /// La barra del UI kit con el ≡, el nombre `title` y el ○, encima del marco; sin el foco
-    /// (`active`), en el color tenue de la barra. La de un artboard de fuente (`font`) es la
-    /// naranja.
+    /// (`active`), en el color tenue de la barra. La de un artboard de fuente es la naranja y la
+    /// de un modelo 3D, la verde azulada (`kind`).
     pub fn bar_shapes(
         &self,
         painter: &Painter,
         layout: &WindowLayout,
         title: &str,
         active: bool,
-        font: bool,
+        kind: BarKind,
         ppp: f32,
     ) -> Vec<Shape> {
-        let look = if font { &self.font_title } else { &self.title };
+        let look = match kind {
+            BarKind::Normal => &self.title,
+            BarKind::Font => &self.font_title,
+            BarKind::Model => &self.model_title,
+        };
         let icons = layout.menu.is_some();
         let state = TitleState {
             focused: active,

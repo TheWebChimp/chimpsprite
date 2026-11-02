@@ -141,3 +141,90 @@ fn set_model_cmd(id: cs_core::ArtboardId, model: Model3D) -> DocCommand {
         model: Some(Box::new(model)),
     }
 }
+
+/// Qué hacen las flechas sobre el objeto elegido de un modelo 3D (G, R y S las cambian).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ModelArrows {
+    /// 1/4 de unidad (4/16) por flecha.
+    #[default]
+    Move,
+    /// 15° por flecha.
+    Rotate,
+    /// ±10 % por flecha.
+    Scale,
+}
+
+impl ModelArrows {
+    pub fn label(self) -> &'static str {
+        match self {
+            ModelArrows::Move => "Move",
+            ModelArrows::Rotate => "Rotate",
+            ModelArrows::Scale => "Scale",
+        }
+    }
+}
+
+/// Lo que mueve una flecha en el modo Move, en 1/16 de unidad.
+const ARROW_MOVE: i32 = 4;
+/// Lo que gira una flecha en el modo Rotate, en décimas de grado.
+const ARROW_ROTATE: i32 = 150;
+
+impl Editor {
+    pub fn model_arrows(&self) -> ModelArrows {
+        self.model_arrows
+    }
+
+    pub fn set_model_arrows(&mut self, mode: ModelArrows) {
+        self.model_arrows = mode;
+        self.revision += 1;
+    }
+
+    /// Una flecha sobre el objeto elegido, según [`ModelArrows`]: `dx` a la derecha, `dy` hacia
+    /// abajo (en pantalla). Move corre el objeto en X e Y; Rotate lo gira en Y (izquierda y
+    /// derecha) y en X (arriba y abajo); Scale lo agranda con → o ↑ y lo achica con ← o ↓.
+    pub fn arrow_on_object(&mut self, dx: i32, dy: i32) -> bool {
+        let Some(i) = self.selected_object() else {
+            return false;
+        };
+        let Some(mut obj) = self.model().map(|m| m.objects[i].clone()) else {
+            return false;
+        };
+        let t = &mut obj.transform;
+        match self.model_arrows {
+            ModelArrows::Move => {
+                t.position.x += dx * ARROW_MOVE;
+                t.position.y -= dy * ARROW_MOVE;
+            }
+            ModelArrows::Rotate => {
+                t.rotation.y += dx * ARROW_ROTATE;
+                t.rotation.x += dy * ARROW_ROTATE;
+            }
+            ModelArrows::Scale => {
+                let grow = dx - dy;
+                let step = |s: i32| match grow.signum() {
+                    1 => (s * 11 + 5) / 10,
+                    -1 => ((s * 10 + 5) / 11).max(1),
+                    _ => s,
+                };
+                t.scale.x = step(t.scale.x);
+                t.scale.y = step(t.scale.y);
+                t.scale.z = step(t.scale.z);
+            }
+        }
+        self.set_object(i, obj)
+    }
+}
+
+impl Editor {
+    /// Elige el objeto del modelo activo que se ve en el pixel local `(x, y)` (ninguno si ahí
+    /// no hay nada).
+    pub fn pick_model_object(&mut self, (x, y): (i32, i32)) {
+        if !self.is_model() {
+            return;
+        }
+        let hit = (x >= 0 && y >= 0)
+            .then(|| cs_render::model_pick(&self.document, self.artboard(), x as u32, y as u32))
+            .flatten();
+        self.select_model_object(hit);
+    }
+}

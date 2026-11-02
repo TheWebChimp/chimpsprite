@@ -661,6 +661,10 @@ fn status_notices(
     if let Some(text) = editor.tiles_status() {
         out.push((text.to_string(), false));
     }
+    // Qué hacen las flechas sobre el objeto elegido del modelo 3D (G, R, S).
+    if editor.is_model() {
+        out.push((format!("3D: {}", editor.model_arrows().label()), false));
+    }
     if let Some(text) = editor.floating_status() {
         out.push((text, false));
     }
