@@ -711,6 +711,15 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         }
         e.set_light(cs_core::Light3D::default());
         e.set_outline(Some(cs_core::Rgba::rgb(0, 0, 0)));
+        // Con CHIMPSPRITE_DEMO_MODEL_EDIT: el modo Edit prendido, en vértices y con uno elegido.
+        if dev_var("CHIMPSPRITE_DEMO_MODEL_EDIT").is_some() {
+            e.toggle_model_edit();
+            e.set_select_mode(cs_3d::SelectMode::Vertex);
+            e.set_model_selection(cs_3d::Selection {
+                mode: cs_3d::SelectMode::Vertex,
+                items: [cs_3d::Item::Vertex(0, 7)].into(),
+            });
+        }
     }
     if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
         app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
