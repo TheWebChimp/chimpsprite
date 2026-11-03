@@ -2,6 +2,15 @@
 
 Fecha: 2026-11-03 · Estado: diseño aprobado
 
+**Cambio (2026-11-03, boceto `D:/Work/chimpdeas/.refs/chimpcad/mockup-panel-split.png`):** el panel
+se parte en dos a lo alto. **Arriba**, siempre visible, lo general del modelo (lo que era la pestaña
+del modelo: modos de selección y Grid en Model, Texture y Texture size, Camera, Light & Outline con
+Shading, Sheet settings…), con su propio scroll. **Abajo**, la tira de pestañas de objetos (ya **sin
+la pestaña fija del modelo**) con ◁ ▷ y `+`, y debajo el contenido del objeto elegido (en Texture:
+Rotate 90°, Flip H, Flip V arriba; luego Position, Rotation, Scale y Double sided), con su scroll.
+Sin objeto elegido, la parte de abajo muestra solo la tira. La línea entre las dos mitades va a la
+mitad del alto del panel, como el boceto.
+
 Referencia del usuario: `D:/Work/chimpdeas/.refs/chimpcad/mockup-object-tab.png` (a 1×; las
 capturas mandan en el acomodo). Sigue a `2026-11-03-chimpcad-chrome-design.md`.
 

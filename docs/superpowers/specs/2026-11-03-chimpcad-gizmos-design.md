@@ -58,6 +58,15 @@ Decisiones tomadas con el usuario:
 - El gizmo gana sobre elegir y sobre la caja de selección cuando el puntero está sobre él (a 4
   puntos de una flecha, un aro o un cubito).
 
+## 3.1 Gizmo de navegación (Persp, boceto `mockup-panel-split.png`)
+
+- Arriba a la derecha de la vista Persp, un pequeño gizmo de ejes como el de Blender: tres bolitas
+  de color (X rojo, Y verde, Z azul) unidas al centro, orientadas con la cámara actual (las de los
+  ejes negativos, más chicas y sin color fuerte), en pixel art.
+- **Clic en una bolita** pone la cámara mirando desde ese lado (X → Side, Y → Top, Z → Front; los
+  negativos, del lado opuesto), un paso de undo como hoy los presets.
+- **Arrastrarlo** orbita la cámara como el clic derecho.
+
 ## 4. Código
 
 - `cs-3d`: rotar la selección (`rotate_selection(model, sel, center, axis, angle)`) y la composición
