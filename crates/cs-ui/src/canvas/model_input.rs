@@ -39,7 +39,7 @@ fn drag_group() -> egui::Id {
 impl CanvasView {
     /// `steps` pasos de rueda sobre el modelo: hacia arriba acerca la cámara.
     pub(super) fn model_wheel(editor: &mut Editor, steps: i32) {
-        let Some(mut camera) = editor.model().map(|m| m.camera) else {
+        let Some(mut camera) = editor.edited_model().map(|m| m.camera) else {
             return;
         };
         let factor = DISTANCE_STEP.powi(-steps);
@@ -62,7 +62,7 @@ impl CanvasView {
         factor: Vec2,
     ) {
         editor.end_group();
-        let Some(camera) = editor.model().map(|m| m.camera) else {
+        let Some(camera) = editor.edited_model().map(|m| m.camera) else {
             return;
         };
         if secondary || modifiers.alt || modifiers.shift {
@@ -88,12 +88,12 @@ impl CanvasView {
         let Some(drag) = self.model_drag else {
             return;
         };
-        if !down || !editor.is_model() {
+        if !down || editor.edited_model().is_none() {
             editor.end_group_of(drag_group().value());
             self.model_drag = None;
             return;
         }
-        let (Some(p), Some(mut model)) = (pointer, editor.model().cloned()) else {
+        let (Some(p), Some(mut model)) = (pointer, editor.edited_model().cloned()) else {
             return;
         };
         let d = p - drag.from;

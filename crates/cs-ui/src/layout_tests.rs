@@ -5489,6 +5489,24 @@ fn pixel_shortcuts_do_not_reach_the_hidden_sprite_in_the_cad_workspace() {
 }
 
 #[test]
+fn pixel_shortcuts_act_on_the_texture_in_texture_mode() {
+    let mut h = with_model_tab();
+    h.app
+        .doc
+        .editor
+        .set_cad_mode(crate::editor::CadMode::Texture);
+    h.frame();
+    let texture = h.app.doc.editor.workspace_model().unwrap().texture.unwrap();
+    assert_eq!(h.app.doc.editor.active, texture);
+    press_ctrl(&mut h, egui::Key::A);
+    h.frame();
+    let e = &h.app.doc.editor;
+    assert!(e.model_edit_on());
+    assert!(e.selection.is_some(), "Select All on the texture");
+    assert_eq!(e.active, texture);
+}
+
+#[test]
 fn a_model_view_tab_sits_right_after_its_document_and_switches_and_closes() {
     let mut h = with_model_tab();
     let doc = h.button(&h.app.doc.location.name.clone());

@@ -28,8 +28,9 @@ mod font_ops;
 mod gestures;
 mod model_edit;
 mod model_ops;
+mod texture_mode;
 mod workspace;
-pub use model_edit::{EditOp, GRIDS, KeyOp, ModelEdit};
+pub use model_edit::{CadMode, EditOp, GRIDS, KeyOp, ModelEdit};
 pub use model_ops::wrap_angle;
 
 /// Herramientas que trabajan dentro de un sprite.
@@ -513,11 +514,24 @@ impl Editor {
         if closed {
             self.workspace = None;
         }
+        // En modo Texture el activo es la textura del modelo del workspace. Sin textura se queda
+        // en el modelo (el lienzo avisa); si el activo era la textura y ya no está (un undo), o
+        // ya no hay workspace, vuelve a Model.
+        let texture = if self.model_edit.mode == CadMode::Texture {
+            let t = self.workspace_texture();
+            if t.is_none() && self.workspace != Some(self.active) {
+                self.model_edit.mode = CadMode::Model;
+            }
+            t
+        } else {
+            None
+        };
         let target = match self.symbol_stack.last() {
             // En el modo símbolo, el activo es el último de la pila.
             Some(&last) => Some(last),
+            None if texture.is_some() => texture,
             // En el workspace, el activo es su modelo o su fuente (aunque no esté en el lienzo).
-            None if self.workspace == Some(self.active) => None,
+            None if self.workspace.is_some() => self.workspace,
             // Fuera de ellos, el activo es uno del lienzo: el de antes de entrar o el primero.
             None => {
                 let from_workspace = closed.then(|| self.workspace_return.take()).flatten();
@@ -599,8 +613,9 @@ impl Editor {
             self.symbol_stack.clear();
             self.symbol_return = None;
         }
-        // Activar otro artboard (uno del lienzo, un símbolo) sale del workspace.
-        if self.workspace.is_some_and(|w| w != id) {
+        // Activar otro artboard (uno del lienzo, un símbolo) sale del workspace; la textura del
+        // modelo en modo Texture no.
+        if self.workspace.is_some_and(|w| w != id) && !self.is_workspace_texture(id) {
             self.workspace = None;
             self.workspace_return = None;
         }
@@ -1076,3 +1091,6 @@ mod model_edit_tests;
 
 #[cfg(test)]
 mod workspace_tests;
+
+#[cfg(test)]
+mod texture_mode_tests;

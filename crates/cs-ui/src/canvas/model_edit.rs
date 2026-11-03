@@ -268,7 +268,7 @@ impl CanvasView {
             });
             return true;
         }
-        let Some(model) = editor.model().cloned() else {
+        let Some(model) = editor.edited_model().cloned() else {
             return false;
         };
         let sel = editor.model_edit().selection.clone();
@@ -382,7 +382,7 @@ impl CanvasView {
             && let Some(view) = self.quadrant_at(p).and_then(quadrant_view)
             && let Some(map) = self.edit_view_map(editor, view)
             && let Some(b) = editor
-                .model()
+                .edited_model()
                 .and_then(|m| cs_3d::bounds(m, &editor.model_edit().selection))
         {
             let c = cs_3d::center(b);

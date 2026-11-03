@@ -5,7 +5,7 @@ use cs_3d::{SelectMode, Selection};
 use cs_core::ArtboardId;
 
 use super::Editor;
-use super::model_edit::ModelEdit;
+use super::model_edit::{CadMode, ModelEdit};
 
 impl Editor {
     /// El modelo o la fuente que se edita en su pestaña (`None`: el lienzo).
@@ -19,10 +19,13 @@ impl Editor {
         self.view_request.take()
     }
 
-    /// Si el lienzo muestra un solo artboard, el activo: en el modo símbolo o en el workspace de
-    /// una fuente. Los demás no se ven y tampoco se tocan (clics, la herramienta Artboard, Fit).
+    /// Si el lienzo muestra un solo artboard, el activo: en el modo símbolo, en el workspace de
+    /// una fuente o en la textura del modo Texture. Los demás no se ven y tampoco se tocan
+    /// (clics, la herramienta Artboard, Fit).
     pub fn single_artboard(&self) -> bool {
-        self.in_symbol_mode() || (self.workspace == Some(self.active) && self.is_font())
+        self.in_symbol_mode()
+            || (self.workspace == Some(self.active) && self.is_font())
+            || self.is_workspace_texture(self.active)
     }
 
     /// Si `id` puede tener workspace: un modelo o una fuente.
@@ -33,22 +36,32 @@ impl Editor {
     }
 
     /// Entra al workspace de `id` (un modelo o una fuente): recuerda el artboard del lienzo activo
-    /// y activa `id`. `false` si `id` no es modelo ni fuente.
+    /// y activa `id`. `false` si `id` no es modelo ni fuente. Entrar a otro deja el modo en
+    /// Model; volver a entrar al mismo (su pestaña otra vez) lo conserva.
     pub fn enter_workspace(&mut self, id: ArtboardId) -> bool {
         if !self.has_workspace(id) {
             return false;
+        }
+        let same = self.workspace == Some(id);
+        if !same {
+            self.cancel_uv_op();
+            self.model_edit.mode = CadMode::Model;
         }
         // Sale del modo símbolo (`ensure_valid` regresa a su artboard del lienzo).
         if !self.symbol_stack.is_empty() {
             self.exit_symbol_to(0);
         }
-        // De un workspace a otro se conserva el artboard del lienzo de antes del primero.
-        if self.on_canvas(self.active) {
+        // De un workspace a otro se conserva el artboard del lienzo de antes del primero (la
+        // textura del modo Texture está en el lienzo, pero no es de donde se vino).
+        if self.workspace.is_none() && self.on_canvas(self.active) {
             self.workspace_return = Some(self.active);
         }
         self.workspace = Some(id);
-        self.activate(id);
-        if self.is_model() {
+        // En modo Texture del mismo modelo, el activo sigue siendo su textura.
+        if !(same && self.is_workspace_texture(self.active)) {
+            self.activate(id);
+        }
+        if self.workspace_model().is_some() {
             self.reset_model_edit(id);
         }
         self.revision += 1;
@@ -62,6 +75,8 @@ impl Editor {
             return;
         }
         self.cancel_model_op();
+        self.cancel_uv_op();
+        self.model_edit.mode = CadMode::Model;
         let back = self
             .workspace_return
             .take()
@@ -80,7 +95,7 @@ impl Editor {
     fn reset_model_edit(&mut self, id: ArtboardId) {
         if self.model_edit.artboard != Some(id) {
             let center = self
-                .model()
+                .workspace_model()
                 .and_then(cs_3d::model_bounds)
                 .map_or([0.0; 3], cs_3d::center);
             self.model_edit = ModelEdit {
@@ -96,6 +111,7 @@ impl Editor {
         }
         let edit = &mut self.model_edit;
         edit.op = None;
+        edit.uv_op = None;
         edit.preview = None;
         edit.key_request = None;
     }

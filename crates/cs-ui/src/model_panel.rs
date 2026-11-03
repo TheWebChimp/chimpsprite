@@ -160,7 +160,7 @@ fn body(
     skin: Option<&Skin>,
     state: &mut ModelPanelState,
 ) -> Option<ModelAction> {
-    let Some(count) = editor.model().map(|m| m.objects.len()) else {
+    let Some(count) = editor.edited_model().map(|m| m.objects.len()) else {
         let new = button(ui, skin, "New 3D Model…");
         ui.add_space(ITEM_GAP);
         ui.add(egui::Label::new("The active artboard is not a 3D model.").wrap());
@@ -249,7 +249,7 @@ fn button(ui: &mut Ui, skin: Option<&Skin>, label: &str) -> egui::Response {
 /// elige.
 fn objects(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let names: Vec<String> = editor
-        .model()
+        .edited_model()
         .map(|m| m.objects.iter().map(|o| o.name.clone()).collect())
         .unwrap_or_default();
     let chosen = editor.selected_object();
@@ -448,7 +448,7 @@ fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let Some(i) = editor.selected_object() else {
         return;
     };
-    let Some(model) = editor.model().cloned() else {
+    let Some(model) = editor.edited_model().cloned() else {
         return;
     };
     let obj: &Object3D = &model.objects[i];
@@ -515,7 +515,7 @@ fn check(ui: &mut Ui, skin: Option<&Skin>, on: &mut bool, label: &str) {
 /// La textura: un select con los artboards del lienzo que no son modelos ni fuentes (y None; una
 /// que ya no existe se muestra "(missing)") y New Texture, que agrega una plantilla y la asigna.
 fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
-    let Some(current) = editor.model().map(|m| m.texture) else {
+    let Some(current) = editor.edited_model().map(|m| m.texture) else {
         return;
     };
     ui.add_space(SECTION_GAP);
@@ -592,7 +592,7 @@ fn angles(ui: &mut Ui, skin: Option<&Skin>, salt: &str, (yaw, pitch): (&mut i32,
 /// La cámara, la luz y el contorno. Todo lo cambiado en un frame (o en un arrastre) es un paso de
 /// deshacer (`set_model_grouped`).
 fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
-    let Some(model) = editor.model().cloned() else {
+    let Some(model) = editor.edited_model().cloned() else {
         return;
     };
     let primary = editor.resolve(editor.primary);
@@ -705,8 +705,15 @@ enum ShadeColumn {
 /// paleta, que igual cuentan en el render), tachadas en diagonal: el clic derecho en un paso lo
 /// quita y en el color quita la entrada. Devuelve la tabla nueva si el usuario la cambió.
 fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingTable> {
-    let table = editor.model()?.shading.clone();
-    let palette = editor.sprite().palette.colors().to_vec();
+    let table = editor.edited_model()?.shading.clone();
+    // La paleta del modelo (en modo Texture el activo es su textura).
+    let palette = editor
+        .document
+        .artboard(editor.model_id())?
+        .sprite
+        .palette
+        .colors()
+        .to_vec();
     let opaque: Vec<(usize, Rgba)> = palette
         .iter()
         .copied()

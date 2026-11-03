@@ -43,14 +43,19 @@ pub struct BakeDialog {
 }
 
 impl BakeDialog {
-    /// Para el modelo activo de `editor`, con las opciones de [`BakeOptions::from_model`].
+    /// Para el modelo que se edita en `editor`, con las opciones de [`BakeOptions::from_model`].
     pub fn new(editor: &Editor) -> Self {
         let texture_frames = editor.model_texture_frames();
-        let sprite = editor.sprite();
-        let model = editor.model().cloned().unwrap_or_default();
+        // El modelo que se edita (en modo Texture el activo es su textura).
+        let id = editor.model_id();
+        let size = editor
+            .document
+            .artboard(id)
+            .map_or((1, 1), |a| (a.sprite.width, a.sprite.height));
+        let model = editor.edited_model().cloned().unwrap_or_default();
         BakeDialog {
-            options: BakeOptions::from_model(&model, (sprite.width, sprite.height), texture_frames),
-            model: editor.active,
+            options: BakeOptions::from_model(&model, size, texture_frames),
+            model: id,
             texture_frames,
             preview: None,
         }

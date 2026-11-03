@@ -3,7 +3,7 @@
 //! cuadrícula y los gestos de mover y escalar. Durante un gesto solo cambia la vista previa; al
 //! terminar es un paso de undo.
 
-use cs_3d::{Handle, OrthoView, P3, SelectMode, Selection, ViewMap};
+use cs_3d::{Handle, OrthoView, P3, SelectMode, Selection, UvPoint, ViewMap};
 use cs_core::{ArtboardId, Model3D};
 
 use super::Editor;
@@ -68,6 +68,42 @@ pub enum EditOp {
     },
 }
 
+/// Los dos modos de la pestaña de un modelo: las 4 vistas (*Model*) o el modelo arriba y su
+/// textura abajo (*Texture*).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CadMode {
+    #[default]
+    Model,
+    Texture,
+}
+
+/// El zoom (entero) y el desplazamiento de la textura de abajo en modo Texture.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextureView {
+    pub zoom: u32,
+    pub pan: (f32, f32),
+}
+
+/// Un gesto sobre las UVs de las caras elegidas, en pixeles de la textura (`f32`: el puntero).
+/// Hasta soltar solo cambia la vista previa; al soltar es un paso de undo.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum UvOp {
+    /// Mover las UVs de las caras elegidas en pixeles enteros; `from` es el punto agarrado.
+    Move { from: (f32, f32) },
+    /// Arrastrar un asa de la caja `bounds` (inclusiva) de las UVs elegidas: `handle.u` en x y
+    /// `handle.v` en y de la textura (−1 el lado menor, 1 el mayor, 0 ninguno).
+    Scale {
+        handle: Handle,
+        bounds: (UvPoint, UvPoint),
+    },
+    /// Mover solo el vértice UV `vertex` de la cara `face`; `from` es el punto agarrado.
+    Vertex {
+        face: (usize, usize),
+        vertex: usize,
+        from: (f32, f32),
+    },
+}
+
 /// El estado del modo Edit (de la UI: no se guarda ni pasa por undo). Es del modelo de
 /// `artboard`: al entrar al workspace de otro, empieza de cero.
 #[derive(Clone, Debug)]
@@ -88,6 +124,12 @@ pub struct ModelEdit {
     /// Lo que se presionó estando ya elegido: si el gesto de mover termina sin arrastre, queda
     /// como la única selección.
     pub click_item: Option<cs_3d::Item>,
+    /// El modo de la pestaña (al abrir otro modelo, *Model*).
+    pub mode: CadMode,
+    /// La vista de la textura en modo Texture (`None`: encuadrarla cuando el lienzo sepa el área).
+    pub texture_view: Option<TextureView>,
+    /// El gesto de UV en curso (su vista previa va en `preview`).
+    pub uv_op: Option<UvOp>,
 }
 
 impl Default for ModelEdit {
@@ -104,6 +146,9 @@ impl Default for ModelEdit {
             op: None,
             key_request: None,
             click_item: None,
+            mode: CadMode::Model,
+            texture_view: None,
+            uv_op: None,
         }
     }
 }
@@ -117,16 +162,18 @@ impl Editor {
         &self.model_edit
     }
 
-    /// Si el modo Edit está prendido: en el workspace de un modelo, siempre.
+    /// Si el modo Edit está prendido: en el workspace de un modelo, siempre (en los dos modos; en
+    /// Texture el activo es su textura).
     pub fn model_edit_on(&self) -> bool {
-        self.workspace == Some(self.active) && self.is_model()
+        self.workspace_model().is_some()
+            && (self.workspace == Some(self.active) || self.model_edit.mode == CadMode::Texture)
     }
 
     /// Centro y zoom para que el modelo entero quepa, con aire, en un cuadrante de `side` puntos
     /// de pantalla (el lado más corto). Ya no queda encuadre pendiente.
     pub fn fit_model_views(&mut self, side: f32) {
         self.model_edit.fit = false;
-        let Some(b) = self.model().and_then(cs_3d::model_bounds) else {
+        let Some(b) = self.edited_model().and_then(cs_3d::model_bounds) else {
             return;
         };
         let extent = (0..3).map(|i| b.1[i] - b.0[i]).fold(16.0_f32, f32::max);
@@ -136,7 +183,7 @@ impl Editor {
 
     pub fn set_select_mode(&mut self, mode: SelectMode) {
         let from = self.model_edit.selection.mode;
-        let next = match self.model() {
+        let next = match self.edited_model() {
             // De Object a un subelemento se empieza vacío: convertir elegiría todo el objeto y
             // arrastrar una arista movería el bloque entero.
             Some(m) if from != SelectMode::Object || mode == SelectMode::Object => {
@@ -164,7 +211,7 @@ impl Editor {
 
     /// El modelo que se ve en el modo Edit: la vista previa del gesto o el del documento.
     pub fn edit_model_shown(&self) -> Option<&Model3D> {
-        self.model_edit.preview.as_ref().or(self.model())
+        self.model_edit.preview.as_ref().or(self.edited_model())
     }
 
     pub fn request_model_key_op(&mut self, op: KeyOp) {
@@ -209,7 +256,7 @@ impl Editor {
         }
         let grid = (!free).then_some(self.model_edit.grid);
         let sel = &self.model_edit.selection;
-        let preview = match (op, self.model()) {
+        let preview = match (op, self.edited_model()) {
             (
                 EditOp::Move {
                     map, from, grab, ..
@@ -273,7 +320,7 @@ impl Editor {
             return;
         };
         if let EditOp::Box { map, from, to, add } = op {
-            if let Some(m) = self.model() {
+            if let Some(m) = self.edited_model() {
                 let mode = self.model_edit.selection.mode;
                 let hit = cs_3d::box_select(m, &map, mode, from, to);
                 let mut next = if add {
@@ -320,7 +367,7 @@ impl Editor {
     /// Una flecha: lo elegido un paso de cuadrícula en la última vista usada (`dx` a la derecha,
     /// `dy` hacia abajo en pantalla). Un paso de undo.
     pub fn nudge_model_selection(&mut self, dx: i32, dy: i32) -> bool {
-        let Some(m) = self.model() else {
+        let Some(m) = self.edited_model() else {
             return false;
         };
         if self.model_edit.selection.is_empty() {
@@ -370,6 +417,7 @@ impl Editor {
             None => edit.selection.items.clear(),
         }
         edit.op = None;
+        edit.uv_op = None;
         edit.preview = None;
     }
 }
