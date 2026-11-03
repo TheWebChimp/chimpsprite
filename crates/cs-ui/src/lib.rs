@@ -903,10 +903,30 @@ impl ChimpApp {
             tilemap_dialog::DialogResult::Accept => {
                 let (model, options) = (dialog.model(), dialog.chosen());
                 self.bake = None;
-                self.doc.editor.bake_artboard(model, options);
+                self.finish_bake(model, options);
             }
             tilemap_dialog::DialogResult::Cancel => self.bake = None,
         }
+    }
+
+    /// Hornea `model` y muestra el resultado: el artboard horneado queda activo en el lienzo del
+    /// documento (se sale de la pestaña del modelo, si se horneó desde ella).
+    pub(crate) fn finish_bake(
+        &mut self,
+        model: cs_core::ArtboardId,
+        options: cs_render::BakeOptions,
+    ) {
+        if !self.doc.editor.bake_artboard(model, options) {
+            return;
+        }
+        let Some(baked) = self.doc.editor.document.artboards.last().map(|a| a.id) else {
+            return;
+        };
+        self.tabs.show_doc(&mut self.doc);
+        self.doc.editor.activate(baked);
+        self.doc
+            .canvas
+            .request_zoom(view::ZoomRequest::CenterActive);
     }
 
     /// Crea el modelo 3D `name` en el documento abierto, abre el panel 3D en el dock y lo
@@ -1221,6 +1241,12 @@ impl ChimpApp {
     fn layout(&mut self, ui: &mut egui::Ui, modal: bool) -> Option<egui::Rect> {
         // Las pestañas de vista de lo que ya no existe (o ya no es modelo ni fuente) se van.
         self.tabs.sync_views(&mut self.doc);
+        // Entrar al workspace de un modelo desde el lienzo (doble clic en una instancia, Edit
+        // Symbol) también abre su pestaña de vista y su panel.
+        if let Some(id) = self.doc.editor.take_view_request() {
+            self.tabs.open_view(&mut self.doc, id);
+            self.show_workspace_panel(ui.ctx());
+        }
         // Con Pixel UI, como en el mockup: el menú de 16 de alto y las pestañas de 23, sin línea
         // entre los dos; la barra de pestañas termina en un separador grabado (en vez de la línea
         // de egui). Detrás, contra el borde derecho, el degradé del final de la barra.

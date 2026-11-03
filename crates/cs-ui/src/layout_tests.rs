@@ -5764,3 +5764,57 @@ fn opening_a_model_view_opens_the_3d_panel() {
     h.frame();
     assert!(open(&h), "clicking its tab opens the 3D panel");
 }
+
+#[test]
+fn creating_a_model_or_font_opens_its_view_tab_and_panel() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let ctx = h.ctx.clone();
+    assert!(h.app.create_model(&ctx, "Hut", (32, 32)));
+    h.frame();
+    let model = h.app.doc.editor.workspace().expect("in the workspace");
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2, "a view tab");
+    assert!(h.app.doc.views.contains(&model));
+    assert!(h.app.doc.editor.is_model());
+    assert!(
+        h.app
+            .create_font(&ctx, "Pix", (8, 8), cs_core::FontMode::OneBit)
+    );
+    h.frame();
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 3);
+    assert!(h.app.doc.editor.is_font());
+}
+
+#[test]
+fn double_clicking_a_model_instance_opens_its_view_tab() {
+    let mut h = with_library_items();
+    let ship = h.app.doc.editor.document.models().next().unwrap().id;
+    assert!(h.app.doc.editor.drop_symbol(ship, (8, 8)).is_ok());
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 1);
+    // Lo que hace el doble clic con Move sobre la instancia: queda elegida y se entra a ella.
+    assert!(!h.app.doc.editor.selected_objects().is_empty());
+    assert!(h.app.doc.editor.enter_instance());
+    h.frame();
+    assert_eq!(h.app.doc.editor.workspace(), Some(ship));
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2, "a view tab");
+    assert!(h.app.doc.views.contains(&ship));
+}
+
+#[test]
+fn baking_from_the_model_tab_returns_to_the_document_tab_with_the_baked_artboard() {
+    let mut h = with_library_items();
+    let ship = h.app.doc.editor.document.models().next().unwrap().id;
+    h.double_click(library_row(&h, "Ship").center());
+    assert_eq!(h.app.doc.editor.workspace(), Some(ship));
+    let count = h.app.doc.editor.document.artboards.len();
+    // Lo que hace Export del diálogo Bake… (sus botones pixel no están en el arnés).
+    let dialog = crate::bake_dialog::BakeDialog::new(&h.app.doc.editor);
+    h.app.finish_bake(dialog.model(), dialog.chosen());
+    h.frame();
+    let e = &h.app.doc.editor;
+    assert_eq!(e.document.artboards.len(), count + 1, "the baked artboard");
+    assert_eq!(e.workspace(), None, "back on the canvas");
+    let baked = e.document.artboards.last().unwrap();
+    assert!(baked.name.ends_with("bake"));
+    assert_eq!(e.active, baked.id);
+    assert!(baked.on_canvas());
+}

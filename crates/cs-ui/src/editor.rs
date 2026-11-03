@@ -374,6 +374,9 @@ pub struct Editor {
     pub(crate) workspace: Option<ArtboardId>,
     /// El artboard del lienzo activo al entrar al workspace (para volver).
     workspace_return: Option<ArtboardId>,
+    /// Un modelo o fuente a cuyo workspace se entró desde el lienzo (doble clic en una instancia):
+    /// la app le abre su pestaña de vista (ver `take_view_request`).
+    pub(crate) view_request: Option<ArtboardId>,
     /// Los objetos seleccionados, en el orden en que se eligieron, y de qué artboard y capa son
     /// (los ids de objeto son por capa). Se leen con `selected_objects()`, que no devuelve nada
     /// si la capa actual es otra. Ver `object_ops.rs`.
@@ -457,6 +460,7 @@ impl Editor {
             symbol_return: None,
             workspace: None,
             workspace_return: None,
+            view_request: None,
             object_selection: Vec::new(),
             object_selection_at: None,
             object_bounds_cache: Default::default(),

@@ -13,6 +13,12 @@ impl Editor {
         self.workspace
     }
 
+    /// El workspace al que se entró sin pasar por su pestaña, una sola vez: la app le abre la
+    /// pestaña de vista y su panel.
+    pub fn take_view_request(&mut self) -> Option<ArtboardId> {
+        self.view_request.take()
+    }
+
     /// Si `id` puede tener workspace: un modelo o una fuente.
     pub(crate) fn has_workspace(&self, id: ArtboardId) -> bool {
         self.document

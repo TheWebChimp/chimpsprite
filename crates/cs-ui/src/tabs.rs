@@ -314,6 +314,13 @@ impl Tabs {
         current.editor.exit_workspace();
     }
 
+    /// Muestra el lienzo del documento activo (sale del workspace de su vista).
+    pub fn show_doc(&mut self, current: &mut DocState) {
+        if let Some(a) = self.active {
+            self.switch(current, a);
+        }
+    }
+
     /// Abre (o activa) la pestaña de vista de `artboard` en el documento activo.
     pub fn open_view(&mut self, current: &mut DocState, artboard: ArtboardId) {
         if self.active.is_none() || !current.editor.has_workspace(artboard) {
