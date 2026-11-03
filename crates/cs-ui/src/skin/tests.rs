@@ -1050,6 +1050,37 @@ fn the_embedded_skin_has_the_chimpcad_pieces() {
 }
 
 #[test]
+fn the_embedded_skin_has_the_add_object_icons() {
+    let data = decode(EMBEDDED).unwrap();
+    // Los cinco íconos azules del menú del + (boceto del menú), copiados píxel por píxel y sin
+    // el contorno blanco del elegido (ese lo pone el panel).
+    for (name, size) in [
+        ("icon.add.cube", [20, 20]),
+        ("icon.add.cylinder", [16, 20]),
+        ("icon.add.cone", [16, 19]),
+        ("icon.add.sphere", [18, 18]),
+        ("icon.add.plane", [18, 20]),
+    ] {
+        let piece = data.pieces.get(name).unwrap_or_else(|| panic!("{name}"));
+        assert_eq!((piece.size, piece.center), (size, None), "{name}");
+        // Ni el relleno del panel ni el blanco del contorno: solo los azules, sobre transparente.
+        for px in piece.rgba.chunks(4) {
+            let c = Rgba::new(px[0], px[1], px[2], px[3]);
+            assert!(c.a == 0 || c.a == 255, "{name}: no half alpha");
+            assert_ne!(c, Rgba::rgb(255, 255, 255), "{name}: no selection outline");
+            assert_ne!(c, Rgba::rgb(234, 224, 221), "{name}: no panel fill");
+        }
+    }
+    let cube = &data.pieces["icon.add.cube"];
+    let at = |x: u32, y: u32| {
+        let i = ((y * cube.size[0] + x) * 4) as usize;
+        Rgba::new(cube.rgba[i], cube.rgba[i + 1], cube.rgba[i + 2], cube.rgba[i + 3])
+    };
+    assert_eq!(at(0, 0).a, 0, "outside is transparent");
+    assert_eq!(at(10, 0), Rgba::rgb(27, 36, 71), "the cube's outline");
+}
+
+#[test]
 fn variants_are_used_when_they_exist() {
     let ctx = egui::Context::default();
     let skin = Skin::load(&ctx, EMBEDDED).unwrap();
