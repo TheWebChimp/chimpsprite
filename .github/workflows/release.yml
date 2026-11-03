@@ -1,14 +1,20 @@
 name: Release
 
 # Un tag `v*` arma los instaladores de Windows, macOS y Linux y publica el release.
-# En PRs que tocan el empaquetado solo los arma (sin publicar), para probarlo.
+# En PRs que tocan este workflow solo los arma (sin publicar), para probarlo.
+#
+# Ahorro de minutos (2026-11-03): la bolsa de Actions es de toda la
+# organización (plan free, 2000 min/mes) y GitHub cuenta macOS x10 y Windows
+# x2. Cada corrida de esta matriz vale ~100-150 min efectivos. Antes también
+# corría en todo PR que tocara apps/chimpsprite/Cargo.toml (dependencias,
+# versión) y eso solo se comió ~500 min en octubre. Para probar el empaquetado
+# sin tag: Actions → Release → Run workflow (workflow_dispatch) sobre la rama.
 on:
   push:
     tags: ["v*"]
   pull_request:
     paths:
       - .github/workflows/release.yml
-      - apps/chimpsprite/Cargo.toml
   workflow_dispatch:
 
 permissions:
