@@ -143,10 +143,17 @@ confirmación de achicar).
 - Gestos (spec §3, §3.1): con Move o con Alt: dentro de un contorno → mover; asa → escalar
   (Shift proporcional); vértice UV → moverlo. Umbral de arrastre de 3 puntos (un clic no cambia
   nada). Cursor de mover sobre contornos/asas en esos casos.
+- **Pintar solo la cara (pedido del usuario):** con caras elegidas en modo Texture, la selección
+  de pixeles del editor (la marquesina que ya respetan todas las herramientas) es la unión de sus
+  polígonos UV rasterizados en la textura; cambia sola al cambiar la selección de caras o al mover
+  o escalar sus UVs; sin caras elegidas, sin selección (se pinta libre). Las hormigas de la marquesina
+  no se dibujan ahí (el contorno UV ya la marca). Salir de Texture la quita.
+- **Encuadrar la cara (pedido del usuario):** al elegir caras con un clic arriba, la textura de abajo
+  se acerca (zoom entero más grande que quepa, con aire) y se centra en la caja de sus UVs.
 - Panel 3D, en modo Texture: sección **UV** con **Rotate 90°**, **Flip H**, **Flip V**
   (deshabilitados sin caras elegidas) y **Texture size** (select 16…512; achicar con UVs fuera pide
   confirmación). En modo Model la sección no aparece.
-- [ ] **Steps:** pruebas (arrastrar dentro del contorno con Move mueve las UVs en un paso de undo;
+- [ ] **Steps:** pruebas (con la cara de enfrente elegida, el lápiz fuera de su contorno no pinta y dentro sí; elegir una cara encuadra su caja abajo; arrastrar dentro del contorno con Move mueve las UVs en un paso de undo;
   Alt + arrastrar con el lápiz mueve en vez de pintar; un asa de esquina escala; un vértice UV se
   mueve solo; los botones Rotate/Flip; Texture size 128 desde el panel) → fallan → implementar →
   verde → commit "Modo Textura: editar las UVs de las caras y el tamaño de la textura".

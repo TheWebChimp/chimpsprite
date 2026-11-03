@@ -75,6 +75,13 @@ varias texturas por modelo.
 - Con cualquier otra herramienta, el clic pinta; para mover UVs sin cambiar de herramienta se
   mantiene **Alt** (el cursor cambia a mover sobre un contorno o asa).
 
+### 3.2 Pintar solo la cara elegida
+
+- Con caras elegidas, solo se pinta dentro de sus contornos UV: la selección de pixeles de la
+  textura es la unión de esos polígonos (las herramientas ya respetan la selección). Sin caras
+  elegidas se pinta libre.
+- Al elegir caras con un clic arriba, la textura de abajo se acerca y se centra en su pedazo.
+
 ## 4. Tamaño de la textura
 
 - En la sección *UV* del panel 3D, **Texture size**: un select con 16, 32, 64, 128, 256 y 512 (el
