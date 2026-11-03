@@ -1,8 +1,12 @@
 name: Pages
 
+# Un push que solo toca docs o markdown no cambia el sitio: no se recompila.
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - 'docs/**'
+      - '**.md'
   workflow_dispatch:
 
 permissions:
