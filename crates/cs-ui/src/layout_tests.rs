@@ -4031,6 +4031,43 @@ fn persp_pixels(h: &LayoutHarness) -> Rect {
 }
 
 #[test]
+fn the_ortho_views_are_pixel_images_over_their_quadrants() {
+    let mut h = with_a_model_at_800();
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    let ppp = h.ctx.pixels_per_point();
+    let first = h.app.doc.canvas.model_ortho_textures();
+    for (k, i) in [0, 2, 3].into_iter().enumerate() {
+        let (_, tex) = first[k].expect("the view is rasterized");
+        let r = h
+            .textures
+            .iter()
+            .find(|(t, _)| *t == tex)
+            .map(|(_, r)| *r)
+            .expect("the view is drawn");
+        // Toda la vista, un pixel por punto, en puntos (y pixeles físicos) enteros.
+        assert_eq!(r, quads[i], "view {i}");
+        assert_eq!(r.min, r.min.round(), "{r:?}");
+        assert_eq!(r.size(), r.size().round(), "{r:?}");
+        let px = r.min.to_vec2() * ppp;
+        assert_eq!(px, px.round(), "{r:?} at {ppp}");
+    }
+    // Sin cambios no se vuelve a pintar; con otra selección, sí.
+    h.frame();
+    assert_eq!(h.app.doc.canvas.model_ortho_textures(), first);
+    let editor = &mut h.app.doc.editor;
+    editor.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Object,
+        items: [cs_3d::Item::Object(0)].into(),
+    });
+    h.frame();
+    let next = h.app.doc.canvas.model_ortho_textures();
+    for k in 0..3 {
+        assert_ne!(next[k].unwrap().0, first[k].unwrap().0, "view {k}");
+        assert_eq!(next[k].unwrap().1, first[k].unwrap().1, "same texture {k}");
+    }
+}
+
+#[test]
 fn the_cad_workspace_fills_the_canvas_with_the_four_views() {
     let mut h = with_a_model_at_800();
     assert!(h.app.view.rulers, "the rulers are on in the document");

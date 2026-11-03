@@ -140,6 +140,9 @@ pub struct CanvasView {
     edit_quads: Option<[Rect; 4]>,
     /// La perspectiva del modo Edit: la clave de lo que muestra y su textura.
     edit_persp: Option<(u64, TextureHandle)>,
+    /// Las vistas orto en pixel art (Front, Top, Side): la clave de lo que muestra cada una y su
+    /// textura.
+    edit_ortho: [Option<(u64, TextureHandle)>; 3],
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
     pub background: Color32,
     /// Las reglas del skin con Pixel UI (`None`: las de siempre); lo pone la app en cada frame.
@@ -293,6 +296,7 @@ impl Default for CanvasView {
             model_drag: None,
             edit_quads: None,
             edit_persp: None,
+            edit_ortho: [None, None, None],
         }
     }
 }
