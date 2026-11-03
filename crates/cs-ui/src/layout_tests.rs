@@ -6064,6 +6064,37 @@ fn the_pencil_paints_the_texture_below() {
 }
 
 #[test]
+fn the_model_on_top_follows_the_stroke_while_painting() {
+    let mut h = with_a_model_in_texture_mode();
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    h.app.doc.editor.primary = PixelValue::Rgba(Rgba::rgb(1, 2, 3));
+    let r = texture_pixels(&h);
+    let (_, bottom) = h.app.doc.canvas.texture_panes().unwrap();
+    let r = r.intersect(bottom);
+    let (from, to) = (r.lerp_inside(vec2(0.3, 0.5)), r.lerp_inside(vec2(0.7, 0.5)));
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, true)]);
+    let key = |h: &LayoutHarness| h.app.doc.canvas.model_persp_key();
+    let mut last = key(&h);
+    // Cada paso del trazo (sin soltar) vuelve a renderizar el modelo de arriba.
+    for t in [0.25, 0.5, 0.75, 1.0] {
+        h.frame_with(vec![Event::PointerMoved(from.lerp(to, t))]);
+        assert!(h.app.doc.editor.is_painting());
+        let now = key(&h);
+        assert_ne!(now, last, "re-rendered mid-stroke at {t}");
+        last = now;
+    }
+    h.frame_with(vec![button(to, false)]);
+    assert!(!h.app.doc.editor.is_painting());
+}
+
+#[test]
 fn the_wheel_below_zooms_the_texture_not_the_ortho_views() {
     let mut h = with_a_model_in_texture_mode();
     let view = h.app.doc.editor.model_edit().texture_view.expect("fitted");
@@ -6267,6 +6298,44 @@ fn alt_drag_with_the_pencil_moves_the_uvs_instead_of_painting() {
     assert_eq!(front_uvs(&h), moved);
     assert_eq!(texture_sprite(&h), pixels, "nothing painted");
     assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn an_alt_press_left_hanging_by_a_mode_change_does_not_click_later() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    let layer = texture_sprite(&h).layers.last().unwrap().id;
+    let under = texture_sprite(&h).pixel(layer, 0, 8, 8);
+    let primary = PixelValue::Rgba(Rgba::rgb(1, 2, 3));
+    assert_ne!(primary, under);
+    h.app.doc.editor.primary = primary;
+    let at = texel(&h, 8.5, 8.5);
+    let press = |pressed| Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::ALT,
+    };
+    // Alt + prensa sobre la cara (espera al umbral) y, sin soltar, a Model: ahí se suelta.
+    h.frame_with(vec![
+        Event::ModifiersChanged(egui::Modifiers::ALT),
+        Event::PointerMoved(at),
+    ]);
+    h.frame_with(vec![press(true)]);
+    h.app.doc.editor.set_cad_mode(crate::editor::CadMode::Model);
+    h.frame_with(vec![press(false)]);
+    h.frame_with(vec![Event::ModifiersChanged(Default::default())]);
+    // De vuelta en Texture, la prensa de antes no le llega a la herramienta (el gotero).
+    h.app
+        .doc
+        .editor
+        .set_cad_mode(crate::editor::CadMode::Texture);
+    h.frame();
+    h.frame();
+    assert_eq!(
+        h.app.doc.editor.primary, primary,
+        "no late eyedropper click"
+    );
 }
 
 #[test]

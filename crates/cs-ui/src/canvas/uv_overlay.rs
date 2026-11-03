@@ -281,6 +281,14 @@ impl CanvasView {
         Some(cursor)
     }
 
+    /// Olvida la prensa de UV a medias (el panel de la textura no se ve o no recibe la entrada):
+    /// si no, al volver una prensa con Alt vieja le pasaría un clic a la herramienta.
+    pub(super) fn drop_uv_press(&mut self, editor: &mut Editor) {
+        if self.uv_press.take().is_some() {
+            editor.cancel_uv_op();
+        }
+    }
+
     /// Las UVs de las caras elegidas sobre la textura (en el panel de abajo): el contorno de cada
     /// una, sus vértices y las asas de la caja de todas. Del modelo que se ve (con la vista previa
     /// del gesto).

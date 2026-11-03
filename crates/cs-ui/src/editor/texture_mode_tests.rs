@@ -504,3 +504,29 @@ fn una_marquesina_igual_a_la_de_la_cara_es_del_usuario() {
     e.set_selection(same);
     assert!(!e.selection_is_face_mask(), "the user's own, even if equal");
 }
+
+#[test]
+fn volver_a_elegir_la_misma_cara_regresa_su_seleccion() {
+    let mut e = editing();
+    e.set_cad_mode(CadMode::Texture);
+    let camera = cs_core::CameraPreset::Front.camera(4 * cs_core::FIXED, Default::default());
+    assert!(e.set_camera(camera));
+    let ship = e.document.artboard(e.model_id()).unwrap();
+    let center = (ship.sprite.width as i32 / 2, ship.sprite.height as i32 / 2);
+    e.pick_model_face(center, false);
+    assert_eq!(e.selected_faces().len(), 1);
+    let mask = e.selection.clone();
+    assert!(e.selection_is_face_mask());
+    // Ctrl+D y otra vez la misma cara: vuelve la selección de la cara.
+    e.deselect();
+    assert!(e.selection.is_none());
+    e.pick_model_face(center, false);
+    assert!(e.selection_is_face_mask());
+    assert_eq!(e.selection, mask);
+    // Igual después de Ctrl+A.
+    e.select_all();
+    assert!(!e.selection_is_face_mask());
+    e.pick_model_face(center, false);
+    assert!(e.selection_is_face_mask());
+    assert_eq!(e.selection, mask);
+}

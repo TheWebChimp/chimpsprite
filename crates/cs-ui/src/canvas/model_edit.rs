@@ -450,6 +450,12 @@ impl CanvasView {
         self.edit_persp.as_ref().map(|(_, t)| t.id())
     }
 
+    /// La clave del render de la perspectiva (cambia cuando se vuelve a renderizar).
+    #[cfg(test)]
+    pub(crate) fn model_persp_key(&self) -> Option<u64> {
+        self.edit_persp.as_ref().map(|(k, _)| *k)
+    }
+
     /// Las texturas de las vistas orto (Front, Top, Side) y su clave, para los tests de la app.
     #[cfg(test)]
     pub(crate) fn model_ortho_textures(&self) -> [Option<(u64, egui::TextureId)>; 3] {
@@ -617,7 +623,10 @@ impl CanvasView {
         } else {
             Vec::new()
         };
-        // Con `revision`: lo que se pinta en la textura se ve en vivo.
+        // Con `revision`: lo que se pinta en la textura se ve en vivo. A mitad de un trazo ni la
+        // revisión ni la versión cambian: mientras se pinta se renderiza en cada pasada (`doc` es
+        // la vista con el trazo en curso).
+        let live = editor.is_painting().then(|| ctx.cumulative_pass_nr());
         let mut h = DefaultHasher::new();
         (
             model,
@@ -626,6 +635,7 @@ impl CanvasView {
             size,
             artboard.id,
             &faces,
+            live,
         )
             .hash(&mut h);
         let key = h.finish();

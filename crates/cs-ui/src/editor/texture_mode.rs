@@ -128,6 +128,15 @@ impl Editor {
         }
         // Con caras elegidas, la textura de abajo se encuadra en sus UVs.
         self.model_edit.focus_uvs = !sel.items.is_empty();
+        // Elegir caras (aunque sean las mismas) vuelve a poner su selección, aunque otra (Ctrl+D,
+        // Ctrl+A, lo flotante confirmado) la haya reemplazado: se olvida la de antes para que se
+        // recalcule.
+        if self.model_edit.mode == CadMode::Texture {
+            self.commit_floating();
+        }
+        if !sel.items.is_empty() && self.model_edit.face_mask.as_ref().is_some_and(|m| !m.on) {
+            self.model_edit.face_mask = None;
+        }
         self.set_model_selection(sel);
     }
 

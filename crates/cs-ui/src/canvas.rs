@@ -771,9 +771,11 @@ impl CanvasView {
             if editor.cad_mode() == crate::editor::CadMode::Texture {
                 self.show_texture_mode(ui, &response, rect, editor, dialog, view_settings);
             } else {
+                self.drop_uv_press(editor);
                 self.show_model_workspace(ui, &response, rect, editor, dialog.is_some());
             }
         } else {
+            self.drop_uv_press(editor);
             self.edit_quads = None;
             self.texture_panes = None;
             self.mode_rect = None;

@@ -52,6 +52,7 @@ impl CanvasView {
             self.show_texture_pane(ui, &pane, bottom, editor, dialog, view_settings);
         } else {
             self.clear_canvas_hover();
+            self.drop_uv_press(editor);
             self.pending_zoom = None;
             self.no_texture(ui, bottom, editor);
         }
@@ -207,11 +208,14 @@ impl CanvasView {
     }
 
     /// Encuadra la textura (el artboard activo) en `bottom`: el zoom entero más grande con el
-    /// que cabe con aire (mínimo 1) y centrada.
+    /// que cabe con aire (de 1 a 64) y centrada.
     pub(super) fn fit_texture(&mut self, bottom: Rect, editor: &Editor) {
         let ((x0, y0), (x1, y1)) = editor.artboard().rect();
         let size = Vec2::new((x1 - x0).max(1) as f32, (y1 - y0).max(1) as f32) * self.ratio;
-        self.zoom = (bottom.size() * 0.85 / size).min_elem().floor().max(1.0);
+        self.zoom = (bottom.size() * 0.85 / size)
+            .min_elem()
+            .floor()
+            .clamp(1.0, 64.0);
         let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
         self.pan = -center * self.scale();
     }
