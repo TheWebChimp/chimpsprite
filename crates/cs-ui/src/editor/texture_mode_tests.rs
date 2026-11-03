@@ -325,3 +325,50 @@ fn los_atajos_de_pixeles_solo_se_bloquean_en_model() {
     e.exit_workspace();
     assert!(!e.pixel_actions_blocked());
 }
+
+#[test]
+fn sin_textura_los_atajos_de_pixeles_siguen_bloqueados() {
+    let mut e = editing();
+    assert!(e.set_texture(None));
+    e.set_cad_mode(CadMode::Texture);
+    // El activo sigue siendo el modelo: su sprite escondido no se toca.
+    assert!(e.is_model());
+    assert!(e.pixel_actions_blocked());
+}
+
+#[test]
+fn en_texture_la_seleccion_se_queda_en_caras() {
+    let mut e = texturing();
+    for mode in [SelectMode::Object, SelectMode::Vertex, SelectMode::Edge] {
+        e.set_select_mode(mode);
+        assert_eq!(e.model_edit().selection.mode, SelectMode::Face, "{mode:?}");
+        assert_eq!(e.selected_faces(), vec![(0, 0)]);
+    }
+    // En Model sí cambia.
+    e.set_cad_mode(CadMode::Model);
+    e.set_select_mode(SelectMode::Vertex);
+    assert_eq!(e.model_edit().selection.mode, SelectMode::Vertex);
+}
+
+#[test]
+fn texture_size_solo_entre_16_y_512() {
+    let mut e = texturing();
+    let steps = e.history.done_count();
+    for side in [0, 8, 15, 513, 1024] {
+        assert!(!e.set_texture_size(side), "{side}");
+    }
+    assert_eq!(e.history.done_count(), steps);
+    assert!(e.set_texture_size(16));
+    assert!(e.set_texture_size(512));
+}
+
+#[test]
+fn new_texture_en_texture_conserva_el_objeto_del_panel() {
+    let mut e = editing();
+    assert!(e.set_texture(None));
+    e.set_cad_mode(CadMode::Texture);
+    e.select_model_object(Some(0));
+    assert!(e.new_texture());
+    assert_eq!(e.active, texture_of(&e));
+    assert_eq!(e.selected_object(), Some(0));
+}

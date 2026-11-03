@@ -182,6 +182,10 @@ impl Editor {
     }
 
     pub fn set_select_mode(&mut self, mode: SelectMode) {
+        // En modo Texture la selección es siempre de caras.
+        if self.model_edit.mode == CadMode::Texture && mode != SelectMode::Face {
+            return;
+        }
         let from = self.model_edit.selection.mode;
         let next = match self.edited_model() {
             // De Object a un subelemento se empieza vacío: convertir elegiría todo el objeto y

@@ -5507,6 +5507,26 @@ fn pixel_shortcuts_act_on_the_texture_in_texture_mode() {
 }
 
 #[test]
+fn pixel_shortcuts_stay_blocked_in_texture_mode_without_a_texture() {
+    let mut h = with_model_tab();
+    assert!(h.app.doc.editor.set_texture(None));
+    h.app
+        .doc
+        .editor
+        .set_cad_mode(crate::editor::CadMode::Texture);
+    h.frame();
+    let steps = h.app.doc.editor.history.done_count();
+    press_ctrl(&mut h, egui::Key::A);
+    h.frame();
+    h.frame_with(key_tap(egui::Key::Delete));
+    h.frame_with(key_tap(egui::Key::F));
+    let e = &h.app.doc.editor;
+    assert!(e.is_model(), "the model is still active");
+    assert!(e.selection.is_none(), "no marquee on the hidden sprite");
+    assert_eq!(e.history.done_count(), steps, "no invisible undo steps");
+}
+
+#[test]
 fn a_model_view_tab_sits_right_after_its_document_and_switches_and_closes() {
     let mut h = with_model_tab();
     let doc = h.button(&h.app.doc.location.name.clone());

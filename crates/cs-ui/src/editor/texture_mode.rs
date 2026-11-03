@@ -9,6 +9,9 @@ use cs_core::{ArtboardId, Model3D};
 use super::Editor;
 use super::model_edit::{CadMode, UvOp};
 
+/// Los lados de la textura que se pueden elegir (Texture size).
+pub const TEXTURE_SIDES: std::ops::RangeInclusive<u32> = 16..=512;
+
 impl Editor {
     pub fn cad_mode(&self) -> CadMode {
         self.model_edit.mode
@@ -36,10 +39,10 @@ impl Editor {
     }
 
     /// Si los atajos de pixeles (pegar, borrar, rellenar, seleccionar…) están bloqueados: en el
-    /// modo Model del workspace de un modelo tocarían su sprite escondido. En Texture actúan
-    /// sobre la textura.
+    /// workspace de un modelo con el modelo activo (el modo Model, o Texture sin textura)
+    /// tocarían su sprite escondido. Con la textura activa actúan sobre ella.
     pub fn pixel_actions_blocked(&self) -> bool {
-        self.model_edit_on() && self.model_edit.mode == CadMode::Model
+        self.model_edit_on() && self.is_model()
     }
 
     /// Cambia de modo: en Texture activa la textura del modelo del workspace (si tiene; si no,
@@ -91,7 +94,7 @@ impl Editor {
 
     /// El lado de la textura del modelo del workspace pasa a `side`, anclado arriba a la
     /// izquierda: lo pintado se queda donde estaba y al achicar se recorta. Las UVs no cambian.
-    /// Un paso de undo.
+    /// Un paso de undo. Solo lados de [`TEXTURE_SIDES`] (de 16 a 512).
     pub fn set_texture_size(&mut self, side: u32) -> bool {
         let Some(id) = self.workspace_texture() else {
             return false;
@@ -99,7 +102,7 @@ impl Editor {
         let Some(sprite) = self.document.artboard(id).map(|a| &a.sprite) else {
             return false;
         };
-        if side == 0 || (sprite.width, sprite.height) == (side, side) {
+        if !TEXTURE_SIDES.contains(&side) || (sprite.width, sprite.height) == (side, side) {
             return false;
         }
         let shrink = side < sprite.width || side < sprite.height;

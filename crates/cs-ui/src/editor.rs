@@ -624,8 +624,14 @@ impl Editor {
         self.end_group();
         self.frame_range = None;
         self.views.insert(self.active, (self.layer, self.frame));
+        // Entre el modelo del workspace y su textura (modo Texture) el objeto del panel es el
+        // mismo modelo: se conserva.
+        let same_model = self.is_workspace_texture(id)
+            || (self.workspace == Some(id) && self.is_workspace_texture(self.active));
         self.active = id;
-        self.model_object = None;
+        if !same_model {
+            self.model_object = None;
+        }
         (self.layer, self.frame) = self.views.get(&id).copied().unwrap_or((LayerId(0), 0));
         self.selection = None;
         self.slice = None;
