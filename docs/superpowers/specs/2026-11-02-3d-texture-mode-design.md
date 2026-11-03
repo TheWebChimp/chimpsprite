@@ -1,6 +1,23 @@
 # Modelos 3D, parte 3: modo Textura (UVs) en ChimpCAD
 
-Fecha: 2026-11-02 · Estado: diseño aprobado
+Fecha: 2026-11-02 · Estado: implementado
+
+Notas de la implementación:
+
+- **Contorno de las caras arriba:** es el borde de los pixeles que la cara pinta en el render (no
+  sus esquinas proyectadas), así cae justo sobre la cara; se dibuja aunque otra cara la tape.
+- **Shift arriba:** clic agrega o quita una cara; arrastrar mueve el objetivo (separados por el
+  umbral de arrastre).
+- **Pintar solo la cara:** la selección de pixeles de la cara se reaplica cuando cambian las caras o
+  sus UVs; una marquesina del usuario se respeta hasta entonces. Sin hormigas.
+- **Move con la cara elegida:** dentro de los contornos mueve UVs; fuera no hace nada (no corta
+  pixeles).
+- **Alt:** solo un arrastre de más de 3 puntos que empieza en un contorno, asa o vértice mueve UVs;
+  Alt + clic sigue siendo el gotero de las herramientas de pintar.
+- **Panel en Texture:** se esconden los radios de modo y el Grid (solo sirven a las vistas orto).
+- **Texture size:** al achicar pregunta si cualquier UV del modelo queda fuera; recorta en el mismo
+  paso de undo.
+- La línea de tiempo no se muestra en la pestaña del modelo.
 
 Referencia: la captura de picoCAD 2 del usuario (modo textura: el modelo arriba con la cara
 elegida, la textura abajo con la paleta y el contorno blanco de la cara). Sigue a la parte 2A
