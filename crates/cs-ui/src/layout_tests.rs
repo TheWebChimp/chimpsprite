@@ -5521,3 +5521,191 @@ fn deleting_the_model_closes_its_view_tab() {
     assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 1);
     assert!(!h.texts.iter().any(|t| t.0 == "Ship"));
 }
+
+/// Un documento con el símbolo "Coin", el modelo "Ship" y la fuente "Pixie", sin ninguna vista
+/// abierta, y el panel Library abierto.
+fn with_library_items() -> LayoutHarness {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    add_symbol(&mut h, "Coin");
+    let editor = &mut h.app.doc.editor;
+    assert!(editor.new_model("Ship", (32, 32)));
+    editor.exit_workspace();
+    h.frame();
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    h.frame();
+    h
+}
+
+/// La fila `name` del panel Library (la de más abajo con ese nombre: la pestaña está arriba).
+fn library_row(h: &LayoutHarness, name: &str) -> Rect {
+    h.nodes
+        .iter()
+        .filter(|(l, _)| l == name)
+        .map(|(_, r)| *r)
+        .max_by(|a, b| a.top().total_cmp(&b.top()))
+        .unwrap_or_else(|| panic!("no {name:?} row in {:?}", h.nodes))
+}
+
+#[test]
+fn the_library_has_symbols_models_and_fonts_sections_with_their_counts() {
+    let mut h = with_library_items();
+    let text = |h: &LayoutHarness, t: &str| {
+        h.text_rects
+            .iter()
+            .find(|(x, _, _)| x == t)
+            .map(|(_, r, _)| *r)
+    };
+    let symbols = text(&h, "Symbols").expect("Symbols title");
+    let models = text(&h, "Models").expect("Models title");
+    let fonts = text(&h, "Fonts").expect("Fonts title");
+    assert!(symbols.top() < models.top() && models.top() < fonts.top());
+    // La cuenta junto al título: 1 símbolo, 1 modelo, 0 fuentes.
+    let count_of = |h: &LayoutHarness, title: Rect| {
+        h.text_rects
+            .iter()
+            .find(|(_, r, _)| {
+                (r.center().y - title.center().y).abs() < 4.0 && r.left() > title.right()
+            })
+            .map(|(t, _, _)| t.clone())
+    };
+    assert_eq!(count_of(&h, symbols).as_deref(), Some("1"));
+    assert_eq!(count_of(&h, models).as_deref(), Some("1"));
+    assert_eq!(count_of(&h, fonts).as_deref(), Some("0"));
+    // Las secciones con algo no piden nada; la vacía dice cómo crear una.
+    let has = |t: &str| h.texts.iter().any(|(x, _)| x == t);
+    assert!(!has("F8 makes a symbol") && !has("File → New 3D Model…"));
+    assert!(has("File → New Font…"), "{:?}", h.texts);
+    assert!(library_row(&h, "Coin").top() < library_row(&h, "Ship").top());
+    // Un documento vacío muestra las tres ayudas.
+    let mut empty = LayoutHarness::new(pixel_ui(), true);
+    empty.click(empty.button("Library").center(), PointerButton::Primary);
+    empty.frame();
+    for t in [
+        "F8 makes a symbol",
+        "File → New 3D Model…",
+        "File → New Font…",
+    ] {
+        assert!(empty.texts.iter().any(|(x, _)| x == t), "{t}");
+    }
+    h.frame();
+}
+
+#[test]
+fn double_clicking_a_model_in_the_library_opens_its_tab() {
+    let mut h = with_library_items();
+    let ship = h.app.doc.editor.document.models().next().unwrap().id;
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 1);
+    let row = library_row(&h, "Ship");
+    h.double_click(row.center());
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2, "a view tab");
+    assert_eq!(h.app.doc.editor.workspace(), Some(ship));
+    // Un símbolo sigue entrando en su modo.
+    let coin = library_row(&h, "Coin");
+    h.double_click(coin.center());
+    assert!(h.app.doc.editor.in_symbol_mode());
+}
+
+#[test]
+fn double_clicking_a_font_in_the_library_opens_its_tab_and_panel() {
+    let mut h = with_library_items();
+    assert!(
+        h.app
+            .doc
+            .editor
+            .new_font("Pixie", (8, 8), cs_core::FontMode::OneBit)
+    );
+    h.app.doc.editor.exit_workspace();
+    h.frame();
+    h.frame();
+    let font = h.app.doc.editor.document.fonts().next().unwrap().id;
+    let row = library_row(&h, "Pixie");
+    h.double_click(row.center());
+    assert_eq!(h.app.doc.editor.workspace(), Some(font));
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2);
+    assert!(h.app.doc.editor.is_font());
+}
+
+#[test]
+fn renaming_a_model_in_the_library_renames_its_tab() {
+    let mut h = with_library_items();
+    let row = library_row(&h, "Ship");
+    h.double_click(row.center());
+    h.frame();
+    let row = library_row(&h, "Ship");
+    h.click(row.center(), PointerButton::Secondary);
+    h.frame();
+    h.click(h.button("Rename").center(), PointerButton::Primary);
+    h.frame();
+    h.frame_with(vec![Event::Text("x".into())]);
+    h.frame_with(key_tap(egui::Key::Enter));
+    h.frame();
+    h.frame();
+    let ship = h.app.doc.editor.document.models().next().unwrap();
+    assert_eq!(ship.name, "Shipx");
+    assert!(
+        h.buttons.iter().any(|(l, _)| l == "Shipx"),
+        "the tab: {:?}",
+        h.buttons
+    );
+}
+
+#[test]
+fn deleting_a_model_from_the_library_closes_its_tab() {
+    let mut h = with_library_items();
+    let row = library_row(&h, "Ship");
+    h.double_click(row.center());
+    h.frame();
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2);
+    let row = library_row(&h, "Ship");
+    h.click(row.center(), PointerButton::Secondary);
+    h.frame();
+    h.click(h.button("Delete").center(), PointerButton::Primary);
+    h.frame();
+    h.frame();
+    assert_eq!(h.app.doc.editor.document.models().count(), 0);
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 1);
+    assert_eq!(h.app.doc.editor.workspace(), None);
+}
+
+#[test]
+fn duplicating_a_model_makes_another_model_not_a_symbol() {
+    let mut h = with_library_items();
+    let row = library_row(&h, "Ship");
+    h.click(row.center(), PointerButton::Secondary);
+    h.frame();
+    h.click(h.button("Duplicate").center(), PointerButton::Primary);
+    h.frame();
+    let doc = &h.app.doc.editor.document;
+    assert_eq!(doc.models().count(), 2);
+    assert_eq!(doc.library().count(), 1, "still only Coin");
+}
+
+#[test]
+fn dragging_a_model_from_the_library_to_the_canvas_places_an_instance() {
+    let mut h = with_library_items();
+    let ship = h.app.doc.editor.document.models().next().unwrap().id;
+    let row = library_row(&h, "Ship");
+    let host = h
+        .app
+        .doc
+        .editor
+        .document
+        .canvas_artboards()
+        .next()
+        .unwrap()
+        .id;
+    let texture = h.app.doc.canvas.artboard_texture(host).expect("rendered");
+    let to = h
+        .textures
+        .iter()
+        .find(|(t, _)| *t == texture)
+        .map(|(_, r)| *r)
+        .expect("the host on screen");
+    // Un punto del artboard que no quede debajo del panel.
+    let to = Pos2::new(
+        (to.left() + to.right().min(row.left() - 4.0)) / 2.0,
+        to.center().y,
+    );
+    drag(&mut h, row.center(), to);
+    assert_eq!(h.app.doc.editor.document.instance_uses(ship), 1);
+}

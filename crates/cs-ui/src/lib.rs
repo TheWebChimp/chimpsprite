@@ -687,7 +687,10 @@ impl ChimpApp {
                 let mut copy = source.clone();
                 copy.id = editor.document.next_artboard_id();
                 copy.name = format!("{} copy", source.name);
-                copy.in_library = true;
+                // Una fuente lleva su nombre también en su info.
+                if let Some(font) = &mut copy.font {
+                    font.name = copy.name.clone();
+                }
                 let new = copy.id;
                 let index = editor.document.artboards.len();
                 if editor.execute_doc(cs_commands::DocCommand::AddArtboard {
@@ -712,6 +715,12 @@ impl ChimpApp {
                     && editor.library_selected == Some(id)
                 {
                     editor.library_selected = None;
+                }
+            }
+            library_panel::LibraryAction::Open(id) => {
+                self.tabs.open_view(&mut self.doc, id);
+                if self.doc.editor.workspace() == Some(id) && self.doc.editor.is_font() {
+                    self.show_font_beside_panel(ctx);
                 }
             }
             library_panel::LibraryAction::Edit(id) => {

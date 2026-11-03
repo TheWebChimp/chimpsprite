@@ -722,6 +722,12 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             });
         }
     }
+    // Desarrollo: el panel Library abierto, de vuelta en el lienzo (con _MODEL y _FONT, con un
+    // modelo y una fuente en sus secciones), para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_LIBRARY").is_some() && app.has_doc() {
+        app.doc.editor.exit_workspace();
+        dock::set_open(ctx, Some(dock::DockPanel::Library));
+    }
     if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
         app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
     }
