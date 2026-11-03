@@ -5709,3 +5709,49 @@ fn dragging_a_model_from_the_library_to_the_canvas_places_an_instance() {
     drag(&mut h, row.center(), to);
     assert_eq!(h.app.doc.editor.document.instance_uses(ship), 1);
 }
+
+#[test]
+fn place_on_canvas_of_a_model_puts_an_instance_on_the_canvas() {
+    let mut h = with_library_items();
+    let ship = h.app.doc.editor.document.models().next().unwrap().id;
+    let row = library_row(&h, "Ship");
+    h.click(row.center(), PointerButton::Secondary);
+    h.frame();
+    h.click(h.button("Place on Canvas").center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(h.app.doc.editor.document.instance_uses(ship), 1);
+    assert!(
+        h.app
+            .doc
+            .editor
+            .document
+            .artboard(ship)
+            .unwrap()
+            .model
+            .is_some()
+    );
+    assert_eq!(h.app.doc.editor.document.models().count(), 1);
+}
+
+#[test]
+fn opening_a_model_view_opens_the_3d_panel() {
+    use crate::dock::DockPanel;
+    let mut h = with_library_items();
+    let open = |h: &LayoutHarness| crate::dock::open_panel(&h.ctx) == Some(DockPanel::Model);
+    assert!(!open(&h));
+    let row = library_row(&h, "Ship");
+    h.double_click(row.center());
+    h.frame();
+    assert!(open(&h), "Library double-click opens the 3D panel");
+    // Cerrar el panel y volver a la pestaña del modelo también lo abre.
+    crate::dock::set_open(&h.ctx, None);
+    let doc = h.button(&h.app.doc.location.name.clone());
+    h.click(doc.center(), PointerButton::Primary);
+    h.frame();
+    crate::dock::set_open(&h.ctx, None);
+    h.frame();
+    let tab = h.button("Ship");
+    h.click(tab.center(), PointerButton::Primary);
+    h.frame();
+    assert!(open(&h), "clicking its tab opens the 3D panel");
+}

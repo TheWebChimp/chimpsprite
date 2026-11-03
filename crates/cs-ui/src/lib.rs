@@ -700,6 +700,25 @@ impl ChimpApp {
                     editor.library_selected = Some(new);
                 }
             }
+            library_panel::LibraryAction::PlaceOnCanvas(id)
+                if editor
+                    .document
+                    .artboard(id)
+                    .is_some_and(|a| a.model.is_some()) =>
+            {
+                // Un modelo no sale de la biblioteca: pone una instancia en el centro del
+                // artboard activo del lienzo (o el primero), como al arrastrarlo.
+                let target = editor
+                    .document
+                    .artboard(editor.active)
+                    .filter(|a| a.on_canvas())
+                    .or_else(|| editor.document.canvas_artboards().next());
+                if let Some(a) = target {
+                    let ((x0, y0), (x1, y1)) = a.rect();
+                    let at = ((x0 + x1) / 2, (y0 + y1) / 2);
+                    let _ = editor.drop_symbol(id, at);
+                }
+            }
             library_panel::LibraryAction::PlaceOnCanvas(id) => {
                 if let Some(cmd) = cs_commands::symbol::place_on_canvas(&editor.document, id)
                     && editor.execute_doc(cmd)
@@ -719,8 +738,8 @@ impl ChimpApp {
             }
             library_panel::LibraryAction::Open(id) => {
                 self.tabs.open_view(&mut self.doc, id);
-                if self.doc.editor.workspace() == Some(id) && self.doc.editor.is_font() {
-                    self.show_font_beside_panel(ctx);
+                if self.doc.editor.workspace() == Some(id) {
+                    self.show_workspace_panel(ctx);
                 }
             }
             library_panel::LibraryAction::Edit(id) => {
@@ -810,13 +829,30 @@ impl ChimpApp {
             });
     }
 
-    /// Después de elegir la pestaña `tab` de la barra: la de la vista de una fuente abre su panel.
-    fn after_tab_action(&mut self, ctx: &egui::Context, tab: tabs::TabRef) {
-        if matches!(tab, tabs::TabRef::View(..))
-            && self.doc.editor.workspace().is_some()
-            && self.doc.editor.is_font()
-        {
+    /// Abre el panel 3D (si estaba cerrado) y encuadra el modelo al lado de él.
+    fn show_model_beside_panel(&mut self, ctx: &egui::Context) {
+        dock::set_open(ctx, Some(dock::DockPanel::Model));
+        self.doc
+            .canvas
+            .request_zoom(view::ZoomRequest::FitActiveBeside {
+                right_inset: dock::flyout_reach(model_panel::WIDTH),
+            });
+    }
+
+    /// El panel del workspace en el que se está: el de la fuente o el del modelo.
+    fn show_workspace_panel(&mut self, ctx: &egui::Context) {
+        if self.doc.editor.is_font() {
             self.show_font_beside_panel(ctx);
+        } else if self.doc.editor.is_model() {
+            self.show_model_beside_panel(ctx);
+        }
+    }
+
+    /// Después de elegir la pestaña `tab` de la barra: la de la vista de un modelo o una fuente
+    /// abre su panel.
+    fn after_tab_action(&mut self, ctx: &egui::Context, tab: tabs::TabRef) {
+        if matches!(tab, tabs::TabRef::View(..)) && self.doc.editor.workspace().is_some() {
+            self.show_workspace_panel(ctx);
         }
     }
 
@@ -887,12 +923,7 @@ impl ChimpApp {
         if let Some(id) = self.doc.editor.workspace() {
             self.tabs.open_view(&mut self.doc, id);
         }
-        dock::set_open(ctx, Some(dock::DockPanel::Model));
-        self.doc
-            .canvas
-            .request_zoom(view::ZoomRequest::FitActiveBeside {
-                right_inset: dock::flyout_reach(model_panel::WIDTH),
-            });
+        self.show_model_beside_panel(ctx);
         true
     }
 
