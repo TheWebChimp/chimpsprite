@@ -200,9 +200,18 @@ fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
     ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
 }
 
-/// `f` redondeado a milésimas (como las escalas).
-fn thousandths(f: f32) -> f32 {
-    (f * 1000.0).round() / 1000.0
+/// El factor más chico (en valor absoluto) de los gizmos de escala.
+const MIN_SCALE: f32 = 0.001;
+
+/// El factor de escala `f` de un gizmo en milésimas (como las escalas), nunca 0: lo más chico
+/// es una milésima, con su signo (al pasar del centro, voltea).
+fn scale_factor(f: f32) -> f32 {
+    let f = (f * 1000.0).round() / 1000.0;
+    if f.abs() < MIN_SCALE {
+        MIN_SCALE.copysign(f)
+    } else {
+        f
+    }
 }
 
 /// Cuánto giró el puntero de `a` a `b` alrededor de `center` en pantalla, en grados y en el
@@ -656,7 +665,7 @@ fn gizmo_preview(
                 return None;
             }
             let mut f = [1.0; 3];
-            f[axis] = thousandths(along(pointer) / start);
+            f[axis] = scale_factor(along(pointer) / start);
             Some(cs_3d::scale(m, sel, center, f))
         }
         // El cubito del centro se agarra en el centro (la distancia del inicio es casi 0): el
@@ -664,8 +673,22 @@ fn gizmo_preview(
         // distancia, y baja hacia la izquierda o abajo (nunca a 0 ni menos).
         GizmoPart::ScaleUniform => {
             let moved = (pointer.0 - from.0) - (pointer.1 - from.1);
-            let f = thousandths(1.0 + moved / GIZMO_PX).max(0.001);
+            let f = scale_factor(1.0 + moved / GIZMO_PX).max(MIN_SCALE);
             Some(cs_3d::scale(m, sel, center, [f; 3]))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_gizmo_scale_factor_is_never_zero_and_keeps_its_sign() {
+        assert_eq!(scale_factor(0.0), 0.001);
+        assert_eq!(scale_factor(0.0003), 0.001);
+        assert_eq!(scale_factor(-0.0003), -0.001);
+        assert_eq!(scale_factor(-0.5), -0.5);
+        assert_eq!(scale_factor(1.23456), 1.235);
     }
 }

@@ -1849,10 +1849,13 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
             return true;
         }
         let busy = editor.model_edit().op.is_some();
+        let gizmo_drag = matches!(editor.model_edit().op, Some(editor::EditOp::Gizmo { .. }));
         let mut handled = true;
         match key {
             Key::G if !shift => editor.request_model_key_op(editor::KeyOp::Grab),
             Key::S if !shift => editor.request_model_key_op(editor::KeyOp::Scale),
+            // Durante un arrastre del gizmo no se cambia de gizmo.
+            Key::W | Key::E | Key::R if !shift && gizmo_drag => {}
             Key::W if !shift => editor.toggle_gizmo(editor::Gizmo::Move),
             Key::E if !shift => editor.toggle_gizmo(editor::Gizmo::Rotate),
             Key::R if !shift => editor.toggle_gizmo(editor::Gizmo::Scale),

@@ -6199,6 +6199,63 @@ fn escape_or_a_right_click_cancels_a_gizmo_drag() {
 }
 
 #[test]
+fn a_right_click_that_cancels_a_gizmo_drag_does_not_pan() {
+    let (mut h, c) = cube_with_gizmo(crate::editor::Gizmo::Move);
+    let center = h.app.doc.editor.model_edit().center;
+    let from = c + vec2(20.0, 0.0);
+    let button = |button, pos, pressed| Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(PointerButton::Primary, from, true)]);
+    let to = from + vec2(30.0, 0.0);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.frame_with(vec![button(PointerButton::Secondary, to, true)]);
+    // Con el izquierdo todavía apretado, el puntero sigue.
+    h.frame_with(vec![Event::PointerMoved(to + vec2(40.0, 20.0))]);
+    let end = to + vec2(60.0, 30.0);
+    h.frame_with(vec![button(PointerButton::Secondary, end, false)]);
+    h.frame_with(vec![Event::PointerMoved(end)]);
+    h.frame_with(vec![button(PointerButton::Primary, end, false)]);
+    h.frame();
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(
+        h.app.doc.editor.model_edit().center,
+        center,
+        "the views panned"
+    );
+    assert_eq!(cube_transform(&h).position, v3(0, 0, 0));
+}
+
+#[test]
+fn w_e_r_do_nothing_during_a_gizmo_drag() {
+    use crate::editor::Gizmo;
+    let (mut h, c) = cube_with_gizmo(Gizmo::Move);
+    let zoom = h.app.doc.editor.model_edit().zoom;
+    let from = c + vec2(20.0, 0.0);
+    let to = from + vec2(8.0 * zoom, 0.0);
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, true)]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    for key in [egui::Key::W, egui::Key::E, egui::Key::R] {
+        tap_key(&mut h, key);
+        assert_eq!(h.app.doc.editor.model_edit().gizmo, Gizmo::Move, "{key:?}");
+    }
+    h.frame_with(vec![button(to, false)]);
+    h.frame();
+    assert_eq!(cube_transform(&h).position, v3(8, 0, 0), "the drag went on");
+}
+
+#[test]
 fn the_gizmo_wins_over_the_box_select() {
     let mut h = editing_model();
     h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);

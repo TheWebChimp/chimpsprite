@@ -185,8 +185,10 @@ impl CanvasView {
                 i.modifiers,
             )
         });
-        // El derecho durante un arrastre del gizmo lo cancela.
-        if secondary && matches!(editor.model_edit().op, Some(EditOp::Gizmo { .. })) {
+        // El derecho durante un arrastre del gizmo lo cancela (y no empieza nada más: ni
+        // desplazar las vistas con esa misma prensa).
+        let cancelled = secondary && matches!(editor.model_edit().op, Some(EditOp::Gizmo { .. }));
+        if cancelled {
             editor.cancel_model_op();
         }
         // Con un arrastre en curso, el otro botón no empieza nada. Un gesto de teclado (G o S)
@@ -197,6 +199,7 @@ impl CanvasView {
             Some(EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. })
         );
         if pressed
+            && !cancelled
             && !modal
             && response.hovered()
             && (!busy || (keyboard_op && self.model_drag.is_none()))
