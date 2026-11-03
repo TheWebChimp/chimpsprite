@@ -583,6 +583,35 @@ mod tests {
     }
 
     #[test]
+    fn the_face_selection_does_not_follow_to_the_canvas_from_its_own_texture() {
+        use crate::editor::CadMode;
+        use cs_3d::{Item, SelectMode, Selection};
+        // Se entra a la vista del modelo desde su textura: al volver, la textura sigue activa.
+        for close in [false, true] {
+            let (mut tabs, mut current, id) = with_model();
+            let texture = current.editor.document.artboard(id).unwrap();
+            let texture = texture.model.as_ref().unwrap().texture.unwrap();
+            current.editor.activate(texture);
+            tabs.switch_view(&mut current, 0, id);
+            current.editor.set_cad_mode(CadMode::Texture);
+            current.editor.set_model_selection(Selection {
+                mode: SelectMode::Face,
+                items: [Item::Face(0, 0)].into(),
+            });
+            assert!(current.editor.selection_is_face_mask());
+            if close {
+                tabs.close_view(&mut current, 0, id);
+            } else {
+                tabs.switch(&mut current, 0);
+            }
+            let e = &current.editor;
+            assert_eq!((e.workspace(), e.active), (None, texture), "close: {close}");
+            assert!(e.selection.is_none(), "close: {close}");
+            assert!(!e.selection_is_face_mask(), "close: {close}");
+        }
+    }
+
+    #[test]
     fn closing_a_document_closes_its_views() {
         let (mut tabs, mut current, _) = with_model();
         tabs.close(&mut current, 0);

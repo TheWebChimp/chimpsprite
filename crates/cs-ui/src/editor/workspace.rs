@@ -77,6 +77,10 @@ impl Editor {
         self.cancel_model_op();
         self.cancel_uv_op();
         self.model_edit.mode = CadMode::Model;
+        // Si se regresa a la textura (ya activa), `activate` no hace nada: la selección de las
+        // caras se quita aquí para que no se quede en el lienzo.
+        self.commit_floating();
+        self.sync_face_mask();
         let back = self
             .workspace_return
             .take()
