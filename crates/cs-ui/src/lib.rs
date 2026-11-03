@@ -1875,12 +1875,16 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
         }
         let busy = editor.model_edit().op.is_some();
         let gizmo_drag = matches!(editor.model_edit().op, Some(editor::EditOp::Gizmo { .. }));
+        // Los gizmos solo existen en modo Model (no en Texture sin textura).
+        let model_mode = editor.cad_mode() == editor::CadMode::Model;
         let mut handled = true;
         match key {
+            // Durante un arrastre del gizmo, G y S no lo cambian por un gesto de teclado ni
+            // W, E y R de gizmo.
+            Key::G | Key::S | Key::W | Key::E | Key::R if !shift && gizmo_drag => {}
             Key::G if !shift => editor.request_model_key_op(editor::KeyOp::Grab),
             Key::S if !shift => editor.request_model_key_op(editor::KeyOp::Scale),
-            // Durante un arrastre del gizmo no se cambia de gizmo.
-            Key::W | Key::E | Key::R if !shift && gizmo_drag => {}
+            Key::W | Key::E | Key::R if !shift && !model_mode => {}
             Key::W if !shift => editor.toggle_gizmo(editor::Gizmo::Move),
             Key::E if !shift => editor.toggle_gizmo(editor::Gizmo::Rotate),
             Key::R if !shift => editor.toggle_gizmo(editor::Gizmo::Scale),

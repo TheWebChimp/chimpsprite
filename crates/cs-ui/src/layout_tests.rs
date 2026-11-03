@@ -6515,6 +6515,193 @@ fn w_e_r_do_nothing_during_a_gizmo_drag() {
 }
 
 #[test]
+fn g_and_s_do_nothing_during_a_gizmo_drag() {
+    let (mut h, c) = cube_with_gizmo(crate::editor::Gizmo::Move);
+    let zoom = h.app.doc.editor.model_edit().zoom;
+    let steps = h.app.doc.editor.history.done_count();
+    let from = c + vec2(20.0, 0.0);
+    let to = from + vec2(8.0 * zoom, 0.0);
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, true)]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    for key in [egui::Key::G, egui::Key::S] {
+        tap_key(&mut h, key);
+        assert!(
+            matches!(
+                h.app.doc.editor.model_edit().op,
+                Some(crate::editor::EditOp::Gizmo { .. })
+            ),
+            "{key:?}: {:?}",
+            h.app.doc.editor.model_edit().op
+        );
+    }
+    h.frame_with(vec![button(to, false)]);
+    h.frame();
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(cube_transform(&h).position, v3(8, 0, 0), "the drag went on");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn w_e_r_do_nothing_in_texture_mode_without_a_texture() {
+    use crate::editor::Gizmo;
+    let mut h = editing_model();
+    assert!(h.app.doc.editor.set_texture(None));
+    h.app
+        .doc
+        .editor
+        .set_cad_mode(crate::editor::CadMode::Texture);
+    h.frame();
+    // Sin textura sigue activo el modelo (los atajos de pixeles están bloqueados).
+    assert!(h.app.doc.editor.pixel_actions_blocked());
+    let before = h.app.doc.editor.model_edit().gizmo;
+    for key in [egui::Key::W, egui::Key::E, egui::Key::R] {
+        tap_key(&mut h, key);
+        assert_eq!(h.app.doc.editor.model_edit().gizmo, before, "{key:?}");
+    }
+    assert_eq!(before, Gizmo::Move);
+}
+
+#[test]
+fn a_negative_scale_from_the_gizmo_survives_the_scale_field() {
+    let (mut h, c) = cube_with_gizmo(crate::editor::Gizmo::Scale);
+    assert!(
+        h.texts.iter().any(|(t, _)| t == "Scale"),
+        "the object tab is shown"
+    );
+    let r = crate::editor::GIZMO_PX;
+    let steps = h.app.doc.editor.history.done_count();
+    // El cubito X más allá del centro: escala negativa en X.
+    drag_with(
+        &mut h,
+        c + vec2(r, 0.0),
+        c - vec2(r, 0.0),
+        Default::default(),
+    );
+    h.frame();
+    h.frame();
+    let scale = cube_transform(&h).scale;
+    assert!(scale.x < 0, "{scale:?}");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+/// El centro del aro `axis` del gizmo de la perspectiva (el promedio de sus puntos).
+fn persp_ring_center(h: &LayoutHarness, axis: usize) -> cs_3d::P3 {
+    let cs_3d::HandleGeom::Ring(pts) = persp_handle(h, cs_3d::GizmoPart::Ring(axis)) else {
+        panic!("a ring");
+    };
+    let n = pts.len() as f32;
+    std::array::from_fn(|i| pts.iter().map(|p| p[i]).sum::<f32>() / n)
+}
+
+#[test]
+fn the_rotate_gizmo_stays_put_while_its_ring_is_dragged() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    // Tres esquinas de adelante (sin la de abajo a la izquierda): al girar, el centro de su
+    // caja se corre.
+    let pts = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    let items = (0..pts.len())
+        .filter(|&i| pts[i][2] > 0.0 && !(pts[i][0] < 0.0 && pts[i][1] < 0.0))
+        .map(|i| cs_3d::Item::Vertex(0, i as u32))
+        .collect();
+    h.app.doc.editor.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Vertex,
+        items,
+    });
+    h.app.doc.editor.set_gizmo(crate::editor::Gizmo::Rotate);
+    h.frame();
+    let center = [0.0, 0.0, 16.0];
+    assert_eq!(persp_ring_center(&h, 2).map(f32::round), center);
+    let c = front_screen(&h, center);
+    let r = crate::editor::GIZMO_PX;
+    let at = |deg: f32| {
+        let a = deg.to_radians();
+        c + vec2(a.cos(), -a.sin()) * r
+    };
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(at(0.0))]);
+    h.frame_with(vec![button(at(0.0), true)]);
+    h.frame_with(vec![Event::PointerMoved(at(20.0))]);
+    h.frame_with(vec![Event::PointerMoved(at(45.0))]);
+    h.frame();
+    let shown = h.app.doc.editor.edit_model_shown().unwrap();
+    let sel = &h.app.doc.editor.model_edit().selection;
+    let moved = cs_3d::center(cs_3d::bounds(shown, sel).unwrap());
+    assert!(
+        (moved[1] - center[1]).abs() > 1.0,
+        "the box drifts: {moved:?}"
+    );
+    // El gizmo (orto y perspectiva) sigue en el centro del giro.
+    let ring = persp_ring_center(&h, 2);
+    for i in 0..3 {
+        assert!((ring[i] - center[i]).abs() < 0.01, "{ring:?}");
+    }
+    let ortho = h
+        .app
+        .doc
+        .canvas
+        .ortho_gizmo_center(&h.app.doc.editor)
+        .expect("a gizmo");
+    assert_eq!(ortho, center);
+    h.frame_with(vec![button(at(45.0), false)]);
+    h.frame();
+}
+
+#[test]
+fn a_gizmo_handle_under_the_navigation_gizmo_does_not_light_up() {
+    let mut h = editing_model();
+    let balls = h.app.doc.canvas.nav_gizmo_balls(&h.app.doc.editor);
+    let ball = |axis, negative| {
+        balls
+            .iter()
+            .find(|b| (b.0, b.1) == (axis, negative))
+            .map(|b| b.2)
+            .unwrap()
+    };
+    // Cerca del centro del gizmo de navegación (no en una bolita): ahí se orbita.
+    let p = ball(0, false).lerp(ball(0, true), 0.5) + vec2(6.0, 6.0);
+    // El cubo corrido para que el cuadrito del centro de su gizmo Move caiga en `p`.
+    let pm = h.app.doc.canvas.persp_map(&h.app.doc.editor).unwrap();
+    let (o, d) = pm.ray((p.x, p.y));
+    let cam = camera(&h);
+    let t = cam.distance as f32;
+    let len = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+    let w: [f32; 3] = std::array::from_fn(|i| o[i] + d[i] / len * t);
+    let mut model = h.app.doc.editor.model().unwrap().clone();
+    model.objects[0].transform.position = v3(
+        w[0].round() as i32,
+        w[1].round() as i32,
+        w[2].round() as i32,
+    );
+    let group = egui::Id::new("move the cube");
+    h.app.doc.editor.set_model_grouped(model, group);
+    h.app.doc.editor.end_group();
+    h.app.doc.editor.select_model_object(Some(0));
+    h.app.doc.editor.set_gizmo(crate::editor::Gizmo::Move);
+    h.frame();
+    assert_eq!(
+        persp_hit(&h, p),
+        Some(cs_3d::GizmoPart::Plane),
+        "the gizmo is under the navigation gizmo"
+    );
+    h.frame_with(vec![Event::PointerMoved(p)]);
+    h.frame();
+    assert_eq!(h.app.doc.canvas.persp_hover_gizmo(), None);
+}
+
+#[test]
 fn the_gizmo_wins_over_the_box_select() {
     let mut h = editing_model();
     h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);

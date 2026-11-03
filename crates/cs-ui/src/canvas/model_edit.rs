@@ -258,15 +258,16 @@ impl CanvasView {
     }
 
     /// Lo de la perspectiva bajo `p` (en modo Model): primero el gizmo de navegación, después
-    /// el gizmo de lo elegido.
+    /// el gizmo de lo elegido. En el área del de navegación (donde un clic orbita, como en
+    /// `persp_press`) solo cuenta su bolita: un asa debajo no se resalta.
     fn persp_hover_at(&self, editor: &Editor, p: Pos2) -> Option<PerspHover> {
         if editor.cad_mode() != CadMode::Model {
             return None;
         }
         let q = self.edit_quads?[PERSP];
         let pm = self.persp_map(editor)?;
-        if let Some(ball) = nav_gizmo::nav_hit(&pm.camera, q, p) {
-            return Some(PerspHover::Nav(ball));
+        if nav_gizmo::nav_area(&pm.camera, q, p) {
+            return nav_gizmo::nav_hit(&pm.camera, q, p).map(PerspHover::Nav);
         }
         persp_gizmo_at(editor, &pm, (p.x, p.y)).map(|(part, _)| PerspHover::Gizmo(part))
     }
@@ -561,9 +562,24 @@ impl CanvasView {
     /// El gizmo de lo elegido como se ve en la perspectiva, para los tests de la app.
     #[cfg(test)]
     pub(crate) fn persp_gizmo_shape(&self, editor: &Editor) -> Option<cs_3d::GizmoShape> {
-        let model = editor.edited_model()?;
-        let center = cs_3d::center(cs_3d::bounds(model, &editor.model_edit().selection)?);
+        let center = gizmo_center(editor, editor.edit_model_shown()?)?;
         persp_gizmo(editor.shown_gizmo()?, &self.persp_map(editor)?, center)
+    }
+
+    /// Dónde se dibuja el gizmo en las vistas orto, para los tests de la app.
+    #[cfg(test)]
+    pub(crate) fn ortho_gizmo_center(&self, editor: &Editor) -> Option<cs_3d::P3> {
+        editor.shown_gizmo()?;
+        gizmo_center(editor, editor.edit_model_shown()?)
+    }
+
+    /// El asa del gizmo de la perspectiva resaltada bajo el puntero, para los tests de la app.
+    #[cfg(test)]
+    pub(crate) fn persp_hover_gizmo(&self) -> Option<GizmoPart> {
+        match self.persp_hover {
+            Some(PerspHover::Gizmo(part)) => Some(part),
+            _ => None,
+        }
     }
 
     /// Las bolitas del gizmo de navegación (eje, negativa y centro en pantalla), para los tests
@@ -652,6 +668,7 @@ impl CanvasView {
         let face_edges = selected_face_edges(model, sel);
         let grid = editor.model_edit().grid;
         let gizmo = editor.shown_gizmo();
+        let gizmo_center = gizmo.and_then(|_| gizmo_center(editor, model));
         // El asa en uso se resalta en las tres vistas; la de debajo del puntero, en la suya.
         let active = match editor.model_edit().op {
             Some(EditOp::Gizmo { part, .. }) => Some(part),
@@ -675,6 +692,7 @@ impl CanvasView {
             let boxed = box_ends(editor, view);
             let mut hasher = DefaultHasher::new();
             (model, sel, grid, view, w, h, gizmo, gizmo_hot).hash(&mut hasher);
+            gizmo_center.map(|c| c.map(f32::to_bits)).hash(&mut hasher);
             [
                 min.x,
                 min.y,
@@ -705,6 +723,7 @@ impl CanvasView {
                     face_edges: &face_edges,
                     boxed,
                     gizmo,
+                    gizmo_center,
                     gizmo_hot,
                 }
                 .image(w, h);
@@ -865,7 +884,6 @@ impl CanvasView {
         if w == 0 || h == 0 {
             return;
         }
-        let sel = &editor.model_edit().selection;
         let gizmo = editor.shown_gizmo();
         // Como en las orto: el asa en uso, o la de debajo del puntero.
         let active = match editor.model_edit().op {
@@ -885,15 +903,13 @@ impl CanvasView {
             q,
             min: (min.x, min.y),
             gizmo,
-            bounds: gizmo.and_then(|_| cs_3d::bounds(model, sel)),
+            center: gizmo.and_then(|_| gizmo_center(editor, model)),
             gizmo_hot,
             nav_hot,
         };
         let mut hasher = DefaultHasher::new();
         (
-            overlay
-                .bounds
-                .map(|(a, b)| [a, b].map(|p| p.map(f32::to_bits))),
+            overlay.center.map(|c| c.map(f32::to_bits)),
             pm.camera,
             pm.size,
             gizmo,
@@ -1206,8 +1222,9 @@ struct OrthoScene<'a> {
     bounds: Option<(cs_3d::P3, cs_3d::P3)>,
     face_edges: &'a HashSet<(usize, u32, u32)>,
     boxed: Option<((f32, f32), (f32, f32))>,
-    /// El gizmo en el centro de la caja de la selección (`None`: ninguno) y su asa resaltada.
+    /// El gizmo (`None`: ninguno), dónde va (ver [`gizmo_center`]) y su asa resaltada.
     gizmo: Option<GizmoKind>,
+    gizmo_center: Option<cs_3d::P3>,
     gizmo_hot: Option<GizmoPart>,
 }
 
@@ -1371,10 +1388,10 @@ impl OrthoScene<'_> {
     /// puntos), los ejes de escala con su cubito y, encima, el cuadrito o cubito del centro. Cada
     /// asa en el color de su eje; la resaltada, en amarillo.
     fn gizmo(&self, img: &mut cs_3d::WireImage) {
-        let (Some(kind), Some(b)) = (self.gizmo, self.bounds) else {
+        let (Some(kind), Some(center)) = (self.gizmo, self.gizmo_center) else {
             return;
         };
-        let shape = ortho_gizmo(kind, self.map, cs_3d::center(b));
+        let shape = ortho_gizmo(kind, self.map, center);
         draw_gizmo(
             img,
             &shape.handles,
@@ -1483,9 +1500,9 @@ struct PerspOverlay<'a> {
     /// El cuadrante Persp y el punto de pantalla del pixel `(0, 0)` (entero).
     q: Rect,
     min: (f32, f32),
-    /// El gizmo en el centro de `bounds` (`None`: ninguno) y su asa resaltada.
+    /// El gizmo en `center` (`None`: ninguno; ver [`gizmo_center`]) y su asa resaltada.
     gizmo: Option<GizmoKind>,
-    bounds: Option<(cs_3d::P3, cs_3d::P3)>,
+    center: Option<cs_3d::P3>,
     gizmo_hot: Option<GizmoPart>,
     nav_hot: Option<NavBall>,
 }
@@ -1494,8 +1511,8 @@ impl PerspOverlay<'_> {
     /// La imagen de `w × h`: el gizmo 3D (las asas de atrás primero) y el de navegación.
     fn image(&self, w: usize, h: usize) -> cs_3d::WireImage {
         let mut img = cs_3d::WireImage::new(w, h, [0; 4]);
-        if let (Some(kind), Some(b)) = (self.gizmo, self.bounds)
-            && let Some(shape) = persp_gizmo(kind, self.pm, cs_3d::center(b))
+        if let (Some(kind), Some(center)) = (self.gizmo, self.center)
+            && let Some(shape) = persp_gizmo(kind, self.pm, center)
         {
             let pr = self.pm.projector();
             // La profundidad de un asa: la de su punta (los aros y el centro, la del centro).
@@ -1562,6 +1579,23 @@ fn ortho_gizmo(kind: GizmoKind, map: &ViewMap, center: cs_3d::P3) -> cs_3d::Gizm
         }
     }
     cs_3d::gizmo_shape(kind, center, GIZMO_PX / map.scale, axes)
+}
+
+/// Dónde se dibuja el gizmo con `model` (el que se muestra): en el centro de la caja de lo
+/// elegido o, mientras se arrastra un aro, en el centro fijo del giro (la caja de lo girado se
+/// corre y el gizmo se iría con ella).
+fn gizmo_center(editor: &Editor, model: &cs_core::Model3D) -> Option<cs_3d::P3> {
+    match editor.model_edit().op {
+        Some(EditOp::Gizmo {
+            part: GizmoPart::Ring(_),
+            center,
+            ..
+        }) => Some(center),
+        _ => Some(cs_3d::center(cs_3d::bounds(
+            model,
+            &editor.model_edit().selection,
+        )?)),
+    }
 }
 
 /// El asa del gizmo bajo `at` (en pantalla) en la vista de `map`, si se ve un gizmo, y el centro
@@ -1689,6 +1723,7 @@ mod tests {
             face_edges: &selected_face_edges(model, sel),
             boxed,
             gizmo: None,
+            gizmo_center: None,
             gizmo_hot: None,
         }
         .image(100, 100)
@@ -1793,6 +1828,7 @@ mod tests {
             face_edges: &selected_face_edges(&m, &sel),
             boxed: None,
             gizmo: Some(kind),
+            gizmo_center: cs_3d::bounds(&m, &sel).map(cs_3d::center),
             gizmo_hot: hot,
         }
         .image(100, 100)
@@ -1863,7 +1899,7 @@ mod tests {
                 q,
                 min: (0.0, 0.0),
                 gizmo: Some(GizmoKind::Move),
-                bounds: cs_3d::bounds(&m, &sel),
+                center: cs_3d::bounds(&m, &sel).map(cs_3d::center),
                 gizmo_hot: None,
                 nav_hot,
             }
