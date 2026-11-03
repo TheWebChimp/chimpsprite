@@ -4,7 +4,7 @@
 //! textura y su tamaño, la cámara, la luz (con la cuadrícula Shading), el contorno y Sheet
 //! settings…. Abajo, la tira de pestañas de los objetos (una por objeto, con el ícono de su tipo:
 //! un clic la elige, su marca quita el objeto y, si no caben, las flechas las recorren) con el +
-//! a la derecha (un menú con las primitivas y los lados de las redondas: elegir una la agrega) y,
+//! a la derecha (su ventanita, en [`add_menu`]: el tipo, los lados de los redondos y Add) y,
 //! debajo, con su scroll, lo del objeto elegido: en modo Texture, los botones de las UVs (girar y
 //! voltear las de las caras elegidas); su posición, su rotación y su escala en filas de X, Y y Z,
 //! y Double sided. Sin objeto elegido, abajo solo la tira. Sin modelo, el botón New 3D Model….
@@ -27,6 +27,8 @@ use crate::pixel_ui;
 use crate::skin::Skin;
 use crate::tabs::TabIcon;
 
+mod add_menu;
+
 /// Ancho de adentro del panel (sin su marco): el contenido y la barra del scroll.
 pub const WIDTH: f32 = 300.0;
 /// Las pestañas de los objetos, 5 filas debajo de la línea que parte el panel (3 de aire después
@@ -48,8 +50,6 @@ const SECTION_GAP: f32 = 8.0;
 /// El + de la tira: del alto de las flechas, 4 px después de ellas (como en el boceto).
 const PLUS_W: f32 = 13.0;
 const PLUS_GAP: f32 = 4.0;
-/// El stepper de los lados, en el menú del +.
-const SIDES_W: f32 = 62.0;
 /// El select de la cuadrícula del modo Edit.
 const GRID_W: f32 = 56.0;
 /// El select del tamaño de la textura (modo Texture) y sus lados.
@@ -111,12 +111,18 @@ const PIN_DARK: Color32 = Color32::from_rgb(5, 4, 3);
 pub struct ModelPanelState {
     /// Los lados de lo que se agregue redondo (cilindro, cono, esfera).
     pub sides: u32,
+    /// El tipo elegido en el menú del + (de entrada, el cubo).
+    pub add_kind: PrimitiveKind,
+    /// Abrir el menú del + en el próximo frame (la demo, para capturas).
+    pub open_add_menu: bool,
 }
 
 impl Default for ModelPanelState {
     fn default() -> Self {
         ModelPanelState {
             sides: DEFAULT_SIDES,
+            add_kind: PrimitiveKind::Cube,
+            open_add_menu: false,
         }
     }
 }
@@ -289,7 +295,7 @@ fn header(
                 vec2(PLUS_W, kit::tabs::ARROW_SIZE),
             );
             strip.right = plus.left() - PLUS_GAP;
-            added = plus_button(ui, skin, plus, state);
+            added = add_menu::plus_button(ui, skin, plus, state);
             let event = kit::tabs::tab_strip(ui, skin, id, strip, &items, active);
             (strip.bottom(), event)
         }
@@ -318,66 +324,9 @@ fn header(
     line
 }
 
-/// El + de la tira en `rect` (un botón del kit con el ícono `icon.tab_add`) y su menú: lo elegido.
-fn plus_button(
-    ui: &mut Ui,
-    skin: &Skin,
-    rect: Rect,
-    state: &mut ModelPanelState,
-) -> Option<Primitive> {
-    let id = ui.id().with("model_add_object");
-    let plus = kit::tabs::ADD_MARK;
-    let response = kit::button::icon_button_at(ui, skin, rect, id, plus, "Add object");
-    let look = menus::MenuLook::new(skin, rect.top());
-    // Cambiar los lados no lo cierra: lo cierra elegir una primitiva o un clic afuera.
-    let keep = egui::PopupCloseBehavior::CloseOnClickOutside;
-    menus::dropdown_with(&look, &response, rect, keep, |ui| {
-        add_menu(ui, Some(skin), state)
-    })
-    .flatten()
-}
-
-/// El menú del +: las primitivas (elegir una cierra el menú y la devuelve) y, debajo, los lados
-/// de las redondas (las esferas, con la mitad de anillos).
-fn add_menu(ui: &mut Ui, skin: Option<&Skin>, state: &mut ModelPanelState) -> Option<Primitive> {
-    let sides = state.sides.clamp(MIN_SIDES, MAX_SIDES);
-    let options = [
-        Primitive::Cube,
-        Primitive::Plane,
-        Primitive::Cylinder { sides },
-        Primitive::Cone { sides },
-        Primitive::Sphere {
-            sides,
-            rings: sides / 2,
-        },
-    ];
-    let mut picked = None;
-    for p in options {
-        if ui.add(menus::choice(false, p.name())).clicked() {
-            picked = Some(p);
-            ui.close();
-        }
-    }
-    menus::separator(ui);
-    ui.horizontal(|ui| {
-        ui.label("Sides");
-        let range = MIN_SIDES..=MAX_SIDES;
-        match skin {
-            Some(skin) => {
-                let value = &mut state.sides;
-                kit::stepper::stepper(ui, skin, SIDES_W, "model_sides", value, range, 1, None);
-            }
-            None => {
-                ui.add(egui::DragValue::new(&mut state.sides).range(range));
-            }
-        }
-    });
-    picked
-}
-
 /// Sin Pixel UI: una fila de egui (con scroll de lado) con el nombre de cada pestaña (un clic la
-/// elige), el × de las que se cierran (quita su objeto) y, al final, el + con su menú (lo elegido
-/// queda en `added`).
+/// elige), el × de las que se cierran (quita su objeto) y, al final, el + con su menú (lo
+/// agregado queda en `added`).
 fn plain_tabs(
     ui: &mut Ui,
     items: &[TabItem],
@@ -409,8 +358,7 @@ fn plain_tabs(
                     }
                     ui.add_space(4.0);
                 }
-                let menu = ui.menu_button("+", |ui| add_menu(ui, None, state));
-                *added = menu.inner.flatten();
+                *added = add_menu::plain_menu(ui, state);
             });
         });
     event

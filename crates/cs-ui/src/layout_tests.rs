@@ -4581,17 +4581,52 @@ fn in_model_panel(h: &LayoutHarness, label: &str) -> Option<Rect> {
         .map(|(_, r)| *r)
 }
 
-/// Agrega un objeto `kind` con el + de la tira de pestañas (su menú de primitivas).
+/// Agrega un objeto `kind` con el + de la tira de pestañas: en su menú, el ícono del tipo y
+/// "Add <tipo>".
 fn add_object(h: &mut LayoutHarness, kind: &str) {
+    let plus = open_add_menu(h);
+    let icon = in_add_menu(h, plus, kind).unwrap_or_else(|| panic!("no {kind:?} in the + menu"));
+    h.click(icon.center(), PointerButton::Primary);
+    let add = in_add_menu(h, plus, &format!("Add {kind}")).expect("the Add button");
+    h.click(add.center(), PointerButton::Primary);
+}
+
+/// Abre el menú del + del panel 3D; devuelve el +.
+fn open_add_menu(h: &mut LayoutHarness) -> Rect {
     let plus = in_model_panel(h, "Add object").expect("the + button");
     h.click(plus.center(), PointerButton::Primary);
-    let item = h
-        .nodes
+    plus
+}
+
+/// El nodo `label` en el menú del + (debajo del +).
+fn in_add_menu(h: &LayoutHarness, plus: Rect, label: &str) -> Option<Rect> {
+    h.nodes
         .iter()
-        .find(|(l, r)| l == kind && r.top() > plus.bottom())
+        .find(|(l, r)| l == label && r.top() > plus.bottom())
         .map(|(_, r)| *r)
-        .unwrap_or_else(|| panic!("no {kind:?} in the + menu"));
-    h.click(item.center(), PointerButton::Primary);
+}
+
+/// La caja del menú del + (sin su sombra ni su pestaña): la `menu.list` que empieza 10 filas
+/// debajo de lo alto del + y termina con él a la derecha (como el boceto).
+fn add_menu_box(h: &LayoutHarness, plus: Rect) -> Option<Rect> {
+    let shadow = crate::menus::PANEL_SHADOW;
+    // Las partes del 9-slice de la caja (y las de la pestaña que caen sobre ella).
+    let parts = h
+        .drawn(crate::menus::PANEL)
+        .into_iter()
+        .filter(|r| r.top() >= plus.top() + 10.0);
+    parts
+        .reduce(|a, b| a.union(b))
+        .filter(|r| r.top() == plus.top() + 10.0 && r.right() == plus.right() + shadow)
+        .map(|r| Rect::from_min_max(r.min, r.max - Vec2::splat(shadow)))
+}
+
+/// Si el stepper de los lados del menú del + está deshabilitado (su campo, el apagado).
+fn sides_disabled(h: &LayoutHarness, menu: Rect) -> bool {
+    let inside = |name: &str| h.drawn(name).iter().any(|r| menu.contains_rect(*r));
+    let off = inside("stepper.field.disabled");
+    assert_ne!(off, inside(crate::kit::stepper::FIELD), "one stepper field");
+    off
 }
 
 /// `h` sin objeto elegido (ya no hay pestaña del modelo: desde el editor).
@@ -4828,7 +4863,7 @@ fn each_half_of_the_3d_panel_scrolls_on_its_own() {
 }
 
 #[test]
-fn the_plus_button_adds_a_primitive_with_the_chosen_sides_and_selects_its_tab() {
+fn the_plus_opens_the_add_menu_like_the_sketch() {
     let mut h = without_an_object(model_panel_open(true));
     // Ni Add ni Sides en el cuerpo: van en el menú del +.
     let flyout = model_flyout(&h);
@@ -4840,29 +4875,93 @@ fn the_plus_button_adds_a_primitive_with_the_chosen_sides_and_selects_its_tab() 
     assert!(plus.left() > cube.right());
     assert_eq!(plus.height(), crate::kit::tabs::ARROW_SIZE, "{plus:?}");
     assert!(plus.top() >= cube.top() && plus.bottom() <= cube.bottom());
-    h.click(plus.center(), PointerButton::Primary);
-    let below = |h: &LayoutHarness, label: &str| {
-        h.nodes
-            .iter()
-            .find(|(l, r)| l == label && r.top() > plus.bottom())
-            .map(|(_, r)| *r)
-    };
-    for kind in ["Cube", "Plane", "Cylinder", "Cone", "Sphere"] {
-        below(&h, kind).unwrap_or_else(|| panic!("no {kind} in the menu"));
+    assert!(add_menu_box(&h, plus).is_none(), "closed");
+    open_add_menu(&mut h);
+    // La ventanita del boceto: 136×87, 10 filas debajo de lo alto del + y con él a la derecha.
+    let menu = add_menu_box(&h, plus).expect("the add menu");
+    assert_eq!(menu.size(), vec2(136.0, 87.0));
+    // Los cinco íconos en una fila, uno cada 25 px, en el orden del boceto.
+    let icons: Vec<Rect> = ["Cube", "Cylinder", "Cone", "Sphere", "Plane"]
+        .iter()
+        .map(|k| in_add_menu(&h, plus, k).unwrap_or_else(|| panic!("no {k} icon")))
+        .collect();
+    for (i, pair) in icons.windows(2).enumerate() {
+        assert_eq!(pair[1].left() - pair[0].left(), 25.0, "icon {i}");
+        assert_eq!(pair[1].top(), pair[0].top(), "icon {i}");
     }
+    assert!(icons.iter().all(|r| menu.contains_rect(*r)));
+    for (i, kind) in ["cube", "cylinder", "cone", "sphere", "plane"]
+        .iter()
+        .enumerate()
+    {
+        let name = format!("icon.add.{kind}");
+        let drawn = h.drawn(&name);
+        assert!(
+            drawn.iter().any(|r| icons[i].contains_rect(*r)),
+            "{name} in {:?}: {drawn:?}",
+            icons[i]
+        );
+    }
+    // Elegido de entrada, el cubo: Add Cube abajo a la derecha (8 px antes del borde).
+    let add = in_add_menu(&h, plus, "Add Cube").expect("Add Cube");
+    assert_eq!(add.right(), menu.right() - 8.0, "{add:?} {menu:?}");
+    assert_eq!(add.top(), menu.top() + 62.0, "{add:?} {menu:?}");
+    assert_eq!(add.height(), crate::kit::button::HEIGHT);
+    assert!(h.selected.contains(&("Cube".to_owned(), true)));
+    assert!(text_in(&h, menu, "Sides").is_some());
+    // El cubo no tiene lados.
+    assert!(sides_disabled(&h, menu));
+    // La línea divisoria, de borde a borde, 33 filas debajo de lo alto de la caja.
+    let line = h
+        .drawn(crate::menus::SEPARATOR)
+        .into_iter()
+        .filter(|r| menu.contains_rect(*r))
+        .reduce(|a, b| a.union(b))
+        .expect("the divider");
+    assert_eq!(line.top(), menu.top() + 33.0);
+    assert_eq!(line.x_range(), menu.x_range().shrink(1.0));
+}
+
+#[test]
+fn clicking_an_icon_of_the_add_menu_chooses_the_type() {
+    let mut h = without_an_object(model_panel_open(true));
+    let plus = open_add_menu(&mut h);
+    let menu = add_menu_box(&h, plus).expect("the add menu");
+    let cylinder = in_add_menu(&h, plus, "Cylinder").unwrap();
+    h.click(cylinder.center(), PointerButton::Primary);
+    assert!(add_menu_box(&h, plus).is_some(), "it stays open");
+    assert!(in_add_menu(&h, plus, "Add Cylinder").is_some());
+    assert!(in_add_menu(&h, plus, "Add Cube").is_none());
+    assert!(!sides_disabled(&h, menu), "a cylinder has sides");
+    assert!(h.selected.contains(&("Cylinder".to_owned(), true)));
+    // El plano, como el cubo, no.
+    let plane = in_add_menu(&h, plus, "Plane").unwrap();
+    h.click(plane.center(), PointerButton::Primary);
+    assert!(in_add_menu(&h, plus, "Add Plane").is_some());
+    assert!(sides_disabled(&h, menu));
+    // Nada se agregó todavía.
+    assert_eq!(h.app.doc.editor.model().unwrap().objects.len(), 1);
+}
+
+#[test]
+fn add_in_the_add_menu_adds_the_type_with_the_sides_and_selects_its_tab() {
+    let mut h = without_an_object(model_panel_open(true));
+    let plus = open_add_menu(&mut h);
+    let menu = add_menu_box(&h, plus).expect("the add menu");
+    let cone = in_add_menu(&h, plus, "Cone").unwrap();
+    h.click(cone.center(), PointerButton::Primary);
     // Sides, en el mismo menú: dos más (de 8 a 10) sin cerrarlo.
-    let sphere = below(&h, "Sphere").unwrap();
     let more = h
         .buttons
         .iter()
-        .find(|(l, r)| l == "Increase" && r.top() > sphere.top() && !flyout.contains_rect(*r))
+        .find(|(l, r)| l == "Increase" && menu.contains_rect(*r))
         .map(|(_, r)| *r)
         .expect("the Sides + in the menu");
     h.click(more.center(), PointerButton::Primary);
     h.click(more.center(), PointerButton::Primary);
-    let cone = below(&h, "Cone").expect("the menu stays open");
+    let add = in_add_menu(&h, plus, "Add Cone").expect("the menu stays open");
     let steps = h.app.doc.editor.history.done_count();
-    h.click(cone.center(), PointerButton::Primary);
+    h.click(add.center(), PointerButton::Primary);
     h.frame();
     let editor = &h.app.doc.editor;
     let objects = &editor.model().unwrap().objects;
@@ -4874,13 +4973,56 @@ fn the_plus_button_adds_a_primitive_with_the_chosen_sides_and_selects_its_tab() 
     assert_eq!(editor.history.done_count(), steps + 1);
     // Su pestaña, la elegida; el menú, cerrado.
     assert_eq!(editor.selected_object(), Some(1));
-    assert!(below(&h, "Sphere").is_none(), "the menu closed");
+    assert!(add_menu_box(&h, plus).is_none(), "the menu closed");
+    assert!(in_add_menu(&h, plus, "Add Cone").is_none());
     let tab = in_model_panel(&h, "Cone").expect("the cone tab");
     assert!(
         h.drawn_boxes("tab.active")
             .iter()
             .any(|r| r.left() == tab.left())
     );
+}
+
+#[test]
+fn without_pixel_ui_the_plus_menu_has_the_types_sides_and_add() {
+    let mut h = LayoutHarness::new(plain(), true);
+    assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+    h.frame();
+    h.click(h.button("+").center(), PointerButton::Primary);
+    let cylinder = h.button("Cylinder");
+    // De entrada, el cubo.
+    h.button("Add Cube");
+    h.click(cylinder.center(), PointerButton::Primary);
+    h.click(h.button("Add Cylinder").center(), PointerButton::Primary);
+    h.frame();
+    let editor = &h.app.doc.editor;
+    assert_eq!(editor.model().unwrap().objects.len(), 2);
+    assert_eq!(editor.selected_object(), Some(1));
+    assert!(
+        !h.buttons.iter().any(|(l, _)| l.starts_with("Add ")),
+        "closed"
+    );
+}
+
+#[test]
+fn escape_or_a_click_outside_closes_the_add_menu_without_adding() {
+    let mut h = without_an_object(model_panel_open(true));
+    let plus = open_add_menu(&mut h);
+    assert!(add_menu_box(&h, plus).is_some());
+    tap_key(&mut h, egui::Key::Escape);
+    assert!(add_menu_box(&h, plus).is_none(), "closed");
+    assert!(in_add_menu(&h, plus, "Add Cube").is_none());
+    assert_eq!(h.app.doc.editor.model().unwrap().objects.len(), 1);
+    // Un clic afuera también lo cierra.
+    open_add_menu(&mut h);
+    assert!(add_menu_box(&h, plus).is_some());
+    let away = model_flyout(&h).left_top() + vec2(4.0, 4.0);
+    h.click(away, PointerButton::Primary);
+    assert!(
+        add_menu_box(&h, plus).is_none(),
+        "closed by a click outside"
+    );
+    assert_eq!(h.app.doc.editor.model().unwrap().objects.len(), 1);
 }
 
 #[test]

@@ -1074,7 +1074,12 @@ fn the_embedded_skin_has_the_add_object_icons() {
     let cube = &data.pieces["icon.add.cube"];
     let at = |x: u32, y: u32| {
         let i = ((y * cube.size[0] + x) * 4) as usize;
-        Rgba::new(cube.rgba[i], cube.rgba[i + 1], cube.rgba[i + 2], cube.rgba[i + 3])
+        Rgba::new(
+            cube.rgba[i],
+            cube.rgba[i + 1],
+            cube.rgba[i + 2],
+            cube.rgba[i + 3],
+        )
     };
     assert_eq!(at(0, 0).a, 0, "outside is transparent");
     assert_eq!(at(10, 0), Rgba::rgb(27, 36, 71), "the cube's outline");
