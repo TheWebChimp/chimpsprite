@@ -4561,8 +4561,7 @@ fn the_model_panel_shows_the_objects_as_tabs_and_adds_a_cylinder() {
         .expect("the 3D panel is open");
     let cube = node(&h, "Cube");
     assert!(flyout.contains_rect(cube), "{cube:?} vs {flyout:?}");
-    h.click(node(&h, "Add").center(), PointerButton::Primary);
-    h.click(node(&h, "Cylinder").center(), PointerButton::Primary);
+    add_object(&mut h, "Cylinder");
     let editor = &h.app.doc.editor;
     let objects = &editor.model().unwrap().objects;
     assert_eq!(objects.len(), 2);
@@ -4584,11 +4583,248 @@ fn model_flyout(h: &LayoutHarness) -> Rect {
         .expect("the 3D panel is open")
 }
 
+/// El nodo `label` dentro del panel 3D (no el de otro lado con el mismo nombre).
+fn in_model_panel(h: &LayoutHarness, label: &str) -> Option<Rect> {
+    let flyout = model_flyout(h);
+    h.nodes
+        .iter()
+        .find(|(l, r)| l == label && flyout.contains_rect(*r))
+        .map(|(_, r)| *r)
+}
+
+/// Agrega un objeto `kind` con el + de la tira de pestañas (su menú de primitivas).
+fn add_object(h: &mut LayoutHarness, kind: &str) {
+    let plus = in_model_panel(h, "Add object").expect("the + button");
+    h.click(plus.center(), PointerButton::Primary);
+    let item = h
+        .nodes
+        .iter()
+        .find(|(l, r)| l == kind && r.top() > plus.bottom())
+        .map(|(_, r)| *r)
+        .unwrap_or_else(|| panic!("no {kind:?} in the + menu"));
+    h.click(item.center(), PointerButton::Primary);
+}
+
+/// `h` con la pestaña del modelo elegida (un clic en ella: sin objeto elegido).
+fn on_the_model_tab(mut h: LayoutHarness) -> LayoutHarness {
+    let tab = in_model_panel(&h, "Model").expect("the model tab");
+    h.click(tab.center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(h.app.doc.editor.selected_object(), None);
+    h
+}
+
+/// Los íconos de los cinco tipos de objeto, en el orden de la pestaña del modelo.
+const MODEL_TAB_ICONS: [&str; 5] = [
+    "icon.object.cube",
+    "icon.object.cylinder",
+    "icon.object.cone",
+    "icon.object.sphere",
+    "icon.object.plane",
+];
+
+#[test]
+fn the_model_tab_comes_first_without_a_close_mark_and_is_active_without_an_object() {
+    let mut h = model_panel_open(true);
+    assert_eq!(
+        h.app.doc.editor.selected_object(),
+        Some(0),
+        "a new model chooses its cube"
+    );
+    let model = in_model_panel(&h, "Model").expect("the model tab");
+    let cube = node(&h, "Cube");
+    // Primera, en la fila de las de los objetos.
+    assert_eq!(model.top(), cube.top());
+    assert!(model.right() < cube.left(), "{model:?} {cube:?}");
+    // No se cierra: sin ○ ni ×.
+    for verb in ["Delete Model", "Close Model"] {
+        assert!(!h.nodes.iter().any(|(l, _)| l == verb), "{verb}");
+    }
+    // Su etiqueta: los cinco íconos de tipo seguidos, sin nombre.
+    let icons: Vec<Rect> = MODEL_TAB_ICONS
+        .iter()
+        .map(|name| {
+            h.drawn(name)
+                .into_iter()
+                .find(|r| model.contains_rect(*r))
+                .unwrap_or_else(|| panic!("no {name} in the model tab {model:?}"))
+        })
+        .collect();
+    for pair in icons.windows(2) {
+        assert!(pair[0].right() < pair[1].left(), "{icons:?}");
+        assert_eq!(pair[0].bottom(), pair[1].bottom(), "{icons:?}");
+    }
+    assert!(text_in(&h, model, "Model").is_none(), "no name drawn");
+    // Con el cubo elegido, la activa es la del cubo.
+    let active = |h: &LayoutHarness| h.drawn_boxes("tab.active");
+    assert!(active(&h).iter().any(|r| r.left() == cube.left()));
+    // Un clic en ella: sin objeto elegido, y ella es la activa.
+    h.click(model.center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(h.app.doc.editor.selected_object(), None);
+    assert!(
+        active(&h).iter().any(|r| r.left() == model.left()),
+        "{:?}",
+        active(&h)
+    );
+    // Sin objeto elegido de otra forma (desde el editor), también.
+    h.app.doc.editor.select_model_object(Some(0));
+    h.frame();
+    assert!(active(&h).iter().any(|r| r.left() == cube.left()));
+    h.app.doc.editor.select_model_object(None);
+    h.frame();
+    h.frame();
+    assert!(active(&h).iter().any(|r| r.left() == model.left()));
+}
+
+#[test]
+fn the_plus_button_adds_a_primitive_with_the_chosen_sides_and_selects_its_tab() {
+    let mut h = on_the_model_tab(model_panel_open(true));
+    // Ni Add ni Sides en el cuerpo: van en el menú del +.
+    let flyout = model_flyout(&h);
+    assert!(in_model_panel(&h, "Add").is_none());
+    assert!(text_in(&h, flyout, "Sides").is_none());
+    let plus = in_model_panel(&h, "Add object").expect("the + button");
+    let model = in_model_panel(&h, "Model").unwrap();
+    // A la derecha de la tira, del alto de las flechas.
+    assert!(plus.left() > model.right());
+    assert_eq!(plus.height(), crate::kit::tabs::ARROW_SIZE, "{plus:?}");
+    assert!(plus.top() >= model.top() && plus.bottom() <= model.bottom());
+    h.click(plus.center(), PointerButton::Primary);
+    let below = |h: &LayoutHarness, label: &str| {
+        h.nodes
+            .iter()
+            .find(|(l, r)| l == label && r.top() > plus.bottom())
+            .map(|(_, r)| *r)
+    };
+    for kind in ["Cube", "Plane", "Cylinder", "Cone", "Sphere"] {
+        below(&h, kind).unwrap_or_else(|| panic!("no {kind} in the menu"));
+    }
+    // Sides, en el mismo menú: dos más (de 8 a 10) sin cerrarlo.
+    let sphere = below(&h, "Sphere").unwrap();
+    let more = h
+        .buttons
+        .iter()
+        .find(|(l, r)| l == "Increase" && r.top() > sphere.top() && !flyout.contains_rect(*r))
+        .map(|(_, r)| *r)
+        .expect("the Sides + in the menu");
+    h.click(more.center(), PointerButton::Primary);
+    h.click(more.center(), PointerButton::Primary);
+    let cone = below(&h, "Cone").expect("the menu stays open");
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(cone.center(), PointerButton::Primary);
+    h.frame();
+    let editor = &h.app.doc.editor;
+    let objects = &editor.model().unwrap().objects;
+    assert_eq!(objects.len(), 2);
+    assert_eq!(
+        objects[1].mesh,
+        cs_3d::primitive_mesh(&cs_3d::Primitive::Cone { sides: 10 })
+    );
+    assert_eq!(editor.history.done_count(), steps + 1);
+    // Su pestaña, la elegida; el menú, cerrado.
+    assert_eq!(editor.selected_object(), Some(1));
+    assert!(below(&h, "Sphere").is_none(), "the menu closed");
+    let tab = in_model_panel(&h, "Cone").expect("the cone tab");
+    assert!(
+        h.drawn_boxes("tab.active")
+            .iter()
+            .any(|r| r.left() == tab.left())
+    );
+}
+
+#[test]
+fn the_plus_button_sits_right_of_the_tab_arrows() {
+    let mut h = model_panel_open(true);
+    for _ in 0..11 {
+        assert!(
+            h.app
+                .doc
+                .editor
+                .add_primitive(cs_3d::Primitive::Cylinder { sides: 8 })
+        );
+    }
+    h.frame();
+    h.frame();
+    let next = in_model_panel(&h, "Next tabs").expect("the arrows");
+    let plus = in_model_panel(&h, "Add object").expect("the + button");
+    assert!(plus.left() > next.right(), "{plus:?} {next:?}");
+    assert!(plus.left() - next.right() <= 8.0, "{plus:?} {next:?}");
+    assert_eq!((plus.top(), plus.height()), (next.top(), next.height()));
+    let inner = model_flyout(&h).shrink(crate::dock::FLYOUT_MARGIN as f32);
+    assert!(plus.right() <= inner.right(), "{plus:?} in {inner:?}");
+}
+
+/// Las etiquetas de eje (X, Y, Z) del panel 3D: vacío si no hay filas de transform.
+fn axis_tags(h: &LayoutHarness) -> Vec<Rect> {
+    let flyout = model_flyout(h);
+    h.drawn(crate::kit::stepper::UNIT)
+        .into_iter()
+        .filter(|r| flyout.contains_rect(*r) && r.width() == crate::kit::stepper::TAG_W)
+        .collect()
+}
+
+#[test]
+fn each_tab_shows_only_its_own_settings() {
+    let h = model_panel_tall();
+    let flyout = model_flyout(&h);
+    let below_tabs = Rect::from_min_max(pos2(flyout.left(), node(&h, "Cube").bottom()), flyout.max);
+    let shown = |h: &LayoutHarness, t: &str| text_in(h, below_tabs, t).is_some();
+    // La del cubo: su transform y nada del modelo.
+    for t in ["Position", "Rotation", "Scale", "Double sided"] {
+        assert!(shown(&h, t), "{t} in the object tab");
+    }
+    assert_eq!(axis_tags(&h).len(), 9);
+    let model_things = [
+        "Object",
+        "Vertex",
+        "Grid",
+        "Texture",
+        "Texture size",
+        "Camera",
+        "Light & Outline",
+        "Shading",
+    ];
+    for t in model_things {
+        assert!(!shown(&h, t), "{t} in the object tab");
+    }
+    assert!(in_model_panel(&h, "Sheet settings…").is_none());
+    assert!(in_model_panel(&h, "New Texture").is_none());
+    // La del modelo: lo del modelo y nada del objeto.
+    let h = on_the_model_tab(h);
+    for t in model_things {
+        assert!(shown(&h, t), "{t} in the model tab");
+    }
+    in_model_panel(&h, "Sheet settings…").expect("Sheet settings… in the model tab");
+    in_model_panel(&h, "New Texture").expect("New Texture in the model tab");
+    for t in ["Position", "Rotation", "Scale", "Double sided", "UV"] {
+        assert!(!shown(&h, t), "{t} in the model tab");
+    }
+    assert!(axis_tags(&h).is_empty(), "no transform rows");
+}
+
+#[test]
+fn with_an_object_chosen_its_tab_needs_no_scroll_in_the_capture_window() {
+    // La de la captura y una baja (donde todo el panel junto no cabía).
+    for size in [Vec2::new(1920.0, 1009.0), Vec2::new(1200.0, 480.0)] {
+        let h = model_panel_in(size);
+        assert_eq!(h.app.doc.editor.selected_object(), Some(0));
+        let flyout = model_flyout(&h);
+        let double = check(&h, "Double sided").0;
+        assert!(flyout.contains_rect(double), "{double:?} in {flyout:?}");
+        assert!(
+            !h.drawn("scroll.track.v")
+                .iter()
+                .any(|r| r.intersects(flyout)),
+            "the object tab scrolls at {size:?}"
+        );
+    }
+}
+
 #[test]
 fn the_3d_panel_has_one_tab_per_object_with_the_icon_of_its_kind() {
     let mut h = model_panel_open(true);
-    h.click(node(&h, "Add").center(), PointerButton::Primary);
-    h.click(node(&h, "Cylinder").center(), PointerButton::Primary);
+    add_object(&mut h, "Cylinder");
     let model = h.app.doc.editor.model().unwrap().clone();
     let items = crate::model_panel::object_tabs(&model);
     let shown: Vec<(&str, crate::tabs::TabIcon, crate::kit::tabs::TabMark)> = items
@@ -4626,8 +4862,7 @@ fn the_3d_panel_has_one_tab_per_object_with_the_icon_of_its_kind() {
 #[test]
 fn closing_an_object_tab_removes_the_object_in_one_undo_step() {
     let mut h = model_panel_open(true);
-    h.click(node(&h, "Add").center(), PointerButton::Primary);
-    h.click(node(&h, "Cylinder").center(), PointerButton::Primary);
+    add_object(&mut h, "Cylinder");
     let steps = h.app.doc.editor.history.done_count();
     assert!(!h.nodes.iter().any(|(l, _)| l == "Close Cube"));
     h.click(node(&h, "Delete Cube").center(), PointerButton::Primary);
@@ -4743,10 +4978,10 @@ fn panel_top_texts(h: &LayoutHarness) -> (Vec<Rect>, Rect) {
 
 #[test]
 fn the_3d_panel_opens_at_the_top_with_edit_visible() {
-    for h in [model_panel_open(true), model_panel_tall()] {
+    for h in [model_panel_open(true), model_panel_tall()].map(on_the_model_tab) {
         let (titles, edit) = panel_top_texts(&h);
         // Ya no hay título "3D" en el panel (solo el botón del dock y el de la barra): arriba,
-        // la pestaña del cubo, y "Object" a la vista debajo.
+        // la pestaña del cubo, y en la del modelo "Object" a la vista debajo.
         let flyout = model_flyout(&h);
         assert!(
             !titles.iter().any(|t| flyout.contains_rect(*t)),
@@ -4762,7 +4997,7 @@ fn the_3d_panel_opens_at_the_top_with_edit_visible() {
 #[test]
 fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
     // Una ventana baja: el panel no cabe y se desplaza.
-    let mut h = model_panel_in(Vec2::new(1200.0, 500.0));
+    let mut h = on_the_model_tab(model_panel_in(Vec2::new(1200.0, 500.0)));
     let (_, top) = panel_top_texts(&h);
     let over = top.center();
     h.frame_with(vec![Event::PointerMoved(over)]);
@@ -4794,7 +5029,7 @@ fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
 
 #[test]
 fn the_3d_panel_has_the_modes_and_the_grid() {
-    let mut h = model_panel_open(true);
+    let mut h = on_the_model_tab(model_panel_open(true));
     let text = |h: &LayoutHarness, t: &str| {
         h.text_rects
             .iter()
@@ -4981,7 +5216,7 @@ fn model_pixels(h: &LayoutHarness) -> Vec<Rgba> {
 
 #[test]
 fn the_texture_select_skips_the_library_and_marks_a_missing_texture() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     let doc = &mut h.app.doc.editor.document;
     doc.artboards
         .iter_mut()
@@ -5013,7 +5248,7 @@ fn the_texture_select_skips_the_library_and_marks_a_missing_texture() {
 
 #[test]
 fn choosing_another_texture_in_the_model_panel_changes_the_model() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     let before = h.app.doc.editor.model().unwrap().texture;
     h.click(node(&h, "Ship Texture").center(), PointerButton::Primary);
     h.click(node(&h, "Skin").center(), PointerButton::Primary);
@@ -5034,7 +5269,7 @@ fn choosing_another_texture_in_the_model_panel_changes_the_model() {
 
 #[test]
 fn new_texture_adds_a_template_artboard_and_assigns_it_in_one_step() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     let steps = h.app.doc.editor.history.done_count();
     let count = h.app.doc.editor.document.artboards.len();
     h.click(h.button("New Texture").center(), PointerButton::Primary);
@@ -5051,7 +5286,7 @@ fn new_texture_adds_a_template_artboard_and_assigns_it_in_one_step() {
 
 #[test]
 fn the_iso_preset_sets_an_orthographic_camera() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     h.click(h.button("Iso").center(), PointerButton::Primary);
     let cam = h.app.doc.editor.model().unwrap().camera;
     assert_eq!(cam.projection, cs_core::Projection::Orthographic);
@@ -5063,7 +5298,7 @@ fn the_iso_preset_sets_an_orthographic_camera() {
 
 #[test]
 fn the_projection_radios_switch_the_camera() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     let ortho = node(&h, "Orthographic");
     h.click(ortho.center(), PointerButton::Primary);
     let cam = h.app.doc.editor.model().unwrap().camera;
@@ -5072,7 +5307,7 @@ fn the_projection_radios_switch_the_camera() {
 
 #[test]
 fn turning_the_light_off_changes_the_render() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     let lit = model_pixels(&h);
     assert!(check(&h, "Light").1);
     h.click(check(&h, "Light").0.center(), PointerButton::Primary);
@@ -5082,7 +5317,7 @@ fn turning_the_light_off_changes_the_render() {
 
 #[test]
 fn turning_the_outline_on_sets_the_primary_color() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     assert_eq!(h.app.doc.editor.model().unwrap().outline, None);
     h.click(check(&h, "Outline").0.center(), PointerButton::Primary);
     let editor = &h.app.doc.editor;
@@ -5093,16 +5328,23 @@ fn turning_the_outline_on_sets_the_primary_color() {
 }
 
 #[test]
-fn the_model_panel_has_a_bake_button() {
-    let h = model_panel_tall();
-    h.button("Bake…");
+fn the_model_tab_has_a_sheet_settings_button() {
+    let h = on_the_model_tab(model_panel_tall());
+    h.button("Sheet settings…");
+    assert!(!h.buttons.iter().any(|(l, _)| l == "Bake…"));
 }
 
 #[test]
 fn every_model_panel_control_fits_beside_the_scroll_bar() {
     // Una ventana baja y una alta (cabe todo, sin barra).
-    for size in [Vec2::new(1200.0, 480.0), Vec2::new(1200.0, 1800.0)] {
+    // La pestaña del cubo (18: sus nueve steppers) y la del modelo (8: Yaw y Pitch de la
+    // cámara y de la luz).
+    let sizes = [Vec2::new(1200.0, 480.0), Vec2::new(1200.0, 1800.0)];
+    for (size, model_tab) in sizes.into_iter().flat_map(|s| [(s, false), (s, true)]) {
         let mut h = model_panel_in(size);
+        if model_tab {
+            h = on_the_model_tab(h);
+        }
         h.frame();
         let flyout = h
             .ctx
@@ -5124,7 +5366,8 @@ fn every_model_panel_control_fits_beside_the_scroll_bar() {
         let steppers = controls
             .iter()
             .filter(|(l, _)| l == "Increase" || l == "Decrease");
-        assert!(steppers.clone().count() >= 22, "{controls:?}");
+        let least = if model_tab { 8 } else { 18 };
+        assert!(steppers.clone().count() >= least, "{controls:?}");
         // Los steppers (de ancho fijo) caben siempre al lado de la barra.
         for (label, r) in steppers {
             assert!(inside(*r, content), "{label} {r:?} outside {content:?}");
@@ -5134,8 +5377,14 @@ fn every_model_panel_control_fits_beside_the_scroll_bar() {
             .drawn("scroll.track.v")
             .iter()
             .any(|r| r.intersects(flyout) && r.left() >= content.right() - 1.0);
-        let area = if scrolls { content } else { inner };
+        // La tira de pestañas (con el +) está arriba del scroll: llega hasta el borde.
+        let tabs = in_model_panel(&h, "Model").expect("the model tab");
         for (label, r) in controls {
+            let area = if scrolls && r.top() > tabs.bottom() {
+                content
+            } else {
+                inner
+            };
             assert!(inside(*r, area), "{label} {r:?} outside {area:?}");
         }
     }
@@ -5173,6 +5422,10 @@ fn values_outside_the_panel_ranges_are_not_rewritten_by_drawing_the_panel() {
     }
     assert_eq!(h.app.doc.editor.model().unwrap(), &model);
     assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    // Y la pestaña del modelo (la cámara y la luz).
+    let h = on_the_model_tab(h);
+    assert_eq!(h.app.doc.editor.model().unwrap(), &model);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
 }
 
 // --- El panel 3D: la cuadrícula Shading ---
@@ -5184,7 +5437,7 @@ fn model_palette(h: &LayoutHarness, i: usize) -> Rgba {
 
 #[test]
 fn picking_a_shade_pins_the_step_in_one_undo_step_and_changes_the_render() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     // El 6 es el color del cubo en la plantilla de la textura.
     let (cube, red) = (model_palette(&h, 6), model_palette(&h, 27));
     let before = model_pixels(&h);
@@ -5203,7 +5456,7 @@ fn picking_a_shade_pins_the_step_in_one_undo_step_and_changes_the_render() {
 
 #[test]
 fn a_right_click_on_a_shade_step_returns_it_to_auto() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     let (cube, red) = (model_palette(&h, 6), model_palette(&h, 27));
     h.click(node(&h, "Shade 6 step 2").center(), PointerButton::Primary);
     h.click(node(&h, "Shade color 27").center(), PointerButton::Primary);
@@ -5221,7 +5474,7 @@ fn a_right_click_on_a_shade_step_returns_it_to_auto() {
 
 #[test]
 fn auto_empties_the_shading_table() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     assert!(
         h.disabled.iter().any(|l| l == "Auto"),
         "Auto with an empty table"
@@ -5254,7 +5507,7 @@ fn set_model_palette(h: &mut LayoutHarness, colors: Vec<Rgba>) {
 
 #[test]
 fn entries_of_colors_outside_the_palette_show_as_orphan_columns() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     let gone = Rgba::new(1, 2, 3, 255);
     let mut table = cs_core::ShadingTable::default();
     table.set(gone, 1, Some(model_palette(&h, 27)));
@@ -5319,7 +5572,7 @@ fn entries_of_colors_outside_the_palette_show_as_orphan_columns() {
 
 #[test]
 fn the_shade_popup_offers_only_opaque_colors() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     let mut colors = h.app.doc.editor.sprite().palette.colors().to_vec();
     colors[27].a = 0;
     set_model_palette(&mut h, colors);
@@ -5330,7 +5583,7 @@ fn the_shade_popup_offers_only_opaque_colors() {
 
 #[test]
 fn the_shading_grid_is_disabled_with_the_light_off() {
-    let mut h = model_panel_tall();
+    let mut h = on_the_model_tab(model_panel_tall());
     assert!(!h.disabled.iter().any(|l| l == "Shade 6 step 1"));
     let mut model = h.app.doc.editor.model().unwrap().clone();
     model.light.enabled = false;
@@ -5355,7 +5608,7 @@ fn the_shading_grid_is_disabled_with_the_light_off() {
 
 #[test]
 fn every_shade_cell_is_inside_the_flyout() {
-    let h = model_panel_tall();
+    let h = on_the_model_tab(model_panel_tall());
     let flyout = h
         .ctx
         .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
@@ -6814,7 +7067,7 @@ fn the_uv_buttons_rotate_and_flip_the_chosen_faces() {
 
 #[test]
 fn texture_size_128_from_the_panel_and_shrinking_asks() {
-    let mut h = with_the_model_panel(with_a_model_in_texture_mode());
+    let mut h = on_the_model_tab(with_the_model_panel(with_a_model_in_texture_mode()));
     h.click(node(&h, "64").center(), PointerButton::Primary);
     h.click(node(&h, "128").center(), PointerButton::Primary);
     let s = texture_sprite(&h);
@@ -6832,10 +7085,15 @@ fn texture_size_128_from_the_panel_and_shrinking_asks() {
 
 #[test]
 fn texture_mode_hides_the_select_mode_radios() {
-    let mut h = with_the_model_panel(with_a_model_at_800());
+    let mut h = on_the_model_tab(with_the_model_panel(with_a_model_at_800()));
     let has = |h: &LayoutHarness, l: &str| h.nodes.iter().any(|(n, _)| n == l);
     assert!(has(&h, "Vertex") && has(&h, "Edge"));
+    // La sección UV es de la pestaña de un objeto, y solo en Texture.
+    h.app.doc.editor.select_model_object(Some(0));
+    h.frame();
+    h.frame();
     assert!(!has(&h, "Rotate 90°"), "no UV section in Model");
+    h.app.doc.editor.select_model_object(None);
     h.app
         .doc
         .editor
@@ -6845,6 +7103,9 @@ fn texture_mode_hides_the_select_mode_radios() {
     for l in ["Object", "Vertex", "Edge", "Face"] {
         assert!(!has(&h, l), "{l}");
     }
+    h.app.doc.editor.select_model_object(Some(0));
+    h.frame();
+    h.frame();
     assert!(has(&h, "Rotate 90°"));
 }
 

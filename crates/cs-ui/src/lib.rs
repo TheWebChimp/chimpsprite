@@ -1216,7 +1216,7 @@ impl ChimpApp {
                     tabs::TabIcon::None => "",
                     tabs::TabIcon::Model => "▣ ",
                     tabs::TabIcon::Font => "Aa ",
-                    tabs::TabIcon::Piece(_) => "",
+                    tabs::TabIcon::Piece(_) | tabs::TabIcon::Pieces(_) => "",
                 };
                 let label = format!("{icon}{}{}", tab.name, if tab.dirty { " •" } else { "" });
                 ui.add_space(4.0);

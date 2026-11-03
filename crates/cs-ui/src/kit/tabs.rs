@@ -35,6 +35,8 @@ pub const ARROW_PREV: &str = "tab.arrow.prev";
 pub const ARROW_NEXT: &str = "tab.arrow.next";
 pub const DIRTY_MARK: &str = "icon.tab_dirty";
 pub const CLOSE_MARK: &str = "icon.tab_close";
+/// El + de una tira (agregar), 5×5 de una tinta: va en un botón del kit del alto de las flechas.
+pub const ADD_MARK: &str = "icon.tab_add";
 
 /// Entre una pestaña y la siguiente (y entre la última y las flechas).
 pub const GAP: f32 = 8.0;
@@ -64,6 +66,10 @@ pub const ICON_FONT: &str = "tab.icon.font";
 /// `ICON_WIDTH`, pegado a la izquierda y con su fila de abajo en la 13 de la pestaña (como en el
 /// boceto: los de 10 de alto, desde la fila 4).
 pub const ICON_BOTTOM: f32 = 14.0;
+/// Varias piezas seguidas (`TabIcon::Pieces`): cada una empieza 11 px después de la anterior
+/// (como los cinco tipos de objeto de la pestaña del modelo en el boceto); la última ocupa
+/// `ICON_WIDTH`.
+pub const PIECES_PITCH: f32 = 11.0;
 /// Las flechas: dos cajas de 12×12 que comparten la columna del medio, 1 fila debajo del borde
 /// de arriba de las pestañas.
 pub const ARROW_SIZE: f32 = 12.0;
@@ -94,6 +100,8 @@ pub struct TabItem {
     pub icon: TabIcon,
     /// El verbo del × (su tooltip y su etiqueta accesible): "Close" salvo que cerrar sea otra cosa.
     pub close_label: &'static str,
+    /// Si el nombre se ve; si no, es solo su etiqueta accesible (la pestaña es su ícono).
+    pub show_label: bool,
 }
 
 impl TabItem {
@@ -104,6 +112,16 @@ impl TabItem {
             mark: TabMark::None,
             icon: TabIcon::None,
             close_label: "Close",
+            show_label: true,
+        }
+    }
+
+    /// Una pestaña que es solo su ícono, sin marca: `label` queda como su etiqueta accesible.
+    pub fn icons_only(label: impl Into<String>, icon: TabIcon) -> Self {
+        TabItem {
+            icon,
+            show_label: false,
+            ..TabItem::new(label)
         }
     }
 
@@ -225,10 +243,12 @@ pub fn chrome(item: &TabItem) -> f32 {
     } else {
         0.0
     };
-    let icon = if item.icon == TabIcon::None {
-        0.0
+    // Sin nombre, sin el aire hasta él.
+    let icon = icon_width(item.icon);
+    let icon = if icon > 0.0 && item.show_label {
+        icon + SWATCH_GAP
     } else {
-        ICON_WIDTH + SWATCH_GAP
+        icon
     };
     let mark = if item.mark == TabMark::None {
         0.0
@@ -238,9 +258,23 @@ pub fn chrome(item: &TabItem) -> f32 {
     2.0 * (EDGE + PAD) + swatch + icon + mark
 }
 
+/// Lo que ocupa a lo ancho el ícono de una pestaña (sin su aire hasta el nombre).
+pub fn icon_width(icon: TabIcon) -> f32 {
+    match icon {
+        TabIcon::None => 0.0,
+        TabIcon::Pieces(names) => names.len().saturating_sub(1) as f32 * PIECES_PITCH + ICON_WIDTH,
+        _ => ICON_WIDTH,
+    }
+}
+
+/// Lo que se ve del nombre de una pestaña: nada si es solo su ícono.
+fn shown_label(item: &TabItem) -> &str {
+    if item.show_label { &item.label } else { "" }
+}
+
 /// El ancho justo de una pestaña.
 pub fn natural_width(ui: &Ui, item: &TabItem) -> f32 {
-    chrome(item) + ink(ui, &item.label)
+    chrome(item) + ink(ui, shown_label(item))
 }
 
 /// Una pestaña acomodada: su rect (sin lo que la activa baja) y el nombre como entra.
@@ -319,7 +353,7 @@ pub fn layout(ui: &Ui, strip: &Strip, items: &[TabItem], offset: usize) -> Layou
         }
         let rect = Rect::from_min_size(pos2(x, strip.top), vec2(widths[i], HEIGHT));
         let room = (widths[i] - chrome(&items[i])).max(0.0);
-        let name = fit_name(ui, &items[i].label, room);
+        let name = fit_name(ui, shown_label(&items[i]), room);
         placed.push(Placed {
             index: i,
             rect,
@@ -380,7 +414,13 @@ pub fn tab_shapes(
     } else {
         colors.tab_text_dim
     };
-    if item.icon != TabIcon::None {
+    if let TabIcon::Pieces(names) = item.icon {
+        for (k, name) in names.iter().enumerate() {
+            let at = pos2(left + k as f32 * PIECES_PITCH, caps);
+            shapes.extend(icon_shapes(ui, skin, TabIcon::Piece(name), at, color));
+        }
+        left += icon_width(item.icon) + SWATCH_GAP;
+    } else if item.icon != TabIcon::None {
         shapes.extend(icon_shapes(ui, skin, item.icon, pos2(left, caps), color));
         left += ICON_WIDTH + SWATCH_GAP;
     }
@@ -409,7 +449,8 @@ fn icon_shapes(ui: &Ui, skin: &Skin, icon: TabIcon, at: egui::Pos2, color: Color
         TabIcon::Model => ICON_MODEL,
         TabIcon::Font => ICON_FONT,
         TabIcon::Piece(name) => name,
-        TabIcon::None => return Vec::new(),
+        // Las de varias piezas las dibuja una por una `tab_shapes`.
+        TabIcon::None | TabIcon::Pieces(_) => return Vec::new(),
     };
     if let Some(piece) = skin.piece(name, WidgetState::Normal) {
         let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
