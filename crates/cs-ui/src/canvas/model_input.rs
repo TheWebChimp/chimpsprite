@@ -4,6 +4,8 @@
 //! - **Botón derecho o Alt + izquierdo** arrastrando: orbita (`yaw` y `pitch`).
 //! - **Shift + izquierdo** arrastrando: mueve el `target` en el plano de la vista.
 //! - **Ctrl + rueda:** acerca o aleja la cámara (`distance`), sin tocar el zoom del lienzo.
+//! - **Gizmo de navegación** (arriba a la derecha): arrastrarlo orbita; un clic en una bolita
+//!   pone la cámara mirando desde ese lado.
 //! - **Clic izquierdo:** elige el objeto que se ve bajo el puntero (o ninguno). En el render del
 //!   modo Texture elige la cara (Shift + clic sin arrastrar la agrega o la quita).
 //!
@@ -34,6 +36,28 @@ pub(super) struct ModelDrag {
     /// suelta sin pasar el umbral de arrastre, agrega o quita la cara de ahí (y la cámara no se
     /// movió); pasado el umbral, mueve el objetivo.
     toggle: Option<(i32, i32)>,
+    /// Se apretó el gizmo de navegación y todavía no se arrastró: al soltar así, la cámara mira
+    /// desde el lado de la bolita (si se apretó una); pasado el umbral, orbita.
+    nav: Option<Option<super::nav_gizmo::NavBall>>,
+}
+
+impl ModelDrag {
+    /// Apretar el gizmo de navegación en `from` (sobre la bolita `ball`, si hay) con la cámara
+    /// `camera`.
+    pub(super) fn nav(
+        from: Pos2,
+        camera: Camera3D,
+        ball: Option<super::nav_gizmo::NavBall>,
+    ) -> ModelDrag {
+        ModelDrag {
+            orbit: true,
+            from,
+            camera,
+            factor: Vec2::ONE,
+            toggle: None,
+            nav: Some(ball),
+        }
+    }
 }
 
 /// El grupo de undo de los arrastres sobre el modelo.
@@ -77,6 +101,7 @@ impl CanvasView {
                 camera,
                 factor,
                 toggle: None,
+                nav: None,
             });
         } else {
             editor.pick_model_object(local);
@@ -107,6 +132,7 @@ impl CanvasView {
                 camera,
                 factor,
                 toggle: (!orbit).then_some(local),
+                nav: None,
             });
         } else {
             editor.pick_model_face(local, false);
@@ -133,18 +159,23 @@ impl CanvasView {
             {
                 editor.pick_model_face(local, true);
             }
+            // Un clic en una bolita del gizmo de navegación: un paso de undo, como los presets.
+            if let Some(Some(ball)) = drag.nav {
+                editor.set_camera(ball.camera(drag.camera));
+            }
             return;
         }
         let (Some(p), Some(mut model)) = (pointer, editor.edited_model().cloned()) else {
             return;
         };
         let d = p - drag.from;
-        if drag.toggle.is_some() {
+        if drag.toggle.is_some() || drag.nav.is_some() {
             if d.length() < crate::editor::DRAG_THRESHOLD {
                 return;
             }
-            // Ya es un arrastre: mueve el objetivo y al soltar no elige nada.
+            // Ya es un arrastre: mueve la cámara y al soltar no elige nada.
             drag.toggle = None;
+            drag.nav = None;
             self.model_drag = Some(drag);
         }
         model.camera = if drag.orbit {

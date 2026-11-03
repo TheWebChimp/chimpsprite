@@ -11,6 +11,7 @@ use cs_core::Document;
 use eframe::egui::{Shape, pos2, vec2};
 use eframe::emath::GuiRounding as _;
 
+use super::nav_gizmo::{self, NavBall};
 use super::*;
 use crate::editor::{CadMode, EditOp, GIZMO_PX, Gizmo, GizmoView, KeyOp, PerspMap};
 
@@ -48,10 +49,11 @@ const GRID_MIN_PX: f32 = 4.0;
 const SCALE_NEAR_PX: f32 = 6.0;
 const SCALE_REF_PX: f32 = 24.0;
 
-/// Lo de la perspectiva bajo el puntero: un asa del gizmo.
+/// Lo de la perspectiva bajo el puntero: un asa del gizmo o una bolita del de navegación.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum PerspHover {
     Gizmo(GizmoPart),
+    Nav(NavBall),
 }
 
 /// Los cuadrantes del área `screen`: Front, Persp, Top y Side. La parten a la mitad en puntos
@@ -216,8 +218,8 @@ impl CanvasView {
         }
         self.model_drag_input(editor, pointer, any_down);
         self.model_edit_input(editor, pointer, edit_down, modifiers);
-        // El asa del gizmo bajo el puntero (sin gesto en curso), para resaltarla (en una vista
-        // orto o en la perspectiva).
+        // El asa del gizmo bajo el puntero (sin gesto en curso), para resaltarla; en la
+        // perspectiva, también la bolita del gizmo de navegación.
         self.gizmo_hover = None;
         self.persp_hover = None;
         if editor.model_edit().op.is_none()
@@ -255,12 +257,17 @@ impl CanvasView {
         })
     }
 
-    /// Lo de la perspectiva bajo `p` (en modo Model): el asa del gizmo de lo elegido.
+    /// Lo de la perspectiva bajo `p` (en modo Model): primero el gizmo de navegación, después
+    /// el gizmo de lo elegido.
     fn persp_hover_at(&self, editor: &Editor, p: Pos2) -> Option<PerspHover> {
         if editor.cad_mode() != CadMode::Model {
             return None;
         }
+        let q = self.edit_quads?[PERSP];
         let pm = self.persp_map(editor)?;
+        if let Some(ball) = nav_gizmo::nav_hit(&pm.camera, q, p) {
+            return Some(PerspHover::Nav(ball));
+        }
         persp_gizmo_at(editor, &pm, (p.x, p.y)).map(|(part, _)| PerspHover::Gizmo(part))
     }
 
@@ -441,24 +448,31 @@ impl CanvasView {
         let Some(q) = self.edit_quads.map(|qs| qs[i]) else {
             return;
         };
-        // Con el izquierdo (sin Alt, que orbita): el gizmo de lo elegido gana sobre elegir y
-        // sobre mover la cámara.
+        // Con el izquierdo (sin Alt, que orbita): el gizmo de navegación y después el de lo
+        // elegido ganan sobre elegir y sobre mover la cámara.
         if !secondary
             && !modifiers.alt
             && editor.cad_mode() == CadMode::Model
             && let Some(pm) = self.persp_map(editor)
-            && let Some((part, center)) = persp_gizmo_at(editor, &pm, (p.x, p.y))
         {
-            let at = (p.x, p.y);
-            editor.start_model_op(EditOp::Gizmo {
-                view: GizmoView::Persp(pm),
-                part,
-                from: at,
-                center,
-                last: at,
-                turned: 0.0,
-            });
-            return;
+            if nav_gizmo::nav_area(&pm.camera, q, p) {
+                editor.end_group();
+                let ball = nav_gizmo::nav_hit(&pm.camera, q, p);
+                self.model_drag = Some(model_input::ModelDrag::nav(p, pm.camera, ball));
+                return;
+            }
+            if let Some((part, center)) = persp_gizmo_at(editor, &pm, (p.x, p.y)) {
+                let at = (p.x, p.y);
+                editor.start_model_op(EditOp::Gizmo {
+                    view: GizmoView::Persp(pm),
+                    part,
+                    from: at,
+                    center,
+                    last: at,
+                    turned: 0.0,
+                });
+                return;
+            }
         }
         let (r, scale) = self.persp_rect(q, editor);
         let local = (
@@ -550,6 +564,19 @@ impl CanvasView {
         let model = editor.edited_model()?;
         let center = cs_3d::center(cs_3d::bounds(model, &editor.model_edit().selection)?);
         persp_gizmo(editor.shown_gizmo()?, &self.persp_map(editor)?, center)
+    }
+
+    /// Las bolitas del gizmo de navegación (eje, negativa y centro en pantalla), para los tests
+    /// de la app.
+    #[cfg(test)]
+    pub(crate) fn nav_gizmo_balls(&self, editor: &Editor) -> Vec<(usize, bool, Pos2)> {
+        let (Some(q), Some(pm)) = (self.edit_quads, self.persp_map(editor)) else {
+            return Vec::new();
+        };
+        nav_gizmo::nav_balls(&pm.camera, q[PERSP])
+            .into_iter()
+            .map(|(b, p)| (b.axis, b.negative, p))
+            .collect()
     }
 
     /// La textura de lo que va encima de la perspectiva (los gizmos), para los tests de la app.
@@ -819,8 +846,8 @@ impl CanvasView {
     }
 
     /// Encima del render de la perspectiva (modo Model), en pixel art a la rejilla de la UI como
-    /// las vistas orto: el gizmo de lo elegido, en 3D con la cámara del modelo. Cacheado
-    /// mientras no cambie lo que muestra.
+    /// las vistas orto: el gizmo de lo elegido, en 3D con la cámara del modelo, y el gizmo de
+    /// navegación arriba a la derecha. Cacheado mientras no cambie lo que muestra.
     fn draw_persp_overlay(
         &mut self,
         painter: &egui::Painter,
@@ -845,13 +872,22 @@ impl CanvasView {
             Some(EditOp::Gizmo { part, .. }) => Some(part),
             _ => None,
         };
-        let gizmo_hot = active.or(self.persp_hover.map(|PerspHover::Gizmo(part)| part));
+        let gizmo_hot = active.or(match self.persp_hover {
+            Some(PerspHover::Gizmo(part)) => Some(part),
+            _ => None,
+        });
+        let nav_hot = match self.persp_hover {
+            Some(PerspHover::Nav(ball)) => Some(ball),
+            _ => None,
+        };
         let overlay = PerspOverlay {
             pm: &pm,
+            q,
             min: (min.x, min.y),
             gizmo,
             bounds: gizmo.and_then(|_| cs_3d::bounds(model, sel)),
             gizmo_hot,
+            nav_hot,
         };
         let mut hasher = DefaultHasher::new();
         (
@@ -862,6 +898,7 @@ impl CanvasView {
             pm.size,
             gizmo,
             gizmo_hot,
+            nav_hot,
             w,
             h,
         )
@@ -1443,16 +1480,18 @@ fn draw_gizmo(
 /// punto, con fondo transparente).
 struct PerspOverlay<'a> {
     pm: &'a PerspMap,
-    /// El punto de pantalla del pixel `(0, 0)` (entero).
+    /// El cuadrante Persp y el punto de pantalla del pixel `(0, 0)` (entero).
+    q: Rect,
     min: (f32, f32),
     /// El gizmo en el centro de `bounds` (`None`: ninguno) y su asa resaltada.
     gizmo: Option<GizmoKind>,
     bounds: Option<(cs_3d::P3, cs_3d::P3)>,
     gizmo_hot: Option<GizmoPart>,
+    nav_hot: Option<NavBall>,
 }
 
 impl PerspOverlay<'_> {
-    /// La imagen de `w × h`: el gizmo 3D (las asas de atrás primero).
+    /// La imagen de `w × h`: el gizmo 3D (las asas de atrás primero) y el de navegación.
     fn image(&self, w: usize, h: usize) -> cs_3d::WireImage {
         let mut img = cs_3d::WireImage::new(w, h, [0; 4]);
         if let (Some(kind), Some(b)) = (self.gizmo, self.bounds)
@@ -1475,6 +1514,21 @@ impl PerspOverlay<'_> {
                 self.gizmo_hot,
             );
         }
+        let colors = nav_gizmo::NavColors {
+            axes: AXIS_COLORS.map(rgba),
+            background: rgba(PERSP_BG),
+            light: rgba(GIZMO_CENTER),
+            dark: [0, 0, 0, 255],
+            hot: rgba(SELECTED),
+        };
+        nav_gizmo::draw_nav(
+            &mut img,
+            self.min,
+            &self.pm.camera,
+            self.q,
+            self.nav_hot,
+            &colors,
+        );
         img
     }
 }
@@ -1789,7 +1843,7 @@ mod tests {
     }
 
     #[test]
-    fn the_persp_overlay_is_pixel_art() {
+    fn the_persp_overlay_is_pixel_art_with_both_gizmos() {
         use cs_3d::{GizmoKind, GizmoPart};
         let m = cube();
         let sel = cs_3d::Selection {
@@ -1802,14 +1856,20 @@ mod tests {
             min: (20.0, 10.0),
             scale: (3.0, 3.0),
         };
-        let img = PerspOverlay {
-            pm: &pm,
-            min: (0.0, 0.0),
-            gizmo: Some(GizmoKind::Move),
-            bounds: cs_3d::bounds(&m, &sel),
-            gizmo_hot: None,
-        }
-        .image(240, 220);
+        let q = Rect::from_min_size(Pos2::ZERO, vec2(240.0, 220.0));
+        let image = |nav_hot| {
+            PerspOverlay {
+                pm: &pm,
+                q,
+                min: (0.0, 0.0),
+                gizmo: Some(GizmoKind::Move),
+                bounds: cs_3d::bounds(&m, &sel),
+                gizmo_hot: None,
+                nav_hot,
+            }
+            .image(240, 220)
+        };
+        let img = image(None);
         // Transparente fuera de los gizmos; lo demás, opaco (sin mezclas).
         assert_eq!(img.get(5, 200), Some([0; 4]));
         assert!(img.pixels.iter().all(|c| c[3] == 0 || c[3] == 255));
@@ -1836,6 +1896,29 @@ mod tests {
         // Mide GIZMO_PX en pantalla, a lo ancho de la cámara.
         let len = (b.0 - a.0).hypot(b.1 - a.1);
         assert!(len > 8.0 && len <= GIZMO_PX + 0.5, "{len}");
+        // El gizmo de navegación: la bolita X roja con su borde claro; la -X, apagada.
+        let balls = nav_gizmo::nav_balls(&pm.camera, q);
+        let ball = |axis, negative| {
+            balls
+                .iter()
+                .find(|(b, _)| *b == NavBall { axis, negative })
+                .map(|(_, p)| (p.x as i32, p.y as i32))
+                .unwrap()
+        };
+        let (bx, by) = ball(0, false);
+        assert_eq!(img.get(bx - 3, by), Some(rgba(AXIS_COLORS[0])));
+        assert_eq!(img.get(bx + 7, by), Some(rgba(GIZMO_CENTER)));
+        assert_eq!(img.get(bx + 6, by), Some([0, 0, 0, 255]));
+        let (nx, ny) = ball(0, true);
+        let dim = img.get(nx, ny).unwrap();
+        assert_eq!(dim[3], 255);
+        assert_ne!(dim, rgba(AXIS_COLORS[0]));
+        // Bajo el puntero, el borde en amarillo.
+        let hot = image(Some(NavBall {
+            axis: 0,
+            negative: false,
+        }));
+        assert_eq!(hot.get(bx + 7, by), Some(rgba(SELECTED)));
     }
 
     #[test]

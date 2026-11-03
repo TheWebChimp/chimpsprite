@@ -24,6 +24,7 @@ use crate::{kit, theme, widgets};
 mod input;
 mod model_edit;
 mod model_input;
+mod nav_gizmo;
 mod rulers;
 mod texture_mode;
 mod uv_overlay;
@@ -161,10 +162,11 @@ pub struct CanvasView {
     edit_ortho: [Option<(u64, TextureHandle)>; 3],
     /// El asa del gizmo bajo el puntero (sin gesto) y la vista orto donde está.
     gizmo_hover: Option<(cs_3d::OrthoView, cs_3d::GizmoPart)>,
-    /// Lo de la perspectiva bajo el puntero (sin gesto): un asa del gizmo.
+    /// Lo de la perspectiva bajo el puntero (sin gesto): un asa del gizmo o una bolita del de
+    /// navegación.
     persp_hover: Option<model_edit::PerspHover>,
-    /// Lo que va encima del render de la perspectiva (el gizmo) en pixel art: la clave de lo que
-    /// muestra y su textura.
+    /// Lo que va encima del render de la perspectiva (el gizmo y el de navegación) en pixel art:
+    /// la clave de lo que muestra y su textura.
     edit_persp_overlay: Option<(u64, TextureHandle)>,
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
     pub background: Color32,

@@ -6582,7 +6582,7 @@ fn persp_hit(h: &LayoutHarness, at: Pos2) -> Option<cs_3d::GizmoPart> {
 }
 
 #[test]
-fn the_gizmo_is_drawn_over_the_persp_render() {
+fn the_gizmo_and_the_navigation_gizmo_are_drawn_over_the_persp_render() {
     let (h, _) = cube_with_gizmo(crate::editor::Gizmo::Move);
     let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
     let overlay = h
@@ -6614,7 +6614,7 @@ fn the_gizmo_is_drawn_over_the_persp_render() {
         let (t, u) = (persp_screen(&h, tip) - c, persp_screen(&h, unit) - c);
         assert!(t.normalized().dot(u.normalized()) > 0.99, "axis {axis}");
     }
-    // Sin nada elegido no hay gizmo.
+    // Sin nada elegido no hay gizmo (el de navegación sigue).
     let mut h = editing_model();
     h.frame();
     assert!(
@@ -6624,6 +6624,7 @@ fn the_gizmo_is_drawn_over_the_persp_render() {
             .persp_gizmo_shape(&h.app.doc.editor)
             .is_none()
     );
+    assert_eq!(h.app.doc.canvas.nav_gizmo_balls(&h.app.doc.editor).len(), 6);
 }
 
 #[test]
@@ -6788,6 +6789,71 @@ fn the_persp_gizmo_wins_over_picking_and_moving_the_camera() {
     }
     assert_eq!(h.app.doc.editor.model_edit().selection, all);
     assert_eq!(camera(&h), cam);
+}
+
+#[test]
+fn clicking_a_navigation_ball_looks_from_that_side_in_one_undo_step() {
+    let mut h = editing_model();
+    let start = camera(&h);
+    for (axis, negative, want) in [
+        (0, false, (900, 0)),
+        (1, false, (0, 900)),
+        (2, true, (-1800, 0)),
+        (0, true, (-900, 0)),
+    ] {
+        let steps = h.app.doc.editor.history.done_count();
+        let balls = h.app.doc.canvas.nav_gizmo_balls(&h.app.doc.editor);
+        let (_, _, at) = balls
+            .into_iter()
+            .find(|b| (b.0, b.1) == (axis, negative))
+            .expect("the ball");
+        h.click(at, PointerButton::Primary);
+        let cam = camera(&h);
+        assert_eq!((cam.yaw, cam.pitch), want, "{axis} {negative}");
+        assert_eq!(
+            (cam.distance, cam.target, cam.projection),
+            (start.distance, start.target, start.projection)
+        );
+        assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    }
+    h.app.doc.editor.undo();
+    assert_eq!((camera(&h).yaw, camera(&h).pitch), (-1800, 0));
+}
+
+#[test]
+fn dragging_the_navigation_gizmo_orbits_in_one_undo_step() {
+    let mut h = editing_model();
+    let start = camera(&h);
+    let balls = h.app.doc.canvas.nav_gizmo_balls(&h.app.doc.editor);
+    let ball = |axis, negative| {
+        balls
+            .iter()
+            .find(|b| (b.0, b.1) == (axis, negative))
+            .map(|b| b.2)
+            .unwrap()
+    };
+    let center = ball(0, false).lerp(ball(0, true), 0.5);
+    let steps = h.app.doc.editor.history.done_count();
+    // Cerca del centro (no en una bolita): 20 puntos a la derecha = 10° de yaw.
+    let from = center + vec2(6.0, 6.0);
+    drag_with(&mut h, from, from + vec2(20.0, 0.0), Default::default());
+    assert_eq!(
+        (camera(&h).yaw, camera(&h).pitch),
+        (start.yaw + 100, start.pitch)
+    );
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    // Desde una bolita también orbita (y no salta a su lado al soltar).
+    let x = ball(0, false);
+    drag_with(&mut h, x, x + vec2(0.0, 10.0), Default::default());
+    assert_eq!(
+        (camera(&h).yaw, camera(&h).pitch),
+        (start.yaw + 100, start.pitch + 50)
+    );
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 2);
+    // Un clic al lado (fuera del gizmo) no cambia la cámara.
+    let before = camera(&h);
+    h.click(center + vec2(-40.0, 30.0), PointerButton::Primary);
+    assert_eq!(camera(&h), before);
 }
 
 /// Un modelo "Ship" con su pestaña de vista abierta, en el documento de la prueba.
