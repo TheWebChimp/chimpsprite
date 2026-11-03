@@ -738,6 +738,8 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                     mode: cs_3d::SelectMode::Face,
                     items: [cs_3d::Item::Face(0, f)].into(),
                 });
+                // Como al elegirla con un clic: la textura de abajo se encuadra en ella.
+                e.model_edit.focus_uvs = true;
             }
         }
     }

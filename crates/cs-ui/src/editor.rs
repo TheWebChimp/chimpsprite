@@ -30,7 +30,7 @@ mod model_edit;
 mod model_ops;
 mod texture_mode;
 mod workspace;
-pub use model_edit::{CadMode, DRAG_THRESHOLD, EditOp, GRIDS, KeyOp, ModelEdit, TextureView};
+pub use model_edit::{CadMode, DRAG_THRESHOLD, EditOp, GRIDS, KeyOp, ModelEdit, TextureView, UvOp};
 pub use model_ops::wrap_angle;
 
 /// Herramientas que trabajan dentro de un sprite.
@@ -559,6 +559,7 @@ impl Editor {
                 (self.layer, self.frame) = (layer, frame);
             }
             self.selection = None;
+            self.model_edit.face_mask = None;
             self.slice = None;
         }
         let sprite = &self
@@ -594,6 +595,7 @@ impl Editor {
             self.selection = None;
         }
         self.sync_model_edit();
+        self.sync_face_mask();
     }
 
     /// Si `id` es un artboard del lienzo (no un símbolo de la biblioteca, un modelo ni una
@@ -634,6 +636,8 @@ impl Editor {
         }
         (self.layer, self.frame) = self.views.get(&id).copied().unwrap_or((LayerId(0), 0));
         self.selection = None;
+        // La selección de las caras (modo Texture) se vuelve a poner si sigue haciendo falta.
+        self.model_edit.face_mask = None;
         self.slice = None;
         self.ensure_valid();
         self.revision += 1;

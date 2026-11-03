@@ -26,6 +26,10 @@ mod model_edit;
 mod model_input;
 mod rulers;
 mod texture_mode;
+mod uv_overlay;
+
+#[cfg(test)]
+pub(crate) use uv_overlay::UV_HANDLE_OFFSET;
 
 const ZOOM_LEVELS: [f32; 13] = [
     0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
@@ -142,6 +146,10 @@ pub struct CanvasView {
     texture_fit: Option<(Rect, crate::editor::TextureView)>,
     /// El zoom de la textura del modo Texture en el último frame (`None`: no se vio).
     texture_zoom: Option<f32>,
+    /// El gesto de UV apretado sobre la textura del modo Texture (ver `uv_input`).
+    uv_press: Option<uv_overlay::UvPress>,
+    /// El puntero es de las UVs de las caras elegidas (sin contorno del pincel).
+    uv_hover: bool,
     /// Los botones Model / Texture del workspace del modelo en este frame: ahí no empiezan los
     /// gestos de las vistas de debajo.
     mode_rect: Option<Rect>,
@@ -311,6 +319,8 @@ impl Default for CanvasView {
             texture_pane: false,
             texture_fit: None,
             texture_zoom: None,
+            uv_press: None,
+            uv_hover: false,
             mode_rect: None,
             edit_outline: None,
             edit_persp: None,
@@ -515,7 +525,12 @@ impl CanvasView {
                 self.pan = -center * self.scale();
             }
             // La textura del modo Texture se encuadra en su panel (el panel del dock ya quedó
-            // fuera).
+            // fuera). Al abrir la pestaña o su panel, con caras elegidas, en las UVs de ellas.
+            ZoomRequest::FitActiveBeside { .. }
+                if self.texture_pane && !editor.selected_faces().is_empty() =>
+            {
+                self.focus_uvs(rect, editor)
+            }
             ZoomRequest::Fit | ZoomRequest::FitActiveBeside { .. } if self.texture_pane => {
                 self.fit_texture(rect, editor)
             }
@@ -1128,8 +1143,12 @@ impl CanvasView {
         {
             draw_slices(&painter, &artboard.sprite, editor, origin, self.scale());
         }
+        // La selección de las caras elegidas (modo Texture) no lleva hormigas: su contorno UV ya
+        // la marca.
+        let face_mask = self.texture_pane && editor.selection_is_face_mask();
         if let (Some(mask), Some(origin)) = (&view.selection, active_origin)
             && view_settings.shows(view_settings.selection_edges)
+            && !face_mask
         {
             let phase = (ctx.input(|i| i.time) * ANTS_SPEED) as i32;
             draw_marching_ants(&painter, mask, origin, self.scale(), phase, self.pixel_ui);
@@ -1190,6 +1209,10 @@ impl CanvasView {
             }
         }
 
+        if self.texture_pane && !modal {
+            self.draw_uv_overlay(&painter, rect, editor);
+        }
+
         // Contorno del pincel bajo el cursor.
         let tool = editor.active_tool();
         // Con Espacio o Hand se está por mover la vista: sin contorno.
@@ -1198,6 +1221,7 @@ impl CanvasView {
             && !modal
             && !self.over_label
             && !self.over_ruler
+            && !self.uv_hover
             && self.ruler_drag.is_none()
             && self.sym_drag.is_none()
             && !editor.artboard_gesture().is_active()

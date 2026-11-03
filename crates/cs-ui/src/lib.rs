@@ -649,6 +649,9 @@ impl ChimpApp {
             Some(model_panel::ModelAction::Bake) if self.doc.editor.edited_model().is_some() => {
                 self.bake = Some(bake_dialog::BakeDialog::new(&self.doc.editor));
             }
+            Some(model_panel::ModelAction::TextureSize(side)) => {
+                self.palette_confirm = Some(palette_ui::Confirm::TextureSize(side));
+            }
             _ => {}
         }
     }

@@ -1,8 +1,9 @@
 //! El panel 3D del dock: el modelo 3D del artboard activo. Arriba, fijo, el título; abajo, con
-//! scroll, lo demás. Sin modelo, el botón New 3D Model…; con modelo, sus objetos: la lista (un
-//! clic elige), Add con las primitivas (y los lados de las redondas) y, del elegido, su posición,
-//! su rotación y su escala, Double sided y Delete; luego la textura, la cámara, la luz (con la
-//! cuadrícula Shading) y el contorno.
+//! scroll, lo demás. Sin modelo, el botón New 3D Model…; con modelo, arriba los modos de selección
+//! y la cuadrícula (en modo Texture, la sección UV: girar y voltear las UVs de las caras elegidas
+//! y el tamaño de la textura) y sus objetos: la lista (un clic elige), Add con las primitivas (y
+//! los lados de las redondas) y, del elegido, su posición, su rotación y su escala, Double sided y
+//! Delete; luego la textura, la cámara, la luz (con la cuadrícula Shading) y el contorno.
 
 use cs_3d::Primitive;
 use cs_core::{CameraPreset, Model3D, Object3D, Projection, Rgba, ShadingTable};
@@ -12,7 +13,7 @@ use eframe::egui::{
 };
 
 use crate::dock::FLYOUT_MARGIN;
-use crate::editor::{Editor, wrap_angle};
+use crate::editor::{CadMode, Editor, wrap_angle};
 use crate::font_panel::lit_line;
 use crate::kit;
 use crate::menus;
@@ -37,6 +38,9 @@ const ADD_W: f32 = 90.0;
 const SIDES_W: f32 = 62.0;
 /// El select de la cuadrícula del modo Edit.
 const GRID_W: f32 = 56.0;
+/// El select del tamaño de la textura (modo Texture) y sus lados.
+const TEXTURE_SIZE_W: f32 = 64.0;
+const TEXTURE_SIZES: [u32; 6] = [16, 32, 64, 128, 256, 512];
 /// Los lados de cilindros, conos y esferas.
 const MIN_SIDES: u32 = 3;
 const MAX_SIDES: u32 = 32;
@@ -91,6 +95,8 @@ pub enum ModelAction {
     NewModel,
     /// Bake…: abrir el diálogo de hornear el modelo.
     Bake,
+    /// Pasar la textura a este lado, que deja UVs fuera: la app pide confirmación antes.
+    TextureSize(u32),
 }
 
 /// El panel en `ui` (lo de adentro del marco, de la columna entera: ver
@@ -171,7 +177,12 @@ fn body(
         1 => "1 object".to_owned(),
         n => format!("{n} objects"),
     };
-    edit_rows(ui, editor, skin);
+    let action = if editor.cad_mode() == CadMode::Texture {
+        uv_section(ui, editor, skin)
+    } else {
+        edit_rows(ui, editor, skin);
+        None
+    };
     label_with_hint(ui, "Objects", &note);
     objects(ui, editor, skin);
     add_row(ui, editor, skin, state);
@@ -179,9 +190,77 @@ fn body(
     texture(ui, editor, skin);
     settings(ui, editor, skin);
     ui.add_space(SECTION_GAP);
-    button(ui, skin, "Bake…")
+    let bake = button(ui, skin, "Bake…")
         .clicked()
-        .then_some(ModelAction::Bake)
+        .then_some(ModelAction::Bake);
+    action.or(bake)
+}
+
+/// En modo Texture, en lugar de los modos de selección (ahí es siempre de caras) y de la
+/// cuadrícula (de las vistas orto): la sección UV, con Rotate 90°, Flip H y Flip V para las caras
+/// elegidas (sin caras, deshabilitados) y Texture size. Achicar la textura dejando UVs fuera lo
+/// confirma la app (`ModelAction::TextureSize`).
+fn uv_section(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
+    label_with_hint(ui, "UV", "");
+    let faces = !editor.selected_faces().is_empty();
+    let (mut rotate, mut flip_h, mut flip_v) = (false, false, false);
+    ui.add_enabled_ui(faces, |ui| {
+        ui.horizontal(|ui| {
+            rotate = button(ui, skin, "Rotate 90°").clicked();
+            flip_h = button(ui, skin, "Flip H").clicked();
+            flip_v = button(ui, skin, "Flip V").clicked();
+        });
+    });
+    if rotate {
+        editor.rotate_selected_uvs();
+    }
+    if flip_h || flip_v {
+        editor.flip_selected_uvs(flip_h);
+    }
+    let size = editor
+        .workspace_texture()
+        .and_then(|id| editor.document.artboard(id))
+        .map(|a| (a.sprite.width, a.sprite.height));
+    let mut picked = None;
+    if let Some((w, h)) = size {
+        let shown = if w == h {
+            w.to_string()
+        } else {
+            format!("{w}×{h}")
+        };
+        let mut list = |ui: &mut Ui| {
+            for side in TEXTURE_SIZES {
+                let on = (w, h) == (side, side);
+                if ui.add(menus::choice(on, &side.to_string())).clicked() {
+                    picked = Some(side);
+                    ui.close();
+                }
+            }
+        };
+        ui.horizontal(|ui| {
+            ui.label("Texture size");
+            let width = Some(TEXTURE_SIZE_W);
+            match skin {
+                Some(skin) => {
+                    kit::select::select(ui, skin, "model_texture_size", &shown, width, list);
+                }
+                None => {
+                    egui::ComboBox::from_id_salt("model_texture_size")
+                        .selected_text(&shown)
+                        .show_ui(ui, |ui| list(ui));
+                }
+            }
+        });
+    }
+    ui.add_space(SECTION_GAP);
+    match picked {
+        Some(side) if editor.texture_size_cuts_uvs(side) => Some(ModelAction::TextureSize(side)),
+        Some(side) => {
+            editor.set_texture_size(side);
+            None
+        }
+        None => None,
+    }
 }
 
 /// El texto de una cuadrícula (en 1/16 de unidad).

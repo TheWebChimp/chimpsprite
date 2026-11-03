@@ -180,6 +180,10 @@ impl CanvasView {
                 self.texture_fit = Some((bottom, self.texture_view()));
             }
         }
+        // Caras recién elegidas arriba: encuadradas.
+        if std::mem::take(&mut editor.model_edit.focus_uvs) {
+            self.focus_uvs(bottom, editor);
+        }
         self.fitted = true;
         let mut view = *view_settings;
         view.rulers = false;
@@ -209,6 +213,26 @@ impl CanvasView {
         let size = Vec2::new((x1 - x0).max(1) as f32, (y1 - y0).max(1) as f32) * self.ratio;
         self.zoom = (bottom.size() * 0.85 / size).min_elem().floor().max(1.0);
         let center = Vec2::new((x0 + x1) as f32, (y0 + y1) as f32) / 2.0;
+        self.pan = -center * self.scale();
+    }
+
+    /// Encuadra en `bottom` la caja de las UVs de las caras elegidas: el zoom entero más grande
+    /// con el que cabe con aire (de 1 a 64) y centrada.
+    pub(super) fn focus_uvs(&mut self, bottom: Rect, editor: &Editor) {
+        let faces = editor.selected_faces();
+        let Some(((x0, y0), (x1, y1))) = editor
+            .edited_model()
+            .and_then(|m| cs_3d::uv_bounds(m, &faces))
+        else {
+            return;
+        };
+        let size = Vec2::new((x1 - x0).max(1) as f32, (y1 - y0).max(1) as f32) * self.ratio;
+        self.zoom = (bottom.size() * 0.85 / size)
+            .min_elem()
+            .floor()
+            .clamp(1.0, 64.0);
+        let (ax, ay) = editor.artboard().position;
+        let center = Vec2::new((ax * 2 + x0 + x1) as f32, (ay * 2 + y0 + y1) as f32) / 2.0;
         self.pan = -center * self.scale();
     }
 

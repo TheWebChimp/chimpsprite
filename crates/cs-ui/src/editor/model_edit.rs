@@ -130,6 +130,12 @@ pub struct ModelEdit {
     pub texture_view: Option<TextureView>,
     /// El gesto de UV en curso (su vista previa va en `preview`).
     pub uv_op: Option<UvOp>,
+    /// Encuadrar abajo las UVs de las caras elegidas en cuanto el lienzo sepa el área (al
+    /// elegirlas con un clic arriba).
+    pub focus_uvs: bool,
+    /// La selección de pixeles que puso el modo Texture con las caras elegidas (ver
+    /// `sync_face_mask`).
+    pub(crate) face_mask: Option<super::texture_mode::FaceMask>,
 }
 
 impl Default for ModelEdit {
@@ -149,6 +155,8 @@ impl Default for ModelEdit {
             mode: CadMode::Model,
             texture_view: None,
             uv_op: None,
+            focus_uvs: false,
+            face_mask: None,
         }
     }
 }
@@ -207,6 +215,12 @@ impl Editor {
             self.model_object = Some(o);
         }
         self.model_edit.selection = sel;
+        // En modo Texture la selección de pixeles sigue a las caras (lo flotante se confirma
+        // antes: la selección de debajo cambia).
+        if self.model_edit.mode == CadMode::Texture {
+            self.commit_floating();
+            self.sync_face_mask();
+        }
     }
 
     pub fn set_model_grid(&mut self, grid: i32) {

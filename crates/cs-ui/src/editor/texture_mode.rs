@@ -2,15 +2,33 @@
 //! workspace (`active` = la textura, `workspace` = el modelo) y edita las UVs de las caras
 //! elegidas. Cambiar de modo es estado de la UI: no toca el documento ni el undo.
 
-use cs_3d::{Item, SelectMode, Selection};
+use cs_3d::{Item, SelectMode, Selection, UvPoint};
 use cs_commands::{Command, DocCommand};
-use cs_core::{ArtboardId, Model3D};
+use cs_core::{ArtboardId, Mask, Model3D};
 
 use super::Editor;
 use super::model_edit::{CadMode, UvOp};
 
 /// Los lados de la textura que se pueden elegir (Texture size).
 pub const TEXTURE_SIDES: std::ops::RangeInclusive<u32> = 16..=512;
+
+/// De qué sale la selección de pixeles de las caras elegidas: la textura, su tamaño y las UVs de
+/// cada cara.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct FaceMaskKey {
+    texture: ArtboardId,
+    size: (u32, u32),
+    faces: Vec<((usize, usize), Vec<UvPoint>)>,
+}
+
+/// La selección de pixeles que puso el modo Texture (la unión de los polígonos UV de las caras
+/// elegidas) y de qué salió. Solo se vuelve a poner cuando eso cambia: una marquesina del
+/// usuario se queda hasta que cambien las caras o sus UVs.
+#[derive(Clone, Debug)]
+pub(crate) struct FaceMask {
+    key: FaceMaskKey,
+    mask: Option<Mask>,
+}
 
 impl Editor {
     pub fn cad_mode(&self) -> CadMode {
@@ -107,7 +125,106 @@ impl Editor {
             (None, true) => return,
             (None, false) => sel.items.clear(),
         }
+        // Con caras elegidas, la textura de abajo se encuadra en sus UVs.
+        self.model_edit.focus_uvs = !sel.items.is_empty();
         self.set_model_selection(sel);
+    }
+
+    /// De qué sale la selección de las caras ahora: en modo Texture, con la textura activa y
+    /// caras elegidas.
+    fn face_mask_key(&self) -> Option<FaceMaskKey> {
+        if self.model_edit.mode != CadMode::Texture {
+            return None;
+        }
+        let texture = self.workspace_texture().filter(|&t| t == self.active)?;
+        let faces = self.selected_faces();
+        if faces.is_empty() {
+            return None;
+        }
+        let model = self.workspace_model()?;
+        let sprite = &self.document.artboard(texture)?.sprite;
+        let mut faces: Vec<_> = faces
+            .into_iter()
+            .filter_map(|(o, f)| {
+                let uvs = model.objects.get(o)?.mesh.faces.get(f)?.uvs.clone();
+                Some(((o, f), uvs))
+            })
+            .collect();
+        faces.sort_by_key(|(id, _)| *id);
+        Some(FaceMaskKey {
+            texture,
+            size: (sprite.width, sprite.height),
+            faces,
+        })
+    }
+
+    /// Con caras elegidas en modo Texture, la selección de pixeles de la textura es la unión de
+    /// sus polígonos UV (las herramientas solo pintan ahí); se recalcula cuando cambian las caras,
+    /// sus UVs o la textura. Sin caras (o fuera de Texture) se quita, si sigue siendo la suya. No
+    /// pasa por el undo.
+    pub(crate) fn sync_face_mask(&mut self) {
+        // Con algo flotando la selección es la suya: se espera a que se confirme.
+        if self.floating.is_some() {
+            return;
+        }
+        let key = self.face_mask_key();
+        if self.model_edit.face_mask.as_ref().map(|m| &m.key) == key.as_ref() {
+            return;
+        }
+        let old = self.model_edit.face_mask.take();
+        match key {
+            Some(key) => {
+                let model = self.workspace_model().expect("the key has a model");
+                let ids: Vec<(usize, usize)> = key.faces.iter().map(|(id, _)| *id).collect();
+                let (w, h) = key.size;
+                let covered = cs_3d::uv_coverage(model, &ids, key.size);
+                let mut mask = Mask::new(w, h);
+                for (i, _) in covered.iter().enumerate().filter(|(_, on)| **on) {
+                    mask.set((i % w as usize) as i32, (i / w as usize) as i32, true);
+                }
+                let mask = (!mask.is_empty()).then_some(mask);
+                self.selection = mask.clone();
+                self.model_edit.face_mask = Some(FaceMask { key, mask });
+                self.revision += 1;
+            }
+            None => {
+                if old.is_some_and(|o| o.mask.is_some() && o.mask == self.selection) {
+                    self.selection = None;
+                    self.revision += 1;
+                }
+            }
+        }
+    }
+
+    /// Si la selección de pixeles es la de las caras elegidas (la que puso el modo Texture).
+    pub fn selection_is_face_mask(&self) -> bool {
+        self.model_edit
+            .face_mask
+            .as_ref()
+            .is_some_and(|m| m.mask.is_some() && m.mask == self.selection)
+    }
+
+    /// Si pasar la textura a `side` la achica y deja vértices UV de alguna cara fuera (antes de
+    /// hacerlo se pide confirmación).
+    pub fn texture_size_cuts_uvs(&self, side: u32) -> bool {
+        let Some(sprite) = self
+            .workspace_texture()
+            .and_then(|id| self.document.artboard(id))
+            .map(|a| &a.sprite)
+        else {
+            return false;
+        };
+        if side >= sprite.width && side >= sprite.height {
+            return false;
+        }
+        let s = side as i32;
+        self.workspace_model().is_some_and(|m| {
+            m.objects
+                .iter()
+                .flat_map(|o| &o.mesh.faces)
+                .flat_map(|f| &f.uvs)
+                .any(|&(x, y)| x < 0 || y < 0 || x > s || y > s)
+        })
     }
 
     /// Las caras elegidas `(objeto, cara)` (solo en modo Face).

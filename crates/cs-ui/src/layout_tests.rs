@@ -6145,3 +6145,248 @@ fn the_mode_buttons_do_not_touch_the_object_in_persp() {
     assert_eq!(e.selected_object(), Some(0), "the panel's object");
     assert_eq!(e.model_edit().selection, sel);
 }
+
+/// En modo Texture con la cara de enfrente del cubo (la 0, en los pixeles 0..16 de la textura)
+/// elegida.
+fn with_the_front_face_chosen() -> LayoutHarness {
+    let mut h = with_a_model_in_texture_mode();
+    h.app.doc.editor.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Face,
+        items: [cs_3d::Item::Face(0, 0)].into(),
+    });
+    h.frame();
+    h.frame();
+    h
+}
+
+/// El punto de pantalla del punto `(x, y)` de la textura (en pixeles; `x + 0.5` es el centro).
+fn texel(h: &LayoutHarness, x: f32, y: f32) -> Pos2 {
+    let r = texture_pixels(h);
+    let side = h.app.doc.editor.sprite().width as f32;
+    r.min + vec2(x, y) * (r.width() / side)
+}
+
+fn front_uvs(h: &LayoutHarness) -> Vec<(i32, i32)> {
+    h.app.doc.editor.workspace_model().unwrap().objects[0]
+        .mesh
+        .faces[0]
+        .uvs
+        .clone()
+}
+
+/// La textura del modelo (su sprite).
+fn texture_sprite(h: &LayoutHarness) -> cs_core::Sprite {
+    let e = &h.app.doc.editor;
+    let id = e.workspace_model().unwrap().texture.unwrap();
+    e.document.artboard(id).unwrap().sprite.clone()
+}
+
+/// Como `drag`, con `modifiers` apretados todo el arrastre.
+fn drag_holding(h: &mut LayoutHarness, from: Pos2, to: Pos2, modifiers: egui::Modifiers) {
+    let press = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers,
+    };
+    h.frame_with(vec![
+        Event::ModifiersChanged(modifiers),
+        Event::PointerMoved(from),
+    ]);
+    h.frame_with(vec![press(from, true)]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.frame_with(vec![press(to, false)]);
+    h.frame_with(vec![Event::ModifiersChanged(Default::default())]);
+}
+
+#[test]
+fn the_pencil_paints_only_inside_the_chosen_face() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    h.app.doc.editor.primary = red;
+    let layer = texture_sprite(&h).layers.last().unwrap().id;
+    h.click(texel(&h, 40.5, 40.5), PointerButton::Primary);
+    assert_ne!(texture_sprite(&h).pixel(layer, 0, 40, 40), red, "outside");
+    h.click(texel(&h, 8.5, 8.5), PointerButton::Primary);
+    assert_eq!(texture_sprite(&h).pixel(layer, 0, 8, 8), red, "inside");
+}
+
+#[test]
+fn picking_a_face_on_top_focuses_its_uvs_below() {
+    let mut h = with_a_model_in_texture_mode();
+    let e = &mut h.app.doc.editor;
+    let camera = cs_core::CameraPreset::Front.camera(4 * cs_core::FIXED, Default::default());
+    assert!(e.set_camera(camera));
+    h.frame();
+    let fitted = h.app.doc.editor.model_edit().texture_view.unwrap();
+    h.click(persp_pixels(&h).center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(h.app.doc.editor.selected_faces(), vec![(0, 0)]);
+    let (_, bottom) = h.app.doc.canvas.texture_panes().unwrap();
+    let view = h.app.doc.editor.model_edit().texture_view.unwrap();
+    let room = bottom.width().min(bottom.height()) * 0.85;
+    let expected = ((room / 16.0).floor() as u32).clamp(1, 64);
+    assert_eq!(view.zoom, expected, "the largest integer zoom that fits");
+    assert!(view.zoom > fitted.zoom, "{fitted:?} -> {view:?}");
+    let center = texel(&h, 8.0, 8.0);
+    assert!(
+        (center - bottom.center()).length() <= 1.0,
+        "{center:?} in {bottom:?}"
+    );
+}
+
+#[test]
+fn dragging_inside_the_outline_with_move_moves_the_uvs_in_one_step() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Move);
+    let before = front_uvs(&h);
+    let pixels = texture_sprite(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    // Un clic no cambia nada.
+    h.click(texel(&h, 8.5, 8.5), PointerButton::Primary);
+    assert_eq!(front_uvs(&h), before);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    h.drag(texel(&h, 8.5, 8.5), texel(&h, 11.5, 10.5));
+    let moved: Vec<_> = before.iter().map(|&(x, y)| (x + 3, y + 2)).collect();
+    assert_eq!(front_uvs(&h), moved);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert_eq!(texture_sprite(&h), pixels, "the pixels stay");
+}
+
+#[test]
+fn alt_drag_with_the_pencil_moves_the_uvs_instead_of_painting() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    let before = front_uvs(&h);
+    let pixels = texture_sprite(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    let (from, to) = (texel(&h, 8.5, 8.5), texel(&h, 6.5, 12.5));
+    drag_holding(&mut h, from, to, egui::Modifiers::ALT);
+    let moved: Vec<_> = before.iter().map(|&(x, y)| (x - 2, y + 4)).collect();
+    assert_eq!(front_uvs(&h), moved);
+    assert_eq!(texture_sprite(&h), pixels, "nothing painted");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn a_corner_handle_scales_the_uvs() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Move);
+    let off = vec2(1.0, 1.0) * crate::canvas::UV_HANDLE_OFFSET;
+    let (from, to) = (texel(&h, 16.0, 16.0) + off, texel(&h, 24.0, 32.0) + off);
+    h.drag(from, to);
+    let m = h.app.doc.editor.workspace_model().unwrap();
+    assert_eq!(cs_3d::uv_bounds(m, &[(0, 0)]), Some(((0, 0), (24, 32))));
+}
+
+#[test]
+fn a_uv_vertex_moves_alone() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Move);
+    let before = front_uvs(&h);
+    let k = before.iter().position(|&p| p == (16, 0)).unwrap();
+    h.drag(texel(&h, 16.0, 0.0), texel(&h, 20.0, 3.0));
+    let after = front_uvs(&h);
+    for (i, (a, b)) in after.iter().zip(&before).enumerate() {
+        if i == k {
+            assert_eq!(*a, (20, 3));
+        } else {
+            assert_eq!(a, b, "vertex {i}");
+        }
+    }
+}
+
+/// Con el panel 3D abierto.
+fn with_the_model_panel(mut h: LayoutHarness) -> LayoutHarness {
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    h
+}
+
+#[test]
+fn the_uv_buttons_rotate_and_flip_the_chosen_faces() {
+    let mut h = with_the_model_panel(with_a_model_in_texture_mode());
+    for label in ["Rotate 90°", "Flip H", "Flip V"] {
+        h.button(label);
+        assert!(
+            h.disabled.iter().any(|l| l == label),
+            "{label} without faces"
+        );
+    }
+    h.app.doc.editor.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Face,
+        items: [cs_3d::Item::Face(0, 0)].into(),
+    });
+    h.frame();
+    let before = front_uvs(&h);
+    let m = h.app.doc.editor.workspace_model().unwrap();
+    let rotated = cs_3d::rotate_uvs_90(m, &[(0, 0)]).objects[0].mesh.faces[0]
+        .uvs
+        .clone();
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(h.button("Rotate 90°").center(), PointerButton::Primary);
+    assert_eq!(front_uvs(&h), rotated);
+    assert_ne!(front_uvs(&h), before);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    h.click(h.button("Flip H").center(), PointerButton::Primary);
+    let flipped: Vec<_> = before.iter().map(|&(x, y)| (16 - x, y)).collect();
+    assert_eq!(front_uvs(&h), flipped);
+    h.app.doc.editor.undo();
+    h.click(h.button("Flip V").center(), PointerButton::Primary);
+    let flipped: Vec<_> = before.iter().map(|&(x, y)| (x, 16 - y)).collect();
+    assert_eq!(front_uvs(&h), flipped);
+}
+
+#[test]
+fn texture_size_128_from_the_panel_and_shrinking_asks() {
+    let mut h = with_the_model_panel(with_a_model_in_texture_mode());
+    h.click(node(&h, "64").center(), PointerButton::Primary);
+    h.click(node(&h, "128").center(), PointerButton::Primary);
+    let s = texture_sprite(&h);
+    assert_eq!((s.width, s.height), (128, 128));
+    // Achicar a 32 deja fuera caras del cubo: pide confirmación.
+    h.click(node(&h, "128").center(), PointerButton::Primary);
+    h.click(node(&h, "32").center(), PointerButton::Primary);
+    let s = texture_sprite(&h);
+    assert_eq!((s.width, s.height), (128, 128), "not yet");
+    assert!(matches!(
+        h.app.palette_confirm,
+        Some(crate::palette_ui::Confirm::TextureSize(32))
+    ));
+}
+
+#[test]
+fn texture_mode_hides_the_select_mode_radios() {
+    let mut h = with_the_model_panel(with_a_model_at_800());
+    let has = |h: &LayoutHarness, l: &str| h.nodes.iter().any(|(n, _)| n == l);
+    assert!(has(&h, "Vertex") && has(&h, "Edge"));
+    assert!(!has(&h, "Rotate 90°"), "no UV section in Model");
+    h.app
+        .doc
+        .editor
+        .set_cad_mode(crate::editor::CadMode::Texture);
+    h.frame();
+    h.frame();
+    for l in ["Object", "Vertex", "Edge", "Face"] {
+        assert!(!has(&h, l), "{l}");
+    }
+    assert!(has(&h, "Rotate 90°"));
+}
+
+#[test]
+fn opening_the_panel_beside_with_a_face_chosen_focuses_its_uvs() {
+    let mut h = with_the_front_face_chosen();
+    let fitted = h.app.doc.editor.model_edit().texture_view.unwrap();
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::FitActiveBeside { right_inset: 0.0 });
+    h.frame();
+    let view = h.app.doc.editor.model_edit().texture_view.unwrap();
+    assert!(view.zoom > fitted.zoom, "{fitted:?} -> {view:?}");
+    let (_, bottom) = h.app.doc.canvas.texture_panes().unwrap();
+    let center = texel(&h, 8.0, 8.0);
+    assert!((center - bottom.center()).length() <= 1.0);
+}

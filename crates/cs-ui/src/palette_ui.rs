@@ -159,6 +159,8 @@ pub enum Confirm {
     Delete(String),
     /// "New palette" en un sprite indexado: los píxeles de los colores que se van cambian.
     NewPalette,
+    /// Texture size (panel 3D) a un lado más chico que deja UVs de caras fuera.
+    TextureSize(u32),
 }
 
 /// Formato al guardar, según la extensión elegida (`.gpl` si no se reconoce).
@@ -594,6 +596,13 @@ impl ChimpApp {
                 "Delete",
             ),
             Confirm::NewPalette => ("New palette", NEW_PALETTE_QUESTION.to_owned(), "OK"),
+            Confirm::TextureSize(side) => (
+                "Texture size",
+                format!(
+                    "Some faces use pixels outside the new size ({side}×{side}). Resize anyway?"
+                ),
+                "Resize",
+            ),
         };
         // Con Pixel UI, en el diálogo pixel, como "Unsaved changes".
         let skin = self.pixel.skin();
@@ -614,6 +623,9 @@ impl ChimpApp {
             ) => self.store_preset(palette, comments, then_default),
             (Some(true), Confirm::NewPalette) => {
                 self.doc.editor.new_palette();
+            }
+            (Some(true), Confirm::TextureSize(side)) => {
+                self.doc.editor.set_texture_size(side);
             }
             (Some(true), Confirm::Delete(name)) => {
                 if let Err(e) = self.palettes.delete(&name) {

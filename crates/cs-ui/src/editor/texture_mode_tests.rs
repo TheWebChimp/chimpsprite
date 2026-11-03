@@ -372,3 +372,126 @@ fn new_texture_en_texture_conserva_el_objeto_del_panel() {
     assert_eq!(e.active, texture_of(&e));
     assert_eq!(e.selected_object(), Some(0));
 }
+
+/// Pinta con el lápiz el pixel `(x, y)` de la textura (el activo) y dice si cambió.
+fn paints_at(e: &mut Editor, (x, y): (i32, i32)) -> bool {
+    let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    e.primary = red;
+    e.tool = ToolKind::Pencil;
+    let (ax, ay) = e.artboard().position;
+    e.pointer_press(
+        ((ax + x) as f32 + 0.5, (ay + y) as f32 + 0.5),
+        false,
+        false,
+        0.1,
+    );
+    e.pointer_release();
+    let sprite = e.sprite();
+    let layer = sprite.layers.last().unwrap().id;
+    sprite.pixel(layer, 0, x, y) == red
+}
+
+fn face(f: usize) -> Selection {
+    Selection {
+        mode: SelectMode::Face,
+        items: [Item::Face(0, f)].into(),
+    }
+}
+
+#[test]
+fn con_una_cara_elegida_solo_se_pinta_dentro_de_su_contorno() {
+    let mut e = editing();
+    e.set_cad_mode(CadMode::Texture);
+    let steps = e.history.done_count();
+    e.set_model_selection(face(0));
+    // La cara de enfrente del cubo usa los pixeles 0..16 de la textura.
+    let mask = e.selection.clone().expect("the face's pixels are selected");
+    assert_eq!(mask.bounds(), Some(((0, 0), (15, 15))));
+    assert_eq!(mask.points().count(), 256);
+    assert_eq!(e.history.done_count(), steps, "selecting is not undoable");
+    assert!(e.selection_is_face_mask());
+    assert!(!e.shows_handles(), "no transform box on the face's pixels");
+    assert!(!paints_at(&mut e, (20, 5)), "outside the face");
+    assert!(paints_at(&mut e, (5, 5)), "inside the face");
+    // Otra cara: la selección la sigue.
+    e.set_model_selection(face(1));
+    assert_eq!(
+        e.selection.as_ref().and_then(|m| m.bounds()),
+        Some(((16, 0), (31, 15)))
+    );
+    // Mover sus UVs también.
+    e.start_uv_op(UvOp::Move { from: (20.0, 5.0) });
+    e.update_uv_op((24.0, 7.0), false);
+    e.finish_uv_op();
+    assert_eq!(
+        e.selection.as_ref().and_then(|m| m.bounds()),
+        Some(((20, 2), (35, 17)))
+    );
+    // Deshacer el movimiento la regresa.
+    e.undo();
+    assert_eq!(
+        e.selection.as_ref().and_then(|m| m.bounds()),
+        Some(((16, 0), (31, 15)))
+    );
+    // Sin caras, se pinta libre.
+    e.set_model_selection(Selection {
+        mode: SelectMode::Face,
+        items: Default::default(),
+    });
+    assert!(e.selection.is_none());
+    assert!(paints_at(&mut e, (40, 40)));
+}
+
+#[test]
+fn la_seleccion_de_la_cara_se_va_al_salir_de_texture_y_vuelve_al_entrar() {
+    let mut e = texturing();
+    assert!(e.selection.is_some());
+    e.set_cad_mode(CadMode::Model);
+    assert!(e.selection.is_none(), "Model has no pixel selection");
+    e.set_cad_mode(CadMode::Texture);
+    assert!(e.selection_is_face_mask(), "the face is still chosen");
+    e.exit_workspace();
+    assert!(e.selection.is_none());
+}
+
+#[test]
+fn la_marquesina_del_usuario_gana_hasta_que_cambian_las_caras() {
+    let mut e = texturing();
+    // Seleccionar todo con caras elegidas: se respeta.
+    e.select_all();
+    assert!(!e.selection_is_face_mask());
+    assert_eq!(
+        e.selection.as_ref().map(|m| m.points().count()),
+        Some(64 * 64)
+    );
+    // Pintar no la cambia.
+    assert!(paints_at(&mut e, (40, 40)));
+    assert_eq!(
+        e.selection.as_ref().map(|m| m.points().count()),
+        Some(64 * 64)
+    );
+    // Elegir otra cara vuelve a la de la cara.
+    e.set_model_selection(face(2));
+    assert!(e.selection_is_face_mask());
+    // Deseleccionar: se pinta libre hasta que cambien las caras.
+    e.deselect();
+    assert!(e.selection.is_none());
+    assert!(paints_at(&mut e, (60, 60)));
+    // Al quitar las caras no se toca una marquesina del usuario.
+    e.select_all();
+    e.set_model_selection(Selection {
+        mode: SelectMode::Face,
+        items: Default::default(),
+    });
+    assert!(e.selection.is_some());
+}
+
+#[test]
+fn texture_size_pregunta_si_alguna_uv_queda_fuera() {
+    let e = texturing();
+    // El cubo usa hasta el pixel 48 de la plantilla de 64.
+    assert!(!e.texture_size_cuts_uvs(128), "growing never asks");
+    assert!(!e.texture_size_cuts_uvs(64));
+    assert!(e.texture_size_cuts_uvs(32));
+    assert!(e.texture_size_cuts_uvs(16));
+}

@@ -133,6 +133,66 @@ pub fn flip_uvs(model: &Model3D, faces: &[(usize, usize)], horizontal: bool) -> 
     })
 }
 
+/// Dónde cruza la recta horizontal `y` la arista `a`–`b` del polígono, si la cruza (las
+/// puntas de abajo cuentan y las de arriba no, así un vértice no se cuenta dos veces).
+fn crossing(a: UvPoint, b: UvPoint, y: f32) -> Option<f32> {
+    let (ay, by) = (a.1 as f32, b.1 as f32);
+    ((ay > y) != (by > y)).then(|| a.0 as f32 + (y - ay) * (b.0 - a.0) as f32 / (by - ay))
+}
+
+/// Si el punto `p` (en pixeles de la textura) cae dentro del polígono `uvs` (regla par-impar).
+/// Con menos de tres vértices no hay adentro.
+pub fn uv_polygon_contains(uvs: &[UvPoint], p: (f32, f32)) -> bool {
+    let n = uvs.len();
+    if n < 3 {
+        return false;
+    }
+    (0..n)
+        .filter_map(|i| crossing(uvs[i], uvs[(i + 1) % n], p.1))
+        .filter(|&x| p.0 < x)
+        .count()
+        % 2
+        == 1
+}
+
+/// Los pixeles de una textura de `w × h` que cubren los polígonos UV de `faces`: los que tienen
+/// el centro adentro (regla par-impar), repetidos con `rem_euclid` como el muestreo. Fila por
+/// fila.
+pub fn uv_coverage(model: &Model3D, faces: &[(usize, usize)], (w, h): (u32, u32)) -> Vec<bool> {
+    let mut out = vec![false; w as usize * h as usize];
+    if w == 0 || h == 0 {
+        return out;
+    }
+    let (wi, hi) = (w as i64, h as i64);
+    let mut xs: Vec<f32> = Vec::new();
+    for (o, f) in existing(model, faces) {
+        let uvs = &model.objects[o].mesh.faces[f].uvs;
+        let n = uvs.len();
+        let Some(((_, y0), (_, y1))) = bounds_of(uvs).filter(|_| n >= 3) else {
+            continue;
+        };
+        for y in y0..y1 {
+            xs.clear();
+            xs.extend((0..n).filter_map(|i| crossing(uvs[i], uvs[(i + 1) % n], y as f32 + 0.5)));
+            xs.sort_by(f32::total_cmp);
+            let row = (y as i64).rem_euclid(hi) as usize * w as usize;
+            for span in xs.as_chunks::<2>().0 {
+                // Los pixeles con el centro en [a, b).
+                let a = (span[0] - 0.5).ceil() as i64;
+                let b = (span[1] - 0.5).ceil() as i64;
+                if b - a >= wi {
+                    out[row..row + w as usize].fill(true);
+                    continue;
+                }
+                for x in a..b {
+                    out[row + x.rem_euclid(wi) as usize] = true;
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -251,6 +311,55 @@ mod tests {
         let m = flip_uvs(&model(), &[(0, 0)], false);
         assert_eq!(uvs(&m, 0), vec![(10, 22), (14, 22), (14, 20), (10, 20)]);
         assert_eq!(flip_uvs(&m, &[(0, 0)], false), model());
+    }
+
+    /// Los pixeles `(x, y)` cubiertos de una textura de `w` de ancho.
+    fn covered(c: &[bool], w: usize) -> Vec<(usize, usize)> {
+        c.iter()
+            .enumerate()
+            .filter(|(_, on)| **on)
+            .map(|(i, _)| (i % w, i / w))
+            .collect()
+    }
+
+    #[test]
+    fn la_cobertura_son_los_pixeles_con_el_centro_adentro() {
+        let c = uv_coverage(&model(), &[(0, 1)], (8, 8));
+        let square: Vec<_> = (0..3).flat_map(|y| (0..3).map(move |x| (x, y))).collect();
+        assert_eq!(covered(&c, 8), square);
+        // Un triángulo rectángulo de 4: los centros con x + y < 3.
+        let mut m = model();
+        m.objects[0].mesh.faces[1].uvs = vec![(0, 0), (4, 0), (0, 4)];
+        let c = uv_coverage(&m, &[(0, 1)], (8, 8));
+        let tri = vec![(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (0, 2)];
+        assert_eq!(covered(&c, 8), tri);
+        // Las dos caras juntas; sin caras, nada.
+        let both = uv_coverage(&model(), &[(0, 0), (0, 1)], (32, 32));
+        assert_eq!(covered(&both, 32).len(), 9 + 8);
+        assert!(!uv_coverage(&model(), &[], (8, 8)).contains(&true));
+    }
+
+    #[test]
+    fn la_cobertura_se_repite_fuera_de_la_textura() {
+        // El rectángulo 4×2 en (10, 20) cae en (10, 4) de una textura de 16.
+        let c = uv_coverage(&model(), &[(0, 0)], (16, 16));
+        let want: Vec<_> = (4..6).flat_map(|y| (10..14).map(move |x| (x, y))).collect();
+        assert_eq!(covered(&c, 16), want);
+        // Uno más ancho que la textura cubre filas enteras.
+        let mut m = model();
+        m.objects[0].mesh.faces[1].uvs = vec![(-5, 1), (30, 1), (30, 2), (-5, 2)];
+        let c = uv_coverage(&m, &[(0, 1)], (8, 8));
+        assert_eq!(covered(&c, 8), (0..8).map(|x| (x, 1)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn un_punto_dentro_de_un_poligono_uv() {
+        let tri = [(0, 0), (4, 0), (0, 4)];
+        assert!(uv_polygon_contains(&tri, (0.5, 0.5)));
+        assert!(uv_polygon_contains(&tri, (1.0, 2.5)));
+        assert!(!uv_polygon_contains(&tri, (3.0, 3.0)));
+        assert!(!uv_polygon_contains(&tri, (-0.5, 1.0)));
+        assert!(!uv_polygon_contains(&[(0, 0), (4, 0)], (1.0, 0.0)));
     }
 
     #[test]
