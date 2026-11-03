@@ -334,3 +334,45 @@ fn the_tab_pieces_have_the_mockup_sizes() {
         assert_eq!(piece.size, size, "{name}");
     }
 }
+
+#[test]
+fn a_tab_with_a_piece_icon_draws_it_bottom_aligned_before_the_name() {
+    let (ctx, skin) = pixel_ctx();
+    let rect = Rect::from_min_size(AT, vec2(60.0, HEIGHT));
+    for (name, size) in [
+        ("icon.object.cone", vec2(9.0, 10.0)),
+        ("icon.object.plane", vec2(8.0, 8.0)),
+    ] {
+        let item = TabItem::closable("Cone", true).with_icon(TabIcon::Piece(name));
+        let shapes = frame(&ctx, vec![], |ui| {
+            let look = TabLook {
+                active: true,
+                hovered: false,
+                mark_hovered: false,
+            };
+            ui.painter()
+                .extend(tab_shapes(ui, &skin, rect, &item, "Cone", look));
+        });
+        let d = drawn(&shapes);
+        // Como en el boceto: el ícono abajo en la fila 13 (los de 10 de alto, desde la 4), 6 px
+        // adentro; el nombre, 3 después del lugar del ícono (`ICON_WIDTH`), en la fila 6.
+        let left = AT.x + EDGE + PAD;
+        assert_eq!(
+            d.boxes(&skin, name, WidgetState::Normal),
+            vec![Rect::from_min_size(
+                pos2(left, AT.y + ICON_BOTTOM - size.y),
+                size
+            )],
+            "{name}"
+        );
+        let (at, _, galley) = d.texts.first().expect("the name").clone();
+        assert_eq!(
+            ink_at(at, &galley),
+            (left + ICON_WIDTH + SWATCH_GAP, AT.y + CAPS_TOP)
+        );
+        assert_eq!(
+            chrome(&item),
+            chrome(&TabItem::closable("", true)) + ICON_WIDTH + SWATCH_GAP
+        );
+    }
+}

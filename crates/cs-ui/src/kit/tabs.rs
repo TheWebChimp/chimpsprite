@@ -60,6 +60,10 @@ pub const SWATCH_GAP: f32 = 3.0;
 pub const ICON_WIDTH: f32 = 10.0;
 pub const ICON_MODEL: &str = "tab.icon.model";
 pub const ICON_FONT: &str = "tab.icon.font";
+/// Un ícono de pieza (`TabIcon::Piece`, los de los objetos del panel 3D) va en el lugar de
+/// `ICON_WIDTH`, pegado a la izquierda y con su fila de abajo en la 13 de la pestaña (como en el
+/// boceto: los de 10 de alto, desde la fila 4).
+pub const ICON_BOTTOM: f32 = 14.0;
 /// Las flechas: dos cajas de 12×12 que comparten la columna del medio, 1 fila debajo del borde
 /// de arriba de las pestañas.
 pub const ARROW_SIZE: f32 = 12.0;
@@ -385,17 +389,23 @@ pub fn tab_shapes(
     shapes
 }
 
-/// El ícono de una pestaña de vista con las mayúsculas en la fila `at.y`: la pieza del skin si la
-/// trae; si no, un cuadrito con otro adentro (modelo) o "Aa" (fuente).
+/// El ícono de una pestaña con las mayúsculas en la fila `at.y`: la pieza del skin si la trae
+/// (las de `TabIcon::Piece`, con su fila de abajo en [`ICON_BOTTOM`]); si no, un cuadrito con
+/// otro adentro (modelo o pieza) o "Aa" (fuente).
 fn icon_shapes(ui: &Ui, skin: &Skin, icon: TabIcon, at: egui::Pos2, color: Color32) -> Vec<Shape> {
     let ppp = ui.ctx().pixels_per_point();
     let name = match icon {
         TabIcon::Model => ICON_MODEL,
         TabIcon::Font => ICON_FONT,
+        TabIcon::Piece(name) => name,
         TabIcon::None => return Vec::new(),
     };
     if let Some(piece) = skin.piece(name, WidgetState::Normal) {
         let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
+        let at = match icon {
+            TabIcon::Piece(_) => pos2(at.x, at.y - CAPS_TOP + ICON_BOTTOM - size.y),
+            _ => at,
+        };
         return pixel_ui::piece_shapes(piece, Rect::from_min_size(at, size), ppp);
     }
     if icon == TabIcon::Font {

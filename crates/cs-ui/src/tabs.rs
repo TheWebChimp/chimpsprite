@@ -95,6 +95,8 @@ pub(crate) enum TabIcon {
     None,
     Model,
     Font,
+    /// Una pieza del skin con ese nombre (los objetos del panel 3D: `icon.object.cube`…).
+    Piece(&'static str),
 }
 
 /// Una pestaña que no es un documento. Va después de las de documentos y, mientras se ve, no hay

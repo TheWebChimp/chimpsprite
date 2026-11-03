@@ -4525,7 +4525,7 @@ fn the_model_panel_without_a_model_offers_new_3d_model() {
 }
 
 #[test]
-fn the_model_panel_lists_the_objects_and_adds_a_cylinder() {
+fn the_model_panel_shows_the_objects_as_tabs_and_adds_a_cylinder() {
     let mut h = model_panel_open(true);
     let flyout = h
         .ctx
@@ -4544,8 +4544,106 @@ fn the_model_panel_lists_the_objects_and_adds_a_cylinder() {
         cs_3d::primitive_mesh(&cs_3d::Primitive::Cylinder { sides: 8 })
     );
     assert_eq!(editor.selected_object(), Some(1));
-    // Un clic en la fila del cubo lo elige.
+    // Un clic en la pestaña del cubo lo elige.
     h.click(node(&h, "Cube").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.selected_object(), Some(0));
+}
+
+/// El panel 3D abierto: su caja.
+fn model_flyout(h: &LayoutHarness) -> Rect {
+    h.ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
+        .expect("the 3D panel is open")
+}
+
+#[test]
+fn the_3d_panel_has_one_tab_per_object_with_the_icon_of_its_kind() {
+    let mut h = model_panel_open(true);
+    h.click(node(&h, "Add").center(), PointerButton::Primary);
+    h.click(node(&h, "Cylinder").center(), PointerButton::Primary);
+    let model = h.app.doc.editor.model().unwrap().clone();
+    let items = crate::model_panel::object_tabs(&model);
+    let shown: Vec<(&str, crate::tabs::TabIcon, crate::kit::tabs::TabMark)> = items
+        .iter()
+        .map(|t| (t.label.as_str(), t.icon, t.mark))
+        .collect();
+    use crate::kit::tabs::TabMark::Dirty;
+    use crate::tabs::TabIcon::Piece;
+    assert_eq!(
+        shown,
+        vec![
+            ("Cube", Piece("icon.object.cube"), Dirty),
+            ("Cylinder", Piece("icon.object.cylinder"), Dirty),
+        ]
+    );
+    // Las dos pestañas en una fila arriba del panel, en lugar del título y de la lista.
+    let flyout = model_flyout(&h);
+    let (cube, cylinder) = (node(&h, "Cube"), node(&h, "Cylinder"));
+    assert!(flyout.contains_rect(cube) && flyout.contains_rect(cylinder));
+    assert_eq!(cube.top(), cylinder.top());
+    assert!(cube.right() < cylinder.left(), "{cube:?} {cylinder:?}");
+    assert!(
+        cube.top() < flyout.top() + 20.0,
+        "{cube:?} at the top of {flyout:?}"
+    );
+    assert!(!h.text_rects.iter().any(|(t, _, _)| t == "Objects"));
+    assert!(
+        !panel_top_texts(&h)
+            .0
+            .iter()
+            .any(|r| flyout.contains_rect(*r))
+    );
+}
+
+#[test]
+fn closing_an_object_tab_removes_the_object_in_one_undo_step() {
+    let mut h = model_panel_open(true);
+    h.click(node(&h, "Add").center(), PointerButton::Primary);
+    h.click(node(&h, "Cylinder").center(), PointerButton::Primary);
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(node(&h, "Close Cube").center(), PointerButton::Primary);
+    let names = |h: &LayoutHarness| -> Vec<String> {
+        let model = h.app.doc.editor.model().unwrap();
+        model.objects.iter().map(|o| o.name.clone()).collect()
+    };
+    assert_eq!(names(&h), vec!["Cylinder".to_owned()]);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(names(&h), vec!["Cube".to_owned(), "Cylinder".to_owned()]);
+}
+
+#[test]
+fn many_object_tabs_scroll_with_the_arrows() {
+    let mut h = model_panel_open(true);
+    let editor = &mut h.app.doc.editor;
+    for _ in 0..11 {
+        assert!(editor.add_primitive(cs_3d::Primitive::Cylinder { sides: 8 }));
+    }
+    let mut model = editor.model().unwrap().clone();
+    for (i, o) in model.objects.iter_mut().enumerate() {
+        o.name = format!("Part {i}");
+    }
+    assert!(editor.set_model_grouped(model, egui::Id::new("rename")));
+    editor.select_model_object(Some(0));
+    h.frame();
+    h.frame();
+    let flyout = model_flyout(&h);
+    let in_panel = |h: &LayoutHarness, label: &str| {
+        h.nodes
+            .iter()
+            .find(|(l, r)| l == label && flyout.contains_rect(*r))
+            .map(|(_, r)| *r)
+    };
+    let first = in_panel(&h, "Part 0").expect("the first tab");
+    assert!(in_panel(&h, "Part 11").is_none(), "they do not all fit");
+    let next = in_panel(&h, "Next tabs").expect("the arrows");
+    // Las flechas a la derecha, en la fila de las pestañas.
+    assert!(next.left() > first.right() && next.top() < first.bottom());
+    for _ in 0..12 {
+        h.click(next.center(), PointerButton::Primary);
+    }
+    assert!(in_panel(&h, "Part 0").is_none(), "scrolled past the first");
+    assert!(in_panel(&h, "Part 11").is_some(), "the last one in view");
     assert_eq!(h.app.doc.editor.selected_object(), Some(0));
 }
 
@@ -4604,15 +4702,17 @@ fn panel_top_texts(h: &LayoutHarness) -> (Vec<Rect>, Rect) {
 fn the_3d_panel_opens_at_the_top_with_edit_visible() {
     for h in [model_panel_open(true), model_panel_tall()] {
         let (titles, edit) = panel_top_texts(&h);
-        // El "3D" del título del panel: el que queda a la izquierda de sus filas (los otros son
-        // el botón del dock y el de la barra).
-        let title = titles
-            .iter()
-            .filter(|t| t.left() < edit.left() && t.top() < edit.top())
-            .max_by(|a, b| a.left().total_cmp(&b.left()))
-            .copied()
-            .expect("the panel title");
-        assert!(edit.top() >= title.bottom(), "{edit:?} bajo {title:?}");
+        // Ya no hay título "3D" en el panel (solo el botón del dock y el de la barra): arriba,
+        // la pestaña del cubo, y "Object" a la vista debajo.
+        let flyout = model_flyout(&h);
+        assert!(
+            !titles.iter().any(|t| flyout.contains_rect(*t)),
+            "{titles:?}"
+        );
+        let tab = node(&h, "Cube");
+        assert!(flyout.contains_rect(tab), "{tab:?} in {flyout:?}");
+        assert!(edit.top() >= tab.bottom(), "{edit:?} bajo {tab:?}");
+        assert!(flyout.contains_rect(edit), "{edit:?} in {flyout:?}");
     }
 }
 
