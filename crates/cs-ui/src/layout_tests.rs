@@ -4703,7 +4703,7 @@ fn the_position_x_stepper_moves_the_object_in_one_step() {
     let plus = h
         .buttons
         .iter()
-        .filter(|(l, r)| l == "Increase" && r.top() > heading.bottom())
+        .filter(|(l, r)| l == "Increase" && r.top() > heading.center().y)
         .min_by(|a, b| {
             (a.1.top(), a.1.left())
                 .partial_cmp(&(b.1.top(), b.1.left()))
@@ -4817,12 +4817,133 @@ fn the_3d_panel_has_the_modes_and_the_grid() {
 }
 
 #[test]
-fn delete_in_the_model_panel_removes_the_object() {
-    let mut h = model_panel_open(true);
-    h.click(h.button("Delete").center(), PointerButton::Primary);
-    let editor = &h.app.doc.editor;
-    assert!(editor.model().unwrap().objects.is_empty());
-    assert_eq!(editor.selected_object(), None);
+fn the_object_tab_has_no_delete_button() {
+    // Lo quita la ○ de su pestaña.
+    let h = model_panel_tall();
+    assert!(
+        !h.buttons.iter().any(|(l, _)| l == "Delete"),
+        "{:?}",
+        h.buttons
+    );
+    node(&h, "Delete Cube");
+}
+
+/// La primera vez que se ve el texto `t` dentro de `area`.
+fn text_in(h: &LayoutHarness, area: Rect, t: &str) -> Option<Rect> {
+    h.text_rects
+        .iter()
+        .find(|(s, r, _)| s == t && area.contains_rect(*r))
+        .map(|(_, r, _)| *r)
+}
+
+/// Las etiquetas de eje (X, Y, Z) de la fila de steppers debajo del título `title` del panel 3D:
+/// las cajitas, de izquierda a derecha.
+fn axis_row(h: &LayoutHarness, title: &str) -> Vec<Rect> {
+    let flyout = model_flyout(h);
+    let heading = text_in(h, flyout, title).unwrap_or_else(|| panic!("no {title:?}"));
+    let tags: Vec<Rect> = h
+        .drawn(crate::kit::stepper::UNIT)
+        .into_iter()
+        .filter(|r| flyout.contains_rect(*r) && r.top() > heading.center().y)
+        .collect();
+    let top = tags.iter().map(|r| r.top()).fold(f32::INFINITY, f32::min);
+    let mut row: Vec<Rect> = tags.into_iter().filter(|r| r.top() == top).collect();
+    row.sort_by(|a, b| a.left().partial_cmp(&b.left()).unwrap());
+    row
+}
+
+#[test]
+fn the_object_tab_shows_the_transform_in_rows_of_three_tagged_steppers() {
+    let h = model_panel_tall();
+    let flyout = model_flyout(&h);
+    let inner = flyout.shrink(crate::dock::FLYOUT_MARGIN as f32);
+    let bar = inner.right() - crate::pixel_ui::SCROLL_BAR;
+    let mut last = Rect::NOTHING;
+    for title in ["Position", "Rotation", "Scale"] {
+        let heading = text_in(&h, flyout, title).unwrap();
+        assert!(heading.top() > last.bottom(), "{title} below the row above");
+        let row = axis_row(&h, title);
+        assert_eq!(row.len(), 3, "{title}: {row:?}");
+        // El título, sobre la primera etiqueta y alineado con ella.
+        assert_eq!(row[0].left(), heading.left().round(), "{title}");
+        for (tag, letter) in row.iter().zip(["X", "Y", "Z"]) {
+            assert_eq!(tag.size(), vec2(13.0, 17.0), "{title} {letter}");
+            text_in(&h, *tag, letter).unwrap_or_else(|| panic!("{title}: {letter} in {tag:?}"));
+            // El − pegado a la etiqueta; el + a la derecha, sin pasar la barra del scroll.
+            let minus = h
+                .buttons
+                .iter()
+                .find(|(l, r)| l == "Decrease" && r.left() == tag.right() && r.top() == tag.top())
+                .unwrap_or_else(|| panic!("{title} {letter}: the − after its tag"));
+            let plus = h
+                .buttons
+                .iter()
+                .filter(|(l, r)| {
+                    l == "Increase" && r.top() == tag.top() && r.left() > minus.1.left()
+                })
+                .min_by(|a, b| a.1.left().partial_cmp(&b.1.left()).unwrap())
+                .unwrap();
+            assert!(
+                plus.1.right() <= bar,
+                "{title} {letter} {:?} past {bar}",
+                plus.1
+            );
+        }
+        // Las tres del mismo ancho, con el mismo aire entre ellas.
+        let pluses: Vec<f32> = h
+            .buttons
+            .iter()
+            .filter(|(l, r)| l == "Increase" && r.top() == row[0].top())
+            .map(|(_, r)| r.right())
+            .collect();
+        assert_eq!(pluses.len(), 3, "{title}");
+        let gap = row[1].left() - (pluses.iter().copied().fold(f32::INFINITY, f32::min));
+        assert!((3.0..=8.0).contains(&gap), "{title}: gap {gap}");
+        last = row[0];
+    }
+    // Double sided debajo de la escala; nada de textura, cámara ni luz entre medio.
+    let double = check(&h, "Double sided").0;
+    assert!(double.top() > last.bottom());
+    let position = text_in(&h, flyout, "Position").unwrap();
+    let block = Rect::from_min_max(
+        pos2(flyout.left(), position.top()),
+        pos2(flyout.right(), double.bottom()),
+    );
+    for t in [
+        "Texture",
+        "Camera",
+        "Light & Outline",
+        "Light",
+        "Shading",
+        "Add",
+        "Sides",
+    ] {
+        assert!(text_in(&h, block, t).is_none(), "{t} in the object block");
+    }
+}
+
+#[test]
+fn the_rotation_z_stepper_turns_the_object_in_one_step() {
+    let mut h = model_panel_tall();
+    let z = axis_row(&h, "Rotation")[2];
+    let plus = h
+        .buttons
+        .iter()
+        .filter(|(l, r)| l == "Increase" && r.top() == z.top() && r.left() > z.right())
+        .min_by(|a, b| a.1.left().partial_cmp(&b.1.left()).unwrap())
+        .map(|(_, r)| *r)
+        .unwrap();
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(plus.center(), PointerButton::Primary);
+    let rotation = |h: &LayoutHarness| {
+        h.app.doc.editor.model().unwrap().objects[0]
+            .transform
+            .rotation
+    };
+    assert_eq!(rotation(&h), cs_core::Vec3i { x: 0, y: 0, z: 10 });
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(rotation(&h), cs_core::Vec3i::default());
 }
 
 // --- El panel 3D: textura, cámara, luz y contorno ---
@@ -6725,6 +6846,31 @@ fn texture_mode_hides_the_select_mode_radios() {
         assert!(!has(&h, l), "{l}");
     }
     assert!(has(&h, "Rotate 90°"));
+}
+
+#[test]
+fn in_texture_mode_the_object_tab_ends_with_the_uv_buttons() {
+    let h = with_the_model_panel(with_a_model_in_texture_mode());
+    assert!(h.app.doc.editor.selected_object().is_some());
+    let flyout = model_flyout(&h);
+    let double = check(&h, "Double sided").0;
+    let scale = axis_row(&h, "Scale")[0];
+    assert!(double.top() > scale.bottom());
+    // La sección UV, después de Double sided; Texture size no está entre medio (va con el modelo).
+    let uv = text_in(&h, flyout, "UV").expect("the UV title");
+    assert!(uv.top() > double.bottom(), "{uv:?} below {double:?}");
+    let mut bottom = uv.bottom();
+    for label in ["Rotate 90°", "Flip H", "Flip V"] {
+        let b = h.button(label);
+        assert!(b.top() > uv.bottom(), "{label}");
+        bottom = bottom.max(b.bottom());
+    }
+    let position = text_in(&h, flyout, "Position").unwrap();
+    let block = Rect::from_min_max(
+        pos2(flyout.left(), position.top()),
+        pos2(flyout.right(), bottom),
+    );
+    assert!(text_in(&h, block, "Texture size").is_none());
 }
 
 #[test]
