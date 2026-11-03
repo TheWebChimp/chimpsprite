@@ -6107,3 +6107,41 @@ fn texture_mode_without_a_texture_offers_a_new_one() {
     let texture = e.workspace_model().unwrap().texture.expect("a new texture");
     assert_eq!(e.active, texture, "and it is painted on");
 }
+
+#[test]
+fn the_mode_buttons_do_not_touch_the_face_selection_below() {
+    let mut h = with_a_model_in_texture_mode();
+    let e = &mut h.app.doc.editor;
+    let sel = cs_3d::Selection {
+        mode: cs_3d::SelectMode::Face,
+        items: [cs_3d::Item::Face(0, 0)].into(),
+    };
+    e.set_model_selection(sel.clone());
+    h.frame();
+    // El activo otra vez: no cambia nada, ni la selección de debajo.
+    h.click(node(&h, "Texture").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.model_edit().selection, sel);
+    // A Model y de vuelta: la selección sigue.
+    h.click(node(&h, "Model").center(), PointerButton::Primary);
+    h.click(node(&h, "Texture").center(), PointerButton::Primary);
+    let e = &h.app.doc.editor;
+    assert_eq!(e.cad_mode(), crate::editor::CadMode::Texture);
+    assert_eq!(e.model_edit().selection, sel);
+}
+
+#[test]
+fn the_mode_buttons_do_not_touch_the_object_in_persp() {
+    let mut h = with_a_model_at_800();
+    let e = &mut h.app.doc.editor;
+    e.select_model_object(Some(0));
+    let sel = e.model_edit().selection.clone();
+    h.frame();
+    let model = node(&h, "Model");
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    assert!(quads[1].contains(model.center()), "over Persp");
+    h.click(model.center(), PointerButton::Primary);
+    let e = &h.app.doc.editor;
+    assert_eq!(e.cad_mode(), crate::editor::CadMode::Model);
+    assert_eq!(e.selected_object(), Some(0), "the panel's object");
+    assert_eq!(e.model_edit().selection, sel);
+}

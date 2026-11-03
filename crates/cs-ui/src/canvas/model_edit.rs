@@ -87,6 +87,7 @@ impl CanvasView {
     ) {
         let area = workspace_area(ui, rect);
         self.texture_panes = None;
+        self.mode_rect = Some(mode_buttons_rect(ui, area));
         // Los cuadrantes salen del área, así que ya valen para la entrada de este frame (también
         // en el primero del workspace).
         let quads = quadrants(area);
@@ -187,6 +188,7 @@ impl CanvasView {
             && response.hovered()
             && (!busy || (keyboard_op && self.model_drag.is_none()))
             && let Some(p) = pointer
+            && !self.mode_rect.is_some_and(|r| r.contains(p))
         {
             self.model_edit_press(editor, p, secondary, middle, modifiers);
         }
@@ -630,10 +632,23 @@ impl CanvasView {
         if self.edit_persp.as_ref().is_none_or(|(k, _)| *k != key) {
             let mut pixels = cs_render::model_render(doc, artboard, model, size);
             if !faces.is_empty() {
-                let outline = cs_render::model_face_outline(model, size, &faces);
+                // El contorno depende del modelo, el tamaño y las caras, no de la textura: al
+                // pintar se reusa.
+                let mut h = DefaultHasher::new();
+                (model, size, &faces).hash(&mut h);
+                let outline_key = h.finish();
+                if self
+                    .edit_outline
+                    .as_ref()
+                    .is_none_or(|(k, _)| *k != outline_key)
+                {
+                    let outline = cs_render::model_face_outline(model, size, &faces);
+                    self.edit_outline = Some((outline_key, outline));
+                }
+                let outline = self.edit_outline.as_ref().map_or(&[][..], |(_, o)| &o[..]);
                 let [r, g, b, _] = SELECTED.to_srgba_unmultiplied();
                 let yellow = cs_core::Rgba::new(r, g, b, 255);
-                for (p, on) in pixels.iter_mut().zip(outline) {
+                for (p, &on) in pixels.iter_mut().zip(outline) {
                     if on {
                         *p = yellow;
                     }
@@ -686,30 +701,47 @@ pub(super) fn model_sprite(editor: &Editor) -> &cs_core::Sprite {
 /// Aire entre los botones Model / Texture y la esquina de arriba a la derecha del área.
 const MODE_AIR: f32 = 3.0;
 
+/// Las opciones del grupo de los modos.
+fn mode_items() -> [crate::kit::group::GroupItem<'static>; 2] {
+    use crate::kit::group::GroupItem;
+    [GroupItem::text("Model"), GroupItem::text("Texture")]
+}
+
+/// Dónde van los botones Model / Texture en `area` (arriba a la derecha). Los gestos de las
+/// vistas de debajo no empiezan ahí: el clic es de los botones.
+pub(super) fn mode_buttons_rect(ui: &egui::Ui, area: Rect) -> Rect {
+    let size = match crate::pixel_ui::frame_skin(ui.ctx()) {
+        Some(_) => vec2(
+            crate::kit::group::width(ui, &mode_items()),
+            crate::kit::button::HEIGHT,
+        ),
+        None => vec2(120.0, 20.0),
+    };
+    let at = pos2(area.right() - MODE_AIR - size.x, area.top() + MODE_AIR).round();
+    Rect::from_min_size(at, size)
+}
+
 /// Los botones **Model** y **Texture** (un grupo del kit; el del modo actual, presionado)
 /// arriba a la derecha de `area`, en los dos modos. Un clic cambia de modo.
 pub(super) fn mode_buttons(ui: &mut egui::Ui, area: Rect, editor: &mut Editor) {
-    use crate::kit::group::{self, GroupItem};
-    let items = [GroupItem::text("Model"), GroupItem::text("Texture")];
+    use crate::kit::group;
+    let items = mode_items();
     let modes = [CadMode::Model, CadMode::Texture];
     let current = editor.cad_mode();
     let id = egui::Id::new("cad_mode_buttons");
+    let rect = mode_buttons_rect(ui, area);
     let chosen = match crate::pixel_ui::frame_skin(ui.ctx()) {
         Some(skin) => {
-            let w = group::width(ui, &items);
-            let at = pos2(area.right() - MODE_AIR - w, area.top() + MODE_AIR).round();
             let painter = ui.painter().clone();
             let active = |i: usize| modes[i] == current;
-            group::button_group_at(ui, &skin, &painter, id, at, &items, &active)
+            group::button_group_at(ui, &skin, &painter, id, rect.min, &items, &active)
         }
         // Sin Pixel UI, dos botones de texto de egui que se pueden elegir.
         None => {
-            let size = vec2(120.0, 20.0);
-            let at = pos2(area.right() - MODE_AIR - size.x, area.top() + MODE_AIR).round();
             let mut chosen = None;
             let builder = egui::UiBuilder::new()
                 .id_salt(id)
-                .max_rect(Rect::from_min_size(at, size))
+                .max_rect(rect)
                 .layout(egui::Layout::left_to_right(egui::Align::Center));
             ui.scope_builder(builder, |ui| {
                 for (i, item) in items.iter().enumerate() {

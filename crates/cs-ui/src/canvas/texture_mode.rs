@@ -7,7 +7,7 @@
 
 use eframe::egui::pos2;
 
-use super::model_edit::{PERSP_BG, mode_buttons, workspace_area};
+use super::model_edit::{PERSP_BG, mode_buttons, mode_buttons_rect, workspace_area};
 use super::*;
 use crate::editor::TextureView;
 
@@ -36,6 +36,7 @@ impl CanvasView {
         let (top, bottom) = texture_panes(area);
         self.edit_quads = None;
         self.texture_panes = Some((top, bottom));
+        self.mode_rect = Some(mode_buttons_rect(ui, area));
         // G y S de teclado son de las vistas orto: aquí no esperan a nadie.
         editor.model_edit.key_request = None;
         self.texture_top_input(ui, response, top, editor, dialog.is_some());
@@ -97,6 +98,10 @@ impl CanvasView {
         modal: bool,
     ) {
         let over = |p: Pos2| top.contains(p);
+        // Los restos de rueda de touchpad siguen sumando solo mientras Ctrl siga apretado.
+        if !ui.input(|i| i.modifiers.command) {
+            self.wheel_rest = 0.0;
+        }
         if response.hovered() && response.hover_pos().is_some_and(over) {
             let wheel: Vec<(egui::MouseWheelUnit, f32)> = ui.input(|i| {
                 i.raw
@@ -135,6 +140,7 @@ impl CanvasView {
             && response.hovered()
             && self.model_drag.is_none()
             && let Some(p) = pointer.filter(|p| over(*p))
+            && !self.mode_rect.is_some_and(|r| r.contains(p))
         {
             let (r, scale) = self.persp_rect(top, editor);
             let local = (

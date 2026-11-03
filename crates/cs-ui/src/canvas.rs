@@ -142,6 +142,13 @@ pub struct CanvasView {
     texture_fit: Option<(Rect, crate::editor::TextureView)>,
     /// El zoom de la textura del modo Texture en el último frame (`None`: no se vio).
     texture_zoom: Option<f32>,
+    /// Los botones Model / Texture del workspace del modelo en este frame: ahí no empiezan los
+    /// gestos de las vistas de debajo.
+    mode_rect: Option<Rect>,
+    /// El contorno de las caras elegidas sobre el render (modo Texture): la clave de la
+    /// geometría, la cámara, el tamaño y las caras, y sus pixeles. Pintar la textura no lo
+    /// recalcula.
+    edit_outline: Option<(u64, Vec<bool>)>,
     /// La perspectiva del modo Edit: la clave de lo que muestra y su textura.
     edit_persp: Option<(u64, TextureHandle)>,
     /// Las vistas orto en pixel art (Front, Top, Side): la clave de lo que muestra cada una y su
@@ -304,6 +311,8 @@ impl Default for CanvasView {
             texture_pane: false,
             texture_fit: None,
             texture_zoom: None,
+            mode_rect: None,
+            edit_outline: None,
             edit_persp: None,
             edit_ortho: [None, None, None],
         }
@@ -752,6 +761,7 @@ impl CanvasView {
         } else {
             self.edit_quads = None;
             self.texture_panes = None;
+            self.mode_rect = None;
             self.show_artboards(ui, &response, rect, editor, dialog, view_settings);
         }
         // La barra de estado (dibujada antes) muestra el zoom de otra vista: otro frame.
