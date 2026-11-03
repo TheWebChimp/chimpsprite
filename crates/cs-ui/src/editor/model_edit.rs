@@ -3,7 +3,7 @@
 //! cuadrícula y los gestos de mover y escalar. Durante un gesto solo cambia la vista previa; al
 //! terminar es un paso de undo.
 
-use cs_3d::{Handle, OrthoView, P3, SelectMode, Selection, UvPoint, ViewMap};
+use cs_3d::{Handle, OrthoView, P3, SelectMode, Selection, ViewMap};
 use cs_core::{ArtboardId, Model3D};
 
 use super::Editor;
@@ -90,12 +90,6 @@ pub struct TextureView {
 pub enum UvOp {
     /// Mover las UVs de las caras elegidas en pixeles enteros; `from` es el punto agarrado.
     Move { from: (f32, f32) },
-    /// Arrastrar un asa de la caja `bounds` (inclusiva) de las UVs elegidas: `handle.u` en x y
-    /// `handle.v` en y de la textura (−1 el lado menor, 1 el mayor, 0 ninguno).
-    Scale {
-        handle: Handle,
-        bounds: (UvPoint, UvPoint),
-    },
     /// Mover solo el vértice UV `vertex` de la cara `face`; `from` es el punto agarrado.
     Vertex {
         face: (usize, usize),

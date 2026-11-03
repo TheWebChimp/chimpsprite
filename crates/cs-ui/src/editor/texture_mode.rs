@@ -295,9 +295,9 @@ impl Editor {
         self.model_edit.uv_op = Some(op);
     }
 
-    /// El gesto de UV sigue al puntero (`pointer` en pixeles de la textura; `proportional`:
-    /// Shift, en una esquina los dos ejes con el mismo factor). Todo cae en pixeles enteros.
-    pub fn update_uv_op(&mut self, pointer: (f32, f32), proportional: bool) {
+    /// El gesto de UV sigue al puntero (`pointer` en pixeles de la textura). Todo cae en pixeles
+    /// enteros.
+    pub fn update_uv_op(&mut self, pointer: (f32, f32)) {
         let Some(op) = self.model_edit.uv_op else {
             return;
         };
@@ -313,41 +313,6 @@ impl Editor {
         };
         let preview = match op {
             UvOp::Move { from } => cs_3d::move_uvs(m, &faces, delta(from)),
-            UvOp::Scale { handle, bounds } => {
-                let ((x0, y0), (x1, y1)) = bounds;
-                // El ancla es el lado opuesto al asa; el borde arrastrado cae en el pixel.
-                let side = |s: i8, lo: i32, hi: i32, at: f32| {
-                    let (edge, anchor) = if s > 0 { (hi, lo) } else { (lo, hi) };
-                    let f = if edge == anchor {
-                        1.0
-                    } else {
-                        (at.round() - anchor as f32) / (edge - anchor) as f32
-                    };
-                    (anchor as f32, f)
-                };
-                let mid = ((x0 + x1) as f32 / 2.0, (y0 + y1) as f32 / 2.0);
-                let (ax, fx) = if handle.u != 0 {
-                    side(handle.u, x0, x1, pointer.0)
-                } else {
-                    (mid.0, 1.0)
-                };
-                let (ay, fy) = if handle.v != 0 {
-                    side(handle.v, y0, y1, pointer.1)
-                } else {
-                    (mid.1, 1.0)
-                };
-                let (fx, fy) = if proportional && handle.u != 0 && handle.v != 0 {
-                    let f = if (fx - 1.0).abs() >= (fy - 1.0).abs() {
-                        fx
-                    } else {
-                        fy
-                    };
-                    (f, f)
-                } else {
-                    (fx, fy)
-                };
-                cs_3d::scale_uvs(m, &faces, (ax, ay), (fx, fy))
-            }
             UvOp::Vertex { face, vertex, from } => {
                 let Some(&(x, y)) = m
                     .objects
@@ -366,15 +331,11 @@ impl Editor {
 
     /// Termina el gesto de UV: si cambió algo, un paso de undo.
     pub fn finish_uv_op(&mut self) {
-        let Some(op) = self.model_edit.uv_op.take() else {
+        if self.model_edit.uv_op.take().is_none() {
             return;
-        };
-        let label = match op {
-            UvOp::Scale { .. } => "Scale UV",
-            UvOp::Move { .. } | UvOp::Vertex { .. } => "Move UV",
-        };
+        }
         if let Some(model) = self.model_edit.preview.take() {
-            self.named(label, |e| e.set_model(model));
+            self.named("Move UV", |e| e.set_model(model));
         }
     }
 

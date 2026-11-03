@@ -1,4 +1,4 @@
-use cs_3d::{Handle, Item, SelectMode, Selection};
+use cs_3d::{Item, SelectMode, Selection};
 use cs_core::{ArtboardId, ColorMode, LayerId, PixelValue, Rgba, Sprite};
 
 use super::model_edit::UvOp;
@@ -133,7 +133,7 @@ fn mover_uvs_es_un_paso_de_undo_y_cancelar_ninguno() {
     let steps = e.history.done_count();
     // Cancelar: el documento no cambia.
     e.start_uv_op(UvOp::Move { from: (5.0, 5.0) });
-    e.update_uv_op((9.0, 7.0), false);
+    e.update_uv_op((9.0, 7.0));
     assert_ne!(
         e.edit_model_shown().unwrap().objects[0].mesh.faces[0].uvs,
         before,
@@ -145,15 +145,15 @@ fn mover_uvs_es_un_paso_de_undo_y_cancelar_ninguno() {
     assert_eq!(e.history.done_count(), steps, "cancel leaves no step");
     // Soltar: un paso de undo.
     e.start_uv_op(UvOp::Move { from: (5.0, 5.0) });
-    e.update_uv_op((9.2, 6.6), false);
-    e.update_uv_op((8.0, 3.0), false);
+    e.update_uv_op((9.2, 6.6));
+    e.update_uv_op((8.0, 3.0));
     e.finish_uv_op();
     let moved: Vec<_> = before.iter().map(|&(x, y)| (x + 3, y - 2)).collect();
     assert_eq!(face_uvs(&e, 0), moved);
     assert_eq!(e.history.done_count(), steps + 1);
     // Un clic sin arrastre no deja paso.
     e.start_uv_op(UvOp::Move { from: (5.0, 5.0) });
-    e.update_uv_op((5.2, 5.3), false);
+    e.update_uv_op((5.2, 5.3));
     e.finish_uv_op();
     assert_eq!(e.history.done_count(), steps + 1);
     e.undo();
@@ -163,39 +163,26 @@ fn mover_uvs_es_un_paso_de_undo_y_cancelar_ninguno() {
 }
 
 #[test]
-fn escalar_y_mover_un_vertice_uv() {
+fn mover_un_vertice_uv_cambia_solo_ese() {
     let mut e = texturing();
     let before = face_uvs(&e, 0);
-    let (lo, hi) = cs_3d::uv_bounds(e.workspace_model().unwrap(), &[(0, 0)]).unwrap();
     let steps = e.history.done_count();
-    // La esquina de abajo a la derecha al doble: la de arriba a la izquierda se queda.
-    let w = hi.0 - lo.0;
-    let h = hi.1 - lo.1;
-    e.start_uv_op(UvOp::Scale {
-        handle: Handle { u: 1, v: 1 },
-        bounds: (lo, hi),
-    });
-    e.update_uv_op(((lo.0 + 2 * w) as f32, (lo.1 + 2 * h) as f32), false);
-    e.finish_uv_op();
-    assert_eq!(
-        cs_3d::uv_bounds(e.workspace_model().unwrap(), &[(0, 0)]),
-        Some((lo, (lo.0 + 2 * w, lo.1 + 2 * h)))
-    );
-    assert_eq!(e.history.done_count(), steps + 1);
-    e.undo();
-    assert_eq!(face_uvs(&e, 0), before);
-    // Un vértice: solo ese cambia.
+    let at = |k: usize| (before[k].0 as f32, before[k].1 as f32);
     e.start_uv_op(UvOp::Vertex {
         face: (0, 0),
         vertex: 1,
-        from: (before[1].0 as f32, before[1].1 as f32),
+        from: at(1),
     });
-    e.update_uv_op((before[1].0 as f32 + 2.4, before[1].1 as f32 - 1.0), false);
+    e.update_uv_op((at(1).0 + 2.4, at(1).1 - 1.0));
     e.finish_uv_op();
     let uvs = face_uvs(&e, 0);
     assert_eq!(uvs[1], (before[1].0 + 2, before[1].1 - 1));
-    assert_eq!(uvs[0], before[0]);
+    for k in [0, 2, 3] {
+        assert_eq!(uvs[k], before[k], "vertex {k}");
+    }
     assert_eq!(e.history.done_count(), steps + 1);
+    e.undo();
+    assert_eq!(face_uvs(&e, 0), before);
 }
 
 #[test]
@@ -421,7 +408,7 @@ fn con_una_cara_elegida_solo_se_pinta_dentro_de_su_contorno() {
     );
     // Mover sus UVs también.
     e.start_uv_op(UvOp::Move { from: (20.0, 5.0) });
-    e.update_uv_op((24.0, 7.0), false);
+    e.update_uv_op((24.0, 7.0));
     e.finish_uv_op();
     assert_eq!(
         e.selection.as_ref().and_then(|m| m.bounds()),

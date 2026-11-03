@@ -12,7 +12,7 @@ Notas de la implementación:
   sus UVs; una marquesina del usuario se respeta hasta entonces. Sin hormigas.
 - **Move con la cara elegida:** dentro de los contornos mueve UVs; fuera no hace nada (no corta
   pixeles).
-- **Alt:** solo un arrastre de más de 3 puntos que empieza en un contorno, asa o vértice mueve UVs;
+- **Alt:** solo un arrastre de más de 3 puntos que empieza en un contorno o vértice mueve UVs;
   Alt + clic sigue siendo el gotero de las herramientas de pintar.
 - **Panel en Texture:** se esconden los radios de modo y el Grid (solo sirven a las vistas orto).
 - **Texture size:** al achicar pregunta si cualquier UV del modelo queda fuera; recorta en el mismo
@@ -71,14 +71,14 @@ varias texturas por modelo.
 
 - Cada cara elegida dibuja su **contorno UV** (el polígono de sus `uvs`, en pixeles de la textura)
   en blanco con un borde oscuro de 1 px para que se lea sobre cualquier color; sus vértices UV como
-  cuadritos de 3 px.
-- La **caja** de todas las UVs elegidas lleva 8 asas (como la 2A).
-- **Gestos** (con la herramienta Move, o con cualquier herramienta si el puntero está sobre un asa
-  o dentro de un contorno con **Alt** apretado — ver 3.1):
-  - Arrastrar **dentro de un contorno**: mueve las UVs de las caras elegidas (en pixeles enteros).
-  - Arrastrar un **asa**: escala las UVs respecto al lado o esquina opuesta (Shift = proporcional),
-    redondeando a pixeles enteros. Agrandar = más pixeles en la cara.
-  - Arrastrar un **vértice UV**: mueve solo ese vértice (de esa cara).
+  puntos de 5×5 px (blanco con borde oscuro) fáciles de agarrar.
+- **Sin asas de escala:** las UVs no se escalan proporcionalmente; cada vértice es un punto libre.
+- **Gestos** (con la herramienta Move, o con cualquier herramienta si el puntero está sobre un
+  vértice o dentro de un contorno con **Alt** apretado — ver 3.1):
+  - Arrastrar **dentro de un contorno**: mueve la cara (las UVs de todas las elegidas juntas, en
+    pixeles enteros).
+  - Arrastrar un **vértice UV**: mueve solo ese vértice (de esa cara) a cualquier pixel entero de la
+    textura, siguiendo al puntero. El vértice gana sobre el adentro del contorno.
   - Cada gesto es un paso de undo (`SetModel` con vista previa, como la 2A).
 - **Botones** en el panel 3D (sección *UV*, visible en modo *Texture* con caras elegidas):
   **Rotate 90°** (gira las UVs de cada cara elegida un cuarto de vuelta alrededor del centro de su
@@ -90,7 +90,7 @@ varias texturas por modelo.
 
 - Con la herramienta **Move** (V), los gestos de UV de arriba.
 - Con cualquier otra herramienta, el clic pinta; para mover UVs sin cambiar de herramienta se
-  mantiene **Alt** (el cursor cambia a mover sobre un contorno o asa).
+  mantiene **Alt** (el cursor cambia a mover sobre un contorno o vértice).
 
 ### 3.2 Pintar solo la cara elegida
 

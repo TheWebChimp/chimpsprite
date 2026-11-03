@@ -6339,14 +6339,41 @@ fn an_alt_press_left_hanging_by_a_mode_change_does_not_click_later() {
 }
 
 #[test]
-fn a_corner_handle_scales_the_uvs() {
+fn the_uv_box_has_no_scale_handles() {
     let mut h = with_the_front_face_chosen();
     h.app.doc.editor.set_tool(ToolKind::Move);
-    let off = vec2(1.0, 1.0) * crate::canvas::UV_HANDLE_OFFSET;
-    let (from, to) = (texel(&h, 16.0, 16.0) + off, texel(&h, 24.0, 32.0) + off);
-    h.drag(from, to);
-    let m = h.app.doc.editor.workspace_model().unwrap();
-    assert_eq!(cs_3d::uv_bounds(m, &[(0, 0)]), Some(((0, 0), (24, 32))));
+    let before = front_uvs(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    // Donde estaba el asa de la esquina de abajo a la derecha: ya no hay nada.
+    let off = vec2(4.5, 4.5);
+    h.drag(texel(&h, 16.0, 16.0) + off, texel(&h, 24.0, 32.0) + off);
+    assert_eq!(front_uvs(&h), before);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+}
+
+#[test]
+fn a_corner_vertex_is_a_free_point_with_a_bigger_grab_area() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Move);
+    let before = front_uvs(&h);
+    let k = before.iter().position(|&p| p == (16, 16)).unwrap();
+    let steps = h.app.doc.editor.history.done_count();
+    // Agarrado a 3 puntos del vértice (el punto de 5×5 llega ahí) y llevado a cualquier pixel.
+    h.drag(
+        texel(&h, 16.0, 16.0) + vec2(3.0, 3.0),
+        texel(&h, 19.0, 11.0) + vec2(3.0, 3.0),
+    );
+    let after = front_uvs(&h);
+    for (i, (a, b)) in after.iter().zip(&before).enumerate() {
+        if i == k {
+            assert_eq!(*a, (19, 11));
+        } else {
+            assert_eq!(a, b, "vertex {i}");
+        }
+    }
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(front_uvs(&h), before);
 }
 
 #[test]
