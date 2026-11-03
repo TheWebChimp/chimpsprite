@@ -1429,12 +1429,17 @@ impl ChimpApp {
             ui.set_clip_rect(ui.clip_rect().with_max_y(top));
         }
         // La barra de opciones, a todo el ancho debajo de las pestañas: 21 de alto con Pixel UI,
-        // con el separador grabado abajo.
-        panels::options_bar_panel(ui.style(), skin).show(ui, |ui| {
-            ui.add_enabled_ui(!modal, |ui| {
-                panels::tool_options_bar(ui, &mut self.doc.editor, skin)
+        // con el separador grabado abajo. En la pestaña de un modelo (ChimpCAD) no va: su alto
+        // es del área de abajo (la ventana del texto sigue, para pintar en la textura).
+        if self.doc.editor.model_edit_on() {
+            panels::text_window(ui.ctx(), &mut self.doc.editor, skin);
+        } else {
+            panels::options_bar_panel(ui.style(), skin).show(ui, |ui| {
+                ui.add_enabled_ui(!modal, |ui| {
+                    panels::tool_options_bar(ui, &mut self.doc.editor, skin)
+                });
             });
-        });
+        }
         // La toolbar antes que la línea de tiempo: va a todo el alto, hasta la barra de estado, y
         // la línea de tiempo empieza a su derecha.
         // Alrededor de los artboards: el color `canvas` del skin con Pixel UI.

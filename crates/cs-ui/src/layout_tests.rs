@@ -5,7 +5,7 @@ use cs_commands::Command;
 use cs_core::{LayerId, PixelValue, Rgba};
 use eframe::egui::{
     self, Event, PointerButton, Pos2, RawInput, Rect, TextureId, Vec2,
-    containers::panel::PanelState, vec2,
+    containers::panel::PanelState, pos2, vec2,
 };
 
 use crate::ChimpApp;
@@ -4076,12 +4076,15 @@ fn the_cad_workspace_fills_the_canvas_with_the_four_views() {
     assert!(h.app.doc.canvas.artboard_texture(plain).is_some());
     let canvas = h.canvas.expect("the workspace area");
     let quads = h.app.doc.canvas.model_edit_quadrants().expect("the views");
-    // Los cuatro cubren todo el área (sin reglas), partida a la mitad en puntos enteros.
+    // Los cuatro cubren todo el área debajo del encabezado (sin reglas), partida a la mitad en
+    // puntos enteros.
+    let header = h.app.doc.canvas.cad_header().expect("the header");
+    let views = Rect::from_min_max(pos2(canvas.left(), header.bottom() + 1.0), canvas.max);
     let all = quads.iter().fold(quads[0], |a, q| a.union(*q));
-    assert_eq!(all, canvas);
-    let mid = canvas.min + ((canvas.size() / 2.0).floor());
-    assert_eq!(quads[0], Rect::from_min_max(canvas.min, mid), "Front");
-    assert_eq!(quads[3], Rect::from_min_max(mid, canvas.max), "Side");
+    assert_eq!(all, views);
+    let mid = views.min + ((views.size() / 2.0).floor());
+    assert_eq!(quads[0], Rect::from_min_max(views.min, mid), "Front");
+    assert_eq!(quads[3], Rect::from_min_max(mid, views.max), "Side");
     // Ni la textura del modelo, ni otros artboards, ni barras de ventana.
     let ids: Vec<_> = h
         .app
@@ -4498,6 +4501,8 @@ fn model_panel_open(model: bool) -> LayoutHarness {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     if model {
         assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+        // En el workspace del modelo no hay barra de opciones: el dock sube en el frame que sigue.
+        h.frame();
     }
     h.click(h.button("3D").center(), PointerButton::Primary);
     h.frame();
@@ -4697,6 +4702,8 @@ fn model_panel_in(size: Vec2) -> LayoutHarness {
         cs_core::Sprite::new(16, 16, cs_core::ColorMode::Rgba)
     ));
     assert!(editor.new_model("Ship", (32, 32)));
+    // En el workspace del modelo no hay barra de opciones: el dock sube en el frame que sigue.
+    h.frame();
     h.click(h.button("3D").center(), PointerButton::Primary);
     h.frame();
     h
@@ -5945,8 +5952,10 @@ fn texture_mode_splits_the_area_top_and_bottom_left_of_the_panel() {
     let mut h = with_a_model_in_texture_mode();
     let canvas = h.canvas.expect("the workspace area");
     let (top, bottom) = h.app.doc.canvas.texture_panes().expect("the two panes");
-    assert_eq!(top.min, canvas.min);
-    assert_eq!(top.height(), (canvas.height() / 2.0).floor());
+    // Debajo del encabezado y de su línea.
+    let header = h.app.doc.canvas.cad_header().expect("the header");
+    assert_eq!(top.min, pos2(canvas.left(), header.bottom() + 1.0));
+    assert_eq!(top.height(), ((canvas.bottom() - top.top()) / 2.0).floor());
     assert_eq!(bottom.top(), top.bottom() + 1.0, "a 1 point line");
     assert_eq!(bottom.bottom(), canvas.bottom());
     assert_eq!(top.right(), canvas.right());
@@ -6139,6 +6148,105 @@ fn texture_mode_without_a_texture_offers_a_new_one() {
     assert_eq!(e.active, texture, "and it is painted on");
 }
 
+const PERSP_QUAD: usize = 1;
+
+/// Lo que cambia la pestaña del modelo en la ventana (con Pixel UI): sin la barra de opciones
+/// de herramienta, el lienzo empieza donde empezaba ella.
+#[test]
+fn the_model_tab_has_no_tool_options_bar_and_the_canvas_takes_its_height() {
+    let doc = LayoutHarness::new(pixel_ui(), true);
+    let bar = |h: &LayoutHarness| h.texts.iter().any(|(t, _)| t == "Brush Size");
+    assert!(bar(&doc), "the bar on the canvas tab: {:?}", doc.texts);
+    let options = doc.panel("tool_options");
+    let doc_canvas = doc.canvas.expect("the canvas");
+    let mut h = with_a_model_at_800();
+    assert!(!bar(&h), "no bar in the model tab");
+    let canvas = h.canvas.expect("the workspace area");
+    // (Abajo cambia aparte: el workspace no tiene línea de tiempo.)
+    assert_eq!(canvas.top(), doc_canvas.top() - options.height());
+    assert_eq!(canvas.x_range(), doc_canvas.x_range());
+    // Ni en modo Texture.
+    h.app
+        .doc
+        .editor
+        .set_cad_mode(crate::editor::CadMode::Texture);
+    h.frame();
+    h.frame();
+    assert!(!bar(&h), "no bar in Texture either");
+    assert_eq!(h.canvas, Some(canvas));
+}
+
+/// El encabezado de ChimpCAD (boceto a 1×): una franja de 24 filas arriba del área, de lado a
+/// lado, con el logo a (3, 2) y los botones Model | Texture a 3 de arriba y 4 de la derecha; una
+/// línea oscura y, debajo, las vistas.
+#[test]
+fn the_chimpcad_header_has_the_logo_and_the_mode_buttons_over_the_views() {
+    let mut h = with_a_model_at_800();
+    let canvas = h.canvas.expect("the workspace area");
+    let header = h.app.doc.canvas.cad_header().expect("the header");
+    assert_eq!(header.min, canvas.min);
+    assert_eq!(header.right(), canvas.right());
+    assert_eq!(header.height(), 24.0);
+    let logo = h.drawn("logo.chimpcad");
+    assert_eq!(
+        logo,
+        vec![Rect::from_min_size(
+            header.min + vec2(3.0, 2.0),
+            vec2(94.0, 20.0)
+        )]
+    );
+    let (model, texture) = (node(&h, "Model"), node(&h, "Texture"));
+    assert_eq!(model.top(), header.top() + 3.0, "{model:?} in {header:?}");
+    assert_eq!(texture.right(), header.right() - 4.0, "{texture:?}");
+    assert!(header.contains_rect(model) && header.contains_rect(texture));
+    // La línea oscura de abajo, de lado a lado.
+    let line = Rect::from_x_y_ranges(header.x_range(), header.bottom()..=header.bottom() + 1.0);
+    let border = crate::pixel_ui::control_border(&h.ctx);
+    let rects = h.colored_rects();
+    assert!(rects.contains(&(border, line)), "the line under the header");
+    // El bisel: arriba, el brillo blanco del boceto (el de los paneles).
+    let top = Rect::from_x_y_ranges(header.x_range(), header.top()..=header.top() + 1.0);
+    let white = h.app.pixel.skin().unwrap().colors().menu_highlight;
+    assert!(rects.contains(&(white, top)), "the bevel on top");
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    assert_eq!(quads[0].top(), line.bottom(), "the views start below");
+    // En modo Texture, igual: el render empieza debajo.
+    h.click(texture.center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(h.app.doc.canvas.cad_header(), Some(header));
+    assert_eq!(h.drawn("logo.chimpcad").len(), 1);
+    let (top, _) = h.app.doc.canvas.texture_panes().unwrap();
+    assert_eq!(top.top(), line.bottom());
+    assert!(!top.intersects(node(&h, "Model")));
+    // En el lienzo no hay encabezado.
+    let doc = LayoutHarness::new(pixel_ui(), true);
+    assert_eq!(doc.app.doc.canvas.cad_header(), None);
+    assert!(doc.drawn("logo.chimpcad").is_empty());
+}
+
+/// Sin Pixel UI, el encabezado dice "ChimpCAD" en texto.
+#[test]
+fn without_pixel_ui_the_chimpcad_header_says_its_name() {
+    let mut h = LayoutHarness::new(plain(), true);
+    assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+    let id = h.app.doc.editor.workspace().expect("the workspace");
+    h.app.tabs.open_view(&mut h.app.doc, id);
+    h.frame();
+    h.frame();
+    let header = h.app.doc.canvas.cad_header().expect("the header");
+    assert!(
+        h.texts
+            .iter()
+            .any(|(t, p)| t == "ChimpCAD" && header.contains(*p)),
+        "{:?}",
+        h.texts
+    );
+    let model = node(&h, "Model");
+    assert!(header.contains_rect(model), "{model:?} in {header:?}");
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    assert!(quads[0].top() > header.bottom());
+}
+
 #[test]
 fn the_mode_buttons_do_not_touch_the_face_selection_below() {
     let mut h = with_a_model_in_texture_mode();
@@ -6169,7 +6277,12 @@ fn the_mode_buttons_do_not_touch_the_object_in_persp() {
     h.frame();
     let model = node(&h, "Model");
     let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
-    assert!(quads[1].contains(model.center()), "over Persp");
+    // En el encabezado, arriba de Persp: no sobre ella.
+    assert!(
+        quads.iter().all(|q| !q.intersects(model)),
+        "not over the views"
+    );
+    assert!(model.bottom() <= quads[PERSP_QUAD].top());
     h.click(model.center(), PointerButton::Primary);
     let e = &h.app.doc.editor;
     assert_eq!(e.cad_mode(), crate::editor::CadMode::Model);

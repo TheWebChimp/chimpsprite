@@ -8,7 +8,8 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 
 use cs_3d::{Handle, Item, OrthoView, SelectMode, ViewMap};
 use cs_core::Document;
-use eframe::egui::{pos2, vec2};
+use eframe::egui::{Shape, pos2, vec2};
+use eframe::emath::GuiRounding as _;
 
 use super::*;
 use crate::editor::{CadMode, EditOp, KeyOp};
@@ -85,12 +86,12 @@ impl CanvasView {
         editor: &mut Editor,
         modal: bool,
     ) {
-        let area = workspace_area(ui, rect);
+        let (header, views) = header_split(workspace_area(ui, rect));
         self.texture_panes = None;
-        self.mode_rect = Some(mode_buttons_rect(ui, area));
-        // Los cuadrantes salen del área, así que ya valen para la entrada de este frame (también
-        // en el primero del workspace).
-        let quads = quadrants(area);
+        self.header_rect = Some(header);
+        // Los cuadrantes salen del área debajo del encabezado, así que ya valen para la entrada
+        // de este frame (también en el primero del workspace).
+        let quads = quadrants(views);
         self.edit_quads = Some(quads);
         // El zoom del lienzo no aplica aquí.
         self.pending_zoom = None;
@@ -104,7 +105,7 @@ impl CanvasView {
         let view = editor.view();
         self.draw_model_edit(ui, &painter, quads, editor, view.document.as_ref());
         drop(view);
-        mode_buttons(ui, area, editor);
+        cad_header(ui, header, editor);
     }
 
     /// La entrada del workspace: Ctrl + rueda (zoom de las vistas orto o distancia de la cámara
@@ -188,7 +189,7 @@ impl CanvasView {
             && response.hovered()
             && (!busy || (keyboard_op && self.model_drag.is_none()))
             && let Some(p) = pointer
-            && !self.mode_rect.is_some_and(|r| r.contains(p))
+            && !self.header_rect.is_some_and(|r| r.contains(p))
         {
             self.model_edit_press(editor, p, secondary, middle, modifiers);
         }
@@ -437,6 +438,12 @@ impl CanvasView {
     #[cfg(test)]
     pub(crate) fn texture_panes(&self) -> Option<(Rect, Rect)> {
         self.texture_panes
+    }
+
+    /// La franja del encabezado de ChimpCAD (en el workspace de un modelo).
+    #[cfg(test)]
+    pub(crate) fn cad_header(&self) -> Option<Rect> {
+        self.header_rect
     }
 
     #[cfg(test)]
@@ -708,8 +715,72 @@ pub(super) fn model_sprite(editor: &Editor) -> &cs_core::Sprite {
         .map_or_else(|| editor.sprite(), |a| &a.sprite)
 }
 
-/// Aire entre los botones Model / Texture y la esquina de arriba a la derecha del área.
-const MODE_AIR: f32 = 3.0;
+/// Alto del encabezado de ChimpCAD, como en el boceto (a 1×): 24 filas con el bisel y los botones
+/// del kit (de 17) a `MODE_TOP` del borde. Debajo, una línea oscura de 1 y luego las vistas.
+pub(crate) const HEADER_HEIGHT: f32 = 24.0;
+/// Dónde va el logo en el encabezado (su esquina, desde la del encabezado).
+const LOGO_AT: Vec2 = vec2(3.0, 2.0);
+/// Aire de los botones Model / Texture: desde arriba y desde la derecha del encabezado.
+const MODE_TOP: f32 = 3.0;
+const MODE_RIGHT: f32 = 4.0;
+
+/// El área del workspace partida: arriba el encabezado (`HEADER_HEIGHT`) y, después de su línea
+/// de 1, las vistas.
+pub(super) fn header_split(area: Rect) -> (Rect, Rect) {
+    let bottom = (area.top() + HEADER_HEIGHT).min(area.bottom());
+    let header = Rect::from_min_max(area.min, pos2(area.right(), bottom));
+    let views = Rect::from_min_max(
+        pos2(area.left(), (bottom + 1.0).min(area.bottom())),
+        area.max,
+    );
+    (header, views)
+}
+
+/// El encabezado de ChimpCAD en `header`: la franja con su bisel y la línea oscura de abajo, el
+/// logo a la izquierda (la pieza `logo.chimpcad`; sin ella, el nombre en texto) y los botones
+/// Model / Texture a la derecha.
+pub(super) fn cad_header(ui: &mut egui::Ui, header: Rect, editor: &mut Editor) {
+    let ppp = ui.ctx().pixels_per_point();
+    let line = Rect::from_x_y_ranges(header.x_range(), header.bottom()..=header.bottom() + 1.0);
+    let painter = ui.painter().with_clip_rect(header.union(line));
+    let skin = crate::pixel_ui::frame_skin(ui.ctx());
+    let mut mesh = egui::epaint::Mesh::default();
+    let mut fill = |r: Rect, color: Color32| mesh.add_colored_rect(r.round_to_pixels(ppp), color);
+    match &skin {
+        // El bisel del boceto: el brillo blanco de los paneles arriba y a la derecha, la sombra
+        // (el fondo de la app) a la izquierda y abajo.
+        Some(skin) => {
+            let c = skin.colors();
+            let (l, t, r, b) = (header.left(), header.top(), header.right(), header.bottom());
+            let span = |x0, y0, x1, y1| Rect::from_min_max(pos2(x0, y0), pos2(x1, y1));
+            fill(header, c.panel);
+            fill(span(l, t, r, t + 1.0), c.menu_highlight);
+            fill(span(r - 1.0, t, r, b - 1.0), c.menu_highlight);
+            fill(span(l, t + 1.0, l + 1.0, b), c.background);
+            fill(span(l, b - 1.0, r, b), c.background);
+        }
+        None => fill(header, ui.visuals().panel_fill),
+    }
+    fill(line, crate::pixel_ui::control_border(ui.ctx()));
+    painter.add(Shape::mesh(mesh));
+    let logo = skin.as_ref().and_then(|s| {
+        s.piece("logo.chimpcad", crate::skin::WidgetState::Normal)
+            .map(|_| crate::pixel_draw::piece_at(s, "logo.chimpcad", header.min + LOGO_AT, ppp))
+    });
+    match logo {
+        Some(shapes) => painter.extend(shapes),
+        None => {
+            painter.text(
+                pos2(header.left() + 2.0 * LOGO_AT.x, header.center().y).round(),
+                egui::Align2::LEFT_CENTER,
+                "ChimpCAD",
+                egui::TextStyle::Button.resolve(ui.style()),
+                ui.visuals().strong_text_color(),
+            );
+        }
+    }
+    mode_buttons(ui, header, editor);
+}
 
 /// Las opciones del grupo de los modos.
 fn mode_items() -> [crate::kit::group::GroupItem<'static>; 2] {
@@ -717,9 +788,8 @@ fn mode_items() -> [crate::kit::group::GroupItem<'static>; 2] {
     [GroupItem::text("Model"), GroupItem::text("Texture")]
 }
 
-/// Dónde van los botones Model / Texture en `area` (arriba a la derecha). Los gestos de las
-/// vistas de debajo no empiezan ahí: el clic es de los botones.
-pub(super) fn mode_buttons_rect(ui: &egui::Ui, area: Rect) -> Rect {
+/// Dónde van los botones Model / Texture en el encabezado `header` (a la derecha).
+fn mode_buttons_rect(ui: &egui::Ui, header: Rect) -> Rect {
     let size = match crate::pixel_ui::frame_skin(ui.ctx()) {
         Some(_) => vec2(
             crate::kit::group::width(ui, &mode_items()),
@@ -727,19 +797,23 @@ pub(super) fn mode_buttons_rect(ui: &egui::Ui, area: Rect) -> Rect {
         ),
         None => vec2(120.0, 20.0),
     };
-    let at = pos2(area.right() - MODE_AIR - size.x, area.top() + MODE_AIR).round();
+    let at = pos2(
+        header.right() - MODE_RIGHT - size.x,
+        header.top() + MODE_TOP,
+    )
+    .round();
     Rect::from_min_size(at, size)
 }
 
-/// Los botones **Model** y **Texture** (un grupo del kit; el del modo actual, presionado)
-/// arriba a la derecha de `area`, en los dos modos. Un clic cambia de modo.
-pub(super) fn mode_buttons(ui: &mut egui::Ui, area: Rect, editor: &mut Editor) {
+/// Los botones **Model** y **Texture** (un grupo del kit; el del modo actual, presionado) a la
+/// derecha del encabezado `header`, en los dos modos. Un clic cambia de modo.
+fn mode_buttons(ui: &mut egui::Ui, header: Rect, editor: &mut Editor) {
     use crate::kit::group;
     let items = mode_items();
     let modes = [CadMode::Model, CadMode::Texture];
     let current = editor.cad_mode();
     let id = egui::Id::new("cad_mode_buttons");
-    let rect = mode_buttons_rect(ui, area);
+    let rect = mode_buttons_rect(ui, header);
     let chosen = match crate::pixel_ui::frame_skin(ui.ctx()) {
         Some(skin) => {
             let painter = ui.painter().clone();
