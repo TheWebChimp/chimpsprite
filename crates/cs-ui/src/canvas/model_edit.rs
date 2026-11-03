@@ -6,13 +6,13 @@
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use cs_3d::{Handle, Item, OrthoView, SelectMode, ViewMap};
+use cs_3d::{GizmoKind, GizmoPart, Handle, HandleGeom, Item, OrthoView, SelectMode, ViewMap};
 use cs_core::Document;
 use eframe::egui::{Shape, pos2, vec2};
 use eframe::emath::GuiRounding as _;
 
 use super::*;
-use crate::editor::{CadMode, EditOp, KeyOp};
+use crate::editor::{CadMode, EditOp, GIZMO_PX, Gizmo, KeyOp};
 
 pub(crate) const FRONT: usize = 0;
 pub(crate) const PERSP: usize = 1;
@@ -30,6 +30,14 @@ const GRID_LINE: Color32 = Color32::from_rgba_premultiplied(0x10, 0x10, 0x20, 0x
 const SELECTED: Color32 = Color32::from_rgb(0xff, 0xec, 0x27);
 const GUIDE: Color32 = Color32::from_rgb(0x5f, 0x57, 0x4f);
 const SEPARATOR: Color32 = Color32::from_rgb(0x1d, 0x2b, 0x53);
+/// Los colores de los ejes del gizmo (como Blender, en la paleta de PICO-8): X rojo, Y verde y Z
+/// azul; el centro, blanco. El asa bajo el puntero o en uso va en [`SELECTED`].
+const AXIS_COLORS: [Color32; 3] = [
+    Color32::from_rgb(0xff, 0x00, 0x4d),
+    Color32::from_rgb(0x00, 0xe4, 0x36),
+    Color32::from_rgb(0x29, 0xad, 0xff),
+];
+const GIZMO_CENTER: Color32 = Color32::from_rgb(0xff, 0xf1, 0xe8);
 /// Lado de los cuadritos de los vértices y de las asas, en puntos.
 const VERTEX_PX: f32 = 3.0;
 pub(crate) const HANDLE_PX: f32 = 5.0;
@@ -177,6 +185,10 @@ impl CanvasView {
                 i.modifiers,
             )
         });
+        // El derecho durante un arrastre del gizmo lo cancela.
+        if secondary && matches!(editor.model_edit().op, Some(EditOp::Gizmo { .. })) {
+            editor.cancel_model_op();
+        }
         // Con un arrastre en curso, el otro botón no empieza nada. Un gesto de teclado (G o S)
         // espera un clic: confirma con el izquierdo, cancela con el derecho.
         let busy = self.model_drag.is_some() || editor.model_edit().op.is_some();
@@ -195,6 +207,19 @@ impl CanvasView {
         }
         self.model_drag_input(editor, pointer, any_down);
         self.model_edit_input(editor, pointer, edit_down, modifiers);
+        // El asa del gizmo bajo el puntero (sin gesto en curso), para resaltarla.
+        self.gizmo_hover = None;
+        if editor.model_edit().op.is_none()
+            && self.model_drag.is_none()
+            && !modal
+            && let Some(p) = response.hover_pos()
+            && !self.header_rect.is_some_and(|r| r.contains(p))
+            && let Some(view) = self.quadrant_at(p).and_then(quadrant_view)
+            && let Some(map) = self.edit_view_map(editor, view)
+            && let Some((part, _)) = gizmo_at(editor, &map, (p.x, p.y))
+        {
+            self.gizmo_hover = Some((view, part));
+        }
     }
 
     /// Dónde va el render de la perspectiva en el cuadrante `q` (a la resolución del artboard,
@@ -267,6 +292,18 @@ impl CanvasView {
                 map,
                 from: at,
                 center: editor.model_edit().center,
+            });
+            return true;
+        }
+        // El gizmo gana sobre elegir, las asas y la caja de selección.
+        if let Some((part, center)) = gizmo_at(editor, &map, at) {
+            editor.start_model_op(EditOp::Gizmo {
+                map,
+                part,
+                from: at,
+                center,
+                last: at,
+                turned: 0.0,
             });
             return true;
         }
@@ -511,7 +548,16 @@ impl CanvasView {
         let bounds = cs_3d::bounds(model, sel);
         let face_edges = selected_face_edges(model, sel);
         let grid = editor.model_edit().grid;
+        let gizmo = editor.shown_gizmo();
+        // El asa en uso se resalta en las tres vistas; la de debajo del puntero, en la suya.
+        let active = match editor.model_edit().op {
+            Some(EditOp::Gizmo { part, .. }) => Some(part),
+            _ => None,
+        };
         for (k, view) in OrthoView::ALL.into_iter().enumerate() {
+            let gizmo_hot = active.or(self
+                .gizmo_hover
+                .and_then(|(v, part)| (v == view).then_some(part)));
             let q = quads[quadrant_index(view)];
             let Some(map) = self.edit_view_map(editor, view) else {
                 continue;
@@ -525,7 +571,7 @@ impl CanvasView {
             }
             let boxed = box_ends(editor, view);
             let mut hasher = DefaultHasher::new();
-            (model, sel, grid, view, w, h).hash(&mut hasher);
+            (model, sel, grid, view, w, h, gizmo, gizmo_hot).hash(&mut hasher);
             [
                 min.x,
                 min.y,
@@ -555,6 +601,8 @@ impl CanvasView {
                     bounds,
                     face_edges: &face_edges,
                     boxed,
+                    gizmo,
+                    gizmo_hot,
                 }
                 .image(w, h);
                 let pixels = img
@@ -723,6 +771,8 @@ const LOGO_AT: Vec2 = vec2(3.0, 2.0);
 /// Aire de los botones Model / Texture: desde arriba y desde la derecha del encabezado.
 const MODE_TOP: f32 = 3.0;
 const MODE_RIGHT: f32 = 4.0;
+/// Entre los botones de los gizmos y los de Model / Texture.
+const GIZMO_GAP: f32 = 4.0;
 
 /// El área del workspace partida: arriba el encabezado (`HEADER_HEIGHT`) y, después de su línea
 /// de 1, las vistas.
@@ -779,7 +829,68 @@ pub(super) fn cad_header(ui: &mut egui::Ui, header: Rect, editor: &mut Editor) {
             );
         }
     }
+    // Los gizmos, solo en modo Model (antes de cambiar de modo con el otro grupo).
+    if editor.cad_mode() == CadMode::Model {
+        gizmo_buttons(ui, header, editor);
+    }
     mode_buttons(ui, header, editor);
+}
+
+/// Las opciones del grupo de los gizmos.
+fn gizmo_items() -> [crate::kit::group::GroupItem<'static>; 3] {
+    use crate::kit::group::GroupItem;
+    [
+        GroupItem::text("Move"),
+        GroupItem::text("Rotate"),
+        GroupItem::text("Scale"),
+    ]
+}
+
+/// Los botones **Move**, **Rotate** y **Scale** (un grupo del kit; el del gizmo actual,
+/// presionado) a la izquierda de Model / Texture. Un clic elige ese gizmo; en el activo, lo
+/// apaga.
+fn gizmo_buttons(ui: &mut egui::Ui, header: Rect, editor: &mut Editor) {
+    use crate::kit::group;
+    let items = gizmo_items();
+    let gizmos = [Gizmo::Move, Gizmo::Rotate, Gizmo::Scale];
+    let current = editor.model_edit().gizmo;
+    let id = egui::Id::new("cad_gizmo_buttons");
+    let modes = mode_buttons_rect(ui, header);
+    let chosen = match crate::pixel_ui::frame_skin(ui.ctx()) {
+        Some(skin) => {
+            let width = group::width(ui, &items);
+            let at = pos2(modes.left() - GIZMO_GAP - width, modes.top()).round();
+            let painter = ui.painter().clone();
+            let active = |i: usize| gizmos[i] == current;
+            group::button_group_at(ui, &skin, &painter, id, at, &items, &active)
+        }
+        // Sin Pixel UI, tres botones de texto de egui que se pueden elegir.
+        None => {
+            let mut chosen = None;
+            let rect = Rect::from_min_size(
+                pos2(modes.left() - GIZMO_GAP - 160.0, modes.top()),
+                vec2(160.0, modes.height()),
+            );
+            let builder = egui::UiBuilder::new()
+                .id_salt(id)
+                .max_rect(rect)
+                .layout(egui::Layout::right_to_left(egui::Align::Center));
+            ui.scope_builder(builder, |ui| {
+                for (i, item) in items.iter().enumerate().rev() {
+                    if ui
+                        .selectable_label(gizmos[i] == current, item.label)
+                        .clicked()
+                    {
+                        chosen = Some(i);
+                    }
+                }
+            });
+            chosen
+        }
+    };
+    if let Some(i) = chosen {
+        editor.toggle_gizmo(gizmos[i]);
+    }
 }
 
 /// Las opciones del grupo de los modos.
@@ -909,6 +1020,9 @@ struct OrthoScene<'a> {
     bounds: Option<(cs_3d::P3, cs_3d::P3)>,
     face_edges: &'a HashSet<(usize, u32, u32)>,
     boxed: Option<((f32, f32), (f32, f32))>,
+    /// El gizmo en el centro de la caja de la selección (`None`: ninguno) y su asa resaltada.
+    gizmo: Option<GizmoKind>,
+    gizmo_hot: Option<GizmoPart>,
 }
 
 /// El color como pixel de la imagen.
@@ -928,7 +1042,7 @@ impl OrthoScene<'_> {
 
     /// La imagen de `w × h`: el fondo, la cuadrícula, la cruz punteada por el centro de la
     /// selección, las aristas (las elegidas encima), los cuadritos de los vértices o de las
-    /// caras, las asas y la caja de selección en curso.
+    /// caras, las asas, el gizmo y la caja de selección en curso.
     fn image(&self, w: usize, h: usize) -> cs_3d::WireImage {
         let mut img = cs_3d::WireImage::new(w, h, rgba(ORTHO_BG));
         self.grid_lines(&mut img);
@@ -940,6 +1054,7 @@ impl OrthoScene<'_> {
         }
         self.wireframe(&mut img);
         self.handles(&mut img);
+        self.gizmo(&mut img);
         if let Some((a, b)) = self.boxed {
             let ((x0, y0), (x1, y1)) = (self.px(a), self.px(b));
             img.rect_outline(x0, y0, x1, y1, rgba(SELECTED));
@@ -1065,6 +1180,117 @@ impl OrthoScene<'_> {
             img.fill_rect(x - side / 2, y - side / 2, side, side, rgba(SELECTED));
         }
     }
+
+    /// El gizmo, en pixeles de 1: las flechas (asta y punta llena), los aros (polígonos de sus
+    /// puntos), los ejes de escala con su cubito y, encima, el cuadrito o cubito del centro. Cada
+    /// asa en el color de su eje; la resaltada, en amarillo.
+    fn gizmo(&self, img: &mut cs_3d::WireImage) {
+        let (Some(kind), Some(b)) = (self.gizmo, self.bounds) else {
+            return;
+        };
+        let shape = ortho_gizmo(kind, self.map, cs_3d::center(b));
+        let px = |p: cs_3d::P3| self.px(self.map.to_screen(p));
+        let half = cs_3d::GIZMO_BOX as i32;
+        let side = 2 * half + 1;
+        // Primero las asas de los ejes; los cuadritos del centro, al final (encima).
+        let (boxes, axes): (Vec<_>, Vec<_>) = shape
+            .handles
+            .iter()
+            .partition(|h| matches!(h.geom, HandleGeom::Box(_)));
+        for h in axes.into_iter().chain(boxes) {
+            let color = rgba(match h.part {
+                part if Some(part) == self.gizmo_hot => SELECTED,
+                GizmoPart::Axis(a) | GizmoPart::Ring(a) | GizmoPart::ScaleAxis(a) => AXIS_COLORS[a],
+                GizmoPart::Plane | GizmoPart::ScaleUniform => GIZMO_CENTER,
+            });
+            match &h.geom {
+                HandleGeom::Arrow { from, tip, base } => {
+                    let ((x0, y0), t) = (px(*from), px(*tip));
+                    img.line(x0, y0, t.0, t.1, color);
+                    // La punta: el triángulo de la punta a la base, con el punto de la base que
+                    // más se aleja del asta en pantalla (los de profundidad caen sobre ella),
+                    // pareja a los dos lados en pixeles enteros.
+                    let k = base.len() as f32;
+                    let mid: cs_3d::P3 =
+                        std::array::from_fn(|i| base.iter().map(|p| p[i]).sum::<f32>() / k);
+                    let sm = self.map.to_screen(mid);
+                    let (dx, dy) = base
+                        .iter()
+                        .map(|&p| {
+                            let s = self.map.to_screen(p);
+                            (s.0 - sm.0, s.1 - sm.1)
+                        })
+                        .max_by(|a, b| a.0.hypot(a.1).total_cmp(&b.0.hypot(b.1)))
+                        .map_or((0, 0), |(dx, dy)| (dx.round() as i32, dy.round() as i32));
+                    let m = px(mid);
+                    let (e0, e1) = ((m.0 + dx, m.1 + dy), (m.0 - dx, m.1 - dy));
+                    fill_triangle(img, t, e0, e1, color);
+                }
+                HandleGeom::Ring(pts) => {
+                    let s: Vec<(i32, i32)> = pts.iter().map(|&p| px(p)).collect();
+                    for i in 0..s.len() {
+                        let (a, b) = (s[i], s[(i + 1) % s.len()]);
+                        img.line(a.0, a.1, b.0, b.1, color);
+                    }
+                }
+                HandleGeom::Stick { from, tip } => {
+                    let ((x0, y0), (x1, y1)) = (px(*from), px(*tip));
+                    img.line(x0, y0, x1, y1, color);
+                    img.fill_rect(x1 - half, y1 - half, side, side, color);
+                }
+                HandleGeom::Box(p) => {
+                    let (x, y) = px(*p);
+                    if h.part == GizmoPart::ScaleUniform {
+                        img.fill_rect(x - half, y - half, side, side, color);
+                    } else {
+                        img.rect_outline(x - half, y - half, x + half, y + half, color);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// Un triángulo lleno de `a` a la base `b`–`c`: una línea de `a` a cada pixel de la base.
+fn fill_triangle(
+    img: &mut cs_3d::WireImage,
+    a: (i32, i32),
+    b: (i32, i32),
+    c: (i32, i32),
+    color: cs_3d::Rgba,
+) {
+    let n = (c.0 - b.0).abs().max((c.1 - b.1).abs()).max(1);
+    for i in 0..=n {
+        let lerp = |p: i32, q: i32| p + ((q - p) as f32 * i as f32 / n as f32).round() as i32;
+        img.line(a.0, a.1, lerp(b.0, c.0), lerp(b.1, c.1), color);
+    }
+}
+
+/// El gizmo `kind` en `center` como se ve en la vista orto de `map`, de [`GIZMO_PX`] puntos:
+/// Move y Scale con los dos ejes del plano de la vista; Rotate, solo con el aro del eje de
+/// profundidad (el que gira en ese plano).
+fn ortho_gizmo(kind: GizmoKind, map: &ViewMap, center: cs_3d::P3) -> cs_3d::GizmoShape {
+    let (u, v) = map.view.axes();
+    let mut axes = [false; 3];
+    match kind {
+        GizmoKind::Rotate => axes[3 - u - v] = true,
+        _ => {
+            axes[u] = true;
+            axes[v] = true;
+        }
+    }
+    cs_3d::gizmo_shape(kind, center, GIZMO_PX / map.scale, axes)
+}
+
+/// El asa del gizmo bajo `at` (en pantalla) en la vista de `map`, si se ve un gizmo, y el centro
+/// del gizmo (el de la caja de lo elegido).
+fn gizmo_at(editor: &Editor, map: &ViewMap, at: (f32, f32)) -> Option<(GizmoPart, cs_3d::P3)> {
+    let kind = editor.shown_gizmo()?;
+    let model = editor.edited_model()?;
+    let center = cs_3d::center(cs_3d::bounds(model, &editor.model_edit().selection)?);
+    ortho_gizmo(kind, map, center)
+        .hit(|p| map.to_screen(p), at, cs_3d::PICK_RADIUS)
+        .map(|part| (part, center))
 }
 
 /// `top` (premultiplicado, con transparencia) encima del color opaco `bg`.
@@ -1145,6 +1371,8 @@ mod tests {
             bounds: cs_3d::bounds(model, sel),
             face_edges: &selected_face_edges(model, sel),
             boxed,
+            gizmo: None,
+            gizmo_hot: None,
         }
         .image(100, 100)
     }
@@ -1229,6 +1457,72 @@ mod tests {
         }
         assert_ne!(at(&img, 15, 15), SELECTED);
         assert_ne!(at(&img, 21, 21), SELECTED);
+    }
+
+    /// El cubo elegido entero con el gizmo `kind` (`hot`: el asa resaltada).
+    fn render_gizmo(kind: cs_3d::GizmoKind, hot: Option<cs_3d::GizmoPart>) -> cs_3d::WireImage {
+        let m = cube();
+        let sel = cs_3d::Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0)].into(),
+        };
+        OrthoScene {
+            map: &MAP,
+            min: (0.0, 0.0),
+            grid: 1,
+            model: &m,
+            sel: &sel,
+            bounds: cs_3d::bounds(&m, &sel),
+            face_edges: &selected_face_edges(&m, &sel),
+            boxed: None,
+            gizmo: Some(kind),
+            gizmo_hot: hot,
+        }
+        .image(100, 100)
+    }
+
+    #[test]
+    fn the_gizmo_is_pixel_art_in_the_axis_colors() {
+        use cs_3d::{GizmoKind, GizmoPart};
+        let r = crate::editor::GIZMO_PX as i32;
+        // Move en Front: la flecha X a la derecha (roja), la Y arriba (verde) y el cuadrito del
+        // centro; ni Z ni nada hacia abajo.
+        let img = render_gizmo(GizmoKind::Move, None);
+        assert_eq!(at(&img, 60, 50), AXIS_COLORS[0]);
+        assert_eq!(at(&img, 50 + r, 50), AXIS_COLORS[0], "the tip");
+        assert_eq!(at(&img, 50, 40), AXIS_COLORS[1]);
+        assert_eq!(at(&img, 50, 50 - r), AXIS_COLORS[1]);
+        assert_ne!(at(&img, 50, 60), AXIS_COLORS[1]);
+        assert_ne!(at(&img, 40, 50), AXIS_COLORS[0]);
+        // La punta de la flecha es más ancha que el asta.
+        assert_eq!(at(&img, 50 + r - 6, 51), AXIS_COLORS[0]);
+        assert_eq!(at(&img, 50 + r - 6, 49), AXIS_COLORS[0]);
+        assert_eq!(at(&img, 50 + r - 8, 53), AXIS_COLORS[0], "the base");
+        assert_eq!(at(&img, 50 + r - 8, 47), AXIS_COLORS[0], "the base");
+        assert_eq!(at(&img, 60, 51), ORTHO_BG);
+        assert_eq!(at(&img, 52, 48), GIZMO_CENTER, "the square");
+        assert!(img.pixels.iter().all(|c| *c != rgba(AXIS_COLORS[2])));
+        // La flecha bajo el puntero, amarilla.
+        let img = render_gizmo(GizmoKind::Move, Some(GizmoPart::Axis(0)));
+        assert_eq!(at(&img, 60, 50), SELECTED);
+        assert_eq!(at(&img, 50, 40), AXIS_COLORS[1]);
+        // Rotate: solo el aro de Z, un círculo azul alrededor del centro.
+        let img = render_gizmo(GizmoKind::Rotate, None);
+        assert_eq!(at(&img, 50 + r, 50), AXIS_COLORS[2]);
+        assert_eq!(at(&img, 50, 50 - r), AXIS_COLORS[2]);
+        assert_eq!(at(&img, 50 - r, 50), AXIS_COLORS[2]);
+        assert_ne!(at(&img, 60, 50), AXIS_COLORS[2]);
+        assert!(
+            img.pixels
+                .iter()
+                .all(|c| *c != rgba(AXIS_COLORS[0]) && *c != rgba(AXIS_COLORS[1]))
+        );
+        // Scale: un cubito lleno en la punta de cada eje y otro en el centro.
+        let img = render_gizmo(GizmoKind::Scale, None);
+        assert_eq!(at(&img, 50 + r + 2, 52), AXIS_COLORS[0]);
+        assert_eq!(at(&img, 48, 50 - r - 2), AXIS_COLORS[1]);
+        assert_eq!(at(&img, 50, 50), GIZMO_CENTER);
+        assert_eq!(at(&img, 60, 50), AXIS_COLORS[0]);
     }
 
     #[test]

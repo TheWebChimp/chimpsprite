@@ -3,7 +3,7 @@
 //! cuadrícula y los gestos de mover y escalar. Durante un gesto solo cambia la vista previa; al
 //! terminar es un paso de undo.
 
-use cs_3d::{Handle, OrthoView, P3, SelectMode, Selection, ViewMap};
+use cs_3d::{GizmoKind, GizmoPart, Handle, OrthoView, P3, SelectMode, Selection, ViewMap};
 use cs_core::{ArtboardId, Model3D};
 
 use super::Editor;
@@ -19,6 +19,32 @@ const ZOOM_MAX: f32 = 64.0;
 /// Cuánto (en puntos) hay que mover el puntero para que un arrastre con el mouse empiece a mover
 /// o escalar: un clic sin arrastre no toca el modelo.
 pub const DRAG_THRESHOLD: f32 = 3.0;
+/// El tamaño del gizmo en pantalla (en puntos; no cambia con el zoom): el largo de sus ejes y el
+/// radio de sus aros.
+pub const GIZMO_PX: f32 = 32.0;
+/// Los pasos del aro del gizmo, en grados (con Ctrl, de 1°).
+const ROTATE_STEP: f32 = 15.0;
+
+/// El gizmo de las vistas (como Blender): uno a la vez, o ninguno.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Gizmo {
+    None,
+    #[default]
+    Move,
+    Rotate,
+    Scale,
+}
+
+impl Gizmo {
+    pub fn kind(self) -> Option<GizmoKind> {
+        match self {
+            Gizmo::None => None,
+            Gizmo::Move => Some(GizmoKind::Move),
+            Gizmo::Rotate => Some(GizmoKind::Rotate),
+            Gizmo::Scale => Some(GizmoKind::Scale),
+        }
+    }
+}
 
 /// Lo que pidió el teclado y empieza el lienzo (que sabe dónde está el puntero).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -59,6 +85,18 @@ pub enum EditOp {
         from: (f32, f32),
         to: (f32, f32),
         add: bool,
+    },
+    /// Arrastrar el asa `part` del gizmo (desde `from`, con el mismo umbral que Move) de
+    /// `center` (el centro de la caja de lo elegido al empezar). Para los aros, `last` es el
+    /// último punto del puntero y `turned` lo girado hasta ahí (grados, en el sentido positivo
+    /// del eje).
+    Gizmo {
+        map: ViewMap,
+        part: GizmoPart,
+        from: (f32, f32),
+        center: P3,
+        last: (f32, f32),
+        turned: f32,
     },
     /// Desplazar las vistas (botón derecho o central).
     Pan {
@@ -130,6 +168,8 @@ pub struct ModelEdit {
     /// La selección de pixeles que puso el modo Texture con las caras elegidas (ver
     /// `sync_face_mask`).
     pub(crate) face_mask: Option<super::texture_mode::FaceMask>,
+    /// El gizmo de las vistas en modo *Model* (se queda al cambiar de modelo).
+    pub gizmo: Gizmo,
 }
 
 impl Default for ModelEdit {
@@ -151,12 +191,47 @@ impl Default for ModelEdit {
             uv_op: None,
             focus_uvs: false,
             face_mask: None,
+            gizmo: Gizmo::default(),
         }
     }
 }
 
 fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
     ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
+}
+
+/// `f` redondeado a milésimas (como las escalas).
+fn thousandths(f: f32) -> f32 {
+    (f * 1000.0).round() / 1000.0
+}
+
+/// Cuánto giró el puntero de `a` a `b` alrededor de `center` en pantalla, en grados y en el
+/// sentido positivo del eje `axis` (el del aro); `project` lleva el mundo a la pantalla. 0 si el
+/// aro se ve de canto o el puntero pasa por el centro.
+pub fn ring_turn(
+    project: impl Fn(P3) -> (f32, f32),
+    center: P3,
+    axis: usize,
+    a: (f32, f32),
+    b: (f32, f32),
+) -> f32 {
+    let c = project(center);
+    let along = |k: usize| {
+        let mut p = center;
+        p[k] += 1.0;
+        let s = project(p);
+        (s.0 - c.0, s.1 - c.1)
+    };
+    // El giro positivo lleva el eje que sigue hacia el otro: así se ve su sentido en pantalla.
+    let (u, v) = (along((axis + 1) % 3), along((axis + 2) % 3));
+    let sense = u.0 * v.1 - u.1 * v.0;
+    let (pa, pb) = ((a.0 - c.0, a.1 - c.1), (b.0 - c.0, b.1 - c.1));
+    if sense.abs() < 1e-6 || pa == (0.0, 0.0) || pb == (0.0, 0.0) {
+        return 0.0;
+    }
+    let cross = pa.0 * pb.1 - pa.1 * pb.0;
+    let dot = pa.0 * pb.0 + pa.1 * pb.1;
+    cross.atan2(dot).to_degrees() * sense.signum()
 }
 
 impl Editor {
@@ -232,8 +307,34 @@ impl Editor {
         }
     }
 
+    /// El gizmo `g` (estado de la UI: no es un paso de undo).
+    pub fn set_gizmo(&mut self, g: Gizmo) {
+        self.model_edit.gizmo = g;
+    }
+
+    /// El gizmo `g`, o ninguno si ya era ese (los botones del encabezado y W, E, R).
+    pub fn toggle_gizmo(&mut self, g: Gizmo) {
+        let next = if self.model_edit.gizmo == g {
+            Gizmo::None
+        } else {
+            g
+        };
+        self.set_gizmo(next);
+    }
+
+    /// El gizmo que se ve en las vistas: el elegido, en modo *Model* y con algo elegido.
+    pub fn shown_gizmo(&self) -> Option<GizmoKind> {
+        let e = &self.model_edit;
+        if e.mode != CadMode::Model || e.selection.is_empty() || !self.model_edit_on() {
+            return None;
+        }
+        e.gizmo.kind()
+    }
+
     pub fn start_model_op(&mut self, op: EditOp) {
-        if let EditOp::Move { map, .. } | EditOp::Handle { map, .. } = op {
+        if let EditOp::Move { map, .. } | EditOp::Handle { map, .. } | EditOp::Gizmo { map, .. } =
+            op
+        {
             self.model_edit.last_view = map.view;
         }
         self.model_edit.preview = None;
@@ -258,7 +359,8 @@ impl Editor {
                 keyboard: false,
                 ..
             }
-            | EditOp::Handle { from, .. } => Some(from),
+            | EditOp::Handle { from, .. }
+            | EditOp::Gizmo { from, .. } => Some(from),
             _ => None,
         };
         if from.is_some_and(|f| dist(pointer, f) < DRAG_THRESHOLD)
@@ -266,6 +368,31 @@ impl Editor {
         {
             return;
         }
+        // El aro suma lo que gira el puntero desde el punto anterior (así pasa de media vuelta
+        // sin saltar); el giro sale siempre del modelo del inicio.
+        let op = match op {
+            EditOp::Gizmo {
+                map,
+                part: part @ GizmoPart::Ring(axis),
+                from,
+                center,
+                last,
+                turned,
+            } => {
+                let turned = turned + ring_turn(|p| map.to_screen(p), center, axis, last, pointer);
+                let op = EditOp::Gizmo {
+                    map,
+                    part,
+                    from,
+                    center,
+                    last: pointer,
+                    turned,
+                };
+                self.model_edit.op = Some(op);
+                op
+            }
+            op => op,
+        };
         let grid = (!free).then_some(self.model_edit.grid);
         let sel = &self.model_edit.selection;
         let preview = match (op, self.edited_model()) {
@@ -305,6 +432,29 @@ impl Editor {
                     (dist(pointer, map.to_screen(center)) / from_dist * 1000.0).round() / 1000.0;
                 Some(cs_3d::scale(m, sel, center, [f; 3]))
             }
+            (
+                EditOp::Gizmo {
+                    map,
+                    part,
+                    from,
+                    center,
+                    turned,
+                    ..
+                },
+                Some(m),
+            ) => gizmo_preview(
+                m,
+                sel,
+                GizmoDrag {
+                    map,
+                    part,
+                    center,
+                    from,
+                    turned,
+                },
+                pointer,
+                grid,
+            ),
             (EditOp::Box { map, from, add, .. }, _) => {
                 self.model_edit.op = Some(EditOp::Box {
                     map,
@@ -359,7 +509,15 @@ impl Editor {
             return;
         }
         let label = match op {
-            EditOp::Move { .. } => "Move",
+            EditOp::Move { .. }
+            | EditOp::Gizmo {
+                part: GizmoPart::Axis(_) | GizmoPart::Plane,
+                ..
+            } => "Move",
+            EditOp::Gizmo {
+                part: GizmoPart::Ring(_),
+                ..
+            } => "Rotate",
             _ => "Scale",
         };
         if let Some(model) = self.model_edit.preview.take() {
@@ -431,5 +589,83 @@ impl Editor {
         edit.op = None;
         edit.uv_op = None;
         edit.preview = None;
+    }
+}
+
+/// Un arrastre del gizmo: el asa `part` del gizmo de `center`, desde `from` en la vista de
+/// `map`; `turned`, lo girado por el aro.
+struct GizmoDrag {
+    map: ViewMap,
+    part: GizmoPart,
+    center: P3,
+    from: (f32, f32),
+    turned: f32,
+}
+
+/// La vista previa de arrastrar el gizmo hasta `pointer` (`grid`: la cuadrícula, `None` con
+/// Ctrl), siempre desde el modelo del inicio `m`.
+fn gizmo_preview(
+    m: &Model3D,
+    sel: &Selection,
+    drag: GizmoDrag,
+    pointer: (f32, f32),
+    grid: Option<i32>,
+) -> Option<Model3D> {
+    let GizmoDrag {
+        map,
+        part,
+        center,
+        from,
+        turned,
+    } = drag;
+    let c = map.to_screen(center);
+    match part {
+        // Las flechas, solo en su eje del mundo; el cuadrito, en el plano de la vista. El centro
+        // del gizmo cae en la cuadrícula, como lo agarrado al mover.
+        GizmoPart::Axis(_) | GizmoPart::Plane => {
+            let d = map.drag_delta((pointer.0 - from.0, pointer.1 - from.1));
+            let mut d = cs_3d::snapped_delta(map.view, center, d, grid);
+            if let GizmoPart::Axis(axis) = part {
+                for (i, v) in d.iter_mut().enumerate() {
+                    if i != axis {
+                        *v = 0.0;
+                    }
+                }
+            }
+            Some(cs_3d::translate(m, sel, d))
+        }
+        // En pasos de 15° (con Ctrl, de 1°).
+        GizmoPart::Ring(axis) => {
+            let step = if grid.is_some() { ROTATE_STEP } else { 1.0 };
+            let tenths = ((turned / step).round() * step * 10.0).round() as i32;
+            Some(cs_3d::rotate_selection(m, sel, center, axis, tenths))
+        }
+        // La distancia al centro sobre el eje (en pantalla) entre la del inicio.
+        GizmoPart::ScaleAxis(axis) => {
+            let mut tip = center;
+            tip[axis] += 1.0;
+            let t = map.to_screen(tip);
+            let dir = (t.0 - c.0, t.1 - c.1);
+            let len = dir.0.hypot(dir.1);
+            if len < 1e-6 {
+                return None;
+            }
+            let along = |p: (f32, f32)| ((p.0 - c.0) * dir.0 + (p.1 - c.1) * dir.1) / len;
+            let start = along(from);
+            if start.abs() < 1.0 {
+                return None;
+            }
+            let mut f = [1.0; 3];
+            f[axis] = thousandths(along(pointer) / start);
+            Some(cs_3d::scale(m, sel, center, f))
+        }
+        // El cubito del centro se agarra en el centro (la distancia del inicio es casi 0): el
+        // factor crece con lo que el puntero va a la derecha o arriba, 2× a un gizmo de
+        // distancia, y baja hacia la izquierda o abajo (nunca a 0 ni menos).
+        GizmoPart::ScaleUniform => {
+            let moved = (pointer.0 - from.0) - (pointer.1 - from.1);
+            let f = thousandths(1.0 + moved / GIZMO_PX).max(0.001);
+            Some(cs_3d::scale(m, sel, center, [f; 3]))
+        }
     }
 }

@@ -724,6 +724,19 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                 items: [cs_3d::Item::Vertex(0, 7)].into(),
             });
         }
+        // Con CHIMPSPRITE_DEMO_GIZMO=move|rotate|scale: el cubo elegido en modo Object con ese
+        // gizmo.
+        if let Some(name) = dev_var("CHIMPSPRITE_DEMO_GIZMO") {
+            use crate::editor::Gizmo;
+            let gizmo = match name {
+                "rotate" => Gizmo::Rotate,
+                "scale" => Gizmo::Scale,
+                "none" => Gizmo::None,
+                _ => Gizmo::Move,
+            };
+            e.select_model_object(Some(0));
+            e.set_gizmo(gizmo);
+        }
         // Con CHIMPSPRITE_DEMO_MODEL_TEXTURE: en modo Texture, con la cara de enfrente del cubo
         // (la de z+) elegida.
         if dev_var("CHIMPSPRITE_DEMO_MODEL_TEXTURE").is_some() {

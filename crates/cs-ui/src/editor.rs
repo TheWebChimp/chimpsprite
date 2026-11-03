@@ -30,7 +30,9 @@ mod model_edit;
 mod model_ops;
 mod texture_mode;
 mod workspace;
-pub use model_edit::{CadMode, DRAG_THRESHOLD, EditOp, GRIDS, KeyOp, ModelEdit, TextureView, UvOp};
+pub use model_edit::{
+    CadMode, DRAG_THRESHOLD, EditOp, GIZMO_PX, GRIDS, Gizmo, KeyOp, ModelEdit, TextureView, UvOp,
+};
 pub use model_ops::wrap_angle;
 
 /// Herramientas que trabajan dentro de un sprite.

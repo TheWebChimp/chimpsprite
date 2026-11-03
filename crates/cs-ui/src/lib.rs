@@ -1831,8 +1831,9 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
     // En el workspace del modelo (siempre en modo Edit): 1–4 cambian qué se elige, G y S
     // arrancan un gesto que sigue al puntero, Enter lo confirma, Esc lo cancela (o vacía la
     // selección) y las flechas mueven un paso de cuadrícula (no cambian de frame ni de capa).
-    // Con Shift, G y S siguen con sus otros atajos. En modo Texture las teclas son las de
-    // siempre, sobre la textura.
+    // Con Shift, G y S siguen con sus otros atajos. W, E y R eligen el gizmo (Move, Rotate,
+    // Scale; la misma otra vez lo apaga). En modo Texture las teclas son las de siempre, sobre
+    // la textura.
     if editor.pixel_actions_blocked() {
         use cs_3d::SelectMode;
         let mode = match key {
@@ -1852,6 +1853,9 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
         match key {
             Key::G if !shift => editor.request_model_key_op(editor::KeyOp::Grab),
             Key::S if !shift => editor.request_model_key_op(editor::KeyOp::Scale),
+            Key::W if !shift => editor.toggle_gizmo(editor::Gizmo::Move),
+            Key::E if !shift => editor.toggle_gizmo(editor::Gizmo::Rotate),
+            Key::R if !shift => editor.toggle_gizmo(editor::Gizmo::Scale),
             Key::Enter if busy => editor.finish_model_op(),
             Key::Escape if busy => {
                 editor.cancel_model_op();

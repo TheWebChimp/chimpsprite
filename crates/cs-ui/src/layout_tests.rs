@@ -5985,6 +5985,248 @@ fn a_click_on_a_selected_edge_keeps_only_that_edge_and_a_drag_moves_all() {
     assert_eq!(h.app.doc.editor.history.done_count(), steps, "no move");
 }
 
+// --- Los gizmos en las vistas orto ---
+
+/// El botón `label` del encabezado de ChimpCAD (si se ve).
+fn header_button(h: &LayoutHarness, label: &str) -> Option<Rect> {
+    let header = h.app.doc.canvas.cad_header()?;
+    h.nodes
+        .iter()
+        .find(|(l, r)| l == label && header.contains_rect(*r))
+        .map(|(_, r)| *r)
+}
+
+#[test]
+fn the_gizmo_buttons_and_w_e_r_switch_the_gizmo_and_turn_it_off() {
+    use crate::editor::Gizmo;
+    let mut h = editing_model();
+    let gizmo = |h: &LayoutHarness| h.app.doc.editor.model_edit().gizmo;
+    assert_eq!(gizmo(&h), Gizmo::Move, "Move by default");
+    let steps = h.app.doc.editor.history.done_count();
+    let button = |h: &LayoutHarness, label| header_button(h, label).expect(label);
+    let (mv, rotate, scale) = (
+        button(&h, "Move"),
+        button(&h, "Rotate"),
+        button(&h, "Scale"),
+    );
+    // Un grupo a la izquierda de Model | Texture, en puntos enteros.
+    let model = button(&h, "Model");
+    assert!(mv.right() <= rotate.left() + 1.0 && rotate.right() <= scale.left() + 1.0);
+    assert!(scale.right() < model.left(), "{scale:?} {model:?}");
+    assert_eq!(mv.min, mv.min.round());
+    let down = |h: &LayoutHarness, r: Rect| {
+        h.drawn("button.down")
+            .iter()
+            .any(|d| r.expand(1.0).contains_rect(*d))
+    };
+    assert!(down(&h, mv) && !down(&h, rotate) && !down(&h, scale));
+    // Con algo elegido, cambiar de gizmo vuelve a pintar las vistas.
+    h.app.doc.editor.select_model_object(Some(0));
+    h.frame();
+    let keys = h.app.doc.canvas.model_ortho_textures();
+    h.click(rotate.center(), PointerButton::Primary);
+    assert_eq!(gizmo(&h), Gizmo::Rotate);
+    assert!(down(&h, rotate) && !down(&h, mv));
+    let next = h.app.doc.canvas.model_ortho_textures();
+    assert_ne!(next[0].unwrap().0, keys[0].unwrap().0, "Front redrawn");
+    // Clic en el activo: ninguno.
+    h.click(rotate.center(), PointerButton::Primary);
+    assert_eq!(gizmo(&h), Gizmo::None);
+    assert!(!down(&h, rotate));
+    h.click(scale.center(), PointerButton::Primary);
+    assert_eq!(gizmo(&h), Gizmo::Scale);
+    // W, E y R; la misma otra vez lo apaga.
+    for (key, want) in [
+        (egui::Key::W, Gizmo::Move),
+        (egui::Key::W, Gizmo::None),
+        (egui::Key::E, Gizmo::Rotate),
+        (egui::Key::R, Gizmo::Scale),
+        (egui::Key::R, Gizmo::None),
+        (egui::Key::E, Gizmo::Rotate),
+    ] {
+        tap_key(&mut h, key);
+        assert_eq!(gizmo(&h), want, "{key:?}");
+    }
+    assert_eq!(
+        h.app.doc.editor.history.done_count(),
+        steps,
+        "no undo steps"
+    );
+    // En modo Texture no hay gizmos.
+    h.app
+        .doc
+        .editor
+        .set_cad_mode(crate::editor::CadMode::Texture);
+    h.frame();
+    assert!(header_button(&h, "Move").is_none());
+    tap_key(&mut h, egui::Key::W);
+    assert_eq!(gizmo(&h), Gizmo::Rotate, "W in Texture mode");
+}
+
+/// El cubo elegido en modo Objeto con el gizmo `g`, y dónde cae su centro (el origen) en Front.
+fn cube_with_gizmo(g: crate::editor::Gizmo) -> (LayoutHarness, Pos2) {
+    let mut h = editing_model();
+    h.app.doc.editor.select_model_object(Some(0));
+    h.app.doc.editor.set_gizmo(g);
+    h.frame();
+    let c = front_screen(&h, [0.0; 3]);
+    (h, c)
+}
+
+fn cube_transform(h: &LayoutHarness) -> cs_core::Transform3D {
+    h.app.doc.editor.model().unwrap().objects[0].transform
+}
+
+fn v3(x: i32, y: i32, z: i32) -> cs_core::Vec3i {
+    cs_core::Vec3i { x, y, z }
+}
+
+#[test]
+fn dragging_the_x_arrow_in_front_moves_only_x_in_one_undo_step() {
+    let (mut h, c) = cube_with_gizmo(crate::editor::Gizmo::Move);
+    let steps = h.app.doc.editor.history.done_count();
+    let zoom = h.app.doc.editor.model_edit().zoom;
+    // Sobre la flecha X; el puntero también sube, pero solo cuenta X.
+    let from = c + vec2(20.0, 0.0);
+    drag_with(
+        &mut h,
+        from,
+        from + vec2(8.0 * zoom, -5.0 * zoom),
+        Default::default(),
+    );
+    assert_eq!(cube_transform(&h).position, v3(8, 0, 0));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(cube_transform(&h).position, v3(0, 0, 0));
+}
+
+#[test]
+fn dragging_the_ring_in_front_rotates_in_15_degree_steps_and_ctrl_in_1() {
+    let (mut h, c) = cube_with_gizmo(crate::editor::Gizmo::Rotate);
+    let r = crate::editor::GIZMO_PX;
+    let at = |deg: f32| {
+        let a = deg.to_radians();
+        c + vec2(a.cos(), -a.sin()) * r
+    };
+    let steps = h.app.doc.editor.history.done_count();
+    // 50° al revés del reloj en Front: alrededor de +Z, en pasos de 15°.
+    drag_with(&mut h, at(0.0), at(50.0), Default::default());
+    assert_eq!(cube_transform(&h).rotation, v3(0, 0, 450));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    h.frame();
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::COMMAND)]);
+    drag_with(&mut h, at(0.0), at(50.0), egui::Modifiers::COMMAND);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    assert_eq!(cube_transform(&h).rotation, v3(0, 0, 500));
+    // Con el reloj, negativo.
+    h.app.doc.editor.undo();
+    h.frame();
+    drag_with(&mut h, at(0.0), at(-35.0), Default::default());
+    assert_eq!(cube_transform(&h).rotation, v3(0, 0, -300));
+}
+
+#[test]
+fn the_scale_cubes_scale_one_axis_or_all_three() {
+    let (mut h, c) = cube_with_gizmo(crate::editor::Gizmo::Scale);
+    let r = crate::editor::GIZMO_PX;
+    let steps = h.app.doc.editor.history.done_count();
+    // El cubito X (en la punta del eje) al doble de lejos: solo X.
+    drag_with(
+        &mut h,
+        c + vec2(r, 0.0),
+        c + vec2(2.0 * r, 10.0),
+        Default::default(),
+    );
+    assert_eq!(cube_transform(&h).scale, v3(2000, 1000, 1000));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    h.frame();
+    // El del centro: parejo.
+    drag_with(&mut h, c, c + vec2(r, 0.0), Default::default());
+    assert_eq!(cube_transform(&h).scale, v3(2000, 2000, 2000));
+    assert_eq!(cube_transform(&h).position, v3(0, 0, 0));
+}
+
+#[test]
+fn a_click_on_the_gizmo_without_dragging_changes_nothing() {
+    let (mut h, c) = cube_with_gizmo(crate::editor::Gizmo::Move);
+    let model = h.app.doc.editor.model().cloned();
+    let selection = h.app.doc.editor.model_edit().selection.clone();
+    let steps = h.app.doc.editor.history.done_count();
+    let from = c + vec2(20.0, 0.0);
+    drag_with(&mut h, from, from + vec2(2.0, 0.0), Default::default());
+    assert_eq!(h.app.doc.editor.model().cloned(), model);
+    assert_eq!(h.app.doc.editor.model_edit().selection, selection);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+}
+
+#[test]
+fn escape_or_a_right_click_cancels_a_gizmo_drag() {
+    let (mut h, c) = cube_with_gizmo(crate::editor::Gizmo::Move);
+    let steps = h.app.doc.editor.history.done_count();
+    let zoom = h.app.doc.editor.model_edit().zoom;
+    let from = c + vec2(20.0, 0.0);
+    let to = from + vec2(8.0 * zoom, 0.0);
+    let button = |button, pos, pressed| Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: Default::default(),
+    };
+    for cancel in ["escape", "right"] {
+        h.frame_with(vec![Event::PointerMoved(from)]);
+        h.frame_with(vec![button(PointerButton::Primary, from, true)]);
+        h.frame_with(vec![Event::PointerMoved(to)]);
+        assert_ne!(
+            h.app.doc.editor.edit_model_shown(),
+            h.app.doc.editor.model(),
+            "a preview"
+        );
+        match cancel {
+            "escape" => tap_key(&mut h, egui::Key::Escape),
+            _ => {
+                h.frame_with(vec![button(PointerButton::Secondary, to, true)]);
+                h.frame_with(vec![button(PointerButton::Secondary, to, false)]);
+            }
+        }
+        h.frame_with(vec![button(PointerButton::Primary, to, false)]);
+        h.frame();
+        assert!(h.app.doc.editor.model_edit().op.is_none(), "{cancel}");
+        assert_eq!(cube_transform(&h).position, v3(0, 0, 0), "{cancel}");
+        assert_eq!(h.app.doc.editor.history.done_count(), steps, "{cancel}");
+    }
+}
+
+#[test]
+fn the_gizmo_wins_over_the_box_select() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    let all = cs_3d::Selection {
+        mode: cs_3d::SelectMode::Object,
+        items: [cs_3d::Item::Object(0)].into(),
+    }
+    .converted(h.app.doc.editor.model().unwrap(), cs_3d::SelectMode::Vertex);
+    assert_eq!(all.items.len(), 8);
+    h.app.doc.editor.set_model_selection(all.clone());
+    h.frame();
+    let before = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    let zoom = h.app.doc.editor.model_edit().zoom;
+    // Sin el gizmo, ahí (lejos de los vértices) empezaría una caja de selección.
+    let from = front_screen(&h, [0.0; 3]) + vec2(20.0, 0.0);
+    drag_with(
+        &mut h,
+        from,
+        from + vec2(8.0 * zoom, 0.0),
+        Default::default(),
+    );
+    let after = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    for (a, b) in before.iter().zip(&after) {
+        assert_eq!([a[0] + 8.0, a[1], a[2]], *b);
+    }
+    assert_eq!(h.app.doc.editor.model_edit().selection, all);
+}
+
 /// Un modelo "Ship" con su pestaña de vista abierta, en el documento de la prueba.
 fn with_model_tab() -> LayoutHarness {
     let mut h = LayoutHarness::new(pixel_ui(), true);
