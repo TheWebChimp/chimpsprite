@@ -384,11 +384,11 @@ impl ViewMap {
     }
 }
 
-fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
+pub(crate) fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
     ((a.0 - b.0).powi(2) + (a.1 - b.1).powi(2)).sqrt()
 }
 
-fn dist_to_segment(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
+pub(crate) fn dist_to_segment(p: (f32, f32), a: (f32, f32), b: (f32, f32)) -> f32 {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let len2 = dx * dx + dy * dy;
     let t = if len2 == 0.0 {
@@ -576,7 +576,12 @@ pub fn center((lo, hi): (P3, P3)) -> P3 {
 
 /// Cambia en `out` los vértices involucrados en `sel` (de `model`): `f` lleva su posición en el
 /// mundo a la nueva. Siempre desde los de `model`, así el redondeo no se acumula en un arrastre.
-fn edit_vertices(out: &mut Model3D, model: &Model3D, sel: &Selection, f: impl Fn(P3) -> P3) {
+pub(crate) fn edit_vertices(
+    out: &mut Model3D,
+    model: &Model3D,
+    sel: &Selection,
+    f: impl Fn(P3) -> P3,
+) {
     for (o, vs) in sel.vertices(model) {
         let obj = &mut out.objects[o];
         let t = obj.transform;
@@ -588,7 +593,7 @@ fn edit_vertices(out: &mut Model3D, model: &Model3D, sel: &Selection, f: impl Fn
     }
 }
 
-fn objects_of(sel: &Selection, model: &Model3D) -> Vec<usize> {
+pub(crate) fn objects_of(sel: &Selection, model: &Model3D) -> Vec<usize> {
     let mut out: Vec<usize> = sel
         .items
         .iter()
