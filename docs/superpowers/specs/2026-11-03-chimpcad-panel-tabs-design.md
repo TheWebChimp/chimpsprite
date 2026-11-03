@@ -25,6 +25,20 @@ Decisiones tomadas con el usuario:
   mismo menú, el stepper **Sides** (para cilindro, cono y esfera). Elegir una la agrega y elige su
   pestaña. El select "Add" y el stepper "Sides" del cuerpo del panel desaparecen.
 
+### 1.1 El menú del `+` (boceto del usuario)
+
+Referencia: `D:/Work/chimpdeas/.refs/chimpcad/mockup-add-menu.png` (156×118 a 1×; manda en el
+acomodo). El `+` abre una ventanita pegada al botón (con la pestañita que la une al `+` arriba a la
+derecha y su sombra, como los flyouts del dock):
+
+- Arriba, **cinco íconos azules** (cubo, cilindro, cono, esfera, plano) — piezas nuevas
+  `icon.add.cube`, `icon.add.cylinder`, `icon.add.cone`, `icon.add.sphere`, `icon.add.plane`,
+  copiadas del boceto. Clic elige el tipo; el elegido lleva el contorno blanco y la flechita sobre la
+  línea divisoria (como el boceto).
+- Una línea divisoria; debajo, **Sides** (stepper del kit; deshabilitado para cubo y plano).
+- Abajo a la derecha, un botón **Add <Tipo>** ("Add Cube", "Add Cylinder", …) que agrega el objeto,
+  elige su pestaña y cierra la ventanita.
+
 ## 2. La pestaña de un objeto
 
 - **Position**, **Rotation**, **Scale**: un título y una fila con tres steppers, cada uno con su
