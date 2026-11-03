@@ -395,8 +395,9 @@ impl Editor {
             };
         }
         if self.active_tool() == ToolKind::Artboard {
-            // En el modo símbolo la herramienta no toca los artboards del lienzo (no se ven).
-            if self.in_symbol_mode() {
+            // En el modo símbolo o en el workspace de una fuente la herramienta no toca los
+            // artboards del lienzo (no se ven).
+            if self.single_artboard() {
                 return;
             }
             if let Some(id) =
@@ -407,8 +408,9 @@ impl Editor {
             }
             return;
         }
-        // En el modo símbolo solo se ve el símbolo: un clic no activa otro artboard.
-        if !self.in_symbol_mode()
+        // En el modo símbolo (o en el workspace de una fuente) solo se ve el activo: un clic no
+        // activa otro artboard.
+        if !self.single_artboard()
             && let Some(id) = self.document.artboard_at(world)
         {
             self.activate(id);

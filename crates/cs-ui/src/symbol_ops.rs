@@ -64,10 +64,10 @@ impl Editor {
         Ok(c.symbol)
     }
 
-    /// El artboard que se ve bajo `world` (mundo): en el modo símbolo solo el símbolo; si no, el
-    /// de más arriba del lienzo.
+    /// El artboard que se ve bajo `world` (mundo): en el modo símbolo o en el workspace de una
+    /// fuente solo el activo; si no, el de más arriba del lienzo.
     pub fn shown_artboard_at(&self, world: (f32, f32)) -> Option<ArtboardId> {
-        if self.in_symbol_mode() {
+        if self.single_artboard() {
             self.artboard().contains(world).then_some(self.active)
         } else {
             self.document.artboard_at(world)

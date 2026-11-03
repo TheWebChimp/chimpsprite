@@ -48,14 +48,7 @@ fn shown_artboards<'a>(
     document: &'a cs_core::Document,
     editor: &Editor,
 ) -> impl DoubleEndedIterator<Item = &'a Artboard> + use<'a> {
-    let font_workspace = editor
-        .workspace()
-        .filter(|&id| document.artboard(id).is_some_and(|a| a.font.is_some()));
-    let only = if editor.in_symbol_mode() {
-        Some(editor.active)
-    } else {
-        font_workspace
-    };
+    let only = editor.single_artboard().then_some(editor.active);
     document.artboards.iter().filter(move |a| match only {
         Some(id) => a.id == id,
         None => a.on_canvas(),
@@ -161,7 +154,8 @@ pub struct CanvasView {
     pub cursors: Option<pixel_cursors::CursorSet>,
     /// Píxeles físicos por punto del último frame: [`Self::origin`] se alinea a ellos.
     ppp: f32,
-    /// El zoom y el paneo del documento al entrar al modo símbolo: se restauran al salir.
+    /// El zoom y el paneo del documento al entrar al modo símbolo o al workspace de una fuente:
+    /// se restauran al volver al lienzo.
     symbol_return_view: Option<(f32, Vec2)>,
     /// Si se ve la migaja de pan (modo símbolo) en este frame.
     crumbs_shown: bool,
@@ -416,9 +410,10 @@ impl CanvasView {
         )
     }
 
-    /// Ajusta el zoom a todo el lienzo (en el modo símbolo, al símbolo).
+    /// Ajusta el zoom a todo el lienzo (en el modo símbolo, al símbolo; en el workspace de una
+    /// fuente, al glifo).
     fn fit(&mut self, rect: Rect, editor: &Editor) {
-        let bounds = if editor.in_symbol_mode() {
+        let bounds = if editor.single_artboard() {
             Some(editor.artboard().rect())
         } else {
             editor.document.bounds()
@@ -1599,9 +1594,10 @@ impl CanvasView {
         })
     }
 
-    /// Guarda la vista del documento al entrar al modo símbolo y la restaura al salir.
+    /// Guarda la vista del documento al entrar al modo símbolo o al workspace de una fuente y la
+    /// restaura al volver al lienzo.
     fn sync_symbol_view(&mut self, editor: &Editor) {
-        if editor.in_symbol_mode() {
+        if editor.single_artboard() {
             self.symbol_return_view.get_or_insert((self.zoom, self.pan));
         } else if let Some((zoom, pan)) = self.symbol_return_view.take() {
             (self.zoom, self.pan) = (zoom, pan);

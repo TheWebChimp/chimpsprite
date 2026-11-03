@@ -787,9 +787,10 @@ impl CanvasView {
             }
         } else if editor.active_tool() == ToolKind::Artboard {
             let world = pointer.map(|p| self.to_world(rect, p));
-            // En el modo símbolo la herramienta no toca los artboards del lienzo (no se ven).
+            // En el modo símbolo o en el workspace de una fuente la herramienta no toca los
+            // artboards del lienzo (no se ven).
             let hit = world
-                .filter(|_| !editor.in_symbol_mode())
+                .filter(|_| !editor.single_artboard())
                 .and_then(|w| hit_test(&editor.document, w, slop));
             Some(artboard_cursor(hit))
         } else if editor.active_tool() == ToolKind::Move

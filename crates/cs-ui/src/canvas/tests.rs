@@ -2350,3 +2350,96 @@ fn in_symbol_mode_a_double_click_on_drawn_pixels_does_not_leave() {
         "an empty pixel inside is still inside"
     );
 }
+
+/// Una fuente en su workspace (en el glifo A) con un artboard del lienzo justo debajo: los nuevos
+/// van a la derecha del lienzo, donde también quedó la fuente. A 16×, centrada.
+fn font_over_a_canvas_artboard() -> (Harness, ArtboardId, ArtboardId) {
+    let mut h = Harness::new();
+    assert!(h.editor.new_font("Mine", (8, 8), cs_core::FontMode::OneBit));
+    let font = h.editor.active;
+    h.editor.add_artboard(8, 8);
+    let under = h.editor.active;
+    let position = |h: &Harness, id| h.editor.document.artboard(id).unwrap().position;
+    assert_eq!(
+        position(&h, under),
+        position(&h, font),
+        "right under the glyph"
+    );
+    assert!(h.editor.enter_workspace(font));
+    assert!(h.editor.go_to_glyph('A'));
+    h.canvas.zoom = 16.0;
+    h.canvas.request_zoom(ZoomRequest::CenterActive);
+    h.frame(vec![]);
+    h.frame(vec![]);
+    (h, font, under)
+}
+
+fn index_of(h: &Harness, id: ArtboardId) -> usize {
+    h.editor
+        .document
+        .artboards
+        .iter()
+        .position(|a| a.id == id)
+        .unwrap()
+}
+
+#[test]
+fn in_a_font_workspace_a_click_paints_the_glyph_not_the_hidden_artboard_under_it() {
+    let (mut h, font, under) = font_over_a_canvas_artboard();
+    let hidden = h.editor.document.artboard(under).unwrap().sprite.clone();
+    let glyph = h.pixels_of(index_of(&h, font));
+    // Lejos de la línea del ancho (a media celda), que se lleva el clic.
+    let at = glyph.left_top() + glyph.size() * 0.25;
+    let world = h.canvas.to_world(h.rect, at);
+    assert_eq!(h.editor.shown_artboard_at(world), Some(font));
+    h.editor.set_tool(ToolKind::Pencil);
+    h.click(at, PointerButton::Primary);
+    let e = &h.editor;
+    assert_eq!(e.workspace(), Some(font), "still in the workspace");
+    assert_eq!(e.active, font);
+    assert!(
+        e.sprite().cel(e.layer, e.frame).is_some(),
+        "the glyph is painted"
+    );
+    assert_eq!(e.document.artboard(under).unwrap().sprite, hidden);
+}
+
+#[test]
+fn in_a_font_workspace_the_artboard_tool_does_not_reach_the_hidden_artboards() {
+    let (mut h, font, under) = font_over_a_canvas_artboard();
+    let before = h.editor.document.artboard(under).unwrap().position;
+    let glyph = h.pixels_of(index_of(&h, font));
+    h.editor.set_tool(ToolKind::Artboard);
+    let at = glyph.left_top() + glyph.size() * 0.25;
+    h.drag(at, at + Vec2::new(64.0, 0.0));
+    assert_eq!(h.editor.workspace(), Some(font));
+    assert_eq!(h.editor.active, font);
+    assert_eq!(h.editor.document.artboard(under).unwrap().position, before);
+}
+
+#[test]
+fn in_a_font_workspace_fit_frames_only_the_glyph() {
+    let (mut h, font, _) = font_over_a_canvas_artboard();
+    h.canvas.request_zoom(ZoomRequest::Fit);
+    h.frame(vec![]);
+    let glyph = h.pixels_of(index_of(&h, font));
+    // 8 px en 600 de alto: mucho más que el lienzo entero (40 px de ancho).
+    assert!(glyph.width() >= 256.0, "{glyph:?}");
+    assert!(h.rect.contains_rect(glyph), "{glyph:?}");
+}
+
+#[test]
+fn leaving_a_font_workspace_restores_the_canvas_view() {
+    let mut h = Harness::new();
+    h.canvas.zoom = 2.0;
+    h.frame(vec![]);
+    let before = (h.canvas.zoom, h.canvas.pan);
+    assert!(h.editor.new_font("Mine", (8, 8), cs_core::FontMode::OneBit));
+    h.frame(vec![]);
+    h.canvas.request_zoom(ZoomRequest::Fit);
+    h.frame(vec![]);
+    assert_ne!(h.canvas.zoom, before.0, "the glyph is framed");
+    h.editor.exit_workspace();
+    h.frame(vec![]);
+    assert_eq!((h.canvas.zoom, h.canvas.pan), before);
+}

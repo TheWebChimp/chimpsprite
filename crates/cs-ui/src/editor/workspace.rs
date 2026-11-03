@@ -19,6 +19,12 @@ impl Editor {
         self.view_request.take()
     }
 
+    /// Si el lienzo muestra un solo artboard, el activo: en el modo símbolo o en el workspace de
+    /// una fuente. Los demás no se ven y tampoco se tocan (clics, la herramienta Artboard, Fit).
+    pub fn single_artboard(&self) -> bool {
+        self.in_symbol_mode() || (self.workspace == Some(self.active) && self.is_font())
+    }
+
     /// Si `id` puede tener workspace: un modelo o una fuente.
     pub(crate) fn has_workspace(&self, id: ArtboardId) -> bool {
         self.document
