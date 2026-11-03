@@ -76,13 +76,15 @@ pub enum PrimitiveKind {
 }
 
 impl Object3D {
-    /// El tipo que se muestra: el guardado o, en archivos viejos, el que dice el principio del
+    /// El tipo que se muestra: el guardado o, en archivos viejos, el que dice la primera palabra del
     /// nombre ("Cylinder 2" es un cilindro); si no, un cubo.
     pub fn shown_kind(&self) -> PrimitiveKind {
         if let Some(k) = self.kind {
             return k;
         }
         let name = self.name.to_ascii_lowercase();
+        // La primera palabra entera: "Conveyor" no es un cono.
+        let word = name.split_whitespace().next().unwrap_or("");
         [
             ("plane", PrimitiveKind::Plane),
             ("cylinder", PrimitiveKind::Cylinder),
@@ -90,7 +92,7 @@ impl Object3D {
             ("sphere", PrimitiveKind::Sphere),
         ]
         .into_iter()
-        .find(|(prefix, _)| name.starts_with(prefix))
+        .find(|(first, _)| word == *first)
         .map_or(PrimitiveKind::Cube, |(_, k)| k)
     }
 }
@@ -384,6 +386,10 @@ mod tests {
         assert_eq!(named("Cylinder").shown_kind(), PrimitiveKind::Cylinder);
         assert_eq!(named("Cube").shown_kind(), PrimitiveKind::Cube);
         assert_eq!(named("Casa").shown_kind(), PrimitiveKind::Cube);
+        assert_eq!(named("cone").shown_kind(), PrimitiveKind::Cone);
+        assert_eq!(named("cone 2").shown_kind(), PrimitiveKind::Cone);
+        assert_eq!(named("Conveyor").shown_kind(), PrimitiveKind::Cube);
+        assert_eq!(named("Planet").shown_kind(), PrimitiveKind::Cube);
         // El tipo guardado manda sobre el nombre.
         let mut o = named("Cone");
         o.kind = Some(PrimitiveKind::Plane);

@@ -114,7 +114,19 @@ impl Editor {
         }
         model.objects.remove(i);
         let left = model.objects.len();
+        // La selección guarda índices de objeto: se acomoda ANTES del paso (que la revalida contra
+        // el modelo nuevo): lo del objeto quitado se va y lo de los posteriores se corre un lugar.
+        let old = self.model_edit.selection.items.clone();
+        self.model_edit.selection.items = old
+            .iter()
+            .filter(|it| it.object() != i)
+            .map(|&it| match it.object() {
+                o if o > i => it.with_object(o - 1),
+                _ => it,
+            })
+            .collect();
         if !self.named("Remove Object", |e| e.set_model(model)) {
+            self.model_edit.selection.items = old;
             return false;
         }
         // Quitar uno anterior a la elegida la deja en el mismo objeto (un lugar antes); quitar la

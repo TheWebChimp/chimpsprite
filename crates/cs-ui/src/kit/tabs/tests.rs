@@ -376,3 +376,37 @@ fn a_tab_with_a_piece_icon_draws_it_bottom_aligned_before_the_name() {
         );
     }
 }
+
+#[test]
+fn the_middle_button_does_not_close_a_tab_whose_close_is_not_close() {
+    let (ctx, skin) = pixel_ctx();
+    let items = vec![
+        TabItem::closable("Cube", true).with_close_label("Delete"),
+        TabItem::closable("Plane", true).with_close_label("Delete"),
+    ];
+    let id = egui::Id::new("strip");
+    let strip = Strip::new(AT.x, AT.x + 400.0, AT.y);
+    let at = pos2(AT.x + 20.0, AT.y + 6.0);
+    let mut closed = false;
+    for ev in [
+        Event::PointerMoved(at),
+        Event::PointerButton {
+            pos: at,
+            button: PointerButton::Middle,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        Event::PointerButton {
+            pos: at,
+            button: PointerButton::Middle,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ] {
+        frame(&ctx, vec![ev], |ui| {
+            let e = tab_strip(ui, &skin, id, strip, &items, Some(1));
+            closed |= matches!(e, Some(TabEvent::Close(_)));
+        });
+    }
+    assert!(!closed);
+}

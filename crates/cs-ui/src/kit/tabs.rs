@@ -639,7 +639,10 @@ pub fn tab_strip(
         };
         shapes.extend(tab_shapes(ui, skin, rect, &shown_item, &p.name, look));
         let closed = close.is_some_and(|c| c.clicked())
-            || (item.mark != TabMark::None && response.middle_clicked());
+            // El clic del medio solo cierra si cerrar es "Close": quitar un objeto no se hace sin querer.
+            || (item.mark != TabMark::None
+                && item.close_label == "Close"
+                && response.middle_clicked());
         if closed {
             event = Some(TabEvent::Close(p.index));
         } else if response.clicked() {

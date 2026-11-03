@@ -202,6 +202,16 @@ impl Item {
         }
     }
 
+    /// El mismo elemento pero en el objeto `n` (al quitar un objeto, los de después se corren).
+    pub fn with_object(self, n: usize) -> Item {
+        match self {
+            Item::Object(_) => Item::Object(n),
+            Item::Vertex(_, v) => Item::Vertex(n, v),
+            Item::Edge(_, a, b) => Item::Edge(n, a, b),
+            Item::Face(_, f) => Item::Face(n, f),
+        }
+    }
+
     /// Los vértices que mueve (un objeto, todos los suyos).
     fn vertices(self, model: &Model3D) -> Vec<u32> {
         let mesh = &model.objects[self.object()].mesh;
@@ -771,6 +781,14 @@ mod tests {
     use super::*;
     use crate::{Primitive, primitive_mesh};
     use cs_core::{Model3D, Object3D, Transform3D, Vec3i};
+
+    #[test]
+    fn with_object_cambia_solo_el_objeto() {
+        assert_eq!(Item::Object(3).with_object(1), Item::Object(1));
+        assert_eq!(Item::Vertex(3, 7).with_object(1), Item::Vertex(1, 7));
+        assert_eq!(Item::Edge(3, 1, 2).with_object(0), Item::Edge(0, 1, 2));
+        assert_eq!(Item::Face(3, 5).with_object(2), Item::Face(2, 5));
+    }
 
     pub(super) fn cube_at(position: Vec3i) -> Object3D {
         Object3D {

@@ -48,6 +48,49 @@ fn removing_and_setting_objects() {
 }
 
 #[test]
+fn removing_an_object_keeps_the_selection_on_the_same_objects() {
+    let mut e = editor_with_model();
+    e.add_primitive(Primitive::Plane);
+    e.add_primitive(Primitive::Cylinder { sides: 8 });
+    e.add_primitive(Primitive::Plane);
+    e.select_model_object(Some(2));
+    assert_eq!(
+        e.model_edit()
+            .selection
+            .items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![cs_3d::Item::Object(2)]
+    );
+    assert!(e.remove_object(0));
+    assert_eq!(
+        e.model_edit()
+            .selection
+            .items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![cs_3d::Item::Object(1)]
+    );
+    // El último también se corre (no se pierde por quedar fuera de rango).
+    e.select_model_object(Some(2));
+    assert!(e.remove_object(0));
+    assert_eq!(
+        e.model_edit()
+            .selection
+            .items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![cs_3d::Item::Object(1)]
+    );
+    // Quitar el elegido saca su selección.
+    assert!(e.remove_object(1));
+    assert!(e.model_edit().selection.items.is_empty());
+}
+
+#[test]
 fn removing_a_lower_object_keeps_the_same_one_selected() {
     let mut e = editor_with_model();
     e.add_primitive(Primitive::Plane);
