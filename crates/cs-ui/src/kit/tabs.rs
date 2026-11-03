@@ -92,6 +92,8 @@ pub struct TabItem {
     pub color: Option<Color32>,
     pub mark: TabMark,
     pub icon: TabIcon,
+    /// El verbo del × (su tooltip y su etiqueta accesible): "Close" salvo que cerrar sea otra cosa.
+    pub close_label: &'static str,
 }
 
 impl TabItem {
@@ -101,6 +103,15 @@ impl TabItem {
             color: None,
             mark: TabMark::None,
             icon: TabIcon::None,
+            close_label: "Close",
+        }
+    }
+
+    /// Otro verbo para el ×, cuando cerrar la pestaña borra lo que representa ("Delete").
+    pub fn with_close_label(self, close_label: &'static str) -> Self {
+        TabItem {
+            close_label,
+            ..self
         }
     }
 
@@ -601,7 +612,7 @@ pub fn tab_strip(
         // La marca va después de la pestaña: gana el clic. Si la pestaña es más angosta que
         // su marco, no hay marca ni zona de clic (le robarían el clic a la vecina).
         let close = (item.mark != TabMark::None && rect.width() >= chrome(item)).then(|| {
-            let label = format!("Close {}", item.label);
+            let label = format!("{} {}", item.close_label, item.label);
             let close = ui
                 .interact(
                     mark_rect(rect).expand(MARK_HIT),
@@ -609,7 +620,7 @@ pub fn tab_strip(
                     Sense::click(),
                 )
                 .on_hover_cursor(CursorIcon::PointingHand)
-                .tip("Close");
+                .tip(item.close_label);
             close.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &label));
             close
         });

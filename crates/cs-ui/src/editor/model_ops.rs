@@ -117,7 +117,11 @@ impl Editor {
         if !self.named("Remove Object", |e| e.set_model(model)) {
             return false;
         }
-        self.model_object = (left > 0).then(|| self.model_object.unwrap_or(0).min(left - 1));
+        // Quitar uno anterior a la elegida la deja en el mismo objeto (un lugar antes); quitar la
+        // elegida (o una posterior) acomoda el índice dentro de lo que quedó.
+        let selected = self.model_object.unwrap_or(0);
+        let selected = if i < selected { selected - 1 } else { selected };
+        self.model_object = (left > 0).then(|| selected.min(left - 1));
         true
     }
 

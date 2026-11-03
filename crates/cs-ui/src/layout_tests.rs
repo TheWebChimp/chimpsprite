@@ -4601,7 +4601,8 @@ fn closing_an_object_tab_removes_the_object_in_one_undo_step() {
     h.click(node(&h, "Add").center(), PointerButton::Primary);
     h.click(node(&h, "Cylinder").center(), PointerButton::Primary);
     let steps = h.app.doc.editor.history.done_count();
-    h.click(node(&h, "Close Cube").center(), PointerButton::Primary);
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Close Cube"));
+    h.click(node(&h, "Delete Cube").center(), PointerButton::Primary);
     let names = |h: &LayoutHarness| -> Vec<String> {
         let model = h.app.doc.editor.model().unwrap();
         model.objects.iter().map(|o| o.name.clone()).collect()
@@ -4610,6 +4611,20 @@ fn closing_an_object_tab_removes_the_object_in_one_undo_step() {
     assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
     h.app.doc.editor.undo();
     assert_eq!(names(&h), vec!["Cube".to_owned(), "Cylinder".to_owned()]);
+}
+
+#[test]
+fn object_tabs_say_delete_and_document_tabs_say_close() {
+    assert_eq!(
+        crate::kit::tabs::TabItem::closable("A", false).close_label,
+        "Close"
+    );
+    let mut h = model_panel_open(true);
+    let model = h.app.doc.editor.model().unwrap().clone();
+    let items = crate::model_panel::object_tabs(&model);
+    assert!(items.iter().all(|t| t.close_label == "Delete"));
+    h.frame();
+    assert!(h.nodes.iter().any(|(l, _)| l == "Delete Cube"));
 }
 
 #[test]

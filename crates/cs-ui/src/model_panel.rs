@@ -168,6 +168,7 @@ pub(crate) fn object_tabs(model: &Model3D) -> Vec<kit::tabs::TabItem> {
         .iter()
         .map(|o| {
             kit::tabs::TabItem::closable(o.name.clone(), true)
+                .with_close_label("Delete")
                 .with_icon(TabIcon::Piece(kind_icon(o.shown_kind())))
         })
         .collect()
@@ -230,8 +231,8 @@ fn plain_tabs(
                     {
                         event = Some(kit::tabs::TabEvent::Select(i));
                     }
-                    let close = ui.small_button("×").on_hover_text("Remove");
-                    let label = format!("Close {}", item.label);
+                    let close = ui.small_button("×").on_hover_text(item.close_label);
+                    let label = format!("{} {}", item.close_label, item.label);
                     close.widget_info(|| {
                         egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
                     });

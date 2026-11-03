@@ -48,6 +48,22 @@ fn removing_and_setting_objects() {
 }
 
 #[test]
+fn removing_a_lower_object_keeps_the_same_one_selected() {
+    let mut e = editor_with_model();
+    e.add_primitive(Primitive::Plane);
+    e.add_primitive(Primitive::Cylinder { sides: 8 });
+    e.select_model_object(Some(2));
+    let name = e.model().unwrap().objects[2].name.clone();
+    assert!(e.remove_object(0));
+    assert_eq!(e.selected_object(), Some(1));
+    assert_eq!(e.model().unwrap().objects[1].name, name);
+    // Quitar uno posterior no mueve la elegida.
+    e.select_model_object(Some(0));
+    assert!(e.remove_object(1));
+    assert_eq!(e.selected_object(), Some(0));
+}
+
+#[test]
 fn camera_light_outline_and_texture_undo() {
     let mut e = editor_with_model();
     let mut cam = e.model().unwrap().camera;
