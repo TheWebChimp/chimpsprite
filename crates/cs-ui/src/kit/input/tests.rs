@@ -322,6 +322,29 @@ fn a_number_field_drags_and_draws_its_unit_box() {
 }
 
 #[test]
+fn a_number_field_does_not_clamp_a_value_already_out_of_its_range() {
+    // Lo que vino de otro lado (un gizmo, un script) se muestra pero no se recorta solo.
+    let (ctx, skin) = pixel_ctx();
+    for start in [-50, 250] {
+        let mut value = start;
+        for _ in 0..2 {
+            frame(&ctx, vec![], |ui| {
+                number_input(
+                    ui,
+                    &skin,
+                    42.0,
+                    "n",
+                    &mut value,
+                    0..=100,
+                    Default::default(),
+                );
+            });
+        }
+        assert_eq!(value, start);
+    }
+}
+
+#[test]
 fn every_digit_of_the_pixel_font_is_as_wide_as_the_others() {
     let font =
         fontdue::Font::from_bytes(crate::appearance::PIXEL_FONT, Default::default()).unwrap();
