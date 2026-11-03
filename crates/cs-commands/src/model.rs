@@ -102,6 +102,7 @@ pub fn new_model_artboard(
             mesh: primitive_mesh(&cube),
             transform: Transform3D::default(),
             double_sided: false,
+            kind: Some(cube.kind()),
         }],
         texture: Some(texture_id),
         ..Default::default()

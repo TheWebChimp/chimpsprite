@@ -25,6 +25,10 @@ fn adding_a_primitive_selects_it_and_undo_removes_it() {
     assert!(e.add_primitive(Primitive::Cylinder { sides: 8 }));
     assert_eq!(e.model().unwrap().objects.len(), 2);
     assert_eq!(e.selected_object(), Some(1));
+    // El objeto nuevo guarda su tipo (y el cubo inicial el suyo).
+    let objects = &e.model().unwrap().objects;
+    assert_eq!(objects[0].kind, Some(cs_core::PrimitiveKind::Cube));
+    assert_eq!(objects[1].kind, Some(cs_core::PrimitiveKind::Cylinder));
     e.undo();
     assert_eq!(e.model().unwrap().objects.len(), 1);
 }

@@ -614,6 +614,7 @@ mod tests {
             mesh,
             transform: Transform3D::default(),
             double_sided: false,
+            kind: None,
         }
     }
 

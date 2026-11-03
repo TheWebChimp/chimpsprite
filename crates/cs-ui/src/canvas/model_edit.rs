@@ -1037,6 +1037,7 @@ mod tests {
                 mesh: cs_3d::primitive_mesh(&cs_3d::Primitive::Cube),
                 transform: Default::default(),
                 double_sided: false,
+                kind: Some(cs_core::PrimitiveKind::Cube),
             }],
             ..Model3D::default()
         }

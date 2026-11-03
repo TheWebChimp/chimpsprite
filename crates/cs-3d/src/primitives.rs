@@ -2,7 +2,7 @@
 //! −1..+1 unidades (−16..16 en punto fijo), con +Y hacia arriba. Las caras van en sentido
 //! antihorario visto desde afuera. Los UV caen en las zonas de la plantilla de 64×64.
 
-use cs_core::{FIXED, Face, Mesh, Vec3i};
+use cs_core::{FIXED, Face, Mesh, PrimitiveKind, Vec3i};
 
 /// Tamaño de la plantilla de textura de un modelo nuevo.
 pub const TEMPLATE_SIZE: (u32, u32) = (64, 64);
@@ -23,6 +23,16 @@ pub enum Primitive {
 }
 
 impl Primitive {
+    pub fn kind(&self) -> PrimitiveKind {
+        match self {
+            Primitive::Cube => PrimitiveKind::Cube,
+            Primitive::Plane => PrimitiveKind::Plane,
+            Primitive::Cylinder { .. } => PrimitiveKind::Cylinder,
+            Primitive::Cone { .. } => PrimitiveKind::Cone,
+            Primitive::Sphere { .. } => PrimitiveKind::Sphere,
+        }
+    }
+
     pub fn name(&self) -> &'static str {
         match self {
             Primitive::Cube => "Cube",
@@ -323,6 +333,7 @@ mod tests {
                     mesh: primitive_mesh(p),
                     transform: Transform3D::default(),
                     double_sided: false,
+                    kind: Some(p.kind()),
                 })
                 .collect(),
             ..Model3D::default()

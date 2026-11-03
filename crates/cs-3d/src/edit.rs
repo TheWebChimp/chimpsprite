@@ -781,6 +781,7 @@ mod tests {
                 ..Transform3D::default()
             },
             double_sided: false,
+            kind: Some(Primitive::Cube.kind()),
         }
     }
 

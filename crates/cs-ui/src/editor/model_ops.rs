@@ -95,6 +95,7 @@ impl Editor {
             mesh: primitive_mesh(&p),
             transform: Transform3D::default(),
             double_sided: false,
+            kind: Some(p.kind()),
         });
         let last = model.objects.len() - 1;
         if !self.named("Add Object", |e| e.set_model(model)) {
