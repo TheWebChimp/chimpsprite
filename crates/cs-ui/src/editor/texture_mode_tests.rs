@@ -495,3 +495,12 @@ fn texture_size_pregunta_si_alguna_uv_queda_fuera() {
     assert!(e.texture_size_cuts_uvs(32));
     assert!(e.texture_size_cuts_uvs(16));
 }
+
+#[test]
+fn una_marquesina_igual_a_la_de_la_cara_es_del_usuario() {
+    let mut e = texturing();
+    assert!(e.selection_is_face_mask());
+    let same = e.selection.clone();
+    e.set_selection(same);
+    assert!(!e.selection_is_face_mask(), "the user's own, even if equal");
+}

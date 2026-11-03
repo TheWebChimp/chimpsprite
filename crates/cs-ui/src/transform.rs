@@ -613,6 +613,10 @@ impl Editor {
             }
             None => true,
         };
+        // Lo confirmado deja su propia selección (ya no la de las caras del modo Texture).
+        if applied {
+            self.face_mask_replaced();
+        }
         self.selection = if applied {
             f.mask()
         } else {

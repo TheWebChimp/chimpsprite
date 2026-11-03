@@ -1,9 +1,9 @@
 //! Las UVs de las caras elegidas sobre la textura del modo Texture (abajo): el contorno de cada
 //! cara (blanco con borde oscuro de 1 punto), sus vértices y las asas de la caja de todas, en
 //! puntos enteros (con zoom entero, cada pixel de la textura mide puntos enteros). Con la
-//! herramienta Move, o con Alt y cualquier otra, arrastrar dentro de un contorno mueve las UVs,
-//! un asa las escala (Shift: proporcional) y un vértice se mueve solo. Un clic sin arrastre no
-//! cambia nada; cada gesto es un paso de undo.
+//! herramienta Move, o arrastrando con Alt y cualquier otra, arrastrar dentro de un contorno mueve
+//! las UVs, un asa las escala (Shift: proporcional) y un vértice se mueve solo. Un clic sin
+//! arrastre no cambia las UVs (con Alt es de la herramienta); cada gesto es un paso de undo.
 
 use cs_core::Model3D;
 
@@ -28,15 +28,17 @@ enum UvHit {
     Inside,
 }
 
-/// Un gesto de UV apretado: dónde (en pantalla), si ya pasó el umbral de arrastre, su cursor y
+/// Un gesto de UV apretado: dónde (en pantalla), si ya pasó el umbral de arrastre, su cursor,
 /// lo que se le suma al puntero (en pixeles de la textura) para que el asa agarrada caiga justo
-/// en el borde de la caja.
+/// en el borde de la caja y, con Alt, el gesto que empieza al pasar el umbral (si no, el clic es
+/// de la herramienta).
 #[derive(Clone, Copy, Debug)]
 pub(super) struct UvPress {
     at: Pos2,
     moved: bool,
     cursor: egui::CursorIcon,
     offset: (f32, f32),
+    pending: Option<UvOp>,
 }
 
 /// Si el asa `h` de la caja `((x0, y0), (x1, y1))` puede cambiar algo (en un eje sin medida no).
@@ -158,10 +160,13 @@ impl CanvasView {
             .then_some(UvHit::Inside)
     }
 
-    /// Los gestos de UV en la textura de abajo (`rect`: su panel). Con un gesto en curso lo
-    /// sigue y al soltar lo termina (sin pasar el umbral, lo cancela); si no, con Move o con
-    /// Alt, una prensa sobre un vértice, un asa o un contorno lo empieza. Devuelve el cursor si
-    /// el puntero es de las UVs (y entonces la herramienta no recibe la prensa).
+    /// Los gestos de UV en la textura de abajo (`rect`: su panel). Una prensa sobre un vértice,
+    /// un asa o un contorno con Move empieza el gesto; con Alt y otra herramienta el gesto espera
+    /// al umbral de arrastre: un clic sin arrastre se le pasa a la herramienta tal cual (el gotero
+    /// de las que pintan, etc.) y un arrastre mueve las UVs (también con las de selección, que con
+    /// Alt restarían). Sin pasar el umbral nada cambia. Con Move y la selección de las caras, una
+    /// prensa fuera de las UVs no hace nada (no corta los pixeles de la cara). Devuelve el cursor
+    /// si el puntero es de las UVs (y entonces la herramienta no recibe la prensa).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn uv_input(
         &mut self,
@@ -175,19 +180,26 @@ impl CanvasView {
         modifiers: egui::Modifiers,
     ) -> Option<egui::CursorIcon> {
         self.uv_hover = false;
-        if editor.model_edit().uv_op.is_some() {
+        if let Some(press) = self.uv_press {
             let escape = ui.input(|i| i.key_pressed(egui::Key::Escape));
-            let Some(press) = self.uv_press.filter(|_| !escape && !secondary) else {
-                // Esc o el otro botón lo cancelan (y uno que quedó sin prensa, también).
+            if escape || secondary {
+                // Esc o el otro botón lo cancelan.
                 editor.cancel_uv_op();
                 self.uv_press = None;
                 return None;
-            };
+            }
             if !down {
                 if press.moved {
                     editor.finish_uv_op();
                 } else {
                     editor.cancel_uv_op();
+                    // Alt + clic sin arrastre: la herramienta recibe el clic que se guardó.
+                    if press.pending.is_some() {
+                        let world = self.to_world(rect, press.at);
+                        let slop = EDGE_SLOP_PX / self.zoom;
+                        editor.pointer_press(world, false, true, slop);
+                        editor.pointer_release();
+                    }
                 }
                 self.uv_press = None;
                 return Some(press.cursor);
@@ -195,8 +207,13 @@ impl CanvasView {
             if let Some(p) = pointer
                 && (press.moved || (p - press.at).length() >= DRAG_THRESHOLD)
             {
+                if let Some(op) = press.pending {
+                    editor.end_group();
+                    editor.start_uv_op(op);
+                }
                 self.uv_press = Some(UvPress {
                     moved: true,
+                    pending: None,
                     ..press
                 });
                 let (x, y) = self.uv_point(rect, editor, p);
@@ -206,15 +223,21 @@ impl CanvasView {
             self.uv_hover = true;
             return Some(press.cursor);
         }
-        self.uv_press = None;
+        // Un gesto que quedó sin prensa (p. ej. el panel dejó de verse) no sigue.
+        editor.cancel_uv_op();
         let tool = editor.active_tool();
-        if !(tool == ToolKind::Move || modifiers.alt) || editor.is_painting() || !response.hovered()
-        {
+        let moving = tool == ToolKind::Move;
+        if !(moving || modifiers.alt) || editor.is_painting() || !response.hovered() {
             return None;
         }
         let p = pointer?;
         let model = editor.edited_model()?.clone();
-        let hit = self.uv_hit(rect, editor, &model, p)?;
+        let Some(hit) = self.uv_hit(rect, editor, &model, p) else {
+            // Move sobre la selección de las caras, fuera de sus UVs: nada (ni el menú del clic
+            // derecho, que sí sigue).
+            return (moving && !secondary && editor.selection_is_face_mask())
+                .then_some(egui::CursorIcon::Default);
+        };
         let cursor = match hit {
             UvHit::Handle(h) => uv_handle_cursor(h),
             _ => egui::CursorIcon::Move,
@@ -238,13 +261,20 @@ impl CanvasView {
                     (UvOp::Scale { handle, bounds }, (hx - at.0, hy - at.1))
                 }
             };
-            editor.end_group();
-            editor.start_uv_op(op);
+            // Con Move empieza ya; con Alt, al pasar el umbral.
+            let pending = if moving {
+                editor.end_group();
+                editor.start_uv_op(op);
+                None
+            } else {
+                Some(op)
+            };
             self.uv_press = Some(UvPress {
                 at: p,
                 moved: false,
                 cursor,
                 offset,
+                pending,
             });
         }
         self.uv_hover = true;

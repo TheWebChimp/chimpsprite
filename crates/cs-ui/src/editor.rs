@@ -593,6 +593,7 @@ impl Editor {
             .is_some_and(|m| (m.width(), m.height()) != (w, h))
         {
             self.selection = None;
+            self.face_mask_replaced();
         }
         self.sync_model_edit();
         self.sync_face_mask();
@@ -843,6 +844,7 @@ impl Editor {
             self.last_selection = Some(old);
         }
         self.selection = selection;
+        self.face_mask_replaced();
         self.revision += 1;
     }
 

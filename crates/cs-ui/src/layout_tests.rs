@@ -6390,3 +6390,52 @@ fn opening_the_panel_beside_with_a_face_chosen_focuses_its_uvs() {
     let center = texel(&h, 8.0, 8.0);
     assert!((center - bottom.center()).length() <= 1.0);
 }
+
+#[test]
+fn a_move_drag_outside_the_face_changes_nothing() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Move);
+    let (uvs, pixels) = (front_uvs(&h), texture_sprite(&h));
+    let selection = h.app.doc.editor.selection.clone();
+    let steps = h.app.doc.editor.history.done_count();
+    h.drag(texel(&h, 40.5, 40.5), texel(&h, 45.5, 44.5));
+    let e = &h.app.doc.editor;
+    assert_eq!(texture_sprite(&h), pixels, "no pixels cut or moved");
+    assert_eq!(front_uvs(&h), uvs);
+    assert_eq!(e.selection, selection);
+    assert!(e.selection_is_face_mask());
+    assert!(e.floating.is_none());
+    assert_eq!(e.history.done_count(), steps);
+}
+
+#[test]
+fn alt_click_with_the_pencil_inside_a_face_still_picks_the_color() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    h.app.doc.editor.primary = PixelValue::Rgba(Rgba::rgb(1, 2, 3));
+    let uvs = front_uvs(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    let layer = texture_sprite(&h).layers.last().unwrap().id;
+    let under = texture_sprite(&h).pixel(layer, 0, 8, 8);
+    let at = texel(&h, 8.5, 8.5);
+    drag_holding(&mut h, at, at, egui::Modifiers::ALT);
+    let e = &h.app.doc.editor;
+    assert_eq!(e.primary, under, "the eyedropper picked it");
+    assert_eq!(front_uvs(&h), uvs, "no UV change");
+    assert_eq!(e.history.done_count(), steps);
+}
+
+#[test]
+fn alt_drag_with_a_selection_tool_on_a_face_moves_its_uvs() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::RectSelect);
+    let before = front_uvs(&h);
+    let (from, to) = (texel(&h, 8.5, 8.5), texel(&h, 9.5, 13.5));
+    drag_holding(&mut h, from, to, egui::Modifiers::ALT);
+    let moved: Vec<_> = before.iter().map(|&(x, y)| (x + 1, y + 5)).collect();
+    assert_eq!(front_uvs(&h), moved);
+    assert!(
+        h.app.doc.editor.selection_is_face_mask(),
+        "the face's pixels"
+    );
+}

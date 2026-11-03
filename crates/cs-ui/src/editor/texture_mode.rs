@@ -23,11 +23,12 @@ pub(crate) struct FaceMaskKey {
 
 /// La selección de pixeles que puso el modo Texture (la unión de los polígonos UV de las caras
 /// elegidas) y de qué salió. Solo se vuelve a poner cuando eso cambia: una marquesina del
-/// usuario se queda hasta que cambien las caras o sus UVs.
+/// usuario se queda hasta que cambien las caras o sus UVs. `on`: la selección de ahora es la
+/// suya (la apaga cualquier otra selección: `set_selection`, confirmar lo flotante…).
 #[derive(Clone, Debug)]
 pub(crate) struct FaceMask {
     key: FaceMaskKey,
-    mask: Option<Mask>,
+    on: bool,
 }
 
 impl Editor {
@@ -183,12 +184,13 @@ impl Editor {
                     mask.set((i % w as usize) as i32, (i / w as usize) as i32, true);
                 }
                 let mask = (!mask.is_empty()).then_some(mask);
-                self.selection = mask.clone();
-                self.model_edit.face_mask = Some(FaceMask { key, mask });
+                let on = mask.is_some();
+                self.selection = mask;
+                self.model_edit.face_mask = Some(FaceMask { key, on });
                 self.revision += 1;
             }
             None => {
-                if old.is_some_and(|o| o.mask.is_some() && o.mask == self.selection) {
+                if old.is_some_and(|o| o.on) {
                     self.selection = None;
                     self.revision += 1;
                 }
@@ -197,11 +199,16 @@ impl Editor {
     }
 
     /// Si la selección de pixeles es la de las caras elegidas (la que puso el modo Texture).
+    /// Con algo flotando, no: la selección es la de lo flotante.
     pub fn selection_is_face_mask(&self) -> bool {
-        self.model_edit
-            .face_mask
-            .as_ref()
-            .is_some_and(|m| m.mask.is_some() && m.mask == self.selection)
+        self.floating.is_none() && self.model_edit.face_mask.as_ref().is_some_and(|m| m.on)
+    }
+
+    /// La selección de pixeles dejó de ser la de las caras (otra la reemplazó).
+    pub(crate) fn face_mask_replaced(&mut self) {
+        if let Some(m) = &mut self.model_edit.face_mask {
+            m.on = false;
+        }
     }
 
     /// Si pasar la textura a `side` la achica y deja vértices UV de alguna cara fuera (antes de
