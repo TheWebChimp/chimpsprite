@@ -1834,6 +1834,9 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
         if handled {
             return true;
         }
+        // Lo demás (Enter con algo flotando, Delete, X/Y de tiles…) tocaría el sprite escondido
+        // del modelo: pasa al registro de atajos, que lo filtra.
+        return false;
     }
     match key {
         Key::Enter if editor.is_pending() => editor.finish_gesture(),

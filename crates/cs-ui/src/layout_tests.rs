@@ -5472,6 +5472,23 @@ fn with_model_tab() -> LayoutHarness {
 }
 
 #[test]
+fn pixel_shortcuts_do_not_reach_the_hidden_sprite_in_the_cad_workspace() {
+    let mut h = with_model_tab();
+    let steps = h.app.doc.editor.history.done_count();
+    press_ctrl(&mut h, egui::Key::A);
+    h.frame();
+    assert!(h.app.doc.editor.selection.is_none(), "no marquee");
+    h.frame_with(key_tap(egui::Key::Delete));
+    h.frame_with(key_tap(egui::Key::F));
+    press(&mut h, egui::Key::H, egui::Modifiers::SHIFT);
+    press_ctrl(&mut h, egui::Key::I);
+    h.frame();
+    let e = &h.app.doc.editor;
+    assert!(e.model_edit_on());
+    assert_eq!(e.history.done_count(), steps, "no invisible undo steps");
+}
+
+#[test]
 fn a_model_view_tab_sits_right_after_its_document_and_switches_and_closes() {
     let mut h = with_model_tab();
     let doc = h.button(&h.app.doc.location.name.clone());

@@ -75,15 +75,22 @@ impl Editor {
     }
 
     /// Al entrar al workspace de un modelo: en otro modelo el modo Edit empieza de cero (en modo
-    /// Edge y sin selección); siempre se encuadra el modelo cuando el lienzo sepa el área.
+    /// Edge y sin selección) y se encuadra el modelo cuando el lienzo sepa el área; al volver al
+    /// mismo se conservan el zoom y el centro de las vistas.
     fn reset_model_edit(&mut self, id: ArtboardId) {
         if self.model_edit.artboard != Some(id) {
+            let center = self
+                .model()
+                .and_then(cs_3d::model_bounds)
+                .map_or([0.0; 3], cs_3d::center);
             self.model_edit = ModelEdit {
                 artboard: Some(id),
                 selection: Selection {
                     mode: SelectMode::Edge,
                     items: Default::default(),
                 },
+                center,
+                fit: true,
                 ..Default::default()
             };
         }
@@ -91,9 +98,5 @@ impl Editor {
         edit.op = None;
         edit.preview = None;
         edit.key_request = None;
-        edit.fit = true;
-        if let Some(b) = self.model().and_then(cs_3d::model_bounds) {
-            self.model_edit.center = cs_3d::center(b);
-        }
     }
 }

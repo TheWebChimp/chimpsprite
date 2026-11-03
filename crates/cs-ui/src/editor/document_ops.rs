@@ -188,23 +188,30 @@ impl Editor {
     }
 
     /// `Sprite → Duplicate`: una copia del artboard activo con `name`, a la derecha de todo, y
-    /// la activa.
+    /// la activa. La copia de un modelo o una fuente (como el Duplicate de la Library: la fuente
+    /// lleva el nombre también en su info) se abre en su workspace y la app le abre su pestaña.
     pub fn duplicate_artboard(&mut self, name: String) -> bool {
         self.commit_floating();
         let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
         let id = self.document.next_artboard_id();
-        let artboard = Artboard {
+        let mut artboard = Artboard {
             in_library: false,
             id,
             name,
             position: (x1 + 16, y0),
             ..self.artboard().clone()
         };
+        if let Some(font) = &mut artboard.font {
+            font.name = artboard.name.clone();
+        }
         let added = self.execute_doc(DocCommand::AddArtboard {
             index: self.document.artboards.len(),
             artboard: Box::new(artboard),
         });
-        if added {
+        if added && self.has_workspace(id) {
+            let entered = self.enter_workspace(id);
+            self.view_request = entered.then_some(id);
+        } else if added {
             self.activate(id);
         }
         added

@@ -11,7 +11,9 @@ impl ChimpApp {
         }
         let typing = ctx.egui_wants_keyboard_input();
         let painting = self.has_doc() && self.doc.editor.is_painting();
-        if self.has_doc() && !typing && !painting {
+        // En el workspace de un modelo el sprite (escondido) no se toca: ni copiar ni pegar.
+        let model = self.has_doc() && self.doc.editor.model_edit_on();
+        if self.has_doc() && !typing && !painting && !model {
             self.clipboard_events(ctx);
         }
         let presses: Vec<(Key, Modifiers)> = ctx.input(|i| {
@@ -50,6 +52,9 @@ impl ChimpApp {
                 keymap::Gate::NotPainting => !typing && !painting,
             };
             if !allowed || (action.needs_document() && !self.has_doc()) {
+                continue;
+            }
+            if self.has_doc() && self.doc.editor.model_edit_on() && !action.in_model_workspace() {
                 continue;
             }
             // Que no le llegue también a egui (Tab mueve el foco, por ejemplo).

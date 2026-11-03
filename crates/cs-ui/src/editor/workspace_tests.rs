@@ -201,3 +201,44 @@ fn salir_del_workspace_cancela_el_gesto_del_modelo() {
     );
     assert_eq!(e.history.done_count(), steps, "nothing committed");
 }
+
+#[test]
+fn volver_al_mismo_modelo_conserva_el_encuadre() {
+    let mut e = editor();
+    assert!(e.new_model("Ship", (64, 64)));
+    let ship = e.active;
+    e.fit_model_views(100.0);
+    // El usuario acercó y movió las vistas.
+    e.model_edit.zoom = 7.0;
+    e.model_edit.center = [3.0, 0.0, 0.0];
+    e.exit_workspace();
+    assert!(e.enter_workspace(ship));
+    assert!(!e.model_edit().fit, "no re-fit");
+    assert_eq!(e.model_edit().zoom, 7.0);
+    assert_eq!(e.model_edit().center, [3.0, 0.0, 0.0]);
+    // Otro modelo sí se encuadra.
+    assert!(e.new_model("Other", (64, 64)));
+    assert!(e.model_edit().fit);
+}
+
+#[test]
+fn duplicar_en_el_workspace_abre_el_de_la_copia() {
+    let mut e = editor();
+    let home = e.active;
+    assert!(e.new_font("Mine", (8, 8), FontMode::OneBit));
+    let _ = e.take_view_request();
+    assert!(e.duplicate_artboard("Mine Copy".into()));
+    let copy = e.active;
+    assert_eq!(e.workspace(), Some(copy), "in the copy's workspace");
+    assert_eq!(e.font().unwrap().name, "Mine Copy", "like the Library");
+    assert_eq!(e.take_view_request(), Some(copy), "the app opens its tab");
+    e.exit_workspace();
+    assert_eq!(e.active, home, "back to the canvas artboard");
+    // Un modelo igual.
+    assert!(e.new_model("Ship", (64, 64)));
+    let _ = e.take_view_request();
+    assert!(e.duplicate_artboard("Ship Copy".into()));
+    assert_eq!(e.workspace(), Some(e.active));
+    assert!(e.model_edit_on());
+    assert_eq!(e.take_view_request(), Some(e.active));
+}

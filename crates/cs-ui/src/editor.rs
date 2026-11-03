@@ -582,7 +582,8 @@ impl Editor {
         self.sync_model_edit();
     }
 
-    /// Si `id` es un artboard del lienzo (no de la biblioteca).
+    /// Si `id` es un artboard del lienzo (no un símbolo de la biblioteca, un modelo ni una
+    /// fuente).
     fn on_canvas(&self, id: ArtboardId) -> bool {
         self.document.artboard(id).is_some_and(|a| a.on_canvas())
     }
