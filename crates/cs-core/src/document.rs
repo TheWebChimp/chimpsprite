@@ -154,6 +154,12 @@ impl Artboard {
         !self.in_library && self.model.is_none() && self.font.is_none()
     }
 
+    /// Un símbolo de la biblioteca. Un modelo o una fuente no lo es aunque esté marcado
+    /// `in_library` (archivos viejos): tiene su propia sección y su pestaña.
+    pub fn is_symbol(&self) -> bool {
+        self.in_library && self.model.is_none() && self.font.is_none()
+    }
+
     /// Centro de simetría efectivo en medios píxeles.
     pub fn symmetry_center2(&self) -> (i32, i32) {
         self.symmetry
@@ -242,9 +248,9 @@ impl Document {
         self.artboards.iter().filter(|a| a.on_canvas())
     }
 
-    /// Los símbolos de la biblioteca, en el orden del documento.
+    /// Los símbolos de la biblioteca, en el orden del documento (ver `Artboard::is_symbol`).
     pub fn library(&self) -> impl Iterator<Item = &Artboard> {
-        self.artboards.iter().filter(|a| a.in_library)
+        self.artboards.iter().filter(|a| a.is_symbol())
     }
 
     /// Los modelos 3D, en el orden del documento.
@@ -509,6 +515,16 @@ mod tests {
         assert_eq!(ids(d.models().collect()), vec![ArtboardId(3)]);
         assert_eq!(ids(d.fonts().collect()), vec![ArtboardId(4)]);
         assert_eq!(ids(d.library().collect()), vec![ArtboardId(2)]);
+    }
+
+    #[test]
+    fn a_model_or_font_marked_in_library_is_not_a_symbol() {
+        // Archivos viejos: un modelo (o una fuente) mandado a la biblioteca.
+        let mut d = kinds_doc();
+        d.artboards[2].in_library = true;
+        d.artboards[3].in_library = true;
+        let ids: Vec<_> = d.library().map(|a| a.id).collect();
+        assert_eq!(ids, vec![ArtboardId(2)]);
     }
 
     #[test]

@@ -34,6 +34,19 @@ fn move_to_library_and_back_with_undo() {
 }
 
 #[test]
+fn a_model_or_font_does_not_go_to_the_library() {
+    let mut d = doc();
+    add(&mut d, 2, (20, 0), false);
+    add(&mut d, 3, (40, 0), false);
+    add(&mut d, 4, (60, 0), false);
+    d.artboards[2].model = Some(Model3D::default());
+    d.artboards[3].font = Some(FontInfo::new("F", 8, FontMode::OneBit));
+    assert_eq!(move_to_library(&d, ArtboardId(3)), None, "model");
+    assert_eq!(move_to_library(&d, ArtboardId(4)), None, "font");
+    assert!(move_to_library(&d, ArtboardId(2)).is_some());
+}
+
+#[test]
 fn the_last_canvas_artboard_cannot_leave() {
     let mut d = doc();
     add(&mut d, 2, (20, 0), true);

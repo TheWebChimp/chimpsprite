@@ -329,7 +329,7 @@ impl Editor {
         };
         match self.document.artboard(source) {
             None => false,
-            Some(a) if a.in_library => self.enter_symbol(source),
+            Some(a) if a.is_symbol() => self.enter_symbol(source),
             Some(a) if a.model.is_some() => {
                 // La app abre la pestaña de vista del modelo (no hay pestañas en el editor).
                 let entered = self.enter_workspace(source);

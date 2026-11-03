@@ -25,10 +25,11 @@ pub fn free_position(doc: &Document) -> (i32, i32) {
     }
 }
 
-/// Manda `id` a la biblioteca. `None` si ya está ahí o si es el último artboard del lienzo.
+/// Manda `id` a la biblioteca. `None` si no está en el lienzo (ya está ahí, o es un modelo o
+/// una fuente, que viven en su propia sección) o si es el último artboard del lienzo.
 pub fn move_to_library(doc: &Document, id: ArtboardId) -> Option<DocCommand> {
     let artboard = doc.artboard(id)?;
-    (!artboard.in_library && doc.canvas_count() > 1).then_some(DocCommand::SetArtboardInLibrary {
+    (artboard.on_canvas() && doc.canvas_count() > 1).then_some(DocCommand::SetArtboardInLibrary {
         id,
         in_library: true,
     })

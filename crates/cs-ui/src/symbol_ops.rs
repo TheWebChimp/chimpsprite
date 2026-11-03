@@ -102,7 +102,7 @@ impl Editor {
     /// Entra a editar `id` (un símbolo de la biblioteca): lo apila y lo activa. Guarda el artboard
     /// activo de antes para volver.
     pub fn enter_symbol(&mut self, id: ArtboardId) -> bool {
-        if !self.document.artboard(id).is_some_and(|a| a.in_library) {
+        if !self.document.artboard(id).is_some_and(|a| a.is_symbol()) {
             return false;
         }
         // Si ya está en la pila, se vuelve a ese nivel.

@@ -309,3 +309,14 @@ fn the_text_tool_writes_with_a_document_font() {
     };
     assert_eq!(pixels, vec![(2, 3, e.primary)]);
 }
+
+#[test]
+fn a_font_cannot_be_moved_to_the_library() {
+    let mut e = editor_with_font();
+    let font = e.active;
+    e.add_artboard(8, 8);
+    assert!(e.enter_workspace(font));
+    assert!(!e.can_move_active_to_library(), "the menu item is disabled");
+    assert!(!e.move_active_to_library());
+    assert!(!e.document.artboard(font).unwrap().in_library);
+}

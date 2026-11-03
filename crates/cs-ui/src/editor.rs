@@ -500,7 +500,7 @@ impl Editor {
         // La pila del modo símbolo se corta en el primero que ya no es un símbolo de la
         // biblioteca (p. ej. un undo lo borró o lo sacó al lienzo).
         let document = &self.document;
-        let symbol = |id: &ArtboardId| document.artboard(*id).is_some_and(|a| a.in_library);
+        let symbol = |id: &ArtboardId| document.artboard(*id).is_some_and(|a| a.is_symbol());
         if let Some(cut) = self.symbol_stack.iter().position(|id| !symbol(id)) {
             self.symbol_stack.truncate(cut);
         }
