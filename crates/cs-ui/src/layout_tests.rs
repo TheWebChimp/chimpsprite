@@ -5536,6 +5536,12 @@ fn with_library_items() -> LayoutHarness {
     h
 }
 
+/// Vuelve a abrir el panel Library (abrir la vista de un modelo o fuente abre su panel encima).
+fn reopen_library(h: &mut LayoutHarness) {
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    h.frame();
+}
+
 /// La fila `name` del panel Library (la de más abajo con ese nombre: la pestaña está arriba).
 fn library_row(h: &LayoutHarness, name: &str) -> Rect {
     h.nodes
@@ -5599,6 +5605,7 @@ fn double_clicking_a_model_in_the_library_opens_its_tab() {
     h.double_click(row.center());
     assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2, "a view tab");
     assert_eq!(h.app.doc.editor.workspace(), Some(ship));
+    reopen_library(&mut h);
     // Un símbolo sigue entrando en su modo.
     let coin = library_row(&h, "Coin");
     h.double_click(coin.center());
@@ -5631,6 +5638,7 @@ fn renaming_a_model_in_the_library_renames_its_tab() {
     let row = library_row(&h, "Ship");
     h.double_click(row.center());
     h.frame();
+    reopen_library(&mut h);
     let row = library_row(&h, "Ship");
     h.click(row.center(), PointerButton::Secondary);
     h.frame();
@@ -5656,6 +5664,7 @@ fn deleting_a_model_from_the_library_closes_its_tab() {
     h.double_click(row.center());
     h.frame();
     assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2);
+    reopen_library(&mut h);
     let row = library_row(&h, "Ship");
     h.click(row.center(), PointerButton::Secondary);
     h.frame();
