@@ -524,8 +524,7 @@ impl CanvasView {
                 self.zoom = 1.0;
                 self.pan = -center * self.scale();
             }
-            // La textura del modo Texture se encuadra en su panel (el panel del dock ya quedó
-            // fuera). Al abrir la pestaña o su panel, con caras elegidas, en las UVs de ellas.
+            // La textura del modo Texture se encuadra en su panel (el panel 3D ya quedó fuera). Al abrir la pestaña o su panel, con caras elegidas, en las UVs de ellas.
             ZoomRequest::FitActiveBeside { .. }
                 if self.texture_pane && !editor.selected_faces().is_empty() =>
             {

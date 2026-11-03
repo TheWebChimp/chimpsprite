@@ -648,6 +648,11 @@ impl ChimpApp {
                 });
             },
         );
+        self.model_action(action);
+    }
+
+    /// Lo que pidió el panel 3D.
+    fn model_action(&mut self, action: Option<model_panel::ModelAction>) {
         match action {
             Some(model_panel::ModelAction::NewModel) => self.new_model = Some(Default::default()),
             Some(model_panel::ModelAction::Bake) if self.doc.editor.edited_model().is_some() => {
@@ -836,14 +841,12 @@ impl ChimpApp {
             });
     }
 
-    /// Abre el panel 3D (si estaba cerrado) y encuadra el modelo al lado de él.
-    fn show_model_beside_panel(&mut self, ctx: &egui::Context) {
-        dock::set_open(ctx, Some(dock::DockPanel::Model));
+    /// Encuadra el modelo al entrar a su pestaña. Su panel 3D va fijo al lado del workspace (ya
+    /// fuera del lienzo): el panel abierto del dock, el del lienzo, no cambia.
+    fn show_model_beside_panel(&mut self) {
         self.doc
             .canvas
-            .request_zoom(view::ZoomRequest::FitActiveBeside {
-                right_inset: dock::flyout_reach(model_panel::WIDTH),
-            });
+            .request_zoom(view::ZoomRequest::FitActiveBeside { right_inset: 0.0 });
     }
 
     /// El panel del workspace en el que se está: el de la fuente o el del modelo.
@@ -851,7 +854,7 @@ impl ChimpApp {
         if self.doc.editor.is_font() {
             self.show_font_beside_panel(ctx);
         } else if self.doc.editor.workspace_model().is_some() {
-            self.show_model_beside_panel(ctx);
+            self.show_model_beside_panel();
         }
     }
 
@@ -881,7 +884,7 @@ impl ChimpApp {
                 if !self.has_doc() {
                     self.new_document();
                 }
-                self.create_model(ctx, &name, size);
+                self.create_model(&name, size);
             }
             tilemap_dialog::DialogResult::Cancel => self.new_model = None,
         }
@@ -936,21 +939,16 @@ impl ChimpApp {
             .request_zoom(view::ZoomRequest::CenterActive);
     }
 
-    /// Crea el modelo 3D `name` en el documento abierto, abre el panel 3D en el dock y lo
-    /// encuadra al lado de él. `false` si no se pudo.
-    pub(crate) fn create_model(
-        &mut self,
-        ctx: &egui::Context,
-        name: &str,
-        size: (u32, u32),
-    ) -> bool {
+    /// Crea el modelo 3D `name` en el documento abierto, abre su pestaña (con el panel 3D) y lo
+    /// encuadra. `false` si no se pudo.
+    pub(crate) fn create_model(&mut self, name: &str, size: (u32, u32)) -> bool {
         if !self.doc.editor.new_model(name, size) {
             return false;
         }
         if let Some(id) = self.doc.editor.workspace() {
             self.tabs.open_view(&mut self.doc, id);
         }
-        self.show_model_beside_panel(ctx);
+        self.show_model_beside_panel();
         true
     }
 
@@ -1594,25 +1592,47 @@ impl ChimpApp {
         let mut dock_frame = egui::Frame::side_top_panel(ui.style());
         dock_frame.inner_margin.left = 0;
         dock_frame.inner_margin.right = dock::RIGHT_MARGIN;
-        let dock_out = egui::Panel::right("dock")
-            .resizable(false)
-            .exact_size(dock::WIDTH)
-            .frame(dock_frame)
-            .show_separator_line(skin.is_none())
-            .show(ui, |ui| {
-                ui.add_enabled_ui(!modal, |ui| {
-                    dock::show(
-                        ui,
-                        &mut self.doc.editor,
-                        &mut self.doc.artboard_name,
-                        skin,
-                        &mut self.view.timeline,
-                        &mut self.view.preview,
-                    )
+        // En la pestaña de un modelo (ChimpCAD) no va la columna del dock: en su lugar, el panel
+        // 3D fijo, que no se cierra. El panel abierto del dock (el del lienzo) queda como estaba.
+        let model_tab = self.doc.editor.model_edit_on();
+        let mut model_action = None;
+        let dock_out = if model_tab {
+            let editor = &mut self.doc.editor;
+            let state = &mut self.model_panel;
+            egui::Panel::right("model_panel")
+                .resizable(false)
+                .exact_size(dock::fixed_panel_width(model_panel::WIDTH))
+                .frame(dock_frame)
+                .show_separator_line(skin.is_none())
+                .show(ui, |ui| {
+                    dock::fixed_panel(ui, skin, model_panel::WIDTH, |ui| {
+                        ui.add_enabled_ui(!modal, |ui| {
+                            model_action = model_panel::show(ui, editor, skin, state);
+                        });
+                    });
+                });
+            dock::DockOutput::default()
+        } else {
+            egui::Panel::right("dock")
+                .resizable(false)
+                .exact_size(dock::WIDTH)
+                .frame(dock_frame)
+                .show_separator_line(skin.is_none())
+                .show(ui, |ui| {
+                    ui.add_enabled_ui(!modal, |ui| {
+                        dock::show(
+                            ui,
+                            &mut self.doc.editor,
+                            &mut self.doc.artboard_name,
+                            skin,
+                            &mut self.view.timeline,
+                            &mut self.view.preview,
+                        )
+                    })
+                    .inner
                 })
                 .inner
-            })
-            .inner;
+        };
         // Un artboard de fuente o modelo no tiene timeline: sus frames son los glifos. La preferencia queda igual para los sprites.
         // Tampoco en la pestaña de un modelo en modo Texture (el activo es su textura).
         if self.view.timeline
@@ -1644,6 +1664,7 @@ impl ChimpApp {
         if dock_out.canvas_size {
             self.open_canvas_size();
         }
+        self.model_action(model_action);
         let canvas_texture = self.doc.canvas.plain_texture(&self.doc.editor);
         if self.view.preview
             && self.preview.show(
@@ -1672,7 +1693,8 @@ impl ChimpApp {
             Some((dock::DockPanel::Model, anchor)) => self.model_panel(ui.ctx(), anchor, modal),
             _ => {}
         }
-        if !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {
+        // En la pestaña del modelo, el de Lospec queda abierto para cuando se vuelva al lienzo.
+        if !model_tab && !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {
             self.close_lospec_panel();
         }
         // Otra vez: el panel derecho necesita `self` entero.

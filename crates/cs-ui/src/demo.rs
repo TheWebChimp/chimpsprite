@@ -672,7 +672,7 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     // contorno, y el panel 3D abierto, para capturas.
     if dev_var("CHIMPSPRITE_DEMO_MODEL").is_some()
         && app.has_doc()
-        && app.create_model(ctx, "House", (128, 128))
+        && app.create_model("House", (128, 128))
     {
         let e = &mut app.doc.editor;
         if e.add_primitive(cs_3d::Primitive::Cone { sides: 4 })

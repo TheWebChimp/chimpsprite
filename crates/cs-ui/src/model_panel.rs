@@ -1,4 +1,5 @@
-//! El panel 3D del dock: el modelo 3D del artboard activo. Arriba, fija, la tira de pestañas: la
+//! El panel 3D (en el dock del lienzo; en la pestaña del modelo, fijo en su lugar): el modelo 3D
+//! del artboard activo. Arriba, fija, la tira de pestañas: la
 //! del modelo (los cinco íconos de tipo, sin marca; activa sin objeto elegido) y una por objeto
 //! (con el ícono de su tipo: un clic la elige, su marca quita el objeto y, si no caben, las
 //! flechas las recorren) y, a la derecha, el + (un menú con las primitivas y los lados de las
@@ -134,7 +135,8 @@ pub enum ModelAction {
 }
 
 /// El panel en `ui` (lo de adentro del marco, de la columna entera: ver
-/// [`crate::dock::flyout_fixed`]): el título fijo y el medio con scroll.
+/// [`crate::dock::flyout_fixed`] y [`crate::dock::fixed_panel`]): el título fijo y el medio con
+/// scroll.
 pub fn show(
     ui: &mut Ui,
     editor: &mut Editor,

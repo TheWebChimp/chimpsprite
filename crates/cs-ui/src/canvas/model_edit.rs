@@ -94,7 +94,7 @@ impl CanvasView {
         editor: &mut Editor,
         modal: bool,
     ) {
-        let (header, views) = header_split(workspace_area(ui, rect));
+        let (header, views) = header_split(rect);
         self.texture_panes = None;
         self.header_rect = Some(header);
         // Los cuadrantes salen del área debajo del encabezado, así que ya valen para la entrada
@@ -744,18 +744,6 @@ impl CanvasView {
             p.image(t.id(), r, full, Color32::WHITE);
         }
     }
-}
-
-/// El área del workspace en `rect` (todo el lienzo): lo que se ve a la izquierda del panel del
-/// dock abierto (con el panel cerrado, todo).
-pub(super) fn workspace_area(ui: &egui::Ui, rect: Rect) -> Rect {
-    let mut area = rect;
-    if let Some(panel) = crate::dock::open_flyout_rect(ui.ctx())
-        && panel.intersects(rect)
-    {
-        area.max.x = panel.left().floor().clamp(rect.left() + 1.0, rect.right());
-    }
-    area
 }
 
 /// El sprite del modelo que se edita (el del workspace, aunque el activo sea su textura).

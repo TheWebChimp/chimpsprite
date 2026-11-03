@@ -7,7 +7,7 @@
 
 use eframe::egui::pos2;
 
-use super::model_edit::{PERSP_BG, cad_header, header_split, workspace_area};
+use super::model_edit::{PERSP_BG, cad_header, header_split};
 use super::*;
 use crate::editor::TextureView;
 
@@ -33,7 +33,7 @@ impl CanvasView {
         view_settings: &ViewSettings,
     ) {
         // Debajo del encabezado de ChimpCAD.
-        let (header, area) = header_split(workspace_area(ui, rect));
+        let (header, area) = header_split(rect);
         let (top, bottom) = texture_panes(area);
         self.edit_quads = None;
         self.texture_panes = Some((top, bottom));

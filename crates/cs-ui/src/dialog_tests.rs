@@ -433,11 +433,10 @@ fn new_model_creates_a_model_artboard() {
     assert!(editor.is_model(), "the active artboard is a model");
     assert_eq!(editor.artboard().name, "Model");
     assert_eq!((editor.sprite().width, editor.sprite().height), (128, 128));
-    // Y se abre el panel 3D del dock.
-    assert_eq!(
-        crate::dock::open_panel(&h.ctx),
-        Some(crate::dock::DockPanel::Model)
-    );
+    // Y se abre su pestaña, con el panel 3D fijo: el panel abierto del dock (el del lienzo)
+    // no cambia.
+    assert!(editor.model_edit_on());
+    assert_eq!(crate::dock::open_panel(&h.ctx), None);
 }
 
 #[test]

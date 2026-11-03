@@ -4134,34 +4134,17 @@ fn the_cad_workspace_fills_the_canvas_with_the_four_views() {
 }
 
 #[test]
-fn the_cad_views_end_left_of_the_open_dock_panel() {
-    let mut h = with_a_model_at_800();
+fn the_cad_views_end_left_of_the_3d_panel() {
+    let h = with_a_model_at_800();
     let canvas = h.canvas.expect("the workspace area");
+    // El panel 3D va fijo al lado (fuera del lienzo): las vistas llenan el área entera.
+    let panel = model_flyout(&h);
+    assert!(canvas.right() <= panel.left(), "{panel:?} vs {canvas:?}");
     let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
-    assert_eq!(quads[1].right(), canvas.right(), "closed: the whole area");
-    h.click(h.button("3D").center(), PointerButton::Primary);
-    h.frame();
-    let id = egui::Id::new(("dock_flyout", crate::dock::DockPanel::Model.label()));
-    let panel = h
-        .ctx
-        .memory(|m| m.area_rect(id))
-        .expect("the 3D panel is open");
-    assert!(panel.left() < canvas.right(), "{panel:?} over {canvas:?}");
-    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
-    for i in [1, 3] {
-        assert!(
-            quads[i].right() <= panel.left(),
-            "{:?} vs {panel:?}",
-            quads[i]
-        );
-    }
+    assert_eq!(quads[1].right(), canvas.right());
+    assert_eq!(quads[3].right(), canvas.right());
     assert_eq!(quads[0].left(), canvas.left());
     assert!(quads[1].contains_rect(persp_pixels(&h)), "the render too");
-    // Cerrado otra vez: hasta el borde del lienzo.
-    h.click(h.button("3D").center(), PointerButton::Primary);
-    h.frame();
-    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
-    assert_eq!(quads[3].right(), canvas.right());
 }
 
 #[test]
@@ -4524,15 +4507,16 @@ fn the_other_button_during_a_model_drag_reaches_no_tool() {
 
 // --- El panel 3D ---
 
-/// El panel 3D del dock abierto (con `model`, un modelo nuevo de 32×32 con su cubo).
+/// El panel 3D (con `model`, un modelo nuevo de 32×32 con su cubo, en su pestaña; sin él, el
+/// del dock abierto).
 fn model_panel_open(model: bool) -> LayoutHarness {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     if model {
+        // En la pestaña del modelo el panel 3D va fijo (sin el dock).
         assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
-        // En el workspace del modelo no hay barra de opciones: el dock sube en el frame que sigue.
-        h.frame();
+    } else {
+        h.click(h.button("3D").center(), PointerButton::Primary);
     }
-    h.click(h.button("3D").center(), PointerButton::Primary);
     h.frame();
     h
 }
@@ -4555,10 +4539,7 @@ fn the_model_panel_without_a_model_offers_new_3d_model() {
 #[test]
 fn the_model_panel_shows_the_objects_as_tabs_and_adds_a_cylinder() {
     let mut h = model_panel_open(true);
-    let flyout = h
-        .ctx
-        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
-        .expect("the 3D panel is open");
+    let flyout = model_flyout(&h);
     let cube = node(&h, "Cube");
     assert!(flyout.contains_rect(cube), "{cube:?} vs {flyout:?}");
     add_object(&mut h, "Cylinder");
@@ -4576,8 +4557,16 @@ fn the_model_panel_shows_the_objects_as_tabs_and_adds_a_cylinder() {
     assert_eq!(h.app.doc.editor.selected_object(), Some(0));
 }
 
-/// El panel 3D abierto: su caja.
+/// El panel 3D: su caja (en la pestaña del modelo, la del panel fijo; si no, la del dock).
 fn model_flyout(h: &LayoutHarness) -> Rect {
+    if h.app.doc.editor.model_edit_on() {
+        let side = h.panel("model_panel");
+        let air = crate::dock::RIGHT_MARGIN as f32;
+        return Rect::from_min_max(
+            pos2(side.left(), side.top() + 2.0 + 5.0),
+            pos2(side.right() - air, side.bottom() - 2.0 - 5.0),
+        );
+    }
     h.ctx
         .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
         .expect("the 3D panel is open")
@@ -5016,10 +5005,13 @@ fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
         scrolled == Rect::NOTHING || scrolled.top() < top.top() - 20.0,
         "el panel no se desplazó"
     );
-    // Cerrar y volver a abrir (el botón 3D del dock).
-    h.click(h.button("3D").center(), PointerButton::Primary);
+    // Ir al lienzo y volver a la pestaña del modelo (el panel no se cierra de otro modo).
+    let doc = h.button(&h.app.doc.location.name.clone());
+    let ship = h.app.doc.editor.workspace().expect("the model's workspace");
+    h.click(doc.center(), PointerButton::Primary);
     h.frame();
-    h.click(h.button("3D").center(), PointerButton::Primary);
+    assert!(!h.app.doc.editor.model_edit_on());
+    h.app.tabs.open_view(&mut h.app.doc, ship);
     for _ in 0..3 {
         h.frame();
     }
@@ -5201,9 +5193,9 @@ fn model_panel_in(size: Vec2) -> LayoutHarness {
         cs_core::Sprite::new(16, 16, cs_core::ColorMode::Rgba)
     ));
     assert!(editor.new_model("Ship", (32, 32)));
-    // En el workspace del modelo no hay barra de opciones: el dock sube en el frame que sigue.
+    // En el workspace del modelo no hay barra de opciones y el panel 3D va fijo: todo se acomoda
+    // en el frame que sigue.
     h.frame();
-    h.click(h.button("3D").center(), PointerButton::Primary);
     h.frame();
     h
 }
@@ -5346,10 +5338,7 @@ fn every_model_panel_control_fits_beside_the_scroll_bar() {
             h = on_the_model_tab(h);
         }
         h.frame();
-        let flyout = h
-            .ctx
-            .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
-            .expect("the 3D panel is open");
+        let flyout = model_flyout(&h);
         // Lo de adentro del marco y, sin la barra del scroll (a la derecha), lo del contenido.
         let inner = flyout.shrink(crate::dock::FLYOUT_MARGIN as f32);
         let content = Rect::from_min_max(
@@ -5519,10 +5508,7 @@ fn entries_of_colors_outside_the_palette_show_as_orphan_columns() {
     table.set(faded, 1, Some(model_palette(&h, 6)));
     assert!(h.app.doc.editor.set_shading(table));
     set_model_palette(&mut h, colors);
-    let flyout = h
-        .ctx
-        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
-        .expect("the 3D panel is open");
+    let flyout = model_flyout(&h);
     // Ordenadas como la tabla: (1, 2, 3) antes que el 9 de la paleta.
     let first = node(&h, "Shade orphan 0 color");
     let second = node(&h, "Shade orphan 1 color");
@@ -5609,10 +5595,7 @@ fn the_shading_grid_is_disabled_with_the_light_off() {
 #[test]
 fn every_shade_cell_is_inside_the_flyout() {
     let h = on_the_model_tab(model_panel_tall());
-    let flyout = h
-        .ctx
-        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
-        .expect("the 3D panel is open");
+    let flyout = model_flyout(&h);
     let palette = h.app.doc.editor.sprite().palette.colors().to_vec();
     let mut count = 0;
     for (i, c) in palette.iter().enumerate().filter(|(_, c)| c.a == 255) {
@@ -6414,8 +6397,19 @@ fn with_library_items() -> LayoutHarness {
     h
 }
 
-/// Vuelve a abrir el panel Library (abrir la vista de un modelo o fuente abre su panel encima).
+/// Vuelve a abrir el panel Library: desde la pestaña de un modelo (sin dock), de vuelta al
+/// lienzo, donde sigue abierto; desde la de una fuente (que abre su panel encima), su botón.
 fn reopen_library(h: &mut LayoutHarness) {
+    if h.app.doc.editor.model_edit_on() {
+        let doc = h.button(&h.app.doc.location.name.clone());
+        h.click(doc.center(), PointerButton::Primary);
+        h.frame();
+        assert_eq!(
+            crate::dock::open_panel(&h.ctx),
+            Some(crate::dock::DockPanel::Library)
+        );
+        return;
+    }
     h.click(h.button("Library").center(), PointerButton::Primary);
     h.frame();
 }
@@ -6620,34 +6614,109 @@ fn place_on_canvas_of_a_model_puts_an_instance_on_the_canvas() {
     assert_eq!(h.app.doc.editor.document.models().count(), 1);
 }
 
+/// Los botones del dock dibujados en el último frame (los de los paneles y los de abajo).
+fn dock_buttons(h: &LayoutHarness) -> Vec<String> {
+    let labels: Vec<&str> = crate::dock::DockPanel::ALL
+        .iter()
+        .map(|p| p.label())
+        .chain(["Timeline", "Preview"])
+        .collect();
+    h.buttons
+        .iter()
+        .filter(|(l, _)| labels.contains(&l.as_str()))
+        .map(|(l, _)| l.clone())
+        .collect()
+}
+
+/// En la pestaña del modelo se ve el panel 3D (su pestaña "Model" dentro de su caja).
+fn model_panel_shown(h: &LayoutHarness) -> bool {
+    in_model_panel(h, "Model").is_some()
+}
+
 #[test]
-fn opening_a_model_view_opens_the_3d_panel() {
+fn opening_a_model_view_shows_the_3d_panel_without_the_dock() {
     use crate::dock::DockPanel;
     let mut h = with_library_items();
-    let open = |h: &LayoutHarness| crate::dock::open_panel(&h.ctx) == Some(DockPanel::Model);
-    assert!(!open(&h));
+    assert!(!dock_buttons(&h).is_empty(), "the canvas tab has the dock");
     let row = library_row(&h, "Ship");
     h.double_click(row.center());
     h.frame();
-    assert!(open(&h), "Library double-click opens the 3D panel");
-    // Cerrar el panel y volver a la pestaña del modelo también lo abre.
-    crate::dock::set_open(&h.ctx, None);
+    assert!(h.app.doc.editor.model_edit_on());
+    assert!(
+        model_panel_shown(&h),
+        "Library double-click shows the 3D panel"
+    );
+    assert_eq!(dock_buttons(&h), Vec::<String>::new(), "no dock column");
+    // El panel del dock abierto en el lienzo sigue siendo el de antes (Library).
+    assert_eq!(crate::dock::open_panel(&h.ctx), Some(DockPanel::Library));
+    // De vuelta al lienzo, el dock con su panel; y otra vez a la pestaña del modelo, el panel 3D.
     let doc = h.button(&h.app.doc.location.name.clone());
     h.click(doc.center(), PointerButton::Primary);
     h.frame();
-    crate::dock::set_open(&h.ctx, None);
-    h.frame();
+    assert!(!h.app.doc.editor.model_edit_on());
+    assert!(dock_buttons(&h).contains(&"Library".to_string()));
+    assert_eq!(crate::dock::open_panel(&h.ctx), Some(DockPanel::Library));
     let tab = h.button("Ship");
     h.click(tab.center(), PointerButton::Primary);
     h.frame();
-    assert!(open(&h), "clicking its tab opens the 3D panel");
+    assert!(model_panel_shown(&h), "clicking its tab shows the 3D panel");
+    assert_eq!(dock_buttons(&h), Vec::<String>::new());
+}
+
+#[test]
+fn switching_tabs_keeps_the_canvas_tab_dock_panel() {
+    use crate::dock::DockPanel;
+    let mut h = with_model_tab();
+    let doc_tab = |h: &LayoutHarness| h.button(&h.app.doc.location.name.clone());
+    for open in [None, Some(DockPanel::Lumen), Some(DockPanel::Model)] {
+        h.click(doc_tab(&h).center(), PointerButton::Primary);
+        h.frame();
+        crate::dock::set_open(&h.ctx, open);
+        h.frame();
+        h.click(h.button("Ship").center(), PointerButton::Primary);
+        h.frame();
+        assert!(model_panel_shown(&h));
+        assert_eq!(crate::dock::open_panel(&h.ctx), open, "on the model tab");
+        h.click(doc_tab(&h).center(), PointerButton::Primary);
+        h.frame();
+        assert_eq!(crate::dock::open_panel(&h.ctx), open, "back on the canvas");
+        assert!(dock_buttons(&h).contains(&"Timeline".to_string()));
+    }
+}
+
+#[test]
+fn the_3d_panel_of_the_model_tab_sits_between_the_workspace_and_the_colors() {
+    let h = with_model_tab();
+    assert_eq!(dock_buttons(&h), Vec::<String>::new());
+    let side = h.panel("model_panel");
+    let colors = h.panel("palette");
+    assert_eq!(side.right(), colors.left(), "{side:?} {colors:?}");
+    let canvas = h.canvas.expect("the workspace area");
+    // La caja del panel: 3 px de aire hasta el lienzo y hasta la columna de colores.
+    let panel = model_flyout(&h);
+    assert_eq!(
+        panel.left() - canvas.right(),
+        3.0 + 3.0,
+        "{panel:?} {canvas:?}"
+    );
+    assert_eq!(colors.left() - panel.right(), 3.0);
+    assert_eq!(
+        panel.width(),
+        crate::model_panel::WIDTH + 2.0 * crate::dock::FLYOUT_MARGIN as f32
+    );
+    // Sin pestaña: la caja no pasa de su borde derecho.
+    let boxes = union(&h.drawn("menu.side")).expect("the panel box");
+    assert_eq!(boxes, panel, "only the box, without the tab");
+    // A lo alto, como la columna del dock: de las reglas al borde de abajo, con 5 de aire.
+    assert_eq!(boxes.top(), side.top() + 2.0 + 5.0);
+    assert_eq!(boxes.bottom(), side.bottom() - 2.0 - 5.0);
 }
 
 #[test]
 fn creating_a_model_or_font_opens_its_view_tab_and_panel() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     let ctx = h.ctx.clone();
-    assert!(h.app.create_model(&ctx, "Hut", (32, 32)));
+    assert!(h.app.create_model("Hut", (32, 32)));
     h.frame();
     let model = h.app.doc.editor.workspace().expect("in the workspace");
     assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2, "a view tab");
@@ -6765,7 +6834,7 @@ fn the_model_and_texture_buttons_switch_the_mode_without_undo() {
 
 #[test]
 fn texture_mode_splits_the_area_top_and_bottom_left_of_the_panel() {
-    let mut h = with_a_model_in_texture_mode();
+    let h = with_a_model_in_texture_mode();
     let canvas = h.canvas.expect("the workspace area");
     let (top, bottom) = h.app.doc.canvas.texture_panes().expect("the two panes");
     // Debajo del encabezado y de su línea.
@@ -6797,11 +6866,8 @@ fn texture_mode_splits_the_area_top_and_bottom_left_of_the_panel() {
         (r.center() - bottom.center()).length() <= 1.0,
         "{r:?} in {bottom:?}"
     );
-    // Con el panel 3D abierto, a su izquierda.
-    h.click(h.button("3D").center(), PointerButton::Primary);
-    h.frame();
-    let id = egui::Id::new(("dock_flyout", crate::dock::DockPanel::Model.label()));
-    let panel = h.ctx.memory(|m| m.area_rect(id)).expect("the 3D panel");
+    // A la izquierda del panel 3D (fijo).
+    let panel = model_flyout(&h);
     let (top, bottom) = h.app.doc.canvas.texture_panes().unwrap();
     assert!(top.right() <= panel.left() && bottom.right() <= panel.left());
     assert!(
@@ -6980,7 +7046,9 @@ fn the_model_tab_has_no_tool_options_bar_and_the_canvas_takes_its_height() {
     let canvas = h.canvas.expect("the workspace area");
     // (Abajo cambia aparte: el workspace no tiene línea de tiempo.)
     assert_eq!(canvas.top(), doc_canvas.top() - options.height());
-    assert_eq!(canvas.x_range(), doc_canvas.x_range());
+    // A lo ancho, del mismo borde izquierdo hasta el panel 3D fijo (en lugar del dock).
+    assert_eq!(canvas.left(), doc_canvas.left());
+    assert_eq!(canvas.right(), model_flyout(&h).left() - 6.0);
     // Ni en modo Texture.
     h.app
         .doc
@@ -7057,8 +7125,14 @@ fn without_pixel_ui_the_chimpcad_header_says_its_name() {
         "{:?}",
         h.texts
     );
-    let model = node(&h, "Model");
-    assert!(header.contains_rect(model), "{model:?} in {header:?}");
+    // El botón Model del encabezado (el panel 3D, al lado, tiene su pestaña Model).
+    assert!(
+        h.nodes
+            .iter()
+            .any(|(l, r)| l == "Model" && header.contains_rect(*r)),
+        "{:?} in {header:?}",
+        h.nodes
+    );
     let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
     assert!(quads[0].top() > header.bottom());
 }
@@ -7322,10 +7396,9 @@ fn a_uv_vertex_moves_alone() {
     }
 }
 
-/// Con el panel 3D abierto.
-fn with_the_model_panel(mut h: LayoutHarness) -> LayoutHarness {
-    h.click(h.button("3D").center(), PointerButton::Primary);
-    h.frame();
+/// Con el panel 3D a la vista (en la pestaña del modelo va fijo).
+fn with_the_model_panel(h: LayoutHarness) -> LayoutHarness {
+    assert!(h.app.doc.editor.model_edit_on());
     h
 }
 
