@@ -1214,7 +1214,7 @@ impl ChimpApp {
                     tabs::TabIcon::None => "",
                     tabs::TabIcon::Model => "▣ ",
                     tabs::TabIcon::Font => "Aa ",
-                    tabs::TabIcon::Piece(_) | tabs::TabIcon::Pieces(_) => "",
+                    tabs::TabIcon::Piece(_) => "",
                 };
                 let label = format!("{icon}{}{}", tab.name, if tab.dirty { " •" } else { "" });
                 ui.add_space(4.0);
@@ -1666,7 +1666,10 @@ impl ChimpApp {
         }
         self.model_action(model_action);
         let canvas_texture = self.doc.canvas.plain_texture(&self.doc.editor);
+        // En la pestaña de un modelo no está su botón (no hay dock): la ventana se esconde sin
+        // apagarse y vuelve con el lienzo.
         if self.view.preview
+            && !model_tab
             && self.preview.show(
                 ui.ctx(),
                 &self.doc.editor,

@@ -712,8 +712,8 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         }
         e.set_light(cs_core::Light3D::default());
         e.set_outline(Some(cs_core::Rgba::rgb(0, 0, 0)));
-        // El panel en la pestaña del modelo (sin objeto elegido); con
-        // CHIMPSPRITE_DEMO_MODEL_TEXTURE, en la del cubo.
+        // El panel sin objeto elegido (abajo, solo la tira); con CHIMPSPRITE_DEMO_MODEL_TEXTURE,
+        // con el cubo.
         e.select_model_object(None);
         // Con CHIMPSPRITE_DEMO_MODEL_EDIT: en vértices y con uno elegido (el workspace siempre
         // está en modo Edit).

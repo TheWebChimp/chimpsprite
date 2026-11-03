@@ -1,13 +1,13 @@
 //! El panel 3D (en el dock del lienzo; en la pestaña del modelo, fijo en su lugar): el modelo 3D
-//! del artboard activo. Arriba, fija, la tira de pestañas: la
-//! del modelo (los cinco íconos de tipo, sin marca; activa sin objeto elegido) y una por objeto
-//! (con el ícono de su tipo: un clic la elige, su marca quita el objeto y, si no caben, las
-//! flechas las recorren) y, a la derecha, el + (un menú con las primitivas y los lados de las
-//! redondas: elegir una la agrega). Abajo, con scroll, lo de la pestaña activa. Sin modelo, el
-//! botón New 3D Model…. La de un objeto: su posición, su rotación y su escala en filas de X, Y y
-//! Z, Double sided y, en modo Texture, la sección UV (girar y voltear las UVs de las caras
-//! elegidas). La del modelo: los modos de selección y la cuadrícula (en modo Model), la textura
-//! y su tamaño, la cámara, la luz (con la cuadrícula Shading), el contorno y Sheet settings….
+//! del artboard activo, partido en dos a lo alto por una línea grabada a la mitad. Arriba, con su
+//! scroll, lo general del modelo: los modos de selección y la cuadrícula (en modo Model), la
+//! textura y su tamaño, la cámara, la luz (con la cuadrícula Shading), el contorno y Sheet
+//! settings…. Abajo, la tira de pestañas de los objetos (una por objeto, con el ícono de su tipo:
+//! un clic la elige, su marca quita el objeto y, si no caben, las flechas las recorren) con el +
+//! a la derecha (un menú con las primitivas y los lados de las redondas: elegir una la agrega) y,
+//! debajo, con su scroll, lo del objeto elegido: en modo Texture, los botones de las UVs (girar y
+//! voltear las de las caras elegidas); su posición, su rotación y su escala en filas de X, Y y Z,
+//! y Double sided. Sin objeto elegido, abajo solo la tira. Sin modelo, el botón New 3D Model….
 
 use cs_3d::Primitive;
 use cs_core::{CameraPreset, Model3D, Object3D, PrimitiveKind, Projection, Rgba, ShadingTable};
@@ -29,28 +29,25 @@ use crate::tabs::TabIcon;
 
 /// Ancho de adentro del panel (sin su marco): el contenido y la barra del scroll.
 pub const WIDTH: f32 = 300.0;
-/// Las pestañas de los objetos, 5 filas debajo del borde de arriba de la caja del panel, sobre su
-/// línea grabada (como en el boceto).
+/// Las pestañas de los objetos, 5 filas debajo de la línea que parte el panel (3 de aire después
+/// de sus dos filas), sobre su propia línea grabada.
 const TABS_TOP: f32 = 5.0;
-/// Sin Pixel UI: la fila de pestañas de egui (más alta) y la línea debajo.
+/// Sin Pixel UI: la fila de pestañas de egui (más alta) y la línea debajo, desde la que parte el
+/// panel.
 const PLAIN_TABS_TOP: f32 = 8.0;
 const PLAIN_HEADER_LINE: f32 = 29.0;
-/// Del borde de arriba del medio a lo primero, y lo mismo abajo.
+/// Del borde de arriba de cada mitad a lo primero, y lo mismo abajo.
 const MIDDLE_AIR: f32 = 4.0;
+/// De la línea de las pestañas a lo primero del objeto (en modo Texture, los botones de las UVs):
+/// 9 filas (como el boceto), con [`MIDDLE_AIR`]. La fila de los botones es media fila más alta
+/// que ellos y los centra: el botón cae (redondeado) una fila más abajo.
+const OBJECT_TOP_AIR: f32 = 9.0 - MIDDLE_AIR - 1.0;
 /// Entre una cosa y otra del medio, y antes de cada sección.
 const ITEM_GAP: f32 = 4.0;
 const SECTION_GAP: f32 = 8.0;
 /// El + de la tira: del alto de las flechas, 4 px después de ellas (como en el boceto).
 const PLUS_W: f32 = 13.0;
 const PLUS_GAP: f32 = 4.0;
-/// La pestaña del modelo: los íconos de los cinco tipos de objeto.
-const MODEL_TAB_ICONS: &[&str] = &[
-    "icon.object.cube",
-    "icon.object.cylinder",
-    "icon.object.cone",
-    "icon.object.sphere",
-    "icon.object.plane",
-];
 /// El stepper de los lados, en el menú del +.
 const SIDES_W: f32 = 62.0;
 /// El select de la cuadrícula del modo Edit.
@@ -135,8 +132,8 @@ pub enum ModelAction {
 }
 
 /// El panel en `ui` (lo de adentro del marco, de la columna entera: ver
-/// [`crate::dock::flyout_fixed`] y [`crate::dock::fixed_panel`]): el título fijo y el medio con
-/// scroll.
+/// [`crate::dock::flyout_fixed`] y [`crate::dock::fixed_panel`]): arriba lo general, la línea a la
+/// mitad y abajo la tira de pestañas y lo del objeto elegido, cada mitad con su scroll.
 pub fn show(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -147,39 +144,94 @@ pub fn show(
     // La caja del panel, como la pinta el dock: en puntos enteros.
     let outer = inner.expand(FLYOUT_MARGIN as f32);
     let outer = Rect::from_min_size(outer.min.round(), outer.size().round());
-    let line = header(ui, editor, skin, state, outer, inner);
-    let middle = Rect::from_x_y_ranges(
-        inner.x_range(),
-        line + pixel_ui::ETCHED_SIZE..=inner.bottom(),
-    );
-    let mut area = egui::ScrollArea::vertical()
-        .id_salt("model_panel_middle")
-        .auto_shrink([false, false])
-        .max_height(middle.height())
-        .min_scrolled_height(middle.height());
     // Recién abierto: arriba. egui guarda el desplazamiento del scroll (y lo persiste entre
     // sesiones), así que sin esto el panel reabre donde se dejó, con Edit y los modos ocultos.
     // Si el frame anterior no se dibujó el panel, es que estaba cerrado.
     let shown_id = egui::Id::new("model_panel_last_pass");
     let pass = ui.ctx().cumulative_pass_nr();
     let last: Option<u64> = ui.data(|d| d.get_temp(shown_id));
-    if last.is_none_or(|last| last + 1 < pass) {
-        area = area.vertical_scroll_offset(0.0);
-    }
+    let reopened = last.is_none_or(|last| last + 1 < pass);
     ui.data_mut(|d| d.insert_temp(shown_id, pass));
-    let action = ui
-        .scope_builder(UiBuilder::new().max_rect(middle), |ui| {
-            pixel_ui::scroll(ui, area, |ui| {
-                ui.add_space(MIDDLE_AIR);
-                let action = body(ui, editor, skin);
-                ui.add_space(MIDDLE_AIR);
-                action
-            })
+    let action = if editor.edited_model().is_none() {
+        // Sin modelo, todo el panel para New 3D Model… (sin línea ni pestañas).
+        scrolled(ui, "model_panel_middle", inner, reopened, |ui| {
+            let new = button(ui, skin, "New 3D Model…");
+            ui.add_space(ITEM_GAP);
+            ui.add(egui::Label::new("The active artboard is not a 3D model.").wrap());
+            new.clicked().then_some(ModelAction::NewModel)
         })
-        .inner;
-    // Todo el panel es de la columna (el medio no lo dice: está en su propio `Ui`).
+    } else {
+        let split = split_row(outer);
+        let top = Rect::from_x_y_ranges(inner.x_range(), inner.top()..=split);
+        let action = scrolled(ui, "model_panel_general", top, reopened, |ui| {
+            ui.spacing_mut().item_spacing.y = ITEM_GAP;
+            general(ui, editor, skin)
+        });
+        divider(ui, skin, outer, split);
+        let line = header(ui, editor, skin, state, outer, inner, split);
+        if editor.selected_object().is_some() {
+            let bottom = Rect::from_x_y_ranges(
+                inner.x_range(),
+                line + pixel_ui::ETCHED_SIZE..=inner.bottom(),
+            );
+            scrolled(ui, "model_panel_object", bottom, reopened, |ui| {
+                ui.spacing_mut().item_spacing.y = ITEM_GAP;
+                selected(ui, editor, skin);
+            });
+        }
+        action
+    };
+    // Todo el panel es de la columna (las mitades no lo dicen: están en su propio `Ui`).
     ui.advance_cursor_after_rect(inner);
     action
+}
+
+/// La fila de la línea que parte el panel: la mitad del alto de su caja `outer`, en puntos
+/// enteros.
+fn split_row(outer: Rect) -> f32 {
+    outer.top() + (outer.height() / 2.0).floor()
+}
+
+/// La línea que parte el panel en la fila `top`: grabada, como la de la tira de pestañas, de lado
+/// a lado de lo de adentro de la caja `outer` (sin Pixel UI, la de egui).
+fn divider(ui: &Ui, skin: Option<&Skin>, outer: Rect, top: f32) {
+    let x = outer.x_range().shrink(1.0);
+    match skin {
+        Some(skin) => {
+            let ppp = ui.ctx().pixels_per_point();
+            let line = pixel_ui::etched_hline(x, top, skin.colors(), ppp);
+            ui.painter().add(line);
+        }
+        None => lit_line(ui, None, outer, top),
+    }
+}
+
+/// Una mitad del panel en `rect`, con su propio scroll (`salt`) y [`MIDDLE_AIR`] arriba y abajo.
+/// Con `reset`, desde arriba.
+fn scrolled<R>(
+    ui: &mut Ui,
+    salt: &str,
+    rect: Rect,
+    reset: bool,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let mut area = egui::ScrollArea::vertical()
+        .id_salt(salt)
+        .auto_shrink([false, false])
+        .max_height(rect.height())
+        .min_scrolled_height(rect.height());
+    if reset {
+        area = area.vertical_scroll_offset(0.0);
+    }
+    ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+        pixel_ui::scroll(ui, area, |ui| {
+            ui.add_space(MIDDLE_AIR);
+            let inner = add_contents(ui);
+            ui.add_space(MIDDLE_AIR);
+            inner
+        })
+    })
+    .inner
 }
 
 /// La pieza del ícono de un tipo de objeto.
@@ -207,18 +259,12 @@ pub(crate) fn object_tabs(model: &Model3D) -> Vec<TabItem> {
         .collect()
 }
 
-/// La tira entera de `model`: primero la del modelo (los cinco íconos de tipo, sin nombre ni
-/// marca: no se cierra) y después las de sus objetos. La pestaña `i + 1` es la del objeto `i`.
-pub(crate) fn panel_tabs(model: &Model3D) -> Vec<TabItem> {
-    let whole = TabItem::icons_only("Model", TabIcon::Pieces(MODEL_TAB_ICONS));
-    std::iter::once(whole).chain(object_tabs(model)).collect()
-}
-
-/// Arriba del panel, fija: la tira de pestañas (la del kit, estilo documento, en lo de adentro de
-/// la caja; su línea grabada, de lado a lado) con el + a la derecha o, sin Pixel UI, una fila de
-/// egui y una línea. Un clic en la del modelo deja sin objeto elegido; en la de un objeto, lo
-/// elige; su marca lo quita (un paso de undo). El + agrega lo elegido en su menú (y lo elige). Sin
-/// modelo, solo la línea. Devuelve la fila de arriba de la línea.
+/// Arriba de la mitad de abajo (desde la línea que parte el panel, en la fila `split`), fija: la
+/// tira de pestañas de los objetos (la del kit, estilo documento, en lo de adentro de la caja; su
+/// línea grabada, de lado a lado) con el + a la derecha o, sin Pixel UI, una fila de egui y una
+/// línea. La pestaña `i` es la del objeto `i`: un clic la elige; su marca lo quita (un paso de
+/// undo). Sin objeto elegido, ninguna activa. El + agrega lo elegido en su menú (y lo elige).
+/// Devuelve la fila de arriba de la línea de la tira.
 fn header(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -226,33 +272,30 @@ fn header(
     state: &mut ModelPanelState,
     outer: Rect,
     inner: Rect,
+    split: f32,
 ) -> f32 {
-    let items = editor.edited_model().map(panel_tabs).unwrap_or_default();
-    let has_model = !items.is_empty();
-    // La del modelo, activa sin objeto elegido.
-    let active = has_model.then(|| editor.selected_object().map_or(0, |i| i + 1));
+    let items = editor.edited_model().map(object_tabs).unwrap_or_default();
+    let active = editor.selected_object();
     let id = ui.id().with("model_object_tabs");
     let mut added = None;
     let (line, event) = match skin {
         Some(skin) => {
-            let top = outer.top() + TABS_TOP;
+            let top = split + TABS_TOP;
             let mut strip = kit::tabs::Strip::new(inner.left(), inner.right(), top);
             strip.line = outer.x_range().shrink(1.0);
-            if has_model {
-                // El +, al final de la fila; las pestañas y sus flechas, antes.
-                let plus = Rect::from_min_size(
-                    pos2(inner.right() - PLUS_W, top + kit::tabs::ARROWS_TOP),
-                    vec2(PLUS_W, kit::tabs::ARROW_SIZE),
-                );
-                strip.right = plus.left() - PLUS_GAP;
-                added = plus_button(ui, skin, plus, state);
-            }
+            // El +, al final de la fila; las pestañas y sus flechas, antes.
+            let plus = Rect::from_min_size(
+                pos2(inner.right() - PLUS_W, top + kit::tabs::ARROWS_TOP),
+                vec2(PLUS_W, kit::tabs::ARROW_SIZE),
+            );
+            strip.right = plus.left() - PLUS_GAP;
+            added = plus_button(ui, skin, plus, state);
             let event = kit::tabs::tab_strip(ui, skin, id, strip, &items, active);
             (strip.bottom(), event)
         }
         None => {
-            let line = outer.top() + PLAIN_HEADER_LINE;
-            let row = Rect::from_x_y_ranges(inner.x_range(), outer.top() + PLAIN_TABS_TOP..=line);
+            let line = split + PLAIN_HEADER_LINE;
+            let row = Rect::from_x_y_ranges(inner.x_range(), split + PLAIN_TABS_TOP..=line);
             let event = ui
                 .scope_builder(UiBuilder::new().max_rect(row), |ui| {
                     plain_tabs(ui, &items, active, state, &mut added)
@@ -263,13 +306,11 @@ fn header(
         }
     };
     match event {
-        Some(TabEvent::Select(0)) => editor.select_model_object(None),
-        Some(TabEvent::Select(i)) => editor.select_model_object(Some(i - 1)),
-        // La del modelo no tiene marca: no se cierra.
-        Some(TabEvent::Close(0)) | None => {}
+        Some(TabEvent::Select(i)) => editor.select_model_object(Some(i)),
         Some(TabEvent::Close(i)) => {
-            editor.remove_object(i - 1);
+            editor.remove_object(i);
         }
+        None => {}
     }
     if let Some(p) = added {
         editor.add_primitive(p);
@@ -368,35 +409,17 @@ fn plain_tabs(
                     }
                     ui.add_space(4.0);
                 }
-                if !items.is_empty() {
-                    let menu = ui.menu_button("+", |ui| add_menu(ui, None, state));
-                    *added = menu.inner.flatten();
-                }
+                let menu = ui.menu_button("+", |ui| add_menu(ui, None, state));
+                *added = menu.inner.flatten();
             });
         });
     event
 }
 
-/// Lo que se desplaza: New 3D Model… sin modelo; con modelo, lo de la pestaña activa (la de un
-/// objeto o la del modelo).
-fn body(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
-    if editor.edited_model().is_none() {
-        let new = button(ui, skin, "New 3D Model…");
-        ui.add_space(ITEM_GAP);
-        ui.add(egui::Label::new("The active artboard is not a 3D model.").wrap());
-        return new.clicked().then_some(ModelAction::NewModel);
-    }
-    ui.spacing_mut().item_spacing.y = ITEM_GAP;
-    if editor.selected_object().is_some() {
-        selected(ui, editor, skin);
-        return None;
-    }
-    model_tab(ui, editor, skin)
-}
-
-/// La pestaña del modelo: en modo Model, los modos de selección y la cuadrícula; la textura y su
-/// tamaño; la cámara, la luz (con Shading) y el contorno, y Sheet settings… (hornear).
-fn model_tab(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
+/// Lo general del modelo (la mitad de arriba): en modo Model, los modos de selección y la
+/// cuadrícula; la textura y su tamaño; la cámara, la luz (con Shading) y el contorno, y Sheet
+/// settings… (hornear).
+fn general(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
     if editor.cad_mode() == CadMode::Model {
         edit_rows(ui, editor, skin);
     }
@@ -409,10 +432,9 @@ fn model_tab(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<Mo
     action.or(bake)
 }
 
-/// En la pestaña de un objeto, en modo Texture: la sección UV, con Rotate 90°, Flip H y Flip V
-/// para las caras elegidas (sin caras, deshabilitados).
-fn uv_section(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
-    label_with_hint(ui, "UV", "");
+/// Lo del objeto elegido, en modo Texture: Rotate 90°, Flip H y Flip V para las caras elegidas
+/// (sin caras, deshabilitados), en una fila sin título (como el boceto).
+fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let faces = !editor.selected_faces().is_empty();
     let (mut rotate, mut flip_h, mut flip_v) = (false, false, false);
     ui.add_enabled_ui(faces, |ui| {
@@ -655,9 +677,10 @@ fn scaled_axes(
     }
 }
 
-/// La pestaña del objeto elegido: posición, rotación y escala (una fila de X, Y, Z cada una),
-/// Double sided y, en modo Texture, la sección UV. Quitarlo es la ○ de su pestaña. Todo lo
-/// cambiado en un frame (o en un arrastre) es un paso de deshacer (`set_model_grouped`).
+/// Lo del objeto elegido (la mitad de abajo): en modo Texture, primero los botones de las UVs;
+/// posición, rotación y escala (una fila de X, Y, Z cada una) y Double sided. Quitarlo es la ○ de
+/// su pestaña. Todo lo cambiado en un frame (o en un arrastre) es un paso de deshacer
+/// (`set_model_grouped`).
 fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let Some(i) = editor.selected_object() else {
         return;
@@ -665,9 +688,13 @@ fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let Some(model) = editor.edited_model().cloned() else {
         return;
     };
+    // Los títulos de los ejes van con el aire de entre una fila y otra (como en el boceto).
+    ui.add_space(OBJECT_TOP_AIR);
+    if editor.cad_mode() == CadMode::Texture {
+        uv_buttons(ui, editor, skin);
+    }
     let obj: &Object3D = &model.objects[i];
     let mut next = obj.clone();
-    ui.add_space(SECTION_GAP);
     let t = &mut next.transform;
     let p = &mut t.position;
     axes(
@@ -702,10 +729,6 @@ fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
     if !ui.input(|input| input.pointer.any_down()) {
         editor.end_group_of(group.value());
-    }
-    if editor.cad_mode() == CadMode::Texture {
-        ui.add_space(SECTION_GAP);
-        uv_section(ui, editor, skin);
     }
 }
 
