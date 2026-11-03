@@ -2317,6 +2317,34 @@ fn with_pixel_ui_the_right_panel_can_not_be_narrower_than_its_minimum() {
 }
 
 #[test]
+fn the_saved_palette_width_is_the_right_panels_width_from_the_first_frame() {
+    for base in [pixel_ui(), ViewSettings::default()] {
+        let view = ViewSettings {
+            palette_width: Some(180.0),
+            ..base
+        };
+        let h = LayoutHarness::new(view, true);
+        assert_eq!(h.panel("palette").width(), 180.0);
+        assert_eq!(h.app.view.palette_width, Some(180.0));
+    }
+}
+
+#[test]
+fn dragging_the_right_panel_edge_saves_its_width() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let panel = h.panel("palette");
+    let edge = Pos2::new(panel.left(), panel.center().y);
+    drag(&mut h, edge, edge + Vec2::new(-30.0, 0.0));
+    let wide = h.panel("palette").width();
+    assert_eq!(wide, panel.width() + 30.0);
+    assert_eq!(h.app.view.palette_width, Some(wide));
+    let mut storage = MemoryStorage::default();
+    eframe::App::save(&mut h.app, &mut storage);
+    let saved: ViewSettings = eframe::get_value(&storage, crate::VIEW_KEY).expect("saved");
+    assert_eq!(saved.palette_width, Some(wide));
+}
+
+#[test]
 fn without_pixel_ui_the_right_panel_has_no_splitter_and_keeps_its_scroll() {
     let h = LayoutHarness::editor();
     assert!(!h.nodes.iter().any(|(l, _)| l == "Palette height"));
