@@ -1573,7 +1573,11 @@ impl ChimpApp {
             })
             .inner;
         // Un artboard de fuente o modelo no tiene timeline: sus frames son los glifos. La preferencia queda igual para los sprites.
-        if self.view.timeline && !self.doc.editor.is_structure_locked() {
+        // Tampoco en la pestaña de un modelo en modo Texture (el activo es su textura).
+        if self.view.timeline
+            && !self.doc.editor.is_structure_locked()
+            && !self.doc.editor.model_edit_on()
+        {
             let mut panel = egui::Panel::bottom("timeline")
                 .resizable(true)
                 .default_size(190.0);

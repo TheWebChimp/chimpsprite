@@ -721,6 +721,25 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                 items: [cs_3d::Item::Vertex(0, 7)].into(),
             });
         }
+        // Con CHIMPSPRITE_DEMO_MODEL_TEXTURE: en modo Texture, con la cara de enfrente del cubo
+        // (la de z+) elegida.
+        if dev_var("CHIMPSPRITE_DEMO_MODEL_TEXTURE").is_some() {
+            let front = e.model().and_then(|m| {
+                let mesh = &m.objects.first()?.mesh;
+                mesh.faces.iter().position(|f| {
+                    f.verts
+                        .iter()
+                        .all(|&v| mesh.vertices.get(v as usize).is_some_and(|p| p.z > 0))
+                })
+            });
+            e.set_cad_mode(crate::editor::CadMode::Texture);
+            if let Some(f) = front {
+                e.set_model_selection(cs_3d::Selection {
+                    mode: cs_3d::SelectMode::Face,
+                    items: [cs_3d::Item::Face(0, f)].into(),
+                });
+            }
+        }
     }
     // Desarrollo: el panel Library abierto, de vuelta en el lienzo (con _MODEL y _FONT, con un
     // modelo y una fuente en sus secciones), para capturas.

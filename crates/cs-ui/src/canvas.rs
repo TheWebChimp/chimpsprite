@@ -25,6 +25,7 @@ mod input;
 mod model_edit;
 mod model_input;
 mod rulers;
+mod texture_mode;
 
 const ZOOM_LEVELS: [f32; 13] = [
     0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
@@ -131,6 +132,16 @@ pub struct CanvasView {
     model_drag: Option<model_input::ModelDrag>,
     /// Los cuadrantes (Front, Persp, Top, Side) del workspace del modelo, en pantalla.
     edit_quads: Option<[Rect; 4]>,
+    /// Los dos paneles del modo Texture (arriba el modelo, abajo la textura), en pantalla.
+    texture_panes: Option<(Rect, Rect)>,
+    /// Si lo que se dibuja ahora es la textura del modo Texture (en el panel de abajo): sin
+    /// reglas, notas, ventana ni etiqueta del artboard.
+    texture_pane: bool,
+    /// El panel de abajo y la vista con que se encuadró la textura sola: mientras nadie la
+    /// cambie, si el panel cambia de tamaño se vuelve a encuadrar.
+    texture_fit: Option<(Rect, crate::editor::TextureView)>,
+    /// El zoom de la textura del modo Texture en el último frame (`None`: no se vio).
+    texture_zoom: Option<f32>,
     /// La perspectiva del modo Edit: la clave de lo que muestra y su textura.
     edit_persp: Option<(u64, TextureHandle)>,
     /// Las vistas orto en pixel art (Front, Top, Side): la clave de lo que muestra cada una y su
@@ -289,6 +300,10 @@ impl Default for CanvasView {
             cards_revision: None,
             model_drag: None,
             edit_quads: None,
+            texture_panes: None,
+            texture_pane: false,
+            texture_fit: None,
+            texture_zoom: None,
             edit_persp: None,
             edit_ortho: [None, None, None],
         }
@@ -338,6 +353,12 @@ impl CanvasView {
         );
         let w = (-self.pan - size / 2.0) / self.scale();
         (w.x.round() as i32, w.y.round() as i32)
+    }
+
+    /// El zoom que se ve (el de la barra de estado): el de la textura en el modo Texture; si no,
+    /// el del lienzo.
+    pub fn shown_zoom(&self) -> f32 {
+        self.texture_zoom.unwrap_or(self.zoom)
     }
 
     /// Cuánto mide un píxel en pantalla, a lo ancho y a lo alto: el zoom por la proporción de
@@ -461,6 +482,10 @@ impl CanvasView {
         } else {
             ZOOM_LEVELS[i.saturating_sub(1)]
         };
+        // La textura del modo Texture va siempre a zoom entero.
+        if self.texture_pane && next < 1.0 {
+            return;
+        }
         let world = (anchor - self.origin(rect)) / self.scale();
         self.zoom = next;
         self.pan = anchor - world * self.scale() - rect.center();
@@ -479,6 +504,11 @@ impl CanvasView {
                 let center = (rect.center() - self.origin(rect)) / self.scale();
                 self.zoom = 1.0;
                 self.pan = -center * self.scale();
+            }
+            // La textura del modo Texture se encuadra en su panel (el panel del dock ya quedó
+            // fuera).
+            ZoomRequest::Fit | ZoomRequest::FitActiveBeside { .. } if self.texture_pane => {
+                self.fit_texture(rect, editor)
             }
             ZoomRequest::Fit => self.fit(rect, editor),
             ZoomRequest::CenterActive => self.center_active(editor),
@@ -698,7 +728,7 @@ impl CanvasView {
         &mut self,
         ui: &mut egui::Ui,
         editor: &mut Editor,
-        mut dialog: Option<&mut CanvasSizeDialog>,
+        dialog: Option<&mut CanvasSizeDialog>,
         view_settings: &ViewSettings,
     ) {
         let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
@@ -711,12 +741,37 @@ impl CanvasView {
         self.crumbs_shown = editor.in_symbol_mode();
         self.sync_symbol_view(editor);
         // El workspace de un modelo (ChimpCAD): las cuatro vistas en todo el área, sin artboards,
-        // reglas ni nada del lienzo.
+        // reglas ni nada del lienzo; en modo Texture, el modelo arriba y la textura abajo.
+        let zoom_before = self.texture_zoom.take();
         if editor.model_edit_on() {
-            self.show_model_workspace(ui, &response, rect, editor, dialog.is_some());
-            return;
+            if editor.cad_mode() == crate::editor::CadMode::Texture {
+                self.show_texture_mode(ui, &response, rect, editor, dialog, view_settings);
+            } else {
+                self.show_model_workspace(ui, &response, rect, editor, dialog.is_some());
+            }
+        } else {
+            self.edit_quads = None;
+            self.texture_panes = None;
+            self.show_artboards(ui, &response, rect, editor, dialog, view_settings);
         }
-        self.edit_quads = None;
+        // La barra de estado (dibujada antes) muestra el zoom de otra vista: otro frame.
+        if self.texture_zoom != zoom_before {
+            ui.ctx().request_repaint();
+        }
+    }
+
+    /// El lienzo de siempre en `rect` (con la entrada de `response`): los artboards que se ven,
+    /// sus guías, la selección, el pincel, las notas y las reglas.
+    fn show_artboards(
+        &mut self,
+        ui: &mut egui::Ui,
+        response: &egui::Response,
+        rect: Rect,
+        editor: &mut Editor,
+        mut dialog: Option<&mut CanvasSizeDialog>,
+        view_settings: &ViewSettings,
+    ) {
+        let ctx = ui.ctx().clone();
         // Un símbolo soltado desde la Library. Con un diálogo abierto o sobre las reglas o la
         // migaja de pan no cuenta (el payload se descarta igual).
         if let Some(payload) = response.dnd_release_payload::<crate::library_panel::SymbolPayload>()
@@ -756,7 +811,7 @@ impl CanvasView {
         self.refresh_cards(editor);
         self.handle_input(
             ui,
-            &response,
+            response,
             rect,
             editor,
             dialog.as_deref_mut(),
@@ -962,6 +1017,10 @@ impl CanvasView {
                 };
                 let kind = BarKind::of(artboard);
                 painter.extend(w.bar_shapes(&painter, layout, &title, active, kind, ppp));
+                continue;
+            }
+            // La textura del modo Texture va sola en su panel: sin borde ni etiqueta.
+            if self.texture_pane {
                 continue;
             }
             let (border, label_color) = if active {
@@ -1197,8 +1256,8 @@ impl CanvasView {
         }
 
         // Las notas (post-its): encima de los artboards y debajo de las reglas. En el modo
-        // símbolo no se ven (son del documento).
-        if !editor.in_symbol_mode() {
+        // símbolo ni con la textura del modo Texture no se ven (son del documento).
+        if !editor.in_symbol_mode() && !self.texture_pane {
             let (origin, scale) = (self.origin(rect), self.scale());
             let to_screen =
                 move |(x, y): (i32, i32)| origin + Vec2::new(x as f32, y as f32) * scale;

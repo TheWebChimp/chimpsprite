@@ -67,6 +67,56 @@ pub fn model_pick(doc: &Document, artboard: &Artboard, x: u32, y: u32) -> Option
     )
 }
 
+/// La cara `(objeto, cara)` de `model` que se ve en el pixel `(x, y)` de su render a `size` con
+/// la textura (frame 0) y la paleta de `artboard`, como [`model_render`]. `None` si no hay
+/// ninguna.
+pub fn model_pick_face(
+    doc: &Document,
+    artboard: &Artboard,
+    model: &cs_core::Model3D,
+    size: (u32, u32),
+    (x, y): (u32, u32),
+) -> Option<(usize, usize)> {
+    let mut stack = vec![artboard.id];
+    let texture = texture_frame_of(doc, model, 0, &mut stack);
+    cs_3d::pick_face(
+        &RenderInput {
+            model,
+            size,
+            texture: texture.as_ref().map(|(width, height, pixels)| Texture {
+                width: *width,
+                height: *height,
+                pixels,
+            }),
+            palette: artboard.sprite.palette.colors(),
+            camera: None,
+            extra_yaw: 0,
+        },
+        x,
+        y,
+    )
+}
+
+/// El contorno de 1 px de las caras `faces` en el render de `model` a `size` (ver
+/// [`cs_3d::face_outline`]), fila por fila.
+pub fn model_face_outline(
+    model: &cs_core::Model3D,
+    size: (u32, u32),
+    faces: &[(usize, usize)],
+) -> Vec<bool> {
+    cs_3d::face_outline(
+        &RenderInput {
+            model,
+            size,
+            texture: None,
+            palette: &[],
+            camera: None,
+            extra_yaw: 0,
+        },
+        faces,
+    )
+}
+
 /// El render de `model` (p. ej. la vista previa del modo Edit, no el guardado en `artboard`)
 /// con la textura (frame 0) y la paleta de `artboard`, a `size`. Sin caché.
 pub fn model_render(

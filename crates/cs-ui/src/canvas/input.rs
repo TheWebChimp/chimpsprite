@@ -515,6 +515,7 @@ impl CanvasView {
             && !ruler_busy
             && !editor.is_painting()
             && !editor.in_symbol_mode()
+            && !self.texture_pane
         {
             // Solo si lo de arriba en el puntero es el lienzo: con un menú o una ventana encima,
             // las notas de abajo no lo ven.

@@ -2,7 +2,7 @@
 //! workspace (`active` = la textura, `workspace` = el modelo) y edita las UVs de las caras
 //! elegidas. Cambiar de modo es estado de la UI: no toca el documento ni el undo.
 
-use cs_3d::{Item, SelectMode};
+use cs_3d::{Item, SelectMode, Selection};
 use cs_commands::{Command, DocCommand};
 use cs_core::{ArtboardId, Model3D};
 
@@ -75,6 +75,39 @@ impl Editor {
         }
         self.model_object = object;
         self.revision += 1;
+    }
+
+    /// Elige la cara del modelo que se edita que se ve en el pixel `(x, y)` de su render (a la
+    /// resolución de su artboard). `toggle` (Shift): la agrega o la quita; si no, queda sola, y
+    /// un clic en vacío vacía la selección. La selección queda en modo Face.
+    pub fn pick_model_face(&mut self, (x, y): (i32, i32), toggle: bool) {
+        let Some(artboard) = self.document.artboard(self.model_id()) else {
+            return;
+        };
+        let Some(model) = artboard.model.as_ref() else {
+            return;
+        };
+        let size = (artboard.sprite.width.max(1), artboard.sprite.height.max(1));
+        let hit = (x >= 0 && y >= 0)
+            .then(|| {
+                let at = (x as u32, y as u32);
+                cs_render::model_pick_face(&self.document, artboard, model, size, at)
+            })
+            .flatten();
+        let mut sel = self.model_edit.selection.clone();
+        if sel.mode != SelectMode::Face {
+            sel = Selection {
+                mode: SelectMode::Face,
+                items: Default::default(),
+            };
+        }
+        match (hit, toggle) {
+            (Some((o, f)), true) => sel.toggle(Item::Face(o, f)),
+            (Some((o, f)), false) => sel.items = [Item::Face(o, f)].into(),
+            (None, true) => return,
+            (None, false) => sel.items.clear(),
+        }
+        self.set_model_selection(sel);
     }
 
     /// Las caras elegidas `(objeto, cara)` (solo en modo Face).

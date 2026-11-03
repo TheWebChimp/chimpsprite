@@ -4,7 +4,8 @@
 //! - **Botón derecho o Alt + izquierdo** arrastrando: orbita (`yaw` y `pitch`).
 //! - **Shift + izquierdo** arrastrando: mueve el `target` en el plano de la vista.
 //! - **Ctrl + rueda:** acerca o aleja la cámara (`distance`), sin tocar el zoom del lienzo.
-//! - **Clic izquierdo:** elige el objeto que se ve bajo el puntero (o ninguno).
+//! - **Clic izquierdo:** elige el objeto que se ve bajo el puntero (o ninguno). En el render del
+//!   modo Texture elige la cara (Shift + clic sin arrastrar la agrega o la quita).
 //!
 //! Cada arrastre es un solo paso de undo.
 
@@ -29,6 +30,10 @@ pub(super) struct ModelDrag {
     /// Pixeles del artboard por punto de pantalla (el render de la perspectiva va a escala
     /// entera).
     factor: Vec2,
+    /// En el render del modo Texture, Shift + clic: el pixel del render donde se apretó. Si se
+    /// suelta sin pasar el umbral de arrastre, agrega o quita la cara de ahí (y la cámara no se
+    /// movió); pasado el umbral, mueve el objetivo.
+    toggle: Option<(i32, i32)>,
 }
 
 /// El grupo de undo de los arrastres sobre el modelo.
@@ -71,9 +76,40 @@ impl CanvasView {
                 from: p,
                 camera,
                 factor,
+                toggle: None,
             });
         } else {
             editor.pick_model_object(local);
+        }
+    }
+
+    /// Como [`Self::model_press_at`], en el render del modo Texture: el clic izquierdo elige la
+    /// cara bajo el puntero; Shift + izquierdo la agrega o la quita si no se arrastra (si se
+    /// arrastra, mueve el objetivo).
+    pub(super) fn texture_press_at(
+        &mut self,
+        editor: &mut Editor,
+        p: Pos2,
+        local: (i32, i32),
+        secondary: bool,
+        modifiers: egui::Modifiers,
+        factor: Vec2,
+    ) {
+        editor.end_group();
+        let Some(camera) = editor.edited_model().map(|m| m.camera) else {
+            return;
+        };
+        if secondary || modifiers.alt || modifiers.shift {
+            let orbit = secondary || modifiers.alt;
+            self.model_drag = Some(ModelDrag {
+                orbit,
+                from: p,
+                camera,
+                factor,
+                toggle: (!orbit).then_some(local),
+            });
+        } else {
+            editor.pick_model_face(local, false);
         }
     }
 
@@ -85,24 +121,42 @@ impl CanvasView {
         pointer: Option<Pos2>,
         down: bool,
     ) {
-        let Some(drag) = self.model_drag else {
+        let Some(mut drag) = self.model_drag else {
             return;
         };
         if !down || editor.edited_model().is_none() {
             editor.end_group_of(drag_group().value());
             self.model_drag = None;
+            // Shift + clic sin arrastre en el render del modo Texture.
+            if let Some(local) = drag.toggle
+                && editor.edited_model().is_some()
+            {
+                editor.pick_model_face(local, true);
+            }
             return;
         }
         let (Some(p), Some(mut model)) = (pointer, editor.edited_model().cloned()) else {
             return;
         };
         let d = p - drag.from;
+        if drag.toggle.is_some() {
+            if d.length() < crate::editor::DRAG_THRESHOLD {
+                return;
+            }
+            // Ya es un arrastre: mueve el objetivo y al soltar no elige nada.
+            drag.toggle = None;
+            self.model_drag = Some(drag);
+        }
         model.camera = if drag.orbit {
             orbit(drag.camera, d)
         } else {
             // Pixeles del artboard: lo que se arrastró en pantalla, sin la escala del render.
             let pixels = d * drag.factor;
-            pan(drag.camera, pixels, editor.sprite().height)
+            pan(
+                drag.camera,
+                pixels,
+                super::model_edit::model_sprite(editor).height,
+            )
         };
         editor.set_model_grouped(model, drag_group());
     }

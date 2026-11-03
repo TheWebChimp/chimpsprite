@@ -5873,3 +5873,237 @@ fn baking_from_the_model_tab_returns_to_the_document_tab_with_the_baked_artboard
     assert_eq!(e.active, baked.id);
     assert!(baked.on_canvas());
 }
+/// El modelo de 32×32 en su pestaña, en modo Texture (la textura activa).
+fn with_a_model_in_texture_mode() -> LayoutHarness {
+    let mut h = with_a_model_at_800();
+    h.app
+        .doc
+        .editor
+        .set_cad_mode(crate::editor::CadMode::Texture);
+    h.frame();
+    h.frame();
+    h
+}
+
+/// Dónde se dibuja la textura del modelo (abajo, en modo Texture).
+fn texture_pixels(h: &LayoutHarness) -> Rect {
+    let id = h.app.doc.editor.workspace_model().unwrap().texture.unwrap();
+    let tex = h
+        .app
+        .doc
+        .canvas
+        .artboard_texture(id)
+        .expect("the texture is composed");
+    h.textures
+        .iter()
+        .find(|(t, _)| *t == tex)
+        .map(|(_, r)| *r)
+        .expect("the texture is drawn")
+}
+
+#[test]
+fn the_model_and_texture_buttons_switch_the_mode_without_undo() {
+    use crate::editor::CadMode;
+    let mut h = with_a_model_at_800();
+    let canvas = h.canvas.expect("the workspace area");
+    let steps = h.app.doc.editor.history.done_count();
+    let (model, texture) = (node(&h, "Model"), node(&h, "Texture"));
+    // Arriba a la derecha del área, uno junto al otro, en puntos enteros.
+    assert!(
+        texture.left() >= model.right() - 1.0,
+        "{model:?} {texture:?}"
+    );
+    assert!(
+        canvas.right() - texture.right() < 8.0,
+        "{texture:?} in {canvas:?}"
+    );
+    assert!(model.top() - canvas.top() < 8.0 && model.top() >= canvas.top());
+    assert_eq!(model.min, model.min.round());
+    // El activo se ve presionado.
+    let down = |h: &LayoutHarness, r: Rect| {
+        h.drawn("button.down")
+            .iter()
+            .any(|d| r.expand(1.0).contains_rect(*d))
+    };
+    assert!(down(&h, model) && !down(&h, texture));
+    h.click(texture.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.cad_mode(), CadMode::Texture);
+    let (model, texture) = (node(&h, "Model"), node(&h, "Texture"));
+    assert!(canvas.right() - texture.right() < 8.0, "also in Texture");
+    assert!(down(&h, texture) && !down(&h, model));
+    h.click(model.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.cad_mode(), CadMode::Model);
+    assert_eq!(
+        h.app.doc.editor.history.done_count(),
+        steps,
+        "no undo steps"
+    );
+}
+
+#[test]
+fn texture_mode_splits_the_area_top_and_bottom_left_of_the_panel() {
+    let mut h = with_a_model_in_texture_mode();
+    let canvas = h.canvas.expect("the workspace area");
+    let (top, bottom) = h.app.doc.canvas.texture_panes().expect("the two panes");
+    assert_eq!(top.min, canvas.min);
+    assert_eq!(top.height(), (canvas.height() / 2.0).floor());
+    assert_eq!(bottom.top(), top.bottom() + 1.0, "a 1 point line");
+    assert_eq!(bottom.bottom(), canvas.bottom());
+    assert_eq!(top.right(), canvas.right());
+    assert_eq!(bottom.x_range(), top.x_range());
+    assert!(top.contains_rect(persp_pixels(&h)), "the model on top");
+    assert!(
+        bottom.intersects(texture_pixels(&h)),
+        "the texture below: {:?} in {bottom:?}",
+        texture_pixels(&h)
+    );
+    assert!(
+        h.app.doc.canvas.model_edit_quadrants().is_none(),
+        "no ortho views"
+    );
+    // Encuadrada al entrar: a zoom entero y centrada en su panel.
+    let r = texture_pixels(&h);
+    let zoom = h.app.doc.editor.model_edit().texture_view.unwrap().zoom as f32;
+    let side = h.app.doc.editor.sprite().width as f32;
+    assert_eq!(r.width(), side * zoom, "{r:?}");
+    let room = bottom.width().min(bottom.height()) * 0.85;
+    assert!(side * (zoom + 1.0) > room, "the largest that fits");
+    assert!(
+        (r.center() - bottom.center()).length() <= 1.0,
+        "{r:?} in {bottom:?}"
+    );
+    // Con el panel 3D abierto, a su izquierda.
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    let id = egui::Id::new(("dock_flyout", crate::dock::DockPanel::Model.label()));
+    let panel = h.ctx.memory(|m| m.area_rect(id)).expect("the 3D panel");
+    let (top, bottom) = h.app.doc.canvas.texture_panes().unwrap();
+    assert!(top.right() <= panel.left() && bottom.right() <= panel.left());
+    assert!(
+        node(&h, "Texture").right() <= panel.left(),
+        "the buttons too"
+    );
+}
+
+#[test]
+fn clicking_the_front_face_of_the_render_selects_it() {
+    let mut h = with_a_model_in_texture_mode();
+    let e = &mut h.app.doc.editor;
+    let camera = cs_core::CameraPreset::Front.camera(4 * cs_core::FIXED, Default::default());
+    assert!(e.set_camera(camera));
+    h.frame();
+    let r = persp_pixels(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(r.center(), PointerButton::Primary);
+    let e = &h.app.doc.editor;
+    let faces = e.selected_faces();
+    assert_eq!(faces.len(), 1, "{faces:?}");
+    let mesh = &e.workspace_model().unwrap().objects[faces[0].0].mesh;
+    assert!(
+        mesh.faces[faces[0].1]
+            .verts
+            .iter()
+            .all(|&v| mesh.vertices[v as usize].z > 0),
+        "the front face"
+    );
+    assert_eq!(e.history.done_count(), steps, "picking is not undoable");
+    assert_eq!(e.active, e.workspace_model().unwrap().texture.unwrap());
+    // Shift + clic la quita y la vuelve a poner; un clic en vacío vacía.
+    let shift_click = |h: &mut LayoutHarness, pos: Pos2| {
+        let press = |pressed| Event::PointerButton {
+            pos,
+            button: PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::SHIFT,
+        };
+        h.frame_with(vec![Event::PointerMoved(pos)]);
+        h.frame_with(vec![
+            Event::ModifiersChanged(egui::Modifiers::SHIFT),
+            press(true),
+        ]);
+        h.frame_with(vec![press(false)]);
+        h.frame_with(vec![Event::ModifiersChanged(Default::default())]);
+    };
+    shift_click(&mut h, r.center());
+    assert!(h.app.doc.editor.selected_faces().is_empty(), "toggled off");
+    shift_click(&mut h, r.center());
+    assert_eq!(h.app.doc.editor.selected_faces(), faces, "toggled on");
+    let (top, _) = h.app.doc.canvas.texture_panes().unwrap();
+    h.click(
+        top.min + vec2(4.0, top.height() - 4.0),
+        PointerButton::Primary,
+    );
+    assert!(h.app.doc.editor.selected_faces().is_empty(), "empty clears");
+}
+
+#[test]
+fn the_pencil_paints_the_texture_below() {
+    let mut h = with_a_model_in_texture_mode();
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    h.app.doc.editor.primary = PixelValue::Rgba(Rgba::rgb(1, 2, 3));
+    let id = h.app.doc.editor.workspace_model().unwrap().texture.unwrap();
+    let before = h
+        .app
+        .doc
+        .editor
+        .document
+        .artboard(id)
+        .unwrap()
+        .sprite
+        .clone();
+    let steps = h.app.doc.editor.history.done_count();
+    let r = texture_pixels(&h);
+    let (_, bottom) = h.app.doc.canvas.texture_panes().unwrap();
+    let at = r.intersect(bottom).center();
+    h.click(at, PointerButton::Primary);
+    let e = &h.app.doc.editor;
+    assert_eq!(e.history.done_count(), steps + 1);
+    let after = &e.document.artboard(id).unwrap().sprite;
+    assert_ne!(*after, before, "the texture changed");
+    assert_eq!(e.cad_mode(), crate::editor::CadMode::Texture);
+}
+
+#[test]
+fn the_wheel_below_zooms_the_texture_not_the_ortho_views() {
+    let mut h = with_a_model_in_texture_mode();
+    let view = h.app.doc.editor.model_edit().texture_view.expect("fitted");
+    assert!(view.zoom >= 1);
+    let ortho = h.app.doc.editor.model_edit().zoom;
+    let canvas_zoom = h.app.doc.canvas.zoom;
+    let (_, bottom) = h.app.doc.canvas.texture_panes().unwrap();
+    let at = bottom.center();
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    h.frame_with(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: vec2(0.0, 1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Default::default(),
+    }]);
+    h.frame();
+    let next = h.app.doc.editor.model_edit().texture_view.unwrap();
+    assert!(next.zoom > view.zoom, "{view:?} -> {next:?}");
+    assert_eq!(h.app.doc.editor.model_edit().zoom, ortho);
+    assert_eq!(h.app.doc.canvas.zoom, canvas_zoom, "the document's zoom");
+}
+
+#[test]
+fn texture_mode_without_a_texture_offers_a_new_one() {
+    let mut h = with_a_model_at_800();
+    assert!(h.app.doc.editor.set_texture(None));
+    h.app
+        .doc
+        .editor
+        .set_cad_mode(crate::editor::CadMode::Texture);
+    h.frame();
+    h.frame();
+    assert!(
+        h.texts.iter().any(|(t, _)| t == "No texture"),
+        "{:?}",
+        h.texts
+    );
+    h.click(h.button("New Texture").center(), PointerButton::Primary);
+    h.frame();
+    let e = &h.app.doc.editor;
+    let texture = e.workspace_model().unwrap().texture.expect("a new texture");
+    assert_eq!(e.active, texture, "and it is painted on");
+}

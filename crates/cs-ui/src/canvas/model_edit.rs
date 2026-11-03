@@ -11,7 +11,7 @@ use cs_core::Document;
 use eframe::egui::{pos2, vec2};
 
 use super::*;
-use crate::editor::{EditOp, KeyOp};
+use crate::editor::{CadMode, EditOp, KeyOp};
 
 pub(crate) const FRONT: usize = 0;
 pub(crate) const PERSP: usize = 1;
@@ -21,7 +21,7 @@ pub(crate) const SIDE: usize = 3;
 /// Colores provisionales (los de picoCAD): fondo de las vistas orto, de la perspectiva, aristas,
 /// cuadrícula y separadores.
 const ORTHO_BG: Color32 = Color32::from_rgb(0x83, 0x76, 0x9c);
-const PERSP_BG: Color32 = Color32::from_rgb(0x1d, 0x2b, 0x53);
+pub(super) const PERSP_BG: Color32 = Color32::from_rgb(0x1d, 0x2b, 0x53);
 const EDGE: Color32 = Color32::from_rgb(0xc2, 0xc3, 0xc7);
 const GRID_LINE: Color32 = Color32::from_rgba_premultiplied(0x10, 0x10, 0x20, 0x30);
 // Provisional: el amarillo de PICO-8, que se ve sobre el morado de las vistas (el color de
@@ -79,20 +79,14 @@ impl CanvasView {
     /// el diálogo Canvas Size abierto no empieza ningún gesto.
     pub(super) fn show_model_workspace(
         &mut self,
-        ui: &egui::Ui,
+        ui: &mut egui::Ui,
         response: &egui::Response,
         rect: Rect,
         editor: &mut Editor,
         modal: bool,
     ) {
-        // Las vistas no quedan debajo del panel del dock abierto: van en lo que se ve a su
-        // izquierda (con el panel cerrado, todo el área).
-        let mut area = rect;
-        if let Some(panel) = crate::dock::open_flyout_rect(ui.ctx())
-            && panel.intersects(rect)
-        {
-            area.max.x = panel.left().floor().clamp(rect.left() + 1.0, rect.right());
-        }
+        let area = workspace_area(ui, rect);
+        self.texture_panes = None;
         // Los cuadrantes salen del área, así que ya valen para la entrada de este frame (también
         // en el primero del workspace).
         let quads = quadrants(area);
@@ -108,6 +102,8 @@ impl CanvasView {
         painter.rect_filled(rect, 0.0, self.background);
         let view = editor.view();
         self.draw_model_edit(ui, &painter, quads, editor, view.document.as_ref());
+        drop(view);
+        mode_buttons(ui, area, editor);
     }
 
     /// La entrada del workspace: Ctrl + rueda (zoom de las vistas orto o distancia de la cámara
@@ -201,11 +197,14 @@ impl CanvasView {
     /// Dónde va el render de la perspectiva en el cuadrante `q` (a la resolución del artboard,
     /// a la escala entera más grande que quepa, mínimo 1, y centrado) y cuántos puntos mide cada
     /// pixel del render (el dibujo y los gestos usan lo mismo).
-    fn persp_rect(&self, q: Rect, editor: &Editor) -> (Rect, Vec2) {
-        let sprite = editor.sprite();
+    pub(super) fn persp_rect(&self, q: Rect, editor: &Editor) -> (Rect, Vec2) {
+        // El del modelo (en modo Texture el activo es su textura).
+        let sprite = model_sprite(editor);
+        let (rx, ry) = sprite.pixel_ratio;
+        let ratio = vec2(rx.max(1) as f32, ry.max(1) as f32);
         let pixels = vec2(
-            sprite.width.max(1) as f32 * self.ratio.x,
-            sprite.height.max(1) as f32 * self.ratio.y,
+            sprite.width.max(1) as f32 * ratio.x,
+            sprite.height.max(1) as f32 * ratio.y,
         );
         let k = (q.width() / pixels.x)
             .min(q.height() / pixels.y)
@@ -215,7 +214,7 @@ impl CanvasView {
         // En pixeles físicos enteros.
         let ppp = self.ppp.max(1.0);
         let min = ((q.center() - size / 2.0).to_vec2() * ppp).round() / ppp;
-        (Rect::from_min_size(min.to_pos2(), size), self.ratio * k)
+        (Rect::from_min_size(min.to_pos2(), size), ratio * k)
     }
 
     fn quadrant_at(&self, p: Pos2) -> Option<usize> {
@@ -432,6 +431,12 @@ impl CanvasView {
         true
     }
 
+    /// Los dos paneles del modo Texture (arriba el modelo, abajo la textura), para los tests.
+    #[cfg(test)]
+    pub(crate) fn texture_panes(&self) -> Option<(Rect, Rect)> {
+        self.texture_panes
+    }
+
     #[cfg(test)]
     pub(crate) fn model_edit_quadrants(&self) -> Option<[Rect; 4]> {
         self.edit_quads
@@ -587,10 +592,11 @@ impl CanvasView {
         }
     }
 
-    /// La perspectiva: el render pixel del modelo a la resolución del artboard, a escala entera y
-    /// centrado en el cuadrante; cacheado mientras no cambien el modelo, el documento ni el
-    /// tamaño.
-    fn draw_persp(
+    /// La perspectiva: el render pixel del modelo a la resolución de su artboard, a escala entera
+    /// y centrado en el cuadrante; cacheado mientras no cambien el modelo, el documento ni el
+    /// tamaño. En modo Texture lleva encima el contorno amarillo de las caras elegidas, en
+    /// pixeles del render.
+    pub(super) fn draw_persp(
         &mut self,
         painter: &egui::Painter,
         q: Rect,
@@ -599,12 +605,40 @@ impl CanvasView {
         model: &cs_core::Model3D,
         ctx: &egui::Context,
     ) {
-        let size = (editor.sprite().width.max(1), editor.sprite().height.max(1));
+        let Some(artboard) = doc.artboard(editor.model_id()) else {
+            return;
+        };
+        let sprite = &artboard.sprite;
+        let size = (sprite.width.max(1), sprite.height.max(1));
+        let faces = if editor.cad_mode() == CadMode::Texture {
+            editor.selected_faces()
+        } else {
+            Vec::new()
+        };
+        // Con `revision`: lo que se pinta en la textura se ve en vivo.
         let mut h = DefaultHasher::new();
-        (model, editor.doc_version, size, editor.active).hash(&mut h);
+        (
+            model,
+            editor.doc_version,
+            editor.revision,
+            size,
+            artboard.id,
+            &faces,
+        )
+            .hash(&mut h);
         let key = h.finish();
         if self.edit_persp.as_ref().is_none_or(|(k, _)| *k != key) {
-            let pixels = cs_render::model_render(doc, editor.artboard(), model, size);
+            let mut pixels = cs_render::model_render(doc, artboard, model, size);
+            if !faces.is_empty() {
+                let outline = cs_render::model_face_outline(model, size, &faces);
+                let [r, g, b, _] = SELECTED.to_srgba_unmultiplied();
+                let yellow = cs_core::Rgba::new(r, g, b, 255);
+                for (p, on) in pixels.iter_mut().zip(outline) {
+                    if on {
+                        *p = yellow;
+                    }
+                }
+            }
             let rgba: Vec<u8> = pixels.iter().flat_map(|c| [c.r, c.g, c.b, c.a]).collect();
             let image =
                 egui::ColorImage::from_rgba_unmultiplied([size.0 as usize, size.1 as usize], &rgba);
@@ -626,6 +660,72 @@ impl CanvasView {
             let p = painter.with_clip_rect(q.intersect(painter.clip_rect()));
             p.image(t.id(), r, full, Color32::WHITE);
         }
+    }
+}
+
+/// El área del workspace en `rect` (todo el lienzo): lo que se ve a la izquierda del panel del
+/// dock abierto (con el panel cerrado, todo).
+pub(super) fn workspace_area(ui: &egui::Ui, rect: Rect) -> Rect {
+    let mut area = rect;
+    if let Some(panel) = crate::dock::open_flyout_rect(ui.ctx())
+        && panel.intersects(rect)
+    {
+        area.max.x = panel.left().floor().clamp(rect.left() + 1.0, rect.right());
+    }
+    area
+}
+
+/// El sprite del modelo que se edita (el del workspace, aunque el activo sea su textura).
+pub(super) fn model_sprite(editor: &Editor) -> &cs_core::Sprite {
+    editor
+        .document
+        .artboard(editor.model_id())
+        .map_or_else(|| editor.sprite(), |a| &a.sprite)
+}
+
+/// Aire entre los botones Model / Texture y la esquina de arriba a la derecha del área.
+const MODE_AIR: f32 = 3.0;
+
+/// Los botones **Model** y **Texture** (un grupo del kit; el del modo actual, presionado)
+/// arriba a la derecha de `area`, en los dos modos. Un clic cambia de modo.
+pub(super) fn mode_buttons(ui: &mut egui::Ui, area: Rect, editor: &mut Editor) {
+    use crate::kit::group::{self, GroupItem};
+    let items = [GroupItem::text("Model"), GroupItem::text("Texture")];
+    let modes = [CadMode::Model, CadMode::Texture];
+    let current = editor.cad_mode();
+    let id = egui::Id::new("cad_mode_buttons");
+    let chosen = match crate::pixel_ui::frame_skin(ui.ctx()) {
+        Some(skin) => {
+            let w = group::width(ui, &items);
+            let at = pos2(area.right() - MODE_AIR - w, area.top() + MODE_AIR).round();
+            let painter = ui.painter().clone();
+            let active = |i: usize| modes[i] == current;
+            group::button_group_at(ui, &skin, &painter, id, at, &items, &active)
+        }
+        // Sin Pixel UI, dos botones de texto de egui que se pueden elegir.
+        None => {
+            let size = vec2(120.0, 20.0);
+            let at = pos2(area.right() - MODE_AIR - size.x, area.top() + MODE_AIR).round();
+            let mut chosen = None;
+            let builder = egui::UiBuilder::new()
+                .id_salt(id)
+                .max_rect(Rect::from_min_size(at, size))
+                .layout(egui::Layout::left_to_right(egui::Align::Center));
+            ui.scope_builder(builder, |ui| {
+                for (i, item) in items.iter().enumerate() {
+                    if ui
+                        .selectable_label(modes[i] == current, item.label)
+                        .clicked()
+                    {
+                        chosen = Some(i);
+                    }
+                }
+            });
+            chosen
+        }
+    };
+    if let Some(i) = chosen {
+        editor.set_cad_mode(modes[i]);
     }
 }
 
