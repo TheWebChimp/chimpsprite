@@ -44,6 +44,15 @@ pub fn pick_object(input: &RenderInput, x: u32, y: u32) -> Option<usize> {
         return None;
     }
     let r = rasterize(input);
+    r.ids[(y * input.size.0 + x) as usize].map(|(o, _)| o)
+}
+
+/// La cara `(objeto, índice de cara)` que se ve en el pixel `(x, y)`, si hay alguna.
+pub fn pick_face(input: &RenderInput, x: u32, y: u32) -> Option<(usize, usize)> {
+    if x >= input.size.0 || y >= input.size.1 {
+        return None;
+    }
+    let r = rasterize(input);
     r.ids[(y * input.size.0 + x) as usize]
 }
 
@@ -265,12 +274,14 @@ struct Raster {
     h: u32,
     color: Vec<Rgba>,
     depth: Vec<f32>,
-    ids: Vec<Option<usize>>,
+    /// `(objeto, cara)` visibles en cada pixel.
+    ids: Vec<Option<(usize, usize)>>,
 }
 
 /// Lo que comparte cada pixel de una cara.
 struct FaceCtx<'a> {
-    id: usize,
+    /// `(objeto, cara)`.
+    id: (usize, usize),
     steps: u8,
     texture: Option<&'a Texture<'a>>,
     palette: &'a [Rgba],
@@ -374,7 +385,7 @@ fn rasterize(input: &RenderInput) -> Raster {
         let s = obj.transform.scale;
         // Una escala negativa en un número impar de ejes invierte el sentido de las caras.
         let mirrored = (s.x < 0) ^ (s.y < 0) ^ (s.z < 0);
-        for face in &obj.mesh.faces {
+        for (face_i, face) in obj.mesh.faces.iter().enumerate() {
             if face.verts.len() < 3 || face.uvs.len() != face.verts.len() {
                 continue;
             }
@@ -438,7 +449,7 @@ fn rasterize(input: &RenderInput) -> Raster {
                 }
             };
             let ctx = FaceCtx {
-                id,
+                id: (id, face_i),
                 steps,
                 texture,
                 palette: input.palette,
@@ -741,5 +752,23 @@ mod tests {
         assert_eq!(pick_object(&inp, 8, 8), Some(1));
         assert_eq!(pick_object(&inp, 0, 0), None);
         assert_eq!(pick_object(&inp, 99, 99), None);
+    }
+
+    #[test]
+    fn pick_face_da_la_cara_de_enfrente() {
+        let m = model(vec![cube()]);
+        let inp = input(&m, 32, &[ROJO], 1);
+        let (o, f) = pick_face(&inp, 16, 16).expect("hay cara en el centro");
+        assert_eq!(o, 0);
+        let mesh = &m.objects[0].mesh;
+        assert!(
+            mesh.faces[f]
+                .verts
+                .iter()
+                .all(|&v| mesh.vertices[v as usize].z > 0),
+            "la cara elegida debe ser la de z+"
+        );
+        assert_eq!(pick_face(&inp, 0, 0), None);
+        assert_eq!(pick_face(&inp, 99, 99), None);
     }
 }
