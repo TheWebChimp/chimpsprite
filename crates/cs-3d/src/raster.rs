@@ -207,6 +207,7 @@ fn orbit_dir(yaw: i32, pitch: i32) -> V3 {
 }
 
 /// La cámara lista para proyectar: base ortonormal y escala de pantalla.
+#[derive(Clone, Copy, Debug)]
 struct View {
     eye: V3,
     right: V3,
@@ -253,7 +254,7 @@ impl View {
     }
 
     /// Del mundo al espacio de vista: x a la derecha, y arriba, z la profundidad hacia adelante.
-    fn to_view(&self, p: V3) -> V3 {
+    fn to_view(self, p: V3) -> V3 {
         let d = sub(p, self.eye);
         [dot(d, self.right), dot(d, self.up), dot(d, self.fwd)]
     }
@@ -273,6 +274,79 @@ impl View {
             vw: c.v * iw,
         }
     }
+}
+
+/// Lleva puntos del mundo (en 1/16 de unidad, como los vértices) a la imagen del render de una
+/// cámara, con la misma cuenta que el rasterizador: en pixeles del render, y hacia abajo (el
+/// centro del pixel `(x, y)` es `(x + 0.5, y + 0.5)`). Sirve para dibujar encima del render.
+#[derive(Clone, Copy, Debug)]
+pub struct Projector {
+    view: View,
+}
+
+impl Projector {
+    /// El proyector de `camera` en un render de `size`.
+    pub fn new(camera: &Camera3D, size: (u32, u32)) -> Projector {
+        Projector {
+            view: View::new(camera, size.0, size.1),
+        }
+    }
+
+    /// Dónde cae `p` en el render; `None` en perspectiva si queda detrás del plano cercano.
+    pub fn project(&self, p: crate::P3) -> Option<(f32, f32)> {
+        let f = FIXED as f32;
+        let v = self.view.to_view([p[0] / f, p[1] / f, p[2] / f]);
+        if self.view.focal.is_some() && v[2] < NEAR {
+            return None;
+        }
+        let s = self.view.project(&ClipVert {
+            p: v,
+            u: 0.0,
+            v: 0.0,
+        });
+        Some((s.x as f32, s.y as f32))
+    }
+
+    /// Qué tan lejos queda `p` frente a la cámara (en unidades; más es más lejos).
+    pub fn depth(&self, p: crate::P3) -> f32 {
+        let f = FIXED as f32;
+        self.view.to_view([p[0] / f, p[1] / f, p[2] / f])[2]
+    }
+
+    /// La base de la cámara en el mundo (unitaria): derecha, arriba y hacia adonde mira.
+    pub fn axes(&self) -> [[f32; 3]; 3] {
+        [self.view.right, self.view.up, self.view.fwd]
+    }
+
+    /// El rayo del punto `s` del render: su origen (en el plano de la cámara) y su dirección
+    /// (hacia adelante), en 1/16 de unidad. Los puntos del rayo caen en `s`.
+    pub fn ray(&self, s: (f32, f32)) -> (crate::P3, crate::P3) {
+        let v = &self.view;
+        let (x, y) = (s.0 - v.center.0, v.center.1 - s.1);
+        let f = FIXED as f32;
+        let at = |o: V3, d: V3| {
+            (
+                std::array::from_fn(|i| o[i] * f),
+                std::array::from_fn(|i| d[i] * f),
+            )
+        };
+        match v.focal {
+            Some(focal) => {
+                let d = std::array::from_fn(|i| v.fwd[i] + (v.right[i] * x + v.up[i] * y) / focal);
+                at(v.eye, d)
+            }
+            None => {
+                let o =
+                    std::array::from_fn(|i| v.eye[i] + (v.right[i] * x + v.up[i] * y) / v.scale);
+                at(o, v.fwd)
+            }
+        }
+    }
+}
+
+/// Dónde cae `p` (en 1/16) en el render de `size` con `camera` (ver [`Projector`]).
+pub fn project_point(camera: &Camera3D, size: (u32, u32), p: crate::P3) -> Option<(f32, f32)> {
+    Projector::new(camera, size).project(p)
 }
 
 /// Vértice en espacio de vista con su UV (para recortar).
@@ -596,7 +670,7 @@ fn outline(img: &mut [Rgba], w: u32, h: u32, color: Rgba) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Primitive, darker, primitive_mesh};
+    use crate::{P3, Primitive, darker, primitive_mesh};
     use cs_core::{
         CameraPreset, FIXED, Face, Light3D, Mesh, Object3D, Projection, Transform3D, Vec3i,
     };
@@ -903,5 +977,132 @@ mod tests {
             "afuera no"
         );
         assert_eq!(out.iter().filter(|&&on| on).count(), 28);
+    }
+    /// La envolvente convexa (en sentido antihorario con y hacia arriba) de `pts`.
+    fn hull(mut pts: Vec<(f32, f32)>) -> Vec<(f32, f32)> {
+        pts.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.total_cmp(&b.1)));
+        let turn = |o: (f32, f32), a: (f32, f32), b: (f32, f32)| {
+            (a.0 - o.0) * (b.1 - o.1) - (a.1 - o.1) * (b.0 - o.0)
+        };
+        let mut out: Vec<(f32, f32)> = Vec::new();
+        for pass in 0..2 {
+            let start = out.len();
+            let iter: Vec<(f32, f32)> = if pass == 0 {
+                pts.clone()
+            } else {
+                pts.iter().rev().copied().collect()
+            };
+            for p in iter {
+                while out.len() >= start + 2
+                    && turn(out[out.len() - 2], out[out.len() - 1], p) <= 0.0
+                {
+                    out.pop();
+                }
+                out.push(p);
+            }
+            out.pop();
+        }
+        out
+    }
+
+    #[test]
+    fn el_proyector_cae_donde_pinta_el_rasterizador() {
+        // Un cubo visto en diagonal, en perspectiva y en ortográfica, en un render no cuadrado:
+        // un pixel se pinta si y solo si su centro cae dentro de la envolvente de las esquinas
+        // proyectadas (salvo justo sobre un borde).
+        let corners: Vec<P3> = (0..8)
+            .map(|i| {
+                let s = |b: i32| if i & b != 0 { 16.0 } else { -16.0 };
+                [s(1), s(2), s(4)]
+            })
+            .collect();
+        for projection in [
+            Projection::Perspective { fov: 600 },
+            Projection::Orthographic,
+        ] {
+            let mut m = model(vec![cube()]);
+            m.camera = Camera3D {
+                projection,
+                yaw: 300,
+                pitch: 250,
+                distance: 5 * FIXED,
+                target: Vec3i { x: 3, y: -2, z: 1 },
+            };
+            let (w, h) = (40u32, 30u32);
+            let inp = RenderInput {
+                size: (w, h),
+                ..input(&m, 16, &[ROJO], 1)
+            };
+            let img = render_model(&inp);
+            let pts: Vec<(f32, f32)> = corners
+                .iter()
+                .map(|&p| project_point(&m.camera, (w, h), p).expect("in front"))
+                .collect();
+            // En la imagen y hacia abajo: se da vuelta para la envolvente.
+            let poly = hull(pts.iter().map(|&(x, y)| (x, -y)).collect());
+            let mut painted = 0;
+            for y in 0..h {
+                for x in 0..w {
+                    let c = (x as f32 + 0.5, -(y as f32 + 0.5));
+                    let sides: Vec<f32> = (0..poly.len())
+                        .map(|i| {
+                            let (a, b) = (poly[i], poly[(i + 1) % poly.len()]);
+                            let len = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
+                            ((b.0 - a.0) * (c.1 - a.1) - (b.1 - a.1) * (c.0 - a.0)) / len
+                        })
+                        .collect();
+                    if sides.iter().any(|d| d.abs() < 0.01) {
+                        continue;
+                    }
+                    let inside = sides.iter().all(|&d| d > 0.0);
+                    let on = img[(y * w + x) as usize].a != 0;
+                    assert_eq!(on, inside, "{projection:?} ({x},{y})");
+                    painted += on as i32;
+                }
+            }
+            assert!(painted > 40, "{projection:?}: {painted}");
+        }
+    }
+
+    #[test]
+    fn el_proyector_de_frente_y_sus_rayos() {
+        // Front a 2 unidades en 16×16 (ortográfica): 4 pixeles por unidad desde el centro.
+        let cam = CameraPreset::Front.camera(2 * FIXED, Vec3i::default());
+        let pr = Projector::new(&cam, (16, 16));
+        assert_eq!(pr.project([16.0, 16.0, 0.0]), Some((12.0, 4.0)));
+        assert_eq!(pr.project([-16.0, 0.0, 5.0]), Some((4.0, 8.0)));
+        let [right, up, fwd] = pr.axes();
+        assert_eq!(
+            (right, up, fwd),
+            ([1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, -1.0])
+        );
+        // En perspectiva, lo de detrás de la cámara no se proyecta; lo de enfrente sí, y el rayo
+        // de su punto en pantalla pasa por él.
+        let persp = Camera3D {
+            projection: Projection::Perspective { fov: 600 },
+            yaw: 300,
+            pitch: 250,
+            distance: 5 * FIXED,
+            target: Vec3i { x: 3, y: -2, z: 1 },
+        };
+        for cam in [persp, cam] {
+            let pr = Projector::new(&cam, (40, 30));
+            let p = [10.0, -20.0, 7.0];
+            let s = pr.project(p).expect("in front");
+            let (o, d) = pr.ray(s);
+            // La distancia de `p` a la recta del rayo, en 1/16.
+            let t: f32 = (0..3).map(|i| (p[i] - o[i]) * d[i]).sum::<f32>()
+                / (0..3).map(|i| d[i] * d[i]).sum::<f32>();
+            let off: f32 = (0..3)
+                .map(|i| (o[i] + d[i] * t - p[i]).powi(2))
+                .sum::<f32>()
+                .sqrt();
+            assert!(off < 0.05, "{cam:?}: {off}");
+            assert!(t > 0.0);
+        }
+        let pr = Projector::new(&persp, (40, 30));
+        let behind = pr.axes()[2].map(|f| -f * 6.0 * 16.0);
+        assert_eq!(pr.project(behind), None);
+        assert!(pr.depth([0.0; 3]) > 0.0);
     }
 }

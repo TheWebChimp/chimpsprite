@@ -161,6 +161,11 @@ pub struct CanvasView {
     edit_ortho: [Option<(u64, TextureHandle)>; 3],
     /// El asa del gizmo bajo el puntero (sin gesto) y la vista orto donde está.
     gizmo_hover: Option<(cs_3d::OrthoView, cs_3d::GizmoPart)>,
+    /// Lo de la perspectiva bajo el puntero (sin gesto): un asa del gizmo.
+    persp_hover: Option<model_edit::PerspHover>,
+    /// Lo que va encima del render de la perspectiva (el gizmo) en pixel art: la clave de lo que
+    /// muestra y su textura.
+    edit_persp_overlay: Option<(u64, TextureHandle)>,
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
     pub background: Color32,
     /// Las reglas del skin con Pixel UI (`None`: las de siempre); lo pone la app en cada frame.
@@ -325,6 +330,8 @@ impl Default for CanvasView {
             edit_persp: None,
             edit_ortho: [None, None, None],
             gizmo_hover: None,
+            persp_hover: None,
+            edit_persp_overlay: None,
         }
     }
 }

@@ -4,7 +4,7 @@
 //! terminar es un paso de undo.
 
 use cs_3d::{GizmoKind, GizmoPart, Handle, OrthoView, P3, SelectMode, Selection, ViewMap};
-use cs_core::{ArtboardId, Model3D};
+use cs_core::{ArtboardId, Camera3D, Model3D};
 
 use super::Editor;
 
@@ -87,11 +87,11 @@ pub enum EditOp {
         add: bool,
     },
     /// Arrastrar el asa `part` del gizmo (desde `from`, con el mismo umbral que Move) de
-    /// `center` (el centro de la caja de lo elegido al empezar). Para los aros, `last` es el
-    /// último punto del puntero y `turned` lo girado hasta ahí (grados, en el sentido positivo
-    /// del eje).
+    /// `center` (el centro de la caja de lo elegido al empezar), en una vista orto o en la
+    /// perspectiva. Para los aros, `last` es el último punto del puntero y `turned` lo girado
+    /// hasta ahí (grados, en el sentido positivo del eje).
     Gizmo {
-        map: ViewMap,
+        view: GizmoView,
         part: GizmoPart,
         from: (f32, f32),
         center: P3,
@@ -104,6 +104,138 @@ pub enum EditOp {
         from: (f32, f32),
         center: P3,
     },
+}
+
+/// Cómo se ve el mundo en la perspectiva: la cámara del modelo, el tamaño del render (en pixeles
+/// del artboard) y dónde cae en pantalla (la esquina y los puntos por pixel del render).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PerspMap {
+    pub camera: Camera3D,
+    pub size: (u32, u32),
+    pub min: (f32, f32),
+    pub scale: (f32, f32),
+}
+
+impl PerspMap {
+    pub fn projector(&self) -> cs_3d::Projector {
+        cs_3d::Projector::new(&self.camera, self.size)
+    }
+
+    /// Dónde se ve `p` en pantalla (`None` si queda detrás de la cámara).
+    pub fn to_screen(self, p: P3) -> Option<(f32, f32)> {
+        let s = self.projector().project(p)?;
+        Some((
+            self.min.0 + s.0 * self.scale.0,
+            self.min.1 + s.1 * self.scale.1,
+        ))
+    }
+
+    /// El rayo (origen y dirección, en 1/16) del punto de pantalla `s`.
+    pub fn ray(&self, s: (f32, f32)) -> (P3, P3) {
+        self.projector().ray((
+            (s.0 - self.min.0) / self.scale.0,
+            (s.1 - self.min.1) / self.scale.1,
+        ))
+    }
+}
+
+/// Dónde se arrastra el gizmo: en una vista orto o en la perspectiva.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GizmoView {
+    Ortho(ViewMap),
+    Persp(PerspMap),
+}
+
+/// Un punto de pantalla muy lejos: lo de detrás de la cámara (no se dibuja ni se agarra).
+const FAR: (f32, f32) = (1e9, 1e9);
+
+fn sub3(a: P3, b: P3) -> P3 {
+    [a[0] - b[0], a[1] - b[1], a[2] - b[2]]
+}
+
+fn dot3(a: P3, b: P3) -> f32 {
+    a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+}
+
+impl GizmoView {
+    /// Dónde se ve `p` en pantalla (lo de detrás de la cámara, en [`FAR`]).
+    pub fn to_screen(self, p: P3) -> (f32, f32) {
+        match self {
+            GizmoView::Ortho(map) => map.to_screen(p),
+            GizmoView::Persp(pm) => pm.to_screen(p).unwrap_or(FAR),
+        }
+    }
+
+    /// Cuánto se mueve lo agarrado en `center` con el puntero de `from` a `to` (`grid`: la
+    /// cuadrícula, `None` con Ctrl): con `axis`, solo en ese eje del mundo; sin él, en el plano
+    /// de la vista. Lo agarrado cae en la cuadrícula.
+    fn move_delta(
+        &self,
+        center: P3,
+        axis: Option<usize>,
+        from: (f32, f32),
+        to: (f32, f32),
+        grid: Option<i32>,
+    ) -> P3 {
+        let pm = match self {
+            GizmoView::Ortho(map) => {
+                let d = map.drag_delta((to.0 - from.0, to.1 - from.1));
+                let mut d = cs_3d::snapped_delta(map.view, center, d, grid);
+                if let Some(axis) = axis {
+                    for (i, v) in d.iter_mut().enumerate() {
+                        if i != axis {
+                            *v = 0.0;
+                        }
+                    }
+                }
+                return d;
+            }
+            GizmoView::Persp(pm) => pm,
+        };
+        let g = grid.unwrap_or(1) as f32;
+        let snap = |v: f32| (v / g).round() * g;
+        let mut d = [0.0; 3];
+        match axis {
+            // El punto del eje más cerca del rayo del puntero (al empezar y ahora).
+            Some(axis) => {
+                let along = |s: (f32, f32)| {
+                    let (o, r) = pm.ray(s);
+                    let w = sub3(center, o);
+                    let (b, c) = (r[axis], dot3(r, r));
+                    let den = c - b * b;
+                    (den.abs() > 1e-6 * c).then(|| (b * dot3(r, w) - c * w[axis]) / den)
+                };
+                if let (Some(a), Some(b)) = (along(from), along(to)) {
+                    d[axis] = snap(center[axis] + b - a) - center[axis];
+                }
+            }
+            // Donde el rayo cruza el plano de la vista que pasa por el centro.
+            None => {
+                let [right, up, fwd] = pm.projector().axes();
+                let hit = |s: (f32, f32)| {
+                    let (o, r) = pm.ray(s);
+                    let den = dot3(r, fwd);
+                    (den.abs() > 1e-6).then(|| {
+                        let t = dot3(sub3(center, o), fwd) / den;
+                        [o[0] + r[0] * t, o[1] + r[1] * t, o[2] + r[2] * t]
+                    })
+                };
+                if let (Some(a), Some(b)) = (hit(from), hit(to)) {
+                    for i in 0..3 {
+                        // Solo los ejes que se ven en el plano de la vista caen en la
+                        // cuadrícula (el de profundidad, de frente, no se mueve).
+                        let moved = b[i] - a[i];
+                        d[i] = if right[i].hypot(up[i]) > 0.05 {
+                            snap(center[i] + moved) - center[i]
+                        } else {
+                            moved
+                        };
+                    }
+                }
+            }
+        }
+        d
+    }
 }
 
 /// Los dos modos de la pestaña de un modelo: las 4 vistas (*Model*) o el modelo arriba y su
@@ -341,8 +473,12 @@ impl Editor {
     }
 
     pub fn start_model_op(&mut self, op: EditOp) {
-        if let EditOp::Move { map, .. } | EditOp::Handle { map, .. } | EditOp::Gizmo { map, .. } =
-            op
+        if let EditOp::Move { map, .. }
+        | EditOp::Handle { map, .. }
+        | EditOp::Gizmo {
+            view: GizmoView::Ortho(map),
+            ..
+        } = op
         {
             self.model_edit.last_view = map.view;
         }
@@ -381,16 +517,16 @@ impl Editor {
         // sin saltar); el giro sale siempre del modelo del inicio.
         let op = match op {
             EditOp::Gizmo {
-                map,
+                view,
                 part: part @ GizmoPart::Ring(axis),
                 from,
                 center,
                 last,
                 turned,
             } => {
-                let turned = turned + ring_turn(|p| map.to_screen(p), center, axis, last, pointer);
+                let turned = turned + ring_turn(|p| view.to_screen(p), center, axis, last, pointer);
                 let op = EditOp::Gizmo {
-                    map,
+                    view,
                     part,
                     from,
                     center,
@@ -443,7 +579,7 @@ impl Editor {
             }
             (
                 EditOp::Gizmo {
-                    map,
+                    view,
                     part,
                     from,
                     center,
@@ -455,7 +591,7 @@ impl Editor {
                 m,
                 sel,
                 GizmoDrag {
-                    map,
+                    view,
                     part,
                     center,
                     from,
@@ -601,10 +737,10 @@ impl Editor {
     }
 }
 
-/// Un arrastre del gizmo: el asa `part` del gizmo de `center`, desde `from` en la vista de
-/// `map`; `turned`, lo girado por el aro.
+/// Un arrastre del gizmo: el asa `part` del gizmo de `center`, desde `from` en `view`; `turned`,
+/// lo girado por el aro.
 struct GizmoDrag {
-    map: ViewMap,
+    view: GizmoView,
     part: GizmoPart,
     center: P3,
     from: (f32, f32),
@@ -621,28 +757,26 @@ fn gizmo_preview(
     grid: Option<i32>,
 ) -> Option<Model3D> {
     let GizmoDrag {
-        map,
+        view,
         part,
         center,
         from,
         turned,
     } = drag;
-    let c = map.to_screen(center);
+    let c = view.to_screen(center);
     match part {
         // Las flechas, solo en su eje del mundo; el cuadrito, en el plano de la vista. El centro
         // del gizmo cae en la cuadrícula, como lo agarrado al mover.
-        GizmoPart::Axis(_) | GizmoPart::Plane => {
-            let d = map.drag_delta((pointer.0 - from.0, pointer.1 - from.1));
-            let mut d = cs_3d::snapped_delta(map.view, center, d, grid);
-            if let GizmoPart::Axis(axis) = part {
-                for (i, v) in d.iter_mut().enumerate() {
-                    if i != axis {
-                        *v = 0.0;
-                    }
-                }
-            }
-            Some(cs_3d::translate(m, sel, d))
-        }
+        GizmoPart::Axis(axis) => Some(cs_3d::translate(
+            m,
+            sel,
+            view.move_delta(center, Some(axis), from, pointer, grid),
+        )),
+        GizmoPart::Plane => Some(cs_3d::translate(
+            m,
+            sel,
+            view.move_delta(center, None, from, pointer, grid),
+        )),
         // En pasos de 15° (con Ctrl, de 1°).
         GizmoPart::Ring(axis) => {
             let step = if grid.is_some() { ROTATE_STEP } else { 1.0 };
@@ -653,7 +787,7 @@ fn gizmo_preview(
         GizmoPart::ScaleAxis(axis) => {
             let mut tip = center;
             tip[axis] += 1.0;
-            let t = map.to_screen(tip);
+            let t = view.to_screen(tip);
             let dir = (t.0 - c.0, t.1 - c.1);
             let len = dir.0.hypot(dir.1);
             if len < 1e-6 {

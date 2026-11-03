@@ -31,7 +31,8 @@ mod model_ops;
 mod texture_mode;
 mod workspace;
 pub use model_edit::{
-    CadMode, DRAG_THRESHOLD, EditOp, GIZMO_PX, GRIDS, Gizmo, KeyOp, ModelEdit, TextureView, UvOp,
+    CadMode, DRAG_THRESHOLD, EditOp, GIZMO_PX, GRIDS, Gizmo, GizmoView, KeyOp, ModelEdit, PerspMap,
+    TextureView, UvOp,
 };
 pub use model_ops::wrap_angle;
 

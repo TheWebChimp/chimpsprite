@@ -6543,6 +6543,253 @@ fn the_gizmo_wins_over_the_box_select() {
     assert_eq!(h.app.doc.editor.model_edit().selection, all);
 }
 
+// --- Los gizmos en la perspectiva ---
+
+/// Dónde se ve el punto `p` del mundo en la perspectiva del workspace.
+fn persp_screen(h: &LayoutHarness, p: cs_3d::P3) -> Pos2 {
+    let pm = h
+        .app
+        .doc
+        .canvas
+        .persp_map(&h.app.doc.editor)
+        .expect("the perspective");
+    let (x, y) = pm.to_screen(p).expect("in front of the camera");
+    Pos2::new(x, y)
+}
+
+/// El asa `part` del gizmo como se ve en la perspectiva.
+fn persp_handle(h: &LayoutHarness, part: cs_3d::GizmoPart) -> cs_3d::HandleGeom {
+    h.app
+        .doc
+        .canvas
+        .persp_gizmo_shape(&h.app.doc.editor)
+        .expect("a gizmo in the perspective")
+        .handles
+        .into_iter()
+        .find(|x| x.part == part)
+        .expect("the handle")
+        .geom
+}
+
+/// El asa del gizmo de la perspectiva bajo `at`.
+fn persp_hit(h: &LayoutHarness, at: Pos2) -> Option<cs_3d::GizmoPart> {
+    let pm = h.app.doc.canvas.persp_map(&h.app.doc.editor)?;
+    h.app.doc.canvas.persp_gizmo_shape(&h.app.doc.editor)?.hit(
+        |p| pm.to_screen(p).unwrap_or((1e9, 1e9)),
+        (at.x, at.y),
+        cs_3d::PICK_RADIUS,
+    )
+}
+
+#[test]
+fn the_gizmo_is_drawn_over_the_persp_render() {
+    let (h, _) = cube_with_gizmo(crate::editor::Gizmo::Move);
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    let overlay = h
+        .app
+        .doc
+        .canvas
+        .persp_overlay_texture()
+        .expect("the overlay is rasterized");
+    let render = h.app.doc.canvas.model_persp_texture().unwrap();
+    let at = |tex| h.textures.iter().position(|(t, _)| *t == tex);
+    let (i, j) = (
+        at(render).unwrap(),
+        at(overlay).expect("the overlay is drawn"),
+    );
+    assert!(j > i, "over the render");
+    // Un pixel por punto sobre todo el cuadrante, en puntos enteros.
+    let r = h.textures[j].1;
+    assert_eq!(r.min, quads[1].min.round());
+    assert_eq!(r.max, quads[1].max.round());
+    // Las tres flechas, cada una hacia su eje (en pantalla).
+    let c = persp_screen(&h, [0.0; 3]);
+    for axis in 0..3 {
+        let cs_3d::HandleGeom::Arrow { tip, .. } = persp_handle(&h, cs_3d::GizmoPart::Axis(axis))
+        else {
+            panic!("an arrow");
+        };
+        let mut unit = [0.0; 3];
+        unit[axis] = 16.0;
+        let (t, u) = (persp_screen(&h, tip) - c, persp_screen(&h, unit) - c);
+        assert!(t.normalized().dot(u.normalized()) > 0.99, "axis {axis}");
+    }
+    // Sin nada elegido no hay gizmo.
+    let mut h = editing_model();
+    h.frame();
+    assert!(
+        h.app
+            .doc
+            .canvas
+            .persp_gizmo_shape(&h.app.doc.editor)
+            .is_none()
+    );
+}
+
+#[test]
+fn dragging_the_x_arrow_in_persp_moves_only_x_in_one_undo_step() {
+    let (mut h, _) = cube_with_gizmo(crate::editor::Gizmo::Move);
+    let steps = h.app.doc.editor.history.done_count();
+    let cs_3d::HandleGeom::Arrow { from, tip, .. } = persp_handle(&h, cs_3d::GizmoPart::Axis(0))
+    else {
+        panic!("an arrow");
+    };
+    let (a, b) = (persp_screen(&h, from), persp_screen(&h, tip));
+    let start = a.lerp(b, 0.6);
+    assert_eq!(persp_hit(&h, start), Some(cs_3d::GizmoPart::Axis(0)));
+    let dir = (b - a).normalized();
+    // A lo largo de la flecha y también de costado: solo cuenta X.
+    drag_with(
+        &mut h,
+        start,
+        start + dir * 40.0 + dir.rot90() * 10.0,
+        Default::default(),
+    );
+    let p = cube_transform(&h).position;
+    assert!(p.x > 0 && p.x % 4 == 0, "on the grid: {p:?}");
+    assert_eq!((p.y, p.z), (0, 0));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    // Hacia el otro lado, negativo.
+    h.app.doc.editor.undo();
+    h.frame();
+    assert_eq!(cube_transform(&h).position, v3(0, 0, 0));
+    drag_with(&mut h, start, start - dir * 40.0, Default::default());
+    let p = cube_transform(&h).position;
+    assert!(p.x < 0 && (p.y, p.z) == (0, 0), "{p:?}");
+}
+
+#[test]
+fn dragging_the_view_square_in_persp_moves_in_the_view_plane() {
+    let (mut h, _) = cube_with_gizmo(crate::editor::Gizmo::Move);
+    let center = persp_screen(&h, [0.0; 3]);
+    assert_eq!(persp_hit(&h, center), Some(cs_3d::GizmoPart::Plane));
+    let cam = camera(&h);
+    drag_with(&mut h, center, center + vec2(30.0, 0.0), Default::default());
+    // A la derecha de la cámara (yaw 30°: hacia +X y un poco hacia -Z), en la cuadrícula.
+    let p = cube_transform(&h).position;
+    assert!(p.x > 0 && p.z < 0 && p.y == 0, "{p:?}");
+    assert!(p.x % 4 == 0 && p.z % 4 == 0, "{p:?}");
+    assert_eq!(camera(&h), cam, "the camera stays");
+}
+
+#[test]
+fn dragging_a_ring_in_persp_rotates_in_15_degree_steps_and_ctrl_in_1() {
+    let (mut h, _) = cube_with_gizmo(crate::editor::Gizmo::Rotate);
+    let cs_3d::HandleGeom::Ring(pts) = persp_handle(&h, cs_3d::GizmoPart::Ring(2)) else {
+        panic!("a ring");
+    };
+    // Un punto del aro de Z que no comparte con los otros aros.
+    let from = pts
+        .iter()
+        .map(|&p| persp_screen(&h, p))
+        .find(|&s| {
+            persp_hit(&h, s) == Some(cs_3d::GizmoPart::Ring(2))
+                && [
+                    vec2(4.0, 0.0),
+                    vec2(0.0, 4.0),
+                    vec2(-4.0, 0.0),
+                    vec2(0.0, -4.0),
+                ]
+                .iter()
+                .all(|d| persp_hit(&h, s + *d) != Some(cs_3d::GizmoPart::Ring(0)))
+        })
+        .expect("a free spot on the ring");
+    let c = persp_screen(&h, [0.0; 3]);
+    // Girado `deg` al revés del reloj en pantalla alrededor del centro: la cámara mira desde
+    // +Z, así que es el sentido positivo de Z.
+    let turned = |deg: f32| {
+        let (s, k) = deg.to_radians().sin_cos();
+        let d = from - c;
+        c + vec2(d.x * k + d.y * s, -d.x * s + d.y * k)
+    };
+    let steps = h.app.doc.editor.history.done_count();
+    drag_with(&mut h, from, turned(50.0), Default::default());
+    assert_eq!(cube_transform(&h).rotation, v3(0, 0, 450));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    h.frame();
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::COMMAND)]);
+    drag_with(&mut h, from, turned(50.0), egui::Modifiers::COMMAND);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    assert_eq!(cube_transform(&h).rotation, v3(0, 0, 500));
+    h.app.doc.editor.undo();
+    h.frame();
+    drag_with(&mut h, from, turned(-35.0), Default::default());
+    assert_eq!(cube_transform(&h).rotation, v3(0, 0, -300));
+}
+
+#[test]
+fn the_scale_cubes_in_persp_scale_one_axis_or_all_three() {
+    let (mut h, _) = cube_with_gizmo(crate::editor::Gizmo::Scale);
+    let c = persp_screen(&h, [0.0; 3]);
+    assert_eq!(persp_hit(&h, c), Some(cs_3d::GizmoPart::ScaleUniform));
+    let steps = h.app.doc.editor.history.done_count();
+    drag_with(
+        &mut h,
+        c,
+        c + vec2(crate::editor::GIZMO_PX, 0.0),
+        Default::default(),
+    );
+    assert_eq!(cube_transform(&h).scale, v3(2000, 2000, 2000));
+    assert_eq!(cube_transform(&h).position, v3(0, 0, 0));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    h.frame();
+    // El cubito de Y, al doble de lejos del centro: solo Y.
+    let cs_3d::HandleGeom::Stick { tip, .. } = persp_handle(&h, cs_3d::GizmoPart::ScaleAxis(1))
+    else {
+        panic!("a stick");
+    };
+    let t = persp_screen(&h, tip);
+    drag_with(&mut h, t, c + (t - c) * 2.0, Default::default());
+    assert_eq!(cube_transform(&h).scale, v3(1000, 2000, 1000));
+}
+
+#[test]
+fn the_persp_gizmo_wins_over_picking_and_moving_the_camera() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    let all = cs_3d::Selection {
+        mode: cs_3d::SelectMode::Object,
+        items: [cs_3d::Item::Object(0)].into(),
+    }
+    .converted(h.app.doc.editor.model().unwrap(), cs_3d::SelectMode::Vertex);
+    h.app.doc.editor.set_model_selection(all.clone());
+    h.frame();
+    let cam = camera(&h);
+    let before = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    // La flecha X cae sobre el cubo: sin el gizmo, el clic elegiría el objeto.
+    let cs_3d::HandleGeom::Arrow { from, tip, .. } = persp_handle(&h, cs_3d::GizmoPart::Axis(0))
+    else {
+        panic!("an arrow");
+    };
+    let (a, b) = (persp_screen(&h, from), persp_screen(&h, tip));
+    let start = a.lerp(b, 0.3);
+    let pm = h.app.doc.canvas.persp_map(&h.app.doc.editor).unwrap();
+    let local = (
+        ((start.x - pm.min.0) / pm.scale.0) as u32,
+        ((start.y - pm.min.1) / pm.scale.1) as u32,
+    );
+    let doc = &h.app.doc.editor.document;
+    let artboard = doc.artboard(h.app.doc.editor.model_id()).unwrap();
+    assert_eq!(
+        cs_render::model_pick(doc, artboard, local.0, local.1),
+        Some(0)
+    );
+    // Con Shift (que movería el objetivo de la cámara) también gana el gizmo.
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)]);
+    drag_with(&mut h, start, start + (b - a) * 0.5, egui::Modifiers::SHIFT);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    let after = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    let dx = after[0][0] - before[0][0];
+    assert!(dx > 0.0, "moved along X");
+    for (p, q) in before.iter().zip(&after) {
+        assert_eq!([p[0] + dx, p[1], p[2]], *q);
+    }
+    assert_eq!(h.app.doc.editor.model_edit().selection, all);
+    assert_eq!(camera(&h), cam);
+}
+
 /// Un modelo "Ship" con su pestaña de vista abierta, en el documento de la prueba.
 fn with_model_tab() -> LayoutHarness {
     let mut h = LayoutHarness::new(pixel_ui(), true);
