@@ -130,7 +130,7 @@ fn the_axis_stepper_has_its_tag_glued_to_the_left() {
     assert_eq!(TAG_W, 13.0);
     assert!(drawn.contains(&(
         id(&skin, UNIT, WidgetState::Normal),
-        Rect::from_min_size(rect.min, vec2(TAG_W, HEIGHT))
+        Rect::from_min_size(rect.min + vec2(1.0, 0.0), vec2(TAG_W - 1.0, HEIGHT))
     )));
     assert!(drawn.contains(&(
         id(&skin, LEFT, WidgetState::Normal),
@@ -174,4 +174,63 @@ fn the_axis_stepper_has_its_tag_glued_to_the_left() {
         run(events, &mut value);
     }
     assert_eq!(value, -1);
+}
+
+/// Los pixeles sueltos (rectángulos de 1×1) que dibujan las formas: posición y color.
+fn dots(shapes: &[Shape]) -> Vec<(Rect, Color32)> {
+    fn walk(shape: &Shape, out: &mut Vec<(Rect, Color32)>) {
+        match shape {
+            Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+            Shape::Rect(r) if r.rect.width() == 1.0 && r.rect.height() == 1.0 => {
+                out.push((r.rect, r.fill));
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    shapes.iter().for_each(|s| walk(s, &mut out));
+    out
+}
+
+#[test]
+fn the_axis_tag_is_rounded_outside_and_square_beside_the_button_like_the_mockup() {
+    let (ctx, skin) = pixel_ctx();
+    let mut rect = Rect::NOTHING;
+    let mut value = 0;
+    let shapes = frame(&ctx, vec![], |ui| {
+        rect = Rect::from_min_size(ui.cursor().min, vec2(80.0, HEIGHT));
+        axis_stepper(ui, &skin, 80.0, "t", "X", &mut value, -9..=9, 1);
+    });
+    let drawn = pieces(&shapes);
+    let colors = skin.colors();
+    let unit = skin.piece(UNIT, WidgetState::Normal).unwrap();
+    let (light, cream) = (unit.pixel(0, 0), unit.pixel(0, 16));
+    let at = |dots: &[(Rect, Color32)], x: f32, y: usize| {
+        let p = pos2(x, rect.top() + y as f32);
+        dots.iter().rev().find(|(r, _)| r.min == p).map(|(_, c)| *c)
+    };
+    let dots = dots(&shapes);
+    // Lado de afuera (izquierda): la esquina de arriba y la de abajo no se dibujan (la caja de la
+    // unidad empieza una columna adentro); las filas siguientes son el borde claro y el oscuro.
+    let x = rect.left();
+    assert_eq!(at(&dots, x, 0), None, "top-left corner is empty");
+    assert_eq!(at(&dots, x, 16), None, "bottom-left shadow is empty");
+    assert!(drawn.contains(&(
+        unit.texture.id(),
+        Rect::from_min_size(rect.min + vec2(1.0, 0.0), vec2(TAG_W - 1.0, HEIGHT))
+    )));
+    for y in 1..=6 {
+        assert_eq!(at(&dots, x, y), Some(light), "row {y}");
+    }
+    assert_eq!(at(&dots, x, 7), Some(colors.control_border));
+    assert_eq!(at(&dots, x, 8), Some(light));
+    for y in 9..=14 {
+        assert_eq!(at(&dots, x, y), Some(colors.control_border), "row {y}");
+    }
+    assert_eq!(at(&dots, x, 15), Some(cream), "bottom-left corner is light");
+    // Lado del botón: su columna izquierda queda recta (borde arriba y abajo, luz debajo).
+    let bx = rect.left() + TAG_W;
+    assert_eq!(at(&dots, bx, 0), Some(colors.control_border));
+    assert_eq!(at(&dots, bx, 15), Some(colors.control_border));
+    assert_eq!(at(&dots, bx, 16), Some(cream));
 }

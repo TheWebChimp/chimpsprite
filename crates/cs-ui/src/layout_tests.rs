@@ -5188,7 +5188,9 @@ fn axis_tags(h: &LayoutHarness) -> Vec<Rect> {
     let flyout = model_flyout(h);
     h.drawn(crate::kit::stepper::UNIT)
         .into_iter()
-        .filter(|r| flyout.contains_rect(*r) && r.width() == crate::kit::stepper::TAG_W)
+        // La caja de la unidad empieza una columna adentro de la etiqueta (su borde redondeado).
+        .filter(|r| flyout.contains_rect(*r) && r.width() == crate::kit::stepper::TAG_W - 1.0)
+        .map(|r| r.with_min_x(r.min.x - 1.0))
         .collect()
 }
 
@@ -5479,6 +5481,7 @@ fn axis_row(h: &LayoutHarness, title: &str) -> Vec<Rect> {
         .drawn(crate::kit::stepper::UNIT)
         .into_iter()
         .filter(|r| flyout.contains_rect(*r) && r.top() > heading.center().y)
+        .map(|r| r.with_min_x(r.min.x - 1.0))
         .collect();
     let top = tags.iter().map(|r| r.top()).fold(f32::INFINITY, f32::min);
     let mut row: Vec<Rect> = tags.into_iter().filter(|r| r.top() == top).collect();
