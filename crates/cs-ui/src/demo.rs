@@ -735,6 +735,10 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         if dev_var("CHIMPSPRITE_DEMO_ADD_MENU").is_some() {
             app.model_panel.open_add_menu = true;
         }
+        // Con CHIMPSPRITE_DEMO_SHADING: la ventana Shading abierta.
+        if dev_var("CHIMPSPRITE_DEMO_SHADING").is_some() {
+            app.model_panel.shading = true;
+        }
         // Con CHIMPSPRITE_DEMO_MODEL_EDIT: en vértices y con uno elegido (el workspace siempre
         // está en modo Edit).
         if dev_var("CHIMPSPRITE_DEMO_MODEL_EDIT").is_some() {

@@ -138,6 +138,7 @@ impl LayoutHarness {
             // Como `App::ui`: los atajos corren antes de dibujar los paneles.
             app.handle_shortcuts(&ctx);
             canvas = app.layout(ui, false);
+            app.update_shading_window(&ctx, false);
         });
         // Las texturas (fuentes, skin y lienzo) no se suben a ninguna GPU.
         output.textures_delta.clear();
@@ -4843,7 +4844,7 @@ fn model_halves(h: &LayoutHarness) -> (Rect, Rect) {
 }
 
 /// Lo general del modelo (arriba) y lo del objeto elegido (abajo), en modo Model.
-const GENERAL_TEXTS: [&str; 8] = [
+const GENERAL_TEXTS: [&str; 7] = [
     "Object",
     "Vertex",
     "Grid",
@@ -4851,7 +4852,6 @@ const GENERAL_TEXTS: [&str; 8] = [
     "Texture Size",
     "Camera",
     "Light & Outline",
-    "Shading",
 ];
 const OBJECT_TEXTS: [&str; 4] = ["Position", "Rotation", "Scale", "Double sided"];
 
@@ -4890,7 +4890,7 @@ fn the_general_part_goes_above_the_line_and_the_object_below() {
         assert!(text_in(&h, top, t).is_some(), "{t} above the line");
         assert!(text_in(&h, bottom, t).is_none(), "{t} below the line");
     }
-    for label in ["Sheet settings…", "New"] {
+    for label in ["Shading…", "Sheet settings…", "New"] {
         let r = in_model_panel(&h, label).unwrap_or_else(|| panic!("{label}"));
         assert!(top.contains_rect(r), "{label} {r:?} in {top:?}");
     }
@@ -5607,7 +5607,7 @@ fn the_object_tab_shows_the_transform_in_rows_of_three_tagged_steppers() {
         "Camera",
         "Light & Outline",
         "Light",
-        "Shading",
+        "Shading…",
         "Add",
         "Sides",
     ] {
@@ -6061,7 +6061,105 @@ fn values_outside_the_panel_ranges_are_not_rewritten_by_drawing_the_panel() {
     assert_eq!(h.app.doc.editor.history.done_count(), steps);
 }
 
-// --- El panel 3D: la cuadrícula Shading ---
+// --- El panel 3D: la ventana Shading ---
+
+/// [`model_panel_tall`] con la ventana Shading abierta (con Shading… del panel).
+fn shading_open() -> LayoutHarness {
+    let mut h = model_panel_tall();
+    assert!(
+        !h.nodes.iter().any(|(l, _)| l == "Shade 6 step 1"),
+        "not in the panel"
+    );
+    h.click(h.button("Shading…").center(), PointerButton::Primary);
+    h.frame();
+    assert!(h.app.model_panel.shading);
+    h
+}
+
+#[test]
+fn shading_opens_its_window_and_the_x_closes_it() {
+    let mut h = shading_open();
+    let flyout = model_flyout(&h);
+    let title = h
+        .text_rects
+        .iter()
+        .find(|(s, r, _)| s == "Shading" && !flyout.contains_rect(*r))
+        .map(|(_, r, _)| *r)
+        .expect("the window title");
+    // La cuadrícula, debajo del título de la ventana (y no en el panel).
+    let cell = node(&h, "Shade 6 step 1");
+    assert!(cell.top() > title.bottom(), "{cell:?} under {title:?}");
+    // El panel sigue usable con la ventana abierta (no es un diálogo).
+    assert!(!h.app.is_modal());
+    h.app.model_panel.shading = false;
+    h.frame();
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Shade 6 step 1"));
+}
+
+#[test]
+fn the_shading_window_closes_without_a_model() {
+    let mut h = shading_open();
+    h.app
+        .doc
+        .editor
+        .document
+        .artboards
+        .iter_mut()
+        .for_each(|a| a.model = None);
+    h.frame();
+    h.frame();
+    assert!(!h.app.model_panel.shading);
+}
+
+#[test]
+fn the_light_row_has_light_yaw_and_pitch_like_the_mockup() {
+    let h = model_panel_tall();
+    let (top, _) = model_halves(&h);
+    let light = check(&h, "Light").0;
+    let yaw = text_in(&h, top, "Yaw").unwrap();
+    let pitch = text_in(&h, top, "Pitch").unwrap();
+    // En la fila de la casilla, en orden.
+    for r in [yaw, pitch] {
+        assert!(
+            r.top() < light.bottom() && r.bottom() > light.top(),
+            "{r:?} {light:?}"
+        );
+    }
+    assert!(light.right() < yaw.left() && yaw.right() < pitch.left());
+    // Los dos steppers, del mismo ancho (±1) y el de Pitch hasta el final de la fila.
+    let mut plus: Vec<Rect> = h
+        .buttons
+        .iter()
+        .filter(|(l, r)| l == "Increase" && top.contains_rect(*r))
+        .map(|(_, r)| *r)
+        .collect();
+    let mut minus: Vec<Rect> = h
+        .buttons
+        .iter()
+        .filter(|(l, r)| l == "Decrease" && top.contains_rect(*r))
+        .map(|(_, r)| *r)
+        .collect();
+    assert_eq!((plus.len(), minus.len()), (2, 2), "{plus:?} {minus:?}");
+    plus.sort_by(|a, b| a.left().total_cmp(&b.left()));
+    minus.sort_by(|a, b| a.left().total_cmp(&b.left()));
+    let widths: Vec<f32> = (0..2).map(|i| plus[i].right() - minus[i].left()).collect();
+    assert!((widths[0] - widths[1]).abs() <= 1.0, "{widths:?}");
+    assert_eq!(plus[1].right(), model_row_right(&h));
+    // Outline, debajo.
+    let outline = check(&h, "Outline").0;
+    assert!(outline.top() > light.bottom());
+}
+
+#[test]
+fn shading_and_sheet_settings_end_the_row_after_the_outline() {
+    let h = model_panel_tall();
+    let shading = h.button("Shading…");
+    let sheet = h.button("Sheet settings…");
+    assert_eq!(sheet.right(), model_row_right(&h));
+    assert_eq!(sheet.left() - shading.right(), 4.0);
+    assert_eq!(shading.top(), sheet.top());
+    assert!(shading.top() > check(&h, "Outline").0.bottom());
+}
 
 /// El color de la paleta del modelo con índice `i`.
 fn model_palette(h: &LayoutHarness, i: usize) -> Rgba {
@@ -6070,7 +6168,7 @@ fn model_palette(h: &LayoutHarness, i: usize) -> Rgba {
 
 #[test]
 fn picking_a_shade_pins_the_step_in_one_undo_step_and_changes_the_render() {
-    let mut h = model_panel_tall();
+    let mut h = shading_open();
     // El 6 es el color del cubo en la plantilla de la textura.
     let (cube, red) = (model_palette(&h, 6), model_palette(&h, 27));
     let before = model_pixels(&h);
@@ -6089,7 +6187,7 @@ fn picking_a_shade_pins_the_step_in_one_undo_step_and_changes_the_render() {
 
 #[test]
 fn a_right_click_on_a_shade_step_returns_it_to_auto() {
-    let mut h = model_panel_tall();
+    let mut h = shading_open();
     let (cube, red) = (model_palette(&h, 6), model_palette(&h, 27));
     h.click(node(&h, "Shade 6 step 2").center(), PointerButton::Primary);
     h.click(node(&h, "Shade color 27").center(), PointerButton::Primary);
@@ -6107,7 +6205,7 @@ fn a_right_click_on_a_shade_step_returns_it_to_auto() {
 
 #[test]
 fn auto_empties_the_shading_table() {
-    let mut h = model_panel_tall();
+    let mut h = shading_open();
     assert!(
         h.disabled.iter().any(|l| l == "Auto"),
         "Auto with an empty table"
@@ -6140,7 +6238,7 @@ fn set_model_palette(h: &mut LayoutHarness, colors: Vec<Rgba>) {
 
 #[test]
 fn entries_of_colors_outside_the_palette_show_as_orphan_columns() {
-    let mut h = model_panel_tall();
+    let mut h = shading_open();
     let gone = Rgba::new(1, 2, 3, 255);
     let mut table = cs_core::ShadingTable::default();
     table.set(gone, 1, Some(model_palette(&h, 27)));
@@ -6152,7 +6250,7 @@ fn entries_of_colors_outside_the_palette_show_as_orphan_columns() {
     table.set(faded, 1, Some(model_palette(&h, 6)));
     assert!(h.app.doc.editor.set_shading(table));
     set_model_palette(&mut h, colors);
-    let flyout = model_flyout(&h);
+    let flyout = h.ctx.content_rect();
     // Ordenadas como la tabla: (1, 2, 3) antes que el 9 de la paleta.
     let first = node(&h, "Shade orphan 0 color");
     let second = node(&h, "Shade orphan 1 color");
@@ -6190,6 +6288,9 @@ fn entries_of_colors_outside_the_palette_show_as_orphan_columns() {
     let shading = &h.app.doc.editor.model().unwrap().shading;
     assert_eq!(shading.get(faded, 1), None);
     assert_eq!(shading.entries.len(), 1);
+    // Sin esa columna la ventana se angosta y se vuelve a centrar.
+    h.frame();
+    h.frame();
     h.click(
         node(&h, "Shade orphan 0 step 1").center(),
         PointerButton::Secondary,
@@ -6202,7 +6303,7 @@ fn entries_of_colors_outside_the_palette_show_as_orphan_columns() {
 
 #[test]
 fn the_shade_popup_offers_only_opaque_colors() {
-    let mut h = model_panel_tall();
+    let mut h = shading_open();
     let mut colors = h.app.doc.editor.sprite().palette.colors().to_vec();
     colors[27].a = 0;
     set_model_palette(&mut h, colors);
@@ -6213,7 +6314,7 @@ fn the_shade_popup_offers_only_opaque_colors() {
 
 #[test]
 fn the_shading_grid_is_disabled_with_the_light_off() {
-    let mut h = model_panel_tall();
+    let mut h = shading_open();
     assert!(!h.disabled.iter().any(|l| l == "Shade 6 step 1"));
     let mut model = h.app.doc.editor.model().unwrap().clone();
     model.light.enabled = false;
@@ -6227,6 +6328,11 @@ fn the_shading_grid_is_disabled_with_the_light_off() {
     h.frame();
     h.frame();
     assert!(h.disabled.iter().any(|l| l == "Shade 6 step 1"));
+    assert!(
+        h.text_rects
+            .iter()
+            .any(|(s, _, _)| s == "Turn the light on to edit.")
+    );
     let steps = h.app.doc.editor.history.done_count();
     h.click(node(&h, "Shade 6 step 1").center(), PointerButton::Primary);
     assert!(
@@ -6237,9 +6343,9 @@ fn the_shading_grid_is_disabled_with_the_light_off() {
 }
 
 #[test]
-fn every_shade_cell_is_inside_the_flyout() {
-    let h = model_panel_tall();
-    let flyout = model_flyout(&h);
+fn every_shade_cell_is_on_screen() {
+    let h = shading_open();
+    let flyout = h.ctx.content_rect();
     let palette = h.app.doc.editor.sprite().palette.colors().to_vec();
     let mut count = 0;
     for (i, c) in palette.iter().enumerate().filter(|(_, c)| c.a == 255) {

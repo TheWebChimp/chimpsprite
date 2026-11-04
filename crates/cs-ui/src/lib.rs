@@ -658,6 +658,7 @@ impl ChimpApp {
             Some(model_panel::ModelAction::Bake) if self.doc.editor.edited_model().is_some() => {
                 self.bake = Some(bake_dialog::BakeDialog::new(&self.doc.editor));
             }
+            Some(model_panel::ModelAction::Shading) => self.model_panel.shading = true,
             Some(model_panel::ModelAction::TextureSize(side)) => {
                 self.palette_confirm = Some(palette_ui::Confirm::TextureSize(side));
             }
@@ -916,6 +917,21 @@ impl ChimpApp {
                 self.finish_bake(model, options);
             }
             tilemap_dialog::DialogResult::Cancel => self.bake = None,
+        }
+    }
+
+    /// La ventana Shading del panel 3D: se cierra con la × o cuando ya no hay modelo que editar.
+    pub(crate) fn update_shading_window(&mut self, ctx: &egui::Context, modal: bool) {
+        if !self.model_panel.shading {
+            return;
+        }
+        if !self.has_doc() || self.doc.editor.edited_model().is_none() {
+            self.model_panel.shading = false;
+            return;
+        }
+        let skin = self.pixel.skin();
+        if model_panel::shading_window(ctx, &mut self.doc.editor, skin, modal) {
+            self.model_panel.shading = false;
         }
     }
 
@@ -1812,6 +1828,7 @@ impl eframe::App for ChimpApp {
         self.update_font_dialog(&ctx);
         self.update_model_dialog(&ctx);
         self.update_bake_dialog(&ctx);
+        self.update_shading_window(&ctx, modal);
         self.update_symbol_dialog(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);

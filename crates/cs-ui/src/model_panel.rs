@@ -1,8 +1,8 @@
 //! El panel 3D (en el dock del lienzo; en la pestaña del modelo, fijo en su lugar): el modelo 3D
 //! del artboard activo, partido en dos a lo alto por una línea grabada (a ≈ 40 %). Arriba, con su
 //! scroll, lo general del modelo: los modos de selección y la cuadrícula (en modo Model), la
-//! textura y su tamaño, la cámara, la luz (con la cuadrícula Shading), el contorno y Sheet
-//! settings…. Abajo, la tira de pestañas de los objetos (una por objeto, con el ícono de su tipo:
+//! textura y su tamaño, la cámara, la luz, el contorno, Shading… (la cuadrícula, en su ventana)
+//! y Sheet settings…. Abajo, la tira de pestañas de los objetos (una por objeto, con el ícono de su tipo:
 //! un clic la elige, su marca quita el objeto y, si no caben, las flechas las recorren) con el +
 //! a la derecha (su ventanita, en [`add_menu`]: el tipo, los lados de los redondos y Add) y,
 //! debajo, con su scroll, lo del objeto elegido: en modo Model, Extrude, Subdivide, Merge y
@@ -82,14 +82,10 @@ fn axis_grid(avail: f32) -> (usize, f32) {
     (per_row, ((avail - gaps) / per_row as f32).floor())
 }
 
-/// El ancho de una columna (la etiqueta y su stepper): las dos columnas, con `PAIR_GAP` y el aire
-/// entre los widgets de la fila (tres veces), llenan lo de adentro sin la barra del scroll.
-fn cell_w(ui: &Ui) -> f32 {
-    let gaps = PAIR_GAP + 3.0 * ui.spacing().item_spacing.x;
-    ((WIDTH - pixel_ui::SCROLL_BAR - gaps) / 2.0).floor()
-}
-/// La etiqueta de Yaw y Pitch.
-const ANGLE_LABEL_W: f32 = 34.0;
+/// La fila de la luz (como el boceto): de la casilla Light a "Yaw", y de cada etiqueta a su
+/// stepper; entre el stepper de Yaw y "Pitch", [`PAIR_GAP`].
+const LIGHT_GAP: f32 = 12.0;
+const LABEL_GAP: f32 = 4.0;
 /// Las filas de la textura y de la cámara (como el boceto): la columna de la derecha (Texture
 /// Size) empieza a 5/8 de la fila (138 de sus 220 columnas), con este aire antes; el aire entre
 /// el select de la cámara y sus presets es el mismo.
@@ -130,6 +126,8 @@ pub struct ModelPanelState {
     pub add_kind: PrimitiveKind,
     /// Abrir el menú del + en el próximo frame (la demo, para capturas).
     pub open_add_menu: bool,
+    /// La ventana Shading está abierta ([`shading_window`]).
+    pub shading: bool,
 }
 
 impl Default for ModelPanelState {
@@ -138,6 +136,7 @@ impl Default for ModelPanelState {
             sides: DEFAULT_SIDES,
             add_kind: PrimitiveKind::Cube,
             open_add_menu: false,
+            shading: false,
         }
     }
 }
@@ -148,6 +147,8 @@ pub enum ModelAction {
     NewModel,
     /// Bake…: abrir el diálogo de hornear el modelo.
     Bake,
+    /// Shading…: abrir la ventana de la tabla de sombras.
+    Shading,
     /// Pasar la textura a este lado, que deja UVs fuera: la app pide confirmación antes.
     TextureSize(u32),
 }
@@ -381,7 +382,7 @@ fn plain_tabs(
 }
 
 /// Lo general del modelo (la mitad de arriba): en modo Model, los modos de selección y la
-/// cuadrícula; la textura y su tamaño; la cámara, la luz (con Shading) y el contorno, y Sheet
+/// cuadrícula; la textura y su tamaño; la cámara, la luz y el contorno, y Shading… y Sheet
 /// settings… (hornear).
 fn general(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
     if editor.cad_mode() == CadMode::Model {
@@ -390,10 +391,8 @@ fn general(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<Mode
     let action = texture(ui, editor, skin);
     settings(ui, editor, skin);
     ui.add_space(SECTION_GAP);
-    let bake = button(ui, skin, "Sheet settings…")
-        .clicked()
-        .then_some(ModelAction::Bake);
-    action.or(bake)
+    let window = window_buttons(ui, skin);
+    action.or(window)
 }
 
 /// Lo del objeto elegido, en modo Texture: Rotate 90°, Flip H y Flip V para las caras elegidas
@@ -551,31 +550,23 @@ fn button(ui: &mut Ui, skin: Option<&Skin>, label: &str) -> egui::Response {
     }
 }
 
-/// Una columna: la etiqueta de `label_w` y el stepper, que llena lo que queda de [`cell_w`]. Un
-/// valor fuera de `range` se muestra en el borde pero solo se escribe si el usuario lo cambia
-/// (el stepper no lo recorta solo).
-fn cell_with(
+/// Un ángulo de la luz: la etiqueta y, a [`LABEL_GAP`], el stepper de `width`. Un valor fuera de
+/// `range` se muestra en el borde pero solo se escribe si el usuario lo cambia (el stepper no lo
+/// recorta solo).
+fn angle_cell(
     ui: &mut Ui,
     skin: Option<&Skin>,
-    salt: &str,
-    label_w: f32,
+    width: f32,
     (label, value): (&str, &mut i32),
     range: std::ops::RangeInclusive<i32>,
 ) {
-    ui.allocate_ui_with_layout(
-        vec2(label_w, kit::stepper::HEIGHT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_width(label_w);
-            ui.label(label);
-        },
-    );
-    let id = format!("{salt}_{label}");
+    ui.label(label);
+    ui.add_space(LABEL_GAP);
+    let id = format!("light_{label}");
     let shown = (*value).clamp(*range.start(), *range.end());
     let mut v = shown;
     match skin {
         Some(skin) => {
-            let width = cell_w(ui) - label_w;
             kit::stepper::stepper(ui, skin, width, &id, &mut v, range, 1, None);
         }
         None => {
@@ -889,23 +880,43 @@ fn camera_row(
     }
 }
 
-/// Yaw (dado la vuelta a ±180°) y Pitch en grados (lo guardado, en décimas): solo se escribe el
-/// que cambió.
-fn angles(ui: &mut Ui, skin: Option<&Skin>, salt: &str, (yaw, pitch): (&mut i32, &mut i32)) {
-    let (was_yaw, was_pitch) = (wrap_angle(*yaw) / 10, *pitch / 10);
+/// El ancho de `text` como lo deja `ui.label`.
+fn label_width(ui: &Ui, text: &str) -> f32 {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font, Color32::WHITE);
+    galley.size().x
+}
+
+/// La fila de la luz, como el boceto: la casilla Light y, hasta el final de la fila, Yaw (dado la
+/// vuelta a ±180°) y Pitch en grados (lo guardado, en décimas) con sus steppers del mismo ancho,
+/// deshabilitados sin luz. Solo se escribe el ángulo que cambió.
+fn light_row(ui: &mut Ui, skin: Option<&Skin>, light: &mut cs_core::Light3D) {
+    let (was_yaw, was_pitch) = (wrap_angle(light.yaw) / 10, light.pitch / 10);
     let (mut y, mut p) = (was_yaw, was_pitch);
+    let right = ui.cursor().left() + row_width(ui);
     ui.horizontal(|ui| {
-        let range = -YAW_MAX..=YAW_MAX;
-        cell_with(ui, skin, salt, ANGLE_LABEL_W, ("Yaw", &mut y), range);
-        ui.add_space(PAIR_GAP);
-        let range = -PITCH_MAX..=PITCH_MAX;
-        cell_with(ui, skin, salt, ANGLE_LABEL_W, ("Pitch", &mut p), range);
+        ui.spacing_mut().item_spacing.x = 0.0;
+        check(ui, skin, &mut light.enabled, "Light");
+        ui.add_space(LIGHT_GAP);
+        ui.add_enabled_ui(light.enabled, |ui| {
+            let (yaw_w, pitch_w) = (label_width(ui, "Yaw"), label_width(ui, "Pitch"));
+            let free = right - ui.cursor().left() - yaw_w - pitch_w - 2.0 * LABEL_GAP - PAIR_GAP;
+            let range = -YAW_MAX..=YAW_MAX;
+            angle_cell(ui, skin, (free / 2.0).floor(), ("Yaw", &mut y), range);
+            ui.add_space(PAIR_GAP);
+            // El de Pitch llega justo al final de la fila.
+            let width = right - ui.cursor().left() - pitch_w - LABEL_GAP;
+            let range = -PITCH_MAX..=PITCH_MAX;
+            angle_cell(ui, skin, width, ("Pitch", &mut p), range);
+        });
     });
     if y != was_yaw {
-        *yaw = y * 10;
+        light.yaw = y * 10;
     }
     if p != was_pitch {
-        *pitch = p * 10;
+        light.pitch = p * 10;
     }
 }
 
@@ -954,15 +965,8 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 
     label_with_hint(ui, "Light & Outline", "");
-    let light = &mut next.light;
-    check(ui, skin, &mut light.enabled, "Light");
-    ui.add_enabled_ui(light.enabled, |ui| {
-        angles(ui, skin, "light", (&mut light.yaw, &mut light.pitch));
-    });
-    // Sin luz no hay sombras: la cuadrícula se ve pero no se edita.
-    let shading = ui
-        .add_enabled_ui(light.enabled, |ui| shading(ui, editor, skin))
-        .inner;
+    ui.add_space(-AXIS_TITLE_PULL);
+    light_row(ui, skin, &mut next.light);
     let mut outline = next.outline.is_some();
     ui.horizontal(|ui| {
         check(ui, skin, &mut outline, "Outline");
@@ -981,10 +985,63 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     if !ui.input(|input| input.pointer.any_down()) {
         editor.end_group_of(group.value());
     }
-    // La tabla, aparte: cada clic en la cuadrícula es su propio paso de undo.
-    if let Some(table) = shading {
+}
+
+/// Shading… y Sheet settings…, al final de su fila (como el boceto). Devuelve lo pedido.
+fn window_buttons(ui: &mut Ui, skin: Option<&Skin>) -> Option<ModelAction> {
+    const BUTTONS: [(&str, ModelAction); 2] = [
+        ("Shading…", ModelAction::Shading),
+        ("Sheet settings…", ModelAction::Bake),
+    ];
+    let mut picked = None;
+    match skin {
+        Some(skin) => {
+            let row = row_rect(ui, row_width(ui));
+            let mut right = row.right();
+            for (label, action) in BUTTONS.into_iter().rev() {
+                let w = kit::button::width(ui, label);
+                let rect =
+                    Rect::from_min_max(pos2(right - w, row.top()), pos2(right, row.bottom()));
+                let id = ui.id().with(("model_window_button", label));
+                if kit::button::button_at(ui, skin, rect, id, label).clicked() {
+                    picked = Some(action);
+                }
+                right = rect.left() - COLUMN_GAP;
+            }
+        }
+        None => {
+            ui.horizontal(|ui| {
+                for (label, action) in BUTTONS {
+                    if pixel_ui::text_button(ui, label).clicked() {
+                        picked = Some(action);
+                    }
+                }
+            });
+        }
+    }
+    picked
+}
+
+/// La ventana Shading (la abre Shading… de lo general): la cuadrícula de [`shading`] y Auto. Sin
+/// luz (o con un diálogo abierto, `modal`) se ve pero no se edita. Cada cambio es su propio paso
+/// de undo. Devuelve si se cerró con la ×.
+pub fn shading_window(
+    ctx: &egui::Context,
+    editor: &mut Editor,
+    skin: Option<&Skin>,
+    modal: bool,
+) -> bool {
+    let anchor = (egui::Align2::CENTER_CENTER, Vec2::ZERO);
+    let (table, closed) =
+        pixel_ui::app_window(ctx, skin, "model_shading", "Shading", true, anchor, |ui| {
+            let lit = editor.edited_model().is_some_and(|m| m.light.enabled);
+            ui.add_enabled_ui(!modal && lit, |ui| shading(ui, editor, skin, lit))
+                .inner
+        });
+    if let Some(table) = table.flatten() {
         editor.set_shading(table);
     }
+    closed
 }
 
 /// El color de egui de un `Rgba`.
@@ -1019,13 +1076,14 @@ enum ShadeColumn {
     Orphan(usize, Rgba),
 }
 
-/// "Shading" con Auto (vaciar la tabla) y la cuadrícula: por cada color opaco de la paleta del
+/// La cuadrícula Shading y, debajo, Auto (vaciar la tabla): por cada color opaco de la paleta del
 /// modelo una columna (en bloques de [`SHADE_COLUMNS`]) con el color y, debajo, sus pasos 1 y 2
 /// de luz. Un clic en un paso abre las muestras opacas de la paleta (elegir una lo fija); el
 /// derecho lo vuelve automático. Después, las entradas huérfanas (de colores que ya no están en la
 /// paleta, que igual cuentan en el render), tachadas en diagonal: el clic derecho en un paso lo
-/// quita y en el color quita la entrada. Devuelve la tabla nueva si el usuario la cambió.
-fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingTable> {
+/// quita y en el color quita la entrada. Sin luz (`lit` apagado), al lado de Auto lo dice.
+/// Devuelve la tabla nueva si el usuario la cambió.
+fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>, lit: bool) -> Option<ShadingTable> {
     let table = editor.edited_model()?.shading.clone();
     // La paleta del modelo (en modo Texture el activo es su textura).
     let palette = editor
@@ -1054,13 +1112,6 @@ fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingT
         )
         .collect();
     let mut next = None;
-    ui.horizontal(|ui| {
-        label_with_hint(ui, "Shading", "");
-        let auto = ui.add_enabled_ui(!table.entries.is_empty(), |ui| button(ui, skin, "Auto"));
-        if auto.inner.clicked() {
-            next = Some(ShadingTable::default());
-        }
-    });
     let enabled = ui.is_enabled();
     for block in columns.chunks(SHADE_COLUMNS) {
         let size = vec2(
@@ -1138,6 +1189,15 @@ fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingT
             }
         }
     }
+    ui.horizontal(|ui| {
+        let auto = ui.add_enabled_ui(!table.entries.is_empty(), |ui| button(ui, skin, "Auto"));
+        if auto.inner.clicked() {
+            next = Some(ShadingTable::default());
+        }
+        if !lit {
+            ui.label("Turn the light on to edit.");
+        }
+    });
     next.filter(|t| *t != table)
 }
 
