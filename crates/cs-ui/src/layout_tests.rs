@@ -8892,6 +8892,41 @@ fn a_uv_vertex_moves_alone() {
     }
 }
 
+#[test]
+fn with_the_pencil_dragging_a_uv_vertex_moves_it_and_a_click_paints() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    let layer = texture_sprite(&h).layers.last().unwrap().id;
+    let primary = PixelValue::Rgba(Rgba::rgb(1, 2, 3));
+    h.app.doc.editor.primary = primary;
+    let before = front_uvs(&h);
+    let pixels = texture_sprite(&h);
+    let k = before.iter().position(|&p| p == (16, 0)).unwrap();
+    let steps = h.app.doc.editor.history.done_count();
+    // Arrastrar el vértice lo mueve, sin pintar, en un paso.
+    h.drag(texel(&h, 16.0, 0.0), texel(&h, 20.0, 3.0));
+    let after = front_uvs(&h);
+    for (i, (a, b)) in after.iter().zip(&before).enumerate() {
+        if i == k {
+            assert_eq!(*a, (20, 3));
+        } else {
+            assert_eq!(a, b, "vertex {i}");
+        }
+    }
+    assert_eq!(texture_sprite(&h), pixels, "nothing painted");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    // Un clic sin arrastre en un vértice pinta el pixel bajo el puntero (el de la esquina de
+    // arriba a la izquierda, dentro de la cara: solo ahí se pinta).
+    assert_ne!(texture_sprite(&h).pixel(layer, 0, 0, 0), primary);
+    h.click(texel(&h, 0.0, 0.0) + vec2(1.0, 1.0), PointerButton::Primary);
+    assert_eq!(front_uvs(&h), after, "the UVs stay");
+    assert_eq!(texture_sprite(&h).pixel(layer, 0, 0, 0), primary);
+    // Y arrastrar dentro de la cara pinta, no mueve las UVs.
+    h.drag(texel(&h, 8.5, 8.5), texel(&h, 10.5, 8.5));
+    assert_eq!(front_uvs(&h), after);
+    assert_eq!(texture_sprite(&h).pixel(layer, 0, 10, 8), primary);
+}
+
 /// Con el panel 3D a la vista (en la pestaña del modelo va fijo).
 fn with_the_model_panel(h: LayoutHarness) -> LayoutHarness {
     assert!(h.app.doc.editor.model_edit_on());

@@ -1,9 +1,10 @@
 //! Las UVs de las caras elegidas sobre la textura del modo Texture (abajo): el contorno de cada
 //! cara (blanco con borde oscuro de 1 punto) y sus vértices, en puntos enteros (con zoom entero,
-//! cada pixel de la textura mide puntos enteros). Con la herramienta Move, o arrastrando con Alt
-//! y cualquier otra, arrastrar dentro de un contorno mueve las UVs juntas y un vértice es un
-//! punto libre: se mueve solo, a cualquier pixel (sin asas de escala). Un clic sin arrastre no
-//! cambia las UVs (con Alt es de la herramienta); cada gesto es un paso de undo.
+//! cada pixel de la textura mide puntos enteros). Un vértice es un punto libre: arrastrarlo, con
+//! cualquier herramienta (también las de pintar), lo mueve solo a cualquier pixel (sin asas de
+//! escala). Con la herramienta Move, o arrastrando con Alt y cualquier otra, arrastrar dentro de
+//! un contorno mueve las UVs juntas. Un clic sin arrastre no cambia las UVs (salvo con Move, es
+//! de la herramienta: el lápiz pinta ahí); cada gesto es un paso de undo.
 
 use cs_core::Model3D;
 
@@ -29,6 +30,8 @@ pub(super) struct UvPress {
     moved: bool,
     cursor: egui::CursorIcon,
     pending: Option<UvOp>,
+    /// Si se apretó con Alt (el clic sin arrastre le llega así a la herramienta).
+    alt: bool,
 }
 
 /// Los puntos enteros de la línea de `a` a `b` (Bresenham, las dos puntas incluidas).
@@ -127,11 +130,12 @@ impl CanvasView {
                     editor.finish_uv_op();
                 } else {
                     editor.cancel_uv_op();
-                    // Alt + clic sin arrastre: la herramienta recibe el clic que se guardó.
+                    // Un clic sin arrastre (salvo con Move): la herramienta recibe el clic que se
+                    // guardó, con Alt si lo tenía.
                     if press.pending.is_some() {
                         let world = self.to_world(rect, press.at);
                         let slop = EDGE_SLOP_PX / self.zoom;
-                        editor.pointer_press(world, false, true, slop);
+                        editor.pointer_press(world, false, press.alt, slop);
                         editor.pointer_release();
                     }
                 }
@@ -159,12 +163,17 @@ impl CanvasView {
         editor.cancel_uv_op();
         let tool = editor.active_tool();
         let moving = tool == ToolKind::Move;
-        if !(moving || modifiers.alt) || editor.is_painting() || !response.hovered() {
+        if editor.is_painting() || !response.hovered() {
             return None;
         }
         let p = pointer?;
         let model = editor.edited_model()?.clone();
-        let Some(hit) = self.uv_hit(rect, editor, &model, p) else {
+        // Sin Move ni Alt, solo los vértices (lo de adentro de la cara es de la herramienta).
+        let any_tool = !(moving || modifiers.alt);
+        let Some(hit) = self
+            .uv_hit(rect, editor, &model, p)
+            .filter(|h| !any_tool || matches!(h, UvHit::Vertex { .. }))
+        else {
             // Move sobre la selección de las caras, fuera de sus UVs: nada (ni el menú del clic
             // derecho, que sí sigue).
             return (moving && !secondary && editor.selection_is_face_mask())
@@ -181,7 +190,7 @@ impl CanvasView {
                 },
                 UvHit::Inside => UvOp::Move { from: at },
             };
-            // Con Move empieza ya; con Alt, al pasar el umbral.
+            // Con Move empieza ya; si no, al pasar el umbral (un clic es de la herramienta).
             let pending = if moving {
                 editor.end_group();
                 editor.start_uv_op(op);
@@ -194,6 +203,7 @@ impl CanvasView {
                 moved: false,
                 cursor,
                 pending,
+                alt: modifiers.alt,
             });
         }
         self.uv_hover = true;
