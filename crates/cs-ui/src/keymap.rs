@@ -385,6 +385,7 @@ impl Action {
                 | ActualSize
                 | FitToScreen
                 | SwapColors
+                | DuplicateObject
                 | Tool(_)
         )
     }

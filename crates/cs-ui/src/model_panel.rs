@@ -310,18 +310,22 @@ fn header(
     let active = editor.selected_object();
     let id = ui.id().with("model_object_tabs");
     let mut added = None;
+    let mut duplicate = false;
     let (line, event) = match skin {
         Some(skin) => {
             let top = split + TABS_TOP;
             let mut strip = kit::tabs::Strip::new(inner.left(), inner.right(), top);
             strip.line = outer.x_range().shrink(1.0);
-            // El +, al final de la fila; las pestañas y sus flechas, antes.
+            // El +, al final de la fila, y antes Duplicate (del mismo tamaño); las pestañas y sus
+            // flechas, antes.
             let plus = Rect::from_min_size(
                 pos2(inner.right() - PLUS_W, top + kit::tabs::ARROWS_TOP),
                 vec2(PLUS_W, kit::tabs::ARROW_SIZE),
             );
-            strip.right = plus.left() - PLUS_GAP;
+            let copy = plus.translate(vec2(-(PLUS_W + PLUS_GAP), 0.0));
+            strip.right = copy.left() - PLUS_GAP;
             added = add_menu::plus_button(ui, skin, plus, state);
+            duplicate = duplicate_button(ui, skin, copy, editor.can_duplicate_model_objects());
             let event = kit::tabs::tab_strip(ui, skin, id, strip, &items, active);
             (strip.bottom(), event)
         }
@@ -330,7 +334,12 @@ fn header(
             let row = Rect::from_x_y_ranges(inner.x_range(), split + PLAIN_TABS_TOP..=line);
             let event = ui
                 .scope_builder(UiBuilder::new().max_rect(row), |ui| {
-                    plain_tabs(ui, &items, active, state, &mut added)
+                    let can = editor.can_duplicate_model_objects();
+                    let tabs = plain_tabs(ui, &items, active, state, &mut added);
+                    duplicate = ui
+                        .add_enabled(can, egui::Button::new("Duplicate"))
+                        .clicked();
+                    tabs
                 })
                 .inner;
             lit_line(ui, None, outer, line);
@@ -347,7 +356,27 @@ fn header(
     if let Some(p) = added {
         editor.add_primitive(p);
     }
+    if duplicate {
+        editor.duplicate_model_objects();
+    }
     line
+}
+
+/// Duplicate en `rect`, junto al +: un botón del kit con el ícono de copiar (`icon.copy`) y su
+/// tooltip (con el atajo); deshabilitado sin nada que duplicar. Devuelve si se apretó.
+fn duplicate_button(ui: &mut Ui, skin: &Skin, rect: Rect, enabled: bool) -> bool {
+    let id = ui.id().with("model_duplicate_object");
+    let shortcut = crate::keymap::label(ui.ctx(), crate::keymap::Action::DuplicateObject);
+    let tip = if shortcut.is_empty() {
+        "Duplicate object".to_owned()
+    } else {
+        format!("Duplicate object ({shortcut})")
+    };
+    ui.add_enabled_ui(enabled, |ui| {
+        let response = kit::button::icon_button_at(ui, skin, rect, id, "icon.copy", "Duplicate");
+        crate::pixel_ui::bubble_tooltip(response, skin, &tip).clicked()
+    })
+    .inner
 }
 
 /// Sin Pixel UI: una fila de egui (con scroll de lado) con el nombre de cada pestaña (un clic la

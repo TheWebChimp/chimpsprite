@@ -5249,7 +5249,7 @@ fn escape_or_a_click_outside_closes_the_add_menu_without_adding() {
 }
 
 #[test]
-fn the_plus_button_sits_right_of_the_tab_arrows() {
+fn the_duplicate_and_plus_buttons_sit_right_of_the_tab_arrows() {
     let mut h = model_panel_open(true);
     for _ in 0..11 {
         assert!(
@@ -5263,9 +5263,13 @@ fn the_plus_button_sits_right_of_the_tab_arrows() {
     h.frame();
     let next = in_model_panel(&h, "Next tabs").expect("the arrows");
     let plus = in_model_panel(&h, "Add object").expect("the + button");
-    assert!(plus.left() > next.right(), "{plus:?} {next:?}");
-    assert!(plus.left() - next.right() <= 8.0, "{plus:?} {next:?}");
+    // Las flechas, Duplicate y el +, en ese orden y a la misma altura.
+    let copy = in_model_panel(&h, "Duplicate").expect("the duplicate button");
+    assert!(copy.left() > next.right(), "{copy:?} {next:?}");
+    assert!(copy.left() - next.right() <= 8.0, "{copy:?} {next:?}");
+    assert!(plus.left() > copy.right(), "{plus:?} {copy:?}");
     assert_eq!((plus.top(), plus.height()), (next.top(), next.height()));
+    assert_eq!((copy.top(), copy.height()), (next.top(), next.height()));
     let inner = model_flyout(&h).shrink(crate::dock::FLYOUT_MARGIN as f32);
     assert!(plus.right() <= inner.right(), "{plus:?} in {inner:?}");
 }
@@ -9468,4 +9472,41 @@ fn number_keys_and_arrows_do_nothing_during_an_extrude() {
     assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
     assert_eq!(h.app.doc.editor.history.done().last(), Some("Extrude"));
     assert_eq!(top_ys(&h, top), vec![20; 4], "the cap moved");
+}
+
+#[test]
+fn the_duplicate_button_sits_left_of_the_plus_and_duplicates() {
+    let mut h = model_panel_open(true);
+    let plus = in_model_panel(&h, "Add object").expect("the + button");
+    let copy = in_model_panel(&h, "Duplicate").expect("the duplicate button");
+    assert_eq!(copy.size(), plus.size());
+    assert_eq!(copy.top(), plus.top());
+    assert_eq!(plus.left() - copy.right(), 4.0, "{copy:?} {plus:?}");
+    // Las pestañas no llegan a él.
+    let cube = node(&h, "Cube");
+    assert!(cube.right() <= copy.left(), "{cube:?} {copy:?}");
+    let n = h.app.doc.editor.model().unwrap().objects.len();
+    h.click(copy.center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.model().unwrap().objects.len(), n + 1);
+    // Su pestaña aparece y queda elegida.
+    h.frame();
+    assert!(h.nodes.iter().any(|(l, _)| l == "Cube copy"));
+    assert_eq!(h.app.doc.editor.selected_object(), Some(n));
+    // Sin objeto elegido, deshabilitado.
+    let h = without_an_object(h);
+    assert!(
+        h.disabled.iter().any(|l| l == "Duplicate"),
+        "{:?}",
+        h.disabled
+    );
+}
+
+#[test]
+fn ctrl_j_duplicates_the_3d_object_in_the_model_tab() {
+    let mut h = model_panel_open(true);
+    assert!(h.app.doc.editor.pixel_actions_blocked());
+    let n = h.app.doc.editor.model().unwrap().objects.len();
+    press_ctrl(&mut h, egui::Key::J);
+    h.frame();
+    assert_eq!(h.app.doc.editor.model().unwrap().objects.len(), n + 1);
 }

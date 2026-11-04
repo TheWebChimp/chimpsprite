@@ -155,6 +155,73 @@ impl Editor {
         true
     }
 
+    /// Los objetos que duplica Duplicate Object: en modo Object, los elegidos en las vistas; si
+    /// no, el de la pestaña elegida.
+    fn objects_to_duplicate(&self) -> Vec<usize> {
+        let Some(model) = self.edited_model() else {
+            return Vec::new();
+        };
+        let sel = &self.model_edit.selection;
+        let chosen: Vec<usize> = match sel.mode {
+            cs_3d::SelectMode::Object if self.model_edit.artboard == Some(self.model_id()) => sel
+                .items
+                .iter()
+                .filter_map(|it| match it {
+                    cs_3d::Item::Object(o) => Some(*o),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let chosen = if chosen.is_empty() {
+            self.selected_object().into_iter().collect()
+        } else {
+            chosen
+        };
+        chosen
+            .into_iter()
+            .filter(|&o| o < model.objects.len())
+            .collect()
+    }
+
+    /// Si hay algo que duplicar (ver [`Self::duplicate_model_objects`]).
+    pub fn can_duplicate_model_objects(&self) -> bool {
+        !self.extruding() && !self.objects_to_duplicate().is_empty()
+    }
+
+    /// Duplicate Object (Ctrl+J o el botón de la tira de pestañas): una copia de cada objeto
+    /// elegido en su mismo lugar, al final de la lista y con " copy" en el nombre, en un paso de
+    /// undo. Quedan elegidas las copias (la última, en su pestaña).
+    pub fn duplicate_model_objects(&mut self) -> bool {
+        if !self.can_duplicate_model_objects() {
+            return false;
+        }
+        let chosen = self.objects_to_duplicate();
+        let Some(mut model) = self.edited_model().cloned() else {
+            return false;
+        };
+        let first = model.objects.len();
+        for &o in &chosen {
+            let mut copy = model.objects[o].clone();
+            copy.name = format!("{} copy", copy.name);
+            model.objects.push(copy);
+        }
+        let last = model.objects.len() - 1;
+        if !self.named("Duplicate Object", |e| e.set_model(model)) {
+            return false;
+        }
+        self.model_object = Some(last);
+        if self.model_edit.mode == super::CadMode::Model
+            && self.model_edit.artboard == Some(self.model_id())
+        {
+            self.set_model_selection(cs_3d::Selection {
+                mode: cs_3d::SelectMode::Object,
+                items: (first..=last).map(cs_3d::Item::Object).collect(),
+            });
+        }
+        true
+    }
+
     pub fn remove_object(&mut self, i: usize) -> bool {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;

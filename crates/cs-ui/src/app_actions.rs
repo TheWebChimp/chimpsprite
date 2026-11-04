@@ -163,6 +163,10 @@ impl ChimpApp {
             ConvertToSymbol => self.open_convert_to_symbol(),
             // Como las flechas y Delete sobre objetos: solo con Move (ver `can_arrange_objects`,
             // que también habilita el menú Layer > Arrange).
+            // En el modo Model de ChimpCAD, Duplicate Object duplica los objetos 3D.
+            DuplicateObject if editor.pixel_actions_blocked() => {
+                editor.duplicate_model_objects();
+            }
             BringForward | SendBackward | BringToFront | SendToBack | DuplicateObject
             | DeleteObject
                 if !editor.can_arrange_objects() => {}

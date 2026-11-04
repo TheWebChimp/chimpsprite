@@ -240,3 +240,61 @@ fn the_selected_object_resets_when_another_artboard_is_activated() {
     e.activate(model);
     assert_eq!(e.model_object, None);
 }
+
+#[test]
+fn duplicating_copies_the_chosen_object_in_place_in_one_undo_step() {
+    let mut e = editor_with_model();
+    let mut moved = e.model().unwrap().objects[0].clone();
+    moved.transform.position.x = 32;
+    e.set_object(0, moved);
+    let steps = e.history.done_count();
+    assert!(e.duplicate_model_objects());
+    let objects = &e.model().unwrap().objects;
+    assert_eq!(objects.len(), 2);
+    assert_eq!(objects[1].name, format!("{} copy", objects[0].name));
+    assert_eq!(objects[1].mesh, objects[0].mesh);
+    assert_eq!(objects[1].transform, objects[0].transform, "in place");
+    assert_eq!(objects[1].kind, objects[0].kind);
+    assert_eq!(e.selected_object(), Some(1), "the copy is chosen");
+    assert_eq!(e.history.done_count(), steps + 1);
+    e.undo();
+    assert_eq!(e.model().unwrap().objects.len(), 1);
+}
+
+#[test]
+fn with_several_objects_chosen_each_one_is_duplicated() {
+    let mut e = editor_with_model();
+    assert!(e.add_primitive(Primitive::Plane));
+    e.set_select_mode(cs_3d::SelectMode::Object);
+    e.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Object,
+        items: [cs_3d::Item::Object(0), cs_3d::Item::Object(1)].into(),
+    });
+    assert!(e.duplicate_model_objects());
+    let names: Vec<String> = e
+        .model()
+        .unwrap()
+        .objects
+        .iter()
+        .map(|o| o.name.clone())
+        .collect();
+    assert_eq!(
+        names[2..],
+        [format!("{} copy", names[0]), format!("{} copy", names[1])]
+    );
+    // Las copias quedan elegidas.
+    let items = &e.model_edit().selection.items;
+    assert_eq!(
+        items,
+        &[cs_3d::Item::Object(2), cs_3d::Item::Object(3)].into()
+    );
+}
+
+#[test]
+fn without_an_object_there_is_nothing_to_duplicate() {
+    let mut e = editor_with_model();
+    e.select_model_object(None);
+    assert!(!e.can_duplicate_model_objects());
+    assert!(!e.duplicate_model_objects());
+    assert_eq!(e.model().unwrap().objects.len(), 1);
+}
