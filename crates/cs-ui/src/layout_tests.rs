@@ -4170,7 +4170,7 @@ fn the_perspective_is_drawn_at_an_integer_scale() {
 }
 
 #[test]
-fn ctrl_wheel_on_front_zooms_the_views_not_the_canvas() {
+fn the_wheel_on_front_zooms_the_views_not_the_canvas() {
     let mut h = with_a_model_at_800();
     let canvas_zoom = h.app.doc.canvas.zoom;
     let pan = h.app.doc.canvas.pan();
@@ -4183,17 +4183,18 @@ fn ctrl_wheel_on_front_zooms_the_views_not_the_canvas() {
         modifiers,
     };
     h.frame_with(vec![Event::PointerMoved(at)]);
-    // Sin Ctrl, la rueda no hace nada.
+    // Sin Ctrl, la rueda también hace zoom en las vistas.
     h.frame_with(vec![wheel(Default::default())]);
     h.frame();
-    assert_eq!(h.app.doc.editor.model_edit().zoom, zoom);
+    let plain = h.app.doc.editor.model_edit().zoom;
+    assert!(plain > zoom, "{zoom} -> {plain}");
     assert_eq!(h.app.doc.canvas.zoom, canvas_zoom);
     h.frame_with(vec![
         Event::ModifiersChanged(egui::Modifiers::COMMAND),
         wheel(egui::Modifiers::COMMAND),
     ]);
     h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
-    assert!(h.app.doc.editor.model_edit().zoom > zoom);
+    assert!(h.app.doc.editor.model_edit().zoom > plain);
     assert_eq!(h.app.doc.canvas.zoom, canvas_zoom);
     assert_eq!(h.app.doc.canvas.pan(), pan);
 }
@@ -4403,6 +4404,101 @@ fn ctrl_wheel_over_a_model_changes_the_camera_distance_not_the_zoom() {
     h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
     let after = camera(&h).distance;
     assert_eq!(after, (before as f32 * 1.1).round() as i32, "away");
+    assert_eq!(h.app.doc.canvas.zoom, zoom);
+}
+
+/// Un paso de rueda de ratón (hacia arriba si `dy > 0`).
+fn line_wheel(dy: f32, modifiers: egui::Modifiers) -> Event {
+    Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: vec2(0.0, dy),
+        phase: egui::TouchPhase::Move,
+        modifiers,
+    }
+}
+
+/// El punto del plano del objetivo (perpendicular a la mirada) que se ve en `at`.
+fn persp_focal_point(h: &LayoutHarness, at: Pos2) -> cs_3d::P3 {
+    let map = h
+        .app
+        .doc
+        .canvas
+        .persp_map(&h.app.doc.editor)
+        .expect("the perspective");
+    let (o, d) = map.ray((at.x, at.y));
+    let fwd = map.projector().axes()[2];
+    let t = map.camera.target;
+    let t = [t.x as f32, t.y as f32, t.z as f32];
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let s = dot([t[0] - o[0], t[1] - o[1], t[2] - o[2]], fwd) / dot(d, fwd);
+    std::array::from_fn(|i| o[i] + d[i] * s)
+}
+
+#[test]
+fn the_plain_wheel_over_persp_dollies_toward_the_pointer() {
+    let mut h = with_a_model_at_800();
+    let before = camera(&h);
+    let zoom = h.app.doc.canvas.zoom;
+    let ortho = h.app.doc.editor.model_edit().zoom;
+    let pixels = persp_pixels(&h);
+    // Fuera del centro: el objetivo se corre hacia ahí.
+    let at = pixels.center() + vec2(pixels.width() / 4.0, -pixels.height() / 8.0);
+    let point = persp_focal_point(&h, at);
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    h.frame_with(vec![line_wheel(1.0, Default::default())]);
+    h.frame();
+    let after = camera(&h);
+    assert_eq!(
+        after.distance,
+        (before.distance as f32 / 1.1).round() as i32,
+        "closer"
+    );
+    assert_ne!(after.target, before.target, "toward the pointer");
+    // Lo que estaba bajo el puntero sigue ahí (a menos de un pixel del render).
+    let map = h.app.doc.canvas.persp_map(&h.app.doc.editor).unwrap();
+    let (x, y) = map.to_screen(point).expect("in front");
+    assert!(
+        (x - at.x).abs() <= map.scale.0 && (y - at.y).abs() <= map.scale.1,
+        "{:?} vs {at:?}",
+        (x, y)
+    );
+    assert_eq!(h.app.doc.canvas.zoom, zoom, "not the canvas");
+    assert_eq!(h.app.doc.editor.model_edit().zoom, ortho, "not the views");
+    // Ctrl + rueda hace lo mismo.
+    h.frame_with(vec![
+        Event::ModifiersChanged(egui::Modifiers::COMMAND),
+        line_wheel(-1.0, egui::Modifiers::COMMAND),
+    ]);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    assert_eq!(
+        camera(&h).distance,
+        (after.distance as f32 * 1.1).round() as i32,
+        "away"
+    );
+}
+
+#[test]
+fn the_plain_wheel_over_the_texture_mode_render_dollies_the_camera() {
+    let mut h = with_a_model_in_texture_mode();
+    let model = |h: &LayoutHarness| h.app.doc.editor.workspace_model().unwrap().camera;
+    let before = model(&h);
+    let view = h.app.doc.editor.model_edit().texture_view;
+    let zoom = h.app.doc.canvas.zoom;
+    let (top, _) = h.app.doc.canvas.texture_panes().unwrap();
+    h.frame_with(vec![Event::PointerMoved(top.center())]);
+    h.frame_with(vec![line_wheel(1.0, Default::default())]);
+    h.frame();
+    let after = model(&h);
+    assert_eq!(
+        after.distance,
+        (before.distance as f32 / 1.1).round() as i32,
+        "closer"
+    );
+    assert_eq!(
+        h.app.doc.editor.model_edit().texture_view,
+        view,
+        "not the texture"
+    );
     assert_eq!(h.app.doc.canvas.zoom, zoom);
 }
 

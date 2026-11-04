@@ -3,7 +3,8 @@
 //!
 //! - **Botón derecho o Alt + izquierdo** arrastrando: orbita (`yaw` y `pitch`).
 //! - **Shift + izquierdo** arrastrando: mueve el `target` en el plano de la vista.
-//! - **Ctrl + rueda:** acerca o aleja la cámara (`distance`), sin tocar el zoom del lienzo.
+//! - **Rueda** (con o sin Ctrl): acerca o aleja la cámara (`distance`) hacia el punto bajo el
+//!   puntero, sin tocar el zoom del lienzo.
 //! - **Gizmo de navegación** (arriba a la derecha): arrastrarlo orbita; un clic en una bolita
 //!   pone la cámara mirando desde ese lado.
 //! - **Clic izquierdo:** elige el objeto que se ve bajo el puntero (o ninguno). En el render del
@@ -14,6 +15,7 @@
 use cs_core::{Camera3D, FIXED, Vec3i};
 
 use super::*;
+use crate::editor::PerspMap;
 
 /// Décimas de grado por punto de pantalla al orbitar.
 const ORBIT_SPEED: f32 = 5.0;
@@ -66,13 +68,27 @@ fn drag_group() -> egui::Id {
 }
 
 impl CanvasView {
-    /// `steps` pasos de rueda sobre el modelo: hacia arriba acerca la cámara.
-    pub(super) fn model_wheel(editor: &mut Editor, steps: i32) {
+    /// `steps` pasos de rueda sobre el modelo: hacia arriba acerca la cámara. Con `at` (cómo se
+    /// ve la perspectiva y el puntero), el objetivo se corre hacia el punto bajo el puntero en su
+    /// plano (como "zoom to mouse position" de Blender): ese punto se queda donde está en pantalla.
+    pub(super) fn model_wheel(editor: &mut Editor, steps: i32, at: Option<(PerspMap, Pos2)>) {
         let Some(mut camera) = editor.edited_model().map(|m| m.camera) else {
             return;
         };
         let factor = DISTANCE_STEP.powi(-steps);
-        camera.distance = ((camera.distance as f32 * factor).round() as i32).max(FIXED);
+        let distance = ((camera.distance as f32 * factor).round() as i32).max(FIXED);
+        if let Some((map, p)) = at {
+            let k = 1.0 - distance as f32 / camera.distance.max(1) as f32;
+            let to = focal_point(&map, p);
+            let t = camera.target;
+            let toward = |from: i32, to: f32| from + ((to - from as f32) * k).round() as i32;
+            camera.target = Vec3i {
+                x: toward(t.x, to[0]),
+                y: toward(t.y, to[1]),
+                z: toward(t.z, to[2]),
+            };
+        }
+        camera.distance = distance;
         editor.set_camera(camera);
     }
 
@@ -191,6 +207,36 @@ impl CanvasView {
         };
         editor.set_model_grouped(model, drag_group());
     }
+}
+
+/// Los eventos de rueda de este frame (unidad y vertical), con o sin modificadores.
+pub(super) fn wheel_events(ui: &egui::Ui) -> Vec<(egui::MouseWheelUnit, f32)> {
+    ui.input(|i| {
+        i.raw
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::MouseWheel { unit, delta, .. } => Some((*unit, delta.y)),
+                _ => None,
+            })
+            .collect()
+    })
+}
+
+/// El punto del plano del objetivo (perpendicular a la mirada) que se ve en `p`, en 1/16 de
+/// unidad.
+fn focal_point(map: &PerspMap, p: Pos2) -> [f32; 3] {
+    let (o, d) = map.ray((p.x, p.y));
+    let fwd = map.projector().axes()[2];
+    let t = map.camera.target;
+    let t = [t.x as f32, t.y as f32, t.z as f32];
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let along = dot(d, fwd);
+    if along.abs() < f32::EPSILON {
+        return t;
+    }
+    let s = dot([t[0] - o[0], t[1] - o[1], t[2] - o[2]], fwd) / along;
+    std::array::from_fn(|i| o[i] + d[i] * s)
 }
 
 /// La cámara de `start` girada por un arrastre de `d` puntos (el `yaw`, siempre en ±180°).

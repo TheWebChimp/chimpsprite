@@ -124,9 +124,9 @@ impl CanvasView {
         cad_header(ui, header, editor);
     }
 
-    /// La entrada del workspace: Ctrl + rueda (zoom de las vistas orto o distancia de la cámara
-    /// en Persp) y los botones del modo Edit. La rueda sin Ctrl, el zoom y el paneo del lienzo,
-    /// la mano y las herramientas no hacen nada.
+    /// La entrada del workspace: la rueda, con o sin Ctrl (zoom de las vistas orto o distancia
+    /// de la cámara en Persp), y los botones del modo Edit. El zoom y el paneo del lienzo, la
+    /// mano y las herramientas no hacen nada.
     fn workspace_input(
         &mut self,
         ui: &egui::Ui,
@@ -146,38 +146,19 @@ impl CanvasView {
         self.selection_menu = false;
         self.object_menu = false;
         self.slice_menu = false;
-        // Los restos de rueda de touchpad siguen sumando mientras Ctrl siga apretado.
-        let mut keep_rest = ui.input(|i| i.modifiers.command);
+        // La rueda, con o sin Ctrl: sobre una vista orto, zoom de las tres; sobre la
+        // perspectiva, la cámara hacia el puntero. Los restos de touchpad siguen sumando
+        // mientras el puntero siga en el workspace.
         if let Some(pointer) = response.hover_pos() {
-            let wheel: Vec<(egui::MouseWheelUnit, f32, bool)> = ui.input(|i| {
-                i.raw
-                    .events
-                    .iter()
-                    .filter_map(|e| match e {
-                        egui::Event::MouseWheel {
-                            unit,
-                            delta,
-                            modifiers,
-                            ..
-                        } => Some((*unit, delta.y, modifiers.command)),
-                        _ => None,
-                    })
-                    .collect()
-            });
-            for (unit, dy, command) in wheel {
-                if !command {
-                    keep_rest = false;
-                    continue;
-                }
-                let steps = brush_wheel_steps(&mut self.wheel_rest, unit, dy);
-                // Sobre una vista orto, zoom de las tres; sobre la perspectiva, la cámara.
+            for (unit, dy) in super::model_input::wheel_events(ui) {
+                let steps = brush_wheel_steps(&mut self.model_wheel_rest, unit, dy);
                 if steps != 0 && !self.model_edit_wheel(editor, pointer, steps) {
-                    Self::model_wheel(editor, steps);
+                    let at = self.persp_map(editor).map(|map| (map, pointer));
+                    Self::model_wheel(editor, steps, at);
                 }
             }
-        }
-        if !keep_rest {
-            self.wheel_rest = 0.0;
+        } else {
+            self.model_wheel_rest = 0.0;
         }
         let (pressed, secondary, middle, any_down, edit_down, pointer, modifiers) = ui.input(|i| {
             let pressed = |b| i.pointer.button_pressed(b);
@@ -245,7 +226,12 @@ impl CanvasView {
     /// Cómo se ve el mundo en la perspectiva del workspace (la cámara del modelo y dónde cae su
     /// render en pantalla).
     pub(crate) fn persp_map(&self, editor: &Editor) -> Option<PerspMap> {
-        let q = self.edit_quads?[PERSP];
+        self.persp_map_in(self.edit_quads?[PERSP], editor)
+    }
+
+    /// Como [`Self::persp_map`], con el render en el rect `q` (el cuadrante Persp o el panel de
+    /// arriba del modo Texture).
+    pub(super) fn persp_map_in(&self, q: Rect, editor: &Editor) -> Option<PerspMap> {
         let camera = editor.edited_model()?.camera;
         let sprite = model_sprite(editor);
         let (r, scale) = self.persp_rect(q, editor);
@@ -535,7 +521,7 @@ impl CanvasView {
         }
     }
 
-    /// Ctrl + rueda sobre una vista orto: zoom en las tres. `true` si fue de una vista orto.
+    /// La rueda (con o sin Ctrl) sobre una vista orto: zoom en las tres. `true` si fue de una vista orto.
     pub(super) fn model_edit_wheel(&mut self, editor: &mut Editor, p: Pos2, steps: i32) -> bool {
         let Some(view) = self.quadrant_at(p).and_then(quadrant_view) else {
             return false;

@@ -130,6 +130,9 @@ pub struct CanvasView {
     pub symbol_request: bool,
     /// Ctrl+rueda de touchpad: píxeles acumulados que todavía no suman un paso de grosor.
     wheel_rest: f32,
+    /// La rueda de touchpad sobre el workspace del modelo (las vistas o el render de arriba
+    /// del modo Texture): píxeles acumulados que todavía no suman un paso.
+    model_wheel_rest: f32,
     /// El arrastre en curso sobre la perspectiva del workspace (orbitar o mover el objetivo).
     model_drag: Option<model_input::ModelDrag>,
     /// Los cuadrantes (Front, Persp, Top, Side) del workspace del modelo, en pantalla.
@@ -305,6 +308,7 @@ impl Default for CanvasView {
             artboard_request: None,
             symbol_request: false,
             wheel_rest: 0.0,
+            model_wheel_rest: 0.0,
             background: theme::CANVAS_BG,
             pixel_rulers: None,
             rulers_shown: false,
