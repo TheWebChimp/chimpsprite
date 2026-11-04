@@ -111,7 +111,8 @@ impl CanvasView {
                 let steps = brush_wheel_steps(&mut self.model_wheel_rest, unit, dy);
                 if steps != 0 {
                     let at = self.persp_map_in(top, editor).map(|map| (map, p));
-                    Self::model_wheel(editor, steps, at);
+                    let now = ui.input(|i| i.time);
+                    self.model_wheel(editor, steps, at, now);
                 }
             }
         } else {

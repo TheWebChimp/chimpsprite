@@ -133,6 +133,9 @@ pub struct CanvasView {
     /// La rueda de touchpad sobre el workspace del modelo (las vistas o el render de arriba
     /// del modo Texture): píxeles acumulados que todavía no suman un paso.
     model_wheel_rest: f32,
+    /// Cuándo (segundos de egui) fue el último paso de rueda sobre la cámara del modelo: una
+    /// ráfaga seguida es un solo paso de undo.
+    model_wheel_at: Option<f64>,
     /// El arrastre en curso sobre la perspectiva del workspace (orbitar o mover el objetivo).
     model_drag: Option<model_input::ModelDrag>,
     /// Los cuadrantes (Front, Persp, Top, Side) del workspace del modelo, en pantalla.
@@ -309,6 +312,7 @@ impl Default for CanvasView {
             symbol_request: false,
             wheel_rest: 0.0,
             model_wheel_rest: 0.0,
+            model_wheel_at: None,
             background: theme::CANVAS_BG,
             pixel_rulers: None,
             rulers_shown: false,

@@ -154,7 +154,8 @@ impl CanvasView {
                 let steps = brush_wheel_steps(&mut self.model_wheel_rest, unit, dy);
                 if steps != 0 && !self.model_edit_wheel(editor, pointer, steps) {
                     let at = self.persp_map(editor).map(|map| (map, pointer));
-                    Self::model_wheel(editor, steps, at);
+                    let now = ui.input(|i| i.time);
+                    self.model_wheel(editor, steps, at, now);
                 }
             }
         } else {

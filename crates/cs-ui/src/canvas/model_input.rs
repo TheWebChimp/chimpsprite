@@ -12,7 +12,7 @@
 //!
 //! Cada arrastre es un solo paso de undo.
 
-use cs_core::{Camera3D, FIXED, Vec3i};
+use cs_core::{Camera3D, FIXED, Model3D, Vec3i};
 
 use super::*;
 use crate::editor::PerspMap;
@@ -62,6 +62,14 @@ impl ModelDrag {
     }
 }
 
+/// Cuánto sin rueda corta la ráfaga de pasos (segundos).
+const WHEEL_PAUSE: f64 = 0.6;
+
+/// El grupo de undo de la rueda sobre la cámara del modelo.
+fn wheel_group() -> egui::Id {
+    egui::Id::new("model_wheel")
+}
+
 /// El grupo de undo de los arrastres sobre el modelo.
 fn drag_group() -> egui::Id {
     egui::Id::new("model_drag")
@@ -71,10 +79,20 @@ impl CanvasView {
     /// `steps` pasos de rueda sobre el modelo: hacia arriba acerca la cámara. Con `at` (cómo se
     /// ve la perspectiva y el puntero), el objetivo se corre hacia el punto bajo el puntero en su
     /// plano (como "zoom to mouse position" de Blender): ese punto se queda donde está en pantalla.
-    pub(super) fn model_wheel(editor: &mut Editor, steps: i32, at: Option<(PerspMap, Pos2)>) {
-        let Some(mut camera) = editor.edited_model().map(|m| m.camera) else {
+    ///
+    /// Los pasos seguidos (con menos de [`WHEEL_PAUSE`] entre uno y otro, `now` en segundos) son un
+    /// solo paso de undo; otro gesto o una pausa empieza uno nuevo.
+    pub(super) fn model_wheel(
+        &mut self,
+        editor: &mut Editor,
+        steps: i32,
+        at: Option<(PerspMap, Pos2)>,
+        now: f64,
+    ) {
+        let Some(model) = editor.edited_model().cloned() else {
             return;
         };
+        let mut camera = model.camera;
         let factor = DISTANCE_STEP.powi(-steps);
         let distance = ((camera.distance as f32 * factor).round() as i32).max(FIXED);
         if let Some((map, p)) = at {
@@ -89,7 +107,11 @@ impl CanvasView {
             };
         }
         camera.distance = distance;
-        editor.set_camera(camera);
+        if self.model_wheel_at.is_none_or(|t| now - t > WHEEL_PAUSE) {
+            editor.end_group_of(wheel_group().value());
+        }
+        self.model_wheel_at = Some(now);
+        editor.set_model_grouped(Model3D { camera, ..model }, wheel_group());
     }
 
     /// Un botón apretado sobre la perspectiva, con el punto ya en pixeles del artboard (`local`)

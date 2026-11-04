@@ -4417,6 +4417,45 @@ fn line_wheel(dy: f32, modifiers: egui::Modifiers) -> Event {
     }
 }
 
+#[test]
+fn a_burst_of_wheel_steps_over_persp_is_one_undo_step() {
+    let mut h = with_a_model_at_800();
+    let before = camera(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    let at = persp_pixels(&h).center();
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    for _ in 0..4 {
+        h.frame_with(vec![line_wheel(1.0, Default::default())]);
+    }
+    h.frame();
+    assert!(camera(&h).distance < before.distance);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(camera(&h), before);
+}
+
+#[test]
+fn a_pause_or_another_gesture_starts_a_new_wheel_step() {
+    let mut h = with_a_model_at_800();
+    let steps = h.app.doc.editor.history.done_count();
+    let at = persp_pixels(&h).center();
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    h.frame_with(vec![line_wheel(1.0, Default::default())]);
+    h.frame_with(vec![line_wheel(1.0, Default::default())]);
+    // Una pausa de más de 0,6 s corta el grupo.
+    h.time += 1.0;
+    h.frame_with(vec![line_wheel(1.0, Default::default())]);
+    h.frame();
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 2);
+    // Otro gesto (un cambio de cámara aparte) también corta el grupo.
+    let mut cam = camera(&h);
+    cam.yaw += 100;
+    h.app.doc.editor.set_camera(cam);
+    h.frame_with(vec![line_wheel(1.0, Default::default())]);
+    h.frame();
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 4);
+}
+
 /// El punto del plano del objetivo (perpendicular a la mirada) que se ve en `at`.
 fn persp_focal_point(h: &LayoutHarness, at: Pos2) -> cs_3d::P3 {
     let map = h
