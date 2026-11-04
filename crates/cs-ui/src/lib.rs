@@ -1449,7 +1449,7 @@ impl ChimpApp {
         }
         // La barra de opciones, a todo el ancho debajo de las pestañas: 21 de alto con Pixel UI,
         // con el separador grabado abajo. En la pestaña de un modelo (ChimpCAD) no va: su alto
-        // es del área de abajo (la ventana del texto sigue, para pintar en la textura).
+        // es del área de abajo (en modo Texture, el área la pone debajo de su encabezado).
         if self.doc.editor.model_edit_on() {
             panels::text_window(ui.ctx(), &mut self.doc.editor, skin);
         } else {

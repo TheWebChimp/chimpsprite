@@ -8310,9 +8310,10 @@ fn texture_mode_splits_the_area_top_and_bottom_left_of_the_panel() {
     let h = with_a_model_in_texture_mode();
     let canvas = h.canvas.expect("the workspace area");
     let (top, bottom) = h.app.doc.canvas.texture_panes().expect("the two panes");
-    // Debajo del encabezado y de su línea.
+    // Debajo del encabezado, de su línea y de la barra de opciones.
     let header = h.app.doc.canvas.cad_header().expect("the header");
-    assert_eq!(top.min, pos2(canvas.left(), header.bottom() + 1.0));
+    let bar = crate::panels::options_bar_height(h.app.pixel.skin());
+    assert_eq!(top.min, pos2(canvas.left(), header.bottom() + 1.0 + bar));
     assert_eq!(top.height(), ((canvas.bottom() - top.top()) / 2.0).floor());
     assert_eq!(bottom.top(), top.bottom() + 1.0, "a 1 point line");
     assert_eq!(bottom.bottom(), canvas.bottom());
@@ -8505,10 +8506,11 @@ fn texture_mode_without_a_texture_offers_a_new_one() {
 
 const PERSP_QUAD: usize = 1;
 
-/// Lo que cambia la pestaña del modelo en la ventana (con Pixel UI): sin la barra de opciones
-/// de herramienta, el lienzo empieza donde empezaba ella.
+/// Lo que cambia la pestaña del modelo en la ventana (con Pixel UI): en modo Model, sin la barra
+/// de opciones de herramienta, el lienzo empieza donde empezaba ella; en modo Texture (se pinta
+/// la textura) la barra vuelve.
 #[test]
-fn the_model_tab_has_no_tool_options_bar_and_the_canvas_takes_its_height() {
+fn the_model_tab_has_the_tool_options_bar_only_in_texture_mode() {
     let doc = LayoutHarness::new(pixel_ui(), true);
     let bar = |h: &LayoutHarness| h.texts.iter().any(|(t, _)| t == "Brush Size");
     assert!(bar(&doc), "the bar on the canvas tab: {:?}", doc.texts);
@@ -8522,14 +8524,28 @@ fn the_model_tab_has_no_tool_options_bar_and_the_canvas_takes_its_height() {
     // A lo ancho, del mismo borde izquierdo hasta el panel 3D fijo (en lugar del dock).
     assert_eq!(canvas.left(), doc_canvas.left());
     assert_eq!(canvas.right(), model_flyout(&h).left() - 6.0);
-    // Ni en modo Texture.
+    // En modo Texture, la barra (y el área, debajo de ella, como en el lienzo).
     h.app
         .doc
         .editor
         .set_cad_mode(crate::editor::CadMode::Texture);
     h.frame();
     h.frame();
-    assert!(!bar(&h), "no bar in Texture either");
+    assert!(bar(&h), "the bar in Texture: {:?}", h.texts);
+    assert!(h.texts.iter().any(|(t, _)| t == "Ink"), "{:?}", h.texts);
+    // Debajo del encabezado (que no se mueve) y arriba del render.
+    assert_eq!(h.canvas, Some(canvas));
+    let header = h.app.doc.canvas.cad_header().expect("the header");
+    let size = text_in(&h, canvas, "Brush Size").expect("in the area");
+    assert!(size.top() > header.bottom(), "{size:?} under {header:?}");
+    let (top, _) = h.app.doc.canvas.texture_panes().unwrap();
+    assert!(size.bottom() < top.top(), "{size:?} over {top:?}");
+    assert_eq!(top.top() - header.bottom() - 1.0, options.height());
+    // Y de vuelta en Model, otra vez sin ella.
+    h.app.doc.editor.set_cad_mode(crate::editor::CadMode::Model);
+    h.frame();
+    h.frame();
+    assert!(!bar(&h));
     assert_eq!(h.canvas, Some(canvas));
 }
 
@@ -8573,7 +8589,8 @@ fn the_chimpcad_header_has_the_logo_and_the_mode_buttons_over_the_views() {
     assert_eq!(h.app.doc.canvas.cad_header(), Some(header));
     assert_eq!(h.drawn("logo.chimpcad").len(), 1);
     let (top, _) = h.app.doc.canvas.texture_panes().unwrap();
-    assert_eq!(top.top(), line.bottom());
+    let bar = crate::panels::options_bar_height(h.app.pixel.skin());
+    assert_eq!(top.top(), line.bottom() + bar, "under the options bar");
     assert!(!top.intersects(node(&h, "Model")));
     // En el lienzo no hay encabezado.
     let doc = LayoutHarness::new(pixel_ui(), true);
