@@ -263,6 +263,22 @@ fn texture_size_agranda_sin_perder_pixeles_ni_uvs() {
 }
 
 #[test]
+fn el_tamano_de_la_textura_sale_del_modelo_que_se_edita_aunque_no_haya_workspace() {
+    let mut e = editing();
+    let texture = texture_of(&e);
+    // El modelo activo sin su workspace (el panel 3D lo sigue mostrando): no hay textura del
+    // workspace, pero la del modelo que se edita sí.
+    e.workspace = None;
+    assert!(e.edited_model().is_some());
+    assert_eq!(e.workspace_texture(), None);
+    assert_eq!(e.edited_texture(), Some(texture));
+    // Y Texture Size la cambia, como en el workspace.
+    assert!(e.set_texture_size(128));
+    let sprite = &e.document.artboard(texture).unwrap().sprite;
+    assert_eq!((sprite.width, sprite.height), (128, 128));
+}
+
+#[test]
 fn quitar_la_textura_por_undo_regresa_a_model() {
     let mut e = editing();
     let ship = e.active;

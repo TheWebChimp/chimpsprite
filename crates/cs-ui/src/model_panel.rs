@@ -725,8 +725,9 @@ fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<Mode
             .artboard(id)
             .map_or_else(|| "(missing)".to_owned(), |a| a.name.clone()),
     };
+    // El tamaño de la textura del modelo que se edita (también fuera de su workspace).
     let size = editor
-        .workspace_texture()
+        .edited_texture()
         .and_then(|id| editor.document.artboard(id))
         .map(|a| (a.sprite.width, a.sprite.height));
     let size_shown = match size {

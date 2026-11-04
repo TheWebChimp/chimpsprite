@@ -285,8 +285,6 @@ fn draw_chimp(editor: &mut Editor) {
     });
 }
 
-/// Lo que piden las variables de desarrollo (`CHIMPSPRITE_DEMO_*`) al abrir la app: diálogos,
-/// herramientas, rangos y paneles listos para las capturas.
 /// El techo de la casita del demo: un cono de 4 lados girado 45° (lados paralelos a los del
 /// cubo) y aplastado en Y a 5/8, con la base sobre la tapa del cubo: el centro sube 1 + 5/8
 /// unidades (con el centro en y = 1 la base quedaba en y = 0.4, enterrada en el cubo, y en Persp
@@ -299,6 +297,8 @@ fn house_roof() -> cs_core::Transform3D {
     t
 }
 
+/// Lo que piden las variables de desarrollo (`CHIMPSPRITE_DEMO_*`) al abrir la app: diálogos,
+/// herramientas, rangos y paneles listos para las capturas.
 pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     use crate::*;
     // Desarrollo: la pestaña UI Catalog a la vista, para capturas.
