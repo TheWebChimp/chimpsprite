@@ -4105,8 +4105,14 @@ fn zoomed_in_the_persp_render_fills_its_quadrant_and_picks_outside_the_artboard(
         assert!((0.0..=k).contains(&over), "{drawn:?} vs {q:?} at {k}");
     }
     // Un clic en el modelo afuera del cuadrado del artboard lo elige.
-    let at = pos2(artboard.left() - k * 1.5, artboard.center().y);
-    assert!(q.contains(at));
+    // (A la izquierda, en el aire que quede entre el cuadrante y el cuadrado: hasta un pixel y
+    // medio del render.)
+    let left = (artboard.left() - q.left()).min(k * 3.0) / 2.0;
+    let at = pos2(artboard.left() - left, artboard.center().y);
+    assert!(
+        q.contains(at) && !artboard.contains(at),
+        "{at:?} {q:?} {artboard:?} {k}"
+    );
     h.click(at, PointerButton::Primary);
     assert_eq!(h.app.doc.editor.selected_object(), Some(0), "the cube");
 }

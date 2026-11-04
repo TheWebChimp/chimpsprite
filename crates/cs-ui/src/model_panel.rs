@@ -31,7 +31,7 @@ use crate::tabs::TabIcon;
 mod add_menu;
 
 /// Ancho de adentro del panel (sin su marco): el contenido y la barra del scroll.
-pub const WIDTH: f32 = 300.0;
+pub const WIDTH: f32 = 227.0;
 /// Las pestañas de los objetos, 5 filas debajo de la línea que parte el panel (3 de aire después
 /// de sus dos filas), sobre su propia línea grabada.
 const TABS_TOP: f32 = 5.0;
@@ -73,8 +73,9 @@ const DEFAULT_SIDES: u32 = 8;
 /// El transform del objeto: los tres ejes en una fila de steppers con su etiqueta, con este aire
 /// entre uno y otro (y antes de la barra del scroll), como en el boceto.
 const AXIS_GAP: f32 = 4.0;
-/// Lo menos de un stepper de eje: su etiqueta, sus botones y un campo donde quepa "-4096".
-const AXIS_MIN_W: f32 = kit::stepper::TAG_W + 2.0 * kit::stepper::BUTTON_W + 30.0;
+/// Lo menos de un stepper de eje: su etiqueta, sus botones y un campo donde quepa "-4096" (cinco
+/// cifras de 5 de ancho, tabulares). Así caben tres por fila en el panel, como en el boceto.
+const AXIS_MIN_W: f32 = kit::stepper::TAG_W + 2.0 * kit::stepper::BUTTON_W + 24.0;
 /// El título se acerca a su fila: egui deja debajo de la letra su aire y el de [`ITEM_GAP`], y el
 /// boceto pone 4 filas de la letra al stepper (y 10 del stepper al título que sigue).
 const AXIS_TITLE_PULL: f32 = 7.0;
