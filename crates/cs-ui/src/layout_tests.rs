@@ -7342,6 +7342,145 @@ fn the_persp_gizmo_wins_over_picking_and_moving_the_camera() {
     assert_eq!(camera(&h), cam);
 }
 
+/// Corre el cubo del modelo lejos del origen y aleja la cámara hacia otro lado: devuelve el
+/// centro del modelo (en 1/16, redondeado), donde tiene que quedar el objetivo al recentrar.
+fn move_the_model_off_center(h: &mut LayoutHarness) -> cs_core::Vec3i {
+    let editor = &mut h.app.doc.editor;
+    let mut obj = editor.edited_model().unwrap().objects[0].clone();
+    obj.transform.position = cs_core::Vec3i {
+        x: 40,
+        y: 24,
+        z: -16,
+    };
+    // Puede que ya estuviera ahí (de una vuelta anterior de la prueba).
+    editor.set_object(0, obj);
+    let mut cam = editor.edited_model().unwrap().camera;
+    cam.target = cs_core::Vec3i {
+        x: -300,
+        y: 120,
+        z: 90,
+    };
+    cam.distance = 40 * cs_core::FIXED;
+    editor.set_camera(cam);
+    h.frame();
+    let c = cs_3d::center(cs_3d::model_bounds(h.app.doc.editor.edited_model().unwrap()).unwrap());
+    cs_core::Vec3i {
+        x: c[0].round() as i32,
+        y: c[1].round() as i32,
+        z: c[2].round() as i32,
+    }
+}
+
+/// Que todo el modelo se vea en el render de la perspectiva, con aire, y que lo llene bastante
+/// (no quedó chiquito a lo lejos).
+fn assert_the_model_fills_the_persp(h: &LayoutHarness) {
+    let editor = &h.app.doc.editor;
+    let model = editor.edited_model().unwrap();
+    let artboard = editor.document.artboard(editor.model_id()).unwrap();
+    let size = (artboard.sprite.width, artboard.sprite.height);
+    let projector = cs_3d::Projector::new(&model.camera, size);
+    let (lo, hi) = cs_3d::model_bounds(model).unwrap();
+    let (mut min, mut max) = ((f32::MAX, f32::MAX), (f32::MIN, f32::MIN));
+    for i in 0..8 {
+        let p = [
+            if i & 1 == 0 { lo[0] } else { hi[0] },
+            if i & 2 == 0 { lo[1] } else { hi[1] },
+            if i & 4 == 0 { lo[2] } else { hi[2] },
+        ];
+        let (x, y) = projector.project(p).expect("in front of the camera");
+        min = (min.0.min(x), min.1.min(y));
+        max = (max.0.max(x), max.1.max(y));
+    }
+    let (w, h) = (size.0 as f32, size.1 as f32);
+    assert!(
+        min.0 >= 1.0 && min.1 >= 1.0 && max.0 <= w - 1.0 && max.1 <= h - 1.0,
+        "the model fits with air: {min:?} {max:?} in {size:?}"
+    );
+    let span = (max.0 - min.0).max(max.1 - min.1);
+    assert!(span >= 0.4 * w.min(h), "the model fills the view: {span}");
+}
+
+#[test]
+fn home_frames_the_whole_model_in_one_undo_step() {
+    let mut h = editing_model();
+    for projection in [
+        cs_core::Projection::Orthographic,
+        cs_core::Projection::Perspective { fov: 600 },
+    ] {
+        let center = move_the_model_off_center(&mut h);
+        let mut cam = camera(&h);
+        cam.projection = projection;
+        cam.yaw = 300;
+        cam.pitch = 200;
+        h.app.doc.editor.set_camera(cam);
+        h.frame();
+        let before = camera(&h);
+        let steps = h.app.doc.editor.history.done_count();
+        h.frame_with(key_tap(egui::Key::Home));
+        h.frame();
+        let after = camera(&h);
+        assert_eq!(after.target, center, "{projection:?}");
+        assert_eq!(
+            (after.yaw, after.pitch, after.projection),
+            (before.yaw, before.pitch, before.projection)
+        );
+        assert_the_model_fills_the_persp(&h);
+        assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+        h.app.doc.editor.undo();
+        assert_eq!(camera(&h), before);
+        h.frame();
+    }
+}
+
+#[test]
+fn home_over_the_texture_mode_render_frames_the_model() {
+    let mut h = with_a_model_in_texture_mode();
+    let camera = |h: &LayoutHarness| h.app.doc.editor.edited_model().unwrap().camera;
+    let center = move_the_model_off_center(&mut h);
+    let (top, bottom) = h.app.doc.canvas.texture_panes().unwrap();
+    // Sobre la textura de abajo, Home no toca la cámara.
+    let before = camera(&h);
+    h.frame_with(vec![Event::PointerMoved(bottom.center())]);
+    h.frame_with(key_tap(egui::Key::Home));
+    h.frame();
+    assert_eq!(camera(&h), before, "not over the texture");
+    h.frame_with(vec![Event::PointerMoved(top.center())]);
+    let steps = h.app.doc.editor.history.done_count();
+    h.frame_with(key_tap(egui::Key::Home));
+    h.frame();
+    assert_eq!(camera(&h).target, center);
+    assert_the_model_fills_the_persp(&h);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn the_camera_presets_and_the_navigation_balls_recenter_on_the_model() {
+    let mut h = model_panel_tall();
+    let center = move_the_model_off_center(&mut h);
+    for label in ["Iso", "Top", "Side", "Front"] {
+        let before = camera(&h);
+        h.click(node(&h, label).center(), PointerButton::Primary);
+        let cam = camera(&h);
+        assert_eq!(cam.target, center, "{label}");
+        assert_eq!(cam.distance, before.distance, "{label}");
+        h.app.doc.editor.undo();
+        h.frame();
+    }
+    let mut h = editing_model();
+    let center = move_the_model_off_center(&mut h);
+    let before = camera(&h);
+    let balls = h.app.doc.canvas.nav_gizmo_balls(&h.app.doc.editor);
+    let (_, _, at) = balls
+        .into_iter()
+        .find(|b| (b.0, b.1) == (1, false))
+        .expect("the ball");
+    h.click(at, PointerButton::Primary);
+    let cam = camera(&h);
+    assert_eq!((cam.yaw, cam.pitch), (0, 900));
+    assert_eq!(cam.target, center, "the ball");
+    assert_eq!(cam.distance, before.distance, "the ball");
+}
+
 #[test]
 fn clicking_a_navigation_ball_looks_from_that_side_in_one_undo_step() {
     let mut h = editing_model();

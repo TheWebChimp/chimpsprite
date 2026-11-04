@@ -905,8 +905,10 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
         }
         _ => {}
     }
+    // Los presets miran al centro del modelo (con la distancia de antes).
     if let Some(preset) = preset {
-        *cam = preset.camera(cam.distance, cam.target);
+        let target = crate::editor::model_center(&model).unwrap_or(cam.target);
+        *cam = preset.camera(cam.distance, target);
     }
 
     label_with_hint(ui, "Light & Outline", "");

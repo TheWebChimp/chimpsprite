@@ -89,9 +89,9 @@ impl CanvasView {
         self.slice_menu = false;
     }
 
-    /// La entrada del render de arriba: la rueda (con o sin Ctrl) acerca o aleja la cámara; los
-    /// botones eligen caras, orbitan o mueven el objetivo (`texture_press_at`); el arrastre sigue
-    /// al puntero.
+    /// La entrada del render de arriba: la rueda (con o sin Ctrl) acerca o aleja la cámara; Home
+    /// encuadra el modelo; los botones eligen caras, orbitan o mueven el objetivo
+    /// (`texture_press_at`); el arrastre sigue al puntero.
     fn texture_top_input(
         &mut self,
         ui: &egui::Ui,
@@ -117,6 +117,30 @@ impl CanvasView {
             }
         } else {
             self.model_wheel_rest = 0.0;
+        }
+        // Home con el puntero arriba encuadra el modelo, como en modo Model (abajo es de la
+        // textura). No mientras se escribe en un campo ni durante un arrastre.
+        let home = ui.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key {
+                        key: egui::Key::Home,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                        ..
+                    } if modifiers.is_none()
+                )
+            })
+        });
+        if home
+            && !modal
+            && self.model_drag.is_none()
+            && !ui.ctx().egui_wants_keyboard_input()
+            && response.hover_pos().is_some_and(over)
+        {
+            editor.frame_model();
         }
         let (pressed, secondary, any_down, pointer, modifiers) = ui.input(|i| {
             let pressed = |b| i.pointer.button_pressed(b);

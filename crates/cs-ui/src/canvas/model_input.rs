@@ -6,7 +6,9 @@
 //! - **Rueda** (con o sin Ctrl): acerca o aleja la cámara (`distance`) hacia el punto bajo el
 //!   puntero, sin tocar el zoom del lienzo.
 //! - **Gizmo de navegación** (arriba a la derecha): arrastrarlo orbita; un clic en una bolita
-//!   pone la cámara mirando desde ese lado.
+//!   pone la cámara mirando desde ese lado (al centro del modelo).
+//! - **Home:** encuadra todo el modelo (el objetivo a su centro, la distancia para que se vea
+//!   entero).
 //! - **Clic izquierdo:** elige el objeto que se ve bajo el puntero (o ninguno). En el render del
 //!   modo Texture elige la cara (Shift + clic sin arrastrar la agrega o la quita).
 //!
@@ -197,9 +199,14 @@ impl CanvasView {
             {
                 editor.pick_model_face(local, true);
             }
-            // Un clic en una bolita del gizmo de navegación: un paso de undo, como los presets.
+            // Un clic en una bolita del gizmo de navegación: un paso de undo, como los presets (y
+            // como ellos, mirando al centro del modelo).
             if let Some(Some(ball)) = drag.nav {
-                editor.set_camera(ball.camera(drag.camera));
+                let mut camera = ball.camera(drag.camera);
+                if let Some(target) = editor.edited_model().and_then(crate::editor::model_center) {
+                    camera.target = target;
+                }
+                editor.set_camera(camera);
             }
             return;
         }
