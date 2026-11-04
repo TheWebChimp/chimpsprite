@@ -6001,6 +6001,30 @@ fn turning_the_light_off_changes_the_render() {
 }
 
 #[test]
+fn dither_turns_on_the_dithered_shadows_in_one_step() {
+    let mut h = model_panel_tall();
+    let (dither, on) = check(&h, "Dither");
+    assert!(!on, "off by default");
+    // En la fila de Outline, a su derecha.
+    let outline = check(&h, "Outline").0;
+    assert!(dither.left() > outline.right());
+    assert!(dither.top() < outline.bottom() && dither.bottom() > outline.top());
+    let plain = model_pixels(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(dither.center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.model().unwrap().light.dither);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert_ne!(model_pixels(&h), plain, "the render changes");
+    // Sin luz se ve pero no se usa.
+    h.click(check(&h, "Light").0.center(), PointerButton::Primary);
+    h.frame();
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(check(&h, "Dither").0.center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.model().unwrap().light.dither, "unchanged");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+}
+
+#[test]
 fn turning_the_outline_on_sets_the_primary_color() {
     let mut h = model_panel_tall();
     assert_eq!(h.app.doc.editor.model().unwrap().outline, None);

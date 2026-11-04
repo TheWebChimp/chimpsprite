@@ -151,6 +151,10 @@ pub struct Light3D {
     pub enabled: bool,
     pub yaw: i32,
     pub pitch: i32,
+    /// Sombras con tramado: cada cara mezcla los dos pasos de luz más cercanos con un patrón
+    /// (en vez de quedarse con uno solo).
+    #[serde(default)]
+    pub dither: bool,
 }
 
 impl Default for Light3D {
@@ -159,6 +163,7 @@ impl Default for Light3D {
             enabled: true,
             yaw: 300,
             pitch: 450,
+            dither: false,
         }
     }
 }
@@ -424,9 +429,23 @@ mod tests {
             Light3D {
                 enabled: true,
                 yaw: 300,
-                pitch: 450
+                pitch: 450,
+                dither: false,
             }
         );
+    }
+
+    #[test]
+    fn a_light_saved_before_dither_reads_without_it() {
+        let old = r#"{"enabled":true,"yaw":300,"pitch":450}"#;
+        let light: Light3D = serde_json::from_str(old).unwrap();
+        assert_eq!(light, Light3D::default());
+        let on = Light3D {
+            dither: true,
+            ..Light3D::default()
+        };
+        let back: Light3D = serde_json::from_str(&serde_json::to_string(&on).unwrap()).unwrap();
+        assert_eq!(back, on);
     }
 
     #[test]

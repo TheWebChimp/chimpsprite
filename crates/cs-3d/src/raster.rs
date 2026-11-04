@@ -482,6 +482,9 @@ struct Raster {
 struct FaceCtx<'a> {
     /// `(objeto, cara)`.
     id: (usize, usize),
+    /// Con tramado: el nivel de sombra de la cara entre 0 y 2 (sin él, `steps` redondeado), que
+    /// cada pixel pasa a un paso con la matriz de Bayer.
+    level: Option<f32>,
     /// En un cuadrilátero que no es paralelogramo: las UVs de cada pixel, bilineales sobre la
     /// cara entera (si no, por triángulo).
     quad: Option<(QuadMap, &'a View)>,
@@ -546,15 +549,36 @@ impl Raster {
                 if texel.a == 0 {
                     continue;
                 }
+                let steps = match ctx.level {
+                    Some(level) => dithered_steps(level, px, py),
+                    None => ctx.steps,
+                };
                 let color = *cache
-                    .entry((texel, ctx.steps))
-                    .or_insert_with(|| shade(ctx.palette, ctx.shading, texel, ctx.steps as u32));
+                    .entry((texel, steps))
+                    .or_insert_with(|| shade(ctx.palette, ctx.shading, texel, steps as u32));
                 self.color[i] = color;
                 self.depth[i] = depth;
                 self.ids[i] = Some(ctx.id);
             }
         }
     }
+}
+
+/// El nivel de sombra de una cara (de 0, de frente a la luz, a 2, de espaldas) por el coseno `d`
+/// entre su normal y la luz: redondeado da los pasos de siempre (0 si d > 0.5, 1 si d > 0, 2 si
+/// no); con tramado, sus decimales son cuántos pixeles van al paso siguiente.
+fn shade_level(d: f32) -> f32 {
+    ((0.75 - d) * 2.0).clamp(0.0, 2.0)
+}
+
+/// La matriz de Bayer de 4×4 (los umbrales del tramado ordenado).
+const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+
+/// El paso de luz del pixel `(px, py)` de una cara de nivel `level`: el de abajo o el de arriba
+/// según su umbral de Bayer (fijo en pantalla). Un nivel entero queda parejo.
+fn dithered_steps(level: f32, px: u32, py: u32) -> u8 {
+    let threshold = (BAYER[(py % 4) as usize][(px % 4) as usize] as f32 + 0.5) / 16.0;
+    (level + threshold - 0.5).round().clamp(0.0, 2.0) as u8
 }
 
 /// Las UVs bilineales de un cuadrilátero: cada pixel cae en un punto de la cara (el rayo de la
@@ -778,22 +802,17 @@ fn rasterize(input: &RenderInput) -> Raster {
             if area == 0.0 || (!front && !obj.double_sided) {
                 continue;
             }
-            let steps = match light {
-                None => 0,
-                Some(to_light) => {
-                    let d = dot(normal, to_light) * if front { 1.0 } else { -1.0 };
-                    if d > 0.5 {
-                        0
-                    } else if d > 0.0 {
-                        1
-                    } else {
-                        2
-                    }
-                }
-            };
+            let level = light.map(|to_light| {
+                shade_level(dot(normal, to_light) * if front { 1.0 } else { -1.0 })
+            });
+            // Sin tramado, el paso más cercano: 0 con la luz de frente (d > 0.5), 1 de lado
+            // (d > 0) y 2 de espaldas.
+            let steps = level.map_or(0, |l| l.round() as u8);
+            let level = level.filter(|_| model.light.dither);
             let quad = QuadMap::new(&pts, &face.uvs, &view).map(|q| (q, &view));
             let ctx = FaceCtx {
                 id: (id, face_i),
+                level,
                 quad,
                 steps,
                 texture,
@@ -925,6 +944,7 @@ mod tests {
             enabled: true,
             yaw: 1000,
             pitch: 200,
+            dither: false,
         };
         let inp = input(&m, 32, &[BLANCO], 1);
         let img = render_model(&inp);
@@ -942,6 +962,52 @@ mod tests {
     }
 
     #[test]
+    fn el_nivel_redondeado_da_los_pasos_de_siempre() {
+        for (d, steps) in [(1.0, 0), (0.6, 0), (0.4, 1), (0.1, 1), (-0.1, 2), (-1.0, 2)] {
+            assert_eq!(shade_level(d).round() as u8, steps, "{d}");
+        }
+        // Un nivel entero no se trama; uno a la mitad, mitad y mitad.
+        let count = |level: f32, step: u8| {
+            (0..4)
+                .flat_map(|y| (0..4).map(move |x| (x, y)))
+                .filter(|&(x, y)| dithered_steps(level, x, y) == step)
+                .count()
+        };
+        assert_eq!(count(1.0, 1), 16);
+        assert_eq!(count(1.5, 1), 8);
+        assert_eq!(count(1.5, 2), 8);
+        assert_eq!(count(0.25, 1), 4);
+    }
+
+    #[test]
+    fn con_tramado_una_cara_de_lado_mezcla_dos_pasos() {
+        let mut m = model(vec![cube()]);
+        m.camera = CameraPreset::Iso.camera(2 * FIXED, Vec3i::default());
+        m.light = Light3D {
+            enabled: true,
+            yaw: 1000,
+            pitch: 200,
+            dither: false,
+        };
+        let colores = |m: &Model3D| {
+            let img = render_model(&input(m, 32, &[BLANCO], 1));
+            // La cara de arriba (de 1 paso sin tramado), alrededor de su centro.
+            let mut c: Vec<Rgba> = (6..11)
+                .flat_map(|y| (14..19).map(move |x| (x, y)))
+                .map(|(x, y)| img[y * 32 + x])
+                .collect();
+            c.sort_by_key(|c| (c.r, c.g, c.b));
+            c.dedup();
+            c
+        };
+        assert_eq!(colores(&m), vec![CLARO], "plain");
+        m.light.dither = true;
+        let tramado = colores(&m);
+        assert_eq!(tramado.len(), 2, "{tramado:?}");
+        assert!(tramado.contains(&CLARO), "{tramado:?}");
+    }
+
+    #[test]
     fn tabla_de_shading_cambia_solo_su_paso() {
         let mut m = model(vec![cube()]);
         m.camera = CameraPreset::Iso.camera(2 * FIXED, Vec3i::default());
@@ -949,6 +1015,7 @@ mod tests {
             enabled: true,
             yaw: 1000,
             pitch: 200,
+            dither: false,
         };
         let antes = render_model(&input(&m, 32, &[BLANCO], 1));
         m.shading.set(BLANCO, 1, Some(ROJO));

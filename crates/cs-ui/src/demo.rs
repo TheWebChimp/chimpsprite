@@ -726,7 +726,11 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                 .camera((distance.round() as i32).max(1), m.camera.target);
             e.set_camera(camera);
         }
-        e.set_light(cs_core::Light3D::default());
+        // Con CHIMPSPRITE_DEMO_DITHER: las sombras con tramado.
+        e.set_light(cs_core::Light3D {
+            dither: dev_var("CHIMPSPRITE_DEMO_DITHER").is_some(),
+            ..cs_core::Light3D::default()
+        });
         e.set_outline(Some(cs_core::Rgba::rgb(0, 0, 0)));
         // El panel sin objeto elegido (abajo, solo la tira); con CHIMPSPRITE_DEMO_MODEL_TEXTURE,
         // con el cubo.

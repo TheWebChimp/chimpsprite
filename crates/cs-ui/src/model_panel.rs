@@ -1033,11 +1033,15 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     ui.add_space(-AXIS_TITLE_PULL);
     light_row(ui, skin, &mut next.light);
     let mut outline = next.outline.is_some();
+    let lit = next.light.enabled;
     in_row(ui, |ui| {
         check(ui, skin, &mut outline, "Outline");
         if let Some(color) = &mut next.outline {
             crate::widgets::color_edit(ui, color, false, "Outline color");
         }
+        // El tramado de las sombras (sin luz no hay sombras: se ve pero no se usa).
+        ui.add_space(LIGHT_GAP);
+        ui.add_enabled_ui(lit, |ui| check(ui, skin, &mut next.light.dither, "Dither"));
     });
     if outline != next.outline.is_some() {
         next.outline = outline.then_some(primary);
