@@ -296,28 +296,28 @@ fn arrows_do_not_nudge_during_an_extrude() {
 }
 
 #[test]
-fn undoing_a_topology_change_does_not_leave_a_stale_selection() {
+fn undoing_a_topology_change_brings_back_the_selection_of_that_topology() {
     let mut e = editing();
     let top = top_face(&e);
     faces(&mut e, &[top]);
+    let before = e.model_edit().selection.clone();
     assert!(e.subdivide_model_selection());
-    assert_eq!(e.model_edit().selection.items.len(), 4);
+    let after = e.model_edit().selection.clone();
+    assert_eq!(after.items.len(), 4);
+    // Deshacer vuelve a la cara de antes; rehacer, a las cuatro (las dos, de su topología).
     e.undo();
-    assert!(
-        e.model_edit().selection.is_empty(),
-        "{:?}",
-        e.model_edit().selection
-    );
+    assert_eq!(e.model_edit().selection, before);
     e.redo();
-    assert!(e.model_edit().selection.is_empty());
+    assert_eq!(e.model_edit().selection, after);
 
     let mut e = editing();
     let verts = model(&e).objects[0].mesh.faces[top].verts.clone();
     vertices(&mut e, &verts);
+    let before = e.model_edit().selection.clone();
     assert!(e.merge_model_selection());
     assert_eq!(e.model_edit().selection.items.len(), 1);
     e.undo();
-    assert!(e.model_edit().selection.is_empty());
+    assert_eq!(e.model_edit().selection, before);
     // Mover (sin cambiar la topología) y deshacer deja la selección.
     vertices(&mut e, &[0, 1]);
     e.nudge_model_selection(1, 0);

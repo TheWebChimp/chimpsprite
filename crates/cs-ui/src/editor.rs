@@ -378,6 +378,9 @@ pub struct Editor {
     /// El modelo o la fuente que se edita en su pestaña, fuera del lienzo (ver `workspace.rs`).
     /// Si hay, es el activo.
     pub(crate) workspace: Option<ArtboardId>,
+    /// La selección 3D de cada paso del historial (por su índice): la de antes y la de después,
+    /// para que deshacer y rehacer la devuelvan (ver `model_edit::StepSelection`).
+    pub(crate) step_selections: Vec<Option<model_edit::StepSelection>>,
     /// El artboard del lienzo activo al entrar al workspace (para volver).
     workspace_return: Option<ArtboardId>,
     /// Un modelo o fuente a cuyo workspace se entró desde el lienzo (doble clic en una instancia):
@@ -465,6 +468,7 @@ impl Editor {
             symbol_stack: Vec::new(),
             symbol_return: None,
             workspace: None,
+            step_selections: Vec::new(),
             workspace_return: None,
             view_request: None,
             object_selection: Vec::new(),
@@ -719,10 +723,12 @@ impl Editor {
     /// Ejecuta sin confirmar lo flotante (lo usa la confirmación misma).
     pub(crate) fn apply_doc(&mut self, cmd: DocCommand) -> bool {
         self.merge = None;
+        let (steps, selection) = (self.history.done_count(), self.selection_snapshot());
         // Las fuentes y los modelos 3D no cambian de frames, capas ni tamaño (salvo con sus
         // propias operaciones, que traen su `SetFont` o `SetModel`).
         match StructureLock::execute(&mut self.history, &mut self.document, cmd, false) {
             Ok(()) => {
+                self.record_step_selection(steps, selection);
                 self.revision += 1;
                 self.doc_version += 1;
                 self.ensure_valid();
@@ -761,9 +767,11 @@ impl Editor {
             self.current_object(),
         );
         let merged = self.merge == Some((group, target));
+        let (steps, selection) = (self.history.done_count(), self.selection_snapshot());
         let result = StructureLock::execute(&mut self.history, &mut self.document, cmd, merged);
         match result {
             Ok(()) => {
+                self.record_step_selection(steps, selection);
                 self.merge = Some((group, target));
                 self.revision += 1;
                 self.doc_version += 1;
@@ -795,11 +803,13 @@ impl Editor {
             return;
         }
         self.merge = None;
+        let (step, selection) = (self.history.done_count(), self.selection_snapshot());
         match self.history.undo(&mut self.document) {
             Ok(true) => {
                 self.revision += 1;
                 self.doc_version += 1;
                 self.ensure_valid();
+                self.restore_selection_on_undo(step, selection);
             }
             Ok(false) => {}
             Err(e) => log::error!("undo failed: {e}"),
@@ -817,6 +827,7 @@ impl Editor {
                 self.revision += 1;
                 self.doc_version += 1;
                 self.ensure_valid();
+                self.restore_selection_on_redo(self.history.done_count());
             }
             Ok(false) => {}
             Err(e) => log::error!("redo failed: {e}"),

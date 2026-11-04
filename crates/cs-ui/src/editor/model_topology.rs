@@ -217,6 +217,10 @@ impl Editor {
             self.model_edit.selection = old;
             return false;
         }
+        // Deshacer el paso vuelve a lo elegido de antes (no a lo que ya se puso para él).
+        if let Some(Some(step)) = self.step_selections.last_mut() {
+            step.set_before(old);
+        }
         self.set_model_selection(sel);
         // Si se borraron objetos, el del panel queda dentro de lo que quedó.
         self.model_object = self
