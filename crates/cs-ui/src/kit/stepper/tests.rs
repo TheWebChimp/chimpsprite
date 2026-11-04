@@ -234,3 +234,85 @@ fn the_axis_tag_is_rounded_outside_and_square_beside_the_button_like_the_mockup(
     assert_eq!(at(&dots, bx, 15), Some(colors.control_border));
     assert_eq!(at(&dots, bx, 16), Some(cream));
 }
+
+/// La columna recta del − (al lado de la etiqueta) en `rect`: las filas 0, 15 y 16.
+fn square_column(shapes: &[Shape], rect: Rect) -> Vec<Option<Color32>> {
+    let dots = dots(shapes);
+    let x = rect.left() + TAG_W;
+    [0, 15, 16]
+        .iter()
+        .map(|y| {
+            let p = pos2(x, rect.top() + *y as f32);
+            dots.iter().rev().find(|(r, _)| r.min == p).map(|(_, c)| *c)
+        })
+        .collect()
+}
+
+/// Lo que la columna recta del − debe pintar con el botón en `state`.
+fn square_column_of(skin: &Skin, state: WidgetState) -> Vec<Option<Color32>> {
+    let p = skin.piece(LEFT, state).unwrap();
+    let h = HEIGHT as u32;
+    vec![
+        Some(p.pixel(0, 1)),
+        Some(p.pixel(0, 1)),
+        Some(p.pixel(0, h - 2)),
+    ]
+}
+
+#[test]
+fn the_square_edge_of_the_minus_follows_its_state() {
+    let (ctx, skin) = pixel_ctx();
+    let run = |events: Vec<Event>, value: &mut i32| {
+        let mut rect = Rect::NOTHING;
+        let shapes = frame(&ctx, events, |ui| {
+            rect = Rect::from_min_size(ui.cursor().min, vec2(80.0, HEIGHT));
+            axis_stepper(ui, &skin, 80.0, "e", "X", value, -9..=9, 1);
+        });
+        (shapes, rect)
+    };
+    // La deshabilitada se distingue de la normal en esa columna (si no, no prueba nada). La
+    // presionada hoy coincide con la normal ahí, pero igual tiene que salir de su pieza.
+    assert_ne!(
+        square_column_of(&skin, WidgetState::Disabled),
+        square_column_of(&skin, WidgetState::Normal)
+    );
+    // En el mínimo, el − está deshabilitado aunque la interfaz no: su columna, la deshabilitada.
+    let mut value = -9;
+    let (shapes, rect) = run(vec![], &mut value);
+    assert_eq!(
+        square_column(&shapes, rect),
+        square_column_of(&skin, WidgetState::Disabled)
+    );
+    // Presionado (el bisel invertido): la columna de la pieza presionada.
+    let mut value = 0;
+    let minus = pos2(rect.left() + TAG_W + 7.0, rect.center().y);
+    let press = Event::PointerButton {
+        pos: minus,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Default::default(),
+    };
+    run(vec![Event::PointerMoved(minus), press], &mut value);
+    let (shapes, _) = run(vec![], &mut value);
+    assert!(
+        pieces(&shapes)
+            .iter()
+            .any(|(t, _)| *t == id(&skin, LEFT, WidgetState::Down)),
+        "the minus is drawn pressed"
+    );
+    assert_eq!(
+        square_column(&shapes, rect),
+        square_column_of(&skin, WidgetState::Down)
+    );
+    // Soltar fuera para no dejar el botón presionado en el contexto.
+    let release = Event::PointerButton {
+        pos: pos2(0.0, 0.0),
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    };
+    run(
+        vec![Event::PointerMoved(pos2(0.0, 0.0)), release],
+        &mut value,
+    );
+}

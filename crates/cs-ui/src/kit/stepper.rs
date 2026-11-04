@@ -241,14 +241,10 @@ pub fn tag_shapes(ui: &Ui, skin: &Skin, rect: Rect, axis: &str, enabled: bool) -
 }
 
 /// El borde izquierdo del botón − pegado a una etiqueta: recto, sin las esquinas redondeadas del
-/// botón solo (borde arriba y abajo, luz debajo), como el boceto.
-fn square_left_edge(skin: &Skin, button: Rect, enabled: bool) -> Vec<Shape> {
-    let state = if enabled {
-        WidgetState::Normal
-    } else {
-        WidgetState::Disabled
-    };
-    let Some(p) = skin.piece(LEFT, state) else {
+/// botón solo (borde arriba y abajo, luz debajo), como el boceto. Con los colores de la pieza del
+/// − en `state`, el estado con el que se dibujó el botón.
+fn square_left_edge(skin: &Skin, button: Rect, state: ButtonState) -> Vec<Shape> {
+    let Some(p) = skin.piece(LEFT, piece_state(state)) else {
         return Vec::new();
     };
     let cell = |row: u32, color: Color32| {
@@ -318,10 +314,11 @@ pub fn axis_stepper<Num: emath::Numeric>(
     painter.set_opacity(1.0);
     painter.extend(shapes);
     let rest = Rect::from_min_max(pos2(tag.right(), rect.top()), rect.max);
-    let response = stepper_at(ui, skin, rest, id_salt, value, range, step, None);
-    // El botón − queda recto del lado de la etiqueta.
+    let (response, minus_state) =
+        stepper_with_minus(ui, skin, rest, id_salt, value, range, step, None);
+    // El botón − queda recto del lado de la etiqueta, en el estado con el que se dibujó.
     let (minus, ..) = parts(rest);
-    painter.extend(square_left_edge(skin, minus, ui.is_enabled()));
+    painter.extend(square_left_edge(skin, minus, minus_state));
     response
 }
 
@@ -337,6 +334,21 @@ pub fn stepper_at<Num: emath::Numeric>(
     step: Num,
     unit: Option<&str>,
 ) -> Response {
+    stepper_with_minus(ui, skin, rect, id_salt, value, range, step, unit).0
+}
+
+/// [`stepper_at`], que además dice en qué estado se dibujó el botón −.
+#[allow(clippy::too_many_arguments)]
+fn stepper_with_minus<Num: emath::Numeric>(
+    ui: &mut Ui,
+    skin: &Skin,
+    rect: Rect,
+    id_salt: &str,
+    value: &mut Num,
+    range: RangeInclusive<Num>,
+    step: Num,
+    unit: Option<&str>,
+) -> (Response, ButtonState) {
     let (left, field, right) = parts(rect);
     let enabled = ui.is_enabled();
     let colors = *skin.colors();
@@ -381,6 +393,7 @@ pub fn stepper_at<Num: emath::Numeric>(
     // Los botones.
     let id = ui.id().with(("kit_stepper", id_salt));
     let mut shapes = Vec::new();
+    let mut minus_state = ButtonState::Normal;
     for (rect, piece, icon, sign) in [(left, LEFT, MINUS, -1.0), (right, RIGHT, PLUS, 1.0)] {
         let current = value.to_f64();
         let can = if sign < 0.0 {
@@ -396,20 +409,17 @@ pub fn stepper_at<Num: emath::Numeric>(
             let next = (current + sign * step.to_f64()).clamp(lo, hi);
             *value = Num::from_f64(next);
         }
-        shapes.extend(button_shapes(
-            ui,
-            skin,
-            rect,
-            piece,
-            icon,
-            ButtonState::of(&b, usable),
-        ));
+        let state = ButtonState::of(&b, usable);
+        if sign < 0.0 {
+            minus_state = state;
+        }
+        shapes.extend(button_shapes(ui, skin, rect, piece, icon, state));
     }
     painter.extend(shapes);
     if value.to_f64() != before {
         response.mark_changed();
     }
-    response
+    (response, minus_state)
 }
 
 #[cfg(test)]
