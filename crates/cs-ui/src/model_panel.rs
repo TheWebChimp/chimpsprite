@@ -55,8 +55,7 @@ const PLUS_W: f32 = 13.0;
 const PLUS_GAP: f32 = 4.0;
 /// El select de la cuadrícula del modo Edit.
 const GRID_W: f32 = 56.0;
-/// El select del tamaño de la textura (modo Texture) y sus lados.
-const TEXTURE_SIZE_W: f32 = 64.0;
+/// Los lados del tamaño de la textura.
 const TEXTURE_SIZES: [u32; 6] = [16, 32, 64, 128, 256, 512];
 /// Los lados de cilindros, conos y esferas.
 const MIN_SIDES: u32 = 3;
@@ -90,8 +89,20 @@ fn cell_w(ui: &Ui) -> f32 {
 }
 /// La etiqueta de Yaw y Pitch.
 const ANGLE_LABEL_W: f32 = 34.0;
-/// El select de la textura.
-const TEXTURE_W: f32 = 150.0;
+/// Las filas de la textura y de la cámara (como el boceto): la columna de la derecha (Texture
+/// Size) empieza a 5/8 de la fila (138 de sus 220 columnas), con este aire antes; el aire entre
+/// el select de la cámara y sus presets es el mismo.
+const RIGHT_COLUMN: f32 = 0.625;
+const COLUMN_GAP: f32 = 4.0;
+/// Lo que dice un select sin nada elegido.
+const NO_OPTION: &str = "Select an option…";
+/// Los presets de la cámara, en su grupo de botones.
+const PRESETS: [(&str, CameraPreset); 4] = [
+    ("Iso", CameraPreset::Iso),
+    ("Top", CameraPreset::Top),
+    ("Side", CameraPreset::Side),
+    ("Front", CameraPreset::Front),
+];
 /// Hasta dónde llegan Yaw (en grados) y Pitch (en grados).
 const YAW_MAX: i32 = 360;
 const PITCH_MAX: i32 = 90;
@@ -404,52 +415,40 @@ fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 }
 
-/// Texture size, debajo de la textura (si el modelo tiene una). Achicar la textura dejando UVs
-/// fuera lo confirma la app (`ModelAction::TextureSize`).
-fn texture_size(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
-    let size = editor
-        .workspace_texture()
-        .and_then(|id| editor.document.artboard(id))
-        .map(|a| (a.sprite.width, a.sprite.height));
-    let mut picked = None;
-    if let Some((w, h)) = size {
-        let shown = if w == h {
-            w.to_string()
-        } else {
-            format!("{w}×{h}")
-        };
-        let mut list = |ui: &mut Ui| {
-            for side in TEXTURE_SIZES {
-                let on = (w, h) == (side, side);
-                if ui.add(menus::choice(on, &side.to_string())).clicked() {
-                    picked = Some(side);
-                    ui.close();
-                }
-            }
-        };
-        ui.horizontal(|ui| {
-            ui.label("Texture size");
-            let width = Some(TEXTURE_SIZE_W);
-            match skin {
-                Some(skin) => {
-                    kit::select::select(ui, skin, "model_texture_size", &shown, width, list);
-                }
-                None => {
-                    egui::ComboBox::from_id_salt("model_texture_size")
-                        .selected_text(&shown)
-                        .show_ui(ui, |ui| list(ui));
-                }
-            }
-        });
+/// El ancho de las filas de lo general: lo de adentro sin la barra del scroll y el aire de antes
+/// (como las filas de los ejes).
+fn row_width(ui: &Ui) -> f32 {
+    ((WIDTH - pixel_ui::SCROLL_BAR).min(ui.available_width()) - AXIS_GAP).floor()
+}
+
+/// El lugar de una fila de selects (y botones) de `width`, en puntos enteros. Sin el aire de entre
+/// filas arriba: como las filas de los ejes (que egui centra en una fila más baja), queda a 4 filas
+/// de la letra de su título y a 10 del título que sigue, como el boceto.
+fn row_rect(ui: &mut Ui, width: f32) -> Rect {
+    ui.add_space(-ui.spacing().item_spacing.y);
+    let (slot, _) = ui.allocate_exact_size(vec2(width, kit::select::HEIGHT), Sense::hover());
+    Rect::from_min_size(slot.min.round(), slot.size())
+}
+
+/// Dos títulos en una fila: `left` al principio (en `ui`, como cualquier título) y `right` a la
+/// misma altura en la columna `column` (desde el principio de la fila), en su propio `Ui`.
+fn pair_labels(ui: &mut Ui, (left, right): (&str, &str), column: f32) {
+    let at = ui.cursor().min + vec2(column, 0.0);
+    let rect = Rect::from_min_size(at, vec2((ui.available_width() - column).max(0.0), 0.0));
+    let mut second = ui.new_child(UiBuilder::new().max_rect(rect));
+    label_with_hint(&mut second, right, "");
+    label_with_hint(ui, left, "");
+    ui.add_space(-AXIS_TITLE_PULL);
+}
+
+/// Lo que pide el select de Texture Size: achicar la textura dejando UVs fuera lo confirma la app
+/// (`ModelAction::TextureSize`).
+fn resize_texture(editor: &mut Editor, side: u32) -> Option<ModelAction> {
+    if editor.texture_size_cuts_uvs(side) {
+        return Some(ModelAction::TextureSize(side));
     }
-    match picked {
-        Some(side) if editor.texture_size_cuts_uvs(side) => Some(ModelAction::TextureSize(side)),
-        Some(side) => {
-            editor.set_texture_size(side);
-            None
-        }
-        None => None,
-    }
+    editor.set_texture_size(side);
+    None
 }
 
 /// El texto de una cuadrícula (en 1/16 de unidad).
@@ -700,13 +699,17 @@ fn check(ui: &mut Ui, skin: Option<&Skin>, on: &mut bool, label: &str) {
     };
 }
 
-/// La textura: un select con los artboards del lienzo que no son modelos ni fuentes (y None; una
-/// que ya no existe se muestra "(missing)") y New Texture, que agrega una plantilla y la asigna;
-/// debajo, su tamaño ([`texture_size`]).
+/// La textura y su tamaño, como el boceto: arriba "Texture" y, en la columna de la derecha,
+/// "Texture Size"; debajo, el select de la textura (los artboards del lienzo que no son modelos ni
+/// fuentes, y None; sin textura dice "Select an option…" y una que ya no existe, "(missing)") con
+/// New pegado a la derecha (agrega una plantilla y la asigna) y, en la otra columna, el del tamaño
+/// (vacío y deshabilitado sin textura).
 fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
     let current = editor.edited_model().map(|m| m.texture)?;
     ui.add_space(SECTION_GAP);
-    label_with_hint(ui, "Texture", "");
+    let row_w = row_width(ui);
+    let column = (row_w * RIGHT_COLUMN).round();
+    pair_labels(ui, ("Texture", "Texture Size"), column);
     let options: Vec<(cs_core::ArtboardId, String)> = editor
         .document
         .artboards
@@ -716,14 +719,23 @@ fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<Mode
         .collect();
     // La textura puede no estar en la lista (en la biblioteca) o ya no existir.
     let shown = match current {
-        None => "None".to_owned(),
+        None => NO_OPTION.to_owned(),
         Some(id) => editor
             .document
             .artboard(id)
             .map_or_else(|| "(missing)".to_owned(), |a| a.name.clone()),
     };
+    let size = editor
+        .workspace_texture()
+        .and_then(|id| editor.document.artboard(id))
+        .map(|a| (a.sprite.width, a.sprite.height));
+    let size_shown = match size {
+        Some((w, h)) if w == h => w.to_string(),
+        Some((w, h)) => format!("{w}×{h}"),
+        None => String::new(),
+    };
     let mut picked = None;
-    let mut list = |ui: &mut Ui| {
+    let list = |ui: &mut Ui| {
         if ui.add(menus::choice(current.is_none(), "None")).clicked() {
             picked = Some(None);
             ui.close();
@@ -735,26 +747,104 @@ fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<Mode
             }
         }
     };
-    let mut new = false;
-    ui.horizontal(|ui| {
-        match skin {
-            Some(skin) => {
-                kit::select::select(ui, skin, "model_texture", &shown, Some(TEXTURE_W), list);
-            }
-            None => {
-                egui::ComboBox::from_id_salt("model_texture")
-                    .selected_text(&shown)
-                    .show_ui(ui, |ui| list(ui));
+    let mut side = None;
+    let sides = |ui: &mut Ui| {
+        for s in TEXTURE_SIZES {
+            let on = size == Some((s, s));
+            if ui.add(menus::choice(on, &s.to_string())).clicked() {
+                side = Some(s);
+                ui.close();
             }
         }
-        new = button(ui, skin, "New Texture").clicked();
-    });
+    };
+    let new = match skin {
+        Some(skin) => {
+            let row = row_rect(ui, row_w);
+            let id = ui.id();
+            // New, pegado al select: comparten la columna del borde. Va primero, así el borde del
+            // select queda encima (como en el boceto).
+            let end = row.left() + column - COLUMN_GAP;
+            let new_w = kit::button::width(ui, "New");
+            let new_rect =
+                Rect::from_min_max(pos2(end - new_w, row.top()), pos2(end, row.bottom()));
+            let new_id = id.with("model_texture_new");
+            let new = kit::button::button_at(ui, skin, new_rect, new_id, "New").clicked();
+            let field = Rect::from_min_max(row.min, pos2(new_rect.left() + 1.0, row.bottom()));
+            kit::select::select_at(ui, skin, field, id.with("model_texture"), &shown, list);
+            let size_rect = Rect::from_min_max(pos2(row.left() + column, row.top()), row.max);
+            // En su propio `Ui` (deshabilitado sin textura), que no ocupa lugar en la columna.
+            let mut column_ui = ui.new_child(UiBuilder::new().max_rect(size_rect));
+            column_ui.add_enabled_ui(size.is_some(), |ui| {
+                let size_id = id.with("model_texture_size");
+                kit::select::select_at(ui, skin, size_rect, size_id, &size_shown, sides);
+            });
+            new
+        }
+        None => {
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("model_texture")
+                    .selected_text(&shown)
+                    .show_ui(ui, list);
+                let new = pixel_ui::text_button(ui, "New").clicked();
+                ui.add_enabled_ui(size.is_some(), |ui| {
+                    egui::ComboBox::from_id_salt("model_texture_size")
+                        .selected_text(&size_shown)
+                        .show_ui(ui, sides);
+                });
+                new
+            })
+            .inner
+        }
+    };
     if new {
         editor.new_texture();
     } else if let Some(texture) = picked {
         editor.set_texture(texture);
     }
-    texture_size(ui, editor, skin)
+    side.and_then(|side| resize_texture(editor, side))
+}
+
+/// La fila de la cámara, como el boceto: el select de la proyección (`shown`, con las opciones de
+/// `list`) y, al final de la fila, el grupo de los presets. Devuelve el preset apretado.
+fn camera_row(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    shown: &str,
+    list: impl FnOnce(&mut Ui),
+) -> Option<CameraPreset> {
+    let row_w = row_width(ui);
+    match skin {
+        Some(skin) => {
+            let items = PRESETS.map(|(label, _)| kit::group::GroupItem::text(label));
+            let row = row_rect(ui, row_w);
+            let at = pos2(
+                (row.right() - kit::group::width(ui, &items)).round(),
+                row.top(),
+            );
+            let field = Rect::from_min_max(row.min, pos2(at.x - COLUMN_GAP, row.bottom()));
+            let id = ui.id();
+            kit::select::select_at(ui, skin, field, id.with("model_projection"), shown, list);
+            let painter = ui.painter().clone();
+            let presets = id.with("model_camera_presets");
+            kit::group::button_group_at(ui, skin, &painter, presets, at, &items, &|_| false)
+                .map(|i| PRESETS[i].1)
+        }
+        None => {
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("model_projection")
+                    .selected_text(shown)
+                    .show_ui(ui, list);
+                let mut picked = None;
+                for (label, preset) in PRESETS {
+                    if pixel_ui::text_button(ui, label).clicked() {
+                        picked = Some(preset);
+                    }
+                }
+                picked
+            })
+            .inner
+        }
+    }
 }
 
 /// Yaw (dado la vuelta a ±180°) y Pitch en grados (lo guardado, en décimas): solo se escribe el
@@ -785,12 +875,27 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     };
     let primary = editor.resolve(editor.primary);
     let mut next = model.clone();
-    ui.add_space(SECTION_GAP);
+    // Como el boceto (y los ejes del objeto): de una fila al título que sigue, solo el aire de
+    // entre filas, y del título a su fila, 4 filas de la letra.
     label_with_hint(ui, "Camera", "");
+    ui.add_space(-AXIS_TITLE_PULL);
+    // Sin Yaw ni Pitch: la cámara la mueven la órbita, el gizmo de navegación y los presets.
     let cam = &mut next.camera;
     let ortho = cam.projection == Projection::Orthographic;
-    ui.horizontal(|ui| {
-        if radio(ui, skin, !ortho, "Perspective").clicked() && ortho {
+    let mut projection = None;
+    let list = |ui: &mut Ui| {
+        for (label, o) in [("Perspective", false), ("Orthographic", true)] {
+            if ui.add(menus::choice(ortho == o, label)).clicked() {
+                projection = Some(o);
+                ui.close();
+            }
+        }
+    };
+    let shown = if ortho { "Orthographic" } else { "Perspective" };
+    let preset = camera_row(ui, skin, shown, list);
+    match projection {
+        Some(true) if !ortho => cam.projection = Projection::Orthographic,
+        Some(false) if ortho => {
             cam.projection = Projection::Perspective {
                 fov: match Model3D::default().camera.projection {
                     Projection::Perspective { fov } => fov,
@@ -798,28 +903,12 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
                 },
             };
         }
-        if radio(ui, skin, ortho, "Orthographic").clicked() {
-            cam.projection = Projection::Orthographic;
-        }
-    });
-    ui.horizontal(|ui| {
-        for (label, preset) in [
-            ("Iso", CameraPreset::Iso),
-            ("Top", CameraPreset::Top),
-            ("Side", CameraPreset::Side),
-            ("Front", CameraPreset::Front),
-        ] {
-            if button(ui, skin, label).clicked() {
-                *cam = preset.camera(cam.distance, cam.target);
-            }
-        }
-        if button(ui, skin, "Reset").clicked() {
-            *cam = Model3D::default().camera;
-        }
-    });
-    angles(ui, skin, "camera", (&mut cam.yaw, &mut cam.pitch));
+        _ => {}
+    }
+    if let Some(preset) = preset {
+        *cam = preset.camera(cam.distance, cam.target);
+    }
 
-    ui.add_space(SECTION_GAP);
     label_with_hint(ui, "Light & Outline", "");
     let light = &mut next.light;
     check(ui, skin, &mut light.enabled, "Light");

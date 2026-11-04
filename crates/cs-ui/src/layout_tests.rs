@@ -4796,7 +4796,7 @@ const GENERAL_TEXTS: [&str; 8] = [
     "Vertex",
     "Grid",
     "Texture",
-    "Texture size",
+    "Texture Size",
     "Camera",
     "Light & Outline",
     "Shading",
@@ -4838,7 +4838,7 @@ fn the_general_part_goes_above_the_line_and_the_object_below() {
         assert!(text_in(&h, top, t).is_some(), "{t} above the line");
         assert!(text_in(&h, bottom, t).is_none(), "{t} below the line");
     }
-    for label in ["Sheet settings…", "New Texture"] {
+    for label in ["Sheet settings…", "New"] {
         let r = in_model_panel(&h, label).unwrap_or_else(|| panic!("{label}"));
         assert!(top.contains_rect(r), "{label} {r:?} in {top:?}");
     }
@@ -5674,7 +5674,10 @@ fn new_texture_adds_a_template_artboard_and_assigns_it_in_one_step() {
     let mut h = model_panel_tall();
     let steps = h.app.doc.editor.history.done_count();
     let count = h.app.doc.editor.document.artboards.len();
-    h.click(h.button("New Texture").center(), PointerButton::Primary);
+    h.click(
+        in_model_panel(&h, "New").unwrap().center(),
+        PointerButton::Primary,
+    );
     let editor = &h.app.doc.editor;
     assert_eq!(editor.document.artboards.len(), count + 1);
     assert_eq!(editor.history.done_count(), steps + 1);
@@ -5686,25 +5689,195 @@ fn new_texture_adds_a_template_artboard_and_assigns_it_in_one_step() {
     assert_eq!(h.app.doc.editor.document.artboards.len(), count);
 }
 
+/// Hasta dónde llegan las filas de lo general del panel 3D: lo de adentro sin la barra del scroll
+/// y el aire de antes (como las filas de los ejes).
+fn model_row_right(h: &LayoutHarness) -> f32 {
+    let inner = model_flyout(h).shrink(crate::dock::FLYOUT_MARGIN as f32);
+    inner.right() - crate::pixel_ui::SCROLL_BAR - 4.0
+}
+
+/// El ritmo de los ejes del objeto (el del boceto): del título a su fila de steppers y de esa fila
+/// al título que sigue.
+fn axis_rhythm(h: &LayoutHarness) -> (f32, f32) {
+    let flyout = model_flyout(h);
+    let position = text_in(h, flyout, "Position").unwrap();
+    let rotation = text_in(h, flyout, "Rotation").unwrap();
+    let row = axis_row(h, "Position")[0];
+    (row.top() - position.top(), rotation.top() - row.top())
+}
+
+/// El select del tamaño de la textura: el control del panel en la fila de `texture`, a la
+/// derecha de `new`.
+fn texture_size_select(h: &LayoutHarness, texture: Rect, new: Rect) -> Rect {
+    let flyout = model_flyout(h);
+    h.nodes
+        .iter()
+        .find(|(_, r)| {
+            flyout.contains_rect(*r) && r.top() == texture.top() && r.left() > new.right()
+        })
+        .map(|(_, r)| *r)
+        .unwrap_or_else(|| panic!("no Texture Size select in {:?}", h.nodes))
+}
+
 #[test]
-fn the_iso_preset_sets_an_orthographic_camera() {
+fn the_texture_row_glues_new_to_its_select_with_the_size_in_the_right_column() {
+    let h = model_panel_tall();
+    let (top, _) = model_halves(&h);
+    let texture = node(&h, "Ship Texture");
+    let new = in_model_panel(&h, "New").expect("New beside the texture");
+    // New pegado al select: comparten la columna del borde, del mismo alto.
+    assert_eq!(new.left(), texture.right() - 1.0, "{texture:?} {new:?}");
+    assert_eq!((new.top(), new.height()), (texture.top(), texture.height()));
+    // El tamaño, en la columna de la derecha (≈ 60 % de la fila, como el boceto), en la misma
+    // fila, 4 después de New y hasta el final de la fila.
+    let size = texture_size_select(&h, texture, new);
+    assert_eq!(size.left() - new.right(), 4.0, "{new:?} {size:?}");
+    let right = model_row_right(&h);
+    assert_eq!(size.right(), right);
+    let at = (size.left() - texture.left()) / (right - texture.left());
+    assert!((0.58..=0.66).contains(&at), "column at {at}");
+    // Las etiquetas, arriba de cada una y en la misma fila.
+    let label = text_in(&h, top, "Texture").unwrap();
+    let size_label = text_in(&h, top, "Texture Size").unwrap();
+    assert_eq!(label.top(), size_label.top(), "{label:?} {size_label:?}");
+    // De la etiqueta al select, lo del boceto: como del título de los ejes a su fila.
+    let (title, row) = axis_rhythm(&h);
+    assert_eq!(texture.top() - label.top(), title, "{label:?} {texture:?}");
+    assert!(row > 0.0);
+    assert!((label.left() - texture.left()).abs() <= 1.0, "{label:?}");
+    assert!(
+        (size_label.left() - size.left()).abs() <= 1.0,
+        "{size_label:?}"
+    );
+    assert!(in_model_panel(&h, "New Texture").is_none());
+}
+
+#[test]
+fn without_a_texture_the_select_asks_for_an_option_and_keeps_none_in_the_list() {
     let mut h = model_panel_tall();
-    h.click(h.button("Iso").center(), PointerButton::Primary);
+    h.click(node(&h, "Ship Texture").center(), PointerButton::Primary);
+    h.click(node(&h, "None").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.model().unwrap().texture, None);
+    let texture = in_model_panel(&h, "Select an option…").expect("the placeholder");
+    // La fila no cambia: New pegado y el tamaño (vacío) a la derecha.
+    let new = in_model_panel(&h, "New").unwrap();
+    assert_eq!(new.left(), texture.right() - 1.0);
+    texture_size_select(&h, texture, new);
+    // None sigue en la lista.
+    h.click(texture.center(), PointerButton::Primary);
+    node(&h, "None");
+}
+
+#[test]
+fn the_camera_row_is_a_projection_select_and_the_preset_group() {
+    let h = model_panel_tall();
+    let (top, _) = model_halves(&h);
+    let texture = node(&h, "Ship Texture");
+    let projection = in_model_panel(&h, "Perspective").expect("the projection select");
+    assert!(projection.top() > texture.bottom());
+    assert_eq!(projection.left(), texture.left());
+    let presets: Vec<Rect> = ["Iso", "Top", "Side", "Front"]
+        .iter()
+        .map(|l| in_model_panel(&h, l).unwrap_or_else(|| panic!("{l}")))
+        .collect();
+    // El grupo, pegado (cada uno comparte la columna con el que sigue), en la fila del select,
+    // 4 después de él y hasta el final de la fila.
+    for pair in presets.windows(2) {
+        assert_eq!(pair[1].left(), pair[0].right() - 1.0, "{pair:?}");
+    }
+    for r in &presets {
+        assert_eq!(
+            (r.top(), r.height()),
+            (projection.top(), projection.height())
+        );
+    }
+    assert_eq!(presets[0].left() - projection.right(), 4.0);
+    assert_eq!(presets[3].right(), model_row_right(&h));
+    // Como el boceto (y los ejes): de la fila de la textura al título de la cámara, de él a su
+    // fila y de ella al título que sigue.
+    let label = text_in(&h, top, "Camera").unwrap();
+    let (title, row) = axis_rhythm(&h);
+    assert_eq!(label.top() - texture.top(), row, "{texture:?} {label:?}");
+    assert_eq!(
+        projection.top() - label.top(),
+        title,
+        "{label:?} {projection:?}"
+    );
+    let light = text_in(&h, top, "Light & Outline").unwrap();
+    assert_eq!(
+        light.top() - projection.top(),
+        row,
+        "{projection:?} {light:?}"
+    );
+    // Ni Yaw, Pitch ni Reset en la cámara (la mueven la órbita, el gizmo y los presets): los
+    // únicos Yaw y Pitch son los de la luz.
+    assert!(in_model_panel(&h, "Reset").is_none());
+    for t in ["Yaw", "Pitch"] {
+        let all: Vec<Rect> = h
+            .text_rects
+            .iter()
+            .filter(|(s, r, _)| s == t && top.contains_rect(*r))
+            .map(|(_, r, _)| *r)
+            .collect();
+        assert_eq!(all.len(), 1, "{t}: {all:?}");
+        assert!(all[0].top() > light.bottom(), "{t} is the light's");
+    }
+}
+
+#[test]
+fn each_camera_preset_is_one_undo_step() {
+    let mut h = model_panel_tall();
+    let presets = [
+        ("Iso", cs_core::CameraPreset::Iso),
+        ("Top", cs_core::CameraPreset::Top),
+        ("Side", cs_core::CameraPreset::Side),
+        ("Front", cs_core::CameraPreset::Front),
+    ];
+    for (label, preset) in presets {
+        let before = h.app.doc.editor.model().unwrap().camera;
+        let steps = h.app.doc.editor.history.done_count();
+        h.click(node(&h, label).center(), PointerButton::Primary);
+        let cam = h.app.doc.editor.model().unwrap().camera;
+        assert_eq!(
+            cam,
+            preset.camera(before.distance, before.target),
+            "{label}"
+        );
+        assert_eq!(cam.projection, cs_core::Projection::Orthographic);
+        assert_eq!(h.app.doc.editor.history.done_count(), steps + 1, "{label}");
+        h.app.doc.editor.undo();
+        assert_eq!(h.app.doc.editor.model().unwrap().camera, before, "{label}");
+        h.frame();
+    }
+}
+
+#[test]
+fn the_projection_select_switches_the_camera_in_one_step() {
+    let mut h = model_panel_tall();
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(node(&h, "Perspective").center(), PointerButton::Primary);
+    h.click(node(&h, "Orthographic").center(), PointerButton::Primary);
     let cam = h.app.doc.editor.model().unwrap().camera;
     assert_eq!(cam.projection, cs_core::Projection::Orthographic);
-    assert_eq!((cam.yaw, cam.pitch), (450, 300));
-    h.click(h.button("Reset").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    in_model_panel(&h, "Orthographic").expect("the select shows it");
+    h.app.doc.editor.undo();
     let cam = h.app.doc.editor.model().unwrap().camera;
     assert_eq!(cam, cs_core::Model3D::default().camera);
 }
 
 #[test]
-fn the_projection_radios_switch_the_camera() {
+fn the_projection_select_goes_back_to_perspective() {
     let mut h = model_panel_tall();
-    let ortho = node(&h, "Orthographic");
-    h.click(ortho.center(), PointerButton::Primary);
+    h.click(node(&h, "Perspective").center(), PointerButton::Primary);
+    h.click(node(&h, "Orthographic").center(), PointerButton::Primary);
+    h.click(node(&h, "Orthographic").center(), PointerButton::Primary);
+    h.click(node(&h, "Perspective").center(), PointerButton::Primary);
     let cam = h.app.doc.editor.model().unwrap().camera;
-    assert_eq!(cam.projection, cs_core::Projection::Orthographic);
+    assert_eq!(
+        cam.projection,
+        cs_core::Model3D::default().camera.projection
+    );
 }
 
 #[test]
@@ -5739,8 +5912,8 @@ fn the_model_tab_has_a_sheet_settings_button() {
 #[test]
 fn every_model_panel_control_fits_beside_the_scroll_bar() {
     // Una ventana baja y una alta (cabe todo, sin barra).
-    // Con el cubo elegido (18: sus nueve steppers, y 8 de lo general: Yaw y Pitch de la cámara
-    // y de la luz) y sin objeto (solo los 8 de lo general).
+    // Con el cubo elegido (18: sus nueve steppers, y 4 de lo general: Yaw y Pitch de la luz; la
+    // cámara ya no los tiene) y sin objeto (solo los 4 de lo general).
     let sizes = [Vec2::new(1200.0, 480.0), Vec2::new(1200.0, 1800.0)];
     for (size, object) in sizes.into_iter().flat_map(|s| [(s, true), (s, false)]) {
         let mut h = model_panel_in(size);
@@ -5765,7 +5938,7 @@ fn every_model_panel_control_fits_beside_the_scroll_bar() {
         let steppers = controls
             .iter()
             .filter(|(l, _)| l == "Increase" || l == "Decrease");
-        let least = if object { 8 + 18 } else { 8 };
+        let least = if object { 4 + 18 } else { 4 };
         assert!(steppers.clone().count() >= least, "{controls:?}");
         // Los steppers (de ancho fijo) caben siempre al lado de la barra.
         for (label, r) in steppers {
@@ -8463,8 +8636,8 @@ fn in_texture_mode_the_object_tab_starts_with_the_uv_buttons() {
     let double = check(&h, "Double sided").0;
     let scale = axis_row(&h, "Scale")[0];
     assert!(double.top() > scale.bottom());
-    // Texture size no está abajo (va con lo general).
-    assert!(text_in(&h, bottom, "Texture size").is_none());
+    // Texture Size no está abajo (va con lo general).
+    assert!(text_in(&h, bottom, "Texture Size").is_none());
 }
 
 #[test]
