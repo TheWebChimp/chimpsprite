@@ -4043,8 +4043,22 @@ fn with_a_model_at_800() -> LayoutHarness {
     h
 }
 
-/// Dónde se dibuja el render de la perspectiva (en el cuadrante Persp del workspace).
+/// Dónde cae el artboard del modelo en el render de la perspectiva (en el cuadrante Persp del
+/// workspace o arriba en el modo Texture): el render llena el cuadro y el artboard va al centro.
 fn persp_pixels(h: &LayoutHarness) -> Rect {
+    let drawn = persp_texture_rect(h);
+    let (full, artboard) = h
+        .app
+        .doc
+        .canvas
+        .persp_drawn(&h.app.doc.editor)
+        .expect("the perspective");
+    assert_eq!(drawn, full, "the render is drawn where it says");
+    artboard
+}
+
+/// Dónde se dibuja la textura del render de la perspectiva.
+fn persp_texture_rect(h: &LayoutHarness) -> Rect {
     let tex = h
         .app
         .doc
@@ -4056,6 +4070,44 @@ fn persp_pixels(h: &LayoutHarness) -> Rect {
         .find(|(t, _)| *t == tex)
         .map(|(_, r)| *r)
         .expect("the perspective is drawn")
+}
+
+#[test]
+fn zoomed_in_the_persp_render_fills_its_quadrant_and_picks_outside_the_artboard() {
+    let mut h = with_a_model_at_800();
+    let q = h.app.doc.canvas.model_edit_quadrants().unwrap()[1];
+    let artboard = persp_pixels(&h);
+    h.frame_with(vec![Event::PointerMoved(artboard.center())]);
+    for _ in 0..8 {
+        h.frame_with(vec![line_wheel(1.0, Default::default())]);
+    }
+    h.frame();
+    // La escala no cambia: el artboard sigue en el mismo lugar.
+    assert_eq!(persp_pixels(&h), artboard);
+    // El render llega a los cuatro bordes del cuadrante (se pasa menos de un pixel del render).
+    let drawn = persp_texture_rect(&h);
+    let k = h
+        .app
+        .doc
+        .canvas
+        .persp_map(&h.app.doc.editor)
+        .unwrap()
+        .scale
+        .0;
+    assert!(drawn.contains_rect(q), "{drawn:?} vs {q:?}");
+    for over in [
+        q.left() - drawn.left(),
+        drawn.right() - q.right(),
+        q.top() - drawn.top(),
+        drawn.bottom() - q.bottom(),
+    ] {
+        assert!((0.0..=k).contains(&over), "{drawn:?} vs {q:?} at {k}");
+    }
+    // Un clic en el modelo afuera del cuadrado del artboard lo elige.
+    let at = pos2(artboard.left() - k * 1.5, artboard.center().y);
+    assert!(q.contains(at));
+    h.click(at, PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.selected_object(), Some(0), "the cube");
 }
 
 #[test]
@@ -7273,7 +7325,7 @@ fn the_persp_gizmo_wins_over_picking_and_moving_the_camera() {
     let doc = &h.app.doc.editor.document;
     let artboard = doc.artboard(h.app.doc.editor.model_id()).unwrap();
     assert_eq!(
-        cs_render::model_pick(doc, artboard, local.0, local.1),
+        cs_render::model_pick(doc, artboard, local.0 as i32, local.1 as i32),
         Some(0)
     );
     // Con Shift (que movería el objetivo de la cámara) también gana el gizmo.

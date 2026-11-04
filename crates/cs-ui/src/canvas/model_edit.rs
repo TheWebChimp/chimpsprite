@@ -282,6 +282,38 @@ impl CanvasView {
         (Rect::from_min_size(min.to_pos2(), size), ratio * k)
     }
 
+    /// El render de la perspectiva que llena el cuadrante `q`: con la escala de
+    /// [`Self::persp_rect`] y el artboard en su centro (a pixeles enteros), los pixeles que faltan
+    /// para llegar a los bordes, iguales de cada lado. Devuelve dónde va en pantalla (puede
+    /// salirse un poco de `q`), su tamaño y el del artboard (el cuadro de la proyección): el
+    /// recorte del centro es el render de siempre, así que al acercar la cámara el modelo no
+    /// queda cortado en el cuadrado del artboard.
+    pub(super) fn persp_view(&self, q: Rect, editor: &Editor) -> (Rect, (u32, u32), (u32, u32)) {
+        let sprite = model_sprite(editor);
+        let frame = (sprite.width.max(1), sprite.height.max(1));
+        let (r, scale) = self.persp_rect(q, editor);
+        // Un pixel del render de más si no cae justo: lo de afuera de `q` no se ve.
+        let side = |near: f32, far: f32, s: f32| ((near.max(far) / s).ceil().max(0.0)) as u32;
+        let ox = side(r.left() - q.left(), q.right() - r.right(), scale.x);
+        let oy = side(r.top() - q.top(), q.bottom() - r.bottom(), scale.y);
+        let size = (frame.0 + 2 * ox, frame.1 + 2 * oy);
+        let min = r.min - vec2(ox as f32 * scale.x, oy as f32 * scale.y);
+        let full = Rect::from_min_size(min, vec2(size.0 as f32 * scale.x, size.1 as f32 * scale.y));
+        (full, size, frame)
+    }
+
+    /// Dónde se dibuja el render de la perspectiva (en el cuadrante Persp o en el panel de
+    /// arriba del modo Texture) y dónde cae su artboard, para los tests de la app.
+    #[cfg(test)]
+    pub(crate) fn persp_drawn(&self, editor: &Editor) -> Option<(Rect, Rect)> {
+        let q = match (self.edit_quads, self.texture_panes) {
+            (Some(qs), _) => qs[PERSP],
+            (None, Some((top, _))) => top,
+            (None, None) => return None,
+        };
+        Some((self.persp_view(q, editor).0, self.persp_rect(q, editor).0))
+    }
+
     fn quadrant_at(&self, p: Pos2) -> Option<usize> {
         self.edit_quads?.iter().position(|q| q.contains(p))
     }
@@ -765,9 +797,9 @@ impl CanvasView {
         }
     }
 
-    /// La perspectiva: el render pixel del modelo a la resolución de su artboard, a escala entera
-    /// y centrado en el cuadrante; cacheado mientras no cambien el modelo, el documento ni el
-    /// tamaño. En modo Texture lleva encima el contorno amarillo de las caras elegidas, en
+    /// La perspectiva: el render pixel del modelo con la escala de la resolución de su artboard
+    /// (entera y centrado en el cuadrante), hasta los bordes del cuadrante (`persp_view`);
+    /// cacheado mientras no cambien el modelo, el documento ni el tamaño. En modo Texture lleva encima el contorno amarillo de las caras elegidas, en
     /// pixeles del render.
     pub(super) fn draw_persp(
         &mut self,
@@ -781,8 +813,8 @@ impl CanvasView {
         let Some(artboard) = doc.artboard(editor.model_id()) else {
             return;
         };
-        let sprite = &artboard.sprite;
-        let size = (sprite.width.max(1), sprite.height.max(1));
+        // Todo el cuadrante, con el artboard al centro (ver `persp_view`).
+        let (rect, size, frame) = self.persp_view(q, editor);
         let faces = if editor.cad_mode() == CadMode::Texture {
             editor.selected_faces()
         } else {
@@ -798,6 +830,7 @@ impl CanvasView {
             editor.doc_version,
             editor.revision,
             size,
+            frame,
             artboard.id,
             &faces,
             live,
@@ -805,19 +838,19 @@ impl CanvasView {
             .hash(&mut h);
         let key = h.finish();
         if self.edit_persp.as_ref().is_none_or(|(k, _)| *k != key) {
-            let mut pixels = cs_render::model_render(doc, artboard, model, size);
+            let mut pixels = cs_render::model_render(doc, artboard, model, size, Some(frame));
             if !faces.is_empty() {
                 // El contorno depende del modelo, el tamaño y las caras, no de la textura: al
                 // pintar se reusa.
                 let mut h = DefaultHasher::new();
-                (model, size, &faces).hash(&mut h);
+                (model, size, frame, &faces).hash(&mut h);
                 let outline_key = h.finish();
                 if self
                     .edit_outline
                     .as_ref()
                     .is_none_or(|(k, _)| *k != outline_key)
                 {
-                    let outline = cs_render::model_face_outline(model, size, &faces);
+                    let outline = cs_render::model_face_outline(model, size, Some(frame), &faces);
                     self.edit_outline = Some((outline_key, outline));
                 }
                 let outline = self.edit_outline.as_ref().map_or(&[][..], |(_, o)| &o[..]);
@@ -845,10 +878,9 @@ impl CanvasView {
         }
         if let Some((_, t)) = &self.edit_persp {
             let full = Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0));
-            let (r, _) = self.persp_rect(q, editor);
-            // A escala 1 puede no caber: no se sale del cuadrante.
+            // Se sale un poco del cuadrante (y a escala 1 el artboard puede no caber): se recorta.
             let p = painter.with_clip_rect(q.intersect(painter.clip_rect()));
-            p.image(t.id(), r, full, Color32::WHITE);
+            p.image(t.id(), rect, full, Color32::WHITE);
         }
     }
 

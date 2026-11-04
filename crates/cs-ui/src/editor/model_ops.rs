@@ -302,9 +302,8 @@ impl Editor {
         else {
             return;
         };
-        let hit = (x >= 0 && y >= 0)
-            .then(|| cs_render::model_pick(&self.document, artboard, x as u32, y as u32))
-            .flatten();
+        // Afuera del artboard también: la vista Persp llena su cuadro.
+        let hit = cs_render::model_pick(&self.document, artboard, x, y);
         self.select_model_object(hit);
     }
 }

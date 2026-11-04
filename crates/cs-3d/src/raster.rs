@@ -27,6 +27,11 @@ pub struct RenderInput<'a> {
     pub camera: Option<Camera3D>,
     /// Décimas de grado sumadas a la rotación Y de todos los objetos (al hornear).
     pub extra_yaw: i32,
+    /// El cuadro de referencia de la proyección, si no es `size`: su alto da la escala (la
+    /// ortográfica) o la focal (la perspectiva), y va centrado en la imagen (corrido a pixeles
+    /// enteros). Así el render de `frame` es justo el recorte del centro de uno más grande: la
+    /// vista se agranda hasta los bordes sin cambiar de escala. `None`: el cuadro es `size`.
+    pub frame: Option<(u32, u32)>,
 }
 
 /// Pinta el modelo en una imagen de `size.0`×`size.1` con fondo transparente.
@@ -67,7 +72,12 @@ pub fn face_outline(input: &RenderInput, faces: &[(usize, usize)]) -> Vec<bool> 
     if n == 0 || faces.is_empty() {
         return out;
     }
-    let view = View::new(&input.camera.unwrap_or(input.model.camera), w, h);
+    let view = View::new(
+        &input.camera.unwrap_or(input.model.camera),
+        w,
+        h,
+        input.frame,
+    );
     let mut mask = vec![false; n];
     for &(o, f) in faces {
         let Some(obj) = input.model.objects.get(o) else {
@@ -221,7 +231,9 @@ struct View {
 }
 
 impl View {
-    fn new(cam: &Camera3D, w: u32, h: u32) -> View {
+    /// La vista de `cam` en una imagen de `w`×`h` con el cuadro `frame` (ver
+    /// [`RenderInput::frame`]; `None`: el cuadro es la imagen).
+    fn new(cam: &Camera3D, w: u32, h: u32, frame: Option<(u32, u32)>) -> View {
         let dist = cam.distance.max(1) as f32 / FIXED as f32;
         let dir = orbit_dir(cam.yaw, cam.pitch);
         let target = units(cam.target);
@@ -234,7 +246,12 @@ impl View {
         let yaw = rad(cam.yaw);
         let right = [yaw.cos(), 0.0, -yaw.sin()];
         let up = cross(right, fwd);
-        let half_h = h as f32 / 2.0;
+        let (fw, fh) = frame.unwrap_or((w, h));
+        let half_h = fh as f32 / 2.0;
+        // El cuadro en el centro de la imagen, corrido a pixeles enteros: su render es el
+        // recorte exacto del de la imagen.
+        let shift = |n: u32, f: u32| (n as i64 - f as i64).div_euclid(2) as f32;
+        let center = (fw as f32 / 2.0 + shift(w, fw), half_h + shift(h, fh));
         let focal = match cam.projection {
             Projection::Perspective { fov } => {
                 let fov = rad(fov.clamp(10, 1700));
@@ -248,8 +265,8 @@ impl View {
             up,
             fwd,
             focal,
-            scale: h as f32 / (2.0 * dist),
-            center: (w as f32 / 2.0, half_h),
+            scale: fh as f32 / (2.0 * dist),
+            center,
         }
     }
 
@@ -288,7 +305,7 @@ impl Projector {
     /// El proyector de `camera` en un render de `size`.
     pub fn new(camera: &Camera3D, size: (u32, u32)) -> Projector {
         Projector {
-            view: View::new(camera, size.0, size.1),
+            view: View::new(camera, size.0, size.1, None),
         }
     }
 
@@ -553,7 +570,7 @@ fn rasterize(input: &RenderInput) -> Raster {
         return r;
     }
     let model = input.model;
-    let view = View::new(&input.camera.unwrap_or(model.camera), w, h);
+    let view = View::new(&input.camera.unwrap_or(model.camera), w, h, input.frame);
     // Una textura vacía o incompleta cuenta como si no hubiera.
     let texture = input.texture.as_ref().filter(|t| {
         t.width > 0 && t.height > 0 && t.pixels.len() >= (t.width as usize) * (t.height as usize)
@@ -718,6 +735,7 @@ mod tests {
             palette: &[BLANCO, CLARO, OSCURO, NEGRO],
             camera: None,
             extra_yaw: 0,
+            frame: None,
         }
     }
 
@@ -1104,5 +1122,54 @@ mod tests {
         let behind = pr.axes()[2].map(|f| -f * 6.0 * 16.0);
         assert_eq!(pr.project(behind), None);
         assert!(pr.depth([0.0; 3]) > 0.0);
+    }
+    #[test]
+    fn con_marco_el_render_chico_es_el_centro_del_grande() {
+        // De cerca, el cubo se sale del cuadro de 32×32: en el de 48×40 con el mismo marco se ve
+        // lo de afuera, y su centro es igual pixel por pixel.
+        for projection in [
+            Projection::Perspective { fov: 600 },
+            Projection::Orthographic,
+        ] {
+            let mut m = model(vec![cube()]);
+            m.camera = Camera3D {
+                projection,
+                yaw: 300,
+                pitch: 250,
+                distance: FIXED * 3 / 2,
+                target: Vec3i { x: 3, y: -2, z: 1 },
+            };
+            let tex = [ROJO, AZUL, BLANCO, NEGRO];
+            let small = input(&m, 32, &tex, 2);
+            let big = RenderInput {
+                size: (48, 40),
+                frame: Some((32, 32)),
+                ..small
+            };
+            let (a, b) = (render_model(&small), render_model(&big));
+            let faces = [(0, 0), (0, 2), (0, 4)];
+            let (oa, ob) = (face_outline(&small, &faces), face_outline(&big, &faces));
+            for y in 0..32u32 {
+                for x in 0..32u32 {
+                    let (i, j) = ((y * 32 + x) as usize, ((y + 4) * 48 + x + 8) as usize);
+                    assert_eq!(a[i], b[j], "{projection:?} ({x}, {y})");
+                    // El borde de la imagen chica cuenta como borde de la cara; adentro, igual.
+                    if (1..31).contains(&x) && (1..31).contains(&y) {
+                        assert_eq!(oa[i], ob[j], "{projection:?} contorno ({x}, {y})");
+                    }
+                    assert_eq!(
+                        pick_face(&small, x, y),
+                        pick_face(&big, x + 8, y + 4),
+                        "{projection:?} pick ({x}, {y})"
+                    );
+                }
+            }
+            // Afuera del marco también hay modelo (antes quedaba cortado).
+            let outside = (0..40u32)
+                .flat_map(|y| (0..48u32).map(move |x| (x, y)))
+                .filter(|&(x, y)| !(8..40).contains(&x) || !(4..36).contains(&y))
+                .any(|(x, y)| b[(y * 48 + x) as usize].a > 0);
+            assert!(outside, "{projection:?}");
+        }
     }
 }

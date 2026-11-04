@@ -107,12 +107,8 @@ impl Editor {
             return;
         };
         let size = (artboard.sprite.width.max(1), artboard.sprite.height.max(1));
-        let hit = (x >= 0 && y >= 0)
-            .then(|| {
-                let at = (x as u32, y as u32);
-                cs_render::model_pick_face(&self.document, artboard, model, size, at)
-            })
-            .flatten();
+        // Afuera del artboard también: el render de arriba llena su panel.
+        let hit = cs_render::model_pick_face(&self.document, artboard, model, size, (x, y));
         let mut sel = self.model_edit.selection.clone();
         if sel.mode != SelectMode::Face {
             sel = Selection {

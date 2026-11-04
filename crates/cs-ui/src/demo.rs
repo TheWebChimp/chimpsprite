@@ -706,8 +706,14 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             e.enter_workspace(home);
         }
         if let Some(m) = e.model() {
+            // Con CHIMPSPRITE_DEMO_ZOOM=<n>: la cámara n veces más cerca (como con la rueda).
+            let zoom = dev_var("CHIMPSPRITE_DEMO_ZOOM")
+                .and_then(|z| z.parse::<f32>().ok())
+                .filter(|z| *z > 0.0)
+                .unwrap_or(1.0);
+            let distance = m.camera.distance.max(cs_core::FIXED) as f32 / zoom;
             let camera = cs_core::CameraPreset::Iso
-                .camera(m.camera.distance.max(cs_core::FIXED), m.camera.target);
+                .camera((distance.round() as i32).max(1), m.camera.target);
             e.set_camera(camera);
         }
         e.set_light(cs_core::Light3D::default());
