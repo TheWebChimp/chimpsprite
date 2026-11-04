@@ -4826,11 +4826,11 @@ fn without_an_object(mut h: LayoutHarness) -> LayoutHarness {
     h
 }
 
-/// La fila de la línea que parte el panel 3D: como en el boceto, a 160/408 (≈ 40 %) del alto de
+/// La fila de la línea que parte el panel 3D: como en el boceto, a 197/408 (≈ 48 %) del alto de
 /// su caja (en puntos enteros).
 fn model_split(h: &LayoutHarness) -> f32 {
     let flyout = model_flyout(h);
-    flyout.top() + (flyout.height() * 160.0 / 408.0).floor()
+    flyout.top() + (flyout.height() * 197.0 / 408.0).floor()
 }
 
 /// La mitad de arriba del panel 3D (hasta la línea) y la de abajo (desde la línea).
@@ -4844,9 +4844,7 @@ fn model_halves(h: &LayoutHarness) -> (Rect, Rect) {
 }
 
 /// Lo general del modelo (arriba) y lo del objeto elegido (abajo), en modo Model.
-const GENERAL_TEXTS: [&str; 7] = [
-    "Object",
-    "Vertex",
+const GENERAL_TEXTS: [&str; 5] = [
     "Grid",
     "Texture",
     "Texture Size",
@@ -4856,7 +4854,7 @@ const GENERAL_TEXTS: [&str; 7] = [
 const OBJECT_TEXTS: [&str; 4] = ["Position", "Rotation", "Scale", "Double sided"];
 
 #[test]
-fn the_3d_panel_is_split_at_40_percent_of_its_height_by_an_etched_line() {
+fn the_3d_panel_is_split_at_48_percent_of_its_height_by_an_etched_line() {
     let h = model_panel_tall();
     let flyout = model_flyout(&h);
     let split = model_split(&h);
@@ -4992,7 +4990,7 @@ fn each_half_of_the_3d_panel_scrolls_on_its_own() {
     let split = model_split(&h);
     let cube = node(&h, "Cube");
     let first = |h: &LayoutHarness, t: &str, area: Rect| text_in(h, area, t);
-    let object = first(&h, "Object", top).expect("Object at the top");
+    let object = first(&h, "Grid", top).expect("Grid at the top");
     let position = first(&h, "Position", bottom).expect("Position below");
     let wheel = |h: &mut LayoutHarness, at: Pos2| {
         h.frame_with(vec![Event::PointerMoved(at)]);
@@ -5008,7 +5006,7 @@ fn each_half_of_the_3d_panel_scrolls_on_its_own() {
     };
     // Arriba: se mueve lo general; la línea, la tira y lo del objeto se quedan.
     wheel(&mut h, object.center());
-    let moved = first(&h, "Object", top);
+    let moved = first(&h, "Grid", top);
     assert!(moved.is_none_or(|r| r.top() < object.top()), "{moved:?}");
     assert_eq!(model_split(&h), split);
     assert_eq!(node(&h, "Cube"), cube);
@@ -5248,8 +5246,9 @@ fn axis_tags(h: &LayoutHarness) -> Vec<Rect> {
 
 #[test]
 fn with_an_object_chosen_its_tab_needs_no_scroll_in_the_capture_window() {
-    // La de la captura y una baja (donde todo el panel junto no cabía).
-    for size in [Vec2::new(1920.0, 1009.0), Vec2::new(1200.0, 480.0)] {
+    // La de la captura (en una más baja, como en el boceto, lo del objeto se desplaza).
+    {
+        let size = Vec2::new(1920.0, 1009.0);
         let h = model_panel_in(size);
         assert_eq!(h.app.doc.editor.selected_object(), Some(0));
         let (_, bottom) = model_halves(&h);
@@ -5405,7 +5404,7 @@ fn the_position_x_stepper_moves_the_object_in_one_step() {
     assert_eq!(x(&h), 0);
 }
 
-/// Lo que se ve de los textos "3D" y "Object" (la primera fila del modo Edit) en el panel recién
+/// Lo que se ve de los textos "3D" y "Grid" (la primera fila del modo Edit) en el panel recién
 /// abierto.
 fn panel_top_texts(h: &LayoutHarness) -> (Vec<Rect>, Rect) {
     let find = |t: &str| -> Vec<Rect> {
@@ -5417,7 +5416,7 @@ fn panel_top_texts(h: &LayoutHarness) -> (Vec<Rect>, Rect) {
     };
     (
         find("3D"),
-        find("Object").first().copied().unwrap_or(Rect::NOTHING),
+        find("Grid").first().copied().unwrap_or(Rect::NOTHING),
     )
 }
 
@@ -5426,7 +5425,7 @@ fn the_3d_panel_opens_at_the_top_with_edit_visible() {
     for h in [model_panel_open(true), model_panel_tall()] {
         let (titles, edit) = panel_top_texts(&h);
         // Ya no hay título "3D" en el panel (solo el botón del dock y el de la barra): arriba,
-        // lo general con "Object" a la vista, y la pestaña del cubo debajo de la línea.
+        // lo general con "Grid" a la vista, y la pestaña del cubo debajo de la línea.
         let flyout = model_flyout(&h);
         assert!(
             !titles.iter().any(|t| flyout.contains_rect(*t)),
@@ -5447,7 +5446,7 @@ fn the_3d_panel_opens_at_the_top_with_edit_visible() {
 #[test]
 fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
     // Una ventana baja: el panel no cabe y se desplaza.
-    let mut h = model_panel_in(Vec2::new(1200.0, 500.0));
+    let mut h = model_panel_in(Vec2::new(1200.0, 380.0));
     let (_, top) = panel_top_texts(&h);
     let over = top.center();
     h.frame_with(vec![Event::PointerMoved(over)]);
@@ -5461,7 +5460,7 @@ fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
         h.frame();
     }
     let (_, scrolled) = panel_top_texts(&h);
-    // Desplazado, "Object" sale de la vista (no se dibuja) o queda más arriba.
+    // Desplazado, "Grid" sale de la vista (no se dibuja) o queda más arriba.
     assert!(
         scrolled == Rect::NOTHING || scrolled.top() < top.top() - 20.0,
         "el panel no se desplazó"
@@ -5490,11 +5489,29 @@ fn the_3d_panel_has_the_modes_and_the_grid() {
             .map(|(_, r, _)| *r)
             .unwrap_or_else(|| panic!("no text {t:?}"))
     };
-    for t in ["Object", "Vertex", "Edge", "Face", "Grid", "1/4"] {
-        text(&h, t);
+    // Como el boceto: los cuatro íconos (13×13, uno cada 17) al principio de la fila, sin
+    // texto, y "Grid" con su select (de 46) al final.
+    let modes: Vec<Rect> = ["Object", "Vertex", "Edge", "Face"]
+        .iter()
+        .map(|l| node(&h, l))
+        .collect();
+    assert!(!h.text_rects.iter().any(|(s, _, _)| s == "Vertex"));
+    for (k, r) in modes.iter().enumerate() {
+        assert_eq!(r.size(), Vec2::splat(13.0), "{r:?}");
+        assert_eq!(r.left() - modes[0].left(), 17.0 * k as f32);
+        assert_eq!(r.top(), modes[0].top());
     }
+    let grid = in_model_panel(&h, "1/4").expect("the grid select");
+    assert_eq!(grid.right(), model_row_right(&h));
+    assert_eq!(grid.width(), 46.0);
+    assert_eq!(modes[0].top() - grid.top(), 2.0);
+    let label = text_in(&h, model_flyout(&h), "Grid").expect("Grid");
+    assert!(
+        label.right() < grid.left() && label.left() > modes[3].right(),
+        "{label:?} {grid:?} {modes:?}"
+    );
     assert!(h.app.doc.editor.model_edit_on());
-    h.click(text(&h, "Vertex").center(), PointerButton::Primary);
+    h.click(modes[1].center(), PointerButton::Primary);
     assert_eq!(
         h.app.doc.editor.model_edit().selection.mode,
         cs_3d::SelectMode::Vertex
@@ -6147,7 +6164,7 @@ fn the_light_row_has_light_yaw_and_pitch_like_the_mockup() {
     assert_eq!(plus[1].right(), model_row_right(&h));
     // Outline, debajo.
     let outline = check(&h, "Outline").0;
-    assert!(outline.top() > light.bottom());
+    assert!(outline.top() >= light.bottom(), "{outline:?} {light:?}");
 }
 
 #[test]
@@ -8881,7 +8898,7 @@ fn texture_size_128_from_the_panel_and_shrinking_asks() {
 }
 
 #[test]
-fn texture_mode_hides_the_select_mode_radios() {
+fn texture_mode_disables_the_select_modes() {
     let mut h = with_the_model_panel(with_a_model_at_800());
     let has = |h: &LayoutHarness, l: &str| h.nodes.iter().any(|(n, _)| n == l);
     assert!(has(&h, "Vertex") && has(&h, "Edge"));
@@ -8897,8 +8914,9 @@ fn texture_mode_hides_the_select_mode_radios() {
         .set_cad_mode(crate::editor::CadMode::Texture);
     h.frame();
     h.frame();
+    // Se ven (la fila no se va) pero no se usan.
     for l in ["Object", "Vertex", "Edge", "Face"] {
-        assert!(!has(&h, l), "{l}");
+        assert!(has(&h, l) && h.disabled.iter().any(|d| d == l), "{l}");
     }
     h.app.doc.editor.select_model_object(Some(0));
     h.frame();

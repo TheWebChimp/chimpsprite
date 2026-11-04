@@ -1,6 +1,6 @@
 //! El panel 3D (en el dock del lienzo; en la pestaña del modelo, fijo en su lugar): el modelo 3D
-//! del artboard activo, partido en dos a lo alto por una línea grabada (a ≈ 40 %). Arriba, con su
-//! scroll, lo general del modelo: los modos de selección y la cuadrícula (en modo Model), la
+//! del artboard activo, partido en dos a lo alto por una línea grabada (a ≈ 48 %). Arriba, con su
+//! scroll, lo general del modelo: los modos de selección y la cuadrícula (usables en modo Model), la
 //! textura y su tamaño, la cámara, la luz, el contorno, Shading… (la cuadrícula, en su ventana)
 //! y Sheet settings…. Abajo, la tira de pestañas de los objetos (una por objeto, con el ícono de su tipo:
 //! un clic la elige, su marca quita el objeto y, si no caben, las flechas las recorren) con el +
@@ -39,23 +39,31 @@ const TABS_TOP: f32 = 5.0;
 /// panel.
 const PLAIN_TABS_TOP: f32 = 8.0;
 const PLAIN_HEADER_LINE: f32 = 29.0;
-/// Dónde parte la línea el panel, desde arriba de su caja: como en el boceto, 160 de sus 408
-/// filas (≈ 40 %; lo de abajo, las pestañas y el objeto, tiene más lugar).
-const SPLIT: f32 = 160.0 / 408.0;
+/// Dónde parte la línea el panel, desde arriba de su caja: como en el boceto, 197 de sus 408
+/// filas (≈ 48 %: lo general cabe entero sin scroll).
+const SPLIT: f32 = 197.0 / 408.0;
 /// Del borde de arriba de cada mitad a lo primero, y lo mismo abajo.
 const MIDDLE_AIR: f32 = 4.0;
 /// De la línea de las pestañas a lo primero del objeto (en modo Texture, los botones de las UVs):
 /// 9 filas (como el boceto), con [`MIDDLE_AIR`]. La fila de los botones es media fila más alta
 /// que ellos y los centra: el botón cae (redondeado) una fila más abajo.
 const OBJECT_TOP_AIR: f32 = 9.0 - MIDDLE_AIR - 1.0;
-/// Entre una cosa y otra del medio, y antes de cada sección.
+/// Entre una cosa y otra del medio.
 const ITEM_GAP: f32 = 4.0;
-const SECTION_GAP: f32 = 8.0;
+/// Como el boceto: la fila de los modos, 12 filas debajo de lo alto de la caja (2 más que el
+/// aire de arriba), y de ella a la fila de la textura, 42.
+const MODE_ROW_AIR: f32 = 2.0;
+const TEXTURE_AIR: f32 = 3.0;
+/// Y de la fila de la luz a la de Shading… y Sheet settings…, 37 (como entre las otras filas).
+const BUTTONS_AIR: f32 = 3.0;
 /// El + de la tira: del alto de las flechas, 4 px después de ellas (como en el boceto).
 const PLUS_W: f32 = 13.0;
 const PLUS_GAP: f32 = 4.0;
-/// El select de la cuadrícula del modo Edit.
-const GRID_W: f32 = 56.0;
+/// La fila de los modos de selección (como el boceto): sus botones, uno cada 17 px y 2 filas
+/// debajo de lo alto del select de la cuadrícula (al final de la fila, de 46 de ancho).
+const MODE_PITCH: f32 = kit::tile::SIZE.x + 4.0;
+const MODE_TOP: f32 = 2.0;
+const GRID_W: f32 = 46.0;
 /// Los lados del tamaño de la textura.
 const TEXTURE_SIZES: [u32; 6] = [16, 32, 64, 128, 256, 512];
 /// Los lados de cilindros, conos y esferas.
@@ -385,12 +393,10 @@ fn plain_tabs(
 /// cuadrícula; la textura y su tamaño; la cámara, la luz y el contorno, y Shading… y Sheet
 /// settings… (hornear).
 fn general(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
-    if editor.cad_mode() == CadMode::Model {
-        edit_rows(ui, editor, skin);
-    }
+    edit_rows(ui, editor, skin);
     let action = texture(ui, editor, skin);
     settings(ui, editor, skin);
-    ui.add_space(SECTION_GAP);
+    ui.add_space(BUTTONS_AIR);
     let window = window_buttons(ui, skin);
     action.or(window)
 }
@@ -468,6 +474,16 @@ fn row_rect(ui: &mut Ui, width: f32) -> Rect {
     Rect::from_min_size(slot.min.round(), slot.size())
 }
 
+/// Lo que agregue `add_contents` de izquierda a derecha (centrado a lo alto) en una fila de
+/// [`row_rect`]: con el mismo ritmo que las de los selects, aunque lo de adentro sea más bajo o
+/// más alto.
+fn in_row<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
+    let row = row_rect(ui, row_width(ui));
+    let layout = egui::Layout::left_to_right(egui::Align::Center);
+    let mut child = ui.new_child(UiBuilder::new().max_rect(row).layout(layout));
+    add_contents(&mut child)
+}
+
 /// Dos títulos en una fila: `left` al principio (en `ui`, como cualquier título) y `right` a la
 /// misma altura en la columna `column` (desde el principio de la fila), en su propio `Ui`.
 fn pair_labels(ui: &mut Ui, (left, right): (&str, &str), column: f32) {
@@ -500,23 +516,26 @@ fn grid_label(g: i32) -> &'static str {
     }
 }
 
-/// Los modos de selección y la cuadrícula del modo Edit (el del workspace del modelo).
+/// La pieza del ícono de un modo de selección.
+fn mode_icon(mode: cs_3d::SelectMode) -> &'static str {
+    match mode {
+        cs_3d::SelectMode::Object => "icon.mode.object",
+        cs_3d::SelectMode::Vertex => "icon.mode.vertex",
+        cs_3d::SelectMode::Edge => "icon.mode.edge",
+        cs_3d::SelectMode::Face => "icon.mode.face",
+    }
+}
+
+/// Los modos de selección y la cuadrícula del modo Edit (el del workspace del modelo), como el
+/// boceto: los íconos de los modos (con su tooltip) al principio de la fila y "Grid" con su
+/// select al final. En modo Texture se ven pero no se usan (la fila no se va, así lo demás no
+/// salta al cambiar de modo).
 fn edit_rows(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let current = editor.model_edit().selection.mode;
-    let mut picked = None;
-    ui.horizontal(|ui| {
-        for mode in cs_3d::SelectMode::ALL {
-            if radio(ui, skin, current == mode, mode.label()).clicked() {
-                picked = Some(mode);
-            }
-        }
-    });
-    if let Some(mode) = picked {
-        editor.set_select_mode(mode);
-    }
     let grid = editor.model_edit().grid;
+    let mut picked = None;
     let mut chosen = None;
-    let mut list = |ui: &mut Ui| {
+    let list = |ui: &mut Ui| {
         for g in crate::editor::GRIDS {
             if ui.add(menus::choice(g == grid, grid_label(g))).clicked() {
                 chosen = Some(g);
@@ -524,19 +543,64 @@ fn edit_rows(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
             }
         }
     };
-    ui.horizontal(|ui| {
-        ui.label("Grid");
-        match skin {
-            Some(skin) => {
-                kit::select::select(ui, skin, "model_grid", grid_label(grid), Some(GRID_W), list);
-            }
-            None => {
-                egui::ComboBox::from_id_salt("model_grid")
-                    .selected_text(grid_label(grid))
-                    .show_ui(ui, |ui| list(ui));
-            }
+    let enabled = editor.cad_mode() == CadMode::Model;
+    match skin {
+        Some(skin) => {
+            ui.add_space(MODE_ROW_AIR);
+            let row = row_rect(ui, row_width(ui));
+            let id = ui.id();
+            ui.add_enabled_ui(enabled, |ui| {
+                for (k, mode) in cs_3d::SelectMode::ALL.into_iter().enumerate() {
+                    let at = pos2(row.left() + k as f32 * MODE_PITCH, row.top() + MODE_TOP);
+                    let tile = id.with(("model_select_mode", k));
+                    let on = current == mode;
+                    let icon = mode_icon(mode);
+                    if kit::tile::tile_toggle_at(ui, skin, at, tile, icon, mode.label(), on)
+                        .clicked()
+                    {
+                        picked = Some(mode);
+                    }
+                }
+                let field = Rect::from_min_max(pos2(row.right() - GRID_W, row.top()), row.max);
+                let w = label_width(ui, "Grid");
+                let label = Rect::from_min_max(
+                    pos2(field.left() - LABEL_GAP - w, row.top()),
+                    pos2(field.left() - LABEL_GAP, row.bottom()),
+                );
+                let layout = egui::Layout::left_to_right(egui::Align::Center);
+                ui.new_child(UiBuilder::new().max_rect(label).layout(layout))
+                    .label("Grid");
+                kit::select::select_at(
+                    ui,
+                    skin,
+                    field,
+                    id.with("model_grid"),
+                    grid_label(grid),
+                    list,
+                );
+            });
         }
-    });
+        None => {
+            ui.add_enabled_ui(enabled, |ui| {
+                ui.horizontal(|ui| {
+                    for mode in cs_3d::SelectMode::ALL {
+                        if radio(ui, None, current == mode, mode.label()).clicked() {
+                            picked = Some(mode);
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Grid");
+                    egui::ComboBox::from_id_salt("model_grid")
+                        .selected_text(grid_label(grid))
+                        .show_ui(ui, list);
+                });
+            });
+        }
+    }
+    if let Some(mode) = picked {
+        editor.set_select_mode(mode);
+    }
     if let Some(g) = chosen {
         editor.set_model_grid(g);
     }
@@ -738,7 +802,7 @@ fn check(ui: &mut Ui, skin: Option<&Skin>, on: &mut bool, label: &str) {
 /// (vacío y deshabilitado sin textura).
 fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
     let current = editor.edited_model().map(|m| m.texture)?;
-    ui.add_space(SECTION_GAP);
+    ui.add_space(TEXTURE_AIR);
     let row_w = row_width(ui);
     let column = (row_w * RIGHT_COLUMN).round();
     pair_labels(ui, ("Texture", "Texture Size"), column);
@@ -896,7 +960,7 @@ fn light_row(ui: &mut Ui, skin: Option<&Skin>, light: &mut cs_core::Light3D) {
     let (was_yaw, was_pitch) = (wrap_angle(light.yaw) / 10, light.pitch / 10);
     let (mut y, mut p) = (was_yaw, was_pitch);
     let right = ui.cursor().left() + row_width(ui);
-    ui.horizontal(|ui| {
+    in_row(ui, |ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
         check(ui, skin, &mut light.enabled, "Light");
         ui.add_space(LIGHT_GAP);
@@ -968,7 +1032,7 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     ui.add_space(-AXIS_TITLE_PULL);
     light_row(ui, skin, &mut next.light);
     let mut outline = next.outline.is_some();
-    ui.horizontal(|ui| {
+    in_row(ui, |ui| {
         check(ui, skin, &mut outline, "Outline");
         if let Some(color) = &mut next.outline {
             crate::widgets::color_edit(ui, color, false, "Outline color");

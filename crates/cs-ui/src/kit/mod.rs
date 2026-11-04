@@ -14,6 +14,7 @@ pub mod slider;
 pub mod slot;
 pub mod stepper;
 pub mod tabs;
+pub mod tile;
 pub mod title_bar;
 
 pub use group::{GroupItem, button_group};

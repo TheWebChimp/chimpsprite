@@ -396,6 +396,10 @@ oculta.
   - Home: `home.icon.new` (6×7) y `home.icon.open` (10×8) en los botones; `home.icon.files`
     (13×11) y `home.icon.folders` (14×9) en los títulos de las listas.
   - `bar.info` (12×13): el ícono de info de la barra de opciones (las ayudas, en su tooltip).
+  - Modos de selección del panel 3D (11×11, en x 181..227, y 87): `icon.mode.object`,
+    `icon.mode.vertex`, `icon.mode.edge` e `icon.mode.face`. Van adentro del botón plano de
+    `kit::tile` (13×13 con su fila clara debajo; el marco lo dibuja la app con
+    `color.ruler_tick` y `color.highlight`, y prendido se llena de `color.highlight`).
   - Cursores del lienzo: `cursor.cross` (7×7, el centro cae en el puntero), `cursor.eyedropper`
     (16×16, la punta abajo a la izquierda) y `cursor.rotate` (15×15, centrado). En la cruz y el
     cuentagotas lo oscuro es tinta y lo claro su contrario: cada píxel se pinta negro o blanco
