@@ -259,3 +259,68 @@ fn nothing_runs_during_a_gesture() {
     assert!(!e.delete_model_selection());
     assert!(!e.subdivide_model_selection());
 }
+
+#[test]
+fn the_selection_does_not_change_during_an_extrude() {
+    let mut e = editing();
+    assert!(e.add_primitive(cs_3d::Primitive::Cube));
+    let top = top_face(&e);
+    faces(&mut e, &[top]);
+    assert!(e.start_extrude(GizmoView::Ortho(front()), (100.0, 100.0)));
+    let during = e.model_edit().selection.clone();
+    e.set_select_mode(SelectMode::Vertex);
+    e.set_model_selection(Selection {
+        mode: SelectMode::Face,
+        items: [Item::Face(0, 0)].into(),
+    });
+    e.select_model_object(Some(1));
+    assert_eq!(e.model_edit().selection, during);
+    assert!(matches!(e.model_edit().op, Some(EditOp::Extrude { .. })));
+    e.update_model_op((100.0, 68.0), false, false);
+    e.finish_model_op();
+    assert_eq!(e.history.done().last(), Some("Extrude"));
+    assert_eq!(face_ys(&e, top), vec![32; 4]);
+}
+
+#[test]
+fn arrows_do_not_nudge_during_an_extrude() {
+    let mut e = editing();
+    let top = top_face(&e);
+    faces(&mut e, &[top]);
+    assert!(e.start_extrude(GizmoView::Ortho(front()), (100.0, 100.0)));
+    let shown = e.edit_model_shown().cloned();
+    let steps = e.history.done_count();
+    assert!(!e.nudge_model_selection(1, 0));
+    assert_eq!(e.history.done_count(), steps);
+    assert_eq!(e.edit_model_shown().cloned(), shown);
+}
+
+#[test]
+fn undoing_a_topology_change_does_not_leave_a_stale_selection() {
+    let mut e = editing();
+    let top = top_face(&e);
+    faces(&mut e, &[top]);
+    assert!(e.subdivide_model_selection());
+    assert_eq!(e.model_edit().selection.items.len(), 4);
+    e.undo();
+    assert!(
+        e.model_edit().selection.is_empty(),
+        "{:?}",
+        e.model_edit().selection
+    );
+    e.redo();
+    assert!(e.model_edit().selection.is_empty());
+
+    let mut e = editing();
+    let verts = model(&e).objects[0].mesh.faces[top].verts.clone();
+    vertices(&mut e, &verts);
+    assert!(e.merge_model_selection());
+    assert_eq!(e.model_edit().selection.items.len(), 1);
+    e.undo();
+    assert!(e.model_edit().selection.is_empty());
+    // Mover (sin cambiar la topología) y deshacer deja la selección.
+    vertices(&mut e, &[0, 1]);
+    e.nudge_model_selection(1, 0);
+    e.undo();
+    assert_eq!(e.model_edit().selection.items.len(), 2);
+}

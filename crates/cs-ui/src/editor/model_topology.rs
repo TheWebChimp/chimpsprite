@@ -147,7 +147,11 @@ impl Editor {
             center: cs_3d::center(b),
             normal,
         });
-        self.set_model_selection(sel);
+        // (`set_model_selection` ya no cambia nada a media extrusión.)
+        if let Some(o) = sel.first_object() {
+            self.model_object = Some(o);
+        }
+        self.model_edit.selection = sel;
         // Lo extruido se ve desde ya, aunque el puntero no se haya movido.
         self.model_edit.preview = Some(model.clone());
         self.model_edit.extrusion = Some(Extrusion { model, before });

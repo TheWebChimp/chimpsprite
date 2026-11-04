@@ -9213,3 +9213,22 @@ fn delete_and_backspace_in_a_panel_field_do_not_delete_geometry() {
     assert_eq!(h.app.doc.editor.history.done_count(), steps);
     assert!(!h.app.doc.editor.model_edit().selection.is_empty());
 }
+
+#[test]
+fn number_keys_and_arrows_do_nothing_during_an_extrude() {
+    let (mut h, top) = with_the_top_face_chosen();
+    let steps = h.app.doc.editor.history.done_count();
+    press(&mut h, egui::Key::E, egui::Modifiers::COMMAND);
+    h.frame();
+    let sel = h.app.doc.editor.model_edit().selection.clone();
+    tap_key(&mut h, egui::Key::Num2);
+    tap_key(&mut h, egui::Key::ArrowRight);
+    assert_eq!(h.app.doc.editor.model_edit().selection, sel);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    let to = front_screen(&h, [0.0, 20.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.click(to, PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert_eq!(h.app.doc.editor.history.done().last(), Some("Extrude"));
+    assert_eq!(top_ys(&h, top), vec![20; 4], "the cap moved");
+}

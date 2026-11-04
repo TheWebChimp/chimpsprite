@@ -1941,6 +1941,8 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
                     items: Default::default(),
                 });
             }
+            // Las flechas no mueven nada durante un gesto.
+            Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown if busy => {}
             Key::ArrowLeft => {
                 editor.nudge_model_selection(-1, 0);
             }

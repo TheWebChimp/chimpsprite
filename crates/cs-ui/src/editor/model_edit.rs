@@ -353,6 +353,10 @@ pub struct ModelEdit {
     /// Durante un [`EditOp::Extrude`]: el modelo ya extruido (sin mover) y la selección de
     /// antes (la que vuelve al cancelar).
     pub extrusion: Option<super::model_topology::Extrusion>,
+    /// Cuántos vértices y caras tenía cada objeto cuando se eligió la selección (ver
+    /// `sync_model_edit`): si un deshacer o rehacer cambia la topología de un objeto, sus índices
+    /// ya no son los mismos vértices, aristas o caras.
+    pub made_on: Vec<(usize, usize)>,
 }
 
 impl Default for ModelEdit {
@@ -376,8 +380,17 @@ impl Default for ModelEdit {
             face_mask: None,
             gizmo: Gizmo::default(),
             extrusion: None,
+            made_on: Vec::new(),
         }
     }
+}
+
+/// Cuántos vértices y caras tiene cada objeto de `m`.
+pub(crate) fn topology_counts(m: &Model3D) -> Vec<(usize, usize)> {
+    m.objects
+        .iter()
+        .map(|o| (o.mesh.vertices.len(), o.mesh.faces.len()))
+        .collect()
 }
 
 fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
@@ -451,7 +464,16 @@ impl Editor {
         self.model_edit.zoom = (0.8 * side / extent).clamp(ZOOM_MIN, ZOOM_MAX);
     }
 
+    /// Si hay un Extrude en curso: la selección es la de lo extruido (el modelo de la vista
+    /// previa, no el del documento) y no cambia hasta confirmar o cancelar.
+    pub(crate) fn extruding(&self) -> bool {
+        matches!(self.model_edit.op, Some(EditOp::Extrude { .. }))
+    }
+
     pub fn set_select_mode(&mut self, mode: SelectMode) {
+        if self.extruding() {
+            return;
+        }
         // En modo Texture la selección es siempre de caras.
         if self.model_edit.mode == CadMode::Texture && mode != SelectMode::Face {
             return;
@@ -473,6 +495,10 @@ impl Editor {
 
     /// La selección nueva; el objeto del panel pasa a ser el primero de ella (si hay).
     pub fn set_model_selection(&mut self, sel: Selection) {
+        if self.extruding() {
+            return;
+        }
+        self.model_edit.made_on = self.edited_model().map(topology_counts).unwrap_or_default();
         if let Some(o) = sel.first_object() {
             self.model_object = Some(o);
         }
@@ -496,8 +522,7 @@ impl Editor {
 
     pub fn request_model_key_op(&mut self, op: KeyOp) {
         // Un Extrude en curso no se cambia por otro gesto: lo extruido se perdería.
-        let extruding = matches!(self.model_edit.op, Some(EditOp::Extrude { .. }));
-        if self.model_edit_on() && !self.model_edit.selection.is_empty() && !extruding {
+        if self.model_edit_on() && !self.model_edit.selection.is_empty() && !self.extruding() {
             self.model_edit.key_request = Some(op);
         }
     }
@@ -760,6 +785,10 @@ impl Editor {
     /// Una flecha: lo elegido un paso de cuadrícula en la última vista usada (`dx` a la derecha,
     /// `dy` hacia abajo en pantalla). Un paso de undo.
     pub fn nudge_model_selection(&mut self, dx: i32, dy: i32) -> bool {
+        // No durante un gesto (un Extrude moverá lo extruido con el puntero).
+        if self.model_edit.op.is_some() {
+            return false;
+        }
         let Some(m) = self.edited_model() else {
             return false;
         };
@@ -809,7 +838,22 @@ impl Editor {
             .and_then(|id| self.document.artboard(id))
             .and_then(|a| a.model.as_ref());
         match model {
-            Some(m) => edit.selection.retain_valid(m),
+            Some(m) => {
+                // Un objeto con otra cantidad de vértices o caras que al elegir (deshacer o
+                // rehacer un Extrude, Subdivide, Merge o Delete): sus índices ya son otros, la
+                // selección se vacía.
+                let now = topology_counts(m);
+                let changed = edit.selection.mode != SelectMode::Object
+                    && edit.selection.items.iter().any(|it| {
+                        let o = it.object();
+                        edit.made_on.get(o).is_some_and(|c| now.get(o) != Some(c))
+                    });
+                if changed {
+                    edit.selection.items.clear();
+                }
+                edit.made_on = now;
+                edit.selection.retain_valid(m);
+            }
             None => edit.selection.items.clear(),
         }
         edit.op = None;
