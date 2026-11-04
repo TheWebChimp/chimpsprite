@@ -133,7 +133,7 @@ pub fn new_model_artboard(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use cs_core::{ColorMode, PixelValue, Sprite};
+    use cs_core::{ColorMode, PixelValue, Rgba, Sprite};
 
     #[test]
     fn a_new_model_brings_its_texture_and_undoes() {
@@ -173,6 +173,70 @@ mod tests {
 
         undo.apply(&mut doc).unwrap();
         assert_eq!(doc, before);
+    }
+
+    /// Los pixeles RGBA de la plantilla (fila por fila).
+    fn template_pixels() -> Vec<Rgba> {
+        let tex = texture_template(&Palette::db32());
+        let img = &tex.images[&tex.cels.values().next().unwrap().image];
+        let (w, h) = TEMPLATE_SIZE;
+        (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| match img.get(x, y) {
+                Some(PixelValue::Rgba(c)) => c,
+                _ => Rgba::TRANSPARENT,
+            })
+            .collect()
+    }
+
+    /// Render iso de 64×64 de `objects` con la plantilla de textura.
+    fn render_iso(objects: Vec<Object3D>) -> Vec<Rgba> {
+        let model = Model3D {
+            objects,
+            camera: cs_core::CameraPreset::Iso.camera(5 * cs_core::FIXED, Default::default()),
+            ..Default::default()
+        };
+        let pixels = template_pixels();
+        let palette = Palette::db32();
+        cs_3d::render_model(&cs_3d::RenderInput {
+            model: &model,
+            size: (64, 64),
+            texture: Some(cs_3d::Texture {
+                width: TEMPLATE_SIZE.0,
+                height: TEMPLATE_SIZE.1,
+                pixels: &pixels,
+            }),
+            palette: palette.colors(),
+            camera: None,
+            extra_yaw: 0,
+            frame: None,
+        })
+    }
+
+    fn object(p: Primitive, transform: Transform3D) -> Object3D {
+        Object3D {
+            name: p.name().into(),
+            mesh: primitive_mesh(&p),
+            transform,
+            double_sided: false,
+            kind: Some(p.kind()),
+        }
+    }
+
+    #[test]
+    fn every_primitive_paints_with_the_template() {
+        for p in [
+            Primitive::Cube,
+            Primitive::Plane,
+            Primitive::Cylinder { sides: 8 },
+            Primitive::Cone { sides: 4 },
+            Primitive::Cone { sides: 8 },
+            Primitive::Sphere { sides: 8, rings: 4 },
+        ] {
+            let img = render_iso(vec![object(p, Transform3D::default())]);
+            let painted = img.iter().filter(|c| c.a > 0).count();
+            assert!(painted > 50, "{p:?}: {painted} pixeles pintados");
+        }
     }
 
     #[test]

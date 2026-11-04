@@ -287,6 +287,18 @@ fn draw_chimp(editor: &mut Editor) {
 
 /// Lo que piden las variables de desarrollo (`CHIMPSPRITE_DEMO_*`) al abrir la app: diálogos,
 /// herramientas, rangos y paneles listos para las capturas.
+/// El techo de la casita del demo: un cono de 4 lados girado 45° (lados paralelos a los del
+/// cubo) y aplastado en Y a 5/8, con la base sobre la tapa del cubo: el centro sube 1 + 5/8
+/// unidades (con el centro en y = 1 la base quedaba en y = 0.4, enterrada en el cubo, y en Persp
+/// solo asomaba la punta).
+fn house_roof() -> cs_core::Transform3D {
+    let mut t = cs_core::Transform3D::default();
+    t.scale.y = 625;
+    t.position.y = cs_core::FIXED + cs_core::FIXED * t.scale.y / 1000;
+    t.rotation.y = 450;
+    t
+}
+
 pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     use crate::*;
     // Desarrollo: la pestaña UI Catalog a la vista, para capturas.
@@ -679,9 +691,7 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             && let Some(i) = e.selected_object()
             && let Some(mut roof) = e.model().and_then(|m| m.objects.get(i).cloned())
         {
-            roof.transform.position.y = cs_core::FIXED;
-            roof.transform.rotation.y = 450;
-            roof.transform.scale.y = 600;
+            roof.transform = house_roof();
             e.set_object(i, roof);
         }
         // Ventana y puerta en la cara de enfrente del cubo (la celda (0,0)-(16,16) de la textura).
@@ -778,5 +788,76 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     }
     if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
         app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cs_3d::{Primitive, RenderInput, TEMPLATE_SIZE, Texture, primitive_mesh, render_model};
+    use cs_core::{CameraPreset, FIXED, Model3D, Object3D, Palette, Rgba, Transform3D};
+
+    use super::*;
+
+    /// Render iso de 64×64 de `objects` con la plantilla de textura de un modelo nuevo.
+    fn render_iso(objects: Vec<Object3D>) -> Vec<Rgba> {
+        let palette = Palette::db32();
+        let tex = cs_commands::model::texture_template(&palette);
+        let img = &tex.images[&tex.cels.values().next().unwrap().image];
+        let (w, h) = TEMPLATE_SIZE;
+        let pixels: Vec<Rgba> = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| match img.get(x, y) {
+                Some(PixelValue::Rgba(c)) => c,
+                _ => Rgba::TRANSPARENT,
+            })
+            .collect();
+        let model = Model3D {
+            objects,
+            camera: CameraPreset::Iso.camera(5 * FIXED, Default::default()),
+            ..Default::default()
+        };
+        render_model(&RenderInput {
+            model: &model,
+            size: (64, 64),
+            texture: Some(Texture {
+                width: w,
+                height: h,
+                pixels: &pixels,
+            }),
+            palette: palette.colors(),
+            camera: None,
+            extra_yaw: 0,
+            frame: None,
+        })
+    }
+
+    fn object(p: Primitive, transform: Transform3D) -> Object3D {
+        Object3D {
+            name: p.name().into(),
+            mesh: primitive_mesh(&p),
+            transform,
+            double_sided: false,
+            kind: Some(p.kind()),
+        }
+    }
+
+    #[test]
+    fn el_techo_de_la_casita_sale_arriba_del_cubo() {
+        let cube = object(Primitive::Cube, Transform3D::default());
+        let roof = object(Primitive::Cone { sides: 4 }, house_roof());
+        let alone = render_iso(vec![cube.clone()]);
+        let house = render_iso(vec![cube, roof]);
+        // El techo pinta pixeles arriba de la silueta del cubo solo.
+        let extra = (0..alone.len())
+            .filter(|&i| alone[i].a == 0 && house[i].a > 0)
+            .count();
+        assert!(extra > 10, "el techo agrega {extra} pixeles");
+    }
+
+    #[test]
+    fn la_base_del_techo_queda_sobre_la_tapa_del_cubo() {
+        let t = house_roof();
+        // La base del cono (y = −1) escalada y trasladada cae en y = +1, la tapa del cubo.
+        assert_eq!(t.position.y * 1000 - FIXED * t.scale.y, FIXED * 1000);
     }
 }
