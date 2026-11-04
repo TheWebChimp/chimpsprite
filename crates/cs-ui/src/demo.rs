@@ -744,6 +744,26 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                 items: [cs_3d::Item::Vertex(0, 7)].into(),
             });
         }
+        // Con CHIMPSPRITE_DEMO_EXTRUDE: la cara de arriba del cubo extruida una unidad (en modo
+        // Face, con la cara extruida elegida).
+        if dev_var("CHIMPSPRITE_DEMO_EXTRUDE").is_some() {
+            let top = e.model().and_then(|m| {
+                let mesh = &m.objects.first()?.mesh;
+                mesh.faces.iter().position(|f| {
+                    f.verts
+                        .iter()
+                        .all(|&v| mesh.vertices.get(v as usize).is_some_and(|p| p.y > 0))
+                })
+            });
+            if let Some(f) = top {
+                e.set_select_mode(cs_3d::SelectMode::Face);
+                e.set_model_selection(cs_3d::Selection {
+                    mode: cs_3d::SelectMode::Face,
+                    items: [cs_3d::Item::Face(0, f)].into(),
+                });
+                e.extrude_moved([0.0, cs_core::FIXED as f32, 0.0]);
+            }
+        }
         // Con CHIMPSPRITE_DEMO_GIZMO=move|rotate|scale: el cubo elegido en modo Object con ese
         // gizmo.
         if let Some(name) = dev_var("CHIMPSPRITE_DEMO_GIZMO") {

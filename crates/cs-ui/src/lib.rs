@@ -1842,6 +1842,23 @@ impl eframe::App for ChimpApp {
     }
 }
 
+/// En el modo Model del workspace de un modelo, Ctrl+E extruye y Ctrl+D divide las caras
+/// elegidas: ganan sobre Export y Deselect (que aquí no aplica), aunque no haya nada que extruir
+/// o dividir. Devuelve si la usó (si no, va al registro de atajos).
+pub(crate) fn cad_command_key(editor: &mut Editor, key: Key) -> bool {
+    if !editor.pixel_actions_blocked() || editor.cad_mode() != editor::CadMode::Model {
+        return false;
+    }
+    match key {
+        Key::E => editor.request_extrude(),
+        Key::D => {
+            editor.subdivide_model_selection();
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// Las teclas sin Ctrl ni Alt que no se reasignan porque dependen de lo que pasa: Enter confirma
 /// lo que está a medias o flotando, Esc cancela, las flechas mueven lo seleccionado, Delete
 /// borra y, en modo Tiles, X e Y voltean el tile del pincel. Devuelve si la usó (si no, va al
@@ -1857,8 +1874,10 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
     // arrancan un gesto que sigue al puntero, Enter lo confirma, Esc lo cancela (o vacía la
     // selección) y las flechas mueven un paso de cuadrícula (no cambian de frame ni de capa).
     // Con Shift, G y S siguen con sus otros atajos. W, E y R eligen el gizmo (Move, Rotate,
-    // Scale; la misma otra vez lo apaga). Home encuadra el modelo. En modo Texture las teclas son
-    // las de siempre, sobre la textura (Home, sobre el render de arriba, lo ve el lienzo).
+    // Scale; la misma otra vez lo apaga). Home encuadra el modelo. En modo Model, M une lo elegido
+    // y Supr / Retroceso lo borran (Ctrl+E y Ctrl+D, en `cad_command_key`). En modo Texture las
+    // teclas son las de siempre, sobre la textura (Home, sobre el render de arriba, lo ve el
+    // lienzo).
     if editor.pixel_actions_blocked() {
         use cs_3d::SelectMode;
         let mode = match key {
@@ -1888,6 +1907,14 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
             Key::W if !shift => editor.toggle_gizmo(editor::Gizmo::Move),
             Key::E if !shift => editor.toggle_gizmo(editor::Gizmo::Rotate),
             Key::R if !shift => editor.toggle_gizmo(editor::Gizmo::Scale),
+            // Unir y borrar no cortan un gesto en curso.
+            Key::M | Key::Delete | Key::Backspace if model_mode && busy => {}
+            Key::M if !shift && model_mode => {
+                editor.merge_model_selection();
+            }
+            Key::Delete | Key::Backspace if model_mode => {
+                editor.delete_model_selection();
+            }
             Key::Enter if busy => editor.finish_model_op(),
             // Home encuadra todo el modelo (no durante un gesto).
             Key::Home if !busy => {

@@ -51,6 +51,8 @@ impl Gizmo {
 pub enum KeyOp {
     Grab,
     Scale,
+    /// Ctrl+E (o el botón Extrude): extruir y mover lo extruido (ver [`EditOp::Extrude`]).
+    Extrude,
 }
 
 /// Un gesto en curso en una vista ortográfica (puntos de pantalla).
@@ -97,6 +99,16 @@ pub enum EditOp {
         center: P3,
         last: (f32, f32),
         turned: f32,
+    },
+    /// Extruir: las caras extruidas (las de [`ModelEdit::extrusion`]) siguen al puntero sin
+    /// botón desde `from`, como G; en la perspectiva, a lo largo de `normal` (la normal promedio
+    /// del mundo, unitaria; si es 0, en el plano de la vista), y en las orto, en su plano.
+    /// `center` es el centro de su caja (lo que cae en la cuadrícula). Clic o Enter confirma.
+    Extrude {
+        view: GizmoView,
+        from: (f32, f32),
+        center: P3,
+        normal: P3,
     },
     /// Desplazar las vistas (botón derecho o central).
     Pan {
@@ -236,6 +248,42 @@ impl GizmoView {
         }
         d
     }
+
+    /// Cuánto se mueve lo extruido (ver [`EditOp::Extrude`]) con el puntero de `from` a `to`: en
+    /// las orto, en el plano de la vista con `center` en la cuadrícula; en la perspectiva, a lo
+    /// largo de `normal` en pasos de la cuadrícula (`None` con Ctrl: de 1/16).
+    pub(crate) fn extrude_delta(
+        &self,
+        center: P3,
+        normal: P3,
+        from: (f32, f32),
+        to: (f32, f32),
+        grid: Option<i32>,
+    ) -> P3 {
+        let pm = match self {
+            GizmoView::Ortho(map) => {
+                let d = map.drag_delta((to.0 - from.0, to.1 - from.1));
+                return cs_3d::snapped_delta(map.view, center, d, grid);
+            }
+            GizmoView::Persp(pm) => pm,
+        };
+        if dot3(normal, normal) < 1e-6 {
+            return self.move_delta(center, None, from, to, grid);
+        }
+        // El punto de la recta de la normal más cerca del rayo del puntero (al empezar y ahora).
+        let along = |s: (f32, f32)| {
+            let (o, r) = pm.ray(s);
+            let w = sub3(center, o);
+            let (b, c) = (dot3(normal, r), dot3(r, r));
+            let den = c - b * b;
+            (den.abs() > 1e-6 * c).then(|| (b * dot3(r, w) - c * dot3(normal, w)) / den)
+        };
+        let (Some(a), Some(b)) = (along(from), along(to)) else {
+            return [0.0; 3];
+        };
+        let t = cs_3d::snap(b - a, grid.unwrap_or(1));
+        normal.map(|n| n * t)
+    }
 }
 
 /// Los dos modos de la pestaña de un modelo: las 4 vistas (*Model*) o el modelo arriba y su
@@ -302,6 +350,9 @@ pub struct ModelEdit {
     pub(crate) face_mask: Option<super::texture_mode::FaceMask>,
     /// El gizmo de las vistas en modo *Model* (se queda al cambiar de modelo).
     pub gizmo: Gizmo,
+    /// Durante un [`EditOp::Extrude`]: el modelo ya extruido (sin mover) y la selección de
+    /// antes (la que vuelve al cancelar).
+    pub extrusion: Option<super::model_topology::Extrusion>,
 }
 
 impl Default for ModelEdit {
@@ -324,6 +375,7 @@ impl Default for ModelEdit {
             focus_uvs: false,
             face_mask: None,
             gizmo: Gizmo::default(),
+            extrusion: None,
         }
     }
 }
@@ -478,6 +530,10 @@ impl Editor {
         | EditOp::Gizmo {
             view: GizmoView::Ortho(map),
             ..
+        }
+        | EditOp::Extrude {
+            view: GizmoView::Ortho(map),
+            ..
         } = op
         {
             self.model_edit.last_view = map.view;
@@ -600,6 +656,18 @@ impl Editor {
                 pointer,
                 grid,
             ),
+            (
+                EditOp::Extrude {
+                    view,
+                    from,
+                    center,
+                    normal,
+                },
+                _,
+            ) => self.model_edit.extrusion.as_ref().map(|x| {
+                let d = view.extrude_delta(center, normal, from, pointer, grid);
+                cs_3d::translate(&x.model, sel, d)
+            }),
             (EditOp::Box { map, from, add, .. }, _) => {
                 self.model_edit.op = Some(EditOp::Box {
                     map,
@@ -643,6 +711,10 @@ impl Editor {
             }
             return;
         }
+        if let EditOp::Extrude { .. } = op {
+            self.finish_extrude();
+            return;
+        }
         // Un clic (sin arrastre) en algo ya elegido lo deja como la única selección.
         let click = self.model_edit.click_item.take();
         if let (EditOp::Move { .. }, Some(item), None) = (op, click, &self.model_edit.preview) {
@@ -676,6 +748,10 @@ impl Editor {
         self.model_edit.click_item = None;
         let had = self.model_edit.op.take().is_some();
         self.model_edit.preview = None;
+        // Un Extrude cancelado no deja nada: vuelve la selección de antes.
+        if let Some(x) = self.model_edit.extrusion.take() {
+            self.model_edit.selection = x.before;
+        }
         had
     }
 
@@ -723,6 +799,9 @@ impl Editor {
     /// existe.
     pub(crate) fn sync_model_edit(&mut self) {
         let edit = &mut self.model_edit;
+        if let Some(x) = edit.extrusion.take() {
+            edit.selection = x.before;
+        }
         let model = edit
             .artboard
             .and_then(|id| self.document.artboard(id))
