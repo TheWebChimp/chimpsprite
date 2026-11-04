@@ -4734,10 +4734,11 @@ fn without_an_object(mut h: LayoutHarness) -> LayoutHarness {
     h
 }
 
-/// La fila de la línea que parte el panel 3D: a la mitad del alto de su caja (en puntos enteros).
+/// La fila de la línea que parte el panel 3D: como en el boceto, a 160/408 (≈ 40 %) del alto de
+/// su caja (en puntos enteros).
 fn model_split(h: &LayoutHarness) -> f32 {
     let flyout = model_flyout(h);
-    flyout.top() + (flyout.height() / 2.0).floor()
+    flyout.top() + (flyout.height() * 160.0 / 408.0).floor()
 }
 
 /// La mitad de arriba del panel 3D (hasta la línea) y la de abajo (desde la línea).
@@ -4764,7 +4765,7 @@ const GENERAL_TEXTS: [&str; 8] = [
 const OBJECT_TEXTS: [&str; 4] = ["Position", "Rotation", "Scale", "Double sided"];
 
 #[test]
-fn the_3d_panel_is_split_at_half_its_height_by_an_etched_line() {
+fn the_3d_panel_is_split_at_40_percent_of_its_height_by_an_etched_line() {
     let h = model_panel_tall();
     let flyout = model_flyout(&h);
     let split = model_split(&h);
@@ -4780,7 +4781,7 @@ fn the_3d_panel_is_split_at_half_its_height_by_an_etched_line() {
     let cube = node(&h, "Cube");
     assert!(cube.top() > split + 1.0, "{cube:?} under {split}");
     assert!(cube.top() - split <= 8.0, "{cube:?} right under {split}");
-    // Otra ventana, otra mitad.
+    // Otra ventana, otra línea.
     let h = model_panel_in(Vec2::new(1200.0, 640.0));
     let split = model_split(&h);
     let cube = node(&h, "Cube");
@@ -4888,8 +4889,8 @@ fn without_an_object_only_the_strip_shows_below_the_line() {
 
 #[test]
 fn each_half_of_the_3d_panel_scrolls_on_its_own() {
-    // Una ventana baja: ni lo general ni lo del objeto caben en su mitad.
-    let mut h = model_panel_in(Vec2::new(1200.0, 400.0));
+    // Una ventana baja: ni lo general ni lo del objeto caben en su parte.
+    let mut h = model_panel_in(Vec2::new(1200.0, 360.0));
     let (top, bottom) = model_halves(&h);
     let tracks = h.drawn("scroll.track.v");
     assert!(tracks.iter().any(|r| top.contains_rect(*r)), "{tracks:?}");

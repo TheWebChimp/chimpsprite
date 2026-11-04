@@ -89,8 +89,9 @@ impl CanvasView {
         self.slice_menu = false;
     }
 
-    /// La entrada del render de arriba: la rueda (con o sin Ctrl) acerca o aleja la cámara; los botones eligen
-    /// caras, orbitan o mueven el objetivo (`texture_press_at`); el arrastre sigue al puntero.
+    /// La entrada del render de arriba: la rueda (con o sin Ctrl) acerca o aleja la cámara; los
+    /// botones eligen caras, orbitan o mueven el objetivo (`texture_press_at`); el arrastre sigue
+    /// al puntero.
     fn texture_top_input(
         &mut self,
         ui: &egui::Ui,

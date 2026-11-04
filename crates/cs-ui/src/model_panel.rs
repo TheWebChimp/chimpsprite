@@ -1,5 +1,5 @@
 //! El panel 3D (en el dock del lienzo; en la pestaña del modelo, fijo en su lugar): el modelo 3D
-//! del artboard activo, partido en dos a lo alto por una línea grabada a la mitad. Arriba, con su
+//! del artboard activo, partido en dos a lo alto por una línea grabada (a ≈ 40 %). Arriba, con su
 //! scroll, lo general del modelo: los modos de selección y la cuadrícula (en modo Model), la
 //! textura y su tamaño, la cámara, la luz (con la cuadrícula Shading), el contorno y Sheet
 //! settings…. Abajo, la tira de pestañas de los objetos (una por objeto, con el ícono de su tipo:
@@ -38,6 +38,9 @@ const TABS_TOP: f32 = 5.0;
 /// panel.
 const PLAIN_TABS_TOP: f32 = 8.0;
 const PLAIN_HEADER_LINE: f32 = 29.0;
+/// Dónde parte la línea el panel, desde arriba de su caja: como en el boceto, 160 de sus 408
+/// filas (≈ 40 %; lo de abajo, las pestañas y el objeto, tiene más lugar).
+const SPLIT: f32 = 160.0 / 408.0;
 /// Del borde de arriba de cada mitad a lo primero, y lo mismo abajo.
 const MIDDLE_AIR: f32 = 4.0;
 /// De la línea de las pestañas a lo primero del objeto (en modo Texture, los botones de las UVs):
@@ -138,8 +141,9 @@ pub enum ModelAction {
 }
 
 /// El panel en `ui` (lo de adentro del marco, de la columna entera: ver
-/// [`crate::dock::flyout_fixed`] y [`crate::dock::fixed_panel`]): arriba lo general, la línea a la
-/// mitad y abajo la tira de pestañas y lo del objeto elegido, cada mitad con su scroll.
+/// [`crate::dock::flyout_fixed`] y [`crate::dock::fixed_panel`]): arriba lo general, la línea a
+/// [`SPLIT`] del alto y abajo la tira de pestañas y lo del objeto elegido, cada parte con su
+/// scroll.
 pub fn show(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -192,10 +196,10 @@ pub fn show(
     action
 }
 
-/// La fila de la línea que parte el panel: la mitad del alto de su caja `outer`, en puntos
+/// La fila de la línea que parte el panel: a [`SPLIT`] del alto de su caja `outer`, en puntos
 /// enteros.
 fn split_row(outer: Rect) -> f32 {
-    outer.top() + (outer.height() / 2.0).floor()
+    outer.top() + (outer.height() * SPLIT).floor()
 }
 
 /// La línea que parte el panel en la fila `top`: grabada, como la de la tira de pestañas, de lado

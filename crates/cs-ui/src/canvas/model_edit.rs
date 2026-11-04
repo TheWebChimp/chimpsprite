@@ -521,7 +521,8 @@ impl CanvasView {
         }
     }
 
-    /// La rueda (con o sin Ctrl) sobre una vista orto: zoom en las tres. `true` si fue de una vista orto.
+    /// La rueda (con o sin Ctrl) sobre una vista orto: zoom en las tres. `true` si fue de una
+    /// vista orto.
     pub(super) fn model_edit_wheel(&mut self, editor: &mut Editor, p: Pos2, steps: i32) -> bool {
         let Some(view) = self.quadrant_at(p).and_then(quadrant_view) else {
             return false;
