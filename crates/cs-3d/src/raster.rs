@@ -482,6 +482,9 @@ struct Raster {
 struct FaceCtx<'a> {
     /// `(objeto, cara)`.
     id: (usize, usize),
+    /// En un cuadrilátero que no es paralelogramo: las UVs de cada pixel, bilineales sobre la
+    /// cara entera (si no, por triángulo).
+    quad: Option<(QuadMap, &'a View)>,
     steps: u8,
     texture: Option<&'a Texture<'a>>,
     palette: &'a [Rgba],
@@ -528,9 +531,17 @@ impl Raster {
                 if depth <= self.depth[i] {
                     continue;
                 }
-                let iw = l0 * a.iw + l1 * b.iw + l2 * c.iw;
-                let u = (l0 * a.uw + l1 * b.uw + l2 * c.uw) / iw;
-                let v = (l0 * a.vw + l1 * b.vw + l2 * c.vw) / iw;
+                let quad = ctx
+                    .quad
+                    .as_ref()
+                    .and_then(|(q, view)| q.uv_at(view, fx, fy));
+                let (u, v) = quad.unwrap_or_else(|| {
+                    let iw = l0 * a.iw + l1 * b.iw + l2 * c.iw;
+                    (
+                        (l0 * a.uw + l1 * b.uw + l2 * c.uw) / iw,
+                        (l0 * a.vw + l1 * b.vw + l2 * c.vw) / iw,
+                    )
+                });
                 let texel = sample(ctx.texture, u, v);
                 if texel.a == 0 {
                     continue;
@@ -544,6 +555,138 @@ impl Raster {
             }
         }
     }
+}
+
+/// Las UVs bilineales de un cuadrilátero: cada pixel cae en un punto de la cara (el rayo de la
+/// cámara contra su plano), que da sus parámetros `(s, t)` sobre las cuatro esquinas (la
+/// bilineal inversa) y con ellos la mezcla de las cuatro UVs. Partida en dos triángulos, una cara
+/// que no es paralelogramo (un trapecio) dobla la textura en la diagonal; así un diseño simétrico
+/// se ve simétrico.
+#[derive(Clone, Copy)]
+struct QuadMap {
+    /// Una esquina, la normal y dos ejes del plano de la cara (en el espacio de vista).
+    origin: V3,
+    normal: V3,
+    axes: [V3; 2],
+    /// Las esquinas en esos ejes y sus UVs.
+    corners: [(f32, f32); 4],
+    uvs: [(f32, f32); 4],
+}
+
+impl QuadMap {
+    /// Para una cara de cuatro vértices (`pts`, en el mundo) que no sea un paralelogramo, ni en
+    /// el espacio ni en sus UVs (en uno, la bilineal es la misma que por triángulos).
+    fn new(pts: &[V3], uvs: &[(i32, i32)], view: &View) -> Option<QuadMap> {
+        if pts.len() != 4 || uvs.len() != 4 {
+            return None;
+        }
+        let q: Vec<V3> = pts.iter().map(|&p| view.to_view(p)).collect();
+        let uvs: [(f32, f32); 4] = std::array::from_fn(|i| (uvs[i].0 as f32, uvs[i].1 as f32));
+        let n = newell(&q);
+        let len = dot(n, n).sqrt();
+        let e = sub(q[1], q[0]);
+        let el = dot(e, e).sqrt();
+        if len <= 0.0 || el <= 0.0 {
+            return None;
+        }
+        let normal = [n[0] / len, n[1] / len, n[2] / len];
+        let e1 = [e[0] / el, e[1] / el, e[2] / el];
+        let e2 = cross(normal, e1);
+        let corners: [(f32, f32); 4] = std::array::from_fn(|i| {
+            let d = sub(q[i], q[0]);
+            (dot(d, e1), dot(d, e2))
+        });
+        // a − b + c − d: cero en un paralelogramo.
+        let skew = |p: &[(f32, f32); 4]| {
+            let g = (
+                p[0].0 - p[1].0 + p[2].0 - p[3].0,
+                p[0].1 - p[1].1 + p[2].1 - p[3].1,
+            );
+            let size = (p[2].0 - p[0].0).abs() + (p[2].1 - p[0].1).abs() + 1e-6;
+            (g.0.abs() + g.1.abs()) / size
+        };
+        if skew(&corners) < 1e-3 && skew(&uvs) < 1e-3 {
+            return None;
+        }
+        Some(QuadMap {
+            origin: q[0],
+            normal,
+            axes: [e1, e2],
+            corners,
+            uvs,
+        })
+    }
+
+    /// Las UVs en el punto de pantalla `(fx, fy)`, o `None` si el rayo no corta la cara (de
+    /// canto) o no se encuentran sus parámetros.
+    fn uv_at(&self, view: &View, fx: f64, fy: f64) -> Option<(f32, f32)> {
+        let sx = fx as f32 - view.center.0;
+        let sy = view.center.1 - fy as f32;
+        let (o, d) = match view.focal {
+            Some(f) => ([0.0; 3], [sx / f, sy / f, 1.0]),
+            None => ([sx / view.scale, sy / view.scale, 0.0], [0.0, 0.0, 1.0]),
+        };
+        let den = dot(d, self.normal);
+        if den.abs() < 1e-6 {
+            return None;
+        }
+        let k = dot(sub(self.origin, o), self.normal) / den;
+        let hit = [o[0] + d[0] * k, o[1] + d[1] * k, o[2] + d[2] * k];
+        let h = sub(hit, self.origin);
+        let p = (dot(h, self.axes[0]), dot(h, self.axes[1]));
+        let (s, t) = inverse_bilinear(p, &self.corners)?;
+        let [a, b, c, d] = self.uvs;
+        let mix = |a: f32, b: f32, c: f32, d: f32| {
+            (1.0 - s) * (1.0 - t) * a + s * (1.0 - t) * b + s * t * c + (1.0 - s) * t * d
+        };
+        Some((mix(a.0, b.0, c.0, d.0), mix(a.1, b.1, c.1, d.1)))
+    }
+}
+
+/// Los parámetros `(s, t)` de `p` en el cuadrilátero `q` (en orden alrededor):
+/// `p = q0 + s·(q1 − q0) + t·(q3 − q0) + s·t·(q0 − q1 + q2 − q3)`, recortados a `[0, 1]`.
+fn inverse_bilinear(p: (f32, f32), q: &[(f32, f32); 4]) -> Option<(f32, f32)> {
+    let cross2 = |a: (f32, f32), b: (f32, f32)| a.0 * b.1 - a.1 * b.0;
+    let e = (q[1].0 - q[0].0, q[1].1 - q[0].1);
+    let f = (q[3].0 - q[0].0, q[3].1 - q[0].1);
+    let g = (
+        q[0].0 - q[1].0 + q[2].0 - q[3].0,
+        q[0].1 - q[1].1 + q[2].1 - q[3].1,
+    );
+    let h = (p.0 - q[0].0, p.1 - q[0].1);
+    let k2 = cross2(g, f);
+    let k1 = cross2(e, f) + cross2(h, g);
+    let k0 = cross2(h, e);
+    // `s` sale de `t` con el componente de denominador más grande.
+    let s_of = |t: f32| {
+        let (dx, dy) = (e.0 + g.0 * t, e.1 + g.1 * t);
+        if dx.abs() >= dy.abs() {
+            (h.0 - f.0 * t) / dx
+        } else {
+            (h.1 - f.1 * t) / dy
+        }
+    };
+    let ok = |s: f32, t: f32| s.is_finite() && t.is_finite();
+    let near = |x: f32| (-0.01..=1.01).contains(&x);
+    let (s, t) = if k2.abs() < 1e-6 * (k1.abs() + 1.0) {
+        let t = -k0 / k1;
+        (s_of(t), t)
+    } else {
+        let disc = k1 * k1 - 4.0 * k0 * k2;
+        if disc < 0.0 {
+            return None;
+        }
+        let root = disc.sqrt();
+        let t1 = (-k1 - root) / (2.0 * k2);
+        let t2 = (-k1 + root) / (2.0 * k2);
+        let (s1, s2) = (s_of(t1), s_of(t2));
+        if ok(s1, t1) && near(s1) && near(t1) {
+            (s1, t1)
+        } else {
+            (s2, t2)
+        }
+    };
+    ok(s, t).then(|| (s.clamp(0.0, 1.0), t.clamp(0.0, 1.0)))
 }
 
 /// Muestreo *nearest*: el texel `floor(u), floor(v)`, repetido con `rem_euclid`.
@@ -648,8 +791,10 @@ fn rasterize(input: &RenderInput) -> Raster {
                     }
                 }
             };
+            let quad = QuadMap::new(&pts, &face.uvs, &view).map(|q| (q, &view));
             let ctx = FaceCtx {
                 id: (id, face_i),
+                quad,
                 steps,
                 texture,
                 palette: input.palette,
@@ -875,6 +1020,68 @@ mod tests {
                 assert_eq!(img[y * 16 + x], AZUL, "({x},{y})");
             }
         }
+    }
+
+    /// Un trapecio de frente (abajo de ±1, arriba de ±0.5) con la textura entera: su espejo
+    /// izquierda/derecha es él mismo.
+    fn trapecio() -> Mesh {
+        let f = FIXED;
+        let v = |x, y| Vec3i { x, y, z: 0 };
+        Mesh {
+            vertices: vec![v(-f, -f), v(f, -f), v(f / 2, f), v(-f / 2, f)],
+            faces: vec![Face {
+                verts: vec![0, 1, 2, 3],
+                uvs: vec![(0, 8), (8, 8), (8, 0), (0, 0)],
+            }],
+        }
+    }
+
+    #[test]
+    fn un_trapecio_con_textura_simetrica_se_ve_simetrico() {
+        // Una X de 8×8 (simétrica izquierda/derecha).
+        let tex: Vec<Rgba> = (0..64)
+            .map(|i| {
+                let (x, y) = (i % 8, i / 8);
+                if x == y || x == 7 - y { ROJO } else { AZUL }
+            })
+            .collect();
+        let m = model(vec![obj(trapecio())]);
+        let size = 64;
+        let img = render_model(&input(&m, size, &tex, 8));
+        let size = size as usize;
+        let (mut covered, mut wrong) = (0, 0);
+        for y in 0..size {
+            for x in 0..size / 2 {
+                let (l, r) = (img[y * size + x], img[y * size + size - 1 - x]);
+                if l.a == 0 && r.a == 0 {
+                    continue;
+                }
+                covered += 1;
+                if l != r {
+                    wrong += 1;
+                }
+            }
+        }
+        assert!(covered > 100, "{covered}");
+        // Por triángulos, la diagonal desarma la X (decenas de pixeles distintos).
+        assert!(wrong * 50 <= covered, "{wrong} of {covered} not mirrored");
+    }
+
+    #[test]
+    fn la_bilineal_inversa_da_las_esquinas_y_el_centro() {
+        let q = [(0.0, 0.0), (4.0, 0.0), (3.0, 2.0), (1.0, 2.0)];
+        for (i, st) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+            .iter()
+            .enumerate()
+        {
+            let (s, t) = inverse_bilinear(q[i], &q).unwrap();
+            assert!(
+                (s - st.0).abs() < 1e-4 && (t - st.1).abs() < 1e-4,
+                "{i}: {s} {t}"
+            );
+        }
+        let (s, t) = inverse_bilinear((2.0, 1.0), &q).unwrap();
+        assert!((s - 0.5).abs() < 1e-4 && (t - 0.5).abs() < 1e-4, "{s} {t}");
     }
 
     #[test]
