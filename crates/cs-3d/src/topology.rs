@@ -306,8 +306,9 @@ fn pieces(cs: &[Corner], m: &[Option<Corner>], vertices: &mut Vec<Vec3i>) -> Vec
 /// más de 4 vértices no se parten.
 ///
 /// Las posiciones nuevas (mitades y centros) se redondean al 1/16 más cercano; las UVs, al pixel
-/// más cercano (`.5` lejos del cero). En una arista de 1/16 la mitad cae sobre una punta. Cada
-/// cara deja sus pedazos en su lugar de la lista: los índices de las caras de después se corren.
+/// más cercano (`.5` lejos del cero). En una arista de 1/16 la mitad caería sobre una punta: esa
+/// arista no se parte (las caras que la usan se re-arman con las demás mitades). Cada cara deja
+/// sus pedazos en su lugar de la lista: los índices de las caras de después se corren.
 pub fn subdivide_faces(model: &Model3D, sel: &Selection) -> (Model3D, Selection) {
     let mut out = model.clone();
     let mut items = BTreeSet::new();
@@ -324,19 +325,26 @@ pub fn subdivide_faces(model: &Model3D, sel: &Selection) -> (Model3D, Selection)
             continue;
         }
         let mut mids: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+        let mut seen: BTreeSet<(u32, u32)> = BTreeSet::new();
         for &f in &chosen {
             let vs = &mesh.faces[f].verts;
             for i in 0..vs.len() {
                 let (a, b) = (vs[i], vs[(i + 1) % vs.len()]);
-                if a != b && !mids.contains_key(&key(a, b)) {
-                    let (pa, pb) = (p3(mesh.vertices[a as usize]), p3(mesh.vertices[b as usize]));
-                    let p = [
+                if a != b && !seen.contains(&key(a, b)) {
+                    seen.insert(key(a, b));
+                    let (va, vb) = (mesh.vertices[a as usize], mesh.vertices[b as usize]);
+                    let (pa, pb) = (p3(va), p3(vb));
+                    let p = round3([
                         (pa[0] + pb[0]) / 2.0,
                         (pa[1] + pb[1]) / 2.0,
                         (pa[2] + pb[2]) / 2.0,
-                    ];
-                    mids.insert(key(a, b), mesh.vertices.len() as u32);
-                    mesh.vertices.push(round3(p));
+                    ]);
+                    // Una arista tan corta que su mitad cae sobre una punta no se parte (sería
+                    // una cara sin área); las caras que la usan siguen sin partirla.
+                    if p != va && p != vb {
+                        mids.insert(key(a, b), mesh.vertices.len() as u32);
+                        mesh.vertices.push(p);
+                    }
                 }
             }
         }
@@ -445,7 +453,11 @@ pub fn delete_selection(model: &Model3D, sel: &Selection) -> (Model3D, Selection
         items: BTreeSet::new(),
     };
     if sel.mode == SelectMode::Object {
-        for o in objects_of(sel, model).into_iter().rev() {
+        // De mayor a menor y sin repetir (los índices de después se corren al quitar).
+        let mut objects = objects_of(sel, model);
+        objects.sort_unstable();
+        objects.dedup();
+        for o in objects.into_iter().rev() {
             out.objects.remove(o);
         }
         return (out, empty);
@@ -808,6 +820,27 @@ mod tests {
     }
 
     #[test]
+    fn dividir_no_parte_aristas_de_un_dieciseisavo() {
+        // Una caja de 1/16 de ancho en x (de -16 a -15): sus aristas en x no se parten.
+        let mut obj = cube_obj(Vec3i::default());
+        for v in &mut obj.mesh.vertices {
+            if v.x > 0 {
+                v.x = -15;
+            }
+        }
+        let m = model_of(vec![obj]);
+        let (out, s) = subdivide_faces(&m, &faces_sel(0, &[FRONT, TOP]));
+        let mesh = &out.objects[0].mesh;
+        check_closed(mesh);
+        for f in 0..mesh.faces.len() {
+            let n = normal(mesh, f);
+            assert!(n.iter().any(|&c| c != 0.0), "la cara {f} no tiene área");
+        }
+        // Cada una se parte solo a lo alto o a lo hondo: 2 pedazos.
+        assert_eq!(s.items.len(), 4);
+    }
+
+    #[test]
     fn dividir_triangulos_cierra() {
         let m = model_of(vec![Object3D {
             mesh: primitive_mesh(&Primitive::Cylinder { sides: 6 }),
@@ -949,6 +982,20 @@ mod tests {
         assert_eq!(out.objects[0].transform.position, at(64));
         assert!(s.is_empty());
         assert_eq!(s.mode, SelectMode::Object);
+    }
+
+    #[test]
+    fn borrar_objetos_con_una_seleccion_revuelta_quita_cada_uno_una_vez() {
+        let at = |x| Vec3i { x, y: 0, z: 0 };
+        let m = model_of(vec![cube_obj(at(0)), cube_obj(at(64)), cube_obj(at(128))]);
+        // Los objetos salen 2, 0, 2: sin ordenar, se quitaría uno de más.
+        let mixed = sel(
+            SelectMode::Object,
+            [Item::Object(2), Item::Vertex(0, 0), Item::Vertex(2, 0)],
+        );
+        let (out, _) = delete_selection(&m, &mixed);
+        assert_eq!(out.objects.len(), 1);
+        assert_eq!(out.objects[0].transform.position, at(64));
     }
 
     #[test]
