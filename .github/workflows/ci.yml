@@ -3,6 +3,10 @@ on:
   push:
     branches: [main]
   pull_request:
+# Un push nuevo al mismo PR cancela la corrida anterior (solo cuenta la última).
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 jobs:
   check:
     runs-on: ubuntu-latest

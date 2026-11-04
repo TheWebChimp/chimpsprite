@@ -1,14 +1,11 @@
 name: Release
 
 # Un tag `v*` arma los instaladores de Windows, macOS y Linux y publica el release.
-# En PRs que tocan el empaquetado solo los arma (sin publicar), para probarlo.
+# Solo corre a pedido: con el tag o a mano (Actions → Release → Run workflow, que los arma sin
+# publicar, para probar el empaquetado). Nunca en PRs: los minutos de macOS cuentan 10×.
 on:
   push:
     tags: ["v*"]
-  pull_request:
-    paths:
-      - .github/workflows/release.yml
-      - apps/chimpsprite/Cargo.toml
   workflow_dispatch:
 
 permissions:
