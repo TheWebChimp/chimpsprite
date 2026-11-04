@@ -9163,3 +9163,53 @@ fn object_mode_delete_removes_the_object_and_merge_does_nothing() {
     assert_eq!(h.app.doc.editor.model().unwrap().objects.len(), 1);
     assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
 }
+
+#[test]
+fn g_and_s_during_an_extrude_do_not_drop_it() {
+    let (mut h, top) = with_the_top_face_chosen();
+    let steps = h.app.doc.editor.history.done_count();
+    press(&mut h, egui::Key::E, egui::Modifiers::COMMAND);
+    h.frame();
+    tap_key(&mut h, egui::Key::G);
+    tap_key(&mut h, egui::Key::S);
+    assert!(
+        matches!(
+            h.app.doc.editor.model_edit().op,
+            Some(crate::editor::EditOp::Extrude { .. })
+        ),
+        "still extruding"
+    );
+    let to = front_screen(&h, [0.0, 20.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.click(to, PointerButton::Primary);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert_eq!(h.app.doc.editor.history.done().last(), Some("Extrude"));
+    assert_eq!(vertex_count(&h), 12);
+    assert_eq!(top_ys(&h, top), vec![20; 4]);
+}
+
+#[test]
+fn delete_and_backspace_in_a_panel_field_do_not_delete_geometry() {
+    let (mut h, _) = with_the_top_face_chosen();
+    let tag = axis_row(&h, "Position")[0];
+    let field = Pos2::new(
+        tag.right() + crate::kit::stepper::BUTTON_W + 12.0,
+        tag.center().y,
+    );
+    h.click(field, PointerButton::Primary);
+    assert!(h.ctx.egui_wants_keyboard_input(), "the field has focus");
+    let model = h.app.doc.editor.model().cloned();
+    let steps = h.app.doc.editor.history.done_count();
+    for key in [egui::Key::Backspace, egui::Key::Delete] {
+        h.frame_with(key_tap(key));
+    }
+    h.frame();
+    assert_eq!(
+        h.app.doc.editor.model().cloned(),
+        model,
+        "no geometry deleted"
+    );
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    assert!(!h.app.doc.editor.model_edit().selection.is_empty());
+}

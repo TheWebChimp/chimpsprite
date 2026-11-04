@@ -495,7 +495,9 @@ impl Editor {
     }
 
     pub fn request_model_key_op(&mut self, op: KeyOp) {
-        if self.model_edit_on() && !self.model_edit.selection.is_empty() {
+        // Un Extrude en curso no se cambia por otro gesto: lo extruido se perdería.
+        let extruding = matches!(self.model_edit.op, Some(EditOp::Extrude { .. }));
+        if self.model_edit_on() && !self.model_edit.selection.is_empty() && !extruding {
             self.model_edit.key_request = Some(op);
         }
     }
