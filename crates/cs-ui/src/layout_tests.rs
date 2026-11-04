@@ -4527,6 +4527,37 @@ fn persp_focal_point(h: &LayoutHarness, at: Pos2) -> cs_3d::P3 {
 }
 
 #[test]
+fn a_middle_drag_over_persp_pans_in_one_undo_step() {
+    let mut h = with_a_model_at_800();
+    let before = camera(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    let from = persp_pixels(&h).center();
+    let to = from + vec2(40.0, 0.0);
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Middle,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, true)]);
+    h.frame_with(vec![Event::PointerMoved(from.lerp(to, 0.5))]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.frame_with(vec![button(to, false)]);
+    h.frame();
+    let after = camera(&h);
+    // Se mueve el objetivo, sin orbitar ni acercarse.
+    assert_ne!(after.target, before.target, "panned");
+    assert_eq!(
+        (after.yaw, after.pitch, after.distance),
+        (before.yaw, before.pitch, before.distance)
+    );
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(camera(&h), before);
+}
+
+#[test]
 fn the_plain_wheel_over_persp_dollies_toward_the_pointer() {
     let mut h = with_a_model_at_800();
     let before = camera(&h);

@@ -142,12 +142,15 @@ impl CanvasView {
         {
             editor.frame_model();
         }
-        let (pressed, secondary, any_down, pointer, modifiers) = ui.input(|i| {
+        let (pressed, secondary, middle, any_down, pointer, modifiers) = ui.input(|i| {
             let pressed = |b| i.pointer.button_pressed(b);
             (
-                pressed(egui::PointerButton::Primary) || pressed(egui::PointerButton::Secondary),
+                pressed(egui::PointerButton::Primary)
+                    || pressed(egui::PointerButton::Secondary)
+                    || pressed(egui::PointerButton::Middle),
                 pressed(egui::PointerButton::Secondary),
-                i.pointer.primary_down() || i.pointer.secondary_down(),
+                pressed(egui::PointerButton::Middle),
+                i.pointer.primary_down() || i.pointer.secondary_down() || i.pointer.middle_down(),
                 i.pointer.interact_pos(),
                 i.modifiers,
             )
@@ -164,7 +167,11 @@ impl CanvasView {
                 ((p.x - r.left()) / scale.x).floor() as i32,
                 ((p.y - r.top()) / scale.y).floor() as i32,
             );
-            self.texture_press_at(editor, p, local, secondary, modifiers, Vec2::ONE / scale);
+            if middle {
+                self.model_pan_press(editor, p, Vec2::ONE / scale);
+            } else {
+                self.texture_press_at(editor, p, local, secondary, modifiers, Vec2::ONE / scale);
+            }
         }
         self.model_drag_input(editor, pointer, any_down);
     }

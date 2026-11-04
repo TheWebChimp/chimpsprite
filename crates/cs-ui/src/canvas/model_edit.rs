@@ -169,7 +169,7 @@ impl CanvasView {
                     || pressed(egui::PointerButton::Middle),
                 pressed(egui::PointerButton::Secondary),
                 pressed(egui::PointerButton::Middle),
-                i.pointer.primary_down() || i.pointer.secondary_down(),
+                i.pointer.primary_down() || i.pointer.secondary_down() || i.pointer.middle_down(),
                 i.pointer.primary_down() || i.pointer.secondary_down() || i.pointer.middle_down(),
                 i.pointer.interact_pos(),
                 i.modifiers,
@@ -350,8 +350,13 @@ impl CanvasView {
             return true;
         }
         let Some(view) = quadrant_view(i) else {
-            // El botón central no hace nada en la perspectiva.
-            if !middle {
+            // El botón central mueve la cámara (paneo), como en las vistas de frente.
+            if middle {
+                if let Some(q) = self.edit_quads.map(|qs| qs[i]) {
+                    let (_, scale) = self.persp_rect(q, editor);
+                    self.model_pan_press(editor, p, Vec2::ONE / scale);
+                }
+            } else {
                 self.persp_press(editor, i, p, secondary, modifiers);
             }
             return true;
