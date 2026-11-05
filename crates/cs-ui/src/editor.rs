@@ -29,6 +29,7 @@ mod gestures;
 mod model_edit;
 mod model_ops;
 mod model_topology;
+mod outliner_ops;
 mod texture_mode;
 mod workspace;
 pub use model_edit::{
@@ -37,6 +38,9 @@ pub use model_edit::{
 };
 pub(crate) use model_ops::model_center;
 pub use model_ops::wrap_angle;
+// Para el outliner del panel (todavía sin usar afuera).
+#[allow(unused_imports)]
+pub use outliner_ops::{DropAt, Row};
 
 /// Herramientas que trabajan dentro de un sprite.
 struct SpriteTools {
@@ -336,6 +340,9 @@ pub struct Editor {
     pub(crate) glyph_clipboard: font_ops::GlyphClipboard,
     /// Objeto elegido del modelo 3D activo (índice en `model.objects`).
     pub(crate) model_object: Option<usize>,
+    /// El grupo elegido en el outliner (índice en `model.groups`): la fila activa cuando es un
+    /// grupo. Con uno elegido, `model_object` queda en `None` (elegir uno limpia el otro).
+    pub(crate) model_group: Option<usize>,
     /// El modo Edit del artboard 3D (estado de la UI: no se guarda).
     pub(crate) model_edit: ModelEdit,
     /// Gesto en curso (p. ej. arrastrar un campo del panel) cuyos cambios se juntan en un solo
@@ -450,6 +457,7 @@ impl Editor {
             text_style: TextStyle::default(),
             glyph_clipboard: None,
             model_object: None,
+            model_group: None,
             model_edit: Default::default(),
             merge: None,
             edit_mask: false,
@@ -643,6 +651,7 @@ impl Editor {
         self.active = id;
         if !same_model {
             self.model_object = None;
+            self.model_group = None;
         }
         (self.layer, self.frame) = self.views.get(&id).copied().unwrap_or((LayerId(0), 0));
         self.selection = None;
@@ -1119,6 +1128,9 @@ mod model_edit_tests;
 
 #[cfg(test)]
 mod model_topology_tests;
+
+#[cfg(test)]
+mod outliner_tests;
 
 #[cfg(test)]
 mod workspace_tests;

@@ -501,6 +501,7 @@ impl Editor {
         self.model_edit.made_on = self.edited_model().map(topology_counts).unwrap_or_default();
         if let Some(o) = sel.first_object() {
             self.model_object = Some(o);
+            self.model_group = None;
         }
         self.model_edit.selection = sel;
         // En modo Texture la selección de pixeles sigue a las caras (lo flotante se confirma

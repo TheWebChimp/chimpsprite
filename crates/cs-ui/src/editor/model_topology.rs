@@ -153,6 +153,7 @@ impl Editor {
         // (`set_model_selection` ya no cambia nada a media extrusión.)
         if let Some(o) = sel.first_object() {
             self.model_object = Some(o);
+            self.model_group = None;
         }
         self.model_edit.selection = sel;
         // Lo extruido se ve desde ya, aunque el puntero no se haya movido.

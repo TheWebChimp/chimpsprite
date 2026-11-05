@@ -85,7 +85,7 @@ impl Editor {
         self.cancel_model_op();
         self.cancel_uv_op();
         // Activar la textura o el modelo olvida el objeto del panel: es el mismo modelo.
-        let object = self.model_object;
+        let (object, group) = (self.model_object, self.model_group);
         self.model_edit.mode = mode;
         match mode {
             CadMode::Texture => {
@@ -103,7 +103,7 @@ impl Editor {
                 }
             }
         }
-        self.model_object = object;
+        (self.model_object, self.model_group) = (object, group);
         self.revision += 1;
     }
 

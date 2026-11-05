@@ -71,6 +71,7 @@ impl Editor {
         self.enter_workspace(id);
         self.set_frame(0);
         self.model_object = Some(0);
+        self.model_group = None;
         true
     }
 
@@ -116,6 +117,7 @@ impl Editor {
             return;
         }
         self.model_object = i;
+        self.model_group = None;
         // En el modo Edit, elegir un objeto (panel o perspectiva) pasa a modo Object con ese
         // objeto: convertirlo a sus aristas o vértices elegiría todo el bloque (solo si el
         // modelo del modo Edit es el que se edita: la selección es de ese modelo). En modo
@@ -140,7 +142,12 @@ impl Editor {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
-        // Por ahora va a la raíz (el outliner elegirá el grupo).
+        // Entra en el grupo elegido en el outliner o, si no, en el del objeto elegido.
+        let groups = model.groups.len();
+        let parent = self.model_group.filter(|&g| g < groups).or_else(|| {
+            self.selected_object()
+                .and_then(|o| model.object_parents(o).first().copied())
+        });
         model.push_object(
             Object3D {
                 name: p.name().to_owned(),
@@ -151,13 +158,14 @@ impl Editor {
                 hidden: false,
                 locked: false,
             },
-            None,
+            parent,
         );
         let last = model.objects.len() - 1;
         if !self.named("Add Object", |e| e.set_model(model)) {
             return false;
         }
         self.model_object = Some(last);
+        self.model_group = None;
         true
     }
 
@@ -219,6 +227,7 @@ impl Editor {
             return false;
         }
         self.model_object = Some(last);
+        self.model_group = None;
         if self.model_edit.mode == super::CadMode::Model
             && self.model_edit.artboard == Some(self.model_id())
         {
@@ -263,6 +272,7 @@ impl Editor {
         }
         if let Some(last) = last {
             self.model_object = Some(last);
+            self.model_group = None;
             if self.model_edit.mode == super::CadMode::Model
                 && self.model_edit.artboard == Some(self.model_id())
             {
@@ -310,6 +320,7 @@ impl Editor {
         let selected = self.model_object.unwrap_or(0);
         let selected = if i < selected { selected - 1 } else { selected };
         self.model_object = (left > 0).then(|| selected.min(left - 1));
+        self.model_group = None;
         true
     }
 
