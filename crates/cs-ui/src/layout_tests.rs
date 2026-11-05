@@ -9042,7 +9042,10 @@ fn with_an_object_chosen_the_box_covers_all_its_faces() {
     };
     let before = uvs_of(&h);
     let steps = h.app.doc.editor.history.done_count();
-    h.drag(texel(&h, 8.5, 8.5), texel(&h, 11.5, 10.5));
+    // La caja de la fila (sin caras elegidas) mueve las UVs con Alt (sin Alt, Move es de los
+    // pixeles).
+    let (from, to) = (texel(&h, 8.5, 8.5), texel(&h, 11.5, 10.5));
+    drag_holding(&mut h, from, to, egui::Modifiers::ALT);
     let moved: Vec<Vec<_>> = before
         .iter()
         .map(|f| f.iter().map(|&(x, y)| (x + 3, y + 2)).collect())
@@ -9064,6 +9067,117 @@ fn handles_drag_with_the_pencil_too() {
     assert_eq!(front_bounds(&h), Some(((0, 0), (24, 20))));
     assert_eq!(texture_sprite(&h), pixels, "nothing painted");
     assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+/// En modo Texture sin caras elegidas y con la fila del cubo activa (la caja es la del objeto).
+fn with_the_cube_row_active() -> LayoutHarness {
+    let mut h = with_a_model_in_texture_mode();
+    let e = &mut h.app.doc.editor;
+    e.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Face,
+        items: Default::default(),
+    });
+    e.select_model_object(Some(0));
+    h.frame();
+    h.frame();
+    h
+}
+
+fn cube_uvs(h: &LayoutHarness) -> Vec<Vec<(i32, i32)>> {
+    h.app.doc.editor.workspace_model().unwrap().objects[0]
+        .mesh
+        .faces
+        .iter()
+        .map(|f| f.uvs.clone())
+        .collect()
+}
+
+/// Con la fila del cubo activa: el pixel `(8, 8)` de la textura pintado de rojo y una selección
+/// de pixeles de 4..12 alrededor.
+fn with_a_red_pixel_selected_in_the_cube_box() -> (LayoutHarness, PixelValue) {
+    let mut h = with_the_cube_row_active();
+    let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    h.app.doc.editor.primary = red;
+    h.click(texel(&h, 8.5, 8.5), PointerButton::Primary);
+    let layer = texture_sprite(&h).layers.last().unwrap().id;
+    assert_eq!(texture_sprite(&h).pixel(layer, 0, 8, 8), red);
+    let s = texture_sprite(&h);
+    let mut mask = cs_core::Mask::new(s.width, s.height);
+    for y in 4..12 {
+        for x in 4..12 {
+            mask.set(x, y, true);
+        }
+    }
+    h.app.doc.editor.set_selection(Some(mask));
+    h.app.doc.editor.set_tool(ToolKind::Move);
+    h.frame();
+    (h, red)
+}
+
+#[test]
+fn with_the_row_box_a_move_drag_inside_moves_the_pixels_not_the_uvs() {
+    let (mut h, red) = with_a_red_pixel_selected_in_the_cube_box();
+    let uvs = cube_uvs(&h);
+    h.drag(texel(&h, 8.5, 8.5), texel(&h, 11.5, 10.5));
+    assert_eq!(cube_uvs(&h), uvs, "the UVs stay");
+    h.app.doc.editor.commit_floating();
+    let layer = texture_sprite(&h).layers.last().unwrap().id;
+    assert_eq!(
+        texture_sprite(&h).pixel(layer, 0, 11, 10),
+        red,
+        "the pixels moved"
+    );
+}
+
+#[test]
+fn with_the_row_box_an_alt_drag_inside_moves_the_uvs_not_the_pixels() {
+    let (mut h, _) = with_a_red_pixel_selected_in_the_cube_box();
+    let uvs = cube_uvs(&h);
+    let pixels = texture_sprite(&h);
+    let (from, to) = (texel(&h, 8.5, 8.5), texel(&h, 11.5, 10.5));
+    drag_holding(&mut h, from, to, egui::Modifiers::ALT);
+    let moved: Vec<Vec<_>> = uvs
+        .iter()
+        .map(|f| f.iter().map(|&(x, y)| (x + 3, y + 2)).collect())
+        .collect();
+    assert_eq!(cube_uvs(&h), moved);
+    assert!(h.app.doc.editor.floating.is_none());
+    assert_eq!(texture_sprite(&h), pixels, "the pixels stay");
+}
+
+#[test]
+fn with_the_pencil_a_click_on_a_handle_paints_and_does_not_scale() {
+    let mut h = with_the_cube_row_active();
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    let primary = PixelValue::Rgba(Rgba::rgb(1, 2, 3));
+    h.app.doc.editor.primary = primary;
+    let faces: Vec<_> = (0..cube_uvs(&h).len()).map(|f| (0, f)).collect();
+    let b = cs_3d::uv_bounds(h.app.doc.editor.workspace_model().unwrap(), &faces).unwrap();
+    let side = texture_sprite(&h).width as i32;
+    assert!(
+        b.1.0 < side - 1 && b.1.1 < side - 1,
+        "room for the handle: {b:?}"
+    );
+    let f = |(x, y): (i32, i32)| (x as f32, y as f32);
+    let at = uv_handle(&h, (f(b.0), f(b.1)), (1, 1));
+    // El pixel bajo el asa.
+    let r = texture_pixels(&h);
+    let k = r.width() / side as f32;
+    let (px, py) = (
+        ((at.x - r.min.x) / k).floor() as i32,
+        ((at.y - r.min.y) / k).floor() as i32,
+    );
+    let layer = texture_sprite(&h).layers.last().unwrap().id;
+    assert_ne!(texture_sprite(&h).pixel(layer, 0, px, py), primary);
+    let uvs = cube_uvs(&h);
+    h.click(at, PointerButton::Primary);
+    assert_eq!(cube_uvs(&h), uvs, "no scale");
+    assert_eq!(
+        texture_sprite(&h).pixel(layer, 0, px, py),
+        primary,
+        "painted"
+    );
 }
 
 #[test]

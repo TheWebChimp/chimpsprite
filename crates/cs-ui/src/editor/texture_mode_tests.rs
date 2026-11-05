@@ -639,3 +639,56 @@ fn escalar_uvs_con_un_asa_cae_en_pixeles_enteros_y_es_un_paso() {
     let m = e.workspace_model().unwrap();
     assert_eq!(cs_3d::uv_bounds(m, &[(0, 0)]), Some(((0, 0), (24, 24))));
 }
+
+#[test]
+fn la_caja_de_una_fila_deja_fuera_los_objetos_ocultos() {
+    let mut e = editing();
+    assert!(e.add_primitive(cs_3d::Primitive::Plane));
+    // Un grupo con los dos objetos; el plano, oculto.
+    e.set_model_selection(Selection {
+        mode: SelectMode::Object,
+        items: [Item::Object(0), Item::Object(1)].into(),
+    });
+    assert!(e.new_group());
+    let g = e.workspace_model().unwrap().groups.len() - 1;
+    assert_eq!(e.workspace_model().unwrap().group_objects(g).len(), 2);
+    assert!(e.toggle_hidden(super::Row::Object(1)));
+    e.set_cad_mode(CadMode::Texture);
+    e.set_active_row(Some(super::Row::Object(1)), false);
+    assert!(e.uv_box_faces().is_empty(), "a hidden object: no box");
+    e.set_active_row(Some(super::Row::Object(0)), false);
+    assert!(!e.uv_box_faces().is_empty());
+    // El grupo: solo las caras del que se ve.
+    e.set_active_row(Some(super::Row::Group(g)), false);
+    let faces = e.uv_box_faces();
+    assert!(
+        !faces.is_empty() && faces.iter().all(|&(o, _)| o == 0),
+        "{faces:?}"
+    );
+}
+
+#[test]
+fn shift_en_un_lado_deja_al_menos_un_pixel_en_el_otro_eje() {
+    let mut e = texturing();
+    let bounds = |e: &Editor| cs_3d::uv_bounds(e.workspace_model().unwrap(), &[(0, 0)]).unwrap();
+    // Primero 16×2: el asa de abajo, sin Shift.
+    e.start_uv_op(UvOp::Scale {
+        handle: (0, 1),
+        from: (8.0, 16.0),
+        bounds: bounds(&e),
+    });
+    e.update_uv_op((8.0, 2.0), false);
+    e.finish_uv_op();
+    assert_eq!(bounds(&e), ((0, 0), (16, 2)));
+    // El lado derecho a 1 de ancho con Shift: el alto no baja de 1.
+    e.start_uv_op(UvOp::Scale {
+        handle: (1, 0),
+        from: (16.0, 1.0),
+        bounds: bounds(&e),
+    });
+    e.update_uv_op((1.0, 1.0), true);
+    e.finish_uv_op();
+    let ((x0, y0), (x1, y1)) = bounds(&e);
+    assert_eq!(x1 - x0, 1);
+    assert!(y1 - y0 >= 1, "{:?}", bounds(&e));
+}

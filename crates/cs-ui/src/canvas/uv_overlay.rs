@@ -5,8 +5,9 @@
 //! arrastrarlo, con cualquier herramienta (también las de pintar), lo mueve solo a cualquier
 //! pixel. Un asa (por fuera de la caja, para no tapar los vértices de sus esquinas) se arrastra
 //! igual y escala las UVs de la caja respecto del lado opuesto, en pixeles enteros (Shift:
-//! proporcional). Con la herramienta Move, o arrastrando con Alt y cualquier otra, arrastrar
-//! dentro de la caja mueve sus UVs juntas. Un clic sin arrastre no cambia las UVs (salvo con
+//! proporcional). Arrastrar dentro de la caja mueve sus UVs juntas con Alt (cualquier
+//! herramienta) o, si la caja es la de las caras elegidas, también con Move (la de la fila
+//! activa deja Move para los pixeles). Un clic sin arrastre no cambia las UVs (salvo con
 //! Move, es de la herramienta: el lápiz pinta ahí); cada gesto es un paso de undo.
 
 use cs_core::Model3D;
@@ -233,12 +234,14 @@ impl CanvasView {
         }
         let p = pointer?;
         let model = editor.edited_model()?.clone();
-        // Sin Move ni Alt, solo las asas y los vértices (lo de adentro de la caja es de la
-        // herramienta).
-        let any_tool = !(moving || modifiers.alt);
+        // Lo de adentro de la caja mueve las UVs con Alt o, si la caja es la de las caras
+        // elegidas, también con Move. La caja de la fila activa (sin caras) siempre está: con
+        // Move sin Alt, lo de adentro es de la herramienta (mover pixeles o la selección), como
+        // fuera del modo Texture. Las asas y los vértices, con cualquier herramienta.
+        let inside_moves = modifiers.alt || (moving && !editor.selected_faces().is_empty());
         let Some(hit) = self
             .uv_hit(rect, editor, &model, p)
-            .filter(|h| !any_tool || !matches!(h, UvHit::Inside))
+            .filter(|h| inside_moves || !matches!(h, UvHit::Inside))
         else {
             // Move sobre la selección de las caras, fuera de sus UVs: nada (ni el menú del clic
             // derecho, que sí sigue).

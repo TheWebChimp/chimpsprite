@@ -271,7 +271,9 @@ impl Editor {
 
     /// Las caras que abarca la caja de UVs: con caras elegidas (modo Face), esas; si no, todas las
     /// de los objetos elegidos en modo Object o, sin ellos, las del objeto o el grupo de la fila
-    /// activa del outliner. Sin nada de eso, ninguna (no hay caja).
+    /// activa del outliner. Los objetos ocultos (ellos o un grupo suyo) quedan fuera, como de la
+    /// selección 3D en `set_active_row`: la fila de un objeto oculto no tiene caja. Sin nada de
+    /// eso, ninguna (no hay caja).
     pub fn uv_box_faces(&self) -> Vec<(usize, usize)> {
         let faces = self.selected_faces();
         if !faces.is_empty() {
@@ -297,6 +299,7 @@ impl Editor {
         objects.dedup();
         objects
             .into_iter()
+            .filter(|&o| !model.object_hidden(o))
             .filter_map(|o| Some((o, model.objects.get(o)?.mesh.faces.len())))
             .flat_map(|(o, n)| (0..n).map(move |f| (o, f)))
             .collect()
@@ -435,7 +438,8 @@ impl Editor {
 /// (en pixeles de la textura): el ancla (el lado o la esquina opuesta; en un eje sin asa, el
 /// medio) y el factor por eje. El borde arrastrado cae en el pixel entero bajo el puntero y la
 /// caja no baja de 1 pixel ni se voltea. Con `proportional` (Shift), los dos ejes usan el mismo
-/// factor: en una esquina el que más cambió; en un lado, el de ese lado.
+/// factor: en una esquina el que más cambió; en un lado, el de ese lado (el otro eje tampoco
+/// baja de 1 pixel).
 fn uv_handle_scale(
     handle: (i8, i8),
     from: (f32, f32),
@@ -459,6 +463,15 @@ fn uv_handle_scale(
     };
     let (ax, fx) = axis(handle.0, x0, x1, from.0, pointer.0);
     let (ay, fy) = axis(handle.1, y0, y1, from.1, pointer.1);
+    // El factor más chico que deja `extent` pixeles en al menos 1.
+    let at_least_1px = |f: f32, extent: i32| {
+        if extent == 0 {
+            f
+        } else {
+            f.max(1.0 / extent.abs() as f32)
+        }
+    };
+    let (w, h) = (x1 - x0, y1 - y0);
     let f = match (fx, fy, proportional) {
         (Some(fx), Some(fy), true) => {
             let f = if (fx - 1.0).abs() >= (fy - 1.0).abs() {
@@ -466,9 +479,10 @@ fn uv_handle_scale(
             } else {
                 fy
             };
-            (f, f)
+            (at_least_1px(f, w), at_least_1px(f, h))
         }
-        (Some(f), None, true) | (None, Some(f), true) => (f, f),
+        (Some(f), None, true) => (f, at_least_1px(f, h)),
+        (None, Some(f), true) => (at_least_1px(f, w), f),
         (fx, fy, _) => (fx.unwrap_or(1.0), fy.unwrap_or(1.0)),
     };
     ((ax, ay), f)
