@@ -546,6 +546,12 @@ fn set_model_cmd(id: cs_core::ArtboardId, model: Model3D) -> DocCommand {
     }
 }
 
+/// Hasta dónde llegan, en la barrita del objeto, la posición (en 1/16: ±256 unidades), la
+/// rotación (en grados) y la escala (en %).
+pub const POSITION_MAX: i32 = 256 * cs_core::FIXED;
+pub const ROTATION_MAX: i32 = 360;
+pub const SCALE_MAX: i32 = 1000;
+
 /// Un ángulo en décimas de grado llevado a `-1800..1800` (la misma orientación).
 pub fn wrap_angle(tenths: i32) -> i32 {
     (tenths + 1800).rem_euclid(3600) - 1800

@@ -7,7 +7,7 @@
 
 use eframe::egui::pos2;
 
-use super::model_edit::{PERSP_BG, cad_header, header_split};
+use super::model_edit::{PERSP_BG, cad_header, header_split, object_bar_split};
 use super::*;
 use crate::editor::TextureView;
 
@@ -32,19 +32,21 @@ impl CanvasView {
         dialog: Option<&mut CanvasSizeDialog>,
         view_settings: &ViewSettings,
     ) {
-        // Debajo del encabezado de ChimpCAD, la barra de opciones de la herramienta (para pintar
-        // la textura: el tamaño del pincel, la tinta…) y después las dos partes. Va aquí y no
-        // arriba de todo para que el encabezado no se mueva al cambiar de modo.
+        // Debajo del encabezado de ChimpCAD, la barrita del objeto (como en modo Model), la barra
+        // de opciones de la herramienta (para pintar la textura: el tamaño del pincel, la
+        // tinta…) y después las dos partes. Van aquí y no arriba de todo para que el encabezado
+        // no se mueva al cambiar de modo.
         let (header, area) = header_split(rect);
         let skin = crate::pixel_ui::frame_skin(ui.ctx());
         let skin = skin.as_deref();
-        let bar_bottom = (area.top() + crate::panels::options_bar_height(skin)).min(area.bottom());
-        let bar = Rect::from_min_max(area.min, pos2(area.right(), bar_bottom));
-        let area = Rect::from_min_max(pos2(area.left(), bar_bottom), area.max);
+        let height = crate::panels::options_bar_height(skin);
+        let (object_bar, area) = object_bar_split(area, height);
+        let (bar, area) = object_bar_split(area, height);
         let (top, bottom) = texture_panes(area);
         self.edit_quads = None;
         self.texture_panes = Some((top, bottom));
         self.header_rect = Some(header);
+        self.object_bar_rect = Some(object_bar);
         // G y S de teclado son de las vistas orto: aquí no esperan a nadie.
         editor.model_edit.key_request = None;
         self.texture_top_input(ui, response, top, editor, dialog.is_some());
@@ -79,7 +81,8 @@ impl CanvasView {
             crate::pixel_ui::control_border(ui.ctx()),
         );
         cad_header(ui, header, editor);
-        // La barra, encima del fondo ya pintado.
+        // Las barras, encima del fondo ya pintado.
+        super::object_bar::object_bar(ui, object_bar, editor);
         let mut bar_ui = ui.new_child(egui::UiBuilder::new().max_rect(bar).id_salt("cad_options"));
         bar_ui.set_clip_rect(bar);
         crate::panels::options_bar_panel(bar_ui.style(), skin).show(&mut bar_ui, |ui| {

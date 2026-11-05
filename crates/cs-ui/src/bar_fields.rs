@@ -356,6 +356,53 @@ pub fn number_with_prefix<Num: emath::Numeric>(
     bar_number(ui, look, PREFIX_FIELD_WIDTH, id_salt, value, range, options)
 }
 
+/// El campo de un eje (la barrita del objeto de ChimpCAD): la caja del prefijo con la letra
+/// `axis` y el número centrado en el blanco, de `AXIS_FIELD_WIDTH`; un punto arrastrado es uno
+/// más. Su nombre accesible es `name` ("Position X"). Sin `value`, el campo vacío y
+/// deshabilitado.
+pub fn axis_number(
+    ui: &mut Ui,
+    look: BarLook,
+    name: &str,
+    axis: &str,
+    value: Option<&mut i32>,
+    range: RangeInclusive<i32>,
+) -> Response {
+    let affixes = Affixes::prefix(axis);
+    let enabled = ui.is_enabled() && value.is_some();
+    let response = match value {
+        Some(value) => {
+            let options = NumberOptions {
+                affixes,
+                align: egui::Align::Center,
+                speed: Some(1.0),
+            };
+            bar_number(ui, look, AXIS_FIELD_WIDTH, name, value, range, options)
+        }
+        None => {
+            let size = vec2(AXIS_FIELD_WIDTH, FIELD_HEIGHT);
+            let (slot, _) = ui.allocate_exact_size(size, Sense::hover());
+            let rect = Rect::from_min_size(
+                pos2(slot.left().round(), look.top + FIELD_TOP),
+                vec2(AXIS_FIELD_WIDTH, input::HEIGHT),
+            );
+            let id = ui.id().with(("bar_axis_empty", name));
+            let response = ui.interact(rect, id, Sense::hover());
+            let state = input::InputState::Disabled;
+            let shapes = input::frame_shapes(ui, look.skin, rect, state, affixes);
+            let mut painter = painter(ui, look);
+            painter.set_opacity(1.0);
+            painter.extend(shapes);
+            response
+        }
+    };
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::DragValue, enabled, name));
+    response
+}
+
+/// [`axis_number`], de borde a borde: la caja de la letra y lugar para "-4096".
+const AXIS_FIELD_WIDTH: f32 = 41.0;
+
 /// El campo numérico del kit de `width` en las filas de los campos de la barra.
 fn bar_number<Num: emath::Numeric>(
     ui: &mut Ui,

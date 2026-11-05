@@ -310,6 +310,56 @@ impl Editor {
         true
     }
 
+    /// La transform de la fila activa, si se puede editar: hay fila activa, no está bloqueada
+    /// (ni ella ni un grupo de los que la contienen) y la selección 3D no tiene otros objetos
+    /// que los suyos (un grupo: todos los de adentro).
+    pub fn active_transform(&self) -> Option<Transform3D> {
+        let model = self.edited_model()?;
+        let row = self.active_row()?;
+        let (transform, locked) = match row {
+            Row::Object(o) => (model.objects.get(o)?.transform, model.object_locked(o)),
+            Row::Group(g) => {
+                let group = model.groups.get(g)?;
+                let inherited = model
+                    .group_parents(g)
+                    .iter()
+                    .any(|&p| model.groups.get(p).is_some_and(|p| p.locked));
+                (group.transform, group.locked || inherited)
+            }
+        };
+        if locked {
+            return None;
+        }
+        if self.model_edit.artboard == Some(self.model_id()) {
+            let mine = row_objects(model, row);
+            let sel = &self.model_edit.selection;
+            if sel.items.iter().any(|it| !mine.contains(&it.object())) {
+                return None;
+            }
+        }
+        Some(transform)
+    }
+
+    /// Cambia la transform de la fila activa (si se puede: ver [`Editor::active_transform`]).
+    /// Los cambios seguidos del mismo `group` (un arrastre) son un solo paso de undo.
+    pub fn set_active_transform(&mut self, t: Transform3D, group: eframe::egui::Id) -> bool {
+        if self.active_transform().is_none() {
+            return false;
+        }
+        let (Some(row), Some(mut model)) = (self.active_row(), self.edited_model().cloned()) else {
+            return false;
+        };
+        let slot = match row {
+            Row::Object(o) => model.objects.get_mut(o).map(|ob| &mut ob.transform),
+            Row::Group(g) => model.groups.get_mut(g).map(|gr| &mut gr.transform),
+        };
+        let Some(slot) = slot else {
+            return false;
+        };
+        *slot = t;
+        self.set_model_grouped(model, group)
+    }
+
     /// Los objetos elegidos en las vistas (en modo Object, del modelo que se edita).
     fn chosen_objects(&self) -> Vec<usize> {
         let sel = &self.model_edit.selection;

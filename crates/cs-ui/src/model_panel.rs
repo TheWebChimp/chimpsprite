@@ -4,12 +4,12 @@
 //! textura y su tamaño, la cámara, la luz, el contorno, Shading… (la cuadrícula, en su ventana)
 //! y Sheet settings…. Abajo, el encabezado "Outliner" con Duplicate, New group y el + a la
 //! derecha (su ventanita, en [`add_menu`]: el tipo, los lados de los redondos y Add) y, debajo,
-//! con su scroll, lo del objeto elegido (en modo Model, Extrude, Subdivide, Merge y Delete; en
-//! modo Texture, los botones de las UVs; su posición, su rotación y su escala en filas de X, Y y
-//! Z, y Double sided) y el [`outliner`] con los objetos y los grupos. Sin modelo, el botón New 3D
-//! Model….
+//! con su scroll, la fila de botones del objeto (en modo Model, Extrude, Subdivide, Merge y
+//! Delete; en modo Texture, los de las UVs) y el [`outliner`] con los objetos y los grupos. La
+//! posición, la rotación y la escala de la fila activa van en la barrita del objeto, debajo del
+//! encabezado de ChimpCAD (`canvas::object_bar`). Sin modelo, el botón New 3D Model….
 
-use cs_core::{CameraPreset, Model3D, Object3D, PrimitiveKind, Projection, Rgba, ShadingTable};
+use cs_core::{CameraPreset, Model3D, PrimitiveKind, Projection, Rgba, ShadingTable};
 use eframe::egui::{
     self, Color32, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2, vec2,
 };
@@ -45,7 +45,7 @@ const PLAIN_HEADER_LINE: f32 = 29.0;
 const SPLIT: f32 = 197.0 / 408.0;
 /// Del borde de arriba de cada mitad a lo primero, y lo mismo abajo.
 const MIDDLE_AIR: f32 = 4.0;
-/// De la línea de las pestañas a lo primero del objeto (en modo Texture, los botones de las UVs):
+/// De la línea del encabezado del outliner a la fila de botones del objeto:
 /// 9 filas (como el boceto), con [`MIDDLE_AIR`]. La fila de los botones es media fila más alta
 /// que ellos y los centra: el botón cae (redondeado) una fila más abajo.
 const OBJECT_TOP_AIR: f32 = 9.0 - MIDDLE_AIR - 1.0;
@@ -73,26 +73,11 @@ const TEXTURE_SIZES: [u32; 6] = [16, 32, 64, 128, 256, 512];
 const MIN_SIDES: u32 = 3;
 const MAX_SIDES: u32 = 32;
 const DEFAULT_SIDES: u32 = 8;
-/// El transform del objeto: los tres ejes en una fila de steppers con su etiqueta, con este aire
-/// entre uno y otro (y antes de la barra del scroll), como en el boceto.
-const AXIS_GAP: f32 = 4.0;
-/// Lo menos de un stepper de eje: su etiqueta, sus botones y un campo donde quepa "-4096" (cinco
-/// cifras de 5 de ancho, tabulares). Así caben tres por fila en el panel, como en el boceto.
-const AXIS_MIN_W: f32 = kit::stepper::TAG_W + 2.0 * kit::stepper::BUTTON_W + 24.0;
+/// El aire de las filas antes de la barra del scroll.
+const ROW_END_GAP: f32 = 4.0;
 /// El título se acerca a su fila: egui deja debajo de la letra su aire y el de [`ITEM_GAP`], y el
-/// boceto pone 4 filas de la letra al stepper (y 10 del stepper al título que sigue).
-const AXIS_TITLE_PULL: f32 = 7.0;
-
-/// Cuántos steppers de eje van por fila en `avail` (tres; si no caben, dos) y de qué ancho.
-fn axis_grid(avail: f32) -> (usize, f32) {
-    let per_row = if 3.0 * AXIS_MIN_W + 2.0 * AXIS_GAP <= avail {
-        3
-    } else {
-        2
-    };
-    let gaps = (per_row - 1) as f32 * AXIS_GAP;
-    (per_row, ((avail - gaps) / per_row as f32).floor())
-}
+/// boceto pone 4 filas de la letra a la fila (y 10 de la fila al título que sigue).
+const TITLE_PULL: f32 = 7.0;
 
 /// La fila de la luz (como el boceto): de la casilla Light a "Yaw", y de cada etiqueta a su
 /// stepper; entre el stepper de Yaw y "Pitch", [`PAIR_GAP`].
@@ -116,11 +101,6 @@ const PRESETS: [(&str, CameraPreset); 4] = [
 const YAW_MAX: i32 = 360;
 const PITCH_MAX: i32 = 90;
 const PAIR_GAP: f32 = 8.0;
-/// Hasta dónde llegan la posición (en 1/16: ±256 unidades), la rotación (en grados) y la escala
-/// (en %).
-const POSITION_MAX: i32 = 256 * cs_core::FIXED;
-const ROTATION_MAX: i32 = 360;
-const SCALE_MAX: i32 = 1000;
 /// La cuadrícula Shading (y las muestras de su popup): casillas de 12 con líneas de 1
 /// compartidas, del color de las del mapa de FontForge, y hasta 16 columnas por bloque.
 const SHADE_CELL: f32 = 12.0;
@@ -213,11 +193,9 @@ pub fn show(
         );
         scrolled(ui, "model_panel_object", bottom, reopened, |ui| {
             ui.spacing_mut().item_spacing.y = ITEM_GAP;
-            // Lo del objeto elegido (hasta que pase a la barrita) y, debajo, el outliner.
-            if editor.selected_object().is_some() {
-                selected(ui, editor, skin);
-                ui.add_space(ITEM_GAP);
-            }
+            // La fila de botones del objeto y, debajo, el outliner.
+            object_buttons(ui, editor, skin);
+            ui.add_space(ITEM_GAP);
             let width = row_width(ui);
             outliner::show(ui, editor, skin, &mut state.outliner, width);
         });
@@ -463,15 +441,14 @@ fn topology_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 }
 
-/// El ancho de las filas de lo general: lo de adentro sin la barra del scroll y el aire de antes
-/// (como las filas de los ejes).
+/// El ancho de las filas de lo general: lo de adentro sin la barra del scroll y el aire de antes.
 fn row_width(ui: &Ui) -> f32 {
-    ((WIDTH - pixel_ui::SCROLL_BAR).min(ui.available_width()) - AXIS_GAP).floor()
+    ((WIDTH - pixel_ui::SCROLL_BAR).min(ui.available_width()) - ROW_END_GAP).floor()
 }
 
 /// El lugar de una fila de selects (y botones) de `width`, en puntos enteros. Sin el aire de entre
-/// filas arriba: como las filas de los ejes (que egui centra en una fila más baja), queda a 4 filas
-/// de la letra de su título y a 10 del título que sigue, como el boceto.
+/// filas arriba (egui centra las filas en una más baja): queda a 4 filas de la letra de su título
+/// y a 10 del título que sigue, como el boceto.
 fn row_rect(ui: &mut Ui, width: f32) -> Rect {
     ui.add_space(-ui.spacing().item_spacing.y);
     let (slot, _) = ui.allocate_exact_size(vec2(width, kit::select::HEIGHT), Sense::hover());
@@ -496,7 +473,7 @@ fn pair_labels(ui: &mut Ui, (left, right): (&str, &str), column: f32) {
     let mut second = ui.new_child(UiBuilder::new().max_rect(rect));
     label_with_hint(&mut second, right, "");
     label_with_hint(ui, left, "");
-    ui.add_space(-AXIS_TITLE_PULL);
+    ui.add_space(-TITLE_PULL);
 }
 
 /// Lo que pide el select de Texture Size: achicar la textura dejando UVs fuera lo confirma la app
@@ -646,140 +623,13 @@ fn angle_cell(
     }
 }
 
-/// Un eje: el stepper de `width` con su etiqueta (`axis`) pegada a la izquierda. Un valor fuera
-/// de `range` se muestra en el borde pero solo se escribe si el usuario lo cambia (el stepper no
-/// lo recorta solo).
-fn axis_cell(
-    ui: &mut Ui,
-    skin: Option<&Skin>,
-    (title, width): (&str, f32),
-    (axis, value): (&str, &mut i32),
-    range: std::ops::RangeInclusive<i32>,
-) {
-    let id = format!("{title}_{axis}");
-    let shown = (*value).clamp(*range.start(), *range.end());
-    let mut v = shown;
-    match skin {
-        Some(skin) => {
-            kit::stepper::axis_stepper(ui, skin, width, &id, axis, &mut v, range, 1);
-        }
-        None => {
-            ui.label(axis);
-            ui.add(egui::DragValue::new(&mut v).range(range));
-        }
-    }
-    if v != shown {
-        *value = v;
-    }
-}
-
-/// Un título con su unidad y, debajo, los tres ejes en una fila de steppers con su etiqueta (X, Y,
-/// Z) que llena lo de adentro sin la barra del scroll; si no caben, X e Y en una fila y Z debajo.
-fn axes(
-    ui: &mut Ui,
-    skin: Option<&Skin>,
-    (title, unit): (&str, &str),
-    values: [&mut i32; 3],
-    range: std::ops::RangeInclusive<i32>,
-) {
-    label_with_hint(ui, title, unit);
-    ui.add_space(-AXIS_TITLE_PULL);
-    let avail = (WIDTH - pixel_ui::SCROLL_BAR).min(ui.available_width()) - AXIS_GAP;
-    let (per_row, width) = axis_grid(avail);
-    let mut cells = ["X", "Y", "Z"].into_iter().zip(values);
-    loop {
-        let row: Vec<_> = cells.by_ref().take(per_row).collect();
-        if row.is_empty() {
-            break;
-        }
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = AXIS_GAP;
-            for cell in row {
-                axis_cell(ui, skin, (title, width), cell, range.clone());
-            }
-        });
-    }
-}
-
-/// Los tres ejes de `v` mostrados en otra unidad: `per` de lo guardado (pasado antes por `show`)
-/// por cada uno mostrado. Solo se escribe el eje que cambió (los otros no pierden lo que no se
-/// ve).
-fn scaled_axes(
-    ui: &mut Ui,
-    skin: Option<&Skin>,
-    labels: (&str, &str),
-    (v, show): (&mut cs_core::Vec3i, fn(i32) -> i32),
-    per: i32,
-    range: std::ops::RangeInclusive<i32>,
-) {
-    let before = [show(v.x) / per, show(v.y) / per, show(v.z) / per];
-    let mut shown = before;
-    let [a, b, c] = &mut shown;
-    axes(ui, skin, labels, [a, b, c], range);
-    for (axis, (now, was)) in [&mut v.x, &mut v.y, &mut v.z]
-        .into_iter()
-        .zip(shown.into_iter().zip(before))
-    {
-        if now != was {
-            *axis = now * per;
-        }
-    }
-}
-
-/// Lo del objeto elegido (la mitad de abajo): primero los botones de topología (en modo Model) o
-/// los de las UVs (en modo Texture);
-/// posición, rotación y escala (una fila de X, Y, Z cada una) y Double sided. Quitarlo es Supr
-/// en el outliner. Todo lo cambiado en un frame (o en un arrastre) es un paso de deshacer
-/// (`set_model_grouped`).
-fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
-    let Some(i) = editor.selected_object() else {
-        return;
-    };
-    let Some(model) = editor.edited_model().cloned() else {
-        return;
-    };
-    // Los títulos de los ejes van con el aire de entre una fila y otra (como en el boceto).
+/// La fila de botones del objeto, arriba del outliner: en modo Model los de topología y en modo
+/// Texture los de las UVs (cada uno deshabilitado cuando no aplica).
+fn object_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     ui.add_space(OBJECT_TOP_AIR);
     match editor.cad_mode() {
         CadMode::Texture => uv_buttons(ui, editor, skin),
         CadMode::Model => topology_buttons(ui, editor, skin),
-    }
-    let obj: &Object3D = &model.objects[i];
-    let mut next = obj.clone();
-    let t = &mut next.transform;
-    let p = &mut t.position;
-    axes(
-        ui,
-        skin,
-        ("Position", "(1/16)"),
-        [&mut p.x, &mut p.y, &mut p.z],
-        -POSITION_MAX..=POSITION_MAX,
-    );
-    scaled_axes(
-        ui,
-        skin,
-        ("Rotation", "(°)"),
-        (&mut t.rotation, wrap_angle),
-        10,
-        -ROTATION_MAX..=ROTATION_MAX,
-    );
-    let scale = (&mut t.scale, std::convert::identity as fn(i32) -> i32);
-    scaled_axes(ui, skin, ("Scale", "(%)"), scale, 10, 1..=SCALE_MAX);
-    ui.add_space(ITEM_GAP);
-    match skin {
-        Some(skin) => kit::check::checkbox(ui, skin, &mut next.double_sided, "Double sided"),
-        None => ui.checkbox(&mut next.double_sided, "Double sided"),
-    };
-    // Un arrastre (de un stepper) es un solo paso de undo: se juntan los cambios mientras el
-    // botón siga apretado.
-    let group = ui.id().with("model_object");
-    if next != *obj {
-        let mut changed = model.clone();
-        changed.objects[i] = next;
-        editor.set_model_grouped(changed, group);
-    }
-    if !ui.input(|input| input.pointer.any_down()) {
-        editor.end_group_of(group.value());
     }
 }
 
@@ -996,10 +846,10 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     };
     let primary = editor.resolve(editor.primary);
     let mut next = model.clone();
-    // Como el boceto (y los ejes del objeto): de una fila al título que sigue, solo el aire de
+    // Como el boceto: de una fila al título que sigue, solo el aire de
     // entre filas, y del título a su fila, 4 filas de la letra.
     label_with_hint(ui, "Camera", "");
-    ui.add_space(-AXIS_TITLE_PULL);
+    ui.add_space(-TITLE_PULL);
     // Sin Yaw ni Pitch: la cámara la mueven la órbita, el gizmo de navegación y los presets.
     let cam = &mut next.camera;
     let ortho = cam.projection == Projection::Orthographic;
@@ -1033,7 +883,7 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 
     label_with_hint(ui, "Light & Outline", "");
-    ui.add_space(-AXIS_TITLE_PULL);
+    ui.add_space(-TITLE_PULL);
     light_row(ui, skin, &mut next.light);
     let mut outline = next.outline.is_some();
     let lit = next.light.enabled;
@@ -1335,6 +1185,3 @@ fn swatches(
             .and_then(|i| i.inner),
     }
 }
-
-#[cfg(test)]
-mod tests;

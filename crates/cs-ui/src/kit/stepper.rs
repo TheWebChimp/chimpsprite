@@ -12,7 +12,8 @@
 //!   `DragValue` del campo numérico del kit).
 //! - Con unidad ("ms"), su caja `stepper.unit` (1×17, se estira) pegada al botón derecho: 3 + tinta
 //!   + 3 (por lo menos 11), el texto centrado en `color.field_text`.
-//! - Con etiqueta de eje (el transform del panel 3D, como el boceto de la pestaña de un objeto):
+//! - Con etiqueta de eje (era el transform del panel 3D, como el boceto de la pestaña de un
+//!   objeto; hoy la transform va en la barrita del objeto, con los campos de la barra):
 //!   una cajita de [`TAG_W`] pegada a la izquierda del botón −, la misma `stepper.unit` (del alto
 //!   del stepper), redondeada del lado de afuera (a la izquierda) y recta contra el botón (que
 //!   también queda recto de ese lado), con la letra (`X`, `Y`, `Z`) centrada en
@@ -38,6 +39,7 @@ pub const PLUS: &str = "icon.plus";
 /// Cada botón, con la columna que lo separa del campo.
 pub const BUTTON_W: f32 = 15.0;
 /// La etiqueta de eje: 13 de ancho, como en el boceto.
+#[allow(dead_code)] // Sin uso en la app desde que la transform pasó a la barrita del objeto.
 pub const TAG_W: f32 = 13.0;
 
 fn piece_state(state: ButtonState) -> WidgetState {
@@ -196,6 +198,7 @@ pub fn forced_shapes(
 
 /// La columna izquierda de la etiqueta, fila por fila (1 a 14), como el boceto: `true` es el
 /// borde oscuro (`color.control_border`) y `false` el claro de la caja de la unidad.
+#[allow(dead_code)] // Sin uso en la app desde que la transform pasó a la barrita del objeto.
 const TAG_EDGE: [bool; 14] = [
     false, false, false, false, false, false, true, false, true, true, true, true, true, true,
 ];
@@ -203,6 +206,7 @@ const TAG_EDGE: [bool; 14] = [
 /// La etiqueta de eje en `rect` ([`TAG_W`]×[`HEIGHT`]): la caja de la unidad con la letra `axis`
 /// centrada, redondeada del lado de afuera (a la izquierda; sin pixel en las esquinas) y recta del
 /// lado del botón −, como el boceto.
+#[allow(dead_code)] // Sin uso en la app desde que la transform pasó a la barrita del objeto.
 pub fn tag_shapes(ui: &Ui, skin: &Skin, rect: Rect, axis: &str, enabled: bool) -> Vec<Shape> {
     let ppp = ui.ctx().pixels_per_point();
     let colors = skin.colors();
@@ -243,6 +247,7 @@ pub fn tag_shapes(ui: &Ui, skin: &Skin, rect: Rect, axis: &str, enabled: bool) -
 /// El borde izquierdo del botón − pegado a una etiqueta: recto, sin las esquinas redondeadas del
 /// botón solo (borde arriba y abajo, luz debajo), como el boceto. Con los colores de la pieza del
 /// − en `state`, el estado con el que se dibujó el botón.
+#[allow(dead_code)] // Sin uso en la app desde que la transform pasó a la barrita del objeto.
 fn square_left_edge(skin: &Skin, button: Rect, state: ButtonState) -> Vec<Shape> {
     let Some(p) = skin.piece(LEFT, piece_state(state)) else {
         return Vec::new();
@@ -294,6 +299,7 @@ pub fn stepper<Num: emath::Numeric>(
 
 /// [`stepper`] con la etiqueta de eje `axis` pegada a la izquierda: `width` es todo, la etiqueta
 /// ([`TAG_W`]) y el stepper. La etiqueta no se toca (solo dice el eje).
+#[allow(dead_code)] // Sin uso en la app desde que la transform pasó a la barrita del objeto.
 #[allow(clippy::too_many_arguments)]
 pub fn axis_stepper<Num: emath::Numeric>(
     ui: &mut Ui,

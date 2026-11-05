@@ -31,6 +31,8 @@ struct LayoutHarness {
     selected: Vec<(String, bool)>,
     /// Los botones deshabilitados del último frame (sus nombres).
     disabled: Vec<String>,
+    /// Todo lo deshabilitado con nombre del último frame (botones, campos…).
+    off: Vec<String>,
     /// Todo lo que tiene nombre en el último frame (botones, sliders, campos): nombre y rect.
     nodes: Vec<(String, Rect)>,
     /// Lo dibujado en el último frame.
@@ -97,6 +99,7 @@ impl LayoutHarness {
             checks: Vec::new(),
             selected: Vec::new(),
             disabled: Vec::new(),
+            off: Vec::new(),
             nodes: Vec::new(),
             shapes: Vec::new(),
             textures: Vec::new(),
@@ -185,6 +188,11 @@ impl LayoutHarness {
         self.disabled = named(egui::accesskit::Role::Button)
             .filter(|(_, _, n)| n.is_disabled())
             .map(|(label, _, _)| label)
+            .collect();
+        self.off = nodes
+            .iter()
+            .filter(|(_, n)| n.is_disabled())
+            .filter_map(|(_, n)| Some(n.label()?.to_string()))
             .collect();
         self.nodes = nodes
             .iter()
@@ -4163,10 +4171,11 @@ fn the_cad_workspace_fills_the_canvas_with_the_four_views() {
     assert!(h.app.doc.canvas.artboard_texture(plain).is_some());
     let canvas = h.canvas.expect("the workspace area");
     let quads = h.app.doc.canvas.model_edit_quadrants().expect("the views");
-    // Los cuatro cubren todo el área debajo del encabezado (sin reglas), partida a la mitad en
-    // puntos enteros.
+    // Los cuatro cubren todo el área debajo del encabezado y de la barrita del objeto (sin
+    // reglas), partida a la mitad en puntos enteros.
     let header = h.app.doc.canvas.cad_header().expect("the header");
-    let views = Rect::from_min_max(pos2(canvas.left(), header.bottom() + 1.0), canvas.max);
+    let bar = crate::panels::options_bar_height(h.app.pixel.skin());
+    let views = Rect::from_min_max(pos2(canvas.left(), header.bottom() + 1.0 + bar), canvas.max);
     let all = quads.iter().fold(quads[0], |a, q| a.union(*q));
     assert_eq!(all, views);
     let mid = views.min + ((views.size() / 2.0).floor());
@@ -4880,7 +4889,7 @@ fn model_halves(h: &LayoutHarness) -> (Rect, Rect) {
     )
 }
 
-/// Lo general del modelo (arriba) y lo del objeto elegido (abajo), en modo Model.
+/// Lo general del modelo (arriba) y la fila de botones del objeto (abajo), en modo Model.
 const GENERAL_TEXTS: [&str; 5] = [
     "Grid",
     "Texture",
@@ -4888,7 +4897,7 @@ const GENERAL_TEXTS: [&str; 5] = [
     "Camera",
     "Light & Outline",
 ];
-const OBJECT_TEXTS: [&str; 4] = ["Position", "Rotation", "Scale", "Double sided"];
+const OBJECT_BUTTONS: [&str; 4] = ["Extrude", "Subdivide", "Merge", "Delete"];
 
 #[test]
 fn the_3d_panel_is_split_at_48_percent_of_its_height_by_an_etched_line() {
@@ -4929,12 +4938,10 @@ fn the_general_part_goes_above_the_line_and_the_object_below() {
         let r = in_model_panel(&h, label).unwrap_or_else(|| panic!("{label}"));
         assert!(top.contains_rect(r), "{label} {r:?} in {top:?}");
     }
-    for t in OBJECT_TEXTS {
-        assert!(text_in(&h, below_tabs, t).is_some(), "{t} below the tabs");
-        assert!(text_in(&h, top, t).is_none(), "{t} above the line");
+    for l in OBJECT_BUTTONS {
+        let r = in_model_panel(&h, l).unwrap_or_else(|| panic!("{l}"));
+        assert!(below_tabs.contains_rect(r), "{l} {r:?} below the header");
     }
-    assert_eq!(axis_tags(&h).len(), 9);
-    assert!(axis_tags(&h).iter().all(|r| below_tabs.contains_rect(*r)));
 }
 
 #[test]
@@ -4998,18 +5005,25 @@ fn away(h: &mut LayoutHarness) {
 }
 
 #[test]
-fn without_an_object_only_the_outliner_shows_below_the_line() {
+fn without_an_object_only_the_buttons_and_the_outliner_show_below_the_line() {
     let h = without_an_object(model_panel_tall());
     let (top, bottom) = model_halves(&h);
     let header = node(&h, "Add object");
     let below = Rect::from_min_max(pos2(bottom.left(), header.bottom() + 2.0), bottom.max);
-    let texts: Vec<&String> = h
+    let mut texts: Vec<&str> = h
         .text_rects
         .iter()
         .filter(|(_, r, _)| below.intersects(*r))
-        .map(|(t, _, _)| t)
+        .map(|(t, _, _)| t.as_str())
         .collect();
-    assert_eq!(texts, vec!["Cube"], "only the outliner under the header");
+    texts.sort_unstable();
+    // (Los botones deshabilitados dibujan su texto dos veces: el grabado.)
+    texts.dedup();
+    assert_eq!(
+        texts,
+        vec!["Cube", "Delete", "Extrude", "Merge", "Subdivide"],
+        "only the object buttons and the outliner under the header"
+    );
     let mut controls: Vec<&str> = h
         .nodes
         .iter()
@@ -5020,10 +5034,18 @@ fn without_an_object_only_the_outliner_shows_below_the_line() {
     controls.dedup();
     assert_eq!(
         controls,
-        vec!["Cube", "Double sided Cube", "Hide Cube", "Lock Cube"],
-        "only the row of the cube under the header"
+        vec![
+            "Cube",
+            "Delete",
+            "Double sided Cube",
+            "Extrude",
+            "Hide Cube",
+            "Lock Cube",
+            "Merge",
+            "Subdivide"
+        ],
+        "only the object buttons and the row of the cube under the header"
     );
-    assert!(axis_tags(&h).is_empty(), "no transform rows");
     // Lo general, arriba como siempre.
     for t in GENERAL_TEXTS {
         assert!(text_in(&h, top, t).is_some(), "{t} above the line");
@@ -5032,8 +5054,13 @@ fn without_an_object_only_the_outliner_shows_below_the_line() {
 
 #[test]
 fn each_half_of_the_3d_panel_scrolls_on_its_own() {
-    // Una ventana baja: ni lo general ni lo del objeto caben en su parte.
+    // Una ventana baja: ni lo general ni el outliner (con ocho cubos) caben en su parte.
     let mut h = model_panel_in(Vec2::new(1200.0, 360.0));
+    for _ in 0..7 {
+        assert!(h.app.doc.editor.add_primitive(cs_3d::Primitive::Cube));
+    }
+    h.frame();
+    h.frame();
     let (top, bottom) = model_halves(&h);
     let tracks = h.drawn("scroll.track.v");
     assert!(tracks.iter().any(|r| top.contains_rect(*r)), "{tracks:?}");
@@ -5045,7 +5072,7 @@ fn each_half_of_the_3d_panel_scrolls_on_its_own() {
     let cube = node(&h, "Add object");
     let first = |h: &LayoutHarness, t: &str, area: Rect| text_in(h, area, t);
     let object = first(&h, "Grid", top).expect("Grid at the top");
-    let position = first(&h, "Position", bottom).expect("Position below");
+    let position = first(&h, "Extrude", bottom).expect("Extrude below");
     let wheel = |h: &mut LayoutHarness, at: Pos2| {
         h.frame_with(vec![Event::PointerMoved(at)]);
         h.frame_with(vec![Event::MouseWheel {
@@ -5064,7 +5091,7 @@ fn each_half_of_the_3d_panel_scrolls_on_its_own() {
     assert!(moved.is_none_or(|r| r.top() < object.top()), "{moved:?}");
     assert_eq!(model_split(&h), split);
     assert_eq!(node(&h, "Add object"), cube);
-    assert_eq!(first(&h, "Position", bottom), Some(position));
+    assert_eq!(first(&h, "Extrude", bottom), Some(position));
     let general = h
         .text_rects
         .iter()
@@ -5073,7 +5100,7 @@ fn each_half_of_the_3d_panel_scrolls_on_its_own() {
         .collect::<Vec<_>>();
     // Abajo: se mueve lo del objeto; lo general se queda donde quedó.
     wheel(&mut h, position.center());
-    let moved = first(&h, "Position", bottom);
+    let moved = first(&h, "Extrude", bottom);
     assert!(moved.is_none_or(|r| r.top() < position.top()), "{moved:?}");
     assert_eq!(node(&h, "Add object"), cube);
     let still = h
@@ -5097,7 +5124,7 @@ fn each_half_of_the_3d_panel_scrolls_on_its_own() {
     for t in GENERAL_TEXTS {
         assert!(!seen(&h, bottom, t), "{t} seen below the line");
     }
-    for t in OBJECT_TEXTS {
+    for t in OBJECT_BUTTONS {
         assert!(!seen(&h, top, t), "{t} seen above the line");
     }
 }
@@ -5303,17 +5330,6 @@ fn the_outliner_header_has_duplicate_new_group_and_plus_at_the_right() {
     assert!(icon.iter().any(|r| group.contains_rect(*r)), "{icon:?}");
 }
 
-/// Las etiquetas de eje (X, Y, Z) del panel 3D: vacío si no hay filas de transform.
-fn axis_tags(h: &LayoutHarness) -> Vec<Rect> {
-    let flyout = model_flyout(h);
-    h.drawn(crate::kit::stepper::UNIT)
-        .into_iter()
-        // La caja de la unidad empieza una columna adentro de la etiqueta (su borde redondeado).
-        .filter(|r| flyout.contains_rect(*r) && r.width() == crate::kit::stepper::TAG_W - 1.0)
-        .map(|r| r.with_min_x(r.min.x - 1.0))
-        .collect()
-}
-
 #[test]
 fn with_an_object_chosen_the_bottom_needs_no_scroll_in_the_capture_window() {
     // La de la captura (en una más baja, como en el boceto, lo del objeto se desplaza).
@@ -5322,8 +5338,8 @@ fn with_an_object_chosen_the_bottom_needs_no_scroll_in_the_capture_window() {
         let h = model_panel_in(size);
         assert_eq!(h.app.doc.editor.selected_object(), Some(0));
         let (_, bottom) = model_halves(&h);
-        let double = check(&h, "Double sided").0;
-        assert!(bottom.contains_rect(double), "{double:?} in {bottom:?}");
+        let cube = node(&h, "Cube");
+        assert!(bottom.contains_rect(cube), "{cube:?} in {bottom:?}");
         assert!(
             !h.drawn("scroll.track.v")
                 .iter()
@@ -5589,41 +5605,6 @@ fn dragging_a_row_onto_a_group_moves_it_inside() {
     assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
 }
 
-#[test]
-fn the_position_x_stepper_moves_the_object_in_one_step() {
-    let mut h = model_panel_open(true);
-    let heading = h
-        .text_rects
-        .iter()
-        .find(|(t, _, _)| t == "Position")
-        .map(|(_, r, _)| *r)
-        .expect("the Position heading");
-    // El + de X: el primero de la fila de abajo del título.
-    let plus = h
-        .buttons
-        .iter()
-        .filter(|(l, r)| l == "Increase" && r.top() > heading.center().y)
-        .min_by(|a, b| {
-            (a.1.top(), a.1.left())
-                .partial_cmp(&(b.1.top(), b.1.left()))
-                .unwrap()
-        })
-        .map(|(_, r)| *r)
-        .expect("the Position X + button");
-    let steps = h.app.doc.editor.history.done_count();
-    h.click(plus.center(), PointerButton::Primary);
-    let x = |h: &LayoutHarness| {
-        h.app.doc.editor.model().unwrap().objects[0]
-            .transform
-            .position
-            .x
-    };
-    assert_eq!(x(&h), 1);
-    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
-    h.app.doc.editor.undo();
-    assert_eq!(x(&h), 0);
-}
-
 /// Lo que se ve de los textos "3D" y "Grid" (la primera fila del modo Edit) en el panel recién
 /// abierto.
 fn panel_top_texts(h: &LayoutHarness) -> (Vec<Rect>, Rect) {
@@ -5765,117 +5746,6 @@ fn text_in(h: &LayoutHarness, area: Rect, t: &str) -> Option<Rect> {
         .map(|(_, r, _)| *r)
 }
 
-/// Las etiquetas de eje (X, Y, Z) de la fila de steppers debajo del título `title` del panel 3D:
-/// las cajitas, de izquierda a derecha.
-fn axis_row(h: &LayoutHarness, title: &str) -> Vec<Rect> {
-    let flyout = model_flyout(h);
-    let heading = text_in(h, flyout, title).unwrap_or_else(|| panic!("no {title:?}"));
-    let tags: Vec<Rect> = h
-        .drawn(crate::kit::stepper::UNIT)
-        .into_iter()
-        .filter(|r| flyout.contains_rect(*r) && r.top() > heading.center().y)
-        .map(|r| r.with_min_x(r.min.x - 1.0))
-        .collect();
-    let top = tags.iter().map(|r| r.top()).fold(f32::INFINITY, f32::min);
-    let mut row: Vec<Rect> = tags.into_iter().filter(|r| r.top() == top).collect();
-    row.sort_by(|a, b| a.left().partial_cmp(&b.left()).unwrap());
-    row
-}
-
-#[test]
-fn the_object_tab_shows_the_transform_in_rows_of_three_tagged_steppers() {
-    let h = model_panel_tall();
-    let flyout = model_flyout(&h);
-    let inner = flyout.shrink(crate::dock::FLYOUT_MARGIN as f32);
-    let bar = inner.right() - crate::pixel_ui::SCROLL_BAR;
-    let mut last = Rect::NOTHING;
-    for title in ["Position", "Rotation", "Scale"] {
-        let heading = text_in(&h, flyout, title).unwrap();
-        assert!(heading.top() > last.bottom(), "{title} below the row above");
-        let row = axis_row(&h, title);
-        assert_eq!(row.len(), 3, "{title}: {row:?}");
-        // El título, sobre la primera etiqueta y alineado con ella.
-        assert_eq!(row[0].left(), heading.left().round(), "{title}");
-        for (tag, letter) in row.iter().zip(["X", "Y", "Z"]) {
-            assert_eq!(tag.size(), vec2(13.0, 17.0), "{title} {letter}");
-            text_in(&h, *tag, letter).unwrap_or_else(|| panic!("{title}: {letter} in {tag:?}"));
-            // El − pegado a la etiqueta; el + a la derecha, sin pasar la barra del scroll.
-            let minus = h
-                .buttons
-                .iter()
-                .find(|(l, r)| l == "Decrease" && r.left() == tag.right() && r.top() == tag.top())
-                .unwrap_or_else(|| panic!("{title} {letter}: the − after its tag"));
-            let plus = h
-                .buttons
-                .iter()
-                .filter(|(l, r)| {
-                    l == "Increase" && r.top() == tag.top() && r.left() > minus.1.left()
-                })
-                .min_by(|a, b| a.1.left().partial_cmp(&b.1.left()).unwrap())
-                .unwrap();
-            assert!(
-                plus.1.right() <= bar,
-                "{title} {letter} {:?} past {bar}",
-                plus.1
-            );
-        }
-        // Las tres del mismo ancho, con el mismo aire entre ellas.
-        let pluses: Vec<f32> = h
-            .buttons
-            .iter()
-            .filter(|(l, r)| l == "Increase" && r.top() == row[0].top())
-            .map(|(_, r)| r.right())
-            .collect();
-        assert_eq!(pluses.len(), 3, "{title}");
-        let gap = row[1].left() - (pluses.iter().copied().fold(f32::INFINITY, f32::min));
-        assert!((3.0..=8.0).contains(&gap), "{title}: gap {gap}");
-        last = row[0];
-    }
-    // Double sided debajo de la escala; nada de textura, cámara ni luz entre medio.
-    let double = check(&h, "Double sided").0;
-    assert!(double.top() > last.bottom());
-    let position = text_in(&h, flyout, "Position").unwrap();
-    let block = Rect::from_min_max(
-        pos2(flyout.left(), position.top()),
-        pos2(flyout.right(), double.bottom()),
-    );
-    for t in [
-        "Texture",
-        "Camera",
-        "Light & Outline",
-        "Light",
-        "Shading…",
-        "Add",
-        "Sides",
-    ] {
-        assert!(text_in(&h, block, t).is_none(), "{t} in the object block");
-    }
-}
-
-#[test]
-fn the_rotation_z_stepper_turns_the_object_in_one_step() {
-    let mut h = model_panel_tall();
-    let z = axis_row(&h, "Rotation")[2];
-    let plus = h
-        .buttons
-        .iter()
-        .filter(|(l, r)| l == "Increase" && r.top() == z.top() && r.left() > z.right())
-        .min_by(|a, b| a.1.left().partial_cmp(&b.1.left()).unwrap())
-        .map(|(_, r)| *r)
-        .unwrap();
-    let steps = h.app.doc.editor.history.done_count();
-    h.click(plus.center(), PointerButton::Primary);
-    let rotation = |h: &LayoutHarness| {
-        h.app.doc.editor.model().unwrap().objects[0]
-            .transform
-            .rotation
-    };
-    assert_eq!(rotation(&h), cs_core::Vec3i { x: 0, y: 0, z: 10 });
-    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
-    h.app.doc.editor.undo();
-    assert_eq!(rotation(&h), cs_core::Vec3i::default());
-}
-
 // --- El panel 3D: textura, cámara, luz y contorno ---
 
 /// Como [`model_panel_open`] con un modelo, en una ventana alta (que quepa todo el panel), y con
@@ -5989,14 +5859,14 @@ fn model_row_right(h: &LayoutHarness) -> f32 {
     inner.right() - crate::pixel_ui::SCROLL_BAR - 4.0
 }
 
-/// El ritmo de los ejes del objeto (el del boceto): del título a su fila de steppers y de esa fila
-/// al título que sigue.
-fn axis_rhythm(h: &LayoutHarness) -> (f32, f32) {
+/// El ritmo de las filas de lo general (el del boceto): del título "Camera" a su fila y de esa
+/// fila al título que sigue ("Light & Outline").
+fn row_rhythm(h: &LayoutHarness) -> (f32, f32) {
     let flyout = model_flyout(h);
-    let position = text_in(h, flyout, "Position").unwrap();
-    let rotation = text_in(h, flyout, "Rotation").unwrap();
-    let row = axis_row(h, "Position")[0];
-    (row.top() - position.top(), rotation.top() - row.top())
+    let camera = text_in(h, flyout, "Camera").unwrap();
+    let light = text_in(h, flyout, "Light & Outline").unwrap();
+    let row = in_model_panel(h, "Perspective").expect("the projection select");
+    (row.top() - camera.top(), light.top() - row.top())
 }
 
 /// El select del tamaño de la textura: el control del panel en la fila de `texture`, a la
@@ -6033,8 +5903,8 @@ fn the_texture_row_glues_new_to_its_select_with_the_size_in_the_right_column() {
     let label = text_in(&h, top, "Texture").unwrap();
     let size_label = text_in(&h, top, "Texture Size").unwrap();
     assert_eq!(label.top(), size_label.top(), "{label:?} {size_label:?}");
-    // De la etiqueta al select, lo del boceto: como del título de los ejes a su fila.
-    let (title, row) = axis_rhythm(&h);
+    // De la etiqueta al select, lo del boceto: como del título de la cámara a su fila.
+    let (title, row) = row_rhythm(&h);
     assert_eq!(texture.top() - label.top(), title, "{label:?} {texture:?}");
     assert!(row > 0.0);
     assert!((label.left() - texture.left()).abs() <= 1.0, "{label:?}");
@@ -6086,16 +5956,14 @@ fn the_camera_row_is_a_projection_select_and_the_preset_group() {
     }
     assert_eq!(presets[0].left() - projection.right(), 4.0);
     assert_eq!(presets[3].right(), model_row_right(&h));
-    // Como el boceto (y los ejes): de la fila de la textura al título de la cámara, de él a su
-    // fila y de ella al título que sigue.
+    // Como el boceto: de la fila de la textura al título de la cámara, lo mismo que de la fila
+    // de la cámara al título que sigue; y de la etiqueta de la textura a su select, lo de la
+    // cámara a la suya.
     let label = text_in(&h, top, "Camera").unwrap();
-    let (title, row) = axis_rhythm(&h);
+    let (title, row) = row_rhythm(&h);
     assert_eq!(label.top() - texture.top(), row, "{texture:?} {label:?}");
-    assert_eq!(
-        projection.top() - label.top(),
-        title,
-        "{label:?} {projection:?}"
-    );
+    let texture_label = text_in(&h, top, "Texture").unwrap();
+    assert_eq!(texture.top() - texture_label.top(), title);
     let light = text_in(&h, top, "Light & Outline").unwrap();
     assert_eq!(
         light.top() - projection.top(),
@@ -6229,8 +6097,8 @@ fn the_model_tab_has_a_sheet_settings_button() {
 #[test]
 fn every_model_panel_control_fits_beside_the_scroll_bar() {
     // Una ventana baja y una alta (cabe todo, sin barra).
-    // Con el cubo elegido (18: sus nueve steppers, y 4 de lo general: Yaw y Pitch de la luz; la
-    // cámara ya no los tiene) y sin objeto (solo los 4 de lo general).
+    // Con el cubo elegido y sin objeto: los 4 steppers de lo general (Yaw y Pitch de la luz; la
+    // cámara ya no los tiene; la transform va en la barrita del objeto).
     let sizes = [Vec2::new(1200.0, 480.0), Vec2::new(1200.0, 1800.0)];
     for (size, object) in sizes.into_iter().flat_map(|s| [(s, true), (s, false)]) {
         let mut h = model_panel_in(size);
@@ -6255,8 +6123,7 @@ fn every_model_panel_control_fits_beside_the_scroll_bar() {
         let steppers = controls
             .iter()
             .filter(|(l, _)| l == "Increase" || l == "Decrease");
-        let least = if object { 4 + 18 } else { 4 };
-        assert!(steppers.clone().count() >= least, "{controls:?}");
+        assert!(steppers.clone().count() >= 4, "{controls:?}");
         // Los steppers (de ancho fijo) caben siempre al lado de la barra.
         for (label, r) in steppers {
             assert!(inside(*r, content), "{label} {r:?} outside {content:?}");
@@ -8523,7 +8390,10 @@ fn texture_mode_splits_the_area_top_and_bottom_left_of_the_panel() {
     // Debajo del encabezado, de su línea y de la barra de opciones.
     let header = h.app.doc.canvas.cad_header().expect("the header");
     let bar = crate::panels::options_bar_height(h.app.pixel.skin());
-    assert_eq!(top.min, pos2(canvas.left(), header.bottom() + 1.0 + bar));
+    assert_eq!(
+        top.min,
+        pos2(canvas.left(), header.bottom() + 1.0 + 2.0 * bar)
+    );
     assert_eq!(top.height(), ((canvas.bottom() - top.top()) / 2.0).floor());
     assert_eq!(bottom.top(), top.bottom() + 1.0, "a 1 point line");
     assert_eq!(bottom.bottom(), canvas.bottom());
@@ -8750,7 +8620,8 @@ fn the_model_tab_has_the_tool_options_bar_only_in_texture_mode() {
     assert!(size.top() > header.bottom(), "{size:?} under {header:?}");
     let (top, _) = h.app.doc.canvas.texture_panes().unwrap();
     assert!(size.bottom() < top.top(), "{size:?} over {top:?}");
-    assert_eq!(top.top() - header.bottom() - 1.0, options.height());
+    // La barrita del objeto y la del pincel, del mismo alto.
+    assert_eq!(top.top() - header.bottom() - 1.0, 2.0 * options.height());
     // Y de vuelta en Model, otra vez sin ella.
     h.app.doc.editor.set_cad_mode(crate::editor::CadMode::Model);
     h.frame();
@@ -8792,15 +8663,19 @@ fn the_chimpcad_header_has_the_logo_and_the_mode_buttons_over_the_views() {
     let white = h.app.pixel.skin().unwrap().colors().menu_highlight;
     assert!(rects.contains(&(white, top)), "the bevel on top");
     let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
-    assert_eq!(quads[0].top(), line.bottom(), "the views start below");
+    let bar = crate::panels::options_bar_height(h.app.pixel.skin());
+    assert_eq!(
+        quads[0].top(),
+        line.bottom() + bar,
+        "the views start below the object bar"
+    );
     // En modo Texture, igual: el render empieza debajo.
     h.click(texture.center(), PointerButton::Primary);
     h.frame();
     assert_eq!(h.app.doc.canvas.cad_header(), Some(header));
     assert_eq!(h.drawn("logo.chimpcad").len(), 1);
     let (top, _) = h.app.doc.canvas.texture_panes().unwrap();
-    let bar = crate::panels::options_bar_height(h.app.pixel.skin());
-    assert_eq!(top.top(), line.bottom() + bar, "under the options bar");
+    assert_eq!(top.top(), line.bottom() + 2.0 * bar, "under both bars");
     assert!(!top.intersects(node(&h, "Model")));
     // En el lienzo no hay encabezado.
     let doc = LayoutHarness::new(pixel_ui(), true);
@@ -9224,7 +9099,7 @@ fn in_texture_mode_the_object_tab_starts_with_the_uv_buttons() {
     let (_, bottom) = model_halves(&h);
     let cube = node(&h, "Add object");
     // Como el boceto: los botones de las UVs primero, en una fila debajo del encabezado (sin
-    // título), y después Position, Rotation, Scale y Double sided.
+    // título), y después el outliner.
     let labels = ["Rotate 90°", "Flip H", "Flip V"];
     let buttons: Vec<Rect> = labels.iter().map(|l| h.button(l)).collect();
     for (b, l) in buttons.iter().zip(labels) {
@@ -9242,12 +9117,9 @@ fn in_texture_mode_the_object_tab_starts_with_the_uv_buttons() {
         buttons[0]
     );
     assert!(buttons[0].left() < buttons[1].left() && buttons[1].left() < buttons[2].left());
-    let position = text_in(&h, bottom, "Position").expect("Position");
-    assert!(position.top() > buttons[0].bottom(), "{position:?}");
+    let row = node(&h, "Cube");
+    assert!(row.top() > buttons[0].bottom(), "{row:?}");
     assert!(text_in(&h, bottom, "UV").is_none(), "no UV title");
-    let double = check(&h, "Double sided").0;
-    let scale = axis_row(&h, "Scale")[0];
-    assert!(double.top() > scale.bottom());
     // Texture Size no está abajo (va con lo general).
     assert!(text_in(&h, bottom, "Texture Size").is_none());
 }
@@ -9514,14 +9386,14 @@ fn the_topology_buttons_follow_the_selection_and_the_mode() {
         },
     );
     assert_eq!(enabled(&h), [true, true, true, true], "a face");
-    // Los botones van en una fila arriba de Position.
+    // Los botones van en una fila arriba del outliner.
     let (_, bottom) = model_halves(&h);
     let buttons: Vec<Rect> = labels.iter().map(|l| h.button(l)).collect();
-    let position = text_in(&h, bottom, "Position").expect("Position");
+    let row = node(&h, "Cube");
     for (b, l) in buttons.iter().zip(labels) {
         assert!(bottom.contains_rect(*b), "{l} {b:?} in {bottom:?}");
         assert_eq!(b.top(), buttons[0].top(), "{l} in one row");
-        assert!(b.bottom() < position.top(), "{l} above Position");
+        assert!(b.bottom() < row.top(), "{l} above the outliner");
     }
 }
 
@@ -9607,31 +9479,6 @@ fn g_and_s_during_an_extrude_do_not_drop_it() {
 }
 
 #[test]
-fn delete_and_backspace_in_a_panel_field_do_not_delete_geometry() {
-    let (mut h, _) = with_the_top_face_chosen();
-    let tag = axis_row(&h, "Position")[0];
-    let field = Pos2::new(
-        tag.right() + crate::kit::stepper::BUTTON_W + 12.0,
-        tag.center().y,
-    );
-    h.click(field, PointerButton::Primary);
-    assert!(h.ctx.egui_wants_keyboard_input(), "the field has focus");
-    let model = h.app.doc.editor.model().cloned();
-    let steps = h.app.doc.editor.history.done_count();
-    for key in [egui::Key::Backspace, egui::Key::Delete] {
-        h.frame_with(key_tap(key));
-    }
-    h.frame();
-    assert_eq!(
-        h.app.doc.editor.model().cloned(),
-        model,
-        "no geometry deleted"
-    );
-    assert_eq!(h.app.doc.editor.history.done_count(), steps);
-    assert!(!h.app.doc.editor.model_edit().selection.is_empty());
-}
-
-#[test]
 fn number_keys_and_arrows_do_nothing_during_an_extrude() {
     let (mut h, top) = with_the_top_face_chosen();
     let steps = h.app.doc.editor.history.done_count();
@@ -9684,4 +9531,318 @@ fn ctrl_j_duplicates_the_3d_object_in_the_model_tab() {
     press_ctrl(&mut h, egui::Key::J);
     h.frame();
     assert_eq!(h.app.doc.editor.model().unwrap().objects.len(), n + 1);
+}
+
+// --- La barrita del objeto, debajo del encabezado de ChimpCAD ---
+
+mod object_bar {
+    use super::*;
+    use crate::editor::Row;
+
+    /// Los nueve campos de la barrita, por su nombre.
+    const FIELDS: [&str; 9] = [
+        "Position X",
+        "Position Y",
+        "Position Z",
+        "Rotation X",
+        "Rotation Y",
+        "Rotation Z",
+        "Scale X",
+        "Scale Y",
+        "Scale Z",
+    ];
+
+    /// El área del workspace debajo del encabezado y su línea.
+    fn below_header(h: &LayoutHarness) -> Rect {
+        let canvas = h.canvas.expect("the workspace area");
+        let header = h.app.doc.canvas.cad_header().expect("the header");
+        Rect::from_min_max(pos2(canvas.left(), header.bottom() + 1.0), canvas.max)
+    }
+
+    /// Los textos dibujados dentro de `r`.
+    fn texts_in(h: &LayoutHarness, r: Rect) -> Vec<String> {
+        h.text_rects
+            .iter()
+            .filter(|(_, t, _)| r.contains_rect(*t))
+            .map(|(s, _, _)| s.clone())
+            .collect()
+    }
+
+    fn settle(h: &mut LayoutHarness) {
+        h.frame();
+        h.frame();
+    }
+
+    /// Escribe `text` en el campo `label` de la barrita (clic, todo elegido, borrar, el texto y
+    /// Enter).
+    fn type_in(h: &mut LayoutHarness, label: &str, text: &str) {
+        h.click(node(h, label).center(), PointerButton::Primary);
+        assert!(h.ctx.egui_wants_keyboard_input(), "{label} has focus");
+        press(h, egui::Key::A, egui::Modifiers::COMMAND);
+        h.frame_with(key_tap(egui::Key::Backspace));
+        h.frame_with(vec![Event::Text(text.into())]);
+        h.frame_with(key_tap(egui::Key::Enter));
+        settle(h);
+    }
+
+    fn transform(h: &LayoutHarness, o: usize) -> cs_core::Transform3D {
+        h.app.doc.editor.model().unwrap().objects[o].transform
+    }
+
+    #[test]
+    fn the_object_bar_sits_under_the_chimpcad_header_in_both_modes() {
+        let mut h = with_a_model_at_800();
+        let header = h.app.doc.canvas.cad_header().expect("the header");
+        let area = below_header(&h);
+        let bar = crate::panels::options_bar_height(h.app.pixel.skin());
+        let quads = h.app.doc.canvas.model_edit_quadrants().expect("the views");
+        // Las vistas empiezan debajo de la barrita.
+        assert_eq!(quads[0].top(), area.top() + bar, "{quads:?}");
+        let titles = ["Position", "Rotation", "Scale"]
+            .map(|t| text_in(&h, area, t).unwrap_or_else(|| panic!("{t} under the header")));
+        for (t, r) in ["Position", "Rotation", "Scale"].iter().zip(titles) {
+            assert!(r.top() > header.bottom(), "{t} {r:?} under {header:?}");
+            assert!(r.bottom() < quads[0].top(), "{t} {r:?} over the views");
+            assert_eq!(r.top(), titles[0].top(), "{t} in one row");
+        }
+        assert!(titles[0].right() < titles[1].left() && titles[1].right() < titles[2].left());
+        // Cada título con sus tres campos después, en la fila de la barrita.
+        for (k, f) in FIELDS.iter().enumerate() {
+            let r = node(&h, f);
+            assert!(
+                area.contains_rect(r) && r.bottom() < quads[0].top(),
+                "{f} {r:?}"
+            );
+            assert!(r.left() > titles[k / 3].right(), "{f} after its title");
+        }
+        // En modo Texture, la barrita en el mismo lugar y, debajo, la del pincel.
+        h.app
+            .doc
+            .editor
+            .set_cad_mode(crate::editor::CadMode::Texture);
+        settle(&mut h);
+        assert_eq!(
+            h.app.doc.canvas.cad_header(),
+            Some(header),
+            "the header stays"
+        );
+        assert_eq!(text_in(&h, area, "Position"), Some(titles[0]));
+        let size = text_in(&h, area, "Brush Size").expect("the brush bar");
+        assert!(
+            size.top() > titles[0].bottom(),
+            "{size:?} under the object bar"
+        );
+        let (top, _) = h.app.doc.canvas.texture_panes().unwrap();
+        assert!(
+            size.bottom() < top.top(),
+            "{size:?} over the render {top:?}"
+        );
+        assert_eq!(top.top(), area.top() + 2.0 * bar);
+    }
+
+    #[test]
+    fn dragging_a_position_field_moves_the_object_in_one_step() {
+        let mut h = with_a_model_at_800();
+        assert_eq!(h.app.doc.editor.active_row(), Some(Row::Object(0)));
+        let x = node(&h, "Position X");
+        let steps = h.app.doc.editor.history.done_count();
+        h.drag(x.center(), x.center() + vec2(20.0, 0.0));
+        settle(&mut h);
+        let p = transform(&h, 0).position;
+        assert!(p.x > 0, "{p:?}");
+        assert_eq!((p.y, p.z), (0, 0));
+        assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+        h.app.doc.editor.undo();
+        assert_eq!(transform(&h, 0).position.x, 0);
+    }
+
+    #[test]
+    fn with_a_group_active_the_bar_edits_the_group() {
+        let mut h = with_a_model_at_800();
+        assert!(h.app.doc.editor.new_group());
+        h.app.doc.editor.set_active_row(Some(Row::Group(0)), false);
+        settle(&mut h);
+        assert_eq!(h.app.doc.editor.active_row(), Some(Row::Group(0)));
+        let steps = h.app.doc.editor.history.done_count();
+        type_in(&mut h, "Position X", "8");
+        let model = h.app.doc.editor.model().unwrap();
+        assert_eq!(model.groups[0].transform.position.x, 8);
+        assert_eq!(model.objects[0].transform.position.x, 0, "the cube stays");
+        assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    }
+
+    #[test]
+    fn the_bar_is_disabled_without_an_active_row_or_when_locked() {
+        let mut h = with_a_model_at_800();
+        let all_off = |h: &LayoutHarness| FIELDS.iter().all(|f| h.off.iter().any(|o| o == f));
+        let none_off = |h: &LayoutHarness| !FIELDS.iter().any(|f| h.off.iter().any(|o| o == f));
+        assert!(none_off(&h), "{:?}", h.off);
+        // Con valor: el número en el campo.
+        assert!(texts_in(&h, node(&h, "Scale X")).contains(&"100".to_owned()));
+        // Sin fila activa: los nueve, vacíos y deshabilitados.
+        h.app.doc.editor.set_active_row(None, false);
+        settle(&mut h);
+        assert!(all_off(&h), "{:?}", h.off);
+        for f in FIELDS {
+            // Solo la letra del eje: ningún número.
+            let texts = texts_in(&h, node(&h, f));
+            let numbers = texts.iter().any(|t| t.chars().any(|c| c.is_ascii_digit()));
+            assert!(!numbers, "{f} empty: {texts:?}");
+        }
+        let steps = h.app.doc.editor.history.done_count();
+        let x = node(&h, "Position X");
+        h.drag(x.center(), x.center() + vec2(20.0, 0.0));
+        assert_eq!(
+            h.app.doc.editor.history.done_count(),
+            steps,
+            "nothing to move"
+        );
+        // Con el cubo bloqueado, también.
+        h.app.doc.editor.set_active_row(Some(Row::Object(0)), false);
+        settle(&mut h);
+        assert!(none_off(&h));
+        assert!(h.app.doc.editor.toggle_row_locked(Row::Object(0)));
+        settle(&mut h);
+        assert!(all_off(&h), "locked: {:?}", h.off);
+        // Y con un grupo bloqueado que lo contiene (bloqueado por herencia).
+        assert!(h.app.doc.editor.toggle_row_locked(Row::Object(0)));
+        assert!(h.app.doc.editor.new_group());
+        assert!(h.app.doc.editor.toggle_row_locked(Row::Group(0)));
+        h.app.doc.editor.set_active_row(Some(Row::Object(0)), false);
+        settle(&mut h);
+        assert!(all_off(&h), "inherited lock: {:?}", h.off);
+    }
+
+    #[test]
+    fn with_other_objects_chosen_in_the_views_the_bar_is_disabled() {
+        let mut h = with_a_model_at_800();
+        assert!(h.app.doc.editor.add_primitive(cs_3d::Primitive::Cube));
+        h.app.doc.editor.set_active_row(Some(Row::Object(0)), false);
+        settle(&mut h);
+        assert!(!h.off.iter().any(|o| o == "Position X"));
+        // El otro cubo también elegido en las vistas: no es de la fila activa.
+        h.app.doc.editor.set_active_row(Some(Row::Object(1)), true);
+        h.app.doc.editor.set_active_row(Some(Row::Object(0)), true);
+        settle(&mut h);
+        let items = &h.app.doc.editor.model_edit().selection.items;
+        assert!(items.contains(&cs_3d::Item::Object(1)), "{items:?}");
+        assert!(h.off.iter().any(|o| o == "Position X"), "{:?}", h.off);
+        // Los dos en un grupo activo: sí (son suyos).
+        assert!(h.app.doc.editor.new_group());
+        h.app.doc.editor.set_active_row(Some(Row::Group(0)), false);
+        settle(&mut h);
+        assert!(!h.off.iter().any(|o| o == "Position X"), "{:?}", h.off);
+    }
+
+    #[test]
+    fn dragging_the_rotation_z_field_turns_the_object_in_one_step() {
+        let mut h = with_a_model_at_800();
+        let z = node(&h, "Rotation Z");
+        let steps = h.app.doc.editor.history.done_count();
+        h.drag(z.center(), z.center() + vec2(10.0, 0.0));
+        settle(&mut h);
+        let r = transform(&h, 0).rotation;
+        // En grados enteros (se guarda en décimas).
+        assert!(r.z > 0 && r.z % 10 == 0, "{r:?}");
+        assert_eq!((r.x, r.y), (0, 0));
+        assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+        h.app.doc.editor.undo();
+        assert_eq!(transform(&h, 0).rotation, cs_core::Vec3i::default());
+    }
+
+    #[test]
+    fn the_rotation_field_shows_the_wrapped_angle_and_scale_stops_at_one_percent() {
+        let mut h = with_a_model_at_800();
+        let mut model = h.app.doc.editor.model().unwrap().clone();
+        model.objects[0].transform.rotation.z = 3700;
+        assert!(
+            h.app
+                .doc
+                .editor
+                .set_model_grouped(model, egui::Id::new("script"))
+        );
+        h.app.doc.editor.end_group();
+        settle(&mut h);
+        // 370° se ve como 10°.
+        assert!(texts_in(&h, node(&h, "Rotation Z")).contains(&"10".to_owned()));
+        // La escala no baja de 1 % (10 milésimas).
+        let x = node(&h, "Scale X");
+        h.drag(x.center(), x.center() - vec2(400.0, 0.0));
+        settle(&mut h);
+        assert_eq!(transform(&h, 0).scale.x, 10);
+    }
+
+    #[test]
+    fn values_outside_the_ranges_are_not_rewritten_by_drawing_the_bar() {
+        let mut h = with_a_model_at_800();
+        let mut model = h.app.doc.editor.model().unwrap().clone();
+        let t = &mut model.objects[0].transform;
+        t.rotation = cs_core::Vec3i {
+            x: 4000,
+            y: -9000,
+            z: 3610,
+        };
+        t.scale = cs_core::Vec3i {
+            x: 20000,
+            y: -1000,
+            z: 5,
+        };
+        t.position.x = 9999 * cs_core::FIXED;
+        assert!(
+            h.app
+                .doc
+                .editor
+                .set_model_grouped(model.clone(), egui::Id::new("script"))
+        );
+        h.app.doc.editor.end_group();
+        let steps = h.app.doc.editor.history.done_count();
+        for _ in 0..3 {
+            h.frame();
+        }
+        assert_eq!(h.app.doc.editor.model().unwrap(), &model);
+        assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    }
+
+    #[test]
+    fn delete_and_backspace_in_a_bar_field_do_not_delete_geometry() {
+        let (mut h, _) = with_the_top_face_chosen();
+        h.click(node(&h, "Position X").center(), PointerButton::Primary);
+        assert!(h.ctx.egui_wants_keyboard_input(), "the field has focus");
+        let model = h.app.doc.editor.model().cloned();
+        let steps = h.app.doc.editor.history.done_count();
+        for key in [egui::Key::Backspace, egui::Key::Delete] {
+            h.frame_with(key_tap(key));
+        }
+        h.frame();
+        assert_eq!(
+            h.app.doc.editor.model().cloned(),
+            model,
+            "no geometry deleted"
+        );
+        assert_eq!(h.app.doc.editor.history.done_count(), steps);
+        assert!(!h.app.doc.editor.model_edit().selection.is_empty());
+    }
+
+    #[test]
+    fn the_object_tab_has_no_transform_rows_any_more() {
+        let h = model_panel_tall();
+        for h in [&h, &without_an_object(model_panel_tall())] {
+            let flyout = model_flyout(h);
+            for t in ["Position", "Rotation", "Scale", "Double sided"] {
+                assert!(text_in(h, flyout, t).is_none(), "{t} in the panel");
+            }
+            assert!(!h.checks.iter().any(|(l, _, _)| l == "Double sided"));
+            // Los botones del objeto, entre el encabezado del outliner y su lista.
+            let header = node(h, "Add object");
+            let cube = node(h, "Cube");
+            for l in ["Extrude", "Subdivide", "Merge", "Delete"] {
+                let b = h.button(l);
+                assert!(flyout.contains_rect(b), "{l} {b:?}");
+                assert!(
+                    b.top() > header.bottom() && b.bottom() < cube.top(),
+                    "{l} {b:?}"
+                );
+            }
+        }
+    }
 }

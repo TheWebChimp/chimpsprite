@@ -34,9 +34,9 @@ const PIXEL_BAR_LEFT: i8 = 7;
 /// - de una etiqueta a su campo: de "Brush Size" al campo (x 276..277);
 /// - de una etiqueta a su primer botón: de "Mode" a la pieza del botón (x 56..59);
 /// - entre botones, y de los botones al combo (las piezas, de 15, dejan 4 px entre cuadros).
-const GROUP_GAP: f32 = 14.0;
-const CONTROL_GAP: f32 = 5.0;
-const LABEL_FIELD_GAP: f32 = 2.0;
+pub const GROUP_GAP: f32 = 14.0;
+pub const CONTROL_GAP: f32 = 5.0;
+pub const LABEL_FIELD_GAP: f32 = 2.0;
 const LABEL_TOGGLE_GAP: f32 = 4.0;
 const TOGGLE_GAP: f32 = 2.0;
 /// Alto de los controles de la barra con Pixel UI (sliders, campos, casillas y botones).
@@ -78,7 +78,13 @@ pub fn options_bar_frame(style: &egui::Style, skin: Option<&Skin>) -> egui::Fram
 /// `options_bar_frame`. Con Pixel UI, sin la línea de egui: la reemplaza el separador grabado que
 /// dibuja `tool_options_bar`.
 pub fn options_bar_panel(style: &egui::Style, skin: Option<&Skin>) -> egui::Panel {
-    egui::Panel::top("tool_options")
+    bar_panel("tool_options", style, skin)
+}
+
+/// Un panel como el de la barra de opciones (su alto, su marco y su separador) con otro `id`:
+/// la barrita del objeto de ChimpCAD, que va encima de la del pincel.
+pub fn bar_panel(id: &'static str, style: &egui::Style, skin: Option<&Skin>) -> egui::Panel {
+    egui::Panel::top(id)
         .exact_size(options_bar_height(skin))
         .frame(options_bar_frame(style, skin))
         .show_separator_line(skin.is_none())
@@ -174,6 +180,47 @@ pub fn tool_options_bar(ui: &mut egui::Ui, editor: &mut Editor, skin: Option<&Sk
     text_window(ui.ctx(), editor, skin);
 }
 
+/// Lo de adentro de un [`bar_panel`] que no es la barra de opciones (la barrita del objeto): como
+/// [`tool_options_bar`], una sola fila que no se parte (con scroll de lado, `id_salt`), con los
+/// controles de `bar_fields` con Pixel UI (`look`) y el separador grabado de abajo; sin Symmetry.
+pub fn bar_row(
+    ui: &mut egui::Ui,
+    skin: Option<&Skin>,
+    id_salt: &'static str,
+    add_contents: impl FnOnce(&mut egui::Ui, Option<BarLook>),
+) {
+    ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
+    ui.style_mut().always_scroll_the_only_direction = true;
+    let bar = ui.clip_rect();
+    let line = bar.bottom() - pixel_ui::ETCHED_SIZE;
+    if skin.is_some() {
+        let spacing = ui.spacing_mut();
+        spacing.interact_size.y = PIXEL_CONTROL_HEIGHT;
+        spacing.button_padding.y = 0.0;
+        spacing.item_spacing.y = 0.0;
+        spacing.scroll.floating = true;
+    }
+    let look = skin.map(|skin| BarLook {
+        skin,
+        top: bar.top(),
+    });
+    row_scroll_area(id_salt).show(ui, |ui| {
+        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+            add_contents(ui, look)
+        });
+    });
+    if let Some(skin) = skin {
+        let mut painter = ui.painter().clone();
+        painter.set_opacity(1.0);
+        painter.add(pixel_ui::etched_hline(
+            bar.x_range(),
+            line,
+            skin.colors(),
+            ui.ctx().pixels_per_point(),
+        ));
+    }
+}
+
 /// Scroll de las opciones de la barra: horizontal, solo con la rueda y la barra.
 fn options_scroll_area() -> egui::ScrollArea {
     row_scroll_area("tool_options_scroll")
@@ -212,7 +259,7 @@ impl Groups {
 
 /// `px` de aire después del último control: el layout ya deja `item_spacing`, así que se
 /// descuenta (puede ser negativo).
-pub(super) fn gap(ui: &mut egui::Ui, px: f32) {
+pub fn gap(ui: &mut egui::Ui, px: f32) {
     ui.add_space(px - ui.spacing().item_spacing.x);
 }
 

@@ -103,9 +103,14 @@ impl CanvasView {
         modal: bool,
     ) {
         let (header, views) = header_split(rect);
+        // Debajo de la línea del encabezado, la barrita del objeto; las vistas, después.
+        let skin = crate::pixel_ui::frame_skin(ui.ctx());
+        let height = crate::panels::options_bar_height(skin.as_deref());
+        let (bar, views) = object_bar_split(views, height);
         self.texture_panes = None;
         self.header_rect = Some(header);
-        // Los cuadrantes salen del área debajo del encabezado, así que ya valen para la entrada
+        self.object_bar_rect = Some(bar);
+        // Los cuadrantes salen del área debajo de la barrita, así que ya valen para la entrada
         // de este frame (también en el primero del workspace).
         let quads = quadrants(views);
         self.edit_quads = Some(quads);
@@ -122,6 +127,8 @@ impl CanvasView {
         self.draw_model_edit(ui, &painter, quads, editor, view.document.as_ref());
         drop(view);
         cad_header(ui, header, editor);
+        // La barrita, encima del fondo ya pintado.
+        super::object_bar::object_bar(ui, bar, editor);
     }
 
     /// La entrada del workspace: la rueda, con o sin Ctrl (zoom de las vistas orto o distancia
@@ -149,7 +156,11 @@ impl CanvasView {
         // La rueda, con o sin Ctrl: sobre una vista orto, zoom de las tres; sobre la
         // perspectiva, la cámara hacia el puntero. Los restos de touchpad siguen sumando
         // mientras el puntero siga en el workspace.
-        if let Some(pointer) = response.hover_pos() {
+        let bar = self.object_bar_rect;
+        if let Some(pointer) = response
+            .hover_pos()
+            .filter(|p| !bar.is_some_and(|r| r.contains(*p)))
+        {
             for (unit, dy) in super::model_input::wheel_events(ui) {
                 let steps = brush_wheel_steps(&mut self.model_wheel_rest, unit, dy);
                 if steps != 0 && !self.model_edit_wheel(editor, pointer, steps) {
@@ -1045,6 +1056,16 @@ pub(super) fn header_split(area: Rect) -> (Rect, Rect) {
         area.max,
     );
     (header, views)
+}
+
+/// El área debajo del encabezado (`area`) partida: arriba la barrita del objeto (de `height`, el
+/// de la barra de opciones) y, debajo, lo demás.
+pub(super) fn object_bar_split(area: Rect, height: f32) -> (Rect, Rect) {
+    let bottom = (area.top() + height).min(area.bottom());
+    (
+        Rect::from_min_max(area.min, pos2(area.right(), bottom)),
+        Rect::from_min_max(pos2(area.left(), bottom), area.max),
+    )
 }
 
 /// El encabezado de ChimpCAD en `header`: la franja con su bisel y la línea oscura de abajo, el
