@@ -1,16 +1,17 @@
 //! Lo de los modelos 3D en el editor: crear uno, sus objetos, la cámara, la luz, el contorno y
 //! la textura y la tabla de shading. Cada cambio es un `SetModel` con el modelo entero (un paso de undo).
 
-use cs_3d::{Primitive, primitive_mesh};
-use cs_commands::DocCommand;
+use cs_3d::{Primitive, UvRect, primitive_mesh};
 use cs_commands::model::texture_template;
+use cs_commands::{Command, DocCommand};
 use cs_core::{
-    Artboard, ArtboardId, Camera3D, FIXED, Light3D, Model3D, Object3D, Projection, Rgba,
-    ShadingTable, Transform3D, Vec3i,
+    Artboard, ArtboardId, Camera3D, FIXED, LayerKind, Light3D, Model3D, Object3D, PixelValue,
+    Projection, Rgba, ShadingTable, Transform3D, Vec3i,
 };
 use cs_render::BakeOptions;
 
 use super::Editor;
+use super::texture_mode::TEXTURE_SIDES;
 
 /// El aire al encuadrar el modelo (Home): su esfera ocupa 1 / `FRAME_AIR` de lo que se ve.
 const FRAME_AIR: f32 = 1.25;
@@ -161,7 +162,9 @@ impl Editor {
             parent,
         );
         let last = model.objects.len() - 1;
-        if !self.named("Add Object", |e| e.set_model(model)) {
+        if !self.named("Add Object", |e| {
+            e.set_placed_model(model, &[last], NewPixels::Template)
+        }) {
             return false;
         }
         self.model_object = Some(last);
@@ -223,7 +226,10 @@ impl Editor {
             model.push_object(copy, parent);
         }
         let last = model.objects.len() - 1;
-        if !self.named("Duplicate Object", |e| e.set_model(model)) {
+        let new: Vec<usize> = (first..=last).collect();
+        if !self.named("Duplicate Object", |e| {
+            e.set_placed_model(model, &new, NewPixels::Copy)
+        }) {
             return false;
         }
         self.model_object = Some(last);
@@ -257,7 +263,9 @@ impl Editor {
         copy.name = format!("{} copy", copy.name);
         model.groups.push(copy);
         let ng = model.groups.len() - 1;
+        let first = model.objects.len();
         let children = copy_nodes(&mut model, &children);
+        let new: Vec<usize> = (first..model.objects.len()).collect();
         let _ = insert_after_group(
             &mut model.tree,
             g,
@@ -266,7 +274,9 @@ impl Editor {
                 children,
             },
         );
-        if !self.named("Duplicate Group", |e| e.set_model(model)) {
+        if !self.named("Duplicate Group", |e| {
+            e.set_placed_model(model, &new, NewPixels::Copy)
+        }) {
             return false;
         }
         self.set_active_row(Some(super::Row::Group(ng)), false);
@@ -463,6 +473,130 @@ impl Editor {
         self.set_model(model)
     }
 
+    /// Lleva las UVs de los objetos `new` de `model` a lugares libres de la textura del modelo
+    /// que se edita (sin encimarse con las de los demás objetos, con [`cs_3d::MARGIN`] de aire),
+    /// en orden. Si uno no cabe, prueba los lados siguientes de [`TEXTURE_SIDES`] (de doble en
+    /// doble); si ni en el más grande cabe, se queda donde está. Devuelve el lado final de la
+    /// textura y, por cada objeto movido, de qué caja a qué lugar se corrió (para copiar sus
+    /// pixeles). Sin textura no toca nada.
+    fn place_new_objects(&self, model: &mut Model3D, new: &[usize]) -> (u32, Vec<UvMove>) {
+        let Some(texture) = self
+            .edited_texture()
+            .and_then(|id| self.document.artboard(id))
+        else {
+            return (0, Vec::new());
+        };
+        let (w, h) = (texture.sprite.width, texture.sprite.height);
+        let mut side = w.min(h);
+        // Los lados a los que puede crecer: los de la lista del panel, más grandes que la textura.
+        let bigger = |s: u32| {
+            TEXTURE_SIDES
+                .filter(|v| v.is_power_of_two())
+                .filter(move |&v| v > s.max(w).max(h))
+        };
+        let mut taken: Vec<UvRect> = (0..model.objects.len())
+            .filter(|o| !new.contains(o))
+            .filter_map(|o| cs_3d::object_uv_rect(model, o))
+            .collect();
+        let mut moves = Vec::new();
+        for &o in new {
+            let Some(rect) = cs_3d::object_uv_rect(model, o) else {
+                continue;
+            };
+            let spot = std::iter::once(side)
+                .chain(bigger(side))
+                .find_map(|s| cs_3d::find_free(&taken, rect.2, rect.3, s as i32).map(|at| (s, at)));
+            let Some((s, at)) = spot else {
+                taken.push(rect);
+                continue;
+            };
+            side = s;
+            *model = cs_3d::place_object(model, o, at);
+            taken.push((at.0, at.1, rect.2, rect.3));
+            moves.push((rect, at));
+        }
+        (side.max(w.min(h)), moves)
+    }
+
+    /// Pone `model` (con objetos nuevos `new`) en el modelo que se edita, cada objeto nuevo en
+    /// su lugar de la textura (ver [`Self::place_new_objects`]): si no cupo, la textura crece
+    /// (conserva sus pixeles), y su caja nueva se llena según `fill`. Todo en un comando.
+    fn set_placed_model(&mut self, mut model: Model3D, new: &[usize], fill: NewPixels) -> bool {
+        let (side, moves) = self.place_new_objects(&mut model, new);
+        let Some(texture) = self
+            .edited_texture()
+            .and_then(|id| self.document.artboard(id))
+        else {
+            return self.set_model(model);
+        };
+        let sprite = &texture.sprite;
+        let mut cmds = Vec::new();
+        if side > sprite.width.min(sprite.height) {
+            cmds.push(DocCommand::OnArtboard {
+                id: texture.id,
+                cmd: Command::ResizeCanvas {
+                    width: side,
+                    height: side,
+                    offset: (0, 0),
+                },
+            });
+        }
+        let mut images = sprite
+            .layers
+            .iter()
+            .filter(|l| l.kind == LayerKind::Image && !l.locked);
+        // De qué sprite se leen los pixeles y en qué capas se escriben.
+        let template;
+        let (source, layers): (&cs_core::Sprite, Vec<_>) = match fill {
+            NewPixels::Copy => (sprite, images.map(|l| (l.id, l.id)).collect()),
+            NewPixels::Template => {
+                // Con la paleta del modelo, como una textura nueva (ver `new_texture`).
+                let palette = self
+                    .document
+                    .artboard(self.model_id())
+                    .map_or(&sprite.palette, |a| &a.sprite.palette);
+                template = texture_template(palette);
+                let from = template.layers[0].id;
+                (
+                    &template,
+                    images.next().map(|l| (from, l.id)).into_iter().collect(),
+                )
+            }
+        };
+        for (from, to) in layers {
+            for frame in 0..sprite.frames.len() {
+                let read = if fill == NewPixels::Copy { frame } else { 0 };
+                // Todos los pixeles de la caja, también los transparentes: queda igual.
+                let pixels: Vec<(i32, i32, PixelValue)> = moves
+                    .iter()
+                    .flat_map(|&((x, y, w, h), (nx, ny))| {
+                        (0..h).flat_map(move |dy| (0..w).map(move |dx| (x, y, nx, ny, dx, dy)))
+                    })
+                    .map(|(x, y, nx, ny, dx, dy)| {
+                        (nx + dx, ny + dy, source.pixel(from, read, x + dx, y + dy))
+                    })
+                    .filter(|&(_, _, v)| sprite.color_mode.accepts(v))
+                    .collect();
+                if !pixels.is_empty() {
+                    cmds.push(DocCommand::OnArtboard {
+                        id: texture.id,
+                        cmd: Command::DrawPixels {
+                            layer: to,
+                            frame,
+                            pixels,
+                        },
+                    });
+                }
+            }
+        }
+        if cmds.is_empty() {
+            return self.set_model(model);
+        }
+        model.normalize_tree();
+        cmds.push(set_model_cmd(self.model_id(), model));
+        self.execute_doc(DocCommand::Batch(cmds))
+    }
+
     /// El modelo nuevo del que se edita (el del workspace en modo Texture, no la textura activa).
     pub(super) fn set_model(&mut self, mut model: Model3D) -> bool {
         model.normalize_tree();
@@ -471,6 +605,20 @@ impl Editor {
         }
         self.execute_doc(set_model_cmd(self.model_id(), model))
     }
+}
+
+/// De qué caja de la textura a qué lugar se corrieron las UVs de un objeto.
+type UvMove = (UvRect, (i32, i32));
+
+/// Con qué se llena la caja nueva de un objeto en la textura (ver `Editor::set_placed_model`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NewPixels {
+    /// La plantilla de las primitivas (lo que tiene una textura nueva en su zona): un objeto
+    /// agregado se ve como en un modelo nuevo y no transparente.
+    Template,
+    /// Los pixeles de su caja vieja (en todas las capas de imagen y frames): un duplicado se ve
+    /// igual que su original.
+    Copy,
 }
 
 /// Los hijos del grupo `g` en el árbol.

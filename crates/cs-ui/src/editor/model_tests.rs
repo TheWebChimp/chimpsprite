@@ -252,7 +252,21 @@ fn duplicating_copies_the_chosen_object_in_place_in_one_undo_step() {
     let objects = &e.model().unwrap().objects;
     assert_eq!(objects.len(), 2);
     assert_eq!(objects[1].name, format!("{} copy", objects[0].name));
-    assert_eq!(objects[1].mesh, objects[0].mesh);
+    // La misma malla; sus UVs, en otro lugar de la textura.
+    assert_eq!(objects[1].mesh.vertices, objects[0].mesh.vertices);
+    let verts = |o: usize| -> Vec<Vec<u32>> {
+        objects[o]
+            .mesh
+            .faces
+            .iter()
+            .map(|f| f.verts.clone())
+            .collect()
+    };
+    assert_eq!(verts(1), verts(0));
+    assert_ne!(
+        objects[1].mesh, objects[0].mesh,
+        "its own place in the texture"
+    );
     assert_eq!(objects[1].transform, objects[0].transform, "in place");
     assert_eq!(objects[1].kind, objects[0].kind);
     assert_eq!(e.selected_object(), Some(1), "the copy is chosen");
@@ -382,4 +396,140 @@ fn duplicating_a_group_copies_its_subgroups() {
     assert_eq!(m.groups[3].name, "sub");
     assert_eq!(m.group_parents(3), vec![2]);
     assert_eq!(m.group_objects(2), vec![1]);
+}
+
+/// La textura del modelo que se edita.
+fn texture_of(e: &Editor) -> &Sprite {
+    let id = e.model().unwrap().texture.unwrap();
+    &e.document.artboard(id).unwrap().sprite
+}
+
+/// Pinta `pixels` en la textura del modelo (capa y frame 0).
+fn paint_texture(e: &mut Editor, pixels: &[(i32, i32, cs_core::PixelValue)]) {
+    let id = e.model().unwrap().texture.unwrap();
+    let layer = texture_of(e).layers[0].id;
+    assert!(e.execute_doc(cs_commands::DocCommand::OnArtboard {
+        id,
+        cmd: cs_commands::Command::DrawPixels {
+            layer,
+            frame: 0,
+            pixels: pixels.to_vec(),
+        },
+    }));
+}
+
+/// Si las cajas de UVs de `a` y `b` se tocan (contando el pixel de aire).
+fn boxes_touch(m: &cs_core::Model3D, a: usize, b: usize) -> bool {
+    let (ra, rb) = (
+        cs_3d::object_uv_rect(m, a).unwrap(),
+        cs_3d::object_uv_rect(m, b).unwrap(),
+    );
+    let m = cs_3d::MARGIN;
+    ra.0 < rb.0 + rb.2 + m
+        && rb.0 < ra.0 + ra.2 + m
+        && ra.1 < rb.1 + rb.3 + m
+        && rb.1 < ra.1 + ra.3 + m
+}
+
+/// Los pixeles de la capa 0, frame 0 de `s` en `0..w` × `0..h`.
+fn pixels_of(s: &Sprite, w: i32, h: i32) -> Vec<cs_core::PixelValue> {
+    let layer = s.layers[0].id;
+    (0..h)
+        .flat_map(|y| (0..w).map(move |x| (x, y)))
+        .map(|(x, y)| s.pixel(layer, 0, x, y))
+        .collect()
+}
+
+#[test]
+fn two_cubes_do_not_share_texture() {
+    let mut e = editor_with_model();
+    assert!(e.add_primitive(Primitive::Cube));
+    let m = e.model().unwrap();
+    assert!(!boxes_touch(m, 0, 1));
+}
+
+#[test]
+fn without_room_the_texture_grows_and_keeps_its_pixels() {
+    let mut e = editor_with_model();
+    assert_eq!(texture_of(&e).width, 64);
+    // Debajo del cubo caben tres planos de 16×16 (con su pixel de aire).
+    for _ in 0..3 {
+        assert!(e.add_primitive(Primitive::Plane));
+        assert_eq!(texture_of(&e).width, 64);
+    }
+    let before = pixels_of(texture_of(&e), 64, 64);
+    let steps = e.history.done_count();
+    assert!(e.add_primitive(Primitive::Plane));
+    let t = texture_of(&e);
+    assert_eq!((t.width, t.height), (128, 128));
+    // Fuera de la caja del nuevo (que trae su plantilla) los pixeles de antes siguen igual.
+    let m = e.model().unwrap();
+    let (nx, ny, nw, nh) = cs_3d::object_uv_rect(m, 4).unwrap();
+    let outside = |(i, _): &(usize, &cs_core::PixelValue)| {
+        let (x, y) = ((i % 64) as i32, (i / 64) as i32);
+        !(nx..nx + nw).contains(&x) || !(ny..ny + nh).contains(&y)
+    };
+    let after = pixels_of(t, 64, 64);
+    let kept: Vec<_> = after.iter().enumerate().filter(outside).collect();
+    let was: Vec<_> = before.iter().enumerate().filter(outside).collect();
+    assert_eq!(kept, was, "the old pixels stay in place");
+    for o in 0..4 {
+        assert!(!boxes_touch(m, o, 4), "{o}");
+    }
+    assert_eq!(e.history.done_count(), steps + 1, "one undo step");
+    e.undo();
+    assert_eq!(texture_of(&e).width, 64);
+    assert_eq!(e.model().unwrap().objects.len(), 4);
+}
+
+#[test]
+fn a_duplicate_gets_its_own_place_and_a_copy_of_its_pixels() {
+    let mut e = editor_with_model();
+    // Un pixel en la cara de enfrente del cubo (la celda (0,0)-(16,16)).
+    let red = cs_core::PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    paint_texture(&mut e, &[(5, 6, red)]);
+    let steps = e.history.done_count();
+    assert!(e.duplicate_model_objects());
+    assert_eq!(e.history.done_count(), steps + 1, "one undo step");
+    let m = e.model().unwrap().clone();
+    assert!(!boxes_touch(&m, 0, 1));
+    let (x0, y0, _, _) = cs_3d::object_uv_rect(&m, 0).unwrap();
+    let (x1, y1, _, _) = cs_3d::object_uv_rect(&m, 1).unwrap();
+    let t = texture_of(&e);
+    let layer = t.layers[0].id;
+    assert_eq!(t.pixel(layer, 0, 5 - x0 + x1, 6 - y0 + y1), red);
+    // El render de la copia se ve igual que el del original (están en el mismo lugar).
+    let ab = e.document.artboard(e.model_id()).unwrap();
+    let only = |keep: usize| {
+        let mut only = m.clone();
+        for (i, o) in only.objects.iter_mut().enumerate() {
+            o.hidden = i != keep;
+        }
+        cs_render::model_render(&e.document, ab, &only, (64, 64), None)
+    };
+    assert_eq!(only(1), only(0));
+    e.undo();
+    assert_eq!(texture_of(&e).width, 64);
+    assert_eq!(e.model().unwrap().objects.len(), 1);
+}
+
+#[test]
+fn an_added_object_brings_the_template_of_its_primitive() {
+    let mut e = editor_with_model();
+    assert!(e.add_primitive(Primitive::Plane));
+    let m = e.model().unwrap();
+    let (x, y, w, h) = cs_3d::object_uv_rect(m, 1).unwrap();
+    let (zx, zy, _, _) = Primitive::Plane.zone();
+    let template = cs_commands::model::texture_template(&e.sprite().palette);
+    let t = texture_of(&e);
+    let (tl, nl) = (template.layers[0].id, t.layers[0].id);
+    for dy in 0..h {
+        for dx in 0..w {
+            assert_eq!(
+                t.pixel(nl, 0, x + dx, y + dy),
+                template.pixel(tl, 0, zx + dx, zy + dy),
+                "({dx}, {dy})"
+            );
+        }
+    }
 }

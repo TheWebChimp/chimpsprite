@@ -8,6 +8,7 @@ mod ramp;
 mod raster;
 mod topology;
 mod uv;
+mod uv_layout;
 mod wire;
 
 pub use edit::*;
@@ -17,4 +18,5 @@ pub use ramp::*;
 pub use raster::*;
 pub use topology::*;
 pub use uv::*;
+pub use uv_layout::*;
 pub use wire::*;

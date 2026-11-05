@@ -4781,10 +4781,13 @@ fn the_model_panel_lists_the_objects_and_adds_a_cylinder() {
     let objects = &editor.model().unwrap().objects;
     assert_eq!(objects.len(), 2);
     assert_eq!(objects[1].name, "Cylinder");
-    assert_eq!(
-        objects[1].mesh,
-        cs_3d::primitive_mesh(&cs_3d::Primitive::Cylinder { sides: 8 })
-    );
+    // La malla de la primitiva (sus UVs, en su lugar libre de la textura).
+    let want = cs_3d::primitive_mesh(&cs_3d::Primitive::Cylinder { sides: 8 });
+    assert_eq!(objects[1].mesh.vertices, want.vertices);
+    assert_eq!(objects[1].mesh.faces.len(), want.faces.len());
+    for (a, b) in objects[1].mesh.faces.iter().zip(&want.faces) {
+        assert_eq!((&a.verts, a.part), (&b.verts, b.part));
+    }
     assert_eq!(editor.selected_object(), Some(1));
     // Un clic en la fila del cubo lo elige.
     h.click(node(&h, "Cube").center(), PointerButton::Primary);
@@ -5236,10 +5239,13 @@ fn add_in_the_add_menu_adds_the_type_with_the_sides_and_selects_its_row() {
     let editor = &h.app.doc.editor;
     let objects = &editor.model().unwrap().objects;
     assert_eq!(objects.len(), 2);
-    assert_eq!(
-        objects[1].mesh,
-        cs_3d::primitive_mesh(&cs_3d::Primitive::Cone { sides: 10 })
-    );
+    // La malla de la primitiva (sus UVs, en su lugar libre de la textura).
+    let want = cs_3d::primitive_mesh(&cs_3d::Primitive::Cone { sides: 10 });
+    assert_eq!(objects[1].mesh.vertices, want.vertices);
+    assert_eq!(objects[1].mesh.faces.len(), want.faces.len());
+    for (a, b) in objects[1].mesh.faces.iter().zip(&want.faces) {
+        assert_eq!((&a.verts, a.part), (&b.verts, b.part));
+    }
     assert_eq!(editor.history.done_count(), steps + 1);
     // Su fila, la activa; el menú, cerrado.
     assert_eq!(editor.selected_object(), Some(1));
