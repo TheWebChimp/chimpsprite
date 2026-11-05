@@ -9382,6 +9382,33 @@ fn in_texture_mode_the_object_tab_starts_with_the_uv_buttons() {
 }
 
 #[test]
+fn pack_uvs_is_in_the_uv_row_and_packs_without_chosen_faces() {
+    let mut h = with_the_model_panel(with_a_model_in_texture_mode());
+    // En la fila de Rotate 90° / Flip, después de Flip V.
+    let pack = h.button("Pack UVs");
+    let flip = h.button("Flip V");
+    assert_eq!(pack.top(), flip.top(), "in the same row");
+    assert!(pack.left() > flip.left());
+    // Es de todo el modelo: sin caras elegidas también se usa.
+    assert!(h.app.doc.editor.selected_faces().is_empty());
+    assert!(!h.disabled.iter().any(|l| l == "Pack UVs"));
+    // El cubo corrido (5, 5): Pack UVs lo regresa a la esquina.
+    let e = &mut h.app.doc.editor;
+    let id = e.workspace().unwrap();
+    let moved = cs_3d::place_object(e.workspace_model().unwrap(), 0, (5, 5));
+    assert!(e.execute_doc(cs_commands::DocCommand::SetModel {
+        id,
+        model: Some(Box::new(moved)),
+    }));
+    h.frame();
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(h.button("Pack UVs").center(), PointerButton::Primary);
+    let m = h.app.doc.editor.workspace_model().unwrap();
+    assert_eq!(cs_3d::object_uv_rect(m, 0), Some((0, 0, 48, 32)));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
 fn opening_the_panel_beside_with_a_face_chosen_focuses_its_uvs() {
     let mut h = with_the_front_face_chosen();
     let fitted = h.app.doc.editor.model_edit().texture_view.unwrap();

@@ -692,3 +692,148 @@ fn shift_en_un_lado_deja_al_menos_un_pixel_en_el_otro_eje() {
     assert_eq!(x1 - x0, 1);
     assert!(y1 - y0 >= 1, "{:?}", bounds(&e));
 }
+
+/// La textura del modelo del workspace (su sprite).
+fn texture_sprite(e: &Editor) -> &Sprite {
+    &e.document.artboard(texture_of(e)).unwrap().sprite
+}
+
+/// Si las cajas de UVs de los objetos `a` y `b` se tocan (contando el pixel de aire).
+fn boxes_touch(m: &cs_core::Model3D, a: usize, b: usize) -> bool {
+    let (ra, rb) = (
+        cs_3d::object_uv_rect(m, a).unwrap(),
+        cs_3d::object_uv_rect(m, b).unwrap(),
+    );
+    let air = cs_3d::MARGIN;
+    ra.0 < rb.0 + rb.2 + air
+        && rb.0 < ra.0 + ra.2 + air
+        && ra.1 < rb.1 + rb.3 + air
+        && rb.1 < ra.1 + ra.3 + air
+}
+
+/// El render de cada objeto del modelo del workspace a solas (sin que uno tape al otro), con la
+/// textura de ahora.
+fn renders_one_by_one(e: &Editor) -> Vec<Vec<Rgba>> {
+    let ab = e.document.artboard(e.workspace().unwrap()).unwrap();
+    let m = e.workspace_model().unwrap();
+    (0..m.objects.len())
+        .map(|keep| {
+            let mut only = m.clone();
+            for (i, o) in only.objects.iter_mut().enumerate() {
+                o.hidden = i != keep;
+            }
+            let pixels = cs_render::model_render(&e.document, ab, &only, (64, 64), None);
+            // Se ve y con la textura (más de un color): comparar no es en vano.
+            let mut seen: Vec<Rgba> = pixels.iter().copied().filter(|p| p.a > 0).collect();
+            seen.sort_by_key(|p| (p.r, p.g, p.b, p.a));
+            seen.dedup();
+            assert!(seen.len() > 1, "object {keep} is seen textured");
+            pixels
+        })
+        .collect()
+}
+
+/// El cubo del modelo nuevo más `extra` objetos con las UVs de siempre de `p` (encimados).
+fn with_stacked(p: cs_3d::Primitive, extra: usize) -> Editor {
+    let mut e = editing();
+    e.set_cad_mode(CadMode::Texture);
+    let mut m = e.workspace_model().unwrap().clone();
+    for i in 0..extra {
+        let mut transform = cs_core::Transform3D::default();
+        // Uno a cada lado del cubo (a la vista de la cámara).
+        transform.position.x = if i % 2 == 0 { 1 } else { -1 } * cs_core::FIXED;
+        m.push_object(
+            cs_core::Object3D {
+                name: p.name().into(),
+                mesh: cs_3d::primitive_mesh(&p),
+                transform,
+                double_sided: false,
+                kind: Some(p.kind()),
+                hidden: false,
+                locked: false,
+            },
+            None,
+        );
+    }
+    assert!(e.set_model(m));
+    // Pintados: cada pixel de la textura de un color distinto.
+    let id = texture_of(&e);
+    let layer = texture_sprite(&e).layers[0].id;
+    let pixels: Vec<(i32, i32, PixelValue)> = (0..64)
+        .flat_map(|y| (0..64).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let c = Rgba::rgb((x * 4) as u8, (y * 4) as u8, ((x + y) * 2) as u8);
+            (x, y, PixelValue::Rgba(c))
+        })
+        .collect();
+    assert!(e.execute_doc(cs_commands::DocCommand::OnArtboard {
+        id,
+        cmd: cs_commands::Command::DrawPixels {
+            layer,
+            frame: 0,
+            pixels,
+        },
+    }));
+    e
+}
+
+/// Los pixeles de la capa 0, frame 0 de `s` (todos).
+fn all_pixels(s: &Sprite) -> Vec<PixelValue> {
+    let layer = s.layers[0].id;
+    (0..s.height as i32)
+        .flat_map(|y| (0..s.width as i32).map(move |x| (x, y)))
+        .map(|(x, y)| s.pixel(layer, 0, x, y))
+        .collect()
+}
+
+#[test]
+fn pack_separates_overlapping_objects_and_keeps_how_they_look() {
+    // El cubo y dos planos en la misma zona de la textura.
+    let mut e = with_stacked(cs_3d::Primitive::Plane, 2);
+    assert!(boxes_touch(e.workspace_model().unwrap(), 1, 2));
+    let model = e.workspace_model().unwrap().clone();
+    let pixels = all_pixels(texture_sprite(&e));
+    let look = renders_one_by_one(&e);
+    let steps = e.history.done_count();
+    assert!(e.pack_uvs());
+    assert_eq!(e.history.done_count(), steps + 1, "one undo step");
+    let m = e.workspace_model().unwrap();
+    for (a, b) in [(0, 1), (0, 2), (1, 2)] {
+        assert!(!boxes_touch(m, a, b), "{a} {b}");
+    }
+    let t = texture_sprite(&e);
+    assert_eq!((t.width, t.height), (64, 64), "they fit without growing");
+    assert_eq!(renders_one_by_one(&e), look, "each object looks the same");
+    // Undo regresa el modelo, el tamaño y los pixeles.
+    e.undo();
+    assert_eq!(e.workspace_model(), Some(&model));
+    let t = texture_sprite(&e);
+    assert_eq!((t.width, t.height), (64, 64));
+    assert_eq!(all_pixels(t), pixels);
+}
+
+#[test]
+fn pack_grows_the_texture_when_needed() {
+    // Dos cubos de 48×32 encimados no caben separados en 64.
+    let mut e = with_stacked(cs_3d::Primitive::Cube, 1);
+    let look = renders_one_by_one(&e);
+    let steps = e.history.done_count();
+    assert!(e.pack_uvs());
+    assert_eq!(e.history.done_count(), steps + 1, "one undo step");
+    let t = texture_sprite(&e);
+    assert_eq!((t.width, t.height), (128, 128));
+    assert!(!boxes_touch(e.workspace_model().unwrap(), 0, 1));
+    assert_eq!(renders_one_by_one(&e), look, "each cube looks the same");
+    // Ya acomodados, otro Pack UVs no cambia nada: ningún paso.
+    assert!(!e.pack_uvs());
+    assert_eq!(e.history.done_count(), steps + 1);
+    e.undo();
+    assert_eq!(texture_sprite(&e).width, 64);
+    assert!(boxes_touch(e.workspace_model().unwrap(), 0, 1));
+}
+
+#[test]
+fn without_texture_there_is_nothing_to_pack() {
+    let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+    assert!(!e.pack_uvs());
+}

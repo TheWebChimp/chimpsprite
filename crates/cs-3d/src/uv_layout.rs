@@ -6,6 +6,10 @@ use cs_core::Model3D;
 /// Una caja de la textura `(x, y, w, h)` en pixeles (`w`, `h` >= 1): cubre de `x` a `x + w`.
 pub type UvRect = (i32, i32, i32, i32);
 
+/// Un acomodo de [`pack`]: el lado de la textura y el lugar (la esquina de su caja) de cada
+/// objeto.
+pub type Packing = (u32, Vec<(usize, (i32, i32))>);
+
 /// Los pixeles de aire entre dos cajas.
 pub const MARGIN: i32 = 1;
 
@@ -40,6 +44,29 @@ pub fn find_free(taken: &[UvRect], w: i32, h: i32, side: i32) -> Option<(i32, i3
         }
     }
     None
+}
+
+/// Un lugar por objeto (los bloques, de mayor a menor área; empates por índice) sin encimes con
+/// MARGIN, en el menor lado de `sides` donde quepan todos. None si no caben ni en el mayor.
+/// Los objetos sin caras no tienen bloque (no salen en la lista).
+pub fn pack(model: &Model3D, sides: &[u32]) -> Option<Packing> {
+    let mut blocks: Vec<(usize, UvRect)> = (0..model.objects.len())
+        .filter_map(|o| Some((o, object_uv_rect(model, o)?)))
+        .collect();
+    blocks.sort_by_key(|&(o, (_, _, w, h))| (std::cmp::Reverse(w as i64 * h as i64), o));
+    let mut sides = sides.to_vec();
+    sides.sort_unstable();
+    // En cada lado se acomoda todo desde cero; el primero donde caben todos gana.
+    sides.into_iter().find_map(|side| {
+        let mut taken: Vec<UvRect> = Vec::with_capacity(blocks.len());
+        let mut places = Vec::with_capacity(blocks.len());
+        for &(o, (_, _, w, h)) in &blocks {
+            let at = find_free(&taken, w, h, side as i32)?;
+            taken.push((at.0, at.1, w, h));
+            places.push((o, at));
+        }
+        Some((side, places))
+    })
 }
 
 /// `model` con las UVs del objeto `o` corridas para que su caja empiece en `at`.
@@ -99,6 +126,40 @@ mod tests {
         let m = model_with(Primitive::Cube);
         assert_eq!(object_uv_rect(&m, 0), Some(Primitive::Cube.zone()));
         assert_eq!(object_uv_rect(&m, 1), None);
+    }
+
+    #[test]
+    fn packing_two_stacked_cubes_puts_them_apart() {
+        // Dos cubos con las UVs de siempre (encimados) y un plano.
+        let mut m = model_with(Primitive::Cube);
+        let cube = m.objects[0].clone();
+        m.push_object(cube, None);
+        let plane = model_with(Primitive::Plane).objects[0].clone();
+        m.push_object(plane, None);
+        // Dos cajas de 48×32 con su pixel de aire no caben en 64 (piden 65 filas): 128.
+        let (side, places) = pack(&m, &[16, 32, 64, 128, 256]).unwrap();
+        assert_eq!(side, 128);
+        // De mayor a menor (empates por índice): los cubos, luego el plano.
+        let order: Vec<usize> = places.iter().map(|&(o, _)| o).collect();
+        assert_eq!(order, vec![0, 1, 2]);
+        let rects: Vec<UvRect> = places
+            .iter()
+            .map(|&(o, at)| {
+                let (_, _, w, h) = object_uv_rect(&m, o).unwrap();
+                (at.0, at.1, w, h)
+            })
+            .collect();
+        for (i, &a) in rects.iter().enumerate() {
+            assert!(
+                a.0 >= 0 && a.1 >= 0 && a.0 + a.2 <= 128 && a.1 + a.3 <= 128,
+                "{a:?}"
+            );
+            for &b in &rects[i + 1..] {
+                assert!(!touches(a, b), "{a:?} {b:?}");
+            }
+        }
+        // Si no caben ni en el mayor, no hay acomodo.
+        assert_eq!(pack(&m, &[16, 32, 64]), None);
     }
 
     #[test]

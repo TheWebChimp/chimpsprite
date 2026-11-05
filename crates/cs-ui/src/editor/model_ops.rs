@@ -523,6 +523,20 @@ impl Editor {
     /// (conserva sus pixeles), y su caja nueva se llena según `fill`. Todo en un comando.
     fn set_placed_model(&mut self, mut model: Model3D, new: &[usize], fill: NewPixels) -> bool {
         let (side, moves) = self.place_new_objects(&mut model, new);
+        self.set_model_moving_pixels(model, side, &moves, fill)
+    }
+
+    /// Pone `model` en el modelo que se edita y, en el mismo comando, su textura pasa a lado
+    /// `side` si es más chica (conserva sus pixeles, anclada arriba a la izquierda) y cada caja
+    /// de `moves` se llena en su lugar nuevo según `fill` (los pixeles se leen de la textura de
+    /// antes de cualquier cambio; los de las cajas viejas se quedan). Sin textura, solo el modelo.
+    pub(super) fn set_model_moving_pixels(
+        &mut self,
+        mut model: Model3D,
+        side: u32,
+        moves: &[UvMove],
+        fill: NewPixels,
+    ) -> bool {
         let Some(texture) = self
             .edited_texture()
             .and_then(|id| self.document.artboard(id))
@@ -608,16 +622,16 @@ impl Editor {
 }
 
 /// De qué caja de la textura a qué lugar se corrieron las UVs de un objeto.
-type UvMove = (UvRect, (i32, i32));
+pub(super) type UvMove = (UvRect, (i32, i32));
 
 /// Con qué se llena la caja nueva de un objeto en la textura (ver `Editor::set_placed_model`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum NewPixels {
+pub(super) enum NewPixels {
     /// La plantilla de las primitivas (lo que tiene una textura nueva en su zona): un objeto
     /// agregado se ve como en un modelo nuevo y no transparente.
     Template,
     /// Los pixeles de su caja vieja (en todas las capas de imagen y frames): un duplicado se ve
-    /// igual que su original.
+    /// igual que su original, y un objeto reacomodado (Pack UVs) igual que antes.
     Copy,
 }
 

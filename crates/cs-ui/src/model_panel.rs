@@ -380,15 +380,23 @@ fn general(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<Mode
 }
 
 /// Lo del objeto elegido, en modo Texture: Rotate 90°, Flip H y Flip V para las caras elegidas
-/// (sin caras, deshabilitados), en una fila sin título (como el boceto).
+/// (sin caras, deshabilitados) y Pack UVs, de todo el modelo (con textura y algún objeto con
+/// UVs), en una fila sin título (como el boceto).
 fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let faces = !editor.selected_faces().is_empty();
-    let (mut rotate, mut flip_h, mut flip_v) = (false, false, false);
-    ui.add_enabled_ui(faces, |ui| {
-        ui.horizontal(|ui| {
+    let packable = editor.edited_texture().is_some()
+        && editor
+            .edited_model()
+            .is_some_and(|m| (0..m.objects.len()).any(|o| cs_3d::object_uv_rect(m, o).is_some()));
+    let (mut rotate, mut flip_h, mut flip_v, mut pack) = (false, false, false, false);
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(faces, |ui| {
             rotate = button(ui, skin, "Rotate 90°").clicked();
             flip_h = button(ui, skin, "Flip H").clicked();
             flip_v = button(ui, skin, "Flip V").clicked();
+        });
+        ui.add_enabled_ui(packable, |ui| {
+            pack = button(ui, skin, "Pack UVs").clicked();
         });
     });
     if rotate {
@@ -396,6 +404,9 @@ fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
     if flip_h || flip_v {
         editor.flip_selected_uvs(flip_h);
+    }
+    if pack {
+        editor.pack_uvs();
     }
 }
 

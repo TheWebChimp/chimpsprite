@@ -7,6 +7,7 @@ use cs_commands::{Command, DocCommand};
 use cs_core::{ArtboardId, Mask, Model3D};
 
 use super::model_edit::{CadMode, UvOp};
+use super::model_ops::NewPixels;
 use super::{Editor, Row};
 
 /// Los lados de la textura que se pueden elegir (Texture size).
@@ -415,6 +416,55 @@ impl Editor {
     /// Voltea las UVs de cada cara elegida (`horizontal`: en x). Un paso de undo.
     pub fn flip_selected_uvs(&mut self, horizontal: bool) -> bool {
         self.edit_selected_uvs("Flip UV", |m, faces| cs_3d::flip_uvs(m, faces, horizontal))
+    }
+
+    /// Pack UVs: reacomoda en la textura los bloques de todos los objetos del modelo que se
+    /// edita (las UVs de cada objeto, con sus caras como estaban entre sí; también los ocultos y
+    /// los bloqueados) sin encimarse, con [`cs_3d::MARGIN`] de aire, de mayor a menor. Si no
+    /// caben, la textura crece al siguiente lado de [`TEXTURE_SIDES`] (de doble en doble). Cada
+    /// bloque lleva sus pixeles a su lugar nuevo: si dos objetos usaban la misma zona, cada uno
+    /// se lleva su copia. Un paso de undo; `false` (ninguno) sin textura, si no caben ni en 512
+    /// o si ya estaban así.
+    pub fn pack_uvs(&mut self) -> bool {
+        let Some(sprite) = self
+            .edited_texture()
+            .and_then(|id| self.document.artboard(id))
+            .map(|a| &a.sprite)
+        else {
+            return false;
+        };
+        let Some(model) = self.edited_model() else {
+            return false;
+        };
+        let (w, h) = (sprite.width, sprite.height);
+        // Desde el lado de ahora; al crecer, los de la lista del panel más grandes que la textura.
+        let sides: Vec<u32> = std::iter::once(w.min(h))
+            .chain(
+                TEXTURE_SIDES
+                    .filter(|v| v.is_power_of_two())
+                    .filter(|&v| v > w.max(h)),
+            )
+            .collect();
+        let Some((side, places)) = cs_3d::pack(model, &sides) else {
+            return false;
+        };
+        let mut packed = model.clone();
+        let mut moves = Vec::new();
+        for (o, at) in places {
+            let Some(rect) = cs_3d::object_uv_rect(model, o) else {
+                continue;
+            };
+            if (rect.0, rect.1) != at {
+                packed = cs_3d::place_object(&packed, o, at);
+                moves.push((rect, at));
+            }
+        }
+        if moves.is_empty() && side <= w.min(h) {
+            return false;
+        }
+        self.named("Pack UVs", |e| {
+            e.set_model_moving_pixels(packed, side, &moves, NewPixels::Copy)
+        })
     }
 
     fn edit_selected_uvs(
