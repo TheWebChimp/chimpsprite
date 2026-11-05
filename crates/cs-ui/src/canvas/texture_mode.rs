@@ -7,7 +7,7 @@
 
 use eframe::egui::pos2;
 
-use super::model_edit::{PERSP_BG, cad_header, header_split, object_bar_split};
+use super::model_edit::{PERSP_BG, bar_split, cad_header, header_split};
 use super::*;
 use crate::editor::TextureView;
 
@@ -40,8 +40,8 @@ impl CanvasView {
         let skin = crate::pixel_ui::frame_skin(ui.ctx());
         let skin = skin.as_deref();
         let height = crate::panels::options_bar_height(skin);
-        let (object_bar, area) = object_bar_split(area, height);
-        let (bar, area) = object_bar_split(area, height);
+        let (object_bar, area) = bar_split(area, height);
+        let (bar, area) = bar_split(area, height);
         let (top, bottom) = texture_panes(area);
         self.edit_quads = None;
         self.texture_panes = Some((top, bottom));

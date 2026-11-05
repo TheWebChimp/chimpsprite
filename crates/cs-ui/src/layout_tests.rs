@@ -9533,6 +9533,128 @@ fn ctrl_j_duplicates_the_3d_object_in_the_model_tab() {
     assert_eq!(h.app.doc.editor.model().unwrap().objects.len(), n + 1);
 }
 
+#[test]
+fn ctrl_j_with_a_group_active_duplicates_the_group() {
+    let mut h = model_panel_open(true);
+    assert!(h.app.doc.editor.new_group());
+    h.frame();
+    assert_eq!(
+        h.app.doc.editor.active_row(),
+        Some(crate::editor::Row::Group(0))
+    );
+    press_ctrl(&mut h, egui::Key::J);
+    h.frame();
+    let model = h.app.doc.editor.model().unwrap();
+    assert_eq!(model.groups.len(), 2);
+    assert_eq!(model.objects.len(), 2);
+    assert_eq!(model.objects[1].name, "Cube", "only the group is a copy");
+    assert_eq!(
+        h.app.doc.editor.active_row(),
+        Some(crate::editor::Row::Group(1))
+    );
+}
+
+#[test]
+fn the_duplicate_tooltip_says_group_with_a_group_active() {
+    let mut h = model_panel_open(true);
+    let copy = in_model_panel(&h, "Duplicate").expect("the duplicate button");
+    bubble_over(&mut h, copy.center());
+    let shortcut = crate::keymap::label(&h.ctx, crate::keymap::Action::DuplicateObject);
+    let object = format!("Duplicate object ({shortcut})");
+    assert!(
+        h.text_rects.iter().any(|(t, _, _)| *t == object),
+        "{object:?}"
+    );
+    assert!(h.app.doc.editor.new_group());
+    bubble_over(&mut h, copy.center());
+    let group = format!("Duplicate group ({shortcut})");
+    assert!(
+        h.text_rects.iter().any(|(t, _, _)| *t == group),
+        "{group:?}"
+    );
+}
+
+#[test]
+fn delete_over_the_outliner_removes_every_chosen_row() {
+    let mut h = model_panel_open(true);
+    add_object(&mut h, "Cylinder");
+    add_object(&mut h, "Plane");
+    let editor = &mut h.app.doc.editor;
+    editor.set_active_row(Some(crate::editor::Row::Object(0)), false);
+    editor.set_active_row(Some(crate::editor::Row::Object(2)), true);
+    h.frame();
+    let steps = h.app.doc.editor.history.done_count();
+    h.frame_with(vec![Event::PointerMoved(node(&h, "Cube").center())]);
+    tap_key(&mut h, egui::Key::Delete);
+    let model = h.app.doc.editor.model().unwrap();
+    let names: Vec<&str> = model.objects.iter().map(|o| o.name.as_str()).collect();
+    assert_eq!(names, vec!["Cylinder"]);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn the_delete_button_with_a_group_active_deletes_the_whole_group() {
+    let mut h = model_panel_tall();
+    assert!(h.app.doc.editor.add_primitive(cs_3d::Primitive::Plane));
+    h.app.doc.editor.set_active_row(None, false);
+    assert!(h.app.doc.editor.new_group());
+    assert!(h.app.doc.editor.move_row(
+        crate::editor::Row::Object(0),
+        crate::editor::DropAt::Into(0)
+    ));
+    h.app
+        .doc
+        .editor
+        .set_active_row(Some(crate::editor::Row::Group(0)), false);
+    h.frame();
+    h.frame();
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(h.button("Delete").center(), PointerButton::Primary);
+    let model = h.app.doc.editor.model().unwrap();
+    assert!(model.groups.is_empty());
+    let names: Vec<&str> = model.objects.iter().map(|o| o.name.as_str()).collect();
+    assert_eq!(names, vec!["Plane"]);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn delete_over_a_menu_on_the_outliner_does_not_delete_the_row() {
+    let mut h = model_panel_open(true);
+    add_object(&mut h, "Cylinder");
+    add_object(&mut h, "Plane");
+    // La fila activa es el cubo, pero en las vistas no hay nada elegido: Supr en las vistas no
+    // borra nada.
+    let editor = &mut h.app.doc.editor;
+    editor.set_active_row(Some(crate::editor::Row::Object(0)), false);
+    editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    editor.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Vertex,
+        items: Default::default(),
+    });
+    h.frame();
+    assert_eq!(
+        h.app.doc.editor.active_row(),
+        Some(crate::editor::Row::Object(0))
+    );
+    let plus = open_add_menu(&mut h);
+    let menu = add_menu_box(&h, plus).expect("the + menu");
+    let rows: Vec<Rect> = ["Cube", "Cylinder", "Plane"]
+        .iter()
+        .filter_map(|l| in_model_panel(&h, l))
+        .collect();
+    let over = rows
+        .iter()
+        .map(|r| r.intersect(menu))
+        .find(|r| r.is_positive())
+        .unwrap_or_else(|| panic!("the menu {menu:?} over a row {rows:?}"));
+    let steps = h.app.doc.editor.history.done_count();
+    h.frame_with(vec![Event::PointerMoved(over.center())]);
+    h.frame();
+    tap_key(&mut h, egui::Key::Delete);
+    assert_eq!(h.app.doc.editor.model().unwrap().objects.len(), 3);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+}
+
 // --- La barrita del objeto, debajo del encabezado de ChimpCAD ---
 
 mod object_bar {
@@ -9672,7 +9794,7 @@ mod object_bar {
     }
 
     #[test]
-    fn the_bar_is_disabled_without_an_active_row_or_when_locked() {
+    fn the_bar_is_disabled_without_an_active_row_or_when_locked_with_its_values() {
         let mut h = with_a_model_at_800();
         let all_off = |h: &LayoutHarness| FIELDS.iter().all(|f| h.off.iter().any(|o| o == f));
         let none_off = |h: &LayoutHarness| !FIELDS.iter().any(|f| h.off.iter().any(|o| o == f));
@@ -9697,13 +9819,21 @@ mod object_bar {
             steps,
             "nothing to move"
         );
-        // Con el cubo bloqueado, también.
+        // Con el cubo bloqueado, también, pero con sus valores.
         h.app.doc.editor.set_active_row(Some(Row::Object(0)), false);
         settle(&mut h);
         assert!(none_off(&h));
         assert!(h.app.doc.editor.toggle_row_locked(Row::Object(0)));
         settle(&mut h);
         assert!(all_off(&h), "locked: {:?}", h.off);
+        assert!(
+            texts_in(&h, node(&h, "Scale X")).contains(&"100".to_owned()),
+            "the locked values show"
+        );
+        let steps = h.app.doc.editor.history.done_count();
+        h.drag(x.center(), x.center() + vec2(20.0, 0.0));
+        settle(&mut h);
+        assert_eq!(h.app.doc.editor.history.done_count(), steps, "locked");
         // Y con un grupo bloqueado que lo contiene (bloqueado por herencia).
         assert!(h.app.doc.editor.toggle_row_locked(Row::Object(0)));
         assert!(h.app.doc.editor.new_group());
@@ -9711,6 +9841,7 @@ mod object_bar {
         h.app.doc.editor.set_active_row(Some(Row::Object(0)), false);
         settle(&mut h);
         assert!(all_off(&h), "inherited lock: {:?}", h.off);
+        assert!(texts_in(&h, node(&h, "Scale X")).contains(&"100".to_owned()));
     }
 
     #[test]

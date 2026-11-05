@@ -240,7 +240,8 @@ impl Editor {
     }
 
     /// Duplicate Group: copia el grupo con todo lo de adentro (objetos y subgrupos, en el mismo
-    /// orden) justo después del original, con " copy" en el nombre, en un paso de undo.
+    /// orden) justo después del original, en un paso de undo. Solo la copia del grupo lleva
+    /// " copy" en el nombre (lo de adentro conserva el suyo). La copia queda como fila activa.
     pub fn duplicate_group(&mut self, g: usize) -> bool {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
@@ -249,7 +250,6 @@ impl Editor {
         if g >= model.groups.len() {
             return false;
         }
-        let first = model.objects.len();
         let Some(children) = group_children(&model.tree, g) else {
             return false;
         };
@@ -266,22 +266,10 @@ impl Editor {
                 children,
             },
         );
-        let last = model.objects.len().checked_sub(1).filter(|&l| l >= first);
         if !self.named("Duplicate Group", |e| e.set_model(model)) {
             return false;
         }
-        if let Some(last) = last {
-            self.model_object = Some(last);
-            self.model_group = None;
-            if self.model_edit.mode == super::CadMode::Model
-                && self.model_edit.artboard == Some(self.model_id())
-            {
-                self.set_model_selection(cs_3d::Selection {
-                    mode: cs_3d::SelectMode::Object,
-                    items: (first..=last).map(cs_3d::Item::Object).collect(),
-                });
-            }
-        }
+        self.set_active_row(Some(super::Row::Group(ng)), false);
         true
     }
 
@@ -289,7 +277,8 @@ impl Editor {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
-        if i >= model.objects.len() {
+        // Lo bloqueado no se borra.
+        if i >= model.objects.len() || model.object_locked(i) {
             return false;
         }
         model.remove_object(i);
@@ -493,15 +482,14 @@ fn group_children(nodes: &[cs_core::Node], g: usize) -> Option<Vec<cs_core::Node
     })
 }
 
-/// Copia `nodes` al modelo (objetos y grupos nuevos al final) y devuelve los nodos de las copias.
+/// Copia `nodes` al modelo (objetos y grupos nuevos al final, con el mismo nombre) y devuelve
+/// los nodos de las copias.
 fn copy_nodes(model: &mut Model3D, nodes: &[cs_core::Node]) -> Vec<cs_core::Node> {
     nodes
         .iter()
         .map(|n| match n {
             cs_core::Node::Object(o) => {
-                let mut copy = model.objects[*o].clone();
-                copy.name = format!("{} copy", copy.name);
-                model.objects.push(copy);
+                model.objects.push(model.objects[*o].clone());
                 cs_core::Node::Object(model.objects.len() - 1)
             }
             cs_core::Node::Group { group, children } => {

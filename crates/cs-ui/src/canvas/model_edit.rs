@@ -106,7 +106,7 @@ impl CanvasView {
         // Debajo de la línea del encabezado, la barrita del objeto; las vistas, después.
         let skin = crate::pixel_ui::frame_skin(ui.ctx());
         let height = crate::panels::options_bar_height(skin.as_deref());
-        let (bar, views) = object_bar_split(views, height);
+        let (bar, views) = bar_split(views, height);
         self.texture_panes = None;
         self.header_rect = Some(header);
         self.object_bar_rect = Some(bar);
@@ -1058,9 +1058,9 @@ pub(super) fn header_split(area: Rect) -> (Rect, Rect) {
     (header, views)
 }
 
-/// El área debajo del encabezado (`area`) partida: arriba la barrita del objeto (de `height`, el
-/// de la barra de opciones) y, debajo, lo demás.
-pub(super) fn object_bar_split(area: Rect, height: f32) -> (Rect, Rect) {
+/// `area` partida: arriba una barra de `height` (el alto de la barra de opciones: la barrita del
+/// objeto o la del pincel) y, debajo, lo demás.
+pub(super) fn bar_split(area: Rect, height: f32) -> (Rect, Rect) {
     let bottom = (area.top() + height).min(area.bottom());
     (
         Rect::from_min_max(area.min, pos2(area.right(), bottom)),

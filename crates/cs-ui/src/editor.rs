@@ -38,8 +38,6 @@ pub use model_edit::{
 };
 pub(crate) use model_ops::model_center;
 pub use model_ops::{POSITION_MAX, ROTATION_MAX, SCALE_MAX, wrap_angle};
-// Para el outliner del panel (todavía sin usar afuera).
-#[allow(unused_imports)]
 pub use outliner_ops::{DropAt, Row};
 
 /// Herramientas que trabajan dentro de un sprite.

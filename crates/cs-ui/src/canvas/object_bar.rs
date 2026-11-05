@@ -1,8 +1,8 @@
 //! La barrita del objeto de ChimpCAD: una fila fija debajo del encabezado, del alto de la barra
 //! de opciones y con su separador grabado, con la posición (en 1/16), la rotación (en grados) y
 //! la escala (en %) de la fila activa del outliner (un objeto o un grupo) en campos numéricos
-//! compactos que se escriben o se arrastran. Sin transform editable (sin fila activa, con la fila
-//! bloqueada o con otras partes elegidas en las vistas), los campos vacíos y deshabilitados.
+//! compactos que se escriben o se arrastran. Con la fila bloqueada, sus valores deshabilitados;
+//! sin fila activa o con otras partes elegidas en las vistas, los campos vacíos y deshabilitados.
 
 use std::ops::RangeInclusive;
 
@@ -83,9 +83,12 @@ pub(super) fn object_bar(ui: &mut egui::Ui, rect: Rect, editor: &mut Editor) {
 
 /// Los tres grupos (título y campos X, Y y Z) y lo que cambió, a la fila activa.
 fn fields(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
-    let current = editor.active_transform();
+    let (current, editable) = match editor.active_transform() {
+        Some((t, editable)) => (Some(t), editable),
+        None => (None, false),
+    };
     let mut next = current;
-    ui.add_enabled_ui(current.is_some(), |ui| {
+    ui.add_enabled_ui(editable, |ui| {
         for (k, part) in parts().iter().enumerate() {
             if k > 0 {
                 match look {
@@ -125,6 +128,7 @@ fn fields(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
     // mientras el botón siga apretado.
     let group = egui::Id::new("cad_object_bar_transform");
     if let Some(t) = next
+        && editable
         && next != current
     {
         editor.set_active_transform(t, group);

@@ -269,3 +269,188 @@ fn deleting_an_object_row() {
     assert_eq!(e.model().unwrap().objects.len(), 1);
     assert!(!e.delete_row(Row::Group(0)));
 }
+
+#[test]
+fn hiding_drops_the_hidden_objects_from_the_selection() {
+    let mut e = editor_with_group();
+    assert_eq!(objects(&e), vec![0, 1]);
+    assert!(e.toggle_hidden(Row::Object(1)));
+    assert_eq!(objects(&e), vec![0]);
+    // El grupo oculto esconde también lo de adentro.
+    assert!(e.toggle_hidden(Row::Group(0)));
+    assert_eq!(objects(&e), Vec::<usize>::new());
+    // Mostrar no vuelve a elegir nada.
+    assert!(e.toggle_hidden(Row::Group(0)));
+    assert_eq!(objects(&e), Vec::<usize>::new());
+}
+
+#[test]
+fn choosing_a_row_leaves_the_hidden_objects_out_of_the_selection() {
+    let mut e = editor_with_group();
+    assert!(e.toggle_hidden(Row::Object(1)));
+    e.set_active_row(Some(Row::Group(0)), false);
+    assert_eq!(e.active_row(), Some(Row::Group(0)));
+    assert_eq!(objects(&e), vec![0]);
+    e.set_active_row(Some(Row::Object(1)), false);
+    assert_eq!(e.active_row(), Some(Row::Object(1)));
+    assert_eq!(objects(&e), Vec::<usize>::new());
+    // Con Shift tampoco se suma.
+    e.set_active_row(Some(Row::Object(0)), false);
+    e.set_active_row(Some(Row::Object(1)), true);
+    assert_eq!(objects(&e), vec![0]);
+}
+
+#[test]
+fn a_locked_row_is_not_deleted() {
+    let mut e = editor_with_group();
+    assert!(e.toggle_row_locked(Row::Object(0)));
+    let steps = e.history.done_count();
+    assert!(!e.delete_row(Row::Object(0)));
+    // El grupo que tiene algo bloqueado tampoco (se iría con él).
+    assert!(!e.delete_row(Row::Group(0)));
+    assert_eq!(e.history.done_count(), steps);
+    assert!(e.toggle_row_locked(Row::Object(0)));
+    // Bloqueado por su grupo.
+    assert!(e.toggle_row_locked(Row::Group(0)));
+    let steps = e.history.done_count();
+    assert!(!e.delete_row(Row::Object(1)));
+    assert!(!e.delete_row(Row::Group(0)));
+    assert_eq!(e.history.done_count(), steps);
+    assert_eq!(e.model().unwrap().objects.len(), 2);
+}
+
+#[test]
+fn duplicate_active_copies_the_active_group_or_else_the_objects() {
+    let mut e = editor_with_group();
+    e.set_active_row(Some(Row::Group(0)), false);
+    assert!(e.can_duplicate_active());
+    assert!(e.duplicate_active());
+    let model = e.model().unwrap();
+    assert_eq!(model.groups.len(), 2);
+    assert_eq!(model.objects.len(), 4);
+    e.set_active_row(Some(Row::Object(0)), false);
+    assert!(e.duplicate_active());
+    let model = e.model().unwrap();
+    assert_eq!(model.groups.len(), 2);
+    assert_eq!(model.objects.len(), 5);
+    // Un grupo vacío también se duplica.
+    e.set_active_row(None, false);
+    assert!(e.new_group());
+    assert!(e.can_duplicate_active());
+    assert!(e.duplicate_active());
+    assert_eq!(e.model().unwrap().groups.len(), 4);
+}
+
+#[test]
+fn after_duplicating_a_group_the_copy_is_the_active_row() {
+    let mut e = editor_with_group();
+    assert!(e.duplicate_group(0));
+    assert_eq!(e.active_row(), Some(Row::Group(1)));
+    assert_eq!(objects(&e), vec![2, 3]);
+    // Con un grupo vacío, también.
+    e.set_active_row(None, false);
+    assert!(e.new_group());
+    assert!(e.duplicate_group(2));
+    assert_eq!(e.active_row(), Some(Row::Group(3)));
+    assert_eq!(objects(&e), Vec::<usize>::new());
+}
+
+#[test]
+fn deleting_the_chosen_rows_takes_all_of_them_in_one_step() {
+    let mut e = editor_with_model();
+    assert!(e.add_primitive(Primitive::Cylinder { sides: 8 }));
+    // El grupo 0 con el cubo; elegidos el cilindro y el grupo (activo).
+    select_objects(&mut e, &[0]);
+    assert!(e.new_group());
+    e.set_active_row(Some(Row::Object(2)), false);
+    e.set_active_row(Some(Row::Group(0)), true);
+    assert_eq!(e.active_row(), Some(Row::Group(0)));
+    assert_eq!(objects(&e), vec![0, 2]);
+    let steps = e.history.done_count();
+    assert!(e.delete_chosen_rows());
+    assert_eq!(e.history.done_count(), steps + 1);
+    let model = e.model().unwrap();
+    assert_eq!(model.objects.len(), 1);
+    assert_eq!(model.objects[0].name, "Plane");
+    assert!(model.groups.is_empty());
+    e.undo();
+    assert_eq!(e.model().unwrap().objects.len(), 3);
+    assert_eq!(e.model().unwrap().groups.len(), 1);
+}
+
+#[test]
+fn deleting_the_chosen_rows_skips_the_locked_ones() {
+    let mut e = editor_with_model();
+    assert!(e.toggle_row_locked(Row::Object(1)));
+    select_objects(&mut e, &[0, 1]);
+    let steps = e.history.done_count();
+    assert!(e.delete_chosen_rows());
+    assert_eq!(e.history.done_count(), steps + 1);
+    let model = e.model().unwrap();
+    assert_eq!(model.objects.len(), 1);
+    assert_eq!(model.objects[0].name, "Plane");
+    // Solo queda lo bloqueado: nada que borrar, sin paso.
+    select_objects(&mut e, &[0]);
+    assert!(!e.delete_chosen_rows());
+    assert_eq!(e.history.done_count(), steps + 1);
+}
+
+#[test]
+fn the_panel_delete_with_a_group_active_deletes_the_whole_group() {
+    let mut e = editor_with_group();
+    e.set_active_row(Some(Row::Group(0)), false);
+    assert!(e.can_delete_from_panel());
+    let steps = e.history.done_count();
+    assert!(e.delete_from_panel());
+    assert_eq!(e.history.done_count(), steps + 1);
+    let model = e.model().unwrap();
+    assert!(model.objects.is_empty());
+    assert!(model.groups.is_empty());
+    // Bloqueado, no.
+    e.undo();
+    assert!(e.toggle_row_locked(Row::Group(0)));
+    e.set_active_row(Some(Row::Group(0)), false);
+    assert!(!e.can_delete_from_panel());
+    assert!(!e.delete_from_panel());
+}
+
+#[test]
+fn the_panel_delete_in_vertex_mode_still_deletes_from_the_mesh() {
+    let mut e = editor_with_group();
+    e.set_active_row(Some(Row::Group(0)), false);
+    e.set_select_mode(SelectMode::Vertex);
+    e.set_model_selection(Selection {
+        mode: SelectMode::Vertex,
+        items: [Item::Vertex(0, 0)].into_iter().collect(),
+    });
+    e.model_group = Some(0);
+    assert!(e.delete_from_panel());
+    let model = e.model().unwrap();
+    assert_eq!(model.objects.len(), 2, "the objects stay");
+    assert_eq!(model.groups.len(), 1, "the group stays");
+}
+
+#[test]
+fn the_transform_of_a_locked_row_is_shown_but_not_editable() {
+    let mut e = editor_with_model();
+    e.set_active_row(Some(Row::Object(0)), false);
+    let (t, editable) = e.active_transform().expect("the cube's transform");
+    assert!(editable);
+    assert!(e.toggle_row_locked(Row::Object(0)));
+    assert_eq!(e.active_transform(), Some((t, false)));
+    let mut moved = t;
+    moved.position.x = 16;
+    assert!(!e.set_active_transform(moved, eframe::egui::Id::new("test")));
+    // Bloqueado por su grupo, igual.
+    assert!(e.toggle_row_locked(Row::Object(0)));
+    select_objects(&mut e, &[0, 1]);
+    assert!(e.new_group());
+    assert!(e.toggle_row_locked(Row::Group(0)));
+    e.set_active_row(Some(Row::Object(0)), false);
+    assert_eq!(e.active_transform(), Some((t, false)));
+    e.set_active_row(Some(Row::Group(0)), false);
+    assert!(matches!(e.active_transform(), Some((_, false))));
+    // Sin fila activa, nada.
+    e.set_active_row(None, false);
+    assert_eq!(e.active_transform(), None);
+}

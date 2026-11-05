@@ -34,8 +34,9 @@ impl Editor {
     }
 
     /// Elige la fila activa (`None`: ninguna). En modo Model la selección 3D pasa a modo Object
-    /// con los objetos de la fila (un grupo: todos los de adentro); con `add` (Shift) se suman a
-    /// la selección o, si ya estaban todos, se quitan (y la fila queda activa igual).
+    /// con los objetos de la fila (un grupo: todos los de adentro) que se ven (lo oculto no se
+    /// elige); con `add` (Shift) se suman a la selección o, si ya estaban todos, se quitan (y la
+    /// fila queda activa igual).
     pub fn set_active_row(&mut self, row: Option<Row>, add: bool) {
         // Durante un Extrude la selección es la de lo extruido: no cambia.
         if self.extruding() {
@@ -48,7 +49,11 @@ impl Editor {
         if row.is_none() && add {
             return;
         }
-        let objects = row.map_or(Vec::new(), |r| row_objects(model, r));
+        let objects: Vec<usize> = row
+            .map_or(Vec::new(), |r| row_objects(model, r))
+            .into_iter()
+            .filter(|&o| !model.object_hidden(o))
+            .collect();
         (self.model_object, self.model_group) = match row {
             Some(Row::Object(o)) => (Some(o), None),
             Some(Row::Group(g)) => (None, Some(g)),
@@ -81,7 +86,8 @@ impl Editor {
         self.revision += 1;
     }
 
-    /// El ojo de la fila: oculta o muestra el objeto o el grupo. Un paso de undo.
+    /// El ojo de la fila: oculta o muestra el objeto o el grupo. Un paso de undo. Lo que queda
+    /// oculto (él o lo de adentro del grupo) sale de la selección 3D.
     pub fn toggle_hidden(&mut self, row: Row) -> bool {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
@@ -94,7 +100,22 @@ impl Editor {
         };
         *hidden = !*hidden;
         let label = if *hidden { "Hide" } else { "Show" };
-        self.named(label, |e| e.set_model(model))
+        if !self.named(label, |e| e.set_model(model)) {
+            return false;
+        }
+        // Después del paso: deshacerlo vuelve a la selección de antes (con lo que se ocultó).
+        if self.model_edit.artboard == Some(self.model_id())
+            && let Some(model) = self.edited_model()
+        {
+            let hidden: Vec<usize> = (0..model.objects.len())
+                .filter(|&o| model.object_hidden(o))
+                .collect();
+            self.model_edit
+                .selection
+                .items
+                .retain(|it| !hidden.contains(&it.object()));
+        }
+        true
     }
 
     /// El candado de la fila: bloquea o desbloquea el objeto o el grupo. Un paso de undo. (No se
@@ -254,31 +275,83 @@ impl Editor {
         self.named("Move", |e| e.set_model(model))
     }
 
-    /// Borra la fila: un objeto, o un grupo con todo lo de adentro (objetos y subgrupos). Un
+    /// Borra la fila: un objeto, o un grupo con todo lo de adentro (objetos y subgrupos). Lo
+    /// bloqueado no se borra (ni un grupo con algo bloqueado adentro): `false`, sin paso. Un
     /// paso de undo.
     pub fn delete_row(&mut self, row: Row) -> bool {
-        let g = match row {
-            Row::Object(o) => return self.named("Delete", |e| e.remove_object(o)),
-            Row::Group(g) => g,
+        self.delete_rows(&[row])
+    }
+
+    /// Supr con el puntero sobre el outliner: borra todas las filas elegidas (los objetos
+    /// elegidos en las vistas en modo Object y la fila activa: un grupo, con lo de adentro),
+    /// salvo lo bloqueado, en un paso de undo. `false` si no queda nada que borrar.
+    pub fn delete_chosen_rows(&mut self) -> bool {
+        let mut rows: Vec<Row> = self.chosen_objects().into_iter().map(Row::Object).collect();
+        rows.extend(self.active_row());
+        self.delete_rows(&rows)
+    }
+
+    /// Si el botón Delete del panel hace algo (ver [`Editor::delete_from_panel`]).
+    pub fn can_delete_from_panel(&self) -> bool {
+        match self.panel_group() {
+            Some(g) => self
+                .edited_model()
+                .is_some_and(|m| !row_protected(m, Row::Group(g))),
+            None => self.can_delete_model_selection(),
+        }
+    }
+
+    /// El botón Delete del panel: con un grupo como fila activa en modo Object, el grupo entero
+    /// con lo elegido (como Supr en el outliner); si no, lo elegido en las vistas.
+    pub fn delete_from_panel(&mut self) -> bool {
+        match self.panel_group() {
+            Some(_) => self.delete_chosen_rows(),
+            None => self.delete_model_selection(),
+        }
+    }
+
+    /// El grupo activo, si el botón Delete lo borra: en modo Object y sin gesto en curso.
+    fn panel_group(&self) -> Option<usize> {
+        let Some(Row::Group(g)) = self.active_row() else {
+            return None;
         };
+        let object_mode = self.model_edit.selection.mode == SelectMode::Object;
+        (object_mode && self.topology_model().is_some()).then_some(g)
+    }
+
+    /// Borra `rows` (los objetos y los grupos con todo lo de adentro), salvo las que no existen o
+    /// están protegidas por un candado, en un paso de undo. `false` si no queda ninguna.
+    fn delete_rows(&mut self, rows: &[Row]) -> bool {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
         model.normalize_tree();
-        if g >= model.groups.len() {
+        let rows: Vec<Row> = rows
+            .iter()
+            .copied()
+            .filter(|&r| row_exists(&model, r) && !row_protected(&model, r))
+            .collect();
+        if rows.is_empty() {
             return false;
         }
-        let gone = model.group_objects(g);
+        let mut gone: Vec<usize> = rows.iter().flat_map(|&r| row_objects(&model, r)).collect();
+        gone.sort_unstable();
+        gone.dedup();
         // Los objetos de mayor a menor (quitar uno corre a los de después).
         for &o in gone.iter().rev() {
             model.remove_object(o);
         }
-        let Some(node) = take_node(&mut model.tree, Row::Group(g)) else {
-            return false;
-        };
+        // Los grupos, con sus subgrupos (uno adentro de otro que se borra ya salió con él).
         let mut groups = Vec::new();
-        node_groups(&node, &mut groups);
+        for &r in &rows {
+            if let Row::Group(g) = r
+                && let Some(node) = take_node(&mut model.tree, Row::Group(g))
+            {
+                node_groups(&node, &mut groups);
+            }
+        }
         groups.sort_unstable();
+        groups.dedup();
         for &gr in groups.iter().rev() {
             remove_group(&mut model, gr);
         }
@@ -304,32 +377,24 @@ impl Editor {
             self.model_edit.made_on = made_on;
             return false;
         }
-        self.model_group = None;
+        self.model_group = self.model_group.and_then(|g| {
+            (!groups.contains(&g)).then(|| g - groups.iter().filter(|&&r| r < g).count())
+        });
         self.model_object = self.model_object.filter(|o| !gone.contains(o)).map(shift);
         self.revision += 1;
         true
     }
 
-    /// La transform de la fila activa, si se puede editar: hay fila activa, no está bloqueada
-    /// (ni ella ni un grupo de los que la contienen) y la selección 3D no tiene otros objetos
-    /// que los suyos (un grupo: todos los de adentro).
-    pub fn active_transform(&self) -> Option<Transform3D> {
+    /// La transform de la fila activa y si se puede editar: hay fila activa y la selección 3D
+    /// no tiene otros objetos que los suyos (un grupo: todos los de adentro); bloqueada (ella o
+    /// un grupo de los que la contienen) se ve pero no se edita (`false`).
+    pub fn active_transform(&self) -> Option<(Transform3D, bool)> {
         let model = self.edited_model()?;
         let row = self.active_row()?;
-        let (transform, locked) = match row {
-            Row::Object(o) => (model.objects.get(o)?.transform, model.object_locked(o)),
-            Row::Group(g) => {
-                let group = model.groups.get(g)?;
-                let inherited = model
-                    .group_parents(g)
-                    .iter()
-                    .any(|&p| model.groups.get(p).is_some_and(|p| p.locked));
-                (group.transform, group.locked || inherited)
-            }
+        let transform = match row {
+            Row::Object(o) => model.objects.get(o)?.transform,
+            Row::Group(g) => model.groups.get(g)?.transform,
         };
-        if locked {
-            return None;
-        }
         if self.model_edit.artboard == Some(self.model_id()) {
             let mine = row_objects(model, row);
             let sel = &self.model_edit.selection;
@@ -337,13 +402,16 @@ impl Editor {
                 return None;
             }
         }
-        Some(transform)
+        Some((transform, !row_locked(model, row)))
     }
 
     /// Cambia la transform de la fila activa (si se puede: ver [`Editor::active_transform`]).
     /// Los cambios seguidos del mismo `group` (un arrastre) son un solo paso de undo.
     pub fn set_active_transform(&mut self, t: Transform3D, group: eframe::egui::Id) -> bool {
-        if self.active_transform().is_none() {
+        if !self
+            .active_transform()
+            .is_some_and(|(_, editable)| editable)
+        {
             return false;
         }
         let (Some(row), Some(mut model)) = (self.active_row(), self.edited_model().cloned()) else {
@@ -358,6 +426,25 @@ impl Editor {
         };
         *slot = t;
         self.set_model_grouped(model, group)
+    }
+
+    /// Si hay algo que duplicar (ver [`Editor::duplicate_active`]).
+    pub fn can_duplicate_active(&self) -> bool {
+        !self.extruding()
+            && (matches!(self.active_row(), Some(Row::Group(_)))
+                || self.can_duplicate_model_objects())
+    }
+
+    /// Duplicate (el botón del outliner, Ctrl+J y el menú Object): con un grupo como fila activa,
+    /// el grupo con lo de adentro; si no, los objetos elegidos.
+    pub fn duplicate_active(&mut self) -> bool {
+        if !self.can_duplicate_active() {
+            return false;
+        }
+        match self.active_row() {
+            Some(Row::Group(g)) => self.duplicate_group(g),
+            _ => self.duplicate_model_objects(),
+        }
     }
 
     /// Los objetos elegidos en las vistas (en modo Object, del modelo que se edita).
@@ -382,6 +469,40 @@ fn row_exists(model: &Model3D, row: Row) -> bool {
         Row::Object(o) => o < model.objects.len(),
         Row::Group(g) => g < model.groups.len(),
     }
+}
+
+/// Si la fila está bloqueada: ella o un grupo de los que la contienen.
+fn row_locked(model: &Model3D, row: Row) -> bool {
+    match row {
+        Row::Object(o) => model.object_locked(o),
+        Row::Group(g) => {
+            model.groups.get(g).is_some_and(|gr| gr.locked)
+                || model
+                    .group_parents(g)
+                    .iter()
+                    .any(|&p| model.groups.get(p).is_some_and(|p| p.locked))
+        }
+    }
+}
+
+/// Si el candado no deja borrar la fila: bloqueada o, un grupo, con algo bloqueado adentro (se
+/// iría con él).
+fn row_protected(model: &Model3D, row: Row) -> bool {
+    row_locked(model, row)
+        || match row {
+            Row::Object(_) => false,
+            Row::Group(g) => {
+                model
+                    .group_objects(g)
+                    .iter()
+                    .any(|&o| model.object_locked(o))
+                    || model
+                        .groups
+                        .iter()
+                        .enumerate()
+                        .any(|(i, gr)| gr.locked && model.group_parents(i).contains(&g))
+            }
+        }
 }
 
 /// Los objetos de la fila (un grupo: todos los de adentro).

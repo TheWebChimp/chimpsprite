@@ -324,3 +324,71 @@ fn undoing_a_topology_change_brings_back_the_selection_of_that_topology() {
     e.undo();
     assert_eq!(e.model_edit().selection.items.len(), 2);
 }
+
+/// Lo de las vistas con el cubo (0) oculto o bloqueado y otro cubo (1) libre.
+fn with_a_second_cube() -> Editor {
+    let mut e = editing();
+    assert!(e.add_primitive(cs_3d::Primitive::Cube));
+    e
+}
+
+#[test]
+fn hidden_or_locked_parts_are_not_edited_from_the_views() {
+    use super::Row;
+    let can = |e: &Editor| {
+        (
+            e.can_extrude(),
+            e.can_subdivide(),
+            e.can_merge(),
+            e.can_delete_model_selection(),
+        )
+    };
+    for hide in [false, true] {
+        let mut e = with_a_second_cube();
+        let toggled = if hide {
+            e.toggle_hidden(Row::Object(0))
+        } else {
+            e.toggle_row_locked(Row::Object(0))
+        };
+        assert!(toggled);
+        let top = top_face(&e);
+        faces(&mut e, &[top]);
+        assert_eq!(can(&e), (false, false, false, false), "hide {hide}");
+        let steps = e.history.done_count();
+        assert!(!e.subdivide_model_selection());
+        assert!(!e.merge_model_selection());
+        assert!(!e.delete_model_selection());
+        assert!(!e.extrude_moved([0.0, 16.0, 0.0]));
+        e.request_extrude();
+        assert!(e.model_edit().key_request.is_none());
+        assert_eq!(e.history.done_count(), steps);
+        // Con una cara del otro cubo también: solo se toca esa.
+        let mut sel = e.model_edit().selection.clone();
+        sel.items.insert(Item::Face(1, top));
+        e.set_model_selection(sel);
+        assert!(e.can_subdivide());
+        let before = model(&e).objects[0].mesh.clone();
+        assert!(e.subdivide_model_selection());
+        assert_eq!(model(&e).objects[0].mesh, before, "hide {hide}");
+        assert!(model(&e).objects[1].mesh.faces.len() > 6);
+        // En modo Object, Supr no borra el oculto o bloqueado.
+        e.set_model_selection(Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0), Item::Object(1)].into_iter().collect(),
+        });
+        assert!(e.delete_model_selection());
+        assert_eq!(model(&e).objects.len(), 1, "hide {hide}");
+        let left = &model(&e).objects[0];
+        assert!(left.hidden || left.locked, "hide {hide}");
+    }
+}
+
+#[test]
+fn merge_skips_the_vertices_of_a_locked_part() {
+    use super::Row;
+    let mut e = with_a_second_cube();
+    assert!(e.toggle_row_locked(Row::Object(0)));
+    vertices(&mut e, &[0, 1]);
+    assert!(!e.can_merge());
+    assert!(!e.merge_model_selection());
+}

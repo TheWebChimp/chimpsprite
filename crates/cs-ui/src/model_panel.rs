@@ -280,11 +280,8 @@ fn header(
     inner: Rect,
     split: f32,
 ) -> f32 {
-    let group = match editor.active_row() {
-        Some(Row::Group(g)) => Some(g),
-        _ => None,
-    };
-    let can_duplicate = group.is_some() || editor.can_duplicate_model_objects();
+    let group = matches!(editor.active_row(), Some(Row::Group(_)));
+    let can_duplicate = editor.can_duplicate_active();
     let mut added = None;
     let mut duplicate = false;
     let mut new_group = false;
@@ -305,7 +302,7 @@ fn header(
             let icon = "icon.outliner.new_group";
             let response = kit::button::icon_button_at(ui, skin, folder, id, icon, "New group");
             new_group = pixel_ui::bubble_tooltip(response, skin, "New group").clicked();
-            duplicate = duplicate_button(ui, skin, copy, can_duplicate);
+            duplicate = duplicate_button(ui, skin, copy, can_duplicate, group);
             // "Outliner", con las mayúsculas centradas con los botones.
             let colors = skin.colors();
             let font = egui::TextStyle::Body.resolve(ui.style());
@@ -339,14 +336,7 @@ fn header(
         editor.add_primitive(p);
     }
     if duplicate {
-        match group {
-            Some(g) => {
-                editor.duplicate_group(g);
-            }
-            None => {
-                editor.duplicate_model_objects();
-            }
-        }
+        editor.duplicate_active();
     }
     if new_group {
         editor.new_group();
@@ -355,14 +345,20 @@ fn header(
 }
 
 /// Duplicate en `rect`, junto a New group: un botón del kit con el ícono de copiar (`icon.copy`)
-/// y su tooltip (con el atajo); deshabilitado sin nada que duplicar. Devuelve si se apretó.
-fn duplicate_button(ui: &mut Ui, skin: &Skin, rect: Rect, enabled: bool) -> bool {
+/// y su tooltip (con el atajo; "group" con un grupo activo); deshabilitado sin nada que
+/// duplicar. Devuelve si se apretó.
+fn duplicate_button(ui: &mut Ui, skin: &Skin, rect: Rect, enabled: bool, group: bool) -> bool {
     let id = ui.id().with("model_duplicate_object");
     let shortcut = crate::keymap::label(ui.ctx(), crate::keymap::Action::DuplicateObject);
-    let tip = if shortcut.is_empty() {
-        "Duplicate object".to_owned()
+    let what = if group {
+        "Duplicate group"
     } else {
-        format!("Duplicate object ({shortcut})")
+        "Duplicate object"
+    };
+    let tip = if shortcut.is_empty() {
+        what.to_owned()
+    } else {
+        format!("{what} ({shortcut})")
     };
     ui.add_enabled_ui(enabled, |ui| {
         let response = kit::button::icon_button_at(ui, skin, rect, id, "icon.copy", "Duplicate");
@@ -411,7 +407,7 @@ fn topology_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
         editor.can_extrude(),
         editor.can_subdivide(),
         editor.can_merge(),
-        editor.can_delete_model_selection(),
+        editor.can_delete_from_panel(),
     ];
     let labels = ["Extrude", "Subdivide", "Merge", "Delete"];
     let mut clicked = None;
@@ -435,7 +431,7 @@ fn topology_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
             editor.merge_model_selection();
         }
         Some(3) => {
-            editor.delete_model_selection();
+            editor.delete_from_panel();
         }
         _ => {}
     }

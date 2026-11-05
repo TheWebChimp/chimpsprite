@@ -158,7 +158,7 @@ pub struct CanvasView {
     /// El encabezado de ChimpCAD (logo y botones Model / Texture) del workspace del modelo en
     /// este frame: ahí no empiezan los gestos de las vistas.
     header_rect: Option<Rect>,
-    /// La barrita del objeto, debajo del encabezado (en modo Model): la rueda ahí es de su
+    /// La barrita del objeto, debajo del encabezado (en los dos modos): la rueda ahí es de su
     /// scroll, no de las vistas.
     object_bar_rect: Option<Rect>,
     /// El contorno de las caras elegidas sobre el render (modo Texture): la clave de la

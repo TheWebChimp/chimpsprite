@@ -46,22 +46,26 @@ pub struct OutlinerState {
     pub drag: Option<Row>,
 }
 
-/// Dónde estaba la lista del outliner en el frame anterior (y en qué pasada): con el puntero
-/// encima, Supr borra la fila activa (y no lo elegido en las vistas: ver
+/// Dónde estaba la lista del outliner en el frame anterior (en qué pasada y en qué capa): con el
+/// puntero encima, Supr borra las filas elegidas (y no lo elegido en las vistas: ver
 /// [`pointer_over_list`]).
 fn list_id() -> egui::Id {
     egui::Id::new("model_outliner_list")
 }
 
-/// Si el puntero está sobre la lista del outliner dibujada en el frame anterior. Los atajos (que
-/// corren antes de dibujar) y el outliner miran la misma, así Supr lo usa uno solo.
+/// Si el puntero está sobre la lista del outliner dibujada en el frame anterior, sin otra capa
+/// encima (un menú, una ventana o un dropdown). Los atajos (que corren antes de dibujar) y el
+/// outliner miran la misma, así Supr lo usa uno solo.
 pub fn pointer_over_list(ctx: &egui::Context) -> bool {
     let pass = ctx.cumulative_pass_nr();
-    let last: Option<(u64, Rect)> = ctx.data(|d| d.get_temp(list_id()));
-    let Some((drawn, rect)) = last else {
+    let last: Option<(u64, Rect, egui::LayerId)> = ctx.data(|d| d.get_temp(list_id()));
+    let Some((drawn, rect, layer)) = last else {
         return false;
     };
-    drawn + 1 >= pass && ctx.pointer_hover_pos().is_some_and(|p| rect.contains(p))
+    drawn + 1 >= pass
+        && ctx
+            .pointer_hover_pos()
+            .is_some_and(|p| rect.contains(p) && ctx.layer_id_at(p) == Some(layer))
 }
 
 /// Una fila de la lista, ya resuelta del árbol.
@@ -185,7 +189,8 @@ pub fn show(
         && ui.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace));
     let pass = ui.ctx().cumulative_pass_nr();
     let seen = list.intersect(ui.clip_rect());
-    ui.data_mut(|d| d.insert_temp(list_id(), (pass, seen)));
+    let layer = ui.layer_id();
+    ui.data_mut(|d| d.insert_temp(list_id(), (pass, seen, layer)));
     let shift = ui.input(|i| i.modifiers.shift);
     let mut action = None;
     let mut rects = Vec::with_capacity(rows.len());
@@ -219,8 +224,8 @@ pub fn show(
     }
     rename(ui, editor, skin, state, &rows, &rects);
     drop_row(ui, editor, &look, state, &rects);
-    if delete && let Some(r) = editor.active_row() {
-        editor.delete_row(r);
+    if delete {
+        editor.delete_chosen_rows();
     }
 }
 

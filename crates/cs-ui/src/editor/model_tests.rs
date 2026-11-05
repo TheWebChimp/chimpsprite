@@ -345,6 +345,8 @@ fn duplicating_a_group_copies_it_with_its_objects() {
     assert_eq!(m.groups.len(), 2);
     assert_eq!(m.groups[1].name, "g copy");
     assert_eq!(m.group_objects(1), vec![1]);
+    // Solo el grupo lleva " copy": lo de adentro conserva su nombre.
+    assert_eq!(m.objects[1].name, m.objects[0].name);
     // La copia va justo después del original.
     assert!(matches!(m.tree[1], cs_core::Node::Group { group: 1, .. }));
     assert_eq!(e.history.done_count(), steps + 1);

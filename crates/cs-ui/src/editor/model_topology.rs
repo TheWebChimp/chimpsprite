@@ -71,7 +71,7 @@ fn average_normal(model: &Model3D, sel: &Selection) -> P3 {
 impl Editor {
     /// El modelo, si se puede cambiar su topología: en modo *Model* del workspace y sin gesto en
     /// curso.
-    fn topology_model(&self) -> Option<&Model3D> {
+    pub(super) fn topology_model(&self) -> Option<&Model3D> {
         let e = &self.model_edit;
         if !self.model_edit_on()
             || e.mode != CadMode::Model
@@ -84,13 +84,23 @@ impl Editor {
         self.edited_model()
     }
 
+    /// Lo elegido que se puede editar: sin lo de los objetos ocultos o bloqueados (ellos o sus
+    /// grupos), como lo que mueve el gizmo.
+    fn editable_selection(&self) -> Selection {
+        let mut sel = self.model_edit.selection.clone();
+        if let Some(m) = self.edited_model() {
+            sel.items.retain(|it| cs_3d::pickable(m, it.object()));
+        }
+        sel
+    }
+
     /// Si lo elegido involucra caras (en modo Object no: el objeto entero no se extruye ni se
     /// divide desde aquí).
     fn faces_involved(&self) -> bool {
         let Some(m) = self.topology_model() else {
             return false;
         };
-        let sel = &self.model_edit.selection;
+        let sel = &self.editable_selection();
         match sel.mode {
             SelectMode::Object => false,
             SelectMode::Face => sel.items.iter().any(|i| matches!(i, Item::Face(..))),
@@ -112,13 +122,13 @@ impl Editor {
         let Some(m) = self.topology_model() else {
             return false;
         };
-        let sel = &self.model_edit.selection;
+        let sel = &self.editable_selection();
         sel.mode != SelectMode::Object && sel.vertices(m).values().any(|vs| vs.len() >= 2)
     }
 
-    /// Borrar: hay algo elegido (en modo Object, los objetos).
+    /// Borrar: hay algo elegido que se puede editar (en modo Object, los objetos).
     pub fn can_delete_model_selection(&self) -> bool {
-        self.topology_model().is_some() && !self.model_edit.selection.is_empty()
+        self.topology_model().is_some() && !self.editable_selection().is_empty()
     }
 
     /// Ctrl+E o el botón Extrude: el lienzo empieza el Extrude en la vista bajo el puntero (o en
@@ -135,11 +145,12 @@ impl Editor {
         if !self.can_extrude() {
             return false;
         }
+        let editable = self.editable_selection();
         let Some(m) = self.edited_model() else {
             return false;
         };
         let before = self.model_edit.selection.clone();
-        let (model, sel) = cs_3d::extrude_faces(m, &before);
+        let (model, sel) = cs_3d::extrude_faces(m, &editable);
         let Some(b) = cs_3d::bounds(&model, &sel) else {
             return false;
         };
@@ -204,17 +215,19 @@ impl Editor {
         self.can_delete_model_selection() && self.apply_topology("Delete", cs_3d::delete_selection)
     }
 
-    /// El modelo y la selección que da `op` con lo elegido, en un paso de undo `label`. La
-    /// selección nueva va antes del paso (el paso revalida la selección contra el modelo nuevo).
+    /// El modelo y la selección que da `op` con lo elegido que se puede editar, en un paso de
+    /// undo `label`. La selección nueva va antes del paso (el paso revalida la selección contra
+    /// el modelo nuevo).
     fn apply_topology(
         &mut self,
         label: &'static str,
         op: impl FnOnce(&Model3D, &Selection) -> (Model3D, Selection),
     ) -> bool {
+        let editable = self.editable_selection();
         let Some(m) = self.edited_model() else {
             return false;
         };
-        let (model, sel) = op(m, &self.model_edit.selection);
+        let (model, sel) = op(m, &editable);
         let left = model.objects.len();
         let old = std::mem::replace(&mut self.model_edit.selection, sel.clone());
         if !self.named(label, |e| e.set_model(model)) {
