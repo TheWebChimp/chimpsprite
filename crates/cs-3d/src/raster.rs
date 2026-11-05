@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use cs_core::{Camera3D, FIXED, Model3D, Object3D, Projection, Rgba, ShadingTable, Vec3i};
+use cs_core::{Camera3D, FIXED, Model3D, Projection, Rgba, ShadingTable, Vec3i};
 
 use crate::shade;
 
@@ -83,10 +83,13 @@ pub fn face_outline(input: &RenderInput, faces: &[(usize, usize)]) -> Vec<bool> 
         let Some(obj) = input.model.objects.get(o) else {
             continue;
         };
+        if input.model.object_hidden(o) {
+            continue;
+        }
         let Some(face) = obj.mesh.faces.get(f).filter(|face| face.verts.len() >= 3) else {
             continue;
         };
-        let world = world_vertices(obj, input.extra_yaw);
+        let world = world_vertices(input.model, o, input.extra_yaw);
         let Some(mut poly) = face
             .verts
             .iter()
@@ -409,28 +412,24 @@ fn clip_near(poly: &[ClipVert]) -> Vec<ClipVert> {
     out
 }
 
-/// Los vértices del objeto en el mundo: escala → rotación X, Y (+ `extra_yaw`), Z → traslación.
-fn world_vertices(obj: &Object3D, extra_yaw: i32) -> Vec<V3> {
-    let t = &obj.transform;
-    let s = [
-        t.scale.x as f32 / 1000.0,
-        t.scale.y as f32 / 1000.0,
-        t.scale.z as f32 / 1000.0,
-    ];
-    let (sx, cx) = rad(t.rotation.x).sin_cos();
-    let (sy, cy) = rad(t.rotation.y + extra_yaw).sin_cos();
-    let (sz, cz) = rad(t.rotation.z).sin_cos();
-    let pos = units(t.position);
-    obj.mesh
+/// Los vértices del objeto `o` en el mundo (en unidades): por su transform y los de sus grupos
+/// (escala → rotación X, Y, Z → traslación cada uno). `extra_yaw` se suma a la rotación Y del de
+/// más afuera (sin grupos, el del objeto): así gira todo el modelo.
+fn world_vertices(model: &Model3D, o: usize, extra_yaw: i32) -> Vec<V3> {
+    let mut chain = model.object_chain(o);
+    if let Some(t) = chain.last_mut() {
+        t.rotation.y += extra_yaw;
+    }
+    let f = FIXED as f32;
+    model.objects[o]
+        .mesh
         .vertices
         .iter()
         .map(|&v| {
-            let u = units(v);
-            let (x, y, z) = (u[0] * s[0], u[1] * s[1], u[2] * s[2]);
-            let (y, z) = (y * cx - z * sx, y * sx + z * cx);
-            let (x, z) = (x * cy + z * sy, -x * sy + z * cy);
-            let (x, y) = (x * cz - y * sz, x * sz + y * cz);
-            [x + pos[0], y + pos[1], z + pos[2]]
+            let p = chain
+                .iter()
+                .fold(crate::edit::p3(v), |p, t| crate::edit::to_world(t, p));
+            [p[0] / f, p[1] / f, p[2] / f]
         })
         .collect()
 }
@@ -748,10 +747,16 @@ fn rasterize(input: &RenderInput) -> Raster {
         .then(|| orbit_dir(model.light.yaw, model.light.pitch));
     let mut cache = HashMap::new();
     for (id, obj) in model.objects.iter().enumerate() {
-        let world = world_vertices(obj, input.extra_yaw);
-        let s = obj.transform.scale;
-        // Una escala negativa en un número impar de ejes invierte el sentido de las caras.
-        let mirrored = (s.x < 0) ^ (s.y < 0) ^ (s.z < 0);
+        if model.object_hidden(id) {
+            continue;
+        }
+        let world = world_vertices(model, id, input.extra_yaw);
+        // Una escala negativa en un número impar de ejes (de toda la cadena) invierte el sentido
+        // de las caras.
+        let mirrored = model.object_chain(id).iter().fold(false, |m, t| {
+            let s = t.scale;
+            m ^ (s.x < 0) ^ (s.y < 0) ^ (s.z < 0)
+        });
         for (face_i, face) in obj.mesh.faces.iter().enumerate() {
             if face.verts.len() < 3 || face.uvs.len() != face.verts.len() {
                 continue;
@@ -907,6 +912,40 @@ mod tests {
 
     fn cube() -> Object3D {
         obj(primitive_mesh(&Primitive::Cube))
+    }
+
+    #[test]
+    fn lo_oculto_no_se_pinta_y_un_grupo_mueve_a_sus_hijos() {
+        let mut m = model(vec![cube()]);
+        m.objects[0].hidden = true;
+        assert!(
+            render_model(&input(&m, 16, &[ROJO], 1))
+                .iter()
+                .all(|p| p.a == 0)
+        );
+        let mut m = model(vec![cube()]);
+        m.groups.push(cs_core::Group3D {
+            name: "g".into(),
+            transform: Transform3D {
+                position: Vec3i {
+                    x: FIXED,
+                    y: 0,
+                    z: 0,
+                },
+                ..Default::default()
+            },
+            hidden: false,
+            locked: false,
+            open: true,
+        });
+        m.tree = vec![cs_core::Node::Group {
+            group: 0,
+            children: vec![cs_core::Node::Object(0)],
+        }];
+        let img = render_model(&input(&m, 16, &[ROJO], 1));
+        // El cubo (4..12) corrido una unidad (4 px) a la derecha: 8..16.
+        assert_eq!(img[8 * 16 + 6].a, 0);
+        assert_eq!(img[8 * 16 + 14], ROJO);
     }
 
     #[test]

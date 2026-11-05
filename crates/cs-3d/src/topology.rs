@@ -458,7 +458,7 @@ pub fn delete_selection(model: &Model3D, sel: &Selection) -> (Model3D, Selection
         objects.sort_unstable();
         objects.dedup();
         for o in objects.into_iter().rev() {
-            out.objects.remove(o);
+            out.remove_object(o);
         }
         return (out, empty);
     }

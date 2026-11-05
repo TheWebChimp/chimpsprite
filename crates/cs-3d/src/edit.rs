@@ -95,9 +95,9 @@ pub(crate) fn round3(p: P3) -> Vec3i {
 /// posición.
 pub fn to_world(t: &Transform3D, p: P3) -> P3 {
     let (x, y, z) = (
-        p[0] * t.scale.x as f32 / 1000.0,
-        p[1] * t.scale.y as f32 / 1000.0,
-        p[2] * t.scale.z as f32 / 1000.0,
+        p[0] * (t.scale.x as f32 / 1000.0),
+        p[1] * (t.scale.y as f32 / 1000.0),
+        p[2] * (t.scale.z as f32 / 1000.0),
     );
     let (sx, cx) = sin_cos(t.rotation.x);
     let (sy, cy) = sin_cos(t.rotation.y);
@@ -133,12 +133,57 @@ pub fn to_local(t: &Transform3D, w: P3, keep: P3) -> P3 {
     ]
 }
 
-/// Los vértices del objeto en el mundo.
-pub fn world_points(obj: &Object3D) -> Vec<P3> {
-    obj.mesh
+/// Un punto local del objeto `o` en el mundo: por su transform y luego por los de sus grupos
+/// (del más cercano al de más afuera).
+pub fn object_to_world(model: &Model3D, o: usize, p: P3) -> P3 {
+    model.object_chain(o).iter().fold(p, |p, t| to_world(t, p))
+}
+
+/// Lo contrario de [`object_to_world`]. `keep` (ver [`to_local`]) solo sirve en el último paso,
+/// el del objeto.
+pub fn object_to_local(model: &Model3D, o: usize, w: P3, keep: P3) -> P3 {
+    let chain = model.object_chain(o);
+    // De afuera hacia adentro.
+    let mut p = w;
+    for (k, t) in chain.iter().enumerate().rev() {
+        p = to_local(t, p, if k == 0 { keep } else { [0.0; 3] });
+    }
+    p
+}
+
+/// Un punto en el espacio del padre del objeto `o` (donde vive su posición) en el mundo: solo
+/// por los transforms de sus grupos.
+pub fn parent_to_world(model: &Model3D, o: usize, p: P3) -> P3 {
+    model
+        .object_chain(o)
+        .iter()
+        .skip(1)
+        .fold(p, |p, t| to_world(t, p))
+}
+
+/// Lo contrario de [`parent_to_world`].
+pub fn parent_to_local(model: &Model3D, o: usize, w: P3) -> P3 {
+    model
+        .object_chain(o)
+        .iter()
+        .skip(1)
+        .rev()
+        .fold(w, |p, t| to_local(t, p, [0.0; 3]))
+}
+
+/// Si el objeto `o` se puede elegir en las vistas: ni oculto ni bloqueado (él o sus grupos).
+pub fn pickable(model: &Model3D, o: usize) -> bool {
+    !model.object_hidden(o) && !model.object_locked(o)
+}
+
+/// Los vértices del objeto `o` en el mundo (con los transforms de sus grupos).
+pub fn world_points(model: &Model3D, o: usize) -> Vec<P3> {
+    let chain = model.object_chain(o);
+    model.objects[o]
+        .mesh
         .vertices
         .iter()
-        .map(|&v| to_world(&obj.transform, p3(v)))
+        .map(|&v| chain.iter().fold(p3(v), |p, t| to_world(t, p)))
         .collect()
 }
 
@@ -442,8 +487,13 @@ fn faces_of(obj: &Object3D) -> impl Iterator<Item = (usize, Vec<u32>)> + '_ {
 /// un objeto si `at` cae dentro de alguna de sus caras.
 pub fn pick(model: &Model3D, map: &ViewMap, mode: SelectMode, at: (f32, f32)) -> Option<Item> {
     let mut cands = Vec::new();
-    for (o, obj) in model.objects.iter().enumerate() {
-        let pts = world_points(obj);
+    for (o, obj) in model
+        .objects
+        .iter()
+        .enumerate()
+        .filter(|(o, _)| pickable(model, *o))
+    {
+        let pts = world_points(model, o);
         let scr: Vec<(f32, f32)> = pts.iter().map(|&p| map.to_screen(p)).collect();
         let depth = |i: u32| map.view.depth(pts[i as usize]);
         match mode {
@@ -503,8 +553,13 @@ pub fn box_select(
     let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
     let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
     let mut out = BTreeSet::new();
-    for (o, obj) in model.objects.iter().enumerate() {
-        let inn: Vec<bool> = world_points(obj)
+    for (o, obj) in model
+        .objects
+        .iter()
+        .enumerate()
+        .filter(|(o, _)| pickable(model, *o))
+    {
+        let inn: Vec<bool> = world_points(model, o)
             .iter()
             .map(|&p| {
                 let s = map.to_screen(p);
@@ -557,13 +612,17 @@ pub fn bounds(model: &Model3D, sel: &Selection) -> Option<(P3, P3)> {
     bounds_of(verts.iter().flat_map(|(&o, vs)| {
         let obj = &model.objects[o];
         vs.iter()
-            .map(move |&v| to_world(&obj.transform, p3(obj.mesh.vertices[v as usize])))
+            .map(move |&v| object_to_world(model, o, p3(obj.mesh.vertices[v as usize])))
     }))
 }
 
-/// La caja (en el mundo) de todo el modelo.
+/// La caja (en el mundo) de todo lo que se ve del modelo (sin los objetos ocultos).
 pub fn model_bounds(model: &Model3D) -> Option<(P3, P3)> {
-    bounds_of(model.objects.iter().flat_map(world_points))
+    bounds_of(
+        (0..model.objects.len())
+            .filter(|&o| !model.object_hidden(o))
+            .flat_map(|o| world_points(model, o)),
+    )
 }
 
 pub fn center((lo, hi): (P3, P3)) -> P3 {
@@ -583,12 +642,10 @@ pub(crate) fn edit_vertices(
     f: impl Fn(P3) -> P3,
 ) {
     for (o, vs) in sel.vertices(model) {
-        let obj = &mut out.objects[o];
-        let t = obj.transform;
         for v in vs {
             let local = p3(model.objects[o].mesh.vertices[v as usize]);
-            let w = f(to_world(&t, local));
-            obj.mesh.vertices[v as usize] = round3(to_local(&t, w, local));
+            let w = f(object_to_world(model, o, local));
+            out.objects[o].mesh.vertices[v as usize] = round3(object_to_local(model, o, w, local));
         }
     }
 }
@@ -618,10 +675,10 @@ pub fn translate(model: &Model3D, sel: &Selection, d: P3) -> Model3D {
     let mut out = model.clone();
     if sel.mode == SelectMode::Object {
         for o in objects_of(sel, model) {
-            let p = &mut out.objects[o].transform.position;
-            for (axis, delta) in d.iter().enumerate() {
-                *comp(p, axis) += delta.round() as i32;
-            }
+            // La posición vive en el espacio de sus grupos: se corre en el mundo.
+            let origin = parent_to_world(model, o, p3(model.objects[o].transform.position));
+            let moved = [origin[0] + d[0], origin[1] + d[1], origin[2] + d[2]];
+            out.objects[o].transform.position = round3(parent_to_local(model, o, moved));
         }
         return out;
     }
@@ -657,23 +714,25 @@ fn scaled(s: i32, f: f32) -> i32 {
 }
 
 /// `model` con lo elegido escalado `f` (por eje del mundo) desde `anchor`. En modo Objeto cambia
-/// la escala del eje local más alineado con cada eje del mundo (exacto sin rotación) y corrige
-/// la posición para que el ancla no se mueva; si no, escala las posiciones de los vértices.
+/// la escala del eje local más alineado con cada eje del mundo (exacto sin rotación; con la del
+/// objeto, no la de sus grupos: aproximado si están girados) y corrige la posición (en el mundo)
+/// para que el ancla no se mueva; si no, escala las posiciones de los vértices.
 pub fn scale(model: &Model3D, sel: &Selection, anchor: P3, f: P3) -> Model3D {
     let mut out = model.clone();
     if sel.mode == SelectMode::Object {
         for o in objects_of(sel, model) {
+            let origin = parent_to_world(model, o, p3(model.objects[o].transform.position));
             let t = &mut out.objects[o].transform;
-            for axis in 0..3 {
-                if f[axis] == 1.0 {
+            for (axis, &fa) in f.iter().enumerate() {
+                if fa == 1.0 {
                     continue;
                 }
                 let k = local_axis(t, axis);
                 let s = comp(&mut t.scale, k);
-                *s = scaled(*s, f[axis]);
-                let p = comp(&mut t.position, axis);
-                *p = (anchor[axis] + (*p as f32 - anchor[axis]) * f[axis]).round() as i32;
+                *s = scaled(*s, fa);
             }
+            let moved: P3 = std::array::from_fn(|i| anchor[i] + (origin[i] - anchor[i]) * f[i]);
+            t.position = round3(parent_to_local(model, o, moved));
         }
         return out;
     }
@@ -951,6 +1010,72 @@ mod tests {
         }
     }
 
+    fn in_group(offset: i32) -> Model3D {
+        let mut m = Model3D::default();
+        m.objects.push(cube_at(Vec3i::default()));
+        m.groups.push(cs_core::Group3D {
+            name: "g".into(),
+            transform: Transform3D {
+                position: Vec3i {
+                    x: offset,
+                    y: 0,
+                    z: 0,
+                },
+                ..Default::default()
+            },
+            hidden: false,
+            locked: false,
+            open: true,
+        });
+        m.tree = vec![cs_core::Node::Group {
+            group: 0,
+            children: vec![cs_core::Node::Object(0)],
+        }];
+        m
+    }
+
+    #[test]
+    fn a_group_moves_its_objects_in_the_world() {
+        let m = in_group(64);
+        let pts = world_points(&m, 0);
+        assert!(pts.iter().all(|p| p[0] >= 48.0 && p[0] <= 80.0), "{pts:?}");
+        let w = object_to_world(&m, 0, [16.0, 0.0, 0.0]);
+        assert_eq!(w, [80.0, 0.0, 0.0]);
+        assert_eq!(object_to_local(&m, 0, w, [0.0; 3]), [16.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn moving_an_object_inside_a_turned_group_follows_the_world() {
+        let mut m = in_group(0);
+        m.groups[0].transform.rotation.y = 900; // 90°: el x del grupo es el -z del mundo
+        let sel = Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0)].into(),
+        };
+        let out = translate(&m, &sel, [16.0, 0.0, 0.0]);
+        let before = object_to_world(&m, 0, [0.0; 3]);
+        let after = object_to_world(&out, 0, [0.0; 3]);
+        assert!(
+            (after[0] - before[0] - 16.0).abs() < 0.5,
+            "{before:?} -> {after:?}"
+        );
+        assert!((after[2] - before[2]).abs() < 0.5);
+    }
+
+    #[test]
+    fn hidden_and_locked_objects_are_not_picked() {
+        let map = front_map();
+        let mut m = in_group(0);
+        let at = map.to_screen([0.0, 0.0, 16.0]);
+        assert!(pick(&m, &map, SelectMode::Object, at).is_some());
+        m.groups[0].locked = true;
+        assert!(pick(&m, &map, SelectMode::Object, at).is_none());
+        m.groups[0].locked = false;
+        m.objects[0].hidden = true;
+        assert!(pick(&m, &map, SelectMode::Object, at).is_none());
+        assert!(box_select(&m, &map, SelectMode::Object, (0.0, 0.0), (1e4, 1e4)).is_empty());
+    }
+
     #[test]
     fn view_map_ida_y_vuelta() {
         let m = front_map();
@@ -1050,13 +1175,13 @@ mod tests {
         );
         let mut turned = one_cube();
         turned.objects[0].transform.rotation.y = 900;
-        let before = world_points(&turned.objects[0])[1];
+        let before = world_points(&turned, 0)[1];
         let after = translate(
             &turned,
             &sel(SelectMode::Vertex, &[Item::Vertex(0, 1)]),
             [4.0, 0.0, 0.0],
         );
-        let now = world_points(&after.objects[0])[1];
+        let now = world_points(&after, 0)[1];
         assert!(
             close(now, [before[0] + 4.0, before[1], before[2]]),
             "{now:?}"

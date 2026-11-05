@@ -442,7 +442,7 @@ impl CanvasView {
                 }
                 let now = editor.model_edit().selection.clone();
                 let grab = match item {
-                    Item::Vertex(o, v) => cs_3d::world_points(&model.objects[o])[v as usize],
+                    Item::Vertex(o, v) => cs_3d::world_points(&model, o)[v as usize],
                     _ => cs_3d::bounds(&model, &now).map_or([0.0; 3], cs_3d::center),
                 };
                 editor.start_model_op(EditOp::Move {
@@ -1246,7 +1246,7 @@ fn selected_vertex_at(
             .iter()
             .any(|i| matches!(*i, Item::Edge(eo, a, b) if eo == o && (a == v || b == v))),
     };
-    on.then(|| cs_3d::world_points(&model.objects[o])[v as usize])
+    on.then(|| cs_3d::world_points(model, o)[v as usize])
 }
 
 /// Las aristas `(objeto, a, b)` (con `a < b`) de las caras elegidas, para pintarlas sin recorrer
@@ -1358,11 +1358,13 @@ impl OrthoScene<'_> {
     /// Objeto.
     fn wireframe(&self, img: &mut cs_3d::WireImage) {
         let (sel, model) = (self.sel, self.model);
-        let scr: Vec<Vec<(f32, f32)>> = model
-            .objects
-            .iter()
-            .map(|obj| {
-                cs_3d::world_points(obj)
+        // Los objetos ocultos quedan sin puntos: no se pinta ni una arista ni un vértice suyo.
+        let scr: Vec<Vec<(f32, f32)>> = (0..model.objects.len())
+            .map(|o| {
+                if model.object_hidden(o) {
+                    return Vec::new();
+                }
+                cs_3d::world_points(model, o)
                     .iter()
                     .map(|&w| self.map.to_screen(w))
                     .collect()
@@ -1842,7 +1844,7 @@ mod tests {
             mode: SelectMode::Vertex,
             items: [Item::Vertex(0, 7)].into(),
         };
-        let p = MAP.to_screen(cs_3d::world_points(&m.objects[0])[7]);
+        let p = MAP.to_screen(cs_3d::world_points(&m, 0)[7]);
         let (x, y) = (p.0.floor() as i32, p.1.floor() as i32);
         let img = render(&m, &one, 1);
         for (dx, dy) in [(-1, -1), (0, 0), (1, 1), (1, -1)] {

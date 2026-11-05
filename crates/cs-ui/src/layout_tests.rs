@@ -6464,10 +6464,7 @@ fn grabbing_with_the_keyboard() -> (LayoutHarness, Pos2) {
 
 fn mesh_x(h: &LayoutHarness) -> Vec<f32> {
     let m = h.app.doc.editor.model().unwrap();
-    cs_3d::world_points(&m.objects[0])
-        .iter()
-        .map(|p| p[0])
-        .collect()
+    cs_3d::world_points(m, 0).iter().map(|p| p[0]).collect()
 }
 
 #[test]
@@ -6596,7 +6593,7 @@ fn a_click_on_an_off_grid_vertex_changes_nothing() {
     h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
     h.frame();
     // Un vértice del cilindro fuera de la cuadrícula (x = ±11), el más cercano a la vista.
-    let points = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[1]);
+    let points = cs_3d::world_points(h.app.doc.editor.model().unwrap(), 1);
     let w = points
         .iter()
         .copied()
@@ -6713,7 +6710,7 @@ fn dragging_a_selected_extreme_vertex_moves_instead_of_scaling() {
     h.frame();
     let vertex = |h: &LayoutHarness, v: usize| {
         let m = h.app.doc.editor.model().unwrap();
-        cs_3d::world_points(&m.objects[0])[v]
+        cs_3d::world_points(m, 0)[v]
     };
     let v0 = vertex(&h, 0);
     // El vértice 7 cae justo en el asa de la esquina de arriba a la derecha.
@@ -6770,7 +6767,7 @@ fn a_straight_selected_edge_drags_from_its_midpoint() {
     let from = front_screen(&h, [0.0, 16.0, 16.0]);
     let to = front_screen(&h, [0.0, 24.0, 16.0]);
     drag_with(&mut h, from, to, Default::default());
-    let points = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    let points = cs_3d::world_points(h.app.doc.editor.model().unwrap(), 0);
     assert_eq!(points[6], [-16.0, 24.0, 16.0]);
     assert_eq!(points[7], [16.0, 24.0, 16.0]);
     assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
@@ -7162,7 +7159,7 @@ fn the_rotate_gizmo_stays_put_while_its_ring_is_dragged() {
     h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
     // Tres esquinas de adelante (sin la de abajo a la izquierda): al girar, el centro de su
     // caja se corre.
-    let pts = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    let pts = cs_3d::world_points(h.app.doc.editor.model().unwrap(), 0);
     let items = (0..pts.len())
         .filter(|&i| pts[i][2] > 0.0 && !(pts[i][0] < 0.0 && pts[i][1] < 0.0))
         .map(|i| cs_3d::Item::Vertex(0, i as u32))
@@ -7269,7 +7266,7 @@ fn the_gizmo_wins_over_the_box_select() {
     assert_eq!(all.items.len(), 8);
     h.app.doc.editor.set_model_selection(all.clone());
     h.frame();
-    let before = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    let before = cs_3d::world_points(h.app.doc.editor.model().unwrap(), 0);
     let zoom = h.app.doc.editor.model_edit().zoom;
     // Sin el gizmo, ahí (lejos de los vértices) empezaría una caja de selección.
     let from = front_screen(&h, [0.0; 3]) + vec2(20.0, 0.0);
@@ -7279,7 +7276,7 @@ fn the_gizmo_wins_over_the_box_select() {
         from + vec2(8.0 * zoom, 0.0),
         Default::default(),
     );
-    let after = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    let after = cs_3d::world_points(h.app.doc.editor.model().unwrap(), 0);
     for (a, b) in before.iter().zip(&after) {
         assert_eq!([a[0] + 8.0, a[1], a[2]], *b);
     }
@@ -7501,7 +7498,7 @@ fn the_persp_gizmo_wins_over_picking_and_moving_the_camera() {
     h.app.doc.editor.set_model_selection(all.clone());
     h.frame();
     let cam = camera(&h);
-    let before = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    let before = cs_3d::world_points(h.app.doc.editor.model().unwrap(), 0);
     // La flecha X cae sobre el cubo: sin el gizmo, el clic elegiría el objeto.
     let cs_3d::HandleGeom::Arrow { from, tip, .. } = persp_handle(&h, cs_3d::GizmoPart::Axis(0))
     else {
@@ -7524,7 +7521,7 @@ fn the_persp_gizmo_wins_over_picking_and_moving_the_camera() {
     h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)]);
     drag_with(&mut h, start, start + (b - a) * 0.5, egui::Modifiers::SHIFT);
     h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
-    let after = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    let after = cs_3d::world_points(h.app.doc.editor.model().unwrap(), 0);
     let dx = after[0][0] - before[0][0];
     assert!(dx > 0.0, "moved along X");
     for (p, q) in before.iter().zip(&after) {

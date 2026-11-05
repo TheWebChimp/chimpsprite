@@ -29,7 +29,7 @@ fn average_normal(model: &Model3D, sel: &Selection) -> P3 {
         let Some(face) = obj.mesh.faces.get(f) else {
             continue;
         };
-        let world = cs_3d::world_points(obj);
+        let world = cs_3d::world_points(model, o);
         let Some(pts) = face
             .verts
             .iter()
@@ -47,8 +47,11 @@ fn average_normal(model: &Model3D, sel: &Selection) -> P3 {
             n[1] += (a[2] - b[2]) * (a[0] + b[0]);
             n[2] += (a[0] - b[0]) * (a[1] + b[1]);
         }
-        let s = obj.transform.scale;
-        if (s.x < 0) ^ (s.y < 0) ^ (s.z < 0) {
+        let mirrored = model.object_chain(o).iter().fold(false, |m, t| {
+            let s = t.scale;
+            m ^ (s.x < 0) ^ (s.y < 0) ^ (s.z < 0)
+        });
+        if mirrored {
             n = n.map(|v| -v);
         }
         let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt();

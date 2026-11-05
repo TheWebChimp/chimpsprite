@@ -6,7 +6,10 @@
 
 use cs_core::{Model3D, Transform3D, Vec3i};
 
-use crate::{P3, SelectMode, Selection, dist_to_segment, edit_vertices, objects_of, p3, round3};
+use crate::{
+    P3, SelectMode, Selection, dist_to_segment, edit_vertices, objects_of, p3, parent_to_local,
+    parent_to_world, round3,
+};
 
 /// `p` girado `tenths` décimas de grado alrededor del eje `axis` (0 x, 1 y, 2 z) del mundo que
 /// pasa por `center`.
@@ -93,8 +96,14 @@ pub fn rotate_selection(
     if sel.mode == SelectMode::Object {
         // El objeto gira por su origen; su origen gira alrededor del centro.
         for o in objects_of(sel, model) {
+            // El origen gira en el mundo; su posición vive en el espacio de sus grupos.
+            let origin = parent_to_world(model, o, p3(model.objects[o].transform.position));
+            let pos = round3(parent_to_local(
+                model,
+                o,
+                rotate_point(origin, center, axis, tenths),
+            ));
             let t = &mut out.objects[o].transform;
-            let pos = round3(rotate_point(p3(t.position), center, axis, tenths));
             *t = rotate_object_world(t, axis, tenths);
             t.position = pos;
         }
