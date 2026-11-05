@@ -44,21 +44,19 @@ pub fn render_model(input: &RenderInput) -> Vec<Rgba> {
 }
 
 /// El índice del objeto que se ve en el pixel `(x, y)`, si hay alguno (sin contar el contorno).
+/// Un objeto bloqueado se ve (y tapa lo de atrás) pero no se elige.
 pub fn pick_object(input: &RenderInput, x: u32, y: u32) -> Option<usize> {
-    if x >= input.size.0 || y >= input.size.1 {
-        return None;
-    }
-    let r = rasterize(input);
-    r.ids[(y * input.size.0 + x) as usize].map(|(o, _)| o)
+    pick_face(input, x, y).map(|(o, _)| o)
 }
 
-/// La cara `(objeto, índice de cara)` que se ve en el pixel `(x, y)`, si hay alguna.
+/// La cara `(objeto, índice de cara)` que se ve en el pixel `(x, y)`, si hay alguna (y su objeto
+/// no está bloqueado).
 pub fn pick_face(input: &RenderInput, x: u32, y: u32) -> Option<(usize, usize)> {
     if x >= input.size.0 || y >= input.size.1 {
         return None;
     }
     let r = rasterize(input);
-    r.ids[(y * input.size.0 + x) as usize]
+    r.ids[(y * input.size.0 + x) as usize].filter(|&(o, _)| !input.model.object_locked(o))
 }
 
 /// El contorno de 1 px de las caras `faces` `(objeto, cara)` en el render de `input`: por cada
@@ -1269,6 +1267,20 @@ mod tests {
         assert_eq!(pick_object(&inp, 8, 8), Some(1));
         assert_eq!(pick_object(&inp, 0, 0), None);
         assert_eq!(pick_object(&inp, 99, 99), None);
+    }
+
+    #[test]
+    fn lo_bloqueado_se_pinta_pero_no_se_elige() {
+        let mut m = model(vec![cube()]);
+        m.objects[0].locked = true;
+        let inp = input(&m, 16, &[ROJO], 1);
+        assert_eq!(render_model(&inp)[8 * 16 + 8], ROJO);
+        assert_eq!(pick_object(&inp, 8, 8), None);
+        assert_eq!(pick_face(&inp, 8, 8), None);
+        m.objects[0].locked = false;
+        let inp = input(&m, 16, &[ROJO], 1);
+        assert_eq!(pick_object(&inp, 8, 8), Some(0));
+        assert!(pick_face(&inp, 8, 8).is_some());
     }
 
     #[test]

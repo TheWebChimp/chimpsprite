@@ -642,6 +642,10 @@ pub(crate) fn edit_vertices(
     f: impl Fn(P3) -> P3,
 ) {
     for (o, vs) in sel.vertices(model) {
+        // Lo bloqueado (él o un grupo suyo) no se edita.
+        if model.object_locked(o) {
+            continue;
+        }
         for v in vs {
             let local = p3(model.objects[o].mesh.vertices[v as usize]);
             let w = f(object_to_world(model, o, local));
@@ -661,6 +665,14 @@ pub(crate) fn objects_of(sel: &Selection, model: &Model3D) -> Vec<usize> {
     out
 }
 
+/// Los objetos de la selección que se pueden mover, escalar o girar: los no bloqueados.
+pub(crate) fn movable_objects(sel: &Selection, model: &Model3D) -> Vec<usize> {
+    objects_of(sel, model)
+        .into_iter()
+        .filter(|&o| !model.object_locked(o))
+        .collect()
+}
+
 fn comp(v: &mut Vec3i, axis: usize) -> &mut i32 {
     match axis {
         0 => &mut v.x,
@@ -670,11 +682,11 @@ fn comp(v: &mut Vec3i, axis: usize) -> &mut i32 {
 }
 
 /// `model` con lo elegido corrido `d` (en el mundo): en modo Objeto, la posición de los objetos;
-/// si no, los vértices involucrados.
+/// si no, los vértices involucrados. Lo bloqueado no se mueve.
 pub fn translate(model: &Model3D, sel: &Selection, d: P3) -> Model3D {
     let mut out = model.clone();
     if sel.mode == SelectMode::Object {
-        for o in objects_of(sel, model) {
+        for o in movable_objects(sel, model) {
             // La posición vive en el espacio de sus grupos: se corre en el mundo.
             let origin = parent_to_world(model, o, p3(model.objects[o].transform.position));
             let moved = [origin[0] + d[0], origin[1] + d[1], origin[2] + d[2]];
@@ -716,11 +728,12 @@ fn scaled(s: i32, f: f32) -> i32 {
 /// `model` con lo elegido escalado `f` (por eje del mundo) desde `anchor`. En modo Objeto cambia
 /// la escala del eje local más alineado con cada eje del mundo (exacto sin rotación; con la del
 /// objeto, no la de sus grupos: aproximado si están girados) y corrige la posición (en el mundo)
-/// para que el ancla no se mueva; si no, escala las posiciones de los vértices.
+/// para que el ancla no se mueva; si no, escala las posiciones de los vértices. Lo bloqueado no
+/// cambia.
 pub fn scale(model: &Model3D, sel: &Selection, anchor: P3, f: P3) -> Model3D {
     let mut out = model.clone();
     if sel.mode == SelectMode::Object {
-        for o in objects_of(sel, model) {
+        for o in movable_objects(sel, model) {
             let origin = parent_to_world(model, o, p3(model.objects[o].transform.position));
             let t = &mut out.objects[o].transform;
             for (axis, &fa) in f.iter().enumerate() {
@@ -1070,10 +1083,35 @@ mod tests {
         assert!(pick(&m, &map, SelectMode::Object, at).is_some());
         m.groups[0].locked = true;
         assert!(pick(&m, &map, SelectMode::Object, at).is_none());
+        assert!(box_select(&m, &map, SelectMode::Object, (0.0, 0.0), (1e4, 1e4)).is_empty());
         m.groups[0].locked = false;
         m.objects[0].hidden = true;
         assert!(pick(&m, &map, SelectMode::Object, at).is_none());
         assert!(box_select(&m, &map, SelectMode::Object, (0.0, 0.0), (1e4, 1e4)).is_empty());
+    }
+
+    #[test]
+    fn locked_objects_are_not_moved_scaled_or_rotated() {
+        let mut m = one_cube();
+        m.objects.push(cube_at(Vec3i { x: 64, y: 0, z: 0 }));
+        m.normalize_tree();
+        m.objects[1].locked = true;
+        let objs = Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0), Item::Object(1)].into(),
+        };
+        let verts = objs.converted(&m, SelectMode::Vertex);
+        for s in [&objs, &verts] {
+            let moved = translate(&m, s, [16.0, 0.0, 0.0]);
+            assert_ne!(moved.objects[0], m.objects[0], "{:?}", s.mode);
+            assert_eq!(moved.objects[1], m.objects[1], "{:?}", s.mode);
+            let scaled = scale(&m, s, [0.0; 3], [2.0, 1.0, 1.0]);
+            assert_ne!(scaled.objects[0], m.objects[0], "{:?}", s.mode);
+            assert_eq!(scaled.objects[1], m.objects[1], "{:?}", s.mode);
+            let turned = crate::rotate_selection(&m, s, [0.0; 3], 1, 900);
+            assert_ne!(turned.objects[0], m.objects[0], "{:?}", s.mode);
+            assert_eq!(turned.objects[1], m.objects[1], "{:?}", s.mode);
+        }
     }
 
     #[test]
