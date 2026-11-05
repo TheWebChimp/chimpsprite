@@ -131,4 +131,27 @@ mod tests {
             assert_eq!(piece.size, [11, 11], "{name}");
         }
     }
+
+    #[test]
+    fn the_outliner_icons_are_in_the_skin() {
+        let skin = skin();
+        for name in [
+            "folder",
+            "eye",
+            "eye_off",
+            "lock",
+            "unlock",
+            "double_sided",
+            "new_group",
+        ] {
+            let piece = skin
+                .piece(&format!("icon.outliner.{name}"), WidgetState::Normal)
+                .unwrap_or_else(|| panic!("icon.outliner.{name}"));
+            assert!(
+                piece.size[0] <= 11 && piece.size[1] <= 11,
+                "{name}: {:?}",
+                piece.size
+            );
+        }
+    }
 }

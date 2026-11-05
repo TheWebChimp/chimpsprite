@@ -400,6 +400,9 @@ oculta.
     `icon.mode.vertex`, `icon.mode.edge` e `icon.mode.face`. Van adentro del botón plano de
     `kit::tile` (13×13 con su fila clara debajo; el marco lo dibuja la app con
     `color.ruler_tick` y `color.highlight`, y prendido se llena de `color.highlight`).
+  - Íconos del outliner de ChimpCAD (PROVISIONALES, 9×9, en x 241..309, y 149, de a 10 px):
+    `icon.outliner.folder`, `.eye`, `.eye_off`, `.lock`, `.unlock`, `.double_sided` y
+    `.new_group`. Tinta `color.ruler_tick` y relleno `color.highlight`; se van a redibujar.
   - Cursores del lienzo: `cursor.cross` (7×7, el centro cae en el puntero), `cursor.eyedropper`
     (16×16, la punta abajo a la izquierda) y `cursor.rotate` (15×15, centrado). En la cruz y el
     cuentagotas lo oscuro es tinta y lo claro su contrario: cada píxel se pinta negro o blanco
