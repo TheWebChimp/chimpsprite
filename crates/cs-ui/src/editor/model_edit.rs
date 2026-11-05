@@ -747,10 +747,16 @@ impl Editor {
         let click = self.model_edit.click_item.take();
         if let (EditOp::Move { .. }, Some(item), None) = (op, click, &self.model_edit.preview) {
             let mode = self.model_edit.selection.mode;
-            self.set_model_selection(Selection {
+            let one = Selection {
                 mode,
                 items: [item].into(),
-            });
+            };
+            // En modo Face, con toda su cara completa.
+            let next = match self.edited_model() {
+                Some(m) => cs_3d::expand_parts(m, &one),
+                None => one,
+            };
+            self.set_model_selection(next);
             return;
         }
         let label = match op {

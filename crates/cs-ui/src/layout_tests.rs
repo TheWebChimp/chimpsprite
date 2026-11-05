@@ -10005,3 +10005,58 @@ mod object_bar {
         }
     }
 }
+
+/// Solo un cilindro de 8 lados en el modelo, en modo Face.
+fn editing_a_cylinder() -> LayoutHarness {
+    let mut h = editing_model();
+    let e = &mut h.app.doc.editor;
+    assert!(e.add_primitive(cs_3d::Primitive::Cylinder { sides: 8 }));
+    assert!(e.remove_object(0));
+    e.set_select_mode(cs_3d::SelectMode::Face);
+    h.frame();
+    h
+}
+
+/// Las caras de la tapa de arriba del cilindro (la parte 1), y el centro en Top de los gajos
+/// `a` y `b` de ella.
+fn top_cap_wedges(h: &LayoutHarness, a: usize, b: usize) -> (Vec<cs_3d::Item>, Pos2, Pos2) {
+    let editor = &h.app.doc.editor;
+    let model = editor.model().unwrap();
+    let mesh = &model.objects[0].mesh;
+    let cap: Vec<usize> = (0..mesh.faces.len())
+        .filter(|&f| mesh.faces[f].part == Some(1))
+        .collect();
+    let map = h
+        .app
+        .doc
+        .canvas
+        .edit_view_map(editor, cs_3d::OrthoView::Top)
+        .expect("top view");
+    let pts = cs_3d::world_points(model, 0);
+    let center = |f: usize| {
+        let vs = &mesh.faces[f].verts;
+        let (x, y) = vs.iter().fold((0.0, 0.0), |(x, y), &v| {
+            let s = map.to_screen(pts[v as usize]);
+            (x + s.0, y + s.1)
+        });
+        let k = vs.len() as f32;
+        Pos2::new(x / k, y / k)
+    };
+    let items = cap.iter().map(|&f| cs_3d::Item::Face(0, f)).collect();
+    (items, center(cap[a]), center(cap[b]))
+}
+
+#[test]
+fn clicking_a_wedge_of_the_cylinder_cap_selects_the_whole_cap() {
+    let mut h = editing_a_cylinder();
+    let (cap, first, other) = top_cap_wedges(&h, 0, 3);
+    assert_eq!(cap.len(), 8);
+    h.click(first, PointerButton::Primary);
+    assert_eq!(chosen_items(&h), cap, "the whole cap");
+    // Shift + clic en otro gajo de la misma tapa: se quita entera.
+    shift_click(&mut h, other);
+    assert!(chosen_items(&h).is_empty(), "{:?}", chosen_items(&h));
+    // Y otra vez: se agrega entera.
+    shift_click(&mut h, other);
+    assert_eq!(chosen_items(&h), cap);
+}

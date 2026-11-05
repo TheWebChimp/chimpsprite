@@ -438,18 +438,20 @@ impl CanvasView {
             return true;
         }
         match cs_3d::pick(&model, &map, sel.mode, at) {
+            // En modo Face, la cara completa en bloque.
             Some(item) if modifiers.shift => {
                 let mut next = sel;
-                next.toggle(item);
+                next.toggle_part(&model, item);
                 editor.set_model_selection(next);
             }
             Some(item) => {
                 let already = sel.items.contains(&item);
                 if !already {
-                    editor.set_model_selection(cs_3d::Selection {
+                    let one = cs_3d::Selection {
                         mode: sel.mode,
                         items: [item].into(),
-                    });
+                    };
+                    editor.set_model_selection(cs_3d::expand_parts(&model, &one));
                 }
                 let now = editor.model_edit().selection.clone();
                 let grab = match item {
@@ -1270,23 +1272,30 @@ fn selected_vertex_at(
     on.then(|| cs_3d::world_points(model, o)[v as usize])
 }
 
-/// Las aristas `(objeto, a, b)` (con `a < b`) de las caras elegidas, para pintarlas sin recorrer
-/// la selección por cada arista.
+/// Las aristas `(objeto, a, b)` (con `a < b`) del borde de las caras completas elegidas (una
+/// vez por parte), para pintarlas sin recorrer la selección por cada arista.
 fn selected_face_edges(
     model: &cs_core::Model3D,
     sel: &cs_3d::Selection,
 ) -> HashSet<(usize, u32, u32)> {
     let mut out = HashSet::new();
+    let mut done = HashSet::new();
     for item in &sel.items {
-        if let Item::Face(o, f) = *item
-            && let Some(face) = model.objects.get(o).and_then(|obj| obj.mesh.faces.get(f))
-        {
-            let vs = &face.verts;
-            for k in 0..vs.len() {
-                let (x, y) = (vs[k], vs[(k + 1) % vs.len()]);
-                out.insert((o, x.min(y), x.max(y)));
-            }
+        let Item::Face(o, f) = *item else {
+            continue;
+        };
+        let Some(face) = model.objects.get(o).and_then(|obj| obj.mesh.faces.get(f)) else {
+            continue;
+        };
+        // Una parte se dibuja una sola vez (por su primera cara elegida).
+        if face.part.is_some_and(|p| !done.insert((o, p))) {
+            continue;
         }
+        out.extend(
+            cs_3d::part_outline(model, o, f)
+                .into_iter()
+                .map(|(a, b)| (o, a, b)),
+        );
     }
     out
 }

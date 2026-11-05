@@ -549,3 +549,30 @@ fn volver_a_elegir_la_misma_cara_regresa_su_seleccion() {
     assert!(e.selection_is_face_mask());
     assert_eq!(e.selection, mask);
 }
+
+#[test]
+fn en_texture_un_clic_en_la_tapa_del_cilindro_elige_la_tapa_entera() {
+    let mut e = editing();
+    assert!(e.add_primitive(cs_3d::Primitive::Cylinder { sides: 8 }));
+    assert!(e.remove_object(0));
+    e.set_cad_mode(CadMode::Texture);
+    let camera = cs_core::CameraPreset::Top.camera(4 * cs_core::FIXED, Default::default());
+    assert!(e.set_camera(camera));
+    let ship = e.document.artboard(e.model_id()).unwrap();
+    // Un poco a la derecha del centro: dentro de un gajo de la tapa.
+    let at = (
+        ship.sprite.width as i32 / 2 + 3,
+        ship.sprite.height as i32 / 2 + 1,
+    );
+    e.pick_model_face(at, false);
+    let mesh = &e.workspace_model().unwrap().objects[0].mesh;
+    let cap: Vec<(usize, usize)> = (0..mesh.faces.len())
+        .filter(|&f| mesh.faces[f].part == Some(1))
+        .map(|f| (0, f))
+        .collect();
+    assert_eq!(cap.len(), 8);
+    assert_eq!(e.selected_faces(), cap);
+    // Shift + clic en la misma tapa la quita entera.
+    e.pick_model_face(at, true);
+    assert!(e.selected_faces().is_empty());
+}

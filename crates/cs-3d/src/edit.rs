@@ -333,6 +333,22 @@ impl Selection {
         }
     }
 
+    /// Como [`Selection::toggle`], pero con la cara completa de una cara: si ya estaba entera
+    /// elegida se quita entera; si no, se agrega entera. Lo que no es cara, como `toggle`.
+    pub fn toggle_part(&mut self, model: &Model3D, item: Item) {
+        let Item::Face(o, f) = item else {
+            return self.toggle(item);
+        };
+        let part = part_items(model, o, f);
+        if part.iter().all(|i| self.items.contains(i)) {
+            for i in &part {
+                self.items.remove(i);
+            }
+        } else {
+            self.items.extend(part);
+        }
+    }
+
     /// Los vértices involucrados por objeto (sin repetir; solo de lo que existe).
     pub fn vertices(&self, model: &Model3D) -> BTreeMap<usize, BTreeSet<u32>> {
         let mut out: BTreeMap<usize, BTreeSet<u32>> = BTreeMap::new();
@@ -541,8 +557,9 @@ pub fn pick(model: &Model3D, map: &ViewMap, mode: SelectMode, at: (f32, f32)) ->
     best(cands)
 }
 
-/// Lo que cae en la caja de pantalla entre `a` y `b`: vértices dentro; aristas y caras con todos
-/// sus vértices dentro; objetos con algún vértice dentro.
+/// Lo que cae en la caja de pantalla entre `a` y `b`: vértices dentro; aristas con sus dos
+/// vértices dentro; las caras de las caras completas con todos sus vértices dentro; objetos con
+/// algún vértice dentro.
 pub fn box_select(
     model: &Model3D,
     map: &ViewMap,
@@ -584,14 +601,83 @@ pub fn box_select(
                     .filter(|&(a, b)| is_in(a) && is_in(b))
                     .map(|(a, b)| Item::Edge(o, a, b)),
             ),
-            SelectMode::Face => out.extend(
-                faces_of(obj)
-                    .filter(|(_, vs)| vs.iter().all(|&v| is_in(v)))
-                    .map(|(i, _)| Item::Face(o, i)),
-            ),
+            SelectMode::Face => {
+                // Las caras completas: una parte entra solo si todas sus caras caben.
+                let faces: Vec<(usize, bool)> = faces_of(obj)
+                    .map(|(i, vs)| (i, vs.iter().all(|&v| is_in(v))))
+                    .collect();
+                let mut whole: BTreeMap<u32, bool> = BTreeMap::new();
+                for &(i, fits) in &faces {
+                    if let Some(p) = obj.mesh.faces[i].part {
+                        *whole.entry(p).or_insert(true) &= fits;
+                    }
+                }
+                out.extend(
+                    faces
+                        .into_iter()
+                        .filter(|&(i, fits)| obj.mesh.faces[i].part.map_or(fits, |p| whole[&p]))
+                        .map(|(i, _)| Item::Face(o, i)),
+                );
+            }
         }
     }
     out
+}
+
+/// Los `Item::Face` de toda la cara completa de `(o, f)`.
+pub fn part_items(model: &Model3D, o: usize, f: usize) -> Vec<Item> {
+    match model.objects.get(o) {
+        Some(obj) if f < obj.mesh.faces.len() => obj
+            .mesh
+            .part_faces(f)
+            .into_iter()
+            .map(|i| Item::Face(o, i))
+            .collect(),
+        _ => vec![Item::Face(o, f)],
+    }
+}
+
+/// `sel` con cada cara elegida extendida a su cara completa (solo en modo Face).
+pub fn expand_parts(model: &Model3D, sel: &Selection) -> Selection {
+    if sel.mode != SelectMode::Face {
+        return sel.clone();
+    }
+    let mut items = sel.items.clone();
+    for &item in &sel.items {
+        if let Item::Face(o, f) = item {
+            items.extend(part_items(model, o, f));
+        }
+    }
+    Selection {
+        mode: sel.mode,
+        items,
+    }
+}
+
+/// Las aristas del borde de la cara completa (las que no comparten dos caras de la parte).
+pub fn part_outline(model: &Model3D, o: usize, f: usize) -> Vec<(u32, u32)> {
+    let Some(obj) = model.objects.get(o) else {
+        return Vec::new();
+    };
+    if f >= obj.mesh.faces.len() {
+        return Vec::new();
+    }
+    let n = obj.mesh.vertices.len() as u32;
+    let mut count: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    for i in obj.mesh.part_faces(f) {
+        let vs = &obj.mesh.faces[i].verts;
+        for k in 0..vs.len() {
+            let (a, b) = (vs[k], vs[(k + 1) % vs.len()]);
+            if a != b && a < n && b < n {
+                *count.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+    }
+    count
+        .into_iter()
+        .filter(|&(_, c)| c == 1)
+        .map(|(e, _)| e)
+        .collect()
 }
 
 fn bounds_of(points: impl Iterator<Item = P3>) -> Option<(P3, P3)> {
@@ -1199,6 +1285,107 @@ mod tests {
         assert_eq!(obj, [Item::Object(0)].into());
         let edge = box_select(&m, &map, SelectMode::Edge, (120.0, 60.0), (140.0, 80.0));
         assert_eq!(edge, [Item::Edge(0, 3, 7)].into(), "the edge seen end-on");
+    }
+
+    fn one_cylinder() -> Model3D {
+        let mut obj = cube_at(Vec3i::default());
+        obj.name = "Cylinder".into();
+        obj.mesh = primitive_mesh(&Primitive::Cylinder { sides: 8 });
+        obj.kind = Some(Primitive::Cylinder { sides: 8 }.kind());
+        Model3D {
+            objects: vec![obj],
+            ..Model3D::default()
+        }
+    }
+
+    fn top_map() -> ViewMap {
+        ViewMap {
+            view: OrthoView::Top,
+            ..front_map()
+        }
+    }
+
+    /// Las caras de la tapa de arriba del cilindro (la parte 1).
+    fn top_cap(m: &Model3D) -> BTreeSet<Item> {
+        let mesh = &m.objects[0].mesh;
+        (0..mesh.faces.len())
+            .filter(|&f| mesh.faces[f].part == Some(1))
+            .map(|f| Item::Face(0, f))
+            .collect()
+    }
+
+    #[test]
+    fn un_gajo_de_la_tapa_elige_la_tapa_entera() {
+        let m = one_cylinder();
+        let map = top_map();
+        let cap = top_cap(&m);
+        assert_eq!(cap.len(), 8);
+        // El centro (en pantalla) del primer gajo de la tapa.
+        let Some(&Item::Face(_, f0)) = cap.iter().next() else {
+            panic!("no cap");
+        };
+        let pts = world_points(&m, 0);
+        let vs = &m.objects[0].mesh.faces[f0].verts;
+        let scr: Vec<(f32, f32)> = vs.iter().map(|&v| map.to_screen(pts[v as usize])).collect();
+        let at = (
+            scr.iter().map(|p| p.0).sum::<f32>() / 3.0,
+            scr.iter().map(|p| p.1).sum::<f32>() / 3.0,
+        );
+        let Some(item) = pick(&m, &map, SelectMode::Face, at) else {
+            panic!("no face");
+        };
+        assert!(cap.contains(&item), "{item:?}");
+        let Item::Face(o, f) = item else {
+            unreachable!()
+        };
+        assert_eq!(
+            part_items(&m, o, f).into_iter().collect::<BTreeSet<_>>(),
+            cap
+        );
+        let sel = Selection {
+            mode: SelectMode::Face,
+            items: [item].into(),
+        };
+        assert_eq!(expand_parts(&m, &sel).items, cap);
+        // En otro modo no se toca.
+        let verts = Selection {
+            mode: SelectMode::Vertex,
+            items: [Item::Vertex(0, 0)].into(),
+        };
+        assert_eq!(expand_parts(&m, &verts), verts);
+    }
+
+    #[test]
+    fn la_caja_en_modo_face_elige_solo_partes_enteras() {
+        let m = one_cylinder();
+        let map = front_map();
+        // La franja de arriba (y = 16 cae en 68): toda la tapa de arriba, nada de los lados.
+        let strip = box_select(&m, &map, SelectMode::Face, (0.0, 60.0), (200.0, 76.0));
+        assert_eq!(strip, top_cap(&m));
+        // La mitad derecha: los lados de ese lado caben enteros, pero no toda su parte.
+        let half = box_select(&m, &map, SelectMode::Face, (99.0, 0.0), (200.0, 200.0));
+        assert!(half.is_empty(), "{half:?}");
+        let all = box_select(&m, &map, SelectMode::Face, (0.0, 0.0), (200.0, 200.0));
+        assert_eq!(all.len(), 24);
+    }
+
+    #[test]
+    fn el_borde_de_la_tapa_es_el_anillo() {
+        let m = one_cylinder();
+        let cap = top_cap(&m);
+        let Some(&Item::Face(_, f)) = cap.iter().next() else {
+            panic!("no cap");
+        };
+        let outline = part_outline(&m, 0, f);
+        assert_eq!(outline.len(), 8, "{outline:?}");
+        // Ninguna va al centro de la tapa (el vértice 16) y todas son del anillo de arriba.
+        assert!(
+            outline
+                .iter()
+                .all(|&(a, b)| a < b && (8..16).contains(&a) && (8..16).contains(&b))
+        );
+        // En el cubo, una cara es su parte: sus 4 aristas.
+        assert_eq!(part_outline(&one_cube(), 0, 0).len(), 4);
     }
 
     #[test]

@@ -108,8 +108,9 @@ impl Editor {
     }
 
     /// Elige la cara del modelo que se edita que se ve en el pixel `(x, y)` de su render (a la
-    /// resolución de su artboard). `toggle` (Shift): la agrega o la quita; si no, queda sola, y
-    /// un clic en vacío vacía la selección. La selección queda en modo Face.
+    /// resolución de su artboard), con toda su cara completa. `toggle` (Shift): la agrega o la
+    /// quita; si no, queda sola, y un clic en vacío vacía la selección. La selección queda en
+    /// modo Face.
     pub fn pick_model_face(&mut self, (x, y): (i32, i32), toggle: bool) {
         let Some(artboard) = self.document.artboard(self.model_id()) else {
             return;
@@ -127,9 +128,12 @@ impl Editor {
                 items: Default::default(),
             };
         }
+        // La cara completa en bloque.
         match (hit, toggle) {
-            (Some((o, f)), true) => sel.toggle(Item::Face(o, f)),
-            (Some((o, f)), false) => sel.items = [Item::Face(o, f)].into(),
+            (Some((o, f)), true) => sel.toggle_part(model, Item::Face(o, f)),
+            (Some((o, f)), false) => {
+                sel.items = cs_3d::part_items(model, o, f).into_iter().collect()
+            }
             (None, true) => return,
             (None, false) => sel.items.clear(),
         }
