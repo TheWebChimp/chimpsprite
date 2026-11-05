@@ -149,7 +149,7 @@ fn mover_uvs_es_un_paso_de_undo_y_cancelar_ninguno() {
     let steps = e.history.done_count();
     // Cancelar: el documento no cambia.
     e.start_uv_op(UvOp::Move { from: (5.0, 5.0) });
-    e.update_uv_op((9.0, 7.0));
+    e.update_uv_op((9.0, 7.0), false);
     assert_ne!(
         e.edit_model_shown().unwrap().objects[0].mesh.faces[0].uvs,
         before,
@@ -161,15 +161,15 @@ fn mover_uvs_es_un_paso_de_undo_y_cancelar_ninguno() {
     assert_eq!(e.history.done_count(), steps, "cancel leaves no step");
     // Soltar: un paso de undo.
     e.start_uv_op(UvOp::Move { from: (5.0, 5.0) });
-    e.update_uv_op((9.2, 6.6));
-    e.update_uv_op((8.0, 3.0));
+    e.update_uv_op((9.2, 6.6), false);
+    e.update_uv_op((8.0, 3.0), false);
     e.finish_uv_op();
     let moved: Vec<_> = before.iter().map(|&(x, y)| (x + 3, y - 2)).collect();
     assert_eq!(face_uvs(&e, 0), moved);
     assert_eq!(e.history.done_count(), steps + 1);
     // Un clic sin arrastre no deja paso.
     e.start_uv_op(UvOp::Move { from: (5.0, 5.0) });
-    e.update_uv_op((5.2, 5.3));
+    e.update_uv_op((5.2, 5.3), false);
     e.finish_uv_op();
     assert_eq!(e.history.done_count(), steps + 1);
     e.undo();
@@ -189,7 +189,7 @@ fn mover_un_vertice_uv_cambia_solo_ese() {
         vertex: 1,
         from: at(1),
     });
-    e.update_uv_op((at(1).0 + 2.4, at(1).1 - 1.0));
+    e.update_uv_op((at(1).0 + 2.4, at(1).1 - 1.0), false);
     e.finish_uv_op();
     let uvs = face_uvs(&e, 0);
     assert_eq!(uvs[1], (before[1].0 + 2, before[1].1 - 1));
@@ -440,7 +440,7 @@ fn con_una_cara_elegida_solo_se_pinta_dentro_de_su_contorno() {
     );
     // Mover sus UVs también.
     e.start_uv_op(UvOp::Move { from: (20.0, 5.0) });
-    e.update_uv_op((24.0, 7.0));
+    e.update_uv_op((24.0, 7.0), false);
     e.finish_uv_op();
     assert_eq!(
         e.selection.as_ref().and_then(|m| m.bounds()),
@@ -575,4 +575,67 @@ fn en_texture_un_clic_en_la_tapa_del_cilindro_elige_la_tapa_entera() {
     // Shift + clic en la misma tapa la quita entera.
     e.pick_model_face(at, true);
     assert!(e.selected_faces().is_empty());
+}
+
+#[test]
+fn la_caja_de_uvs_abarca_las_caras_elegidas_o_el_objeto_o_el_grupo() {
+    let mut e = editing();
+    assert!(e.add_primitive(cs_3d::Primitive::Plane));
+    e.select_model_object(Some(0));
+    assert!(e.new_group());
+    e.set_cad_mode(CadMode::Texture);
+    let all = |e: &Editor, o: usize| -> Vec<(usize, usize)> {
+        let n = e.workspace_model().unwrap().objects[o].mesh.faces.len();
+        (0..n).map(|f| (o, f)).collect()
+    };
+    let sorted = |mut v: Vec<(usize, usize)>| {
+        v.sort();
+        v
+    };
+    e.set_active_row(Some(super::Row::Group(0)), false);
+    assert_eq!(sorted(e.uv_box_faces()), all(&e, 0), "the group's object");
+    e.set_active_row(Some(super::Row::Object(1)), false);
+    assert_eq!(sorted(e.uv_box_faces()), all(&e, 1));
+    // Con caras elegidas, esas.
+    e.set_model_selection(Selection {
+        mode: SelectMode::Face,
+        items: [Item::Face(0, 2)].into(),
+    });
+    assert_eq!(e.uv_box_faces(), vec![(0, 2)]);
+    e.set_model_selection(Selection {
+        mode: SelectMode::Face,
+        items: Default::default(),
+    });
+    e.set_active_row(None, false);
+    assert!(e.uv_box_faces().is_empty(), "nothing chosen: no box");
+}
+
+#[test]
+fn escalar_uvs_con_un_asa_cae_en_pixeles_enteros_y_es_un_paso() {
+    let mut e = texturing();
+    let steps = e.history.done_count();
+    let bounds = cs_3d::uv_bounds(e.workspace_model().unwrap(), &[(0, 0)]).unwrap();
+    assert_eq!(bounds, ((0, 0), (16, 16)));
+    // El asa de abajo a la derecha, agarrada 2 pixeles afuera, llevada 8.3 más allá.
+    e.start_uv_op(UvOp::Scale {
+        handle: (1, 1),
+        from: (18.0, 18.0),
+        bounds,
+    });
+    e.update_uv_op((26.3, 22.0), false);
+    e.finish_uv_op();
+    let m = e.workspace_model().unwrap();
+    assert_eq!(cs_3d::uv_bounds(m, &[(0, 0)]), Some(((0, 0), (24, 20))));
+    assert_eq!(e.history.done_count(), steps + 1);
+    // Con Shift en la esquina, el factor que más cambió en los dos ejes.
+    e.undo();
+    e.start_uv_op(UvOp::Scale {
+        handle: (1, 1),
+        from: (18.0, 18.0),
+        bounds,
+    });
+    e.update_uv_op((26.0, 22.0), true);
+    e.finish_uv_op();
+    let m = e.workspace_model().unwrap();
+    assert_eq!(cs_3d::uv_bounds(m, &[(0, 0)]), Some(((0, 0), (24, 24))));
 }

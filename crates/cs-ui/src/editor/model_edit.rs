@@ -306,8 +306,17 @@ pub struct TextureView {
 /// Hasta soltar solo cambia la vista previa; al soltar es un paso de undo.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UvOp {
-    /// Mover las UVs de las caras elegidas en pixeles enteros; `from` es el punto agarrado.
+    /// Mover las UVs de la caja ([`Editor::uv_box_faces`]) en pixeles enteros; `from` es el
+    /// punto agarrado.
     Move { from: (f32, f32) },
+    /// Arrastrar un asa de la caja `bounds` (inclusiva) de las UVs de la caja
+    /// ([`Editor::uv_box_faces`]): `handle` es `(x, y)` en la textura (−1 el lado menor, 1 el
+    /// mayor, 0 ninguno); `from` es el punto agarrado.
+    Scale {
+        handle: (i8, i8),
+        from: (f32, f32),
+        bounds: ((i32, i32), (i32, i32)),
+    },
     /// Mover solo el vértice UV `vertex` de la cara `face`; `from` es el punto agarrado.
     Vertex {
         face: (usize, usize),

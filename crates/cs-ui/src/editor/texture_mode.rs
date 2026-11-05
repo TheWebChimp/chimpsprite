@@ -6,8 +6,8 @@ use cs_3d::{Item, SelectMode, Selection, UvPoint};
 use cs_commands::{Command, DocCommand};
 use cs_core::{ArtboardId, Mask, Model3D};
 
-use super::Editor;
 use super::model_edit::{CadMode, UvOp};
+use super::{Editor, Row};
 
 /// Los lados de la textura que se pueden elegir (Texture size).
 pub const TEXTURE_SIDES: std::ops::RangeInclusive<u32> = 16..=512;
@@ -269,6 +269,39 @@ impl Editor {
             .collect()
     }
 
+    /// Las caras que abarca la caja de UVs: con caras elegidas (modo Face), esas; si no, todas las
+    /// de los objetos elegidos en modo Object o, sin ellos, las del objeto o el grupo de la fila
+    /// activa del outliner. Sin nada de eso, ninguna (no hay caja).
+    pub fn uv_box_faces(&self) -> Vec<(usize, usize)> {
+        let faces = self.selected_faces();
+        if !faces.is_empty() {
+            return faces;
+        }
+        let Some(model) = self.edited_model() else {
+            return Vec::new();
+        };
+        let sel = &self.model_edit.selection;
+        let mut objects: Vec<usize> = if sel.mode == SelectMode::Object {
+            sel.items.iter().map(|i| i.object()).collect()
+        } else {
+            Vec::new()
+        };
+        if objects.is_empty() {
+            objects = match self.active_row() {
+                Some(Row::Object(o)) => vec![o],
+                Some(Row::Group(g)) => model.group_objects(g),
+                None => Vec::new(),
+            };
+        }
+        objects.sort_unstable();
+        objects.dedup();
+        objects
+            .into_iter()
+            .filter_map(|o| Some((o, model.objects.get(o)?.mesh.faces.len())))
+            .flat_map(|(o, n)| (0..n).map(move |f| (o, f)))
+            .collect()
+    }
+
     /// El lado de la textura del modelo que se edita pasa a `side`, anclado arriba a la
     /// izquierda: lo pintado se queda donde estaba y al achicar se recorta. Las UVs no cambian.
     /// Un paso de undo. Solo lados de [`TEXTURE_SIDES`] (de 16 a 512).
@@ -306,16 +339,16 @@ impl Editor {
         self.model_edit.uv_op = Some(op);
     }
 
-    /// El gesto de UV sigue al puntero (`pointer` en pixeles de la textura). Todo cae en pixeles
-    /// enteros.
-    pub fn update_uv_op(&mut self, pointer: (f32, f32)) {
+    /// El gesto de UV sigue al puntero (`pointer` en pixeles de la textura; `proportional`:
+    /// Shift, al escalar el mismo factor en los dos ejes). Todo cae en pixeles enteros.
+    pub fn update_uv_op(&mut self, pointer: (f32, f32), proportional: bool) {
         let Some(op) = self.model_edit.uv_op else {
             return;
         };
         let Some(m) = self.edited_model() else {
             return;
         };
-        let faces = self.selected_faces();
+        let faces = self.uv_box_faces();
         let delta = |from: (f32, f32)| {
             (
                 (pointer.0 - from.0).round() as i32,
@@ -324,6 +357,14 @@ impl Editor {
         };
         let preview = match op {
             UvOp::Move { from } => cs_3d::move_uvs(m, &faces, delta(from)),
+            UvOp::Scale {
+                handle,
+                from,
+                bounds,
+            } => {
+                let (anchor, f) = uv_handle_scale(handle, from, bounds, pointer, proportional);
+                cs_3d::scale_uvs(m, &faces, anchor, f)
+            }
             UvOp::Vertex { face, vertex, from } => {
                 let Some(&(x, y)) = m
                     .objects
@@ -342,11 +383,15 @@ impl Editor {
 
     /// Termina el gesto de UV: si cambió algo, un paso de undo.
     pub fn finish_uv_op(&mut self) {
-        if self.model_edit.uv_op.take().is_none() {
+        let Some(op) = self.model_edit.uv_op.take() else {
             return;
-        }
+        };
+        let label = match op {
+            UvOp::Scale { .. } => "Scale UV",
+            UvOp::Move { .. } | UvOp::Vertex { .. } => "Move UV",
+        };
         if let Some(model) = self.model_edit.preview.take() {
-            self.named("Move UV", |e| e.set_model(model));
+            self.named(label, |e| e.set_model(model));
         }
     }
 
@@ -384,4 +429,47 @@ impl Editor {
         let next = f(m, &faces);
         self.named(label, |e| e.set_model(next))
     }
+}
+
+/// Arrastrar el asa `handle` de la caja `bounds` (inclusiva) agarrada en `from` hasta `pointer`
+/// (en pixeles de la textura): el ancla (el lado o la esquina opuesta; en un eje sin asa, el
+/// medio) y el factor por eje. El borde arrastrado cae en el pixel entero bajo el puntero y la
+/// caja no baja de 1 pixel ni se voltea. Con `proportional` (Shift), los dos ejes usan el mismo
+/// factor: en una esquina el que más cambió; en un lado, el de ese lado.
+fn uv_handle_scale(
+    handle: (i8, i8),
+    from: (f32, f32),
+    ((x0, y0), (x1, y1)): ((i32, i32), (i32, i32)),
+    pointer: (f32, f32),
+    proportional: bool,
+) -> ((f32, f32), (f32, f32)) {
+    // Por eje: el ancla y el factor (`None`: el eje no tiene asa).
+    let axis = |s: i8, lo: i32, hi: i32, from: f32, at: f32| -> (f32, Option<f32>) {
+        if s == 0 {
+            return ((lo + hi) as f32 / 2.0, None);
+        }
+        let (edge, anchor) = if s > 0 { (hi, lo) } else { (lo, hi) };
+        let old = edge - anchor;
+        if old == 0 {
+            return (anchor as f32, Some(1.0));
+        }
+        let moved = (edge as f32 + at - from).round() as i32 - anchor;
+        let moved = if old > 0 { moved.max(1) } else { moved.min(-1) };
+        (anchor as f32, Some(moved as f32 / old as f32))
+    };
+    let (ax, fx) = axis(handle.0, x0, x1, from.0, pointer.0);
+    let (ay, fy) = axis(handle.1, y0, y1, from.1, pointer.1);
+    let f = match (fx, fy, proportional) {
+        (Some(fx), Some(fy), true) => {
+            let f = if (fx - 1.0).abs() >= (fy - 1.0).abs() {
+                fx
+            } else {
+                fy
+            };
+            (f, f)
+        }
+        (Some(f), None, true) | (None, Some(f), true) => (f, f),
+        (fx, fy, _) => (fx.unwrap_or(1.0), fy.unwrap_or(1.0)),
+    };
+    ((ax, ay), f)
 }

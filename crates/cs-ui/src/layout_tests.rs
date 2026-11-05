@@ -8944,17 +8944,126 @@ fn an_alt_press_left_hanging_by_a_mode_change_does_not_click_later() {
     );
 }
 
+/// El centro del asa `(u, v)` (−1, 0, 1 por eje) de la caja de UVs `(min, max)` en pantalla.
+fn uv_handle(h: &LayoutHarness, (min, max): ((f32, f32), (f32, f32)), (u, v): (i8, i8)) -> Pos2 {
+    let pick = |s: i8, lo: f32, hi: f32| match s {
+        -1 => lo,
+        1 => hi,
+        _ => (lo + hi) / 2.0,
+    };
+    let at = texel(h, pick(u, min.0, max.0), pick(v, min.1, max.1));
+    at + vec2(u as f32, v as f32) * crate::canvas::UV_HANDLE_OFFSET
+}
+
+fn front_bounds(h: &LayoutHarness) -> Option<((i32, i32), (i32, i32))> {
+    cs_3d::uv_bounds(h.app.doc.editor.workspace_model().unwrap(), &[(0, 0)])
+}
+
 #[test]
-fn the_uv_box_has_no_scale_handles() {
+fn dragging_a_corner_handle_scales_the_uvs_in_whole_pixels() {
     let mut h = with_the_front_face_chosen();
     h.app.doc.editor.set_tool(ToolKind::Move);
-    let before = front_uvs(&h);
+    assert_eq!(front_bounds(&h), Some(((0, 0), (16, 16))));
+    let pixels = texture_sprite(&h);
     let steps = h.app.doc.editor.history.done_count();
-    // Donde estaba el asa de la esquina de abajo a la derecha: ya no hay nada.
-    let off = vec2(4.5, 4.5);
-    h.drag(texel(&h, 16.0, 16.0) + off, texel(&h, 24.0, 32.0) + off);
-    assert_eq!(front_uvs(&h), before);
-    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    let from = uv_handle(&h, ((0.0, 0.0), (16.0, 16.0)), (1, 1));
+    // Un poco más de 8 texels: el borde cae en el pixel entero.
+    let to = from + (texel(&h, 8.3, 8.3) - texel(&h, 0.0, 0.0));
+    h.drag(from, to);
+    assert_eq!(front_bounds(&h), Some(((0, 0), (24, 24))));
+    let before: Vec<_> = [(0, 0), (16, 0), (16, 16), (0, 16)].into();
+    let mut uvs = front_uvs(&h);
+    uvs.sort();
+    let mut expected: Vec<_> = before
+        .iter()
+        .map(|&(x, y)| (x * 3 / 2, y * 3 / 2))
+        .collect();
+    expected.sort();
+    assert_eq!(uvs, expected);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert_eq!(texture_sprite(&h), pixels, "the pixels stay");
+    h.app.doc.editor.undo();
+    assert_eq!(front_bounds(&h), Some(((0, 0), (16, 16))));
+}
+
+#[test]
+fn shift_on_a_side_handle_scales_proportionally() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Move);
+    let from = uv_handle(&h, ((0.0, 0.0), (16.0, 16.0)), (1, 0));
+    let to = from - (texel(&h, 8.0, 0.0) - texel(&h, 0.0, 0.0));
+    // Sin Shift solo cambia el ancho.
+    h.drag(from, to);
+    assert_eq!(front_bounds(&h), Some(((0, 0), (8, 16))));
+    h.app.doc.editor.undo();
+    // Con Shift, el alto también, por el mismo factor (respecto del medio).
+    drag_holding(&mut h, from, to, egui::Modifiers::SHIFT);
+    assert_eq!(front_bounds(&h), Some(((0, 4), (8, 12))));
+}
+
+#[test]
+fn a_handle_never_scales_below_one_pixel() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Move);
+    let from = uv_handle(&h, ((0.0, 0.0), (16.0, 16.0)), (1, 1));
+    // Más allá del lado opuesto: la caja no se voltea ni se aplasta.
+    let to = from - (texel(&h, 30.0, 30.0) - texel(&h, 0.0, 0.0));
+    h.drag(from, to);
+    assert_eq!(front_bounds(&h), Some(((0, 0), (1, 1))));
+}
+
+#[test]
+fn with_an_object_chosen_the_box_covers_all_its_faces() {
+    let mut h = with_a_model_in_texture_mode();
+    let e = &mut h.app.doc.editor;
+    e.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Face,
+        items: Default::default(),
+    });
+    e.select_model_object(Some(0));
+    e.set_tool(ToolKind::Move);
+    h.frame();
+    h.frame();
+    let faces = h.app.doc.editor.workspace_model().unwrap().objects[0]
+        .mesh
+        .faces
+        .len();
+    let all: Vec<_> = (0..faces).map(|f| (0, f)).collect();
+    let mut boxed = h.app.doc.editor.uv_box_faces();
+    boxed.sort();
+    assert_eq!(boxed, all);
+    let uvs_of = |h: &LayoutHarness| {
+        h.app.doc.editor.workspace_model().unwrap().objects[0]
+            .mesh
+            .faces
+            .iter()
+            .map(|f| f.uvs.clone())
+            .collect::<Vec<_>>()
+    };
+    let before = uvs_of(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    h.drag(texel(&h, 8.5, 8.5), texel(&h, 11.5, 10.5));
+    let moved: Vec<Vec<_>> = before
+        .iter()
+        .map(|f| f.iter().map(|&(x, y)| (x + 3, y + 2)).collect())
+        .collect();
+    assert_eq!(uvs_of(&h), moved);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn handles_drag_with_the_pencil_too() {
+    let mut h = with_the_front_face_chosen();
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    h.app.doc.editor.primary = PixelValue::Rgba(Rgba::rgb(1, 2, 3));
+    let pixels = texture_sprite(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    let from = uv_handle(&h, ((0.0, 0.0), (16.0, 16.0)), (1, 1));
+    let to = from + (texel(&h, 8.0, 4.0) - texel(&h, 0.0, 0.0));
+    h.drag(from, to);
+    assert_eq!(front_bounds(&h), Some(((0, 0), (24, 20))));
+    assert_eq!(texture_sprite(&h), pixels, "nothing painted");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
 }
 
 #[test]

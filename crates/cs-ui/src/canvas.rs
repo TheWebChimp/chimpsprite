@@ -30,6 +30,9 @@ mod rulers;
 mod texture_mode;
 mod uv_overlay;
 
+#[cfg(test)]
+pub(crate) use uv_overlay::UV_HANDLE_OFFSET;
+
 const ZOOM_LEVELS: [f32; 13] = [
     0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
 ];
