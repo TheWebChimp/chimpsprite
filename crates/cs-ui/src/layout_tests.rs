@@ -4762,7 +4762,7 @@ fn the_model_panel_without_a_model_offers_new_3d_model() {
 }
 
 #[test]
-fn the_model_panel_shows_the_objects_as_tabs_and_adds_a_cylinder() {
+fn the_model_panel_lists_the_objects_and_adds_a_cylinder() {
     let mut h = model_panel_open(true);
     let flyout = model_flyout(&h);
     let cube = node(&h, "Cube");
@@ -4777,7 +4777,7 @@ fn the_model_panel_shows_the_objects_as_tabs_and_adds_a_cylinder() {
         cs_3d::primitive_mesh(&cs_3d::Primitive::Cylinder { sides: 8 })
     );
     assert_eq!(editor.selected_object(), Some(1));
-    // Un clic en la pestaña del cubo lo elige.
+    // Un clic en la fila del cubo lo elige.
     h.click(node(&h, "Cube").center(), PointerButton::Primary);
     assert_eq!(h.app.doc.editor.selected_object(), Some(0));
 }
@@ -4806,7 +4806,7 @@ fn in_model_panel(h: &LayoutHarness, label: &str) -> Option<Rect> {
         .map(|(_, r)| *r)
 }
 
-/// Agrega un objeto `kind` con el + de la tira de pestañas: en su menú, el ícono del tipo y
+/// Agrega un objeto `kind` con el + del encabezado del outliner: en su menú, el ícono del tipo y
 /// "Add <tipo>".
 fn add_object(h: &mut LayoutHarness, kind: &str) {
     let plus = open_add_menu(h);
@@ -4823,11 +4823,11 @@ fn open_add_menu(h: &mut LayoutHarness) -> Rect {
     plus
 }
 
-/// El nodo `label` en el menú del + (debajo del +).
+/// El nodo `label` en el menú del + (debajo del +; no una fila del outliner, de lado a lado).
 fn in_add_menu(h: &LayoutHarness, plus: Rect, label: &str) -> Option<Rect> {
     h.nodes
         .iter()
-        .find(|(l, r)| l == label && r.top() > plus.bottom())
+        .find(|(l, r)| l == label && r.top() > plus.bottom() && r.width() < 100.0)
         .map(|(_, r)| *r)
 }
 
@@ -4854,7 +4854,7 @@ fn sides_disabled(h: &LayoutHarness, menu: Rect) -> bool {
     off
 }
 
-/// `h` sin objeto elegido (ya no hay pestaña del modelo: desde el editor).
+/// `h` sin objeto elegido (desde el editor).
 fn without_an_object(mut h: LayoutHarness) -> LayoutHarness {
     h.app.doc.editor.select_model_object(None);
     h.frame();
@@ -4903,15 +4903,15 @@ fn the_3d_panel_is_split_at_48_percent_of_its_height_by_an_etched_line() {
     assert!(rects.contains(&(colors.canvas, dark)), "{dark:?}");
     let light = dark.translate(vec2(0.0, 1.0));
     assert!(rects.contains(&(colors.highlight, light)), "{light:?}");
-    // La tira de pestañas, justo debajo de la línea.
-    let cube = node(&h, "Cube");
-    assert!(cube.top() > split + 1.0, "{cube:?} under {split}");
-    assert!(cube.top() - split <= 8.0, "{cube:?} right under {split}");
+    // El encabezado del outliner, justo debajo de la línea.
+    let plus = node(&h, "Add object");
+    assert!(plus.top() > split + 1.0, "{plus:?} under {split}");
+    assert!(plus.top() - split <= 8.0, "{plus:?} right under {split}");
     // Otra ventana, otra línea.
     let h = model_panel_in(Vec2::new(1200.0, 640.0));
     let split = model_split(&h);
-    let cube = node(&h, "Cube");
-    assert!(cube.top() > split + 1.0 && cube.top() - split <= 8.0);
+    let plus = node(&h, "Add object");
+    assert!(plus.top() > split + 1.0 && plus.top() - split <= 8.0);
 }
 
 #[test]
@@ -4919,8 +4919,8 @@ fn the_general_part_goes_above_the_line_and_the_object_below() {
     let h = model_panel_tall();
     assert_eq!(h.app.doc.editor.selected_object(), Some(0));
     let (top, bottom) = model_halves(&h);
-    let cube = node(&h, "Cube");
-    let below_tabs = Rect::from_min_max(pos2(bottom.left(), cube.bottom()), bottom.max);
+    let header = node(&h, "Add object");
+    let below_tabs = Rect::from_min_max(pos2(bottom.left(), header.bottom()), bottom.max);
     for t in GENERAL_TEXTS {
         assert!(text_in(&h, top, t).is_some(), "{t} above the line");
         assert!(text_in(&h, bottom, t).is_none(), "{t} below the line");
@@ -4938,11 +4938,12 @@ fn the_general_part_goes_above_the_line_and_the_object_below() {
 }
 
 #[test]
-fn the_tab_strip_has_no_model_tab_and_one_tab_per_object() {
+fn the_outliner_has_no_model_row_and_one_row_per_object() {
     let mut h = model_panel_open(true);
     add_object(&mut h, "Cylinder");
+    away(&mut h);
     let flyout = model_flyout(&h);
-    assert!(in_model_panel(&h, "Model").is_none(), "no model tab");
+    assert!(in_model_panel(&h, "Model").is_none(), "no model row");
     for name in [
         "icon.object.cone",
         "icon.object.sphere",
@@ -4950,11 +4951,19 @@ fn the_tab_strip_has_no_model_tab_and_one_tab_per_object() {
     ] {
         assert!(
             !h.drawn(name).iter().any(|r| flyout.contains_rect(*r)),
-            "{name}: no tab with the five icons"
+            "{name}: only the kinds of the objects"
         );
     }
-    // La primera pestaña es la del cubo, al principio de la tira; la segunda, la del cilindro.
+    // Una fila debajo de la otra, en el orden del árbol, al principio de lo de adentro.
     let (cube, cylinder) = (node(&h, "Cube"), node(&h, "Cylinder"));
+    assert_eq!(
+        (cube.left(), cube.width()),
+        (cylinder.left(), cylinder.width())
+    );
+    assert_eq!(
+        cylinder.top() - cube.top(),
+        crate::model_panel::outliner::ROW_H
+    );
     let inner = flyout.shrink(crate::dock::FLYOUT_MARGIN as f32);
     assert!(
         cube.left() - inner.left() <= 4.0,
@@ -4962,49 +4971,57 @@ fn the_tab_strip_has_no_model_tab_and_one_tab_per_object() {
     );
     h.click(cube.center(), PointerButton::Primary);
     assert_eq!(h.app.doc.editor.selected_object(), Some(0));
-    h.click(cylinder.center(), PointerButton::Primary);
+    h.click(node(&h, "Cylinder").center(), PointerButton::Primary);
     assert_eq!(h.app.doc.editor.selected_object(), Some(1));
-    // Con el cilindro elegido, la activa es la suya.
-    let active = h.drawn_boxes("tab.active");
+    // La activa, con el fondo de la selección del kit.
+    let colors = *h.app.pixel.skin().expect("on").colors();
+    let (cube, cylinder) = (node(&h, "Cube"), node(&h, "Cylinder"));
+    let rects = filled_rects(&h);
     assert!(
-        active.iter().any(|r| r.left() == cylinder.left()),
-        "{active:?}"
+        rects.contains(&(colors.selection, cylinder)),
+        "{cylinder:?}"
     );
-    // Sin objeto elegido, ninguna activa en la tira.
+    assert!(!rects.contains(&(colors.selection, cube)), "{cube:?}");
+    // Sin objeto elegido, ninguna activa.
     let h = without_an_object(h);
-    let strip = Rect::from_min_max(pos2(flyout.left(), model_split(&h)), flyout.max);
-    assert!(
-        !h.drawn_boxes("tab.active")
-            .iter()
-            .any(|r| strip.intersects(*r)),
-        "no active object tab"
-    );
+    let rects = filled_rects(&h);
+    for row in ["Cube", "Cylinder"] {
+        let r = node(&h, row);
+        assert!(!rects.contains(&(colors.selection, r)), "{row} active");
+    }
+}
+
+/// El puntero lejos del panel (que nada se dibuje con el hover).
+fn away(h: &mut LayoutHarness) {
+    h.frame_with(vec![Event::PointerMoved(pos2(1.0, 1.0))]);
+    h.frame();
 }
 
 #[test]
-fn without_an_object_only_the_strip_shows_below_the_line() {
+fn without_an_object_only_the_outliner_shows_below_the_line() {
     let h = without_an_object(model_panel_tall());
     let (top, bottom) = model_halves(&h);
-    let cube = node(&h, "Cube");
-    let below_tabs = Rect::from_min_max(pos2(bottom.left(), cube.bottom() + 2.0), bottom.max);
+    let header = node(&h, "Add object");
+    let below = Rect::from_min_max(pos2(bottom.left(), header.bottom() + 2.0), bottom.max);
     let texts: Vec<&String> = h
         .text_rects
         .iter()
-        .filter(|(_, r, _)| below_tabs.intersects(*r))
+        .filter(|(_, r, _)| below.intersects(*r))
         .map(|(t, _, _)| t)
         .collect();
-    assert_eq!(texts, Vec::<&String>::new(), "nothing under the strip");
-    let controls: Vec<&String> = h
-        .buttons
+    assert_eq!(texts, vec!["Cube"], "only the outliner under the header");
+    let mut controls: Vec<&str> = h
+        .nodes
         .iter()
-        .chain(h.nodes.iter())
-        .filter(|(_, r)| below_tabs.intersects(*r))
-        .map(|(l, _)| l)
+        .filter(|(_, r)| below.intersects(*r))
+        .map(|(l, _)| l.as_str())
         .collect();
+    controls.sort_unstable();
+    controls.dedup();
     assert_eq!(
         controls,
-        Vec::<&String>::new(),
-        "no controls under the strip"
+        vec!["Cube", "Double sided Cube", "Hide Cube", "Lock Cube"],
+        "only the row of the cube under the header"
     );
     assert!(axis_tags(&h).is_empty(), "no transform rows");
     // Lo general, arriba como siempre.
@@ -5025,7 +5042,7 @@ fn each_half_of_the_3d_panel_scrolls_on_its_own() {
         "{tracks:?}"
     );
     let split = model_split(&h);
-    let cube = node(&h, "Cube");
+    let cube = node(&h, "Add object");
     let first = |h: &LayoutHarness, t: &str, area: Rect| text_in(h, area, t);
     let object = first(&h, "Grid", top).expect("Grid at the top");
     let position = first(&h, "Position", bottom).expect("Position below");
@@ -5046,7 +5063,7 @@ fn each_half_of_the_3d_panel_scrolls_on_its_own() {
     let moved = first(&h, "Grid", top);
     assert!(moved.is_none_or(|r| r.top() < object.top()), "{moved:?}");
     assert_eq!(model_split(&h), split);
-    assert_eq!(node(&h, "Cube"), cube);
+    assert_eq!(node(&h, "Add object"), cube);
     assert_eq!(first(&h, "Position", bottom), Some(position));
     let general = h
         .text_rects
@@ -5058,7 +5075,7 @@ fn each_half_of_the_3d_panel_scrolls_on_its_own() {
     wheel(&mut h, position.center());
     let moved = first(&h, "Position", bottom);
     assert!(moved.is_none_or(|r| r.top() < position.top()), "{moved:?}");
-    assert_eq!(node(&h, "Cube"), cube);
+    assert_eq!(node(&h, "Add object"), cube);
     let still = h
         .text_rects
         .iter()
@@ -5093,11 +5110,14 @@ fn the_plus_opens_the_add_menu_like_the_sketch() {
     assert!(in_model_panel(&h, "Add").is_none());
     assert!(text_in(&h, flyout, "Sides").is_none());
     let plus = in_model_panel(&h, "Add object").expect("the + button");
-    let cube = in_model_panel(&h, "Cube").unwrap();
-    // A la derecha de la tira, del alto de las flechas.
-    assert!(plus.left() > cube.right());
-    assert_eq!(plus.height(), crate::kit::tabs::ARROW_SIZE, "{plus:?}");
-    assert!(plus.top() >= cube.top() && plus.bottom() <= cube.bottom());
+    let title = text_in(&h, flyout, "Outliner").expect("the Outliner header");
+    // Al final del encabezado, de 13×13 y a la altura del título.
+    assert!(plus.left() > title.right());
+    assert_eq!(plus.size(), vec2(13.0, 13.0), "{plus:?}");
+    assert!(
+        (plus.center().y - title.center().y).abs() <= 3.0,
+        "{plus:?} {title:?}"
+    );
     assert!(add_menu_box(&h, plus).is_none(), "closed");
     open_add_menu(&mut h);
     // La ventanita del boceto: 136×87, 10 filas debajo de lo alto del + y con él a la derecha.
@@ -5167,7 +5187,7 @@ fn clicking_an_icon_of_the_add_menu_chooses_the_type() {
 }
 
 #[test]
-fn add_in_the_add_menu_adds_the_type_with_the_sides_and_selects_its_tab() {
+fn add_in_the_add_menu_adds_the_type_with_the_sides_and_selects_its_row() {
     let mut h = without_an_object(model_panel_open(true));
     let plus = open_add_menu(&mut h);
     let menu = add_menu_box(&h, plus).expect("the add menu");
@@ -5194,16 +5214,12 @@ fn add_in_the_add_menu_adds_the_type_with_the_sides_and_selects_its_tab() {
         cs_3d::primitive_mesh(&cs_3d::Primitive::Cone { sides: 10 })
     );
     assert_eq!(editor.history.done_count(), steps + 1);
-    // Su pestaña, la elegida; el menú, cerrado.
+    // Su fila, la activa; el menú, cerrado.
     assert_eq!(editor.selected_object(), Some(1));
+    assert_eq!(editor.active_row(), Some(crate::editor::Row::Object(1)));
     assert!(add_menu_box(&h, plus).is_none(), "the menu closed");
     assert!(in_add_menu(&h, plus, "Add Cone").is_none());
-    let tab = in_model_panel(&h, "Cone").expect("the cone tab");
-    assert!(
-        h.drawn_boxes("tab.active")
-            .iter()
-            .any(|r| r.left() == tab.left())
-    );
+    assert!(in_model_panel(&h, "Cone").is_some(), "the cone row");
 }
 
 #[test]
@@ -5211,7 +5227,15 @@ fn without_pixel_ui_the_plus_menu_has_the_types_sides_and_add() {
     let mut h = LayoutHarness::new(plain(), true);
     assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
     h.frame();
-    h.click(h.button("+").center(), PointerButton::Primary);
+    // El + del encabezado del outliner (en su fila, con New group).
+    let row = h.button("New group");
+    let plus = h
+        .buttons
+        .iter()
+        .find(|(l, r)| l == "+" && r.top() == row.top())
+        .map(|(_, r)| *r)
+        .expect("the + of the outliner");
+    h.click(plus.center(), PointerButton::Primary);
     let cylinder = h.button("Cylinder");
     // De entrada, el cubo.
     h.button("Add Cube");
@@ -5249,29 +5273,34 @@ fn escape_or_a_click_outside_closes_the_add_menu_without_adding() {
 }
 
 #[test]
-fn the_duplicate_and_plus_buttons_sit_right_of_the_tab_arrows() {
-    let mut h = model_panel_open(true);
-    for _ in 0..11 {
-        assert!(
-            h.app
-                .doc
-                .editor
-                .add_primitive(cs_3d::Primitive::Cylinder { sides: 8 })
-        );
+fn the_outliner_header_has_duplicate_new_group_and_plus_at_the_right() {
+    let h = model_panel_open(true);
+    let flyout = model_flyout(&h);
+    let title = text_in(&h, flyout, "Outliner").expect("the Outliner title");
+    let [copy, group, plus] = ["Duplicate", "New group", "Add object"]
+        .map(|l| in_model_panel(&h, l).unwrap_or_else(|| panic!("no {l:?}")));
+    // Tres botones de 13×13 en una fila, con 4 px entre uno y otro, al final del encabezado.
+    for b in [copy, group, plus] {
+        assert_eq!(b.size(), vec2(13.0, 13.0), "{b:?}");
+        assert_eq!(b.top(), plus.top(), "{b:?}");
     }
-    h.frame();
-    h.frame();
-    let next = in_model_panel(&h, "Next tabs").expect("the arrows");
-    let plus = in_model_panel(&h, "Add object").expect("the + button");
-    // Las flechas, Duplicate y el +, en ese orden y a la misma altura.
-    let copy = in_model_panel(&h, "Duplicate").expect("the duplicate button");
-    assert!(copy.left() > next.right(), "{copy:?} {next:?}");
-    assert!(copy.left() - next.right() <= 8.0, "{copy:?} {next:?}");
-    assert!(plus.left() > copy.right(), "{plus:?} {copy:?}");
-    assert_eq!((plus.top(), plus.height()), (next.top(), next.height()));
-    assert_eq!((copy.top(), copy.height()), (next.top(), next.height()));
+    assert_eq!(group.left() - copy.right(), 4.0, "{copy:?} {group:?}");
+    assert_eq!(plus.left() - group.right(), 4.0, "{group:?} {plus:?}");
     let inner = model_flyout(&h).shrink(crate::dock::FLYOUT_MARGIN as f32);
     assert!(plus.right() <= inner.right(), "{plus:?} in {inner:?}");
+    assert!(
+        inner.right() - plus.right() <= 1.0,
+        "{plus:?} at the end of {inner:?}"
+    );
+    // El título al principio, a la altura de los botones.
+    assert!(title.left() - inner.left() <= 2.0, "{title:?}");
+    assert!(title.right() < copy.left());
+    assert!(
+        (title.center().y - plus.center().y).abs() <= 3.0,
+        "{title:?} {plus:?}"
+    );
+    let icon = h.drawn("icon.outliner.new_group");
+    assert!(icon.iter().any(|r| group.contains_rect(*r)), "{icon:?}");
 }
 
 /// Las etiquetas de eje (X, Y, Z) del panel 3D: vacío si no hay filas de transform.
@@ -5286,7 +5315,7 @@ fn axis_tags(h: &LayoutHarness) -> Vec<Rect> {
 }
 
 #[test]
-fn with_an_object_chosen_its_tab_needs_no_scroll_in_the_capture_window() {
+fn with_an_object_chosen_the_bottom_needs_no_scroll_in_the_capture_window() {
     // La de la captura (en una más baja, como en el boceto, lo del objeto se desplaza).
     {
         let size = Vec2::new(1920.0, 1009.0);
@@ -5305,52 +5334,68 @@ fn with_an_object_chosen_its_tab_needs_no_scroll_in_the_capture_window() {
 }
 
 #[test]
-fn the_3d_panel_has_one_tab_per_object_with_the_icon_of_its_kind() {
+fn the_outliner_lists_every_object_with_its_icon_eye_and_lock() {
     let mut h = model_panel_open(true);
     add_object(&mut h, "Cylinder");
-    let model = h.app.doc.editor.model().unwrap().clone();
-    let items = crate::model_panel::object_tabs(&model);
-    let shown: Vec<(&str, crate::tabs::TabIcon, crate::kit::tabs::TabMark)> = items
-        .iter()
-        .map(|t| (t.label.as_str(), t.icon, t.mark))
-        .collect();
-    use crate::kit::tabs::TabMark::Dirty;
-    use crate::tabs::TabIcon::Piece;
-    assert_eq!(
-        shown,
-        vec![
-            ("Cube", Piece("icon.object.cube"), Dirty),
-            ("Cylinder", Piece("icon.object.cylinder"), Dirty),
-        ]
-    );
-    // Las dos pestañas en una fila arriba de la mitad de abajo, en lugar del título y de la
-    // lista.
+    away(&mut h);
     let flyout = model_flyout(&h);
+    for name in ["Cube", "Cylinder"] {
+        for label in [
+            name.to_owned(),
+            format!("Hide {name}"),
+            format!("Lock {name}"),
+            format!("Double sided {name}"),
+        ] {
+            assert!(in_model_panel(&h, &label).is_some(), "no {label:?}");
+        }
+    }
     let (cube, cylinder) = (node(&h, "Cube"), node(&h, "Cylinder"));
-    assert!(flyout.contains_rect(cube) && flyout.contains_rect(cylinder));
-    assert_eq!(cube.top(), cylinder.top());
-    assert!(cube.right() < cylinder.left(), "{cube:?} {cylinder:?}");
-    let split = model_split(&h);
+    for (piece, row) in [
+        ("icon.object.cube", cube),
+        ("icon.object.cylinder", cylinder),
+    ] {
+        assert!(
+            h.drawn(piece).iter().any(|r| row.contains_rect(*r)),
+            "{piece} in {row:?}"
+        );
+    }
+    // A la derecha de la fila: ◧, el ojo y el candado (abiertos), en ese orden.
+    let [double, eye, lock] = ["Double sided Cube", "Hide Cube", "Lock Cube"].map(|l| node(&h, l));
+    assert!(double.right() <= eye.left() && eye.right() <= lock.left());
+    assert!(cube.contains_rect(lock), "{lock:?} in {cube:?}");
     assert!(
-        cube.top() > split && cube.top() < split + 20.0,
-        "{cube:?} right under the line at {split}"
+        cube.right() - lock.right() <= 1.0,
+        "{lock:?} at the end of {cube:?}"
     );
-    assert!(!h.text_rects.iter().any(|(t, _, _)| t == "Objects"));
-    assert!(
-        !panel_top_texts(&h)
-            .0
-            .iter()
-            .any(|r| flyout.contains_rect(*r))
-    );
+    for (piece, at) in [
+        ("icon.outliner.double_sided", double),
+        ("icon.outliner.eye", eye),
+        ("icon.outliner.unlock", lock),
+    ] {
+        assert!(
+            h.drawn(piece).iter().any(|r| at.contains_rect(*r)),
+            "{piece} in {at:?}"
+        );
+    }
+    // El encabezado.
+    assert!(text_in(&h, flyout, "Outliner").is_some());
+    for label in ["Duplicate", "New group", "Add object"] {
+        assert!(in_model_panel(&h, label).is_some(), "no {label:?}");
+    }
 }
 
 #[test]
-fn closing_an_object_tab_removes_the_object_in_one_undo_step() {
+fn delete_over_the_outliner_removes_the_active_row_in_one_undo_step() {
     let mut h = model_panel_open(true);
     add_object(&mut h, "Cylinder");
+    h.click(node(&h, "Cube").center(), PointerButton::Primary);
+    assert_eq!(
+        h.app.doc.editor.active_row(),
+        Some(crate::editor::Row::Object(0))
+    );
     let steps = h.app.doc.editor.history.done_count();
-    assert!(!h.nodes.iter().any(|(l, _)| l == "Close Cube"));
-    h.click(node(&h, "Delete Cube").center(), PointerButton::Primary);
+    // Con el puntero todavía sobre la fila.
+    tap_key(&mut h, egui::Key::Delete);
     let names = |h: &LayoutHarness| -> Vec<String> {
         let model = h.app.doc.editor.model().unwrap();
         model.objects.iter().map(|o| o.name.clone()).collect()
@@ -5362,24 +5407,10 @@ fn closing_an_object_tab_removes_the_object_in_one_undo_step() {
 }
 
 #[test]
-fn object_tabs_say_delete_and_document_tabs_say_close() {
-    assert_eq!(
-        crate::kit::tabs::TabItem::closable("A", false).close_label,
-        "Close"
-    );
-    let mut h = model_panel_open(true);
-    let model = h.app.doc.editor.model().unwrap().clone();
-    let items = crate::model_panel::object_tabs(&model);
-    assert!(items.iter().all(|t| t.close_label == "Delete"));
-    h.frame();
-    assert!(h.nodes.iter().any(|(l, _)| l == "Delete Cube"));
-}
-
-#[test]
-fn many_object_tabs_scroll_with_the_arrows() {
-    let mut h = model_panel_open(true);
+fn many_rows_scroll_in_the_outliner() {
+    let mut h = model_panel_in(Vec2::new(1200.0, 640.0));
     let editor = &mut h.app.doc.editor;
-    for _ in 0..11 {
+    for _ in 0..39 {
         assert!(editor.add_primitive(cs_3d::Primitive::Cylinder { sides: 8 }));
     }
     let mut model = editor.model().unwrap().clone();
@@ -5387,27 +5418,175 @@ fn many_object_tabs_scroll_with_the_arrows() {
         o.name = format!("Part {i}");
     }
     assert!(editor.set_model_grouped(model, egui::Id::new("rename")));
-    editor.select_model_object(Some(0));
-    h.frame();
-    h.frame();
-    let flyout = model_flyout(&h);
+    let h = without_an_object(h);
+    let mut h = h;
+    let (_, bottom) = model_halves(&h);
     let in_panel = |h: &LayoutHarness, label: &str| {
         h.nodes
             .iter()
-            .find(|(l, r)| l == label && flyout.contains_rect(*r))
+            .find(|(l, r)| l == label && bottom.contains_rect(*r))
             .map(|(_, r)| *r)
     };
-    let first = in_panel(&h, "Part 0").expect("the first tab");
-    assert!(in_panel(&h, "Part 11").is_none(), "they do not all fit");
-    let next = in_panel(&h, "Next tabs").expect("the arrows");
-    // Las flechas a la derecha, en la fila de las pestañas.
-    assert!(next.left() > first.right() && next.top() < first.bottom());
-    for _ in 0..12 {
-        h.click(next.center(), PointerButton::Primary);
+    let first = in_panel(&h, "Part 0").expect("the first row");
+    assert!(in_panel(&h, "Part 39").is_none(), "they do not all fit");
+    let tracks = h.drawn("scroll.track.v");
+    assert!(
+        tracks.iter().any(|r| bottom.contains_rect(*r)),
+        "{tracks:?}"
+    );
+    h.frame_with(vec![Event::PointerMoved(first.center())]);
+    for _ in 0..4 {
+        h.frame_with(vec![Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: vec2(0.0, -200.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: Default::default(),
+        }]);
+    }
+    for _ in 0..10 {
+        h.frame();
     }
     assert!(in_panel(&h, "Part 0").is_none(), "scrolled past the first");
-    assert!(in_panel(&h, "Part 11").is_some(), "the last one in view");
+    assert!(in_panel(&h, "Part 39").is_some(), "the last one in view");
+}
+
+/// Clic con Shift en `pos`.
+fn shift_click(h: &mut LayoutHarness, pos: Pos2) {
+    let shift = egui::Modifiers::SHIFT;
+    let press = |pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: shift,
+    };
+    h.frame_with(vec![
+        Event::ModifiersChanged(shift),
+        Event::PointerMoved(pos),
+    ]);
+    h.frame_with(vec![press(true)]);
+    h.frame_with(vec![press(false)]);
+    h.frame_with(vec![Event::ModifiersChanged(Default::default())]);
+}
+
+/// Lo elegido en las vistas del modelo.
+fn chosen_items(h: &LayoutHarness) -> Vec<cs_3d::Item> {
+    let items = &h.app.doc.editor.model_edit().selection.items;
+    items.iter().copied().collect()
+}
+
+#[test]
+fn clicking_a_row_chooses_it_and_shift_adds() {
+    use cs_3d::Item::Object;
+    let mut h = model_panel_open(true);
+    add_object(&mut h, "Cylinder");
+    h.click(node(&h, "Cube").center(), PointerButton::Primary);
+    h.click(node(&h, "Cylinder").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.selected_object(), Some(1));
+    assert_eq!(chosen_items(&h), vec![Object(1)]);
+    let at = node(&h, "Cube").center();
+    shift_click(&mut h, at);
+    assert_eq!(chosen_items(&h), vec![Object(0), Object(1)]);
+    // La activa es la última tocada; la otra, elegida en las vistas, también resaltada.
     assert_eq!(h.app.doc.editor.selected_object(), Some(0));
+    let colors = *h.app.pixel.skin().expect("on").colors();
+    let rects = filled_rects(&h);
+    let cylinder = node(&h, "Cylinder");
+    assert!(
+        rects
+            .iter()
+            .any(|(c, r)| *r == cylinder && *c != colors.selection && c.a() > 0),
+        "the cylinder row, highlighted"
+    );
+}
+
+#[test]
+fn the_eye_hides_in_one_step_and_the_render_changes() {
+    let mut h = model_panel_open(true);
+    let before = model_pixels(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    let hidden = |h: &LayoutHarness| h.app.doc.editor.model().unwrap().objects[0].hidden;
+    h.click(node(&h, "Hide Cube").center(), PointerButton::Primary);
+    assert!(hidden(&h));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert_ne!(model_pixels(&h), before, "the cube is not drawn");
+    // Ahora el ojo dice Show (cerrado); otro clic lo vuelve.
+    away(&mut h);
+    let show = node(&h, "Show Cube");
+    let off = h.drawn("icon.outliner.eye_off");
+    assert!(off.iter().any(|r| show.contains_rect(*r)), "{off:?}");
+    h.click(show.center(), PointerButton::Primary);
+    assert!(!hidden(&h));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 2);
+    assert_eq!(model_pixels(&h), before);
+}
+
+#[test]
+fn new_group_wraps_the_chosen_rows_and_its_triangle_folds_it() {
+    let mut h = model_panel_open(true);
+    add_object(&mut h, "Cylinder");
+    h.click(node(&h, "Cube").center(), PointerButton::Primary);
+    let at = node(&h, "Cylinder").center();
+    shift_click(&mut h, at);
+    let steps = h.app.doc.editor.history.done_count();
+    let new_group = in_model_panel(&h, "New group").expect("New group");
+    h.click(new_group.center(), PointerButton::Primary);
+    let model = h.app.doc.editor.model().unwrap().clone();
+    assert_eq!(model.groups.len(), 1);
+    assert_eq!(model.groups[0].name, "Group");
+    assert_eq!(model.object_parents(0), vec![0]);
+    assert_eq!(model.object_parents(1), vec![0]);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    // Los de adentro, con más sangría y debajo del grupo.
+    let (group, cube) = (node(&h, "Group"), node(&h, "Cube"));
+    assert!(cube.left() > group.left(), "{cube:?} {group:?}");
+    assert!(cube.top() > group.top());
+    // El triángulo lo cierra (sin paso de undo): lo de adentro no se dibuja.
+    h.click(node(&h, "Collapse Group").center(), PointerButton::Primary);
+    assert!(!h.app.doc.editor.model().unwrap().groups[0].open);
+    assert!(in_model_panel(&h, "Cube").is_none(), "folded");
+    assert!(in_model_panel(&h, "Cylinder").is_none(), "folded");
+    assert!(in_model_panel(&h, "Expand Group").is_some());
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    // Y lo vuelve a abrir.
+    h.click(node(&h, "Expand Group").center(), PointerButton::Primary);
+    assert!(in_model_panel(&h, "Cube").is_some());
+}
+
+#[test]
+fn double_click_renames_a_row() {
+    let mut h = model_panel_open(true);
+    let steps = h.app.doc.editor.history.done_count();
+    let name = |h: &LayoutHarness| h.app.doc.editor.model().unwrap().objects[0].name.clone();
+    h.double_click(node(&h, "Cube").center());
+    assert!(h.nodes.iter().any(|(l, _)| l == "Rename"), "the field");
+    h.frame_with(vec![Event::Text("Body".into())]);
+    tap_key(&mut h, egui::Key::Enter);
+    assert_eq!(name(&h), "Body");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Rename"), "closed");
+    // Esc cancela.
+    h.double_click(node(&h, "Body").center());
+    h.frame_with(vec![Event::Text("Head".into())]);
+    tap_key(&mut h, egui::Key::Escape);
+    assert_eq!(name(&h), "Body");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Rename"), "closed");
+}
+
+#[test]
+fn dragging_a_row_onto_a_group_moves_it_inside() {
+    let mut h = model_panel_open(true);
+    add_object(&mut h, "Cylinder");
+    h.click(node(&h, "Cube").center(), PointerButton::Primary);
+    let new_group = in_model_panel(&h, "New group").expect("New group");
+    h.click(new_group.center(), PointerButton::Primary);
+    let parents = |h: &LayoutHarness| h.app.doc.editor.model().unwrap().object_parents(1);
+    assert_eq!(parents(&h), Vec::<usize>::new(), "the cylinder, outside");
+    let steps = h.app.doc.editor.history.done_count();
+    let (from, to) = (node(&h, "Cylinder").center(), node(&h, "Group").center());
+    h.drag(from, to);
+    assert_eq!(parents(&h), vec![0]);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
 }
 
 #[test]
@@ -5466,14 +5645,14 @@ fn the_3d_panel_opens_at_the_top_with_edit_visible() {
     for h in [model_panel_open(true), model_panel_tall()] {
         let (titles, edit) = panel_top_texts(&h);
         // Ya no hay título "3D" en el panel (solo el botón del dock y el de la barra): arriba,
-        // lo general con "Grid" a la vista, y la pestaña del cubo debajo de la línea.
+        // lo general con "Grid" a la vista, y el encabezado del outliner debajo de la línea.
         let flyout = model_flyout(&h);
         assert!(
             !titles.iter().any(|t| flyout.contains_rect(*t)),
             "{titles:?}"
         );
         let (top, _) = model_halves(&h);
-        let tab = node(&h, "Cube");
+        let tab = node(&h, "Add object");
         assert!(flyout.contains_rect(tab), "{tab:?} in {flyout:?}");
         assert!(top.contains_rect(edit), "{edit:?} in {top:?}");
         assert!(
@@ -5563,11 +5742,11 @@ fn the_3d_panel_has_the_modes_and_the_grid() {
 }
 
 #[test]
-fn the_object_is_removed_by_its_tab_mark_and_delete_is_for_the_selection() {
-    // Lo quita la ○ de su pestaña; el botón Delete (de la fila de topología) borra lo elegido en
-    // las vistas: sin nada elegido, deshabilitado.
+fn delete_is_for_the_selection_and_the_outliner_has_no_delete_mark() {
+    // El objeto lo quita Supr en el outliner (no hay marca en su fila); el botón Delete (de la
+    // fila de topología) borra lo elegido en las vistas: sin nada elegido, deshabilitado.
     let h = model_panel_tall();
-    node(&h, "Delete Cube");
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Delete Cube"));
     assert_eq!(
         h.buttons.iter().filter(|(l, _)| l == "Delete").count(),
         1,
@@ -6083,10 +6262,10 @@ fn every_model_panel_control_fits_beside_the_scroll_bar() {
             assert!(inside(*r, content), "{label} {r:?} outside {content:?}");
         }
         // Todo, al lado de la barra de su mitad si la hay (las filas de la lista llenan el
-        // ancho). La tira de pestañas (con el +) está arriba del scroll de abajo: llega hasta el
-        // borde.
+        // ancho). El encabezado del outliner (con el +) está arriba del scroll de abajo: llega
+        // hasta el borde.
         let (top, bottom) = model_halves(&h);
-        let tabs = node(&h, "Cube");
+        let tabs = node(&h, "Add object");
         let scrolls = |half: Rect| {
             h.drawn("scroll.track.v")
                 .iter()
@@ -9043,8 +9222,8 @@ fn in_texture_mode_the_object_tab_starts_with_the_uv_buttons() {
     let h = with_the_model_panel(with_a_model_in_texture_mode());
     assert!(h.app.doc.editor.selected_object().is_some());
     let (_, bottom) = model_halves(&h);
-    let cube = node(&h, "Cube");
-    // Como el boceto: los botones de las UVs primero, en una fila debajo de las pestañas (sin
+    let cube = node(&h, "Add object");
+    // Como el boceto: los botones de las UVs primero, en una fila debajo del encabezado (sin
     // título), y después Position, Rotation, Scale y Double sided.
     let labels = ["Rotate 90°", "Flip H", "Flip V"];
     let buttons: Vec<Rect> = labels.iter().map(|l| h.button(l)).collect();
@@ -9052,7 +9231,7 @@ fn in_texture_mode_the_object_tab_starts_with_the_uv_buttons() {
         assert!(bottom.contains_rect(*b), "{l} {b:?} in {bottom:?}");
         assert_eq!(b.top(), buttons[0].top(), "{l} in one row");
     }
-    // 9 filas de aire desde la línea grabada de la tira (como el boceto).
+    // 9 filas de aire desde la línea grabada del encabezado (como el boceto).
     let line = model_split(&h) + 5.0 + crate::kit::tabs::HEIGHT;
     assert!(buttons[0].top() > cube.bottom());
     // (El botón se pinta en su lugar redondeado.)
@@ -9476,16 +9655,15 @@ fn the_duplicate_button_sits_left_of_the_plus_and_duplicates() {
     let mut h = model_panel_open(true);
     let plus = in_model_panel(&h, "Add object").expect("the + button");
     let copy = in_model_panel(&h, "Duplicate").expect("the duplicate button");
+    let group = in_model_panel(&h, "New group").expect("the new group button");
     assert_eq!(copy.size(), plus.size());
     assert_eq!(copy.top(), plus.top());
-    assert_eq!(plus.left() - copy.right(), 4.0, "{copy:?} {plus:?}");
-    // Las pestañas no llegan a él.
-    let cube = node(&h, "Cube");
-    assert!(cube.right() <= copy.left(), "{cube:?} {copy:?}");
+    assert_eq!(group.left() - copy.right(), 4.0, "{copy:?} {group:?}");
+    assert_eq!(plus.left() - group.right(), 4.0, "{group:?} {plus:?}");
     let n = h.app.doc.editor.model().unwrap().objects.len();
     h.click(copy.center(), PointerButton::Primary);
     assert_eq!(h.app.doc.editor.model().unwrap().objects.len(), n + 1);
-    // Su pestaña aparece y queda elegida.
+    // Su fila aparece y queda elegida.
     h.frame();
     assert!(h.nodes.iter().any(|(l, _)| l == "Cube copy"));
     assert_eq!(h.app.doc.editor.selected_object(), Some(n));

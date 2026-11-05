@@ -95,7 +95,9 @@ pub(crate) enum TabIcon {
     None,
     Model,
     Font,
-    /// Una pieza del skin con ese nombre (los objetos del panel 3D: `icon.object.cube`…).
+    /// Una pieza del skin con ese nombre (la tenían los objetos del panel 3D antes del outliner;
+    /// hoy solo la usan los tests de la tira).
+    #[cfg_attr(not(test), allow(dead_code))]
     Piece(&'static str),
 }
 

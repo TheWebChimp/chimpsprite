@@ -2,41 +2,42 @@
 //! del artboard activo, partido en dos a lo alto por una línea grabada (a ≈ 48 %). Arriba, con su
 //! scroll, lo general del modelo: los modos de selección y la cuadrícula (usables en modo Model), la
 //! textura y su tamaño, la cámara, la luz, el contorno, Shading… (la cuadrícula, en su ventana)
-//! y Sheet settings…. Abajo, la tira de pestañas de los objetos (una por objeto, con el ícono de su tipo:
-//! un clic la elige, su marca quita el objeto y, si no caben, las flechas las recorren) con el +
-//! a la derecha (su ventanita, en [`add_menu`]: el tipo, los lados de los redondos y Add) y,
-//! debajo, con su scroll, lo del objeto elegido: en modo Model, Extrude, Subdivide, Merge y
-//! Delete; en modo Texture, los botones de las UVs (girar y voltear las de las caras elegidas); su
-//! posición, su rotación y su escala en filas de X, Y y Z, y Double sided. Sin objeto elegido,
-//! abajo solo la tira. Sin modelo, el botón New 3D Model….
+//! y Sheet settings…. Abajo, el encabezado "Outliner" con Duplicate, New group y el + a la
+//! derecha (su ventanita, en [`add_menu`]: el tipo, los lados de los redondos y Add) y, debajo,
+//! con su scroll, lo del objeto elegido (en modo Model, Extrude, Subdivide, Merge y Delete; en
+//! modo Texture, los botones de las UVs; su posición, su rotación y su escala en filas de X, Y y
+//! Z, y Double sided) y el [`outliner`] con los objetos y los grupos. Sin modelo, el botón New 3D
+//! Model….
 
-use cs_3d::Primitive;
 use cs_core::{CameraPreset, Model3D, Object3D, PrimitiveKind, Projection, Rgba, ShadingTable};
 use eframe::egui::{
     self, Color32, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 
-use crate::kit::tabs::{TabEvent, TabItem};
-
 use crate::dock::FLYOUT_MARGIN;
-use crate::editor::{CadMode, Editor, wrap_angle};
+use crate::editor::{CadMode, Editor, Row, wrap_angle};
 use crate::font_panel::lit_line;
 use crate::kit;
 use crate::menus;
 use crate::panel_kit::label_with_hint;
 use crate::pixel_ui;
 use crate::skin::Skin;
-use crate::tabs::TabIcon;
 
 mod add_menu;
+pub(crate) mod outliner;
+
+pub use outliner::OutlinerState;
 
 /// Ancho de adentro del panel (sin su marco): el contenido y la barra del scroll.
 pub const WIDTH: f32 = 227.0;
-/// Las pestañas de los objetos, 5 filas debajo de la línea que parte el panel (3 de aire después
-/// de sus dos filas), sobre su propia línea grabada.
+/// El encabezado del outliner, 5 filas debajo de la línea que parte el panel (3 de aire después
+/// de sus dos filas), sobre su propia línea grabada a [`kit::tabs::HEIGHT`] (donde estaba la
+/// tira de pestañas).
 const TABS_TOP: f32 = 5.0;
-/// Sin Pixel UI: la fila de pestañas de egui (más alta) y la línea debajo, desde la que parte el
-/// panel.
+/// Las mayúsculas de "Outliner", centradas con los botones del encabezado.
+const HEADER_CAPS: f32 = 5.0;
+/// Sin Pixel UI: la fila del encabezado de egui (más alta) y la línea debajo, desde la que parte
+/// el panel.
 const PLAIN_TABS_TOP: f32 = 8.0;
 const PLAIN_HEADER_LINE: f32 = 29.0;
 /// Dónde parte la línea el panel, desde arriba de su caja: como en el boceto, 197 de sus 408
@@ -56,9 +57,11 @@ const MODE_ROW_AIR: f32 = 2.0;
 const TEXTURE_AIR: f32 = 3.0;
 /// Y de la fila de la luz a la de Shading… y Sheet settings…, 37 (como entre las otras filas).
 const BUTTONS_AIR: f32 = 3.0;
-/// El + de la tira: del alto de las flechas, 4 px después de ellas (como en el boceto).
+/// Los botones del encabezado (Duplicate, New group y +): de 13×13, con 4 px entre uno y otro, una
+/// fila debajo de lo alto del encabezado.
 const PLUS_W: f32 = 13.0;
 const PLUS_GAP: f32 = 4.0;
+const PLUS_TOP: f32 = 1.0;
 /// La fila de los modos de selección (como el boceto): sus botones, uno cada 17 px y 2 filas
 /// debajo de lo alto del select de la cuadrícula (al final de la fila, de 46 de ancho).
 const MODE_PITCH: f32 = kit::tile::SIZE.x + 4.0;
@@ -137,6 +140,8 @@ pub struct ModelPanelState {
     pub open_add_menu: bool,
     /// La ventana Shading está abierta ([`shading_window`]).
     pub shading: bool,
+    /// Lo que el outliner recuerda (renombrar, arrastrar).
+    pub outliner: OutlinerState,
 }
 
 impl Default for ModelPanelState {
@@ -146,6 +151,7 @@ impl Default for ModelPanelState {
             add_kind: PrimitiveKind::Cube,
             open_add_menu: false,
             shading: false,
+            outliner: OutlinerState::default(),
         }
     }
 }
@@ -164,8 +170,8 @@ pub enum ModelAction {
 
 /// El panel en `ui` (lo de adentro del marco, de la columna entera: ver
 /// [`crate::dock::flyout_fixed`] y [`crate::dock::fixed_panel`]): arriba lo general, la línea a
-/// [`SPLIT`] del alto y abajo la tira de pestañas y lo del objeto elegido, cada parte con su
-/// scroll.
+/// [`SPLIT`] del alto y abajo el encabezado del outliner y, con su scroll, lo del objeto elegido
+/// y el outliner.
 pub fn show(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -201,16 +207,20 @@ pub fn show(
         });
         divider(ui, skin, outer, split);
         let line = header(ui, editor, skin, state, outer, inner, split);
-        if editor.selected_object().is_some() {
-            let bottom = Rect::from_x_y_ranges(
-                inner.x_range(),
-                line + pixel_ui::ETCHED_SIZE..=inner.bottom(),
-            );
-            scrolled(ui, "model_panel_object", bottom, reopened, |ui| {
-                ui.spacing_mut().item_spacing.y = ITEM_GAP;
+        let bottom = Rect::from_x_y_ranges(
+            inner.x_range(),
+            line + pixel_ui::ETCHED_SIZE..=inner.bottom(),
+        );
+        scrolled(ui, "model_panel_object", bottom, reopened, |ui| {
+            ui.spacing_mut().item_spacing.y = ITEM_GAP;
+            // Lo del objeto elegido (hasta que pase a la barrita) y, debajo, el outliner.
+            if editor.selected_object().is_some() {
                 selected(ui, editor, skin);
-            });
-        }
+                ui.add_space(ITEM_GAP);
+            }
+            let width = row_width(ui);
+            outliner::show(ui, editor, skin, &mut state.outliner, width);
+        });
         action
     };
     // Todo el panel es de la columna (las mitades no lo dicen: están en su propio `Ui`).
@@ -277,26 +287,12 @@ fn kind_icon(kind: PrimitiveKind) -> &'static str {
     }
 }
 
-/// Las pestañas de los objetos de `model`: el ícono de su tipo, su nombre y la marca ○ (que pasa
-/// a × con el puntero encima) para quitarlo.
-pub(crate) fn object_tabs(model: &Model3D) -> Vec<TabItem> {
-    model
-        .objects
-        .iter()
-        .map(|o| {
-            TabItem::closable(o.name.clone(), true)
-                .with_close_label("Delete")
-                .with_icon(TabIcon::Piece(kind_icon(o.shown_kind())))
-        })
-        .collect()
-}
-
-/// Arriba de la mitad de abajo (desde la línea que parte el panel, en la fila `split`), fija: la
-/// tira de pestañas de los objetos (la del kit, estilo documento, en lo de adentro de la caja; su
-/// línea grabada, de lado a lado) con el + a la derecha o, sin Pixel UI, una fila de egui y una
-/// línea. La pestaña `i` es la del objeto `i`: un clic la elige; su marca lo quita (un paso de
-/// undo). Sin objeto elegido, ninguna activa. El + agrega lo elegido en su menú (y lo elige).
-/// Devuelve la fila de arriba de la línea de la tira.
+/// Arriba de la mitad de abajo (desde la línea que parte el panel, en la fila `split`), fijo: el
+/// encabezado del outliner, "Outliner" a la izquierda y, a la derecha, Duplicate, New group y
+/// el `+` (botones del kit de 13×13), sobre una línea grabada de lado a lado; sin Pixel UI, una
+/// fila de egui y una línea. Duplicate copia lo elegido (con un grupo activo, el grupo con lo de
+/// adentro); New group mete lo elegido en un grupo nuevo; el + agrega lo elegido en su menú (y lo
+/// elige). Devuelve la fila de arriba de la línea.
 fn header(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -306,64 +302,82 @@ fn header(
     inner: Rect,
     split: f32,
 ) -> f32 {
-    let items = editor.edited_model().map(object_tabs).unwrap_or_default();
-    let active = editor.selected_object();
-    let id = ui.id().with("model_object_tabs");
+    let group = match editor.active_row() {
+        Some(Row::Group(g)) => Some(g),
+        _ => None,
+    };
+    let can_duplicate = group.is_some() || editor.can_duplicate_model_objects();
     let mut added = None;
     let mut duplicate = false;
-    let (line, event) = match skin {
+    let mut new_group = false;
+    let line = match skin {
         Some(skin) => {
             let top = split + TABS_TOP;
-            let mut strip = kit::tabs::Strip::new(inner.left(), inner.right(), top);
-            strip.line = outer.x_range().shrink(1.0);
-            // El +, al final de la fila, y antes Duplicate (del mismo tamaño); las pestañas y sus
-            // flechas, antes.
+            let line = top + kit::tabs::HEIGHT;
+            // El +, al final de la fila, y antes New group y Duplicate (del mismo tamaño).
             let plus = Rect::from_min_size(
-                pos2(inner.right() - PLUS_W, top + kit::tabs::ARROWS_TOP),
-                vec2(PLUS_W, kit::tabs::ARROW_SIZE),
+                pos2(inner.right() - PLUS_W, top + PLUS_TOP),
+                Vec2::splat(PLUS_W),
             );
-            let copy = plus.translate(vec2(-(PLUS_W + PLUS_GAP), 0.0));
-            strip.right = copy.left() - PLUS_GAP;
+            let step = vec2(-(PLUS_W + PLUS_GAP), 0.0);
+            let folder = plus.translate(step);
+            let copy = folder.translate(step);
             added = add_menu::plus_button(ui, skin, plus, state);
-            duplicate = duplicate_button(ui, skin, copy, editor.can_duplicate_model_objects());
-            let event = kit::tabs::tab_strip(ui, skin, id, strip, &items, active);
-            (strip.bottom(), event)
+            let id = ui.id().with("model_new_group");
+            let icon = "icon.outliner.new_group";
+            let response = kit::button::icon_button_at(ui, skin, folder, id, icon, "New group");
+            new_group = pixel_ui::bubble_tooltip(response, skin, "New group").clicked();
+            duplicate = duplicate_button(ui, skin, copy, can_duplicate);
+            // "Outliner", con las mayúsculas centradas con los botones.
+            let colors = skin.colors();
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let painter = ui.painter();
+            let galley = painter.layout_no_wrap("Outliner".to_owned(), font, colors.text);
+            let ppp = ui.ctx().pixels_per_point();
+            let at = crate::tab_bar::text_pos(&galley, inner.left(), top + HEADER_CAPS, ppp);
+            painter.galley(at, galley, colors.text);
+            let x = outer.x_range().shrink(1.0);
+            painter.add(pixel_ui::etched_hline(x, line, colors, ppp));
+            line
         }
         None => {
             let line = split + PLAIN_HEADER_LINE;
             let row = Rect::from_x_y_ranges(inner.x_range(), split + PLAIN_TABS_TOP..=line);
-            let event = ui
-                .scope_builder(UiBuilder::new().max_rect(row), |ui| {
-                    let can = editor.can_duplicate_model_objects();
-                    let tabs = plain_tabs(ui, &items, active, state, &mut added);
+            ui.scope_builder(UiBuilder::new().max_rect(row), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Outliner");
                     duplicate = ui
-                        .add_enabled(can, egui::Button::new("Duplicate"))
+                        .add_enabled(can_duplicate, egui::Button::new("Duplicate"))
                         .clicked();
-                    tabs
-                })
-                .inner;
+                    new_group = ui.button("New group").clicked();
+                    added = add_menu::plain_menu(ui, state);
+                });
+            });
             lit_line(ui, None, outer, line);
-            (line, event)
+            line
         }
     };
-    match event {
-        Some(TabEvent::Select(i)) => editor.select_model_object(Some(i)),
-        Some(TabEvent::Close(i)) => {
-            editor.remove_object(i);
-        }
-        None => {}
-    }
     if let Some(p) = added {
         editor.add_primitive(p);
     }
     if duplicate {
-        editor.duplicate_model_objects();
+        match group {
+            Some(g) => {
+                editor.duplicate_group(g);
+            }
+            None => {
+                editor.duplicate_model_objects();
+            }
+        }
+    }
+    if new_group {
+        editor.new_group();
     }
     line
 }
 
-/// Duplicate en `rect`, junto al +: un botón del kit con el ícono de copiar (`icon.copy`) y su
-/// tooltip (con el atajo); deshabilitado sin nada que duplicar. Devuelve si se apretó.
+/// Duplicate en `rect`, junto a New group: un botón del kit con el ícono de copiar (`icon.copy`)
+/// y su tooltip (con el atajo); deshabilitado sin nada que duplicar. Devuelve si se apretó.
 fn duplicate_button(ui: &mut Ui, skin: &Skin, rect: Rect, enabled: bool) -> bool {
     let id = ui.id().with("model_duplicate_object");
     let shortcut = crate::keymap::label(ui.ctx(), crate::keymap::Action::DuplicateObject);
@@ -377,46 +391,6 @@ fn duplicate_button(ui: &mut Ui, skin: &Skin, rect: Rect, enabled: bool) -> bool
         crate::pixel_ui::bubble_tooltip(response, skin, &tip).clicked()
     })
     .inner
-}
-
-/// Sin Pixel UI: una fila de egui (con scroll de lado) con el nombre de cada pestaña (un clic la
-/// elige), el × de las que se cierran (quita su objeto) y, al final, el + con su menú (lo
-/// agregado queda en `added`).
-fn plain_tabs(
-    ui: &mut Ui,
-    items: &[TabItem],
-    active: Option<usize>,
-    state: &mut ModelPanelState,
-    added: &mut Option<Primitive>,
-) -> Option<TabEvent> {
-    let mut event = None;
-    egui::ScrollArea::horizontal()
-        .id_salt("model_object_tabs_plain")
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for (i, item) in items.iter().enumerate() {
-                    if ui
-                        .selectable_label(active == Some(i), &item.label)
-                        .clicked()
-                    {
-                        event = Some(TabEvent::Select(i));
-                    }
-                    if item.mark != kit::tabs::TabMark::None {
-                        let close = ui.small_button("×").on_hover_text(item.close_label);
-                        let label = format!("{} {}", item.close_label, item.label);
-                        close.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
-                        });
-                        if close.clicked() {
-                            event = Some(TabEvent::Close(i));
-                        }
-                    }
-                    ui.add_space(4.0);
-                }
-                *added = add_menu::plain_menu(ui, state);
-            });
-        });
-    event
 }
 
 /// Lo general del modelo (la mitad de arriba): en modo Model, los modos de selección y la
@@ -754,8 +728,8 @@ fn scaled_axes(
 
 /// Lo del objeto elegido (la mitad de abajo): primero los botones de topología (en modo Model) o
 /// los de las UVs (en modo Texture);
-/// posición, rotación y escala (una fila de X, Y, Z cada una) y Double sided. Quitarlo es la ○ de
-/// su pestaña. Todo lo cambiado en un frame (o en un arrastre) es un paso de deshacer
+/// posición, rotación y escala (una fila de X, Y, Z cada una) y Double sided. Quitarlo es Supr
+/// en el outliner. Todo lo cambiado en un frame (o en un arrastre) es un paso de deshacer
 /// (`set_model_grouped`).
 fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let Some(i) = editor.selected_object() else {

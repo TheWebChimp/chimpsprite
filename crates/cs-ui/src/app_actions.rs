@@ -32,7 +32,13 @@ impl ChimpApp {
                 })
                 .collect()
         });
+        // Supr con el puntero sobre el outliner del panel 3D borra su fila activa: lo hace el
+        // outliner (no lo elegido en las vistas).
+        let on_outliner = crate::model_panel::outliner::pointer_over_list(ctx);
         for (key, modifiers) in presses {
+            if on_outliner && matches!(key, Key::Delete | Key::Backspace) {
+                continue;
+            }
             // Primero las fijas, que dependen de lo que pasa (confirmar, cancelar, mover lo
             // seleccionado, borrar).
             if self.has_doc()
