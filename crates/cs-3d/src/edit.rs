@@ -498,9 +498,46 @@ fn faces_of(obj: &Object3D) -> impl Iterator<Item = (usize, Vec<u32>)> + '_ {
     })
 }
 
+/// El punto de cada cara completa del objeto `o` (las caras sin `part`, cada una el suyo): la
+/// cara más grande de la parte (por área en el mundo; a la misma, la de índice menor) y su
+/// centro en el mundo. En orden de esa cara; solo caras con al menos 3 vértices válidos.
+pub fn part_dots(model: &Model3D, o: usize) -> Vec<(usize, P3)> {
+    let Some(obj) = model.objects.get(o) else {
+        return Vec::new();
+    };
+    let pts = world_points(model, o);
+    // La parte (o la cara sola) → (área, cara, centro) de la más grande.
+    let mut best: BTreeMap<(Option<u32>, usize), (f32, usize, P3)> = BTreeMap::new();
+    for (i, vs) in faces_of(obj) {
+        let p: Vec<P3> = vs.iter().map(|&v| pts[v as usize]).collect();
+        // Newell: la normal sin normalizar mide el doble del área.
+        let mut n = [0.0f32; 3];
+        for k in 0..p.len() {
+            let (a, b) = (p[k], p[(k + 1) % p.len()]);
+            n[0] += (a[1] - b[1]) * (a[2] + b[2]);
+            n[1] += (a[2] - b[2]) * (a[0] + b[0]);
+            n[2] += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        let area = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt() / 2.0;
+        let k = p.len() as f32;
+        let c = [0, 1, 2].map(|j| p.iter().map(|q| q[j]).sum::<f32>() / k);
+        let key = match obj.mesh.faces[i].part {
+            Some(part) => (Some(part), 0),
+            None => (None, i),
+        };
+        let e = best.entry(key).or_insert((area, i, c));
+        if area > e.0 {
+            *e = (area, i, c);
+        }
+    }
+    let mut out: Vec<(usize, P3)> = best.into_values().map(|(_, i, c)| (i, c)).collect();
+    out.sort_by_key(|d| d.0);
+    out
+}
+
 /// Lo que hay bajo `at` (pantalla) en la vista de `map`, según el modo: un vértice o una
-/// arista a [`PICK_RADIUS`] o menos; una cara si `at` cae dentro (o cerca de su punto central);
-/// un objeto si `at` cae dentro de alguna de sus caras.
+/// arista a [`PICK_RADIUS`] o menos; una cara si `at` cae dentro (o cerca del punto de su cara
+/// completa, ver [`part_dots`]); un objeto si `at` cae dentro de alguna de sus caras.
 pub fn pick(model: &Model3D, map: &ViewMap, mode: SelectMode, at: (f32, f32)) -> Option<Item> {
     let mut cands = Vec::new();
     for (o, obj) in model
@@ -533,23 +570,24 @@ pub fn pick(model: &Model3D, map: &ViewMap, mode: SelectMode, at: (f32, f32)) ->
                 for (fi, vs) in faces_of(obj) {
                     let poly: Vec<(f32, f32)> = vs.iter().map(|&v| scr[v as usize]).collect();
                     let k = poly.len() as f32;
-                    let c = (
-                        poly.iter().map(|p| p.0).sum::<f32>() / k,
-                        poly.iter().map(|p| p.1).sum::<f32>() / k,
-                    );
                     let cd = vs.iter().map(|&v| depth(v)).sum::<f32>() / k;
-                    let d = if inside(&poly, at) {
-                        0.0
-                    } else if mode == SelectMode::Face && dist(c, at) <= PICK_RADIUS {
-                        dist(c, at)
-                    } else {
+                    if !inside(&poly, at) {
                         continue;
-                    };
+                    }
                     let item = match mode {
                         SelectMode::Face => Item::Face(o, fi),
                         _ => Item::Object(o),
                     };
-                    cands.push((item, d, cd));
+                    cands.push((item, 0.0, cd));
+                }
+                // Cerca del punto de una cara completa: su cara más grande.
+                if mode == SelectMode::Face {
+                    for (fi, c) in part_dots(model, o) {
+                        let d = dist(map.to_screen(c), at);
+                        if d <= PICK_RADIUS {
+                            cands.push((Item::Face(o, fi), d, map.view.depth(c)));
+                        }
+                    }
                 }
             }
         }
@@ -1386,6 +1424,62 @@ mod tests {
         );
         // En el cubo, una cara es su parte: sus 4 aristas.
         assert_eq!(part_outline(&one_cube(), 0, 0).len(), 4);
+    }
+
+    #[test]
+    fn un_punto_por_cara_completa_en_su_cara_mas_grande() {
+        let m = one_cylinder();
+        let dots = part_dots(&m, 0);
+        // Los lados, la tapa de arriba y la de abajo: 3 puntos.
+        assert_eq!(dots.len(), 3, "{dots:?}");
+        let mesh = &m.objects[0].mesh;
+        let parts: Vec<Option<u32>> = dots.iter().map(|&(f, _)| mesh.faces[f].part).collect();
+        assert_eq!(parts, vec![Some(0), Some(1), Some(2)]);
+        // El de la tapa de arriba cae en el centro de su cara, a la altura de la tapa.
+        let (f, c) = dots[1];
+        let pts = world_points(&m, 0);
+        let vs = &mesh.faces[f].verts;
+        for i in 0..3 {
+            let avg = vs.iter().map(|&v| pts[v as usize][i]).sum::<f32>() / vs.len() as f32;
+            assert!((c[i] - avg).abs() < 1e-3);
+        }
+        assert_eq!(c[1], 16.0);
+        // En el cubo, una cara por parte: 6 puntos, uno por cara.
+        let cube = part_dots(&one_cube(), 0);
+        assert_eq!(
+            cube.iter().map(|d| d.0).collect::<Vec<_>>(),
+            (0..6).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn cerca_del_punto_de_la_cara_completa_se_elige_su_cara_mas_grande() {
+        // En Front la tapa de arriba se ve de canto: arriba de ella (fuera de toda cara) y cerca
+        // de su punto se elige la cara del punto.
+        let m = one_cylinder();
+        let map = front_map();
+        let (f, c) = part_dots(&m, 0)[1];
+        let s = map.to_screen(c);
+        assert_eq!(
+            pick(&m, &map, SelectMode::Face, (s.0, s.1 - 3.0)),
+            Some(Item::Face(0, f))
+        );
+        // Cerca del centro de otro gajo (no el del punto), nada.
+        let mesh = &m.objects[0].mesh;
+        let pts = world_points(&m, 0);
+        let other = (0..mesh.faces.len())
+            .filter(|&g| g != f && mesh.faces[g].part == Some(1))
+            .map(|g| {
+                let vs = &mesh.faces[g].verts;
+                let x = vs.iter().map(|&v| pts[v as usize][0]).sum::<f32>() / 3.0;
+                map.to_screen([x, 16.0, 0.0])
+            })
+            .find(|o| dist(*o, s) > 2.0 * PICK_RADIUS)
+            .expect("a wedge far from the dot");
+        assert_eq!(
+            pick(&m, &map, SelectMode::Face, (other.0, other.1 - 3.0)),
+            None
+        );
     }
 
     #[test]

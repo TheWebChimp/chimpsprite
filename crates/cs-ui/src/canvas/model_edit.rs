@@ -1423,30 +1423,31 @@ impl OrthoScene<'_> {
             let (x, y) = self.px(s);
             img.fill_rect(x - side / 2, y - side / 2, side, side, rgba(c));
         };
-        for (o, obj) in model.objects.iter().enumerate() {
+        for (o, pts) in scr.iter().enumerate() {
             match sel.mode {
                 SelectMode::Object => {}
+                // Los ocultos, sin puntos.
+                SelectMode::Face if pts.is_empty() => {}
                 SelectMode::Face => {
-                    for (f, face) in obj.mesh.faces.iter().enumerate() {
-                        let vs: Vec<(f32, f32)> = face
-                            .verts
-                            .iter()
-                            .filter_map(|&v| scr[o].get(v as usize).copied())
-                            .collect();
-                        if vs.is_empty() {
-                            continue;
+                    // Un punto por cara completa (en su cara más grande), amarillo si está
+                    // elegida; los elegidos encima de los que no.
+                    let dots: Vec<((f32, f32), bool)> = cs_3d::part_dots(model, o)
+                        .into_iter()
+                        .map(|(f, c)| {
+                            let on = cs_3d::part_items(model, o, f)
+                                .iter()
+                                .all(|i| sel.items.contains(i));
+                            (self.map.to_screen(c), on)
+                        })
+                        .collect();
+                    for on in [false, true] {
+                        for &(c, _) in dots.iter().filter(|d| d.1 == on) {
+                            dot(img, c, if on { SELECTED } else { EDGE });
                         }
-                        let k = vs.len() as f32;
-                        let c = (
-                            vs.iter().map(|p| p.0).sum::<f32>() / k,
-                            vs.iter().map(|p| p.1).sum::<f32>() / k,
-                        );
-                        let on = sel.items.contains(&Item::Face(o, f));
-                        dot(img, c, if on { SELECTED } else { EDGE });
                     }
                 }
                 _ => {
-                    for (v, &s) in scr[o].iter().enumerate() {
+                    for (v, &s) in pts.iter().enumerate() {
                         let on = sel.items.contains(&Item::Vertex(o, v as u32));
                         dot(img, s, if on { SELECTED } else { SEPARATOR });
                     }
@@ -1902,6 +1903,53 @@ mod tests {
         }
         assert_ne!(at(&img, 15, 15), SELECTED);
         assert_ne!(at(&img, 21, 21), SELECTED);
+    }
+
+    #[test]
+    fn in_face_mode_a_whole_face_has_one_dot() {
+        let mut m = cube();
+        m.objects[0].mesh = cs_3d::primitive_mesh(&cs_3d::Primitive::Cylinder { sides: 8 });
+        let top = ViewMap {
+            view: OrthoView::Top,
+            ..MAP
+        };
+        let mesh = &m.objects[0].mesh;
+        let cap: Vec<usize> = (0..mesh.faces.len())
+            .filter(|&f| mesh.faces[f].part == Some(1))
+            .collect();
+        let sel = cs_3d::Selection {
+            mode: SelectMode::Face,
+            items: cap.iter().map(|&f| Item::Face(0, f)).collect(),
+        };
+        let img = OrthoScene {
+            map: &top,
+            min: (0.0, 0.0),
+            grid: 1,
+            model: &m,
+            sel: &sel,
+            bounds: cs_3d::bounds(&m, &sel),
+            face_edges: &selected_face_edges(&m, &sel),
+            boxed: None,
+            gizmo: None,
+            gizmo_center: None,
+            gizmo_hot: None,
+        }
+        .image(100, 100);
+        // De los centros de los 8 gajos, solo uno lleva el punto (amarillo: la tapa elegida).
+        let pts = cs_3d::world_points(&m, 0);
+        let lit = cap
+            .iter()
+            .filter(|&&f| {
+                let vs = &mesh.faces[f].verts;
+                let (x, y) = vs.iter().fold((0.0, 0.0), |(x, y), &v| {
+                    let s = top.to_screen(pts[v as usize]);
+                    (x + s.0, y + s.1)
+                });
+                let k = vs.len() as f32;
+                at(&img, (x / k).floor() as i32, (y / k).floor() as i32) == SELECTED
+            })
+            .count();
+        assert_eq!(lit, 1);
     }
 
     /// El cubo elegido entero con el gizmo `kind` (`hot`: el asa resaltada).

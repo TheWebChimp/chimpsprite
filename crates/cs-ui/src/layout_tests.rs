@@ -10060,3 +10060,24 @@ fn clicking_a_wedge_of_the_cylinder_cap_selects_the_whole_cap() {
     shift_click(&mut h, other);
     assert_eq!(chosen_items(&h), cap);
 }
+
+#[test]
+fn switching_to_face_mode_chooses_whole_faces() {
+    let mut h = editing_a_cylinder();
+    let e = &mut h.app.doc.editor;
+    e.set_select_mode(cs_3d::SelectMode::Vertex);
+    let mesh = &e.model().unwrap().objects[0].mesh;
+    let quad = mesh.faces[0].verts.clone();
+    let sides: Vec<cs_3d::Item> = (0..mesh.faces.len())
+        .filter(|&f| mesh.faces[f].part == Some(0))
+        .map(|f| cs_3d::Item::Face(0, f))
+        .collect();
+    assert_eq!(sides.len(), 8);
+    e.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Vertex,
+        items: quad.iter().map(|&v| cs_3d::Item::Vertex(0, v)).collect(),
+    });
+    // Los 4 vértices de un lado dan esa cara y, con ella, todos los lados.
+    e.set_select_mode(cs_3d::SelectMode::Face);
+    assert_eq!(chosen_items(&h), sides);
+}

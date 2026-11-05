@@ -482,8 +482,9 @@ impl Editor {
         let next = match self.edited_model() {
             // De Object a un subelemento se empieza vacío: convertir elegiría todo el objeto y
             // arrastrar una arista movería el bloque entero.
+            // En modo Face, siempre caras completas.
             Some(m) if from != SelectMode::Object || mode == SelectMode::Object => {
-                self.model_edit.selection.converted(m, mode)
+                cs_3d::expand_parts(m, &self.model_edit.selection.converted(m, mode))
             }
             _ => Selection {
                 mode,
