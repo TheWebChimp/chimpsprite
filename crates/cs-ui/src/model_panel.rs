@@ -399,9 +399,11 @@ fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 }
 
-/// Lo del objeto elegido, en modo Model: Extrude, Subdivide, Merge y Delete para lo elegido en
-/// las vistas (cada uno deshabilitado cuando no aplica), en una fila sin título como la de las
-/// UVs. Hacen lo mismo que Ctrl+E, Ctrl+D, M y Supr.
+/// Lo del objeto elegido, en modo Model: Extrude, Subdivide, Merge y Delete (cada uno
+/// deshabilitado cuando no aplica), en una fila sin título como la de las UVs. Los tres primeros
+/// van sobre lo elegido en las vistas que se puede editar; Delete también, salvo con un grupo
+/// como fila activa en modo Object, que borra el grupo entero (ver
+/// [`Editor::delete_from_panel`]). Hacen lo mismo que Ctrl+E, Ctrl+D, M y Supr en las vistas.
 fn topology_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let enabled = [
         editor.can_extrude(),

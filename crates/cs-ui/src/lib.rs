@@ -1940,8 +1940,9 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
             Key::M if !shift && model_mode => {
                 editor.merge_model_selection();
             }
+            // Con un grupo activo en modo Object, el grupo entero (como el botón Delete).
             Key::Delete | Key::Backspace if model_mode => {
-                editor.delete_model_selection();
+                editor.delete_from_panel();
             }
             Key::Enter if busy => editor.finish_model_op(),
             // Home encuadra todo el modelo (no durante un gesto).

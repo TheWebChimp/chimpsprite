@@ -103,19 +103,26 @@ impl Editor {
         if !self.named(label, |e| e.set_model(model)) {
             return false;
         }
-        // Después del paso: deshacerlo vuelve a la selección de antes (con lo que se ocultó).
-        if self.model_edit.artboard == Some(self.model_id())
-            && let Some(model) = self.edited_model()
-        {
-            let hidden: Vec<usize> = (0..model.objects.len())
-                .filter(|&o| model.object_hidden(o))
-                .collect();
-            self.model_edit
-                .selection
-                .items
-                .retain(|it| !hidden.contains(&it.object()));
-        }
+        self.drop_hidden_from_selection();
         true
+    }
+
+    /// Saca de la selección 3D lo de los objetos ocultos (ellos o un grupo suyo). Va después del
+    /// paso que los ocultó: deshacerlo vuelve a la selección de antes.
+    fn drop_hidden_from_selection(&mut self) {
+        if self.model_edit.artboard != Some(self.model_id()) {
+            return;
+        }
+        let Some(model) = self.edited_model() else {
+            return;
+        };
+        let hidden: Vec<usize> = (0..model.objects.len())
+            .filter(|&o| model.object_hidden(o))
+            .collect();
+        self.model_edit
+            .selection
+            .items
+            .retain(|it| !hidden.contains(&it.object()));
     }
 
     /// El candado de la fila: bloquea o desbloquea el objeto o el grupo. Un paso de undo. (No se
@@ -242,7 +249,8 @@ impl Editor {
 
     /// Arrastrar una fila: la deja antes o después de otra (en la lista de esa) o al final de un
     /// grupo. Un grupo no entra en sí mismo ni en un descendiente, y una fila no cae junto a sí
-    /// misma. Un paso de undo.
+    /// misma. Un paso de undo. Lo que queda oculto (dentro de un grupo oculto) sale de la
+    /// selección 3D.
     pub fn move_row(&mut self, row: Row, to: DropAt) -> bool {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
@@ -272,7 +280,11 @@ impl Editor {
         if !insert_node(&mut model.tree, to, node) {
             return false;
         }
-        self.named("Move", |e| e.set_model(model))
+        if !self.named("Move", |e| e.set_model(model)) {
+            return false;
+        }
+        self.drop_hidden_from_selection();
+        true
     }
 
     /// Borra la fila: un objeto, o un grupo con todo lo de adentro (objetos y subgrupos). Lo
@@ -301,8 +313,9 @@ impl Editor {
         }
     }
 
-    /// El botón Delete del panel: con un grupo como fila activa en modo Object, el grupo entero
-    /// con lo elegido (como Supr en el outliner); si no, lo elegido en las vistas.
+    /// El botón Delete del panel y Supr en las vistas: con un grupo como fila activa en modo
+    /// Object, el grupo entero con lo elegido (como Supr en el outliner; lo bloqueado no); si
+    /// no, lo elegido en las vistas.
     pub fn delete_from_panel(&mut self) -> bool {
         match self.panel_group() {
             Some(_) => self.delete_chosen_rows(),
@@ -310,7 +323,8 @@ impl Editor {
         }
     }
 
-    /// El grupo activo, si el botón Delete lo borra: en modo Object y sin gesto en curso.
+    /// El grupo activo, si el botón Delete (y Supr en las vistas) lo borra: en modo Object y sin
+    /// gesto en curso.
     fn panel_group(&self) -> Option<usize> {
         let Some(Row::Group(g)) = self.active_row() else {
             return None;

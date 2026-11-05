@@ -454,3 +454,38 @@ fn the_transform_of_a_locked_row_is_shown_but_not_editable() {
     e.set_active_row(None, false);
     assert_eq!(e.active_transform(), None);
 }
+
+#[test]
+fn moving_a_part_into_a_hidden_group_drops_it_from_the_selection() {
+    let mut e = editor_with_model();
+    // El grupo 0, vacío y oculto; el cubo elegido.
+    e.set_active_row(None, false);
+    assert!(e.new_group());
+    assert!(e.toggle_hidden(Row::Group(0)));
+    select_objects(&mut e, &[0, 1]);
+    assert!(e.move_row(Row::Object(0), DropAt::Into(0)));
+    assert_eq!(objects(&e), vec![1]);
+    // Deshacer vuelve a la selección de antes.
+    e.undo();
+    assert_eq!(objects(&e), vec![0, 1]);
+}
+
+#[test]
+fn delete_in_the_views_with_a_group_active_deletes_the_whole_group() {
+    let mut e = editor_with_group();
+    e.set_active_row(Some(Row::Group(0)), false);
+    let steps = e.history.done_count();
+    assert!(crate::editor_key(&mut e, eframe::egui::Key::Delete, false));
+    assert_eq!(e.history.done_count(), steps + 1);
+    let model = e.model().unwrap();
+    assert!(model.objects.is_empty());
+    assert!(model.groups.is_empty());
+    // Bloqueado: nada.
+    e.undo();
+    assert!(e.toggle_row_locked(Row::Group(0)));
+    e.set_active_row(Some(Row::Group(0)), false);
+    let steps = e.history.done_count();
+    crate::editor_key(&mut e, eframe::egui::Key::Delete, false);
+    assert_eq!(e.history.done_count(), steps);
+    assert_eq!(e.model().unwrap().groups.len(), 1);
+}

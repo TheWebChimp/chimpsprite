@@ -642,8 +642,8 @@ pub(crate) fn edit_vertices(
     f: impl Fn(P3) -> P3,
 ) {
     for (o, vs) in sel.vertices(model) {
-        // Lo bloqueado (él o un grupo suyo) no se edita.
-        if model.object_locked(o) {
+        // Lo oculto o bloqueado (él o un grupo suyo) no se edita.
+        if !pickable(model, o) {
             continue;
         }
         for v in vs {
@@ -665,11 +665,12 @@ pub(crate) fn objects_of(sel: &Selection, model: &Model3D) -> Vec<usize> {
     out
 }
 
-/// Los objetos de la selección que se pueden mover, escalar o girar: los no bloqueados.
+/// Los objetos de la selección que se pueden mover, escalar o girar: los que no están ocultos
+/// ni bloqueados.
 pub(crate) fn movable_objects(sel: &Selection, model: &Model3D) -> Vec<usize> {
     objects_of(sel, model)
         .into_iter()
-        .filter(|&o| !model.object_locked(o))
+        .filter(|&o| pickable(model, o))
         .collect()
 }
 
@@ -1110,6 +1111,28 @@ mod tests {
             assert_eq!(scaled.objects[1], m.objects[1], "{:?}", s.mode);
             let turned = crate::rotate_selection(&m, s, [0.0; 3], 1, 900);
             assert_ne!(turned.objects[0], m.objects[0], "{:?}", s.mode);
+            assert_eq!(turned.objects[1], m.objects[1], "{:?}", s.mode);
+        }
+    }
+
+    #[test]
+    fn hidden_objects_are_not_moved_scaled_or_rotated() {
+        let mut m = one_cube();
+        m.objects.push(cube_at(Vec3i { x: 64, y: 0, z: 0 }));
+        m.normalize_tree();
+        m.objects[1].hidden = true;
+        let objs = Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0), Item::Object(1)].into(),
+        };
+        let verts = objs.converted(&m, SelectMode::Vertex);
+        for s in [&objs, &verts] {
+            let moved = translate(&m, s, [16.0, 0.0, 0.0]);
+            assert_ne!(moved.objects[0], m.objects[0], "{:?}", s.mode);
+            assert_eq!(moved.objects[1], m.objects[1], "{:?}", s.mode);
+            let scaled = scale(&m, s, [0.0; 3], [2.0, 1.0, 1.0]);
+            assert_eq!(scaled.objects[1], m.objects[1], "{:?}", s.mode);
+            let turned = crate::rotate_selection(&m, s, [0.0; 3], 1, 900);
             assert_eq!(turned.objects[1], m.objects[1], "{:?}", s.mode);
         }
     }
