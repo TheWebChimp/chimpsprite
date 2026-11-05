@@ -298,3 +298,86 @@ fn without_an_object_there_is_nothing_to_duplicate() {
     assert!(!e.duplicate_model_objects());
     assert_eq!(e.model().unwrap().objects.len(), 1);
 }
+
+fn with_a_group(e: &mut Editor) {
+    let mut m = e.model().unwrap().clone();
+    m.groups.push(cs_core::Group3D {
+        name: "g".into(),
+        transform: Default::default(),
+        hidden: false,
+        locked: false,
+        open: true,
+    });
+    m.tree = vec![cs_core::Node::Group {
+        group: 0,
+        children: vec![cs_core::Node::Object(0)],
+    }];
+    assert!(e.set_model(m));
+}
+
+#[test]
+fn a_duplicate_stays_in_the_group_of_its_original() {
+    let mut e = editor_with_model();
+    with_a_group(&mut e);
+    assert!(e.duplicate_model_objects());
+    let m = e.model().unwrap();
+    assert_eq!(m.object_parents(1), vec![0]);
+}
+
+#[test]
+fn removing_an_object_keeps_the_others_in_their_groups() {
+    let mut e = editor_with_model();
+    assert!(e.add_primitive(Primitive::Plane));
+    with_a_group(&mut e); // el 0 en el grupo, el 1 en la raíz
+    assert!(e.remove_object(0));
+    let m = e.model().unwrap();
+    assert_eq!(m.object_parents(0), Vec::<usize>::new());
+    assert_eq!(m.group_objects(0), Vec::<usize>::new());
+}
+
+#[test]
+fn duplicating_a_group_copies_it_with_its_objects() {
+    let mut e = editor_with_model();
+    with_a_group(&mut e);
+    let steps = e.history.done_count();
+    assert!(e.duplicate_group(0));
+    let m = e.model().unwrap();
+    assert_eq!(m.groups.len(), 2);
+    assert_eq!(m.groups[1].name, "g copy");
+    assert_eq!(m.group_objects(1), vec![1]);
+    // La copia va justo después del original.
+    assert!(matches!(m.tree[1], cs_core::Node::Group { group: 1, .. }));
+    assert_eq!(e.history.done_count(), steps + 1);
+}
+
+#[test]
+fn duplicating_a_group_copies_its_subgroups() {
+    let mut e = editor_with_model();
+    with_a_group(&mut e);
+    let mut m = e.model().unwrap().clone();
+    m.groups.push(cs_core::Group3D {
+        name: "sub".into(),
+        transform: Default::default(),
+        hidden: false,
+        locked: false,
+        open: true,
+    });
+    m.tree = vec![cs_core::Node::Group {
+        group: 0,
+        children: vec![
+            cs_core::Node::Object(0),
+            cs_core::Node::Group {
+                group: 1,
+                children: Vec::new(),
+            },
+        ],
+    }];
+    assert!(e.set_model(m));
+    assert!(e.duplicate_group(0));
+    let m = e.model().unwrap();
+    assert_eq!(m.groups.len(), 4);
+    assert_eq!(m.groups[2].name, "g copy");
+    assert_eq!(m.groups[3].name, "sub");
+    assert_eq!(m.group_parents(3), vec![2]);
+    assert_eq!(m.group_objects(2), vec![1]);
+}

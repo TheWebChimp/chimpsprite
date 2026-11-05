@@ -140,15 +140,19 @@ impl Editor {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
-        model.objects.push(Object3D {
-            name: p.name().to_owned(),
-            mesh: primitive_mesh(&p),
-            transform: Transform3D::default(),
-            double_sided: false,
-            kind: Some(p.kind()),
-            hidden: false,
-            locked: false,
-        });
+        // Por ahora va a la raíz (el outliner elegirá el grupo).
+        model.push_object(
+            Object3D {
+                name: p.name().to_owned(),
+                mesh: primitive_mesh(&p),
+                transform: Transform3D::default(),
+                double_sided: false,
+                kind: Some(p.kind()),
+                hidden: false,
+                locked: false,
+            },
+            None,
+        );
         let last = model.objects.len() - 1;
         if !self.named("Add Object", |e| e.set_model(model)) {
             return false;
@@ -206,7 +210,9 @@ impl Editor {
         for &o in &chosen {
             let mut copy = model.objects[o].clone();
             copy.name = format!("{} copy", copy.name);
-            model.objects.push(copy);
+            // La copia queda en el mismo grupo que su original.
+            let parent = model.object_parents(o).first().copied();
+            model.push_object(copy, parent);
         }
         let last = model.objects.len() - 1;
         if !self.named("Duplicate Object", |e| e.set_model(model)) {
@@ -224,6 +230,51 @@ impl Editor {
         true
     }
 
+    /// Duplicate Group: copia el grupo con todo lo de adentro (objetos y subgrupos, en el mismo
+    /// orden) justo después del original, con " copy" en el nombre, en un paso de undo.
+    pub fn duplicate_group(&mut self, g: usize) -> bool {
+        let Some(mut model) = self.edited_model().cloned() else {
+            return false;
+        };
+        model.normalize_tree();
+        if g >= model.groups.len() {
+            return false;
+        }
+        let first = model.objects.len();
+        let Some(children) = group_children(&model.tree, g) else {
+            return false;
+        };
+        let mut copy = model.groups[g].clone();
+        copy.name = format!("{} copy", copy.name);
+        model.groups.push(copy);
+        let ng = model.groups.len() - 1;
+        let children = copy_nodes(&mut model, &children);
+        let _ = insert_after_group(
+            &mut model.tree,
+            g,
+            cs_core::Node::Group {
+                group: ng,
+                children,
+            },
+        );
+        let last = model.objects.len().checked_sub(1).filter(|&l| l >= first);
+        if !self.named("Duplicate Group", |e| e.set_model(model)) {
+            return false;
+        }
+        if let Some(last) = last {
+            self.model_object = Some(last);
+            if self.model_edit.mode == super::CadMode::Model
+                && self.model_edit.artboard == Some(self.model_id())
+            {
+                self.set_model_selection(cs_3d::Selection {
+                    mode: cs_3d::SelectMode::Object,
+                    items: (first..=last).map(cs_3d::Item::Object).collect(),
+                });
+            }
+        }
+        true
+    }
+
     pub fn remove_object(&mut self, i: usize) -> bool {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
@@ -231,7 +282,7 @@ impl Editor {
         if i >= model.objects.len() {
             return false;
         }
-        model.objects.remove(i);
+        model.remove_object(i);
         let left = model.objects.len();
         // La selección guarda índices de objeto: se acomoda ANTES del paso (que la revalida contra
         // el modelo nuevo): lo del objeto quitado se va y lo de los posteriores se corre un lugar.
@@ -413,12 +464,68 @@ impl Editor {
     }
 
     /// El modelo nuevo del que se edita (el del workspace en modo Texture, no la textura activa).
-    pub(super) fn set_model(&mut self, model: Model3D) -> bool {
+    pub(super) fn set_model(&mut self, mut model: Model3D) -> bool {
+        model.normalize_tree();
         if self.edited_model() == Some(&model) {
             return false;
         }
         self.execute_doc(set_model_cmd(self.model_id(), model))
     }
+}
+
+/// Los hijos del grupo `g` en el árbol.
+fn group_children(nodes: &[cs_core::Node], g: usize) -> Option<Vec<cs_core::Node>> {
+    nodes.iter().find_map(|n| match n {
+        cs_core::Node::Group { group, children } if *group == g => Some(children.clone()),
+        cs_core::Node::Group { children, .. } => group_children(children, g),
+        cs_core::Node::Object(_) => None,
+    })
+}
+
+/// Copia `nodes` al modelo (objetos y grupos nuevos al final) y devuelve los nodos de las copias.
+fn copy_nodes(model: &mut Model3D, nodes: &[cs_core::Node]) -> Vec<cs_core::Node> {
+    nodes
+        .iter()
+        .map(|n| match n {
+            cs_core::Node::Object(o) => {
+                let mut copy = model.objects[*o].clone();
+                copy.name = format!("{} copy", copy.name);
+                model.objects.push(copy);
+                cs_core::Node::Object(model.objects.len() - 1)
+            }
+            cs_core::Node::Group { group, children } => {
+                model.groups.push(model.groups[*group].clone());
+                let ng = model.groups.len() - 1;
+                cs_core::Node::Group {
+                    group: ng,
+                    children: copy_nodes(model, children),
+                }
+            }
+        })
+        .collect()
+}
+
+/// Mete `new` justo después del nodo del grupo `g` (en su misma lista). Si no lo encuentra, lo
+/// devuelve.
+fn insert_after_group(
+    nodes: &mut Vec<cs_core::Node>,
+    g: usize,
+    new: cs_core::Node,
+) -> Option<cs_core::Node> {
+    if let Some(at) = nodes
+        .iter()
+        .position(|n| matches!(n, cs_core::Node::Group { group, .. } if *group == g))
+    {
+        nodes.insert(at + 1, new);
+        return None;
+    }
+    let mut new = new;
+    for n in nodes.iter_mut() {
+        if let cs_core::Node::Group { children, .. } = n {
+            new = insert_after_group(children, g, new)?;
+        }
+    }
+    Some(new)
 }
 
 fn set_model_cmd(id: cs_core::ArtboardId, model: Model3D) -> DocCommand {
