@@ -42,6 +42,9 @@ const FADED: f32 = 0.5;
 pub struct OutlinerState {
     /// La fila que se renombra y lo escrito hasta ahora.
     pub rename: Option<(Row, String)>,
+    /// Recién empezado el renombre: el nombre entero va elegido (lo que se escriba lo
+    /// reemplaza). Solo una vez: después cada tecla se agrega a lo escrito.
+    pub select_all: bool,
     /// La fila que se arrastra.
     pub drag: Option<Row>,
 }
@@ -209,6 +212,7 @@ pub fn show(
         Some(Action::Rename(r)) => {
             let name = rows.iter().find(|l| l.row == r).map(|l| l.name.clone());
             state.rename = name.map(|n| (r, n));
+            state.select_all = true;
         }
         Some(Action::Hide(r)) => {
             editor.toggle_hidden(r);
@@ -435,7 +439,9 @@ fn rename(
                 name_rect.top() + CAPS_TOP - kit::input::FLOATING_CAPS,
             );
             let min_width = name_rect.width() + 2.0 * kit::input::TEXT_LEFT;
-            egui::Area::new(ui.id().with(("outliner_rename", r)))
+            // Un id fijo (no el del `Ui` de la lista, que cambia con lo que se dibuje antes): si
+            // cambiara, el campo sería otro cada frame y perdería el foco y el cursor.
+            egui::Area::new(egui::Id::new(("outliner_rename", r)))
                 .order(egui::Order::Foreground)
                 .fixed_pos(at)
                 .show(ui.ctx(), |ui| {
@@ -447,7 +453,10 @@ fn rename(
     };
     if !edit.has_focus() && !edit.lost_focus() {
         edit.request_focus();
-        // Todo el nombre elegido: lo que se escriba lo reemplaza.
+    }
+    // Al empezar, todo el nombre elegido: lo primero que se escriba lo reemplaza. Solo esa vez
+    // (si el campo perdiera el foco un frame, volver a elegirlo todo borraría lo escrito).
+    if std::mem::take(&mut state.select_all) {
         let mut s = egui::TextEdit::load_state(ui.ctx(), edit.id).unwrap_or_default();
         let all = egui::text::CCursorRange::two(
             egui::text::CCursor::new(0),

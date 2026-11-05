@@ -5590,6 +5590,34 @@ fn double_click_renames_a_row() {
 }
 
 #[test]
+fn renaming_a_row_letter_by_letter_keeps_what_was_typed() {
+    let mut h = model_panel_open(true);
+    let name = |h: &LayoutHarness| h.app.doc.editor.model().unwrap().objects[0].name.clone();
+    let at = node(&h, "Cube").center();
+    h.double_click(at);
+    // Como en la app: una letra por frame, con frames sin nada y el puntero moviéndose entre medio.
+    // Cada letra llega como tecla y como texto, como en la app (y las teclas son atajos: B, O,
+    // D, Y…).
+    let keys = [egui::Key::B, egui::Key::O, egui::Key::D, egui::Key::Y];
+    for (i, (c, key)) in ["B", "o", "d", "y"].into_iter().zip(keys).enumerate() {
+        h.frame_with(vec![Event::PointerMoved(at + vec2(i as f32, 0.0))]);
+        h.frame();
+        let press = |pressed| Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Default::default(),
+        };
+        h.frame_with(vec![press(true), Event::Text(c.into())]);
+        h.frame_with(vec![press(false)]);
+        h.frame();
+    }
+    tap_key(&mut h, egui::Key::Enter);
+    assert_eq!(name(&h), "Body");
+}
+
+#[test]
 fn dragging_a_row_onto_a_group_moves_it_inside() {
     let mut h = model_panel_open(true);
     add_object(&mut h, "Cylinder");
