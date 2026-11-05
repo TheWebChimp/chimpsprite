@@ -288,6 +288,7 @@ mod tests {
                     faces: vec![Face {
                         verts: vec![0],
                         uvs: vec![(0, 0)],
+                        part: None,
                     }],
                 },
                 transform: Transform3D::default(),

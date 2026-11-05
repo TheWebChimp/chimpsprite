@@ -22,12 +22,37 @@ pub struct Vec3i {
 pub struct Face {
     pub verts: Vec<u32>,
     pub uvs: Vec<(i32, i32)>,
+    /// La cara completa a la que pertenece (p. ej. los triángulos de una tapa son una sola);
+    /// `None` en archivos viejos o sin agrupar.
+    #[serde(default)]
+    pub part: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Mesh {
     pub vertices: Vec<Vec3i>,
     pub faces: Vec<Face>,
+}
+
+impl Mesh {
+    /// Las caras de la cara completa de `f` (con el mismo `part`; sin `part`, solo `f`), en orden.
+    pub fn part_faces(&self, f: usize) -> Vec<usize> {
+        match self.faces.get(f).and_then(|x| x.part) {
+            Some(p) => (0..self.faces.len())
+                .filter(|&i| self.faces[i].part == Some(p))
+                .collect(),
+            None => vec![f],
+        }
+    }
+
+    /// El siguiente id de parte libre (máximo + 1, o 0).
+    pub fn next_part(&self) -> u32 {
+        self.faces
+            .iter()
+            .filter_map(|f| f.part)
+            .max()
+            .map_or(0, |m| m + 1)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -542,6 +567,7 @@ mod tests {
         let quad = |a, b, c, d| Face {
             verts: vec![a, b, c, d],
             uvs: vec![(0, 0), (8, 0), (8, 8), (0, 8)],
+            part: None,
         };
         let faces = vec![
             quad(0, 1, 2, 3),
@@ -552,6 +578,56 @@ mod tests {
             quad(3, 2, 6, 7),
         ];
         Mesh { vertices, faces }
+    }
+
+    fn part_face(part: Option<u32>) -> Face {
+        Face {
+            verts: vec![0, 1, 2],
+            uvs: vec![(0, 0); 3],
+            part,
+        }
+    }
+
+    #[test]
+    fn part_faces_sin_parte_es_solo_la_cara() {
+        let mesh = Mesh {
+            vertices: vec![],
+            faces: vec![part_face(None), part_face(None)],
+        };
+        assert_eq!(mesh.part_faces(1), vec![1]);
+        assert_eq!(mesh.part_faces(9), vec![9]);
+    }
+
+    #[test]
+    fn part_faces_junta_las_del_mismo_part() {
+        let mesh = Mesh {
+            vertices: vec![],
+            faces: vec![
+                part_face(Some(1)),
+                part_face(Some(0)),
+                part_face(Some(1)),
+                part_face(Some(1)),
+            ],
+        };
+        assert_eq!(mesh.part_faces(2), vec![0, 2, 3]);
+        assert_eq!(mesh.part_faces(1), vec![1]);
+    }
+
+    #[test]
+    fn next_part_es_el_maximo_mas_uno() {
+        let mut mesh = Mesh::default();
+        assert_eq!(mesh.next_part(), 0);
+        mesh.faces = vec![part_face(None)];
+        assert_eq!(mesh.next_part(), 0);
+        mesh.faces = vec![part_face(Some(0)), part_face(Some(4)), part_face(None)];
+        assert_eq!(mesh.next_part(), 5);
+    }
+
+    #[test]
+    fn face_sin_part_en_el_json_se_lee_con_none() {
+        let f: Face =
+            serde_json::from_str(r#"{"verts":[0,1,2],"uvs":[[0,0],[1,0],[0,1]]}"#).unwrap();
+        assert_eq!(f.part, None);
     }
 
     fn model_with(mesh: Mesh) -> Model3D {

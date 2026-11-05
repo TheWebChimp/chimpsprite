@@ -1074,6 +1074,7 @@ mod tests {
             faces: vec![Face {
                 verts: vec![0, 1, 2, 3],
                 uvs: vec![(0, 1), (2, 1), (2, 0), (0, 0)],
+                part: None,
             }],
         }
     }
@@ -1138,6 +1139,7 @@ mod tests {
             faces: vec![Face {
                 verts: vec![0, 1, 2, 3],
                 uvs: vec![(0, 8), (8, 8), (8, 0), (0, 0)],
+                part: None,
             }],
         }
     }

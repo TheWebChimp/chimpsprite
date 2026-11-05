@@ -202,6 +202,7 @@ mod tests {
         Face {
             verts: vec![0, 1, 2, 3],
             uvs: uvs.to_vec(),
+            part: None,
         }
     }
 

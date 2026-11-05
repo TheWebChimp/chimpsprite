@@ -35,10 +35,11 @@ fn corners(f: &Face) -> Vec<Corner> {
         .collect()
 }
 
-fn face_of(cs: &[Corner]) -> Face {
+fn face_of(cs: &[Corner], part: Option<u32>) -> Face {
     Face {
         verts: cs.iter().map(|c| c.0).collect(),
         uvs: cs.iter().map(|c| c.1).collect(),
+        part,
     }
 }
 
@@ -152,6 +153,8 @@ pub fn extrude_faces(model: &Model3D, sel: &Selection) -> (Model3D, Selection) {
             }
         }
         let mut sides = Vec::new();
+        // Cada lado nuevo es una cara completa propia, con una parte que no estaba en uso.
+        let mut next_part = mesh.next_part();
         for &f in &faces {
             let cs = corners(&mesh.faces[f]);
             let k = cs.len() as f32;
@@ -165,12 +168,16 @@ pub fn extrude_faces(model: &Model3D, sel: &Selection) -> (Model3D, Selection) {
                     continue;
                 }
                 let s = inward_step(ua, ub, inner);
-                sides.push(face_of(&[
-                    (a, (ua.0 + s.0, ua.1 + s.1)),
-                    (b, (ub.0 + s.0, ub.1 + s.1)),
-                    (dup[&b], ub),
-                    (dup[&a], ua),
-                ]));
+                sides.push(face_of(
+                    &[
+                        (a, (ua.0 + s.0, ua.1 + s.1)),
+                        (b, (ub.0 + s.0, ub.1 + s.1)),
+                        (dup[&b], ub),
+                        (dup[&a], ua),
+                    ],
+                    Some(next_part),
+                ));
+                next_part += 1;
             }
         }
         for &f in &faces {
@@ -366,7 +373,7 @@ pub fn subdivide_faces(model: &Model3D, sel: &Selection) -> (Model3D, Selection)
             faces.extend(
                 pieces(&cs, &m, &mut mesh.vertices)
                     .iter()
-                    .map(|p| face_of(p)),
+                    .map(|p| face_of(p, face.part)),
             );
             if chosen.contains(&i) {
                 items.extend((start..faces.len()).map(|f| Item::Face(o, f)));
@@ -411,7 +418,7 @@ pub fn merge_selection(model: &Model3D, sel: &Selection) -> (Model3D, Selection)
                 .map(|(v, uv)| (if vs.contains(&v) { target } else { v }, uv))
                 .filter(|&(v, _)| seen.insert(v))
                 .collect();
-            *f = face_of(&kept);
+            *f = face_of(&kept, f.part);
         }
         mesh.faces.retain(|f| f.verts.len() >= 3);
         if let Some(v) = compact(mesh)[target as usize] {
@@ -863,7 +870,40 @@ mod tests {
         }
     }
 
-    // --- Merge ---
+    #[test]
+    fn dividir_conserva_la_parte_de_la_madre() {
+        let mut m = cube();
+        m.objects[0].mesh.faces[FRONT].part = Some(3);
+        let (out, _) = subdivide_faces(&m, &faces_sel(0, &[FRONT]));
+        let mesh = &out.objects[0].mesh;
+        assert_eq!(mesh.faces.len(), 13);
+        assert_eq!(
+            mesh.faces[..4].iter().map(|f| f.part).collect::<Vec<_>>(),
+            vec![Some(3); 4]
+        );
+        assert_eq!(mesh.faces[4].part, Some(1));
+    }
+
+    #[test]
+    fn extruir_conserva_la_parte_y_los_lados_estrenan_las_suyas() {
+        let m = cube();
+        let before: BTreeSet<u32> = m.objects[0]
+            .mesh
+            .faces
+            .iter()
+            .filter_map(|f| f.part)
+            .collect();
+        let (out, _) = extrude_faces(&m, &faces_sel(0, &[TOP]));
+        let mesh = &out.objects[0].mesh;
+        assert_eq!(mesh.faces[TOP].part, m.objects[0].mesh.faces[TOP].part);
+        let sides: Vec<u32> = mesh.faces[6..10]
+            .iter()
+            .map(|f| f.part.expect("con parte"))
+            .collect();
+        let uniq: BTreeSet<u32> = sides.iter().copied().collect();
+        assert_eq!(uniq.len(), 4, "cada lado con su parte");
+        assert!(uniq.is_disjoint(&before));
+    }
 
     #[test]
     fn unir_los_vertices_de_una_cara() {
