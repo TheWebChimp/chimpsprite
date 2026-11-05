@@ -837,3 +837,49 @@ fn without_texture_there_is_nothing_to_pack() {
     let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
     assert!(!e.pack_uvs());
 }
+
+/// Bloquea la capa 0 de la textura (con el candado del panel de capas).
+fn lock_texture_layer(e: &mut Editor) {
+    let id = texture_of(e);
+    let layer = texture_sprite(e).layers[0].id;
+    assert!(e.execute_doc(cs_commands::DocCommand::OnArtboard {
+        id,
+        cmd: cs_commands::Command::SetLayerProps {
+            id: layer,
+            props: cs_commands::LayerProps {
+                locked: Some(true),
+                ..Default::default()
+            },
+        },
+    }));
+}
+
+#[test]
+fn with_a_locked_texture_layer_there_is_no_pack() {
+    let mut e = with_stacked(cs_3d::Primitive::Plane, 2);
+    assert!(e.can_pack_uvs());
+    lock_texture_layer(&mut e);
+    assert!(!e.can_pack_uvs());
+    let model = e.workspace_model().unwrap().clone();
+    let steps = e.history.done_count();
+    assert!(!e.pack_uvs());
+    assert_eq!(e.history.done_count(), steps, "no undo step");
+    assert_eq!(e.workspace_model(), Some(&model));
+}
+
+#[test]
+fn pack_also_moves_a_locked_object_and_it_looks_the_same() {
+    let mut e = with_stacked(cs_3d::Primitive::Plane, 2);
+    assert!(e.toggle_row_locked(super::Row::Object(2)));
+    assert!(e.workspace_model().unwrap().objects[2].locked);
+    let before = cs_3d::object_uv_rect(e.workspace_model().unwrap(), 2);
+    let look = renders_one_by_one(&e);
+    assert!(e.can_pack_uvs());
+    assert!(e.pack_uvs());
+    let m = e.workspace_model().unwrap();
+    assert_ne!(cs_3d::object_uv_rect(m, 2), before, "the locked one moved");
+    for (a, b) in [(0, 1), (0, 2), (1, 2)] {
+        assert!(!boxes_touch(m, a, b), "{a} {b}");
+    }
+    assert_eq!(renders_one_by_one(&e), look, "each object looks the same");
+}

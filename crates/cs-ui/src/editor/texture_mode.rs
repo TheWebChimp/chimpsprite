@@ -4,7 +4,7 @@
 
 use cs_3d::{Item, SelectMode, Selection, UvPoint};
 use cs_commands::{Command, DocCommand};
-use cs_core::{ArtboardId, Mask, Model3D};
+use cs_core::{ArtboardId, LayerKind, Mask, Model3D};
 
 use super::model_edit::{CadMode, UvOp};
 use super::model_ops::NewPixels;
@@ -418,14 +418,41 @@ impl Editor {
         self.edit_selected_uvs("Flip UV", |m, faces| cs_3d::flip_uvs(m, faces, horizontal))
     }
 
+    /// Si alguna capa de imagen de la textura del modelo que se edita tiene candado (Pack UVs
+    /// no se usa así: sus pixeles se quedarían donde estaban).
+    pub fn texture_layers_locked(&self) -> bool {
+        self.edited_texture()
+            .and_then(|id| self.document.artboard(id))
+            .is_some_and(|a| {
+                a.sprite
+                    .layers
+                    .iter()
+                    .any(|l| l.kind == LayerKind::Image && l.locked)
+            })
+    }
+
+    /// Pack UVs se puede usar: hay textura sin capas bloqueadas y algún objeto con UVs.
+    pub fn can_pack_uvs(&self) -> bool {
+        self.edited_texture().is_some()
+            && !self.texture_layers_locked()
+            && self.edited_model().is_some_and(|m| {
+                (0..m.objects.len()).any(|o| cs_3d::object_uv_rect(m, o).is_some())
+            })
+    }
+
     /// Pack UVs: reacomoda en la textura los bloques de todos los objetos del modelo que se
     /// edita (las UVs de cada objeto, con sus caras como estaban entre sí; también los ocultos y
-    /// los bloqueados) sin encimarse, con [`cs_3d::MARGIN`] de aire, de mayor a menor. Si no
-    /// caben, la textura crece al siguiente lado de [`TEXTURE_SIDES`] (de doble en doble). Cada
-    /// bloque lleva sus pixeles a su lugar nuevo: si dos objetos usaban la misma zona, cada uno
-    /// se lleva su copia. Un paso de undo; `false` (ninguno) sin textura, si no caben ni en 512
-    /// o si ya estaban así.
+    /// los bloqueados con el candado del outliner: el candado es de la geometría, y cada uno se
+    /// lleva sus pixeles, así que se ve igual) sin encimarse, con [`cs_3d::MARGIN`] de aire, de
+    /// mayor a menor. Si no caben, la textura crece al siguiente lado de [`TEXTURE_SIDES`] (de
+    /// doble en doble). Cada bloque lleva sus pixeles a su lugar nuevo: si dos objetos usaban la
+    /// misma zona, cada uno se lleva su copia. Un paso de undo; `false` (ninguno) sin textura,
+    /// con alguna capa de imagen de la textura bloqueada (ver [`Self::texture_layers_locked`]),
+    /// si no caben ni en 512 o si ya estaban así.
     pub fn pack_uvs(&mut self) -> bool {
+        if self.texture_layers_locked() {
+            return false;
+        }
         let Some(sprite) = self
             .edited_texture()
             .and_then(|id| self.document.artboard(id))

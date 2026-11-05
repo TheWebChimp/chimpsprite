@@ -392,3 +392,57 @@ fn merge_skips_the_vertices_of_a_locked_part() {
     assert!(!e.can_merge());
     assert!(!e.merge_model_selection());
 }
+
+/// Un modelo con un cilindro de 8 lados como objeto 1: la tapa de arriba son sus caras 8..16
+/// (parte 1, centro en el vértice 16 y anillo en 8..16).
+fn with_a_cylinder() -> Editor {
+    let mut e = editing();
+    assert!(e.add_primitive(cs_3d::Primitive::Cylinder { sides: 8 }));
+    assert_eq!(model(&e).objects[1].mesh.faces[8].verts, vec![16, 8, 9]);
+    e
+}
+
+fn cyl_vertices(e: &mut Editor, vs: &[u32]) {
+    e.set_select_mode(SelectMode::Vertex);
+    e.set_model_selection(Selection {
+        mode: SelectMode::Vertex,
+        items: vs.iter().map(|&v| Item::Vertex(1, v)).collect(),
+    });
+}
+
+fn cyl_faces(fs: impl IntoIterator<Item = usize>) -> Selection {
+    Selection {
+        mode: SelectMode::Face,
+        items: fs.into_iter().map(|f| Item::Face(1, f)).collect(),
+    }
+}
+
+#[test]
+fn extruding_a_slice_of_a_cap_makes_it_its_own_face() {
+    let mut e = with_a_cylinder();
+    cyl_vertices(&mut e, &[16, 8, 9]);
+    assert!(e.extrude_moved([0.0, 1.0, 0.0]));
+    // La selección es exactamente el gajo extruido.
+    assert_eq!(e.model_edit().selection, cyl_faces([8]));
+    let m = model(&e);
+    assert_ne!(m.objects[1].mesh.faces[8].part, Some(1));
+    // Un clic en uno de los otros 7 elige solo los 7.
+    let click = cyl_faces([9]);
+    assert_eq!(cs_3d::expand_parts(m, &click), cyl_faces(9..16));
+}
+
+#[test]
+fn subdividing_part_of_a_face_selects_the_whole_face() {
+    let mut e = with_a_cylinder();
+    cyl_vertices(&mut e, &[16, 8, 9]);
+    assert!(e.subdivide_model_selection());
+    let m = model(&e).clone();
+    let sel = e.model_edit().selection.clone();
+    assert_eq!(sel.mode, SelectMode::Face);
+    // Toda la tapa (los pedazos y los otros gajos comparten su parte), nada más.
+    let cap: Vec<usize> = (0..m.objects[1].mesh.faces.len())
+        .filter(|&f| m.objects[1].mesh.faces[f].part == Some(1))
+        .collect();
+    assert!(cap.len() > 8);
+    assert_eq!(sel, cyl_faces(cap));
+}

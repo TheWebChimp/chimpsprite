@@ -43,9 +43,11 @@ Decisiones tomadas con el usuario:
 - **Las cajas** (en la textura de abajo, modo Texture):
   - Con un objeto elegido (modo Object en las vistas, o su fila en el outliner) se ve la caja de
     todas sus UVs; con caras completas elegidas, la caja de sus UVs.
-  - Dentro de la caja, arrastrar mueve las UVs (como Move hoy, sin Alt con cualquier
-    herramienta: ver abajo); las **asas** (4 esquinas y 4 lados, cuadritos como los puntos)
-    escalan las UVs respecto del lado opuesto, en pixeles enteros; con Shift, proporcional.
+  - Con caras elegidas, arrastrar dentro de la caja con Move (o con Alt) mueve sus UVs. Con la
+    caja de la fila del outliner (sin caras elegidas), moverla es con Alt, y Move mueve los
+    pixeles. Las **asas** (4 esquinas y 4 lados, cuadritos como los puntos) y los puntos se
+    arrastran con cualquier herramienta; las asas escalan las UVs respecto del lado opuesto, en
+    pixeles enteros; con Shift, proporcional.
   - Los **puntos** de cada vértice siguen libres (los de la cara elegida), como ahora.
   - Cada gesto, un paso de undo. Mover o escalar UVs no mueve los pixeles (como hoy).
   - Con el lápiz u otras herramientas de pintar: los puntos y las asas se arrastran (como los
@@ -62,7 +64,10 @@ Decisiones tomadas con el usuario:
   H / Flip V): reacomoda todos los objetos del modelo sin encimar, cada objeto como un bloque
   (sus caras conservan su acomodo relativo), de mayor a menor, **llevando los pixeles** de cada
   bloque a su lugar nuevo. Si dos objetos usaban la misma zona, cada uno se lleva su copia de esos
-  pixeles. Si no cabe, crece la textura. Un paso de undo.
+  pixeles. Si no cabe, crece la textura. Un paso de undo. Respeta el candado de las capas de la
+  textura: con alguna capa de imagen bloqueada el botón está deshabilitado ("Unlock the texture
+  layers to pack"). Reacomoda también los objetos bloqueados (el candado del outliner), que se
+  llevan sus pixeles y se ven igual.
 
 ## 3. Tests
 

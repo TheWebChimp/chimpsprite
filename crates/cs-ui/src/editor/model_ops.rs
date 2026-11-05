@@ -631,7 +631,10 @@ pub(super) enum NewPixels {
     /// agregado se ve como en un modelo nuevo y no transparente.
     Template,
     /// Los pixeles de su caja vieja (en todas las capas de imagen y frames): un duplicado se ve
-    /// igual que su original, y un objeto reacomodado (Pack UVs) igual que antes.
+    /// igual que su original, y un objeto reacomodado (Pack UVs) igual que antes. Las capas
+    /// bloqueadas se saltan (no se escribe en ellas): un duplicado con una capa bloqueada no
+    /// lleva lo de esa capa a su caja nueva. Pack UVs no llega aquí con capas bloqueadas (ver
+    /// [`Editor::texture_layers_locked`]).
     Copy,
 }
 

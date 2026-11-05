@@ -228,6 +228,9 @@ impl Editor {
             return false;
         };
         let (model, sel) = op(m, &editable);
+        // En modo Face lo que queda elegido son caras completas (Subdivide desde Vertex o
+        // Edge deja solo los pedazos de una parte).
+        let sel = cs_3d::expand_parts(&model, &sel);
         let left = model.objects.len();
         let old = std::mem::replace(&mut self.model_edit.selection, sel.clone());
         if !self.named(label, |e| e.set_model(model)) {

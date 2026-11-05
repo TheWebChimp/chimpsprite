@@ -380,14 +380,13 @@ fn general(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<Mode
 }
 
 /// Lo del objeto elegido, en modo Texture: Rotate 90°, Flip H y Flip V para las caras elegidas
-/// (sin caras, deshabilitados) y Pack UVs, de todo el modelo (con textura y algún objeto con
-/// UVs), en una fila sin título (como el boceto).
+/// (sin caras, deshabilitados) y Pack UVs, de todo el modelo (ver [`Editor::can_pack_uvs`]; con
+/// una capa de la textura bloqueada, el tooltip dice por qué no), en una fila sin título (como
+/// el boceto).
 fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let faces = !editor.selected_faces().is_empty();
-    let packable = editor.edited_texture().is_some()
-        && editor
-            .edited_model()
-            .is_some_and(|m| (0..m.objects.len()).any(|o| cs_3d::object_uv_rect(m, o).is_some()));
+    let packable = editor.can_pack_uvs();
+    let locked = editor.texture_layers_locked();
     let (mut rotate, mut flip_h, mut flip_v, mut pack) = (false, false, false, false);
     ui.horizontal(|ui| {
         ui.add_enabled_ui(faces, |ui| {
@@ -396,7 +395,13 @@ fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
             flip_v = button(ui, skin, "Flip V").clicked();
         });
         ui.add_enabled_ui(packable, |ui| {
-            pack = button(ui, skin, "Pack UVs").clicked();
+            let b = button(ui, skin, "Pack UVs");
+            let b = if locked {
+                b.on_disabled_hover_text("Unlock the texture layers to pack")
+            } else {
+                b
+            };
+            pack = b.clicked();
         });
     });
     if rotate {

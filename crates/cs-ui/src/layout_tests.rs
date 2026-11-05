@@ -9409,6 +9409,30 @@ fn pack_uvs_is_in_the_uv_row_and_packs_without_chosen_faces() {
 }
 
 #[test]
+fn pack_uvs_is_off_with_a_locked_texture_layer_and_says_why() {
+    let mut h = with_the_model_panel(with_a_model_in_texture_mode());
+    let e = &mut h.app.doc.editor;
+    let id = e.workspace_model().unwrap().texture.unwrap();
+    let layer = e.document.artboard(id).unwrap().sprite.layers[0].id;
+    assert!(e.execute_doc(cs_commands::DocCommand::OnArtboard {
+        id,
+        cmd: cs_commands::Command::SetLayerProps {
+            id: layer,
+            props: cs_commands::LayerProps {
+                locked: Some(true),
+                ..Default::default()
+            },
+        },
+    }));
+    h.frame();
+    assert!(h.disabled.iter().any(|l| l == "Pack UVs"));
+    let pack = h.button("Pack UVs");
+    bubble_over(&mut h, pack.center());
+    let why = "Unlock the texture layers to pack";
+    assert!(h.text_rects.iter().any(|(t, _, _)| *t == why), "{why:?}");
+}
+
+#[test]
 fn opening_the_panel_beside_with_a_face_chosen_focuses_its_uvs() {
     let mut h = with_the_front_face_chosen();
     let fitted = h.app.doc.editor.model_edit().texture_view.unwrap();
