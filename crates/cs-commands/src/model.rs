@@ -103,6 +103,8 @@ pub fn new_model_artboard(
             transform: Transform3D::default(),
             double_sided: false,
             kind: Some(cube.kind()),
+            hidden: false,
+            locked: false,
         }],
         texture: Some(texture_id),
         ..Default::default()
@@ -220,6 +222,8 @@ mod tests {
             transform,
             double_sided: false,
             kind: Some(p.kind()),
+            hidden: false,
+            locked: false,
         }
     }
 

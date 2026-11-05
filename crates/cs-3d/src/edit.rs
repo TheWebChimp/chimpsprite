@@ -805,6 +805,8 @@ mod tests {
             },
             double_sided: false,
             kind: Some(Primitive::Cube.kind()),
+            hidden: false,
+            locked: false,
         }
     }
 

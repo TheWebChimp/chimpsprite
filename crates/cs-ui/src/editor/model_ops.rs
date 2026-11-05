@@ -146,6 +146,8 @@ impl Editor {
             transform: Transform3D::default(),
             double_sided: false,
             kind: Some(p.kind()),
+            hidden: false,
+            locked: false,
         });
         let last = model.objects.len() - 1;
         if !self.named("Add Object", |e| e.set_model(model)) {

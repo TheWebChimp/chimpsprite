@@ -281,6 +281,7 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
         let mut model = entry.model;
         if let Some(m) = &mut model {
             m.shading.normalize();
+            m.normalize_tree();
         }
         let model = model.filter(|m| match m.check(&sprite) {
             Ok(()) => true,
@@ -607,6 +608,8 @@ mod tests {
         m.outline = Some(Rgba::rgb(1, 2, 3));
         m.shading
             .set(Rgba::rgb(200, 100, 50), 2, Some(Rgba::rgb(9, 8, 7)));
+        // Al abrir se arma el árbol del outliner: el original ya lo trae igual.
+        m.normalize_tree();
         let (back, report) = read(&write(&doc).unwrap()).unwrap();
         assert!(report.warnings.is_empty(), "{:?}", report.warnings);
         let a = back.artboard(model).unwrap();

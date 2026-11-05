@@ -866,6 +866,8 @@ mod tests {
             transform,
             double_sided: false,
             kind: Some(p.kind()),
+            hidden: false,
+            locked: false,
         }
     }
 

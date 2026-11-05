@@ -221,6 +221,8 @@ mod tests {
                 transform: Transform3D::default(),
                 double_sided: false,
                 kind: None,
+                hidden: false,
+                locked: false,
             }],
             ..Model3D::default()
         }

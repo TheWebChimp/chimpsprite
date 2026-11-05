@@ -1748,6 +1748,8 @@ mod tests {
                 transform: Default::default(),
                 double_sided: false,
                 kind: Some(cs_core::PrimitiveKind::Cube),
+                hidden: false,
+                locked: false,
             }],
             ..Model3D::default()
         }

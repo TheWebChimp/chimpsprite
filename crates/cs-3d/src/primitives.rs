@@ -334,6 +334,8 @@ mod tests {
                     transform: Transform3D::default(),
                     double_sided: false,
                     kind: Some(p.kind()),
+                    hidden: false,
+                    locked: false,
                 })
                 .collect(),
             ..Model3D::default()

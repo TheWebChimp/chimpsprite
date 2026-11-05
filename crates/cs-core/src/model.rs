@@ -53,6 +53,28 @@ impl Default for Transform3D {
     }
 }
 
+/// Una carpeta del outliner: mueve, oculta y bloquea a lo que tiene adentro.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Group3D {
+    pub name: String,
+    pub transform: Transform3D,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub locked: bool,
+    /// Desplegado en el outliner.
+    #[serde(default = "yes")]
+    pub open: bool,
+}
+
+/// Un nodo del árbol del outliner: un objeto o un grupo con sus hijos (índices a `objects` y
+/// `groups`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Node {
+    Object(usize),
+    Group { group: usize, children: Vec<Node> },
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Object3D {
     pub name: String,
@@ -63,6 +85,10 @@ pub struct Object3D {
     /// La primitiva de la que salió (para su ícono); `None` en archivos viejos.
     #[serde(default)]
     pub kind: Option<PrimitiveKind>,
+    #[serde(default)]
+    pub hidden: bool,
+    #[serde(default)]
+    pub locked: bool,
 }
 
 /// El tipo de primitiva de un objeto (sin sus parámetros).
@@ -255,6 +281,12 @@ pub struct Model3D {
     pub outline: Option<Rgba>,
     #[serde(default)]
     pub shading: ShadingTable,
+    /// Las carpetas del outliner.
+    #[serde(default)]
+    pub groups: Vec<Group3D>,
+    /// El árbol del outliner (vacío en archivos viejos: `normalize_tree` lo arma).
+    #[serde(default)]
+    pub tree: Vec<Node>,
 }
 
 impl Default for Model3D {
@@ -272,7 +304,183 @@ impl Default for Model3D {
             light: Light3D::default(),
             outline: None,
             shading: ShadingTable::default(),
+            groups: Vec::new(),
+            tree: Vec::new(),
         }
+    }
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// Busca `target` en `nodes` y devuelve los grupos que lo contienen, del más cercano al más
+/// lejano. `None` si no está.
+fn path_to(nodes: &[Node], target: &Node) -> Option<Vec<usize>> {
+    for n in nodes {
+        if n == target {
+            return Some(Vec::new());
+        }
+        if let Node::Group { group, children } = n {
+            if let Node::Group { group: g, .. } = target
+                && g == group
+            {
+                return Some(Vec::new());
+            }
+            if let Some(mut p) = path_to(children, target) {
+                p.push(*group);
+                return Some(p);
+            }
+        }
+    }
+    None
+}
+
+impl Model3D {
+    /// Deja el árbol del outliner consistente: cada objeto y cada grupo una sola vez (se quitan
+    /// los índices fuera de rango y los repetidos) y lo que falte, al final de la raíz en orden.
+    pub fn normalize_tree(&mut self) {
+        let (no, ng) = (self.objects.len(), self.groups.len());
+        let mut seen_o = vec![false; no];
+        let mut seen_g = vec![false; ng];
+        fn clean(nodes: Vec<Node>, so: &mut [bool], sg: &mut [bool]) -> Vec<Node> {
+            nodes
+                .into_iter()
+                .filter_map(|n| match n {
+                    Node::Object(o) if o < so.len() && !so[o] => {
+                        so[o] = true;
+                        Some(Node::Object(o))
+                    }
+                    Node::Group { group, children } if group < sg.len() && !sg[group] => {
+                        sg[group] = true;
+                        Some(Node::Group {
+                            group,
+                            children: clean(children, so, sg),
+                        })
+                    }
+                    _ => None,
+                })
+                .collect()
+        }
+        let mut tree = clean(std::mem::take(&mut self.tree), &mut seen_o, &mut seen_g);
+        tree.extend((0..ng).filter(|&g| !seen_g[g]).map(|g| Node::Group {
+            group: g,
+            children: Vec::new(),
+        }));
+        tree.extend((0..no).filter(|&o| !seen_o[o]).map(Node::Object));
+        self.tree = tree;
+    }
+
+    pub fn object_parents(&self, o: usize) -> Vec<usize> {
+        path_to(&self.tree, &Node::Object(o)).unwrap_or_default()
+    }
+
+    pub fn group_parents(&self, g: usize) -> Vec<usize> {
+        path_to(
+            &self.tree,
+            &Node::Group {
+                group: g,
+                children: Vec::new(),
+            },
+        )
+        .unwrap_or_default()
+    }
+
+    pub fn object_hidden(&self, o: usize) -> bool {
+        self.objects.get(o).is_some_and(|ob| ob.hidden)
+            || self
+                .object_parents(o)
+                .iter()
+                .any(|&g| self.groups.get(g).is_some_and(|g| g.hidden))
+    }
+
+    pub fn object_locked(&self, o: usize) -> bool {
+        self.objects.get(o).is_some_and(|ob| ob.locked)
+            || self
+                .object_parents(o)
+                .iter()
+                .any(|&g| self.groups.get(g).is_some_and(|g| g.locked))
+    }
+
+    pub fn object_chain(&self, o: usize) -> Vec<Transform3D> {
+        let mut out = vec![
+            self.objects
+                .get(o)
+                .map(|ob| ob.transform)
+                .unwrap_or_default(),
+        ];
+        out.extend(
+            self.object_parents(o)
+                .iter()
+                .filter_map(|&g| self.groups.get(g).map(|g| g.transform)),
+        );
+        out
+    }
+
+    pub fn group_objects(&self, g: usize) -> Vec<usize> {
+        fn find(nodes: &[Node], g: usize) -> Option<&[Node]> {
+            nodes.iter().find_map(|n| match n {
+                Node::Group { group, children } if *group == g => Some(children.as_slice()),
+                Node::Group { children, .. } => find(children, g),
+                Node::Object(_) => None,
+            })
+        }
+        fn collect(nodes: &[Node], out: &mut Vec<usize>) {
+            for n in nodes {
+                match n {
+                    Node::Object(o) => out.push(*o),
+                    Node::Group { children, .. } => collect(children, out),
+                }
+            }
+        }
+        let mut out = Vec::new();
+        if let Some(children) = find(&self.tree, g) {
+            collect(children, &mut out);
+        }
+        out.sort_unstable();
+        out
+    }
+
+    pub fn push_object(&mut self, obj: Object3D, parent: Option<usize>) -> usize {
+        self.normalize_tree();
+        self.objects.push(obj);
+        let i = self.objects.len() - 1;
+        fn put(nodes: &mut [Node], g: usize, i: usize) -> bool {
+            nodes.iter_mut().any(|n| match n {
+                Node::Group { group, children } if *group == g => {
+                    children.push(Node::Object(i));
+                    true
+                }
+                Node::Group { children, .. } => put(children, g, i),
+                Node::Object(_) => false,
+            })
+        }
+        if !parent.is_some_and(|g| put(&mut self.tree, g, i)) {
+            self.tree.push(Node::Object(i));
+        }
+        i
+    }
+
+    pub fn remove_object(&mut self, o: usize) {
+        if o >= self.objects.len() {
+            return;
+        }
+        self.objects.remove(o);
+        fn fix(nodes: Vec<Node>, o: usize) -> Vec<Node> {
+            nodes
+                .into_iter()
+                .filter_map(|n| match n {
+                    Node::Object(i) if i == o => None,
+                    Node::Object(i) => Some(Node::Object(if i > o { i - 1 } else { i })),
+                    Node::Group { group, children } => Some(Node::Group {
+                        group,
+                        children: fix(children, o),
+                    }),
+                })
+                .collect()
+        }
+        self.tree = fix(std::mem::take(&mut self.tree), o);
+        self.normalize_tree();
     }
 }
 
@@ -354,6 +562,8 @@ mod tests {
                 transform: Transform3D::default(),
                 double_sided: false,
                 kind: None,
+                hidden: false,
+                locked: false,
             }],
             ..Model3D::default()
         }
@@ -544,5 +754,118 @@ mod tests {
         let c = CameraPreset::Iso.camera(80, Vec3i::default());
         assert_eq!(c.projection, Projection::Orthographic);
         assert_eq!((c.yaw, c.pitch, c.distance), (450, 300, 80));
+    }
+
+    fn cube_obj() -> Object3D {
+        model_with(cube()).objects.remove(0)
+    }
+
+    fn grouped() -> Model3D {
+        // cube(0) suelto; grupo 0 "legs" con cube(1) y el grupo 1 "foot" con cube(2).
+        let mut m = model_with(cube());
+        m.objects.push(cube_obj());
+        m.objects.push(cube_obj());
+        m.groups = vec![
+            Group3D {
+                name: "legs".into(),
+                transform: Transform3D::default(),
+                hidden: false,
+                locked: false,
+                open: true,
+            },
+            Group3D {
+                name: "foot".into(),
+                transform: Transform3D::default(),
+                hidden: false,
+                locked: false,
+                open: true,
+            },
+        ];
+        m.tree = vec![
+            Node::Object(0),
+            Node::Group {
+                group: 0,
+                children: vec![
+                    Node::Object(1),
+                    Node::Group {
+                        group: 1,
+                        children: vec![Node::Object(2)],
+                    },
+                ],
+            },
+        ];
+        m
+    }
+
+    #[test]
+    fn a_model_without_a_tree_gets_one_with_its_objects_in_order() {
+        let mut m = model_with(cube());
+        m.objects.push(cube_obj());
+        m.normalize_tree();
+        assert_eq!(m.tree, vec![Node::Object(0), Node::Object(1)]);
+        // Idempotente.
+        let again = m.clone();
+        m.normalize_tree();
+        assert_eq!(m, again);
+    }
+
+    #[test]
+    fn normalize_drops_bad_indices_and_adds_what_is_missing() {
+        let mut m = grouped();
+        m.tree.push(Node::Object(7)); // no existe
+        m.tree.push(Node::Object(1)); // repetido
+        m.objects.push(cube_obj()); // el 3 no está en el árbol
+        m.normalize_tree();
+        assert_eq!(m.tree.len(), 3, "{:?}", m.tree);
+        assert_eq!(m.tree[2], Node::Object(3));
+        assert_eq!(m.object_parents(1), vec![0]);
+    }
+
+    #[test]
+    fn parents_hidden_locked_and_chain_are_inherited() {
+        let mut m = grouped();
+        assert_eq!(m.object_parents(2), vec![1, 0]);
+        assert_eq!(m.object_parents(0), Vec::<usize>::new());
+        assert_eq!(m.group_parents(1), vec![0]);
+        m.groups[0].hidden = true;
+        m.groups[1].locked = true;
+        assert!(m.object_hidden(2) && m.object_hidden(1) && !m.object_hidden(0));
+        assert!(m.object_locked(2) && !m.object_locked(1));
+        m.groups[0].transform.position.x = 16;
+        let chain = m.object_chain(2);
+        assert_eq!(chain.len(), 3);
+        assert_eq!(chain[2].position.x, 16, "the outermost group last");
+        assert_eq!(m.group_objects(0), vec![1, 2]);
+    }
+
+    #[test]
+    fn push_and_remove_keep_the_tree() {
+        let mut m = grouped();
+        let i = m.push_object(cube_obj(), Some(1));
+        assert_eq!(i, 3);
+        assert_eq!(m.object_parents(3), vec![1, 0]);
+        m.remove_object(1);
+        // El 2 pasa a ser el 1 (y el 3 el 2), en sus mismos grupos.
+        assert_eq!(m.objects.len(), 3);
+        assert_eq!(m.object_parents(1), vec![1, 0]);
+        assert_eq!(m.object_parents(2), vec![1, 0]);
+        assert!(!format!("{:?}", m.tree).contains("Object(3)"));
+    }
+
+    #[test]
+    fn a_model_saved_before_groups_reads_without_them() {
+        let m = model_with(cube());
+        let mut v = serde_json::to_value(&m).unwrap();
+        let o = v.as_object_mut().unwrap();
+        o.remove("groups");
+        o.remove("tree");
+        for obj in o["objects"].as_array_mut().unwrap() {
+            let obj = obj.as_object_mut().unwrap();
+            obj.remove("hidden");
+            obj.remove("locked");
+        }
+        let back: Model3D = serde_json::from_value(v).unwrap();
+        assert!(back.groups.is_empty() && back.tree.is_empty());
+        assert!(!back.objects[0].hidden && !back.objects[0].locked);
     }
 }
