@@ -320,3 +320,75 @@ fn a_font_cannot_be_moved_to_the_library() {
     assert!(!e.move_active_to_library());
     assert!(!e.document.artboard(font).unwrap().in_library);
 }
+
+/// Una fuente 8×8 con `a` y `´` dibujadas (y `´` agregada).
+fn editor_with_accent_parts() -> Editor {
+    let mut e = editor_with_font();
+    assert!(e.add_glyphs(&['´']));
+    for (ch, points) in [('a', &[(0, 4), (3, 6)][..]), ('´', &[(1, 0)][..])] {
+        e.go_to_glyph(ch);
+        let (layer, frame) = (e.layer, e.frame);
+        e.execute(cs_commands::Command::DrawPixels {
+            layer,
+            frame,
+            pixels: points.iter().map(|&(x, y)| (x, y, ONE_BIT_INK)).collect(),
+        });
+    }
+    e
+}
+
+#[test]
+fn auto_build_keeps_the_current_glyph_and_undoes_in_one_step() {
+    let mut e = editor_with_accent_parts();
+    e.go_to_glyph('b');
+    let report = e.auto_build_accents(None, false);
+    assert_eq!(report.built, vec!['á']);
+    assert_eq!(e.current_glyph(), Some('b'));
+    assert!(e.go_to_glyph('á'));
+    assert_eq!(e.glyph_components().len(), 2);
+    e.undo();
+    assert_eq!(e.font().unwrap().index_of('á'), None);
+}
+
+#[test]
+fn components_are_added_selected_nudged_and_removed() {
+    let mut e = editor_with_accent_parts();
+    e.go_to_glyph('b');
+    assert!(e.add_component('a'));
+    assert_eq!(e.selected_component(), Some(0));
+    e.tool = super::ToolKind::Move;
+    assert!(e.can_nudge_component());
+    assert!(e.nudge_component(1, -1));
+    assert_eq!(e.glyph_components()[0].offset, (1, -1));
+    assert!(!e.add_component('b'), "itself: a cycle");
+    e.undo();
+    assert_eq!(e.glyph_components()[0].offset, (0, 0));
+    e.go_to_glyph('c');
+    assert_eq!(e.selected_component(), None, "another glyph");
+    e.go_to_glyph('b');
+    assert!(e.remove_component(0));
+    assert!(e.glyph_components().is_empty());
+    e.undo();
+    assert!(e.unlink_glyph('b'));
+    assert!(e.glyph_components().is_empty());
+    let frame = e.frame;
+    assert!(
+        e.sprite().cel(e.layer, frame).is_some(),
+        "a's pixels are its own"
+    );
+}
+
+#[test]
+fn filling_glyphs_goes_back_to_the_current_glyph() {
+    let mut e = editor_with_accent_parts();
+    e.go_to_glyph('b');
+    let glyphs = [cs_core::GlyphBuild {
+        ch: '¡',
+        advance: None,
+        pixels: vec![(1, 1, None)],
+    }];
+    assert_eq!(e.fill_glyphs(&glyphs, false), 1);
+    assert_eq!(e.current_glyph(), Some('b'));
+    assert!(e.font().unwrap().index_of('¡').is_some());
+    assert_eq!(e.fill_glyphs(&glyphs, false), 0, "already drawn");
+}

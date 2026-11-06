@@ -797,10 +797,27 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             }
             e.go_to_glyph('A');
             app.font_panel.test_text = "ABC CAB".into();
+            // Con CHIMPSPRITE_DEMO_FONT_COMPOSITE, unas minúsculas y marcas, los acentos armados
+            // con Auto-build accents y la `á` abierta con su `´` elegida (con Move).
+            if dev_var("CHIMPSPRITE_DEMO_FONT_COMPOSITE").is_some() {
+                demo_accents(&mut app.doc.editor);
+                app.font_panel.test_text = "àéîõüçñå ÀÇÑ".into();
+                app.font_panel.page = crate::font_panel::Page::Latin1;
+            }
             // Con CHIMPSPRITE_DEMO_FONT_BUILD, el diálogo Build Font abierto.
             if dev_var("CHIMPSPRITE_DEMO_FONT_BUILD").is_some() {
                 app.open_build_font(None);
             }
+        }
+    }
+    // Desarrollo: Glyphs from image… con un PNG, para capturas (con CHIMPSPRITE_DEMO_FONT).
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(path) = dev_var("CHIMPSPRITE_DEMO_FONT_SHEET")
+        && app.doc.editor.is_font()
+    {
+        match std::fs::read(path) {
+            Ok(bytes) => app.opened_glyph_sheet(&bytes),
+            Err(e) => log::warn!("CHIMPSPRITE_DEMO_FONT_SHEET: {e}"),
         }
     }
     // Desarrollo: el diálogo Import Font de un TTF/OTF (o un JSON de BitFontMaker2 importado),
@@ -987,6 +1004,63 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
         app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
     }
+}
+
+/// Para la captura de los compuestos: unas minúsculas y marcas en la fuente de ejemplo (8×8,
+/// baseline 6), Auto-build accents y la `á` abierta con la `´` elegida, con Move.
+fn demo_accents(e: &mut crate::editor::Editor) {
+    type Rows = &'static [&'static str];
+    // Cada glifo: su carácter, la fila de arriba y sus filas ('X' = tinta).
+    let glyphs: [(char, i32, Rows); 16] = [
+        ('a', 3, &[".XXX", "X..X", ".XXX"]),
+        ('c', 3, &[".XXX", "X...", ".XXX"]),
+        ('e', 3, &[".XX.", "XXXX", ".XX."]),
+        ('i', 1, &["X", ".", "X", "X", "X"]),
+        ('ı', 3, &["X", "X", "X"]),
+        ('n', 3, &["XXX.", "X..X", "X..X"]),
+        ('o', 3, &[".XX.", "X..X", ".XX."]),
+        ('u', 3, &["X..X", "X..X", ".XXX"]),
+        ('´', 0, &["..X", ".X."]),
+        ('`', 0, &[".X.", "..X"]),
+        ('ˆ', 0, &[".X.", "X.X"]),
+        ('˜', 0, &[".X.X", "X.X."]),
+        ('¨', 0, &["X.X"]),
+        ('¸', 0, &[".X", "X."]),
+        ('˚', 0, &[".X.", "X.X", ".X."]),
+        ('C', 1, &[".XXX", "X...", "X...", "X...", ".XXX"]),
+    ];
+    let chars: Vec<char> = glyphs.iter().map(|g| g.0).collect();
+    e.add_glyphs(&chars);
+    for (ch, top, rows) in glyphs {
+        e.go_to_glyph(ch);
+        let (layer, frame) = (e.layer, e.frame);
+        let pixels = rows
+            .iter()
+            .enumerate()
+            .flat_map(|(dy, row)| {
+                row.chars()
+                    .enumerate()
+                    .filter(|(_, c)| *c == 'X')
+                    .map(move |(x, _)| (x as i32 + 1, top + dy as i32, cs_core::ONE_BIT_INK))
+            })
+            .collect();
+        e.execute(Command::Batch(vec![
+            Command::SetCel {
+                layer,
+                frame,
+                cel: None,
+            },
+            Command::DrawPixels {
+                layer,
+                frame,
+                pixels,
+            },
+        ]));
+    }
+    e.auto_build_accents(None, false);
+    e.go_to_glyph('á');
+    e.select_component(Some(1));
+    e.tool = crate::ToolKind::Move;
 }
 
 #[cfg(test)]

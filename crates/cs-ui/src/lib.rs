@@ -31,6 +31,7 @@ mod font_dialog;
 mod font_io;
 mod font_overlay;
 mod font_panel;
+mod font_sheet_dialog;
 mod frame_dialog;
 mod gif_dialog;
 mod mask_ops;
@@ -172,6 +173,8 @@ pub struct ChimpApp {
     build_font: Option<font_io::BuildFontDialog>,
     /// File → Import Font… de un TTF/OTF.
     import_font: Option<Box<font_io::ImportFontDialog>>,
+    /// FontForge → Generate ▾ → Glyphs from image….
+    glyph_sheet: Option<Box<font_sheet_dialog::GlyphSheetDialog>>,
     /// `File → New 3D Model…`.
     new_model: Option<model_dialog::NewModelDialog>,
     /// Bake… del panel 3D.
@@ -337,6 +340,7 @@ impl ChimpApp {
             new_font: None,
             build_font: None,
             import_font: None,
+            glyph_sheet: None,
             new_model: None,
             bake: None,
             gif: None,
@@ -650,6 +654,9 @@ impl ChimpApp {
         match action {
             Some(font_panel::FontAction::NewFont) => self.new_font = Some(Default::default()),
             Some(font_panel::FontAction::Build(format)) => self.open_build_font(Some(format)),
+            Some(font_panel::FontAction::AutoBuildAccents) => self.auto_build_accents(),
+            Some(font_panel::FontAction::FillFromTtf) => self.choose_fill_ttf(ctx),
+            Some(font_panel::FontAction::GlyphsFromImage) => self.choose_glyph_sheet(ctx),
             None => {}
         }
     }
@@ -1923,6 +1930,7 @@ impl eframe::App for ChimpApp {
         self.update_font_dialog(&ctx);
         self.update_build_font_dialog(&ctx);
         self.update_import_font_dialog(&ctx);
+        self.update_glyph_sheet_dialog(&ctx);
         self.update_model_dialog(&ctx);
         self.update_bake_dialog(&ctx);
         self.update_gif_dialog(&ctx);
@@ -2123,6 +2131,19 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
         }
         Key::ArrowDown if editor.can_transform() => {
             editor.nudge(0, 1);
+        }
+        // Con Move en un glifo compuesto, el componente elegido.
+        Key::ArrowLeft if editor.can_nudge_component() => {
+            editor.nudge_component(-step, 0);
+        }
+        Key::ArrowRight if editor.can_nudge_component() => {
+            editor.nudge_component(step, 0);
+        }
+        Key::ArrowUp if editor.can_nudge_component() => {
+            editor.nudge_component(0, -step);
+        }
+        Key::ArrowDown if editor.can_nudge_component() => {
+            editor.nudge_component(0, step);
         }
         Key::ArrowLeft if nudge_objects => {
             editor.nudge_selected_objects(-step, 0);

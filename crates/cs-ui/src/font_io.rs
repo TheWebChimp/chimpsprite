@@ -31,6 +31,12 @@ pub(crate) const IMPORT_FILTERS: &[FileFilter] = &[
     },
 ];
 
+/// Lo que se puede elegir en Fill from TTF….
+pub(crate) const FILL_FILTERS: &[FileFilter] = &[FileFilter {
+    name: "TrueType / OpenType",
+    extensions: &["ttf", "otf"],
+}];
+
 /// Si `name` es un archivo de fuente que se importa (por su extensión).
 pub(crate) fn is_font_file(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
@@ -215,9 +221,20 @@ const PREVIEW_W: f32 = 260.0;
 const PREVIEW_PAD: f32 = 4.0;
 const PREVIEW_INK: Color32 = Color32::from_rgb(5, 4, 3);
 
+/// A qué fuente van los glifos de Fill from TTF.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FillTarget {
+    pub artboard: ArtboardId,
+    /// La baseline de la fuente: los glifos se recorren para caer en ella.
+    pub baseline: u32,
+    /// Si se pisan los glifos ya dibujados.
+    pub replace: bool,
+}
+
 /// Import Font: cómo rasterizar un TTF/OTF (tamaño, umbral, caracteres y modo), con vista
-/// previa.
+/// previa. Con `fill`, es Fill from TTF: los glifos van a una fuente que ya existe (con su modo).
 pub struct ImportFontDialog {
+    pub fill: Option<FillTarget>,
     bytes: Arc<[u8]>,
     pub info: TtfInfo,
     pub px: u32,
@@ -233,6 +250,7 @@ impl ImportFontDialog {
     pub fn new(bytes: Vec<u8>) -> Result<Self, String> {
         let info = ttf_import::ttf_info(&bytes).map_err(|e| e.to_string())?;
         Ok(ImportFontDialog {
+            fill: None,
             bytes: bytes.into(),
             px: info.suggested_px,
             threshold: 50,
@@ -241,6 +259,28 @@ impl ImportFontDialog {
             info,
             preview: None,
         })
+    }
+
+    /// Fill from TTF para la fuente activa: los caracteres latinos y su modo (color solo si los
+    /// dos lo son).
+    pub fn new_fill(bytes: Vec<u8>, editor: &Editor) -> Result<Self, String> {
+        let font = editor.font().ok_or("The active artboard is not a font")?;
+        let mut dialog = Self::new(bytes)?;
+        dialog.chars = CharRange::Latin;
+        dialog.color &= font.mode == FontMode::Color;
+        dialog.fill = Some(FillTarget {
+            artboard: editor.active,
+            baseline: font.metrics.baseline,
+            replace: false,
+        });
+        Ok(dialog)
+    }
+
+    /// Los glifos para la fuente de `fill`, en su baseline.
+    pub fn fill_glyphs(&self) -> Result<Vec<cs_core::GlyphBuild>, String> {
+        let target = self.fill.ok_or("Not filling a font")?;
+        let build = self.import()?;
+        Ok(ttf_import::rebase(&build, target.baseline))
     }
 
     pub fn options(&self) -> TtfImport {
@@ -279,62 +319,76 @@ impl ImportFontDialog {
     }
 
     pub fn show(&mut self, ctx: &egui::Context, skin: Option<&Skin>) -> DialogResult {
-        let buttons = ["Import", "Cancel"];
-        let (result, open) =
-            dialog_window_with(ctx, skin, "import_font", "Import Font", buttons, |ui| {
-                let kind = if self.info.pixel_grid {
-                    format!("pixel font, {} px grid", self.info.suggested_px)
-                } else {
-                    "outline font".to_owned()
-                };
-                ui.label(format!("{} ({kind})", self.info.family));
-                let note = if self.info.chars > ttf_import::MAX_GLYPHS {
-                    format!(
-                        "{} characters (All takes the first {})",
-                        self.info.chars,
-                        ttf_import::MAX_GLYPHS
-                    )
-                } else {
-                    format!("{} characters", self.info.chars)
-                };
-                ui.weak(note);
-                ui.add_space(4.0);
-                egui::Grid::new("import_font_grid")
-                    .num_columns(2)
-                    .spacing([8.0, 6.0])
-                    .show(ui, |ui| {
-                        ui.label("Size:");
-                        widgets::number(ui, &mut self.px, ttf_import::PX_RANGE, " px");
-                        ui.end_row();
-                        ui.label("Threshold:");
-                        widgets::number(ui, &mut self.threshold, 1..=100, "%");
-                        ui.end_row();
-                        ui.label("Characters:");
-                        let chars = &mut self.chars;
-                        widgets::combo(ui, "import_font_chars", chars.label(), |ui| {
-                            for range in CharRange::ALL {
-                                widgets::choice(ui, chars, range, range.label());
-                            }
-                        });
-                        ui.end_row();
-                        ui.label("Mode:");
-                        let has_color = self.info.color;
-                        let color = &mut self.color;
-                        ui.horizontal(|ui| {
-                            widgets::radio_value(ui, color, false, "1 bit");
-                            ui.add_enabled_ui(has_color, |ui| {
-                                widgets::radio_value(ui, color, true, "Color")
-                            })
-                            .response
-                            .on_disabled_hover_text("The font has no color layers (COLR)");
-                        });
-                        ui.end_row();
+        let filling = self.fill.is_some();
+        let (title, accept) = if filling {
+            ("Fill from TTF", "Fill")
+        } else {
+            ("Import Font", "Import")
+        };
+        let buttons = [accept, "Cancel"];
+        let (result, open) = dialog_window_with(ctx, skin, "import_font", title, buttons, |ui| {
+            let kind = if self.info.pixel_grid {
+                format!("pixel font, {} px grid", self.info.suggested_px)
+            } else {
+                "outline font".to_owned()
+            };
+            ui.label(format!("{} ({kind})", self.info.family));
+            let note = if self.info.chars > ttf_import::MAX_GLYPHS {
+                format!(
+                    "{} characters (All takes the first {})",
+                    self.info.chars,
+                    ttf_import::MAX_GLYPHS
+                )
+            } else {
+                format!("{} characters", self.info.chars)
+            };
+            ui.weak(note);
+            ui.add_space(4.0);
+            egui::Grid::new("import_font_grid")
+                .num_columns(2)
+                .spacing([8.0, 6.0])
+                .show(ui, |ui| {
+                    ui.label("Size:");
+                    widgets::number(ui, &mut self.px, ttf_import::PX_RANGE, " px");
+                    ui.end_row();
+                    ui.label("Threshold:");
+                    widgets::number(ui, &mut self.threshold, 1..=100, "%");
+                    ui.end_row();
+                    ui.label("Characters:");
+                    let chars = &mut self.chars;
+                    widgets::combo(ui, "import_font_chars", chars.label(), |ui| {
+                        for range in CharRange::ALL {
+                            widgets::choice(ui, chars, range, range.label());
+                        }
                     });
-                ui.add_space(6.0);
-                if let Some((text, artboard)) = self.preview() {
-                    paint_preview(ui, artboard, text);
-                }
-            });
+                    ui.end_row();
+                    if let Some(fill) = &mut self.fill {
+                        ui.label("");
+                        widgets::checkbox(ui, &mut fill.replace, "Replace drawn glyphs");
+                        ui.end_row();
+                        return;
+                    }
+                    ui.label("Mode:");
+                    let has_color = self.info.color;
+                    let color = &mut self.color;
+                    ui.horizontal(|ui| {
+                        widgets::radio_value(ui, color, false, "1 bit");
+                        ui.add_enabled_ui(has_color, |ui| {
+                            widgets::radio_value(ui, color, true, "Color")
+                        })
+                        .response
+                        .on_disabled_hover_text("The font has no color layers (COLR)");
+                    });
+                    ui.end_row();
+                });
+            if filling {
+                ui.weak("Missing and empty glyphs, on the font's baseline.");
+            }
+            ui.add_space(6.0);
+            if let Some((text, artboard)) = self.preview() {
+                paint_preview(ui, artboard, text);
+            }
+        });
         finish(ctx, open, result)
     }
 }

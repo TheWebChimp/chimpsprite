@@ -3,7 +3,10 @@
 //! fuente, el mapa de caracteres por páginas (ASCII, Latin-1, Latin Ext-A y los de la fuente):
 //! cada celda con el glifo dibujado o, si está vacío o falta, su carácter en gris. Un clic va al
 //! glifo, un doble clic en uno que falta lo agrega y va a él, y el menú de cada celda copia,
-//! pega, borra o quita. Build ▾ abre el menú de exportar (TTF, TTF de color y BMFont).
+//! pega, borra o quita. Al final (debajo del Test Drive), la sección Glyph del glifo actual: sus
+//! componentes (si es compuesto) con sus offsets, agregar uno, Unlink y Build. Generate ▾ arma
+//! los acentos y trae glifos de un TTF o de una imagen; Build ▾ abre el menú de exportar (TTF,
+//! TTF de color y BMFont).
 //!
 //! Las medidas salen del mockup (Design.aseprite, frame 10), desde la esquina de arriba a la
 //! izquierda del panel (su línea de borde es la fila y la columna 0).
@@ -79,6 +82,18 @@ const PAIR_STEPPER_W: f32 = 62.0;
 const PAIR_GAP: f32 = 8.0;
 const NAME_W: f32 = 160.0;
 const GHOST_W: f32 = 80.0;
+/// El aire entre Generate ▾ y Build ▾.
+const GENERATE_GAP: f32 = 4.0;
+/// La sección Glyph: el aire de arriba y entre filas, entre controles, el ancho del nombre de
+/// cada componente, de sus steppers y del campo Component.
+const GLYPH_AIR: f32 = 6.0;
+const GLYPH_ROW_GAP: f32 = 3.0;
+const GLYPH_GAP: f32 = 4.0;
+const COMPONENT_NAME_W: f32 = 70.0;
+const OFFSET_W: f32 = 74.0;
+const COMPONENT_FIELD_W: f32 = 80.0;
+/// La marquita de los compuestos en el mapa.
+const COMPOSITE_MARK: Color32 = Color32::from_rgb(60, 110, 235);
 
 /// Los dos íconos del título (13×14 con su sombra clara): los ajustes de la fuente en (292, 9) y
 /// el mapa en (309, 9).
@@ -106,6 +121,8 @@ pub struct FontPanelState {
     pub add_char: String,
     /// El texto de prueba de la fuente (el del Test Drive).
     pub test_text: String,
+    /// Lo escrito en el campo "Component" de la sección Glyph.
+    pub component_char: String,
 }
 
 impl Default for FontPanelState {
@@ -115,6 +132,7 @@ impl Default for FontPanelState {
             page: Page::default(),
             add_char: String::new(),
             test_text: "The quick brown fox".to_owned(),
+            component_char: String::new(),
         }
     }
 }
@@ -167,7 +185,20 @@ pub enum FontAction {
     NewFont,
     /// Build ▾ → un formato: abrir el diálogo Build Font con él.
     Build(crate::font_io::BuildFormat),
+    /// Generate ▾ → Auto-build accents (la app dice qué pasó).
+    AutoBuildAccents,
+    /// Generate ▾ → Fill from TTF…
+    FillFromTtf,
+    /// Generate ▾ → Glyphs from image…
+    GlyphsFromImage,
 }
+
+/// Lo del menú Generate ▾.
+const GENERATE: [(&str, FontAction); 3] = [
+    ("Auto-build accents", FontAction::AutoBuildAccents),
+    ("Fill from TTF…", FontAction::FillFromTtf),
+    ("Glyphs from image…", FontAction::GlyphsFromImage),
+];
 
 /// El panel en `ui` (lo de adentro del marco, de la columna entera: ver
 /// [`crate::dock::flyout_fixed`]): el título fijo, el medio con scroll y el pie fijo.
@@ -192,6 +223,12 @@ pub fn show(
         .auto_shrink([false, false])
         .max_height(middle.height())
         .min_scrolled_height(middle.height());
+    // Desarrollo: con CHIMPSPRITE_DEMO_FONT_SCROLL, el medio bajado hasta la sección Glyph, para
+    // capturas.
+    let area = match crate::demo::dev_var("CHIMPSPRITE_DEMO_FONT_SCROLL") {
+        Some(_) => area.vertical_scroll_offset(330.0),
+        None => area,
+    };
     let action = ui
         .scope_builder(UiBuilder::new().max_rect(middle), |ui| {
             pixel_ui::scroll(ui, area, |ui| {
@@ -242,6 +279,8 @@ fn body(
     add_chars(ui, editor, skin, state);
     ui.add_space(ADD_TO_TEST);
     test_drive(ui, editor, skin, state);
+    // Debajo del Test Drive: así lo de arriba queda en las filas del mockup.
+    glyph_section(ui, editor, skin, state);
     None
 }
 
@@ -381,6 +420,7 @@ fn footer(
         })
         .inner
         .on_disabled_hover_text("Open a font to build it");
+    let generate = generate_button(ui, skin, response.rect, mode.is_some());
     let mode = mode?;
     let content = |ui: &mut Ui| {
         let mut picked = None;
@@ -398,6 +438,55 @@ fn footer(
         }
         picked
     };
+    let build = match skin {
+        Some(skin) => {
+            let look = menus::MenuLook::new(skin, response.rect.top());
+            menus::dropdown(&look, &response, response.rect, content).flatten()
+        }
+        None => egui::Popup::menu(&response)
+            .show(content)
+            .and_then(|i| i.inner),
+    };
+    build.or(generate)
+}
+
+/// Generate ▾, a la izquierda de Build ▾ (`build` es su rect), con su menú.
+fn generate_button(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    build: Rect,
+    enabled: bool,
+) -> Option<FontAction> {
+    let label = "Generate ▾";
+    let id = ui.id().with("font_generate");
+    let response = ui
+        .add_enabled_ui(enabled, |ui| match skin {
+            Some(skin) => {
+                let size = vec2(kit::button::width(ui, label), kit::button::HEIGHT);
+                let min = pos2(build.left() - GENERATE_GAP - size.x, build.top());
+                kit::button::button_at(ui, skin, Rect::from_min_size(min, size), id, label)
+            }
+            None => {
+                let size = vec2(80.0, build.height());
+                let min = pos2(build.left() - GENERATE_GAP - size.x, build.top());
+                ui.put(Rect::from_min_size(min, size), egui::Button::new(label))
+            }
+        })
+        .inner
+        .on_disabled_hover_text("Open a font to generate glyphs");
+    if !enabled {
+        return None;
+    }
+    let content = |ui: &mut Ui| {
+        let mut picked = None;
+        for (item, action) in GENERATE {
+            if ui.add(menus::plain(item)).clicked() {
+                picked = Some(action);
+                ui.close();
+            }
+        }
+        picked
+    };
     match skin {
         Some(skin) => {
             let look = menus::MenuLook::new(skin, response.rect.top());
@@ -406,6 +495,173 @@ fn footer(
         None => egui::Popup::menu(&response)
             .show(content)
             .and_then(|i| i.inner),
+    }
+}
+
+/// La sección Glyph del glifo actual: si es compuesto, una fila por componente (elegirlo, sus
+/// offsets X e Y y quitarlo); el campo Component con Add; Unlink (si es compuesto) y Build (si
+/// el carácter es un acentuado de la tabla). Los offsets de un arrastre son un paso.
+fn glyph_section(
+    ui: &mut Ui,
+    editor: &mut Editor,
+    skin: Option<&Skin>,
+    state: &mut FontPanelState,
+) {
+    let Some(ch) = editor.current_glyph() else {
+        return;
+    };
+    let components = editor.glyph_components();
+    let composite = !components.is_empty();
+    let hint = if composite {
+        format!("({ch}, composite)")
+    } else {
+        format!("({ch})")
+    };
+    ui.add_space(GLYPH_AIR);
+    label_with_hint(ui, "Glyph", &hint);
+    ui.add_space(GLYPH_ROW_GAP);
+    let (cell_w, cell_h) = (editor.sprite().width as i32, editor.sprite().height as i32);
+    let selected = editor.selected_component();
+    let group = ui.id().with("glyph_components").value();
+    let font = editor.font().cloned();
+    let mut select = None;
+    let mut moved = None;
+    let mut remove = None;
+    for (i, c) in components.iter().enumerate() {
+        let missing = font.as_ref().is_some_and(|f| f.index_of(c.ch).is_none());
+        let name = if missing {
+            format!("{} (missing)", c.ch)
+        } else {
+            c.ch.to_string()
+        };
+        let (mut x, mut y) = c.offset;
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = GLYPH_GAP;
+            let on = selected == Some(i);
+            let picked = match skin {
+                Some(skin) => {
+                    ui.allocate_ui_with_layout(
+                        vec2(COMPONENT_NAME_W, kit::stepper::HEIGHT),
+                        egui::Layout::left_to_right(egui::Align::Center),
+                        |ui| {
+                            ui.set_min_width(COMPONENT_NAME_W);
+                            kit::check::radio(ui, skin, on, &name)
+                        },
+                    )
+                    .inner
+                }
+                None => ui.radio(on, &name),
+            };
+            if picked.clicked() {
+                select = Some(i);
+            }
+            let changed = match skin {
+                Some(skin) => {
+                    let a = kit::stepper::axis_stepper(
+                        ui,
+                        skin,
+                        OFFSET_W,
+                        &format!("component_x{i}"),
+                        "X",
+                        &mut x,
+                        -cell_w..=cell_w,
+                        1,
+                    );
+                    let b = kit::stepper::axis_stepper(
+                        ui,
+                        skin,
+                        OFFSET_W,
+                        &format!("component_y{i}"),
+                        "Y",
+                        &mut y,
+                        -cell_h..=cell_h,
+                        1,
+                    );
+                    a.changed() || b.changed()
+                }
+                None => {
+                    let a = ui.add(egui::DragValue::new(&mut x).range(-cell_w..=cell_w));
+                    let b = ui.add(egui::DragValue::new(&mut y).range(-cell_h..=cell_h));
+                    a.changed() || b.changed()
+                }
+            };
+            if changed {
+                moved = Some((i, (x, y)));
+            }
+            let gone = match skin {
+                Some(skin) => kit::button::button(ui, skin, "Remove"),
+                None => pixel_ui::text_button(ui, "Remove"),
+            };
+            if gone.clicked() {
+                remove = Some(i);
+            }
+        });
+        ui.add_space(GLYPH_ROW_GAP);
+    }
+    if let Some(i) = select {
+        editor.select_component(Some(i));
+    }
+    if let Some((i, offset)) = moved {
+        editor.select_component(Some(i));
+        editor.move_component_grouped(i, offset, group);
+    }
+    if !ui.input(|i| i.pointer.any_down()) {
+        editor.end_group_of(group);
+    }
+    if let Some(i) = remove {
+        editor.remove_component(i);
+    }
+    // El campo Component con Add, Unlink y Build.
+    let buildable = cs_core::decomposition(ch).is_some();
+    let (add, unlink, build) = ui
+        .horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = GLYPH_GAP;
+            let button = |ui: &mut Ui, label: &str, enabled: bool| {
+                ui.add_enabled_ui(enabled, |ui| match skin {
+                    Some(skin) => kit::button::button(ui, skin, label),
+                    None => pixel_ui::text_button(ui, label),
+                })
+                .inner
+            };
+            let field = match skin {
+                Some(skin) => kit::input::text_input(
+                    ui,
+                    skin,
+                    &mut state.component_char,
+                    COMPONENT_FIELD_W,
+                    "Component",
+                    "Component",
+                ),
+                None => ui.add(
+                    egui::TextEdit::singleline(&mut state.component_char)
+                        .desired_width(COMPONENT_FIELD_W)
+                        .hint_text("Component"),
+                ),
+            };
+            let entered = field.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let add = button(ui, "Add", true).clicked() || entered;
+            let unlink = button(ui, "Unlink", composite)
+                .on_disabled_hover_text("Only for composite glyphs")
+                .clicked();
+            let build = button(ui, "Build", buildable)
+                .on_disabled_hover_text("Not an accented letter")
+                .on_hover_text("Build this accented letter from its base and mark")
+                .clicked();
+            (add, unlink, build)
+        })
+        .inner;
+    if add {
+        if let Some(c) = state.component_char.chars().find(|c| !c.is_whitespace()) {
+            editor.add_component(c);
+        }
+        state.component_char.clear();
+    }
+    if unlink {
+        editor.unlink_glyph(ch);
+    }
+    if build {
+        // Un compuesto o un glifo dibujado se reemplaza: aquí lo pidió el usuario.
+        editor.auto_build_accents(Some(&[ch]), true);
     }
 }
 
@@ -769,6 +1025,13 @@ fn map(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, state: &FontPanelS
                 );
             }
         }
+        let composite = font
+            .index_of(ch)
+            .is_some_and(|i| font.glyphs[i].is_composite());
+        if composite {
+            let mark = Rect::from_min_size(cell.min + vec2(1.0, 1.0), Vec2::splat(3.0));
+            painter.rect_filled(mark, 0.0, COMPOSITE_MARK);
+        }
         if is_current {
             painter.rect_stroke(cell, 0.0, Stroke::new(1.0, CURRENT), StrokeKind::Inside);
         }
@@ -778,19 +1041,36 @@ fn map(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, state: &FontPanelS
         } else if response.clicked() && has {
             editor.go_to_glyph(ch);
         }
-        menus::context_menu(&response, |ui| glyph_menu(ui, editor, ch, has));
+        menus::context_menu(&response, |ui| glyph_menu(ui, editor, ch, has, composite));
     }
 }
 
-/// El menú de una celda: Copy, Paste, Clear y Remove si la fuente tiene el carácter; Add si no.
-fn glyph_menu(ui: &mut Ui, editor: &mut Editor, ch: char, has: bool) {
+/// El menú de una celda: Copy, Paste, Clear y Remove si la fuente tiene el carácter (y Unlink si
+/// es compuesto); Add si no. Build composite en los acentuados de la tabla que no son compuestos
+/// (solo arma los vacíos o los que faltan).
+fn glyph_menu(ui: &mut Ui, editor: &mut Editor, ch: char, has: bool, composite: bool) {
+    let buildable = cs_core::decomposition(ch).is_some();
     if !has {
         if ui.add(menus::plain("Add")).clicked() {
             editor.add_glyphs(&[ch]);
             editor.go_to_glyph(ch);
             ui.close();
         }
+        if buildable && ui.add(menus::plain("Build composite")).clicked() {
+            editor.auto_build_accents(Some(&[ch]), true);
+            editor.go_to_glyph(ch);
+            ui.close();
+        }
         return;
+    }
+    if composite && ui.add(menus::plain("Unlink")).clicked() {
+        editor.unlink_glyph(ch);
+        ui.close();
+    }
+    if buildable && !composite && ui.add(menus::plain("Build composite")).clicked() {
+        editor.go_to_glyph(ch);
+        editor.auto_build_accents(Some(&[ch]), true);
+        ui.close();
     }
     if ui.add(menus::plain("Copy")).clicked() {
         editor.go_to_glyph(ch);

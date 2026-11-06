@@ -220,6 +220,8 @@ pub struct CanvasView {
     /// El glifo y su ancho (en columnas) mientras se arrastra la línea del ancho; al soltar se
     /// aplica a ese glifo (aunque el actual haya cambiado).
     advance_drag: Option<(char, i32)>,
+    /// El componente que se arrastra con Move en un glifo compuesto.
+    component_drag: Option<ComponentDrag>,
     /// La muestra de cada artboard de fuente para su tarjeta (de lejos) y la revisión del
     /// documento con la que se armaron.
     cards: HashMap<ArtboardId, CardSample>,
@@ -342,6 +344,7 @@ impl Default for CanvasView {
             crumbs_shown: false,
             advance_line: None,
             advance_drag: None,
+            component_drag: None,
             cards: HashMap::new(),
             cards_revision: None,
             model_drag: None,
@@ -1029,6 +1032,22 @@ impl CanvasView {
                     crate::font_overlay::ghost(&painter, screen, font, glyph, self.scale().x)
             {
                 painter.add(ghost);
+            }
+            if font.is_some() {
+                let index = editor.frame_of(artboard.id);
+                let moved = self
+                    .component_drag
+                    .filter(|d| d.frame == index)
+                    .map(|d| (d.index, d.now));
+                painter.extend(crate::font_overlay::components(
+                    screen,
+                    artboard.font.as_ref().expect("a font"),
+                    &artboard.sprite,
+                    index,
+                    editor.selected_component(),
+                    moved,
+                    self.scale().x,
+                ));
             }
             if let Some(tex) = self.textures.get(&artboard.id) {
                 let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
@@ -2466,3 +2485,15 @@ fn checker_uv(width: u32, height: u32) -> Rect {
 
 #[cfg(test)]
 mod tests;
+
+/// Un componente en pleno arrastre: de qué glifo (su frame y su carácter), cuál, dónde estaba,
+/// el pixel donde se agarró y dónde va.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct ComponentDrag {
+    pub ch: char,
+    pub frame: usize,
+    pub index: usize,
+    pub start: (i32, i32),
+    pub grab: (i32, i32),
+    pub now: (i32, i32),
+}

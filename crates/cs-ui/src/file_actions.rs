@@ -107,6 +107,7 @@ impl ChimpApp {
             || self.new_font.is_some()
             || self.build_font.is_some()
             || self.import_font.is_some()
+            || self.glyph_sheet.is_some()
             || self.new_model.is_some()
             || self.bake.is_some()
             || self.gif.is_some()
@@ -259,6 +260,8 @@ impl ChimpApp {
                         OpenPurpose::ImportFont => {
                             self.opened_font_file(ctx, &loaded.name, loaded.bytes)
                         }
+                        OpenPurpose::FillFont => self.opened_fill_font(loaded.bytes),
+                        OpenPurpose::FontSheet => self.opened_glyph_sheet(&loaded.bytes),
                         OpenPurpose::ImportLayer if self.has_doc() => {
                             self.import_layer_bytes(&loaded, false)
                         }

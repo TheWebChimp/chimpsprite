@@ -4,6 +4,7 @@
 pub mod bitfontmaker;
 pub mod bmfont;
 pub mod outline;
+pub mod sheet;
 pub mod ttf;
 pub mod ttf_import;
 
