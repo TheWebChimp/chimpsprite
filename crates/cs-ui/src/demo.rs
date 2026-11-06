@@ -501,7 +501,8 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         app.run_script(name, source);
     }
     // Desarrollo: la capa actual convertida en símbolo y el panel Library abierto, para capturas.
-    // Con CHIMPSPRITE_DEMO_SYMBOL=edit, además dentro del modo símbolo.
+    // Con CHIMPSPRITE_DEMO_SYMBOL=edit, además dentro del modo símbolo; con =inplace, editándolo
+    // en su lugar (el resto atenuado) con un trazo nuevo encima.
     if let Some(mode) = dev_var("CHIMPSPRITE_DEMO_SYMBOL")
         && app.has_doc()
     {
@@ -530,6 +531,20 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             }
             if mode == "edit" && editor.enter_symbol(symbol) {
                 app.doc.canvas.request_zoom(crate::view::ZoomRequest::Fit);
+            }
+            if mode == "inplace"
+                && let Some(object) = editor.current_object()
+                && editor.enter_symbol_in_place(editor.layer, object)
+            {
+                // Un trazo en el símbolo: se ve en su lugar (y en la Library).
+                let pink = cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(255, 80, 160));
+                let (w, h) = (editor.sprite().width as i32, editor.sprite().height as i32);
+                let pixels = (0..w.min(h)).map(|i| (i, i, pink)).collect();
+                editor.execute(cs_commands::Command::DrawPixels {
+                    layer: editor.sprite().layers.last().map_or(editor.layer, |l| l.id),
+                    frame: editor.frame,
+                    pixels,
+                });
             }
         }
     }
