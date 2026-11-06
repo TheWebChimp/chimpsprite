@@ -326,7 +326,8 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         let a = ends.next().unwrap_or(2);
         app.doc.editor.palette_selection = Some((a, ends.next().unwrap_or(a + 3)));
     }
-    // Desarrollo: el diálogo de Replace Color (o, con "hue", el de Hue/Saturation).
+    // Desarrollo: el diálogo de Replace Color (o, con "hue", "curve" u "outline", el de ese
+    // filtro).
     if let Ok(which) = std::env::var("CHIMPSPRITE_DEMO_FILTER")
         && app.has_doc()
     {
@@ -339,6 +340,9 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                     curve,
                     channels: Default::default(),
                 }
+            }
+            "outline" => {
+                filters::Filter::Outline(filters::OutlineFx::new(editor.resolve(editor.primary)))
             }
             "hue" => filters::Filter::HueSaturation {
                 hue: 90,

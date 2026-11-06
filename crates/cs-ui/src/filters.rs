@@ -1,9 +1,13 @@
 //! Los filtros de Edit (Replace Color, Adjustments y FX), como en Aseprite: trabajan sobre lo
 //! seleccionado de la capa actual (sin selección, la capa entera) en el frame actual, y cada uno
 //! es un paso de undo. Los de color cambian cada píxel solo; Outline, Despeckle y Convolution
-//! Matrix miran a los vecinos.
+//! Matrix miran a los vecinos. Outline (la lógica en `cs_raster::outline`) puede ir además a
+//! varios cels ([`FilterTarget`]).
 
-use cs_core::{Mask, PixelValue, Rgba};
+use cs_commands::Command;
+use cs_core::{LayerId, LayerKind, Mask, PixelValue, Rgba};
+pub use cs_raster::Channels;
+use cs_raster::OutlineShape;
 
 use crate::editor::Editor;
 
@@ -173,11 +177,8 @@ pub enum Filter {
         saturation: i32,
         lightness: i32,
     },
-    /// Un borde de `color` afuera de lo pintado; `square`: también en diagonal.
-    Outline {
-        color: Rgba,
-        square: bool,
-    },
+    /// Un borde alrededor o por dentro de lo pintado, como el de Aseprite.
+    Outline(OutlineFx),
     /// La mediana de cada canal en un cuadrado de `size` (impar) alrededor.
     Despeckle {
         size: u32,
@@ -190,23 +191,50 @@ pub enum Filter {
     },
 }
 
-/// Los canales que cambia Color Curve (como los botones R, G, B y A de Aseprite).
+/// Los valores de Outline (Edit → FX → Outline de Aseprite).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Channels {
-    pub r: bool,
-    pub g: bool,
-    pub b: bool,
-    pub a: bool,
+pub struct OutlineFx {
+    pub color: Rgba,
+    /// Background Color: lo de este color también es vacío; con alfa 0, ninguno (Mask).
+    pub background: Rgba,
+    pub shape: OutlineShape,
+    pub channels: Channels,
 }
 
-impl Default for Channels {
-    /// Los de color, como en Aseprite.
-    fn default() -> Self {
+impl OutlineFx {
+    /// Con los valores de entrada de Aseprite: Circle, afuera, los cuatro canales y sin fondo.
+    pub fn new(color: Rgba) -> Self {
         Self {
-            r: true,
-            g: true,
-            b: true,
-            a: false,
+            color,
+            background: Rgba::TRANSPARENT,
+            shape: OutlineShape::default(),
+            channels: Channels::RGBA,
+        }
+    }
+
+    /// El color de fondo que cuenta como vacío, si hay.
+    fn background(&self) -> Option<Rgba> {
+        (self.background.a > 0).then_some(self.background)
+    }
+}
+
+/// A qué cels va un filtro (el botón Target de Aseprite).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FilterTarget {
+    /// Los cels elegidos en el timeline (sin rango, el actual).
+    #[default]
+    Selected,
+    /// Todos los cels de las capas de imagen visibles y sin candado.
+    All,
+}
+
+impl FilterTarget {
+    pub const ALL: [FilterTarget; 2] = [FilterTarget::Selected, FilterTarget::All];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FilterTarget::Selected => "Selected Cels",
+            FilterTarget::All => "All Cels",
         }
     }
 }
@@ -218,7 +246,7 @@ impl Filter {
             Filter::ReplaceColor { .. } => "Replace Color",
             Filter::BrightnessContrast { .. } => "Brightness/Contrast",
             Filter::HueSaturation { .. } => "Hue/Saturation",
-            Filter::Outline { .. } => "Outline",
+            Filter::Outline(_) => "Outline",
             Filter::Despeckle { .. } => "Despeckle",
             Filter::Convolution(_) => "Convolution Matrix",
             Filter::ColorCurve { .. } => "Color Curve",
@@ -278,19 +306,8 @@ impl Filter {
                 let (r, g, b) = from_hsl(h, s, l.clamp(0.0, 1.0));
                 Rgba::new(r, g, b, c.a)
             }
-            Filter::Outline { color, square } => {
-                if c.a > 0 {
-                    return c;
-                }
-                let sides = [(1, 0), (-1, 0), (0, 1), (0, -1)];
-                let corners = [(1, 1), (1, -1), (-1, 1), (-1, -1)];
-                let touches = |n: &[(i32, i32)]| n.iter().any(|(dx, dy)| at(x + dx, y + dy).a > 0);
-                if touches(&sides) || (square && touches(&corners)) {
-                    color
-                } else {
-                    c
-                }
-            }
+            // Mira la imagen entera: la calcula `outline_changes`.
+            Filter::Outline(_) => c,
             Filter::Despeckle { size } => {
                 let r = (size.max(1) / 2) as i32;
                 let mut around = Vec::new();
@@ -389,39 +406,115 @@ impl Editor {
         if !self.clip_layer_ok(true) {
             return false;
         }
+        self.filter_cels(filter, &[(self.layer, self.frame)])
+    }
+
+    /// Aplica `filter` a lo seleccionado de los cels de `target` (las capas de imagen sin
+    /// candado), en un paso de undo. Devuelve si cambió algo.
+    pub fn apply_filter_to(&mut self, filter: &Filter, target: FilterTarget) -> bool {
+        self.commit_floating();
+        if self.editing_mask() || self.tiles_mode() {
+            return false;
+        }
+        let sprite = self.sprite();
+        let ok = |layer: LayerId, all: bool| {
+            sprite
+                .layer(layer)
+                .is_some_and(|l| l.kind == LayerKind::Image && !l.locked && (!all || l.visible))
+        };
+        let cels: Vec<(LayerId, usize)> = match target {
+            FilterTarget::Selected => self
+                .selected_cels()
+                .into_iter()
+                .filter(|&(l, _)| ok(l, false))
+                .collect(),
+            FilterTarget::All => sprite
+                .layers
+                .iter()
+                .filter(|l| ok(l.id, true))
+                .flat_map(|l| (0..sprite.frames.len()).map(move |f| (l.id, f)))
+                .collect(),
+        };
+        self.filter_cels(filter, &cels)
+    }
+
+    /// Aplica `filter` a `cels` (calculados todos con lo de antes) en un paso de undo.
+    fn filter_cels(&mut self, filter: &Filter, cels: &[(LayerId, usize)]) -> bool {
+        let mut cmds: Vec<Command> = cels
+            .iter()
+            .filter_map(|&(layer, frame)| {
+                let pixels = self.filter_changes(filter, layer, frame);
+                (!pixels.is_empty()).then_some(Command::DrawPixels {
+                    layer,
+                    frame,
+                    pixels,
+                })
+            })
+            .collect();
+        let cmd = match cmds.len() {
+            0 => return false,
+            1 => cmds.remove(0),
+            _ => Command::Batch(cmds),
+        };
+        self.execute_named(cmd, filter.title())
+    }
+
+    /// Los píxeles que cambia `filter` en lo seleccionado del cel `(layer, frame)`.
+    fn filter_changes(
+        &self,
+        filter: &Filter,
+        layer: LayerId,
+        frame: usize,
+    ) -> Vec<(i32, i32, PixelValue)> {
         let sprite = self.sprite();
         let mask = self
             .selection
             .clone()
             .unwrap_or_else(|| Mask::all(sprite.width, sprite.height));
         let (w, h) = (sprite.width as i32, sprite.height as i32);
-        let at = |x: i32, y: i32| {
-            if x < 0 || y < 0 || x >= w || y >= h {
-                Rgba::TRANSPARENT
-            } else {
-                self.resolve(sprite.pixel(self.layer, self.frame, x, y))
+        // El cel una sola vez (los filtros de vecinos leen cada píxel varias veces).
+        let cel: Vec<Rgba> = (0..h)
+            .flat_map(|y| (0..w).map(move |x| (x, y)))
+            .map(|(x, y)| self.resolve(sprite.pixel(layer, frame, x, y)))
+            .collect();
+        let get = |x: i32, y: i32| cel[(y * w + x) as usize];
+        let changed: Vec<(i32, i32, Rgba)> = match filter {
+            Filter::Outline(fx) => {
+                let bg = fx.background();
+                let empty = |x: i32, y: i32| {
+                    let c = get(x, y);
+                    c.a == 0 || Some(c) == bg
+                };
+                let edge = cs_raster::outline_mask(w as u32, h as u32, empty, &fx.shape);
+                mask.points()
+                    .filter(|&(x, y)| edge[(y * w + x) as usize])
+                    .filter_map(|(x, y)| {
+                        let old = get(x, y);
+                        let new = cs_raster::paint_channels(old, fx.color, fx.channels);
+                        (new != old).then_some((x, y, new))
+                    })
+                    .collect()
+            }
+            _ => {
+                let at = |x: i32, y: i32| {
+                    if x < 0 || y < 0 || x >= w || y >= h {
+                        Rgba::TRANSPARENT
+                    } else {
+                        get(x, y)
+                    }
+                };
+                mask.points()
+                    .filter_map(|(x, y)| {
+                        let new = filter.apply(x, y, &at);
+                        (new != at(x, y)).then_some((x, y, new))
+                    })
+                    .collect()
             }
         };
-        let changed: Vec<(i32, i32, Rgba)> = mask
-            .points()
-            .filter_map(|(x, y)| {
-                let new = filter.apply(x, y, &at);
-                (new != at(x, y)).then_some((x, y, new))
-            })
-            .collect();
-        let pixels: Vec<(i32, i32, PixelValue)> = changed
+        changed
             .into_iter()
             .map(|(x, y, c)| (x, y, self.value_of(c)))
-            .collect();
-        !pixels.is_empty()
-            && self.execute_named(
-                cs_commands::Command::DrawPixels {
-                    layer: self.layer,
-                    frame: self.frame,
-                    pixels,
-                },
-                filter.title(),
-            )
+            .collect()
     }
 }
 
@@ -495,24 +588,137 @@ mod tests {
         assert!(c.r == c.g && c.g == c.b, "gray: {c:?}");
     }
 
+    fn outline(matrix: cs_raster::OutlineMatrix, place: cs_raster::OutlinePlace) -> Filter {
+        let mut fx = OutlineFx::new(Rgba::rgb(0, 0, 0));
+        fx.shape.matrix = matrix;
+        fx.shape.place = place;
+        Filter::Outline(fx)
+    }
+
     #[test]
     fn outline_draws_around_with_or_without_corners() {
+        use cs_raster::{OutlineMatrix, OutlinePlace};
         let mut e = editor();
         let black = Rgba::rgb(0, 0, 0);
-        e.apply_filter(&Filter::Outline {
-            color: black,
-            square: false,
-        });
+        e.apply_filter(&outline(OutlineMatrix::CIRCLE, OutlinePlace::Outside));
         assert_eq!(at(&e, 1, 2), black);
         assert_eq!(at(&e, 2, 3), black);
         assert_eq!(at(&e, 1, 1).a, 0, "no corners");
         assert_eq!(at(&e, 2, 2), RED);
         let mut e = editor();
-        e.apply_filter(&Filter::Outline {
-            color: black,
-            square: true,
-        });
+        e.apply_filter(&outline(OutlineMatrix::SQUARE, OutlinePlace::Outside));
         assert_eq!(at(&e, 1, 1), black);
+        let mut e = editor();
+        e.apply_filter(&outline(OutlineMatrix::CIRCLE, OutlinePlace::Inside));
+        assert_eq!(at(&e, 2, 2), black, "inside: the dot itself");
+        assert_eq!(at(&e, 1, 2).a, 0);
+    }
+
+    #[test]
+    fn outline_treats_the_background_color_as_empty() {
+        use cs_raster::{OutlineMatrix, OutlinePlace};
+        let blue = Rgba::rgb(0, 0, 255);
+        let mut e = editor();
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: (0..5)
+                .flat_map(|y| (0..5).map(move |x| (x, y)))
+                .filter(|&p| p != (2, 2))
+                .map(|(x, y)| (x, y, PixelValue::Rgba(blue)))
+                .collect(),
+        });
+        let mut filter = outline(OutlineMatrix::CIRCLE, OutlinePlace::Outside);
+        assert!(
+            !e.apply_filter(&filter),
+            "without a background, all is full"
+        );
+        let Filter::Outline(fx) = &mut filter else {
+            unreachable!()
+        };
+        fx.background = blue;
+        assert!(e.apply_filter(&filter));
+        assert_eq!(at(&e, 2, 1), Rgba::rgb(0, 0, 0));
+        assert_eq!(at(&e, 1, 1), blue);
+    }
+
+    #[test]
+    fn outline_paints_only_the_chosen_channels() {
+        use cs_raster::{OutlineMatrix, OutlinePlace};
+        let mut e = editor();
+        let mut filter = outline(OutlineMatrix::CIRCLE, OutlinePlace::Inside);
+        let Filter::Outline(fx) = &mut filter else {
+            unreachable!()
+        };
+        fx.color = Rgba::new(0, 255, 0, 128);
+        fx.channels = Channels {
+            r: false,
+            g: true,
+            b: false,
+            a: false,
+        };
+        e.apply_filter(&filter);
+        assert_eq!(at(&e, 2, 2), Rgba::rgb(255, 255, 0));
+    }
+
+    #[test]
+    fn outline_goes_to_the_target_cels_in_one_step() {
+        use cs_core::{Frame, Layer};
+        use cs_raster::{OutlineMatrix, OutlinePlace};
+        let mut e = editor();
+        for index in 1..3 {
+            e.execute(Command::AddFrame {
+                index,
+                frame: Frame { duration_ms: 100 },
+            });
+        }
+        for (id, name) in [(2, "locked"), (3, "hidden")] {
+            e.execute(Command::AddLayer {
+                index: id as usize - 1,
+                layer: Layer::new_image(LayerId(id), name),
+            });
+        }
+        let dot = |layer, frame| Command::DrawPixels {
+            layer: LayerId(layer),
+            frame,
+            pixels: vec![(2, 2, PixelValue::Rgba(RED))],
+        };
+        let mut cmds: Vec<Command> = (1..3).map(|f| dot(1, f)).collect();
+        cmds.extend((0..3).flat_map(|f| [dot(2, f), dot(3, f)]));
+        e.execute(Command::Batch(cmds));
+        e.execute(Command::SetLayerProps {
+            id: LayerId(2),
+            props: cs_commands::LayerProps {
+                locked: Some(true),
+                ..Default::default()
+            },
+        });
+        e.execute(Command::SetLayerProps {
+            id: LayerId(3),
+            props: cs_commands::LayerProps {
+                visible: Some(false),
+                ..Default::default()
+            },
+        });
+        let ring = |e: &Editor, layer: u32, frame: usize| {
+            e.resolve(e.sprite().pixel(LayerId(layer), frame, 1, 2)).a > 0
+        };
+        let filter = outline(OutlineMatrix::CIRCLE, OutlinePlace::Outside);
+        e.layer = LayerId(1);
+        e.frame_range = Some((0, 1));
+        let steps = e.steps_done();
+        assert!(e.apply_filter_to(&filter, FilterTarget::Selected));
+        assert_eq!(e.steps_done(), steps + 1, "one step");
+        assert!(ring(&e, 1, 0) && ring(&e, 1, 1));
+        assert!(!ring(&e, 1, 2), "outside the range");
+        e.undo();
+        e.frame_range = None;
+        assert!(e.apply_filter_to(&filter, FilterTarget::All));
+        assert!((0..3).all(|f| ring(&e, 1, f)));
+        assert!(
+            (0..3).all(|f| !ring(&e, 2, f) && !ring(&e, 3, f)),
+            "locked and hidden"
+        );
     }
 
     #[test]
@@ -599,10 +805,10 @@ mod tests {
         let mut e = editor();
         e.set_selection(Some(Mask::from_rect(5, 5, (0, 0), (1, 4))));
         let black = Rgba::rgb(0, 0, 0);
-        e.apply_filter(&Filter::Outline {
-            color: black,
-            square: false,
-        });
+        e.apply_filter(&outline(
+            cs_raster::OutlineMatrix::CIRCLE,
+            cs_raster::OutlinePlace::Outside,
+        ));
         assert_eq!(at(&e, 1, 2), black, "inside");
         assert_eq!(at(&e, 3, 2).a, 0, "outside the selection");
     }

@@ -656,10 +656,7 @@ A pixel art editor."
         });
         menus::submenu(ui, "FX", |ui| {
             if ui.add(menus::plain("Outline…")).clicked() {
-                open = Some(Filter::Outline {
-                    color: primary,
-                    square: false,
-                });
+                open = Some(Filter::Outline(filters::OutlineFx::new(primary)));
                 ui.close();
             }
             if ui.add(menus::plain("Convolution Matrix…")).clicked() {
