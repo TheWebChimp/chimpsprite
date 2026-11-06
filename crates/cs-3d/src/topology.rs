@@ -566,6 +566,7 @@ mod tests {
             kind: Some(Primitive::Cube.kind()),
             hidden: false,
             locked: false,
+            anim: Vec::new(),
         }
     }
 

@@ -105,6 +105,7 @@ pub fn new_model_artboard(
             kind: Some(cube.kind()),
             hidden: false,
             locked: false,
+            anim: Vec::new(),
         }],
         texture: Some(texture_id),
         ..Default::default()
@@ -224,6 +225,7 @@ mod tests {
             kind: Some(p.kind()),
             hidden: false,
             locked: false,
+            anim: Vec::new(),
         }
     }
 

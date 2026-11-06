@@ -321,6 +321,7 @@ fn with_a_group(e: &mut Editor) {
         hidden: false,
         locked: false,
         open: true,
+        anim: Vec::new(),
     });
     m.tree = vec![cs_core::Node::Group {
         group: 0,
@@ -377,6 +378,7 @@ fn duplicating_a_group_copies_its_subgroups() {
         hidden: false,
         locked: false,
         open: true,
+        anim: Vec::new(),
     });
     m.tree = vec![cs_core::Node::Group {
         group: 0,

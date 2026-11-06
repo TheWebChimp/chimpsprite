@@ -1004,6 +1004,7 @@ mod tests {
             kind: Some(Primitive::Cube.kind()),
             hidden: false,
             locked: false,
+            anim: Vec::new(),
         }
     }
 
@@ -1164,6 +1165,7 @@ mod tests {
             hidden: false,
             locked: false,
             open: true,
+            anim: Vec::new(),
         });
         m.tree = vec![cs_core::Node::Group {
             group: 0,

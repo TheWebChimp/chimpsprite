@@ -158,6 +158,7 @@ impl Editor {
                 kind: Some(p.kind()),
                 hidden: false,
                 locked: false,
+                anim: Vec::new(),
             },
             parent,
         );

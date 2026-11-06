@@ -1808,6 +1808,7 @@ mod tests {
                 kind: Some(cs_core::PrimitiveKind::Cube),
                 hidden: false,
                 locked: false,
+                anim: Vec::new(),
             }],
             ..Model3D::default()
         }
