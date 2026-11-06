@@ -29,6 +29,7 @@ mod gestures;
 mod model_edit;
 mod model_ops;
 mod model_topology;
+mod outliner_ops;
 mod texture_mode;
 mod workspace;
 pub use model_edit::{
@@ -36,7 +37,8 @@ pub use model_edit::{
     TextureView, UvOp,
 };
 pub(crate) use model_ops::model_center;
-pub use model_ops::wrap_angle;
+pub use model_ops::{POSITION_MAX, ROTATION_MAX, SCALE_MAX, wrap_angle};
+pub use outliner_ops::{DropAt, Row};
 
 /// Herramientas que trabajan dentro de un sprite.
 struct SpriteTools {
@@ -336,6 +338,9 @@ pub struct Editor {
     pub(crate) glyph_clipboard: font_ops::GlyphClipboard,
     /// Objeto elegido del modelo 3D activo (índice en `model.objects`).
     pub(crate) model_object: Option<usize>,
+    /// El grupo elegido en el outliner (índice en `model.groups`): la fila activa cuando es un
+    /// grupo. Con uno elegido, `model_object` queda en `None` (elegir uno limpia el otro).
+    pub(crate) model_group: Option<usize>,
     /// El modo Edit del artboard 3D (estado de la UI: no se guarda).
     pub(crate) model_edit: ModelEdit,
     /// Gesto en curso (p. ej. arrastrar un campo del panel) cuyos cambios se juntan en un solo
@@ -378,6 +383,9 @@ pub struct Editor {
     /// El modelo o la fuente que se edita en su pestaña, fuera del lienzo (ver `workspace.rs`).
     /// Si hay, es el activo.
     pub(crate) workspace: Option<ArtboardId>,
+    /// La selección 3D de cada paso del historial (por su índice): la de antes y la de después,
+    /// para que deshacer y rehacer la devuelvan (ver `model_edit::StepSelection`).
+    pub(crate) step_selections: Vec<Option<model_edit::StepSelection>>,
     /// El artboard del lienzo activo al entrar al workspace (para volver).
     workspace_return: Option<ArtboardId>,
     /// Un modelo o fuente a cuyo workspace se entró desde el lienzo (doble clic en una instancia):
@@ -447,6 +455,7 @@ impl Editor {
             text_style: TextStyle::default(),
             glyph_clipboard: None,
             model_object: None,
+            model_group: None,
             model_edit: Default::default(),
             merge: None,
             edit_mask: false,
@@ -465,6 +474,7 @@ impl Editor {
             symbol_stack: Vec::new(),
             symbol_return: None,
             workspace: None,
+            step_selections: Vec::new(),
             workspace_return: None,
             view_request: None,
             object_selection: Vec::new(),
@@ -639,6 +649,7 @@ impl Editor {
         self.active = id;
         if !same_model {
             self.model_object = None;
+            self.model_group = None;
         }
         (self.layer, self.frame) = self.views.get(&id).copied().unwrap_or((LayerId(0), 0));
         self.selection = None;
@@ -719,10 +730,12 @@ impl Editor {
     /// Ejecuta sin confirmar lo flotante (lo usa la confirmación misma).
     pub(crate) fn apply_doc(&mut self, cmd: DocCommand) -> bool {
         self.merge = None;
+        let (steps, selection) = (self.history.done_count(), self.selection_snapshot());
         // Las fuentes y los modelos 3D no cambian de frames, capas ni tamaño (salvo con sus
         // propias operaciones, que traen su `SetFont` o `SetModel`).
         match StructureLock::execute(&mut self.history, &mut self.document, cmd, false) {
             Ok(()) => {
+                self.record_step_selection(steps, selection);
                 self.revision += 1;
                 self.doc_version += 1;
                 self.ensure_valid();
@@ -761,9 +774,11 @@ impl Editor {
             self.current_object(),
         );
         let merged = self.merge == Some((group, target));
+        let (steps, selection) = (self.history.done_count(), self.selection_snapshot());
         let result = StructureLock::execute(&mut self.history, &mut self.document, cmd, merged);
         match result {
             Ok(()) => {
+                self.record_step_selection(steps, selection);
                 self.merge = Some((group, target));
                 self.revision += 1;
                 self.doc_version += 1;
@@ -795,11 +810,13 @@ impl Editor {
             return;
         }
         self.merge = None;
+        let (step, selection) = (self.history.done_count(), self.selection_snapshot());
         match self.history.undo(&mut self.document) {
             Ok(true) => {
                 self.revision += 1;
                 self.doc_version += 1;
                 self.ensure_valid();
+                self.restore_selection_on_undo(step, selection);
             }
             Ok(false) => {}
             Err(e) => log::error!("undo failed: {e}"),
@@ -817,6 +834,7 @@ impl Editor {
                 self.revision += 1;
                 self.doc_version += 1;
                 self.ensure_valid();
+                self.restore_selection_on_redo(self.history.done_count());
             }
             Ok(false) => {}
             Err(e) => log::error!("redo failed: {e}"),
@@ -1108,6 +1126,9 @@ mod model_edit_tests;
 
 #[cfg(test)]
 mod model_topology_tests;
+
+#[cfg(test)]
+mod outliner_tests;
 
 #[cfg(test)]
 mod workspace_tests;

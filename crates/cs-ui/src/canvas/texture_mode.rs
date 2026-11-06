@@ -7,7 +7,7 @@
 
 use eframe::egui::pos2;
 
-use super::model_edit::{PERSP_BG, cad_header, header_split};
+use super::model_edit::{PERSP_BG, bar_split, cad_header, header_split};
 use super::*;
 use crate::editor::TextureView;
 
@@ -32,12 +32,21 @@ impl CanvasView {
         dialog: Option<&mut CanvasSizeDialog>,
         view_settings: &ViewSettings,
     ) {
-        // Debajo del encabezado de ChimpCAD.
+        // Debajo del encabezado de ChimpCAD, la barrita del objeto (como en modo Model), la barra
+        // de opciones de la herramienta (para pintar la textura: el tamaño del pincel, la
+        // tinta…) y después las dos partes. Van aquí y no arriba de todo para que el encabezado
+        // no se mueva al cambiar de modo.
         let (header, area) = header_split(rect);
+        let skin = crate::pixel_ui::frame_skin(ui.ctx());
+        let skin = skin.as_deref();
+        let height = crate::panels::options_bar_height(skin);
+        let (object_bar, area) = bar_split(area, height);
+        let (bar, area) = bar_split(area, height);
         let (top, bottom) = texture_panes(area);
         self.edit_quads = None;
         self.texture_panes = Some((top, bottom));
         self.header_rect = Some(header);
+        self.object_bar_rect = Some(object_bar);
         // G y S de teclado son de las vistas orto: aquí no esperan a nadie.
         editor.model_edit.key_request = None;
         self.texture_top_input(ui, response, top, editor, dialog.is_some());
@@ -72,6 +81,13 @@ impl CanvasView {
             crate::pixel_ui::control_border(ui.ctx()),
         );
         cad_header(ui, header, editor);
+        // Las barras, encima del fondo ya pintado.
+        super::object_bar::object_bar(ui, object_bar, editor);
+        let mut bar_ui = ui.new_child(egui::UiBuilder::new().max_rect(bar).id_salt("cad_options"));
+        bar_ui.set_clip_rect(bar);
+        crate::panels::options_bar_panel(bar_ui.style(), skin).show(&mut bar_ui, |ui| {
+            crate::panels::tool_options_bar(ui, editor, skin);
+        });
     }
 
     /// Nada del lienzo bajo el puntero (sin textura no hay pixel, cursores dibujados ni menús).
@@ -142,12 +158,15 @@ impl CanvasView {
         {
             editor.frame_model();
         }
-        let (pressed, secondary, any_down, pointer, modifiers) = ui.input(|i| {
+        let (pressed, secondary, middle, any_down, pointer, modifiers) = ui.input(|i| {
             let pressed = |b| i.pointer.button_pressed(b);
             (
-                pressed(egui::PointerButton::Primary) || pressed(egui::PointerButton::Secondary),
+                pressed(egui::PointerButton::Primary)
+                    || pressed(egui::PointerButton::Secondary)
+                    || pressed(egui::PointerButton::Middle),
                 pressed(egui::PointerButton::Secondary),
-                i.pointer.primary_down() || i.pointer.secondary_down(),
+                pressed(egui::PointerButton::Middle),
+                i.pointer.primary_down() || i.pointer.secondary_down() || i.pointer.middle_down(),
                 i.pointer.interact_pos(),
                 i.modifiers,
             )
@@ -164,7 +183,11 @@ impl CanvasView {
                 ((p.x - r.left()) / scale.x).floor() as i32,
                 ((p.y - r.top()) / scale.y).floor() as i32,
             );
-            self.texture_press_at(editor, p, local, secondary, modifiers, Vec2::ONE / scale);
+            if middle {
+                self.model_pan_press(editor, p, Vec2::ONE / scale);
+            } else {
+                self.texture_press_at(editor, p, local, secondary, modifiers, Vec2::ONE / scale);
+            }
         }
         self.model_drag_input(editor, pointer, any_down);
     }

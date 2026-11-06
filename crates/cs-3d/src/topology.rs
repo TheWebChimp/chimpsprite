@@ -35,10 +35,11 @@ fn corners(f: &Face) -> Vec<Corner> {
         .collect()
 }
 
-fn face_of(cs: &[Corner]) -> Face {
+fn face_of(cs: &[Corner], part: Option<u32>) -> Face {
     Face {
         verts: cs.iter().map(|c| c.0).collect(),
         uvs: cs.iter().map(|c| c.1).collect(),
+        part,
     }
 }
 
@@ -113,11 +114,39 @@ fn inward_step(a: Uv, b: Uv, inner: (f32, f32)) -> Uv {
     ((n.0 / len).round() as i32, (n.1 / len).round() as i32)
 }
 
+/// Si de una cara completa solo están algunas caras en `faces`, esas pasan a una parte nueva
+/// (una por cada parte partida, la misma para todas sus caras elegidas): lo extruido se separa
+/// de lo que se queda. Las partes enteras y las caras sin parte no cambian.
+fn split_parts(mesh: &mut Mesh, faces: &[usize]) {
+    let mut fresh: BTreeMap<u32, u32> = BTreeMap::new();
+    let mut next = mesh.next_part();
+    for &f in faces {
+        let Some(p) = mesh.faces[f].part else {
+            continue;
+        };
+        fresh.entry(p).or_insert_with(|| {
+            if mesh.part_faces(f).iter().all(|g| faces.contains(g)) {
+                p
+            } else {
+                next += 1;
+                next - 1
+            }
+        });
+    }
+    for &f in faces {
+        if let Some(p) = mesh.faces[f].part {
+            mesh.faces[f].part = Some(fresh[&p]);
+        }
+    }
+}
+
 /// `model` con las caras elegidas extruidas, y la selección nueva (esas mismas caras, en modo
 /// Cara). Por objeto: los vértices de la región se duplican y las caras elegidas pasan a los
 /// nuevos (en el mismo lugar: luego se mueven); por cada arista del borde de la región (la que
 /// usa una sola cara elegida) se agrega un lado `[a, b, b', a']`, con `a`→`b` en el sentido de
-/// la cara, así que mira hacia afuera como ella. Los lados van al final de las caras.
+/// la cara, así que mira hacia afuera como ella. Los lados van al final de las caras. Si se
+/// extruye solo un pedazo de una cara completa, ese pedazo estrena su parte (ver
+/// [`split_parts`]).
 ///
 /// UVs de un lado: la tira de un pixel de la cara de la que sale, justo adentro de su arista,
 /// estirada a todo el lado. La fila de `b'`/`a'` (la que sigue a la cara extruida) usa las UVs
@@ -135,6 +164,7 @@ pub fn extrude_faces(model: &Model3D, sel: &Selection) -> (Model3D, Selection) {
         if faces.is_empty() {
             continue;
         }
+        split_parts(mesh, &faces);
         // Cuántas caras elegidas usan cada arista; las de 1 son el borde de la región.
         let mut uses: BTreeMap<(u32, u32), usize> = BTreeMap::new();
         let mut dup: BTreeMap<u32, u32> = BTreeMap::new();
@@ -152,6 +182,8 @@ pub fn extrude_faces(model: &Model3D, sel: &Selection) -> (Model3D, Selection) {
             }
         }
         let mut sides = Vec::new();
+        // Cada lado nuevo es una cara completa propia, con una parte que no estaba en uso.
+        let mut next_part = mesh.next_part();
         for &f in &faces {
             let cs = corners(&mesh.faces[f]);
             let k = cs.len() as f32;
@@ -165,12 +197,16 @@ pub fn extrude_faces(model: &Model3D, sel: &Selection) -> (Model3D, Selection) {
                     continue;
                 }
                 let s = inward_step(ua, ub, inner);
-                sides.push(face_of(&[
-                    (a, (ua.0 + s.0, ua.1 + s.1)),
-                    (b, (ub.0 + s.0, ub.1 + s.1)),
-                    (dup[&b], ub),
-                    (dup[&a], ua),
-                ]));
+                sides.push(face_of(
+                    &[
+                        (a, (ua.0 + s.0, ua.1 + s.1)),
+                        (b, (ub.0 + s.0, ub.1 + s.1)),
+                        (dup[&b], ub),
+                        (dup[&a], ua),
+                    ],
+                    Some(next_part),
+                ));
+                next_part += 1;
             }
         }
         for &f in &faces {
@@ -366,7 +402,7 @@ pub fn subdivide_faces(model: &Model3D, sel: &Selection) -> (Model3D, Selection)
             faces.extend(
                 pieces(&cs, &m, &mut mesh.vertices)
                     .iter()
-                    .map(|p| face_of(p)),
+                    .map(|p| face_of(p, face.part)),
             );
             if chosen.contains(&i) {
                 items.extend((start..faces.len()).map(|f| Item::Face(o, f)));
@@ -411,7 +447,7 @@ pub fn merge_selection(model: &Model3D, sel: &Selection) -> (Model3D, Selection)
                 .map(|(v, uv)| (if vs.contains(&v) { target } else { v }, uv))
                 .filter(|&(v, _)| seen.insert(v))
                 .collect();
-            *f = face_of(&kept);
+            *f = face_of(&kept, f.part);
         }
         mesh.faces.retain(|f| f.verts.len() >= 3);
         if let Some(v) = compact(mesh)[target as usize] {
@@ -458,7 +494,7 @@ pub fn delete_selection(model: &Model3D, sel: &Selection) -> (Model3D, Selection
         objects.sort_unstable();
         objects.dedup();
         for o in objects.into_iter().rev() {
-            out.objects.remove(o);
+            out.remove_object(o);
         }
         return (out, empty);
     }
@@ -519,6 +555,8 @@ mod tests {
             },
             double_sided: false,
             kind: Some(Primitive::Cube.kind()),
+            hidden: false,
+            locked: false,
         }
     }
 
@@ -861,7 +899,91 @@ mod tests {
         }
     }
 
-    // --- Merge ---
+    #[test]
+    fn dividir_conserva_la_parte_de_la_madre() {
+        let mut m = cube();
+        m.objects[0].mesh.faces[FRONT].part = Some(3);
+        let (out, _) = subdivide_faces(&m, &faces_sel(0, &[FRONT]));
+        let mesh = &out.objects[0].mesh;
+        assert_eq!(mesh.faces.len(), 13);
+        assert_eq!(
+            mesh.faces[..4].iter().map(|f| f.part).collect::<Vec<_>>(),
+            vec![Some(3); 4]
+        );
+        assert_eq!(mesh.faces[4].part, Some(1));
+    }
+
+    #[test]
+    fn extruir_conserva_la_parte_y_los_lados_estrenan_las_suyas() {
+        let m = cube();
+        let before: BTreeSet<u32> = m.objects[0]
+            .mesh
+            .faces
+            .iter()
+            .filter_map(|f| f.part)
+            .collect();
+        let (out, _) = extrude_faces(&m, &faces_sel(0, &[TOP]));
+        let mesh = &out.objects[0].mesh;
+        assert_eq!(mesh.faces[TOP].part, m.objects[0].mesh.faces[TOP].part);
+        let sides: Vec<u32> = mesh.faces[6..10]
+            .iter()
+            .map(|f| f.part.expect("con parte"))
+            .collect();
+        let uniq: BTreeSet<u32> = sides.iter().copied().collect();
+        assert_eq!(uniq.len(), 4, "cada lado con su parte");
+        assert!(uniq.is_disjoint(&before));
+    }
+
+    /// Un cilindro de 8 lados: el lado curvo (caras 0..8, parte 0), la tapa de arriba (8..16,
+    /// parte 1; centro en el vértice 16 y anillo en 8..16) y la de abajo (16..24, parte 2).
+    fn cylinder() -> Model3D {
+        let mut m = cube();
+        m.objects[0].mesh = primitive_mesh(&Primitive::Cylinder { sides: 8 });
+        m
+    }
+
+    #[test]
+    fn extruir_un_gajo_de_la_tapa_le_da_su_propia_parte() {
+        let m = cylinder();
+        assert_eq!(m.objects[0].mesh.faces[8].verts, vec![16, 8, 9]);
+        // En modo Vertex: el centro de la tapa y dos vértices vecinos del anillo.
+        let vs = sel(SelectMode::Vertex, [16, 8, 9].map(|v| Item::Vertex(0, v)));
+        let (out, sel) = extrude_faces(&m, &vs);
+        assert_eq!(sel, faces_sel(0, &[8]));
+        let mesh = &out.objects[0].mesh;
+        let gajo = mesh.faces[8].part;
+        assert!(gajo.is_some());
+        for f in 9..16 {
+            assert_eq!(mesh.faces[f].part, Some(1), "cara {f}");
+        }
+        assert_ne!(gajo, Some(1));
+        // La parte del gajo no la usa ninguna otra cara (ni los lados nuevos).
+        assert_eq!(mesh.part_faces(8), vec![8]);
+        assert_eq!(mesh.part_faces(9), (9..16).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn extruir_dos_partes_a_medias_da_una_parte_nueva_a_cada_una() {
+        let mut m = cylinder();
+        // Dos gajos vecinos de la tapa (8 y 9) y una tira del lado (0): dos partes partidas.
+        let (out, _) = extrude_faces(&m, &faces_sel(0, &[0, 8, 9]));
+        let mesh = &out.objects[0].mesh;
+        assert_eq!(mesh.part_faces(8), vec![8, 9]);
+        assert_eq!(mesh.part_faces(0), vec![0]);
+        assert_ne!(mesh.faces[0].part, mesh.faces[8].part);
+        assert_eq!(mesh.part_faces(1), (1..8).collect::<Vec<_>>());
+        // Una parte entera sigue con la suya.
+        let (out, _) = extrude_faces(&m, &faces_sel(0, &(8..16).collect::<Vec<_>>()));
+        assert_eq!(
+            out.objects[0].mesh.part_faces(8),
+            (8..16).collect::<Vec<_>>()
+        );
+        assert_eq!(out.objects[0].mesh.faces[8].part, Some(1));
+        // Caras sin parte siguen sin parte.
+        m.objects[0].mesh.faces[0].part = None;
+        let (out, _) = extrude_faces(&m, &faces_sel(0, &[0]));
+        assert_eq!(out.objects[0].mesh.faces[0].part, None);
+    }
 
     #[test]
     fn unir_los_vertices_de_una_cara() {

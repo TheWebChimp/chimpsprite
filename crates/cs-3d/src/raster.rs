@@ -2,7 +2,7 @@
 
 use std::collections::HashMap;
 
-use cs_core::{Camera3D, FIXED, Model3D, Object3D, Projection, Rgba, ShadingTable, Vec3i};
+use cs_core::{Camera3D, FIXED, Model3D, Projection, Rgba, ShadingTable, Vec3i};
 
 use crate::shade;
 
@@ -44,21 +44,19 @@ pub fn render_model(input: &RenderInput) -> Vec<Rgba> {
 }
 
 /// El índice del objeto que se ve en el pixel `(x, y)`, si hay alguno (sin contar el contorno).
+/// Un objeto bloqueado se ve (y tapa lo de atrás) pero no se elige.
 pub fn pick_object(input: &RenderInput, x: u32, y: u32) -> Option<usize> {
-    if x >= input.size.0 || y >= input.size.1 {
-        return None;
-    }
-    let r = rasterize(input);
-    r.ids[(y * input.size.0 + x) as usize].map(|(o, _)| o)
+    pick_face(input, x, y).map(|(o, _)| o)
 }
 
-/// La cara `(objeto, índice de cara)` que se ve en el pixel `(x, y)`, si hay alguna.
+/// La cara `(objeto, índice de cara)` que se ve en el pixel `(x, y)`, si hay alguna (y su objeto
+/// no está bloqueado).
 pub fn pick_face(input: &RenderInput, x: u32, y: u32) -> Option<(usize, usize)> {
     if x >= input.size.0 || y >= input.size.1 {
         return None;
     }
     let r = rasterize(input);
-    r.ids[(y * input.size.0 + x) as usize]
+    r.ids[(y * input.size.0 + x) as usize].filter(|&(o, _)| !input.model.object_locked(o))
 }
 
 /// El contorno de 1 px de las caras `faces` `(objeto, cara)` en el render de `input`: por cada
@@ -83,10 +81,13 @@ pub fn face_outline(input: &RenderInput, faces: &[(usize, usize)]) -> Vec<bool> 
         let Some(obj) = input.model.objects.get(o) else {
             continue;
         };
+        if input.model.object_hidden(o) {
+            continue;
+        }
         let Some(face) = obj.mesh.faces.get(f).filter(|face| face.verts.len() >= 3) else {
             continue;
         };
-        let world = world_vertices(obj, input.extra_yaw);
+        let world = world_vertices(input.model, o, input.extra_yaw);
         let Some(mut poly) = face
             .verts
             .iter()
@@ -409,28 +410,24 @@ fn clip_near(poly: &[ClipVert]) -> Vec<ClipVert> {
     out
 }
 
-/// Los vértices del objeto en el mundo: escala → rotación X, Y (+ `extra_yaw`), Z → traslación.
-fn world_vertices(obj: &Object3D, extra_yaw: i32) -> Vec<V3> {
-    let t = &obj.transform;
-    let s = [
-        t.scale.x as f32 / 1000.0,
-        t.scale.y as f32 / 1000.0,
-        t.scale.z as f32 / 1000.0,
-    ];
-    let (sx, cx) = rad(t.rotation.x).sin_cos();
-    let (sy, cy) = rad(t.rotation.y + extra_yaw).sin_cos();
-    let (sz, cz) = rad(t.rotation.z).sin_cos();
-    let pos = units(t.position);
-    obj.mesh
+/// Los vértices del objeto `o` en el mundo (en unidades): por su transform y los de sus grupos
+/// (escala → rotación X, Y, Z → traslación cada uno). `extra_yaw` se suma a la rotación Y del de
+/// más afuera (sin grupos, el del objeto): así gira todo el modelo.
+fn world_vertices(model: &Model3D, o: usize, extra_yaw: i32) -> Vec<V3> {
+    let mut chain = model.object_chain(o);
+    if let Some(t) = chain.last_mut() {
+        t.rotation.y += extra_yaw;
+    }
+    let f = FIXED as f32;
+    model.objects[o]
+        .mesh
         .vertices
         .iter()
         .map(|&v| {
-            let u = units(v);
-            let (x, y, z) = (u[0] * s[0], u[1] * s[1], u[2] * s[2]);
-            let (y, z) = (y * cx - z * sx, y * sx + z * cx);
-            let (x, z) = (x * cy + z * sy, -x * sy + z * cy);
-            let (x, y) = (x * cz - y * sz, x * sz + y * cz);
-            [x + pos[0], y + pos[1], z + pos[2]]
+            let p = chain
+                .iter()
+                .fold(crate::edit::p3(v), |p, t| crate::edit::to_world(t, p));
+            [p[0] / f, p[1] / f, p[2] / f]
         })
         .collect()
 }
@@ -482,6 +479,12 @@ struct Raster {
 struct FaceCtx<'a> {
     /// `(objeto, cara)`.
     id: (usize, usize),
+    /// Con tramado: el nivel de sombra de la cara entre 0 y 2 (sin él, `steps` redondeado), que
+    /// cada pixel pasa a un paso con la matriz de Bayer.
+    level: Option<f32>,
+    /// En un cuadrilátero que no es paralelogramo: las UVs de cada pixel, bilineales sobre la
+    /// cara entera (si no, por triángulo).
+    quad: Option<(QuadMap, &'a View)>,
     steps: u8,
     texture: Option<&'a Texture<'a>>,
     palette: &'a [Rgba],
@@ -528,22 +531,183 @@ impl Raster {
                 if depth <= self.depth[i] {
                     continue;
                 }
-                let iw = l0 * a.iw + l1 * b.iw + l2 * c.iw;
-                let u = (l0 * a.uw + l1 * b.uw + l2 * c.uw) / iw;
-                let v = (l0 * a.vw + l1 * b.vw + l2 * c.vw) / iw;
+                let quad = ctx
+                    .quad
+                    .as_ref()
+                    .and_then(|(q, view)| q.uv_at(view, fx, fy));
+                let (u, v) = quad.unwrap_or_else(|| {
+                    let iw = l0 * a.iw + l1 * b.iw + l2 * c.iw;
+                    (
+                        (l0 * a.uw + l1 * b.uw + l2 * c.uw) / iw,
+                        (l0 * a.vw + l1 * b.vw + l2 * c.vw) / iw,
+                    )
+                });
                 let texel = sample(ctx.texture, u, v);
                 if texel.a == 0 {
                     continue;
                 }
+                let steps = match ctx.level {
+                    Some(level) => dithered_steps(level, px, py),
+                    None => ctx.steps,
+                };
                 let color = *cache
-                    .entry((texel, ctx.steps))
-                    .or_insert_with(|| shade(ctx.palette, ctx.shading, texel, ctx.steps as u32));
+                    .entry((texel, steps))
+                    .or_insert_with(|| shade(ctx.palette, ctx.shading, texel, steps as u32));
                 self.color[i] = color;
                 self.depth[i] = depth;
                 self.ids[i] = Some(ctx.id);
             }
         }
     }
+}
+
+/// El nivel de sombra de una cara (de 0, de frente a la luz, a 2, de espaldas) por el coseno `d`
+/// entre su normal y la luz: redondeado da los pasos de siempre (0 si d > 0.5, 1 si d > 0, 2 si
+/// no); con tramado, sus decimales son cuántos pixeles van al paso siguiente.
+fn shade_level(d: f32) -> f32 {
+    ((0.75 - d) * 2.0).clamp(0.0, 2.0)
+}
+
+/// La matriz de Bayer de 4×4 (los umbrales del tramado ordenado).
+const BAYER: [[u8; 4]; 4] = [[0, 8, 2, 10], [12, 4, 14, 6], [3, 11, 1, 9], [15, 7, 13, 5]];
+
+/// El paso de luz del pixel `(px, py)` de una cara de nivel `level`: el de abajo o el de arriba
+/// según su umbral de Bayer (fijo en pantalla). Un nivel entero queda parejo.
+fn dithered_steps(level: f32, px: u32, py: u32) -> u8 {
+    let threshold = (BAYER[(py % 4) as usize][(px % 4) as usize] as f32 + 0.5) / 16.0;
+    (level + threshold - 0.5).round().clamp(0.0, 2.0) as u8
+}
+
+/// Las UVs bilineales de un cuadrilátero: cada pixel cae en un punto de la cara (el rayo de la
+/// cámara contra su plano), que da sus parámetros `(s, t)` sobre las cuatro esquinas (la
+/// bilineal inversa) y con ellos la mezcla de las cuatro UVs. Partida en dos triángulos, una cara
+/// que no es paralelogramo (un trapecio) dobla la textura en la diagonal; así un diseño simétrico
+/// se ve simétrico.
+#[derive(Clone, Copy)]
+struct QuadMap {
+    /// Una esquina, la normal y dos ejes del plano de la cara (en el espacio de vista).
+    origin: V3,
+    normal: V3,
+    axes: [V3; 2],
+    /// Las esquinas en esos ejes y sus UVs.
+    corners: [(f32, f32); 4],
+    uvs: [(f32, f32); 4],
+}
+
+impl QuadMap {
+    /// Para una cara de cuatro vértices (`pts`, en el mundo) que no sea un paralelogramo, ni en
+    /// el espacio ni en sus UVs (en uno, la bilineal es la misma que por triángulos).
+    fn new(pts: &[V3], uvs: &[(i32, i32)], view: &View) -> Option<QuadMap> {
+        if pts.len() != 4 || uvs.len() != 4 {
+            return None;
+        }
+        let q: Vec<V3> = pts.iter().map(|&p| view.to_view(p)).collect();
+        let uvs: [(f32, f32); 4] = std::array::from_fn(|i| (uvs[i].0 as f32, uvs[i].1 as f32));
+        let n = newell(&q);
+        let len = dot(n, n).sqrt();
+        let e = sub(q[1], q[0]);
+        let el = dot(e, e).sqrt();
+        if len <= 0.0 || el <= 0.0 {
+            return None;
+        }
+        let normal = [n[0] / len, n[1] / len, n[2] / len];
+        let e1 = [e[0] / el, e[1] / el, e[2] / el];
+        let e2 = cross(normal, e1);
+        let corners: [(f32, f32); 4] = std::array::from_fn(|i| {
+            let d = sub(q[i], q[0]);
+            (dot(d, e1), dot(d, e2))
+        });
+        // a − b + c − d: cero en un paralelogramo.
+        let skew = |p: &[(f32, f32); 4]| {
+            let g = (
+                p[0].0 - p[1].0 + p[2].0 - p[3].0,
+                p[0].1 - p[1].1 + p[2].1 - p[3].1,
+            );
+            let size = (p[2].0 - p[0].0).abs() + (p[2].1 - p[0].1).abs() + 1e-6;
+            (g.0.abs() + g.1.abs()) / size
+        };
+        if skew(&corners) < 1e-3 && skew(&uvs) < 1e-3 {
+            return None;
+        }
+        Some(QuadMap {
+            origin: q[0],
+            normal,
+            axes: [e1, e2],
+            corners,
+            uvs,
+        })
+    }
+
+    /// Las UVs en el punto de pantalla `(fx, fy)`, o `None` si el rayo no corta la cara (de
+    /// canto) o no se encuentran sus parámetros.
+    fn uv_at(&self, view: &View, fx: f64, fy: f64) -> Option<(f32, f32)> {
+        let sx = fx as f32 - view.center.0;
+        let sy = view.center.1 - fy as f32;
+        let (o, d) = match view.focal {
+            Some(f) => ([0.0; 3], [sx / f, sy / f, 1.0]),
+            None => ([sx / view.scale, sy / view.scale, 0.0], [0.0, 0.0, 1.0]),
+        };
+        let den = dot(d, self.normal);
+        if den.abs() < 1e-6 {
+            return None;
+        }
+        let k = dot(sub(self.origin, o), self.normal) / den;
+        let hit = [o[0] + d[0] * k, o[1] + d[1] * k, o[2] + d[2] * k];
+        let h = sub(hit, self.origin);
+        let p = (dot(h, self.axes[0]), dot(h, self.axes[1]));
+        let (s, t) = inverse_bilinear(p, &self.corners)?;
+        let [a, b, c, d] = self.uvs;
+        let mix = |a: f32, b: f32, c: f32, d: f32| {
+            (1.0 - s) * (1.0 - t) * a + s * (1.0 - t) * b + s * t * c + (1.0 - s) * t * d
+        };
+        Some((mix(a.0, b.0, c.0, d.0), mix(a.1, b.1, c.1, d.1)))
+    }
+}
+
+/// Los parámetros `(s, t)` de `p` en el cuadrilátero `q` (en orden alrededor):
+/// `p = q0 + s·(q1 − q0) + t·(q3 − q0) + s·t·(q0 − q1 + q2 − q3)`, recortados a `[0, 1]`.
+fn inverse_bilinear(p: (f32, f32), q: &[(f32, f32); 4]) -> Option<(f32, f32)> {
+    let cross2 = |a: (f32, f32), b: (f32, f32)| a.0 * b.1 - a.1 * b.0;
+    let e = (q[1].0 - q[0].0, q[1].1 - q[0].1);
+    let f = (q[3].0 - q[0].0, q[3].1 - q[0].1);
+    let g = (
+        q[0].0 - q[1].0 + q[2].0 - q[3].0,
+        q[0].1 - q[1].1 + q[2].1 - q[3].1,
+    );
+    let h = (p.0 - q[0].0, p.1 - q[0].1);
+    let k2 = cross2(g, f);
+    let k1 = cross2(e, f) + cross2(h, g);
+    let k0 = cross2(h, e);
+    // `s` sale de `t` con el componente de denominador más grande.
+    let s_of = |t: f32| {
+        let (dx, dy) = (e.0 + g.0 * t, e.1 + g.1 * t);
+        if dx.abs() >= dy.abs() {
+            (h.0 - f.0 * t) / dx
+        } else {
+            (h.1 - f.1 * t) / dy
+        }
+    };
+    let ok = |s: f32, t: f32| s.is_finite() && t.is_finite();
+    let near = |x: f32| (-0.01..=1.01).contains(&x);
+    let (s, t) = if k2.abs() < 1e-6 * (k1.abs() + 1.0) {
+        let t = -k0 / k1;
+        (s_of(t), t)
+    } else {
+        let disc = k1 * k1 - 4.0 * k0 * k2;
+        if disc < 0.0 {
+            return None;
+        }
+        let root = disc.sqrt();
+        let t1 = (-k1 - root) / (2.0 * k2);
+        let t2 = (-k1 + root) / (2.0 * k2);
+        let (s1, s2) = (s_of(t1), s_of(t2));
+        if ok(s1, t1) && near(s1) && near(t1) {
+            (s1, t1)
+        } else {
+            (s2, t2)
+        }
+    };
+    ok(s, t).then(|| (s.clamp(0.0, 1.0), t.clamp(0.0, 1.0)))
 }
 
 /// Muestreo *nearest*: el texel `floor(u), floor(v)`, repetido con `rem_euclid`.
@@ -581,10 +745,16 @@ fn rasterize(input: &RenderInput) -> Raster {
         .then(|| orbit_dir(model.light.yaw, model.light.pitch));
     let mut cache = HashMap::new();
     for (id, obj) in model.objects.iter().enumerate() {
-        let world = world_vertices(obj, input.extra_yaw);
-        let s = obj.transform.scale;
-        // Una escala negativa en un número impar de ejes invierte el sentido de las caras.
-        let mirrored = (s.x < 0) ^ (s.y < 0) ^ (s.z < 0);
+        if model.object_hidden(id) {
+            continue;
+        }
+        let world = world_vertices(model, id, input.extra_yaw);
+        // Una escala negativa en un número impar de ejes (de toda la cadena) invierte el sentido
+        // de las caras.
+        let mirrored = model.object_chain(id).iter().fold(false, |m, t| {
+            let s = t.scale;
+            m ^ (s.x < 0) ^ (s.y < 0) ^ (s.z < 0)
+        });
         for (face_i, face) in obj.mesh.faces.iter().enumerate() {
             if face.verts.len() < 3 || face.uvs.len() != face.verts.len() {
                 continue;
@@ -635,21 +805,18 @@ fn rasterize(input: &RenderInput) -> Raster {
             if area == 0.0 || (!front && !obj.double_sided) {
                 continue;
             }
-            let steps = match light {
-                None => 0,
-                Some(to_light) => {
-                    let d = dot(normal, to_light) * if front { 1.0 } else { -1.0 };
-                    if d > 0.5 {
-                        0
-                    } else if d > 0.0 {
-                        1
-                    } else {
-                        2
-                    }
-                }
-            };
+            let level = light.map(|to_light| {
+                shade_level(dot(normal, to_light) * if front { 1.0 } else { -1.0 })
+            });
+            // Sin tramado, el paso más cercano: 0 con la luz de frente (d > 0.5), 1 de lado
+            // (d > 0) y 2 de espaldas.
+            let steps = level.map_or(0, |l| l.round() as u8);
+            let level = level.filter(|_| model.light.dither);
+            let quad = QuadMap::new(&pts, &face.uvs, &view).map(|q| (q, &view));
             let ctx = FaceCtx {
                 id: (id, face_i),
+                level,
+                quad,
                 steps,
                 texture,
                 palette: input.palette,
@@ -706,6 +873,8 @@ mod tests {
             transform: Transform3D::default(),
             double_sided: false,
             kind: None,
+            hidden: false,
+            locked: false,
         }
     }
 
@@ -741,6 +910,40 @@ mod tests {
 
     fn cube() -> Object3D {
         obj(primitive_mesh(&Primitive::Cube))
+    }
+
+    #[test]
+    fn lo_oculto_no_se_pinta_y_un_grupo_mueve_a_sus_hijos() {
+        let mut m = model(vec![cube()]);
+        m.objects[0].hidden = true;
+        assert!(
+            render_model(&input(&m, 16, &[ROJO], 1))
+                .iter()
+                .all(|p| p.a == 0)
+        );
+        let mut m = model(vec![cube()]);
+        m.groups.push(cs_core::Group3D {
+            name: "g".into(),
+            transform: Transform3D {
+                position: Vec3i {
+                    x: FIXED,
+                    y: 0,
+                    z: 0,
+                },
+                ..Default::default()
+            },
+            hidden: false,
+            locked: false,
+            open: true,
+        });
+        m.tree = vec![cs_core::Node::Group {
+            group: 0,
+            children: vec![cs_core::Node::Object(0)],
+        }];
+        let img = render_model(&input(&m, 16, &[ROJO], 1));
+        // El cubo (4..12) corrido una unidad (4 px) a la derecha: 8..16.
+        assert_eq!(img[8 * 16 + 6].a, 0);
+        assert_eq!(img[8 * 16 + 14], ROJO);
     }
 
     #[test]
@@ -780,6 +983,7 @@ mod tests {
             enabled: true,
             yaw: 1000,
             pitch: 200,
+            dither: false,
         };
         let inp = input(&m, 32, &[BLANCO], 1);
         let img = render_model(&inp);
@@ -797,6 +1001,52 @@ mod tests {
     }
 
     #[test]
+    fn el_nivel_redondeado_da_los_pasos_de_siempre() {
+        for (d, steps) in [(1.0, 0), (0.6, 0), (0.4, 1), (0.1, 1), (-0.1, 2), (-1.0, 2)] {
+            assert_eq!(shade_level(d).round() as u8, steps, "{d}");
+        }
+        // Un nivel entero no se trama; uno a la mitad, mitad y mitad.
+        let count = |level: f32, step: u8| {
+            (0..4)
+                .flat_map(|y| (0..4).map(move |x| (x, y)))
+                .filter(|&(x, y)| dithered_steps(level, x, y) == step)
+                .count()
+        };
+        assert_eq!(count(1.0, 1), 16);
+        assert_eq!(count(1.5, 1), 8);
+        assert_eq!(count(1.5, 2), 8);
+        assert_eq!(count(0.25, 1), 4);
+    }
+
+    #[test]
+    fn con_tramado_una_cara_de_lado_mezcla_dos_pasos() {
+        let mut m = model(vec![cube()]);
+        m.camera = CameraPreset::Iso.camera(2 * FIXED, Vec3i::default());
+        m.light = Light3D {
+            enabled: true,
+            yaw: 1000,
+            pitch: 200,
+            dither: false,
+        };
+        let colores = |m: &Model3D| {
+            let img = render_model(&input(m, 32, &[BLANCO], 1));
+            // La cara de arriba (de 1 paso sin tramado), alrededor de su centro.
+            let mut c: Vec<Rgba> = (6..11)
+                .flat_map(|y| (14..19).map(move |x| (x, y)))
+                .map(|(x, y)| img[y * 32 + x])
+                .collect();
+            c.sort_by_key(|c| (c.r, c.g, c.b));
+            c.dedup();
+            c
+        };
+        assert_eq!(colores(&m), vec![CLARO], "plain");
+        m.light.dither = true;
+        let tramado = colores(&m);
+        assert_eq!(tramado.len(), 2, "{tramado:?}");
+        assert!(tramado.contains(&CLARO), "{tramado:?}");
+    }
+
+    #[test]
     fn tabla_de_shading_cambia_solo_su_paso() {
         let mut m = model(vec![cube()]);
         m.camera = CameraPreset::Iso.camera(2 * FIXED, Vec3i::default());
@@ -804,6 +1054,7 @@ mod tests {
             enabled: true,
             yaw: 1000,
             pitch: 200,
+            dither: false,
         };
         let antes = render_model(&input(&m, 32, &[BLANCO], 1));
         m.shading.set(BLANCO, 1, Some(ROJO));
@@ -823,6 +1074,7 @@ mod tests {
             faces: vec![Face {
                 verts: vec![0, 1, 2, 3],
                 uvs: vec![(0, 1), (2, 1), (2, 0), (0, 0)],
+                part: None,
             }],
         }
     }
@@ -875,6 +1127,69 @@ mod tests {
                 assert_eq!(img[y * 16 + x], AZUL, "({x},{y})");
             }
         }
+    }
+
+    /// Un trapecio de frente (abajo de ±1, arriba de ±0.5) con la textura entera: su espejo
+    /// izquierda/derecha es él mismo.
+    fn trapecio() -> Mesh {
+        let f = FIXED;
+        let v = |x, y| Vec3i { x, y, z: 0 };
+        Mesh {
+            vertices: vec![v(-f, -f), v(f, -f), v(f / 2, f), v(-f / 2, f)],
+            faces: vec![Face {
+                verts: vec![0, 1, 2, 3],
+                uvs: vec![(0, 8), (8, 8), (8, 0), (0, 0)],
+                part: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn un_trapecio_con_textura_simetrica_se_ve_simetrico() {
+        // Una X de 8×8 (simétrica izquierda/derecha).
+        let tex: Vec<Rgba> = (0..64)
+            .map(|i| {
+                let (x, y) = (i % 8, i / 8);
+                if x == y || x == 7 - y { ROJO } else { AZUL }
+            })
+            .collect();
+        let m = model(vec![obj(trapecio())]);
+        let size = 64;
+        let img = render_model(&input(&m, size, &tex, 8));
+        let size = size as usize;
+        let (mut covered, mut wrong) = (0, 0);
+        for y in 0..size {
+            for x in 0..size / 2 {
+                let (l, r) = (img[y * size + x], img[y * size + size - 1 - x]);
+                if l.a == 0 && r.a == 0 {
+                    continue;
+                }
+                covered += 1;
+                if l != r {
+                    wrong += 1;
+                }
+            }
+        }
+        assert!(covered > 100, "{covered}");
+        // Por triángulos, la diagonal desarma la X (decenas de pixeles distintos).
+        assert!(wrong * 50 <= covered, "{wrong} of {covered} not mirrored");
+    }
+
+    #[test]
+    fn la_bilineal_inversa_da_las_esquinas_y_el_centro() {
+        let q = [(0.0, 0.0), (4.0, 0.0), (3.0, 2.0), (1.0, 2.0)];
+        for (i, st) in [(0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)]
+            .iter()
+            .enumerate()
+        {
+            let (s, t) = inverse_bilinear(q[i], &q).unwrap();
+            assert!(
+                (s - st.0).abs() < 1e-4 && (t - st.1).abs() < 1e-4,
+                "{i}: {s} {t}"
+            );
+        }
+        let (s, t) = inverse_bilinear((2.0, 1.0), &q).unwrap();
+        assert!((s - 0.5).abs() < 1e-4 && (t - 0.5).abs() < 1e-4, "{s} {t}");
     }
 
     #[test]
@@ -954,6 +1269,20 @@ mod tests {
         assert_eq!(pick_object(&inp, 8, 8), Some(1));
         assert_eq!(pick_object(&inp, 0, 0), None);
         assert_eq!(pick_object(&inp, 99, 99), None);
+    }
+
+    #[test]
+    fn lo_bloqueado_se_pinta_pero_no_se_elige() {
+        let mut m = model(vec![cube()]);
+        m.objects[0].locked = true;
+        let inp = input(&m, 16, &[ROJO], 1);
+        assert_eq!(render_model(&inp)[8 * 16 + 8], ROJO);
+        assert_eq!(pick_object(&inp, 8, 8), None);
+        assert_eq!(pick_face(&inp, 8, 8), None);
+        m.objects[0].locked = false;
+        let inp = input(&m, 16, &[ROJO], 1);
+        assert_eq!(pick_object(&inp, 8, 8), Some(0));
+        assert!(pick_face(&inp, 8, 8).is_some());
     }
 
     #[test]

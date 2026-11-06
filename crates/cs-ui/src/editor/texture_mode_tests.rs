@@ -149,7 +149,7 @@ fn mover_uvs_es_un_paso_de_undo_y_cancelar_ninguno() {
     let steps = e.history.done_count();
     // Cancelar: el documento no cambia.
     e.start_uv_op(UvOp::Move { from: (5.0, 5.0) });
-    e.update_uv_op((9.0, 7.0));
+    e.update_uv_op((9.0, 7.0), false);
     assert_ne!(
         e.edit_model_shown().unwrap().objects[0].mesh.faces[0].uvs,
         before,
@@ -161,15 +161,15 @@ fn mover_uvs_es_un_paso_de_undo_y_cancelar_ninguno() {
     assert_eq!(e.history.done_count(), steps, "cancel leaves no step");
     // Soltar: un paso de undo.
     e.start_uv_op(UvOp::Move { from: (5.0, 5.0) });
-    e.update_uv_op((9.2, 6.6));
-    e.update_uv_op((8.0, 3.0));
+    e.update_uv_op((9.2, 6.6), false);
+    e.update_uv_op((8.0, 3.0), false);
     e.finish_uv_op();
     let moved: Vec<_> = before.iter().map(|&(x, y)| (x + 3, y - 2)).collect();
     assert_eq!(face_uvs(&e, 0), moved);
     assert_eq!(e.history.done_count(), steps + 1);
     // Un clic sin arrastre no deja paso.
     e.start_uv_op(UvOp::Move { from: (5.0, 5.0) });
-    e.update_uv_op((5.2, 5.3));
+    e.update_uv_op((5.2, 5.3), false);
     e.finish_uv_op();
     assert_eq!(e.history.done_count(), steps + 1);
     e.undo();
@@ -189,7 +189,7 @@ fn mover_un_vertice_uv_cambia_solo_ese() {
         vertex: 1,
         from: at(1),
     });
-    e.update_uv_op((at(1).0 + 2.4, at(1).1 - 1.0));
+    e.update_uv_op((at(1).0 + 2.4, at(1).1 - 1.0), false);
     e.finish_uv_op();
     let uvs = face_uvs(&e, 0);
     assert_eq!(uvs[1], (before[1].0 + 2, before[1].1 - 1));
@@ -440,7 +440,7 @@ fn con_una_cara_elegida_solo_se_pinta_dentro_de_su_contorno() {
     );
     // Mover sus UVs también.
     e.start_uv_op(UvOp::Move { from: (20.0, 5.0) });
-    e.update_uv_op((24.0, 7.0));
+    e.update_uv_op((24.0, 7.0), false);
     e.finish_uv_op();
     assert_eq!(
         e.selection.as_ref().and_then(|m| m.bounds()),
@@ -548,4 +548,338 @@ fn volver_a_elegir_la_misma_cara_regresa_su_seleccion() {
     e.pick_model_face(center, false);
     assert!(e.selection_is_face_mask());
     assert_eq!(e.selection, mask);
+}
+
+#[test]
+fn en_texture_un_clic_en_la_tapa_del_cilindro_elige_la_tapa_entera() {
+    let mut e = editing();
+    assert!(e.add_primitive(cs_3d::Primitive::Cylinder { sides: 8 }));
+    assert!(e.remove_object(0));
+    e.set_cad_mode(CadMode::Texture);
+    let camera = cs_core::CameraPreset::Top.camera(4 * cs_core::FIXED, Default::default());
+    assert!(e.set_camera(camera));
+    let ship = e.document.artboard(e.model_id()).unwrap();
+    // Un poco a la derecha del centro: dentro de un gajo de la tapa.
+    let at = (
+        ship.sprite.width as i32 / 2 + 3,
+        ship.sprite.height as i32 / 2 + 1,
+    );
+    e.pick_model_face(at, false);
+    let mesh = &e.workspace_model().unwrap().objects[0].mesh;
+    let cap: Vec<(usize, usize)> = (0..mesh.faces.len())
+        .filter(|&f| mesh.faces[f].part == Some(1))
+        .map(|f| (0, f))
+        .collect();
+    assert_eq!(cap.len(), 8);
+    assert_eq!(e.selected_faces(), cap);
+    // Shift + clic en la misma tapa la quita entera.
+    e.pick_model_face(at, true);
+    assert!(e.selected_faces().is_empty());
+}
+
+#[test]
+fn la_caja_de_uvs_abarca_las_caras_elegidas_o_el_objeto_o_el_grupo() {
+    let mut e = editing();
+    assert!(e.add_primitive(cs_3d::Primitive::Plane));
+    e.select_model_object(Some(0));
+    assert!(e.new_group());
+    e.set_cad_mode(CadMode::Texture);
+    let all = |e: &Editor, o: usize| -> Vec<(usize, usize)> {
+        let n = e.workspace_model().unwrap().objects[o].mesh.faces.len();
+        (0..n).map(|f| (o, f)).collect()
+    };
+    let sorted = |mut v: Vec<(usize, usize)>| {
+        v.sort();
+        v
+    };
+    e.set_active_row(Some(super::Row::Group(0)), false);
+    assert_eq!(sorted(e.uv_box_faces()), all(&e, 0), "the group's object");
+    e.set_active_row(Some(super::Row::Object(1)), false);
+    assert_eq!(sorted(e.uv_box_faces()), all(&e, 1));
+    // Con caras elegidas, esas.
+    e.set_model_selection(Selection {
+        mode: SelectMode::Face,
+        items: [Item::Face(0, 2)].into(),
+    });
+    assert_eq!(e.uv_box_faces(), vec![(0, 2)]);
+    e.set_model_selection(Selection {
+        mode: SelectMode::Face,
+        items: Default::default(),
+    });
+    e.set_active_row(None, false);
+    assert!(e.uv_box_faces().is_empty(), "nothing chosen: no box");
+}
+
+#[test]
+fn escalar_uvs_con_un_asa_cae_en_pixeles_enteros_y_es_un_paso() {
+    let mut e = texturing();
+    let steps = e.history.done_count();
+    let bounds = cs_3d::uv_bounds(e.workspace_model().unwrap(), &[(0, 0)]).unwrap();
+    assert_eq!(bounds, ((0, 0), (16, 16)));
+    // El asa de abajo a la derecha, agarrada 2 pixeles afuera, llevada 8.3 más allá.
+    e.start_uv_op(UvOp::Scale {
+        handle: (1, 1),
+        from: (18.0, 18.0),
+        bounds,
+    });
+    e.update_uv_op((26.3, 22.0), false);
+    e.finish_uv_op();
+    let m = e.workspace_model().unwrap();
+    assert_eq!(cs_3d::uv_bounds(m, &[(0, 0)]), Some(((0, 0), (24, 20))));
+    assert_eq!(e.history.done_count(), steps + 1);
+    // Con Shift en la esquina, el factor que más cambió en los dos ejes.
+    e.undo();
+    e.start_uv_op(UvOp::Scale {
+        handle: (1, 1),
+        from: (18.0, 18.0),
+        bounds,
+    });
+    e.update_uv_op((26.0, 22.0), true);
+    e.finish_uv_op();
+    let m = e.workspace_model().unwrap();
+    assert_eq!(cs_3d::uv_bounds(m, &[(0, 0)]), Some(((0, 0), (24, 24))));
+}
+
+#[test]
+fn la_caja_de_una_fila_deja_fuera_los_objetos_ocultos() {
+    let mut e = editing();
+    assert!(e.add_primitive(cs_3d::Primitive::Plane));
+    // Un grupo con los dos objetos; el plano, oculto.
+    e.set_model_selection(Selection {
+        mode: SelectMode::Object,
+        items: [Item::Object(0), Item::Object(1)].into(),
+    });
+    assert!(e.new_group());
+    let g = e.workspace_model().unwrap().groups.len() - 1;
+    assert_eq!(e.workspace_model().unwrap().group_objects(g).len(), 2);
+    assert!(e.toggle_hidden(super::Row::Object(1)));
+    e.set_cad_mode(CadMode::Texture);
+    e.set_active_row(Some(super::Row::Object(1)), false);
+    assert!(e.uv_box_faces().is_empty(), "a hidden object: no box");
+    e.set_active_row(Some(super::Row::Object(0)), false);
+    assert!(!e.uv_box_faces().is_empty());
+    // El grupo: solo las caras del que se ve.
+    e.set_active_row(Some(super::Row::Group(g)), false);
+    let faces = e.uv_box_faces();
+    assert!(
+        !faces.is_empty() && faces.iter().all(|&(o, _)| o == 0),
+        "{faces:?}"
+    );
+}
+
+#[test]
+fn shift_en_un_lado_deja_al_menos_un_pixel_en_el_otro_eje() {
+    let mut e = texturing();
+    let bounds = |e: &Editor| cs_3d::uv_bounds(e.workspace_model().unwrap(), &[(0, 0)]).unwrap();
+    // Primero 16×2: el asa de abajo, sin Shift.
+    e.start_uv_op(UvOp::Scale {
+        handle: (0, 1),
+        from: (8.0, 16.0),
+        bounds: bounds(&e),
+    });
+    e.update_uv_op((8.0, 2.0), false);
+    e.finish_uv_op();
+    assert_eq!(bounds(&e), ((0, 0), (16, 2)));
+    // El lado derecho a 1 de ancho con Shift: el alto no baja de 1.
+    e.start_uv_op(UvOp::Scale {
+        handle: (1, 0),
+        from: (16.0, 1.0),
+        bounds: bounds(&e),
+    });
+    e.update_uv_op((1.0, 1.0), true);
+    e.finish_uv_op();
+    let ((x0, y0), (x1, y1)) = bounds(&e);
+    assert_eq!(x1 - x0, 1);
+    assert!(y1 - y0 >= 1, "{:?}", bounds(&e));
+}
+
+/// La textura del modelo del workspace (su sprite).
+fn texture_sprite(e: &Editor) -> &Sprite {
+    &e.document.artboard(texture_of(e)).unwrap().sprite
+}
+
+/// Si las cajas de UVs de los objetos `a` y `b` se tocan (contando el pixel de aire).
+fn boxes_touch(m: &cs_core::Model3D, a: usize, b: usize) -> bool {
+    let (ra, rb) = (
+        cs_3d::object_uv_rect(m, a).unwrap(),
+        cs_3d::object_uv_rect(m, b).unwrap(),
+    );
+    let air = cs_3d::MARGIN;
+    ra.0 < rb.0 + rb.2 + air
+        && rb.0 < ra.0 + ra.2 + air
+        && ra.1 < rb.1 + rb.3 + air
+        && rb.1 < ra.1 + ra.3 + air
+}
+
+/// El render de cada objeto del modelo del workspace a solas (sin que uno tape al otro), con la
+/// textura de ahora.
+fn renders_one_by_one(e: &Editor) -> Vec<Vec<Rgba>> {
+    let ab = e.document.artboard(e.workspace().unwrap()).unwrap();
+    let m = e.workspace_model().unwrap();
+    (0..m.objects.len())
+        .map(|keep| {
+            let mut only = m.clone();
+            for (i, o) in only.objects.iter_mut().enumerate() {
+                o.hidden = i != keep;
+            }
+            let pixels = cs_render::model_render(&e.document, ab, &only, (64, 64), None);
+            // Se ve y con la textura (más de un color): comparar no es en vano.
+            let mut seen: Vec<Rgba> = pixels.iter().copied().filter(|p| p.a > 0).collect();
+            seen.sort_by_key(|p| (p.r, p.g, p.b, p.a));
+            seen.dedup();
+            assert!(seen.len() > 1, "object {keep} is seen textured");
+            pixels
+        })
+        .collect()
+}
+
+/// El cubo del modelo nuevo más `extra` objetos con las UVs de siempre de `p` (encimados).
+fn with_stacked(p: cs_3d::Primitive, extra: usize) -> Editor {
+    let mut e = editing();
+    e.set_cad_mode(CadMode::Texture);
+    let mut m = e.workspace_model().unwrap().clone();
+    for i in 0..extra {
+        let mut transform = cs_core::Transform3D::default();
+        // Uno a cada lado del cubo (a la vista de la cámara).
+        transform.position.x = if i % 2 == 0 { 1 } else { -1 } * cs_core::FIXED;
+        m.push_object(
+            cs_core::Object3D {
+                name: p.name().into(),
+                mesh: cs_3d::primitive_mesh(&p),
+                transform,
+                double_sided: false,
+                kind: Some(p.kind()),
+                hidden: false,
+                locked: false,
+            },
+            None,
+        );
+    }
+    assert!(e.set_model(m));
+    // Pintados: cada pixel de la textura de un color distinto.
+    let id = texture_of(&e);
+    let layer = texture_sprite(&e).layers[0].id;
+    let pixels: Vec<(i32, i32, PixelValue)> = (0..64)
+        .flat_map(|y| (0..64).map(move |x| (x, y)))
+        .map(|(x, y)| {
+            let c = Rgba::rgb((x * 4) as u8, (y * 4) as u8, ((x + y) * 2) as u8);
+            (x, y, PixelValue::Rgba(c))
+        })
+        .collect();
+    assert!(e.execute_doc(cs_commands::DocCommand::OnArtboard {
+        id,
+        cmd: cs_commands::Command::DrawPixels {
+            layer,
+            frame: 0,
+            pixels,
+        },
+    }));
+    e
+}
+
+/// Los pixeles de la capa 0, frame 0 de `s` (todos).
+fn all_pixels(s: &Sprite) -> Vec<PixelValue> {
+    let layer = s.layers[0].id;
+    (0..s.height as i32)
+        .flat_map(|y| (0..s.width as i32).map(move |x| (x, y)))
+        .map(|(x, y)| s.pixel(layer, 0, x, y))
+        .collect()
+}
+
+#[test]
+fn pack_separates_overlapping_objects_and_keeps_how_they_look() {
+    // El cubo y dos planos en la misma zona de la textura.
+    let mut e = with_stacked(cs_3d::Primitive::Plane, 2);
+    assert!(boxes_touch(e.workspace_model().unwrap(), 1, 2));
+    let model = e.workspace_model().unwrap().clone();
+    let pixels = all_pixels(texture_sprite(&e));
+    let look = renders_one_by_one(&e);
+    let steps = e.history.done_count();
+    assert!(e.pack_uvs());
+    assert_eq!(e.history.done_count(), steps + 1, "one undo step");
+    let m = e.workspace_model().unwrap();
+    for (a, b) in [(0, 1), (0, 2), (1, 2)] {
+        assert!(!boxes_touch(m, a, b), "{a} {b}");
+    }
+    let t = texture_sprite(&e);
+    assert_eq!((t.width, t.height), (64, 64), "they fit without growing");
+    assert_eq!(renders_one_by_one(&e), look, "each object looks the same");
+    // Undo regresa el modelo, el tamaño y los pixeles.
+    e.undo();
+    assert_eq!(e.workspace_model(), Some(&model));
+    let t = texture_sprite(&e);
+    assert_eq!((t.width, t.height), (64, 64));
+    assert_eq!(all_pixels(t), pixels);
+}
+
+#[test]
+fn pack_grows_the_texture_when_needed() {
+    // Dos cubos de 48×32 encimados no caben separados en 64.
+    let mut e = with_stacked(cs_3d::Primitive::Cube, 1);
+    let look = renders_one_by_one(&e);
+    let steps = e.history.done_count();
+    assert!(e.pack_uvs());
+    assert_eq!(e.history.done_count(), steps + 1, "one undo step");
+    let t = texture_sprite(&e);
+    assert_eq!((t.width, t.height), (128, 128));
+    assert!(!boxes_touch(e.workspace_model().unwrap(), 0, 1));
+    assert_eq!(renders_one_by_one(&e), look, "each cube looks the same");
+    // Ya acomodados, otro Pack UVs no cambia nada: ningún paso.
+    assert!(!e.pack_uvs());
+    assert_eq!(e.history.done_count(), steps + 1);
+    e.undo();
+    assert_eq!(texture_sprite(&e).width, 64);
+    assert!(boxes_touch(e.workspace_model().unwrap(), 0, 1));
+}
+
+#[test]
+fn without_texture_there_is_nothing_to_pack() {
+    let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+    assert!(!e.pack_uvs());
+}
+
+/// Bloquea la capa 0 de la textura (con el candado del panel de capas).
+fn lock_texture_layer(e: &mut Editor) {
+    let id = texture_of(e);
+    let layer = texture_sprite(e).layers[0].id;
+    assert!(e.execute_doc(cs_commands::DocCommand::OnArtboard {
+        id,
+        cmd: cs_commands::Command::SetLayerProps {
+            id: layer,
+            props: cs_commands::LayerProps {
+                locked: Some(true),
+                ..Default::default()
+            },
+        },
+    }));
+}
+
+#[test]
+fn with_a_locked_texture_layer_there_is_no_pack() {
+    let mut e = with_stacked(cs_3d::Primitive::Plane, 2);
+    assert!(e.can_pack_uvs());
+    lock_texture_layer(&mut e);
+    assert!(!e.can_pack_uvs());
+    let model = e.workspace_model().unwrap().clone();
+    let steps = e.history.done_count();
+    assert!(!e.pack_uvs());
+    assert_eq!(e.history.done_count(), steps, "no undo step");
+    assert_eq!(e.workspace_model(), Some(&model));
+}
+
+#[test]
+fn pack_also_moves_a_locked_object_and_it_looks_the_same() {
+    let mut e = with_stacked(cs_3d::Primitive::Plane, 2);
+    assert!(e.toggle_row_locked(super::Row::Object(2)));
+    assert!(e.workspace_model().unwrap().objects[2].locked);
+    let before = cs_3d::object_uv_rect(e.workspace_model().unwrap(), 2);
+    let look = renders_one_by_one(&e);
+    assert!(e.can_pack_uvs());
+    assert!(e.pack_uvs());
+    let m = e.workspace_model().unwrap();
+    assert_ne!(cs_3d::object_uv_rect(m, 2), before, "the locked one moved");
+    for (a, b) in [(0, 1), (0, 2), (1, 2)] {
+        assert!(!boxes_touch(m, a, b), "{a} {b}");
+    }
+    assert_eq!(renders_one_by_one(&e), look, "each object looks the same");
 }

@@ -726,7 +726,11 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                 .camera((distance.round() as i32).max(1), m.camera.target);
             e.set_camera(camera);
         }
-        e.set_light(cs_core::Light3D::default());
+        // Con CHIMPSPRITE_DEMO_DITHER: las sombras con tramado.
+        e.set_light(cs_core::Light3D {
+            dither: dev_var("CHIMPSPRITE_DEMO_DITHER").is_some(),
+            ..cs_core::Light3D::default()
+        });
         e.set_outline(Some(cs_core::Rgba::rgb(0, 0, 0)));
         // El panel sin objeto elegido (abajo, solo la tira); con CHIMPSPRITE_DEMO_MODEL_TEXTURE,
         // con el cubo.
@@ -734,6 +738,10 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         // Con CHIMPSPRITE_DEMO_ADD_MENU: el menú del + de la tira abierto.
         if dev_var("CHIMPSPRITE_DEMO_ADD_MENU").is_some() {
             app.model_panel.open_add_menu = true;
+        }
+        // Con CHIMPSPRITE_DEMO_SHADING: la ventana Shading abierta.
+        if dev_var("CHIMPSPRITE_DEMO_SHADING").is_some() {
+            app.model_panel.shading = true;
         }
         // Con CHIMPSPRITE_DEMO_MODEL_EDIT: en vértices y con uno elegido (el workspace siempre
         // está en modo Edit).
@@ -858,6 +866,8 @@ mod tests {
             transform,
             double_sided: false,
             kind: Some(p.kind()),
+            hidden: false,
+            locked: false,
         }
     }
 

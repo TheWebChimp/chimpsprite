@@ -4,10 +4,11 @@
 
 use cs_3d::{Item, SelectMode, Selection, UvPoint};
 use cs_commands::{Command, DocCommand};
-use cs_core::{ArtboardId, Mask, Model3D};
+use cs_core::{ArtboardId, LayerKind, Mask, Model3D};
 
-use super::Editor;
 use super::model_edit::{CadMode, UvOp};
+use super::model_ops::NewPixels;
+use super::{Editor, Row};
 
 /// Los lados de la textura que se pueden elegir (Texture size).
 pub const TEXTURE_SIDES: std::ops::RangeInclusive<u32> = 16..=512;
@@ -85,7 +86,7 @@ impl Editor {
         self.cancel_model_op();
         self.cancel_uv_op();
         // Activar la textura o el modelo olvida el objeto del panel: es el mismo modelo.
-        let object = self.model_object;
+        let (object, group) = (self.model_object, self.model_group);
         self.model_edit.mode = mode;
         match mode {
             CadMode::Texture => {
@@ -103,13 +104,14 @@ impl Editor {
                 }
             }
         }
-        self.model_object = object;
+        (self.model_object, self.model_group) = (object, group);
         self.revision += 1;
     }
 
     /// Elige la cara del modelo que se edita que se ve en el pixel `(x, y)` de su render (a la
-    /// resolución de su artboard). `toggle` (Shift): la agrega o la quita; si no, queda sola, y
-    /// un clic en vacío vacía la selección. La selección queda en modo Face.
+    /// resolución de su artboard), con toda su cara completa. `toggle` (Shift): la agrega o la
+    /// quita; si no, queda sola, y un clic en vacío vacía la selección. La selección queda en
+    /// modo Face.
     pub fn pick_model_face(&mut self, (x, y): (i32, i32), toggle: bool) {
         let Some(artboard) = self.document.artboard(self.model_id()) else {
             return;
@@ -127,9 +129,12 @@ impl Editor {
                 items: Default::default(),
             };
         }
+        // La cara completa en bloque.
         match (hit, toggle) {
-            (Some((o, f)), true) => sel.toggle(Item::Face(o, f)),
-            (Some((o, f)), false) => sel.items = [Item::Face(o, f)].into(),
+            (Some((o, f)), true) => sel.toggle_part(model, Item::Face(o, f)),
+            (Some((o, f)), false) => {
+                sel.items = cs_3d::part_items(model, o, f).into_iter().collect()
+            }
             (None, true) => return,
             (None, false) => sel.items.clear(),
         }
@@ -265,6 +270,42 @@ impl Editor {
             .collect()
     }
 
+    /// Las caras que abarca la caja de UVs: con caras elegidas (modo Face), esas; si no, todas las
+    /// de los objetos elegidos en modo Object o, sin ellos, las del objeto o el grupo de la fila
+    /// activa del outliner. Los objetos ocultos (ellos o un grupo suyo) quedan fuera, como de la
+    /// selección 3D en `set_active_row`: la fila de un objeto oculto no tiene caja. Sin nada de
+    /// eso, ninguna (no hay caja).
+    pub fn uv_box_faces(&self) -> Vec<(usize, usize)> {
+        let faces = self.selected_faces();
+        if !faces.is_empty() {
+            return faces;
+        }
+        let Some(model) = self.edited_model() else {
+            return Vec::new();
+        };
+        let sel = &self.model_edit.selection;
+        let mut objects: Vec<usize> = if sel.mode == SelectMode::Object {
+            sel.items.iter().map(|i| i.object()).collect()
+        } else {
+            Vec::new()
+        };
+        if objects.is_empty() {
+            objects = match self.active_row() {
+                Some(Row::Object(o)) => vec![o],
+                Some(Row::Group(g)) => model.group_objects(g),
+                None => Vec::new(),
+            };
+        }
+        objects.sort_unstable();
+        objects.dedup();
+        objects
+            .into_iter()
+            .filter(|&o| !model.object_hidden(o))
+            .filter_map(|o| Some((o, model.objects.get(o)?.mesh.faces.len())))
+            .flat_map(|(o, n)| (0..n).map(move |f| (o, f)))
+            .collect()
+    }
+
     /// El lado de la textura del modelo que se edita pasa a `side`, anclado arriba a la
     /// izquierda: lo pintado se queda donde estaba y al achicar se recorta. Las UVs no cambian.
     /// Un paso de undo. Solo lados de [`TEXTURE_SIDES`] (de 16 a 512).
@@ -302,16 +343,16 @@ impl Editor {
         self.model_edit.uv_op = Some(op);
     }
 
-    /// El gesto de UV sigue al puntero (`pointer` en pixeles de la textura). Todo cae en pixeles
-    /// enteros.
-    pub fn update_uv_op(&mut self, pointer: (f32, f32)) {
+    /// El gesto de UV sigue al puntero (`pointer` en pixeles de la textura; `proportional`:
+    /// Shift, al escalar el mismo factor en los dos ejes). Todo cae en pixeles enteros.
+    pub fn update_uv_op(&mut self, pointer: (f32, f32), proportional: bool) {
         let Some(op) = self.model_edit.uv_op else {
             return;
         };
         let Some(m) = self.edited_model() else {
             return;
         };
-        let faces = self.selected_faces();
+        let faces = self.uv_box_faces();
         let delta = |from: (f32, f32)| {
             (
                 (pointer.0 - from.0).round() as i32,
@@ -320,6 +361,14 @@ impl Editor {
         };
         let preview = match op {
             UvOp::Move { from } => cs_3d::move_uvs(m, &faces, delta(from)),
+            UvOp::Scale {
+                handle,
+                from,
+                bounds,
+            } => {
+                let (anchor, f) = uv_handle_scale(handle, from, bounds, pointer, proportional);
+                cs_3d::scale_uvs(m, &faces, anchor, f)
+            }
             UvOp::Vertex { face, vertex, from } => {
                 let Some(&(x, y)) = m
                     .objects
@@ -338,11 +387,15 @@ impl Editor {
 
     /// Termina el gesto de UV: si cambió algo, un paso de undo.
     pub fn finish_uv_op(&mut self) {
-        if self.model_edit.uv_op.take().is_none() {
+        let Some(op) = self.model_edit.uv_op.take() else {
             return;
-        }
+        };
+        let label = match op {
+            UvOp::Scale { .. } => "Scale UV",
+            UvOp::Move { .. } | UvOp::Vertex { .. } => "Move UV",
+        };
         if let Some(model) = self.model_edit.preview.take() {
-            self.named("Move UV", |e| e.set_model(model));
+            self.named(label, |e| e.set_model(model));
         }
     }
 
@@ -365,6 +418,82 @@ impl Editor {
         self.edit_selected_uvs("Flip UV", |m, faces| cs_3d::flip_uvs(m, faces, horizontal))
     }
 
+    /// Si alguna capa de imagen de la textura del modelo que se edita tiene candado (Pack UVs
+    /// no se usa así: sus pixeles se quedarían donde estaban).
+    pub fn texture_layers_locked(&self) -> bool {
+        self.edited_texture()
+            .and_then(|id| self.document.artboard(id))
+            .is_some_and(|a| {
+                a.sprite
+                    .layers
+                    .iter()
+                    .any(|l| l.kind == LayerKind::Image && l.locked)
+            })
+    }
+
+    /// Pack UVs se puede usar: hay textura sin capas bloqueadas y algún objeto con UVs.
+    pub fn can_pack_uvs(&self) -> bool {
+        self.edited_texture().is_some()
+            && !self.texture_layers_locked()
+            && self.edited_model().is_some_and(|m| {
+                (0..m.objects.len()).any(|o| cs_3d::object_uv_rect(m, o).is_some())
+            })
+    }
+
+    /// Pack UVs: reacomoda en la textura los bloques de todos los objetos del modelo que se
+    /// edita (las UVs de cada objeto, con sus caras como estaban entre sí; también los ocultos y
+    /// los bloqueados con el candado del outliner: el candado es de la geometría, y cada uno se
+    /// lleva sus pixeles, así que se ve igual) sin encimarse, con [`cs_3d::MARGIN`] de aire, de
+    /// mayor a menor. Si no caben, la textura crece al siguiente lado de [`TEXTURE_SIDES`] (de
+    /// doble en doble). Cada bloque lleva sus pixeles a su lugar nuevo: si dos objetos usaban la
+    /// misma zona, cada uno se lleva su copia. Un paso de undo; `false` (ninguno) sin textura,
+    /// con alguna capa de imagen de la textura bloqueada (ver [`Self::texture_layers_locked`]),
+    /// si no caben ni en 512 o si ya estaban así.
+    pub fn pack_uvs(&mut self) -> bool {
+        if self.texture_layers_locked() {
+            return false;
+        }
+        let Some(sprite) = self
+            .edited_texture()
+            .and_then(|id| self.document.artboard(id))
+            .map(|a| &a.sprite)
+        else {
+            return false;
+        };
+        let Some(model) = self.edited_model() else {
+            return false;
+        };
+        let (w, h) = (sprite.width, sprite.height);
+        // Desde el lado de ahora; al crecer, los de la lista del panel más grandes que la textura.
+        let sides: Vec<u32> = std::iter::once(w.min(h))
+            .chain(
+                TEXTURE_SIDES
+                    .filter(|v| v.is_power_of_two())
+                    .filter(|&v| v > w.max(h)),
+            )
+            .collect();
+        let Some((side, places)) = cs_3d::pack(model, &sides) else {
+            return false;
+        };
+        let mut packed = model.clone();
+        let mut moves = Vec::new();
+        for (o, at) in places {
+            let Some(rect) = cs_3d::object_uv_rect(model, o) else {
+                continue;
+            };
+            if (rect.0, rect.1) != at {
+                packed = cs_3d::place_object(&packed, o, at);
+                moves.push((rect, at));
+            }
+        }
+        if moves.is_empty() && side <= w.min(h) {
+            return false;
+        }
+        self.named("Pack UVs", |e| {
+            e.set_model_moving_pixels(packed, side, &moves, NewPixels::Copy)
+        })
+    }
+
     fn edit_selected_uvs(
         &mut self,
         label: &'static str,
@@ -380,4 +509,58 @@ impl Editor {
         let next = f(m, &faces);
         self.named(label, |e| e.set_model(next))
     }
+}
+
+/// Arrastrar el asa `handle` de la caja `bounds` (inclusiva) agarrada en `from` hasta `pointer`
+/// (en pixeles de la textura): el ancla (el lado o la esquina opuesta; en un eje sin asa, el
+/// medio) y el factor por eje. El borde arrastrado cae en el pixel entero bajo el puntero y la
+/// caja no baja de 1 pixel ni se voltea. Con `proportional` (Shift), los dos ejes usan el mismo
+/// factor: en una esquina el que más cambió; en un lado, el de ese lado (el otro eje tampoco
+/// baja de 1 pixel).
+fn uv_handle_scale(
+    handle: (i8, i8),
+    from: (f32, f32),
+    ((x0, y0), (x1, y1)): ((i32, i32), (i32, i32)),
+    pointer: (f32, f32),
+    proportional: bool,
+) -> ((f32, f32), (f32, f32)) {
+    // Por eje: el ancla y el factor (`None`: el eje no tiene asa).
+    let axis = |s: i8, lo: i32, hi: i32, from: f32, at: f32| -> (f32, Option<f32>) {
+        if s == 0 {
+            return ((lo + hi) as f32 / 2.0, None);
+        }
+        let (edge, anchor) = if s > 0 { (hi, lo) } else { (lo, hi) };
+        let old = edge - anchor;
+        if old == 0 {
+            return (anchor as f32, Some(1.0));
+        }
+        let moved = (edge as f32 + at - from).round() as i32 - anchor;
+        let moved = if old > 0 { moved.max(1) } else { moved.min(-1) };
+        (anchor as f32, Some(moved as f32 / old as f32))
+    };
+    let (ax, fx) = axis(handle.0, x0, x1, from.0, pointer.0);
+    let (ay, fy) = axis(handle.1, y0, y1, from.1, pointer.1);
+    // El factor más chico que deja `extent` pixeles en al menos 1.
+    let at_least_1px = |f: f32, extent: i32| {
+        if extent == 0 {
+            f
+        } else {
+            f.max(1.0 / extent.abs() as f32)
+        }
+    };
+    let (w, h) = (x1 - x0, y1 - y0);
+    let f = match (fx, fy, proportional) {
+        (Some(fx), Some(fy), true) => {
+            let f = if (fx - 1.0).abs() >= (fy - 1.0).abs() {
+                fx
+            } else {
+                fy
+            };
+            (at_least_1px(f, w), at_least_1px(f, h))
+        }
+        (Some(f), None, true) => (f, at_least_1px(f, h)),
+        (None, Some(f), true) => (at_least_1px(f, w), f),
+        (fx, fy, _) => (fx.unwrap_or(1.0), fy.unwrap_or(1.0)),
+    };
+    ((ax, ay), f)
 }

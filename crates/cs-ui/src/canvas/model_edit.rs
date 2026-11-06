@@ -103,9 +103,14 @@ impl CanvasView {
         modal: bool,
     ) {
         let (header, views) = header_split(rect);
+        // Debajo de la línea del encabezado, la barrita del objeto; las vistas, después.
+        let skin = crate::pixel_ui::frame_skin(ui.ctx());
+        let height = crate::panels::options_bar_height(skin.as_deref());
+        let (bar, views) = bar_split(views, height);
         self.texture_panes = None;
         self.header_rect = Some(header);
-        // Los cuadrantes salen del área debajo del encabezado, así que ya valen para la entrada
+        self.object_bar_rect = Some(bar);
+        // Los cuadrantes salen del área debajo de la barrita, así que ya valen para la entrada
         // de este frame (también en el primero del workspace).
         let quads = quadrants(views);
         self.edit_quads = Some(quads);
@@ -122,6 +127,8 @@ impl CanvasView {
         self.draw_model_edit(ui, &painter, quads, editor, view.document.as_ref());
         drop(view);
         cad_header(ui, header, editor);
+        // La barrita, encima del fondo ya pintado.
+        super::object_bar::object_bar(ui, bar, editor);
     }
 
     /// La entrada del workspace: la rueda, con o sin Ctrl (zoom de las vistas orto o distancia
@@ -149,7 +156,11 @@ impl CanvasView {
         // La rueda, con o sin Ctrl: sobre una vista orto, zoom de las tres; sobre la
         // perspectiva, la cámara hacia el puntero. Los restos de touchpad siguen sumando
         // mientras el puntero siga en el workspace.
-        if let Some(pointer) = response.hover_pos() {
+        let bar = self.object_bar_rect;
+        if let Some(pointer) = response
+            .hover_pos()
+            .filter(|p| !bar.is_some_and(|r| r.contains(*p)))
+        {
             for (unit, dy) in super::model_input::wheel_events(ui) {
                 let steps = brush_wheel_steps(&mut self.model_wheel_rest, unit, dy);
                 if steps != 0 && !self.model_edit_wheel(editor, pointer, steps) {
@@ -169,7 +180,7 @@ impl CanvasView {
                     || pressed(egui::PointerButton::Middle),
                 pressed(egui::PointerButton::Secondary),
                 pressed(egui::PointerButton::Middle),
-                i.pointer.primary_down() || i.pointer.secondary_down(),
+                i.pointer.primary_down() || i.pointer.secondary_down() || i.pointer.middle_down(),
                 i.pointer.primary_down() || i.pointer.secondary_down() || i.pointer.middle_down(),
                 i.pointer.interact_pos(),
                 i.modifiers,
@@ -350,8 +361,13 @@ impl CanvasView {
             return true;
         }
         let Some(view) = quadrant_view(i) else {
-            // El botón central no hace nada en la perspectiva.
-            if !middle {
+            // El botón central mueve la cámara (paneo), como en las vistas de frente.
+            if middle {
+                if let Some(q) = self.edit_quads.map(|qs| qs[i]) {
+                    let (_, scale) = self.persp_rect(q, editor);
+                    self.model_pan_press(editor, p, Vec2::ONE / scale);
+                }
+            } else {
                 self.persp_press(editor, i, p, secondary, modifiers);
             }
             return true;
@@ -422,22 +438,24 @@ impl CanvasView {
             return true;
         }
         match cs_3d::pick(&model, &map, sel.mode, at) {
+            // En modo Face, la cara completa en bloque.
             Some(item) if modifiers.shift => {
                 let mut next = sel;
-                next.toggle(item);
+                next.toggle_part(&model, item);
                 editor.set_model_selection(next);
             }
             Some(item) => {
                 let already = sel.items.contains(&item);
                 if !already {
-                    editor.set_model_selection(cs_3d::Selection {
+                    let one = cs_3d::Selection {
                         mode: sel.mode,
                         items: [item].into(),
-                    });
+                    };
+                    editor.set_model_selection(cs_3d::expand_parts(&model, &one));
                 }
                 let now = editor.model_edit().selection.clone();
                 let grab = match item {
-                    Item::Vertex(o, v) => cs_3d::world_points(&model.objects[o])[v as usize],
+                    Item::Vertex(o, v) => cs_3d::world_points(&model, o)[v as usize],
                     _ => cs_3d::bounds(&model, &now).map_or([0.0; 3], cs_3d::center),
                 };
                 editor.start_model_op(EditOp::Move {
@@ -1042,6 +1060,16 @@ pub(super) fn header_split(area: Rect) -> (Rect, Rect) {
     (header, views)
 }
 
+/// `area` partida: arriba una barra de `height` (el alto de la barra de opciones: la barrita del
+/// objeto o la del pincel) y, debajo, lo demás.
+pub(super) fn bar_split(area: Rect, height: f32) -> (Rect, Rect) {
+    let bottom = (area.top() + height).min(area.bottom());
+    (
+        Rect::from_min_max(area.min, pos2(area.right(), bottom)),
+        Rect::from_min_max(pos2(area.left(), bottom), area.max),
+    )
+}
+
 /// El encabezado de ChimpCAD en `header`: la franja con su bisel y la línea oscura de abajo, el
 /// logo a la izquierda (la pieza `logo.chimpcad`; sin ella, el nombre en texto) y los botones
 /// Model / Texture a la derecha.
@@ -1241,26 +1269,33 @@ fn selected_vertex_at(
             .iter()
             .any(|i| matches!(*i, Item::Edge(eo, a, b) if eo == o && (a == v || b == v))),
     };
-    on.then(|| cs_3d::world_points(&model.objects[o])[v as usize])
+    on.then(|| cs_3d::world_points(model, o)[v as usize])
 }
 
-/// Las aristas `(objeto, a, b)` (con `a < b`) de las caras elegidas, para pintarlas sin recorrer
-/// la selección por cada arista.
+/// Las aristas `(objeto, a, b)` (con `a < b`) del borde de las caras completas elegidas (una
+/// vez por parte), para pintarlas sin recorrer la selección por cada arista.
 fn selected_face_edges(
     model: &cs_core::Model3D,
     sel: &cs_3d::Selection,
 ) -> HashSet<(usize, u32, u32)> {
     let mut out = HashSet::new();
+    let mut done = HashSet::new();
     for item in &sel.items {
-        if let Item::Face(o, f) = *item
-            && let Some(face) = model.objects.get(o).and_then(|obj| obj.mesh.faces.get(f))
-        {
-            let vs = &face.verts;
-            for k in 0..vs.len() {
-                let (x, y) = (vs[k], vs[(k + 1) % vs.len()]);
-                out.insert((o, x.min(y), x.max(y)));
-            }
+        let Item::Face(o, f) = *item else {
+            continue;
+        };
+        let Some(face) = model.objects.get(o).and_then(|obj| obj.mesh.faces.get(f)) else {
+            continue;
+        };
+        // Una parte se dibuja una sola vez (por su primera cara elegida).
+        if face.part.is_some_and(|p| !done.insert((o, p))) {
+            continue;
         }
+        out.extend(
+            cs_3d::part_outline(model, o, f)
+                .into_iter()
+                .map(|(a, b)| (o, a, b)),
+        );
     }
     out
 }
@@ -1353,11 +1388,13 @@ impl OrthoScene<'_> {
     /// Objeto.
     fn wireframe(&self, img: &mut cs_3d::WireImage) {
         let (sel, model) = (self.sel, self.model);
-        let scr: Vec<Vec<(f32, f32)>> = model
-            .objects
-            .iter()
-            .map(|obj| {
-                cs_3d::world_points(obj)
+        // Los objetos ocultos quedan sin puntos: no se pinta ni una arista ni un vértice suyo.
+        let scr: Vec<Vec<(f32, f32)>> = (0..model.objects.len())
+            .map(|o| {
+                if model.object_hidden(o) {
+                    return Vec::new();
+                }
+                cs_3d::world_points(model, o)
                     .iter()
                     .map(|&w| self.map.to_screen(w))
                     .collect()
@@ -1386,30 +1423,31 @@ impl OrthoScene<'_> {
             let (x, y) = self.px(s);
             img.fill_rect(x - side / 2, y - side / 2, side, side, rgba(c));
         };
-        for (o, obj) in model.objects.iter().enumerate() {
+        for (o, pts) in scr.iter().enumerate() {
             match sel.mode {
                 SelectMode::Object => {}
+                // Los ocultos, sin puntos.
+                SelectMode::Face if pts.is_empty() => {}
                 SelectMode::Face => {
-                    for (f, face) in obj.mesh.faces.iter().enumerate() {
-                        let vs: Vec<(f32, f32)> = face
-                            .verts
-                            .iter()
-                            .filter_map(|&v| scr[o].get(v as usize).copied())
-                            .collect();
-                        if vs.is_empty() {
-                            continue;
+                    // Un punto por cara completa (en su cara más grande), amarillo si está
+                    // elegida; los elegidos encima de los que no.
+                    let dots: Vec<((f32, f32), bool)> = cs_3d::part_dots(model, o)
+                        .into_iter()
+                        .map(|(f, c)| {
+                            let on = cs_3d::part_items(model, o, f)
+                                .iter()
+                                .all(|i| sel.items.contains(i));
+                            (self.map.to_screen(c), on)
+                        })
+                        .collect();
+                    for on in [false, true] {
+                        for &(c, _) in dots.iter().filter(|d| d.1 == on) {
+                            dot(img, c, if on { SELECTED } else { EDGE });
                         }
-                        let k = vs.len() as f32;
-                        let c = (
-                            vs.iter().map(|p| p.0).sum::<f32>() / k,
-                            vs.iter().map(|p| p.1).sum::<f32>() / k,
-                        );
-                        let on = sel.items.contains(&Item::Face(o, f));
-                        dot(img, c, if on { SELECTED } else { EDGE });
                     }
                 }
                 _ => {
-                    for (v, &s) in scr[o].iter().enumerate() {
+                    for (v, &s) in pts.iter().enumerate() {
                         let on = sel.items.contains(&Item::Vertex(o, v as u32));
                         dot(img, s, if on { SELECTED } else { SEPARATOR });
                     }
@@ -1743,6 +1781,8 @@ mod tests {
                 transform: Default::default(),
                 double_sided: false,
                 kind: Some(cs_core::PrimitiveKind::Cube),
+                hidden: false,
+                locked: false,
             }],
             ..Model3D::default()
         }
@@ -1835,7 +1875,7 @@ mod tests {
             mode: SelectMode::Vertex,
             items: [Item::Vertex(0, 7)].into(),
         };
-        let p = MAP.to_screen(cs_3d::world_points(&m.objects[0])[7]);
+        let p = MAP.to_screen(cs_3d::world_points(&m, 0)[7]);
         let (x, y) = (p.0.floor() as i32, p.1.floor() as i32);
         let img = render(&m, &one, 1);
         for (dx, dy) in [(-1, -1), (0, 0), (1, 1), (1, -1)] {
@@ -1863,6 +1903,53 @@ mod tests {
         }
         assert_ne!(at(&img, 15, 15), SELECTED);
         assert_ne!(at(&img, 21, 21), SELECTED);
+    }
+
+    #[test]
+    fn in_face_mode_a_whole_face_has_one_dot() {
+        let mut m = cube();
+        m.objects[0].mesh = cs_3d::primitive_mesh(&cs_3d::Primitive::Cylinder { sides: 8 });
+        let top = ViewMap {
+            view: OrthoView::Top,
+            ..MAP
+        };
+        let mesh = &m.objects[0].mesh;
+        let cap: Vec<usize> = (0..mesh.faces.len())
+            .filter(|&f| mesh.faces[f].part == Some(1))
+            .collect();
+        let sel = cs_3d::Selection {
+            mode: SelectMode::Face,
+            items: cap.iter().map(|&f| Item::Face(0, f)).collect(),
+        };
+        let img = OrthoScene {
+            map: &top,
+            min: (0.0, 0.0),
+            grid: 1,
+            model: &m,
+            sel: &sel,
+            bounds: cs_3d::bounds(&m, &sel),
+            face_edges: &selected_face_edges(&m, &sel),
+            boxed: None,
+            gizmo: None,
+            gizmo_center: None,
+            gizmo_hot: None,
+        }
+        .image(100, 100);
+        // De los centros de los 8 gajos, solo uno lleva el punto (amarillo: la tapa elegida).
+        let pts = cs_3d::world_points(&m, 0);
+        let lit = cap
+            .iter()
+            .filter(|&&f| {
+                let vs = &mesh.faces[f].verts;
+                let (x, y) = vs.iter().fold((0.0, 0.0), |(x, y), &v| {
+                    let s = top.to_screen(pts[v as usize]);
+                    (x + s.0, y + s.1)
+                });
+                let k = vs.len() as f32;
+                at(&img, (x / k).floor() as i32, (y / k).floor() as i32) == SELECTED
+            })
+            .count();
+        assert_eq!(lit, 1);
     }
 
     /// El cubo elegido entero con el gizmo `kind` (`hot`: el asa resaltada).

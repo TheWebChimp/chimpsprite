@@ -658,6 +658,7 @@ impl ChimpApp {
             Some(model_panel::ModelAction::Bake) if self.doc.editor.edited_model().is_some() => {
                 self.bake = Some(bake_dialog::BakeDialog::new(&self.doc.editor));
             }
+            Some(model_panel::ModelAction::Shading) => self.model_panel.shading = true,
             Some(model_panel::ModelAction::TextureSize(side)) => {
                 self.palette_confirm = Some(palette_ui::Confirm::TextureSize(side));
             }
@@ -916,6 +917,21 @@ impl ChimpApp {
                 self.finish_bake(model, options);
             }
             tilemap_dialog::DialogResult::Cancel => self.bake = None,
+        }
+    }
+
+    /// La ventana Shading del panel 3D: se cierra con la × o cuando ya no hay modelo que editar.
+    pub(crate) fn update_shading_window(&mut self, ctx: &egui::Context, modal: bool) {
+        if !self.model_panel.shading {
+            return;
+        }
+        if !self.has_doc() || self.doc.editor.edited_model().is_none() {
+            self.model_panel.shading = false;
+            return;
+        }
+        let skin = self.pixel.skin();
+        if model_panel::shading_window(ctx, &mut self.doc.editor, skin, modal) {
+            self.model_panel.shading = false;
         }
     }
 
@@ -1433,7 +1449,7 @@ impl ChimpApp {
         }
         // La barra de opciones, a todo el ancho debajo de las pestañas: 21 de alto con Pixel UI,
         // con el separador grabado abajo. En la pestaña de un modelo (ChimpCAD) no va: su alto
-        // es del área de abajo (la ventana del texto sigue, para pintar en la textura).
+        // es del área de abajo (en modo Texture, el área la pone debajo de su encabezado).
         if self.doc.editor.model_edit_on() {
             panels::text_window(ui.ctx(), &mut self.doc.editor, skin);
         } else {
@@ -1812,6 +1828,7 @@ impl eframe::App for ChimpApp {
         self.update_font_dialog(&ctx);
         self.update_model_dialog(&ctx);
         self.update_bake_dialog(&ctx);
+        self.update_shading_window(&ctx, modal);
         self.update_symbol_dialog(&ctx);
         self.show_dialogs(&ctx);
         self.show_restore(&ctx);
@@ -1923,8 +1940,9 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
             Key::M if !shift && model_mode => {
                 editor.merge_model_selection();
             }
+            // Con un grupo activo en modo Object, el grupo entero (como el botón Delete).
             Key::Delete | Key::Backspace if model_mode => {
-                editor.delete_model_selection();
+                editor.delete_from_panel();
             }
             Key::Enter if busy => editor.finish_model_op(),
             // Home encuadra todo el modelo (no durante un gesto).

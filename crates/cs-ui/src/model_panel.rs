@@ -1,95 +1,88 @@
 //! El panel 3D (en el dock del lienzo; en la pestaña del modelo, fijo en su lugar): el modelo 3D
-//! del artboard activo, partido en dos a lo alto por una línea grabada (a ≈ 40 %). Arriba, con su
-//! scroll, lo general del modelo: los modos de selección y la cuadrícula (en modo Model), la
-//! textura y su tamaño, la cámara, la luz (con la cuadrícula Shading), el contorno y Sheet
-//! settings…. Abajo, la tira de pestañas de los objetos (una por objeto, con el ícono de su tipo:
-//! un clic la elige, su marca quita el objeto y, si no caben, las flechas las recorren) con el +
-//! a la derecha (su ventanita, en [`add_menu`]: el tipo, los lados de los redondos y Add) y,
-//! debajo, con su scroll, lo del objeto elegido: en modo Model, Extrude, Subdivide, Merge y
-//! Delete; en modo Texture, los botones de las UVs (girar y voltear las de las caras elegidas); su
-//! posición, su rotación y su escala en filas de X, Y y Z, y Double sided. Sin objeto elegido,
-//! abajo solo la tira. Sin modelo, el botón New 3D Model….
+//! del artboard activo, partido en dos a lo alto por una línea grabada (a ≈ 48 %). Arriba, con su
+//! scroll, lo general del modelo: los modos de selección y la cuadrícula (usables en modo Model), la
+//! textura y su tamaño, la cámara, la luz, el contorno, Shading… (la cuadrícula, en su ventana)
+//! y Sheet settings…. Abajo, el encabezado "Outliner" con Duplicate, New group y el + a la
+//! derecha (su ventanita, en [`add_menu`]: el tipo, los lados de los redondos y Add) y, debajo,
+//! con su scroll, la fila de botones del objeto (en modo Model, Extrude, Subdivide, Merge y
+//! Delete; en modo Texture, los de las UVs) y el [`outliner`] con los objetos y los grupos. La
+//! posición, la rotación y la escala de la fila activa van en la barrita del objeto, debajo del
+//! encabezado de ChimpCAD (`canvas::object_bar`). Sin modelo, el botón New 3D Model….
 
-use cs_3d::Primitive;
-use cs_core::{CameraPreset, Model3D, Object3D, PrimitiveKind, Projection, Rgba, ShadingTable};
+use cs_core::{CameraPreset, Model3D, PrimitiveKind, Projection, Rgba, ShadingTable};
 use eframe::egui::{
     self, Color32, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2, vec2,
 };
 
-use crate::kit::tabs::{TabEvent, TabItem};
-
 use crate::dock::FLYOUT_MARGIN;
-use crate::editor::{CadMode, Editor, wrap_angle};
+use crate::editor::{CadMode, Editor, Row, wrap_angle};
 use crate::font_panel::lit_line;
 use crate::kit;
 use crate::menus;
 use crate::panel_kit::label_with_hint;
 use crate::pixel_ui;
 use crate::skin::Skin;
-use crate::tabs::TabIcon;
 
 mod add_menu;
+pub(crate) mod outliner;
+
+pub use outliner::OutlinerState;
 
 /// Ancho de adentro del panel (sin su marco): el contenido y la barra del scroll.
-pub const WIDTH: f32 = 300.0;
-/// Las pestañas de los objetos, 5 filas debajo de la línea que parte el panel (3 de aire después
-/// de sus dos filas), sobre su propia línea grabada.
+pub const WIDTH: f32 = 227.0;
+/// El encabezado del outliner, 5 filas debajo de la línea que parte el panel (3 de aire después
+/// de sus dos filas), sobre su propia línea grabada a [`kit::tabs::HEIGHT`] (donde estaba la
+/// tira de pestañas).
 const TABS_TOP: f32 = 5.0;
-/// Sin Pixel UI: la fila de pestañas de egui (más alta) y la línea debajo, desde la que parte el
-/// panel.
+/// Las mayúsculas de "Outliner", centradas con los botones del encabezado.
+const HEADER_CAPS: f32 = 5.0;
+/// Sin Pixel UI: la fila del encabezado de egui (más alta) y la línea debajo, desde la que parte
+/// el panel.
 const PLAIN_TABS_TOP: f32 = 8.0;
 const PLAIN_HEADER_LINE: f32 = 29.0;
-/// Dónde parte la línea el panel, desde arriba de su caja: como en el boceto, 160 de sus 408
-/// filas (≈ 40 %; lo de abajo, las pestañas y el objeto, tiene más lugar).
-const SPLIT: f32 = 160.0 / 408.0;
+/// Dónde parte la línea el panel, desde arriba de su caja: como en el boceto, 197 de sus 408
+/// filas (≈ 48 %: lo general cabe entero sin scroll).
+const SPLIT: f32 = 197.0 / 408.0;
 /// Del borde de arriba de cada mitad a lo primero, y lo mismo abajo.
 const MIDDLE_AIR: f32 = 4.0;
-/// De la línea de las pestañas a lo primero del objeto (en modo Texture, los botones de las UVs):
+/// De la línea del encabezado del outliner a la fila de botones del objeto:
 /// 9 filas (como el boceto), con [`MIDDLE_AIR`]. La fila de los botones es media fila más alta
 /// que ellos y los centra: el botón cae (redondeado) una fila más abajo.
 const OBJECT_TOP_AIR: f32 = 9.0 - MIDDLE_AIR - 1.0;
-/// Entre una cosa y otra del medio, y antes de cada sección.
+/// Entre una cosa y otra del medio.
 const ITEM_GAP: f32 = 4.0;
-const SECTION_GAP: f32 = 8.0;
-/// El + de la tira: del alto de las flechas, 4 px después de ellas (como en el boceto).
+/// Como el boceto: la fila de los modos, 12 filas debajo de lo alto de la caja (2 más que el
+/// aire de arriba), y de ella a la fila de la textura, 42.
+const MODE_ROW_AIR: f32 = 2.0;
+const TEXTURE_AIR: f32 = 3.0;
+/// Y de la fila de la luz a la de Shading… y Sheet settings…, 37 (como entre las otras filas).
+const BUTTONS_AIR: f32 = 3.0;
+/// Los botones del encabezado (Duplicate, New group y +): de 13×13, con 4 px entre uno y otro, una
+/// fila debajo de lo alto del encabezado.
 const PLUS_W: f32 = 13.0;
 const PLUS_GAP: f32 = 4.0;
-/// El select de la cuadrícula del modo Edit.
-const GRID_W: f32 = 56.0;
+const PLUS_TOP: f32 = 1.0;
+/// La fila de los modos de selección (como el boceto): sus botones, uno cada 17 px y 2 filas
+/// debajo de lo alto del select de la cuadrícula (al final de la fila, de 46 de ancho).
+const MODE_PITCH: f32 = kit::tile::SIZE.x + 4.0;
+const MODE_TOP: f32 = 2.0;
+const GRID_W: f32 = 46.0;
 /// Los lados del tamaño de la textura.
 const TEXTURE_SIZES: [u32; 6] = [16, 32, 64, 128, 256, 512];
 /// Los lados de cilindros, conos y esferas.
 const MIN_SIDES: u32 = 3;
 const MAX_SIDES: u32 = 32;
 const DEFAULT_SIDES: u32 = 8;
-/// El transform del objeto: los tres ejes en una fila de steppers con su etiqueta, con este aire
-/// entre uno y otro (y antes de la barra del scroll), como en el boceto.
-const AXIS_GAP: f32 = 4.0;
-/// Lo menos de un stepper de eje: su etiqueta, sus botones y un campo donde quepa "-4096".
-const AXIS_MIN_W: f32 = kit::stepper::TAG_W + 2.0 * kit::stepper::BUTTON_W + 30.0;
+/// El aire de las filas antes de la barra del scroll.
+const ROW_END_GAP: f32 = 4.0;
 /// El título se acerca a su fila: egui deja debajo de la letra su aire y el de [`ITEM_GAP`], y el
-/// boceto pone 4 filas de la letra al stepper (y 10 del stepper al título que sigue).
-const AXIS_TITLE_PULL: f32 = 7.0;
+/// boceto pone 4 filas de la letra a la fila (y 10 de la fila al título que sigue).
+const TITLE_PULL: f32 = 7.0;
 
-/// Cuántos steppers de eje van por fila en `avail` (tres; si no caben, dos) y de qué ancho.
-fn axis_grid(avail: f32) -> (usize, f32) {
-    let per_row = if 3.0 * AXIS_MIN_W + 2.0 * AXIS_GAP <= avail {
-        3
-    } else {
-        2
-    };
-    let gaps = (per_row - 1) as f32 * AXIS_GAP;
-    (per_row, ((avail - gaps) / per_row as f32).floor())
-}
-
-/// El ancho de una columna (la etiqueta y su stepper): las dos columnas, con `PAIR_GAP` y el aire
-/// entre los widgets de la fila (tres veces), llenan lo de adentro sin la barra del scroll.
-fn cell_w(ui: &Ui) -> f32 {
-    let gaps = PAIR_GAP + 3.0 * ui.spacing().item_spacing.x;
-    ((WIDTH - pixel_ui::SCROLL_BAR - gaps) / 2.0).floor()
-}
-/// La etiqueta de Yaw y Pitch.
-const ANGLE_LABEL_W: f32 = 34.0;
+/// La fila de la luz (como el boceto): de la casilla Light a "Yaw", y de cada etiqueta a su
+/// stepper; entre el stepper de Yaw y "Pitch", [`PAIR_GAP`].
+const LIGHT_GAP: f32 = 12.0;
+const LABEL_GAP: f32 = 4.0;
 /// Las filas de la textura y de la cámara (como el boceto): la columna de la derecha (Texture
 /// Size) empieza a 5/8 de la fila (138 de sus 220 columnas), con este aire antes; el aire entre
 /// el select de la cámara y sus presets es el mismo.
@@ -108,11 +101,6 @@ const PRESETS: [(&str, CameraPreset); 4] = [
 const YAW_MAX: i32 = 360;
 const PITCH_MAX: i32 = 90;
 const PAIR_GAP: f32 = 8.0;
-/// Hasta dónde llegan la posición (en 1/16: ±256 unidades), la rotación (en grados) y la escala
-/// (en %).
-const POSITION_MAX: i32 = 256 * cs_core::FIXED;
-const ROTATION_MAX: i32 = 360;
-const SCALE_MAX: i32 = 1000;
 /// La cuadrícula Shading (y las muestras de su popup): casillas de 12 con líneas de 1
 /// compartidas, del color de las del mapa de FontForge, y hasta 16 columnas por bloque.
 const SHADE_CELL: f32 = 12.0;
@@ -130,6 +118,10 @@ pub struct ModelPanelState {
     pub add_kind: PrimitiveKind,
     /// Abrir el menú del + en el próximo frame (la demo, para capturas).
     pub open_add_menu: bool,
+    /// La ventana Shading está abierta ([`shading_window`]).
+    pub shading: bool,
+    /// Lo que el outliner recuerda (renombrar, arrastrar).
+    pub outliner: OutlinerState,
 }
 
 impl Default for ModelPanelState {
@@ -138,6 +130,8 @@ impl Default for ModelPanelState {
             sides: DEFAULT_SIDES,
             add_kind: PrimitiveKind::Cube,
             open_add_menu: false,
+            shading: false,
+            outliner: OutlinerState::default(),
         }
     }
 }
@@ -148,14 +142,16 @@ pub enum ModelAction {
     NewModel,
     /// Bake…: abrir el diálogo de hornear el modelo.
     Bake,
+    /// Shading…: abrir la ventana de la tabla de sombras.
+    Shading,
     /// Pasar la textura a este lado, que deja UVs fuera: la app pide confirmación antes.
     TextureSize(u32),
 }
 
 /// El panel en `ui` (lo de adentro del marco, de la columna entera: ver
 /// [`crate::dock::flyout_fixed`] y [`crate::dock::fixed_panel`]): arriba lo general, la línea a
-/// [`SPLIT`] del alto y abajo la tira de pestañas y lo del objeto elegido, cada parte con su
-/// scroll.
+/// [`SPLIT`] del alto y abajo el encabezado del outliner y, con su scroll, lo del objeto elegido
+/// y el outliner.
 pub fn show(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -191,16 +187,18 @@ pub fn show(
         });
         divider(ui, skin, outer, split);
         let line = header(ui, editor, skin, state, outer, inner, split);
-        if editor.selected_object().is_some() {
-            let bottom = Rect::from_x_y_ranges(
-                inner.x_range(),
-                line + pixel_ui::ETCHED_SIZE..=inner.bottom(),
-            );
-            scrolled(ui, "model_panel_object", bottom, reopened, |ui| {
-                ui.spacing_mut().item_spacing.y = ITEM_GAP;
-                selected(ui, editor, skin);
-            });
-        }
+        let bottom = Rect::from_x_y_ranges(
+            inner.x_range(),
+            line + pixel_ui::ETCHED_SIZE..=inner.bottom(),
+        );
+        scrolled(ui, "model_panel_object", bottom, reopened, |ui| {
+            ui.spacing_mut().item_spacing.y = ITEM_GAP;
+            // La fila de botones del objeto y, debajo, el outliner.
+            object_buttons(ui, editor, skin);
+            ui.add_space(ITEM_GAP);
+            let width = row_width(ui);
+            outliner::show(ui, editor, skin, &mut state.outliner, width);
+        });
         action
     };
     // Todo el panel es de la columna (las mitades no lo dicen: están en su propio `Ui`).
@@ -267,26 +265,12 @@ fn kind_icon(kind: PrimitiveKind) -> &'static str {
     }
 }
 
-/// Las pestañas de los objetos de `model`: el ícono de su tipo, su nombre y la marca ○ (que pasa
-/// a × con el puntero encima) para quitarlo.
-pub(crate) fn object_tabs(model: &Model3D) -> Vec<TabItem> {
-    model
-        .objects
-        .iter()
-        .map(|o| {
-            TabItem::closable(o.name.clone(), true)
-                .with_close_label("Delete")
-                .with_icon(TabIcon::Piece(kind_icon(o.shown_kind())))
-        })
-        .collect()
-}
-
-/// Arriba de la mitad de abajo (desde la línea que parte el panel, en la fila `split`), fija: la
-/// tira de pestañas de los objetos (la del kit, estilo documento, en lo de adentro de la caja; su
-/// línea grabada, de lado a lado) con el + a la derecha o, sin Pixel UI, una fila de egui y una
-/// línea. La pestaña `i` es la del objeto `i`: un clic la elige; su marca lo quita (un paso de
-/// undo). Sin objeto elegido, ninguna activa. El + agrega lo elegido en su menú (y lo elige).
-/// Devuelve la fila de arriba de la línea de la tira.
+/// Arriba de la mitad de abajo (desde la línea que parte el panel, en la fila `split`), fijo: el
+/// encabezado del outliner, "Outliner" a la izquierda y, a la derecha, Duplicate, New group y
+/// el `+` (botones del kit de 13×13), sobre una línea grabada de lado a lado; sin Pixel UI, una
+/// fila de egui y una línea. Duplicate copia lo elegido (con un grupo activo, el grupo con lo de
+/// adentro); New group mete lo elegido en un grupo nuevo; el + agrega lo elegido en su menú (y lo
+/// elige). Devuelve la fila de arriba de la línea.
 fn header(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -296,116 +280,128 @@ fn header(
     inner: Rect,
     split: f32,
 ) -> f32 {
-    let items = editor.edited_model().map(object_tabs).unwrap_or_default();
-    let active = editor.selected_object();
-    let id = ui.id().with("model_object_tabs");
+    let group = matches!(editor.active_row(), Some(Row::Group(_)));
+    let can_duplicate = editor.can_duplicate_active();
     let mut added = None;
-    let (line, event) = match skin {
+    let mut duplicate = false;
+    let mut new_group = false;
+    let line = match skin {
         Some(skin) => {
             let top = split + TABS_TOP;
-            let mut strip = kit::tabs::Strip::new(inner.left(), inner.right(), top);
-            strip.line = outer.x_range().shrink(1.0);
-            // El +, al final de la fila; las pestañas y sus flechas, antes.
+            let line = top + kit::tabs::HEIGHT;
+            // El +, al final de la fila, y antes New group y Duplicate (del mismo tamaño).
             let plus = Rect::from_min_size(
-                pos2(inner.right() - PLUS_W, top + kit::tabs::ARROWS_TOP),
-                vec2(PLUS_W, kit::tabs::ARROW_SIZE),
+                pos2(inner.right() - PLUS_W, top + PLUS_TOP),
+                Vec2::splat(PLUS_W),
             );
-            strip.right = plus.left() - PLUS_GAP;
+            let step = vec2(-(PLUS_W + PLUS_GAP), 0.0);
+            let folder = plus.translate(step);
+            let copy = folder.translate(step);
             added = add_menu::plus_button(ui, skin, plus, state);
-            let event = kit::tabs::tab_strip(ui, skin, id, strip, &items, active);
-            (strip.bottom(), event)
+            let id = ui.id().with("model_new_group");
+            let icon = "icon.outliner.new_group";
+            let response = kit::button::icon_button_at(ui, skin, folder, id, icon, "New group");
+            new_group = pixel_ui::bubble_tooltip(response, skin, "New group").clicked();
+            duplicate = duplicate_button(ui, skin, copy, can_duplicate, group);
+            // "Outliner", con las mayúsculas centradas con los botones.
+            let colors = skin.colors();
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let painter = ui.painter();
+            let galley = painter.layout_no_wrap("Outliner".to_owned(), font, colors.text);
+            let ppp = ui.ctx().pixels_per_point();
+            let at = crate::tab_bar::text_pos(&galley, inner.left(), top + HEADER_CAPS, ppp);
+            painter.galley(at, galley, colors.text);
+            let x = outer.x_range().shrink(1.0);
+            painter.add(pixel_ui::etched_hline(x, line, colors, ppp));
+            line
         }
         None => {
             let line = split + PLAIN_HEADER_LINE;
             let row = Rect::from_x_y_ranges(inner.x_range(), split + PLAIN_TABS_TOP..=line);
-            let event = ui
-                .scope_builder(UiBuilder::new().max_rect(row), |ui| {
-                    plain_tabs(ui, &items, active, state, &mut added)
-                })
-                .inner;
+            ui.scope_builder(UiBuilder::new().max_rect(row), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Outliner");
+                    duplicate = ui
+                        .add_enabled(can_duplicate, egui::Button::new("Duplicate"))
+                        .clicked();
+                    new_group = ui.button("New group").clicked();
+                    added = add_menu::plain_menu(ui, state);
+                });
+            });
             lit_line(ui, None, outer, line);
-            (line, event)
+            line
         }
     };
-    match event {
-        Some(TabEvent::Select(i)) => editor.select_model_object(Some(i)),
-        Some(TabEvent::Close(i)) => {
-            editor.remove_object(i);
-        }
-        None => {}
-    }
     if let Some(p) = added {
         editor.add_primitive(p);
+    }
+    if duplicate {
+        editor.duplicate_active();
+    }
+    if new_group {
+        editor.new_group();
     }
     line
 }
 
-/// Sin Pixel UI: una fila de egui (con scroll de lado) con el nombre de cada pestaña (un clic la
-/// elige), el × de las que se cierran (quita su objeto) y, al final, el + con su menú (lo
-/// agregado queda en `added`).
-fn plain_tabs(
-    ui: &mut Ui,
-    items: &[TabItem],
-    active: Option<usize>,
-    state: &mut ModelPanelState,
-    added: &mut Option<Primitive>,
-) -> Option<TabEvent> {
-    let mut event = None;
-    egui::ScrollArea::horizontal()
-        .id_salt("model_object_tabs_plain")
-        .show(ui, |ui| {
-            ui.horizontal(|ui| {
-                for (i, item) in items.iter().enumerate() {
-                    if ui
-                        .selectable_label(active == Some(i), &item.label)
-                        .clicked()
-                    {
-                        event = Some(TabEvent::Select(i));
-                    }
-                    if item.mark != kit::tabs::TabMark::None {
-                        let close = ui.small_button("×").on_hover_text(item.close_label);
-                        let label = format!("{} {}", item.close_label, item.label);
-                        close.widget_info(|| {
-                            egui::WidgetInfo::labeled(egui::WidgetType::Button, true, &label)
-                        });
-                        if close.clicked() {
-                            event = Some(TabEvent::Close(i));
-                        }
-                    }
-                    ui.add_space(4.0);
-                }
-                *added = add_menu::plain_menu(ui, state);
-            });
-        });
-    event
+/// Duplicate en `rect`, junto a New group: un botón del kit con el ícono de copiar (`icon.copy`)
+/// y su tooltip (con el atajo; "group" con un grupo activo); deshabilitado sin nada que
+/// duplicar. Devuelve si se apretó.
+fn duplicate_button(ui: &mut Ui, skin: &Skin, rect: Rect, enabled: bool, group: bool) -> bool {
+    let id = ui.id().with("model_duplicate_object");
+    let shortcut = crate::keymap::label(ui.ctx(), crate::keymap::Action::DuplicateObject);
+    let what = if group {
+        "Duplicate group"
+    } else {
+        "Duplicate object"
+    };
+    let tip = if shortcut.is_empty() {
+        what.to_owned()
+    } else {
+        format!("{what} ({shortcut})")
+    };
+    ui.add_enabled_ui(enabled, |ui| {
+        let response = kit::button::icon_button_at(ui, skin, rect, id, "icon.copy", "Duplicate");
+        crate::pixel_ui::bubble_tooltip(response, skin, &tip).clicked()
+    })
+    .inner
 }
 
 /// Lo general del modelo (la mitad de arriba): en modo Model, los modos de selección y la
-/// cuadrícula; la textura y su tamaño; la cámara, la luz (con Shading) y el contorno, y Sheet
+/// cuadrícula; la textura y su tamaño; la cámara, la luz y el contorno, y Shading… y Sheet
 /// settings… (hornear).
 fn general(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
-    if editor.cad_mode() == CadMode::Model {
-        edit_rows(ui, editor, skin);
-    }
+    edit_rows(ui, editor, skin);
     let action = texture(ui, editor, skin);
     settings(ui, editor, skin);
-    ui.add_space(SECTION_GAP);
-    let bake = button(ui, skin, "Sheet settings…")
-        .clicked()
-        .then_some(ModelAction::Bake);
-    action.or(bake)
+    ui.add_space(BUTTONS_AIR);
+    let window = window_buttons(ui, skin);
+    action.or(window)
 }
 
 /// Lo del objeto elegido, en modo Texture: Rotate 90°, Flip H y Flip V para las caras elegidas
-/// (sin caras, deshabilitados), en una fila sin título (como el boceto).
+/// (sin caras, deshabilitados) y Pack UVs, de todo el modelo (ver [`Editor::can_pack_uvs`]; con
+/// una capa de la textura bloqueada, el tooltip dice por qué no), en una fila sin título (como
+/// el boceto).
 fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let faces = !editor.selected_faces().is_empty();
-    let (mut rotate, mut flip_h, mut flip_v) = (false, false, false);
-    ui.add_enabled_ui(faces, |ui| {
-        ui.horizontal(|ui| {
+    let packable = editor.can_pack_uvs();
+    let locked = editor.texture_layers_locked();
+    let (mut rotate, mut flip_h, mut flip_v, mut pack) = (false, false, false, false);
+    ui.horizontal(|ui| {
+        ui.add_enabled_ui(faces, |ui| {
             rotate = button(ui, skin, "Rotate 90°").clicked();
             flip_h = button(ui, skin, "Flip H").clicked();
             flip_v = button(ui, skin, "Flip V").clicked();
+        });
+        ui.add_enabled_ui(packable, |ui| {
+            let b = button(ui, skin, "Pack UVs");
+            let b = if locked {
+                b.on_disabled_hover_text("Unlock the texture layers to pack")
+            } else {
+                b
+            };
+            pack = b.clicked();
         });
     });
     if rotate {
@@ -414,17 +410,22 @@ fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     if flip_h || flip_v {
         editor.flip_selected_uvs(flip_h);
     }
+    if pack {
+        editor.pack_uvs();
+    }
 }
 
-/// Lo del objeto elegido, en modo Model: Extrude, Subdivide, Merge y Delete para lo elegido en
-/// las vistas (cada uno deshabilitado cuando no aplica), en una fila sin título como la de las
-/// UVs. Hacen lo mismo que Ctrl+E, Ctrl+D, M y Supr.
+/// Lo del objeto elegido, en modo Model: Extrude, Subdivide, Merge y Delete (cada uno
+/// deshabilitado cuando no aplica), en una fila sin título como la de las UVs. Los tres primeros
+/// van sobre lo elegido en las vistas que se puede editar; Delete también, salvo con un grupo
+/// como fila activa en modo Object, que borra el grupo entero (ver
+/// [`Editor::delete_from_panel`]). Hacen lo mismo que Ctrl+E, Ctrl+D, M y Supr en las vistas.
 fn topology_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let enabled = [
         editor.can_extrude(),
         editor.can_subdivide(),
         editor.can_merge(),
-        editor.can_delete_model_selection(),
+        editor.can_delete_from_panel(),
     ];
     let labels = ["Extrude", "Subdivide", "Merge", "Delete"];
     let mut clicked = None;
@@ -448,25 +449,34 @@ fn topology_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
             editor.merge_model_selection();
         }
         Some(3) => {
-            editor.delete_model_selection();
+            editor.delete_from_panel();
         }
         _ => {}
     }
 }
 
-/// El ancho de las filas de lo general: lo de adentro sin la barra del scroll y el aire de antes
-/// (como las filas de los ejes).
+/// El ancho de las filas de lo general: lo de adentro sin la barra del scroll y el aire de antes.
 fn row_width(ui: &Ui) -> f32 {
-    ((WIDTH - pixel_ui::SCROLL_BAR).min(ui.available_width()) - AXIS_GAP).floor()
+    ((WIDTH - pixel_ui::SCROLL_BAR).min(ui.available_width()) - ROW_END_GAP).floor()
 }
 
 /// El lugar de una fila de selects (y botones) de `width`, en puntos enteros. Sin el aire de entre
-/// filas arriba: como las filas de los ejes (que egui centra en una fila más baja), queda a 4 filas
-/// de la letra de su título y a 10 del título que sigue, como el boceto.
+/// filas arriba (egui centra las filas en una más baja): queda a 4 filas de la letra de su título
+/// y a 10 del título que sigue, como el boceto.
 fn row_rect(ui: &mut Ui, width: f32) -> Rect {
     ui.add_space(-ui.spacing().item_spacing.y);
     let (slot, _) = ui.allocate_exact_size(vec2(width, kit::select::HEIGHT), Sense::hover());
     Rect::from_min_size(slot.min.round(), slot.size())
+}
+
+/// Lo que agregue `add_contents` de izquierda a derecha (centrado a lo alto) en una fila de
+/// [`row_rect`]: con el mismo ritmo que las de los selects, aunque lo de adentro sea más bajo o
+/// más alto.
+fn in_row<R>(ui: &mut Ui, add_contents: impl FnOnce(&mut Ui) -> R) -> R {
+    let row = row_rect(ui, row_width(ui));
+    let layout = egui::Layout::left_to_right(egui::Align::Center);
+    let mut child = ui.new_child(UiBuilder::new().max_rect(row).layout(layout));
+    add_contents(&mut child)
 }
 
 /// Dos títulos en una fila: `left` al principio (en `ui`, como cualquier título) y `right` a la
@@ -477,7 +487,7 @@ fn pair_labels(ui: &mut Ui, (left, right): (&str, &str), column: f32) {
     let mut second = ui.new_child(UiBuilder::new().max_rect(rect));
     label_with_hint(&mut second, right, "");
     label_with_hint(ui, left, "");
-    ui.add_space(-AXIS_TITLE_PULL);
+    ui.add_space(-TITLE_PULL);
 }
 
 /// Lo que pide el select de Texture Size: achicar la textura dejando UVs fuera lo confirma la app
@@ -501,23 +511,26 @@ fn grid_label(g: i32) -> &'static str {
     }
 }
 
-/// Los modos de selección y la cuadrícula del modo Edit (el del workspace del modelo).
+/// La pieza del ícono de un modo de selección.
+fn mode_icon(mode: cs_3d::SelectMode) -> &'static str {
+    match mode {
+        cs_3d::SelectMode::Object => "icon.mode.object",
+        cs_3d::SelectMode::Vertex => "icon.mode.vertex",
+        cs_3d::SelectMode::Edge => "icon.mode.edge",
+        cs_3d::SelectMode::Face => "icon.mode.face",
+    }
+}
+
+/// Los modos de selección y la cuadrícula del modo Edit (el del workspace del modelo), como el
+/// boceto: los íconos de los modos (con su tooltip) al principio de la fila y "Grid" con su
+/// select al final. En modo Texture se ven pero no se usan (la fila no se va, así lo demás no
+/// salta al cambiar de modo).
 fn edit_rows(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let current = editor.model_edit().selection.mode;
-    let mut picked = None;
-    ui.horizontal(|ui| {
-        for mode in cs_3d::SelectMode::ALL {
-            if radio(ui, skin, current == mode, mode.label()).clicked() {
-                picked = Some(mode);
-            }
-        }
-    });
-    if let Some(mode) = picked {
-        editor.set_select_mode(mode);
-    }
     let grid = editor.model_edit().grid;
+    let mut picked = None;
     let mut chosen = None;
-    let mut list = |ui: &mut Ui| {
+    let list = |ui: &mut Ui| {
         for g in crate::editor::GRIDS {
             if ui.add(menus::choice(g == grid, grid_label(g))).clicked() {
                 chosen = Some(g);
@@ -525,19 +538,64 @@ fn edit_rows(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
             }
         }
     };
-    ui.horizontal(|ui| {
-        ui.label("Grid");
-        match skin {
-            Some(skin) => {
-                kit::select::select(ui, skin, "model_grid", grid_label(grid), Some(GRID_W), list);
-            }
-            None => {
-                egui::ComboBox::from_id_salt("model_grid")
-                    .selected_text(grid_label(grid))
-                    .show_ui(ui, |ui| list(ui));
-            }
+    let enabled = editor.cad_mode() == CadMode::Model;
+    match skin {
+        Some(skin) => {
+            ui.add_space(MODE_ROW_AIR);
+            let row = row_rect(ui, row_width(ui));
+            let id = ui.id();
+            ui.add_enabled_ui(enabled, |ui| {
+                for (k, mode) in cs_3d::SelectMode::ALL.into_iter().enumerate() {
+                    let at = pos2(row.left() + k as f32 * MODE_PITCH, row.top() + MODE_TOP);
+                    let tile = id.with(("model_select_mode", k));
+                    let on = current == mode;
+                    let icon = mode_icon(mode);
+                    if kit::tile::tile_toggle_at(ui, skin, at, tile, icon, mode.label(), on)
+                        .clicked()
+                    {
+                        picked = Some(mode);
+                    }
+                }
+                let field = Rect::from_min_max(pos2(row.right() - GRID_W, row.top()), row.max);
+                let w = label_width(ui, "Grid");
+                let label = Rect::from_min_max(
+                    pos2(field.left() - LABEL_GAP - w, row.top()),
+                    pos2(field.left() - LABEL_GAP, row.bottom()),
+                );
+                let layout = egui::Layout::left_to_right(egui::Align::Center);
+                ui.new_child(UiBuilder::new().max_rect(label).layout(layout))
+                    .label("Grid");
+                kit::select::select_at(
+                    ui,
+                    skin,
+                    field,
+                    id.with("model_grid"),
+                    grid_label(grid),
+                    list,
+                );
+            });
         }
-    });
+        None => {
+            ui.add_enabled_ui(enabled, |ui| {
+                ui.horizontal(|ui| {
+                    for mode in cs_3d::SelectMode::ALL {
+                        if radio(ui, None, current == mode, mode.label()).clicked() {
+                            picked = Some(mode);
+                        }
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Grid");
+                    egui::ComboBox::from_id_salt("model_grid")
+                        .selected_text(grid_label(grid))
+                        .show_ui(ui, list);
+                });
+            });
+        }
+    }
+    if let Some(mode) = picked {
+        editor.set_select_mode(mode);
+    }
     if let Some(g) = chosen {
         editor.set_model_grid(g);
     }
@@ -551,31 +609,23 @@ fn button(ui: &mut Ui, skin: Option<&Skin>, label: &str) -> egui::Response {
     }
 }
 
-/// Una columna: la etiqueta de `label_w` y el stepper, que llena lo que queda de [`cell_w`]. Un
-/// valor fuera de `range` se muestra en el borde pero solo se escribe si el usuario lo cambia
-/// (el stepper no lo recorta solo).
-fn cell_with(
+/// Un ángulo de la luz: la etiqueta y, a [`LABEL_GAP`], el stepper de `width`. Un valor fuera de
+/// `range` se muestra en el borde pero solo se escribe si el usuario lo cambia (el stepper no lo
+/// recorta solo).
+fn angle_cell(
     ui: &mut Ui,
     skin: Option<&Skin>,
-    salt: &str,
-    label_w: f32,
+    width: f32,
     (label, value): (&str, &mut i32),
     range: std::ops::RangeInclusive<i32>,
 ) {
-    ui.allocate_ui_with_layout(
-        vec2(label_w, kit::stepper::HEIGHT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_width(label_w);
-            ui.label(label);
-        },
-    );
-    let id = format!("{salt}_{label}");
+    ui.label(label);
+    ui.add_space(LABEL_GAP);
+    let id = format!("light_{label}");
     let shown = (*value).clamp(*range.start(), *range.end());
     let mut v = shown;
     match skin {
         Some(skin) => {
-            let width = cell_w(ui) - label_w;
             kit::stepper::stepper(ui, skin, width, &id, &mut v, range, 1, None);
         }
         None => {
@@ -587,140 +637,13 @@ fn cell_with(
     }
 }
 
-/// Un eje: el stepper de `width` con su etiqueta (`axis`) pegada a la izquierda. Un valor fuera
-/// de `range` se muestra en el borde pero solo se escribe si el usuario lo cambia (el stepper no
-/// lo recorta solo).
-fn axis_cell(
-    ui: &mut Ui,
-    skin: Option<&Skin>,
-    (title, width): (&str, f32),
-    (axis, value): (&str, &mut i32),
-    range: std::ops::RangeInclusive<i32>,
-) {
-    let id = format!("{title}_{axis}");
-    let shown = (*value).clamp(*range.start(), *range.end());
-    let mut v = shown;
-    match skin {
-        Some(skin) => {
-            kit::stepper::axis_stepper(ui, skin, width, &id, axis, &mut v, range, 1);
-        }
-        None => {
-            ui.label(axis);
-            ui.add(egui::DragValue::new(&mut v).range(range));
-        }
-    }
-    if v != shown {
-        *value = v;
-    }
-}
-
-/// Un título con su unidad y, debajo, los tres ejes en una fila de steppers con su etiqueta (X, Y,
-/// Z) que llena lo de adentro sin la barra del scroll; si no caben, X e Y en una fila y Z debajo.
-fn axes(
-    ui: &mut Ui,
-    skin: Option<&Skin>,
-    (title, unit): (&str, &str),
-    values: [&mut i32; 3],
-    range: std::ops::RangeInclusive<i32>,
-) {
-    label_with_hint(ui, title, unit);
-    ui.add_space(-AXIS_TITLE_PULL);
-    let avail = (WIDTH - pixel_ui::SCROLL_BAR).min(ui.available_width()) - AXIS_GAP;
-    let (per_row, width) = axis_grid(avail);
-    let mut cells = ["X", "Y", "Z"].into_iter().zip(values);
-    loop {
-        let row: Vec<_> = cells.by_ref().take(per_row).collect();
-        if row.is_empty() {
-            break;
-        }
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = AXIS_GAP;
-            for cell in row {
-                axis_cell(ui, skin, (title, width), cell, range.clone());
-            }
-        });
-    }
-}
-
-/// Los tres ejes de `v` mostrados en otra unidad: `per` de lo guardado (pasado antes por `show`)
-/// por cada uno mostrado. Solo se escribe el eje que cambió (los otros no pierden lo que no se
-/// ve).
-fn scaled_axes(
-    ui: &mut Ui,
-    skin: Option<&Skin>,
-    labels: (&str, &str),
-    (v, show): (&mut cs_core::Vec3i, fn(i32) -> i32),
-    per: i32,
-    range: std::ops::RangeInclusive<i32>,
-) {
-    let before = [show(v.x) / per, show(v.y) / per, show(v.z) / per];
-    let mut shown = before;
-    let [a, b, c] = &mut shown;
-    axes(ui, skin, labels, [a, b, c], range);
-    for (axis, (now, was)) in [&mut v.x, &mut v.y, &mut v.z]
-        .into_iter()
-        .zip(shown.into_iter().zip(before))
-    {
-        if now != was {
-            *axis = now * per;
-        }
-    }
-}
-
-/// Lo del objeto elegido (la mitad de abajo): primero los botones de topología (en modo Model) o
-/// los de las UVs (en modo Texture);
-/// posición, rotación y escala (una fila de X, Y, Z cada una) y Double sided. Quitarlo es la ○ de
-/// su pestaña. Todo lo cambiado en un frame (o en un arrastre) es un paso de deshacer
-/// (`set_model_grouped`).
-fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
-    let Some(i) = editor.selected_object() else {
-        return;
-    };
-    let Some(model) = editor.edited_model().cloned() else {
-        return;
-    };
-    // Los títulos de los ejes van con el aire de entre una fila y otra (como en el boceto).
+/// La fila de botones del objeto, arriba del outliner: en modo Model los de topología y en modo
+/// Texture los de las UVs (cada uno deshabilitado cuando no aplica).
+fn object_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     ui.add_space(OBJECT_TOP_AIR);
     match editor.cad_mode() {
         CadMode::Texture => uv_buttons(ui, editor, skin),
         CadMode::Model => topology_buttons(ui, editor, skin),
-    }
-    let obj: &Object3D = &model.objects[i];
-    let mut next = obj.clone();
-    let t = &mut next.transform;
-    let p = &mut t.position;
-    axes(
-        ui,
-        skin,
-        ("Position", "(1/16)"),
-        [&mut p.x, &mut p.y, &mut p.z],
-        -POSITION_MAX..=POSITION_MAX,
-    );
-    scaled_axes(
-        ui,
-        skin,
-        ("Rotation", "(°)"),
-        (&mut t.rotation, wrap_angle),
-        10,
-        -ROTATION_MAX..=ROTATION_MAX,
-    );
-    let scale = (&mut t.scale, std::convert::identity as fn(i32) -> i32);
-    scaled_axes(ui, skin, ("Scale", "(%)"), scale, 10, 1..=SCALE_MAX);
-    ui.add_space(ITEM_GAP);
-    match skin {
-        Some(skin) => kit::check::checkbox(ui, skin, &mut next.double_sided, "Double sided"),
-        None => ui.checkbox(&mut next.double_sided, "Double sided"),
-    };
-    // Un arrastre (de un stepper) es un solo paso de undo: se juntan los cambios mientras el
-    // botón siga apretado.
-    let group = ui.id().with("model_object");
-    if next != *obj {
-        let mut changed = model.clone();
-        changed.objects[i] = next;
-        editor.set_model_grouped(changed, group);
-    }
-    if !ui.input(|input| input.pointer.any_down()) {
-        editor.end_group_of(group.value());
     }
 }
 
@@ -747,7 +670,7 @@ fn check(ui: &mut Ui, skin: Option<&Skin>, on: &mut bool, label: &str) {
 /// (vacío y deshabilitado sin textura).
 fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
     let current = editor.edited_model().map(|m| m.texture)?;
-    ui.add_space(SECTION_GAP);
+    ui.add_space(TEXTURE_AIR);
     let row_w = row_width(ui);
     let column = (row_w * RIGHT_COLUMN).round();
     pair_labels(ui, ("Texture", "Texture Size"), column);
@@ -889,23 +812,43 @@ fn camera_row(
     }
 }
 
-/// Yaw (dado la vuelta a ±180°) y Pitch en grados (lo guardado, en décimas): solo se escribe el
-/// que cambió.
-fn angles(ui: &mut Ui, skin: Option<&Skin>, salt: &str, (yaw, pitch): (&mut i32, &mut i32)) {
-    let (was_yaw, was_pitch) = (wrap_angle(*yaw) / 10, *pitch / 10);
+/// El ancho de `text` como lo deja `ui.label`.
+fn label_width(ui: &Ui, text: &str) -> f32 {
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font, Color32::WHITE);
+    galley.size().x
+}
+
+/// La fila de la luz, como el boceto: la casilla Light y, hasta el final de la fila, Yaw (dado la
+/// vuelta a ±180°) y Pitch en grados (lo guardado, en décimas) con sus steppers del mismo ancho,
+/// deshabilitados sin luz. Solo se escribe el ángulo que cambió.
+fn light_row(ui: &mut Ui, skin: Option<&Skin>, light: &mut cs_core::Light3D) {
+    let (was_yaw, was_pitch) = (wrap_angle(light.yaw) / 10, light.pitch / 10);
     let (mut y, mut p) = (was_yaw, was_pitch);
-    ui.horizontal(|ui| {
-        let range = -YAW_MAX..=YAW_MAX;
-        cell_with(ui, skin, salt, ANGLE_LABEL_W, ("Yaw", &mut y), range);
-        ui.add_space(PAIR_GAP);
-        let range = -PITCH_MAX..=PITCH_MAX;
-        cell_with(ui, skin, salt, ANGLE_LABEL_W, ("Pitch", &mut p), range);
+    let right = ui.cursor().left() + row_width(ui);
+    in_row(ui, |ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        check(ui, skin, &mut light.enabled, "Light");
+        ui.add_space(LIGHT_GAP);
+        ui.add_enabled_ui(light.enabled, |ui| {
+            let (yaw_w, pitch_w) = (label_width(ui, "Yaw"), label_width(ui, "Pitch"));
+            let free = right - ui.cursor().left() - yaw_w - pitch_w - 2.0 * LABEL_GAP - PAIR_GAP;
+            let range = -YAW_MAX..=YAW_MAX;
+            angle_cell(ui, skin, (free / 2.0).floor(), ("Yaw", &mut y), range);
+            ui.add_space(PAIR_GAP);
+            // El de Pitch llega justo al final de la fila.
+            let width = right - ui.cursor().left() - pitch_w - LABEL_GAP;
+            let range = -PITCH_MAX..=PITCH_MAX;
+            angle_cell(ui, skin, width, ("Pitch", &mut p), range);
+        });
     });
     if y != was_yaw {
-        *yaw = y * 10;
+        light.yaw = y * 10;
     }
     if p != was_pitch {
-        *pitch = p * 10;
+        light.pitch = p * 10;
     }
 }
 
@@ -917,10 +860,10 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     };
     let primary = editor.resolve(editor.primary);
     let mut next = model.clone();
-    // Como el boceto (y los ejes del objeto): de una fila al título que sigue, solo el aire de
+    // Como el boceto: de una fila al título que sigue, solo el aire de
     // entre filas, y del título a su fila, 4 filas de la letra.
     label_with_hint(ui, "Camera", "");
-    ui.add_space(-AXIS_TITLE_PULL);
+    ui.add_space(-TITLE_PULL);
     // Sin Yaw ni Pitch: la cámara la mueven la órbita, el gizmo de navegación y los presets.
     let cam = &mut next.camera;
     let ortho = cam.projection == Projection::Orthographic;
@@ -954,21 +897,18 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 
     label_with_hint(ui, "Light & Outline", "");
-    let light = &mut next.light;
-    check(ui, skin, &mut light.enabled, "Light");
-    ui.add_enabled_ui(light.enabled, |ui| {
-        angles(ui, skin, "light", (&mut light.yaw, &mut light.pitch));
-    });
-    // Sin luz no hay sombras: la cuadrícula se ve pero no se edita.
-    let shading = ui
-        .add_enabled_ui(light.enabled, |ui| shading(ui, editor, skin))
-        .inner;
+    ui.add_space(-TITLE_PULL);
+    light_row(ui, skin, &mut next.light);
     let mut outline = next.outline.is_some();
-    ui.horizontal(|ui| {
+    let lit = next.light.enabled;
+    in_row(ui, |ui| {
         check(ui, skin, &mut outline, "Outline");
         if let Some(color) = &mut next.outline {
             crate::widgets::color_edit(ui, color, false, "Outline color");
         }
+        // El tramado de las sombras (sin luz no hay sombras: se ve pero no se usa).
+        ui.add_space(LIGHT_GAP);
+        ui.add_enabled_ui(lit, |ui| check(ui, skin, &mut next.light.dither, "Dither"));
     });
     if outline != next.outline.is_some() {
         next.outline = outline.then_some(primary);
@@ -981,10 +921,63 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     if !ui.input(|input| input.pointer.any_down()) {
         editor.end_group_of(group.value());
     }
-    // La tabla, aparte: cada clic en la cuadrícula es su propio paso de undo.
-    if let Some(table) = shading {
+}
+
+/// Shading… y Sheet settings…, al final de su fila (como el boceto). Devuelve lo pedido.
+fn window_buttons(ui: &mut Ui, skin: Option<&Skin>) -> Option<ModelAction> {
+    const BUTTONS: [(&str, ModelAction); 2] = [
+        ("Shading…", ModelAction::Shading),
+        ("Sheet settings…", ModelAction::Bake),
+    ];
+    let mut picked = None;
+    match skin {
+        Some(skin) => {
+            let row = row_rect(ui, row_width(ui));
+            let mut right = row.right();
+            for (label, action) in BUTTONS.into_iter().rev() {
+                let w = kit::button::width(ui, label);
+                let rect =
+                    Rect::from_min_max(pos2(right - w, row.top()), pos2(right, row.bottom()));
+                let id = ui.id().with(("model_window_button", label));
+                if kit::button::button_at(ui, skin, rect, id, label).clicked() {
+                    picked = Some(action);
+                }
+                right = rect.left() - COLUMN_GAP;
+            }
+        }
+        None => {
+            ui.horizontal(|ui| {
+                for (label, action) in BUTTONS {
+                    if pixel_ui::text_button(ui, label).clicked() {
+                        picked = Some(action);
+                    }
+                }
+            });
+        }
+    }
+    picked
+}
+
+/// La ventana Shading (la abre Shading… de lo general): la cuadrícula de [`shading`] y Auto. Sin
+/// luz (o con un diálogo abierto, `modal`) se ve pero no se edita. Cada cambio es su propio paso
+/// de undo. Devuelve si se cerró con la ×.
+pub fn shading_window(
+    ctx: &egui::Context,
+    editor: &mut Editor,
+    skin: Option<&Skin>,
+    modal: bool,
+) -> bool {
+    let anchor = (egui::Align2::CENTER_CENTER, Vec2::ZERO);
+    let (table, closed) =
+        pixel_ui::app_window(ctx, skin, "model_shading", "Shading", true, anchor, |ui| {
+            let lit = editor.edited_model().is_some_and(|m| m.light.enabled);
+            ui.add_enabled_ui(!modal && lit, |ui| shading(ui, editor, skin, lit))
+                .inner
+        });
+    if let Some(table) = table.flatten() {
         editor.set_shading(table);
     }
+    closed
 }
 
 /// El color de egui de un `Rgba`.
@@ -1019,13 +1012,14 @@ enum ShadeColumn {
     Orphan(usize, Rgba),
 }
 
-/// "Shading" con Auto (vaciar la tabla) y la cuadrícula: por cada color opaco de la paleta del
+/// La cuadrícula Shading y, debajo, Auto (vaciar la tabla): por cada color opaco de la paleta del
 /// modelo una columna (en bloques de [`SHADE_COLUMNS`]) con el color y, debajo, sus pasos 1 y 2
 /// de luz. Un clic en un paso abre las muestras opacas de la paleta (elegir una lo fija); el
 /// derecho lo vuelve automático. Después, las entradas huérfanas (de colores que ya no están en la
 /// paleta, que igual cuentan en el render), tachadas en diagonal: el clic derecho en un paso lo
-/// quita y en el color quita la entrada. Devuelve la tabla nueva si el usuario la cambió.
-fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingTable> {
+/// quita y en el color quita la entrada. Sin luz (`lit` apagado), al lado de Auto lo dice.
+/// Devuelve la tabla nueva si el usuario la cambió.
+fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>, lit: bool) -> Option<ShadingTable> {
     let table = editor.edited_model()?.shading.clone();
     // La paleta del modelo (en modo Texture el activo es su textura).
     let palette = editor
@@ -1054,13 +1048,6 @@ fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingT
         )
         .collect();
     let mut next = None;
-    ui.horizontal(|ui| {
-        label_with_hint(ui, "Shading", "");
-        let auto = ui.add_enabled_ui(!table.entries.is_empty(), |ui| button(ui, skin, "Auto"));
-        if auto.inner.clicked() {
-            next = Some(ShadingTable::default());
-        }
-    });
     let enabled = ui.is_enabled();
     for block in columns.chunks(SHADE_COLUMNS) {
         let size = vec2(
@@ -1138,6 +1125,15 @@ fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingT
             }
         }
     }
+    ui.horizontal(|ui| {
+        let auto = ui.add_enabled_ui(!table.entries.is_empty(), |ui| button(ui, skin, "Auto"));
+        if auto.inner.clicked() {
+            next = Some(ShadingTable::default());
+        }
+        if !lit {
+            ui.label("Turn the light on to edit.");
+        }
+    });
     next.filter(|t| *t != table)
 }
 
@@ -1203,6 +1199,3 @@ fn swatches(
             .and_then(|i| i.inner),
     }
 }
-
-#[cfg(test)]
-mod tests;

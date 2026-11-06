@@ -293,3 +293,54 @@ fn deshacer_a_media_mano_cancela_el_gesto() {
     assert_eq!(vertex(&e, 7), before, "the undo stays");
     assert_eq!(e.history.done_count(), steps);
 }
+
+fn vertices(items: &[u32]) -> Selection {
+    Selection {
+        mode: SelectMode::Vertex,
+        items: items.iter().map(|&v| Item::Vertex(0, v)).collect(),
+    }
+}
+
+#[test]
+fn deshacer_y_rehacer_devuelven_la_seleccion_3d() {
+    let mut e = editing();
+    e.set_select_mode(SelectMode::Vertex);
+    e.set_model_selection(vertices(&[7]));
+    assert!(e.nudge_model_selection(1, 0));
+    // Después del paso se elige otra cosa: deshacer vuelve a lo de antes del paso…
+    e.set_model_selection(vertices(&[2, 3]));
+    e.undo();
+    assert_eq!(e.model_edit().selection, vertices(&[7]));
+    // …y rehacer, a lo que había al deshacer.
+    e.redo();
+    assert_eq!(e.model_edit().selection, vertices(&[2, 3]));
+}
+
+#[test]
+fn deshacer_un_delete_devuelve_las_caras_borradas_elegidas() {
+    let mut e = editing();
+    e.set_select_mode(SelectMode::Face);
+    let faces = Selection {
+        mode: SelectMode::Face,
+        items: [Item::Face(0, 0)].into(),
+    };
+    e.set_model_selection(faces.clone());
+    assert!(e.delete_model_selection());
+    assert!(e.model_edit().selection.is_empty());
+    e.undo();
+    assert_eq!(e.model_edit().selection, faces);
+}
+
+#[test]
+fn un_paso_nuevo_despues_de_deshacer_olvida_la_seleccion_de_rehacer() {
+    let mut e = editing();
+    e.set_select_mode(SelectMode::Vertex);
+    e.set_model_selection(vertices(&[7]));
+    assert!(e.nudge_model_selection(1, 0));
+    e.undo();
+    e.set_model_selection(vertices(&[1]));
+    assert!(e.nudge_model_selection(0, 1));
+    assert_eq!(e.step_selections.len(), e.history.done_count());
+    e.undo();
+    assert_eq!(e.model_edit().selection, vertices(&[1]));
+}

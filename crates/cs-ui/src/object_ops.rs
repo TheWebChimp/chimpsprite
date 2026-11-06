@@ -250,10 +250,21 @@ pub(crate) fn arrange_items(ui: &mut egui::Ui, editor: &mut Editor) {
             menus::separator(ui);
         }
         let item = menus::item(text, label(&ctx, action));
-        if ui.add_enabled(enabled, item).clicked() {
+        // En el modo Model de ChimpCAD, Duplicate Object es de los objetos 3D (o del grupo
+        // activo del outliner).
+        let model = action == Action::DuplicateObject && editor.pixel_actions_blocked();
+        let on = if model {
+            editor.can_duplicate_active()
+        } else {
+            enabled
+        };
+        if ui.add_enabled(on, item).clicked() {
             match (reorder, action) {
                 (Some(to), _) => {
                     editor.reorder_selected(to);
+                }
+                (None, Action::DuplicateObject) if model => {
+                    editor.duplicate_active();
                 }
                 (None, Action::DuplicateObject) => {
                     editor.duplicate_selected();

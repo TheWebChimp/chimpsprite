@@ -25,9 +25,13 @@ mod input;
 mod model_edit;
 mod model_input;
 mod nav_gizmo;
+mod object_bar;
 mod rulers;
 mod texture_mode;
 mod uv_overlay;
+
+#[cfg(test)]
+pub(crate) use uv_overlay::UV_HANDLE_OFFSET;
 
 const ZOOM_LEVELS: [f32; 13] = [
     0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0, 16.0, 24.0, 32.0, 48.0, 64.0,
@@ -157,6 +161,9 @@ pub struct CanvasView {
     /// El encabezado de ChimpCAD (logo y botones Model / Texture) del workspace del modelo en
     /// este frame: ahí no empiezan los gestos de las vistas.
     header_rect: Option<Rect>,
+    /// La barrita del objeto, debajo del encabezado (en los dos modos): la rueda ahí es de su
+    /// scroll, no de las vistas.
+    object_bar_rect: Option<Rect>,
     /// El contorno de las caras elegidas sobre el render (modo Texture): la clave de la
     /// geometría, la cámara, el tamaño y las caras, y sus pixeles. Pintar la textura no lo
     /// recalcula.
@@ -336,6 +343,7 @@ impl Default for CanvasView {
             uv_press: None,
             uv_hover: false,
             header_rect: None,
+            object_bar_rect: None,
             edit_outline: None,
             edit_persp: None,
             edit_ortho: [None, None, None],
@@ -796,6 +804,7 @@ impl CanvasView {
             self.edit_quads = None;
             self.texture_panes = None;
             self.header_rect = None;
+            self.object_bar_rect = None;
             self.show_artboards(ui, &response, rect, editor, dialog, view_settings);
         }
         // La barra de estado (dibujada antes) muestra el zoom de otra vista: otro frame.

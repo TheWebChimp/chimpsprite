@@ -70,10 +70,11 @@ fn v3(x: i32, y: i32, z: i32) -> Vec3i {
     Vec3i { x, y, z }
 }
 
-fn face(verts: &[u32], uvs: &[(i32, i32)]) -> Face {
+fn face(verts: &[u32], uvs: &[(i32, i32)], part: u32) -> Face {
     Face {
         verts: verts.to_vec(),
         uvs: uvs.to_vec(),
+        part: Some(part),
     }
 }
 
@@ -101,6 +102,7 @@ fn cap_uv(i: u32, n: u32, cell: Rect, up_sign: f32) -> (i32, i32) {
 
 /// Tapa de `n` lados en abanico de triángulos: agrega un vértice al centro (a la altura `y`) y
 /// una cara por lado; los vértices del anillo son `base..base+n`. La de abajo va en orden inverso.
+/// Todos los triángulos son la misma cara completa, `part`.
 fn cap_faces(
     vertices: &mut Vec<Vec3i>,
     faces: &mut Vec<Face>,
@@ -108,6 +110,7 @@ fn cap_faces(
     base: u32,
     y: i32,
     top: bool,
+    part: u32,
 ) {
     let cell = if top { CAP_TOP } else { CAP_BOTTOM };
     let sign = if top { 1.0 } else { -1.0 };
@@ -120,6 +123,7 @@ fn cap_faces(
         faces.push(face(
             &[center, base + a, base + b],
             &[c_uv, cap_uv(a, n, cell, sign), cap_uv(b, n, cell, sign)],
+            part,
         ));
     }
 }
@@ -160,12 +164,14 @@ fn cube() -> Mesh {
     ];
     let faces = defs
         .iter()
-        .map(|(c, (col, row))| {
+        .enumerate()
+        .map(|(part, (c, (col, row)))| {
             let (x0, y0) = (col * 16, row * 16);
             let verts: Vec<u32> = c.iter().map(|&(x, y, z)| idx(x, y, z)).collect();
             face(
                 &verts,
                 &[(x0, y0 + 16), (x0 + 16, y0 + 16), (x0 + 16, y0), (x0, y0)],
+                part as u32,
             )
         })
         .collect();
@@ -177,7 +183,11 @@ fn plane() -> Mesh {
     let f = FIXED;
     Mesh {
         vertices: vec![v3(-f, -f, 0), v3(f, -f, 0), v3(f, f, 0), v3(-f, f, 0)],
-        faces: vec![face(&[0, 1, 2, 3], &[(48, 16), (64, 16), (64, 0), (48, 0)])],
+        faces: vec![face(
+            &[0, 1, 2, 3],
+            &[(48, 16), (64, 16), (64, 0), (48, 0)],
+            0,
+        )],
     }
 }
 
@@ -193,10 +203,11 @@ fn cylinder(n: u32) -> Mesh {
         faces.push(face(
             &[i, j, n + j, n + i],
             &[(u0, 48), (u1, 48), (u1, 32), (u0, 32)],
+            0,
         ));
     }
-    cap_faces(&mut vertices, &mut faces, n, n, f, true);
-    cap_faces(&mut vertices, &mut faces, n, 0, -f, false);
+    cap_faces(&mut vertices, &mut faces, n, n, f, true, 1);
+    cap_faces(&mut vertices, &mut faces, n, 0, -f, false, 2);
     Mesh { vertices, faces }
 }
 
@@ -212,9 +223,13 @@ fn cone(n: u32) -> Mesh {
             32 + i as i32 * 32 / n as i32,
             32 + (i as i32 + 1) * 32 / n as i32,
         );
-        faces.push(face(&[i, j, n], &[(u0, 48), (u1, 48), ((u0 + u1) / 2, 32)]));
+        faces.push(face(
+            &[i, j, n],
+            &[(u0, 48), (u1, 48), ((u0 + u1) / 2, 32)],
+            0,
+        ));
     }
-    cap_faces(&mut vertices, &mut faces, n, 0, -f, false);
+    cap_faces(&mut vertices, &mut faces, n, 0, -f, false, 1);
     Mesh { vertices, faces }
 }
 
@@ -241,6 +256,7 @@ fn sphere(n: u32, rings: u32) -> Mesh {
         faces.push(face(
             &[0, ring(1, i), ring(1, i + 1)],
             &[(um, v(0)), (u(i), v(1)), (u(i + 1), v(1))],
+            0,
         ));
         for k in 1..rings - 1 {
             faces.push(face(
@@ -256,12 +272,14 @@ fn sphere(n: u32, rings: u32) -> Mesh {
                     (u(i + 1), v(k + 1)),
                     (u(i + 1), v(k)),
                 ],
+                0,
             ));
         }
         let k = rings - 1;
         faces.push(face(
             &[ring(k, i), bottom, ring(k, i + 1)],
             &[(u(i), v(k)), (um, v(rings)), (u(i + 1), v(k))],
+            0,
         ));
     }
     Mesh { vertices, faces }
@@ -334,6 +352,8 @@ mod tests {
                     transform: Transform3D::default(),
                     double_sided: false,
                     kind: Some(p.kind()),
+                    hidden: false,
+                    locked: false,
                 })
                 .collect(),
             ..Model3D::default()
@@ -384,6 +404,26 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn las_primitivas_tienen_sus_caras_completas() {
+        let parts = |p: Primitive| {
+            let m = primitive_mesh(&p);
+            let mut ids: Vec<u32> = m.faces.iter().map(|f| f.part.expect("con parte")).collect();
+            ids.sort_unstable();
+            ids.dedup();
+            ids
+        };
+        assert_eq!(parts(Primitive::Cube), vec![0, 1, 2, 3, 4, 5]);
+        assert_eq!(parts(Primitive::Plane), vec![0]);
+        assert_eq!(parts(Primitive::Cylinder { sides: 8 }), vec![0, 1, 2]);
+        assert_eq!(parts(Primitive::Cone { sides: 8 }), vec![0, 1]);
+        assert_eq!(parts(Primitive::Sphere { sides: 8, rings: 4 }), vec![0]);
+        // La tapa de arriba del cilindro: sus 8 triángulos.
+        let m = primitive_mesh(&Primitive::Cylinder { sides: 8 });
+        let top = m.faces.iter().position(|f| f.part == Some(1)).unwrap();
+        assert_eq!(m.part_faces(top).len(), 8);
     }
 
     #[test]

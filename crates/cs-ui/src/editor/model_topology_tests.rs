@@ -296,31 +296,153 @@ fn arrows_do_not_nudge_during_an_extrude() {
 }
 
 #[test]
-fn undoing_a_topology_change_does_not_leave_a_stale_selection() {
+fn undoing_a_topology_change_brings_back_the_selection_of_that_topology() {
     let mut e = editing();
     let top = top_face(&e);
     faces(&mut e, &[top]);
+    let before = e.model_edit().selection.clone();
     assert!(e.subdivide_model_selection());
-    assert_eq!(e.model_edit().selection.items.len(), 4);
+    let after = e.model_edit().selection.clone();
+    assert_eq!(after.items.len(), 4);
+    // Deshacer vuelve a la cara de antes; rehacer, a las cuatro (las dos, de su topología).
     e.undo();
-    assert!(
-        e.model_edit().selection.is_empty(),
-        "{:?}",
-        e.model_edit().selection
-    );
+    assert_eq!(e.model_edit().selection, before);
     e.redo();
-    assert!(e.model_edit().selection.is_empty());
+    assert_eq!(e.model_edit().selection, after);
 
     let mut e = editing();
     let verts = model(&e).objects[0].mesh.faces[top].verts.clone();
     vertices(&mut e, &verts);
+    let before = e.model_edit().selection.clone();
     assert!(e.merge_model_selection());
     assert_eq!(e.model_edit().selection.items.len(), 1);
     e.undo();
-    assert!(e.model_edit().selection.is_empty());
+    assert_eq!(e.model_edit().selection, before);
     // Mover (sin cambiar la topología) y deshacer deja la selección.
     vertices(&mut e, &[0, 1]);
     e.nudge_model_selection(1, 0);
     e.undo();
     assert_eq!(e.model_edit().selection.items.len(), 2);
+}
+
+/// Lo de las vistas con el cubo (0) oculto o bloqueado y otro cubo (1) libre.
+fn with_a_second_cube() -> Editor {
+    let mut e = editing();
+    assert!(e.add_primitive(cs_3d::Primitive::Cube));
+    e
+}
+
+#[test]
+fn hidden_or_locked_parts_are_not_edited_from_the_views() {
+    use super::Row;
+    let can = |e: &Editor| {
+        (
+            e.can_extrude(),
+            e.can_subdivide(),
+            e.can_merge(),
+            e.can_delete_model_selection(),
+        )
+    };
+    for hide in [false, true] {
+        let mut e = with_a_second_cube();
+        let toggled = if hide {
+            e.toggle_hidden(Row::Object(0))
+        } else {
+            e.toggle_row_locked(Row::Object(0))
+        };
+        assert!(toggled);
+        let top = top_face(&e);
+        faces(&mut e, &[top]);
+        assert_eq!(can(&e), (false, false, false, false), "hide {hide}");
+        let steps = e.history.done_count();
+        assert!(!e.subdivide_model_selection());
+        assert!(!e.merge_model_selection());
+        assert!(!e.delete_model_selection());
+        assert!(!e.extrude_moved([0.0, 16.0, 0.0]));
+        e.request_extrude();
+        assert!(e.model_edit().key_request.is_none());
+        assert_eq!(e.history.done_count(), steps);
+        // Con una cara del otro cubo también: solo se toca esa.
+        let mut sel = e.model_edit().selection.clone();
+        sel.items.insert(Item::Face(1, top));
+        e.set_model_selection(sel);
+        assert!(e.can_subdivide());
+        let before = model(&e).objects[0].mesh.clone();
+        assert!(e.subdivide_model_selection());
+        assert_eq!(model(&e).objects[0].mesh, before, "hide {hide}");
+        assert!(model(&e).objects[1].mesh.faces.len() > 6);
+        // En modo Object, Supr no borra el oculto o bloqueado.
+        e.set_model_selection(Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0), Item::Object(1)].into_iter().collect(),
+        });
+        assert!(e.delete_model_selection());
+        assert_eq!(model(&e).objects.len(), 1, "hide {hide}");
+        let left = &model(&e).objects[0];
+        assert!(left.hidden || left.locked, "hide {hide}");
+    }
+}
+
+#[test]
+fn merge_skips_the_vertices_of_a_locked_part() {
+    use super::Row;
+    let mut e = with_a_second_cube();
+    assert!(e.toggle_row_locked(Row::Object(0)));
+    vertices(&mut e, &[0, 1]);
+    assert!(!e.can_merge());
+    assert!(!e.merge_model_selection());
+}
+
+/// Un modelo con un cilindro de 8 lados como objeto 1: la tapa de arriba son sus caras 8..16
+/// (parte 1, centro en el vértice 16 y anillo en 8..16).
+fn with_a_cylinder() -> Editor {
+    let mut e = editing();
+    assert!(e.add_primitive(cs_3d::Primitive::Cylinder { sides: 8 }));
+    assert_eq!(model(&e).objects[1].mesh.faces[8].verts, vec![16, 8, 9]);
+    e
+}
+
+fn cyl_vertices(e: &mut Editor, vs: &[u32]) {
+    e.set_select_mode(SelectMode::Vertex);
+    e.set_model_selection(Selection {
+        mode: SelectMode::Vertex,
+        items: vs.iter().map(|&v| Item::Vertex(1, v)).collect(),
+    });
+}
+
+fn cyl_faces(fs: impl IntoIterator<Item = usize>) -> Selection {
+    Selection {
+        mode: SelectMode::Face,
+        items: fs.into_iter().map(|f| Item::Face(1, f)).collect(),
+    }
+}
+
+#[test]
+fn extruding_a_slice_of_a_cap_makes_it_its_own_face() {
+    let mut e = with_a_cylinder();
+    cyl_vertices(&mut e, &[16, 8, 9]);
+    assert!(e.extrude_moved([0.0, 1.0, 0.0]));
+    // La selección es exactamente el gajo extruido.
+    assert_eq!(e.model_edit().selection, cyl_faces([8]));
+    let m = model(&e);
+    assert_ne!(m.objects[1].mesh.faces[8].part, Some(1));
+    // Un clic en uno de los otros 7 elige solo los 7.
+    let click = cyl_faces([9]);
+    assert_eq!(cs_3d::expand_parts(m, &click), cyl_faces(9..16));
+}
+
+#[test]
+fn subdividing_part_of_a_face_selects_the_whole_face() {
+    let mut e = with_a_cylinder();
+    cyl_vertices(&mut e, &[16, 8, 9]);
+    assert!(e.subdivide_model_selection());
+    let m = model(&e).clone();
+    let sel = e.model_edit().selection.clone();
+    assert_eq!(sel.mode, SelectMode::Face);
+    // Toda la tapa (los pedazos y los otros gajos comparten su parte), nada más.
+    let cap: Vec<usize> = (0..m.objects[1].mesh.faces.len())
+        .filter(|&f| m.objects[1].mesh.faces[f].part == Some(1))
+        .collect();
+    assert!(cap.len() > 8);
+    assert_eq!(sel, cyl_faces(cap));
 }

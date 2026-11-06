@@ -109,7 +109,9 @@ impl TabItem {
         }
     }
 
-    /// Otro verbo para el ×, cuando cerrar la pestaña borra lo que representa ("Delete").
+    /// Otro verbo para el ×, cuando cerrar la pestaña borra lo que representa ("Delete"; hoy
+    /// solo en los tests de la tira).
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn with_close_label(self, close_label: &'static str) -> Self {
         TabItem {
             close_label,

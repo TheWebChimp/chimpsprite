@@ -32,17 +32,28 @@ fn bounds_of(uvs: &[UvPoint]) -> Option<(UvPoint, UvPoint)> {
     }))
 }
 
-/// Aplica `f(uv, caja de su cara)` a todos los UV de cada cara existente.
+/// Aplica `f(uv, caja de su grupo)` a todos los UV de cada cara existente. Un grupo son las
+/// caras pedidas de una misma cara completa (mismo objeto y misma `part`); una cara sin parte
+/// es su propio grupo. Así una tapa o el lado curvo de un cilindro giran como un todo.
 fn map_faces(
     model: &Model3D,
     faces: &[(usize, usize)],
     f: impl Fn(UvPoint, (UvPoint, UvPoint)) -> UvPoint,
 ) -> Model3D {
+    let faces = existing(model, faces);
+    let part = |&(o, i): &(usize, usize)| model.objects[o].mesh.faces[i].part;
     let mut out = model.clone();
-    for (o, i) in existing(model, faces) {
-        let face = &mut out.objects[o].mesh.faces[i];
-        if let Some(b) = bounds_of(&face.uvs) {
-            for uv in &mut face.uvs {
+    for &(o, i) in &faces {
+        let group: Vec<(usize, usize)> = match part(&(o, i)) {
+            Some(p) => faces
+                .iter()
+                .copied()
+                .filter(|g| g.0 == o && part(g) == Some(p))
+                .collect(),
+            None => vec![(o, i)],
+        };
+        if let Some(b) = uv_bounds(model, &group) {
+            for uv in &mut out.objects[o].mesh.faces[i].uvs {
                 *uv = f(*uv, b);
             }
         }
@@ -99,7 +110,8 @@ pub fn move_uv_vertex(
 }
 
 /// Un cuarto de vuelta en el sentido del reloj en pantalla (la `y` de la textura crece hacia
-/// abajo) alrededor del centro de la caja de cada cara: `(x, y)` pasa a `(a - y, b + x)`.
+/// abajo) alrededor del centro de la caja de cada cara (de toda la cara completa si tiene
+/// `part`): `(x, y)` pasa a `(a - y, b + x)`.
 /// Con `sx = min.x + max.x` y `sy = min.y + max.y`, el giro exacto tiene `a = (sx + sy) / 2` y
 /// `b = (sy - sx) / 2`; si `sx + sy` es par son enteros y el giro es exacto. Si es impar (caja
 /// de ancho y alto de distinta paridad) el centro cae en medio pixel y se redondea con `+-1/2`
@@ -122,7 +134,8 @@ pub fn rotate_uvs_90(model: &Model3D, faces: &[(usize, usize)]) -> Model3D {
     })
 }
 
-/// Espeja respecto al centro de la caja de cada cara (exacto: `min + max - v`).
+/// Espeja respecto al centro de la caja de cada cara (de toda la cara completa si tiene `part`;
+/// exacto: `min + max - v`).
 pub fn flip_uvs(model: &Model3D, faces: &[(usize, usize)], horizontal: bool) -> Model3D {
     map_faces(model, faces, |(x, y), (lo, hi)| {
         if horizontal {
@@ -202,6 +215,7 @@ mod tests {
         Face {
             verts: vec![0, 1, 2, 3],
             uvs: uvs.to_vec(),
+            part: None,
         }
     }
 
@@ -221,6 +235,8 @@ mod tests {
                 transform: Transform3D::default(),
                 double_sided: false,
                 kind: None,
+                hidden: false,
+                locked: false,
             }],
             ..Model3D::default()
         }
@@ -312,6 +328,87 @@ mod tests {
         let m = flip_uvs(&model(), &[(0, 0)], false);
         assert_eq!(uvs(&m, 0), vec![(10, 22), (14, 22), (14, 20), (10, 20)]);
         assert_eq!(flip_uvs(&m, &[(0, 0)], false), model());
+    }
+
+    /// Un cilindro de 8 lados: el lado curvo (caras 0..8, parte 0), la tapa de arriba (8..16,
+    /// parte 1) y la de abajo (16..24, parte 2).
+    fn cylinder() -> Model3D {
+        let mut m = model();
+        m.objects[0].mesh = crate::primitive_mesh(&crate::Primitive::Cylinder { sides: 8 });
+        m
+    }
+
+    fn range(r: std::ops::Range<usize>) -> Vec<(usize, usize)> {
+        r.map(|f| (0, f)).collect()
+    }
+
+    /// Si las cajas de las caras `faces` se enciman (con área en común, no solo un borde).
+    fn overlapping(m: &Model3D, faces: &[(usize, usize)]) -> bool {
+        let boxes: Vec<_> = faces.iter().map(|&f| uv_bounds(m, &[f]).unwrap()).collect();
+        boxes.iter().enumerate().any(|(i, a)| {
+            boxes[i + 1..]
+                .iter()
+                .any(|b| a.0.0 < b.1.0 && b.0.0 < a.1.0 && a.0.1 < b.1.1 && b.0.1 < a.1.1)
+        })
+    }
+
+    #[test]
+    fn rotar_el_lado_del_cilindro_gira_la_tira_completa() {
+        let side = range(0..8);
+        let m = rotate_uvs_90(&cylinder(), &side);
+        // La caja de las 8 tiras (32×16) gira como un todo: 16×32 con el mismo centro.
+        assert_eq!(uv_bounds(&cylinder(), &side), Some(((0, 32), (32, 48))));
+        assert_eq!(uv_bounds(&m, &side), Some(((8, 24), (24, 56))));
+        assert!(!overlapping(&m, &side));
+        // Las tapas no se tocan.
+        assert_eq!(
+            m.objects[0].mesh.faces[8..],
+            cylinder().objects[0].mesh.faces[8..]
+        );
+    }
+
+    #[test]
+    fn rotar_la_tapa_del_cilindro_gira_sus_gajos_juntos() {
+        let cap = range(8..16);
+        let m = rotate_uvs_90(&cylinder(), &cap);
+        // El centro de la tapa es el mismo punto en los 8 gajos.
+        let centers: Vec<UvPoint> = (8..16).map(|f| uvs(&m, f)[0]).collect();
+        assert!(centers.iter().all(|&c| c == centers[0]), "{centers:?}");
+        let (lo, hi) = uv_bounds(&cylinder(), &cap).unwrap();
+        let (rlo, rhi) = uv_bounds(&m, &cap).unwrap();
+        assert_eq!((rhi.0 - rlo.0, rhi.1 - rlo.1), (hi.1 - lo.1, hi.0 - lo.0));
+    }
+
+    #[test]
+    fn cuatro_giros_de_una_parte_son_el_original() {
+        for faces in [range(0..8), range(8..16), range(0..24)] {
+            let mut m = cylinder();
+            for _ in 0..4 {
+                m = rotate_uvs_90(&m, &faces);
+            }
+            assert_eq!(m, cylinder());
+        }
+    }
+
+    #[test]
+    fn flip_h_espeja_la_tira_completa() {
+        let side = range(0..8);
+        let m = flip_uvs(&cylinder(), &side, true);
+        // La primera tira (x 0..4) pasa al otro extremo (x 28..32), espejada.
+        assert_eq!(uvs(&m, 0), vec![(32, 48), (28, 48), (28, 32), (32, 32)]);
+        assert_eq!(uv_bounds(&m, &side), uv_bounds(&cylinder(), &side));
+        assert!(!overlapping(&m, &side));
+        assert_eq!(flip_uvs(&m, &side, true), cylinder());
+    }
+
+    #[test]
+    fn caras_sin_parte_giran_solas() {
+        // Las dos caras de `model()` no tienen parte: cada una gira en su propia caja.
+        let m = rotate_uvs_90(&model(), &[(0, 0), (0, 1)]);
+        assert_eq!(
+            m,
+            rotate_uvs_90(&rotate_uvs_90(&model(), &[(0, 0)]), &[(0, 1)])
+        );
     }
 
     /// Los pixeles `(x, y)` cubiertos de una textura de `w` de ancho.

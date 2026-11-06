@@ -2,7 +2,8 @@
 //! mueven la cámara o eligen objetos.
 //!
 //! - **Botón derecho o Alt + izquierdo** arrastrando: orbita (`yaw` y `pitch`).
-//! - **Shift + izquierdo** arrastrando: mueve el `target` en el plano de la vista.
+//! - **Botón central o Shift + izquierdo** arrastrando: mueve el `target` en el plano de la vista
+//!   (paneo).
 //! - **Rueda** (con o sin Ctrl): acerca o aleja la cámara (`distance`) hacia el punto bajo el
 //!   puntero, sin tocar el zoom del lienzo.
 //! - **Gizmo de navegación** (arriba a la derecha): arrastrarlo orbita; un clic en una bolita
@@ -146,6 +147,23 @@ impl CanvasView {
         } else {
             editor.pick_model_object(local);
         }
+    }
+
+    /// El botón central apretado sobre la perspectiva (con el `factor` de pantalla a pixeles del
+    /// artboard): empieza a mover el objetivo (paneo), como Shift + izquierdo.
+    pub(super) fn model_pan_press(&mut self, editor: &mut Editor, p: Pos2, factor: Vec2) {
+        editor.end_group();
+        let Some(camera) = editor.edited_model().map(|m| m.camera) else {
+            return;
+        };
+        self.model_drag = Some(ModelDrag {
+            orbit: false,
+            from: p,
+            camera,
+            factor,
+            toggle: None,
+            nav: None,
+        });
     }
 
     /// Como [`Self::model_press_at`], en el render del modo Texture: el clic izquierdo elige la

@@ -306,8 +306,17 @@ pub struct TextureView {
 /// Hasta soltar solo cambia la vista previa; al soltar es un paso de undo.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum UvOp {
-    /// Mover las UVs de las caras elegidas en pixeles enteros; `from` es el punto agarrado.
+    /// Mover las UVs de la caja ([`Editor::uv_box_faces`]) en pixeles enteros; `from` es el
+    /// punto agarrado.
     Move { from: (f32, f32) },
+    /// Arrastrar un asa de la caja `bounds` (inclusiva) de las UVs de la caja
+    /// ([`Editor::uv_box_faces`]): `handle` es `(x, y)` en la textura (−1 el lado menor, 1 el
+    /// mayor, 0 ninguno); `from` es el punto agarrado.
+    Scale {
+        handle: (i8, i8),
+        from: (f32, f32),
+        bounds: ((i32, i32), (i32, i32)),
+    },
     /// Mover solo el vértice UV `vertex` de la cara `face`; `from` es el punto agarrado.
     Vertex {
         face: (usize, usize),
@@ -482,8 +491,9 @@ impl Editor {
         let next = match self.edited_model() {
             // De Object a un subelemento se empieza vacío: convertir elegiría todo el objeto y
             // arrastrar una arista movería el bloque entero.
+            // En modo Face, siempre caras completas.
             Some(m) if from != SelectMode::Object || mode == SelectMode::Object => {
-                self.model_edit.selection.converted(m, mode)
+                cs_3d::expand_parts(m, &self.model_edit.selection.converted(m, mode))
             }
             _ => Selection {
                 mode,
@@ -501,6 +511,7 @@ impl Editor {
         self.model_edit.made_on = self.edited_model().map(topology_counts).unwrap_or_default();
         if let Some(o) = sel.first_object() {
             self.model_object = Some(o);
+            self.model_group = None;
         }
         self.model_edit.selection = sel;
         // En modo Texture la selección de pixeles sigue a las caras (lo flotante se confirma
@@ -746,10 +757,16 @@ impl Editor {
         let click = self.model_edit.click_item.take();
         if let (EditOp::Move { .. }, Some(item), None) = (op, click, &self.model_edit.preview) {
             let mode = self.model_edit.selection.mode;
-            self.set_model_selection(Selection {
+            let one = Selection {
                 mode,
                 items: [item].into(),
-            });
+            };
+            // En modo Face, con toda su cara completa.
+            let next = match self.edited_model() {
+                Some(m) => cs_3d::expand_parts(m, &one),
+                None => one,
+            };
+            self.set_model_selection(next);
             return;
         }
         let label = match op {
@@ -859,6 +876,108 @@ impl Editor {
         edit.op = None;
         edit.uv_op = None;
         edit.preview = None;
+    }
+}
+
+/// La selección 3D de un paso del historial: la del modelo `model` antes del paso y, desde que
+/// se deshizo, la que había entonces (la de después), para rehacerlo con ella.
+#[derive(Clone, Debug)]
+pub(crate) struct StepSelection {
+    model: ArtboardId,
+    before: Selection,
+    after: Option<Selection>,
+}
+
+impl StepSelection {
+    /// Cambia la selección de antes del paso.
+    pub(crate) fn set_before(&mut self, selection: Selection) {
+        self.before = selection;
+    }
+}
+
+impl Editor {
+    /// El modelo que se edita y su selección 3D, si hay modelo.
+    pub(crate) fn selection_snapshot(&self) -> Option<(ArtboardId, Selection)> {
+        let model = self.model_edit.artboard?;
+        // A media extrusión, lo elegido de verdad es lo de antes (deshacer vuelve ahí).
+        let selection = match &self.model_edit.extrusion {
+            Some(x) => x.before.clone(),
+            None => self.model_edit.selection.clone(),
+        };
+        Some((model, selection))
+    }
+
+    /// Si el comando recién ejecutado dejó un paso nuevo (había `steps`), guarda con él la
+    /// selección de antes (`snapshot`). Los pasos que se podían rehacer ya no existen.
+    pub(crate) fn record_step_selection(
+        &mut self,
+        steps: usize,
+        snapshot: Option<(ArtboardId, Selection)>,
+    ) {
+        if self.history.done_count() <= steps {
+            return;
+        }
+        let list = &mut self.step_selections;
+        list.truncate(steps);
+        list.resize(steps, None);
+        list.push(snapshot.map(|(model, before)| StepSelection {
+            model,
+            before,
+            after: None,
+        }));
+    }
+
+    /// Recién deshecho el paso `step` (había `step` hechos): guarda la selección que había
+    /// (`snapshot`) para rehacerlo y vuelve a la de antes del paso, si es del mismo modelo.
+    pub(crate) fn restore_selection_on_undo(
+        &mut self,
+        step: usize,
+        snapshot: Option<(ArtboardId, Selection)>,
+    ) {
+        let Some(Some(entry)) = step
+            .checked_sub(1)
+            .and_then(|i| self.step_selections.get_mut(i))
+        else {
+            return;
+        };
+        if let Some((model, now)) = snapshot
+            && model == entry.model
+        {
+            entry.after = Some(now);
+        }
+        let (model, before) = (entry.model, entry.before.clone());
+        self.apply_step_selection(model, before);
+    }
+
+    /// Recién rehecho el paso `step` (quedan `step` hechos): vuelve a la selección que había
+    /// cuando se deshizo.
+    pub(crate) fn restore_selection_on_redo(&mut self, step: usize) {
+        let Some(Some(entry)) = step
+            .checked_sub(1)
+            .and_then(|i| self.step_selections.get(i))
+        else {
+            return;
+        };
+        if let Some(after) = entry.after.clone() {
+            let model = entry.model;
+            self.apply_step_selection(model, after);
+        }
+    }
+
+    /// Pone `selection` si `model` es el que se edita (sin lo que ya no exista) y es otra.
+    fn apply_step_selection(&mut self, model: ArtboardId, mut selection: Selection) {
+        if self.model_edit.artboard != Some(model) || self.extruding() {
+            return;
+        }
+        let Some(m) = self.edited_model() else {
+            return;
+        };
+        selection.retain_valid(m);
+        // Sin cambio no se toca (en modo Texture pondría la selección de pixeles de las caras
+        // sobre la que se haya hecho a mano).
+        if selection != self.model_edit.selection {
+            self.set_model_selection(selection);
+        }
     }
 }
 

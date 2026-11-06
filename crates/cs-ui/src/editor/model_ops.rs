@@ -1,16 +1,17 @@
 //! Lo de los modelos 3D en el editor: crear uno, sus objetos, la cámara, la luz, el contorno y
 //! la textura y la tabla de shading. Cada cambio es un `SetModel` con el modelo entero (un paso de undo).
 
-use cs_3d::{Primitive, primitive_mesh};
-use cs_commands::DocCommand;
+use cs_3d::{Primitive, UvRect, primitive_mesh};
 use cs_commands::model::texture_template;
+use cs_commands::{Command, DocCommand};
 use cs_core::{
-    Artboard, ArtboardId, Camera3D, FIXED, Light3D, Model3D, Object3D, Projection, Rgba,
-    ShadingTable, Transform3D, Vec3i,
+    Artboard, ArtboardId, Camera3D, FIXED, LayerKind, Light3D, Model3D, Object3D, PixelValue,
+    Projection, Rgba, ShadingTable, Transform3D, Vec3i,
 };
 use cs_render::BakeOptions;
 
 use super::Editor;
+use super::texture_mode::TEXTURE_SIDES;
 
 /// El aire al encuadrar el modelo (Home): su esfera ocupa 1 / `FRAME_AIR` de lo que se ve.
 const FRAME_AIR: f32 = 1.25;
@@ -71,6 +72,7 @@ impl Editor {
         self.enter_workspace(id);
         self.set_frame(0);
         self.model_object = Some(0);
+        self.model_group = None;
         true
     }
 
@@ -116,6 +118,7 @@ impl Editor {
             return;
         }
         self.model_object = i;
+        self.model_group = None;
         // En el modo Edit, elegir un objeto (panel o perspectiva) pasa a modo Object con ese
         // objeto: convertirlo a sus aristas o vértices elegiría todo el bloque (solo si el
         // modelo del modo Edit es el que se edita: la selección es de ese modelo). En modo
@@ -140,18 +143,143 @@ impl Editor {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
-        model.objects.push(Object3D {
-            name: p.name().to_owned(),
-            mesh: primitive_mesh(&p),
-            transform: Transform3D::default(),
-            double_sided: false,
-            kind: Some(p.kind()),
+        // Entra en el grupo elegido en el outliner o, si no, en el del objeto elegido.
+        let groups = model.groups.len();
+        let parent = self.model_group.filter(|&g| g < groups).or_else(|| {
+            self.selected_object()
+                .and_then(|o| model.object_parents(o).first().copied())
         });
+        model.push_object(
+            Object3D {
+                name: p.name().to_owned(),
+                mesh: primitive_mesh(&p),
+                transform: Transform3D::default(),
+                double_sided: false,
+                kind: Some(p.kind()),
+                hidden: false,
+                locked: false,
+            },
+            parent,
+        );
         let last = model.objects.len() - 1;
-        if !self.named("Add Object", |e| e.set_model(model)) {
+        if !self.named("Add Object", |e| {
+            e.set_placed_model(model, &[last], NewPixels::Template)
+        }) {
             return false;
         }
         self.model_object = Some(last);
+        self.model_group = None;
+        true
+    }
+
+    /// Los objetos que duplica Duplicate Object: en modo Object, los elegidos en las vistas; si
+    /// no, el de la pestaña elegida.
+    fn objects_to_duplicate(&self) -> Vec<usize> {
+        let Some(model) = self.edited_model() else {
+            return Vec::new();
+        };
+        let sel = &self.model_edit.selection;
+        let chosen: Vec<usize> = match sel.mode {
+            cs_3d::SelectMode::Object if self.model_edit.artboard == Some(self.model_id()) => sel
+                .items
+                .iter()
+                .filter_map(|it| match it {
+                    cs_3d::Item::Object(o) => Some(*o),
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        };
+        let chosen = if chosen.is_empty() {
+            self.selected_object().into_iter().collect()
+        } else {
+            chosen
+        };
+        chosen
+            .into_iter()
+            .filter(|&o| o < model.objects.len())
+            .collect()
+    }
+
+    /// Si hay algo que duplicar (ver [`Self::duplicate_model_objects`]).
+    pub fn can_duplicate_model_objects(&self) -> bool {
+        !self.extruding() && !self.objects_to_duplicate().is_empty()
+    }
+
+    /// Duplicate Object (Ctrl+J o el botón de la tira de pestañas): una copia de cada objeto
+    /// elegido en su mismo lugar, al final de la lista y con " copy" en el nombre, en un paso de
+    /// undo. Quedan elegidas las copias (la última, en su pestaña).
+    pub fn duplicate_model_objects(&mut self) -> bool {
+        if !self.can_duplicate_model_objects() {
+            return false;
+        }
+        let chosen = self.objects_to_duplicate();
+        let Some(mut model) = self.edited_model().cloned() else {
+            return false;
+        };
+        let first = model.objects.len();
+        for &o in &chosen {
+            let mut copy = model.objects[o].clone();
+            copy.name = format!("{} copy", copy.name);
+            // La copia queda en el mismo grupo que su original.
+            let parent = model.object_parents(o).first().copied();
+            model.push_object(copy, parent);
+        }
+        let last = model.objects.len() - 1;
+        let new: Vec<usize> = (first..=last).collect();
+        if !self.named("Duplicate Object", |e| {
+            e.set_placed_model(model, &new, NewPixels::Copy)
+        }) {
+            return false;
+        }
+        self.model_object = Some(last);
+        self.model_group = None;
+        if self.model_edit.mode == super::CadMode::Model
+            && self.model_edit.artboard == Some(self.model_id())
+        {
+            self.set_model_selection(cs_3d::Selection {
+                mode: cs_3d::SelectMode::Object,
+                items: (first..=last).map(cs_3d::Item::Object).collect(),
+            });
+        }
+        true
+    }
+
+    /// Duplicate Group: copia el grupo con todo lo de adentro (objetos y subgrupos, en el mismo
+    /// orden) justo después del original, en un paso de undo. Solo la copia del grupo lleva
+    /// " copy" en el nombre (lo de adentro conserva el suyo). La copia queda como fila activa.
+    pub fn duplicate_group(&mut self, g: usize) -> bool {
+        let Some(mut model) = self.edited_model().cloned() else {
+            return false;
+        };
+        model.normalize_tree();
+        if g >= model.groups.len() {
+            return false;
+        }
+        let Some(children) = group_children(&model.tree, g) else {
+            return false;
+        };
+        let mut copy = model.groups[g].clone();
+        copy.name = format!("{} copy", copy.name);
+        model.groups.push(copy);
+        let ng = model.groups.len() - 1;
+        let first = model.objects.len();
+        let children = copy_nodes(&mut model, &children);
+        let new: Vec<usize> = (first..model.objects.len()).collect();
+        let _ = insert_after_group(
+            &mut model.tree,
+            g,
+            cs_core::Node::Group {
+                group: ng,
+                children,
+            },
+        );
+        if !self.named("Duplicate Group", |e| {
+            e.set_placed_model(model, &new, NewPixels::Copy)
+        }) {
+            return false;
+        }
+        self.set_active_row(Some(super::Row::Group(ng)), false);
         true
     }
 
@@ -159,10 +287,11 @@ impl Editor {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
-        if i >= model.objects.len() {
+        // Lo bloqueado no se borra.
+        if i >= model.objects.len() || model.object_locked(i) {
             return false;
         }
-        model.objects.remove(i);
+        model.remove_object(i);
         let left = model.objects.len();
         // La selección guarda índices de objeto: se acomoda ANTES del paso (que la revalida contra
         // el modelo nuevo): lo del objeto quitado se va y lo de los posteriores se corre un lugar.
@@ -190,6 +319,7 @@ impl Editor {
         let selected = self.model_object.unwrap_or(0);
         let selected = if i < selected { selected - 1 } else { selected };
         self.model_object = (left > 0).then(|| selected.min(left - 1));
+        self.model_group = None;
         true
     }
 
@@ -343,13 +473,223 @@ impl Editor {
         self.set_model(model)
     }
 
+    /// Lleva las UVs de los objetos `new` de `model` a lugares libres de la textura del modelo
+    /// que se edita (sin encimarse con las de los demás objetos, con [`cs_3d::MARGIN`] de aire),
+    /// en orden. Si uno no cabe, prueba los lados siguientes de [`TEXTURE_SIDES`] (de doble en
+    /// doble); si ni en el más grande cabe, se queda donde está. Devuelve el lado final de la
+    /// textura y, por cada objeto movido, de qué caja a qué lugar se corrió (para copiar sus
+    /// pixeles). Sin textura no toca nada.
+    fn place_new_objects(&self, model: &mut Model3D, new: &[usize]) -> (u32, Vec<UvMove>) {
+        let Some(texture) = self
+            .edited_texture()
+            .and_then(|id| self.document.artboard(id))
+        else {
+            return (0, Vec::new());
+        };
+        let (w, h) = (texture.sprite.width, texture.sprite.height);
+        let mut side = w.min(h);
+        // Los lados a los que puede crecer: los de la lista del panel, más grandes que la textura.
+        let bigger = |s: u32| {
+            TEXTURE_SIDES
+                .filter(|v| v.is_power_of_two())
+                .filter(move |&v| v > s.max(w).max(h))
+        };
+        let mut taken: Vec<UvRect> = (0..model.objects.len())
+            .filter(|o| !new.contains(o))
+            .filter_map(|o| cs_3d::object_uv_rect(model, o))
+            .collect();
+        let mut moves = Vec::new();
+        for &o in new {
+            let Some(rect) = cs_3d::object_uv_rect(model, o) else {
+                continue;
+            };
+            let spot = std::iter::once(side)
+                .chain(bigger(side))
+                .find_map(|s| cs_3d::find_free(&taken, rect.2, rect.3, s as i32).map(|at| (s, at)));
+            let Some((s, at)) = spot else {
+                taken.push(rect);
+                continue;
+            };
+            side = s;
+            *model = cs_3d::place_object(model, o, at);
+            taken.push((at.0, at.1, rect.2, rect.3));
+            moves.push((rect, at));
+        }
+        (side.max(w.min(h)), moves)
+    }
+
+    /// Pone `model` (con objetos nuevos `new`) en el modelo que se edita, cada objeto nuevo en
+    /// su lugar de la textura (ver [`Self::place_new_objects`]): si no cupo, la textura crece
+    /// (conserva sus pixeles), y su caja nueva se llena según `fill`. Todo en un comando.
+    fn set_placed_model(&mut self, mut model: Model3D, new: &[usize], fill: NewPixels) -> bool {
+        let (side, moves) = self.place_new_objects(&mut model, new);
+        self.set_model_moving_pixels(model, side, &moves, fill)
+    }
+
+    /// Pone `model` en el modelo que se edita y, en el mismo comando, su textura pasa a lado
+    /// `side` si es más chica (conserva sus pixeles, anclada arriba a la izquierda) y cada caja
+    /// de `moves` se llena en su lugar nuevo según `fill` (los pixeles se leen de la textura de
+    /// antes de cualquier cambio; los de las cajas viejas se quedan). Sin textura, solo el modelo.
+    pub(super) fn set_model_moving_pixels(
+        &mut self,
+        mut model: Model3D,
+        side: u32,
+        moves: &[UvMove],
+        fill: NewPixels,
+    ) -> bool {
+        let Some(texture) = self
+            .edited_texture()
+            .and_then(|id| self.document.artboard(id))
+        else {
+            return self.set_model(model);
+        };
+        let sprite = &texture.sprite;
+        let mut cmds = Vec::new();
+        if side > sprite.width.min(sprite.height) {
+            cmds.push(DocCommand::OnArtboard {
+                id: texture.id,
+                cmd: Command::ResizeCanvas {
+                    width: side,
+                    height: side,
+                    offset: (0, 0),
+                },
+            });
+        }
+        let mut images = sprite
+            .layers
+            .iter()
+            .filter(|l| l.kind == LayerKind::Image && !l.locked);
+        // De qué sprite se leen los pixeles y en qué capas se escriben.
+        let template;
+        let (source, layers): (&cs_core::Sprite, Vec<_>) = match fill {
+            NewPixels::Copy => (sprite, images.map(|l| (l.id, l.id)).collect()),
+            NewPixels::Template => {
+                // Con la paleta del modelo, como una textura nueva (ver `new_texture`).
+                let palette = self
+                    .document
+                    .artboard(self.model_id())
+                    .map_or(&sprite.palette, |a| &a.sprite.palette);
+                template = texture_template(palette);
+                let from = template.layers[0].id;
+                (
+                    &template,
+                    images.next().map(|l| (from, l.id)).into_iter().collect(),
+                )
+            }
+        };
+        for (from, to) in layers {
+            for frame in 0..sprite.frames.len() {
+                let read = if fill == NewPixels::Copy { frame } else { 0 };
+                // Todos los pixeles de la caja, también los transparentes: queda igual.
+                let pixels: Vec<(i32, i32, PixelValue)> = moves
+                    .iter()
+                    .flat_map(|&((x, y, w, h), (nx, ny))| {
+                        (0..h).flat_map(move |dy| (0..w).map(move |dx| (x, y, nx, ny, dx, dy)))
+                    })
+                    .map(|(x, y, nx, ny, dx, dy)| {
+                        (nx + dx, ny + dy, source.pixel(from, read, x + dx, y + dy))
+                    })
+                    .filter(|&(_, _, v)| sprite.color_mode.accepts(v))
+                    .collect();
+                if !pixels.is_empty() {
+                    cmds.push(DocCommand::OnArtboard {
+                        id: texture.id,
+                        cmd: Command::DrawPixels {
+                            layer: to,
+                            frame,
+                            pixels,
+                        },
+                    });
+                }
+            }
+        }
+        if cmds.is_empty() {
+            return self.set_model(model);
+        }
+        model.normalize_tree();
+        cmds.push(set_model_cmd(self.model_id(), model));
+        self.execute_doc(DocCommand::Batch(cmds))
+    }
+
     /// El modelo nuevo del que se edita (el del workspace en modo Texture, no la textura activa).
-    pub(super) fn set_model(&mut self, model: Model3D) -> bool {
+    pub(super) fn set_model(&mut self, mut model: Model3D) -> bool {
+        model.normalize_tree();
         if self.edited_model() == Some(&model) {
             return false;
         }
         self.execute_doc(set_model_cmd(self.model_id(), model))
     }
+}
+
+/// De qué caja de la textura a qué lugar se corrieron las UVs de un objeto.
+pub(super) type UvMove = (UvRect, (i32, i32));
+
+/// Con qué se llena la caja nueva de un objeto en la textura (ver `Editor::set_placed_model`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum NewPixels {
+    /// La plantilla de las primitivas (lo que tiene una textura nueva en su zona): un objeto
+    /// agregado se ve como en un modelo nuevo y no transparente.
+    Template,
+    /// Los pixeles de su caja vieja (en todas las capas de imagen y frames): un duplicado se ve
+    /// igual que su original, y un objeto reacomodado (Pack UVs) igual que antes. Las capas
+    /// bloqueadas se saltan (no se escribe en ellas): un duplicado con una capa bloqueada no
+    /// lleva lo de esa capa a su caja nueva. Pack UVs no llega aquí con capas bloqueadas (ver
+    /// [`Editor::texture_layers_locked`]).
+    Copy,
+}
+
+/// Los hijos del grupo `g` en el árbol.
+fn group_children(nodes: &[cs_core::Node], g: usize) -> Option<Vec<cs_core::Node>> {
+    nodes.iter().find_map(|n| match n {
+        cs_core::Node::Group { group, children } if *group == g => Some(children.clone()),
+        cs_core::Node::Group { children, .. } => group_children(children, g),
+        cs_core::Node::Object(_) => None,
+    })
+}
+
+/// Copia `nodes` al modelo (objetos y grupos nuevos al final, con el mismo nombre) y devuelve
+/// los nodos de las copias.
+fn copy_nodes(model: &mut Model3D, nodes: &[cs_core::Node]) -> Vec<cs_core::Node> {
+    nodes
+        .iter()
+        .map(|n| match n {
+            cs_core::Node::Object(o) => {
+                model.objects.push(model.objects[*o].clone());
+                cs_core::Node::Object(model.objects.len() - 1)
+            }
+            cs_core::Node::Group { group, children } => {
+                model.groups.push(model.groups[*group].clone());
+                let ng = model.groups.len() - 1;
+                cs_core::Node::Group {
+                    group: ng,
+                    children: copy_nodes(model, children),
+                }
+            }
+        })
+        .collect()
+}
+
+/// Mete `new` justo después del nodo del grupo `g` (en su misma lista). Si no lo encuentra, lo
+/// devuelve.
+fn insert_after_group(
+    nodes: &mut Vec<cs_core::Node>,
+    g: usize,
+    new: cs_core::Node,
+) -> Option<cs_core::Node> {
+    if let Some(at) = nodes
+        .iter()
+        .position(|n| matches!(n, cs_core::Node::Group { group, .. } if *group == g))
+    {
+        nodes.insert(at + 1, new);
+        return None;
+    }
+    let mut new = new;
+    for n in nodes.iter_mut() {
+        if let cs_core::Node::Group { children, .. } = n {
+            new = insert_after_group(children, g, new)?;
+        }
+    }
+    Some(new)
 }
 
 fn set_model_cmd(id: cs_core::ArtboardId, model: Model3D) -> DocCommand {
@@ -358,6 +698,12 @@ fn set_model_cmd(id: cs_core::ArtboardId, model: Model3D) -> DocCommand {
         model: Some(Box::new(model)),
     }
 }
+
+/// Hasta dónde llegan, en la barrita del objeto, la posición (en 1/16: ±256 unidades), la
+/// rotación (en grados) y la escala (en %).
+pub const POSITION_MAX: i32 = 256 * cs_core::FIXED;
+pub const ROTATION_MAX: i32 = 360;
+pub const SCALE_MAX: i32 = 1000;
 
 /// Un ángulo en décimas de grado llevado a `-1800..1800` (la misma orientación).
 pub fn wrap_angle(tenths: i32) -> i32 {

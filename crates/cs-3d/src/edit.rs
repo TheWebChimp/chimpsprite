@@ -95,9 +95,9 @@ pub(crate) fn round3(p: P3) -> Vec3i {
 /// posición.
 pub fn to_world(t: &Transform3D, p: P3) -> P3 {
     let (x, y, z) = (
-        p[0] * t.scale.x as f32 / 1000.0,
-        p[1] * t.scale.y as f32 / 1000.0,
-        p[2] * t.scale.z as f32 / 1000.0,
+        p[0] * (t.scale.x as f32 / 1000.0),
+        p[1] * (t.scale.y as f32 / 1000.0),
+        p[2] * (t.scale.z as f32 / 1000.0),
     );
     let (sx, cx) = sin_cos(t.rotation.x);
     let (sy, cy) = sin_cos(t.rotation.y);
@@ -133,12 +133,57 @@ pub fn to_local(t: &Transform3D, w: P3, keep: P3) -> P3 {
     ]
 }
 
-/// Los vértices del objeto en el mundo.
-pub fn world_points(obj: &Object3D) -> Vec<P3> {
-    obj.mesh
+/// Un punto local del objeto `o` en el mundo: por su transform y luego por los de sus grupos
+/// (del más cercano al de más afuera).
+pub fn object_to_world(model: &Model3D, o: usize, p: P3) -> P3 {
+    model.object_chain(o).iter().fold(p, |p, t| to_world(t, p))
+}
+
+/// Lo contrario de [`object_to_world`]. `keep` (ver [`to_local`]) solo sirve en el último paso,
+/// el del objeto.
+pub fn object_to_local(model: &Model3D, o: usize, w: P3, keep: P3) -> P3 {
+    let chain = model.object_chain(o);
+    // De afuera hacia adentro.
+    let mut p = w;
+    for (k, t) in chain.iter().enumerate().rev() {
+        p = to_local(t, p, if k == 0 { keep } else { [0.0; 3] });
+    }
+    p
+}
+
+/// Un punto en el espacio del padre del objeto `o` (donde vive su posición) en el mundo: solo
+/// por los transforms de sus grupos.
+pub fn parent_to_world(model: &Model3D, o: usize, p: P3) -> P3 {
+    model
+        .object_chain(o)
+        .iter()
+        .skip(1)
+        .fold(p, |p, t| to_world(t, p))
+}
+
+/// Lo contrario de [`parent_to_world`].
+pub fn parent_to_local(model: &Model3D, o: usize, w: P3) -> P3 {
+    model
+        .object_chain(o)
+        .iter()
+        .skip(1)
+        .rev()
+        .fold(w, |p, t| to_local(t, p, [0.0; 3]))
+}
+
+/// Si el objeto `o` se puede elegir en las vistas: ni oculto ni bloqueado (él o sus grupos).
+pub fn pickable(model: &Model3D, o: usize) -> bool {
+    !model.object_hidden(o) && !model.object_locked(o)
+}
+
+/// Los vértices del objeto `o` en el mundo (con los transforms de sus grupos).
+pub fn world_points(model: &Model3D, o: usize) -> Vec<P3> {
+    let chain = model.object_chain(o);
+    model.objects[o]
+        .mesh
         .vertices
         .iter()
-        .map(|&v| to_world(&obj.transform, p3(v)))
+        .map(|&v| chain.iter().fold(p3(v), |p, t| to_world(t, p)))
         .collect()
 }
 
@@ -285,6 +330,22 @@ impl Selection {
     pub fn toggle(&mut self, item: Item) {
         if !self.items.remove(&item) {
             self.items.insert(item);
+        }
+    }
+
+    /// Como [`Selection::toggle`], pero con la cara completa de una cara: si ya estaba entera
+    /// elegida se quita entera; si no, se agrega entera. Lo que no es cara, como `toggle`.
+    pub fn toggle_part(&mut self, model: &Model3D, item: Item) {
+        let Item::Face(o, f) = item else {
+            return self.toggle(item);
+        };
+        let part = part_items(model, o, f);
+        if part.iter().all(|i| self.items.contains(i)) {
+            for i in &part {
+                self.items.remove(i);
+            }
+        } else {
+            self.items.extend(part);
         }
     }
 
@@ -437,13 +498,55 @@ fn faces_of(obj: &Object3D) -> impl Iterator<Item = (usize, Vec<u32>)> + '_ {
     })
 }
 
+/// El punto de cada cara completa del objeto `o` (las caras sin `part`, cada una el suyo): la
+/// cara más grande de la parte (por área en el mundo; a la misma, la de índice menor) y su
+/// centro en el mundo. En orden de esa cara; solo caras con al menos 3 vértices válidos.
+pub fn part_dots(model: &Model3D, o: usize) -> Vec<(usize, P3)> {
+    let Some(obj) = model.objects.get(o) else {
+        return Vec::new();
+    };
+    let pts = world_points(model, o);
+    // La parte (o la cara sola) → (área, cara, centro) de la más grande.
+    let mut best: BTreeMap<(Option<u32>, usize), (f32, usize, P3)> = BTreeMap::new();
+    for (i, vs) in faces_of(obj) {
+        let p: Vec<P3> = vs.iter().map(|&v| pts[v as usize]).collect();
+        // Newell: la normal sin normalizar mide el doble del área.
+        let mut n = [0.0f32; 3];
+        for k in 0..p.len() {
+            let (a, b) = (p[k], p[(k + 1) % p.len()]);
+            n[0] += (a[1] - b[1]) * (a[2] + b[2]);
+            n[1] += (a[2] - b[2]) * (a[0] + b[0]);
+            n[2] += (a[0] - b[0]) * (a[1] + b[1]);
+        }
+        let area = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt() / 2.0;
+        let k = p.len() as f32;
+        let c = [0, 1, 2].map(|j| p.iter().map(|q| q[j]).sum::<f32>() / k);
+        let key = match obj.mesh.faces[i].part {
+            Some(part) => (Some(part), 0),
+            None => (None, i),
+        };
+        let e = best.entry(key).or_insert((area, i, c));
+        if area > e.0 {
+            *e = (area, i, c);
+        }
+    }
+    let mut out: Vec<(usize, P3)> = best.into_values().map(|(_, i, c)| (i, c)).collect();
+    out.sort_by_key(|d| d.0);
+    out
+}
+
 /// Lo que hay bajo `at` (pantalla) en la vista de `map`, según el modo: un vértice o una
-/// arista a [`PICK_RADIUS`] o menos; una cara si `at` cae dentro (o cerca de su punto central);
-/// un objeto si `at` cae dentro de alguna de sus caras.
+/// arista a [`PICK_RADIUS`] o menos; una cara si `at` cae dentro (o cerca del punto de su cara
+/// completa, ver [`part_dots`]); un objeto si `at` cae dentro de alguna de sus caras.
 pub fn pick(model: &Model3D, map: &ViewMap, mode: SelectMode, at: (f32, f32)) -> Option<Item> {
     let mut cands = Vec::new();
-    for (o, obj) in model.objects.iter().enumerate() {
-        let pts = world_points(obj);
+    for (o, obj) in model
+        .objects
+        .iter()
+        .enumerate()
+        .filter(|(o, _)| pickable(model, *o))
+    {
+        let pts = world_points(model, o);
         let scr: Vec<(f32, f32)> = pts.iter().map(|&p| map.to_screen(p)).collect();
         let depth = |i: u32| map.view.depth(pts[i as usize]);
         match mode {
@@ -467,23 +570,24 @@ pub fn pick(model: &Model3D, map: &ViewMap, mode: SelectMode, at: (f32, f32)) ->
                 for (fi, vs) in faces_of(obj) {
                     let poly: Vec<(f32, f32)> = vs.iter().map(|&v| scr[v as usize]).collect();
                     let k = poly.len() as f32;
-                    let c = (
-                        poly.iter().map(|p| p.0).sum::<f32>() / k,
-                        poly.iter().map(|p| p.1).sum::<f32>() / k,
-                    );
                     let cd = vs.iter().map(|&v| depth(v)).sum::<f32>() / k;
-                    let d = if inside(&poly, at) {
-                        0.0
-                    } else if mode == SelectMode::Face && dist(c, at) <= PICK_RADIUS {
-                        dist(c, at)
-                    } else {
+                    if !inside(&poly, at) {
                         continue;
-                    };
+                    }
                     let item = match mode {
                         SelectMode::Face => Item::Face(o, fi),
                         _ => Item::Object(o),
                     };
-                    cands.push((item, d, cd));
+                    cands.push((item, 0.0, cd));
+                }
+                // Cerca del punto de una cara completa: su cara más grande.
+                if mode == SelectMode::Face {
+                    for (fi, c) in part_dots(model, o) {
+                        let d = dist(map.to_screen(c), at);
+                        if d <= PICK_RADIUS {
+                            cands.push((Item::Face(o, fi), d, map.view.depth(c)));
+                        }
+                    }
                 }
             }
         }
@@ -491,8 +595,9 @@ pub fn pick(model: &Model3D, map: &ViewMap, mode: SelectMode, at: (f32, f32)) ->
     best(cands)
 }
 
-/// Lo que cae en la caja de pantalla entre `a` y `b`: vértices dentro; aristas y caras con todos
-/// sus vértices dentro; objetos con algún vértice dentro.
+/// Lo que cae en la caja de pantalla entre `a` y `b`: vértices dentro; aristas con sus dos
+/// vértices dentro; las caras de las caras completas con todos sus vértices dentro; objetos con
+/// algún vértice dentro.
 pub fn box_select(
     model: &Model3D,
     map: &ViewMap,
@@ -503,8 +608,13 @@ pub fn box_select(
     let (x0, x1) = (a.0.min(b.0), a.0.max(b.0));
     let (y0, y1) = (a.1.min(b.1), a.1.max(b.1));
     let mut out = BTreeSet::new();
-    for (o, obj) in model.objects.iter().enumerate() {
-        let inn: Vec<bool> = world_points(obj)
+    for (o, obj) in model
+        .objects
+        .iter()
+        .enumerate()
+        .filter(|(o, _)| pickable(model, *o))
+    {
+        let inn: Vec<bool> = world_points(model, o)
             .iter()
             .map(|&p| {
                 let s = map.to_screen(p);
@@ -529,14 +639,83 @@ pub fn box_select(
                     .filter(|&(a, b)| is_in(a) && is_in(b))
                     .map(|(a, b)| Item::Edge(o, a, b)),
             ),
-            SelectMode::Face => out.extend(
-                faces_of(obj)
-                    .filter(|(_, vs)| vs.iter().all(|&v| is_in(v)))
-                    .map(|(i, _)| Item::Face(o, i)),
-            ),
+            SelectMode::Face => {
+                // Las caras completas: una parte entra solo si todas sus caras caben.
+                let faces: Vec<(usize, bool)> = faces_of(obj)
+                    .map(|(i, vs)| (i, vs.iter().all(|&v| is_in(v))))
+                    .collect();
+                let mut whole: BTreeMap<u32, bool> = BTreeMap::new();
+                for &(i, fits) in &faces {
+                    if let Some(p) = obj.mesh.faces[i].part {
+                        *whole.entry(p).or_insert(true) &= fits;
+                    }
+                }
+                out.extend(
+                    faces
+                        .into_iter()
+                        .filter(|&(i, fits)| obj.mesh.faces[i].part.map_or(fits, |p| whole[&p]))
+                        .map(|(i, _)| Item::Face(o, i)),
+                );
+            }
         }
     }
     out
+}
+
+/// Los `Item::Face` de toda la cara completa de `(o, f)`.
+pub fn part_items(model: &Model3D, o: usize, f: usize) -> Vec<Item> {
+    match model.objects.get(o) {
+        Some(obj) if f < obj.mesh.faces.len() => obj
+            .mesh
+            .part_faces(f)
+            .into_iter()
+            .map(|i| Item::Face(o, i))
+            .collect(),
+        _ => vec![Item::Face(o, f)],
+    }
+}
+
+/// `sel` con cada cara elegida extendida a su cara completa (solo en modo Face).
+pub fn expand_parts(model: &Model3D, sel: &Selection) -> Selection {
+    if sel.mode != SelectMode::Face {
+        return sel.clone();
+    }
+    let mut items = sel.items.clone();
+    for &item in &sel.items {
+        if let Item::Face(o, f) = item {
+            items.extend(part_items(model, o, f));
+        }
+    }
+    Selection {
+        mode: sel.mode,
+        items,
+    }
+}
+
+/// Las aristas del borde de la cara completa (las que no comparten dos caras de la parte).
+pub fn part_outline(model: &Model3D, o: usize, f: usize) -> Vec<(u32, u32)> {
+    let Some(obj) = model.objects.get(o) else {
+        return Vec::new();
+    };
+    if f >= obj.mesh.faces.len() {
+        return Vec::new();
+    }
+    let n = obj.mesh.vertices.len() as u32;
+    let mut count: BTreeMap<(u32, u32), u32> = BTreeMap::new();
+    for i in obj.mesh.part_faces(f) {
+        let vs = &obj.mesh.faces[i].verts;
+        for k in 0..vs.len() {
+            let (a, b) = (vs[k], vs[(k + 1) % vs.len()]);
+            if a != b && a < n && b < n {
+                *count.entry((a.min(b), a.max(b))).or_default() += 1;
+            }
+        }
+    }
+    count
+        .into_iter()
+        .filter(|&(_, c)| c == 1)
+        .map(|(e, _)| e)
+        .collect()
 }
 
 fn bounds_of(points: impl Iterator<Item = P3>) -> Option<(P3, P3)> {
@@ -557,13 +736,17 @@ pub fn bounds(model: &Model3D, sel: &Selection) -> Option<(P3, P3)> {
     bounds_of(verts.iter().flat_map(|(&o, vs)| {
         let obj = &model.objects[o];
         vs.iter()
-            .map(move |&v| to_world(&obj.transform, p3(obj.mesh.vertices[v as usize])))
+            .map(move |&v| object_to_world(model, o, p3(obj.mesh.vertices[v as usize])))
     }))
 }
 
-/// La caja (en el mundo) de todo el modelo.
+/// La caja (en el mundo) de todo lo que se ve del modelo (sin los objetos ocultos).
 pub fn model_bounds(model: &Model3D) -> Option<(P3, P3)> {
-    bounds_of(model.objects.iter().flat_map(world_points))
+    bounds_of(
+        (0..model.objects.len())
+            .filter(|&o| !model.object_hidden(o))
+            .flat_map(|o| world_points(model, o)),
+    )
 }
 
 pub fn center((lo, hi): (P3, P3)) -> P3 {
@@ -583,12 +766,14 @@ pub(crate) fn edit_vertices(
     f: impl Fn(P3) -> P3,
 ) {
     for (o, vs) in sel.vertices(model) {
-        let obj = &mut out.objects[o];
-        let t = obj.transform;
+        // Lo oculto o bloqueado (él o un grupo suyo) no se edita.
+        if !pickable(model, o) {
+            continue;
+        }
         for v in vs {
             let local = p3(model.objects[o].mesh.vertices[v as usize]);
-            let w = f(to_world(&t, local));
-            obj.mesh.vertices[v as usize] = round3(to_local(&t, w, local));
+            let w = f(object_to_world(model, o, local));
+            out.objects[o].mesh.vertices[v as usize] = round3(object_to_local(model, o, w, local));
         }
     }
 }
@@ -604,6 +789,15 @@ pub(crate) fn objects_of(sel: &Selection, model: &Model3D) -> Vec<usize> {
     out
 }
 
+/// Los objetos de la selección que se pueden mover, escalar o girar: los que no están ocultos
+/// ni bloqueados.
+pub(crate) fn movable_objects(sel: &Selection, model: &Model3D) -> Vec<usize> {
+    objects_of(sel, model)
+        .into_iter()
+        .filter(|&o| pickable(model, o))
+        .collect()
+}
+
 fn comp(v: &mut Vec3i, axis: usize) -> &mut i32 {
     match axis {
         0 => &mut v.x,
@@ -613,15 +807,15 @@ fn comp(v: &mut Vec3i, axis: usize) -> &mut i32 {
 }
 
 /// `model` con lo elegido corrido `d` (en el mundo): en modo Objeto, la posición de los objetos;
-/// si no, los vértices involucrados.
+/// si no, los vértices involucrados. Lo bloqueado no se mueve.
 pub fn translate(model: &Model3D, sel: &Selection, d: P3) -> Model3D {
     let mut out = model.clone();
     if sel.mode == SelectMode::Object {
-        for o in objects_of(sel, model) {
-            let p = &mut out.objects[o].transform.position;
-            for (axis, delta) in d.iter().enumerate() {
-                *comp(p, axis) += delta.round() as i32;
-            }
+        for o in movable_objects(sel, model) {
+            // La posición vive en el espacio de sus grupos: se corre en el mundo.
+            let origin = parent_to_world(model, o, p3(model.objects[o].transform.position));
+            let moved = [origin[0] + d[0], origin[1] + d[1], origin[2] + d[2]];
+            out.objects[o].transform.position = round3(parent_to_local(model, o, moved));
         }
         return out;
     }
@@ -657,23 +851,26 @@ fn scaled(s: i32, f: f32) -> i32 {
 }
 
 /// `model` con lo elegido escalado `f` (por eje del mundo) desde `anchor`. En modo Objeto cambia
-/// la escala del eje local más alineado con cada eje del mundo (exacto sin rotación) y corrige
-/// la posición para que el ancla no se mueva; si no, escala las posiciones de los vértices.
+/// la escala del eje local más alineado con cada eje del mundo (exacto sin rotación; con la del
+/// objeto, no la de sus grupos: aproximado si están girados) y corrige la posición (en el mundo)
+/// para que el ancla no se mueva; si no, escala las posiciones de los vértices. Lo bloqueado no
+/// cambia.
 pub fn scale(model: &Model3D, sel: &Selection, anchor: P3, f: P3) -> Model3D {
     let mut out = model.clone();
     if sel.mode == SelectMode::Object {
-        for o in objects_of(sel, model) {
+        for o in movable_objects(sel, model) {
+            let origin = parent_to_world(model, o, p3(model.objects[o].transform.position));
             let t = &mut out.objects[o].transform;
-            for axis in 0..3 {
-                if f[axis] == 1.0 {
+            for (axis, &fa) in f.iter().enumerate() {
+                if fa == 1.0 {
                     continue;
                 }
                 let k = local_axis(t, axis);
                 let s = comp(&mut t.scale, k);
-                *s = scaled(*s, f[axis]);
-                let p = comp(&mut t.position, axis);
-                *p = (anchor[axis] + (*p as f32 - anchor[axis]) * f[axis]).round() as i32;
+                *s = scaled(*s, fa);
             }
+            let moved: P3 = std::array::from_fn(|i| anchor[i] + (origin[i] - anchor[i]) * f[i]);
+            t.position = round3(parent_to_local(model, o, moved));
         }
         return out;
     }
@@ -805,6 +1002,8 @@ mod tests {
             },
             double_sided: false,
             kind: Some(Primitive::Cube.kind()),
+            hidden: false,
+            locked: false,
         }
     }
 
@@ -949,6 +1148,119 @@ mod tests {
         }
     }
 
+    fn in_group(offset: i32) -> Model3D {
+        let mut m = Model3D::default();
+        m.objects.push(cube_at(Vec3i::default()));
+        m.groups.push(cs_core::Group3D {
+            name: "g".into(),
+            transform: Transform3D {
+                position: Vec3i {
+                    x: offset,
+                    y: 0,
+                    z: 0,
+                },
+                ..Default::default()
+            },
+            hidden: false,
+            locked: false,
+            open: true,
+        });
+        m.tree = vec![cs_core::Node::Group {
+            group: 0,
+            children: vec![cs_core::Node::Object(0)],
+        }];
+        m
+    }
+
+    #[test]
+    fn a_group_moves_its_objects_in_the_world() {
+        let m = in_group(64);
+        let pts = world_points(&m, 0);
+        assert!(pts.iter().all(|p| p[0] >= 48.0 && p[0] <= 80.0), "{pts:?}");
+        let w = object_to_world(&m, 0, [16.0, 0.0, 0.0]);
+        assert_eq!(w, [80.0, 0.0, 0.0]);
+        assert_eq!(object_to_local(&m, 0, w, [0.0; 3]), [16.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn moving_an_object_inside_a_turned_group_follows_the_world() {
+        let mut m = in_group(0);
+        m.groups[0].transform.rotation.y = 900; // 90°: el x del grupo es el -z del mundo
+        let sel = Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0)].into(),
+        };
+        let out = translate(&m, &sel, [16.0, 0.0, 0.0]);
+        let before = object_to_world(&m, 0, [0.0; 3]);
+        let after = object_to_world(&out, 0, [0.0; 3]);
+        assert!(
+            (after[0] - before[0] - 16.0).abs() < 0.5,
+            "{before:?} -> {after:?}"
+        );
+        assert!((after[2] - before[2]).abs() < 0.5);
+    }
+
+    #[test]
+    fn hidden_and_locked_objects_are_not_picked() {
+        let map = front_map();
+        let mut m = in_group(0);
+        let at = map.to_screen([0.0, 0.0, 16.0]);
+        assert!(pick(&m, &map, SelectMode::Object, at).is_some());
+        m.groups[0].locked = true;
+        assert!(pick(&m, &map, SelectMode::Object, at).is_none());
+        assert!(box_select(&m, &map, SelectMode::Object, (0.0, 0.0), (1e4, 1e4)).is_empty());
+        m.groups[0].locked = false;
+        m.objects[0].hidden = true;
+        assert!(pick(&m, &map, SelectMode::Object, at).is_none());
+        assert!(box_select(&m, &map, SelectMode::Object, (0.0, 0.0), (1e4, 1e4)).is_empty());
+    }
+
+    #[test]
+    fn locked_objects_are_not_moved_scaled_or_rotated() {
+        let mut m = one_cube();
+        m.objects.push(cube_at(Vec3i { x: 64, y: 0, z: 0 }));
+        m.normalize_tree();
+        m.objects[1].locked = true;
+        let objs = Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0), Item::Object(1)].into(),
+        };
+        let verts = objs.converted(&m, SelectMode::Vertex);
+        for s in [&objs, &verts] {
+            let moved = translate(&m, s, [16.0, 0.0, 0.0]);
+            assert_ne!(moved.objects[0], m.objects[0], "{:?}", s.mode);
+            assert_eq!(moved.objects[1], m.objects[1], "{:?}", s.mode);
+            let scaled = scale(&m, s, [0.0; 3], [2.0, 1.0, 1.0]);
+            assert_ne!(scaled.objects[0], m.objects[0], "{:?}", s.mode);
+            assert_eq!(scaled.objects[1], m.objects[1], "{:?}", s.mode);
+            let turned = crate::rotate_selection(&m, s, [0.0; 3], 1, 900);
+            assert_ne!(turned.objects[0], m.objects[0], "{:?}", s.mode);
+            assert_eq!(turned.objects[1], m.objects[1], "{:?}", s.mode);
+        }
+    }
+
+    #[test]
+    fn hidden_objects_are_not_moved_scaled_or_rotated() {
+        let mut m = one_cube();
+        m.objects.push(cube_at(Vec3i { x: 64, y: 0, z: 0 }));
+        m.normalize_tree();
+        m.objects[1].hidden = true;
+        let objs = Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0), Item::Object(1)].into(),
+        };
+        let verts = objs.converted(&m, SelectMode::Vertex);
+        for s in [&objs, &verts] {
+            let moved = translate(&m, s, [16.0, 0.0, 0.0]);
+            assert_ne!(moved.objects[0], m.objects[0], "{:?}", s.mode);
+            assert_eq!(moved.objects[1], m.objects[1], "{:?}", s.mode);
+            let scaled = scale(&m, s, [0.0; 3], [2.0, 1.0, 1.0]);
+            assert_eq!(scaled.objects[1], m.objects[1], "{:?}", s.mode);
+            let turned = crate::rotate_selection(&m, s, [0.0; 3], 1, 900);
+            assert_eq!(turned.objects[1], m.objects[1], "{:?}", s.mode);
+        }
+    }
+
     #[test]
     fn view_map_ida_y_vuelta() {
         let m = front_map();
@@ -1013,6 +1325,163 @@ mod tests {
         assert_eq!(edge, [Item::Edge(0, 3, 7)].into(), "the edge seen end-on");
     }
 
+    fn one_cylinder() -> Model3D {
+        let mut obj = cube_at(Vec3i::default());
+        obj.name = "Cylinder".into();
+        obj.mesh = primitive_mesh(&Primitive::Cylinder { sides: 8 });
+        obj.kind = Some(Primitive::Cylinder { sides: 8 }.kind());
+        Model3D {
+            objects: vec![obj],
+            ..Model3D::default()
+        }
+    }
+
+    fn top_map() -> ViewMap {
+        ViewMap {
+            view: OrthoView::Top,
+            ..front_map()
+        }
+    }
+
+    /// Las caras de la tapa de arriba del cilindro (la parte 1).
+    fn top_cap(m: &Model3D) -> BTreeSet<Item> {
+        let mesh = &m.objects[0].mesh;
+        (0..mesh.faces.len())
+            .filter(|&f| mesh.faces[f].part == Some(1))
+            .map(|f| Item::Face(0, f))
+            .collect()
+    }
+
+    #[test]
+    fn un_gajo_de_la_tapa_elige_la_tapa_entera() {
+        let m = one_cylinder();
+        let map = top_map();
+        let cap = top_cap(&m);
+        assert_eq!(cap.len(), 8);
+        // El centro (en pantalla) del primer gajo de la tapa.
+        let Some(&Item::Face(_, f0)) = cap.iter().next() else {
+            panic!("no cap");
+        };
+        let pts = world_points(&m, 0);
+        let vs = &m.objects[0].mesh.faces[f0].verts;
+        let scr: Vec<(f32, f32)> = vs.iter().map(|&v| map.to_screen(pts[v as usize])).collect();
+        let at = (
+            scr.iter().map(|p| p.0).sum::<f32>() / 3.0,
+            scr.iter().map(|p| p.1).sum::<f32>() / 3.0,
+        );
+        let Some(item) = pick(&m, &map, SelectMode::Face, at) else {
+            panic!("no face");
+        };
+        assert!(cap.contains(&item), "{item:?}");
+        let Item::Face(o, f) = item else {
+            unreachable!()
+        };
+        assert_eq!(
+            part_items(&m, o, f).into_iter().collect::<BTreeSet<_>>(),
+            cap
+        );
+        let sel = Selection {
+            mode: SelectMode::Face,
+            items: [item].into(),
+        };
+        assert_eq!(expand_parts(&m, &sel).items, cap);
+        // En otro modo no se toca.
+        let verts = Selection {
+            mode: SelectMode::Vertex,
+            items: [Item::Vertex(0, 0)].into(),
+        };
+        assert_eq!(expand_parts(&m, &verts), verts);
+    }
+
+    #[test]
+    fn la_caja_en_modo_face_elige_solo_partes_enteras() {
+        let m = one_cylinder();
+        let map = front_map();
+        // La franja de arriba (y = 16 cae en 68): toda la tapa de arriba, nada de los lados.
+        let strip = box_select(&m, &map, SelectMode::Face, (0.0, 60.0), (200.0, 76.0));
+        assert_eq!(strip, top_cap(&m));
+        // La mitad derecha: los lados de ese lado caben enteros, pero no toda su parte.
+        let half = box_select(&m, &map, SelectMode::Face, (99.0, 0.0), (200.0, 200.0));
+        assert!(half.is_empty(), "{half:?}");
+        let all = box_select(&m, &map, SelectMode::Face, (0.0, 0.0), (200.0, 200.0));
+        assert_eq!(all.len(), 24);
+    }
+
+    #[test]
+    fn el_borde_de_la_tapa_es_el_anillo() {
+        let m = one_cylinder();
+        let cap = top_cap(&m);
+        let Some(&Item::Face(_, f)) = cap.iter().next() else {
+            panic!("no cap");
+        };
+        let outline = part_outline(&m, 0, f);
+        assert_eq!(outline.len(), 8, "{outline:?}");
+        // Ninguna va al centro de la tapa (el vértice 16) y todas son del anillo de arriba.
+        assert!(
+            outline
+                .iter()
+                .all(|&(a, b)| a < b && (8..16).contains(&a) && (8..16).contains(&b))
+        );
+        // En el cubo, una cara es su parte: sus 4 aristas.
+        assert_eq!(part_outline(&one_cube(), 0, 0).len(), 4);
+    }
+
+    #[test]
+    fn un_punto_por_cara_completa_en_su_cara_mas_grande() {
+        let m = one_cylinder();
+        let dots = part_dots(&m, 0);
+        // Los lados, la tapa de arriba y la de abajo: 3 puntos.
+        assert_eq!(dots.len(), 3, "{dots:?}");
+        let mesh = &m.objects[0].mesh;
+        let parts: Vec<Option<u32>> = dots.iter().map(|&(f, _)| mesh.faces[f].part).collect();
+        assert_eq!(parts, vec![Some(0), Some(1), Some(2)]);
+        // El de la tapa de arriba cae en el centro de su cara, a la altura de la tapa.
+        let (f, c) = dots[1];
+        let pts = world_points(&m, 0);
+        let vs = &mesh.faces[f].verts;
+        for i in 0..3 {
+            let avg = vs.iter().map(|&v| pts[v as usize][i]).sum::<f32>() / vs.len() as f32;
+            assert!((c[i] - avg).abs() < 1e-3);
+        }
+        assert_eq!(c[1], 16.0);
+        // En el cubo, una cara por parte: 6 puntos, uno por cara.
+        let cube = part_dots(&one_cube(), 0);
+        assert_eq!(
+            cube.iter().map(|d| d.0).collect::<Vec<_>>(),
+            (0..6).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn cerca_del_punto_de_la_cara_completa_se_elige_su_cara_mas_grande() {
+        // En Front la tapa de arriba se ve de canto: arriba de ella (fuera de toda cara) y cerca
+        // de su punto se elige la cara del punto.
+        let m = one_cylinder();
+        let map = front_map();
+        let (f, c) = part_dots(&m, 0)[1];
+        let s = map.to_screen(c);
+        assert_eq!(
+            pick(&m, &map, SelectMode::Face, (s.0, s.1 - 3.0)),
+            Some(Item::Face(0, f))
+        );
+        // Cerca del centro de otro gajo (no el del punto), nada.
+        let mesh = &m.objects[0].mesh;
+        let pts = world_points(&m, 0);
+        let other = (0..mesh.faces.len())
+            .filter(|&g| g != f && mesh.faces[g].part == Some(1))
+            .map(|g| {
+                let vs = &mesh.faces[g].verts;
+                let x = vs.iter().map(|&v| pts[v as usize][0]).sum::<f32>() / 3.0;
+                map.to_screen([x, 16.0, 0.0])
+            })
+            .find(|o| dist(*o, s) > 2.0 * PICK_RADIUS)
+            .expect("a wedge far from the dot");
+        assert_eq!(
+            pick(&m, &map, SelectMode::Face, (other.0, other.1 - 3.0)),
+            None
+        );
+    }
+
     #[test]
     fn limites_de_la_seleccion() {
         let m = one_cube();
@@ -1048,13 +1517,13 @@ mod tests {
         );
         let mut turned = one_cube();
         turned.objects[0].transform.rotation.y = 900;
-        let before = world_points(&turned.objects[0])[1];
+        let before = world_points(&turned, 0)[1];
         let after = translate(
             &turned,
             &sel(SelectMode::Vertex, &[Item::Vertex(0, 1)]),
             [4.0, 0.0, 0.0],
         );
-        let now = world_points(&after.objects[0])[1];
+        let now = world_points(&after, 0)[1];
         assert!(
             close(now, [before[0] + 4.0, before[1], before[2]]),
             "{now:?}"

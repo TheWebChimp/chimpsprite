@@ -32,7 +32,13 @@ impl ChimpApp {
                 })
                 .collect()
         });
+        // Supr con el puntero sobre el outliner del panel 3D borra sus filas elegidas: lo hace
+        // el outliner (no lo elegido en las vistas).
+        let on_outliner = crate::model_panel::outliner::pointer_over_list(ctx);
         for (key, modifiers) in presses {
+            if on_outliner && matches!(key, Key::Delete | Key::Backspace) {
+                continue;
+            }
             // Primero las fijas, que dependen de lo que pasa (confirmar, cancelar, mover lo
             // seleccionado, borrar).
             if self.has_doc()
@@ -163,6 +169,11 @@ impl ChimpApp {
             ConvertToSymbol => self.open_convert_to_symbol(),
             // Como las flechas y Delete sobre objetos: solo con Move (ver `can_arrange_objects`,
             // que también habilita el menú Layer > Arrange).
+            // En el modo Model de ChimpCAD, Duplicate Object duplica los objetos 3D (o el grupo
+            // activo del outliner).
+            DuplicateObject if editor.pixel_actions_blocked() => {
+                editor.duplicate_active();
+            }
             BringForward | SendBackward | BringToFront | SendToBack | DuplicateObject
             | DeleteObject
                 if !editor.can_arrange_objects() => {}
