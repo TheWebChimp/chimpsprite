@@ -217,6 +217,7 @@ pub fn turntable_frame(
         camera: Some(options.bake.camera(&m.camera)),
         extra_yaw: (angle % angles * 3600 / angles) as i32,
         frame,
+        time_ms: None,
     });
     if let Some(bg) = options.background {
         for p in &mut pixels {

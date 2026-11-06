@@ -82,6 +82,7 @@ pub fn model_pick(doc: &Document, artboard: &Artboard, x: i32, y: i32) -> Option
             camera: None,
             extra_yaw: 0,
             frame: Some(frame),
+            time_ms: None,
         },
         at.0,
         at.1,
@@ -114,6 +115,7 @@ pub fn model_pick_face(
             camera: None,
             extra_yaw: 0,
             frame: Some(size),
+            time_ms: None,
         },
         at.0,
         at.1,
@@ -137,6 +139,7 @@ pub fn model_face_outline(
             camera: None,
             extra_yaw: 0,
             frame,
+            time_ms: None,
         },
         faces,
     )
@@ -166,6 +169,7 @@ pub fn model_render(
         camera: None,
         extra_yaw: 0,
         frame,
+        time_ms: None,
     })
 }
 
@@ -239,6 +243,7 @@ pub(crate) fn model_sprite_at(
                 camera: None,
                 extra_yaw: 0,
                 frame: None,
+                time_ms: None,
             }));
             if let Ok(mut cache) = CACHE.lock() {
                 if cache.len() >= CACHE_LIMIT {

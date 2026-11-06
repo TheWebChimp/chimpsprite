@@ -213,6 +213,7 @@ mod tests {
             camera: None,
             extra_yaw: 0,
             frame: None,
+            time_ms: None,
         })
     }
 
