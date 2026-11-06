@@ -38,6 +38,8 @@ pub enum LibraryAction {
     Delete(ArtboardId),
     Duplicate(ArtboardId),
     Rename(ArtboardId, String),
+    /// Library → Fonts → Import…: elegir un TTF, OTF o JSON de BitFontMaker2.
+    ImportFont,
 }
 
 /// Lo que se arrastra desde una fila: el símbolo o el modelo (lo suelta el lienzo).
@@ -279,6 +281,20 @@ pub fn show(
         for (id, name, uses) in list {
             if let Some(a) = row(ui, editor, skin, state, kind, (*id, name, *uses)) {
                 action = Some(a);
+            }
+        }
+        // Las fuentes también entran de afuera: TTF, OTF o el JSON de BitFontMaker2.
+        if kind == Kind::Font {
+            ui.add_space(2.0);
+            let import = match skin {
+                Some(skin) => crate::kit::button::button(ui, skin, "Import…"),
+                None => pixel_ui::text_button(ui, "Import…"),
+            };
+            if import
+                .on_hover_text("A TTF, OTF or BitFontMaker2 JSON font")
+                .clicked()
+            {
+                action = Some(LibraryAction::ImportFont);
             }
         }
         ui.add_space(6.0);

@@ -73,6 +73,8 @@ pub enum OpenPurpose {
     LumenMap(crate::lumen::MapKind),
     /// Cargar una paleta (`.gpl`, `.hex`, `.pal`, `.png`, `.aseprite`).
     LoadPalette,
+    /// Importar una fuente (TTF/OTF o el JSON de BitFontMaker2).
+    ImportFont,
 }
 
 pub enum PlatformEvent {

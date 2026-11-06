@@ -708,6 +708,19 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             }
             e.go_to_glyph('A');
             app.font_panel.test_text = "ABC CAB".into();
+            // Con CHIMPSPRITE_DEMO_FONT_BUILD, el diálogo Build Font abierto.
+            if dev_var("CHIMPSPRITE_DEMO_FONT_BUILD").is_some() {
+                app.open_build_font(None);
+            }
+        }
+    }
+    // Desarrollo: el diálogo Import Font de un TTF/OTF (o un JSON de BitFontMaker2 importado),
+    // para capturas.
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(path) = dev_var("CHIMPSPRITE_DEMO_FONT_IMPORT") {
+        match std::fs::read(path) {
+            Ok(bytes) => app.opened_font_file(ctx, path, bytes),
+            Err(e) => log::warn!("CHIMPSPRITE_DEMO_FONT_IMPORT: {e}"),
         }
     }
     // Desarrollo: una casita 3D (cubo y cono de techo) con su textura pintada, cámara iso, luz y

@@ -100,6 +100,8 @@ impl ChimpApp {
             || self.grid_dialog.is_some()
             || self.new_tilemap.is_some()
             || self.new_font.is_some()
+            || self.build_font.is_some()
+            || self.import_font.is_some()
             || self.new_model.is_some()
             || self.bake.is_some()
             || self.gif.is_some()
@@ -226,7 +228,7 @@ impl ChimpApp {
     }
 
     /// Procesa lo que llegó de la plataforma (archivos abiertos o errores).
-    pub(crate) fn handle_platform_events(&mut self, _ctx: &egui::Context) {
+    pub(crate) fn handle_platform_events(&mut self, ctx: &egui::Context) {
         for event in self.platform.poll() {
             match event {
                 PlatformEvent::Opened {
@@ -241,7 +243,16 @@ impl ChimpApp {
                         bytes,
                     };
                     match purpose {
+                        // Un TTF/OTF abierto o soltado se importa como fuente pixel.
+                        OpenPurpose::Open | OpenPurpose::Dropped
+                            if crate::font_io::is_font_file(&loaded.name) =>
+                        {
+                            self.opened_font_file(ctx, &loaded.name, loaded.bytes)
+                        }
                         OpenPurpose::Open | OpenPurpose::Dropped => self.load(loaded),
+                        OpenPurpose::ImportFont => {
+                            self.opened_font_file(ctx, &loaded.name, loaded.bytes)
+                        }
                         OpenPurpose::ImportLayer if self.has_doc() => {
                             self.import_layer_bytes(&loaded, false)
                         }
