@@ -1064,6 +1064,7 @@ dependencies = [
  "cs-raster",
  "cs-render",
  "flate2",
+ "fontdue",
  "gif",
  "log",
  "png",
@@ -1071,6 +1072,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.21",
+ "ttf-parser",
  "zip",
 ]
 
