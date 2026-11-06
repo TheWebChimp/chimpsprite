@@ -516,14 +516,21 @@ impl CanvasView {
             }
             if label {
                 let text = format!("{}s", t / 1000);
-                let (shape, _) = crate::pixel_draw::caps_text_in(
-                    ui,
-                    egui::TextStyle::Small,
-                    &text,
-                    x + 2.0,
-                    panes.ruler.top() + 2.0,
-                    look.text,
-                );
+                let draw = |left: f32| {
+                    crate::pixel_draw::caps_text_in(
+                        ui,
+                        egui::TextStyle::Small,
+                        &text,
+                        left,
+                        panes.ruler.top() + 2.0,
+                        look.text,
+                    )
+                };
+                let (mut shape, width) = draw(x + 2.0);
+                // El del final, a la izquierda de su rayita (si no, se corta).
+                if x + 2.0 + width > panes.ruler.right() {
+                    shape = draw(x - 1.0 - width).0;
+                }
                 ruler.add(shape);
             }
             t += 100;

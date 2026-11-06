@@ -66,7 +66,7 @@ actual, si se reproduce y el bloque elegido no se guardan ni pasan por undo.
   Todo se ajusta a 50 ms (Shift: a 10 ms), queda dentro de `[0, Length]` y dura al menos 50 ms.
   Un gesto = un paso de undo (vista previa mientras se arrastra, Esc cancela).
 - Bloques que se pisan en la misma pista se reparten en carriles (la pista se hace más alta).
-- Supr con el puntero sobre el timeline borra el bloque elegido.
+- Supr/Retroceso en modo Anim borra el bloque elegido; las flechas ← → mueven el tiempo 100 ms (Shift: 10).
 - La rueda sobre el timeline lo desplaza verticalmente si no cabe.
 
 ### Panel del bloque

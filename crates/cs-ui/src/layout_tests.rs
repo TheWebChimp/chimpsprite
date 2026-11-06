@@ -8506,9 +8506,12 @@ fn the_model_and_texture_buttons_switch_the_mode_without_undo() {
         texture.left() >= model.right() - 1.0,
         "{model:?} {texture:?}"
     );
+    // Anim, el último del grupo, va contra la derecha.
+    let anim = node(&h, "Anim");
+    assert!(anim.left() >= texture.right() - 1.0, "{texture:?} {anim:?}");
     assert!(
-        canvas.right() - texture.right() < 8.0,
-        "{texture:?} in {canvas:?}"
+        canvas.right() - anim.right() < 8.0,
+        "{anim:?} in {canvas:?}"
     );
     assert!(model.top() - canvas.top() < 8.0 && model.top() >= canvas.top());
     assert_eq!(model.min, model.min.round());
@@ -8522,7 +8525,10 @@ fn the_model_and_texture_buttons_switch_the_mode_without_undo() {
     h.click(texture.center(), PointerButton::Primary);
     assert_eq!(h.app.doc.editor.cad_mode(), CadMode::Texture);
     let (model, texture) = (node(&h, "Model"), node(&h, "Texture"));
-    assert!(canvas.right() - texture.right() < 8.0, "also in Texture");
+    assert!(
+        canvas.right() - node(&h, "Anim").right() < 8.0,
+        "also in Texture"
+    );
     assert!(down(&h, texture) && !down(&h, model));
     h.click(model.center(), PointerButton::Primary);
     assert_eq!(h.app.doc.editor.cad_mode(), CadMode::Model);
@@ -8829,7 +8835,11 @@ fn the_chimpcad_header_has_the_logo_and_the_mode_buttons_over_the_views() {
     );
     let (model, texture) = (node(&h, "Model"), node(&h, "Texture"));
     assert_eq!(model.top(), header.top() + 3.0, "{model:?} in {header:?}");
-    assert_eq!(texture.right(), header.right() - 4.0, "{texture:?}");
+    assert_eq!(
+        node(&h, "Anim").right(),
+        header.right() - 4.0,
+        "{texture:?}"
+    );
     assert!(header.contains_rect(model) && header.contains_rect(texture));
     // La línea oscura de abajo, de lado a lado.
     let line = Rect::from_x_y_ranges(header.x_range(), header.bottom()..=header.bottom() + 1.0);
