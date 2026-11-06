@@ -321,6 +321,15 @@ impl Editor {
         }
     }
 
+    /// Si la fuente del objeto actual en este frame es un símbolo de la biblioteca (se puede
+    /// editar en su lugar o aislado).
+    pub fn current_object_is_symbol(&self) -> bool {
+        self.instance_key()
+            .and_then(|k| k.source)
+            .and_then(|id| self.document.artboard(id))
+            .is_some_and(|a| a.is_symbol())
+    }
+
     /// "Entrar al símbolo": con la fuente de la instancia actual en la biblioteca, entra al modo
     /// símbolo; si es un modelo, entra a su workspace; si está en el lienzo, la activa.
     pub fn enter_instance(&mut self) -> bool {

@@ -705,10 +705,17 @@ In the browser the map's tilesets and images can't be read: use                 
             return;
         }
         let docs = self.tabs.docs(&self.doc);
-        let entries: Vec<_> = dirty
+        // Un símbolo editado en su lugar se guarda en su posición de la biblioteca.
+        let saved: Vec<_> = dirty
             .iter()
-            .map(|&i| (docs[i].location.name.as_str(), &docs[i].editor.document))
+            .map(|&i| {
+                (
+                    docs[i].location.name.as_str(),
+                    docs[i].editor.document_for_save(),
+                )
+            })
             .collect();
+        let entries: Vec<_> = saved.iter().map(|(n, d)| (*n, d.as_ref())).collect();
         let result = crate::autosave::encode(&entries)
             .and_then(|text| crate::autosave::storage::store(&text));
         match result {
@@ -974,7 +981,7 @@ fn unsaved_window(
 /// documento: se confirma antes de escribir.
 pub(crate) fn save_bytes(editor: &mut Editor, file_name: &str) -> Result<Vec<u8>, FileError> {
     editor.commit_floating();
-    files::encode(&editor.document, file_name)
+    files::encode(&editor.document_for_save(), file_name)
 }
 
 /// Comando que agrega el PNG como capa nueva en el frame actual. Lo flotante se confirma antes

@@ -985,6 +985,12 @@ fn with_pixel_ui_an_object_layer_has_no_picture_label() {
     assert!(h.texts.iter().any(|t| t == "Scene"), "{:?}", h.texts);
     assert!(h.texts.iter().all(|t| !t.contains('🖼')), "{:?}", h.texts);
     assert!(has_node(&h, "Alpha") && has_node(&h, "Beta"));
+    // En su lugar, el ícono del skin (en la capa activa, su versión para lo elegido).
+    assert_eq!(h.drawn("icon.layer.objects.selected").len(), 1);
+    assert!(h.drawn("icon.layer.objects").is_empty());
+    h.editor.select_layer(LayerId(1));
+    h.frame(vec![]);
+    assert_eq!(h.drawn("icon.layer.objects").len(), 1);
     // Sin Pixel UI, el texto sigue.
     let mut h = Harness::new(1200.0);
     with_two_objects(&mut h);

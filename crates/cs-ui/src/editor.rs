@@ -388,9 +388,10 @@ pub struct Editor {
     pub editing_secondary: bool,
     /// El símbolo elegido en el panel de la biblioteca (o el último creado con F8).
     pub library_selected: Option<ArtboardId>,
-    /// El modo símbolo: los símbolos de la biblioteca en edición, del de afuera al de adentro.
-    /// Vacía: se edita el documento. Si no, el activo es el último.
-    pub symbol_stack: Vec<ArtboardId>,
+    /// El modo símbolo: los símbolos de la biblioteca en edición, del de afuera al de adentro
+    /// (cada uno aislado o en su lugar). Vacía: se edita el documento. Si no, el activo es el
+    /// último.
+    pub symbol_stack: Vec<crate::symbol_ops::SymbolLevel>,
     /// El artboard activo al entrar al modo símbolo desde el documento (para volver).
     pub symbol_return: Option<ArtboardId>,
     /// El modelo o la fuente que se edita en su pestaña, fuera del lienzo (ver `workspace.rs`).
@@ -533,9 +534,11 @@ impl Editor {
         // biblioteca (p. ej. un undo lo borró o lo sacó al lienzo).
         let document = &self.document;
         let symbol = |id: &ArtboardId| document.artboard(*id).is_some_and(|a| a.is_symbol());
-        if let Some(cut) = self.symbol_stack.iter().position(|id| !symbol(id)) {
-            self.symbol_stack.truncate(cut);
+        if let Some(cut) = self.symbol_stack.iter().position(|l| !symbol(&l.id)) {
+            self.truncate_symbols(cut);
         }
+        // Los que se editan en su lugar siguen a su instancia (un undo pudo moverla o borrarla).
+        self.sync_in_place();
         // El workspace se cierra si su artboard ya no es modelo ni fuente (p. ej. un undo lo
         // borró): se regresa al artboard del lienzo de antes de entrar.
         let closed = self
@@ -559,7 +562,7 @@ impl Editor {
         };
         let target = match self.symbol_stack.last() {
             // En el modo símbolo, el activo es el último de la pila.
-            Some(&last) => Some(last),
+            Some(last) => Some(last.id),
             None if texture.is_some() => texture,
             // En el workspace, el activo es su modelo o su fuente (aunque no esté en el lienzo).
             None if self.workspace.is_some() => self.workspace,
@@ -643,8 +646,8 @@ impl Editor {
         }
         // Activar algo fuera de la pila (el panel de Artboards, un artboard nuevo) sale del modo
         // símbolo.
-        if !self.symbol_stack.contains(&id) {
-            self.symbol_stack.clear();
+        if !self.symbol_stack.iter().any(|l| l.id == id) {
+            self.truncate_symbols(0);
             self.symbol_return = None;
         }
         // Activar otro artboard (uno del lienzo, un símbolo) sale del workspace; la textura del
@@ -1173,3 +1176,6 @@ mod texture_mode_tests;
 
 #[cfg(test)]
 mod anim_tests;
+
+#[cfg(test)]
+mod in_place_tests;
