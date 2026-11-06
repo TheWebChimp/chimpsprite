@@ -1,6 +1,6 @@
 # FontForge, parte 3: glifos compuestos y generar glifos
 
-Fecha: 2026-11-06 · Estado: diseño
+Fecha: 2026-11-06 · Estado: implementado
 
 Sigue al núcleo (`2026-11-01-pixel-font-core-design.md`) y a exportar/importar
 (`2026-11-06-fontforge-export-import-design.md`). Una fuente es un artboard con `font`, con un
@@ -77,7 +77,8 @@ pub struct GlyphInfo {
   (los vacíos sí se arman); los que faltan se agregan. Un solo paso de deshacer. Devuelve cuántos
   armó, cuántos quedaron apretados y cuántos no pudo (sin base o sin marca), y la app lo dice en
   un aviso.
-- Lo mismo para un solo carácter: *Build composite* en el menú de una celda del mapa.
+- Lo mismo para un solo carácter: *Build composite* en el menú de una celda del mapa y *Build* en
+  la sección Glyph; ahí, como lo pidió el usuario, **sí reemplaza** un glifo dibujado o compuesto.
 
 ## 3. Comandos (`cs-commands::font`)
 
@@ -115,7 +116,8 @@ pub struct GlyphInfo {
   punteada. Con la herramienta **Move**, un clic sobre un componente lo elige y arrastrarlo lo
   mueve por pixeles enteros (un paso al soltar); las **flechas** lo mueven 1 px (10 con Shift).
   Con otras herramientas se pinta como siempre (los pixeles propios).
-- **Panel FontForge, vista Edit:** debajo de Add, la sección **Glyph** del glifo actual:
+- **Panel FontForge, vista Edit:** debajo del Test Drive (para no mover las filas del mockup), la
+  sección **Glyph** del glifo actual:
   - si es compuesto, una fila por componente: el carácter, sus offsets X e Y (steppers del kit),
     un botón para elegirlo y uno para quitarlo;
   - un campo *Component* con botón *Add* (agrega ese carácter como componente en (0, 0));
@@ -131,8 +133,8 @@ pub struct GlyphInfo {
   margen, fila de la baseline, tinta y fondo (selectores de color), el texto del orden, *Replace
   drawn glyphs* y *Import*.
 - Capturas: `CHIMPSPRITE_DEMO_FONT_COMPOSITE=1` (con `_FONT`) arma los acentos de la fuente de
-  ejemplo y abre `á` con la `´` elegida; `CHIMPSPRITE_DEMO_FONT_SHEET=<png>` abre Glyphs from
-  image….
+  ejemplo y abre `á` con la `´` elegida (`CHIMPSPRITE_DEMO_FONT_SCROLL=1` baja el panel hasta la
+  sección Glyph); `CHIMPSPRITE_DEMO_FONT_SHEET=<png>` abre Glyphs from image….
 
 ## 6. Pruebas
 
@@ -164,3 +166,7 @@ pub struct GlyphInfo {
 7. Auto-build **no pisa** glifos dibujados ni compuestos existentes.
 8. Mover componentes en el lienzo **solo con Move** (con las demás herramientas se pinta).
 9. Hoja de glifos: umbral fijo de 48 en RGB para el fondo, alfa < 128 transparente.
+10. La sección Glyph va **debajo del Test Drive** (hay que bajar el panel para verla) para que el
+    mapa, Add y el Test Drive sigan en las filas del mockup.
+11. Glyphs from Image empieza con el orden ASCII desde `!`; una hoja que empieza en otra letra
+    necesita editar el texto del orden.
