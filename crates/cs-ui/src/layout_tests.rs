@@ -10140,6 +10140,33 @@ mod object_bar {
         assert_eq!(transform(&h, 0).position.x, 0);
     }
 
+    /// Escribir un número tecla por tecla es un solo paso de undo (no uno por dígito); el campo
+    /// siguiente, otro.
+    #[test]
+    fn typing_in_a_field_is_one_undo_step() {
+        let mut h = with_a_model_at_800();
+        let steps = h.app.doc.editor.history.done_count();
+        let x = node(&h, "Position X");
+        h.click(x.center(), PointerButton::Primary);
+        press(&mut h, egui::Key::A, egui::Modifiers::COMMAND);
+        h.frame_with(key_tap(egui::Key::Backspace));
+        for c in ["1", "2", "3"] {
+            h.frame_with(vec![Event::Text(c.into())]);
+            h.frame();
+        }
+        h.frame_with(key_tap(egui::Key::Enter));
+        settle(&mut h);
+        assert_eq!(transform(&h, 0).position.x, 123);
+        assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+        type_in(&mut h, "Position Y", "7");
+        assert_eq!(h.app.doc.editor.history.done_count(), steps + 2);
+        h.app.doc.editor.undo();
+        assert_eq!(transform(&h, 0).position.y, 0);
+        assert_eq!(transform(&h, 0).position.x, 123);
+        h.app.doc.editor.undo();
+        assert_eq!(transform(&h, 0).position.x, 0);
+    }
+
     #[test]
     fn with_a_group_active_the_bar_edits_the_group() {
         let mut h = with_a_model_at_800();
