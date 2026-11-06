@@ -1268,7 +1268,7 @@ impl CanvasView {
             let shape = editor.options.brush_shape;
             let offset = -((size as i32 - 1) / 2);
             // En modo Tiles el pincel cubre celdas enteras.
-            let cells = editor.tile_space().filter(|_| tool.uses_cells());
+            let cells = editor.cell_space().filter(|_| tool.uses_cells());
             // Las herramientas que pintan píxeles muestran el color primario bajo el cursor.
             let fill = (cells.is_none()
                 && tool.paints()

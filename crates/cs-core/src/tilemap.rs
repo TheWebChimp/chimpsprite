@@ -61,6 +61,16 @@ impl Tile {
     pub fn flip_d(self) -> bool {
         self.0 & Self::FLIP_D != 0
     }
+
+    /// Solo los bits de los flips (sin el índice).
+    pub fn flags(self) -> u32 {
+        self.0 & !Self::INDEX_MASK
+    }
+
+    /// Los mismos flips con otro índice.
+    pub fn with_index(self, index: u32) -> Tile {
+        Tile((index & Self::INDEX_MASK) | self.flags())
+    }
 }
 
 /// Grilla de tiles de un cel; medidas en tiles, fila por fila.
@@ -177,6 +187,47 @@ fn tile_source(tile: Tile, w: u32, h: u32, x: u32, y: u32) -> (u32, u32) {
         std::mem::swap(&mut sx, &mut sy);
     }
     (sx, sy)
+}
+
+/// `image` tal como la dibuja una celda con los flips de `tile` (el índice no importa). El flip D
+/// solo se aplica a imágenes cuadradas (en las otras no se dibuja, ver `Tileset::drawn_tile`).
+pub fn orient_tile(image: &Image, tile: Tile) -> Image {
+    let tile = square_flips(image, tile);
+    let (w, h) = (image.width(), image.height());
+    let mut out = image.clone();
+    for y in 0..h {
+        for x in 0..w {
+            let (sx, sy) = tile_source(tile, w, h, x, y);
+            let v = image.get(sx, sy).expect("in bounds");
+            out.set(x, y, v).expect("in bounds and same mode");
+        }
+    }
+    out
+}
+
+/// El inverso de `orient_tile`: la imagen del tile que, dibujada con los flips de `tile`, se ve
+/// como `seen`.
+pub fn unorient_tile(seen: &Image, tile: Tile) -> Image {
+    let tile = square_flips(seen, tile);
+    let (w, h) = (seen.width(), seen.height());
+    let mut out = seen.clone();
+    for y in 0..h {
+        for x in 0..w {
+            let (sx, sy) = tile_source(tile, w, h, x, y);
+            let v = seen.get(x, y).expect("in bounds");
+            out.set(sx, sy, v).expect("in bounds and same mode");
+        }
+    }
+    out
+}
+
+/// Sin el flip D si la imagen no es cuadrada (transponerla cambiaría su tamaño).
+fn square_flips(image: &Image, tile: Tile) -> Tile {
+    if image.width() == image.height() {
+        tile
+    } else {
+        Tile(tile.0 & !Tile::FLIP_D)
+    }
 }
 
 /// Valor que dibuja la grilla en `(lx, ly)`, relativo a su esquina: una sola búsqueda de tile.
@@ -385,5 +436,46 @@ mod tests {
         assert!(wide.drawn_tile(Tile::new(1, false, false, true)).is_none());
         assert_eq!(tile_grid_pixel(mode, &wide, &g, 0, 0), None);
         assert_eq!(MAX_TILESET_TILES, 1 << 16);
+    }
+
+    /// Los 8 flips posibles (los bits D, X e Y).
+    fn all_flips() -> Vec<Tile> {
+        (0..8)
+            .map(|i| Tile::new(1, i & 1 != 0, i & 2 != 0, i & 4 != 0))
+            .collect()
+    }
+
+    #[test]
+    fn flags_and_with_index_keep_the_flips() {
+        let t = Tile::new(5, true, false, true);
+        assert_eq!(t.flags(), Tile::FLIP_X | Tile::FLIP_D);
+        assert_eq!(t.with_index(9), Tile::new(9, true, false, true));
+        assert_eq!(Tile(7).flags(), 0);
+    }
+
+    #[test]
+    fn oriented_tiles_look_like_the_drawn_grid_and_round_trip() {
+        let mode = ColorMode::Rgba;
+        // Un tile asimétrico de 3×3: cada píxel distinto.
+        let mut img = Image::new(3, 3, mode);
+        for y in 0..3 {
+            for x in 0..3 {
+                let c = crate::Rgba::rgb(x as u8 * 80, y as u8 * 80, 7);
+                img.set(x, y, PixelValue::Rgba(c)).unwrap();
+            }
+        }
+        let mut ts = Tileset::new("t", (3, 3), mode);
+        ts.tiles.push(Arc::new(img.clone()));
+        for tile in all_flips() {
+            let mut grid = TileGrid::new(1, 1);
+            grid.set(0, 0, tile);
+            let drawn = draw_tile_grid(mode, &ts, &grid).unwrap();
+            assert_eq!(orient_tile(&img, tile), drawn, "{tile:?}");
+            assert_eq!(unorient_tile(&drawn, tile), img, "{tile:?}");
+        }
+        // Sin flips no cambia; D en una imagen no cuadrada se ignora.
+        assert_eq!(orient_tile(&img, Tile(1)), img);
+        let wide = Image::new(4, 2, mode);
+        assert_eq!(orient_tile(&wide, Tile::new(1, false, false, true)), wide);
     }
 }

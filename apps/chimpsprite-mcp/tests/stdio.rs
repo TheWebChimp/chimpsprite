@@ -93,6 +93,8 @@ fn draw_and_render_over_stdio() {
         "read_pixels",
         "inbetween",
         "convert_layer",
+        "draw_tilemap_pixels",
+        "move_tile",
         "export",
     ] {
         assert!(

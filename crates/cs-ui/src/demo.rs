@@ -607,9 +607,35 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     // Desarrollo: abre el diálogo de nueva capa tilemap para capturas (con --demo).
     // Desarrollo: la capa activa pasada a tilemap de 8×8 (con su panel del tileset) y el volteo X
     // del pincel prendido, para capturas.
-    if dev_var("CHIMPSPRITE_DEMO_TILEMAP").is_some() && app.has_doc() {
-        app.doc.editor.convert_to_tilemap((8, 8));
-        app.doc.editor.toggle_brush_flip(cs_core::Tile::FLIP_X);
+    // Con CHIMPSPRITE_DEMO_TILEMAP=pixels (o pixels-manual, pixels-stack): en modo Pixels con ese
+    // modo de tileset, el lápiz elegido y una línea pintada a través de los tiles.
+    if let Some(value) = dev_var("CHIMPSPRITE_DEMO_TILEMAP")
+        && app.has_doc()
+    {
+        let editor = &mut app.doc.editor;
+        editor.convert_to_tilemap((8, 8));
+        editor.toggle_brush_flip(cs_core::Tile::FLIP_X);
+        if let Some(mode) = value.strip_prefix("pixels") {
+            use cs_commands::tiles::TilesetMode;
+            editor.set_tilemap_pixels(true);
+            editor.options.tileset_mode = match mode {
+                "-manual" => TilesetMode::Manual,
+                "-stack" => TilesetMode::Stack,
+                _ => TilesetMode::Auto,
+            };
+            editor.set_tool(editor::ToolKind::Pencil);
+            let color = editor.primary;
+            let width = editor.sprite().width as i32;
+            let pixels = (4..width - 4)
+                .map(|x| (x, 40 + (x / 6) % 3, color))
+                .collect();
+            let cmd = Command::DrawPixels {
+                layer: editor.layer,
+                frame: editor.frame,
+                pixels,
+            };
+            editor.execute_paint(cmd, "Pencil");
+        }
     }
     // Desarrollo: una fuente de 8×8 con unas letras y el panel Font abierto, para capturas.
     if dev_var("CHIMPSPRITE_DEMO_FONT").is_some() && app.has_doc() {

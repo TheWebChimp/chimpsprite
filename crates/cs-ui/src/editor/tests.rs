@@ -1265,3 +1265,172 @@ fn curve_drag_a_line_then_two_clicks_paint_it() {
     assert!(!e.is_pending());
     assert_ne!(*e.sprite(), before, "painted");
 }
+
+/// `tile_editor` con las celdas (0, 0) y (1, 0) en el tile 1, en modo Pixels con `mode` y el
+/// primario verde.
+fn pixels_editor(mode: cs_commands::tiles::TilesetMode) -> Editor {
+    let mut e = tile_editor();
+    click(&mut e, (1, 1), false, false);
+    click(&mut e, (5, 1), false, false);
+    e.set_tilemap_pixels(true);
+    e.options.tileset_mode = mode;
+    e.primary = PixelValue::Rgba(Rgba::rgb(0, 255, 0));
+    assert!(e.tilemap_pixels_mode() && !e.tiles_mode());
+    e
+}
+
+fn tile_pixel(e: &Editor, index: usize, x: u32, y: u32) -> Option<PixelValue> {
+    e.sprite().tilesets[0].tiles[index].get(x, y)
+}
+
+#[test]
+fn pixels_mode_auto_duplicates_a_shared_tile_in_one_undo_step() {
+    use cs_commands::tiles::TilesetMode;
+    let mut e = pixels_editor(TilesetMode::Auto);
+    let green = e.primary;
+    let steps = e.steps_done();
+    click(&mut e, (2, 1), false, false);
+    assert_eq!(e.steps_done(), steps + 1, "one undo step");
+    assert_eq!(e.sprite().tilesets[0].tiles.len(), 4, "a new tile 3");
+    assert_eq!(tile_at(&e, (0, 0)), t(3));
+    assert_eq!(tile_at(&e, (1, 0)), t(1), "the other instance keeps tile 1");
+    assert_eq!(tile_pixel(&e, 3, 2, 1), Some(green));
+    assert_eq!(
+        e.sprite().layer(LayerId(2)).unwrap().kind,
+        cs_core::LayerKind::Tilemap
+    );
+    e.undo();
+    assert_eq!(e.sprite().tilesets[0].tiles.len(), 3);
+    assert_eq!(tile_at(&e, (0, 0)), t(1));
+}
+
+#[test]
+fn pixels_mode_manual_changes_every_instance_and_previews_it() {
+    use cs_commands::tiles::TilesetMode;
+    let mut e = pixels_editor(TilesetMode::Manual);
+    let green = e.primary;
+    e.pointer_press((2.5, 1.5), false, false, 0.1);
+    // Mientras se pinta, la vista previa ya muestra el píxel en las dos instancias.
+    let preview = e.view().document.artboards[0].sprite.clone();
+    let shown = cs_render::materialize_tilemaps(&preview, 0..1);
+    assert_eq!(shown.pixel(LayerId(2), 0, 6, 1), green);
+    assert_eq!(
+        tile_pixel(&e, 1, 2, 1),
+        Some(PixelValue::Rgba(Rgba::TRANSPARENT))
+    );
+    e.pointer_release();
+    assert_eq!(tile_pixel(&e, 1, 2, 1), Some(green));
+    assert_eq!(e.sprite().tilesets[0].tiles.len(), 3, "no new tiles");
+    assert_eq!((tile_at(&e, (0, 0)), tile_at(&e, (1, 0))), (t(1), t(1)));
+}
+
+#[test]
+fn pixels_mode_stack_adds_a_tile_even_for_a_unique_one() {
+    use cs_commands::tiles::TilesetMode;
+    let mut e = pixels_editor(TilesetMode::Stack);
+    e.set_tool(ToolKind::Line);
+    // Una línea por las dos celdas que las deja distintas: dos tiles nuevos.
+    drag_local(&mut e, (1, 2), (7, 2), false, false);
+    assert_eq!(e.sprite().tilesets[0].tiles.len(), 5);
+    assert_eq!((tile_at(&e, (0, 0)), tile_at(&e, (1, 0))), (t(3), t(4)));
+    // Si quedan iguales, comparten el tile nuevo.
+    drag_local(&mut e, (0, 3), (7, 3), false, false);
+    assert_eq!(e.sprite().tilesets[0].tiles.len(), 7);
+    drag_local(&mut e, (0, 2), (0, 2), false, false);
+    assert_eq!(tile_at(&e, (0, 0)), tile_at(&e, (1, 0)));
+    assert!(e.tiles_status().unwrap().contains("Stack"));
+}
+
+#[test]
+fn pixels_mode_tools_read_the_drawn_tilemap() {
+    use cs_commands::tiles::TilesetMode;
+    let mut e = pixels_editor(TilesetMode::Auto);
+    let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    // El cuentagotas toma el color del tile, no el valor de la celda.
+    e.set_tool(ToolKind::Eyedropper);
+    click(&mut e, (4, 0), false, false);
+    assert_eq!(e.primary, red);
+    // La cubeta rellena todo lo transparente del lienzo sin tocar el rojo de los tiles: las dos
+    // celdas quedan iguales y comparten un tile (el 1 queda sin uso y se borra); las celdas de
+    // afuera comparten otro, todo azul.
+    let blue = PixelValue::Rgba(Rgba::rgb(0, 0, 255));
+    e.primary = blue;
+    e.set_tool(ToolKind::Bucket);
+    click(&mut e, (2, 2), false, false);
+    let tile = tile_at(&e, (0, 0));
+    assert_eq!(tile_at(&e, (1, 0)), tile);
+    let i = tile.index() as usize;
+    assert_eq!(tile_pixel(&e, i, 0, 0), Some(red));
+    assert_eq!(tile_pixel(&e, i, 3, 3), Some(blue));
+    assert_eq!(e.sprite().tilesets[0].tiles.len(), 4);
+    assert_eq!(
+        tile_pixel(&e, tile_at(&e, (3, 3)).index() as usize, 0, 0),
+        Some(blue)
+    );
+}
+
+#[test]
+fn pixels_mode_delete_clears_the_selected_pixels_through_the_tiles() {
+    use cs_commands::tiles::TilesetMode;
+    let mut e = pixels_editor(TilesetMode::Auto);
+    e.selection = Some(Mask::from_points(16, 16, [(0, 0)]));
+    e.clear_selection_content();
+    // La celda (0, 0) quedó transparente: tile vacío; la otra instancia sigue.
+    assert_eq!(tile_at(&e, (0, 0)), Tile::EMPTY);
+    assert_eq!(tile_at(&e, (1, 0)), t(1));
+    assert_eq!(e.sprite().tilesets[0].tiles.len(), 3);
+}
+
+#[test]
+fn switching_pixels_and_tiles_cuts_the_stroke_and_locked_layers_do_nothing() {
+    use cs_commands::tiles::TilesetMode;
+    let mut e = pixels_editor(TilesetMode::Auto);
+    e.pointer_press((2.5, 1.5), false, false, 0.1);
+    assert!(e.is_painting());
+    e.set_tilemap_pixels(false);
+    assert!(!e.is_painting(), "the stroke is cut");
+    assert!(e.tiles_mode());
+    e.set_tilemap_pixels(true);
+    e.toggle_locked(LayerId(2));
+    let before = e.sprite().clone();
+    click(&mut e, (2, 1), false, false);
+    assert_eq!(*e.sprite(), before, "locked");
+}
+
+#[test]
+fn pixels_mode_move_keeps_the_layer_and_moving_tiles_follows_the_brush() {
+    use cs_commands::tiles::TilesetMode;
+    let mut e = pixels_editor(TilesetMode::Auto);
+    e.set_tool(ToolKind::Move);
+    drag_local(&mut e, (1, 1), (5, 1), false, false);
+    assert_eq!(e.layer, LayerId(2));
+    assert_eq!(e.sprite().cel(LayerId(2), 0).unwrap().position, (4, 0));
+    // Reordenar: el tile 1 pasa al lugar 2; el pincel (tile 1) lo sigue.
+    e.set_brush_tile(t(1));
+    assert!(e.move_tile(1, 2));
+    assert_eq!(e.brush_tile(), t(2));
+    assert_eq!(tile_at(&e, (1, 0)), t(2));
+    assert!(!e.move_tile(0, 1), "the empty tile stays first");
+    e.undo();
+    assert_eq!(tile_at(&e, (1, 0)), t(1));
+}
+
+#[test]
+fn space_tab_and_space_digits_switch_the_tilemap_modes() {
+    use cs_commands::tiles::TilesetMode;
+    let mut e = tile_editor();
+    assert!(crate::tilemap_space_key(&mut e, eframe::egui::Key::Tab));
+    assert!(e.tilemap_pixels_mode());
+    assert!(crate::tilemap_space_key(&mut e, eframe::egui::Key::Num1));
+    assert_eq!(e.options.tileset_mode, TilesetMode::Manual);
+    assert!(crate::tilemap_space_key(&mut e, eframe::egui::Key::Num3));
+    assert_eq!(e.options.tileset_mode, TilesetMode::Stack);
+    assert!(!crate::tilemap_space_key(&mut e, eframe::egui::Key::A));
+    assert!(crate::tilemap_space_key(&mut e, eframe::egui::Key::Tab));
+    assert!(e.tiles_mode());
+    e.select_layer(LayerId(1));
+    assert!(
+        !crate::tilemap_space_key(&mut e, eframe::egui::Key::Tab),
+        "image layers"
+    );
+}

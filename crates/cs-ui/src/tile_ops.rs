@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use cs_commands::tiles::{self, TilePaintError, TilesetMode};
 use cs_commands::{Command, ops};
 use cs_core::{Cel, ColorMode, Image, ImageId, LayerId, LayerKind, Mask, PixelValue, Rgba, Sprite};
 use cs_core::{Tile, Tileset};
@@ -330,11 +331,154 @@ pub fn numbered_cells_in(
     out
 }
 
+/// Identidad del proxy de píxeles: artboard, capa, frame y versión del documento.
+pub type PixelProxyKey = (cs_core::ArtboardId, LayerId, usize, u64);
+
+/// Copia del sprite donde la capa tilemap `layer` es una capa de imagen con su cel de `frame`
+/// dibujado (en la misma posición): lo que ven las herramientas en modo Pixels. Los cels de esa
+/// capa en otros frames se quitan. `None` si la capa no es tilemap, su tileset no existe o la
+/// grilla dibujada pasaría `MAX_TILEMAP_PIXELS`.
+pub fn pixel_proxy(sprite: &Sprite, layer: LayerId, frame: usize) -> Option<Sprite> {
+    let l = sprite
+        .layer(layer)
+        .filter(|l| l.kind == LayerKind::Tilemap)?;
+    let tileset = sprite.tilesets.get(l.tileset? as usize)?;
+    let mut proxy = sprite.clone();
+    let pl = proxy.layer_mut(layer).expect("same layers");
+    pl.kind = LayerKind::Image;
+    pl.tileset = None;
+    proxy.cels.retain(|&(l, f), _| l != layer || f == frame);
+    if let Some(cel) = sprite.cel(layer, frame) {
+        let grid = sprite.tilemap(cel.image)?;
+        if grid.width == 0 || grid.height == 0 {
+            proxy.cels.remove(&(layer, frame));
+        } else {
+            let image = cs_core::draw_tile_grid(sprite.color_mode, tileset, grid)?;
+            let id = proxy.next_image_id();
+            proxy.images.insert(id, Arc::new(image));
+            proxy.cels.insert((layer, frame), Cel { image: id, ..*cel });
+        }
+    }
+    Some(proxy)
+}
+
 impl Editor {
-    /// La capa activa es tilemap con un tileset válido y no se está editando su máscara: las
-    /// herramientas trabajan con tiles.
+    /// La capa activa es tilemap con un tileset válido, no se está editando su máscara y el modo
+    /// es Tiles: las herramientas trabajan con tiles.
     pub fn tiles_mode(&self) -> bool {
-        self.tile_space().is_some()
+        self.cell_space().is_some()
+    }
+
+    /// Las celdas de la capa activa si las herramientas trabajan con tiles (modo Tiles).
+    pub fn cell_space(&self) -> Option<TileSpace> {
+        self.tile_space().filter(|_| !self.tilemap_pixels)
+    }
+
+    /// Como `tiles_mode`, pero en modo Pixels: las herramientas pintan píxeles y el tileset se
+    /// actualiza según `options.tileset_mode`.
+    pub fn tilemap_pixels_mode(&self) -> bool {
+        self.tilemap_pixels && self.tile_space().is_some()
+    }
+
+    /// El modo elegido para las capas tilemap: Pixels (`true`) o Tiles.
+    pub fn tilemap_pixels(&self) -> bool {
+        self.tilemap_pixels
+    }
+
+    /// Pasa las capas tilemap a modo Pixels o Tiles. Si cambia a qué pinta la herramienta a mitad
+    /// de un trazo, el trazo se corta.
+    pub fn set_tilemap_pixels(&mut self, on: bool) {
+        let before = self.paint_target();
+        self.tilemap_pixels = on;
+        self.tile_limit = false;
+        self.cancel_if_target_changed(before);
+        self.revision += 1;
+    }
+
+    /// El proxy de píxeles de la capa activa en modo Pixels (ver `pixel_proxy`), armado una vez
+    /// por versión del documento.
+    pub(crate) fn pixel_proxy(&self) -> Option<Arc<Sprite>> {
+        if !self.tilemap_pixels_mode() {
+            return None;
+        }
+        let key = (self.active, self.layer, self.frame, self.doc_version);
+        let mut cache = self.pixel_proxy.borrow_mut();
+        if let Some((k, proxy)) = cache.as_ref()
+            && *k == key
+        {
+            return Some(proxy.clone());
+        }
+        let proxy = Arc::new(pixel_proxy(self.sprite(), self.layer, self.frame)?);
+        *cache = Some((key, proxy.clone()));
+        Some(proxy)
+    }
+
+    /// En modo Pixels, un `DrawPixels` de la capa activa pasa a los cambios de tiles y tileset
+    /// del modo de tileset (`tiles::draw_tilemap_pixels`); los demás comandos no cambian. Con la
+    /// capa bloqueada no hay nada que hacer.
+    pub(crate) fn tilemap_command(&self, cmd: Command) -> Result<Command, TilePaintError> {
+        let Command::DrawPixels {
+            layer,
+            frame,
+            pixels,
+        } = &cmd
+        else {
+            return Ok(cmd);
+        };
+        if !self.tilemap_pixels_mode() || *layer != self.layer {
+            return Ok(cmd);
+        }
+        if self.sprite().layer(*layer).is_none_or(|l| l.locked) {
+            return Err(TilePaintError::Nothing);
+        }
+        tiles::draw_tilemap_pixels(
+            self.sprite(),
+            *layer,
+            *frame,
+            pixels,
+            self.options.tileset_mode,
+        )
+    }
+
+    /// Ejecuta un trazo de `kind` (ya pasado por `shape_paint`) como un paso de undo con su
+    /// nombre; en modo Pixels, traducido a tiles. Devuelve si se aplicó (sin cambios cuenta como
+    /// aplicado); si pasaría los límites, lo avisa la barra de estado.
+    pub(crate) fn execute_paint(&mut self, cmd: Command, name: &'static str) -> bool {
+        match self.tilemap_command(cmd) {
+            Ok(cmd) => self.execute_named(cmd, name),
+            Err(TilePaintError::TooLarge) => {
+                self.tile_limit = true;
+                false
+            }
+            Err(_) => true,
+        }
+    }
+
+    /// Mueve el tile `from` del tileset activo a la posición `to` (un paso de undo). El tile del
+    /// pincel sigue al tile que tenía.
+    pub fn move_tile(&mut self, from: u32, to: u32) -> bool {
+        let Some((index, _)) = self.active_tileset() else {
+            return false;
+        };
+        let Some(cmd) = tiles::move_tile(self.sprite(), index as usize, from, to) else {
+            return false;
+        };
+        let brush = self.brush_tile();
+        if !self.execute_named(cmd, "Move Tile") {
+            return false;
+        }
+        let i = brush.index();
+        let moved = if i == from {
+            to
+        } else if from < i && i <= to {
+            i - 1
+        } else if to <= i && i < from {
+            i + 1
+        } else {
+            i
+        };
+        self.set_brush_tile(brush.with_index(moved));
+        true
     }
 
     pub fn tile_space(&self) -> Option<TileSpace> {
@@ -421,6 +565,19 @@ impl Editor {
 
     /// Aviso de la barra de estado en modo Tiles.
     pub fn tiles_status(&self) -> Option<String> {
+        if self.tilemap_pixels_mode() {
+            if self.tile_limit {
+                return Some(
+                    "Pixels mode: the tilemap or tileset would exceed its size limit".into(),
+                );
+            }
+            let what = match self.options.tileset_mode {
+                TilesetMode::Manual => "Manual: drawing modifies the existing tiles",
+                TilesetMode::Auto => "Auto: drawing creates, reuses and deletes tiles",
+                TilesetMode::Stack => "Stack: drawing adds new tiles",
+            };
+            return Some(format!("Pixels mode ({what})"));
+        }
         if !self.tiles_mode() {
             // Capa tilemap sin tileset usable: avisa en vez de quedar mudo.
             let broken = !self.editing_mask()

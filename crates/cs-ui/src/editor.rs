@@ -353,6 +353,13 @@ pub struct Editor {
     pub(crate) brush_tileset: Option<(ArtboardId, u32)>,
     /// El último trazo en modo Tiles no se aplicó porque la grilla pasaría el límite de tamaño.
     pub(crate) tile_limit: bool,
+    /// En una capa tilemap las herramientas pintan píxeles (modo Pixels) en vez de tiles (modo
+    /// Tiles). Vale para todas las capas tilemap y no se guarda: cada sesión empieza en Tiles.
+    pub(crate) tilemap_pixels: bool,
+    /// El proxy de píxeles del modo Pixels (ver `Editor::pixel_proxy`), por artboard, capa, frame
+    /// y versión del documento.
+    pub(crate) pixel_proxy:
+        std::cell::RefCell<Option<(tile_ops::PixelProxyKey, std::sync::Arc<Sprite>)>>,
     /// Contenido levantado que se está moviendo, escalando o rotando (ver `transform.rs`).
     pub(crate) floating: Option<Floating>,
     /// Arrastre en curso para mover, escalar o rotar lo seleccionado.
@@ -463,6 +470,8 @@ impl Editor {
             brush_tile: Tile::new(1, false, false, false),
             brush_tileset: None,
             tile_limit: false,
+            tilemap_pixels: false,
+            pixel_proxy: Default::default(),
             floating: None,
             transform_drag: None,
             palette_locked: true,
@@ -953,11 +962,15 @@ impl Editor {
         }
         let t = self.sprite().color_mode.transparent();
         let pixels = mask.points().map(|(x, y)| (x, y, t)).collect();
-        self.execute(Command::DrawPixels {
+        let cmd = Command::DrawPixels {
             layer: self.layer,
             frame: self.frame,
             pixels,
-        });
+        };
+        // En modo Pixels sobre una capa tilemap, por los tiles (ver `execute_paint`).
+        if let Ok(cmd) = self.tilemap_command(cmd) {
+            self.execute(cmd);
+        }
     }
 
     /// Edit → Stroke (S), como en Aseprite: pinta con el color primario el borde de la selección
@@ -1056,6 +1069,9 @@ impl Editor {
         }
         if let Some(cmd) = self.text_command() {
             let cmd = self.shape_paint(ToolKind::Text, cmd);
+            let Ok(cmd) = self.tilemap_command(cmd) else {
+                return current();
+            };
             let mut doc = self.document.clone();
             let applied = DocCommand::OnArtboard {
                 id: self.active,
@@ -1083,7 +1099,11 @@ impl Editor {
             let out = tool.preview(&self.tiles_context(&proxy));
             return self.tiles_view(kind, out, &proxy);
         }
-        let out = tool.preview(&self.context());
+        let pixels = self.pixel_proxy_for(kind);
+        let out = match &pixels {
+            Some(sprite) => tool.preview(&self.context_on(sprite)),
+            None => tool.preview(&self.context()),
+        };
         let selection = match out.selection {
             Some(sel) => self.combine_selection(kind, sel),
             None => self.selection.clone(),
@@ -1095,6 +1115,14 @@ impl Editor {
             };
         };
         let cmd = self.shape_paint(kind, cmd);
+        // En modo Pixels la vista previa pasa por la misma traducción a tiles que al soltar (en
+        // Manual se ven cambiar todas las instancias del tile).
+        let Ok(cmd) = self.tilemap_command(cmd) else {
+            return DocView {
+                document: Cow::Borrowed(&self.document),
+                selection,
+            };
+        };
         let mut doc = self.document.clone();
         let applied = DocCommand::OnArtboard {
             id: self.active,
