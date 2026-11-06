@@ -594,6 +594,21 @@ fn layers_with_other_tile_sizes_become_images_and_missing_tiles_are_empty() {
 }
 
 #[test]
+fn a_tilemap_with_an_empty_tileset_is_an_empty_tile_layer() {
+    let mut s = Sprite::new(16, 8, ColorMode::Rgba);
+    s.layers.clear();
+    s.tilesets
+        .push(Tileset::new("new", (8, 8), ColorMode::Rgba));
+    add_tilemap(&mut s, "Fresh", 0, TileGrid::new(2, 1), (0, 0));
+    let out = export_of(&s, TiledOptions::default());
+    assert_eq!(names(&out), ["hero.tmx"], "no tileset files");
+    let map = read_tmx(&text(&out, "hero.tmx")).unwrap();
+    assert!(map.tilesets.is_empty());
+    assert_eq!(tiles_of(&map.layers[0]), [0, 0]);
+    assert!(out.warnings.is_empty(), "{:?}", out.warnings);
+}
+
+#[test]
 fn without_tilemaps_there_is_nothing_to_export() {
     let s = Sprite::new(8, 8, ColorMode::Rgba);
     assert!(!has_tilemaps(&s));

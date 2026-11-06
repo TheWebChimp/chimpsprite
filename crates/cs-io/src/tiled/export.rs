@@ -399,19 +399,33 @@ impl Context<'_> {
                     }
                     None => {
                         let ts = layer.tileset.and_then(|i| sprite.tilesets.get(i as usize));
-                        if ts.is_some_and(|ts| ts.tile_size != self.tile_size) {
-                            out.warn(format!(
+                        // Tileset sin tiles (una capa recién convertida): capa de tiles vacía.
+                        if ts
+                            .is_some_and(|ts| ts.tile_size == self.tile_size && ts.tiles.len() <= 1)
+                        {
+                            let (w, h) = self.map_size;
+                            let content = LayerContent::Tiles {
+                                width: w,
+                                height: h,
+                                gids: vec![0; w as usize * h as usize],
+                                encoding: self.options.encoding,
+                            };
+                            (content, (0, 0))
+                        } else {
+                            if ts.is_some_and(|ts| ts.tile_size != self.tile_size) {
+                                out.warn(format!(
                                 "Layer '{}' uses tiles of another size than the map: exported as \
                                  an image layer",
                                 layer.name
                             ));
+                            }
+                            let drawn = cel.and_then(|c| {
+                                let grid = sprite.tilemap(c.image)?;
+                                let image = cs_core::draw_tile_grid(sprite.color_mode, ts?, grid)?;
+                                Some((image, c.position, c.opacity))
+                            });
+                            self.image_content(layer, drawn, map_stem, images)
                         }
-                        let drawn = cel.and_then(|c| {
-                            let grid = sprite.tilemap(c.image)?;
-                            let image = cs_core::draw_tile_grid(sprite.color_mode, ts?, grid)?;
-                            Some((image, c.position, c.opacity))
-                        });
-                        self.image_content(layer, drawn, map_stem, images)
                     }
                 },
                 LayerKind::Image => {

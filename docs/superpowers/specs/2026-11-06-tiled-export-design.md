@@ -119,8 +119,9 @@ Image layers get their own PNGs; slices become objects.
 
 - Folder empieza en la carpeta del documento (si está guardado) o la última usada; vacía → el
   diálogo de guardar del sistema. En web no hay carpeta: se descarga un `.zip` con todo.
-- Sin capas tilemap, Export queda deshabilitado con el aviso "Needs a tilemap layer (Layer →
-  Convert to Tilemap)".
+- Sin capas tilemap, el ítem File → Export Tiled Map… queda deshabilitado con el tooltip "Needs a
+  tilemap layer (Layer → Convert to Tilemap)". Una tilemap con su tileset vacío sale como capa
+  de tiles vacía (y el tileset no se escribe).
 - Al terminar, el mensaje "Exported" con la lista de archivos y los avisos.
 
 File → Import Tiled Map… (escritorio) abre `.tmx`/`.tmj` en una pestaña nueva sin guardar; soltar
