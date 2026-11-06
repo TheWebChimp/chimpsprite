@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 
 use crate::error::{Result, invalid};
 use crate::params::{
-    AddTilemapLayer, ConvertLayer, ConvertTo, CreateTileset, GetTiles, Ref, SetTilePixels, SetTiles,
+    AddTilemapLayer, ConvertLayer, ConvertTo, CreateTileset, DrawTilemapPixels, GetTiles, MoveTile,
+    Ref, SetTilePixels, SetTiles, TilesetModeArg,
 };
 use crate::target;
 use crate::{Reply, Session};
@@ -313,6 +314,61 @@ impl Session {
         Ok(Reply::json(reply))
     }
 
+    /// Píxeles del lienzo sobre una capa tilemap, con el modo de tileset (un paso de deshacer).
+    pub fn draw_tilemap_pixels(&mut self, p: DrawTilemapPixels) -> Result<Reply> {
+        use cs_commands::tiles::{TilePaintError, TilesetMode, draw_tilemap_pixels};
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let (layer, index, _) = tilemap_layer(sprite, &p.layer)?;
+        let frame = target::frame(sprite, p.frame)?;
+        let mut pixels = Vec::with_capacity(p.pixels.len());
+        for px in &p.pixels {
+            pixels.push((px.x, px.y, target::color(sprite, &px.color)?));
+        }
+        let mode = match p.mode {
+            TilesetModeArg::Manual => TilesetMode::Manual,
+            TilesetModeArg::Auto => TilesetMode::Auto,
+            TilesetModeArg::Stack => TilesetMode::Stack,
+        };
+        let cmd = match draw_tilemap_pixels(sprite, layer, frame, &pixels, mode) {
+            Ok(cmd) => cmd,
+            Err(TilePaintError::Nothing) => return Ok(Reply::text("Nothing changed.")),
+            Err(TilePaintError::TooLarge) => {
+                return Err(invalid(format!(
+                    "the tilemap grid or the tileset would exceed its limits (4096 tiles per \
+                     side, 67108864 pixels, {} tiles)",
+                    cs_core::MAX_TILESET_TILES
+                )));
+            }
+            Err(TilePaintError::NotTilemap) => unreachable!("checked by tilemap_layer"),
+        };
+        self.run_on(&p.doc, ab, vec![cmd])?;
+        let (_, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        Ok(Reply::json(json!({
+            "tileset": index,
+            "tiles": sprite.tilesets[index].tiles.len(),
+            "notes": "tiles counts the empty tile 0; read the cells with get_tiles.",
+        })))
+    }
+
+    /// Reordena un tile del tileset y remapea los mapas (un paso de deshacer).
+    pub fn move_tile(&mut self, p: MoveTile) -> Result<Reply> {
+        let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let ts = tileset_at(sprite, p.tileset)?;
+        let count = ts.tiles.len();
+        let Some(cmd) = cs_commands::tiles::move_tile(sprite, p.tileset, p.from, p.to) else {
+            return Err(invalid(format!(
+                "from and to must be different tiles in 1-{} (tile 0 is the empty tile and \
+                 stays first)",
+                count.saturating_sub(1)
+            )));
+        };
+        self.run_on(&p.doc, ab, vec![cmd])?;
+        Ok(Reply::text(format!(
+            "Moved tile {} to {} in tileset {}; every tilemap using it was remapped.",
+            p.from, p.to, p.tileset
+        )))
+    }
+
     /// Convierte una capa entre imagen y tilemap (un solo paso de deshacer).
     pub fn convert_layer(&mut self, p: ConvertLayer) -> Result<Reply> {
         let (ab, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
@@ -403,6 +459,42 @@ mod tests {
         let d = &s.doc("d1").unwrap().document;
         cs_render::render_frame(&cs_render::materialize(d, sprite, 0..1), 0)
             [y * sprite.width as usize + x]
+    }
+
+    #[test]
+    fn draw_tilemap_pixels_and_move_tile() {
+        let mut s = session(16, 8);
+        s.create_tileset(p(json!({"doc": "d1", "name": "t",
+            "tile_width": 4, "tile_height": 4})))
+            .unwrap();
+        s.add_tilemap_layer(p(json!({"doc": "d1", "tileset": 0, "name": "map"})))
+            .unwrap();
+        let r = json(
+            &s.draw_tilemap_pixels(p(json!({"doc": "d1", "layer": "map", "pixels": [
+                {"x": 0, "y": 0, "color": "#ff0000"}, {"x": 4, "y": 0, "color": "#0000ff"}]})))
+                .unwrap(),
+        );
+        assert_eq!(r["tiles"], 3, "two new tiles plus the empty one");
+        assert_eq!((px(&s, 0, 0), px(&s, 4, 0)), (RED, BLUE));
+        // Manual: pintar en el tile 1 no crea tiles.
+        let r = json(
+            &s.draw_tilemap_pixels(p(json!({"doc": "d1", "layer": "map", "mode": "manual",
+                "pixels": [{"x": 1, "y": 0, "color": "#0000ff"}]})))
+                .unwrap(),
+        );
+        assert_eq!(r["tiles"], 3);
+        assert_eq!(px(&s, 1, 0), BLUE);
+        s.move_tile(p(json!({"doc": "d1", "tileset": 0, "from": 1, "to": 2})))
+            .unwrap();
+        assert_eq!((px(&s, 0, 0), px(&s, 4, 0)), (RED, BLUE), "remapped");
+        let e = s
+            .move_tile(p(json!({"doc": "d1", "tileset": 0, "from": 0, "to": 2})))
+            .unwrap_err();
+        assert!(e.to_string().contains("tile 0"), "{e}");
+        let e = s
+            .draw_tilemap_pixels(p(json!({"doc": "d1", "layer": 1, "pixels": []})))
+            .unwrap_err();
+        assert!(e.to_string().contains("not a tilemap layer"), "{e}");
     }
 
     #[test]

@@ -982,6 +982,47 @@ pub struct ConvertLayer {
     pub tile_height: Option<u32>,
 }
 
+/// What happens to the tileset when drawing pixels on a tilemap layer (Aseprite's tileset modes).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum TilesetModeArg {
+    /// Modify the tile under each cell (every instance changes); never create tiles.
+    Manual,
+    /// Create tiles when needed, reuse equal ones (also flipped, if the tileset allows it) and
+    /// delete tiles left unused.
+    #[default]
+    Auto,
+    /// Never modify existing tiles: every changed cell gets a new tile (or an equal existing one).
+    Stack,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DrawTilemapPixels {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    /// A tilemap layer.
+    pub layer: Ref,
+    #[serde(default)]
+    pub frame: usize,
+    /// "manual", "auto" (default) or "stack".
+    #[serde(default)]
+    pub mode: TilesetModeArg,
+    /// Pixels in canvas coordinates; outside the canvas they are ignored. "transparent" erases.
+    pub pixels: Vec<PixelArg>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct MoveTile {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    /// Tileset index (0-based).
+    pub tileset: usize,
+    /// Tile to move (1 or more: tile 0 is the empty tile and stays first).
+    pub from: u32,
+    /// Its new position (1 or more); the tiles in between shift by one.
+    pub to: u32,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ApplyCommands {
     pub doc: String,

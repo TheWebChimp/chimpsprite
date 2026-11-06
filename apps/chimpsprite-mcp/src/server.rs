@@ -291,6 +291,20 @@ impl ChimpServer {
         self.with(|s| s.convert_layer(p))
     }
 
+    #[tool(
+        description = "Draw pixels (canvas coordinates) on a tilemap layer, like Aseprite's Pixels mode: the tileset updates by mode. manual modifies the tile under each cell (every instance changes, no new tiles); auto (default) creates tiles when needed, reuses equal ones (also flipped if the tileset allows it) and deletes tiles left unused, duplicating a modified tile used elsewhere; stack never modifies tiles and adds new ones at the end. A fully transparent cell becomes the empty tile 0. One undo step; returns the tile count."
+    )]
+    fn draw_tilemap_pixels(&self, Parameters(p): Parameters<DrawTilemapPixels>) -> CallToolResult {
+        self.with(|s| s.draw_tilemap_pixels(p))
+    }
+
+    #[tool(
+        description = "Move a tile of a tileset to another position (the tiles in between shift by one) and remap every tilemap that uses it, so nothing changes on the canvas. Tile 0 (empty) stays first."
+    )]
+    fn move_tile(&self, Parameters(p): Parameters<MoveTile>) -> CallToolResult {
+        self.with(|s| s.move_tile(p))
+    }
+
     // --- Frames, tags y cels ---
 
     #[tool(description = "Add an empty frame, or duplicate an existing one (optionally linked).")]
