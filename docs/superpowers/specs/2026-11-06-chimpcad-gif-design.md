@@ -60,7 +60,7 @@ cabe, si no a la mayor que quepa (así se ven las scanlines). Debajo, el tamaño
   pico-8: el más cercano) → fondo → escala → scanlines.
 - `cs_io::export::encode_gif(width, height, frames, delay_ms, looping)`: lo de `export_gif`
   sacado a una función que recibe pixeles RGBA; `export_gif` la usa. Mismo crate `gif` (puro
-  Rust, compila en wasm). `encode_png_strip` para el PNG.
+  Rust, compila en wasm). La tira PNG se arma con `Bitmap::blit` y `to_png`.
 
 ## 3. FOV en la vista Persp
 
