@@ -5,7 +5,8 @@
 //! - **Botón central o Shift + izquierdo** arrastrando: mueve el `target` en el plano de la vista
 //!   (paneo).
 //! - **Rueda** (con o sin Ctrl): acerca o aleja la cámara (`distance`) hacia el punto bajo el
-//!   puntero, sin tocar el zoom del lienzo.
+//!   puntero, sin tocar el zoom del lienzo. **Alt + rueda** cambia el FOV de la perspectiva de
+//!   5° en 5° (en orto, la rueda de siempre).
 //! - **Gizmo de navegación** (arriba a la derecha): arrastrarlo orbita; un clic en una bolita
 //!   pone la cámara mirando desde ese lado (al centro del modelo).
 //! - **Home:** encuadra todo el modelo (el objetivo a su centro, la distancia para que se vea
@@ -15,7 +16,7 @@
 //!
 //! Cada arrastre es un solo paso de undo.
 
-use cs_core::{Camera3D, FIXED, Model3D, Vec3i};
+use cs_core::{Camera3D, FIXED, Model3D, Projection, Vec3i};
 
 use super::*;
 use crate::editor::PerspMap;
@@ -26,6 +27,8 @@ const ORBIT_SPEED: f32 = 5.0;
 const PITCH_LIMIT: i32 = 890;
 /// Cuánto cambia la distancia por paso de rueda.
 const DISTANCE_STEP: f32 = 1.1;
+/// Cuánto cambia el FOV por paso de Alt + rueda (décimas de grado).
+pub(crate) const FOV_STEP: i32 = 50;
 
 /// Un arrastre sobre el artboard 3D: orbitar o mover el objetivo, desde dónde y con la cámara
 /// del principio (el cambio se calcula siempre desde ahí).
@@ -115,6 +118,30 @@ impl CanvasView {
         }
         self.model_wheel_at = Some(now);
         editor.set_model_grouped(Model3D { camera, ..model }, wheel_group());
+    }
+
+    /// `steps` pasos de Alt + rueda sobre la perspectiva: hacia arriba cierra el FOV (acerca),
+    /// dentro de [`cs_render::BAKE_FOV`]. Los pasos seguidos son un solo paso de undo, como los de
+    /// [`Self::model_wheel`]. `false` si la cámara es ortográfica (no hay FOV).
+    pub(super) fn model_fov_wheel(&mut self, editor: &mut Editor, steps: i32, now: f64) -> bool {
+        let Some(model) = editor.edited_model().cloned() else {
+            return false;
+        };
+        let Projection::Perspective { fov } = model.camera.projection else {
+            return false;
+        };
+        let range = cs_render::BAKE_FOV;
+        let fov = (fov - steps * FOV_STEP).clamp(*range.start(), *range.end());
+        let camera = Camera3D {
+            projection: Projection::Perspective { fov },
+            ..model.camera
+        };
+        if self.model_wheel_at.is_none_or(|t| now - t > WHEEL_PAUSE) {
+            editor.end_group_of(wheel_group().value());
+        }
+        self.model_wheel_at = Some(now);
+        editor.set_model_grouped(Model3D { camera, ..model }, wheel_group());
+        true
     }
 
     /// Un botón apretado sobre la perspectiva, con el punto ya en pixeles del artboard (`local`)

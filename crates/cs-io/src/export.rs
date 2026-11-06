@@ -135,14 +135,53 @@ pub fn export_png_sequence(sprite: &Sprite, scale: u32) -> Result<Vec<Vec<u8>>> 
 
 /// GIF animado de los frames `from..=to`, en bucle infinito.
 pub fn export_gif(sprite: &Sprite, from: usize, to: usize, scale: u32) -> Result<Vec<u8>> {
-    let gif_error = |e: gif::EncodingError| IoError::Gif(e.to_string());
     let last = sprite.frames.len() - 1;
     let (from, to) = (from.min(last), to.min(last).max(from.min(last)));
     let frames: Vec<Bitmap> = (from..=to)
         .map(|f| Bitmap::from_frame(sprite, f, scale))
         .collect();
     let (w, h) = (frames[0].width, frames[0].height);
-    if w > u16::MAX as u32 || h > u16::MAX as u32 {
+    let frames: Vec<(&[Rgba], u32)> = frames
+        .iter()
+        .enumerate()
+        .map(|(i, b)| {
+            (
+                &b.pixels[..],
+                u32::from(sprite.frames[from + i].duration_ms),
+            )
+        })
+        .collect();
+    write_gif(w, h, &frames, true)
+}
+
+/// GIF animado de `frames` (RGBA de `width`×`height` cada uno), todos de `delay_ms`; con
+/// `looping`, en bucle infinito (si no, se reproduce una vez). Los pixeles con alfa < 128 son
+/// transparentes.
+pub fn encode_gif(
+    width: u32,
+    height: u32,
+    frames: &[Vec<Rgba>],
+    delay_ms: u32,
+    looping: bool,
+) -> Result<Vec<u8>> {
+    let frames: Vec<(&[Rgba], u32)> = frames.iter().map(|f| (&f[..], delay_ms)).collect();
+    write_gif(width, height, &frames, looping)
+}
+
+/// El GIF de `frames` (pixeles y demora en ms), con paleta global si caben los colores.
+fn write_gif(w: u32, h: u32, frames: &[(&[Rgba], u32)], looping: bool) -> Result<Vec<u8>> {
+    let gif_error = |e: gif::EncodingError| IoError::Gif(e.to_string());
+    if frames.is_empty() {
+        return Err(IoError::Unsupported(
+            "a GIF needs at least one frame".into(),
+        ));
+    }
+    if frames.iter().any(|(p, _)| p.len() != (w * h) as usize) {
+        return Err(IoError::Unsupported(
+            "every GIF frame must have the image size".into(),
+        ));
+    }
+    if w == 0 || h == 0 || w > u16::MAX as u32 || h > u16::MAX as u32 {
         return Err(IoError::Unsupported(
             "GIF images are limited to 65535 px".into(),
         ));
@@ -151,8 +190,8 @@ pub fn export_gif(sprite: &Sprite, from: usize, to: usize, scale: u32) -> Result
     // Paleta global si todos los colores opacos caben (deja un índice para la transparencia).
     let mut colors: HashMap<[u8; 3], u8> = HashMap::new();
     let mut fits = true;
-    'scan: for frame in &frames {
-        for c in &frame.pixels {
+    'scan: for (pixels, _) in frames {
+        for c in pixels.iter() {
             if c.a >= 128 && !colors.contains_key(&[c.r, c.g, c.b]) {
                 if colors.len() == 255 {
                     fits = false;
@@ -175,14 +214,16 @@ pub fn export_gif(sprite: &Sprite, from: usize, to: usize, scale: u32) -> Result
         let global: &[u8] = if fits { &palette } else { &[] };
         let mut encoder =
             gif::Encoder::new(&mut out, w as u16, h as u16, global).map_err(gif_error)?;
-        encoder
-            .set_repeat(gif::Repeat::Infinite)
-            .map_err(gif_error)?;
-        for (i, bitmap) in frames.iter().enumerate() {
-            let ms = sprite.frames[from + i].duration_ms as u32;
+        // Sin la extensión NETSCAPE el GIF se reproduce una vez (`Finite(0)` sería infinito).
+        if looping {
+            encoder
+                .set_repeat(gif::Repeat::Infinite)
+                .map_err(gif_error)?;
+        }
+        for (pixels, ms) in frames {
+            let ms = *ms;
             let mut frame = if fits {
-                let indices: Vec<u8> = bitmap
-                    .pixels
+                let indices: Vec<u8> = pixels
                     .iter()
                     .map(|c| {
                         if c.a < 128 {
@@ -200,8 +241,7 @@ pub fn export_gif(sprite: &Sprite, from: usize, to: usize, scale: u32) -> Result
                     ..Default::default()
                 }
             } else {
-                let mut rgba: Vec<u8> = bitmap
-                    .pixels
+                let mut rgba: Vec<u8> = pixels
                     .iter()
                     .flat_map(|c| [c.r, c.g, c.b, if c.a < 128 { 0 } else { 255 }])
                     .collect();
@@ -614,6 +654,60 @@ mod tests {
         let first = first.unwrap();
         assert_eq!(&first[0..4], &[255, 0, 0, 255]);
         assert_eq!(first[4 * 2 + 3], 0, "transparent pixel");
+    }
+
+    /// Los frames de un GIF decodificado (RGBA), sus demoras y si repite.
+    fn decode_gif(bytes: &[u8]) -> ((u16, u16), Vec<Vec<u8>>, Vec<u16>, gif::Repeat) {
+        let mut options = gif::DecodeOptions::new();
+        options.set_color_output(gif::ColorOutput::RGBA);
+        let mut decoder = options.read_info(std::io::Cursor::new(bytes)).unwrap();
+        let size = (decoder.width(), decoder.height());
+        let (mut frames, mut delays) = (Vec::new(), Vec::new());
+        while let Some(frame) = decoder.read_next_frame().unwrap() {
+            frames.push(frame.buffer.to_vec());
+            delays.push(frame.delay);
+        }
+        (size, frames, delays, decoder.repeat())
+    }
+
+    #[test]
+    fn encode_gif_writes_every_frame_with_its_delay() {
+        let (red, clear) = (Rgba::rgb(255, 0, 0), Rgba::TRANSPARENT);
+        let frames = vec![vec![red, clear, clear], vec![clear, red, clear]];
+        let bytes = encode_gif(3, 1, &frames, 120, true).unwrap();
+        let (size, decoded, delays, repeat) = decode_gif(&bytes);
+        assert_eq!(size, (3, 1));
+        assert_eq!(delays, vec![12, 12]);
+        assert_eq!(repeat, gif::Repeat::Infinite);
+        assert_eq!(&decoded[1][4..8], &[255, 0, 0, 255]);
+        assert_eq!(decoded[1][3], 0, "transparent pixel");
+    }
+
+    #[test]
+    fn encode_gif_without_loop_plays_once() {
+        let frames = vec![vec![Rgba::rgb(1, 2, 3)]; 2];
+        let bytes = encode_gif(1, 1, &frames, 100, false).unwrap();
+        let (_, decoded, _, repeat) = decode_gif(&bytes);
+        assert_eq!(decoded.len(), 2);
+        assert_eq!(repeat, gif::Repeat::Finite(0));
+    }
+
+    #[test]
+    fn encode_gif_with_many_colors_still_encodes() {
+        // Más de 255 colores: la paleta por frame (cuantizada).
+        let pixels: Vec<Rgba> = (0..400u32)
+            .map(|i| Rgba::rgb((i % 256) as u8, (i / 2) as u8, 7))
+            .collect();
+        let bytes = encode_gif(20, 20, &[pixels], 50, true).unwrap();
+        let (size, decoded, delays, _) = decode_gif(&bytes);
+        assert_eq!(size, (20, 20));
+        assert_eq!((decoded.len(), delays), (1, vec![5]));
+    }
+
+    #[test]
+    fn encode_gif_rejects_no_frames_and_wrong_sizes() {
+        assert!(encode_gif(1, 1, &[], 100, true).is_err());
+        assert!(encode_gif(2, 1, &[vec![Rgba::TRANSPARENT]], 100, true).is_err());
     }
 
     #[test]

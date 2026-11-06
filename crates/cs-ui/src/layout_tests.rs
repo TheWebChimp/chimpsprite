@@ -4486,6 +4486,59 @@ fn line_wheel(dy: f32, modifiers: egui::Modifiers) -> Event {
 }
 
 #[test]
+fn alt_wheel_over_persp_changes_the_fov_in_one_undo_step() {
+    let mut h = with_a_model_at_800();
+    let before = camera(&h);
+    assert_eq!(
+        before.projection,
+        cs_core::Projection::Perspective { fov: 600 }
+    );
+    let steps = h.app.doc.editor.history.done_count();
+    let at = persp_pixels(&h).center();
+    h.frame_with(vec![
+        Event::ModifiersChanged(egui::Modifiers::ALT),
+        Event::PointerMoved(at),
+    ]);
+    // Hacia arriba cierra el FOV (de 5° en 5°); la distancia no cambia.
+    for _ in 0..2 {
+        h.frame_with(vec![line_wheel(1.0, egui::Modifiers::ALT)]);
+    }
+    h.frame_with(vec![line_wheel(-1.0, egui::Modifiers::ALT)]);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    let after = camera(&h);
+    assert_eq!(
+        after.projection,
+        cs_core::Projection::Perspective { fov: 550 }
+    );
+    assert_eq!(after.distance, before.distance);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.frame();
+    assert!(
+        h.texts.iter().any(|(t, _)| t == "Persp 55°"),
+        "the label says the fov"
+    );
+    h.app.doc.editor.undo();
+    assert_eq!(camera(&h), before);
+}
+
+#[test]
+fn the_fov_stops_at_its_limits() {
+    let mut h = with_a_model_at_800();
+    let at = persp_pixels(&h).center();
+    h.frame_with(vec![
+        Event::ModifiersChanged(egui::Modifiers::ALT),
+        Event::PointerMoved(at),
+    ]);
+    for _ in 0..20 {
+        h.frame_with(vec![line_wheel(1.0, egui::Modifiers::ALT)]);
+    }
+    assert_eq!(
+        camera(&h).projection,
+        cs_core::Projection::Perspective { fov: 100 }
+    );
+}
+
+#[test]
 fn a_burst_of_wheel_steps_over_persp_is_one_undo_step() {
     let mut h = with_a_model_at_800();
     let before = camera(&h);
@@ -4937,7 +4990,7 @@ fn the_general_part_goes_above_the_line_and_the_object_below() {
         assert!(text_in(&h, top, t).is_some(), "{t} above the line");
         assert!(text_in(&h, bottom, t).is_none(), "{t} below the line");
     }
-    for label in ["Shading…", "Sheet settings…", "New"] {
+    for label in ["Shading…", "Sheet settings…", "GIF settings…", "New"] {
         let r = in_model_panel(&h, label).unwrap_or_else(|| panic!("{label}"));
         assert!(top.contains_rect(r), "{label} {r:?} in {top:?}");
     }
@@ -5926,7 +5979,7 @@ fn row_rhythm(h: &LayoutHarness) -> (f32, f32) {
     let flyout = model_flyout(h);
     let camera = text_in(h, flyout, "Camera").unwrap();
     let light = text_in(h, flyout, "Light & Outline").unwrap();
-    let row = in_model_panel(h, "Perspective").expect("the projection select");
+    let row = in_model_panel(h, "Perspective 60°").expect("the projection select");
     (row.top() - camera.top(), light.top() - row.top())
 }
 
@@ -5997,7 +6050,7 @@ fn the_camera_row_is_a_projection_select_and_the_preset_group() {
     let h = model_panel_tall();
     let (top, _) = model_halves(&h);
     let texture = node(&h, "Ship Texture");
-    let projection = in_model_panel(&h, "Perspective").expect("the projection select");
+    let projection = in_model_panel(&h, "Perspective 60°").expect("the projection select");
     assert!(projection.top() > texture.bottom());
     assert_eq!(projection.left(), texture.left());
     let presets: Vec<Rect> = ["Iso", "Top", "Side", "Front"]
@@ -6077,7 +6130,7 @@ fn each_camera_preset_is_one_undo_step() {
 fn the_projection_select_switches_the_camera_in_one_step() {
     let mut h = model_panel_tall();
     let steps = h.app.doc.editor.history.done_count();
-    h.click(node(&h, "Perspective").center(), PointerButton::Primary);
+    h.click(node(&h, "Perspective 60°").center(), PointerButton::Primary);
     h.click(node(&h, "Orthographic").center(), PointerButton::Primary);
     let cam = h.app.doc.editor.model().unwrap().camera;
     assert_eq!(cam.projection, cs_core::Projection::Orthographic);
@@ -6089,12 +6142,30 @@ fn the_projection_select_switches_the_camera_in_one_step() {
 }
 
 #[test]
+fn the_projection_select_offers_fov_presets() {
+    let mut h = model_panel_tall();
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(node(&h, "Perspective 60°").center(), PointerButton::Primary);
+    for label in ["Perspective 30°", "Perspective 45°", "Orthographic"] {
+        node(&h, label);
+    }
+    h.click(node(&h, "Perspective 90°").center(), PointerButton::Primary);
+    let cam = h.app.doc.editor.model().unwrap().camera;
+    assert_eq!(
+        cam.projection,
+        cs_core::Projection::Perspective { fov: 900 }
+    );
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    in_model_panel(&h, "Perspective 90°").expect("the select shows it");
+}
+
+#[test]
 fn the_projection_select_goes_back_to_perspective() {
     let mut h = model_panel_tall();
-    h.click(node(&h, "Perspective").center(), PointerButton::Primary);
+    h.click(node(&h, "Perspective 60°").center(), PointerButton::Primary);
     h.click(node(&h, "Orthographic").center(), PointerButton::Primary);
     h.click(node(&h, "Orthographic").center(), PointerButton::Primary);
-    h.click(node(&h, "Perspective").center(), PointerButton::Primary);
+    h.click(node(&h, "Perspective 60°").center(), PointerButton::Primary);
     let cam = h.app.doc.editor.model().unwrap().camera;
     assert_eq!(
         cam.projection,
@@ -6340,14 +6411,28 @@ fn the_light_row_has_light_yaw_and_pitch_like_the_mockup() {
 }
 
 #[test]
-fn shading_and_sheet_settings_end_the_row_after_the_outline() {
+fn shading_sheet_and_gif_settings_end_the_row_after_the_outline() {
     let h = model_panel_tall();
     let shading = h.button("Shading…");
     let sheet = h.button("Sheet settings…");
-    assert_eq!(sheet.right(), model_row_right(&h));
+    let gif = h.button("GIF settings…");
+    assert_eq!(gif.right(), model_row_right(&h));
+    assert_eq!(gif.left() - sheet.right(), 4.0);
     assert_eq!(sheet.left() - shading.right(), 4.0);
     assert_eq!(shading.top(), sheet.top());
+    assert_eq!(gif.top(), sheet.top());
     assert!(shading.top() > check(&h, "Outline").0.bottom());
+    // Caben en la fila (sin taparse con el borde de la izquierda).
+    let (top, _) = model_halves(&h);
+    assert!(shading.left() >= top.left(), "{shading:?} in {top:?}");
+}
+
+#[test]
+fn gif_settings_opens_its_dialog() {
+    let mut h = model_panel_tall();
+    let gif = h.button("GIF settings…");
+    h.click(gif.center(), PointerButton::Primary);
+    assert!(h.app.gif.is_some());
 }
 
 /// El color de la paleta del modelo con índice `i`.

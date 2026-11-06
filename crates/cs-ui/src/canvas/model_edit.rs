@@ -164,9 +164,11 @@ impl CanvasView {
             for (unit, dy) in super::model_input::wheel_events(ui) {
                 let steps = brush_wheel_steps(&mut self.model_wheel_rest, unit, dy);
                 if steps != 0 && !self.model_edit_wheel(editor, pointer, steps) {
-                    let at = self.persp_map(editor).map(|map| (map, pointer));
-                    let now = ui.input(|i| i.time);
-                    self.model_wheel(editor, steps, at, now);
+                    let (now, alt) = ui.input(|i| (i.time, i.modifiers.alt));
+                    if !(alt && self.model_fov_wheel(editor, steps, now)) {
+                        let at = self.persp_map(editor).map(|map| (map, pointer));
+                        self.model_wheel(editor, steps, at, now);
+                    }
                 }
             }
         } else {
@@ -837,9 +839,14 @@ impl CanvasView {
             0.0,
             SEPARATOR,
         );
+        // La perspectiva dice su FOV (lo cambia Alt + rueda).
+        let persp = match model.camera.projection {
+            cs_core::Projection::Perspective { fov } => format!("Persp {}°", fov / 10),
+            cs_core::Projection::Orthographic => "Persp".to_owned(),
+        };
         for (i, label) in [
             (FRONT, "Front"),
-            (PERSP, "Persp"),
+            (PERSP, persp.as_str()),
             (TOP, "Top"),
             (SIDE, "Side"),
         ] {

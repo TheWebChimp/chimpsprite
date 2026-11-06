@@ -9,7 +9,7 @@
 //! posición, la rotación y la escala de la fila activa van en la barrita del objeto, debajo del
 //! encabezado de ChimpCAD (`canvas::object_bar`). Sin modelo, el botón New 3D Model….
 
-use cs_core::{CameraPreset, Model3D, PrimitiveKind, Projection, Rgba, ShadingTable};
+use cs_core::{CameraPreset, PrimitiveKind, Projection, Rgba, ShadingTable};
 use eframe::egui::{
     self, Color32, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2, pos2, vec2,
 };
@@ -142,6 +142,8 @@ pub enum ModelAction {
     NewModel,
     /// Bake…: abrir el diálogo de hornear el modelo.
     Bake,
+    /// GIF settings…: abrir el diálogo de exportar el modelo girando.
+    Gif,
     /// Shading…: abrir la ventana de la tabla de sombras.
     Shading,
     /// Pasar la textura a este lado, que deja UVs fuera: la app pide confirmación antes.
@@ -852,6 +854,18 @@ fn light_row(ui: &mut Ui, skin: Option<&Skin>, light: &mut cs_core::Light3D) {
     }
 }
 
+/// Los FOV (en décimas de grado) que ofrece el select de la proyección; el de la vista Persp se
+/// afina con Alt + rueda.
+const FOV_PRESETS: [i32; 4] = [300, 450, 600, 900];
+
+/// Lo que dice el select de la proyección: "Perspective 60°" u "Orthographic".
+pub(crate) fn projection_label(p: Projection) -> String {
+    match p {
+        Projection::Perspective { fov } => format!("Perspective {}°", fov / 10),
+        Projection::Orthographic => "Orthographic".to_owned(),
+    }
+}
+
 /// La cámara, la luz y el contorno. Todo lo cambiado en un frame (o en un arrastre) es un paso de
 /// deshacer (`set_model_grouped`).
 fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
@@ -866,29 +880,27 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     ui.add_space(-TITLE_PULL);
     // Sin Yaw ni Pitch: la cámara la mueven la órbita, el gizmo de navegación y los presets.
     let cam = &mut next.camera;
-    let ortho = cam.projection == Projection::Orthographic;
     let mut projection = None;
+    let current = cam.projection;
     let list = |ui: &mut Ui| {
-        for (label, o) in [("Perspective", false), ("Orthographic", true)] {
-            if ui.add(menus::choice(ortho == o, label)).clicked() {
-                projection = Some(o);
+        let choices = FOV_PRESETS
+            .map(|fov| Projection::Perspective { fov })
+            .into_iter()
+            .chain([Projection::Orthographic]);
+        for p in choices {
+            if ui
+                .add(menus::choice(current == p, &projection_label(p)))
+                .clicked()
+            {
+                projection = Some(p);
                 ui.close();
             }
         }
     };
-    let shown = if ortho { "Orthographic" } else { "Perspective" };
-    let preset = camera_row(ui, skin, shown, list);
-    match projection {
-        Some(true) if !ortho => cam.projection = Projection::Orthographic,
-        Some(false) if ortho => {
-            cam.projection = Projection::Perspective {
-                fov: match Model3D::default().camera.projection {
-                    Projection::Perspective { fov } => fov,
-                    Projection::Orthographic => 600,
-                },
-            };
-        }
-        _ => {}
+    let shown = projection_label(current);
+    let preset = camera_row(ui, skin, &shown, list);
+    if let Some(p) = projection {
+        cam.projection = p;
     }
     // Los presets miran al centro del modelo (con la distancia de antes).
     if let Some(preset) = preset {
@@ -923,11 +935,13 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 }
 
-/// Shading… y Sheet settings…, al final de su fila (como el boceto). Devuelve lo pedido.
+/// Shading…, Sheet settings… y GIF settings…, al final de su fila (como el boceto, que tenía
+/// los dos primeros). Devuelve lo pedido.
 fn window_buttons(ui: &mut Ui, skin: Option<&Skin>) -> Option<ModelAction> {
-    const BUTTONS: [(&str, ModelAction); 2] = [
+    const BUTTONS: [(&str, ModelAction); 3] = [
         ("Shading…", ModelAction::Shading),
         ("Sheet settings…", ModelAction::Bake),
+        ("GIF settings…", ModelAction::Gif),
     ];
     let mut picked = None;
     match skin {

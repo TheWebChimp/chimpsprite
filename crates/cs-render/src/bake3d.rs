@@ -28,6 +28,8 @@ pub enum BakeOutput {
 pub const BAKE_FRAMES: RangeInclusive<u32> = 1..=64;
 pub const BAKE_SIZE: RangeInclusive<u32> = 8..=512;
 pub const BAKE_TILT: RangeInclusive<i32> = -900..=900;
+/// El campo de visión de la perspectiva, en décimas de grado (10°–150°).
+pub const BAKE_FOV: RangeInclusive<i32> = 100..=1500;
 
 /// El fov de la perspectiva si el modelo es ortográfico y se hornea en perspectiva (60°).
 const DEFAULT_FOV: i32 = 600;
@@ -45,8 +47,10 @@ pub struct BakeOptions {
     pub tilt: i32,
     /// En 1/16 de unidad, sumado a la altura del punto al que mira la cámara.
     pub height: i32,
-    /// Ortográfica; si no, perspectiva (con el fov del modelo o 60°).
+    /// Ortográfica; si no, perspectiva con `fov`.
     pub ortho: bool,
+    /// El campo de visión de la perspectiva, en décimas de grado ([`BAKE_FOV`]).
+    pub fov: i32,
     /// Usar todos los frames de la textura (si no, solo el 0).
     pub animate_texture: bool,
     pub output: BakeOutput,
@@ -66,13 +70,17 @@ impl BakeOptions {
             tilt: m.camera.pitch,
             height: 0,
             ortho: matches!(m.camera.projection, Projection::Orthographic),
+            fov: match m.camera.projection {
+                Projection::Perspective { fov } => fov.clamp(*BAKE_FOV.start(), *BAKE_FOV.end()),
+                Projection::Orthographic => DEFAULT_FOV,
+            },
             animate_texture: texture_frames > 1,
             output: BakeOutput::Frames,
         }
     }
 
     /// Los ángulos, dentro de [`BAKE_FRAMES`].
-    fn angles(&self) -> u32 {
+    pub(crate) fn angles(&self) -> u32 {
         self.frames.clamp(*BAKE_FRAMES.start(), *BAKE_FRAMES.end())
     }
 
@@ -90,12 +98,14 @@ impl BakeOptions {
     }
 
     /// La cámara `model` con la inclinación, el zoom, la altura y la proyección elegidos.
-    fn camera(&self, model: &Camera3D) -> Camera3D {
+    pub(crate) fn camera(&self, model: &Camera3D) -> Camera3D {
         let distance = i64::from(model.distance) * 100 / i64::from(self.zoom.max(1));
-        let projection = match (self.ortho, model.projection) {
-            (true, _) => Projection::Orthographic,
-            (false, p @ Projection::Perspective { .. }) => p,
-            (false, Projection::Orthographic) => Projection::Perspective { fov: DEFAULT_FOV },
+        let projection = if self.ortho {
+            Projection::Orthographic
+        } else {
+            Projection::Perspective {
+                fov: self.fov.clamp(*BAKE_FOV.start(), *BAKE_FOV.end()),
+            }
         };
         let mut target = model.target;
         target.y += self.height;
@@ -113,7 +123,7 @@ impl BakeOptions {
 const TAG_COLOR: Rgba = Rgba::rgb(0x5b, 0x6e, 0xe1);
 
 /// El artboard `model` y su modelo, si es un modelo que se puede hornear.
-fn bakeable(doc: &Document, model: ArtboardId) -> Option<(&Artboard, &Model3D)> {
+pub(crate) fn bakeable(doc: &Document, model: ArtboardId) -> Option<(&Artboard, &Model3D)> {
     let artboard = doc.artboard(model)?;
     let m = artboard.model.as_ref()?;
     let source = &artboard.sprite;
@@ -455,6 +465,31 @@ mod tests {
         let m = doc.artboard(model).unwrap().model.as_ref().unwrap();
         assert_eq!(BakeOptions::from_model(m, (1024, 64), 1).size, 512);
         assert_eq!(BakeOptions::from_model(m, (2, 2), 1).size, 8);
+    }
+
+    #[test]
+    fn the_fov_comes_from_the_model_and_changes_only_the_perspective() {
+        let (mut doc, model, _) = with_model();
+        let m = doc.artboard_mut(model).unwrap().model.as_mut().unwrap();
+        m.camera.projection = cs_core::Projection::Perspective { fov: 450 };
+        let o = options_for(&doc, model, 1, false, BakeOutput::Frames);
+        assert_eq!(o.fov, 450);
+        let wide = BakeOptions { fov: 900, ..o };
+        let (a, _) = bake_model(&doc, model, &o).unwrap();
+        let (b, _) = bake_model(&doc, model, &wide).unwrap();
+        assert_ne!(render_frame(&a, 0), render_frame(&b, 0));
+        // En orto el fov no cuenta.
+        let ortho = BakeOptions { ortho: true, ..o };
+        let (c, _) = bake_model(&doc, model, &ortho).unwrap();
+        let (d, _) = bake_model(&doc, model, &BakeOptions { fov: 900, ..ortho }).unwrap();
+        assert_eq!(render_frame(&c, 0), render_frame(&d, 0));
+        // Un modelo orto hornea en perspectiva con 60°.
+        let m = doc.artboard_mut(model).unwrap().model.as_mut().unwrap();
+        m.camera.projection = cs_core::Projection::Orthographic;
+        assert_eq!(
+            options_for(&doc, model, 1, false, BakeOutput::Frames).fov,
+            600
+        );
     }
 
     #[test]
