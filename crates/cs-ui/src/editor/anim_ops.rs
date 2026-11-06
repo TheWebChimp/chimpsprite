@@ -10,6 +10,8 @@ use super::{CadMode, Editor, Row};
 /// Lo más corto que puede durar un bloque y el paso del ajuste de los arrastres (ms).
 pub const MIN_CLIP_MS: u32 = 50;
 pub const SNAP_MS: u32 = 50;
+/// Con Shift, el ajuste fino.
+pub const FINE_SNAP_MS: u32 = 10;
 /// Lo que puede durar la animación (ms).
 pub const ANIM_LENGTH: std::ops::RangeInclusive<u32> = 100..=60_000;
 /// Lo que dura un bloque nuevo (si cabe).
@@ -265,11 +267,24 @@ impl Editor {
     /// La duración de la animación (recortada a [`ANIM_LENGTH`]). Un paso de undo. El tiempo
     /// actual se recorta.
     pub fn set_anim_length(&mut self, ms: u32) -> bool {
+        self.set_anim_length_in(ms, None)
+    }
+
+    /// Como [`Self::set_anim_length`], juntando los cambios del gesto `group` (un arrastre del
+    /// campo) en un solo paso.
+    pub fn set_anim_length_grouped(&mut self, ms: u32, group: eframe::egui::Id) -> bool {
+        self.set_anim_length_in(ms, Some(group))
+    }
+
+    fn set_anim_length_in(&mut self, ms: u32, group: Option<eframe::egui::Id>) -> bool {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
         model.anim_ms = ms.clamp(*ANIM_LENGTH.start(), *ANIM_LENGTH.end());
-        let done = self.named("Animation length", |e| e.set_model(model));
+        let done = self.named("Animation length", |e| match group {
+            Some(g) => e.set_model_grouped(model, g),
+            None => e.set_model(model),
+        });
         let length = self.anim_length();
         let a = &mut self.model_edit.anim;
         a.time_ms = a.time_ms.min(length);
@@ -322,6 +337,28 @@ impl Editor {
 
     /// Cambia el bloque `i` de la pista `row`. Un paso de undo.
     pub fn set_clip(&mut self, row: Row, i: usize, clip: Clip) -> bool {
+        self.set_clip_in(row, i, clip, None)
+    }
+
+    /// Como [`Self::set_clip`], juntando los cambios del gesto `group` (un arrastre o lo escrito
+    /// en un campo del panel) en un solo paso.
+    pub fn set_clip_grouped(
+        &mut self,
+        row: Row,
+        i: usize,
+        clip: Clip,
+        group: eframe::egui::Id,
+    ) -> bool {
+        self.set_clip_in(row, i, clip, Some(group))
+    }
+
+    fn set_clip_in(
+        &mut self,
+        row: Row,
+        i: usize,
+        clip: Clip,
+        group: Option<eframe::egui::Id>,
+    ) -> bool {
         let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
@@ -329,7 +366,41 @@ impl Editor {
             return false;
         };
         *slot = valid(clip);
-        self.named("Edit block", |e| e.set_model(model))
+        self.named("Edit block", |e| match group {
+            Some(g) => e.set_model_grouped(model, g),
+            None => e.set_model(model),
+        })
+    }
+
+    /// Elige el objeto que se ve en el pixel `(x, y)` del render del modelo en el tiempo actual
+    /// (a la resolución de su artboard; puede caer afuera). Un clic en vacío no elige nada. El
+    /// bloque elegido se queda si es de esa pista.
+    pub fn pick_anim_object(&mut self, (x, y): (i32, i32)) {
+        let Some(artboard) = self.document.artboard(self.model_id()) else {
+            return;
+        };
+        let Some(model) = self.edit_model_shown() else {
+            return;
+        };
+        let size = (artboard.sprite.width.max(1), artboard.sprite.height.max(1));
+        let hit = cs_render::model_pick_at(
+            &self.document,
+            artboard,
+            model,
+            size,
+            (x, y),
+            self.anim_time(),
+        );
+        let row = hit.map(Row::Object);
+        if self
+            .model_edit
+            .anim
+            .clip
+            .is_some_and(|(r, _)| Some(r) != row)
+        {
+            self.model_edit.anim.clip = None;
+        }
+        self.set_active_row(row, false);
     }
 
     /// Borra el bloque elegido. Un paso de undo.

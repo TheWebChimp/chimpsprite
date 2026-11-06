@@ -257,7 +257,7 @@ fn scrolled<R>(
 }
 
 /// La pieza del ícono de un tipo de objeto.
-fn kind_icon(kind: PrimitiveKind) -> &'static str {
+pub(crate) fn kind_icon(kind: PrimitiveKind) -> &'static str {
     match kind {
         PrimitiveKind::Cube => "icon.object.cube",
         PrimitiveKind::Plane => "icon.object.plane",

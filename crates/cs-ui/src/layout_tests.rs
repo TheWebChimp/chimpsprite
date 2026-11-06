@@ -10562,3 +10562,120 @@ fn the_library_offers_importing_a_font() {
     h.frame();
     assert!(h.button("Import…").width() > 0.0);
 }
+
+/// El modelo de 800 en modo Anim (con el botón del encabezado).
+fn with_a_model_in_anim_mode() -> LayoutHarness {
+    let mut h = with_a_model_at_800();
+    h.click(node(&h, "Anim").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.cad_mode(), crate::editor::CadMode::Anim);
+    h.frame();
+    h
+}
+
+/// Dónde está el bloque `i` de la pista `row` en el timeline del modo Anim.
+fn anim_block(h: &LayoutHarness, row: crate::editor::Row, i: usize) -> Rect {
+    use crate::canvas::anim_mode_block;
+    anim_mode_block(&h.app.doc.canvas, &h.app.doc.editor, row, i).expect("the block is shown")
+}
+
+#[test]
+fn anim_mode_has_the_persp_on_top_and_the_bar_timeline_and_panel_below() {
+    let h = with_a_model_in_anim_mode();
+    let canvas = h.canvas.expect("the workspace area");
+    let panes = h.app.doc.canvas.anim_panes().expect("the anim panes");
+    assert!(
+        panes.top.contains_rect(persp_pixels(&h)),
+        "the model on top"
+    );
+    assert_eq!(panes.bar.top(), panes.top.bottom() + 1.0);
+    assert!(panes.ruler.top() >= panes.bar.bottom());
+    assert_eq!(panes.tracks.bottom(), canvas.bottom());
+    assert_eq!(panes.panel.right(), canvas.right());
+    assert!(panes.names.right() < panes.tracks.left());
+    // La barra: los botones de reproducción, el tiempo, Length, Loop y Add.
+    for label in [
+        "Go to start",
+        "Play",
+        "Go to end",
+        "Loop",
+        "Rotate",
+        "Spin",
+        "Bob",
+    ] {
+        assert!(h.nodes.iter().any(|(l, _)| l == label), "{label}");
+    }
+    assert!(h.texts.iter().any(|(t, _)| t == "0/2s"), "{:?}", h.texts);
+    assert!(h.texts.iter().any(|(t, _)| t == "No block"));
+    // Sin gizmos ni vistas orto.
+    assert!(!h.nodes.iter().any(|(l, _)| {
+        l == "Move"
+            && h.app
+                .doc
+                .canvas
+                .cad_header()
+                .unwrap()
+                .contains_rect(node(&h, "Move"))
+    }));
+    assert!(h.app.doc.canvas.model_edit_quadrants().is_none());
+}
+
+#[test]
+fn adding_a_block_and_dragging_it_in_the_timeline() {
+    use crate::editor::Row;
+    let mut h = with_a_model_in_anim_mode();
+    // El cubo es la pista elegida: Add → Rotate le agrega un bloque en 0.
+    h.click(node(&h, "Rotate").center(), PointerButton::Primary);
+    let clip = |h: &LayoutHarness| h.app.doc.editor.edited_model().unwrap().objects[0].anim[0];
+    assert_eq!((clip(&h).start_ms, clip(&h).duration_ms), (0, 1000));
+    assert!(
+        h.texts.iter().any(|(t, _)| t == "Rotate"),
+        "the block panel"
+    );
+    let steps = h.app.doc.editor.history.done_count();
+    // Arrastrarlo un cuarto de la animación (500 ms) a la derecha.
+    let r = anim_block(&h, Row::Object(0), 0);
+    let panes = h.app.doc.canvas.anim_panes().unwrap();
+    let per_ms = (panes.tracks.width() - 8.0) / 2000.0;
+    h.drag(r.center(), r.center() + vec2(500.0 * per_ms, 0.0));
+    assert_eq!(clip(&h).start_ms, 500);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    // Estirar el final hasta el final de la animación.
+    let r = anim_block(&h, Row::Object(0), 0);
+    h.drag(
+        pos2(r.right() - 1.0, r.center().y),
+        pos2(panes.tracks.right(), r.center().y),
+    );
+    assert_eq!(clip(&h).end_ms(), 2000);
+    // Supr lo borra.
+    press(&mut h, egui::Key::Delete, Default::default());
+    assert!(
+        h.app.doc.editor.edited_model().unwrap().objects[0]
+            .anim
+            .is_empty()
+    );
+}
+
+#[test]
+fn the_ruler_moves_the_time_and_play_advances_it() {
+    let mut h = with_a_model_in_anim_mode();
+    let panes = h.app.doc.canvas.anim_panes().unwrap();
+    let x = panes.tracks.left() + 4.0 + (panes.tracks.width() - 8.0) / 2.0;
+    h.click(pos2(x, panes.ruler.center().y), PointerButton::Primary);
+    let t = h.app.doc.editor.anim().time_ms;
+    assert!((990..=1010).contains(&t), "{t}");
+    assert!(
+        h.texts
+            .iter()
+            .any(|(s, _)| s.starts_with('1') && s.ends_with("/2s"))
+    );
+    h.click(node(&h, "Play").center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.anim().playing);
+    let before = h.app.doc.editor.anim().time_ms;
+    for _ in 0..4 {
+        h.frame();
+    }
+    assert!(h.app.doc.editor.anim().time_ms > before);
+    // Enter pausa.
+    press(&mut h, egui::Key::Enter, Default::default());
+    assert!(!h.app.doc.editor.anim().playing);
+}

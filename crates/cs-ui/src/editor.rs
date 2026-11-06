@@ -33,7 +33,9 @@ mod model_topology;
 mod outliner_ops;
 mod texture_mode;
 mod workspace;
-pub use anim_ops::AnimView;
+pub use anim_ops::{
+    ANIM_LENGTH, AnimView, ClipEdge, FINE_SNAP_MS, MIN_CLIP_MS, NewClip, SNAP_MS, row_clips,
+};
 pub use model_edit::{
     CadMode, DRAG_THRESHOLD, EditOp, GIZMO_PX, GRIDS, Gizmo, GizmoView, KeyOp, ModelEdit, PerspMap,
     TextureView, UvOp,

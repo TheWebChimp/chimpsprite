@@ -883,6 +883,8 @@ impl CanvasView {
         // revisión ni la versión cambian: mientras se pinta se renderiza en cada pasada (`doc` es
         // la vista con el trazo en curso).
         let live = editor.is_painting().then(|| ctx.cumulative_pass_nr());
+        // En modo Anim, el modelo en el tiempo actual.
+        let time = editor.anim_time();
         let mut h = DefaultHasher::new();
         (
             model,
@@ -893,11 +895,13 @@ impl CanvasView {
             artboard.id,
             &faces,
             live,
+            time,
         )
             .hash(&mut h);
         let key = h.finish();
         if self.edit_persp.as_ref().is_none_or(|(k, _)| *k != key) {
-            let mut pixels = cs_render::model_render(doc, artboard, model, size, Some(frame));
+            let mut pixels =
+                cs_render::model_render_at(doc, artboard, model, size, Some(frame), time);
             if !faces.is_empty() {
                 // El contorno depende del modelo, el tamaño y las caras, no de la textura: al
                 // pintar se reusa.
@@ -1185,9 +1189,13 @@ fn gizmo_buttons(ui: &mut egui::Ui, header: Rect, editor: &mut Editor) {
 }
 
 /// Las opciones del grupo de los modos.
-fn mode_items() -> [crate::kit::group::GroupItem<'static>; 2] {
+fn mode_items() -> [crate::kit::group::GroupItem<'static>; 3] {
     use crate::kit::group::GroupItem;
-    [GroupItem::text("Model"), GroupItem::text("Texture")]
+    [
+        GroupItem::text("Model"),
+        GroupItem::text("Texture"),
+        GroupItem::text("Anim"),
+    ]
 }
 
 /// Dónde van los botones Model / Texture en el encabezado `header` (a la derecha).
@@ -1212,7 +1220,7 @@ fn mode_buttons_rect(ui: &egui::Ui, header: Rect) -> Rect {
 fn mode_buttons(ui: &mut egui::Ui, header: Rect, editor: &mut Editor) {
     use crate::kit::group;
     let items = mode_items();
-    let modes = [CadMode::Model, CadMode::Texture];
+    let modes = [CadMode::Model, CadMode::Texture, CadMode::Anim];
     let current = editor.cad_mode();
     let id = egui::Id::new("cad_mode_buttons");
     let rect = mode_buttons_rect(ui, header);

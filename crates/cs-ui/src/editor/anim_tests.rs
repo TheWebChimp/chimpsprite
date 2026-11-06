@@ -1,7 +1,6 @@
 use cs_core::{Axis3, ClipMotion, ColorMode, Curve, Sprite};
 
-use super::anim_ops::{ClipEdge, NewClip, row_clips};
-use super::{CadMode, Editor, Row};
+use super::{CadMode, ClipEdge, Editor, NewClip, Row, row_clips};
 
 /// Un modelo nuevo (un cubo, elegido) en su workspace, en modo Anim.
 fn animating() -> Editor {
