@@ -98,8 +98,14 @@ pub(super) fn plus_button(
     let id = ui.id().with("model_add_object");
     let plus = kit::tabs::ADD_MARK;
     let response = kit::button::icon_button_at(ui, skin, rect, id, plus, "Add object");
+    let popup_id = egui::Popup::default_response_id(&response);
     if std::mem::take(&mut state.open_add_menu) {
-        egui::Popup::open_id(ui.ctx(), egui::Popup::default_response_id(&response));
+        egui::Popup::open_id(ui.ctx(), popup_id);
+    }
+    // Abierta, un telón transparente debajo de ella tapa todo lo demás: un clic afuera solo la
+    // cierra y no llega al widget de abajo (egui lo dejaría pasar).
+    if egui::Popup::is_id_open(ui.ctx(), popup_id) {
+        veil(ui.ctx(), id.with("veil"));
     }
     // La esquina de arriba a la derecha de la ventanita (con su sombra) va 10 filas debajo de lo
     // alto del +, con la caja terminando con él.
@@ -120,6 +126,21 @@ pub(super) fn plus_button(
             response.ctx.move_to_top(inner.response.layer_id);
             inner.inner
         })
+}
+
+/// Un área invisible de toda la ventana que se lleva los clics (y el puntero) de lo que tiene
+/// debajo. La ventanita va arriba de ella (se sube al frente después).
+fn veil(ctx: &egui::Context, id: egui::Id) {
+    let screen = ctx.content_rect();
+    egui::Area::new(id)
+        .order(egui::Order::Foreground)
+        .fixed_pos(screen.min)
+        .show(ctx, |ui| {
+            ui.allocate_rect(
+                Rect::from_min_size(screen.min, screen.size()),
+                Sense::click(),
+            );
+        });
 }
 
 /// Lo de adentro de la ventanita colgada del + en `plus`: la caja, la pestaña, los íconos, la

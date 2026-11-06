@@ -5255,6 +5255,33 @@ fn add_in_the_add_menu_adds_the_type_with_the_sides_and_selects_its_row() {
     assert!(in_model_panel(&h, "Cone").is_some(), "the cone row");
 }
 
+/// Un clic afuera del menú del + solo lo cierra: no llega a lo de abajo (aquí, la fila del cubo
+/// en el outliner, que lo elegiría).
+#[test]
+fn a_click_outside_the_add_menu_only_closes_it() {
+    let mut h = without_an_object(model_panel_open(true));
+    let plus = open_add_menu(&mut h);
+    let menu = add_menu_box(&h, plus).expect("the add menu");
+    let row = h
+        .nodes
+        .iter()
+        .find(|(l, r)| l == "Cube" && r.width() >= 100.0)
+        .map(|(_, r)| *r)
+        .expect("the cube row");
+    let at = pos2(row.left() + 4.0, row.center().y);
+    assert!(!menu.contains(at), "{at:?} outside {menu:?}");
+    h.click(at, PointerButton::Primary);
+    h.frame();
+    assert!(add_menu_box(&h, plus).is_none(), "the menu closed");
+    assert_eq!(h.app.doc.editor.active_row(), None, "the row was not hit");
+    // El clic siguiente ya llega.
+    h.click(at, PointerButton::Primary);
+    assert_eq!(
+        h.app.doc.editor.active_row(),
+        Some(crate::editor::Row::Object(0))
+    );
+}
+
 #[test]
 fn without_pixel_ui_the_plus_menu_has_the_types_sides_and_add() {
     let mut h = LayoutHarness::new(plain(), true);
