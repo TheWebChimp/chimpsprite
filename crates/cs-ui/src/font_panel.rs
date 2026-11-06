@@ -223,6 +223,12 @@ pub fn show(
         .auto_shrink([false, false])
         .max_height(middle.height())
         .min_scrolled_height(middle.height());
+    // Desarrollo: con CHIMPSPRITE_DEMO_FONT_SCROLL, el medio bajado hasta la sección Glyph, para
+    // capturas.
+    let area = match crate::demo::dev_var("CHIMPSPRITE_DEMO_FONT_SCROLL") {
+        Some(_) => area.vertical_scroll_offset(330.0),
+        None => area,
+    };
     let action = ui
         .scope_builder(UiBuilder::new().max_rect(middle), |ui| {
             pixel_ui::scroll(ui, area, |ui| {
