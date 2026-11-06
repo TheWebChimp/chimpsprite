@@ -265,6 +265,95 @@ pub fn font_sprite(cell: (u32, u32), mode: FontMode, frames: usize) -> Sprite {
     sprite
 }
 
+/// Un glifo para [`build_font`]: su carácter, su ancho (`None`: automático) y sus pixeles en la
+/// celda (`None` es la tinta de 1 bit; en color, su color).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GlyphBuild {
+    pub ch: char,
+    pub advance: Option<u32>,
+    pub pixels: Vec<(u32, u32, Option<Rgba>)>,
+}
+
+/// Una fuente armada desde pixeles (lo que devuelven los importadores).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FontBuild {
+    pub name: String,
+    pub mode: FontMode,
+    pub cell: (u32, u32),
+    pub metrics: FontMetrics,
+    pub letter_spacing: u32,
+    pub space_width: u32,
+    pub monospace: bool,
+    pub glyphs: Vec<GlyphBuild>,
+}
+
+/// La fuente y su sprite desde `build`: los glifos en orden y sin repetir (gana el primero), sin
+/// el espacio (que usa `space_width`), con lo que cae fuera de la celda recortado y sin cel los
+/// vacíos. En 1 bit todo pixel es tinta; en color, un pixel sin color es negro. Sin glifos queda
+/// uno vacío (`!`), porque una fuente tiene al menos un frame.
+pub fn build_font(build: FontBuild) -> (FontInfo, Sprite) {
+    let cell = (build.cell.0.max(1), build.cell.1.max(1));
+    let mut glyphs: Vec<GlyphBuild> = build.glyphs.into_iter().filter(|g| g.ch != ' ').collect();
+    glyphs.sort_by_key(|g| g.ch); // estable: el primero de los repetidos queda primero
+    glyphs.dedup_by_key(|g| g.ch);
+    if glyphs.is_empty() {
+        glyphs.push(GlyphBuild {
+            ch: '!',
+            advance: None,
+            pixels: Vec::new(),
+        });
+    }
+    let mut sprite = font_sprite(cell, build.mode, glyphs.len());
+    let layer = sprite.layers[0].id;
+    for (frame, glyph) in glyphs.iter().enumerate() {
+        let inside = glyph
+            .pixels
+            .iter()
+            .filter(|(x, y, _)| *x < cell.0 && *y < cell.1);
+        let mut image = crate::Image::new(cell.0, cell.1, sprite.color_mode);
+        let mut any = false;
+        for &(x, y, color) in inside {
+            let value = match build.mode {
+                FontMode::OneBit => ONE_BIT_INK,
+                FontMode::Color => PixelValue::Rgba(color.unwrap_or(Rgba::new(0, 0, 0, 255))),
+            };
+            if painted(&sprite, value) && image.set(x, y, value).is_ok() {
+                any = true;
+            }
+        }
+        if !any {
+            continue;
+        }
+        let id = sprite.next_image_id();
+        sprite.images.insert(id, std::sync::Arc::new(image));
+        sprite.cels.insert(
+            (layer, frame),
+            crate::Cel {
+                position: (0, 0),
+                opacity: 255,
+                image: id,
+            },
+        );
+    }
+    let font = FontInfo {
+        name: build.name,
+        mode: build.mode,
+        metrics: build.metrics.clamped(cell.1),
+        letter_spacing: build.letter_spacing,
+        space_width: build.space_width,
+        monospace: build.monospace,
+        ghost: GhostSettings::default(),
+        glyphs: glyphs
+            .iter()
+            .map(|g| GlyphInfo {
+                ch: g.ch,
+                advance: g.advance,
+            })
+            .collect(),
+    };
+    (font, sprite)
+}
+
 /// Si `value` es un pixel pintado en `sprite`.
 fn painted(sprite: &Sprite, value: PixelValue) -> bool {
     match value {
@@ -555,6 +644,76 @@ mod tests {
         assert!(normalize_font(&mut font, &mut s));
         assert_eq!(font.glyphs.len(), 2);
         assert_eq!(font.check(&s), Ok(()));
+    }
+
+    fn glyph(ch: char, advance: Option<u32>, pixels: &[(u32, u32)]) -> GlyphBuild {
+        GlyphBuild {
+            ch,
+            advance,
+            pixels: pixels.iter().map(|&(x, y)| (x, y, None)).collect(),
+        }
+    }
+
+    fn build(mode: FontMode, glyphs: Vec<GlyphBuild>) -> FontBuild {
+        FontBuild {
+            name: "Built".into(),
+            mode,
+            cell: (8, 10),
+            metrics: FontMetrics::for_cell(10),
+            letter_spacing: 1,
+            space_width: 4,
+            monospace: false,
+            glyphs,
+        }
+    }
+
+    #[test]
+    fn building_a_font_sorts_dedups_and_drops_the_space() {
+        let (font, sprite) = build_font(build(
+            FontMode::OneBit,
+            vec![
+                glyph('b', Some(5), &[(1, 1)]),
+                glyph(' ', None, &[(0, 0)]),
+                glyph('a', None, &[(0, 2), (20, 2), (1, 30)]),
+                glyph('b', None, &[(3, 3)]),
+                glyph('c', None, &[]),
+            ],
+        ));
+        let chars: Vec<char> = font.glyphs.iter().map(|g| g.ch).collect();
+        assert_eq!(chars, vec!['a', 'b', 'c']);
+        assert_eq!(font.glyphs[1].advance, Some(5), "the first 'b' wins");
+        assert_eq!(font.check(&sprite), Ok(()));
+        assert_eq!((sprite.width, sprite.height), (8, 10));
+        assert_eq!((font.name.as_str(), font.space_width), ("Built", 4));
+        let layer = sprite.layers[0].id;
+        assert_eq!(sprite.pixel(layer, 0, 0, 2), ONE_BIT_INK);
+        assert_eq!(sprite.pixel(layer, 1, 1, 1), ONE_BIT_INK);
+        assert_eq!(sprite.pixel(layer, 1, 3, 3), ONE_BIT_PAPER);
+        assert!(!sprite.cels.contains_key(&(layer, 2)), "empty: no cel");
+        assert_eq!(ink_width(&sprite, 0), 1, "outside the cell is cut");
+    }
+
+    #[test]
+    fn building_a_color_font_keeps_the_colors() {
+        let red = Rgba::new(200, 10, 10, 255);
+        let (font, sprite) = build_font(build(
+            FontMode::Color,
+            vec![GlyphBuild {
+                ch: 'A',
+                advance: None,
+                pixels: vec![(0, 0, Some(red)), (1, 0, None)],
+            }],
+        ));
+        assert_eq!(font.check(&sprite), Ok(()));
+        let layer = sprite.layers[0].id;
+        assert_eq!(sprite.pixel(layer, 0, 0, 0), PixelValue::Rgba(red));
+        assert_eq!(
+            sprite.pixel(layer, 0, 1, 0),
+            PixelValue::Rgba(Rgba::new(0, 0, 0, 255))
+        );
+        let (font, sprite) = build_font(build(FontMode::Color, Vec::new()));
+        assert_eq!(font.glyphs.len(), 1, "a font has at least one glyph");
+        assert_eq!(font.check(&sprite), Ok(()));
     }
 
     #[test]
