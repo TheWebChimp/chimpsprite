@@ -4,24 +4,28 @@
 //! Redondeo: todo se lleva al pixel entero más cercano (`f32::round`: las mitades se alejan de
 //! cero). Los giros y los espejos son exactos en enteros y no redondean nada.
 
+use std::collections::{HashMap, HashSet};
+
 use cs_core::Model3D;
 
 /// Un punto de la textura, en pixeles.
 pub type UvPoint = (i32, i32);
 
-/// Las caras de `faces` que existen, sin repetir, como `(objeto, cara)`.
+/// Las caras de `faces` que existen, sin repetir (en el orden en que llegan), como
+/// `(objeto, cara)`.
 fn existing(model: &Model3D, faces: &[(usize, usize)]) -> Vec<(usize, usize)> {
-    let mut out: Vec<(usize, usize)> = Vec::new();
-    for &(o, f) in faces {
-        let ok = model
-            .objects
-            .get(o)
-            .is_some_and(|obj| f < obj.mesh.faces.len());
-        if ok && !out.contains(&(o, f)) {
-            out.push((o, f));
-        }
-    }
-    out
+    let mut seen = HashSet::with_capacity(faces.len());
+    faces
+        .iter()
+        .copied()
+        .filter(|&(o, f)| {
+            model
+                .objects
+                .get(o)
+                .is_some_and(|obj| f < obj.mesh.faces.len())
+                && seen.insert((o, f))
+        })
+        .collect()
 }
 
 /// Caja `(min, max)` inclusiva de unos UV.
@@ -41,18 +45,28 @@ fn map_faces(
     f: impl Fn(UvPoint, (UvPoint, UvPoint)) -> UvPoint,
 ) -> Model3D {
     let faces = existing(model, faces);
-    let part = |&(o, i): &(usize, usize)| model.objects[o].mesh.faces[i].part;
+    // El grupo de cada cara: (objeto, parte) o, sin parte, (objeto, la cara sola). Las cajas
+    // se arman de una pasada (con esferas grandes, recalcularlas por cara era cuadrático en
+    // cada frame de un arrastre).
+    let group = |(o, i): (usize, usize)| {
+        let part = model.objects[o].mesh.faces[i].part;
+        (o, part, if part.is_some() { 0 } else { i })
+    };
+    let mut boxes: HashMap<_, (UvPoint, UvPoint)> = HashMap::new();
+    for &(o, i) in &faces {
+        if let Some((lo, hi)) = bounds_of(&model.objects[o].mesh.faces[i].uvs) {
+            boxes
+                .entry(group((o, i)))
+                .and_modify(|(a, b)| {
+                    *a = (a.0.min(lo.0), a.1.min(lo.1));
+                    *b = (b.0.max(hi.0), b.1.max(hi.1));
+                })
+                .or_insert((lo, hi));
+        }
+    }
     let mut out = model.clone();
     for &(o, i) in &faces {
-        let group: Vec<(usize, usize)> = match part(&(o, i)) {
-            Some(p) => faces
-                .iter()
-                .copied()
-                .filter(|g| g.0 == o && part(g) == Some(p))
-                .collect(),
-            None => vec![(o, i)],
-        };
-        if let Some(b) = uv_bounds(model, &group) {
+        if let Some(&b) = boxes.get(&group((o, i))) {
             for uv in &mut out.objects[o].mesh.faces[i].uvs {
                 *uv = f(*uv, b);
             }
@@ -399,6 +413,52 @@ mod tests {
         assert_eq!(uv_bounds(&m, &side), uv_bounds(&cylinder(), &side));
         assert!(!overlapping(&m, &side));
         assert_eq!(flip_uvs(&m, &side, true), cylinder());
+    }
+
+    #[test]
+    fn caras_repetidas_o_desordenadas_dan_lo_mismo() {
+        // El cilindro y un objeto más (las caras de `model()`, sin parte).
+        let mut m = cylinder();
+        m.objects.push(model().objects[0].clone());
+        let once: Vec<(usize, usize)> = range(0..6)
+            .into_iter()
+            .chain(range(9..12))
+            .chain([(1, 1)])
+            .collect();
+        let mut messy: Vec<(usize, usize)> = once.iter().rev().copied().collect();
+        messy.extend(once.iter().copied());
+        messy.push((0, 99));
+        for op in [rotate_uvs_90, |m: &Model3D, f: &[(usize, usize)]| {
+            flip_uvs(m, f, true)
+        }] {
+            assert_eq!(op(&m, &messy), op(&m, &once));
+        }
+        // La caja del pedazo pedido de la tira (6 de 8), no la de toda la parte.
+        let r = rotate_uvs_90(&m, &once);
+        let (lo, hi) = uv_bounds(&m, &range(0..6)).unwrap();
+        let (rlo, rhi) = uv_bounds(&r, &range(0..6)).unwrap();
+        assert_eq!((rhi.0 - rlo.0, rhi.1 - rlo.1), (hi.1 - lo.1, hi.0 - lo.0));
+        assert_eq!(r.objects[0].mesh.faces[6..9], m.objects[0].mesh.faces[6..9]);
+    }
+
+    #[test]
+    fn mover_las_uvs_de_una_esfera_grande_es_rapido() {
+        // 64×32: 2048 caras de una sola parte, como al arrastrar la caja UV de la esfera.
+        let mut m = model();
+        m.objects[0].mesh = crate::primitive_mesh(&crate::Primitive::Sphere {
+            sides: 64,
+            rings: 32,
+        });
+        let all = range(0..m.objects[0].mesh.faces.len());
+        let start = std::time::Instant::now();
+        let moved = move_uvs(&m, &all, (1, 0));
+        let spent = start.elapsed();
+        assert_eq!(
+            moved.objects[0].mesh.faces[0].uvs[0].0,
+            m.objects[0].mesh.faces[0].uvs[0].0 + 1
+        );
+        // Antes (cuadrático), en debug, unos 40 s; ahora, milisegundos.
+        assert!(spent.as_millis() < 2000, "{spent:?}");
     }
 
     #[test]
