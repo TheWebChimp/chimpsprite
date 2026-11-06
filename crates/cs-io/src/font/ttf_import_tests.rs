@@ -197,3 +197,23 @@ fn a_real_outline_font_is_rasterized_into_its_cell() {
         assert_eq!(bottom + 1, build.metrics.baseline, "{}", info.family);
     }
 }
+
+#[test]
+fn rebasing_moves_the_glyphs_onto_another_baseline() {
+    // La muestra tiene la baseline en 8: a una de 10 baja 2, a una de 3 sube 5 (y se pierde lo de
+    // arriba).
+    let build = import_ttf(&exported(FontMode::OneBit), &options(10, false)).unwrap();
+    assert_eq!(build.metrics.baseline, 8);
+    let a = |glyphs: &[GlyphBuild]| glyphs.iter().find(|g| g.ch == 'A').unwrap().pixels.clone();
+    let original = a(&build.glyphs);
+    let down = a(&rebase(&build, 10));
+    assert_eq!(down.len(), original.len());
+    assert!(
+        original
+            .iter()
+            .zip(&down)
+            .all(|(o, d)| d.1 == o.1 + 2 && d.0 == o.0)
+    );
+    let up = a(&rebase(&build, 3));
+    assert!(up.len() < original.len() && up.iter().all(|p| p.1 <= 2));
+}

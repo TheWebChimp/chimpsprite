@@ -488,6 +488,28 @@ fn rasterize_font(face: &Face, chars: &[char], options: &TtfImport) -> Result<Fo
     })
 }
 
+/// Los glifos de `build` para otra fuente con la baseline en la fila `baseline`: recorridos en y
+/// (lo que quede arriba de la fila 0 se pierde). Para rellenar una fuente desde un TTF.
+pub fn rebase(build: &FontBuild, baseline: u32) -> Vec<GlyphBuild> {
+    let dy = baseline as i64 - build.metrics.baseline as i64;
+    build
+        .glyphs
+        .iter()
+        .map(|g| GlyphBuild {
+            ch: g.ch,
+            advance: g.advance,
+            pixels: g
+                .pixels
+                .iter()
+                .filter_map(|&(x, y, c)| {
+                    let y = y as i64 + dy;
+                    (y >= 0).then_some((x, y as u32, c))
+                })
+                .collect(),
+        })
+        .collect()
+}
+
 #[cfg(test)]
 #[path = "ttf_import_tests.rs"]
 mod tests;
