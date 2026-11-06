@@ -639,6 +639,47 @@ mod tests {
     }
 
     #[test]
+    fn the_kind_of_each_object_roundtrips() {
+        use cs_core::PrimitiveKind;
+        let mut doc = Document::with_sprite("one", Sprite::new(4, 4, ColorMode::Rgba));
+        let (model, _, cmd) =
+            cs_commands::model::new_model_artboard(&doc, "Cube", (24, 24), (10, 0));
+        cmd.apply(&mut doc).unwrap();
+        let m = doc.artboard_mut(model).unwrap().model.as_mut().unwrap();
+        let kinds = [
+            Some(PrimitiveKind::Cube),
+            Some(PrimitiveKind::Plane),
+            Some(PrimitiveKind::Cylinder),
+            Some(PrimitiveKind::Cone),
+            Some(PrimitiveKind::Sphere),
+            // Un objeto de un archivo de antes del tipo.
+            None,
+        ];
+        let first = m.objects[0].clone();
+        m.objects = kinds
+            .iter()
+            .map(|&kind| cs_core::Object3D {
+                kind,
+                ..first.clone()
+            })
+            .collect();
+        m.normalize_tree();
+        let (back, report) = read(&write(&doc).unwrap()).unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        let got: Vec<_> = back
+            .artboard(model)
+            .unwrap()
+            .model
+            .as_ref()
+            .unwrap()
+            .objects
+            .iter()
+            .map(|o| o.kind)
+            .collect();
+        assert_eq!(got, kinds);
+    }
+
+    #[test]
     fn a_model_opens_off_the_canvas_and_its_texture_on_it() {
         let mut doc = Document::with_sprite("one", Sprite::new(4, 4, ColorMode::Rgba));
         let (model, texture, cmd) =
