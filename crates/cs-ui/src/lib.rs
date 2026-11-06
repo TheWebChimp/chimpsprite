@@ -178,6 +178,8 @@ pub struct ChimpApp {
     preferences: bool,
     /// El diálogo de un filtro de Edit (Replace Color, Adjustments, FX), con su vista previa.
     filter_dialog: Option<filter_dialog::FilterDialog>,
+    /// Los últimos valores de Outline que se dejaron (menos el color), para la próxima vez.
+    last_outline: Option<(filters::OutlineFx, filters::FilterTarget)>,
     /// Select → Color Range… o Modify abierto.
     select_dialog: Option<select_dialogs::SelectDialog>,
     /// Frame → Frame Properties… abierto.
@@ -326,6 +328,7 @@ impl ChimpApp {
             keymap: keymap::Keymap::default(),
             preferences: false,
             filter_dialog: None,
+            last_outline: None,
             select_dialog: None,
             frame_dialog: None,
             sheet_dialog: None,
@@ -1142,10 +1145,11 @@ impl ChimpApp {
             return;
         };
         let skin = self.pixel.skin();
-        if !matches!(
-            dialog.show(ctx, &mut self.doc.editor, skin),
-            tilemap_dialog::DialogResult::Open
-        ) {
+        let result = dialog.show(ctx, &mut self.doc.editor, skin);
+        if let Some(outline) = dialog.committed_outline() {
+            self.last_outline = Some(outline);
+        }
+        if !matches!(result, tilemap_dialog::DialogResult::Open) {
             self.filter_dialog = None;
         }
     }
@@ -1207,9 +1211,29 @@ impl ChimpApp {
         }
     }
 
-    /// Abre el diálogo de `filter` (con sus valores de entrada).
+    /// Abre el diálogo de `filter` (con sus valores de entrada). Outline vuelve con los últimos
+    /// valores que se dejaron (con el color de `filter`) y Tiled como View → Tiled Mode.
     fn open_filter(&mut self, filter: filters::Filter) {
-        self.filter_dialog = Some(filter_dialog::FilterDialog::new(filter));
+        let mut target = filters::FilterTarget::default();
+        let filter = match filter {
+            filters::Filter::Outline(fx) => {
+                let mut fx = match self.last_outline {
+                    Some((last, last_target)) => {
+                        target = last_target;
+                        filters::OutlineFx {
+                            color: fx.color,
+                            ..last
+                        }
+                    }
+                    None => fx,
+                };
+                let tiled = self.doc.editor.tiled;
+                filter_dialog::set_tiled(&mut fx, tiled != editor::TiledMode::None, tiled);
+                filters::Filter::Outline(fx)
+            }
+            other => other,
+        };
+        self.filter_dialog = Some(filter_dialog::FilterDialog::new(filter).with_target(target));
     }
 
     /// Barra de pestañas: Home + documentos.
