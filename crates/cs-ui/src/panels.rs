@@ -484,10 +484,18 @@ pub fn tileset(ui: &mut egui::Ui, editor: &mut Editor, thumbs: &mut TileThumbs) 
         count.saturating_sub(1)
     ));
     let brush = editor.brush_tile();
+    // Cada miniatura con su respuesta, para soltar sobre ella un tile arrastrado.
+    let mut cells: Vec<(Rect, egui::Response)> = Vec::with_capacity(count);
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::splat(2.0);
         for i in 0..count {
-            let (rect, response) = ui.allocate_exact_size(Vec2::splat(THUMB + 4.0), Sense::click());
+            // El vacío no se arrastra; los demás sí, para reordenar.
+            let sense = if i == 0 {
+                Sense::click()
+            } else {
+                Sense::click_and_drag()
+            };
+            let (rect, response) = ui.allocate_exact_size(Vec2::splat(THUMB + 4.0), sense);
             let inner = rect.shrink(2.0);
             let painter = ui.painter();
             checker(painter, inner);
@@ -524,7 +532,17 @@ pub fn tileset(ui: &mut egui::Ui, editor: &mut Editor, thumbs: &mut TileThumbs) 
                     StrokeKind::Inside,
                 );
             }
-            if response.tip(format!("Tile {number}")).clicked() {
+            let tip = if i == 0 {
+                format!("Tile {number}")
+            } else {
+                format!("Tile {number} (drag to reorder)")
+            };
+            // Con nombre accesible ("Tile N"), como los botones.
+            response.widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Button, true, format!("Tile {number}"))
+            });
+            let response = response.tip(tip);
+            if response.clicked() {
                 editor.set_brush_tile(Tile::new(
                     i as u32,
                     brush.flip_x(),
@@ -532,8 +550,10 @@ pub fn tileset(ui: &mut egui::Ui, editor: &mut Editor, thumbs: &mut TileThumbs) 
                     brush.flip_d(),
                 ));
             }
+            cells.push((rect, response));
         }
     });
+    reorder_tiles(ui, editor, &cells);
     ui.add_space(6.0);
     ui.horizontal(|ui| {
         ui.label("Flip:");
@@ -566,6 +586,41 @@ pub fn tileset(ui: &mut egui::Ui, editor: &mut Editor, thumbs: &mut TileThumbs) 
             editor.toggle_brush_flip(Tile::FLIP_D);
         }
     });
+}
+
+/// Color del borde de la miniatura donde caería el tile arrastrado.
+const TILE_DROP: Color32 = Color32::from_rgb(255, 200, 60);
+
+/// Arrastrar una miniatura (no el vacío) y soltarla sobre otra mueve ese tile a su lugar
+/// (`Editor::move_tile`, un paso de undo); mientras tanto, la de destino lleva un borde.
+fn reorder_tiles(ui: &egui::Ui, editor: &mut Editor, cells: &[(Rect, egui::Response)]) {
+    let id = ui.id().with("tile_drag");
+    if let Some(from) = cells.iter().position(|(_, r)| r.drag_started()) {
+        ui.data_mut(|d| d.insert_temp(id, from));
+    }
+    let Some(from) = ui.data(|d| d.get_temp::<usize>(id)) else {
+        return;
+    };
+    let pointer = ui.input(|i| i.pointer.interact_pos());
+    let target = pointer
+        .and_then(|p| cells.iter().position(|(rect, _)| rect.contains(p)))
+        .filter(|&t| t != 0 && t != from);
+    if let Some(t) = target {
+        ui.painter().rect_stroke(
+            cells[t].0,
+            0.0,
+            Stroke::new(2.0, TILE_DROP),
+            StrokeKind::Inside,
+        );
+    }
+    let released = cells.get(from).is_none_or(|(_, r)| r.drag_stopped())
+        || !ui.input(|i| i.pointer.any_down());
+    if released {
+        ui.data_mut(|d| d.remove::<usize>(id));
+        if let Some(t) = target {
+            editor.move_tile(from as u32, t as u32);
+        }
+    }
 }
 
 /// Los volteos del tile del pincel con Pixel UI: X, Y y D (este, solo con tiles cuadrados).

@@ -1942,3 +1942,63 @@ fn a_tilemap_layer_shows_pixels_or_tiles_and_the_tileset_mode_in_the_options_bar
         assert!(h.editor.tiles_mode());
     }
 }
+
+/// Un frame del panel Tileset en un panel central (con accesibilidad: cada miniatura es un nodo
+/// "Tile N"); devuelve los nodos.
+fn tileset_frame(
+    ctx: &egui::Context,
+    editor: &mut Editor,
+    thumbs: &mut TileThumbs,
+    time: f64,
+    events: Vec<Event>,
+) -> Vec<(String, Rect)> {
+    let input = RawInput {
+        screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(300.0, 300.0))),
+        time: Some(time),
+        events,
+        ..Default::default()
+    };
+    let mut output = ctx.run_ui(input, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| tileset(ui, editor, thumbs));
+    });
+    output.textures_delta.clear();
+    nodes(&output)
+}
+
+#[test]
+fn dragging_a_tile_thumbnail_onto_another_moves_it_in_one_undo_step() {
+    use crate::tile_ops::test_util::{t, tile_at, tile_editor};
+    let ctx = egui::Context::default();
+    ctx.enable_accesskit();
+    let mut e = tile_editor();
+    let cmd = cs_commands::ops::set_tiles(e.sprite(), e.layer, 0, &[(0, 0, t(1))]).unwrap();
+    e.execute(cmd);
+    e.set_brush_tile(t(1));
+    let mut thumbs = TileThumbs::default();
+    let mut time = 0.0;
+    let mut run = |e: &mut Editor, events| {
+        time += 0.05;
+        tileset_frame(&ctx, e, &mut thumbs, time, events)
+    };
+    let nodes = run(&mut e, vec![]);
+    let at = |name: &str| nodes.iter().find(|(n, _)| n == name).unwrap().1.center();
+    let (a, b) = (at("Tile 1"), at("Tile 2"));
+    let steps = e.steps_done();
+    run(&mut e, vec![Event::PointerMoved(a)]);
+    run(&mut e, vec![button(a, true)]);
+    for k in 1..=4 {
+        let p = a + (b - a) * (k as f32 / 4.0);
+        run(&mut e, vec![Event::PointerMoved(p)]);
+    }
+    run(&mut e, vec![button(b, false)]);
+    run(&mut e, vec![]);
+    assert_eq!(e.steps_done(), steps + 1, "one undo step");
+    assert_eq!(tile_at(&e, (0, 0)), t(2), "the cell follows its tile");
+    assert_eq!(e.brush_tile(), t(2), "and so does the brush");
+    // Un clic sin arrastrar sigue eligiendo el tile del pincel.
+    run(&mut e, vec![Event::PointerMoved(a)]);
+    run(&mut e, vec![button(a, true)]);
+    run(&mut e, vec![button(a, false)]);
+    assert_eq!(e.brush_tile(), t(1));
+    assert_eq!(e.steps_done(), steps + 1);
+}
