@@ -741,7 +741,30 @@ impl CanvasView {
             });
         }
         if self.object_menu {
-            menus::context_menu(response, |ui| crate::object_ops::arrange_items(ui, editor));
+            menus::context_menu(response, |ui| {
+                // Como en Flash: en su lugar o aislado, si es un símbolo de la biblioteca.
+                let symbol = editor.current_object_is_symbol();
+                if ui
+                    .add_enabled(symbol, menus::plain("Edit in Place"))
+                    .clicked()
+                {
+                    if let (layer, Some(object)) = (editor.layer, editor.current_object()) {
+                        editor.enter_symbol_in_place(layer, object);
+                    }
+                    ui.close();
+                }
+                if ui
+                    .add_enabled(symbol, menus::plain("Edit Symbol"))
+                    .clicked()
+                {
+                    if editor.enter_instance() {
+                        self.request_zoom(ZoomRequest::Fit);
+                    }
+                    ui.close();
+                }
+                menus::separator(ui);
+                crate::object_ops::arrange_items(ui, editor);
+            });
         }
         if self.slice_menu {
             menus::context_menu(response, |ui| {
@@ -809,7 +832,7 @@ impl CanvasView {
             editor.finish_gesture();
         }
         // Doble clic con Move: sobre un objeto, lo selecciona y entra a su fuente (a un símbolo
-        // de la biblioteca, en el modo símbolo); fuera del símbolo que se edita sale un nivel. No
+        // de la biblioteca, en su lugar); fuera del símbolo que se edita sale un nivel. No
         // sobre la barra o la etiqueta (renombra), las reglas ni la migaja de pan.
         if response.double_clicked()
             && editor.active_tool() == ToolKind::Move
@@ -823,6 +846,8 @@ impl CanvasView {
                     editor.exit_symbol_to(editor.symbol_stack.len() - 1);
                     ui.ctx().request_repaint();
                 }
+                // En su lugar la vista no se mueve: el símbolo está donde estaba la instancia.
+                Some(true) if editor.editing_in_place() => ui.ctx().request_repaint(),
                 Some(true) if editor.in_symbol_mode() => {
                     self.request_zoom(ZoomRequest::Fit);
                     ui.ctx().request_repaint();

@@ -208,12 +208,15 @@ impl Editor {
         self.active_tool() == crate::editor::ToolKind::Move && !self.selected_objects().is_empty()
     }
 
-    /// Doble clic con Move en `world`: si hay un objeto, lo selecciona y entra a su fuente (al
-    /// modo símbolo si es de la biblioteca; si es del lienzo, la activa). `None` si no hay
+    /// Doble clic con Move en `world`: si hay un objeto, lo selecciona y entra a su fuente (a un
+    /// símbolo de la biblioteca, en su lugar; si es del lienzo, la activa). `None` si no hay
     /// objeto; si no, si entró.
     pub fn open_object_at(&mut self, world: (f32, f32)) -> Option<bool> {
         let (layer, object) = self.object_at(world)?;
         self.select_object(layer, object, false);
+        if self.enter_symbol_in_place(layer, object) {
+            return Some(true);
+        }
         Some(self.enter_instance())
     }
 }

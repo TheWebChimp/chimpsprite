@@ -711,6 +711,9 @@ impl Editor {
             self.commit_floating();
         } else if self.tool == ToolKind::Move && !self.selected_objects().is_empty() {
             self.clear_object_selection();
+        } else if self.selection.is_none() && self.in_symbol_mode() {
+            // Sin nada que cancelar, sale un nivel del modo símbolo (como en Flash).
+            self.exit_symbol_to(self.symbol_stack.len() - 1);
         } else {
             self.deselect();
         }

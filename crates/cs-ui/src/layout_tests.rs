@@ -2944,13 +2944,78 @@ fn the_library_state_belongs_to_its_tab() {
 }
 
 #[test]
+fn editing_in_place_draws_the_symbol_where_its_instance_is_over_the_dimmed_scene() {
+    for pixel in [true, false] {
+        let view = if pixel { pixel_ui() } else { plain() };
+        let mut h = LayoutHarness::new(view, true);
+        let editor = &mut h.app.doc.editor;
+        let red = cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0));
+        editor.execute(cs_commands::Command::DrawPixels {
+            layer: editor.layer,
+            frame: 0,
+            pixels: vec![(4, 6, red), (7, 8, red)],
+        });
+        let coin = editor
+            .convert_to_symbol("Coin", cs_commands::symbol::SymbolTiming::Graphic)
+            .unwrap();
+        let host = editor.active;
+        let (layer, object) = (editor.layer, editor.current_object().unwrap());
+        h.frame();
+        h.frame();
+        let zoom = h.app.doc.canvas.zoom;
+        let host_texture = h.app.doc.canvas.artboard_texture(host).expect("rendered");
+        let drawn = |h: &LayoutHarness, t: TextureId| {
+            h.textures.iter().find(|(x, _)| *x == t).map(|(_, r)| *r)
+        };
+        let host_rect = drawn(&h, host_texture).expect("the host is drawn");
+        assert!(h.app.doc.editor.enter_symbol_in_place(layer, object));
+        h.frame();
+        h.frame();
+        assert_eq!(h.app.doc.canvas.zoom, zoom, "pixel {pixel}: the view stays");
+        // El host ya no se dibuja como artboard: su contexto (atenuado) sí.
+        assert!(drawn(&h, host_texture).is_none(), "pixel {pixel}");
+        let context = h.app.doc.canvas.context_textures();
+        assert_eq!(context.len(), 1, "pixel {pixel}");
+        let context_rect = drawn(&h, context[0]).expect("the dimmed scene");
+        assert!(
+            (context_rect.min - host_rect.min).length() < 0.5,
+            "pixel {pixel}"
+        );
+        // El símbolo, justo donde estaba la instancia (4, 6) del host.
+        let coin_texture = h.app.doc.canvas.artboard_texture(coin).expect("rendered");
+        let coin_rect = drawn(&h, coin_texture).expect("the symbol is drawn");
+        let width = h
+            .app
+            .doc
+            .editor
+            .document
+            .artboard(host)
+            .unwrap()
+            .sprite
+            .width;
+        let scale = host_rect.width() / width as f32;
+        let expected = host_rect.min + Vec2::new(4.0, 6.0) * scale;
+        assert!(
+            (coin_rect.min - expected).length() < 0.5,
+            "pixel {pixel}: {coin_rect:?} vs {expected:?}"
+        );
+        assert!(h.texts.iter().any(|(t, _)| t == "Scene"), "pixel {pixel}");
+        // Esc sale y el host vuelve.
+        h.app.doc.editor.escape();
+        h.frame();
+        assert!(drawn(&h, host_texture).is_some(), "pixel {pixel}");
+        assert!(h.app.doc.canvas.context_textures().is_empty());
+    }
+}
+
+#[test]
 fn symbol_mode_shows_only_the_symbol_under_a_breadcrumb_that_leaves_it() {
     for pixel in [true, false] {
         let mut h = with_a_symbol(pixel);
         let host = h.app.doc.editor.active;
         let coin = h.app.doc.editor.library_selected.unwrap();
         let zoom = h.app.doc.canvas.zoom;
-        assert!(!h.texts.iter().any(|(t, _)| t == "Document"));
+        assert!(!h.texts.iter().any(|(t, _)| t == "Scene"));
         let host_texture = h.app.doc.canvas.artboard_texture(host).expect("rendered");
         assert!(h.app.doc.editor.enter_symbol(coin));
         h.app.doc.canvas.request_zoom(crate::view::ZoomRequest::Fit);
@@ -2968,13 +3033,13 @@ fn symbol_mode_shows_only_the_symbol_under_a_breadcrumb_that_leaves_it() {
                 .map(|(_, r, _)| *r)
         };
         assert!(crumb(&h, "Coin").is_some(), "{:?}", h.texts);
-        let document = crumb(&h, "Document").expect("the breadcrumb");
-        // Un clic en "Document" vuelve al documento, con su vista de antes.
+        let document = crumb(&h, "Scene").expect("the breadcrumb");
+        // Un clic en "Scene" vuelve al documento, con su vista de antes.
         h.click(document.center(), PointerButton::Primary);
         assert!(!h.app.doc.editor.in_symbol_mode(), "pixel {pixel}");
         assert_eq!(h.app.doc.editor.active, host);
         h.frame();
-        assert!(crumb(&h, "Document").is_none());
+        assert!(crumb(&h, "Scene").is_none());
         assert_eq!(h.app.doc.canvas.zoom, zoom, "the document view is back");
     }
 }

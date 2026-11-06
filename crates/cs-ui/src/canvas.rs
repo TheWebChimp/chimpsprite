@@ -51,6 +51,19 @@ const LABEL_SIZE: f32 = 12.0;
 const LABEL_GAP: f32 = 4.0;
 /// Alto de la franja de la migaja de pan del modo símbolo (arriba del lienzo).
 const CRUMBS_PX: f32 = 14.0;
+/// Edit in Place: cuánto tapa el velo del color del fondo al contexto.
+const IN_PLACE_DIM: f32 = 0.55;
+/// Un rectángulo del mundo: esquina de arriba a la izquierda y la de abajo a la derecha.
+type WorldRect = ((i32, i32), (i32, i32));
+
+/// Lo que se ve atenuado alrededor del símbolo editado en su lugar: una textura por artboard del
+/// contexto y su rectángulo en el mundo, compuestos con la revisión y la pila de `key`.
+#[derive(Default)]
+struct InPlaceView {
+    textures: HashMap<ArtboardId, TextureHandle>,
+    shown: Vec<(ArtboardId, WorldRect)>,
+    key: Option<(u64, Vec<crate::symbol_ops::SymbolLevel>)>,
+}
 
 /// Los artboards que muestra el lienzo, en su orden: los del lienzo o, en el modo símbolo o en el
 /// workspace de una fuente, solo el que se edita.
@@ -212,6 +225,8 @@ pub struct CanvasView {
     /// El zoom y el paneo del documento al entrar al modo símbolo o al workspace de una fuente:
     /// se restauran al volver al lienzo.
     symbol_return_view: Option<(f32, Vec2)>,
+    /// Edit in Place: lo que se ve atenuado alrededor del símbolo (ver `draw_in_place_context`).
+    context: InPlaceView,
     /// Si se ve la migaja de pan (modo símbolo) en este frame.
     crumbs_shown: bool,
     /// El rect de golpe de la línea del ancho del glifo actual, como se dibujó en el último
@@ -341,6 +356,7 @@ impl Default for CanvasView {
             symmetry_color: None,
             ppp: 1.0,
             symbol_return_view: None,
+            context: InPlaceView::default(),
             crumbs_shown: false,
             advance_line: None,
             advance_drag: None,
@@ -831,7 +847,17 @@ impl CanvasView {
             self.texture_panes = None;
             self.header_rect = None;
             self.object_bar_rect = None;
-            self.show_artboards(ui, &response, rect, editor, dialog, view_settings);
+            if editor.editing_in_place() {
+                // En su lugar, el símbolo va sin la ventana de Pixel UI ni su nombre: se ve como
+                // la instancia, sobre el contexto atenuado.
+                let window = self.artboard_window.take();
+                let mut view = *view_settings;
+                view.artboard_names = false;
+                self.show_artboards(ui, &response, rect, editor, dialog, &view);
+                self.artboard_window = window;
+            } else {
+                self.show_artboards(ui, &response, rect, editor, dialog, view_settings);
+            }
         }
         // La barra de estado (dibujada antes) muestra el zoom de otra vista: otro frame.
         if self.texture_zoom != zoom_before {
@@ -972,11 +998,14 @@ impl CanvasView {
             self.rendered_revision = (!painting).then_some(editor.revision);
         }
 
+        self.refresh_in_place_context(&ctx, editor, document, painting);
+
         let checker = self.checker(&ctx);
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 0.0, self.background);
 
         let ppp = ctx.pixels_per_point();
+        self.draw_in_place_context(&painter, rect, checker, ppp);
         self.draw_tiled(&painter, rect, editor, document, checker, ppp);
         self.advance_line = None;
         for artboard in shown_artboards(document, editor) {
@@ -1759,6 +1788,99 @@ impl CanvasView {
 
     /// Guarda la vista del documento al entrar al modo símbolo o al workspace de una fuente y la
     /// restaura al volver al lienzo.
+    /// Recompone las texturas del contexto de Edit in Place si cambió el documento o la pila, o
+    /// si se está pintando (las otras instancias del símbolo se ven en vivo). Fuera de Edit in
+    /// Place las suelta.
+    fn refresh_in_place_context(
+        &mut self,
+        ctx: &egui::Context,
+        editor: &Editor,
+        document: &cs_core::Document,
+        painting: bool,
+    ) {
+        if !editor.editing_in_place() {
+            self.context = InPlaceView::default();
+            return;
+        }
+        let key = (editor.revision, editor.symbol_stack.clone());
+        if !painting && self.context.key.as_ref() == Some(&key) {
+            return;
+        }
+        let Some(context) = editor.in_place_context(document) else {
+            return;
+        };
+        let doc = &context.document;
+        let mut shown = Vec::new();
+        for &id in &context.artboards {
+            let Some(artboard) = doc.artboard(id) else {
+                continue;
+            };
+            let frame = editor
+                .frame_of(id)
+                .min(artboard.sprite.frames.len().saturating_sub(1));
+            let sprite = &*cs_render::materialize(doc, &artboard.sprite, frame..frame + 1);
+            let pixels = cs_render::render_frame(sprite, frame);
+            let bytes: Vec<u8> = pixels.iter().flat_map(|c| [c.r, c.g, c.b, c.a]).collect();
+            let size = [sprite.width as usize, sprite.height as usize];
+            let image = ColorImage::from_rgba_unmultiplied(size, &bytes);
+            match self.context.textures.get_mut(&id) {
+                Some(tex) => tex.set(image, TextureOptions::NEAREST),
+                None => {
+                    let name = format!("in-place-context-{}", id.0);
+                    let tex = ctx.load_texture(name, image, TextureOptions::NEAREST);
+                    self.context.textures.insert(id, tex);
+                }
+            }
+            shown.push((id, artboard.rect()));
+        }
+        self.context
+            .textures
+            .retain(|id, _| shown.iter().any(|s| s.0 == *id));
+        self.context.shown = shown;
+        self.context.key = (!painting).then_some(key);
+    }
+
+    /// El contexto de Edit in Place: cada artboard con su damero, sin ventana ni nombre, y encima
+    /// un velo del color del fondo (`IN_PLACE_DIM`). Va debajo del símbolo.
+    fn draw_in_place_context(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        checker: egui::TextureId,
+        ppp: f32,
+    ) {
+        if self.context.shown.is_empty() {
+            return;
+        }
+        let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+        for &(id, ((x0, y0), (x1, y1))) in &self.context.shown {
+            let r = Rect::from_min_max(
+                self.to_screen(rect, (x0, y0)),
+                self.to_screen(rect, (x1, y1)),
+            );
+            let screen = WindowLayout::pixels_on_screen(r, ppp);
+            if !screen.intersects(rect) {
+                continue;
+            }
+            let uv = checker_uv((x1 - x0) as u32, (y1 - y0) as u32);
+            painter.image(checker, screen, uv, Color32::WHITE);
+            if let Some(tex) = self.context.textures.get(&id) {
+                painter.image(tex.id(), screen, full_uv, Color32::WHITE);
+            }
+        }
+        painter.rect_filled(rect, 0.0, self.background.gamma_multiply(IN_PLACE_DIM));
+    }
+
+    /// Las texturas del contexto de Edit in Place que se dibujan (para los tests).
+    #[cfg(test)]
+    pub(crate) fn context_textures(&self) -> Vec<egui::TextureId> {
+        self.context
+            .shown
+            .iter()
+            .filter_map(|(id, _)| self.context.textures.get(id).map(|t| t.id()))
+            .collect()
+    }
+
     fn sync_symbol_view(&mut self, editor: &Editor) {
         if editor.single_artboard() {
             self.symbol_return_view.get_or_insert((self.zoom, self.pan));
