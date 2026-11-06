@@ -2590,6 +2590,8 @@ fn with_a_menu_open_hovering_another_title_switches_to_it() {
     assert!(!has(&h, "Copy Merged"), "nothing open");
     open_menu(&mut h, "File");
     assert!(has(&h, "Export"), "File open");
+    // El menú dibuja "…" como "...".
+    assert!(has(&h, "Export Tiled Map...") && has(&h, "Import Tiled Map..."));
     h.frame_with(vec![Event::PointerMoved(h.button("Edit").center())]);
     for _ in 0..3 {
         h.frame();

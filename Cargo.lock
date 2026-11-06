@@ -1059,6 +1059,7 @@ dependencies = [
 name = "cs-io"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "base64 0.22.1",
  "cs-commands",
  "cs-core",
  "cs-raster",
@@ -1070,6 +1071,7 @@ dependencies = [
  "log",
  "png",
  "proptest",
+ "quick-xml",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

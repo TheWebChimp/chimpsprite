@@ -9,6 +9,8 @@ cs-core.workspace = true
 cs-commands.workspace = true
 cs-render.workspace = true
 flate2 = "1.1"
+base64 = "0.22"
+quick-xml = "0.41"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 png.workspace = true
 gif = "0.14"

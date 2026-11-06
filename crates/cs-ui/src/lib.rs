@@ -90,6 +90,7 @@ mod symbol_ops;
 mod tabs;
 mod theme;
 mod tile_ops;
+mod tiled_dialog;
 mod tilemap_dialog;
 mod timeline;
 mod timeline_clip;
@@ -208,6 +209,10 @@ pub struct ChimpApp {
     export: Option<export_dialog::ExportDialog>,
     /// Opciones de la última exportación, para reabrir el diálogo igual.
     last_export: export_dialog::ExportDialog,
+    /// File → Export Tiled Map… abierto.
+    tiled_export: Option<tiled_dialog::TiledDialog>,
+    /// Opciones de la última exportación a Tiled.
+    last_tiled: tiled_dialog::TiledDialog,
     /// Cerrar sin preguntar (ya se confirmó).
     allow_close: bool,
     title: String,
@@ -353,6 +358,8 @@ impl ChimpApp {
             message: None,
             export: None,
             last_export: export_dialog::ExportDialog::default(),
+            tiled_export: None,
+            last_tiled: tiled_dialog::TiledDialog::default(),
             allow_close: false,
             title: String::new(),
             clipboard: None,
