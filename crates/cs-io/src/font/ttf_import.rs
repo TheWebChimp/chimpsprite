@@ -33,6 +33,8 @@ pub struct TtfInfo {
     pub color: bool,
     /// Cuántos caracteres tiene (sin el espacio ni los de control).
     pub chars: usize,
+    /// Sus primeros caracteres (hasta 12), para mostrarla si no tiene letras latinas.
+    pub sample: String,
 }
 
 /// Qué caracteres importar.
@@ -149,6 +151,7 @@ pub fn ttf_info(bytes: &[u8]) -> Result<TtfInfo> {
         pixel_grid: px.is_some(),
         color: face.tables().colr.is_some(),
         chars: chars.len(),
+        sample: chars.iter().take(12).collect(),
     })
 }
 

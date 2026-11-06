@@ -41,6 +41,7 @@ fn the_info_of_our_ttf_suggests_its_cell_height() {
     assert_eq!(info.suggested_px, 10);
     assert!(!info.color);
     assert_eq!(info.chars, 6);
+    assert_eq!(info.sample, "Agiz€\u{1F600}");
     assert!(ttf_info(&exported(FontMode::Color)).unwrap().color);
     assert!(ttf_info(b"not a font").is_err());
 }

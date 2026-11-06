@@ -224,8 +224,9 @@ pub struct ImportFontDialog {
     pub threshold: u32,
     pub chars: CharRange,
     pub color: bool,
-    /// La vista previa y las opciones con que se hizo.
-    preview: Option<(TtfImport, Option<Artboard>)>,
+    /// La vista previa (su texto y la fuente con esos caracteres) y las opciones con que se
+    /// hizo.
+    preview: Option<(TtfImport, Option<(String, Artboard)>)>,
 }
 
 impl ImportFontDialog {
@@ -257,17 +258,24 @@ impl ImportFontDialog {
         ttf_import::import_ttf(&self.bytes, &self.options()).map_err(|e| e.to_string())
     }
 
-    /// La vista previa con las opciones de ahora (se rehace solo si cambiaron).
-    fn preview(&mut self) -> Option<&Artboard> {
+    /// La vista previa con las opciones de ahora (se rehace solo si cambiaron): "AaBbGg 0123"
+    /// o, si la fuente casi no tiene esas letras, sus primeros caracteres.
+    fn preview(&mut self) -> Option<&(String, Artboard)> {
         let options = self.options();
         if self.preview.as_ref().is_none_or(|(o, _)| *o != options) {
-            let chars: Vec<char> = PREVIEW_TEXT.chars().collect();
-            let artboard = ttf_import::import_chars(&self.bytes, &chars, &options)
-                .ok()
-                .map(preview_artboard);
-            self.preview = Some((options, artboard));
+            let raster = |text: &str| {
+                let chars: Vec<char> = text.chars().collect();
+                ttf_import::import_chars(&self.bytes, &chars, &options).ok()
+            };
+            let latin = raster(PREVIEW_TEXT).filter(|b| b.glyphs.len() >= 3);
+            let preview = match latin {
+                Some(build) => Some((PREVIEW_TEXT.to_owned(), build)),
+                None => raster(&self.info.sample).map(|b| (self.info.sample.clone(), b)),
+            };
+            let preview = preview.map(|(text, build)| (text, preview_artboard(build)));
+            self.preview = Some((options, preview));
         }
-        self.preview.as_ref().and_then(|(_, a)| a.as_ref())
+        self.preview.as_ref().and_then(|(_, p)| p.as_ref())
     }
 
     pub fn show(&mut self, ctx: &egui::Context, skin: Option<&Skin>) -> DialogResult {
@@ -323,8 +331,8 @@ impl ImportFontDialog {
                         ui.end_row();
                     });
                 ui.add_space(6.0);
-                if let Some(artboard) = self.preview() {
-                    paint_preview(ui, artboard);
+                if let Some((text, artboard)) = self.preview() {
+                    paint_preview(ui, artboard, text);
                 }
             });
         finish(ctx, open, result)
@@ -347,8 +355,8 @@ fn preview_artboard(build: FontBuild) -> Artboard {
     }
 }
 
-/// [`PREVIEW_TEXT`] escrito con la fuente, en tinta oscura sobre blanco (como el Test Drive).
-fn paint_preview(ui: &mut egui::Ui, artboard: &Artboard) {
+/// `text` escrito con la fuente, en tinta oscura sobre blanco (como el Test Drive).
+fn paint_preview(ui: &mut egui::Ui, artboard: &Artboard, text: &str) {
     let Some(view) = artboard.font_view() else {
         return;
     };
@@ -358,7 +366,7 @@ fn paint_preview(ui: &mut egui::Ui, artboard: &Artboard) {
     let painter = ui.painter().with_clip_rect(paper.intersect(ui.clip_rect()));
     painter.rect_filled(paper, 0.0, Color32::WHITE);
     let origin = paper.min + Vec2::splat(PREVIEW_PAD);
-    for (x, y, c) in cs_tools::text::font_text(&view, PREVIEW_TEXT, PREVIEW_SCALE) {
+    for (x, y, c) in cs_tools::text::font_text(&view, text, PREVIEW_SCALE) {
         let color = c.map_or(PREVIEW_INK, |c| {
             Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
         });
