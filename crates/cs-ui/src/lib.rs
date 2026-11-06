@@ -646,8 +646,11 @@ impl ChimpApp {
         );
         match action {
             Some(model_panel::ModelAction::NewModel) => self.new_model = Some(Default::default()),
-            Some(model_panel::ModelAction::Bake) if self.doc.editor.is_model() => {
+            Some(model_panel::ModelAction::Bake) if self.doc.editor.edited_model().is_some() => {
                 self.bake = Some(bake_dialog::BakeDialog::new(&self.doc.editor));
+            }
+            Some(model_panel::ModelAction::TextureSize(side)) => {
+                self.palette_confirm = Some(palette_ui::Confirm::TextureSize(side));
             }
             _ => {}
         }
@@ -843,7 +846,7 @@ impl ChimpApp {
     fn show_workspace_panel(&mut self, ctx: &egui::Context) {
         if self.doc.editor.is_font() {
             self.show_font_beside_panel(ctx);
-        } else if self.doc.editor.is_model() {
+        } else if self.doc.editor.workspace_model().is_some() {
             self.show_model_beside_panel(ctx);
         }
     }
@@ -1573,7 +1576,11 @@ impl ChimpApp {
             })
             .inner;
         // Un artboard de fuente o modelo no tiene timeline: sus frames son los glifos. La preferencia queda igual para los sprites.
-        if self.view.timeline && !self.doc.editor.is_structure_locked() {
+        // Tampoco en la pestaña de un modelo en modo Texture (el activo es su textura).
+        if self.view.timeline
+            && !self.doc.editor.is_structure_locked()
+            && !self.doc.editor.model_edit_on()
+        {
             let mut panel = egui::Panel::bottom("timeline")
                 .resizable(true)
                 .default_size(190.0);
@@ -1786,8 +1793,9 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
     // En el workspace del modelo (siempre en modo Edit): 1–4 cambian qué se elige, G y S
     // arrancan un gesto que sigue al puntero, Enter lo confirma, Esc lo cancela (o vacía la
     // selección) y las flechas mueven un paso de cuadrícula (no cambian de frame ni de capa).
-    // Con Shift, G y S siguen con sus otros atajos.
-    if editor.model_edit_on() {
+    // Con Shift, G y S siguen con sus otros atajos. En modo Texture las teclas son las de
+    // siempre, sobre la textura.
+    if editor.pixel_actions_blocked() {
         use cs_3d::SelectMode;
         let mode = match key {
             _ if shift => None,

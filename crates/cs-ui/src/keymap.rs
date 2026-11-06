@@ -358,7 +358,8 @@ impl Action {
 
     /// Si vale en el workspace de un modelo (ChimpCAD): lo que no toca el sprite escondido del
     /// modelo (archivos, pestañas, undo, vistas, paneles, herramientas y colores). Lo demás
-    /// (selección, relleno, voltear, capas, frames…) dejaría pasos de undo invisibles.
+    /// (selección, relleno, voltear, capas, frames…) dejaría pasos de undo invisibles. Solo en
+    /// el modo Model: en Texture todo actúa sobre la textura.
     pub fn in_model_workspace(self) -> bool {
         use Action::*;
         matches!(

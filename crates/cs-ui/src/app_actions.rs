@@ -11,8 +11,9 @@ impl ChimpApp {
         }
         let typing = ctx.egui_wants_keyboard_input();
         let painting = self.has_doc() && self.doc.editor.is_painting();
-        // En el workspace de un modelo el sprite (escondido) no se toca: ni copiar ni pegar.
-        let model = self.has_doc() && self.doc.editor.model_edit_on();
+        // En el modo Model del workspace de un modelo el sprite (escondido) no se toca: ni copiar
+        // ni pegar. En modo Texture se copia y se pega en la textura.
+        let model = self.has_doc() && self.doc.editor.pixel_actions_blocked();
         if self.has_doc() && !typing && !painting && !model {
             self.clipboard_events(ctx);
         }
@@ -54,7 +55,10 @@ impl ChimpApp {
             if !allowed || (action.needs_document() && !self.has_doc()) {
                 continue;
             }
-            if self.has_doc() && self.doc.editor.model_edit_on() && !action.in_model_workspace() {
+            if self.has_doc()
+                && self.doc.editor.pixel_actions_blocked()
+                && !action.in_model_workspace()
+            {
                 continue;
             }
             // Que no le llegue también a egui (Tab mueve el foco, por ejemplo).

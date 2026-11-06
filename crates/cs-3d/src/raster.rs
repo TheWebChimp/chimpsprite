@@ -44,7 +44,125 @@ pub fn pick_object(input: &RenderInput, x: u32, y: u32) -> Option<usize> {
         return None;
     }
     let r = rasterize(input);
+    r.ids[(y * input.size.0 + x) as usize].map(|(o, _)| o)
+}
+
+/// La cara `(objeto, índice de cara)` que se ve en el pixel `(x, y)`, si hay alguna.
+pub fn pick_face(input: &RenderInput, x: u32, y: u32) -> Option<(usize, usize)> {
+    if x >= input.size.0 || y >= input.size.1 {
+        return None;
+    }
+    let r = rasterize(input);
     r.ids[(y * input.size.0 + x) as usize]
+}
+
+/// El contorno de 1 px de las caras `faces` `(objeto, cara)` en el render de `input`: por cada
+/// cara, los pixeles que cubre su polígono (con la misma regla que el render, aunque esté tapada
+/// o de espaldas) y que tienen un vecino de 4 conexión fuera de él. Fila por fila, `size.0` ×
+/// `size.1`.
+pub fn face_outline(input: &RenderInput, faces: &[(usize, usize)]) -> Vec<bool> {
+    let (w, h) = input.size;
+    let n = (w as usize) * (h as usize);
+    let mut out = vec![false; n];
+    if n == 0 || faces.is_empty() {
+        return out;
+    }
+    let view = View::new(&input.camera.unwrap_or(input.model.camera), w, h);
+    let mut mask = vec![false; n];
+    for &(o, f) in faces {
+        let Some(obj) = input.model.objects.get(o) else {
+            continue;
+        };
+        let Some(face) = obj.mesh.faces.get(f).filter(|face| face.verts.len() >= 3) else {
+            continue;
+        };
+        let world = world_vertices(obj, input.extra_yaw);
+        let Some(mut poly) = face
+            .verts
+            .iter()
+            .map(|&v| {
+                world.get(v as usize).map(|&p| ClipVert {
+                    p: view.to_view(p),
+                    u: 0.0,
+                    v: 0.0,
+                })
+            })
+            .collect::<Option<Vec<ClipVert>>>()
+        else {
+            continue;
+        };
+        if view.focal.is_some() {
+            poly = clip_near(&poly);
+            if poly.len() < 3 {
+                continue;
+            }
+        }
+        let screen: Vec<ScreenVert> = poly.iter().map(|c| view.project(c)).collect();
+        mask.fill(false);
+        for i in 1..screen.len() - 1 {
+            cover_triangle(&mut mask, w, h, &screen[0], &screen[i], &screen[i + 1]);
+        }
+        let (wu, hu) = (w as usize, h as usize);
+        for y in 0..hu {
+            for x in 0..wu {
+                let i = y * wu + x;
+                if !mask[i] {
+                    continue;
+                }
+                let edge = x == 0
+                    || y == 0
+                    || x + 1 == wu
+                    || y + 1 == hu
+                    || !mask[i - 1]
+                    || !mask[i + 1]
+                    || !mask[i - wu]
+                    || !mask[i + wu];
+                if edge {
+                    out[i] = true;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Marca en `mask` los pixeles que cubre el triángulo (de cualquier orientación), con la regla
+/// top-left del render.
+fn cover_triangle(
+    mask: &mut [bool],
+    w: u32,
+    h: u32,
+    a: &ScreenVert,
+    b: &ScreenVert,
+    c: &ScreenVert,
+) {
+    let (a, mut b, mut c) = (a, b, c);
+    let mut area = edge(a, b, c.x, c.y);
+    if area < 0.0 {
+        std::mem::swap(&mut b, &mut c);
+        area = -area;
+    }
+    if area <= 0.0 || !area.is_finite() {
+        return;
+    }
+    let min_x = a.x.min(b.x).min(c.x).floor().max(0.0) as u32;
+    let min_y = a.y.min(b.y).min(c.y).floor().max(0.0) as u32;
+    let max_x = (a.x.max(b.x).max(c.x).ceil().max(0.0) as u32).min(w);
+    let max_y = (a.y.max(b.y).max(c.y).ceil().max(0.0) as u32).min(h);
+    let tl = [top_left(b, c), top_left(c, a), top_left(a, b)];
+    let inside = |v: f64, tl: bool| v > 0.0 || (v == 0.0 && tl);
+    for py in min_y..max_y {
+        let fy = py as f64 + 0.5;
+        for px in min_x..max_x {
+            let fx = px as f64 + 0.5;
+            if inside(edge(b, c, fx, fy), tl[0])
+                && inside(edge(c, a, fx, fy), tl[1])
+                && inside(edge(a, b, fx, fy), tl[2])
+            {
+                mask[(py * w + px) as usize] = true;
+            }
+        }
+    }
 }
 
 /// El color de las caras cuando no hay textura.
@@ -265,12 +383,14 @@ struct Raster {
     h: u32,
     color: Vec<Rgba>,
     depth: Vec<f32>,
-    ids: Vec<Option<usize>>,
+    /// `(objeto, cara)` visibles en cada pixel.
+    ids: Vec<Option<(usize, usize)>>,
 }
 
 /// Lo que comparte cada pixel de una cara.
 struct FaceCtx<'a> {
-    id: usize,
+    /// `(objeto, cara)`.
+    id: (usize, usize),
     steps: u8,
     texture: Option<&'a Texture<'a>>,
     palette: &'a [Rgba],
@@ -374,7 +494,7 @@ fn rasterize(input: &RenderInput) -> Raster {
         let s = obj.transform.scale;
         // Una escala negativa en un número impar de ejes invierte el sentido de las caras.
         let mirrored = (s.x < 0) ^ (s.y < 0) ^ (s.z < 0);
-        for face in &obj.mesh.faces {
+        for (face_i, face) in obj.mesh.faces.iter().enumerate() {
             if face.verts.len() < 3 || face.uvs.len() != face.verts.len() {
                 continue;
             }
@@ -438,7 +558,7 @@ fn rasterize(input: &RenderInput) -> Raster {
                 }
             };
             let ctx = FaceCtx {
-                id,
+                id: (id, face_i),
                 steps,
                 texture,
                 palette: input.palette,
@@ -741,5 +861,46 @@ mod tests {
         assert_eq!(pick_object(&inp, 8, 8), Some(1));
         assert_eq!(pick_object(&inp, 0, 0), None);
         assert_eq!(pick_object(&inp, 99, 99), None);
+    }
+
+    #[test]
+    fn pick_face_da_la_cara_de_enfrente() {
+        let m = model(vec![cube()]);
+        let inp = input(&m, 32, &[ROJO], 1);
+        let (o, f) = pick_face(&inp, 16, 16).expect("hay cara en el centro");
+        assert_eq!(o, 0);
+        let mesh = &m.objects[0].mesh;
+        assert!(
+            mesh.faces[f]
+                .verts
+                .iter()
+                .all(|&v| mesh.vertices[v as usize].z > 0),
+            "la cara elegida debe ser la de z+"
+        );
+        assert_eq!(pick_face(&inp, 0, 0), None);
+        assert_eq!(pick_face(&inp, 99, 99), None);
+    }
+
+    #[test]
+    fn contorno_de_la_cara_de_enfrente() {
+        let m = model(vec![cube()]);
+        let inp = input(&m, 16, &[ROJO], 1);
+        let front = pick_face(&inp, 8, 8).expect("la cara de enfrente");
+        assert!(face_outline(&inp, &[]).iter().all(|on| !on));
+        let out = face_outline(&inp, &[front]);
+        let at = |x: usize, y: usize| out[y * 16 + x];
+        // La cara cubre 4..12: el contorno es su primera y su última fila y columna.
+        for k in 4..12 {
+            assert!(
+                at(k, 4) && at(k, 11) && at(4, k) && at(11, k),
+                "borde en {k}"
+            );
+        }
+        assert!(!at(8, 8) && !at(5, 5) && !at(10, 10), "adentro no");
+        assert!(
+            !at(3, 8) && !at(12, 8) && !at(8, 3) && !at(8, 12),
+            "afuera no"
+        );
+        assert_eq!(out.iter().filter(|&&on| on).count(), 28);
     }
 }

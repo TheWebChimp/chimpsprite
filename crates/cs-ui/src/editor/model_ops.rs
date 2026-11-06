@@ -37,15 +37,30 @@ impl Editor {
         self.model().is_some()
     }
 
+    /// El artboard del modelo que se edita: el del workspace en modo Texture (ahí el activo es
+    /// su textura); si no, el activo.
+    pub fn model_id(&self) -> ArtboardId {
+        match self.workspace {
+            Some(w) if self.model_edit.mode == super::CadMode::Texture => w,
+            _ => self.active,
+        }
+    }
+
+    /// El modelo que se edita (el de [`Self::model_id`]): el que tocan el panel 3D y el modo
+    /// Edit, aunque el activo sea su textura.
+    pub fn edited_model(&self) -> Option<&Model3D> {
+        self.document.artboard(self.model_id())?.model.as_ref()
+    }
+
     /// Fuente o modelo: sus frames, capas, modo de color y tamaño no se tocan con las acciones
     /// de siempre.
     pub fn is_structure_locked(&self) -> bool {
         self.is_font() || self.is_model()
     }
 
-    /// El objeto elegido del modelo activo.
+    /// El objeto elegido del modelo que se edita.
     pub fn selected_object(&self) -> Option<usize> {
-        let count = self.model()?.objects.len();
+        let count = self.edited_model()?.objects.len();
         self.model_object.filter(|&i| i < count)
     }
 
@@ -53,9 +68,11 @@ impl Editor {
         self.model_object = i;
         // En el modo Edit, elegir un objeto (panel o perspectiva) pasa a modo Object con ese
         // objeto: convertirlo a sus aristas o vértices elegiría todo el bloque (solo si el
-        // modelo en edición es el activo: la selección es de ese modelo).
-        if self.model_edit.artboard == Some(self.active)
-            && let Some(m) = self.model()
+        // modelo del modo Edit es el que se edita: la selección es de ese modelo). En modo
+        // Texture la selección se queda en caras.
+        if self.model_edit.artboard == Some(self.model_id())
+            && self.model_edit.mode == super::CadMode::Model
+            && let Some(m) = self.edited_model()
         {
             self.model_edit.selection = cs_3d::Selection {
                 mode: cs_3d::SelectMode::Object,
@@ -70,7 +87,7 @@ impl Editor {
     }
 
     pub fn add_primitive(&mut self, p: Primitive) -> bool {
-        let Some(mut model) = self.model().cloned() else {
+        let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
         model.objects.push(Object3D {
@@ -88,7 +105,7 @@ impl Editor {
     }
 
     pub fn remove_object(&mut self, i: usize) -> bool {
-        let Some(mut model) = self.model().cloned() else {
+        let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
         if i >= model.objects.len() {
@@ -104,7 +121,7 @@ impl Editor {
     }
 
     pub fn set_object(&mut self, i: usize, obj: Object3D) -> bool {
-        let Some(mut model) = self.model().cloned() else {
+        let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
         let Some(slot) = model.objects.get_mut(i) else {
@@ -117,10 +134,10 @@ impl Editor {
     /// Como `set_model`, pero los cambios seguidos del mismo `group` (un arrastre) son un solo
     /// paso de undo.
     pub fn set_model_grouped(&mut self, model: Model3D, group: eframe::egui::Id) -> bool {
-        if self.model() == Some(&model) {
+        if self.edited_model() == Some(&model) {
             return false;
         }
-        let cmd = set_model_cmd(self.active, model);
+        let cmd = set_model_cmd(self.model_id(), model);
         self.execute_doc_grouped(cmd, group.value())
     }
 
@@ -146,18 +163,23 @@ impl Editor {
     }
 
     /// Una textura nueva (la plantilla de las primitivas, con la paleta del modelo), a la derecha
-    /// de todo, y asignada al modelo activo: un solo paso de undo. El modelo sigue activo.
+    /// de todo, y asignada al modelo que se edita: un solo paso de undo. El modelo sigue activo
+    /// (en modo Texture se activa la textura nueva).
     pub fn new_texture(&mut self) -> bool {
-        let Some(mut model) = self.model().cloned() else {
+        let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
         let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
         let id = self.document.next_artboard_id();
+        let model_id = self.model_id();
+        let Some(owner) = self.document.artboard(model_id) else {
+            return false;
+        };
         let artboard = Artboard {
             id,
-            name: format!("{} Texture", self.artboard().name),
+            name: format!("{} Texture", owner.name),
             position: (x1 + 16, y0),
-            sprite: texture_template(&self.sprite().palette),
+            sprite: texture_template(&owner.sprite.palette),
             guides: Vec::new(),
             symmetry: Default::default(),
             in_library: false,
@@ -170,26 +192,27 @@ impl Editor {
                 index: self.document.artboards.len(),
                 artboard: Box::new(artboard),
             },
-            set_model_cmd(self.active, model),
+            set_model_cmd(model_id, model),
         ]);
         self.execute_doc(cmd)
     }
 
-    /// Cuántos frames tiene la textura del modelo activo (0 sin textura o si no es un modelo).
+    /// Cuántos frames tiene la textura del modelo que se edita (0 sin textura o si no es un
+    /// modelo).
     pub fn model_texture_frames(&self) -> usize {
-        self.model()
+        self.edited_model()
             .and_then(|m| m.texture)
-            .filter(|&id| id != self.active)
+            .filter(|&id| id != self.model_id())
             .and_then(|id| self.document.artboard(id))
             .filter(|t| t.model.is_none())
             .map_or(0, |t| t.sprite.frames.len())
     }
 
-    /// Hornea el modelo activo (ver [`cs_render::bake_model`]) en un artboard normal nuevo,
-    /// `"{modelo} · bake"`, a la derecha de todo: un solo paso de undo. El modelo sigue
-    /// activo.
+    /// Hornea el modelo que se edita (ver [`cs_render::bake_model`]) en un artboard normal
+    /// nuevo, `"{modelo} · bake"`, a la derecha de todo: un solo paso de undo. El activo no
+    /// cambia.
     pub fn bake(&mut self, options: BakeOptions) -> bool {
-        self.bake_artboard(self.active, options)
+        self.bake_artboard(self.model_id(), options)
     }
 
     /// Como [`Self::bake`], pero del modelo `id` aunque no sea el activo.
@@ -223,18 +246,19 @@ impl Editor {
     }
 
     fn edit_model(&mut self, f: impl FnOnce(&mut Model3D)) -> bool {
-        let Some(mut model) = self.model().cloned() else {
+        let Some(mut model) = self.edited_model().cloned() else {
             return false;
         };
         f(&mut model);
         self.set_model(model)
     }
 
+    /// El modelo nuevo del que se edita (el del workspace en modo Texture, no la textura activa).
     pub(super) fn set_model(&mut self, model: Model3D) -> bool {
-        if self.model() == Some(&model) {
+        if self.edited_model() == Some(&model) {
             return false;
         }
-        self.execute_doc(set_model_cmd(self.active, model))
+        self.execute_doc(set_model_cmd(self.model_id(), model))
     }
 }
 
@@ -251,14 +275,18 @@ pub fn wrap_angle(tenths: i32) -> i32 {
 }
 
 impl Editor {
-    /// Elige el objeto del modelo activo que se ve en el pixel local `(x, y)` (ninguno si ahí
-    /// no hay nada).
+    /// Elige el objeto del modelo que se edita que se ve en el pixel local `(x, y)` (ninguno si
+    /// ahí no hay nada).
     pub fn pick_model_object(&mut self, (x, y): (i32, i32)) {
-        if !self.is_model() {
+        let Some(artboard) = self
+            .document
+            .artboard(self.model_id())
+            .filter(|a| a.model.is_some())
+        else {
             return;
-        }
+        };
         let hit = (x >= 0 && y >= 0)
-            .then(|| cs_render::model_pick(&self.document, self.artboard(), x as u32, y as u32))
+            .then(|| cs_render::model_pick(&self.document, artboard, x as u32, y as u32))
             .flatten();
         self.select_model_object(hit);
     }

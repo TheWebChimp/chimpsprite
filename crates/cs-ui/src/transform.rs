@@ -243,11 +243,13 @@ impl Editor {
 
     /// Se puede transformar: herramienta de selección o Move sobre una capa de imagen editable,
     /// fuera del modo Tiles y sin editar la máscara (como el portapapeles), con algo seleccionado
-    /// o flotando.
+    /// o flotando. La selección de las caras del modo Texture no se transforma: con Move se
+    /// mueven sus UVs.
     pub fn can_transform(&self) -> bool {
         (self.tool.is_selection() || self.tool == ToolKind::Move)
             && self.clip_layer_ok(true)
-            && (self.floating.is_some() || self.selection.is_some())
+            && (self.floating.is_some()
+                || (self.selection.is_some() && !self.selection_is_face_mask()))
     }
 
     /// Caja de lo flotante o, si no flota nada, el rectángulo que contiene la selección.
@@ -611,6 +613,10 @@ impl Editor {
             }
             None => true,
         };
+        // Lo confirmado deja su propia selección (ya no la de las caras del modo Texture).
+        if applied {
+            self.face_mask_replaced();
+        }
         self.selection = if applied {
             f.mask()
         } else {

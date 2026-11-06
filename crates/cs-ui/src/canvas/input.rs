@@ -515,6 +515,7 @@ impl CanvasView {
             && !ruler_busy
             && !editor.is_painting()
             && !editor.in_symbol_mode()
+            && !self.texture_pane
         {
             // Solo si lo de arriba en el puntero es el lienzo: con un menú o una ventana encima,
             // las notas de abajo no lo ven.
@@ -533,6 +534,23 @@ impl CanvasView {
             self.notes.cursor = None;
         }
         let over_note = self.notes.busy() || self.notes.cursor.is_some();
+        // Las UVs de las caras elegidas (modo Texture): con Move o con Alt sus gestos ganan.
+        let uv_cursor = if self.texture_pane && !modal && !space_key && !hand && !ruler_busy {
+            self.uv_input(
+                ui,
+                response,
+                rect,
+                editor,
+                pointer,
+                (pressed_primary, pressed_secondary),
+                any_down,
+                modifiers,
+            )
+        } else {
+            self.uv_hover = false;
+            None
+        };
+        let uv_busy = uv_cursor.is_some() || editor.model_edit().uv_op.is_some();
 
         // Con un trazo a medias, el clic del otro botón lo cancela (y no empieza otro).
         let cancelled = editor.is_painting()
@@ -543,6 +561,7 @@ impl CanvasView {
             && !cancelled
             && !ruler_busy
             && !over_note
+            && !uv_busy
             && self.dragging_guide.is_none()
             && !space_key
             && !hand
@@ -757,6 +776,8 @@ impl CanvasView {
             None
         } else if ruler_busy {
             Some(egui::CursorIcon::Default)
+        } else if let Some(c) = uv_cursor {
+            Some(c)
         } else if let Some(c) = self.notes.cursor {
             Some(c)
         } else if editor.artboard_gesture().moving() {

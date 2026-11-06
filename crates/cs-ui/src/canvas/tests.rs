@@ -2443,3 +2443,13 @@ fn leaving_a_font_workspace_restores_the_canvas_view() {
     h.frame(vec![]);
     assert_eq!((h.canvas.zoom, h.canvas.pan), before);
 }
+
+#[test]
+fn fitting_a_small_texture_in_a_tall_pane_stops_at_64x() {
+    // Una textura de 16 px en un panel enorme: como Focus, no pasa de 64×.
+    let mut canvas = CanvasView::default();
+    let editor = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+    let pane = Rect::from_min_size(Pos2::ZERO, Vec2::new(2000.0, 4000.0));
+    canvas.fit_texture(pane, &editor);
+    assert_eq!(canvas.zoom, 64.0);
+}

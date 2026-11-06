@@ -28,8 +28,9 @@ mod font_ops;
 mod gestures;
 mod model_edit;
 mod model_ops;
+mod texture_mode;
 mod workspace;
-pub use model_edit::{EditOp, GRIDS, KeyOp, ModelEdit};
+pub use model_edit::{CadMode, DRAG_THRESHOLD, EditOp, GRIDS, KeyOp, ModelEdit, TextureView, UvOp};
 pub use model_ops::wrap_angle;
 
 /// Herramientas que trabajan dentro de un sprite.
@@ -513,11 +514,24 @@ impl Editor {
         if closed {
             self.workspace = None;
         }
+        // En modo Texture el activo es la textura del modelo del workspace. Sin textura se queda
+        // en el modelo (el lienzo avisa); si el activo era la textura y ya no está (un undo), o
+        // ya no hay workspace, vuelve a Model.
+        let texture = if self.model_edit.mode == CadMode::Texture {
+            let t = self.workspace_texture();
+            if t.is_none() && self.workspace != Some(self.active) {
+                self.model_edit.mode = CadMode::Model;
+            }
+            t
+        } else {
+            None
+        };
         let target = match self.symbol_stack.last() {
             // En el modo símbolo, el activo es el último de la pila.
             Some(&last) => Some(last),
+            None if texture.is_some() => texture,
             // En el workspace, el activo es su modelo o su fuente (aunque no esté en el lienzo).
-            None if self.workspace == Some(self.active) => None,
+            None if self.workspace.is_some() => self.workspace,
             // Fuera de ellos, el activo es uno del lienzo: el de antes de entrar o el primero.
             None => {
                 let from_workspace = closed.then(|| self.workspace_return.take()).flatten();
@@ -545,6 +559,7 @@ impl Editor {
                 (self.layer, self.frame) = (layer, frame);
             }
             self.selection = None;
+            self.model_edit.face_mask = None;
             self.slice = None;
         }
         let sprite = &self
@@ -578,8 +593,10 @@ impl Editor {
             .is_some_and(|m| (m.width(), m.height()) != (w, h))
         {
             self.selection = None;
+            self.face_mask_replaced();
         }
         self.sync_model_edit();
+        self.sync_face_mask();
     }
 
     /// Si `id` es un artboard del lienzo (no un símbolo de la biblioteca, un modelo ni una
@@ -599,8 +616,9 @@ impl Editor {
             self.symbol_stack.clear();
             self.symbol_return = None;
         }
-        // Activar otro artboard (uno del lienzo, un símbolo) sale del workspace.
-        if self.workspace.is_some_and(|w| w != id) {
+        // Activar otro artboard (uno del lienzo, un símbolo) sale del workspace; la textura del
+        // modelo en modo Texture no.
+        if self.workspace.is_some_and(|w| w != id) && !self.is_workspace_texture(id) {
             self.workspace = None;
             self.workspace_return = None;
         }
@@ -609,10 +627,18 @@ impl Editor {
         self.end_group();
         self.frame_range = None;
         self.views.insert(self.active, (self.layer, self.frame));
+        // Entre el modelo del workspace y su textura (modo Texture) el objeto del panel es el
+        // mismo modelo: se conserva.
+        let same_model = self.is_workspace_texture(id)
+            || (self.workspace == Some(id) && self.is_workspace_texture(self.active));
         self.active = id;
-        self.model_object = None;
+        if !same_model {
+            self.model_object = None;
+        }
         (self.layer, self.frame) = self.views.get(&id).copied().unwrap_or((LayerId(0), 0));
         self.selection = None;
+        // La selección de las caras (modo Texture) se vuelve a poner si sigue haciendo falta.
+        self.model_edit.face_mask = None;
         self.slice = None;
         self.ensure_valid();
         self.revision += 1;
@@ -818,6 +844,7 @@ impl Editor {
             self.last_selection = Some(old);
         }
         self.selection = selection;
+        self.face_mask_replaced();
         self.revision += 1;
     }
 
@@ -1076,3 +1103,6 @@ mod model_edit_tests;
 
 #[cfg(test)]
 mod workspace_tests;
+
+#[cfg(test)]
+mod texture_mode_tests;

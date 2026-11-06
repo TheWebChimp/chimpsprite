@@ -1102,3 +1102,37 @@ fn convert_to_symbol_dialog_creates_with_the_chosen_type() {
         );
     }
 }
+
+#[test]
+fn shrinking_the_texture_with_uvs_outside_asks_and_resize_applies() {
+    for pixel_ui in [true, false] {
+        let mut h = DialogHarness::new(pixel_ui);
+        let e = &mut h.app.doc.editor;
+        assert!(e.new_model("Ship", (32, 32)));
+        e.set_cad_mode(crate::editor::CadMode::Texture);
+        let texture = e.workspace_model().unwrap().texture.unwrap();
+        let side = |h: &DialogHarness| {
+            let s = &h.app.doc.editor.document.artboard(texture).unwrap().sprite;
+            (s.width, s.height)
+        };
+        // Lo que pide Texture size en el panel 3D (ver `ModelAction::TextureSize`).
+        h.app.palette_confirm = Some(crate::palette_ui::Confirm::TextureSize(32));
+        h.settle();
+        assert!(
+            h.texts
+                .iter()
+                .any(|t| t.contains("Some faces use pixels outside the new size")),
+            "pixel_ui {pixel_ui}: {:?}",
+            h.texts
+        );
+        assert_eq!(side(&h), (64, 64), "not yet");
+        h.click("Cancel");
+        assert!(h.app.palette_confirm.is_none());
+        assert_eq!(side(&h), (64, 64));
+        h.app.palette_confirm = Some(crate::palette_ui::Confirm::TextureSize(32));
+        h.settle();
+        h.click("Resize");
+        assert!(h.app.palette_confirm.is_none());
+        assert_eq!(side(&h), (32, 32));
+    }
+}
