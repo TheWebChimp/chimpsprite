@@ -6,13 +6,14 @@
 use std::collections::HashSet;
 use std::hash::{DefaultHasher, Hash, Hasher};
 
-use cs_3d::{Handle, Item, OrthoView, SelectMode, ViewMap};
+use cs_3d::{GizmoKind, GizmoPart, Handle, HandleGeom, Item, OrthoView, SelectMode, ViewMap};
 use cs_core::Document;
 use eframe::egui::{Shape, pos2, vec2};
 use eframe::emath::GuiRounding as _;
 
+use super::nav_gizmo::{self, NavBall};
 use super::*;
-use crate::editor::{CadMode, EditOp, KeyOp};
+use crate::editor::{CadMode, EditOp, GIZMO_PX, Gizmo, GizmoView, KeyOp, PerspMap};
 
 pub(crate) const FRONT: usize = 0;
 pub(crate) const PERSP: usize = 1;
@@ -30,6 +31,14 @@ const GRID_LINE: Color32 = Color32::from_rgba_premultiplied(0x10, 0x10, 0x20, 0x
 const SELECTED: Color32 = Color32::from_rgb(0xff, 0xec, 0x27);
 const GUIDE: Color32 = Color32::from_rgb(0x5f, 0x57, 0x4f);
 const SEPARATOR: Color32 = Color32::from_rgb(0x1d, 0x2b, 0x53);
+/// Los colores de los ejes del gizmo (como Blender, en la paleta de PICO-8): X rojo, Y verde y Z
+/// azul; el centro, blanco. El asa bajo el puntero o en uso va en [`SELECTED`].
+pub(super) const AXIS_COLORS: [Color32; 3] = [
+    Color32::from_rgb(0xff, 0x00, 0x4d),
+    Color32::from_rgb(0x00, 0xe4, 0x36),
+    Color32::from_rgb(0x29, 0xad, 0xff),
+];
+const GIZMO_CENTER: Color32 = Color32::from_rgb(0xff, 0xf1, 0xe8);
 /// Lado de los cuadritos de los vértices y de las asas, en puntos.
 const VERTEX_PX: f32 = 3.0;
 pub(crate) const HANDLE_PX: f32 = 5.0;
@@ -39,6 +48,13 @@ const GRID_MIN_PX: f32 = 4.0;
 /// [`SCALE_REF_PX`] (si no, casi cualquier movimiento lo dispararía o lo dejaría en 0).
 const SCALE_NEAR_PX: f32 = 6.0;
 const SCALE_REF_PX: f32 = 24.0;
+
+/// Lo de la perspectiva bajo el puntero: un asa del gizmo o una bolita del de navegación.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum PerspHover {
+    Gizmo(GizmoPart),
+    Nav(NavBall),
+}
 
 /// Los cuadrantes del área `screen`: Front, Persp, Top y Side. La parten a la mitad en puntos
 /// enteros (con ancho impar, la columna de más es de la derecha).
@@ -86,7 +102,7 @@ impl CanvasView {
         editor: &mut Editor,
         modal: bool,
     ) {
-        let (header, views) = header_split(workspace_area(ui, rect));
+        let (header, views) = header_split(rect);
         self.texture_panes = None;
         self.header_rect = Some(header);
         // Los cuadrantes salen del área debajo del encabezado, así que ya valen para la entrada
@@ -108,9 +124,9 @@ impl CanvasView {
         cad_header(ui, header, editor);
     }
 
-    /// La entrada del workspace: Ctrl + rueda (zoom de las vistas orto o distancia de la cámara
-    /// en Persp) y los botones del modo Edit. La rueda sin Ctrl, el zoom y el paneo del lienzo,
-    /// la mano y las herramientas no hacen nada.
+    /// La entrada del workspace: la rueda, con o sin Ctrl (zoom de las vistas orto o distancia
+    /// de la cámara en Persp), y los botones del modo Edit. El zoom y el paneo del lienzo, la
+    /// mano y las herramientas no hacen nada.
     fn workspace_input(
         &mut self,
         ui: &egui::Ui,
@@ -130,38 +146,20 @@ impl CanvasView {
         self.selection_menu = false;
         self.object_menu = false;
         self.slice_menu = false;
-        // Los restos de rueda de touchpad siguen sumando mientras Ctrl siga apretado.
-        let mut keep_rest = ui.input(|i| i.modifiers.command);
+        // La rueda, con o sin Ctrl: sobre una vista orto, zoom de las tres; sobre la
+        // perspectiva, la cámara hacia el puntero. Los restos de touchpad siguen sumando
+        // mientras el puntero siga en el workspace.
         if let Some(pointer) = response.hover_pos() {
-            let wheel: Vec<(egui::MouseWheelUnit, f32, bool)> = ui.input(|i| {
-                i.raw
-                    .events
-                    .iter()
-                    .filter_map(|e| match e {
-                        egui::Event::MouseWheel {
-                            unit,
-                            delta,
-                            modifiers,
-                            ..
-                        } => Some((*unit, delta.y, modifiers.command)),
-                        _ => None,
-                    })
-                    .collect()
-            });
-            for (unit, dy, command) in wheel {
-                if !command {
-                    keep_rest = false;
-                    continue;
-                }
-                let steps = brush_wheel_steps(&mut self.wheel_rest, unit, dy);
-                // Sobre una vista orto, zoom de las tres; sobre la perspectiva, la cámara.
+            for (unit, dy) in super::model_input::wheel_events(ui) {
+                let steps = brush_wheel_steps(&mut self.model_wheel_rest, unit, dy);
                 if steps != 0 && !self.model_edit_wheel(editor, pointer, steps) {
-                    Self::model_wheel(editor, steps);
+                    let at = self.persp_map(editor).map(|map| (map, pointer));
+                    let now = ui.input(|i| i.time);
+                    self.model_wheel(editor, steps, at, now);
                 }
             }
-        }
-        if !keep_rest {
-            self.wheel_rest = 0.0;
+        } else {
+            self.model_wheel_rest = 0.0;
         }
         let (pressed, secondary, middle, any_down, edit_down, pointer, modifiers) = ui.input(|i| {
             let pressed = |b| i.pointer.button_pressed(b);
@@ -177,6 +175,12 @@ impl CanvasView {
                 i.modifiers,
             )
         });
+        // El derecho durante un arrastre del gizmo lo cancela (y no empieza nada más: ni
+        // desplazar las vistas con esa misma prensa).
+        let cancelled = secondary && matches!(editor.model_edit().op, Some(EditOp::Gizmo { .. }));
+        if cancelled {
+            editor.cancel_model_op();
+        }
         // Con un arrastre en curso, el otro botón no empieza nada. Un gesto de teclado (G o S)
         // espera un clic: confirma con el izquierdo, cancela con el derecho.
         let busy = self.model_drag.is_some() || editor.model_edit().op.is_some();
@@ -185,6 +189,7 @@ impl CanvasView {
             Some(EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. })
         );
         if pressed
+            && !cancelled
             && !modal
             && response.hovered()
             && (!busy || (keyboard_op && self.model_drag.is_none()))
@@ -195,6 +200,63 @@ impl CanvasView {
         }
         self.model_drag_input(editor, pointer, any_down);
         self.model_edit_input(editor, pointer, edit_down, modifiers);
+        // El asa del gizmo bajo el puntero (sin gesto en curso), para resaltarla; en la
+        // perspectiva, también la bolita del gizmo de navegación.
+        self.gizmo_hover = None;
+        self.persp_hover = None;
+        if editor.model_edit().op.is_none()
+            && self.model_drag.is_none()
+            && !modal
+            && let Some(p) = response.hover_pos()
+            && !self.header_rect.is_some_and(|r| r.contains(p))
+            && let Some(i) = self.quadrant_at(p)
+        {
+            match quadrant_view(i) {
+                Some(view) => {
+                    if let Some(map) = self.edit_view_map(editor, view)
+                        && let Some((part, _)) = gizmo_at(editor, &map, (p.x, p.y))
+                    {
+                        self.gizmo_hover = Some((view, part));
+                    }
+                }
+                None => self.persp_hover = self.persp_hover_at(editor, p),
+            }
+        }
+    }
+
+    /// Cómo se ve el mundo en la perspectiva del workspace (la cámara del modelo y dónde cae su
+    /// render en pantalla).
+    pub(crate) fn persp_map(&self, editor: &Editor) -> Option<PerspMap> {
+        self.persp_map_in(self.edit_quads?[PERSP], editor)
+    }
+
+    /// Como [`Self::persp_map`], con el render en el rect `q` (el cuadrante Persp o el panel de
+    /// arriba del modo Texture).
+    pub(super) fn persp_map_in(&self, q: Rect, editor: &Editor) -> Option<PerspMap> {
+        let camera = editor.edited_model()?.camera;
+        let sprite = model_sprite(editor);
+        let (r, scale) = self.persp_rect(q, editor);
+        Some(PerspMap {
+            camera,
+            size: (sprite.width.max(1), sprite.height.max(1)),
+            min: (r.left(), r.top()),
+            scale: (scale.x, scale.y),
+        })
+    }
+
+    /// Lo de la perspectiva bajo `p` (en modo Model): primero el gizmo de navegación, después
+    /// el gizmo de lo elegido. En el área del de navegación (donde un clic orbita, como en
+    /// `persp_press`) solo cuenta su bolita: un asa debajo no se resalta.
+    fn persp_hover_at(&self, editor: &Editor, p: Pos2) -> Option<PerspHover> {
+        if editor.cad_mode() != CadMode::Model {
+            return None;
+        }
+        let q = self.edit_quads?[PERSP];
+        let pm = self.persp_map(editor)?;
+        if nav_gizmo::nav_area(&pm.camera, q, p) {
+            return nav_gizmo::nav_hit(&pm.camera, q, p).map(PerspHover::Nav);
+        }
+        persp_gizmo_at(editor, &pm, (p.x, p.y)).map(|(part, _)| PerspHover::Gizmo(part))
     }
 
     /// Dónde va el render de la perspectiva en el cuadrante `q` (a la resolución del artboard,
@@ -218,6 +280,38 @@ impl CanvasView {
         let ppp = self.ppp.max(1.0);
         let min = ((q.center() - size / 2.0).to_vec2() * ppp).round() / ppp;
         (Rect::from_min_size(min.to_pos2(), size), ratio * k)
+    }
+
+    /// El render de la perspectiva que llena el cuadrante `q`: con la escala de
+    /// [`Self::persp_rect`] y el artboard en su centro (a pixeles enteros), los pixeles que faltan
+    /// para llegar a los bordes, iguales de cada lado. Devuelve dónde va en pantalla (puede
+    /// salirse un poco de `q`), su tamaño y el del artboard (el cuadro de la proyección): el
+    /// recorte del centro es el render de siempre, así que al acercar la cámara el modelo no
+    /// queda cortado en el cuadrado del artboard.
+    pub(super) fn persp_view(&self, q: Rect, editor: &Editor) -> (Rect, (u32, u32), (u32, u32)) {
+        let sprite = model_sprite(editor);
+        let frame = (sprite.width.max(1), sprite.height.max(1));
+        let (r, scale) = self.persp_rect(q, editor);
+        // Un pixel del render de más si no cae justo: lo de afuera de `q` no se ve.
+        let side = |near: f32, far: f32, s: f32| ((near.max(far) / s).ceil().max(0.0)) as u32;
+        let ox = side(r.left() - q.left(), q.right() - r.right(), scale.x);
+        let oy = side(r.top() - q.top(), q.bottom() - r.bottom(), scale.y);
+        let size = (frame.0 + 2 * ox, frame.1 + 2 * oy);
+        let min = r.min - vec2(ox as f32 * scale.x, oy as f32 * scale.y);
+        let full = Rect::from_min_size(min, vec2(size.0 as f32 * scale.x, size.1 as f32 * scale.y));
+        (full, size, frame)
+    }
+
+    /// Dónde se dibuja el render de la perspectiva (en el cuadrante Persp o en el panel de
+    /// arriba del modo Texture) y dónde cae su artboard, para los tests de la app.
+    #[cfg(test)]
+    pub(crate) fn persp_drawn(&self, editor: &Editor) -> Option<(Rect, Rect)> {
+        let q = match (self.edit_quads, self.texture_panes) {
+            (Some(qs), _) => qs[PERSP],
+            (None, Some((top, _))) => top,
+            (None, None) => return None,
+        };
+        Some((self.persp_view(q, editor).0, self.persp_rect(q, editor).0))
     }
 
     fn quadrant_at(&self, p: Pos2) -> Option<usize> {
@@ -267,6 +361,18 @@ impl CanvasView {
                 map,
                 from: at,
                 center: editor.model_edit().center,
+            });
+            return true;
+        }
+        // El gizmo gana sobre elegir, las asas y la caja de selección.
+        if let Some((part, center)) = gizmo_at(editor, &map, at) {
+            editor.start_model_op(EditOp::Gizmo {
+                view: GizmoView::Ortho(map),
+                part,
+                from: at,
+                center,
+                last: at,
+                turned: 0.0,
             });
             return true;
         }
@@ -362,6 +468,32 @@ impl CanvasView {
         let Some(q) = self.edit_quads.map(|qs| qs[i]) else {
             return;
         };
+        // Con el izquierdo (sin Alt, que orbita): el gizmo de navegación y después el de lo
+        // elegido ganan sobre elegir y sobre mover la cámara.
+        if !secondary
+            && !modifiers.alt
+            && editor.cad_mode() == CadMode::Model
+            && let Some(pm) = self.persp_map(editor)
+        {
+            if nav_gizmo::nav_area(&pm.camera, q, p) {
+                editor.end_group();
+                let ball = nav_gizmo::nav_hit(&pm.camera, q, p);
+                self.model_drag = Some(model_input::ModelDrag::nav(p, pm.camera, ball));
+                return;
+            }
+            if let Some((part, center)) = persp_gizmo_at(editor, &pm, (p.x, p.y)) {
+                let at = (p.x, p.y);
+                editor.start_model_op(EditOp::Gizmo {
+                    view: GizmoView::Persp(pm),
+                    part,
+                    from: at,
+                    center,
+                    last: at,
+                    turned: 0.0,
+                });
+                return;
+            }
+        }
         let (r, scale) = self.persp_rect(q, editor);
         let local = (
             ((p.x - r.left()) / scale.x).floor() as i32,
@@ -422,7 +554,8 @@ impl CanvasView {
         }
     }
 
-    /// Ctrl + rueda sobre una vista orto: zoom en las tres. `true` si fue de una vista orto.
+    /// La rueda (con o sin Ctrl) sobre una vista orto: zoom en las tres. `true` si fue de una
+    /// vista orto.
     pub(super) fn model_edit_wheel(&mut self, editor: &mut Editor, p: Pos2, steps: i32) -> bool {
         let Some(view) = self.quadrant_at(p).and_then(quadrant_view) else {
             return false;
@@ -444,6 +577,48 @@ impl CanvasView {
     #[cfg(test)]
     pub(crate) fn cad_header(&self) -> Option<Rect> {
         self.header_rect
+    }
+
+    /// El gizmo de lo elegido como se ve en la perspectiva, para los tests de la app.
+    #[cfg(test)]
+    pub(crate) fn persp_gizmo_shape(&self, editor: &Editor) -> Option<cs_3d::GizmoShape> {
+        let center = gizmo_center(editor, editor.edit_model_shown()?)?;
+        persp_gizmo(editor.shown_gizmo()?, &self.persp_map(editor)?, center)
+    }
+
+    /// Dónde se dibuja el gizmo en las vistas orto, para los tests de la app.
+    #[cfg(test)]
+    pub(crate) fn ortho_gizmo_center(&self, editor: &Editor) -> Option<cs_3d::P3> {
+        editor.shown_gizmo()?;
+        gizmo_center(editor, editor.edit_model_shown()?)
+    }
+
+    /// El asa del gizmo de la perspectiva resaltada bajo el puntero, para los tests de la app.
+    #[cfg(test)]
+    pub(crate) fn persp_hover_gizmo(&self) -> Option<GizmoPart> {
+        match self.persp_hover {
+            Some(PerspHover::Gizmo(part)) => Some(part),
+            _ => None,
+        }
+    }
+
+    /// Las bolitas del gizmo de navegación (eje, negativa y centro en pantalla), para los tests
+    /// de la app.
+    #[cfg(test)]
+    pub(crate) fn nav_gizmo_balls(&self, editor: &Editor) -> Vec<(usize, bool, Pos2)> {
+        let (Some(q), Some(pm)) = (self.edit_quads, self.persp_map(editor)) else {
+            return Vec::new();
+        };
+        nav_gizmo::nav_balls(&pm.camera, q[PERSP])
+            .into_iter()
+            .map(|(b, p)| (b.axis, b.negative, p))
+            .collect()
+    }
+
+    /// La textura de lo que va encima de la perspectiva (los gizmos), para los tests de la app.
+    #[cfg(test)]
+    pub(crate) fn persp_overlay_texture(&self) -> Option<egui::TextureId> {
+        self.edit_persp_overlay.as_ref().map(|(_, t)| t.id())
     }
 
     #[cfg(test)]
@@ -505,13 +680,24 @@ impl CanvasView {
             painter.rect_filled(*q, 0.0, if i == PERSP { PERSP_BG } else { ORTHO_BG });
         }
         self.draw_persp(painter, quads[PERSP], editor, doc, model, ctx);
+        self.draw_persp_overlay(painter, quads[PERSP], editor, model, ctx);
         // La caja de la selección y las aristas de las caras elegidas, una vez por frame para
         // las tres vistas.
         let sel = &editor.model_edit().selection;
         let bounds = cs_3d::bounds(model, sel);
         let face_edges = selected_face_edges(model, sel);
         let grid = editor.model_edit().grid;
+        let gizmo = editor.shown_gizmo();
+        let gizmo_center = gizmo.and_then(|_| gizmo_center(editor, model));
+        // El asa en uso se resalta en las tres vistas; la de debajo del puntero, en la suya.
+        let active = match editor.model_edit().op {
+            Some(EditOp::Gizmo { part, .. }) => Some(part),
+            _ => None,
+        };
         for (k, view) in OrthoView::ALL.into_iter().enumerate() {
+            let gizmo_hot = active.or(self
+                .gizmo_hover
+                .and_then(|(v, part)| (v == view).then_some(part)));
             let q = quads[quadrant_index(view)];
             let Some(map) = self.edit_view_map(editor, view) else {
                 continue;
@@ -525,7 +711,8 @@ impl CanvasView {
             }
             let boxed = box_ends(editor, view);
             let mut hasher = DefaultHasher::new();
-            (model, sel, grid, view, w, h).hash(&mut hasher);
+            (model, sel, grid, view, w, h, gizmo, gizmo_hot).hash(&mut hasher);
+            gizmo_center.map(|c| c.map(f32::to_bits)).hash(&mut hasher);
             [
                 min.x,
                 min.y,
@@ -555,6 +742,9 @@ impl CanvasView {
                     bounds,
                     face_edges: &face_edges,
                     boxed,
+                    gizmo,
+                    gizmo_center,
+                    gizmo_hot,
                 }
                 .image(w, h);
                 let pixels = img
@@ -607,9 +797,9 @@ impl CanvasView {
         }
     }
 
-    /// La perspectiva: el render pixel del modelo a la resolución de su artboard, a escala entera
-    /// y centrado en el cuadrante; cacheado mientras no cambien el modelo, el documento ni el
-    /// tamaño. En modo Texture lleva encima el contorno amarillo de las caras elegidas, en
+    /// La perspectiva: el render pixel del modelo con la escala de la resolución de su artboard
+    /// (entera y centrado en el cuadrante), hasta los bordes del cuadrante (`persp_view`);
+    /// cacheado mientras no cambien el modelo, el documento ni el tamaño. En modo Texture lleva encima el contorno amarillo de las caras elegidas, en
     /// pixeles del render.
     pub(super) fn draw_persp(
         &mut self,
@@ -623,8 +813,8 @@ impl CanvasView {
         let Some(artboard) = doc.artboard(editor.model_id()) else {
             return;
         };
-        let sprite = &artboard.sprite;
-        let size = (sprite.width.max(1), sprite.height.max(1));
+        // Todo el cuadrante, con el artboard al centro (ver `persp_view`).
+        let (rect, size, frame) = self.persp_view(q, editor);
         let faces = if editor.cad_mode() == CadMode::Texture {
             editor.selected_faces()
         } else {
@@ -640,6 +830,7 @@ impl CanvasView {
             editor.doc_version,
             editor.revision,
             size,
+            frame,
             artboard.id,
             &faces,
             live,
@@ -647,19 +838,19 @@ impl CanvasView {
             .hash(&mut h);
         let key = h.finish();
         if self.edit_persp.as_ref().is_none_or(|(k, _)| *k != key) {
-            let mut pixels = cs_render::model_render(doc, artboard, model, size);
+            let mut pixels = cs_render::model_render(doc, artboard, model, size, Some(frame));
             if !faces.is_empty() {
                 // El contorno depende del modelo, el tamaño y las caras, no de la textura: al
                 // pintar se reusa.
                 let mut h = DefaultHasher::new();
-                (model, size, &faces).hash(&mut h);
+                (model, size, frame, &faces).hash(&mut h);
                 let outline_key = h.finish();
                 if self
                     .edit_outline
                     .as_ref()
                     .is_none_or(|(k, _)| *k != outline_key)
                 {
-                    let outline = cs_render::model_face_outline(model, size, &faces);
+                    let outline = cs_render::model_face_outline(model, size, Some(frame), &faces);
                     self.edit_outline = Some((outline_key, outline));
                 }
                 let outline = self.edit_outline.as_ref().map_or(&[][..], |(_, o)| &o[..]);
@@ -687,24 +878,103 @@ impl CanvasView {
         }
         if let Some((_, t)) = &self.edit_persp {
             let full = Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0));
-            let (r, _) = self.persp_rect(q, editor);
-            // A escala 1 puede no caber: no se sale del cuadrante.
+            // Se sale un poco del cuadrante (y a escala 1 el artboard puede no caber): se recorta.
             let p = painter.with_clip_rect(q.intersect(painter.clip_rect()));
-            p.image(t.id(), r, full, Color32::WHITE);
+            p.image(t.id(), rect, full, Color32::WHITE);
         }
     }
-}
 
-/// El área del workspace en `rect` (todo el lienzo): lo que se ve a la izquierda del panel del
-/// dock abierto (con el panel cerrado, todo).
-pub(super) fn workspace_area(ui: &egui::Ui, rect: Rect) -> Rect {
-    let mut area = rect;
-    if let Some(panel) = crate::dock::open_flyout_rect(ui.ctx())
-        && panel.intersects(rect)
-    {
-        area.max.x = panel.left().floor().clamp(rect.left() + 1.0, rect.right());
+    /// Encima del render de la perspectiva (modo Model), en pixel art a la rejilla de la UI como
+    /// las vistas orto: el gizmo de lo elegido, en 3D con la cámara del modelo, y el gizmo de
+    /// navegación arriba a la derecha. Cacheado mientras no cambie lo que muestra.
+    fn draw_persp_overlay(
+        &mut self,
+        painter: &egui::Painter,
+        q: Rect,
+        editor: &Editor,
+        model: &cs_core::Model3D,
+        ctx: &egui::Context,
+    ) {
+        let Some(pm) = self.persp_map(editor) else {
+            return;
+        };
+        let min = q.min.round();
+        let size = q.max.round() - min;
+        let (w, h) = (size.x.max(0.0) as usize, size.y.max(0.0) as usize);
+        if w == 0 || h == 0 {
+            return;
+        }
+        let gizmo = editor.shown_gizmo();
+        // Como en las orto: el asa en uso, o la de debajo del puntero.
+        let active = match editor.model_edit().op {
+            Some(EditOp::Gizmo { part, .. }) => Some(part),
+            _ => None,
+        };
+        let gizmo_hot = active.or(match self.persp_hover {
+            Some(PerspHover::Gizmo(part)) => Some(part),
+            _ => None,
+        });
+        let nav_hot = match self.persp_hover {
+            Some(PerspHover::Nav(ball)) => Some(ball),
+            _ => None,
+        };
+        let overlay = PerspOverlay {
+            pm: &pm,
+            q,
+            min: (min.x, min.y),
+            gizmo,
+            center: gizmo.and_then(|_| gizmo_center(editor, model)),
+            gizmo_hot,
+            nav_hot,
+        };
+        let mut hasher = DefaultHasher::new();
+        (
+            overlay.center.map(|c| c.map(f32::to_bits)),
+            pm.camera,
+            pm.size,
+            gizmo,
+            gizmo_hot,
+            nav_hot,
+            w,
+            h,
+        )
+            .hash(&mut hasher);
+        [min.x, min.y, pm.min.0, pm.min.1, pm.scale.0, pm.scale.1]
+            .map(f32::to_bits)
+            .hash(&mut hasher);
+        let key = hasher.finish();
+        if self
+            .edit_persp_overlay
+            .as_ref()
+            .is_none_or(|(old, _)| *old != key)
+        {
+            let img = overlay.image(w, h);
+            let pixels = img
+                .pixels
+                .iter()
+                .map(|c| Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]))
+                .collect();
+            let image = egui::ColorImage::new([w, h], pixels);
+            let opts = egui::TextureOptions::NEAREST;
+            match &mut self.edit_persp_overlay {
+                Some((old, t)) => {
+                    t.set(image, opts);
+                    *old = key;
+                }
+                None => {
+                    self.edit_persp_overlay = Some((
+                        key,
+                        ctx.load_texture("model_edit_persp_overlay", image, opts),
+                    ));
+                }
+            }
+        }
+        if let Some((_, t)) = &self.edit_persp_overlay {
+            let full = Rect::from_min_max(Pos2::ZERO, pos2(1.0, 1.0));
+            let p = painter.with_clip_rect(q.intersect(painter.clip_rect()));
+            p.image(t.id(), Rect::from_min_size(min, size), full, Color32::WHITE);
+        }
     }
-    area
 }
 
 /// El sprite del modelo que se edita (el del workspace, aunque el activo sea su textura).
@@ -723,6 +993,8 @@ const LOGO_AT: Vec2 = vec2(3.0, 2.0);
 /// Aire de los botones Model / Texture: desde arriba y desde la derecha del encabezado.
 const MODE_TOP: f32 = 3.0;
 const MODE_RIGHT: f32 = 4.0;
+/// Entre los botones de los gizmos y los de Model / Texture.
+const GIZMO_GAP: f32 = 4.0;
 
 /// El área del workspace partida: arriba el encabezado (`HEADER_HEIGHT`) y, después de su línea
 /// de 1, las vistas.
@@ -779,7 +1051,68 @@ pub(super) fn cad_header(ui: &mut egui::Ui, header: Rect, editor: &mut Editor) {
             );
         }
     }
+    // Los gizmos, solo en modo Model (antes de cambiar de modo con el otro grupo).
+    if editor.cad_mode() == CadMode::Model {
+        gizmo_buttons(ui, header, editor);
+    }
     mode_buttons(ui, header, editor);
+}
+
+/// Las opciones del grupo de los gizmos.
+fn gizmo_items() -> [crate::kit::group::GroupItem<'static>; 3] {
+    use crate::kit::group::GroupItem;
+    [
+        GroupItem::text("Move"),
+        GroupItem::text("Rotate"),
+        GroupItem::text("Scale"),
+    ]
+}
+
+/// Los botones **Move**, **Rotate** y **Scale** (un grupo del kit; el del gizmo actual,
+/// presionado) a la izquierda de Model / Texture. Un clic elige ese gizmo; en el activo, lo
+/// apaga.
+fn gizmo_buttons(ui: &mut egui::Ui, header: Rect, editor: &mut Editor) {
+    use crate::kit::group;
+    let items = gizmo_items();
+    let gizmos = [Gizmo::Move, Gizmo::Rotate, Gizmo::Scale];
+    let current = editor.model_edit().gizmo;
+    let id = egui::Id::new("cad_gizmo_buttons");
+    let modes = mode_buttons_rect(ui, header);
+    let chosen = match crate::pixel_ui::frame_skin(ui.ctx()) {
+        Some(skin) => {
+            let width = group::width(ui, &items);
+            let at = pos2(modes.left() - GIZMO_GAP - width, modes.top()).round();
+            let painter = ui.painter().clone();
+            let active = |i: usize| gizmos[i] == current;
+            group::button_group_at(ui, &skin, &painter, id, at, &items, &active)
+        }
+        // Sin Pixel UI, tres botones de texto de egui que se pueden elegir.
+        None => {
+            let mut chosen = None;
+            let rect = Rect::from_min_size(
+                pos2(modes.left() - GIZMO_GAP - 160.0, modes.top()),
+                vec2(160.0, modes.height()),
+            );
+            let builder = egui::UiBuilder::new()
+                .id_salt(id)
+                .max_rect(rect)
+                .layout(egui::Layout::right_to_left(egui::Align::Center));
+            ui.scope_builder(builder, |ui| {
+                for (i, item) in items.iter().enumerate().rev() {
+                    if ui
+                        .selectable_label(gizmos[i] == current, item.label)
+                        .clicked()
+                    {
+                        chosen = Some(i);
+                    }
+                }
+            });
+            chosen
+        }
+    };
+    if let Some(i) = chosen {
+        editor.toggle_gizmo(gizmos[i]);
+    }
 }
 
 /// Las opciones del grupo de los modos.
@@ -909,6 +1242,10 @@ struct OrthoScene<'a> {
     bounds: Option<(cs_3d::P3, cs_3d::P3)>,
     face_edges: &'a HashSet<(usize, u32, u32)>,
     boxed: Option<((f32, f32), (f32, f32))>,
+    /// El gizmo (`None`: ninguno), dónde va (ver [`gizmo_center`]) y su asa resaltada.
+    gizmo: Option<GizmoKind>,
+    gizmo_center: Option<cs_3d::P3>,
+    gizmo_hot: Option<GizmoPart>,
 }
 
 /// El color como pixel de la imagen.
@@ -928,7 +1265,7 @@ impl OrthoScene<'_> {
 
     /// La imagen de `w × h`: el fondo, la cuadrícula, la cruz punteada por el centro de la
     /// selección, las aristas (las elegidas encima), los cuadritos de los vértices o de las
-    /// caras, las asas y la caja de selección en curso.
+    /// caras, las asas, el gizmo y la caja de selección en curso.
     fn image(&self, w: usize, h: usize) -> cs_3d::WireImage {
         let mut img = cs_3d::WireImage::new(w, h, rgba(ORTHO_BG));
         self.grid_lines(&mut img);
@@ -940,6 +1277,7 @@ impl OrthoScene<'_> {
         }
         self.wireframe(&mut img);
         self.handles(&mut img);
+        self.gizmo(&mut img);
         if let Some((a, b)) = self.boxed {
             let ((x0, y0), (x1, y1)) = (self.px(a), self.px(b));
             img.rect_outline(x0, y0, x1, y1, rgba(SELECTED));
@@ -1065,6 +1403,265 @@ impl OrthoScene<'_> {
             img.fill_rect(x - side / 2, y - side / 2, side, side, rgba(SELECTED));
         }
     }
+
+    /// El gizmo, en pixeles de 1: las flechas (asta y punta llena), los aros (polígonos de sus
+    /// puntos), los ejes de escala con su cubito y, encima, el cuadrito o cubito del centro. Cada
+    /// asa en el color de su eje; la resaltada, en amarillo.
+    fn gizmo(&self, img: &mut cs_3d::WireImage) {
+        let (Some(kind), Some(center)) = (self.gizmo, self.gizmo_center) else {
+            return;
+        };
+        let shape = ortho_gizmo(kind, self.map, center);
+        draw_gizmo(
+            img,
+            &shape.handles,
+            &|p| Some(self.map.to_screen(p)),
+            self.min,
+            self.gizmo_hot,
+        );
+    }
+}
+
+/// Dibuja las asas `handles` del gizmo en `img` (cuyo pixel `(0, 0)` es el punto `min`) en
+/// pixeles de 1, en ese orden: las flechas (asta y punta llena), los aros (polígonos de sus
+/// puntos), los ejes de escala con su cubito y, al final (encima), el cuadrito o cubito del
+/// centro. Cada asa en el color de su eje; la de `hot`, en amarillo. `project` lleva el mundo a
+/// la pantalla (`None`: detrás de la cámara; esa asa no se dibuja).
+fn draw_gizmo(
+    img: &mut cs_3d::WireImage,
+    handles: &[cs_3d::GizmoHandle],
+    project: &dyn Fn(cs_3d::P3) -> Option<(f32, f32)>,
+    min: (f32, f32),
+    hot: Option<GizmoPart>,
+) {
+    // El punto entero que contiene el punto de pantalla (el mismo redondeo que las vistas).
+    let px = |s: (f32, f32)| ((s.0 - min.0).floor() as i32, (s.1 - min.1).floor() as i32);
+    let half = cs_3d::GIZMO_BOX as i32;
+    let side = 2 * half + 1;
+    // Primero las asas de los ejes; los cuadritos del centro, al final (encima).
+    let (boxes, axes): (Vec<_>, Vec<_>) = handles
+        .iter()
+        .partition(|h| matches!(h.geom, HandleGeom::Box(_)));
+    for h in axes.into_iter().chain(boxes) {
+        let color = rgba(match h.part {
+            part if Some(part) == hot => SELECTED,
+            GizmoPart::Axis(a) | GizmoPart::Ring(a) | GizmoPart::ScaleAxis(a) => AXIS_COLORS[a],
+            GizmoPart::Plane | GizmoPart::ScaleUniform => GIZMO_CENTER,
+        });
+        match &h.geom {
+            HandleGeom::Arrow { from, tip, base } => {
+                let k = base.len() as f32;
+                let mid: cs_3d::P3 =
+                    std::array::from_fn(|i| base.iter().map(|p| p[i]).sum::<f32>() / k);
+                let (Some(f), Some(t_s), Some(sm)) = (project(*from), project(*tip), project(mid))
+                else {
+                    continue;
+                };
+                let ((x0, y0), t) = (px(f), px(t_s));
+                img.line(x0, y0, t.0, t.1, color);
+                // La punta: el triángulo de la punta a la base, tan ancho como el punto de la
+                // base que más se aleja del asta en pantalla (los de profundidad caen sobre
+                // ella) y de través al asta en pantalla, parejo a los dos lados en pixeles
+                // enteros.
+                let half_width = base
+                    .iter()
+                    .filter_map(|&p| project(p).map(|s| (s.0 - sm.0).hypot(s.1 - sm.1)))
+                    .fold(0.0, f32::max);
+                let (ux, uy) = (t_s.0 - f.0, t_s.1 - f.1);
+                let len = ux.hypot(uy).max(1e-6);
+                let (dx, dy) = (
+                    (-uy / len * half_width).round() as i32,
+                    (ux / len * half_width).round() as i32,
+                );
+                let m = px(sm);
+                let (e0, e1) = ((m.0 + dx, m.1 + dy), (m.0 - dx, m.1 - dy));
+                fill_triangle(img, t, e0, e1, color);
+            }
+            HandleGeom::Ring(pts) => {
+                let Some(s) = pts
+                    .iter()
+                    .map(|&p| project(p).map(px))
+                    .collect::<Option<Vec<(i32, i32)>>>()
+                else {
+                    continue;
+                };
+                for i in 0..s.len() {
+                    let (a, b) = (s[i], s[(i + 1) % s.len()]);
+                    img.line(a.0, a.1, b.0, b.1, color);
+                }
+            }
+            HandleGeom::Stick { from, tip } => {
+                let (Some(f), Some(t)) = (project(*from), project(*tip)) else {
+                    continue;
+                };
+                let ((x0, y0), (x1, y1)) = (px(f), px(t));
+                img.line(x0, y0, x1, y1, color);
+                img.fill_rect(x1 - half, y1 - half, side, side, color);
+            }
+            HandleGeom::Box(p) => {
+                let Some(s) = project(*p) else {
+                    continue;
+                };
+                let (x, y) = px(s);
+                if h.part == GizmoPart::ScaleUniform {
+                    img.fill_rect(x - half, y - half, side, side, color);
+                } else {
+                    img.rect_outline(x - half, y - half, x + half, y + half, color);
+                }
+            }
+        }
+    }
+}
+
+/// Lo que va encima del render de la perspectiva, para pintarlo en pixel art (un pixel por
+/// punto, con fondo transparente).
+struct PerspOverlay<'a> {
+    pm: &'a PerspMap,
+    /// El cuadrante Persp y el punto de pantalla del pixel `(0, 0)` (entero).
+    q: Rect,
+    min: (f32, f32),
+    /// El gizmo en `center` (`None`: ninguno; ver [`gizmo_center`]) y su asa resaltada.
+    gizmo: Option<GizmoKind>,
+    center: Option<cs_3d::P3>,
+    gizmo_hot: Option<GizmoPart>,
+    nav_hot: Option<NavBall>,
+}
+
+impl PerspOverlay<'_> {
+    /// La imagen de `w × h`: el gizmo 3D (las asas de atrás primero) y el de navegación.
+    fn image(&self, w: usize, h: usize) -> cs_3d::WireImage {
+        let mut img = cs_3d::WireImage::new(w, h, [0; 4]);
+        if let (Some(kind), Some(center)) = (self.gizmo, self.center)
+            && let Some(shape) = persp_gizmo(kind, self.pm, center)
+        {
+            let pr = self.pm.projector();
+            // La profundidad de un asa: la de su punta (los aros y el centro, la del centro).
+            let depth = |h: &cs_3d::GizmoHandle| match &h.geom {
+                HandleGeom::Arrow { tip, .. } | HandleGeom::Stick { tip, .. } => pr.depth(*tip),
+                HandleGeom::Ring(pts) => pr.depth(pts[0]).max(pr.depth(pts[pts.len() / 2])),
+                HandleGeom::Box(p) => pr.depth(*p),
+            };
+            let mut handles = shape.handles;
+            handles.sort_by(|a, b| depth(b).total_cmp(&depth(a)));
+            draw_gizmo(
+                &mut img,
+                &handles,
+                &|p| self.pm.to_screen(p),
+                self.min,
+                self.gizmo_hot,
+            );
+        }
+        let colors = nav_gizmo::NavColors {
+            axes: AXIS_COLORS.map(rgba),
+            background: rgba(PERSP_BG),
+            light: rgba(GIZMO_CENTER),
+            dark: [0, 0, 0, 255],
+            hot: rgba(SELECTED),
+        };
+        nav_gizmo::draw_nav(
+            &mut img,
+            self.min,
+            &self.pm.camera,
+            self.q,
+            self.nav_hot,
+            &colors,
+        );
+        img
+    }
+}
+
+/// Un triángulo lleno de `a` a la base `b`–`c`: una línea de `a` a cada pixel de la base.
+fn fill_triangle(
+    img: &mut cs_3d::WireImage,
+    a: (i32, i32),
+    b: (i32, i32),
+    c: (i32, i32),
+    color: cs_3d::Rgba,
+) {
+    let n = (c.0 - b.0).abs().max((c.1 - b.1).abs()).max(1);
+    for i in 0..=n {
+        let lerp = |p: i32, q: i32| p + ((q - p) as f32 * i as f32 / n as f32).round() as i32;
+        img.line(a.0, a.1, lerp(b.0, c.0), lerp(b.1, c.1), color);
+    }
+}
+
+/// El gizmo `kind` en `center` como se ve en la vista orto de `map`, de [`GIZMO_PX`] puntos:
+/// Move y Scale con los dos ejes del plano de la vista; Rotate, solo con el aro del eje de
+/// profundidad (el que gira en ese plano).
+fn ortho_gizmo(kind: GizmoKind, map: &ViewMap, center: cs_3d::P3) -> cs_3d::GizmoShape {
+    let (u, v) = map.view.axes();
+    let mut axes = [false; 3];
+    match kind {
+        GizmoKind::Rotate => axes[3 - u - v] = true,
+        _ => {
+            axes[u] = true;
+            axes[v] = true;
+        }
+    }
+    cs_3d::gizmo_shape(kind, center, GIZMO_PX / map.scale, axes)
+}
+
+/// Dónde se dibuja el gizmo con `model` (el que se muestra): en el centro de la caja de lo
+/// elegido o, mientras se arrastra un aro, en el centro fijo del giro (la caja de lo girado se
+/// corre y el gizmo se iría con ella).
+fn gizmo_center(editor: &Editor, model: &cs_core::Model3D) -> Option<cs_3d::P3> {
+    match editor.model_edit().op {
+        Some(EditOp::Gizmo {
+            part: GizmoPart::Ring(_),
+            center,
+            ..
+        }) => Some(center),
+        _ => Some(cs_3d::center(cs_3d::bounds(
+            model,
+            &editor.model_edit().selection,
+        )?)),
+    }
+}
+
+/// El asa del gizmo bajo `at` (en pantalla) en la vista de `map`, si se ve un gizmo, y el centro
+/// del gizmo (el de la caja de lo elegido).
+fn gizmo_at(editor: &Editor, map: &ViewMap, at: (f32, f32)) -> Option<(GizmoPart, cs_3d::P3)> {
+    let kind = editor.shown_gizmo()?;
+    let model = editor.edited_model()?;
+    let center = cs_3d::center(cs_3d::bounds(model, &editor.model_edit().selection)?);
+    ortho_gizmo(kind, map, center)
+        .hit(|p| map.to_screen(p), at, cs_3d::PICK_RADIUS)
+        .map(|part| (part, center))
+}
+
+/// El gizmo `kind` en `center` como se ve en la perspectiva de `pm`: los tres ejes, de
+/// [`GIZMO_PX`] puntos (a la distancia del centro); `None` si el centro queda detrás de la
+/// cámara.
+pub(crate) fn persp_gizmo(
+    kind: GizmoKind,
+    pm: &PerspMap,
+    center: cs_3d::P3,
+) -> Option<cs_3d::GizmoShape> {
+    let c = pm.to_screen(center)?;
+    // Cuántos puntos mide una unidad (16/16) a lo ancho, a la distancia del centro.
+    let [right, ..] = pm.projector().axes();
+    let s = pm.to_screen(std::array::from_fn(|i| center[i] + right[i] * 16.0))?;
+    let per = (s.0 - c.0).hypot(s.1 - c.1) / 16.0;
+    (per > 1e-6).then(|| cs_3d::gizmo_shape(kind, center, GIZMO_PX / per, [true; 3]))
+}
+
+/// El asa del gizmo bajo `at` (en pantalla) en la perspectiva de `pm`, si se ve un gizmo, y el
+/// centro del gizmo.
+fn persp_gizmo_at(
+    editor: &Editor,
+    pm: &PerspMap,
+    at: (f32, f32),
+) -> Option<(GizmoPart, cs_3d::P3)> {
+    let kind = editor.shown_gizmo()?;
+    let model = editor.edited_model()?;
+    let center = cs_3d::center(cs_3d::bounds(model, &editor.model_edit().selection)?);
+    persp_gizmo(kind, pm, center)?
+        .hit(
+            |p| pm.to_screen(p).unwrap_or((1e9, 1e9)),
+            at,
+            cs_3d::PICK_RADIUS,
+        )
+        .map(|part| (part, center))
 }
 
 /// `top` (premultiplicado, con transparencia) encima del color opaco `bg`.
@@ -1145,6 +1742,9 @@ mod tests {
             bounds: cs_3d::bounds(model, sel),
             face_edges: &selected_face_edges(model, sel),
             boxed,
+            gizmo: None,
+            gizmo_center: None,
+            gizmo_hot: None,
         }
         .image(100, 100)
     }
@@ -1229,6 +1829,152 @@ mod tests {
         }
         assert_ne!(at(&img, 15, 15), SELECTED);
         assert_ne!(at(&img, 21, 21), SELECTED);
+    }
+
+    /// El cubo elegido entero con el gizmo `kind` (`hot`: el asa resaltada).
+    fn render_gizmo(kind: cs_3d::GizmoKind, hot: Option<cs_3d::GizmoPart>) -> cs_3d::WireImage {
+        let m = cube();
+        let sel = cs_3d::Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0)].into(),
+        };
+        OrthoScene {
+            map: &MAP,
+            min: (0.0, 0.0),
+            grid: 1,
+            model: &m,
+            sel: &sel,
+            bounds: cs_3d::bounds(&m, &sel),
+            face_edges: &selected_face_edges(&m, &sel),
+            boxed: None,
+            gizmo: Some(kind),
+            gizmo_center: cs_3d::bounds(&m, &sel).map(cs_3d::center),
+            gizmo_hot: hot,
+        }
+        .image(100, 100)
+    }
+
+    #[test]
+    fn the_gizmo_is_pixel_art_in_the_axis_colors() {
+        use cs_3d::{GizmoKind, GizmoPart};
+        let r = crate::editor::GIZMO_PX as i32;
+        // Move en Front: la flecha X a la derecha (roja), la Y arriba (verde) y el cuadrito del
+        // centro; ni Z ni nada hacia abajo.
+        let img = render_gizmo(GizmoKind::Move, None);
+        assert_eq!(at(&img, 60, 50), AXIS_COLORS[0]);
+        assert_eq!(at(&img, 50 + r, 50), AXIS_COLORS[0], "the tip");
+        assert_eq!(at(&img, 50, 40), AXIS_COLORS[1]);
+        assert_eq!(at(&img, 50, 50 - r), AXIS_COLORS[1]);
+        assert_ne!(at(&img, 50, 60), AXIS_COLORS[1]);
+        assert_ne!(at(&img, 40, 50), AXIS_COLORS[0]);
+        // La punta de la flecha es más ancha que el asta.
+        assert_eq!(at(&img, 50 + r - 6, 51), AXIS_COLORS[0]);
+        assert_eq!(at(&img, 50 + r - 6, 49), AXIS_COLORS[0]);
+        assert_eq!(at(&img, 50 + r - 8, 53), AXIS_COLORS[0], "the base");
+        assert_eq!(at(&img, 50 + r - 8, 47), AXIS_COLORS[0], "the base");
+        assert_eq!(at(&img, 60, 51), ORTHO_BG);
+        assert_eq!(at(&img, 52, 48), GIZMO_CENTER, "the square");
+        assert!(img.pixels.iter().all(|c| *c != rgba(AXIS_COLORS[2])));
+        // La flecha bajo el puntero, amarilla.
+        let img = render_gizmo(GizmoKind::Move, Some(GizmoPart::Axis(0)));
+        assert_eq!(at(&img, 60, 50), SELECTED);
+        assert_eq!(at(&img, 50, 40), AXIS_COLORS[1]);
+        // Rotate: solo el aro de Z, un círculo azul alrededor del centro.
+        let img = render_gizmo(GizmoKind::Rotate, None);
+        assert_eq!(at(&img, 50 + r, 50), AXIS_COLORS[2]);
+        assert_eq!(at(&img, 50, 50 - r), AXIS_COLORS[2]);
+        assert_eq!(at(&img, 50 - r, 50), AXIS_COLORS[2]);
+        assert_ne!(at(&img, 60, 50), AXIS_COLORS[2]);
+        assert!(
+            img.pixels
+                .iter()
+                .all(|c| *c != rgba(AXIS_COLORS[0]) && *c != rgba(AXIS_COLORS[1]))
+        );
+        // Scale: un cubito lleno en la punta de cada eje y otro en el centro.
+        let img = render_gizmo(GizmoKind::Scale, None);
+        assert_eq!(at(&img, 50 + r + 2, 52), AXIS_COLORS[0]);
+        assert_eq!(at(&img, 48, 50 - r - 2), AXIS_COLORS[1]);
+        assert_eq!(at(&img, 50, 50), GIZMO_CENTER);
+        assert_eq!(at(&img, 60, 50), AXIS_COLORS[0]);
+    }
+
+    #[test]
+    fn the_persp_overlay_is_pixel_art_with_both_gizmos() {
+        use cs_3d::{GizmoKind, GizmoPart};
+        let m = cube();
+        let sel = cs_3d::Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0)].into(),
+        };
+        let pm = PerspMap {
+            camera: m.camera,
+            size: (64, 64),
+            min: (20.0, 10.0),
+            scale: (3.0, 3.0),
+        };
+        let q = Rect::from_min_size(Pos2::ZERO, vec2(240.0, 220.0));
+        let image = |nav_hot| {
+            PerspOverlay {
+                pm: &pm,
+                q,
+                min: (0.0, 0.0),
+                gizmo: Some(GizmoKind::Move),
+                center: cs_3d::bounds(&m, &sel).map(cs_3d::center),
+                gizmo_hot: None,
+                nav_hot,
+            }
+            .image(240, 220)
+        };
+        let img = image(None);
+        // Transparente fuera de los gizmos; lo demás, opaco (sin mezclas).
+        assert_eq!(img.get(5, 200), Some([0; 4]));
+        assert!(img.pixels.iter().all(|c| c[3] == 0 || c[3] == 255));
+        // El asta de la flecha X, en rojo (un pixel de 1 por la mitad).
+        let shape = persp_gizmo(GizmoKind::Move, &pm, [0.0; 3]).unwrap();
+        let x = shape
+            .handles
+            .iter()
+            .find(|h| h.part == GizmoPart::Axis(0))
+            .unwrap();
+        let HandleGeom::Arrow { from, tip, .. } = x.geom else {
+            panic!("an arrow");
+        };
+        let (a, b) = (pm.to_screen(from).unwrap(), pm.to_screen(tip).unwrap());
+        let mid = ((a.0 + b.0) / 2.0, (a.1 + b.1) / 2.0);
+        let near = |p: (f32, f32), c: Color32| {
+            (-1..=1).any(|dy| {
+                (-1..=1).any(|dx| {
+                    img.get(p.0.floor() as i32 + dx, p.1.floor() as i32 + dy) == Some(rgba(c))
+                })
+            })
+        };
+        assert!(near(mid, AXIS_COLORS[0]), "the X shaft");
+        // Mide GIZMO_PX en pantalla, a lo ancho de la cámara.
+        let len = (b.0 - a.0).hypot(b.1 - a.1);
+        assert!(len > 8.0 && len <= GIZMO_PX + 0.5, "{len}");
+        // El gizmo de navegación: la bolita X roja con su borde claro; la -X, apagada.
+        let balls = nav_gizmo::nav_balls(&pm.camera, q);
+        let ball = |axis, negative| {
+            balls
+                .iter()
+                .find(|(b, _)| *b == NavBall { axis, negative })
+                .map(|(_, p)| (p.x as i32, p.y as i32))
+                .unwrap()
+        };
+        let (bx, by) = ball(0, false);
+        assert_eq!(img.get(bx - 3, by), Some(rgba(AXIS_COLORS[0])));
+        assert_eq!(img.get(bx + 7, by), Some(rgba(GIZMO_CENTER)));
+        assert_eq!(img.get(bx + 6, by), Some([0, 0, 0, 255]));
+        let (nx, ny) = ball(0, true);
+        let dim = img.get(nx, ny).unwrap();
+        assert_eq!(dim[3], 255);
+        assert_ne!(dim, rgba(AXIS_COLORS[0]));
+        // Bajo el puntero, el borde en amarillo.
+        let hot = image(Some(NavBall {
+            axis: 0,
+            negative: false,
+        }));
+        assert_eq!(hot.get(bx + 7, by), Some(rgba(SELECTED)));
     }
 
     #[test]

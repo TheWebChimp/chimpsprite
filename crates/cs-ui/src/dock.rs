@@ -217,14 +217,6 @@ pub fn open_panel(ctx: &egui::Context) -> Option<DockPanel> {
         .flatten()
 }
 
-/// Dónde está el panel flotante abierto (el del frame en curso si ya se mostró; si no, el del
-/// anterior). `None` con todos cerrados.
-pub fn open_flyout_rect(ctx: &egui::Context) -> Option<Rect> {
-    let panel = open_panel(ctx)?;
-    let id = egui::Id::new(("dock_flyout", panel.label()));
-    ctx.memory(|m| m.area_rect(id))
-}
-
 pub fn set_open(ctx: &egui::Context, panel: Option<DockPanel>) {
     ctx.data_mut(|d| d.insert_temp(open_id(), panel));
 }
@@ -430,6 +422,44 @@ fn flyout_with(
                 plain_icon(ui, skin, panel.icon(), panel.plain(), button);
             }
         });
+}
+
+/// Ancho del panel fijo de `width` de contenido (ver [`fixed_panel`]): su caja y el aire hasta
+/// el panel derecho.
+pub fn fixed_panel_width(width: f32) -> f32 {
+    width + 2.0 * FLYOUT_MARGIN as f32 + RIGHT_MARGIN as f32
+}
+
+/// En lugar de la columna del dock (la pestaña de un modelo): un panel fijo que no se cierra, en
+/// la caja de los paneles flotantes pero sin pestaña, a lo alto de la columna (de la altura de las
+/// reglas del lienzo a la del botón del timeline). Como en [`flyout_fixed`], el contenido recibe
+/// `width` de ancho por todo el alto, sin el marco.
+pub fn fixed_panel(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    width: f32,
+    add_contents: impl FnOnce(&mut Ui),
+) {
+    let mut column = ui.max_rect();
+    if skin.is_some() {
+        column.min.y += TOP_AIR;
+        column.max.y -= BOTTOM_AIR;
+    }
+    let size = vec2(width + 2.0 * FLYOUT_MARGIN as f32, column.height());
+    let rect = Rect::from_min_size(column.min.round(), size.round());
+    let ppp = ui.ctx().pixels_per_point();
+    let piece = skin.and_then(|s| s.piece(FLYOUT_PIECE, WidgetState::Normal));
+    let shape = match piece {
+        Some(piece) => Shape::Vec(pixel_ui::piece_shapes(piece, rect, ppp)),
+        None => egui::Frame::popup(ui.style()).inner_margin(0).paint(rect),
+    };
+    ui.painter().add(shape);
+    let inner = rect.shrink(FLYOUT_MARGIN as f32);
+    ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+        ui.set_width(width);
+        ui.set_height(inner.height());
+        add_contents(ui);
+    });
 }
 
 /// Cuánto entra en el lienzo, desde su borde derecho, un panel flotante de `width` de contenido:

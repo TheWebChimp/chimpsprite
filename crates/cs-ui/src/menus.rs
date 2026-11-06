@@ -41,15 +41,15 @@ const LOOK_TAG: &str = "chimpsprite_pixel_menu";
 const TITLE_OPEN: &str = "menu.title.open";
 /// El panel de los menús (mockup de componentes, frame 9: el menú Frame): el de la lista del
 /// select, con la sombra (5,4,3) con alfa 123 de 2 px abajo y a la derecha, afuera del panel.
-const PANEL: &str = "menu.list";
+pub(crate) const PANEL: &str = "menu.list";
 /// La sombra del panel, que va afuera de su rect.
-const PANEL_SHADOW: f32 = 2.0;
+pub(crate) const PANEL_SHADOW: f32 = 2.0;
 /// El panel del menú de las variantes de una herramienta (mockup de componentes, frame 9: Hand
 /// y Zoom), sin sombra: borde (89,77,77) con las esquinas de 1 px, brillo arriba y a la derecha y
 /// bisel a la izquierda y abajo.
 const SIDE_PANEL: &str = "menu.side";
 /// El separador: la fila blanca sobre la (189,164,153), de borde a borde (encima del bisel).
-const SEPARATOR: &str = "menu.separator";
+pub(crate) const SEPARATOR: &str = "menu.separator";
 const KEY: &str = "key";
 const CHECK: &str = "menu.check";
 const CHECK_ON: &str = "menu.check.on";

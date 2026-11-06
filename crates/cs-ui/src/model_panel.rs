@@ -1,12 +1,13 @@
-//! El panel 3D del dock: el modelo 3D del artboard activo. Arriba, fija, la tira de pestañas: la
-//! del modelo (los cinco íconos de tipo, sin marca; activa sin objeto elegido) y una por objeto
-//! (con el ícono de su tipo: un clic la elige, su marca quita el objeto y, si no caben, las
-//! flechas las recorren) y, a la derecha, el + (un menú con las primitivas y los lados de las
-//! redondas: elegir una la agrega). Abajo, con scroll, lo de la pestaña activa. Sin modelo, el
-//! botón New 3D Model…. La de un objeto: su posición, su rotación y su escala en filas de X, Y y
-//! Z, Double sided y, en modo Texture, la sección UV (girar y voltear las UVs de las caras
-//! elegidas). La del modelo: los modos de selección y la cuadrícula (en modo Model), la textura
-//! y su tamaño, la cámara, la luz (con la cuadrícula Shading), el contorno y Sheet settings….
+//! El panel 3D (en el dock del lienzo; en la pestaña del modelo, fijo en su lugar): el modelo 3D
+//! del artboard activo, partido en dos a lo alto por una línea grabada (a ≈ 40 %). Arriba, con su
+//! scroll, lo general del modelo: los modos de selección y la cuadrícula (en modo Model), la
+//! textura y su tamaño, la cámara, la luz (con la cuadrícula Shading), el contorno y Sheet
+//! settings…. Abajo, la tira de pestañas de los objetos (una por objeto, con el ícono de su tipo:
+//! un clic la elige, su marca quita el objeto y, si no caben, las flechas las recorren) con el +
+//! a la derecha (su ventanita, en [`add_menu`]: el tipo, los lados de los redondos y Add) y,
+//! debajo, con su scroll, lo del objeto elegido: en modo Texture, los botones de las UVs (girar y
+//! voltear las de las caras elegidas); su posición, su rotación y su escala en filas de X, Y y Z,
+//! y Double sided. Sin objeto elegido, abajo solo la tira. Sin modelo, el botón New 3D Model….
 
 use cs_3d::Primitive;
 use cs_core::{CameraPreset, Model3D, Object3D, PrimitiveKind, Projection, Rgba, ShadingTable};
@@ -26,36 +27,35 @@ use crate::pixel_ui;
 use crate::skin::Skin;
 use crate::tabs::TabIcon;
 
+mod add_menu;
+
 /// Ancho de adentro del panel (sin su marco): el contenido y la barra del scroll.
 pub const WIDTH: f32 = 300.0;
-/// Las pestañas de los objetos, 5 filas debajo del borde de arriba de la caja del panel, sobre su
-/// línea grabada (como en el boceto).
+/// Las pestañas de los objetos, 5 filas debajo de la línea que parte el panel (3 de aire después
+/// de sus dos filas), sobre su propia línea grabada.
 const TABS_TOP: f32 = 5.0;
-/// Sin Pixel UI: la fila de pestañas de egui (más alta) y la línea debajo.
+/// Sin Pixel UI: la fila de pestañas de egui (más alta) y la línea debajo, desde la que parte el
+/// panel.
 const PLAIN_TABS_TOP: f32 = 8.0;
 const PLAIN_HEADER_LINE: f32 = 29.0;
-/// Del borde de arriba del medio a lo primero, y lo mismo abajo.
+/// Dónde parte la línea el panel, desde arriba de su caja: como en el boceto, 160 de sus 408
+/// filas (≈ 40 %; lo de abajo, las pestañas y el objeto, tiene más lugar).
+const SPLIT: f32 = 160.0 / 408.0;
+/// Del borde de arriba de cada mitad a lo primero, y lo mismo abajo.
 const MIDDLE_AIR: f32 = 4.0;
+/// De la línea de las pestañas a lo primero del objeto (en modo Texture, los botones de las UVs):
+/// 9 filas (como el boceto), con [`MIDDLE_AIR`]. La fila de los botones es media fila más alta
+/// que ellos y los centra: el botón cae (redondeado) una fila más abajo.
+const OBJECT_TOP_AIR: f32 = 9.0 - MIDDLE_AIR - 1.0;
 /// Entre una cosa y otra del medio, y antes de cada sección.
 const ITEM_GAP: f32 = 4.0;
 const SECTION_GAP: f32 = 8.0;
 /// El + de la tira: del alto de las flechas, 4 px después de ellas (como en el boceto).
 const PLUS_W: f32 = 13.0;
 const PLUS_GAP: f32 = 4.0;
-/// La pestaña del modelo: los íconos de los cinco tipos de objeto.
-const MODEL_TAB_ICONS: &[&str] = &[
-    "icon.object.cube",
-    "icon.object.cylinder",
-    "icon.object.cone",
-    "icon.object.sphere",
-    "icon.object.plane",
-];
-/// El stepper de los lados, en el menú del +.
-const SIDES_W: f32 = 62.0;
 /// El select de la cuadrícula del modo Edit.
 const GRID_W: f32 = 56.0;
-/// El select del tamaño de la textura (modo Texture) y sus lados.
-const TEXTURE_SIZE_W: f32 = 64.0;
+/// Los lados del tamaño de la textura.
 const TEXTURE_SIZES: [u32; 6] = [16, 32, 64, 128, 256, 512];
 /// Los lados de cilindros, conos y esferas.
 const MIN_SIDES: u32 = 3;
@@ -89,8 +89,20 @@ fn cell_w(ui: &Ui) -> f32 {
 }
 /// La etiqueta de Yaw y Pitch.
 const ANGLE_LABEL_W: f32 = 34.0;
-/// El select de la textura.
-const TEXTURE_W: f32 = 150.0;
+/// Las filas de la textura y de la cámara (como el boceto): la columna de la derecha (Texture
+/// Size) empieza a 5/8 de la fila (138 de sus 220 columnas), con este aire antes; el aire entre
+/// el select de la cámara y sus presets es el mismo.
+const RIGHT_COLUMN: f32 = 0.625;
+const COLUMN_GAP: f32 = 4.0;
+/// Lo que dice un select sin nada elegido.
+const NO_OPTION: &str = "Select an option…";
+/// Los presets de la cámara, en su grupo de botones.
+const PRESETS: [(&str, CameraPreset); 4] = [
+    ("Iso", CameraPreset::Iso),
+    ("Top", CameraPreset::Top),
+    ("Side", CameraPreset::Side),
+    ("Front", CameraPreset::Front),
+];
 /// Hasta dónde llegan Yaw (en grados) y Pitch (en grados).
 const YAW_MAX: i32 = 360;
 const PITCH_MAX: i32 = 90;
@@ -113,12 +125,18 @@ const PIN_DARK: Color32 = Color32::from_rgb(5, 4, 3);
 pub struct ModelPanelState {
     /// Los lados de lo que se agregue redondo (cilindro, cono, esfera).
     pub sides: u32,
+    /// El tipo elegido en el menú del + (de entrada, el cubo).
+    pub add_kind: PrimitiveKind,
+    /// Abrir el menú del + en el próximo frame (la demo, para capturas).
+    pub open_add_menu: bool,
 }
 
 impl Default for ModelPanelState {
     fn default() -> Self {
         ModelPanelState {
             sides: DEFAULT_SIDES,
+            add_kind: PrimitiveKind::Cube,
+            open_add_menu: false,
         }
     }
 }
@@ -134,7 +152,9 @@ pub enum ModelAction {
 }
 
 /// El panel en `ui` (lo de adentro del marco, de la columna entera: ver
-/// [`crate::dock::flyout_fixed`]): el título fijo y el medio con scroll.
+/// [`crate::dock::flyout_fixed`] y [`crate::dock::fixed_panel`]): arriba lo general, la línea a
+/// [`SPLIT`] del alto y abajo la tira de pestañas y lo del objeto elegido, cada parte con su
+/// scroll.
 pub fn show(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -145,39 +165,94 @@ pub fn show(
     // La caja del panel, como la pinta el dock: en puntos enteros.
     let outer = inner.expand(FLYOUT_MARGIN as f32);
     let outer = Rect::from_min_size(outer.min.round(), outer.size().round());
-    let line = header(ui, editor, skin, state, outer, inner);
-    let middle = Rect::from_x_y_ranges(
-        inner.x_range(),
-        line + pixel_ui::ETCHED_SIZE..=inner.bottom(),
-    );
-    let mut area = egui::ScrollArea::vertical()
-        .id_salt("model_panel_middle")
-        .auto_shrink([false, false])
-        .max_height(middle.height())
-        .min_scrolled_height(middle.height());
     // Recién abierto: arriba. egui guarda el desplazamiento del scroll (y lo persiste entre
     // sesiones), así que sin esto el panel reabre donde se dejó, con Edit y los modos ocultos.
     // Si el frame anterior no se dibujó el panel, es que estaba cerrado.
     let shown_id = egui::Id::new("model_panel_last_pass");
     let pass = ui.ctx().cumulative_pass_nr();
     let last: Option<u64> = ui.data(|d| d.get_temp(shown_id));
-    if last.is_none_or(|last| last + 1 < pass) {
-        area = area.vertical_scroll_offset(0.0);
-    }
+    let reopened = last.is_none_or(|last| last + 1 < pass);
     ui.data_mut(|d| d.insert_temp(shown_id, pass));
-    let action = ui
-        .scope_builder(UiBuilder::new().max_rect(middle), |ui| {
-            pixel_ui::scroll(ui, area, |ui| {
-                ui.add_space(MIDDLE_AIR);
-                let action = body(ui, editor, skin);
-                ui.add_space(MIDDLE_AIR);
-                action
-            })
+    let action = if editor.edited_model().is_none() {
+        // Sin modelo, todo el panel para New 3D Model… (sin línea ni pestañas).
+        scrolled(ui, "model_panel_middle", inner, reopened, |ui| {
+            let new = button(ui, skin, "New 3D Model…");
+            ui.add_space(ITEM_GAP);
+            ui.add(egui::Label::new("The active artboard is not a 3D model.").wrap());
+            new.clicked().then_some(ModelAction::NewModel)
         })
-        .inner;
-    // Todo el panel es de la columna (el medio no lo dice: está en su propio `Ui`).
+    } else {
+        let split = split_row(outer);
+        let top = Rect::from_x_y_ranges(inner.x_range(), inner.top()..=split);
+        let action = scrolled(ui, "model_panel_general", top, reopened, |ui| {
+            ui.spacing_mut().item_spacing.y = ITEM_GAP;
+            general(ui, editor, skin)
+        });
+        divider(ui, skin, outer, split);
+        let line = header(ui, editor, skin, state, outer, inner, split);
+        if editor.selected_object().is_some() {
+            let bottom = Rect::from_x_y_ranges(
+                inner.x_range(),
+                line + pixel_ui::ETCHED_SIZE..=inner.bottom(),
+            );
+            scrolled(ui, "model_panel_object", bottom, reopened, |ui| {
+                ui.spacing_mut().item_spacing.y = ITEM_GAP;
+                selected(ui, editor, skin);
+            });
+        }
+        action
+    };
+    // Todo el panel es de la columna (las mitades no lo dicen: están en su propio `Ui`).
     ui.advance_cursor_after_rect(inner);
     action
+}
+
+/// La fila de la línea que parte el panel: a [`SPLIT`] del alto de su caja `outer`, en puntos
+/// enteros.
+fn split_row(outer: Rect) -> f32 {
+    outer.top() + (outer.height() * SPLIT).floor()
+}
+
+/// La línea que parte el panel en la fila `top`: grabada, como la de la tira de pestañas, de lado
+/// a lado de lo de adentro de la caja `outer` (sin Pixel UI, la de egui).
+fn divider(ui: &Ui, skin: Option<&Skin>, outer: Rect, top: f32) {
+    let x = outer.x_range().shrink(1.0);
+    match skin {
+        Some(skin) => {
+            let ppp = ui.ctx().pixels_per_point();
+            let line = pixel_ui::etched_hline(x, top, skin.colors(), ppp);
+            ui.painter().add(line);
+        }
+        None => lit_line(ui, None, outer, top),
+    }
+}
+
+/// Una mitad del panel en `rect`, con su propio scroll (`salt`) y [`MIDDLE_AIR`] arriba y abajo.
+/// Con `reset`, desde arriba.
+fn scrolled<R>(
+    ui: &mut Ui,
+    salt: &str,
+    rect: Rect,
+    reset: bool,
+    add_contents: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let mut area = egui::ScrollArea::vertical()
+        .id_salt(salt)
+        .auto_shrink([false, false])
+        .max_height(rect.height())
+        .min_scrolled_height(rect.height());
+    if reset {
+        area = area.vertical_scroll_offset(0.0);
+    }
+    ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
+        pixel_ui::scroll(ui, area, |ui| {
+            ui.add_space(MIDDLE_AIR);
+            let inner = add_contents(ui);
+            ui.add_space(MIDDLE_AIR);
+            inner
+        })
+    })
+    .inner
 }
 
 /// La pieza del ícono de un tipo de objeto.
@@ -205,18 +280,12 @@ pub(crate) fn object_tabs(model: &Model3D) -> Vec<TabItem> {
         .collect()
 }
 
-/// La tira entera de `model`: primero la del modelo (los cinco íconos de tipo, sin nombre ni
-/// marca: no se cierra) y después las de sus objetos. La pestaña `i + 1` es la del objeto `i`.
-pub(crate) fn panel_tabs(model: &Model3D) -> Vec<TabItem> {
-    let whole = TabItem::icons_only("Model", TabIcon::Pieces(MODEL_TAB_ICONS));
-    std::iter::once(whole).chain(object_tabs(model)).collect()
-}
-
-/// Arriba del panel, fija: la tira de pestañas (la del kit, estilo documento, en lo de adentro de
-/// la caja; su línea grabada, de lado a lado) con el + a la derecha o, sin Pixel UI, una fila de
-/// egui y una línea. Un clic en la del modelo deja sin objeto elegido; en la de un objeto, lo
-/// elige; su marca lo quita (un paso de undo). El + agrega lo elegido en su menú (y lo elige). Sin
-/// modelo, solo la línea. Devuelve la fila de arriba de la línea.
+/// Arriba de la mitad de abajo (desde la línea que parte el panel, en la fila `split`), fija: la
+/// tira de pestañas de los objetos (la del kit, estilo documento, en lo de adentro de la caja; su
+/// línea grabada, de lado a lado) con el + a la derecha o, sin Pixel UI, una fila de egui y una
+/// línea. La pestaña `i` es la del objeto `i`: un clic la elige; su marca lo quita (un paso de
+/// undo). Sin objeto elegido, ninguna activa. El + agrega lo elegido en su menú (y lo elige).
+/// Devuelve la fila de arriba de la línea de la tira.
 fn header(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -224,33 +293,30 @@ fn header(
     state: &mut ModelPanelState,
     outer: Rect,
     inner: Rect,
+    split: f32,
 ) -> f32 {
-    let items = editor.edited_model().map(panel_tabs).unwrap_or_default();
-    let has_model = !items.is_empty();
-    // La del modelo, activa sin objeto elegido.
-    let active = has_model.then(|| editor.selected_object().map_or(0, |i| i + 1));
+    let items = editor.edited_model().map(object_tabs).unwrap_or_default();
+    let active = editor.selected_object();
     let id = ui.id().with("model_object_tabs");
     let mut added = None;
     let (line, event) = match skin {
         Some(skin) => {
-            let top = outer.top() + TABS_TOP;
+            let top = split + TABS_TOP;
             let mut strip = kit::tabs::Strip::new(inner.left(), inner.right(), top);
             strip.line = outer.x_range().shrink(1.0);
-            if has_model {
-                // El +, al final de la fila; las pestañas y sus flechas, antes.
-                let plus = Rect::from_min_size(
-                    pos2(inner.right() - PLUS_W, top + kit::tabs::ARROWS_TOP),
-                    vec2(PLUS_W, kit::tabs::ARROW_SIZE),
-                );
-                strip.right = plus.left() - PLUS_GAP;
-                added = plus_button(ui, skin, plus, state);
-            }
+            // El +, al final de la fila; las pestañas y sus flechas, antes.
+            let plus = Rect::from_min_size(
+                pos2(inner.right() - PLUS_W, top + kit::tabs::ARROWS_TOP),
+                vec2(PLUS_W, kit::tabs::ARROW_SIZE),
+            );
+            strip.right = plus.left() - PLUS_GAP;
+            added = add_menu::plus_button(ui, skin, plus, state);
             let event = kit::tabs::tab_strip(ui, skin, id, strip, &items, active);
             (strip.bottom(), event)
         }
         None => {
-            let line = outer.top() + PLAIN_HEADER_LINE;
-            let row = Rect::from_x_y_ranges(inner.x_range(), outer.top() + PLAIN_TABS_TOP..=line);
+            let line = split + PLAIN_HEADER_LINE;
+            let row = Rect::from_x_y_ranges(inner.x_range(), split + PLAIN_TABS_TOP..=line);
             let event = ui
                 .scope_builder(UiBuilder::new().max_rect(row), |ui| {
                     plain_tabs(ui, &items, active, state, &mut added)
@@ -261,13 +327,11 @@ fn header(
         }
     };
     match event {
-        Some(TabEvent::Select(0)) => editor.select_model_object(None),
-        Some(TabEvent::Select(i)) => editor.select_model_object(Some(i - 1)),
-        // La del modelo no tiene marca: no se cierra.
-        Some(TabEvent::Close(0)) | None => {}
+        Some(TabEvent::Select(i)) => editor.select_model_object(Some(i)),
         Some(TabEvent::Close(i)) => {
-            editor.remove_object(i - 1);
+            editor.remove_object(i);
         }
+        None => {}
     }
     if let Some(p) = added {
         editor.add_primitive(p);
@@ -275,66 +339,9 @@ fn header(
     line
 }
 
-/// El + de la tira en `rect` (un botón del kit con el ícono `icon.tab_add`) y su menú: lo elegido.
-fn plus_button(
-    ui: &mut Ui,
-    skin: &Skin,
-    rect: Rect,
-    state: &mut ModelPanelState,
-) -> Option<Primitive> {
-    let id = ui.id().with("model_add_object");
-    let plus = kit::tabs::ADD_MARK;
-    let response = kit::button::icon_button_at(ui, skin, rect, id, plus, "Add object");
-    let look = menus::MenuLook::new(skin, rect.top());
-    // Cambiar los lados no lo cierra: lo cierra elegir una primitiva o un clic afuera.
-    let keep = egui::PopupCloseBehavior::CloseOnClickOutside;
-    menus::dropdown_with(&look, &response, rect, keep, |ui| {
-        add_menu(ui, Some(skin), state)
-    })
-    .flatten()
-}
-
-/// El menú del +: las primitivas (elegir una cierra el menú y la devuelve) y, debajo, los lados
-/// de las redondas (las esferas, con la mitad de anillos).
-fn add_menu(ui: &mut Ui, skin: Option<&Skin>, state: &mut ModelPanelState) -> Option<Primitive> {
-    let sides = state.sides.clamp(MIN_SIDES, MAX_SIDES);
-    let options = [
-        Primitive::Cube,
-        Primitive::Plane,
-        Primitive::Cylinder { sides },
-        Primitive::Cone { sides },
-        Primitive::Sphere {
-            sides,
-            rings: sides / 2,
-        },
-    ];
-    let mut picked = None;
-    for p in options {
-        if ui.add(menus::choice(false, p.name())).clicked() {
-            picked = Some(p);
-            ui.close();
-        }
-    }
-    menus::separator(ui);
-    ui.horizontal(|ui| {
-        ui.label("Sides");
-        let range = MIN_SIDES..=MAX_SIDES;
-        match skin {
-            Some(skin) => {
-                let value = &mut state.sides;
-                kit::stepper::stepper(ui, skin, SIDES_W, "model_sides", value, range, 1, None);
-            }
-            None => {
-                ui.add(egui::DragValue::new(&mut state.sides).range(range));
-            }
-        }
-    });
-    picked
-}
-
 /// Sin Pixel UI: una fila de egui (con scroll de lado) con el nombre de cada pestaña (un clic la
-/// elige), el × de las que se cierran (quita su objeto) y, al final, el + con su menú (lo elegido
-/// queda en `added`).
+/// elige), el × de las que se cierran (quita su objeto) y, al final, el + con su menú (lo
+/// agregado queda en `added`).
 fn plain_tabs(
     ui: &mut Ui,
     items: &[TabItem],
@@ -366,35 +373,16 @@ fn plain_tabs(
                     }
                     ui.add_space(4.0);
                 }
-                if !items.is_empty() {
-                    let menu = ui.menu_button("+", |ui| add_menu(ui, None, state));
-                    *added = menu.inner.flatten();
-                }
+                *added = add_menu::plain_menu(ui, state);
             });
         });
     event
 }
 
-/// Lo que se desplaza: New 3D Model… sin modelo; con modelo, lo de la pestaña activa (la de un
-/// objeto o la del modelo).
-fn body(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
-    if editor.edited_model().is_none() {
-        let new = button(ui, skin, "New 3D Model…");
-        ui.add_space(ITEM_GAP);
-        ui.add(egui::Label::new("The active artboard is not a 3D model.").wrap());
-        return new.clicked().then_some(ModelAction::NewModel);
-    }
-    ui.spacing_mut().item_spacing.y = ITEM_GAP;
-    if editor.selected_object().is_some() {
-        selected(ui, editor, skin);
-        return None;
-    }
-    model_tab(ui, editor, skin)
-}
-
-/// La pestaña del modelo: en modo Model, los modos de selección y la cuadrícula; la textura y su
-/// tamaño; la cámara, la luz (con Shading) y el contorno, y Sheet settings… (hornear).
-fn model_tab(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
+/// Lo general del modelo (la mitad de arriba): en modo Model, los modos de selección y la
+/// cuadrícula; la textura y su tamaño; la cámara, la luz (con Shading) y el contorno, y Sheet
+/// settings… (hornear).
+fn general(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
     if editor.cad_mode() == CadMode::Model {
         edit_rows(ui, editor, skin);
     }
@@ -407,10 +395,9 @@ fn model_tab(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<Mo
     action.or(bake)
 }
 
-/// En la pestaña de un objeto, en modo Texture: la sección UV, con Rotate 90°, Flip H y Flip V
-/// para las caras elegidas (sin caras, deshabilitados).
-fn uv_section(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
-    label_with_hint(ui, "UV", "");
+/// Lo del objeto elegido, en modo Texture: Rotate 90°, Flip H y Flip V para las caras elegidas
+/// (sin caras, deshabilitados), en una fila sin título (como el boceto).
+fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let faces = !editor.selected_faces().is_empty();
     let (mut rotate, mut flip_h, mut flip_v) = (false, false, false);
     ui.add_enabled_ui(faces, |ui| {
@@ -428,52 +415,40 @@ fn uv_section(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 }
 
-/// Texture size, debajo de la textura (si el modelo tiene una). Achicar la textura dejando UVs
-/// fuera lo confirma la app (`ModelAction::TextureSize`).
-fn texture_size(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
-    let size = editor
-        .workspace_texture()
-        .and_then(|id| editor.document.artboard(id))
-        .map(|a| (a.sprite.width, a.sprite.height));
-    let mut picked = None;
-    if let Some((w, h)) = size {
-        let shown = if w == h {
-            w.to_string()
-        } else {
-            format!("{w}×{h}")
-        };
-        let mut list = |ui: &mut Ui| {
-            for side in TEXTURE_SIZES {
-                let on = (w, h) == (side, side);
-                if ui.add(menus::choice(on, &side.to_string())).clicked() {
-                    picked = Some(side);
-                    ui.close();
-                }
-            }
-        };
-        ui.horizontal(|ui| {
-            ui.label("Texture size");
-            let width = Some(TEXTURE_SIZE_W);
-            match skin {
-                Some(skin) => {
-                    kit::select::select(ui, skin, "model_texture_size", &shown, width, list);
-                }
-                None => {
-                    egui::ComboBox::from_id_salt("model_texture_size")
-                        .selected_text(&shown)
-                        .show_ui(ui, |ui| list(ui));
-                }
-            }
-        });
+/// El ancho de las filas de lo general: lo de adentro sin la barra del scroll y el aire de antes
+/// (como las filas de los ejes).
+fn row_width(ui: &Ui) -> f32 {
+    ((WIDTH - pixel_ui::SCROLL_BAR).min(ui.available_width()) - AXIS_GAP).floor()
+}
+
+/// El lugar de una fila de selects (y botones) de `width`, en puntos enteros. Sin el aire de entre
+/// filas arriba: como las filas de los ejes (que egui centra en una fila más baja), queda a 4 filas
+/// de la letra de su título y a 10 del título que sigue, como el boceto.
+fn row_rect(ui: &mut Ui, width: f32) -> Rect {
+    ui.add_space(-ui.spacing().item_spacing.y);
+    let (slot, _) = ui.allocate_exact_size(vec2(width, kit::select::HEIGHT), Sense::hover());
+    Rect::from_min_size(slot.min.round(), slot.size())
+}
+
+/// Dos títulos en una fila: `left` al principio (en `ui`, como cualquier título) y `right` a la
+/// misma altura en la columna `column` (desde el principio de la fila), en su propio `Ui`.
+fn pair_labels(ui: &mut Ui, (left, right): (&str, &str), column: f32) {
+    let at = ui.cursor().min + vec2(column, 0.0);
+    let rect = Rect::from_min_size(at, vec2((ui.available_width() - column).max(0.0), 0.0));
+    let mut second = ui.new_child(UiBuilder::new().max_rect(rect));
+    label_with_hint(&mut second, right, "");
+    label_with_hint(ui, left, "");
+    ui.add_space(-AXIS_TITLE_PULL);
+}
+
+/// Lo que pide el select de Texture Size: achicar la textura dejando UVs fuera lo confirma la app
+/// (`ModelAction::TextureSize`).
+fn resize_texture(editor: &mut Editor, side: u32) -> Option<ModelAction> {
+    if editor.texture_size_cuts_uvs(side) {
+        return Some(ModelAction::TextureSize(side));
     }
-    match picked {
-        Some(side) if editor.texture_size_cuts_uvs(side) => Some(ModelAction::TextureSize(side)),
-        Some(side) => {
-            editor.set_texture_size(side);
-            None
-        }
-        None => None,
-    }
+    editor.set_texture_size(side);
+    None
 }
 
 /// El texto de una cuadrícula (en 1/16 de unidad).
@@ -653,9 +628,10 @@ fn scaled_axes(
     }
 }
 
-/// La pestaña del objeto elegido: posición, rotación y escala (una fila de X, Y, Z cada una),
-/// Double sided y, en modo Texture, la sección UV. Quitarlo es la ○ de su pestaña. Todo lo
-/// cambiado en un frame (o en un arrastre) es un paso de deshacer (`set_model_grouped`).
+/// Lo del objeto elegido (la mitad de abajo): en modo Texture, primero los botones de las UVs;
+/// posición, rotación y escala (una fila de X, Y, Z cada una) y Double sided. Quitarlo es la ○ de
+/// su pestaña. Todo lo cambiado en un frame (o en un arrastre) es un paso de deshacer
+/// (`set_model_grouped`).
 fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let Some(i) = editor.selected_object() else {
         return;
@@ -663,9 +639,13 @@ fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     let Some(model) = editor.edited_model().cloned() else {
         return;
     };
+    // Los títulos de los ejes van con el aire de entre una fila y otra (como en el boceto).
+    ui.add_space(OBJECT_TOP_AIR);
+    if editor.cad_mode() == CadMode::Texture {
+        uv_buttons(ui, editor, skin);
+    }
     let obj: &Object3D = &model.objects[i];
     let mut next = obj.clone();
-    ui.add_space(SECTION_GAP);
     let t = &mut next.transform;
     let p = &mut t.position;
     axes(
@@ -701,10 +681,6 @@ fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     if !ui.input(|input| input.pointer.any_down()) {
         editor.end_group_of(group.value());
     }
-    if editor.cad_mode() == CadMode::Texture {
-        ui.add_space(SECTION_GAP);
-        uv_section(ui, editor, skin);
-    }
 }
 
 /// Un radio: el del kit (sin Pixel UI, el de texto).
@@ -723,13 +699,17 @@ fn check(ui: &mut Ui, skin: Option<&Skin>, on: &mut bool, label: &str) {
     };
 }
 
-/// La textura: un select con los artboards del lienzo que no son modelos ni fuentes (y None; una
-/// que ya no existe se muestra "(missing)") y New Texture, que agrega una plantilla y la asigna;
-/// debajo, su tamaño ([`texture_size`]).
+/// La textura y su tamaño, como el boceto: arriba "Texture" y, en la columna de la derecha,
+/// "Texture Size"; debajo, el select de la textura (los artboards del lienzo que no son modelos ni
+/// fuentes, y None; sin textura dice "Select an option…" y una que ya no existe, "(missing)") con
+/// New pegado a la derecha (agrega una plantilla y la asigna) y, en la otra columna, el del tamaño
+/// (vacío y deshabilitado sin textura).
 fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<ModelAction> {
     let current = editor.edited_model().map(|m| m.texture)?;
     ui.add_space(SECTION_GAP);
-    label_with_hint(ui, "Texture", "");
+    let row_w = row_width(ui);
+    let column = (row_w * RIGHT_COLUMN).round();
+    pair_labels(ui, ("Texture", "Texture Size"), column);
     let options: Vec<(cs_core::ArtboardId, String)> = editor
         .document
         .artboards
@@ -739,14 +719,24 @@ fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<Mode
         .collect();
     // La textura puede no estar en la lista (en la biblioteca) o ya no existir.
     let shown = match current {
-        None => "None".to_owned(),
+        None => NO_OPTION.to_owned(),
         Some(id) => editor
             .document
             .artboard(id)
             .map_or_else(|| "(missing)".to_owned(), |a| a.name.clone()),
     };
+    // El tamaño de la textura del modelo que se edita (también fuera de su workspace).
+    let size = editor
+        .edited_texture()
+        .and_then(|id| editor.document.artboard(id))
+        .map(|a| (a.sprite.width, a.sprite.height));
+    let size_shown = match size {
+        Some((w, h)) if w == h => w.to_string(),
+        Some((w, h)) => format!("{w}×{h}"),
+        None => String::new(),
+    };
     let mut picked = None;
-    let mut list = |ui: &mut Ui| {
+    let list = |ui: &mut Ui| {
         if ui.add(menus::choice(current.is_none(), "None")).clicked() {
             picked = Some(None);
             ui.close();
@@ -758,26 +748,104 @@ fn texture(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<Mode
             }
         }
     };
-    let mut new = false;
-    ui.horizontal(|ui| {
-        match skin {
-            Some(skin) => {
-                kit::select::select(ui, skin, "model_texture", &shown, Some(TEXTURE_W), list);
-            }
-            None => {
-                egui::ComboBox::from_id_salt("model_texture")
-                    .selected_text(&shown)
-                    .show_ui(ui, |ui| list(ui));
+    let mut side = None;
+    let sides = |ui: &mut Ui| {
+        for s in TEXTURE_SIZES {
+            let on = size == Some((s, s));
+            if ui.add(menus::choice(on, &s.to_string())).clicked() {
+                side = Some(s);
+                ui.close();
             }
         }
-        new = button(ui, skin, "New Texture").clicked();
-    });
+    };
+    let new = match skin {
+        Some(skin) => {
+            let row = row_rect(ui, row_w);
+            let id = ui.id();
+            // New, pegado al select: comparten la columna del borde. Va primero, así el borde del
+            // select queda encima (como en el boceto).
+            let end = row.left() + column - COLUMN_GAP;
+            let new_w = kit::button::width(ui, "New");
+            let new_rect =
+                Rect::from_min_max(pos2(end - new_w, row.top()), pos2(end, row.bottom()));
+            let new_id = id.with("model_texture_new");
+            let new = kit::button::button_at(ui, skin, new_rect, new_id, "New").clicked();
+            let field = Rect::from_min_max(row.min, pos2(new_rect.left() + 1.0, row.bottom()));
+            kit::select::select_at(ui, skin, field, id.with("model_texture"), &shown, list);
+            let size_rect = Rect::from_min_max(pos2(row.left() + column, row.top()), row.max);
+            // En su propio `Ui` (deshabilitado sin textura), que no ocupa lugar en la columna.
+            let mut column_ui = ui.new_child(UiBuilder::new().max_rect(size_rect));
+            column_ui.add_enabled_ui(size.is_some(), |ui| {
+                let size_id = id.with("model_texture_size");
+                kit::select::select_at(ui, skin, size_rect, size_id, &size_shown, sides);
+            });
+            new
+        }
+        None => {
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("model_texture")
+                    .selected_text(&shown)
+                    .show_ui(ui, list);
+                let new = pixel_ui::text_button(ui, "New").clicked();
+                ui.add_enabled_ui(size.is_some(), |ui| {
+                    egui::ComboBox::from_id_salt("model_texture_size")
+                        .selected_text(&size_shown)
+                        .show_ui(ui, sides);
+                });
+                new
+            })
+            .inner
+        }
+    };
     if new {
         editor.new_texture();
     } else if let Some(texture) = picked {
         editor.set_texture(texture);
     }
-    texture_size(ui, editor, skin)
+    side.and_then(|side| resize_texture(editor, side))
+}
+
+/// La fila de la cámara, como el boceto: el select de la proyección (`shown`, con las opciones de
+/// `list`) y, al final de la fila, el grupo de los presets. Devuelve el preset apretado.
+fn camera_row(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    shown: &str,
+    list: impl FnOnce(&mut Ui),
+) -> Option<CameraPreset> {
+    let row_w = row_width(ui);
+    match skin {
+        Some(skin) => {
+            let items = PRESETS.map(|(label, _)| kit::group::GroupItem::text(label));
+            let row = row_rect(ui, row_w);
+            let at = pos2(
+                (row.right() - kit::group::width(ui, &items)).round(),
+                row.top(),
+            );
+            let field = Rect::from_min_max(row.min, pos2(at.x - COLUMN_GAP, row.bottom()));
+            let id = ui.id();
+            kit::select::select_at(ui, skin, field, id.with("model_projection"), shown, list);
+            let painter = ui.painter().clone();
+            let presets = id.with("model_camera_presets");
+            kit::group::button_group_at(ui, skin, &painter, presets, at, &items, &|_| false)
+                .map(|i| PRESETS[i].1)
+        }
+        None => {
+            ui.horizontal(|ui| {
+                egui::ComboBox::from_id_salt("model_projection")
+                    .selected_text(shown)
+                    .show_ui(ui, list);
+                let mut picked = None;
+                for (label, preset) in PRESETS {
+                    if pixel_ui::text_button(ui, label).clicked() {
+                        picked = Some(preset);
+                    }
+                }
+                picked
+            })
+            .inner
+        }
+    }
 }
 
 /// Yaw (dado la vuelta a ±180°) y Pitch en grados (lo guardado, en décimas): solo se escribe el
@@ -808,12 +876,27 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     };
     let primary = editor.resolve(editor.primary);
     let mut next = model.clone();
-    ui.add_space(SECTION_GAP);
+    // Como el boceto (y los ejes del objeto): de una fila al título que sigue, solo el aire de
+    // entre filas, y del título a su fila, 4 filas de la letra.
     label_with_hint(ui, "Camera", "");
+    ui.add_space(-AXIS_TITLE_PULL);
+    // Sin Yaw ni Pitch: la cámara la mueven la órbita, el gizmo de navegación y los presets.
     let cam = &mut next.camera;
     let ortho = cam.projection == Projection::Orthographic;
-    ui.horizontal(|ui| {
-        if radio(ui, skin, !ortho, "Perspective").clicked() && ortho {
+    let mut projection = None;
+    let list = |ui: &mut Ui| {
+        for (label, o) in [("Perspective", false), ("Orthographic", true)] {
+            if ui.add(menus::choice(ortho == o, label)).clicked() {
+                projection = Some(o);
+                ui.close();
+            }
+        }
+    };
+    let shown = if ortho { "Orthographic" } else { "Perspective" };
+    let preset = camera_row(ui, skin, shown, list);
+    match projection {
+        Some(true) if !ortho => cam.projection = Projection::Orthographic,
+        Some(false) if ortho => {
             cam.projection = Projection::Perspective {
                 fov: match Model3D::default().camera.projection {
                     Projection::Perspective { fov } => fov,
@@ -821,28 +904,14 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
                 },
             };
         }
-        if radio(ui, skin, ortho, "Orthographic").clicked() {
-            cam.projection = Projection::Orthographic;
-        }
-    });
-    ui.horizontal(|ui| {
-        for (label, preset) in [
-            ("Iso", CameraPreset::Iso),
-            ("Top", CameraPreset::Top),
-            ("Side", CameraPreset::Side),
-            ("Front", CameraPreset::Front),
-        ] {
-            if button(ui, skin, label).clicked() {
-                *cam = preset.camera(cam.distance, cam.target);
-            }
-        }
-        if button(ui, skin, "Reset").clicked() {
-            *cam = Model3D::default().camera;
-        }
-    });
-    angles(ui, skin, "camera", (&mut cam.yaw, &mut cam.pitch));
+        _ => {}
+    }
+    // Los presets miran al centro del modelo (con la distancia de antes).
+    if let Some(preset) = preset {
+        let target = crate::editor::model_center(&model).unwrap_or(cam.target);
+        *cam = preset.camera(cam.distance, target);
+    }
 
-    ui.add_space(SECTION_GAP);
     label_with_hint(ui, "Light & Outline", "");
     let light = &mut next.light;
     check(ui, skin, &mut light.enabled, "Light");

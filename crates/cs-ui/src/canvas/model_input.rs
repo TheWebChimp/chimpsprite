@@ -3,15 +3,21 @@
 //!
 //! - **Botón derecho o Alt + izquierdo** arrastrando: orbita (`yaw` y `pitch`).
 //! - **Shift + izquierdo** arrastrando: mueve el `target` en el plano de la vista.
-//! - **Ctrl + rueda:** acerca o aleja la cámara (`distance`), sin tocar el zoom del lienzo.
+//! - **Rueda** (con o sin Ctrl): acerca o aleja la cámara (`distance`) hacia el punto bajo el
+//!   puntero, sin tocar el zoom del lienzo.
+//! - **Gizmo de navegación** (arriba a la derecha): arrastrarlo orbita; un clic en una bolita
+//!   pone la cámara mirando desde ese lado (al centro del modelo).
+//! - **Home:** encuadra todo el modelo (el objetivo a su centro, la distancia para que se vea
+//!   entero).
 //! - **Clic izquierdo:** elige el objeto que se ve bajo el puntero (o ninguno). En el render del
 //!   modo Texture elige la cara (Shift + clic sin arrastrar la agrega o la quita).
 //!
 //! Cada arrastre es un solo paso de undo.
 
-use cs_core::{Camera3D, FIXED, Vec3i};
+use cs_core::{Camera3D, FIXED, Model3D, Vec3i};
 
 use super::*;
+use crate::editor::PerspMap;
 
 /// Décimas de grado por punto de pantalla al orbitar.
 const ORBIT_SPEED: f32 = 5.0;
@@ -34,6 +40,36 @@ pub(super) struct ModelDrag {
     /// suelta sin pasar el umbral de arrastre, agrega o quita la cara de ahí (y la cámara no se
     /// movió); pasado el umbral, mueve el objetivo.
     toggle: Option<(i32, i32)>,
+    /// Se apretó el gizmo de navegación y todavía no se arrastró: al soltar así, la cámara mira
+    /// desde el lado de la bolita (si se apretó una); pasado el umbral, orbita.
+    nav: Option<Option<super::nav_gizmo::NavBall>>,
+}
+
+impl ModelDrag {
+    /// Apretar el gizmo de navegación en `from` (sobre la bolita `ball`, si hay) con la cámara
+    /// `camera`.
+    pub(super) fn nav(
+        from: Pos2,
+        camera: Camera3D,
+        ball: Option<super::nav_gizmo::NavBall>,
+    ) -> ModelDrag {
+        ModelDrag {
+            orbit: true,
+            from,
+            camera,
+            factor: Vec2::ONE,
+            toggle: None,
+            nav: Some(ball),
+        }
+    }
+}
+
+/// Cuánto sin rueda corta la ráfaga de pasos (segundos).
+const WHEEL_PAUSE: f64 = 0.6;
+
+/// El grupo de undo de la rueda sobre la cámara del modelo.
+fn wheel_group() -> egui::Id {
+    egui::Id::new("model_wheel")
 }
 
 /// El grupo de undo de los arrastres sobre el modelo.
@@ -42,14 +78,42 @@ fn drag_group() -> egui::Id {
 }
 
 impl CanvasView {
-    /// `steps` pasos de rueda sobre el modelo: hacia arriba acerca la cámara.
-    pub(super) fn model_wheel(editor: &mut Editor, steps: i32) {
-        let Some(mut camera) = editor.edited_model().map(|m| m.camera) else {
+    /// `steps` pasos de rueda sobre el modelo: hacia arriba acerca la cámara. Con `at` (cómo se
+    /// ve la perspectiva y el puntero), el objetivo se corre hacia el punto bajo el puntero en su
+    /// plano (como "zoom to mouse position" de Blender): ese punto se queda donde está en pantalla.
+    ///
+    /// Los pasos seguidos (con menos de [`WHEEL_PAUSE`] entre uno y otro, `now` en segundos) son un
+    /// solo paso de undo; otro gesto o una pausa empieza uno nuevo.
+    pub(super) fn model_wheel(
+        &mut self,
+        editor: &mut Editor,
+        steps: i32,
+        at: Option<(PerspMap, Pos2)>,
+        now: f64,
+    ) {
+        let Some(model) = editor.edited_model().cloned() else {
             return;
         };
+        let mut camera = model.camera;
         let factor = DISTANCE_STEP.powi(-steps);
-        camera.distance = ((camera.distance as f32 * factor).round() as i32).max(FIXED);
-        editor.set_camera(camera);
+        let distance = ((camera.distance as f32 * factor).round() as i32).max(FIXED);
+        if let Some((map, p)) = at {
+            let k = 1.0 - distance as f32 / camera.distance.max(1) as f32;
+            let to = focal_point(&map, p);
+            let t = camera.target;
+            let toward = |from: i32, to: f32| from + ((to - from as f32) * k).round() as i32;
+            camera.target = Vec3i {
+                x: toward(t.x, to[0]),
+                y: toward(t.y, to[1]),
+                z: toward(t.z, to[2]),
+            };
+        }
+        camera.distance = distance;
+        if self.model_wheel_at.is_none_or(|t| now - t > WHEEL_PAUSE) {
+            editor.end_group_of(wheel_group().value());
+        }
+        self.model_wheel_at = Some(now);
+        editor.set_model_grouped(Model3D { camera, ..model }, wheel_group());
     }
 
     /// Un botón apretado sobre la perspectiva, con el punto ya en pixeles del artboard (`local`)
@@ -77,6 +141,7 @@ impl CanvasView {
                 camera,
                 factor,
                 toggle: None,
+                nav: None,
             });
         } else {
             editor.pick_model_object(local);
@@ -107,6 +172,7 @@ impl CanvasView {
                 camera,
                 factor,
                 toggle: (!orbit).then_some(local),
+                nav: None,
             });
         } else {
             editor.pick_model_face(local, false);
@@ -133,18 +199,28 @@ impl CanvasView {
             {
                 editor.pick_model_face(local, true);
             }
+            // Un clic en una bolita del gizmo de navegación: un paso de undo, como los presets (y
+            // como ellos, mirando al centro del modelo).
+            if let Some(Some(ball)) = drag.nav {
+                let mut camera = ball.camera(drag.camera);
+                if let Some(target) = editor.edited_model().and_then(crate::editor::model_center) {
+                    camera.target = target;
+                }
+                editor.set_camera(camera);
+            }
             return;
         }
         let (Some(p), Some(mut model)) = (pointer, editor.edited_model().cloned()) else {
             return;
         };
         let d = p - drag.from;
-        if drag.toggle.is_some() {
+        if drag.toggle.is_some() || drag.nav.is_some() {
             if d.length() < crate::editor::DRAG_THRESHOLD {
                 return;
             }
-            // Ya es un arrastre: mueve el objetivo y al soltar no elige nada.
+            // Ya es un arrastre: mueve la cámara y al soltar no elige nada.
             drag.toggle = None;
+            drag.nav = None;
             self.model_drag = Some(drag);
         }
         model.camera = if drag.orbit {
@@ -160,6 +236,36 @@ impl CanvasView {
         };
         editor.set_model_grouped(model, drag_group());
     }
+}
+
+/// Los eventos de rueda de este frame (unidad y vertical), con o sin modificadores.
+pub(super) fn wheel_events(ui: &egui::Ui) -> Vec<(egui::MouseWheelUnit, f32)> {
+    ui.input(|i| {
+        i.raw
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                egui::Event::MouseWheel { unit, delta, .. } => Some((*unit, delta.y)),
+                _ => None,
+            })
+            .collect()
+    })
+}
+
+/// El punto del plano del objetivo (perpendicular a la mirada) que se ve en `p`, en 1/16 de
+/// unidad.
+fn focal_point(map: &PerspMap, p: Pos2) -> [f32; 3] {
+    let (o, d) = map.ray((p.x, p.y));
+    let fwd = map.projector().axes()[2];
+    let t = map.camera.target;
+    let t = [t.x as f32, t.y as f32, t.z as f32];
+    let dot = |a: [f32; 3], b: [f32; 3]| a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+    let along = dot(d, fwd);
+    if along.abs() < f32::EPSILON {
+        return t;
+    }
+    let s = dot([t[0] - o[0], t[1] - o[1], t[2] - o[2]], fwd) / along;
+    std::array::from_fn(|i| o[i] + d[i] * s)
 }
 
 /// La cámara de `start` girada por un arrastre de `d` puntos (el `yaw`, siempre en ±180°).

@@ -5,11 +5,57 @@ use cs_3d::{Primitive, primitive_mesh};
 use cs_commands::DocCommand;
 use cs_commands::model::texture_template;
 use cs_core::{
-    Artboard, ArtboardId, Camera3D, Light3D, Model3D, Object3D, Rgba, ShadingTable, Transform3D,
+    Artboard, ArtboardId, Camera3D, FIXED, Light3D, Model3D, Object3D, Projection, Rgba,
+    ShadingTable, Transform3D, Vec3i,
 };
 use cs_render::BakeOptions;
 
 use super::Editor;
+
+/// El aire al encuadrar el modelo (Home): su esfera ocupa 1 / `FRAME_AIR` de lo que se ve.
+const FRAME_AIR: f32 = 1.25;
+
+/// El centro de la caja de todo `model` en el mundo (en 1/16, redondeado); `None` sin vértices.
+pub(crate) fn model_center(model: &Model3D) -> Option<Vec3i> {
+    let c = cs_3d::center(cs_3d::model_bounds(model)?);
+    Some(Vec3i {
+        x: c[0].round() as i32,
+        y: c[1].round() as i32,
+        z: c[2].round() as i32,
+    })
+}
+
+/// `camera` mirando al centro de `model`, desde la distancia en la que todo el modelo (su esfera)
+/// se ve con aire en un render de `size`; el giro, la altura y la proyección no cambian. `None`
+/// si el modelo no tiene vértices.
+pub(crate) fn framed_camera(
+    camera: Camera3D,
+    model: &Model3D,
+    size: (u32, u32),
+) -> Option<Camera3D> {
+    let (lo, hi) = cs_3d::model_bounds(model)?;
+    let target = model_center(model)?;
+    let half = [0, 1, 2].map(|i| (hi[i] - lo[i]) / 2.0);
+    let radius = (half[0] * half[0] + half[1] * half[1] + half[2] * half[2]).sqrt();
+    let aspect = size.0.max(1) as f32 / size.1.max(1) as f32;
+    let need = radius * FRAME_AIR;
+    let distance = match camera.projection {
+        // Lo que se ve: `distance` hacia arriba y abajo del objetivo, y eso por `aspect` a los
+        // lados.
+        Projection::Orthographic => need / aspect.min(1.0),
+        // La esfera entra en el cono más angosto (el vertical o el horizontal).
+        Projection::Perspective { fov } => {
+            let vertical = (fov.clamp(10, 1700) as f32 / 20.0).to_radians();
+            let horizontal = (vertical.tan() * aspect).atan();
+            need / vertical.min(horizontal).sin()
+        }
+    };
+    Some(Camera3D {
+        distance: (distance.round() as i32).max(FIXED),
+        target,
+        ..camera
+    })
+}
 
 impl Editor {
     /// Un modelo 3D nuevo (con su textura) a la derecha de todo, en su workspace y con el cubo
@@ -162,6 +208,23 @@ impl Editor {
         self.edit_model(|m| m.camera = c)
     }
 
+    /// Home: la cámara encuadra todo el modelo que se edita (ver [`framed_camera`]) en el render
+    /// de la perspectiva, del tamaño del artboard del modelo. Un paso de undo.
+    pub fn frame_model(&mut self) -> bool {
+        let Some(model) = self.edited_model() else {
+            return false;
+        };
+        let size = self
+            .document
+            .artboard(self.model_id())
+            .map_or((1, 1), |a| (a.sprite.width, a.sprite.height));
+        let Some(camera) = framed_camera(model.camera, model, size) else {
+            return false;
+        };
+        self.end_group();
+        self.set_camera(camera)
+    }
+
     pub fn set_light(&mut self, l: Light3D) -> bool {
         self.edit_model(|m| m.light = l)
     }
@@ -302,9 +365,8 @@ impl Editor {
         else {
             return;
         };
-        let hit = (x >= 0 && y >= 0)
-            .then(|| cs_render::model_pick(&self.document, artboard, x as u32, y as u32))
-            .flatten();
+        // Afuera del artboard también: la vista Persp llena su cuadro.
+        let hit = cs_render::model_pick(&self.document, artboard, x, y);
         self.select_model_object(hit);
     }
 }

@@ -14,8 +14,9 @@
 //!   + 3 (por lo menos 11), el texto centrado en `color.field_text`.
 //! - Con etiqueta de eje (el transform del panel 3D, como el boceto de la pestaña de un objeto):
 //!   una cajita de [`TAG_W`] pegada a la izquierda del botón −, la misma `stepper.unit` (del alto
-//!   del stepper) con un borde izquierdo de `color.control_border` y la letra (`X`, `Y`, `Z`)
-//!   centrada en `color.field_text`.
+//!   del stepper), redondeada del lado de afuera (a la izquierda) y recta contra el botón (que
+//!   también queda recto de ese lado), con la letra (`X`, `Y`, `Z`) centrada en
+//!   `color.field_text`.
 
 use std::ops::RangeInclusive;
 
@@ -193,21 +194,39 @@ pub fn forced_shapes(
     shapes
 }
 
-/// La etiqueta de eje en `rect` ([`TAG_W`]×[`HEIGHT`]): la caja de la unidad con su borde
-/// izquierdo y la letra `axis` centrada.
+/// La columna izquierda de la etiqueta, fila por fila (1 a 14), como el boceto: `true` es el
+/// borde oscuro (`color.control_border`) y `false` el claro de la caja de la unidad.
+const TAG_EDGE: [bool; 14] = [
+    false, false, false, false, false, false, true, false, true, true, true, true, true, true,
+];
+
+/// La etiqueta de eje en `rect` ([`TAG_W`]×[`HEIGHT`]): la caja de la unidad con la letra `axis`
+/// centrada, redondeada del lado de afuera (a la izquierda; sin pixel en las esquinas) y recta del
+/// lado del botón −, como el boceto.
 pub fn tag_shapes(ui: &Ui, skin: &Skin, rect: Rect, axis: &str, enabled: bool) -> Vec<Shape> {
     let ppp = ui.ctx().pixels_per_point();
     let colors = skin.colors();
-    let mut shapes = match skin.piece(UNIT, WidgetState::Normal) {
-        Some(p) => pixel_ui::piece_shapes(p, rect, ppp),
-        None => vec![Shape::rect_filled(rect, 0.0, colors.canvas)],
+    // La caja de la unidad empieza una columna adentro: la primera es el borde redondeado.
+    let boxed = Rect::from_min_max(pos2(rect.left() + 1.0, rect.top()), rect.max);
+    let unit = skin.piece(UNIT, WidgetState::Normal);
+    let mut shapes = match unit {
+        Some(p) => pixel_ui::piece_shapes(p, boxed, ppp),
+        None => vec![Shape::rect_filled(boxed, 0.0, colors.canvas)],
     };
-    // El borde izquierdo, como el de los botones: de la segunda fila a la penúltima.
-    let edge = Rect::from_min_max(
-        pos2(rect.left(), rect.top() + 1.0),
-        pos2(rect.left() + 1.0, rect.bottom() - 1.0),
-    );
-    shapes.push(Shape::rect_filled(edge, 0.0, colors.control_border));
+    // El borde izquierdo: sin la esquina de arriba, el claro y el oscuro de las filas del boceto,
+    // y la luz de abajo en lugar de la esquina de abajo.
+    let light = unit.map_or(colors.control_border, |p| p.pixel(0, 0));
+    let cream = unit.map_or(colors.canvas, |p| p.pixel(0, HEIGHT as u32 - 1));
+    let cell = |row: usize, color: Color32| {
+        let top = rect.top() + row as f32;
+        let at = Rect::from_min_max(pos2(rect.left(), top), pos2(rect.left() + 1.0, top + 1.0));
+        Shape::rect_filled(at, 0.0, color)
+    };
+    for (i, dark) in TAG_EDGE.iter().enumerate() {
+        let color = if *dark { colors.control_border } else { light };
+        shapes.push(cell(i + 1, color));
+    }
+    shapes.push(cell(HEIGHT as usize - 2, cream));
     let color = if enabled {
         colors.field_text
     } else {
@@ -219,6 +238,26 @@ pub fn tag_shapes(ui: &Ui, skin: &Skin, rect: Rect, axis: &str, enabled: bool) -
     let at = tab_bar::text_pos(&shown, left, rect.top() + input::CAPS_TOP, ppp);
     shapes.push(Shape::galley(at, shown, color));
     shapes
+}
+
+/// El borde izquierdo del botón − pegado a una etiqueta: recto, sin las esquinas redondeadas del
+/// botón solo (borde arriba y abajo, luz debajo), como el boceto. Con los colores de la pieza del
+/// − en `state`, el estado con el que se dibujó el botón.
+fn square_left_edge(skin: &Skin, button: Rect, state: ButtonState) -> Vec<Shape> {
+    let Some(p) = skin.piece(LEFT, piece_state(state)) else {
+        return Vec::new();
+    };
+    let cell = |row: u32, color: Color32| {
+        let top = button.top() + row as f32;
+        let at = Rect::from_min_max(
+            pos2(button.left(), top),
+            pos2(button.left() + 1.0, top + 1.0),
+        );
+        Shape::rect_filled(at, 0.0, color)
+    };
+    let h = HEIGHT as u32;
+    let (edge, cream) = (p.pixel(0, 1), p.pixel(0, h - 2));
+    vec![cell(0, edge), cell(h - 2, edge), cell(h - 1, cream)]
 }
 
 /// Los botones y el campo de un stepper en `rect`.
@@ -275,7 +314,12 @@ pub fn axis_stepper<Num: emath::Numeric>(
     painter.set_opacity(1.0);
     painter.extend(shapes);
     let rest = Rect::from_min_max(pos2(tag.right(), rect.top()), rect.max);
-    stepper_at(ui, skin, rest, id_salt, value, range, step, None)
+    let (response, minus_state) =
+        stepper_with_minus(ui, skin, rest, id_salt, value, range, step, None);
+    // El botón − queda recto del lado de la etiqueta, en el estado con el que se dibujó.
+    let (minus, ..) = parts(rest);
+    painter.extend(square_left_edge(skin, minus, minus_state));
+    response
 }
 
 /// [`stepper`] en `rect` (de [`HEIGHT`] de alto).
@@ -290,6 +334,21 @@ pub fn stepper_at<Num: emath::Numeric>(
     step: Num,
     unit: Option<&str>,
 ) -> Response {
+    stepper_with_minus(ui, skin, rect, id_salt, value, range, step, unit).0
+}
+
+/// [`stepper_at`], que además dice en qué estado se dibujó el botón −.
+#[allow(clippy::too_many_arguments)]
+fn stepper_with_minus<Num: emath::Numeric>(
+    ui: &mut Ui,
+    skin: &Skin,
+    rect: Rect,
+    id_salt: &str,
+    value: &mut Num,
+    range: RangeInclusive<Num>,
+    step: Num,
+    unit: Option<&str>,
+) -> (Response, ButtonState) {
     let (left, field, right) = parts(rect);
     let enabled = ui.is_enabled();
     let colors = *skin.colors();
@@ -334,6 +393,7 @@ pub fn stepper_at<Num: emath::Numeric>(
     // Los botones.
     let id = ui.id().with(("kit_stepper", id_salt));
     let mut shapes = Vec::new();
+    let mut minus_state = ButtonState::Normal;
     for (rect, piece, icon, sign) in [(left, LEFT, MINUS, -1.0), (right, RIGHT, PLUS, 1.0)] {
         let current = value.to_f64();
         let can = if sign < 0.0 {
@@ -349,20 +409,17 @@ pub fn stepper_at<Num: emath::Numeric>(
             let next = (current + sign * step.to_f64()).clamp(lo, hi);
             *value = Num::from_f64(next);
         }
-        shapes.extend(button_shapes(
-            ui,
-            skin,
-            rect,
-            piece,
-            icon,
-            ButtonState::of(&b, usable),
-        ));
+        let state = ButtonState::of(&b, usable);
+        if sign < 0.0 {
+            minus_state = state;
+        }
+        shapes.extend(button_shapes(ui, skin, rect, piece, icon, state));
     }
     painter.extend(shapes);
     if value.to_f64() != before {
         response.mark_changed();
     }
-    response
+    (response, minus_state)
 }
 
 #[cfg(test)]

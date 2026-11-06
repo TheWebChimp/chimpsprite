@@ -110,6 +110,8 @@ impl Editor {
                 },
                 center,
                 fit: true,
+                // El gizmo es de la UI, no del modelo.
+                gizmo: self.model_edit.gizmo,
                 ..Default::default()
             };
         }

@@ -725,7 +725,14 @@ pub(crate) fn drag_number<Num: emath::Numeric>(
         .unwrap_or_else(|| crate::pixel_sections::text_rows(whole));
     let clip = Rect::from_x_y_ranges(inner.x_range().expand(1.0), rows).intersect(ui.clip_rect());
     child.set_clip_rect(clip);
-    let response = child.add(egui::DragValue::new(value).range(range).speed(speed));
+    // Un valor que ya estaba fuera de `range` (de un gizmo, de un script) no se recorta solo:
+    // el `DragValue` de egui lo haría cada frame y contaría como un cambio.
+    let response = child.add(
+        egui::DragValue::new(value)
+            .range(range)
+            .clamp_existing_to_range(false)
+            .speed(speed),
+    );
     // Un clic en la zona de afuera del texto también entra a escribir.
     if zone.clicked() {
         ui.memory_mut(|m| m.request_focus(response.id));

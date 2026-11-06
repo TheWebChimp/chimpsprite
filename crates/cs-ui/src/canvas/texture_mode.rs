@@ -1,13 +1,13 @@
 //! El modo Texture del workspace de un modelo (como picoCAD 2): el área a la izquierda del panel
 //! se parte arriba/abajo. Arriba, el render del modelo (clic elige caras; orbitar, mover el
-//! objetivo y Ctrl + rueda como en Persp) con el contorno amarillo de las caras elegidas. Abajo,
+//! objetivo y la rueda como en Persp) con el contorno amarillo de las caras elegidas. Abajo,
 //! su textura por el camino de siempre del lienzo (un solo artboard), con su propio zoom entero
 //! y desplazamiento (`texture_view`): herramientas, cursor, cuadrícula de pixeles y atajos
 //! funcionan ahí.
 
 use eframe::egui::pos2;
 
-use super::model_edit::{PERSP_BG, cad_header, header_split, workspace_area};
+use super::model_edit::{PERSP_BG, cad_header, header_split};
 use super::*;
 use crate::editor::TextureView;
 
@@ -33,7 +33,7 @@ impl CanvasView {
         view_settings: &ViewSettings,
     ) {
         // Debajo del encabezado de ChimpCAD.
-        let (header, area) = header_split(workspace_area(ui, rect));
+        let (header, area) = header_split(rect);
         let (top, bottom) = texture_panes(area);
         self.edit_quads = None;
         self.texture_panes = Some((top, bottom));
@@ -89,8 +89,9 @@ impl CanvasView {
         self.slice_menu = false;
     }
 
-    /// La entrada del render de arriba: Ctrl + rueda acerca o aleja la cámara; los botones eligen
-    /// caras, orbitan o mueven el objetivo (`texture_press_at`); el arrastre sigue al puntero.
+    /// La entrada del render de arriba: la rueda (con o sin Ctrl) acerca o aleja la cámara; Home
+    /// encuadra el modelo; los botones eligen caras, orbitan o mueven el objetivo
+    /// (`texture_press_at`); el arrastre sigue al puntero.
     fn texture_top_input(
         &mut self,
         ui: &egui::Ui,
@@ -100,32 +101,46 @@ impl CanvasView {
         modal: bool,
     ) {
         let over = |p: Pos2| top.contains(p);
-        // Los restos de rueda de touchpad siguen sumando solo mientras Ctrl siga apretado.
-        if !ui.input(|i| i.modifiers.command) {
-            self.wheel_rest = 0.0;
-        }
-        if response.hovered() && response.hover_pos().is_some_and(over) {
-            let wheel: Vec<(egui::MouseWheelUnit, f32)> = ui.input(|i| {
-                i.raw
-                    .events
-                    .iter()
-                    .filter_map(|e| match e {
-                        egui::Event::MouseWheel {
-                            unit,
-                            delta,
-                            modifiers,
-                            ..
-                        } if modifiers.command => Some((*unit, delta.y)),
-                        _ => None,
-                    })
-                    .collect()
-            });
-            for (unit, dy) in wheel {
-                let steps = brush_wheel_steps(&mut self.wheel_rest, unit, dy);
+        // Hacia el punto bajo el puntero, como en Persp. Los restos de rueda de touchpad siguen
+        // sumando mientras el puntero siga arriba (la textura de abajo tiene los suyos).
+        if let Some(p) = response
+            .hover_pos()
+            .filter(|p| response.hovered() && over(*p))
+        {
+            for (unit, dy) in model_input::wheel_events(ui) {
+                let steps = brush_wheel_steps(&mut self.model_wheel_rest, unit, dy);
                 if steps != 0 {
-                    Self::model_wheel(editor, steps);
+                    let at = self.persp_map_in(top, editor).map(|map| (map, p));
+                    let now = ui.input(|i| i.time);
+                    self.model_wheel(editor, steps, at, now);
                 }
             }
+        } else {
+            self.model_wheel_rest = 0.0;
+        }
+        // Home con el puntero arriba encuadra el modelo, como en modo Model (abajo es de la
+        // textura). No mientras se escribe en un campo ni durante un arrastre.
+        let home = ui.input(|i| {
+            i.events.iter().any(|e| {
+                matches!(
+                    e,
+                    egui::Event::Key {
+                        key: egui::Key::Home,
+                        pressed: true,
+                        repeat: false,
+                        modifiers,
+                        ..
+                    } if modifiers.is_none()
+                )
+            })
+        });
+        if home
+            && !modal
+            && self.model_drag.is_none()
+            && !ui.ctx().egui_wants_keyboard_input()
+            && response.hover_pos().is_some_and(over)
+        {
+            editor.frame_model();
         }
         let (pressed, secondary, any_down, pointer, modifiers) = ui.input(|i| {
             let pressed = |b| i.pointer.button_pressed(b);

@@ -51,6 +51,17 @@ impl Editor {
             .map(|a| a.id)
     }
 
+    /// La textura del modelo que se edita ([`Self::edited_model`]), si es un artboard de pixeles
+    /// que existe. En el workspace es la misma que [`Self::workspace_texture`]; fuera de él, la
+    /// del modelo activo.
+    pub(crate) fn edited_texture(&self) -> Option<ArtboardId> {
+        let id = self.edited_model()?.texture?;
+        self.document
+            .artboard(id)
+            .filter(|a| a.model.is_none() && a.font.is_none())
+            .map(|a| a.id)
+    }
+
     /// Si `id` es la textura del modelo del workspace en modo Texture (activarla no sale del
     /// workspace).
     pub(crate) fn is_workspace_texture(&self, id: ArtboardId) -> bool {
@@ -107,12 +118,8 @@ impl Editor {
             return;
         };
         let size = (artboard.sprite.width.max(1), artboard.sprite.height.max(1));
-        let hit = (x >= 0 && y >= 0)
-            .then(|| {
-                let at = (x as u32, y as u32);
-                cs_render::model_pick_face(&self.document, artboard, model, size, at)
-            })
-            .flatten();
+        // Afuera del artboard también: el render de arriba llena su panel.
+        let hit = cs_render::model_pick_face(&self.document, artboard, model, size, (x, y));
         let mut sel = self.model_edit.selection.clone();
         if sel.mode != SelectMode::Face {
             sel = Selection {
@@ -224,7 +231,7 @@ impl Editor {
     /// hacerlo se pide confirmación).
     pub fn texture_size_cuts_uvs(&self, side: u32) -> bool {
         let Some(sprite) = self
-            .workspace_texture()
+            .edited_texture()
             .and_then(|id| self.document.artboard(id))
             .map(|a| &a.sprite)
         else {
@@ -234,7 +241,7 @@ impl Editor {
             return false;
         }
         let s = side as i32;
-        self.workspace_model().is_some_and(|m| {
+        self.edited_model().is_some_and(|m| {
             m.objects
                 .iter()
                 .flat_map(|o| &o.mesh.faces)
@@ -258,11 +265,11 @@ impl Editor {
             .collect()
     }
 
-    /// El lado de la textura del modelo del workspace pasa a `side`, anclado arriba a la
+    /// El lado de la textura del modelo que se edita pasa a `side`, anclado arriba a la
     /// izquierda: lo pintado se queda donde estaba y al achicar se recorta. Las UVs no cambian.
     /// Un paso de undo. Solo lados de [`TEXTURE_SIDES`] (de 16 a 512).
     pub fn set_texture_size(&mut self, side: u32) -> bool {
-        let Some(id) = self.workspace_texture() else {
+        let Some(id) = self.edited_texture() else {
             return false;
         };
         let Some(sprite) = self.document.artboard(id).map(|a| &a.sprite) else {

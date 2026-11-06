@@ -38,48 +38,38 @@ pub fn model_sprite(doc: &Document, artboard: &Artboard, texture_frame: usize) -
     model_sprite_at(doc, artboard, texture_frame, &mut stack)
 }
 
+/// El render más chico, con el cuadro `size` en su centro, que llega al pixel `(x, y)` del cuadro
+/// (que puede caer afuera): su tamaño y dónde queda ese pixel en él. `None` si queda demasiado
+/// lejos.
+fn around(size: (u32, u32), (x, y): (i32, i32)) -> Option<((u32, u32), (u32, u32))> {
+    // Lo que falta de cada lado, igual en los dos para que el cuadro siga centrado.
+    let side = |v: i32, n: u32| (-v).max(v - (n as i32 - 1)).max(0);
+    let (ox, oy) = (side(x, size.0), side(y, size.1));
+    if ox > 1 << 14 || oy > 1 << 14 {
+        return None;
+    }
+    let (ox, oy) = (ox as u32, oy as u32);
+    Some((
+        (size.0 + 2 * ox, size.1 + 2 * oy),
+        ((x + ox as i32) as u32, (y + oy as i32) as u32),
+    ))
+}
+
 /// El objeto del modelo de `artboard` que se ve en su pixel `(x, y)` en el lienzo (con el frame
-/// 0 de la textura: sus pixeles transparentes no tapan lo de atrás). `None` si no hay ninguno o
-/// si no es un modelo.
-pub fn model_pick(doc: &Document, artboard: &Artboard, x: u32, y: u32) -> Option<usize> {
+/// 0 de la textura: sus pixeles transparentes no tapan lo de atrás). El pixel puede caer fuera
+/// del artboard: cuenta lo que se vería ahí si el render siguiera (como la vista Persp que llena
+/// su cuadro). `None` si no hay ninguno o si no es un modelo.
+pub fn model_pick(doc: &Document, artboard: &Artboard, x: i32, y: i32) -> Option<usize> {
     let model = artboard.model.as_ref()?;
     let sprite = &artboard.sprite;
     if !sprite.color_mode.stores_rgba() || model.check(sprite).is_err() {
         return None;
     }
+    let frame = (sprite.width, sprite.height);
+    let (size, at) = around(frame, (x, y))?;
     let mut stack = vec![artboard.id];
     let texture = texture_frame_of(doc, model, 0, &mut stack);
     cs_3d::pick_object(
-        &RenderInput {
-            model,
-            size: (sprite.width, sprite.height),
-            texture: texture.as_ref().map(|(width, height, pixels)| Texture {
-                width: *width,
-                height: *height,
-                pixels,
-            }),
-            palette: sprite.palette.colors(),
-            camera: None,
-            extra_yaw: 0,
-        },
-        x,
-        y,
-    )
-}
-
-/// La cara `(objeto, cara)` de `model` que se ve en el pixel `(x, y)` de su render a `size` con
-/// la textura (frame 0) y la paleta de `artboard`, como [`model_render`]. `None` si no hay
-/// ninguna.
-pub fn model_pick_face(
-    doc: &Document,
-    artboard: &Artboard,
-    model: &cs_core::Model3D,
-    size: (u32, u32),
-    (x, y): (u32, u32),
-) -> Option<(usize, usize)> {
-    let mut stack = vec![artboard.id];
-    let texture = texture_frame_of(doc, model, 0, &mut stack);
-    cs_3d::pick_face(
         &RenderInput {
             model,
             size,
@@ -88,20 +78,54 @@ pub fn model_pick_face(
                 height: *height,
                 pixels,
             }),
-            palette: artboard.sprite.palette.colors(),
+            palette: sprite.palette.colors(),
             camera: None,
             extra_yaw: 0,
+            frame: Some(frame),
         },
-        x,
-        y,
+        at.0,
+        at.1,
     )
 }
 
-/// El contorno de 1 px de las caras `faces` en el render de `model` a `size` (ver
-/// [`cs_3d::face_outline`]), fila por fila.
+/// La cara `(objeto, cara)` de `model` que se ve en el pixel `(x, y)` de su render a `size` con
+/// la textura (frame 0) y la paleta de `artboard`, como [`model_render`]. El pixel puede caer
+/// fuera de `size`, como en [`model_pick`]. `None` si no hay ninguna.
+pub fn model_pick_face(
+    doc: &Document,
+    artboard: &Artboard,
+    model: &cs_core::Model3D,
+    size: (u32, u32),
+    at: (i32, i32),
+) -> Option<(usize, usize)> {
+    let (render, at) = around(size, at)?;
+    let mut stack = vec![artboard.id];
+    let texture = texture_frame_of(doc, model, 0, &mut stack);
+    cs_3d::pick_face(
+        &RenderInput {
+            model,
+            size: render,
+            texture: texture.as_ref().map(|(width, height, pixels)| Texture {
+                width: *width,
+                height: *height,
+                pixels,
+            }),
+            palette: artboard.sprite.palette.colors(),
+            camera: None,
+            extra_yaw: 0,
+            frame: Some(size),
+        },
+        at.0,
+        at.1,
+    )
+}
+
+/// El contorno de 1 px de las caras `faces` en el render de `model` a `size` con el cuadro
+/// `frame` (ver [`cs_3d::face_outline`] y [`RenderInput::frame`]), fila por fila.
 pub fn model_face_outline(
     model: &cs_core::Model3D,
     size: (u32, u32),
+    frame: Option<(u32, u32)>,
     faces: &[(usize, usize)],
 ) -> Vec<bool> {
     cs_3d::face_outline(
@@ -112,18 +136,21 @@ pub fn model_face_outline(
             palette: &[],
             camera: None,
             extra_yaw: 0,
+            frame,
         },
         faces,
     )
 }
 
 /// El render de `model` (p. ej. la vista previa del modo Edit, no el guardado en `artboard`)
-/// con la textura (frame 0) y la paleta de `artboard`, a `size`. Sin caché.
+/// con la textura (frame 0) y la paleta de `artboard`, a `size` con el cuadro `frame` (ver
+/// [`RenderInput::frame`]; `None`: el cuadro es `size`). Sin caché.
 pub fn model_render(
     doc: &Document,
     artboard: &Artboard,
     model: &cs_core::Model3D,
     size: (u32, u32),
+    frame: Option<(u32, u32)>,
 ) -> Vec<Rgba> {
     let mut stack = vec![artboard.id];
     let texture = texture_frame_of(doc, model, 0, &mut stack);
@@ -138,6 +165,7 @@ pub fn model_render(
         palette: artboard.sprite.palette.colors(),
         camera: None,
         extra_yaw: 0,
+        frame,
     })
 }
 
@@ -210,6 +238,7 @@ pub(crate) fn model_sprite_at(
                 palette,
                 camera: None,
                 extra_yaw: 0,
+                frame: None,
             }));
             if let Ok(mut cache) = CACHE.lock() {
                 if cache.len() >= CACHE_LIMIT {
@@ -360,10 +389,10 @@ mod tests {
         let artboard = doc.artboard(model).unwrap();
         let m = artboard.model.as_ref().unwrap();
         assert_eq!(
-            model_render(&doc, artboard, m, (SIZE, SIZE)),
+            model_render(&doc, artboard, m, (SIZE, SIZE), None),
             model_pixels(&doc, model)
         );
-        let half = model_render(&doc, artboard, m, (SIZE / 2, SIZE / 2));
+        let half = model_render(&doc, artboard, m, (SIZE / 2, SIZE / 2), None);
         assert_eq!(half.len(), (SIZE * SIZE / 4) as usize);
         assert_eq!(center(&half, SIZE / 2).a, 255);
     }

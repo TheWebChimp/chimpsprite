@@ -143,6 +143,7 @@ fn render_angle(
         palette: source.palette.colors(),
         camera: Some(options.camera(&m.camera)),
         extra_yaw: (angle % angles * 3600 / angles) as i32,
+        frame: None,
     })
 }
 

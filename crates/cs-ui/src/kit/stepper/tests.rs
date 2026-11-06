@@ -130,7 +130,7 @@ fn the_axis_stepper_has_its_tag_glued_to_the_left() {
     assert_eq!(TAG_W, 13.0);
     assert!(drawn.contains(&(
         id(&skin, UNIT, WidgetState::Normal),
-        Rect::from_min_size(rect.min, vec2(TAG_W, HEIGHT))
+        Rect::from_min_size(rect.min + vec2(1.0, 0.0), vec2(TAG_W - 1.0, HEIGHT))
     )));
     assert!(drawn.contains(&(
         id(&skin, LEFT, WidgetState::Normal),
@@ -174,4 +174,145 @@ fn the_axis_stepper_has_its_tag_glued_to_the_left() {
         run(events, &mut value);
     }
     assert_eq!(value, -1);
+}
+
+/// Los pixeles sueltos (rectángulos de 1×1) que dibujan las formas: posición y color.
+fn dots(shapes: &[Shape]) -> Vec<(Rect, Color32)> {
+    fn walk(shape: &Shape, out: &mut Vec<(Rect, Color32)>) {
+        match shape {
+            Shape::Vec(v) => v.iter().for_each(|s| walk(s, out)),
+            Shape::Rect(r) if r.rect.width() == 1.0 && r.rect.height() == 1.0 => {
+                out.push((r.rect, r.fill));
+            }
+            _ => {}
+        }
+    }
+    let mut out = Vec::new();
+    shapes.iter().for_each(|s| walk(s, &mut out));
+    out
+}
+
+#[test]
+fn the_axis_tag_is_rounded_outside_and_square_beside_the_button_like_the_mockup() {
+    let (ctx, skin) = pixel_ctx();
+    let mut rect = Rect::NOTHING;
+    let mut value = 0;
+    let shapes = frame(&ctx, vec![], |ui| {
+        rect = Rect::from_min_size(ui.cursor().min, vec2(80.0, HEIGHT));
+        axis_stepper(ui, &skin, 80.0, "t", "X", &mut value, -9..=9, 1);
+    });
+    let drawn = pieces(&shapes);
+    let colors = skin.colors();
+    let unit = skin.piece(UNIT, WidgetState::Normal).unwrap();
+    let (light, cream) = (unit.pixel(0, 0), unit.pixel(0, 16));
+    let at = |dots: &[(Rect, Color32)], x: f32, y: usize| {
+        let p = pos2(x, rect.top() + y as f32);
+        dots.iter().rev().find(|(r, _)| r.min == p).map(|(_, c)| *c)
+    };
+    let dots = dots(&shapes);
+    // Lado de afuera (izquierda): la esquina de arriba y la de abajo no se dibujan (la caja de la
+    // unidad empieza una columna adentro); las filas siguientes son el borde claro y el oscuro.
+    let x = rect.left();
+    assert_eq!(at(&dots, x, 0), None, "top-left corner is empty");
+    assert_eq!(at(&dots, x, 16), None, "bottom-left shadow is empty");
+    assert!(drawn.contains(&(
+        unit.texture.id(),
+        Rect::from_min_size(rect.min + vec2(1.0, 0.0), vec2(TAG_W - 1.0, HEIGHT))
+    )));
+    for y in 1..=6 {
+        assert_eq!(at(&dots, x, y), Some(light), "row {y}");
+    }
+    assert_eq!(at(&dots, x, 7), Some(colors.control_border));
+    assert_eq!(at(&dots, x, 8), Some(light));
+    for y in 9..=14 {
+        assert_eq!(at(&dots, x, y), Some(colors.control_border), "row {y}");
+    }
+    assert_eq!(at(&dots, x, 15), Some(cream), "bottom-left corner is light");
+    // Lado del botón: su columna izquierda queda recta (borde arriba y abajo, luz debajo).
+    let bx = rect.left() + TAG_W;
+    assert_eq!(at(&dots, bx, 0), Some(colors.control_border));
+    assert_eq!(at(&dots, bx, 15), Some(colors.control_border));
+    assert_eq!(at(&dots, bx, 16), Some(cream));
+}
+
+/// La columna recta del − (al lado de la etiqueta) en `rect`: las filas 0, 15 y 16.
+fn square_column(shapes: &[Shape], rect: Rect) -> Vec<Option<Color32>> {
+    let dots = dots(shapes);
+    let x = rect.left() + TAG_W;
+    [0, 15, 16]
+        .iter()
+        .map(|y| {
+            let p = pos2(x, rect.top() + *y as f32);
+            dots.iter().rev().find(|(r, _)| r.min == p).map(|(_, c)| *c)
+        })
+        .collect()
+}
+
+/// Lo que la columna recta del − debe pintar con el botón en `state`.
+fn square_column_of(skin: &Skin, state: WidgetState) -> Vec<Option<Color32>> {
+    let p = skin.piece(LEFT, state).unwrap();
+    let h = HEIGHT as u32;
+    vec![
+        Some(p.pixel(0, 1)),
+        Some(p.pixel(0, 1)),
+        Some(p.pixel(0, h - 2)),
+    ]
+}
+
+#[test]
+fn the_square_edge_of_the_minus_follows_its_state() {
+    let (ctx, skin) = pixel_ctx();
+    let run = |events: Vec<Event>, value: &mut i32| {
+        let mut rect = Rect::NOTHING;
+        let shapes = frame(&ctx, events, |ui| {
+            rect = Rect::from_min_size(ui.cursor().min, vec2(80.0, HEIGHT));
+            axis_stepper(ui, &skin, 80.0, "e", "X", value, -9..=9, 1);
+        });
+        (shapes, rect)
+    };
+    // La deshabilitada se distingue de la normal en esa columna (si no, no prueba nada). La
+    // presionada hoy coincide con la normal ahí, pero igual tiene que salir de su pieza.
+    assert_ne!(
+        square_column_of(&skin, WidgetState::Disabled),
+        square_column_of(&skin, WidgetState::Normal)
+    );
+    // En el mínimo, el − está deshabilitado aunque la interfaz no: su columna, la deshabilitada.
+    let mut value = -9;
+    let (shapes, rect) = run(vec![], &mut value);
+    assert_eq!(
+        square_column(&shapes, rect),
+        square_column_of(&skin, WidgetState::Disabled)
+    );
+    // Presionado (el bisel invertido): la columna de la pieza presionada.
+    let mut value = 0;
+    let minus = pos2(rect.left() + TAG_W + 7.0, rect.center().y);
+    let press = Event::PointerButton {
+        pos: minus,
+        button: egui::PointerButton::Primary,
+        pressed: true,
+        modifiers: Default::default(),
+    };
+    run(vec![Event::PointerMoved(minus), press], &mut value);
+    let (shapes, _) = run(vec![], &mut value);
+    assert!(
+        pieces(&shapes)
+            .iter()
+            .any(|(t, _)| *t == id(&skin, LEFT, WidgetState::Down)),
+        "the minus is drawn pressed"
+    );
+    assert_eq!(
+        square_column(&shapes, rect),
+        square_column_of(&skin, WidgetState::Down)
+    );
+    // Soltar fuera para no dejar el botón presionado en el contexto.
+    let release = Event::PointerButton {
+        pos: pos2(0.0, 0.0),
+        button: egui::PointerButton::Primary,
+        pressed: false,
+        modifiers: Default::default(),
+    };
+    run(
+        vec![Event::PointerMoved(pos2(0.0, 0.0)), release],
+        &mut value,
+    );
 }

@@ -2,6 +2,15 @@
 
 Fecha: 2026-11-03 · Estado: diseño aprobado
 
+**Cambio (2026-11-03, boceto `D:/Work/chimpdeas/.refs/chimpcad/mockup-panel-split.png`):** el panel
+se parte en dos a lo alto. **Arriba**, siempre visible, lo general del modelo (lo que era la pestaña
+del modelo: modos de selección y Grid en Model, Texture y Texture size, Camera, Light & Outline con
+Shading, Sheet settings…), con su propio scroll. **Abajo**, la tira de pestañas de objetos (ya **sin
+la pestaña fija del modelo**) con ◁ ▷ y `+`, y debajo el contenido del objeto elegido (en Texture:
+Rotate 90°, Flip H, Flip V arriba; luego Position, Rotation, Scale y Double sided), con su scroll.
+Sin objeto elegido, la parte de abajo muestra solo la tira. La línea entre las dos mitades va a la
+mitad del alto del panel, como el boceto.
+
 Referencia del usuario: `D:/Work/chimpdeas/.refs/chimpcad/mockup-object-tab.png` (a 1×; las
 capturas mandan en el acomodo). Sigue a `2026-11-03-chimpcad-chrome-design.md`.
 
@@ -24,6 +33,20 @@ Decisiones tomadas con el usuario:
   flechas). El `+` abre un menú con las primitivas (Cube, Plane, Cylinder, Cone, Sphere) y, en el
   mismo menú, el stepper **Sides** (para cilindro, cono y esfera). Elegir una la agrega y elige su
   pestaña. El select "Add" y el stepper "Sides" del cuerpo del panel desaparecen.
+
+### 1.1 El menú del `+` (boceto del usuario)
+
+Referencia: `D:/Work/chimpdeas/.refs/chimpcad/mockup-add-menu.png` (156×118 a 1×; manda en el
+acomodo). El `+` abre una ventanita pegada al botón (con la pestañita que la une al `+` arriba a la
+derecha y su sombra, como los flyouts del dock):
+
+- Arriba, **cinco íconos azules** (cubo, cilindro, cono, esfera, plano) — piezas nuevas
+  `icon.add.cube`, `icon.add.cylinder`, `icon.add.cone`, `icon.add.sphere`, `icon.add.plane`,
+  copiadas del boceto. Clic elige el tipo; el elegido lleva el contorno blanco y la flechita sobre la
+  línea divisoria (como el boceto).
+- Una línea divisoria; debajo, **Sides** (stepper del kit; deshabilitado para cubo y plano).
+- Abajo a la derecha, un botón **Add <Tipo>** ("Add Cube", "Add Cylinder", …) que agrega el objeto,
+  elige su pestaña y cierra la ventanita.
 
 ## 2. La pestaña de un objeto
 

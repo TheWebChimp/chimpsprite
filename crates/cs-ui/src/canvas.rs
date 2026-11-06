@@ -24,6 +24,7 @@ use crate::{kit, theme, widgets};
 mod input;
 mod model_edit;
 mod model_input;
+mod nav_gizmo;
 mod rulers;
 mod texture_mode;
 mod uv_overlay;
@@ -129,6 +130,12 @@ pub struct CanvasView {
     pub symbol_request: bool,
     /// Ctrl+rueda de touchpad: píxeles acumulados que todavía no suman un paso de grosor.
     wheel_rest: f32,
+    /// La rueda de touchpad sobre el workspace del modelo (las vistas o el render de arriba
+    /// del modo Texture): píxeles acumulados que todavía no suman un paso.
+    model_wheel_rest: f32,
+    /// Cuándo (segundos de egui) fue el último paso de rueda sobre la cámara del modelo: una
+    /// ráfaga seguida es un solo paso de undo.
+    model_wheel_at: Option<f64>,
     /// El arrastre en curso sobre la perspectiva del workspace (orbitar o mover el objetivo).
     model_drag: Option<model_input::ModelDrag>,
     /// Los cuadrantes (Front, Persp, Top, Side) del workspace del modelo, en pantalla.
@@ -159,6 +166,14 @@ pub struct CanvasView {
     /// Las vistas orto en pixel art (Front, Top, Side): la clave de lo que muestra cada una y su
     /// textura.
     edit_ortho: [Option<(u64, TextureHandle)>; 3],
+    /// El asa del gizmo bajo el puntero (sin gesto) y la vista orto donde está.
+    gizmo_hover: Option<(cs_3d::OrthoView, cs_3d::GizmoPart)>,
+    /// Lo de la perspectiva bajo el puntero (sin gesto): un asa del gizmo o una bolita del de
+    /// navegación.
+    persp_hover: Option<model_edit::PerspHover>,
+    /// Lo que va encima del render de la perspectiva (el gizmo y el de navegación) en pixel art:
+    /// la clave de lo que muestra y su textura.
+    edit_persp_overlay: Option<(u64, TextureHandle)>,
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
     pub background: Color32,
     /// Las reglas del skin con Pixel UI (`None`: las de siempre); lo pone la app en cada frame.
@@ -296,6 +311,8 @@ impl Default for CanvasView {
             artboard_request: None,
             symbol_request: false,
             wheel_rest: 0.0,
+            model_wheel_rest: 0.0,
+            model_wheel_at: None,
             background: theme::CANVAS_BG,
             pixel_rulers: None,
             rulers_shown: false,
@@ -322,6 +339,9 @@ impl Default for CanvasView {
             edit_outline: None,
             edit_persp: None,
             edit_ortho: [None, None, None],
+            gizmo_hover: None,
+            persp_hover: None,
+            edit_persp_overlay: None,
         }
     }
 }
@@ -521,8 +541,8 @@ impl CanvasView {
                 self.zoom = 1.0;
                 self.pan = -center * self.scale();
             }
-            // La textura del modo Texture se encuadra en su panel (el panel del dock ya quedó
-            // fuera). Al abrir la pestaña o su panel, con caras elegidas, en las UVs de ellas.
+            // La textura del modo Texture se encuadra en su panel (el panel 3D ya quedó fuera).
+            // Al abrir la pestaña o su panel, con caras elegidas, en las UVs de ellas.
             ZoomRequest::FitActiveBeside { .. }
                 if self.texture_pane && !editor.selected_faces().is_empty() =>
             {
