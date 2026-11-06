@@ -130,7 +130,8 @@ Las herramientas ven un **proxy de píxeles**: una copia del sprite donde la cap
 capa de imagen con su cel de este frame dibujado (`draw_tile_grid`). Se cachea por artboard, capa,
 frame y versión del documento. Todas las herramientas que pintan o seleccionan lo usan (lápiz, spray,
 borrador, cuentagotas, cubeta, degradado, formas, texto, Contour, Blur, Jumble, selecciones); Move,
-Slice y Artboard siguen sobre el sprite real (Move mueve el cel tilemap en píxeles, como Aseprite).
+Slice y Artboard siguen sobre el sprite real (Move mueve el cel tilemap en pasos de un tile, como en
+modo Tiles, y se queda en la capa tilemap).
 
 El `DrawPixels` que sale (con simetría, Tiled Mode, recorte a la selección e ink, que lee el proxy)
 pasa por `tiles::draw_tilemap_pixels` con el modo elegido. Un trazo = un paso de undo con el nombre
@@ -200,5 +201,7 @@ variante para Manual y Stack).
 6. **Manual sin cel** crea el cel y los tiles, como hizo Aseprite en la prueba.
 7. **Reordenar** mueve un tile a la vez (Aseprite permite elegir varios y copiar con Ctrl): queda
    para después.
-8. **Move en modo Pixels** mueve el cel tilemap en píxeles (puede quedar desalineado de la grilla del
-   lienzo, como en Aseprite); levantar/transformar una selección sobre un tilemap no está.
+8. **Move en modo Pixels** mueve el cel tilemap en pasos de un tile, igual que en modo Tiles (así la
+   grilla sigue alineada); levantar/transformar una selección sobre un tilemap no está.
+9. **La grilla de tiles** se dibuja en el lienzo en los dos modos (en Pixels ayuda a ver qué tile se
+   está tocando).
