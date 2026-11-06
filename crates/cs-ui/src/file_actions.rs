@@ -194,6 +194,9 @@ impl ChimpApp {
         match (tab, close) {
             (TabRef::Doc(i), false) => self.tabs.switch(&mut self.doc, i),
             (TabRef::Doc(i), true) => self.request_close_tab(i),
+            (TabRef::View(doc, id), false) => self.tabs.switch_view(&mut self.doc, doc, id),
+            // Una vista no tiene nada que guardar: se cierra sin preguntar.
+            (TabRef::View(doc, id), true) => self.tabs.close_view(&mut self.doc, doc, id),
             (TabRef::Page(page), false) => self.show_page(page),
             (TabRef::Page(page), true) => self.tabs.close_page(page),
         }

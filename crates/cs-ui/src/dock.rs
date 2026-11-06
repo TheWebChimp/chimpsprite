@@ -217,6 +217,14 @@ pub fn open_panel(ctx: &egui::Context) -> Option<DockPanel> {
         .flatten()
 }
 
+/// Dónde está el panel flotante abierto (el del frame en curso si ya se mostró; si no, el del
+/// anterior). `None` con todos cerrados.
+pub fn open_flyout_rect(ctx: &egui::Context) -> Option<Rect> {
+    let panel = open_panel(ctx)?;
+    let id = egui::Id::new(("dock_flyout", panel.label()));
+    ctx.memory(|m| m.area_rect(id))
+}
+
 pub fn set_open(ctx: &egui::Context, panel: Option<DockPanel>) {
     ctx.data_mut(|d| d.insert_temp(open_id(), panel));
 }

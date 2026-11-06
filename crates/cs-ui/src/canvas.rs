@@ -42,16 +42,16 @@ const LABEL_GAP: f32 = 4.0;
 /// Alto de la franja de la migaja de pan del modo símbolo (arriba del lienzo).
 const CRUMBS_PX: f32 = 14.0;
 
-/// Los artboards que muestra el lienzo, en su orden: los del lienzo o, en el modo símbolo, solo
-/// el que se edita.
+/// Los artboards que muestra el lienzo, en su orden: los del lienzo o, en el modo símbolo o en el
+/// workspace de una fuente, solo el que se edita.
 fn shown_artboards<'a>(
     document: &'a cs_core::Document,
     editor: &Editor,
 ) -> impl DoubleEndedIterator<Item = &'a Artboard> + use<'a> {
-    let only = editor.in_symbol_mode().then_some(editor.active);
+    let only = editor.single_artboard().then_some(editor.active);
     document.artboards.iter().filter(move |a| match only {
         Some(id) => a.id == id,
-        None => !a.in_library,
+        None => a.on_canvas(),
     })
 }
 /// Los números de tile se dibujan solo si cada tile ocupa al menos esto en pantalla.
@@ -127,12 +127,15 @@ pub struct CanvasView {
     pub symbol_request: bool,
     /// Ctrl+rueda de touchpad: píxeles acumulados que todavía no suman un paso de grosor.
     wheel_rest: f32,
-    /// El arrastre en curso sobre el artboard 3D activo (orbitar o mover el objetivo).
+    /// El arrastre en curso sobre la perspectiva del workspace (orbitar o mover el objetivo).
     model_drag: Option<model_input::ModelDrag>,
-    /// Los cuadrantes (Front, Persp, Top, Side) del artboard 3D en modo Edit, en pantalla.
+    /// Los cuadrantes (Front, Persp, Top, Side) del workspace del modelo, en pantalla.
     edit_quads: Option<[Rect; 4]>,
     /// La perspectiva del modo Edit: la clave de lo que muestra y su textura.
     edit_persp: Option<(u64, TextureHandle)>,
+    /// Las vistas orto en pixel art (Front, Top, Side): la clave de lo que muestra cada una y su
+    /// textura.
+    edit_ortho: [Option<(u64, TextureHandle)>; 3],
     /// Color alrededor de los artboards (`background_for`); lo pone la app en cada frame.
     pub background: Color32,
     /// Las reglas del skin con Pixel UI (`None`: las de siempre); lo pone la app en cada frame.
@@ -151,7 +154,8 @@ pub struct CanvasView {
     pub cursors: Option<pixel_cursors::CursorSet>,
     /// Píxeles físicos por punto del último frame: [`Self::origin`] se alinea a ellos.
     ppp: f32,
-    /// El zoom y el paneo del documento al entrar al modo símbolo: se restauran al salir.
+    /// El zoom y el paneo del documento al entrar al modo símbolo o al workspace de una fuente:
+    /// se restauran al volver al lienzo.
     symbol_return_view: Option<(f32, Vec2)>,
     /// Si se ve la migaja de pan (modo símbolo) en este frame.
     crumbs_shown: bool,
@@ -286,6 +290,7 @@ impl Default for CanvasView {
             model_drag: None,
             edit_quads: None,
             edit_persp: None,
+            edit_ortho: [None, None, None],
         }
     }
 }
@@ -300,6 +305,12 @@ impl CanvasView {
         }
         let texture = self.textures.get(&editor.active)?;
         Some((texture.id(), texture.size_vec2()))
+    }
+
+    /// El paneo de la vista (para los tests).
+    #[cfg(test)]
+    pub(crate) fn pan(&self) -> Vec2 {
+        self.pan
     }
 
     /// Cuántas veces se compuso un artboard (para los tests).
@@ -399,9 +410,10 @@ impl CanvasView {
         )
     }
 
-    /// Ajusta el zoom a todo el lienzo (en el modo símbolo, al símbolo).
+    /// Ajusta el zoom a todo el lienzo (en el modo símbolo, al símbolo; en el workspace de una
+    /// fuente, al glifo).
     fn fit(&mut self, rect: Rect, editor: &Editor) {
-        let bounds = if editor.in_symbol_mode() {
+        let bounds = if editor.single_artboard() {
             Some(editor.artboard().rect())
         } else {
             editor.document.bounds()
@@ -698,6 +710,13 @@ impl CanvasView {
         self.rulers_shown = view_settings.rulers;
         self.crumbs_shown = editor.in_symbol_mode();
         self.sync_symbol_view(editor);
+        // El workspace de un modelo (ChimpCAD): las cuatro vistas en todo el área, sin artboards,
+        // reglas ni nada del lienzo.
+        if editor.model_edit_on() {
+            self.show_model_workspace(ui, &response, rect, editor, dialog.is_some());
+            return;
+        }
+        self.edit_quads = None;
         // Un símbolo soltado desde la Library. Con un diálogo abierto o sobre las reglas o la
         // migaja de pan no cuenta (el payload se descarta igual).
         if let Some(payload) = response.dnd_release_payload::<crate::library_panel::SymbolPayload>()
@@ -826,9 +845,6 @@ impl CanvasView {
         let ppp = ctx.pixels_per_point();
         self.draw_tiled(&painter, rect, editor, document, checker, ppp);
         self.advance_line = None;
-        if !editor.model_edit_on() {
-            self.edit_quads = None;
-        }
         for artboard in shown_artboards(document, editor) {
             // Alineada a píxeles de pantalla: el damero y la textura caen justo en píxeles y la
             // ventana de Pixel UI se arma alrededor de este mismo rect (blanco de 1 px exacto).
@@ -867,81 +883,74 @@ impl CanvasView {
             if let Some((w, layout)) = &window {
                 painter.extend(w.frame_shapes(layout, active, ppp));
             }
-            // El modo Edit del modelo activo: cuatro vistas en lugar del damero y la textura.
-            // La barra, el nombre y el borde siguen igual que fuera del modo Edit: solo los
-            // píxeles (y lo que va sobre ellos) se reemplazan por las cuatro vistas, que se
-            // dibujan al final, cuando ya no se usa la ventana prestada de `self`.
-            let editing = active && editor.model_edit_on();
-            if !editing {
-                let ((x0, y0), (x1, y1)) = artboard.rect();
-                let uv = checker_uv((x1 - x0) as u32, (y1 - y0) as u32);
-                painter.image(checker, screen, uv, Color32::WHITE);
-                // El artboard de fuente activo: la letra fantasma va sobre el damero y debajo de lo
-                // dibujado; las guías, encima (después de las cuadrículas).
-                let font = artboard
-                    .font
-                    .as_ref()
-                    .filter(|_| active)
-                    .zip(self.shown_advance(editor));
-                if let Some((font, (glyph, _))) = font
-                    && let Some(ghost) =
-                        crate::font_overlay::ghost(&painter, screen, font, glyph, self.scale().x)
-                {
-                    painter.add(ghost);
-                }
-                if let Some(tex) = self.textures.get(&artboard.id) {
-                    let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
-                    painter.image(tex.id(), screen, full_uv, Color32::WHITE);
-                }
-                if view_settings.shows(view_settings.grid) {
-                    draw_grid(
-                        &painter,
-                        screen,
-                        artboard.sprite.grid,
-                        self.scale(),
-                        view_settings.grid_color(),
+            let ((x0, y0), (x1, y1)) = artboard.rect();
+            let uv = checker_uv((x1 - x0) as u32, (y1 - y0) as u32);
+            painter.image(checker, screen, uv, Color32::WHITE);
+            // El artboard de fuente activo: la letra fantasma va sobre el damero y debajo de lo
+            // dibujado; las guías, encima (después de las cuadrículas).
+            let font = artboard
+                .font
+                .as_ref()
+                .filter(|_| active)
+                .zip(self.shown_advance(editor));
+            if let Some((font, (glyph, _))) = font
+                && let Some(ghost) =
+                    crate::font_overlay::ghost(&painter, screen, font, glyph, self.scale().x)
+            {
+                painter.add(ghost);
+            }
+            if let Some(tex) = self.textures.get(&artboard.id) {
+                let full_uv = Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0));
+                painter.image(tex.id(), screen, full_uv, Color32::WHITE);
+            }
+            if view_settings.shows(view_settings.grid) {
+                draw_grid(
+                    &painter,
+                    screen,
+                    artboard.sprite.grid,
+                    self.scale(),
+                    view_settings.grid_color(),
+                );
+            }
+            if self.zoom >= 8.0 && view_settings.shows(view_settings.pixel_grid) {
+                let stroke = Stroke::new(1.0, theme::GRID);
+                for x in 1..artboard.sprite.width {
+                    painter.vline(
+                        screen.left() + x as f32 * self.scale().x,
+                        screen.y_range(),
+                        stroke,
                     );
                 }
-                if self.zoom >= 8.0 && view_settings.shows(view_settings.pixel_grid) {
-                    let stroke = Stroke::new(1.0, theme::GRID);
-                    for x in 1..artboard.sprite.width {
-                        painter.vline(
-                            screen.left() + x as f32 * self.scale().x,
-                            screen.y_range(),
-                            stroke,
-                        );
-                    }
-                    for y in 1..artboard.sprite.height {
-                        painter.hline(
-                            screen.x_range(),
-                            screen.top() + y as f32 * self.scale().y,
-                            stroke,
-                        );
-                    }
-                }
-                // Modo Tiles: la grilla de tiles de la capa activa, independiente del grid de trabajo.
-                if artboard.id == editor.active
-                    && view_settings.extras
-                    && let Some(space) = editor.tile_space()
-                {
-                    draw_grid(
-                        &painter,
-                        screen,
-                        GridSettings {
-                            size: space.tile_size,
-                            offset: space.offset,
-                        },
-                        self.scale(),
-                        theme::TILE_GRID,
+                for y in 1..artboard.sprite.height {
+                    painter.hline(
+                        screen.x_range(),
+                        screen.top() + y as f32 * self.scale().y,
+                        stroke,
                     );
                 }
-                if let Some((font, (_, advance))) = font {
-                    let scale = self.scale().x;
-                    painter.extend(crate::font_overlay::guides(screen, font, advance, scale));
-                    // Con Monospace el ancho es el de la celda: la línea no se arrastra.
-                    self.advance_line = (!font.monospace)
-                        .then(|| crate::font_overlay::advance_hit(screen, advance, scale));
-                }
+            }
+            // Modo Tiles: la grilla de tiles de la capa activa, independiente del grid de trabajo.
+            if artboard.id == editor.active
+                && view_settings.extras
+                && let Some(space) = editor.tile_space()
+            {
+                draw_grid(
+                    &painter,
+                    screen,
+                    GridSettings {
+                        size: space.tile_size,
+                        offset: space.offset,
+                    },
+                    self.scale(),
+                    theme::TILE_GRID,
+                );
+            }
+            if let Some((font, (_, advance))) = font {
+                let scale = self.scale().x;
+                painter.extend(crate::font_overlay::guides(screen, font, advance, scale));
+                // Con Monospace el ancho es el de la celda: la línea no se arrastra.
+                self.advance_line = (!font.monospace)
+                    .then(|| crate::font_overlay::advance_hit(screen, advance, scale));
             }
             if let Some((w, layout)) = &window {
                 // La barra de título reemplaza a la etiqueta. Sin el borde naranja del activo:
@@ -953,9 +962,6 @@ impl CanvasView {
                 };
                 let kind = BarKind::of(artboard);
                 painter.extend(w.bar_shapes(&painter, layout, &title, active, kind, ppp));
-                if editing {
-                    self.draw_model_edit(&painter, screen, editor, document, &ctx);
-                }
                 continue;
             }
             let (border, label_color) = if active {
@@ -972,9 +978,6 @@ impl CanvasView {
                     FontId::proportional(LABEL_SIZE),
                     label_color,
                 );
-            }
-            if editing {
-                self.draw_model_edit(&painter, screen, editor, document, &ctx);
             }
         }
 
@@ -1591,9 +1594,10 @@ impl CanvasView {
         })
     }
 
-    /// Guarda la vista del documento al entrar al modo símbolo y la restaura al salir.
+    /// Guarda la vista del documento al entrar al modo símbolo o al workspace de una fuente y la
+    /// restaura al volver al lienzo.
     fn sync_symbol_view(&mut self, editor: &Editor) {
-        if editor.in_symbol_mode() {
+        if editor.single_artboard() {
             self.symbol_return_view.get_or_insert((self.zoom, self.pan));
         } else if let Some((zoom, pan)) = self.symbol_return_view.take() {
             (self.zoom, self.pan) = (zoom, pan);

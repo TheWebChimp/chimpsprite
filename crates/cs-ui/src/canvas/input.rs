@@ -322,14 +322,9 @@ impl CanvasView {
         // Durante un trazo el grosor no cambia: Ctrl+rueda se ignora (ni grosor ni zoom).
         let painting = editor.is_painting();
         let brush = editor.active_tool().uses_brush();
-        // Sobre el artboard 3D activo, Ctrl+rueda acerca o aleja la cámara (ni grosor ni zoom).
-        let ppp = ui.ctx().pixels_per_point();
-        let model_hover = response
-            .hover_pos()
-            .is_some_and(|p| self.over_model(rect, editor, p, ppp));
         // Los restos de rueda de touchpad solo siguen sumando mientras dura el gesto: Ctrl
-        // mantenido, herramienta de pincel (o el modelo) y ninguna rueda sin Ctrl en el medio.
-        let mut keep_rest = (brush || model_hover) && ui.input(|i| i.modifiers.command);
+        // mantenido, herramienta de pincel y ninguna rueda sin Ctrl en el medio.
+        let mut keep_rest = brush && ui.input(|i| i.modifiers.command);
         if let Some(pointer) = response.hover_pos() {
             let wheel: Vec<(egui::MouseWheelUnit, f32, bool)> = ui.input(|i| {
                 i.raw
@@ -348,19 +343,6 @@ impl CanvasView {
             });
             let mut scroll = 0.0;
             for (unit, dy, command) in wheel {
-                if command && model_hover {
-                    let steps = brush_wheel_steps(&mut self.wheel_rest, unit, dy);
-                    if steps != 0 {
-                        // En el modo Edit, sobre una vista orto la rueda hace zoom; sobre la
-                        // perspectiva, lo de siempre.
-                        if !(editor.model_edit_on()
-                            && self.model_edit_wheel(editor, pointer, steps))
-                        {
-                            Self::model_wheel(editor, steps);
-                        }
-                    }
-                    continue;
-                }
                 if command && brush && painting {
                     continue;
                 }
@@ -427,21 +409,11 @@ impl CanvasView {
         }
 
         // Pintura: estado crudo del puntero, para que un clic sin arrastre también cuente.
-        let (
-            pressed_primary,
-            pressed_secondary,
-            pressed_middle,
-            any_down,
-            edit_down,
-            pointer,
-            modifiers,
-        ) = ui.input(|i| {
+        let (pressed_primary, pressed_secondary, any_down, pointer, modifiers) = ui.input(|i| {
             (
                 i.pointer.button_pressed(egui::PointerButton::Primary),
                 i.pointer.button_pressed(egui::PointerButton::Secondary),
-                i.pointer.button_pressed(egui::PointerButton::Middle),
                 i.pointer.primary_down() || i.pointer.secondary_down(),
-                i.pointer.primary_down() || i.pointer.secondary_down() || i.pointer.middle_down(),
                 i.pointer.interact_pos(),
                 i.modifiers,
             )
@@ -577,57 +549,9 @@ impl CanvasView {
             && response.hovered()
             && !editor.is_painting()
             && (pressed_primary || pressed_secondary);
-        // En el modo Edit el botón central también arranca gestos (desplazar las vistas).
-        let can_press_model = can_press
-            || (pressed_middle
-                && editor.model_edit_on()
-                && !modal
-                && !cancelled
-                && !ruler_busy
-                && !over_note
-                && self.dragging_guide.is_none()
-                && !space_key
-                && !hand
-                && response.hovered()
-                && !editor.is_painting());
-        // Sobre el área de pixeles del artboard 3D activo, los botones mueven la cámara o eligen
-        // objetos: no llegan a las herramientas (ni al cuentagotas ni a los menús).
-        // Con un arrastre del modelo en curso, el otro botón no llega a nada.
-        let model_busy = self.model_drag.is_some() || editor.model_edit().op.is_some();
-        // Un gesto de teclado (G o S) espera un clic: confirma con el izquierdo, cancela con el
-        // derecho. Esos clics sí llegan al modo Edit (pero nunca a las herramientas).
-        let keyboard_op = matches!(
-            editor.model_edit().op,
-            Some(
-                crate::editor::EditOp::Move { keyboard: true, .. }
-                    | crate::editor::EditOp::Scale { .. }
-            )
-        );
-        let model_press = can_press_model
-            && over_label.is_none()
-            && (!model_busy || (keyboard_op && self.model_drag.is_none()))
-            && pointer.is_some_and(|p| !over_crumbs(p) && self.over_model(rect, editor, p, ppp));
-        if model_press && let Some(p) = pointer {
-            // Los menús de una vez anterior no se abren con este clic.
-            self.selection_menu = false;
-            self.object_menu = false;
-            self.slice_menu = false;
-            // El central es solo del modo Edit: si todavía no hay cuadrantes (el primer frame),
-            // no cae en `model_press` (ahí sería un clic izquierdo que elige).
-            if !(editor.model_edit_on()
-                && (self.model_edit_press(editor, p, pressed_secondary, pressed_middle, modifiers)
-                    || pressed_middle))
-            {
-                self.model_press(rect, editor, p, pressed_secondary, modifiers);
-            }
-        }
+        // Un arrastre de la perspectiva que quedó a medias al salir del workspace termina aquí.
         self.model_drag_input(editor, pointer, any_down);
-        if editor.model_edit_on() {
-            self.model_edit_input(editor, pointer, edit_down, modifiers);
-        }
         if can_press
-            && !model_press
-            && !model_busy
             && let Some(p) = pointer
             && !over_crumbs(p)
         {
@@ -863,9 +787,10 @@ impl CanvasView {
             }
         } else if editor.active_tool() == ToolKind::Artboard {
             let world = pointer.map(|p| self.to_world(rect, p));
-            // En el modo símbolo la herramienta no toca los artboards del lienzo (no se ven).
+            // En el modo símbolo o en el workspace de una fuente la herramienta no toca los
+            // artboards del lienzo (no se ven).
             let hit = world
-                .filter(|_| !editor.in_symbol_mode())
+                .filter(|_| !editor.single_artboard())
                 .and_then(|w| hit_test(&editor.document, w, slop));
             Some(artboard_cursor(hit))
         } else if editor.active_tool() == ToolKind::Move

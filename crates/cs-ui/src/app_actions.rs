@@ -9,16 +9,11 @@ impl ChimpApp {
         if self.is_modal() {
             return;
         }
-        if std::mem::take(&mut self.drop_focus) {
-            ctx.memory_mut(|m| {
-                if let Some(id) = m.focused() {
-                    m.surrender_focus(id);
-                }
-            });
-        }
         let typing = ctx.egui_wants_keyboard_input();
         let painting = self.has_doc() && self.doc.editor.is_painting();
-        if self.has_doc() && !typing && !painting {
+        // En el workspace de un modelo el sprite (escondido) no se toca: ni copiar ni pegar.
+        let model = self.has_doc() && self.doc.editor.model_edit_on();
+        if self.has_doc() && !typing && !painting && !model {
             self.clipboard_events(ctx);
         }
         let presses: Vec<(Key, Modifiers)> = ctx.input(|i| {
@@ -46,12 +41,6 @@ impl ChimpApp {
                 && !modifiers.alt
                 && editor_key(&mut self.doc.editor, key, modifiers.shift)
             {
-                // Tab (modo Edit) tampoco debe dejar el foco en un campo de texto: egui ya lo
-                // movió al empezar el frame, así que se suelta al empezar el siguiente.
-                if key == egui::Key::Tab {
-                    ctx.input_mut(|i| i.consume_key(modifiers, key));
-                    self.drop_focus = true;
-                }
                 continue;
             }
             let Some(action) = self.keymap.action_for(key, modifiers) else {
@@ -63,6 +52,9 @@ impl ChimpApp {
                 keymap::Gate::NotPainting => !typing && !painting,
             };
             if !allowed || (action.needs_document() && !self.has_doc()) {
+                continue;
+            }
+            if self.has_doc() && self.doc.editor.model_edit_on() && !action.in_model_workspace() {
                 continue;
             }
             // Que no le llegue también a egui (Tab mueve el foco, por ejemplo).

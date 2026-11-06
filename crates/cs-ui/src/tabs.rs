@@ -24,6 +24,8 @@ pub(crate) struct DocState {
     pub tile_thumbs: crate::panels::TileThumbs,
     /// El panel Library de este documento: lo que se renombra, lo que se borra y las texturas.
     pub library: crate::library_panel::LibraryState,
+    /// Las pestañas de vista abiertas (modelos y fuentes de este documento), en orden.
+    pub views: Vec<ArtboardId>,
 }
 
 impl DocState {
@@ -37,6 +39,7 @@ impl DocState {
             artboard_name: (ArtboardId(0), String::new()),
             tile_thumbs: Default::default(),
             library: Default::default(),
+            views: Vec::new(),
         }
     }
 
@@ -83,6 +86,15 @@ impl DocState {
 pub(crate) struct TabInfo {
     pub name: String,
     pub dirty: bool,
+    pub icon: TabIcon,
+}
+
+/// El ícono que va antes del nombre de una pestaña de vista.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TabIcon {
+    None,
+    Model,
+    Font,
 }
 
 /// Una pestaña que no es un documento. Va después de las de documentos y, mientras se ve, no hay
@@ -101,10 +113,12 @@ impl Page {
     }
 }
 
-/// Una pestaña de la barra: un documento (su índice) o una página.
+/// Una pestaña de la barra: un documento (su índice), la vista de un modelo o una fuente de ese
+/// documento, o una página.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TabRef {
     Doc(usize),
+    View(usize, ArtboardId),
     Page(Page),
 }
 
@@ -149,27 +163,79 @@ impl Tabs {
         }
     }
 
-    /// Las pestañas de la barra en orden: los documentos y después las páginas.
-    pub fn bar(&self) -> Vec<TabRef> {
-        (0..self.len())
-            .map(TabRef::Doc)
-            .chain(self.pages.iter().map(|&p| TabRef::Page(p)))
-            .collect()
+    /// Las pestañas de la barra en orden: cada documento seguido de sus vistas y, al final, las
+    /// páginas.
+    pub fn bar(&self, current: &DocState) -> Vec<TabRef> {
+        let mut bar = self.doc_bar(current);
+        bar.extend(self.pages.iter().map(|&p| TabRef::Page(p)));
+        bar
+    }
+
+    /// Los documentos y sus vistas (la barra sin las páginas).
+    fn doc_bar(&self, current: &DocState) -> Vec<TabRef> {
+        let mut bar = Vec::new();
+        for i in 0..self.len() {
+            bar.push(TabRef::Doc(i));
+            bar.extend(
+                self.get(current, i)
+                    .views
+                    .iter()
+                    .map(|&id| TabRef::View(i, id)),
+            );
+        }
+        bar
+    }
+
+    /// La pestaña del documento activo que se ve: su vista si está en el workspace; si no, él.
+    fn shown_doc_tab(&self, current: &DocState) -> Option<TabRef> {
+        let a = self.active?;
+        Some(match current.editor.workspace() {
+            Some(id) if current.views.contains(&id) => TabRef::View(a, id),
+            _ => TabRef::Doc(a),
+        })
     }
 
     /// Cuál de [`Tabs::bar`] es la que se ve (`None`: Home).
-    pub fn bar_active(&self) -> Option<usize> {
+    pub fn bar_active(&self, current: &DocState) -> Option<usize> {
         let page = self.page.map(TabRef::Page);
-        let shown = self.active.map(TabRef::Doc).or(page)?;
-        self.bar().iter().position(|t| *t == shown)
+        let shown = self.shown_doc_tab(current).or(page)?;
+        self.bar(current).iter().position(|t| *t == shown)
     }
 
     /// Nombre y estado de cada pestaña de [`Tabs::bar`].
     pub fn bar_infos(&self, current: &DocState) -> Vec<TabInfo> {
-        let mut infos = self.infos(current);
+        let mut infos: Vec<TabInfo> = self
+            .doc_bar(current)
+            .into_iter()
+            .map(|tab| match tab {
+                TabRef::Doc(i) => {
+                    let doc = self.get(current, i);
+                    TabInfo {
+                        name: doc.location.name.clone(),
+                        dirty: doc.is_dirty(),
+                        icon: TabIcon::None,
+                    }
+                }
+                TabRef::View(i, id) => {
+                    let doc = self.get(current, i);
+                    let artboard = doc.editor.document.artboard(id);
+                    TabInfo {
+                        name: artboard.map(|a| a.name.clone()).unwrap_or_default(),
+                        dirty: doc.is_dirty(),
+                        icon: if artboard.is_some_and(|a| a.model.is_some()) {
+                            TabIcon::Model
+                        } else {
+                            TabIcon::Font
+                        },
+                    }
+                }
+                TabRef::Page(_) => unreachable!("las páginas no están en `doc_bar`"),
+            })
+            .collect();
         infos.extend(self.pages.iter().map(|p| TabInfo {
             name: p.title().to_owned(),
             dirty: false,
+            icon: TabIcon::None,
         }));
         infos
     }
@@ -206,6 +272,7 @@ impl Tabs {
                 TabInfo {
                     name: doc.location.name.clone(),
                     dirty: doc.is_dirty(),
+                    icon: TabIcon::None,
                 }
             })
             .collect()
@@ -231,14 +298,74 @@ impl Tabs {
         }
     }
 
+    /// Muestra el lienzo del documento `index`: sale del workspace de su vista, si estaba en ella.
     pub fn switch(&mut self, current: &mut DocState, index: usize) {
-        if index >= self.len() || Some(index) == self.active {
+        if index >= self.len() {
+            return;
+        }
+        if Some(index) == self.active {
+            current.editor.exit_workspace();
             return;
         }
         self.page = None;
         self.stash(current);
         *current = self.slots[index].take().expect("inactive tab is stored");
         self.active = Some(index);
+        current.editor.exit_workspace();
+    }
+
+    /// Muestra el lienzo del documento activo (sale del workspace de su vista).
+    pub fn show_doc(&mut self, current: &mut DocState) {
+        if let Some(a) = self.active {
+            self.switch(current, a);
+        }
+    }
+
+    /// Abre (o activa) la pestaña de vista de `artboard` en el documento activo.
+    pub fn open_view(&mut self, current: &mut DocState, artboard: ArtboardId) {
+        if self.active.is_none() || !current.editor.has_workspace(artboard) {
+            return;
+        }
+        if !current.views.contains(&artboard) {
+            current.views.push(artboard);
+        }
+        current.editor.enter_workspace(artboard);
+    }
+
+    /// Activa la pestaña de vista de `artboard` del documento `doc`: cambia a él y entra al
+    /// workspace.
+    pub fn switch_view(&mut self, current: &mut DocState, doc: usize, artboard: ArtboardId) {
+        if Some(doc) != self.active {
+            self.switch(current, doc);
+        }
+        if Some(doc) == self.active {
+            current.editor.enter_workspace(artboard);
+        }
+    }
+
+    /// Cierra la pestaña de vista de `artboard` del documento `doc` (sin preguntar: no hay nada
+    /// que guardar). Si se estaba viendo, vuelve al lienzo de ese documento.
+    pub fn close_view(&mut self, current: &mut DocState, doc: usize, artboard: ArtboardId) {
+        let target = if Some(doc) == self.active {
+            Some(current)
+        } else {
+            self.slots.get_mut(doc).and_then(Option::as_mut)
+        };
+        if let Some(target) = target {
+            target.views.retain(|&id| id != artboard);
+            if target.editor.workspace() == Some(artboard) {
+                target.editor.exit_workspace();
+            }
+        }
+    }
+
+    /// Quita de las vistas de todos los documentos los artboards que ya no existen o ya no son
+    /// modelo ni fuente (se borraron, o se deshizo su creación).
+    pub fn sync_views(&mut self, current: &mut DocState) {
+        for doc in self.docs_mut(current) {
+            let editor = &doc.editor;
+            doc.views.retain(|&id| editor.has_workspace(id));
+        }
     }
 
     pub fn go_home(&mut self, current: &mut DocState) {
@@ -282,15 +409,23 @@ impl Tabs {
         };
     }
 
-    /// Siguiente (o anterior) pestaña, pasando por Home.
+    /// Siguiente (o anterior) pestaña, pasando por Home. Recorre los documentos y sus vistas.
     pub fn cycle(&mut self, current: &mut DocState, forward: bool) {
-        let n = self.len() as isize + 1; // Home + pestañas
-        let pos = self.active.map_or(0, |a| a as isize + 1);
+        let list = self.doc_bar(current);
+        let n = list.len() as isize + 1; // Home + pestañas
+        let shown = self.shown_doc_tab(current);
+        let pos = shown
+            .and_then(|t| list.iter().position(|x| *x == t))
+            .map_or(0, |p| p as isize + 1);
         let next = (pos + if forward { 1 } else { -1 }).rem_euclid(n);
         if next == 0 {
             self.go_home(current);
-        } else {
-            self.switch(current, next as usize - 1);
+            return;
+        }
+        match list[next as usize - 1] {
+            TabRef::Doc(i) => self.switch(current, i),
+            TabRef::View(i, id) => self.switch_view(current, i, id),
+            TabRef::Page(_) => {}
         }
     }
 
@@ -365,24 +500,109 @@ mod tests {
         tabs.show_page(&mut current, Page::Catalog);
         assert_eq!((tabs.active(), tabs.page()), (None, Some(Page::Catalog)));
         assert_eq!(
-            tabs.bar(),
+            tabs.bar(&current),
             vec![TabRef::Doc(0), TabRef::Page(Page::Catalog)]
         );
-        assert_eq!(tabs.bar_active(), Some(1));
+        assert_eq!(tabs.bar_active(&current), Some(1));
         let infos = tabs.bar_infos(&current);
         assert_eq!(infos[1].name, "UI Catalog");
         // Otra vez no la duplica; un documento la tapa y sigue abierta.
         tabs.show_page(&mut current, Page::Catalog);
         tabs.switch(&mut current, 0);
         assert_eq!(current.location.name, "a");
-        assert_eq!((tabs.page(), tabs.bar().len()), (None, 2));
+        assert_eq!((tabs.page(), tabs.bar(&current).len()), (None, 2));
         tabs.show_page(&mut current, Page::Catalog);
         tabs.go_home(&mut current);
-        assert_eq!((tabs.page(), tabs.bar_active()), (None, None));
+        assert_eq!((tabs.page(), tabs.bar_active(&current)), (None, None));
         // Cerrada a la vista, queda Home.
         tabs.show_page(&mut current, Page::Catalog);
         tabs.close_page(Page::Catalog);
-        assert_eq!((tabs.page(), tabs.bar()), (None, vec![TabRef::Doc(0)]));
+        assert_eq!(
+            (tabs.page(), tabs.bar(&current)),
+            (None, vec![TabRef::Doc(0)])
+        );
+    }
+
+    /// Dos documentos; el primero con un modelo "Ship" (con su vista abierta). Queda activo el 0.
+    fn with_model() -> (Tabs, DocState, ArtboardId) {
+        let mut tabs = Tabs::default();
+        let mut current = named("");
+        tabs.open(&mut current, named("a"));
+        touch(&mut current);
+        assert!(current.editor.new_model("Ship", (32, 32)));
+        let id = current.editor.workspace().expect("enters the workspace");
+        tabs.open_view(&mut current, id);
+        tabs.open(&mut current, named("b"));
+        touch(&mut current);
+        tabs.switch(&mut current, 0);
+        (tabs, current, id)
+    }
+
+    #[test]
+    fn a_view_tab_follows_its_document() {
+        let (tabs, current, id) = with_model();
+        assert_eq!(
+            tabs.bar(&current),
+            vec![TabRef::Doc(0), TabRef::View(0, id), TabRef::Doc(1)]
+        );
+        let infos = tabs.bar_infos(&current);
+        assert_eq!(infos[1].name, "Ship");
+        assert_eq!(infos[1].icon, TabIcon::Model);
+        assert_eq!(infos[1].dirty, infos[0].dirty);
+    }
+
+    #[test]
+    fn opening_switching_and_closing_a_view() {
+        let (mut tabs, mut current, id) = with_model();
+        // `switch` al documento deja el lienzo.
+        assert_eq!(tabs.bar_active(&current), Some(0));
+        tabs.switch_view(&mut current, 0, id);
+        assert_eq!(tabs.bar_active(&current), Some(1));
+        // Otro documento y de vuelta a la vista.
+        tabs.switch(&mut current, 1);
+        assert_eq!(tabs.bar_active(&current), Some(2));
+        tabs.switch_view(&mut current, 0, id);
+        assert_eq!(current.editor.workspace(), Some(id));
+        assert_eq!(tabs.bar_active(&current), Some(1));
+        // Cerrar la activa regresa al lienzo de su documento.
+        tabs.close_view(&mut current, 0, id);
+        assert_eq!(current.editor.workspace(), None);
+        assert_eq!(tabs.bar_active(&current), Some(0));
+        assert_eq!(tabs.bar(&current), vec![TabRef::Doc(0), TabRef::Doc(1)]);
+    }
+
+    #[test]
+    fn ctrl_tab_walks_through_the_views() {
+        let (mut tabs, mut current, id) = with_model();
+        tabs.cycle(&mut current, true); // Doc(0) → View
+        assert_eq!(current.editor.workspace(), Some(id));
+        tabs.cycle(&mut current, true); // View → Doc(1)
+        assert_eq!(tabs.active(), Some(1));
+        tabs.cycle(&mut current, false); // Doc(1) → View
+        assert_eq!(tabs.bar_active(&current), Some(1));
+    }
+
+    #[test]
+    fn closing_a_document_closes_its_views() {
+        let (mut tabs, mut current, _) = with_model();
+        tabs.close(&mut current, 0);
+        assert_eq!(tabs.bar(&current), vec![TabRef::Doc(0)]);
+        assert_eq!(current.location.name, "b");
+    }
+
+    #[test]
+    fn views_of_deleted_artboards_are_dropped() {
+        let (mut tabs, mut current, id) = with_model();
+        tabs.switch_view(&mut current, 0, id);
+        current.editor.undo(); // deshace la creación del modelo (o lo último)
+        while current.editor.document.artboard(id).is_some() {
+            assert!(current.editor.history.can_undo());
+            current.editor.undo();
+        }
+        current.editor.ensure_valid();
+        tabs.sync_views(&mut current);
+        assert!(current.views.is_empty());
+        assert_eq!(tabs.bar(&current), vec![TabRef::Doc(0), TabRef::Doc(1)]);
     }
 
     #[test]

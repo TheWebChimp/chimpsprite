@@ -356,6 +356,38 @@ impl Action {
         }
     }
 
+    /// Si vale en el workspace de un modelo (ChimpCAD): lo que no toca el sprite escondido del
+    /// modelo (archivos, pestañas, undo, vistas, paneles, herramientas y colores). Lo demás
+    /// (selección, relleno, voltear, capas, frames…) dejaría pasos de undo invisibles.
+    pub fn in_model_workspace(self) -> bool {
+        use Action::*;
+        matches!(
+            self,
+            NewFile
+                | Open
+                | Save
+                | SaveAs
+                | Export
+                | CloseTab
+                | NextTab
+                | PreviousTab
+                | Undo
+                | Redo
+                | KeyboardShortcuts
+                | Preferences
+                | OnionSkin
+                | Extras
+                | Timeline
+                | FullScreen
+                | ZoomIn
+                | ZoomOut
+                | ActualSize
+                | FitToScreen
+                | SwapColors
+                | Tool(_)
+        )
+    }
+
     /// Si necesita un documento abierto.
     pub fn needs_document(self) -> bool {
         !matches!(

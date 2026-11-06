@@ -203,8 +203,6 @@ pub struct ChimpApp {
     /// `paste_timeline`, si no los píxeles.
     timeline_clipboard: Option<timeline_clip::TimelineClip>,
     paste_timeline: bool,
-    /// Soltar el foco de egui al empezar el siguiente frame (tras un Tab del modo Edit).
-    drop_focus: bool,
     palettes: palette_library::PaletteLibrary,
     presets_window: Option<palette_ui::PresetsWindow>,
     /// El panel Lospec del dock (mientras está abierto).
@@ -341,7 +339,6 @@ impl ChimpApp {
             clipboard: None,
             timeline_clipboard: None,
             paste_timeline: false,
-            drop_focus: false,
             palettes,
             presets_window: None,
             lospec_dock: None,
@@ -690,7 +687,10 @@ impl ChimpApp {
                 let mut copy = source.clone();
                 copy.id = editor.document.next_artboard_id();
                 copy.name = format!("{} copy", source.name);
-                copy.in_library = true;
+                // Una fuente lleva su nombre también en su info.
+                if let Some(font) = &mut copy.font {
+                    font.name = copy.name.clone();
+                }
                 let new = copy.id;
                 let index = editor.document.artboards.len();
                 if editor.execute_doc(cs_commands::DocCommand::AddArtboard {
@@ -698,6 +698,25 @@ impl ChimpApp {
                     artboard: Box::new(copy),
                 }) {
                     editor.library_selected = Some(new);
+                }
+            }
+            library_panel::LibraryAction::PlaceOnCanvas(id)
+                if editor
+                    .document
+                    .artboard(id)
+                    .is_some_and(|a| a.model.is_some()) =>
+            {
+                // Un modelo no sale de la biblioteca: pone una instancia en el centro del
+                // artboard activo del lienzo (o el primero), como al arrastrarlo.
+                let target = editor
+                    .document
+                    .artboard(editor.active)
+                    .filter(|a| a.on_canvas())
+                    .or_else(|| editor.document.canvas_artboards().next());
+                if let Some(a) = target {
+                    let ((x0, y0), (x1, y1)) = a.rect();
+                    let at = ((x0 + x1) / 2, (y0 + y1) / 2);
+                    let _ = editor.drop_symbol(id, at);
                 }
             }
             library_panel::LibraryAction::PlaceOnCanvas(id) => {
@@ -715,6 +734,12 @@ impl ChimpApp {
                     && editor.library_selected == Some(id)
                 {
                     editor.library_selected = None;
+                }
+            }
+            library_panel::LibraryAction::Open(id) => {
+                self.tabs.open_view(&mut self.doc, id);
+                if self.doc.editor.workspace() == Some(id) {
+                    self.show_workspace_panel(ctx);
                 }
             }
             library_panel::LibraryAction::Edit(id) => {
@@ -786,14 +811,49 @@ impl ChimpApp {
         if !self.doc.editor.new_font(name, cell, mode) {
             return false;
         }
+        if let Some(id) = self.doc.editor.workspace() {
+            self.tabs.open_view(&mut self.doc, id);
+        }
+        self.show_font_beside_panel(ctx);
+        true
+    }
+
+    /// Abre el panel Font (si estaba cerrado) y encuadra el glifo al lado de él: lo que hace
+    /// falta al entrar al workspace de una fuente.
+    fn show_font_beside_panel(&mut self, ctx: &egui::Context) {
         dock::set_open(ctx, Some(dock::DockPanel::Font));
-        // La fuente nueva, ajustada a lo que no tapa el panel.
         self.doc
             .canvas
             .request_zoom(view::ZoomRequest::FitActiveBeside {
                 right_inset: dock::flyout_reach(font_panel::WIDTH),
             });
-        true
+    }
+
+    /// Abre el panel 3D (si estaba cerrado) y encuadra el modelo al lado de él.
+    fn show_model_beside_panel(&mut self, ctx: &egui::Context) {
+        dock::set_open(ctx, Some(dock::DockPanel::Model));
+        self.doc
+            .canvas
+            .request_zoom(view::ZoomRequest::FitActiveBeside {
+                right_inset: dock::flyout_reach(model_panel::WIDTH),
+            });
+    }
+
+    /// El panel del workspace en el que se está: el de la fuente o el del modelo.
+    fn show_workspace_panel(&mut self, ctx: &egui::Context) {
+        if self.doc.editor.is_font() {
+            self.show_font_beside_panel(ctx);
+        } else if self.doc.editor.is_model() {
+            self.show_model_beside_panel(ctx);
+        }
+    }
+
+    /// Después de elegir la pestaña `tab` de la barra: la de la vista de un modelo o una fuente
+    /// abre su panel.
+    fn after_tab_action(&mut self, ctx: &egui::Context, tab: tabs::TabRef) {
+        if matches!(tab, tabs::TabRef::View(..)) && self.doc.editor.workspace().is_some() {
+            self.show_workspace_panel(ctx);
+        }
     }
 
     fn update_model_dialog(&mut self, ctx: &egui::Context) {
@@ -843,10 +903,30 @@ impl ChimpApp {
             tilemap_dialog::DialogResult::Accept => {
                 let (model, options) = (dialog.model(), dialog.chosen());
                 self.bake = None;
-                self.doc.editor.bake_artboard(model, options);
+                self.finish_bake(model, options);
             }
             tilemap_dialog::DialogResult::Cancel => self.bake = None,
         }
+    }
+
+    /// Hornea `model` y muestra el resultado: el artboard horneado queda activo en el lienzo del
+    /// documento (se sale de la pestaña del modelo, si se horneó desde ella).
+    pub(crate) fn finish_bake(
+        &mut self,
+        model: cs_core::ArtboardId,
+        options: cs_render::BakeOptions,
+    ) {
+        if !self.doc.editor.bake_artboard(model, options) {
+            return;
+        }
+        let Some(baked) = self.doc.editor.document.artboards.last().map(|a| a.id) else {
+            return;
+        };
+        self.tabs.show_doc(&mut self.doc);
+        self.doc.editor.activate(baked);
+        self.doc
+            .canvas
+            .request_zoom(view::ZoomRequest::CenterActive);
     }
 
     /// Crea el modelo 3D `name` en el documento abierto, abre el panel 3D en el dock y lo
@@ -860,12 +940,10 @@ impl ChimpApp {
         if !self.doc.editor.new_model(name, size) {
             return false;
         }
-        dock::set_open(ctx, Some(dock::DockPanel::Model));
-        self.doc
-            .canvas
-            .request_zoom(view::ZoomRequest::FitActiveBeside {
-                right_inset: dock::flyout_reach(model_panel::WIDTH),
-            });
+        if let Some(id) = self.doc.editor.workspace() {
+            self.tabs.open_view(&mut self.doc, id);
+        }
+        self.show_model_beside_panel(ctx);
         true
     }
 
@@ -1118,8 +1196,8 @@ impl ChimpApp {
         let mut switch_to = None;
         let mut close = None;
         let mut home = false;
-        let bar = self.tabs.bar();
-        let shown = self.tabs.bar_active();
+        let bar = self.tabs.bar(&self.doc);
+        let shown = self.tabs.bar_active(&self.doc);
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 2.0;
             if ui.selectable_label(shown.is_none(), "🏠 Home").clicked() {
@@ -1127,7 +1205,12 @@ impl ChimpApp {
             }
             for (i, tab) in self.tabs.bar_infos(&self.doc).into_iter().enumerate() {
                 let active = shown == Some(i);
-                let label = format!("{}{}", tab.name, if tab.dirty { " •" } else { "" });
+                let icon = match tab.icon {
+                    tabs::TabIcon::None => "",
+                    tabs::TabIcon::Model => "▣ ",
+                    tabs::TabIcon::Font => "Aa ",
+                };
+                let label = format!("{icon}{}{}", tab.name, if tab.dirty { " •" } else { "" });
                 ui.add_space(4.0);
                 let response = ui.selectable_label(active, label);
                 if response.clicked() {
@@ -1146,6 +1229,7 @@ impl ChimpApp {
         }
         if let Some(i) = switch_to {
             self.tab_action(bar[i], false);
+            self.after_tab_action(ui.ctx(), bar[i]);
         }
         if let Some(i) = close {
             self.tab_action(bar[i], true);
@@ -1155,6 +1239,14 @@ impl ChimpApp {
     /// Los paneles de la ventana, en el orden en que egui les reparte el espacio: el primero que
     /// se declara se queda con el borde. Devuelve el rect del lienzo (`None` en Home).
     fn layout(&mut self, ui: &mut egui::Ui, modal: bool) -> Option<egui::Rect> {
+        // Las pestañas de vista de lo que ya no existe (o ya no es modelo ni fuente) se van.
+        self.tabs.sync_views(&mut self.doc);
+        // Entrar al workspace de un modelo desde el lienzo (doble clic en una instancia, Edit
+        // Symbol) también abre su pestaña de vista y su panel.
+        if let Some(id) = self.doc.editor.take_view_request() {
+            self.tabs.open_view(&mut self.doc, id);
+            self.show_workspace_panel(ui.ctx());
+        }
         // Con Pixel UI, como en el mockup: el menú de 16 de alto y las pestañas de 23, sin línea
         // entre los dos; la barra de pestañas termina en un separador grabado (en vez de la línea
         // de egui). Detrás, contra el borde derecho, el degradé del final de la barra.
@@ -1195,7 +1287,7 @@ impl ChimpApp {
         });
         if let Some(skin) = self.pixel.skin() {
             let infos = self.tabs.bar_infos(&self.doc);
-            let active = self.tabs.bar_active();
+            let active = self.tabs.bar_active(&self.doc);
             let action = egui::Panel::top("tabs")
                 .exact_size(tab_bar::TABS_HEIGHT)
                 .frame(egui::Frame::side_top_panel(ui.style()).inner_margin(0))
@@ -1220,8 +1312,14 @@ impl ChimpApp {
             }
             match action {
                 Some(tab_bar::TabAction::Home) => self.go_home(),
-                Some(tab_bar::TabAction::Switch(i)) => self.tab_action(self.tabs.bar()[i], false),
-                Some(tab_bar::TabAction::Close(i)) => self.tab_action(self.tabs.bar()[i], true),
+                Some(tab_bar::TabAction::Switch(i)) => {
+                    let tab = self.tabs.bar(&self.doc)[i];
+                    self.tab_action(tab, false);
+                    self.after_tab_action(&ctx, tab);
+                }
+                Some(tab_bar::TabAction::Close(i)) => {
+                    self.tab_action(self.tabs.bar(&self.doc)[i], true)
+                }
                 None => {}
             }
         } else {
@@ -1685,88 +1783,60 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
     let palette = editor.palette_range().is_some_and(|r| r.end() > r.start());
     let objects = editor.tool == ToolKind::Move && !editor.selected_objects().is_empty();
     let nudge_objects = objects && editor.selection.is_none() && !editor.can_transform();
-    // Con un modelo 3D activo, G, R y S eligen qué hacen las flechas y las flechas actúan sobre
-    // el objeto elegido (no cambian de frame ni de capa).
-    if editor.is_model() {
-        // Tab entra y sale del modo Edit (en un modelo no muestra la línea de tiempo).
-        if key == Key::Tab && !shift {
-            editor.toggle_model_edit();
-            return true;
-        }
-        // En el modo Edit: 1–4 cambian qué se elige, G y S arrancan un gesto que sigue al
-        // puntero, Enter lo confirma, Esc lo cancela (o vacía la selección) y las flechas
-        // mueven un paso de cuadrícula.
-        if editor.model_edit_on() {
-            use cs_3d::SelectMode;
-            let mode = match key {
-                _ if shift => None,
-                Key::Num1 => Some(SelectMode::Object),
-                Key::Num2 => Some(SelectMode::Vertex),
-                Key::Num3 => Some(SelectMode::Edge),
-                Key::Num4 => Some(SelectMode::Face),
-                _ => None,
-            };
-            if let Some(mode) = mode {
-                editor.set_select_mode(mode);
-                return true;
-            }
-            let busy = editor.model_edit().op.is_some();
-            let mut handled = true;
-            match key {
-                Key::G if !shift => editor.request_model_key_op(editor::KeyOp::Grab),
-                Key::S if !shift => editor.request_model_key_op(editor::KeyOp::Scale),
-                Key::Enter if busy => editor.finish_model_op(),
-                Key::Escape if busy => {
-                    editor.cancel_model_op();
-                }
-                Key::Escape => {
-                    let mode = editor.model_edit().selection.mode;
-                    editor.set_model_selection(cs_3d::Selection {
-                        mode,
-                        items: Default::default(),
-                    });
-                }
-                Key::ArrowLeft => {
-                    editor.nudge_model_selection(-1, 0);
-                }
-                Key::ArrowRight => {
-                    editor.nudge_model_selection(1, 0);
-                }
-                Key::ArrowUp => {
-                    editor.nudge_model_selection(0, -1);
-                }
-                Key::ArrowDown => {
-                    editor.nudge_model_selection(0, 1);
-                }
-                _ => handled = false,
-            }
-            if handled {
-                return true;
-            }
-        }
-        let arrow = match key {
-            Key::ArrowLeft => Some((-1, 0)),
-            Key::ArrowRight => Some((1, 0)),
-            Key::ArrowUp => Some((0, -1)),
-            Key::ArrowDown => Some((0, 1)),
-            _ => None,
-        };
-        if let Some((dx, dy)) = arrow {
-            editor.arrow_on_object(dx, dy);
-            return true;
-        }
-        // Sin Shift: Shift+R es Jumble y Shift+S, otro atajo.
+    // En el workspace del modelo (siempre en modo Edit): 1–4 cambian qué se elige, G y S
+    // arrancan un gesto que sigue al puntero, Enter lo confirma, Esc lo cancela (o vacía la
+    // selección) y las flechas mueven un paso de cuadrícula (no cambian de frame ni de capa).
+    // Con Shift, G y S siguen con sus otros atajos.
+    if editor.model_edit_on() {
+        use cs_3d::SelectMode;
         let mode = match key {
             _ if shift => None,
-            Key::G => Some(editor::ModelArrows::Move),
-            Key::R => Some(editor::ModelArrows::Rotate),
-            Key::S => Some(editor::ModelArrows::Scale),
+            Key::Num1 => Some(SelectMode::Object),
+            Key::Num2 => Some(SelectMode::Vertex),
+            Key::Num3 => Some(SelectMode::Edge),
+            Key::Num4 => Some(SelectMode::Face),
             _ => None,
         };
         if let Some(mode) = mode {
-            editor.set_model_arrows(mode);
+            editor.set_select_mode(mode);
             return true;
         }
+        let busy = editor.model_edit().op.is_some();
+        let mut handled = true;
+        match key {
+            Key::G if !shift => editor.request_model_key_op(editor::KeyOp::Grab),
+            Key::S if !shift => editor.request_model_key_op(editor::KeyOp::Scale),
+            Key::Enter if busy => editor.finish_model_op(),
+            Key::Escape if busy => {
+                editor.cancel_model_op();
+            }
+            Key::Escape => {
+                let mode = editor.model_edit().selection.mode;
+                editor.set_model_selection(cs_3d::Selection {
+                    mode,
+                    items: Default::default(),
+                });
+            }
+            Key::ArrowLeft => {
+                editor.nudge_model_selection(-1, 0);
+            }
+            Key::ArrowRight => {
+                editor.nudge_model_selection(1, 0);
+            }
+            Key::ArrowUp => {
+                editor.nudge_model_selection(0, -1);
+            }
+            Key::ArrowDown => {
+                editor.nudge_model_selection(0, 1);
+            }
+            _ => handled = false,
+        }
+        if handled {
+            return true;
+        }
+        // Lo demás (Enter con algo flotando, Delete, X/Y de tiles…) tocaría el sprite escondido
+        // del modelo: pasa al registro de atajos, que lo filtra.
+        return false;
     }
     match key {
         Key::Enter if editor.is_pending() => editor.finish_gesture(),

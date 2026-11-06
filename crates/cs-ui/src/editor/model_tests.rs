@@ -129,33 +129,6 @@ fn other_writers_cannot_touch_a_model_sprite() {
 }
 
 #[test]
-fn arrow_rotation_wraps_and_arrow_scale_keeps_sign_and_range() {
-    use super::ModelArrows;
-    let mut e = editor_with_model();
-    let mut obj = e.model().unwrap().objects[0].clone();
-    obj.transform.rotation.y = 1750;
-    obj.transform.scale = cs_core::Vec3i {
-        x: -1000,
-        y: 10,
-        z: 9_800,
-    };
-    assert!(e.set_object(0, obj));
-    e.set_model_arrows(ModelArrows::Rotate);
-    assert!(e.arrow_on_object(1, 0));
-    assert_eq!(e.model().unwrap().objects[0].transform.rotation.y, -1700);
-    e.set_model_arrows(ModelArrows::Scale);
-    // Achicar: el negativo sigue negativo y nada baja de 10 (1 %).
-    assert!(e.arrow_on_object(-1, 0));
-    let s = e.model().unwrap().objects[0].transform.scale;
-    assert_eq!((s.x, s.y), (-909, 10));
-    // Agrandar: nada pasa de 10 000 (1000 %).
-    assert!(e.arrow_on_object(1, 0));
-    assert!(e.arrow_on_object(1, 0));
-    let s = e.model().unwrap().objects[0].transform.scale;
-    assert_eq!((s.x, s.y, s.z), (-1100, 12, 10_000));
-}
-
-#[test]
 fn two_bakes_do_not_overlap() {
     let mut e = editor_with_model();
     let options = cs_render::BakeOptions {
@@ -170,10 +143,10 @@ fn two_bakes_do_not_overlap() {
     type Box2 = ((i32, i32), (i32, i32));
     let overlap =
         |(a0, a1): Box2, (b0, b1): Box2| a0.0 < b1.0 && b0.0 < a1.0 && a0.1 < b1.1 && b0.1 < a1.1;
-    // Los dos bakes (los últimos) no pisan a nada.
+    // Los dos bakes (los últimos) no pisan a nada del lienzo (el modelo no está en él).
     for bake in n - 2..n {
         for other in 0..n {
-            if other != bake {
+            if other != bake && e.document.artboards[other].on_canvas() {
                 assert!(
                     !overlap(rects[bake], rects[other]),
                     "{bake} overlaps {other}: {rects:?}"

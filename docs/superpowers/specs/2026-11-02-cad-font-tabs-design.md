@@ -1,6 +1,21 @@
 # Pestañas para modelos y fuentes (ChimpCAD y FontForge fuera del lienzo)
 
-Fecha: 2026-11-02 · Estado: diseño aprobado
+Fecha: 2026-11-02 · Estado: implementado
+
+Notas de la implementación (donde difiere del diseño original o lo precisa):
+
+- **Las pestañas de vista viven en su documento** (`DocState.views`); la barra las pone después de
+  él (`TabRef::View`). El editor entra al *workspace* del artboard (`Editor::workspace`).
+- **ChimpCAD siempre en modo Edit:** desaparecen Tab sobre el artboard, la casilla "Edit (Tab)" y
+  las teclas viejas del modo objeto (G/R/S + flechas sobre el objeto); rotar con el mouse queda para
+  la 2B. Las vistas ocupan el área del lienzo a la izquierda del panel abierto.
+- **Selección (comentarios del usuario):** un modelo abre en modo Edge; de Object a
+  Vertex/Edge/Face la selección empieza vacía; un clic sin arrastrar sobre algo ya elegido lo deja
+  solo; elegir un objeto en el panel o en Persp pasa a modo Object.
+- **Pixel art:** las vistas orto se rasterizan a la rejilla de pixeles de la UI (líneas Bresenham,
+  vértices y asas como bloques) en `cs-3d/src/wire.rs`.
+- **Library:** *Place on Canvas* de un modelo pone una instancia; las fuentes no se arrastran al
+  lienzo. Abrir la pestaña de un modelo abre el panel 3D (la de una fuente, el panel Font).
 
 Sigue a la parte 2A de los modelos 3D (`2026-11-02-3d-modeling-edit-design.md`) y al editor de
 fuentes (`2026-11-01-pixel-font-core-design.md`). Va antes de la parte 2B (extruir, dividir, unir,

@@ -255,7 +255,7 @@ impl<'a> Existing<'a> {
 }
 
 /// Lo elegido en el modo Edit (todo del mismo tipo que `mode`).
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Selection {
     pub mode: SelectMode,
     pub items: BTreeSet<Item>,

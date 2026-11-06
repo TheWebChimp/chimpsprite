@@ -149,6 +149,17 @@ pub struct Artboard {
 }
 
 impl Artboard {
+    /// En el lienzo: ni símbolo de la biblioteca, ni modelo 3D, ni fuente.
+    pub fn on_canvas(&self) -> bool {
+        !self.in_library && self.model.is_none() && self.font.is_none()
+    }
+
+    /// Un símbolo de la biblioteca. Un modelo o una fuente no lo es aunque esté marcado
+    /// `in_library` (archivos viejos): tiene su propia sección y su pestaña.
+    pub fn is_symbol(&self) -> bool {
+        self.in_library && self.model.is_none() && self.font.is_none()
+    }
+
     /// Centro de simetría efectivo en medios píxeles.
     pub fn symmetry_center2(&self) -> (i32, i32) {
         self.symmetry
@@ -232,14 +243,57 @@ impl Document {
         }
     }
 
-    /// Los artboards del lienzo (todos menos los de la biblioteca), en z-order.
+    /// Los artboards del lienzo (ni símbolos, ni modelos 3D, ni fuentes), en z-order.
     pub fn canvas_artboards(&self) -> impl DoubleEndedIterator<Item = &Artboard> {
-        self.artboards.iter().filter(|a| !a.in_library)
+        self.artboards.iter().filter(|a| a.on_canvas())
     }
 
-    /// Los símbolos de la biblioteca, en el orden del documento.
+    /// Los símbolos de la biblioteca, en el orden del documento (ver `Artboard::is_symbol`).
     pub fn library(&self) -> impl Iterator<Item = &Artboard> {
-        self.artboards.iter().filter(|a| a.in_library)
+        self.artboards.iter().filter(|a| a.is_symbol())
+    }
+
+    /// Los modelos 3D, en el orden del documento.
+    pub fn models(&self) -> impl Iterator<Item = &Artboard> {
+        self.artboards.iter().filter(|a| a.model.is_some())
+    }
+
+    /// Las fuentes pixel, en el orden del documento.
+    pub fn fonts(&self) -> impl Iterator<Item = &Artboard> {
+        self.artboards.iter().filter(|a| a.font.is_some())
+    }
+
+    /// Si no queda ningún artboard en el lienzo, agrega uno vacío "Sprite" del tamaño, modo de
+    /// color y paleta del primero, a la derecha de todo. Devuelve si agregó.
+    pub fn ensure_canvas_artboard(&mut self) -> bool {
+        if self.canvas_count() > 0 {
+            return false;
+        }
+        let Some(first) = self.artboards.first() else {
+            return false;
+        };
+        let (width, height) = (first.sprite.width, first.sprite.height);
+        let mut sprite = Sprite::new(width, height, first.sprite.color_mode);
+        sprite.palette = first.sprite.palette.clone();
+        let x = self
+            .artboards
+            .iter()
+            .map(|a| a.rect().1.0)
+            .max()
+            .unwrap_or(0);
+        let id = self.next_artboard_id();
+        self.artboards.push(Artboard {
+            id,
+            name: "Sprite".into(),
+            position: (x, 0),
+            sprite,
+            guides: Vec::new(),
+            symmetry: Default::default(),
+            in_library: false,
+            font: None,
+            model: None,
+        });
+        true
     }
 
     /// Cuántos artboards hay en el lienzo.
@@ -427,6 +481,72 @@ mod tests {
         assert_eq!(d.bounds(), Some(((0, 0), (4, 4))));
         assert_eq!(d.artboard_at((101.0, 101.0)), None);
         assert_eq!(d.artboard_at((1.0, 1.0)), Some(ArtboardId(1)));
+    }
+
+    /// `library_doc` más un modelo (3) y una fuente (4).
+    fn kinds_doc() -> Document {
+        let mut d = library_doc();
+        let mut model = d.artboards[0].clone();
+        model.id = ArtboardId(3);
+        model.model = Some(Model3D::default());
+        let mut font = d.artboards[0].clone();
+        font.id = ArtboardId(4);
+        font.font = Some(FontInfo::new("F", 8, crate::FontMode::OneBit));
+        d.artboards.push(model);
+        d.artboards.push(font);
+        d
+    }
+
+    #[test]
+    fn on_canvas_excludes_symbols_models_and_fonts() {
+        let d = kinds_doc();
+        assert!(d.artboards[0].on_canvas());
+        assert!(!d.artboards[1].on_canvas(), "symbol");
+        assert!(!d.artboards[2].on_canvas(), "model");
+        assert!(!d.artboards[3].on_canvas(), "font");
+    }
+
+    #[test]
+    fn models_and_fonts_are_not_counted_on_the_canvas() {
+        let d = kinds_doc();
+        let ids = |it: Vec<&Artboard>| it.into_iter().map(|a| a.id).collect::<Vec<_>>();
+        assert_eq!(ids(d.canvas_artboards().collect()), vec![ArtboardId(1)]);
+        assert_eq!(d.canvas_count(), 1);
+        assert_eq!(ids(d.models().collect()), vec![ArtboardId(3)]);
+        assert_eq!(ids(d.fonts().collect()), vec![ArtboardId(4)]);
+        assert_eq!(ids(d.library().collect()), vec![ArtboardId(2)]);
+    }
+
+    #[test]
+    fn a_model_or_font_marked_in_library_is_not_a_symbol() {
+        // Archivos viejos: un modelo (o una fuente) mandado a la biblioteca.
+        let mut d = kinds_doc();
+        d.artboards[2].in_library = true;
+        d.artboards[3].in_library = true;
+        let ids: Vec<_> = d.library().map(|a| a.id).collect();
+        assert_eq!(ids, vec![ArtboardId(2)]);
+    }
+
+    #[test]
+    fn ensure_canvas_artboard_adds_a_sprite_when_none_is_left() {
+        let mut d = kinds_doc();
+        d.artboards.drain(0..2); // quedan el modelo (3) y la fuente (4)
+        d.artboards[0].sprite = Sprite::new(7, 9, ColorMode::Rgba);
+        assert_eq!(d.canvas_count(), 0);
+        assert!(d.ensure_canvas_artboard());
+        assert_eq!(d.canvas_count(), 1);
+        let a = d.canvas_artboards().next().unwrap();
+        assert_eq!(a.name, "Sprite");
+        assert_eq!(
+            (a.sprite.width, a.sprite.height),
+            (d.artboards[0].sprite.width, d.artboards[0].sprite.height)
+        );
+        assert_eq!(a.sprite.palette, d.artboards[0].sprite.palette);
+        assert_eq!(a.id, ArtboardId(5));
+        assert!(a.on_canvas());
+        let before = d.clone();
+        assert!(!d.ensure_canvas_artboard());
+        assert_eq!(d, before);
     }
 
     #[test]

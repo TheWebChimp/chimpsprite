@@ -1,11 +1,13 @@
-//! El panel Library del dock: los símbolos de la biblioteca. Arriba, la vista previa animada del
-//! elegido; abajo, la lista con su miniatura, su nombre y cuántas instancias lo usan. Cada fila se
-//! renombra con F2, tiene su menú (Edit Symbol, Rename, Duplicate, Place on Canvas, Delete) y se
-//! arrastra al lienzo (ver [`SymbolPayload`]).
+//! El panel Library del dock: los símbolos, los modelos 3D y las fuentes del documento. Arriba, la
+//! vista previa animada de lo elegido; abajo, tres secciones (Symbols, Models, Fonts) con su
+//! cuenta y, en cada fila, su miniatura, su nombre y cuántas instancias la usan. Cada fila se
+//! renombra con F2, tiene su menú (Edit Symbol u Open, Rename, Duplicate, Place on Canvas,
+//! Delete) y los símbolos y modelos se arrastran al lienzo (ver [`SymbolPayload`]). El doble clic
+//! entra al símbolo o abre la pestaña del modelo o de la fuente.
 
 use std::collections::HashMap;
 
-use cs_core::{ArtboardId, Document, Sprite};
+use cs_core::{Artboard, ArtboardId, Document, Rgba, Sprite};
 use cs_io::export::Bitmap;
 use eframe::egui::{self, Color32, Rect, Sense, TextureHandle, Ui, pos2, vec2};
 
@@ -30,13 +32,15 @@ const ROW_PAD: f32 = 4.0;
 #[derive(Clone, Debug, PartialEq)]
 pub enum LibraryAction {
     Edit(ArtboardId),
+    /// Abrir la pestaña de vista de un modelo o una fuente.
+    Open(ArtboardId),
     PlaceOnCanvas(ArtboardId),
     Delete(ArtboardId),
     Duplicate(ArtboardId),
     Rename(ArtboardId, String),
 }
 
-/// Lo que se arrastra desde una fila: el símbolo (lo suelta el lienzo).
+/// Lo que se arrastra desde una fila: el símbolo o el modelo (lo suelta el lienzo).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SymbolPayload(pub ArtboardId);
 
@@ -50,27 +54,62 @@ pub struct LibraryState {
     /// Darle el foco al campo del nombre en el próximo frame.
     focus_rename: bool,
     /// La textura de la vista previa: de qué símbolo, frame y versión del documento.
-    preview: Option<(PreviewKey, TextureHandle)>,
+    preview: Option<(PreviewKey, TextureHandle, (u32, u32))>,
     /// Las miniaturas, con la versión del documento de la que salieron.
-    thumbs: HashMap<ArtboardId, (u64, TextureHandle)>,
-    /// Las filas de la lista y la versión del documento de la que salieron (no se recalculan
-    /// mientras solo se anima la vista previa).
-    rows: Option<(u64, Vec<Row>)>,
+    thumbs: HashMap<ArtboardId, (u64, TextureHandle, (u32, u32))>,
+    /// Las filas de las secciones y la versión del documento de la que salieron (no se
+    /// recalculan mientras solo se anima la vista previa).
+    rows: Option<(u64, Sections)>,
 }
 
 /// Una fila de la lista: id, nombre y usos.
 type Row = (ArtboardId, String, usize);
 
+/// Qué es lo que muestra una fila.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Symbol,
+    Model,
+    Font,
+}
+
+/// Las filas de las tres secciones.
+#[derive(Clone, Default)]
+struct Sections {
+    symbols: Vec<Row>,
+    models: Vec<Row>,
+    fonts: Vec<Row>,
+}
+
+impl Sections {
+    fn of(doc: &Document) -> Sections {
+        Sections {
+            symbols: library_rows(doc),
+            models: rows_sorted(doc, doc.models()),
+            fonts: rows_sorted(doc, doc.fonts()),
+        }
+    }
+
+    /// Todas las filas, de arriba a abajo.
+    fn all(&self) -> Vec<Row> {
+        [&self.symbols, &self.models, &self.fonts]
+            .into_iter()
+            .flatten()
+            .cloned()
+            .collect()
+    }
+}
+
 impl LibraryState {
     /// Las filas de `editor`, de la memoria si el documento no cambió.
-    fn rows(&mut self, editor: &Editor) -> Vec<Row> {
+    fn rows(&mut self, editor: &Editor) -> Sections {
         let version = editor.doc_version;
         if let Some((v, rows)) = &self.rows
             && *v == version
         {
             return rows.clone();
         }
-        let rows = library_rows(&editor.document);
+        let rows = Sections::of(&editor.document);
         self.rows = Some((version, rows.clone()));
         rows
     }
@@ -90,13 +129,17 @@ impl LibraryState {
     }
 }
 
-/// De qué es la textura de la vista previa: símbolo, frame y versión del documento.
+/// De qué es la textura de la vista previa: artboard, frame y versión del documento.
 type PreviewKey = (ArtboardId, usize, u64);
 
 /// Las filas de la lista: (id, nombre, usos), ordenadas por nombre (sin distinguir mayúsculas).
 pub fn library_rows(doc: &Document) -> Vec<Row> {
-    let mut rows: Vec<_> = doc
-        .library()
+    rows_sorted(doc, doc.library())
+}
+
+/// Las filas de `boards`, ordenadas por nombre (sin distinguir mayúsculas).
+fn rows_sorted<'a>(doc: &Document, boards: impl Iterator<Item = &'a Artboard>) -> Vec<Row> {
+    let mut rows: Vec<_> = boards
         .map(|a| (a.id, a.name.clone(), doc.instance_uses(a.id)))
         .collect();
     rows.sort_by_cached_key(|(_, name, _)| name.to_lowercase());
@@ -139,6 +182,39 @@ fn render(doc: &Document, sprite: &Sprite, frame: usize) -> Bitmap {
     }
 }
 
+/// El texto de la miniatura de una fuente.
+const FONT_THUMB_SAMPLE: &str = "Ab";
+
+/// La tinta de las fuentes de 1 bit.
+const FONT_INK: Rgba = Rgba {
+    r: 5,
+    g: 4,
+    b: 3,
+    a: 255,
+};
+
+/// La imagen de `a` en su frame `frame`: un símbolo, su sprite; un modelo, su render; una fuente,
+/// `sample` escrito con ella. `None` si no hay nada que mostrar (una fuente sin tinta).
+fn image_of(doc: &Document, a: &Artboard, frame: usize, sample: &str) -> Option<Bitmap> {
+    if a.model.is_some() {
+        let sprite = cs_render::model_sprite(doc, a, frame)?;
+        return Some(render(doc, &sprite, 0));
+    }
+    if let Some(view) = a.font_view() {
+        let text = cs_tools::text::font_text(&view, sample, 1);
+        let xs = || text.iter().map(|&(x, _, _)| x);
+        let ys = || text.iter().map(|&(_, y, _)| y);
+        let (x0, x1, y0, y1) = (xs().min()?, xs().max()?, ys().min()?, ys().max()?);
+        let mut image = Bitmap::new((x1 - x0 + 1) as u32, (y1 - y0 + 1) as u32);
+        for (x, y, c) in text {
+            let at = ((y - y0) as u32 * image.width + (x - x0) as u32) as usize;
+            image.pixels[at] = c.unwrap_or(FONT_INK);
+        }
+        return Some(image);
+    }
+    Some(render(doc, &a.sprite, frame))
+}
+
 /// `texture` de `size` centrada en `area`, a la escala de [`fit_scale`].
 fn paint_fitted(ui: &Ui, texture: &TextureHandle, size: (u32, u32), area: Rect) {
     let k = fit_scale(size, area.size());
@@ -157,7 +233,8 @@ pub fn show(
     state: &mut LibraryState,
 ) -> Option<LibraryAction> {
     let mut action = None;
-    let rows = state.rows(editor);
+    let sections = state.rows(editor);
+    let rows = sections.all();
     state.prune(&rows);
     // Lo elegido tiene que seguir en la biblioteca (lo pudo sacar un undo).
     if editor
@@ -166,18 +243,10 @@ pub fn show(
     {
         editor.library_selected = None;
     }
-    let count = match rows.len() {
-        1 => "1 symbol".to_string(),
-        n => format!("{n} symbols"),
-    };
-    label_with_hint(ui, "Library", &count);
+    label_with_hint(ui, "Library", "");
     ui.add_space(4.0);
     preview(ui, editor, state);
     ui.add_space(6.0);
-    if rows.is_empty() {
-        ui.add(egui::Label::new("Select layers or pixels and press F8 to make a symbol.").wrap());
-        return None;
-    }
     // F2 renombra la fila elegida (si nadie más tiene el foco del teclado).
     if state.renaming.is_none()
         && let Some(id) = editor.library_selected
@@ -186,10 +255,33 @@ pub fn show(
     {
         start_rename(state, &rows, id);
     }
-    for (id, name, uses) in &rows {
-        if let Some(a) = row(ui, editor, skin, state, (*id, name, *uses)) {
-            action = Some(a);
+    let parts = [
+        (
+            "Symbols",
+            Kind::Symbol,
+            &sections.symbols,
+            "F8 makes a symbol",
+        ),
+        (
+            "Models",
+            Kind::Model,
+            &sections.models,
+            "File → New 3D Model…",
+        ),
+        ("Fonts", Kind::Font, &sections.fonts, "File → New Font…"),
+    ];
+    for (title, kind, list, help) in parts {
+        label_with_hint(ui, title, &list.len().to_string());
+        ui.add_space(2.0);
+        if list.is_empty() {
+            ui.add(egui::Label::new(help).wrap());
         }
+        for (id, name, uses) in list {
+            if let Some(a) = row(ui, editor, skin, state, kind, (*id, name, *uses)) {
+                action = Some(a);
+            }
+        }
+        ui.add_space(6.0);
     }
     if let Some(id) = state.confirm_delete
         && let Some(a) = confirm_delete(ui, editor, state, id)
@@ -224,13 +316,15 @@ fn preview(ui: &mut Ui, editor: &Editor, state: &mut LibraryState) {
     let t_ms = (ui.input(|i| i.time) * 1000.0) as u64;
     let (f, rest) = preview_frame(sprite, t_ms);
     let key = (symbol.id, f, editor.doc_version);
-    if !matches!(&state.preview, Some((k, _)) if *k == key) {
-        let image = render(doc, sprite, f);
-        let texture = crate::lumen::texture_of(ui, "library_preview", &image);
-        state.preview = Some((key, texture));
+    if !matches!(&state.preview, Some((k, ..)) if *k == key) {
+        state.preview =
+            image_of(doc, symbol, f, crate::artboard_window::CARD_SAMPLE).map(|image| {
+                let texture = crate::lumen::texture_of(ui, "library_preview", &image);
+                (key, texture, (image.width, image.height))
+            });
     }
-    if let Some((_, texture)) = &state.preview {
-        paint_fitted(ui, texture, (sprite.width, sprite.height), well);
+    if let Some((_, texture, size)) = &state.preview {
+        paint_fitted(ui, texture, *size, well);
     }
     // Se vuelve a pintar cuando cambia el frame, no en cada frame de la pantalla.
     if let Some(rest) = rest {
@@ -239,24 +333,25 @@ fn preview(ui: &mut Ui, editor: &Editor, state: &mut LibraryState) {
     }
 }
 
-/// La miniatura de `id` (su frame 0), hecha de nuevo si cambió el documento.
+/// La miniatura de `id` (su frame 0) y su tamaño, hecha de nuevo si cambió el documento.
 fn thumb(
     ui: &Ui,
     editor: &Editor,
     state: &mut LibraryState,
     id: ArtboardId,
-) -> Option<TextureHandle> {
+) -> Option<(TextureHandle, (u32, u32))> {
     let version = editor.doc_version;
-    if let Some((v, t)) = state.thumbs.get(&id)
+    if let Some((v, t, size)) = state.thumbs.get(&id)
         && *v == version
     {
-        return Some(t.clone());
+        return Some((t.clone(), *size));
     }
-    let sprite = &editor.document.artboard(id)?.sprite;
-    let image = render(&editor.document, sprite, 0);
+    let a = editor.document.artboard(id)?;
+    let image = image_of(&editor.document, a, 0, FONT_THUMB_SAMPLE)?;
+    let size = (image.width, image.height);
     let texture = crate::lumen::texture_of(ui, &format!("library_thumb_{}", id.0), &image);
-    state.thumbs.insert(id, (version, texture.clone()));
-    Some(texture)
+    state.thumbs.insert(id, (version, texture.clone(), size));
+    Some((texture, size))
 }
 
 /// Una fila de la lista: miniatura, nombre y usos. Devuelve lo que se pidió en ella.
@@ -265,6 +360,7 @@ fn row(
     editor: &mut Editor,
     skin: Option<&Skin>,
     state: &mut LibraryState,
+    kind: Kind,
     (id, name, uses): (ArtboardId, &str, usize),
 ) -> Option<LibraryAction> {
     let mut action = None;
@@ -297,10 +393,7 @@ fn row(
         vec2(THUMB, THUMB),
     );
     crate::panels::checker(&ui.painter_at(thumb_rect), thumb_rect);
-    if let Some(texture) = thumb(ui, editor, state, id)
-        && let Some(a) = editor.document.artboard(id)
-    {
-        let size = (a.sprite.width, a.sprite.height);
+    if let Some((texture, size)) = thumb(ui, editor, state, id) {
         paint_fitted(ui, &texture, size, thumb_rect);
     }
     let text_left = thumb_rect.right() + ROW_PAD + 2.0;
@@ -326,7 +419,15 @@ fn row(
         field_ui.spacing_mut().text_edit_width = field.width();
         let mut done = None;
         if let Some((_, buffer)) = &mut state.renaming {
-            let edit = crate::widgets::text_line_named(&mut field_ui, buffer, "Symbol name");
+            let edit = crate::widgets::text_line_named(
+                &mut field_ui,
+                buffer,
+                match kind {
+                    Kind::Symbol => "Symbol name",
+                    Kind::Model => "Model name",
+                    Kind::Font => "Font name",
+                },
+            );
             if state.focus_rename {
                 edit.request_focus();
                 state.focus_rename = false;
@@ -351,16 +452,26 @@ fn row(
         let at = pos2(text_left, rect.center().y - galley.size().y / 2.0);
         ui.painter_at(rect).galley(at.round(), galley, text);
     }
-    response.dnd_set_drag_payload(SymbolPayload(id));
+    if kind != Kind::Font {
+        response.dnd_set_drag_payload(SymbolPayload(id));
+    }
     if response.clicked() || response.secondary_clicked() || response.drag_started() {
         editor.library_selected = Some(id);
     }
     if response.double_clicked() {
-        action = Some(LibraryAction::Edit(id));
+        action = Some(match kind {
+            Kind::Symbol => LibraryAction::Edit(id),
+            _ => LibraryAction::Open(id),
+        });
     }
     menus::context_menu(&response, |ui| {
-        if ui.add(menus::plain("Edit Symbol")).clicked() {
-            action = Some(LibraryAction::Edit(id));
+        if kind == Kind::Symbol {
+            if ui.add(menus::plain("Edit Symbol")).clicked() {
+                action = Some(LibraryAction::Edit(id));
+                ui.close();
+            }
+        } else if ui.add(menus::plain("Open")).clicked() {
+            action = Some(LibraryAction::Open(id));
             ui.close();
         }
         if ui.add(menus::plain("Rename")).clicked() {
@@ -372,7 +483,7 @@ fn row(
             action = Some(LibraryAction::Duplicate(id));
             ui.close();
         }
-        if ui.add(menus::plain("Place on Canvas")).clicked() {
+        if kind != Kind::Font && ui.add(menus::plain("Place on Canvas")).clicked() {
             action = Some(LibraryAction::PlaceOnCanvas(id));
             ui.close();
         }

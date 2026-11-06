@@ -3161,7 +3161,7 @@ fn help_ui_catalog_opens_a_closable_tab_with_the_four_button_states() {
     // Una pestaña más, a la vista, sin documento activo.
     assert_eq!(h.app.tabs.page(), Some(crate::tabs::Page::Catalog));
     assert_eq!(h.app.tabs.active(), None);
-    assert_eq!(h.app.tabs.bar_active(), Some(2));
+    assert_eq!(h.app.tabs.bar_active(&h.app.doc), Some(2));
     assert!(h.texts.iter().any(|(t, _)| t == "UI Catalog"), "the tab");
     for state in ["Normal", "Hover", "Pressed", "Disabled"] {
         assert!(h.texts.iter().any(|(t, _)| t == state), "{state}");
@@ -3189,7 +3189,7 @@ fn help_ui_catalog_opens_a_closable_tab_with_the_four_button_states() {
         .tab_action(crate::tabs::TabRef::Page(crate::tabs::Page::Catalog), true);
     h.frame();
     assert_eq!(h.app.tabs.page(), None);
-    assert_eq!(h.app.tabs.bar().len(), 2);
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2);
 }
 
 #[test]
@@ -3346,6 +3346,49 @@ fn zoom_centered(h: &mut LayoutHarness, zoom: f32) {
 }
 
 #[test]
+fn the_font_workspace_draws_only_its_artboard_and_painting_is_one_undo_step() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let normal = h.app.doc.editor.artboard().id;
+    let ctx = h.ctx.clone();
+    assert!(
+        h.app
+            .create_font(&ctx, "Mine", (16, 16), cs_core::FontMode::OneBit)
+    );
+    h.app.doc.editor.go_to_glyph('A');
+    h.frame();
+    h.frame();
+    h.frame();
+    // El lienzo dibuja solo la fuente: el artboard normal no se ve.
+    let font = h.app.doc.editor.workspace().expect("the font workspace");
+    assert!(
+        union(&h.drawn("title.bar.font")).is_some(),
+        "the font window"
+    );
+    assert!(h.drawn("title.bar").is_empty(), "no normal artboard");
+    if let Some(tex) = h.app.doc.canvas.artboard_texture(normal) {
+        assert!(h.textures.iter().all(|(t, _)| *t != tex), "hidden");
+    }
+    // Pintar un pixel cambia el glifo y es un solo paso de undo.
+    h.app.doc.editor.set_tool(ToolKind::Pencil);
+    h.app.doc.editor.primary = cs_core::ONE_BIT_INK;
+    let steps = h.app.doc.editor.history.done_count();
+    // Lejos de la línea del ancho (a media celda), que se lleva el clic.
+    let art = artboard_pixels(&h);
+    let at = art.left_top() + art.size() * 0.25;
+    h.click(at, PointerButton::Primary);
+    let e = &h.app.doc.editor;
+    assert_eq!(e.artboard().id, font);
+    assert!(e.sprite().cel(e.layer, e.frame).is_some(), "painted");
+    assert_eq!(e.history.done_count(), steps + 1);
+    // Desde la pestaña del documento se deshace.
+    h.app.tabs.switch(&mut h.app.doc, 0);
+    h.app.doc.editor.undo();
+    h.app.doc.editor.enter_workspace(font);
+    let e = &h.app.doc.editor;
+    assert!(e.sprite().cel(e.layer, e.frame).is_none(), "undone");
+}
+
+#[test]
 fn a_font_artboard_has_the_orange_bar_and_a_normal_one_the_pink_one() {
     let mut h = LayoutHarness::new(pixel_ui(), true);
     h.frame();
@@ -3391,17 +3434,6 @@ fn zoomed_far_out_a_font_artboard_is_a_card_with_a_sample() {
     zoom_centered(&mut h, 8.0);
     assert!(h.textures.iter().any(|(t, _)| *t == tex));
     assert!(h.app.doc.canvas.advance_line_rect().is_some());
-}
-
-#[test]
-fn clicking_the_card_activates_the_font_artboard() {
-    let (mut h, normal, font) = with_a_font_at_800();
-    zoom_centered(&mut h, 0.5);
-    h.app.doc.editor.activate(normal);
-    h.frame();
-    let bar = union(&h.drawn("title.bar.font")).expect("the card's orange bar");
-    h.click(bar.center(), PointerButton::Primary);
-    assert_eq!(h.app.doc.editor.active, font);
 }
 
 #[test]
@@ -3546,6 +3578,37 @@ fn a_new_font_is_fitted_beside_the_font_panel() {
     assert!(art.right() <= flyout.left(), "{art:?} vs {flyout:?}");
     assert!(canvas.contains_rect(art), "{art:?} vs {canvas:?}");
     // Ajustada: no se queda chiquita.
+    assert!(art.width() >= 100.0, "{art:?}");
+}
+
+#[test]
+fn switching_to_a_font_view_tab_opens_the_font_panel_beside_the_glyph() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let ctx = h.ctx.clone();
+    assert!(
+        h.app
+            .create_font(&ctx, "Mine", (8, 8), cs_core::FontMode::OneBit)
+    );
+    for _ in 0..3 {
+        h.frame();
+    }
+    // De vuelta al documento, con el panel cerrado.
+    let doc = h.button(&h.app.doc.location.name.clone());
+    h.click(doc.center(), PointerButton::Primary);
+    crate::dock::set_open(&ctx, None);
+    h.frame();
+    assert_eq!(h.app.doc.editor.workspace(), None);
+    let view = h.button("Mine");
+    h.click(view.center(), PointerButton::Primary);
+    for _ in 0..3 {
+        h.frame();
+    }
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "FontForge"))))
+        .expect("the Font panel is open");
+    let art = artboard_pixels(&h);
+    assert!(art.right() <= flyout.left(), "{art:?} vs {flyout:?}");
     assert!(art.width() >= 100.0, "{art:?}");
 }
 
@@ -3944,12 +4007,201 @@ fn dragging_a_font_stepper_is_one_undo_step() {
     assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 12);
 }
 
-/// Con Pixel UI, un modelo 3D de 32×32 activo, a 800 % y centrado (con el cubo elegido).
+/// Con Pixel UI, un modelo 3D de 32×32 nuevo abierto en su pestaña (su workspace de ChimpCAD,
+/// con las vistas ya encuadradas).
 fn with_a_model_at_800() -> LayoutHarness {
-    let mut h = LayoutHarness::new(pixel_ui(), true);
-    assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
-    zoom_centered(&mut h, 8.0);
+    let mut h = with_model_tab();
+    h.frame();
     h
+}
+
+/// Dónde se dibuja el render de la perspectiva (en el cuadrante Persp del workspace).
+fn persp_pixels(h: &LayoutHarness) -> Rect {
+    let tex = h
+        .app
+        .doc
+        .canvas
+        .model_persp_texture()
+        .expect("the perspective is rendered");
+    h.textures
+        .iter()
+        .find(|(t, _)| *t == tex)
+        .map(|(_, r)| *r)
+        .expect("the perspective is drawn")
+}
+
+#[test]
+fn the_ortho_views_are_pixel_images_over_their_quadrants() {
+    let mut h = with_a_model_at_800();
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    let ppp = h.ctx.pixels_per_point();
+    let first = h.app.doc.canvas.model_ortho_textures();
+    for (k, i) in [0, 2, 3].into_iter().enumerate() {
+        let (_, tex) = first[k].expect("the view is rasterized");
+        let r = h
+            .textures
+            .iter()
+            .find(|(t, _)| *t == tex)
+            .map(|(_, r)| *r)
+            .expect("the view is drawn");
+        // Toda la vista, un pixel por punto, en puntos (y pixeles físicos) enteros.
+        assert_eq!(r, quads[i], "view {i}");
+        assert_eq!(r.min, r.min.round(), "{r:?}");
+        assert_eq!(r.size(), r.size().round(), "{r:?}");
+        let px = r.min.to_vec2() * ppp;
+        assert_eq!(px, px.round(), "{r:?} at {ppp}");
+    }
+    // Sin cambios no se vuelve a pintar; con otra selección, sí.
+    h.frame();
+    assert_eq!(h.app.doc.canvas.model_ortho_textures(), first);
+    let editor = &mut h.app.doc.editor;
+    editor.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Object,
+        items: [cs_3d::Item::Object(0)].into(),
+    });
+    h.frame();
+    let next = h.app.doc.canvas.model_ortho_textures();
+    for k in 0..3 {
+        assert_ne!(next[k].unwrap().0, first[k].unwrap().0, "view {k}");
+        assert_eq!(next[k].unwrap().1, first[k].unwrap().1, "same texture {k}");
+    }
+}
+
+#[test]
+fn the_cad_workspace_fills_the_canvas_with_the_four_views() {
+    let mut h = with_a_model_at_800();
+    assert!(h.app.view.rulers, "the rulers are on in the document");
+    // El artboard del lienzo ya tiene su textura (del primer frame): no se dibuja.
+    let plain = h.app.doc.editor.document.artboards[0].id;
+    assert!(h.app.doc.canvas.artboard_texture(plain).is_some());
+    let canvas = h.canvas.expect("the workspace area");
+    let quads = h.app.doc.canvas.model_edit_quadrants().expect("the views");
+    // Los cuatro cubren todo el área (sin reglas), partida a la mitad en puntos enteros.
+    let all = quads.iter().fold(quads[0], |a, q| a.union(*q));
+    assert_eq!(all, canvas);
+    let mid = canvas.min + ((canvas.size() / 2.0).floor());
+    assert_eq!(quads[0], Rect::from_min_max(canvas.min, mid), "Front");
+    assert_eq!(quads[3], Rect::from_min_max(mid, canvas.max), "Side");
+    // Ni la textura del modelo, ni otros artboards, ni barras de ventana.
+    let ids: Vec<_> = h
+        .app
+        .doc
+        .editor
+        .document
+        .artboards
+        .iter()
+        .map(|a| a.id)
+        .collect();
+    for id in ids {
+        if let Some(tex) = h.app.doc.canvas.artboard_texture(id) {
+            assert!(h.textures.iter().all(|(t, _)| *t != tex), "{id:?} drawn");
+        }
+    }
+    assert!(h.drawn("title.bar").is_empty() && h.drawn("title.bar.model").is_empty());
+    h.frame();
+    assert_eq!(h.app.doc.canvas.model_edit_quadrants(), Some(quads));
+}
+
+#[test]
+fn the_cad_views_end_left_of_the_open_dock_panel() {
+    let mut h = with_a_model_at_800();
+    let canvas = h.canvas.expect("the workspace area");
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    assert_eq!(quads[1].right(), canvas.right(), "closed: the whole area");
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    let id = egui::Id::new(("dock_flyout", crate::dock::DockPanel::Model.label()));
+    let panel = h
+        .ctx
+        .memory(|m| m.area_rect(id))
+        .expect("the 3D panel is open");
+    assert!(panel.left() < canvas.right(), "{panel:?} over {canvas:?}");
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    for i in [1, 3] {
+        assert!(
+            quads[i].right() <= panel.left(),
+            "{:?} vs {panel:?}",
+            quads[i]
+        );
+    }
+    assert_eq!(quads[0].left(), canvas.left());
+    assert!(quads[1].contains_rect(persp_pixels(&h)), "the render too");
+    // Cerrado otra vez: hasta el borde del lienzo.
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    assert_eq!(quads[3].right(), canvas.right());
+}
+
+#[test]
+fn the_perspective_is_drawn_at_an_integer_scale() {
+    let h = with_a_model_at_800();
+    let q = h.app.doc.canvas.model_edit_quadrants().unwrap()[1];
+    let r = persp_pixels(&h);
+    let s = r.width() / 32.0;
+    assert!(s >= 1.0 && s.fract() == 0.0, "{r:?}");
+    assert_eq!(r.height(), 32.0 * s);
+    // La más grande que cabe, centrada.
+    assert!(
+        32.0 * (s + 1.0) > q.width().min(q.height()),
+        "{r:?} in {q:?}"
+    );
+    assert!(q.contains_rect(r), "{r:?} in {q:?}");
+    assert!((r.center().x - q.center().x).abs() <= 1.0, "{r:?} in {q:?}");
+    assert!((r.center().y - q.center().y).abs() <= 1.0, "{r:?} in {q:?}");
+    // En pixeles físicos enteros.
+    let ppp = h.ctx.pixels_per_point();
+    let px = r.min.to_vec2() * ppp;
+    assert_eq!(px, px.round(), "{r:?} at {ppp}");
+}
+
+#[test]
+fn ctrl_wheel_on_front_zooms_the_views_not_the_canvas() {
+    let mut h = with_a_model_at_800();
+    let canvas_zoom = h.app.doc.canvas.zoom;
+    let pan = h.app.doc.canvas.pan();
+    let zoom = h.app.doc.editor.model_edit().zoom;
+    let at = h.app.doc.canvas.model_edit_quadrants().unwrap()[0].center();
+    let wheel = |modifiers| Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: vec2(0.0, 1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers,
+    };
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    // Sin Ctrl, la rueda no hace nada.
+    h.frame_with(vec![wheel(Default::default())]);
+    h.frame();
+    assert_eq!(h.app.doc.editor.model_edit().zoom, zoom);
+    assert_eq!(h.app.doc.canvas.zoom, canvas_zoom);
+    h.frame_with(vec![
+        Event::ModifiersChanged(egui::Modifiers::COMMAND),
+        wheel(egui::Modifiers::COMMAND),
+    ]);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    assert!(h.app.doc.editor.model_edit().zoom > zoom);
+    assert_eq!(h.app.doc.canvas.zoom, canvas_zoom);
+    assert_eq!(h.app.doc.canvas.pan(), pan);
+}
+
+#[test]
+fn painting_tools_and_the_hand_do_nothing_in_the_cad_workspace() {
+    let mut h = with_a_model_at_800();
+    let pan = h.app.doc.canvas.pan();
+    let revision = h.app.doc.editor.revision;
+    let side = h.app.doc.canvas.model_edit_quadrants().unwrap()[3];
+    for tool in [ToolKind::Pencil, ToolKind::Hand] {
+        h.app.doc.editor.tool = tool;
+        drag_with(
+            &mut h,
+            side.left_top() + vec2(4.0, 12.0),
+            side.left_top() + vec2(40.0, 40.0),
+            Default::default(),
+        );
+        assert!(!h.app.doc.editor.is_painting(), "{tool:?}");
+    }
+    assert_eq!(h.app.doc.canvas.pan(), pan);
+    assert_eq!(h.app.doc.editor.revision, revision, "nothing painted");
 }
 
 fn tap_key(h: &mut LayoutHarness, key: egui::Key) {
@@ -3966,36 +4218,21 @@ fn tap_key(h: &mut LayoutHarness, key: egui::Key) {
 }
 
 #[test]
-fn tab_on_a_model_enters_edit_mode_with_four_views() {
+fn tab_in_a_model_workspace_is_the_timeline() {
     let mut h = with_a_model_at_800();
-    let pixels = artboard_pixels(&h);
+    assert!(h.app.doc.editor.model_edit_on());
     let timeline = h.app.view.timeline;
     tap_key(&mut h, egui::Key::Tab);
-    assert!(h.app.doc.editor.model_edit_on());
-    assert_eq!(
-        h.app.view.timeline, timeline,
-        "Tab did not toggle the timeline"
+    assert_ne!(h.app.view.timeline, timeline, "Tab toggles the timeline");
+    assert!(
+        h.app.doc.editor.model_edit_on(),
+        "the workspace stays in Edit"
     );
-    let quads = h
-        .app
-        .doc
-        .canvas
-        .model_edit_quadrants()
-        .expect("the quadrants");
-    assert_eq!(quads[0].min, pixels.min);
-    assert_eq!(quads[3].max, pixels.max);
-    assert_eq!(quads[0].width(), pixels.width() / 2.0);
-    for label in ["Front", "Top", "Side", "Persp"] {
-        assert!(h.texts.iter().any(|(t, _)| t == label), "{label}");
-    }
-    tap_key(&mut h, egui::Key::Tab);
-    assert!(!h.app.doc.editor.model_edit_on());
-    assert!(h.app.doc.canvas.model_edit_quadrants().is_none());
 }
 
 fn editing_model() -> LayoutHarness {
-    let mut h = with_a_model_at_800();
-    tap_key(&mut h, egui::Key::Tab);
+    // El modelo abierto en su pestaña: su workspace, siempre en modo Edit.
+    let h = with_a_model_at_800();
     assert!(h.app.doc.editor.model_edit_on());
     h
 }
@@ -4107,32 +4344,11 @@ fn camera(h: &LayoutHarness) -> cs_core::Camera3D {
 }
 
 #[test]
-fn a_model_artboard_has_the_teal_bar() {
-    let h = with_a_model_at_800();
-    let pixels = artboard_pixels(&h);
-    let bar = union(&h.drawn("title.bar.model")).expect("the model bar");
-    assert_eq!(bar.left(), pixels.left() - 2.0);
-    assert_eq!(bar.right(), pixels.right() + 2.0);
-    assert_eq!(bar.bottom(), pixels.top() - 1.0);
-    assert!(h.drawn("title.bar.font").iter().all(|r| !r.intersects(bar)));
-}
-
-#[test]
-fn a_model_artboard_keeps_its_teal_bar_in_edit_mode() {
-    let mut h = with_a_model_at_800();
-    let before = union(&h.drawn("title.bar.model")).expect("the model bar");
-    tap_key(&mut h, egui::Key::Tab);
-    assert!(h.app.doc.editor.model_edit_on());
-    let bar = union(&h.drawn("title.bar.model")).expect("the model bar in Edit");
-    assert_eq!(bar, before);
-}
-
-#[test]
 fn right_dragging_a_model_orbits_the_camera_in_one_undo_step() {
     let mut h = with_a_model_at_800();
     let before = camera(&h);
     let steps = h.app.doc.editor.history.done_count();
-    let from = artboard_pixels(&h).center();
+    let from = persp_pixels(&h).center();
     let press = |pos, pressed| Event::PointerButton {
         pos,
         button: PointerButton::Secondary,
@@ -4159,7 +4375,7 @@ fn ctrl_wheel_over_a_model_changes_the_camera_distance_not_the_zoom() {
     let mut h = with_a_model_at_800();
     let before = camera(&h).distance;
     let zoom = h.app.doc.canvas.zoom;
-    let at = artboard_pixels(&h).center();
+    let at = persp_pixels(&h).center();
     h.frame_with(vec![
         Event::ModifiersChanged(egui::Modifiers::COMMAND),
         Event::PointerMoved(at),
@@ -4179,7 +4395,7 @@ fn ctrl_wheel_over_a_model_changes_the_camera_distance_not_the_zoom() {
 #[test]
 fn clicking_a_model_picks_the_object_under_the_pointer() {
     let mut h = with_a_model_at_800();
-    let pixels = artboard_pixels(&h);
+    let pixels = persp_pixels(&h);
     h.click(pixels.left_top() + vec2(4.0, 4.0), PointerButton::Primary);
     assert_eq!(h.app.doc.editor.selected_object(), None, "an empty corner");
     h.click(pixels.center(), PointerButton::Primary);
@@ -4187,36 +4403,9 @@ fn clicking_a_model_picks_the_object_under_the_pointer() {
 }
 
 #[test]
-fn g_and_the_right_arrow_move_the_selected_object_not_the_frame() {
+fn shift_s_and_shift_r_keep_their_shortcuts_in_the_cad_workspace() {
     let mut h = with_a_model_at_800();
-    let key = |key, pressed| Event::Key {
-        key,
-        physical_key: None,
-        pressed,
-        repeat: false,
-        modifiers: Default::default(),
-    };
-    let x = |h: &LayoutHarness| {
-        h.app.doc.editor.model().unwrap().objects[0]
-            .transform
-            .position
-            .x
-    };
-    let x0 = x(&h);
-    h.frame_with(vec![key(egui::Key::G, true), key(egui::Key::G, false)]);
-    h.frame_with(vec![
-        key(egui::Key::ArrowRight, true),
-        key(egui::Key::ArrowRight, false),
-    ]);
-    h.frame();
-    assert_eq!(x(&h), x0 + 4);
-    assert_eq!(h.app.doc.editor.frame, 0);
-    assert!(h.texts.iter().any(|(t, _)| t.contains("3D: Move")));
-}
-
-#[test]
-fn shift_s_and_shift_r_do_not_switch_the_3d_arrows() {
-    let mut h = with_a_model_at_800();
+    h.app.doc.editor.select_model_object(Some(0));
     let key = |key, pressed| Event::Key {
         key,
         physical_key: None,
@@ -4224,13 +4413,18 @@ fn shift_s_and_shift_r_do_not_switch_the_3d_arrows() {
         repeat: false,
         modifiers: egui::Modifiers::SHIFT,
     };
-    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)]);
+    let at = h.app.doc.canvas.model_edit_quadrants().unwrap()[0].center();
+    h.frame_with(vec![
+        Event::PointerMoved(at),
+        Event::ModifiersChanged(egui::Modifiers::SHIFT),
+    ]);
     for k in [egui::Key::S, egui::Key::R] {
         h.frame_with(vec![key(k, true), key(k, false)]);
-        assert_eq!(
-            h.app.doc.editor.model_arrows(),
-            crate::editor::ModelArrows::Move,
-            "{k:?}"
+        h.frame();
+        let e = h.app.doc.editor.model_edit();
+        assert!(
+            e.op.is_none() && e.key_request.is_none(),
+            "{k:?} started a gesture"
         );
     }
     // Shift+R sigue siendo la herramienta Jumble.
@@ -4241,10 +4435,9 @@ fn shift_s_and_shift_r_do_not_switch_the_3d_arrows() {
 fn a_right_click_on_a_model_does_not_reopen_an_old_selection_menu() {
     let mut h = with_a_model_at_800();
     let model = h.app.doc.editor.active;
-    let plain = h.app.doc.editor.document.artboards[0].id;
     h.app.doc.editor.tool = ToolKind::RectSelect;
-    // El menú de la selección en el artboard normal.
-    h.app.doc.editor.activate(plain);
+    // El menú de la selección en el artboard normal, en el lienzo.
+    h.app.doc.editor.exit_workspace();
     h.app.doc.editor.select_all();
     zoom_centered(&mut h, 8.0);
     h.click(artboard_pixels(&h).center(), PointerButton::Secondary);
@@ -4258,10 +4451,10 @@ fn a_right_click_on_a_model_does_not_reopen_an_old_selection_menu() {
         modifiers: Default::default(),
     }]);
     h.frame();
-    // El derecho sobre el modelo orbita: no vuelve a abrir aquel menú.
-    h.app.doc.editor.activate(model);
-    zoom_centered(&mut h, 8.0);
-    h.click(artboard_pixels(&h).center(), PointerButton::Secondary);
+    // El derecho sobre la perspectiva del modelo orbita: no vuelve a abrir aquel menú.
+    h.app.doc.editor.enter_workspace(model);
+    h.frame();
+    h.click(persp_pixels(&h).center(), PointerButton::Secondary);
     h.frame();
     assert!(!menu(&h), "an old menu opened over the model");
 }
@@ -4272,7 +4465,7 @@ fn the_other_button_during_a_model_drag_reaches_no_tool() {
     let mut h = with_a_model_at_800();
     h.app.doc.editor.tool = ToolKind::Move;
     h.app.doc.editor.select_all();
-    let from = artboard_pixels(&h).center();
+    let from = persp_pixels(&h).center();
     let button = |pos, button, pressed| Event::PointerButton {
         pos,
         button,
@@ -4386,7 +4579,8 @@ fn the_position_x_stepper_moves_the_object_in_one_step() {
     assert_eq!(x(&h), 0);
 }
 
-/// Lo que se ve de los textos "3D" y "Edit (Tab)" en el panel recién abierto.
+/// Lo que se ve de los textos "3D" y "Object" (la primera fila del modo Edit) en el panel recién
+/// abierto.
 fn panel_top_texts(h: &LayoutHarness) -> (Vec<Rect>, Rect) {
     let find = |t: &str| -> Vec<Rect> {
         h.text_rects
@@ -4397,7 +4591,7 @@ fn panel_top_texts(h: &LayoutHarness) -> (Vec<Rect>, Rect) {
     };
     (
         find("3D"),
-        find("Edit (Tab)").first().copied().unwrap_or(Rect::NOTHING),
+        find("Object").first().copied().unwrap_or(Rect::NOTHING),
     )
 }
 
@@ -4434,7 +4628,7 @@ fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
         h.frame();
     }
     let (_, scrolled) = panel_top_texts(&h);
-    // Desplazado, "Edit (Tab)" sale de la vista (no se dibuja) o queda más arriba.
+    // Desplazado, "Object" sale de la vista (no se dibuja) o queda más arriba.
     assert!(
         scrolled == Rect::NOTHING || scrolled.top() < top.top() - 20.0,
         "el panel no se desplazó"
@@ -4451,7 +4645,7 @@ fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
 }
 
 #[test]
-fn the_3d_panel_has_edit_the_modes_and_the_grid() {
+fn the_3d_panel_has_the_modes_and_the_grid() {
     let mut h = model_panel_open(true);
     let text = |h: &LayoutHarness, t: &str| {
         h.text_rects
@@ -4460,18 +4654,9 @@ fn the_3d_panel_has_edit_the_modes_and_the_grid() {
             .map(|(_, r, _)| *r)
             .unwrap_or_else(|| panic!("no text {t:?}"))
     };
-    for t in [
-        "Edit (Tab)",
-        "Object",
-        "Vertex",
-        "Edge",
-        "Face",
-        "Grid",
-        "1/4",
-    ] {
+    for t in ["Object", "Vertex", "Edge", "Face", "Grid", "1/4"] {
         text(&h, t);
     }
-    h.click(text(&h, "Edit (Tab)").center(), PointerButton::Primary);
     assert!(h.app.doc.editor.model_edit_on());
     h.click(text(&h, "Vertex").center(), PointerButton::Primary);
     assert_eq!(
@@ -5204,11 +5389,18 @@ fn dragging_a_selected_extreme_vertex_moves_instead_of_scaling() {
 #[test]
 fn a_middle_press_on_the_first_edit_frame_does_not_pick() {
     let mut h = with_a_model_at_800();
+    let ship = h.app.doc.editor.active;
     h.app.doc.editor.select_model_object(None);
-    let at = artboard_pixels(&h).center();
+    h.app.doc.editor.exit_workspace();
+    h.frame();
+    assert_eq!(h.app.doc.canvas.model_edit_quadrants(), None, "the canvas");
+    // Sobre el centro de la perspectiva (donde se ve el cubo) en cuanto se entre.
+    let canvas = h.canvas.expect("the canvas");
+    let at = canvas.lerp_inside(vec2(0.75, 0.25));
     h.frame_with(vec![Event::PointerMoved(at)]);
-    // El modo Edit se prende sin un frame de por medio: todavía no hay cuadrantes.
-    h.app.doc.editor.toggle_model_edit();
+    // El workspace se abre sin un frame de por medio: todavía no hay cuadrantes del frame
+    // anterior.
+    h.app.doc.editor.enter_workspace(ship);
     let button = |pressed| Event::PointerButton {
         pos: at,
         button: PointerButton::Middle,
@@ -5243,4 +5435,403 @@ fn a_straight_selected_edge_drags_from_its_midpoint() {
     assert_eq!(points[6], [-16.0, 24.0, 16.0]);
     assert_eq!(points[7], [16.0, 24.0, 16.0]);
     assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn a_click_on_a_selected_edge_keeps_only_that_edge_and_a_drag_moves_all() {
+    let mut h = editing_model();
+    assert_eq!(
+        h.app.doc.editor.model_edit().selection.mode,
+        cs_3d::SelectMode::Edge,
+        "a model opens in Edge mode"
+    );
+    let all = cs_3d::Selection {
+        mode: cs_3d::SelectMode::Object,
+        items: [cs_3d::Item::Object(0)].into(),
+    }
+    .converted(h.app.doc.editor.model().unwrap(), cs_3d::SelectMode::Edge);
+    assert_eq!(all.items.len(), 12);
+    h.app.doc.editor.set_model_selection(all);
+    h.frame();
+    let steps = h.app.doc.editor.history.done_count();
+    // A un cuarto de la arista de arriba: lejos de las asas de la caja.
+    let at = front_screen(&h, [8.0, 16.0, 16.0]);
+    drag_with(&mut h, at, at, Default::default());
+    assert_eq!(h.app.doc.editor.model_edit().selection.items.len(), 1);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps, "no move");
+}
+
+/// Un modelo "Ship" con su pestaña de vista abierta, en el documento de la prueba.
+fn with_model_tab() -> LayoutHarness {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+    let id = h.app.doc.editor.workspace().expect("the workspace");
+    h.app.tabs.open_view(&mut h.app.doc, id);
+    h.frame();
+    h
+}
+
+#[test]
+fn pixel_shortcuts_do_not_reach_the_hidden_sprite_in_the_cad_workspace() {
+    let mut h = with_model_tab();
+    let steps = h.app.doc.editor.history.done_count();
+    press_ctrl(&mut h, egui::Key::A);
+    h.frame();
+    assert!(h.app.doc.editor.selection.is_none(), "no marquee");
+    h.frame_with(key_tap(egui::Key::Delete));
+    h.frame_with(key_tap(egui::Key::F));
+    press(&mut h, egui::Key::H, egui::Modifiers::SHIFT);
+    press_ctrl(&mut h, egui::Key::I);
+    h.frame();
+    let e = &h.app.doc.editor;
+    assert!(e.model_edit_on());
+    assert_eq!(e.history.done_count(), steps, "no invisible undo steps");
+}
+
+#[test]
+fn a_model_view_tab_sits_right_after_its_document_and_switches_and_closes() {
+    let mut h = with_model_tab();
+    let doc = h.button(&h.app.doc.location.name.clone());
+    let view = h.button("Ship");
+    assert!(view.left() > doc.right(), "{doc:?} {view:?}");
+    assert!(view.left() - doc.right() < 40.0, "right after it");
+    assert_eq!(h.app.tabs.bar_active(&h.app.doc), Some(1), "its view shows");
+    // El ícono antes del nombre (el modelo dibuja ▣ con formas, sin texto).
+    assert!(!h.drawn("tab.active").is_empty());
+    // La pestaña del documento regresa al lienzo.
+    h.click(doc.center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(h.app.doc.editor.workspace(), None);
+    assert_eq!(h.app.tabs.bar_active(&h.app.doc), Some(0));
+    // La de la vista vuelve al workspace.
+    let view = h.button("Ship");
+    h.click(view.center(), PointerButton::Primary);
+    h.frame();
+    assert!(h.app.doc.editor.workspace().is_some());
+    assert_eq!(h.app.tabs.bar_active(&h.app.doc), Some(1));
+    // La × la cierra sin preguntar.
+    let close = h.button("Close Ship");
+    h.click(close.center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(h.app.pending, None);
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 1);
+    assert_eq!(h.app.doc.editor.workspace(), None);
+}
+
+#[test]
+fn deleting_the_model_closes_its_view_tab() {
+    let mut h = with_model_tab();
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2);
+    while h
+        .app
+        .doc
+        .editor
+        .document
+        .artboards
+        .iter()
+        .any(|a| a.model.is_some())
+    {
+        h.app.doc.editor.undo();
+    }
+    h.frame();
+    h.frame();
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 1);
+    assert!(!h.texts.iter().any(|t| t.0 == "Ship"));
+}
+
+/// Un documento con el símbolo "Coin", el modelo "Ship" y la fuente "Pixie", sin ninguna vista
+/// abierta, y el panel Library abierto.
+fn with_library_items() -> LayoutHarness {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    add_symbol(&mut h, "Coin");
+    let editor = &mut h.app.doc.editor;
+    assert!(editor.new_model("Ship", (32, 32)));
+    editor.exit_workspace();
+    h.frame();
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    h.frame();
+    h
+}
+
+/// Vuelve a abrir el panel Library (abrir la vista de un modelo o fuente abre su panel encima).
+fn reopen_library(h: &mut LayoutHarness) {
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    h.frame();
+}
+
+/// La fila `name` del panel Library (la de más abajo con ese nombre: la pestaña está arriba).
+fn library_row(h: &LayoutHarness, name: &str) -> Rect {
+    h.nodes
+        .iter()
+        .filter(|(l, _)| l == name)
+        .map(|(_, r)| *r)
+        .max_by(|a, b| a.top().total_cmp(&b.top()))
+        .unwrap_or_else(|| panic!("no {name:?} row in {:?}", h.nodes))
+}
+
+#[test]
+fn the_library_has_symbols_models_and_fonts_sections_with_their_counts() {
+    let mut h = with_library_items();
+    let text = |h: &LayoutHarness, t: &str| {
+        h.text_rects
+            .iter()
+            .find(|(x, _, _)| x == t)
+            .map(|(_, r, _)| *r)
+    };
+    let symbols = text(&h, "Symbols").expect("Symbols title");
+    let models = text(&h, "Models").expect("Models title");
+    let fonts = text(&h, "Fonts").expect("Fonts title");
+    assert!(symbols.top() < models.top() && models.top() < fonts.top());
+    // La cuenta junto al título: 1 símbolo, 1 modelo, 0 fuentes.
+    let count_of = |h: &LayoutHarness, title: Rect| {
+        h.text_rects
+            .iter()
+            .find(|(_, r, _)| {
+                (r.center().y - title.center().y).abs() < 4.0 && r.left() > title.right()
+            })
+            .map(|(t, _, _)| t.clone())
+    };
+    assert_eq!(count_of(&h, symbols).as_deref(), Some("1"));
+    assert_eq!(count_of(&h, models).as_deref(), Some("1"));
+    assert_eq!(count_of(&h, fonts).as_deref(), Some("0"));
+    // Las secciones con algo no piden nada; la vacía dice cómo crear una.
+    let has = |t: &str| h.texts.iter().any(|(x, _)| x == t);
+    assert!(!has("F8 makes a symbol") && !has("File → New 3D Model…"));
+    assert!(has("File → New Font…"), "{:?}", h.texts);
+    assert!(library_row(&h, "Coin").top() < library_row(&h, "Ship").top());
+    // Un documento vacío muestra las tres ayudas.
+    let mut empty = LayoutHarness::new(pixel_ui(), true);
+    empty.click(empty.button("Library").center(), PointerButton::Primary);
+    empty.frame();
+    for t in [
+        "F8 makes a symbol",
+        "File → New 3D Model…",
+        "File → New Font…",
+    ] {
+        assert!(empty.texts.iter().any(|(x, _)| x == t), "{t}");
+    }
+    h.frame();
+}
+
+#[test]
+fn double_clicking_a_model_in_the_library_opens_its_tab() {
+    let mut h = with_library_items();
+    let ship = h.app.doc.editor.document.models().next().unwrap().id;
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 1);
+    let row = library_row(&h, "Ship");
+    h.double_click(row.center());
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2, "a view tab");
+    assert_eq!(h.app.doc.editor.workspace(), Some(ship));
+    reopen_library(&mut h);
+    // Un símbolo sigue entrando en su modo.
+    let coin = library_row(&h, "Coin");
+    h.double_click(coin.center());
+    assert!(h.app.doc.editor.in_symbol_mode());
+}
+
+#[test]
+fn double_clicking_a_font_in_the_library_opens_its_tab_and_panel() {
+    let mut h = with_library_items();
+    assert!(
+        h.app
+            .doc
+            .editor
+            .new_font("Pixie", (8, 8), cs_core::FontMode::OneBit)
+    );
+    h.app.doc.editor.exit_workspace();
+    h.frame();
+    h.frame();
+    let font = h.app.doc.editor.document.fonts().next().unwrap().id;
+    let row = library_row(&h, "Pixie");
+    h.double_click(row.center());
+    assert_eq!(h.app.doc.editor.workspace(), Some(font));
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2);
+    assert!(h.app.doc.editor.is_font());
+}
+
+#[test]
+fn renaming_a_model_in_the_library_renames_its_tab() {
+    let mut h = with_library_items();
+    let row = library_row(&h, "Ship");
+    h.double_click(row.center());
+    h.frame();
+    reopen_library(&mut h);
+    let row = library_row(&h, "Ship");
+    h.click(row.center(), PointerButton::Secondary);
+    h.frame();
+    h.click(h.button("Rename").center(), PointerButton::Primary);
+    h.frame();
+    h.frame_with(vec![Event::Text("x".into())]);
+    h.frame_with(key_tap(egui::Key::Enter));
+    h.frame();
+    h.frame();
+    let ship = h.app.doc.editor.document.models().next().unwrap();
+    assert_eq!(ship.name, "Shipx");
+    assert!(
+        h.buttons.iter().any(|(l, _)| l == "Shipx"),
+        "the tab: {:?}",
+        h.buttons
+    );
+}
+
+#[test]
+fn deleting_a_model_from_the_library_closes_its_tab() {
+    let mut h = with_library_items();
+    let row = library_row(&h, "Ship");
+    h.double_click(row.center());
+    h.frame();
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2);
+    reopen_library(&mut h);
+    let row = library_row(&h, "Ship");
+    h.click(row.center(), PointerButton::Secondary);
+    h.frame();
+    h.click(h.button("Delete").center(), PointerButton::Primary);
+    h.frame();
+    h.frame();
+    assert_eq!(h.app.doc.editor.document.models().count(), 0);
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 1);
+    assert_eq!(h.app.doc.editor.workspace(), None);
+}
+
+#[test]
+fn duplicating_a_model_makes_another_model_not_a_symbol() {
+    let mut h = with_library_items();
+    let row = library_row(&h, "Ship");
+    h.click(row.center(), PointerButton::Secondary);
+    h.frame();
+    h.click(h.button("Duplicate").center(), PointerButton::Primary);
+    h.frame();
+    let doc = &h.app.doc.editor.document;
+    assert_eq!(doc.models().count(), 2);
+    assert_eq!(doc.library().count(), 1, "still only Coin");
+}
+
+#[test]
+fn dragging_a_model_from_the_library_to_the_canvas_places_an_instance() {
+    let mut h = with_library_items();
+    let ship = h.app.doc.editor.document.models().next().unwrap().id;
+    let row = library_row(&h, "Ship");
+    let host = h
+        .app
+        .doc
+        .editor
+        .document
+        .canvas_artboards()
+        .next()
+        .unwrap()
+        .id;
+    let texture = h.app.doc.canvas.artboard_texture(host).expect("rendered");
+    let to = h
+        .textures
+        .iter()
+        .find(|(t, _)| *t == texture)
+        .map(|(_, r)| *r)
+        .expect("the host on screen");
+    // Un punto del artboard que no quede debajo del panel.
+    let to = Pos2::new(
+        (to.left() + to.right().min(row.left() - 4.0)) / 2.0,
+        to.center().y,
+    );
+    drag(&mut h, row.center(), to);
+    assert_eq!(h.app.doc.editor.document.instance_uses(ship), 1);
+}
+
+#[test]
+fn place_on_canvas_of_a_model_puts_an_instance_on_the_canvas() {
+    let mut h = with_library_items();
+    let ship = h.app.doc.editor.document.models().next().unwrap().id;
+    let row = library_row(&h, "Ship");
+    h.click(row.center(), PointerButton::Secondary);
+    h.frame();
+    h.click(h.button("Place on Canvas").center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(h.app.doc.editor.document.instance_uses(ship), 1);
+    assert!(
+        h.app
+            .doc
+            .editor
+            .document
+            .artboard(ship)
+            .unwrap()
+            .model
+            .is_some()
+    );
+    assert_eq!(h.app.doc.editor.document.models().count(), 1);
+}
+
+#[test]
+fn opening_a_model_view_opens_the_3d_panel() {
+    use crate::dock::DockPanel;
+    let mut h = with_library_items();
+    let open = |h: &LayoutHarness| crate::dock::open_panel(&h.ctx) == Some(DockPanel::Model);
+    assert!(!open(&h));
+    let row = library_row(&h, "Ship");
+    h.double_click(row.center());
+    h.frame();
+    assert!(open(&h), "Library double-click opens the 3D panel");
+    // Cerrar el panel y volver a la pestaña del modelo también lo abre.
+    crate::dock::set_open(&h.ctx, None);
+    let doc = h.button(&h.app.doc.location.name.clone());
+    h.click(doc.center(), PointerButton::Primary);
+    h.frame();
+    crate::dock::set_open(&h.ctx, None);
+    h.frame();
+    let tab = h.button("Ship");
+    h.click(tab.center(), PointerButton::Primary);
+    h.frame();
+    assert!(open(&h), "clicking its tab opens the 3D panel");
+}
+
+#[test]
+fn creating_a_model_or_font_opens_its_view_tab_and_panel() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let ctx = h.ctx.clone();
+    assert!(h.app.create_model(&ctx, "Hut", (32, 32)));
+    h.frame();
+    let model = h.app.doc.editor.workspace().expect("in the workspace");
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2, "a view tab");
+    assert!(h.app.doc.views.contains(&model));
+    assert!(h.app.doc.editor.is_model());
+    assert!(
+        h.app
+            .create_font(&ctx, "Pix", (8, 8), cs_core::FontMode::OneBit)
+    );
+    h.frame();
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 3);
+    assert!(h.app.doc.editor.is_font());
+}
+
+#[test]
+fn double_clicking_a_model_instance_opens_its_view_tab() {
+    let mut h = with_library_items();
+    let ship = h.app.doc.editor.document.models().next().unwrap().id;
+    assert!(h.app.doc.editor.drop_symbol(ship, (8, 8)).is_ok());
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 1);
+    // Lo que hace el doble clic con Move sobre la instancia: queda elegida y se entra a ella.
+    assert!(!h.app.doc.editor.selected_objects().is_empty());
+    assert!(h.app.doc.editor.enter_instance());
+    h.frame();
+    assert_eq!(h.app.doc.editor.workspace(), Some(ship));
+    assert_eq!(h.app.tabs.bar(&h.app.doc).len(), 2, "a view tab");
+    assert!(h.app.doc.views.contains(&ship));
+}
+
+#[test]
+fn baking_from_the_model_tab_returns_to_the_document_tab_with_the_baked_artboard() {
+    let mut h = with_library_items();
+    let ship = h.app.doc.editor.document.models().next().unwrap().id;
+    h.double_click(library_row(&h, "Ship").center());
+    assert_eq!(h.app.doc.editor.workspace(), Some(ship));
+    let count = h.app.doc.editor.document.artboards.len();
+    // Lo que hace Export del diálogo Bake… (sus botones pixel no están en el arnés).
+    let dialog = crate::bake_dialog::BakeDialog::new(&h.app.doc.editor);
+    h.app.finish_bake(dialog.model(), dialog.chosen());
+    h.frame();
+    let e = &h.app.doc.editor;
+    assert_eq!(e.document.artboards.len(), count + 1, "the baked artboard");
+    assert_eq!(e.workspace(), None, "back on the canvas");
+    let baked = e.document.artboards.last().unwrap();
+    assert!(baked.name.ends_with("bake"));
+    assert_eq!(e.active, baked.id);
+    assert!(baked.on_canvas());
 }

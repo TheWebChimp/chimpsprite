@@ -5,8 +5,8 @@ use super::{EditOp, Editor};
 
 fn editing() -> Editor {
     let mut e = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+    // Un modelo nuevo se abre en su workspace, siempre en modo Edit.
     assert!(e.new_model("Ship", (64, 64)));
-    e.toggle_model_edit();
     e
 }
 
@@ -24,32 +24,97 @@ fn vertex(e: &Editor, v: usize) -> cs_core::Vec3i {
 }
 
 #[test]
-fn edit_se_prende_solo_en_el_modelo_activo() {
+fn edit_esta_prendido_solo_en_el_workspace() {
     let mut e = editing();
     assert!(e.model_edit_on());
     // Encuadra el cubo (±16) en el centro.
     assert_eq!(e.model_edit().center, [0.0; 3]);
     assert!(e.model_edit().zoom > 0.0);
-    let plain = e.document.artboards[0].id;
-    e.activate(plain);
-    assert!(!e.model_edit_on());
-    e.toggle_model_edit();
-    assert!(!e.model_edit_on(), "not on a plain artboard");
+    e.exit_workspace();
+    assert!(!e.model_edit_on(), "not on the canvas");
 }
 
 #[test]
-fn cambiar_de_modo_convierte_y_sincroniza_el_objeto() {
+fn un_modelo_se_abre_en_edge_y_sin_seleccion() {
+    let e = editing();
+    assert_eq!(e.model_edit().selection.mode, SelectMode::Edge);
+    assert!(e.model_edit().selection.is_empty());
+}
+
+#[test]
+fn de_objeto_a_un_subelemento_empieza_sin_seleccion() {
     let mut e = editing();
     e.set_model_selection(Selection {
         mode: SelectMode::Object,
         items: [Item::Object(0)].into(),
     });
+    for mode in [SelectMode::Vertex, SelectMode::Edge, SelectMode::Face] {
+        e.set_model_selection(Selection {
+            mode: SelectMode::Object,
+            items: [Item::Object(0)].into(),
+        });
+        e.set_select_mode(mode);
+        assert_eq!(e.model_edit().selection.mode, mode);
+        assert!(e.model_edit().selection.is_empty(), "{mode:?}");
+    }
+    // Entre subelementos se convierte, y de ahi a Object tambien.
     e.set_select_mode(SelectMode::Vertex);
-    assert_eq!(e.model_edit().selection.items.len(), 8);
-    assert_eq!(e.selected_object(), Some(0));
+    e.set_model_selection(Selection {
+        mode: SelectMode::Vertex,
+        items: [Item::Vertex(0, 7)].into(),
+    });
+    e.set_select_mode(SelectMode::Object);
+    assert_eq!(e.model_edit().selection.items, [Item::Object(0)].into());
+}
+
+#[test]
+fn elegir_un_objeto_pasa_a_modo_objeto() {
+    let mut e = editing();
+    assert_eq!(e.model_edit().selection.mode, SelectMode::Edge);
     e.select_model_object(Some(0));
-    assert_eq!(e.model_edit().selection.mode, SelectMode::Vertex);
-    assert_eq!(e.model_edit().selection.items.len(), 8);
+    assert_eq!(e.model_edit().selection.mode, SelectMode::Object);
+    assert_eq!(e.model_edit().selection.items, [Item::Object(0)].into());
+    assert_eq!(e.selected_object(), Some(0));
+    // Ya en modo Object, se queda ahi.
+    e.select_model_object(Some(0));
+    assert_eq!(e.model_edit().selection.mode, SelectMode::Object);
+    // Ninguno: modo Object y vacio.
+    e.select_model_object(None);
+    assert!(e.model_edit().selection.is_empty());
+}
+
+#[test]
+fn clic_sin_arrastrar_en_lo_ya_elegido_lo_deja_solo() {
+    let mut e = editing();
+    e.set_select_mode(SelectMode::Vertex);
+    e.set_model_selection(Selection {
+        mode: SelectMode::Vertex,
+        items: [Item::Vertex(0, 3), Item::Vertex(0, 7)].into(),
+    });
+    let steps = e.history.done_count();
+    let move_from = |e: &mut Editor| {
+        e.start_model_op(EditOp::Move {
+            map: front(),
+            from: (132.0, 68.0),
+            grab: [16.0, 16.0, 16.0],
+            keyboard: false,
+        });
+        e.model_edit.click_item = Some(Item::Vertex(0, 7));
+    };
+    // Un arrastre mueve todo lo elegido y no cambia la seleccion.
+    move_from(&mut e);
+    e.update_model_op((148.0, 68.0), false, false);
+    e.finish_model_op();
+    assert_eq!(e.model_edit().selection.items.len(), 2);
+    assert_eq!(e.history.done_count(), steps + 1);
+    // Un clic (sin pasar el umbral) deja solo ese item.
+    move_from(&mut e);
+    e.update_model_op((133.0, 68.0), false, false);
+    e.finish_model_op();
+    assert_eq!(e.model_edit().selection.items, [Item::Vertex(0, 7)].into());
+    assert_eq!(e.history.done_count(), steps + 1);
+    // El marcador no sobrevive al gesto.
+    assert!(e.model_edit().click_item.is_none());
 }
 
 #[test]
@@ -188,17 +253,19 @@ fn el_estado_de_la_ui_de_edit_no_cambia_la_revision() {
 }
 
 #[test]
-fn elegir_un_objeto_de_otro_modelo_no_toca_la_seleccion_de_edit() {
+fn elegir_un_objeto_fuera_del_workspace_no_toca_la_seleccion_de_edit() {
     let mut e = editing();
+    let ship = e.active;
     e.set_select_mode(SelectMode::Vertex);
     let picked = Selection {
         mode: SelectMode::Vertex,
         items: [Item::Vertex(0, 7)].into(),
     };
     e.set_model_selection(picked.clone());
-    assert!(e.new_model("Other", (64, 64)));
+    e.exit_workspace();
     assert!(!e.model_edit_on());
     e.select_model_object(Some(0));
+    assert!(e.enter_workspace(ship));
     assert_eq!(e.model_edit().selection, picked);
 }
 

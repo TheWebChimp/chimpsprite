@@ -1,5 +1,5 @@
-//! La entrada del lienzo sobre el artboard 3D activo: con el puntero en su área de pixeles, los
-//! gestos mueven la cámara o eligen objetos en vez de llegar a las herramientas.
+//! La entrada sobre la perspectiva del workspace del modelo (el cuadrante Persp): los gestos
+//! mueven la cámara o eligen objetos.
 //!
 //! - **Botón derecho o Alt + izquierdo** arrastrando: orbita (`yaw` y `pitch`).
 //! - **Shift + izquierdo** arrastrando: mueve el `target` en el plano de la vista.
@@ -26,9 +26,9 @@ pub(super) struct ModelDrag {
     orbit: bool,
     from: Pos2,
     camera: Camera3D,
-    /// Pixeles del artboard entero por pixel del render (1 fuera del modo Edit; en la perspectiva
-    /// del modo Edit, el render es más chico que el artboard).
-    factor: f32,
+    /// Pixeles del artboard por punto de pantalla (el render de la perspectiva va a escala
+    /// entera).
+    factor: Vec2,
 }
 
 /// El grupo de undo de los arrastres sobre el modelo.
@@ -37,17 +37,6 @@ fn drag_group() -> egui::Id {
 }
 
 impl CanvasView {
-    /// Si `p` cae en el área de pixeles del artboard activo, cuando es un modelo 3D y no lo tapa
-    /// otro artboard.
-    pub(super) fn over_model(&self, rect: Rect, editor: &Editor, p: Pos2, ppp: f32) -> bool {
-        if !editor.is_model() {
-            return false;
-        }
-        let (min, max) = editor.artboard().rect();
-        let area = Rect::from_min_max(self.to_screen(rect, min), self.to_screen(rect, max));
-        area.contains(p) && !self.under_front_artboard(rect, editor, p, ppp)
-    }
-
     /// `steps` pasos de rueda sobre el modelo: hacia arriba acerca la cámara.
     pub(super) fn model_wheel(editor: &mut Editor, steps: i32) {
         let Some(mut camera) = editor.model().map(|m| m.camera) else {
@@ -58,22 +47,10 @@ impl CanvasView {
         editor.set_camera(camera);
     }
 
-    /// Un botón apretado sobre el modelo: empieza a orbitar (derecho o Alt + izquierdo), a mover
-    /// el objetivo (Shift + izquierdo) o elige el objeto bajo el puntero (izquierdo).
-    pub(super) fn model_press(
-        &mut self,
-        rect: Rect,
-        editor: &mut Editor,
-        p: Pos2,
-        secondary: bool,
-        modifiers: egui::Modifiers,
-    ) {
-        let local = editor.to_local(self.to_world(rect, p));
-        self.model_press_at(editor, p, local, secondary, modifiers, 1.0);
-    }
-
-    /// Lo mismo con el punto ya en pixeles del artboard (`local`) y el `factor` de pantalla a
-    /// pixeles del artboard.
+    /// Un botón apretado sobre la perspectiva, con el punto ya en pixeles del artboard (`local`)
+    /// y el `factor` de pantalla a pixeles del artboard: empieza a orbitar (derecho o Alt +
+    /// izquierdo), a mover el objetivo (Shift + izquierdo) o elige el objeto bajo el puntero
+    /// (izquierdo).
     #[allow(clippy::too_many_arguments)]
     pub(super) fn model_press_at(
         &mut self,
@@ -82,7 +59,7 @@ impl CanvasView {
         local: (i32, i32),
         secondary: bool,
         modifiers: egui::Modifiers,
-        factor: f32,
+        factor: Vec2,
     ) {
         editor.end_group();
         let Some(camera) = editor.model().map(|m| m.camera) else {
@@ -123,8 +100,8 @@ impl CanvasView {
         model.camera = if drag.orbit {
             orbit(drag.camera, d)
         } else {
-            // Pixeles del artboard: lo que se arrastró en pantalla, sin el zoom.
-            let pixels = d / self.scale() * drag.factor;
+            // Pixeles del artboard: lo que se arrastró en pantalla, sin la escala del render.
+            let pixels = d * drag.factor;
             pan(drag.camera, pixels, editor.sprite().height)
         };
         editor.set_model_grouped(model, drag_group());

@@ -460,7 +460,6 @@ fn new_model_from_home_opens_a_new_document() {
 fn bake_adds_the_baked_artboard_in_one_undo_step() {
     let mut h = DialogHarness::new(true);
     assert!(h.app.doc.editor.new_model("Model", (32, 32)));
-    let model = h.app.doc.editor.active;
     let before = h.app.doc.editor.document.artboards.len();
     h.app.bake = Some(crate::bake_dialog::BakeDialog::new(&h.app.doc.editor));
     h.settle();
@@ -487,7 +486,9 @@ fn bake_adds_the_baked_artboard_in_one_undo_step() {
     assert_eq!(baked.name, "Model · bake");
     assert!(baked.model.is_none(), "the bake is a normal artboard");
     assert_eq!(baked.sprite.frames.len(), 8, "8 angles by default");
-    assert_eq!(editor.active, model, "the model stays active");
+    let baked = baked.id;
+    assert_eq!(editor.active, baked, "the bake is shown on the canvas");
+    assert_eq!(editor.workspace(), None, "out of the model's tab");
     editor.undo();
     assert_eq!(editor.document.artboards.len(), before);
 }

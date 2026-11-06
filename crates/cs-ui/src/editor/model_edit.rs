@@ -1,6 +1,7 @@
-//! El modo Edit del artboard 3D (picoCAD): la selección (objetos, vértices, aristas o caras),
-//! las vistas ortográficas (centro y zoom compartidos), la cuadrícula y los gestos de mover y
-//! escalar. Durante un gesto solo cambia la vista previa; al terminar es un paso de undo.
+//! El modo Edit del modelo 3D (picoCAD), siempre prendido en su workspace: la selección
+//! (objetos, vértices, aristas o caras), las vistas ortográficas (centro y zoom compartidos), la
+//! cuadrícula y los gestos de mover y escalar. Durante un gesto solo cambia la vista previa; al
+//! terminar es un paso de undo.
 
 use cs_3d::{Handle, OrthoView, P3, SelectMode, Selection, ViewMap};
 use cs_core::{ArtboardId, Model3D};
@@ -67,35 +68,42 @@ pub enum EditOp {
     },
 }
 
-/// El estado del modo Edit (de la UI: no se guarda ni pasa por undo).
+/// El estado del modo Edit (de la UI: no se guarda ni pasa por undo). Es del modelo de
+/// `artboard`: al entrar al workspace de otro, empieza de cero.
 #[derive(Clone, Debug)]
 pub struct ModelEdit {
-    pub on: bool,
     pub artboard: Option<ArtboardId>,
     pub selection: Selection,
     pub grid: i32,
     pub center: P3,
-    /// Pixeles del artboard por 1/16 de unidad en las vistas ortográficas.
+    /// Puntos de pantalla por 1/16 de unidad en las vistas ortográficas.
     pub zoom: f32,
+    /// Encuadrar el modelo en las vistas en cuanto el lienzo conozca el área (al entrar al
+    /// workspace). Ver `fit_model_views`.
+    pub fit: bool,
     pub last_view: OrthoView,
     pub preview: Option<Model3D>,
     pub op: Option<EditOp>,
     pub key_request: Option<KeyOp>,
+    /// Lo que se presionó estando ya elegido: si el gesto de mover termina sin arrastre, queda
+    /// como la única selección.
+    pub click_item: Option<cs_3d::Item>,
 }
 
 impl Default for ModelEdit {
     fn default() -> Self {
         Self {
-            on: false,
             artboard: None,
             selection: Selection::default(),
             grid: DEFAULT_GRID,
             center: [0.0; 3],
             zoom: 1.0,
+            fit: false,
             last_view: OrthoView::Front,
             preview: None,
             op: None,
             key_request: None,
+            click_item: None,
         }
     }
 }
@@ -109,50 +117,32 @@ impl Editor {
         &self.model_edit
     }
 
-    /// Si el modo Edit está prendido en el artboard activo (y es un modelo).
+    /// Si el modo Edit está prendido: en el workspace de un modelo, siempre.
     pub fn model_edit_on(&self) -> bool {
-        self.model_edit.on && self.model_edit.artboard == Some(self.active) && self.is_model()
+        self.workspace == Some(self.active) && self.is_model()
     }
 
-    /// Prende o apaga el modo Edit. Al prenderlo en otro modelo, la selección empieza vacía;
-    /// siempre encuadra el modelo entero en las vistas.
-    pub fn toggle_model_edit(&mut self) {
-        if self.model_edit_on() {
-            self.model_edit.on = false;
-            self.model_edit.preview = None;
-            self.model_edit.op = None;
-            self.model_edit.key_request = None;
-        } else if self.is_model() {
-            if self.model_edit.artboard != Some(self.active) {
-                let mode = self.model_edit.selection.mode;
-                self.model_edit.selection = Selection {
-                    mode,
-                    items: Default::default(),
-                };
-            }
-            self.model_edit.on = true;
-            self.model_edit.artboard = Some(self.active);
-            self.fit_model_views();
-        }
-        self.revision += 1;
-    }
-
-    /// Centro y zoom para que el modelo entero quepa en un cuadrante (la mitad del artboard),
-    /// con aire.
-    fn fit_model_views(&mut self) {
+    /// Centro y zoom para que el modelo entero quepa, con aire, en un cuadrante de `side` puntos
+    /// de pantalla (el lado más corto). Ya no queda encuadre pendiente.
+    pub fn fit_model_views(&mut self, side: f32) {
+        self.model_edit.fit = false;
         let Some(b) = self.model().and_then(cs_3d::model_bounds) else {
             return;
         };
         let extent = (0..3).map(|i| b.1[i] - b.0[i]).fold(16.0_f32, f32::max);
-        let side = self.sprite().width.min(self.sprite().height) as f32 / 2.0;
         self.model_edit.center = cs_3d::center(b);
         self.model_edit.zoom = (0.8 * side / extent).clamp(ZOOM_MIN, ZOOM_MAX);
     }
 
     pub fn set_select_mode(&mut self, mode: SelectMode) {
+        let from = self.model_edit.selection.mode;
         let next = match self.model() {
-            Some(m) => self.model_edit.selection.converted(m, mode),
-            None => Selection {
+            // De Object a un subelemento se empieza vacío: convertir elegiría todo el objeto y
+            // arrastrar una arista movería el bloque entero.
+            Some(m) if from != SelectMode::Object || mode == SelectMode::Object => {
+                self.model_edit.selection.converted(m, mode)
+            }
+            _ => Selection {
                 mode,
                 items: Default::default(),
             },
@@ -188,6 +178,7 @@ impl Editor {
             self.model_edit.last_view = map.view;
         }
         self.model_edit.preview = None;
+        self.model_edit.click_item = None;
         self.model_edit.op = Some(op);
     }
 
@@ -298,6 +289,16 @@ impl Editor {
             }
             return;
         }
+        // Un clic (sin arrastre) en algo ya elegido lo deja como la única selección.
+        let click = self.model_edit.click_item.take();
+        if let (EditOp::Move { .. }, Some(item), None) = (op, click, &self.model_edit.preview) {
+            let mode = self.model_edit.selection.mode;
+            self.set_model_selection(Selection {
+                mode,
+                items: [item].into(),
+            });
+            return;
+        }
         let label = match op {
             EditOp::Move { .. } => "Move",
             _ => "Scale",
@@ -310,6 +311,7 @@ impl Editor {
     /// Cancela el gesto sin tocar el documento. `false` si no había ninguno.
     pub fn cancel_model_op(&mut self) -> bool {
         self.model_edit.key_request = None;
+        self.model_edit.click_item = None;
         let had = self.model_edit.op.take().is_some();
         self.model_edit.preview = None;
         had
@@ -365,10 +367,7 @@ impl Editor {
             .and_then(|a| a.model.as_ref());
         match model {
             Some(m) => edit.selection.retain_valid(m),
-            None => {
-                edit.on = false;
-                edit.selection.items.clear();
-            }
+            None => edit.selection.items.clear(),
         }
         edit.op = None;
         edit.preview = None;

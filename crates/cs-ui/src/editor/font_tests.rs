@@ -111,7 +111,9 @@ fn the_text_font_of_a_deleted_font_artboard_falls_back_to_the_pixel_font() {
         "Mine",
         "the name follows the font"
     );
-    e.remove_active_artboard();
+    // Las fuentes no están en el lienzo: se borran desde la Library.
+    assert!(e.execute_doc(cs_commands::DocCommand::RemoveArtboard { id }));
+    assert_eq!(e.workspace(), None);
     e.sync_text_font();
     assert_eq!(e.text_style.font, FontChoice::Pixel);
 }
@@ -147,7 +149,7 @@ fn a_glyph_pastes_only_into_a_font_of_its_color_mode_and_keeps_its_opacity() {
     assert!(e.paste_glyph());
     assert_eq!(e.sprite().cel(e.layer, e.frame).unwrap().opacity, 128);
     // En la de 1 bit: no.
-    e.activate(one_bit);
+    assert!(e.enter_workspace(one_bit));
     e.go_to_glyph('A');
     let before = e.document.clone();
     assert!(!e.paste_glyph());
@@ -163,7 +165,7 @@ fn the_text_tool_writes_with_the_ink_on_a_one_bit_font() {
     let colors = e.active;
     e.go_to_glyph('A');
     paint(&mut e, PixelValue::Rgba(cs_core::Rgba::rgb(255, 0, 0)));
-    e.activate(one_bit);
+    assert!(e.enter_workspace(one_bit));
     e.go_to_glyph('B');
     e.primary = PixelValue::Index(7);
     for font in [
@@ -306,4 +308,15 @@ fn the_text_tool_writes_with_a_document_font() {
         panic!("a draw command");
     };
     assert_eq!(pixels, vec![(2, 3, e.primary)]);
+}
+
+#[test]
+fn a_font_cannot_be_moved_to_the_library() {
+    let mut e = editor_with_font();
+    let font = e.active;
+    e.add_artboard(8, 8);
+    assert!(e.enter_workspace(font));
+    assert!(!e.can_move_active_to_library(), "the menu item is disabled");
+    assert!(!e.move_active_to_library());
+    assert!(!e.document.artboard(font).unwrap().in_library);
 }

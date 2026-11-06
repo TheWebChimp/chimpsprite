@@ -157,7 +157,7 @@ pub(crate) fn pixel_tab_bar(
     strip.scroll = false;
     let items: Vec<kit_tabs::TabItem> = tabs
         .iter()
-        .map(|t| kit_tabs::TabItem::closable(t.name.clone(), t.dirty))
+        .map(|t| kit_tabs::TabItem::closable(t.name.clone(), t.dirty).with_icon(t.icon))
         .collect();
     let event = kit_tabs::tab_strip(ui, skin, ui.id().with("doc_tabs"), strip, &items, active);
     let mut action = home(ui, skin, bar, strip.bottom()).then_some(TabAction::Home);
