@@ -837,6 +837,21 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                 e.model_edit.focus_uvs = true;
             }
         }
+        // Con CHIMPSPRITE_DEMO_GIF=<preset> (native, nintendo_ds, gameboy, pico-8): GIF
+        // settings abierto con ese preset, escala 2, fondo y scanlines.
+        if let Some(name) = dev_var("CHIMPSPRITE_DEMO_GIF") {
+            let mut gif = crate::gif_dialog::GifDialog::new(&app.doc.editor);
+            if let Some(preset) = cs_render::RenderPreset::ALL
+                .into_iter()
+                .find(|p| p.label() == name)
+            {
+                gif.options.preset = preset;
+            }
+            gif.options.scale = 2;
+            gif.options.background = Some(cs_core::Rgba::rgb(0x1d, 0x2b, 0x53));
+            gif.options.scanlines = Some(30);
+            app.gif = Some(gif);
+        }
     }
     // Desarrollo: el panel Library abierto, de vuelta en el lienzo (con _MODEL y _FONT, con un
     // modelo y una fuente en sus secciones), para capturas.
