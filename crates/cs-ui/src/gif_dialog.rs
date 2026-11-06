@@ -157,6 +157,7 @@ impl GifDialog {
         let shown_scale = preview_scale((w / scale, h / scale), scale);
         self.update_preview(ctx, doc, angle, shown_scale);
         let caption = format!("{w}×{h}, {frames} frames");
+        let anim_ms = self.anim_ms;
         let (o, format, preview) = (&mut self.options, &mut self.format, &self.preview);
         let buttons = ["Export", "Cancel"];
         let (result, open) = dialog_window_with(ctx, skin, "gif", "GIF settings", buttons, |ui| {
@@ -167,7 +168,7 @@ impl GifDialog {
                     fov_row(ui, skin, &mut o.bake);
                 });
                 ui.add_space(COLUMN_GAP);
-                ui.vertical(|ui| look_fields(ui, skin, o, format));
+                ui.vertical(|ui| look_fields(ui, skin, o, format, anim_ms));
                 ui.add_space(COLUMN_GAP);
                 ui.vertical(|ui| {
                     show_preview(ui, preview.as_ref());
@@ -247,8 +248,15 @@ fn color_check(
 }
 
 /// La columna del aspecto: Render, Scale, Outline, Scanlines, Background, Frame (ms), Loop y
-/// Format.
-fn look_fields(ui: &mut Ui, skin: Option<&Skin>, o: &mut TurntableOptions, format: &mut GifFormat) {
+/// Format. Con la animación (Motion), Frame (ms) es el de la animación (`anim_ms` repartidos
+/// entre los frames) y no se cambia.
+fn look_fields(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    o: &mut TurntableOptions,
+    format: &mut GifFormat,
+    anim_ms: u32,
+) {
     ui.spacing_mut().item_spacing.y = 6.0;
     row(ui, "Render", |ui| {
         widgets::combo(ui, "gif_render", o.preset.label(), |ui| {
@@ -288,14 +296,21 @@ fn look_fields(ui: &mut Ui, skin: Option<&Skin>, o: &mut TurntableOptions, forma
         Rgba::rgb(0, 0, 0),
     );
     row(ui, "Frame (ms)", |ui| {
-        number(
-            ui,
-            skin,
-            "gif_frame_ms",
-            &mut o.frame_ms,
-            TURNTABLE_FRAME_MS,
-            10,
-        )
+        if o.bake.motion.animates() {
+            let mut shown = o.frame_ms(anim_ms);
+            ui.add_enabled_ui(false, |ui| {
+                number(ui, skin, "gif_frame_ms", &mut shown, TURNTABLE_FRAME_MS, 10)
+            });
+        } else {
+            number(
+                ui,
+                skin,
+                "gif_frame_ms",
+                &mut o.frame_ms,
+                TURNTABLE_FRAME_MS,
+                10,
+            )
+        }
     });
     row(ui, "", |ui| check(ui, skin, &mut o.looping, "Loop"));
     row(ui, "Format", |ui| {
