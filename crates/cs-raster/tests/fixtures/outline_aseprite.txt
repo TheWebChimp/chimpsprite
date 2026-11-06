@@ -1,0 +1,1242 @@
+== outside_circle
+place=outside matrix=170 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+..kk...
+.k##k..
+.k###k.
+..k#k..
+...k...
+.......
+== outside_square
+place=outside matrix=495 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.kkkk..
+.k##kk.
+.k###k.
+.kk#kk.
+..kkk..
+.......
+== outside_horizontal
+place=outside matrix=40 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+.k##k..
+.k###k.
+..k#k..
+.......
+.......
+== outside_vertical
+place=outside matrix=130 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+..kk...
+..##k..
+..###..
+..k#k..
+...k...
+.......
+== outside_bit0
+place=outside matrix=1 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..##...
+..###..
+...#kk.
+....k..
+.......
+== outside_bit1
+place=outside matrix=2 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..##...
+..###..
+..k#k..
+...k...
+.......
+== outside_bit2
+place=outside matrix=4 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..##...
+.k###..
+.kk#...
+..k....
+.......
+== outside_bit3
+place=outside matrix=8 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..##k..
+..###k.
+...#k..
+.......
+.......
+== outside_bit4
+place=outside matrix=16 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+== outside_bit5
+place=outside matrix=32 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+.k##...
+.k###..
+..k#...
+.......
+.......
+== outside_bit6
+place=outside matrix=64 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+...kk..
+..##kk.
+..###..
+...#...
+.......
+.......
+== outside_bit7
+place=outside matrix=128 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+..kk...
+..##k..
+..###..
+...#...
+.......
+.......
+== outside_bit8
+place=outside matrix=256 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.kk....
+.k##...
+..###..
+...#...
+.......
+.......
+== inside_circle
+place=inside matrix=170 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..kk...
+..k#k..
+...k...
+.......
+.......
+== inside_square
+place=inside matrix=495 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..kk...
+..kkk..
+...k...
+.......
+.......
+== inside_horizontal
+place=inside matrix=40 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..kk...
+..k#k..
+...k...
+.......
+.......
+== inside_vertical
+place=inside matrix=130 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..kk...
+..k#k..
+...k...
+.......
+.......
+== inside_bit0
+place=inside matrix=1 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..kk...
+..k##..
+...#...
+.......
+.......
+== inside_bit1
+place=inside matrix=2 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..kk...
+..##k..
+...#...
+.......
+.......
+== inside_bit2
+place=inside matrix=4 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..kk...
+..#kk..
+...#...
+.......
+.......
+== inside_bit3
+place=inside matrix=8 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..k#...
+..k##..
+...k...
+.......
+.......
+== inside_bit4
+place=inside matrix=16 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+== inside_bit5
+place=inside matrix=32 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..#k...
+..##k..
+...k...
+.......
+.......
+== inside_bit6
+place=inside matrix=64 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..k#...
+..kk#..
+...k...
+.......
+.......
+== inside_bit7
+place=inside matrix=128 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..##...
+..k#k..
+...k...
+.......
+.......
+== inside_bit8
+place=inside matrix=256 tiled=none bg=none
+.......
+.......
+..##...
+..###..
+...#...
+.......
+.......
+--
+.......
+.......
+..##...
+..#kk..
+...k...
+.......
+.......
+== bg_outside_circle
+place=outside matrix=170 tiled=none bg=b
+bbbbbbb
+bbbbbbb
+bb##bbb
+bb#g#bb
+bbb#bbb
+bbbbbbb
+bbbbbbb
+--
+bbbbbbb
+bbkkbbb
+bk##kbb
+bk#g#kb
+bbk#kbb
+bbbkbbb
+bbbbbbb
+== bg_inside_square
+place=inside matrix=495 tiled=none bg=b
+bbbbbbb
+bbbbbbb
+bb##bbb
+bb#g#bb
+bbb#bbb
+bbbbbbb
+bbbbbbb
+--
+bbbbbbb
+bbbbbbb
+bbkkbbb
+bbkkkbb
+bbbkbbb
+bbbbbbb
+bbbbbbb
+== no_bg_outside_circle
+place=outside matrix=170 tiled=none bg=none
+bbbbbbb
+bbbbbbb
+bb##bbb
+bb#g#bb
+bbb#bbb
+bbbbbbb
+bbbbbbb
+--
+bbbbbbb
+bbbbbbb
+bb##bbb
+bb#g#bb
+bbb#bbb
+bbbbbbb
+bbbbbbb
+== edge_outside_circle
+place=outside matrix=170 tiled=none bg=none
+##....
+#.....
+......
+......
+.....#
+--
+##k...
+#k....
+k.....
+.....k
+....k#
+== edge_inside_square
+place=inside matrix=495 tiled=none bg=none
+##....
+#.....
+......
+......
+.....#
+--
+kk....
+k.....
+......
+......
+.....k
+== edge_outside_top_left_only
+place=outside matrix=1 tiled=none bg=none
+##....
+#.....
+......
+......
+.....#
+--
+##k...
+#kk...
+kk....
+......
+.....#
+== edge_outside_bottom_right_only
+place=outside matrix=256 tiled=none bg=none
+##....
+#.....
+......
+......
+.....#
+--
+##....
+#.....
+......
+....kk
+....k#
+== tiled_outside_circle
+place=outside matrix=170 tiled=both bg=none
+##....
+#.....
+......
+......
+.....#
+--
+##k..k
+#k...k
+k.....
+.....k
+kk..k#
+== tiled_x_outside_square
+place=outside matrix=495 tiled=x bg=none
+##....
+#.....
+......
+......
+.....#
+--
+##k..k
+#kk..k
+kk...k
+k...kk
+k...k#
+== tiled_y_outside_square
+place=outside matrix=495 tiled=y bg=none
+##....
+#.....
+......
+......
+.....#
+--
+##k.kk
+#kk...
+kk....
+....kk
+kkk.k#
+== full_inside_circle
+place=inside matrix=170 tiled=none bg=none
+####
+####
+####
+--
+####
+####
+####
+== full_inside_circle_tiled
+place=inside matrix=170 tiled=both bg=none
+####
+####
+####
+--
+####
+####
+####
+== random_1
+place=inside matrix=297 tiled=x bg=none
+#g...g#
+###.##.
+#......
+....#g#
+.b#.bg#
+gg.###.
+##...#g
+--
+#k...k#
+kkk.kk.
+k......
+....kkk
+.kk.kkk
+kk.kkk.
+kk...kg
+== random_2
+place=outside matrix=17 tiled=x bg=none
+b#.g.b.g#.g#
+...#.bgg..g#
+..bb#.#g###.
+..#.#gb#.b..
+.#......###g
+g.g.#bb#bb.b
+g..#bb#b#...
+##b.#g..##b.
+..#.b.#.....
+--
+b#kgkbkg#kg#
+kkk#kbggkkg#
+k.bb#.#g###k
+..#k#gb#kbkk
+.#.k.kkk###g
+g.g.#bb#bbkb
+gk.#bb#b#kk.
+##b.#gkk##b.
+.k#kbk#..kkk
+== random_3
+place=outside matrix=480 tiled=none bg=b
+...#...#
+..####..
+..b..#..
+#..bbb#.
+gb#.g.#.
+##g.#b..
+--
+.kk#kkk#
+.k####k.
+kkb.k#kk
+#kkkkk#k
+gk#kgk#.
+##gk#k..
+== random_4
+place=inside matrix=368 tiled=x bg=none
+#..g.bg....
+..b.g.#.g.#
+g.#gb#.#.#b
+#.##...g.#b
+#gg.g#.g..g
+#...#bb.#.#
+...g#..#.#.
+#..gbb#...b
+gb.b#..##b.
+--
+k..k.bk....
+..k.k.k.k.k
+k.kkkk.k.kb
+k.kk...k.kk
+kkk.kk.k..k
+k...kkk.k.k
+...kk..k.k.
+k..kkkk...b
+kk.kk..k#k.
+== random_5
+place=inside matrix=451 tiled=none bg=none
+..b###
+b..bgg
+#...b.
+.b.###
+.#g..#
+--
+..kk##
+k..kkk
+k...b.
+.k.kkk
+.kk..k
+== random_6
+place=outside matrix=510 tiled=y bg=b
+..#b#
+...gb
+..g.b
+.g#b.
+..#g#
+.#.#.
+--
+kk#k#
+.kkgk
+kkgkb
+kg#kk
+kk#g#
+k#k#k
+== random_7
+place=outside matrix=463 tiled=x bg=b
+.#b#.gg.#
+b...#..bb
+#..b##.#.
+.#b.##.g.
+....g.b.b
+--
+k#k#kggk#
+kkkk#kkkk
+#kkk##k#k
+k#kk##kgk
+kkkkgkkkk
+== random_8
+place=outside matrix=432 tiled=none bg=b
+#.##
+b...
+.#gb
+g#..
+..##
+--
+#k##
+kkk.
+k#gb
+g#kk
+.k##
+== random_9
+place=outside matrix=22 tiled=x bg=b
+b#.###.b.#
+.#.#g#..b.
+##.#..#b#g
+gg#.#g.b.#
+.g##.bg.b#
+--
+k#k###.bk#
+k#k#g#..kk
+##k#kk#b#g
+gg#k#gkkk#
+kg##kkg.k#
+== random_10
+place=inside matrix=407 tiled=y bg=b
+bbggbg..g...
+.####gbbg.g#
+#.g.b.#..#.b
+#.b#.g.gb.#g
+..b#..#ggb.#
+#.#..#g.g.bb
+#.##g##gbg.g
+....bbb.#gg.
+--
+bbkkbk..k...
+.kkkkkbbk.kk
+k.k.b.k..k.b
+k.bk.k.kb.kk
+..bk..kkkb.k
+k.k..kk.k.bb
+k.kkkkkkbk.k
+....bbb.kkk.
+== random_11
+place=inside matrix=491 tiled=y bg=none
+..g..b.#...#
+g#b.#..b#.g.
+.b..b##..#..
+g.#b....###g
+bg.#bg###.#.
+.#b.b.#g.g#g
+.#bg.###bg.g
+..b###b##g#g
+#.g.#gbb#..#
+##.#b#.g...b
+--
+..k..k.k...k
+kkk.k..kk.k.
+.k..kkk..k..
+k.kk....kkkk
+kk.kkkkkk.k.
+.kk.k.kk.kkk
+.kkk.kk#kk.k
+..kkkkb#kkkk
+k.k.kkkkk..k
+kk.kkk.k...k
+== random_12
+place=outside matrix=326 tiled=y bg=b
+g#...#..b#g#
+###g...b...g
+.#b#g.#.g#b#
+--
+g#kkk#kkk#g#
+###gkk.kkkkg
+k#k#g.#.g#k#
+== random_13
+place=inside matrix=344 tiled=both bg=none
+g#g..
+b#g.#
+..#.b
+--
+k#k..
+kkk.k
+..k.k
+== random_14
+place=inside matrix=61 tiled=both bg=b
+b.#.b..
+.#.b#g.
+#..#..#
+..g..gg
+#.b.#bg
+b#...##
+#.#b#.g
+.#...bg
+#.b#..g
+#bb#.g.
+--
+b.k.b..
+.k.bkk.
+k..k..k
+..k..kk
+k.b.kbk
+bk...kk
+k.kbk.k
+.k...bk
+k.bk..k
+kbbk.k.
+== random_15
+place=inside matrix=408 tiled=both bg=none
+##g.bb..#.#.
+gbg#.#.#b.g#
+.g.g#.#...bb
+b#b#g#...bg#
+#.##.#.....#
+........#bg.
+g#gg...g.bgg
+..bgg.#gbb##
+--
+k#g.kk..k.k.
+kkk#.k.kk.kk
+.k.k#.k...kb
+kkbkkk...kk#
+k.kk.k.....k
+........kbg.
+kkgg...k.kgk
+..kkg.kkkkkk
+== random_16
+place=outside matrix=169 tiled=both bg=b
+.g#...##
+bg#bg.b.
+..#.###.
+.##.g.##
+#b#..#..
+#g...#b#
+..gg.g#.
+--
+kg#kkk##
+kg#kgkkk
+.k#k###k
+k##kgk##
+#k#kk#kk
+#gkkk#k#
+kkggkg#k
+== random_17
+place=outside matrix=432 tiled=x bg=b
+..#.#b..
+#b.#.#.#
+.bggg.#g
+###b##..
+g.#bggg.
+#.#.#...
+.##.g#b#
+....##bb
+.##....g
+g#b.#bg#
+--
+kk#k#kkk
+#kk#k#k#
+kkgggk#g
+###k##kk
+gk#kgggk
+#k#k#kkk
+k##kg#k#
+kkkk##kk
+k##kkkkg
+g#bk#kg#
+== random_18
+place=inside matrix=105 tiled=x bg=b
+#.bg#g.
+#b#b.b.
+.#.b#g#
+--
+k.bkkk.
+kbkb.b.
+.k.bkkk
+== random_19
+place=inside matrix=200 tiled=y bg=b
+##.#b.gg.
+##b###.g.
+b.#.#...#
+##..g#b.g
+--
+##.kb.kk.
+kkbkkk.k.
+b.k.k...k
+##..kkb.k
+== random_20
+place=inside matrix=8 tiled=x bg=none
+.bb#..b.#..
+#.#.###..g.
+b#..##g#.b#
+.#g###.#b#b
+g.#..#bgg.g
+..gb#..#..b
+g.#...##g.#
+..##gb.#..b
+.#...#..#..
+--
+.kb#..k.k..
+k.k.k##..k.
+b#..k#g#.k#
+.kg###.kb#b
+g.k..kbgg.k
+..kb#..k..k
+g.k...k#g.k
+..k#gb.k..k
+.k...k..k..
+== random_21
+place=outside matrix=444 tiled=x bg=none
+##...g.b.
+g..#.#...
+b#b.##gg#
+...gb...#
+...#gb.#.
+.g.g#gb.b
+.#...b.b.
+.gb..#...
+g..#.#.b.
+b#...##.#
+--
+##kkkgkbk
+gkk#k#kkk
+b#bk##gg#
+kkkgbkkk#
+kkk#gbk#k
+kgkg#gbkb
+k#kkkbkbk
+kgbkk#kkk
+gkk#k#kbk
+b#k.k##k#
+== random_22
+place=inside matrix=172 tiled=y bg=b
+.##.#
+.###b
+##bbg
+.g#..
+#..g.
+g#b.#
+b#ggb
+.g..#
+gg..b
+--
+.kk.k
+.kkkb
+kkbbk
+.kk..
+k..k.
+kkb.k
+bkkkb
+.k..k
+kk..b
+== random_23
+place=outside matrix=377 tiled=none bg=none
+g#.b#..
+.b##b##
+g####g.
+#b.b#.g
+.#b....
+--
+g#kb#kk
+kb##b##
+g####gk
+#bkb#kg
+k#bkkk.
+== random_24
+place=inside matrix=238 tiled=y bg=b
+#b#.g.#.
+#.#.g.#b
+#...#bb.
+.#...g..
+...b.##.
+g....g.#
+##...gbb
+--
+kbk.k.k.
+k.k.k.kb
+k...kbb.
+.k...k..
+...b.kk.
+k....k.k
+kk...kbb
+== random_25
+place=inside matrix=333 tiled=y bg=none
+.b.g..
+.##b#.
+b#b.#b
+--
+.k.k..
+.kkkk.
+kkb.kk
+== random_26
+place=outside matrix=175 tiled=y bg=b
+.....b.
+.g.#b#b
+.gb#...
+.##..#.
+..###.g
+.#g.ggb
+--
+kkkkkkk
+kgk#k#k
+kgk#kkk
+k##kk#k
+kk###kg
+k#gkggk
+== random_27
+place=outside matrix=478 tiled=y bg=none
+.##b..g..#g#
+#.g...#b.###
+b#.....g#.#g
+#g.b#g.b.g.#
+bg.#.#g.#...
+#g...###g.b.
+g...#...g.g.
+..#bgg.g#bg.
+#bbg.b.g.bb.
+.#.gg.g.#gg.
+--
+k##bkkgkk#g#
+#kgk.k#bk###
+b#kkkkkg#k#g
+#gkb#gkbkgk#
+bgk#k#gk#kkk
+#gkkk###gkbk
+gkkk#kkkgkgk
+kk#bggkg#bgk
+#bbgkbkgkbbk
+k#kggkgk#ggk
+== random_28
+place=inside matrix=297 tiled=both bg=b
+b.###..b
+##b#b##.
+b#.#.g..
+#.#b.g..
+--
+b.kkk..b
+kkbkbkk.
+bk.k.k..
+k.kb.k..
+== random_29
+place=outside matrix=212 tiled=y bg=b
+##.b
+.g.#
+#..g
+.#..
+.#b.
+#.g.
+#.##
+--
+##kk
+kg.#
+#kkg
+.#kk
+k#kk
+#kgk
+#k##
+== random_30
+place=inside matrix=367 tiled=x bg=b
+...g.
+g#ggg
+b.bg#
+....g
+--
+...k.
+kkkkk
+b.bkk
+....k
+== random_31
+place=inside matrix=42 tiled=x bg=none
+.#.g.g##.#
+#.b...#..#
+#.#g.b##.#
+g.#.bg...g
+.#.###g.#g
+#.g#b.b..#
+.g.#g.gg..
+.b#.##g#g#
+.#.bb...g.
+--
+.k.k.k#k.k
+k.k...k..k
+k.kk.k#k.k
+k.k.kk...k
+.k.k##k.kk
+k.k#k.k..k
+.k.kk.kk..
+.kk.kkg#kk
+.k.kk...k.
+== random_32
+place=outside matrix=147 tiled=y bg=b
+b#.g###.#
+b.g##.b#.
+..b...b#.
+####.##g#
+...#b.gg.
+.#b....gb
+.gb#b..#.
+#..g.g.gg
+g#.##..bb
+.g.##g#..
+--
+b#kg###k#
+bkg##kk#k
+kkkkkkk#k
+####.##g#
+kkk#kkggk
+.#bkk.kgk
+kgk#bk.#k
+#kkgkg.gg
+g#.##kkkk
+kgk##g#.k
+== random_33
+place=outside matrix=216 tiled=both bg=b
+#b###
+..bg#
+#.gb.
+..#..
+b.b#.
+#..#g
+...b.
+--
+#k###
+kkkg#
+#kgk.
+..#kk
+kkb#k
+#k.#g
+kkkkk
+== random_34
+place=outside matrix=429 tiled=none bg=none
+g.b..
+..##.
+.....
+#g###
+##b##
+--
+gkbk.
+kk##k
+kkkkk
+#g###
+##b##
+== random_35
+place=inside matrix=488 tiled=x bg=b
+g##..#g#...g
+..#..g##g##.
+b#.##.gb#...
+.##bgb#g.##g
+--
+kkk..kgk...k
+..k..kkkkkk.
+bk.kk.kbk...
+.kkbkbkk.k#k
+== random_36
+place=outside matrix=87 tiled=y bg=b
+b.#g#
+b###b
+gg#.#
+..gb.
+--
+bk#g#
+k###k
+gg#k#
+kkgkk
+== random_37
+place=outside matrix=412 tiled=x bg=b
+#g.###g.
+g...gg.#
+b.......
+#.#g.##.
+--
+#gk###gk
+gkkkggk#
+kkkkkkkk
+#k#gk##k
+== random_38
+place=inside matrix=2 tiled=none bg=none
+.gbb.b###.
+.##bb#..b#
+g#.#g#..#b
+###b#.g..#
+..bgb....g
+.gg.#.#.#.
+###b.#b##.
+g#bgb#.gbb
+#.b..b#...
+b..#..##.b
+--
+.gbb.b###.
+.##bk#..bk
+k#.#g#..#b
+##kb#.k..#
+..bgb....g
+.kg.#.k.k.
+k##k.kbk#.
+g#bgk#.gbk
+#.b..bk...
+b..k..#k.k
+== random_39
+place=outside matrix=381 tiled=y bg=none
+.g...#..#.
+#ggg.#....
+#gb..gb..g
+gg##..#.#.
+.g#...b.g#
+--
+kgkkk#kk#k
+#gggk#kkkk
+#gbkkgbkkg
+gg##kk#k#k
+kg#kkkbkg#
+== random_40
+place=outside matrix=284 tiled=x bg=b
+.gbbb
+....g
+#...#
+.g#b#
+b.#.g
+--
+kgkkb
+k..kg
+#k.k#
+kg#k#
+kk#kg

@@ -8,6 +8,7 @@ mod fill;
 mod gradient;
 mod groom;
 mod line;
+mod outline;
 mod polygon;
 mod quantize;
 mod rect;
@@ -27,6 +28,10 @@ pub use groom::{
 pub use line::{
     BrushShape, brush_points, brush_square, custom_brush, custom_brush_version, line,
     pixel_perfect, set_custom_brush, stamp,
+};
+pub use outline::{
+    Channels, OutlineMatrix, OutlinePlace, OutlinePreset, OutlineShape, outline_mask,
+    paint_channels,
 };
 pub use polygon::{polygon_filled, polygon_filled_nonzero, polygon_filled_nonzero_in};
 pub use quantize::{median_cut, nearest};
