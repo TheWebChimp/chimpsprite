@@ -1,7 +1,8 @@
 //! El modo Texture del workspace de un modelo (como picoCAD 2): el área a la izquierda del panel
 //! se parte arriba/abajo. Arriba, el render del modelo (clic elige caras; orbitar, mover el
-//! objetivo y la rueda como en Persp) con el contorno amarillo de las caras elegidas. Abajo,
-//! su textura por el camino de siempre del lienzo (un solo artboard), con su propio zoom entero
+//! objetivo y la rueda como en Persp) con el contorno amarillo de las caras elegidas. Abajo, la
+//! fila de opciones de la herramienta (la barra de siempre: pincel, tinta, simetría…) y la
+//! textura por el camino de siempre del lienzo (un solo artboard), con su propio zoom entero
 //! y desplazamiento (`texture_view`): herramientas, cursor, cuadrícula de pixeles y atajos
 //! funcionan ahí.
 
@@ -32,17 +33,18 @@ impl CanvasView {
         dialog: Option<&mut CanvasSizeDialog>,
         view_settings: &ViewSettings,
     ) {
-        // Debajo del encabezado de ChimpCAD, la barrita del objeto (como en modo Model), la barra
-        // de opciones de la herramienta (para pintar la textura: el tamaño del pincel, la
-        // tinta…) y después las dos partes. Van aquí y no arriba de todo para que el encabezado
-        // no se mueva al cambiar de modo.
+        // Debajo del encabezado de ChimpCAD, la barrita del objeto (como en modo Model) y las
+        // dos partes: arriba el render, pegado a la barrita como en el mockup; abajo, la fila de
+        // opciones de la herramienta (para pintar la textura: el tamaño del pincel, la tinta…)
+        // encima de la textura, junto a lo que pinta. Van aquí y no arriba de todo para que el
+        // encabezado no se mueva al cambiar de modo.
         let (header, area) = header_split(rect);
         let skin = crate::pixel_ui::frame_skin(ui.ctx());
         let skin = skin.as_deref();
         let height = crate::panels::options_bar_height(skin);
         let (object_bar, area) = bar_split(area, height);
-        let (bar, area) = bar_split(area, height);
-        let (top, bottom) = texture_panes(area);
+        let (top, below) = texture_panes(area);
+        let (bar, bottom) = bar_split(below, height);
         self.edit_quads = None;
         self.texture_panes = Some((top, bottom));
         self.header_rect = Some(header);
