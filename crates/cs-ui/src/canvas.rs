@@ -1789,8 +1789,6 @@ impl CanvasView {
         })
     }
 
-    /// Guarda la vista del documento al entrar al modo símbolo o al workspace de una fuente y la
-    /// restaura al volver al lienzo.
     /// Recompone las texturas del contexto de Edit in Place si cambió el documento o la pila, o
     /// si se está pintando (las otras instancias del símbolo se ven en vivo). Fuera de Edit in
     /// Place las suelta.
@@ -1884,6 +1882,8 @@ impl CanvasView {
             .collect()
     }
 
+    /// Guarda la vista del documento al entrar al modo símbolo o al workspace de una fuente y la
+    /// restaura al volver al lienzo.
     fn sync_symbol_view(&mut self, editor: &Editor) {
         if editor.single_artboard() {
             self.symbol_return_view.get_or_insert((self.zoom, self.pan));
