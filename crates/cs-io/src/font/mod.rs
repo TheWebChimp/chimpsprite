@@ -1,6 +1,7 @@
 //! Las fuentes pixel hacia y desde otros formatos: TTF (con COLR para las de color), BMFont y el
 //! JSON de BitFontMaker2.
 
+pub mod bitfontmaker;
 pub mod bmfont;
 pub mod outline;
 pub mod ttf;
