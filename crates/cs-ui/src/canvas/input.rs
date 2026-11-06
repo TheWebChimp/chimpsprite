@@ -351,7 +351,13 @@ impl CanvasView {
                 if command && model_hover {
                     let steps = brush_wheel_steps(&mut self.wheel_rest, unit, dy);
                     if steps != 0 {
-                        Self::model_wheel(editor, steps);
+                        // En el modo Edit, sobre una vista orto la rueda hace zoom; sobre la
+                        // perspectiva, lo de siempre.
+                        if !(editor.model_edit_on()
+                            && self.model_edit_wheel(editor, pointer, steps))
+                        {
+                            Self::model_wheel(editor, steps);
+                        }
                     }
                     continue;
                 }
@@ -421,11 +427,21 @@ impl CanvasView {
         }
 
         // Pintura: estado crudo del puntero, para que un clic sin arrastre también cuente.
-        let (pressed_primary, pressed_secondary, any_down, pointer, modifiers) = ui.input(|i| {
+        let (
+            pressed_primary,
+            pressed_secondary,
+            pressed_middle,
+            any_down,
+            edit_down,
+            pointer,
+            modifiers,
+        ) = ui.input(|i| {
             (
                 i.pointer.button_pressed(egui::PointerButton::Primary),
                 i.pointer.button_pressed(egui::PointerButton::Secondary),
+                i.pointer.button_pressed(egui::PointerButton::Middle),
                 i.pointer.primary_down() || i.pointer.secondary_down(),
+                i.pointer.primary_down() || i.pointer.secondary_down() || i.pointer.middle_down(),
                 i.pointer.interact_pos(),
                 i.modifiers,
             )
@@ -561,22 +577,54 @@ impl CanvasView {
             && response.hovered()
             && !editor.is_painting()
             && (pressed_primary || pressed_secondary);
+        // En el modo Edit el botón central también arranca gestos (desplazar las vistas).
+        let can_press_model = can_press
+            || (pressed_middle
+                && editor.model_edit_on()
+                && !modal
+                && !cancelled
+                && !ruler_busy
+                && !over_note
+                && self.dragging_guide.is_none()
+                && !space_key
+                && !hand
+                && response.hovered()
+                && !editor.is_painting());
         // Sobre el área de pixeles del artboard 3D activo, los botones mueven la cámara o eligen
         // objetos: no llegan a las herramientas (ni al cuentagotas ni a los menús).
         // Con un arrastre del modelo en curso, el otro botón no llega a nada.
-        let model_busy = self.model_drag.is_some();
-        let model_press = can_press
+        let model_busy = self.model_drag.is_some() || editor.model_edit().op.is_some();
+        // Un gesto de teclado (G o S) espera un clic: confirma con el izquierdo, cancela con el
+        // derecho. Esos clics sí llegan al modo Edit (pero nunca a las herramientas).
+        let keyboard_op = matches!(
+            editor.model_edit().op,
+            Some(
+                crate::editor::EditOp::Move { keyboard: true, .. }
+                    | crate::editor::EditOp::Scale { .. }
+            )
+        );
+        let model_press = can_press_model
             && over_label.is_none()
-            && !model_busy
+            && (!model_busy || (keyboard_op && self.model_drag.is_none()))
             && pointer.is_some_and(|p| !over_crumbs(p) && self.over_model(rect, editor, p, ppp));
         if model_press && let Some(p) = pointer {
             // Los menús de una vez anterior no se abren con este clic.
             self.selection_menu = false;
             self.object_menu = false;
             self.slice_menu = false;
-            self.model_press(rect, editor, p, pressed_secondary, modifiers);
+            // El central es solo del modo Edit: si todavía no hay cuadrantes (el primer frame),
+            // no cae en `model_press` (ahí sería un clic izquierdo que elige).
+            if !(editor.model_edit_on()
+                && (self.model_edit_press(editor, p, pressed_secondary, pressed_middle, modifiers)
+                    || pressed_middle))
+            {
+                self.model_press(rect, editor, p, pressed_secondary, modifiers);
+            }
         }
         self.model_drag_input(editor, pointer, any_down);
+        if editor.model_edit_on() {
+            self.model_edit_input(editor, pointer, edit_down, modifiers);
+        }
         if can_press
             && !model_press
             && !model_busy

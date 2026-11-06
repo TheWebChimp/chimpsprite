@@ -2,9 +2,9 @@
 
 use std::collections::HashMap;
 
-use cs_core::{Camera3D, FIXED, Model3D, Object3D, Projection, Rgba, Vec3i};
+use cs_core::{Camera3D, FIXED, Model3D, Object3D, Projection, Rgba, ShadingTable, Vec3i};
 
-use crate::darker;
+use crate::shade;
 
 /// Una textura RGBA de `width`×`height` (fila por fila).
 #[derive(Clone, Copy, Debug)]
@@ -274,6 +274,7 @@ struct FaceCtx<'a> {
     steps: u8,
     texture: Option<&'a Texture<'a>>,
     palette: &'a [Rgba],
+    shading: &'a ShadingTable,
 }
 
 impl Raster {
@@ -325,7 +326,7 @@ impl Raster {
                 }
                 let color = *cache
                     .entry((texel, ctx.steps))
-                    .or_insert_with(|| (0..ctx.steps).fold(texel, |c, _| darker(ctx.palette, c)));
+                    .or_insert_with(|| shade(ctx.palette, ctx.shading, texel, ctx.steps as u32));
                 self.color[i] = color;
                 self.depth[i] = depth;
                 self.ids[i] = Some(ctx.id);
@@ -441,6 +442,7 @@ fn rasterize(input: &RenderInput) -> Raster {
                 steps,
                 texture,
                 palette: input.palette,
+                shading: &model.shading,
             };
             for i in 1..screen.len() - 1 {
                 r.triangle(&screen[0], &screen[i], &screen[i + 1], &ctx, &mut cache);
@@ -579,6 +581,25 @@ mod tests {
         assert_eq!(img[18 * 32 + 22], BLANCO);
         assert_eq!(img[18 * 32 + 10], OSCURO);
         assert_eq!(img[8 * 32 + 16], CLARO);
+    }
+
+    #[test]
+    fn tabla_de_shading_cambia_solo_su_paso() {
+        let mut m = model(vec![cube()]);
+        m.camera = CameraPreset::Iso.camera(2 * FIXED, Vec3i::default());
+        m.light = Light3D {
+            enabled: true,
+            yaw: 1000,
+            pitch: 200,
+        };
+        let antes = render_model(&input(&m, 32, &[BLANCO], 1));
+        m.shading.set(BLANCO, 1, Some(ROJO));
+        let despues = render_model(&input(&m, 32, &[BLANCO], 1));
+        // Cara de 1 paso (arriba): ahora roja. Caras de 0 y 2 pasos: igual.
+        assert_eq!(antes[8 * 32 + 16], CLARO);
+        assert_eq!(despues[8 * 32 + 16], ROJO);
+        assert_eq!(despues[18 * 32 + 22], BLANCO);
+        assert_eq!(despues[18 * 32 + 10], OSCURO);
     }
 
     fn plane_2x1() -> Mesh {

@@ -1,10 +1,12 @@
 //! Lo de los modelos 3D en el editor: crear uno, sus objetos, la cámara, la luz, el contorno y
-//! la textura. Cada cambio es un `SetModel` con el modelo entero (un paso de undo).
+//! la textura y la tabla de shading. Cada cambio es un `SetModel` con el modelo entero (un paso de undo).
 
 use cs_3d::{Primitive, primitive_mesh};
 use cs_commands::DocCommand;
 use cs_commands::model::texture_template;
-use cs_core::{Artboard, Camera3D, Light3D, Model3D, Object3D, Rgba, Transform3D};
+use cs_core::{
+    Artboard, ArtboardId, Camera3D, Light3D, Model3D, Object3D, Rgba, ShadingTable, Transform3D,
+};
 use cs_render::BakeOptions;
 
 use super::Editor;
@@ -47,6 +49,22 @@ impl Editor {
 
     pub fn select_model_object(&mut self, i: Option<usize>) {
         self.model_object = i;
+        // En el modo Edit, elegir un objeto (panel o perspectiva) lo elige en el modo actual
+        // (solo si el modelo en edición es el activo: la selección es de ese modelo).
+        if self.model_edit.artboard == Some(self.active)
+            && let Some(m) = self.model()
+        {
+            let mode = self.model_edit.selection.mode;
+            let picked = cs_3d::Selection {
+                mode: cs_3d::SelectMode::Object,
+                items: i
+                    .filter(|&i| i < m.objects.len())
+                    .map(cs_3d::Item::Object)
+                    .into_iter()
+                    .collect(),
+            };
+            self.model_edit.selection = picked.converted(m, mode);
+        }
         self.revision += 1;
     }
 
@@ -117,6 +135,11 @@ impl Editor {
         self.edit_model(|m| m.outline = o)
     }
 
+    /// La tabla de shading del modelo activo (las rampas de luz fijadas por color).
+    pub fn set_shading(&mut self, table: ShadingTable) -> bool {
+        self.edit_model(|m| m.shading = table)
+    }
+
     pub fn set_texture(&mut self, t: Option<cs_core::ArtboardId>) -> bool {
         self.edit_model(|m| m.texture = t)
     }
@@ -165,12 +188,18 @@ impl Editor {
     /// `"{modelo} · bake"`, a la derecha de todo: un solo paso de undo. El modelo sigue
     /// activo.
     pub fn bake(&mut self, options: BakeOptions) -> bool {
-        let Some((mut sprite, tags)) = cs_render::bake_model(&self.document, self.active, &options)
-        else {
+        self.bake_artboard(self.active, options)
+    }
+
+    /// Como [`Self::bake`], pero del modelo `id` aunque no sea el activo.
+    pub fn bake_artboard(&mut self, id: ArtboardId, options: BakeOptions) -> bool {
+        let Some((mut sprite, tags)) = cs_render::bake_model(&self.document, id, &options) else {
             return false;
         };
         sprite.tags = tags;
-        let model = self.artboard();
+        let Some(model) = self.document.artboard(id) else {
+            return false;
+        };
         // A la derecha de todo (como un modelo nuevo): los bakes seguidos no se pisan.
         let right = self.document.bounds().map_or(0, |(_, (x1, _))| x1);
         let position = (right + 16, model.position.1);
@@ -200,7 +229,7 @@ impl Editor {
         self.set_model(model)
     }
 
-    fn set_model(&mut self, model: Model3D) -> bool {
+    pub(super) fn set_model(&mut self, model: Model3D) -> bool {
         if self.model() == Some(&model) {
             return false;
         }

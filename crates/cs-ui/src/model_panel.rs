@@ -1,11 +1,15 @@
 //! El panel 3D del dock: el modelo 3D del artboard activo. Arriba, fijo, el título; abajo, con
 //! scroll, lo demás. Sin modelo, el botón New 3D Model…; con modelo, sus objetos: la lista (un
 //! clic elige), Add con las primitivas (y los lados de las redondas) y, del elegido, su posición,
-//! su rotación y su escala, Double sided y Delete.
+//! su rotación y su escala, Double sided y Delete; luego la textura, la cámara, la luz (con la
+//! cuadrícula Shading) y el contorno.
 
 use cs_3d::Primitive;
-use cs_core::{CameraPreset, Model3D, Object3D, Projection};
-use eframe::egui::{self, Align2, Rect, Sense, TextStyle, Ui, UiBuilder, pos2, vec2};
+use cs_core::{CameraPreset, Model3D, Object3D, Projection, Rgba, ShadingTable};
+use eframe::egui::{
+    self, Align2, Color32, Rect, Sense, Stroke, StrokeKind, TextStyle, Ui, UiBuilder, Vec2, pos2,
+    vec2,
+};
 
 use crate::dock::FLYOUT_MARGIN;
 use crate::editor::{Editor, wrap_angle};
@@ -31,6 +35,8 @@ const ROW_PAD: f32 = 4.0;
 /// El select Add y el stepper de los lados.
 const ADD_W: f32 = 90.0;
 const SIDES_W: f32 = 62.0;
+/// El select de la cuadrícula del modo Edit.
+const GRID_W: f32 = 56.0;
 /// Los lados de cilindros, conos y esferas.
 const MIN_SIDES: u32 = 3;
 const MAX_SIDES: u32 = 32;
@@ -56,6 +62,14 @@ const PAIR_GAP: f32 = 8.0;
 const POSITION_MAX: i32 = 256 * cs_core::FIXED;
 const ROTATION_MAX: i32 = 360;
 const SCALE_MAX: i32 = 1000;
+/// La cuadrícula Shading (y las muestras de su popup): casillas de 12 con líneas de 1
+/// compartidas, del color de las del mapa de FontForge, y hasta 16 columnas por bloque.
+const SHADE_CELL: f32 = 12.0;
+const SHADE_PITCH: f32 = SHADE_CELL + 1.0;
+const SHADE_COLUMNS: usize = 16;
+const SHADE_GRID: Color32 = Color32::from_rgb(136, 110, 106);
+/// El punto de una casilla fijada sobre un color claro.
+const PIN_DARK: Color32 = Color32::from_rgb(5, 4, 3);
 
 /// El estado del panel entre frames.
 pub struct ModelPanelState {
@@ -96,11 +110,21 @@ pub fn show(
         inner.x_range(),
         outer.top() + HEADER_LINE + pixel_ui::ETCHED_SIZE..=inner.bottom(),
     );
-    let area = egui::ScrollArea::vertical()
+    let mut area = egui::ScrollArea::vertical()
         .id_salt("model_panel_middle")
         .auto_shrink([false, false])
         .max_height(middle.height())
         .min_scrolled_height(middle.height());
+    // Recién abierto: arriba. egui guarda el desplazamiento del scroll (y lo persiste entre
+    // sesiones), así que sin esto el panel reabre donde se dejó, con Edit y los modos ocultos.
+    // Si el frame anterior no se dibujó el panel, es que estaba cerrado.
+    let shown_id = egui::Id::new("model_panel_last_pass");
+    let pass = ui.ctx().cumulative_pass_nr();
+    let last: Option<u64> = ui.data(|d| d.get_temp(shown_id));
+    if last.is_none_or(|last| last + 1 < pass) {
+        area = area.vertical_scroll_offset(0.0);
+    }
+    ui.data_mut(|d| d.insert_temp(shown_id, pass));
     let action = ui
         .scope_builder(UiBuilder::new().max_rect(middle), |ui| {
             pixel_ui::scroll(ui, area, |ui| {
@@ -147,6 +171,7 @@ fn body(
         1 => "1 object".to_owned(),
         n => format!("{n} objects"),
     };
+    edit_rows(ui, editor, skin);
     label_with_hint(ui, "Objects", &note);
     objects(ui, editor, skin);
     add_row(ui, editor, skin, state);
@@ -157,6 +182,65 @@ fn body(
     button(ui, skin, "Bake…")
         .clicked()
         .then_some(ModelAction::Bake)
+}
+
+/// El texto de una cuadrícula (en 1/16 de unidad).
+fn grid_label(g: i32) -> &'static str {
+    match g {
+        1 => "1/16",
+        2 => "1/8",
+        4 => "1/4",
+        8 => "1/2",
+        _ => "1",
+    }
+}
+
+/// Edit (Tab), los modos de selección y la cuadrícula del modo Edit (se ven aunque Edit esté
+/// apagado).
+fn edit_rows(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
+    let mut on = editor.model_edit_on();
+    check(ui, skin, &mut on, "Edit (Tab)");
+    if on != editor.model_edit_on() {
+        editor.toggle_model_edit();
+    }
+    let current = editor.model_edit().selection.mode;
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        for mode in cs_3d::SelectMode::ALL {
+            if radio(ui, skin, current == mode, mode.label()).clicked() {
+                picked = Some(mode);
+            }
+        }
+    });
+    if let Some(mode) = picked {
+        editor.set_select_mode(mode);
+    }
+    let grid = editor.model_edit().grid;
+    let mut chosen = None;
+    let mut list = |ui: &mut Ui| {
+        for g in crate::editor::GRIDS {
+            if ui.add(menus::choice(g == grid, grid_label(g))).clicked() {
+                chosen = Some(g);
+                ui.close();
+            }
+        }
+    };
+    ui.horizontal(|ui| {
+        ui.label("Grid");
+        match skin {
+            Some(skin) => {
+                kit::select::select(ui, skin, "model_grid", grid_label(grid), Some(GRID_W), list);
+            }
+            None => {
+                egui::ComboBox::from_id_salt("model_grid")
+                    .selected_text(grid_label(grid))
+                    .show_ui(ui, |ui| list(ui));
+            }
+        }
+    });
+    if let Some(g) = chosen {
+        editor.set_model_grid(g);
+    }
 }
 
 /// Un botón: el del kit (sin Pixel UI, el de texto).
@@ -560,6 +644,10 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     ui.add_enabled_ui(light.enabled, |ui| {
         angles(ui, skin, "light", (&mut light.yaw, &mut light.pitch));
     });
+    // Sin luz no hay sombras: la cuadrícula se ve pero no se edita.
+    let shading = ui
+        .add_enabled_ui(light.enabled, |ui| shading(ui, editor, skin))
+        .inner;
     let mut outline = next.outline.is_some();
     ui.horizontal(|ui| {
         check(ui, skin, &mut outline, "Outline");
@@ -577,5 +665,219 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
     if !ui.input(|input| input.pointer.any_down()) {
         editor.end_group_of(group.value());
+    }
+    // La tabla, aparte: cada clic en la cuadrícula es su propio paso de undo.
+    if let Some(table) = shading {
+        editor.set_shading(table);
+    }
+}
+
+/// El color de egui de un `Rgba`.
+fn color32(c: Rgba) -> Color32 {
+    Color32::from_rgba_unmultiplied(c.r, c.g, c.b, c.a)
+}
+
+/// El punto de una casilla fijada, de `PIN_DARK` sobre lo claro y blanco sobre lo oscuro.
+fn pin_color(c: Rgba) -> Color32 {
+    let luminance = 299 * c.r as u32 + 587 * c.g as u32 + 114 * c.b as u32;
+    if luminance > 128 * 1000 {
+        PIN_DARK
+    } else {
+        Color32::WHITE
+    }
+}
+
+/// Una casilla de la cuadrícula en la columna `col` y la fila `row` desde `origin`: sus líneas
+/// (compartidas con las vecinas) y lo de adentro.
+fn shade_cell(origin: egui::Pos2, col: usize, row: usize) -> (Rect, Rect) {
+    let at = origin + vec2(col as f32 * SHADE_PITCH, row as f32 * SHADE_PITCH);
+    let lines = Rect::from_min_size(at, Vec2::splat(SHADE_PITCH + 1.0));
+    (lines, lines.shrink(1.0))
+}
+
+/// Una columna de la cuadrícula Shading: un color opaco de la paleta (con su índice) o una
+/// entrada huérfana de la tabla (con su número entre las huérfanas), la de un color que ya no
+/// está entre los opacos de la paleta.
+#[derive(Clone, Copy)]
+enum ShadeColumn {
+    Palette(usize, Rgba),
+    Orphan(usize, Rgba),
+}
+
+/// "Shading" con Auto (vaciar la tabla) y la cuadrícula: por cada color opaco de la paleta del
+/// modelo una columna (en bloques de [`SHADE_COLUMNS`]) con el color y, debajo, sus pasos 1 y 2
+/// de luz. Un clic en un paso abre las muestras opacas de la paleta (elegir una lo fija); el
+/// derecho lo vuelve automático. Después, las entradas huérfanas (de colores que ya no están en la
+/// paleta, que igual cuentan en el render), tachadas en diagonal: el clic derecho en un paso lo
+/// quita y en el color quita la entrada. Devuelve la tabla nueva si el usuario la cambió.
+fn shading(ui: &mut Ui, editor: &Editor, skin: Option<&Skin>) -> Option<ShadingTable> {
+    let table = editor.model()?.shading.clone();
+    let palette = editor.sprite().palette.colors().to_vec();
+    let opaque: Vec<(usize, Rgba)> = palette
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, c)| c.a == 255)
+        .collect();
+    let columns: Vec<ShadeColumn> = opaque
+        .iter()
+        .map(|&(i, c)| ShadeColumn::Palette(i, c))
+        .chain(
+            table
+                .entries
+                .iter()
+                .filter(|e| !opaque.iter().any(|&(_, c)| c == e.color))
+                .enumerate()
+                .map(|(n, e)| ShadeColumn::Orphan(n, e.color)),
+        )
+        .collect();
+    let mut next = None;
+    ui.horizontal(|ui| {
+        label_with_hint(ui, "Shading", "");
+        let auto = ui.add_enabled_ui(!table.entries.is_empty(), |ui| button(ui, skin, "Auto"));
+        if auto.inner.clicked() {
+            next = Some(ShadingTable::default());
+        }
+    });
+    let enabled = ui.is_enabled();
+    for block in columns.chunks(SHADE_COLUMNS) {
+        let size = vec2(
+            SHADE_PITCH * block.len() as f32 + 1.0,
+            SHADE_PITCH * 3.0 + 1.0,
+        );
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let origin = rect.min.round();
+        let painter = ui.painter().clone();
+        for (col, &column) in block.iter().enumerate() {
+            let (color, orphan) = match column {
+                ShadeColumn::Palette(_, c) => (c, None),
+                ShadeColumn::Orphan(n, c) => (c, Some(n)),
+            };
+            for row in 0..3 {
+                let (lines, cell) = shade_cell(origin, col, row);
+                let shown = cs_3d::shade(&palette, &table, color, row as u32);
+                painter.rect_filled(lines, 0.0, SHADE_GRID);
+                painter.rect_filled(cell, 0.0, color32(shown));
+                if row == 0 {
+                    if let Some(n) = orphan {
+                        orphan_mark(&painter, cell, pin_color(shown));
+                        let id = ui.id().with(("shade_orphan", n));
+                        let response = ui.interact(cell, id, Sense::click());
+                        let label = format!("Shade orphan {n} color");
+                        response.widget_info(|| {
+                            egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label)
+                        });
+                        if response.secondary_clicked() {
+                            let mut t = table.clone();
+                            t.set(color, 1, None);
+                            t.set(color, 2, None);
+                            next = Some(t);
+                        }
+                    }
+                    continue;
+                }
+                let step = row;
+                let pinned = table.get(color, step).is_some();
+                if pinned {
+                    let dot = Rect::from_min_size(
+                        pos2(cell.right() - 2.0, cell.top() + 1.0),
+                        Vec2::splat(1.0),
+                    );
+                    painter.rect_filled(dot, 0.0, pin_color(shown));
+                }
+                let (id, label) = match column {
+                    ShadeColumn::Palette(i, _) => (
+                        ui.id().with(("shade", i, step)),
+                        format!("Shade {i} step {step}"),
+                    ),
+                    ShadeColumn::Orphan(n, _) => (
+                        ui.id().with(("shade_orphan", n, step)),
+                        format!("Shade orphan {n} step {step}"),
+                    ),
+                };
+                let response = ui.interact(cell, id, Sense::click());
+                response.widget_info(|| {
+                    egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label)
+                });
+                if response.secondary_clicked() && pinned {
+                    let mut t = table.clone();
+                    t.set(color, step, None);
+                    next = Some(t);
+                }
+                // Las huérfanas solo se quitan: su color ya no está en la paleta.
+                if orphan.is_some() {
+                    continue;
+                }
+                if let Some(pick) = swatches(skin, &response, cell, &opaque, shown) {
+                    let mut t = table.clone();
+                    t.set(color, step, Some(pick));
+                    next = Some(t);
+                }
+            }
+        }
+    }
+    next.filter(|t| *t != table)
+}
+
+/// La marca de una columna huérfana: una diagonal de 1 px sobre su color, de abajo a la izquierda
+/// a arriba a la derecha.
+fn orphan_mark(painter: &egui::Painter, cell: Rect, color: Color32) {
+    let n = cell.width().round() as i32;
+    for k in 0..n {
+        let at = pos2(cell.left() + k as f32, cell.bottom() - 1.0 - k as f32);
+        painter.rect_filled(Rect::from_min_size(at, Vec2::splat(1.0)), 0.0, color);
+    }
+}
+
+/// Las muestras de `colors` (los opacos de la paleta, con su índice) en un popup colgado de la
+/// casilla `anchor` (lo abre y lo cierra un clic en `response`), con `current` marcado: el color
+/// elegido, si hubo.
+fn swatches(
+    skin: Option<&Skin>,
+    response: &egui::Response,
+    anchor: Rect,
+    colors: &[(usize, Rgba)],
+    current: Rgba,
+) -> Option<Rgba> {
+    let content = |ui: &mut Ui| {
+        let columns = colors.len().clamp(1, SHADE_COLUMNS);
+        let rows = colors.len().div_ceil(SHADE_COLUMNS);
+        let size = vec2(
+            SHADE_PITCH * columns as f32 + 1.0,
+            SHADE_PITCH * rows as f32 + 1.0,
+        );
+        let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
+        let origin = rect.min.round();
+        let painter = ui.painter().clone();
+        let enabled = ui.is_enabled();
+        let mut picked = None;
+        for (slot, &(j, c)) in colors.iter().enumerate() {
+            let (lines, cell) = shade_cell(origin, slot % SHADE_COLUMNS, slot / SHADE_COLUMNS);
+            painter.rect_filled(lines, 0.0, SHADE_GRID);
+            painter.rect_filled(cell, 0.0, color32(c));
+            if c == current {
+                let stroke = Stroke::new(1.0, pin_color(c));
+                painter.rect_stroke(cell, 0.0, stroke, StrokeKind::Inside);
+            }
+            let swatch = ui.interact(cell, ui.id().with(("shade_swatch", j)), Sense::click());
+            let label = format!("Shade color {j}");
+            swatch.widget_info(|| {
+                egui::WidgetInfo::selected(egui::WidgetType::Button, enabled, c == current, &label)
+            });
+            if swatch.clicked() {
+                picked = Some(c);
+                ui.close();
+            }
+        }
+        picked
+    };
+    match skin {
+        Some(skin) => {
+            let look = menus::MenuLook::new(skin, anchor.top());
+            menus::dropdown(&look, response, anchor, content).flatten()
+        }
+        None => egui::Popup::menu(response)
+            .show(content)
+            .and_then(|i| i.inner),
     }
 }

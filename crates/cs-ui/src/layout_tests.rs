@@ -3952,6 +3952,156 @@ fn with_a_model_at_800() -> LayoutHarness {
     h
 }
 
+fn tap_key(h: &mut LayoutHarness, key: egui::Key) {
+    for pressed in [true, false] {
+        h.frame_with(vec![Event::Key {
+            key,
+            physical_key: None,
+            pressed,
+            repeat: false,
+            modifiers: Default::default(),
+        }]);
+    }
+    h.frame();
+}
+
+#[test]
+fn tab_on_a_model_enters_edit_mode_with_four_views() {
+    let mut h = with_a_model_at_800();
+    let pixels = artboard_pixels(&h);
+    let timeline = h.app.view.timeline;
+    tap_key(&mut h, egui::Key::Tab);
+    assert!(h.app.doc.editor.model_edit_on());
+    assert_eq!(
+        h.app.view.timeline, timeline,
+        "Tab did not toggle the timeline"
+    );
+    let quads = h
+        .app
+        .doc
+        .canvas
+        .model_edit_quadrants()
+        .expect("the quadrants");
+    assert_eq!(quads[0].min, pixels.min);
+    assert_eq!(quads[3].max, pixels.max);
+    assert_eq!(quads[0].width(), pixels.width() / 2.0);
+    for label in ["Front", "Top", "Side", "Persp"] {
+        assert!(h.texts.iter().any(|(t, _)| t == label), "{label}");
+    }
+    tap_key(&mut h, egui::Key::Tab);
+    assert!(!h.app.doc.editor.model_edit_on());
+    assert!(h.app.doc.canvas.model_edit_quadrants().is_none());
+}
+
+fn editing_model() -> LayoutHarness {
+    let mut h = with_a_model_at_800();
+    tap_key(&mut h, egui::Key::Tab);
+    assert!(h.app.doc.editor.model_edit_on());
+    h
+}
+
+fn front_screen(h: &LayoutHarness, w: cs_3d::P3) -> Pos2 {
+    let map = h
+        .app
+        .doc
+        .canvas
+        .edit_view_map(&h.app.doc.editor, cs_3d::OrthoView::Front)
+        .expect("front view");
+    let (x, y) = map.to_screen(w);
+    Pos2::new(x, y)
+}
+
+fn drag_with(h: &mut LayoutHarness, from: Pos2, to: Pos2, modifiers: egui::Modifiers) {
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers,
+    };
+    h.frame_with(vec![Event::PointerMoved(from)]);
+    h.frame_with(vec![button(from, true)]);
+    h.frame_with(vec![Event::PointerMoved(from.lerp(to, 0.5))]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.frame_with(vec![button(to, false)]);
+    h.frame();
+}
+
+#[test]
+fn clicking_a_vertex_in_front_selects_it_and_shift_click_toggles() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    let corner = front_screen(&h, [16.0, 16.0, 16.0]);
+    h.click(corner, PointerButton::Primary);
+    assert_eq!(
+        h.app.doc.editor.model_edit().selection.items,
+        [cs_3d::Item::Vertex(0, 7)].into()
+    );
+    let other = front_screen(&h, [-16.0, -16.0, 16.0]);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)]);
+    drag_with(&mut h, other, other, egui::Modifiers::SHIFT);
+    assert_eq!(h.app.doc.editor.model_edit().selection.items.len(), 2);
+}
+
+#[test]
+fn dragging_a_vertex_in_front_moves_it_in_one_undo_step() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    let from = front_screen(&h, [16.0, 16.0, 16.0]);
+    let to = front_screen(&h, [24.0, 16.0, 16.0]);
+    drag_with(&mut h, from, to, Default::default());
+    let v = h.app.doc.editor.model().unwrap().objects[0].mesh.vertices[7];
+    assert_eq!((v.x, v.y, v.z), (24, 16, 16));
+    h.app.doc.editor.undo();
+    let v = h.app.doc.editor.model().unwrap().objects[0].mesh.vertices[7];
+    assert_eq!(v.x, 16);
+}
+
+#[test]
+fn a_box_in_an_empty_spot_selects_the_vertices_inside() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    let corner = front_screen(&h, [16.0, 16.0, 16.0]);
+    drag_with(
+        &mut h,
+        corner + vec2(8.0, -8.0),
+        corner + vec2(-8.0, 8.0),
+        Default::default(),
+    );
+    assert_eq!(
+        h.app.doc.editor.model_edit().selection.items,
+        [cs_3d::Item::Vertex(0, 3), cs_3d::Item::Vertex(0, 7)].into()
+    );
+}
+
+#[test]
+fn right_drag_pans_the_ortho_views_and_ctrl_wheel_zooms_them() {
+    let mut h = editing_model();
+    let center = h.app.doc.editor.model_edit().center;
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    let at = quads[0].center();
+    let button = |pos, pressed| Event::PointerButton {
+        pos,
+        button: PointerButton::Secondary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    h.frame_with(vec![button(at, true)]);
+    h.frame_with(vec![Event::PointerMoved(at + vec2(20.0, 0.0))]);
+    h.frame_with(vec![button(at + vec2(20.0, 0.0), false)]);
+    h.frame();
+    assert!(h.app.doc.editor.model_edit().center[0] < center[0]);
+    let zoom = h.app.doc.editor.model_edit().zoom;
+    h.frame_with(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Line,
+        delta: vec2(0.0, 1.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: egui::Modifiers::COMMAND,
+    }]);
+    h.frame();
+    assert!(h.app.doc.editor.model_edit().zoom > zoom);
+}
+
 fn camera(h: &LayoutHarness) -> cs_core::Camera3D {
     h.app.doc.editor.model().expect("a model").camera
 }
@@ -3965,6 +4115,16 @@ fn a_model_artboard_has_the_teal_bar() {
     assert_eq!(bar.right(), pixels.right() + 2.0);
     assert_eq!(bar.bottom(), pixels.top() - 1.0);
     assert!(h.drawn("title.bar.font").iter().all(|r| !r.intersects(bar)));
+}
+
+#[test]
+fn a_model_artboard_keeps_its_teal_bar_in_edit_mode() {
+    let mut h = with_a_model_at_800();
+    let before = union(&h.drawn("title.bar.model")).expect("the model bar");
+    tap_key(&mut h, egui::Key::Tab);
+    assert!(h.app.doc.editor.model_edit_on());
+    let bar = union(&h.drawn("title.bar.model")).expect("the model bar in Edit");
+    assert_eq!(bar, before);
 }
 
 #[test]
@@ -4226,6 +4386,103 @@ fn the_position_x_stepper_moves_the_object_in_one_step() {
     assert_eq!(x(&h), 0);
 }
 
+/// Lo que se ve de los textos "3D" y "Edit (Tab)" en el panel recién abierto.
+fn panel_top_texts(h: &LayoutHarness) -> (Vec<Rect>, Rect) {
+    let find = |t: &str| -> Vec<Rect> {
+        h.text_rects
+            .iter()
+            .filter(|(s, _, _)| s == t)
+            .map(|(_, r, _)| *r)
+            .collect()
+    };
+    (
+        find("3D"),
+        find("Edit (Tab)").first().copied().unwrap_or(Rect::NOTHING),
+    )
+}
+
+#[test]
+fn the_3d_panel_opens_at_the_top_with_edit_visible() {
+    for h in [model_panel_open(true), model_panel_tall()] {
+        let (titles, edit) = panel_top_texts(&h);
+        // El "3D" del título del panel: el que queda a la izquierda de sus filas (los otros son
+        // el botón del dock y el de la barra).
+        let title = titles
+            .iter()
+            .filter(|t| t.left() < edit.left() && t.top() < edit.top())
+            .max_by(|a, b| a.left().total_cmp(&b.left()))
+            .copied()
+            .expect("the panel title");
+        assert!(edit.top() >= title.bottom(), "{edit:?} bajo {title:?}");
+    }
+}
+
+#[test]
+fn reopening_the_3d_panel_starts_at_the_top_even_if_it_was_scrolled() {
+    // Una ventana baja: el panel no cabe y se desplaza.
+    let mut h = model_panel_in(Vec2::new(1200.0, 500.0));
+    let (_, top) = panel_top_texts(&h);
+    let over = top.center();
+    h.frame_with(vec![Event::PointerMoved(over)]);
+    h.frame_with(vec![Event::MouseWheel {
+        unit: egui::MouseWheelUnit::Point,
+        delta: vec2(0.0, -120.0),
+        phase: egui::TouchPhase::Move,
+        modifiers: Default::default(),
+    }]);
+    for _ in 0..10 {
+        h.frame();
+    }
+    let (_, scrolled) = panel_top_texts(&h);
+    // Desplazado, "Edit (Tab)" sale de la vista (no se dibuja) o queda más arriba.
+    assert!(
+        scrolled == Rect::NOTHING || scrolled.top() < top.top() - 20.0,
+        "el panel no se desplazó"
+    );
+    // Cerrar y volver a abrir (el botón 3D del dock).
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    h.frame();
+    h.click(h.button("3D").center(), PointerButton::Primary);
+    for _ in 0..3 {
+        h.frame();
+    }
+    let (_, reopened) = panel_top_texts(&h);
+    assert_eq!(reopened.top(), top.top());
+}
+
+#[test]
+fn the_3d_panel_has_edit_the_modes_and_the_grid() {
+    let mut h = model_panel_open(true);
+    let text = |h: &LayoutHarness, t: &str| {
+        h.text_rects
+            .iter()
+            .find(|(s, _, _)| s == t)
+            .map(|(_, r, _)| *r)
+            .unwrap_or_else(|| panic!("no text {t:?}"))
+    };
+    for t in [
+        "Edit (Tab)",
+        "Object",
+        "Vertex",
+        "Edge",
+        "Face",
+        "Grid",
+        "1/4",
+    ] {
+        text(&h, t);
+    }
+    h.click(text(&h, "Edit (Tab)").center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.model_edit_on());
+    h.click(text(&h, "Vertex").center(), PointerButton::Primary);
+    assert_eq!(
+        h.app.doc.editor.model_edit().selection.mode,
+        cs_3d::SelectMode::Vertex
+    );
+    h.click(text(&h, "1/4").center(), PointerButton::Primary);
+    h.click(text(&h, "1/2").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.model_edit().grid, 8);
+}
+
 #[test]
 fn delete_in_the_model_panel_removes_the_object() {
     let mut h = model_panel_open(true);
@@ -4460,4 +4717,530 @@ fn values_outside_the_panel_ranges_are_not_rewritten_by_drawing_the_panel() {
     }
     assert_eq!(h.app.doc.editor.model().unwrap(), &model);
     assert_eq!(h.app.doc.editor.history.done_count(), steps);
+}
+
+// --- El panel 3D: la cuadrícula Shading ---
+
+/// El color de la paleta del modelo con índice `i`.
+fn model_palette(h: &LayoutHarness, i: usize) -> Rgba {
+    h.app.doc.editor.sprite().palette.colors()[i]
+}
+
+#[test]
+fn picking_a_shade_pins_the_step_in_one_undo_step_and_changes_the_render() {
+    let mut h = model_panel_tall();
+    // El 6 es el color del cubo en la plantilla de la textura.
+    let (cube, red) = (model_palette(&h, 6), model_palette(&h, 27));
+    let before = model_pixels(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(node(&h, "Shade 6 step 1").center(), PointerButton::Primary);
+    h.click(node(&h, "Shade color 27").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    assert_eq!(editor.model().unwrap().shading.get(cube, 1), Some(red));
+    assert_eq!(editor.history.done_count(), steps + 1);
+    assert_ne!(model_pixels(&h), before);
+    // El popup se cerró.
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Shade color 27"));
+    h.app.doc.editor.undo();
+    assert_eq!(h.app.doc.editor.model().unwrap().shading.get(cube, 1), None);
+}
+
+#[test]
+fn a_right_click_on_a_shade_step_returns_it_to_auto() {
+    let mut h = model_panel_tall();
+    let (cube, red) = (model_palette(&h, 6), model_palette(&h, 27));
+    h.click(node(&h, "Shade 6 step 2").center(), PointerButton::Primary);
+    h.click(node(&h, "Shade color 27").center(), PointerButton::Primary);
+    assert_eq!(
+        h.app.doc.editor.model().unwrap().shading.get(cube, 2),
+        Some(red)
+    );
+    h.click(
+        node(&h, "Shade 6 step 2").center(),
+        PointerButton::Secondary,
+    );
+    let shading = &h.app.doc.editor.model().unwrap().shading;
+    assert_eq!(shading, &cs_core::ShadingTable::default());
+}
+
+#[test]
+fn auto_empties_the_shading_table() {
+    let mut h = model_panel_tall();
+    assert!(
+        h.disabled.iter().any(|l| l == "Auto"),
+        "Auto with an empty table"
+    );
+    let mut table = cs_core::ShadingTable::default();
+    table.set(model_palette(&h, 6), 1, Some(model_palette(&h, 27)));
+    table.set(model_palette(&h, 9), 2, Some(model_palette(&h, 0)));
+    assert!(h.app.doc.editor.set_shading(table));
+    h.frame();
+    h.frame();
+    assert!(!h.disabled.iter().any(|l| l == "Auto"));
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(h.button("Auto").center(), PointerButton::Primary);
+    let editor = &h.app.doc.editor;
+    assert_eq!(
+        editor.model().unwrap().shading,
+        cs_core::ShadingTable::default()
+    );
+    assert_eq!(editor.history.done_count(), steps + 1);
+}
+
+/// Cambia la paleta del modelo (el artboard activo) sin pasar por el historial.
+fn set_model_palette(h: &mut LayoutHarness, colors: Vec<Rgba>) {
+    let editor = &mut h.app.doc.editor;
+    let id = editor.active;
+    editor.document.artboard_mut(id).unwrap().sprite.palette = cs_core::Palette::new(colors);
+    h.frame();
+    h.frame();
+}
+
+#[test]
+fn entries_of_colors_outside_the_palette_show_as_orphan_columns() {
+    let mut h = model_panel_tall();
+    let gone = Rgba::new(1, 2, 3, 255);
+    let mut table = cs_core::ShadingTable::default();
+    table.set(gone, 1, Some(model_palette(&h, 27)));
+    table.set(gone, 2, Some(model_palette(&h, 0)));
+    // Un color de la paleta que deja de ser opaco también queda huérfano.
+    let mut colors = h.app.doc.editor.sprite().palette.colors().to_vec();
+    let faded = colors[9];
+    colors[9].a = 0;
+    table.set(faded, 1, Some(model_palette(&h, 6)));
+    assert!(h.app.doc.editor.set_shading(table));
+    set_model_palette(&mut h, colors);
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
+        .expect("the 3D panel is open");
+    // Ordenadas como la tabla: (1, 2, 3) antes que el 9 de la paleta.
+    let first = node(&h, "Shade orphan 0 color");
+    let second = node(&h, "Shade orphan 1 color");
+    for label in [
+        "Shade orphan 0 step 1",
+        "Shade orphan 0 step 2",
+        "Shade orphan 1 step 1",
+    ] {
+        assert!(flyout.contains_rect(node(&h, label)), "{label}");
+    }
+    assert!(flyout.contains_rect(first) && flyout.contains_rect(second));
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Shade 9 step 1"));
+    // Después de las columnas de la paleta.
+    let n = h.app.doc.editor.sprite().palette.len();
+    let last = node(&h, &format!("Shade {} step 1", n - 1));
+    let orphan = node(&h, "Shade orphan 0 step 1");
+    assert!(
+        orphan.min.y > last.min.y || (orphan.min.y == last.min.y && orphan.min.x > last.min.x),
+        "{orphan:?} after {last:?}"
+    );
+    // Clic derecho en un paso lo quita; en el color, la entrada entera.
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(
+        node(&h, "Shade orphan 0 step 2").center(),
+        PointerButton::Secondary,
+    );
+    let shading = &h.app.doc.editor.model().unwrap().shading;
+    assert_eq!(shading.get(gone, 2), None);
+    assert_eq!(shading.get(gone, 1), Some(model_palette(&h, 27)));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.click(
+        node(&h, "Shade orphan 1 color").center(),
+        PointerButton::Secondary,
+    );
+    let shading = &h.app.doc.editor.model().unwrap().shading;
+    assert_eq!(shading.get(faded, 1), None);
+    assert_eq!(shading.entries.len(), 1);
+    h.click(
+        node(&h, "Shade orphan 0 step 1").center(),
+        PointerButton::Secondary,
+    );
+    let shading = &h.app.doc.editor.model().unwrap().shading;
+    assert_eq!(shading, &cs_core::ShadingTable::default());
+    h.frame();
+    assert!(!h.nodes.iter().any(|(l, _)| l.starts_with("Shade orphan")));
+}
+
+#[test]
+fn the_shade_popup_offers_only_opaque_colors() {
+    let mut h = model_panel_tall();
+    let mut colors = h.app.doc.editor.sprite().palette.colors().to_vec();
+    colors[27].a = 0;
+    set_model_palette(&mut h, colors);
+    h.click(node(&h, "Shade 6 step 1").center(), PointerButton::Primary);
+    assert!(h.nodes.iter().any(|(l, _)| l == "Shade color 26"));
+    assert!(!h.nodes.iter().any(|(l, _)| l == "Shade color 27"));
+}
+
+#[test]
+fn the_shading_grid_is_disabled_with_the_light_off() {
+    let mut h = model_panel_tall();
+    assert!(!h.disabled.iter().any(|l| l == "Shade 6 step 1"));
+    let mut model = h.app.doc.editor.model().unwrap().clone();
+    model.light.enabled = false;
+    assert!(
+        h.app
+            .doc
+            .editor
+            .set_model_grouped(model, egui::Id::new("script"))
+    );
+    h.app.doc.editor.end_group();
+    h.frame();
+    h.frame();
+    assert!(h.disabled.iter().any(|l| l == "Shade 6 step 1"));
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(node(&h, "Shade 6 step 1").center(), PointerButton::Primary);
+    assert!(
+        !h.nodes.iter().any(|(l, _)| l == "Shade color 27"),
+        "no popup"
+    );
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+}
+
+#[test]
+fn every_shade_cell_is_inside_the_flyout() {
+    let h = model_panel_tall();
+    let flyout = h
+        .ctx
+        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "3D"))))
+        .expect("the 3D panel is open");
+    let palette = h.app.doc.editor.sprite().palette.colors().to_vec();
+    let mut count = 0;
+    for (i, c) in palette.iter().enumerate().filter(|(_, c)| c.a == 255) {
+        for k in 1..=2 {
+            let r = node(&h, &format!("Shade {i} step {k}"));
+            assert!(
+                flyout.contains_rect(r),
+                "{i} {k} {r:?} vs {flyout:?} ({c:?})"
+            );
+            count += 1;
+        }
+    }
+    assert_eq!(count, 2 * palette.len());
+}
+
+/// Un modelo en modo Edit con el objeto elegido, el puntero sobre Front y una G pedida.
+fn grabbing_with_the_keyboard() -> (LayoutHarness, Pos2) {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Object);
+    let c = front_screen(&h, [0.0, 0.0, 0.0]);
+    h.click(c, PointerButton::Primary);
+    assert!(!h.app.doc.editor.model_edit().selection.items.is_empty());
+    h.frame_with(vec![Event::PointerMoved(c)]);
+    h.app
+        .doc
+        .editor
+        .request_model_key_op(crate::editor::KeyOp::Grab);
+    h.frame();
+    assert!(h.app.doc.editor.model_edit().op.is_some(), "grab started");
+    let to = c + vec2(60.0, 0.0);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    (h, to)
+}
+
+fn mesh_x(h: &LayoutHarness) -> Vec<f32> {
+    let m = h.app.doc.editor.model().unwrap();
+    cs_3d::world_points(&m.objects[0])
+        .iter()
+        .map(|p| p[0])
+        .collect()
+}
+
+#[test]
+fn a_left_click_commits_a_keyboard_grab_in_one_undo_step() {
+    let (mut h, to) = grabbing_with_the_keyboard();
+    let before = mesh_x(&h);
+    h.click(to, PointerButton::Primary);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_ne!(mesh_x(&h), before, "moved");
+    h.app.doc.editor.undo();
+    assert_eq!(mesh_x(&h), before, "one undo step");
+}
+
+#[test]
+fn a_right_click_cancels_a_keyboard_grab() {
+    let (mut h, to) = grabbing_with_the_keyboard();
+    let before = mesh_x(&h);
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(to, PointerButton::Secondary);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(mesh_x(&h), before);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+}
+
+#[test]
+fn a_left_click_in_the_perspective_still_commits_a_keyboard_grab() {
+    let (mut h, _) = grabbing_with_the_keyboard();
+    let selection = h.app.doc.editor.model_edit().selection.clone();
+    let steps = h.app.doc.editor.history.done_count();
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    h.click(quads[1].center(), PointerButton::Primary);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert_eq!(h.app.doc.editor.model_edit().selection, selection);
+}
+
+#[test]
+fn number_keys_switch_the_selection_mode() {
+    let mut h = editing_model();
+    for (key, mode) in [
+        (egui::Key::Num2, cs_3d::SelectMode::Vertex),
+        (egui::Key::Num3, cs_3d::SelectMode::Edge),
+        (egui::Key::Num4, cs_3d::SelectMode::Face),
+        (egui::Key::Num1, cs_3d::SelectMode::Object),
+    ] {
+        tap_key(&mut h, key);
+        assert_eq!(h.app.doc.editor.model_edit().selection.mode, mode);
+    }
+}
+
+#[test]
+fn a_corner_handle_scales_both_axes_of_the_view() {
+    let mut h = editing_model();
+    // El cubo elegido en modo Objeto: su caja es ±16.
+    h.app.doc.editor.select_model_object(Some(0));
+    h.frame();
+    let from = front_screen(&h, [16.0, 16.0, 0.0]);
+    let to = front_screen(&h, [48.0, 48.0, 0.0]);
+    drag_with(&mut h, from, to, Default::default());
+    let t = h.app.doc.editor.model().unwrap().objects[0].transform;
+    assert_eq!((t.scale.x, t.scale.y, t.scale.z), (2000, 2000, 1000));
+}
+
+#[test]
+fn s_follows_the_pointer_and_escape_cancels_without_an_undo_step() {
+    let mut h = editing_model();
+    h.app.doc.editor.select_model_object(Some(0));
+    let start = front_screen(&h, [8.0, 0.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(start)]);
+    let steps = h.app.doc.editor.history.done_count();
+    tap_key(&mut h, egui::Key::S);
+    h.frame_with(vec![Event::PointerMoved(start + vec2(20.0, 0.0))]);
+    h.frame();
+    assert!(h.app.doc.editor.edit_model_shown().unwrap() != h.app.doc.editor.model().unwrap());
+    tap_key(&mut h, egui::Key::Escape);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    assert_eq!(
+        h.app.doc.editor.model().unwrap().objects[0]
+            .transform
+            .scale
+            .x,
+        1000
+    );
+}
+
+#[test]
+fn escape_without_a_gesture_clears_the_selection() {
+    let mut h = editing_model();
+    h.app.doc.editor.select_model_object(Some(0));
+    tap_key(&mut h, egui::Key::Escape);
+    assert!(h.app.doc.editor.model_edit().selection.is_empty());
+}
+
+#[test]
+fn g_then_a_click_moves_and_arrows_nudge_by_the_grid() {
+    let mut h = editing_model();
+    h.app.doc.editor.select_model_object(Some(0));
+    let start = front_screen(&h, [0.0, 0.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(start)]);
+    tap_key(&mut h, egui::Key::G);
+    let to = front_screen(&h, [8.0, 0.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.click(to, PointerButton::Primary);
+    let x = |h: &LayoutHarness| {
+        h.app.doc.editor.model().unwrap().objects[0]
+            .transform
+            .position
+            .x
+    };
+    assert_eq!(x(&h), 8);
+    let steps = h.app.doc.editor.history.done_count();
+    tap_key(&mut h, egui::Key::ArrowRight);
+    assert_eq!(x(&h), 12);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn a_click_on_an_off_grid_vertex_changes_nothing() {
+    let mut h = editing_model();
+    assert!(
+        h.app
+            .doc
+            .editor
+            .add_primitive(cs_3d::Primitive::Cylinder { sides: 8 })
+    );
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    h.frame();
+    // Un vértice del cilindro fuera de la cuadrícula (x = ±11), el más cercano a la vista.
+    let points = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[1]);
+    let w = points
+        .iter()
+        .copied()
+        .filter(|p| p[0].rem_euclid(4.0) != 0.0)
+        .max_by(|a, b| a[2].total_cmp(&b[2]))
+        .expect("an off-grid vertex");
+    let model = h.app.doc.editor.model().cloned();
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(front_screen(&h, w), PointerButton::Primary);
+    let sel = &h.app.doc.editor.model_edit().selection;
+    assert!(
+        !sel.is_empty()
+            && sel
+                .items
+                .iter()
+                .all(|i| matches!(i, cs_3d::Item::Vertex(1, _))),
+        "the cylinder vertex got selected: {sel:?}"
+    );
+    assert_eq!(h.app.doc.editor.model().cloned(), model, "nothing moved");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps, "no undo step");
+}
+
+#[test]
+fn s_with_the_pointer_on_the_center_uses_a_fixed_reference() {
+    let mut h = editing_model();
+    h.app.doc.editor.select_model_object(Some(0));
+    let c = front_screen(&h, [0.0, 0.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(c)]);
+    tap_key(&mut h, egui::Key::S);
+    let scale_x = |h: &LayoutHarness| {
+        h.app.doc.editor.edit_model_shown().unwrap().objects[0]
+            .transform
+            .scale
+            .x
+    };
+    h.frame_with(vec![Event::PointerMoved(c + vec2(24.0, 0.0))]);
+    assert_eq!(scale_x(&h), 1000, "24 points away is the reference");
+    h.frame_with(vec![Event::PointerMoved(c + vec2(48.0, 0.0))]);
+    assert_eq!(scale_x(&h), 2000);
+    tap_key(&mut h, egui::Key::Escape);
+}
+
+#[test]
+fn edit_gestures_do_not_recompose_the_artboards() {
+    let mut h = editing_model();
+    h.frame();
+    let composed = h.app.doc.canvas.composed_count();
+    let quads = h.app.doc.canvas.model_edit_quadrants().unwrap();
+    let at = quads[0].center();
+    let button = |pos, button, pressed| Event::PointerButton {
+        pos,
+        button,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    h.frame_with(vec![button(at, PointerButton::Secondary, true)]);
+    for dx in [5.0, 10.0, 20.0] {
+        h.frame_with(vec![Event::PointerMoved(at + vec2(dx, 0.0))]);
+    }
+    h.frame_with(vec![button(
+        at + vec2(20.0, 0.0),
+        PointerButton::Secondary,
+        false,
+    )]);
+    h.frame();
+    // Una caja en un lugar vacío (cambia la selección, no el documento).
+    let corner = quads[0].left_top() + vec2(4.0, 12.0);
+    drag_with(
+        &mut h,
+        corner,
+        corner + vec2(10.0, 10.0),
+        Default::default(),
+    );
+    assert_eq!(
+        h.app.doc.canvas.composed_count(),
+        composed,
+        "panning and a box only redraw the views"
+    );
+}
+
+#[test]
+fn shift_on_a_corner_handle_scales_proportionally() {
+    let mut h = editing_model();
+    h.app.doc.editor.select_model_object(Some(0));
+    h.frame();
+    let from = front_screen(&h, [16.0, 16.0, 0.0]);
+    let to = front_screen(&h, [48.0, 32.0, 0.0]);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::SHIFT)]);
+    drag_with(&mut h, from, to, egui::Modifiers::SHIFT);
+    h.frame_with(vec![Event::ModifiersChanged(egui::Modifiers::NONE)]);
+    let t = h.app.doc.editor.model().unwrap().objects[0].transform;
+    assert_eq!((t.scale.x, t.scale.y, t.scale.z), (2000, 2000, 1000));
+    assert_eq!(
+        h.app.doc.editor.model_edit().selection.items,
+        [cs_3d::Item::Object(0)].into(),
+        "Shift on the handle did not toggle the selection"
+    );
+}
+
+#[test]
+fn dragging_a_selected_extreme_vertex_moves_instead_of_scaling() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Vertex);
+    h.app.doc.editor.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Vertex,
+        items: [
+            cs_3d::Item::Vertex(0, 0),
+            cs_3d::Item::Vertex(0, 3),
+            cs_3d::Item::Vertex(0, 7),
+        ]
+        .into(),
+    });
+    h.frame();
+    let vertex = |h: &LayoutHarness, v: usize| {
+        let m = h.app.doc.editor.model().unwrap();
+        cs_3d::world_points(&m.objects[0])[v]
+    };
+    let v0 = vertex(&h, 0);
+    // El vértice 7 cae justo en el asa de la esquina de arriba a la derecha.
+    let from = front_screen(&h, [16.0, 16.0, 16.0]);
+    let to = front_screen(&h, [24.0, 16.0, 16.0]);
+    drag_with(&mut h, from, to, Default::default());
+    assert_eq!(vertex(&h, 7), [24.0, 16.0, 16.0]);
+    assert_eq!(vertex(&h, 0)[0], v0[0] + 8.0, "everything selected moved");
+    assert_eq!(h.app.doc.editor.model_edit().selection.items.len(), 3);
+}
+
+#[test]
+fn a_middle_press_on_the_first_edit_frame_does_not_pick() {
+    let mut h = with_a_model_at_800();
+    h.app.doc.editor.select_model_object(None);
+    let at = artboard_pixels(&h).center();
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    // El modo Edit se prende sin un frame de por medio: todavía no hay cuadrantes.
+    h.app.doc.editor.toggle_model_edit();
+    let button = |pressed| Event::PointerButton {
+        pos: at,
+        button: PointerButton::Middle,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame_with(vec![button(true)]);
+    h.frame_with(vec![button(false)]);
+    h.frame();
+    assert_eq!(
+        h.app.doc.editor.selected_object(),
+        None,
+        "the cube got picked"
+    );
+}
+
+#[test]
+fn a_straight_selected_edge_drags_from_its_midpoint() {
+    let mut h = editing_model();
+    h.app.doc.editor.set_select_mode(cs_3d::SelectMode::Edge);
+    // La arista de arriba al frente (vértices 6 y 7): en Front su caja no tiene alto.
+    h.app.doc.editor.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Edge,
+        items: [cs_3d::Item::Edge(0, 6, 7)].into(),
+    });
+    h.frame();
+    let steps = h.app.doc.editor.history.done_count();
+    let from = front_screen(&h, [0.0, 16.0, 16.0]);
+    let to = front_screen(&h, [0.0, 24.0, 16.0]);
+    drag_with(&mut h, from, to, Default::default());
+    let points = cs_3d::world_points(&h.app.doc.editor.model().unwrap().objects[0]);
+    assert_eq!(points[6], [-16.0, 24.0, 16.0]);
+    assert_eq!(points[7], [16.0, 24.0, 16.0]);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
 }

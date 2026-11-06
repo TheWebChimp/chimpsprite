@@ -203,6 +203,8 @@ pub struct ChimpApp {
     /// `paste_timeline`, si no los píxeles.
     timeline_clipboard: Option<timeline_clip::TimelineClip>,
     paste_timeline: bool,
+    /// Soltar el foco de egui al empezar el siguiente frame (tras un Tab del modo Edit).
+    drop_focus: bool,
     palettes: palette_library::PaletteLibrary,
     presets_window: Option<palette_ui::PresetsWindow>,
     /// El panel Lospec del dock (mientras está abierto).
@@ -339,6 +341,7 @@ impl ChimpApp {
             clipboard: None,
             timeline_clipboard: None,
             paste_timeline: false,
+            drop_focus: false,
             palettes,
             presets_window: None,
             lospec_dock: None,
@@ -817,21 +820,30 @@ impl ChimpApp {
         }
     }
 
-    /// Bake…: al aceptar, hornea el modelo activo (si sigue siéndolo) en un artboard nuevo.
+    /// Bake…: al aceptar, hornea el modelo con el que se abrió (aunque ya no sea el activo; si
+    /// ya no existe como modelo, el diálogo se cierra) en un artboard nuevo.
     fn update_bake_dialog(&mut self, ctx: &egui::Context) {
-        if !self.has_doc() || !self.doc.editor.is_model() {
+        let still_model = self.has_doc()
+            && self.bake.as_ref().is_none_or(|d| {
+                self.doc
+                    .editor
+                    .document
+                    .artboard(d.model())
+                    .is_some_and(|a| a.model.is_some())
+            });
+        if !still_model {
             self.bake = None;
             return;
         }
         let Some(dialog) = &mut self.bake else {
             return;
         };
-        match dialog.show(ctx, self.pixel.skin()) {
+        match dialog.show(ctx, self.pixel.skin(), &self.doc.editor.document) {
             tilemap_dialog::DialogResult::Open => {}
             tilemap_dialog::DialogResult::Accept => {
-                let options = dialog.chosen();
+                let (model, options) = (dialog.model(), dialog.chosen());
                 self.bake = None;
-                self.doc.editor.bake(options);
+                self.doc.editor.bake_artboard(model, options);
             }
             tilemap_dialog::DialogResult::Cancel => self.bake = None,
         }
@@ -1676,6 +1688,62 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
     // Con un modelo 3D activo, G, R y S eligen qué hacen las flechas y las flechas actúan sobre
     // el objeto elegido (no cambian de frame ni de capa).
     if editor.is_model() {
+        // Tab entra y sale del modo Edit (en un modelo no muestra la línea de tiempo).
+        if key == Key::Tab && !shift {
+            editor.toggle_model_edit();
+            return true;
+        }
+        // En el modo Edit: 1–4 cambian qué se elige, G y S arrancan un gesto que sigue al
+        // puntero, Enter lo confirma, Esc lo cancela (o vacía la selección) y las flechas
+        // mueven un paso de cuadrícula.
+        if editor.model_edit_on() {
+            use cs_3d::SelectMode;
+            let mode = match key {
+                _ if shift => None,
+                Key::Num1 => Some(SelectMode::Object),
+                Key::Num2 => Some(SelectMode::Vertex),
+                Key::Num3 => Some(SelectMode::Edge),
+                Key::Num4 => Some(SelectMode::Face),
+                _ => None,
+            };
+            if let Some(mode) = mode {
+                editor.set_select_mode(mode);
+                return true;
+            }
+            let busy = editor.model_edit().op.is_some();
+            let mut handled = true;
+            match key {
+                Key::G if !shift => editor.request_model_key_op(editor::KeyOp::Grab),
+                Key::S if !shift => editor.request_model_key_op(editor::KeyOp::Scale),
+                Key::Enter if busy => editor.finish_model_op(),
+                Key::Escape if busy => {
+                    editor.cancel_model_op();
+                }
+                Key::Escape => {
+                    let mode = editor.model_edit().selection.mode;
+                    editor.set_model_selection(cs_3d::Selection {
+                        mode,
+                        items: Default::default(),
+                    });
+                }
+                Key::ArrowLeft => {
+                    editor.nudge_model_selection(-1, 0);
+                }
+                Key::ArrowRight => {
+                    editor.nudge_model_selection(1, 0);
+                }
+                Key::ArrowUp => {
+                    editor.nudge_model_selection(0, -1);
+                }
+                Key::ArrowDown => {
+                    editor.nudge_model_selection(0, 1);
+                }
+                _ => handled = false,
+            }
+            if handled {
+                return true;
+            }
+        }
         let arrow = match key {
             Key::ArrowLeft => Some((-1, 0)),
             Key::ArrowRight => Some((1, 0)),
