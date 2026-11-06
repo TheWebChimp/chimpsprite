@@ -507,10 +507,13 @@ impl CanvasView {
         )
     }
 
-    /// Ajusta el zoom a todo el lienzo (en el modo símbolo, al símbolo; en el workspace de una
-    /// fuente, al glifo).
+    /// Ajusta el zoom a todo el lienzo (en el modo símbolo, al símbolo, o editándolo en su lugar,
+    /// a lo que lo rodea; en el workspace de una fuente, al glifo).
     fn fit(&mut self, rect: Rect, editor: &Editor) {
-        let bounds = if editor.single_artboard() {
+        let bounds = if editor.editing_in_place() {
+            // En su lugar, toda la escena alrededor (el símbolo está adentro).
+            editor.in_place_bounds()
+        } else if editor.single_artboard() {
             Some(editor.artboard().rect())
         } else {
             editor.document.bounds()

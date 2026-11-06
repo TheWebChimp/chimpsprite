@@ -38,10 +38,13 @@ fn entering_in_place_shows_the_symbol_where_its_instance_is() {
     assert!(e.in_symbol_mode() && e.editing_in_place());
     assert_eq!(position(&e, s), (102, 52), "host + key position");
     assert_eq!(e.symbol_breadcrumb(), vec!["Scene".to_string(), "S".into()]);
+    // "Fit" abarca la escena de alrededor.
+    assert_eq!(e.in_place_bounds(), Some(((100, 50), (108, 58))));
     // Salir devuelve la posición de la biblioteca y el host.
     e.exit_symbol_to(0);
     assert!(!e.in_symbol_mode());
     assert_eq!((e.active, position(&e, s)), (host, home));
+    assert_eq!(e.in_place_bounds(), None);
 }
 
 #[test]

@@ -253,6 +253,22 @@ impl Editor {
         self.symbol_stack.last().is_some_and(|l| l.place.is_some())
     }
 
+    /// Lo que abarca la escena alrededor del símbolo que se edita en su lugar (para "Fit"): todo
+    /// el lienzo si la cadena de niveles en su lugar empieza en el documento; si no, el símbolo
+    /// aislado de abajo. `None` si no se edita en su lugar.
+    pub fn in_place_bounds(&self) -> Option<((i32, i32), (i32, i32))> {
+        if !self.editing_in_place() {
+            return None;
+        }
+        match self.symbol_stack.iter().rposition(|l| l.place.is_none()) {
+            None => self.document.bounds(),
+            Some(i) => self
+                .document
+                .artboard(self.symbol_stack[i].id)
+                .map(|a| a.rect()),
+        }
+    }
+
     /// Lo que se ve atenuado alrededor del símbolo que se edita en su lugar, a partir de
     /// `document` (el que muestra el lienzo): lo que se veía donde empieza la cadena de niveles en
     /// su lugar (los artboards del lienzo, o el símbolo aislado de abajo), en una copia donde la

@@ -516,7 +516,7 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         if let Ok(symbol) =
             editor.convert_to_symbol(&name, cs_commands::symbol::SymbolTiming::Graphic)
         {
-            if mode != "objects" {
+            if mode != "objects" && mode != "inplace" {
                 dock::set_open(ctx, Some(dock::DockPanel::Library));
             }
             // Con =objects, dos sombreros más en la misma capa, la capa desplegada en el
