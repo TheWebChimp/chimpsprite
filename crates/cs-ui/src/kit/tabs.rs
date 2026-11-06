@@ -87,6 +87,26 @@ pub enum TabMark {
     Dirty,
 }
 
+/// Qué hace el × de una pestaña: cerrarla (lo de siempre) o borrar lo que representa.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum CloseVerb {
+    #[default]
+    Close,
+    /// Hoy solo en los tests de la tira (las pestañas de objeto pasaron al outliner).
+    #[cfg_attr(not(test), allow(dead_code))]
+    Delete,
+}
+
+impl CloseVerb {
+    /// El verbo en el tooltip y la etiqueta accesible del ×.
+    pub fn label(self) -> &'static str {
+        match self {
+            CloseVerb::Close => "Close",
+            CloseVerb::Delete => "Delete",
+        }
+    }
+}
+
 /// Una pestaña: su nombre, el cuadrito de color (si tiene) y su marca.
 #[derive(Clone, Debug)]
 pub struct TabItem {
@@ -94,8 +114,8 @@ pub struct TabItem {
     pub color: Option<Color32>,
     pub mark: TabMark,
     pub icon: TabIcon,
-    /// El verbo del × (su tooltip y su etiqueta accesible): "Close" salvo que cerrar sea otra cosa.
-    pub close_label: &'static str,
+    /// Qué hace el × (su tooltip y su etiqueta accesible): cerrar salvo que sea otra cosa.
+    pub close: CloseVerb,
 }
 
 impl TabItem {
@@ -105,18 +125,15 @@ impl TabItem {
             color: None,
             mark: TabMark::None,
             icon: TabIcon::None,
-            close_label: "Close",
+            close: CloseVerb::Close,
         }
     }
 
-    /// Otro verbo para el ×, cuando cerrar la pestaña borra lo que representa ("Delete"; hoy
-    /// solo en los tests de la tira).
+    /// Otro verbo para el ×, cuando cerrar la pestaña borra lo que representa (hoy solo en los
+    /// tests de la tira).
     #[cfg_attr(not(test), allow(dead_code))]
-    pub fn with_close_label(self, close_label: &'static str) -> Self {
-        TabItem {
-            close_label,
-            ..self
-        }
+    pub fn with_close(self, close: CloseVerb) -> Self {
+        TabItem { close, ..self }
     }
 
     /// El ícono de vista antes del nombre.
@@ -616,7 +633,7 @@ pub fn tab_strip(
         // La marca va después de la pestaña: gana el clic. Si la pestaña es más angosta que
         // su marco, no hay marca ni zona de clic (le robarían el clic a la vecina).
         let close = (item.mark != TabMark::None && rect.width() >= chrome(item)).then(|| {
-            let label = format!("{} {}", item.close_label, item.label);
+            let label = format!("{} {}", item.close.label(), item.label);
             let close = ui
                 .interact(
                     mark_rect(rect).expand(MARK_HIT),
@@ -624,7 +641,7 @@ pub fn tab_strip(
                     Sense::click(),
                 )
                 .on_hover_cursor(CursorIcon::PointingHand)
-                .tip(item.close_label);
+                .tip(item.close.label());
             close.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &label));
             close
         });
@@ -643,9 +660,9 @@ pub fn tab_strip(
         };
         shapes.extend(tab_shapes(ui, skin, rect, &shown_item, &p.name, look));
         let closed = close.is_some_and(|c| c.clicked())
-            // El clic del medio solo cierra si cerrar es "Close": quitar un objeto no se hace sin querer.
+            // El clic del medio solo cierra si el × cierra: quitar un objeto no se hace sin querer.
             || (item.mark != TabMark::None
-                && item.close_label == "Close"
+                && item.close == CloseVerb::Close
                 && response.middle_clicked());
         if closed {
             event = Some(TabEvent::Close(p.index));
