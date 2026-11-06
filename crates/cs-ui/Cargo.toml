@@ -53,3 +53,7 @@ web-sys = { version = "0.3", features = [
     "HtmlAudioElement",
     "HtmlMediaElement",
 ] }
+
+[dev-dependencies]
+# Para decodificar los GIF de GIF settings en los tests (la misma versión que usa cs-io).
+gif = "0.14"

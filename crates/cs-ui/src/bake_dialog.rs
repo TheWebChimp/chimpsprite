@@ -137,12 +137,31 @@ fn spins(frames: u32) -> bool {
 
 /// Los campos, en columna: etiqueta y stepper (o casilla, o radios).
 fn fields(ui: &mut Ui, skin: Option<&Skin>, o: &mut BakeOptions, animated: bool) {
+    camera_fields(ui, skin, o, true);
+    if animated {
+        row(ui, "", |ui| {
+            check(ui, skin, &mut o.animate_texture, "Animate texture")
+        });
+    }
+    row(ui, "Output", |ui| {
+        ui.vertical(|ui| {
+            widgets::radio_value(ui, &mut o.output, BakeOutput::Frames, "Frames");
+            widgets::radio_value(ui, &mut o.output, BakeOutput::Spritesheet, "Spritesheet");
+        });
+    });
+}
+
+/// Los campos de la cámara (los comparte GIF settings): Frames, Size (deshabilitado sin `size`),
+/// Zoom, Tilt, Height y Ortho.
+pub(crate) fn camera_fields(ui: &mut Ui, skin: Option<&Skin>, o: &mut BakeOptions, size: bool) {
     ui.spacing_mut().item_spacing.y = 6.0;
     row(ui, "Frames", |ui| {
         number(ui, skin, "bake_frames", &mut o.frames, BAKE_FRAMES, 1)
     });
     row(ui, "Size (px)", |ui| {
-        number(ui, skin, "bake_size", &mut o.size, BAKE_SIZE, 1)
+        ui.add_enabled_ui(size, |ui| {
+            number(ui, skin, "bake_size", &mut o.size, BAKE_SIZE, 1)
+        });
     });
     row(ui, "Zoom (%)", |ui| {
         number(ui, skin, "bake_zoom", &mut o.zoom, ZOOM, 10)
@@ -162,21 +181,10 @@ fn fields(ui: &mut Ui, skin: Option<&Skin>, o: &mut BakeOptions, animated: bool)
         number(ui, skin, "bake_height", &mut o.height, HEIGHT, 1)
     });
     row(ui, "", |ui| check(ui, skin, &mut o.ortho, "Ortho"));
-    if animated {
-        row(ui, "", |ui| {
-            check(ui, skin, &mut o.animate_texture, "Animate texture")
-        });
-    }
-    row(ui, "Output", |ui| {
-        ui.vertical(|ui| {
-            widgets::radio_value(ui, &mut o.output, BakeOutput::Frames, "Frames");
-            widgets::radio_value(ui, &mut o.output, BakeOutput::Spritesheet, "Spritesheet");
-        });
-    });
 }
 
 /// Una fila: la etiqueta en una columna de [`LABEL_W`] y lo que agregue `add`.
-fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
+pub(crate) fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
     ui.horizontal(|ui| {
         ui.allocate_ui_with_layout(
             vec2(LABEL_W, kit::stepper::HEIGHT),
@@ -191,7 +199,7 @@ fn row(ui: &mut Ui, label: &str, add: impl FnOnce(&mut Ui)) {
 }
 
 /// El stepper del kit (sin Pixel UI, el campo de egui).
-fn number<N: egui::emath::Numeric>(
+pub(crate) fn number<N: egui::emath::Numeric>(
     ui: &mut Ui,
     skin: Option<&Skin>,
     salt: &str,
@@ -199,9 +207,22 @@ fn number<N: egui::emath::Numeric>(
     range: RangeInclusive<N>,
     step: N,
 ) {
+    number_sized(ui, skin, STEPPER_W, salt, value, range, step);
+}
+
+/// [`number`] de `width` (con Pixel UI).
+pub(crate) fn number_sized<N: egui::emath::Numeric>(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    width: f32,
+    salt: &str,
+    value: &mut N,
+    range: RangeInclusive<N>,
+    step: N,
+) {
     match skin {
         Some(skin) => {
-            kit::stepper::stepper(ui, skin, STEPPER_W, salt, value, range, step, None);
+            kit::stepper::stepper(ui, skin, width, salt, value, range, step, None);
         }
         None => {
             // Al arrastrar avanza de `step` en `step` y cae en múltiplos de `step` (dentro del
@@ -220,7 +241,7 @@ fn number<N: egui::emath::Numeric>(
 }
 
 /// La casilla del kit (sin Pixel UI, la de egui).
-fn check(ui: &mut Ui, skin: Option<&Skin>, on: &mut bool, label: &str) {
+pub(crate) fn check(ui: &mut Ui, skin: Option<&Skin>, on: &mut bool, label: &str) {
     match skin {
         Some(skin) => kit::check::checkbox(ui, skin, on, label),
         None => ui.checkbox(on, label),

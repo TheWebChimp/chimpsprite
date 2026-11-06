@@ -4937,7 +4937,7 @@ fn the_general_part_goes_above_the_line_and_the_object_below() {
         assert!(text_in(&h, top, t).is_some(), "{t} above the line");
         assert!(text_in(&h, bottom, t).is_none(), "{t} below the line");
     }
-    for label in ["Shading…", "Sheet settings…", "New"] {
+    for label in ["Shading…", "Sheet settings…", "GIF settings…", "New"] {
         let r = in_model_panel(&h, label).unwrap_or_else(|| panic!("{label}"));
         assert!(top.contains_rect(r), "{label} {r:?} in {top:?}");
     }
@@ -6340,14 +6340,28 @@ fn the_light_row_has_light_yaw_and_pitch_like_the_mockup() {
 }
 
 #[test]
-fn shading_and_sheet_settings_end_the_row_after_the_outline() {
+fn shading_sheet_and_gif_settings_end_the_row_after_the_outline() {
     let h = model_panel_tall();
     let shading = h.button("Shading…");
     let sheet = h.button("Sheet settings…");
-    assert_eq!(sheet.right(), model_row_right(&h));
+    let gif = h.button("GIF settings…");
+    assert_eq!(gif.right(), model_row_right(&h));
+    assert_eq!(gif.left() - sheet.right(), 4.0);
     assert_eq!(sheet.left() - shading.right(), 4.0);
     assert_eq!(shading.top(), sheet.top());
+    assert_eq!(gif.top(), sheet.top());
     assert!(shading.top() > check(&h, "Outline").0.bottom());
+    // Caben en la fila (sin taparse con el borde de la izquierda).
+    let (top, _) = model_halves(&h);
+    assert!(shading.left() >= top.left(), "{shading:?} in {top:?}");
+}
+
+#[test]
+fn gif_settings_opens_its_dialog() {
+    let mut h = model_panel_tall();
+    let gif = h.button("GIF settings…");
+    h.click(gif.center(), PointerButton::Primary);
+    assert!(h.app.gif.is_some());
 }
 
 /// El color de la paleta del modelo con índice `i`.

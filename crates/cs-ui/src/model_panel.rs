@@ -142,6 +142,8 @@ pub enum ModelAction {
     NewModel,
     /// Bake…: abrir el diálogo de hornear el modelo.
     Bake,
+    /// GIF settings…: abrir el diálogo de exportar el modelo girando.
+    Gif,
     /// Shading…: abrir la ventana de la tabla de sombras.
     Shading,
     /// Pasar la textura a este lado, que deja UVs fuera: la app pide confirmación antes.
@@ -923,11 +925,13 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 }
 
-/// Shading… y Sheet settings…, al final de su fila (como el boceto). Devuelve lo pedido.
+/// Shading…, Sheet settings… y GIF settings…, al final de su fila (como el boceto, que tenía
+/// los dos primeros). Devuelve lo pedido.
 fn window_buttons(ui: &mut Ui, skin: Option<&Skin>) -> Option<ModelAction> {
-    const BUTTONS: [(&str, ModelAction); 2] = [
+    const BUTTONS: [(&str, ModelAction); 3] = [
         ("Shading…", ModelAction::Shading),
         ("Sheet settings…", ModelAction::Bake),
+        ("GIF settings…", ModelAction::Gif),
     ];
     let mut picked = None;
     match skin {

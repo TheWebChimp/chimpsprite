@@ -30,6 +30,7 @@ mod font_dialog;
 mod font_overlay;
 mod font_panel;
 mod frame_dialog;
+mod gif_dialog;
 mod mask_ops;
 mod menus;
 mod model_dialog;
@@ -168,6 +169,8 @@ pub struct ChimpApp {
     new_model: Option<model_dialog::NewModelDialog>,
     /// Bake… del panel 3D.
     bake: Option<bake_dialog::BakeDialog>,
+    /// GIF settings… del panel 3D.
+    gif: Option<gif_dialog::GifDialog>,
     /// La ventana Edit → Undo History abierta.
     undo_history: bool,
     /// La ventana Edit → Keyboard Shortcuts abierta.
@@ -323,6 +326,7 @@ impl ChimpApp {
             new_font: None,
             new_model: None,
             bake: None,
+            gif: None,
             undo_history: false,
             shortcuts: None,
             keymap: keymap::Keymap::default(),
@@ -661,6 +665,9 @@ impl ChimpApp {
             Some(model_panel::ModelAction::Bake) if self.doc.editor.edited_model().is_some() => {
                 self.bake = Some(bake_dialog::BakeDialog::new(&self.doc.editor));
             }
+            Some(model_panel::ModelAction::Gif) if self.doc.editor.edited_model().is_some() => {
+                self.gif = Some(gif_dialog::GifDialog::new(&self.doc.editor));
+            }
             Some(model_panel::ModelAction::Shading) => self.model_panel.shading = true,
             Some(model_panel::ModelAction::TextureSize(side)) => {
                 self.palette_confirm = Some(palette_ui::Confirm::TextureSize(side));
@@ -920,6 +927,52 @@ impl ChimpApp {
                 self.finish_bake(model, options);
             }
             tilemap_dialog::DialogResult::Cancel => self.bake = None,
+        }
+    }
+
+    /// GIF settings…: al aceptar, arma el archivo del modelo con el que se abrió (si ya no existe
+    /// como modelo, el diálogo se cierra) y pregunta dónde guardarlo (en web, lo descarga). Si no
+    /// se elige dónde, el diálogo sigue abierto.
+    fn update_gif_dialog(&mut self, ctx: &egui::Context) {
+        let still_model = self.has_doc()
+            && self.gif.as_ref().is_none_or(|d| {
+                self.doc
+                    .editor
+                    .document
+                    .artboard(d.model())
+                    .is_some_and(|a| a.model.is_some())
+            });
+        if !still_model {
+            self.gif = None;
+            return;
+        }
+        let Some(dialog) = &mut self.gif else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin(), &self.doc.editor.document) {
+            tilemap_dialog::DialogResult::Open => {}
+            tilemap_dialog::DialogResult::Accept => {
+                let bytes = match dialog.build(&self.doc.editor.document) {
+                    Ok(bytes) => bytes,
+                    Err(e) => {
+                        self.gif = None;
+                        return self.show_message("Could not export", e);
+                    }
+                };
+                let (name, ext) = (dialog.file_name(), dialog.format.extension());
+                let filters = [platform::FileFilter {
+                    name: if ext == "gif" { "GIF" } else { "PNG" },
+                    extensions: if ext == "gif" { &["gif"] } else { &["png"] },
+                }];
+                let Some(target) = self.platform.choose_save(&name, &filters) else {
+                    return;
+                };
+                self.gif = None;
+                if let Err(e) = self.platform.write(&target, &bytes) {
+                    self.show_message("Could not export", e);
+                }
+            }
+            tilemap_dialog::DialogResult::Cancel => self.gif = None,
         }
     }
 
@@ -1852,6 +1905,7 @@ impl eframe::App for ChimpApp {
         self.update_font_dialog(&ctx);
         self.update_model_dialog(&ctx);
         self.update_bake_dialog(&ctx);
+        self.update_gif_dialog(&ctx);
         self.update_shading_window(&ctx, modal);
         self.update_symbol_dialog(&ctx);
         self.show_dialogs(&ctx);

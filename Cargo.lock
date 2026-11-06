@@ -1133,6 +1133,7 @@ dependencies = [
  "eframe",
  "ehttp",
  "fontdue",
+ "gif",
  "image",
  "js-sys",
  "log",

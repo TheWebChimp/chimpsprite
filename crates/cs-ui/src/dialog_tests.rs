@@ -81,6 +81,7 @@ impl DialogHarness {
             app.update_font_dialog(&ctx);
             app.update_model_dialog(&ctx);
             app.update_bake_dialog(&ctx);
+            app.update_gif_dialog(&ctx);
             app.update_symbol_dialog(&ctx);
             app.show_dialogs(&ctx);
             app.update_palette_windows(&ctx, false);
@@ -553,6 +554,155 @@ fn export_bakes_the_dialogs_own_model_even_if_another_is_active() {
     assert!(h.app.bake.is_none());
     let baked = h.app.doc.editor.document.artboards.last().unwrap();
     assert_eq!(baked.name, "First · bake");
+}
+
+// --- GIF settings ---
+
+/// Los frames (RGBA), su tamaño, las demoras y si repite de un GIF.
+fn decode_gif(bytes: &[u8]) -> ((u16, u16), Vec<Vec<u8>>, Vec<u16>, bool) {
+    let mut options = gif::DecodeOptions::new();
+    options.set_color_output(gif::ColorOutput::RGBA);
+    let mut decoder = options.read_info(std::io::Cursor::new(bytes)).unwrap();
+    let size = (decoder.width(), decoder.height());
+    let (mut frames, mut delays) = (Vec::new(), Vec::new());
+    while let Some(frame) = decoder.read_next_frame().unwrap() {
+        frames.push(frame.buffer.to_vec());
+        delays.push(frame.delay);
+    }
+    let looping = decoder.repeat() == gif::Repeat::Infinite;
+    (size, frames, delays, looping)
+}
+
+/// La app con un modelo de 32×32 ("Ship") y GIF settings abierto.
+fn gif_open(pixel_ui: bool) -> DialogHarness {
+    let mut h = DialogHarness::new(pixel_ui);
+    assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+    h.app.gif = Some(crate::gif_dialog::GifDialog::new(&h.app.doc.editor));
+    h.settle();
+    h
+}
+
+#[test]
+fn gif_settings_shows_its_fields_and_is_modal() {
+    for pixel_ui in [true, false] {
+        let h = gif_open(pixel_ui);
+        assert!(h.app.is_modal());
+        assert!(h.drew_text("GIF settings"), "{:?}", h.texts);
+        for label in [
+            "Frames",
+            "Size (px)",
+            "Zoom (%)",
+            "Tilt (°)",
+            "Height",
+            "Ortho",
+            "FOV (°)",
+            "Render",
+            "Scale",
+            "Outline",
+            "Scanlines",
+            "Background",
+            "Frame (ms)",
+            "Loop",
+            "Format",
+            "32×32, 8 frames",
+        ] {
+            assert!(h.drew_text(label), "{label}: {:?}", h.texts);
+        }
+        h.button("Export");
+        h.button("Cancel");
+    }
+}
+
+#[test]
+fn gif_settings_builds_a_gif_with_a_frame_per_angle() {
+    let mut h = gif_open(true);
+    let gif = h.app.gif.as_mut().unwrap();
+    assert_eq!(gif.file_name(), "Ship.gif");
+    gif.options.scale = 2;
+    gif.options.frame_ms = 120;
+    gif.options.bake.frames = 6;
+    let bytes = gif.build(&h.app.doc.editor.document).unwrap();
+    let (size, frames, delays, looping) = decode_gif(&bytes);
+    assert_eq!(size, (64, 64));
+    assert_eq!(frames.len(), 6);
+    assert_eq!(delays, vec![12; 6]);
+    assert!(looping);
+    assert_ne!(frames[0], frames[1], "the model turns");
+    // Sin fondo, la esquina es transparente.
+    assert_eq!(frames[0][3], 0);
+}
+
+#[test]
+fn gif_settings_presets_and_png_strip() {
+    let mut h = gif_open(true);
+    let gif = h.app.gif.as_mut().unwrap();
+    gif.options.preset = cs_render::RenderPreset::GameBoy;
+    gif.options.looping = false;
+    gif.options.bake.frames = 4;
+    let bytes = gif.build(&h.app.doc.editor.document).unwrap();
+    let (size, frames, _, looping) = decode_gif(&bytes);
+    assert_eq!(size, (160, 144));
+    assert_eq!(frames.len(), 4);
+    assert!(!looping);
+    gif.format = crate::gif_dialog::GifFormat::Png;
+    assert_eq!(gif.file_name(), "Ship.png");
+    let png = gif.build(&h.app.doc.editor.document).unwrap();
+    let strip = cs_io::import::decode_png(&png).unwrap();
+    assert_eq!((strip.width, strip.height), (160 * 4, 144));
+}
+
+#[test]
+fn gif_settings_cancel_closes_and_the_dialog_follows_its_model() {
+    let mut h = gif_open(true);
+    h.click("Cancel");
+    h.settle();
+    assert!(h.app.gif.is_none());
+    // Si el modelo deja de existir, se cierra solo.
+    h.app.gif = Some(crate::gif_dialog::GifDialog::new(&h.app.doc.editor));
+    let model = h.app.gif.as_ref().unwrap().model();
+    h.app.doc.editor.document.artboard_mut(model).unwrap().model = None;
+    h.settle();
+    assert!(h.app.gif.is_none());
+}
+
+#[test]
+fn the_fov_stepper_is_disabled_in_ortho_and_changes_the_fov() {
+    let mut h = gif_open(true);
+    let fov = h.app.gif.as_ref().unwrap().options.bake.fov;
+    // El stepper del FOV es el séptimo de la primera columna (Frames, Size, Zoom, Tilt, Height,
+    // y FOV después de Ortho): el más abajo de la columna de la izquierda.
+    let left = h
+        .buttons
+        .iter()
+        .filter(|(l, _)| l == "Increase")
+        .map(|(_, r)| *r)
+        .min_by(|a, b| a.min.x.partial_cmp(&b.min.x).unwrap())
+        .unwrap()
+        .min
+        .x;
+    let plus = h
+        .buttons
+        .iter()
+        .filter(|(l, r)| l == "Increase" && (r.min.x - left).abs() < 1.0)
+        .map(|(_, r)| *r)
+        .max_by(|a, b| a.min.y.partial_cmp(&b.min.y).unwrap())
+        .unwrap();
+    let press = |pressed| Event::PointerButton {
+        pos: plus.center(),
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Default::default(),
+    };
+    h.frame(vec![Event::PointerMoved(plus.center())]);
+    h.frame(vec![press(true)]);
+    h.frame(vec![press(false)]);
+    h.frame(vec![]);
+    let o = h.app.gif.as_ref().unwrap().options.bake;
+    if o.ortho {
+        assert_eq!(o.fov, fov, "disabled in ortho");
+    } else {
+        assert_eq!(o.fov, fov + 50);
+    }
 }
 
 // --- New Tilemap Layer ---
