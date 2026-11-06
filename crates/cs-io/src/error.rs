@@ -10,6 +10,8 @@ pub enum IoError {
     Zip(String),
     #[error("png: {0}")]
     Png(String),
+    #[error("Tiled map: {0}")]
+    Tiled(String),
     #[error("gif: {0}")]
     Gif(String),
     #[error("json: {0}")]
