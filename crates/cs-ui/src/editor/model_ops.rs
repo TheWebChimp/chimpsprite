@@ -314,6 +314,8 @@ impl Editor {
             self.model_edit.made_on = made_on;
             return false;
         }
+        // Deshacer el paso vuelve a lo elegido de antes (no a lo acomodado para él).
+        self.step_selection_before(old);
         // Quitar uno anterior a la elegida la deja en el mismo objeto (un lugar antes); quitar la
         // elegida (o una posterior) acomoda el índice dentro de lo que quedó.
         let selected = self.model_object.unwrap_or(0);

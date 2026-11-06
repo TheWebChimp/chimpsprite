@@ -879,32 +879,48 @@ impl Editor {
     }
 }
 
-/// La selección 3D de un paso del historial: la del modelo `model` antes del paso y, desde que
-/// se deshizo, la que había entonces (la de después), para rehacerlo con ella.
+/// Lo elegido en un modelo: la selección 3D y la fila activa del outliner (el objeto y el grupo
+/// del panel).
+#[derive(Clone, Debug)]
+pub(crate) struct Chosen {
+    selection: Selection,
+    object: Option<usize>,
+    group: Option<usize>,
+}
+
+/// Lo elegido en un paso del historial: lo del modelo `model` antes del paso y, desde que se
+/// deshizo, lo que había entonces (lo de después), para rehacerlo con eso.
 #[derive(Clone, Debug)]
 pub(crate) struct StepSelection {
     model: ArtboardId,
-    before: Selection,
-    after: Option<Selection>,
+    before: Chosen,
+    after: Option<Chosen>,
 }
 
 impl StepSelection {
-    /// Cambia la selección de antes del paso.
+    /// Cambia la selección 3D de antes del paso (la fila activa queda).
     pub(crate) fn set_before(&mut self, selection: Selection) {
-        self.before = selection;
+        self.before.selection = selection;
     }
 }
 
 impl Editor {
-    /// El modelo que se edita y su selección 3D, si hay modelo.
-    pub(crate) fn selection_snapshot(&self) -> Option<(ArtboardId, Selection)> {
+    /// El modelo que se edita y lo elegido en él, si hay modelo.
+    pub(crate) fn selection_snapshot(&self) -> Option<(ArtboardId, Chosen)> {
         let model = self.model_edit.artboard?;
         // A media extrusión, lo elegido de verdad es lo de antes (deshacer vuelve ahí).
         let selection = match &self.model_edit.extrusion {
             Some(x) => x.before.clone(),
             None => self.model_edit.selection.clone(),
         };
-        Some((model, selection))
+        Some((
+            model,
+            Chosen {
+                selection,
+                object: self.model_object,
+                group: self.model_group,
+            },
+        ))
     }
 
     /// Si el comando recién ejecutado dejó un paso nuevo (había `steps`), guarda con él la
@@ -912,7 +928,7 @@ impl Editor {
     pub(crate) fn record_step_selection(
         &mut self,
         steps: usize,
-        snapshot: Option<(ArtboardId, Selection)>,
+        snapshot: Option<(ArtboardId, Chosen)>,
     ) {
         if self.history.done_count() <= steps {
             return;
@@ -927,12 +943,21 @@ impl Editor {
         }));
     }
 
+    /// Cambia los ítems de la selección 3D de antes del último paso (el modo es el de ahora): lo
+    /// que se acomodó antes del paso para el modelo nuevo no es lo que deshacer debe devolver.
+    pub(crate) fn step_selection_before(&mut self, items: std::collections::BTreeSet<cs_3d::Item>) {
+        let mode = self.model_edit.selection.mode;
+        if let Some(Some(step)) = self.step_selections.last_mut() {
+            step.set_before(Selection { mode, items });
+        }
+    }
+
     /// Recién deshecho el paso `step` (había `step` hechos): guarda la selección que había
     /// (`snapshot`) para rehacerlo y vuelve a la de antes del paso, si es del mismo modelo.
     pub(crate) fn restore_selection_on_undo(
         &mut self,
         step: usize,
-        snapshot: Option<(ArtboardId, Selection)>,
+        snapshot: Option<(ArtboardId, Chosen)>,
     ) {
         let Some(Some(entry)) = step
             .checked_sub(1)
@@ -964,20 +989,26 @@ impl Editor {
         }
     }
 
-    /// Pone `selection` si `model` es el que se edita (sin lo que ya no exista) y es otra.
-    fn apply_step_selection(&mut self, model: ArtboardId, mut selection: Selection) {
+    /// Pone lo elegido en `chosen` si `model` es el que se edita (sin lo que ya no exista): la
+    /// selección 3D si es otra y la fila activa.
+    fn apply_step_selection(&mut self, model: ArtboardId, chosen: Chosen) {
         if self.model_edit.artboard != Some(model) || self.extruding() {
             return;
         }
         let Some(m) = self.edited_model() else {
             return;
         };
+        let (objects, groups) = (m.objects.len(), m.groups.len());
+        let mut selection = chosen.selection;
         selection.retain_valid(m);
         // Sin cambio no se toca (en modo Texture pondría la selección de pixeles de las caras
         // sobre la que se haya hecho a mano).
         if selection != self.model_edit.selection {
             self.set_model_selection(selection);
         }
+        // Después: elegir pone como fila el primer objeto de la selección.
+        self.model_object = chosen.object.filter(|&o| o < objects);
+        self.model_group = chosen.group.filter(|&g| g < groups);
     }
 }
 
