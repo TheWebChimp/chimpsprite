@@ -64,7 +64,7 @@ pub fn add_glyphs(artboard: &Artboard, chars: &[char]) -> Option<DocCommand> {
     let mut cmds = Vec::new();
     for ch in chars {
         if let Err(index) = font.insert_index(ch) {
-            font.glyphs.insert(index, GlyphInfo { ch, advance: None });
+            font.glyphs.insert(index, GlyphInfo::new(ch));
             cmds.push(DocCommand::OnArtboard {
                 id: artboard.id,
                 cmd: Command::AddFrame {

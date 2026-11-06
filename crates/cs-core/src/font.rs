@@ -69,13 +69,46 @@ impl Default for GhostSettings {
     }
 }
 
-/// Un glifo: su carácter y su ancho (`None`: automático).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// Un glifo: su carácter, su ancho (`None`: automático) y, si es compuesto, sus componentes.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GlyphInfo {
     pub ch: char,
     #[serde(default)]
     pub advance: Option<u32>,
+    /// Los glifos que se dibujan debajo de los pixeles propios (como los *composites* de
+    /// TrueType); vacío: un glifo normal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<GlyphComponent>,
 }
+
+impl GlyphInfo {
+    /// Un glifo normal de ancho automático.
+    pub fn new(ch: char) -> Self {
+        GlyphInfo {
+            ch,
+            advance: None,
+            components: Vec::new(),
+        }
+    }
+
+    pub fn is_composite(&self) -> bool {
+        !self.components.is_empty()
+    }
+}
+
+/// Un componente de un glifo compuesto: lo que se ve del glifo de `ch`, recorrido `offset`
+/// pixeles desde la esquina de la celda.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct GlyphComponent {
+    pub ch: char,
+    pub offset: (i32, i32),
+}
+
+/// Hasta cuántos niveles se siguen los compuestos dentro de compuestos.
+const MAX_COMPONENT_DEPTH: usize = 8;
+
+/// Lo que se ve de un glifo: pixel pintado por (fila, columna) de la celda.
+pub type ComposedPixels = BTreeMap<(u32, u32), PixelValue>;
 
 /// La tinta y el papel de una fuente de 1 bit (índices de su paleta).
 pub const ONE_BIT_INK: PixelValue = PixelValue::Index(1);
@@ -113,9 +146,7 @@ impl FontInfo {
             space_width: 3,
             monospace: false,
             ghost: GhostSettings::default(),
-            glyphs: ('!'..='~')
-                .map(|ch| GlyphInfo { ch, advance: None })
-                .collect(),
+            glyphs: ('!'..='~').map(GlyphInfo::new).collect(),
         }
     }
 
@@ -131,17 +162,138 @@ impl FontInfo {
 
     /// El ancho del glifo `index`: el de la celda con Monospace; el manual; o el automático
     /// (lo dibujado + `letter_spacing`; vacío, la mitad de la celda).
+    ///
+    /// Un compuesto automático avanza lo mayor entre su primer componente (la base, con su
+    /// offset) y lo que se ve + `letter_spacing`: `á` avanza como `a`.
     pub fn advance(&self, sprite: &Sprite, index: usize) -> u32 {
+        self.advance_at(sprite, index, &mut Vec::new())
+    }
+
+    fn advance_at(&self, sprite: &Sprite, index: usize, chain: &mut Vec<usize>) -> u32 {
         if self.monospace {
             return sprite.width;
         }
-        if let Some(advance) = self.glyphs.get(index).and_then(|g| g.advance) {
+        let Some(glyph) = self.glyphs.get(index) else {
+            return sprite.width / 2;
+        };
+        if let Some(advance) = glyph.advance {
             return advance;
         }
-        match ink_width(sprite, index) {
-            0 => sprite.width / 2,
-            ink => ink + self.letter_spacing,
+        if !glyph.is_composite() {
+            return match ink_width(sprite, index) {
+                0 => sprite.width / 2,
+                ink => ink + self.letter_spacing,
+            };
         }
+        let ink = self
+            .composed(sprite, index)
+            .keys()
+            .map(|&(_, x)| x + 1)
+            .max()
+            .map(|ink| ink + self.letter_spacing);
+        chain.push(index);
+        let base = glyph.components.first().and_then(|c| {
+            let j = self.index_of(c.ch)?;
+            if chain.contains(&j) || chain.len() > MAX_COMPONENT_DEPTH {
+                return None;
+            }
+            let advance = self.advance_at(sprite, j, chain) as i32 + c.offset.0;
+            Some(advance.max(0) as u32)
+        });
+        chain.pop();
+        match (base, ink) {
+            (None, None) => sprite.width / 2,
+            (a, b) => a.unwrap_or(0).max(b.unwrap_or(0)),
+        }
+    }
+
+    /// Lo que se ve del glifo `index`: sus componentes en orden (cada uno con lo que se ve de su
+    /// glifo, recorrido) y encima sus pixeles propios, recortado a la celda. Un componente que
+    /// la fuente no tiene no dibuja; un ciclo (de un archivo roto) se corta.
+    pub fn composed(&self, sprite: &Sprite, index: usize) -> ComposedPixels {
+        let mut out = BTreeMap::new();
+        self.compose_into(sprite, index, (0, 0), &mut Vec::new(), &mut out);
+        out
+    }
+
+    fn compose_into(
+        &self,
+        sprite: &Sprite,
+        index: usize,
+        offset: (i32, i32),
+        chain: &mut Vec<usize>,
+        out: &mut ComposedPixels,
+    ) {
+        let Some(glyph) = self.glyphs.get(index) else {
+            return;
+        };
+        chain.push(index);
+        for c in &glyph.components {
+            let Some(j) = self.index_of(c.ch) else {
+                continue;
+            };
+            if chain.contains(&j) || chain.len() > MAX_COMPONENT_DEPTH {
+                continue;
+            }
+            let at = (offset.0 + c.offset.0, offset.1 + c.offset.1);
+            self.compose_into(sprite, j, at, chain, out);
+        }
+        chain.pop();
+        let Some(layer) = sprite.layers.first().map(|l| l.id) else {
+            return;
+        };
+        let (w, h) = (sprite.width as i32, sprite.height as i32);
+        for y in 0..h {
+            for x in 0..w {
+                let v = sprite.pixel(layer, index, x, y);
+                let (sx, sy) = (x + offset.0, y + offset.1);
+                if painted(sprite, v) && (0..w).contains(&sx) && (0..h).contains(&sy) {
+                    out.insert((sy as u32, sx as u32), v);
+                }
+            }
+        }
+    }
+
+    /// La caja de lo que se ve del glifo `index` (columnas y filas, el final sin incluir).
+    pub fn ink_bounds(&self, sprite: &Sprite, index: usize) -> Option<InkBounds> {
+        bounds_of(&self.composed(sprite, index))
+    }
+
+    /// Si el glifo de `a` usa (a cualquier profundidad) el de `b`.
+    pub fn depends_on(&self, a: char, b: char) -> bool {
+        let mut seen = std::collections::BTreeSet::new();
+        let mut todo = vec![a];
+        while let Some(ch) = todo.pop() {
+            if !seen.insert(ch) {
+                continue;
+            }
+            let Some(g) = self.index_of(ch).map(|i| &self.glyphs[i]) else {
+                continue;
+            };
+            for c in &g.components {
+                if c.ch == b {
+                    return true;
+                }
+                todo.push(c.ch);
+            }
+        }
+        false
+    }
+
+    /// Si poner `components` en el glifo de `ch` haría un ciclo.
+    pub fn would_cycle(&self, ch: char, components: &[GlyphComponent]) -> bool {
+        components
+            .iter()
+            .any(|c| c.ch == ch || self.depends_on(c.ch, ch))
+    }
+
+    /// Los compuestos que usan directamente el glifo de `ch`.
+    pub fn users_of(&self, ch: char) -> Vec<char> {
+        self.glyphs
+            .iter()
+            .filter(|g| g.components.iter().any(|c| c.ch == ch))
+            .map(|g| g.ch)
+            .collect()
     }
 
     /// Lo que avanza un carácter que la fuente no tiene (el cuadrito tachado).
@@ -211,7 +363,7 @@ pub fn normalize_font(font: &mut FontInfo, sprite: &mut Sprite) -> bool {
     // Cada frame con su glifo: el que tenía (si no se repite) o uno de uso privado.
     let mut used = std::collections::BTreeSet::new();
     let mut slots: Vec<Option<GlyphInfo>> = (0..frames)
-        .map(|f| font.glyphs.get(f).copied().filter(|g| used.insert(g.ch)))
+        .map(|f| font.glyphs.get(f).cloned().filter(|g| used.insert(g.ch)))
         .collect();
     let mut next = 0xE000u32;
     for slot in slots.iter_mut().filter(|s| s.is_none()) {
@@ -222,7 +374,7 @@ pub fn normalize_font(font: &mut FontInfo, sprite: &mut Sprite) -> bool {
                 break c;
             }
         };
-        *slot = Some(GlyphInfo { ch, advance: None });
+        *slot = Some(GlyphInfo::new(ch));
     }
     let mut order: Vec<(GlyphInfo, usize)> = slots
         .into_iter()
@@ -346,8 +498,8 @@ pub fn build_font(build: FontBuild) -> (FontInfo, Sprite) {
         glyphs: glyphs
             .iter()
             .map(|g| GlyphInfo {
-                ch: g.ch,
                 advance: g.advance,
+                ..GlyphInfo::new(g.ch)
             })
             .collect(),
     };
@@ -376,6 +528,45 @@ pub fn ink_width(sprite: &Sprite, frame: usize) -> u32 {
         .map_or(0, |x| x + 1)
 }
 
+/// Una caja de pixeles: columnas `x0..x1` y filas `y0..y1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InkBounds {
+    pub x0: i32,
+    pub y0: i32,
+    pub x1: i32,
+    pub y1: i32,
+}
+
+impl InkBounds {
+    pub fn width(&self) -> i32 {
+        self.x1 - self.x0
+    }
+
+    pub fn height(&self) -> i32 {
+        self.y1 - self.y0
+    }
+}
+
+/// La caja de `pixels` (`None` si no hay ninguno).
+pub fn bounds_of(pixels: &ComposedPixels) -> Option<InkBounds> {
+    let mut it = pixels.keys();
+    let &(y, x) = it.next()?;
+    let mut b = InkBounds {
+        x0: x as i32,
+        y0: y as i32,
+        x1: x as i32 + 1,
+        y1: y as i32 + 1,
+    };
+    for &(y, x) in it {
+        let (x, y) = (x as i32, y as i32);
+        b.x0 = b.x0.min(x);
+        b.x1 = b.x1.max(x + 1);
+        b.y0 = b.y0.min(y);
+        b.y1 = b.y1.max(y + 1);
+    }
+    Some(b)
+}
+
 /// Los pixeles de un glifo, en la celda: `None` es la tinta de 1 bit; en color, su color.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct GlyphPixels {
@@ -398,27 +589,24 @@ impl Artboard {
     pub fn font_view(&self) -> Option<PixelFontView> {
         let font = self.font.as_ref()?;
         let sprite = &self.sprite;
-        let layer = sprite.layers.first()?.id;
+        sprite.layers.first()?;
         let glyphs = font
             .glyphs
             .iter()
             .enumerate()
             .map(|(i, g)| {
-                let mut pixels = Vec::new();
-                for y in 0..sprite.height {
-                    for x in 0..sprite.width {
-                        let v = sprite.pixel(layer, i, x as i32, y as i32);
-                        if !painted(sprite, v) {
-                            continue;
-                        }
+                let pixels = font
+                    .composed(sprite, i)
+                    .into_iter()
+                    .map(|((y, x), v)| {
                         let color = match (font.mode, v) {
                             (FontMode::Color, PixelValue::Rgba(c)) => Some(c),
                             (FontMode::Color, PixelValue::Index(k)) => sprite.palette.get(k),
                             (FontMode::OneBit, _) => None,
                         };
-                        pixels.push((x, y, color));
-                    }
-                }
+                        (x, y, color)
+                    })
+                    .collect();
                 let advance = font.advance(sprite, i);
                 (g.ch, GlyphPixels { pixels, advance })
             })
@@ -611,17 +799,11 @@ mod tests {
         let mut font = FontInfo::new("Mine", 8, FontMode::OneBit);
         font.glyphs = vec![
             GlyphInfo {
-                ch: 'B',
                 advance: Some(2),
+                ..GlyphInfo::new('B')
             },
-            GlyphInfo {
-                ch: 'A',
-                advance: None,
-            },
-            GlyphInfo {
-                ch: 'A',
-                advance: None,
-            },
+            GlyphInfo::new('A'),
+            GlyphInfo::new('A'),
         ];
         // Cuatro frames: el de 'B' (0) pintado; el 2 repite 'A' y el 3 no tiene glifo.
         let mut s = font_sprite((8, 8), FontMode::OneBit, 4);
@@ -721,5 +903,118 @@ mod tests {
         let font = FontInfo::new("Mine", 12, FontMode::Color);
         let json = serde_json::to_string(&font).unwrap();
         assert_eq!(serde_json::from_str::<FontInfo>(&json).unwrap(), font);
+    }
+
+    /// Una fuente 8×8 con `a` (2 px en la fila 5), `´` (1 px en la fila 0) y `á` compuesta.
+    fn accented() -> (FontInfo, Sprite) {
+        let mut font = FontInfo::new("Mine", 8, FontMode::OneBit);
+        font.glyphs.push(GlyphInfo::new('´'));
+        font.glyphs.push(GlyphInfo::new('á'));
+        let mut s = font_sprite((8, 8), FontMode::OneBit, font.glyphs.len());
+        let a = font.index_of('a').unwrap();
+        ink(&mut s, a, &[(0, 5), (3, 5)]);
+        ink(&mut s, 94, &[(0, 0)]);
+        font.glyphs[95].components = vec![
+            GlyphComponent {
+                ch: 'a',
+                offset: (0, 0),
+            },
+            GlyphComponent {
+                ch: '´',
+                offset: (2, 3),
+            },
+        ];
+        (font, s)
+    }
+
+    #[test]
+    fn a_composite_shows_its_components_moved_and_its_own_pixels_on_top() {
+        let (font, mut s) = accented();
+        let px = |font: &FontInfo, s: &Sprite| -> Vec<(u32, u32)> {
+            font.composed(s, 95).keys().map(|&(y, x)| (x, y)).collect()
+        };
+        assert_eq!(px(&font, &s), vec![(2, 3), (0, 5), (3, 5)]);
+        ink(&mut s, 95, &[(7, 7)]);
+        assert_eq!(px(&font, &s), vec![(2, 3), (0, 5), (3, 5), (7, 7)]);
+        assert!(font.glyphs[95].is_composite());
+        assert!(font.depends_on('á', 'a') && !font.depends_on('a', 'á'));
+        assert_eq!(font.users_of('´'), vec!['á']);
+        let b = font.ink_bounds(&s, 95).unwrap();
+        assert_eq!((b.x0, b.y0, b.x1, b.y1), (0, 3, 8, 8));
+    }
+
+    #[test]
+    fn components_are_clipped_and_missing_or_cyclic_ones_draw_nothing() {
+        let (mut font, s) = accented();
+        font.glyphs[95].components[1].offset = (7, -1);
+        let keys: Vec<_> = font.composed(&s, 95).into_keys().collect();
+        assert_eq!(keys, vec![(5, 0), (5, 3)], "the accent fell outside");
+        font.glyphs[95].components[1].ch = 'é';
+        assert_eq!(font.composed(&s, 95).len(), 2, "missing: nothing");
+        // Un ciclo (de un archivo roto): a usa á, á usa a.
+        let a = font.index_of('a').unwrap();
+        font.glyphs[a].components = vec![GlyphComponent {
+            ch: 'á',
+            offset: (1, 0),
+        }];
+        assert_eq!(font.composed(&s, 95).len(), 2, "cut, no loop");
+        let back = GlyphComponent {
+            ch: 'á',
+            offset: (0, 0),
+        };
+        assert!(font.would_cycle('a', &[back]));
+        assert!(font.would_cycle('á', &[back]));
+        let _ = font.advance(&s, a);
+    }
+
+    #[test]
+    fn composites_nest() {
+        let (mut font, mut s) = accented();
+        font.glyphs.push(GlyphInfo {
+            components: vec![GlyphComponent {
+                ch: 'á',
+                offset: (1, 1),
+            }],
+            ..GlyphInfo::new('\u{E000}')
+        });
+        s.frames.push(Frame { duration_ms: 100 });
+        let keys: Vec<_> = font.composed(&s, 96).into_keys().collect();
+        assert_eq!(keys, vec![(4, 3), (6, 1), (6, 4)]);
+    }
+
+    #[test]
+    fn the_automatic_advance_of_a_composite_follows_its_base() {
+        let (mut font, s) = accented();
+        assert_eq!(font.advance(&s, 95), 5, "like a: 4 columns + 1");
+        let a = font.index_of('a').unwrap();
+        font.glyphs[a].advance = Some(7);
+        assert_eq!(font.advance(&s, 95), 7, "a's manual advance");
+        font.glyphs[95].components[1].offset = (7, 3);
+        font.glyphs[a].advance = None;
+        assert_eq!(font.advance(&s, 95), 9, "the accent reaches further");
+        let artboard = crate::Artboard {
+            model: None,
+            id: crate::ArtboardId(1),
+            name: "Mine".into(),
+            position: (0, 0),
+            sprite: s,
+            guides: Vec::new(),
+            symmetry: Default::default(),
+            in_library: false,
+            font: Some(font),
+        };
+        let view = artboard.font_view().unwrap();
+        assert_eq!(view.glyphs[&'á'].pixels.len(), 3);
+        assert_eq!(view.glyphs[&'á'].advance, 9);
+    }
+
+    #[test]
+    fn glyph_components_survive_json_and_old_glyphs_still_read() {
+        let (font, _) = accented();
+        let json = serde_json::to_string(&font).unwrap();
+        assert_eq!(serde_json::from_str::<FontInfo>(&json).unwrap(), font);
+        let old: GlyphInfo = serde_json::from_str(r#"{"ch":"a","advance":null}"#).unwrap();
+        assert_eq!(old, GlyphInfo::new('a'));
+        assert!(!serde_json::to_string(&old).unwrap().contains("components"));
     }
 }
