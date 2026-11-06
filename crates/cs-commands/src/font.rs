@@ -210,10 +210,12 @@ pub struct AccentReport {
 }
 
 /// Arma como compuestos los acentuados de la tabla (o solo los de `only`) que falten o estén
-/// vacíos, agregando los glifos que hagan falta. `None` si no arma ninguno (con lo que pasó).
+/// vacíos (con `replace`, también los dibujados o compuestos: pierden sus pixeles), agregando los
+/// glifos que hagan falta. `None` si no arma ninguno (con lo que pasó).
 pub fn auto_build_accents(
     artboard: &Artboard,
     only: Option<&[char]>,
+    replace: bool,
 ) -> (Option<DocCommand>, AccentReport) {
     let mut report = AccentReport::default();
     let Some(original) = artboard.font.as_ref() else {
@@ -228,8 +230,10 @@ pub fn auto_build_accents(
     chars.dedup();
     let mut font = original.clone();
     let mut cmds = Vec::new();
+    let mut clears = Vec::new();
     for ch in chars {
         if let Some(i) = original.index_of(ch)
+            && !replace
             && !is_blank(original, sprite, i)
         {
             report.kept += 1;
@@ -243,6 +247,15 @@ pub fn auto_build_accents(
                 continue;
             }
         };
+        if original.would_cycle(ch, &plan.components) {
+            report.missing.push(ch);
+            continue;
+        }
+        if let Some(i) = original.index_of(ch)
+            && sprite.cel(sprite.layers[0].id, i).is_some()
+        {
+            clears.push(ch);
+        }
         let index = match font.insert_index(ch) {
             Ok(i) => i,
             Err(i) => {
@@ -265,6 +278,19 @@ pub fn auto_build_accents(
     }
     if report.built.is_empty() {
         return (None, report);
+    }
+    let layer = sprite.layers[0].id;
+    for ch in clears {
+        if let Some(frame) = font.index_of(ch) {
+            cmds.push(on(
+                artboard,
+                Command::SetCel {
+                    layer,
+                    frame,
+                    cel: None,
+                },
+            ));
+        }
     }
     cmds.push(set_font(artboard, font));
     (Some(DocCommand::Batch(cmds)), report)

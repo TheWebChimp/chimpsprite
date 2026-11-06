@@ -341,7 +341,7 @@ fn editor_with_accent_parts() -> Editor {
 fn auto_build_keeps_the_current_glyph_and_undoes_in_one_step() {
     let mut e = editor_with_accent_parts();
     e.go_to_glyph('b');
-    let report = e.auto_build_accents(None);
+    let report = e.auto_build_accents(None, false);
     assert_eq!(report.built, vec!['á']);
     assert_eq!(e.current_glyph(), Some('b'));
     assert!(e.go_to_glyph('á'));

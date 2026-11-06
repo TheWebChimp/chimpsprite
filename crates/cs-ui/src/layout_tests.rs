@@ -10707,7 +10707,7 @@ fn font_with_a_composite(h: &mut LayoutHarness) {
                 .collect(),
         });
     }
-    assert_eq!(e.auto_build_accents(None).built, vec!['á']);
+    assert_eq!(e.auto_build_accents(None, false).built, vec!['á']);
     e.go_to_glyph('á');
     e.tool = ToolKind::Move;
     h.app
@@ -10767,4 +10767,46 @@ fn dragging_a_component_with_move_moves_it_in_one_step() {
         Some('á'),
         "the arrow did not change the glyph"
     );
+}
+
+#[test]
+fn generate_builds_the_accents_and_the_glyph_section_unlinks_them() {
+    let mut h = font_panel_open(Vec2::new(1200.0, 1000.0));
+    let e = &mut h.app.doc.editor;
+    e.add_glyphs(&['´']);
+    for (ch, points) in [('a', vec![(0, 4), (3, 6)]), ('´', vec![(1, 0)])] {
+        e.go_to_glyph(ch);
+        let (layer, frame) = (e.layer, e.frame);
+        e.execute(Command::DrawPixels {
+            layer,
+            frame,
+            pixels: points
+                .into_iter()
+                .map(|(x, y)| (x, y, cs_core::ONE_BIT_INK))
+                .collect(),
+        });
+    }
+    h.frame();
+    let generate = h.button("Generate ▾");
+    let build = h.button("Build ▾");
+    assert_eq!(generate.top(), build.top());
+    assert!(generate.right() < build.left());
+    h.click(generate.center(), PointerButton::Primary);
+    h.frame();
+    h.click(
+        h.button("Auto-build accents").center(),
+        PointerButton::Primary,
+    );
+    h.frame();
+    assert!(h.app.doc.editor.font().unwrap().index_of('á').is_some());
+    h.app.message = None;
+    h.app.doc.editor.go_to_glyph('á');
+    h.frame();
+    h.frame();
+    assert!(!h.disabled.iter().any(|l| l == "Unlink"), "a composite");
+    h.click(h.button("Unlink").center(), PointerButton::Primary);
+    h.frame();
+    let e = &h.app.doc.editor;
+    assert!(e.glyph_components().is_empty());
+    assert!(e.sprite().cel(e.layer, e.frame).is_some());
 }

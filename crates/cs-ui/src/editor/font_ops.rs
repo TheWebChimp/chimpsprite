@@ -226,6 +226,23 @@ impl Editor {
         self.named("Move Component", |e| e.set_glyph_components(ch, components))
     }
 
+    /// Como `move_component`, pero los cambios seguidos del mismo `group` (el arrastre de un
+    /// stepper del panel) son un solo paso.
+    pub fn move_component_grouped(&mut self, index: usize, offset: (i32, i32), group: u64) -> bool {
+        let Some(ch) = self.current_glyph() else {
+            return false;
+        };
+        let mut components = self.glyph_components();
+        let Some(c) = components.get_mut(index) else {
+            return false;
+        };
+        c.offset = offset;
+        let Some(cmd) = cs_commands::font::set_components(self.artboard(), ch, components) else {
+            return false;
+        };
+        self.execute_doc_grouped(cmd, group)
+    }
+
     /// Las flechas con Move en un compuesto: mueven el componente elegido.
     pub fn can_nudge_component(&self) -> bool {
         self.tool == super::ToolKind::Move
@@ -283,9 +300,14 @@ impl Editor {
         self.named("Unlink Glyph", |e| e.execute_doc(cmd))
     }
 
-    /// Auto-build accents (o solo los de `only`), en un paso. Devuelve lo que pasó.
-    pub fn auto_build_accents(&mut self, only: Option<&[char]>) -> cs_commands::font::AccentReport {
-        let (cmd, report) = cs_commands::font::auto_build_accents(self.artboard(), only);
+    /// Auto-build accents (o solo los de `only`; con `replace`, también los ya dibujados), en un
+    /// paso. Devuelve lo que pasó.
+    pub fn auto_build_accents(
+        &mut self,
+        only: Option<&[char]>,
+        replace: bool,
+    ) -> cs_commands::font::AccentReport {
+        let (cmd, report) = cs_commands::font::auto_build_accents(self.artboard(), only, replace);
         if let Some(cmd) = cmd {
             let current = self.current_glyph();
             self.named("Auto-build Accents", |e| e.execute_doc(cmd));

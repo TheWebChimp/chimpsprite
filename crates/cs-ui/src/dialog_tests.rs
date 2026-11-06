@@ -81,6 +81,7 @@ impl DialogHarness {
             app.update_font_dialog(&ctx);
             app.update_build_font_dialog(&ctx);
             app.update_import_font_dialog(&ctx);
+            app.update_glyph_sheet_dialog(&ctx);
             app.update_model_dialog(&ctx);
             app.update_bake_dialog(&ctx);
             app.update_gif_dialog(&ctx);
@@ -1471,4 +1472,81 @@ fn a_bitfontmaker_json_is_imported_without_a_dialog_even_from_home() {
     h.app.opened_font_file(&ctx, "bad.json", b"[]".to_vec());
     h.settle();
     assert!(h.app.message.is_some());
+}
+
+#[test]
+fn fill_from_ttf_fills_the_missing_glyphs_of_the_active_font_in_one_step() {
+    let mut h = DialogHarness::new(true);
+    // Una fuente 6×8 como la de prueba, con la `A` vacía.
+    assert!(
+        h.app
+            .doc
+            .editor
+            .new_font("Mine", (6, 8), cs_core::FontMode::OneBit)
+    );
+    h.app.opened_fill_font(crate::font_io::sample_ttf());
+    h.settle();
+    assert!(h.drew_text("Fill from TTF"));
+    assert!(h.app.import_font.as_ref().unwrap().fill.is_some());
+    h.click("Fill");
+    h.settle();
+    assert!(h.app.import_font.is_none());
+    let body = &h.app.message.as_ref().expect("a notice").body;
+    assert_eq!(body, "1 glyph filled.");
+    let editor = &mut h.app.doc.editor;
+    let font = editor.font().unwrap().clone();
+    let a = font.index_of('A').unwrap();
+    assert!(editor.sprite().cel(editor.layer, a).is_some(), "A filled");
+    editor.undo();
+    assert!(editor.sprite().cel(editor.layer, a).is_none());
+}
+
+#[test]
+fn auto_build_accents_tells_what_it_did() {
+    let mut h = DialogHarness::new(true);
+    let e = &mut h.app.doc.editor;
+    assert!(e.new_font("Mine", (8, 10), cs_core::FontMode::OneBit));
+    e.add_glyphs(&['´']);
+    for (ch, points) in [('a', vec![(0, 5), (3, 7)]), ('´', vec![(1, 0)])] {
+        e.go_to_glyph(ch);
+        let (layer, frame) = (e.layer, e.frame);
+        e.execute(cs_commands::Command::DrawPixels {
+            layer,
+            frame,
+            pixels: points
+                .into_iter()
+                .map(|(x, y)| (x, y, cs_core::ONE_BIT_INK))
+                .collect(),
+        });
+    }
+    h.app.auto_build_accents();
+    let body = &h.app.message.as_ref().expect("a notice").body;
+    assert!(body.starts_with("1 accented letter built."), "{body}");
+    assert!(body.contains("need a base letter or a mark"), "{body}");
+    assert!(h.app.doc.editor.font().unwrap().index_of('á').is_some());
+}
+
+#[test]
+fn glyphs_from_an_image_go_to_the_active_font() {
+    let mut h = DialogHarness::new(true);
+    assert!(
+        h.app
+            .doc
+            .editor
+            .new_font("Mine", (4, 4), cs_core::FontMode::OneBit)
+    );
+    let mut sheet = cs_io::export::Bitmap::new(8, 4);
+    sheet.pixels.fill(cs_core::Rgba::new(255, 255, 255, 255));
+    sheet.pixels[1] = cs_core::Rgba::new(0, 0, 0, 255);
+    let png = sheet.to_png().unwrap();
+    h.app.opened_glyph_sheet(&png);
+    h.settle();
+    assert!(h.drew_text("Glyphs from Image"));
+    h.click("Import");
+    h.settle();
+    assert!(h.app.glyph_sheet.is_none());
+    assert_eq!(h.app.message.as_ref().unwrap().body, "1 glyph filled.");
+    let e = &h.app.doc.editor;
+    let bang = e.font().unwrap().index_of('!').unwrap();
+    assert!(e.sprite().cel(e.layer, bang).is_some());
 }

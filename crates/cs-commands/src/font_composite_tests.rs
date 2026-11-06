@@ -57,7 +57,7 @@ fn auto_build_accents_adds_the_composites_it_can_and_undoes() {
         .unwrap();
     draw(&mut doc, id, 'é', &[(0, 0)]);
     let before = doc.clone();
-    let (cmd, report) = auto_build_accents(doc.artboard(id).unwrap(), None);
+    let (cmd, report) = auto_build_accents(doc.artboard(id).unwrap(), None, false);
     // Con a y ´: á, y nada más (las demás marcas y bases no están).
     assert_eq!(report.built, vec!['á']);
     assert_eq!(report.kept, 1, "é was drawn");
@@ -71,9 +71,14 @@ fn auto_build_accents_adds_the_composites_it_can_and_undoes() {
     assert_eq!(g.components[1].offset, (0, 0), "rows 0..2, air at row 2");
     assert!(seen(&doc, id, 'á').contains(&(2, 0)));
     // Otra vez: ya está.
-    let (again, report) = auto_build_accents(doc.artboard(id).unwrap(), Some(&['á']));
+    let (again, report) = auto_build_accents(doc.artboard(id).unwrap(), Some(&['á']), false);
     assert!(again.is_none());
     assert_eq!(report.kept, 1);
+    // Con replace se rearma, y una é dibujada pierde sus pixeles (aquí no hay `e`: no se puede).
+    let (again, report) = auto_build_accents(doc.artboard(id).unwrap(), Some(&['á', 'é']), true);
+    assert_eq!(report.built, vec!['á']);
+    assert_eq!(report.missing, vec!['é']);
+    assert!(again.is_some());
     undo.apply(&mut doc).unwrap();
     assert_eq!(doc, before);
 }
@@ -81,7 +86,7 @@ fn auto_build_accents_adds_the_composites_it_can_and_undoes() {
 #[test]
 fn a_composite_follows_its_parts_and_unlinks_to_its_own_pixels() {
     let (mut doc, id) = doc_with_accent_parts();
-    let (cmd, _) = auto_build_accents(doc.artboard(id).unwrap(), Some(&['á']));
+    let (cmd, _) = auto_build_accents(doc.artboard(id).unwrap(), Some(&['á']), false);
     cmd.unwrap().apply(&mut doc).unwrap();
     draw(&mut doc, id, 'a', &[(5, 6)]);
     assert!(seen(&doc, id, 'á').contains(&(5, 6)), "live");
@@ -133,7 +138,7 @@ fn components_are_set_with_undo_and_cycles_refused() {
 #[test]
 fn removing_a_component_glyph_unlinks_its_users_first() {
     let (mut doc, id) = doc_with_accent_parts();
-    let (cmd, _) = auto_build_accents(doc.artboard(id).unwrap(), Some(&['á']));
+    let (cmd, _) = auto_build_accents(doc.artboard(id).unwrap(), Some(&['á']), false);
     cmd.unwrap().apply(&mut doc).unwrap();
     let looked = seen(&doc, id, 'á');
     let before = doc.clone();
@@ -180,7 +185,7 @@ fn filling_glyphs_adds_missing_and_empty_ones_and_replaces_only_if_asked() {
     undo.apply(&mut doc).unwrap();
     assert_eq!(doc, before);
     // Con replace, también la a (y un compuesto deja de serlo).
-    let (cmd, _) = auto_build_accents(doc.artboard(id).unwrap(), Some(&['á']));
+    let (cmd, _) = auto_build_accents(doc.artboard(id).unwrap(), Some(&['á']), false);
     cmd.unwrap().apply(&mut doc).unwrap();
     let glyphs = vec![build('a', &[(7, 9)]), build('á', &[(3, 3)])];
     let (cmd, count) = fill_glyphs(doc.artboard(id).unwrap(), &glyphs, true).unwrap();

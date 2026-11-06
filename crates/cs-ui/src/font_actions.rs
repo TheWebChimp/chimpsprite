@@ -5,6 +5,7 @@ use eframe::egui;
 
 use crate::ChimpApp;
 use crate::font_io::{self, BuildFontDialog, BuildFormat, OpenedFont};
+use crate::font_sheet_dialog::GlyphSheetDialog;
 use crate::platform::{FileFilter, OpenPurpose};
 use crate::tilemap_dialog::DialogResult;
 
@@ -16,6 +17,33 @@ const FNT_FILTER: &[FileFilter] = &[FileFilter {
     name: "BMFont",
     extensions: &["fnt"],
 }];
+const SHEET_FILTER: &[FileFilter] = &[FileFilter {
+    name: "PNG image",
+    extensions: &["png"],
+}];
+
+/// Lo que dice el aviso de Auto-build accents.
+pub(crate) fn accent_summary(report: &cs_commands::font::AccentReport) -> String {
+    let mut lines = vec![match report.built.len() {
+        0 => "No accented letters were built.".to_owned(),
+        1 => "1 accented letter built.".to_owned(),
+        n => format!("{n} accented letters built."),
+    }];
+    if !report.cramped.is_empty() {
+        let chars: String = report.cramped.iter().collect();
+        lines.push(format!("No room for the 1 px gap: {chars}"));
+    }
+    if report.kept > 0 {
+        lines.push(format!("{} already drawn (left as they are).", report.kept));
+    }
+    if !report.missing.is_empty() {
+        lines.push(format!(
+            "{} need a base letter or a mark (´ ` ^ ~ ¨ ˚ ¸ …) drawn first.",
+            report.missing.len()
+        ));
+    }
+    lines.join("\n")
+}
 
 impl ChimpApp {
     /// Build ▾ → `format` (o File → Export Font…): el diálogo Build Font de la fuente activa.
@@ -96,6 +124,15 @@ impl ChimpApp {
         match dialog.show(ctx, self.pixel.skin()) {
             DialogResult::Open => {}
             DialogResult::Cancel => self.import_font = None,
+            DialogResult::Accept if dialog.fill.is_some() => {
+                let fill = dialog.fill.expect("filling");
+                let result = dialog.fill_glyphs();
+                self.import_font = None;
+                match result {
+                    Ok(glyphs) => self.fill_font(fill.artboard, &glyphs, fill.replace),
+                    Err(e) => self.show_message("Could not read the font", e),
+                }
+            }
             DialogResult::Accept => {
                 let result = dialog.import();
                 self.import_font = None;
@@ -105,6 +142,81 @@ impl ChimpApp {
                 }
             }
         }
+    }
+
+    /// Generate ▾ → Auto-build accents: arma los acentuados que se puedan y dice qué pasó.
+    pub(crate) fn auto_build_accents(&mut self) {
+        if !self.doc.editor.is_font() {
+            return;
+        }
+        let report = self.doc.editor.auto_build_accents(None, false);
+        self.show_message("Auto-build Accents", accent_summary(&report));
+    }
+
+    /// Generate ▾ → Fill from TTF…: elegir el TTF/OTF.
+    pub(crate) fn choose_fill_ttf(&mut self, ctx: &egui::Context) {
+        self.platform
+            .open_file(font_io::FILL_FILTERS, OpenPurpose::FillFont, ctx);
+    }
+
+    /// El TTF/OTF leído para rellenar la fuente activa: su diálogo.
+    pub(crate) fn opened_fill_font(&mut self, bytes: Vec<u8>) {
+        match font_io::ImportFontDialog::new_fill(bytes, &self.doc.editor) {
+            Ok(dialog) => self.import_font = Some(Box::new(dialog)),
+            Err(e) => self.show_message("Could not read the font", e),
+        }
+    }
+
+    /// Generate ▾ → Glyphs from image…: elegir el PNG.
+    pub(crate) fn choose_glyph_sheet(&mut self, ctx: &egui::Context) {
+        self.platform
+            .open_file(SHEET_FILTER, OpenPurpose::FontSheet, ctx);
+    }
+
+    /// El PNG leído: el diálogo Glyphs from Image para la fuente activa.
+    pub(crate) fn opened_glyph_sheet(&mut self, bytes: &[u8]) {
+        match cs_io::import::decode_png(bytes) {
+            Ok(sheet) => {
+                self.glyph_sheet = GlyphSheetDialog::new(&self.doc.editor, sheet).map(Box::new);
+            }
+            Err(e) => self.show_message("Could not read the image", e.to_string()),
+        }
+    }
+
+    pub(crate) fn update_glyph_sheet_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.glyph_sheet else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin()) {
+            DialogResult::Open => {}
+            DialogResult::Cancel => self.glyph_sheet = None,
+            DialogResult::Accept => {
+                let (artboard, replace) = (dialog.artboard, dialog.replace);
+                let glyphs = dialog.glyphs();
+                self.glyph_sheet = None;
+                self.fill_font(artboard, &glyphs, replace);
+            }
+        }
+    }
+
+    /// Pone `glyphs` en la fuente `artboard` (si sigue activa) y dice cuántos.
+    fn fill_font(
+        &mut self,
+        artboard: cs_core::ArtboardId,
+        glyphs: &[cs_core::GlyphBuild],
+        replace: bool,
+    ) {
+        let editor = &mut self.doc.editor;
+        if editor.active != artboard || !editor.is_font() {
+            return self.show_message("Generate Glyphs", "The font is not active anymore.");
+        }
+        let count = editor.fill_glyphs(glyphs, replace);
+        let body = match count {
+            0 => "No glyphs to fill: they are all drawn already.".to_owned(),
+            1 => "1 glyph filled.".to_owned(),
+            n => format!("{n} glyphs filled."),
+        };
+        self.show_message("Generate Glyphs", body);
     }
 
     /// Agrega la fuente importada al documento abierto (desde Home, a uno nuevo), abre su

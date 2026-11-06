@@ -75,6 +75,10 @@ pub enum OpenPurpose {
     LoadPalette,
     /// Importar una fuente (TTF/OTF o el JSON de BitFontMaker2).
     ImportFont,
+    /// Rellenar la fuente activa desde un TTF/OTF (FontForge → Generate ▾).
+    FillFont,
+    /// Glifos desde una hoja PNG para la fuente activa (FontForge → Generate ▾).
+    FontSheet,
 }
 
 pub enum PlatformEvent {
