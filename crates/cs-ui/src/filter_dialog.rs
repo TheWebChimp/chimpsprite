@@ -148,13 +148,12 @@ impl FilterDialog {
                     ],
                 );
             }
-            Filter::Outline { color, square } => {
+            Filter::Outline(fx) => {
                 ui.horizontal(|ui| {
                     ui.label("Color");
-                    swatch(ui, *color, true);
+                    swatch(ui, fx.color, true);
                 });
-                color_picker(ui, skin, color);
-                widgets::checkbox(ui, square, "Square (corners too)");
+                color_picker(ui, skin, &mut fx.color);
             }
             Filter::Despeckle { size } => {
                 ui.horizontal(|ui| {
