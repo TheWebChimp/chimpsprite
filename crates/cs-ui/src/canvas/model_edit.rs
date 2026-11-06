@@ -1702,8 +1702,9 @@ fn gizmo_at(editor: &Editor, map: &ViewMap, at: (f32, f32)) -> Option<(GizmoPart
 }
 
 /// El gizmo `kind` en `center` como se ve en la perspectiva de `pm`: los tres ejes, de
-/// [`GIZMO_PX`] puntos (a la distancia del centro); `None` si el centro queda detrás de la
-/// cámara.
+/// [`GIZMO_PX`] puntos (a la distancia del centro), menos (en Move y Scale) los que apuntan casi
+/// a la cámara y en pantalla miden menos de [`MIN_AXIS_PX`]; `None` si el centro queda detrás de
+/// la cámara.
 pub(crate) fn persp_gizmo(
     kind: GizmoKind,
     pm: &PerspMap,
@@ -1714,8 +1715,25 @@ pub(crate) fn persp_gizmo(
     let [right, ..] = pm.projector().axes();
     let s = pm.to_screen(std::array::from_fn(|i| center[i] + right[i] * 16.0))?;
     let per = (s.0 - c.0).hypot(s.1 - c.1) / 16.0;
-    (per > 1e-6).then(|| cs_3d::gizmo_shape(kind, center, GIZMO_PX / per, [true; 3]))
+    if per <= 1e-6 {
+        return None;
+    }
+    let size = GIZMO_PX / per;
+    // Una flecha (o un cubito) escorzada no se ve y su arrastre se dispara: se esconde, como en
+    // Blender. Un aro de canto sigue siendo una línea que se agarra.
+    let axes = std::array::from_fn(|a| {
+        kind == GizmoKind::Rotate
+            || pm
+                .to_screen(std::array::from_fn(|i| {
+                    center[i] + if i == a { size } else { 0.0 }
+                }))
+                .is_some_and(|t| (t.0 - c.0).hypot(t.1 - c.1) >= MIN_AXIS_PX)
+    });
+    Some(cs_3d::gizmo_shape(kind, center, size, axes))
 }
+
+/// Lo menos que mide en pantalla un eje del gizmo de la perspectiva para que se dibuje.
+const MIN_AXIS_PX: f32 = 3.0;
 
 /// El asa del gizmo bajo `at` (en pantalla) en la perspectiva de `pm`, si se ve un gizmo, y el
 /// centro del gizmo.
@@ -2096,6 +2114,35 @@ mod tests {
             negative: false,
         }));
         assert_eq!(hot.get(bx + 7, by), Some(rgba(SELECTED)));
+    }
+
+    /// Un eje que apunta a la cámara (de frente, el Z) mediría casi nada en pantalla: su flecha y
+    /// su cubito no se dibujan ni se agarran. Los aros de Rotate quedan.
+    #[test]
+    fn the_persp_gizmo_hides_the_axis_pointing_at_the_camera() {
+        use cs_3d::{GizmoKind, GizmoPart};
+        let parts = |camera, kind| {
+            let pm = PerspMap {
+                camera,
+                size: (64, 64),
+                min: (20.0, 10.0),
+                scale: (3.0, 3.0),
+            };
+            let shape = persp_gizmo(kind, &pm, [0.0; 3]).unwrap();
+            shape.handles.iter().map(|h| h.part).collect::<Vec<_>>()
+        };
+        let front = cs_core::CameraPreset::Front.camera(4 * cs_core::FIXED, Default::default());
+        let iso = cs_core::CameraPreset::Iso.camera(4 * cs_core::FIXED, Default::default());
+        let moved = parts(front, GizmoKind::Move);
+        assert!(moved.contains(&GizmoPart::Axis(0)) && moved.contains(&GizmoPart::Axis(1)));
+        assert!(!moved.contains(&GizmoPart::Axis(2)), "{moved:?}");
+        let scaled = parts(front, GizmoKind::Scale);
+        assert!(!scaled.contains(&GizmoPart::ScaleAxis(2)), "{scaled:?}");
+        assert!(scaled.contains(&GizmoPart::ScaleUniform));
+        assert_eq!(parts(front, GizmoKind::Rotate).len(), 3);
+        // En iso se ven los tres.
+        let all = parts(iso, GizmoKind::Move);
+        assert!((0..3).all(|a| all.contains(&GizmoPart::Axis(a))), "{all:?}");
     }
 
     #[test]

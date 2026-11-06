@@ -790,6 +790,9 @@ fn is_scale_font(font: &FontChoice) -> bool {
 fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
     // La fuente del documento elegida puede haberse renombrado o borrado.
     editor.sync_text_font();
+    // En la pestaña de un modelo (pintando su textura) no hay dock: el panel Dafont no se vería.
+    #[cfg(not(target_arch = "wasm32"))]
+    let dock = !editor.model_edit_on();
     let mut fonts = vec![FontChoice::Pixel, FontChoice::Hack, FontChoice::Ubuntu];
     // Las fuentes pixel del documento, también de escala entera.
     fonts.extend(
@@ -833,14 +836,15 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
         }
     }
     #[cfg(not(target_arch = "wasm32"))]
-    if look.is_some() {
+    if look.is_some() && dock {
         gap(ui, CONTROL_GAP);
     }
     // Las fuentes pixel de dafont.com: abre su panel del dock.
     #[cfg(not(target_arch = "wasm32"))]
-    if crate::pixel_ui::text_button(ui, "Dafont")
-        .tip("Pixel fonts from dafont.com")
-        .clicked()
+    if dock
+        && crate::pixel_ui::text_button(ui, "Dafont")
+            .tip("Pixel fonts from dafont.com")
+            .clicked()
     {
         crate::dafont::request_open(ui.ctx());
     }

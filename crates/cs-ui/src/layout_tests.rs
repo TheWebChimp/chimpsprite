@@ -5255,6 +5255,33 @@ fn add_in_the_add_menu_adds_the_type_with_the_sides_and_selects_its_row() {
     assert!(in_model_panel(&h, "Cone").is_some(), "the cone row");
 }
 
+/// Un clic afuera del menú del + solo lo cierra: no llega a lo de abajo (aquí, la fila del cubo
+/// en el outliner, que lo elegiría).
+#[test]
+fn a_click_outside_the_add_menu_only_closes_it() {
+    let mut h = without_an_object(model_panel_open(true));
+    let plus = open_add_menu(&mut h);
+    let menu = add_menu_box(&h, plus).expect("the add menu");
+    let row = h
+        .nodes
+        .iter()
+        .find(|(l, r)| l == "Cube" && r.width() >= 100.0)
+        .map(|(_, r)| *r)
+        .expect("the cube row");
+    let at = pos2(row.left() + 4.0, row.center().y);
+    assert!(!menu.contains(at), "{at:?} outside {menu:?}");
+    h.click(at, PointerButton::Primary);
+    h.frame();
+    assert!(add_menu_box(&h, plus).is_none(), "the menu closed");
+    assert_eq!(h.app.doc.editor.active_row(), None, "the row was not hit");
+    // El clic siguiente ya llega.
+    h.click(at, PointerButton::Primary);
+    assert_eq!(
+        h.app.doc.editor.active_row(),
+        Some(crate::editor::Row::Object(0))
+    );
+}
+
 #[test]
 fn without_pixel_ui_the_plus_menu_has_the_types_sides_and_add() {
     let mut h = LayoutHarness::new(plain(), true);
@@ -8421,15 +8448,17 @@ fn texture_mode_splits_the_area_top_and_bottom_left_of_the_panel() {
     let h = with_a_model_in_texture_mode();
     let canvas = h.canvas.expect("the workspace area");
     let (top, bottom) = h.app.doc.canvas.texture_panes().expect("the two panes");
-    // Debajo del encabezado, de su línea y de la barra de opciones.
+    // Arriba, debajo del encabezado, de su línea y de la barrita del objeto; abajo, después de
+    // la línea de 1 punto, la fila del pincel y la textura.
     let header = h.app.doc.canvas.cad_header().expect("the header");
     let bar = crate::panels::options_bar_height(h.app.pixel.skin());
-    assert_eq!(
-        top.min,
-        pos2(canvas.left(), header.bottom() + 1.0 + 2.0 * bar)
-    );
+    assert_eq!(top.min, pos2(canvas.left(), header.bottom() + 1.0 + bar));
     assert_eq!(top.height(), ((canvas.bottom() - top.top()) / 2.0).floor());
-    assert_eq!(bottom.top(), top.bottom() + 1.0, "a 1 point line");
+    assert_eq!(
+        bottom.top(),
+        top.bottom() + 1.0 + bar,
+        "the line and the brush row"
+    );
     assert_eq!(bottom.bottom(), canvas.bottom());
     assert_eq!(top.right(), canvas.right());
     assert_eq!(bottom.x_range(), top.x_range());
@@ -8622,7 +8651,7 @@ const PERSP_QUAD: usize = 1;
 
 /// Lo que cambia la pestaña del modelo en la ventana (con Pixel UI): en modo Model, sin la barra
 /// de opciones de herramienta, el lienzo empieza donde empezaba ella; en modo Texture (se pinta
-/// la textura) la barra vuelve.
+/// la textura) la barra vuelve, como fila arriba de la textura.
 #[test]
 fn the_model_tab_has_the_tool_options_bar_only_in_texture_mode() {
     let doc = LayoutHarness::new(pixel_ui(), true);
@@ -8647,21 +8676,46 @@ fn the_model_tab_has_the_tool_options_bar_only_in_texture_mode() {
     h.frame();
     assert!(bar(&h), "the bar in Texture: {:?}", h.texts);
     assert!(h.texts.iter().any(|(t, _)| t == "Ink"), "{:?}", h.texts);
-    // Debajo del encabezado (que no se mueve) y arriba del render.
+    // El encabezado no se mueve; la fila va debajo del render y arriba de la textura.
     assert_eq!(h.canvas, Some(canvas));
     let header = h.app.doc.canvas.cad_header().expect("the header");
     let size = text_in(&h, canvas, "Brush Size").expect("in the area");
-    assert!(size.top() > header.bottom(), "{size:?} under {header:?}");
-    let (top, _) = h.app.doc.canvas.texture_panes().unwrap();
-    assert!(size.bottom() < top.top(), "{size:?} over {top:?}");
-    // La barrita del objeto y la del pincel, del mismo alto.
-    assert_eq!(top.top() - header.bottom() - 1.0, 2.0 * options.height());
+    let (top, bottom) = h.app.doc.canvas.texture_panes().unwrap();
+    assert!(
+        size.top() > top.bottom() && size.bottom() < bottom.top(),
+        "{size:?} between {top:?} and {bottom:?}"
+    );
+    // La barrita del objeto y la del pincel, del mismo alto que la barra del lienzo.
+    assert_eq!(top.top() - header.bottom() - 1.0, options.height());
+    assert_eq!(bottom.top() - top.bottom() - 1.0, options.height());
     // Y de vuelta en Model, otra vez sin ella.
     h.app.doc.editor.set_cad_mode(crate::editor::CadMode::Model);
     h.frame();
     h.frame();
     assert!(!bar(&h));
     assert_eq!(h.canvas, Some(canvas));
+}
+
+/// En la pestaña del modelo no hay dock: la fila del pincel no ofrece "Dafont" (abriría un panel
+/// del dock que ahí no se ve). En el lienzo, sí.
+#[test]
+fn the_texture_mode_text_options_have_no_dafont_button() {
+    let dafont = |h: &LayoutHarness| h.texts.iter().any(|(t, _)| t == "Dafont");
+    let mut doc = LayoutHarness::new(pixel_ui(), true);
+    doc.app.doc.editor.set_tool(ToolKind::Text);
+    doc.frame();
+    doc.frame();
+    assert!(dafont(&doc), "on the canvas tab: {:?}", doc.texts);
+    let mut h = with_a_model_in_texture_mode();
+    h.app.doc.editor.set_tool(ToolKind::Text);
+    h.frame();
+    h.frame();
+    assert!(
+        h.texts.iter().any(|(t, _)| t == "Load font"),
+        "the text options are there: {:?}",
+        h.texts
+    );
+    assert!(!dafont(&h), "no Dafont in the model tab");
 }
 
 /// El encabezado de ChimpCAD (boceto a 1×): una franja de 24 filas arriba del área, de lado a
@@ -8709,7 +8763,7 @@ fn the_chimpcad_header_has_the_logo_and_the_mode_buttons_over_the_views() {
     assert_eq!(h.app.doc.canvas.cad_header(), Some(header));
     assert_eq!(h.drawn("logo.chimpcad").len(), 1);
     let (top, _) = h.app.doc.canvas.texture_panes().unwrap();
-    assert_eq!(top.top(), line.bottom() + 2.0 * bar, "under both bars");
+    assert_eq!(top.top(), line.bottom() + bar, "under the object bar");
     assert!(!top.intersects(node(&h, "Model")));
     // En el lienzo no hay encabezado.
     let doc = LayoutHarness::new(pixel_ui(), true);
@@ -10045,7 +10099,8 @@ mod object_bar {
             );
             assert!(r.left() > titles[k / 3].right(), "{f} after its title");
         }
-        // En modo Texture, la barrita en el mismo lugar y, debajo, la del pincel.
+        // En modo Texture, la barrita en el mismo lugar y, debajo, el render; la fila del
+        // pincel va arriba de la textura (entre la línea del medio y la textura).
         h.app
             .doc
             .editor
@@ -10057,17 +10112,16 @@ mod object_bar {
             "the header stays"
         );
         assert_eq!(text_in(&h, area, "Position"), Some(titles[0]));
-        let size = text_in(&h, area, "Brush Size").expect("the brush bar");
-        assert!(
-            size.top() > titles[0].bottom(),
-            "{size:?} under the object bar"
-        );
-        let (top, _) = h.app.doc.canvas.texture_panes().unwrap();
-        assert!(
-            size.bottom() < top.top(),
-            "{size:?} over the render {top:?}"
-        );
-        assert_eq!(top.top(), area.top() + 2.0 * bar);
+        let (top, bottom) = h.app.doc.canvas.texture_panes().unwrap();
+        assert_eq!(top.top(), area.top() + bar);
+        let size = text_in(&h, area, "Brush Size").expect("the brush row");
+        let ink = text_in(&h, area, "Ink").expect("the ink");
+        for r in [size, ink] {
+            assert!(
+                r.top() > top.bottom() && r.bottom() < bottom.top(),
+                "{r:?} between the render {top:?} and the texture {bottom:?}"
+            );
+        }
     }
 
     #[test]
@@ -10082,6 +10136,33 @@ mod object_bar {
         assert!(p.x > 0, "{p:?}");
         assert_eq!((p.y, p.z), (0, 0));
         assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+        h.app.doc.editor.undo();
+        assert_eq!(transform(&h, 0).position.x, 0);
+    }
+
+    /// Escribir un número tecla por tecla es un solo paso de undo (no uno por dígito); el campo
+    /// siguiente, otro.
+    #[test]
+    fn typing_in_a_field_is_one_undo_step() {
+        let mut h = with_a_model_at_800();
+        let steps = h.app.doc.editor.history.done_count();
+        let x = node(&h, "Position X");
+        h.click(x.center(), PointerButton::Primary);
+        press(&mut h, egui::Key::A, egui::Modifiers::COMMAND);
+        h.frame_with(key_tap(egui::Key::Backspace));
+        for c in ["1", "2", "3"] {
+            h.frame_with(vec![Event::Text(c.into())]);
+            h.frame();
+        }
+        h.frame_with(key_tap(egui::Key::Enter));
+        settle(&mut h);
+        assert_eq!(transform(&h, 0).position.x, 123);
+        assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+        type_in(&mut h, "Position Y", "7");
+        assert_eq!(h.app.doc.editor.history.done_count(), steps + 2);
+        h.app.doc.editor.undo();
+        assert_eq!(transform(&h, 0).position.y, 0);
+        assert_eq!(transform(&h, 0).position.x, 123);
         h.app.doc.editor.undo();
         assert_eq!(transform(&h, 0).position.x, 0);
     }

@@ -391,6 +391,8 @@ impl Editor {
             self.model_edit.made_on = made_on;
             return false;
         }
+        // Deshacer el paso vuelve a lo elegido de antes (no a lo acomodado para él).
+        self.step_selection_before(old);
         self.model_group = self.model_group.and_then(|g| {
             (!groups.contains(&g)).then(|| g - groups.iter().filter(|&&r| r < g).count())
         });

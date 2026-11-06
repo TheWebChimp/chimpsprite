@@ -489,3 +489,33 @@ fn delete_in_the_views_with_a_group_active_deletes_the_whole_group() {
     assert_eq!(e.history.done_count(), steps);
     assert_eq!(e.model().unwrap().groups.len(), 1);
 }
+
+#[test]
+fn undo_and_redo_bring_back_the_active_row_and_its_selection() {
+    // Un objeto borrado: deshacer lo vuelve a dejar como fila activa y elegido.
+    let mut e = editor_with_model();
+    e.set_active_row(Some(Row::Object(1)), false);
+    assert_eq!(objects(&e), vec![1]);
+    assert!(e.delete_row(Row::Object(1)));
+    assert_eq!(e.active_row(), None);
+    e.undo();
+    assert_eq!(e.active_row(), Some(Row::Object(1)));
+    assert_eq!(objects(&e), vec![1]);
+    // Rehacer, a como quedó.
+    e.redo();
+    assert_eq!(e.active_row(), None);
+    assert!(objects(&e).is_empty());
+    // Un grupo borrado: deshacer lo vuelve a dejar activo (no la fila de un objeto).
+    let mut e = editor_with_group();
+    e.set_active_row(Some(Row::Group(0)), false);
+    assert!(e.delete_row(Row::Group(0)));
+    e.undo();
+    assert_eq!(e.active_row(), Some(Row::Group(0)));
+    assert_eq!(objects(&e), vec![0, 1]);
+    // Otro paso con el cubo activo y después el plano: deshacer vuelve al cubo.
+    e.set_active_row(Some(Row::Object(0)), false);
+    assert!(e.toggle_hidden(Row::Object(1)));
+    e.set_active_row(Some(Row::Group(0)), false);
+    e.undo();
+    assert_eq!(e.active_row(), Some(Row::Object(0)));
+}

@@ -88,6 +88,8 @@ fn fields(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
         None => (None, false),
     };
     let mut next = current;
+    // El campo en el que se está escribiendo (con el foco, o recién soltado con Enter).
+    let mut typing = None;
     ui.add_enabled_ui(editable, |ui| {
         for (k, part) in parts().iter().enumerate() {
             if k > 0 {
@@ -120,40 +122,55 @@ fn fields(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
                         _ => &mut v.z,
                     }
                 });
-                axis_field(ui, look, (&name, axis), value, part);
+                if axis_field(ui, look, (&name, axis), value, part) {
+                    typing = Some(name);
+                }
             }
         }
     });
-    // Un arrastre (o lo escrito en un campo) es un solo paso de undo: se juntan los cambios
-    // mientras el botón siga apretado.
-    let group = egui::Id::new("cad_object_bar_transform");
+    // Un arrastre es un solo paso de undo: se juntan los cambios mientras el botón siga
+    // apretado. Lo escrito en un campo (egui lo pasa tecla por tecla), otro paso por campo: se
+    // juntan mientras ese campo tenga el foco.
+    let drag = egui::Id::new("cad_object_bar_transform");
+    let group = typing.as_ref().map_or(drag, |name| drag.with(name));
     if let Some(t) = next
         && editable
         && next != current
     {
         editor.set_active_transform(t, group);
     }
-    if !ui.input(|input| input.pointer.any_down()) {
-        editor.end_group_of(group.value());
+    if typing.is_none() && !ui.input(|input| input.pointer.any_down()) {
+        editor.end_group_of(drag.value());
+        for part in parts() {
+            for axis in ["X", "Y", "Z"] {
+                editor.end_group_of(drag.with(format!("{} {axis}", part.title)).value());
+            }
+        }
     }
 }
 
 /// El campo de un eje (`name`, con la letra `axis`) de `part`: lo guardado en `value` se muestra
 /// en la unidad de la barrita y solo se escribe si el usuario lo cambia (un valor fuera de
-/// `part.range` no se recorta solo). Sin `value`, vacío y deshabilitado.
+/// `part.range` no se recorta solo). Sin `value`, vacío y deshabilitado. Devuelve si se está
+/// escribiendo en él (tiene el foco o lo acaba de soltar).
 fn axis_field(
     ui: &mut egui::Ui,
     look: Option<BarLook>,
     (name, axis): (&str, &str),
     value: Option<&mut i32>,
     part: &Part,
-) {
+) -> bool {
     let shown = value.as_deref().map(|v| (part.show)(*v) / part.per);
     let mut v = shown;
-    match look {
-        Some(look) => {
-            bar_fields::axis_number(ui, look, name, axis, v.as_mut(), part.range.clone());
-        }
+    let response = match look {
+        Some(look) => Some(bar_fields::axis_number(
+            ui,
+            look,
+            name,
+            axis,
+            v.as_mut(),
+            part.range.clone(),
+        )),
         None => {
             ui.label(axis);
             match v.as_mut() {
@@ -161,17 +178,19 @@ fn axis_field(
                     let drag = egui::DragValue::new(v)
                         .range(part.range.clone())
                         .clamp_existing_to_range(false);
-                    ui.add(drag).on_hover_text(name);
+                    Some(ui.add(drag).on_hover_text(name))
                 }
                 None => {
                     ui.add_enabled(false, egui::Label::new("–"));
+                    None
                 }
             }
         }
-    }
+    };
     if let (Some(value), Some(now)) = (value, v)
         && v != shown
     {
         *value = now * part.per;
     }
+    response.is_some_and(|r| r.has_focus() || r.lost_focus())
 }
