@@ -7,6 +7,7 @@ pub mod engines;
 mod error;
 pub mod export;
 pub mod files;
+pub mod font;
 pub mod import;
 pub mod lospec;
 pub mod palette_files;

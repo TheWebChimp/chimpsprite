@@ -79,6 +79,8 @@ impl DialogHarness {
             app.update_canvas_size(&ctx);
             app.update_tilemap_dialogs(&ctx);
             app.update_font_dialog(&ctx);
+            app.update_build_font_dialog(&ctx);
+            app.update_import_font_dialog(&ctx);
             app.update_model_dialog(&ctx);
             app.update_bake_dialog(&ctx);
             app.update_gif_dialog(&ctx);
@@ -1300,4 +1302,80 @@ fn shrinking_the_texture_with_uvs_outside_asks_and_resize_applies() {
         assert!(h.app.palette_confirm.is_none());
         assert_eq!(side(&h), (32, 32));
     }
+}
+
+// --- Build e Import Font ---
+
+#[test]
+fn build_font_opens_with_the_format_and_cancels() {
+    let mut h = DialogHarness::new(true);
+    h.app
+        .doc
+        .editor
+        .new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    h.app
+        .open_build_font(Some(crate::font_io::BuildFormat::BmFont));
+    h.settle();
+    assert!(h.drew_text("Build Font"));
+    assert!(h.drew_text("Mine.fnt + Mine.png"));
+    let dialog = h.app.build_font.as_ref().unwrap();
+    assert_eq!(dialog.format, crate::font_io::BuildFormat::BmFont);
+    h.click("Cancel");
+    h.settle();
+    assert!(h.app.build_font.is_none());
+    // Sin fuente activa no hay nada que construir; en 1 bit, el TTF de color pasa a TTF.
+    h.app
+        .open_build_font(Some(crate::font_io::BuildFormat::ColorTtf));
+    assert_eq!(
+        h.app.build_font.as_ref().map(|d| d.format),
+        Some(crate::font_io::BuildFormat::Ttf)
+    );
+}
+
+#[test]
+fn importing_a_ttf_shows_its_dialog_and_adds_the_font_in_its_tab() {
+    let mut h = DialogHarness::new(true);
+    let ctx = h.ctx.clone();
+    h.app
+        .opened_font_file(&ctx, "tiny.ttf", crate::font_io::sample_ttf());
+    h.settle();
+    assert!(h.drew_text("Import Font"));
+    assert_eq!(h.app.import_font.as_ref().unwrap().px, 8);
+    let before = h.app.doc.editor.document.artboards.len();
+    h.click("Import");
+    h.settle();
+    assert!(h.app.import_font.is_none());
+    let editor = &h.app.doc.editor;
+    assert_eq!(editor.document.artboards.len(), before + 1);
+    let font = editor.font().expect("the imported font is active");
+    assert_eq!(font.name, "Tiny");
+    assert_eq!((editor.sprite().width, editor.sprite().height), (6, 8));
+    assert_eq!(
+        crate::dock::open_panel(&h.ctx),
+        Some(crate::dock::DockPanel::Font)
+    );
+    // Un paso de undo.
+    h.app.doc.editor.undo();
+    assert_eq!(h.app.doc.editor.document.artboards.len(), before);
+}
+
+#[test]
+fn a_bitfontmaker_json_is_imported_without_a_dialog_even_from_home() {
+    let mut h = DialogHarness::new(true);
+    h.app.request_close_tab(0);
+    h.settle();
+    assert!(!h.app.has_doc());
+    let ctx = h.ctx.clone();
+    let json = br#"{"65":[0,0,0,12,12,0,0,0,0,0,0,0,0,0,0,0],"name":"BFM"}"#.to_vec();
+    h.app.opened_font_file(&ctx, "bfm.json", json);
+    h.settle();
+    assert!(h.app.import_font.is_none());
+    assert!(h.app.has_doc());
+    let font = h.app.doc.editor.font().expect("a font");
+    assert_eq!(font.name, "BFM");
+    assert_eq!(font.glyphs.len(), 1);
+    // Lo que no es una fuente avisa.
+    h.app.opened_font_file(&ctx, "bad.json", b"[]".to_vec());
+    h.settle();
+    assert!(h.app.message.is_some());
 }

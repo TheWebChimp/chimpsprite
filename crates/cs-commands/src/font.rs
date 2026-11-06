@@ -1,7 +1,9 @@
 //! Los cambios de una fuente pixel: crearla, agregar o quitar glifos (un frame cada uno) y sus
 //! anchos. Pintar un glifo es editar un cel, como siempre.
 
-use cs_core::{Artboard, ArtboardId, Document, FontInfo, FontMode, Frame, GlyphInfo, font_sprite};
+use cs_core::{
+    Artboard, ArtboardId, Document, FontInfo, FontMode, Frame, GlyphInfo, Sprite, font_sprite,
+};
 
 use crate::{Command, DocCommand};
 
@@ -14,14 +16,26 @@ pub fn new_font_artboard(
     mode: FontMode,
     position: (i32, i32),
 ) -> (ArtboardId, DocCommand) {
-    let id = doc.next_artboard_id();
     let font = FontInfo::new(name, cell.1, mode);
+    let sprite = font_sprite(cell, mode, font.glyphs.len());
+    add_font_artboard(doc, font, sprite, position)
+}
+
+/// El artboard de la fuente `font` con su `sprite` (p. ej. una importada) en `position`, con el
+/// nombre de la fuente, y el comando que lo agrega al final.
+pub fn add_font_artboard(
+    doc: &Document,
+    font: FontInfo,
+    sprite: Sprite,
+    position: (i32, i32),
+) -> (ArtboardId, DocCommand) {
+    let id = doc.next_artboard_id();
     let artboard = Artboard {
         model: None,
         id,
-        name: name.to_owned(),
+        name: font.name.clone(),
         position,
-        sprite: font_sprite(cell, mode, font.glyphs.len()),
+        sprite,
         guides: Vec::new(),
         symmetry: Default::default(),
         in_library: false,
@@ -188,6 +202,34 @@ mod tests {
             },
         };
         assert!(StructureLock::execute(&mut history, &mut doc, plain, false).is_ok());
+    }
+
+    #[test]
+    fn a_built_font_is_added_as_an_artboard_and_undoes() {
+        let (mut doc, _) = doc_with_font();
+        let before = doc.clone();
+        let (font, sprite) = cs_core::build_font(cs_core::FontBuild {
+            name: "Imported".into(),
+            mode: FontMode::OneBit,
+            cell: (6, 8),
+            metrics: cs_core::FontMetrics::for_cell(8),
+            letter_spacing: 1,
+            space_width: 3,
+            monospace: false,
+            glyphs: vec![cs_core::GlyphBuild {
+                ch: 'x',
+                advance: None,
+                pixels: vec![(1, 1, None)],
+            }],
+        });
+        let (id, cmd) = add_font_artboard(&doc, font, sprite, (100, 0));
+        let undo = cmd.apply(&mut doc).unwrap();
+        let a = doc.artboard(id).unwrap();
+        assert_eq!(a.name, "Imported");
+        assert_eq!(a.font.as_ref().unwrap().glyphs.len(), 1);
+        assert_eq!((a.sprite.width, a.sprite.height), (6, 8));
+        undo.apply(&mut doc).unwrap();
+        assert_eq!(doc, before);
     }
 
     #[test]

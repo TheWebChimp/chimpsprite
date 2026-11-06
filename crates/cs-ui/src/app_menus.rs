@@ -797,6 +797,10 @@ A pixel art editor."
                 if ui.add(menus::plain("Import Sprite Sheet…")).clicked() {
                     self.import_sheet(&ctx);
                 }
+                if ui.add(menus::plain("Import Font…")).clicked() {
+                    self.choose_font_file(&ctx);
+                    ui.close();
+                }
                 ui.add_enabled_ui(has_doc, |ui| self.scripts_menu(ui, &ctx));
                 if ui
                     .add_enabled(
@@ -806,6 +810,15 @@ A pixel art editor."
                     .clicked()
                 {
                     self.open_export();
+                }
+                let font = self.doc.editor.is_font();
+                if ui
+                    .add_enabled(has_doc && font, menus::plain("Export Font…"))
+                    .on_disabled_hover_text("Open a font (Library → Fonts)")
+                    .clicked()
+                {
+                    self.open_build_font(None);
+                    ui.close();
                 }
                 menus::separator(ui);
                 if ui.add(menus::plain("Quit")).clicked() {

@@ -23,6 +23,20 @@ impl Editor {
         true
     }
 
+    /// Agrega una fuente ya armada (una importada) a la derecha de todo, en un paso de undo, y
+    /// entra a ella como con [`Editor::new_font`].
+    pub fn add_font(&mut self, font: FontInfo, sprite: cs_core::Sprite) -> bool {
+        let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
+        let (id, cmd) =
+            cs_commands::font::add_font_artboard(&self.document, font, sprite, (x1 + 16, y0));
+        if !self.named("Import Font", |e| e.execute_doc(cmd)) {
+            return false;
+        }
+        self.enter_workspace(id);
+        self.set_frame(0);
+        true
+    }
+
     /// La fuente del artboard activo.
     pub fn font(&self) -> Option<&FontInfo> {
         self.artboard().font.as_ref()

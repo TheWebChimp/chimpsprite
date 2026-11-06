@@ -3728,7 +3728,10 @@ fn the_font_panel_keeps_its_logo_and_build_while_the_middle_scrolls() {
         build.bottom() > flyout.bottom() - 20.0,
         "{build:?} {flyout:?}"
     );
-    assert!(h.disabled.iter().any(|l| l == "Build ▾"));
+    assert!(
+        !h.disabled.iter().any(|l| l == "Build ▾"),
+        "a font can be built"
+    );
     let map_top = |h: &LayoutHarness| {
         h.text_rects
             .iter()
@@ -10526,4 +10529,34 @@ fn switching_to_face_mode_chooses_whole_faces() {
     // Los 4 vértices de un lado dan esa cara y, con ella, todos los lados.
     e.set_select_mode(cs_3d::SelectMode::Face);
     assert_eq!(chosen_items(&h), sides);
+}
+
+#[test]
+fn build_opens_the_format_menu_and_the_dialog() {
+    let mut h = font_panel_open(Vec2::new(1200.0, 800.0));
+    h.click(h.button("Build ▾").center(), PointerButton::Primary);
+    h.frame();
+    assert!(h.button("TTF…").width() > 0.0);
+    assert!(h.button("BMFont (.fnt + .png)…").width() > 0.0);
+    assert!(
+        h.disabled.iter().any(|l| l == "Color TTF (COLR)…"),
+        "1 bit: no color TTF"
+    );
+    h.click(h.button("TTF…").center(), PointerButton::Primary);
+    h.frame();
+    assert_eq!(
+        h.app.build_font.as_ref().map(|d| d.format),
+        Some(crate::font_io::BuildFormat::Ttf)
+    );
+}
+
+#[test]
+fn the_library_offers_importing_a_font() {
+    let palettes = PaletteLibrary::new(Box::new(NoPresets));
+    let mut app = ChimpApp::with_parts(Default::default(), pixel_ui(), palettes);
+    app.new_document();
+    let mut h = LayoutHarness::start_in(app, Vec2::new(1200.0, 800.0));
+    h.click(h.button("Library").center(), PointerButton::Primary);
+    h.frame();
+    assert!(h.button("Import…").width() > 0.0);
 }

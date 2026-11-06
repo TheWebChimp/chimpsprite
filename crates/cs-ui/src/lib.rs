@@ -26,7 +26,9 @@ mod fg_bg;
 mod file_actions;
 mod filter_dialog;
 mod filters;
+mod font_actions;
 mod font_dialog;
+mod font_io;
 mod font_overlay;
 mod font_panel;
 mod frame_dialog;
@@ -165,6 +167,10 @@ pub struct ChimpApp {
     new_tilemap: Option<tilemap_dialog::NewTilemapDialog>,
     /// `File → New Font…`.
     new_font: Option<font_dialog::NewFontDialog>,
+    /// Build ▾ del panel FontForge y File → Export Font….
+    build_font: Option<font_io::BuildFontDialog>,
+    /// File → Import Font… de un TTF/OTF.
+    import_font: Option<Box<font_io::ImportFontDialog>>,
     /// `File → New 3D Model…`.
     new_model: Option<model_dialog::NewModelDialog>,
     /// Bake… del panel 3D.
@@ -324,6 +330,8 @@ impl ChimpApp {
             news_fetcher: news::default_fetcher(),
             new_tilemap: None,
             new_font: None,
+            build_font: None,
+            import_font: None,
             new_model: None,
             bake: None,
             gif: None,
@@ -632,8 +640,10 @@ impl ChimpApp {
                 });
             },
         );
-        if let Some(font_panel::FontAction::NewFont) = action {
-            self.new_font = Some(Default::default());
+        match action {
+            Some(font_panel::FontAction::NewFont) => self.new_font = Some(Default::default()),
+            Some(font_panel::FontAction::Build(format)) => self.open_build_font(Some(format)),
+            None => {}
         }
     }
 
@@ -765,6 +775,7 @@ impl ChimpApp {
                     self.show_workspace_panel(ctx);
                 }
             }
+            library_panel::LibraryAction::ImportFont => self.choose_font_file(ctx),
             library_panel::LibraryAction::Edit(id) => {
                 if editor.enter_symbol(id) {
                     self.doc.canvas.request_zoom(view::ZoomRequest::Fit);
@@ -1903,6 +1914,8 @@ impl eframe::App for ChimpApp {
         }
         self.update_tilemap_dialogs(&ctx);
         self.update_font_dialog(&ctx);
+        self.update_build_font_dialog(&ctx);
+        self.update_import_font_dialog(&ctx);
         self.update_model_dialog(&ctx);
         self.update_bake_dialog(&ctx);
         self.update_gif_dialog(&ctx);

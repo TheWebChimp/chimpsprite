@@ -16,7 +16,13 @@ serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror.workspace = true
 log.workspace = true
+# Leer TTF/OTF (importar fuentes y probar las exportadas); la misma versión que usa fontdue.
+ttf-parser = { version = "0.25", default-features = false, features = ["std"] }
 
 [dev-dependencies]
+# La que usa la herramienta Texto: las fuentes exportadas se prueban con ella.
+fontdue = "0.9"
+# Fuentes reales (no pixel) para probar el importador.
+epaint_default_fonts = "0.36"
 cs-raster.workspace = true
 proptest.workspace = true

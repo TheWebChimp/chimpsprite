@@ -3,7 +3,7 @@
 //! fuente, el mapa de caracteres por páginas (ASCII, Latin-1, Latin Ext-A y los de la fuente):
 //! cada celda con el glifo dibujado o, si está vacío o falta, su carácter en gris. Un clic va al
 //! glifo, un doble clic en uno que falta lo agrega y va a él, y el menú de cada celda copia,
-//! pega, borra o quita.
+//! pega, borra o quita. Build ▾ abre el menú de exportar (TTF, TTF de color y BMFont).
 //!
 //! Las medidas salen del mockup (Design.aseprite, frame 10), desde la esquina de arriba a la
 //! izquierda del panel (su línea de borde es la fila y la columna 0).
@@ -165,6 +165,8 @@ impl Page {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FontAction {
     NewFont,
+    /// Build ▾ → un formato: abrir el diálogo Build Font con él.
+    Build(crate::font_io::BuildFormat),
 }
 
 /// El panel en `ui` (lo de adentro del marco, de la columna entera: ver
@@ -180,7 +182,7 @@ pub fn show(
     let outer = inner.expand(FLYOUT_MARGIN as f32);
     let outer = Rect::from_min_size(outer.min.round(), outer.size().round());
     header(ui, skin, state, outer, editor.font().is_some());
-    footer(ui, skin, outer);
+    let build = footer(ui, skin, outer, editor.font().map(|f| f.mode));
     let middle = Rect::from_x_y_ranges(
         outer.shrink(FLYOUT_MARGIN as f32).x_range(),
         outer.top() + HEADER_LINE + pixel_ui::ETCHED_SIZE..=outer.bottom() - FOOTER_LINE,
@@ -202,7 +204,7 @@ pub fn show(
         .inner;
     // Todo el panel es de la columna (el medio no lo dice: está en su propio `Ui`).
     ui.advance_cursor_after_rect(inner);
-    action
+    action.or(build)
 }
 
 /// Lo que se desplaza: New Font… sin fuente; con fuente, la vista elegida.
@@ -350,29 +352,61 @@ pub(crate) fn lit_line(ui: &Ui, skin: Option<&Skin>, outer: Rect, top: f32) {
     }
 }
 
-/// El pie: la línea grabada y el botón Build (deshabilitado: "Coming soon") a la derecha,
-/// centrado en el alto del pie.
-fn footer(ui: &mut Ui, skin: Option<&Skin>, outer: Rect) {
+/// El pie: la línea grabada y el botón Build ▾ a la derecha, centrado en el alto del pie. Con
+/// una fuente (de `mode`), abre el menú de los formatos; sin fuente, deshabilitado.
+fn footer(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    outer: Rect,
+    mode: Option<cs_core::FontMode>,
+) -> Option<FontAction> {
     lit_line(ui, skin, outer, outer.bottom() - FOOTER_LINE);
     let label = "Build ▾";
     let rows = (outer.bottom() - FOOTER_TOP)..=(outer.bottom() - FOOTER_BOTTOM);
     let center = (rows.start() + rows.end()) / 2.0;
     let right = outer.right() - FLYOUT_MARGIN as f32;
     let id = ui.id().with("font_build");
-    ui.add_enabled_ui(false, |ui| match skin {
+    let response = ui
+        .add_enabled_ui(mode.is_some(), |ui| match skin {
+            Some(skin) => {
+                let size = vec2(kit::button::width(ui, label), kit::button::HEIGHT);
+                let min = pos2(right - size.x, center - size.y / 2.0).round();
+                kit::button::button_at(ui, skin, Rect::from_min_size(min, size), id, label)
+            }
+            None => {
+                let size = vec2(60.0, 20.0);
+                let min = pos2(right - size.x, center - size.y / 2.0).round();
+                ui.put(Rect::from_min_size(min, size), egui::Button::new(label))
+            }
+        })
+        .inner
+        .on_disabled_hover_text("Open a font to build it");
+    let mode = mode?;
+    let content = |ui: &mut Ui| {
+        let mut picked = None;
+        for format in crate::font_io::BuildFormat::ALL {
+            let item = format!("{}…", format.label());
+            let enabled = format.available(mode);
+            if ui
+                .add_enabled(enabled, menus::plain(&item))
+                .on_disabled_hover_text("Only for color fonts")
+                .clicked()
+            {
+                picked = Some(FontAction::Build(format));
+                ui.close();
+            }
+        }
+        picked
+    };
+    match skin {
         Some(skin) => {
-            let size = vec2(kit::button::width(ui, label), kit::button::HEIGHT);
-            let min = pos2(right - size.x, center - size.y / 2.0).round();
-            kit::button::button_at(ui, skin, Rect::from_min_size(min, size), id, label)
+            let look = menus::MenuLook::new(skin, response.rect.top());
+            menus::dropdown(&look, &response, response.rect, content).flatten()
         }
-        None => {
-            let size = vec2(60.0, 20.0);
-            let min = pos2(right - size.x, center - size.y / 2.0).round();
-            ui.put(Rect::from_min_size(min, size), egui::Button::new(label))
-        }
-    })
-    .inner
-    .on_disabled_hover_text("Coming soon");
+        None => egui::Popup::menu(&response)
+            .show(content)
+            .and_then(|i| i.inner),
+    }
 }
 
 /// El Test Drive: el campo del texto de prueba y, debajo, ese texto escrito con la fuente (a
