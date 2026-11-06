@@ -7,6 +7,7 @@ use cs_commands::{Command, ops};
 use cs_core::{Cel, ColorMode, Image, ImageId, LayerKind, PixelBuffer, PixelValue, Rgba, Sprite};
 
 use crate::export::Bitmap;
+use crate::spritesheet::SheetOrder;
 use crate::{IoError, Result};
 
 /// Tope de memoria para decodificar (protege contra PNG maliciosos).
@@ -107,6 +108,28 @@ pub struct SheetGrid {
 }
 
 impl SheetGrid {
+    /// La celda que deja `columns` × `rows` celdas en una hoja de `size` con ese aire y ese
+    /// margen (lo que sobra a la derecha y abajo no se usa). Al menos 1×1.
+    pub fn from_counts(
+        size: (u32, u32),
+        (columns, rows): (u32, u32),
+        padding: (u32, u32),
+        offset: (u32, u32),
+    ) -> SheetGrid {
+        let side = |total: u32, n: u32, pad: u32, off: u32| {
+            let n = n.max(1);
+            (total.saturating_sub(off).saturating_sub(pad * (n - 1)) / n).max(1)
+        };
+        SheetGrid {
+            cell: (
+                side(size.0, columns, padding.0, offset.0),
+                side(size.1, rows, padding.1, offset.1),
+            ),
+            padding,
+            offset,
+        }
+    }
+
     /// Columnas y filas enteras que entran en una hoja de `size`.
     pub fn count(&self, size: (u32, u32)) -> (u32, u32) {
         let fit = |total: u32, offset: u32, cell: u32, pad: u32| {
@@ -129,6 +152,17 @@ impl SheetGrid {
 /// por filas (de izquierda a derecha y de arriba a abajo). Las celdas vacías del final no se
 /// agregan. `None` si no entra ninguna celda.
 pub fn sprite_from_sheet(sheet: &Bitmap, grid: SheetGrid) -> Option<Sprite> {
+    sprite_from_sheet_ordered(sheet, grid, SheetOrder::ByRows, 100)
+}
+
+/// Como [`sprite_from_sheet`], recorriendo las celdas en `order` y con frames de `duration_ms`
+/// (Slice into Frames).
+pub fn sprite_from_sheet_ordered(
+    sheet: &Bitmap,
+    grid: SheetGrid,
+    order: SheetOrder,
+    duration_ms: u16,
+) -> Option<Sprite> {
     let (cols, rows) = grid.count((sheet.width, sheet.height));
     let (w, h) = (grid.cell.0.max(1), grid.cell.1.max(1));
     if cols == 0 || rows == 0 {
@@ -142,18 +176,17 @@ pub fn sprite_from_sheet(sheet: &Bitmap, grid: SheetGrid) -> Option<Sprite> {
             .map(|(x, y)| sheet.pixels[(y * sheet.width + x) as usize])
             .collect()
     };
-    let mut cells: Vec<Vec<Rgba>> = (0..rows)
-        .flat_map(|row| (0..cols).map(move |col| (col, row)))
+    let mut cells: Vec<Vec<Rgba>> = (0..cols * rows)
+        .map(|i| order.cell(i, cols, rows))
         .map(|(col, row)| cell(col, row))
         .collect();
     while cells.len() > 1 && cells.last().is_some_and(|c| c.iter().all(|p| p.a == 0)) {
         cells.pop();
     }
     let mut sprite = Sprite::new(w, h, ColorMode::Rgba);
-    let duration = sprite.frames[0].duration_ms;
     sprite.frames = vec![
         cs_core::Frame {
-            duration_ms: duration
+            duration_ms: duration_ms.max(1)
         };
         cells.len()
     ];
