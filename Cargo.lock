@@ -1063,6 +1063,7 @@ dependencies = [
  "cs-core",
  "cs-raster",
  "cs-render",
+ "epaint_default_fonts",
  "flate2",
  "fontdue",
  "gif",

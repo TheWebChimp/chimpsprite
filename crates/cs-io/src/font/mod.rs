@@ -4,6 +4,7 @@
 pub mod bmfont;
 pub mod outline;
 pub mod ttf;
+pub mod ttf_import;
 
 /// Una fuente de prueba de celda 8×10 (baseline 8): una `A` con hueco (en color, de dos
 /// colores), una `g` con descendente, una `i` de ancho manual, un `€` y un carácter fuera del BMP.
