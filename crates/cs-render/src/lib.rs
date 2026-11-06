@@ -9,7 +9,7 @@ mod materialize;
 mod model3d;
 pub mod normal;
 pub use bake3d::{
-    BAKE_FRAMES, BAKE_SIZE, BAKE_TILT, BakeOptions, BakeOutput, bake_model, bake_preview,
+    BAKE_FOV, BAKE_FRAMES, BAKE_SIZE, BAKE_TILT, BakeOptions, BakeOutput, bake_model, bake_preview,
 };
 pub use lighting::{Light, detect_background, lit, luminance_mask};
 pub use materialize::{
