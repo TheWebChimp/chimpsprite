@@ -31,6 +31,7 @@ mod model_edit;
 mod model_ops;
 mod model_topology;
 mod outliner_ops;
+mod play_in_place;
 mod texture_mode;
 mod workspace;
 pub use anim_ops::{
@@ -302,6 +303,9 @@ pub struct Editor {
     pub(crate) playback: Option<(Playback, (usize, usize), AnimDirection)>,
     /// Milisegundos acumulados en el frame actual durante la reproducción.
     pub(crate) play_clock: f64,
+    /// Play in Place: los artboards que se animan solos en el lienzo (estado de la sesión, fuera
+    /// del documento y del undo).
+    pub(crate) in_place: std::collections::BTreeMap<ArtboardId, play_in_place::InPlace>,
     /// Rango de frames seleccionado en el timeline (para tags, duraciones…).
     pub frame_range: Option<(usize, usize)>,
     /// Las capas del rango de cels (de la capa donde empezó a la otra punta, en el orden del
@@ -452,6 +456,7 @@ impl Editor {
             playing: false,
             playback: None,
             play_clock: 0.0,
+            in_place: Default::default(),
             frame_range: None,
             layer_range: None,
             frames_picked: false,
@@ -1018,7 +1023,19 @@ impl Editor {
 
     /// Punto de mundo → píxel local del artboard activo.
     /// Frame a mostrar de un artboard: el actual si es el activo; si no, el recordado.
+    /// Los que no son el activo con Play in Place, el de su reproducción.
     pub fn frame_of(&self, id: ArtboardId) -> usize {
+        if id == self.active {
+            self.frame
+        } else if let Some(frame) = self.in_place_frame(id) {
+            frame
+        } else {
+            self.edit_frame_of(id)
+        }
+    }
+
+    /// El frame de edición de un artboard: el actual si es el activo; si no, el recordado.
+    pub fn edit_frame_of(&self, id: ArtboardId) -> usize {
         if id == self.active {
             self.frame
         } else {
@@ -1179,3 +1196,6 @@ mod anim_tests;
 
 #[cfg(test)]
 mod in_place_tests;
+
+#[cfg(test)]
+mod play_in_place_tests;
