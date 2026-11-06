@@ -23,6 +23,7 @@ use crate::transform_box::TransformHit;
 mod tool_options;
 pub use tool_options::*;
 
+mod anim_ops;
 mod document_ops;
 mod font_ops;
 mod gestures;
@@ -32,6 +33,9 @@ mod model_topology;
 mod outliner_ops;
 mod texture_mode;
 mod workspace;
+pub use anim_ops::{
+    ANIM_LENGTH, AnimView, ClipEdge, FINE_SNAP_MS, MIN_CLIP_MS, NewClip, SNAP_MS, row_clips,
+};
 pub use model_edit::{
     CadMode, DRAG_THRESHOLD, EditOp, GIZMO_PX, GRIDS, Gizmo, GizmoView, KeyOp, ModelEdit, PerspMap,
     TextureView, UvOp,
@@ -1163,3 +1167,6 @@ mod workspace_tests;
 
 #[cfg(test)]
 mod texture_mode_tests;
+
+#[cfg(test)]
+mod anim_tests;

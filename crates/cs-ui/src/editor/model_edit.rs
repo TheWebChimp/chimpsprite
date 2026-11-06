@@ -286,13 +286,14 @@ impl GizmoView {
     }
 }
 
-/// Los dos modos de la pestaña de un modelo: las 4 vistas (*Model*) o el modelo arriba y su
-/// textura abajo (*Texture*).
+/// Los modos de la pestaña de un modelo: las 4 vistas (*Model*), el modelo arriba y su
+/// textura abajo (*Texture*) o el modelo animado arriba y el timeline abajo (*Anim*).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CadMode {
     #[default]
     Model,
     Texture,
+    Anim,
 }
 
 /// El zoom (entero) y el desplazamiento de la textura de abajo en modo Texture.
@@ -366,6 +367,8 @@ pub struct ModelEdit {
     /// `sync_model_edit`): si un deshacer o rehacer cambia la topología de un objeto, sus índices
     /// ya no son los mismos vértices, aristas o caras.
     pub made_on: Vec<(usize, usize)>,
+    /// El modo Anim: el tiempo actual, la reproducción y el bloque elegido.
+    pub anim: super::AnimView,
 }
 
 impl Default for ModelEdit {
@@ -390,6 +393,7 @@ impl Default for ModelEdit {
             gizmo: Gizmo::default(),
             extrusion: None,
             made_on: Vec::new(),
+            anim: super::AnimView::default(),
         }
     }
 }

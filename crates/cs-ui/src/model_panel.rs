@@ -257,7 +257,7 @@ fn scrolled<R>(
 }
 
 /// La pieza del ícono de un tipo de objeto.
-fn kind_icon(kind: PrimitiveKind) -> &'static str {
+pub(crate) fn kind_icon(kind: PrimitiveKind) -> &'static str {
     match kind {
         PrimitiveKind::Cube => "icon.object.cube",
         PrimitiveKind::Plane => "icon.object.plane",
@@ -646,6 +646,8 @@ fn object_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     match editor.cad_mode() {
         CadMode::Texture => uv_buttons(ui, editor, skin),
         CadMode::Model => topology_buttons(ui, editor, skin),
+        // Los bloques se agregan desde la barra del timeline.
+        CadMode::Anim => {}
     }
 }
 

@@ -78,6 +78,143 @@ impl Default for Transform3D {
     }
 }
 
+/// Un eje del modelo.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Axis3 {
+    X,
+    #[default]
+    Y,
+    Z,
+}
+
+impl Axis3 {
+    pub const ALL: [Axis3; 3] = [Axis3::X, Axis3::Y, Axis3::Z];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Axis3::X => "x",
+            Axis3::Y => "y",
+            Axis3::Z => "z",
+        }
+    }
+}
+
+/// Cómo avanza un bloque de animación: de 0 a 1 a lo largo de cada ida.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Curve {
+    #[default]
+    Linear,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+    /// Rebota al llegar (como una pelota que cae).
+    Bounce,
+    /// Se pasa y oscila hasta quedarse (un resorte).
+    Elastic,
+    /// Se pasa un poco y vuelve.
+    Back,
+    /// Se queda en 0 y salta a 1 al final.
+    Step,
+}
+
+impl Curve {
+    pub const ALL: [Curve; 8] = [
+        Curve::Linear,
+        Curve::EaseIn,
+        Curve::EaseOut,
+        Curve::EaseInOut,
+        Curve::Bounce,
+        Curve::Elastic,
+        Curve::Back,
+        Curve::Step,
+    ];
+
+    /// Como se ve en el select (en minúsculas, como picoCAD 2).
+    pub fn label(self) -> &'static str {
+        match self {
+            Curve::Linear => "linear",
+            Curve::EaseIn => "ease in",
+            Curve::EaseOut => "ease out",
+            Curve::EaseInOut => "ease in/out",
+            Curve::Bounce => "bounce",
+            Curve::Elastic => "elastic",
+            Curve::Back => "back",
+            Curve::Step => "step",
+        }
+    }
+}
+
+/// Lo que hace un bloque de animación a su objeto o grupo, por el origen del nodo y en los ejes
+/// de su padre.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ClipMotion {
+    /// Gira `turns` milésimas de vuelta alrededor de `axis` (positivo: como la rotación del
+    /// transform en ese eje).
+    Rotate { axis: Axis3, turns: i32 },
+    /// Se corre `offset` (en 1/16 de unidad).
+    Move { offset: Vec3i },
+    /// Escala por `factor` (milésimas por eje; 1000 = igual).
+    Scale { factor: Vec3i },
+}
+
+impl ClipMotion {
+    /// El nombre del tipo (el título del panel del bloque).
+    pub fn name(&self) -> &'static str {
+        match self {
+            ClipMotion::Rotate { .. } => "Rotate",
+            ClipMotion::Move { .. } => "Move",
+            ClipMotion::Scale { .. } => "Scale",
+        }
+    }
+}
+
+fn one() -> u32 {
+    1
+}
+
+/// Un bloque de animación de la pista de un objeto o grupo: de `start_ms` a
+/// `start_ms + duration_ms`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Clip {
+    pub start_ms: u32,
+    pub duration_ms: u32,
+    pub motion: ClipMotion,
+    #[serde(default)]
+    pub curve: Curve,
+    /// Cada ciclo va y vuelve.
+    #[serde(default)]
+    pub ping_pong: bool,
+    /// Cuántos ciclos caben en el bloque (al menos 1).
+    #[serde(default = "one")]
+    pub repeat: u32,
+}
+
+impl Clip {
+    /// Un bloque de `motion` de `start_ms` a `start_ms + duration_ms`, lineal, sin ping pong y
+    /// una vez.
+    pub fn new(motion: ClipMotion, start_ms: u32, duration_ms: u32) -> Clip {
+        Clip {
+            start_ms,
+            duration_ms,
+            motion,
+            curve: Curve::Linear,
+            ping_pong: false,
+            repeat: 1,
+        }
+    }
+
+    pub fn end_ms(&self) -> u32 {
+        self.start_ms.saturating_add(self.duration_ms)
+    }
+}
+
+/// La duración de la animación de un modelo nuevo (o de un archivo de antes de la animación).
+pub const DEFAULT_ANIM_MS: u32 = 2000;
+
+fn default_anim_ms() -> u32 {
+    DEFAULT_ANIM_MS
+}
+
 /// Una carpeta del outliner: mueve, oculta y bloquea a lo que tiene adentro.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Group3D {
@@ -90,6 +227,9 @@ pub struct Group3D {
     /// Desplegado en el outliner.
     #[serde(default = "yes")]
     pub open: bool,
+    /// Los bloques de animación de su pista.
+    #[serde(default)]
+    pub anim: Vec<Clip>,
 }
 
 /// Un nodo del árbol del outliner: un objeto o un grupo con sus hijos (índices a `objects` y
@@ -114,6 +254,9 @@ pub struct Object3D {
     pub hidden: bool,
     #[serde(default)]
     pub locked: bool,
+    /// Los bloques de animación de su pista.
+    #[serde(default)]
+    pub anim: Vec<Clip>,
 }
 
 /// El tipo de primitiva de un objeto (sin sus parámetros).
@@ -312,6 +455,9 @@ pub struct Model3D {
     /// El árbol del outliner (vacío en archivos viejos: `normalize_tree` lo arma).
     #[serde(default)]
     pub tree: Vec<Node>,
+    /// Lo que dura la animación (ms).
+    #[serde(default = "default_anim_ms")]
+    pub anim_ms: u32,
 }
 
 impl Default for Model3D {
@@ -331,6 +477,7 @@ impl Default for Model3D {
             shading: ShadingTable::default(),
             groups: Vec::new(),
             tree: Vec::new(),
+            anim_ms: DEFAULT_ANIM_MS,
         }
     }
 }
@@ -640,6 +787,7 @@ mod tests {
                 kind: None,
                 hidden: false,
                 locked: false,
+                anim: Vec::new(),
             }],
             ..Model3D::default()
         }
@@ -848,6 +996,7 @@ mod tests {
                 hidden: false,
                 locked: false,
                 open: true,
+                anim: Vec::new(),
             },
             Group3D {
                 name: "foot".into(),
@@ -855,6 +1004,7 @@ mod tests {
                 hidden: false,
                 locked: false,
                 open: true,
+                anim: Vec::new(),
             },
         ];
         m.tree = vec![
@@ -926,6 +1076,59 @@ mod tests {
         assert_eq!(m.object_parents(1), vec![1, 0]);
         assert_eq!(m.object_parents(2), vec![1, 0]);
         assert!(!format!("{:?}", m.tree).contains("Object(3)"));
+    }
+
+    #[test]
+    fn a_model_saved_before_animation_reads_without_it() {
+        let mut m = grouped();
+        let mut v = serde_json::to_value(&m).unwrap();
+        let o = v.as_object_mut().unwrap();
+        o.remove("anim_ms");
+        for obj in o["objects"].as_array_mut().unwrap() {
+            obj.as_object_mut().unwrap().remove("anim");
+        }
+        for g in o["groups"].as_array_mut().unwrap() {
+            g.as_object_mut().unwrap().remove("anim");
+        }
+        let back: Model3D = serde_json::from_value(v).unwrap();
+        assert_eq!(back.anim_ms, DEFAULT_ANIM_MS);
+        assert!(back.objects.iter().all(|o| o.anim.is_empty()));
+        assert!(back.groups.iter().all(|g| g.anim.is_empty()));
+        // Con bloques, va y vuelve igual.
+        m.anim_ms = 5000;
+        m.objects[1].anim.push(Clip {
+            curve: Curve::Bounce,
+            ping_pong: true,
+            repeat: 3,
+            ..Clip::new(
+                ClipMotion::Rotate {
+                    axis: Axis3::Z,
+                    turns: 300,
+                },
+                250,
+                1000,
+            )
+        });
+        m.groups[0].anim.push(Clip::new(
+            ClipMotion::Move {
+                offset: Vec3i { x: 0, y: 4, z: 0 },
+            },
+            0,
+            500,
+        ));
+        let s = serde_json::to_string(&m).unwrap();
+        assert_eq!(serde_json::from_str::<Model3D>(&s).unwrap(), m);
+    }
+
+    #[test]
+    fn a_clip_without_curve_options_is_linear_once() {
+        let c: Clip = serde_json::from_str(
+            r#"{"start_ms":10,"duration_ms":20,"motion":{"Scale":{"factor":{"x":1,"y":2,"z":3}}}}"#,
+        )
+        .unwrap();
+        assert_eq!((c.curve, c.ping_pong, c.repeat), (Curve::Linear, false, 1));
+        assert_eq!(c.end_ms(), 30);
+        assert_eq!(c.motion.name(), "Scale");
     }
 
     #[test]

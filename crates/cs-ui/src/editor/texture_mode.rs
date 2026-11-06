@@ -77,14 +77,17 @@ impl Editor {
     }
 
     /// Cambia de modo: en Texture activa la textura del modelo del workspace (si tiene; si no,
-    /// el modelo sigue activo y el lienzo avisa) y pasa la selección a modo Face; en Model
-    /// vuelve a activar el modelo. No toca el documento.
+    /// el modelo sigue activo y el lienzo avisa) y pasa la selección a modo Face; en Model y en
+    /// Anim vuelve a activar el modelo. Salir de Anim pausa la reproducción. No toca el
+    /// documento.
     pub fn set_cad_mode(&mut self, mode: CadMode) {
         if mode == self.model_edit.mode || self.workspace_model().is_none() {
             return;
         }
         self.cancel_model_op();
         self.cancel_uv_op();
+        self.cancel_clip_drag();
+        self.model_edit.anim.playing = false;
         // Activar la textura o el modelo olvida el objeto del panel: es el mismo modelo.
         let (object, group) = (self.model_object, self.model_group);
         self.model_edit.mode = mode;
@@ -98,7 +101,7 @@ impl Editor {
                     self.activate(t);
                 }
             }
-            CadMode::Model => {
+            CadMode::Model | CadMode::Anim => {
                 if let Some(w) = self.workspace {
                     self.activate(w);
                 }

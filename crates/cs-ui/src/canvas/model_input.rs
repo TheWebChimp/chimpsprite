@@ -209,6 +209,8 @@ impl CanvasView {
         let Some(camera) = editor.edited_model().map(|m| m.camera) else {
             return;
         };
+        // En modo Anim un clic elige el objeto (Shift no suma caras: mueve el objetivo).
+        let anim = editor.cad_mode() == crate::editor::CadMode::Anim;
         if secondary || modifiers.alt || modifiers.shift {
             let orbit = secondary || modifiers.alt;
             self.model_drag = Some(ModelDrag {
@@ -216,9 +218,11 @@ impl CanvasView {
                 from: p,
                 camera,
                 factor,
-                toggle: (!orbit).then_some(local),
+                toggle: (!orbit && !anim).then_some(local),
                 nav: None,
             });
+        } else if anim {
+            editor.pick_anim_object(local);
         } else {
             editor.pick_model_face(local, false);
         }

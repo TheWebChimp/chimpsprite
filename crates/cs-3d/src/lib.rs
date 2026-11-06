@@ -1,6 +1,7 @@
 //! Núcleo de los modelos 3D de pocos polígonos: primitivas y sus UVs automáticos, y el
 //! rasterizador pixel que los pinta.
 
+mod anim;
 mod edit;
 mod gizmo;
 mod primitives;
@@ -11,6 +12,7 @@ mod uv;
 mod uv_layout;
 mod wire;
 
+pub use anim::*;
 pub use edit::*;
 pub use gizmo::*;
 pub use primitives::*;

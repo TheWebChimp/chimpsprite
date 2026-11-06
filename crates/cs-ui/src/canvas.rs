@@ -21,6 +21,9 @@ use crate::transform_box::{self, Handle, TransformBox, TransformHit};
 use crate::view::{ViewSettings, ZoomRequest};
 use crate::{kit, theme, widgets};
 
+mod anim_mode;
+#[cfg(test)]
+pub(crate) use anim_mode::anim_mode_block;
 mod input;
 mod model_edit;
 mod model_input;
@@ -144,8 +147,15 @@ pub struct CanvasView {
     model_drag: Option<model_input::ModelDrag>,
     /// Los cuadrantes (Front, Persp, Top, Side) del workspace del modelo, en pantalla.
     edit_quads: Option<[Rect; 4]>,
-    /// Los dos paneles del modo Texture (arriba el modelo, abajo la textura), en pantalla.
+    /// Los dos paneles del modo Texture (arriba el modelo, abajo la textura), en pantalla. En
+    /// modo Anim, arriba el modelo y abajo la barra, el timeline y el panel del bloque.
     texture_panes: Option<(Rect, Rect)>,
+    /// Las partes del modo Anim en pantalla (`None` en los otros modos).
+    anim_panes: Option<anim_mode::AnimPanes>,
+    /// Cuánto se desplazaron las pistas del timeline del modo Anim (con la rueda).
+    anim_scroll: f32,
+    /// Se está arrastrando el tiempo en la regla del timeline.
+    anim_scrub: bool,
     /// Si lo que se dibuja ahora es la textura del modo Texture (en el panel de abajo): sin
     /// reglas, notas, ventana ni etiqueta del artboard.
     texture_pane: bool,
@@ -337,6 +347,9 @@ impl Default for CanvasView {
             model_drag: None,
             edit_quads: None,
             texture_panes: None,
+            anim_panes: None,
+            anim_scroll: 0.0,
+            anim_scrub: false,
             texture_pane: false,
             texture_fit: None,
             texture_zoom: None,
@@ -793,13 +806,23 @@ impl CanvasView {
         // reglas ni nada del lienzo; en modo Texture, el modelo arriba y la textura abajo.
         let zoom_before = self.texture_zoom.take();
         if editor.model_edit_on() {
-            if editor.cad_mode() == crate::editor::CadMode::Texture {
-                self.show_texture_mode(ui, &response, rect, editor, dialog, view_settings);
-            } else {
-                self.drop_uv_press(editor);
-                self.show_model_workspace(ui, &response, rect, editor, dialog.is_some());
+            match editor.cad_mode() {
+                crate::editor::CadMode::Texture => {
+                    self.anim_panes = None;
+                    self.show_texture_mode(ui, &response, rect, editor, dialog, view_settings);
+                }
+                crate::editor::CadMode::Anim => {
+                    self.drop_uv_press(editor);
+                    self.show_anim_mode(ui, &response, rect, editor, dialog.is_some());
+                }
+                crate::editor::CadMode::Model => {
+                    self.anim_panes = None;
+                    self.drop_uv_press(editor);
+                    self.show_model_workspace(ui, &response, rect, editor, dialog.is_some());
+                }
             }
         } else {
+            self.anim_panes = None;
             self.drop_uv_press(editor);
             self.edit_quads = None;
             self.texture_panes = None;

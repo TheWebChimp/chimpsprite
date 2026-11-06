@@ -354,6 +354,7 @@ mod tests {
                     kind: Some(p.kind()),
                     hidden: false,
                     locked: false,
+                    anim: Vec::new(),
                 })
                 .collect(),
             ..Model3D::default()

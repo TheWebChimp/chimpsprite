@@ -2,6 +2,7 @@
 //! tabla del diseño (`pixel`).
 
 mod pixel;
+pub(crate) use pixel::pause_icon;
 
 use cs_commands::ops::{self, LayerDrop};
 use std::collections::HashSet;

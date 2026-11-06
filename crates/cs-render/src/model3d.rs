@@ -82,6 +82,42 @@ pub fn model_pick(doc: &Document, artboard: &Artboard, x: i32, y: i32) -> Option
             camera: None,
             extra_yaw: 0,
             frame: Some(frame),
+            time_ms: None,
+        },
+        at.0,
+        at.1,
+    )
+}
+
+/// El objeto de `model` que se ve en el pixel `(x, y)` de su render a `size` en el tiempo
+/// `time_ms` de la animación (con la textura, frame 0, y la paleta de `artboard`), como
+/// [`model_render_at`]. El pixel puede caer fuera de `size`, como en [`model_pick`]. Los
+/// bloqueados no se eligen. `None` si no hay ninguno.
+pub fn model_pick_at(
+    doc: &Document,
+    artboard: &Artboard,
+    model: &cs_core::Model3D,
+    size: (u32, u32),
+    at: (i32, i32),
+    time_ms: Option<u32>,
+) -> Option<usize> {
+    let (render, at) = around(size, at)?;
+    let mut stack = vec![artboard.id];
+    let texture = texture_frame_of(doc, model, 0, &mut stack);
+    cs_3d::pick_object(
+        &RenderInput {
+            model,
+            size: render,
+            texture: texture.as_ref().map(|(width, height, pixels)| Texture {
+                width: *width,
+                height: *height,
+                pixels,
+            }),
+            palette: artboard.sprite.palette.colors(),
+            camera: None,
+            extra_yaw: 0,
+            frame: Some(size),
+            time_ms,
         },
         at.0,
         at.1,
@@ -114,6 +150,7 @@ pub fn model_pick_face(
             camera: None,
             extra_yaw: 0,
             frame: Some(size),
+            time_ms: None,
         },
         at.0,
         at.1,
@@ -137,6 +174,7 @@ pub fn model_face_outline(
             camera: None,
             extra_yaw: 0,
             frame,
+            time_ms: None,
         },
         faces,
     )
@@ -152,6 +190,18 @@ pub fn model_render(
     size: (u32, u32),
     frame: Option<(u32, u32)>,
 ) -> Vec<Rgba> {
+    model_render_at(doc, artboard, model, size, frame, None)
+}
+
+/// Como [`model_render`], en el tiempo `time_ms` de la animación (`None`: en reposo).
+pub fn model_render_at(
+    doc: &Document,
+    artboard: &Artboard,
+    model: &cs_core::Model3D,
+    size: (u32, u32),
+    frame: Option<(u32, u32)>,
+    time_ms: Option<u32>,
+) -> Vec<Rgba> {
     let mut stack = vec![artboard.id];
     let texture = texture_frame_of(doc, model, 0, &mut stack);
     render_model(&RenderInput {
@@ -166,6 +216,7 @@ pub fn model_render(
         camera: None,
         extra_yaw: 0,
         frame,
+        time_ms,
     })
 }
 
@@ -239,6 +290,7 @@ pub(crate) fn model_sprite_at(
                 camera: None,
                 extra_yaw: 0,
                 frame: None,
+                time_ms: None,
             }));
             if let Ok(mut cache) = CACHE.lock() {
                 if cache.len() >= CACHE_LIMIT {
@@ -395,5 +447,38 @@ mod tests {
         let half = model_render(&doc, artboard, m, (SIZE / 2, SIZE / 2), None);
         assert_eq!(half.len(), (SIZE * SIZE / 4) as usize);
         assert_eq!(center(&half, SIZE / 2).a, 255);
+    }
+
+    #[test]
+    fn the_render_and_the_pick_at_a_time_use_the_animation() {
+        let (doc, model, _) = with_model();
+        let artboard = doc.artboard(model).unwrap();
+        let mut m = artboard.model.clone().unwrap();
+        // El cubo se va 4 unidades a la derecha en 1 s: al final ya no está en el centro.
+        m.objects[0].anim.push(Clip::new(
+            ClipMotion::Move {
+                offset: Vec3i {
+                    x: 4 * FIXED,
+                    y: 0,
+                    z: 0,
+                },
+            },
+            0,
+            1000,
+        ));
+        let size = (SIZE, SIZE);
+        let rest = model_render(&doc, artboard, &m, size, None);
+        assert_eq!(
+            model_render_at(&doc, artboard, &m, size, None, Some(0)),
+            rest
+        );
+        let moved = model_render_at(&doc, artboard, &m, size, None, Some(1000));
+        assert_ne!(moved, rest);
+        let c = (SIZE as i32 / 2, SIZE as i32 / 2);
+        assert_eq!(model_pick_at(&doc, artboard, &m, size, c, Some(0)), Some(0));
+        assert_eq!(model_pick_at(&doc, artboard, &m, size, c, Some(1000)), None);
+        // Bloqueado no se elige.
+        m.objects[0].locked = true;
+        assert_eq!(model_pick_at(&doc, artboard, &m, size, c, Some(0)), None);
     }
 }

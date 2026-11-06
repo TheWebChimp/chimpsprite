@@ -251,6 +251,7 @@ mod tests {
                 kind: None,
                 hidden: false,
                 locked: false,
+                anim: Vec::new(),
             }],
             ..Model3D::default()
         }

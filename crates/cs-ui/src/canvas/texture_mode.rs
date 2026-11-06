@@ -4,7 +4,7 @@
 //! fila de opciones de la herramienta (la barra de siempre: pincel, tinta, simetría…) y la
 //! textura por el camino de siempre del lienzo (un solo artboard), con su propio zoom entero
 //! y desplazamiento (`texture_view`): herramientas, cursor, cuadrícula de pixeles y atajos
-//! funcionan ahí.
+//! funcionan ahí. El modo Anim usa la misma parte de arriba (ver `anim_mode`).
 
 use eframe::egui::pos2;
 
@@ -110,7 +110,7 @@ impl CanvasView {
     /// La entrada del render de arriba: la rueda (con o sin Ctrl) acerca o aleja la cámara; Home
     /// encuadra el modelo; los botones eligen caras, orbitan o mueven el objetivo
     /// (`texture_press_at`); el arrastre sigue al puntero.
-    fn texture_top_input(
+    pub(super) fn texture_top_input(
         &mut self,
         ui: &egui::Ui,
         response: &egui::Response,

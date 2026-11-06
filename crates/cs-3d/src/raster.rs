@@ -25,8 +25,11 @@ pub struct RenderInput<'a> {
     pub palette: &'a [Rgba],
     /// `None`: la cámara del modelo.
     pub camera: Option<Camera3D>,
-    /// Décimas de grado sumadas a la rotación Y de todos los objetos (al hornear).
+    /// Décimas de grado que gira el modelo entero alrededor del eje vertical que pasa por el
+    /// objetivo de la cámara, después de todo (el turntable al hornear).
     pub extra_yaw: i32,
+    /// El tiempo de la animación (ms) en que se pinta; `None`, en reposo (sin animación).
+    pub time_ms: Option<u32>,
     /// El cuadro de referencia de la proyección, si no es `size`: su alto da la escala (la
     /// ortográfica) o la focal (la perspectiva), y va centrado en la imagen (corrido a pixeles
     /// enteros). Así el render de `frame` es justo el recorte del centro de uno más grande: la
@@ -77,6 +80,7 @@ pub fn face_outline(input: &RenderInput, faces: &[(usize, usize)]) -> Vec<bool> 
         input.frame,
     );
     let mut mask = vec![false; n];
+    let posed = Posed::new(input);
     for &(o, f) in faces {
         let Some(obj) = input.model.objects.get(o) else {
             continue;
@@ -87,7 +91,7 @@ pub fn face_outline(input: &RenderInput, faces: &[(usize, usize)]) -> Vec<bool> 
         let Some(face) = obj.mesh.faces.get(f).filter(|face| face.verts.len() >= 3) else {
             continue;
         };
-        let world = world_vertices(input.model, o, input.extra_yaw);
+        let world = posed.world_vertices(input.model, o);
         let Some(mut poly) = face
             .verts
             .iter()
@@ -410,26 +414,68 @@ fn clip_near(poly: &[ClipVert]) -> Vec<ClipVert> {
     out
 }
 
-/// Los vértices del objeto `o` en el mundo (en unidades): por su transform y los de sus grupos
-/// (escala → rotación X, Y, Z → traslación cada uno). `extra_yaw` se suma a la rotación Y del de
-/// más afuera (sin grupos, el del objeto): así gira todo el modelo.
-fn world_vertices(model: &Model3D, o: usize, extra_yaw: i32) -> Vec<V3> {
-    let mut chain = model.object_chain(o);
-    if let Some(t) = chain.last_mut() {
-        t.rotation.y += extra_yaw;
+/// Cómo se llevan los vértices al mundo en un render: la pose de la animación en su tiempo y el
+/// giro del turntable alrededor del eje vertical que pasa por el objetivo de la cámara.
+struct Posed {
+    pose: Option<crate::Pose>,
+    yaw: i32,
+    pivot: (f32, f32),
+}
+
+impl Posed {
+    fn new(input: &RenderInput) -> Posed {
+        let target = input.camera.unwrap_or(input.model.camera).target;
+        Posed {
+            pose: input
+                .time_ms
+                .and_then(|t| crate::pose_at(input.model, t as f32)),
+            yaw: input.extra_yaw,
+            pivot: (target.x as f32, target.z as f32),
+        }
     }
-    let f = FIXED as f32;
-    model.objects[o]
-        .mesh
-        .vertices
-        .iter()
-        .map(|&v| {
-            let p = chain
-                .iter()
-                .fold(crate::edit::p3(v), |p, t| crate::edit::to_world(t, p));
-            [p[0] / f, p[1] / f, p[2] / f]
-        })
-        .collect()
+
+    /// Los vértices del objeto `o` en el mundo (en unidades): por su transform y los de sus
+    /// grupos (escala → rotación X, Y, Z → traslación cada uno), cada uno con su pose, y luego
+    /// el giro del turntable.
+    fn world_vertices(&self, model: &Model3D, o: usize) -> Vec<V3> {
+        let chain = crate::posed_chain(model, self.pose.as_ref(), o);
+        let (sy, cy) = crate::edit::sin_cos(self.yaw);
+        let (px, pz) = self.pivot;
+        let f = FIXED as f32;
+        model.objects[o]
+            .mesh
+            .vertices
+            .iter()
+            .map(|&v| {
+                let p = crate::through_chain(&chain, crate::edit::p3(v));
+                let p = if self.yaw == 0 {
+                    p
+                } else {
+                    // Como la rotación Y de los transforms, alrededor del objetivo.
+                    let (x, z) = (p[0] - px, p[2] - pz);
+                    [x * cy + z * sy + px, p[1], -x * sy + z * cy + pz]
+                };
+                [p[0] / f, p[1] / f, p[2] / f]
+            })
+            .collect()
+    }
+
+    /// Si la cadena del objeto `o` (con las poses) voltea: un número impar de escalas negativas.
+    fn mirrored(&self, model: &Model3D, o: usize) -> bool {
+        crate::posed_chain(model, self.pose.as_ref(), o)
+            .iter()
+            .fold(false, |m, (t, node)| {
+                let s = t.scale;
+                let flipped = node.is_some_and(|n| det(&n.m) < 0.0);
+                m ^ (s.x < 0) ^ (s.y < 0) ^ (s.z < 0) ^ flipped
+            })
+    }
+}
+
+fn det(m: &[[f32; 3]; 3]) -> f32 {
+    m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+        - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+        + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0])
 }
 
 /// Normal (sin normalizar) del polígono por el método de Newell.
@@ -744,17 +790,15 @@ fn rasterize(input: &RenderInput) -> Raster {
         .enabled
         .then(|| orbit_dir(model.light.yaw, model.light.pitch));
     let mut cache = HashMap::new();
+    let posed = Posed::new(input);
     for (id, obj) in model.objects.iter().enumerate() {
         if model.object_hidden(id) {
             continue;
         }
-        let world = world_vertices(model, id, input.extra_yaw);
-        // Una escala negativa en un número impar de ejes (de toda la cadena) invierte el sentido
-        // de las caras.
-        let mirrored = model.object_chain(id).iter().fold(false, |m, t| {
-            let s = t.scale;
-            m ^ (s.x < 0) ^ (s.y < 0) ^ (s.z < 0)
-        });
+        let world = posed.world_vertices(model, id);
+        // Una escala negativa en un número impar de ejes (de toda la cadena, con la de la
+        // animación) invierte el sentido de las caras.
+        let mirrored = posed.mirrored(model, id);
         for (face_i, face) in obj.mesh.faces.iter().enumerate() {
             if face.verts.len() < 3 || face.uvs.len() != face.verts.len() {
                 continue;
@@ -875,6 +919,7 @@ mod tests {
             kind: None,
             hidden: false,
             locked: false,
+            anim: Vec::new(),
         }
     }
 
@@ -905,6 +950,7 @@ mod tests {
             camera: None,
             extra_yaw: 0,
             frame: None,
+            time_ms: None,
         }
     }
 
@@ -935,6 +981,7 @@ mod tests {
             hidden: false,
             locked: false,
             open: true,
+            anim: Vec::new(),
         });
         m.tree = vec![cs_core::Node::Group {
             group: 0,
@@ -1100,6 +1147,84 @@ mod tests {
         assert_eq!(render_model(&inp)[8 * 16 + 8], ROJO);
         inp.extra_yaw = 1800;
         assert!(render_model(&inp).iter().all(|p| p.a == 0));
+    }
+
+    #[test]
+    fn el_turntable_gira_el_modelo_entero_alrededor_del_objetivo() {
+        // Un cubo corrido una unidad a la derecha (pixeles 8..16) da media vuelta alrededor del
+        // objetivo (el origen): queda a la izquierda (0..8), no girando en su lugar.
+        let mut c = cube();
+        c.transform.position.x = FIXED;
+        let m = model(vec![c]);
+        let mut inp = input(&m, 16, &[ROJO], 1);
+        let img = render_model(&inp);
+        assert_eq!((img[8 * 16 + 2].a, img[8 * 16 + 12]), (0, ROJO));
+        inp.extra_yaw = 1800;
+        let img = render_model(&inp);
+        assert_eq!((img[8 * 16 + 2], img[8 * 16 + 12].a), (ROJO, 0));
+    }
+
+    #[test]
+    fn el_render_en_un_tiempo_usa_la_pose_de_la_animacion() {
+        let mut c = cube();
+        c.anim.push(cs_core::Clip::new(
+            cs_core::ClipMotion::Move {
+                offset: Vec3i {
+                    x: FIXED,
+                    y: 0,
+                    z: 0,
+                },
+            },
+            0,
+            1000,
+        ));
+        let m = model(vec![c]);
+        let mut inp = input(&m, 16, &[ROJO], 1);
+        let rest = render_model(&inp);
+        assert_eq!((rest[8 * 16 + 4], rest[8 * 16 + 12].a), (ROJO, 0));
+        inp.time_ms = Some(0);
+        assert_eq!(render_model(&inp), rest);
+        // Al final, una unidad (4 px) a la derecha: 8..16.
+        inp.time_ms = Some(1000);
+        let moved = render_model(&inp);
+        assert_eq!((moved[8 * 16 + 4].a, moved[8 * 16 + 12]), (0, ROJO));
+        // El pick y el contorno de caras usan la misma pose.
+        assert_eq!(pick_object(&inp, 13, 8), Some(0));
+        assert!(face_outline(&inp, &[(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5)])[8 * 16 + 8]);
+        inp.time_ms = None;
+        assert_eq!(pick_object(&inp, 13, 8), None);
+    }
+
+    #[test]
+    fn una_escala_animada_negativa_voltea_las_caras() {
+        let mut c = cube();
+        // Elastic se pasa de 1: con un factor casi 0, la escala cruza a negativa.
+        c.anim.push(cs_core::Clip {
+            curve: cs_core::Curve::Elastic,
+            ..cs_core::Clip::new(
+                cs_core::ClipMotion::Scale {
+                    factor: Vec3i {
+                        x: 1,
+                        y: 1000,
+                        z: 1000,
+                    },
+                },
+                0,
+                1000,
+            )
+        });
+        let m = model(vec![c]);
+        let at = |t: f32| Posed {
+            pose: crate::pose_at(&m, t),
+            yaw: 0,
+            pivot: (0.0, 0.0),
+        };
+        let flipped = (0..100)
+            .map(|i| i as f32 * 10.0)
+            .find(|&t| det(&at(t).pose.unwrap().objects[0].unwrap().m) < 0.0)
+            .expect("the elastic overshoot crosses zero");
+        assert!(at(flipped).mirrored(&m, 0));
+        assert!(!at(0.0).mirrored(&m, 0));
     }
 
     #[test]

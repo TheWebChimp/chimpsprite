@@ -5,7 +5,7 @@ use std::ops::RangeInclusive;
 use std::time::Duration;
 
 use cs_core::{ArtboardId, Document};
-use cs_render::{BAKE_FRAMES, BAKE_SIZE, BAKE_TILT, BakeOptions, BakeOutput};
+use cs_render::{BAKE_FRAMES, BAKE_SIZE, BAKE_TILT, BakeOptions, BakeOutput, Motion};
 use eframe::egui::{self, Color32, Rect, Ui, vec2};
 
 use crate::editor::Editor;
@@ -38,6 +38,8 @@ pub struct BakeDialog {
     model: ArtboardId,
     /// Los frames de la textura del modelo: con más de uno se puede animar.
     texture_frames: usize,
+    /// Lo que dura la animación del modelo (ms).
+    anim_ms: u32,
     /// Se recalcula solo si cambian las opciones o el ángulo.
     preview: Option<Preview>,
 }
@@ -57,6 +59,7 @@ impl BakeDialog {
             options: BakeOptions::from_model(&model, size, texture_frames),
             model: id,
             texture_frames,
+            anim_ms: model.anim_ms,
             preview: None,
         }
     }
@@ -83,11 +86,17 @@ impl BakeDialog {
         doc: &Document,
     ) -> DialogResult {
         let animated = self.texture_frames > 1;
-        // La vista previa gira: un ángulo nuevo cada 1/8 s.
+        // La vista previa gira: un ángulo nuevo cada 1/8 s; con la animación, a su velocidad.
         let frames = self.options.frames.max(1);
-        let angle = (ctx.input(|i| i.time) * PREVIEW_FPS) as u32 % frames;
+        let ms = if self.options.motion.animates() {
+            self.options.anim_frame_ms(self.anim_ms)
+        } else {
+            (1000.0 / PREVIEW_FPS) as u32
+        };
+        let angle =
+            ((ctx.input(|i| i.time) * 1000.0) as u64 / u64::from(ms.max(1))) as u32 % frames;
         if spins(frames) {
-            ctx.request_repaint_after(Duration::from_millis(125));
+            ctx.request_repaint_after(Duration::from_millis(u64::from(ms.max(1))));
         }
         self.update_preview(ctx, doc, angle);
         let (o, preview) = (&mut self.options, &self.preview);
@@ -151,10 +160,17 @@ fn fields(ui: &mut Ui, skin: Option<&Skin>, o: &mut BakeOptions, animated: bool)
     });
 }
 
-/// Los campos de la cámara (los comparte GIF settings): Frames, Size (deshabilitado sin `size`),
-/// Zoom, Tilt, Height y Ortho.
+/// Los campos de la cámara (los comparte GIF settings): Motion (el turntable, la animación del
+/// modelo o las dos), Frames, Size (deshabilitado sin `size`), Zoom, Tilt, Height y Ortho.
 pub(crate) fn camera_fields(ui: &mut Ui, skin: Option<&Skin>, o: &mut BakeOptions, size: bool) {
     ui.spacing_mut().item_spacing.y = 6.0;
+    row(ui, "Motion", |ui| {
+        widgets::combo(ui, "bake_motion", o.motion.label(), |ui| {
+            for m in Motion::ALL {
+                widgets::choice(ui, &mut o.motion, m, m.label());
+            }
+        });
+    });
     row(ui, "Frames", |ui| {
         number(ui, skin, "bake_frames", &mut o.frames, BAKE_FRAMES, 1)
     });

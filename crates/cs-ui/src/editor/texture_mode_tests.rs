@@ -751,6 +751,7 @@ fn with_stacked(p: cs_3d::Primitive, extra: usize) -> Editor {
                 kind: Some(p.kind()),
                 hidden: false,
                 locked: false,
+                anim: Vec::new(),
             },
             None,
         );

@@ -218,6 +218,7 @@ impl Editor {
             hidden: false,
             locked: false,
             open: true,
+            anim: Vec::new(),
         });
         let empty = Node::Group {
             group: ng,

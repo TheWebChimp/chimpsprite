@@ -533,7 +533,7 @@ fn group(ui: &mut Ui, skin: &Skin, origin: Pos2, buttons: &[Btn]) -> Vec<Respons
 }
 
 /// Pausa: dos barras de 2×8 en las filas del triángulo de Play, con su tinta.
-fn pause_icon(ui: &Ui, skin: &Skin, icon_at: Pos2) {
+pub(crate) fn pause_icon(ui: &Ui, skin: &Skin, icon_at: Pos2) {
     let color = skin.colors().field_text;
     for x in [8.0, 12.0] {
         solid(
