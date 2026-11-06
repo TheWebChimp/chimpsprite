@@ -646,6 +646,8 @@ fn object_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     match editor.cad_mode() {
         CadMode::Texture => uv_buttons(ui, editor, skin),
         CadMode::Model => topology_buttons(ui, editor, skin),
+        // Los bloques se agregan desde la barra del timeline.
+        CadMode::Anim => {}
     }
 }
 

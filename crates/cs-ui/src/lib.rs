@@ -2017,6 +2017,10 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
     // lienzo).
     if editor.pixel_actions_blocked() {
         use cs_3d::SelectMode;
+        // En modo Anim: reproducir, borrar el bloque, mover el tiempo (ver `anim_key`).
+        if editor.cad_mode() == editor::CadMode::Anim && editor.anim_key(key, shift) {
+            return true;
+        }
         let mode = match key {
             _ if shift => None,
             Key::Num1 => Some(SelectMode::Object),
