@@ -31,6 +31,11 @@ pub(crate) const SPRITE_FILTERS: &[FileFilter] = &[
     },
 ];
 
+const TILED_FILTER: &[FileFilter] = &[FileFilter {
+    name: "Tiled map",
+    extensions: &["tmx", "tmj"],
+}];
+
 const PNG_FILTER: &[FileFilter] = &[FileFilter {
     name: "PNG",
     extensions: &["png"],
@@ -108,6 +113,7 @@ impl ChimpApp {
             || self.convert_tilemap.is_some()
             || self.symbol_dialog.is_some()
             || self.export.is_some()
+            || self.tiled_export.is_some()
             || self.pending.is_some()
             || self.message.is_some()
             || self.restore.is_some()
@@ -303,6 +309,10 @@ impl ChimpApp {
             && let Some(i) = self.tabs.find_path(&self.doc, &path)
         {
             self.tabs.switch(&mut self.doc, i);
+            return;
+        }
+        if cs_io::tiled::is_tiled_map(&loaded.name) {
+            self.open_tiled(&loaded);
             return;
         }
         match files::decode(&loaded.name, &loaded.bytes) {
@@ -582,6 +592,64 @@ impl ChimpApp {
         }
     }
 
+    /// File → Import Tiled Map…: se elige el `.tmx`/`.tmj` (sus tilesets e imágenes se leen de
+    /// la misma carpeta).
+    pub(crate) fn import_tiled(&mut self, ctx: &egui::Context) {
+        self.platform
+            .open_file(TILED_FILTER, OpenPurpose::Open, ctx);
+    }
+
+    /// Un mapa de Tiled leído: se abre como sprite nuevo sin guardar (como un PNG).
+    fn open_tiled(&mut self, loaded: &Loaded) {
+        let dir = loaded.target.as_ref().and_then(|t| t.dir.clone());
+        // En web no hay carpeta: solo se pueden leer mapas sin archivos vecinos.
+        let mut load = |path: &str| std::fs::read(dir.as_ref()?.join(path)).ok();
+        match cs_io::tiled::import(&loaded.name, &loaded.bytes, &mut load) {
+            Ok((sprite, warnings)) => {
+                let name = files::stem(&loaded.name).to_string();
+                self.open_sheet_sprite(&name, sprite);
+                if !warnings.is_empty() {
+                    let body = warnings
+                        .iter()
+                        .map(|w| format!("• {w}"))
+                        .collect::<Vec<_>>()
+                        .join(
+                            "
+",
+                        );
+                    self.show_message("Opened with warnings", body);
+                }
+            }
+            Err(e) => {
+                let mut body = e.to_string();
+                if self.platform.saves_by_download() {
+                    body.push_str(
+                        "
+
+In the browser the map's tilesets and images can't be read: use                          the desktop app.",
+                    );
+                }
+                self.show_message("Could not open the file", body);
+            }
+        }
+    }
+
+    /// File → Export Tiled Map….
+    pub(crate) fn open_tiled_export(&mut self) {
+        self.doc.editor.commit_floating();
+        let dir = self
+            .doc
+            .location
+            .target
+            .as_ref()
+            .and_then(|t| t.dir.clone());
+        self.tiled_export = Some(crate::tiled_dialog::TiledDialog::reopen(
+            &self.last_tiled,
+            &self.doc.editor,
+            dir,
+        ));
+    }
+
     pub(crate) fn open_export(&mut self) {
         self.doc.editor.commit_floating();
         // El normal map, con los ajustes de Lumen.
@@ -745,6 +813,33 @@ impl ChimpApp {
             }
         }
 
+        if let Some(mut dialog) = self.tiled_export.take() {
+            use crate::tiled_dialog::TiledResult;
+            match dialog.show(ctx, &mut self.doc.editor, &self.platform, self.pixel.skin()) {
+                TiledResult::Open => self.tiled_export = Some(dialog),
+                TiledResult::Cancel => self.last_tiled = dialog,
+                TiledResult::Done(done) => {
+                    self.last_tiled = dialog;
+                    let mut lines: Vec<String> =
+                        done.files.iter().map(|f| format!("• {f}")).collect();
+                    if !done.warnings.is_empty() {
+                        lines.push(String::new());
+                        lines.extend(done.warnings.iter().map(|w| format!("• {w}")));
+                    }
+                    self.show_message(
+                        "Exported",
+                        lines.join(
+                            "
+",
+                        ),
+                    );
+                }
+                TiledResult::Failed(e) => {
+                    self.tiled_export = Some(dialog);
+                    self.show_message("Could not export", e);
+                }
+            }
+        }
         if let Some(mut dialog) = self.export.take() {
             match dialog.show(ctx, &mut self.doc.editor, &self.platform, self.pixel.skin()) {
                 ExportResult::Open => self.export = Some(dialog),

@@ -801,6 +801,12 @@ A pixel art editor."
                     self.choose_font_file(&ctx);
                     ui.close();
                 }
+                // Los tilesets e imágenes del mapa se leen de su carpeta: solo en escritorio.
+                if !self.platform.saves_by_download()
+                    && ui.add(menus::plain("Import Tiled Map…")).clicked()
+                {
+                    self.import_tiled(&ctx);
+                }
                 ui.add_enabled_ui(has_doc, |ui| self.scripts_menu(ui, &ctx));
                 if ui
                     .add_enabled(
@@ -819,6 +825,14 @@ A pixel art editor."
                 {
                     self.open_build_font(None);
                     ui.close();
+                }
+                let tiled = has_doc && cs_io::tiled::has_tilemaps(self.doc.editor.sprite());
+                if ui
+                    .add_enabled(tiled, menus::plain("Export Tiled Map…"))
+                    .on_disabled_hover_text(crate::tiled_dialog::NEEDS_TILEMAP)
+                    .clicked()
+                {
+                    self.open_tiled_export();
                 }
                 menus::separator(ui);
                 if ui.add(menus::plain("Quit")).clicked() {

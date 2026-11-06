@@ -723,6 +723,96 @@ fn the_fov_stepper_is_disabled_in_ortho_and_changes_the_fov() {
     }
 }
 
+// --- Export Tiled Map ---
+
+/// El documento con la capa pasada a tilemap de 8×8 (con un píxel pintado: un tile).
+fn with_a_tilemap(pixel_ui: bool) -> DialogHarness {
+    use cs_core::{PixelValue, Rgba};
+    let mut h = DialogHarness::new(pixel_ui);
+    let editor = &mut h.app.doc.editor;
+    editor.execute(cs_commands::Command::DrawPixels {
+        layer: editor.layer,
+        frame: 0,
+        pixels: vec![(1, 1, PixelValue::Rgba(Rgba::rgb(255, 0, 0)))],
+    });
+    assert!(editor.convert_to_tilemap((8, 8)));
+    h
+}
+
+#[test]
+fn tiled_export_writes_the_map_into_its_folder() {
+    let dir = std::env::temp_dir().join(format!("chimpsprite-tiled-ui-{}", std::process::id()));
+    let mut h = with_a_tilemap(true);
+    h.app.open_tiled_export();
+    h.app.tiled_export.as_mut().unwrap().folder = dir.display().to_string();
+    h.app.tiled_export.as_mut().unwrap().name = "level".into();
+    h.settle();
+    assert!(h.app.is_modal());
+    for label in [
+        "Export Tiled Map",
+        "Format",
+        "Tilesets",
+        "Layer data",
+        "Frames",
+        "Name",
+        "Folder",
+        "TMX (XML)",
+        "External .tsx",
+        "Base64 + zlib",
+        "Current (1)",
+    ] {
+        assert!(h.drew_text(label), "{label}: {:?}", h.texts);
+    }
+    h.button("Browse…");
+    h.click("TMJ (JSON)");
+    h.settle();
+    let dialog = h.app.tiled_export.as_ref().unwrap();
+    assert_eq!(dialog.format, cs_io::tiled::MapFormat::Tmj);
+    assert!(h.drew_text("External .tsj"), "{:?}", h.texts);
+    h.click("Export");
+    h.settle();
+    assert!(h.app.tiled_export.is_none());
+    let message = h.app.message.as_ref().expect("the files written");
+    assert_eq!(message.title, "Exported");
+    assert!(message.body.contains("level.tmj"), "{}", message.body);
+    let map = std::fs::read_to_string(dir.join("level.tmj")).unwrap();
+    let map = cs_io::tiled::read_tmj(&map).unwrap();
+    assert_eq!(map.tilesets.len(), 1);
+    assert!(dir.join(map.tilesets[0].source.as_ref().unwrap()).exists());
+    // La próxima vez abre igual.
+    assert_eq!(h.app.last_tiled.format, cs_io::tiled::MapFormat::Tmj);
+    std::fs::remove_dir_all(dir).ok();
+}
+
+#[test]
+fn exported_tiled_maps_open_as_tilemap_sprites() {
+    let dir = std::env::temp_dir().join(format!("chimpsprite-tiled-open-{}", std::process::id()));
+    let mut h = with_a_tilemap(false);
+    let dialog = crate::tiled_dialog::TiledDialog::default();
+    let platform = h.app.platform.clone();
+    dialog
+        .export_to(&mut h.app.doc.editor, Some(dir.clone()), "level", &platform)
+        .unwrap();
+    h.app.platform.open_path(
+        &dir.join("level.tmx"),
+        crate::platform::OpenPurpose::Dropped,
+    );
+    let ctx = h.ctx.clone();
+    h.app.handle_platform_events(&ctx);
+    h.settle();
+    assert!(
+        h.app.message.is_none(),
+        "{:?}",
+        h.app.message.as_ref().map(|m| &m.body)
+    );
+    let sprite = h.app.doc.editor.sprite();
+    assert_eq!(sprite.layers[0].kind, cs_core::LayerKind::Tilemap);
+    assert_eq!(sprite.tilesets[0].tiles.len(), 2);
+    assert_eq!(h.app.doc.location.name, "level.chimp");
+    assert!(h.app.message.is_none(), "no warnings");
+    std::fs::remove_dir_all(dir).ok();
+}
+
 // --- New Tilemap Layer ---
 
 fn new_tilemap(pixel_ui: bool) -> DialogHarness {
@@ -1208,11 +1298,14 @@ fn with_pixel_ui_a_slice_can_be_renamed_in_slice_properties() {
 #[test]
 fn every_window_is_the_app_window() {
     type Open = fn(&mut ChimpApp, &egui::Context);
-    let windows: [(&str, &str, Open); 5] = [
+    let windows: [(&str, &str, Open); 6] = [
         ("palette_presets_window", "Palette Presets", |app, ctx| {
             app.palette_action(ctx, crate::panels::PaletteAction::OpenPresets)
         }),
         ("export_window", "Export", |app, _| app.open_export()),
+        ("tiled_export_window", "Export Tiled Map", |app, _| {
+            app.open_tiled_export()
+        }),
         ("grid_settings_window", "Grid Settings", |app, _| {
             app.grid_dialog = Some(crate::view::GridDialog::new(&app.doc.editor, &app.view))
         }),

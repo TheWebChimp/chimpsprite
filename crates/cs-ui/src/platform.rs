@@ -218,6 +218,22 @@ impl Platform {
         Some(SaveTarget::named(suggested))
     }
 
+    /// Pregunta por una carpeta (empezando en `start`, si existe). En web no hay carpetas.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn choose_folder(&self, start: &str) -> Option<PathBuf> {
+        let mut dialog = rfd::FileDialog::new();
+        let start = Path::new(start.trim());
+        if start.is_dir() {
+            dialog = dialog.set_directory(start);
+        }
+        dialog.pick_folder()
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    pub fn choose_folder(&self, _start: &str) -> Option<PathBuf> {
+        None
+    }
+
     /// Escribe (escritorio, de forma atómica) o descarga (web).
     #[cfg(not(target_arch = "wasm32"))]
     pub fn write(&self, target: &SaveTarget, bytes: &[u8]) -> Result<(), String> {
