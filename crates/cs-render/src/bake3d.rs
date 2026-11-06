@@ -80,7 +80,7 @@ impl BakeOptions {
     }
 
     /// Los ángulos, dentro de [`BAKE_FRAMES`].
-    fn angles(&self) -> u32 {
+    pub(crate) fn angles(&self) -> u32 {
         self.frames.clamp(*BAKE_FRAMES.start(), *BAKE_FRAMES.end())
     }
 
@@ -123,7 +123,7 @@ impl BakeOptions {
 const TAG_COLOR: Rgba = Rgba::rgb(0x5b, 0x6e, 0xe1);
 
 /// El artboard `model` y su modelo, si es un modelo que se puede hornear.
-fn bakeable(doc: &Document, model: ArtboardId) -> Option<(&Artboard, &Model3D)> {
+pub(crate) fn bakeable(doc: &Document, model: ArtboardId) -> Option<(&Artboard, &Model3D)> {
     let artboard = doc.artboard(model)?;
     let m = artboard.model.as_ref()?;
     let source = &artboard.sprite;

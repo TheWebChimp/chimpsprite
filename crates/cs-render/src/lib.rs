@@ -8,6 +8,7 @@ mod lighting;
 mod materialize;
 mod model3d;
 pub mod normal;
+mod turntable;
 pub use bake3d::{
     BAKE_FOV, BAKE_FRAMES, BAKE_SIZE, BAKE_TILT, BakeOptions, BakeOutput, bake_model, bake_preview,
 };
@@ -17,6 +18,10 @@ pub use materialize::{
 };
 pub use model3d::{model_face_outline, model_pick, model_pick_face, model_render, model_sprite};
 pub use normal::{NormalFormat, NormalSettings, normal_map};
+pub use turntable::{
+    RenderPreset, SCANLINES, TURNTABLE_FRAME_MS, TURNTABLE_SCALE, Turntable, TurntableOptions,
+    turntable, turntable_frame,
+};
 
 use cs_core::{BlendMode, ColorMode, Image, ImageId, Layer, LayerKind, PixelValue, Rgba, Sprite};
 
