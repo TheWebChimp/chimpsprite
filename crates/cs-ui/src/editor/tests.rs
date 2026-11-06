@@ -1414,3 +1414,23 @@ fn pixels_mode_move_keeps_the_layer_and_moving_tiles_follows_the_brush() {
     e.undo();
     assert_eq!(tile_at(&e, (1, 0)), t(1));
 }
+
+#[test]
+fn space_tab_and_space_digits_switch_the_tilemap_modes() {
+    use cs_commands::tiles::TilesetMode;
+    let mut e = tile_editor();
+    assert!(crate::tilemap_space_key(&mut e, eframe::egui::Key::Tab));
+    assert!(e.tilemap_pixels_mode());
+    assert!(crate::tilemap_space_key(&mut e, eframe::egui::Key::Num1));
+    assert_eq!(e.options.tileset_mode, TilesetMode::Manual);
+    assert!(crate::tilemap_space_key(&mut e, eframe::egui::Key::Num3));
+    assert_eq!(e.options.tileset_mode, TilesetMode::Stack);
+    assert!(!crate::tilemap_space_key(&mut e, eframe::egui::Key::A));
+    assert!(crate::tilemap_space_key(&mut e, eframe::egui::Key::Tab));
+    assert!(e.tiles_mode());
+    e.select_layer(LayerId(1));
+    assert!(
+        !crate::tilemap_space_key(&mut e, eframe::egui::Key::Tab),
+        "image layers"
+    );
+}

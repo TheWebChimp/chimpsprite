@@ -1900,6 +1900,28 @@ pub(crate) fn cad_command_key(editor: &mut Editor, key: Key) -> bool {
     true
 }
 
+/// Con Space apretado y una capa tilemap activa, como en Aseprite: Tab alterna Pixels y Tiles, y
+/// 1, 2 y 3 eligen el modo de tileset Manual, Auto y Stack. Devuelve si usó la tecla.
+pub(crate) fn tilemap_space_key(editor: &mut Editor, key: Key) -> bool {
+    use cs_commands::tiles::TilesetMode;
+    if editor.tile_space().is_none() {
+        return false;
+    }
+    let mode = match key {
+        Key::Tab => {
+            let pixels = editor.tilemap_pixels();
+            editor.set_tilemap_pixels(!pixels);
+            return true;
+        }
+        Key::Num1 => TilesetMode::Manual,
+        Key::Num2 => TilesetMode::Auto,
+        Key::Num3 => TilesetMode::Stack,
+        _ => return false,
+    };
+    editor.options.tileset_mode = mode;
+    true
+}
+
 /// Las teclas sin Ctrl ni Alt que no se reasignan porque dependen de lo que pasa: Enter confirma
 /// lo que está a medias o flotando, Esc cancela, las flechas mueven lo seleccionado, Delete
 /// borra y, en modo Tiles, X e Y voltean el tile del pincel. Devuelve si la usó (si no, va al

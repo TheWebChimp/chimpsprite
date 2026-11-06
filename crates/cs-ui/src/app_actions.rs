@@ -35,7 +35,20 @@ impl ChimpApp {
         // Supr con el puntero sobre el outliner del panel 3D borra sus filas elegidas: lo hace
         // el outliner (no lo elegido en las vistas).
         let on_outliner = crate::model_panel::outliner::pointer_over_list(ctx);
+        let space = ctx.input(|i| i.key_down(Key::Space));
         for (key, modifiers) in presses {
+            // Space+Tab y Space+1/2/3 en una capa tilemap, como en Aseprite.
+            if space
+                && self.has_doc()
+                && !typing
+                && !painting
+                && !modifiers.command
+                && !modifiers.alt
+                && tilemap_space_key(&mut self.doc.editor, key)
+            {
+                ctx.input_mut(|i| i.consume_key(modifiers, key));
+                continue;
+            }
             if on_outliner && matches!(key, Key::Delete | Key::Backspace) {
                 continue;
             }

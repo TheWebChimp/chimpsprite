@@ -2,6 +2,7 @@
 //! y la ventana de texto.
 
 use super::*;
+use cs_commands::tiles::TilesetMode;
 
 /// El radio que vuelve al prender el redondeo si no se había usado otro.
 pub(super) const DEFAULT_CORNER_RADIUS: u32 = 4;
@@ -277,6 +278,11 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
     };
     // Las ayudas van al final: con Pixel UI, juntas detrás del ícono de info.
     let mut hints: Vec<&'static str> = Vec::new();
+    // Con una capa tilemap activa, primero cómo se pinta en ella (como en Aseprite).
+    if editor.tile_space().is_some() {
+        groups.next(ui);
+        tilemap_options(ui, editor, look, &mut hints);
+    }
     let options = &mut editor.options;
     if tool.uses_brush() {
         groups.next(ui);
@@ -643,6 +649,65 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
         hints.push("Alt+click: pick color");
     }
     show_hints(ui, look, &mut groups, &hints);
+}
+
+/// El nombre de cada modo de tileset en la barra.
+fn tileset_mode_label(mode: TilesetMode) -> &'static str {
+    match mode {
+        TilesetMode::Manual => "Manual",
+        TilesetMode::Auto => "Auto",
+        TilesetMode::Stack => "Stack",
+    }
+}
+
+/// Con una capa tilemap activa: Pixels | Tiles (qué pintan las herramientas) y, en Pixels, el
+/// modo de tileset Manual | Auto | Stack. Con Pixel UI, los grupos del kit con LED; sin él,
+/// radios. Las explicaciones de Aseprite van a las ayudas.
+fn tilemap_options(
+    ui: &mut egui::Ui,
+    editor: &mut Editor,
+    look: Option<BarLook>,
+    hints: &mut Vec<&'static str>,
+) {
+    let mut pixels = editor.tilemap_pixels();
+    let before = pixels;
+    let name = |p: bool| if p { "Pixels" } else { "Tiles" };
+    match look {
+        Some(look) => {
+            bar_fields::options(ui, look, &mut pixels, [true, false], name);
+        }
+        None => {
+            crate::widgets::radio_value(ui, &mut pixels, true, "Pixels");
+            crate::widgets::radio_value(ui, &mut pixels, false, "Tiles");
+        }
+    }
+    if pixels != before {
+        editor.set_tilemap_pixels(pixels);
+    }
+    hints.push("Space+Tab: switch between Pixels and Tiles");
+    if !editor.tilemap_pixels() {
+        return;
+    }
+    let mode = &mut editor.options.tileset_mode;
+    match look {
+        Some(look) => {
+            gap(ui, CONTROL_GAP);
+            bar_fields::label(ui, look, "Tileset:");
+            gap(ui, LABEL_FIELD_GAP);
+            bar_fields::options(ui, look, mode, TilesetMode::ALL, tileset_mode_label);
+        }
+        None => {
+            ui.label("Tileset:");
+            for value in TilesetMode::ALL {
+                crate::widgets::radio_value(ui, mode, value, tileset_mode_label(value));
+            }
+        }
+    }
+    hints.push(match *mode {
+        TilesetMode::Manual => "Manual: modify existing tiles, don't create new tiles automatically (Space+1)",
+        TilesetMode::Auto => "Auto: modify and reuse existing tiles, create/delete tiles if needed/possible (Space+2)",
+        TilesetMode::Stack => "Stack: don't modify existing tiles, generate and stack new tiles automatically (Space+3)",
+    });
 }
 
 /// Las ayudas de la herramienta, al final de la barra: con Pixel UI, el ícono de info con todas

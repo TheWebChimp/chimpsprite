@@ -1918,3 +1918,27 @@ fn the_object_panel_says_why_there_is_nothing_to_edit() {
     assert!(has(&texts, "Select an object on the canvas"), "{texts:?}");
     assert!(!has(&texts, "Name"), "{texts:?}");
 }
+
+#[test]
+fn a_tilemap_layer_shows_pixels_or_tiles_and_the_tileset_mode_in_the_options_bar() {
+    use cs_commands::tiles::TilesetMode;
+    for pixel in [true, false] {
+        let mut h = BarHarness::with_skin(1400.0, pixel);
+        assert!(!h.has("Pixels"), "not on an image layer");
+        h.editor = crate::tile_ops::test_util::tile_editor();
+        h.frame(vec![]);
+        assert!(h.has("Pixels") && h.has("Tiles"));
+        assert!(!h.has("Manual"), "only in Pixels mode");
+        h.click("Pixels");
+        assert!(h.editor.tilemap_pixels_mode());
+        h.frame(vec![]);
+        for text in ["Manual", "Auto", "Stack"] {
+            assert!(h.has(text), "{text}");
+        }
+        assert!(h.rect("Manual").left() > h.rect("Tiles").right());
+        h.click("Stack");
+        assert_eq!(h.editor.options.tileset_mode, TilesetMode::Stack);
+        h.click("Tiles");
+        assert!(h.editor.tiles_mode());
+    }
+}
