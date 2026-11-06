@@ -517,6 +517,7 @@ pub fn delete_selection(model: &Model3D, sel: &Selection) -> (Model3D, Selection
             Item::Object(_) => {}
         }
     }
+    let mut emptied = Vec::new();
     for (o, g) in gone {
         let mesh = &mut out.objects[o].mesh;
         let old = std::mem::take(&mut mesh.faces);
@@ -527,6 +528,14 @@ pub fn delete_selection(model: &Model3D, sel: &Selection) -> (Model3D, Selection
             .map(|(_, f)| f)
             .collect();
         compact(mesh);
+        if mesh.faces.is_empty() {
+            emptied.push(o);
+        }
+    }
+    // Un objeto sin caras no se ve ni se puede elegir: se va con ellas (de mayor a menor, los
+    // índices de después se corren al quitar).
+    for o in emptied.into_iter().rev() {
+        out.remove_object(o);
     }
     (out, empty)
 }
@@ -1118,6 +1127,26 @@ mod tests {
         let (out, _) = delete_selection(&m, &mixed);
         assert_eq!(out.objects.len(), 1);
         assert_eq!(out.objects[0].transform.position, at(64));
+    }
+
+    #[test]
+    fn borrar_todas_las_caras_de_un_objeto_lo_quita() {
+        let at = |x| Vec3i { x, y: 0, z: 0 };
+        let m = model_of(vec![cube_obj(at(0)), cube_obj(at(64)), cube_obj(at(128))]);
+        // Todas las caras del del medio: no queda un objeto vacío (y los de después se corren).
+        let (out, s) = delete_selection(&m, &faces_sel(1, &[0, 1, 2, 3, 4, 5]));
+        assert_eq!(out.objects.len(), 2);
+        assert_eq!(out.objects[0].transform.position, at(0));
+        assert_eq!(out.objects[1].transform.position, at(128));
+        assert!(s.is_empty());
+        // Lo mismo borrando sus 8 vértices en modo Vertex.
+        let all = sel(SelectMode::Vertex, (0..8).map(|v| Item::Vertex(2, v)));
+        let (out, _) = delete_selection(&m, &all);
+        assert_eq!(out.objects.len(), 2);
+        assert_eq!(out.objects[1].transform.position, at(64));
+        // Con caras que quedan, el objeto sigue.
+        let (out, _) = delete_selection(&m, &faces_sel(1, &[0, 1, 2, 3, 4]));
+        assert_eq!(out.objects.len(), 3);
     }
 
     #[test]
