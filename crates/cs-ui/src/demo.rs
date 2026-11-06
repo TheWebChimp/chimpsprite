@@ -297,6 +297,93 @@ fn house_roof() -> cs_core::Transform3D {
     t
 }
 
+/// La casita del demo animada (CHIMPSPRITE_DEMO_ANIM): el techo en el grupo "Hinge" cuyo origen
+/// es la bisagra (arriba atrás del cubo) se abre con un rebote y se cierra; la casa da saltitos.
+/// Queda en modo Anim con la pista del grupo y su primer bloque elegidos, en `time` ms.
+fn animate_house(e: &mut Editor, time: u32) {
+    use cs_core::{Axis3, Clip, ClipMotion, Curve, FIXED, Group3D, Node, Transform3D, Vec3i};
+    let Some(mut m) = e.model().cloned() else {
+        return;
+    };
+    if m.objects.len() < 2 {
+        return;
+    }
+    let hinge = Vec3i {
+        x: 0,
+        y: FIXED,
+        z: -FIXED,
+    };
+    m.objects[1].name = "Roof".into();
+    m.objects[1].transform.position.y -= hinge.y;
+    m.objects[1].transform.position.z -= hinge.z;
+    m.groups = vec![Group3D {
+        name: "Hinge".into(),
+        transform: Transform3D {
+            position: hinge,
+            ..Transform3D::default()
+        },
+        hidden: false,
+        locked: false,
+        open: true,
+        anim: vec![
+            Clip {
+                curve: Curve::Bounce,
+                ..Clip::new(
+                    ClipMotion::Rotate {
+                        axis: Axis3::X,
+                        turns: -150,
+                    },
+                    0,
+                    900,
+                )
+            },
+            Clip {
+                curve: Curve::EaseIn,
+                ..Clip::new(
+                    ClipMotion::Rotate {
+                        axis: Axis3::X,
+                        turns: 150,
+                    },
+                    1300,
+                    500,
+                )
+            },
+        ],
+    }];
+    m.objects[0].name = "House".into();
+    m.objects[0].anim = vec![Clip {
+        curve: Curve::EaseOut,
+        ping_pong: true,
+        repeat: 2,
+        ..Clip::new(
+            ClipMotion::Move {
+                offset: Vec3i {
+                    x: 0,
+                    y: FIXED / 4,
+                    z: 0,
+                },
+            },
+            1000,
+            1000,
+        )
+    }];
+    m.tree = vec![
+        Node::Object(0),
+        Node::Group {
+            group: 0,
+            children: vec![Node::Object(1)],
+        },
+    ];
+    let id = e.model_id();
+    e.execute_doc(DocCommand::SetModel {
+        id,
+        model: Some(Box::new(m)),
+    });
+    e.set_cad_mode(crate::editor::CadMode::Anim);
+    e.select_clip(Some((crate::editor::Row::Group(0), 0)));
+    e.set_anim_time(time);
+}
+
 /// Lo que piden las variables de desarrollo (`CHIMPSPRITE_DEMO_*`) al abrir la app: diálogos,
 /// herramientas, rangos y paneles listos para las capturas.
 pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
@@ -852,10 +939,23 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                 e.model_edit.focus_uvs = true;
             }
         }
+        // Con CHIMPSPRITE_DEMO_ANIM[=<ms>]: la casita animada en modo Anim (ver
+        // `animate_house`), en ese tiempo (600 ms si no dice).
+        if let Some(t) = dev_var("CHIMPSPRITE_DEMO_ANIM") {
+            animate_house(&mut app.doc.editor, t.parse().unwrap_or(600));
+        }
         // Con CHIMPSPRITE_DEMO_GIF=<preset> (native, nintendo_ds, gameboy, pico-8): GIF
-        // settings abierto con ese preset, escala 2, fondo y scanlines.
+        // settings abierto con ese preset, escala 2, fondo y scanlines. Con
+        // CHIMPSPRITE_DEMO_GIF_MOTION=<Turntable|Animation|Both>, ese Motion (12 frames); con
+        // CHIMPSPRITE_DEMO_GIF_FILE=<ruta>, además escribe ahí el GIF.
         if let Some(name) = dev_var("CHIMPSPRITE_DEMO_GIF") {
             let mut gif = crate::gif_dialog::GifDialog::new(&app.doc.editor);
+            if let Some(motion) = dev_var("CHIMPSPRITE_DEMO_GIF_MOTION")
+                .and_then(|m| cs_render::Motion::ALL.into_iter().find(|x| x.label() == m))
+            {
+                gif.options.bake.motion = motion;
+                gif.options.bake.frames = 12;
+            }
             if let Some(preset) = cs_render::RenderPreset::ALL
                 .into_iter()
                 .find(|p| p.label() == name)
@@ -865,6 +965,16 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             gif.options.scale = 2;
             gif.options.background = Some(cs_core::Rgba::rgb(0x1d, 0x2b, 0x53));
             gif.options.scanlines = Some(30);
+            if let Some(path) = dev_var("CHIMPSPRITE_DEMO_GIF_FILE") {
+                match gif.build(&app.doc.editor.document) {
+                    Ok(bytes) => {
+                        if let Err(e) = std::fs::write(path, bytes) {
+                            log::error!("demo gif: {e}");
+                        }
+                    }
+                    Err(e) => log::error!("demo gif: {e}"),
+                }
+            }
             app.gif = Some(gif);
         }
     }
