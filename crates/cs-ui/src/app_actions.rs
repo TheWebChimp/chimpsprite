@@ -44,6 +44,18 @@ impl ChimpApp {
             {
                 continue;
             }
+            // Ctrl+E y Ctrl+D del modo Model de ChimpCAD (Extrude y Subdivide).
+            if self.has_doc()
+                && !typing
+                && !painting
+                && modifiers.command
+                && !modifiers.alt
+                && !modifiers.shift
+                && cad_command_key(&mut self.doc.editor, key)
+            {
+                ctx.input_mut(|i| i.consume_key(modifiers, key));
+                continue;
+            }
             let Some(action) = self.keymap.action_for(key, modifiers) else {
                 continue;
             };

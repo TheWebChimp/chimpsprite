@@ -6,6 +6,7 @@ mod gizmo;
 mod primitives;
 mod ramp;
 mod raster;
+mod topology;
 mod uv;
 mod wire;
 
@@ -14,5 +15,6 @@ pub use gizmo::*;
 pub use primitives::*;
 pub use ramp::*;
 pub use raster::*;
+pub use topology::*;
 pub use uv::*;
 pub use wire::*;

@@ -1,6 +1,11 @@
 # Modelos 3D, parte 2B: extruir, dividir, unir y borrar
 
-Fecha: 2026-11-03 · Estado: diseño aprobado
+Fecha: 2026-11-03 · Estado: implementado
+
+Notas de la implementación: en modo Objeto, Extrude, Subdivide y Merge están deshabilitados (Delete
+borra los objetos); durante un Extrude no cambian la selección, el modo, G/S ni las flechas; al
+deshacer o rehacer una operación que cambia cuántos vértices o caras tiene un objeto, su selección se
+vacía (no se restaura); dividir no parte aristas cuyo punto medio cae en un extremo.
 
 Sigue a la 2A (`2026-11-02-3d-modeling-edit-design.md`), a las pestañas de ChimpCAD y a los gizmos
 (`2026-11-03-chimpcad-gizmos-design.md`).

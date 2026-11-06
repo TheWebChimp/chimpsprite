@@ -51,6 +51,8 @@ impl Gizmo {
 pub enum KeyOp {
     Grab,
     Scale,
+    /// Ctrl+E (o el botón Extrude): extruir y mover lo extruido (ver [`EditOp::Extrude`]).
+    Extrude,
 }
 
 /// Un gesto en curso en una vista ortográfica (puntos de pantalla).
@@ -97,6 +99,16 @@ pub enum EditOp {
         center: P3,
         last: (f32, f32),
         turned: f32,
+    },
+    /// Extruir: las caras extruidas (las de [`ModelEdit::extrusion`]) siguen al puntero sin
+    /// botón desde `from`, como G; en la perspectiva, a lo largo de `normal` (la normal promedio
+    /// del mundo, unitaria; si es 0, en el plano de la vista), y en las orto, en su plano.
+    /// `center` es el centro de su caja (lo que cae en la cuadrícula). Clic o Enter confirma.
+    Extrude {
+        view: GizmoView,
+        from: (f32, f32),
+        center: P3,
+        normal: P3,
     },
     /// Desplazar las vistas (botón derecho o central).
     Pan {
@@ -236,6 +248,42 @@ impl GizmoView {
         }
         d
     }
+
+    /// Cuánto se mueve lo extruido (ver [`EditOp::Extrude`]) con el puntero de `from` a `to`: en
+    /// las orto, en el plano de la vista con `center` en la cuadrícula; en la perspectiva, a lo
+    /// largo de `normal` en pasos de la cuadrícula (`None` con Ctrl: de 1/16).
+    pub(crate) fn extrude_delta(
+        &self,
+        center: P3,
+        normal: P3,
+        from: (f32, f32),
+        to: (f32, f32),
+        grid: Option<i32>,
+    ) -> P3 {
+        let pm = match self {
+            GizmoView::Ortho(map) => {
+                let d = map.drag_delta((to.0 - from.0, to.1 - from.1));
+                return cs_3d::snapped_delta(map.view, center, d, grid);
+            }
+            GizmoView::Persp(pm) => pm,
+        };
+        if dot3(normal, normal) < 1e-6 {
+            return self.move_delta(center, None, from, to, grid);
+        }
+        // El punto de la recta de la normal más cerca del rayo del puntero (al empezar y ahora).
+        let along = |s: (f32, f32)| {
+            let (o, r) = pm.ray(s);
+            let w = sub3(center, o);
+            let (b, c) = (dot3(normal, r), dot3(r, r));
+            let den = c - b * b;
+            (den.abs() > 1e-6 * c).then(|| (b * dot3(r, w) - c * dot3(normal, w)) / den)
+        };
+        let (Some(a), Some(b)) = (along(from), along(to)) else {
+            return [0.0; 3];
+        };
+        let t = cs_3d::snap(b - a, grid.unwrap_or(1));
+        normal.map(|n| n * t)
+    }
 }
 
 /// Los dos modos de la pestaña de un modelo: las 4 vistas (*Model*) o el modelo arriba y su
@@ -302,6 +350,13 @@ pub struct ModelEdit {
     pub(crate) face_mask: Option<super::texture_mode::FaceMask>,
     /// El gizmo de las vistas en modo *Model* (se queda al cambiar de modelo).
     pub gizmo: Gizmo,
+    /// Durante un [`EditOp::Extrude`]: el modelo ya extruido (sin mover) y la selección de
+    /// antes (la que vuelve al cancelar).
+    pub extrusion: Option<super::model_topology::Extrusion>,
+    /// Cuántos vértices y caras tenía cada objeto cuando se eligió la selección (ver
+    /// `sync_model_edit`): si un deshacer o rehacer cambia la topología de un objeto, sus índices
+    /// ya no son los mismos vértices, aristas o caras.
+    pub made_on: Vec<(usize, usize)>,
 }
 
 impl Default for ModelEdit {
@@ -324,8 +379,18 @@ impl Default for ModelEdit {
             focus_uvs: false,
             face_mask: None,
             gizmo: Gizmo::default(),
+            extrusion: None,
+            made_on: Vec::new(),
         }
     }
+}
+
+/// Cuántos vértices y caras tiene cada objeto de `m`.
+pub(crate) fn topology_counts(m: &Model3D) -> Vec<(usize, usize)> {
+    m.objects
+        .iter()
+        .map(|o| (o.mesh.vertices.len(), o.mesh.faces.len()))
+        .collect()
 }
 
 fn dist(a: (f32, f32), b: (f32, f32)) -> f32 {
@@ -399,7 +464,16 @@ impl Editor {
         self.model_edit.zoom = (0.8 * side / extent).clamp(ZOOM_MIN, ZOOM_MAX);
     }
 
+    /// Si hay un Extrude en curso: la selección es la de lo extruido (el modelo de la vista
+    /// previa, no el del documento) y no cambia hasta confirmar o cancelar.
+    pub(crate) fn extruding(&self) -> bool {
+        matches!(self.model_edit.op, Some(EditOp::Extrude { .. }))
+    }
+
     pub fn set_select_mode(&mut self, mode: SelectMode) {
+        if self.extruding() {
+            return;
+        }
         // En modo Texture la selección es siempre de caras.
         if self.model_edit.mode == CadMode::Texture && mode != SelectMode::Face {
             return;
@@ -421,6 +495,10 @@ impl Editor {
 
     /// La selección nueva; el objeto del panel pasa a ser el primero de ella (si hay).
     pub fn set_model_selection(&mut self, sel: Selection) {
+        if self.extruding() {
+            return;
+        }
+        self.model_edit.made_on = self.edited_model().map(topology_counts).unwrap_or_default();
         if let Some(o) = sel.first_object() {
             self.model_object = Some(o);
         }
@@ -443,7 +521,8 @@ impl Editor {
     }
 
     pub fn request_model_key_op(&mut self, op: KeyOp) {
-        if self.model_edit_on() && !self.model_edit.selection.is_empty() {
+        // Un Extrude en curso no se cambia por otro gesto: lo extruido se perdería.
+        if self.model_edit_on() && !self.model_edit.selection.is_empty() && !self.extruding() {
             self.model_edit.key_request = Some(op);
         }
     }
@@ -476,6 +555,10 @@ impl Editor {
         if let EditOp::Move { map, .. }
         | EditOp::Handle { map, .. }
         | EditOp::Gizmo {
+            view: GizmoView::Ortho(map),
+            ..
+        }
+        | EditOp::Extrude {
             view: GizmoView::Ortho(map),
             ..
         } = op
@@ -600,6 +683,18 @@ impl Editor {
                 pointer,
                 grid,
             ),
+            (
+                EditOp::Extrude {
+                    view,
+                    from,
+                    center,
+                    normal,
+                },
+                _,
+            ) => self.model_edit.extrusion.as_ref().map(|x| {
+                let d = view.extrude_delta(center, normal, from, pointer, grid);
+                cs_3d::translate(&x.model, sel, d)
+            }),
             (EditOp::Box { map, from, add, .. }, _) => {
                 self.model_edit.op = Some(EditOp::Box {
                     map,
@@ -643,6 +738,10 @@ impl Editor {
             }
             return;
         }
+        if let EditOp::Extrude { .. } = op {
+            self.finish_extrude();
+            return;
+        }
         // Un clic (sin arrastre) en algo ya elegido lo deja como la única selección.
         let click = self.model_edit.click_item.take();
         if let (EditOp::Move { .. }, Some(item), None) = (op, click, &self.model_edit.preview) {
@@ -676,12 +775,20 @@ impl Editor {
         self.model_edit.click_item = None;
         let had = self.model_edit.op.take().is_some();
         self.model_edit.preview = None;
+        // Un Extrude cancelado no deja nada: vuelve la selección de antes.
+        if let Some(x) = self.model_edit.extrusion.take() {
+            self.model_edit.selection = x.before;
+        }
         had
     }
 
     /// Una flecha: lo elegido un paso de cuadrícula en la última vista usada (`dx` a la derecha,
     /// `dy` hacia abajo en pantalla). Un paso de undo.
     pub fn nudge_model_selection(&mut self, dx: i32, dy: i32) -> bool {
+        // No durante un gesto (un Extrude moverá lo extruido con el puntero).
+        if self.model_edit.op.is_some() {
+            return false;
+        }
         let Some(m) = self.edited_model() else {
             return false;
         };
@@ -723,12 +830,30 @@ impl Editor {
     /// existe.
     pub(crate) fn sync_model_edit(&mut self) {
         let edit = &mut self.model_edit;
+        if let Some(x) = edit.extrusion.take() {
+            edit.selection = x.before;
+        }
         let model = edit
             .artboard
             .and_then(|id| self.document.artboard(id))
             .and_then(|a| a.model.as_ref());
         match model {
-            Some(m) => edit.selection.retain_valid(m),
+            Some(m) => {
+                // Un objeto con otra cantidad de vértices o caras que al elegir (deshacer o
+                // rehacer un Extrude, Subdivide, Merge o Delete): sus índices ya son otros, la
+                // selección se vacía.
+                let now = topology_counts(m);
+                let changed = edit.selection.mode != SelectMode::Object
+                    && edit.selection.items.iter().any(|it| {
+                        let o = it.object();
+                        edit.made_on.get(o).is_some_and(|c| now.get(o) != Some(c))
+                    });
+                if changed {
+                    edit.selection.items.clear();
+                }
+                edit.made_on = now;
+                edit.selection.retain_valid(m);
+            }
             None => edit.selection.items.clear(),
         }
         edit.op = None;

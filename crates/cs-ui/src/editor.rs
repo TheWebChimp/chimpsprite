@@ -28,6 +28,7 @@ mod font_ops;
 mod gestures;
 mod model_edit;
 mod model_ops;
+mod model_topology;
 mod texture_mode;
 mod workspace;
 pub use model_edit::{
@@ -1104,6 +1105,9 @@ mod model_tests;
 
 #[cfg(test)]
 mod model_edit_tests;
+
+#[cfg(test)]
+mod model_topology_tests;
 
 #[cfg(test)]
 mod workspace_tests;

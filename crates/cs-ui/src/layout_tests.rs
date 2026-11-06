@@ -5505,15 +5505,19 @@ fn the_3d_panel_has_the_modes_and_the_grid() {
 }
 
 #[test]
-fn the_object_tab_has_no_delete_button() {
-    // Lo quita la ○ de su pestaña.
+fn the_object_is_removed_by_its_tab_mark_and_delete_is_for_the_selection() {
+    // Lo quita la ○ de su pestaña; el botón Delete (de la fila de topología) borra lo elegido en
+    // las vistas: sin nada elegido, deshabilitado.
     let h = model_panel_tall();
-    assert!(
-        !h.buttons.iter().any(|(l, _)| l == "Delete"),
+    node(&h, "Delete Cube");
+    assert_eq!(
+        h.buttons.iter().filter(|(l, _)| l == "Delete").count(),
+        1,
         "{:?}",
         h.buttons
     );
-    node(&h, "Delete Cube");
+    assert!(h.app.doc.editor.model_edit().selection.is_empty());
+    assert!(h.disabled.iter().any(|l| l == "Delete"));
 }
 
 /// La primera vez que se ve el texto `t` dentro de `area`.
@@ -8894,4 +8898,337 @@ fn alt_drag_with_a_selection_tool_on_a_face_moves_its_uvs() {
         h.app.doc.editor.selection_is_face_mask(),
         "the face's pixels"
     );
+}
+
+// --- ChimpCAD: Extrude, Subdivide, Merge y Delete ---
+
+/// El modelo en su pestaña con la cara de arriba del cubo elegida (modo Face) y el puntero en
+/// su centro en la vista Front. Devuelve la cara.
+fn with_the_top_face_chosen() -> (LayoutHarness, usize) {
+    let mut h = editing_model();
+    let mesh = &h.app.doc.editor.model().unwrap().objects[0].mesh;
+    let top = mesh
+        .faces
+        .iter()
+        .position(|f| f.verts.iter().all(|&v| mesh.vertices[v as usize].y > 0))
+        .expect("the top face");
+    let e = &mut h.app.doc.editor;
+    e.set_select_mode(cs_3d::SelectMode::Face);
+    e.set_model_selection(cs_3d::Selection {
+        mode: cs_3d::SelectMode::Face,
+        items: [cs_3d::Item::Face(0, top)].into(),
+    });
+    let at = front_screen(&h, [0.0, 16.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(at)]);
+    (h, top)
+}
+
+fn top_ys(h: &LayoutHarness, top: usize) -> Vec<i32> {
+    let mesh = &h.app.doc.editor.model().unwrap().objects[0].mesh;
+    mesh.faces[top]
+        .verts
+        .iter()
+        .map(|&v| mesh.vertices[v as usize].y)
+        .collect()
+}
+
+fn vertex_count(h: &LayoutHarness) -> usize {
+    h.app.doc.editor.model().unwrap().objects[0]
+        .mesh
+        .vertices
+        .len()
+}
+
+#[test]
+fn ctrl_e_then_a_move_and_a_click_extrudes_in_one_undo_step() {
+    let (mut h, top) = with_the_top_face_chosen();
+    let steps = h.app.doc.editor.history.done_count();
+    press(&mut h, egui::Key::E, egui::Modifiers::COMMAND);
+    h.frame();
+    assert!(
+        matches!(
+            h.app.doc.editor.model_edit().op,
+            Some(crate::editor::EditOp::Extrude { .. })
+        ),
+        "the extrude follows the pointer"
+    );
+    assert!(h.app.export.is_none(), "Ctrl+E is not Export here");
+    let to = front_screen(&h, [0.0, 20.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    assert_eq!(vertex_count(&h), 8, "the document waits");
+    h.click(to, PointerButton::Primary);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(vertex_count(&h), 12);
+    assert_eq!(top_ys(&h, top), vec![20; 4], "moved outward");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.app.doc.editor.undo();
+    assert_eq!(vertex_count(&h), 8, "one undo step");
+}
+
+#[test]
+fn escape_cancels_an_extrude_without_an_undo_step() {
+    let (mut h, top) = with_the_top_face_chosen();
+    let before = h.app.doc.editor.model().cloned();
+    let steps = h.app.doc.editor.history.done_count();
+    press(&mut h, egui::Key::E, egui::Modifiers::COMMAND);
+    h.frame();
+    h.frame_with(vec![Event::PointerMoved(front_screen(
+        &h,
+        [0.0, 20.0, 0.0],
+    ))]);
+    tap_key(&mut h, egui::Key::Escape);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(h.app.doc.editor.model().cloned(), before);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    assert_eq!(top_ys(&h, top), vec![16; 4]);
+}
+
+#[test]
+fn a_right_click_cancels_an_extrude() {
+    let (mut h, _) = with_the_top_face_chosen();
+    let before = h.app.doc.editor.model().cloned();
+    press(&mut h, egui::Key::E, egui::Modifiers::COMMAND);
+    h.frame();
+    let to = front_screen(&h, [0.0, 20.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.click(to, PointerButton::Secondary);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(h.app.doc.editor.model().cloned(), before);
+}
+
+#[test]
+fn ctrl_d_m_and_delete_are_one_undo_step_each() {
+    let (mut h, _) = with_the_top_face_chosen();
+    let steps = h.app.doc.editor.history.done_count();
+    press(&mut h, egui::Key::D, egui::Modifiers::COMMAND);
+    h.frame();
+    assert_eq!(h.app.doc.editor.history.done().last(), Some("Subdivide"));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    tap_key(&mut h, egui::Key::M);
+    assert_eq!(h.app.doc.editor.history.done().last(), Some("Merge"));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 2);
+    // Lo unido queda elegido (un vértice): Delete lo borra con sus caras.
+    tap_key(&mut h, egui::Key::Delete);
+    assert_eq!(h.app.doc.editor.history.done().last(), Some("Delete"));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 3);
+}
+
+#[test]
+fn backspace_deletes_too() {
+    let (mut h, _) = with_the_top_face_chosen();
+    let steps = h.app.doc.editor.history.done_count();
+    tap_key(&mut h, egui::Key::Backspace);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    let faces = h.app.doc.editor.model().unwrap().objects[0]
+        .mesh
+        .faces
+        .len();
+    assert_eq!(faces, 5);
+}
+
+#[test]
+fn ctrl_e_and_ctrl_d_do_not_export_or_deselect_in_the_cad_workspace() {
+    let mut h = editing_model();
+    let steps = h.app.doc.editor.history.done_count();
+    press(&mut h, egui::Key::E, egui::Modifiers::COMMAND);
+    h.frame();
+    press(&mut h, egui::Key::D, egui::Modifiers::COMMAND);
+    h.frame();
+    assert!(h.app.export.is_none(), "no Export");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    assert!(
+        h.app.doc.editor.model_edit().op.is_none(),
+        "nothing to extrude"
+    );
+}
+
+#[test]
+fn on_the_canvas_ctrl_e_still_exports_and_ctrl_d_deselects() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    h.app.doc.editor.select_all();
+    h.frame();
+    assert!(h.app.doc.editor.selection.is_some());
+    press(&mut h, egui::Key::D, egui::Modifiers::COMMAND);
+    h.frame();
+    assert!(h.app.doc.editor.selection.is_none(), "deselected");
+    press(&mut h, egui::Key::E, egui::Modifiers::COMMAND);
+    h.frame();
+    assert!(h.app.export.is_some(), "Export");
+}
+
+#[test]
+fn the_topology_buttons_follow_the_selection_and_the_mode() {
+    let mut h = with_the_model_panel(with_a_model_at_800());
+    let labels = ["Extrude", "Subdivide", "Merge", "Delete"];
+    let enabled = |h: &LayoutHarness| -> Vec<bool> {
+        labels
+            .iter()
+            .map(|l| {
+                h.button(l);
+                !h.disabled.iter().any(|d| d == l)
+            })
+            .collect()
+    };
+    let choose = |h: &mut LayoutHarness, sel: cs_3d::Selection| {
+        h.app.doc.editor.set_select_mode(sel.mode);
+        h.app.doc.editor.set_model_selection(sel);
+        h.frame();
+        h.frame();
+    };
+    let vertices = |vs: &[u32]| cs_3d::Selection {
+        mode: cs_3d::SelectMode::Vertex,
+        items: vs.iter().map(|&v| cs_3d::Item::Vertex(0, v)).collect(),
+    };
+    h.app.doc.editor.select_model_object(Some(0));
+    h.frame();
+    h.frame();
+    assert_eq!(enabled(&h), [false, false, false, true], "Object mode");
+    choose(&mut h, vertices(&[]));
+    assert_eq!(enabled(&h), [false, false, false, false], "nothing chosen");
+    choose(&mut h, vertices(&[0]));
+    assert_eq!(enabled(&h), [false, false, false, true], "one vertex");
+    choose(&mut h, vertices(&[0, 1]));
+    assert_eq!(enabled(&h), [false, false, true, true], "two vertices");
+    choose(
+        &mut h,
+        cs_3d::Selection {
+            mode: cs_3d::SelectMode::Face,
+            items: [cs_3d::Item::Face(0, 0)].into(),
+        },
+    );
+    assert_eq!(enabled(&h), [true, true, true, true], "a face");
+    // Los botones van en una fila arriba de Position.
+    let (_, bottom) = model_halves(&h);
+    let buttons: Vec<Rect> = labels.iter().map(|l| h.button(l)).collect();
+    let position = text_in(&h, bottom, "Position").expect("Position");
+    for (b, l) in buttons.iter().zip(labels) {
+        assert!(bottom.contains_rect(*b), "{l} {b:?} in {bottom:?}");
+        assert_eq!(b.top(), buttons[0].top(), "{l} in one row");
+        assert!(b.bottom() < position.top(), "{l} above Position");
+    }
+}
+
+#[test]
+fn the_topology_buttons_run_the_commands() {
+    let mut h = with_the_model_panel(with_a_model_at_800());
+    let face = cs_3d::Selection {
+        mode: cs_3d::SelectMode::Face,
+        items: [cs_3d::Item::Face(0, 0)].into(),
+    };
+    let choose = |h: &mut LayoutHarness, sel: cs_3d::Selection| {
+        h.app.doc.editor.set_select_mode(sel.mode);
+        h.app.doc.editor.set_model_selection(sel);
+        h.frame();
+        h.frame();
+    };
+    choose(&mut h, face.clone());
+    let steps = h.app.doc.editor.history.done_count();
+    h.click(h.button("Subdivide").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.history.done().last(), Some("Subdivide"));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    h.click(h.button("Delete").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.history.done().last(), Some("Delete"));
+    choose(&mut h, face);
+    h.click(h.button("Extrude").center(), PointerButton::Primary);
+    h.frame();
+    assert!(
+        matches!(
+            h.app.doc.editor.model_edit().op,
+            Some(crate::editor::EditOp::Extrude { .. })
+        ),
+        "the button starts the interactive extrude"
+    );
+    let steps = h.app.doc.editor.history.done_count();
+    tap_key(&mut h, egui::Key::Enter);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(h.app.doc.editor.history.done().last(), Some("Extrude"));
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn object_mode_delete_removes_the_object_and_merge_does_nothing() {
+    let mut h = editing_model();
+    assert!(h.app.doc.editor.add_primitive(cs_3d::Primitive::Cube));
+    h.app.doc.editor.select_model_object(Some(1));
+    h.frame();
+    let steps = h.app.doc.editor.history.done_count();
+    tap_key(&mut h, egui::Key::M);
+    press(&mut h, egui::Key::D, egui::Modifiers::COMMAND);
+    h.frame();
+    press(&mut h, egui::Key::E, egui::Modifiers::COMMAND);
+    h.frame();
+    assert!(h.app.doc.editor.model_edit().op.is_none(), "no extrude");
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    tap_key(&mut h, egui::Key::Delete);
+    assert_eq!(h.app.doc.editor.model().unwrap().objects.len(), 1);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+}
+
+#[test]
+fn g_and_s_during_an_extrude_do_not_drop_it() {
+    let (mut h, top) = with_the_top_face_chosen();
+    let steps = h.app.doc.editor.history.done_count();
+    press(&mut h, egui::Key::E, egui::Modifiers::COMMAND);
+    h.frame();
+    tap_key(&mut h, egui::Key::G);
+    tap_key(&mut h, egui::Key::S);
+    assert!(
+        matches!(
+            h.app.doc.editor.model_edit().op,
+            Some(crate::editor::EditOp::Extrude { .. })
+        ),
+        "still extruding"
+    );
+    let to = front_screen(&h, [0.0, 20.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.click(to, PointerButton::Primary);
+    assert!(h.app.doc.editor.model_edit().op.is_none());
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert_eq!(h.app.doc.editor.history.done().last(), Some("Extrude"));
+    assert_eq!(vertex_count(&h), 12);
+    assert_eq!(top_ys(&h, top), vec![20; 4]);
+}
+
+#[test]
+fn delete_and_backspace_in_a_panel_field_do_not_delete_geometry() {
+    let (mut h, _) = with_the_top_face_chosen();
+    let tag = axis_row(&h, "Position")[0];
+    let field = Pos2::new(
+        tag.right() + crate::kit::stepper::BUTTON_W + 12.0,
+        tag.center().y,
+    );
+    h.click(field, PointerButton::Primary);
+    assert!(h.ctx.egui_wants_keyboard_input(), "the field has focus");
+    let model = h.app.doc.editor.model().cloned();
+    let steps = h.app.doc.editor.history.done_count();
+    for key in [egui::Key::Backspace, egui::Key::Delete] {
+        h.frame_with(key_tap(key));
+    }
+    h.frame();
+    assert_eq!(
+        h.app.doc.editor.model().cloned(),
+        model,
+        "no geometry deleted"
+    );
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    assert!(!h.app.doc.editor.model_edit().selection.is_empty());
+}
+
+#[test]
+fn number_keys_and_arrows_do_nothing_during_an_extrude() {
+    let (mut h, top) = with_the_top_face_chosen();
+    let steps = h.app.doc.editor.history.done_count();
+    press(&mut h, egui::Key::E, egui::Modifiers::COMMAND);
+    h.frame();
+    let sel = h.app.doc.editor.model_edit().selection.clone();
+    tap_key(&mut h, egui::Key::Num2);
+    tap_key(&mut h, egui::Key::ArrowRight);
+    assert_eq!(h.app.doc.editor.model_edit().selection, sel);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps);
+    let to = front_screen(&h, [0.0, 20.0, 0.0]);
+    h.frame_with(vec![Event::PointerMoved(to)]);
+    h.click(to, PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.history.done_count(), steps + 1);
+    assert_eq!(h.app.doc.editor.history.done().last(), Some("Extrude"));
+    assert_eq!(top_ys(&h, top), vec![20; 4], "the cap moved");
 }

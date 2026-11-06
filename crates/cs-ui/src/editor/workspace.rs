@@ -120,5 +120,8 @@ impl Editor {
         edit.uv_op = None;
         edit.preview = None;
         edit.key_request = None;
+        if let Some(x) = edit.extrusion.take() {
+            edit.selection = x.before;
+        }
     }
 }

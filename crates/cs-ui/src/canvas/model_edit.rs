@@ -181,12 +181,14 @@ impl CanvasView {
         if cancelled {
             editor.cancel_model_op();
         }
-        // Con un arrastre en curso, el otro botón no empieza nada. Un gesto de teclado (G o S)
-        // espera un clic: confirma con el izquierdo, cancela con el derecho.
+        // Con un arrastre en curso, el otro botón no empieza nada. Un gesto de teclado (G, S o el
+        // Extrude) espera un clic: confirma con el izquierdo, cancela con el derecho.
         let busy = self.model_drag.is_some() || editor.model_edit().op.is_some();
         let keyboard_op = matches!(
             editor.model_edit().op,
-            Some(EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. })
+            Some(
+                EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. } | EditOp::Extrude { .. }
+            )
         );
         if pressed
             && !cancelled
@@ -331,11 +333,13 @@ impl CanvasView {
         let Some(i) = self.quadrant_at(p) else {
             return false;
         };
-        // Con un G o S de teclado en curso, el clic lo cierra sea cual sea el cuadrante: el
-        // izquierdo confirma y el derecho o el central cancelan.
+        // Con un G, S o Extrude de teclado en curso, el clic lo cierra sea cual sea el cuadrante:
+        // el izquierdo confirma y el derecho o el central cancelan.
         let keyboard = matches!(
             editor.model_edit().op,
-            Some(EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. })
+            Some(
+                EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. } | EditOp::Extrude { .. }
+            )
         );
         if keyboard {
             if secondary || middle {
@@ -502,8 +506,8 @@ impl CanvasView {
         self.model_press_at(editor, p, local, secondary, modifiers, Vec2::ONE / scale);
     }
 
-    /// Cada frame: el gesto sigue al puntero; al soltar (si no es de teclado) termina. Un G o S
-    /// pedido por el teclado empieza aquí, en la vista bajo el puntero.
+    /// Cada frame: el gesto sigue al puntero; al soltar (si no es de teclado) termina. Un G, S o
+    /// Extrude pedido por el teclado empieza aquí, en la vista bajo el puntero.
     pub(super) fn model_edit_input(
         &mut self,
         editor: &mut Editor,
@@ -511,6 +515,10 @@ impl CanvasView {
         down: bool,
         modifiers: egui::Modifiers,
     ) {
+        if editor.model_edit.key_request == Some(KeyOp::Extrude) {
+            editor.model_edit.key_request = None;
+            self.start_extrude(editor, pointer);
+        }
         if let Some(req) = editor.model_edit.key_request.take()
             && let Some(p) = pointer
             && let Some(view) = self.quadrant_at(p).and_then(quadrant_view)
@@ -536,6 +544,7 @@ impl CanvasView {
                         from_dist: if d < SCALE_NEAR_PX { SCALE_REF_PX } else { d },
                     }
                 }
+                KeyOp::Extrude => return,
             };
             editor.start_model_op(op);
         }
@@ -547,10 +556,35 @@ impl CanvasView {
         }
         let keyboard = matches!(
             op,
-            EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. }
+            EditOp::Move { keyboard: true, .. } | EditOp::Scale { .. } | EditOp::Extrude { .. }
         );
         if !down && !keyboard {
             editor.finish_model_op();
+        }
+    }
+
+    /// Empieza el Extrude pedido (Ctrl+E o el botón) en la vista bajo el puntero: en la
+    /// perspectiva, a lo largo de la normal; en una orto, en su plano. Con el puntero fuera de
+    /// las vistas (el botón del panel), en la última vista orto usada, desde el puntero (o el
+    /// centro de esa vista): no se mueve hasta que el puntero se mueva.
+    fn start_extrude(&mut self, editor: &mut Editor, pointer: Option<Pos2>) {
+        let Some(quads) = self.edit_quads else {
+            return;
+        };
+        let over = pointer.and_then(|p| self.quadrant_at(p).map(|i| (p, i)));
+        let (view, from) = match over {
+            Some((p, i)) => match quadrant_view(i) {
+                Some(v) => (self.edit_view_map(editor, v).map(GizmoView::Ortho), p),
+                None => (self.persp_map(editor).map(GizmoView::Persp), p),
+            },
+            None => {
+                let v = editor.model_edit().last_view;
+                let from = pointer.unwrap_or(quads[quadrant_index(v)].center());
+                (self.edit_view_map(editor, v).map(GizmoView::Ortho), from)
+            }
+        };
+        if let Some(view) = view {
+            editor.start_extrude(view, (from.x, from.y));
         }
     }
 

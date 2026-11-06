@@ -111,6 +111,10 @@ impl Editor {
     }
 
     pub fn select_model_object(&mut self, i: Option<usize>) {
+        // Durante un Extrude la selección es la de lo extruido: no cambia.
+        if self.extruding() {
+            return;
+        }
         self.model_object = i;
         // En el modo Edit, elegir un objeto (panel o perspectiva) pasa a modo Object con ese
         // objeto: convertirlo a sus aristas o vértices elegiría todo el bloque (solo si el
@@ -171,8 +175,14 @@ impl Editor {
                 _ => it,
             })
             .collect();
+        // Los conteos de la selección se corren igual (ver `sync_model_edit`).
+        let made_on = self.model_edit.made_on.clone();
+        if i < self.model_edit.made_on.len() {
+            self.model_edit.made_on.remove(i);
+        }
         if !self.named("Remove Object", |e| e.set_model(model)) {
             self.model_edit.selection.items = old;
+            self.model_edit.made_on = made_on;
             return false;
         }
         // Quitar uno anterior a la elegida la deja en el mismo objeto (un lugar antes); quitar la

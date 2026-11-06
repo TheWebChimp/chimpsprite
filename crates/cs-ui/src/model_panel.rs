@@ -5,9 +5,10 @@
 //! settings…. Abajo, la tira de pestañas de los objetos (una por objeto, con el ícono de su tipo:
 //! un clic la elige, su marca quita el objeto y, si no caben, las flechas las recorren) con el +
 //! a la derecha (su ventanita, en [`add_menu`]: el tipo, los lados de los redondos y Add) y,
-//! debajo, con su scroll, lo del objeto elegido: en modo Texture, los botones de las UVs (girar y
-//! voltear las de las caras elegidas); su posición, su rotación y su escala en filas de X, Y y Z,
-//! y Double sided. Sin objeto elegido, abajo solo la tira. Sin modelo, el botón New 3D Model….
+//! debajo, con su scroll, lo del objeto elegido: en modo Model, Extrude, Subdivide, Merge y
+//! Delete; en modo Texture, los botones de las UVs (girar y voltear las de las caras elegidas); su
+//! posición, su rotación y su escala en filas de X, Y y Z, y Double sided. Sin objeto elegido,
+//! abajo solo la tira. Sin modelo, el botón New 3D Model….
 
 use cs_3d::Primitive;
 use cs_core::{CameraPreset, Model3D, Object3D, PrimitiveKind, Projection, Rgba, ShadingTable};
@@ -415,6 +416,44 @@ fn uv_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }
 }
 
+/// Lo del objeto elegido, en modo Model: Extrude, Subdivide, Merge y Delete para lo elegido en
+/// las vistas (cada uno deshabilitado cuando no aplica), en una fila sin título como la de las
+/// UVs. Hacen lo mismo que Ctrl+E, Ctrl+D, M y Supr.
+fn topology_buttons(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
+    let enabled = [
+        editor.can_extrude(),
+        editor.can_subdivide(),
+        editor.can_merge(),
+        editor.can_delete_model_selection(),
+    ];
+    let labels = ["Extrude", "Subdivide", "Merge", "Delete"];
+    let mut clicked = None;
+    ui.horizontal(|ui| {
+        for (i, (label, on)) in labels.into_iter().zip(enabled).enumerate() {
+            if ui
+                .add_enabled_ui(on, |ui| button(ui, skin, label))
+                .inner
+                .clicked()
+            {
+                clicked = Some(i);
+            }
+        }
+    });
+    match clicked {
+        Some(0) => editor.request_extrude(),
+        Some(1) => {
+            editor.subdivide_model_selection();
+        }
+        Some(2) => {
+            editor.merge_model_selection();
+        }
+        Some(3) => {
+            editor.delete_model_selection();
+        }
+        _ => {}
+    }
+}
+
 /// El ancho de las filas de lo general: lo de adentro sin la barra del scroll y el aire de antes
 /// (como las filas de los ejes).
 fn row_width(ui: &Ui) -> f32 {
@@ -628,7 +667,8 @@ fn scaled_axes(
     }
 }
 
-/// Lo del objeto elegido (la mitad de abajo): en modo Texture, primero los botones de las UVs;
+/// Lo del objeto elegido (la mitad de abajo): primero los botones de topología (en modo Model) o
+/// los de las UVs (en modo Texture);
 /// posición, rotación y escala (una fila de X, Y, Z cada una) y Double sided. Quitarlo es la ○ de
 /// su pestaña. Todo lo cambiado en un frame (o en un arrastre) es un paso de deshacer
 /// (`set_model_grouped`).
@@ -641,8 +681,9 @@ fn selected(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     };
     // Los títulos de los ejes van con el aire de entre una fila y otra (como en el boceto).
     ui.add_space(OBJECT_TOP_AIR);
-    if editor.cad_mode() == CadMode::Texture {
-        uv_buttons(ui, editor, skin);
+    match editor.cad_mode() {
+        CadMode::Texture => uv_buttons(ui, editor, skin),
+        CadMode::Model => topology_buttons(ui, editor, skin),
     }
     let obj: &Object3D = &model.objects[i];
     let mut next = obj.clone();
