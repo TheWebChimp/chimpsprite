@@ -955,7 +955,7 @@ impl ChimpApp {
                 let bytes = match dialog.build(&self.doc.editor.document) {
                     Ok(bytes) => bytes,
                     Err(e) => {
-                        self.gif = None;
+                        // El diálogo sigue abierto: se puede bajar la escala o los frames.
                         return self.show_message("Could not export", e);
                     }
                 };

@@ -22,6 +22,9 @@ use crate::widgets;
 const PREVIEW: egui::Vec2 = vec2(160.0, 120.0);
 /// Entre las columnas.
 const COLUMN_GAP: f32 = 12.0;
+/// Los pixeles que puede tener el archivo entre todos sus frames (≈ 256 MB en RGBA): con Scale 8,
+/// la DS y 64 frames se pediría mucha más memoria.
+const MAX_PIXELS: u64 = 64 * 1024 * 1024;
 /// El stepper de la intensidad de las scanlines (más angosto: va después de la casilla).
 const SMALL_STEPPER_W: f32 = 64.0;
 /// El FOV, en grados.
@@ -97,6 +100,13 @@ impl GifDialog {
 
     /// El archivo: el GIF o la tira PNG de los frames del turntable de `doc`.
     pub fn build(&self, doc: &Document) -> Result<Vec<u8>, String> {
+        let (w, h) = self.options.output_size(self.model_size);
+        let frames = u64::from(self.options.bake.frames.max(1));
+        if u64::from(w) * u64::from(h) * frames > MAX_PIXELS {
+            return Err(format!(
+                "{w}×{h} with {frames} frames is too big: lower the scale, the size or the frames."
+            ));
+        }
         let t = cs_render::turntable(doc, self.model, &self.options)
             .ok_or_else(|| "The model can't be rendered.".to_owned())?;
         let bytes = match self.format {

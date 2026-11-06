@@ -652,6 +652,22 @@ fn gif_settings_presets_and_png_strip() {
 }
 
 #[test]
+fn gif_settings_refuses_a_huge_file() {
+    let mut h = gif_open(true);
+    let gif = h.app.gif.as_mut().unwrap();
+    gif.options.preset = cs_render::RenderPreset::NintendoDs;
+    gif.options.scale = 8;
+    gif.options.bake.frames = 64;
+    let error = gif.build(&h.app.doc.editor.document).unwrap_err();
+    assert!(error.contains("too big"), "{error}");
+    // Export lo dice y deja el diálogo abierto para cambiarlo.
+    h.click("Export");
+    h.settle();
+    assert!(h.app.message.is_some());
+    assert!(h.app.gif.is_some());
+}
+
+#[test]
 fn gif_settings_cancel_closes_and_the_dialog_follows_its_model() {
     let mut h = gif_open(true);
     h.click("Cancel");
