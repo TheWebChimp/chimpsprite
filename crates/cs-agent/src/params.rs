@@ -660,6 +660,20 @@ pub enum ExportKind {
     Unity,
     /// Spritesheet PNG + Bevy atlas (.ron): grid, animations and slices.
     Bevy,
+    /// Tiled map of the tilemap layers: `path` ending in .tmx (XML) or .tmj (JSON), plus the
+    /// tilesets (.tsx/.tsj + PNG) and a PNG per image layer next to it. Slices become objects.
+    Tiled,
+}
+
+/// How a Tiled map stores its tile layers.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum TiledEncodingArg {
+    #[default]
+    Csv,
+    Base64,
+    Zlib,
+    Gzip,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, JsonSchema)]
@@ -698,6 +712,15 @@ pub struct Export {
     pub normal_map: bool,
     /// Godot: `res://` folder where the sheet will live (default "res://").
     pub godot_folder: Option<String>,
+    /// Tiled: tile layer data encoding (default csv).
+    #[serde(default)]
+    pub tiled_encoding: TiledEncodingArg,
+    /// Tiled: tilesets inside the map instead of .tsx/.tsj files.
+    #[serde(default)]
+    pub tiled_embedded: bool,
+    /// Tiled: one map per frame (name_001.tmx…) instead of only `frame`.
+    #[serde(default)]
+    pub all_frames: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

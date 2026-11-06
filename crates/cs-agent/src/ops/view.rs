@@ -6,7 +6,7 @@ use cs_io::export::{self, Bitmap, JsonFormat, SheetLayout};
 use cs_render::{OnionSkin, blend_over, render_frame, render_onion, resolve};
 
 use crate::error::{Result, invalid};
-use crate::params::{Export, ExportKind, LayoutArg, ReadPixels, Render};
+use crate::params::{Export, ExportKind, LayoutArg, ReadPixels, Render, TiledEncodingArg};
 use crate::target;
 use crate::text::{Cell, grid};
 use crate::{Reply, Session};
@@ -136,6 +136,9 @@ impl Session {
     }
 
     pub fn export(&self, p: Export) -> Result<Reply> {
+        if p.kind == ExportKind::Tiled {
+            return self.export_tiled(p);
+        }
         let (id, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
         // Las instancias y los tilemaps se hornean en capas de imagen antes de exportar.
         let baked = cs_render::bake_layers(
@@ -231,6 +234,7 @@ impl Session {
                 write(path.clone(), &atlas.png)?;
                 write(path.with_extension("json"), atlas.json.as_bytes())?;
             }
+            ExportKind::Tiled => unreachable!("handled by export_tiled"),
             ExportKind::Godot | ExportKind::Unity | ExportKind::Bevy => {
                 let name = &self
                     .doc(&p.doc)?
@@ -281,6 +285,55 @@ impl Session {
             write(path.with_file_name(format!("{stem}_n.png")), &normals)?;
         }
         Ok(Reply::text(format!("Wrote:\n{}", written.join("\n"))))
+    }
+
+    /// `kind: "tiled"`: el mapa (`.tmx` o `.tmj` según `path`) y sus archivos al lado.
+    fn export_tiled(&self, p: Export) -> Result<Reply> {
+        use cs_io::tiled::{Encoding, MapFormat, TiledFrames, TiledOptions};
+        let (_, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let path = self.path(&p.path)?;
+        let format = match path.extension().and_then(|e| e.to_str()) {
+            Some(e) if e.eq_ignore_ascii_case("tmj") => MapFormat::Tmj,
+            Some(e) if e.eq_ignore_ascii_case("tmx") => MapFormat::Tmx,
+            _ => return Err(invalid("for kind=tiled, path must end in .tmx or .tmj")),
+        };
+        let options = TiledOptions {
+            format,
+            external_tilesets: !p.tiled_embedded,
+            encoding: match p.tiled_encoding {
+                TiledEncodingArg::Csv => Encoding::Csv,
+                TiledEncodingArg::Base64 => Encoding::Base64,
+                TiledEncodingArg::Zlib => Encoding::Base64Zlib,
+                TiledEncodingArg::Gzip => Encoding::Base64Gzip,
+            },
+            frames: if p.all_frames {
+                TiledFrames::All
+            } else {
+                TiledFrames::Current(target::frame(sprite, p.frame)?)
+            },
+        };
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("map")
+            .to_string();
+        let out = cs_io::tiled::export(&self.doc(&p.doc)?.document, sprite, &stem, &options)?;
+        let dir = path
+            .parent()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_default();
+        std::fs::create_dir_all(&dir)?;
+        let mut lines = vec!["Wrote:".to_string()];
+        for (name, bytes) in &out.files {
+            let file = dir.join(name);
+            std::fs::write(&file, bytes)?;
+            lines.push(file.display().to_string());
+        }
+        if !out.warnings.is_empty() {
+            lines.push("Notes:".into());
+            lines.extend(out.warnings);
+        }
+        Ok(Reply::text(lines.join("\n")))
     }
 }
 
@@ -420,6 +473,58 @@ mod tests {
         assert_eq!(png.width, 8);
         assert!(
             s.export(p(json!({"doc": "d1", "path": "../x.png", "kind": "png"})))
+                .is_err()
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn export_tiled_writes_the_map_and_its_tilesets() {
+        let dir = std::env::temp_dir().join(format!("cs-agent-tiled-{}", std::process::id()));
+        let mut s = Session::new(Some(dir.clone()));
+        s.new_document(p(json!({"width": 8, "height": 4, "name": "level"})))
+            .unwrap();
+        // Sin capas tilemap no hay mapa.
+        let e = s
+            .export(p(
+                json!({"doc": "d1", "path": "m/level.tmx", "kind": "tiled"}),
+            ))
+            .unwrap_err();
+        assert!(e.to_string().contains("no tilemap layers"), "{e}");
+        s.create_tileset(p(json!({"doc": "d1", "name": "ground",
+            "tile_width": 4, "tile_height": 4})))
+            .unwrap();
+        s.add_tilemap_layer(p(json!({"doc": "d1", "tileset": 0, "name": "map"})))
+            .unwrap();
+        s.draw_tilemap_pixels(p(json!({"doc": "d1", "layer": "map", "pixels": [
+            {"x": 5, "y": 0, "color": "#ff0000"}]})))
+            .unwrap();
+        let r = s
+            .export(p(
+                json!({"doc": "d1", "path": "m/level.tmj", "kind": "tiled",
+                "tiled_encoding": "zlib"}),
+            ))
+            .unwrap();
+        assert!(format!("{r:?}").contains("level.tmj"));
+        let map =
+            cs_io::tiled::read_tmj(&std::fs::read_to_string(dir.join("m/level.tmj")).unwrap())
+                .unwrap();
+        assert_eq!((map.width, map.height), (2, 1));
+        assert_eq!(map.tilesets[0].source.as_deref(), Some("ground.tsj"));
+        assert!(dir.join("m/ground.tsj").exists() && dir.join("m/ground.png").exists());
+        s.export(p(
+            json!({"doc": "d1", "path": "e/level.tmx", "kind": "tiled",
+            "tiled_embedded": true}),
+        ))
+        .unwrap();
+        let tmx = std::fs::read_to_string(dir.join("e/level.tmx")).unwrap();
+        assert!(
+            cs_io::tiled::read_tmx(&tmx).unwrap().tilesets[0]
+                .source
+                .is_none()
+        );
+        assert!(
+            s.export(p(json!({"doc": "d1", "path": "x.png", "kind": "tiled"})))
                 .is_err()
         );
         std::fs::remove_dir_all(dir).ok();
