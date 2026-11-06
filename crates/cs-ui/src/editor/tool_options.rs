@@ -377,6 +377,8 @@ pub struct ToolOptions {
     pub mirror_selection: bool,
     /// Cómo pintan las herramientas de color (ver `ToolKind::uses_ink`).
     pub ink: Ink,
+    /// Qué pasa con el tileset al pintar píxeles sobre una capa tilemap (modo Pixels).
+    pub tileset_mode: cs_commands::tiles::TilesetMode,
 }
 
 /// Cómo se pinta encima de lo que hay, como los inks de Aseprite.
@@ -432,6 +434,7 @@ impl Default for ToolOptions {
             group_choice: GroupChoice::default(),
             mirror_selection: false,
             ink: Ink::Simple,
+            tileset_mode: cs_commands::tiles::TilesetMode::Auto,
         }
     }
 }

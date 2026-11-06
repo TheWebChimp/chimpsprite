@@ -121,7 +121,7 @@ impl Editor {
         };
         self.text = None;
         let cmd = self.shape_paint(ToolKind::Text, cmd);
-        self.execute_named(cmd, ToolKind::Text.label());
+        self.execute_paint(cmd, ToolKind::Text.label());
     }
 
     pub(super) fn text_command(&self) -> Option<Command> {
@@ -232,6 +232,12 @@ impl Editor {
     }
 
     pub(super) fn context(&self) -> ToolContext<'_> {
+        self.context_on(self.sprite())
+    }
+
+    /// El contexto de las herramientas sobre `sprite`: el del documento o, en modo Pixels sobre
+    /// una capa tilemap, su proxy de píxeles (misma capa, mismo frame).
+    pub(super) fn context_on<'a>(&'a self, sprite: &'a Sprite) -> ToolContext<'a> {
         let one_bit = self
             .font()
             .is_some_and(|f| f.mode == cs_core::FontMode::OneBit);
@@ -247,7 +253,7 @@ impl Editor {
             self.secondary
         };
         ToolContext {
-            sprite: self.sprite(),
+            sprite,
             layer: self.layer,
             frame: self.frame,
             color: self.color(),
@@ -321,12 +327,23 @@ impl Editor {
         )
     }
 
+    /// Proxy de píxeles para `kind` en modo Pixels sobre una capa tilemap: lo usan las herramientas
+    /// que pintan o seleccionan (Move, Slice y Artboard siguen sobre el sprite real; Move mueve el
+    /// cel tilemap en pasos de un tile).
+    pub(super) fn pixel_proxy_for(&self, kind: ToolKind) -> Option<std::sync::Arc<Sprite>> {
+        let real = matches!(
+            kind,
+            ToolKind::Move | ToolKind::Slice | ToolKind::Artboard | ToolKind::Hand | ToolKind::Zoom
+        );
+        if real { None } else { self.pixel_proxy() }
+    }
+
     /// Punto de mundo → punto de la herramienta: píxel local o, en modo Tiles, el píxel del proxy
     /// de la celda que contiene al puntero.
     fn tool_point(&self, world: (f32, f32)) -> Point {
         let p = self.to_local(self.snapped(world));
         match self
-            .tile_space()
+            .cell_space()
             .filter(|_| self.active_tool().uses_cells())
         {
             Some(space) => space.proxy_pixel(space.cell_at(p)),
@@ -339,12 +356,14 @@ impl Editor {
     fn with_tool<R: Default>(&mut self, f: impl FnOnce(&mut dyn Tool, &ToolContext) -> R) -> R {
         let kind = self.active_tool();
         let proxy = self.cell_proxy(kind);
+        let pixels = self.pixel_proxy_for(kind);
         let mut tools = std::mem::replace(&mut self.tools, SpriteTools::new());
         let result = tools
             .get_mut(kind)
-            .map(|tool| match &proxy {
-                Some(proxy) => f(tool, &self.tiles_context(proxy)),
-                None => f(tool, &self.context()),
+            .map(|tool| match (&proxy, &pixels) {
+                (Some(proxy), _) => f(tool, &self.tiles_context(proxy)),
+                (None, Some(sprite)) => f(tool, &self.context_on(sprite)),
+                (None, None) => f(tool, &self.context()),
             })
             .unwrap_or_default();
         self.tools = tools;
@@ -444,9 +463,12 @@ impl Editor {
         }
         // Mover sin selección: un objeto bajo el puntero queda seleccionado (con Shift se suma o
         // se quita) y activa su capa; con Alt, el arrastre mueve copias. Sin objeto, cambia a la
-        // capa que tiene algo dibujado bajo el puntero. En modo Tiles Move se queda en la capa
-        // tilemap.
-        if self.active_tool() == ToolKind::Move && self.selection.is_none() && !self.tiles_mode() {
+        // capa que tiene algo dibujado bajo el puntero. Sobre una capa tilemap (en modo Tiles o
+        // Pixels) Move se queda en ella.
+        if self.active_tool() == ToolKind::Move
+            && self.selection.is_none()
+            && self.tile_space().is_none()
+        {
             match self.object_at(world) {
                 Some((layer, object)) => {
                     // Un clic sobre uno ya seleccionado conserva la selección (para arrastrarla
@@ -697,7 +719,9 @@ impl Editor {
         else {
             return cmd;
         };
-        let sprite = self.sprite();
+        // En modo Pixels lo de abajo es lo que dibuja la capa tilemap (su proxy).
+        let proxy = self.pixel_proxy();
+        let sprite = proxy.as_deref().unwrap_or(self.sprite());
         let under = |x, y| sprite.pixel(layer, frame, x, y);
         let pixels = match self.options.ink {
             Ink::Simple => pixels,
@@ -773,7 +797,7 @@ impl Editor {
         let applied = match out.command {
             Some(cmd) => {
                 let cmd = self.shape_paint(kind, cmd);
-                self.execute_named(cmd, kind.label())
+                self.execute_paint(cmd, kind.label())
             }
             None => true,
         };
