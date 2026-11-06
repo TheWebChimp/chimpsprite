@@ -340,6 +340,8 @@ pub struct Editor {
     pub text_style: TextStyle,
     /// El glifo copiado con Copy glyph.
     pub(crate) glyph_clipboard: font_ops::GlyphClipboard,
+    /// El componente elegido del glifo compuesto actual: (su carácter, el índice).
+    pub(crate) glyph_component: Option<(char, usize)>,
     /// Objeto elegido del modelo 3D activo (índice en `model.objects`).
     pub(crate) model_object: Option<usize>,
     /// El grupo elegido en el outliner (índice en `model.groups`): la fila activa cuando es un
@@ -465,6 +467,7 @@ impl Editor {
             text: None,
             text_style: TextStyle::default(),
             glyph_clipboard: None,
+            glyph_component: None,
             model_object: None,
             model_group: None,
             model_edit: Default::default(),

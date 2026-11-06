@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use cs_commands::{Command, DocCommand};
-use cs_core::{ArtboardId, Cel, ColorMode, FontInfo, FontMode};
+use cs_core::{ArtboardId, Cel, ColorMode, FontInfo, FontMode, GlyphComponent};
 
 use super::Editor;
 
@@ -186,6 +186,132 @@ impl Editor {
                 frame,
                 cel: None,
             })
+    }
+
+    /// Los componentes del glifo actual (vacío si no es compuesto).
+    pub fn glyph_components(&self) -> Vec<GlyphComponent> {
+        self.font()
+            .and_then(|f| f.glyphs.get(self.frame))
+            .map_or_else(Vec::new, |g| g.components.clone())
+    }
+
+    /// El componente elegido del glifo actual (si sigue existiendo).
+    pub fn selected_component(&self) -> Option<usize> {
+        let (ch, i) = self.glyph_component?;
+        (Some(ch) == self.current_glyph() && i < self.glyph_components().len()).then_some(i)
+    }
+
+    pub fn select_component(&mut self, index: Option<usize>) {
+        self.glyph_component = index.and_then(|i| Some((self.current_glyph()?, i)));
+    }
+
+    /// Los componentes del glifo de `ch`, en un paso; no si haría un ciclo.
+    pub fn set_glyph_components(&mut self, ch: char, components: Vec<GlyphComponent>) -> bool {
+        let Some(cmd) = cs_commands::font::set_components(self.artboard(), ch, components) else {
+            return false;
+        };
+        self.named("Glyph Components", |e| e.execute_doc(cmd))
+    }
+
+    /// Pone el componente `index` del glifo actual en `offset`.
+    pub fn move_component(&mut self, index: usize, offset: (i32, i32)) -> bool {
+        let Some(ch) = self.current_glyph() else {
+            return false;
+        };
+        let mut components = self.glyph_components();
+        let Some(c) = components.get_mut(index) else {
+            return false;
+        };
+        c.offset = offset;
+        self.named("Move Component", |e| e.set_glyph_components(ch, components))
+    }
+
+    /// Las flechas con Move en un compuesto: mueven el componente elegido.
+    pub fn can_nudge_component(&self) -> bool {
+        self.tool == super::ToolKind::Move
+            && self.selected_component().is_some()
+            && self.selection.is_none()
+            && !self.can_transform()
+    }
+
+    pub fn nudge_component(&mut self, dx: i32, dy: i32) -> bool {
+        let Some(i) = self.selected_component() else {
+            return false;
+        };
+        let (x, y) = self.glyph_components()[i].offset;
+        self.move_component(i, (x + dx, y + dy))
+    }
+
+    /// Agrega el glifo de `component` como componente del actual, en (0, 0), y lo elige.
+    pub fn add_component(&mut self, component: char) -> bool {
+        let Some(ch) = self.current_glyph() else {
+            return false;
+        };
+        let mut components = self.glyph_components();
+        components.push(GlyphComponent {
+            ch: component,
+            offset: (0, 0),
+        });
+        let index = components.len() - 1;
+        if !self.named("Add Component", |e| e.set_glyph_components(ch, components)) {
+            return false;
+        }
+        self.select_component(Some(index));
+        true
+    }
+
+    pub fn remove_component(&mut self, index: usize) -> bool {
+        let Some(ch) = self.current_glyph() else {
+            return false;
+        };
+        let mut components = self.glyph_components();
+        if index >= components.len() {
+            return false;
+        }
+        components.remove(index);
+        self.select_component(None);
+        self.named("Remove Component", |e| {
+            e.set_glyph_components(ch, components)
+        })
+    }
+
+    /// Desvincula el compuesto de `ch` (pasa a pixeles propios).
+    pub fn unlink_glyph(&mut self, ch: char) -> bool {
+        let Some(cmd) = cs_commands::font::unlink_glyph(self.artboard(), ch) else {
+            return false;
+        };
+        self.named("Unlink Glyph", |e| e.execute_doc(cmd))
+    }
+
+    /// Auto-build accents (o solo los de `only`), en un paso. Devuelve lo que pasó.
+    pub fn auto_build_accents(&mut self, only: Option<&[char]>) -> cs_commands::font::AccentReport {
+        let (cmd, report) = cs_commands::font::auto_build_accents(self.artboard(), only);
+        if let Some(cmd) = cmd {
+            let current = self.current_glyph();
+            self.named("Auto-build Accents", |e| e.execute_doc(cmd));
+            // Los glifos nuevos corren los frames: el actual sigue siendo el mismo carácter.
+            if let Some(ch) = current {
+                self.go_to_glyph(ch);
+            }
+        }
+        report
+    }
+
+    /// Pone los pixeles de `glyphs` en la fuente activa (ver `cs_commands::font::fill_glyphs`),
+    /// en un paso. Devuelve cuántos puso.
+    pub fn fill_glyphs(&mut self, glyphs: &[cs_core::GlyphBuild], replace: bool) -> usize {
+        let Some((cmd, count)) = cs_commands::font::fill_glyphs(self.artboard(), glyphs, replace)
+        else {
+            return 0;
+        };
+        let current = self.current_glyph();
+        if !self.named("Generate Glyphs", |e| e.execute_doc(cmd)) {
+            return 0;
+        }
+        if let Some(ch) = current {
+            self.go_to_glyph(ch);
+        }
+        count
     }
 
     /// La fuente de la herramienta Texto, al día con el documento: si es una fuente del
