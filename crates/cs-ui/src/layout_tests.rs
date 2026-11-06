@@ -8669,6 +8669,28 @@ fn the_model_tab_has_the_tool_options_bar_only_in_texture_mode() {
     assert_eq!(h.canvas, Some(canvas));
 }
 
+/// En la pestaña del modelo no hay dock: la fila del pincel no ofrece "Dafont" (abriría un panel
+/// del dock que ahí no se ve). En el lienzo, sí.
+#[test]
+fn the_texture_mode_text_options_have_no_dafont_button() {
+    let dafont = |h: &LayoutHarness| h.texts.iter().any(|(t, _)| t == "Dafont");
+    let mut doc = LayoutHarness::new(pixel_ui(), true);
+    doc.app.doc.editor.set_tool(ToolKind::Text);
+    doc.frame();
+    doc.frame();
+    assert!(dafont(&doc), "on the canvas tab: {:?}", doc.texts);
+    let mut h = with_a_model_in_texture_mode();
+    h.app.doc.editor.set_tool(ToolKind::Text);
+    h.frame();
+    h.frame();
+    assert!(
+        h.texts.iter().any(|(t, _)| t == "Load font"),
+        "the text options are there: {:?}",
+        h.texts
+    );
+    assert!(!dafont(&h), "no Dafont in the model tab");
+}
+
 /// El encabezado de ChimpCAD (boceto a 1×): una franja de 24 filas arriba del área, de lado a
 /// lado, con el logo a (3, 2) y los botones Model | Texture a 3 de arriba y 4 de la derecha; una
 /// línea oscura y, debajo, las vistas.
