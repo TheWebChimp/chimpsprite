@@ -986,7 +986,9 @@ pub(crate) fn dropdown<R>(
     )
 }
 
-fn dropdown_with<R>(
+/// Como [`dropdown`], con otro `close` (`CloseOnClickOutside`: un menú con controles adentro, como
+/// un stepper, que se cierra solo al elegir o con un clic afuera).
+pub(crate) fn dropdown_with<R>(
     look: &MenuLook,
     response: &Response,
     anchor: Rect,

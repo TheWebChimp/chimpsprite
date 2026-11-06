@@ -45,6 +45,9 @@ pub struct ViewSettings {
     /// El alto de la caja de la paleta (Pixel UI), elegido con la división que la separa del
     /// editor de color. De fábrica, el del diseño; el panel lo achica si no entra.
     pub palette_height: f32,
+    /// El ancho de la columna de colores (el panel derecho), elegido arrastrando su borde. `None`
+    /// hasta que se elige: el panel arranca con su ancho de fábrica.
+    pub palette_width: Option<f32>,
     /// Los sonidos de la interfaz (clics y avisos): apagados de fábrica.
     pub ui_sounds: bool,
     pub sound_pack: crate::sound::SoundPack,
@@ -75,6 +78,7 @@ impl Default for ViewSettings {
             ui_scale: 2,
             palette_locked: true,
             palette_height: crate::color_panel::PALETTE_DEFAULT_HEIGHT,
+            palette_width: None,
             ui_sounds: false,
             sound_pack: crate::sound::SoundPack::default(),
             sound_volume: crate::sound::DEFAULT_VOLUME,
@@ -275,6 +279,20 @@ mod tests {
         let back: ViewSettings =
             serde_json::from_str(&serde_json::to_string(&tall).unwrap()).unwrap();
         assert_eq!(back.palette_height, 260.0);
+    }
+
+    #[test]
+    fn the_palette_width_is_saved_and_old_settings_still_load() {
+        assert_eq!(ViewSettings::default().palette_width, None);
+        let v: ViewSettings = serde_json::from_str(r#"{"grid":true}"#).unwrap();
+        assert_eq!(v.palette_width, None);
+        let narrow = ViewSettings {
+            palette_width: Some(180.0),
+            ..Default::default()
+        };
+        let back: ViewSettings =
+            serde_json::from_str(&serde_json::to_string(&narrow).unwrap()).unwrap();
+        assert_eq!(back.palette_width, Some(180.0));
     }
 
     #[test]

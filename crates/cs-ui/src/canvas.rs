@@ -147,9 +147,9 @@ pub struct CanvasView {
     uv_press: Option<uv_overlay::UvPress>,
     /// El puntero es de las UVs de las caras elegidas (sin contorno del pincel).
     uv_hover: bool,
-    /// Los botones Model / Texture del workspace del modelo en este frame: ahí no empiezan los
-    /// gestos de las vistas de debajo.
-    mode_rect: Option<Rect>,
+    /// El encabezado de ChimpCAD (logo y botones Model / Texture) del workspace del modelo en
+    /// este frame: ahí no empiezan los gestos de las vistas.
+    header_rect: Option<Rect>,
     /// El contorno de las caras elegidas sobre el render (modo Texture): la clave de la
     /// geometría, la cámara, el tamaño y las caras, y sus pixeles. Pintar la textura no lo
     /// recalcula.
@@ -318,7 +318,7 @@ impl Default for CanvasView {
             texture_zoom: None,
             uv_press: None,
             uv_hover: false,
-            mode_rect: None,
+            header_rect: None,
             edit_outline: None,
             edit_persp: None,
             edit_ortho: [None, None, None],
@@ -775,7 +775,7 @@ impl CanvasView {
             self.drop_uv_press(editor);
             self.edit_quads = None;
             self.texture_panes = None;
-            self.mode_rect = None;
+            self.header_rect = None;
             self.show_artboards(ui, &response, rect, editor, dialog, view_settings);
         }
         // La barra de estado (dibujada antes) muestra el zoom de otra vista: otro frame.

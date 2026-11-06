@@ -127,6 +127,22 @@ fn selected_faces_son_las_caras_elegidas() {
 }
 
 #[test]
+fn quitar_un_objeto_deja_las_caras_elegidas_en_la_misma_cara() {
+    let mut e = editing();
+    e.add_primitive(cs_3d::Primitive::Plane);
+    e.add_primitive(cs_3d::Primitive::Plane);
+    e.set_cad_mode(CadMode::Texture);
+    e.set_model_selection(Selection {
+        mode: SelectMode::Face,
+        items: [Item::Face(2, 0)].into(),
+    });
+    let face = e.workspace_model().unwrap().objects[2].mesh.faces[0].clone();
+    assert!(e.remove_object(0));
+    assert_eq!(e.selected_faces(), vec![(1, 0)]);
+    assert_eq!(e.workspace_model().unwrap().objects[1].mesh.faces[0], face);
+}
+
+#[test]
 fn mover_uvs_es_un_paso_de_undo_y_cancelar_ninguno() {
     let mut e = texturing();
     let before = face_uvs(&e, 0);

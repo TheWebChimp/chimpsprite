@@ -712,6 +712,9 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         }
         e.set_light(cs_core::Light3D::default());
         e.set_outline(Some(cs_core::Rgba::rgb(0, 0, 0)));
+        // El panel en la pestaña del modelo (sin objeto elegido); con
+        // CHIMPSPRITE_DEMO_MODEL_TEXTURE, en la del cubo.
+        e.select_model_object(None);
         // Con CHIMPSPRITE_DEMO_MODEL_EDIT: en vértices y con uno elegido (el workspace siempre
         // está en modo Edit).
         if dev_var("CHIMPSPRITE_DEMO_MODEL_EDIT").is_some() {
@@ -732,6 +735,7 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                         .all(|&v| mesh.vertices.get(v as usize).is_some_and(|p| p.z > 0))
                 })
             });
+            e.select_model_object(Some(0));
             e.set_cad_mode(crate::editor::CadMode::Texture);
             if let Some(f) = front {
                 e.set_model_selection(cs_3d::Selection {

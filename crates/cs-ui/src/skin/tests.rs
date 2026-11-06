@@ -1015,6 +1015,41 @@ fn the_embedded_skin_has_the_timeline_pieces_of_the_design() {
 }
 
 #[test]
+fn the_embedded_skin_has_the_chimpcad_pieces() {
+    let data = decode(EMBEDDED).unwrap();
+    // El cubo del dock (sin el marco del botón), el logo del encabezado y los cinco íconos de
+    // la primera pestaña del boceto de ChimpCAD, copiados píxel por píxel.
+    for (name, size) in [
+        ("icon.dock.model", [14, 14]),
+        ("logo.chimpcad", [94, 20]),
+        ("icon.object.cube", [9, 9]),
+        ("icon.object.cylinder", [7, 10]),
+        ("icon.object.cone", [9, 10]),
+        ("icon.object.sphere", [9, 9]),
+        ("icon.object.plane", [8, 8]),
+    ] {
+        let piece = data.pieces.get(name).unwrap_or_else(|| panic!("{name}"));
+        assert_eq!((piece.size, piece.center), (size, None), "{name}");
+    }
+    let at = |name: &str, x: u32, y: u32| {
+        let p = &data.pieces[name];
+        let i = ((y * p.size[0] + x) * 4) as usize;
+        Rgba::new(p.rgba[i], p.rgba[i + 1], p.rgba[i + 2], p.rgba[i + 3])
+    };
+    assert_eq!(at("icon.dock.model", 0, 0).a, 0, "transparent corner");
+    assert_eq!(
+        at("icon.dock.model", 4, 0),
+        Rgba::rgb(27, 36, 71),
+        "outline"
+    );
+    assert_eq!(at("logo.chimpcad", 0, 0).a, 0, "no bar fill");
+    assert_eq!(at("logo.chimpcad", 0, 3), Rgba::rgb(5, 4, 3), "outline");
+    // La cara de arriba del cubo lleva el relleno del panel, opaco.
+    assert_eq!(at("icon.object.cube", 4, 1), Rgba::rgb(234, 224, 221));
+    assert_eq!(at("icon.object.cube", 0, 0).a, 0, "outside is transparent");
+}
+
+#[test]
 fn variants_are_used_when_they_exist() {
     let ctx = egui::Context::default();
     let skin = Skin::load(&ctx, EMBEDDED).unwrap();

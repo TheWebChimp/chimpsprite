@@ -60,6 +60,41 @@ pub struct Object3D {
     pub transform: Transform3D,
     #[serde(default)]
     pub double_sided: bool,
+    /// La primitiva de la que salió (para su ícono); `None` en archivos viejos.
+    #[serde(default)]
+    pub kind: Option<PrimitiveKind>,
+}
+
+/// El tipo de primitiva de un objeto (sin sus parámetros).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum PrimitiveKind {
+    Cube,
+    Plane,
+    Cylinder,
+    Cone,
+    Sphere,
+}
+
+impl Object3D {
+    /// El tipo que se muestra: el guardado o, en archivos viejos, el que dice la primera palabra del
+    /// nombre ("Cylinder 2" es un cilindro); si no, un cubo.
+    pub fn shown_kind(&self) -> PrimitiveKind {
+        if let Some(k) = self.kind {
+            return k;
+        }
+        let name = self.name.to_ascii_lowercase();
+        // La primera palabra entera: "Conveyor" no es un cono.
+        let word = name.split_whitespace().next().unwrap_or("");
+        [
+            ("plane", PrimitiveKind::Plane),
+            ("cylinder", PrimitiveKind::Cylinder),
+            ("cone", PrimitiveKind::Cone),
+            ("sphere", PrimitiveKind::Sphere),
+        ]
+        .into_iter()
+        .find(|(first, _)| word == *first)
+        .map_or(PrimitiveKind::Cube, |(_, k)| k)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -313,6 +348,7 @@ mod tests {
                 mesh,
                 transform: Transform3D::default(),
                 double_sided: false,
+                kind: None,
             }],
             ..Model3D::default()
         }
@@ -320,6 +356,44 @@ mod tests {
 
     fn sprite() -> Sprite {
         Sprite::new(16, 16, ColorMode::Rgba)
+    }
+
+    #[test]
+    fn el_tipo_del_objeto_va_y_vuelve_por_json() {
+        let mut o = model_with(cube()).objects.remove(0);
+        o.kind = Some(PrimitiveKind::Cylinder);
+        let s = serde_json::to_string(&o).unwrap();
+        let back: Object3D = serde_json::from_str(&s).unwrap();
+        assert_eq!(back, o);
+        assert_eq!(back.shown_kind(), PrimitiveKind::Cylinder);
+    }
+
+    #[test]
+    fn un_objeto_viejo_sin_tipo_lo_deduce_del_nombre() {
+        let o = model_with(cube()).objects.remove(0);
+        let mut v = serde_json::to_value(&o).unwrap();
+        v.as_object_mut().unwrap().remove("kind");
+        let named = |name: &str| {
+            let mut v = v.clone();
+            v["name"] = serde_json::Value::from(name);
+            serde_json::from_value::<Object3D>(v).unwrap()
+        };
+        let old = named("Cone");
+        assert_eq!(old.kind, None);
+        assert_eq!(old.shown_kind(), PrimitiveKind::Cone);
+        assert_eq!(named("sphere 2").shown_kind(), PrimitiveKind::Sphere);
+        assert_eq!(named("PLANE").shown_kind(), PrimitiveKind::Plane);
+        assert_eq!(named("Cylinder").shown_kind(), PrimitiveKind::Cylinder);
+        assert_eq!(named("Cube").shown_kind(), PrimitiveKind::Cube);
+        assert_eq!(named("Casa").shown_kind(), PrimitiveKind::Cube);
+        assert_eq!(named("cone").shown_kind(), PrimitiveKind::Cone);
+        assert_eq!(named("cone 2").shown_kind(), PrimitiveKind::Cone);
+        assert_eq!(named("Conveyor").shown_kind(), PrimitiveKind::Cube);
+        assert_eq!(named("Planet").shown_kind(), PrimitiveKind::Cube);
+        // El tipo guardado manda sobre el nombre.
+        let mut o = named("Cone");
+        o.kind = Some(PrimitiveKind::Plane);
+        assert_eq!(o.shown_kind(), PrimitiveKind::Plane);
     }
 
     #[test]

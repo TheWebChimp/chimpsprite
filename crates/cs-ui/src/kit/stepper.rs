@@ -12,6 +12,10 @@
 //!   `DragValue` del campo numérico del kit).
 //! - Con unidad ("ms"), su caja `stepper.unit` (1×17, se estira) pegada al botón derecho: 3 + tinta
 //!   + 3 (por lo menos 11), el texto centrado en `color.field_text`.
+//! - Con etiqueta de eje (el transform del panel 3D, como el boceto de la pestaña de un objeto):
+//!   una cajita de [`TAG_W`] pegada a la izquierda del botón −, la misma `stepper.unit` (del alto
+//!   del stepper) con un borde izquierdo de `color.control_border` y la letra (`X`, `Y`, `Z`)
+//!   centrada en `color.field_text`.
 
 use std::ops::RangeInclusive;
 
@@ -32,6 +36,8 @@ pub const MINUS: &str = "icon.minus";
 pub const PLUS: &str = "icon.plus";
 /// Cada botón, con la columna que lo separa del campo.
 pub const BUTTON_W: f32 = 15.0;
+/// La etiqueta de eje: 13 de ancho, como en el boceto.
+pub const TAG_W: f32 = 13.0;
 
 fn piece_state(state: ButtonState) -> WidgetState {
     match state {
@@ -187,6 +193,34 @@ pub fn forced_shapes(
     shapes
 }
 
+/// La etiqueta de eje en `rect` ([`TAG_W`]×[`HEIGHT`]): la caja de la unidad con su borde
+/// izquierdo y la letra `axis` centrada.
+pub fn tag_shapes(ui: &Ui, skin: &Skin, rect: Rect, axis: &str, enabled: bool) -> Vec<Shape> {
+    let ppp = ui.ctx().pixels_per_point();
+    let colors = skin.colors();
+    let mut shapes = match skin.piece(UNIT, WidgetState::Normal) {
+        Some(p) => pixel_ui::piece_shapes(p, rect, ppp),
+        None => vec![Shape::rect_filled(rect, 0.0, colors.canvas)],
+    };
+    // El borde izquierdo, como el de los botones: de la segunda fila a la penúltima.
+    let edge = Rect::from_min_max(
+        pos2(rect.left(), rect.top() + 1.0),
+        pos2(rect.left() + 1.0, rect.bottom() - 1.0),
+    );
+    shapes.push(Shape::rect_filled(edge, 0.0, colors.control_border));
+    let color = if enabled {
+        colors.field_text
+    } else {
+        colors.button_text_disabled
+    };
+    let shown = galley(ui, axis, color);
+    let ink = crate::menus::ink_width(&shown);
+    let left = rect.left() + 1.0 + ((rect.width() - 1.0 - ink) / 2.0).floor();
+    let at = tab_bar::text_pos(&shown, left, rect.top() + input::CAPS_TOP, ppp);
+    shapes.push(Shape::galley(at, shown, color));
+    shapes
+}
+
 /// Los botones y el campo de un stepper en `rect`.
 fn parts(rect: Rect) -> (Rect, Rect, Rect) {
     let left = Rect::from_min_size(rect.min, vec2(BUTTON_W, HEIGHT));
@@ -217,6 +251,31 @@ pub fn stepper<Num: emath::Numeric>(
     let (slot, _) = ui.allocate_exact_size(vec2(width.round(), HEIGHT), Sense::hover());
     let rect = Rect::from_min_size(slot.min.round(), slot.size());
     stepper_at(ui, skin, rect, id_salt, value, range, step, unit)
+}
+
+/// [`stepper`] con la etiqueta de eje `axis` pegada a la izquierda: `width` es todo, la etiqueta
+/// ([`TAG_W`]) y el stepper. La etiqueta no se toca (solo dice el eje).
+#[allow(clippy::too_many_arguments)]
+pub fn axis_stepper<Num: emath::Numeric>(
+    ui: &mut Ui,
+    skin: &Skin,
+    width: f32,
+    id_salt: &str,
+    axis: &str,
+    value: &mut Num,
+    range: RangeInclusive<Num>,
+    step: Num,
+) -> Response {
+    let (slot, _) = ui.allocate_exact_size(vec2(width.round(), HEIGHT), Sense::hover());
+    let rect = Rect::from_min_size(slot.min.round(), slot.size());
+    let tag = Rect::from_min_size(rect.min, vec2(TAG_W, HEIGHT));
+    let shapes = tag_shapes(ui, skin, tag, axis, ui.is_enabled());
+    // Como el resto del stepper: deshabilitado se pinta con sus colores, no con transparencia.
+    let mut painter = ui.painter().clone();
+    painter.set_opacity(1.0);
+    painter.extend(shapes);
+    let rest = Rect::from_min_max(pos2(tag.right(), rect.top()), rect.max);
+    stepper_at(ui, skin, rest, id_salt, value, range, step, None)
 }
 
 /// [`stepper`] en `rect` (de [`HEIGHT`] de alto).

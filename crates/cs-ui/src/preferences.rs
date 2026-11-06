@@ -40,8 +40,9 @@ pub fn show(
                 Some(0) => out.closed = true,
                 Some(_) => {
                     *view = ViewSettings {
-                        // La caja de la paleta y su candado no son de esta ventana.
+                        // La caja de la paleta, su ancho y su candado no son de esta ventana.
                         palette_height: view.palette_height,
+                        palette_width: view.palette_width,
                         palette_locked: view.palette_locked,
                         ..ViewSettings::default()
                     }

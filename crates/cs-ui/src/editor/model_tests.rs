@@ -25,6 +25,10 @@ fn adding_a_primitive_selects_it_and_undo_removes_it() {
     assert!(e.add_primitive(Primitive::Cylinder { sides: 8 }));
     assert_eq!(e.model().unwrap().objects.len(), 2);
     assert_eq!(e.selected_object(), Some(1));
+    // El objeto nuevo guarda su tipo (y el cubo inicial el suyo).
+    let objects = &e.model().unwrap().objects;
+    assert_eq!(objects[0].kind, Some(cs_core::PrimitiveKind::Cube));
+    assert_eq!(objects[1].kind, Some(cs_core::PrimitiveKind::Cylinder));
     e.undo();
     assert_eq!(e.model().unwrap().objects.len(), 1);
 }
@@ -40,6 +44,65 @@ fn removing_and_setting_objects() {
     assert!(e.remove_object(1));
     assert!(!e.remove_object(5));
     assert_eq!(e.model().unwrap().objects.len(), 1);
+    assert_eq!(e.selected_object(), Some(0));
+}
+
+#[test]
+fn removing_an_object_keeps_the_selection_on_the_same_objects() {
+    let mut e = editor_with_model();
+    e.add_primitive(Primitive::Plane);
+    e.add_primitive(Primitive::Cylinder { sides: 8 });
+    e.add_primitive(Primitive::Plane);
+    e.select_model_object(Some(2));
+    assert_eq!(
+        e.model_edit()
+            .selection
+            .items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![cs_3d::Item::Object(2)]
+    );
+    assert!(e.remove_object(0));
+    assert_eq!(
+        e.model_edit()
+            .selection
+            .items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![cs_3d::Item::Object(1)]
+    );
+    // El último también se corre (no se pierde por quedar fuera de rango).
+    e.select_model_object(Some(2));
+    assert!(e.remove_object(0));
+    assert_eq!(
+        e.model_edit()
+            .selection
+            .items
+            .iter()
+            .copied()
+            .collect::<Vec<_>>(),
+        vec![cs_3d::Item::Object(1)]
+    );
+    // Quitar el elegido saca su selección.
+    assert!(e.remove_object(1));
+    assert!(e.model_edit().selection.items.is_empty());
+}
+
+#[test]
+fn removing_a_lower_object_keeps_the_same_one_selected() {
+    let mut e = editor_with_model();
+    e.add_primitive(Primitive::Plane);
+    e.add_primitive(Primitive::Cylinder { sides: 8 });
+    e.select_model_object(Some(2));
+    let name = e.model().unwrap().objects[2].name.clone();
+    assert!(e.remove_object(0));
+    assert_eq!(e.selected_object(), Some(1));
+    assert_eq!(e.model().unwrap().objects[1].name, name);
+    // Quitar uno posterior no mueve la elegida.
+    e.select_model_object(Some(0));
+    assert!(e.remove_object(1));
     assert_eq!(e.selected_object(), Some(0));
 }
 

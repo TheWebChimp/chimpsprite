@@ -849,8 +849,9 @@ fn text_style_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLo
     }
 }
 
-/// Ventana flotante para escribir el texto que se está colocando.
-fn text_window(ctx: &egui::Context, editor: &mut Editor, skin: Option<&Skin>) {
+/// Ventana flotante para escribir el texto que se está colocando. La dibuja la barra de opciones;
+/// sin la barra (en la pestaña de un modelo), la app la llama sola.
+pub fn text_window(ctx: &egui::Context, editor: &mut Editor, skin: Option<&Skin>) {
     if editor.text.is_none() {
         return;
     }

@@ -7,7 +7,7 @@
 
 use eframe::egui::pos2;
 
-use super::model_edit::{PERSP_BG, mode_buttons, mode_buttons_rect, workspace_area};
+use super::model_edit::{PERSP_BG, cad_header, header_split, workspace_area};
 use super::*;
 use crate::editor::TextureView;
 
@@ -32,11 +32,12 @@ impl CanvasView {
         dialog: Option<&mut CanvasSizeDialog>,
         view_settings: &ViewSettings,
     ) {
-        let area = workspace_area(ui, rect);
+        // Debajo del encabezado de ChimpCAD.
+        let (header, area) = header_split(workspace_area(ui, rect));
         let (top, bottom) = texture_panes(area);
         self.edit_quads = None;
         self.texture_panes = Some((top, bottom));
-        self.mode_rect = Some(mode_buttons_rect(ui, area));
+        self.header_rect = Some(header);
         // G y S de teclado son de las vistas orto: aquí no esperan a nadie.
         editor.model_edit.key_request = None;
         self.texture_top_input(ui, response, top, editor, dialog.is_some());
@@ -70,7 +71,7 @@ impl CanvasView {
             0.0,
             crate::pixel_ui::control_border(ui.ctx()),
         );
-        mode_buttons(ui, area, editor);
+        cad_header(ui, header, editor);
     }
 
     /// Nada del lienzo bajo el puntero (sin textura no hay pixel, cursores dibujados ni menús).
@@ -141,7 +142,7 @@ impl CanvasView {
             && response.hovered()
             && self.model_drag.is_none()
             && let Some(p) = pointer.filter(|p| over(*p))
-            && !self.mode_rect.is_some_and(|r| r.contains(p))
+            && !self.header_rect.is_some_and(|r| r.contains(p))
         {
             let (r, scale) = self.persp_rect(top, editor);
             let local = (

@@ -329,8 +329,128 @@ fn the_tab_pieces_have_the_mockup_sizes() {
         ("tab.shade.left", [5, 1]),
         ("tab.shade.right", [5, 1]),
         ("tab.hover", [7, 15]),
+        ("icon.tab_add", [5, 5]),
     ] {
         let piece = skin.piece(name, WidgetState::Normal).unwrap();
         assert_eq!(piece.size, size, "{name}");
     }
+}
+
+#[test]
+fn a_tab_with_a_piece_icon_draws_it_bottom_aligned_before_the_name() {
+    let (ctx, skin) = pixel_ctx();
+    let rect = Rect::from_min_size(AT, vec2(60.0, HEIGHT));
+    for (name, size) in [
+        ("icon.object.cone", vec2(9.0, 10.0)),
+        ("icon.object.plane", vec2(8.0, 8.0)),
+    ] {
+        let item = TabItem::closable("Cone", true).with_icon(TabIcon::Piece(name));
+        let shapes = frame(&ctx, vec![], |ui| {
+            let look = TabLook {
+                active: true,
+                hovered: false,
+                mark_hovered: false,
+            };
+            ui.painter()
+                .extend(tab_shapes(ui, &skin, rect, &item, "Cone", look));
+        });
+        let d = drawn(&shapes);
+        // Como en el boceto: el ícono abajo en la fila 13 (los de 10 de alto, desde la 4), 6 px
+        // adentro; el nombre, 3 después del lugar del ícono (`ICON_WIDTH`), en la fila 6.
+        let left = AT.x + EDGE + PAD;
+        assert_eq!(
+            d.boxes(&skin, name, WidgetState::Normal),
+            vec![Rect::from_min_size(
+                pos2(left, AT.y + ICON_BOTTOM - size.y),
+                size
+            )],
+            "{name}"
+        );
+        let (at, _, galley) = d.texts.first().expect("the name").clone();
+        assert_eq!(
+            ink_at(at, &galley),
+            (left + ICON_WIDTH + SWATCH_GAP, AT.y + CAPS_TOP)
+        );
+        assert_eq!(
+            chrome(&item),
+            chrome(&TabItem::closable("", true)) + ICON_WIDTH + SWATCH_GAP
+        );
+    }
+}
+
+#[test]
+fn the_middle_button_does_not_close_a_tab_whose_close_is_not_close() {
+    let (ctx, skin) = pixel_ctx();
+    let items = vec![
+        TabItem::closable("Cube", true).with_close_label("Delete"),
+        TabItem::closable("Plane", true).with_close_label("Delete"),
+    ];
+    let id = egui::Id::new("strip");
+    let strip = Strip::new(AT.x, AT.x + 400.0, AT.y);
+    let at = pos2(AT.x + 20.0, AT.y + 6.0);
+    let mut closed = false;
+    for ev in [
+        Event::PointerMoved(at),
+        Event::PointerButton {
+            pos: at,
+            button: PointerButton::Middle,
+            pressed: true,
+            modifiers: Modifiers::NONE,
+        },
+        Event::PointerButton {
+            pos: at,
+            button: PointerButton::Middle,
+            pressed: false,
+            modifiers: Modifiers::NONE,
+        },
+    ] {
+        frame(&ctx, vec![ev], |ui| {
+            let e = tab_strip(ui, &skin, id, strip, &items, Some(1));
+            closed |= matches!(e, Some(TabEvent::Close(_)));
+        });
+    }
+    assert!(!closed);
+}
+
+#[test]
+fn an_icons_only_tab_draws_its_pieces_in_a_row_and_no_name() {
+    let (ctx, skin) = pixel_ctx();
+    const PIECES: &[&str] = &["icon.object.cube", "icon.object.plane"];
+    let item = TabItem::icons_only("Model", TabIcon::Pieces(PIECES));
+    assert_eq!(item.mark, TabMark::None);
+    // Sin nombre ni marca: los bordes, el aire y los íconos (cada uno en su lugar de
+    // `PIECES_PITCH`; el último, en el de `ICON_WIDTH`).
+    let width = 2.0 * (EDGE + PAD) + PIECES_PITCH + ICON_WIDTH;
+    assert_eq!(chrome(&item), width);
+    let rect = Rect::from_min_size(AT, vec2(width, HEIGHT));
+    let shapes = frame(&ctx, vec![], |ui| {
+        assert_eq!(natural_width(ui, &item), width);
+        let look = TabLook {
+            active: true,
+            hovered: false,
+            mark_hovered: false,
+        };
+        ui.painter()
+            .extend(tab_shapes(ui, &skin, rect, &item, "", look));
+    });
+    let d = drawn(&shapes);
+    let left = AT.x + EDGE + PAD;
+    for (k, (name, size)) in [
+        ("icon.object.cube", vec2(9.0, 9.0)),
+        ("icon.object.plane", vec2(8.0, 8.0)),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let at = pos2(left + k as f32 * PIECES_PITCH, AT.y + ICON_BOTTOM - size.y);
+        assert_eq!(
+            d.boxes(&skin, name, WidgetState::Normal),
+            vec![Rect::from_min_size(at, size)],
+            "{name}"
+        );
+    }
+    assert!(
+        d.texts.iter().all(|(_, _, g)| g.text().is_empty()),
+        "no name"
+    );
 }
