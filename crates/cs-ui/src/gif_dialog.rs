@@ -64,6 +64,8 @@ pub struct GifDialog {
     name: String,
     /// El tamaño del artboard del modelo (da la proporción).
     model_size: (u32, u32),
+    /// Lo que dura la animación del modelo (ms).
+    anim_ms: u32,
     /// Se recalcula solo si cambian las opciones, el ángulo o la escala.
     preview: Option<Preview>,
 }
@@ -84,6 +86,7 @@ impl GifDialog {
             model: id,
             name,
             model_size,
+            anim_ms: model.anim_ms,
             preview: None,
         }
     }
@@ -114,7 +117,7 @@ impl GifDialog {
                 t.width,
                 t.height,
                 &t.frames,
-                self.options.frame_ms(),
+                self.options.frame_ms(self.anim_ms),
                 self.options.looping,
             ),
             GifFormat::Png => {
@@ -144,7 +147,7 @@ impl GifDialog {
     ) -> DialogResult {
         // La vista previa gira a la duración elegida.
         let frames = self.options.bake.frames.max(1);
-        let ms = u64::from(self.options.frame_ms());
+        let ms = u64::from(self.options.frame_ms(self.anim_ms));
         let angle = ((ctx.input(|i| i.time) * 1000.0) as u64 / ms) as u32 % frames;
         if frames > 1 {
             ctx.request_repaint_after(Duration::from_millis(ms));

@@ -142,10 +142,15 @@ impl TurntableOptions {
             .clamp(*TURNTABLE_SCALE.start(), *TURNTABLE_SCALE.end())
     }
 
-    /// Lo que dura un frame, dentro de [`TURNTABLE_FRAME_MS`].
-    pub fn frame_ms(&self) -> u32 {
-        self.frame_ms
-            .clamp(*TURNTABLE_FRAME_MS.start(), *TURNTABLE_FRAME_MS.end())
+    /// Lo que dura un frame, dentro de [`TURNTABLE_FRAME_MS`]: el elegido o, si se exporta la
+    /// animación (que dura `anim_ms`), la animación repartida entre los frames.
+    pub fn frame_ms(&self, anim_ms: u32) -> u32 {
+        let ms = if self.bake.motion.animates() {
+            self.bake.anim_frame_ms(anim_ms)
+        } else {
+            self.frame_ms
+        };
+        ms.clamp(*TURNTABLE_FRAME_MS.start(), *TURNTABLE_FRAME_MS.end())
     }
 
     /// El render (a escala 1) de un modelo de `model_size` y el cuadro de la proyección: en
@@ -178,7 +183,8 @@ impl TurntableOptions {
     }
 }
 
-/// Los frames del turntable: uno por ángulo, todos de `width`×`height`.
+/// Los frames del turntable: uno por ángulo (o muestra de la animación), todos de
+/// `width`×`height`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Turntable {
     pub width: u32,
@@ -186,7 +192,8 @@ pub struct Turntable {
     pub frames: Vec<Vec<Rgba>>,
 }
 
-/// El frame del ángulo `angle` (módulo los ángulos) a la escala `scale` (para la vista previa,
+/// El frame `angle` (módulo los frames: su ángulo y su tiempo, ver [`BakeOptions::sample`]) a
+/// la escala `scale` (para la vista previa,
 /// que puede usar una menor que la de las opciones): ancho, alto y pixeles. `None` si no es un
 /// modelo (o está roto).
 pub fn turntable_frame(
@@ -204,7 +211,7 @@ pub fn turntable_frame(
         ..m.clone()
     };
     let (size, frame) = options.render_size((source.width, source.height));
-    let angles = options.bake.angles();
+    let (extra_yaw, time_ms) = options.bake.sample(angle, m.anim_ms);
     let mut pixels = render_model(&RenderInput {
         model: &model,
         size,
@@ -215,9 +222,9 @@ pub fn turntable_frame(
         }),
         palette: source.palette.colors(),
         camera: Some(options.bake.camera(&m.camera)),
-        extra_yaw: (angle % angles * 3600 / angles) as i32,
+        extra_yaw,
         frame,
-        time_ms: None,
+        time_ms,
     });
     if let Some(bg) = options.background {
         for p in &mut pixels {
@@ -502,6 +509,57 @@ mod tests {
         assert_eq!(t.frames.len(), 4);
         assert_ne!(t.frames[0], t.frames[1]);
         assert!(turntable(&doc, ArtboardId(999), &o).is_none());
+    }
+
+    /// El cubo del modelo con un bloque que lo sube una unidad a lo largo de la animación (1 s).
+    fn with_animation() -> (Document, ArtboardId) {
+        let (mut doc, model) = with_model();
+        let m = doc.artboard_mut(model).unwrap().model.as_mut().unwrap();
+        m.anim_ms = 1000;
+        m.objects[0].anim.push(cs_core::Clip::new(
+            cs_core::ClipMotion::Move {
+                offset: cs_core::Vec3i {
+                    x: 0,
+                    y: cs_core::FIXED,
+                    z: 0,
+                },
+            },
+            0,
+            1000,
+        ));
+        (doc, model)
+    }
+
+    #[test]
+    fn the_animation_motion_samples_the_animation_with_a_fixed_camera() {
+        let (doc, model) = with_animation();
+        let base = options(&doc, model);
+        let o = |motion| TurntableOptions {
+            bake: BakeOptions {
+                frames: 4,
+                motion,
+                ..base.bake
+            },
+            frame_ms: 70,
+            ..base
+        };
+        let anim = turntable(&doc, model, &o(crate::Motion::Animation)).unwrap();
+        let turn = turntable(&doc, model, &o(crate::Motion::Turntable)).unwrap();
+        let both = turntable(&doc, model, &o(crate::Motion::Both)).unwrap();
+        // El frame 0 es el mismo en los tres (ángulo 0, tiempo 0).
+        assert_eq!(anim.frames[0], turn.frames[0]);
+        assert_eq!(both.frames[0], turn.frames[0]);
+        // Después, la animación sube el cubo sin girarlo; Both lo sube y lo gira.
+        assert_ne!(anim.frames[2], anim.frames[0]);
+        assert_ne!(anim.frames[2], turn.frames[2]);
+        assert_ne!(both.frames[1], anim.frames[1]);
+        assert_ne!(both.frames[1], turn.frames[1]);
+        // Turntable: la duración elegida; con la animación, 1000 ms / 4.
+        assert_eq!(o(crate::Motion::Turntable).frame_ms(1000), 70);
+        assert_eq!(o(crate::Motion::Animation).frame_ms(1000), 250);
+        assert_eq!(o(crate::Motion::Both).frame_ms(1000), 250);
+        // Dentro de los límites del GIF.
+        assert_eq!(o(crate::Motion::Both).frame_ms(1), 10);
     }
 
     #[test]

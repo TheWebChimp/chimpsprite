@@ -24,6 +24,35 @@ pub enum BakeOutput {
     Spritesheet,
 }
 
+/// Qué se mueve de un frame al siguiente al hornear.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum Motion {
+    /// El modelo da una vuelta alrededor de Y (un ángulo por frame).
+    #[default]
+    Turntable,
+    /// La animación del modelo, muestreada a lo largo de su duración, con la cámara fija.
+    Animation,
+    /// La animación y, a la vez, una vuelta del turntable a lo largo de ella.
+    Both,
+}
+
+impl Motion {
+    pub const ALL: [Motion; 3] = [Motion::Turntable, Motion::Animation, Motion::Both];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Motion::Turntable => "Turntable",
+            Motion::Animation => "Animation",
+            Motion::Both => "Both",
+        }
+    }
+
+    /// Si usa la animación (y la duración de sus frames sale de ella).
+    pub fn animates(self) -> bool {
+        self != Motion::Turntable
+    }
+}
+
 /// Los límites de las opciones (el diálogo usa los mismos).
 pub const BAKE_FRAMES: RangeInclusive<u32> = 1..=64;
 pub const BAKE_SIZE: RangeInclusive<u32> = 8..=512;
@@ -54,6 +83,8 @@ pub struct BakeOptions {
     /// Usar todos los frames de la textura (si no, solo el 0).
     pub animate_texture: bool,
     pub output: BakeOutput,
+    /// Qué cambia de un frame (de los `frames`) al siguiente.
+    pub motion: Motion,
 }
 
 impl BakeOptions {
@@ -76,7 +107,29 @@ impl BakeOptions {
             },
             animate_texture: texture_frames > 1,
             output: BakeOutput::Frames,
+            motion: Motion::Turntable,
         }
+    }
+
+    /// El frame `i` (módulo los frames) de un modelo cuya animación dura `anim_ms`: el giro del
+    /// turntable (décimas de grado) y el tiempo de la animación (`None`: en reposo).
+    pub fn sample(&self, i: u32, anim_ms: u32) -> (i32, Option<u32>) {
+        let n = self.angles();
+        let i = i % n;
+        let yaw = (i * 3600 / n) as i32;
+        let time = (u64::from(i) * u64::from(anim_ms) / u64::from(n)) as u32;
+        match self.motion {
+            Motion::Turntable => (yaw, None),
+            Motion::Animation => (0, Some(time)),
+            Motion::Both => (yaw, Some(time)),
+        }
+    }
+
+    /// Lo que dura cada frame si la animación dura `anim_ms`: la animación repartida entre los
+    /// frames (redondeado, al menos 1 ms).
+    pub fn anim_frame_ms(&self, anim_ms: u32) -> u32 {
+        let n = self.angles();
+        ((anim_ms + n / 2) / n).max(1)
     }
 
     /// Los ángulos, dentro de [`BAKE_FRAMES`].
@@ -133,7 +186,8 @@ pub(crate) fn bakeable(doc: &Document, model: ArtboardId) -> Option<(&Artboard, 
     Some((artboard, m))
 }
 
-/// Un render del horneado: el ángulo `angle` (de `options.frames`) con `texture`.
+/// Un render del horneado: el frame `angle` (de `options.frames`: su ángulo y su tiempo, ver
+/// [`BakeOptions::sample`]) con `texture`.
 fn render_angle(
     m: &Model3D,
     source: &Sprite,
@@ -141,7 +195,7 @@ fn render_angle(
     texture: Option<&(u32, u32, Vec<Rgba>)>,
     angle: u32,
 ) -> Vec<Rgba> {
-    let angles = options.angles();
+    let (extra_yaw, time_ms) = options.sample(angle, m.anim_ms);
     render_model(&RenderInput {
         model: m,
         size: options.frame_size((source.width, source.height)),
@@ -152,9 +206,9 @@ fn render_angle(
         }),
         palette: source.palette.colors(),
         camera: Some(options.camera(&m.camera)),
-        extra_yaw: (angle % angles * 3600 / angles) as i32,
+        extra_yaw,
         frame: None,
-        time_ms: None,
+        time_ms,
     })
 }
 
@@ -197,6 +251,10 @@ pub fn bake_model(
         Some(t) if options.animate_texture => {
             t.sprite.frames.iter().map(|f| f.duration_ms).collect()
         }
+        // Con la animación del modelo, la animación repartida entre los frames.
+        _ if options.motion.animates() => {
+            vec![options.anim_frame_ms(m.anim_ms).min(u32::from(u16::MAX)) as u16]
+        }
         // Sin animar: lo que dura el frame 0 de la textura (o, sin textura, el del modelo).
         _ => {
             let frames = texture.map_or(&source.frames, |t| &t.sprite.frames);
@@ -219,7 +277,7 @@ pub fn bake_model(
             if columns > 1 {
                 tags = (0..angles as usize)
                     .map(|a| Tag {
-                        name: format!("{}°", a * 360 / angles as usize),
+                        name: sample_name(options, a as u32, m.anim_ms),
                         from: a * columns,
                         to: a * columns + columns - 1,
                         direction: AnimDirection::Forward,
@@ -254,6 +312,18 @@ pub fn bake_model(
         }
     };
     Some((sprite, tags))
+}
+
+/// El nombre del tag del frame `i`: su ángulo ("45°"), su tiempo ("0.25s") o los dos.
+fn sample_name(options: &BakeOptions, i: u32, anim_ms: u32) -> String {
+    let (yaw, time) = options.sample(i, anim_ms);
+    let angle = format!("{}°", yaw / 10);
+    let at = |t: u32| format!("{:.2}s", t as f32 / 1000.0);
+    match (options.motion, time) {
+        (Motion::Animation, Some(t)) => at(t),
+        (Motion::Both, Some(t)) => format!("{angle} {}", at(t)),
+        _ => angle,
+    }
 }
 
 /// Un sprite RGBA de `size` con la paleta de `source`, una capa y un frame por imagen.
@@ -589,5 +659,63 @@ mod tests {
         let o = options(8, false, BakeOutput::Frames);
         assert!(bake_model(&doc, texture, &o).is_none());
         assert!(bake_model(&doc, ArtboardId(999), &o).is_none());
+    }
+
+    #[test]
+    fn the_samples_are_angles_times_or_both() {
+        let o = |motion| BakeOptions {
+            frames: 4,
+            motion,
+            ..options(8, false, BakeOutput::Frames)
+        };
+        assert_eq!(o(Motion::Turntable).sample(1, 2000), (900, None));
+        assert_eq!(o(Motion::Animation).sample(1, 2000), (0, Some(500)));
+        assert_eq!(o(Motion::Both).sample(3, 2000), (2700, Some(1500)));
+        // Módulo los frames.
+        assert_eq!(o(Motion::Both).sample(5, 2000), (900, Some(500)));
+        assert_eq!(o(Motion::Animation).anim_frame_ms(1000), 250);
+        assert_eq!(o(Motion::Animation).anim_frame_ms(0), 1);
+        assert!(!Motion::Turntable.animates() && Motion::Both.animates());
+    }
+
+    #[test]
+    fn baking_the_animation_spreads_its_length_over_the_frames() {
+        let (mut doc, model, texture) = with_model();
+        {
+            let m = doc.artboard_mut(model).unwrap().model.as_mut().unwrap();
+            m.anim_ms = 1200;
+            m.objects[0].anim.push(cs_core::Clip::new(
+                cs_core::ClipMotion::Rotate {
+                    axis: cs_core::Axis3::X,
+                    turns: 125,
+                },
+                0,
+                1200,
+            ));
+        }
+        let o = BakeOptions {
+            motion: Motion::Animation,
+            ..options_for(&doc, model, 4, false, BakeOutput::Frames)
+        };
+        let (sprite, tags) = bake_model(&doc, model, &o).unwrap();
+        assert!(tags.is_empty());
+        assert_eq!(sprite.frames.len(), 4);
+        assert!(sprite.frames.iter().all(|f| f.duration_ms == 300));
+        assert_ne!(render_frame(&sprite, 0), render_frame(&sprite, 2));
+        // Con la textura animada, un tag por muestra con su tiempo.
+        texture_frames(&mut doc, texture, 2);
+        let o = BakeOptions {
+            animate_texture: true,
+            ..o
+        };
+        let (_, tags) = bake_model(&doc, model, &o).unwrap();
+        let names: Vec<_> = tags.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(names, ["0.00s", "0.30s", "0.60s", "0.90s"]);
+        let both = BakeOptions {
+            motion: Motion::Both,
+            ..o
+        };
+        let (_, tags) = bake_model(&doc, model, &both).unwrap();
+        assert_eq!(tags[1].name, "90° 0.30s");
     }
 }
