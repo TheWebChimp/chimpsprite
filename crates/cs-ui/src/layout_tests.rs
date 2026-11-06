@@ -10689,3 +10689,82 @@ fn the_ruler_moves_the_time_and_play_advances_it() {
     press(&mut h, egui::Key::Enter, Default::default());
     assert!(!h.app.doc.editor.anim().playing);
 }
+
+/// Una fuente 16×16 con `a` y `´` dibujadas y la `á` armada, en la `á`, con Move.
+fn font_with_a_composite(h: &mut LayoutHarness) {
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+    e.add_glyphs(&['´']);
+    for (ch, points) in [('a', vec![(1, 8), (4, 11)]), ('´', vec![(2, 1), (3, 0)])] {
+        e.go_to_glyph(ch);
+        let (layer, frame) = (e.layer, e.frame);
+        e.execute(Command::DrawPixels {
+            layer,
+            frame,
+            pixels: points
+                .into_iter()
+                .map(|(x, y)| (x, y, cs_core::ONE_BIT_INK))
+                .collect(),
+        });
+    }
+    assert_eq!(e.auto_build_accents(None).built, vec!['á']);
+    e.go_to_glyph('á');
+    e.tool = ToolKind::Move;
+    h.app
+        .doc
+        .canvas
+        .request_zoom(crate::view::ZoomRequest::CenterActive);
+    h.frame();
+    h.frame();
+}
+
+/// La esquina de la celda del glifo actual en pantalla y lo que mide un pixel (de la línea del
+/// ancho, que va de arriba abajo de la celda a `advance` columnas del borde).
+fn glyph_origin(h: &LayoutHarness) -> (Pos2, f32) {
+    let line = h
+        .app
+        .doc
+        .canvas
+        .advance_line_rect()
+        .expect("the advance line");
+    let scale = h.app.doc.canvas.scale().x;
+    let advance = h.app.doc.editor.glyph_advance().unwrap() as f32;
+    (
+        Pos2::new(line.center().x - advance * scale, line.top()),
+        scale,
+    )
+}
+
+#[test]
+fn dragging_a_component_with_move_moves_it_in_one_step() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    font_with_a_composite(&mut h);
+    let start = h.app.doc.editor.glyph_components()[1].offset;
+    let (origin, scale) = glyph_origin(&h);
+    // Un pixel de la marca: (3, 0) de la `´` más su offset.
+    let at = |(x, y): (i32, i32)| {
+        origin + egui::vec2((x as f32 + 0.5) * scale, (y as f32 + 0.5) * scale)
+    };
+    let from = at((3 + start.0, start.1));
+    let to = from + egui::vec2(2.0 * scale, scale);
+    h.drag(from, to);
+    let e = &mut h.app.doc.editor;
+    assert_eq!(e.selected_component(), Some(1));
+    assert_eq!(e.glyph_components()[1].offset, (start.0 + 2, start.1 + 1));
+    let frame = e.frame;
+    assert!(
+        e.sprite().cel(e.layer, frame).is_none(),
+        "Move did not touch the pixels"
+    );
+    e.undo();
+    assert_eq!(e.glyph_components()[1].offset, start);
+    // Las flechas mueven el elegido.
+    h.frame_with(key_tap(egui::Key::ArrowRight));
+    let e = &h.app.doc.editor;
+    assert_eq!(e.glyph_components()[1].offset, (start.0 + 1, start.1));
+    assert_eq!(
+        e.current_glyph(),
+        Some('á'),
+        "the arrow did not change the glyph"
+    );
+}

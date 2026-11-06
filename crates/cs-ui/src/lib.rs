@@ -2124,6 +2124,19 @@ pub(crate) fn editor_key(editor: &mut Editor, key: Key, shift: bool) -> bool {
         Key::ArrowDown if editor.can_transform() => {
             editor.nudge(0, 1);
         }
+        // Con Move en un glifo compuesto, el componente elegido.
+        Key::ArrowLeft if editor.can_nudge_component() => {
+            editor.nudge_component(-step, 0);
+        }
+        Key::ArrowRight if editor.can_nudge_component() => {
+            editor.nudge_component(step, 0);
+        }
+        Key::ArrowUp if editor.can_nudge_component() => {
+            editor.nudge_component(0, -step);
+        }
+        Key::ArrowDown if editor.can_nudge_component() => {
+            editor.nudge_component(0, step);
+        }
         Key::ArrowLeft if nudge_objects => {
             editor.nudge_selected_objects(-step, 0);
         }

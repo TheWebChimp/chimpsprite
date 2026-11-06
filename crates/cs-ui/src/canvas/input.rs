@@ -191,6 +191,77 @@ impl CanvasView {
         Some(egui::CursorIcon::ResizeHorizontal)
     }
 
+    /// Con Move en un glifo compuesto: un clic sobre un componente lo elige y arrastrarlo lo
+    /// mueve por pixeles enteros (un paso al soltar). Devuelve el cursor si el puntero está sobre
+    /// un componente o arrastrándolo (la herramienta no recibe el clic). Va antes que la línea
+    /// del ancho: un arrastre que pasa sobre ella sigue siendo del componente.
+    #[allow(clippy::too_many_arguments)]
+    fn component_input(
+        &mut self,
+        response: &egui::Response,
+        rect: Rect,
+        area: Rect,
+        editor: &mut Editor,
+        pointer: Option<Pos2>,
+        pressed: bool,
+        down: bool,
+    ) -> Option<egui::CursorIcon> {
+        if let Some(mut drag) = self.component_drag {
+            if down {
+                if let Some(p) = pointer {
+                    let (x, y) = editor.to_local(self.to_world(rect, p));
+                    drag.now = (
+                        drag.start.0 + x - drag.grab.0,
+                        drag.start.1 + y - drag.grab.1,
+                    );
+                    self.component_drag = Some(drag);
+                }
+                return Some(egui::CursorIcon::Grabbing);
+            }
+            self.component_drag = None;
+            if editor.current_glyph() == Some(drag.ch) && drag.now != drag.start {
+                editor.move_component(drag.index, drag.now);
+            }
+            return None;
+        }
+        if editor.active_tool() != ToolKind::Move
+            || self.advance_drag.is_some()
+            || editor.is_painting()
+            || !response.hovered()
+            || self.ruler_drag.is_some()
+            || self.notes.busy()
+        {
+            return None;
+        }
+        let p = pointer.filter(|p| area.contains(*p))?;
+        let ch = editor.current_glyph()?;
+        let font = editor.font()?;
+        let frame = editor.frame;
+        if !font.glyphs.get(frame)?.is_composite() {
+            return None;
+        }
+        let ppp = response.ctx.pixels_per_point();
+        if self.under_front_artboard(rect, editor, p, ppp) {
+            return None;
+        }
+        let at = editor.to_local(self.to_world(rect, p));
+        let index = crate::font_overlay::component_at(font, editor.sprite(), frame, at)?;
+        let start = font.glyphs[frame].components[index].offset;
+        self.guide_hint = Some("Drag to move the component (arrows nudge it)");
+        if pressed {
+            editor.select_component(Some(index));
+            self.component_drag = Some(ComponentDrag {
+                ch,
+                frame,
+                index,
+                start,
+                grab: at,
+                now: start,
+            });
+        }
+        Some(egui::CursorIcon::Grab)
+    }
+
     /// Crear (desde las reglas), mover y borrar guías. Devuelve el cursor a mostrar si el
     /// puntero está ocupado por las reglas/guías (y en ese caso las herramientas no reciben el clic).
     #[allow(clippy::too_many_arguments)]
@@ -380,6 +451,7 @@ impl CanvasView {
             && self.ruler_drag.is_none()
             && self.sym_drag.is_none()
             && self.advance_drag.is_none()
+            && self.component_drag.is_none()
             && self.dragging_guide.is_none();
         if response.dragged_by(egui::PointerButton::Middle)
             || ((space_key || hand_pans) && response.dragged_by(egui::PointerButton::Primary))
@@ -478,6 +550,16 @@ impl CanvasView {
         let ruler_cursor = if modal || space_key || sym_cursor.is_some() || self.sym_drag.is_some()
         {
             sym_cursor
+        } else if let Some(cursor) = self.component_input(
+            response,
+            rect,
+            area,
+            editor,
+            pointer,
+            pressed_primary,
+            any_down,
+        ) {
+            Some(cursor)
         } else if let Some(cursor) = self.advance_input(
             response,
             rect,
@@ -502,7 +584,8 @@ impl CanvasView {
         let ruler_busy = ruler_cursor.is_some()
             || self.ruler_drag.is_some()
             || self.sym_drag.is_some()
-            || self.advance_drag.is_some();
+            || self.advance_drag.is_some()
+            || self.component_drag.is_some();
         guide_cursor = guide_cursor.or(ruler_cursor);
         // Las notas van encima de todo: sobre una (o arrastrándola), las herramientas no reciben
         // el clic.
