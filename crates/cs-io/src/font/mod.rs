@@ -57,6 +57,7 @@ pub(crate) fn sample_font(mode: cs_core::FontMode) -> cs_core::Artboard {
         letter_spacing: 1,
         space_width: 3,
         monospace: false,
+        kerning: Vec::new(),
         glyphs: vec![
             glyph('A', None, a),
             glyph('g', None, g),

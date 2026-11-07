@@ -464,6 +464,7 @@ pub(crate) fn sample_ttf() -> Vec<u8> {
         letter_spacing: 1,
         space_width: 2,
         monospace: false,
+        kerning: Vec::new(),
         glyphs: vec![cs_core::GlyphBuild {
             ch: 'A',
             advance: None,
@@ -488,6 +489,7 @@ mod tests {
             letter_spacing: 1,
             space_width: 2,
             monospace: false,
+            kerning: Vec::new(),
             glyphs: Vec::new(),
         });
         let files = build_files(&artboard, BuildFormat::BmFont, "Big Name", "out").unwrap();

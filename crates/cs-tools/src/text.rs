@@ -400,6 +400,7 @@ mod tests {
                     )
                 })
                 .collect(),
+            kerning: Default::default(),
         }
     }
 

@@ -488,6 +488,7 @@ mod tests {
             letter_spacing: 1,
             space_width: 3,
             monospace: false,
+            kerning: Vec::new(),
             glyphs: vec![cs_core::GlyphBuild {
                 ch: 'x',
                 advance: None,

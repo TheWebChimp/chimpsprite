@@ -5,7 +5,9 @@ use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::{Artboard, ColorMode, Frame, LayerKind, Palette, PixelValue, Rgba, Sprite};
+use crate::{
+    Artboard, ColorMode, FontKerning, Frame, KernSide, LayerKind, Palette, PixelValue, Rgba, Sprite,
+};
 
 /// 1 bit (prendido o apagado, como BitFontMaker2) o color.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -133,6 +135,9 @@ pub struct FontInfo {
     #[serde(default)]
     pub ghost: GhostSettings,
     pub glyphs: Vec<GlyphInfo>,
+    /// Los pares y las clases de kerning.
+    #[serde(default, skip_serializing_if = "FontKerning::is_empty")]
+    pub kerning: FontKerning,
 }
 
 impl FontInfo {
@@ -147,6 +152,7 @@ impl FontInfo {
             monospace: false,
             ghost: GhostSettings::default(),
             glyphs: ('!'..='~').map(GlyphInfo::new).collect(),
+            kerning: FontKerning::default(),
         }
     }
 
@@ -301,16 +307,24 @@ impl FontInfo {
         (self.metrics.cap_height / 2).max(3) + self.letter_spacing
     }
 
-    /// El ancho de una línea de `text` (el espacio avanza `space_width`).
+    /// El ancho de una línea de `text` (el espacio avanza `space_width`), con el kerning entre
+    /// dos glifos seguidos.
     pub fn text_width(&self, sprite: &Sprite, text: &str) -> u32 {
-        text.chars()
-            .map(|ch| match ch {
-                ' ' => self.space_width,
-                _ => self
-                    .index_of(ch)
-                    .map_or(self.missing_width(), |i| self.advance(sprite, i)),
-            })
-            .sum()
+        let mut width = 0i64;
+        let mut prev: Option<char> = None;
+        for ch in text.chars() {
+            let index = (ch != ' ').then(|| self.index_of(ch)).flatten();
+            width += match (ch, index) {
+                (' ', _) => self.space_width as i64,
+                (_, Some(i)) => {
+                    let kern = prev.map_or(0, |p| self.kerning.value(p, ch));
+                    self.advance(sprite, i) as i64 + kern as i64
+                }
+                (_, None) => self.missing_width() as i64,
+            };
+            prev = index.map(|_| ch);
+        }
+        width.max(0) as u32
     }
 
     /// Si el sprite de la fuente está bien armado: glifos en orden y sin repetir, uno por frame,
@@ -437,6 +451,8 @@ pub struct FontBuild {
     pub space_width: u32,
     pub monospace: bool,
     pub glyphs: Vec<GlyphBuild>,
+    /// Los pares de kerning (en pixeles), de carácter a carácter.
+    pub kerning: Vec<(char, char, i32)>,
 }
 
 /// La fuente y su sprite desde `build`: los glifos en orden y sin repetir (gana el primero), sin
@@ -487,6 +503,13 @@ pub fn build_font(build: FontBuild) -> (FontInfo, Sprite) {
             },
         );
     }
+    let mut kerning = FontKerning::default();
+    for &(a, b, value) in &build.kerning {
+        let has = |c: char| glyphs.binary_search_by_key(&c, |g| g.ch).is_ok();
+        if value != 0 && has(a) && has(b) {
+            kerning.set(KernSide::Char(a), KernSide::Char(b), value);
+        }
+    }
     let font = FontInfo {
         name: build.name,
         mode: build.mode,
@@ -502,6 +525,7 @@ pub fn build_font(build: FontBuild) -> (FontInfo, Sprite) {
                 ..GlyphInfo::new(g.ch)
             })
             .collect(),
+        kerning,
     };
     (font, sprite)
 }
@@ -582,6 +606,8 @@ pub struct PixelFontView {
     pub space_width: u32,
     pub missing_width: u32,
     pub glyphs: BTreeMap<char, GlyphPixels>,
+    /// El kerning aplanado: lo que se suma entre dos glifos seguidos (sin los de 0).
+    pub kerning: BTreeMap<(char, char), i32>,
 }
 
 impl Artboard {
@@ -617,6 +643,7 @@ impl Artboard {
             space_width: font.space_width,
             missing_width: font.missing_width(),
             glyphs,
+            kerning: font.kerning.flatten(|c| font.index_of(c).is_some()),
         })
     }
 }
@@ -624,7 +651,7 @@ impl Artboard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Cel, Image};
+    use crate::{Cel, ClassSide, Image, KernClass};
     use std::sync::Arc;
 
     /// Pinta `points` con la tinta en el glifo `frame` de un sprite de 1 bit.
@@ -716,6 +743,61 @@ mod tests {
             5 + 3 + 5 + font.missing_width()
         );
         assert_eq!(font.missing_width(), 5 + 1);
+    }
+
+    #[test]
+    fn the_width_of_a_text_adds_the_kerning_between_glyphs() {
+        let mut font = FontInfo::new("Mine", 16, FontMode::OneBit);
+        let s = font_sprite((16, 16), FontMode::OneBit, 94);
+        font.kerning
+            .set(KernSide::Char('A'), KernSide::Char('V'), -2);
+        font.kerning
+            .set(KernSide::Char('V'), KernSide::Char('A'), -1);
+        // Vacíos: 8 cada uno; AV −2, VA −1.
+        assert_eq!(font.text_width(&s, "AVA"), 24 - 3);
+        assert_eq!(font.text_width(&s, "A V"), 16 + 3, "not across a space");
+        assert_eq!(
+            font.text_width(&s, "AéV"),
+            16 + font.missing_width(),
+            "not across a missing char"
+        );
+    }
+
+    #[test]
+    fn the_view_has_the_flattened_kerning_and_a_build_keeps_its_pairs() {
+        let (mut font, sprite) = build_font(FontBuild {
+            kerning: vec![('a', 'b', -1), ('a', 'z', 3), ('b', 'a', 0)],
+            ..build(
+                FontMode::OneBit,
+                vec![glyph('a', None, &[(0, 0)]), glyph('b', None, &[(0, 0)])],
+            )
+        });
+        assert_eq!(font.kerning.pairs.len(), 1, "z is missing and 0 is nothing");
+        assert_eq!(font.kerning.value('a', 'b'), -1);
+        font.kerning.classes.push(KernClass {
+            name: "ab".into(),
+            side: ClassSide::Second,
+            chars: vec!['a', 'b', 'q'],
+        });
+        font.kerning
+            .set(KernSide::Char('b'), KernSide::Class("ab".into()), 2);
+        let artboard = crate::Artboard {
+            model: None,
+            id: crate::ArtboardId(1),
+            name: "Mine".into(),
+            position: (0, 0),
+            sprite,
+            guides: Vec::new(),
+            symmetry: Default::default(),
+            in_library: false,
+            font: Some(font),
+        };
+        let view = artboard.font_view().unwrap();
+        let expected: BTreeMap<(char, char), i32> =
+            [(('a', 'b'), -1), (('b', 'a'), 2), (('b', 'b'), 2)]
+                .into_iter()
+                .collect();
+        assert_eq!(view.kerning, expected);
     }
 
     #[test]
@@ -845,6 +927,7 @@ mod tests {
             letter_spacing: 1,
             space_width: 4,
             monospace: false,
+            kerning: Vec::new(),
             glyphs,
         }
     }
@@ -900,7 +983,12 @@ mod tests {
 
     #[test]
     fn font_info_survives_json() {
-        let font = FontInfo::new("Mine", 12, FontMode::Color);
+        let mut font = FontInfo::new("Mine", 12, FontMode::Color);
+        let json = serde_json::to_string(&font).unwrap();
+        assert!(!json.contains("kerning"), "no kerning, nothing written");
+        assert_eq!(serde_json::from_str::<FontInfo>(&json).unwrap(), font);
+        font.kerning
+            .set(KernSide::Char('A'), KernSide::Char('V'), -1);
         let json = serde_json::to_string(&font).unwrap();
         assert_eq!(serde_json::from_str::<FontInfo>(&json).unwrap(), font);
     }

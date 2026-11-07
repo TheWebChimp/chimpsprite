@@ -615,6 +615,7 @@ mod tests {
                     (*ch, cs_core::GlyphPixels { pixels, advance: 4 })
                 })
                 .collect(),
+            kerning: Default::default(),
         }
     }
 
