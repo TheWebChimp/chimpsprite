@@ -22,8 +22,8 @@ serializables expuestos en el MCP", "no salen en los exports"):
    (orden, archivos/scripts viejos). Errores nuevos: `NoteNotFound(u32)`, `DuplicateNoteId(u32)`.
    Etiquetas de undo: "New Note", "Note", "Delete Note".
 2. **Editor**: `add_note`, `set_note_text`, `set_note_color`, `remove_note` y el fin de un arrastre
-   usan los comandos por nota (el historial dice qué pasó). Nuevo `duplicate_note(id)`: copia a +12,+12
-   puntos de mundo, arriba de todas. `Document::note(id)` y `Document::next_note_id()` en `cs-core`.
+   usan los comandos por nota (el historial dice qué pasó). Nuevo `duplicate_note(id, offset)`: copia corrida
+   `offset` píxeles del mundo, arriba de todas (el menú pasa el equivalente a 12 puntos de pantalla). `Document::note(id)` y `Document::next_note_id()` en `cs-core`.
 3. **Herramienta Note** (`ToolKind::Note`, atajo **N**, en el grupo de Artboard de la barra): un clic
    en el lienzo —fuera o encima de un artboard— pone una nota amarilla centrada en el puntero y la deja
    lista para escribir. Si había una nota escribiéndose, ese clic solo termina de escribirla (no crea
@@ -64,3 +64,11 @@ serializables expuestos en el MCP", "no salen en los exports"):
 7. **MCP**: `add_note` sin posición la pone a 8 px a la derecha de todo lo del lienzo (como
    `add_artboard`), y el tamaño por defecto es el de la UI (86×89).
 8. **Ícono provisional** `icon.note` (16×16 como el resto): el usuario lo redibujará.
+
+## Notas de la implementación
+
+- La nota pegada con la herramienta se crea al apretar y se empieza a escribir al **soltar** el clic
+  (`NotesView::edit_when_released`): si el campo de texto se pusiera al apretar, el mismo clic le
+  quitaría el foco (igual que el clic en el papel de una nota, que ya escribía al soltar).
+- Con Note los handles de una selección flotante no se agarran ni cambian el cursor.
+- `Note::DEFAULT_SIZE`, `MIN_SIZE` y `MAX_SIZE` viven en `cs-core` (los usan la UI y el MCP).
