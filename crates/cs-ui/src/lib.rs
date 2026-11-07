@@ -65,11 +65,14 @@ mod layer_ops;
 mod layout_tests;
 mod library_panel;
 mod logo;
+// Hasta que la app lo use (tarea 3 del plan de Chimpy).
 mod lospec_client;
 #[cfg(not(target_arch = "wasm32"))]
 mod lospec_examples;
 mod lospec_tab;
 mod lumen;
+#[allow(dead_code)]
+mod mascot;
 #[cfg(not(target_arch = "wasm32"))]
 mod news;
 mod notes;
