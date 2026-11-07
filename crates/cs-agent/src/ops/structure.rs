@@ -579,6 +579,12 @@ impl Session {
             opacity: p.opacity,
             timing: p.timing.as_ref(),
             first_frame: p.first_frame,
+            transform: Transform::from_args(
+                (p.scale_x, p.scale_y),
+                p.rotation,
+                p.tint.as_deref(),
+                p.tint_amount,
+            )?,
         };
         let object = first_object(sprite, layer);
         let cmd = object
@@ -658,6 +664,12 @@ impl Session {
             opacity: p.opacity,
             timing: p.timing.as_ref(),
             first_frame: p.first_frame,
+            transform: Transform::from_args(
+                (p.scale_x, p.scale_y),
+                p.rotation,
+                p.tint.as_deref(),
+                p.tint_amount,
+            )?,
         };
         let cmd = ops::update_object_key(sprite, layer, object, p.frame, |k| change.apply(k))
             .ok_or_else(|| invalid("no keyframe at or before that frame, or nothing changed"))?;
@@ -690,6 +702,80 @@ impl Session {
         };
         self.run_on(&p.doc, host, vec![cmd])?;
         Ok(Reply::text(format!("Reordered object {}.", object.0)))
+    }
+
+    // --- Tweens ---
+
+    pub fn set_tween(&mut self, p: SetTween) -> Result<Reply> {
+        let (host, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let layer = target::layer(sprite, &p.layer)?;
+        let object = match &p.object {
+            Some(r) => object_ref(sprite, layer, r)?,
+            None => {
+                first_object(sprite, layer).ok_or_else(|| invalid("the layer has no objects"))?
+            }
+        };
+        target::frame(sprite, p.frame)?;
+        let mut objects = sprite.layer(layer).expect("resolved").objects.clone();
+        let keys = &mut objects
+            .iter_mut()
+            .find(|o| o.id == object)
+            .expect("resolved")
+            .track
+            .keys;
+        let i = keys
+            .iter()
+            .rposition(|k| k.frame <= p.frame)
+            .ok_or_else(|| invalid("the object has no keyframe at or before that frame"))?;
+        let created = keys[i].tween.is_none();
+        if created && i + 1 >= keys.len() {
+            return Err(invalid(
+                "a tween needs a next keyframe to go to (add one with set_object_key)",
+            ));
+        }
+        let tween = keys[i].tween.get_or_insert_with(cs_core::Tween::default);
+        tween.ease = ease(tween.ease, p.ease, p.amount)?;
+        let start = keys[i].frame;
+        let end = keys[i + 1..].first().map(|k| k.frame);
+        let broken = !keys
+            .get(i + 1)
+            .is_some_and(|n| n.source.is_some() && n.source == keys[i].source);
+        let unchanged = sprite.layer(layer).expect("resolved").objects == objects;
+        if !unchanged {
+            self.run_on(&p.doc, host, vec![Command::SetObjects { layer, objects }])?;
+        }
+        let what = if created { "Created" } else { "Set" };
+        let span = match end {
+            Some(end) => format!("frames {start}..{end}"),
+            None => format!("frame {start} on"),
+        };
+        let warning = if broken {
+            " Warning: the next keyframe shows another symbol, so it holds instead of tweening."
+        } else {
+            ""
+        };
+        Ok(Reply::text(format!(
+            "{what} the tween of object {} over {span}.{warning}",
+            object.0
+        )))
+    }
+
+    pub fn remove_tween(&mut self, p: RemoveTween) -> Result<Reply> {
+        let (host, sprite) = self.sprite(&p.doc, p.artboard.as_ref())?;
+        let layer = target::layer(sprite, &p.layer)?;
+        let object = match &p.object {
+            Some(r) => object_ref(sprite, layer, r)?,
+            None => {
+                first_object(sprite, layer).ok_or_else(|| invalid("the layer has no objects"))?
+            }
+        };
+        let cmd = ops::remove_tweens(sprite, layer, &[object], p.frame)
+            .ok_or_else(|| invalid(format!("no tween at frame {}", p.frame)))?;
+        self.run_on(&p.doc, host, vec![cmd])?;
+        Ok(Reply::text(format!(
+            "Removed the tween of object {} at frame {}.",
+            object.0, p.frame
+        )))
     }
 
     // --- Cels ---
@@ -833,6 +919,55 @@ impl Session {
 }
 
 /// El primer objeto de una capa de objetos (las herramientas de instancia actúan sobre él).
+/// El ease que pide el agente sobre el de antes (`current`): sin `kind`, el mismo tipo; sin
+/// `amount`, el de antes si el tipo no cambia (si no, 0 en Classic y 100 en las curvas).
+fn ease(
+    current: cs_core::Ease,
+    kind: Option<EaseArg>,
+    amount: Option<i32>,
+) -> Result<cs_core::Ease> {
+    use cs_core::{Curve, Ease};
+    let now = match current {
+        Ease::Classic(_) => None,
+        Ease::Curve { curve, .. } => Some(curve),
+    };
+    let curve = match kind {
+        None => now,
+        Some(EaseArg::Classic) => None,
+        Some(EaseArg::EaseIn) => Some(Curve::EaseIn),
+        Some(EaseArg::EaseOut) => Some(Curve::EaseOut),
+        Some(EaseArg::EaseInOut) => Some(Curve::EaseInOut),
+        Some(EaseArg::Bounce) => Some(Curve::Bounce),
+        Some(EaseArg::Elastic) => Some(Curve::Elastic),
+        Some(EaseArg::Back) => Some(Curve::Back),
+        Some(EaseArg::Step) => Some(Curve::Step),
+    };
+    let kept = match current {
+        _ if curve != now => None,
+        Ease::Classic(e) => Some(e as i32),
+        Ease::Curve { amount, .. } => Some(amount as i32),
+    };
+    match curve {
+        None => {
+            let a = amount.or(kept).unwrap_or(0);
+            if !(-100..=100).contains(&a) {
+                return Err(invalid("classic ease amount must be -100 to 100"));
+            }
+            Ok(Ease::Classic(a as i8))
+        }
+        Some(curve) => {
+            let a = amount.or(kept).unwrap_or(100);
+            if !(0..=100).contains(&a) {
+                return Err(invalid("curve ease amount must be 0 to 100"));
+            }
+            Ok(Ease::Curve {
+                curve,
+                amount: a as u8,
+            })
+        }
+    }
+}
+
 fn first_object(sprite: &cs_core::Sprite, layer: cs_core::LayerId) -> Option<cs_core::ObjectId> {
     sprite.layer(layer)?.objects.first().map(|o| o.id)
 }
@@ -847,6 +982,64 @@ struct KeyChange<'a> {
     opacity: Option<u8>,
     timing: Option<&'a TimingArg>,
     first_frame: Option<usize>,
+    transform: Transform,
+}
+
+/// Escala (milésimas), rotación y tinte pedidos; lo que es `None` se deja como está.
+struct Transform {
+    scale: (Option<i32>, Option<i32>),
+    rotation: Option<i32>,
+    tint: Option<cs_core::Rgba>,
+    tint_amount: Option<u8>,
+}
+
+impl Transform {
+    fn from_args(
+        scale: (Option<f32>, Option<f32>),
+        rotation: Option<i32>,
+        tint: Option<&str>,
+        tint_amount: Option<u8>,
+    ) -> Result<Self> {
+        let milli = |percent: Option<f32>| -> Result<Option<i32>> {
+            percent
+                .map(|p| {
+                    if p.is_finite() && (0.1..=100_000.0).contains(&p) {
+                        Ok((p * 10.0).round() as i32)
+                    } else {
+                        Err(invalid("scale must be a percent between 0.1 and 100000"))
+                    }
+                })
+                .transpose()
+        };
+        Ok(Self {
+            scale: (milli(scale.0)?, milli(scale.1)?),
+            rotation,
+            tint: tint.map(target::hex).transpose()?,
+            tint_amount,
+        })
+    }
+
+    fn apply(&self, k: &mut cs_core::InstanceKey) {
+        k.scale = (
+            self.scale.0.unwrap_or(k.scale.0),
+            self.scale.1.unwrap_or(k.scale.1),
+        );
+        k.rotation = self.rotation.unwrap_or(k.rotation);
+        if self.tint.is_none() && self.tint_amount.is_none() {
+            return;
+        }
+        let color = self
+            .tint
+            .map(|c| cs_core::Rgba { a: 255, ..c })
+            .or(k.tint.map(|t| t.color))
+            .unwrap_or(cs_core::Rgba::rgb(255, 255, 255));
+        // Un tinte nuevo sin cantidad va entero; 0 lo quita.
+        let amount = self
+            .tint_amount
+            .or(k.tint.map(|t| t.amount).filter(|&a| a > 0))
+            .unwrap_or(255);
+        k.tint = (amount > 0).then_some(cs_core::Tint { color, amount });
+    }
 }
 
 impl KeyChange<'_> {
@@ -880,6 +1073,7 @@ impl KeyChange<'_> {
             },
             (None, Timing::MovieClip { .. }) => Timing::MovieClip { first_frame: first },
         };
+        self.transform.apply(k);
     }
 }
 
@@ -1525,5 +1719,101 @@ mod tests {
                 "source": 1})))
             .unwrap_err();
         assert!(err.to_string().contains("cycle"), "{err}");
+    }
+
+    #[test]
+    fn objects_scale_rotate_tint_and_tween() {
+        let mut s = session(8, 8);
+        for _ in 0..2 {
+            s.add_frame(p(json!({"doc": "d1"}))).unwrap();
+        }
+        s.add_artboard(p(
+            json!({"doc": "d1", "name": "coin", "width": 2, "height": 2}),
+        ))
+        .unwrap();
+        s.draw_pixels(p(json!({"doc": "d1", "artboard": "coin",
+            "pixels": [{"x": 0, "y": 0, "color": "#ff0000"}]})))
+            .unwrap();
+        s.add_instance_layer(p(json!({"doc": "d1", "source": "coin", "x": 0, "y": 0,
+            "name": "Props"})))
+            .unwrap();
+        let keys = |s: &Session| {
+            let described =
+                crate::ops::test_util::json(&s.describe(p(json!({"doc": "d1"}))).unwrap());
+            described["artboards"][0]["layers_bottom_to_top"][1]["objects"][0]["keys"].clone()
+        };
+        let render = |s: &Session, frame: usize| {
+            cs_render::render_frame(
+                &cs_render::materialize(
+                    &s.doc("d1").unwrap().document,
+                    s.sprite("d1", None).unwrap().1,
+                    frame..frame + 1,
+                ),
+                frame,
+            )
+        };
+        // Escala, rotación y tinte en una key nueva.
+        s.set_instance_key(p(json!({"doc": "d1", "layer": "Props", "frame": 2, "x": 4,
+            "y": 2, "scale_x": 150, "scale_y": 50, "rotation": 90, "tint": "#00ff00"})))
+            .unwrap();
+        let k = keys(&s);
+        assert_eq!(k[1]["scale"], json!([1500, 500]));
+        assert_eq!(k[1]["rotation"], json!(90));
+        assert_eq!(k[1]["tint"]["amount"], json!(255), "a new tint is full");
+        assert!(k[0].get("scale").is_none(), "the first key is untouched");
+        assert!(
+            s.set_object_key(p(json!({"doc": "d1", "layer": "Props", "object": "Props",
+                "scale_x": 0})))
+                .is_err()
+        );
+        s.set_object_key(p(json!({"doc": "d1", "layer": "Props", "object": "Props",
+            "frame": 2, "tint_amount": 0, "scale_x": 100, "scale_y": 100, "rotation": 0})))
+            .unwrap();
+        assert!(
+            keys(&s)[1].get("tint").is_none(),
+            "amount 0 removes the tint"
+        );
+        // Tween: sin key siguiente no se puede; desde el frame 1 (el tramo 0..2) sí.
+        assert!(
+            s.set_tween(p(json!({"doc": "d1", "layer": "Props", "frame": 2})))
+                .is_err()
+        );
+        assert!(
+            s.set_tween(p(json!({"doc": "d1", "layer": "Props", "frame": 1,
+                "amount": 101})))
+                .is_err()
+        );
+        let held = render(&s, 1);
+        assert_eq!(held[0].r, 255, "holds the first key before the tween");
+        s.set_tween(p(json!({"doc": "d1", "layer": "Props", "frame": 1})))
+            .unwrap();
+        assert_eq!(keys(&s)[0]["tween"], json!({"ease": {"Classic": 0}}));
+        let mid = render(&s, 1);
+        assert_eq!(mid[8 + 2].r, 255, "halfway, at (2, 1)");
+        assert_eq!(mid[0].a, 0);
+        s.set_tween(p(json!({"doc": "d1", "layer": "Props", "frame": 0,
+            "ease": "ease_in_out", "amount": 50})))
+            .unwrap();
+        assert_eq!(
+            keys(&s)[0]["tween"]["ease"],
+            json!({"Curve": {"curve": "EaseInOut", "amount": 50}})
+        );
+        // Solo la cantidad: el mismo tipo.
+        s.set_tween(p(
+            json!({"doc": "d1", "layer": "Props", "frame": 0, "amount": 20}),
+        ))
+        .unwrap();
+        assert_eq!(keys(&s)[0]["tween"]["ease"]["Curve"]["amount"], json!(20));
+        s.remove_tween(p(json!({"doc": "d1", "layer": "Props", "frame": 1})))
+            .unwrap();
+        assert!(keys(&s)[0].get("tween").is_none());
+        assert_eq!(render(&s, 1), held);
+        assert!(
+            s.remove_tween(p(json!({"doc": "d1", "layer": "Props", "frame": 1})))
+                .is_err()
+        );
+        // Un paso de undo por llamada.
+        s.undo(p(json!({"doc": "d1"}))).unwrap();
+        assert_eq!(keys(&s)[0]["tween"]["ease"]["Curve"]["amount"], json!(20));
     }
 }
