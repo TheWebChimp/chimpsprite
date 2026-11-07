@@ -159,7 +159,12 @@ fn kerning_units(face: &Face, chars: &[char]) -> BTreeMap<(char, char), i32> {
                     continue;
                 };
                 from_gpos = true;
-                for &(a, ga) in &ids {
+                let coverage = match &pair {
+                    PairAdjustment::Format1 { coverage, .. }
+                    | PairAdjustment::Format2 { coverage, .. } => *coverage,
+                };
+                // Solo los de la izquierda que el subtable cubre.
+                for &(a, ga) in ids.iter().filter(|(_, g)| coverage.contains(*g)) {
                     for &(b, gb) in &ids {
                         let value = match &pair {
                             PairAdjustment::Format1 { coverage, sets } => coverage
