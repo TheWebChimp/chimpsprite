@@ -131,12 +131,48 @@ pub(crate) fn build_files(
     }
 }
 
-/// Build Font: el formato, el nombre de la familia y lo que se va a escribir.
+/// El nombre de archivo (sin extensión) de un estilo de la familia `family`: `Familia-Estilo`
+/// (el estilo sin espacios), o solo `Familia` si es el Regular y va solo.
+pub(crate) fn style_stem(family: &str, style: &cs_core::FontStyle, alone: bool) -> String {
+    let base = file_stem(family);
+    let regular = style.name.trim().is_empty() || style.name.trim().eq_ignore_ascii_case("Regular");
+    if alone && regular {
+        base
+    } else {
+        format!("{base}-{}", file_stem(&style.compact_name()))
+    }
+}
+
+/// Los archivos de cada fuente de `members` (los estilos de una familia) en `format`, cada uno
+/// con su nombre `Familia-Estilo`.
+pub(crate) fn build_family_files(
+    doc: &cs_core::Document,
+    members: &[ArtboardId],
+    format: BuildFormat,
+    family: &str,
+) -> Result<Vec<(String, Vec<u8>)>, String> {
+    let mut out = Vec::new();
+    for &id in members {
+        let artboard = doc.artboard(id).ok_or("A style of the family is gone")?;
+        let style = &artboard.font.as_ref().ok_or("Not a font")?.style;
+        let stem = style_stem(family, style, members.len() == 1);
+        out.extend(build_files(artboard, format, family, &stem)?);
+    }
+    Ok(out)
+}
+
+/// Build Font: el formato, el nombre de la familia, si van todos los estilos y lo que se va a
+/// escribir.
 pub struct BuildFontDialog {
     pub artboard: ArtboardId,
     pub format: BuildFormat,
     pub family: String,
     mode: FontMode,
+    /// El estilo de la fuente y los de su familia (ella incluida), en orden.
+    style: cs_core::FontStyle,
+    pub members: Vec<(ArtboardId, cs_core::FontStyle)>,
+    /// Todos los estilos de la familia, un archivo cada uno.
+    pub whole_family: bool,
 }
 
 impl BuildFontDialog {
@@ -153,21 +189,42 @@ impl BuildFontDialog {
             format,
             family: font.name.clone(),
             mode: font.mode,
+            style: font.style.clone(),
+            members: editor.family_fonts(),
+            whole_family: false,
         })
     }
 
-    /// El nombre de los archivos (sin extensión).
+    /// El nombre de los archivos (sin extensión) de la fuente sola: `Familia` (el Regular) o
+    /// `Familia-Estilo`.
     pub fn stem(&self) -> String {
-        file_stem(&self.family)
+        style_stem(&self.family, &self.style, true)
+    }
+
+    /// Las fuentes que se escriben: la activa o, con la familia, todas.
+    pub fn targets(&self) -> Vec<ArtboardId> {
+        if self.whole_family && self.members.len() > 1 {
+            self.members.iter().map(|(id, _)| *id).collect()
+        } else {
+            vec![self.artboard]
+        }
     }
 
     /// Lo que se va a escribir, para leerlo en el diálogo.
     pub fn files_label(&self) -> String {
-        let stem = self.stem();
-        match self.format {
+        let one = |stem: &str| match self.format {
             BuildFormat::BmFont => format!("{stem}.fnt + {stem}.png"),
             _ => format!("{stem}.ttf"),
+        };
+        if self.whole_family && self.members.len() > 1 {
+            let names: Vec<String> = self
+                .members
+                .iter()
+                .map(|(_, style)| one(&style_stem(&self.family, style, false)))
+                .collect();
+            return names.join("\n");
         }
+        one(&self.stem())
     }
 
     pub fn show(&mut self, ctx: &egui::Context, skin: Option<&Skin>) -> DialogResult {
@@ -198,6 +255,12 @@ impl BuildFontDialog {
                         ui.label("Family:");
                         widgets::text_line_named(ui, &mut self.family, "Family name");
                         ui.end_row();
+                        if self.members.len() > 1 {
+                            ui.label("");
+                            let label = format!("Whole family ({} styles)", self.members.len());
+                            widgets::checkbox(ui, &mut self.whole_family, &label);
+                            ui.end_row();
+                        }
                         ui.label("Writes:");
                         ui.label(self.files_label());
                         ui.end_row();

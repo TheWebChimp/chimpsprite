@@ -72,23 +72,45 @@ impl ChimpApp {
     }
 
     /// Pregunta dónde guardar y escribe los archivos de `dialog` (el BMFont: el `.fnt` donde se
-    /// eligió y su `.png` al lado, con el mismo nombre).
+    /// eligió y su `.png` al lado, con el mismo nombre). Con la familia, el primero va donde se
+    /// eligió y los demás a su lado, cada uno con su nombre `Familia-Estilo`.
     fn build_font_files(&mut self, dialog: &BuildFontDialog) {
-        let Some(artboard) = self.doc.editor.document.artboard(dialog.artboard) else {
-            return;
+        let targets = dialog.targets();
+        let family = targets.len() > 1;
+        let document = &self.doc.editor.document;
+        let files = if family {
+            font_io::build_family_files(document, &targets, dialog.format, &dialog.family)
+        } else {
+            Ok(Vec::new())
         };
-        let (suggested, filters) = match dialog.format {
-            BuildFormat::BmFont => (format!("{}.fnt", dialog.stem()), FNT_FILTER),
-            _ => (format!("{}.ttf", dialog.stem()), TTF_FILTER),
+        let mut files = match files {
+            Ok(files) => files,
+            Err(e) => return self.show_message("Could not build the font", e),
+        };
+        let suggested = match (family, files.first()) {
+            (true, Some((name, _))) => name.clone(),
+            _ => match dialog.format {
+                BuildFormat::BmFont => format!("{}.fnt", dialog.stem()),
+                _ => format!("{}.ttf", dialog.stem()),
+            },
+        };
+        let filters = match dialog.format {
+            BuildFormat::BmFont => FNT_FILTER,
+            _ => TTF_FILTER,
         };
         let Some(target) = self.platform.choose_save(&suggested, filters) else {
             return;
         };
-        let stem = target.stem().to_owned();
-        let files = match font_io::build_files(artboard, dialog.format, &dialog.family, &stem) {
-            Ok(files) => files,
-            Err(e) => return self.show_message("Could not build the font", e),
-        };
+        if !family {
+            let Some(artboard) = self.doc.editor.document.artboard(dialog.artboard) else {
+                return;
+            };
+            let stem = target.stem().to_owned();
+            files = match font_io::build_files(artboard, dialog.format, &dialog.family, &stem) {
+                Ok(files) => files,
+                Err(e) => return self.show_message("Could not build the font", e),
+            };
+        }
         for (i, (name, bytes)) in files.iter().enumerate() {
             // El primero va donde se eligió; los demás (el atlas), a su lado.
             let file = if i == 0 {
