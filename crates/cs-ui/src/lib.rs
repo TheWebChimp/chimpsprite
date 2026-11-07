@@ -1512,9 +1512,10 @@ impl ChimpApp {
                 // Cinco clics seguidos despiertan a Chimpy (o, despierto, le piden un consejo).
                 let rect = egui::Rect::from_min_size(at.round(), runner.size());
                 self.mascot_view.runner = Some(rect);
-                if ui
-                    .interact(rect, egui::Id::new("running_chimp"), egui::Sense::click())
-                    .clicked()
+                if !modal
+                    && ui
+                        .interact(rect, egui::Id::new("running_chimp"), egui::Sense::click())
+                        .clicked()
                 {
                     let now = ui.input(|i| i.time);
                     self.mascot.poke(now, &self.keymap);
