@@ -6,7 +6,7 @@ use std::sync::Arc;
 use cs_core::{
     ArtboardId, Cel, ColorMode, Image, ImageId, InstanceKey, InstanceTrack, Layer, LayerId,
     LayerKind, LayerMask, MAX_TILESET_TILES, Mask, ObjectId, PixelBuffer, PixelValue, SceneObject,
-    Sprite, Tile, TileGrid, Tileset,
+    Sprite, Tile, TileGrid, Tileset, Tween,
 };
 
 use crate::Command;
@@ -65,7 +65,7 @@ pub fn new_object_layer(
 }
 
 /// Cambia con `f` la key vigente de `object` (de `layer`) en `frame`; si `frame` no es keyframe,
-/// la copia ahí primero. `None` si no hay key vigente o nada cambia.
+/// la copia ahí primero (en un tween, con los valores que se ven; ver `keyframe_at`). `None` si no hay key vigente o nada cambia.
 pub fn update_object_key(
     sprite: &Sprite,
     layer: LayerId,
@@ -93,11 +93,10 @@ pub fn update_objects_key(
     let old = &sprite.layer(layer)?.objects;
     let mut new = old.clone();
     for o in new.iter_mut().filter(|o| objects.contains(&o.id)) {
-        let Some(&key) = o.track.key_at(frame) else {
+        // En medio de un tween, lo que se ve ahí (no la key de antes).
+        let Some(mut key) = o.track.keyframe_at(frame) else {
             continue;
         };
-        let mut key = key;
-        key.frame = frame;
         f(&mut key);
         o.track.set_key(key);
     }
@@ -155,6 +154,87 @@ pub fn remove_objects_key(
     (new != *old).then_some(Command::SetObjects {
         layer,
         objects: new,
+    })
+}
+
+/// ¿Se le puede poner un tween a la key vigente de `track` en `frame`? Hace falta una key
+/// siguiente (a donde llegar) y que no tenga uno ya.
+pub fn can_create_tween(track: &InstanceTrack, frame: usize) -> bool {
+    track
+        .keys
+        .iter()
+        .rposition(|k| k.frame <= frame)
+        .is_some_and(|i| track.keys[i].tween.is_none() && i + 1 < track.keys.len())
+}
+
+/// ¿La key vigente de `track` en `frame` tiene tween (aunque esté roto)?
+pub fn has_tween(track: &InstanceTrack, frame: usize) -> bool {
+    track.key_at(frame).is_some_and(|k| k.tween.is_some())
+}
+
+/// Cambia con `f` la key vigente en `frame` (sin crear keyframes) de cada uno de `objects`;
+/// `f` recibe si hay una key siguiente. `None` si nada cambia.
+fn change_current_keys(
+    sprite: &Sprite,
+    layer: LayerId,
+    objects: &[ObjectId],
+    frame: usize,
+    mut f: impl FnMut(bool, &mut InstanceKey),
+) -> Option<Command> {
+    let old = &object_layer(sprite, layer)?.objects;
+    let mut new = old.clone();
+    for o in new.iter_mut().filter(|o| objects.contains(&o.id)) {
+        let keys = &mut o.track.keys;
+        let Some(i) = keys.iter().rposition(|k| k.frame <= frame) else {
+            continue;
+        };
+        let has_next = i + 1 < keys.len();
+        f(has_next, &mut keys[i]);
+    }
+    (new != *old).then_some(Command::SetObjects {
+        layer,
+        objects: new,
+    })
+}
+
+/// Create Tween: un classic tween (lineal) desde la key vigente en `frame` hasta la siguiente, en
+/// cada uno de `objects` que tenga key siguiente y no tenga tween. Un solo comando.
+pub fn create_tweens(
+    sprite: &Sprite,
+    layer: LayerId,
+    objects: &[ObjectId],
+    frame: usize,
+) -> Option<Command> {
+    change_current_keys(sprite, layer, objects, frame, |has_next, k| {
+        if has_next && k.tween.is_none() {
+            k.tween = Some(Tween::default());
+        }
+    })
+}
+
+/// Remove Tween: quita el tween de la key vigente en `frame` de cada uno de `objects`.
+pub fn remove_tweens(
+    sprite: &Sprite,
+    layer: LayerId,
+    objects: &[ObjectId],
+    frame: usize,
+) -> Option<Command> {
+    change_current_keys(sprite, layer, objects, frame, |_, k| k.tween = None)
+}
+
+/// Cambia con `f` el tween del tramo que contiene `frame` (el de su key de inicio) en cada uno
+/// de `objects` que tenga uno; no crea keyframes.
+pub fn update_tweens(
+    sprite: &Sprite,
+    layer: LayerId,
+    objects: &[ObjectId],
+    frame: usize,
+    mut f: impl FnMut(&mut Tween),
+) -> Option<Command> {
+    change_current_keys(sprite, layer, objects, frame, |_, k| {
+        if let Some(tween) = &mut k.tween {
+            f(tween);
+        }
     })
 }
 
@@ -218,7 +298,7 @@ pub fn move_objects(
         .then_some(Command::SetObjects { layer, objects })
 }
 
-/// Corre `offset` la key en `frame` de los objetos `ids` (la crea copiando la vigente). Devuelve
+/// Corre `offset` la key en `frame` de los objetos `ids` (la crea con lo que se ve). Devuelve
 /// si alguno cambió.
 fn shift_objects(
     objects: &mut [SceneObject],
@@ -231,10 +311,9 @@ fn shift_objects(
     }
     let mut changed = false;
     for o in objects.iter_mut().filter(|o| ids.contains(&o.id)) {
-        let Some(mut key) = o.track.key_at(frame).copied() else {
+        let Some(mut key) = o.track.keyframe_at(frame) else {
             continue;
         };
-        key.frame = frame;
         key.position = (key.position.0 + offset.0, key.position.1 + offset.1);
         o.track.set_key(key);
         changed = true;
