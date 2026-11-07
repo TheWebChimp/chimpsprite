@@ -2033,7 +2033,10 @@ impl eframe::App for ChimpApp {
         self.update_title(&ctx);
         platform::set_unsaved(self.any_dirty());
 
-        self.capture.update(&ctx);
+        // La captura de desarrollo cierra sin preguntar por los cambios de la demo.
+        if self.capture.update(&ctx) {
+            self.allow_close = true;
+        }
         sound::end_frame(
             &ctx,
             self.view.ui_sounds,
