@@ -70,6 +70,8 @@ mod lospec_client;
 mod lospec_examples;
 mod lospec_tab;
 mod lumen;
+mod mascot;
+mod mascot_view;
 #[cfg(not(target_arch = "wasm32"))]
 mod news;
 mod notes;
@@ -130,6 +132,8 @@ const TOOL_OPTIONS_KEY: &str = "chimpsprite.tool_options";
 const CUSTOM_BRUSH_KEY: &str = "chimpsprite.custom_brush";
 /// Los atajos elegidos en Edit → Keyboard Shortcuts.
 const KEYMAP_KEY: &str = "chimpsprite.keymap";
+/// Chimpy, el asistente escondido: si está prendido y qué consejos ya dio.
+const MASCOT_KEY: &str = "chimpsprite.mascot";
 
 /// Texto que queda en el portapapeles del sistema al copiar píxeles (ver `shortcuts`).
 const CLIPBOARD_MARKER: &str = "ChimpSprite pixels";
@@ -167,6 +171,9 @@ pub struct ChimpApp {
     logo: Option<Option<logo::Logo>>,
     /// El mono que corre arriba a la derecha con Pixel UI (como `logo`).
     runner: Option<Option<logo::Logo>>,
+    /// Chimpy, el asistente escondido (se despierta con cinco clics al mono que corre).
+    mascot: mascot::Mascot,
+    mascot_view: mascot_view::MascotView,
     /// Pixnews, las novedades de Home, y cómo se piden (en los tests, sin red). Solo escritorio.
     #[cfg(not(target_arch = "wasm32"))]
     news: news::News,
@@ -294,6 +301,12 @@ impl ChimpApp {
         {
             app.keymap = keymap::Keymap::from_settings(&settings);
         }
+        if let Some(settings) = cc
+            .storage
+            .and_then(|s| eframe::get_value::<mascot::MascotSettings>(s, MASCOT_KEY))
+        {
+            app.mascot = mascot::Mascot::new(settings);
+        }
         if launch.demo {
             app.open_demo();
         }
@@ -347,6 +360,8 @@ impl ChimpApp {
             grid_dialog: None,
             logo: None,
             runner: None,
+            mascot: mascot::Mascot::default(),
+            mascot_view: mascot_view::MascotView::default(),
             #[cfg(not(target_arch = "wasm32"))]
             news: news::News::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -1231,7 +1246,7 @@ impl ChimpApp {
             self.shortcuts = None;
         }
         if self.preferences {
-            let out = preferences::show(ctx, &mut self.view, skin);
+            let out = preferences::show(ctx, &mut self.view, skin, &mut self.mascot);
             if out.closed {
                 self.preferences = false;
             }
@@ -1415,6 +1430,15 @@ impl ChimpApp {
     /// Los paneles de la ventana, en el orden en que egui les reparte el espacio: el primero que
     /// se declara se queda con el borde. Devuelve el rect del lienzo (`None` en Home).
     fn layout(&mut self, ui: &mut egui::Ui, modal: bool) -> Option<egui::Rect> {
+        let screen = ui.max_rect();
+        let canvas = self.layout_panels(ui, modal);
+        // Chimpy, encima del lienzo (o de Home).
+        self.update_mascot(ui.ctx(), canvas, screen, modal);
+        canvas
+    }
+
+    /// Los paneles de la ventana; devuelve el rect del lienzo (`None` en Home).
+    fn layout_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> Option<egui::Rect> {
         // Las pestañas de vista de lo que ya no existe (o ya no es modelo ni fuente) se van.
         self.tabs.sync_views(&mut self.doc);
         // Entrar al workspace de un modelo desde el lienzo (doble clic en una instancia, Edit
@@ -1485,6 +1509,17 @@ impl ChimpApp {
                     window.top(),
                 );
                 runner.paint_at(ui, at.round());
+                // Cinco clics seguidos despiertan a Chimpy (o, despierto, le piden un consejo).
+                let rect = egui::Rect::from_min_size(at.round(), runner.size());
+                self.mascot_view.runner = Some(rect);
+                if !modal
+                    && ui
+                        .interact(rect, egui::Id::new("running_chimp"), egui::Sense::click())
+                        .clicked()
+                {
+                    let now = ui.input(|i| i.time);
+                    self.mascot.poke(now, &self.keymap);
+                }
             }
             match action {
                 Some(tab_bar::TabAction::Home) => self.go_home(),
@@ -2013,6 +2048,7 @@ impl eframe::App for ChimpApp {
         eframe::set_value(storage, TOOL_OPTIONS_KEY, &self.current_tool_options());
         eframe::set_value(storage, CUSTOM_BRUSH_KEY, &cs_raster::custom_brush());
         eframe::set_value(storage, KEYMAP_KEY, &self.keymap.settings());
+        eframe::set_value(storage, MASCOT_KEY, &self.mascot.settings);
         eframe::set_value(
             storage,
             DEFAULT_PALETTE_KEY,

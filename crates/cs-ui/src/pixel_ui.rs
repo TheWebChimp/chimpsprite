@@ -693,19 +693,19 @@ fn more_mark(corner: Pos2, pixels_per_point: f32) -> [Rect; 3] {
 /// Globo de los tooltips de la barra de íconos: el del mockup (frame 2, junto a la barra), con
 /// la cola a la izquierda. Su 9-slice deja la cola fija: las filas de la cola van en el borde de
 /// arriba y sus columnas en el de la izquierda, así el globo crece a la derecha y hacia abajo.
-const BUBBLE_PIECE: &str = "tooltip.bubble";
+pub(crate) const BUBBLE_PIECE: &str = "tooltip.bubble";
 /// Ancho de la cola: el cuerpo empieza en la columna 8 de la pieza.
-const BUBBLE_TAIL: f32 = 8.0;
+pub(crate) const BUBBLE_TAIL: f32 = 8.0;
 /// Fila de la punta de la cola, contada desde arriba del cuerpo.
-const BUBBLE_TIP_ROW: f32 = 8.0;
+pub(crate) const BUBBLE_TIP_ROW: f32 = 8.0;
 /// Aire entre el botón y la punta de la cola: en el mockup el botón termina en la x 55 y la cola
 /// empieza en la 62.
 const BUBBLE_GAP: f32 = 6.0;
 /// Aire del cuerpo alrededor del texto. En el mockup, una línea de mayúsculas (7 px) centrada en
 /// las 19 filas de relleno del cuerpo deja 6 arriba y 6 abajo; a los lados va el mismo.
-const BUBBLE_PADDING: f32 = 6.0;
+pub(crate) const BUBBLE_PADDING: f32 = 6.0;
 /// La fila de sombra debajo del relleno del cuerpo.
-const BUBBLE_SHADOW: f32 = 1.0;
+pub(crate) const BUBBLE_SHADOW: f32 = 1.0;
 /// Lo más ancho que se hace el texto del globo (después parte en líneas) y cuántas líneas
 /// muestra como mucho (si no entra, termina en puntos suspensivos).
 const BUBBLE_MAX_WIDTH: f32 = 200.0;
@@ -756,7 +756,7 @@ fn bubble_galley(
 
 /// Alto del texto de `galley` en la fuente pixel: de la fila de arriba de las mayúsculas de la
 /// primera línea a la de abajo de las de la última.
-fn caps_block_height(galley: &egui::Galley) -> f32 {
+pub(crate) fn caps_block_height(galley: &egui::Galley) -> f32 {
     let baselines: Vec<f32> = galley
         .rows
         .iter()

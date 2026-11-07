@@ -29,6 +29,15 @@ esos rangos con `fontTools.subset` (`unifont_symbols`: flechas, ☀ ❤ ✨ y di
 `unifont_emoji`: U+1F000..1FAFF). Van detrás de las fuentes pixel, antes que las de egui.
 Licencia: SIL OFL 1.1 (ver `UNIFONT-OFL.txt`).
 
+## mascot.aseprite
+
+Chimpy, el asistente escondido (`crates/cs-ui/src/mascot.rs`): 32×40, colgando de la mano
+derecha (la mano agarra el borde de arriba del lienzo, en la fila 0) y mirando a la derecha, donde
+sale el globo (la cola apunta a la fila 8 del cuerpo, a la altura de la cara). Tags: `idle`
+(quieto y parpadeo) y `talk` (boca abierta y cerrada); las duraciones de los frames son las de la
+animación. **Arte PROVISIONAL** (hecho con Lua a partir de los colores de `running.aseprite`): el
+usuario lo redibujará; el código solo pide los dos tags (sin ellos usa todos los frames).
+
 ## skin.aseprite
 
 El skin (incluido el arte copiado del mockup) es del autor del proyecto y se distribuye con la

@@ -102,7 +102,7 @@ impl ChimpApp {
     }
 
     /// Hace lo de un atajo.
-    fn run_action(&mut self, ctx: &egui::Context, action: keymap::Action) {
+    pub(crate) fn run_action(&mut self, ctx: &egui::Context, action: keymap::Action) {
         use keymap::Action::*;
         let editor = &mut self.doc.editor;
         match action {
