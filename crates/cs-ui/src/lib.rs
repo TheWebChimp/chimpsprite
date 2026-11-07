@@ -766,24 +766,7 @@ impl ChimpApp {
                 editor.rename_artboard(id, name);
             }
             library_panel::LibraryAction::Duplicate(id) => {
-                let Some(source) = editor.document.artboard(id) else {
-                    return;
-                };
-                let mut copy = source.clone();
-                copy.id = editor.document.next_artboard_id();
-                copy.name = format!("{} copy", source.name);
-                // Una fuente lleva su nombre también en su info: la copia es de otra familia
-                // ("Mine copy Bold").
-                if let Some(font) = &mut copy.font {
-                    font.name = format!("{} copy", font.name);
-                    copy.name = font.full_name();
-                }
-                let new = copy.id;
-                let index = editor.document.artboards.len();
-                if editor.execute_doc(cs_commands::DocCommand::AddArtboard {
-                    index,
-                    artboard: Box::new(copy),
-                }) {
+                if let Some(new) = editor.duplicate_library_item(id) {
                     editor.library_selected = Some(new);
                 }
             }

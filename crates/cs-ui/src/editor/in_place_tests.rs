@@ -208,6 +208,26 @@ fn saving_writes_the_library_position() {
 }
 
 #[test]
+fn duplicating_a_symbol_edited_in_place_copies_it_at_its_library_position() {
+    let (mut e, s, layer, object) = host_with_symbol();
+    let home = position(&e, s);
+    assert!(e.enter_symbol_in_place(layer, object));
+    let copy = e.duplicate_library_item(s).unwrap();
+    let artboard = e.document.artboard(copy).unwrap();
+    assert_eq!(
+        (artboard.name.as_str(), artboard.position),
+        ("S copy", home)
+    );
+    assert!(artboard.in_library);
+    // Sin editar en su lugar, la de siempre.
+    e.exit_symbol_to(0);
+    let again = e.duplicate_library_item(s).unwrap();
+    assert_eq!(position(&e, again), home);
+    e.undo();
+    assert!(e.document.artboard(again).is_none(), "one undo step");
+}
+
+#[test]
 fn double_click_on_an_instance_enters_in_place() {
     let (mut e, s, _, _) = host_with_symbol();
     assert_eq!(e.open_object_at((102.5, 52.5)), Some(true));
