@@ -217,3 +217,81 @@ fn rebasing_moves_the_glyphs_onto_another_baseline() {
     let up = a(&rebase(&build, 3));
     assert!(up.len() < original.len() && up.iter().all(|p| p.1 <= 2));
 }
+
+#[test]
+fn kerning_and_style_survive_export_and_import() {
+    use cs_core::KernSide::{Char, Class};
+    let mut original = sample_font(FontMode::OneBit);
+    let font = original.font.as_mut().unwrap();
+    font.style = cs_core::FontStyle {
+        name: "Bold Italic".into(),
+        weight: 700,
+        italic: true,
+        slant: 3,
+        source: None,
+    };
+    font.kerning.classes.push(cs_core::KernClass {
+        name: "low".into(),
+        side: cs_core::ClassSide::Second,
+        chars: vec!['g', 'i'],
+    });
+    font.kerning.set(Char('A'), Class("low".into()), -1);
+    font.kerning.set(Char('A'), Char('i'), 0);
+    font.kerning.set(Char('g'), Char('€'), 2);
+    let bytes = export_ttf(
+        &original,
+        &TtfOptions {
+            family: String::new(),
+            color: false,
+        },
+    )
+    .unwrap();
+    let back = imported(&bytes, &options(10, false));
+    let (a, b) = (original.font_view().unwrap(), back.font_view().unwrap());
+    assert_eq!(
+        a.kerning.len(),
+        2,
+        "A·g −1 and g·€ +2 (A·i is an exception of 0)"
+    );
+    assert_eq!(b.kerning, a.kerning);
+    let font = back.font.as_ref().unwrap();
+    assert!(
+        font.kerning.classes.is_empty(),
+        "classes come back as pairs"
+    );
+    assert_eq!(font.name, "Sample");
+    assert_eq!(font.style.name, "Bold Italic");
+    assert_eq!(
+        (font.style.weight, font.style.italic, font.style.slant),
+        (700, true, 3)
+    );
+    // A otro tamaño, el kerning se escala y lo que queda en 0 no entra.
+    let small = imported(&bytes, &options(4, false));
+    let font = small.font.as_ref().unwrap();
+    assert_eq!(font.kerning.value('g', '€'), 1, "0.8");
+    assert_eq!(font.kerning.value('A', 'g'), 0, "−0.4");
+    assert_eq!(font.kerning.pairs.len(), 1);
+}
+
+#[test]
+fn a_real_font_brings_its_gpos_kerning() {
+    let o = TtfImport {
+        chars: CharRange::Ascii,
+        ..options(32, false)
+    };
+    let build = import_ttf(epaint_default_fonts::UBUNTU_LIGHT, &o).unwrap();
+    let kern = |a, b| {
+        build
+            .kerning
+            .iter()
+            .find(|k| (k.0, k.1) == (a, b))
+            .map(|k| k.2)
+    };
+    assert!(!build.kerning.is_empty());
+    assert!(
+        kern('A', 'V').is_some_and(|v| v < 0),
+        "{:?}",
+        kern('A', 'V')
+    );
+    assert!(build.kerning.iter().all(|k| k.2 != 0));
+}
