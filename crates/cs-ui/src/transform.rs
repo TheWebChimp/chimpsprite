@@ -12,6 +12,9 @@ use cs_raster::{Block, MAX_BLOCK_SIDE, RotationAlgorithm};
 use crate::editor::{DocView, Editor, ToolKind};
 use crate::transform_box::{self, TransformBox, TransformHit};
 
+mod mirror;
+pub(crate) use mirror::MirrorFloat;
+
 /// Contenido levantado de una capa mientras se transforma.
 #[derive(Clone, Debug)]
 pub struct Floating {
@@ -38,9 +41,9 @@ pub struct Floating {
     at: (i32, i32),
     /// Rotación con la que se calculó `rendered`.
     rendered_with: RotationAlgorithm,
-    /// Selección espejo: los ejes (vertical y horizontal) y el centro (en medios píxeles). Al
-    /// trasladar, lo de cada lado del eje se mueve al revés que lo del otro.
-    mirror: Option<(cs_core::SymmetryAxes, (i32, i32))>,
+    /// Selección espejo: los reflejos de lo primario (`source`) y las piezas sobre los ejes, que
+    /// se transforman en espejo con la caja.
+    mirror: Option<Box<MirrorFloat>>,
     /// Vista previa (el documento con lo flotante aplicado; `None` si no se pudo aplicar) y el
     /// `doc_version` con el que se armó. Se descarta al cambiar la caja o lo transformado; la capa,
     /// el frame y el artboard no cambian mientras flota.
@@ -90,60 +93,14 @@ impl Floating {
         }
     }
 
-    /// Con la selección espejo y la caja solo trasladada `(dx, dy)`: cada píxel se mueve hacia su
-    /// lado del eje (los de un lado `+dx`, los del otro `-dx`; igual en vertical con el eje
-    /// horizontal). Lo que está justo sobre el eje no se mueve en ese sentido.
-    fn render_mirrored(&mut self) -> bool {
-        let Some((axes, center2)) = self.mirror else {
-            return false;
-        };
-        let b = self.bbox;
-        let (w, h) = (self.source.width as i32, self.source.height as i32);
-        if b.angle != 0.0 || b.width() != w || b.height() != h {
-            return false;
-        }
-        let (dx, dy) = (b.left() - self.origin.0, b.top() - self.origin.1);
-        let shift = |c: i32, axis: bool, center: i32, d: i32| {
-            // `center` está en medios píxeles: el centro del píxel `c` es `2c + 1`.
-            match (axis, (2 * c + 1).cmp(&center)) {
-                (false, _) => c + d,
-                (true, std::cmp::Ordering::Less) => c + d,
-                (true, std::cmp::Ordering::Greater) => c - d,
-                (true, std::cmp::Ordering::Equal) => c,
-            }
-        };
-        let moved: Vec<(i32, i32, PixelValue)> = self
-            .source
-            .points()
-            .map(|(x, y, v)| {
-                let (cx, cy) = (self.origin.0 + x, self.origin.1 + y);
-                (
-                    shift(cx, axes.vertical, center2.0, dx),
-                    shift(cy, axes.horizontal, center2.1, dy),
-                    v,
-                )
-            })
-            .collect();
-        let Some(x0) = moved.iter().map(|p| p.0).min() else {
-            return false;
-        };
-        let y0 = moved.iter().map(|p| p.1).min().unwrap_or(0);
-        let x1 = moved.iter().map(|p| p.0).max().unwrap_or(x0);
-        let y1 = moved.iter().map(|p| p.1).max().unwrap_or(y0);
-        let mut block = Block::new((x1 - x0 + 1) as u32, (y1 - y0 + 1) as u32);
-        for (x, y, v) in moved {
-            block.set(x - x0, y - y0, Some(v));
-        }
-        self.rendered = block;
-        self.at = (x0, y0);
-        self.preview.take();
-        true
-    }
-
     /// Escala (con volteos) y rota lo levantado según la caja.
     fn render(&mut self, algorithm: RotationAlgorithm) {
-        if self.render_mirrored() {
+        if let Some(mirror) = &self.mirror {
+            let (w, h) = (self.source.width, self.source.height);
+            let start = TransformBox::new(self.origin.0, self.origin.1, w, h);
+            (self.rendered, self.at) = mirror.render(&self.source, start, self.bbox, algorithm);
             self.rendered_with = algorithm;
+            self.preview.take();
             return;
         }
         let b = self.bbox;
@@ -183,18 +140,27 @@ impl Floating {
         (!mask.is_empty()).then_some(mask)
     }
 
+    /// Los píxeles levantados (el hueco): lo seleccionado entero, también con el espejo.
+    fn hole(&self) -> Vec<(i32, i32)> {
+        match &self.mirror {
+            Some(mirror) => mirror.hole.clone(),
+            None => {
+                let (ox, oy) = self.origin;
+                self.source
+                    .points()
+                    .map(|(x, y, _)| (ox + x, oy + y))
+                    .collect()
+            }
+        }
+    }
+
     /// Comando que deja lo flotante en la capa: el hueco en el origen (si no viene de pegar) y el
     /// estampado, sin borrar con lo transparente.
     fn command(&self, sprite: &Sprite) -> Command {
         let clear = sprite.color_mode.transparent();
         let mut pixels = Vec::new();
         if !self.from_paste {
-            let (ox, oy) = self.origin;
-            pixels.extend(
-                self.source
-                    .points()
-                    .map(|(x, y, _)| (ox + x, oy + y, clear)),
-            );
+            pixels.extend(self.hole().into_iter().map(|(x, y)| (x, y, clear)));
         }
         let (ax, ay) = self.at;
         pixels.extend(
@@ -230,6 +196,9 @@ pub(crate) struct TransformDrag {
     /// El puntero (sin pegar) ya salió del píxel presionado: no es un clic aunque el ajuste haya
     /// dejado la caja quieta.
     dragged: bool,
+    /// Con el espejo, el reflejo que se agarró: el arrastre se lleva con su inversa, así lo
+    /// agarrado sigue al mouse y lo primario se mueve en espejo.
+    mirror_op: cs_raster::MirrorOp,
 }
 
 impl Editor {
@@ -252,12 +221,17 @@ impl Editor {
                 || (self.selection.is_some() && !self.selection_is_face_mask()))
     }
 
-    /// Caja de lo flotante o, si no flota nada, el rectángulo que contiene la selección.
+    /// Caja de lo flotante o, si no flota nada, el rectángulo que contiene la selección (con la
+    /// selección espejo, el de lo primario).
     pub fn transform_box(&self) -> Option<TransformBox> {
         if let Some(f) = &self.floating {
             return Some(f.bbox);
         }
-        let ((x0, y0), (x1, y1)) = self.selection.as_ref()?.bounds()?;
+        let bounds = match self.mirror_plan() {
+            Some(plan) => plan.bounds(),
+            None => self.selection.as_ref()?.bounds(),
+        };
+        let ((x0, y0), (x1, y1)) = bounds?;
         Some(TransformBox::new(
             x0,
             y0,
@@ -280,20 +254,33 @@ impl Editor {
         let Some(((x0, y0), (x1, y1))) = mask.bounds() else {
             return false;
         };
+        let plan = self.mirror_plan();
         let sprite = self.sprite();
-        let mut source = Block::new((x1 - x0 + 1) as u32, (y1 - y0 + 1) as u32);
-        for (x, y) in mask.points() {
-            source.set(
-                x - x0,
-                y - y0,
-                Some(sprite.pixel(self.layer, self.frame, x, y)),
-            );
-        }
         let canvas = (sprite.width, sprite.height);
         let target = (self.active, self.layer, self.frame);
-        let mut floating = Floating::new(source, (x0, y0), target, false, Some(mask), canvas);
-        // Con la selección espejo, al trasladar cada lado se mueve como en un espejo.
-        floating.mirror = self.move_mirror();
+        let (layer, frame) = (self.layer, self.frame);
+        let sample = |(x, y): (i32, i32)| sprite.pixel(layer, frame, x, y);
+        // Con la selección espejo, lo primario flota con la caja y lo demás en espejo.
+        let mirrored = plan.and_then(|plan| {
+            let ops = cs_raster::mirror_ops(self.symmetry().axes);
+            let clear = sprite.color_mode.transparent();
+            MirrorFloat::lift(&plan, mask.points().collect(), clear, ops, sample)
+        });
+        let floating = match mirrored {
+            Some((source, origin, mirror)) => {
+                let mut f = Floating::new(source, origin, target, false, Some(mask), canvas);
+                f.mirror = Some(Box::new(mirror));
+                f.render(RotationAlgorithm::Fast);
+                f
+            }
+            None => {
+                let mut source = Block::new((x1 - x0 + 1) as u32, (y1 - y0 + 1) as u32);
+                for (x, y) in mask.points() {
+                    source.set(x - x0, y - y0, Some(sample((x, y))));
+                }
+                Floating::new(source, (x0, y0), target, false, Some(mask), canvas)
+            }
+        };
         self.floating = Some(floating);
         self.revision += 1;
         true
@@ -314,16 +301,30 @@ impl Editor {
     /// Empieza a mover, escalar o rotar lo seleccionado. Se levanta recién al cambiar algo, así
     /// un clic no levanta nada.
     pub fn press_transform(&mut self, hit: TransformHit, world: (f32, f32)) {
-        let Some(start_box) = self.transform_box() else {
-            return;
-        };
-        self.stop();
         let start_pixel = self.to_local(world);
-        let start_snapped = self.to_local(self.snap_world(world));
         let inside = self
             .selection
             .as_ref()
             .is_some_and(|m| m.contains(start_pixel.0, start_pixel.1));
+        // Selección espejo: sin levantar, lo agarrado pasa a ser lo primario; flotando, el
+        // arrastre sobre un reflejo se lleva con su inversa.
+        let mut mirror_op = cs_raster::MirrorOp::IDENTITY;
+        if hit == TransformHit::Move && inside {
+            match self.floating.as_ref() {
+                None => self.mirror_anchor = Some((2 * start_pixel.0 + 1, 2 * start_pixel.1 + 1)),
+                Some(f) => {
+                    if let Some(mirror) = &f.mirror {
+                        let b = f.bbox;
+                        mirror_op = mirror.op_at(start_pixel, (b.x0 + b.x1, b.y0 + b.y1));
+                    }
+                }
+            }
+        }
+        let Some(start_box) = self.transform_box() else {
+            return;
+        };
+        self.stop();
+        let start_snapped = self.to_local(self.snap_world(world));
         self.transform_drag = Some(TransformDrag {
             hit,
             start: self.local_point(world),
@@ -333,6 +334,7 @@ impl Editor {
             inside,
             moved: false,
             dragged: false,
+            mirror_op,
         });
         self.revision += 1;
     }
@@ -351,10 +353,12 @@ impl Editor {
             TransformHit::Move => {
                 // Pega a guías/grid como Move: el desplazamiento entre los dos puntos pegados.
                 let pixel = self.to_local(self.snap_world(world));
-                drag.start_box.translated(
+                let delta = (
                     pixel.0 - drag.start_snapped.0,
                     pixel.1 - drag.start_snapped.1,
-                )
+                );
+                let (dx, dy) = drag.mirror_op.inverse().linear(delta);
+                drag.start_box.translated(dx, dy)
             }
             TransformHit::Handle(handle) => {
                 transform_box::resize(&drag.start_box, handle, drag.start, p, shift)
@@ -665,12 +669,7 @@ impl Editor {
             .artboard(f.artboard)
             .map(|a| a.sprite.color_mode.transparent());
         if let Some(clear) = clear {
-            let (ox, oy) = f.origin;
-            let pixels = f
-                .source
-                .points()
-                .map(|(x, y, _)| (ox + x, oy + y, clear))
-                .collect();
+            let pixels = f.hole().into_iter().map(|(x, y)| (x, y, clear)).collect();
             self.apply_doc(DocCommand::OnArtboard {
                 id: f.artboard,
                 cmd: Command::DrawPixels {
@@ -781,5 +780,7 @@ impl Editor {
     }
 }
 
+#[cfg(test)]
+mod mirror_tests;
 #[cfg(test)]
 mod tests;

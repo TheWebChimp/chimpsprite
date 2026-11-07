@@ -810,6 +810,12 @@ impl Editor {
         if let Some(selection) = out.selection
             && applied
         {
+            // El lado del espejo: el centro de lo que se seleccionó con el gesto.
+            if kind.is_selection()
+                && let Some(((x0, y0), (x1, y1))) = selection.as_ref().and_then(Mask::bounds)
+            {
+                self.mirror_anchor = Some((x0 + x1 + 1, y0 + y1 + 1));
+            }
             let combined = self.combine_selection(kind, selection);
             self.set_selection(combined);
         }
@@ -930,17 +936,39 @@ impl Editor {
         Mask::from_points(mask.width(), mask.height(), points)
     }
 
-    /// El espejo para mover lo levantado: los ejes vertical y horizontal (las diagonales solo
-    /// reflejan al seleccionar) y el centro, si la selección espejo está prendida.
-    pub(crate) fn move_mirror(&self) -> Option<(cs_core::SymmetryAxes, (i32, i32))> {
+    /// El plan de la selección espejo para la selección actual, si la opción está prendida, hay
+    /// algún eje y la selección es simétrica. Se guarda hasta que cambia algo de lo que depende.
+    pub(crate) fn mirror_plan(&self) -> MirrorPlanRef {
         let axes = self.symmetry().axes;
-        (self.options.mirror_selection && (axes.vertical || axes.horizontal)).then(|| {
-            let axes = cs_core::SymmetryAxes {
-                vertical: axes.vertical,
-                horizontal: axes.horizontal,
-                ..Default::default()
-            };
-            (axes, self.artboard().symmetry_center2())
-        })
+        if !self.options.mirror_selection || !axes.any() {
+            return None;
+        }
+        let mask = self.selection.as_ref()?;
+        let anchor2 = match self.mirror_anchor {
+            Some(a) => a,
+            None => {
+                let (x, y) = mask.points().next()?;
+                (2 * x + 1, 2 * y + 1)
+            }
+        };
+        let center2 = self.artboard().symmetry_center2();
+        let mut cache = self.mirror_cache.borrow_mut();
+        if let Some((key, plan)) = cache.as_ref()
+            && key.axes == axes
+            && key.center2 == center2
+            && key.anchor2 == anchor2
+            && key.mask == *mask
+        {
+            return plan.clone();
+        }
+        let plan = cs_raster::mirror_plan(mask, axes, center2, anchor2).map(std::sync::Arc::new);
+        let key = MirrorKey {
+            mask: mask.clone(),
+            axes,
+            center2,
+            anchor2,
+        };
+        *cache = Some((key, plan.clone()));
+        plan
     }
 }
