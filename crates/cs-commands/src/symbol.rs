@@ -436,17 +436,21 @@ fn content_rect(
                         add(x, y, x.saturating_add(w - 1), y.saturating_add(h - 1));
                         continue;
                     }
-                    // Escalado o rotado: un cuadrado que contiene cualquier giro del símbolo
-                    // escalado, alrededor de su centro (con un píxel de margen por el redondeo).
+                    // Escalado o rotado: la caja del rectángulo del símbolo escalado y girado
+                    // alrededor de su centro (con un píxel de margen por el redondeo de
+                    // RotSprite).
                     let side = |size: i32, scale: f32| (size as f32 * scale).round().max(1.0);
                     let (sw, sh) = (side(w, pose.scale.0), side(h, pose.scale.1));
-                    let r = ((sw * sw + sh * sh).sqrt() / 2.0).ceil() as i32 + 1;
+                    let (sin, cos) = pose.rotation.to_radians().sin_cos();
+                    let (sin, cos) = (sin.abs(), cos.abs());
+                    let half = |a: f32, b: f32| ((a + b) / 2.0).ceil() as i32 + 1;
+                    let (rx, ry) = (half(sw * cos, sh * sin), half(sw * sin, sh * cos));
                     let (cx, cy) = (x.saturating_add(w / 2), y.saturating_add(h / 2));
                     add(
-                        cx.saturating_sub(r),
-                        cy.saturating_sub(r),
-                        cx.saturating_add(r),
-                        cy.saturating_add(r),
+                        cx.saturating_sub(rx),
+                        cy.saturating_sub(ry),
+                        cx.saturating_add(rx),
+                        cy.saturating_add(ry),
                     );
                 }
             }

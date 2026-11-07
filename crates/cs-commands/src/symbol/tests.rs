@@ -396,6 +396,110 @@ fn converting_scaled_rotated_and_tweened_objects_looks_the_same() {
 }
 
 #[test]
+fn a_rotated_object_takes_the_box_of_its_turn_not_a_square() {
+    // Una raya de 4×1 en un host de 32×32, al triple de ancho y girada 90°: de 1×12.
+    let mut s = Sprite::new(32, 32, ColorMode::Rgba);
+    crate::Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: (10..14).map(|x| (x, 16, RED)).collect(),
+    }
+    .apply(&mut s)
+    .unwrap();
+    let mut d = Document::with_sprite("host", s);
+    let line = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![LayerId(1)]),
+        "Line",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    line.command.apply(&mut d).unwrap();
+    let s = &mut d.artboards[0].sprite;
+    let object = s.layer(line.layer).unwrap().objects[0].id;
+    crate::ops::update_object_key(s, line.layer, object, 0, |k| {
+        k.scale = (3000, 1000);
+        k.rotation = 90;
+    })
+    .unwrap()
+    .apply(s)
+    .unwrap();
+    let before = rendered(&d, ArtboardId(1));
+    let outer = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![line.layer]),
+        "Outer",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    outer.command.apply(&mut d).unwrap();
+    assert_eq!(rendered(&d, ArtboardId(1)), before, "nothing is cut");
+    let symbol = &d.artboard(outer.symbol).unwrap().sprite;
+    // 1 + 2 pixeles de margen a cada lado por 12 + 1 y 1 (un cuadrado medía 17×17).
+    assert!(
+        symbol.width <= 5 && symbol.height <= 15,
+        "{}×{}",
+        symbol.width,
+        symbol.height
+    );
+}
+
+#[test]
+fn no_turn_or_scale_gets_cut_by_the_tighter_box() {
+    let cases = [
+        (10, 2000),
+        (30, 1500),
+        (45, 3000),
+        (77, 1000),
+        (135, 2500),
+        (200, 1200),
+        (315, 2000),
+    ];
+    for (rotation, scale) in cases {
+        let mut s = Sprite::new(48, 48, ColorMode::Rgba);
+        crate::Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(20, 20, RED), (24, 20, RED), (20, 22, BLUE), (22, 21, RED)],
+        }
+        .apply(&mut s)
+        .unwrap();
+        let mut d = Document::with_sprite("host", s);
+        let first = convert_to_symbol(
+            &d,
+            ArtboardId(1),
+            &SymbolSource::Layers(vec![LayerId(1)]),
+            "Shape",
+            SymbolTiming::Graphic,
+        )
+        .unwrap();
+        first.command.apply(&mut d).unwrap();
+        let s = &mut d.artboards[0].sprite;
+        let object = s.layer(first.layer).unwrap().objects[0].id;
+        crate::ops::update_object_key(s, first.layer, object, 0, |k| {
+            k.scale = (scale, 1000);
+            k.rotation = rotation;
+        })
+        .unwrap()
+        .apply(s)
+        .unwrap();
+        let before = rendered(&d, ArtboardId(1));
+        let outer = convert_to_symbol(
+            &d,
+            ArtboardId(1),
+            &SymbolSource::Layers(vec![first.layer]),
+            "Outer",
+            SymbolTiming::Graphic,
+        )
+        .unwrap();
+        outer.command.apply(&mut d).unwrap();
+        assert_eq!(rendered(&d, ArtboardId(1)), before, "{rotation}° ×{scale}");
+    }
+}
+
+#[test]
 fn convert_errors() {
     let d = animated();
     let layers = |ids: &[u32]| SymbolSource::Layers(ids.iter().map(|&i| LayerId(i)).collect());
