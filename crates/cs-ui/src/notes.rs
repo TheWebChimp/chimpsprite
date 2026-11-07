@@ -303,12 +303,9 @@ impl NotesView {
                 }
                 _ => {
                     // Al soltar: el gesto entero en un paso de undo (desde la nota de antes).
-                    let after = editor.document.notes.clone();
                     if let Some(n) = editor.document.notes.iter_mut().find(|n| n.id == drag.id) {
-                        *n = drag.before.clone();
-                    }
-                    if after != editor.document.notes {
-                        editor.set_notes(after);
+                        let after = std::mem::replace(n, drag.before.clone());
+                        editor.set_note(after);
                     }
                     self.drag = None;
                 }
@@ -546,6 +543,11 @@ impl NotesView {
                 }
                 if ui.add(menus::plain("Bring to Front")).clicked() {
                     editor.note_to_front(id);
+                    ui.close();
+                }
+                if ui.add(menus::plain("Duplicate")).clicked() {
+                    self.finish_editing(editor);
+                    editor.duplicate_note(id);
                     ui.close();
                 }
                 menus::separator(ui);

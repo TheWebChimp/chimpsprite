@@ -1218,3 +1218,6 @@ mod in_place_tests;
 
 #[cfg(test)]
 mod play_in_place_tests;
+
+#[cfg(test)]
+mod notes_tests;
