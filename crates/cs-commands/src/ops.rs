@@ -65,7 +65,8 @@ pub fn new_object_layer(
 }
 
 /// Cambia con `f` la key vigente de `object` (de `layer`) en `frame`; si `frame` no es keyframe,
-/// la copia ahí primero (en un tween, con los valores que se ven; ver `keyframe_at`). `None` si no hay key vigente o nada cambia.
+/// la copia ahí primero (en un tween, con los valores que se ven; ver `keyframe_at`). `None`
+/// si no hay key vigente o nada cambia.
 pub fn update_object_key(
     sprite: &Sprite,
     layer: LayerId,

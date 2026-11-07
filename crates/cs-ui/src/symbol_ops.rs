@@ -123,8 +123,8 @@ impl Editor {
     /// Entra a editar en su lugar el símbolo del objeto `object` de la capa `layer` del activo
     /// (Edit in Place): el símbolo se ve donde está la instancia, sobre el resto atenuado, y
     /// empieza en el frame que la instancia muestra ahora. Si el objeto está volteado, escalado
-    /// o rotado (o su símbolo ya está en la pila) entra aislado. `false` si la fuente no es un símbolo de la
-    /// biblioteca.
+    /// o rotado (o su símbolo ya está en la pila) entra aislado. `false` si la fuente no es un
+    /// símbolo de la biblioteca.
     pub fn enter_symbol_in_place(&mut self, layer: LayerId, object: ObjectId) -> bool {
         let (parent, parent_frame) = (self.active, self.frame);
         let sprite = self.sprite();
