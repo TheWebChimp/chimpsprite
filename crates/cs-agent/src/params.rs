@@ -410,6 +410,78 @@ pub struct DrawShape {
     pub on_mask: bool,
 }
 
+/// The colors of an isometric drawing. Each part is optional: without it, it is a shade of
+/// `color` (light from the top left: top lighter, right darker, outline very dark, highlight
+/// almost white).
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct IsoStyle {
+    /// Base color: the left face, and what the other parts are shaded from.
+    pub color: ColorArg,
+    /// Top face color.
+    pub top_color: Option<ColorArg>,
+    /// Left face color (default: `color`).
+    pub left_color: Option<ColorArg>,
+    /// Right face color.
+    pub right_color: Option<ColorArg>,
+    /// Silhouette outline color, or "none" for no outline.
+    pub outline: Option<ColorArg>,
+    /// Color of the front edges of the top face (and, with 3 px corners, of the vertical front
+    /// edge), or "none" for no highlight.
+    pub highlight: Option<ColorArg>,
+    /// Replace every color with the nearest one of the palette (always on indexed sprites).
+    #[serde(default)]
+    pub snap_to_palette: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DrawIsoBox {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Option<Ref>,
+    #[serde(default)]
+    pub frame: usize,
+    /// Top-left corner of the box's bounding rectangle.
+    pub x: i32,
+    pub y: i32,
+    /// Length of the back-left top edge in units (1 unit = 2 px across, 1 px down), like
+    /// Isobox's "X size (Left)" (1-512).
+    pub left: u32,
+    /// Length of the back-right top edge in units (1-512).
+    pub right: u32,
+    /// Height of the sides in pixels (0 = a flat tile; up to 2048).
+    pub height: u32,
+    /// Width of the top and bottom corners: 2, 3 (default) or 4 px. 4 px with left = right = 8
+    /// and height 0 is the classic 32×16 tile.
+    pub corner: Option<u32>,
+    #[serde(flatten)]
+    pub style: IsoStyle,
+    pub clip: Option<Rect>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct DrawIsoBlocks {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Option<Ref>,
+    #[serde(default)]
+    pub frame: usize,
+    /// Top-left corner of the drawing's bounding rectangle.
+    pub x: i32,
+    pub y: i32,
+    /// Stack heights on the isometric grid, one array per row (rows go down-left, columns
+    /// down-right); 0 = empty cell. Up to 32×32 cells and 64 blocks per stack.
+    pub heights: Vec<Vec<u32>>,
+    /// Block size in units (each block is a size × size box; default 2).
+    pub size: Option<u32>,
+    /// Block height in pixels (default 4).
+    pub block_height: Option<u32>,
+    /// Corner width: 2, 3 (default) or 4 px.
+    pub corner: Option<u32>,
+    #[serde(flatten)]
+    pub style: IsoStyle,
+    pub clip: Option<Rect>,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct Fill {
     pub doc: String,

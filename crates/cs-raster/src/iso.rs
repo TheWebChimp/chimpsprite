@@ -273,7 +273,7 @@ impl IsoBlocks {
             heights: vec![1; (columns * rows) as usize],
             size: 2,
             block_height: 4,
-            corner: IsoCorner::Two,
+            corner: IsoCorner::Three,
         }
     }
 
