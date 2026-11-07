@@ -821,6 +821,17 @@ pub struct SetInstanceKey {
     pub timing: Option<TimingArg>,
     /// Symbol frame to start from.
     pub first_frame: Option<usize>,
+    /// Horizontal scale in percent (100 = as is, 0.1 to 2000), from the symbol's center.
+    pub scale_x: Option<f32>,
+    /// Vertical scale in percent (100 = as is, 0.1 to 2000), from the symbol's center.
+    pub scale_y: Option<f32>,
+    /// Rotation in degrees, clockwise, from the symbol's center. Not wrapped: 720 in the end
+    /// keyframe of a tween spins twice.
+    pub rotation: Option<i32>,
+    /// Tint color ("#rrggbb"): the symbol's colors mix toward it.
+    pub tint: Option<String>,
+    /// How much of the tint color, 0-255 (0 removes the tint; default 255 with a new tint).
+    pub tint_amount: Option<u8>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -871,6 +882,62 @@ pub struct SetObjectKey {
     pub timing: Option<TimingArg>,
     /// Symbol frame to start from.
     pub first_frame: Option<usize>,
+    /// Horizontal scale in percent (100 = as is, 0.1 to 2000), from the symbol's center.
+    pub scale_x: Option<f32>,
+    /// Vertical scale in percent (100 = as is, 0.1 to 2000), from the symbol's center.
+    pub scale_y: Option<f32>,
+    /// Rotation in degrees, clockwise, from the symbol's center. Not wrapped: 720 in the end
+    /// keyframe of a tween spins twice.
+    pub rotation: Option<i32>,
+    /// Tint color ("#rrggbb"): the symbol's colors mix toward it.
+    pub tint: Option<String>,
+    /// How much of the tint color, 0-255 (0 removes the tint; default 255 with a new tint).
+    pub tint_amount: Option<u8>,
+}
+
+/// How a tween eases between its two keyframes.
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EaseArg {
+    /// Flash's classic ease: amount -100 (speeds up) to 100 (slows down); 0 is linear.
+    Classic,
+    EaseIn,
+    EaseOut,
+    EaseInOut,
+    Bounce,
+    Elastic,
+    Back,
+    Step,
+}
+
+/// Create (or change) the classic tween of an object from the keyframe at or before `frame` to
+/// the next keyframe.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetTween {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    /// Object layer, by name or id.
+    pub layer: Ref,
+    /// Object, by id or name (default: the layer's first object).
+    pub object: Option<Ref>,
+    /// Any frame of the span (the tween belongs to the keyframe at or before it).
+    #[serde(default)]
+    pub frame: usize,
+    /// Default: classic (or the tween's current ease).
+    pub ease: Option<EaseArg>,
+    /// Classic: -100 to 100 (default 0). Curves: 0 to 100, how strong (default 100).
+    pub amount: Option<i32>,
+}
+
+/// Remove the tween of the span that contains `frame`.
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct RemoveTween {
+    pub doc: String,
+    pub artboard: Option<Ref>,
+    pub layer: Ref,
+    /// Object, by id or name (default: the layer's first object).
+    pub object: Option<Ref>,
+    pub frame: usize,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]

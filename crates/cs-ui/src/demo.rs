@@ -502,7 +502,7 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     }
     // Desarrollo: la capa actual convertida en símbolo y el panel Library abierto, para capturas.
     // Con CHIMPSPRITE_DEMO_SYMBOL=edit, además dentro del modo símbolo; con =inplace, editándolo
-    // en su lugar (el resto atenuado) con un trazo nuevo encima.
+    // en su lugar (el resto atenuado) con un trazo nuevo encima; con =tween, con un tween.
     if let Some(mode) = dev_var("CHIMPSPRITE_DEMO_SYMBOL")
         && app.has_doc()
     {
@@ -516,7 +516,7 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         if let Ok(symbol) =
             editor.convert_to_symbol(&name, cs_commands::symbol::SymbolTiming::Graphic)
         {
-            if mode != "objects" && mode != "inplace" {
+            if !matches!(mode, "objects" | "inplace" | "tween") {
                 dock::set_open(ctx, Some(dock::DockPanel::Library));
             }
             // Con =objects, dos sombreros más en la misma capa, la capa desplegada en el
@@ -528,6 +528,29 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                     let _ = editor.drop_symbol(symbol, (x + at.0, y + at.1));
                 }
                 app.doc.timeline.expanded_objects.insert(layer);
+            }
+            // Con =tween, el sombrero va del primer frame al último corriéndose, creciendo y
+            // girando (classic tween con ease out), la capa desplegada y un frame del medio.
+            if mode == "tween"
+                && let Some(object) = editor.current_object()
+            {
+                let layer = editor.layer;
+                let last = editor.sprite().frames.len().saturating_sub(1);
+                editor.set_frame(last);
+                editor.update_instance_key(|k| {
+                    k.position = (k.position.0 + 16, k.position.1 + 6);
+                    k.scale = (1500, 1500);
+                    k.rotation = 30;
+                });
+                editor.set_frame(0);
+                editor.create_tweens(layer, &[object], 0);
+                editor.select_object(layer, object, false);
+                editor.update_current_tween(None, |t| t.ease = cs_core::Ease::Classic(100));
+                editor.set_frame(last.div_ceil(2));
+                app.doc
+                    .timeline
+                    .expanded_objects
+                    .insert((editor.active, layer));
             }
             if mode == "edit" && editor.enter_symbol(symbol) {
                 app.doc.canvas.request_zoom(crate::view::ZoomRequest::Fit);

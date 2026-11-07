@@ -349,6 +349,53 @@ fn converting_a_layer_with_several_objects_looks_the_same_and_undoes_exactly() {
 }
 
 #[test]
+fn converting_scaled_rotated_and_tweened_objects_looks_the_same() {
+    let mut d = animated();
+    let first = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![LayerId(1)]),
+        "Dot",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    first.command.apply(&mut d).unwrap();
+    // El objeto, al triple y girado 45° en el frame 0, con un tween hasta el 2 (90°, alto ×3).
+    let s = &mut d.artboards[0].sprite;
+    let object = s.layer(first.layer).unwrap().objects[0].id;
+    crate::ops::update_object_key(s, first.layer, object, 0, |k| {
+        k.scale = (3000, 3000);
+        k.rotation = 45;
+    })
+    .unwrap()
+    .apply(s)
+    .unwrap();
+    crate::ops::update_object_key(s, first.layer, object, 2, |k| {
+        k.scale = (1000, 3000);
+        k.rotation = 90;
+        k.position.0 += 1;
+    })
+    .unwrap()
+    .apply(s)
+    .unwrap();
+    crate::ops::create_tweens(s, first.layer, &[object], 0)
+        .unwrap()
+        .apply(s)
+        .unwrap();
+    let before = rendered(&d, ArtboardId(1));
+    let outer = convert_to_symbol(
+        &d,
+        ArtboardId(1),
+        &SymbolSource::Layers(vec![first.layer]),
+        "Outer",
+        SymbolTiming::Graphic,
+    )
+    .unwrap();
+    outer.command.apply(&mut d).unwrap();
+    assert_eq!(rendered(&d, ArtboardId(1)), before);
+}
+
+#[test]
 fn convert_errors() {
     let d = animated();
     let layers = |ids: &[u32]| SymbolSource::Layers(ids.iter().map(|&i| LayerId(i)).collect());

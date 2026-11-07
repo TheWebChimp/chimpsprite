@@ -208,7 +208,7 @@ impl ChimpServer {
     }
 
     #[tool(
-        description = "Change an object layer from a frame on (creates a keyframe there); acts on the layer's first object (use set_object_key for another one): position, flip, opacity, source artboard and timing (loop / once / single follow the parent's frames; movie_clip plays on its own clock)."
+        description = "Change an object layer from a frame on (creates a keyframe there); acts on the layer's first object (use set_object_key for another one): position, scale, rotation, tint, flip, opacity, source artboard and timing (loop / once / single follow the parent's frames; movie_clip plays on its own clock)."
     )]
     fn set_instance_key(&self, Parameters(p): Parameters<SetInstanceKey>) -> CallToolResult {
         self.with(|s| s.set_instance_key(p))
@@ -229,7 +229,7 @@ impl ChimpServer {
     }
 
     #[tool(
-        description = "Change one object of an object layer from a frame on (creates a keyframe there): position, flip, opacity, source artboard and timing. Object by id or name."
+        description = "Change one object of an object layer from a frame on (creates a keyframe there; inside a tween it starts from what is seen there): position, scale and rotation (from the symbol's center), tint, flip, opacity, source artboard and timing. Object by id or name."
     )]
     fn set_object_key(&self, Parameters(p): Parameters<SetObjectKey>) -> CallToolResult {
         self.with(|s| s.set_object_key(p))
@@ -247,6 +247,20 @@ impl ChimpServer {
     )]
     fn reorder_object(&self, Parameters(p): Parameters<ReorderObject>) -> CallToolResult {
         self.with(|s| s.reorder_object(p))
+    }
+
+    #[tool(
+        description = "Create a classic tween (like Flash) for an object: from its keyframe at or before `frame` to its next keyframe, the frames in between interpolate position, scale, rotation, opacity and tint (pixel art: whole pixels, nearest neighbour, RotSprite). Both keyframes must show the same symbol. If the span already has a tween, changes its ease. Ease: classic (amount -100 speeds up … 100 slows down) or a curve (ease_in, ease_out, ease_in_out, bounce, elastic, back, step; amount 0-100)."
+    )]
+    fn set_tween(&self, Parameters(p): Parameters<SetTween>) -> CallToolResult {
+        self.with(|s| s.set_tween(p))
+    }
+
+    #[tool(
+        description = "Remove the tween of the span that contains `frame` (the object holds each keyframe again)."
+    )]
+    fn remove_tween(&self, Parameters(p): Parameters<RemoveTween>) -> CallToolResult {
+        self.with(|s| s.remove_tween(p))
     }
 
     // --- Tilemaps ---

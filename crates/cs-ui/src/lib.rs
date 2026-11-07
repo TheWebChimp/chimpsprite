@@ -102,6 +102,7 @@ mod tool_group;
 mod tool_tests;
 mod transform;
 mod transform_box;
+mod tween_ops;
 mod undo_history;
 mod view;
 mod widgets;

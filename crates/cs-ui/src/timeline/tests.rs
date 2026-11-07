@@ -996,3 +996,90 @@ fn with_pixel_ui_an_object_layer_has_no_picture_label() {
     with_two_objects(&mut h);
     assert!(h.texts.iter().any(|t| t == "🖼 Scene"), "{:?}", h.texts);
 }
+
+/// `with_two_objects` con una key más de Beta en el frame 1 (en (2, 2)).
+fn with_tweenable_beta(h: &mut Harness) -> (LayerId, [cs_core::ObjectId; 2]) {
+    let (layer, [a, b]) = with_two_objects(h);
+    let cmd =
+        ops::update_object_key(h.editor.sprite(), layer, b, 1, |k| k.position = (2, 2)).unwrap();
+    h.editor.execute(cmd);
+    h.frame(vec![]);
+    (layer, [a, b])
+}
+
+fn first_tween(h: &Harness, layer: LayerId, o: cs_core::ObjectId) -> Option<cs_core::Tween> {
+    let l = h.editor.sprite().layer(layer).unwrap();
+    l.object(o).unwrap().track.keys[0].tween
+}
+
+#[test]
+fn the_tween_menu_of_an_object_row_creates_and_removes_its_tween() {
+    let mut h = Harness::new(1200.0);
+    let (layer, [a, b]) = with_tweenable_beta(&mut h);
+    h.state.expanded_objects.insert((h.editor.active, layer));
+    h.frame(vec![]);
+    let fill = theme::ACCENT.gamma_multiply(0.25);
+    assert!(!h.flat_colors.contains(&fill));
+    let at = pos2(h.header_cell(0).x, h.rect("Beta").center().y);
+    h.right_click_at(at);
+    h.click("Create Tween");
+    h.frame(vec![]);
+    assert!(first_tween(&h, layer, b).is_some());
+    assert!(first_tween(&h, layer, a).is_none());
+    assert!(h.flat_colors.contains(&fill), "the span is painted");
+    // Alpha no tiene key siguiente: Create Tween está deshabilitado.
+    let alpha = pos2(h.header_cell(0).x, h.rect("Alpha").center().y);
+    h.right_click_at(alpha);
+    h.click("Create Tween");
+    h.frame(vec![]);
+    assert!(first_tween(&h, layer, a).is_none());
+    h.right_click_at(at);
+    h.click("Remove Tween");
+    h.frame(vec![]);
+    assert!(first_tween(&h, layer, b).is_none());
+    // Cada uno, un paso de undo.
+    h.editor.undo();
+    assert!(first_tween(&h, layer, b).is_some());
+}
+
+#[test]
+fn the_collapsed_row_tween_menu_acts_on_the_selected_object() {
+    let mut h = Harness::new(1200.0);
+    let (layer, [a, b]) = with_tweenable_beta(&mut h);
+    h.editor.select_object(layer, b, false);
+    h.frame(vec![]);
+    let row = h.state.rows.iter().find(|(l, _)| *l == layer).unwrap().1;
+    h.right_click_at(pos2(h.header_cell(0).x, row.center().y));
+    h.click("Create Tween");
+    h.frame(vec![]);
+    assert!(first_tween(&h, layer, b).is_some());
+    assert!(first_tween(&h, layer, a).is_none());
+}
+
+#[test]
+fn tween_cells_carry_the_arrow_or_the_dashed_line() {
+    let span = TweenSpan {
+        start: 2,
+        end: Some(5),
+        broken: false,
+    };
+    let marks = |f| tween_marks(span, f, 8);
+    assert_eq!(
+        marks(2),
+        TweenMarks {
+            from_left: false,
+            to_right: true,
+            arrow: false,
+            dashed: false
+        }
+    );
+    assert!(marks(3).from_left && !marks(3).arrow);
+    assert!(marks(4).arrow, "the cell before the end key");
+    let broken = TweenSpan {
+        start: 2,
+        end: None,
+        broken: true,
+    };
+    let last = tween_marks(broken, 7, 8);
+    assert!(last.dashed && !last.arrow && !last.to_right && last.from_left);
+}

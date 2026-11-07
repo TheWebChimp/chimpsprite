@@ -12,6 +12,7 @@ mod model;
 mod palettes;
 mod sprite;
 mod tilemap;
+mod tween;
 
 pub use anim::*;
 pub use color::*;
@@ -25,3 +26,4 @@ pub use model::*;
 pub use palettes::*;
 pub use sprite::*;
 pub use tilemap::*;
+pub use tween::*;

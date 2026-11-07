@@ -322,3 +322,35 @@ fn a_nested_context_copies_the_middle_symbol_without_the_instance() {
             .is_empty()
     );
 }
+
+#[test]
+fn scaled_or_rotated_instances_are_edited_isolated() {
+    for change in [
+        (|k: &mut cs_core::InstanceKey| k.rotation = 90) as fn(&mut cs_core::InstanceKey),
+        |k| k.scale = (2000, 1000),
+    ] {
+        let (mut e, s, layer, object) = host_with_symbol();
+        let cmd = ops::update_object_key(e.sprite(), layer, object, 0, change).unwrap();
+        e.execute(cmd);
+        assert!(e.enter_symbol_in_place(layer, object));
+        assert_eq!(e.active, s);
+        assert!(!e.editing_in_place());
+    }
+}
+
+#[test]
+fn in_place_inside_a_tween_uses_where_the_instance_is_on_that_frame() {
+    let (mut e, s, layer, object) = host_with_symbol();
+    e.insert_empty_frame();
+    e.insert_empty_frame();
+    // Del frame 0 en (2, 2) al 2 en (6, 4), con tween: en el frame 1 está en (4, 3).
+    let cmd =
+        ops::update_object_key(e.sprite(), layer, object, 2, |k| k.position = (6, 4)).unwrap();
+    e.execute(cmd);
+    let cmd = ops::create_tweens(e.sprite(), layer, &[object], 0).unwrap();
+    e.execute(cmd);
+    e.set_frame(1);
+    assert!(e.enter_symbol_in_place(layer, object));
+    assert!(e.editing_in_place());
+    assert_eq!(position(&e, s), (104, 53));
+}

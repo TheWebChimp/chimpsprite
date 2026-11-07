@@ -1136,3 +1136,100 @@ fn rename_object_and_undo() {
     );
     assert!(rename_object(&s, id, ObjectId(9), "X").is_none());
 }
+
+/// `four_objects` con 5 frames; A tiene una segunda key en el frame 4 en (8, 4).
+fn tweenable() -> (Sprite, LayerId) {
+    let (mut s, id) = four_objects();
+    for i in 1..5 {
+        crate::Command::AddFrame {
+            index: i,
+            frame: Frame { duration_ms: 100 },
+        }
+        .apply(&mut s)
+        .unwrap();
+    }
+    move_objects(&s, id, &ids(&[1]), 4, 8, 4)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    (s, id)
+}
+
+fn track_of(s: &Sprite, layer: LayerId, object: u32) -> &InstanceTrack {
+    &s.layer(layer)
+        .unwrap()
+        .object(ObjectId(object))
+        .unwrap()
+        .track
+}
+
+#[test]
+fn create_and_remove_tweens_with_undo() {
+    let (mut s, id) = tweenable();
+    // B no tiene key siguiente: no se le crea.
+    assert!(!can_create_tween(track_of(&s, id, 2), 1));
+    assert!(can_create_tween(track_of(&s, id, 1), 1));
+    assert!(create_tweens(&s, id, &ids(&[2]), 1).is_none());
+    let before = s.clone();
+    let undo = create_tweens(&s, id, &ids(&[1, 2]), 2)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    let a = track_of(&s, id, 1);
+    assert_eq!(a.keys[0].tween, Some(Tween::default()));
+    assert!(has_tween(a, 3) && !has_tween(a, 4));
+    assert!(!can_create_tween(a, 0), "already tweened");
+    assert_eq!(a.pose_at(2).unwrap().position, (4, 2));
+    assert!(track_of(&s, id, 2).keys[0].tween.is_none());
+    assert!(
+        create_tweens(&s, id, &ids(&[1]), 1).is_none(),
+        "nothing changes"
+    );
+    // El ease se cambia en la key de inicio, sin crear keyframes.
+    let eased = update_tweens(&s, id, &ids(&[1]), 3, |t| t.ease = Ease::Classic(-100)).unwrap();
+    let mut e = s.clone();
+    eased.apply(&mut e).unwrap();
+    let a = track_of(&e, id, 1);
+    assert_eq!(a.keys.len(), 2);
+    assert_eq!(a.keys[0].tween.unwrap().ease, Ease::Classic(-100));
+    assert!(update_tweens(&s, id, &ids(&[2]), 3, |t| t.ease = Ease::Classic(5)).is_none());
+    // Quitar.
+    let mut r = s.clone();
+    let undo_remove = remove_tweens(&r, id, &ids(&[1]), 1)
+        .unwrap()
+        .apply(&mut r)
+        .unwrap();
+    assert!(track_of(&r, id, 1).keys[0].tween.is_none());
+    assert!(remove_tweens(&r, id, &ids(&[1]), 1).is_none());
+    undo_remove.apply(&mut r).unwrap();
+    assert_eq!(r, s);
+    undo.apply(&mut s).unwrap();
+    assert_eq!(s, before);
+}
+
+#[test]
+fn moving_or_editing_inside_a_tween_keys_what_is_seen() {
+    let (mut s, id) = tweenable();
+    create_tweens(&s, id, &ids(&[1]), 0)
+        .unwrap()
+        .apply(&mut s)
+        .unwrap();
+    // En el frame 2 se ve en (4, 2): moverlo 1 px deja la key en (5, 2), no en (1, 0).
+    let mut m = s.clone();
+    move_objects(&m, id, &ids(&[1]), 2, 1, 0)
+        .unwrap()
+        .apply(&mut m)
+        .unwrap();
+    let a = track_of(&m, id, 1);
+    assert_eq!(a.keys.len(), 3);
+    assert_eq!((a.keys[1].frame, a.keys[1].position), (2, (5, 2)));
+    assert!(a.keys[1].tween.is_some(), "both halves stay tweened");
+    // Lo mismo al editar (el inspector): la opacidad cambia sobre lo que se ve.
+    let mut e = s.clone();
+    update_object_key(&e, id, ObjectId(1), 2, |k| k.opacity = 9)
+        .unwrap()
+        .apply(&mut e)
+        .unwrap();
+    let k = track_of(&e, id, 1).keys[1];
+    assert_eq!((k.frame, k.position, k.opacity), (2, (4, 2), 9));
+}

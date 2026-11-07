@@ -423,13 +423,31 @@ fn content_rect(
                 }
             }
             LayerKind::Objects => {
-                for key in layer.objects.iter().flat_map(|o| o.track.keys.iter()) {
-                    let Some(src) = key.source.and_then(|s| doc.artboard(s)) else {
+                // Lo que se ve en cada frame (en un tween, la pose de en medio).
+                let poses = (0..sprite.frames.len())
+                    .flat_map(|f| layer.objects.iter().filter_map(move |o| o.track.pose_at(f)));
+                for pose in poses {
+                    let Some(src) = pose.key.source.and_then(|s| doc.artboard(s)) else {
                         continue;
                     };
                     let (w, h) = (src.sprite.width as i32, src.sprite.height as i32);
-                    let (x, y) = key.position;
-                    add(x, y, x.saturating_add(w - 1), y.saturating_add(h - 1));
+                    let (x, y) = pose.position;
+                    if !pose.is_transformed() {
+                        add(x, y, x.saturating_add(w - 1), y.saturating_add(h - 1));
+                        continue;
+                    }
+                    // Escalado o rotado: un cuadrado que contiene cualquier giro del símbolo
+                    // escalado, alrededor de su centro (con un píxel de margen por el redondeo).
+                    let side = |size: i32, scale: f32| (size as f32 * scale).round().max(1.0);
+                    let (sw, sh) = (side(w, pose.scale.0), side(h, pose.scale.1));
+                    let r = ((sw * sw + sh * sh).sqrt() / 2.0).ceil() as i32 + 1;
+                    let (cx, cy) = (x.saturating_add(w / 2), y.saturating_add(h / 2));
+                    add(
+                        cx.saturating_sub(r),
+                        cy.saturating_sub(r),
+                        cx.saturating_add(r),
+                        cy.saturating_add(r),
+                    );
                 }
             }
             LayerKind::Group | LayerKind::Tilemap => {}
