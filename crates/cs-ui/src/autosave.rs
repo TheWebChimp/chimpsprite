@@ -24,7 +24,9 @@ pub fn encode(docs: &[(&str, &Document)]) -> Result<String, String> {
     let payloads = docs
         .iter()
         .map(|(name, doc)| {
-            let bytes = cs_io::chimp::write(doc).map_err(|e| e.to_string())?;
+            // Sin miniatura: no hace falta y se ahorra el render cada 10 s.
+            let bytes = cs_io::chimp::write_with(doc, cs_io::chimp::ThumbnailFrom::None)
+                .map_err(|e| e.to_string())?;
             Ok(Payload {
                 name: name.to_string(),
                 chimp: STANDARD.encode(bytes),
@@ -136,6 +138,24 @@ mod tests {
         assert_eq!(back[0].doc.artboards[0].name, "hero");
         assert_eq!(back[1].doc.artboards[0].name, "coin");
         assert!(decode("{nope").is_err());
+    }
+
+    #[test]
+    fn the_autosave_has_no_thumbnail() {
+        let mut sprite = Sprite::new(2, 2, ColorMode::Rgba);
+        cs_commands::Command::DrawPixels {
+            layer: cs_core::LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(1, 2, 3)))],
+        }
+        .apply(&mut sprite)
+        .unwrap();
+        let doc = Document::with_sprite("hero", sprite);
+        let text = encode(&[("hero.chimp", &doc)]).unwrap();
+        let payloads: Vec<Payload> = serde_json::from_str(&text).unwrap();
+        let bytes = STANDARD.decode(&payloads[0].chimp).unwrap();
+        let thumb = cs_io::thumbnail::read_png(std::io::Cursor::new(bytes)).unwrap();
+        assert!(thumb.is_none());
     }
 
     /// Autosave real de la versión anterior: "hero.chimp", un sprite de 4×4 con la simetría
