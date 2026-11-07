@@ -125,7 +125,7 @@ fn a_walk_cycle_offers_onion_skin() {
     let tip = m.tip().expect("the walk cycle tip");
     assert_eq!(tip.id, "walk-cycle");
     assert_eq!(tip.buttons(), vec!["Yes", "No, thanks"]);
-    assert_eq!(m.answer(0, 102.0), Some(Suggestion::Run(Action::OnionSkin)));
+    assert_eq!(m.answer(0, 102.0), Some(Suggestion::OnionSkin));
     assert!(m.settings.seen.contains("walk-cycle"));
     // Se va (sube) y no vuelve a salir.
     m.observe(110.0, &snap(doc.clone()), &keys);

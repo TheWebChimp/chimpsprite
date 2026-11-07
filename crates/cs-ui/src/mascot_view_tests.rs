@@ -218,3 +218,33 @@ fn turning_him_off_hides_him() {
     assert!(h.node(mascot::NAME).is_none());
     assert!(h.app.mascot.settings.discovered, "Help still offers him");
 }
+
+#[test]
+fn yes_to_onion_skin_never_turns_it_off() {
+    let mut h = Harness::new(true);
+    let ctx = h.ctx.clone();
+    h.app.doc.editor.onion_enabled = true;
+    h.app.accept_suggestion(&ctx, mascot::Suggestion::OnionSkin);
+    assert!(h.app.doc.editor.onion_enabled);
+}
+
+#[test]
+fn help_offers_chimpy_only_once_he_was_found() {
+    let mut h = Harness::new(true);
+    h.click_node("Help");
+    h.frames(4);
+    assert!(h.node("About ChimpSprite").is_some(), "Help is open");
+    assert!(h.node(mascot::NAME).is_none());
+
+    let mut h = Harness::new(true);
+    h.app.mascot = mascot::Mascot::new(MascotSettings {
+        enabled: true,
+        discovered: true,
+        ..Default::default()
+    });
+    h.click_node("Help");
+    h.frames(4);
+    h.click_node(mascot::NAME);
+    assert!(!h.app.mascot.settings.enabled, "the check turns him off");
+    assert!(h.app.mascot.settings.discovered);
+}

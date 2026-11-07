@@ -55,7 +55,8 @@ no aparece más de cada tantos minutos.
    - Los atajos de los textos salen del keymap (si el usuario cambió una tecla, el consejo dice la
      suya; si una acción quedó sin atajo, ese consejo no sale).
 5. **Se va solo**: a los 14 s (el tiempo no corre con el puntero encima del globo o de Chimpy), al
-   tocar un botón, o apenas el usuario empieza a pintar (aprieta en el lienzo).
+   tocar un botón, o apenas el usuario aprieta el mouse fuera de él (pintar, elegir otra cosa),
+   escribe en un campo o abre un diálogo.
 6. **Demo** para capturas: `CHIMPSPRITE_DEMO_MASCOT=<id>` (p. ej. `walk-cycle`, `tool.pencil`,
    `hello`) muestra ese globo al arrancar, sin esperar ni cambiar lo guardado.
 
@@ -80,3 +81,9 @@ no aparece más de cada tantos minutos.
 6. **El arte es provisional**: `assets/ui/mascot.aseprite` (tags `idle` y `talk`), para redibujar.
 7. **No hay botón "no me muestres más"** en el globo (Clippy lo tenía): se apaga en Help o en
    Preferences, para que un clic apurado no lo mate sin querer.
+8. **Solo con Pixel UI**: el chango que lo despierta y el globo son del skin; sin Pixel UI no
+   aparece (lo guardado sigue igual).
+9. **"Yes" a Onion Skin solo lo prende** (si el usuario ya lo había prendido, no lo apaga como el
+   atajo F3).
+10. **Arriba del todo menos de los diálogos**: el globo es un área de egui en el orden de las
+    ventanas; si se abre un diálogo, Chimpy se va.

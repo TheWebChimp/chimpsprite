@@ -97,8 +97,10 @@ pub struct Snapshot {
 /// Lo que la app hace cuando se acepta un consejo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Suggestion {
-    /// Lo de un atajo (Onion Skin, Keyboard Shortcuts…).
+    /// Lo de un atajo (Keyboard Shortcuts…).
     Run(Action),
+    /// Prender Onion Skin (no es el atajo: ese lo apaga si ya estaba prendido).
+    OnionSkin,
     /// Prender Mirror Selection.
     MirrorSelection,
     /// Play in Place del artboard activo.
@@ -309,7 +311,7 @@ pub fn tip_by_id(id: &str, keys: &Keymap) -> Option<Tip> {
             id,
             "It looks like you're drawing a walk cycle! Want Onion Skin, to see the frames \
              around this one?",
-            Suggestion::Run(Action::OnionSkin),
+            Suggestion::OnionSkin,
         ),
         "mirror" => Tip::offer(
             id,

@@ -110,8 +110,9 @@ impl ChimpApp {
 
         let Some(pose) = self.mascot.pose(now) else {
             self.mascot_view.rects.clear();
-            if self.mascot.settings.enabled {
-                // Los consejos automáticos llegan con la app quieta.
+            if self.mascot.settings.enabled && ctx.input(|i| i.focused) {
+                // Los consejos automáticos llegan con la app quieta (y no con otra ventana
+                // al frente: sin el foco no se repinta, como el mono que corre).
                 ctx.request_repaint_after(std::time::Duration::from_secs(1));
             }
             return;
@@ -225,6 +226,7 @@ impl ChimpApp {
                     self.run_action(ctx, action);
                 }
             }
+            Suggestion::OnionSkin if self.has_doc() => self.doc.editor.onion_enabled = true,
             Suggestion::MirrorSelection if self.has_doc() => {
                 self.doc.editor.options.mirror_selection = true;
             }
@@ -235,7 +237,7 @@ impl ChimpApp {
                     editor.toggle_play_in_place(id);
                 }
             }
-            Suggestion::MirrorSelection | Suggestion::PlayInPlace => {}
+            Suggestion::OnionSkin | Suggestion::MirrorSelection | Suggestion::PlayInPlace => {}
         }
     }
 }
