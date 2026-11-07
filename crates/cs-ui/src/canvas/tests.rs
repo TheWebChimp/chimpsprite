@@ -1390,12 +1390,13 @@ fn the_menu_icon_opens_the_artboard_menu_and_the_circle_deletes_it() {
     assert_ne!(h.editor.active, first);
     with_window(&mut h);
     let pixels = h.pixels_of(0);
-    // "≡": lo selecciona y abre su menú, sin moverlo.
+    // "≡": abre su menú, sin moverlo ni activarlo (lo activa la opción que se elija).
     let menu = pixels.left_top() + Vec2::new(-2.0 + 2.0 + 4.5, -14.0 + 7.5);
+    let active = h.editor.active;
     h.click(menu, PointerButton::Primary);
-    assert_eq!(h.editor.active, first);
+    assert_eq!(h.editor.active, active);
     assert_eq!(
-        h.editor.artboard().position,
+        h.editor.document.artboard(first).unwrap().position,
         (0, 0),
         "a click does not move it"
     );
@@ -2540,17 +2541,53 @@ fn a_single_frame_artboard_has_no_play_mark() {
 
 #[test]
 fn right_clicking_the_title_bar_opens_the_artboard_menu() {
-    let (mut h, a, _) = two_animated();
+    let (mut h, a, b) = two_animated();
     let window = window_of_id(&h, a);
     let bar = window.text.unwrap().center();
     h.click(bar, PointerButton::Secondary);
     h.frame(vec![]);
-    assert_eq!(h.editor.active, a, "the menu is about that artboard");
+    // Se activa al elegir algo que lo necesita (Play in Place no).
+    assert_eq!(h.editor.active, b, "opening the menu does not activate it");
     let texts: Vec<String> = h.texts().into_iter().map(|(t, _)| t).collect();
     for item in ["Rename", "Play in Place", "Delete"] {
         assert!(texts.iter().any(|t| t == item), "{item} in {texts:?}");
     }
     assert!(h.editor.sprite().cels.is_empty(), "nothing painted");
+}
+
+#[test]
+fn play_in_place_from_the_menu_does_not_activate_the_artboard() {
+    let (mut h, a, b) = two_animated();
+    // El desplegable pixel del "≡", como en la app.
+    let skin = Skin::embedded(&h.ctx);
+    crate::pixel_ui::set_bubble(&h.ctx, Some(std::sync::Arc::new(skin)));
+    let menu = window_of_id(&h, a).menu.unwrap().center();
+    h.click(menu, PointerButton::Primary);
+    h.frame(vec![]);
+    assert_eq!(h.editor.active, b, "opening the menu does not activate it");
+    let item = text_rect(&h, "Play in Place").expect("the item");
+    h.click(item.center(), PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(h.editor.is_playing_in_place(a));
+    assert_eq!(h.editor.active, b, "still editing the other one");
+    assert!(text_rect(&h, "Play in Place").is_none(), "the menu closed");
+    // Desde el clic derecho en la barra, igual: lo apaga sin activarlo.
+    let bar = window_of_id(&h, a).text.unwrap().center();
+    h.click(bar, PointerButton::Secondary);
+    h.frame(vec![]);
+    let item = text_rect(&h, "Play in Place").expect("the item");
+    h.click(item.center(), PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(!h.editor.is_playing_in_place(a));
+    assert_eq!(h.editor.active, b);
+    // Lo demás del menú es sobre ese artboard: lo activa.
+    h.click(menu, PointerButton::Primary);
+    h.frame(vec![]);
+    let item = text_rect(&h, "Properties").expect("the item");
+    h.click(item.center(), PointerButton::Primary);
+    h.frame(vec![]);
+    assert_eq!(h.editor.active, a);
+    assert_eq!(h.canvas.artboard_request, Some(ArtboardRequest::Properties));
 }
 
 /// El centro del papel de la nota `id` en pantalla.

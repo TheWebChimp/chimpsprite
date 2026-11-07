@@ -2059,11 +2059,18 @@ impl CanvasView {
         }
     }
 
-    /// Lo que hay en el menú "≡" del artboard `id`.
+    /// Lo que hay en el menú "≡" del artboard `id`. Abrirlo no lo activa: cada opción lo activa
+    /// al elegirla (obran sobre el activo), salvo Play in Place, que solo alterna su
+    /// reproducción, como el ▶ de la barra.
     fn artboard_menu(&mut self, ui: &mut egui::Ui, editor: &mut Editor, id: ArtboardId) {
-        editor.activate(id);
+        let Some(artboard) = editor.document.artboard(id) else {
+            ui.close();
+            return;
+        };
+        let (font, name) = (artboard.font.is_some(), artboard.name.clone());
+        let transformable = cs_commands::sprite_ops::can_transform(&artboard.sprite);
         // Un artboard de fuente: lo del glifo actual primero.
-        if editor.artboard().font.is_some() {
+        if font {
             for (label, dx, dy) in [
                 ("Shift Left", -1, 0),
                 ("Shift Right", 1, 0),
@@ -2071,32 +2078,36 @@ impl CanvasView {
                 ("Shift Down", 0, 1),
             ] {
                 if ui.add(menus::plain(label)).clicked() {
+                    editor.activate(id);
                     editor.shift_glyph(dx, dy);
                     ui.close();
                 }
             }
             if ui.add(menus::plain("Copy Glyph")).clicked() {
+                editor.activate(id);
                 editor.copy_glyph();
                 ui.close();
             }
             if ui.add(menus::plain("Paste Glyph")).clicked() {
+                editor.activate(id);
                 editor.paste_glyph();
                 ui.close();
             }
             if ui.add(menus::plain("Clear Glyph")).clicked() {
+                editor.activate(id);
                 editor.clear_glyph();
                 ui.close();
             }
             ui.add_enabled(false, menus::plain("Glyph From…"));
             menus::separator(ui);
         }
-        if ui.add(menus::plain("Rename")).clicked()
-            && let Some(artboard) = editor.document.artboard(id)
-        {
-            self.renaming = Some((id, artboard.name.clone(), false));
+        if ui.add(menus::plain("Rename")).clicked() {
+            editor.activate(id);
+            self.renaming = Some((id, name.clone(), false));
             ui.close();
         }
         if ui.add(menus::item("Properties", "Ctrl+P")).clicked() {
+            editor.activate(id);
             self.artboard_request = Some(ArtboardRequest::Properties);
             ui.close();
         }
@@ -2104,31 +2115,33 @@ impl CanvasView {
         // borrarlo (sin la confirmación de la biblioteca) no van desde acá.
         let symbol = editor.in_symbol_mode();
         if !symbol && ui.add(menus::plain("Duplicate")).clicked() {
-            let name = format!("{} Copy", editor.artboard().name);
-            editor.duplicate_artboard(name);
+            editor.activate(id);
+            editor.duplicate_artboard(format!("{name} Copy"));
             ui.close();
         }
         if !symbol
             && ui
                 .add_enabled(
-                    editor.can_move_active_to_library(),
+                    cs_commands::symbol::move_to_library(&editor.document, id).is_some(),
                     menus::plain("Move to Library"),
                 )
                 .clicked()
         {
+            editor.activate(id);
             editor.move_active_to_library();
             ui.close();
         }
         menus::separator(ui);
-        let transformable = cs_commands::sprite_ops::can_transform(editor.sprite());
         if ui
             .add_enabled(transformable, menus::item("Sprite Size", "Ctrl+Alt+I"))
             .clicked()
         {
+            editor.activate(id);
             self.artboard_request = Some(ArtboardRequest::SpriteSize);
             ui.close();
         }
         if ui.add(menus::item("Canvas Size", "C")).clicked() {
+            editor.activate(id);
             self.artboard_request = Some(ArtboardRequest::CanvasSize);
             ui.close();
         }
@@ -2150,6 +2163,7 @@ impl CanvasView {
             )
             .clicked()
         {
+            // Sin activarlo: se sigue editando el activo.
             editor.toggle_play_in_place(id);
             ui.close();
         }
@@ -2160,6 +2174,7 @@ impl CanvasView {
             )
             .clicked()
         {
+            editor.activate(id);
             self.artboard_request = Some(ArtboardRequest::ExpandSheet);
             ui.close();
         }
@@ -2167,12 +2182,14 @@ impl CanvasView {
             .add_enabled(plain, menus::plain("Slice into Frames…"))
             .clicked()
         {
+            editor.activate(id);
             self.artboard_request = Some(ArtboardRequest::SliceFrames);
             ui.close();
         }
         menus::separator(ui);
         let can_delete = editor.document.canvas_count() > 1;
         if ui.add_enabled(can_delete, menus::plain("Delete")).clicked() {
+            editor.activate(id);
             editor.remove_active_artboard();
             ui.close();
         }

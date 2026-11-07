@@ -707,8 +707,9 @@ impl CanvasView {
                 Some((id, TitleHit::Bar)) if pressed_primary => {
                     editor.press_artboard_label(id, world)
                 }
-                // "≡": lo activa; su menú se abre al soltar (`artboard_menus`).
-                Some((id, TitleHit::Menu)) if pressed_primary => editor.activate(id),
+                // "≡": su menú se abre al soltar (`artboard_menus`); no lo activa (cada opción
+                // lo activa al elegirla).
+                Some((_, TitleHit::Menu)) if pressed_primary => {}
                 // "▶": Play in Place, sin activarlo (se sigue editando el activo).
                 Some((id, TitleHit::Play)) if pressed_primary => {
                     editor.toggle_play_in_place(id);
