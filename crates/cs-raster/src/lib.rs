@@ -8,6 +8,7 @@ mod fill;
 pub mod font_style;
 mod gradient;
 mod groom;
+mod iso;
 mod line;
 mod mirror;
 mod outline;
@@ -27,6 +28,7 @@ pub use groom::{
     GridGuess, clean_outline, detect_grid, reduce_colors, remove_background,
     sample_following_edges, sample_grid, suggest_merges,
 };
+pub use iso::{IsoBox, IsoCorner, IsoPart, IsoParts, iso_box};
 pub use line::{
     BrushShape, brush_points, brush_square, custom_brush, custom_brush_version, line,
     pixel_perfect, set_custom_brush, stamp,
