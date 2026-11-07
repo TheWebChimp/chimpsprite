@@ -155,9 +155,11 @@ pub fn iso_blocks(blocks: &IsoBlocks, outline: bool, highlight: bool) -> IsoPart
 
 - `draw_iso_box`: `doc`, `artboard?`, `layer?`, `frame`, `x`, `y` (esquina de arriba a la
   izquierda de la caja), `left`, `right`, `height`, `corner` (2, 3 o 4; 3 de fábrica como
-  Isobox), `color` (base) o `top`/`left_color`/`right_color`, `outline`
-  (color o `false`), `highlight` (color o `false`), `clip`. Es un `Command::DrawPixels` (un paso).
-- `draw_iso_blocks`: igual, con `heights` (filas de alturas), `size` y `block_height`.
+  Isobox), `color` (base; lo que no se dé sale de sus tonos), `top_color` / `left_color` /
+  `right_color`, `outline` y `highlight` (un color o `"none"` para no dibujarlos),
+  `snap_to_palette` (en indexado, siempre), `clip`. Es un `Command::DrawPixels` (un paso).
+- `draw_iso_blocks`: igual, con `heights` (filas de alturas; hasta 32×32 celdas y 64 por pila),
+  `size` (2 de fábrica) y `block_height` (4).
 - Están en `OPERATIONS` (los scripts Rhai/Lua las llaman igual) y en el servidor MCP.
 
 ## Decisiones que el usuario puede revisar
