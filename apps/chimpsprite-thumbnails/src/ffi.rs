@@ -119,4 +119,23 @@ pub(crate) mod tests {
         assert_eq!(code, CHIMP_THUMBNAIL_ERROR);
         unsafe { chimp_thumbnail_free(std::ptr::null_mut(), 0) };
     }
+
+    #[test]
+    fn the_c_header_matches() {
+        let header = include_str!("../macos/chimp_thumbnail.h");
+        for (name, value) in [
+            ("CHIMP_THUMBNAIL_OK", CHIMP_THUMBNAIL_OK),
+            ("CHIMP_THUMBNAIL_NONE", CHIMP_THUMBNAIL_NONE),
+            ("CHIMP_THUMBNAIL_ERROR", CHIMP_THUMBNAIL_ERROR),
+        ] {
+            assert!(
+                header.contains(&format!("#define {name} {value} ")),
+                "{name}"
+            );
+        }
+        assert!(header.contains(
+            "int32_t chimp_thumbnail_png(const uint8_t *data, size_t len, uint8_t **out, size_t *out_len);"
+        ));
+        assert!(header.contains("void chimp_thumbnail_free(uint8_t *ptr, size_t len);"));
+    }
 }
