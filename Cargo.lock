@@ -777,6 +777,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "chimpsprite-thumbnails"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "cs-commands",
+ "cs-core",
+ "cs-io",
+ "windows",
+ "windows-core",
+]
+
+[[package]]
 name = "chrono"
 version = "0.4.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
