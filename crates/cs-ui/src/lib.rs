@@ -220,7 +220,6 @@ pub struct ChimpApp {
     iso_dialog: Option<Box<iso_dialog::IsoDialog>>,
     iso_settings: iso_dialog::IsoSettings,
     /// `InputState::time` del último avance de Play in Place (`None` sin nada animándose).
-    play_in_place_time: Option<f64>,
     /// La ventanita de preview (abierta con `view.preview`).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
@@ -387,7 +386,6 @@ impl ChimpApp {
             expand_dialog: None,
             iso_dialog: None,
             iso_settings: Default::default(),
-            play_in_place_time: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
             symbol_dialog: None,
@@ -1279,19 +1277,30 @@ impl ChimpApp {
     /// Avanza Play in Place con el reloj de egui (`stable_dt` en reposo es el estimado, no el
     /// real) y pide repintar justo para el próximo cambio de frame.
     fn tick_play_in_place(&mut self, ctx: &egui::Context) {
-        if !self.has_doc() || !self.doc.editor.any_playing_in_place() {
-            self.play_in_place_time = None;
-            return;
-        }
         let now = ctx.input(|i| i.time);
+        if let Some(ms) = self.tick_play_in_place_at(now) {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(ms.max(1.0) / 1000.0));
+        }
+    }
+
+    /// Avanza Play in Place del documento a la vista hasta `now` (en segundos). Cada pestaña
+    /// lleva su reloj: al volver a una, sus artboards siguen como si no hubieran parado. Devuelve
+    /// los milisegundos hasta el próximo cambio de frame.
+    fn tick_play_in_place_at(&mut self, now: f64) -> Option<f64> {
+        if !self.has_doc() {
+            return None;
+        }
+        if !self.doc.editor.any_playing_in_place() {
+            self.doc.play_in_place_time = None;
+            return None;
+        }
         let dt_ms = self
+            .doc
             .play_in_place_time
             .map_or(0.0, |t| (now - t) * 1000.0)
             .max(0.0);
-        self.play_in_place_time = Some(now);
-        if let (Some(ms), _) = self.doc.editor.tick_play_in_place(dt_ms) {
-            ctx.request_repaint_after(std::time::Duration::from_secs_f64(ms.max(1.0) / 1000.0));
-        }
+        self.doc.play_in_place_time = Some(now);
+        self.doc.editor.tick_play_in_place(dt_ms).0
     }
 
     fn update_sheet_dialog(&mut self, ctx: &egui::Context) {
@@ -2275,6 +2284,41 @@ mod tests {
     use cs_core::Mask;
 
     use super::*;
+
+    #[test]
+    fn play_in_place_keeps_running_in_a_background_tab() {
+        use crate::palette_library::{PaletteLibrary, test_util::NoPresets};
+        let palettes = PaletteLibrary::new(Box::new(NoPresets));
+        let mut app = ChimpApp::with_parts(Default::default(), Default::default(), palettes);
+        app.new_document();
+        // Un artboard de 3 frames (100, 200 y 300 ms) animándose junto al activo.
+        let mut sprite = Sprite::new(2, 2, ColorMode::Rgba);
+        sprite.frames = (1..=3)
+            .map(|i| cs_core::Frame {
+                duration_ms: 100 * i,
+            })
+            .collect();
+        let first = app.doc.editor.active;
+        assert!(
+            app.doc
+                .editor
+                .add_artboard_with_sprite("Hero".into(), sprite)
+        );
+        let hero = app.doc.editor.active;
+        app.doc.editor.activate(first);
+        assert!(app.doc.editor.toggle_play_in_place(hero));
+        assert_eq!(app.tick_play_in_place_at(10.0), Some(100.0));
+        // Otra pestaña, sin nada animándose, un cuarto de segundo; y de vuelta.
+        app.new_document();
+        assert_eq!(app.tick_play_in_place_at(10.25), None);
+        app.tabs.switch(&mut app.doc, 0);
+        assert_eq!(app.tick_play_in_place_at(10.375), Some(225.0));
+        assert_eq!(
+            app.doc.editor.frame_of(hero),
+            2,
+            "375 ms in: 75 into the third frame"
+        );
+    }
 
     #[test]
     fn convert_failure_message_has_no_stray_spaces() {

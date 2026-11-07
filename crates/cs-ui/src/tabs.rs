@@ -26,6 +26,9 @@ pub(crate) struct DocState {
     pub library: crate::library_panel::LibraryState,
     /// Las pestañas de vista abiertas (modelos y fuentes de este documento), en orden.
     pub views: Vec<ArtboardId>,
+    /// El último avance de Play in Place (reloj de egui, en segundos): sigue corriendo con la
+    /// pestaña en el fondo.
+    pub play_in_place_time: Option<f64>,
 }
 
 impl DocState {
@@ -40,6 +43,7 @@ impl DocState {
             tile_thumbs: Default::default(),
             library: Default::default(),
             views: Vec::new(),
+            play_in_place_time: None,
         }
     }
 

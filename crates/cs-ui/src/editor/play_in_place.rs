@@ -46,6 +46,27 @@ fn range_at(sprite: &Sprite, frame: usize) -> ((usize, usize), AnimDirection) {
     }
 }
 
+/// Lo que dura una vuelta entera de `range` en `direction` (de vuelta al mismo frame y sentido):
+/// en ping-pong los extremos se ven una vez y los de en medio dos.
+fn cycle_ms(sprite: &Sprite, range: (usize, usize), direction: AnimDirection) -> f64 {
+    let (from, to) = range;
+    let ping_pong = matches!(
+        direction,
+        AnimDirection::PingPong | AnimDirection::PingPongReverse
+    );
+    let total: f64 = (from..=to)
+        .map(|f| {
+            let ms = sprite.frames[f].duration_ms.max(1) as f64;
+            if ping_pong && f != from && f != to {
+                2.0 * ms
+            } else {
+                ms
+            }
+        })
+        .sum();
+    total.max(1.0)
+}
+
 impl Editor {
     /// Se puede animar en el lugar: un artboard normal (ni fuente ni modelo) con más de un frame.
     pub fn can_play_in_place(&self, id: ArtboardId) -> bool {
@@ -120,7 +141,13 @@ impl Editor {
                 *play = PlayInPlace::starting(sprite, frame);
             }
             play.clock += dt_ms;
-            // Tope para no girar sin fin si la app estuvo pausada mucho tiempo.
+            // Tras una pausa larga (otra pestaña, la app quieta) se tiran las vueltas enteras: el
+            // frame es el mismo que si hubiera seguido.
+            let cycle = cycle_ms(sprite, play.range, play.direction);
+            if play.clock >= cycle {
+                play.clock %= cycle;
+            }
+            // Tope para no girar sin fin (con lo de arriba no debería llegarse).
             for _ in 0..count * 4 {
                 let duration = sprite.frames[play.playback.frame].duration_ms.max(1) as f64;
                 if play.clock < duration {
