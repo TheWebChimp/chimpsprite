@@ -238,6 +238,7 @@ pub fn pixel_dialog_with_bar<R>(
             focused: true,
             menu: false,
             close: close_response.as_ref().map(|r| r.hovered()),
+            play: None,
         };
         shapes.extend(crate::kit::title_bar::bar_shapes(
             ui.painter(),

@@ -23,6 +23,7 @@ fn the_bar_has_the_menu_the_title_and_the_close_mark_like_the_mockup() {
             focused: true,
             menu: true,
             close: Some(false),
+            play: None,
         };
         shapes = bar_shapes(ui.painter(), &look, rect, "Un título", state, 1.0);
     });
@@ -60,6 +61,7 @@ fn the_orange_font_bar_dims_to_its_own_dark_row() {
             focused: false,
             menu: true,
             close: Some(false),
+            play: None,
         };
         shapes = bar_shapes(ui.painter(), &look, rect, "Mine", state, 1.0);
     });
@@ -89,6 +91,7 @@ fn without_focus_everything_takes_the_dark_row_color_and_hover_turns_the_mark_in
             focused: false,
             menu: true,
             close: Some(true),
+            play: None,
         };
         shapes = bar_shapes(ui.painter(), &look, rect, "Doc", state, 1.0);
     });
@@ -105,4 +108,39 @@ fn without_focus_everything_takes_the_dark_row_color_and_hover_turns_the_mark_in
             .iter()
             .any(|(p, _)| *p == pos2(x_left, ICON_TOP))
     );
+}
+
+#[test]
+fn the_play_mark_goes_four_pixels_before_the_close_mark_and_turns_into_a_pause() {
+    let (ctx, skin) = pixel_ctx();
+    let look = TitleLook::new(&skin);
+    let rect = Rect::from_min_size(pos2(0.0, 0.0), vec2(100.0, HEIGHT));
+    let parts = layout_with_play(rect, true, true, true);
+    let (play, close) = (parts.play.unwrap(), parts.close.unwrap());
+    // Los 9×9 que se tocan quedan pegados sin pisarse; el título termina 3 antes del ▶.
+    assert_eq!(play.right(), close.left());
+    assert_eq!(parts.text.max, play.left() + 2.0 - CLOSE_GAP);
+    assert_eq!(layout(rect, true, true).play, None);
+    let dots_with = |playing: bool| {
+        let mut shapes = vec![];
+        frame(&ctx, vec![], |ui| {
+            let state = TitleState {
+                focused: true,
+                menu: false,
+                close: None,
+                play: Some(playing),
+            };
+            shapes = bar_shapes(ui.painter(), &look, rect, "", state, 1.0);
+        });
+        dots_of(&shapes)
+    };
+    let ink = Color32::from_rgb(100, 54, 75);
+    // Sin ○, el ▶ va en su lugar: 4 px antes del borde, desde la fila 5.
+    let play = dots_with(false);
+    assert_eq!(play.len(), 13, "the triangle");
+    assert!(play.contains(&(pos2(91.0, 5.0), ink)));
+    assert!(play.contains(&(pos2(95.0, 7.0), ink)));
+    let pause = dots_with(true);
+    assert_eq!(pause.len(), 20, "two bars");
+    assert!(!pause.iter().any(|(p, _)| p.x == 93.0));
 }

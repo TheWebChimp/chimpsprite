@@ -1167,6 +1167,7 @@ fn title_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
                 focused,
                 menu: true,
                 close: Some(hovered),
+                play: Some(hovered),
             };
             shapes.extend(title_bar::bar_shapes(
                 ui.painter(),
@@ -1180,7 +1181,7 @@ fn title_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
         let (label, _) = pixel_draw::caps_text_in(
             ui,
             TextStyle::Small,
-            &format!("{name} (right: the x with the pointer over it)"),
+            &format!("{name} (right: the x with the pointer over it, playing in place)"),
             left,
             y + title_bar::HEIGHT + 4.0,
             colors.text_dim,
@@ -1199,6 +1200,7 @@ fn title_section(ui: &mut Ui, skin: &Skin, origin: Pos2) -> f32 {
             focused: true,
             menu: false,
             close: None,
+            play: None,
         },
         ppp,
     ));

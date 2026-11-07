@@ -82,9 +82,10 @@ impl Editor {
             return Err("That would put the artboard inside itself");
         }
         let local = (world.0 - board.position.0, world.1 - board.position.1);
-        // El frame que se ve en ese artboard (puede no ser el activo y tener menos frames).
+        // El frame de edición de ese artboard (puede no ser el activo y tener menos frames; si
+        // se anima en el lugar, el que se va a editar al activarlo, no el que se ve).
         let last = board.sprite.frames.len().saturating_sub(1);
-        let frame = self.frame_of(target).min(last);
+        let frame = self.edit_frame_of(target).min(last);
         let name = src.name.clone();
         self.place_object(target, frame, source, &name, local);
         Ok(())

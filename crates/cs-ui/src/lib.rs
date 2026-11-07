@@ -4,6 +4,7 @@ mod anim_ops;
 mod app_actions;
 mod app_menus;
 mod appearance;
+mod artboard_sheets;
 mod artboard_window;
 mod autosave;
 mod bake_dialog;
@@ -21,6 +22,7 @@ mod dialog_tests;
 mod dock;
 mod edit_ops;
 mod editor;
+mod expand_dialog;
 mod export_dialog;
 mod fg_bg;
 mod file_actions;
@@ -199,6 +201,10 @@ pub struct ChimpApp {
     frame_dialog: Option<frame_dialog::FramePropertiesDialog>,
     /// File → Import Sprite Sheet… abierto.
     sheet_dialog: Option<sheet_dialog::SheetDialog>,
+    /// Expand to Spritesheet… (menú de un artboard) abierto.
+    expand_dialog: Option<expand_dialog::ExpandDialog>,
+    /// `InputState::time` del último avance de Play in Place (`None` sin nada animándose).
+    play_in_place_time: Option<f64>,
     /// La ventanita de preview (abierta con `view.preview`).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
@@ -353,6 +359,8 @@ impl ChimpApp {
             select_dialog: None,
             frame_dialog: None,
             sheet_dialog: None,
+            expand_dialog: None,
+            play_in_place_time: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
             symbol_dialog: None,
@@ -1144,6 +1152,8 @@ impl ChimpApp {
                 self.open_sprite_dialog(|a| SpriteDialog::Size(SpriteSizeDialog::new(a)));
             }
             ArtboardRequest::CanvasSize => self.open_canvas_size(),
+            ArtboardRequest::ExpandSheet => self.open_expand_sheet(),
+            ArtboardRequest::SliceFrames => self.open_slice_frames(),
         }
     }
 
@@ -1232,6 +1242,24 @@ impl ChimpApp {
         }
     }
 
+    /// Avanza Play in Place con el reloj de egui (`stable_dt` en reposo es el estimado, no el
+    /// real) y pide repintar justo para el próximo cambio de frame.
+    fn tick_play_in_place(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() || !self.doc.editor.any_playing_in_place() {
+            self.play_in_place_time = None;
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        let dt_ms = self
+            .play_in_place_time
+            .map_or(0.0, |t| (now - t) * 1000.0)
+            .max(0.0);
+        self.play_in_place_time = Some(now);
+        if let (Some(ms), _) = self.doc.editor.tick_play_in_place(dt_ms) {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(ms.max(1.0) / 1000.0));
+        }
+    }
+
     fn update_sheet_dialog(&mut self, ctx: &egui::Context) {
         let Some(dialog) = &mut self.sheet_dialog else {
             return;
@@ -1240,10 +1268,15 @@ impl ChimpApp {
             tilemap_dialog::DialogResult::Open => {}
             tilemap_dialog::DialogResult::Accept => {
                 let name = dialog.name.clone();
+                let slice = dialog.purpose != sheet_dialog::SheetPurpose::Import;
                 match dialog.sprite() {
                     Some(sprite) => {
                         self.sheet_dialog = None;
-                        self.open_sheet_sprite(&name, sprite);
+                        if slice {
+                            self.add_sliced_artboard(&name, sprite);
+                        } else {
+                            self.open_sheet_sprite(&name, sprite);
+                        }
                     }
                     None => self.show_message(
                         "Nothing to import",
@@ -1906,6 +1939,7 @@ impl eframe::App for ChimpApp {
             self.doc.editor.tick(dt_ms);
             ctx.request_repaint();
         }
+        self.tick_play_in_place(&ctx);
 
         let modal = self.is_modal();
         self.layout(ui, modal);
@@ -1915,6 +1949,7 @@ impl eframe::App for ChimpApp {
         self.update_select_dialog(&ctx);
         self.update_frame_dialog(&ctx);
         self.update_sheet_dialog(&ctx);
+        self.update_expand_dialog(&ctx);
         self.update_settings_windows(&ctx);
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);

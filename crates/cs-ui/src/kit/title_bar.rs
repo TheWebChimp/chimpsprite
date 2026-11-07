@@ -9,6 +9,8 @@
 //!   (`icon.title_close.hover`). Los íconos, en las filas 5 a 9.
 //! - Con el foco, los íconos van en su tinta (100,54,75) y el título en `color.text`; sin el foco,
 //!   los tres en el color de la fila oscura de la barra (178,82,102).
+//! - Opcional, entre el título y el ○, el ▶ (`icon.title_play`, 5×5) o, reproduciendo, la pausa
+//!   (`icon.title_pause`): 4 px antes del ○ (Play in Place de los artboards).
 //! - Los marcos de las ventanas (`window`, `artboard.frame`) traen la barra de 14 filas; esta se
 //!   dibuja encima con su contenido.
 
@@ -25,6 +27,10 @@ pub const PIECE: &str = "title.bar";
 pub const MENU: &str = "icon.title_menu";
 pub const CLOSE: &str = "icon.title_close";
 pub const CLOSE_HOVER: &str = "icon.title_close.hover";
+pub const PLAY: &str = "icon.title_play";
+pub const PAUSE: &str = "icon.title_pause";
+/// Del ▶ al ○ (afuera).
+pub const PLAY_GAP: f32 = 4.0;
 /// El ≡ desde la columna 4; los íconos, desde la fila 5.
 pub const MENU_LEFT: f32 = 4.0;
 pub const ICON_TOP: f32 = 5.0;
@@ -40,6 +46,7 @@ pub const CAPS_TOP: f32 = 4.0;
 pub const HIT: f32 = 9.0;
 const MENU_SIZE: Vec2 = vec2(6.0, 5.0);
 const CLOSE_SIZE: Vec2 = vec2(5.0, 5.0);
+const PLAY_SIZE: Vec2 = vec2(5.0, 5.0);
 /// Sin la pieza de la barra: la tinta sin el foco.
 const DIM_FALLBACK: Color32 = Color32::from_rgb(178, 82, 102);
 
@@ -51,6 +58,8 @@ pub struct TitleLook {
     menu: Option<Piece>,
     close: Option<Piece>,
     close_hover: Option<Piece>,
+    play: Option<Piece>,
+    pause: Option<Piece>,
     colors: SkinColors,
 }
 
@@ -68,6 +77,8 @@ impl TitleLook {
             menu: piece(MENU),
             close: piece(CLOSE),
             close_hover: piece(CLOSE_HOVER),
+            play: piece(PLAY),
+            pause: piece(PAUSE),
             colors: *skin.colors(),
         }
     }
@@ -95,12 +106,19 @@ pub struct TitleParts {
     /// Lo que se toca del ≡ y del ○ (9×9 alrededor de cada uno).
     pub menu: Option<Rect>,
     pub close: Option<Rect>,
+    /// Lo que se toca del ▶ (9×9).
+    pub play: Option<Rect>,
     /// De dónde a dónde puede ir la tinta del título.
     pub text: egui::Rangef,
 }
 
 /// Las partes de una barra en `rect` con o sin ≡ y ○.
 pub fn layout(rect: Rect, menu: bool, close: bool) -> TitleParts {
+    layout_with_play(rect, menu, false, close)
+}
+
+/// Como [`layout`], con o sin el ▶ (antes del ○ o, sin ○, en su lugar).
+pub fn layout_with_play(rect: Rect, menu: bool, play: bool, close: bool) -> TitleParts {
     // 9×9 desde la fila 3, con el ícono centrado a lo ancho (el píxel de sobra, a la derecha).
     let hit = |icon: Rect| {
         Rect::from_min_size(
@@ -122,12 +140,25 @@ pub fn layout(rect: Rect, menu: bool, close: bool) -> TitleParts {
         ),
         CLOSE_SIZE,
     );
+    let play_icon = Rect::from_min_size(
+        pos2(
+            if close {
+                close_icon.left() - PLAY_GAP - PLAY_SIZE.x
+            } else {
+                close_icon.left()
+            },
+            rect.top() + ICON_TOP,
+        ),
+        PLAY_SIZE,
+    );
     let left = if menu {
         menu_icon.right() + TEXT_GAP
     } else {
         rect.left() + TEXT_LEFT
     };
-    let right = if close {
+    let right = if play {
+        play_icon.left() - CLOSE_GAP
+    } else if close {
         close_icon.left() - CLOSE_GAP
     } else {
         rect.right() - CLOSE_RIGHT
@@ -135,6 +166,7 @@ pub fn layout(rect: Rect, menu: bool, close: bool) -> TitleParts {
     TitleParts {
         menu: menu.then(|| hit(menu_icon)),
         close: close.then(|| hit(close_icon)),
+        play: play.then(|| hit(play_icon)),
         text: egui::Rangef::new(left, right.max(left)),
     }
 }
@@ -155,12 +187,14 @@ fn dots(piece: &Piece, at: Pos2, color: Color32) -> Vec<Shape> {
         .collect()
 }
 
-/// Lo que dibuja la barra: `Some(hovered)` en `close` pone el ○ (la × con el puntero encima).
+/// Lo que dibuja la barra: `Some(hovered)` en `close` pone el ○ (la × con el puntero encima);
+/// `Some(playing)` en `play`, el ▶ (o la pausa si ya reproduce).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TitleState {
     pub focused: bool,
     pub menu: bool,
     pub close: Option<bool>,
+    pub play: Option<bool>,
 }
 
 /// La barra en `rect` (de [`HEIGHT`] de alto) con `title` y lo que diga `state`. `painter` arma el
@@ -177,7 +211,12 @@ pub fn bar_shapes(
         Some(p) => pixel_ui::piece_shapes(p, rect.with_max_y(rect.top() + HEIGHT), ppp),
         None => vec![Shape::rect_filled(rect, 0.0, look.colors.selection)],
     };
-    let parts = layout(rect, state.menu, state.close.is_some());
+    let parts = layout_with_play(
+        rect,
+        state.menu,
+        state.play.is_some(),
+        state.close.is_some(),
+    );
     let ink = |piece: &Piece| {
         if state.focused {
             piece.pixel(first_ink(piece).0, first_ink(piece).1)
@@ -202,6 +241,16 @@ pub fn bar_shapes(
         };
         if let Some(piece) = piece {
             shapes.extend(dots(piece, icon_at(hit, CLOSE_SIZE), ink(piece)));
+        }
+    }
+    if let (Some(hit), Some(playing)) = (parts.play, state.play) {
+        let piece = if playing {
+            look.pause.as_ref()
+        } else {
+            look.play.as_ref()
+        };
+        if let Some(piece) = piece {
+            shapes.extend(dots(piece, icon_at(hit, PLAY_SIZE), ink(piece)));
         }
     }
     let color = look.text_color(state.focused);

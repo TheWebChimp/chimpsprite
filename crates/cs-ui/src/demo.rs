@@ -1019,6 +1019,40 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     if std::env::var_os("CHIMPSPRITE_DEMO_NEW_TILEMAP").is_some() && app.has_doc() {
         app.new_tilemap = Some(tilemap_dialog::NewTilemapDialog::new(&app.doc.editor));
     }
+    // Desarrollo: una copia del chango y el original animándose en el lugar mientras se edita la
+    // copia, para capturas del ▶.
+    if dev_var("CHIMPSPRITE_DEMO_IN_PLACE").is_some() && app.has_doc() {
+        let editor = &mut app.doc.editor;
+        let original = editor.active;
+        let name = format!("{} Copy", editor.artboard().name);
+        editor.duplicate_artboard(name);
+        editor.toggle_play_in_place(original);
+    }
+    // Desarrollo: Expand to Spritesheet del chango abierto; con CHIMPSPRITE_DEMO_EXPAND=add, la
+    // hoja ya agregada (con spacing 0 y la grilla de las celdas).
+    if let Some(mode) = dev_var("CHIMPSPRITE_DEMO_EXPAND")
+        && app.has_doc()
+    {
+        app.open_expand_sheet();
+        if mode == "add"
+            && let Some(dialog) = app.expand_dialog.take()
+            && let Ok(sheet) = dialog.sheet()
+        {
+            let name = format!("{} Sheet", dialog.name);
+            app.doc.editor.add_artboard_with_sprite(name, sheet);
+        }
+    }
+    // Desarrollo: la hoja del chango (Expand) y Slice into Frames abierto sobre ella.
+    if dev_var("CHIMPSPRITE_DEMO_SLICE").is_some() && app.has_doc() {
+        app.open_expand_sheet();
+        if let Some(dialog) = app.expand_dialog.take()
+            && let Ok(sheet) = dialog.sheet()
+        {
+            let name = format!("{} Sheet", dialog.name);
+            app.doc.editor.add_artboard_with_sprite(name, sheet);
+            app.open_slice_frames();
+        }
+    }
 }
 
 /// Para la captura de los compuestos: unas minúsculas y marcas en la fuente de ejemplo (8×8,

@@ -22,6 +22,8 @@
 //!   lados, se dibuja la tarjeta ([`WindowLayout::card`], referencia `ff_zoom.png`): la barra con
 //!   el nombre de la fuente y un cuerpo blanco con "Abcde 12345" escrito con la fuente, a 1 punto
 //!   por píxel, a 5 del anillo gris de cada lado.
+//! - **Play in Place:** los artboards que se pueden animar llevan el ▶ del kit antes del ○ (la
+//!   pausa si se están animando), si entran los tres íconos.
 //! - **Modelos 3D:** los artboards 3D llevan la barra verde azulada (`title.bar.model`,
 //!   provisional; sin ella, la rosa).
 
@@ -50,6 +52,8 @@ const PADDING: f32 = 1.0;
 pub const TITLE_BAR: f32 = title_bar::HEIGHT;
 /// La barra lleva los íconos si entran los dos con su aire.
 const ICONS_MIN_WIDTH: f32 = 2.0 * (title_bar::HIT + 2.0);
+/// Y el ▶ si entran los tres.
+const PLAY_MIN_WIDTH: f32 = 3.0 * (title_bar::HIT + 2.0);
 /// Lo que se agrega al final de un título que no entra.
 const ELLIPSIS: &str = "...";
 
@@ -78,6 +82,8 @@ pub struct WindowLayout {
     /// "≡" y "○"; `None` si la ventana es demasiado angosta.
     pub menu: Option<Rect>,
     pub close: Option<Rect>,
+    /// El ▶ de Play in Place (ver [`Self::with_play`]).
+    pub play: Option<Rect>,
     /// Espacio para el título, entre los íconos; `None` si no hay íconos.
     pub text: Option<Rect>,
     /// En la tarjeta de una fuente vista de lejos, dónde va la muestra; `None` en las ventanas
@@ -90,10 +96,12 @@ pub struct WindowLayout {
 pub enum TitleHit {
     /// La barra: clic selecciona, arrastre mueve, doble clic renombra.
     Bar,
-    /// "≡": selecciona el artboard (no hay menú contextual de artboards).
+    /// "≡": activa el artboard y abre su menú.
     Menu,
-    /// "○": decorativo por ahora.
+    /// "○": borra el artboard.
     Close,
+    /// "▶": Play in Place (sin activar el artboard).
+    Play,
 }
 
 impl WindowLayout {
@@ -129,9 +137,25 @@ impl WindowLayout {
             bar,
             menu,
             close,
+            play: None,
             text,
             card,
         }
+    }
+
+    /// La misma ventana con el ▶ antes del ○, si entran los tres íconos (la tarjeta de una
+    /// fuente no lo lleva).
+    pub fn with_play(mut self) -> WindowLayout {
+        if self.card.is_some() || self.frame.width() < PLAY_MIN_WIDTH {
+            return self;
+        }
+        let parts = title_bar::layout_with_play(self.bar, true, true, true);
+        self.menu = parts.menu;
+        self.close = parts.close;
+        self.play = parts.play;
+        self.text = (parts.text.span() > 0.0)
+            .then(|| Rect::from_x_y_ranges(parts.text, self.bar.y_range()));
+        self
     }
 
     /// Dónde se dibujan de verdad los píxeles del área `pixels`: redondeada a píxeles de
@@ -171,6 +195,8 @@ impl WindowLayout {
             TitleHit::Menu
         } else if self.close.is_some_and(|r| r.contains(p)) {
             TitleHit::Close
+        } else if self.play.is_some_and(|r| r.contains(p)) {
+            TitleHit::Play
         } else {
             TitleHit::Bar
         })
@@ -353,7 +379,8 @@ impl ArtboardWindow {
 
     /// La barra del UI kit con el ≡, el nombre `title` y el ○, encima del marco; sin el foco
     /// (`active`), en el color tenue de la barra. La de un artboard de fuente es la naranja y la
-    /// de un modelo 3D, la verde azulada (`kind`).
+    /// de un modelo 3D, la verde azulada (`kind`). Con el ▶ en `layout`, la pausa si `playing`.
+    #[allow(clippy::too_many_arguments)]
     pub fn bar_shapes(
         &self,
         painter: &Painter,
@@ -361,6 +388,7 @@ impl ArtboardWindow {
         title: &str,
         active: bool,
         kind: BarKind,
+        playing: bool,
         ppp: f32,
     ) -> Vec<Shape> {
         let look = match kind {
@@ -372,8 +400,9 @@ impl ArtboardWindow {
         let state = TitleState {
             focused: active,
             menu: icons,
-            // El "○" es decorativo por ahora: qué hace lo va a definir el usuario.
+            // El "○" borra el artboard.
             close: icons.then_some(false),
+            play: layout.play.map(|_| playing),
         };
         let title = if layout.text.is_some() { title } else { "" };
         title_bar::bar_shapes(painter, look, layout.bar, title, state, ppp)
@@ -507,6 +536,28 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn the_play_mark_goes_before_the_close_mark_when_the_three_icons_fit() {
+        let l = WindowLayout::around(pixels(128.0, 64.0), 1.0).with_play();
+        let (play, close) = (l.play.unwrap(), l.close.unwrap());
+        assert_eq!(play.right(), close.left());
+        assert_eq!(l.hit(play.center()), Some(TitleHit::Play));
+        assert_eq!(l.hit(close.center()), Some(TitleHit::Close));
+        assert!(l.text.unwrap().right() < play.left());
+        // 33 de ancho entran los tres; con menos, sin ▶.
+        assert!(
+            WindowLayout::around(pixels(29.0, 4.0), 1.0)
+                .with_play()
+                .play
+                .is_some()
+        );
+        let narrow = WindowLayout::around(pixels(28.0, 4.0), 1.0);
+        assert_eq!(narrow.with_play(), narrow);
+        // La tarjeta de una fuente no lo lleva.
+        let card = WindowLayout::card(pos2(0.0, 0.0), vec2(40.0, 15.0));
+        assert_eq!(card.with_play(), card);
     }
 
     #[test]

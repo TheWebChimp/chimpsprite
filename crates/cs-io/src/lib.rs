@@ -11,6 +11,7 @@ pub mod font;
 pub mod import;
 pub mod lospec;
 pub mod palette_files;
+pub mod spritesheet;
 pub mod tiled;
 
 pub use error::{IoError, Result};

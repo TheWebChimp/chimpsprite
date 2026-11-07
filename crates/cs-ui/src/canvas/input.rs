@@ -683,6 +683,20 @@ impl CanvasView {
                     let (x, y) = editor.to_local(world);
                     m.contains(x, y)
                 });
+            // Clic derecho en la barra (o en el artboard con la herramienta Artboard): su menú.
+            self.artboard_context = if pressed_secondary && slice.is_none() {
+                over_label.map(|(id, _)| id).or_else(|| {
+                    (tool == ToolKind::Artboard && !editor.single_artboard())
+                        .then(|| editor.document.artboard_at(world))
+                        .flatten()
+                })
+            } else {
+                None
+            };
+            if self.artboard_context.is_some() {
+                self.object_menu = false;
+                self.selection_menu = false;
+            }
             // Un handle o la franja de rotación ganan sobre el gesto de la herramienta.
             let transform = if pressed_primary {
                 self.transform_hit(rect, editor, p)
@@ -695,6 +709,11 @@ impl CanvasView {
                 }
                 // "≡": lo activa; su menú se abre al soltar (`artboard_menus`).
                 Some((id, TitleHit::Menu)) if pressed_primary => editor.activate(id),
+                // "▶": Play in Place, sin activarlo (se sigue editando el activo).
+                Some((id, TitleHit::Play)) if pressed_primary => {
+                    editor.toggle_play_in_place(id);
+                    ui.ctx().request_repaint();
+                }
                 // "○": borra el artboard (se deshace con Ctrl+Z; el último no se borra).
                 Some((id, TitleHit::Close)) if pressed_primary => {
                     // En el modo símbolo la ventana es la del símbolo: no se borra desde ahí.
@@ -703,6 +722,7 @@ impl CanvasView {
                         editor.remove_active_artboard();
                     }
                 }
+                _ if self.artboard_context.is_some() => {}
                 _ if slice.is_some() => {
                     editor.end_group();
                     editor.slice = slice;
@@ -716,6 +736,9 @@ impl CanvasView {
             }
         }
         self.artboard_menus(ui, rect, editor);
+        if let Some(id) = self.artboard_context {
+            menus::context_menu(response, |ui| self.artboard_menu(ui, editor, id));
+        }
         if self.selection_menu {
             menus::context_menu(response, |ui| {
                 if ui.add(menus::item("Flip Horizontal", "Shift+H")).clicked() {
@@ -898,7 +921,7 @@ impl CanvasView {
         } else if let Some((_, hit)) = over_label.filter(|_| !editor.is_painting()) {
             Some(match hit {
                 TitleHit::Bar => egui::CursorIcon::Grab,
-                TitleHit::Menu => egui::CursorIcon::PointingHand,
+                TitleHit::Menu | TitleHit::Play => egui::CursorIcon::PointingHand,
                 TitleHit::Close => egui::CursorIcon::Default,
             })
         } else if let Some(hit) = transform_cursor {
