@@ -404,6 +404,26 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     if std::env::var_os("CHIMPSPRITE_DEMO_SELECT").is_some() && app.has_doc() {
         app.doc.editor.set_tool(ToolKind::RectSelect);
     }
+    // Desarrollo: la selección espejo con los ojos y la boca del chimpancé seleccionados y los
+    // ojos acercados al eje (siguen flotando), para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_MIRROR").is_some() && app.has_doc() {
+        let editor = &mut app.doc.editor;
+        editor.set_tool(ToolKind::RectSelect);
+        editor.options.mirror_selection = true;
+        let (w, h) = (editor.sprite().width, editor.sprite().height);
+        let mut mask = cs_core::Mask::from_rect(w, h, (26, 30), (27, 31));
+        mask = mask.union(&cs_core::Mask::from_rect(w, h, (36, 30), (37, 31)));
+        mask = mask.union(&cs_core::Mask::from_rect(w, h, (26, 40), (37, 41)));
+        editor.set_selection(Some(mask));
+        editor.mirror_anchor = Some((2 * 26 + 1, 2 * 30 + 1));
+        editor.nudge(2, 0);
+    }
+    // Desarrollo: Palette Presets con una paleta de Coolors pegada (el texto de la variable).
+    if let Ok(text) = std::env::var("CHIMPSPRITE_DEMO_COOLORS")
+        && app.has_doc()
+    {
+        app.paste_palette_text(&text);
+    }
     // Desarrollo: cuatro colores de la paleta seleccionados, para capturas.
     // (`a,b` elige de la a a la b.)
     if let Ok(range) = std::env::var("CHIMPSPRITE_DEMO_PALETTE_SELECTION")

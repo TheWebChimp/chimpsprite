@@ -75,6 +75,14 @@ struct InFlight<T> {
     pending: Pending<T>,
 }
 
+impl PresetsWindow {
+    /// La paleta que se muestra arriba de la lista (la del link o la pegada).
+    #[cfg(test)]
+    pub(crate) fn lookup_title(&self) -> Option<&str> {
+        self.lospec.lookup_result().map(|p| p.title.as_str())
+    }
+}
+
 impl<T> InFlight<T> {
     fn new(generation: u64, started: f64, pending: Pending<T>) -> Self {
         Self {
@@ -395,6 +403,23 @@ impl ChimpApp {
             }
             None => {}
         }
+    }
+
+    /// Ctrl+V con una paleta en el portapapeles (link de Coolors o colores hex): abre Palette
+    /// Presets en la pestaña Lospec con la paleta pegada, lista para Apply, Append o Save.
+    pub(crate) fn paste_palette_text(&mut self, text: &str) {
+        if self.presets_window.is_none() {
+            self.palettes.reload();
+            self.presets_window = Some(PresetsWindow::default());
+        }
+        let Some(window) = self.presets_window.as_mut() else {
+            return;
+        };
+        window.tab = PresetsTab::Lospec;
+        window.link_open = true;
+        // El campo es de una línea: un export de varias líneas queda en una.
+        window.lospec.link = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        window.lospec.start_lookup();
     }
 
     /// `modal`: hay un diálogo abierto (este cuadro); la ventana de presets queda desactivada.
@@ -834,7 +859,7 @@ fn lospec_ui(
     if *link_open {
         // Su texto arriba, como los de la búsqueda; el campo llena lo que deja Fetch.
         ui.spacing_mut().item_spacing.y = 1.0;
-        ui.label("Paste a Lospec link or palette name");
+        ui.label("Paste a Lospec or Coolors link, or hex colors");
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             ui.spacing_mut().item_spacing.x = 5.0;
             let mut fetch = false;
@@ -1102,7 +1127,7 @@ fn search_form(
                     ui,
                     skin.as_deref(),
                     LINK_ICON,
-                    "Paste a Lospec link",
+                    "Paste a Lospec or Coolors link",
                     Some(*link_open),
                 );
                 if link.clicked() {
@@ -1309,9 +1334,13 @@ fn lospec_row(
                     .color(text),
             );
         }
-        // El link solo se abre con un slug validado: la URL va a `explorer`/`open`/`xdg-open`.
-        if cs_io::lospec::is_valid_slug(&p.slug) {
-            let url = cs_io::lospec::page_url(&p.slug);
+        // El link solo se abre con un slug validado (o una página de Coolors armada con los hex):
+        // la URL va a `explorer`/`open`/`xdg-open`.
+        let url = match &p.source {
+            Some(source) => cs_io::coolors::is_coolors_url(source).then(|| source.clone()),
+            None => cs_io::lospec::is_valid_slug(&p.slug).then(|| cs_io::lospec::page_url(&p.slug)),
+        };
+        if let Some(url) = url {
             let title = title
                 .on_hover_cursor(egui::CursorIcon::PointingHand)
                 .tip(&url);

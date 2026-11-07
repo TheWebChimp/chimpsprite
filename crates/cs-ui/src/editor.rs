@@ -242,6 +242,18 @@ type MergeTarget = (ArtboardId, LayerId, usize, Option<usize>, Option<ObjectId>)
 type BrushImage = std::rc::Rc<[((i32, i32), PixelValue)]>;
 type BrushImageKey = (u64, ArtboardId, u64);
 
+/// De qué depende el plan de la selección espejo (ver `Editor::mirror_plan`).
+#[derive(Debug)]
+pub(crate) struct MirrorKey {
+    pub(crate) mask: Mask,
+    pub(crate) axes: cs_core::SymmetryAxes,
+    pub(crate) center2: (i32, i32),
+    pub(crate) anchor2: (i32, i32),
+}
+
+/// El plan de la selección espejo, compartido con la caché.
+pub(crate) type MirrorPlanRef = Option<std::sync::Arc<cs_raster::MirrorPlan>>;
+
 /// View → Tiled Mode, como en Aseprite: en qué ejes se repite el artboard activo.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum TiledMode {
@@ -331,6 +343,11 @@ pub struct Editor {
     brush_image: std::cell::RefCell<Option<(BrushImageKey, BrushImage)>>,
     /// Última selección descartada (para Reselect).
     last_selection: Option<Mask>,
+    /// Selección espejo: el lado que se toca (medios píxeles), del último gesto de selección o
+    /// de lo agarrado. Ver `mirror_plan`.
+    pub(crate) mirror_anchor: Option<(i32, i32)>,
+    /// El plan del espejo y la selección, los ejes, el centro y el ancla con que se armó.
+    pub(crate) mirror_cache: std::cell::RefCell<Option<(MirrorKey, MirrorPlanRef)>>,
     /// Modo de combinación del gesto de selección en curso.
     gesture_mode: SelectionMode,
     /// Shift ya estaba presionado al empezar el gesto (se usó para el modo, no para restringir).
@@ -468,6 +485,8 @@ impl Editor {
             snap: None,
             brush_image: Default::default(),
             last_selection: None,
+            mirror_anchor: None,
+            mirror_cache: Default::default(),
             gesture_mode: SelectionMode::Replace,
             shift_at_press: false,
             text: None,

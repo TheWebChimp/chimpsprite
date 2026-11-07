@@ -7,9 +7,9 @@ pub use cs_core::SymmetryAxes;
 /// Una de las 8 simetrías del cuadrado: matriz entera `[a, b, c, d]` que lleva la distancia al
 /// centro, en medios píxeles, de `(dx, dy)` a `(a·dx + b·dy, c·dx + d·dy)`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct Transform([i32; 4]);
+pub(crate) struct Transform(pub(crate) [i32; 4]);
 
-const IDENTITY: Transform = Transform([1, 0, 0, 1]);
+pub(crate) const IDENTITY: Transform = Transform([1, 0, 0, 1]);
 /// Espejo izquierda ↔ derecha (eje vertical │).
 const FLIP_X: Transform = Transform([-1, 0, 0, 1]);
 /// Espejo arriba ↔ abajo (eje horizontal ─).
@@ -37,7 +37,7 @@ const SQUARE: [Transform; 8] = [
 /// El grupo que generan los ejes prendidos, con la identidad primero. Va por tabla (no se
 /// cierran los espejos uno con otro): así siempre son 1, 2, 4 u 8 transformaciones, aunque el
 /// centro no caiga en el medio de un píxel para las diagonales.
-fn group(axes: SymmetryAxes) -> &'static [Transform] {
+pub(crate) fn group(axes: SymmetryAxes) -> &'static [Transform] {
     let SymmetryAxes {
         vertical,
         horizontal,
@@ -57,7 +57,7 @@ fn group(axes: SymmetryAxes) -> &'static [Transform] {
     }
 }
 
-fn apply(t: Transform, (x, y): Point, (cx2, cy2): (i32, i32)) -> Point {
+pub(crate) fn apply(t: Transform, (x, y): Point, (cx2, cy2): (i32, i32)) -> Point {
     let [a, b, c, d] = t.0;
     // Centro del píxel menos el centro de simetría, en medios píxeles.
     let (dx, dy) = (2 * x + 1 - cx2, 2 * y + 1 - cy2);

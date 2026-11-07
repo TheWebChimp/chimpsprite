@@ -9,6 +9,7 @@ pub mod font_style;
 mod gradient;
 mod groom;
 mod line;
+mod mirror;
 mod outline;
 mod polygon;
 mod quantize;
@@ -30,6 +31,7 @@ pub use line::{
     BrushShape, brush_points, brush_square, custom_brush, custom_brush_version, line,
     pixel_perfect, set_custom_brush, stamp,
 };
+pub use mirror::{FixedPiece, MirrorOp, MirrorPlan, mirror_ops, mirror_plan, project};
 pub use outline::{
     Channels, OutlineMatrix, OutlinePlace, OutlinePreset, OutlineShape, outline_mask,
     paint_channels,
