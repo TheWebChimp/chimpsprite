@@ -323,6 +323,16 @@ impl Document {
         self.artboards.iter_mut().find(|a| a.id == id)
     }
 
+    /// La nota `id`.
+    pub fn note(&self, id: u32) -> Option<&Note> {
+        self.notes.iter().find(|n| n.id == id)
+    }
+
+    /// Id para una nota nueva: uno más que el mayor.
+    pub fn next_note_id(&self) -> u32 {
+        self.notes.iter().map(|n| n.id).max().unwrap_or(0) + 1
+    }
+
     /// Id nuevo: mayor que el de todo artboard existente y que toda fuente de instancia, para que
     /// las keys que apuntan a un artboard borrado no pasen a mostrar uno nuevo.
     pub fn next_artboard_id(&self) -> ArtboardId {
