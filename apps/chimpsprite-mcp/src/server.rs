@@ -432,6 +432,20 @@ impl ChimpServer {
     }
 
     #[tool(
+        description = "Draw a pixel-perfect 2:1 isometric box (like Isobox for Aseprite): top, left and right faces shaded from one color (or given per face), silhouette outline and highlighted front edges. left/right are edge lengths in units of 2 px; height is in px. One undo step."
+    )]
+    fn draw_iso_box(&self, Parameters(p): Parameters<DrawIsoBox>) -> CallToolResult {
+        self.with(|s| s.draw_iso_box(p))
+    }
+
+    #[tool(
+        description = "Draw stacks of equal isometric blocks on an isometric grid (a simple IsoBuilder): heights per cell, one array per row; painted back to front with one silhouette outline. One undo step."
+    )]
+    fn draw_iso_blocks(&self, Parameters(p): Parameters<DrawIsoBlocks>) -> CallToolResult {
+        self.with(|s| s.draw_iso_blocks(p))
+    }
+
+    #[tool(
         description = "Bucket fill on a layer: the connected area of the clicked color, or every pixel of that color with contiguous=false."
     )]
     fn fill(&self, Parameters(p): Parameters<Fill>) -> CallToolResult {

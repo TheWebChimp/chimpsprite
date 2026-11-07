@@ -1,7 +1,7 @@
 //! Menú View: qué se muestra en el lienzo, grid, zoom y paneles.
 
 use cs_commands::{Command, DocCommand};
-use cs_core::{ArtboardId, GridSettings};
+use cs_core::{ArtboardId, GridKind, GridSettings};
 use eframe::egui::{self, Color32};
 use serde::{Deserialize, Serialize};
 
@@ -142,6 +142,19 @@ impl GridDialog {
         }
     }
 
+    /// Cambia el tipo de la cuadrícula; al pasar a isométrica con celdas cuadradas, quedan de
+    /// 2:1 (16×16 → 16×8), como las del pixel art isométrico.
+    pub fn set_kind(&mut self, kind: GridKind) {
+        if kind == self.grid.kind {
+            return;
+        }
+        let (w, h) = self.grid.size;
+        if kind == GridKind::Isometric && w == h {
+            self.grid.size = (w, (w / 2).max(1));
+        }
+        self.grid.kind = kind;
+    }
+
     /// Comando que aplica el grid (o `None` si no cambió).
     pub fn command(&self, editor: &Editor) -> Option<DocCommand> {
         let current = editor.document.artboard(self.artboard)?.sprite.grid;
@@ -170,6 +183,15 @@ impl GridDialog {
                     .num_columns(4)
                     .spacing([8.0, 6.0])
                     .show(ui, |ui| {
+                        ui.label("Type:");
+                        let mut kind = self.grid.kind;
+                        widgets::combo(ui, "grid_kind", kind.label(), |ui| {
+                            for k in GridKind::ALL {
+                                widgets::choice(ui, &mut kind, k, k.label());
+                            }
+                        });
+                        self.set_kind(kind);
+                        ui.end_row();
                         ui.label("Width:");
                         widgets::number(ui, &mut self.grid.size.0, 1..=4096, " px");
                         ui.label("Height:");
@@ -324,5 +346,24 @@ mod tests {
         assert!(!v.tile_numbers, "tile numbers start hidden");
         let v: ViewSettings = serde_json::from_str(r#"{"tile_numbers":true}"#).unwrap();
         assert!(v.tile_numbers && v.timeline);
+    }
+
+    #[test]
+    fn the_isometric_type_turns_square_cells_into_two_by_one() {
+        let mut editor = Editor::with_sprite(Sprite::new(8, 8, ColorMode::Rgba));
+        let view = ViewSettings::default();
+        let mut d = GridDialog::new(&editor, &view);
+        d.set_kind(GridKind::Isometric);
+        assert_eq!((d.grid.kind, d.grid.size), (GridKind::Isometric, (16, 8)));
+        // Volver a ortogonal no toca el tamaño; un tamaño que no es cuadrado queda como está.
+        d.set_kind(GridKind::Orthogonal);
+        assert_eq!(d.grid.size, (16, 8));
+        d.grid.size = (32, 12);
+        d.set_kind(GridKind::Isometric);
+        assert_eq!(d.grid.size, (32, 12));
+        editor.execute_doc(d.command(&editor).unwrap());
+        assert_eq!(editor.sprite().grid.kind, GridKind::Isometric);
+        editor.undo();
+        assert_eq!(editor.sprite().grid.kind, GridKind::Orthogonal);
     }
 }

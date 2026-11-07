@@ -8,6 +8,7 @@ mod fill;
 pub mod font_style;
 mod gradient;
 mod groom;
+mod iso;
 mod line;
 mod mirror;
 mod outline;
@@ -18,7 +19,7 @@ mod symmetry;
 mod transform;
 
 pub use blur::blur_average;
-pub use constrain::{constrain_line, constrain_square};
+pub use constrain::{constrain_iso, constrain_line, constrain_square};
 pub use curve::cubic_bezier;
 pub use ellipse::{ellipse_filled, ellipse_outline};
 pub use fill::flood_fill;
@@ -26,6 +27,10 @@ pub use gradient::{Dither, GradientShape, gradient_t};
 pub use groom::{
     GridGuess, clean_outline, detect_grid, reduce_colors, remove_background,
     sample_following_edges, sample_grid, suggest_merges,
+};
+pub use iso::{
+    IsoBlocks, IsoBox, IsoColors, IsoCorner, IsoPart, IsoParts, iso_blocks, iso_box,
+    iso_grid_lines, paint_parts, snap_iso,
 };
 pub use line::{
     BrushShape, brush_points, brush_square, custom_brush, custom_brush_version, line,

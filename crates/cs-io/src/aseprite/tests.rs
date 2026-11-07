@@ -153,6 +153,7 @@ pub(crate) fn rich_sprite(mode: ColorMode) -> Sprite {
     s.grid = GridSettings {
         size: (8, 6),
         offset: (2, -1),
+        ..Default::default()
     };
     s.slices = vec![
         Slice {

@@ -213,6 +213,7 @@ pub fn read(data: &[u8]) -> Result<(Sprite, LoadReport)> {
         sprite.grid = cs_core::GridSettings {
             size: grid_size,
             offset: grid_offset,
+            ..Default::default()
         };
     }
     sprite.layers.clear();

@@ -3,6 +3,7 @@
 mod color;
 mod document;
 mod draw;
+mod iso;
 mod notes;
 mod structure;
 mod tilemap;

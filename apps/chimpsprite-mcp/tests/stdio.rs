@@ -95,6 +95,8 @@ fn draw_and_render_over_stdio() {
         "convert_layer",
         "draw_tilemap_pixels",
         "move_tile",
+        "draw_iso_box",
+        "draw_iso_blocks",
         "export",
     ] {
         assert!(

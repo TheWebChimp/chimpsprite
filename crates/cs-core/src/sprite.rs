@@ -237,6 +237,9 @@ impl LayerMask {
 pub struct GridSettings {
     pub size: (u32, u32),
     pub offset: (i32, i32),
+    /// Celdas rectangulares o rombos isométricos (lo guardado antes es ortogonal).
+    #[serde(default)]
+    pub kind: GridKind,
 }
 
 impl Default for GridSettings {
@@ -244,6 +247,29 @@ impl Default for GridSettings {
         Self {
             size: (16, 16),
             offset: (0, 0),
+            kind: GridKind::Orthogonal,
+        }
+    }
+}
+
+/// La forma de las celdas de la cuadrícula (el `Type` de Grid Settings).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum GridKind {
+    /// Rectángulos de `size`.
+    #[default]
+    Orthogonal,
+    /// Rombos de `size` de ancho y alto (2:1 con 16×8, 32×16…), con los vértices en múltiplos de
+    /// medio tamaño desde el offset.
+    Isometric,
+}
+
+impl GridKind {
+    pub const ALL: [GridKind; 2] = [GridKind::Orthogonal, GridKind::Isometric];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            GridKind::Orthogonal => "Orthogonal",
+            GridKind::Isometric => "Isometric",
         }
     }
 }

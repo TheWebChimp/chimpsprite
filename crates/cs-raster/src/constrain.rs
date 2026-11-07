@@ -4,15 +4,29 @@ use crate::Point;
 /// vertical. Las de 2×1 y 1×2 son las del pixel art: tramos de 2 píxeles, todos iguales.
 const SLOPES: [(i32, i32); 5] = [(1, 0), (2, 1), (1, 1), (1, 2), (0, 1)];
 
+/// Las de la línea isométrica: horizontal, 2×1 y vertical.
+const ISO_SLOPES: [(i32, i32); 3] = [(1, 0), (2, 1), (0, 1)];
+
 /// Ajusta `b` para que la línea `a`–`b` quede horizontal, vertical, a 45° o en 2×1 / 1×2 (la
 /// pendiente más cercana). En 2×1 y 1×2 termina donde cierra el último tramo de 2, para que
 /// todos los tramos midan lo mismo.
 pub fn constrain_line(a: Point, b: Point) -> Point {
+    constrain_to(a, b, &SLOPES)
+}
+
+/// Como [`constrain_line`], solo horizontal, vertical o 2×1 (la línea del pixel art isométrico):
+/// sin 45° ni 1×2.
+pub fn constrain_iso(a: Point, b: Point) -> Point {
+    constrain_to(a, b, &ISO_SLOPES)
+}
+
+/// Ajusta `b` a la pendiente de `slopes` (del primer cuadrante) más cercana a la de `a`–`b`.
+fn constrain_to(a: Point, b: Point, slopes: &[(i32, i32)]) -> Point {
     let (dx, dy) = (b.0 - a.0, b.1 - a.1);
     let (adx, ady) = (dx.abs() as f32, dy.abs() as f32);
     let angle = ady.atan2(adx);
     let slope_angle = |&(p, q): &(i32, i32)| (q as f32).atan2(p as f32);
-    let (p, q) = *SLOPES
+    let (p, q) = *slopes
         .iter()
         .min_by(|s, t| {
             let ds = (slope_angle(s) - angle).abs();
@@ -67,6 +81,23 @@ mod tests {
             for (i, p) in pixels.iter().enumerate() {
                 assert_eq!(*p, (3 + i as i32, 3 + i as i32 / 2), "n = {n}");
             }
+        }
+    }
+
+    #[test]
+    fn iso_lines_snap_to_flat_upright_or_two_by_one() {
+        // 45° queda más cerca de 2×1 que de la vertical.
+        assert_eq!(constrain_iso((0, 0), (4, 4)), (5, 2));
+        assert_eq!(constrain_iso((0, 0), (1, 6)), (0, 6));
+        assert_eq!(constrain_iso((0, 0), (5, 1)), (5, 0));
+        assert_eq!(constrain_iso((0, 0), (-8, 4)), (-7, 3));
+        assert_eq!(constrain_iso((2, 2), (2, 2)), (2, 2));
+        // Nunca 1×2: casi vertical es vertical.
+        assert_eq!(constrain_iso((0, 0), (3, 7)), (0, 8));
+        for n in 1..8 {
+            let b = constrain_iso((0, 0), (2 * n + 1, -n));
+            let pixels = crate::line((0, 0), b);
+            assert_eq!(pixels.len() as i32, 2 * n, "n = {n}");
         }
     }
 

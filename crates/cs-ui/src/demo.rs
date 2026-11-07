@@ -1173,6 +1173,106 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             app.open_slice_frames();
         }
     }
+    demo_iso(app);
+}
+
+/// Desarrollo: las herramientas isométricas. `CHIMPSPRITE_DEMO_ISO=box` abre Edit → Iso Box…,
+/// `=blocks` lo abre en Blocks y `=placed` arma un artboard de 96×72 con la cuadrícula
+/// isométrica, unas pilas y una caja ya colocadas y otra caja flotando. Con
+/// `CHIMPSPRITE_DEMO_ISO_GRID`, la cuadrícula del artboard activo es isométrica de 16×8 (con
+/// `=dialog`, además Grid Settings abierto).
+fn demo_iso(app: &mut crate::ChimpApp) {
+    use crate::iso_dialog::IsoMode;
+    use cs_raster::{IsoBox, IsoCorner};
+    if !app.has_doc() {
+        return;
+    }
+    let mode = dev_var("CHIMPSPRITE_DEMO_ISO");
+    if mode == Some("placed") {
+        let sprite = cs_core::Sprite::new(96, 72, cs_core::ColorMode::Rgba);
+        app.doc
+            .editor
+            .add_artboard_with_sprite("Iso".into(), sprite);
+        let place = |app: &mut crate::ChimpApp,
+                     settings: &crate::iso_dialog::IsoSettings,
+                     base: cs_core::Rgba,
+                     at: Option<(i32, i32)>,
+                     commit: bool| {
+            let d = crate::iso_dialog::IsoDialog::new(settings.clone(), base, &[], false);
+            let image = d.image();
+            let editor = &mut app.doc.editor;
+            let origin = at.unwrap_or_else(|| editor.centered_origin((image.width, image.height)));
+            if let Some(clip) = crate::clipboard::Clip::from_shape(
+                origin,
+                (image.width, image.height),
+                &image.pixels,
+            ) {
+                editor.place_floating(&clip, d.label());
+                if commit {
+                    editor.commit_floating();
+                }
+            }
+        };
+        let mut blocks = crate::iso_dialog::IsoSettings {
+            mode: IsoMode::Blocks,
+            ..Default::default()
+        };
+        blocks.blocks.resize(4, 3);
+        blocks.blocks.heights = vec![3, 2, 1, 1, 2, 1, 0, 1, 1, 1, 1, 2];
+        blocks.blocks.block_height = 5;
+        place(
+            app,
+            &blocks,
+            cs_core::Rgba::rgb(0x6a, 0xbe, 0x30),
+            Some((4, 4)),
+            true,
+        );
+        let mut cube = crate::iso_dialog::IsoSettings {
+            shape: IsoBox {
+                left: 5,
+                right: 3,
+                height: 10,
+                corner: IsoCorner::Two,
+            },
+            ..Default::default()
+        };
+        place(
+            app,
+            &cube,
+            cs_core::Rgba::rgb(0xdf, 0x71, 0x26),
+            Some((60, 8)),
+            true,
+        );
+        cube.shape = IsoBox {
+            left: 4,
+            right: 4,
+            height: 6,
+            corner: IsoCorner::Three,
+        };
+        place(
+            app,
+            &cube,
+            cs_core::Rgba::rgb(0x5b, 0x6e, 0xe1),
+            Some((56, 40)),
+            false,
+        );
+    }
+    if mode == Some("placed") || dev_var("CHIMPSPRITE_DEMO_ISO_GRID").is_some() {
+        let mut grid = app.doc.editor.sprite().grid;
+        grid.size = (16, 8);
+        grid.kind = cs_core::GridKind::Isometric;
+        app.doc.editor.execute(cs_commands::Command::SetGrid(grid));
+        app.view.grid = true;
+        if dev_var("CHIMPSPRITE_DEMO_ISO_GRID") == Some("dialog") {
+            app.grid_dialog = Some(crate::view::GridDialog::new(&app.doc.editor, &app.view));
+        }
+    }
+    if mode == Some("box") || mode == Some("blocks") {
+        if mode == Some("blocks") {
+            app.iso_settings.mode = IsoMode::Blocks;
+        }
+        app.open_iso_box();
+    }
 }
 
 /// Para la captura de los compuestos: unas minúsculas y marcas en la fuente de ejemplo (8×8,

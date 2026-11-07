@@ -390,6 +390,13 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
         groups.next(ui);
         check_option(ui, look, &mut options.filled, "Filled");
     }
+    if tool == ToolKind::Line {
+        groups.next(ui);
+        check_option(ui, look, &mut options.iso_lines, "Isometric");
+        if options.iso_lines {
+            hints.push("Isometric: the line snaps to 2:1, vertical or horizontal.");
+        }
+    }
     if tool == ToolKind::Rectangle {
         groups.next(ui);
         let radius = match look {

@@ -540,3 +540,23 @@ fn every_tool_has_its_icon_in_the_skin_and_note_is_n() {
     assert_eq!(ToolKind::Note.label(), "Note");
     assert!(!ToolKind::Note.paints() && !ToolKind::Note.uses_brush());
 }
+
+#[test]
+fn the_isometric_line_option_snaps_lines_to_two_by_one_and_is_saved() {
+    use crate::editor::ToolOptions;
+    let mut e = editor(ToolKind::Line);
+    e.options.iso_lines = true;
+    // Casi a 45° sin Shift: sale 2×1, en tramos de 2.
+    stroke(&mut e, &[(0, 0), (4, 3)], false);
+    let painted: Vec<(i32, i32)> = (0..8)
+        .flat_map(|y| (0..8).map(move |x| (x, y)))
+        .filter(|&(x, y)| px(&e, x, y) != e.sprite().color_mode.transparent())
+        .collect();
+    assert_eq!(painted, vec![(0, 0), (1, 0), (2, 1), (3, 1)]);
+    // Se guarda; lo guardado antes de que existiera queda apagado.
+    let back: ToolOptions =
+        serde_json::from_str(&serde_json::to_string(&e.options).unwrap()).unwrap();
+    assert!(back.iso_lines);
+    let old: ToolOptions = serde_json::from_str(r#"{"brush_size":2}"#).unwrap();
+    assert!(!old.iso_lines);
+}

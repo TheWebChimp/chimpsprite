@@ -62,7 +62,7 @@ impl Session {
         self.draw(doc, s.artboard, s.layer, s.frame, pixels, s.on_mask)
     }
 
-    fn draw(
+    pub(super) fn draw(
         &mut self,
         doc: &str,
         artboard: ArtboardId,

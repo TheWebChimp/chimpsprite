@@ -417,6 +417,7 @@ fn set_grid_roundtrip_and_rejects_zero() {
     let grid = GridSettings {
         size: (8, 4),
         offset: (1, -2),
+        kind: cs_core::GridKind::Isometric,
     };
     let inv = Command::SetGrid(grid).apply(&mut s).unwrap();
     assert_eq!(s.grid, grid);
@@ -425,7 +426,7 @@ fn set_grid_roundtrip_and_rejects_zero() {
     assert!(
         Command::SetGrid(GridSettings {
             size: (0, 4),
-            offset: (0, 0)
+            ..Default::default()
         })
         .apply(&mut s)
         .is_err()

@@ -1,6 +1,6 @@
 //! Lógica pura de reglas, guías y snap (sin egui).
 
-use cs_core::{Axis, GridSettings, Guide};
+use cs_core::{Axis, GridKind, GridSettings, Guide};
 
 /// Grosor de las reglas en pantalla.
 pub const RULER_PX: f32 = 18.0;
@@ -55,6 +55,12 @@ pub fn after_drag(guides: &[Guide], moved: Option<usize>, new: Option<Guide>) ->
     out
 }
 
+/// `line` corrido una centésima hacia donde está `v` (el puntero): así el píxel que cae es el de
+/// su lado.
+fn pointer_side(v: f32, line: f32) -> f32 {
+    if v < line { line - 0.01 } else { line + 0.01 }
+}
+
 /// A qué se pegan las herramientas (en coordenadas locales del artboard activo).
 #[derive(Clone, Debug, Default)]
 pub struct SnapContext {
@@ -76,7 +82,8 @@ impl SnapContext {
         for g in self.guides.iter().filter(|g| g.axis == axis) {
             consider(g.position as f32);
         }
-        if let Some(grid) = self.grid {
+        // La isométrica pega a sus vértices (en `snap`), no a líneas por eje.
+        if let Some(grid) = self.grid.filter(|g| g.kind == GridKind::Orthogonal) {
             let (size, offset) = match axis {
                 Axis::Vertical => (grid.size.0, grid.offset.0),
                 Axis::Horizontal => (grid.size.1, grid.offset.1),
@@ -85,16 +92,18 @@ impl SnapContext {
             let k = ((v - offset as f32) / size).round();
             consider(offset as f32 + k * size);
         }
-        match best {
-            // Queda del lado de la línea donde está el puntero.
-            Some((line, _)) if v < line => line - 0.01,
-            Some((line, _)) => line + 0.01,
-            None => v,
-        }
+        best.map_or(v, |(line, _)| pointer_side(v, line))
     }
 
-    /// Punto local pegado a guías/grid cercanos.
+    /// Punto local pegado a guías/grid cercanos. Con la cuadrícula isométrica, al vértice de
+    /// los rombos más cercano si está a menos de la tolerancia en los dos ejes.
     pub fn snap(&self, p: (f32, f32)) -> (f32, f32) {
+        if let Some(grid) = self.grid.filter(|g| g.kind == GridKind::Isometric) {
+            let (vx, vy) = cs_raster::snap_iso(p, grid.size, grid.offset);
+            if (vx - p.0).abs() <= self.tolerance && (vy - p.1).abs() <= self.tolerance {
+                return (pointer_side(p.0, vx), pointer_side(p.1, vy));
+            }
+        }
         (
             self.snap_axis(p.0, Axis::Vertical),
             self.snap_axis(p.1, Axis::Horizontal),
@@ -172,11 +181,30 @@ mod tests {
             grid: Some(GridSettings {
                 size: (16, 16),
                 offset: (4, 0),
+                ..Default::default()
             }),
             tolerance: 1.0,
         };
         let (x, y) = grid.snap((19.6, 31.5));
         assert_eq!((x.floor() as i32, y.floor() as i32), (19, 31));
         assert!((x - 19.99).abs() < 1e-4 && (y - 31.99).abs() < 1e-4);
+
+        // Isométrica de 32×16: pega al vértice (32, 8) desde cerca, por el lado del puntero.
+        let iso = SnapContext {
+            guides: vec![],
+            grid: Some(GridSettings {
+                size: (32, 16),
+                offset: (0, 0),
+                kind: GridKind::Isometric,
+            }),
+            tolerance: 1.0,
+        };
+        let (x, y) = iso.snap((31.5, 8.6));
+        assert!(
+            (x - 31.99).abs() < 1e-4 && (y - 8.01).abs() < 1e-4,
+            "{x} {y}"
+        );
+        // Lejos de un vértice no pega (ni a las líneas por eje de la ortogonal).
+        assert_eq!(iso.snap((8.5, 3.5)), (8.5, 3.5));
     }
 }

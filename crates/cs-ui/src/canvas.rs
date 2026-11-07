@@ -1162,6 +1162,7 @@ impl CanvasView {
                     GridSettings {
                         size: space.tile_size,
                         offset: space.offset,
+                        ..Default::default()
                     },
                     self.scale(),
                     theme::TILE_GRID,
@@ -1674,6 +1675,15 @@ fn draw_grid(
         return;
     }
     let stroke = Stroke::new(1.0, color);
+    if grid.kind == cs_core::GridKind::Isometric {
+        // Los rombos, con la geometría del motor (en píxeles del sprite).
+        let area = (screen.width() / zoom.x, screen.height() / zoom.y);
+        let at = |(x, y): (f32, f32)| screen.min + Vec2::new(x * zoom.x, y * zoom.y);
+        for [a, b] in cs_raster::iso_grid_lines(area, grid.size, grid.offset) {
+            painter.line_segment([at(a), at(b)], stroke);
+        }
+        return;
+    }
     let first = |offset: i32, scale: f32, step: f32| (offset as f32 * scale).rem_euclid(step);
     let mut x = screen.left() + first(grid.offset.0, zoom.x, sx);
     while x < screen.right() {

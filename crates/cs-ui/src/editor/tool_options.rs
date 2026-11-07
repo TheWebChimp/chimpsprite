@@ -357,6 +357,8 @@ pub struct ToolOptions {
     pub filled: bool,
     /// Radio de las esquinas del rectángulo (0 = rectas).
     pub corner_radius: u32,
+    /// Línea isométrica: Line pega siempre a horizontal, vertical o 2×1.
+    pub iso_lines: bool,
     pub contiguous: bool,
     /// Shift presionado (lo actualiza la UI cada frame). No se guarda.
     #[serde(skip)]
@@ -425,6 +427,7 @@ impl Default for ToolOptions {
             pixel_perfect: true,
             filled: false,
             corner_radius: 0,
+            iso_lines: false,
             contiguous: true,
             constrain: false,
             selection_mode: SelectionMode::Replace,

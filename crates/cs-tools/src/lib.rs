@@ -63,6 +63,8 @@ pub struct ToolContext<'a> {
     pub contiguous: bool,
     /// Shift: líneas a 45°, cuadrados y círculos.
     pub constrain: bool,
+    /// Línea isométrica: la línea siempre pega a horizontal, vertical o 2×1.
+    pub iso: bool,
     pub selection: Option<&'a Mask>,
     /// Varita: diferencia máxima por canal (0–255).
     pub tolerance: u8,
@@ -226,6 +228,7 @@ pub(crate) mod test_util {
             pixel_perfect: false,
             filled: false,
             corner_radius: 0,
+            iso: false,
             contiguous: true,
             constrain: false,
             selection: None,

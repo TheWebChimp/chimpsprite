@@ -108,6 +108,26 @@ impl Clip {
         })
     }
 
+    /// Una forma con su esquina en `origin`: los píxeles `Some` de `pixels` (por filas, de
+    /// `size`); lo demás no es parte de la selección. `None` si no hay ninguno.
+    pub fn from_shape(
+        origin: (i32, i32),
+        size: (u32, u32),
+        pixels: &[Option<Rgba>],
+    ) -> Option<Self> {
+        let w = size.0.max(1) as usize;
+        let pixels: Vec<(i32, i32, Rgba)> = pixels
+            .iter()
+            .enumerate()
+            .filter_map(|(i, c)| c.map(|c| ((i % w) as i32, (i / w) as i32, c)))
+            .collect();
+        (!pixels.is_empty()).then_some(Self {
+            origin,
+            size,
+            pixels,
+        })
+    }
+
     pub fn size(&self) -> (u32, u32) {
         self.size
     }
@@ -250,6 +270,30 @@ impl Editor {
             block.set(x - crop.0, y - crop.1, Some(value(c)));
         }
         self.float_pasted(block, (ox, oy));
+    }
+
+    /// Deja `clip` flotando en la capa actual como un pegado (seleccionado y con Move), con
+    /// `label` como nombre del paso de undo al confirmarse. `false` si la capa no se puede pintar.
+    pub fn place_floating(&mut self, clip: &Clip, label: &'static str) -> bool {
+        if !self.clip_layer_ok(true) {
+            return false;
+        }
+        self.paste(clip);
+        self.label_pasted(label);
+        self.floating.is_some()
+    }
+
+    /// La esquina para que algo de `size` quede centrado en la selección o, sin selección, en el
+    /// lienzo.
+    pub fn centered_origin(&self, size: (u32, u32)) -> (i32, i32) {
+        let s = self.sprite();
+        let ((x0, y0), (x1, y1)) = self
+            .selection
+            .as_ref()
+            .and_then(|m| m.bounds())
+            .unwrap_or(((0, 0), (s.width as i32 - 1, s.height as i32 - 1)));
+        let center = |a: i32, b: i32, size: u32| (a + b + 1 - size as i32).div_euclid(2);
+        (center(x0, x1, size.0), center(y0, y1, size.1))
     }
 
     /// Crea un artboard del tamaño de lo copiado (con la paleta y el modo del actual) y lo pega
