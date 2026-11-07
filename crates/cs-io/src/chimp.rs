@@ -441,6 +441,56 @@ mod tests {
     }
 
     #[test]
+    fn tweens_and_transforms_roundtrip_and_bake_every_frame() {
+        let mut d = with_instance(Timing::MovieClip { first_frame: 0 });
+        for index in 1..3 {
+            cs_commands::Command::AddFrame {
+                index,
+                frame: Frame { duration_ms: 100 },
+            }
+            .apply(&mut d.artboards[0].sprite)
+            .unwrap();
+        }
+        let track = &mut d.artboards[0].sprite.layers[1].objects[0].track;
+        let first = &mut track.keys[0];
+        first.tween = Some(Tween {
+            ease: Ease::Classic(-40),
+        });
+        first.tint = Some(Tint {
+            color: Rgba::rgb(0, 0, 255),
+            amount: 128,
+        });
+        let end = InstanceKey {
+            frame: 2,
+            position: (5, 3),
+            scale: (2000, 3000),
+            rotation: 90,
+            tween: None,
+            ..*first
+        };
+        track.keys.push(end);
+        let (back, report) = read(&write(&d).unwrap()).unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(
+            back.artboards[0].sprite.layers[1].objects,
+            d.artboards[0].sprite.layers[1].objects
+        );
+        // El .aseprite interno trae cada frame como se ve (también el del medio del tween).
+        let bytes = write(&d).unwrap();
+        let mut zip = ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
+        let (inner, _) =
+            aseprite::read(&read_entry(&mut zip, "artboards/1.aseprite").unwrap()).unwrap();
+        for f in 0..3 {
+            let shown = cs_render::materialize(&d, &d.artboards[0].sprite, f..f + 1);
+            assert_eq!(
+                cs_render::render_frame(&inner, f),
+                cs_render::render_frame(&shown, f),
+                "frame {f}"
+            );
+        }
+    }
+
+    #[test]
     fn unsorted_instance_keys_load_normalized() {
         let mut d = with_instance(Timing::MovieClip { first_frame: 0 });
         let track = &mut d.artboards[0].sprite.layers[1].objects[0].track;
