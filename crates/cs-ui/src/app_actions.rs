@@ -52,6 +52,17 @@ impl ChimpApp {
             if on_outliner && matches!(key, Key::Delete | Key::Backspace) {
                 continue;
             }
+            // Supr con el puntero sobre una nota la borra (ahí la nota tapa el lienzo).
+            if self.has_doc()
+                && !typing
+                && !painting
+                && modifiers.is_none()
+                && matches!(key, Key::Delete | Key::Backspace)
+                && self.doc.canvas.notes.delete_hovered(&mut self.doc.editor)
+            {
+                ctx.input_mut(|i| i.consume_key(modifiers, key));
+                continue;
+            }
             // Primero las fijas, que dependen de lo que pasa (confirmar, cancelar, mover lo
             // seleccionado, borrar).
             if self.has_doc()
