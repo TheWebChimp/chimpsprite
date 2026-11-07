@@ -98,17 +98,19 @@ pub struct MirrorPlan {
 }
 
 impl MirrorPlan {
-    /// Esquinas (inclusivas) de lo primario y las piezas fijas representantes: la caja.
+    /// Esquinas (inclusivas) de la caja: lo primario o, si todo está sobre los ejes, las piezas
+    /// fijas representantes. (Las piezas fijas no siguen la caja: solo su parte simétrica.)
     pub fn bounds(&self) -> Option<(Point, Point)> {
-        self.primary
-            .iter()
-            .chain(self.fixed.iter().flat_map(|f| f.points.iter()))
-            .fold(None, |acc, &(x, y)| match acc {
-                None => Some(((x, y), (x, y))),
-                Some(((x0, y0), (x1, y1))) => {
-                    Some(((x0.min(x), y0.min(y)), (x1.max(x), y1.max(y))))
-                }
-            })
+        let fixed = || self.fixed.iter().flat_map(|f| f.points.iter());
+        let points: Box<dyn Iterator<Item = &Point>> = if self.primary.is_empty() {
+            Box::new(fixed())
+        } else {
+            Box::new(self.primary.iter())
+        };
+        points.fold(None, |acc, &(x, y)| match acc {
+            None => Some(((x, y), (x, y))),
+            Some(((x0, y0), (x1, y1))) => Some(((x0.min(x), y0.min(y)), (x1.max(x), y1.max(y)))),
+        })
     }
 }
 
@@ -330,7 +332,11 @@ mod tests {
         assert!(mouth.centered_x() && !mouth.centered_y() && !mouth.diagonal());
         // Solo se mueve a lo largo del eje.
         assert_eq!(project(&mouth.stabilizer, (3, 2)), (0, 2));
-        assert_eq!(plan.bounds(), Some(((1, 1), (5, 5))));
+        assert_eq!(
+            plan.bounds(),
+            Some(((1, 1), (1, 1))),
+            "the box is the primary only"
+        );
     }
 
     #[test]

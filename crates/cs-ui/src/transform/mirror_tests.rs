@@ -270,3 +270,28 @@ fn rotating_turns_the_reflection_the_other_way() {
     assert_eq!([px(&e, 7, 0), px(&e, 6, 0), px(&e, 7, 1)], [BLUE; 3]);
     assert_eq!(px(&e, 6, 1), clear(&e));
 }
+
+#[test]
+fn the_box_is_the_primary_and_the_mouth_on_the_axis_stays() {
+    // 12×8, eje entre 5 y 6: ojos en (2,1) y (9,1), boca (5,6)-(6,6).
+    let pixels = [(2, 1, RED), (9, 1, BLUE), (5, 6, GREEN), (6, 6, GREEN)];
+    let mut e = editor(12, 8, &pixels, V);
+    let points = [(2, 1), (9, 1), (5, 6), (6, 6)];
+    e.set_selection(Some(cs_core::Mask::from_points(12, 8, points)));
+    e.mirror_anchor = Some((5, 3));
+    let b = e.transform_box().unwrap();
+    assert_eq!(
+        (b.left(), b.top(), b.width(), b.height()),
+        (2, 1, 1, 1),
+        "the left eye"
+    );
+    assert!(e.nudge(1, 0));
+    assert!(e.commit_floating());
+    assert_eq!(px(&e, 3, 1), RED);
+    assert_eq!(px(&e, 8, 1), BLUE);
+    assert_eq!(
+        [px(&e, 5, 6), px(&e, 6, 6)],
+        [GREEN, GREEN],
+        "the mouth stays centered"
+    );
+}
