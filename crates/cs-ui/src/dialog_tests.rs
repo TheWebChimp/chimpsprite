@@ -1679,3 +1679,24 @@ fn build_font_offers_the_whole_family() {
     h.settle();
     assert!(h.drew_text("Mine-Regular.ttf\nMine-Italic.ttf"));
 }
+
+#[test]
+fn a_pasted_coolors_palette_shows_up_and_applies() {
+    for pixel_ui in [true, false] {
+        let mut h = DialogHarness::new(pixel_ui);
+        h.app
+            .paste_palette_text("https://coolors.co/palette/264653-2a9d8f-e9c46a");
+        h.settle();
+        assert!(
+            h.drew_text("Coolors 264653-2a9d8f-e9c46a"),
+            "pixel_ui {pixel_ui}"
+        );
+        h.click("Apply");
+        let colors = h.app.doc.editor.sprite().palette.colors().to_vec();
+        assert_eq!(
+            colors,
+            [0x264653, 0x2a9d8f, 0xe9c46a].map(cs_core::Rgba::from_hex),
+            "pixel_ui {pixel_ui}"
+        );
+    }
+}

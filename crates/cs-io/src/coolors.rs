@@ -34,6 +34,13 @@ pub fn coolors_url(slug: &str) -> String {
     format!("https://coolors.co/palette/{slug}")
 }
 
+/// `url` es una página de paleta de Coolors armada con [`coolors_url`] (solo hex y guiones): se
+/// puede abrir sin miedo.
+pub fn is_coolors_url(url: &str) -> bool {
+    url.strip_prefix("https://coolors.co/palette/")
+        .is_some_and(|slug| !slug.is_empty() && slug.split('-').all(six_digits))
+}
+
 /// Lee una paleta de `text`: un link de Coolors, una lista de colores hex (separados por
 /// guiones, comas, espacios, `;` o saltos; con o sin `#`) o un texto con colores `#rrggbb` o
 /// `"rrggbb"` mezclados (los exports de código de Coolors). `None` si no es nada de eso.
@@ -207,6 +214,11 @@ mod tests {
             None
         );
         assert_eq!(parse_palette_text("https://coolors.co/"), None);
+        // Lo que se abre en el navegador.
+        assert!(is_coolors_url(p.source.as_deref().unwrap()));
+        assert!(!is_coolors_url("https://coolors.co/palette/264653-x;rm"));
+        assert!(!is_coolors_url("https://evil.example/palette/264653"));
+        assert!(!is_coolors_url("https://coolors.co/palette/"));
     }
 
     #[test]

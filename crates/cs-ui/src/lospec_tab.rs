@@ -127,13 +127,25 @@ impl LospecTab {
         Some((self.generation, query))
     }
 
+    /// Busca lo del campo del link. Un link de Coolors o una lista de colores no necesita red: la
+    /// paleta queda como resultado enseguida y no hay nada que pedir (`None`).
     pub fn start_lookup(&mut self) -> Option<(u64, String)> {
         self.lookup = None;
+        if let Some(pasted) = cs_io::coolors::parse_palette_text(&self.link) {
+            self.lookup_generation += 1;
+            self.lookup_loading = false;
+            self.error = None;
+            self.lookup = Some(LospecPalette::pasted(pasted));
+            return None;
+        }
         let Some(slug) = slug_from_input(&self.link) else {
             // Invalida cualquier búsqueda anterior aún en vuelo.
             self.lookup_generation += 1;
             self.lookup_loading = false;
-            self.error = Some("Paste a lospec.com palette link or a palette name.".into());
+            self.error = Some(
+                "Paste a lospec.com or coolors.co palette link, a palette name or hex colors."
+                    .into(),
+            );
             return None;
         };
         self.lookup_generation += 1;
@@ -268,6 +280,7 @@ mod tests {
             likes: None,
             downloads: None,
             examples: Vec::new(),
+            source: None,
         }
     }
 
@@ -438,6 +451,33 @@ mod tests {
     }
 
     #[test]
+    fn coolors_links_and_hex_colors_show_up_without_a_request() {
+        let mut tab = LospecTab {
+            link: "https://coolors.co/palette/264653-2a9d8f-e9c46a".into(),
+            ..Default::default()
+        };
+        assert_eq!(tab.start_lookup(), None, "nothing to fetch");
+        assert!(!tab.lookup_loading());
+        assert_eq!(tab.error(), None);
+        let p = tab.lookup_result().unwrap();
+        assert_eq!(p.title, "Coolors 264653-2a9d8f-e9c46a");
+        assert_eq!(p.palette.colors()[1], Rgba::from_hex(0x2a9d8f));
+        assert_eq!(
+            p.comments(),
+            vec!["Source: https://coolors.co/palette/264653-2a9d8f-e9c46a".to_string()]
+        );
+        // Una lista de hex; y un pedido a Lospec viejo ya no cuenta.
+        tab.link = "sweetie-16".into();
+        let (g, _) = tab.start_lookup().unwrap();
+        tab.link = "#ff0000, #00ff00".into();
+        assert_eq!(tab.start_lookup(), None);
+        tab.finish_lookup(g, Ok(pal("sweetie-16")));
+        let p = tab.lookup_result().unwrap();
+        assert_eq!(p.title, "Pasted ff0000-00ff00");
+        assert!(p.comments().is_empty(), "no page to cite");
+    }
+
+    #[test]
     fn invalid_link_discards_pending_lookup() {
         let mut tab = LospecTab {
             link: "sweetie-16".into(),
@@ -499,7 +539,7 @@ mod tests {
         assert!(tab.start_lookup().is_none());
         assert_eq!(
             tab.error(),
-            Some("Paste a lospec.com palette link or a palette name.")
+            Some("Paste a lospec.com or coolors.co palette link, a palette name or hex colors.")
         );
     }
 }

@@ -241,6 +241,19 @@ impl ChimpApp {
         });
         let paste =
             ctx.input(|i| clipboard::paste_request(&i.events, i.modifiers, &mut self.pasted));
+        // Un link de Coolors o una lista de colores en el portapapeles: es una paleta.
+        let palette_text = ctx.input(|i| {
+            i.events.iter().find_map(|e| match e {
+                egui::Event::Paste(text)
+                    if text != CLIPBOARD_MARKER
+                        && cs_io::coolors::parse_palette_text(text)
+                            .is_some_and(|p| p.is_confident()) =>
+                {
+                    Some(text.clone())
+                }
+                _ => None,
+            })
+        });
         // Ctrl+Shift+C también llega como Copy: es Copy Merged.
         if copy && ctx.input(|i| i.modifiers.shift) {
             self.copy_merged(ctx);
@@ -248,6 +261,8 @@ impl ChimpApp {
             self.copy(ctx);
         } else if cut {
             self.cut(ctx);
+        } else if let Some(text) = palette_text {
+            self.paste_palette_text(&text);
         } else if let Some(request) = paste {
             self.paste(request);
         }

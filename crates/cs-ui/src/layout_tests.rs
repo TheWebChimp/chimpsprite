@@ -964,6 +964,29 @@ fn ctrl_c_and_ctrl_v_without_a_selection_copy_and_paste_frames() {
 }
 
 #[test]
+fn ctrl_v_with_a_coolors_link_opens_the_pasted_palette() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let before = h.app.doc.editor.sprite().palette.clone();
+    let link = "https://coolors.co/palette/264653-2a9d8f-e9c46a-f4a261-e76f51";
+    h.frame_with(vec![Event::Paste(link.into())]);
+    let window = h
+        .app
+        .presets_window
+        .as_ref()
+        .expect("Palette Presets opened");
+    assert_eq!(window.tab, crate::palette_ui::PresetsTab::Lospec);
+    assert_eq!(
+        window.lookup_title(),
+        Some("Coolors 264653-2a9d8f-e9c46a-f4a261-e76f51")
+    );
+    assert_eq!(
+        h.app.doc.editor.sprite().palette,
+        before,
+        "nothing applied yet"
+    );
+}
+
+#[test]
 fn clicking_the_marker_closes_a_clean_tab() {
     let mut h = two_tabs(Some(0));
     let mark = h.button("Close Otro.chimp");

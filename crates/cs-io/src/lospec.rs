@@ -99,6 +99,9 @@ pub struct LospecPalette {
     pub downloads: Option<u32>,
     /// URLs de las imágenes de ejemplo (solo las trae el listado).
     pub examples: Vec<String>,
+    /// La página de una paleta que no es de Lospec (una pegada de Coolors); `None` = la de
+    /// Lospec del slug.
+    pub source: Option<String>,
 }
 
 impl LospecPalette {
@@ -109,14 +112,35 @@ impl LospecPalette {
         }
     }
 
-    /// Líneas `# …` del `.gpl` guardado: autor (si hay) y página de origen.
+    /// Líneas `# …` del `.gpl` guardado: autor (si hay) y página de origen (si tiene).
     pub fn comments(&self) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(author) = &self.author {
             out.push(format!("Author: {author}"));
         }
-        out.push(format!("Source: {}", page_url(&self.slug)));
+        match &self.source {
+            Some(source) => out.push(format!("Source: {source}")),
+            None if is_valid_slug(&self.slug) => {
+                out.push(format!("Source: {}", page_url(&self.slug)))
+            }
+            None => {}
+        }
         out
+    }
+
+    /// Una paleta pegada (link de Coolors o lista de colores), para mostrarla como las de
+    /// Lospec. Sin slug: no tiene página en Lospec.
+    pub fn pasted(p: crate::coolors::PastedPalette) -> Self {
+        Self {
+            slug: String::new(),
+            title: p.name,
+            author: None,
+            palette: p.palette,
+            likes: None,
+            downloads: None,
+            examples: Vec::new(),
+            source: p.source,
+        }
     }
 }
 
@@ -169,6 +193,7 @@ fn parse_entry(e: &Value) -> Result<LospecPalette, LospecError> {
         likes: e["likes"].as_u64().map(|n| n as u32),
         downloads: count(&e["downloads"]),
         examples: examples(&e["examples"]),
+        source: None,
     })
 }
 
@@ -202,6 +227,7 @@ pub fn parse_palette(json: &[u8], slug: &str) -> Result<LospecPalette, LospecErr
         likes: None,
         downloads: None,
         examples: Vec::new(),
+        source: None,
     })
 }
 
