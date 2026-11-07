@@ -2,8 +2,9 @@
 
 use std::path::Path;
 
+use crate::chimp::ThumbnailFrom;
 use crate::{IoError, LoadReport, aseprite, chimp, import};
-use cs_core::{Document, LayerKind};
+use cs_core::{ArtboardId, Document, LayerKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FileKind {
@@ -132,10 +133,24 @@ pub fn decode(name: &str, bytes: &[u8]) -> Result<(Document, LoadReport), FileEr
     })
 }
 
-/// Bytes a guardar con el nombre `file_name`, según su extensión.
+/// Bytes a guardar con el nombre `file_name`, según su extensión. Un `.chimp` lleva la
+/// miniatura del primer artboard del lienzo.
 pub fn encode(doc: &Document, file_name: &str) -> Result<Vec<u8>, FileError> {
+    encode_with(doc, file_name, None)
+}
+
+/// Como `encode`, con la miniatura del `.chimp` sacada de `active` (si sirve, ver
+/// `thumbnail::pick`).
+pub fn encode_with(
+    doc: &Document,
+    file_name: &str,
+    active: Option<ArtboardId>,
+) -> Result<Vec<u8>, FileError> {
     match kind_of(file_name) {
-        Some(FileKind::Chimp) => Ok(chimp::write(doc)?),
+        Some(FileKind::Chimp) => {
+            let thumbnail = active.map_or(ThumbnailFrom::Auto, ThumbnailFrom::Of);
+            Ok(chimp::write_with(doc, thumbnail)?)
+        }
         Some(FileKind::Aseprite) => match doc.artboards.as_slice() {
             // `.aseprite` no tiene instancias, máscaras ni recortes: se aplican a los píxeles. Los
             // tilemaps se guardan como tilemaps.
@@ -165,6 +180,41 @@ mod tests {
         assert_eq!(kind_of("x.png"), Some(FileKind::Png));
         assert_eq!(kind_of("x.txt"), None);
         assert_eq!(stem("dir/hero.aseprite"), "hero");
+    }
+
+    #[test]
+    fn a_chimp_gets_the_thumbnail_of_the_active_artboard() {
+        let mut doc = Document::with_sprite("hero", Sprite::new(2, 2, ColorMode::Rgba));
+        let mut coin = Sprite::new(4, 1, ColorMode::Rgba);
+        cs_commands::Command::DrawPixels {
+            layer: cs_core::LayerId(1),
+            frame: 0,
+            pixels: vec![(0, 0, cs_core::PixelValue::Rgba(cs_core::Rgba::rgb(9, 9, 9)))],
+        }
+        .apply(&mut coin)
+        .unwrap();
+        doc.artboards.push(Artboard {
+            model: None,
+            in_library: false,
+            font: None,
+            guides: Vec::new(),
+            symmetry: Default::default(),
+            id: ArtboardId(2),
+            name: "coin".into(),
+            position: (20, 0),
+            sprite: coin,
+        });
+        let thumb = |bytes: Vec<u8>| crate::thumbnail::read(std::io::Cursor::new(bytes)).unwrap();
+        // El primero está vacío: sin miniatura; con el activo, la de "coin".
+        assert!(thumb(encode(&doc, "game.chimp").unwrap()).is_none());
+        let coin = thumb(encode_with(&doc, "game.chimp", Some(ArtboardId(2))).unwrap()).unwrap();
+        assert_eq!((coin.width, coin.height), (256, 64));
+        // Un `.aseprite` no cambia.
+        let single = Document::with_sprite("hero", Sprite::new(2, 2, ColorMode::Rgba));
+        assert_eq!(
+            encode_with(&single, "x.aseprite", Some(ArtboardId(1))).unwrap(),
+            encode(&single, "x.aseprite").unwrap()
+        );
     }
 
     #[test]

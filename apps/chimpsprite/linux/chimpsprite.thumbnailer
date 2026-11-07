@@ -1,0 +1,4 @@
+[Thumbnailer Entry]
+TryExec=chimpsprite
+Exec=chimpsprite --thumbnail %i %o %s
+MimeType=application/x-chimpsprite;

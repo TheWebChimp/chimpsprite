@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- ESQUELETO: el Info.plist de la extensión (ChimpSprite.app/Contents/PlugIns/ChimpThumbnail.appex).
+     El Info.plist de la app tiene que exportar el UTI (ver docs/thumbnails.md). -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDisplayName</key>
+	<string>ChimpSprite Thumbnails</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.thewebchimp.chimpsprite.thumbnail</string>
+	<key>CFBundlePackageType</key>
+	<string>XPC!</string>
+	<key>NSExtension</key>
+	<dict>
+		<key>NSExtensionAttributes</key>
+		<dict>
+			<key>QLSupportedContentTypes</key>
+			<array>
+				<string>com.thewebchimp.chimpsprite.document</string>
+			</array>
+			<key>QLThumbnailMinimumDimension</key>
+			<integer>16</integer>
+		</dict>
+		<key>NSExtensionPointIdentifier</key>
+		<string>com.apple.quicklook.thumbnail</string>
+		<key>NSExtensionPrincipalClass</key>
+		<string>$(PRODUCT_MODULE_NAME).ThumbnailProvider</string>
+	</dict>
+</dict>
+</plist>

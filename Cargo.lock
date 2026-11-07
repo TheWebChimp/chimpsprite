@@ -751,6 +751,9 @@ dependencies = [
 name = "chimpsprite"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "cs-commands",
+ "cs-core",
+ "cs-io",
  "cs-ui",
  "eframe",
  "env_logger",
@@ -771,6 +774,17 @@ dependencies = [
  "rmcp",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "chimpsprite-thumbnails"
+version = "0.1.0-alpha.1"
+dependencies = [
+ "cs-commands",
+ "cs-core",
+ "cs-io",
+ "windows",
+ "windows-core",
 ]
 
 [[package]]

@@ -15,13 +15,14 @@ const MAX_DECODE_BYTES: usize = 512 * 1024 * 1024;
 
 /// Decodifica cualquier PNG (paleta, gris, RGB, RGBA, 16 bits) a RGBA de 8 bits.
 pub fn decode_png(bytes: &[u8]) -> Result<Bitmap> {
+    decode_png_limited(bytes, MAX_DECODE_BYTES)
+}
+
+/// Como `decode_png`, con un tope de memoria propio (`limit` bytes).
+pub(crate) fn decode_png_limited(bytes: &[u8], limit: usize) -> Result<Bitmap> {
     let png_error = |e: png::DecodingError| IoError::Png(e.to_string());
-    let mut decoder = png::Decoder::new_with_limits(
-        Cursor::new(bytes),
-        png::Limits {
-            bytes: MAX_DECODE_BYTES,
-        },
-    );
+    let mut decoder =
+        png::Decoder::new_with_limits(Cursor::new(bytes), png::Limits { bytes: limit });
     decoder.set_transformations(png::Transformations::normalize_to_color8());
     let mut reader = decoder.read_info().map_err(png_error)?;
     let size = reader

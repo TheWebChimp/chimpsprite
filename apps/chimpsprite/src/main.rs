@@ -1,5 +1,7 @@
 //! Punto de entrada: ventana nativa en escritorio, `<canvas>` en el navegador.
 
+#[cfg(not(target_arch = "wasm32"))]
+mod thumbnail_cli;
 #[cfg(windows)]
 mod win_icon;
 
@@ -7,6 +9,9 @@ mod win_icon;
 fn main() -> eframe::Result {
     use eframe::egui;
 
+    if let Some(code) = thumbnail_cli::main_if_requested() {
+        std::process::exit(code);
+    }
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
     let mut viewport = egui::ViewportBuilder::default()
         .with_title("ChimpSprite")

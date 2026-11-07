@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
-use crate::{IoError, LoadReport, Result, aseprite};
+use crate::{IoError, LoadReport, Result, aseprite, thumbnail};
 
 const FORMAT: &str = "chimp";
 const VERSION: u32 = 1;
@@ -181,7 +181,23 @@ fn zip_error(e: impl std::fmt::Display) -> IoError {
     IoError::Zip(e.to_string())
 }
 
+/// De qué artboard sale la miniatura (`thumbnail.png`) al guardar.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThumbnailFrom {
+    /// Sin miniatura (el autosave).
+    None,
+    /// El primero del lienzo.
+    Auto,
+    /// Este (el activo); si no sirve, como `Auto` (ver `thumbnail::pick`).
+    Of(ArtboardId),
+}
+
+/// El `.chimp` con la miniatura del primer artboard del lienzo.
 pub fn write(doc: &Document) -> Result<Vec<u8>> {
+    write_with(doc, ThumbnailFrom::Auto)
+}
+
+pub fn write_with(doc: &Document, thumbnail: ThumbnailFrom) -> Result<Vec<u8>> {
     let mut zip = ZipWriter::new(Cursor::new(Vec::new()));
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
     let mut entries = Vec::new();
@@ -221,6 +237,18 @@ pub fn write(doc: &Document) -> Result<Vec<u8>> {
     };
     zip.start_file(MANIFEST, options).map_err(zip_error)?;
     zip.write_all(&serde_json::to_vec_pretty(&manifest)?)?;
+    let source = match thumbnail {
+        ThumbnailFrom::None => None,
+        ThumbnailFrom::Auto => thumbnail::pick(doc, None),
+        ThumbnailFrom::Of(id) => thumbnail::pick(doc, Some(id)),
+    };
+    if let Some(image) = source.and_then(|id| thumbnail::render(doc, id)) {
+        // El PNG ya viene comprimido.
+        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        zip.start_file(thumbnail::ENTRY, stored)
+            .map_err(zip_error)?;
+        zip.write_all(&image.to_png()?)?;
+    }
     Ok(zip.finish().map_err(zip_error)?.into_inner())
 }
 
@@ -934,6 +962,52 @@ mod tests {
             ),
         });
         d
+    }
+
+    fn thumbnail_of(bytes: &[u8]) -> Option<crate::export::Bitmap> {
+        thumbnail::read(Cursor::new(bytes)).unwrap()
+    }
+
+    #[test]
+    fn the_thumbnail_is_frame_one_of_the_chosen_artboard() {
+        let mut d = doc();
+        // El 7 (4×2 indexado) con un píxel de la paleta en (3, 1).
+        cs_commands::Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(3, 1, PixelValue::Index(1))],
+        }
+        .apply(&mut d.artboards[1].sprite)
+        .unwrap();
+        let auto = thumbnail_of(&write(&d).unwrap()).unwrap();
+        assert_eq!((auto.width, auto.height), (256, 256), "the first one, 8×8");
+        assert_eq!(auto.pixels[3 * 32 * 256 + 3 * 32], Rgba::rgb(1, 2, 3));
+        let active = write_with(&d, ThumbnailFrom::Of(ArtboardId(7))).unwrap();
+        let active = thumbnail_of(&active).unwrap();
+        assert_eq!((active.width, active.height), (256, 128), "4×2 at 64×");
+        let color = cs_render::resolve(&d.artboards[1].sprite, PixelValue::Index(1));
+        assert_eq!(*active.pixels.last().unwrap(), color);
+        assert!(thumbnail_of(&write_with(&d, ThumbnailFrom::None).unwrap()).is_none());
+    }
+
+    #[test]
+    fn the_thumbnail_is_not_part_of_the_document() {
+        let d = doc();
+        let bytes = write(&d).unwrap();
+        let mut zip = ZipArchive::new(Cursor::new(bytes.as_slice())).unwrap();
+        assert!(zip.by_name(thumbnail::ENTRY).is_ok());
+        let (back, report) = read(&bytes).unwrap();
+        assert!(report.warnings.is_empty(), "{:?}", report.warnings);
+        assert_eq!(back.artboards.len(), 2);
+        // Un `.chimp` de antes (sin miniatura) abre igual.
+        let (old, _) = read(&write_with(&d, ThumbnailFrom::None).unwrap()).unwrap();
+        assert_eq!(old, back);
+    }
+
+    #[test]
+    fn an_empty_document_saves_without_thumbnail() {
+        let empty = Document::with_sprite("one", Sprite::new(4, 4, ColorMode::Rgba));
+        assert!(thumbnail_of(&write(&empty).unwrap()).is_none());
     }
 
     #[test]

@@ -980,10 +980,10 @@ fn unsaved_window(
 }
 
 /// Bytes del documento para guardarlo como `file_name`. Lo flotante todavía no está en el
-/// documento: se confirma antes de escribir.
+/// documento: se confirma antes de escribir. La miniatura del `.chimp` es la del artboard activo.
 pub(crate) fn save_bytes(editor: &mut Editor, file_name: &str) -> Result<Vec<u8>, FileError> {
     editor.commit_floating();
-    files::encode(&editor.document_for_save(), file_name)
+    files::encode_with(&editor.document_for_save(), file_name, Some(editor.active))
 }
 
 /// Comando que agrega el PNG como capa nueva en el frame actual. Lo flotante se confirma antes
@@ -1200,6 +1200,28 @@ mod tests {
         let saved = &doc.artboards[0].sprite;
         assert_eq!(saved.pixel(LayerId(1), 0, 2, 2), red, "the file has it");
         assert_ne!(saved.pixel(LayerId(1), 0, 0, 0), red);
+    }
+
+    #[test]
+    fn the_saved_chimp_has_the_thumbnail_of_the_active_artboard() {
+        let mut e = Editor::with_sprite(Sprite::new(4, 4, ColorMode::Rgba));
+        e.add_artboard(8, 2);
+        let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+        e.execute(Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: vec![(7, 1, red)],
+        });
+        let bytes = save_bytes(&mut e, "hero.chimp").unwrap();
+        let thumb = cs_io::thumbnail::read(std::io::Cursor::new(bytes))
+            .unwrap()
+            .expect("the active artboard is not empty");
+        assert_eq!(
+            (thumb.width, thumb.height),
+            (256, 64),
+            "8×2, not the 4×4 one"
+        );
+        assert_eq!(*thumb.pixels.last().unwrap(), Rgba::rgb(255, 0, 0));
     }
 
     #[test]
