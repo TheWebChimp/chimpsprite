@@ -392,3 +392,164 @@ fn filling_glyphs_goes_back_to_the_current_glyph() {
     assert!(e.font().unwrap().index_of('¡').is_some());
     assert_eq!(e.fill_glyphs(&glyphs, false), 0, "already drawn");
 }
+
+#[test]
+fn a_styled_font_is_named_family_and_style_and_renaming_changes_the_family() {
+    let mut e = editor_with_font();
+    let mut info = e.font().unwrap().clone();
+    info.style = cs_core::FontStyle {
+        name: "Bold".into(),
+        weight: 700,
+        ..Default::default()
+    };
+    assert!(e.set_font_info(info));
+    assert_eq!(e.artboard().name, "Mine Bold");
+    let id = e.active;
+    assert!(e.rename_artboard(id, "Other Bold".into()));
+    assert_eq!(e.font().unwrap().name, "Other");
+    assert_eq!(e.artboard().name, "Other Bold");
+    assert!(e.rename_artboard(id, "Third".into()));
+    assert_eq!(e.font().unwrap().name, "Third");
+    assert_eq!(e.artboard().name, "Third Bold", "the style stays");
+    assert!(e.duplicate_artboard("Copy Bold".into()));
+    assert_eq!(e.font().unwrap().name, "Copy");
+    assert_eq!(e.artboard().name, "Copy Bold");
+    assert_eq!(
+        e.document_fonts()
+            .into_iter()
+            .map(|(_, n)| n)
+            .collect::<Vec<_>>(),
+        vec!["Third Bold", "Copy Bold"]
+    );
+}
+
+/// La fuente de 8×8 con una `l` (una barra de la fila 1 a la 5) y una `o`.
+fn editor_with_letters() -> Editor {
+    let mut e = editor_with_font();
+    for (ch, points) in [
+        ('l', vec![(0, 1), (0, 2), (0, 3), (0, 4), (0, 5)]),
+        ('o', vec![(1, 4)]),
+    ] {
+        e.go_to_glyph(ch);
+        let (layer, frame) = (e.layer, e.frame);
+        e.execute(cs_commands::Command::DrawPixels {
+            layer,
+            frame,
+            pixels: points
+                .into_iter()
+                .map(|(x, y)| (x, y, ONE_BIT_INK))
+                .collect(),
+        });
+    }
+    e
+}
+
+fn bold_style() -> cs_core::FontStyle {
+    cs_core::FontStyle {
+        name: "Bold".into(),
+        weight: 700,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn a_new_variant_joins_the_family_in_one_step_and_rebuilds_from_its_source() {
+    use cs_core::{VariantKind, VariantRecipe};
+    let mut e = editor_with_letters();
+    let regular = e.active;
+    let recipe = VariantRecipe::new(VariantKind::Bold);
+    assert!(e.add_variant(&recipe, bold_style()));
+    let bold = e.active;
+    assert_ne!(bold, regular);
+    assert_eq!(e.workspace(), Some(bold), "in the new font");
+    assert_eq!(e.artboard().name, "Mine Bold");
+    assert_eq!(e.font().unwrap().name, "Mine");
+    let l = e.font().unwrap().index_of('l').unwrap();
+    assert_eq!(cs_core::ink_width(e.sprite(), l), 2, "bold: 1 + 1");
+    let family: Vec<String> = e.family_fonts().into_iter().map(|(_, s)| s.name).collect();
+    assert_eq!(family, vec!["Regular", "Bold"]);
+    assert!(e.family_has_style("bold"));
+    assert!(
+        !e.add_variant(&recipe, bold_style()),
+        "the family has a Bold already"
+    );
+    // Rebuild: después de cambiar la Regular, la Bold la sigue en un paso.
+    assert!(e.can_rebuild(bold) && !e.can_rebuild(regular));
+    e.enter_workspace(regular);
+    e.go_to_glyph('l');
+    let (layer, frame) = (e.layer, e.frame);
+    e.execute(cs_commands::Command::DrawPixels {
+        layer,
+        frame,
+        pixels: vec![(2, 5, ONE_BIT_INK)],
+    });
+    assert!(e.rebuild_variant(bold));
+    let width = |e: &Editor| {
+        let a = e.document.artboard(bold).unwrap();
+        cs_core::ink_width(&a.sprite, l)
+    };
+    assert_eq!(width(&e), 4);
+    assert_eq!(e.document.artboard(bold).unwrap().name, "Mine Bold");
+    e.undo();
+    assert_eq!(width(&e), 2);
+    e.undo();
+    e.undo();
+    assert!(
+        e.document.artboard(bold).is_none(),
+        "New Variant was one step"
+    );
+}
+
+#[test]
+fn kerning_changes_are_one_step_and_dragging_is_grouped() {
+    use cs_core::KernSide::Char;
+    let mut e = editor_with_letters();
+    let mut k = e.font().unwrap().kerning.clone();
+    k.set(Char('l'), Char('o'), -1);
+    assert!(e.set_kerning(k.clone()));
+    assert!(!e.set_kerning(k.clone()), "no change");
+    for v in [-2, -3] {
+        k.set(Char('l'), Char('o'), v);
+        e.set_kerning_grouped(k.clone(), 7);
+    }
+    e.end_group_of(7);
+    assert_eq!(e.font().unwrap().kerning.value('l', 'o'), -3);
+    e.undo();
+    assert_eq!(e.font().unwrap().kerning.value('l', 'o'), -1);
+    e.undo();
+    assert!(e.font().unwrap().kerning.is_empty());
+}
+
+#[test]
+fn the_family_builds_one_file_per_style() {
+    use cs_core::{VariantKind, VariantRecipe};
+    let mut e = editor_with_letters();
+    assert!(e.add_variant(&VariantRecipe::new(VariantKind::Bold), bold_style()));
+    let italic = cs_core::FontStyle {
+        name: "Bold Italic".into(),
+        weight: 700,
+        italic: true,
+        slant: 3,
+        source: None,
+    };
+    assert!(e.add_variant(&VariantRecipe::new(VariantKind::BoldItalic), italic));
+    let members: Vec<_> = e.family_fonts().into_iter().map(|(id, _)| id).collect();
+    let files = crate::font_io::build_family_files(
+        &e.document,
+        &members,
+        crate::font_io::BuildFormat::Ttf,
+        "Mine",
+    )
+    .unwrap();
+    let names: Vec<&str> = files.iter().map(|(n, _)| n.as_str()).collect();
+    assert_eq!(
+        names,
+        vec!["Mine-Regular.ttf", "Mine-Bold.ttf", "Mine-BoldItalic.ttf"]
+    );
+    let dialog =
+        crate::font_io::BuildFontDialog::new(&e, crate::font_io::BuildFormat::Ttf).unwrap();
+    assert_eq!(dialog.files_label(), "Mine-BoldItalic.ttf");
+    assert_eq!(dialog.members.len(), 3);
+    let alone = cs_core::FontStyle::default();
+    assert_eq!(crate::font_io::style_stem("Mine", &alone, true), "Mine");
+}

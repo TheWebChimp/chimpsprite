@@ -1,6 +1,7 @@
 //! Exportar una fuente pixel a BMFont (el `.fnt` de texto de AngelCode y su atlas `.png`), lo
 //! que leen los motores de juegos. Cada glifo va recortado a sus pixeles, en estantes con 1 pixel
-//! de aire; la tinta de 1 bit sale blanca, para teñirla en el motor.
+//! de aire; la tinta de 1 bit sale blanca, para teñirla en el motor. El estilo va en `face`,
+//! `bold` e `italic`, y el kerning en las líneas `kerning`.
 
 use std::fmt::Write as _;
 
@@ -78,13 +79,15 @@ pub fn export_bmfont(artboard: &Artboard, png_file: &str) -> Result<BmFont> {
         }
     }
     let (_, cell_h) = view.cell;
-    let face = font.name.replace('"', "'");
+    let (family, _) = font.style.legacy_names(&font.name);
+    let face = family.replace('"', "'");
+    let (bold, italic) = (font.style.is_bold() as u8, font.style.italic as u8);
     let file = png_file.replace('"', "'");
     let mut fnt = String::new();
     // `write!` a un `String` no falla.
     let _ = writeln!(
         fnt,
-        "info face=\"{face}\" size={cell_h} bold=0 italic=0 charset=\"\" unicode=1 \
+        "info face=\"{face}\" size={cell_h} bold={bold} italic={italic} charset=\"\" unicode=1 \
          stretchH=100 smooth=0 aa=1 padding=0,0,0,0 spacing={SPACING},{SPACING} outline=0"
     );
     let _ = writeln!(
@@ -109,7 +112,14 @@ pub fn export_bmfont(artboard: &Artboard, png_file: &str) -> Result<BmFont> {
     for g in &glyphs {
         line(g.ch as u32, Some(g), g.advance);
     }
-    let _ = writeln!(fnt, "kernings count=0");
+    let _ = writeln!(fnt, "kernings count={}", view.kerning.len());
+    for (&(a, b), &amount) in &view.kerning {
+        let _ = writeln!(
+            fnt,
+            "kerning first={} second={} amount={amount}",
+            a as u32, b as u32
+        );
+    }
     Ok(BmFont {
         fnt,
         png: atlas.to_png()?,
@@ -184,6 +194,7 @@ mod tests {
         assert!(lines[1].starts_with("common lineHeight=10 base=8 "));
         assert_eq!(lines[2], "page id=0 file=\"sample.png\"");
         assert_eq!(lines[3], "chars count=7");
+        assert!(lines[0].contains(" bold=0 italic=0 "));
         assert_eq!(*lines.last().unwrap(), "kernings count=0");
         let space = char_line(&bm.fnt, 32);
         assert_eq!((space["width"], space["xadvance"]), (0, 3));
@@ -195,6 +206,44 @@ mod tests {
         let z = char_line(&bm.fnt, 'z' as u32);
         assert_eq!((z["width"], z["height"], z["xadvance"]), (0, 0, 4));
         assert!(bm.fnt.contains(&format!("char id={} ", 0x1F600)));
+    }
+
+    #[test]
+    fn the_style_and_the_kerning_go_to_the_fnt() {
+        use cs_core::KernSide::Char;
+        let mut artboard = sample_font(FontMode::OneBit);
+        let font = artboard.font.as_mut().unwrap();
+        font.style = cs_core::FontStyle {
+            name: "Bold Italic".into(),
+            weight: 700,
+            italic: true,
+            slant: 3,
+            source: None,
+        };
+        font.kerning.set(Char('g'), Char('i'), 2);
+        font.kerning.set(Char('A'), Char('g'), -1);
+        let bm = export_bmfont(&artboard, "s.png").unwrap();
+        let lines: Vec<&str> = bm.fnt.lines().collect();
+        assert!(lines[0].starts_with("info face=\"Sample\" size=10 bold=1 italic=1 "));
+        let tail: Vec<&str> = lines.iter().rev().take(3).rev().copied().collect();
+        assert_eq!(
+            tail,
+            vec![
+                "kernings count=2",
+                "kerning first=65 second=103 amount=-1",
+                "kerning first=103 second=105 amount=2",
+            ]
+        );
+        // Un estilo que no es RIBBI va en la familia.
+        let font = artboard.font.as_mut().unwrap();
+        font.style.name = "Outline".into();
+        font.style.weight = 400;
+        font.style.italic = false;
+        let bm = export_bmfont(&artboard, "s.png").unwrap();
+        assert!(
+            bm.fnt
+                .starts_with("info face=\"Sample Outline\" size=10 bold=0 italic=0 ")
+        );
     }
 
     #[test]

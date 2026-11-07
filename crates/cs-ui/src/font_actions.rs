@@ -6,6 +6,7 @@ use eframe::egui;
 use crate::ChimpApp;
 use crate::font_io::{self, BuildFontDialog, BuildFormat, OpenedFont};
 use crate::font_sheet_dialog::GlyphSheetDialog;
+use crate::font_variant_dialog::NewVariantDialog;
 use crate::platform::{FileFilter, OpenPurpose};
 use crate::tilemap_dialog::DialogResult;
 
@@ -72,23 +73,45 @@ impl ChimpApp {
     }
 
     /// Pregunta dónde guardar y escribe los archivos de `dialog` (el BMFont: el `.fnt` donde se
-    /// eligió y su `.png` al lado, con el mismo nombre).
+    /// eligió y su `.png` al lado, con el mismo nombre). Con la familia, el primero va donde se
+    /// eligió y los demás a su lado, cada uno con su nombre `Familia-Estilo`.
     fn build_font_files(&mut self, dialog: &BuildFontDialog) {
-        let Some(artboard) = self.doc.editor.document.artboard(dialog.artboard) else {
-            return;
+        let targets = dialog.targets();
+        let family = targets.len() > 1;
+        let document = &self.doc.editor.document;
+        let files = if family {
+            font_io::build_family_files(document, &targets, dialog.format, &dialog.family)
+        } else {
+            Ok(Vec::new())
         };
-        let (suggested, filters) = match dialog.format {
-            BuildFormat::BmFont => (format!("{}.fnt", dialog.stem()), FNT_FILTER),
-            _ => (format!("{}.ttf", dialog.stem()), TTF_FILTER),
+        let mut files = match files {
+            Ok(files) => files,
+            Err(e) => return self.show_message("Could not build the font", e),
+        };
+        let suggested = match (family, files.first()) {
+            (true, Some((name, _))) => name.clone(),
+            _ => match dialog.format {
+                BuildFormat::BmFont => format!("{}.fnt", dialog.stem()),
+                _ => format!("{}.ttf", dialog.stem()),
+            },
+        };
+        let filters = match dialog.format {
+            BuildFormat::BmFont => FNT_FILTER,
+            _ => TTF_FILTER,
         };
         let Some(target) = self.platform.choose_save(&suggested, filters) else {
             return;
         };
-        let stem = target.stem().to_owned();
-        let files = match font_io::build_files(artboard, dialog.format, &dialog.family, &stem) {
-            Ok(files) => files,
-            Err(e) => return self.show_message("Could not build the font", e),
-        };
+        if !family {
+            let Some(artboard) = self.doc.editor.document.artboard(dialog.artboard) else {
+                return;
+            };
+            let stem = target.stem().to_owned();
+            files = match font_io::build_files(artboard, dialog.format, &dialog.family, &stem) {
+                Ok(files) => files,
+                Err(e) => return self.show_message("Could not build the font", e),
+            };
+        }
         for (i, (name, bytes)) in files.iter().enumerate() {
             // El primero va donde se eligió; los demás (el atlas), a su lado.
             let file = if i == 0 {
@@ -140,6 +163,43 @@ impl ChimpApp {
                     Ok(build) => self.add_imported_font(ctx, build),
                     Err(e) => self.show_message("Could not import the font", e),
                 }
+            }
+        }
+    }
+
+    /// New Variant… (de los ajustes de la fuente): el diálogo para la fuente activa.
+    pub(crate) fn open_new_variant(&mut self) {
+        let text = self.font_panel.test_text.clone();
+        self.new_variant = NewVariantDialog::new(&self.doc.editor, &text).map(Box::new);
+    }
+
+    pub(crate) fn update_new_variant_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.new_variant else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin(), &self.doc.editor) {
+            DialogResult::Open => {}
+            DialogResult::Cancel => self.new_variant = None,
+            DialogResult::Accept => {
+                let editor = &mut self.doc.editor;
+                if editor.active != dialog.source {
+                    self.new_variant = None;
+                    return self.show_message("New Variant", "The font is not active anymore.");
+                }
+                let style = dialog.style();
+                if style.name.is_empty() || editor.family_has_style(&style.name) {
+                    // Se queda abierto: el diálogo ya dice por qué.
+                    return;
+                }
+                let recipe = dialog.recipe;
+                self.new_variant = None;
+                if !self.doc.editor.add_variant(&recipe, style) {
+                    return self.show_message("New Variant", "Could not create the variant.");
+                }
+                if let Some(id) = self.doc.editor.workspace() {
+                    self.tabs.open_view(&mut self.doc, id);
+                }
+                self.show_font_beside_panel(ctx);
             }
         }
     }

@@ -67,12 +67,12 @@ const CURRENT: Color32 = Color32::from_rgb(226, 114, 133);
 const ADD_WIDTH: f32 = 120.0;
 const ADD_ALL_GAP: f32 = 4.0;
 /// Ancho del campo del Test Drive y de su papel.
-const TEST_W: f32 = 284.0;
+pub(crate) const TEST_W: f32 = 284.0;
 /// La escala del texto del Test Drive y el aire alrededor de él.
-const TEST_SCALE: u32 = 2;
-const TEST_PAD: f32 = 4.0;
+pub(crate) const TEST_SCALE: u32 = 2;
+pub(crate) const TEST_PAD: f32 = 4.0;
 /// La tinta del Test Drive: oscura fija, porque el papel es blanco aunque el tema sea oscuro.
-const TEST_INK: Color32 = Color32::from_rgb(5, 4, 3);
+pub(crate) const TEST_INK: Color32 = Color32::from_rgb(5, 4, 3);
 /// La columna de las etiquetas de los ajustes y los anchos de sus controles.
 const LABEL_W: f32 = 90.0;
 /// Los números de las medidas y el espaciado van en dos columnas: cada una, la etiqueta y su
@@ -95,10 +95,12 @@ const COMPONENT_FIELD_W: f32 = 80.0;
 /// La marquita de los compuestos en el mapa.
 const COMPOSITE_MARK: Color32 = Color32::from_rgb(60, 110, 235);
 
-/// Los dos íconos del título (13×14 con su sombra clara): los ajustes de la fuente en (292, 9) y
-/// el mapa en (309, 9).
+/// Los íconos del título (13×14 con su sombra clara): el kerning en (275, 9), los ajustes de la
+/// fuente en (292, 9) y el mapa en (309, 9).
+const KERN_ICON: &str = "icon.fontforge.kern";
 const CONFIG_ICON: &str = "icon.fontforge.config";
 const EDIT_ICON: &str = "icon.fontforge.edit";
+const KERN_AT: Vec2 = vec2(275.0, 9.0);
 const CONFIG_AT: Vec2 = vec2(292.0, 9.0);
 const EDIT_AT: Vec2 = vec2(309.0, 9.0);
 const ICON_SIZE: Vec2 = vec2(13.0, 14.0);
@@ -111,6 +113,8 @@ pub enum PanelView {
     Edit,
     /// Los ajustes de la fuente.
     Config,
+    /// Los pares y las clases de kerning.
+    Kerning,
 }
 
 /// El estado del panel entre frames.
@@ -123,6 +127,13 @@ pub struct FontPanelState {
     pub test_text: String,
     /// Lo escrito en el campo "Component" de la sección Glyph.
     pub component_char: String,
+    /// El par elegido en la vista Kerning.
+    pub kern_pair: Option<(char, char)>,
+    /// Los campos First y Second de la fila para agregar un par.
+    pub kern_first: String,
+    pub kern_second: String,
+    /// El arrastre de una letra en la vista Kerning: el valor al empezar y lo arrastrado.
+    pub kern_drag: Option<(i32, f32)>,
 }
 
 impl Default for FontPanelState {
@@ -133,6 +144,10 @@ impl Default for FontPanelState {
             add_char: String::new(),
             test_text: "The quick brown fox".to_owned(),
             component_char: String::new(),
+            kern_pair: None,
+            kern_first: String::new(),
+            kern_second: String::new(),
+            kern_drag: None,
         }
     }
 }
@@ -191,6 +206,10 @@ pub enum FontAction {
     FillFromTtf,
     /// Generate ▾ → Glyphs from image…
     GlyphsFromImage,
+    /// La sección Family de los ajustes → abrir la pestaña de otro estilo.
+    OpenFont(cs_core::ArtboardId),
+    /// New Variant… (de los ajustes).
+    NewVariant,
 }
 
 /// Lo del menú Generate ▾.
@@ -260,9 +279,16 @@ fn body(
         ui.add(egui::Label::new("The active artboard is not a font.").wrap());
         return new.clicked().then_some(FontAction::NewFont);
     };
-    if state.view == PanelView::Config {
-        settings(ui, editor, skin);
-        return None;
+    match state.view {
+        PanelView::Config => {
+            settings(ui, editor, skin);
+            return family_section(ui, editor, skin);
+        }
+        PanelView::Kerning => {
+            crate::font_kern_panel::show(ui, editor, skin, state);
+            return None;
+        }
+        PanelView::Edit => {}
     }
     let note = match count {
         1 => "1 glyph".to_owned(),
@@ -307,6 +333,7 @@ fn header(ui: &mut Ui, skin: Option<&Skin>, state: &mut FontPanelState, outer: R
         }
     }
     let icons = [
+        (KERN_ICON, KERN_AT, "Kerning", PanelView::Kerning),
         (CONFIG_ICON, CONFIG_AT, "Font Settings", PanelView::Config),
         (EDIT_ICON, EDIT_AT, "Edit Glyphs", PanelView::Edit),
     ];
@@ -714,42 +741,39 @@ fn test_drive(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, state: &mut
             color,
         );
     }
-    // Las letras: un rect por carácter, con el avance que usa `font_text`.
+    // Las letras: un rect por carácter, donde las pone `font_text` (con el kerning).
     let enabled = ui.is_enabled();
     let mut go = None;
-    for (row, line) in state.test_text.lines().enumerate() {
-        let mut pen = 0u32;
-        for (i, ch) in line.chars().enumerate() {
-            let advance = if ch == ' ' {
-                view.space_width
-            } else {
-                view.glyphs
-                    .get(&ch)
-                    .map_or(view.missing_width, |g| g.advance)
-            };
-            let letter = Rect::from_min_size(
-                origin + vec2((pen * TEST_SCALE) as f32, row as f32 * line_h),
-                vec2((advance * TEST_SCALE) as f32, line_h),
-            )
-            .intersect(paper);
-            pen += advance;
-            if ch == ' ' || !letter.is_positive() {
-                continue;
-            }
-            let response =
-                ui.interact(letter, ui.id().with(("test_drive", row, i)), Sense::click());
-            let label = format!("Test Drive {ch}");
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label)
-            });
-            if response.clicked() {
-                go = Some(ch);
-            }
+    for laid in cs_tools::text::font_layout(&view, &state.test_text) {
+        let letter = letter_rect(origin, line_h, &laid).intersect(paper);
+        if laid.ch == ' ' || !letter.is_positive() {
+            continue;
+        }
+        let id = ui.id().with(("test_drive", laid.row, laid.col));
+        let response = ui.interact(letter, id, Sense::click());
+        let label = format!("Test Drive {}", laid.ch);
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
+        if response.clicked() {
+            go = Some(laid.ch);
         }
     }
     if let Some(ch) = go {
         editor.go_to_glyph(ch);
     }
+}
+
+/// El rect de una letra del papel del texto de prueba (a `TEST_SCALE`, desde `origin`).
+pub(crate) fn letter_rect(
+    origin: egui::Pos2,
+    line_h: f32,
+    laid: &cs_tools::text::LaidChar,
+) -> Rect {
+    let scale = TEST_SCALE as f32;
+    Rect::from_min_size(
+        origin + vec2(laid.x as f32 * scale, laid.row as f32 * line_h),
+        vec2(laid.advance.max(1) as f32 * scale, line_h),
+    )
 }
 
 /// Una fila de los ajustes: la etiqueta en su columna y el control.
@@ -820,7 +844,7 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     ui.add_space(4.0);
     let mut info = font.clone();
     let name_id = ui.id().with("font_name");
-    if let Some(name) = row(ui, "Name", |ui| {
+    if let Some(name) = row(ui, "Family", |ui| {
         kit::input::buffered(ui, name_id, &font.name, |ui, text| match skin {
             Some(skin) => kit::input::text_input(ui, skin, text, NAME_W, "Font name", "Font name"),
             None => ui.add(egui::TextEdit::singleline(text).desired_width(NAME_W)),
@@ -828,6 +852,39 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }) {
         info.name = name;
     }
+    // El estilo: su nombre, su peso y si es itálica.
+    let style_id = ui.id().with("font_style_name");
+    if let Some(name) = row(ui, "Style", |ui| {
+        kit::input::buffered(ui, style_id, &font.style.name, |ui, text| match skin {
+            Some(skin) => kit::input::text_input(ui, skin, text, NAME_W, "Style name", "Regular"),
+            None => ui.add(egui::TextEdit::singleline(text).desired_width(NAME_W)),
+        })
+    }) && !name.trim().is_empty()
+    {
+        info.style.name = name.trim().to_owned();
+    }
+    row(ui, "Weight", |ui| {
+        let weight = &mut info.style.weight;
+        let selected = format!("{weight} {}", cs_core::weight_name(*weight));
+        let content = |ui: &mut Ui| {
+            for (w, name) in cs_core::WEIGHTS {
+                widgets::choice(ui, weight, w, &format!("{w} {name}"));
+            }
+        };
+        match skin {
+            Some(skin) => {
+                kit::select::select(ui, skin, "font_weight", &selected, Some(NAME_W), content);
+            }
+            None => {
+                egui::ComboBox::from_id_salt("font_weight")
+                    .selected_text(selected.as_str())
+                    .show_ui(ui, content);
+            }
+        }
+    });
+    row(ui, "", |ui| {
+        checkbox(ui, skin, &mut info.style.italic, "Italic")
+    });
     row(ui, "Mode", |ui| ui.label(font_dialog::mode_name(font.mode)));
     row(ui, "Cell", |ui| ui.label(format!("{cell_w}×{cell_h}")));
     // Las mayúsculas y la x-height hasta la baseline; los descendentes, de ella hasta abajo.
@@ -905,6 +962,79 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
             editor.set_glyph_advance(ch, advance);
         }
     }
+}
+
+/// La sección Family de los ajustes: un renglón por estilo de la familia (el actual marcado; un
+/// clic abre su pestaña) con Rebuild en los generados, y New Variant….
+fn family_section(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<FontAction> {
+    let font = editor.font()?.clone();
+    let members = editor.family_fonts();
+    ui.add_space(GLYPH_AIR);
+    let hint = match members.len() {
+        1 => "(1 style)".to_owned(),
+        n => format!("({n} styles)"),
+    };
+    label_with_hint(ui, &format!("Family \"{}\"", font.name), &hint);
+    ui.add_space(GLYPH_ROW_GAP);
+    let mut action = None;
+    let mut rebuild = None;
+    for (id, style) in &members {
+        let on = *id == editor.active;
+        let generated = style.source.as_ref().map(|s| {
+            let from = editor
+                .document
+                .artboard(s.artboard)
+                .and_then(|a| a.font.as_ref())
+                .map_or_else(|| "a removed font".to_owned(), |f| f.style.name.clone());
+            format!("{} from {from}", s.recipe.kind.label())
+        });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = GLYPH_GAP;
+            let label = style.name.clone();
+            let picked = ui
+                .allocate_ui_with_layout(
+                    vec2(NAME_W, kit::stepper::HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(NAME_W);
+                        match skin {
+                            Some(skin) => kit::check::radio(ui, skin, on, &label),
+                            None => ui.radio(on, &label),
+                        }
+                    },
+                )
+                .inner;
+            if picked.clicked() && !on {
+                action = Some(FontAction::OpenFont(*id));
+            }
+            if let Some(generated) = &generated {
+                let can = editor.can_rebuild(*id);
+                let response = ui
+                    .add_enabled_ui(can, |ui| match skin {
+                        Some(skin) => kit::button::button(ui, skin, "Rebuild"),
+                        None => pixel_ui::text_button(ui, "Rebuild"),
+                    })
+                    .inner
+                    .on_hover_text(format!("{generated}: generate it again (your edits go)"))
+                    .on_disabled_hover_text("Its source font is gone");
+                if response.clicked() {
+                    rebuild = Some(*id);
+                }
+            }
+        });
+        ui.add_space(GLYPH_ROW_GAP);
+    }
+    if let Some(id) = rebuild {
+        editor.rebuild_variant(id);
+    }
+    let new = match skin {
+        Some(skin) => kit::button::button(ui, skin, "New Variant…"),
+        None => pixel_ui::text_button(ui, "New Variant…"),
+    };
+    if new.clicked() {
+        action = Some(FontAction::NewVariant);
+    }
+    action
 }
 
 /// La tira de las páginas: las pestañas del kit (sin Pixel UI, etiquetas de egui).

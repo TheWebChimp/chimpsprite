@@ -2,11 +2,14 @@
 //! pixel y la regla de devanado no cero de TrueType; un pixel se prende si su cobertura llega al
 //! umbral. Las fuentes pixel en TTF (las de BitFontMaker2, las nuestras) se reconocen porque
 //! todas sus coordenadas caen en una cuadrícula común: su tamaño sugerido es su celda exacta. En
-//! color, las capas COLR (v0) se pintan una sobre otra con su color.
+//! color, las capas COLR (v0) se pintan una sobre otra con su color. El kerning sale de la
+//! feature `kern` del `GPOS` (o, si no, de la tabla `kern`) y el estilo, de `name`, `OS/2` y
+//! `post`.
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use cs_core::{FontBuild, FontMetrics, FontMode, GlyphBuild, Rgba};
+use cs_core::{FontBuild, FontMetrics, FontMode, FontStyle, GlyphBuild, Rgba};
+use ttf_parser::gpos::{PairAdjustment, PositioningSubtable};
 use ttf_parser::{Face, GlyphId, OutlineBuilder};
 
 use crate::{IoError, Result};
@@ -88,20 +91,121 @@ fn parse(bytes: &[u8]) -> Result<Face<'_>> {
         .map_err(|e| IoError::Unsupported(format!("not a TrueType or OpenType font ({e})")))
 }
 
-/// El nombre de la familia de `face` (el tipográfico si lo tiene).
-fn family(face: &Face) -> String {
-    let names = face.names();
-    let find = |id| {
-        names
-            .into_iter()
-            .filter(|n| n.name_id == id)
-            .find_map(|n| n.to_string())
-    };
-    find(ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
-        .or_else(|| find(ttf_parser::name_id::FAMILY))
+/// El primer nombre `id` de `face` que se puede leer (sin espacios de más; `None` si vacío).
+fn name_of(face: &Face, id: u16) -> Option<String> {
+    face.names()
+        .into_iter()
+        .filter(|n| n.name_id == id)
+        .find_map(|n| n.to_string())
         .map(|s| s.trim().to_owned())
         .filter(|s| !s.is_empty())
+}
+
+/// El nombre de la familia de `face` (el tipográfico si lo tiene).
+fn family(face: &Face) -> String {
+    name_of(face, ttf_parser::name_id::TYPOGRAPHIC_FAMILY)
+        .or_else(|| name_of(face, ttf_parser::name_id::FAMILY))
         .unwrap_or_else(|| "Imported".into())
+}
+
+/// El estilo de `face`: la subfamilia tipográfica (o la legacy), el peso de `OS/2`, la itálica y
+/// su inclinación (de `post.italicAngle`).
+fn style_of(face: &Face) -> FontStyle {
+    let name = name_of(face, ttf_parser::name_id::TYPOGRAPHIC_SUBFAMILY)
+        .or_else(|| name_of(face, ttf_parser::name_id::SUBFAMILY))
+        .unwrap_or_else(|| "Regular".into());
+    let angle = face.italic_angle().abs() as f64;
+    let slant = if angle > 0.5 {
+        (1.0 / angle.to_radians().tan()).round().max(1.0) as u32
+    } else {
+        0
+    };
+    FontStyle {
+        name,
+        weight: face.weight().to_number(),
+        italic: face.is_italic(),
+        slant,
+        source: None,
+    }
+}
+
+/// El kerning entre `chars` en unidades de la fuente: los lookups PairPos de la feature `kern` del
+/// `GPOS` (formato 1 y 2, el `XAdvance` del primero; dentro de un lookup gana su primer subtable,
+/// y los lookups se suman) o, si no tiene, la tabla `kern` (subtablas horizontales).
+fn kerning_units(face: &Face, chars: &[char]) -> BTreeMap<(char, char), i32> {
+    let ids: Vec<(char, GlyphId)> = chars
+        .iter()
+        .filter_map(|&c| Some((c, face.glyph_index(c)?)))
+        .collect();
+    let mut out: BTreeMap<(char, char), i32> = BTreeMap::new();
+    let mut from_gpos = false;
+    if let Some(gpos) = face.tables().gpos {
+        let kern = ttf_parser::Tag::from_bytes(b"kern");
+        let mut lookups: Vec<u16> = gpos
+            .features
+            .into_iter()
+            .filter(|f| f.tag == kern)
+            .flat_map(|f| f.lookup_indices)
+            .collect();
+        lookups.sort_unstable();
+        lookups.dedup();
+        for index in lookups {
+            let Some(lookup) = gpos.lookups.get(index) else {
+                continue;
+            };
+            let mut here: BTreeMap<(char, char), i32> = BTreeMap::new();
+            for sub in lookup.subtables.into_iter::<PositioningSubtable>() {
+                let PositioningSubtable::Pair(pair) = sub else {
+                    continue;
+                };
+                from_gpos = true;
+                let coverage = match &pair {
+                    PairAdjustment::Format1 { coverage, .. }
+                    | PairAdjustment::Format2 { coverage, .. } => *coverage,
+                };
+                // Solo los de la izquierda que el subtable cubre.
+                for &(a, ga) in ids.iter().filter(|(_, g)| coverage.contains(*g)) {
+                    for &(b, gb) in &ids {
+                        let value = match &pair {
+                            PairAdjustment::Format1 { coverage, sets } => coverage
+                                .get(ga)
+                                .and_then(|i| sets.get(i))
+                                .and_then(|set| set.get(gb)),
+                            PairAdjustment::Format2 {
+                                coverage,
+                                classes,
+                                matrix,
+                            } => coverage
+                                .contains(ga)
+                                .then(|| matrix.get((classes.0.get(ga), classes.1.get(gb))))
+                                .flatten(),
+                        };
+                        if let Some((first, _)) = value {
+                            here.entry((a, b)).or_insert(first.x_advance as i32);
+                        }
+                    }
+                }
+            }
+            for (pair, v) in here {
+                *out.entry(pair).or_insert(0) += v;
+            }
+        }
+    }
+    if !from_gpos && let Some(kern) = face.tables().kern {
+        for sub in kern.subtables {
+            if !sub.horizontal || sub.variable || sub.has_cross_stream {
+                continue;
+            }
+            for &(a, ga) in &ids {
+                for &(b, gb) in &ids {
+                    if let Some(v) = sub.glyphs_kerning(ga, gb) {
+                        out.entry((a, b)).or_insert(v as i32);
+                    }
+                }
+            }
+        }
+    }
+    out
 }
 
 /// Los caracteres del cmap que se pueden importar (sin el espacio ni los de control), en orden.
@@ -471,6 +575,15 @@ fn rasterize_font(face: &Face, chars: &[char], options: &TtfImport) -> Result<Fo
         "" => family(face),
         name => name.to_owned(),
     };
+    // El kerning entre los glifos importados, en pixeles (sin los que quedan en 0).
+    let imported: Vec<char> = glyphs.iter().map(|g| g.ch).collect();
+    let kerning = kerning_units(face, &imported)
+        .into_iter()
+        .filter_map(|((a, b), v)| match (v as f32 * scale).round() as i32 {
+            0 => None,
+            px => Some((a, b, px)),
+        })
+        .collect();
     Ok(FontBuild {
         name,
         mode,
@@ -484,6 +597,8 @@ fn rasterize_font(face: &Face, chars: &[char], options: &TtfImport) -> Result<Fo
         letter_spacing,
         space_width,
         monospace,
+        kerning,
+        style: style_of(face),
         glyphs,
     })
 }

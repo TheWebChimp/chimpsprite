@@ -842,6 +842,61 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                 app.font_panel.test_text = "àéîõüçñå ÀÇÑ".into();
                 app.font_panel.page = crate::font_panel::Page::Latin1;
             }
+            // Con CHIMPSPRITE_DEMO_FONT_KERN, unos pares y una clase, y la vista Kerning con el
+            // par A·B elegido.
+            if dev_var("CHIMPSPRITE_DEMO_FONT_KERN").is_some() {
+                use cs_core::KernSide::{Char, Class};
+                let e = &mut app.doc.editor;
+                let mut k = e.font().map(|f| f.kerning.clone()).unwrap_or_default();
+                k.classes.push(cs_core::KernClass {
+                    name: "round".into(),
+                    side: cs_core::ClassSide::Second,
+                    chars: vec!['C', 'O'],
+                });
+                k.set(Char('A'), Char('B'), -1);
+                k.set(Char('B'), Class("round".into()), 1);
+                e.set_kerning(k);
+                app.font_panel.view = crate::font_panel::PanelView::Kerning;
+                app.font_panel.kern_pair = Some(('A', 'B'));
+                app.font_panel.test_text = "ABC CAB".into();
+            }
+            // Con CHIMPSPRITE_DEMO_FONT_STYLES, la Bold y la Italic generadas y los ajustes de la
+            // Italic con la familia (en su pestaña).
+            if dev_var("CHIMPSPRITE_DEMO_FONT_STYLES").is_some() {
+                use cs_core::{FontStyle, VariantKind, VariantRecipe};
+                for kind in [VariantKind::Bold, VariantKind::Italic] {
+                    let e = &mut app.doc.editor;
+                    let regular = e.family_fonts().first().map(|(id, _)| *id);
+                    if let Some(id) = regular {
+                        e.enter_workspace(id);
+                    }
+                    let style = FontStyle {
+                        name: kind.style_name().into(),
+                        weight: kind.weight(),
+                        italic: kind.italic(),
+                        slant: if kind.italic() { 3 } else { 0 },
+                        source: None,
+                    };
+                    if e.add_variant(&VariantRecipe::new(kind), style)
+                        && let Some(id) = e.workspace()
+                    {
+                        app.tabs.open_view(&mut app.doc, id);
+                    }
+                }
+                app.doc.editor.go_to_glyph('A');
+                app.font_panel.view = crate::font_panel::PanelView::Config;
+            }
+            // Con CHIMPSPRITE_DEMO_FONT_VARIANT, el diálogo New Variant… abierto (`=outline`,
+            // `=italic`… elige el tipo).
+            if let Some(kind) = dev_var("CHIMPSPRITE_DEMO_FONT_VARIANT") {
+                app.open_new_variant();
+                let kind = cs_core::VariantKind::ALL
+                    .into_iter()
+                    .find(|k| k.style_name().eq_ignore_ascii_case(kind.trim()));
+                if let (Some(dialog), Some(kind)) = (app.new_variant.as_mut(), kind) {
+                    dialog.set_kind(kind);
+                }
+            }
             // Con CHIMPSPRITE_DEMO_FONT_BUILD, el diálogo Build Font abierto.
             if dev_var("CHIMPSPRITE_DEMO_FONT_BUILD").is_some() {
                 app.open_build_font(None);

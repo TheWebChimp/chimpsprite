@@ -10875,3 +10875,112 @@ fn generate_builds_the_accents_and_the_glyph_section_unlinks_them() {
     assert!(e.glyph_components().is_empty());
     assert!(e.sprite().cel(e.layer, e.frame).is_some());
 }
+
+/// El panel FontForge con una fuente de 8×8 con `l` y `o` dibujadas, en la vista Kerning, con el
+/// texto "lol".
+fn kerning_view_open() -> LayoutHarness {
+    let mut h = font_panel_open(Vec2::new(1200.0, 1000.0));
+    let e = &mut h.app.doc.editor;
+    for (ch, points) in [('l', vec![(0, 1), (0, 5)]), ('o', vec![(0, 3), (2, 5)])] {
+        e.go_to_glyph(ch);
+        let (layer, frame) = (e.layer, e.frame);
+        e.execute(Command::DrawPixels {
+            layer,
+            frame,
+            pixels: points
+                .into_iter()
+                .map(|(x, y)| (x, y, cs_core::ONE_BIT_INK))
+                .collect(),
+        });
+    }
+    h.app.font_panel.test_text = "lol".into();
+    h.frame();
+    h
+}
+
+#[test]
+fn the_kerning_icon_opens_the_kerning_view() {
+    let mut h = kerning_view_open();
+    let flyout = font_flyout(&h);
+    let kern = h.button("Kerning");
+    assert_eq!(kern.min, flyout.min + vec2(275.0, 9.0));
+    assert_eq!(h.drawn("icon.fontforge.kern").len(), 1);
+    h.click(kern.center(), PointerButton::Primary);
+    assert!(h.text_rects.iter().any(|(t, _, _)| t == "Pairs"));
+    assert!(h.button("Kern lo").width() > 0.0);
+    assert!(!h.buttons.iter().any(|(l, _)| l == "Glyph A"));
+}
+
+#[test]
+fn clicking_a_letter_picks_its_pair_and_dragging_it_kerns_in_one_step() {
+    let mut h = kerning_view_open();
+    h.click(h.button("Kerning").center(), PointerButton::Primary);
+    let letter = h.button("Kern lo");
+    h.click(letter.center(), PointerButton::Primary);
+    assert_eq!(h.app.font_panel.kern_pair, Some(('l', 'o')));
+    // Cuatro pixeles de la fuente a la izquierda (a ×2, ocho puntos: más que lo que egui
+    // todavía cuenta como clic).
+    let from = h.button("Kern lo").center();
+    h.drag(from, from - vec2(8.0, 0.0));
+    let e = &mut h.app.doc.editor;
+    assert_eq!(e.font().unwrap().kerning.value('l', 'o'), -4);
+    e.undo();
+    assert!(
+        e.font().unwrap().kerning.is_empty(),
+        "the drag was one step"
+    );
+    h.frame();
+    // Agregar un par desde la fila de abajo.
+    h.app.font_panel.kern_first = "o".into();
+    h.app.font_panel.kern_second = "l".into();
+    h.frame();
+    h.click(h.button("Add").center(), PointerButton::Primary);
+    let e = &h.app.doc.editor;
+    let k = &e.font().unwrap().kerning;
+    assert_eq!(k.pairs.len(), 1);
+    assert_eq!(h.app.font_panel.kern_pair, Some(('o', 'l')));
+    // Una clase nueva.
+    h.click(h.button("New class").center(), PointerButton::Primary);
+    assert_eq!(h.app.doc.editor.font().unwrap().kerning.classes.len(), 1);
+}
+
+#[test]
+fn the_font_settings_show_the_family_and_new_variant_creates_the_bold() {
+    let mut h = kerning_view_open();
+    h.click(h.button("Font Settings").center(), PointerButton::Primary);
+    assert!(h.text_rects.iter().any(|(t, _, _)| t == "Family \"Mine\""));
+    assert!(h.text_rects.iter().any(|(t, _, _)| t == "Weight"));
+    h.click(h.button("New Variant…").center(), PointerButton::Primary);
+    assert!(h.app.new_variant.is_some());
+    // Lo que hace Create (el diálogo no se dibuja en este arnés: ver dialog_tests).
+    h.app.new_variant = None;
+    let recipe = cs_core::VariantRecipe::new(cs_core::VariantKind::Bold);
+    let style = cs_core::FontStyle {
+        name: "Bold".into(),
+        weight: 700,
+        ..Default::default()
+    };
+    assert!(h.app.doc.editor.add_variant(&recipe, style));
+    h.frame();
+    let e = &h.app.doc.editor;
+    assert_eq!(e.artboard().name, "Mine Bold");
+    assert_eq!(e.workspace(), Some(e.active), "in its workspace");
+    let bold = e.active;
+    let family: Vec<String> = e.family_fonts().into_iter().map(|(_, s)| s.name).collect();
+    assert_eq!(family, vec!["Regular", "Bold"]);
+    for _ in 0..3 {
+        h.frame();
+    }
+    // En los ajustes de la Bold: Rebuild en ella y un clic en Regular abre la otra.
+    assert!(!h.disabled.iter().any(|l| l == "Rebuild"));
+    h.click(h.button("Rebuild").center(), PointerButton::Primary);
+    assert_eq!(
+        h.app.doc.editor.history.done().last(),
+        Some("Rebuild Variant")
+    );
+    let regular = h.nodes.iter().find(|(l, _)| l == "Regular").unwrap().1;
+    h.click(regular.center(), PointerButton::Primary);
+    let e = &h.app.doc.editor;
+    assert_ne!(e.active, bold);
+    assert_eq!(e.artboard().name, "Mine");
+}

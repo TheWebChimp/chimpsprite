@@ -1072,7 +1072,7 @@ impl CanvasView {
             {
                 painter.extend(w.card_shapes(layout, sample, active, ppp));
                 let title = match &artboard.font {
-                    Some(font) if self.names_visible && !renaming => font.name.clone(),
+                    Some(font) if self.names_visible && !renaming => font.full_name(),
                     _ => String::new(),
                 };
                 painter.extend(w.bar_shapes(
@@ -1696,7 +1696,7 @@ fn draw_grid(
 fn label_text(artboard: &Artboard, frame: usize) -> String {
     if let Some(font) = &artboard.font {
         let ch = font.glyphs.get(frame).map_or('?', |g| g.ch);
-        return format!("{ch} · {}", font.name);
+        return format!("{ch} · {}", font.full_name());
     }
     format!(
         "{}  {}×{}",

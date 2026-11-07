@@ -77,6 +77,12 @@ impl StructureLock {
     /// Después de aplicar: cada fuente o modelo que sigue siéndolo está bien armado y con su
     /// tamaño.
     pub fn holds(&self, doc: &Document) -> Result<(), CmdError> {
+        self.holds_except(doc, &[])
+    }
+
+    /// Como `holds`, pero los de `resized` (a los que el comando les puso fuente o modelo nuevos,
+    /// como Rebuild de una variante) pueden cambiar de tamaño.
+    fn holds_except(&self, doc: &Document, resized: &[ArtboardId]) -> Result<(), CmdError> {
         for &(id, size, _) in &self.0 {
             let Some(a) = doc.artboard(id) else {
                 continue;
@@ -84,7 +90,8 @@ impl StructureLock {
             if a.font.is_none() && a.model.is_none() {
                 continue;
             }
-            if !well_formed(a) || (a.sprite.width, a.sprite.height) != size {
+            let same_size = (a.sprite.width, a.sprite.height) == size || resized.contains(&id);
+            if !well_formed(a) || !same_size {
                 return Err(CmdError::StructureLocked(id));
             }
         }
@@ -101,7 +108,9 @@ impl StructureLock {
     ) -> Result<(), CmdError> {
         let lock = StructureLock::of(doc);
         lock.allows(&cmd)?;
-        history.execute_checked(doc, cmd, merged, |d| lock.holds(d))
+        let mut resized = Vec::new();
+        sets_structure(&cmd, &mut resized);
+        history.execute_checked(doc, cmd, merged, |d| lock.holds_except(d, &resized))
     }
 }
 

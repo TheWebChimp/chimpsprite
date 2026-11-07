@@ -1,10 +1,13 @@
 //! Lo de las fuentes pixel en el editor: crear una, moverse entre glifos, agregar y quitar,
-//! anchos, y desplazar, copiar, pegar y borrar un glifo.
+//! anchos, desplazar, copiar, pegar y borrar un glifo, el kerning y las variantes de la familia.
 
 use std::sync::Arc;
 
 use cs_commands::{Command, DocCommand};
-use cs_core::{ArtboardId, Cel, ColorMode, FontInfo, FontMode, GlyphComponent};
+use cs_core::{
+    ArtboardId, Cel, ColorMode, FontInfo, FontKerning, FontMode, FontStyle, GlyphComponent,
+    VariantRecipe,
+};
 
 use super::Editor;
 
@@ -26,15 +29,146 @@ impl Editor {
     /// Agrega una fuente ya armada (una importada) a la derecha de todo, en un paso de undo, y
     /// entra a ella como con [`Editor::new_font`].
     pub fn add_font(&mut self, font: FontInfo, sprite: cs_core::Sprite) -> bool {
+        self.add_font_named(font, sprite, "Import Font")
+    }
+
+    /// Como [`Editor::add_font`], con el nombre del paso de undo.
+    fn add_font_named(
+        &mut self,
+        font: FontInfo,
+        sprite: cs_core::Sprite,
+        step: &'static str,
+    ) -> bool {
         let ((_, y0), (x1, _)) = self.document.bounds().unwrap_or(((0, 0), (0, 0)));
         let (id, cmd) =
             cs_commands::font::add_font_artboard(&self.document, font, sprite, (x1 + 16, y0));
-        if !self.named("Import Font", |e| e.execute_doc(cmd)) {
+        if !self.named(step, |e| e.execute_doc(cmd)) {
             return false;
         }
         self.enter_workspace(id);
         self.set_frame(0);
         true
+    }
+
+    /// Las fuentes de la familia de la activa (las del documento con su mismo nombre, ella
+    /// incluida), por peso, luego derechas antes que itálicas y luego por nombre del estilo.
+    pub fn family_fonts(&self) -> Vec<(ArtboardId, FontStyle)> {
+        let Some(family) = self.font().map(|f| f.name.clone()) else {
+            return Vec::new();
+        };
+        let mut out: Vec<(ArtboardId, FontStyle)> = self
+            .document
+            .artboards
+            .iter()
+            .filter_map(|a| {
+                let font = a.font.as_ref()?;
+                (font.name == family).then(|| (a.id, font.style.clone()))
+            })
+            .collect();
+        out.sort_by(|(_, a), (_, b)| {
+            (a.weight, a.italic, &a.name).cmp(&(b.weight, b.italic, &b.name))
+        });
+        out
+    }
+
+    /// Si la familia de la fuente activa ya tiene un estilo llamado `name`.
+    pub fn family_has_style(&self, name: &str) -> bool {
+        self.family_fonts()
+            .iter()
+            .any(|(_, s)| s.name.trim().eq_ignore_ascii_case(name.trim()))
+    }
+
+    /// La variante de `recipe` de la fuente activa, con `style` (su fuente y su receta quedan en
+    /// él), sin agregarla: la del diálogo New Variant y su vista previa.
+    pub fn variant_of_active(
+        &self,
+        recipe: &VariantRecipe,
+        style: FontStyle,
+    ) -> Option<(FontInfo, cs_core::Sprite)> {
+        let font = self.font()?;
+        let (mut info, sprite) =
+            cs_raster::font_style::generate_variant(font, self.sprite(), recipe);
+        info.style = FontStyle {
+            source: Some(cs_core::StyleSource {
+                artboard: self.active,
+                recipe: *recipe,
+            }),
+            ..style
+        };
+        Some((info, sprite))
+    }
+
+    /// New Variant: genera la variante de la fuente activa y la agrega a la familia (un paso),
+    /// y entra a ella. `false` si la familia ya tiene ese estilo o el activo no es una fuente.
+    pub fn add_variant(&mut self, recipe: &VariantRecipe, style: FontStyle) -> bool {
+        if style.name.trim().is_empty() || self.family_has_style(&style.name) {
+            return false;
+        }
+        let Some((info, sprite)) = self.variant_of_active(recipe, style) else {
+            return false;
+        };
+        self.add_font_named(info, sprite, "New Variant")
+    }
+
+    /// Si la variante `id` se puede reconstruir: se generó y su fuente sigue siendo una fuente.
+    pub fn can_rebuild(&self, id: ArtboardId) -> bool {
+        self.rebuilt(id).is_some()
+    }
+
+    /// La variante `id` generada otra vez desde su fuente, con su nombre y su estilo.
+    fn rebuilt(&self, id: ArtboardId) -> Option<(FontInfo, cs_core::Sprite)> {
+        let artboard = self.document.artboard(id)?;
+        let font = artboard.font.as_ref()?;
+        let source = font.style.source.as_ref()?;
+        let from = self.document.artboard(source.artboard)?;
+        let (mut info, sprite) = cs_raster::font_style::generate_variant(
+            from.font.as_ref()?,
+            &from.sprite,
+            &source.recipe,
+        );
+        info.name = font.name.clone();
+        info.style = font.style.clone();
+        Some((info, sprite))
+    }
+
+    /// Rebuild: genera otra vez la variante `id` desde su fuente (glifos, medidas y kerning; se
+    /// quedan el nombre y el estilo), en un paso.
+    pub fn rebuild_variant(&mut self, id: ArtboardId) -> bool {
+        let Some((info, sprite)) = self.rebuilt(id) else {
+            return false;
+        };
+        let Some(cmd) = self
+            .document
+            .artboard(id)
+            .and_then(|a| cs_commands::font::replace_font(a, info, sprite))
+        else {
+            return false;
+        };
+        let current = self.current_glyph();
+        if !self.named("Rebuild Variant", |e| e.execute_doc(cmd)) {
+            return false;
+        }
+        if let Some(ch) = current.filter(|_| id == self.active) {
+            self.go_to_glyph(ch);
+        }
+        true
+    }
+
+    /// El kerning de la fuente activa, en un paso.
+    pub fn set_kerning(&mut self, kerning: FontKerning) -> bool {
+        let Some(cmd) = cs_commands::font::set_kerning(self.artboard(), kerning) else {
+            return false;
+        };
+        self.named("Kerning", |e| e.execute_doc(cmd))
+    }
+
+    /// Como `set_kerning`, pero los cambios seguidos del mismo `group` (el arrastre de un stepper
+    /// o de una letra) son un solo paso.
+    pub fn set_kerning_grouped(&mut self, kerning: FontKerning, group: u64) -> bool {
+        let Some(cmd) = cs_commands::font::set_kerning(self.artboard(), kerning) else {
+            return false;
+        };
+        self.execute_doc_grouped(cmd, group)
     }
 
     /// La fuente del artboard activo.
@@ -347,10 +481,10 @@ impl Editor {
             .artboard(ArtboardId(*artboard))
             .and_then(|a| a.font.as_ref());
         match font {
-            Some(font) if font.name != *name => {
+            Some(font) if font.full_name() != *name => {
                 self.text_style.font = cs_tools::text::FontChoice::Document {
                     artboard: *artboard,
-                    name: font.name.clone(),
+                    name: font.full_name(),
                 };
             }
             Some(_) => {}
@@ -366,22 +500,24 @@ impl Editor {
         self.document
             .artboards
             .iter()
-            .filter_map(|a| Some((a.id, a.font.as_ref()?.name.clone())))
+            .filter_map(|a| Some((a.id, a.font.as_ref()?.full_name())))
             .collect()
     }
 }
 
-/// La fuente nueva de `id` y, con ella, su nombre como nombre del artboard: los dos van juntos
-/// y el inverso deshace ambos (también al juntar los pasos de un arrastre).
+/// La fuente nueva de `id` y, con ella, su nombre completo (familia y estilo) como nombre del
+/// artboard: los dos van juntos y el inverso deshace ambos (también al juntar los pasos de un
+/// arrastre).
 pub(super) fn set_font_named(id: ArtboardId, info: FontInfo) -> DocCommand {
+    let name = info.full_name();
     DocCommand::Batch(vec![
         DocCommand::SetFont {
             id,
-            font: Some(Box::new(info.clone())),
+            font: Some(Box::new(info)),
         },
         DocCommand::SetArtboardProps {
             id,
-            name: Some(info.name),
+            name: Some(name),
             position: None,
         },
     ])

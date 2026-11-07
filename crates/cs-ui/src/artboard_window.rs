@@ -255,19 +255,12 @@ impl CardSample {
         let (Some(x0), Some(x1), Some(y0), Some(y1)) =
             (xs().min(), xs().max(), ys().min(), ys().max())
         else {
-            // Sin tinta: el renglón más ancho por las líneas de la celda.
-            let width = |line: &str| -> u32 {
-                line.chars()
-                    .map(|ch| match ch {
-                        ' ' => view.space_width,
-                        _ => view
-                            .glyphs
-                            .get(&ch)
-                            .map_or(view.missing_width, |g| g.advance),
-                    })
-                    .sum()
-            };
-            let w = CARD_SAMPLE.lines().map(width).max().unwrap_or(0);
+            // Sin tinta: el renglón más ancho (con su kerning) por las líneas de la celda.
+            let w = cs_tools::text::font_layout(view, CARD_SAMPLE)
+                .iter()
+                .map(|l| (l.x + l.advance).max(0) as u32)
+                .max()
+                .unwrap_or(0);
             let h = CARD_SAMPLE.lines().count() as u32 * view.cell.1;
             return CardSample {
                 size: vec2(w as f32, h as f32),
@@ -615,6 +608,7 @@ mod tests {
                     (*ch, cs_core::GlyphPixels { pixels, advance: 4 })
                 })
                 .collect(),
+            kerning: Default::default(),
         }
     }
 

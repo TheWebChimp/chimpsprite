@@ -31,9 +31,11 @@ mod filters;
 mod font_actions;
 mod font_dialog;
 mod font_io;
+mod font_kern_panel;
 mod font_overlay;
 mod font_panel;
 mod font_sheet_dialog;
+mod font_variant_dialog;
 mod frame_dialog;
 mod gif_dialog;
 mod mask_ops;
@@ -174,6 +176,8 @@ pub struct ChimpApp {
     new_font: Option<font_dialog::NewFontDialog>,
     /// Build ▾ del panel FontForge y File → Export Font….
     build_font: Option<font_io::BuildFontDialog>,
+    /// New Variant… del panel FontForge.
+    new_variant: Option<Box<font_variant_dialog::NewVariantDialog>>,
     /// File → Import Font… de un TTF/OTF.
     import_font: Option<Box<font_io::ImportFontDialog>>,
     /// FontForge → Generate ▾ → Glyphs from image….
@@ -346,6 +350,7 @@ impl ChimpApp {
             new_tilemap: None,
             new_font: None,
             build_font: None,
+            new_variant: None,
             import_font: None,
             glyph_sheet: None,
             new_model: None,
@@ -666,6 +671,11 @@ impl ChimpApp {
             Some(font_panel::FontAction::AutoBuildAccents) => self.auto_build_accents(),
             Some(font_panel::FontAction::FillFromTtf) => self.choose_fill_ttf(ctx),
             Some(font_panel::FontAction::GlyphsFromImage) => self.choose_glyph_sheet(ctx),
+            Some(font_panel::FontAction::OpenFont(id)) => {
+                self.tabs.open_view(&mut self.doc, id);
+                self.show_font_beside_panel(ctx);
+            }
+            Some(font_panel::FontAction::NewVariant) => self.open_new_variant(),
             None => {}
         }
     }
@@ -743,9 +753,11 @@ impl ChimpApp {
                 let mut copy = source.clone();
                 copy.id = editor.document.next_artboard_id();
                 copy.name = format!("{} copy", source.name);
-                // Una fuente lleva su nombre también en su info.
+                // Una fuente lleva su nombre también en su info: la copia es de otra familia
+                // ("Mine copy Bold").
                 if let Some(font) = &mut copy.font {
-                    font.name = copy.name.clone();
+                    font.name = format!("{} copy", font.name);
+                    copy.name = font.full_name();
                 }
                 let new = copy.id;
                 let index = editor.document.artboards.len();
@@ -1965,6 +1977,7 @@ impl eframe::App for ChimpApp {
         self.update_tilemap_dialogs(&ctx);
         self.update_font_dialog(&ctx);
         self.update_build_font_dialog(&ctx);
+        self.update_new_variant_dialog(&ctx);
         self.update_import_font_dialog(&ctx);
         self.update_glyph_sheet_dialog(&ctx);
         self.update_model_dialog(&ctx);

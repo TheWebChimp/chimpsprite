@@ -80,6 +80,7 @@ impl DialogHarness {
             app.update_tilemap_dialogs(&ctx);
             app.update_font_dialog(&ctx);
             app.update_build_font_dialog(&ctx);
+            app.update_new_variant_dialog(&ctx);
             app.update_import_font_dialog(&ctx);
             app.update_glyph_sheet_dialog(&ctx);
             app.update_model_dialog(&ctx);
@@ -1619,4 +1620,62 @@ fn slice_into_frames_reuses_the_sheet_dialog_with_its_own_title() {
     // Un frame vacío: las celdas vacías del final no se agregan (queda la primera).
     assert_eq!((e.sprite().width, e.sprite().height), (4, 4));
     assert_eq!(h.app.tabs.docs(&h.app.doc).len(), 1, "no new tab");
+}
+
+#[test]
+fn new_variant_creates_the_style_and_opens_its_tab() {
+    let mut h = DialogHarness::new(true);
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    e.go_to_glyph('A');
+    let (layer, frame) = (e.layer, e.frame);
+    e.execute(cs_commands::Command::DrawPixels {
+        layer,
+        frame,
+        pixels: vec![(0, 2, cs_core::ONE_BIT_INK)],
+    });
+    h.app.open_new_variant();
+    h.settle();
+    assert!(h.drew_text("New Variant"));
+    assert!(h.drew_text("From Mine"));
+    h.click("Create");
+    h.settle();
+    assert!(h.app.new_variant.is_none());
+    let e = &h.app.doc.editor;
+    assert_eq!(e.artboard().name, "Mine Bold");
+    assert!(h.app.doc.views.contains(&e.active), "its tab");
+    // Otra vez Bold: la familia ya lo tiene, el diálogo lo dice y no se cierra.
+    let regular = e.family_fonts()[0].0;
+    h.app.tabs.open_view(&mut h.app.doc, regular);
+    h.app.open_new_variant();
+    h.settle();
+    assert!(h.drew_text("The family has a \"Bold\" style already."));
+    h.click("Create");
+    h.settle();
+    assert!(h.app.new_variant.is_some());
+    assert_eq!(h.app.doc.editor.family_fonts().len(), 2);
+}
+
+#[test]
+fn build_font_offers_the_whole_family() {
+    let mut h = DialogHarness::new(true);
+    let e = &mut h.app.doc.editor;
+    e.new_font("Mine", (8, 8), cs_core::FontMode::OneBit);
+    let recipe = cs_core::VariantRecipe::new(cs_core::VariantKind::Italic);
+    let style = cs_core::FontStyle {
+        name: "Italic".into(),
+        italic: true,
+        slant: 3,
+        ..Default::default()
+    };
+    assert!(e.add_variant(&recipe, style));
+    h.app.open_build_font(None);
+    h.settle();
+    assert!(h.drew_text("Mine-Italic.ttf"));
+    assert!(h.drew_text("Whole family (2 styles)"));
+    let dialog = h.app.build_font.as_mut().unwrap();
+    dialog.whole_family = true;
+    assert_eq!(dialog.targets().len(), 2);
+    h.settle();
+    assert!(h.drew_text("Mine-Regular.ttf\nMine-Italic.ttf"));
 }

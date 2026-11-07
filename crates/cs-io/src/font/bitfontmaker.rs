@@ -136,6 +136,8 @@ pub fn import_bitfontmaker(json: &str) -> Result<FontBuild> {
         letter_spacing,
         space_width,
         monospace: false,
+        kerning: Vec::new(),
+        style: Default::default(),
         glyphs,
     })
 }
