@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::{ArtboardId, Sprite};
+use crate::{ArtboardId, Sprite, Tint, Tween};
 
 /// Cómo avanza la línea de tiempo del símbolo.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -37,6 +37,34 @@ pub struct InstanceKey {
     pub flip_v: bool,
     pub opacity: u8,
     pub timing: Timing,
+    /// Escala en milésimas (1000 = 100 %), en X y en Y, desde el centro del símbolo.
+    #[serde(default = "unit_scale", skip_serializing_if = "is_unit_scale")]
+    pub scale: (i32, i32),
+    /// Rotación en grados, horaria, desde el centro del símbolo. Sin envolver: 720 son dos
+    /// vueltas (un tween de 0 a 720 gira dos veces).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub rotation: i32,
+    /// Tinte (el Color Effect → Tint de Flash).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tint: Option<Tint>,
+    /// Classic tween desde esta key hasta la siguiente.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tween: Option<Tween>,
+}
+
+/// La escala sin cambios, en milésimas.
+pub const UNIT_SCALE: i32 = 1000;
+
+fn unit_scale() -> (i32, i32) {
+    (UNIT_SCALE, UNIT_SCALE)
+}
+
+fn is_unit_scale(scale: &(i32, i32)) -> bool {
+    *scale == unit_scale()
+}
+
+fn is_zero(v: &i32) -> bool {
+    *v == 0
 }
 
 impl InstanceKey {
@@ -53,7 +81,20 @@ impl InstanceKey {
                 first_frame: 0,
                 play: GraphicPlay::Loop,
             },
+            scale: unit_scale(),
+            rotation: 0,
+            tint: None,
+            tween: None,
         }
+    }
+
+    /// Sin escala, sin rotación (o vueltas enteras) y sin flips: se ve como el símbolo tal cual
+    /// (el tinte y la opacidad no cuentan).
+    pub fn is_plain(&self) -> bool {
+        self.scale == unit_scale()
+            && self.rotation.rem_euclid(360) == 0
+            && !self.flip_h
+            && !self.flip_v
     }
 }
 

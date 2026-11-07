@@ -3,7 +3,7 @@
 //! bloque en un tiempo, la pose de cada nodo (lo que se suma a su transform) y los puntos del
 //! modelo animado. También los ayudantes del timeline (carriles, ajuste del tiempo).
 
-use std::f32::consts::{PI, TAU};
+use std::f32::consts::PI;
 
 use cs_core::{Axis3, Clip, ClipMotion, Curve, Model3D};
 
@@ -15,57 +15,9 @@ type M3 = [[f32; 3]; 3];
 const IDENTITY: M3 = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]];
 
 /// El valor de `curve` en `f` (de 0 a 1, recortado): 0 en 0 y 1 en 1. Bounce, elastic y back
-/// pueden pasarse de 1 en el medio.
+/// pueden pasarse de 1 en el medio. Es `Curve::value` (también la usan los tweens de objetos).
 pub fn curve_value(curve: Curve, f: f32) -> f32 {
-    let x = f.clamp(0.0, 1.0);
-    match curve {
-        Curve::Linear => x,
-        Curve::EaseIn => x * x * x,
-        Curve::EaseOut => 1.0 - (1.0 - x).powi(3),
-        Curve::EaseInOut => {
-            if x < 0.5 {
-                4.0 * x * x * x
-            } else {
-                1.0 - (-2.0 * x + 2.0).powi(3) / 2.0
-            }
-        }
-        Curve::Bounce => bounce_out(x),
-        Curve::Elastic => {
-            if x <= 0.0 || x >= 1.0 {
-                x
-            } else {
-                2f32.powf(-10.0 * x) * ((x * 10.0 - 0.75) * (TAU / 3.0)).sin() + 1.0
-            }
-        }
-        Curve::Back => {
-            let (c1, c3) = (1.70158, 2.70158);
-            1.0 + c3 * (x - 1.0).powi(3) + c1 * (x - 1.0).powi(2)
-        }
-        Curve::Step => {
-            if x >= 1.0 {
-                1.0
-            } else {
-                0.0
-            }
-        }
-    }
-}
-
-/// La pelota que cae y rebota tres veces hasta quedarse en 1.
-fn bounce_out(x: f32) -> f32 {
-    let (n1, d1) = (7.5625, 2.75);
-    if x < 1.0 / d1 {
-        n1 * x * x
-    } else if x < 2.0 / d1 {
-        let x = x - 1.5 / d1;
-        n1 * x * x + 0.75
-    } else if x < 2.5 / d1 {
-        let x = x - 2.25 / d1;
-        n1 * x * x + 0.9375
-    } else {
-        let x = x - 2.625 / d1;
-        n1 * x * x + 0.984375
-    }
+    curve.value(f)
 }
 
 /// Cuánto hizo el bloque `clip` en el tiempo `t` (ms): 0 antes de empezar; en el bloque, sus
