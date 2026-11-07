@@ -192,8 +192,29 @@ fn kerning_units(face: &Face, chars: &[char]) -> BTreeMap<(char, char), i32> {
         }
     }
     if !from_gpos && let Some(kern) = face.tables().kern {
+        // Los caracteres de cada glifo (un glifo puede tener varios).
+        let mut chars_of: BTreeMap<GlyphId, Vec<char>> = BTreeMap::new();
+        for &(c, g) in &ids {
+            chars_of.entry(g).or_default().push(c);
+        }
         for sub in kern.subtables {
             if !sub.horizontal || sub.variable || sub.has_cross_stream {
+                continue;
+            }
+            // El formato 0 es una lista de pares: se recorre (y no todos contra todos).
+            if let ttf_parser::kern::Format::Format0(table) = &sub.format {
+                for pair in table.pairs {
+                    let (Some(left), Some(right)) =
+                        (chars_of.get(&pair.left()), chars_of.get(&pair.right()))
+                    else {
+                        continue;
+                    };
+                    for &a in left {
+                        for &b in right {
+                            out.entry((a, b)).or_insert(pair.value as i32);
+                        }
+                    }
+                }
                 continue;
             }
             for &(a, ga) in &ids {

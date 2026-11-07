@@ -219,6 +219,33 @@ fn rebasing_moves_the_glyphs_onto_another_baseline() {
 }
 
 #[test]
+fn without_gpos_the_kern_table_pairs_come_in() {
+    use cs_core::KernSide::Char;
+    let mut original = sample_font(FontMode::OneBit);
+    let font = original.font.as_mut().unwrap();
+    font.kerning.set(Char('A'), Char('g'), -1);
+    font.kerning.set(Char('g'), Char('€'), 2);
+    let mut bytes = export_ttf(
+        &original,
+        &TtfOptions {
+            family: String::new(),
+            color: false,
+        },
+    )
+    .unwrap();
+    // Sin el GPOS (su etiqueta cambiada en el directorio de tablas), queda la tabla `kern`.
+    let at = bytes.windows(4).position(|w| w == b"GPOS").expect("a GPOS");
+    bytes[at..at + 4].copy_from_slice(b"XPOS");
+    assert!(Face::parse(&bytes, 0).unwrap().tables().gpos.is_none());
+    let back = imported(&bytes, &options(10, false));
+    assert_eq!(
+        back.font_view().unwrap().kerning,
+        original.font_view().unwrap().kerning
+    );
+    assert_eq!(back.font.as_ref().unwrap().kerning.pairs.len(), 2);
+}
+
+#[test]
 fn kerning_and_style_survive_export_and_import() {
     use cs_core::KernSide::{Char, Class};
     let mut original = sample_font(FontMode::OneBit);
