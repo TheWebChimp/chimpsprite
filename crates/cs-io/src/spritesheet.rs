@@ -133,6 +133,7 @@ pub fn expand_frames(
         out.grid = GridSettings {
             size: cell,
             offset: (settings.border as i32, settings.border as i32),
+            ..Default::default()
         };
     }
     adopt_palette(&mut out, &sprite.palette, sprite.color_mode);

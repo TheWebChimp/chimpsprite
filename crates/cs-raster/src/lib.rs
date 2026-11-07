@@ -29,7 +29,8 @@ pub use groom::{
     sample_following_edges, sample_grid, suggest_merges,
 };
 pub use iso::{
-    IsoBlocks, IsoBox, IsoColors, IsoCorner, IsoPart, IsoParts, iso_blocks, iso_box, paint_parts,
+    IsoBlocks, IsoBox, IsoColors, IsoCorner, IsoPart, IsoParts, iso_blocks, iso_box,
+    iso_grid_lines, paint_parts, snap_iso,
 };
 pub use line::{
     BrushShape, brush_points, brush_square, custom_brush, custom_brush_version, line,

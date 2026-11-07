@@ -231,7 +231,7 @@ mod tests {
         );
         e.execute(cs_commands::Command::SetGrid(cs_core::GridSettings {
             size: (8, 300),
-            offset: (0, 0),
+            ..Default::default()
         }));
         assert_eq!(
             TileSizeDialog::new(&e).tile_size,

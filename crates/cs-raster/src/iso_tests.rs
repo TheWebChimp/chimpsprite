@@ -359,3 +359,71 @@ fn resizing_the_grid_keeps_what_fits() {
     g.set_height(2, 0, 7);
     assert_eq!(g.heights, vec![1, 2, 7]);
 }
+
+/// Los segmentos con los extremos redondeados a décimos, ordenados (para comparar).
+fn segments(lines: Vec<[(f32, f32); 2]>) -> Vec<[(i32, i32); 2]> {
+    let r = |(x, y): (f32, f32)| ((x * 10.0).round() as i32, (y * 10.0).round() as i32);
+    let mut out: Vec<[(i32, i32); 2]> = lines
+        .into_iter()
+        .map(|[a, b]| {
+            let (a, b) = (r(a), r(b));
+            if a <= b { [a, b] } else { [b, a] }
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+#[test]
+fn one_iso_cell_is_a_diamond() {
+    let lines = iso_grid_lines((32.0, 16.0), (32, 16), (0, 0));
+    assert_eq!(
+        segments(lines),
+        vec![
+            [(0, 80), (160, 0)],
+            [(0, 80), (160, 160)],
+            [(160, 0), (320, 80)],
+            [(160, 160), (320, 80)],
+        ]
+    );
+}
+
+#[test]
+fn the_iso_grid_follows_the_offset_and_covers_the_area() {
+    // Con offset (8, 0) el vértice de arriba queda en x = 24.
+    let lines = iso_grid_lines((32.0, 16.0), (32, 16), (8, 0));
+    assert!(
+        segments(lines.clone())
+            .iter()
+            .any(|s| s.contains(&(240, 0)))
+    );
+    // Todo adentro del área.
+    for [a, b] in &lines {
+        for (x, y) in [a, b] {
+            assert!(
+                (-0.01..=32.01).contains(x) && (-0.01..=16.01).contains(y),
+                "{lines:?}"
+            );
+        }
+    }
+    // Un área grande: 2 familias de líneas a 2:1.
+    let many = iso_grid_lines((64.0, 64.0), (16, 8), (0, 0));
+    assert!(many.len() > 16);
+    for [a, b] in many {
+        let slope = (b.1 - a.1) / (b.0 - a.0);
+        assert!((slope.abs() - 0.5).abs() < 1e-4, "{slope}");
+    }
+    assert!(iso_grid_lines((0.0, 0.0), (16, 8), (0, 0)).is_empty());
+}
+
+#[test]
+fn points_snap_to_the_nearest_diamond_corner() {
+    assert_eq!(snap_iso((15.0, 1.0), (32, 16), (0, 0)), (16.0, 0.0));
+    assert_eq!(snap_iso((1.0, 9.0), (32, 16), (0, 0)), (0.0, 8.0));
+    assert_eq!(snap_iso((30.0, 9.5), (32, 16), (0, 0)), (32.0, 8.0));
+    // El centro de un rombo no es un vértice: va al más cercano (arriba o abajo, a 8).
+    let (x, y) = snap_iso((16.0, 7.0), (32, 16), (0, 0));
+    assert_eq!((x, y), (16.0, 0.0));
+    // Con offset.
+    assert_eq!(snap_iso((5.0, 9.0), (32, 16), (4, 0)), (4.0, 8.0));
+}

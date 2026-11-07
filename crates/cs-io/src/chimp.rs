@@ -6,8 +6,8 @@ use std::io::{Cursor, Read, Write};
 use std::sync::Arc;
 
 use cs_core::{
-    Artboard, ArtboardId, Document, FontInfo, Guide, InstanceTrack, LayerKind, LayerMask, Model3D,
-    Note, ObjectId, SceneObject, Sprite, Symmetry,
+    Artboard, ArtboardId, Document, FontInfo, GridKind, Guide, InstanceTrack, LayerKind, LayerMask,
+    Model3D, Note, ObjectId, SceneObject, Sprite, Symmetry,
 };
 use serde::{Deserialize, Serialize};
 use zip::write::SimpleFileOptions;
@@ -41,6 +41,9 @@ struct Entry {
     guides: Vec<Guide>,
     #[serde(default)]
     symmetry: Symmetry,
+    /// El tipo de la cuadrícula del sprite (el `.aseprite` solo guarda el tamaño y el offset).
+    #[serde(default, skip_serializing_if = "is_orthogonal")]
+    grid_kind: GridKind,
     /// Símbolo de la biblioteca (no se ve en el lienzo).
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     library: bool,
@@ -53,6 +56,10 @@ struct Entry {
     /// El modelo 3D del artboard (si es un modelo).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     model: Option<Model3D>,
+}
+
+fn is_orthogonal(kind: &GridKind) -> bool {
+    *kind == GridKind::Orthogonal
 }
 
 #[derive(Serialize, Deserialize)]
@@ -223,6 +230,7 @@ pub fn write_with(doc: &Document, thumbnail: ThumbnailFrom) -> Result<Vec<u8>> {
             file,
             guides: artboard.guides.clone(),
             symmetry: artboard.symmetry,
+            grid_kind: artboard.sprite.grid.kind,
             library: artboard.in_library,
             layers,
             font: artboard.font.clone(),
@@ -290,6 +298,7 @@ pub fn read(data: &[u8]) -> Result<(Document, LoadReport)> {
             )));
         }
         let (mut sprite, sub) = aseprite::read(&read_entry(&mut zip, &entry.file)?)?;
+        sprite.grid.kind = entry.grid_kind;
         apply_extras(&mut zip, &mut sprite, entry.layers)?;
         for w in sub.warnings {
             report.warn(format!("{}: {w}", entry.name));
@@ -961,6 +970,11 @@ mod tests {
                 },
             ),
         });
+        d.artboards[1].sprite.grid = cs_core::GridSettings {
+            size: (16, 8),
+            offset: (1, 2),
+            kind: GridKind::Isometric,
+        };
         d
     }
 
@@ -1020,6 +1034,7 @@ mod tests {
             assert_eq!((a.id, &a.name, a.position), (b.id, &b.name, b.position));
             assert_eq!(a.guides, b.guides);
             assert_eq!(a.symmetry, b.symmetry);
+            assert_eq!(a.sprite.grid, b.sprite.grid);
             assert_eq!(
                 cs_render::render_frame(&a.sprite, 0),
                 cs_render::render_frame(&b.sprite, 0)

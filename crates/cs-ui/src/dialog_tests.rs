@@ -1700,3 +1700,18 @@ fn a_pasted_coolors_palette_shows_up_and_applies() {
         );
     }
 }
+
+#[test]
+fn grid_settings_has_the_grid_type() {
+    for pixel_ui in [true, false] {
+        let mut h = DialogHarness::new(pixel_ui);
+        h.app.grid_dialog = Some(crate::view::GridDialog::new(&h.app.doc.editor, &h.app.view));
+        h.settle();
+        assert!(h.drew_text("Type:"), "pixel_ui {pixel_ui}: {:?}", h.texts);
+        assert!(
+            h.drew_text("Orthogonal"),
+            "pixel_ui {pixel_ui}: {:?}",
+            h.texts
+        );
+    }
+}

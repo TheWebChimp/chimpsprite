@@ -505,6 +505,70 @@ fn from_hsv(h: f32, s: f32, v: f32, a: u8) -> Rgba {
     Rgba::new(byte(r), byte(g), byte(b), a)
 }
 
+/// Los segmentos de la cuadrícula isométrica de rombos de `size` (vértices en múltiplos de medio
+/// tamaño desde `offset`) que caen en `area` (ancho y alto, desde el origen): las líneas
+/// `(x − ox)/w ± (y − oy)/h = k + ½`.
+pub fn iso_grid_lines(
+    area: (f32, f32),
+    size: (u32, u32),
+    offset: (i32, i32),
+) -> Vec<[(f32, f32); 2]> {
+    let (aw, ah) = area;
+    if aw <= 0.0 || ah <= 0.0 {
+        return Vec::new();
+    }
+    let (w, h) = (size.0.max(1) as f32, size.1.max(1) as f32);
+    let (ox, oy) = (offset.0 as f32, offset.1 as f32);
+    let mut out = Vec::new();
+    for sign in [1.0f32, -1.0] {
+        let f = |x: f32, y: f32| (x - ox) / w + sign * (y - oy) / h;
+        let corners = [f(0.0, 0.0), f(aw, 0.0), f(0.0, ah), f(aw, ah)];
+        let lo = corners.iter().copied().fold(f32::INFINITY, f32::min);
+        let hi = corners.iter().copied().fold(f32::NEG_INFINITY, f32::max);
+        let first = (lo - 0.5).floor() as i64;
+        let last = (hi - 0.5).ceil() as i64;
+        for k in first..=last {
+            let c = k as f32 + 0.5;
+            if c <= lo || c >= hi {
+                continue;
+            }
+            // La recta de x = 0 a x = ancho, recortada a 0 ≤ y ≤ alto.
+            let y_at = |x: f32| oy + sign * h * (c - (x - ox) / w);
+            let (y0, y1) = (y_at(0.0), y_at(aw));
+            let (ta, tb) = ((0.0 - y0) / (y1 - y0), (ah - y0) / (y1 - y0));
+            let (t0, t1) = (ta.min(tb).max(0.0), ta.max(tb).min(1.0));
+            if t0 < t1 {
+                let at = |t: f32| (aw * t, y0 + (y1 - y0) * t);
+                out.push([at(t0), at(t1)]);
+            }
+        }
+    }
+    out
+}
+
+/// El vértice de la cuadrícula isométrica (de [`iso_grid_lines`]) más cercano a `p`.
+pub fn snap_iso(p: (f32, f32), size: (u32, u32), offset: (i32, i32)) -> (f32, f32) {
+    let (hw, hh) = (size.0.max(1) as f32 / 2.0, size.1.max(1) as f32 / 2.0);
+    let (ox, oy) = (offset.0 as f32, offset.1 as f32);
+    // En medios tamaños desde el offset, los vértices son los (i, j) enteros con i + j impar.
+    let (u, v) = ((p.0 - ox) / hw, (p.1 - oy) / hh);
+    let (i, j) = (u.round() as i64, v.round() as i64);
+    let candidates: &[(i64, i64)] = if (i + j).rem_euclid(2) == 1 {
+        &[(0, 0)]
+    } else {
+        &[(0, -1), (-1, 0), (1, 0), (0, 1)]
+    };
+    let at = |(di, dj): (i64, i64)| (ox + (i + di) as f32 * hw, oy + (j + dj) as f32 * hh);
+    candidates
+        .iter()
+        .map(|&d| at(d))
+        .min_by(|a, b| {
+            let d = |q: &(f32, f32)| (q.0 - p.0).powi(2) + (q.1 - p.1).powi(2);
+            d(a).total_cmp(&d(b))
+        })
+        .expect("there are candidates")
+}
+
 #[cfg(test)]
 #[path = "iso_tests.rs"]
 mod tests;
