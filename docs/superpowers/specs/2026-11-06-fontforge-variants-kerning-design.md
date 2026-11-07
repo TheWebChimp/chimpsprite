@@ -1,6 +1,6 @@
 # FontForge, parte 4: variantes de la fuente y kerning
 
-Fecha: 2026-11-06 · Estado: diseño
+Fecha: 2026-11-06 · Estado: implementado
 
 Sigue al núcleo (`2026-11-01-pixel-font-core-design.md`), a las pestañas
 (`2026-11-02-cad-font-tabs-design.md`), a exportar/importar
@@ -116,9 +116,9 @@ Cada glifo transforma **sus pixeles propios** (los compuestos siguen siendo comp
 
 Después, la celda: si algo quedó a la izquierda o arriba de la celda, todo se corre lo necesario
 (la baseline también) y la celda crece lo que haga falta a la derecha y abajo (tope 256). Los
-anchos manuales crecen lo que crece la letra (Bold y Shadow 1, Outline 2, Italic 0: la itálica no
-cambia los anchos, el automático ya ve la inclinación). Los descendentes crecen lo que creció la
-celda abajo.
+anchos manuales crecen lo que crece la letra a la derecha más lo que se corrió todo (Bold 1;
+Outline 1 + 1 = 2; Shadow 1 en color y 2 + 1 = 3 en 1 bit; Italic 0: la itálica no cambia los
+anchos, el automático ya ve la inclinación). Los descendentes crecen lo que creció la celda abajo.
 
 **Compuestos:** sus componentes quedan con los mismos offsets (los pixeles de cada glifo se
 transforman igual), salvo en las itálicas, donde el offset en x de cada componente se ajusta a lo
@@ -244,8 +244,8 @@ se llama `Mine.ttf` si es el Regular y `Mine-Bold.ttf` si no.
 3. **Bold = 1 px a la derecha**; **Italic = 1 columna cada 3 filas** sobre la baseline, sin mover
    los descendentes; **Outline** con la matriz del filtro Outline (hueca en 1 bit); **Shadow** 1
    px abajo a la derecha (en 1 bit, hueca con el borde de abajo y la derecha doble, como Mac).
-4. Los anchos manuales crecen con la letra (Bold/Shadow +1, Outline +2); la itálica no los
-   cambia. La celda crece lo que haga falta (no se recorta nada).
+4. Los anchos manuales crecen con la letra (Bold +1, Outline +2, Shadow +1 en color y +3 en
+   1 bit); la itálica no los cambia. La celda crece lo que haga falta (no se recorta nada).
 5. **Kerning en pixeles enteros**, con clases First/Second y la precedencia de UFO (los pares
    exactos son excepciones).
 6. **Se exportan `kern` y `GPOS` aplanados** (pares de glifos, sin `PairPos` formato 2 de clases):
