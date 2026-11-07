@@ -101,6 +101,27 @@ impl Editor {
         true
     }
 
+    /// Place on Canvas de la Library: saca `id` de la biblioteca al lienzo (a un lugar libre si
+    /// se encima con otro) y lo activa, en un paso de undo. Si se está editando un símbolo (en su
+    /// lugar o aislado), primero sale del modo símbolo: el que estaba en su lugar vuelve a su
+    /// posición de la biblioteca y se coloca desde ahí. `false` si no es de la biblioteca.
+    pub fn place_on_canvas(&mut self, id: ArtboardId) -> bool {
+        if !self.document.artboard(id).is_some_and(|a| a.in_library) {
+            return false;
+        }
+        if self.in_symbol_mode() {
+            self.exit_symbol_to(0);
+        }
+        let Some(cmd) = symbol::place_on_canvas(&self.document, id) else {
+            return false;
+        };
+        if !self.execute_doc(cmd) {
+            return false;
+        }
+        self.activate(id);
+        true
+    }
+
     /// Entra a editar `id` (un símbolo de la biblioteca) aislado: lo apila y lo activa. Guarda el
     /// artboard activo de antes para volver.
     pub fn enter_symbol(&mut self, id: ArtboardId) -> bool {

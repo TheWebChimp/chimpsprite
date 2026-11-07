@@ -2235,6 +2235,49 @@ fn in_symbol_mode_the_artboard_menu_has_no_duplicate_move_or_delete() {
 }
 
 #[test]
+fn leaving_each_symbol_level_restores_the_view_from_when_it_was_entered() {
+    // T dentro de S dentro del host, los dos en su lugar.
+    let mut h = Harness::new();
+    let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    h.editor.execute(Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: vec![(4, 5, red), (6, 6, red)],
+    });
+    let symbol = cs_commands::symbol::SymbolTiming::Graphic;
+    h.editor.convert_to_symbol("T", symbol).unwrap();
+    let s = h.editor.convert_to_symbol("S", symbol).unwrap();
+    let s_layer = h.editor.layer;
+    let s_object = h.editor.sprite().layer(s_layer).unwrap().objects[0].id;
+    let inner = &h.editor.document.artboard(s).unwrap().sprite;
+    let (t_layer, t_object) = (inner.layers[0].id, inner.layers[0].objects[0].id);
+    h.canvas.zoom = 2.0;
+    h.frame(vec![]);
+    let scene = (h.canvas.zoom, h.canvas.pan);
+    assert!(h.editor.enter_symbol_in_place(s_layer, s_object));
+    h.frame(vec![]);
+    // Adentro de S se acerca y se mueve.
+    h.canvas.zoom = 6.0;
+    h.canvas.pan += Vec2::new(30.0, -12.0);
+    h.frame(vec![]);
+    let in_s = (h.canvas.zoom, h.canvas.pan);
+    assert!(h.editor.enter_symbol_in_place(t_layer, t_object));
+    h.frame(vec![]);
+    h.canvas.zoom = 12.0;
+    h.canvas.pan += Vec2::new(-50.0, 40.0);
+    h.frame(vec![]);
+    // Esc (lo maneja la app: `editor_key`) sale un nivel.
+    h.editor.escape();
+    h.frame(vec![]);
+    assert!(h.editor.in_symbol_mode(), "back in S");
+    assert_eq!((h.canvas.zoom, h.canvas.pan), in_s, "S as it was");
+    h.editor.escape();
+    h.frame(vec![]);
+    assert!(!h.editor.in_symbol_mode());
+    assert_eq!((h.canvas.zoom, h.canvas.pan), scene, "the scene as it was");
+}
+
+#[test]
 fn a_symbol_dropped_on_a_ruler_or_the_breadcrumb_does_nothing() {
     let (mut h, coin) = in_a_symbol();
     // Gem: otro símbolo para soltar dentro de Coin.

@@ -789,10 +789,7 @@ impl ChimpApp {
                 }
             }
             library_panel::LibraryAction::PlaceOnCanvas(id) => {
-                if let Some(cmd) = cs_commands::symbol::place_on_canvas(&editor.document, id)
-                    && editor.execute_doc(cmd)
-                {
-                    editor.activate(id);
+                if editor.place_on_canvas(id) {
                     self.doc
                         .canvas
                         .request_zoom(view::ZoomRequest::CenterActive);

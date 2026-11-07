@@ -228,9 +228,9 @@ pub struct CanvasView {
     pub cursors: Option<pixel_cursors::CursorSet>,
     /// Píxeles físicos por punto del último frame: [`Self::origin`] se alinea a ellos.
     ppp: f32,
-    /// El zoom y el paneo del documento al entrar al modo símbolo o al workspace de una fuente:
-    /// se restauran al volver al lienzo.
-    symbol_return_view: Option<(f32, Vec2)>,
+    /// El zoom y el paneo al entrar a cada nivel del modo símbolo (el primero, el del documento)
+    /// o al workspace de una fuente: al salir de un nivel vuelve el de cuando se entró.
+    symbol_return_view: Vec<(f32, Vec2)>,
     /// Edit in Place: lo que se ve atenuado alrededor del símbolo (ver `draw_in_place_context`).
     context: InPlaceView,
     /// Si se ve la migaja de pan (modo símbolo) en este frame.
@@ -366,7 +366,7 @@ impl Default for CanvasView {
             cursors: None,
             symmetry_color: None,
             ppp: 1.0,
-            symbol_return_view: None,
+            symbol_return_view: Vec::new(),
             context: InPlaceView::default(),
             crumbs_shown: false,
             advance_line: None,
@@ -2006,13 +2006,23 @@ impl CanvasView {
             .collect()
     }
 
-    /// Guarda la vista del documento al entrar al modo símbolo o al workspace de una fuente y la
-    /// restaura al volver al lienzo.
+    /// Guarda la vista al entrar a cada nivel del modo símbolo (o al workspace de una fuente) y,
+    /// al salir de uno o de varios a la vez, restaura la de cuando se entró al de más afuera.
     fn sync_symbol_view(&mut self, editor: &Editor) {
-        if editor.single_artboard() {
-            self.symbol_return_view.get_or_insert((self.zoom, self.pan));
-        } else if let Some((zoom, pan)) = self.symbol_return_view.take() {
+        let depth = if editor.in_symbol_mode() {
+            editor.symbol_stack.len()
+        } else {
+            usize::from(editor.single_artboard())
+        };
+        let mut back = None;
+        while self.symbol_return_view.len() > depth {
+            back = self.symbol_return_view.pop();
+        }
+        if let Some((zoom, pan)) = back {
             (self.zoom, self.pan) = (zoom, pan);
+        }
+        while self.symbol_return_view.len() < depth {
+            self.symbol_return_view.push((self.zoom, self.pan));
         }
     }
 
