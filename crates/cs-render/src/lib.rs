@@ -8,6 +8,7 @@ mod lighting;
 mod materialize;
 mod model3d;
 pub mod normal;
+mod rot_cache;
 mod turntable;
 pub use bake3d::{
     BAKE_FOV, BAKE_FRAMES, BAKE_SIZE, BAKE_TILT, BakeOptions, BakeOutput, Motion, bake_model,
