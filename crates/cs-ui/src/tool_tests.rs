@@ -54,16 +54,16 @@ fn thirteen_groups_in_the_toolbar_order() {
     assert_eq!(group_of(Curve), &[Line, Curve], "Curve goes with Line");
     assert_eq!(group_of(Polygon), &[Rectangle, Ellipse, Polygon]);
     assert_eq!(
-        group_of(Artboard),
-        &[Artboard],
-        "Artboard has its own group"
+        group_of(Note),
+        &[Artboard, Note],
+        "Note goes with Artboard (both work on the canvas)"
     );
     // Cada herramienta está en un solo grupo.
     let all: Vec<ToolKind> = ToolKind::GROUPS
         .iter()
         .flat_map(|g| g.iter().copied())
         .collect();
-    assert_eq!(all.len(), 25);
+    assert_eq!(all.len(), 26);
     for (i, kind) in all.iter().enumerate() {
         assert!(!all[..i].contains(kind), "{kind:?} twice");
     }
@@ -522,4 +522,21 @@ fn the_polygon_tool_paints_the_outline_closed_with_a_click_on_the_first_vertex()
     );
     e.undo();
     assert_eq!(px(&e, 3, 1), px(&e, 3, 3), "one undo step");
+}
+
+#[test]
+fn every_tool_has_its_icon_in_the_skin_and_note_is_n() {
+    let ctx = eframe::egui::Context::default();
+    let skin = crate::skin::Skin::embedded(&ctx);
+    for &kind in ToolKind::GROUPS.iter().flat_map(|g| g.iter()) {
+        let piece = crate::tool_group::icon_piece(kind);
+        assert!(
+            skin.piece(piece, crate::skin::WidgetState::Normal)
+                .is_some(),
+            "{kind:?}: {piece}"
+        );
+    }
+    assert_eq!(ToolKind::Note.shortcut(), "N");
+    assert_eq!(ToolKind::Note.label(), "Note");
+    assert!(!ToolKind::Note.paints() && !ToolKind::Note.uses_brush());
 }

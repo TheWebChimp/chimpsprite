@@ -120,8 +120,12 @@ impl SpriteTools {
             ToolKind::Eyedropper => &self.eyedropper,
             ToolKind::Contour => &self.contour,
             ToolKind::Blur => &self.blur,
-            // Text y Artboard no son herramientas de sprite; Hand y Zoom las maneja el lienzo.
-            ToolKind::Text | ToolKind::Artboard | ToolKind::Hand | ToolKind::Zoom => return None,
+            // Text, Artboard y Note no son herramientas de sprite; Hand y Zoom las maneja el lienzo.
+            ToolKind::Text
+            | ToolKind::Artboard
+            | ToolKind::Note
+            | ToolKind::Hand
+            | ToolKind::Zoom => return None,
         })
     }
 
@@ -150,7 +154,11 @@ impl SpriteTools {
             ToolKind::Eyedropper => self.eyedropper = Eyedropper::new(),
             ToolKind::Contour => self.contour = Contour::new(),
             ToolKind::Blur => self.blur = Blur::new(),
-            ToolKind::Text | ToolKind::Artboard | ToolKind::Hand | ToolKind::Zoom => {}
+            ToolKind::Text
+            | ToolKind::Artboard
+            | ToolKind::Note
+            | ToolKind::Hand
+            | ToolKind::Zoom => {}
         }
     }
 
@@ -177,8 +185,12 @@ impl SpriteTools {
             ToolKind::Eyedropper => &mut self.eyedropper,
             ToolKind::Contour => &mut self.contour,
             ToolKind::Blur => &mut self.blur,
-            // Text y Artboard no son herramientas de sprite; Hand y Zoom las maneja el lienzo.
-            ToolKind::Text | ToolKind::Artboard | ToolKind::Hand | ToolKind::Zoom => return None,
+            // Text, Artboard y Note no son herramientas de sprite; Hand y Zoom las maneja el lienzo.
+            ToolKind::Text
+            | ToolKind::Artboard
+            | ToolKind::Note
+            | ToolKind::Hand
+            | ToolKind::Zoom => return None,
         })
     }
 }
@@ -1218,3 +1230,6 @@ mod in_place_tests;
 
 #[cfg(test)]
 mod play_in_place_tests;
+
+#[cfg(test)]
+mod notes_tests;

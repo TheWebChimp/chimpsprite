@@ -49,6 +49,10 @@ pub enum CmdError {
     TilesetInUse(usize),
     #[error("artboard {0:?} has a locked structure (font or 3D model)")]
     StructureLocked(ArtboardId),
+    #[error("note {0} not found")]
+    NoteNotFound(u32),
+    #[error("note id {0} already exists")]
+    DuplicateNoteId(u32),
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

@@ -31,6 +31,8 @@ pub enum ToolKind {
     Blur,
     Slice,
     Artboard,
+    /// Pega una nota (post-it) en el lienzo con un clic; la maneja el lienzo.
+    Note,
 }
 
 impl ToolKind {
@@ -54,7 +56,7 @@ impl ToolKind {
         &[ToolKind::Contour],
         &[ToolKind::Blur],
         &[ToolKind::Move, ToolKind::Slice],
-        &[ToolKind::Artboard],
+        &[ToolKind::Artboard, ToolKind::Note],
     ];
 
     /// Índice en `GROUPS` del grupo que tiene a `self`.
@@ -88,6 +90,7 @@ impl ToolKind {
             ToolKind::Text => "Text",
             ToolKind::Slice => "Slice",
             ToolKind::Artboard => "Artboard",
+            ToolKind::Note => "Note",
             ToolKind::Hand => "Hand",
             ToolKind::Zoom => "Zoom",
             ToolKind::Contour => "Contour",
@@ -118,6 +121,7 @@ impl ToolKind {
             ToolKind::Text => "T",
             ToolKind::Slice => "Shift+C",
             ToolKind::Artboard => "Shift+O",
+            ToolKind::Note => "N",
             ToolKind::Hand => "H",
             ToolKind::Zoom => "Z",
             ToolKind::Contour => "D",

@@ -51,6 +51,7 @@ pub fn emoji(kind: ToolKind) -> &'static str {
         ToolKind::Text => "🔤",
         ToolKind::Slice => "✂",
         ToolKind::Artboard => "🖼",
+        ToolKind::Note => "📝",
     }
 }
 
@@ -82,6 +83,8 @@ pub fn icon_piece(kind: ToolKind) -> &'static str {
         ToolKind::Text => "icon.text",
         ToolKind::Slice => "icon.slice",
         ToolKind::Artboard => "icon.artboard",
+        // Ícono provisional (dibujado con Lua): el usuario lo redibujará.
+        ToolKind::Note => "icon.note",
     }
 }
 

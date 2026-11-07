@@ -54,6 +54,16 @@ pub enum DocCommand {
     },
     /// Reemplaza las notas del documento (agregar, mover, editar o borrar una).
     SetNotes(Vec<Note>),
+    /// Agrega una nota en `index` del z-order de las notas (la última queda arriba).
+    AddNote {
+        index: usize,
+        note: Note,
+    },
+    /// Reemplaza la nota con el mismo id (moverla, agrandarla, escribirla o cambiarle el color).
+    SetNote(Note),
+    RemoveNote {
+        id: u32,
+    },
     /// Reemplaza el documento entero (lo que dejó un script): el inverso es el de antes.
     SetDocument(Box<Document>),
     /// Transacción: se aplica completa o nada.
@@ -183,6 +193,33 @@ impl DocCommand {
                 let old = std::mem::replace(&mut doc.notes, notes.clone());
                 Ok(DocCommand::SetNotes(old))
             }
+            DocCommand::AddNote { index, note } => {
+                if *index > doc.notes.len() {
+                    return Err(CmdError::IndexOutOfRange(*index));
+                }
+                if doc.note(note.id).is_some() {
+                    return Err(CmdError::DuplicateNoteId(note.id));
+                }
+                doc.notes.insert(*index, note.clone());
+                Ok(DocCommand::RemoveNote { id: note.id })
+            }
+            DocCommand::SetNote(note) => {
+                let old = doc
+                    .notes
+                    .iter_mut()
+                    .find(|n| n.id == note.id)
+                    .ok_or(CmdError::NoteNotFound(note.id))?;
+                Ok(DocCommand::SetNote(std::mem::replace(old, note.clone())))
+            }
+            DocCommand::RemoveNote { id } => {
+                let index = doc
+                    .notes
+                    .iter()
+                    .position(|n| n.id == *id)
+                    .ok_or(CmdError::NoteNotFound(*id))?;
+                let note = doc.notes.remove(index);
+                Ok(DocCommand::AddNote { index, note })
+            }
             DocCommand::SetDocument(document) => {
                 if document.artboards.is_empty() {
                     return Err(CmdError::LastArtboard);
@@ -249,6 +286,9 @@ impl crate::Undoable for DocCommand {
             DocCommand::SetModel { .. } => "Model",
             DocCommand::SetSprite { .. } => "Sprite",
             DocCommand::SetNotes(_) => "Notes",
+            DocCommand::AddNote { .. } => "New Note",
+            DocCommand::SetNote(_) => "Note",
+            DocCommand::RemoveNote { .. } => "Delete Note",
             DocCommand::SetDocument(_) => "Script",
             DocCommand::Batch(cmds) => cmds.first().map_or("Change", crate::Undoable::label),
         }
@@ -599,5 +639,104 @@ mod tests {
         };
         let json = serde_json::to_string(&c).unwrap();
         assert_eq!(serde_json::from_str::<DocCommand>(&json).unwrap(), c);
+    }
+
+    fn note(id: u32, text: &str) -> Note {
+        Note {
+            id,
+            position: (5, -3),
+            size: (90, 60),
+            text: text.into(),
+            color: NoteColor::Pink,
+        }
+    }
+
+    #[test]
+    fn add_set_and_remove_a_note_undo_one_by_one() {
+        let mut d = doc();
+        d.notes.push(note(1, "a"));
+        let before = d.clone();
+        // Agregar: en su lugar del z-order; el inverso la quita.
+        let add = DocCommand::AddNote {
+            index: 0,
+            note: note(4, "b"),
+        };
+        assert_eq!(crate::Undoable::label(&add), "New Note");
+        let inv = add.apply(&mut d).unwrap();
+        assert_eq!(d.notes.iter().map(|n| n.id).collect::<Vec<_>>(), [4, 1]);
+        assert_eq!(inv, DocCommand::RemoveNote { id: 4 });
+        inv.apply(&mut d).unwrap();
+        assert_eq!(d, before);
+        // Cambiar: la reemplaza por id; el inverso es la de antes.
+        let mut changed = note(1, "otra");
+        changed.position = (40, 2);
+        let set = DocCommand::SetNote(changed.clone());
+        assert_eq!(crate::Undoable::label(&set), "Note");
+        let inv = set.apply(&mut d).unwrap();
+        assert_eq!(d.notes, vec![changed]);
+        assert_eq!(inv, DocCommand::SetNote(note(1, "a")));
+        inv.apply(&mut d).unwrap();
+        assert_eq!(d, before);
+        // Borrar: el inverso la vuelve a poner donde estaba.
+        let remove = DocCommand::RemoveNote { id: 1 };
+        assert_eq!(crate::Undoable::label(&remove), "Delete Note");
+        let inv = remove.apply(&mut d).unwrap();
+        assert!(d.notes.is_empty());
+        inv.apply(&mut d).unwrap();
+        assert_eq!(d, before);
+    }
+
+    #[test]
+    fn note_commands_check_ids_and_index_and_serialize() {
+        let mut d = doc();
+        d.notes.push(note(1, "a"));
+        let before = d.clone();
+        assert_eq!(
+            DocCommand::AddNote {
+                index: 0,
+                note: note(1, "x"),
+            }
+            .apply(&mut d),
+            Err(CmdError::DuplicateNoteId(1))
+        );
+        assert_eq!(
+            DocCommand::AddNote {
+                index: 2,
+                note: note(2, "x"),
+            }
+            .apply(&mut d),
+            Err(CmdError::IndexOutOfRange(2))
+        );
+        assert_eq!(
+            DocCommand::SetNote(note(7, "x")).apply(&mut d),
+            Err(CmdError::NoteNotFound(7))
+        );
+        assert_eq!(
+            DocCommand::RemoveNote { id: 7 }.apply(&mut d),
+            Err(CmdError::NoteNotFound(7))
+        );
+        assert_eq!(d, before);
+        for c in [
+            DocCommand::AddNote {
+                index: 1,
+                note: note(2, "línea 1\nlínea 2"),
+            },
+            DocCommand::SetNote(note(1, "b")),
+            DocCommand::RemoveNote { id: 1 },
+        ] {
+            let json = serde_json::to_string(&c).unwrap();
+            assert_eq!(serde_json::from_str::<DocCommand>(&json).unwrap(), c);
+        }
+    }
+
+    #[test]
+    fn note_ids_and_lookup() {
+        let mut d = doc();
+        assert_eq!(d.next_note_id(), 1);
+        d.notes.push(note(3, "a"));
+        d.notes.push(note(1, "b"));
+        assert_eq!(d.next_note_id(), 4);
+        assert_eq!(d.note(1).map(|n| n.text.as_str()), Some("b"));
+        assert!(d.note(2).is_none());
     }
 }

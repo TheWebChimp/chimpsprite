@@ -260,42 +260,62 @@ impl Editor {
         self.execute_doc(DocCommand::SetNotes(notes))
     }
 
-    /// Una nota nueva con su esquina en `position` (mundo); devuelve su id.
+    /// Una nota nueva con su esquina en `position` (mundo), arriba de las demás; devuelve su id.
     pub fn add_note(&mut self, position: (i32, i32)) -> Option<u32> {
-        let id = self.document.notes.iter().map(|n| n.id).max().unwrap_or(0) + 1;
-        let mut notes = self.document.notes.clone();
-        notes.push(cs_core::Note {
+        let id = self.document.next_note_id();
+        let note = cs_core::Note {
             id,
             position,
             size: crate::notes::NEW_SIZE,
             text: String::new(),
             color: Default::default(),
-        });
-        self.set_notes(notes).then_some(id)
+        };
+        self.insert_note(note)
+    }
+
+    /// Pone `note` arriba de las demás (un paso de undo); devuelve su id.
+    fn insert_note(&mut self, note: cs_core::Note) -> Option<u32> {
+        let id = note.id;
+        let index = self.document.notes.len();
+        self.execute_doc(DocCommand::AddNote { index, note })
+            .then_some(id)
+    }
+
+    /// Una copia de la nota `id` corrida `offset` píxeles del mundo abajo y a la derecha,
+    /// arriba de todas.
+    pub fn duplicate_note(&mut self, id: u32, offset: i32) -> Option<u32> {
+        let mut note = self.document.note(id)?.clone();
+        note.id = self.document.next_note_id();
+        note.position = (note.position.0 + offset, note.position.1 + offset);
+        self.insert_note(note)
+    }
+
+    /// Reemplaza la nota con el id de `note` (un paso de undo, si cambió).
+    pub fn set_note(&mut self, note: cs_core::Note) -> bool {
+        match self.document.note(note.id) {
+            Some(old) if *old != note => self.execute_doc(DocCommand::SetNote(note)),
+            _ => false,
+        }
     }
 
     pub fn set_note_text(&mut self, id: u32, text: String) -> bool {
-        let mut notes = self.document.notes.clone();
-        match notes.iter_mut().find(|n| n.id == id) {
-            Some(n) if n.text != text => n.text = text,
-            _ => return false,
-        }
-        self.set_notes(notes)
+        let Some(mut note) = self.document.note(id).cloned() else {
+            return false;
+        };
+        note.text = text;
+        self.set_note(note)
     }
 
     pub fn set_note_color(&mut self, id: u32, color: cs_core::NoteColor) -> bool {
-        let mut notes = self.document.notes.clone();
-        match notes.iter_mut().find(|n| n.id == id) {
-            Some(n) if n.color != color => n.color = color,
-            _ => return false,
-        }
-        self.set_notes(notes)
+        let Some(mut note) = self.document.note(id).cloned() else {
+            return false;
+        };
+        note.color = color;
+        self.set_note(note)
     }
 
     pub fn remove_note(&mut self, id: u32) -> bool {
-        let mut notes = self.document.notes.clone();
-        notes.retain(|n| n.id != id);
-        self.set_notes(notes)
+        self.document.note(id).is_some() && self.execute_doc(DocCommand::RemoveNote { id })
     }
 
     /// Lleva la nota `id` encima de las demás.

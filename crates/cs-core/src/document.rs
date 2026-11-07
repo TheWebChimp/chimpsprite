@@ -197,6 +197,15 @@ pub struct Note {
     pub color: NoteColor,
 }
 
+impl Note {
+    /// El papel de una nota nueva, en puntos de interfaz (el de la pieza del skin, sin la sombra).
+    pub const DEFAULT_SIZE: (u32, u32) = (86, 89);
+    /// El papel más chico (al agrandarla): entran la barra y una línea de texto.
+    pub const MIN_SIZE: (u32, u32) = (60, 44);
+    /// El papel más grande.
+    pub const MAX_SIZE: (u32, u32) = (2048, 2048);
+}
+
 /// El color del papel de una nota.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NoteColor {
@@ -321,6 +330,16 @@ impl Document {
 
     pub fn artboard_mut(&mut self, id: ArtboardId) -> Option<&mut Artboard> {
         self.artboards.iter_mut().find(|a| a.id == id)
+    }
+
+    /// La nota `id`.
+    pub fn note(&self, id: u32) -> Option<&Note> {
+        self.notes.iter().find(|n| n.id == id)
+    }
+
+    /// Id para una nota nueva: uno más que el mayor.
+    pub fn next_note_id(&self) -> u32 {
+        self.notes.iter().map(|n| n.id).max().unwrap_or(0) + 1
     }
 
     /// Id nuevo: mayor que el de todo artboard existente y que toda fuente de instancia, para que

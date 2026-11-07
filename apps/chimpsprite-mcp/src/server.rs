@@ -128,6 +128,27 @@ impl ChimpServer {
         self.with(|s| s.remove_artboard(p))
     }
 
+    // --- Notas ---
+
+    #[tool(
+        description = "Add a sticky note (post-it) on the document canvas, between and above the artboards. Notes are annotations: they are saved in .chimp files but never exported. Returns the note id."
+    )]
+    fn add_note(&self, Parameters(p): Parameters<AddNote>) -> CallToolResult {
+        self.with(|s| s.add_note(p))
+    }
+
+    #[tool(
+        description = "Change a sticky note's text, position, size or color, or bring it to the front."
+    )]
+    fn set_note(&self, Parameters(p): Parameters<SetNote>) -> CallToolResult {
+        self.with(|s| s.set_note(p))
+    }
+
+    #[tool(description = "Remove a sticky note.")]
+    fn remove_note(&self, Parameters(p): Parameters<NoteOnly>) -> CallToolResult {
+        self.with(|s| s.remove_note(p))
+    }
+
     // --- Capas ---
 
     #[tool(description = "Add an image layer or a group. Returns the new layer id.")]
