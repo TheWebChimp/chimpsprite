@@ -99,6 +99,52 @@ pub(crate) fn new_class(k: &mut FontKerning) {
     });
 }
 
+/// Por qué la clase `index` no puede cambiar de lado (`None` si puede): la usan pares (del otro
+/// lado ya no la encontrarían) o del otro lado ya hay una clase con su nombre.
+pub(crate) fn side_change_blocked(k: &FontKerning, index: usize) -> Option<String> {
+    let class = k.classes.get(index)?;
+    let it = KernSide::Class(class.name.clone());
+    let used = k
+        .pairs
+        .iter()
+        .filter(|p| match class.side {
+            ClassSide::First => p.first == it,
+            ClassSide::Second => p.second == it,
+        })
+        .count();
+    match used {
+        0 => {}
+        1 => return Some("Used by 1 pair: remove it to change the side".to_owned()),
+        n => return Some(format!("Used by {n} pairs: remove them to change the side")),
+    }
+    let other = ClassSide::ALL.into_iter().find(|&s| s != class.side)?;
+    k.classes
+        .iter()
+        .any(|c| c.side == other && c.name == class.name)
+        .then(|| format!("There is already a {} class @{}", other.label(), class.name))
+}
+
+/// Los caracteres de la clase `index` que ya están en una clase anterior de su lado (cuentan en
+/// esa) y el nombre de la primera de esas clases.
+pub(crate) fn shadowed_chars(k: &FontKerning, index: usize) -> Option<(String, String)> {
+    let class = k.classes.get(index)?;
+    let mut owner = None;
+    let chars: String = class
+        .chars
+        .iter()
+        .filter(|&&c| {
+            let first = k.classes[..index]
+                .iter()
+                .find(|o| o.side == class.side && o.chars.contains(&c));
+            if let Some(o) = first {
+                owner.get_or_insert_with(|| o.name.clone());
+            }
+            first.is_some()
+        })
+        .collect();
+    owner.map(|o| (chars, o))
+}
+
 /// De dónde sale el valor de un par, para leerlo: "pair", "@round · V"…
 fn source_label(k: &FontKerning, source: Option<(usize, KernSource)>) -> String {
     match source {
@@ -415,21 +461,21 @@ fn classes(ui: &mut Ui, skin: Option<&Skin>, k: &mut FontKerning) {
                 rename_class(k, i, &name);
             }
             let mut side = class.side;
-            match skin {
-                Some(skin) => {
-                    kit::select::select(
-                        ui,
-                        skin,
-                        &format!("kern_class_side{i}"),
-                        side.label(),
-                        Some(CLASS_SIDE_W),
-                        |ui| {
-                            for s in ClassSide::ALL {
-                                widgets::choice(ui, &mut side, s, s.label());
-                            }
-                        },
-                    );
-                }
+            // Con pares que la usan no cambia de lado (se quedarían sin clase): se avisa por qué.
+            let blocked = side_change_blocked(k, i);
+            let picker = ui.add_enabled_ui(blocked.is_none(), |ui| match skin {
+                Some(skin) => kit::select::select(
+                    ui,
+                    skin,
+                    &format!("kern_class_side{i}"),
+                    side.label(),
+                    Some(CLASS_SIDE_W),
+                    |ui| {
+                        for s in ClassSide::ALL {
+                            widgets::choice(ui, &mut side, s, s.label());
+                        }
+                    },
+                ),
                 None => {
                     egui::ComboBox::from_id_salt(("kern_class_side", i))
                         .selected_text(side.label())
@@ -437,12 +483,14 @@ fn classes(ui: &mut Ui, skin: Option<&Skin>, k: &mut FontKerning) {
                             for s in ClassSide::ALL {
                                 widgets::choice(ui, &mut side, s, s.label());
                             }
-                        });
+                        })
+                        .response
                 }
+            });
+            if let Some(why) = &blocked {
+                picker.inner.on_disabled_hover_text(why);
             }
-            if side != class.side {
-                // Cambiar de lado: los pares que la usaban del lado de antes ya no la encuentran.
-                remove_class_pairs(k, &class.name, class.side);
+            if side != class.side && blocked.is_none() {
                 k.classes[i].side = side;
             }
             let chars: String = class.chars.iter().collect();
@@ -462,6 +510,14 @@ fn classes(ui: &mut Ui, skin: Option<&Skin>, k: &mut FontKerning) {
                 remove = Some(i);
             }
         });
+        // Un carácter en dos clases del mismo lado cuenta en la primera: se avisa.
+        if let Some((chars, owner)) = shadowed_chars(k, i) {
+            ui.add_space(ROW_GAP);
+            crate::panel_kit::hint(
+                ui,
+                &format!("{chars}: already in @{owner}, they count there"),
+            );
+        }
         ui.add_space(ROW_GAP);
     }
     if let Some(i) = remove {
@@ -470,15 +526,6 @@ fn classes(ui: &mut Ui, skin: Option<&Skin>, k: &mut FontKerning) {
     if button(ui, skin, "New class").clicked() {
         new_class(k);
     }
-}
-
-/// Quita los pares que usan la clase `name` del lado `side`.
-fn remove_class_pairs(k: &mut FontKerning, name: &str, side: ClassSide) {
-    let gone = KernSide::Class(name.to_owned());
-    k.pairs.retain(|p| match side {
-        ClassSide::First => p.first != gone,
-        ClassSide::Second => p.second != gone,
-    });
 }
 
 #[cfg(test)]
@@ -527,5 +574,50 @@ mod tests {
         remove_class(&mut k, 0);
         assert!(k.pairs.is_empty());
         assert_eq!(k.classes.len(), 1);
+    }
+
+    #[test]
+    fn a_class_with_pairs_or_a_namesake_on_the_other_side_keeps_its_side() {
+        let mut k = kerning();
+        assert_eq!(
+            side_change_blocked(&k, 0).as_deref(),
+            Some("Used by 1 pair: remove it to change the side")
+        );
+        k.set(Class("round".into()), Char('W'), -1);
+        assert!(
+            side_change_blocked(&k, 0)
+                .unwrap()
+                .starts_with("Used by 2 pairs")
+        );
+        k.pairs.clear();
+        assert_eq!(side_change_blocked(&k, 0), None);
+        k.classes.push(KernClass {
+            name: "round".into(),
+            side: ClassSide::Second,
+            chars: vec!['O'],
+        });
+        assert_eq!(
+            side_change_blocked(&k, 0).as_deref(),
+            Some("There is already a Second class @round")
+        );
+        assert_eq!(side_change_blocked(&k, 9), None);
+    }
+
+    #[test]
+    fn letters_already_in_an_earlier_class_of_the_same_side_are_pointed_out() {
+        let mut k = kerning();
+        k.classes.push(KernClass {
+            name: "o".into(),
+            side: ClassSide::First,
+            chars: vec!['o', 'O', 'Q'],
+        });
+        k.classes.push(KernClass {
+            name: "other side".into(),
+            side: ClassSide::Second,
+            chars: vec!['O'],
+        });
+        assert_eq!(shadowed_chars(&k, 0), None, "the first one wins");
+        assert_eq!(shadowed_chars(&k, 1), Some(("OQ".into(), "round".into())));
+        assert_eq!(shadowed_chars(&k, 2), None, "the other side does not count");
     }
 }

@@ -29,9 +29,11 @@ impl Capture {
         }
     }
 
-    pub fn update(&mut self, ctx: &egui::Context) {
+    /// Devuelve `true` en el frame en que, ya guardada la captura, pide cerrar la ventana: la app
+    /// cierra sin preguntar por los cambios (las demos modifican el documento).
+    pub fn update(&mut self, ctx: &egui::Context) -> bool {
         let Some(path) = self.path.clone() else {
-            return;
+            return false;
         };
         self.frames += 1;
         ctx.request_repaint();
@@ -52,7 +54,9 @@ impl Capture {
                 Err(e) => log::error!("screenshot failed: {e}"),
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return true;
         }
+        false
     }
 }
 
@@ -64,4 +68,40 @@ fn save_png(path: &Path, image: &egui::ColorImage) -> Result<(), Box<dyn std::er
     let bytes: Vec<u8> = image.pixels.iter().flat_map(|c| c.to_array()).collect();
     encoder.write_header()?.write_image_data(&bytes)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn after_saving_the_shot_it_closes_and_says_so() {
+        let path = std::env::temp_dir().join(format!("cs-capture-{}.png", std::process::id()));
+        let mut capture = Capture {
+            path: Some(path.clone()),
+            ..Default::default()
+        };
+        let ctx = egui::Context::default();
+        let mut closing = Vec::new();
+        for frame in 0..WARMUP_FRAMES + 1 {
+            let mut input = egui::RawInput::default();
+            if frame == WARMUP_FRAMES {
+                input.events.push(egui::Event::Screenshot {
+                    viewport_id: egui::ViewportId::ROOT,
+                    user_data: Default::default(),
+                    image: std::sync::Arc::new(egui::ColorImage::filled(
+                        [2, 2],
+                        egui::Color32::RED,
+                    )),
+                });
+            }
+            let mut output = ctx.run_ui(input, |ui| closing.push(capture.update(ui.ctx())));
+            output.textures_delta.clear();
+        }
+        assert_eq!(closing.iter().filter(|c| **c).count(), 1);
+        assert_eq!(closing.last(), Some(&true));
+        assert!(path.exists());
+        let _ = std::fs::remove_file(path);
+        assert!(!Capture::default().update(&ctx), "without a path, nothing");
+    }
 }

@@ -1616,6 +1616,26 @@ fn the_corner_resizes_and_the_circle_deletes_the_note() {
 }
 
 #[test]
+fn delete_with_the_pointer_over_a_note_deletes_it_in_one_undo_step() {
+    let mut h = Harness::new();
+    let (id, paper) = with_note(&mut h);
+    assert!(
+        !h.canvas.notes.delete_hovered(&mut h.editor),
+        "without the pointer over it, nothing"
+    );
+    h.frame(vec![Event::PointerMoved(paper.center())]);
+    assert!(h.canvas.notes.delete_hovered(&mut h.editor));
+    assert!(h.editor.document.notes.is_empty(), "deleted");
+    h.editor.undo();
+    assert_eq!(h.editor.document.notes.len(), 1, "undone");
+    // Escribiendo en ella, Supr es del texto.
+    h.canvas.notes.start_editing(&mut h.editor, id);
+    h.frame(vec![Event::PointerMoved(paper.center())]);
+    assert!(!h.canvas.notes.delete_hovered(&mut h.editor));
+    assert_eq!(h.editor.document.notes.len(), 1);
+}
+
+#[test]
 fn typing_in_a_note_saves_its_text_in_one_step() {
     let mut h = Harness::new();
     let (id, _) = with_note(&mut h);

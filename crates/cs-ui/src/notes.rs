@@ -378,6 +378,20 @@ impl NotesView {
         }
     }
 
+    /// Supr con el puntero sobre una nota (sin arrastrarla ni escribir en ella): la borra, en un
+    /// paso de undo. Devuelve si borró una.
+    pub fn delete_hovered(&mut self, editor: &mut Editor) -> bool {
+        if self.cursor.is_none() || self.drag.is_some() || self.editing.is_some() {
+            return false;
+        }
+        let Some(id) = self.hovered.take() else {
+            return false;
+        };
+        self.pressed_body = None;
+        editor.remove_note(id);
+        true
+    }
+
     /// Si hay una nota escribiéndose.
     pub fn is_editing(&self) -> bool {
         self.editing.is_some()

@@ -218,6 +218,41 @@ impl Editor {
         }
     }
 
+    /// La posición de `id` en la biblioteca: la de siempre o, si se edita en su lugar, la de
+    /// antes de entrar.
+    pub(crate) fn home_position(&self, id: ArtboardId) -> Option<(i32, i32)> {
+        let home = self
+            .symbol_stack
+            .iter()
+            .rev()
+            .find(|l| l.id == id)
+            .and_then(|l| l.place)
+            .map(|p| p.home);
+        home.or_else(|| self.document.artboard(id).map(|a| a.position))
+    }
+
+    /// El Duplicate de la Library: una copia de `id` ("… copy") en su misma posición de la
+    /// biblioteca (aunque se edite en su lugar), en un paso de undo. Devuelve la copia.
+    pub fn duplicate_library_item(&mut self, id: ArtboardId) -> Option<ArtboardId> {
+        let mut copy = self.document.artboard(id)?.clone();
+        copy.id = self.document.next_artboard_id();
+        copy.name = format!("{} copy", copy.name);
+        copy.position = self.home_position(id)?;
+        // Una fuente lleva su nombre también en su info: la copia es de otra familia
+        // ("Mine copy Bold").
+        if let Some(font) = &mut copy.font {
+            font.name = format!("{} copy", font.name);
+            copy.name = font.full_name();
+        }
+        let new = copy.id;
+        let index = self.document.artboards.len();
+        self.execute_doc(cs_commands::DocCommand::AddArtboard {
+            index,
+            artboard: Box::new(copy),
+        })
+        .then_some(new)
+    }
+
     /// El documento para guardar: con los símbolos que se editan en su lugar en su posición de
     /// la biblioteca (la de edición no se guarda).
     pub fn document_for_save(&self) -> Cow<'_, Document> {

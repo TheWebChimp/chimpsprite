@@ -10,7 +10,7 @@ use cs_core::{
     Artboard, ArtboardId, Cel, ColorMode, Document, Image, ImageId, InstancePose, InstanceTrack,
     Layer, LayerKind, PixelValue, Rgba, Sprite, TileGrid, Tileset, Tint, source_frame,
 };
-use cs_raster::{Block, MAX_BLOCK_SIDE, rotsprite, scale_nearest};
+use cs_raster::{Block, MAX_BLOCK_SIDE, scale_nearest};
 
 use crate::render_frame;
 
@@ -332,7 +332,7 @@ fn transformed(block: Block<Rgba>, pose: &InstancePose) -> (Block<Rgba>, (i32, i
     if pose.rotation.rem_euclid(360.0) == 0.0 {
         return (block, offset);
     }
-    let (rotated, (dx, dy)) = rotsprite(&block, pose.rotation.to_radians());
+    let (rotated, (dx, dy)) = crate::rot_cache::rotate(block, pose.rotation.to_radians());
     offset = (offset.0 + dx, offset.1 + dy);
     (rotated, offset)
 }

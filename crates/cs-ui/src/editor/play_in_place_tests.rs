@@ -160,8 +160,42 @@ fn a_frame_longer_than_a_second_still_advances_in_small_steps() {
     assert_eq!(e.tick_play_in_place(0.0).0, Some(4.0));
     e.tick_play_in_place(16.0);
     assert_eq!(e.frame_of(a), 1);
-    // Una pausa enorme no gira sin fin: queda en algún frame, empezándolo.
+    // Una pausa enorme no gira sin fin: 1e9 ms son 344 827 vueltas de 2900 y 1700 ms más. Con
+    // los 12 que llevaba el frame 1: 1712 = 200 + 100 + 100 + 1312 ya en el 0 (faltan 1188).
     let (next, _) = e.tick_play_in_place(1.0e9);
-    let ms = [2500.0, 200.0, 100.0, 100.0][e.frame_of(a)];
-    assert_eq!(next, Some(ms));
+    assert_eq!((e.frame_of(a), next), (0, Some(1188.0)));
+}
+
+#[test]
+fn a_long_pause_lands_on_the_frame_it_would_have_reached() {
+    // Hacia adelante, la vuelta dura 500 ms.
+    let (mut e, a, _) = two();
+    e.toggle_play_in_place(a);
+    e.tick_play_in_place(1000.0 * 500.0 + 150.0);
+    assert_eq!(e.frame_of(a), 1);
+    assert_eq!(
+        e.tick_play_in_place(0.0).0,
+        Some(150.0),
+        "50 ms into the 200 of frame 1"
+    );
+    // Ping-pong de 1 a 3 (200, 100, 100): 1, 2, 3, 2 y otra vez el 1 (500 ms).
+    let mut sprite = animated();
+    sprite.tags.push(Tag {
+        name: "walk".into(),
+        from: 1,
+        to: 3,
+        direction: AnimDirection::PingPong,
+        color: Rgba::rgb(0, 0, 0),
+        repeat: 0,
+    });
+    let mut e = Editor::with_sprite(sprite);
+    let a = e.active;
+    e.set_frame(1);
+    e.add_artboard_with_sprite("B".into(), animated());
+    e.toggle_play_in_place(a);
+    e.tick_play_in_place(1000.0 * 500.0 + 350.0);
+    assert_eq!(e.frame_of(a), 3);
+    assert_eq!(e.tick_play_in_place(0.0).0, Some(50.0));
+    e.tick_play_in_place(50.0);
+    assert_eq!(e.frame_of(a), 2, "on its way back");
 }

@@ -6,6 +6,32 @@ use ttf_parser::{Face, GlyphId, OutlineBuilder};
 use super::*;
 use crate::font::sample_font;
 
+#[test]
+fn the_format_4_cmap_fits_its_u16_length_up_to_its_range_limit() {
+    // Caracteres sueltos (uno sí, uno no), cada uno su tramo.
+    let scattered = |n: usize| -> Vec<(u32, u16)> {
+        (0..n)
+            .map(|i| (0x100 + 2 * i as u32, i as u16 + 1))
+            .collect()
+    };
+    let most = scattered(MAX_CMAP4_RANGES);
+    assert_eq!(bmp_ranges(&most), MAX_CMAP4_RANGES);
+    let table = cmap_format4(&most);
+    let length = u16::from_be_bytes([table[2], table[3]]) as usize;
+    assert_eq!(length, table.len(), "the length is exact");
+    assert_eq!(
+        bmp_ranges(&scattered(MAX_CMAP4_RANGES + 1)),
+        MAX_CMAP4_RANGES + 1
+    );
+    assert!(
+        16 + 8 * (MAX_CMAP4_RANGES + 2) > u16::MAX as usize,
+        "one more would overflow"
+    );
+    // Seguidos (con sus glifos seguidos) son un tramo.
+    let run: Vec<(u32, u16)> = (0..20_000).map(|i| (0x4E00 + i, i as u16 + 1)).collect();
+    assert_eq!(bmp_ranges(&run), 1);
+}
+
 fn ttf(mode: FontMode, color: bool) -> Vec<u8> {
     let options = TtfOptions {
         family: String::new(),

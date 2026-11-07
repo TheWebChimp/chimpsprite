@@ -22,6 +22,10 @@ const DATE: i64 = 3_850_070_400;
 /// Los pares de kerning que caben (una subtabla `kern` formato 0 mide a lo más 64 KB).
 pub const MAX_KERNING_PAIRS: usize = 10_000;
 
+/// Tramos del BMP que entran en el `cmap` formato 4: su largo es un u16 (16 + 8 por tramo, con
+/// el del final, 0xFFFF).
+pub const MAX_CMAP4_RANGES: usize = (u16::MAX as usize - 16) / 8 - 1;
+
 /// Las unidades por pixel de una celda de `height` filas: 64, o menos si el em pasaría de 16384.
 pub fn units_per_pixel(height: u32) -> u32 {
     UNITS_PER_PIXEL.min(MAX_EM / height.max(1)).max(1)
@@ -153,6 +157,13 @@ pub fn export_ttf(artboard: &Artboard, options: &TtfOptions) -> Result<Vec<u8>> 
         ));
     }
     cmap.sort_unstable();
+    let ranges = bmp_ranges(&cmap);
+    if ranges > MAX_CMAP4_RANGES {
+        return Err(IoError::Unsupported(format!(
+            "too many scattered characters for a TrueType font ({ranges} ranges of \
+             consecutive characters; at most {MAX_CMAP4_RANGES})"
+        )));
+    }
     let family = match options.family.trim() {
         "" => font.name.trim(),
         name => name,
@@ -462,8 +473,18 @@ fn runs(cmap: &[(u32, u16)]) -> Vec<(u32, u32, u16)> {
     out
 }
 
+/// Lo que va al formato 4: el BMP sin U+FFFF (es el tramo del final).
+fn bmp(cmap: &[(u32, u16)]) -> Vec<(u32, u16)> {
+    cmap.iter().copied().filter(|&(c, _)| c < 0xFFFF).collect()
+}
+
+/// Los tramos del formato 4 sin el del final.
+fn bmp_ranges(cmap: &[(u32, u16)]) -> usize {
+    runs(&bmp(cmap)).len()
+}
+
 fn cmap_format4(cmap: &[(u32, u16)]) -> Vec<u8> {
-    let bmp: Vec<(u32, u16)> = cmap.iter().copied().filter(|&(c, _)| c < 0xFFFF).collect();
+    let bmp = bmp(cmap);
     let mut segments: Vec<(u16, u16, u16)> = runs(&bmp)
         .into_iter()
         .map(|(a, b, g)| (a as u16, b as u16, (g as u32).wrapping_sub(a) as u16))
