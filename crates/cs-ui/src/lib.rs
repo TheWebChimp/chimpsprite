@@ -199,6 +199,8 @@ pub struct ChimpApp {
     frame_dialog: Option<frame_dialog::FramePropertiesDialog>,
     /// File → Import Sprite Sheet… abierto.
     sheet_dialog: Option<sheet_dialog::SheetDialog>,
+    /// `InputState::time` del último avance de Play in Place (`None` sin nada animándose).
+    in_place_time: Option<f64>,
     /// La ventanita de preview (abierta con `view.preview`).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
@@ -353,6 +355,7 @@ impl ChimpApp {
             select_dialog: None,
             frame_dialog: None,
             sheet_dialog: None,
+            in_place_time: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
             symbol_dialog: None,
@@ -1232,6 +1235,24 @@ impl ChimpApp {
         }
     }
 
+    /// Avanza Play in Place con el reloj de egui (`stable_dt` en reposo es el estimado, no el
+    /// real) y pide repintar justo para el próximo cambio de frame.
+    fn tick_in_place(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() || !self.doc.editor.any_in_place() {
+            self.in_place_time = None;
+            return;
+        }
+        let now = ctx.input(|i| i.time);
+        let dt_ms = self
+            .in_place_time
+            .map_or(0.0, |t| (now - t) * 1000.0)
+            .max(0.0);
+        self.in_place_time = Some(now);
+        if let (Some(ms), _) = self.doc.editor.tick_in_place(dt_ms) {
+            ctx.request_repaint_after(std::time::Duration::from_secs_f64(ms.max(1.0) / 1000.0));
+        }
+    }
+
     fn update_sheet_dialog(&mut self, ctx: &egui::Context) {
         let Some(dialog) = &mut self.sheet_dialog else {
             return;
@@ -1906,6 +1927,7 @@ impl eframe::App for ChimpApp {
             self.doc.editor.tick(dt_ms);
             ctx.request_repaint();
         }
+        self.tick_in_place(&ctx);
 
         let modal = self.is_modal();
         self.layout(ui, modal);

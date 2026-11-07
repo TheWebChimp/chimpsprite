@@ -14,7 +14,7 @@ tarea (tests + clippy en verde).
 3. **Canvas y app.** Textura recompuesta por frame (`texture_frames`); tick en `lib.rs` con
    `InputState::time` y `request_repaint_after`.
 4. **Barra de título.** `kit::title_bar`: `TitleState::play` y `TitleParts::play`; íconos
-   `icon.title_play` / `icon.title_stop` en el skin (provisionales, por MCP de Aseprite o PIL);
+   `icon.title_play` / `icon.title_pause` en el skin (provisionales, por MCP de Aseprite o PIL);
    `WindowLayout::play`, `TitleHit::Play`; clic sin activar. Catálogo del kit con el ▶. Tests de
    layout y de clic.
 5. **Menú del artboard.** Clic derecho en la barra/etiqueta (y con la herramienta Artboard) abre el

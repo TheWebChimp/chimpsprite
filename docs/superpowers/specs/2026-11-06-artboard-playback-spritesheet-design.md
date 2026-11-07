@@ -21,7 +21,7 @@ Dos ideas del usuario:
 ### Comportamiento
 
 - Cada ventana de artboard (Pixel UI) lleva en la barra de título un ▶ entre el título y el ○
-  (`icon.title_play`); encendido se ve como ■ (`icon.title_stop`). Clic lo prende o lo apaga **sin
+  (`icon.title_play`); encendido se ve como la pausa ‖ (`icon.title_pause`). Clic lo prende o lo apaga **sin
   activar el artboard** (se sigue editando el activo). También está en el menú del artboard
   ("Play in Place", casilla). Sin Pixel UI, solo desde el menú.
 - Solo se ofrece en artboards normales con más de un frame (no en fuentes ni modelos 3D, que tienen

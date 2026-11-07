@@ -94,6 +94,9 @@ pub struct CanvasView {
     /// La revisión con la que se compusieron todos los artboards: mientras se pinta, los que no
     /// son el activo (ni muestran instancias) no cambian y no se recomponen.
     all_rendered: Option<u64>,
+    /// El frame que muestra la textura de cada artboard: con Play in Place cambia sin que cambie
+    /// la revisión, y entonces se recompone solo ese.
+    texture_frames: HashMap<ArtboardId, usize>,
     /// Cuántas veces se compuso un artboard (para los tests).
     #[cfg(test)]
     composed: u32,
@@ -139,6 +142,9 @@ pub struct CanvasView {
     /// Clic derecho dentro de la selección con una herramienta de selección o Move: al soltar se
     /// abre su menú (voltear…).
     selection_menu: bool,
+    /// Clic derecho en la barra de un artboard (o en él con la herramienta Artboard): al soltar se
+    /// abre su menú, el mismo del "≡".
+    artboard_context: Option<ArtboardId>,
     /// Diálogo Slice Properties abierto (para el slice seleccionado).
     pub slice_properties: bool,
     /// Las notas (post-its) del lienzo: su arrastre, su edición y su cursor.
@@ -241,6 +247,9 @@ pub struct CanvasView {
     /// documento con la que se armaron.
     cards: HashMap<ArtboardId, CardSample>,
     cards_revision: Option<u64>,
+    /// Los artboards que llevan el ▶ de Play in Place en la barra y si se están animando (se
+    /// arma cada frame del editor).
+    in_place: HashMap<ArtboardId, bool>,
 }
 
 /// Color alrededor de los artboards: `canvas` del skin con Pixel UI; si no, el del tema.
@@ -318,6 +327,7 @@ impl Default for CanvasView {
             checker: None,
             rendered_revision: None,
             all_rendered: None,
+            texture_frames: HashMap::new(),
             #[cfg(test)]
             composed: 0,
             rendered_mask: None,
@@ -340,6 +350,7 @@ impl Default for CanvasView {
             object_menu: false,
             drop_error: None,
             selection_menu: false,
+            artboard_context: None,
             slice_properties: false,
             notes: Default::default(),
             artboard_request: None,
@@ -362,6 +373,7 @@ impl Default for CanvasView {
             advance_drag: None,
             component_drag: None,
             cards: HashMap::new(),
+            in_place: HashMap::new(),
             cards_revision: None,
             model_drag: None,
             edit_quads: None,
@@ -938,18 +950,36 @@ impl CanvasView {
         // Recompone las texturas si el documento cambió o hay un gesto en curso.
         let painting = editor.is_painting();
         let mask = editor.editing_mask().then_some(editor.layer);
-        if painting || self.rendered_revision != Some(editor.revision) || self.rendered_mask != mask
-        {
+        let full = painting
+            || self.rendered_revision != Some(editor.revision)
+            || self.rendered_mask != mask;
+        // Sin cambios en el documento, solo los que cambiaron de frame (Play in Place).
+        let moved: Vec<ArtboardId> = if full {
+            Vec::new()
+        } else {
+            shown_artboards(document, editor)
+                .map(|a| a.id)
+                .filter(|&id| self.texture_frames.get(&id) != Some(&editor.frame_of(id)))
+                .collect()
+        };
+        if full || !moved.is_empty() {
             self.rendered_mask = mask;
             self.textures
                 .retain(|id, _| document.artboard(*id).is_some());
+            self.texture_frames
+                .retain(|id, _| document.artboard(*id).is_some());
             let mut skipped = false;
             for artboard in shown_artboards(document, editor) {
+                if !full && !moved.contains(&artboard.id) {
+                    continue;
+                }
                 let sprite = &artboard.sprite;
+                let frame = editor.frame_of(artboard.id);
                 let unchanged = painting
                     && self.all_rendered == Some(editor.revision)
                     && artboard.id != editor.active
                     && self.textures.contains_key(&artboard.id)
+                    && self.texture_frames.get(&artboard.id) == Some(&frame)
                     && !sprite.layers.iter().any(|l| !l.objects.is_empty())
                     // Un modelo 3D cambia si se pinta su textura.
                     && artboard
@@ -964,7 +994,6 @@ impl CanvasView {
                 {
                     self.composed += 1;
                 }
-                let frame = editor.frame_of(artboard.id);
                 let onion = artboard.id == editor.active && editor.onion_enabled && !editor.playing;
                 // Las instancias se resuelven a capas normales antes de componer.
                 let frames = if onion {
@@ -993,12 +1022,15 @@ impl CanvasView {
                         self.textures.insert(artboard.id, tex);
                     }
                 }
+                self.texture_frames.insert(artboard.id, frame);
             }
-            if !skipped {
-                self.all_rendered = Some(editor.revision);
+            if full {
+                if !skipped {
+                    self.all_rendered = Some(editor.revision);
+                }
+                // Durante un gesto no marcamos como al día, para recomponer al terminar.
+                self.rendered_revision = (!painting).then_some(editor.revision);
             }
-            // Durante un gesto no marcamos como al día, para recomponer al terminar.
-            self.rendered_revision = (!painting).then_some(editor.revision);
         }
 
         self.refresh_in_place_context(&ctx, editor, document, painting);
@@ -1043,7 +1075,15 @@ impl CanvasView {
                     Some(font) if self.names_visible && !renaming => font.name.clone(),
                     _ => String::new(),
                 };
-                painter.extend(w.bar_shapes(&painter, layout, &title, active, BarKind::Font, ppp));
+                painter.extend(w.bar_shapes(
+                    &painter,
+                    layout,
+                    &title,
+                    active,
+                    BarKind::Font,
+                    false,
+                    ppp,
+                ));
                 continue;
             }
             if let Some((w, layout)) = &window {
@@ -1143,7 +1183,8 @@ impl CanvasView {
                     String::new()
                 };
                 let kind = BarKind::of(artboard);
-                painter.extend(w.bar_shapes(&painter, layout, &title, active, kind, ppp));
+                let playing = self.in_place.get(&artboard.id) == Some(&true);
+                painter.extend(w.bar_shapes(&painter, layout, &title, active, kind, playing, ppp));
                 continue;
             }
             // La textura del modo Texture va sola en su panel: sin borde ni etiqueta.
@@ -1729,7 +1770,10 @@ impl CanvasView {
     /// o, si es una fuente y esa ventana quedaría más chica que su tarjeta a lo ancho y a lo alto
     /// (de lejos, el glifo no se lee), la tarjeta, desde la misma esquina.
     fn window_of(&self, rect: Rect, artboard: &Artboard, ppp: f32) -> WindowLayout {
-        let window = WindowLayout::around(self.pixel_rect(rect, artboard), ppp);
+        let mut window = WindowLayout::around(self.pixel_rect(rect, artboard), ppp);
+        if self.in_place.contains_key(&artboard.id) {
+            window = window.with_play();
+        }
         let Some(sample) = self.cards.get(&artboard.id) else {
             return window;
         };
@@ -1741,6 +1785,17 @@ impl CanvasView {
 
     /// Arma de nuevo las muestras de las tarjetas si el documento cambió.
     fn refresh_cards(&mut self, editor: &Editor) {
+        // En el modo símbolo o en un workspace la ventana es la de un solo artboard: sin ▶.
+        self.in_place = if editor.single_artboard() {
+            HashMap::new()
+        } else {
+            editor
+                .document
+                .canvas_artboards()
+                .filter(|a| editor.can_play_in_place(a.id))
+                .map(|a| (a.id, editor.is_playing_in_place(a.id)))
+                .collect()
+        };
         if self.cards_revision == Some(editor.revision) {
             return;
         }
@@ -2069,6 +2124,19 @@ impl CanvasView {
         }
         if symbol {
             return;
+        }
+        menus::separator(ui);
+        // Play in Place: no en fuentes ni modelos.
+        let mut playing = editor.is_playing_in_place(id);
+        if ui
+            .add_enabled(
+                editor.can_play_in_place(id),
+                menus::check(&mut playing, "Play in Place"),
+            )
+            .clicked()
+        {
+            editor.toggle_play_in_place(id);
+            ui.close();
         }
         menus::separator(ui);
         let can_delete = editor.document.canvas_count() > 1;

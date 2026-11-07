@@ -2453,3 +2453,82 @@ fn fitting_a_small_texture_in_a_tall_pane_stops_at_64x() {
     canvas.fit_texture(pane, &editor);
     assert_eq!(canvas.zoom, 64.0);
 }
+
+/// Dos artboards de 16×16 con 3 frames de 100 ms, a zoom 4 con Pixel UI: el primero ("A") y el
+/// activo ("B").
+fn two_animated() -> (Harness, ArtboardId, ArtboardId) {
+    let animated = || {
+        let mut s = Sprite::new(16, 16, ColorMode::Rgba);
+        s.frames = vec![cs_core::Frame { duration_ms: 100 }; 3];
+        s
+    };
+    let mut h = Harness::new();
+    h.editor = Editor::with_sprite(animated());
+    let a = h.editor.active;
+    assert!(h.editor.add_artboard_with_sprite("B".into(), animated()));
+    let b = h.editor.active;
+    h.canvas.zoom = 4.0;
+    with_window(&mut h);
+    h.frame(vec![]);
+    (h, a, b)
+}
+
+fn window_of_id(h: &Harness, id: ArtboardId) -> WindowLayout {
+    let artboard = h.editor.document.artboard(id).unwrap();
+    h.canvas
+        .window_of(h.rect, artboard, h.ctx.pixels_per_point())
+}
+
+#[test]
+fn the_play_mark_plays_an_artboard_in_place_without_activating_it() {
+    let (mut h, a, b) = two_animated();
+    let play = window_of_id(&h, a)
+        .play
+        .expect("the ▶ of an animated artboard");
+    h.frame(vec![Event::PointerMoved(play.center())]);
+    assert_eq!(h.cursor, egui::CursorIcon::PointingHand);
+    h.click(play.center(), PointerButton::Primary);
+    assert!(h.editor.is_playing_in_place(a));
+    assert_eq!(h.editor.active, b, "still editing the other one");
+    assert!(h.editor.history.can_undo(), "only the new artboard");
+    // Al avanzar, solo se recompone el que cambió de frame.
+    h.frame(vec![]);
+    let before = h.canvas.composed;
+    h.editor.tick_in_place(100.0);
+    h.frame(vec![]);
+    assert_eq!(h.canvas.composed - before, 1, "only the one playing");
+    assert_eq!(h.canvas.texture_frames[&a], 1);
+    let before = h.canvas.composed;
+    h.frame(vec![]);
+    assert_eq!(h.canvas.composed, before, "nothing changed");
+    // Otro clic lo apaga y vuelve a su frame de edición.
+    h.click(play.center(), PointerButton::Primary);
+    assert!(!h.editor.is_playing_in_place(a));
+    h.frame(vec![]);
+    assert_eq!(h.canvas.texture_frames[&a], 0);
+}
+
+#[test]
+fn a_single_frame_artboard_has_no_play_mark() {
+    let mut h = Harness::new();
+    h.canvas.zoom = 4.0;
+    with_window(&mut h);
+    let id = h.editor.active;
+    assert_eq!(window_of_id(&h, id).play, None);
+    assert!(window_of_id(&h, id).close.is_some());
+}
+
+#[test]
+fn right_clicking_the_title_bar_opens_the_artboard_menu() {
+    let (mut h, a, _) = two_animated();
+    let window = window_of_id(&h, a);
+    let bar = window.text.unwrap().center();
+    h.click(bar, PointerButton::Secondary);
+    h.frame(vec![]);
+    assert_eq!(h.editor.active, a, "the menu is about that artboard");
+    let texts: Vec<String> = h.texts().into_iter().map(|(t, _)| t).collect();
+    for item in ["Rename", "Play in Place", "Delete"] {
+        assert!(texts.iter().any(|t| t == item), "{item} in {texts:?}");
+    }
+    assert!(h.editor.sprite().cels.is_empty(), "nothing painted");
+}
