@@ -4,9 +4,10 @@
 //! silueta (para los programas sin color) y cada color, una capa.
 //!
 //! Escrito a mano (sin crates): `head`, `hhea`, `maxp`, `OS/2`, `hmtx`, `cmap` (4 y 12),
-//! `loca`, `glyf`, `name`, `post`, y `COLR`/`CPAL`.
+//! `loca`, `glyf`, `name`, `post`, `COLR`/`CPAL` y, con kerning, `kern` y `GPOS`. El estilo de
+//! la fuente (Bold, Italic, Outline…) va en `name`, `OS/2`, `head.macStyle`, `post` y `hhea`.
 
-use cs_core::{Artboard, FontMode, Rgba};
+use cs_core::{Artboard, FontMode, FontStyle, Rgba, VariantKind};
 
 use super::outline::{self, Point};
 use crate::{IoError, Result};
@@ -18,6 +19,8 @@ const MAX_EM: u32 = 16384;
 /// La fecha de creación y modificación (fija, para que el archivo no cambie solo): el 1 de enero
 /// de 2026 en segundos desde 1904.
 const DATE: i64 = 3_850_070_400;
+/// Los pares de kerning que caben (una subtabla `kern` formato 0 mide a lo más 64 KB).
+pub const MAX_KERNING_PAIRS: usize = 10_000;
 
 /// Las unidades por pixel de una celda de `height` filas: 64, o menos si el em pasaría de 16384.
 pub fn units_per_pixel(height: u32) -> u32 {
@@ -159,6 +162,26 @@ pub fn export_ttf(artboard: &Artboard, options: &TtfOptions) -> Result<Vec<u8>> 
     } else {
         family
     };
+    // El kerning aplanado, de glifo a glifo, en unidades.
+    let gid_of = |ch: char| {
+        cmap.binary_search_by_key(&(ch as u32), |c| c.0)
+            .ok()
+            .map(|i| cmap[i].1)
+    };
+    let mut kerning: Vec<(u16, u16, i32)> = view
+        .kerning
+        .iter()
+        .filter_map(|(&(a, b), &v)| Some((gid_of(a)?, gid_of(b)?, v * upp)))
+        .collect();
+    kerning.sort_unstable();
+    if kerning.len() > MAX_KERNING_PAIRS {
+        return Err(IoError::Unsupported(format!(
+            "too many kerning pairs ({}; at most {MAX_KERNING_PAIRS})",
+            kerning.len()
+        )));
+    }
+    let style = &font.style;
+    let kind = style.source.as_ref().map(|s| s.recipe.kind);
     let metrics = Metrics {
         em: (cell_h as i32 * upp) as u16,
         upp,
@@ -168,6 +191,13 @@ pub fn export_ttf(artboard: &Artboard, options: &TtfOptions) -> Result<Vec<u8>> 
         x_height: view.metrics.x_height as i32 * upp,
         cell_h,
         monospace: font.monospace,
+        weight: style.weight.clamp(1, 1000),
+        bold: style.is_bold(),
+        italic: style.italic,
+        outline: kind == Some(VariantKind::Outline),
+        shadow: kind == Some(VariantKind::Shadow),
+        slant: style.slant,
+        italic_angle: style.italic_angle(),
     };
     let mut tables: Vec<([u8; 4], Vec<u8>)> = Vec::new();
     let (loca, glyf) = glyf_loca(&glyphs);
@@ -179,11 +209,15 @@ pub fn export_ttf(artboard: &Artboard, options: &TtfOptions) -> Result<Vec<u8>> 
     tables.push((*b"hmtx", hmtx(&glyphs, metrics.upp)));
     tables.push((*b"loca", loca));
     tables.push((*b"maxp", maxp(&glyphs)));
-    tables.push((*b"name", name_table(family)));
+    tables.push((*b"name", name_table(family, style)));
     tables.push((*b"post", post(&metrics)));
     if color && !base_records.is_empty() {
         tables.push((*b"COLR", colr(&base_records, &layer_records)));
         tables.push((*b"CPAL", cpal(&palette)));
+    }
+    if !kerning.is_empty() {
+        tables.push((*b"kern", kern(&kerning)));
+        tables.push((*b"GPOS", gpos(&kerning)));
     }
     tables.sort_by_key(|(tag, _)| *tag);
     Ok(sfnt(tables))
@@ -199,6 +233,24 @@ struct Metrics {
     x_height: i32,
     cell_h: u32,
     monospace: bool,
+    /// El estilo: el peso (usWeightClass), las banderas y la itálica.
+    weight: u16,
+    bold: bool,
+    italic: bool,
+    outline: bool,
+    shadow: bool,
+    slant: u32,
+    italic_angle: f64,
+}
+
+impl Metrics {
+    /// `head.macStyle`: bold, italic, outline y shadow.
+    fn mac_style(&self) -> u16 {
+        (self.bold as u16)
+            | ((self.italic as u16) << 1)
+            | ((self.outline as u16) << 3)
+            | ((self.shadow as u16) << 4)
+    }
 }
 
 /// Escritura big-endian.
@@ -247,7 +299,7 @@ fn head(glyphs: &[OutGlyph], m: &Metrics) -> Vec<u8> {
     // Baseline en y = 0, lsb en x = 0, ppem entero.
     w.u16(0b1011).u16(m.em).i64(DATE).i64(DATE);
     w.i16(x0).i16(y0).i16(x1).i16(y1);
-    w.u16(0)
+    w.u16(m.mac_style())
         .u16(m.cell_h.min(u16::MAX as u32) as u16)
         .i16(2)
         .i16(1)
@@ -269,7 +321,20 @@ fn hhea(glyphs: &[OutGlyph], m: &Metrics) -> Vec<u8> {
     w.u16(1).u16(0).i16(m.ascender).i16(m.descender).i16(0);
     w.u16(advance_max.unwrap_or(0).clamp(0, u16::MAX as i32) as u16);
     w.i16(min_lsb).i16(min_rsb).i16(extent);
-    w.i16(1).i16(0).i16(0).i16(0).i16(0).i16(0).i16(0).i16(0);
+    // La pendiente del cursor: derecha, o la de la itálica (`slant` filas por columna).
+    let (rise, run) = if m.slant > 0 {
+        (m.slant as i32, 1)
+    } else {
+        (1, 0)
+    };
+    w.i16(rise)
+        .i16(run)
+        .i16(0)
+        .i16(0)
+        .i16(0)
+        .i16(0)
+        .i16(0)
+        .i16(0);
     w.u16(glyphs.len() as u16);
     w.0
 }
@@ -462,16 +527,39 @@ fn postscript_name(family: &str) -> String {
     }
 }
 
-fn name_table(family: &str) -> Vec<u8> {
-    let ps = postscript_name(family);
-    let records: Vec<(u16, String)> = vec![
-        (1, family.to_owned()),
-        (2, "Regular".into()),
-        (3, format!("ChimpSprite: {family}")),
-        (4, family.to_owned()),
+/// El nombre completo de `family` con `style` ("Mine Bold"; el Regular, "Mine").
+fn full_name(family: &str, style: &FontStyle) -> String {
+    let name = style.name.trim();
+    if name.is_empty() || name.eq_ignore_ascii_case("Regular") {
+        family.to_owned()
+    } else {
+        format!("{family} {name}")
+    }
+}
+
+/// `name`: la familia y la subfamilia legacy (RIBBI), el ID único, el nombre completo, la versión,
+/// el PostScript ("Mine-Bold"; el Regular, "Mine") y, si el estilo no es RIBBI, la familia y la
+/// subfamilia tipográficas.
+fn name_table(family: &str, style: &FontStyle) -> Vec<u8> {
+    let (legacy, sub) = style.legacy_names(family);
+    let full = full_name(family, style);
+    let ps = if full == family {
+        postscript_name(family)
+    } else {
+        format!("{}-{}", postscript_name(family), style.compact_name())
+    };
+    let mut records: Vec<(u16, String)> = vec![
+        (1, legacy),
+        (2, sub),
+        (3, format!("ChimpSprite: {full}")),
+        (4, full),
         (5, "Version 1.000".into()),
-        (6, ps),
+        (6, postscript_name(&ps)),
     ];
+    if !style.is_ribbi() && !style.name.trim().is_empty() {
+        records.push((16, family.to_owned()));
+        records.push((17, style.name.trim().to_owned()));
+    }
     let mut strings = W::default();
     let mut w = W::default();
     w.u16(0)
@@ -492,7 +580,9 @@ fn name_table(family: &str) -> Vec<u8> {
 
 fn post(m: &Metrics) -> Vec<u8> {
     let mut w = W::default();
-    w.u32(0x0003_0000).u32(0).i16(-m.upp).i16(m.upp);
+    // italicAngle en 16.16.
+    let angle = (m.italic_angle * 65536.0).round() as i32;
+    w.u32(0x0003_0000).u32(angle as u32).i16(-m.upp).i16(m.upp);
     w.u32(m.monospace as u32).u32(0).u32(0).u32(0).u32(0);
     w.0
 }
@@ -518,7 +608,7 @@ fn os2(glyphs: &[OutGlyph], cmap: &[(u32, u16)], m: &Metrics) -> Vec<u8> {
     let first = cmap.first().map_or(0x20, |c| c.0.min(0xFFFF));
     let last = cmap.last().map_or(0x20, |c| c.0.min(0xFFFF));
     let mut w = W::default();
-    w.u16(4).i16(avg).u16(400).u16(5).u16(0);
+    w.u16(4).i16(avg).u16(m.weight).u16(5).u16(0);
     // Subíndices y superíndices.
     w.i16(em * 65 / 100)
         .i16(em * 60 / 100)
@@ -532,13 +622,106 @@ fn os2(glyphs: &[OutGlyph], cmap: &[(u32, u16)], m: &Metrics) -> Vec<u8> {
     w.i16(m.upp).i16(m.x_height / 2);
     w.i16(0).bytes(&[0; 10]);
     w.u32(ranges).u32(0).u32(0).u32(0).bytes(b"CHMP");
-    // Regular y USE_TYPO_METRICS.
-    w.u16(0x40 | 0x80).u16(first as u16).u16(last as u16);
+    // ITALIC, OUTLINED, BOLD o REGULAR, y USE_TYPO_METRICS.
+    let mut selection = 0x80u16;
+    if m.italic {
+        selection |= 0x01;
+    }
+    if m.outline {
+        selection |= 0x08;
+    }
+    if m.bold {
+        selection |= 0x20;
+    }
+    if !m.italic && !m.bold {
+        selection |= 0x40;
+    }
+    w.u16(selection).u16(first as u16).u16(last as u16);
     w.i16(m.ascender).i16(m.descender).i16(0);
     w.u16(m.ascender.max(0) as u16)
         .u16((-m.descender).max(0) as u16);
     w.u32(1).u32(0);
     w.i16(m.x_height).i16(m.cap_height).u16(0).u16(0x20).u16(0);
+    w.0
+}
+
+/// `kern` (versión 0 de Microsoft): una subtabla formato 0, horizontal, con los pares
+/// `(izquierdo, derecho, valor)` ordenados por glifos.
+fn kern(pairs: &[(u16, u16, i32)]) -> Vec<u8> {
+    let n = pairs.len() as u16;
+    let power = largest_power_of_two(n.max(1));
+    let mut w = W::default();
+    w.u16(0).u16(1);
+    w.u16(0).u16(14 + 6 * n).u16(0x0001);
+    w.u16(n).u16(power * 6).u16(power.trailing_zeros() as u16);
+    w.u16((n - power.min(n)) * 6);
+    for &(a, b, v) in pairs {
+        w.u16(a).u16(b).i16(v);
+    }
+    w.0
+}
+
+/// `GPOS` 1.0: los scripts `DFLT` y `latn` con la feature `kern`, que usa un lookup de tipo 2
+/// (PairPos formato 1: un PairSet por glifo de la izquierda, con el `XAdvance` del primero).
+fn gpos(pairs: &[(u16, u16, i32)]) -> Vec<u8> {
+    // ScriptList: dos scripts, cada uno con su LangSys por defecto que usa la feature 0.
+    let tags: [&[u8; 4]; 2] = [b"DFLT", b"latn"];
+    let mut scripts = W::default();
+    scripts.u16(tags.len() as u16);
+    // Cada Script: su encabezado (4) y su LangSys (6 + un índice).
+    let script_size = 4 + 6 + 2;
+    for (i, tag) in tags.iter().enumerate() {
+        let at = 2 + 6 * tags.len() + i * script_size;
+        scripts.bytes(*tag).u16(at as u16);
+    }
+    for _ in tags {
+        scripts.u16(4).u16(0);
+        scripts.u16(0).u16(0xFFFF).u16(1).u16(0);
+    }
+    // FeatureList: `kern` con el lookup 0.
+    let mut features = W::default();
+    features.u16(1).bytes(b"kern").u16(8);
+    features.u16(0).u16(1).u16(0);
+    // El subtable PairPos formato 1: el encabezado, los PairSet y el Coverage.
+    let mut firsts: Vec<u16> = pairs.iter().map(|p| p.0).collect();
+    firsts.dedup();
+    let header = 10 + 2 * firsts.len();
+    let mut sets = W::default();
+    let mut offsets = Vec::new();
+    for &first in &firsts {
+        offsets.push(header + sets.0.len());
+        let row: Vec<&(u16, u16, i32)> = pairs.iter().filter(|p| p.0 == first).collect();
+        sets.u16(row.len() as u16);
+        for &&(_, second, v) in &row {
+            sets.u16(second).i16(v);
+        }
+    }
+    let coverage_at = header + sets.0.len();
+    let mut sub = W::default();
+    sub.u16(1).u16(coverage_at as u16).u16(0x0004).u16(0);
+    sub.u16(firsts.len() as u16);
+    for o in offsets {
+        sub.u16(o as u16);
+    }
+    sub.bytes(&sets.0);
+    sub.u16(1).u16(firsts.len() as u16);
+    for &g in &firsts {
+        sub.u16(g);
+    }
+    // LookupList: un lookup de tipo 2 con ese subtable.
+    let mut lookups = W::default();
+    lookups.u16(1).u16(4);
+    lookups.u16(2).u16(0).u16(1).u16(8);
+    lookups.bytes(&sub.0);
+    let script_at = 10;
+    let feature_at = script_at + scripts.0.len();
+    let lookup_at = feature_at + features.0.len();
+    let mut w = W::default();
+    w.u16(1).u16(0);
+    w.u16(script_at as u16)
+        .u16(feature_at as u16)
+        .u16(lookup_at as u16);
+    w.bytes(&scripts.0).bytes(&features.0).bytes(&lookups.0);
     w.0
 }
 

@@ -1,6 +1,6 @@
 use std::collections::BTreeSet;
 
-use cs_core::{FontMode, Rgba};
+use cs_core::{Artboard, FontMode, Rgba};
 use ttf_parser::{Face, GlyphId, OutlineBuilder};
 
 use super::*;
@@ -260,4 +260,193 @@ fn dump_for_external_tools() {
     let dir = std::path::PathBuf::from(dir);
     std::fs::write(dir.join("sample-1bit.ttf"), ttf(FontMode::OneBit, false)).unwrap();
     std::fs::write(dir.join("sample-color.ttf"), ttf(FontMode::Color, true)).unwrap();
+    let options = TtfOptions {
+        family: String::new(),
+        color: false,
+    };
+    let bold = export_ttf(&styled(bold()), &options).unwrap();
+    std::fs::write(dir.join("sample-bold-kern.ttf"), bold).unwrap();
+}
+
+/// La fuente de prueba con un estilo y unos pares de kerning (A·g −1, g·i +2, A·€ −3).
+fn styled(style: cs_core::FontStyle) -> Artboard {
+    use cs_core::KernSide::Char;
+    let mut artboard = sample_font(FontMode::OneBit);
+    let font = artboard.font.as_mut().unwrap();
+    font.style = style;
+    font.kerning.set(Char('A'), Char('g'), -1);
+    font.kerning.set(Char('g'), Char('i'), 2);
+    font.kerning.set(Char('A'), Char('€'), -3);
+    font.kerning.set(Char('A'), Char('q'), -5); // la fuente no tiene `q`
+    artboard
+}
+
+fn name_of(face: &Face, id: u16) -> Option<String> {
+    face.names()
+        .into_iter()
+        .find(|n| n.name_id == id && n.is_unicode())
+        .and_then(|n| n.to_string())
+}
+
+fn bold() -> cs_core::FontStyle {
+    cs_core::FontStyle {
+        name: "Bold".into(),
+        weight: 700,
+        ..Default::default()
+    }
+}
+
+#[test]
+fn the_style_goes_to_name_os2_head_and_post() {
+    let options = TtfOptions {
+        family: String::new(),
+        color: false,
+    };
+    let bytes = export_ttf(&styled(bold()), &options).unwrap();
+    let face = Face::parse(&bytes, 0).unwrap();
+    assert_eq!(name_of(&face, 1).as_deref(), Some("Sample"));
+    assert_eq!(name_of(&face, 2).as_deref(), Some("Bold"));
+    assert_eq!(name_of(&face, 4).as_deref(), Some("Sample Bold"));
+    assert_eq!(name_of(&face, 6).as_deref(), Some("Sample-Bold"));
+    assert_eq!(name_of(&face, 16), None, "RIBBI: no typographic family");
+    assert!(face.is_bold() && !face.is_italic());
+    assert_eq!(face.weight(), ttf_parser::Weight::Bold);
+    let os2 = bytes_of(&face, b"OS/2");
+    assert_eq!(
+        u16::from_be_bytes([os2[62], os2[63]]),
+        0x80 | 0x20,
+        "BOLD, not REGULAR"
+    );
+    // Italic, 1 columna cada 3 filas.
+    let italic = cs_core::FontStyle {
+        name: "Italic".into(),
+        italic: true,
+        slant: 3,
+        ..Default::default()
+    };
+    let bytes = export_ttf(&styled(italic), &options).unwrap();
+    let face = Face::parse(&bytes, 0).unwrap();
+    assert!(face.is_italic() && !face.is_bold());
+    let angle = face.italic_angle();
+    assert!((angle + 18.43).abs() < 0.01, "{angle}");
+    let mac_style =
+        u16::from_be_bytes([bytes_of(&face, b"head")[44], bytes_of(&face, b"head")[45]]);
+    assert_eq!(mac_style, 0b10);
+    // Un Outline generado: no es RIBBI, lleva la familia tipográfica y OUTLINED.
+    let outline = cs_core::FontStyle::for_variant(
+        cs_core::ArtboardId(1),
+        cs_core::VariantRecipe::new(cs_core::VariantKind::Outline),
+        "Outline",
+    );
+    let bytes = export_ttf(&styled(outline), &options).unwrap();
+    let face = Face::parse(&bytes, 0).unwrap();
+    assert_eq!(name_of(&face, 1).as_deref(), Some("Sample Outline"));
+    assert_eq!(name_of(&face, 2).as_deref(), Some("Regular"));
+    assert_eq!(name_of(&face, 16).as_deref(), Some("Sample"));
+    assert_eq!(name_of(&face, 17).as_deref(), Some("Outline"));
+    assert!(face.is_regular());
+    assert!(face.style() == ttf_parser::Style::Normal);
+    let os2 = bytes_of(&face, b"OS/2");
+    let selection = u16::from_be_bytes([os2[62], os2[63]]);
+    assert_eq!(selection, 0x80 | 0x40 | 0x08);
+}
+
+/// Los bytes de la tabla `tag`.
+fn bytes_of<'a>(face: &Face<'a>, tag: &[u8; 4]) -> &'a [u8] {
+    face.raw_face()
+        .table(ttf_parser::Tag::from_bytes(tag))
+        .unwrap()
+}
+
+#[test]
+fn kerning_goes_to_the_kern_table_and_fontdue_reads_it() {
+    let options = TtfOptions {
+        family: String::new(),
+        color: false,
+    };
+    let bytes = export_ttf(&styled(Default::default()), &options).unwrap();
+    let font =
+        fontdue::Font::from_bytes(bytes.as_slice(), fontdue::FontSettings::default()).unwrap();
+    // A 10 px (el em), 1 pixel de la fuente = 1 px.
+    assert_eq!(font.horizontal_kern('A', 'g', 10.0), Some(-1.0));
+    assert_eq!(font.horizontal_kern('g', 'i', 10.0), Some(2.0));
+    assert_eq!(font.horizontal_kern('A', '€', 10.0), Some(-3.0));
+    assert_eq!(font.horizontal_kern('g', 'A', 10.0), None);
+    let face = Face::parse(&bytes, 0).unwrap();
+    let kern = face.tables().kern.unwrap();
+    let sub = kern.subtables.into_iter().next().unwrap();
+    assert!(sub.horizontal);
+    let (a, g) = (
+        face.glyph_index('A').unwrap(),
+        face.glyph_index('g').unwrap(),
+    );
+    assert_eq!(sub.glyphs_kerning(a, g), Some(-64));
+}
+
+#[test]
+fn kerning_goes_to_gpos_with_the_kern_feature() {
+    use ttf_parser::gpos::{PairAdjustment, PositioningSubtable};
+    let options = TtfOptions {
+        family: String::new(),
+        color: false,
+    };
+    let bytes = export_ttf(&styled(Default::default()), &options).unwrap();
+    let face = Face::parse(&bytes, 0).unwrap();
+    let gpos = face.tables().gpos.expect("a GPOS table");
+    let scripts: Vec<String> = gpos
+        .scripts
+        .into_iter()
+        .map(|s| s.tag.to_string())
+        .collect();
+    assert_eq!(scripts, vec!["DFLT", "latn"]);
+    let feature = gpos
+        .features
+        .find(ttf_parser::Tag::from_bytes(b"kern"))
+        .expect("the kern feature");
+    let lookup = gpos
+        .lookups
+        .get(feature.lookup_indices.get(0).unwrap())
+        .unwrap();
+    let sub: PositioningSubtable = lookup.subtables.get(0).unwrap();
+    let PositioningSubtable::Pair(PairAdjustment::Format1 { coverage, sets }) = sub else {
+        panic!("PairPos format 1");
+    };
+    let id = |c| face.glyph_index(c).unwrap();
+    let value = |a, b| {
+        let set = sets.get(coverage.get(id(a))?)?;
+        set.get(id(b)).map(|(v, _)| v.x_advance)
+    };
+    assert_eq!(value('A', 'g'), Some(-64));
+    assert_eq!(value('A', '€'), Some(-3 * 64));
+    assert_eq!(value('g', 'i'), Some(2 * 64));
+    assert_eq!(value('g', 'A'), None);
+    assert_eq!(value('i', 'g'), None);
+}
+
+#[test]
+fn without_kerning_there_are_no_kern_tables_and_too_many_pairs_is_an_error() {
+    let bytes = ttf(FontMode::OneBit, false);
+    let face = Face::parse(&bytes, 0).unwrap();
+    assert!(face.tables().kern.is_none() && face.tables().gpos.is_none());
+    // 101 × 100 pares de caracteres de uso privado.
+    let mut artboard = sample_font(FontMode::OneBit);
+    let font = artboard.font.as_mut().unwrap();
+    let chars: Vec<char> = (0xE000..0xE000 + 101).filter_map(char::from_u32).collect();
+    font.glyphs
+        .extend(chars.iter().map(|&c| cs_core::GlyphInfo::new(c)));
+    font.glyphs.sort_by_key(|g| g.ch);
+    artboard.sprite.frames = vec![cs_core::Frame { duration_ms: 100 }; font.glyphs.len()];
+    let font = artboard.font.as_mut().unwrap();
+    for &a in &chars {
+        for &b in &chars[..100] {
+            font.kerning
+                .set(cs_core::KernSide::Char(a), cs_core::KernSide::Char(b), 1);
+        }
+    }
+    let options = TtfOptions {
+        family: String::new(),
+        color: false,
+    };
+    let err = export_ttf(&artboard, &options).unwrap_err().to_string();
+    assert!(err.contains("too many kerning pairs (10100"), "{err}");
 }
