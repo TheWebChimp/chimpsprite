@@ -1179,7 +1179,8 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
 /// Desarrollo: las herramientas isométricas. `CHIMPSPRITE_DEMO_ISO=box` abre Edit → Iso Box…,
 /// `=blocks` lo abre en Blocks y `=placed` arma un artboard de 96×72 con la cuadrícula
 /// isométrica, unas pilas y una caja ya colocadas y otra caja flotando. Con
-/// `CHIMPSPRITE_DEMO_ISO_GRID`, la cuadrícula del artboard activo es isométrica de 16×8.
+/// `CHIMPSPRITE_DEMO_ISO_GRID`, la cuadrícula del artboard activo es isométrica de 16×8 (con
+/// `=dialog`, además Grid Settings abierto).
 fn demo_iso(app: &mut crate::ChimpApp) {
     use crate::iso_dialog::IsoMode;
     use cs_raster::{IsoBox, IsoCorner};
@@ -1262,6 +1263,9 @@ fn demo_iso(app: &mut crate::ChimpApp) {
         grid.kind = cs_core::GridKind::Isometric;
         app.doc.editor.execute(cs_commands::Command::SetGrid(grid));
         app.view.grid = true;
+        if dev_var("CHIMPSPRITE_DEMO_ISO_GRID") == Some("dialog") {
+            app.grid_dialog = Some(crate::view::GridDialog::new(&app.doc.editor, &app.view));
+        }
     }
     if mode == Some("box") || mode == Some("blocks") {
         if mode == Some("blocks") {
