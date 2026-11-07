@@ -67,12 +67,12 @@ const CURRENT: Color32 = Color32::from_rgb(226, 114, 133);
 const ADD_WIDTH: f32 = 120.0;
 const ADD_ALL_GAP: f32 = 4.0;
 /// Ancho del campo del Test Drive y de su papel.
-const TEST_W: f32 = 284.0;
+pub(crate) const TEST_W: f32 = 284.0;
 /// La escala del texto del Test Drive y el aire alrededor de él.
-const TEST_SCALE: u32 = 2;
-const TEST_PAD: f32 = 4.0;
+pub(crate) const TEST_SCALE: u32 = 2;
+pub(crate) const TEST_PAD: f32 = 4.0;
 /// La tinta del Test Drive: oscura fija, porque el papel es blanco aunque el tema sea oscuro.
-const TEST_INK: Color32 = Color32::from_rgb(5, 4, 3);
+pub(crate) const TEST_INK: Color32 = Color32::from_rgb(5, 4, 3);
 /// La columna de las etiquetas de los ajustes y los anchos de sus controles.
 const LABEL_W: f32 = 90.0;
 /// Los números de las medidas y el espaciado van en dos columnas: cada una, la etiqueta y su
@@ -95,10 +95,12 @@ const COMPONENT_FIELD_W: f32 = 80.0;
 /// La marquita de los compuestos en el mapa.
 const COMPOSITE_MARK: Color32 = Color32::from_rgb(60, 110, 235);
 
-/// Los dos íconos del título (13×14 con su sombra clara): los ajustes de la fuente en (292, 9) y
-/// el mapa en (309, 9).
+/// Los íconos del título (13×14 con su sombra clara): el kerning en (275, 9), los ajustes de la
+/// fuente en (292, 9) y el mapa en (309, 9).
+const KERN_ICON: &str = "icon.fontforge.kern";
 const CONFIG_ICON: &str = "icon.fontforge.config";
 const EDIT_ICON: &str = "icon.fontforge.edit";
+const KERN_AT: Vec2 = vec2(275.0, 9.0);
 const CONFIG_AT: Vec2 = vec2(292.0, 9.0);
 const EDIT_AT: Vec2 = vec2(309.0, 9.0);
 const ICON_SIZE: Vec2 = vec2(13.0, 14.0);
@@ -111,6 +113,8 @@ pub enum PanelView {
     Edit,
     /// Los ajustes de la fuente.
     Config,
+    /// Los pares y las clases de kerning.
+    Kerning,
 }
 
 /// El estado del panel entre frames.
@@ -123,6 +127,13 @@ pub struct FontPanelState {
     pub test_text: String,
     /// Lo escrito en el campo "Component" de la sección Glyph.
     pub component_char: String,
+    /// El par elegido en la vista Kerning.
+    pub kern_pair: Option<(char, char)>,
+    /// Los campos First y Second de la fila para agregar un par.
+    pub kern_first: String,
+    pub kern_second: String,
+    /// El arrastre de una letra en la vista Kerning: el valor al empezar y lo arrastrado.
+    pub kern_drag: Option<(i32, f32)>,
 }
 
 impl Default for FontPanelState {
@@ -133,6 +144,10 @@ impl Default for FontPanelState {
             add_char: String::new(),
             test_text: "The quick brown fox".to_owned(),
             component_char: String::new(),
+            kern_pair: None,
+            kern_first: String::new(),
+            kern_second: String::new(),
+            kern_drag: None,
         }
     }
 }
@@ -260,9 +275,16 @@ fn body(
         ui.add(egui::Label::new("The active artboard is not a font.").wrap());
         return new.clicked().then_some(FontAction::NewFont);
     };
-    if state.view == PanelView::Config {
-        settings(ui, editor, skin);
-        return None;
+    match state.view {
+        PanelView::Config => {
+            settings(ui, editor, skin);
+            return None;
+        }
+        PanelView::Kerning => {
+            crate::font_kern_panel::show(ui, editor, skin, state);
+            return None;
+        }
+        PanelView::Edit => {}
     }
     let note = match count {
         1 => "1 glyph".to_owned(),
@@ -307,6 +329,7 @@ fn header(ui: &mut Ui, skin: Option<&Skin>, state: &mut FontPanelState, outer: R
         }
     }
     let icons = [
+        (KERN_ICON, KERN_AT, "Kerning", PanelView::Kerning),
         (CONFIG_ICON, CONFIG_AT, "Font Settings", PanelView::Config),
         (EDIT_ICON, EDIT_AT, "Edit Glyphs", PanelView::Edit),
     ];
@@ -737,7 +760,11 @@ fn test_drive(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, state: &mut
 }
 
 /// El rect de una letra del papel del texto de prueba (a `TEST_SCALE`, desde `origin`).
-fn letter_rect(origin: egui::Pos2, line_h: f32, laid: &cs_tools::text::LaidChar) -> Rect {
+pub(crate) fn letter_rect(
+    origin: egui::Pos2,
+    line_h: f32,
+    laid: &cs_tools::text::LaidChar,
+) -> Rect {
     let scale = TEST_SCALE as f32;
     Rect::from_min_size(
         origin + vec2(laid.x as f32 * scale, laid.row as f32 * line_h),

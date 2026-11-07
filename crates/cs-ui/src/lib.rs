@@ -31,6 +31,7 @@ mod filters;
 mod font_actions;
 mod font_dialog;
 mod font_io;
+mod font_kern_panel;
 mod font_overlay;
 mod font_panel;
 mod font_sheet_dialog;
