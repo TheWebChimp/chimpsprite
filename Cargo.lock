@@ -751,6 +751,9 @@ dependencies = [
 name = "chimpsprite"
 version = "0.1.0-alpha.1"
 dependencies = [
+ "cs-commands",
+ "cs-core",
+ "cs-io",
  "cs-ui",
  "eframe",
  "env_logger",

@@ -21,6 +21,12 @@ windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 env_logger.workspace = true
+# `chimpsprite --thumbnail` (el thumbnailer de Linux, ver src/thumbnail_cli.rs).
+cs-io.workspace = true
+
+[dev-dependencies]
+cs-core.workspace = true
+cs-commands.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen-futures = "0.4"
@@ -39,6 +45,11 @@ icons = ["../../assets/icon/icon-32.png", "../../assets/icon/icon-128.png", "../
 
 [package.metadata.packager.nsis]
 installerIcon = "../../assets/icon/chimpsprite.ico"
+
+# Las miniaturas de los `.chimp` en los gestores de archivos (ver docs/thumbnails.md).
+[package.metadata.packager.deb.files]
+"linux/chimpsprite.thumbnailer" = "/usr/share/thumbnailers/chimpsprite.thumbnailer"
+"linux/chimpsprite-mime.xml" = "/usr/share/mime/packages/chimpsprite.xml"
 
 # Firma ad-hoc (sin certificado): macOS la pide para abrir la app en Apple Silicon.
 [package.metadata.packager.macos]

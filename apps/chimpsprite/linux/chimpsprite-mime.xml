@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- El tipo de los .chimp. Es un zip: sub-class-of hace que el glob gane a la detección por
+     contenido (que diría application/zip). Se instala en /usr/share/mime/packages/. -->
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-chimpsprite">
+    <comment>ChimpSprite document</comment>
+    <sub-class-of type="application/zip"/>
+    <glob pattern="*.chimp"/>
+  </mime-type>
+</mime-info>
