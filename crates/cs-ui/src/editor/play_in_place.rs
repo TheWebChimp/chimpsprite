@@ -130,9 +130,12 @@ impl Editor {
                 play.playback.step(play.range, play.direction);
                 changed |= play.playback.frame != before;
             }
-            play.clock = play.clock.min(1000.0);
             let duration = sprite.frames[play.playback.frame].duration_ms.max(1) as f64;
-            let left = (duration - play.clock).max(0.0);
+            // Si se llegó al tope, lo que sobra se tira: el frame de ahora empieza de cero.
+            if play.clock >= duration {
+                play.clock = 0.0;
+            }
+            let left = duration - play.clock;
             next = Some(next.map_or(left, |n: f64| n.min(left)));
         }
         (next, changed)

@@ -155,6 +155,7 @@ pub fn adopt_palette(sprite: &mut Sprite, palette: &Palette, mode: ColorMode) {
                 palette
                     .colors()
                     .iter()
+                    .take(256) // los índices son de un byte
                     .enumerate()
                     .find(|&(i, &p)| p == c && i != transparent_index as usize)
                     .map(|(i, _)| i as u8)
