@@ -179,3 +179,75 @@ fn zero_sides_count_as_one_unit() {
     assert_eq!(IsoCorner::from_pixels(3), Some(IsoCorner::Three));
     assert_eq!(IsoCorner::from_pixels(5), None);
 }
+
+/// Luminancia entera, para comparar tonos.
+fn luma(c: Rgba) -> u32 {
+    299 * c.r as u32 + 587 * c.g as u32 + 114 * c.b as u32
+}
+
+#[test]
+fn shades_from_a_base_color_go_light_on_top_and_dark_on_the_right() {
+    for base in [
+        Rgba::rgb(200, 80, 60),
+        Rgba::rgb(60, 140, 200),
+        Rgba::rgb(128, 128, 128),
+        Rgba::rgb(90, 200, 90),
+        Rgba::rgb(110, 60, 150),
+    ] {
+        let c = IsoColors::from_base(base);
+        assert_eq!(c.left, base);
+        assert!(luma(c.highlight) > luma(c.top), "{base:?}: {c:?}");
+        assert!(luma(c.top) > luma(c.left), "{base:?}: {c:?}");
+        assert!(luma(c.left) > luma(c.right), "{base:?}: {c:?}");
+        assert!(luma(c.right) > luma(c.outline), "{base:?}: {c:?}");
+    }
+    // Un gris queda gris (sin tinte) y el alfa del base se conserva.
+    let gray = IsoColors::from_base(Rgba::new(128, 128, 128, 200));
+    for c in [gray.top, gray.right, gray.outline, gray.highlight] {
+        assert!(c.r == c.g && c.g == c.b, "{c:?}");
+        assert_eq!(c.a, 200);
+    }
+}
+
+#[test]
+fn each_part_takes_its_color() {
+    let c = IsoColors {
+        top: Rgba::rgb(1, 0, 0),
+        left: Rgba::rgb(2, 0, 0),
+        right: Rgba::rgb(3, 0, 0),
+        outline: Rgba::rgb(4, 0, 0),
+        highlight: Rgba::rgb(5, 0, 0),
+    };
+    assert_eq!(c.color(IsoPart::Top), c.top);
+    assert_eq!(c.color(IsoPart::Left), c.left);
+    assert_eq!(c.color(IsoPart::Right), c.right);
+    assert_eq!(c.color(IsoPart::Outline), c.outline);
+    assert_eq!(c.color(IsoPart::Highlight), c.highlight);
+    let parts = iso_box(&cube(2, 2, 2, IsoCorner::Two), true, true);
+    let pixels = paint_parts(&parts, &c);
+    assert_eq!(pixels.len(), 36);
+    assert_eq!(pixels[0], None);
+    assert_eq!(pixels[2], Some(c.outline));
+    // (2, 1) es la cara de arriba; (1, 3), la izquierda.
+    assert_eq!(pixels[6 + 2], Some(c.top));
+    assert_eq!(pixels[3 * 6 + 1], Some(c.left));
+}
+
+#[test]
+fn colors_snap_to_the_nearest_opaque_palette_entry() {
+    let palette = [
+        Rgba::new(0, 0, 0, 0),
+        Rgba::rgb(10, 10, 10),
+        Rgba::rgb(250, 250, 250),
+        Rgba::rgb(200, 0, 0),
+    ];
+    let c = IsoColors::from_base(Rgba::rgb(190, 20, 20)).snapped(&palette);
+    assert_eq!(c.left, Rgba::rgb(200, 0, 0));
+    assert_eq!(c.outline, Rgba::rgb(10, 10, 10));
+    for color in [c.top, c.left, c.right, c.outline, c.highlight] {
+        assert!(palette[1..].contains(&color), "{color:?}");
+    }
+    // Sin colores opacos, no cambia nada.
+    let base = IsoColors::from_base(Rgba::rgb(190, 20, 20));
+    assert_eq!(base.snapped(&palette[..1]), base);
+}
