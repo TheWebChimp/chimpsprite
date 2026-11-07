@@ -7,6 +7,7 @@ mod stream;
 
 use std::cell::RefCell;
 use std::ffi::c_void;
+use std::panic::AssertUnwindSafe;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use windows::Win32::Foundation::{
@@ -90,12 +91,18 @@ impl IThumbnailProvider_Impl for ThumbnailProvider_Impl {
             return Err(E_POINTER.into());
         }
         let stream = self.stream.borrow().clone().ok_or(E_UNEXPECTED)?;
-        // Sin miniatura incrustada (un archivo viejo) el Explorador pone el ícono normal.
-        let image = cs_io::thumbnail::read(StreamReader(stream))
-            .ok()
-            .flatten()
-            .ok_or(E_FAIL)?;
-        let bitmap = dib(&cs_io::thumbnail::fit(&image, cx))?;
+        // Sin miniatura incrustada (un archivo viejo) el Explorador pone el ícono normal. Un
+        // pánico (un archivo roto que no se previó) tampoco cruza a COM.
+        let image = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            cs_io::thumbnail::read(StreamReader(stream))
+                .ok()
+                .flatten()
+                .map(|image| cs_io::thumbnail::fit(&image, cx))
+        }))
+        .ok()
+        .flatten()
+        .ok_or(E_FAIL)?;
+        let bitmap = dib(&image)?;
         unsafe {
             *phbmp = bitmap;
             *pdwalpha = WTSAT_ARGB;
@@ -158,7 +165,14 @@ impl IClassFactory_Impl for Factory_Impl {
         if lock.as_bool() {
             LIVE.fetch_add(1, Ordering::SeqCst);
         } else {
-            LIVE.fetch_sub(1, Ordering::SeqCst);
+            // Un `LockServer(FALSE)` de más no da la vuelta al contador.
+            let mut n = LIVE.load(Ordering::SeqCst);
+            while n > 0 {
+                match LIVE.compare_exchange(n, n - 1, Ordering::SeqCst, Ordering::SeqCst) {
+                    Ok(_) => break,
+                    Err(now) => n = now,
+                }
+            }
         }
         Ok(())
     }
