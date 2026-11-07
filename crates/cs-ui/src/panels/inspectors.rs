@@ -472,9 +472,9 @@ fn transform_rows(ui: &mut egui::Ui, editor: &mut Editor, key: &cs_core::Instanc
     let (mut sx, mut sy) = (percent(key.scale.0), percent(key.scale.1));
     let (rx, ry) = ui
         .horizontal(|ui| {
-            ui.label("Scale");
-            let rx = widgets::number(ui, &mut sx, 1..=10000, "%");
-            let ry = widgets::number(ui, &mut sy, 1..=10000, "%");
+            ui.label("Scale %");
+            let rx = widgets::number(ui, &mut sx, 1..=2000, "");
+            let ry = widgets::number(ui, &mut sy, 1..=2000, "");
             (rx, ry)
         })
         .inner;

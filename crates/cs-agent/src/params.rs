@@ -821,9 +821,9 @@ pub struct SetInstanceKey {
     pub timing: Option<TimingArg>,
     /// Symbol frame to start from.
     pub first_frame: Option<usize>,
-    /// Horizontal scale in percent (100 = as is), from the symbol's center.
+    /// Horizontal scale in percent (100 = as is, 0.1 to 2000), from the symbol's center.
     pub scale_x: Option<f32>,
-    /// Vertical scale in percent (100 = as is), from the symbol's center.
+    /// Vertical scale in percent (100 = as is, 0.1 to 2000), from the symbol's center.
     pub scale_y: Option<f32>,
     /// Rotation in degrees, clockwise, from the symbol's center. Not wrapped: 720 in the end
     /// keyframe of a tween spins twice.
@@ -882,9 +882,9 @@ pub struct SetObjectKey {
     pub timing: Option<TimingArg>,
     /// Symbol frame to start from.
     pub first_frame: Option<usize>,
-    /// Horizontal scale in percent (100 = as is), from the symbol's center.
+    /// Horizontal scale in percent (100 = as is, 0.1 to 2000), from the symbol's center.
     pub scale_x: Option<f32>,
-    /// Vertical scale in percent (100 = as is), from the symbol's center.
+    /// Vertical scale in percent (100 = as is, 0.1 to 2000), from the symbol's center.
     pub scale_y: Option<f32>,
     /// Rotation in degrees, clockwise, from the symbol's center. Not wrapped: 720 in the end
     /// keyframe of a tween spins twice.

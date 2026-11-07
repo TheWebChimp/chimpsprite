@@ -161,7 +161,7 @@ No hay primitivas nuevas: todo es `Command::SetObjects` (serializable, un paso d
 
 **Inspector Object** (después de Position):
 
-- **Scale** X % e Y % (1–10000 %), **Rotation** (°, −3600…3600), **Tint** (botón de color +
+- **Scale** X % e Y % (1–2000 %), **Rotation** (°, −3600…3600), **Tint** (botón de color +
   cantidad 0–255; cantidad 0 = sin tinte).
 - Si la key vigente tiene tween: un bloque **Tween** con **Ease** (select: Classic, Ease In,
   Ease Out, Ease In Out, Bounce, Elastic, Back, Step), **Amount** (−100…100 en Classic, 0…100 en
@@ -183,8 +183,8 @@ el render horneado.
 ## 6. MCP (`cs-agent`)
 
 - `set_object_key` y `set_instance_key` ganan `scale_x`, `scale_y` (porcentaje, decimales
-  permitidos), `rotation` (grados), `tint` (color, `"#rrggbb"`) y `tint_amount` (0–255; 0 quita el
-  tinte).
+  permitidos, 0.1–2000), `rotation` (grados), `tint` (color, `"#rrggbb"`) y `tint_amount`
+  (0–255; 0 quita el tinte).
 - **`set_tween`** `{doc, artboard?, layer, object?, frame, ease?, amount?}`: crea el tween del
   tramo que contiene `frame` (o cambia su ease). `ease`: `classic` (default), `ease_in`,
   `ease_out`, `ease_in_out`, `bounce`, `elastic`, `back`, `step`. `object` por id o nombre (sin
@@ -224,6 +224,19 @@ el render horneado.
 **`cs-agent`**
 - `set_object_key` con escala/rotación/tinte; `set_tween` + `render` del frame del medio;
   `remove_tween`.
+
+## Ajustes al spec (descubiertos al implementar)
+
+1. **F8 con objetos transformados.** El recorte del símbolo nuevo usaba la caja del símbolo fuente
+   en la posición de cada key: con escala, rotación o tween recortaba. Ahora recorre la pose de
+   cada frame y, si está transformada, toma un cuadrado que contiene cualquier giro del símbolo
+   escalado (con un píxel de margen). El render sigue idéntico (lo garantiza una prueba).
+2. **Escala hasta 2000 %** en el panel y en el MCP: el bloque escalado se calcula entero antes de
+   recortar al lienzo (además, cada lado se limita a 4096 px como en la selección).
+3. **`Editor::instance_key()` devuelve lo que se ve** (`keyframe_at`): el panel Object muestra la
+   pose en medio de un tween y sus cambios crean la key ahí con esos valores.
+4. **Las marcas del tween** (fondo y flecha) se ven en la fila plegada solo si la capa tiene un
+   objeto (como las barras de hold); con varios, en sus sub-filas.
 
 ## Decisiones que el usuario puede revisar
 

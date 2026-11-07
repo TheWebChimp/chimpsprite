@@ -1003,10 +1003,10 @@ impl Transform {
         let milli = |percent: Option<f32>| -> Result<Option<i32>> {
             percent
                 .map(|p| {
-                    if p.is_finite() && (0.1..=100_000.0).contains(&p) {
+                    if p.is_finite() && (0.1..=2000.0).contains(&p) {
                         Ok((p * 10.0).round() as i32)
                     } else {
-                        Err(invalid("scale must be a percent between 0.1 and 100000"))
+                        Err(invalid("scale must be a percent between 0.1 and 2000"))
                     }
                 })
                 .transpose()

@@ -2014,7 +2014,7 @@ fn the_object_panel_shows_the_transform_and_the_tween() {
     e.add_instance_layer(cs_core::ArtboardId(2));
     let has = |texts: &[String], t: &str| texts.iter().any(|s| s == t);
     let texts = object_panel_texts(&mut e);
-    for t in ["Scale", "Rotation", "Tint"] {
+    for t in ["Scale %", "Rotation", "Tint"] {
         assert!(has(&texts, t), "{t} in {texts:?}");
     }
     assert!(!has(&texts, "Create Tween"), "no next keyframe yet");
