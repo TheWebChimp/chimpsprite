@@ -89,6 +89,7 @@ impl DialogHarness {
             app.update_symbol_dialog(&ctx);
             app.update_sheet_dialog(&ctx);
             app.update_expand_dialog(&ctx);
+            app.update_iso_dialog(&ctx);
             app.show_dialogs(&ctx);
             app.update_palette_windows(&ctx, false);
             app.update_grid_dialog(&ctx);
@@ -1713,5 +1714,47 @@ fn grid_settings_has_the_grid_type() {
             "pixel_ui {pixel_ui}: {:?}",
             h.texts
         );
+    }
+}
+
+#[test]
+fn iso_box_places_the_box_floating_and_remembers_the_settings() {
+    for pixel_ui in [true, false] {
+        let mut h = DialogHarness::new(pixel_ui);
+        h.app.open_iso_box();
+        h.settle();
+        assert!(h.drew_text("Iso Box"), "pixel_ui {pixel_ui}: {:?}", h.texts);
+        assert!(
+            h.drew_text("Shade from"),
+            "pixel_ui {pixel_ui}: {:?}",
+            h.texts
+        );
+        // La caja de fábrica (4 × 4 × 8, 3 px): 15 × 16.
+        assert!(
+            h.drew_text("15 × 16 px"),
+            "pixel_ui {pixel_ui}: {:?}",
+            h.texts
+        );
+        h.click("Blocks");
+        h.settle();
+        assert!(
+            h.drew_text("Stack heights (click +1, right-click −1):"),
+            "pixel_ui {pixel_ui}: {:?}",
+            h.texts
+        );
+        h.click("Box");
+        h.settle();
+        h.click("Place");
+        h.settle();
+        assert!(h.app.iso_dialog.is_none(), "pixel_ui {pixel_ui}");
+        let e = &h.app.doc.editor;
+        assert!(e.is_floating(), "pixel_ui {pixel_ui}");
+        assert_eq!(e.tool, crate::editor::ToolKind::Move);
+        // Se recuerda en la sesión.
+        assert_eq!(h.app.iso_settings.mode, crate::iso_dialog::IsoMode::Box);
+        h.app.open_iso_box();
+        h.settle();
+        h.key(Key::Escape);
+        assert!(h.app.iso_dialog.is_none(), "pixel_ui {pixel_ui}");
     }
 }

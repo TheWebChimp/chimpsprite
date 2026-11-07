@@ -674,6 +674,11 @@ A pixel art editor."
         if ui.add(menus::plain("Insert Text")).clicked() {
             self.doc.editor.set_tool(editor::ToolKind::Text);
         }
+        let iso = self.doc.editor.clip_layer_ok(true);
+        if ui.add_enabled(iso, menus::plain("Iso Box…")).clicked() {
+            self.open_iso_box();
+            ui.close();
+        }
         if ui.add(menus::plain("New Note")).clicked() {
             self.new_note();
         }

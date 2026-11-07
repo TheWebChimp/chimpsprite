@@ -38,6 +38,7 @@ mod font_sheet_dialog;
 mod font_variant_dialog;
 mod frame_dialog;
 mod gif_dialog;
+mod iso_dialog;
 mod mask_ops;
 mod menus;
 mod model_dialog;
@@ -208,6 +209,9 @@ pub struct ChimpApp {
     sheet_dialog: Option<sheet_dialog::SheetDialog>,
     /// Expand to Spritesheet… (menú de un artboard) abierto.
     expand_dialog: Option<expand_dialog::ExpandDialog>,
+    /// Edit → Iso Box… abierto y lo elegido la última vez (en la sesión).
+    iso_dialog: Option<Box<iso_dialog::IsoDialog>>,
+    iso_settings: iso_dialog::IsoSettings,
     /// `InputState::time` del último avance de Play in Place (`None` sin nada animándose).
     play_in_place_time: Option<f64>,
     /// La ventanita de preview (abierta con `view.preview`).
@@ -366,6 +370,8 @@ impl ChimpApp {
             frame_dialog: None,
             sheet_dialog: None,
             expand_dialog: None,
+            iso_dialog: None,
+            iso_settings: Default::default(),
             play_in_place_time: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
@@ -1963,6 +1969,7 @@ impl eframe::App for ChimpApp {
         self.update_frame_dialog(&ctx);
         self.update_sheet_dialog(&ctx);
         self.update_expand_dialog(&ctx);
+        self.update_iso_dialog(&ctx);
         self.update_settings_windows(&ctx);
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);

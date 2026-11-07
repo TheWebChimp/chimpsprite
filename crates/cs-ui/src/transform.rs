@@ -385,6 +385,14 @@ impl Editor {
         }
     }
 
+    /// El nombre del paso que dejará lo pegado que flota al confirmarse (en vez de "Paste"):
+    /// lo que se coloca desde un diálogo, como Iso Box.
+    pub(crate) fn label_pasted(&mut self, label: &'static str) {
+        if let Some(f) = self.floating.as_mut().filter(|f| f.from_paste) {
+            f.label = label;
+        }
+    }
+
     /// El nombre del paso que dejará lo flotante al confirmarse (lo pegado sigue siendo "Paste").
     fn name_floating(&mut self, label: &'static str) {
         if let Some(f) = self.floating.as_mut().filter(|f| !f.from_paste) {
