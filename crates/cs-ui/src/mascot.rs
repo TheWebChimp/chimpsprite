@@ -644,6 +644,79 @@ impl Mascot {
     }
 }
 
+/// El arte de Chimpy (provisional, para redibujar): `assets/ui/mascot.aseprite`, colgando de la
+/// mano derecha, con los tags `idle` y `talk`.
+pub const ART: &[u8] = include_bytes!("../../../assets/ui/mascot.aseprite");
+
+/// Los frames del arte ya compuestos y los de cada animación (sin egui).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Art {
+    pub size: [usize; 2],
+    pub frames: Vec<Vec<cs_core::Rgba>>,
+    pub durations_ms: Vec<u32>,
+    pub idle: std::ops::Range<usize>,
+    pub talk: std::ops::Range<usize>,
+}
+
+impl Art {
+    /// Lee el arte de `bytes` (un `.aseprite`).
+    pub fn decode(bytes: &[u8]) -> Option<Art> {
+        let (sprite, _) = cs_io::aseprite::read(bytes).ok()?;
+        let frames = (0..sprite.frames.len())
+            .map(|i| cs_render::render_frame(&sprite, i))
+            .collect();
+        let durations = sprite
+            .frames
+            .iter()
+            .map(|f| u32::from(f.duration_ms).max(1))
+            .collect();
+        let tags: Vec<(&str, std::ops::Range<usize>)> = sprite
+            .tags
+            .iter()
+            .map(|t| (t.name.as_str(), t.from..t.to + 1))
+            .collect();
+        Some(Self::from_parts(
+            [sprite.width as usize, sprite.height as usize],
+            frames,
+            durations,
+            &tags,
+        ))
+    }
+
+    /// Con los tags `idle` y `talk` (por nombre); el que falte (o se salga) usa todos los frames.
+    pub fn from_parts(
+        size: [usize; 2],
+        frames: Vec<Vec<cs_core::Rgba>>,
+        durations_ms: Vec<u32>,
+        tags: &[(&str, std::ops::Range<usize>)],
+    ) -> Art {
+        let all = 0..frames.len();
+        let tag = |name: &str| {
+            tags.iter()
+                .find(|(n, r)| *n == name && !r.is_empty() && r.end <= frames.len())
+                .map_or(all.clone(), |(_, r)| r.clone())
+        };
+        let (idle, talk) = (tag("idle"), tag("talk"));
+        Art {
+            size,
+            frames,
+            durations_ms,
+            idle,
+            talk,
+        }
+    }
+
+    /// El frame de `anim` a los `clock` segundos (en bucle, con las duraciones del arte).
+    pub fn frame(&self, anim: Anim, clock: f64) -> usize {
+        let range = match anim {
+            Anim::Idle => self.idle.clone(),
+            Anim::Talk => self.talk.clone(),
+        };
+        crate::tab_bar::animation_frame(&self.durations_ms[range.clone()], clock)
+            .map_or(range.start, |(i, _)| range.start + i)
+    }
+}
+
 #[cfg(test)]
 #[path = "mascot_tests.rs"]
 mod tests;

@@ -467,3 +467,39 @@ fn the_demo_forces_a_bubble_without_touching_the_settings() {
     assert_eq!(shown_id(&m), Some("walk-cycle"));
     assert!(!m.force("nope", 0.0, &keys));
 }
+
+#[test]
+fn the_embedded_art_has_idle_and_talk() {
+    let art = Art::decode(ART).expect("the embedded art");
+    assert_eq!(art.size, [32, 40]);
+    assert_eq!(art.frames.len(), art.durations_ms.len());
+    assert!(art.durations_ms.iter().all(|&d| d > 0));
+    assert!(art.idle.len() >= 2, "{:?}", art.idle);
+    assert!(art.talk.len() >= 2, "{:?}", art.talk);
+    // La mano agarra el borde de arriba: algo dibujado en la primera fila.
+    assert!(art.frames[0][..32].iter().any(|c| c.a > 0));
+}
+
+#[test]
+fn art_frames_follow_the_tag_durations() {
+    let art = Art {
+        size: [1, 1],
+        frames: vec![Vec::new(); 4],
+        durations_ms: vec![1000, 100, 200, 200],
+        idle: 0..2,
+        talk: 2..4,
+    };
+    assert_eq!(art.frame(Anim::Idle, 0.5), 0);
+    assert_eq!(art.frame(Anim::Idle, 1.05), 1);
+    assert_eq!(art.frame(Anim::Idle, 1.15), 0);
+    assert_eq!(art.frame(Anim::Talk, 0.1), 2);
+    assert_eq!(art.frame(Anim::Talk, 0.3), 3);
+    assert_eq!(art.frame(Anim::Talk, 0.45), 2);
+}
+
+#[test]
+fn art_without_tags_uses_every_frame() {
+    let art = Art::from_parts([1, 1], vec![Vec::new(); 3], vec![100; 3], &[]);
+    assert_eq!(art.idle, 0..3);
+    assert_eq!(art.talk, 0..3);
+}
