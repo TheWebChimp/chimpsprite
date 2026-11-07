@@ -119,6 +119,30 @@ impl IsoParts {
         })
     }
 
+    /// Con `highlight`, el borde de adelante de las caras de arriba (los píxeles de arriba con
+    /// un costado debajo); con `outline`, el contorno de la silueta encima.
+    fn finish(&mut self, outline: bool, highlight: bool) {
+        if highlight {
+            let rims: Vec<(i32, i32)> = self
+                .points()
+                .filter(|&(x, y, p)| {
+                    p == IsoPart::Top
+                        && matches!(
+                            self.get(x, y + 1),
+                            Some(IsoPart::Left | IsoPart::Right | IsoPart::Highlight)
+                        )
+                })
+                .map(|(x, y, _)| (x, y))
+                .collect();
+            for (x, y) in rims {
+                self.set(x, y, IsoPart::Highlight);
+            }
+        }
+        if outline {
+            self.outline_silhouette();
+        }
+    }
+
     /// Marca como contorno los píxeles no vacíos con algún vecino de los 4 vacío (o afuera).
     fn outline_silhouette(&mut self) {
         let edge: Vec<(i32, i32)> = self
@@ -178,8 +202,9 @@ impl IsoBox {
         4 * r - self.corner.overlap()
     }
 
-    /// Las caras (y el highlight) sin contorno.
-    fn faces(&self, highlight: bool) -> IsoParts {
+    /// Las caras sin contorno ni el borde de adelante; con `center` (y esquina de 3 px), la
+    /// columna de la arista del frente es highlight (si no, de la cara izquierda).
+    fn faces(&self, center: bool) -> IsoParts {
         let (w, h) = self.size();
         let mut out = IsoParts::empty(w, h);
         let (l, r) = self.units();
@@ -197,18 +222,12 @@ impl IsoBox {
             let x = x as i32;
             for y in top..=bottom + self.height as i32 {
                 let part = if in_top(x, y) {
-                    // El borde de adelante de la cara de arriba: debajo hay un costado.
-                    let rim = self.height > 0 && !in_top(x, y + 1);
-                    if rim && highlight {
-                        IsoPart::Highlight
-                    } else {
-                        IsoPart::Top
-                    }
+                    IsoPart::Top
                 } else {
                     match (2 * x + 1).cmp(&edge2) {
                         std::cmp::Ordering::Less => IsoPart::Left,
                         std::cmp::Ordering::Greater => IsoPart::Right,
-                        std::cmp::Ordering::Equal if highlight => IsoPart::Highlight,
+                        std::cmp::Ordering::Equal if center => IsoPart::Highlight,
                         std::cmp::Ordering::Equal => IsoPart::Left,
                     }
                 };
@@ -224,10 +243,151 @@ impl IsoBox {
 /// arriba y (con esquina de 3 px) la arista vertical del frente.
 pub fn iso_box(shape: &IsoBox, outline: bool, highlight: bool) -> IsoParts {
     let mut parts = shape.faces(highlight);
-    if outline {
-        parts.outline_silhouette();
-    }
+    parts.finish(outline, highlight);
     parts
+}
+
+/// Pilas de bloques iguales en una rejilla isométrica: las columnas siguen la arista de
+/// atrás-derecha y las filas la de atrás-izquierda; cada celda tiene la altura de su pila
+/// (0 = vacía). Cada bloque es una caja de `size × size` unidades y `block_height` px.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct IsoBlocks {
+    pub columns: u32,
+    pub rows: u32,
+    /// Por filas: `heights[r * columns + c]`.
+    pub heights: Vec<u32>,
+    pub size: u32,
+    pub block_height: u32,
+    pub corner: IsoCorner,
+}
+
+/// Un bloque `(columna, fila, nivel)` y su esquina en el dibujo.
+type Placed = ((u32, u32, u32), (i32, i32));
+
+impl IsoBlocks {
+    /// Una rejilla de `columns × rows` con un bloque en cada celda.
+    pub fn new(columns: u32, rows: u32) -> Self {
+        Self {
+            columns,
+            rows,
+            heights: vec![1; (columns * rows) as usize],
+            size: 2,
+            block_height: 4,
+            corner: IsoCorner::Two,
+        }
+    }
+
+    /// La caja de cada bloque.
+    pub fn block(&self) -> IsoBox {
+        IsoBox {
+            left: self.size,
+            right: self.size,
+            height: self.block_height,
+            corner: self.corner,
+        }
+    }
+
+    /// La altura de la pila de `(c, r)` (0 afuera de la rejilla).
+    pub fn height_at(&self, c: u32, r: u32) -> u32 {
+        if c >= self.columns || r >= self.rows {
+            return 0;
+        }
+        self.heights
+            .get((r * self.columns + c) as usize)
+            .copied()
+            .unwrap_or(0)
+    }
+
+    /// Cambia la altura de `(c, r)` (nada si está afuera).
+    pub fn set_height(&mut self, c: u32, r: u32, height: u32) {
+        if c < self.columns && r < self.rows {
+            let i = (r * self.columns + c) as usize;
+            if let Some(h) = self.heights.get_mut(i) {
+                *h = height;
+            }
+        }
+    }
+
+    /// Cambia el tamaño de la rejilla; las celdas que siguen adentro conservan su altura y las
+    /// nuevas quedan vacías.
+    pub fn resize(&mut self, columns: u32, rows: u32) {
+        let mut heights = vec![0; (columns * rows) as usize];
+        for r in 0..rows.min(self.rows) {
+            for c in 0..columns.min(self.columns) {
+                heights[(r * columns + c) as usize] = self.height_at(c, r);
+            }
+        }
+        self.columns = columns;
+        self.rows = rows;
+        self.heights = heights;
+    }
+
+    /// Los bloques `(c, r, nivel)` de atrás hacia adelante (por `c + r + nivel`: alcanza para
+    /// bloques de una rejilla) con su esquina en el dibujo, y el tamaño del dibujo.
+    fn placed(&self) -> (Vec<Placed>, (u32, u32)) {
+        let s = self.size.max(1) as i32;
+        let bh = self.block_height as i32;
+        let mut blocks = Vec::new();
+        for r in 0..self.rows {
+            for c in 0..self.columns {
+                for k in 0..self.height_at(c, r) {
+                    blocks.push((c, r, k));
+                }
+            }
+        }
+        blocks.sort_by_key(|&(c, r, k)| c + r + k);
+        let at: Vec<(i32, i32)> = blocks
+            .iter()
+            .map(|&(c, r, k)| {
+                let (c, r, k) = (c as i32, r as i32, k as i32);
+                (2 * s * (c - r), s * (c + r) - bh * k)
+            })
+            .collect();
+        let (Some(x0), Some(y0)) = (at.iter().map(|p| p.0).min(), at.iter().map(|p| p.1).min())
+        else {
+            return (Vec::new(), (0, 0));
+        };
+        let (bw, bhh) = self.block().size();
+        let x1 = at.iter().map(|p| p.0).max().unwrap_or(x0) + bw as i32;
+        let y1 = at.iter().map(|p| p.1).max().unwrap_or(y0) + bhh as i32;
+        let placed = blocks
+            .into_iter()
+            .zip(at)
+            .map(|(b, (x, y))| (b, (x - x0, y - y0)))
+            .collect();
+        (placed, ((x1 - x0) as u32, (y1 - y0) as u32))
+    }
+}
+
+/// Las pilas de `blocks`, pintadas de atrás hacia adelante; el contorno es el de la silueta de
+/// todo el conjunto y el highlight, el de las aristas de arriba que dan a un costado (las juntas
+/// entre bloques del mismo nivel no se marcan).
+pub fn iso_blocks(blocks: &IsoBlocks, outline: bool, highlight: bool) -> IsoParts {
+    let (placed, (w, h)) = blocks.placed();
+    let mut out = IsoParts::empty(w, h);
+    // En `faces`, el highlight es solo la columna de la arista del frente.
+    let block = blocks.block().faces(highlight);
+    for ((c, r, k), (bx, by)) in placed {
+        // Con un vecino al lado en el mismo nivel, ese costado queda adentro y la pared sigue
+        // con la cara del otro lado: lo poco que asoma del costado tapado (la media columna de
+        // la punta del frente) es de la pared, sin la arista del frente.
+        let right_hidden = blocks.height_at(c + 1, r) > k;
+        let left_hidden = blocks.height_at(c, r + 1) > k;
+        for (x, y, part) in block.points() {
+            let part = match part {
+                IsoPart::Right | IsoPart::Highlight if right_hidden && !left_hidden => {
+                    IsoPart::Left
+                }
+                IsoPart::Left | IsoPart::Highlight if left_hidden && !right_hidden => {
+                    IsoPart::Right
+                }
+                part => part,
+            };
+            out.set(bx + x, by + y, part);
+        }
+    }
+    out.finish(outline, highlight);
+    out
 }
 
 /// Los colores de cada parte de una caja.

@@ -251,3 +251,111 @@ fn colors_snap_to_the_nearest_opaque_palette_entry() {
     let base = IsoColors::from_base(Rgba::rgb(190, 20, 20));
     assert_eq!(base.snapped(&palette[..1]), base);
 }
+
+/// Una rejilla de `columns × rows` con las alturas dadas por filas.
+fn grid(
+    columns: u32,
+    heights: &[u32],
+    size: u32,
+    block_height: u32,
+    corner: IsoCorner,
+) -> IsoBlocks {
+    IsoBlocks {
+        columns,
+        rows: heights.len() as u32 / columns,
+        heights: heights.to_vec(),
+        size,
+        block_height,
+        corner,
+    }
+}
+
+#[test]
+fn one_block_is_a_box() {
+    for corner in IsoCorner::ALL {
+        for (outline, highlight) in [(true, true), (true, false), (false, true), (false, false)] {
+            let blocks = grid(1, &[1], 3, 5, corner);
+            assert_eq!(
+                iso_blocks(&blocks, outline, highlight),
+                iso_box(&cube(3, 3, 5, corner), outline, highlight),
+                "{corner:?} {outline} {highlight}"
+            );
+        }
+    }
+}
+
+#[test]
+fn stacked_blocks_are_a_taller_box() {
+    for corner in IsoCorner::ALL {
+        for highlight in [false, true] {
+            assert_eq!(
+                iso_blocks(&grid(1, &[3], 2, 4, corner), true, highlight),
+                iso_box(&cube(2, 2, 12, corner), true, highlight),
+                "{corner:?} {highlight}"
+            );
+        }
+    }
+}
+
+#[test]
+fn blocks_side_by_side_are_a_wider_box() {
+    for corner in [IsoCorner::Two, IsoCorner::Four] {
+        // Dos columnas: sigue la arista de atrás-derecha.
+        assert_eq!(
+            iso_blocks(&grid(2, &[1, 1], 2, 3, corner), true, false),
+            iso_box(&cube(2, 4, 3, corner), true, false),
+            "{corner:?} columns"
+        );
+        // Dos filas: la de atrás-izquierda.
+        assert_eq!(
+            iso_blocks(&grid(1, &[1, 1], 2, 3, corner), true, false),
+            iso_box(&cube(4, 2, 3, corner), true, false),
+            "{corner:?} rows"
+        );
+        // La junta de arriba no se marca con highlight: solo el borde de adelante.
+        assert_eq!(
+            iso_blocks(&grid(2, &[1, 1], 2, 3, corner), true, true),
+            iso_box(&cube(2, 4, 3, corner), true, true),
+            "{corner:?} highlight"
+        );
+    }
+}
+
+#[test]
+fn a_block_in_front_hides_the_one_behind() {
+    // El segundo bloque de la celda de adelante (1, 1) cae justo sobre el de la (0, 0).
+    let both = grid(2, &[1, 0, 0, 2], 2, 4, IsoCorner::Three);
+    let front = grid(2, &[0, 0, 0, 2], 2, 4, IsoCorner::Three);
+    assert_eq!(
+        iso_blocks(&both, true, true),
+        iso_blocks(&front, true, true)
+    );
+}
+
+#[test]
+fn a_step_shows_the_highlight_of_the_higher_block() {
+    // Atrás dos bloques, adelante (a la derecha) uno: el borde de adelante del alto se ve sobre
+    // su costado derecho, que asoma encima del bajo.
+    let step = iso_blocks(&grid(2, &[2, 1], 2, 4, IsoCorner::Two), true, true);
+    assert!(step.points().any(|(_, _, p)| p == IsoPart::Highlight));
+    assert!(step.points().any(|(_, _, p)| p == IsoPart::Right));
+}
+
+#[test]
+fn an_empty_grid_draws_nothing() {
+    let empty = grid(2, &[0, 0, 0, 0], 2, 4, IsoCorner::Two);
+    let parts = iso_blocks(&empty, true, true);
+    assert_eq!((parts.width, parts.height), (0, 0));
+}
+
+#[test]
+fn resizing_the_grid_keeps_what_fits() {
+    let mut g = grid(2, &[1, 2, 3, 4], 2, 4, IsoCorner::Two);
+    g.resize(3, 1);
+    assert_eq!((g.columns, g.rows), (3, 1));
+    assert_eq!(g.heights, vec![1, 2, 0]);
+    assert_eq!(g.height_at(1, 0), 2);
+    assert_eq!(g.height_at(5, 5), 0);
+    g.set_height(2, 0, 7);
+    assert_eq!(g.heights, vec![1, 2, 7]);
+}
