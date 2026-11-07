@@ -281,9 +281,64 @@ fn vector_text(font: &fontdue::Font, text: &str, px: f32) -> Vec<(i32, i32, u8)>
     out
 }
 
+/// Un carácter de un texto escrito con una fuente pixel (ver [`font_layout`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LaidChar {
+    /// La línea y el índice del carácter en ella.
+    pub row: usize,
+    pub col: usize,
+    pub ch: char,
+    /// Dónde empieza (la pluma, en pixeles de la fuente, ya con el kerning del par anterior) y lo
+    /// que avanza.
+    pub x: i32,
+    pub advance: i32,
+    /// El kerning con el carácter de antes (0 si no hay par, después de un espacio o de uno que
+    /// falta).
+    pub kern: i32,
+    /// Si la fuente tiene su glifo (el espacio no cuenta como glifo).
+    pub glyph: bool,
+}
+
+/// Dónde va cada carácter de `text` con la fuente pixel `view`: el espacio avanza
+/// `space_width`, un carácter que falta `missing_width`, y entre dos glifos seguidos se suma su
+/// kerning (no a través de un espacio ni de un carácter que falta).
+pub fn font_layout(view: &cs_core::PixelFontView, text: &str) -> Vec<LaidChar> {
+    let mut out = Vec::new();
+    for (row, line) in text.lines().enumerate() {
+        let mut pen = 0i32;
+        let mut prev: Option<char> = None;
+        for (col, ch) in line.chars().enumerate() {
+            let glyph = (ch != ' ').then(|| view.glyphs.get(&ch)).flatten();
+            let kern = match (prev, glyph) {
+                (Some(p), Some(_)) => view.kerning.get(&(p, ch)).copied().unwrap_or(0),
+                _ => 0,
+            };
+            pen += kern;
+            let advance = match (ch, glyph) {
+                (' ', _) => view.space_width as i32,
+                (_, Some(g)) => g.advance as i32,
+                (_, None) => view.missing_width as i32,
+            };
+            out.push(LaidChar {
+                row,
+                col,
+                ch,
+                x: pen,
+                advance,
+                kern,
+                glyph: glyph.is_some(),
+            });
+            pen += advance;
+            prev = glyph.map(|_| ch);
+        }
+    }
+    out
+}
+
 /// Los pixeles de `text` con la fuente pixel `view` a escala `scale`, desde la esquina de arriba
 /// a la izquierda: `None` es la tinta (1 bit), `Some` el color del glifo. Cada línea mide la celda.
 /// Un carácter que falta es un cuadrito tachado del alto de las mayúsculas, apoyado en la baseline.
+/// Entre dos glifos va su kerning ([`font_layout`]).
 pub fn font_text(
     view: &cs_core::PixelFontView,
     text: &str,
@@ -299,35 +354,29 @@ pub fn font_text(
         }
     };
     let (cell_h, m) = (view.cell.1 as i32, view.metrics);
-    for (row, line) in text.lines().enumerate() {
-        let top = row as i32 * cell_h;
-        let mut pen = 0i32;
-        for ch in line.chars() {
-            if ch == ' ' {
-                pen += view.space_width as i32;
-                continue;
-            }
-            match view.glyphs.get(&ch) {
-                Some(g) => {
-                    for &(x, y, c) in &g.pixels {
-                        put(pen + x as i32, top + y as i32, c);
-                    }
-                    pen += g.advance as i32;
+    for laid in font_layout(view, text) {
+        let (pen, top) = (laid.x, laid.row as i32 * cell_h);
+        if laid.ch == ' ' {
+            continue;
+        }
+        match view.glyphs.get(&laid.ch) {
+            Some(g) => {
+                for &(x, y, c) in &g.pixels {
+                    put(pen + x as i32, top + y as i32, c);
                 }
-                None => {
-                    // El cuadrito tachado: borde y una diagonal.
-                    let w = view.missing_width.saturating_sub(1).max(2) as i32;
-                    let h = m.cap_height.max(2) as i32;
-                    let y0 = top + m.baseline as i32 - h;
-                    for y in 0..h {
-                        for x in 0..w {
-                            let edge = x == 0 || y == 0 || x == w - 1 || y == h - 1;
-                            if edge || x * (h - 1) == (h - 1 - y) * (w - 1) {
-                                put(pen + x, y0 + y, None);
-                            }
+            }
+            None => {
+                // El cuadrito tachado: borde y una diagonal.
+                let w = view.missing_width.saturating_sub(1).max(2) as i32;
+                let h = m.cap_height.max(2) as i32;
+                let y0 = top + m.baseline as i32 - h;
+                for y in 0..h {
+                    for x in 0..w {
+                        let edge = x == 0 || y == 0 || x == w - 1 || y == h - 1;
+                        if edge || x * (h - 1) == (h - 1 - y) * (w - 1) {
+                            put(pen + x, y0 + y, None);
                         }
                     }
-                    pen += view.missing_width as i32;
                 }
             }
         }
@@ -422,6 +471,35 @@ mod tests {
             out.contains(&(0, 16, None)),
             "the second line, one cell (8) × 2 down"
         );
+    }
+
+    #[test]
+    fn the_kerning_goes_between_two_glyphs_but_not_across_spaces_or_missing_chars() {
+        let mut view = view_with(&[('a', &[(0, 5)], 3), ('b', &[(1, 4)], 4)]);
+        view.kerning.insert(('a', 'b'), -1);
+        view.kerning.insert(('b', 'a'), 2);
+        let out = font_text(&view, "ab", 1);
+        // b en 3 − 1.
+        assert_eq!(out, vec![(0, 5, None), (3, 4, None)]);
+        let laid = font_layout(
+            &view, "aba a
+zb",
+        );
+        let xs: Vec<(char, i32, i32)> = laid.iter().map(|l| (l.ch, l.x, l.kern)).collect();
+        assert_eq!(
+            xs,
+            vec![
+                ('a', 0, 0),
+                ('b', 2, -1),
+                ('a', 8, 2),
+                (' ', 11, 0),
+                ('a', 14, 0),
+                ('z', 0, 0),
+                ('b', 4, 0),
+            ]
+        );
+        assert_eq!((laid[5].row, laid[5].col, laid[5].glyph), (1, 0, false));
+        assert!(!laid[3].glyph, "a space is not a glyph");
     }
 
     #[test]

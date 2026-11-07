@@ -714,42 +714,35 @@ fn test_drive(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, state: &mut
             color,
         );
     }
-    // Las letras: un rect por carácter, con el avance que usa `font_text`.
+    // Las letras: un rect por carácter, donde las pone `font_text` (con el kerning).
     let enabled = ui.is_enabled();
     let mut go = None;
-    for (row, line) in state.test_text.lines().enumerate() {
-        let mut pen = 0u32;
-        for (i, ch) in line.chars().enumerate() {
-            let advance = if ch == ' ' {
-                view.space_width
-            } else {
-                view.glyphs
-                    .get(&ch)
-                    .map_or(view.missing_width, |g| g.advance)
-            };
-            let letter = Rect::from_min_size(
-                origin + vec2((pen * TEST_SCALE) as f32, row as f32 * line_h),
-                vec2((advance * TEST_SCALE) as f32, line_h),
-            )
-            .intersect(paper);
-            pen += advance;
-            if ch == ' ' || !letter.is_positive() {
-                continue;
-            }
-            let response =
-                ui.interact(letter, ui.id().with(("test_drive", row, i)), Sense::click());
-            let label = format!("Test Drive {ch}");
-            response.widget_info(|| {
-                egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label)
-            });
-            if response.clicked() {
-                go = Some(ch);
-            }
+    for laid in cs_tools::text::font_layout(&view, &state.test_text) {
+        let letter = letter_rect(origin, line_h, &laid).intersect(paper);
+        if laid.ch == ' ' || !letter.is_positive() {
+            continue;
+        }
+        let id = ui.id().with(("test_drive", laid.row, laid.col));
+        let response = ui.interact(letter, id, Sense::click());
+        let label = format!("Test Drive {}", laid.ch);
+        response
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, &label));
+        if response.clicked() {
+            go = Some(laid.ch);
         }
     }
     if let Some(ch) = go {
         editor.go_to_glyph(ch);
     }
+}
+
+/// El rect de una letra del papel del texto de prueba (a `TEST_SCALE`, desde `origin`).
+fn letter_rect(origin: egui::Pos2, line_h: f32, laid: &cs_tools::text::LaidChar) -> Rect {
+    let scale = TEST_SCALE as f32;
+    Rect::from_min_size(
+        origin + vec2(laid.x as f32 * scale, laid.row as f32 * line_h),
+        vec2(laid.advance.max(1) as f32 * scale, line_h),
+    )
 }
 
 /// Una fila de los ajustes: la etiqueta en su columna y el control.
