@@ -2532,3 +2532,66 @@ fn right_clicking_the_title_bar_opens_the_artboard_menu() {
     }
     assert!(h.editor.sprite().cels.is_empty(), "nothing painted");
 }
+
+/// El centro del papel de la nota `id` en pantalla.
+fn note_center(h: &Harness, id: u32) -> Pos2 {
+    let note = h.editor.document.note(id).unwrap();
+    let at = h.canvas.to_screen(h.rect, note.position).round();
+    at + Vec2::new(note.size.0 as f32, note.size.1 as f32) / 2.0
+}
+
+/// Si el centro de la nota `id` cae en `p`, salvo el redondeo de su esquina al píxel del mundo.
+fn note_centered_at(h: &Harness, id: u32, p: Pos2) -> bool {
+    let d = note_center(h, id) - p;
+    let half = h.canvas.scale() / 2.0 + Vec2::splat(1.0);
+    d.x.abs() <= half.x && d.y.abs() <= half.y
+}
+
+#[test]
+fn the_note_tool_sticks_a_note_centered_on_the_click_ready_to_write() {
+    let mut h = Harness::new();
+    h.editor.set_tool(ToolKind::Note);
+    let before = h.editor.sprite().clone();
+    // Sobre el artboard: pega la nota y no pinta.
+    let on_artboard = h.canvas.to_screen(h.rect, (8, 8));
+    h.click(on_artboard, PointerButton::Primary);
+    assert_eq!(*h.editor.sprite(), before, "no pixels");
+    assert_eq!(h.editor.document.notes.len(), 1);
+    let id = h.editor.document.notes[0].id;
+    assert!(note_centered_at(&h, id, on_artboard));
+    assert_eq!(h.editor.history.done().last(), Some("New Note"));
+    assert!(h.canvas.notes.is_editing(), "ready to write");
+    h.frame(vec![]);
+    h.frame(vec![Event::Text("hola".into())]);
+    h.frame(vec![]);
+    // Un clic fuera mientras se escribe solo termina de escribir (no pega otra).
+    let away = h.rect.left_top() + Vec2::new(60.0, 60.0);
+    h.click(away, PointerButton::Primary);
+    h.frame(vec![]);
+    assert_eq!(h.editor.document.notes.len(), 1);
+    assert_eq!(h.editor.document.note(id).unwrap().text, "hola");
+    assert!(!h.canvas.notes.is_editing());
+    // Fuera de los artboards también: otra nota.
+    h.click(away, PointerButton::Primary);
+    assert_eq!(h.editor.document.notes.len(), 2);
+    let other = h.editor.document.notes[1].id;
+    assert!(note_centered_at(&h, other, away));
+}
+
+#[test]
+fn with_the_note_tool_a_click_on_a_note_is_the_notes() {
+    let mut h = Harness::new();
+    let (id, paper) = with_note(&mut h);
+    h.editor.set_tool(ToolKind::Note);
+    // Sobre la nota: escribe en ella, no pega otra.
+    h.click(paper.center(), PointerButton::Primary);
+    h.frame(vec![]);
+    assert_eq!(h.editor.document.notes.len(), 1);
+    assert!(h.canvas.notes.is_editing());
+    h.canvas.notes.finish_editing(&mut h.editor);
+    assert!(h.editor.document.note(id).is_some());
+    // El clic derecho no pega nada.
+    let away = h.rect.left_top() + Vec2::new(60.0, 400.0);
+    h.click(away, PointerButton::Secondary);
+    assert_eq!(h.editor.document.notes.len(), 1);
+}

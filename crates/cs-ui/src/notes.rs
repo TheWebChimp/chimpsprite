@@ -110,6 +110,8 @@ pub struct NotesView {
     /// La nota cuyo papel se apretó: al soltar encima, se escribe en ella (al soltar, para que
     /// el clic no le quite el foco al campo recién puesto).
     pressed_body: Option<u32>,
+    /// La nota recién pegada con la herramienta Note: se escribe en ella al soltar el clic.
+    edit_on_release: Option<u32>,
 }
 
 /// El papel de una nota en pantalla (sin la sombra): su esquina en el mundo y su tamaño en puntos.
@@ -269,6 +271,10 @@ impl NotesView {
         double_clicked: bool,
     ) {
         self.cursor = None;
+        if !down && let Some(id) = self.edit_on_release.take() {
+            self.start_editing(editor, id);
+            return;
+        }
         let hit = pointer.and_then(|p| self.hit(editor, to_screen, p));
         self.hovered = hit.map(|(id, _)| id);
         if !down && hit.is_none() {
@@ -366,6 +372,17 @@ impl NotesView {
             }
             NoteHit::Menu | NoteHit::Body => {}
         }
+    }
+
+    /// Si hay una nota escribiéndose.
+    pub fn is_editing(&self) -> bool {
+        self.editing.is_some()
+    }
+
+    /// Escribir en la nota `id` al soltar el clic que la pegó (al soltar, para que el clic no le
+    /// quite el foco al campo).
+    pub fn edit_when_released(&mut self, id: u32) {
+        self.edit_on_release = Some(id);
     }
 
     pub fn start_editing(&mut self, editor: &mut Editor, id: u32) {

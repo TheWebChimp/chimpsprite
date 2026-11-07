@@ -729,6 +729,12 @@ impl CanvasView {
                 }
                 // El clic derecho abre el menú de la selección en vez de llegar a la herramienta.
                 _ if self.selection_menu || self.object_menu => {}
+                // Note: el clic pega una nota (no es una herramienta de sprite).
+                _ if tool == ToolKind::Note => {
+                    if pressed_primary {
+                        self.place_note(rect, editor, p);
+                    }
+                }
                 _ => match transform {
                     Some(hit) => editor.press_transform(hit, world),
                     None => editor.pointer_press(world, pressed_secondary, modifiers.alt, slop),
@@ -880,9 +886,11 @@ impl CanvasView {
             }
         }
 
+        // Con Note los handles no se agarran (el clic pega una nota).
         let transform_cursor = editor
             .transform_drag_hit()
-            .or_else(|| pointer.and_then(|p| self.transform_hit(rect, editor, p)));
+            .or_else(|| pointer.and_then(|p| self.transform_hit(rect, editor, p)))
+            .filter(|_| editor.active_tool() != ToolKind::Note);
         let hand_dragging = hand_pans && response.dragged_by(egui::PointerButton::Primary);
         let cursor = if space_key || hand_dragging {
             Some(if response.dragged() {
@@ -972,6 +980,25 @@ impl CanvasView {
         };
         if let Some(c) = cursor {
             ui.ctx().set_cursor_icon(c);
+        }
+    }
+
+    /// Con la herramienta Note, un clic en `p` (pantalla) pega una nota nueva centrada en el
+    /// puntero, lista para escribir. Si se estaba escribiendo una, el clic solo la termina. En el
+    /// modo símbolo y en el de Texture las notas no se ven: no hace nada.
+    pub(super) fn place_note(&mut self, rect: Rect, editor: &mut Editor, p: Pos2) {
+        if editor.in_symbol_mode() || self.texture_pane {
+            return;
+        }
+        if self.notes.is_editing() {
+            self.notes.finish_editing(editor);
+            return;
+        }
+        let size = crate::notes::NEW_SIZE;
+        let corner = self.to_world(rect, p - Vec2::new(size.0 as f32, size.1 as f32) / 2.0);
+        let corner = (corner.0.round() as i32, corner.1.round() as i32);
+        if let Some(id) = editor.add_note(corner) {
+            self.notes.edit_when_released(id);
         }
     }
 

@@ -333,7 +333,12 @@ impl Editor {
     pub(super) fn pixel_proxy_for(&self, kind: ToolKind) -> Option<std::sync::Arc<Sprite>> {
         let real = matches!(
             kind,
-            ToolKind::Move | ToolKind::Slice | ToolKind::Artboard | ToolKind::Hand | ToolKind::Zoom
+            ToolKind::Move
+                | ToolKind::Slice
+                | ToolKind::Artboard
+                | ToolKind::Note
+                | ToolKind::Hand
+                | ToolKind::Zoom
         );
         if real { None } else { self.pixel_proxy() }
     }
@@ -412,6 +417,10 @@ impl Editor {
                 (false, true) => SelectionMode::Subtract,
                 (false, false) => self.options.selection_mode,
             };
+        }
+        // Note pega notas desde el lienzo (son del documento, no del sprite).
+        if self.active_tool() == ToolKind::Note {
+            return;
         }
         if self.active_tool() == ToolKind::Artboard {
             // En el modo símbolo o en el workspace de una fuente la herramienta no toca los

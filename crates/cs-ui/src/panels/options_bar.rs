@@ -453,6 +453,9 @@ fn tool_options(ui: &mut egui::Ui, editor: &mut Editor, look: Option<BarLook>) {
         }
     }
     match tool {
+        ToolKind::Note => {
+            hints.push("Click on the canvas to stick a note. Click a note to write in it; drag its bar to move it.");
+        }
         ToolKind::Hand => {
             hints.push(
                 "Drag to move the view. Space+drag or the middle button do it with any tool.",
