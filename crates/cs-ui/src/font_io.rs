@@ -473,7 +473,7 @@ fn preview_artboard(build: FontBuild) -> Artboard {
 }
 
 /// `text` escrito con la fuente, en tinta oscura sobre blanco (como el Test Drive).
-fn paint_preview(ui: &mut egui::Ui, artboard: &Artboard, text: &str) {
+pub(crate) fn paint_preview(ui: &mut egui::Ui, artboard: &Artboard, text: &str) {
     let Some(view) = artboard.font_view() else {
         return;
     };

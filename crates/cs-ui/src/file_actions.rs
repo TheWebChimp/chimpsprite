@@ -106,6 +106,7 @@ impl ChimpApp {
             || self.new_tilemap.is_some()
             || self.new_font.is_some()
             || self.build_font.is_some()
+            || self.new_variant.is_some()
             || self.import_font.is_some()
             || self.glyph_sheet.is_some()
             || self.new_model.is_some()

@@ -6,6 +6,7 @@ use eframe::egui;
 use crate::ChimpApp;
 use crate::font_io::{self, BuildFontDialog, BuildFormat, OpenedFont};
 use crate::font_sheet_dialog::GlyphSheetDialog;
+use crate::font_variant_dialog::NewVariantDialog;
 use crate::platform::{FileFilter, OpenPurpose};
 use crate::tilemap_dialog::DialogResult;
 
@@ -162,6 +163,43 @@ impl ChimpApp {
                     Ok(build) => self.add_imported_font(ctx, build),
                     Err(e) => self.show_message("Could not import the font", e),
                 }
+            }
+        }
+    }
+
+    /// New Variant… (de los ajustes de la fuente): el diálogo para la fuente activa.
+    pub(crate) fn open_new_variant(&mut self) {
+        let text = self.font_panel.test_text.clone();
+        self.new_variant = NewVariantDialog::new(&self.doc.editor, &text).map(Box::new);
+    }
+
+    pub(crate) fn update_new_variant_dialog(&mut self, ctx: &egui::Context) {
+        let Some(dialog) = &mut self.new_variant else {
+            return;
+        };
+        match dialog.show(ctx, self.pixel.skin(), &self.doc.editor) {
+            DialogResult::Open => {}
+            DialogResult::Cancel => self.new_variant = None,
+            DialogResult::Accept => {
+                let editor = &mut self.doc.editor;
+                if editor.active != dialog.source {
+                    self.new_variant = None;
+                    return self.show_message("New Variant", "The font is not active anymore.");
+                }
+                let style = dialog.style();
+                if style.name.is_empty() || editor.family_has_style(&style.name) {
+                    // Se queda abierto: el diálogo ya dice por qué.
+                    return;
+                }
+                let recipe = dialog.recipe;
+                self.new_variant = None;
+                if !self.doc.editor.add_variant(&recipe, style) {
+                    return self.show_message("New Variant", "Could not create the variant.");
+                }
+                if let Some(id) = self.doc.editor.workspace() {
+                    self.tabs.open_view(&mut self.doc, id);
+                }
+                self.show_font_beside_panel(ctx);
             }
         }
     }

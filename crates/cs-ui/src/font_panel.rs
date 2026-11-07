@@ -206,6 +206,10 @@ pub enum FontAction {
     FillFromTtf,
     /// Generate ▾ → Glyphs from image…
     GlyphsFromImage,
+    /// La sección Family de los ajustes → abrir la pestaña de otro estilo.
+    OpenFont(cs_core::ArtboardId),
+    /// New Variant… (de los ajustes).
+    NewVariant,
 }
 
 /// Lo del menú Generate ▾.
@@ -278,7 +282,7 @@ fn body(
     match state.view {
         PanelView::Config => {
             settings(ui, editor, skin);
-            return None;
+            return family_section(ui, editor, skin);
         }
         PanelView::Kerning => {
             crate::font_kern_panel::show(ui, editor, skin, state);
@@ -840,7 +844,7 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     ui.add_space(4.0);
     let mut info = font.clone();
     let name_id = ui.id().with("font_name");
-    if let Some(name) = row(ui, "Name", |ui| {
+    if let Some(name) = row(ui, "Family", |ui| {
         kit::input::buffered(ui, name_id, &font.name, |ui, text| match skin {
             Some(skin) => kit::input::text_input(ui, skin, text, NAME_W, "Font name", "Font name"),
             None => ui.add(egui::TextEdit::singleline(text).desired_width(NAME_W)),
@@ -848,6 +852,39 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     }) {
         info.name = name;
     }
+    // El estilo: su nombre, su peso y si es itálica.
+    let style_id = ui.id().with("font_style_name");
+    if let Some(name) = row(ui, "Style", |ui| {
+        kit::input::buffered(ui, style_id, &font.style.name, |ui, text| match skin {
+            Some(skin) => kit::input::text_input(ui, skin, text, NAME_W, "Style name", "Regular"),
+            None => ui.add(egui::TextEdit::singleline(text).desired_width(NAME_W)),
+        })
+    }) && !name.trim().is_empty()
+    {
+        info.style.name = name.trim().to_owned();
+    }
+    row(ui, "Weight", |ui| {
+        let weight = &mut info.style.weight;
+        let selected = format!("{weight} {}", cs_core::weight_name(*weight));
+        let content = |ui: &mut Ui| {
+            for (w, name) in cs_core::WEIGHTS {
+                widgets::choice(ui, weight, w, &format!("{w} {name}"));
+            }
+        };
+        match skin {
+            Some(skin) => {
+                kit::select::select(ui, skin, "font_weight", &selected, Some(NAME_W), content);
+            }
+            None => {
+                egui::ComboBox::from_id_salt("font_weight")
+                    .selected_text(selected.as_str())
+                    .show_ui(ui, content);
+            }
+        }
+    });
+    row(ui, "", |ui| {
+        checkbox(ui, skin, &mut info.style.italic, "Italic")
+    });
     row(ui, "Mode", |ui| ui.label(font_dialog::mode_name(font.mode)));
     row(ui, "Cell", |ui| ui.label(format!("{cell_w}×{cell_h}")));
     // Las mayúsculas y la x-height hasta la baseline; los descendentes, de ella hasta abajo.
@@ -925,6 +962,79 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
             editor.set_glyph_advance(ch, advance);
         }
     }
+}
+
+/// La sección Family de los ajustes: un renglón por estilo de la familia (el actual marcado; un
+/// clic abre su pestaña) con Rebuild en los generados, y New Variant….
+fn family_section(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<FontAction> {
+    let font = editor.font()?.clone();
+    let members = editor.family_fonts();
+    ui.add_space(GLYPH_AIR);
+    let hint = match members.len() {
+        1 => "(1 style)".to_owned(),
+        n => format!("({n} styles)"),
+    };
+    label_with_hint(ui, &format!("Family \"{}\"", font.name), &hint);
+    ui.add_space(GLYPH_ROW_GAP);
+    let mut action = None;
+    let mut rebuild = None;
+    for (id, style) in &members {
+        let on = *id == editor.active;
+        let generated = style.source.as_ref().map(|s| {
+            let from = editor
+                .document
+                .artboard(s.artboard)
+                .and_then(|a| a.font.as_ref())
+                .map_or_else(|| "a removed font".to_owned(), |f| f.style.name.clone());
+            format!("{} from {from}", s.recipe.kind.label())
+        });
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = GLYPH_GAP;
+            let label = style.name.clone();
+            let picked = ui
+                .allocate_ui_with_layout(
+                    vec2(NAME_W, kit::stepper::HEIGHT),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.set_min_width(NAME_W);
+                        match skin {
+                            Some(skin) => kit::check::radio(ui, skin, on, &label),
+                            None => ui.radio(on, &label),
+                        }
+                    },
+                )
+                .inner;
+            if picked.clicked() && !on {
+                action = Some(FontAction::OpenFont(*id));
+            }
+            if let Some(generated) = &generated {
+                let can = editor.can_rebuild(*id);
+                let response = ui
+                    .add_enabled_ui(can, |ui| match skin {
+                        Some(skin) => kit::button::button(ui, skin, "Rebuild"),
+                        None => pixel_ui::text_button(ui, "Rebuild"),
+                    })
+                    .inner
+                    .on_hover_text(format!("{generated}: generate it again (your edits go)"))
+                    .on_disabled_hover_text("Its source font is gone");
+                if response.clicked() {
+                    rebuild = Some(*id);
+                }
+            }
+        });
+        ui.add_space(GLYPH_ROW_GAP);
+    }
+    if let Some(id) = rebuild {
+        editor.rebuild_variant(id);
+    }
+    let new = match skin {
+        Some(skin) => kit::button::button(ui, skin, "New Variant…"),
+        None => pixel_ui::text_button(ui, "New Variant…"),
+    };
+    if new.clicked() {
+        action = Some(FontAction::NewVariant);
+    }
+    action
 }
 
 /// La tira de las páginas: las pestañas del kit (sin Pixel UI, etiquetas de egui).

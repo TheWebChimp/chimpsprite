@@ -10943,3 +10943,44 @@ fn clicking_a_letter_picks_its_pair_and_dragging_it_kerns_in_one_step() {
     h.click(h.button("New class").center(), PointerButton::Primary);
     assert_eq!(h.app.doc.editor.font().unwrap().kerning.classes.len(), 1);
 }
+
+#[test]
+fn the_font_settings_show_the_family_and_new_variant_creates_the_bold() {
+    let mut h = kerning_view_open();
+    h.click(h.button("Font Settings").center(), PointerButton::Primary);
+    assert!(h.text_rects.iter().any(|(t, _, _)| t == "Family \"Mine\""));
+    assert!(h.text_rects.iter().any(|(t, _, _)| t == "Weight"));
+    h.click(h.button("New Variant…").center(), PointerButton::Primary);
+    assert!(h.app.new_variant.is_some());
+    // Lo que hace Create (el diálogo no se dibuja en este arnés: ver dialog_tests).
+    h.app.new_variant = None;
+    let recipe = cs_core::VariantRecipe::new(cs_core::VariantKind::Bold);
+    let style = cs_core::FontStyle {
+        name: "Bold".into(),
+        weight: 700,
+        ..Default::default()
+    };
+    assert!(h.app.doc.editor.add_variant(&recipe, style));
+    h.frame();
+    let e = &h.app.doc.editor;
+    assert_eq!(e.artboard().name, "Mine Bold");
+    assert_eq!(e.workspace(), Some(e.active), "in its workspace");
+    let bold = e.active;
+    let family: Vec<String> = e.family_fonts().into_iter().map(|(_, s)| s.name).collect();
+    assert_eq!(family, vec!["Regular", "Bold"]);
+    for _ in 0..3 {
+        h.frame();
+    }
+    // En los ajustes de la Bold: Rebuild en ella y un clic en Regular abre la otra.
+    assert!(!h.disabled.iter().any(|l| l == "Rebuild"));
+    h.click(h.button("Rebuild").center(), PointerButton::Primary);
+    assert_eq!(
+        h.app.doc.editor.history.done().last(),
+        Some("Rebuild Variant")
+    );
+    let regular = h.nodes.iter().find(|(l, _)| l == "Regular").unwrap().1;
+    h.click(regular.center(), PointerButton::Primary);
+    let e = &h.app.doc.editor;
+    assert_ne!(e.active, bold);
+    assert_eq!(e.artboard().name, "Mine");
+}
