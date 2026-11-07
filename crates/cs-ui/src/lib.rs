@@ -134,6 +134,8 @@ const CUSTOM_BRUSH_KEY: &str = "chimpsprite.custom_brush";
 const KEYMAP_KEY: &str = "chimpsprite.keymap";
 /// Chimpy, el asistente escondido: si está prendido y qué consejos ya dio.
 const MASCOT_KEY: &str = "chimpsprite.mascot";
+/// Lo último que se exportó con GIF settings (ChimpCAD).
+const GIF_KEY: &str = "chimpsprite.gif";
 
 /// Texto que queda en el portapapeles del sistema al copiar píxeles (ver `shortcuts`).
 const CLIPBOARD_MARKER: &str = "ChimpSprite pixels";
@@ -258,6 +260,8 @@ pub struct ChimpApp {
     /// Opciones de herramienta de la última pestaña abierta (o las guardadas al arrancar). Cada
     /// pestaña nueva empieza con las de la pestaña activa.
     tool_options: editor::ToolOptions,
+    /// Lo último que se exportó con GIF settings: el diálogo abre así (se guarda entre sesiones).
+    gif_settings: gif_dialog::GifSettings,
 }
 
 /// En la memoria de egui: la fila de arriba de la barra de estado de este frame.
@@ -305,6 +309,11 @@ impl ChimpApp {
         {
             app.mascot = mascot::Mascot::new(settings);
         }
+        // Sin la clave (una configuración de antes) o con campos de menos: lo del modelo.
+        app.gif_settings = cc
+            .storage
+            .and_then(|s| eframe::get_value(s, GIF_KEY))
+            .unwrap_or_default();
         if launch.demo {
             app.open_demo();
         }
@@ -409,6 +418,7 @@ impl ChimpApp {
             pasted: false,
             pixel: appearance::PixelUi::from_env(),
             tool_options: editor::ToolOptions::default(),
+            gif_settings: Default::default(),
         }
     }
 
@@ -727,7 +737,10 @@ impl ChimpApp {
                 self.bake = Some(bake_dialog::BakeDialog::new(&self.doc.editor));
             }
             Some(model_panel::ModelAction::Gif) if self.doc.editor.edited_model().is_some() => {
-                self.gif = Some(gif_dialog::GifDialog::new(&self.doc.editor));
+                self.gif = Some(gif_dialog::GifDialog::with_settings(
+                    &self.doc.editor,
+                    &self.gif_settings,
+                ));
             }
             Some(model_panel::ModelAction::Shading) => self.model_panel.shading = true,
             Some(model_panel::ModelAction::TextureSize(side)) => {
@@ -789,10 +802,7 @@ impl ChimpApp {
                 }
             }
             library_panel::LibraryAction::PlaceOnCanvas(id) => {
-                if let Some(cmd) = cs_commands::symbol::place_on_canvas(&editor.document, id)
-                    && editor.execute_doc(cmd)
-                {
-                    editor.activate(id);
+                if editor.place_on_canvas(id) {
                     self.doc
                         .canvas
                         .request_zoom(view::ZoomRequest::CenterActive);
@@ -999,6 +1009,8 @@ impl ChimpApp {
         match dialog.show(ctx, self.pixel.skin(), &self.doc.editor.document) {
             tilemap_dialog::DialogResult::Open => {}
             tilemap_dialog::DialogResult::Accept => {
+                // Lo elegido queda para la próxima vez (aunque no se llegue a guardar).
+                self.gif_settings = gif_dialog::GifSettings::of(dialog);
                 let bytes = match dialog.build(&self.doc.editor.document) {
                     Ok(bytes) => bytes,
                     Err(e) => {
@@ -2043,6 +2055,7 @@ impl eframe::App for ChimpApp {
         eframe::set_value(storage, CUSTOM_BRUSH_KEY, &cs_raster::custom_brush());
         eframe::set_value(storage, KEYMAP_KEY, &self.keymap.settings());
         eframe::set_value(storage, MASCOT_KEY, &self.mascot.settings);
+        eframe::set_value(storage, GIF_KEY, &self.gif_settings);
         eframe::set_value(
             storage,
             DEFAULT_PALETTE_KEY,

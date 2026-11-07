@@ -405,14 +405,22 @@ impl ChimpApp {
         }
     }
 
-    /// Ctrl+V con una paleta en el portapapeles (link de Coolors o colores hex): abre Palette
-    /// Presets en la pestaña Lospec con la paleta pegada, lista para Apply, Append o Save.
+    /// Ctrl+V con una paleta en el portapapeles (link de Coolors o colores hex): la pega en el
+    /// panel Lospec del dock si está abierto (y se ve: en la pestaña de un modelo queda guardado
+    /// sin dibujarse) y si no, abre Palette Presets en la pestaña Lospec; queda lista para Apply,
+    /// Append o Save.
     pub(crate) fn paste_palette_text(&mut self, text: &str) {
-        if self.presets_window.is_none() {
+        let dock_shown = self.lospec_dock.is_some() && !self.doc.editor.model_edit_on();
+        if !dock_shown && self.presets_window.is_none() {
             self.palettes.reload();
             self.presets_window = Some(PresetsWindow::default());
         }
-        let Some(window) = self.presets_window.as_mut() else {
+        let window = if dock_shown {
+            self.lospec_dock.as_mut()
+        } else {
+            self.presets_window.as_mut()
+        };
+        let Some(window) = window else {
             return;
         };
         window.tab = PresetsTab::Lospec;

@@ -228,6 +228,39 @@ fn duplicating_a_symbol_edited_in_place_copies_it_at_its_library_position() {
 }
 
 #[test]
+fn place_on_canvas_while_editing_in_place_leaves_first() {
+    let (mut e, s, layer, object) = host_with_symbol();
+    let host = e.active;
+    let home = position(&e, s);
+    assert!(e.enter_symbol_in_place(layer, object));
+    let undos = e.history.done().count();
+    assert!(e.place_on_canvas(s));
+    assert!(!e.in_symbol_mode(), "out of the symbol mode");
+    assert_eq!(e.active, s);
+    let artboard = e.document.artboard(s).unwrap();
+    assert!(artboard.on_canvas());
+    // Se coloca desde su posición de la biblioteca (o en un lugar libre), no desde la de edición
+    // encima del host.
+    let ((x0, y0), (x1, y1)) = artboard.rect();
+    let ((hx0, hy0), (hx1, hy1)) = e.document.artboard(host).unwrap().rect();
+    assert!(
+        x1 <= hx0 || hx1 <= x0 || y1 <= hy0 || hy1 <= y0,
+        "not over the host"
+    );
+    assert_eq!(e.history.done().count(), undos + 1, "one undo step");
+    e.undo();
+    let artboard = e.document.artboard(s).unwrap();
+    assert!(artboard.in_library);
+    assert_eq!(artboard.position, home);
+    // Aislado, igual: sale del modo símbolo.
+    assert!(e.enter_symbol(s));
+    assert!(e.place_on_canvas(s));
+    assert!(!e.in_symbol_mode() && e.active == s);
+    // Lo que no es de la biblioteca no sale de ningún lado.
+    assert!(!e.place_on_canvas(host));
+}
+
+#[test]
 fn double_click_on_an_instance_enters_in_place() {
     let (mut e, s, _, _) = host_with_symbol();
     assert_eq!(e.open_object_at((102.5, 52.5)), Some(true));

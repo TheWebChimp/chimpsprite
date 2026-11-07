@@ -228,9 +228,9 @@ pub struct CanvasView {
     pub cursors: Option<pixel_cursors::CursorSet>,
     /// Píxeles físicos por punto del último frame: [`Self::origin`] se alinea a ellos.
     ppp: f32,
-    /// El zoom y el paneo del documento al entrar al modo símbolo o al workspace de una fuente:
-    /// se restauran al volver al lienzo.
-    symbol_return_view: Option<(f32, Vec2)>,
+    /// El zoom y el paneo al entrar a cada nivel del modo símbolo (el primero, el del documento)
+    /// o al workspace de una fuente: al salir de un nivel vuelve el de cuando se entró.
+    symbol_return_view: Vec<(f32, Vec2)>,
     /// Edit in Place: lo que se ve atenuado alrededor del símbolo (ver `draw_in_place_context`).
     context: InPlaceView,
     /// Si se ve la migaja de pan (modo símbolo) en este frame.
@@ -366,7 +366,7 @@ impl Default for CanvasView {
             cursors: None,
             symmetry_color: None,
             ppp: 1.0,
-            symbol_return_view: None,
+            symbol_return_view: Vec::new(),
             context: InPlaceView::default(),
             crumbs_shown: false,
             advance_line: None,
@@ -1199,13 +1199,16 @@ impl CanvasView {
             };
             painter.rect_stroke(screen, 0.0, border, StrokeKind::Outside);
             if self.names_visible && !renaming {
-                painter.text(
-                    screen.left_top() - Vec2::new(0.0, LABEL_GAP),
-                    Align2::LEFT_BOTTOM,
-                    label_text(artboard, editor.frame_of(artboard.id)),
-                    FontId::proportional(LABEL_SIZE),
-                    label_color,
-                );
+                let label = self.label_of(&painter, rect, artboard, editor);
+                painter.galley(label.text.min, label.galley, label_color);
+                // El ▶ de Play in Place, como el del timeline sin Pixel UI; más claro al pasar.
+                if let Some((at, play)) = label.play {
+                    let hovered = ui
+                        .input(|i| i.pointer.hover_pos())
+                        .is_some_and(|p| at.contains(p));
+                    let color = if hovered { Color32::WHITE } else { label_color };
+                    painter.galley(at.min, play, color);
+                }
             }
         }
 
@@ -1716,6 +1719,32 @@ fn label_text(artboard: &Artboard, frame: usize) -> String {
 
 /// Del borde izquierdo de la ventana al campo de renombrar: después del "≡".
 const RENAME_LEFT: f32 = 12.0;
+/// Sin Pixel UI, del título al ▶ de Play in Place.
+const PLAY_LABEL_GAP: f32 = 6.0;
+
+/// La etiqueta de un artboard sin Pixel UI (el nombre sobre su borde de arriba) en pantalla.
+struct Label {
+    galley: std::sync::Arc<egui::Galley>,
+    /// Donde va el título.
+    text: Rect,
+    /// El ▶ (o la pausa) de Play in Place después del título y su texto, si se puede animar.
+    play: Option<(Rect, std::sync::Arc<egui::Galley>)>,
+}
+
+impl Label {
+    /// Lo que responde al puntero: el título (con 2 de aire) y el ▶.
+    fn hit(&self, p: Pos2) -> Option<TitleHit> {
+        if self
+            .play
+            .as_ref()
+            .is_some_and(|(r, _)| r.expand(2.0).contains(p))
+        {
+            Some(TitleHit::Play)
+        } else {
+            self.text.expand(2.0).contains(p).then_some(TitleHit::Bar)
+        }
+    }
+}
 
 impl CanvasView {
     /// Campo para renombrar el artboard sobre su etiqueta: Enter o clic afuera aplica, Esc cancela.
@@ -1774,6 +1803,36 @@ impl CanvasView {
             return;
         }
         self.renaming = Some((id, name, focused || response.has_focus()));
+    }
+
+    /// Sin Pixel UI, la etiqueta de `artboard`: el título apoyado `LABEL_GAP` arriba de su
+    /// esquina y, si lleva el ▶ de Play in Place, el ▶ (la pausa si se anima) a su derecha.
+    fn label_of(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        artboard: &Artboard,
+        editor: &Editor,
+    ) -> Label {
+        let font = FontId::proportional(LABEL_SIZE);
+        let galley = painter.layout_no_wrap(
+            label_text(artboard, editor.frame_of(artboard.id)),
+            font.clone(),
+            Color32::PLACEHOLDER,
+        );
+        let bottom_left = self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
+        let text =
+            Rect::from_min_size(bottom_left - Vec2::new(0.0, galley.size().y), galley.size());
+        let play = self.play_marks.get(&artboard.id).map(|&playing| {
+            let mark = if playing { "⏸" } else { "▶" };
+            let play = painter.layout_no_wrap(mark.into(), font, Color32::PLACEHOLDER);
+            let at = Rect::from_min_size(
+                Pos2::new(text.right() + PLAY_LABEL_GAP, text.bottom() - play.size().y),
+                play.size(),
+            );
+            (at, play)
+        });
+        Label { galley, text, play }
     }
 
     /// Con Pixel UI, la ventana de `artboard` en pantalla: la de siempre alrededor de sus píxeles
@@ -1947,13 +2006,23 @@ impl CanvasView {
             .collect()
     }
 
-    /// Guarda la vista del documento al entrar al modo símbolo o al workspace de una fuente y la
-    /// restaura al volver al lienzo.
+    /// Guarda la vista al entrar a cada nivel del modo símbolo (o al workspace de una fuente) y,
+    /// al salir de uno o de varios a la vez, restaura la de cuando se entró al de más afuera.
     fn sync_symbol_view(&mut self, editor: &Editor) {
-        if editor.single_artboard() {
-            self.symbol_return_view.get_or_insert((self.zoom, self.pan));
-        } else if let Some((zoom, pan)) = self.symbol_return_view.take() {
+        let depth = if editor.in_symbol_mode() {
+            editor.symbol_stack.len()
+        } else {
+            usize::from(editor.single_artboard())
+        };
+        let mut back = None;
+        while self.symbol_return_view.len() > depth {
+            back = self.symbol_return_view.pop();
+        }
+        if let Some((zoom, pan)) = back {
             (self.zoom, self.pan) = (zoom, pan);
+        }
+        while self.symbol_return_view.len() < depth {
+            self.symbol_return_view.push((self.zoom, self.pan));
         }
     }
 
@@ -2059,11 +2128,18 @@ impl CanvasView {
         }
     }
 
-    /// Lo que hay en el menú "≡" del artboard `id`.
+    /// Lo que hay en el menú "≡" del artboard `id`. Abrirlo no lo activa: cada opción lo activa
+    /// al elegirla (obran sobre el activo), salvo Play in Place, que solo alterna su
+    /// reproducción, como el ▶ de la barra.
     fn artboard_menu(&mut self, ui: &mut egui::Ui, editor: &mut Editor, id: ArtboardId) {
-        editor.activate(id);
+        let Some(artboard) = editor.document.artboard(id) else {
+            ui.close();
+            return;
+        };
+        let (font, name) = (artboard.font.is_some(), artboard.name.clone());
+        let transformable = cs_commands::sprite_ops::can_transform(&artboard.sprite);
         // Un artboard de fuente: lo del glifo actual primero.
-        if editor.artboard().font.is_some() {
+        if font {
             for (label, dx, dy) in [
                 ("Shift Left", -1, 0),
                 ("Shift Right", 1, 0),
@@ -2071,32 +2147,36 @@ impl CanvasView {
                 ("Shift Down", 0, 1),
             ] {
                 if ui.add(menus::plain(label)).clicked() {
+                    editor.activate(id);
                     editor.shift_glyph(dx, dy);
                     ui.close();
                 }
             }
             if ui.add(menus::plain("Copy Glyph")).clicked() {
+                editor.activate(id);
                 editor.copy_glyph();
                 ui.close();
             }
             if ui.add(menus::plain("Paste Glyph")).clicked() {
+                editor.activate(id);
                 editor.paste_glyph();
                 ui.close();
             }
             if ui.add(menus::plain("Clear Glyph")).clicked() {
+                editor.activate(id);
                 editor.clear_glyph();
                 ui.close();
             }
             ui.add_enabled(false, menus::plain("Glyph From…"));
             menus::separator(ui);
         }
-        if ui.add(menus::plain("Rename")).clicked()
-            && let Some(artboard) = editor.document.artboard(id)
-        {
-            self.renaming = Some((id, artboard.name.clone(), false));
+        if ui.add(menus::plain("Rename")).clicked() {
+            editor.activate(id);
+            self.renaming = Some((id, name.clone(), false));
             ui.close();
         }
         if ui.add(menus::item("Properties", "Ctrl+P")).clicked() {
+            editor.activate(id);
             self.artboard_request = Some(ArtboardRequest::Properties);
             ui.close();
         }
@@ -2104,31 +2184,33 @@ impl CanvasView {
         // borrarlo (sin la confirmación de la biblioteca) no van desde acá.
         let symbol = editor.in_symbol_mode();
         if !symbol && ui.add(menus::plain("Duplicate")).clicked() {
-            let name = format!("{} Copy", editor.artboard().name);
-            editor.duplicate_artboard(name);
+            editor.activate(id);
+            editor.duplicate_artboard(format!("{name} Copy"));
             ui.close();
         }
         if !symbol
             && ui
                 .add_enabled(
-                    editor.can_move_active_to_library(),
+                    cs_commands::symbol::move_to_library(&editor.document, id).is_some(),
                     menus::plain("Move to Library"),
                 )
                 .clicked()
         {
+            editor.activate(id);
             editor.move_active_to_library();
             ui.close();
         }
         menus::separator(ui);
-        let transformable = cs_commands::sprite_ops::can_transform(editor.sprite());
         if ui
             .add_enabled(transformable, menus::item("Sprite Size", "Ctrl+Alt+I"))
             .clicked()
         {
+            editor.activate(id);
             self.artboard_request = Some(ArtboardRequest::SpriteSize);
             ui.close();
         }
         if ui.add(menus::item("Canvas Size", "C")).clicked() {
+            editor.activate(id);
             self.artboard_request = Some(ArtboardRequest::CanvasSize);
             ui.close();
         }
@@ -2150,6 +2232,7 @@ impl CanvasView {
             )
             .clicked()
         {
+            // Sin activarlo: se sigue editando el activo.
             editor.toggle_play_in_place(id);
             ui.close();
         }
@@ -2160,6 +2243,7 @@ impl CanvasView {
             )
             .clicked()
         {
+            editor.activate(id);
             self.artboard_request = Some(ArtboardRequest::ExpandSheet);
             ui.close();
         }
@@ -2167,12 +2251,14 @@ impl CanvasView {
             .add_enabled(plain, menus::plain("Slice into Frames…"))
             .clicked()
         {
+            editor.activate(id);
             self.artboard_request = Some(ArtboardRequest::SliceFrames);
             ui.close();
         }
         menus::separator(ui);
         let can_delete = editor.document.canvas_count() > 1;
         if ui.add_enabled(can_delete, menus::plain("Delete")).clicked() {
+            editor.activate(id);
             editor.remove_active_artboard();
             ui.close();
         }
@@ -2223,19 +2309,8 @@ impl CanvasView {
                 if !self.names_visible {
                     return None;
                 }
-                let galley = ui.painter().layout_no_wrap(
-                    label_text(artboard, editor.frame_of(artboard.id)),
-                    FontId::proportional(LABEL_SIZE),
-                    Color32::WHITE,
-                );
-                let bottom_left =
-                    self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
-                let label = Rect::from_min_size(
-                    bottom_left - Vec2::new(0.0, galley.size().y),
-                    galley.size(),
-                )
-                .expand(2.0);
-                label.contains(p).then_some((artboard.id, TitleHit::Bar))
+                let label = self.label_of(ui.painter(), rect, artboard, editor);
+                label.hit(p).map(|hit| (artboard.id, hit))
             })
     }
 }

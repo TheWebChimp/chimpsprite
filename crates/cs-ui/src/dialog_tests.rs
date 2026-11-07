@@ -689,6 +689,102 @@ fn gif_settings_cancel_closes_and_the_dialog_follows_its_model() {
 }
 
 #[test]
+fn gif_settings_are_remembered_after_export_and_saved_with_the_app() {
+    use cs_render::{Motion, RenderPreset};
+    let mut h = gif_open(true);
+    let gif = h.app.gif.as_mut().unwrap();
+    // Nada como lo del modelo; y demasiado grande, para que Export no pregunte dónde guardar.
+    let o = &mut gif.options;
+    o.preset = RenderPreset::NintendoDs;
+    o.scale = 8;
+    o.bake.frames = 64;
+    o.bake.size = 48;
+    o.bake.zoom = 150;
+    o.bake.tilt = 150;
+    o.bake.height = 3;
+    o.bake.fov = 900;
+    o.bake.motion = Motion::Both;
+    o.outline = Some(cs_core::Rgba::rgb(10, 20, 30));
+    o.scanlines = Some(70);
+    o.background = Some(cs_core::Rgba::rgb(1, 2, 3));
+    o.frame_ms = 120;
+    o.looping = false;
+    gif.format = crate::gif_dialog::GifFormat::Png;
+    let chosen = (gif.options, gif.format);
+    h.click("Export");
+    h.settle();
+    assert!(h.app.message.is_some(), "too big: it stays open");
+    h.app.message = None;
+    h.app.gif = None;
+    // Otra vez (aunque sea otro modelo): como se dejó.
+    assert!(h.app.doc.editor.new_model("Boat", (16, 16)));
+    h.app
+        .model_action(Some(crate::model_panel::ModelAction::Gif));
+    let gif = h.app.gif.as_ref().expect("opened");
+    assert_eq!((gif.options, gif.format), chosen);
+    // Cancel no cambia lo recordado.
+    h.app.gif.as_mut().unwrap().options.scale = 1;
+    h.click("Cancel");
+    h.settle();
+    assert_eq!(h.app.gif_settings.scale, Some(8));
+    // Y se guarda con la configuración de la app.
+    let mut storage = crate::layout_tests::MemoryStorage::default();
+    eframe::App::save(&mut h.app, &mut storage);
+    let saved: crate::gif_dialog::GifSettings =
+        eframe::get_value(&storage, crate::GIF_KEY).expect("saved");
+    assert_eq!(saved, h.app.gif_settings);
+}
+
+#[test]
+fn gif_settings_from_an_older_config_take_the_rest_from_the_model() {
+    use crate::gif_dialog::{GifDialog, GifSettings};
+    let mut h = DialogHarness::new(true);
+    assert!(h.app.doc.editor.new_model("Ship", (32, 32)));
+    let editor = &h.app.doc.editor;
+    let model = GifDialog::new(editor);
+    // Sin nada guardado (una configuración de antes): las del modelo.
+    let storage = crate::layout_tests::MemoryStorage::default();
+    let none: Option<GifSettings> = eframe::get_value(&storage, crate::GIF_KEY);
+    let fresh = GifDialog::with_settings(editor, &none.unwrap_or_default());
+    assert_eq!((fresh.options, fresh.format), (model.options, model.format));
+    // Con algunos campos, nombres que ya no existen y valores fuera de rango: lo que sirve.
+    let mut storage = crate::layout_tests::MemoryStorage::default();
+    storage.0.insert(
+        crate::GIF_KEY.to_owned(),
+        r#"(scale: Some(3), render: Some("gameboy"), motion: Some("Wobble"), frames: Some(999), scanlines: Some(true))"#
+            .to_owned(),
+    );
+    let some: GifSettings = eframe::get_value(&storage, crate::GIF_KEY).expect("read");
+    let d = GifDialog::with_settings(editor, &some);
+    assert_eq!(d.options.scale, 3);
+    assert_eq!(d.options.preset, cs_render::RenderPreset::GameBoy);
+    assert_eq!(d.options.bake.motion, model.options.bake.motion);
+    assert_eq!(d.options.bake.frames, 64);
+    assert_eq!(
+        d.options.scanlines,
+        Some(50),
+        "on, with the dialog's default"
+    );
+    assert_eq!(d.options.bake.fov, model.options.bake.fov);
+    assert_eq!(d.options.outline, model.options.outline);
+    assert_eq!(d.format, model.format);
+    // Apagado se recuerda apagado aunque el modelo tenga contorno.
+    let id = editor.model_id();
+    let black = cs_core::Rgba::rgb(0, 0, 0);
+    let artboard = h.app.doc.editor.document.artboard_mut(id).unwrap();
+    artboard.model.as_mut().unwrap().outline = Some(black);
+    let editor = &h.app.doc.editor;
+    let off = GifSettings {
+        outline: Some(false),
+        ..Default::default()
+    };
+    assert_eq!(GifDialog::with_settings(editor, &off).options.outline, None);
+    let unset = GifSettings::default();
+    let d = GifDialog::with_settings(editor, &unset);
+    assert_eq!(d.options.outline, Some(black), "the model's");
+}
+
+#[test]
 fn the_fov_stepper_is_disabled_in_ortho_and_changes_the_fov() {
     let mut h = gif_open(true);
     let fov = h.app.gif.as_ref().unwrap().options.bake.fov;

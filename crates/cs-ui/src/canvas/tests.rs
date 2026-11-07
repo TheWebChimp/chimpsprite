@@ -1390,12 +1390,13 @@ fn the_menu_icon_opens_the_artboard_menu_and_the_circle_deletes_it() {
     assert_ne!(h.editor.active, first);
     with_window(&mut h);
     let pixels = h.pixels_of(0);
-    // "≡": lo selecciona y abre su menú, sin moverlo.
+    // "≡": abre su menú, sin moverlo ni activarlo (lo activa la opción que se elija).
     let menu = pixels.left_top() + Vec2::new(-2.0 + 2.0 + 4.5, -14.0 + 7.5);
+    let active = h.editor.active;
     h.click(menu, PointerButton::Primary);
-    assert_eq!(h.editor.active, first);
+    assert_eq!(h.editor.active, active);
     assert_eq!(
-        h.editor.artboard().position,
+        h.editor.document.artboard(first).unwrap().position,
         (0, 0),
         "a click does not move it"
     );
@@ -2234,6 +2235,49 @@ fn in_symbol_mode_the_artboard_menu_has_no_duplicate_move_or_delete() {
 }
 
 #[test]
+fn leaving_each_symbol_level_restores_the_view_from_when_it_was_entered() {
+    // T dentro de S dentro del host, los dos en su lugar.
+    let mut h = Harness::new();
+    let red = PixelValue::Rgba(Rgba::rgb(255, 0, 0));
+    h.editor.execute(Command::DrawPixels {
+        layer: LayerId(1),
+        frame: 0,
+        pixels: vec![(4, 5, red), (6, 6, red)],
+    });
+    let symbol = cs_commands::symbol::SymbolTiming::Graphic;
+    h.editor.convert_to_symbol("T", symbol).unwrap();
+    let s = h.editor.convert_to_symbol("S", symbol).unwrap();
+    let s_layer = h.editor.layer;
+    let s_object = h.editor.sprite().layer(s_layer).unwrap().objects[0].id;
+    let inner = &h.editor.document.artboard(s).unwrap().sprite;
+    let (t_layer, t_object) = (inner.layers[0].id, inner.layers[0].objects[0].id);
+    h.canvas.zoom = 2.0;
+    h.frame(vec![]);
+    let scene = (h.canvas.zoom, h.canvas.pan);
+    assert!(h.editor.enter_symbol_in_place(s_layer, s_object));
+    h.frame(vec![]);
+    // Adentro de S se acerca y se mueve.
+    h.canvas.zoom = 6.0;
+    h.canvas.pan += Vec2::new(30.0, -12.0);
+    h.frame(vec![]);
+    let in_s = (h.canvas.zoom, h.canvas.pan);
+    assert!(h.editor.enter_symbol_in_place(t_layer, t_object));
+    h.frame(vec![]);
+    h.canvas.zoom = 12.0;
+    h.canvas.pan += Vec2::new(-50.0, 40.0);
+    h.frame(vec![]);
+    // Esc (lo maneja la app: `editor_key`) sale un nivel.
+    h.editor.escape();
+    h.frame(vec![]);
+    assert!(h.editor.in_symbol_mode(), "back in S");
+    assert_eq!((h.canvas.zoom, h.canvas.pan), in_s, "S as it was");
+    h.editor.escape();
+    h.frame(vec![]);
+    assert!(!h.editor.in_symbol_mode());
+    assert_eq!((h.canvas.zoom, h.canvas.pan), scene, "the scene as it was");
+}
+
+#[test]
 fn a_symbol_dropped_on_a_ruler_or_the_breadcrumb_does_nothing() {
     let (mut h, coin) = in_a_symbol();
     // Gem: otro símbolo para soltar dentro de Coin.
@@ -2477,6 +2521,14 @@ fn fitting_a_small_texture_in_a_tall_pane_stops_at_64x() {
 /// Dos artboards de 16×16 con 3 frames de 100 ms, a zoom 4 con Pixel UI: el primero ("A") y el
 /// activo ("B").
 fn two_animated() -> (Harness, ArtboardId, ArtboardId) {
+    let (mut h, a, b) = two_animated_plain();
+    with_window(&mut h);
+    h.frame(vec![]);
+    (h, a, b)
+}
+
+/// [`two_animated`] sin Pixel UI (las etiquetas de egui).
+fn two_animated_plain() -> (Harness, ArtboardId, ArtboardId) {
     let animated = || {
         let mut s = Sprite::new(16, 16, ColorMode::Rgba);
         s.frames = vec![cs_core::Frame { duration_ms: 100 }; 3];
@@ -2488,7 +2540,6 @@ fn two_animated() -> (Harness, ArtboardId, ArtboardId) {
     assert!(h.editor.add_artboard_with_sprite("B".into(), animated()));
     let b = h.editor.active;
     h.canvas.zoom = 4.0;
-    with_window(&mut h);
     h.frame(vec![]);
     (h, a, b)
 }
@@ -2529,6 +2580,47 @@ fn the_play_mark_plays_an_artboard_in_place_without_activating_it() {
 }
 
 #[test]
+fn without_pixel_ui_the_label_has_the_play_mark() {
+    let (mut h, a, b) = two_animated_plain();
+    let marks = |h: &Harness, mark: &str| -> Vec<Rect> {
+        h.texts()
+            .into_iter()
+            .filter(|(t, _)| t == mark)
+            .map(|(_, r)| r)
+            .collect()
+    };
+    let play = marks(&h, "▶");
+    assert_eq!(play.len(), 2, "one per animated artboard");
+    // El de A: después de su título, a su altura.
+    let title = h
+        .texts()
+        .into_iter()
+        .find(|(t, _)| t.starts_with("Artboard") || t.contains("16×16"))
+        .map(|(_, r)| r)
+        .expect("a title");
+    let mark = *play
+        .iter()
+        .min_by(|p, q| p.left().total_cmp(&q.left()))
+        .unwrap();
+    assert!(mark.left() > title.right(), "{mark:?} after {title:?}");
+    assert!((mark.bottom() - title.bottom()).abs() <= 2.0);
+    h.frame(vec![Event::PointerMoved(mark.center())]);
+    assert_eq!(h.cursor, egui::CursorIcon::PointingHand);
+    h.click(mark.center(), PointerButton::Primary);
+    assert!(h.editor.is_playing_in_place(a));
+    assert_eq!(h.editor.active, b, "still editing the other one");
+    h.frame(vec![]);
+    assert_eq!(marks(&h, "⏸").len(), 1, "the pause while it plays");
+    // Otro clic lo apaga.
+    h.click(mark.center(), PointerButton::Primary);
+    assert!(!h.editor.is_playing_in_place(a));
+    // Un artboard de un frame no lleva ▶.
+    h.editor.add_artboard(8, 8);
+    h.frame(vec![]);
+    assert_eq!(marks(&h, "▶").len(), 2);
+}
+
+#[test]
 fn a_single_frame_artboard_has_no_play_mark() {
     let mut h = Harness::new();
     h.canvas.zoom = 4.0;
@@ -2540,17 +2632,53 @@ fn a_single_frame_artboard_has_no_play_mark() {
 
 #[test]
 fn right_clicking_the_title_bar_opens_the_artboard_menu() {
-    let (mut h, a, _) = two_animated();
+    let (mut h, a, b) = two_animated();
     let window = window_of_id(&h, a);
     let bar = window.text.unwrap().center();
     h.click(bar, PointerButton::Secondary);
     h.frame(vec![]);
-    assert_eq!(h.editor.active, a, "the menu is about that artboard");
+    // Se activa al elegir algo que lo necesita (Play in Place no).
+    assert_eq!(h.editor.active, b, "opening the menu does not activate it");
     let texts: Vec<String> = h.texts().into_iter().map(|(t, _)| t).collect();
     for item in ["Rename", "Play in Place", "Delete"] {
         assert!(texts.iter().any(|t| t == item), "{item} in {texts:?}");
     }
     assert!(h.editor.sprite().cels.is_empty(), "nothing painted");
+}
+
+#[test]
+fn play_in_place_from_the_menu_does_not_activate_the_artboard() {
+    let (mut h, a, b) = two_animated();
+    // El desplegable pixel del "≡", como en la app.
+    let skin = Skin::embedded(&h.ctx);
+    crate::pixel_ui::set_bubble(&h.ctx, Some(std::sync::Arc::new(skin)));
+    let menu = window_of_id(&h, a).menu.unwrap().center();
+    h.click(menu, PointerButton::Primary);
+    h.frame(vec![]);
+    assert_eq!(h.editor.active, b, "opening the menu does not activate it");
+    let item = text_rect(&h, "Play in Place").expect("the item");
+    h.click(item.center(), PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(h.editor.is_playing_in_place(a));
+    assert_eq!(h.editor.active, b, "still editing the other one");
+    assert!(text_rect(&h, "Play in Place").is_none(), "the menu closed");
+    // Desde el clic derecho en la barra, igual: lo apaga sin activarlo.
+    let bar = window_of_id(&h, a).text.unwrap().center();
+    h.click(bar, PointerButton::Secondary);
+    h.frame(vec![]);
+    let item = text_rect(&h, "Play in Place").expect("the item");
+    h.click(item.center(), PointerButton::Primary);
+    h.frame(vec![]);
+    assert!(!h.editor.is_playing_in_place(a));
+    assert_eq!(h.editor.active, b);
+    // Lo demás del menú es sobre ese artboard: lo activa.
+    h.click(menu, PointerButton::Primary);
+    h.frame(vec![]);
+    let item = text_rect(&h, "Properties").expect("the item");
+    h.click(item.center(), PointerButton::Primary);
+    h.frame(vec![]);
+    assert_eq!(h.editor.active, a);
+    assert_eq!(h.canvas.artboard_request, Some(ArtboardRequest::Properties));
 }
 
 /// El centro del papel de la nota `id` en pantalla.

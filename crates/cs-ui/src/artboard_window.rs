@@ -96,7 +96,7 @@ pub struct WindowLayout {
 pub enum TitleHit {
     /// La barra: clic selecciona, arrastre mueve, doble clic renombra.
     Bar,
-    /// "≡": activa el artboard y abre su menú.
+    /// "≡": abre el menú del artboard (sin activarlo).
     Menu,
     /// "○": borra el artboard.
     Close,

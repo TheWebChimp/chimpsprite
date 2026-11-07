@@ -987,6 +987,35 @@ fn ctrl_v_with_a_coolors_link_opens_the_pasted_palette() {
 }
 
 #[test]
+fn ctrl_v_with_a_coolors_link_and_the_lospec_panel_open_pastes_it_there() {
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let dock = h.panel("dock");
+    let button = h
+        .buttons
+        .iter()
+        .find(|(l, r)| l == "Lospec" && dock.contains_rect(*r))
+        .map(|(_, r)| *r)
+        .expect("the Lospec dock button");
+    h.click(button.center(), PointerButton::Primary);
+    assert!(h.app.lospec_open());
+    let link = "https://coolors.co/palette/264653-2a9d8f-e9c46a-f4a261-e76f51";
+    h.frame_with(vec![Event::Paste(link.into())]);
+    h.frame();
+    assert!(h.app.presets_window.is_none(), "not Palette Presets");
+    let panel = h.app.lospec_dock.as_ref().expect("the panel is still open");
+    assert_eq!(
+        panel.lookup_title(),
+        Some("Coolors 264653-2a9d8f-e9c46a-f4a261-e76f51")
+    );
+    assert!(
+        h.texts
+            .iter()
+            .any(|(t, _)| t == "Coolors 264653-2a9d8f-e9c46a-f4a261-e76f51"),
+        "shown in the panel"
+    );
+}
+
+#[test]
 fn clicking_the_marker_closes_a_clean_tab() {
     let mut h = two_tabs(Some(0));
     let mark = h.button("Close Otro.chimp");
@@ -2184,7 +2213,7 @@ fn with_pixel_ui_new_palette_on_an_rgba_sprite_needs_no_confirmation() {
 
 /// Un `eframe::Storage` en memoria.
 #[derive(Default)]
-struct MemoryStorage(std::collections::HashMap<String, String>);
+pub(crate) struct MemoryStorage(pub std::collections::HashMap<String, String>);
 
 impl eframe::Storage for MemoryStorage {
     fn get_string(&self, key: &str) -> Option<String> {
