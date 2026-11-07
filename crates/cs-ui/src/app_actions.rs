@@ -5,6 +5,8 @@ use cs_commands::ops::Reorder;
 
 impl ChimpApp {
     pub(crate) fn handle_shortcuts(&mut self, ctx: &egui::Context) {
+        // El par elegido que mostró la vista Kerning el frame de antes (si se cerró, ya no).
+        let kern_pair = self.font_panel.kern_arrows.take();
         // Los diálogos son modales: manejan sus propias teclas.
         if self.is_modal() {
             return;
@@ -60,6 +62,23 @@ impl ChimpApp {
                 && matches!(key, Key::Delete | Key::Backspace)
                 && self.doc.canvas.notes.delete_hovered(&mut self.doc.editor)
             {
+                ctx.input_mut(|i| i.consume_key(modifiers, key));
+                continue;
+            }
+            // Con un par elegido en la vista Kerning, ←/→ lo corren 1 px (5 con Shift), un paso
+            // de undo cada una, como FontForge (en vez de mover lo seleccionado o cambiar de
+            // frame).
+            if let Some((a, b)) = kern_pair
+                && self.has_doc()
+                && !typing
+                && !painting
+                && !modifiers.command
+                && !modifiers.alt
+                && matches!(key, Key::ArrowLeft | Key::ArrowRight)
+            {
+                let step = if modifiers.shift { 5 } else { 1 };
+                let delta = if key == Key::ArrowLeft { -step } else { step };
+                self.doc.editor.nudge_kerning(a, b, delta);
                 ctx.input_mut(|i| i.consume_key(modifiers, key));
                 continue;
             }

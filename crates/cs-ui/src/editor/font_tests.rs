@@ -521,6 +521,40 @@ fn kerning_changes_are_one_step_and_dragging_is_grouped() {
 }
 
 #[test]
+fn nudging_a_pair_moves_its_value_one_step_at_a_time_up_to_the_cell() {
+    use cs_core::KernSide::{Char, Class};
+    let mut e = editor_with_letters();
+    assert!(e.nudge_kerning('l', 'o', -1));
+    assert!(e.nudge_kerning('l', 'o', -5));
+    assert_eq!(e.font().unwrap().kerning.value('l', 'o'), -6);
+    e.undo();
+    assert_eq!(
+        e.font().unwrap().kerning.value('l', 'o'),
+        -1,
+        "one step each"
+    );
+    // Hasta el ancho de la celda (8), como el stepper; más allá no hay paso.
+    assert!(e.nudge_kerning('l', 'o', -50));
+    assert_eq!(e.font().unwrap().kerning.value('l', 'o'), -8);
+    assert!(!e.nudge_kerning('l', 'o', -1), "at the limit");
+    // Un par que sale de una clase cambia la clase (como el stepper del par elegido).
+    let mut k = e.font().unwrap().kerning.clone();
+    k.pairs.clear();
+    k.classes.push(cs_core::KernClass {
+        name: "tall".into(),
+        side: cs_core::ClassSide::First,
+        chars: vec!['l'],
+    });
+    k.set(Class("tall".into()), Char('o'), 2);
+    assert!(e.set_kerning(k));
+    assert!(e.nudge_kerning('l', 'o', 1));
+    let k = &e.font().unwrap().kerning;
+    assert_eq!((k.pairs.len(), k.value('l', 'o')), (1, 3));
+    // Letras que la fuente no tiene: nada.
+    assert!(!e.nudge_kerning('l', 'á', 1));
+}
+
+#[test]
 fn the_family_builds_one_file_per_style() {
     use cs_core::{VariantKind, VariantRecipe};
     let mut e = editor_with_letters();

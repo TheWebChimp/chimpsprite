@@ -10968,6 +10968,44 @@ fn clicking_a_letter_picks_its_pair_and_dragging_it_kerns_in_one_step() {
 }
 
 #[test]
+fn the_arrows_kern_the_picked_pair_one_step_per_press() {
+    let mut h = kerning_view_open();
+    let value = |h: &LayoutHarness| h.app.doc.editor.font().unwrap().kerning.value('l', 'o');
+    h.click(h.button("Kerning").center(), PointerButton::Primary);
+    // Sin par elegido, las flechas hacen lo de antes (el frame de al lado: otro glifo).
+    let frame = h.app.doc.editor.frame;
+    press(&mut h, egui::Key::ArrowRight, egui::Modifiers::NONE);
+    assert_ne!(h.app.doc.editor.frame, frame, "no pair: the next frame");
+    assert_eq!(value(&h), 0);
+    h.app.doc.editor.frame = frame;
+    h.frame();
+    h.click(h.button("Kern lo").center(), PointerButton::Primary);
+    assert_eq!(h.app.font_panel.kern_pair, Some(('l', 'o')));
+    press(&mut h, egui::Key::ArrowRight, egui::Modifiers::NONE);
+    assert_eq!(value(&h), 1);
+    assert_eq!(h.app.doc.editor.frame, frame, "not the next frame");
+    press(&mut h, egui::Key::ArrowLeft, egui::Modifiers::SHIFT);
+    assert_eq!(value(&h), -4, "Shift: 5 px");
+    press(&mut h, egui::Key::ArrowLeft, egui::Modifiers::NONE);
+    assert_eq!(value(&h), -5);
+    h.app.doc.editor.undo();
+    assert_eq!(value(&h), -4, "each press is one step");
+    h.app.doc.editor.undo();
+    assert_eq!(value(&h), 1);
+    h.frame();
+    // Con el foco en un campo de texto, las flechas son del campo.
+    let field = h
+        .nodes
+        .iter()
+        .find(|(l, _)| l == "Test text")
+        .map(|(_, r)| *r)
+        .expect("the Test text field");
+    h.click(field.center(), PointerButton::Primary);
+    press(&mut h, egui::Key::ArrowLeft, egui::Modifiers::NONE);
+    assert_eq!(value(&h), 1, "typing: the field gets the arrows");
+}
+
+#[test]
 fn the_font_settings_show_the_family_and_new_variant_creates_the_bold() {
     let mut h = kerning_view_open();
     h.click(h.button("Font Settings").center(), PointerButton::Primary);

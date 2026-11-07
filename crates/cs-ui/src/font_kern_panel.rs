@@ -1,8 +1,8 @@
 //! La vista Kerning del panel FontForge: el texto de prueba con el kerning aplicado (un clic en
-//! una letra elige el par que forma con la de antes y arrastrarla a los lados lo cambia), el par
-//! elegido con su valor y de dónde sale, la lista de pares con una fila para agregar, y las
-//! clases (First y Second) con sus caracteres. Todo lo cambiado en un frame (o en un arrastre) es
-//! un paso de deshacer.
+//! una letra elige el par que forma con la de antes y arrastrarla a los lados o las flechas ←/→
+//! lo cambian: 1 px, 5 con Shift), el par elegido con su valor y de dónde sale, la lista de pares
+//! con una fila para agregar, y las clases (First y Second) con sus caracteres. Todo lo cambiado
+//! en un frame (o en un arrastre, o con cada flecha) es un paso de deshacer.
 
 use cs_core::{ClassSide, FontKerning, KernClass, KernSide, KernSource};
 use eframe::egui::{self, Color32, Rect, Sense, Stroke, Ui, Vec2, vec2};
@@ -230,6 +230,10 @@ pub(crate) fn show(
     let pair = state
         .kern_pair
         .filter(|&(a, b)| font.index_of(a).is_some() && font.index_of(b).is_some());
+    // Las flechas (←/→, Shift: 5 px) corren este par el frame que viene (ver `handle_shortcuts`).
+    if ui.is_enabled() {
+        state.kern_arrows = pair;
+    }
     match pair {
         Some((a, b)) => {
             let (mut value, source) = pair_value(&k, a, b);
