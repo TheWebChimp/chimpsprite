@@ -171,6 +171,27 @@ impl Editor {
         self.execute_doc_grouped(cmd, group)
     }
 
+    /// Corre `delta` pixeles el valor entre `a` y `b` (las flechas de la vista Kerning), en un
+    /// paso: en el par de donde sale (aunque sea de una clase) o en uno nuevo, hasta el ancho de
+    /// la celda como el stepper. Nada si la fuente no tiene las dos letras o ya está en el tope.
+    pub fn nudge_kerning(&mut self, a: char, b: char, delta: i32) -> bool {
+        let Some(font) = self.font() else {
+            return false;
+        };
+        if font.index_of(a).is_none() || font.index_of(b).is_none() {
+            return false;
+        }
+        let limit = self.sprite().width as i32;
+        let mut k = font.kerning.clone();
+        let (value, _) = crate::font_kern_panel::pair_value(&k, a, b);
+        let next = (value + delta).clamp(-limit, limit);
+        if next == value {
+            return false;
+        }
+        crate::font_kern_panel::apply_value(&mut k, a, b, next);
+        self.set_kerning(k)
+    }
+
     /// La fuente del artboard activo.
     pub fn font(&self) -> Option<&FontInfo> {
         self.artboard().font.as_ref()

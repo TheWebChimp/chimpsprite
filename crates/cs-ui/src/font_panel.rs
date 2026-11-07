@@ -134,6 +134,9 @@ pub struct FontPanelState {
     pub kern_second: String,
     /// El arrastre de una letra en la vista Kerning: el valor al empezar y lo arrastrado.
     pub kern_drag: Option<(i32, f32)>,
+    /// El par que la vista Kerning mostró elegido en el último frame (con el panel habilitado):
+    /// las flechas lo corren. Los atajos lo toman al empezar cada frame.
+    pub kern_arrows: Option<(char, char)>,
 }
 
 impl Default for FontPanelState {
@@ -148,6 +151,7 @@ impl Default for FontPanelState {
             kern_first: String::new(),
             kern_second: String::new(),
             kern_drag: None,
+            kern_arrows: None,
         }
     }
 }
