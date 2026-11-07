@@ -8,8 +8,8 @@ use cs_commands::ops::{self, LayerDrop};
 use std::collections::HashSet;
 
 use cs_core::{
-    AnimDirection, ArtboardId, BlendMode, InstanceTrack, Layer, LayerId, LayerKind, SceneObject,
-    Tag,
+    AnimDirection, ArtboardId, BlendMode, InstanceTrack, Layer, LayerId, LayerKind, ObjectId,
+    SceneObject, Tag, TweenSpan,
 };
 use eframe::egui::{
     self, Align2, Color32, FontId, Pos2, Rect, Sense, Stroke, StrokeKind, Vec2, pos2, vec2,
@@ -1305,6 +1305,11 @@ fn layer_row(
                     editor.remove_instance_key(id, f);
                     ui.close();
                 }
+                menus::separator(ui);
+                let objects = editor.key_objects(id);
+                let create = editor.row_can_create_tween(id, f);
+                let remove = editor.row_has_tween(id, f);
+                tween_menu(ui, editor, id, &objects, f, (create, remove));
                 return;
             }
             let (a, b) = editor.selected_frames();
@@ -1389,12 +1394,16 @@ fn object_keys(
         && let Some(key) = track.key_at(f)
     {
         let stroke = Stroke::new(thick, color);
-        // Barra de "hold": viene del frame anterior y sigue al próximo.
-        if f > key.frame {
-            painter.hline(r.left()..=center.x, center.y, stroke);
-        }
-        if f + 1 < frames {
-            painter.hline(center.x..=r.right(), center.y, stroke);
+        if let Some(span) = track.tween_span(f) {
+            tween_cell(painter, grid, r, tween_marks(span, f, frames), stroke, d);
+        } else {
+            // Barra de "hold": viene del frame anterior y sigue al próximo.
+            if f > key.frame {
+                painter.hline(r.left()..=center.x, center.y, stroke);
+            }
+            if f + 1 < frames {
+                painter.hline(center.x..=r.right(), center.y, stroke);
+            }
         }
     }
     let mut starts = tracks
@@ -1416,6 +1425,97 @@ fn object_keys(
         pos2(center.x - d, center.y),
     ];
     painter.add(egui::Shape::convex_polygon(points, fill, Stroke::NONE));
+}
+
+/// Create Tween y Remove Tween del menú de una celda de objetos (`can`: si cada uno se puede),
+/// sobre `objects` de `layer` en el frame `f`.
+fn tween_menu(
+    ui: &mut egui::Ui,
+    editor: &mut Editor,
+    layer: LayerId,
+    objects: &[ObjectId],
+    f: usize,
+    can: (bool, bool),
+) {
+    let create = ui
+        .add_enabled(can.0, menus::plain("Create Tween"))
+        .on_disabled_hover_text("Needs a keyframe here and another one after it");
+    if create.clicked() {
+        editor.create_tweens(layer, objects, f);
+        ui.close();
+    }
+    if ui
+        .add_enabled(can.1, menus::plain("Remove Tween"))
+        .clicked()
+    {
+        editor.remove_tweens(layer, objects, f);
+        ui.close();
+    }
+}
+
+/// Cómo se dibuja la celda de un frame dentro de un tramo con tween.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct TweenMarks {
+    /// La línea viene de la celda anterior (no es la key de inicio).
+    from_left: bool,
+    /// La línea sigue a la celda siguiente (no es el último frame del timeline).
+    to_right: bool,
+    /// La punta de la flecha: la última celda antes de la key final.
+    arrow: bool,
+    /// Punteada: el tween está roto (sin key final o con otro símbolo).
+    dashed: bool,
+}
+
+/// Las marcas de la celda `f` (de `frames`) del tramo `span`: como la barra de hold, con punta
+/// al llegar a la key final, o punteada si está roto (hasta la key siguiente o el final).
+fn tween_marks(span: TweenSpan, f: usize, frames: usize) -> TweenMarks {
+    TweenMarks {
+        from_left: f > span.start,
+        to_right: f + 1 < frames,
+        arrow: !span.broken && span.end == Some(f + 1),
+        dashed: span.broken,
+    }
+}
+
+/// Una celda de un tramo con tween (como en Flash): el fondo con el color de lo elegido al 25 %
+/// y la flecha (o la línea punteada) a la altura del centro; `d` es el radio del ◆.
+fn tween_cell(
+    painter: &egui::Painter,
+    grid: Grid,
+    r: Rect,
+    marks: TweenMarks,
+    stroke: Stroke,
+    d: f32,
+) {
+    painter.rect_filled(r, 0.0, grid.accent().gamma_multiply(0.25));
+    let (cx, cy) = (r.center().x, r.center().y);
+    let x0 = if marks.from_left { r.left() } else { cx };
+    let x1 = if marks.to_right { r.right() } else { cx };
+    if marks.dashed {
+        // Con Pixel UI, 1 px sí y 1 no.
+        let (dash, gap) = if grid.skin.is_some() {
+            (1.0, 1.0)
+        } else {
+            (3.0, 2.0)
+        };
+        painter.extend(egui::Shape::dashed_line(
+            &[pos2(x0, cy), pos2(x1, cy)],
+            stroke,
+            dash,
+            gap,
+        ));
+    } else if x1 > x0 {
+        painter.hline(x0..=x1, cy, stroke);
+    }
+    if marks.arrow {
+        let tip = r.right();
+        let points = vec![pos2(tip, cy), pos2(tip - d, cy + d), pos2(tip - d, cy - d)];
+        painter.add(egui::Shape::convex_polygon(
+            points,
+            stroke.color,
+            Stroke::NONE,
+        ));
+    }
 }
 
 /// La sub-fila de `object` debajo de su capa desplegada: con sangría, su nombre (un clic lo
@@ -1521,6 +1621,8 @@ fn object_row(
             let is_key = track.is_some_and(|t| t.keys.iter().any(|k| k.frame == f));
             // Antes de la primera key no hay nada que copiar.
             let has_key = track.is_some_and(|t| t.key_at(f).is_some());
+            let create = track.is_some_and(|t| ops::can_create_tween(t, f));
+            let remove = track.is_some_and(|t| ops::has_tween(t, f));
             if ui
                 .add_enabled(has_key && !is_key, menus::plain("Insert Keyframe"))
                 .clicked()
@@ -1535,6 +1637,8 @@ fn object_row(
                 editor.remove_object_key(lid, oid, f);
                 ui.close();
             }
+            menus::separator(ui);
+            tween_menu(ui, editor, lid, &[oid], f, (create, remove));
         });
     }
 }

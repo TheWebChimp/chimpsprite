@@ -204,7 +204,7 @@ impl Editor {
     }
 
     /// Los tracks de `key_objects(layer)`.
-    fn key_tracks(&self, layer: LayerId) -> impl Iterator<Item = &InstanceTrack> {
+    pub(crate) fn key_tracks(&self, layer: LayerId) -> impl Iterator<Item = &InstanceTrack> {
         let l = self.sprite().layer(layer);
         self.key_objects(layer)
             .into_iter()
@@ -217,11 +217,13 @@ impl Editor {
         Some(&self.sprite().layer(layer)?.object(object)?.track)
     }
 
-    /// Key vigente del objeto actual en el frame actual (si la capa es de objetos).
+    /// Lo que se ve del objeto actual en el frame actual, como key en este frame (la vigente o,
+    /// en medio de un tween, con los valores interpolados; ver `keyframe_at`). `None` si la capa
+    /// no es de objetos o el objeto todavía no empieza.
     pub fn instance_key(&self) -> Option<InstanceKey> {
         let object = self.current_object()?;
         let layer = self.sprite().layer(self.layer)?;
-        layer.object(object)?.track.key_at(self.frame).copied()
+        layer.object(object)?.track.keyframe_at(self.frame)
     }
 
     pub fn is_instance_keyframe(&self, layer: LayerId, frame: usize) -> bool {
