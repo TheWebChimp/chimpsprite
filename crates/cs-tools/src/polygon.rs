@@ -139,6 +139,7 @@ mod tests {
             pixel_perfect: false,
             filled,
             corner_radius: 0,
+            iso: false,
             contiguous: true,
             constrain: false,
             selection: None,

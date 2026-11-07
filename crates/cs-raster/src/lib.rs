@@ -19,7 +19,7 @@ mod symmetry;
 mod transform;
 
 pub use blur::blur_average;
-pub use constrain::{constrain_line, constrain_square};
+pub use constrain::{constrain_iso, constrain_line, constrain_square};
 pub use curve::cubic_bezier;
 pub use ellipse::{ellipse_filled, ellipse_outline};
 pub use fill::flood_fill;

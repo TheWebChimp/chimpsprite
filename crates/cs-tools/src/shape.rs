@@ -1,6 +1,6 @@
 use cs_commands::Command;
 use cs_raster::{
-    Point, constrain_line, constrain_square, ellipse_filled, ellipse_outline, line,
+    Point, constrain_iso, constrain_line, constrain_square, ellipse_filled, ellipse_outline, line,
     rounded_rect_filled, rounded_rect_outline,
 };
 
@@ -34,6 +34,8 @@ impl ShapeTool {
 
     fn command(&self, ctx: &ToolContext, a: Point, b: Point) -> Command {
         let b = match (ctx.constrain, self.kind) {
+            // La línea isométrica pega siempre (con Shift también).
+            (_, ShapeKind::Line) if ctx.iso => constrain_iso(a, b),
             (false, _) => b,
             (true, ShapeKind::Line) => constrain_line(a, b),
             (true, _) => constrain_square(a, b),
@@ -106,6 +108,26 @@ mod tests {
             run(ShapeKind::Line, &c, (0, 0), (4, 2)),
             vec![(0, 0), (1, 0), (2, 1), (3, 1)]
         );
+    }
+
+    #[test]
+    fn the_iso_line_snaps_without_shift() {
+        let s = sprite();
+        let mut c = ctx(&s);
+        c.iso = true;
+        // Casi a 45°: 2×1.
+        assert_eq!(
+            run(ShapeKind::Line, &c, (0, 0), (4, 3)),
+            vec![(0, 0), (1, 0), (2, 1), (3, 1)]
+        );
+        c.constrain = true;
+        assert_eq!(
+            run(ShapeKind::Line, &c, (0, 0), (1, 5)),
+            vec![(0, 0), (0, 1), (0, 2), (0, 3), (0, 4), (0, 5)]
+        );
+        // No toca al rectángulo.
+        c.constrain = false;
+        assert_eq!(run(ShapeKind::Rectangle, &c, (0, 0), (3, 1)).len(), 8);
     }
 
     #[test]
