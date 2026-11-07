@@ -1199,13 +1199,16 @@ impl CanvasView {
             };
             painter.rect_stroke(screen, 0.0, border, StrokeKind::Outside);
             if self.names_visible && !renaming {
-                painter.text(
-                    screen.left_top() - Vec2::new(0.0, LABEL_GAP),
-                    Align2::LEFT_BOTTOM,
-                    label_text(artboard, editor.frame_of(artboard.id)),
-                    FontId::proportional(LABEL_SIZE),
-                    label_color,
-                );
+                let label = self.label_of(&painter, rect, artboard, editor);
+                painter.galley(label.text.min, label.galley, label_color);
+                // El ▶ de Play in Place, como el del timeline sin Pixel UI; más claro al pasar.
+                if let Some((at, play)) = label.play {
+                    let hovered = ui
+                        .input(|i| i.pointer.hover_pos())
+                        .is_some_and(|p| at.contains(p));
+                    let color = if hovered { Color32::WHITE } else { label_color };
+                    painter.galley(at.min, play, color);
+                }
             }
         }
 
@@ -1716,6 +1719,32 @@ fn label_text(artboard: &Artboard, frame: usize) -> String {
 
 /// Del borde izquierdo de la ventana al campo de renombrar: después del "≡".
 const RENAME_LEFT: f32 = 12.0;
+/// Sin Pixel UI, del título al ▶ de Play in Place.
+const PLAY_LABEL_GAP: f32 = 6.0;
+
+/// La etiqueta de un artboard sin Pixel UI (el nombre sobre su borde de arriba) en pantalla.
+struct Label {
+    galley: std::sync::Arc<egui::Galley>,
+    /// Donde va el título.
+    text: Rect,
+    /// El ▶ (o la pausa) de Play in Place después del título y su texto, si se puede animar.
+    play: Option<(Rect, std::sync::Arc<egui::Galley>)>,
+}
+
+impl Label {
+    /// Lo que responde al puntero: el título (con 2 de aire) y el ▶.
+    fn hit(&self, p: Pos2) -> Option<TitleHit> {
+        if self
+            .play
+            .as_ref()
+            .is_some_and(|(r, _)| r.expand(2.0).contains(p))
+        {
+            Some(TitleHit::Play)
+        } else {
+            self.text.expand(2.0).contains(p).then_some(TitleHit::Bar)
+        }
+    }
+}
 
 impl CanvasView {
     /// Campo para renombrar el artboard sobre su etiqueta: Enter o clic afuera aplica, Esc cancela.
@@ -1774,6 +1803,36 @@ impl CanvasView {
             return;
         }
         self.renaming = Some((id, name, focused || response.has_focus()));
+    }
+
+    /// Sin Pixel UI, la etiqueta de `artboard`: el título apoyado `LABEL_GAP` arriba de su
+    /// esquina y, si lleva el ▶ de Play in Place, el ▶ (la pausa si se anima) a su derecha.
+    fn label_of(
+        &self,
+        painter: &egui::Painter,
+        rect: Rect,
+        artboard: &Artboard,
+        editor: &Editor,
+    ) -> Label {
+        let font = FontId::proportional(LABEL_SIZE);
+        let galley = painter.layout_no_wrap(
+            label_text(artboard, editor.frame_of(artboard.id)),
+            font.clone(),
+            Color32::PLACEHOLDER,
+        );
+        let bottom_left = self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
+        let text =
+            Rect::from_min_size(bottom_left - Vec2::new(0.0, galley.size().y), galley.size());
+        let play = self.play_marks.get(&artboard.id).map(|&playing| {
+            let mark = if playing { "⏸" } else { "▶" };
+            let play = painter.layout_no_wrap(mark.into(), font, Color32::PLACEHOLDER);
+            let at = Rect::from_min_size(
+                Pos2::new(text.right() + PLAY_LABEL_GAP, text.bottom() - play.size().y),
+                play.size(),
+            );
+            (at, play)
+        });
+        Label { galley, text, play }
     }
 
     /// Con Pixel UI, la ventana de `artboard` en pantalla: la de siempre alrededor de sus píxeles
@@ -2240,19 +2299,8 @@ impl CanvasView {
                 if !self.names_visible {
                     return None;
                 }
-                let galley = ui.painter().layout_no_wrap(
-                    label_text(artboard, editor.frame_of(artboard.id)),
-                    FontId::proportional(LABEL_SIZE),
-                    Color32::WHITE,
-                );
-                let bottom_left =
-                    self.to_screen(rect, artboard.position) - Vec2::new(0.0, LABEL_GAP);
-                let label = Rect::from_min_size(
-                    bottom_left - Vec2::new(0.0, galley.size().y),
-                    galley.size(),
-                )
-                .expand(2.0);
-                label.contains(p).then_some((artboard.id, TitleHit::Bar))
+                let label = self.label_of(ui.painter(), rect, artboard, editor);
+                label.hit(p).map(|hit| (artboard.id, hit))
             })
     }
 }

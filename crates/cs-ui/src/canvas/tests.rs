@@ -2478,6 +2478,14 @@ fn fitting_a_small_texture_in_a_tall_pane_stops_at_64x() {
 /// Dos artboards de 16×16 con 3 frames de 100 ms, a zoom 4 con Pixel UI: el primero ("A") y el
 /// activo ("B").
 fn two_animated() -> (Harness, ArtboardId, ArtboardId) {
+    let (mut h, a, b) = two_animated_plain();
+    with_window(&mut h);
+    h.frame(vec![]);
+    (h, a, b)
+}
+
+/// [`two_animated`] sin Pixel UI (las etiquetas de egui).
+fn two_animated_plain() -> (Harness, ArtboardId, ArtboardId) {
     let animated = || {
         let mut s = Sprite::new(16, 16, ColorMode::Rgba);
         s.frames = vec![cs_core::Frame { duration_ms: 100 }; 3];
@@ -2489,7 +2497,6 @@ fn two_animated() -> (Harness, ArtboardId, ArtboardId) {
     assert!(h.editor.add_artboard_with_sprite("B".into(), animated()));
     let b = h.editor.active;
     h.canvas.zoom = 4.0;
-    with_window(&mut h);
     h.frame(vec![]);
     (h, a, b)
 }
@@ -2527,6 +2534,47 @@ fn the_play_mark_plays_an_artboard_in_place_without_activating_it() {
     assert!(!h.editor.is_playing_in_place(a));
     h.frame(vec![]);
     assert_eq!(h.canvas.texture_frames[&a], 0);
+}
+
+#[test]
+fn without_pixel_ui_the_label_has_the_play_mark() {
+    let (mut h, a, b) = two_animated_plain();
+    let marks = |h: &Harness, mark: &str| -> Vec<Rect> {
+        h.texts()
+            .into_iter()
+            .filter(|(t, _)| t == mark)
+            .map(|(_, r)| r)
+            .collect()
+    };
+    let play = marks(&h, "▶");
+    assert_eq!(play.len(), 2, "one per animated artboard");
+    // El de A: después de su título, a su altura.
+    let title = h
+        .texts()
+        .into_iter()
+        .find(|(t, _)| t.starts_with("Artboard") || t.contains("16×16"))
+        .map(|(_, r)| r)
+        .expect("a title");
+    let mark = *play
+        .iter()
+        .min_by(|p, q| p.left().total_cmp(&q.left()))
+        .unwrap();
+    assert!(mark.left() > title.right(), "{mark:?} after {title:?}");
+    assert!((mark.bottom() - title.bottom()).abs() <= 2.0);
+    h.frame(vec![Event::PointerMoved(mark.center())]);
+    assert_eq!(h.cursor, egui::CursorIcon::PointingHand);
+    h.click(mark.center(), PointerButton::Primary);
+    assert!(h.editor.is_playing_in_place(a));
+    assert_eq!(h.editor.active, b, "still editing the other one");
+    h.frame(vec![]);
+    assert_eq!(marks(&h, "⏸").len(), 1, "the pause while it plays");
+    // Otro clic lo apaga.
+    h.click(mark.center(), PointerButton::Primary);
+    assert!(!h.editor.is_playing_in_place(a));
+    // Un artboard de un frame no lleva ▶.
+    h.editor.add_artboard(8, 8);
+    h.frame(vec![]);
+    assert_eq!(marks(&h, "▶").len(), 2);
 }
 
 #[test]
