@@ -485,6 +485,7 @@ fn rasterize_font(face: &Face, chars: &[char], options: &TtfImport) -> Result<Fo
         space_width,
         monospace,
         kerning: Vec::new(),
+        style: Default::default(),
         glyphs,
     })
 }

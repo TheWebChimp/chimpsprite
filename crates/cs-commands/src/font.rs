@@ -37,7 +37,7 @@ pub fn add_font_artboard(
     let artboard = Artboard {
         model: None,
         id,
-        name: font.name.clone(),
+        name: font.full_name(),
         position,
         sprite,
         guides: Vec::new(),
@@ -489,6 +489,7 @@ mod tests {
             space_width: 3,
             monospace: false,
             kerning: Vec::new(),
+            style: Default::default(),
             glyphs: vec![cs_core::GlyphBuild {
                 ch: 'x',
                 advance: None,

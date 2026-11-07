@@ -347,10 +347,10 @@ impl Editor {
             .artboard(ArtboardId(*artboard))
             .and_then(|a| a.font.as_ref());
         match font {
-            Some(font) if font.name != *name => {
+            Some(font) if font.full_name() != *name => {
                 self.text_style.font = cs_tools::text::FontChoice::Document {
                     artboard: *artboard,
-                    name: font.name.clone(),
+                    name: font.full_name(),
                 };
             }
             Some(_) => {}
@@ -366,22 +366,24 @@ impl Editor {
         self.document
             .artboards
             .iter()
-            .filter_map(|a| Some((a.id, a.font.as_ref()?.name.clone())))
+            .filter_map(|a| Some((a.id, a.font.as_ref()?.full_name())))
             .collect()
     }
 }
 
-/// La fuente nueva de `id` y, con ella, su nombre como nombre del artboard: los dos van juntos
-/// y el inverso deshace ambos (también al juntar los pasos de un arrastre).
+/// La fuente nueva de `id` y, con ella, su nombre completo (familia y estilo) como nombre del
+/// artboard: los dos van juntos y el inverso deshace ambos (también al juntar los pasos de un
+/// arrastre).
 pub(super) fn set_font_named(id: ArtboardId, info: FontInfo) -> DocCommand {
+    let name = info.full_name();
     DocCommand::Batch(vec![
         DocCommand::SetFont {
             id,
-            font: Some(Box::new(info.clone())),
+            font: Some(Box::new(info)),
         },
         DocCommand::SetArtboardProps {
             id,
-            name: Some(info.name),
+            name: Some(name),
             position: None,
         },
     ])

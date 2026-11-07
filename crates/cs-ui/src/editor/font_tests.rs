@@ -392,3 +392,33 @@ fn filling_glyphs_goes_back_to_the_current_glyph() {
     assert!(e.font().unwrap().index_of('¡').is_some());
     assert_eq!(e.fill_glyphs(&glyphs, false), 0, "already drawn");
 }
+
+#[test]
+fn a_styled_font_is_named_family_and_style_and_renaming_changes_the_family() {
+    let mut e = editor_with_font();
+    let mut info = e.font().unwrap().clone();
+    info.style = cs_core::FontStyle {
+        name: "Bold".into(),
+        weight: 700,
+        ..Default::default()
+    };
+    assert!(e.set_font_info(info));
+    assert_eq!(e.artboard().name, "Mine Bold");
+    let id = e.active;
+    assert!(e.rename_artboard(id, "Other Bold".into()));
+    assert_eq!(e.font().unwrap().name, "Other");
+    assert_eq!(e.artboard().name, "Other Bold");
+    assert!(e.rename_artboard(id, "Third".into()));
+    assert_eq!(e.font().unwrap().name, "Third");
+    assert_eq!(e.artboard().name, "Third Bold", "the style stays");
+    assert!(e.duplicate_artboard("Copy Bold".into()));
+    assert_eq!(e.font().unwrap().name, "Copy");
+    assert_eq!(e.artboard().name, "Copy Bold");
+    assert_eq!(
+        e.document_fonts()
+            .into_iter()
+            .map(|(_, n)| n)
+            .collect::<Vec<_>>(),
+        vec!["Third Bold", "Copy Bold"]
+    );
+}

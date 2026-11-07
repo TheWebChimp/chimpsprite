@@ -6,7 +6,8 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Artboard, ColorMode, FontKerning, Frame, KernSide, LayerKind, Palette, PixelValue, Rgba, Sprite,
+    Artboard, ColorMode, FontKerning, FontStyle, Frame, KernSide, LayerKind, Palette, PixelValue,
+    Rgba, Sprite,
 };
 
 /// 1 bit (prendido o apagado, como BitFontMaker2) o color.
@@ -138,6 +139,9 @@ pub struct FontInfo {
     /// Los pares y las clases de kerning.
     #[serde(default, skip_serializing_if = "FontKerning::is_empty")]
     pub kerning: FontKerning,
+    /// El estilo en su familia (la familia es `name`).
+    #[serde(default, skip_serializing_if = "FontStyle::is_default")]
+    pub style: FontStyle,
 }
 
 impl FontInfo {
@@ -153,6 +157,7 @@ impl FontInfo {
             ghost: GhostSettings::default(),
             glyphs: ('!'..='~').map(GlyphInfo::new).collect(),
             kerning: FontKerning::default(),
+            style: FontStyle::default(),
         }
     }
 
@@ -453,6 +458,7 @@ pub struct FontBuild {
     pub glyphs: Vec<GlyphBuild>,
     /// Los pares de kerning (en pixeles), de carácter a carácter.
     pub kerning: Vec<(char, char, i32)>,
+    pub style: FontStyle,
 }
 
 /// La fuente y su sprite desde `build`: los glifos en orden y sin repetir (gana el primero), sin
@@ -526,6 +532,7 @@ pub fn build_font(build: FontBuild) -> (FontInfo, Sprite) {
             })
             .collect(),
         kerning,
+        style: build.style,
     };
     (font, sprite)
 }
@@ -928,6 +935,7 @@ mod tests {
             space_width: 4,
             monospace: false,
             kerning: Vec::new(),
+            style: Default::default(),
             glyphs,
         }
     }

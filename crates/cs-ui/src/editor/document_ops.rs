@@ -54,11 +54,18 @@ impl Editor {
         let Some(artboard) = self.document.artboard(id) else {
             return false;
         };
-        if artboard.name == name && artboard.font.as_ref().is_none_or(|f| f.name == name) {
+        if artboard.name == name && artboard.font.as_ref().is_none_or(|f| f.full_name() == name) {
             return false;
         }
         let cmd = match artboard.font.clone() {
-            Some(font) => super::font_ops::set_font_named(id, cs_core::FontInfo { name, ..font }),
+            // La familia (sin el estilo, si el nombre termina en él); el artboard, el completo.
+            Some(font) => super::font_ops::set_font_named(
+                id,
+                cs_core::FontInfo {
+                    name: font.family_from_name(&name),
+                    ..font
+                },
+            ),
             None => DocCommand::SetArtboardProps {
                 id,
                 name: Some(name),
@@ -202,7 +209,8 @@ impl Editor {
             ..self.artboard().clone()
         };
         if let Some(font) = &mut artboard.font {
-            font.name = artboard.name.clone();
+            font.name = font.family_from_name(&artboard.name);
+            artboard.name = font.full_name();
         }
         let added = self.execute_doc(DocCommand::AddArtboard {
             index: self.document.artboards.len(),

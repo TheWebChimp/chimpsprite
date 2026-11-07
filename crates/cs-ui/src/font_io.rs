@@ -399,7 +399,7 @@ fn preview_artboard(build: FontBuild) -> Artboard {
     Artboard {
         model: None,
         id: ArtboardId(0),
-        name: font.name.clone(),
+        name: font.full_name(),
         position: (0, 0),
         sprite,
         guides: Vec::new(),
@@ -465,6 +465,7 @@ pub(crate) fn sample_ttf() -> Vec<u8> {
         space_width: 2,
         monospace: false,
         kerning: Vec::new(),
+        style: Default::default(),
         glyphs: vec![cs_core::GlyphBuild {
             ch: 'A',
             advance: None,
@@ -490,6 +491,7 @@ mod tests {
             space_width: 2,
             monospace: false,
             kerning: Vec::new(),
+            style: Default::default(),
             glyphs: Vec::new(),
         });
         let files = build_files(&artboard, BuildFormat::BmFont, "Big Name", "out").unwrap();
