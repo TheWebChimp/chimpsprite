@@ -4,9 +4,9 @@
 use std::sync::Arc;
 
 use cs_core::{
-    AccentSkip, Artboard, ArtboardId, Cel, ComposedPixels, Document, FontInfo, FontMode, Frame,
-    GlyphBuild, GlyphComponent, GlyphInfo, Image, ImageId, ONE_BIT_INK, PixelValue, Rgba, Sprite,
-    accent_chars, font_sprite, ink_width,
+    AccentSkip, Artboard, ArtboardId, Cel, ComposedPixels, Document, FontInfo, FontKerning,
+    FontMode, Frame, GlyphBuild, GlyphComponent, GlyphInfo, Image, ImageId, ONE_BIT_INK,
+    PixelValue, Rgba, Sprite, accent_chars, font_sprite, ink_width,
 };
 
 use crate::{Command, DocCommand};
@@ -370,6 +370,30 @@ pub fn fill_glyphs(
     Some((DocCommand::Batch(cmds), count))
 }
 
+/// El kerning entero de la fuente; `None` si no cambia nada.
+pub fn set_kerning(artboard: &Artboard, kerning: FontKerning) -> Option<DocCommand> {
+    let mut font = artboard.font.clone()?;
+    if font.kerning == kerning {
+        return None;
+    }
+    font.kerning = kerning;
+    Some(set_font(artboard, font))
+}
+
+/// Reemplaza la fuente y su sprite (Rebuild de una variante: la celda puede cambiar), en un paso.
+/// `None` si el artboard no es una fuente o la fuente nueva no va con el sprite.
+pub fn replace_font(artboard: &Artboard, font: FontInfo, sprite: Sprite) -> Option<DocCommand> {
+    artboard.font.as_ref()?;
+    font.check(&sprite).ok()?;
+    Some(DocCommand::Batch(vec![
+        DocCommand::SetSprite {
+            id: artboard.id,
+            sprite: Box::new(sprite),
+        },
+        set_font(artboard, font),
+    ]))
+}
+
 /// El ancho del glifo de `ch` (`None`: automático); `None` si no cambia nada.
 pub fn set_advance(artboard: &Artboard, ch: char, advance: Option<u32>) -> Option<DocCommand> {
     let mut font = artboard.font.clone()?;
@@ -503,6 +527,62 @@ mod tests {
         assert_eq!(a.font.as_ref().unwrap().glyphs.len(), 1);
         assert_eq!((a.sprite.width, a.sprite.height), (6, 8));
         undo.apply(&mut doc).unwrap();
+        assert_eq!(doc, before);
+    }
+
+    #[test]
+    fn set_kerning_and_replace_font_undo_even_when_the_cell_grows() {
+        let (mut doc, id) = doc_with_font();
+        let mut history = History::new();
+        let before = doc.clone();
+        let mut kerning = FontKerning::default();
+        kerning.set(
+            cs_core::KernSide::Char('A'),
+            cs_core::KernSide::Char('V'),
+            -1,
+        );
+        let a = doc.artboard(id).unwrap();
+        assert!(
+            set_kerning(a, FontKerning::default()).is_none(),
+            "no change"
+        );
+        let cmd = set_kerning(a, kerning.clone()).unwrap();
+        StructureLock::execute(&mut history, &mut doc, cmd, false).unwrap();
+        let font = doc.artboard(id).unwrap().font.clone().unwrap();
+        assert_eq!(font.kerning, kerning);
+        // Una fuente nueva de otra celda (como Rebuild): pasa el candado, en un paso.
+        let mut bigger = font.clone();
+        bigger.name = "Rebuilt".into();
+        let sprite = cs_core::font_sprite((20, 18), FontMode::OneBit, font.glyphs.len());
+        let a = doc.artboard(id).unwrap();
+        assert!(
+            replace_font(
+                a,
+                bigger.clone(),
+                cs_core::font_sprite((4, 4), FontMode::Color, 1)
+            )
+            .is_none()
+        );
+        let cmd = replace_font(a, bigger, sprite).unwrap();
+        StructureLock::execute(&mut history, &mut doc, cmd, false).unwrap();
+        let a = doc.artboard(id).unwrap();
+        assert_eq!((a.sprite.width, a.sprite.height), (20, 18));
+        assert_eq!(a.font.as_ref().unwrap().name, "Rebuilt");
+        // Cambiar la celda sin la fuente sigue sin poder.
+        let resize = DocCommand::SetSprite {
+            id,
+            sprite: Box::new(cs_core::font_sprite(
+                (8, 8),
+                FontMode::OneBit,
+                a.sprite.frames.len(),
+            )),
+        };
+        assert_eq!(
+            StructureLock::execute(&mut history, &mut doc, resize, false),
+            Err(CmdError::StructureLocked(id))
+        );
+        history.undo(&mut doc).unwrap();
+        history.undo(&mut doc).unwrap();
         assert_eq!(doc, before);
     }
 

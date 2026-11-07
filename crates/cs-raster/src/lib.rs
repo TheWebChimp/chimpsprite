@@ -5,6 +5,7 @@ mod constrain;
 mod curve;
 mod ellipse;
 mod fill;
+pub mod font_style;
 mod gradient;
 mod groom;
 mod line;
