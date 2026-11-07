@@ -219,7 +219,6 @@ pub struct ChimpApp {
     /// Edit → Iso Box… abierto y lo elegido la última vez (en la sesión).
     iso_dialog: Option<Box<iso_dialog::IsoDialog>>,
     iso_settings: iso_dialog::IsoSettings,
-    /// `InputState::time` del último avance de Play in Place (`None` sin nada animándose).
     /// La ventanita de preview (abierta con `view.preview`).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
