@@ -7,9 +7,10 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use cs_core::{
-    Artboard, ArtboardId, Cel, ColorMode, Document, Image, ImageId, InstanceKey, InstanceTrack,
-    Layer, LayerKind, PixelValue, Rgba, Sprite, TileGrid, Tileset, source_frame,
+    Artboard, ArtboardId, Cel, ColorMode, Document, Image, ImageId, InstancePose, InstanceTrack,
+    Layer, LayerKind, PixelValue, Rgba, Sprite, TileGrid, Tileset, Tint, source_frame,
 };
+use cs_raster::{Block, MAX_BLOCK_SIDE, rotsprite, scale_nearest};
 
 use crate::render_frame;
 
@@ -142,7 +143,7 @@ fn materialize_at<'a>(
                 .iter()
                 .filter_map(|o| {
                     let (position, image) = instance_image(doc, sprite, &o.track, frame, stack)?;
-                    let opacity = o.track.key_at(frame).map_or(255, |k| k.opacity);
+                    let opacity = o.track.pose_at(frame).map_or(255, |p| p.opacity);
                     Some((opacity, position, image))
                 })
                 .collect();
@@ -240,7 +241,8 @@ pub fn object_image(
     instance_image(doc, sprite, track, frame, &mut stack)
 }
 
-/// Lo que muestra un objeto en `frame`: posición del cel e imagen recortada a lo opaco.
+/// Lo que muestra un objeto en `frame`: posición del cel e imagen recortada a lo opaco, con su
+/// pose (en un tween, la interpolada): flips, escala, rotación y tinte, sin la opacidad.
 fn instance_image(
     doc: &Document,
     parent: &Sprite,
@@ -248,7 +250,8 @@ fn instance_image(
     frame: usize,
     stack: &mut Vec<ArtboardId>,
 ) -> Option<((i32, i32), Image)> {
-    let key: &InstanceKey = track.key_at(frame)?;
+    let pose = track.pose_at(frame)?;
+    let key = &pose.key;
     let source_id = key.source?;
     // Un artboard que ya se está materializando no se dibuja dentro de sí mismo (ciclo).
     if stack.contains(&source_id) {
@@ -268,32 +271,82 @@ fn instance_image(
     let pixels = render_frame(&inner, sf);
     stack.pop();
     let (w, h) = (source.width, source.height);
-    let at = |x: u32, y: u32| -> Rgba {
-        let sx = if key.flip_h { w - 1 - x } else { x };
-        let sy = if key.flip_v { h - 1 - y } else { y };
-        pixels[(sy * w + sx) as usize]
-    };
-    let (mut x0, mut y0, mut x1, mut y1) = (w, h, 0, 0);
+    // El símbolo volteado, como bloque: fuera de lo opaco es `None`.
+    let mut block = Block::new(w, h);
     for y in 0..h {
         for x in 0..w {
-            if at(x, y).a > 0 {
-                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+            let sx = if key.flip_h { w - 1 - x } else { x };
+            let sy = if key.flip_v { h - 1 - y } else { y };
+            let c = pixels[(sy * w + sx) as usize];
+            if c.a > 0 {
+                block.set(x as i32, y as i32, Some(c));
             }
         }
+    }
+    // Esquina del bloque respecto de `pose.position` (la del símbolo sin transformar).
+    let (block, offset) = transformed(block, &pose);
+    let points = block.points();
+    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for (x, y, _) in points {
+        (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
     }
     if x0 >= x1 || y0 >= y1 {
         return None;
     }
-    let mut image = Image::new(x1 - x0, y1 - y0, ColorMode::Rgba);
-    for y in y0..y1 {
-        for x in x0..x1 {
-            image
-                .set(x - x0, y - y0, PixelValue::Rgba(at(x, y)))
-                .expect("in bounds and RGBA");
-        }
+    let mut image = Image::new((x1 - x0) as u32, (y1 - y0) as u32, ColorMode::Rgba);
+    for (x, y, c) in block.points() {
+        let c = pose.tint.map_or(c, |t| tinted(c, t));
+        image
+            .set((x - x0) as u32, (y - y0) as u32, PixelValue::Rgba(c))
+            .expect("in bounds and RGBA");
     }
-    let position = (key.position.0 + x0 as i32, key.position.1 + y0 as i32);
+    let position = (
+        pose.position.0 + offset.0 + x0,
+        pose.position.1 + offset.1 + y0,
+    );
     Some((position, image))
+}
+
+/// `block` (el símbolo de `w`×`h`) escalado por vecino más cercano y rotado con RotSprite según
+/// `pose`, con su centro en el centro del símbolo: el bloque y su esquina respecto de la del
+/// símbolo. Sin escala ni rotación, el mismo bloque en `(0, 0)`.
+fn transformed(block: Block<Rgba>, pose: &InstancePose) -> (Block<Rgba>, (i32, i32)) {
+    if !pose.is_transformed() {
+        return (block, (0, 0));
+    }
+    let (w, h) = (block.width, block.height);
+    let side = |size: u32, scale: f32| {
+        ((size as f32 * scale).round() as i64).clamp(1, MAX_BLOCK_SIDE as i64) as i32
+    };
+    let (sw, sh) = (side(w, pose.scale.0), side(h, pose.scale.1));
+    let (block, mut offset) = if (sw as u32, sh as u32) == (w, h) {
+        (block, (0, 0))
+    } else {
+        // Como la selección (`centered_offset` de cs-raster): el centro queda en su lugar.
+        let scaled = scale_nearest(&block, sw, sh);
+        (
+            scaled,
+            ((w as i32 - sw).div_euclid(2), (h as i32 - sh).div_euclid(2)),
+        )
+    };
+    if pose.rotation.rem_euclid(360.0) == 0.0 {
+        return (block, offset);
+    }
+    let (rotated, (dx, dy)) = rotsprite(&block, pose.rotation.to_radians());
+    offset = (offset.0 + dx, offset.1 + dy);
+    (rotated, offset)
+}
+
+/// `c` mezclado hacia el color de `tint` según su cantidad (el alfa no cambia).
+fn tinted(c: Rgba, tint: Tint) -> Rgba {
+    let a = tint.amount as u32;
+    let mix = |x: u8, y: u8| ((x as u32 * (255 - a) + y as u32 * a + 127) / 255) as u8;
+    Rgba {
+        r: mix(c.r, tint.color.r),
+        g: mix(c.g, tint.color.g),
+        b: mix(c.b, tint.color.b),
+        a: c.a,
+    }
 }
 
 /// `sprite` con las capas tilemap convertidas, o el mismo si no tiene.
@@ -1017,5 +1070,154 @@ mod tests {
         d.artboards.push(artboard(3, s));
         let px = render_frame(&materialize(&d, &d.artboards[0].sprite, 0..1), 0);
         assert_eq!(px[2 * 8 + 2], asymmetric(0, 0));
+    }
+
+    // --- Transformación y tweens ---
+
+    const GREEN: Rgba = Rgba::rgb(0, 255, 0);
+    const WHITE: Rgba = Rgba::rgb(255, 255, 255);
+
+    /// Como `doc`, con un símbolo de 2×2 (rojo, azul / verde, blanco) como artboard 2.
+    fn quad_doc(keys: Vec<InstanceKey>) -> Document {
+        let mut s = Sprite::new(2, 2, ColorMode::Rgba);
+        let pixels = [(0, 0, RED), (1, 0, BLUE), (0, 1, GREEN), (1, 1, WHITE)];
+        Command::DrawPixels {
+            layer: LayerId(1),
+            frame: 0,
+            pixels: pixels
+                .iter()
+                .map(|&(x, y, c)| (x, y, PixelValue::Rgba(c)))
+                .collect(),
+        }
+        .apply(&mut s)
+        .unwrap();
+        Document {
+            artboards: vec![artboard(1, host(keys)), artboard(2, s)],
+            notes: Vec::new(),
+        }
+    }
+
+    fn shown(d: &Document, frame: usize) -> Vec<Rgba> {
+        render_frame(
+            &materialize(d, &d.artboards[0].sprite, frame..frame + 1),
+            frame,
+        )
+    }
+
+    /// Los píxeles no transparentes de `pixels` (8×8), en orden.
+    fn opaque(pixels: &[Rgba]) -> Vec<((usize, usize), Rgba)> {
+        (0..64)
+            .filter(|&i| pixels[i].a > 0)
+            .map(|i| ((i % 8, i / 8), pixels[i]))
+            .collect()
+    }
+
+    fn quad_key(f: impl FnOnce(&mut InstanceKey)) -> InstanceKey {
+        let mut k = InstanceKey::new(0, ArtboardId(2), (3, 3));
+        f(&mut k);
+        k
+    }
+
+    #[test]
+    fn whole_turns_draw_like_no_rotation() {
+        let plain = shown(&quad_doc(vec![quad_key(|_| {})]), 0);
+        let turned = shown(&quad_doc(vec![quad_key(|k| k.rotation = 360)]), 0);
+        assert_eq!(plain, turned);
+        assert_eq!(
+            opaque(&plain),
+            vec![
+                ((3, 3), RED),
+                ((4, 3), BLUE),
+                ((3, 4), GREEN),
+                ((4, 4), WHITE)
+            ]
+        );
+    }
+
+    #[test]
+    fn scaling_is_nearest_neighbour_around_the_center() {
+        let d = quad_doc(vec![quad_key(|k| k.scale = (2000, 2000))]);
+        let got = opaque(&shown(&d, 0));
+        assert_eq!(got.len(), 16, "each pixel becomes 2×2");
+        let at = |x, y| got.iter().find(|p| p.0 == (x, y)).map(|p| p.1);
+        // Centro en (4, 4): ocupa de (2, 2) a (5, 5).
+        assert_eq!((at(2, 2), at(3, 3)), (Some(RED), Some(RED)));
+        assert_eq!((at(4, 2), at(5, 3)), (Some(BLUE), Some(BLUE)));
+        assert_eq!((at(2, 4), at(3, 5)), (Some(GREEN), Some(GREEN)));
+        assert_eq!((at(4, 4), at(5, 5)), (Some(WHITE), Some(WHITE)));
+        // A la mitad, un solo píxel (el del centro de muestreo).
+        let d = quad_doc(vec![quad_key(|k| k.scale = (500, 500))]);
+        assert_eq!(opaque(&shown(&d, 0)), vec![((3, 3), WHITE)]);
+        // Escala en un solo eje.
+        let d = quad_doc(vec![quad_key(|k| k.scale = (1000, 2000))]);
+        assert_eq!(opaque(&shown(&d, 0)).len(), 8);
+    }
+
+    #[test]
+    fn quarter_turns_are_exact_and_other_angles_add_no_colors() {
+        let d = quad_doc(vec![quad_key(|k| k.rotation = 90)]);
+        assert_eq!(
+            opaque(&shown(&d, 0)),
+            vec![
+                ((3, 3), GREEN),
+                ((4, 3), RED),
+                ((3, 4), WHITE),
+                ((4, 4), BLUE)
+            ]
+        );
+        let d = quad_doc(vec![quad_key(|k| k.rotation = -90)]);
+        assert_eq!(shown(&d, 0)[3 * 8 + 3], BLUE);
+        // 45° con RotSprite: sin antialias, solo los colores del símbolo y opacos.
+        let d = quad_doc(vec![quad_key(|k| {
+            k.rotation = 45;
+            k.scale = (3000, 3000);
+        })]);
+        let got = opaque(&shown(&d, 0));
+        assert!(got.len() > 4);
+        for (at, c) in got {
+            assert!([RED, BLUE, GREEN, WHITE].contains(&c), "{at:?} {c:?}");
+        }
+    }
+
+    #[test]
+    fn tint_mixes_the_color_and_keeps_alpha() {
+        let black = |amount| {
+            quad_key(|k| {
+                k.tint = Some(Tint {
+                    color: Rgba::rgb(0, 0, 0),
+                    amount,
+                })
+            })
+        };
+        let full = opaque(&shown(&quad_doc(vec![black(255)]), 0));
+        assert_eq!(full.len(), 4);
+        assert!(full.iter().all(|p| p.1 == Rgba::rgb(0, 0, 0)));
+        let half = shown(&quad_doc(vec![black(128)]), 0);
+        assert_eq!(half[3 * 8 + 3], Rgba::rgb(127, 0, 0));
+        assert_eq!(half[4 * 8 + 4], Rgba::rgb(127, 127, 127));
+        // Con cantidad 0 no cambia nada.
+        let none = shown(&quad_doc(vec![black(0)]), 0);
+        assert_eq!(none, shown(&quad_doc(vec![quad_key(|_| {})]), 0));
+    }
+
+    #[test]
+    fn tweens_draw_the_in_between_frames() {
+        let mut a = InstanceKey::new(0, ArtboardId(2), (0, 0));
+        a.tween = Some(Tween::default());
+        a.opacity = 0;
+        let mut b = InstanceKey::new(2, ArtboardId(2), (4, 2));
+        b.opacity = 254;
+        let d = quad_doc(vec![a, b]);
+        let mid = shown(&d, 1);
+        let red = px(&mid, 2, 1);
+        assert_eq!((red.r, red.g, red.b, red.a), (255, 0, 0, 127));
+        let sprite = &d.artboards[0].sprite;
+        let ((x, y), image) = object_image(&d, sprite, LayerId(2), ObjectId(1), 1).unwrap();
+        assert_eq!((x, y, image.width(), image.height()), (2, 1, 2, 2));
+        // En la key final, lo de la key final (y después se queda).
+        assert_eq!(px(&shown(&d, 3), 4, 2).a, 254);
+        // Sin tween, salta.
+        let a = InstanceKey { tween: None, ..a };
+        assert_eq!(px(&shown(&quad_doc(vec![a, b]), 1), 0, 0).a, 0);
     }
 }

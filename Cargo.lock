@@ -1094,6 +1094,7 @@ dependencies = [
  "cs-3d",
  "cs-commands",
  "cs-core",
+ "cs-raster",
  "log",
 ]
 
