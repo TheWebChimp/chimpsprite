@@ -140,13 +140,18 @@ pub struct IsoDialog {
     indexed: bool,
     /// La vista previa y con qué se armó.
     preview: Option<(IsoSettings, TextureHandle)>,
+    /// El dibujo y con qué se armó (las pilas grandes tardan: no se rehace cada frame).
+    drawn: Option<(IsoSettings, IsoImage)>,
 }
 
 impl IsoDialog {
-    /// Con lo de la última vez (o lo de fábrica); con Shade from, desde `primary`.
+    /// Con lo de la última vez (o lo de fábrica); con Shade from, desde `primary` si sirve de
+    /// base: transparente o casi negro no da tonos (no hay nada más oscuro para la cara derecha
+    /// ni el contorno), así que queda el base de antes.
     pub fn new(settings: IsoSettings, primary: Rgba, palette: &[Rgba], indexed: bool) -> Self {
         let mut settings = settings;
-        if settings.shade {
+        let usable = primary.a >= 128 && primary.r.max(primary.g).max(primary.b) >= 40;
+        if settings.shade && usable {
             settings.set_base(primary);
         }
         Self {
@@ -154,6 +159,7 @@ impl IsoDialog {
             palette: palette.to_vec(),
             indexed,
             preview: None,
+            drawn: None,
         }
     }
 
@@ -177,6 +183,14 @@ impl IsoDialog {
         }
     }
 
+    /// [`Self::image`], rehecho solo si cambió algo.
+    fn drawn(&mut self) -> &IsoImage {
+        if self.drawn.as_ref().is_none_or(|(s, _)| *s != self.settings) {
+            self.drawn = Some((self.settings.clone(), self.image()));
+        }
+        &self.drawn.as_ref().expect("just drawn").1
+    }
+
     /// El nombre del paso de undo al confirmar lo colocado.
     pub fn label(&self) -> &'static str {
         match self.settings.mode {
@@ -192,7 +206,7 @@ impl IsoDialog {
             });
         // Sin nada que colocar (todas las pilas vacías), Place no hace nada.
         let result = match result {
-            DialogResult::Accept if self.image().width == 0 => DialogResult::Open,
+            DialogResult::Accept if self.drawn().width == 0 => DialogResult::Open,
             other => other,
         };
         finish(ctx, open, result)
@@ -323,7 +337,7 @@ impl IsoDialog {
 
     /// El dibujo ampliado (en pasos enteros si entra) sobre el damero, y su tamaño.
     fn preview(&mut self, ui: &mut egui::Ui) {
-        let image = self.image();
+        let image = self.drawn().clone();
         let stale = self
             .preview
             .as_ref()

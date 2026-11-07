@@ -55,6 +55,17 @@ fn shade_from_follows_the_primary_and_a_face_by_hand_turns_it_off() {
 }
 
 #[test]
+fn a_black_or_transparent_primary_keeps_the_last_base() {
+    let last = IsoSettings::default();
+    for primary in [Rgba::rgb(0, 0, 0), Rgba::rgb(20, 30, 10), Rgba::TRANSPARENT] {
+        let d = IsoDialog::new(last.clone(), primary, &[], false);
+        assert_eq!(d.settings.base, last.base, "{primary:?}");
+    }
+    let d = IsoDialog::new(last.clone(), Rgba::rgb(60, 20, 20), &[], false);
+    assert_eq!(d.settings.base, Rgba::rgb(60, 20, 20));
+}
+
+#[test]
 fn the_corner_is_shared_by_the_box_and_the_blocks() {
     let mut s = IsoSettings::default();
     s.set_corner(IsoCorner::Four);

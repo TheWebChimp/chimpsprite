@@ -183,3 +183,6 @@ pub fn iso_blocks(blocks: &IsoBlocks, outline: bool, highlight: bool) -> IsoPart
    el PR de Aseprite; se dibuja con líneas finas (no escalonadas) igual que la ortogonal.
 10. **Menú**: Edit → Iso Box… (junto a Insert Text), sin atajo ni ícono en la barra de
     herramientas.
+11. **Primario negro o transparente**: con Shade from, el diálogo toma el primario como base solo
+    si es opaco y no casi negro (algún canal ≥ 40); si no, queda el base de la vez anterior (de
+    fábrica, un azul): del negro no salen tonos más oscuros para la cara derecha ni el contorno.
