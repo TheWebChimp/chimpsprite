@@ -50,8 +50,8 @@ fn paper_color(color: NoteColor) -> Color32 {
     }
 }
 /// El papel de una nota nueva (el del diseño, sin la sombra) y el mínimo al agrandarla.
-pub const NEW_SIZE: (u32, u32) = (86, 89);
-const MIN_SIZE: Vec2 = vec2(60.0, 44.0);
+pub const NEW_SIZE: (u32, u32) = Note::DEFAULT_SIZE;
+const MIN_SIZE: Vec2 = vec2(Note::MIN_SIZE.0 as f32, Note::MIN_SIZE.1 as f32);
 /// La barra: sus 12 filas (con la línea de abajo), el "≡" y el "○" del diseño.
 const BAR_H: f32 = 12.0;
 const MENU: Rect = Rect {

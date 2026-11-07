@@ -197,6 +197,15 @@ pub struct Note {
     pub color: NoteColor,
 }
 
+impl Note {
+    /// El papel de una nota nueva, en puntos de interfaz (el de la pieza del skin, sin la sombra).
+    pub const DEFAULT_SIZE: (u32, u32) = (86, 89);
+    /// El papel más chico (al agrandarla): entran la barra y una línea de texto.
+    pub const MIN_SIZE: (u32, u32) = (60, 44);
+    /// El papel más grande.
+    pub const MAX_SIZE: (u32, u32) = (2048, 2048);
+}
+
 /// El color del papel de una nota.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum NoteColor {

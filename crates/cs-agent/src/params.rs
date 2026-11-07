@@ -106,6 +106,54 @@ pub struct SetArtboard {
     pub height: Option<u32>,
 }
 
+/// Paper color of a sticky note.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum NoteColorArg {
+    Yellow,
+    Pink,
+    Blue,
+    Green,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct AddNote {
+    pub doc: String,
+    /// The note's text (one line per "\n"). Default: empty.
+    #[serde(default)]
+    pub text: String,
+    /// World position [x, y] of the top-left corner (the same space as artboard positions).
+    /// Default: right of the canvas artboards.
+    pub position: Option<[i32; 2]>,
+    /// Paper size [w, h] in UI points: it does not scale with the zoom. Default [86, 89];
+    /// minimum [60, 44].
+    pub size: Option<[u32; 2]>,
+    /// Default: yellow.
+    pub color: Option<NoteColorArg>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct SetNote {
+    pub doc: String,
+    /// Note id (see describe → sticky_notes).
+    pub note: u32,
+    pub text: Option<String>,
+    pub position: Option<[i32; 2]>,
+    /// Paper size [w, h] in UI points; minimum [60, 44].
+    pub size: Option<[u32; 2]>,
+    pub color: Option<NoteColorArg>,
+    /// Draw it above the other notes.
+    #[serde(default)]
+    pub to_front: bool,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+pub struct NoteOnly {
+    pub doc: String,
+    /// Note id (see describe → sticky_notes).
+    pub note: u32,
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct ArtboardOnly {
     pub doc: String,

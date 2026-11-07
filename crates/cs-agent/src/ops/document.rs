@@ -194,8 +194,10 @@ fn describe_document(id: &str, d: &OpenDoc) -> Value {
         "can_undo": d.history.can_undo(),
         "can_redo": d.history.can_redo(),
         "artboards": artboards,
+        "sticky_notes": crate::ops::notes::describe_notes(&d.document),
         "notes": "Coordinates are artboard pixels from the top-left. Frames are 0-based. \
-                  Cels sharing an image id are linked (editing one edits all).",
+                  Cels sharing an image id are linked (editing one edits all). Sticky notes \
+                  are canvas annotations: world position, size in UI points; never exported.",
     })
 }
 
