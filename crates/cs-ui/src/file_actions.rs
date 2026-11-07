@@ -124,6 +124,7 @@ impl ChimpApp {
             || self.select_dialog.is_some()
             || self.frame_dialog.is_some()
             || self.sheet_dialog.is_some()
+            || self.expand_dialog.is_some()
             || self.shortcuts.is_some()
             || self.preferences
     }

@@ -4,6 +4,7 @@ mod anim_ops;
 mod app_actions;
 mod app_menus;
 mod appearance;
+mod artboard_sheets;
 mod artboard_window;
 mod autosave;
 mod bake_dialog;
@@ -21,6 +22,7 @@ mod dialog_tests;
 mod dock;
 mod edit_ops;
 mod editor;
+mod expand_dialog;
 mod export_dialog;
 mod fg_bg;
 mod file_actions;
@@ -199,6 +201,8 @@ pub struct ChimpApp {
     frame_dialog: Option<frame_dialog::FramePropertiesDialog>,
     /// File → Import Sprite Sheet… abierto.
     sheet_dialog: Option<sheet_dialog::SheetDialog>,
+    /// Expand to Spritesheet… (menú de un artboard) abierto.
+    expand_dialog: Option<expand_dialog::ExpandDialog>,
     /// `InputState::time` del último avance de Play in Place (`None` sin nada animándose).
     in_place_time: Option<f64>,
     /// La ventanita de preview (abierta con `view.preview`).
@@ -355,6 +359,7 @@ impl ChimpApp {
             select_dialog: None,
             frame_dialog: None,
             sheet_dialog: None,
+            expand_dialog: None,
             in_place_time: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
@@ -1147,6 +1152,8 @@ impl ChimpApp {
                 self.open_sprite_dialog(|a| SpriteDialog::Size(SpriteSizeDialog::new(a)));
             }
             ArtboardRequest::CanvasSize => self.open_canvas_size(),
+            ArtboardRequest::ExpandSheet => self.open_expand_sheet(),
+            ArtboardRequest::SliceFrames => self.open_slice_frames(),
         }
     }
 
@@ -1261,10 +1268,15 @@ impl ChimpApp {
             tilemap_dialog::DialogResult::Open => {}
             tilemap_dialog::DialogResult::Accept => {
                 let name = dialog.name.clone();
+                let slice = dialog.purpose != sheet_dialog::SheetPurpose::Import;
                 match dialog.sprite() {
                     Some(sprite) => {
                         self.sheet_dialog = None;
-                        self.open_sheet_sprite(&name, sprite);
+                        if slice {
+                            self.add_sliced_artboard(&name, sprite);
+                        } else {
+                            self.open_sheet_sprite(&name, sprite);
+                        }
                     }
                     None => self.show_message(
                         "Nothing to import",
@@ -1937,6 +1949,7 @@ impl eframe::App for ChimpApp {
         self.update_select_dialog(&ctx);
         self.update_frame_dialog(&ctx);
         self.update_sheet_dialog(&ctx);
+        self.update_expand_dialog(&ctx);
         self.update_settings_windows(&ctx);
         self.update_palette_windows(&ctx, modal);
         self.update_grid_dialog(&ctx);

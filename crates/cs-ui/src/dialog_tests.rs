@@ -86,6 +86,8 @@ impl DialogHarness {
             app.update_bake_dialog(&ctx);
             app.update_gif_dialog(&ctx);
             app.update_symbol_dialog(&ctx);
+            app.update_sheet_dialog(&ctx);
+            app.update_expand_dialog(&ctx);
             app.show_dialogs(&ctx);
             app.update_palette_windows(&ctx, false);
             app.update_grid_dialog(&ctx);
@@ -1549,4 +1551,72 @@ fn glyphs_from_an_image_go_to_the_active_font() {
     let e = &h.app.doc.editor;
     let bang = e.font().unwrap().index_of('!').unwrap();
     assert!(e.sprite().cel(e.layer, bang).is_some());
+}
+
+// --- Expand to Spritesheet / Slice into Frames ---
+
+/// La app con un artboard "Walk" de 8×8 y 4 frames activo.
+fn walk(pixel_ui: bool) -> DialogHarness {
+    let mut h = DialogHarness::new(pixel_ui);
+    let mut sprite = cs_core::Sprite::new(8, 8, cs_core::ColorMode::Rgba);
+    sprite.frames = vec![cs_core::Frame { duration_ms: 100 }; 4];
+    assert!(
+        h.app
+            .doc
+            .editor
+            .add_artboard_with_sprite("Walk".into(), sprite)
+    );
+    h.settle();
+    h
+}
+
+#[test]
+fn expand_to_spritesheet_shows_the_preview_and_adds_the_sheet() {
+    for pixel_ui in [true, false] {
+        let mut h = walk(pixel_ui);
+        let before = h.app.doc.editor.document.artboards.len();
+        h.app.doc.canvas.artboard_request = Some(crate::canvas::ArtboardRequest::ExpandSheet);
+        h.app.artboard_request();
+        h.settle();
+        assert!(h.drew_text("Expand to Spritesheet"), "{:?}", h.texts);
+        assert!(
+            h.texts.iter().any(|t| t.contains("2 × 2 cells, 16×16 px")),
+            "{:?}",
+            h.texts
+        );
+        h.click("Columns");
+        assert_eq!(
+            h.app.expand_dialog.as_ref().unwrap().shape,
+            crate::expand_dialog::SheetShape::Columns
+        );
+        h.click("Expand");
+        assert!(h.app.expand_dialog.is_none(), "pixel_ui {pixel_ui}");
+        let e = &h.app.doc.editor;
+        assert_eq!(e.document.artboards.len(), before + 1);
+        assert_eq!(e.artboard().name, "Walk Sheet");
+        // Columns empieza en las automáticas (2): 2 × 2.
+        assert_eq!((e.sprite().width, e.sprite().height), (16, 16));
+        h.app.doc.editor.undo();
+        assert_eq!(h.app.doc.editor.document.artboards.len(), before);
+    }
+}
+
+#[test]
+fn slice_into_frames_reuses_the_sheet_dialog_with_its_own_title() {
+    let mut h = walk(true);
+    h.app.doc.canvas.artboard_request = Some(crate::canvas::ArtboardRequest::SliceFrames);
+    h.app.artboard_request();
+    h.settle();
+    assert!(h.drew_text("Slice into Frames"), "{:?}", h.texts);
+    h.click("Columns × Rows");
+    let dialog = h.app.sheet_dialog.as_mut().unwrap();
+    assert_eq!(dialog.mode, crate::sheet_dialog::CutMode::Counts);
+    dialog.counts = (2, 2);
+    h.click("Slice");
+    assert!(h.app.sheet_dialog.is_none());
+    let e = &h.app.doc.editor;
+    assert_eq!(e.artboard().name, "Walk Frames");
+    // Un frame vacío: las celdas vacías del final no se agregan (queda la primera).
+    assert_eq!((e.sprite().width, e.sprite().height), (4, 4));
+    assert_eq!(h.app.tabs.docs(&h.app.doc).len(), 1, "no new tab");
 }

@@ -2126,7 +2126,12 @@ impl CanvasView {
             return;
         }
         menus::separator(ui);
-        // Play in Place: no en fuentes ni modelos.
+        // Play in Place, Expand to Spritesheet y Slice into Frames: no en fuentes ni modelos (Play
+        // y Expand piden más de un frame).
+        let plain = editor
+            .document
+            .artboard(id)
+            .is_some_and(|a| a.font.is_none() && a.model.is_none());
         let mut playing = editor.is_playing_in_place(id);
         if ui
             .add_enabled(
@@ -2136,6 +2141,23 @@ impl CanvasView {
             .clicked()
         {
             editor.toggle_play_in_place(id);
+            ui.close();
+        }
+        if ui
+            .add_enabled(
+                editor.can_play_in_place(id),
+                menus::plain("Expand to Spritesheet…"),
+            )
+            .clicked()
+        {
+            self.artboard_request = Some(ArtboardRequest::ExpandSheet);
+            ui.close();
+        }
+        if ui
+            .add_enabled(plain, menus::plain("Slice into Frames…"))
+            .clicked()
+        {
+            self.artboard_request = Some(ArtboardRequest::SliceFrames);
             ui.close();
         }
         menus::separator(ui);
@@ -2214,6 +2236,10 @@ pub enum ArtboardRequest {
     Properties,
     SpriteSize,
     CanvasSize,
+    /// Expand to Spritesheet… del artboard activo.
+    ExpandSheet,
+    /// Slice into Frames… del artboard activo.
+    SliceFrames,
 }
 
 fn artboard_cursor(hit: Option<ArtboardHit>) -> egui::CursorIcon {
