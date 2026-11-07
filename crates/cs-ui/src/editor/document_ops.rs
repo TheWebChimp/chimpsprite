@@ -3,9 +3,6 @@
 
 use super::*;
 
-/// Cuánto se corre (en el mundo, abajo y a la derecha) la copia de una nota duplicada.
-const DUPLICATE_NOTE_OFFSET: i32 = 12;
-
 impl Editor {
     /// Crea un artboard vacío del tamaño dado a la derecha de los existentes y lo activa.
     pub fn add_artboard(&mut self, width: u32, height: u32) {
@@ -284,14 +281,12 @@ impl Editor {
             .then_some(id)
     }
 
-    /// Una copia de la nota `id` un poco más abajo y a la derecha, arriba de todas.
-    pub fn duplicate_note(&mut self, id: u32) -> Option<u32> {
+    /// Una copia de la nota `id` corrida `offset` píxeles del mundo abajo y a la derecha,
+    /// arriba de todas.
+    pub fn duplicate_note(&mut self, id: u32, offset: i32) -> Option<u32> {
         let mut note = self.document.note(id)?.clone();
         note.id = self.document.next_note_id();
-        note.position = (
-            note.position.0 + DUPLICATE_NOTE_OFFSET,
-            note.position.1 + DUPLICATE_NOTE_OFFSET,
-        );
+        note.position = (note.position.0 + offset, note.position.1 + offset);
         self.insert_note(note)
     }
 

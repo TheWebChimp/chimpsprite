@@ -67,6 +67,8 @@ const SHADOW: Vec2 = vec2(1.0, 2.0);
 const TEXT_MARGIN: f32 = 5.0;
 /// La esquina para agrandar.
 const RESIZE: f32 = 10.0;
+/// Cuánto se corre (en puntos, abajo y a la derecha) la copia de una nota duplicada.
+const DUPLICATE_OFFSET: f32 = 12.0;
 const PAPER: Color32 = Color32::from_rgb(248, 197, 58);
 const INK: Color32 = Color32::from_rgb(5, 4, 3);
 
@@ -112,6 +114,8 @@ pub struct NotesView {
     pressed_body: Option<u32>,
     /// La nota recién pegada con la herramienta Note: se escribe en ella al soltar el clic.
     edit_on_release: Option<u32>,
+    /// Puntos de pantalla por píxel del mundo, del último `show`.
+    zoom: f32,
 }
 
 /// El papel de una nota en pantalla (sin la sombra): su esquina en el mundo y su tamaño en puntos.
@@ -410,6 +414,7 @@ impl NotesView {
         to_screen: &dyn Fn((i32, i32)) -> Pos2,
     ) -> Vec<(u32, Rect)> {
         let ppp = ui.ctx().pixels_per_point();
+        self.zoom = (to_screen((1, 0)).x - to_screen((0, 0)).x).max(f32::EPSILON);
         let piece_of = |name: &str| skin.and_then(|s| s.piece(name, WidgetState::Normal));
         let strip = piece_of(COLORS_PIECE);
         // Con barra: la del puntero, la que se arrastra y la que se escribe.
@@ -564,7 +569,9 @@ impl NotesView {
                 }
                 if ui.add(menus::plain("Duplicate")).clicked() {
                     self.finish_editing(editor);
-                    editor.duplicate_note(id);
+                    // La copia se corre lo mismo en pantalla con cualquier zoom.
+                    let offset = (DUPLICATE_OFFSET / self.zoom).round().clamp(1.0, 1000.0) as i32;
+                    editor.duplicate_note(id, offset);
                     ui.close();
                 }
                 menus::separator(ui);

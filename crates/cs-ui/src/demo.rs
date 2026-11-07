@@ -692,6 +692,28 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
                 .set_note_text(id, "Revisar la animación del mono 🐒".into());
             app.doc.editor.set_note_color(id, cs_core::NoteColor::Blue);
         }
+        // Con `many`, una amarilla de varias líneas encima del artboard y una rosa duplicada; con
+        // `edit`, además se escribe en la amarilla (con su barra y la tira de colores).
+        let mode = std::env::var("CHIMPSPRITE_DEMO_NOTE").unwrap_or_default();
+        if (mode == "many" || mode == "edit")
+            && let Some(id) = app.doc.editor.add_note((-40, 8))
+        {
+            app.doc
+                .editor
+                .set_note_text(id, "TODO:\n- walk cycle\n- idle blink".into());
+            if let Some(copy) = app.doc.editor.duplicate_note(id, 12) {
+                app.doc
+                    .editor
+                    .set_note_text(copy, "Ask about palette".into());
+                app.doc
+                    .editor
+                    .set_note_color(copy, cs_core::NoteColor::Pink);
+            }
+            if mode == "edit" {
+                app.doc.editor.note_to_front(id);
+                app.doc.canvas.notes.start_editing(&mut app.doc.editor, id);
+            }
+        }
     }
     // Desarrollo: el panel Dafont del dock abierto, para capturas.
     #[cfg(not(target_arch = "wasm32"))]

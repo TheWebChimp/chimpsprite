@@ -54,7 +54,7 @@ fn duplicate_copies_a_note_a_bit_down_and_right_on_top() {
     let b = e.add_note((50, 0)).unwrap();
     e.set_note_text(a, "copy me".into());
     e.set_note_color(a, NoteColor::Blue);
-    let c = e.duplicate_note(a).unwrap();
+    let c = e.duplicate_note(a, 12).unwrap();
     assert_ne!(c, a);
     assert_ne!(c, b);
     let ids: Vec<u32> = e.document.notes.iter().map(|n| n.id).collect();
@@ -66,7 +66,7 @@ fn duplicate_copies_a_note_a_bit_down_and_right_on_top() {
         (&orig.text, orig.color, orig.size)
     );
     assert_eq!(last_step(&e), Some("New Note"));
-    assert!(e.duplicate_note(99).is_none());
+    assert!(e.duplicate_note(99, 12).is_none());
 }
 
 #[test]
