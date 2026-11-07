@@ -22,8 +22,8 @@ const STEPPER_W: f32 = 96.0;
 /// Ángulos por segundo de la vista previa.
 const PREVIEW_FPS: f64 = 8.0;
 /// Los límites del zoom (%) y de la altura (1/16 de unidad).
-const ZOOM: RangeInclusive<u32> = 10..=1000;
-const HEIGHT: RangeInclusive<i32> = -1024..=1024;
+pub(crate) const ZOOM: RangeInclusive<u32> = 10..=1000;
+pub(crate) const HEIGHT: RangeInclusive<i32> = -1024..=1024;
 
 /// La vista previa calculada: para qué opciones y ángulo, su tamaño y su textura.
 struct Preview {

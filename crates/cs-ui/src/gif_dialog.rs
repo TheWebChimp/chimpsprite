@@ -2,17 +2,22 @@
 //! GIF animado o a una tira PNG, con la cámara de Sheet settings más el FOV, el contorno, las
 //! scanlines, un preset de render (resolución y paleta), la escala, el fondo, la duración de cada
 //! frame y el loop. A la derecha, la vista previa animada.
+//!
+//! Las opciones se recuerdan entre sesiones en la configuración de la app (no en el documento):
+//! ver [`GifSettings`].
 
 use std::ops::RangeInclusive;
 use std::time::Duration;
 
 use cs_core::{ArtboardId, Document, Rgba};
 use cs_render::{
-    BAKE_FOV, RenderPreset, SCANLINES, TURNTABLE_FRAME_MS, TURNTABLE_SCALE, TurntableOptions,
+    BAKE_FOV, BAKE_FRAMES, BAKE_SIZE, BAKE_TILT, Motion, RenderPreset, SCANLINES,
+    TURNTABLE_FRAME_MS, TURNTABLE_SCALE, TurntableOptions,
 };
 use eframe::egui::{self, Color32, Rect, Ui, vec2};
+use serde::{Deserialize, Serialize};
 
-use crate::bake_dialog::{camera_fields, check, number, number_sized, row};
+use crate::bake_dialog::{HEIGHT, ZOOM, camera_fields, check, number, number_sized, row};
 use crate::editor::Editor;
 use crate::skin::Skin;
 use crate::tilemap_dialog::{DialogResult, dialog_window_with, finish};
@@ -49,6 +54,141 @@ impl GifFormat {
     }
 }
 
+/// Lo último que se exportó con GIF settings, para la próxima vez (también en otra sesión): se
+/// guarda en la configuración de la app (`chimpsprite.gif`), no en el documento. Cada campo que
+/// falte (un archivo de configuración de antes, o nada exportado todavía) toma lo del modelo
+/// ([`TurntableOptions::from_model`]); un valor fuera de rango (el archivo a mano) se recorta.
+/// Motion y Render van por su nombre: uno que ya no exista se ignora.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct GifSettings {
+    pub motion: Option<String>,
+    pub frames: Option<u32>,
+    pub size: Option<u32>,
+    pub zoom: Option<u32>,
+    /// En décimas de grado, como [`cs_render::BakeOptions::tilt`].
+    pub tilt: Option<i32>,
+    pub height: Option<i32>,
+    pub ortho: Option<bool>,
+    /// En décimas de grado.
+    pub fov: Option<i32>,
+    pub render: Option<String>,
+    pub scale: Option<u32>,
+    /// La casilla y su color (el color queda aunque se apague).
+    pub outline: Option<bool>,
+    pub outline_color: Option<Rgba>,
+    pub scanlines: Option<bool>,
+    pub scanline_strength: Option<u8>,
+    pub background: Option<bool>,
+    pub background_color: Option<Rgba>,
+    pub frame_ms: Option<u32>,
+    pub looping: Option<bool>,
+    /// "gif" o "png".
+    pub format: Option<String>,
+}
+
+impl GifSettings {
+    /// Todo lo del diálogo `d`.
+    pub fn of(d: &GifDialog) -> GifSettings {
+        let (o, bake) = (&d.options, &d.options.bake);
+        GifSettings {
+            motion: Some(bake.motion.label().to_owned()),
+            frames: Some(bake.frames),
+            size: Some(bake.size),
+            zoom: Some(bake.zoom),
+            tilt: Some(bake.tilt),
+            height: Some(bake.height),
+            ortho: Some(bake.ortho),
+            fov: Some(bake.fov),
+            render: Some(o.preset.label().to_owned()),
+            scale: Some(o.scale),
+            outline: Some(o.outline.is_some()),
+            outline_color: o.outline,
+            scanlines: Some(o.scanlines.is_some()),
+            scanline_strength: o.scanlines,
+            background: Some(o.background.is_some()),
+            background_color: o.background,
+            frame_ms: Some(o.frame_ms),
+            looping: Some(o.looping),
+            format: Some(d.format.extension().to_owned()),
+        }
+    }
+
+    /// Pone en `d` lo que se recuerda (lo que falte queda como está).
+    fn apply(&self, d: &mut GifDialog) {
+        let o = &mut d.options;
+        let b = &mut o.bake;
+        if let Some(m) = self.motion.as_deref().and_then(motion_named) {
+            b.motion = m;
+        }
+        set(&mut b.frames, self.frames, BAKE_FRAMES);
+        set(&mut b.size, self.size, BAKE_SIZE);
+        set(&mut b.zoom, self.zoom, ZOOM);
+        set(&mut b.tilt, self.tilt, BAKE_TILT);
+        set(&mut b.height, self.height, HEIGHT);
+        b.ortho = self.ortho.unwrap_or(b.ortho);
+        set(&mut b.fov, self.fov, BAKE_FOV);
+        if let Some(p) = self.render.as_deref().and_then(preset_named) {
+            o.preset = p;
+        }
+        set(&mut o.scale, self.scale, TURNTABLE_SCALE);
+        toggle(
+            &mut o.outline,
+            self.outline,
+            self.outline_color,
+            Rgba::rgb(0, 0, 0),
+        );
+        let strength = self
+            .scanline_strength
+            .map(|s| s.clamp(*SCANLINES.start(), *SCANLINES.end()));
+        toggle(&mut o.scanlines, self.scanlines, strength, 50);
+        toggle(
+            &mut o.background,
+            self.background,
+            self.background_color,
+            Rgba::rgb(0, 0, 0),
+        );
+        set(&mut o.frame_ms, self.frame_ms, TURNTABLE_FRAME_MS);
+        o.looping = self.looping.unwrap_or(o.looping);
+        match self.format.as_deref() {
+            Some("gif") => d.format = GifFormat::Gif,
+            Some("png") => d.format = GifFormat::Png,
+            _ => {}
+        }
+    }
+}
+
+/// `value` recortado a `range`, si hay.
+fn set<T: Copy + PartialOrd>(target: &mut T, value: Option<T>, range: RangeInclusive<T>) {
+    if let Some(v) = value {
+        *target = if v < *range.start() {
+            *range.start()
+        } else if v > *range.end() {
+            *range.end()
+        } else {
+            v
+        };
+    }
+}
+
+/// Una casilla con su valor: `on` la prende (con `value`, lo que ya tenía o `default`) o la apaga;
+/// sin `on`, queda como está.
+fn toggle<T: Copy>(target: &mut Option<T>, on: Option<bool>, value: Option<T>, default: T) {
+    match on {
+        Some(true) => *target = Some(value.or(*target).unwrap_or(default)),
+        Some(false) => *target = None,
+        None => {}
+    }
+}
+
+fn motion_named(name: &str) -> Option<Motion> {
+    Motion::ALL.into_iter().find(|m| m.label() == name)
+}
+
+fn preset_named(name: &str) -> Option<RenderPreset> {
+    RenderPreset::ALL.into_iter().find(|p| p.label() == name)
+}
+
 /// La vista previa calculada: para qué opciones, ángulo y escala, su tamaño y su textura.
 struct Preview {
     key: (TurntableOptions, u32, u32),
@@ -71,6 +211,14 @@ pub struct GifDialog {
 }
 
 impl GifDialog {
+    /// Para el modelo que se edita en `editor`, con las opciones de
+    /// [`TurntableOptions::from_model`] y encima lo que se recuerda de la última vez.
+    pub fn with_settings(editor: &Editor, settings: &GifSettings) -> Self {
+        let mut dialog = Self::new(editor);
+        settings.apply(&mut dialog);
+        dialog
+    }
+
     /// Para el modelo que se edita en `editor`, con las opciones de
     /// [`TurntableOptions::from_model`].
     pub fn new(editor: &Editor) -> Self {

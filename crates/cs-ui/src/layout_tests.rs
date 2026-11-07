@@ -2213,7 +2213,7 @@ fn with_pixel_ui_new_palette_on_an_rgba_sprite_needs_no_confirmation() {
 
 /// Un `eframe::Storage` en memoria.
 #[derive(Default)]
-struct MemoryStorage(std::collections::HashMap<String, String>);
+pub(crate) struct MemoryStorage(pub std::collections::HashMap<String, String>);
 
 impl eframe::Storage for MemoryStorage {
     fn get_string(&self, key: &str) -> Option<String> {
