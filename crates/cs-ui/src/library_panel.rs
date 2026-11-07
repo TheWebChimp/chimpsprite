@@ -1,6 +1,7 @@
 //! El panel Library del dock: los símbolos, los modelos 3D y las fuentes del documento. Arriba, la
 //! vista previa animada de lo elegido; abajo, tres secciones (Symbols, Models, Fonts) con su
-//! cuenta y, en cada fila, su miniatura, su nombre y cuántas instancias la usan. Cada fila se
+//! cuenta y, en cada fila, su miniatura, su nombre y cuántas instancias la usan (las fuentes de
+//! una familia van juntas bajo su nombre, ver [`font_entries`]). Cada fila se
 //! renombra con F2, tiene su menú (Edit Symbol u Open, Rename, Duplicate, Place on Canvas,
 //! Delete) y los símbolos y modelos se arrastran al lienzo (ver [`SymbolPayload`]). El doble clic
 //! entra al símbolo o abre la pestaña del modelo o de la fuente.
@@ -27,6 +28,9 @@ const ROW_HEIGHT: f32 = 20.0;
 const THUMB: f32 = 16.0;
 /// Aire a la izquierda de la miniatura y entre ella y el nombre.
 const ROW_PAD: f32 = 4.0;
+/// Alto del encabezado de una familia de fuentes y cuánto se corren a la derecha sus filas.
+const FAMILY_HEIGHT: f32 = 14.0;
+const FAMILY_INDENT: f32 = 8.0;
 
 /// Lo que el usuario pidió en el panel (lo resuelve la app).
 #[derive(Clone, Debug, PartialEq)]
@@ -75,12 +79,20 @@ enum Kind {
     Font,
 }
 
+/// Una entrada de la sección Fonts: una fuente suelta (la única de su familia) o una familia con
+/// sus fuentes, cada una con el nombre de su estilo (lo que se ve en su fila).
+#[derive(Clone, Debug, PartialEq)]
+enum FontEntry {
+    Font(Row),
+    Family(String, Vec<(Row, String)>),
+}
+
 /// Las filas de las tres secciones.
 #[derive(Clone, Default)]
 struct Sections {
     symbols: Vec<Row>,
     models: Vec<Row>,
-    fonts: Vec<Row>,
+    fonts: Vec<FontEntry>,
 }
 
 impl Sections {
@@ -88,18 +100,74 @@ impl Sections {
         Sections {
             symbols: library_rows(doc),
             models: rows_sorted(doc, doc.models()),
-            fonts: rows_sorted(doc, doc.fonts()),
+            fonts: font_entries(doc),
         }
+    }
+
+    /// Las filas de las fuentes, de arriba a abajo.
+    fn font_rows(&self) -> impl Iterator<Item = &Row> {
+        self.fonts.iter().flat_map(|e| {
+            let (alone, members) = match e {
+                FontEntry::Font(row) => (Some(row), &[][..]),
+                FontEntry::Family(_, members) => (None, &members[..]),
+            };
+            alone.into_iter().chain(members.iter().map(|(row, _)| row))
+        })
+    }
+
+    /// Cuántas fuentes hay (la cuenta del título Fonts).
+    fn font_count(&self) -> usize {
+        self.font_rows().count()
     }
 
     /// Todas las filas, de arriba a abajo.
     fn all(&self) -> Vec<Row> {
-        [&self.symbols, &self.models, &self.fonts]
-            .into_iter()
-            .flatten()
+        self.symbols
+            .iter()
+            .chain(&self.models)
+            .chain(self.font_rows())
             .cloned()
             .collect()
     }
+}
+
+/// La sección Fonts: las fuentes de una misma familia (las que comparten su nombre de familia),
+/// juntas bajo ella, la Regular primero y luego por peso e itálica; las solas de su familia,
+/// sueltas. Familias y sueltas van por nombre (sin distinguir mayúsculas).
+fn font_entries(doc: &Document) -> Vec<FontEntry> {
+    let mut families: Vec<(String, Vec<&Artboard>)> = Vec::new();
+    for a in doc.fonts() {
+        let Some(font) = &a.font else { continue };
+        match families.iter_mut().find(|(f, _)| *f == font.name) {
+            Some((_, members)) => members.push(a),
+            None => families.push((font.name.clone(), vec![a])),
+        }
+    }
+    let row = |a: &Artboard| (a.id, a.name.clone(), doc.instance_uses(a.id));
+    let mut entries: Vec<(String, FontEntry)> = families
+        .into_iter()
+        .map(|(family, mut members)| {
+            if let [a] = members[..] {
+                return (a.name.to_lowercase(), FontEntry::Font(row(a)));
+            }
+            members.sort_by_cached_key(|a| {
+                let s = &a.font.as_ref().expect("a font").style;
+                let regular = s.name.trim().eq_ignore_ascii_case("Regular");
+                (!regular, s.weight, s.italic, a.name.to_lowercase())
+            });
+            let members = members
+                .into_iter()
+                .map(|a| {
+                    let style = a.font.as_ref().expect("a font").style.name.trim();
+                    let shown = if style.is_empty() { &a.name } else { style };
+                    (row(a), shown.to_owned())
+                })
+                .collect();
+            (family.to_lowercase(), FontEntry::Family(family, members))
+        })
+        .collect();
+    entries.sort_by(|(a, _), (b, _)| a.cmp(b));
+    entries.into_iter().map(|(_, e)| e).collect()
 }
 
 impl LibraryState {
@@ -261,26 +329,56 @@ pub fn show(
         (
             "Symbols",
             Kind::Symbol,
-            &sections.symbols,
+            sections.symbols.len(),
             "F8 makes a symbol",
         ),
         (
             "Models",
             Kind::Model,
-            &sections.models,
+            sections.models.len(),
             "File → New 3D Model…",
         ),
-        ("Fonts", Kind::Font, &sections.fonts, "File → New Font…"),
+        (
+            "Fonts",
+            Kind::Font,
+            sections.font_count(),
+            "File → New Font…",
+        ),
     ];
-    for (title, kind, list, help) in parts {
-        label_with_hint(ui, title, &list.len().to_string());
+    for (title, kind, count, help) in parts {
+        label_with_hint(ui, title, &count.to_string());
         ui.add_space(2.0);
-        if list.is_empty() {
+        if count == 0 {
             ui.add(egui::Label::new(help).wrap());
         }
-        for (id, name, uses) in list {
-            if let Some(a) = row(ui, editor, skin, state, kind, (*id, name, *uses)) {
+        let mut show_row = |ui: &mut Ui, (id, name, uses): &Row, shown: &str, indent: f32| {
+            let look = (shown, indent);
+            if let Some(a) = row(ui, editor, skin, state, kind, (*id, name, *uses), look) {
                 action = Some(a);
+            }
+        };
+        match kind {
+            Kind::Symbol => sections
+                .symbols
+                .iter()
+                .for_each(|r| show_row(ui, r, &r.1, 0.0)),
+            Kind::Model => sections
+                .models
+                .iter()
+                .for_each(|r| show_row(ui, r, &r.1, 0.0)),
+            // Las fuentes de una familia, bajo su nombre y con el de su estilo.
+            Kind::Font => {
+                for entry in &sections.fonts {
+                    match entry {
+                        FontEntry::Font(r) => show_row(ui, r, &r.1, 0.0),
+                        FontEntry::Family(family, members) => {
+                            family_header(ui, skin, family);
+                            for (r, style) in members {
+                                show_row(ui, r, style, FAMILY_INDENT);
+                            }
+                        }
+                    }
+                }
             }
         }
         // Las fuentes también entran de afuera: TTF, OTF o el JSON de BitFontMaker2.
@@ -370,7 +468,30 @@ fn thumb(
     Some((texture, size))
 }
 
-/// Una fila de la lista: miniatura, nombre y usos. Devuelve lo que se pidió en ella.
+/// El encabezado de una familia de fuentes: su nombre, en el gris de las pistas, sobre sus
+/// filas (corridas a la derecha).
+fn family_header(ui: &mut Ui, skin: Option<&Skin>, family: &str) {
+    let width = ui.max_rect().width();
+    let (rect, response) = ui.allocate_exact_size(vec2(width, FAMILY_HEIGHT), Sense::hover());
+    let rect = Rect::from_min_size(rect.min.round(), rect.size());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, family));
+    let dim = match skin {
+        Some(skin) => skin.colors().text_dim,
+        None => ui.visuals().weak_text_color(),
+    };
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let mut job = egui::text::LayoutJob::simple_singleline(family.to_string(), font, dim);
+    job.wrap = egui::text::TextWrapping::truncate_at_width((rect.width() - 2.0 * ROW_PAD).max(0.0));
+    let galley = ui.painter().layout_job(job);
+    let at = pos2(
+        rect.left() + ROW_PAD,
+        rect.center().y - galley.size().y / 2.0,
+    );
+    ui.painter_at(rect).galley(at.round(), galley, dim);
+}
+
+/// Una fila de la lista: miniatura, nombre y usos. `shown` es lo que dice (el nombre, o el
+/// estilo bajo su familia) e `indent` cuánto se corre. Devuelve lo que se pidió en ella.
 fn row(
     ui: &mut Ui,
     editor: &mut Editor,
@@ -378,6 +499,7 @@ fn row(
     state: &mut LibraryState,
     kind: Kind,
     (id, name, uses): (ArtboardId, &str, usize),
+    (shown, indent): (&str, f32),
 ) -> Option<LibraryAction> {
     let mut action = None;
     let width = ui.max_rect().width();
@@ -405,7 +527,11 @@ fn row(
     }
     // La miniatura, sobre el damero.
     let thumb_rect = Rect::from_min_size(
-        pos2(rect.left() + ROW_PAD, rect.center().y - THUMB / 2.0).round(),
+        pos2(
+            rect.left() + ROW_PAD + indent,
+            rect.center().y - THUMB / 2.0,
+        )
+        .round(),
         vec2(THUMB, THUMB),
     );
     crate::panels::checker(&ui.painter_at(thumb_rect), thumb_rect);
@@ -462,7 +588,7 @@ fn row(
         }
     } else {
         // En una línea: lo que no cabe termina en "…".
-        let mut job = egui::text::LayoutJob::simple_singleline(name.to_string(), font, text);
+        let mut job = egui::text::LayoutJob::simple_singleline(shown.to_string(), font, text);
         job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - text_left).max(0.0));
         let galley = ui.painter().layout_job(job);
         let at = pos2(text_left, rect.center().y - galley.size().y / 2.0);
@@ -575,6 +701,63 @@ mod tests {
                 (ArtboardId(2), "walk".to_string(), 0)
             ]
         );
+    }
+
+    /// Un documento con fuentes de (artboard, familia, estilo, peso, itálica).
+    fn with_fonts(fonts: &[(u32, &str, &str, u16, bool)]) -> Document {
+        let mut doc = Document::with_sprite("host", Sprite::new(8, 8, ColorMode::Rgba));
+        for &(id, family, style, weight, italic) in fonts {
+            let mut a = doc.artboards[0].clone();
+            a.id = ArtboardId(id);
+            let font = cs_core::FontInfo {
+                style: cs_core::FontStyle {
+                    name: style.into(),
+                    weight,
+                    italic,
+                    ..Default::default()
+                },
+                ..cs_core::FontInfo::new(family, 8, cs_core::FontMode::OneBit)
+            };
+            a.name = font.full_name();
+            a.font = Some(font);
+            doc.artboards.push(a);
+        }
+        doc
+    }
+
+    #[test]
+    fn fonts_of_a_family_go_under_it_regular_first_and_lone_ones_stay_loose() {
+        let doc = with_fonts(&[
+            (2, "Mine", "Bold Italic", 700, true),
+            (3, "zed", "Regular", 400, false),
+            (4, "Mine", "Light", 300, false),
+            (5, "Mine", "Bold", 700, false),
+            (6, "Mine", "Regular", 400, false),
+            (7, "Ace", "Bold", 700, false),
+            (8, "Mine", "Italic", 400, true),
+        ]);
+        let row = |id: u32, name: &str| (ArtboardId(id), name.to_string(), 0);
+        assert_eq!(
+            font_entries(&doc),
+            vec![
+                // Una sola fuente de su familia (aunque sea Bold) va suelta, con su nombre.
+                FontEntry::Font(row(7, "Ace Bold")),
+                FontEntry::Family(
+                    "Mine".into(),
+                    vec![
+                        (row(6, "Mine"), "Regular".into()),
+                        (row(4, "Mine Light"), "Light".into()),
+                        (row(8, "Mine Italic"), "Italic".into()),
+                        (row(5, "Mine Bold"), "Bold".into()),
+                        (row(2, "Mine Bold Italic"), "Bold Italic".into()),
+                    ]
+                ),
+                FontEntry::Font(row(3, "zed")),
+            ]
+        );
+        let sections = Sections::of(&doc);
+        assert_eq!(sections.font_count(), 7);
+        assert_eq!(sections.all().len(), 7, "every font is a row");
     }
 
     #[test]

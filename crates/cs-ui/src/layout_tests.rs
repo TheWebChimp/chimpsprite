@@ -8258,6 +8258,47 @@ fn double_clicking_a_font_in_the_library_opens_its_tab_and_panel() {
 }
 
 #[test]
+fn the_library_lists_the_fonts_of_a_family_under_its_name() {
+    let mut h = with_library_items();
+    let e = &mut h.app.doc.editor;
+    assert!(e.new_font("Mine", (8, 8), cs_core::FontMode::OneBit));
+    let style = cs_core::FontStyle {
+        name: "Bold".into(),
+        weight: 700,
+        ..Default::default()
+    };
+    let recipe = cs_core::VariantRecipe::new(cs_core::VariantKind::Bold);
+    assert!(e.add_variant(&recipe, style));
+    assert!(e.new_font("Pixie", (8, 8), cs_core::FontMode::OneBit));
+    e.exit_workspace();
+    h.frame();
+    h.frame();
+    let text = |t: &str| {
+        h.text_rects
+            .iter()
+            .filter(|(x, _, _)| x == t)
+            .map(|(_, r, _)| *r)
+            .max_by(|a, b| a.top().total_cmp(&b.top()))
+            .unwrap_or_else(|| panic!("no {t:?} in {:?}", h.texts))
+    };
+    let (family, regular, bold, pixie) =
+        (text("Mine"), text("Regular"), text("Bold"), text("Pixie"));
+    assert!(family.top() < regular.top() && regular.top() < bold.top());
+    assert!(
+        bold.top() < pixie.top(),
+        "the families and loose fonts by name"
+    );
+    assert!(regular.left() > pixie.left(), "the styles go indented");
+    // Las filas siguen siendo las fuentes (con su nombre completo): se abren con doble clic.
+    let row = library_row(&h, "Mine Bold");
+    h.double_click(row.center());
+    assert_eq!(h.app.doc.editor.artboard().name, "Mine Bold");
+    // La cuenta del título: las tres fuentes.
+    reopen_library(&mut h);
+    assert!(h.text_rects.iter().any(|(t, _, _)| t == "3"));
+}
+
+#[test]
 fn renaming_a_model_in_the_library_renames_its_tab() {
     let mut h = with_library_items();
     let row = library_row(&h, "Ship");
