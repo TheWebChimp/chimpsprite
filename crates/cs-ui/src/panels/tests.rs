@@ -2002,3 +2002,33 @@ fn dragging_a_tile_thumbnail_onto_another_moves_it_in_one_undo_step() {
     assert_eq!(e.brush_tile(), t(1));
     assert_eq!(e.steps_done(), steps + 1);
 }
+
+#[test]
+fn the_object_panel_shows_the_transform_and_the_tween() {
+    let mut e = Editor::with_sprite(Sprite::new(16, 16, ColorMode::Rgba));
+    e.insert_empty_frame();
+    e.insert_empty_frame();
+    e.add_artboard(4, 4);
+    e.activate(cs_core::ArtboardId(1));
+    e.set_frame(0);
+    e.add_instance_layer(cs_core::ArtboardId(2));
+    let has = |texts: &[String], t: &str| texts.iter().any(|s| s == t);
+    let texts = object_panel_texts(&mut e);
+    for t in ["Scale", "Rotation", "Tint"] {
+        assert!(has(&texts, t), "{t} in {texts:?}");
+    }
+    assert!(!has(&texts, "Create Tween"), "no next keyframe yet");
+    e.set_frame(2);
+    e.update_instance_key(|k| k.rotation = 90);
+    e.set_frame(1);
+    let texts = object_panel_texts(&mut e);
+    assert!(has(&texts, "Create Tween"), "{texts:?}");
+    assert!(!has(&texts, "Ease"));
+    e.create_current_tween();
+    let texts = object_panel_texts(&mut e);
+    for t in ["Ease", "Classic", "Amount", "Remove Tween"] {
+        assert!(has(&texts, t), "{t} in {texts:?}");
+    }
+    // En medio del tween, los campos muestran lo que se ve: 45°.
+    assert!(has(&texts, "45"), "{texts:?}");
+}

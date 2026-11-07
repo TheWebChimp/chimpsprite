@@ -25,8 +25,8 @@ impl Editor {
                 // Con opacidad 0 no se ve: tampoco se toca.
                 if object
                     .track
-                    .key_at(self.frame)
-                    .is_none_or(|k| k.opacity == 0)
+                    .pose_at(self.frame)
+                    .is_none_or(|p| p.opacity == 0)
                 {
                     continue;
                 }

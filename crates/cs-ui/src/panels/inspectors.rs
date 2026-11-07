@@ -372,6 +372,7 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         });
     }
     gesture_end(editor, &[&rx, &ry]);
+    transform_rows(ui, editor, &key);
     let (mut fh, mut fv) = (key.flip_h, key.flip_v);
     ui.horizontal(|ui| {
         if crate::widgets::checkbox(ui, &mut fh, "Flip H").changed() {
@@ -454,12 +455,166 @@ pub fn instance(ui: &mut egui::Ui, editor: &mut Editor) -> bool {
         });
     }
     gesture_end(editor, &[&first_response]);
+    tween_rows(ui, editor);
     let entered = crate::pixel_ui::text_button(ui, "Edit Symbol")
         .tip("Edit the source symbol (double-click with Move)")
         .clicked()
         && editor.enter_instance();
     ui.separator();
     entered
+}
+
+/// Escala, rotación y tinte de `key` (lo que se ve del objeto actual en este frame): cada campo
+/// cambia solo lo suyo en los objetos que se editan (un paso de undo por gesto).
+fn transform_rows(ui: &mut egui::Ui, editor: &mut Editor, key: &cs_core::InstanceKey) {
+    // La key guarda milésimas; el panel muestra porcentajes enteros.
+    let percent = |milli: i32| (milli as f32 / 10.0).round() as i32;
+    let (mut sx, mut sy) = (percent(key.scale.0), percent(key.scale.1));
+    let (rx, ry) = ui
+        .horizontal(|ui| {
+            ui.label("Scale");
+            let rx = widgets::number(ui, &mut sx, 1..=10000, "%");
+            let ry = widgets::number(ui, &mut sy, 1..=10000, "%");
+            (rx, ry)
+        })
+        .inner;
+    if let Some(group) = gesture_group(editor, &[&rx, &ry]) {
+        let (cx, cy) = (sx != percent(key.scale.0), sy != percent(key.scale.1));
+        editor.update_instance_key_grouped(Some(group), |k| {
+            if cx {
+                k.scale.0 = sx * 10;
+            }
+            if cy {
+                k.scale.1 = sy * 10;
+            }
+        });
+    }
+    gesture_end(editor, &[&rx, &ry]);
+    let mut rotation = key.rotation;
+    let r = ui
+        .horizontal(|ui| {
+            ui.label("Rotation");
+            widgets::number(ui, &mut rotation, -3600..=3600, "")
+                .tip("Degrees, clockwise. 720 in the end keyframe of a tween spins twice")
+        })
+        .inner;
+    if let Some(group) = gesture_group(editor, &[&r]) {
+        editor.update_instance_key_grouped(Some(group), |k| k.rotation = rotation);
+    }
+    gesture_end(editor, &[&r]);
+    // El tinte: el color (opaco) y cuánto se mezcla (0 = nada; el color se conserva).
+    let tint = key.tint.unwrap_or(cs_core::Tint {
+        color: cs_core::Rgba::rgb(255, 255, 255),
+        amount: 0,
+    });
+    let mut color = cs_core::Rgba {
+        a: 255,
+        ..tint.color
+    };
+    let mut amount = tint.amount;
+    let r = ui
+        .horizontal(|ui| {
+            ui.label("Tint");
+            if widgets::color_edit(ui, &mut color, false, "Tint color").changed() {
+                // Elegir un color sin cantidad lo deja entero (como el Tint de Flash).
+                editor.update_instance_key(|k| {
+                    let amount = k.tint.map_or(0, |t| t.amount);
+                    let amount = if amount == 0 { 255 } else { amount };
+                    k.tint = Some(cs_core::Tint { color, amount });
+                });
+            }
+            widgets::number(ui, &mut amount, 0..=255, "")
+                .tip("How much of the tint color: 0 is none, 255 is all")
+        })
+        .inner;
+    if let Some(group) = gesture_group(editor, &[&r]) {
+        editor.update_instance_key_grouped(Some(group), |k| {
+            let color = k.tint.map_or(color, |t| t.color);
+            k.tint = Some(cs_core::Tint { color, amount });
+        });
+    }
+    gesture_end(editor, &[&r]);
+}
+
+/// Las curvas del Ease (además de Classic), con su nombre en el select.
+const EASE_CURVES: [(cs_core::Curve, &str); 7] = [
+    (cs_core::Curve::EaseIn, "Ease In"),
+    (cs_core::Curve::EaseOut, "Ease Out"),
+    (cs_core::Curve::EaseInOut, "Ease In Out"),
+    (cs_core::Curve::Bounce, "Bounce"),
+    (cs_core::Curve::Elastic, "Elastic"),
+    (cs_core::Curve::Back, "Back"),
+    (cs_core::Curve::Step, "Step"),
+];
+
+/// El tween del tramo actual (Ease y Amount, Remove Tween) o, si se puede, Create Tween.
+fn tween_rows(ui: &mut egui::Ui, editor: &mut Editor) {
+    use cs_core::Ease;
+    let Some((tween, span)) = editor.current_tween() else {
+        if editor.can_create_current_tween()
+            && crate::pixel_ui::text_button(ui, "Create Tween")
+                .tip("Tween from this keyframe to the next one")
+                .clicked()
+        {
+            editor.create_current_tween();
+        }
+        return;
+    };
+    // `None` = Classic.
+    let (mut curve, mut amount): (Option<cs_core::Curve>, i32) = match tween.ease {
+        Ease::Classic(e) => (None, e as i32),
+        Ease::Curve { curve, amount } => (Some(curve), amount as i32),
+    };
+    let before = curve;
+    let shown = EASE_CURVES
+        .iter()
+        .find(|(c, _)| Some(*c) == curve)
+        .map_or("Classic", |(_, name)| *name);
+    ui.horizontal(|ui| {
+        ui.label("Ease");
+        widgets::combo(ui, "tween_ease", shown, |ui| {
+            widgets::choice(ui, &mut curve, None, "Classic");
+            for (c, name) in EASE_CURVES {
+                widgets::choice(ui, &mut curve, Some(c), name);
+            }
+        })
+        .tip("Classic is Flash's ease: -100 speeds up, 100 slows down");
+    });
+    if curve != before {
+        // Classic empieza lineal; una curva, entera.
+        editor.update_current_tween(None, |t| {
+            t.ease = match curve {
+                None => Ease::Classic(0),
+                Some(curve) => Ease::Curve { curve, amount: 100 },
+            }
+        });
+    }
+    let range = if curve.is_none() { -100..=100 } else { 0..=100 };
+    let r = ui
+        .horizontal(|ui| {
+            ui.label("Amount");
+            widgets::number(ui, &mut amount, range, "")
+        })
+        .inner;
+    if let Some(group) = gesture_group(editor, &[&r]) {
+        editor.update_current_tween(Some(group), |t| {
+            t.ease = match t.ease {
+                Ease::Classic(_) => Ease::Classic(amount.clamp(-100, 100) as i8),
+                Ease::Curve { curve, .. } => Ease::Curve {
+                    curve,
+                    amount: amount.clamp(0, 100) as u8,
+                },
+            }
+        });
+    }
+    gesture_end(editor, &[&r]);
+    if span.broken {
+        let hint = egui::RichText::new("Tween needs a next keyframe with the same symbol").weak();
+        ui.add(egui::Label::new(hint).wrap());
+    }
+    if crate::pixel_ui::text_button(ui, "Remove Tween").clicked() {
+        editor.remove_current_tween();
+    }
 }
 
 /// Panel de slices: lista, nombre, color, datos y la clave del frame actual (rect y pivote).

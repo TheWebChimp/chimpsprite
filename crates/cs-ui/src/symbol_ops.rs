@@ -122,19 +122,20 @@ impl Editor {
 
     /// Entra a editar en su lugar el símbolo del objeto `object` de la capa `layer` del activo
     /// (Edit in Place): el símbolo se ve donde está la instancia, sobre el resto atenuado, y
-    /// empieza en el frame que la instancia muestra ahora. Si el objeto está volteado (o su
-    /// símbolo ya está en la pila) entra aislado. `false` si la fuente no es un símbolo de la
+    /// empieza en el frame que la instancia muestra ahora. Si el objeto está volteado, escalado
+    /// o rotado (o su símbolo ya está en la pila) entra aislado. `false` si la fuente no es un símbolo de la
     /// biblioteca.
     pub fn enter_symbol_in_place(&mut self, layer: LayerId, object: ObjectId) -> bool {
         let (parent, parent_frame) = (self.active, self.frame);
         let sprite = self.sprite();
-        let Some(key) = sprite
+        let Some(pose) = sprite
             .layer(layer)
             .and_then(|l| l.object(object))
-            .and_then(|o| o.track.key_at(parent_frame))
+            .and_then(|o| o.track.pose_at(parent_frame))
         else {
             return false;
         };
+        let key = &pose.key;
         let Some(symbol) = key
             .source
             .and_then(|id| self.document.artboard(id))
@@ -143,7 +144,8 @@ impl Editor {
             return false;
         };
         let id = symbol.id;
-        if key.flip_h || key.flip_v || self.symbol_stack.iter().any(|s| s.id == id) {
+        // Volteado, escalado o rotado no se puede pintar en su lugar: aislado.
+        if !pose.is_plain() || self.symbol_stack.iter().any(|s| s.id == id) {
             return self.enter_symbol(id);
         }
         let start = source_frame(key, sprite, parent_frame, &symbol.sprite);
@@ -358,20 +360,21 @@ pub struct InPlace {
     pub home: (i32, i32),
 }
 
-/// Dónde se ve `id` editado en su lugar `place`; `None` si la instancia ya no lo muestra (sin el
-/// objeto, sin key, con otra fuente o volteada).
+/// Dónde se ve `id` editado en su lugar `place` (en un tween, donde está en ese frame); `None` si
+/// la instancia ya no lo muestra (sin el objeto, sin key, con otra fuente, volteada, escalada o
+/// rotada).
 fn in_place_position(doc: &Document, id: ArtboardId, place: &InPlace) -> Option<(i32, i32)> {
     let parent = doc.artboard(place.parent)?;
-    let key = parent
+    let pose = parent
         .sprite
         .layer(place.layer)?
         .object(place.object)?
         .track
-        .key_at(place.parent_frame)?;
-    (key.source == Some(id) && !key.flip_h && !key.flip_v).then(|| {
+        .pose_at(place.parent_frame)?;
+    (pose.key.source == Some(id) && pose.is_plain()).then(|| {
         (
-            parent.position.0 + key.position.0,
-            parent.position.1 + key.position.1,
+            parent.position.0 + pose.position.0,
+            parent.position.1 + pose.position.1,
         )
     })
 }
