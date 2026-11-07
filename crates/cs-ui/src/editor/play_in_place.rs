@@ -12,7 +12,7 @@ use super::Editor;
 
 /// La reproducción de un artboard en el lugar.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct InPlace {
+pub struct PlayInPlace {
     pub playback: Playback,
     /// Inclusivo.
     pub range: (usize, usize),
@@ -21,12 +21,12 @@ pub struct InPlace {
     pub clock: f64,
 }
 
-impl InPlace {
+impl PlayInPlace {
     /// Desde `frame`, con el tag que lo contiene o, si no hay, todos los frames.
-    fn starting(sprite: &Sprite, frame: usize) -> InPlace {
+    fn starting(sprite: &Sprite, frame: usize) -> PlayInPlace {
         let frame = frame.min(sprite.frames.len().saturating_sub(1));
         let (range, direction) = range_at(sprite, frame);
-        InPlace {
+        PlayInPlace {
             playback: Playback::new(frame, direction),
             range,
             direction,
@@ -55,12 +55,12 @@ impl Editor {
     }
 
     pub fn is_playing_in_place(&self, id: ArtboardId) -> bool {
-        self.in_place.contains_key(&id)
+        self.playing_in_place.contains_key(&id)
     }
 
     /// Prende o apaga Play in Place de `id` sin activarlo. Devuelve si quedó prendido.
     pub fn toggle_play_in_place(&mut self, id: ArtboardId) -> bool {
-        if self.in_place.remove(&id).is_some() {
+        if self.playing_in_place.remove(&id).is_some() {
             return false;
         }
         if !self.can_play_in_place(id) {
@@ -68,40 +68,41 @@ impl Editor {
         }
         let frame = self.edit_frame_of(id);
         let sprite = &self.document.artboard(id).expect("checked").sprite;
-        self.in_place.insert(id, InPlace::starting(sprite, frame));
+        self.playing_in_place
+            .insert(id, PlayInPlace::starting(sprite, frame));
         true
     }
 
     /// El frame que muestra `id` con Play in Place (siempre dentro de sus frames).
-    pub(crate) fn in_place_frame(&self, id: ArtboardId) -> Option<usize> {
-        let play = self.in_place.get(&id)?;
+    pub(crate) fn play_in_place_frame(&self, id: ArtboardId) -> Option<usize> {
+        let play = self.playing_in_place.get(&id)?;
         let count = self.document.artboard(id)?.sprite.frames.len();
         Some(play.playback.frame.min(count.saturating_sub(1)))
     }
 
     /// Hay algún artboard animándose en el lugar (que no sea el activo).
-    pub fn any_in_place(&self) -> bool {
-        self.in_place.keys().any(|&id| id != self.active)
+    pub fn any_playing_in_place(&self) -> bool {
+        self.playing_in_place.keys().any(|&id| id != self.active)
     }
 
     /// Avanza `dt_ms` las reproducciones en el lugar de los que no son el activo. Descarta las de
     /// artboards que ya no están o ya no se pueden animar y corrige los rangos que quedaron fuera
     /// de sus frames. Devuelve los milisegundos hasta el próximo cambio de frame (`None` si no
     /// hay nada que animar) y si cambió algún frame.
-    pub fn tick_in_place(&mut self, dt_ms: f64) -> (Option<f64>, bool) {
+    pub fn tick_play_in_place(&mut self, dt_ms: f64) -> (Option<f64>, bool) {
         let stale: Vec<ArtboardId> = self
-            .in_place
+            .playing_in_place
             .keys()
             .copied()
             .filter(|&id| !self.can_play_in_place(id))
             .collect();
         for id in stale {
-            self.in_place.remove(&id);
+            self.playing_in_place.remove(&id);
         }
         let mut next: Option<f64> = None;
         let mut changed = false;
         let active = self.active;
-        for (&id, play) in self.in_place.iter_mut() {
+        for (&id, play) in self.playing_in_place.iter_mut() {
             if id == active {
                 continue;
             }
@@ -116,7 +117,7 @@ impl Editor {
                 || (play.range == (0, count - 1) && play.direction == AnimDirection::Forward);
             if !valid || play.range.1 >= count || play.playback.frame >= count {
                 let frame = play.playback.frame.min(count - 1);
-                *play = InPlace::starting(sprite, frame);
+                *play = PlayInPlace::starting(sprite, frame);
             }
             play.clock += dt_ms;
             // Tope para no girar sin fin si la app estuvo pausada mucho tiempo.

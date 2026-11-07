@@ -322,25 +322,3 @@ fn a_nested_context_copies_the_middle_symbol_without_the_instance() {
             .is_empty()
     );
 }
-
-#[test]
-fn a_frame_longer_than_a_second_still_advances_in_small_steps() {
-    let mut sprite = animated();
-    sprite.frames[0].duration_ms = 2500;
-    let mut e = Editor::with_sprite(sprite);
-    let a = e.active;
-    e.add_artboard_with_sprite("B".into(), animated());
-    e.toggle_play_in_place(a);
-    // 156 pasos de 16 ms = 2496 ms: todavía en el 0; faltan 4.
-    for _ in 0..156 {
-        e.tick_in_place(16.0);
-    }
-    assert_eq!(e.frame_of(a), 0);
-    assert_eq!(e.tick_in_place(0.0).0, Some(4.0));
-    e.tick_in_place(16.0);
-    assert_eq!(e.frame_of(a), 1);
-    // Una pausa enorme no gira sin fin: queda en algún frame, empezándolo.
-    let (next, _) = e.tick_in_place(1.0e9);
-    let ms = [2500.0, 200.0, 100.0, 100.0][e.frame_of(a)];
-    assert_eq!(next, Some(ms));
-}

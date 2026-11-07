@@ -7,10 +7,10 @@ tarea (tests + clippy en verde).
    `fit`, `cell_position`, `expand_frames` (aplanado, indexado si se puede, grilla);
    `SheetGrid::from_counts`, `sprite_from_sheet_ordered`. Tests de layout, orden, spacing/border,
    indexado y la ida y vuelta.
-2. **Play in Place en el editor.** `editor/in_place.rs`: estado, `toggle_play_in_place`,
-   `is_playing_in_place`, `can_play_in_place`, `tick_in_place` (devuelve el próximo cambio),
+2. **Play in Place en el editor.** `editor/play_in_place.rs`: estado, `toggle_play_in_place`,
+   `is_playing_in_place`, `can_play_in_place`, `tick_play_in_place` (devuelve el próximo cambio),
    `frame_of` con el frame en el lugar para los no activos; limpieza al borrar y rango recalculado.
-   Tests en `editor/in_place_tests.rs`.
+   Tests en `editor/play_in_place_tests.rs`.
 3. **Canvas y app.** Textura recompuesta por frame (`texture_frames`); tick en `lib.rs` con
    `InputState::time` y `request_repaint_after`.
 4. **Barra de título.** `kit::title_bar`: `TitleState::play` y `TitleParts::play`; íconos

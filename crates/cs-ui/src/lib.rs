@@ -204,7 +204,7 @@ pub struct ChimpApp {
     /// Expand to Spritesheet… (menú de un artboard) abierto.
     expand_dialog: Option<expand_dialog::ExpandDialog>,
     /// `InputState::time` del último avance de Play in Place (`None` sin nada animándose).
-    in_place_time: Option<f64>,
+    play_in_place_time: Option<f64>,
     /// La ventanita de preview (abierta con `view.preview`).
     preview: preview::Preview,
     convert_tilemap: Option<tilemap_dialog::TileSizeDialog>,
@@ -360,7 +360,7 @@ impl ChimpApp {
             frame_dialog: None,
             sheet_dialog: None,
             expand_dialog: None,
-            in_place_time: None,
+            play_in_place_time: None,
             preview: preview::Preview::default(),
             convert_tilemap: None,
             symbol_dialog: None,
@@ -1244,18 +1244,18 @@ impl ChimpApp {
 
     /// Avanza Play in Place con el reloj de egui (`stable_dt` en reposo es el estimado, no el
     /// real) y pide repintar justo para el próximo cambio de frame.
-    fn tick_in_place(&mut self, ctx: &egui::Context) {
-        if !self.has_doc() || !self.doc.editor.any_in_place() {
-            self.in_place_time = None;
+    fn tick_play_in_place(&mut self, ctx: &egui::Context) {
+        if !self.has_doc() || !self.doc.editor.any_playing_in_place() {
+            self.play_in_place_time = None;
             return;
         }
         let now = ctx.input(|i| i.time);
         let dt_ms = self
-            .in_place_time
+            .play_in_place_time
             .map_or(0.0, |t| (now - t) * 1000.0)
             .max(0.0);
-        self.in_place_time = Some(now);
-        if let (Some(ms), _) = self.doc.editor.tick_in_place(dt_ms) {
+        self.play_in_place_time = Some(now);
+        if let (Some(ms), _) = self.doc.editor.tick_play_in_place(dt_ms) {
             ctx.request_repaint_after(std::time::Duration::from_secs_f64(ms.max(1.0) / 1000.0));
         }
     }
@@ -1939,7 +1939,7 @@ impl eframe::App for ChimpApp {
             self.doc.editor.tick(dt_ms);
             ctx.request_repaint();
         }
-        self.tick_in_place(&ctx);
+        self.tick_play_in_place(&ctx);
 
         let modal = self.is_modal();
         self.layout(ui, modal);

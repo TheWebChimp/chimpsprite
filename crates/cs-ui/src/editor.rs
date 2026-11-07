@@ -305,7 +305,7 @@ pub struct Editor {
     pub(crate) play_clock: f64,
     /// Play in Place: los artboards que se animan solos en el lienzo (estado de la sesión, fuera
     /// del documento y del undo).
-    pub(crate) in_place: std::collections::BTreeMap<ArtboardId, play_in_place::InPlace>,
+    pub(crate) playing_in_place: std::collections::BTreeMap<ArtboardId, play_in_place::PlayInPlace>,
     /// Rango de frames seleccionado en el timeline (para tags, duraciones…).
     pub frame_range: Option<(usize, usize)>,
     /// Las capas del rango de cels (de la capa donde empezó a la otra punta, en el orden del
@@ -456,7 +456,7 @@ impl Editor {
             playing: false,
             playback: None,
             play_clock: 0.0,
-            in_place: Default::default(),
+            playing_in_place: Default::default(),
             frame_range: None,
             layer_range: None,
             frames_picked: false,
@@ -1027,7 +1027,7 @@ impl Editor {
     pub fn frame_of(&self, id: ArtboardId) -> usize {
         if id == self.active {
             self.frame
-        } else if let Some(frame) = self.in_place_frame(id) {
+        } else if let Some(frame) = self.play_in_place_frame(id) {
             frame
         } else {
             self.edit_frame_of(id)

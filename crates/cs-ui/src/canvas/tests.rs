@@ -2494,7 +2494,7 @@ fn the_play_mark_plays_an_artboard_in_place_without_activating_it() {
     // Al avanzar, solo se recompone el que cambió de frame.
     h.frame(vec![]);
     let before = h.canvas.composed;
-    h.editor.tick_in_place(100.0);
+    h.editor.tick_play_in_place(100.0);
     h.frame(vec![]);
     assert_eq!(h.canvas.composed - before, 1, "only the one playing");
     assert_eq!(h.canvas.texture_frames[&a], 1);

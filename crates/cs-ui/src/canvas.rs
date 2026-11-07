@@ -249,7 +249,7 @@ pub struct CanvasView {
     cards_revision: Option<u64>,
     /// Los artboards que llevan el ▶ de Play in Place en la barra y si se están animando (se
     /// arma cada frame del editor).
-    in_place: HashMap<ArtboardId, bool>,
+    play_marks: HashMap<ArtboardId, bool>,
 }
 
 /// Color alrededor de los artboards: `canvas` del skin con Pixel UI; si no, el del tema.
@@ -373,7 +373,7 @@ impl Default for CanvasView {
             advance_drag: None,
             component_drag: None,
             cards: HashMap::new(),
-            in_place: HashMap::new(),
+            play_marks: HashMap::new(),
             cards_revision: None,
             model_drag: None,
             edit_quads: None,
@@ -1183,7 +1183,7 @@ impl CanvasView {
                     String::new()
                 };
                 let kind = BarKind::of(artboard);
-                let playing = self.in_place.get(&artboard.id) == Some(&true);
+                let playing = self.play_marks.get(&artboard.id) == Some(&true);
                 painter.extend(w.bar_shapes(&painter, layout, &title, active, kind, playing, ppp));
                 continue;
             }
@@ -1771,7 +1771,7 @@ impl CanvasView {
     /// (de lejos, el glifo no se lee), la tarjeta, desde la misma esquina.
     fn window_of(&self, rect: Rect, artboard: &Artboard, ppp: f32) -> WindowLayout {
         let mut window = WindowLayout::around(self.pixel_rect(rect, artboard), ppp);
-        if self.in_place.contains_key(&artboard.id) {
+        if self.play_marks.contains_key(&artboard.id) {
             window = window.with_play();
         }
         let Some(sample) = self.cards.get(&artboard.id) else {
@@ -1786,7 +1786,7 @@ impl CanvasView {
     /// Arma de nuevo las muestras de las tarjetas si el documento cambió.
     fn refresh_cards(&mut self, editor: &Editor) {
         // En el modo símbolo o en un workspace la ventana es la de un solo artboard: sin ▶.
-        self.in_place = if editor.single_artboard() {
+        self.play_marks = if editor.single_artboard() {
             HashMap::new()
         } else {
             editor

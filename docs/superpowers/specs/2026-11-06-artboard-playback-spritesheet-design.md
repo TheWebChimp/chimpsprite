@@ -41,12 +41,12 @@ Dos ideas del usuario:
 
 ### Estado
 
-- Vive en el `Editor` (por pestaña): `in_place: BTreeMap<ArtboardId, InPlace>` con el `Playback`,
+- Vive en el `Editor` (por pestaña): `playing_in_place: BTreeMap<ArtboardId, PlayInPlace>` con el `Playback`,
   el rango, la dirección y el reloj. **No** es parte del documento: no crea pasos de undo, no marca
   el documento como modificado y no se guarda en el `.chimp`. Se recuerda mientras la pestaña está
   abierta (incluido cambiar de pestaña y volver).
 - El tiempo sale de `InputState::time` (no de `stable_dt`, que en reposo es el dt estimado); el
-  editor avanza con `tick_in_place(dt)`, que devuelve cuánto falta para el próximo cambio. La app
+  editor avanza con `tick_play_in_place(dt)`, que devuelve cuánto falta para el próximo cambio. La app
   pide repintar justo para ese momento (`request_repaint_after`), así el canvas no se repinta a
   60 fps sin necesidad.
 - El canvas recompone la textura de un artboard cuando cambia su frame mostrado aunque la revisión
