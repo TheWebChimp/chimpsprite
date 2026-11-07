@@ -3,6 +3,7 @@
 
 use eframe::egui::{self, Align2, RichText, Ui};
 
+use crate::mascot::Mascot;
 use crate::skin::Skin;
 use crate::sound::SoundPack;
 use crate::view::ViewSettings;
@@ -22,6 +23,7 @@ pub fn show(
     ctx: &egui::Context,
     view: &mut ViewSettings,
     skin: Option<&Skin>,
+    mascot: &mut Mascot,
 ) -> PreferencesOutput {
     let mut out = PreferencesOutput::default();
     let anchor = (Align2::CENTER_CENTER, egui::Vec2::ZERO);
@@ -34,7 +36,7 @@ pub fn show(
         anchor,
         |ui| {
             ui.set_width(WIDTH);
-            contents(ui, view, skin, &mut out);
+            contents(ui, view, skin, mascot, &mut out);
             ui.add_space(6.0);
             match crate::pixel_ui::dialog_buttons(ui, skin, &["OK", "Reset"]) {
                 Some(0) => out.closed = true,
@@ -90,6 +92,7 @@ fn contents(
     ui: &mut Ui,
     view: &mut ViewSettings,
     skin: Option<&Skin>,
+    mascot: &mut Mascot,
     out: &mut PreferencesOutput,
 ) {
     section(ui, skin, "General");
@@ -105,6 +108,14 @@ fn contents(
             });
         });
     });
+    // Chimpy, una vez descubierto (Reset no lo toca: no es de `ViewSettings`).
+    if mascot.settings.discovered {
+        let mut on = mascot.settings.enabled;
+        widgets::checkbox(ui, &mut on, "Chimpy Tips");
+        if on != mascot.settings.enabled {
+            mascot.set_enabled(on);
+        }
+    }
     section(ui, skin, "Editor");
     widgets::checkbox(ui, &mut view.rulers, "Rulers");
     widgets::checkbox(ui, &mut view.brush_preview, "Brush Preview");

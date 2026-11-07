@@ -388,6 +388,12 @@ fn animate_house(e: &mut Editor, time: u32) {
 /// herramientas, rangos y paneles listos para las capturas.
 pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     use crate::*;
+    // Desarrollo: Chimpy colgado con el consejo `id` (p. ej. `walk-cycle`, `tool.pencil`,
+    // `hello`), sin tocar lo guardado ni irse solo, para capturas.
+    if let Some(id) = dev_var("CHIMPSPRITE_DEMO_MASCOT") {
+        let now = ctx.input(|i| i.time);
+        app.mascot.force(id, now, &app.keymap);
+    }
     // Desarrollo: la pestaña UI Catalog a la vista, para capturas.
     if dev_var("CHIMPSPRITE_DEMO_CATALOG").is_some() {
         app.show_page(tabs::Page::Catalog);

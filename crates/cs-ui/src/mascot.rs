@@ -453,11 +453,6 @@ impl Mascot {
         self.shown.as_ref().map(|s| &s.tip)
     }
 
-    /// Está a la vista (bajando, colgado o subiendo): la app sigue repintando.
-    pub fn visible(&self) -> bool {
-        self.shown.is_some()
-    }
-
     /// Prende o apaga (Help → Chimpy, Preferences). Apagado se va al momento.
     pub fn set_enabled(&mut self, on: bool) {
         self.settings.enabled = on;

@@ -438,6 +438,14 @@ impl ChimpApp {
         if ui.add(menus::plain(crate::kit::catalog::TITLE)).clicked() {
             self.show_page(crate::tabs::Page::Catalog);
         }
+        // Chimpy, una vez descubierto (cinco clics al mono que corre): prenderlo o apagarlo.
+        if self.mascot.settings.discovered {
+            let mut on = self.mascot.settings.enabled;
+            ui.add(menus::check(&mut on, crate::mascot::NAME));
+            if on != self.mascot.settings.enabled {
+                self.mascot.set_enabled(on);
+            }
+        }
         menus::separator(ui);
         if ui.add(menus::plain("About ChimpSprite")).clicked() {
             let version = format!("ChimpSprite {}", env!("CARGO_PKG_VERSION"));
