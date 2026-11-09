@@ -2032,3 +2032,23 @@ fn the_object_panel_shows_the_transform_and_the_tween() {
     // En medio del tween, los campos muestran lo que se ve: 45°.
     assert!(has(&texts, "45"), "{texts:?}");
 }
+
+#[test]
+fn a_long_palette_strip_ends_with_how_many_colors_it_leaves_out() {
+    // El "≡" de antes no está en la fuente pixel y salía como un cuadrito vacío.
+    let palette = cs_core::Palette::new((0..100u8).map(|i| cs_core::Rgba::rgb(i, i, i)).collect());
+    let ctx = egui::Context::default();
+    let mut output = ctx.run_ui(RawInput::default(), |ui| {
+        egui::CentralPanel::default().show(ui, |ui| palette_strip(ui, &palette, 64, 8.0));
+    });
+    output.textures_delta.clear();
+    let texts: Vec<String> = output
+        .shapes
+        .iter()
+        .filter_map(|c| match &c.shape {
+            egui::Shape::Text(t) => Some(t.galley.text().to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(texts, ["+36"]);
+}
