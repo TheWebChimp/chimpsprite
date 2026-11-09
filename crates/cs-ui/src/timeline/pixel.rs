@@ -17,7 +17,10 @@
 //! - **Tabla:** filas de 13 (11 de contenido y la línea grabada) y columnas con su línea a la
 //!   derecha: ojo 17, candado 17, nombre 83 y un frame 13. Ojo `timeline.eye` (visible) o
 //!   `timeline.eye.closed` (oculta); candado `palette.icon.lock` (bloqueada) o
-//!   `palette.icon.lock.open`; cel `timeline.cel` o `timeline.cel.empty`.
+//!   `palette.icon.lock.open`; cel `timeline.cel` o `timeline.cel.empty`. La tabla empieza 1
+//!   columna adentro de la caja: esa columna es el brillo de su borde izquierdo.
+//! - **Tags** (`.refs/timeline/mockup.png`): la cajita del nombre y el corchete con contorno
+//!   negro; la fila de tags termina con la línea de las filas, que cierra el encabezado.
 //! - **Lo elegido** (frame 6 del diseño): la celda en `timeline_selection` con sus líneas grabadas
 //!   en `timeline_selection_dark` y `timeline_selection_light` (las de arriba y la de la izquierda
 //!   también, aunque sean de la celda vecina), y sus íconos en la versión `.selected`.
@@ -849,14 +852,16 @@ pub(super) fn content(rect: Rect) -> Rect {
 }
 
 /// Las líneas grabadas de una fila de la tabla que ocupa `row`, con `frames` columnas de frame.
-/// Abajo, la línea a lo ancho, sin la última columna. Entre columnas, la
+/// Abajo, la línea a lo ancho, sin la última columna y desde la columna de antes de la fila (el
+/// borde izquierdo de la tabla, cuya oscura es el borde de la caja). Entre columnas, la
 /// oscura y su brillo desde una fila antes de la fila (el brillo de la línea de arriba) hasta la
-/// oscura de abajo; a la derecha de la tabla, solo la oscura. Se dibujan los brillos y después
-/// las oscuras, como en el diseño.
+/// oscura de abajo; a la izquierda de la tabla, solo el brillo; a la derecha, solo la oscura. Se
+/// dibujan los brillos y después las oscuras, como en el diseño.
 fn row_lines(ui: &Ui, skin: &Skin, row: Rect, frames: usize) {
     let colors = skin.colors();
     let ppp = ui.ctx().pixels_per_point();
     let (top, dark_y) = (row.top() - 1.0, row.bottom() - LINE);
+    let edge = row.left() - 1.0;
     let mut bounds = vec![
         row.left() + EYE_W,
         row.left() + EYE_W + LOCK_W,
@@ -866,15 +871,15 @@ fn row_lines(ui: &Ui, skin: &Skin, row: Rect, frames: usize) {
     bounds.extend((1..frames).map(|f| first + CELL_W * f as f32));
     let mut mesh = Mesh::default();
     let mut rect = |r: Rect, color: Color32| mesh.add_colored_rect(r.round_to_pixels(ppp), color);
-    // Brillos: el de abajo y el de cada línea entre columnas.
+    // Brillos: el de abajo, el del borde izquierdo y el de cada línea entre columnas.
     rect(
         Rect::from_min_max(
-            pos2(row.left(), dark_y + 1.0),
+            pos2(edge, dark_y + 1.0),
             pos2(row.right() - 1.0, row.bottom()),
         ),
         colors.highlight,
     );
-    for &b in &bounds {
+    for b in [row.left()].into_iter().chain(bounds.iter().copied()) {
         rect(
             Rect::from_min_max(pos2(b - 1.0, top), pos2(b, dark_y)),
             colors.highlight,
@@ -888,12 +893,24 @@ fn row_lines(ui: &Ui, skin: &Skin, row: Rect, frames: usize) {
         );
     }
     rect(
-        Rect::from_min_max(
-            pos2(row.left(), dark_y),
-            pos2(row.right() - 1.0, dark_y + 1.0),
-        ),
+        Rect::from_min_max(pos2(edge, dark_y), pos2(row.right() - 1.0, dark_y + 1.0)),
         colors.canvas,
     );
+    ui.painter().add(Shape::mesh(mesh));
+}
+
+/// La línea de abajo de la fila de tags (`row`): la de las filas de la tabla (la oscura y su
+/// brillo, desde el borde izquierdo), que cierra por arriba las celdas del encabezado. Va antes
+/// de los corchetes: sus patas la pisan.
+pub(super) fn tags_floor(ui: &Ui, skin: &Skin, row: Rect) {
+    let colors = skin.colors();
+    let ppp = ui.ctx().pixels_per_point();
+    let (left, right, dark_y) = (row.left() - 1.0, row.right() - 1.0, row.bottom() - LINE);
+    let mut mesh = Mesh::default();
+    for (y, color) in [(dark_y, colors.canvas), (dark_y + 1.0, colors.highlight)] {
+        let r = Rect::from_min_max(pos2(left, y), pos2(right, y + 1.0));
+        mesh.add_colored_rect(r.round_to_pixels(ppp), color);
+    }
     ui.painter().add(Shape::mesh(mesh));
 }
 
@@ -1051,9 +1068,10 @@ pub(super) fn objects_icon(ui: &Ui, skin: &Skin, rect: Rect, selected: bool) -> 
 
 /// Lo elegido, como en el diseño: la celda `cell` (contenido y su línea de la derecha y de
 /// abajo) en `timeline_selection`, enmarcada con las líneas grabadas en rosa: la oscura de arriba
-/// y su brillo, la de la izquierda y su brillo (si la celda no es la primera, en `table_left`), la
-/// oscura de la derecha y la de abajo. `header`: la fila de los números, donde la línea de arriba
-/// es la de la barra (va solo sobre la celda).
+/// y su brillo, la de la izquierda y su brillo, la oscura de la derecha y la de abajo. En la
+/// primera celda (en `table_left`) la línea de la izquierda es el borde de la tabla: solo su
+/// brillo (la oscura es el borde de la caja). `header`: la fila de los números, donde la línea de
+/// arriba es la de la barra o la de la fila de tags (va solo sobre la celda).
 pub(super) fn select(ui: &Ui, skin: &Skin, cell: Rect, table_left: f32, header: bool) {
     let colors = skin.colors();
     let (fill, dark, light) = (
@@ -1069,28 +1087,27 @@ pub(super) fn select(ui: &Ui, skin: &Skin, cell: Rect, table_left: f32, header: 
     let mut mesh = Mesh::default();
     let mut rect = |r: Rect, color: Color32| mesh.add_colored_rect(r.round_to_pixels(ppp), color);
     rect(inner, fill);
-    // Arriba: la línea oscura y su brillo (en la fila de los números, la de la barra y solo
-    // sobre la celda).
+    // Desde dónde van las líneas de arriba y de abajo: la oscura de la izquierda o, en la
+    // primera celda, el brillo del borde de la tabla.
+    let left = if first { x0 - 1.0 } else { x0 - 2.0 };
+    // Arriba: la línea oscura y su brillo (en la fila de los números, la de la barra o la de los
+    // tags y solo sobre la celda).
     let (dark_from, dark_to) = if header {
         (x0 - 1.0, x1)
-    } else if first {
-        (x0, x1 + 1.0)
     } else {
-        (x0 - 2.0, x1 + 1.0)
+        (left, x1 + 1.0)
     };
     rect(px(dark_from, y0 - 2.0, dark_to - dark_from, 1.0), dark);
-    let light_from = if first { x0 } else { x0 - 1.0 };
-    rect(px(light_from, y0 - 1.0, x1 - light_from, 1.0), light);
-    // La izquierda (si hay una celda antes): la oscura y su brillo.
+    rect(px(x0 - 1.0, y0 - 1.0, x1 - x0 + 1.0, 1.0), light);
+    // La izquierda: la oscura (si hay una celda antes) y su brillo.
     if !first {
         let top = if header { y0 - 1.0 } else { y0 - 2.0 };
         rect(px(x0 - 2.0, top, 1.0, y1 + 1.0 - top), dark);
-        rect(px(x0 - 1.0, y0 - 1.0, 1.0, y1 - y0 + 1.0), light);
     }
+    rect(px(x0 - 1.0, y0 - 1.0, 1.0, y1 - y0 + 1.0), light);
     // La derecha y abajo: las oscuras.
     let top = if header { y0 - 1.0 } else { y0 - 2.0 };
     rect(px(x1, top, 1.0, y1 + 1.0 - top), dark);
-    let left = if first { x0 } else { x0 - 2.0 };
     rect(px(left, y1, x1 + 1.0 - left, 1.0), dark);
     ui.painter().add(Shape::mesh(mesh));
 }
@@ -1185,34 +1202,70 @@ pub(super) fn tag_hit(span: Rect, level: usize) -> Rect {
     Rect::from_min_max(pos2(span.left(), top), pos2(span.right(), top + TAG_BOX_H))
 }
 
-/// Un tag como en Aseprite: su nombre en una cajita del color del tag (arriba, en el piso
-/// `level`) y un corchete de su color desde la cajita hasta `bottom` (los números), en los
-/// bordes de sus frames (`span`).
+/// El negro del contorno de los tags (el del mockup, `.refs/timeline/mockup.png`).
+const TAG_INK: Color32 = Color32::from_rgb(0x05, 0x04, 0x03);
+
+/// Un tag como en Aseprite, con el contorno del mockup: su nombre en una cajita del color del tag
+/// (arriba, en el piso `level`) y un corchete de su color desde la cajita hasta `bottom` (los
+/// números), en los bordes de sus frames (`span`). La cajita y el corchete llevan 1 de contorno
+/// negro con las esquinas de afuera recortadas; las patas terminan abiertas sobre la línea oscura
+/// de arriba del encabezado (`bottom − 2`).
+///
+/// En el mockup, con el contenido del primer frame en L = 129, el final de la celda del último en
+/// R = 181, el piso en T = 49 y `bottom` = 66: la cajita de 130 a la tinta + 3 y de 49 a 59, el
+/// tramo de arriba en y = 54 hasta x = 178 (R − 3), la pata derecha en 178 y la izquierda en 130
+/// (L + 1), las dos hasta y = 64.
 pub(super) fn tag(ui: &Ui, span: Rect, bottom: f32, level: usize, color: Color32, name: &str) {
     let top = span.top() + level as f32 * TAG_LEVEL;
-    let (left, right) = (span.left() + 1.0, span.right() - 2.0);
     let mid = top + (TAG_BOX_H / 2.0).floor();
-    // El corchete: arriba de punta a punta y los lados hasta abajo.
-    solid(
-        ui,
-        Rect::from_min_max(pos2(left, mid), pos2(right + 1.0, mid + 1.0)),
-        color,
-    );
-    solid(
-        ui,
-        Rect::from_min_max(pos2(left, mid), pos2(left + 1.0, bottom)),
-        color,
-    );
-    solid(
-        ui,
-        Rect::from_min_max(pos2(right, mid), pos2(right + 1.0, bottom)),
-        color,
-    );
-    // La cajita con el nombre, en blanco o negro según lo claro del color.
-    // Tan ancha como el nombre, aunque el tag sea más angosto (como en Aseprite).
-    let width = ink(ui, name) + 2.0 * TAG_BOX_PAD;
-    let label = Rect::from_min_size(pos2(left, top), vec2(width.max(4.0), TAG_BOX_H));
-    solid(ui, label, color);
+    // La cajita, tan ancha como el nombre aunque el tag sea más angosto (como en Aseprite).
+    let width = (ink(ui, name) + 2.0 * TAG_BOX_PAD).max(4.0);
+    let label = Rect::from_min_size(pos2(span.left() + 1.0, top), vec2(width, TAG_BOX_H));
+    // Las patas: la izquierda en la columna de la cajita; la derecha en la última columna del
+    // contenido del último frame (su contorno de afuera pisa la línea oscura de la tabla).
+    let (left, right) = (label.left(), span.right() - 3.0);
+    let (below, foot) = (label.bottom(), bottom - 1.0);
+    let px = |x0: f32, y0: f32, x1: f32, y1: f32| Rect::from_min_max(pos2(x0, y0), pos2(x1, y1));
+    // El contorno: la cajita sin sus esquinas y los dos lados de la pata izquierda.
+    let mut outline = vec![
+        px(label.left(), top - 1.0, label.right(), top),
+        px(label.left(), below, label.right(), below + 1.0),
+        px(label.left() - 1.0, top, label.left(), below),
+        px(label.right(), top, label.right() + 1.0, below),
+        px(left - 1.0, below, left, foot),
+        px(left + 1.0, below, left + 2.0, foot),
+    ];
+    let mut fill = vec![label, px(left, below, left + 1.0, foot)];
+    if right > label.right() {
+        // Arriba, de la cajita (atraviesa su contorno) a la pata derecha, que baja desde ahí; la
+        // esquina de afuera, recortada.
+        outline.extend([
+            px(label.right(), mid - 1.0, right + 1.0, mid),
+            px(label.right(), mid + 1.0, right, mid + 2.0),
+            px(right - 1.0, mid + 1.0, right, foot),
+            px(right + 1.0, mid, right + 2.0, foot),
+        ]);
+        fill.extend([
+            px(label.right(), mid, right + 1.0, mid + 1.0),
+            px(right, mid, right + 1.0, foot),
+        ]);
+    } else {
+        // La cajita tapa el tramo de arriba: la pata derecha sale de debajo, como la izquierda.
+        outline.extend([
+            px(right - 1.0, below, right, foot),
+            px(right + 1.0, below, right + 2.0, foot),
+        ]);
+        fill.push(px(right, below, right + 1.0, foot));
+    }
+    let ppp = ui.ctx().pixels_per_point();
+    let mut mesh = Mesh::default();
+    for (rects, c) in [(outline, TAG_INK), (fill, color)] {
+        for r in rects {
+            mesh.add_colored_rect(r.round_to_pixels(ppp), c);
+        }
+    }
+    ui.painter().add(Shape::mesh(mesh));
+    // El nombre, en blanco o negro según lo claro del color.
     let luma = 0.299 * color.r() as f32 + 0.587 * color.g() as f32 + 0.114 * color.b() as f32;
     let ink_color = if luma > 150.0 {
         Color32::BLACK
