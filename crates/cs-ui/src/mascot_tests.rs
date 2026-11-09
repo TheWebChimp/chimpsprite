@@ -471,13 +471,14 @@ fn the_demo_forces_a_bubble_without_touching_the_settings() {
 #[test]
 fn the_embedded_art_has_idle_and_talk() {
     let art = Art::decode(ART).expect("the embedded art");
-    assert_eq!(art.size, [32, 40]);
+    // El arte del usuario (`.design/hanging.aseprite`, sin su fila de arriba vacía).
+    assert_eq!(art.size, [25, 37]);
     assert_eq!(art.frames.len(), art.durations_ms.len());
     assert!(art.durations_ms.iter().all(|&d| d > 0));
     assert!(art.idle.len() >= 2, "{:?}", art.idle);
     assert!(art.talk.len() >= 2, "{:?}", art.talk);
     // La mano agarra el borde de arriba: algo dibujado en la primera fila.
-    assert!(art.frames[0][..32].iter().any(|c| c.a > 0));
+    assert!(art.frames[0][..25].iter().any(|c| c.a > 0));
 }
 
 #[test]

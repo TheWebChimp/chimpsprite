@@ -12,7 +12,7 @@ use crate::{ChimpApp, editor::Editor, kit, pixel_rulers, pixel_ui, tab_bar};
 /// De la esquina del lienzo (debajo de la regla y de su borde izquierdo) a Chimpy.
 const LEFT: f32 = 6.0;
 /// La fila de la cara de Chimpy en su arte: ahí apunta la cola del globo.
-const FACE_ROW: f32 = 14.0;
+const FACE_ROW: f32 = 13.0;
 /// Del borde derecho del arte de Chimpy a la cola del globo.
 const GAP: f32 = 1.0;
 /// Lo más ancho del texto del globo (después parte en líneas).
