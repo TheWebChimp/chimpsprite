@@ -31,12 +31,12 @@ Licencia: SIL OFL 1.1 (ver `UNIFONT-OFL.txt`).
 
 ## mascot.aseprite
 
-Chimpy, el asistente escondido (`crates/cs-ui/src/mascot.rs`): 32×40, colgando de la mano
+Chimpy, el asistente escondido (`crates/cs-ui/src/mascot.rs`): 25×37, colgando de la mano
 derecha (la mano agarra el borde de arriba del lienzo, en la fila 0) y mirando a la derecha, donde
-sale el globo (la cola apunta a la fila 8 del cuerpo, a la altura de la cara). Tags: `idle`
-(quieto y parpadeo) y `talk` (boca abierta y cerrada); las duraciones de los frames son las de la
-animación. **Arte PROVISIONAL** (hecho con Lua a partir de los colores de `running.aseprite`): el
-usuario lo redibujará; el código solo pide los dos tags (sin ellos usa todos los frames).
+sale el globo (la cola apunta a la fila 13, a la altura de la cara: `mascot_view::FACE_ROW`). Es
+el arte del usuario (`.design/hanging.aseprite`, 5 frames de balanceo) sin su fila de arriba
+vacía. Tags: `idle` y `talk`, los dos con los 5 frames (no hay frames de boca); las duraciones de
+los frames son las de la animación. Sin tags, el código usa todos los frames.
 
 ## skin.aseprite
 

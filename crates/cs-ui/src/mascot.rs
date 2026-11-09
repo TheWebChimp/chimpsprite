@@ -641,8 +641,8 @@ impl Mascot {
     }
 }
 
-/// El arte de Chimpy (provisional, para redibujar): `assets/ui/mascot.aseprite`, colgando de la
-/// mano derecha, con los tags `idle` y `talk`.
+/// El arte de Chimpy (el del usuario): `assets/ui/mascot.aseprite`, colgando de la mano derecha,
+/// con los tags `idle` y `talk`.
 pub const ART: &[u8] = include_bytes!("../../../assets/ui/mascot.aseprite");
 
 /// Los frames del arte ya compuestos y los de cada animación (sin egui).
