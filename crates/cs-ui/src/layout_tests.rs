@@ -3955,17 +3955,18 @@ fn the_font_panel_rows_are_the_mockup_rows() {
     ] {
         assert!(rows.contains(&want), "{want:?} in {rows:?}");
     }
-    // La cuadrícula desde la fila 85 (su línea), Add desde la 276, el papel del Test Drive
-    // desde la 332 y Build a 25 del borde de abajo.
+    // La cuadrícula desde la fila 85 (su línea), Add 6 debajo de ella, el papel del Test Drive
+    // 56 debajo de Add y Build a 25 del borde de abajo. Con las 14 columnas que caben, los 94
+    // glifos de ASCII son 7 filas (en el mockup eran 8 de 13 y Add iba en la 276).
     assert_eq!(top(h.button("Glyph !")) - 1.0, 85.0);
-    assert_eq!(top(h.button("Add")), 276.0);
+    assert_eq!(top(h.button("Add")), 85.0 + 7.0 * 23.0 + 1.0 + 6.0);
     assert_eq!(top(h.button("Add")), top(h.button("Add All")));
     let paper = filled_rects(&h)
         .into_iter()
         .find(|(c, r)| *c == egui::Color32::WHITE && r.width() == 284.0)
         .map(|(_, r)| r)
         .expect("the Test Drive paper");
-    assert_eq!(top(paper), 332.0);
+    assert_eq!(top(paper), top(h.button("Add")) + 56.0);
     assert_eq!(top(h.button("Build ▾")), bottom - 25.0);
 }
 
@@ -3975,13 +3976,36 @@ fn the_font_map_is_a_grid_of_21_by_23() {
     let flyout = font_flyout(&h);
     let first = h.button("Glyph !");
     let next = h.button("Glyph \"");
-    let below = h.button("Glyph .");
+    let columns = font_map_columns(&h);
+    let below = h.button(&format!("Glyph {}", char::from(b'!' + columns as u8)));
     assert_eq!(first.size(), vec2(20.0, 22.0));
     assert_eq!(next.left() - first.left(), 21.0);
     assert_eq!(below.top() - first.top(), 23.0);
     assert_eq!(below.left(), first.left());
     // La línea izquierda de la cuadrícula en la columna 8 del panel.
     assert_eq!(first.left() - 1.0, flyout.left() + 8.0);
+}
+
+/// Cuántas celdas tiene la primera fila del mapa (las que empiezan donde "Glyph !").
+fn font_map_columns(h: &LayoutHarness) -> usize {
+    let top = h.button("Glyph !").top();
+    h.buttons
+        .iter()
+        .filter(|(l, r)| l.starts_with("Glyph ") && r.top() == top)
+        .count()
+}
+
+#[test]
+fn the_font_map_uses_every_column_that_fits_in_the_panel() {
+    let h = font_panel_open(Vec2::new(1200.0, 800.0));
+    let columns = font_map_columns(&h);
+    // Con el ancho del panel caben 14 (antes eran 13 fijas y sobraba una columna a la derecha).
+    assert_eq!(columns, 14);
+    let first = h.button("Glyph !");
+    let last = h.button(&format!("Glyph {}", char::from(b'!' + columns as u8 - 1)));
+    let scrollbar_room = font_flyout(&h).right() - 8.0;
+    assert!(last.right() + 1.0 <= scrollbar_room, "{last:?} spills");
+    assert_eq!(last.left() - first.left(), 21.0 * (columns - 1) as f32);
 }
 
 #[test]

@@ -58,7 +58,6 @@ const CELL_W: f32 = 20.0;
 const CELL_H: f32 = 22.0;
 const PITCH_X: f32 = CELL_W + 1.0;
 const PITCH_Y: f32 = CELL_H + 1.0;
-const COLUMNS: usize = 13;
 /// Las líneas del mapa, el gris de los caracteres sin dibujar y el marco del glifo actual.
 const GRID: Color32 = Color32::from_rgb(136, 110, 106);
 const MISSING_INK: Color32 = Color32::from_rgb(197, 199, 221);
@@ -1084,9 +1083,10 @@ fn thumb_scale(cell: (u32, u32)) -> f32 {
     }
 }
 
-/// La cuadrícula de la página, de 13 columnas con líneas de 1 compartidas: blanco lo que la
-/// fuente tiene, del color del panel lo que falta, con marco por dentro el glifo actual. Cada
-/// celda muestra una sola cosa: el glifo dibujado o, si está vacío o falta, su carácter en gris.
+/// La cuadrícula de la página, con tantas columnas como quepan a lo ancho y líneas de 1
+/// compartidas: blanco lo que la fuente tiene, del color del panel lo que falta, con marco por
+/// dentro el glifo actual. Cada celda muestra una sola cosa: el glifo dibujado o, si está vacío o
+/// falta, su carácter en gris.
 fn map(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, state: &FontPanelState) {
     let Some(font) = editor.font().cloned() else {
         return;
@@ -1096,8 +1096,9 @@ fn map(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, state: &FontPanelS
     let view = editor.artboard().font_view();
     let cell_size = (editor.sprite().width, editor.sprite().height);
     let scale = thumb_scale(cell_size);
-    let rows = chars.len().div_ceil(COLUMNS);
-    let columns = chars.len().min(COLUMNS);
+    let fit = (((ui.available_width() - 1.0) / PITCH_X).floor() as usize).max(1);
+    let rows = chars.len().div_ceil(fit);
+    let columns = chars.len().min(fit);
     let (rect, _) = ui.allocate_exact_size(
         vec2(PITCH_X * columns as f32 + 1.0, PITCH_Y * rows as f32 + 1.0),
         Sense::hover(),
@@ -1109,11 +1110,7 @@ fn map(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, state: &FontPanelS
     let enabled = ui.is_enabled();
     for (i, &ch) in chars.iter().enumerate() {
         let lines = Rect::from_min_size(
-            origin
-                + vec2(
-                    (i % COLUMNS) as f32 * PITCH_X,
-                    (i / COLUMNS) as f32 * PITCH_Y,
-                ),
+            origin + vec2((i % fit) as f32 * PITCH_X, (i / fit) as f32 * PITCH_Y),
             vec2(PITCH_X + 1.0, PITCH_Y + 1.0),
         );
         let cell = lines.shrink(1.0);

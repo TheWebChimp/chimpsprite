@@ -231,7 +231,8 @@ pub enum PaletteAction {
     OpenFolder,
 }
 
-/// Tira de colores de una paleta: como mucho `max` y termina en "…" si hay más.
+/// Tira de colores de una paleta: como mucho `max` y, si hay más, termina en "+n" con los que
+/// faltan (un símbolo como "≡" no está en la fuente pixel).
 pub fn palette_strip(ui: &mut egui::Ui, palette: &Palette, max: usize, size: f32) {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = Vec2::ZERO;
@@ -240,7 +241,8 @@ pub fn palette_strip(ui: &mut egui::Ui, palette: &Palette, max: usize, size: f32
             ui.painter().rect_filled(rect, 0.0, to_color32(c));
         }
         if palette.len() > max {
-            ui.weak("≡");
+            ui.add_space(size / 2.0);
+            ui.weak(format!("+{}", palette.len() - max));
         }
     });
 }
