@@ -1110,11 +1110,7 @@ fn map(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, state: &FontPanelS
     let enabled = ui.is_enabled();
     for (i, &ch) in chars.iter().enumerate() {
         let lines = Rect::from_min_size(
-            origin
-                + vec2(
-                    (i % fit) as f32 * PITCH_X,
-                    (i / fit) as f32 * PITCH_Y,
-                ),
+            origin + vec2((i % fit) as f32 * PITCH_X, (i / fit) as f32 * PITCH_Y),
             vec2(PITCH_X + 1.0, PITCH_Y + 1.0),
         );
         let cell = lines.shrink(1.0);
