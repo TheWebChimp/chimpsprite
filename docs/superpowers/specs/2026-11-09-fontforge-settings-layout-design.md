@@ -23,15 +23,16 @@ cambian. El contenido que se desplaza empieza en (8, 35); abajo, "y" es desde ah
 | Casilla Ghost | 154 | 42 (la casilla 1 más arriba que el select, como en el mockup) | |
 | Select de la fantasma (Ubuntu/Hack) | 200 | 43 | 80 |
 | Italic / Monospace / Auto width (A) | 37 / 85 / 154 | 64 | |
-| Mode · 1 bit · Cell · 16×16 (texto) | 0 / 74 / 151 / 235 | 85 | |
+| Mode · 1 bit · Cell · 16×16 (texto; x es donde empieza la tinta) | 0 / 74 / 151 / 234 | 85 | |
 | Baseline, x-height, Letter spacing, Cap height, Descent, Space width | etiqueta 0, stepper 74 (62 de ancho) | 111 + 21·i | |
 | Recuadro de la vista previa | 146 | 111 | 166 (hasta 2 antes del borde del contenido) × 121 |
-| Family "…" (n styles) | 0 | 244 (arriba del texto; sus mayúsculas en la 250) | |
+| Family "…" (n styles) | 0 | 244 (sus mayúsculas en la 250) | |
 | Radios de los estilos (con Rebuild) | 0 | 268 + 21·i | |
 | New Variant… | 0 | 291 + 21·(n−1) | |
 
-Las etiquetas se pintan con el texto arriba de su fila (las mayúsculas quedan 6 abajo, como en el
-mockup y como "Map" en la vista del mapa).
+Las etiquetas van en la fila de su control con las mayúsculas 6 abajo, como en el mockup (el texto
+de egui las tiene 4 abajo de su caja: se pinta 2 abajo de la fila), y con la tinta en su x (sin el
+aire de la primera letra, como el del 1).
 
 ## Objetivo
 

@@ -814,8 +814,36 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
     }
     // Desarrollo: una fuente de 8×8 con unas letras y el panel Font abierto, para capturas.
     if dev_var("CHIMPSPRITE_DEMO_FONT").is_some() && app.has_doc() {
+        // Con CHIMPSPRITE_DEMO_FONT_CONFIG, en lugar de la de 8×8, una fuente nueva de 16×16 de
+        // un solo estilo con la vista de ajustes (la del mockup de los ajustes). Con `=sample`,
+        // una H dibujada (el glifo actual, "!", sigue vacío: la vista previa muestra la H).
+        if let Some(config) = dev_var("CHIMPSPRITE_DEMO_FONT_CONFIG") {
+            if app.create_font(ctx, "New Font", (16, 16), cs_core::FontMode::OneBit) {
+                app.font_panel.view = crate::font_panel::PanelView::Config;
+                if config.trim() == "sample" {
+                    let e = &mut app.doc.editor;
+                    let current = e.current_glyph();
+                    e.go_to_glyph('H');
+                    let (layer, frame) = (e.layer, e.frame);
+                    // Las dos astas (filas 2 a 11, sobre la baseline 12) y el travesaño.
+                    let pixels = (2..12)
+                        .flat_map(|y| [(3, y), (4, y), (9, y), (10, y)])
+                        .chain((5..9).map(|x| (x, 6)))
+                        .map(|(x, y)| (x, y, cs_core::ONE_BIT_INK))
+                        .collect();
+                    e.execute(Command::DrawPixels {
+                        layer,
+                        frame,
+                        pixels,
+                    });
+                    if let Some(ch) = current {
+                        e.go_to_glyph(ch);
+                    }
+                }
+            }
+        }
         // Como el OK de File → New Font…: con su panel abierto y encuadrada al lado de él.
-        if app.create_font(ctx, "Demo Font", (8, 8), cs_core::FontMode::OneBit) {
+        else if app.create_font(ctx, "Demo Font", (8, 8), cs_core::FontMode::OneBit) {
             let e = &mut app.doc.editor;
             type Points = &'static [(i32, i32)];
             let letters: [(char, Points); 3] = [
