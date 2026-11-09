@@ -21,6 +21,7 @@ use eframe::emath::GuiRounding as _;
 use crate::dock::FLYOUT_MARGIN;
 use crate::editor::Editor;
 use crate::font_dialog;
+use crate::font_metrics_preview::{self, Metric};
 use crate::kit;
 use crate::menus;
 use crate::panel_kit::label_with_hint;
@@ -33,8 +34,11 @@ use crate::widgets;
 pub const WIDTH: f32 = CONTENT_W + pixel_ui::SCROLL_BAR;
 /// Ancho del contenido que se desplaza (x 8 a 312 en el mockup; la barra, de 312 a 322).
 const CONTENT_W: f32 = 304.0;
-/// El logo del título, en (8, 8).
+/// El logo del título (el chango herrero y "FontForge", 141×28), en (6, 2): sube por encima del
+/// margen y su última fila pisa la línea del título (settings-mockup.png, x 469 e y 72 con el
+/// panel en (463, 70)). Sin Pixel UI, "FontForge" en texto en (8, 8).
 const LOGO: &str = "fontforge.logo";
+const LOGO_AT: Vec2 = vec2(6.0, 2.0);
 /// La línea grabada bajo el título: la fila clara en la 29 y la oscura en la 30.
 const HEADER_LINE: f32 = 29.0;
 /// La del pie, a 33 filas del borde de abajo (375 y 376 en un panel de 408).
@@ -72,15 +76,50 @@ pub(crate) const TEST_SCALE: u32 = 2;
 pub(crate) const TEST_PAD: f32 = 4.0;
 /// La tinta del Test Drive: oscura fija, porque el papel es blanco aunque el tema sea oscuro.
 pub(crate) const TEST_INK: Color32 = Color32::from_rgb(5, 4, 3);
-/// La columna de las etiquetas de los ajustes y los anchos de sus controles.
-const LABEL_W: f32 = 90.0;
-/// Los números de las medidas y el espaciado van en dos columnas: cada una, la etiqueta y su
-/// stepper, con aire entre las dos.
-const PAIR_LABEL_W: f32 = 74.0;
-const PAIR_STEPPER_W: f32 = 62.0;
-const PAIR_GAP: f32 = 8.0;
+/// La vista de ajustes, como en settings-mockup.png (el panel en (463, 70) y el contenido desde
+/// (471, 105), su esquina: todo lo de abajo es desde ahí). Las etiquetas van en la fila de su
+/// control con las mayúsculas 6 más abajo, como en el mockup: el texto de egui las tiene 4 abajo
+/// de su caja, así que se pinta [`TEXT_DROP`] abajo de la fila.
+///
+/// Los campos van en x 37 (508): Family y Style de 160 en las filas 1 y 22 (106 y 127) y el
+/// select de Weight de 112 en la 43 (148).
+const FIELD_X: f32 = 37.0;
 const NAME_W: f32 = 160.0;
+const FAMILY_Y: f32 = 1.0;
+const STYLE_Y: f32 = 22.0;
+const WEIGHT_Y: f32 = 43.0;
+const WEIGHT_W: f32 = 112.0;
+/// En la fila de Weight, la casilla Ghost en x 154 (625; su fila, 1 más arriba que la del
+/// select: la casilla en la 150) y el select de la fantasma de 80 en x 200 (671).
+const GHOST_X: f32 = 154.0;
+const GHOST_Y: f32 = WEIGHT_Y - 1.0;
+const GHOST_SELECT_X: f32 = 200.0;
 const GHOST_W: f32 = 80.0;
+/// La fila de Italic, Monospace y Auto width (las casillas en y 172 y x 508, 556 y 625).
+const CHECKS_Y: f32 = 64.0;
+const CHECKS_X: [f32; 3] = [FIELD_X, 85.0, GHOST_X];
+/// Mode · 1 bit · Cell · 16×16: texto en cuatro columnas (la tinta en x 471, 545, 622 y 705),
+/// las mayúsculas en la 196.
+const MODE_Y: f32 = 85.0;
+const MODE_X: [f32; 4] = [0.0, NUMBER_X, 151.0, 234.0];
+/// Los números en una columna: steppers de 62 en x 74 (545), uno cada 21 desde la 111 (216).
+const NUMBER_X: f32 = 74.0;
+const NUMBER_W: f32 = 62.0;
+const NUMBERS_Y: f32 = 111.0;
+const ROW_PITCH: f32 = 21.0;
+/// El recuadro de la vista previa de métricas, con su marco: desde (146, 111) (617, 216), del
+/// alto de los seis steppers (121, hasta la 336) y hasta 2 antes del borde del contenido (782).
+const PREVIEW_X: f32 = 146.0;
+const PREVIEW_H: f32 = 5.0 * ROW_PITCH + kit::stepper::HEIGHT - 1.0;
+const PREVIEW_RIGHT_AIR: f32 = 2.0;
+/// La familia: el título con sus mayúsculas en la 250 (355; su caja desde la 246), los radios
+/// de los estilos cada 21 desde la 268 (el radio en la 376) y New Variant… 23 debajo del último
+/// (396).
+const FAMILY_TITLE_Y: f32 = 244.0 + TEXT_DROP;
+const STYLES_Y: f32 = 268.0;
+const NEW_VARIANT_GAP: f32 = 23.0;
+/// De la fila de una etiqueta a la caja de su texto (ver [`FIELD_X`]).
+const TEXT_DROP: f32 = 2.0;
 /// El aire entre Generate ▾ y Build ▾.
 const GENERATE_GAP: f32 = 4.0;
 /// La sección Glyph: el aire de arriba y entre filas, entre controles, el ancho del nombre de
@@ -283,10 +322,7 @@ fn body(
         return new.clicked().then_some(FontAction::NewFont);
     };
     match state.view {
-        PanelView::Config => {
-            settings(ui, editor, skin);
-            return family_section(ui, editor, skin);
-        }
+        PanelView::Config => return config_view(ui, editor, skin),
         PanelView::Kerning => {
             crate::font_kern_panel::show(ui, editor, skin, state);
             return None;
@@ -313,21 +349,23 @@ fn body(
     None
 }
 
-/// El título: el logo en (8, 8) (sin Pixel UI, "FontForge" en texto), con fuente los íconos de
-/// las dos vistas a la derecha, y la línea grabada debajo.
+/// El título: con fuente los íconos de las vistas a la derecha, la línea grabada debajo y el
+/// logo en [`LOGO_AT`], encima de la línea (sin Pixel UI, "FontForge" en texto).
 fn header(ui: &mut Ui, skin: Option<&Skin>, state: &mut FontPanelState, outer: Rect, font: bool) {
-    let at = outer.min + vec2(FLYOUT_MARGIN as f32, FLYOUT_MARGIN as f32);
+    let line = outer.top() + HEADER_LINE;
+    lit_line(ui, skin, outer, line);
     let logo = skin.and_then(|s| s.piece(LOGO, WidgetState::Normal));
     let ppp = ui.ctx().pixels_per_point();
     match logo {
         Some(piece) => {
             let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
-            let shapes = pixel_ui::piece_shapes(piece, Rect::from_min_size(at, size), ppp);
-            ui.painter().extend(shapes);
+            let rect = Rect::from_min_size(outer.min + LOGO_AT, size);
+            ui.painter()
+                .extend(pixel_ui::piece_shapes(piece, rect, ppp));
         }
         None => {
             ui.painter().text(
-                at,
+                outer.min + vec2(FLYOUT_MARGIN as f32, FLYOUT_MARGIN as f32),
                 Align2::LEFT_TOP,
                 "FontForge",
                 TextStyle::Heading.resolve(ui.style()),
@@ -378,8 +416,6 @@ fn header(ui: &mut Ui, skin: Option<&Skin>, state: &mut FontPanelState, outer: R
             });
         }
     }
-    let line = outer.top() + HEADER_LINE;
-    lit_line(ui, skin, outer, line);
 }
 
 /// Un ícono del título que cambia la vista: suelto, con los estados del kit (con el puntero
@@ -779,38 +815,57 @@ pub(crate) fn letter_rect(
     )
 }
 
-/// Una fila de los ajustes: la etiqueta en su columna y el control.
-fn row<R>(ui: &mut Ui, label: &str, control: impl FnOnce(&mut Ui) -> R) -> R {
-    ui.horizontal(|ui| {
-        ui.allocate_ui_with_layout(
-            vec2(LABEL_W, kit::stepper::HEIGHT),
-            egui::Layout::left_to_right(egui::Align::Center),
-            |ui| {
-                ui.set_min_width(LABEL_W);
-                ui.label(label);
-            },
-        );
-        control(ui)
-    })
-    .inner
+/// La vista de ajustes (el engrane): los ajustes de la fuente con la vista previa de métricas y,
+/// debajo, la familia, en las posiciones del mockup (ver [`FIELD_X`]).
+fn config_view(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<FontAction> {
+    editor.font()?;
+    let styles = editor.family_fonts().len().max(1);
+    let height = STYLES_Y + (styles - 1) as f32 * ROW_PITCH + NEW_VARIANT_GAP + kit::button::HEIGHT;
+    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height), Sense::hover());
+    let origin = rect.min.round();
+    settings(ui, editor, skin, origin, rect.width());
+    family_section(ui, editor, skin, origin)
 }
 
-/// Un número de los ajustes: el stepper del kit (sin Pixel UI, el `DragValue` de egui).
-type Number<'a> = (&'a str, &'a mut u32, std::ops::RangeInclusive<u32>);
+/// Un hijo de `ui` en (`x`, `y`) desde `origin`, de izquierda a derecha, del alto de un campo y
+/// hasta el borde derecho de `ui`: ahí van los controles del kit, en su esquina.
+fn place<R>(
+    ui: &mut Ui,
+    origin: egui::Pos2,
+    (x, y): (f32, f32),
+    salt: &str,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let min = origin + vec2(x, y);
+    let right = ui.max_rect().right().max(min.x + 1.0);
+    let rect = Rect::from_min_max(min, pos2(right, min.y + kit::input::HEIGHT));
+    let builder = UiBuilder::new()
+        .id_salt(("font_settings_at", salt))
+        .max_rect(rect)
+        .layout(egui::Layout::left_to_right(egui::Align::Min));
+    add(&mut ui.new_child(builder))
+}
 
-/// Un número en su columna: la etiqueta de `PAIR_LABEL_W` y el stepper.
-fn number_cell(ui: &mut Ui, skin: Option<&Skin>, (label, value, range): Number) {
-    ui.allocate_ui_with_layout(
-        vec2(PAIR_LABEL_W, kit::stepper::HEIGHT),
-        egui::Layout::left_to_right(egui::Align::Center),
-        |ui| {
-            ui.set_min_width(PAIR_LABEL_W);
-            ui.label(label);
-        },
-    );
+/// Un texto de los ajustes en la fila `y` desde `origin`, en `x`: sus mayúsculas, 6 más abajo
+/// (sin el centrado de las filas de egui).
+fn text_at(ui: &Ui, origin: egui::Pos2, (x, y): (f32, f32), text: &str) {
+    let color = ui.visuals().text_color();
+    let font = TextStyle::Body.resolve(ui.style());
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    // La tinta en `x`: sin el aire de la primera letra (el del 1 de "1 bit").
+    let bearing = galley.rows.first().and_then(|row| {
+        let g = row.glyphs.first()?;
+        Some((row.pos.x + g.pos.x + g.uv_rect.offset.x).round())
+    });
+    let at = origin + vec2(x - bearing.unwrap_or(0.0), y + TEXT_DROP);
+    ui.painter().galley(at, galley, color);
+}
+
+/// Un número: el stepper del kit de [`NUMBER_W`] (sin Pixel UI, el `DragValue` de egui).
+fn number(ui: &mut Ui, skin: Option<&Skin>, label: &str, value: &mut u32, range: RangeU32) {
     match skin {
         Some(skin) => {
-            kit::stepper::stepper(ui, skin, PAIR_STEPPER_W, label, value, range, 1, None);
+            kit::stepper::stepper(ui, skin, NUMBER_W, label, value, range, 1, None);
         }
         None => {
             ui.add(egui::DragValue::new(value).range(range));
@@ -818,14 +873,7 @@ fn number_cell(ui: &mut Ui, skin: Option<&Skin>, (label, value, range): Number) 
     }
 }
 
-/// Dos números en una fila, cada uno en su columna.
-fn number_pair(ui: &mut Ui, skin: Option<&Skin>, left: Number, right: Number) {
-    ui.horizontal(|ui| {
-        number_cell(ui, skin, left);
-        ui.add_space(PAIR_GAP);
-        number_cell(ui, skin, right);
-    });
-}
+type RangeU32 = std::ops::RangeInclusive<u32>;
 
 /// Una casilla: la del kit (sin Pixel UI, la de egui).
 fn checkbox(ui: &mut Ui, skin: Option<&Skin>, checked: &mut bool, label: &str) -> egui::Response {
@@ -835,114 +883,134 @@ fn checkbox(ui: &mut Ui, skin: Option<&Skin>, checked: &mut bool, label: &str) -
     }
 }
 
-/// Los ajustes de la fuente: nombre, modo y celda, las medidas, el espaciado, Monospace, la letra
-/// fantasma y el ancho automático del glifo actual. Todo lo cambiado en un frame (o en un
-/// arrastre) es un paso de deshacer (`set_font_info_grouped`).
-fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
+/// Un select del kit de `width` con `selected` (sin Pixel UI, el `ComboBox` de egui).
+fn select(
+    ui: &mut Ui,
+    skin: Option<&Skin>,
+    id: &str,
+    selected: &str,
+    width: f32,
+    content: impl FnOnce(&mut Ui),
+) {
+    match skin {
+        Some(skin) => {
+            kit::select::select(ui, skin, id, selected, Some(width), content);
+        }
+        None => {
+            egui::ComboBox::from_id_salt(id)
+                .selected_text(selected)
+                .width(width)
+                .show_ui(ui, content);
+        }
+    }
+}
+
+/// Los ajustes de la fuente, desde `origin` (la esquina del contenido, de `width` de ancho):
+/// Family, Style, Weight con Ghost y su fuente, Italic, Monospace y el ancho automático del
+/// glifo actual, el modo y la celda, los seis números en una columna y, a su derecha, la vista
+/// previa de métricas (con la línea del número que tiene el puntero encima resaltada). Todo lo
+/// cambiado en un frame (o en un arrastre) es un paso de deshacer (`set_font_info_grouped`).
+fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>, origin: egui::Pos2, width: f32) {
     let Some(font) = editor.font().cloned() else {
         return;
     };
     let (cell_w, cell_h) = (editor.sprite().width, editor.sprite().height);
-    ui.label("Font");
-    ui.add_space(4.0);
     let mut info = font.clone();
+    // Family y Style.
+    text_at(ui, origin, (0.0, FAMILY_Y), "Family");
     let name_id = ui.id().with("font_name");
-    if let Some(name) = row(ui, "Family", |ui| {
+    let name = place(ui, origin, (FIELD_X, FAMILY_Y), "family", |ui| {
         kit::input::buffered(ui, name_id, &font.name, |ui, text| match skin {
             Some(skin) => kit::input::text_input(ui, skin, text, NAME_W, "Font name", "Font name"),
             None => ui.add(egui::TextEdit::singleline(text).desired_width(NAME_W)),
         })
-    }) {
+    });
+    if let Some(name) = name {
         info.name = name;
     }
-    // El estilo: su nombre, su peso y si es itálica.
+    text_at(ui, origin, (0.0, STYLE_Y), "Style");
     let style_id = ui.id().with("font_style_name");
-    if let Some(name) = row(ui, "Style", |ui| {
+    let style = place(ui, origin, (FIELD_X, STYLE_Y), "style", |ui| {
         kit::input::buffered(ui, style_id, &font.style.name, |ui, text| match skin {
             Some(skin) => kit::input::text_input(ui, skin, text, NAME_W, "Style name", "Regular"),
             None => ui.add(egui::TextEdit::singleline(text).desired_width(NAME_W)),
         })
-    }) && !name.trim().is_empty()
-    {
+    });
+    if let Some(name) = style.filter(|n| !n.trim().is_empty()) {
         info.style.name = name.trim().to_owned();
     }
-    row(ui, "Weight", |ui| {
+    // Weight y, en su fila, la letra fantasma.
+    text_at(ui, origin, (0.0, WEIGHT_Y), "Weight");
+    place(ui, origin, (FIELD_X, WEIGHT_Y), "weight", |ui| {
         let weight = &mut info.style.weight;
         let selected = format!("{weight} {}", cs_core::weight_name(*weight));
-        let content = |ui: &mut Ui| {
+        select(ui, skin, "font_weight", &selected, WEIGHT_W, |ui| {
             for (w, name) in cs_core::WEIGHTS {
                 widgets::choice(ui, weight, w, &format!("{w} {name}"));
             }
-        };
-        match skin {
-            Some(skin) => {
-                kit::select::select(ui, skin, "font_weight", &selected, Some(NAME_W), content);
-            }
-            None => {
-                egui::ComboBox::from_id_salt("font_weight")
-                    .selected_text(selected.as_str())
-                    .show_ui(ui, content);
-            }
-        }
+        });
     });
-    row(ui, "", |ui| {
+    place(ui, origin, (GHOST_X, GHOST_Y), "ghost", |ui| {
+        checkbox(ui, skin, &mut info.ghost.enabled, "Ghost")
+    });
+    place(ui, origin, (GHOST_SELECT_X, WEIGHT_Y), "ghost_face", |ui| {
+        let ghost = &mut info.ghost.monospace;
+        let face = if *ghost { "Hack" } else { "Ubuntu" };
+        select(ui, skin, "font_ghost", face, GHOST_W, |ui| {
+            widgets::choice(ui, ghost, false, "Ubuntu");
+            widgets::choice(ui, ghost, true, "Hack");
+        });
+    });
+    place(ui, origin, (CHECKS_X[0], CHECKS_Y), "italic", |ui| {
         checkbox(ui, skin, &mut info.style.italic, "Italic")
     });
-    row(ui, "Mode", |ui| ui.label(font_dialog::mode_name(font.mode)));
-    row(ui, "Cell", |ui| ui.label(format!("{cell_w}×{cell_h}")));
-    // Las mayúsculas y la x-height hasta la baseline; los descendentes, de ella hasta abajo.
+    place(ui, origin, (CHECKS_X[1], CHECKS_Y), "monospace", |ui| {
+        checkbox(ui, skin, &mut info.monospace, "Monospace")
+    });
+    // El modo y la celda.
+    let cell = format!("{cell_w}×{cell_h}");
+    let mode = [
+        "Mode",
+        font_dialog::mode_name(font.mode),
+        "Cell",
+        cell.as_str(),
+    ];
+    for (x, text) in MODE_X.into_iter().zip(mode) {
+        text_at(ui, origin, (x, MODE_Y), text);
+    }
+    // Los números: las mayúsculas y la x-height hasta la baseline; los descendentes, de ella
+    // hasta abajo. Con el puntero sobre una fila (etiqueta o stepper), su línea se resalta en
+    // la vista previa.
     let baseline = font.metrics.baseline;
-    let m = &mut info.metrics;
-    number_pair(
-        ui,
-        skin,
-        ("Baseline", &mut m.baseline, 0..=cell_h),
-        ("Cap height", &mut m.cap_height, 0..=baseline),
-    );
-    number_pair(
-        ui,
-        skin,
-        ("x-height", &mut m.x_height, 0..=baseline),
-        ("Descent", &mut m.descent, 0..=cell_h - baseline.min(cell_h)),
-    );
+    let mut hovered = None;
+    for (i, metric) in Metric::ALL.into_iter().enumerate() {
+        let y = NUMBERS_Y + i as f32 * ROW_PITCH;
+        let m = &mut info.metrics;
+        let (value, range) = match metric {
+            Metric::Baseline => (&mut m.baseline, 0..=cell_h),
+            Metric::XHeight => (&mut m.x_height, 0..=baseline),
+            Metric::LetterSpacing => (&mut info.letter_spacing, 0..=8),
+            Metric::CapHeight => (&mut m.cap_height, 0..=baseline),
+            Metric::Descent => (&mut m.descent, 0..=cell_h - baseline.min(cell_h)),
+            Metric::SpaceWidth => (&mut info.space_width, 0..=cell_w),
+        };
+        text_at(ui, origin, (0.0, y), metric.label());
+        place(ui, origin, (NUMBER_X, y), metric.label(), |ui| {
+            number(ui, skin, metric.label(), value, range);
+        });
+        let row = Rect::from_min_size(
+            origin + vec2(0.0, y),
+            vec2(NUMBER_X + NUMBER_W, kit::stepper::HEIGHT),
+        );
+        if ui.rect_contains_pointer(row) {
+            hovered = Some(metric);
+        }
+    }
     // Con la baseline movida, lo demás se acomoda (solo si se cambió algo: abrir el panel no
     // deja pasos).
     if info.metrics != font.metrics {
         info.metrics = info.metrics.clamped(cell_h);
     }
-    number_pair(
-        ui,
-        skin,
-        ("Letter spacing", &mut info.letter_spacing, 0..=8),
-        ("Space width", &mut info.space_width, 0..=cell_w),
-    );
-    ui.add_space(2.0);
-    checkbox(ui, skin, &mut info.monospace, "Monospace");
-    ui.horizontal(|ui| {
-        checkbox(ui, skin, &mut info.ghost.enabled, "Ghost");
-        let face = if info.ghost.monospace {
-            "Hack"
-        } else {
-            "Ubuntu"
-        };
-        let ghost = &mut info.ghost.monospace;
-        match skin {
-            Some(skin) => {
-                kit::select::select(ui, skin, "font_ghost", face, Some(GHOST_W), |ui| {
-                    widgets::choice(ui, ghost, false, "Ubuntu");
-                    widgets::choice(ui, ghost, true, "Hack");
-                });
-            }
-            None => {
-                egui::ComboBox::from_id_salt("font_ghost")
-                    .selected_text(face)
-                    .show_ui(ui, |ui| {
-                        widgets::choice(ui, ghost, false, "Ubuntu");
-                        widgets::choice(ui, ghost, true, "Hack");
-                    });
-            }
-        }
-    });
     // Un arrastre (de un stepper) es un solo paso de undo: se juntan los cambios mientras el
     // botón siga apretado.
     let group = ui.id().with("font_settings").value();
@@ -960,28 +1028,86 @@ fn settings(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) {
     if let Some((ch, advance)) = current {
         let mut auto = advance.is_none();
         let caption = format!("Auto width ({ch})");
-        if checkbox(ui, skin, &mut auto, &caption).changed() {
+        let changed = place(ui, origin, (CHECKS_X[2], CHECKS_Y), "auto_width", |ui| {
+            checkbox(ui, skin, &mut auto, &caption).changed()
+        });
+        if changed {
             let advance = if auto { None } else { editor.glyph_advance() };
             editor.set_glyph_advance(ch, advance);
         }
     }
+    metrics_preview(ui, editor, origin, width, hovered);
 }
 
-/// La sección Family de los ajustes: un renglón por estilo de la familia (el actual marcado; un
-/// clic abre su pestaña) con Rebuild en los generados, y New Variant….
-fn family_section(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Option<FontAction> {
+/// La vista previa de métricas en su recuadro (con el marco de las líneas del mapa), con lo que
+/// la fuente tiene ya con los cambios de este frame.
+fn metrics_preview(
+    ui: &Ui,
+    editor: &Editor,
+    origin: egui::Pos2,
+    width: f32,
+    hovered: Option<Metric>,
+) {
+    let (Some(font), Some(view)) = (editor.font(), editor.artboard().font_view()) else {
+        return;
+    };
+    let frame = Rect::from_min_max(
+        origin + vec2(PREVIEW_X, NUMBERS_Y),
+        pos2(
+            origin.x + width - PREVIEW_RIGHT_AIR,
+            origin.y + NUMBERS_Y + PREVIEW_H,
+        ),
+    );
+    if frame.width() < 3.0 {
+        return;
+    }
+    ui.painter().rect_filled(frame, 0.0, GRID);
+    let ch = font_metrics_preview::preview_char(&view, editor.current_glyph());
+    let advance = ch
+        .and_then(|c| view.glyphs.get(&c))
+        .map_or(view.missing_width, |g| g.advance);
+    let numbers = font_metrics_preview::Numbers {
+        cell: view.cell,
+        metrics: view.metrics,
+        advance,
+        letter_spacing: font.letter_spacing,
+        space_width: view.space_width,
+    };
+    font_metrics_preview::paint(
+        ui.painter(),
+        frame.shrink(1.0),
+        &view,
+        ch,
+        &numbers,
+        hovered,
+    );
+}
+
+/// La sección Family de los ajustes, desde `origin`: el título con cuántos estilos tiene, un
+/// radio por estilo de la familia (el actual marcado; un clic abre su pestaña) con Rebuild en
+/// los generados, y New Variant….
+fn family_section(
+    ui: &mut Ui,
+    editor: &mut Editor,
+    skin: Option<&Skin>,
+    origin: egui::Pos2,
+) -> Option<FontAction> {
     let font = editor.font()?.clone();
     let members = editor.family_fonts();
-    ui.add_space(GLYPH_AIR);
     let hint = match members.len() {
         1 => "(1 style)".to_owned(),
         n => format!("({n} styles)"),
     };
-    label_with_hint(ui, &format!("Family \"{}\"", font.name), &hint);
-    ui.add_space(GLYPH_ROW_GAP);
+    place(ui, origin, (0.0, FAMILY_TITLE_Y), "family_title", |ui| {
+        // Sin el alto mínimo de las filas de egui: el texto, arriba de su fila.
+        ui.spacing_mut().interact_size.y = 0.0;
+        label_with_hint(ui, &format!("Family \"{}\"", font.name), &hint);
+    });
     let mut action = None;
     let mut rebuild = None;
-    for (id, style) in &members {
+    let mut y = STYLES_Y;
+    for (i, (id, style)) in members.iter().enumerate() {
+        y = STYLES_Y + i as f32 * ROW_PITCH;
         let on = *id == editor.active;
         let generated = style.source.as_ref().map(|s| {
             let from = editor
@@ -991,13 +1117,14 @@ fn family_section(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Opti
                 .map_or_else(|| "a removed font".to_owned(), |f| f.style.name.clone());
             format!("{} from {from}", s.recipe.kind.label())
         });
-        ui.horizontal(|ui| {
+        let salt = format!("style{i}");
+        place(ui, origin, (0.0, y), &salt, |ui| {
             ui.spacing_mut().item_spacing.x = GLYPH_GAP;
             let label = style.name.clone();
             let picked = ui
                 .allocate_ui_with_layout(
                     vec2(NAME_W, kit::stepper::HEIGHT),
-                    egui::Layout::left_to_right(egui::Align::Center),
+                    egui::Layout::left_to_right(egui::Align::Min),
                     |ui| {
                         ui.set_min_width(NAME_W);
                         match skin {
@@ -1025,15 +1152,20 @@ fn family_section(ui: &mut Ui, editor: &mut Editor, skin: Option<&Skin>) -> Opti
                 }
             }
         });
-        ui.add_space(GLYPH_ROW_GAP);
     }
     if let Some(id) = rebuild {
         editor.rebuild_variant(id);
     }
-    let new = match skin {
-        Some(skin) => kit::button::button(ui, skin, "New Variant…"),
-        None => pixel_ui::text_button(ui, "New Variant…"),
-    };
+    let new = place(
+        ui,
+        origin,
+        (0.0, y + NEW_VARIANT_GAP),
+        "new_variant",
+        |ui| match skin {
+            Some(skin) => kit::button::button(ui, skin, "New Variant…"),
+            None => pixel_ui::text_button(ui, "New Variant…"),
+        },
+    );
     if new.clicked() {
         action = Some(FontAction::NewVariant);
     }

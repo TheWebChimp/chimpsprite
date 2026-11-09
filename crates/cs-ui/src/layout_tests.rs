@@ -3839,7 +3839,10 @@ fn the_font_panel_keeps_its_logo_and_build_while_the_middle_scrolls() {
     let logos = h.drawn("fontforge.logo");
     assert_eq!(logos.len(), 1, "{logos:?}");
     let logo = logos[0];
-    assert_eq!(logo.min, flyout.min + vec2(8.0, 8.0), "{flyout:?}");
+    // El chango herrero y "FontForge" del mockup (settings-mockup.png): x 469–609 e y 72–99 con
+    // el panel en (463, 70); su última fila pisa la línea del título.
+    assert_eq!(logo.min, flyout.min + vec2(6.0, 2.0), "{flyout:?}");
+    assert_eq!(logo.size(), vec2(141.0, 28.0));
     let build = h.button("Build ▾");
     assert!(flyout.contains_rect(build), "{build:?} in {flyout:?}");
     assert_eq!(build.right(), flyout.right() - 8.0, "{flyout:?}");
@@ -4104,50 +4107,191 @@ fn the_font_settings_change_the_metrics_with_undo() {
     assert_eq!(h.app.doc.editor.font().unwrap().metrics.baseline, 12);
 }
 
-#[test]
-fn the_font_numbers_go_in_two_columns_inside_the_panel() {
-    let mut h = LayoutHarness::new(pixel_ui(), true);
+/// El panel FontForge en la vista de ajustes con una fuente nueva de 16×16 de un estilo, en una
+/// ventana del tamaño del mockup (settings-mockup.png, 960×504 a 1x).
+fn font_settings_open() -> LayoutHarness {
+    let palettes = PaletteLibrary::new(Box::new(NoPresets));
+    let mut app = ChimpApp::with_parts(Default::default(), pixel_ui(), palettes);
+    app.new_document();
+    let mut h = LayoutHarness::start_in(app, Vec2::new(960.0, 504.0));
     h.app
         .doc
         .editor
-        .new_font("Mine", (16, 16), cs_core::FontMode::OneBit);
+        .new_font("New Font", (16, 16), cs_core::FontMode::OneBit);
     h.click(h.button("FontForge").center(), PointerButton::Primary);
     h.frame();
-    // Los ajustes van en la vista del engrane.
     h.click(h.button("Font Settings").center(), PointerButton::Primary);
-    let flyout = h
-        .ctx
-        .memory(|m| m.area_rect(egui::Id::new(("dock_flyout", "FontForge"))))
-        .expect("the Font panel is open");
-    let label = |name: &str| {
-        h.text_rects
-            .iter()
-            .find(|(t, _, _)| t == name)
-            .map(|(_, r, _)| *r)
-            .unwrap_or_else(|| panic!("the {name} label"))
-    };
-    // Cada par comparte fila: la segunda etiqueta, a la derecha de la primera.
-    for (left, right) in [
-        ("Baseline", "Cap height"),
-        ("x-height", "Descent"),
-        ("Letter spacing", "Space width"),
-    ] {
-        let (a, b) = (label(left), label(right));
-        assert!(b.y_range().contains(a.center().y), "{left} / {right}");
-        assert!(b.left() > a.right(), "{left} / {right}");
-        // Los dos steppers de la fila, dentro del panel.
-        let plus: Vec<Rect> = h
-            .buttons
-            .iter()
-            .filter(|(l, r)| l == "Increase" && r.y_range().contains(a.center().y))
-            .map(|(_, r)| *r)
-            .collect();
-        assert_eq!(plus.len(), 2, "{left} / {right}");
-        for r in plus {
-            assert!(flyout.contains_rect(r), "{r:?} vs {flyout:?}");
-        }
+    // Que termine de aparecer (el Area entra con fundido).
+    for _ in 0..10 {
+        h.frame();
     }
-    assert!(label("x-height").top() > label("Baseline").bottom());
+    h
+}
+
+/// El rect del texto `text`.
+fn text_at(h: &LayoutHarness, text: &str) -> Rect {
+    h.text_rects
+        .iter()
+        .find(|(t, _, _)| t == text)
+        .map(|(_, r, _)| *r)
+        .unwrap_or_else(|| panic!("no text {text:?}"))
+}
+
+/// Los steppers de los números, de arriba abajo: del − al + de cada fila.
+fn font_steppers(h: &LayoutHarness) -> Vec<Rect> {
+    let mut minus: Vec<Rect> = h
+        .buttons
+        .iter()
+        .filter(|(l, _)| l == "Decrease")
+        .map(|(_, r)| *r)
+        .collect();
+    minus.sort_by(|a, b| a.top().total_cmp(&b.top()));
+    minus
+        .into_iter()
+        .map(|m| {
+            let plus = h
+                .buttons
+                .iter()
+                .find(|(l, r)| l == "Increase" && r.top() == m.top())
+                .map(|(_, r)| *r)
+                .expect("its +");
+            m.union(plus)
+        })
+        .collect()
+}
+
+/// El gris de adentro del recuadro de la vista previa de métricas.
+fn preview_gray(h: &LayoutHarness) -> Rect {
+    filled_rects(h)
+        .into_iter()
+        .find(|(c, r)| *c == crate::theme::CHECKER_LIGHT && r.width() == 164.0)
+        .map(|(_, r)| r)
+        .expect("the preview's gray")
+}
+
+#[test]
+fn the_font_settings_are_the_mockup_layout() {
+    let h = font_settings_open();
+    let f = font_flyout(&h);
+    // Todo en puntos del panel (su borde es la fila y la columna 0): en el mockup el panel está
+    // en (463, 70), así que cada número es el del mockup menos eso.
+    let at = |r: Rect| r.min - f.min;
+    assert_eq!(f.width(), 330.0, "the mockup panel: x 463 to 792");
+    // Sin el título "Font".
+    assert!(!h.texts.iter().any(|(t, _)| t == "Font"));
+    // Family y Style: los campos de 160 en x 508 (45), y 106 y 127 (36 y 57); sus etiquetas en
+    // x 471 (8), con las mayúsculas 6 más abajo que la fila (y 112 y 133): el texto de egui las
+    // tiene 4 abajo de su caja, que va 2 abajo de la fila.
+    for (label, field, y) in [("Family", "Font name", 36.0), ("Style", "Style name", 57.0)] {
+        // La caja del campo (las piezas `field.text` en su fila, la del texto adentro).
+        let text = node(&h, field);
+        let pieces = h
+            .drawn("field.text")
+            .into_iter()
+            .filter(|r| (text.top() - 2.0..=text.bottom() + 2.0).contains(&r.center().y))
+            .reduce(|a, b| a.union(b))
+            .expect("the field box");
+        assert_eq!(at(pieces), vec2(45.0, y), "{label}");
+        assert_eq!(pieces.width(), 160.0, "{label}");
+        assert_eq!(at(text_at(&h, label)), vec2(8.0, y + 2.0), "{label}");
+    }
+    // Weight: el select de 112 (x 508–619) en y 148 (78); en su fila, la casilla Ghost en
+    // (625, 150) y el select de la fantasma de 80 en x 671 (208).
+    let weight = node(&h, "400 Regular");
+    assert_eq!(at(weight), vec2(45.0, 78.0));
+    assert_eq!(weight.width(), 112.0);
+    assert_eq!(at(text_at(&h, "Weight")), vec2(8.0, 80.0));
+    let ghost = node(&h, "Ubuntu");
+    assert_eq!(at(ghost), vec2(208.0, 78.0));
+    assert_eq!(ghost.width(), 80.0);
+    // Las casillas (piezas de 12×13): Ghost y Auto width prendidas, Italic y Monospace no; la
+    // fila de Italic, Monospace y Auto width con las casillas en y 172 (102) y x 508, 556 y
+    // 625 (45, 93, 162).
+    let in_panel = |name: &str| -> Vec<Vec2> {
+        let rects = h.drawn(name).into_iter().filter(|r| f.contains_rect(*r));
+        rects.map(at).collect()
+    };
+    let mut on = in_panel("check.on");
+    on.sort_by(|a, b| a.y.total_cmp(&b.y));
+    assert_eq!(on, vec![vec2(162.0, 80.0), vec2(162.0, 102.0)]);
+    let mut off = in_panel("check");
+    off.sort_by(|a, b| a.x.total_cmp(&b.x));
+    assert_eq!(off, vec![vec2(45.0, 102.0), vec2(93.0, 102.0)]);
+    // Auto width con el glifo actual: en una fuente nueva, "!" (como en el mockup).
+    assert!(h.checks.iter().any(|(l, _, _)| l == "Auto width (!)"));
+    // Mode · 1 bit · Cell · 16×16: texto en cuatro columnas (la tinta en x 471, 545, 622 y
+    // 705), con las mayúsculas en la 196 (126 del panel: la caja del texto desde la 122). La caja
+    // de los que empiezan con 1, 1 antes: el 1 tiene un pixel de aire a la izquierda.
+    for (text, x) in [
+        ("Mode", 8.0),
+        ("1 bit", 81.0),
+        ("Cell", 159.0),
+        ("16×16", 241.0),
+    ] {
+        assert_eq!(at(text_at(&h, text)), vec2(x, 122.0), "{text}");
+    }
+    // Las medidas en una columna: steppers de 62 (x 545–606) cada 21 desde la 216 (146), con
+    // sus etiquetas en x 471.
+    let steppers = font_steppers(&h);
+    assert_eq!(steppers.len(), 6);
+    let metrics = crate::font_metrics_preview::Metric::ALL;
+    for (i, (stepper, metric)) in steppers.iter().zip(metrics).enumerate() {
+        let (y, name) = (146.0 + 21.0 * i as f32, metric.label());
+        assert_eq!(at(*stepper), vec2(82.0, y), "{name}");
+        assert_eq!(stepper.width(), 62.0, "{name}");
+        assert_eq!(at(text_at(&h, name)), vec2(8.0, y + 2.0), "{name}");
+    }
+    // El recuadro de la vista previa: x 617–782 e y 216–336 (166×121 con el marco), el gris del
+    // lienzo por dentro.
+    let gray = preview_gray(&h);
+    assert_eq!(at(gray), vec2(155.0, 147.0));
+    assert_eq!(gray.size(), vec2(164.0, 119.0));
+    // La familia: el título con su nota (mayúsculas en la 355: la caja del texto desde la 281),
+    // el radio del estilo en (471, 376) y New Variant… en (471, 396).
+    assert_eq!(at(text_at(&h, "Family \"New Font\"")), vec2(8.0, 281.0));
+    let radios: Vec<Vec2> = h.drawn("radio.on").into_iter().map(at).collect();
+    assert_eq!(radios, vec![vec2(8.0, 306.0)]);
+    assert_eq!(at(h.button("New Variant…")), vec2(8.0, 326.0));
+}
+
+#[test]
+fn hovering_a_font_number_highlights_its_line_in_the_preview() {
+    let mut h = font_settings_open();
+    // Una línea resaltada: roja, de 2 de alto y del ancho de la celda (16 × 7 = 112).
+    let strong = |h: &LayoutHarness| {
+        filled_rects(h)
+            .into_iter()
+            .filter(|(c, r)| {
+                *c == crate::font_overlay::GUIDE_RED && r.height() == 2.0 && r.width() == 112.0
+            })
+            .map(|(_, r)| r)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(strong(&h), vec![], "nothing hovered");
+    // El puntero sobre la etiqueta de Cap height (la fila entera cuenta).
+    let label = text_at(&h, "Cap height");
+    h.frame_with(vec![Event::PointerMoved(label.center())]);
+    h.frame();
+    let lines = strong(&h);
+    assert_eq!(lines.len(), 1, "{lines:?}");
+    // La fila de las mayúsculas: 12 − 10 = 2, encima de su borde (2 × 7 = 14 abajo de la celda,
+    // que empieza 3 abajo del gris: (119 − 112) / 2).
+    let cell_top = preview_gray(&h).top() + 3.0;
+    assert_eq!(lines[0].bottom(), cell_top + 14.0);
+    // Sobre Letter spacing: su línea vertical, que sin el puntero no está.
+    let verticals = |h: &LayoutHarness| {
+        filled_rects(h)
+            .into_iter()
+            .filter(|(c, r)| {
+                *c == crate::font_overlay::GUIDE_RED && r.width() == 2.0 && r.height() == 112.0
+            })
+            .count()
+    };
+    assert_eq!(verticals(&h), 1, "only the advance");
+    let label = text_at(&h, "Letter spacing");
+    h.frame_with(vec![Event::PointerMoved(label.center())]);
+    h.frame();
+    assert_eq!(verticals(&h), 2, "the advance and the spacing");
 }
 
 #[test]
