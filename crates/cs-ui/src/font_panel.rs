@@ -33,8 +33,11 @@ use crate::widgets;
 pub const WIDTH: f32 = CONTENT_W + pixel_ui::SCROLL_BAR;
 /// Ancho del contenido que se desplaza (x 8 a 312 en el mockup; la barra, de 312 a 322).
 const CONTENT_W: f32 = 304.0;
-/// El logo del título, en (8, 8).
+/// El logo del título (el chango herrero y "FontForge", 141×28), en (6, 2): sube por encima del
+/// margen y su última fila pisa la línea del título (settings-mockup.png, x 469 e y 72 con el
+/// panel en (463, 70)). Sin Pixel UI, "FontForge" en texto en (8, 8).
 const LOGO: &str = "fontforge.logo";
+const LOGO_AT: Vec2 = vec2(6.0, 2.0);
 /// La línea grabada bajo el título: la fila clara en la 29 y la oscura en la 30.
 const HEADER_LINE: f32 = 29.0;
 /// La del pie, a 33 filas del borde de abajo (375 y 376 en un panel de 408).
@@ -313,21 +316,23 @@ fn body(
     None
 }
 
-/// El título: el logo en (8, 8) (sin Pixel UI, "FontForge" en texto), con fuente los íconos de
-/// las dos vistas a la derecha, y la línea grabada debajo.
+/// El título: con fuente los íconos de las vistas a la derecha, la línea grabada debajo y el
+/// logo en [`LOGO_AT`], encima de la línea (sin Pixel UI, "FontForge" en texto).
 fn header(ui: &mut Ui, skin: Option<&Skin>, state: &mut FontPanelState, outer: Rect, font: bool) {
-    let at = outer.min + vec2(FLYOUT_MARGIN as f32, FLYOUT_MARGIN as f32);
+    let line = outer.top() + HEADER_LINE;
+    lit_line(ui, skin, outer, line);
     let logo = skin.and_then(|s| s.piece(LOGO, WidgetState::Normal));
     let ppp = ui.ctx().pixels_per_point();
     match logo {
         Some(piece) => {
             let size = vec2(piece.size[0] as f32, piece.size[1] as f32);
-            let shapes = pixel_ui::piece_shapes(piece, Rect::from_min_size(at, size), ppp);
-            ui.painter().extend(shapes);
+            let rect = Rect::from_min_size(outer.min + LOGO_AT, size);
+            ui.painter()
+                .extend(pixel_ui::piece_shapes(piece, rect, ppp));
         }
         None => {
             ui.painter().text(
-                at,
+                outer.min + vec2(FLYOUT_MARGIN as f32, FLYOUT_MARGIN as f32),
                 Align2::LEFT_TOP,
                 "FontForge",
                 TextStyle::Heading.resolve(ui.style()),
@@ -378,8 +383,6 @@ fn header(ui: &mut Ui, skin: Option<&Skin>, state: &mut FontPanelState, outer: R
             });
         }
     }
-    let line = outer.top() + HEADER_LINE;
-    lit_line(ui, skin, outer, line);
 }
 
 /// Un ícono del título que cambia la vista: suelto, con los estados del kit (con el puntero

@@ -3839,7 +3839,10 @@ fn the_font_panel_keeps_its_logo_and_build_while_the_middle_scrolls() {
     let logos = h.drawn("fontforge.logo");
     assert_eq!(logos.len(), 1, "{logos:?}");
     let logo = logos[0];
-    assert_eq!(logo.min, flyout.min + vec2(8.0, 8.0), "{flyout:?}");
+    // El chango herrero y "FontForge" del mockup (settings-mockup.png): x 469–609 e y 72–99 con
+    // el panel en (463, 70); su última fila pisa la línea del título.
+    assert_eq!(logo.min, flyout.min + vec2(6.0, 2.0), "{flyout:?}");
+    assert_eq!(logo.size(), vec2(141.0, 28.0));
     let build = h.button("Build ▾");
     assert!(flyout.contains_rect(build), "{build:?} in {flyout:?}");
     assert_eq!(build.right(), flyout.right() - 8.0, "{flyout:?}");
