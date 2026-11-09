@@ -771,7 +771,12 @@ impl DafontPanel {
         match &logo {
             Some(piece) => {
                 let ppp = ui.ctx().pixels_per_point();
-                ui.painter().extend(pixel_ui::piece_shapes(piece, at, ppp));
+                // Sube hasta el borde del panel, por encima del scroll: con su recorte se perdían
+                // sus primeras filas y quedaba un hueco arriba.
+                // (`with_clip_rect` intersecta con el recorte de ahora: un painter nuevo.)
+                let clip = ui.clip_rect().union(at);
+                let painter = egui::Painter::new(ui.ctx().clone(), ui.layer_id(), clip);
+                painter.extend(pixel_ui::piece_shapes(piece, at, ppp));
             }
             None => {
                 ui.painter().text(
