@@ -29,6 +29,12 @@ pub const FILTER: &[crate::platform::FileFilter] = &[crate::platform::FileFilter
 /// El panel (del diseño, desde la esquina de su contenido): su ancho y el alto más chico.
 pub const WIDTH: f32 = 434.0;
 const MIN_HEIGHT: f32 = 391.0;
+/// La ilustración del panel sin imagen (los changos), del usuario, a 1x.
+const EMPTY_ART: &[u8] = include_bytes!("../../../assets/ui/groom_empty.aseprite");
+/// De la ilustración del panel sin imagen a la frase de abajo.
+const EMPTY_GAP: f32 = 8.0;
+/// Lo más ancho de la frase del panel sin imagen.
+const EMPTY_TEXT_WIDTH: f32 = 300.0;
 /// El logo, sobre el margen del panel, y la línea grabada debajo del encabezado.
 const LOGO_AT: egui::Vec2 = vec2(-3.0, -1.0);
 const HEADER_LINE: f32 = 21.0;
@@ -219,6 +225,8 @@ pub struct GroomPanel {
     hovered_group: Option<Vec<Rgba>>,
     /// Lo que muestra la vista previa y su textura.
     texture: Option<(Shown, TextureHandle)>,
+    /// La textura de la ilustración sin imagen (se carga la primera vez que se ve).
+    empty_texture: Option<TextureHandle>,
 }
 
 impl Default for GroomPanel {
@@ -236,6 +244,7 @@ impl Default for GroomPanel {
             result: None,
             hovered_group: None,
             texture: None,
+            empty_texture: None,
         }
     }
 }
@@ -296,6 +305,48 @@ impl GroomPanel {
         if let Some(groomed) = self.groomed(primary) {
             self.picked = groomed.colors.iter().take(n).map(|(c, _)| *c).collect();
         }
+    }
+
+    /// Sin imagen: la ilustración de los changos y, debajo, la frase, centradas en `area`.
+    fn empty_ui(&mut self, ui: &mut Ui, area: Rect) {
+        const TEXT: &str = "Bring an image that looks like pixel art (blurry, scaled up) to make \
+                            it real pixel art.";
+        if self.empty_texture.is_none()
+            && let Some(art) = empty_art()
+        {
+            let texture = ui
+                .ctx()
+                .load_texture("groom_empty", art, TextureOptions::NEAREST);
+            self.empty_texture = Some(texture);
+        }
+        let galley = egui::WidgetText::from(TEXT).into_galley(
+            ui,
+            Some(egui::TextWrapMode::Wrap),
+            EMPTY_TEXT_WIDTH,
+            egui::TextStyle::Body,
+        );
+        let art_size = self
+            .empty_texture
+            .as_ref()
+            .map_or(egui::Vec2::ZERO, |t| t.size_vec2());
+        let art = empty_art_rect(area, art_size, galley.size().y);
+        if let Some(texture) = &self.empty_texture {
+            ui.painter().image(
+                texture.id(),
+                art,
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
+        let text = Rect::from_min_size(
+            pos2(
+                area.center().x - EMPTY_TEXT_WIDTH / 2.0,
+                art.bottom() + EMPTY_GAP,
+            ),
+            vec2(EMPTY_TEXT_WIDTH, galley.size().y),
+        );
+        let centered = egui::Layout::top_down(egui::Align::Center);
+        child(ui, text, centered).add(egui::Label::new(TEXT).wrap());
     }
 
     /// El grupo que se está por juntar: el de la sugerencia bajo el mouse o, si no, los colores
@@ -388,11 +439,8 @@ impl GroomPanel {
         }
         let top_down = egui::Layout::top_down(egui::Align::Min);
         if self.source.is_none() {
-            let rect = Rect::from_min_max(at(0.0, COLUMNS_TOP), at(WIDTH, height));
-            child(ui, rect, top_down).label(
-                "Bring an image that looks like pixel art (blurry, scaled up) to make it real \
-                 pixel art.",
-            );
+            let area = Rect::from_min_max(at(0.0, COLUMNS_TOP), at(WIDTH, footer_line));
+            self.empty_ui(ui, area);
             ui.allocate_rect(
                 Rect::from_min_size(origin, vec2(WIDTH, height)),
                 Sense::hover(),
@@ -1137,9 +1185,89 @@ pub fn decode_image(bytes: &[u8]) -> Result<Bitmap, String> {
     }
 }
 
+/// La ilustración del panel sin imagen ([`EMPTY_ART`]), su primer frame.
+fn empty_art() -> Option<ColorImage> {
+    let (sprite, _) = cs_io::aseprite::read(EMPTY_ART).ok()?;
+    let pixels: Vec<u8> = cs_render::render_frame(&sprite, 0)
+        .iter()
+        .flat_map(|c| [c.r, c.g, c.b, c.a])
+        .collect();
+    Some(ColorImage::from_rgba_unmultiplied(
+        [sprite.width as usize, sprite.height as usize],
+        &pixels,
+    ))
+}
+
+/// Dónde va la ilustración de `art` en `area`: centrada a lo ancho y, con la frase de `text_h`
+/// debajo, a lo alto (arriba del todo si no cabe), en puntos enteros.
+fn empty_art_rect(area: Rect, art: egui::Vec2, text_h: f32) -> Rect {
+    let total = art.y + EMPTY_GAP + text_h;
+    let top = area.top() + ((area.height() - total) / 2.0).max(0.0);
+    Rect::from_min_size(pos2(area.center().x - art.x / 2.0, top).round(), art)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_empty_art_is_the_users_monkeys_at_1x() {
+        let art = empty_art().expect("the embedded art");
+        assert_eq!(art.size, [117, 68]);
+        assert!(art.pixels.iter().any(|c| c.a() == 255));
+    }
+
+    #[test]
+    fn the_empty_art_and_its_text_are_centered_in_the_empty_panel() {
+        let area = Rect::from_min_size(pos2(10.0, 30.0), vec2(WIDTH, 300.0));
+        let art = empty_art_rect(area, vec2(117.0, 68.0), 20.0);
+        assert_eq!(art.size(), vec2(117.0, 68.0));
+        // Centrada a lo ancho (en puntos enteros) y, con la frase de 20 debajo, a lo alto.
+        assert_eq!(art.left(), (10.0 + (WIDTH - 117.0) / 2.0).round());
+        let total = 68.0 + EMPTY_GAP + 20.0;
+        assert_eq!(art.top(), (30.0 + (300.0 - total) / 2.0).round());
+        // Si no cabe, arriba del todo.
+        let short = Rect::from_min_size(pos2(0.0, 0.0), vec2(WIDTH, 50.0));
+        assert_eq!(empty_art_rect(short, vec2(117.0, 68.0), 20.0).top(), 0.0);
+    }
+
+    #[test]
+    fn without_an_image_the_panel_shows_the_monkeys_over_the_text() {
+        let ctx = egui::Context::default();
+        let mut panel = GroomPanel::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                panel.ui(ui, Rgba::rgb(0, 0, 0), &[]);
+            });
+        });
+        output.textures_delta.clear();
+        let mut art = None;
+        let mut text = None;
+        for c in &output.shapes {
+            match &c.shape {
+                egui::Shape::Mesh(m) if m.texture_id != egui::TextureId::default() => {
+                    let r =
+                        Rect::from_points(&m.vertices.iter().map(|v| v.pos).collect::<Vec<_>>());
+                    if r.size() == vec2(117.0, 68.0) {
+                        art = Some(r);
+                    }
+                }
+                egui::Shape::Text(t) if t.galley.text().starts_with("Bring an image") => {
+                    text = Some(t.visual_bounding_rect());
+                }
+                _ => {}
+            }
+        }
+        let (art, text) = (art.expect("the monkeys"), text.expect("the text"));
+        assert!(
+            text.top() >= art.bottom() + EMPTY_GAP - 1.0,
+            "{art:?} {text:?}"
+        );
+        assert!(
+            (text.center().x - art.center().x).abs() <= 1.0,
+            "{art:?} {text:?}"
+        );
+    }
 
     /// 4×3 celdas de 5 px (rojo sobre blanco), agrandado.
     fn big() -> Bitmap {

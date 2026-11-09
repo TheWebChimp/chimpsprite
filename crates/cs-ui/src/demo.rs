@@ -597,7 +597,11 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
             }
         }
     }
-    // Desarrollo: el panel Groom abierto con una imagen (su ruta), para capturas.
+    // Desarrollo: el panel Groom abierto sin imagen (`=empty`, la ilustración) o con una imagen
+    // (su ruta), para capturas.
+    if dev_var("CHIMPSPRITE_DEMO_GROOM") == Some("empty") && app.has_doc() {
+        dock::set_open(ctx, Some(dock::DockPanel::Groom));
+    }
     #[cfg(not(target_arch = "wasm32"))]
     if let Ok(path) = std::env::var("CHIMPSPRITE_DEMO_GROOM")
         && app.has_doc()
