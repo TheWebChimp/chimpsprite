@@ -37,6 +37,8 @@ struct Harness {
     flat_colors: Vec<Color32>,
     /// Los textos dibujados en el último frame.
     texts: Vec<String>,
+    /// Los rects lisos del último frame, en orden de dibujo, ya recortados.
+    flat_rects: Vec<(Rect, Color32)>,
 }
 
 impl Harness {
@@ -65,6 +67,7 @@ impl Harness {
             images: Vec::new(),
             flat_colors: Vec::new(),
             texts: Vec::new(),
+            flat_rects: Vec::new(),
         };
         for _ in 0..3 {
             h.frame(vec![]);
@@ -94,7 +97,9 @@ impl Harness {
         self.images.clear();
         self.flat_colors.clear();
         self.texts.clear();
+        self.flat_rects.clear();
         for clipped in &output.shapes {
+            collect_flat_rects(&clipped.shape, clipped.clip_rect, &mut self.flat_rects);
             collect_images(&clipped.shape, &mut self.images);
             collect_flat_colors(&clipped.shape, &mut self.flat_colors);
             collect_texts(&clipped.shape, &mut self.texts);
@@ -261,6 +266,37 @@ impl Harness {
 
     fn layer(&self, i: usize) -> &cs_core::Layer {
         &self.editor.sprite().layers[i]
+    }
+
+    /// El color liso que quedó en el píxel `(x, y)` (el último rect que lo cubre); las piezas,
+    /// los textos y lo transparente no cuentan.
+    fn color_at(&self, x: f32, y: f32) -> Option<Color32> {
+        let p = pos2(x + 0.5, y + 0.5);
+        self.flat_rects
+            .iter()
+            .rev()
+            .find(|(r, c)| c.a() > 0 && r.contains(p))
+            .map(|(_, c)| *c)
+    }
+}
+
+/// Los rects lisos de una forma (cada cuadro de 4 vértices de una malla sin textura), recortados
+/// a `clip`.
+fn collect_flat_rects(shape: &egui::Shape, clip: Rect, out: &mut Vec<(Rect, Color32)>) {
+    match shape {
+        egui::Shape::Vec(shapes) => {
+            for s in shapes {
+                collect_flat_rects(s, clip, out);
+            }
+        }
+        egui::Shape::Mesh(mesh) if mesh.texture_id == egui::TextureId::default() => {
+            for quad in mesh.vertices.as_chunks::<4>().0 {
+                let r = Rect::from_points(&quad.iter().map(|v| v.pos).collect::<Vec<_>>());
+                out.push((r.intersect(clip), quad[0].color));
+            }
+        }
+        egui::Shape::Rect(r) => out.push((r.rect.intersect(clip), r.fill)),
+        _ => {}
     }
 }
 
@@ -1082,4 +1118,227 @@ fn tween_cells_carry_the_arrow_or_the_dashed_line() {
     };
     let last = tween_marks(broken, 7, 8);
     assert!(last.dashed && !last.arrow && !last.to_right && last.from_left);
+}
+
+// ---- La tabla y los tags del mockup (`.refs/timeline/mockup.png`, 236×138 a 1x) ----
+//
+// Medidas del mockup con su caja en x = 10 (interior desde 11): el primer grupo de la barra en
+// x = 14, la tabla desde x = 12 con el brillo de su borde en x = 11, el contenido del frame 1 en
+// L = 129 y el final de la celda del frame 4 en R = 181; la cajita del tag "Idle" arriba en T = 49
+// y el encabezado (los números) desde B = 66.
+
+/// Dónde quedaron la tabla y el tag en el último frame: lo que el mockup llama 12 (`left`, el
+/// principio de las filas), L, B, T y la última columna de la cajita (`label_right`).
+struct TagMarks {
+    left: f32,
+    l: f32,
+    b: f32,
+    t: f32,
+    label_right: f32,
+}
+
+/// Un sprite de 4 frames con el tag "Idle" de todos, como el demo y el mockup, con el frame 2
+/// actual (el frame elegido taparía el pie de la pata izquierda). Devuelve el color del tag.
+fn with_idle_tag(h: &mut Harness) -> Color32 {
+    for _ in 0..3 {
+        h.editor.duplicate_frame();
+    }
+    h.editor.frame_range = Some((0, 3));
+    h.editor.add_tag();
+    let mut tag = h.editor.sprite().tags[0].clone();
+    tag.name = "Idle".into();
+    h.editor.set_tag(0, tag);
+    h.editor.frame_range = None;
+    h.editor.set_frame(1);
+    h.frame(vec![]);
+    to_color32(h.editor.sprite().tags[0].color)
+}
+
+/// Las medidas del mockup en el último frame: el ojo del encabezado va 3 a la derecha y 2 abajo
+/// del principio de su celda; la cajita del tag es el rect del color del tag de 11 de alto (si
+/// no hay tag, T y `label_right` no dicen nada).
+fn tag_marks(h: &Harness, color: Option<Color32>) -> TagMarks {
+    let eye = h.drawn("timeline.eye")[0];
+    let (left, b) = (eye.left() - 3.0, eye.top() - 2.0);
+    let label = color.map_or(Rect::NOTHING, |color| {
+        h.flat_rects
+            .iter()
+            .find(|(r, c)| *c == color && r.height() == 11.0)
+            .map(|(r, _)| *r)
+            .expect("the tag label")
+    });
+    TagMarks {
+        left,
+        l: left + 117.0,
+        b,
+        t: label.top(),
+        label_right: label.right() - 1.0,
+    }
+}
+
+/// El negro de los contornos del mockup.
+const TAG_INK: Color32 = Color32::from_rgb(0x05, 0x04, 0x03);
+
+#[test]
+fn with_pixel_ui_the_table_starts_one_column_into_the_box_with_a_light_edge() {
+    let mut h = Harness::pixel(1200.0);
+    // Dos capas con la de abajo activa (como Body en el mockup).
+    let bottom = h.layer(0).id;
+    h.editor.add_layer(LayerKind::Image);
+    h.editor.layer = bottom;
+    h.frame(vec![]);
+    let colors = *h.skin.as_ref().unwrap().colors();
+    let m = tag_marks(&h, None);
+    // El primer grupo de la barra está a 3 del interior de la caja (x = 14 en el mockup); la
+    // tabla, a 1 (x = 12), y la columna de en medio (x = 11) es el brillo de su borde.
+    let inner = h.rect("First frame").left() - 3.0;
+    assert_eq!(m.left, inner + 1.0, "the table starts at x = 12");
+    // El encabezado (contenido de 66 a 76): el brillo del borde (11), el contenido del ojo
+    // (12..26), su línea oscura (27) y su brillo (28).
+    let y = m.b + 5.0;
+    assert_eq!(h.color_at(inner, y), Some(colors.highlight), "x = 11");
+    assert_eq!(h.color_at(m.left, y), Some(colors.background), "x = 12");
+    assert_eq!(h.color_at(m.left + 15.0, y), Some(colors.canvas), "x = 27");
+    assert_eq!(
+        h.color_at(m.left + 16.0, y),
+        Some(colors.highlight),
+        "x = 28"
+    );
+    // Las líneas de abajo del encabezado (77 oscura, 78 brillo) empiezan en x = 11.
+    assert_eq!(h.color_at(inner, m.b + 11.0), Some(colors.canvas), "y = 77");
+    assert_eq!(
+        h.color_at(inner, m.b + 12.0),
+        Some(colors.highlight),
+        "y = 78"
+    );
+    // La capa activa (la segunda fila, de 90 a 102 como Shade) en rosa también en esa columna:
+    // la oscura arriba (90) y abajo (103) y el brillo en medio (91..102), como Body en 103..116.
+    let dark = Some(colors.timeline_selection_dark);
+    assert_eq!(h.color_at(inner, m.b + 24.0), dark, "y = 90");
+    for dy in 25..=36 {
+        let y = m.b + dy as f32;
+        assert_eq!(
+            h.color_at(inner, y),
+            Some(colors.timeline_selection_light),
+            "y = {y}"
+        );
+    }
+    assert_eq!(h.color_at(inner, m.b + 37.0), dark, "y = 103");
+    assert_eq!(h.color_at(m.left + 15.0, m.b + 30.0), dark, "x = 27");
+}
+
+#[test]
+fn with_pixel_ui_tags_close_the_header_with_the_line_of_the_rows() {
+    let mut h = Harness::pixel(1200.0);
+    let colors = *h.skin.as_ref().unwrap().colors();
+    let color = with_idle_tag(&mut h);
+    let m = tag_marks(&h, Some(color));
+    assert_eq!(m.b - m.t, 17.0, "B = 66, T = 49");
+    // La línea de arriba del encabezado: oscura en y = 64 (B − 2) y brillo en y = 65 (B − 1),
+    // desde el brillo del borde (x = 11) por el nombre y el contenido de los frames.
+    for x in [m.left - 1.0, m.left + 50.0, m.l + 6.0, m.l + 26.0 + 6.0] {
+        assert_eq!(h.color_at(x, m.b - 2.0), Some(colors.canvas), "dark at {x}");
+        assert_eq!(
+            h.color_at(x, m.b - 1.0),
+            Some(colors.highlight),
+            "light at {x}"
+        );
+    }
+    // Las columnas del encabezado suben hasta el brillo (x = 27 en y = 65).
+    assert_eq!(h.color_at(m.left + 15.0, m.b - 1.0), Some(colors.canvas));
+}
+
+#[test]
+fn with_pixel_ui_the_tag_label_has_a_black_outline_with_cut_corners_like_the_mockup() {
+    let mut h = Harness::pixel(1200.0);
+    let color = with_idle_tag(&mut h);
+    let m = tag_marks(&h, Some(color));
+    let ink = Some(TAG_INK);
+    // La cajita: de L + 1 (x = 130) a la tinta + 3 (x = 151), de T (49) a T + 10 (59).
+    let (x0, x1) = (m.l + 1.0, m.label_right);
+    // Arriba (y = 48) y abajo (y = 60, donde la pata izquierda sigue naranja en x = 130).
+    for x in (x0 as i32)..=(x1 as i32) {
+        let x = x as f32;
+        assert_eq!(h.color_at(x, m.t - 1.0), ink, "top at {x}");
+        let bottom = if x == x0 { Some(color) } else { ink };
+        assert_eq!(h.color_at(x, m.t + 11.0), bottom, "bottom at {x}");
+    }
+    // Los lados (x = 129 y x = 152); el derecho lo atraviesa el corchete en y = 54.
+    for y in 0..11 {
+        let y = m.t + y as f32;
+        assert_eq!(h.color_at(m.l, y), ink, "left at {y}");
+        let right = if y == m.t + 5.0 { Some(color) } else { ink };
+        assert_eq!(h.color_at(x1 + 1.0, y), right, "right at {y}");
+    }
+    // Las esquinas recortadas: (129, 48), (152, 48) y (152, 60); en (129, 60) sigue el contorno
+    // de la pata.
+    assert_ne!(h.color_at(m.l, m.t - 1.0), ink);
+    assert_ne!(h.color_at(x1 + 1.0, m.t - 1.0), ink);
+    assert_ne!(h.color_at(x1 + 1.0, m.t + 11.0), ink);
+    assert_eq!(h.color_at(m.l, m.t + 11.0), ink);
+}
+
+#[test]
+fn with_pixel_ui_the_tag_bracket_is_orange_with_a_black_outline_like_the_mockup() {
+    let mut h = Harness::pixel(1200.0);
+    let colors = *h.skin.as_ref().unwrap().colors();
+    let color = with_idle_tag(&mut h);
+    let m = tag_marks(&h, Some(color));
+    let (ink, orange) = (Some(TAG_INK), Some(color));
+    let r = m.l + 4.0 * 13.0;
+    let mid = m.t + 5.0;
+    // Arriba: naranja en y = 54 de la cajita a R − 3 (x = 178), contorno en y = 53 hasta R − 3 y
+    // en y = 55 hasta R − 4 (177); la esquina de afuera (179, 53), recortada.
+    for x in (m.label_right as i32 + 1)..=(r as i32 - 3) {
+        let x = x as f32;
+        assert_eq!(h.color_at(x, mid), orange, "bar at {x}");
+        assert_eq!(h.color_at(x, mid - 1.0), ink, "bar top at {x}");
+        let below = if x == r - 3.0 { orange } else { ink };
+        assert_eq!(h.color_at(x, mid + 1.0), below, "bar bottom at {x}");
+    }
+    assert_ne!(h.color_at(r - 2.0, mid - 1.0), ink, "cut corner");
+    // La pata derecha: naranja en x = 178 hasta B − 2 (64), contorno en 177 y 179 (sobre la
+    // línea oscura de la tabla); abierta abajo: en y = 65, el brillo de la línea.
+    for y in (mid as i32)..=(m.b as i32 - 2) {
+        let y = y as f32;
+        assert_eq!(h.color_at(r - 3.0, y), orange, "right leg at {y}");
+        assert_eq!(h.color_at(r - 2.0, y), ink, "right leg outside at {y}");
+        if y > mid {
+            assert_eq!(h.color_at(r - 4.0, y), ink, "right leg inside at {y}");
+        }
+    }
+    assert_eq!(h.color_at(r - 3.0, m.b - 1.0), Some(colors.highlight));
+    // La pata izquierda: naranja en x = 130 de debajo de la cajita (60) a B − 2 (64), contorno
+    // en 129 y 131.
+    for y in (m.t as i32 + 11)..=(m.b as i32 - 2) {
+        let y = y as f32;
+        assert_eq!(h.color_at(m.l + 1.0, y), orange, "left leg at {y}");
+        assert_eq!(h.color_at(m.l, y), ink, "left leg outside at {y}");
+        assert_eq!(h.color_at(m.l + 2.0, y), ink, "left leg inside at {y}");
+    }
+    assert_eq!(h.color_at(m.l + 1.0, m.b - 1.0), Some(colors.highlight));
+}
+
+#[test]
+fn with_pixel_ui_a_tag_narrower_than_its_label_drops_both_legs_below_it() {
+    let mut h = Harness::pixel(1200.0);
+    h.editor.add_tag();
+    let mut tag = h.editor.sprite().tags[0].clone();
+    tag.name = "A long name".into();
+    h.editor.set_tag(0, tag);
+    h.frame(vec![]);
+    let color = to_color32(h.editor.sprite().tags[0].color);
+    let m = tag_marks(&h, Some(color));
+    let r = m.l + 13.0;
+    assert!(m.label_right > r, "the label is wider than the frame");
+    // La pata derecha (x = R − 3) sale de debajo de la cajita, como la izquierda; el frame
+    // elegido (el único) tapa su pie.
+    for y in (m.t as i32 + 11)..(m.b as i32 - 2) {
+        let y = y as f32;
+        assert_eq!(h.color_at(r - 3.0, y), Some(color), "right leg at {y}");
+        assert_eq!(h.color_at(r - 2.0, y), Some(TAG_INK), "outside at {y}");
+        assert_eq!(h.color_at(r - 4.0, y), Some(TAG_INK), "inside at {y}");
+    }
+    // Y nada sale a la derecha de la cajita.
+    assert_ne!(h.color_at(m.label_right + 2.0, m.t + 5.0), Some(color));
 }

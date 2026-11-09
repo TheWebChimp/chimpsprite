@@ -199,35 +199,50 @@ fn grid(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, grid:
         egui::ScrollArea::both().auto_shrink([false, false]),
         |ui| {
             ui.spacing_mut().item_spacing = Vec2::ZERO;
-            if grid.skin.is_some() {
-                // El scroll empieza una fila antes: ahí suben las líneas de las columnas.
-                ui.add_space(1.0);
-            }
-            // Con Pixel UI, la fila de tags solo si hay tags (el diseño no la tiene).
-            if grid.skin.is_none() || !editor.sprite().tags.is_empty() {
-                tags_row(ui, editor, grid);
-            }
-            header_row(ui, editor, state, grid);
-            state.rows.clear();
-            for id in editor.timeline_layers() {
-                layer_row(ui, editor, state, id, grid);
-                // Desplegada: una sub-fila por objeto, el de más arriba primero.
-                if state.expanded_objects.contains(&(editor.active, id))
-                    && let Some(layer) = editor
-                        .sprite()
-                        .layer(id)
-                        .filter(|l| l.kind == LayerKind::Objects)
-                        .cloned()
-                {
-                    for object in layer.objects.iter().rev() {
-                        object_row(ui, editor, &layer, object, grid);
-                    }
+            match grid.skin {
+                // El scroll empieza una fila antes (ahí suben las líneas de las columnas) y una
+                // columna antes: el brillo del borde izquierdo de la tabla, cuya línea oscura es
+                // el borde de la caja (`.refs/timeline/mockup.png`: la tabla desde x = 12).
+                Some(_) => {
+                    egui::Frame::new()
+                        .inner_margin(egui::Margin {
+                            left: 1,
+                            top: 1,
+                            ..Default::default()
+                        })
+                        .show(ui, |ui| rows(ui, editor, state, grid));
                 }
+                None => rows(ui, editor, state, grid),
             }
-            range_outline(ui, editor, state, grid);
-            end_cel_drag(ui, editor, state);
         },
     );
+}
+
+/// Lo de adentro del scroll de la grilla: tags, encabezado y capas.
+fn rows(ui: &mut egui::Ui, editor: &mut Editor, state: &mut TimelineState, grid: Grid) {
+    // Con Pixel UI, la fila de tags solo si hay tags (el diseño no la tiene).
+    if grid.skin.is_none() || !editor.sprite().tags.is_empty() {
+        tags_row(ui, editor, grid);
+    }
+    header_row(ui, editor, state, grid);
+    state.rows.clear();
+    for id in editor.timeline_layers() {
+        layer_row(ui, editor, state, id, grid);
+        // Desplegada: una sub-fila por objeto, el de más arriba primero.
+        if state.expanded_objects.contains(&(editor.active, id))
+            && let Some(layer) = editor
+                .sprite()
+                .layer(id)
+                .filter(|l| l.kind == LayerKind::Objects)
+                .cloned()
+        {
+            for object in layer.objects.iter().rev() {
+                object_row(ui, editor, &layer, object, grid);
+            }
+        }
+    }
+    range_outline(ui, editor, state, grid);
+    end_cel_drag(ui, editor, state);
 }
 
 /// Al soltar un rango que se arrastraba, se mueve ahí (con Ctrl, se copia).
@@ -453,6 +468,10 @@ fn tags_row(ui: &mut egui::Ui, editor: &mut Editor, grid: Grid) {
         None => grid.tag_h,
     };
     let (row, _) = ui.allocate_exact_size(vec2(grid.row_width(editor), height), Sense::hover());
+    if let Some(skin) = grid.skin {
+        // Cierra por arriba el encabezado, debajo de los corchetes.
+        pixel::tags_floor(ui, skin, row);
+    }
     let mut action = None;
     for (i, tag) in tags.iter().enumerate() {
         let span = Rect::from_min_max(
