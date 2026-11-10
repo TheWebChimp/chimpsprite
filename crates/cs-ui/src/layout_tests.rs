@@ -11688,7 +11688,8 @@ fn a_lone_docked_panel_collapses_from_its_grab_strip() {
     h.frame();
     let collapse = h.button("Collapse to Icons");
     assert!(leaf.contains_rect(collapse), "{collapse:?} in {leaf:?}");
-    assert!(collapse.right() > leaf.right() - 16.0, "at the right end");
+    // (A la izquierda de la barra de scroll de Groom: ver el test de abajo.)
+    assert!(collapse.right() > leaf.right() - 32.0, "at the right end");
     h.click(collapse.center(), PointerButton::Primary);
     assert!(!h.app.workspace.docked(PanelId::Groom));
     assert_eq!(h.app.workspace.strip(), PanelId::DOCK);
@@ -11892,4 +11893,82 @@ fn in_a_model_tab_a_docked_or_floating_3d_panel_is_drawn_once_by_its_fixed_panel
         );
         assert!(h.panel("model_panel").is_positive());
     }
+}
+
+/// Si el botón « (Collapse to Icons) está en el último frame.
+fn collapse_shown(h: &LayoutHarness) -> bool {
+    h.buttons
+        .iter()
+        .any(|(l, _)| l == crate::workspace::COLLAPSE)
+}
+
+#[test]
+fn the_collapse_button_of_a_lone_panel_shows_only_from_its_grab_strip_and_off_the_scroll_bar() {
+    use crate::panel_registry::PanelId;
+    let mut h = groom_below_color(300.0);
+    let leaf = h.app.workspace.leaf_rect(PanelId::Groom).unwrap();
+    // La barra de scroll de Groom (al borde derecho de su cuerpo, dentro del margen).
+    let right = leaf.right() - f32::from(crate::dock::FLYOUT_MARGIN);
+    let bar = Rect::from_x_y_ranges(
+        right - crate::pixel_ui::SCROLL_BAR..=right,
+        leaf.top()..=leaf.bottom(),
+    );
+    // Arriba de la barra, a la altura del «: el puntero llega desde abajo, por la barra.
+    let top = leaf.top() + crate::kit::tabs::ARROWS_TOP + crate::kit::tabs::ARROW_SIZE - 2.0;
+    let on_bar = pos2(bar.center().x, top);
+    for dy in [80.0, 40.0, 0.0] {
+        h.frame_with(vec![Event::PointerMoved(on_bar + vec2(0.0, dy))]);
+    }
+    h.frame();
+    assert!(!collapse_shown(&h), "entering from below does not show it");
+    // Un clic ahí es de la barra: Groom sigue acoplado.
+    h.click(on_bar, PointerButton::Primary);
+    assert!(h.app.workspace.docked(PanelId::Groom));
+    // Desde la franja de agarre, sí; nunca encima de la barra, y sigue mientras se va hacia él.
+    h.frame_with(vec![Event::PointerMoved(pos2(
+        leaf.center().x,
+        leaf.top() + 1.0,
+    ))]);
+    h.frame();
+    let collapse = h.button(crate::workspace::COLLAPSE);
+    assert!(
+        !collapse.intersect(bar).is_positive(),
+        "{collapse:?} off the scroll bar {bar:?}"
+    );
+    h.frame_with(vec![Event::PointerMoved(collapse.center())]);
+    h.frame();
+    assert!(collapse_shown(&h), "it stays on the way to it");
+    // Al irse de la franja y del botón, se esconde.
+    h.frame_with(vec![Event::PointerMoved(leaf.center())]);
+    h.frame();
+    assert!(!collapse_shown(&h));
+}
+
+#[test]
+fn with_many_tabs_the_collapse_button_does_not_cover_a_close_mark() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::DockTarget;
+    let mut h = LayoutHarness::new(pixel_ui(), true);
+    let mut checked = 0;
+    for id in [
+        PanelId::Library,
+        PanelId::Groom,
+        PanelId::Lumen,
+        PanelId::Slices,
+        PanelId::Artboards,
+        PanelId::Font,
+    ] {
+        h.app.workspace.dock(id, DockTarget::Focused);
+        h.frame();
+        h.frame();
+        let collapse = h.button(crate::workspace::COLLAPSE);
+        for (label, r) in h.buttons.iter().filter(|(l, _)| l.starts_with("Close ")) {
+            assert!(
+                !r.intersect(collapse).is_positive(),
+                "{id:?}: {label} {r:?} under {collapse:?}"
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 0);
 }

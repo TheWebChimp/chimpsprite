@@ -42,6 +42,9 @@ pub(super) const MARKERS: [Color32; 5] = [M_SEP_IDLE, M_SEP_HOVER, M_SEP_DRAG, M
 
 /// El alto de la barra de pestañas: las del kit (15) más la línea grabada (2).
 pub(super) const TAB_BAR_H: f32 = kit::tabs::ACTIVE_HEIGHT;
+/// Lo que la barra de pestañas deja libre a la derecha: el botón « (`workspace::COLLAPSE`) y un
+/// punto de aire. Las pestañas no pasan de ahí (ni la última ni su ×).
+pub(super) const COLLAPSE_ROOM: f32 = kit::tabs::ARROW_SIZE + 1.0;
 /// La franja de arriba de un grupo sin barra de pestañas: de ahí se agarra para arrastrarlo (con
 /// el puntero encima se pinta la línea grabada resaltada, como un divisor).
 pub(super) const GRAB_STRIP: f32 = 3.0;
@@ -66,7 +69,10 @@ pub(super) fn dock_style(ui_style: &egui::Style, skin: &Skin) -> egui_dock::Styl
     style.tab_bar.bg_fill = colors.background;
     style.tab_bar.hline_color = Color32::TRANSPARENT;
     style.tab_bar.corner_radius = CornerRadius::ZERO;
-    style.tab_bar.inner_margin = Margin::ZERO;
+    style.tab_bar.inner_margin = Margin {
+        right: COLLAPSE_ROOM as i8,
+        ..Margin::ZERO
+    };
     style.tab_bar.show_scroll_bar_on_overflow = false;
     for t in [
         &mut style.tab.active,
@@ -107,6 +113,7 @@ pub(super) fn plain_style(ui_style: &egui::Style) -> egui_dock::Style {
     // El fondo de los paneles de egui, como el panel derecho de antes (no el de las ventanas).
     style.tab.tab_body.bg_fill = ui_style.visuals.panel_fill;
     style.tab.tab_body.hidden_tab_bar_drag_height = Some(GRAB_STRIP);
+    style.tab_bar.inner_margin.right += COLLAPSE_ROOM as i8;
     style.separator.extra_interact_width = SEPARATOR_EXTRA;
     style.buttons.show_tab_bar_size = 0.0;
     style.buttons.show_tab_bar_hover_expand = 0.0;
@@ -407,6 +414,15 @@ pub(super) fn tab_item(id: PanelId) -> TabItem {
     }
 }
 
+/// Lo que se ve de las pestañas en la barra del grupo de rect `leaf`: la barra sin el lugar del
+/// botón « ([`COLLAPSE_ROOM`]).
+pub(super) fn visible_tabs(leaf: Rect) -> Rect {
+    Rect::from_min_size(
+        leaf.min,
+        vec2((leaf.width() - COLLAPSE_ROOM).max(0.0), TAB_BAR_H),
+    )
+}
+
 /// La fila de una pestaña (sin lo que la activa baja) a partir del rect de egui_dock.
 pub(super) fn tab_row(rect: Rect) -> Rect {
     Rect::from_min_size(rect.min, vec2(rect.width(), kit::tabs::HEIGHT))
@@ -480,9 +496,10 @@ pub(super) fn paint_tabs(
             continue;
         };
         let bar = Rect::from_min_size(leaf.rect.min, vec2(leaf.rect.width(), TAB_BAR_H));
-        let painter = ctx
-            .layer_painter(first.response.layer_id)
-            .with_clip_rect(bar.intersect(first.response.ctx.content_rect()));
+        let screen = first.response.ctx.content_rect();
+        let layer = ctx.layer_painter(first.response.layer_id);
+        // La línea, a todo lo ancho; las pestañas, sin tapar el lugar del «.
+        let painter = layer.with_clip_rect(visible_tabs(leaf.rect).intersect(screen));
         let active_rect = hit_of(active).map(|h| {
             Rect::from_min_size(
                 h.response.rect.min,
@@ -490,7 +507,9 @@ pub(super) fn paint_tabs(
             )
         });
         let strip = Strip::new(bar.left(), bar.right(), bar.top());
-        painter.extend(kit::tabs::line_shapes(ui, skin, &strip, active_rect));
+        layer
+            .with_clip_rect(bar.intersect(screen))
+            .extend(kit::tabs::line_shapes(ui, skin, &strip, active_rect));
         let mut order: Vec<PanelId> = leaf.tabs.clone();
         order.sort_by_key(|&p| p == active);
         for id in order {

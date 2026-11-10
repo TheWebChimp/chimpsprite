@@ -1189,7 +1189,7 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
     }
     if let Some(skin) = skin {
         skin::paint_tabs(ui, skin, &workspace.state, &hits, dock_id());
-        closed.extend(close_marks(ui, &hits, modal));
+        closed.extend(close_marks(ui, &workspace.state, &hits, modal));
     }
     // Dónde puede haber marcadores este frame: el DockArea y sus ventanas, fuera del cuerpo de los
     // grupos (ver `skin::Armed`).
@@ -1262,18 +1262,28 @@ fn collapse_buttons(
         {
             continue;
         }
-        let at = egui::pos2(
-            leaf.rect.right() - 1.0 - size.x,
-            leaf.rect.top() + kit::tabs::ARROWS_TOP,
-        );
+        // En la barra de pestañas, en el lugar que ella le deja a la derecha (`COLLAPSE_ROOM`);
+        // sin barra, a la izquierda de la barra de scroll del panel (no encima de ella).
+        let right = if leaf.tab_bar_hidden {
+            leaf.rect.right() - f32::from(dock::FLYOUT_MARGIN) - pixel_ui::SCROLL_BAR - 1.0
+        } else {
+            leaf.rect.right() - 1.0
+        };
+        let at = egui::pos2(right - size.x, leaf.rect.top() + kit::tabs::ARROWS_TOP);
         let rect = egui::Rect::from_min_size(at.round(), size);
         if leaf.tab_bar_hidden {
+            // Solo si el puntero llegó por la franja de agarre (no desde abajo, por el panel), y
+            // mientras siga en ella o en el botón.
             let strip = egui::Rect::from_min_size(
                 leaf.rect.min,
                 egui::vec2(leaf.rect.width(), skin::GRAB_STRIP),
             );
-            let near = pointer.is_some_and(|p| strip.union(rect).contains(p) && ours(p));
-            if dragging || !near {
+            let inside = |r: egui::Rect| pointer.is_some_and(|p| r.contains(p) && ours(p));
+            let memory = egui::Id::new(("workspace_collapse_armed", path.surface, path.node));
+            let was = ctx.data(|d| d.get_temp::<bool>(memory)).unwrap_or(false);
+            let armed = (was || inside(strip)) && (inside(strip) || inside(rect));
+            ctx.data_mut(|d| d.insert_temp(memory, armed));
+            if dragging || !armed {
                 continue;
             }
         }
@@ -1311,12 +1321,28 @@ fn collapse_buttons(
 }
 
 /// La × del kit de cada pestaña que se puede cerrar, encima de la de egui_dock (en su capa):
-/// devuelve los paneles cuya × se apretó.
-fn close_marks(ui: &mut egui::Ui, hits: &[skin::TabHit], modal: bool) -> Vec<PanelId> {
+/// devuelve los paneles cuya × se apretó. Solo las que se ven enteras en su barra (con muchas
+/// pestañas, las de la punta quedan cortadas o fuera).
+fn close_marks(
+    ui: &mut egui::Ui,
+    state: &DockState<PanelId>,
+    hits: &[skin::TabHit],
+    modal: bool,
+) -> Vec<PanelId> {
     let mut closed = Vec::new();
     for h in hits {
         let item = skin::tab_item(h.id);
         if item.mark == kit::tabs::TabMark::None || skin::is_dragged_tab(&h.response) {
+            continue;
+        }
+        let shown = state
+            .find_tab(&h.id)
+            .and_then(|path| state.leaf(path.node_path()).ok())
+            .is_some_and(|leaf| {
+                let mark = kit::tabs::mark_rect(skin::tab_row(h.response.rect));
+                skin::visible_tabs(leaf.rect).contains_rect(mark)
+            });
+        if !shown {
             continue;
         }
         let mark = kit::tabs::mark_rect(skin::tab_row(h.response.rect)).expand(2.0);
