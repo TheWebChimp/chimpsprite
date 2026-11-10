@@ -184,12 +184,19 @@ pub(crate) fn paint_drop_zone(
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(default)]
 pub(crate) struct SavedWorkspace {
+    /// La versión de lo guardado, para migrarlo (ver [`SAVED_VERSION`]). Sin el campo, 0: el de
+    /// antes de que existiera (el mismo formato que la versión 1).
+    #[serde(default)]
+    pub version: u32,
     /// El árbol de egui_dock: lo acoplado y las ventanas flotantes.
     pub state: DockState<String>,
     /// Los paneles de la tira, en orden. Al leer no hace falta (la tira es lo del dock que no está
     /// en el árbol), pero así el archivo se entiende solo.
     pub strip: Vec<String>,
 }
+
+/// La versión de lo que se guarda ahora (la fase C).
+pub(crate) const SAVED_VERSION: u32 = 1;
 
 impl Default for SavedWorkspace {
     fn default() -> Self {
@@ -235,6 +242,7 @@ impl Workspace {
     /// [`Workspace::place_restored_windows`]).
     pub(crate) fn to_saved(&self) -> SavedWorkspace {
         SavedWorkspace {
+            version: SAVED_VERSION,
             state: self.state.map_tabs(|p| p.key().to_owned()),
             strip: self.strip.iter().map(|p| p.key().to_owned()).collect(),
         }
@@ -1685,6 +1693,21 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_workspace_carries_its_version_and_one_without_it_is_version_0() {
+        let saved = Workspace::demo("split").unwrap().to_saved();
+        assert_eq!(saved.version, SAVED_VERSION);
+        let ron = ron::to_string(&saved).unwrap();
+        let back: SavedWorkspace = ron::from_str(&ron).unwrap();
+        assert_eq!(back.version, SAVED_VERSION);
+        // Lo de antes (sin el campo) es la versión 0, y se lee igual.
+        let before = ron.replacen(&format!("version:{SAVED_VERSION},"), "", 1);
+        assert_ne!(before, ron);
+        let back: SavedWorkspace = ron::from_str(&before).unwrap();
+        assert_eq!(back.version, 0);
+        assert!(Workspace::from_saved(back).docked(PanelId::Groom));
+    }
+
+    #[test]
     fn unknown_or_repeated_panels_are_dropped_and_missing_ones_go_to_the_strip() {
         let mut saved = Workspace::essentials().to_saved();
         saved.state.push_to_focused_leaf("nope".to_string());
@@ -1753,6 +1776,7 @@ mod tests {
         assert!(is_essentials(&Workspace::from_saved(saved)));
         // Nada que se conozca.
         let saved = SavedWorkspace {
+            version: SAVED_VERSION,
             state: DockState::new(vec!["nope".to_string()]),
             strip: Vec::new(),
         };

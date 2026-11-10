@@ -11853,7 +11853,8 @@ fn the_right_columns_resize_handle_has_the_id_the_width_preference_reads() {
     let id = egui::Id::new("palette").with("__resize");
     assert!(
         h.ctx.read_response(id).is_some(),
-        "egui's private `resize_widget_id` (the panel id `.with(\"__resize\")`) changed:          update `resizing` in `ChimpApp::layout` (the column's width preference)"
+        "egui's private `resize_widget_id` (the panel id `.with(\"__resize\")`) changed: \
+         update `resizing` in `ChimpApp::editor_panels` (the column's width preference)"
     );
 }
 

@@ -134,9 +134,10 @@ egui_taffy y solo `workspace` conoce egui_dock.
   (Generate 50, Modify 45 y Export 41 en la columna de 140, como el mockup); con Modify abierto,
   su raya naranja baja medio punto (a escala 2, 1 pixel de pantalla) para quedar en pixel entero.
 
-  **Pendiente para antes de la fase C:** un test de barrido de anchos de `MIN_WIDTH` a 600 por
-  panel; una variante de `run_at` a escala 2; reservar el ancho de la barra de scroll en los
-  paneles acoplados; medir el costo de recalcular taffy al arrastrar los splits.
+  **Pendiente para la fase D:** un test de barrido de anchos de `MIN_WIDTH` a 600 por panel (ahora
+  que se dibujan a cualquier ancho, acoplados o flotando); una variante de `run_at` a escala 2;
+  medir el costo de recalcular taffy al arrastrar los splits. (El ancho de la barra de scroll de
+  los paneles acoplados ya se reserva en la fase C: va en su mínimo.)
 - **B. Registro de paneles.** Todo pasa por `panels` por dentro; por fuera nada cambia. **HECHA**:
   `crates/cs-ui/src/panel_registry.rs` tiene `PanelId` (13 paneles; 12 en web, sin Dafont),
   `PanelSpec { title, icon, plain, reference_width, min_width, closable, host }`, `Host::{Left,
@@ -193,7 +194,11 @@ egui_taffy y solo `workspace` conoce egui_dock.
   robusta, incluidos NaN/inf) y View → Reset Workspace lo regresa al de fábrica (aún no hay menú
   Window). El ancho de la columna es una preferencia del usuario que solo cambia al arrastrar su
   divisor; el ancho mostrado es `max(preferencia, mínimo de la columna)`, y el mínimo sale de los
-  paneles acoplados.
+  paneles acoplados (el de Color solo si está acoplado). Una pestaña soltada fuera de la columna
+  y de las ventanas (en el lienzo) se pone a flotar ahí; las ventanas flotantes no quedan más
+  chicas que lo mínimo de lo que llevan; en la pestaña de un modelo, el panel 3D lo hospeda su
+  panel fijo y su pestaña del workspace solo dice "Shown in the 3D panel". Lo guardado lleva
+  `version` (1; sin el campo, 0) para que la fase D pueda migrar.
 
   **Probar a mano** (los agentes solo inyectan eventos; esto necesita el mouse real):
   - [ ] Arrastrar un ícono de la tira hacia otro panel: se acopla como pestaña.
@@ -218,13 +223,29 @@ egui_taffy y solo `workspace` conoce egui_dock.
   - Presets con nombre (de fábrica y del usuario) y menú Window con la lista de paneles.
   - Preview acoplado: sus controles (play/pausa, centrar) dentro del contenido.
   - El modal no bloquea separadores, clics en pestañas ni la tira.
-  - La zona de soltado es una caja clara opaca que tapa el panel: hacerla translúcida o reordenar.
-  - Área de clic de « (12x12 sobre la barra de scroll de Groom; reservar `ARROW_SIZE + 1` en la
-    barra de pestañas; no alcanzable con teclado).
+  - El botón « no se alcanza con el teclado (y, sin barra de pestañas, tapa un poco del panel
+    mientras se muestra). Las barras de las ventanas flotantes también le dejan su lugar aunque
+    ahí no hay «.
   - Las ventanas flotantes siempre muestran barra de pestañas (aun con un solo panel).
-  - `egui_dock` no tiene tamaños mínimos por panel: hoy se emulan con el mínimo de la columna y el
-    ajuste de divisiones.
-  - El tamaño de las ventanas flotantes no se ajusta a puntos enteros.
+  - `egui_dock` no tiene tamaños mínimos por panel: hoy se emulan con el mínimo de la columna, el
+    ajuste de divisiones y el de las ventanas (que solo rige al soltar su borde).
+  - El tamaño de las ventanas flotantes que el usuario arrastra no se ajusta a puntos enteros.
+  - **Una instancia por `PanelId` por frame.** En la fase C se resolvió solo para 3D: en la
+    pestaña de un modelo lo hospeda su panel fijo (`"model_panel"`) y su pestaña acoplada o
+    flotante dibuja una frase deshabilitada ("Shown in the 3D panel"). La fase D lo generaliza
+    (que el registro sepa qué anfitrión manda en cada frame y los demás muestren dónde está).
+  - `default_size: Vec2` en la ficha (Timeline usa el "ancho" como alto).
+  - Mover la sincronía de `palette_locked` a `draw_color` (hoy la hace `editor_panels` antes y
+    después del workspace).
+  - `ClosePreview` debe parar la reproducción (hoy solo limpia `view.preview`).
+  - La suposición "superficie principal = columna derecha" está regada en `docked`,
+    `refresh_tab_bars`, el botón «, `column_min_width`, `drop_target`, `from_saved` y
+    `host_width`: decidir con un spike entre un `DockState` para toda la ventana (con el lienzo
+    como hoja) y uno por orilla.
+  - Migrar lo guardado con `SavedWorkspace::version` (ya existe: sin el campo es 0, lo de antes
+    de este arreglo; la fase C escribe 1).
+  - Una tira de íconos por orilla.
+  - Partir `workspace.rs` (el modelo, el soltado, los ajustes de tamaño y `show`).
   - Pestañas con desbordamiento: flechas del kit en vez del scroll de egui_dock.
   - Menores: Esc no cancela un arrastre; `BrowseLospec` no sube una ventana flotante al frente;
     el soltado sobre una ventana toma la primera, no la de arriba; la ventana flotante puede

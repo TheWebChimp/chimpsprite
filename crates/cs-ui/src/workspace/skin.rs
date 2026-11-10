@@ -13,8 +13,29 @@
 //! (egui_dock solo redondea a píxel físico: con la escala 2, medio píxel del skin).
 //!
 //! **Depende de detalles internos de egui_dock 0.21.1** (por eso la versión va fija en
-//! `Cargo.toml`): los ids de [`window_area_id`], [`is_dragged_tab`] y [`hidden_strip_id`], y que el estilo transparente siga pintando rects llenos con los colores
-//! de [`dock_style`]. Al subir de versión hay que revisarlos.
+//! `Cargo.toml`). Al subir de versión hay que revisarlos:
+//!
+//! 1. El id del área de cada ventana flotante, `"window {surface:?}"` ([`window_area_id`]).
+//! 2. La respuesta de la pestaña que se arrastra, `id.with("dragged")` ([`is_dragged_tab`]).
+//! 3. El id de la franja de agarre de un grupo sin barra, `hidden_tab_bar_drag`
+//!    ([`hidden_strip_id`]).
+//! 4. Que con el estilo transparente siga pintando rects llenos, sin redondeo, con los colores de
+//!    [`dock_style`] (divisores, zona de destino; el contorno de "ventana nueva" como trazo), que
+//!    el marco de sus ventanas sea `Frame::window` del `Ui` que recibe el `DockArea` (ver
+//!    [`window_visuals`]) y que los atenúe con `linear_multiply` (ver el test de los marcadores).
+//! 5. Dónde los pinta: la zona de destino en la capa `Foreground` "overlay" recortada a la
+//!    pantalla, los divisores recortados al `DockArea` o a su ventana (de eso depende
+//!    `Armed::in_scope`).
+//! 6. Que el cuerpo de cada pestaña se arme con `Ui::new` y el estilo del contexto (el `Viewer`
+//!    de `workspace` le vuelve a poner el del anfitrión).
+//! 7. Que registre los divisores después de los grupos: lo que alcanzan ([`SEPARATOR_EXTRA`]) le
+//!    gana a la franja de agarre del grupo de abajo.
+//! 8. Que la pestaña que se arrastra vaya en su propia capa `Tooltip` movida con
+//!    `transform_layer_shapes` (la × del kit no va ahí; el fantasma se pinta aparte).
+//! 9. Lo de sus ventanas y del soltar: `WindowState::set_size` es `Window::fixed_size` (el tamaño
+//!    de fuera, con el marco) por un frame, `WindowState::rect()` viene vacío (se mide el área),
+//!    una pestaña solo se suelta sobre un grupo (fuera de ellos `workspace` la pone a flotar) y el
+//!    grupo por el que pasó el puntero se recuerda `max_preference_time` (0.3 s).
 
 use std::sync::Arc;
 

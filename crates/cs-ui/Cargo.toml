@@ -28,7 +28,8 @@ fontdue = "0.9"
 # fija: es la que pide egui 0.36.
 egui_taffy = "=0.14.0"
 # El acomodo de los paneles (acoplar, pestañas, flotantes): solo lo usa `workspace`. Versión fija:
-# la piel depende de detalles internos suyos (dos ids y cómo pinta; ver `workspace/skin.rs`).
+# la piel depende de detalles internos suyos (tres ids, cómo pinta y más: ver la lista de
+# `workspace/skin.rs`).
 egui_dock = { version = "=0.21.1", features = ["serde"] }
 
 # Imágenes copiadas en otras apps (mismas features que usa egui-winit: no compila nada extra).
