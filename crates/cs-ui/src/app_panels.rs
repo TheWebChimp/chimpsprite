@@ -48,6 +48,19 @@ pub(crate) struct PanelCtx {
     pub bottom: Option<f32>,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Cada panel que dibujó [`ChimpApp::draw_panel`], con repetidos (para los tests: una
+    /// instancia por `PanelId` por frame).
+    static DRAWS: std::cell::RefCell<Vec<PanelId>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// Los paneles dibujados desde la última llamada (con repetidos), y empieza de cero.
+#[cfg(test)]
+pub(crate) fn take_draws() -> Vec<PanelId> {
+    DRAWS.with(|d| std::mem::take(&mut *d.borrow_mut()))
+}
+
 impl PanelId {
     /// Si ahora tiene sentido mostrar el panel: la línea de tiempo no va en un artboard de fuente
     /// o de modelo (sus frames son los glifos) ni en la pestaña de un modelo, y el preview se
@@ -99,6 +112,8 @@ impl ChimpApp {
         id: PanelId,
         panel: &PanelCtx,
     ) -> Option<PanelAction> {
+        #[cfg(test)]
+        DRAWS.with(|d| d.borrow_mut().push(id));
         if !self.panels_drawn.contains(&id) {
             self.panels_drawn.push(id);
         }

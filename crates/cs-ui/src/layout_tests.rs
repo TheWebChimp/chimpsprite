@@ -11855,3 +11855,41 @@ fn the_right_columns_resize_handle_has_the_id_the_width_preference_reads() {
         "egui's private `resize_widget_id` (the panel id `.with(\"__resize\")`) changed:          update `resizing` in `ChimpApp::layout` (the column's width preference)"
     );
 }
+
+// --- Fase C: arreglos de la revisión final ---
+
+#[test]
+fn in_a_model_tab_a_docked_or_floating_3d_panel_is_drawn_once_by_its_fixed_panel() {
+    use crate::panel_registry::PanelId;
+    use crate::workspace::DockTarget;
+    for float in [false, true] {
+        let mut h = with_model_tab();
+        if float {
+            h.app.workspace.float(PanelId::Model, pos2(320.0, 120.0));
+        } else {
+            h.app.workspace.dock(PanelId::Model, DockTarget::Focused);
+        }
+        h.frame();
+        h.frame();
+        crate::app_panels::take_draws();
+        h.frame();
+        // egui puede correr más de una pasada por frame (`request_discard`): Tools se dibuja una
+        // vez en cada una.
+        let draws = crate::app_panels::take_draws();
+        let count = |id| draws.iter().filter(|&&p| p == id).count();
+        assert!(count(PanelId::Tools) > 0, "{draws:?}");
+        assert_eq!(
+            count(PanelId::Model),
+            count(PanelId::Tools),
+            "float {float}: one 3D panel per pass ({draws:?})"
+        );
+        // La pestaña del workspace dice dónde está; el panel fijo sigue ahí.
+        assert!(
+            h.texts
+                .iter()
+                .any(|(t, _)| t == crate::workspace::MODEL_ELSEWHERE),
+            "float {float}"
+        );
+        assert!(h.panel("model_panel").is_positive());
+    }
+}

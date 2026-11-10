@@ -35,6 +35,10 @@ use crate::{dock, kit, pixel_ui};
 /// El alto de fábrica de un panel que se pone a flotar (si su ficha no pide más).
 const FLOAT_HEIGHT: f32 = 300.0;
 
+/// Lo que dice la pestaña del panel 3D (acoplado o flotando) en la pestaña de un modelo, donde lo
+/// hospeda su panel fijo (`"model_panel"`).
+pub(crate) const MODEL_ELSEWHERE: &str = "Shown in the 3D panel";
+
 /// Dónde acoplar un panel.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum DockTarget {
@@ -781,6 +785,12 @@ impl TabViewer for Viewer<'_> {
         let spacing = ui.spacing().item_spacing;
         ui.set_style(self.style.clone());
         ui.spacing_mut().item_spacing = spacing;
+        // Una instancia por panel por frame (su estado y los ids de `forms` son globales): en la
+        // pestaña de un modelo, al 3D lo hospeda su panel fijo; aquí, solo dónde está.
+        if id == PanelId::Model && self.app.doc.editor.model_edit_on() {
+            ui.add_enabled(false, egui::Label::new(MODEL_ELSEWHERE));
+            return;
+        }
         // El fondo del grupo (dentro del scroll de egui_dock el `max_rect` puede no serlo): hasta
         // ahí llega la lista de Lospec.
         let bottom = ui.clip_rect().bottom().min(ui.max_rect().bottom()).floor();
