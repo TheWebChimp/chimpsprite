@@ -1096,6 +1096,41 @@ fn fit_splits(state: &mut DockState<PanelId>, m: &Minima, sep: f32, bar: f32) {
     }
 }
 
+/// Cada ventana flotante de al menos lo mínimo de lo que lleva (ver [`node_min`]), sin pasar de
+/// la pantalla, para que nada se recorte a lo ancho. egui_dock no deja ponerle un tamaño mínimo a
+/// sus ventanas: como `skin::snap_windows` con su posición, se le pide el tamaño para el frame
+/// siguiente. Con un botón apretado no: mientras se arrastra su borde puede quedar más chica, y
+/// al soltarlo vuelve a su mínimo.
+fn fit_windows(ctx: &egui::Context, w: &mut Workspace, m: &Minima, sep: f32, bar: f32) {
+    if ctx.input(|i| i.pointer.any_down()) {
+        return;
+    }
+    let screen = ctx.content_rect().size();
+    let windows: Vec<SurfaceIndex> = w
+        .state
+        .iter_surfaces_indexed()
+        .filter(|(s, surface)| !s.is_main() && !surface.is_empty())
+        .map(|(s, _)| s)
+        .collect();
+    for s in windows {
+        let area = ctx.memory(|mem| mem.area_rect(skin::window_area_id(s)));
+        let (Some(area), Some(inner)) = (area, w.root_rect(s)) else {
+            continue;
+        };
+        let need = node_min(&w.state[s], NodeIndex::root(), m, sep, bar);
+        let grow = (need - inner.size()).max(egui::Vec2::ZERO);
+        if grow.x < 0.5 && grow.y < 0.5 {
+            continue;
+        }
+        let size = (area.size() + grow).ceil().min(screen.floor());
+        if size != area.size()
+            && let Some(window) = w.state.get_window_state_mut(s)
+        {
+            window.set_size(size);
+        }
+    }
+}
+
 /// El id del `DockArea` del workspace.
 fn dock_id() -> egui::Id {
     egui::Id::new("workspace_dock")
@@ -1251,7 +1286,9 @@ pub(crate) fn show(app: &mut ChimpApp, ui: &mut egui::Ui, modal: bool) {
     }
     // Cada split con sus lados en su mínimo, y a puntos enteros, para el frame siguiente.
     let (sep, bar) = chrome(ui, skin);
-    fit_splits(&mut workspace.state, &minima(ui, skin), sep, bar);
+    let m = minima(ui, skin);
+    fit_splits(&mut workspace.state, &m, sep, bar);
+    fit_windows(ui.ctx(), &mut workspace, &m, sep, bar);
     skin::snap(ui.ctx(), &mut workspace.state);
     skin::snap_windows(ui.ctx(), &mut workspace.state);
     app.workspace = workspace;
@@ -2067,6 +2104,56 @@ mod tests {
             assert!(screen.contains_rect(rect), "{rect:?} in {screen:?}");
             assert_eq!(rect.min, rect.min.round());
         }
+    }
+
+    /// Lo mínimo de lo de adentro de la ventana `surface` (con Pixel UI).
+    fn window_min(ctx: &egui::Context, app: &ChimpApp, surface: SurfaceIndex) -> egui::Vec2 {
+        let mut out = egui::Vec2::ZERO;
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            let skin = app.pixel.skin();
+            let (sep, bar) = chrome(ui, skin);
+            let tree = &app.workspace.state[surface];
+            out = node_min(tree, NodeIndex::root(), &minima(ui, skin), sep, bar);
+        });
+        output.textures_delta.clear();
+        out
+    }
+
+    #[test]
+    fn a_floating_window_never_gets_smaller_than_its_contents_minimum() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        app.workspace = Workspace::demo("float").unwrap();
+        frames(&ctx, &mut app);
+        let (surface, _) = app.workspace.leaf_of(PanelId::Lumen).unwrap();
+        // Como si se achicara arrastrando su borde (y se soltara).
+        app.workspace
+            .state
+            .get_window_state_mut(surface)
+            .unwrap()
+            .set_size(egui::vec2(120.0, 150.0));
+        for _ in 0..4 {
+            frame(&ctx, &mut app, Vec::new());
+        }
+        let min = window_min(&ctx, &app, surface);
+        let inner = app.workspace.root_rect(surface).expect("Lumen's window");
+        assert!(min.x > 120.0 && min.y > 150.0, "{min:?}");
+        assert!(inner.width() >= min.x, "{inner:?} vs {min:?}");
+        assert!(inner.height() >= min.y, "{inner:?} vs {min:?}");
+        // En una pantalla más chica que su mínimo, cabe en la pantalla.
+        app.workspace
+            .state
+            .get_window_state_mut(surface)
+            .unwrap()
+            .set_size(egui::vec2(120.0, 150.0));
+        for _ in 0..6 {
+            frame_in(&ctx, &mut app, Vec::new(), egui::vec2(400.0, 300.0));
+        }
+        let rect = ctx
+            .memory(|m| m.area_rect(skin::window_area_id(surface)))
+            .expect("Lumen's window");
+        assert!(ctx.content_rect().contains_rect(rect), "{rect:?}");
+        assert!(rect.width() > 200.0, "{rect:?}");
     }
 
     #[test]

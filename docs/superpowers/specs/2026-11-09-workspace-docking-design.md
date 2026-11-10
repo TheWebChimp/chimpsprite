@@ -199,8 +199,11 @@ egui_taffy y solo `workspace` conoce egui_dock.
   - [ ] Arrastrar un ícono de la tira hacia otro panel: se acopla como pestaña.
   - [ ] Arrastrarlo al borde de un panel: se divide (arriba/abajo/izquierda/derecha).
   - [ ] Arrastrarlo sobre el lienzo: queda como ventana flotante.
-  - [ ] Mover y redimensionar la ventana flotante (que no se salga ni se haga más chica que su mínimo).
-  - [ ] Cerrar una pestaña y cerrar una ventana: el panel vuelve a la tira.
+  - [ ] Mover y redimensionar la ventana flotante: no se sale de la pantalla y, al soltar su borde,
+        vuelve a lo mínimo de lo que lleva si quedó más chica (mientras se arrastra el borde sí
+        puede quedar más chica: egui_dock no deja ponerle un mínimo a sus ventanas).
+  - [ ] Cerrar una pestaña con su × (también la de una ventana flotante, que no tiene otro botón
+        para cerrarse): el panel vuelve a la tira.
   - [ ] « Collapse to Icons en un grupo (y que Color no ofrezca colapsar).
   - [ ] Franja de agarre de un grupo de un solo panel: aparece al pasar el mouse y arrastra el grupo.
   - [ ] Clic derecho en un ícono: Dock y Float.
