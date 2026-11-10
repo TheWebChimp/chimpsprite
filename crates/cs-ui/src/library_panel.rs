@@ -19,7 +19,7 @@ use crate::pixel_ui;
 use crate::skin::Skin;
 
 /// Ancho del contenido: el mismo que Groom y Lumen.
-pub const WIDTH: f32 = crate::groom::WIDTH;
+pub const WIDTH: f32 = crate::groom::REFERENCE_WIDTH;
 /// Alto de la caja de la vista previa.
 const PREVIEW_HEIGHT: f32 = 96.0;
 /// Alto de cada fila de la lista.

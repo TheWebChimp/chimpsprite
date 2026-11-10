@@ -105,6 +105,77 @@ pub(crate) fn grow(min: f32, basis: f32, max: Option<f32>, h: f32) -> Style {
     }
 }
 
+/// Una hoja como [`grow`] (`basis` de ancho, entre `min` y lo que sobre en su fila) pero del alto
+/// de lo que tiene adentro: para una columna de un panel, armada con el layout de egui.
+pub(crate) fn grow_auto(min: f32, basis: f32) -> Style {
+    Style {
+        flex_grow: 1.0,
+        flex_shrink: 1.0,
+        flex_basis: length(basis),
+        min_size: Size {
+            width: length(min),
+            height: auto(),
+        },
+        ..Default::default()
+    }
+}
+
+/// `style` estirado al alto de su fila (aunque la fila ponga a sus hijos arriba).
+pub(crate) fn full_height(style: Style) -> Style {
+    Style {
+        align_self: Some(AlignSelf::Stretch),
+        ..style
+    }
+}
+
+/// `style` que crece a lo alto con lo que sobre en su columna (desde 0), sin bajar de `min`: lo
+/// que llena un panel hasta su pie.
+pub(crate) fn fill_height(min: f32, style: Style) -> Style {
+    Style {
+        flex_grow: 1.0,
+        flex_basis: length(0.0_f32),
+        min_size: Size {
+            height: length(min),
+            ..style.min_size
+        },
+        ..style
+    }
+}
+
+/// `style` de por lo menos `h` de alto (un panel del alto de su columna, aunque tenga poco).
+pub(crate) fn min_height(h: f32, style: Style) -> Style {
+    Style {
+        min_size: Size {
+            height: length(h),
+            ..style.min_size
+        },
+        ..style
+    }
+}
+
+/// `style` con `right` de aire a la derecha (lo que sobra en la fila no lo usa).
+pub(crate) fn air_right(right: f32, style: Style) -> Style {
+    Style {
+        margin: Rect {
+            right: length(right),
+            ..style.margin
+        },
+        ..style
+    }
+}
+
+/// `style` empujado a la derecha de su fila (lo de antes queda a la izquierda; si la fila se
+/// parte, a la derecha de la suya).
+pub(crate) fn push_right(style: Style) -> Style {
+    Style {
+        margin: Rect {
+            left: LengthPercentageAuto::auto(),
+            ..style.margin
+        },
+        ..style
+    }
+}
+
 /// Una hoja que reparte el ancho de su fila en partes iguales con sus hermanas `share` (desde
 /// base 0), sin bajar de `min`.
 pub(crate) fn share(min: f32, h: f32) -> Style {
@@ -146,6 +217,20 @@ pub(crate) fn air_above(top: f32, style: Style) -> Style {
         },
         ..style
     }
+}
+
+/// Una hoja de `style` en `tui` que no se mide: lo que `add` dibuja en ella (del tamaño que le dé
+/// su estilo, `ui.max_rect()`) no la agranda. Para los lienzos libres que llenan lo que les toca
+/// (una caja que llega hasta el pie): medidos, crecerían con lo que dibujaron la vez pasada.
+pub(crate) fn canvas<R>(tui: &mut Tui, style: Style, add: impl FnOnce(&mut Ui) -> R) -> R {
+    tui.style(style)
+        .ui_manual(|ui, _| egui_taffy::TuiContainerResponse {
+            inner: add(ui),
+            min_size: egui::Vec2::ZERO,
+            intrinsic_size: None,
+            max_size: egui::Vec2::ZERO,
+            infinite: egui::Vec2b::FALSE,
+        })
 }
 
 /// El ancho que necesita `text` en la fuente de la UI (tinta + 1), en puntos enteros.

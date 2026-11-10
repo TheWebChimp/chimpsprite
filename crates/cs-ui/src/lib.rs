@@ -550,7 +550,7 @@ impl ChimpApp {
             }))
             .collect();
         let groom = &mut self.groom;
-        let width = groom::WIDTH;
+        let width = groom::REFERENCE_WIDTH;
         dock::flyout(
             ctx,
             dock::DockPanel::Groom,
