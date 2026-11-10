@@ -152,6 +152,9 @@ pub struct ChimpApp {
     /// última vez que no la ensanchaba el mínimo de un panel acoplado: a ese vuelve cuando el
     /// panel se va. No se guarda.
     palette_natural_width: Option<f32>,
+    /// Si `save` guarda el acomodo: no cuando es uno de demostración
+    /// (`CHIMPSPRITE_DEMO_WORKSPACE`), que no debe pisar el del usuario.
+    save_workspace: bool,
     /// Documento de la pestaña activa (un marcador vacío si se está en Home).
     doc: tabs::DocState,
     tabs: tabs::Tabs,
@@ -365,6 +368,7 @@ impl ChimpApp {
     ) -> Self {
         Self {
             palette_natural_width: None,
+            save_workspace: true,
             doc: tabs::DocState::untitled(""),
             tabs: tabs::Tabs::default(),
             capture: capture::Capture::from_env(),
@@ -1836,7 +1840,9 @@ impl eframe::App for ChimpApp {
         eframe::set_value(storage, KEYMAP_KEY, &self.keymap.settings());
         eframe::set_value(storage, MASCOT_KEY, &self.mascot.settings);
         eframe::set_value(storage, GIF_KEY, &self.gif_settings);
-        eframe::set_value(storage, WORKSPACE_KEY, &self.workspace.to_saved());
+        if self.save_workspace {
+            eframe::set_value(storage, WORKSPACE_KEY, &self.workspace.to_saved());
+        }
         eframe::set_value(
             storage,
             DEFAULT_PALETTE_KEY,

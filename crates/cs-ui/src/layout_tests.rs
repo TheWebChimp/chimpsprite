@@ -11806,6 +11806,12 @@ fn the_workspace_is_saved_and_a_new_app_restores_it() {
     // Lumen, donde estaba y del mismo tamaño; la columna, igual.
     assert_eq!(w.leaf_rect(PanelId::Lumen).unwrap(), lumen);
     assert_eq!(back.panel("palette"), h.panel("palette"));
+    // Un acomodo de demostración (`CHIMPSPRITE_DEMO_WORKSPACE`) no se guarda.
+    h.app.save_workspace = false;
+    let mut demo = MemoryStorage::default();
+    eframe::App::save(&mut h.app, &mut demo);
+    assert!(!demo.0.contains_key(crate::WORKSPACE_KEY));
+    assert!(eframe::get_value::<ViewSettings>(&demo, crate::VIEW_KEY).is_some());
     // Sin la clave (una configuración de antes): Essentials.
     let palettes = PaletteLibrary::new(Box::new(NoPresets));
     let mut app = ChimpApp::with_parts(Default::default(), pixel_ui(), palettes);
@@ -11838,4 +11844,14 @@ fn reset_workspace_goes_back_to_essentials_in_one_step() {
     assert_eq!(h.panel("palette").width(), 137.0);
     // No es del documento: nada que deshacer.
     assert_eq!(h.app.doc.editor.history.done_count(), undo);
+}
+
+#[test]
+fn the_right_columns_resize_handle_has_the_id_the_width_preference_reads() {
+    let h = LayoutHarness::new(pixel_ui(), true);
+    let id = egui::Id::new("palette").with("__resize");
+    assert!(
+        h.ctx.read_response(id).is_some(),
+        "egui's private `resize_widget_id` (the panel id `.with(\"__resize\")`) changed:          update `resizing` in `ChimpApp::layout` (the column's width preference)"
+    );
 }

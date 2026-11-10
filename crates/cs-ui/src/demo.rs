@@ -478,6 +478,8 @@ pub(crate) fn startup(app: &mut crate::ChimpApp, ctx: &eframe::egui::Context) {
         dev_var("CHIMPSPRITE_DEMO_WORKSPACE").and_then(workspace::Workspace::demo)
     {
         app.workspace = workspace;
+        // El de demostración no pisa el guardado del usuario al cerrar.
+        app.save_workspace = false;
     }
     // Desarrollo: un arrastre con el puntero para capturas (`x0,y0,x1,y1` en puntos, y `,drop`
     // para soltarlo, `,hover` para solo pasar el puntero por `x0,y0` o `,menu` para un clic

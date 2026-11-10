@@ -21,7 +21,9 @@ mod skin;
 use std::collections::HashMap;
 
 use eframe::egui;
-use egui_dock::{DockArea, DockState, Node, NodePath, Surface, TabIndex, TabViewer, Tree};
+use egui_dock::{
+    DockArea, DockState, Node, NodePath, Surface, TabIndex, TabViewer, Tree, WindowState,
+};
 pub(crate) use egui_dock::{NodeIndex, Split, SurfaceIndex};
 
 use crate::ChimpApp;
@@ -201,7 +203,8 @@ pub(crate) struct Workspace {
     /// paneles se dibujan con la app entera): cambiarlo no serviría de nada.
     lent: bool,
     /// Las ventanas de un acomodo leído y el rect que tenía lo de adentro de cada una (ver
-    /// [`Workspace::place_restored_windows`]).
+    /// [`Workspace::place_restored_windows`]). Se olvidan con cualquier cambio del acomodo (los
+    /// índices de las superficies se mueven).
     placements: Vec<(SurfaceIndex, egui::Rect)>,
 }
 
@@ -254,7 +257,7 @@ impl Workspace {
         if self.placements.is_empty() {
             return;
         }
-        if ctx.input(|i| i.pointer.any_down()) {
+        if ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_down()) {
             self.placements.clear();
             return;
         }
@@ -315,10 +318,31 @@ impl Workspace {
             return essentials("no known panel in it");
         }
         // Lo que egui_dock da por bueno al dibujar: la pestaña activa y el grupo con el foco de
-        // cada árbol, existentes.
+        // cada árbol, existentes, y números finitos (RON lee `NaN` e `inf`: con una fracción así
+        // los rects salen NaN, egui se queja en debug y en release nunca se arregla). Los rects
+        // los vuelve a calcular cada frame; `scroll` y las fracciones no.
         for (_, leaf) in state.iter_leaves_mut() {
             if leaf.active.0 >= leaf.tabs.len() {
                 leaf.active = TabIndex(0);
+            }
+            if !leaf.scroll.is_finite() {
+                leaf.scroll = 0.0;
+            }
+        }
+        for surface in state.iter_surfaces_mut() {
+            for node in surface.iter_nodes_mut() {
+                if let Node::Horizontal(split) | Node::Vertical(split) = node {
+                    split.fraction = if split.fraction.is_finite() {
+                        split.fraction.clamp(0.0, 1.0)
+                    } else {
+                        0.5
+                    };
+                }
+            }
+            // Lo guardado de la ventana (la posición y el tamaño pedidos) no se puede revisar
+            // desde aquí: se descarta y la ventana se acomoda con `placements`.
+            if let Surface::Window(_, window) = surface {
+                *window = WindowState::default();
             }
         }
         for surface in state.iter_surfaces_mut() {
@@ -459,6 +483,7 @@ impl Workspace {
     /// desaparecen.
     fn take(&mut self, id: PanelId) {
         self.check_not_lent();
+        self.placements.clear();
         self.strip.retain(|&p| p != id);
         if let Some(path) = self.state.find_tab(&id) {
             self.state.remove_tab(path);
@@ -469,6 +494,7 @@ impl Workspace {
     pub(crate) fn dock(&mut self, id: PanelId, into: DockTarget) {
         // El grupo de destino se recuerda por otra de sus pestañas: sacar `id` de su lugar puede
         // mover los índices del árbol.
+        self.placements.clear();
         let target = match into {
             DockTarget::Leaf(surface, node) | DockTarget::Split(surface, node, _) => self
                 .state
@@ -1876,6 +1902,47 @@ mod tests {
         );
         // Sin tamaño todavía: nada.
         assert_eq!(fit_fraction(0.0, 0.7, 100.0, 100.0, 2.0, None), 0.7);
+    }
+
+    #[test]
+    fn non_finite_numbers_in_a_saved_workspace_are_repaired_and_it_draws() {
+        let fraction = |w: &Workspace| match &w.state.main_surface()[NodeIndex::root()] {
+            Node::Vertical(split) => split.fraction,
+            other => panic!("{other:?}"),
+        };
+        let split = ron::to_string(&Workspace::demo("split").unwrap().to_saved()).unwrap();
+        assert_eq!(split.matches("fraction:0.5,").count(), 1, "{split}");
+        let ctx = egui::Context::default();
+        for (bad, fixed) in [
+            ("NaN", 0.5),
+            ("inf", 0.5),
+            ("-inf", 0.5),
+            ("-3.0", 0.0),
+            ("3.0", 1.0),
+        ] {
+            let text = split.replace("fraction:0.5,", &format!("fraction:{bad},"));
+            let w = Workspace::from_saved(ron::from_str(&text).unwrap());
+            assert_eq!(fraction(&w), fixed, "{bad}");
+            // Y se dibuja (en debug, egui revisa que ningún rect sea NaN).
+            let mut app = test_app();
+            app.workspace = w;
+            frames(&ctx, &mut app);
+            assert!(fraction(&app.workspace).is_finite(), "{bad}");
+            let groom = app.workspace.leaf_rect(PanelId::Groom).unwrap();
+            assert!(groom.is_finite() && groom.is_positive(), "{bad}: {groom:?}");
+        }
+        // Una ventana con su posición pedida en NaN: se descarta y la ventana se dibuja.
+        let float = ron::to_string(&Workspace::demo("float").unwrap().to_saved()).unwrap();
+        assert_eq!(float.matches("x:320.0").count(), 1, "{float}");
+        let text = float.replace("x:320.0", "x:NaN");
+        let mut app = test_app();
+        app.workspace = Workspace::from_saved(ron::from_str(&text).unwrap());
+        frames(&ctx, &mut app);
+        let (surface, _) = app.workspace.leaf_of(PanelId::Lumen).unwrap();
+        let rect = ctx
+            .memory(|m| m.area_rect(skin::window_area_id(surface)))
+            .expect("Lumen's window");
+        assert!(rect.is_finite(), "{rect:?}");
     }
 
     #[test]
