@@ -37,6 +37,7 @@ mod font_overlay;
 mod font_panel;
 mod font_sheet_dialog;
 mod font_variant_dialog;
+mod forms;
 mod frame_dialog;
 mod gif_dialog;
 mod iso_dialog;

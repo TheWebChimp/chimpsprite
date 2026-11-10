@@ -849,16 +849,8 @@ fn place<R>(
 /// Un texto de los ajustes en la fila `y` desde `origin`, en `x`: sus mayúsculas, 6 más abajo
 /// (sin el centrado de las filas de egui).
 fn text_at(ui: &Ui, origin: egui::Pos2, (x, y): (f32, f32), text: &str) {
-    let color = ui.visuals().text_color();
-    let font = TextStyle::Body.resolve(ui.style());
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
-    // La tinta en `x`: sin el aire de la primera letra (el del 1 de "1 bit").
-    let bearing = galley.rows.first().and_then(|row| {
-        let g = row.glyphs.first()?;
-        Some((row.pos.x + g.pos.x + g.uv_rect.offset.x).round())
-    });
-    let at = origin + vec2(x - bearing.unwrap_or(0.0), y + TEXT_DROP);
-    ui.painter().galley(at, galley, color);
+    let at = origin + vec2(x, y);
+    pixel_ui::small_text_at(ui, Rect::from_min_size(at, Vec2::ZERO), text);
 }
 
 /// Un número: el stepper del kit de [`NUMBER_W`] (sin Pixel UI, el `DragValue` de egui).
