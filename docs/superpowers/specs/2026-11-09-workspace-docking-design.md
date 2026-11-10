@@ -180,7 +180,52 @@ egui_taffy y solo `workspace` conoce egui_dock.
   - Ediciones de Artboards/Slices ahora se aplican después de dibujar timeline/color/preview (un
     frame de latencia, igual que Library/Font): aceptado.
 - **C. Docking del lado derecho:** la tira de íconos y sus flyouts + el panel de color pasan a
-  egui_dock (colapsado a íconos, flotantes, arrastrar).
+  egui_dock (colapsado a íconos, flotantes, arrastrar). **HECHA**: `PanelCtx { modal, bottom }` es
+  la entrada única de `draw_panel` (el `PanelSpec` ya trae `key`, `body`, `min_height` y
+  `available`; Lospec vive por "dibujado este frame"). `crates/cs-ui/src/workspace.rs` +
+  `workspace/skin.rs` son los únicos que tocan `egui_dock` (=0.21.1, vestido con el skin: un grupo
+  de un solo panel va sin barra de pestañas y con franja de agarre al pasar el mouse; pestañas del
+  kit; separadores, zonas de soltado y marcos de ventana del skin; todo ajustado a puntos
+  enteros). El panel derecho `"palette"` aloja el workspace y la tira de íconos es el grupo
+  colapsado: se arrastra un ícono para acoplarlo (pestaña o división) o flotarlo; clic derecho
+  Dock/Float; « Collapse to Icons (Color nunca va a la tira); `BrowseLospec` enfoca un Lospec
+  acoplado. El acomodo se guarda al cerrar (`chimpsprite.workspace`, con claves estables y carga
+  robusta, incluidos NaN/inf) y View → Reset Workspace lo regresa al de fábrica (aún no hay menú
+  Window). El ancho de la columna es una preferencia del usuario que solo cambia al arrastrar su
+  divisor; el ancho mostrado es `max(preferencia, mínimo de la columna)`, y el mínimo sale de los
+  paneles acoplados.
+
+  **Probar a mano** (los agentes solo inyectan eventos; esto necesita el mouse real):
+  - [ ] Arrastrar un ícono de la tira hacia otro panel: se acopla como pestaña.
+  - [ ] Arrastrarlo al borde de un panel: se divide (arriba/abajo/izquierda/derecha).
+  - [ ] Arrastrarlo sobre el lienzo: queda como ventana flotante.
+  - [ ] Mover y redimensionar la ventana flotante (que no se salga ni se haga más chica que su mínimo).
+  - [ ] Cerrar una pestaña y cerrar una ventana: el panel vuelve a la tira.
+  - [ ] « Collapse to Icons en un grupo (y que Color no ofrezca colapsar).
+  - [ ] Franja de agarre de un grupo de un solo panel: aparece al pasar el mouse y arrastra el grupo.
+  - [ ] Clic derecho en un ícono: Dock y Float.
+  - [ ] View → Reset Workspace regresa al acomodo de fábrica.
+  - [ ] Cerrar y abrir la app: el acomodo se restaura (acoplados, flotantes y divisiones).
+  - [ ] Ancho de la columna: arrastrar su divisor lo cambia y se conserva; al desacoplar un panel
+        ancho regresa al ancho elegido.
+  - [ ] Buscar en Lospec con Lospec acoplado: la pestaña se enfoca.
+
+  **Para la fase D** (pendientes diferidos de las revisiones de la fase C):
+  - Toolbar, timeline y preview al árbol; el lienzo como nodo central.
+  - Presets con nombre (de fábrica y del usuario) y menú Window con la lista de paneles.
+  - Preview acoplado: sus controles (play/pausa, centrar) dentro del contenido.
+  - El modal no bloquea separadores, clics en pestañas ni la tira.
+  - La zona de soltado es una caja clara opaca que tapa el panel: hacerla translúcida o reordenar.
+  - Área de clic de « (12x12 sobre la barra de scroll de Groom; reservar `ARROW_SIZE + 1` en la
+    barra de pestañas; no alcanzable con teclado).
+  - Las ventanas flotantes siempre muestran barra de pestañas (aun con un solo panel).
+  - `egui_dock` no tiene tamaños mínimos por panel: hoy se emulan con el mínimo de la columna y el
+    ajuste de divisiones.
+  - El tamaño de las ventanas flotantes no se ajusta a puntos enteros.
+  - Pestañas con desbordamiento: flechas del kit en vez del scroll de egui_dock.
+  - Menores: Esc no cancela un arrastre; `BrowseLospec` no sube una ventana flotante al frente;
+    el soltado sobre una ventana toma la primera, no la de arriba; la ventana flotante puede
+    tapar la barra de estado; reordenar/restaurar paneles faltantes en "tidy".
 - **D. El resto al árbol:** toolbar, timeline y preview; workspaces de fábrica y del usuario; menú
   Window. Al final, Essentials se ve igual que hoy.
 - **E. Tests de layout reescritos:** medir dentro de cada panel y en el preset Essentials, no en
