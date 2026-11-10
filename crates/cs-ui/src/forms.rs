@@ -10,6 +10,10 @@ pub(crate) use egui_taffy::taffy::Style;
 pub(crate) use egui_taffy::{Tui, TuiBuilderLogic};
 
 /// Una forma del ancho disponible de `ui`: una columna con `gap` entre sus hijos.
+///
+/// `id` es global: no se combina con `ui.id()`. Dos formas con el mismo `id` en un frame comparten
+/// el estado de taffy (una mide con lo de la otra) y, anidadas, truenan; las que se repiten (una
+/// por fila de una lista) llevan en su `id` algo que no se repita, como su índice.
 pub(crate) fn form(
     ui: &mut Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
@@ -32,20 +36,23 @@ pub(crate) fn form(
 }
 
 /// Una [`form`] en el flujo de `ui` (una fila entre títulos de egui), en puntos enteros aunque
-/// el cursor no lo esté: se arma desde el cursor redondeado y en `ui` ocupa su alto desde el
-/// cursor, como cualquier widget (lo que sigue queda donde quedaría).
+/// el cursor no lo esté: desde el cursor redondeado, de los puntos enteros que quedan a lo ancho,
+/// reserva en `ui` lo que ocupa la forma, como cualquier widget (lo que sigue va debajo).
+/// Devuelve lo que reservó.
 pub(crate) fn form_in_flow(
     ui: &mut Ui,
     id: impl std::hash::Hash + std::fmt::Debug,
     gap: f32,
     add: impl FnOnce(&mut Tui),
-) {
-    let mut rect = ui.available_rect_before_wrap();
-    rect.min = rect.min.round();
+) -> egui::Rect {
+    let available = ui.available_rect_before_wrap();
+    let min = available.min.round();
+    let width = (available.max.x - min.x).floor();
+    let rect = egui::Rect::from_min_size(min, vec2(width, available.max.y - min.y));
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
     form(&mut child, id, gap, add);
-    let size = vec2(rect.width().floor(), child.min_rect().height());
-    ui.allocate_exact_size(size, egui::Sense::hover());
+    let reserved = egui::Rect::from_min_size(min, vec2(width, child.min_rect().height()));
+    ui.allocate_rect(reserved, egui::Sense::hover()).rect
 }
 
 /// El mismo `gap` entre filas y entre columnas.
@@ -557,6 +564,82 @@ mod tests {
         let narrow = run_at(120.0, sample);
         let (g, x) = (narrow.rect("Generate"), narrow.rect("Export"));
         assert!(x.top() > g.top(), "the buttons wrap at 120: {g:?} {x:?}");
+    }
+
+    /// Tres botones de `w` en una fila de `style`.
+    fn three_buttons(tui: &mut Tui, style: Style, w: f32) {
+        let skin = crate::pixel_ui::frame_skin(&tui.egui_ui().ctx().clone()).expect("skin");
+        tui.style(style).add(|tui| {
+            for name in ["One", "Two", "Six"] {
+                tui.style(fixed(w, 17.0)).ui(|ui| {
+                    crate::kit::button::button_sized(ui, &skin, name, w);
+                });
+            }
+        });
+    }
+
+    /// Con el cursor en medio punto, `form_in_flow` reserva un rect en puntos enteros, de lo que
+    /// ocupa la forma (nada de ella se sale), y lo que sigue va debajo de él.
+    #[test]
+    fn a_form_in_flow_reserves_whole_points_from_a_half_point_cursor() {
+        let mut reserved = egui::Rect::NOTHING;
+        let probe = run_at(300.0, |ui| {
+            let at = ui.cursor().min + vec2(0.5, 0.5);
+            let rect = egui::Rect::from_min_size(at, vec2(200.5, 300.0));
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), |ui| {
+                reserved = form_in_flow(ui, "flow", 0.0, |tui| {
+                    three_buttons(tui, row(4.0), 50.0);
+                });
+                label(ui, "After", 40.0);
+            });
+        });
+        let reserved = reserved.translate(vec2(-10.0, -10.0));
+        for v in [
+            reserved.min.x,
+            reserved.min.y,
+            reserved.max.x,
+            reserved.max.y,
+        ] {
+            assert_eq!(v, v.round(), "{reserved:?}");
+        }
+        assert_eq!(reserved.width(), 200.0, "{reserved:?}");
+        // Lo de la forma (After va donde lo pone egui: a medio punto, como su `Ui`).
+        for name in ["One", "Two", "Six"] {
+            let r = probe.rect(name);
+            assert_eq!((r.min, r.max), (r.min.round(), r.max.round()), "{name}");
+            assert!(
+                reserved.contains_rect(r),
+                "{name} {r:?} out of {reserved:?}"
+            );
+        }
+        assert!(
+            probe.rect("After").top() >= reserved.bottom(),
+            "{reserved:?}"
+        );
+    }
+
+    /// `row_end` pone a sus hijos contra el borde derecho; los que no caben bajan, también a la
+    /// derecha.
+    #[test]
+    fn row_end_keeps_its_children_at_the_right_edge() {
+        let wide = run_at(300.0, |ui| {
+            form(ui, "end", 0.0, |tui| three_buttons(tui, row_end(4.0), 50.0))
+        });
+        assert_eq!(wide.rect("Six").right(), 300.0);
+        assert_eq!(wide.rect("Two").right(), 300.0 - 54.0);
+        assert_eq!(wide.rect("One").right(), 300.0 - 108.0);
+        assert_eq!(wide.rect("One").top(), wide.rect("Six").top());
+        // A 120 caben dos: el tercero baja, a la derecha.
+        let narrow = run_at(120.0, |ui| {
+            form(ui, "end", 0.0, |tui| three_buttons(tui, row_end(4.0), 50.0))
+        });
+        let (one, two, six) = (narrow.rect("One"), narrow.rect("Two"), narrow.rect("Six"));
+        assert_eq!(two.right(), 120.0);
+        assert_eq!(one.right(), 120.0 - 54.0);
+        assert_eq!(one.top(), two.top());
+        assert!(six.top() > two.bottom(), "{six:?}");
+        assert_eq!(six.right(), 120.0);
+        narrow.assert_whole_px();
     }
 
     /// Las etiquetas (las de `label` y los textos de `text_wrapped`) salen deshabilitadas para los

@@ -560,7 +560,7 @@ impl DafontPanel {
                 |ui| {
                     ui.set_max_width(ui.available_width() - SCROLL_GAP);
                     for (k, font) in self.fonts.iter().enumerate() {
-                        if self.font_card(ui, font, &mut asked) {
+                        if self.font_card(ui, k, font, &mut asked) {
                             asked.visible.push(k);
                         }
                         ui.add_space(6.0);
@@ -883,8 +883,15 @@ impl DafontPanel {
 
     /// Una fuente de la lista: su barra, su vista previa (la imagen de dafont a su tamaño; con
     /// el puntero encima se recorre a lo ancho) y debajo sus descargas, "Use font" y "View
-    /// more". Devuelve si se ve (para pedir su vista previa).
-    fn font_card(&self, ui: &mut egui::Ui, font: &DafontFont, asked: &mut Asked) -> bool {
+    /// more". Devuelve si se ve (para pedir su vista previa). `index`, su lugar en la lista: su
+    /// forma lleva un id que no se repite aunque dafont repita una fuente.
+    fn font_card(
+        &self,
+        ui: &mut egui::Ui,
+        index: usize,
+        font: &DafontFont,
+        asked: &mut Asked,
+    ) -> bool {
         header(ui, font);
         ui.add_space(HEADER_GAP - ui.spacing().item_spacing.y);
         let width = ui.available_width();
@@ -927,7 +934,7 @@ impl DafontPanel {
             None => {}
         }
         // Las descargas y, a la derecha, los botones (debajo, si no caben al lado).
-        forms::form(ui, ("dafont_card", &font.slug), 0.0, |tui| {
+        forms::form(ui, ("dafont_card", index, &font.slug), 0.0, |tui| {
             tui.style(forms::min_height(ROW_H, forms::row_lines(FIELD_GAP)))
                 .add(|tui| {
                     let downloads = forms::air_above(TEXT_DROP, forms::natural());
