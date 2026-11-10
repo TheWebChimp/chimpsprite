@@ -353,16 +353,25 @@ fn header(tui: &mut forms::Tui, logo: Option<&crate::skin::Piece>) -> Rect {
     })
 }
 
-/// Los anchos de Generate y de Modify y Export en una columna de `width`: parejos, si Generate
-/// cabe; si no, Generate con su ancho justo y los otros dos con lo que queda.
-fn map_button_widths(ui: &Ui, width: f32) -> (f32, f32) {
+/// Modify en la columna del diseño (la de 140): el ancho del mockup.
+const MODIFY: f32 = 45.0;
+
+/// Los anchos de Generate, Modify y Export en una columna de `width`. Generate, con su ancho justo
+/// (o un tercio, si cabe); Modify, la mitad de lo que queda sin bajar de `MODIFY`, y Export, el
+/// resto, sin bajar de su ancho justo (en la columna del diseño: 50, 45 y 41, como el mockup;
+/// en la más angosta, Modify cede lo que le falta a Export).
+fn map_button_widths(ui: &Ui, width: f32) -> (f32, f32, f32) {
     let third = button_width(width, 3);
-    let generate = match pixel_ui::frame_skin(ui.ctx()) {
-        Some(_) => kit::button::width(ui, "Generate").max(third),
-        None => third,
+    let (generate, export_min) = match pixel_ui::frame_skin(ui.ctx()) {
+        Some(_) => (
+            kit::button::width(ui, "Generate").max(third),
+            kit::button::width(ui, "Export"),
+        ),
+        None => (third, 0.0),
     };
-    let rest = ((width - generate - 2.0 * BUTTON_GAP) / 2.0).floor();
-    (generate, rest)
+    let rest = width - generate - 2.0 * BUTTON_GAP;
+    let modify = (rest / 2.0).floor().max(MODIFY).min(rest - export_min);
+    (generate, modify, rest - modify)
 }
 
 impl LumenPanel {
@@ -809,13 +818,13 @@ impl LumenPanel {
                 }
                 return;
             }
-            let (generate, rest) = map_button_widths(ui, width);
+            let (generate, modify_w, export_w) = map_button_widths(ui, width);
             ui.add_enabled_ui(self.albedo.is_some(), |ui| {
                 if pixel_ui::text_button_sized(ui, "Generate", generate).clicked() {
                     self.generate(kind);
                 }
                 let open = self.modify == Some(kind);
-                let modify = pixel_ui::text_button_sized(ui, "Modify", rest)
+                let modify = pixel_ui::text_button_sized(ui, "Modify", modify_w)
                     .on_hover_text("Settings to generate this map");
                 if modify.clicked() {
                     self.modify = if open { None } else { Some(kind) };
@@ -832,7 +841,7 @@ impl LumenPanel {
                 }
             });
             ui.add_enabled_ui(present, |ui| {
-                if pixel_ui::text_button_sized(ui, "Export", rest).clicked()
+                if pixel_ui::text_button_sized(ui, "Export", export_w).clicked()
                     && let Some(image) = self.map_image(kind)
                 {
                     let file = format!("{}{}.png", self.name(), kind.suffix());
@@ -1618,6 +1627,33 @@ mod tests {
                 assert_eq!(probe.rect("Fit").right(), width, "{at}");
             }
         }
+    }
+
+    /// En `REFERENCE_WIDTH`, la fila de botones de cada mapa es la del mockup: Use Layer a todo
+    /// lo ancho de Albedo y, en Normal y Luminance, Generate de su ancho justo (50), Modify de 45
+    /// y Export con el resto (41), 2 entre ellos, hasta el borde de su columna de 140.
+    #[test]
+    fn the_map_buttons_match_the_mockup_at_the_reference_width() {
+        use crate::forms::testing::run_at;
+        let mut lumen = LumenPanel::default();
+        lumen.load("box".into(), sprite());
+        let probe = run_at(REFERENCE_WIDTH, |ui| {
+            lumen.ui(ui);
+        });
+        let all = |name: &str| {
+            let mut rects: Vec<(f32, f32)> = probe
+                .widgets
+                .iter()
+                .filter(|(n, _)| n == name)
+                .map(|(_, r)| (r.left(), r.width()))
+                .collect();
+            rects.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            rects
+        };
+        assert_eq!(all("Use Layer"), [(0.0, 140.0)]);
+        assert_eq!(all("Generate"), [(147.0, 50.0), (294.0, 50.0)]);
+        assert_eq!(all("Modify"), [(199.0, 45.0), (346.0, 45.0)]);
+        assert_eq!(all("Export"), [(246.0, 41.0), (393.0, 41.0)]);
     }
 
     /// Con el contenido de `REFERENCE_WIDTH` desplazado `scrolled` hacia arriba (pintado en
