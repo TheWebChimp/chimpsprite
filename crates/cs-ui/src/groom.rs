@@ -292,11 +292,17 @@ fn header(
                     let rect = Rect::from_min_size(slot.min + LOGO_AT, size);
                     let ppp = ui.ctx().pixels_per_point();
                     // Sube y sale sobre el margen del panel, por encima del recorte del scroll:
-                    // con él se perdía su fila de arriba. (`with_clip_rect` intersecta con el
+                    // con él se perdía su fila de arriba. El recorte crece solo eso (1 arriba,
+                    // 3 a la izquierda): con el contenido desplazado, el logo se recorta como lo
+                    // demás y no se pinta sobre el marco. (`with_clip_rect` intersecta con el
                     // recorte de ahora; `set_clip_rect` lo cambia y deja lo demás del painter:
                     // invisible en la pasada que mide, apagado con un modal.)
+                    let clip = ui.clip_rect();
                     let mut painter = ui.painter().clone();
-                    painter.set_clip_rect(ui.clip_rect().union(rect));
+                    painter.set_clip_rect(
+                        clip.with_min_x(clip.min.x + LOGO_AT.x)
+                            .with_min_y(clip.min.y + LOGO_AT.y),
+                    );
                     painter.extend(pixel_ui::piece_shapes(piece, rect, ppp));
                 }
                 None => {
@@ -1418,13 +1424,13 @@ mod tests {
     }
 
     /// De `MIN_WIDTH` para arriba, con imagen o sin ella, todo entra en el ancho del panel, en
-    /// puntos enteros y sin que nada tape a nada. Con imagen, las dos columnas van lado a lado en
-    /// el ancho del mockup (y más ancho) y, en el más chico, la de los colores baja debajo de la
-    /// de los pasos.
+    /// puntos enteros y sin que nada tape a nada. Con imagen, las dos columnas van lado a lado
+    /// desde `SIDE_BY_SIDE` (a 400, la de los pasos en su mínimo) y, más angosto, la de los
+    /// colores baja debajo de la de los pasos.
     #[test]
     fn the_groom_panel_reflows_at_any_width() {
         use crate::forms::testing::run_at;
-        for width in [MIN_WIDTH, REFERENCE_WIDTH, 600.0] {
+        for width in [MIN_WIDTH, 300.0, 400.0, REFERENCE_WIDTH, 600.0] {
             for with_image in [false, true] {
                 let mut panel = GroomPanel::default();
                 if with_image {
@@ -1436,13 +1442,16 @@ mod tests {
                 probe.assert_whole_px();
                 probe.assert_within(width);
                 probe.assert_no_overlap();
-                probe.rect("Import Image…");
+                // El encabezado en una fila desde 282 (logo, aire y botones); más angosto, los
+                // botones bajan debajo del logo.
+                let import = probe.rect("Import Image…");
+                assert_eq!(import.top() == 0.0, width >= 300.0, "{import:?} at {width}");
                 if !with_image {
                     continue;
                 }
                 // Lo último de los pasos (la paleta) y lo primero de los colores (su orden).
                 let (palette, sort) = (probe.rect("Original Colors"), probe.rect("Most Used"));
-                if width < REFERENCE_WIDTH {
+                if width < SIDE_BY_SIDE {
                     assert!(
                         sort.top() > palette.bottom(),
                         "one under the other at {width}: {palette:?} {sort:?}"
@@ -1452,28 +1461,30 @@ mod tests {
                         sort.left() > palette.right() && sort.top() < palette.top(),
                         "side by side at {width}: {palette:?} {sort:?}"
                     );
+                    // La paleta llega al borde de la columna de los pasos: en su mínimo a 400.
+                    if width == 400.0 {
+                        assert_eq!(palette.right(), LEFT_MIN, "at {width}");
+                    }
                 }
                 probe.rect("New Sprite");
             }
         }
     }
 
-    /// El logo sube 1 por encima del contenido (sobre el margen del panel): el recorte del scroll
-    /// del dock, que empieza en el contenido, no le quita su fila de arriba.
-    #[test]
-    fn the_logo_keeps_its_top_row_above_the_scroll_clip() {
+    /// Lo que pinta `panel` en `content` (con el skin y las fuentes de la app, escala 1) visto
+    /// por un scroll que muestra `viewport` (más abajo que `content`: desplazado): sus shapes,
+    /// cada uno con su recorte.
+    fn painted(
+        panel: &mut GroomPanel,
+        content: Rect,
+        viewport: Rect,
+    ) -> Vec<egui::epaint::ClippedShape> {
         let ctx = egui::Context::default();
         let skin = crate::skin::Skin::embedded(&ctx);
-        let piece = skin.piece("groom.logo", crate::skin::WidgetState::Normal);
-        let size = piece.map(|p| vec2(p.size[0] as f32, p.size[1] as f32));
-        let size = size.expect("the logo in the skin");
         ctx.set_fonts(crate::appearance::font_definitions(true));
         crate::appearance::apply_style(&ctx, Some(skin.colors()));
         crate::pixel_ui::set_bubble(&ctx, Some(std::sync::Arc::new(skin)));
-        let content = Rect::from_min_size(pos2(10.0, 10.0), vec2(REFERENCE_WIDTH, 500.0));
-        let logo = Rect::from_min_size(content.min + LOGO_AT, size);
-        let mut panel = GroomPanel::default();
-        let mut clip = None;
+        let mut shapes = Vec::new();
         // Tres frames: las fuentes llegan en el primero y taffy mide en el segundo.
         for _ in 0..3 {
             let input = egui::RawInput {
@@ -1482,21 +1493,107 @@ mod tests {
             };
             let mut output = ctx.run_ui(input, |ui| {
                 ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
-                    ui.set_clip_rect(content);
+                    ui.set_width(content.width());
+                    ui.set_clip_rect(viewport);
                     panel.ui(ui, Rgba::rgb(0, 0, 0), &[]);
                 });
             });
             output.textures_delta.clear();
-            clip = output.shapes.iter().find_map(|c| match &c.shape {
-                egui::Shape::Mesh(m) => {
-                    let points: Vec<_> = m.vertices.iter().map(|v| v.pos).collect();
-                    (Rect::from_points(&points) == logo).then_some(c.clip_rect)
-                }
-                _ => None,
-            });
+            shapes = output.shapes;
         }
-        let clip = clip.expect("the logo");
+        shapes
+    }
+
+    /// El rect de una malla.
+    fn mesh_rect(shape: &egui::Shape) -> Option<Rect> {
+        match shape {
+            egui::Shape::Mesh(m) => {
+                let points: Vec<_> = m.vertices.iter().map(|v| v.pos).collect();
+                Some(Rect::from_points(&points))
+            }
+            _ => None,
+        }
+    }
+
+    /// Con el contenido desplazado `scrolled` hacia arriba: el rect del logo, su recorte y lo que
+    /// se ve del scroll.
+    fn logo_clip(scrolled: f32) -> (Rect, Rect, Rect) {
+        let skin = crate::skin::Skin::embedded(&egui::Context::default());
+        let piece = skin.piece("groom.logo", crate::skin::WidgetState::Normal);
+        let size = piece.map(|p| vec2(p.size[0] as f32, p.size[1] as f32));
+        let size = size.expect("the logo in the skin");
+        let content = Rect::from_min_size(pos2(10.0, 10.0), vec2(REFERENCE_WIDTH, 500.0));
+        let viewport = content.with_min_y(content.min.y + scrolled);
+        let logo = Rect::from_min_size(content.min + LOGO_AT, size);
+        let shapes = painted(&mut GroomPanel::default(), content, viewport);
+        let clip = shapes
+            .iter()
+            .find(|c| mesh_rect(&c.shape) == Some(logo))
+            .map(|c| c.clip_rect)
+            .expect("the logo");
+        (logo, clip, viewport)
+    }
+
+    /// El logo sube 1 por encima del contenido (sobre el margen del panel): el recorte del scroll
+    /// del dock, que empieza en el contenido, no le quita su fila de arriba.
+    #[test]
+    fn the_logo_keeps_its_top_row_above_the_scroll_clip() {
+        let (logo, clip, _) = logo_clip(0.0);
         assert!(clip.contains_rect(logo), "{logo:?} clipped by {clip:?}");
+    }
+
+    /// Con el contenido desplazado, el logo se recorta como lo demás: su recorte sube solo lo que
+    /// el logo sale del contenido (1), no se pinta sobre el marco del panel.
+    #[test]
+    fn a_scrolled_logo_is_clipped_like_the_rest() {
+        let (logo, clip, viewport) = logo_clip(5.0);
+        assert!(
+            clip.top() >= viewport.top() + LOGO_AT.y,
+            "{logo:?} clipped by {clip:?}, viewport {viewport:?}"
+        );
+    }
+
+    /// La línea grabada entre las columnas: una, a 4 de la de los pasos, solo si van lado a lado.
+    #[test]
+    fn the_divider_is_drawn_only_side_by_side() {
+        for width in [MIN_WIDTH, 300.0, 400.0, REFERENCE_WIDTH, 600.0] {
+            let mut panel = GroomPanel::default();
+            panel.load("big".into(), big());
+            let content = Rect::from_min_size(pos2(10.0, 10.0), vec2(width, 600.0));
+            let shapes = painted(&mut panel, content, content);
+            // Las líneas grabadas de pie: mallas sin textura de 2 de ancho (oscura y clara).
+            fn plain_meshes(shape: &egui::Shape, out: &mut Vec<Rect>) {
+                match shape {
+                    egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| plain_meshes(s, out)),
+                    egui::Shape::Mesh(m) if m.texture_id == egui::TextureId::default() => {
+                        out.extend(mesh_rect(shape));
+                    }
+                    _ => {}
+                }
+            }
+            let mut meshes = Vec::new();
+            shapes
+                .iter()
+                .for_each(|c| plain_meshes(&c.shape, &mut meshes));
+            let dividers: Vec<Rect> = meshes
+                .into_iter()
+                .filter(|r| r.width() == 2.0 && r.height() > 20.0)
+                .collect();
+            if width >= SIDE_BY_SIDE {
+                assert_eq!(dividers.len(), 1, "one at {width}: {dividers:?}");
+                // La columna de los pasos: en su mínimo a 400, de su ancho en la referencia y,
+                // a 600, con la mitad de lo que sobra.
+                let left = match width as u32 {
+                    400 => LEFT_MIN,
+                    434 => LEFT_WIDTH,
+                    _ => LEFT_WIDTH + (width - REFERENCE_WIDTH) / 2.0,
+                };
+                let x = dividers[0].left() - content.left();
+                assert_eq!(x, left + DIVIDER_AIR, "at {width}");
+            } else {
+                assert!(dividers.is_empty(), "none at {width}: {dividers:?}");
+            }
+        }
     }
 
     /// 4×3 celdas de 5 px (rojo sobre blanco), agrandado.

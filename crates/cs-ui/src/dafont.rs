@@ -263,8 +263,10 @@ const FIELD_H: f32 = crate::pixel_ui::CONTROL_HEIGHT;
 /// La frase y el abecedario del detalle.
 const PANGRAM: &str = "the quick brown fox jumps over the lazy dog";
 const CHARSET: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZ abcdefghijklmnopqrstuvwxyz 0123456789";
-/// El logo de dafont (un enlace al sitio).
+/// El logo de dafont (un enlace al sitio), en la esquina de arriba a la derecha del panel, contra
+/// su luz: sale del contenido `LOGO_OVERHANG` hacia arriba y hacia la derecha.
 const LOGO: &str = "dafont.logo";
+const LOGO_OVERHANG: f32 = PANEL_MARGIN - PANEL_EDGE;
 
 /// El orden de la lista ("Sort by" de dafont).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -759,10 +761,7 @@ impl DafontPanel {
         });
         // El logo, arriba a la derecha: abre dafont.com.
         // En la esquina de arriba a la derecha del panel, contra su luz.
-        let corner = egui::pos2(
-            right + PANEL_MARGIN - PANEL_EDGE,
-            top - PANEL_MARGIN + PANEL_EDGE,
-        );
+        let corner = egui::pos2(right + LOGO_OVERHANG, top - LOGO_OVERHANG);
         let at = egui::Rect::from_min_size(corner - vec2(logo_size.x, 0.0), logo_size);
         let response = ui
             .interact(at, ui.id().with("dafont_logo"), egui::Sense::click())
@@ -772,10 +771,17 @@ impl DafontPanel {
             Some(piece) => {
                 let ppp = ui.ctx().pixels_per_point();
                 // Sube hasta el borde del panel, por encima del scroll: con su recorte se perdían
-                // sus primeras filas y quedaba un hueco arriba.
-                // (`with_clip_rect` intersecta con el recorte de ahora: un painter nuevo.)
-                let clip = ui.clip_rect().union(at);
-                let painter = egui::Painter::new(ui.ctx().clone(), ui.layer_id(), clip);
+                // sus primeras filas y quedaba un hueco arriba. El recorte crece solo lo que el
+                // logo sale del contenido (`LOGO_OVERHANG` arriba y a la derecha): con el
+                // contenido desplazado, se recorta como lo demás y no se pinta sobre el marco.
+                // (`with_clip_rect` intersecta con el recorte de ahora; `set_clip_rect` lo
+                // cambia y deja lo demás del painter: apagado con un modal.)
+                let clip = ui.clip_rect();
+                let clip = clip
+                    .with_min_y(clip.min.y - LOGO_OVERHANG)
+                    .with_max_x(clip.max.x.max(right + LOGO_OVERHANG));
+                let mut painter = ui.painter().clone();
+                painter.set_clip_rect(clip);
                 painter.extend(pixel_ui::piece_shapes(piece, at, ppp));
             }
             None => {
@@ -1204,6 +1210,7 @@ fn text_image(font: &cs_tools::text::FontChoice, text: &str, px: u32) -> Option<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eframe::egui::Rect;
 
     /// Dos fuentes como las de la página de la categoría Bitmap (2026-10).
     const LISTING: &str = r#"<a name="36172"></a><div class="lv1left dfbg"><a href="minecraft.font"><strong>Minecraft</strong></a>&nbsp;<span title="Euro" class="contain">&euro;</span>  by <a href="craftron-gaming.d6128">Craftron Gaming</a></div><div class="lv1right dfbg">&nbsp;<span style="cursor:help" title="Use at 16 px (or multiple of 16), anti-alias off"> (16 px)</span></div><div class="lv2right">&nbsp;<span class="light">5,204,307 downloads (5,642 yesterday)</span> &nbsp; <a class="tdn help black" style="cursor:help" target="_blank" href="./faq.php#copyright">100% Free</a></div><div class="dlbox" style="height:88px" ><a class="dl" title="5 K" href="//dl.dafont.com/dl/?f=minecraft"  rel="nofollow">&nbsp;Download&nbsp;</a></div><div style="background-image:url(/img/preview/m/i/minecraft0.png)" class="preview"><a href="minecraft.font"></a></div><div class="dfxsmall">&nbsp;</div><a name="46880"></a><div class="lv1left dfbg"><a href="kiwisoda.font"><strong>Kiwi Soda</strong></a>&nbsp;<span title="Accents" class="contain">&agrave;</span>  by <a href="jeti.d1589">jeti</a></div><div class="lv2right">&nbsp;<a class="tdn help black" href="./faq.php#copyright">Public domain / GPL / OFL</a></div><div style="background-image:url(/img/preview/k/i/kiwisoda0.png)" class="preview"></div>"#;
@@ -1292,6 +1299,69 @@ mod tests {
             Some(
                 "https://img.dafont.com/preview_bitmap.php?text=Hola+mono&ttf=minecraft0&ext=1&size=12"
             )
+        );
+    }
+
+    /// Con el contenido desplazado `scrolled` hacia arriba (la fila de arriba pintada en
+    /// `content`, vista por un scroll que muestra desde más abajo): el rect del logo, su recorte y
+    /// lo que se ve del scroll.
+    fn logo_clip(scrolled: f32) -> (Rect, Rect, Rect) {
+        let ctx = egui::Context::default();
+        let skin = crate::skin::Skin::embedded(&ctx);
+        let piece = skin.piece(LOGO, crate::skin::WidgetState::Normal);
+        let size = piece.map(|p| vec2(p.size[0] as f32, p.size[1] as f32));
+        let size = size.expect("the logo in the skin");
+        ctx.set_fonts(crate::appearance::font_definitions(true));
+        crate::appearance::apply_style(&ctx, Some(skin.colors()));
+        crate::pixel_ui::set_bubble(&ctx, Some(std::sync::Arc::new(skin)));
+        let content = Rect::from_min_size(egui::pos2(20.0, 20.0), vec2(WIDTH, 500.0));
+        let viewport = content.with_min_y(content.min.y + scrolled);
+        let corner = egui::pos2(
+            content.right() + LOGO_OVERHANG,
+            content.top() - LOGO_OVERHANG,
+        );
+        let logo = Rect::from_min_size(corner - vec2(size.x, 0.0), size);
+        let mut panel = DafontPanel::default();
+        let mut clip = None;
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(egui::Pos2::ZERO, vec2(1000.0, 1000.0))),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                ui.scope_builder(egui::UiBuilder::new().max_rect(content), |ui| {
+                    ui.set_clip_rect(viewport);
+                    panel.top_row(ui, &mut Asked::default());
+                });
+            });
+            output.textures_delta.clear();
+            clip = output.shapes.iter().find_map(|c| match &c.shape {
+                egui::Shape::Mesh(m) => {
+                    let points: Vec<_> = m.vertices.iter().map(|v| v.pos).collect();
+                    (Rect::from_points(&points) == logo).then_some(c.clip_rect)
+                }
+                _ => None,
+            });
+        }
+        (logo, clip.expect("the logo"), viewport)
+    }
+
+    /// El logo sube hasta la luz del panel, por encima del contenido: el recorte del scroll del
+    /// dock, que empieza en el contenido, no le quita sus filas de arriba.
+    #[test]
+    fn the_logo_reaches_the_panel_edge_above_the_scroll_clip() {
+        let (logo, clip, _) = logo_clip(0.0);
+        assert!(clip.contains_rect(logo), "{logo:?} clipped by {clip:?}");
+    }
+
+    /// Con el contenido desplazado, el logo se recorta como lo demás: su recorte sube solo lo que
+    /// el logo sale del contenido, no se pinta sobre el marco del panel.
+    #[test]
+    fn a_scrolled_logo_is_clipped_like_the_rest() {
+        let (logo, clip, viewport) = logo_clip(5.0);
+        assert!(
+            clip.top() >= viewport.top() - LOGO_OVERHANG,
+            "{logo:?} clipped by {clip:?}, viewport {viewport:?}"
         );
     }
 
