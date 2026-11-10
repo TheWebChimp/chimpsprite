@@ -763,7 +763,7 @@ impl ChimpApp {
             dock::DockPanel::Library,
             anchor,
             skin,
-            library_panel::WIDTH,
+            library_panel::REFERENCE_WIDTH,
             true,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| {

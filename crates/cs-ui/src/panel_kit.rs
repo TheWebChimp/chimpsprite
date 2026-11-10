@@ -34,6 +34,19 @@ pub(crate) fn hint_wrapped(ui: &mut Ui, text: &str, width: f32) {
     ui.painter().galley(rect.min, galley, color);
 }
 
+/// Un texto como el de `egui::Label` con `wrap` (en varias líneas si no cabe en el ancho de `ui`),
+/// pero en puntos enteros: su rect llega al punto de arriba (el de egui medía lo que mide el texto,
+/// con fracciones).
+pub(crate) fn text_wrapped(ui: &mut Ui, text: &str) {
+    let color = ui.visuals().text_color();
+    let font = egui::TextStyle::Body.resolve(ui.style());
+    let width = ui.available_width().max(1.0);
+    let galley = ui.painter().layout(text.to_string(), font, color, width);
+    let (rect, response) = ui.allocate_exact_size(galley.size().ceil(), Sense::hover());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, text));
+    ui.painter().galley(rect.min, galley, color);
+}
+
 /// Entre la tinta de un texto y su nota.
 pub(crate) const HINT_GAP: f32 = 4.0;
 

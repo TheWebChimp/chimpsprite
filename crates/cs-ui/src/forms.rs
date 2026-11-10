@@ -284,6 +284,8 @@ pub(crate) mod testing {
     pub(crate) struct Probe {
         /// Los controles con nombre (botones, casillas, campos, selects, etiquetas) y su rect.
         pub widgets: Vec<(String, Rect)>,
+        /// Los textos pintados: lo que se ve (con su "…" si no cupo) y el rect de su galley.
+        pub texts: Vec<(String, Rect)>,
     }
 
     /// Lo que se mide: hojas que el usuario ve (no los grupos que las contienen).
@@ -306,6 +308,7 @@ pub(crate) mod testing {
         crate::appearance::apply_style(&ctx, Some(skin.colors()));
         crate::pixel_ui::set_bubble(&ctx, Some(std::sync::Arc::new(skin)));
         let mut widgets = Vec::new();
+        let mut texts = Vec::new();
         // Tres frames: las fuentes llegan en el primero y taffy mide en el segundo.
         for _ in 0..3 {
             let input = RawInput {
@@ -321,6 +324,10 @@ pub(crate) mod testing {
             });
             // Nadie sube texturas aquí: egui exige descartar lo pendiente.
             output.textures_delta.clear();
+            texts.clear();
+            for clipped in &output.shapes {
+                collect_texts(&clipped.shape, &mut texts);
+            }
             let nodes = output
                 .platform_output
                 .accesskit_update
@@ -344,7 +351,22 @@ pub(crate) mod testing {
                 })
                 .collect();
         }
-        Probe { widgets }
+        Probe { widgets, texts }
+    }
+
+    /// Los textos de `shape` como se ven (las letras de sus filas) y su rect, desde la esquina del
+    /// panel.
+    fn collect_texts(shape: &egui::Shape, out: &mut Vec<(String, Rect)>) {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().for_each(|s| collect_texts(s, out)),
+            egui::Shape::Text(text) => {
+                let rows = text.galley.rows.iter();
+                let shown = rows.flat_map(|r| r.glyphs.iter().map(|g| g.chr)).collect();
+                let rect = Rect::from_min_size(text.pos, text.galley.size());
+                out.push((shown, rect.translate(Vec2::splat(-10.0))));
+            }
+            _ => {}
+        }
     }
 
     impl Probe {
@@ -354,6 +376,15 @@ pub(crate) mod testing {
                 .find(|(n, _)| n == name)
                 .map(|(_, r)| *r)
                 .unwrap_or_else(|| panic!("no {name:?} in {:?}", self.widgets))
+        }
+
+        /// El primer texto pintado que empieza con `start`: lo que se ve y su rect.
+        pub(crate) fn text(&self, start: &str) -> (&str, Rect) {
+            self.texts
+                .iter()
+                .find(|(t, _)| t.starts_with(start))
+                .map(|(t, r)| (t.as_str(), *r))
+                .unwrap_or_else(|| panic!("no {start:?} in {:?}", self.texts))
         }
 
         /// Cada control empieza y termina en puntos enteros (nada de medio pixel del skin).
