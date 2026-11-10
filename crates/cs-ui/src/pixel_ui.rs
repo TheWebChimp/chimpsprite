@@ -871,7 +871,7 @@ pub fn icon_button(
 }
 
 /// El botón con ícono: 25×16, como los de la barra.
-const ICON_BUTTON: Vec2 = vec2(25.0, 16.0);
+pub(crate) const ICON_BUTTON: Vec2 = vec2(25.0, 16.0);
 
 /// La norma de los controles con Pixel UI (botones, campos, combos, grupos de opciones): 17 de
 /// alto, el cuerpo de 16 y debajo 1 fila de luz (`highlight`). En los campos y los botones la luz

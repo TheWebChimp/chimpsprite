@@ -142,6 +142,24 @@ pub(crate) fn fill_height(min: f32, style: Style) -> Style {
     }
 }
 
+/// `style` que crece a lo alto con lo que sobre en su columna, sin bajar del alto de lo que tiene
+/// adentro (una fila con una columna de controles y un lienzo que llega hasta el pie).
+pub(crate) fn fill_height_auto(style: Style) -> Style {
+    Style {
+        flex_grow: 1.0,
+        ..style
+    }
+}
+
+/// `style` que crece `weight` veces lo que crecen sus hermanas de peso 1 (una columna que vale
+/// por dos sigue del ancho de dos columnas de las de arriba).
+pub(crate) fn weight(weight: f32, style: Style) -> Style {
+    Style {
+        flex_grow: weight,
+        ..style
+    }
+}
+
 /// `style` de por lo menos `h` de alto (un panel del alto de su columna, aunque tenga poco).
 pub(crate) fn min_height(h: f32, style: Style) -> Style {
     Style {
@@ -158,6 +176,17 @@ pub(crate) fn air_right(right: f32, style: Style) -> Style {
     Style {
         margin: Rect {
             right: length(right),
+            ..style.margin
+        },
+        ..style
+    }
+}
+
+/// `style` con `bottom` de aire debajo (lo de abajo va más abajo; estirado, llega hasta ahí).
+pub(crate) fn air_below(bottom: f32, style: Style) -> Style {
+    Style {
+        margin: Rect {
+            bottom: length(bottom),
             ..style.margin
         },
         ..style

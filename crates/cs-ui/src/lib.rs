@@ -636,7 +636,7 @@ impl ChimpApp {
             dock::DockPanel::Lumen,
             anchor,
             self.pixel.skin(),
-            lumen::WIDTH,
+            lumen::REFERENCE_WIDTH,
             true,
             |ui| {
                 ui.add_enabled_ui(!modal, |ui| action = lumen.ui(ui));

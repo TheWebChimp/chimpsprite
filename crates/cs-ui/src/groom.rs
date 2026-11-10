@@ -13,7 +13,7 @@ use eframe::egui::{
 use crate::forms::{self, TuiBuilderLogic as _};
 use crate::panel_kit::{
     HINT_GAP, box_color, child, double_box, hint, hint_on_baseline, label_with_hint,
-    notched_outline,
+    notched_outline, row_bottom,
 };
 use crate::{pixel_ui, widgets};
 
@@ -1045,16 +1045,6 @@ impl GroomPanel {
         };
         hint(ui, note);
     }
-}
-
-/// Una fila como la de `ui.horizontal` (del alto de los campos de egui) con lo que tiene abajo:
-/// los controles del kit (de 17) quedan en puntos enteros, donde ya se pintaban (centrados en la
-/// fila de 18 quedaban a medio punto y el kit los pintaba redondeados hacia abajo). Los campos
-/// numéricos se ponen solos arriba, a la altura de los de la barra.
-fn row_bottom<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let size = vec2(ui.available_width(), ui.spacing().interact_size.y);
-    let bottom = egui::Layout::left_to_right(egui::Align::Max);
-    ui.allocate_ui_with_layout(size, bottom, add).inner
 }
 
 /// Dónde se guarda si "Before" está presionado (se lee al pintar la vista previa, arriba del
