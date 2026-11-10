@@ -255,6 +255,10 @@ pub struct ChimpApp {
     presets_window: Option<palette_ui::PresetsWindow>,
     /// El panel Lospec del dock (mientras está abierto).
     lospec_dock: Option<palette_ui::PresetsWindow>,
+    /// Los paneles que se dibujaron en este frame (los llena `draw_panel`, se vacía al empezar el
+    /// frame de paneles) y en el anterior.
+    panels_drawn: Vec<panel_registry::PanelId>,
+    panels_drawn_prev: Vec<panel_registry::PanelId>,
     preset_name: Option<palette_ui::NameDialog>,
     palette_confirm: Option<palette_ui::Confirm>,
     /// Ya llegó el `Paste` de este Ctrl+V (ver `clipboard::paste_request`).
@@ -417,6 +421,8 @@ impl ChimpApp {
             palettes,
             presets_window: None,
             lospec_dock: None,
+            panels_drawn: Vec::new(),
+            panels_drawn_prev: Vec::new(),
             preset_name: None,
             palette_confirm: None,
             pasted: false,
@@ -1381,6 +1387,7 @@ impl ChimpApp {
     fn editor_panels(&mut self, ui: &mut egui::Ui, modal: bool) -> egui::Rect {
         use crate::app_panels::{PanelAction, PanelCtx};
         use crate::panel_registry::PanelId;
+        self.begin_panel_frame();
         // Cómo se hospedan las regiones fijas: apagadas con un diálogo abierto (Color, solo sus
         // menús y la instancia); ninguna es Lospec, así que el fondo no importa.
         let fixed = PanelCtx {
@@ -1612,10 +1619,8 @@ impl ChimpApp {
         if let Some((id, anchor)) = dock_out.app_panel {
             self.panel_flyout(ui.ctx(), id, anchor, modal);
         }
-        // En la pestaña del modelo, el de Lospec queda abierto para cuando se vuelva al lienzo.
-        if !model_tab && !matches!(dock_out.app_panel, Some((dock::DockPanel::Lospec, _))) {
-            self.close_lospec_panel();
-        }
+        // Lo que no se dibujó en este frame suelta su estado (Lospec).
+        self.end_panel_frame(model_tab);
         // Otra vez: el panel derecho necesita `self` entero.
         let Some(skin) = self.pixel.skin() else {
             return egui::CentralPanel::no_frame()

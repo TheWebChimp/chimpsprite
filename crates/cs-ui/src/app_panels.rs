@@ -63,6 +63,32 @@ impl PanelId {
 }
 
 impl ChimpApp {
+    /// Abre el frame de los paneles: lo dibujado en el anterior pasa a `was_drawn` y se empieza de
+    /// cero.
+    pub(crate) fn begin_panel_frame(&mut self) {
+        self.panels_drawn_prev = std::mem::take(&mut self.panels_drawn);
+    }
+
+    /// El panel `id` se dibujó en este frame (hasta ahora).
+    pub(crate) fn drawn_this_frame(&self, id: PanelId) -> bool {
+        self.panels_drawn.contains(&id)
+    }
+
+    /// El panel `id` se dibujó en el frame anterior.
+    #[allow(dead_code, reason = "lo leerá el docking (fase C)")]
+    pub(crate) fn was_drawn(&self, id: PanelId) -> bool {
+        self.panels_drawn_prev.contains(&id)
+    }
+
+    /// Cierra el frame de los paneles: lo que ya no se dibuja suelta su estado. Lospec vive
+    /// mientras se dibuja (en un flyout o acoplado) y se cierra el frame en que no. En la pestaña
+    /// de un modelo no hay dock: se queda abierto para cuando se vuelva al lienzo.
+    pub(crate) fn end_panel_frame(&mut self, model_tab: bool) {
+        if !model_tab && !self.drawn_this_frame(PanelId::Lospec) {
+            self.close_lospec_panel();
+        }
+    }
+
     /// El panel `id` en `ui`, hospedado según `panel`, y lo que pidió. Lo apaga entero con un
     /// diálogo modal (salvo Color, que lo maneja adentro) y pone la franja del logo de Lospec
     /// fuera de eso; lo demás que lo rodea (el marco, el tamaño, el scroll de la toolbar) es de
@@ -73,6 +99,9 @@ impl ChimpApp {
         id: PanelId,
         panel: &PanelCtx,
     ) -> Option<PanelAction> {
+        if !self.panels_drawn.contains(&id) {
+            self.panels_drawn.push(id);
+        }
         // Con un diálogo abierto, la paleta sigue viva: solo se apagan sus menús y la instancia.
         if id == PanelId::Color {
             return self.draw_color(ui, panel.modal);
@@ -508,6 +537,75 @@ mod tests {
             ui.set_width(id.spec().reference_width);
             app.draw_panel(ui, id, panel);
         })
+    }
+
+    /// Un frame de la app con el panel Lospec dibujado (o no) fuera de un flyout, como lo hará el
+    /// docking: abre el frame de paneles, dibuja y cierra con la regla del fin de frame.
+    fn lospec_frame(ctx: &egui::Context, app: &mut ChimpApp, draw: bool, model_tab: bool) {
+        use crate::panel_registry::PanelId;
+        app.begin_panel_frame();
+        frame(ctx, app, |app, ui| {
+            if draw {
+                ui.set_width(PanelId::Lospec.spec().reference_width);
+                app.draw_panel(ui, PanelId::Lospec, &Default::default());
+            }
+        });
+        app.end_panel_frame(model_tab);
+    }
+
+    #[test]
+    fn a_lospec_drawn_outside_a_flyout_keeps_its_state_and_searches_once() {
+        use crate::panel_registry::PanelId;
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            frame(&ctx, &mut app, |_, _| {});
+        }
+        let before = crate::palette_ui::lospec_searches_started();
+        for n in 0..3 {
+            lospec_frame(&ctx, &mut app, true, false);
+            assert!(app.lospec_open(), "sigue abierto mientras se dibuja");
+            assert!(app.drawn_this_frame(PanelId::Lospec));
+            // El frame siguiente lo ve como "dibujado el frame anterior".
+            if n > 0 {
+                assert!(app.was_drawn(PanelId::Lospec));
+            }
+        }
+        assert_eq!(
+            crate::palette_ui::lospec_searches_started() - before,
+            1,
+            "la búsqueda se lanzó una sola vez"
+        );
+    }
+
+    #[test]
+    fn lospec_closes_at_the_end_of_the_frame_it_was_not_drawn() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            frame(&ctx, &mut app, |_, _| {});
+        }
+        lospec_frame(&ctx, &mut app, true, false);
+        assert!(app.lospec_open());
+        lospec_frame(&ctx, &mut app, false, false);
+        assert!(!app.lospec_open(), "un frame sin dibujarlo lo cierra");
+        // Dibujado otra vez, empieza de nuevo (con su búsqueda).
+        let before = crate::palette_ui::lospec_searches_started();
+        lospec_frame(&ctx, &mut app, true, false);
+        assert!(app.lospec_open());
+        assert_eq!(crate::palette_ui::lospec_searches_started() - before, 1);
+    }
+
+    #[test]
+    fn on_a_model_tab_lospec_stays_open_though_it_is_not_drawn() {
+        let mut app = test_app();
+        let ctx = egui::Context::default();
+        for _ in 0..2 {
+            frame(&ctx, &mut app, |_, _| {});
+        }
+        lospec_frame(&ctx, &mut app, true, false);
+        lospec_frame(&ctx, &mut app, false, true);
+        assert!(app.lospec_open(), "en la pestaña del modelo no se cierra");
     }
 
     #[test]

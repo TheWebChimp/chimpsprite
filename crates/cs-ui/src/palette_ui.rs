@@ -135,6 +135,18 @@ impl LospecRequests {
     }
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Cuántas búsquedas de Lospec se han lanzado en este hilo (para los tests: sin red).
+    static SEARCHES_STARTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Cuántas búsquedas de Lospec se han lanzado en este hilo.
+#[cfg(test)]
+pub(crate) fn lospec_searches_started() -> usize {
+    SEARCHES_STARTED.with(std::cell::Cell::get)
+}
+
 /// Lo que se guarda en la biblioteca para un resultado de Lospec.
 fn lospec_preset(p: &LospecPalette) -> (NamedPalette, Vec<String>) {
     (p.named(), p.comments())
@@ -1279,6 +1291,8 @@ const COUNT_CAPS: f32 = 4.0;
 /// Una búsqueda nueva: reemplaza las peticiones guardadas (la pestaña descarta las viejas).
 #[cfg(not(target_arch = "wasm32"))]
 fn start_search(ctx: &egui::Context, tab: &mut LospecTab, requests: &mut LospecRequests) {
+    #[cfg(test)]
+    SEARCHES_STARTED.with(|n| n.set(n.get() + 1));
     let start = tab.start_search();
     let now = ctx.input(|i| i.time);
     requests.listing = Some(InFlight::new(
